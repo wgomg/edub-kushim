@@ -62,13 +62,6 @@ func (c *Consumer) Consume(reqID *string) error {
 		storeOriginalPath := filepath.Join(c.config.Storage.StorageDir, "originals", file.Name)
 		file.StorageOriginalPath = &storeOriginalPath
 
-		// TODO: add duplicate check here before processing
-		// duplicateDoc, err := c.checkForDuplicate(&file)
-		// if duplicateDoc != nil {
-		//     c.logger.Info(reqID, "Duplicate found for %s, skipping", file.Name)
-		//     continue
-		// }
-
 		c.Process(file)
 	}
 
@@ -129,8 +122,19 @@ func (c *Consumer) Process(file File) (File, error) {
 
 	file.StorageProcessedPath = &fullStoragePath
 
-	// move file to originals and results storages
-	// if move file fails undo saving to database
+	if err := MoveFile(file.OriginalPath, *file.StorageOriginalPath); err != nil {
+		// TODO: rollback database transaction
+		return file, fmt.Errorf("failed to move original file: %w", err)
+	}
+
+	srcProcessedPath := file.OriginalPath
+	if file.OCRTmpPath != nil {
+		srcProcessedPath = *file.OCRTmpPath
+	}
+	if err := MoveFile(srcProcessedPath, *file.StorageProcessedPath); err != nil {
+		// TODO: rollback database transaction
+		return file, fmt.Errorf("failed to move processed file: %w", err)
+	}
 
 	return file, nil
 }

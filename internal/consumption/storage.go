@@ -100,6 +100,68 @@ func RemoveFile(path string) error {
 	return nil
 }
 
+func MoveFile(src, dst string) error {
+	srcInfo, err := os.Stat(src)
+	if err != nil {
+		return fmt.Errorf("source file does not exist: %w", err)
+	}
+
+	if srcInfo.IsDir() {
+		return fmt.Errorf("source is a directory, not a file: %s", src)
+	}
+
+	dstDir := filepath.Dir(dst)
+	if err := os.MkdirAll(dstDir, 0755); err != nil {
+		return fmt.Errorf("failed to create destination directory %s: %w", dstDir, err)
+	}
+
+	if _, err := os.Stat(dst); err != nil {
+		return fmt.Errorf("destination file already exists: %s", dst)
+	}
+
+	err = os.Rename(src, dst)
+	if err == nil {
+		return nil
+	}
+
+	return moveFileCrossDevice(src, dst, srcInfo)
+}
+
+func moveFileCrossDevice(src, dst string, srcInfo os.FileInfo) error {
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("failed to open source file: %w", err)
+	}
+	defer srcFile.Close()
+
+	dstFile, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, srcInfo.Mode())
+	if err != nil {
+		return fmt.Errorf("failed to create destination file: %w", err)
+	}
+	defer dstFile.Close()
+
+	if _, err := io.Copy(dstFile, srcFile); err != nil {
+		os.Remove(dst)
+		return fmt.Errorf("failed to copy file contents: %w", err)
+	}
+
+	if err := dstFile.Sync(); err != nil {
+		os.Remove(dst)
+		return fmt.Errorf("failed to sync destination file: %w", err)
+	}
+
+	srcFile.Close()
+	dstFile.Close()
+
+	if err := os.Remove(src); err != nil {
+		// if we can't remove source, at least we have the copy
+		// log the error but don't fail the operation
+		fmt.Printf("Warning: Failed to remove source file after copy: %v\n", err)
+	}
+
+	return nil
+}
+
 func calculateChecksumsAndMimeType(
 	filePath string,
 ) (md5Hash string, sha512Hash string, err error) {
