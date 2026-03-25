@@ -127,6 +127,50 @@ func MoveFile(src, dst string) error {
 	return moveFileCrossDevice(src, dst, srcInfo)
 }
 
+func CopyFile(src, dst string) error {
+	srcInfo, err := os.Stat(src)
+	if err != nil {
+		return fmt.Errorf("source file does not exist: %w", err)
+	}
+
+	if srcInfo.IsDir() {
+		return fmt.Errorf("source is a directory, not a file: %s", src)
+	}
+
+	dstDir := filepath.Dir(dst)
+	if err := os.MkdirAll(dstDir, 0755); err != nil {
+		return fmt.Errorf("failed to create destination directory %s: %w", dstDir, err)
+	}
+
+	if _, err := os.Stat(dst); err == nil {
+		return fmt.Errorf("destination file already exists: %s", dst)
+	}
+
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("failed to open source file: %w", err)
+	}
+	defer srcFile.Close()
+
+	dstFile, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, srcInfo.Mode())
+	if err != nil {
+		return fmt.Errorf("failed to create destination file: %w", err)
+	}
+	defer dstFile.Close()
+
+	if _, err := io.Copy(dstFile, srcFile); err != nil {
+		os.Remove(dst)
+		return fmt.Errorf("failed to copy file contents: %w", err)
+	}
+
+	if err := dstFile.Sync(); err != nil {
+		os.Remove(dst)
+		return fmt.Errorf("failed to sync destination file: %w", err)
+	}
+
+	return nil
+}
+
 func moveFileCrossDevice(src, dst string, srcInfo os.FileInfo) error {
 	srcFile, err := os.Open(src)
 	if err != nil {

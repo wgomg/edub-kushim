@@ -88,7 +88,17 @@ func (c *Consumer) Process(file File) (File, error) {
 	)
 	file.StorageProcessedPath = &storePath
 
-	queries := database.NewQueries(c.db)
+	tx, err := c.db.BeginTx(ctx, nil)
+	if err != nil {
+		return file, fmt.Errorf("failed to begin database transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			tx.Rollback()
+		}
+	}()
+
+	queries := database.NewQueries(c.db).WithTx(tx)
 	result, err := queries.CreateDocument(ctx, database.CreateDocumentParams{
 		Title:          file.Name,
 		Md5Checksum:    file.MD5Checksum,
@@ -122,18 +132,44 @@ func (c *Consumer) Process(file File) (File, error) {
 
 	file.StorageProcessedPath = &fullStoragePath
 
-	if err := MoveFile(file.OriginalPath, *file.StorageOriginalPath); err != nil {
-		// TODO: rollback database transaction
-		return file, fmt.Errorf("failed to move original file: %w", err)
+	if file.OCRTmpPath != nil {
+		if err := MoveFile(*file.OCRTmpPath, *file.StorageProcessedPath); err != nil {
+			return file, fmt.Errorf("failed to move OCR processed file: %w", err)
+		}
+		if err := MoveFile(file.OriginalPath, *file.StorageOriginalPath); err != nil {
+			if removeErr := RemoveFile(*file.StorageProcessedPath); removeErr != nil {
+				c.logger.Error(nil, "failed to clean up OCR file: %v", removeErr)
+			}
+			return file, fmt.Errorf("failed to move original file: %w", err)
+		}
+	} else {
+		if err := MoveFile(file.OriginalPath, *file.StorageOriginalPath); err != nil {
+			return file, fmt.Errorf("failed to move original file: %w", err)
+		}
+		if err := CopyFile(*file.StorageOriginalPath, *file.StorageProcessedPath); err != nil {
+			if rollbackErr := MoveFile(*file.StorageOriginalPath, file.OriginalPath); rollbackErr != nil {
+				c.logger.Error(nil, "failed to rollback original file move: %v", rollbackErr)
+			}
+			return file, fmt.Errorf("failed to copy file to processed storage: %w", err)
+		}
 	}
 
-	srcProcessedPath := file.OriginalPath
-	if file.OCRTmpPath != nil {
-		srcProcessedPath = *file.OCRTmpPath
-	}
-	if err := MoveFile(srcProcessedPath, *file.StorageProcessedPath); err != nil {
-		// TODO: rollback database transaction
-		return file, fmt.Errorf("failed to move processed file: %w", err)
+	if err := tx.Commit(); err != nil {
+		if rollbackErr := MoveFile(*file.StorageOriginalPath, file.OriginalPath); rollbackErr != nil {
+			c.logger.Error(
+				nil,
+				"Failed to rollback original file move after commit failure: %v",
+				rollbackErr,
+			)
+		}
+		if removeErr := RemoveFile(*file.StorageProcessedPath); removeErr != nil {
+			c.logger.Error(
+				nil,
+				"Failed to rollback original file move after commit failure: %v",
+				removeErr,
+			)
+		}
+		return file, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
 	return file, nil
