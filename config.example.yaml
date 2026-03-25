@@ -1,0 +1,29 @@
+app:
+  environment: development
+  log_level: debug
+
+server:
+  host: localhost
+  port: 3000
+  read_timeout: 60
+  write_timeout: 60
+  idle_timeout: 60
+
+database:
+  type: sqlite
+  path: ./data
+
+storage:
+  consumption_dir: ./inbox
+  storage_dir: ./storage
+
+consumer:
+  supported_files: ['.pdf']
+  textextractor: 'pdftotext'
+  ocr: 'ocrmypdf'
+
+# Uncomment for production
+# search:
+#   engine: zincsearch
+#   url: http://localhost:4080
+#   index: documents

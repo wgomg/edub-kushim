@@ -1,0 +1,10 @@
+# dev directory
+dev/
+
+# editor directories and files
+.vscode/
+
+# configuration files (except example)
+config.yaml
+config.prod.yaml
+!config.example.yaml

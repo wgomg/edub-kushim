@@ -1,0 +1,100 @@
+package utils
+
+import (
+	"fmt"
+	"io"
+	"log"
+	"os"
+	"strings"
+)
+
+type LogLevel string
+
+const (
+	LevelDebug LogLevel = "debug"
+	LevelInfo  LogLevel = "info"
+	LevelError LogLevel = "error"
+)
+
+type Logger struct {
+	level       LogLevel
+	infoLogger  *log.Logger
+	errorLogger *log.Logger
+	debugLogger *log.Logger
+	fatalLogger *log.Logger
+	RawBodyLog  bool
+}
+
+func NewLogger(level string) *Logger {
+	logLevel := parseLogLevel(level)
+
+	return &Logger{
+		level:       logLevel,
+		infoLogger:  log.New(os.Stdout, "<6>INFO  : ", log.Ldate|log.Ltime|log.Lshortfile),
+		errorLogger: log.New(os.Stderr, "<3>ERROR : ", log.Ldate|log.Ltime|log.Lshortfile),
+		debugLogger: log.New(
+			os.Stdout,
+			"<7>DEBUG : ",
+			log.Ldate|log.Ltime|log.Lshortfile,
+		),
+		fatalLogger: log.New(os.Stderr, "<2>FATAL : ", log.Ldate|log.Ltime|log.Lshortfile),
+	}
+}
+
+func NewDiscardLogger() *Logger {
+	return &Logger{
+		level:       LevelInfo,
+		infoLogger:  log.New(io.Discard, "", 0),
+		errorLogger: log.New(io.Discard, "", 0),
+		debugLogger: log.New(io.Discard, "", 0),
+		fatalLogger: log.New(io.Discard, "", 0),
+	}
+}
+
+func parseLogLevel(level string) LogLevel {
+	switch strings.ToLower(level) {
+	case "debug":
+		return LevelDebug
+	case "info":
+		return LevelInfo
+	case "error":
+		return LevelError
+	default:
+		return LevelInfo
+	}
+}
+
+func (l *Logger) Info(reqID *string, format string, v ...any) {
+	if l.level == LevelError {
+		return
+	}
+
+	if reqID != nil {
+		format = fmt.Sprintf("REQID=%s ", *reqID) + format
+	}
+
+	l.infoLogger.Printf(format, v...)
+}
+
+func (l *Logger) Error(reqID *string, format string, v ...any) {
+	if reqID != nil {
+		format = fmt.Sprintf("REQID=%s ", *reqID) + format
+	}
+
+	l.errorLogger.Printf(format, v...)
+}
+
+func (l *Logger) Debug(reqID *string, format string, v ...any) {
+	if l.level != LevelDebug {
+		return
+	}
+
+	if reqID != nil {
+		format = fmt.Sprintf("REQID=%s ", *reqID) + format
+	}
+	l.debugLogger.Printf(format, v...)
+}
+
+func (l *Logger) Fatal(v ...any) {
+	l.fatalLogger.Fatal(v...)
+}
