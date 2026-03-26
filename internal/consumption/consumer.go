@@ -59,16 +59,17 @@ func (c *Consumer) Consume(reqID *string) error {
 	c.logger.Info(reqID, "%d files found", len(filesToConsume))
 
 	for _, file := range filesToConsume {
-		storeOriginalPath := filepath.Join(c.config.Storage.StorageDir, "originals", file.Name)
-		file.StorageOriginalPath = &storeOriginalPath
-
-		c.Process(file)
+		resultFile, err := c.Process(file)
+		if err != nil {
+			c.logger.Error(nil, "failed processing for %s: %v", resultFile.OriginalPath, err)
+		}
 	}
 
 	return nil
 }
 
 func (c *Consumer) Process(file File) (File, error) {
+	c.logger.Info(nil, "starting processing for file %s", file.OriginalPath)
 	file, err := c.extractText(file)
 	if err != nil {
 		return file, err
@@ -79,14 +80,25 @@ func (c *Consumer) Process(file File) (File, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	storePath := filepath.Join(
-		c.config.Storage.StorageDir,
+	datePath := filepath.Join(
 		strconv.Itoa(file.Date.Year()),
 		fmt.Sprintf("%02d", file.Date.Month()),
 		strconv.Itoa(file.Date.Day()),
 		// document type name
 	)
+
+	storePath := filepath.Join(
+		c.config.Storage.StorageDir,
+		datePath,
+	)
 	file.StorageProcessedPath = &storePath
+
+	storeOriginalPath := filepath.Join(
+		c.config.Storage.StorageDir,
+		"originals",
+		datePath,
+	)
+	file.StorageOriginalPath = &storeOriginalPath
 
 	tx, err := c.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -105,7 +117,7 @@ func (c *Consumer) Process(file File) (File, error) {
 		Sha512Checksum: file.SHA512Checksum,
 		MimeType:       file.MimeType,
 		FileSize:       file.FileSize,
-		OriginalPath:   *file.StorageOriginalPath,
+		OriginalPath:   "",
 		StoragePath:    *file.StorageProcessedPath,
 	})
 	if err != nil {
@@ -117,36 +129,65 @@ func (c *Consumer) Process(file File) (File, error) {
 		return file, fmt.Errorf("failed to get document ID: %w", err)
 	}
 
-	fullStoragePath := filepath.Join(
-		*file.StorageOriginalPath,
-		strconv.FormatInt(documentID, 10)+".pdf",
-	)
+	c.logger.Debug(nil, "Created document with ID: %d", documentID)
 
-	err = queries.UpdateDocument(ctx, database.UpdateDocumentParams{
-		StoragePath: fullStoragePath,
-		ID:          documentID,
+	originalFileName := strconv.FormatInt(documentID, 10) + ".pdf"
+
+	fullOriginalPath := filepath.Join(
+		*file.StorageOriginalPath,
+		originalFileName,
+	)
+	file.StorageOriginalPath = &fullOriginalPath
+
+	fullStoragePath := filepath.Join(
+		*file.StorageProcessedPath,
+		originalFileName,
+	)
+	file.StorageProcessedPath = &fullStoragePath
+
+	c.logger.Debug(nil, "Original path: %s", *file.StorageOriginalPath)
+	c.logger.Debug(nil, "Processed path: %s", *file.StorageProcessedPath)
+
+	err = queries.UpdateDocumentPaths(ctx, database.UpdateDocumentPathsParams{
+		OriginalPath: *file.StorageOriginalPath,
+		StoragePath:  *file.StorageProcessedPath,
+		ID:           documentID,
 	})
 	if err != nil {
 		return file, fmt.Errorf("failed to update storage path: %w", err)
 	}
 
-	file.StorageProcessedPath = &fullStoragePath
-
 	if file.OCRTmpPath != nil {
+		c.logger.Debug(
+			nil,
+			"Moving OCR file from %s to %s",
+			*file.OCRTmpPath,
+			*file.StorageProcessedPath,
+		)
 		if err := MoveFile(*file.OCRTmpPath, *file.StorageProcessedPath); err != nil {
 			return file, fmt.Errorf("failed to move OCR processed file: %w", err)
 		}
+		c.logger.Debug(
+			nil,
+			"Moving original file from %s to %s",
+			file.OriginalPath,
+			*file.StorageOriginalPath,
+		)
 		if err := MoveFile(file.OriginalPath, *file.StorageOriginalPath); err != nil {
+			c.logger.Error(nil, "Failed to move original file, cleaning up OCR file")
 			if removeErr := RemoveFile(*file.StorageProcessedPath); removeErr != nil {
 				c.logger.Error(nil, "failed to clean up OCR file: %v", removeErr)
 			}
 			return file, fmt.Errorf("failed to move original file: %w", err)
 		}
 	} else {
+		c.logger.Debug(nil, "Moving original file from %s to %s", file.OriginalPath, *file.StorageOriginalPath)
 		if err := MoveFile(file.OriginalPath, *file.StorageOriginalPath); err != nil {
 			return file, fmt.Errorf("failed to move original file: %w", err)
 		}
+		c.logger.Debug(nil, "Copying file from %s to %s", *file.StorageOriginalPath, *file.StorageProcessedPath)
 		if err := CopyFile(*file.StorageOriginalPath, *file.StorageProcessedPath); err != nil {
+			c.logger.Error(nil, "Failed to copy file, rolling back original move")
 			if rollbackErr := MoveFile(*file.StorageOriginalPath, file.OriginalPath); rollbackErr != nil {
 				c.logger.Error(nil, "failed to rollback original file move: %v", rollbackErr)
 			}
@@ -154,7 +195,11 @@ func (c *Consumer) Process(file File) (File, error) {
 		}
 	}
 
+	c.logger.Debug(nil, "Committing transaction")
 	if err := tx.Commit(); err != nil {
+		c.logger.Error(nil, "Transaction commit failed: %v", err)
+		c.logger.Error(nil, "Attempting to rollback file operations")
+
 		if rollbackErr := MoveFile(*file.StorageOriginalPath, file.OriginalPath); rollbackErr != nil {
 			c.logger.Error(
 				nil,

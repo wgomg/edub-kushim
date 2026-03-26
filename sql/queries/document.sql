@@ -9,8 +9,9 @@ INSERT INTO document (
     title, md5_checksum, sha512_checksum, mime_type, file_size, original_path, storage_path
 ) VALUES (?, ?, ?, ?, ?, ?, ?);
 
--- name: UpdateDocument :exec
+-- name: UpdateDocumentPaths :exec
 UPDATE document SET
+    original_path = ?,
     storage_path = ?,
     modified_at = CURRENT_TIMESTAMP
 WHERE id = ?;

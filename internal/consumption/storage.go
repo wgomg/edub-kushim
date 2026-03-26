@@ -115,7 +115,7 @@ func MoveFile(src, dst string) error {
 		return fmt.Errorf("failed to create destination directory %s: %w", dstDir, err)
 	}
 
-	if _, err := os.Stat(dst); err != nil {
+	if _, err := os.Stat(dst); err == nil {
 		return fmt.Errorf("destination file already exists: %s", dst)
 	}
 

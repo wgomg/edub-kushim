@@ -266,19 +266,21 @@ func (q *Queries) SearchDocumentsByTitle(ctx context.Context, arg SearchDocument
 	return items, nil
 }
 
-const updateDocument = `-- name: UpdateDocument :exec
+const updateDocumentPaths = `-- name: UpdateDocumentPaths :exec
 UPDATE document SET
+    original_path = ?,
     storage_path = ?,
     modified_at = CURRENT_TIMESTAMP
 WHERE id = ?
 `
 
-type UpdateDocumentParams struct {
-	StoragePath string
-	ID          int64
+type UpdateDocumentPathsParams struct {
+	OriginalPath string
+	StoragePath  string
+	ID           int64
 }
 
-func (q *Queries) UpdateDocument(ctx context.Context, arg UpdateDocumentParams) error {
-	_, err := q.db.ExecContext(ctx, updateDocument, arg.StoragePath, arg.ID)
+func (q *Queries) UpdateDocumentPaths(ctx context.Context, arg UpdateDocumentPathsParams) error {
+	_, err := q.db.ExecContext(ctx, updateDocumentPaths, arg.OriginalPath, arg.StoragePath, arg.ID)
 	return err
 }

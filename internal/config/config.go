@@ -96,6 +96,7 @@ func Load(path string) (*Config, error) {
 	}
 
 	cfg.Db.Name = "edub.db"
+	cfg.Consumer.SupportedFiles = []string{".pdf"}
 
 	if err := os.MkdirAll(cfg.Storage.ConsumptionDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create consumption directory: %w", err)
