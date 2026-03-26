@@ -43,6 +43,7 @@ type ConsumerConfig struct {
 	SupportedFiles []string
 	TextExtractor  string
 	OCR            string
+	DeleteOriginal bool `mapstructure:"delete_original"`
 }
 
 type ToolConfig struct {
@@ -78,6 +79,7 @@ func Load(path string) (*Config, error) {
 	viper.SetDefault("consumer.supported_files", []string{".pdf"})
 	viper.SetDefault("consumer.textextractor", "pdftotext")
 	viper.SetDefault("consumer.ocr", "ocrmypdf")
+	viper.SetDefault("consumer.delete_original", false)
 
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")

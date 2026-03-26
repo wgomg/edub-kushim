@@ -58,7 +58,7 @@ func GetFiles(src string, exts []string) ([]File, error) {
 			continue
 		}
 
-		md5Hash, sha512Hash, err := calculateChecksumsAndMimeType(entryPath)
+		md5Hash, sha512Hash, err := calculateChecksums(entryPath)
 		if err != nil {
 			return nil, fmt.Errorf(
 				"failed to calculate checksums for %s: %w",
@@ -206,7 +206,7 @@ func moveFileCrossDevice(src, dst string, srcInfo os.FileInfo) error {
 	return nil
 }
 
-func calculateChecksumsAndMimeType(
+func calculateChecksums(
 	filePath string,
 ) (md5Hash string, sha512Hash string, err error) {
 	file, err := os.Open(filePath)

@@ -18,7 +18,7 @@ type Runner struct {
 
 type TextExtractionResult struct {
 	Text     *string
-	Metadata map[string]interface{}
+	Metadata map[string]any
 }
 
 type OCRResult struct {

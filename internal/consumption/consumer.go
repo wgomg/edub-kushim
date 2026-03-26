@@ -2,8 +2,14 @@ package consumption
 
 import (
 	"context"
+	"crypto/md5"
+	"crypto/sha512"
 	"database/sql"
+	"encoding/hex"
+	"errors"
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 	"strconv"
 	"time"
@@ -70,7 +76,17 @@ func (c *Consumer) Consume(reqID *string) error {
 
 func (c *Consumer) Process(file File) (File, error) {
 	c.logger.Info(nil, "starting processing for file %s", file.OriginalPath)
-	file, err := c.extractText(file)
+
+	duplicated, err := c.isDuplicate(file.OriginalPath)
+	if err != nil {
+		return file, fmt.Errorf("failed to check for duplicate: %v", err)
+	}
+
+	if duplicated {
+		return file, fmt.Errorf("file is a duplicate, skipping")
+	}
+
+	file, err = c.extractText(file)
 	if err != nil {
 		return file, err
 	}
@@ -173,7 +189,7 @@ func (c *Consumer) Process(file File) (File, error) {
 			file.OriginalPath,
 			*file.StorageOriginalPath,
 		)
-		if err := MoveFile(file.OriginalPath, *file.StorageOriginalPath); err != nil {
+		if err := CopyFile(file.OriginalPath, *file.StorageOriginalPath); err != nil {
 			c.logger.Error(nil, "Failed to move original file, cleaning up OCR file")
 			if removeErr := RemoveFile(*file.StorageProcessedPath); removeErr != nil {
 				c.logger.Error(nil, "failed to clean up OCR file: %v", removeErr)
@@ -182,7 +198,7 @@ func (c *Consumer) Process(file File) (File, error) {
 		}
 	} else {
 		c.logger.Debug(nil, "Moving original file from %s to %s", file.OriginalPath, *file.StorageOriginalPath)
-		if err := MoveFile(file.OriginalPath, *file.StorageOriginalPath); err != nil {
+		if err := CopyFile(file.OriginalPath, *file.StorageOriginalPath); err != nil {
 			return file, fmt.Errorf("failed to move original file: %w", err)
 		}
 		c.logger.Debug(nil, "Copying file from %s to %s", *file.StorageOriginalPath, *file.StorageProcessedPath)
@@ -199,14 +215,6 @@ func (c *Consumer) Process(file File) (File, error) {
 	if err := tx.Commit(); err != nil {
 		c.logger.Error(nil, "Transaction commit failed: %v", err)
 		c.logger.Error(nil, "Attempting to rollback file operations")
-
-		if rollbackErr := MoveFile(*file.StorageOriginalPath, file.OriginalPath); rollbackErr != nil {
-			c.logger.Error(
-				nil,
-				"Failed to rollback original file move after commit failure: %v",
-				rollbackErr,
-			)
-		}
 		if removeErr := RemoveFile(*file.StorageProcessedPath); removeErr != nil {
 			c.logger.Error(
 				nil,
@@ -215,9 +223,92 @@ func (c *Consumer) Process(file File) (File, error) {
 			)
 		}
 		return file, fmt.Errorf("failed to commit transaction: %w", err)
+	} else {
+		if c.config.Consumer.DeleteOriginal {
+			if removeErr := RemoveFile(file.OriginalPath); removeErr != nil {
+				c.logger.Error(
+					nil,
+					"Failed to rollback original file move after commit failure: %v",
+					removeErr,
+				)
+			}
+		}
 	}
 
 	return file, nil
+}
+
+func (c *Consumer) isDuplicate(path string) (bool, error) {
+	md5sum, err := calculateMD5(path)
+	if err != nil {
+		return false, err
+	}
+
+	c.logger.Debug(nil, "MD5: %s", md5sum)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	queries := database.NewQueries(c.db)
+
+	md5Result, err := queries.GetDocumentByMD5Checksum(ctx, md5sum)
+	if err != nil {
+		return false, err
+	}
+
+	c.logger.Debug(nil, "MD5 matches: %d", len(md5Result))
+
+	if len(md5Result) == 0 {
+		return false, nil
+	}
+
+	sha512sum, err := calculateSHA512(path)
+	if err != nil {
+		return false, err
+	}
+
+	c.logger.Debug(nil, "SHA512: %s", sha512sum)
+
+	_, err = queries.GetDocumentBySHA512Checksum(ctx, sha512sum)
+	if err != nil {
+		c.logger.Debug(nil, "SHA512 check error: %v", err)
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	return true, nil
+}
+
+func calculateMD5(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("failed to open file: %w", err)
+	}
+	defer file.Close()
+
+	hasher := md5.New()
+	if _, err := io.Copy(hasher, file); err != nil {
+		return "", fmt.Errorf("failed to calculate MD5: %w", err)
+	}
+
+	return hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
+func calculateSHA512(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("failed to open file: %w", err)
+	}
+	defer file.Close()
+
+	hasher := sha512.New()
+	if _, err := io.Copy(hasher, file); err != nil {
+		return "", fmt.Errorf("failed to calculate SHA512: %w", err)
+	}
+
+	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
 func (c *Consumer) extractText(file File) (File, error) {

@@ -241,7 +241,7 @@ cmd/
 - `StorageConfig`
   - **Fields**: `ConsumptionDir string`, `StorageDir string`
 - `ConsumerConfig`
-  - **Fields**: `SupportedFiles []string`, `TextExtractor string`, `OCR string`
+  - **Fields**: `SupportedFiles []string`, `TextExtractor string`, `OCR string`, `DeleteOriginal bool`
 - `ToolConfig`
   - **Fields**: `Command string`, `Timeout time.Duration`
 - `Config`
@@ -256,6 +256,7 @@ cmd/
 - `Load(path string) (*Config, error)`
   - **Params**: `path` (config file path)
   - **Returns**: `*Config` (loaded configuration), `error` (loading error)
+  - **Description**: Loads configuration from YAML file with sensible defaults. Creates required directories if they don't exist. Supports `delete_original` configuration option to remove original files after successful processing.
 
 ### Consumption Engine (`internal/consumption/`)
 
@@ -278,9 +279,22 @@ cmd/
     - `extractText(file File) (File, error)`
       - **Params**: `file` (file to extract text from)
       - **Returns**: `File` (file with extracted text), `error` (extraction error)
+    - `isDuplicate(path string) (bool, error)`
+      - **Params**: `path` (file path to check)
+      - **Returns**: `bool` (is duplicate), `error` (check error)
+      - **Description**: Checks if a file is a duplicate by computing MD5 and SHA512 checksums and comparing with database records. Uses MD5 for fast filtering and SHA512 for secure verification.
 
 - `File`
   - **Fields**: `Name string`, `OriginalPath string`, `OCRTmpPath *string`, `StorageProcessedPath *string`, `StorageOriginalPath *string`, `MD5Checksum string`, `SHA512Checksum string`, `Text *string`, `MimeType string`, `Date time.Time`, `FileSize int64`
+
+**Functions:**
+
+- `calculateMD5(path string) (string, error)`
+  - **Params**: `path` (file path)
+  - **Returns**: `string` (MD5 checksum), `error` (calculation error)
+- `calculateSHA512(path string) (string, error)`
+  - **Params**: `path` (file path)
+  - **Returns**: `string` (SHA512 checksum), `error` (calculation error)
 
 #### `storage.go`
 
@@ -295,12 +309,16 @@ cmd/
 - `MoveFile(src, dst string) error`
   - **Params**: `src` (source file path), `dst` (destination file path)
   - **Returns**: `error` (move operation error)
-  - **Description**: Moves a file from source to destination. First attempts atomic rename within same filesystem, falls back to copy+remove for cross-device moves. Creates destination directory if needed.
+  - **Description**: Moves a file from source to destination. First attempts atomic rename within same filesystem, falls back to copy+remove for cross-device moves. Creates destination directory if needed. Returns error if destination already exists.
+- `CopyFile(src, dst string) error`
+  - **Params**: `src` (source file path), `dst` (destination file path)
+  - **Returns**: `error` (copy operation error)
+  - **Description**: Copies a file from source to destination. Creates destination directory if needed. Returns error if destination already exists.
 - `moveFileCrossDevice(src, dst string, srcInfo os.FileInfo) error`
   - **Params**: `src` (source file path), `dst` (destination file path), `srcInfo` (source file metadata)
   - **Returns**: `error` (copy operation error)
   - **Description**: Internal helper function for cross-device file moves. Copies file contents, preserves permissions, and removes source after successful copy.
-- `calculateChecksumsAndMimeType(filePath string) (md5Hash string, sha512Hash string, err error)`
+- `calculateChecksums(filePath string) (md5Hash string, sha512Hash string, err error)`
   - **Params**: `filePath` (path to file)
   - **Returns**: `md5Hash` (MD5 checksum), `sha512Hash` (SHA512 checksum), `error` (calculation error)
   - **Description**: Calculates both MD5 and SHA512 checksums for a file in a single pass.
@@ -347,9 +365,10 @@ cmd/
 - `ListDocuments(ctx context.Context, arg ListDocumentsParams) ([]Document, error)`
   - **Params**: `ctx` (context), `arg` (list parameters)
   - **Returns**: `[]Document` (documents), `error` (query error)
-- `UpdateDocument(ctx context.Context, arg UpdateDocumentParams) error`
+- `UpdateDocumentPaths(ctx context.Context, arg UpdateDocumentPathsParams) error`
   - **Params**: `ctx` (context), `arg` (update parameters)
   - **Returns**: `error` (update error)
+  - **Description**: Updates both original_path and storage_path for a document in a single operation.
 - `GetDocumentByMD5Checksum(ctx context.Context, md5Checksum string) ([]Document, error)`
   - **Params**: `ctx` (context), `md5Checksum` (MD5 checksum)
   - **Returns**: `[]Document` (matching documents), `error` (query error)
@@ -605,7 +624,15 @@ type File struct {
 - Filters by supported file types
 - Returns `File` structs with metadata
 
-### 2. Text Extraction (`extractText()` in `consumer.go`)
+### 2. Duplicate Detection (`isDuplicate()` in `consumer.go`)
+
+- Computes MD5 checksum for fast filtering
+- Queries database for MD5 matches
+- If MD5 matches found, computes SHA512 for secure verification
+- Queries database for SHA512 exact match
+- Skips processing if exact duplicate found
+
+### 3. Text Extraction (`extractText()` in `consumer.go`)
 
 ```go
 // Primary extraction attempt
@@ -622,21 +649,65 @@ file.Text = extractResult.Text
 file.OCRTmpPath = ocrResult.TmpPath
 ```
 
-### 3. Database Integration (`Process()` in `consumer.go`)
+### 4. Database Integration (`Process()` in `consumer.go`)
 
 - Creates document record via `CreateDocument` query (returns `sql.Result`)
 - Gets inserted document ID via `LastInsertId()`
-- Generates storage path using date-based pattern: `year/month/day/`
-- Updates document with final storage path including document ID
-- Returns processed `File` struct
+- Generates date-based storage paths: `storage/originals/{year}/{month}/{day}/{documentID}.pdf` and `storage/{year}/{month}/{day}/{documentID}.pdf`
+- Updates document with final storage paths using `UpdateDocumentPaths`
+- Uses database transactions with rollback support
 
-### 4. File Movement (`MoveFile()` in `storage.go`)
+### 5. File Movement and Copy Operations
 
-- Attempts atomic rename within same filesystem
-- Falls back to copy+remove for cross-device moves
-- Creates destination directories as needed
-- Preserves file permissions
-- Handles edge cases and provides comprehensive error messages
+- **OCR Case**: Moves OCR temp file to processed storage, copies original to original storage
+- **No OCR Case**: Copies original file to both original and processed storage
+- **Transaction Safety**: File operations are rolled back if database transaction fails
+- **Cleanup**: Original file removed if `delete_original` configuration is enabled
+
+### 6. Transaction Management
+
+- Uses `BeginTx()` for database transaction
+- Automatic rollback on error via defer function
+- File operations coordinated with transaction commit/rollback
+- Cleanup of partially moved files on failure
+
+## Storage Organization
+
+### Directory Structure
+
+```
+storage/
+├── originals/                    # Original files (copied)
+│   ├── 2024/
+│   │   ├── 03/
+│   │   │   ├── 19/
+│   │   │   │   ├── 1.pdf
+│   │   │   │   ├── 2.pdf
+│   │   │   │   └── ...
+│   │   │   └── 20/
+│   │   │       └── ...
+│   │   └── 04/
+│   │       └── ...
+│   └── 2025/
+│       └── ...
+└── 2024/                        # Processed files (OCR'd if needed)
+    ├── 03/
+    │   ├── 19/
+    │   │   ├── 1.pdf
+    │   │   ├── 2.pdf
+    │   │   └── ...
+    │   └── 20/
+    │       └── ...
+    └── 04/
+        └── ...
+```
+
+### Key Features
+
+- **Date-based organization**: Files organized by year/month/day for scalability
+- **Document ID filenames**: All files use document ID as filename (e.g., `1.pdf`)
+- **Dual storage**: Original files preserved, processed files stored separately
+- **Scalable**: Avoids "too many files in one directory" problem
 
 ## API Reference
 
@@ -698,9 +769,11 @@ kushim version
 ```bash
 kushim consume
 # Scans consumption_dir, processes PDFs
+# Checks for duplicates using MD5/SHA512 checksums
 # Extracts text, runs OCR if needed
 # Moves files to storage_dir with date-based organization
 # Creates database records for processed documents
+# Optionally deletes original files based on configuration
 ```
 
 ## Database Schema
@@ -757,6 +830,7 @@ consumer:
   supported_files: ['.pdf'] # File extensions to process
   textextractor: 'pdftotext' # Text extraction command
   ocr: 'ocrmypdf' # OCR command
+  delete_original: false # Whether to delete original files after processing
 ```
 
 ## Development Workflow
@@ -803,12 +877,12 @@ curl http://localhost:3000/api/v1/documents
 
 ---
 
-**Last Updated**: 2024-03-25
+**Last Updated**: 2024-03-26
 
 **Current Version**: 0.1.0 (Development)
 
-**Focus Area**: File movement and storage operations
+**Focus Area**: Complete document processing pipeline with duplicate detection and transaction safety
 
-**Next Milestone**: Transaction rollback and error handling
+**Next Milestone**: Text content storage and API enhancements
 
 _This document serves as the primary reference for the Document Management System architecture and implementation details._
