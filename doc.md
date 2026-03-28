@@ -32,12 +32,15 @@ High-performance, Go-based document management system optimized for large collec
 - CLI framework with dependency injection
 - Tools framework (pdftotext, ocrmypdf adapters)
 - Document consumption pipeline (scan → extract → OCR → store)
+- Database schema with text content storage and FTS5 virtual tables
+- File movement and cleanup operations with transaction safety
+- Full-text search implementation with manual FTS5 queries
 
 #### 🚧 In Progress
 
-- Database schema updates for text content storage
-- File movement and cleanup operations
-- Error handling and transaction rollback
+- API endpoints for FTS search
+- Integration testing of FTS triggers
+- Performance optimization for large collections
 
 #### 📋 Planned
 
@@ -102,6 +105,72 @@ cmd/
 └── kushim/               # CLI entry point
     └── main.go
 ```
+
+## Database Full-Text Search
+
+### Overview
+
+The system implements full-text search using SQLite's FTS5 (Full-Text Search version 5) virtual tables. This provides fast, relevance-ranked search across document titles and extracted text content without requiring external search services.
+
+### Architecture
+
+#### FTS5 Implementation
+
+The system uses SQLite's built-in FTS5 extension for full-text search capabilities. FTS5 virtual tables are created alongside regular database tables to enable efficient text searching with relevance ranking.
+
+#### Key Components
+
+1. **Virtual Table Structure**: A dedicated FTS5 virtual table stores searchable text fields (title and content) with document references
+2. **Automatic Indexing**: SQLite automatically creates and maintains inverted indexes for fast text search
+3. **Relevance Ranking**: Built-in ranking algorithms (BM25) provide relevance-based result ordering
+4. **Snippet Generation**: Context highlighting shows search term matches within results
+
+#### Integration Points
+
+- **Text Storage**: Extracted text from documents is stored in both the main document table and the FTS virtual table
+- **Search Queries**: Specialized queries use the `MATCH` operator for full-text search
+- **Result Ranking**: Search results are ordered by relevance score for optimal user experience
+
+#### Performance Characteristics
+
+- **In-Memory Indexes**: FTS5 maintains search indexes in memory for fast query performance
+- **Efficient Updates**: Triggers or application logic keep FTS data synchronized with document changes
+- **Scalable Design**: The architecture supports tens of thousands of documents with responsive search
+
+#### Search Features
+
+- **Phrase Search**: Exact phrase matching with quotation marks
+- **Boolean Operators**: AND, OR, NOT operators for complex queries
+- **Prefix Search**: Wildcard matching for partial terms
+- **Relevance Scoring**: Results ranked by term frequency and document structure
+
+#### Current FTS5 Implementation
+
+**Schema Features:**
+
+- `document_fts` virtual table with `unicode61` tokenizer (multi-language support)
+- Automatic synchronization via triggers (`document_ai`, `document_au`, `document_ad`)
+- `UNINDEXED` document_id column for efficient JOINs
+- Universal Unicode support for all scripts/languages
+
+**Manual Implementation (sqlc workaround):**
+Since sqlc doesn't support FTS5 syntax, FTS queries are implemented manually in:
+
+- `internal/database/fts5.go` - Raw SQL queries with `bm25()` ranking and `snippet()` highlighting
+- Triggers automatically maintain FTS table synchronization
+
+**Search Capabilities:**
+
+- Relevance ranking using BM25 algorithm
+- Snippet generation with highlighted matches
+- Multi-language support via `unicode61` tokenizer
+- Boolean operators, phrase search, wildcard matching
+
+### Future Considerations
+
+- **Alternative Databases**: PostgreSQL and MariaDB full-text search support planned for future abstraction
+- **Hybrid Search**: Potential for combining FTS with vector/semantic search
+- **Performance Optimization**: Query optimization and indexing strategies for large document collections
 
 ## File Reference
 
@@ -585,6 +654,7 @@ type Document struct {
     DocumentTypeID sql.NullInt64  // Optional document type reference
     OriginalPath   string         // Path to original file
     StoragePath    string         // Path to processed/stored file
+    TextContent    sql.NullString // Extracted text content (NEW)
 }
 ```
 
@@ -671,6 +741,14 @@ file.OCRTmpPath = ocrResult.TmpPath
 - File operations coordinated with transaction commit/rollback
 - Cleanup of partially moved files on failure
 
+### 7. FTS Indexing (Automatic via Triggers)
+
+- **INSERT Trigger**: Automatically adds new document text to `document_fts`
+- **UPDATE Trigger**: Updates FTS index when document changes
+- **DELETE Trigger**: Removes document from FTS index
+- **Multi-language**: `unicode61` tokenizer supports all Unicode scripts
+- **Real-time**: Index updates happen immediately via database triggers
+
 ## Storage Organization
 
 ### Directory Structure
@@ -755,6 +833,37 @@ Response: Single DocumentResponse
 }
 ```
 
+### Search Documents (FTS)
+
+```
+GET /api/v1/documents/search?q=search+terms&limit=50&offset=0
+Query Parameters:
+  q:      Search query (supports FTS5 operators: AND, OR, NOT, "phrase")
+  limit:  Number of results (1-100, default: 50)
+  offset: Pagination offset (default: 0)
+
+Response: Array of FTSDocumentResponse
+```
+
+### FTSDocumentResponse Structure
+
+```json
+{
+  "id": 1,
+  "title": "document.pdf",
+  "checksum": "sha256:abc123...",
+  "filename": "document.pdf",
+  "mime_type": "application/pdf",
+  "file_size": 102400,
+  "created_at": "2024-03-19T10:30:00Z",
+  "modified_at": "2024-03-19T10:30:00Z",
+  "source_path": "/storage/2024/03/19/pdf/1.pdf",
+  "text_content": "Extracted document text...",
+  "rank": 0.85,
+  "snippet": "...showing <b>search</b> terms in context..."
+}
+```
+
 ## CLI Commands
 
 ### Version
@@ -793,6 +902,20 @@ kushim consume
 
 - `document_author`: Many-to-many document-author relationships
 - `document_tag`: Many-to-many document-tag relationships
+
+### FTS5 Virtual Tables
+
+- `document_fts`: Full-text search virtual table
+  - `document_id UNINDEXED`: Reference to main document table
+  - `title`: Searchable document title
+  - `content`: Searchable extracted text content
+  - `tokenize = 'unicode61'`: Multi-language tokenizer
+
+### Triggers for Automatic Synchronization
+
+- `document_ai`: Inserts new documents into FTS table
+- `document_au`: Updates FTS table on document changes
+- `document_ad`: Removes documents from FTS table on deletion
 
 ### Key Indexes
 
@@ -875,14 +998,28 @@ curl http://localhost:3000/health
 curl http://localhost:3000/api/v1/documents
 ```
 
+## Known Limitations
+
+### FTS5 Implementation
+
+- **sqlc incompatibility**: FTS5 queries implemented manually due to sqlc limitations
+- **CJK languages**: Limited tokenization for Chinese/Japanese/Korean (no word segmentation)
+- **No stemming**: Using `unicode61` alone for universal support (no language-specific stemming)
+
+### Performance Considerations
+
+- **FTS index size**: Text content duplicated in both `document` and `document_fts` tables
+- **Trigger overhead**: Three triggers per document operation
+- **Memory usage**: FTS5 indexes maintained in memory for fast search
+
 ---
 
-**Last Updated**: 2024-03-26
+**Last Updated**: 2024-03-28
 
 **Current Version**: 0.1.0 (Development)
 
-**Focus Area**: Complete document processing pipeline with duplicate detection and transaction safety
+**Focus Area**: Full-text search implementation with multi-language support and FTS5 integration
 
-**Next Milestone**: Text content storage and API enhancements
+**Next Milestone**: FTS search API endpoints and performance testing
 
 _This document serves as the primary reference for the Document Management System architecture and implementation details._

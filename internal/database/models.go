@@ -26,11 +26,18 @@ type Document struct {
 	DocumentTypeID sql.NullInt64
 	OriginalPath   string
 	StoragePath    string
+	TextContent    sql.NullString
 }
 
 type DocumentAuthor struct {
 	DocumentID int64
 	AuthorID   int64
+}
+
+type DocumentFt struct {
+	DocumentID string
+	Title      string
+	Content    string
 }
 
 type DocumentTag struct {

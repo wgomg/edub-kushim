@@ -5,13 +5,16 @@ SELECT * FROM task WHERE id = ?;
 SELECT * FROM task WHERE task_id = ?;
 
 -- name: ListTasks :many
-SELECT * FROM task ORDER BY created_at DESC LIMIT ? OFFSET ?;
+SELECT id, task_id, task_name, status, document_id, created_at, started_at, completed_at, error
+FROM task ORDER BY created_at DESC LIMIT ? OFFSET ?;
 
 -- name: ListTasksByStatus :many
-SELECT * FROM task WHERE status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?;
+SELECT id, task_id, task_name, status, document_id, created_at, started_at, completed_at, error
+FROM task WHERE status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?;
 
 -- name: ListTasksByDocument :many
-SELECT * FROM task WHERE document_id = ? ORDER BY created_at DESC;
+SELECT id, task_id, task_name, status, document_id, created_at, started_at, completed_at, error
+FROM task WHERE document_id = ? ORDER BY created_at DESC;
 
 -- name: CreateTask :execresult
 INSERT INTO task (

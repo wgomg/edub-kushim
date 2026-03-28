@@ -12,8 +12,9 @@ import (
 
 const createDocument = `-- name: CreateDocument :execresult
 INSERT INTO document (
-    title, md5_checksum, sha512_checksum, mime_type, file_size, original_path, storage_path
-) VALUES (?, ?, ?, ?, ?, ?, ?)
+    title, md5_checksum, sha512_checksum, mime_type, file_size,
+    original_path, storage_path, text_content
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateDocumentParams struct {
@@ -24,6 +25,7 @@ type CreateDocumentParams struct {
 	FileSize       int64
 	OriginalPath   string
 	StoragePath    string
+	TextContent    sql.NullString
 }
 
 func (q *Queries) CreateDocument(ctx context.Context, arg CreateDocumentParams) (sql.Result, error) {
@@ -35,6 +37,7 @@ func (q *Queries) CreateDocument(ctx context.Context, arg CreateDocumentParams) 
 		arg.FileSize,
 		arg.OriginalPath,
 		arg.StoragePath,
+		arg.TextContent,
 	)
 }
 
@@ -48,7 +51,9 @@ func (q *Queries) DeleteDocument(ctx context.Context, id int64) error {
 }
 
 const getDocument = `-- name: GetDocument :one
-SELECT id, title, md5_checksum, sha512_checksum, mime_type, file_size, created_at, modified_at, document_type_id, original_path, storage_path FROM document WHERE id = ?
+SELECT id, title, md5_checksum, sha512_checksum, mime_type, file_size,
+       created_at, modified_at, document_type_id, original_path, storage_path, text_content
+FROM document WHERE id = ?
 `
 
 func (q *Queries) GetDocument(ctx context.Context, id int64) (Document, error) {
@@ -66,23 +71,40 @@ func (q *Queries) GetDocument(ctx context.Context, id int64) (Document, error) {
 		&i.DocumentTypeID,
 		&i.OriginalPath,
 		&i.StoragePath,
+		&i.TextContent,
 	)
 	return i, err
 }
 
 const getDocumentByMD5Checksum = `-- name: GetDocumentByMD5Checksum :many
-SELECT id, title, md5_checksum, sha512_checksum, mime_type, file_size, created_at, modified_at, document_type_id, original_path, storage_path FROM document WHERE md5_checksum = ?
+SELECT id, title, md5_checksum, sha512_checksum, mime_type, file_size,
+       created_at, modified_at, document_type_id, original_path, storage_path
+FROM document WHERE md5_checksum = ?
 `
 
-func (q *Queries) GetDocumentByMD5Checksum(ctx context.Context, md5Checksum string) ([]Document, error) {
+type GetDocumentByMD5ChecksumRow struct {
+	ID             int64
+	Title          string
+	Md5Checksum    string
+	Sha512Checksum string
+	MimeType       string
+	FileSize       int64
+	CreatedAt      sql.NullTime
+	ModifiedAt     sql.NullTime
+	DocumentTypeID sql.NullInt64
+	OriginalPath   string
+	StoragePath    string
+}
+
+func (q *Queries) GetDocumentByMD5Checksum(ctx context.Context, md5Checksum string) ([]GetDocumentByMD5ChecksumRow, error) {
 	rows, err := q.db.QueryContext(ctx, getDocumentByMD5Checksum, md5Checksum)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Document
+	var items []GetDocumentByMD5ChecksumRow
 	for rows.Next() {
-		var i Document
+		var i GetDocumentByMD5ChecksumRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.Title,
@@ -110,12 +132,28 @@ func (q *Queries) GetDocumentByMD5Checksum(ctx context.Context, md5Checksum stri
 }
 
 const getDocumentBySHA512Checksum = `-- name: GetDocumentBySHA512Checksum :one
-SELECT id, title, md5_checksum, sha512_checksum, mime_type, file_size, created_at, modified_at, document_type_id, original_path, storage_path FROM document WHERE sha512_checksum = ?
+SELECT id, title, md5_checksum, sha512_checksum, mime_type, file_size,
+       created_at, modified_at, document_type_id, original_path, storage_path
+FROM document WHERE sha512_checksum = ?
 `
 
-func (q *Queries) GetDocumentBySHA512Checksum(ctx context.Context, sha512Checksum string) (Document, error) {
+type GetDocumentBySHA512ChecksumRow struct {
+	ID             int64
+	Title          string
+	Md5Checksum    string
+	Sha512Checksum string
+	MimeType       string
+	FileSize       int64
+	CreatedAt      sql.NullTime
+	ModifiedAt     sql.NullTime
+	DocumentTypeID sql.NullInt64
+	OriginalPath   string
+	StoragePath    string
+}
+
+func (q *Queries) GetDocumentBySHA512Checksum(ctx context.Context, sha512Checksum string) (GetDocumentBySHA512ChecksumRow, error) {
 	row := q.db.QueryRowContext(ctx, getDocumentBySHA512Checksum, sha512Checksum)
-	var i Document
+	var i GetDocumentBySHA512ChecksumRow
 	err := row.Scan(
 		&i.ID,
 		&i.Title,
@@ -133,7 +171,9 @@ func (q *Queries) GetDocumentBySHA512Checksum(ctx context.Context, sha512Checksu
 }
 
 const getDocumentWithDetails = `-- name: GetDocumentWithDetails :one
-SELECT d.id, d.title, d.md5_checksum, d.sha512_checksum, d.mime_type, d.file_size, d.created_at, d.modified_at, d.document_type_id, d.original_path, d.storage_path, dt.name as document_type_name
+SELECT d.id, d.title, d.md5_checksum, d.sha512_checksum, d.mime_type, d.file_size,
+       d.created_at, d.modified_at, d.document_type_id, d.original_path, d.storage_path, d.text_content,
+       dt.name as document_type_name
 FROM document d
 LEFT JOIN document_type dt ON d.document_type_id = dt.id
 WHERE d.id = ?
@@ -151,6 +191,7 @@ type GetDocumentWithDetailsRow struct {
 	DocumentTypeID   sql.NullInt64
 	OriginalPath     string
 	StoragePath      string
+	TextContent      sql.NullString
 	DocumentTypeName sql.NullString
 }
 
@@ -169,13 +210,62 @@ func (q *Queries) GetDocumentWithDetails(ctx context.Context, id int64) (GetDocu
 		&i.DocumentTypeID,
 		&i.OriginalPath,
 		&i.StoragePath,
+		&i.TextContent,
+		&i.DocumentTypeName,
+	)
+	return i, err
+}
+
+const getDocumentWithText = `-- name: GetDocumentWithText :one
+SELECT d.id, d.title, d.md5_checksum, d.sha512_checksum, d.mime_type, d.file_size,
+       d.created_at, d.modified_at, d.document_type_id, d.original_path, d.storage_path, d.text_content,
+       dt.name as document_type_name
+FROM document d
+LEFT JOIN document_type dt ON d.document_type_id = dt.id
+WHERE d.id = ?
+`
+
+type GetDocumentWithTextRow struct {
+	ID               int64
+	Title            string
+	Md5Checksum      string
+	Sha512Checksum   string
+	MimeType         string
+	FileSize         int64
+	CreatedAt        sql.NullTime
+	ModifiedAt       sql.NullTime
+	DocumentTypeID   sql.NullInt64
+	OriginalPath     string
+	StoragePath      string
+	TextContent      sql.NullString
+	DocumentTypeName sql.NullString
+}
+
+func (q *Queries) GetDocumentWithText(ctx context.Context, id int64) (GetDocumentWithTextRow, error) {
+	row := q.db.QueryRowContext(ctx, getDocumentWithText, id)
+	var i GetDocumentWithTextRow
+	err := row.Scan(
+		&i.ID,
+		&i.Title,
+		&i.Md5Checksum,
+		&i.Sha512Checksum,
+		&i.MimeType,
+		&i.FileSize,
+		&i.CreatedAt,
+		&i.ModifiedAt,
+		&i.DocumentTypeID,
+		&i.OriginalPath,
+		&i.StoragePath,
+		&i.TextContent,
 		&i.DocumentTypeName,
 	)
 	return i, err
 }
 
 const listDocuments = `-- name: ListDocuments :many
-SELECT id, title, md5_checksum, sha512_checksum, mime_type, file_size, created_at, modified_at, document_type_id, original_path, storage_path FROM document ORDER BY created_at DESC LIMIT ? OFFSET ?
+SELECT id, title, md5_checksum, sha512_checksum, mime_type, file_size,
+       created_at, modified_at, document_type_id, original_path, storage_path
+FROM document ORDER BY created_at DESC LIMIT ? OFFSET ?
 `
 
 type ListDocumentsParams struct {
@@ -183,15 +273,29 @@ type ListDocumentsParams struct {
 	Offset int64
 }
 
-func (q *Queries) ListDocuments(ctx context.Context, arg ListDocumentsParams) ([]Document, error) {
+type ListDocumentsRow struct {
+	ID             int64
+	Title          string
+	Md5Checksum    string
+	Sha512Checksum string
+	MimeType       string
+	FileSize       int64
+	CreatedAt      sql.NullTime
+	ModifiedAt     sql.NullTime
+	DocumentTypeID sql.NullInt64
+	OriginalPath   string
+	StoragePath    string
+}
+
+func (q *Queries) ListDocuments(ctx context.Context, arg ListDocumentsParams) ([]ListDocumentsRow, error) {
 	rows, err := q.db.QueryContext(ctx, listDocuments, arg.Limit, arg.Offset)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Document
+	var items []ListDocumentsRow
 	for rows.Next() {
-		var i Document
+		var i ListDocumentsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.Title,
@@ -219,7 +323,9 @@ func (q *Queries) ListDocuments(ctx context.Context, arg ListDocumentsParams) ([
 }
 
 const searchDocumentsByTitle = `-- name: SearchDocumentsByTitle :many
-SELECT id, title, md5_checksum, sha512_checksum, mime_type, file_size, created_at, modified_at, document_type_id, original_path, storage_path FROM document
+SELECT id, title, md5_checksum, sha512_checksum, mime_type, file_size,
+       created_at, modified_at, document_type_id, original_path, storage_path
+FROM document
 WHERE title LIKE ?
 ORDER BY created_at DESC
 LIMIT ? OFFSET ?
@@ -231,15 +337,29 @@ type SearchDocumentsByTitleParams struct {
 	Offset int64
 }
 
-func (q *Queries) SearchDocumentsByTitle(ctx context.Context, arg SearchDocumentsByTitleParams) ([]Document, error) {
+type SearchDocumentsByTitleRow struct {
+	ID             int64
+	Title          string
+	Md5Checksum    string
+	Sha512Checksum string
+	MimeType       string
+	FileSize       int64
+	CreatedAt      sql.NullTime
+	ModifiedAt     sql.NullTime
+	DocumentTypeID sql.NullInt64
+	OriginalPath   string
+	StoragePath    string
+}
+
+func (q *Queries) SearchDocumentsByTitle(ctx context.Context, arg SearchDocumentsByTitleParams) ([]SearchDocumentsByTitleRow, error) {
 	rows, err := q.db.QueryContext(ctx, searchDocumentsByTitle, arg.Title, arg.Limit, arg.Offset)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Document
+	var items []SearchDocumentsByTitleRow
 	for rows.Next() {
-		var i Document
+		var i SearchDocumentsByTitleRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.Title,
@@ -282,5 +402,74 @@ type UpdateDocumentPathsParams struct {
 
 func (q *Queries) UpdateDocumentPaths(ctx context.Context, arg UpdateDocumentPathsParams) error {
 	_, err := q.db.ExecContext(ctx, updateDocumentPaths, arg.OriginalPath, arg.StoragePath, arg.ID)
+	return err
+}
+
+const updateDocumentPathsWithText = `-- name: UpdateDocumentPathsWithText :exec
+UPDATE document SET
+    original_path = ?,
+    storage_path = ?,
+    text_content = ?,
+    modified_at = CURRENT_TIMESTAMP
+WHERE id = ?
+`
+
+type UpdateDocumentPathsWithTextParams struct {
+	OriginalPath string
+	StoragePath  string
+	TextContent  sql.NullString
+	ID           int64
+}
+
+func (q *Queries) UpdateDocumentPathsWithText(ctx context.Context, arg UpdateDocumentPathsWithTextParams) error {
+	_, err := q.db.ExecContext(ctx, updateDocumentPathsWithText,
+		arg.OriginalPath,
+		arg.StoragePath,
+		arg.TextContent,
+		arg.ID,
+	)
+	return err
+}
+
+const updateDocumentText = `-- name: UpdateDocumentText :exec
+UPDATE document SET
+    text_content = ?,
+    modified_at = CURRENT_TIMESTAMP
+WHERE id = ?
+`
+
+type UpdateDocumentTextParams struct {
+	TextContent sql.NullString
+	ID          int64
+}
+
+func (q *Queries) UpdateDocumentText(ctx context.Context, arg UpdateDocumentTextParams) error {
+	_, err := q.db.ExecContext(ctx, updateDocumentText, arg.TextContent, arg.ID)
+	return err
+}
+
+const updateDocumentWithText = `-- name: UpdateDocumentWithText :exec
+UPDATE document SET
+    original_path = ?,
+    storage_path = ?,
+    text_content = ?,
+    modified_at = CURRENT_TIMESTAMP
+WHERE id = ?
+`
+
+type UpdateDocumentWithTextParams struct {
+	OriginalPath string
+	StoragePath  string
+	TextContent  sql.NullString
+	ID           int64
+}
+
+func (q *Queries) UpdateDocumentWithText(ctx context.Context, arg UpdateDocumentWithTextParams) error {
+	_, err := q.db.ExecContext(ctx, updateDocumentWithText,
+		arg.OriginalPath,
+		arg.StoragePath,
+		arg.TextContent,
+		arg.ID,
+	)
 	return err
 }

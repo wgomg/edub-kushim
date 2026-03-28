@@ -4,7 +4,9 @@ JOIN document_tag dt ON t.id = dt.tag_id
 WHERE dt.document_id = ?;
 
 -- name: GetTagDocuments :many
-SELECT d.* FROM document d
+SELECT d.id, d.title, d.md5_checksum, d.sha512_checksum, d.mime_type, d.file_size,
+       d.created_at, d.modified_at, d.document_type_id, d.original_path, d.storage_path
+FROM document d
 JOIN document_tag dt ON d.id = dt.document_id
 WHERE dt.tag_id = ?;
 

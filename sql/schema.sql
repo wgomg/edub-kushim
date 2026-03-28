@@ -48,6 +48,7 @@ CREATE TABLE document (
     document_type_id INTEGER,
     original_path TEXT NOT NULL,
     storage_path TEXT NOT NULL,
+    text_content TEXT,
     FOREIGN KEY (document_type_id) REFERENCES document_type(id)
 );
 
@@ -66,6 +67,32 @@ CREATE TABLE document_tag (
     FOREIGN KEY (document_id) REFERENCES document(id) ON DELETE CASCADE,
     FOREIGN KEY (tag_id) REFERENCES tag(id) ON DELETE CASCADE
 );
+
+CREATE VIRTUAL TABLE document_fts USING fts5(
+    document_id UNINDEXED,
+    title,
+    content,
+    tokenize = 'unicode61'
+);
+
+-- Add these triggers after creating the document_fts table
+CREATE TRIGGER document_ai AFTER INSERT ON document
+BEGIN
+    INSERT INTO document_fts(document_id, title, content)
+    VALUES (new.id, new.title, COALESCE(new.text_content, ''));
+END;
+
+CREATE TRIGGER document_ad AFTER DELETE ON document
+BEGIN
+    DELETE FROM document_fts WHERE document_id = old.id;
+END;
+
+CREATE TRIGGER document_au AFTER UPDATE ON document
+BEGIN
+    DELETE FROM document_fts WHERE document_id = old.id;
+    INSERT INTO document_fts(document_id, title, content)
+    VALUES (new.id, new.title, COALESCE(new.text_content, ''));
+END;
 
 CREATE INDEX idx_task_status ON task(status);
 CREATE INDEX idx_document_md5 ON document(md5_checksum);

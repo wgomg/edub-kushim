@@ -8,7 +8,8 @@ SELECT * FROM user WHERE username = ?;
 SELECT * FROM user WHERE api_key = ?;
 
 -- name: ListUsers :many
-SELECT * FROM user ORDER BY created_at DESC LIMIT ? OFFSET ?;
+SELECT id, username, api_key, created_at
+FROM user ORDER BY created_at DESC LIMIT ? OFFSET ?;
 
 -- name: CreateUser :execresult
 INSERT INTO user (

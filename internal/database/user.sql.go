@@ -89,7 +89,8 @@ func (q *Queries) GetUserByUsername(ctx context.Context, username string) (User,
 }
 
 const listUsers = `-- name: ListUsers :many
-SELECT id, username, password_hash, api_key, created_at FROM user ORDER BY created_at DESC LIMIT ? OFFSET ?
+SELECT id, username, api_key, created_at
+FROM user ORDER BY created_at DESC LIMIT ? OFFSET ?
 `
 
 type ListUsersParams struct {
@@ -97,19 +98,25 @@ type ListUsersParams struct {
 	Offset int64
 }
 
-func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]User, error) {
+type ListUsersRow struct {
+	ID        int64
+	Username  string
+	ApiKey    interface{}
+	CreatedAt sql.NullTime
+}
+
+func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]ListUsersRow, error) {
 	rows, err := q.db.QueryContext(ctx, listUsers, arg.Limit, arg.Offset)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []User
+	var items []ListUsersRow
 	for rows.Next() {
-		var i User
+		var i ListUsersRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.Username,
-			&i.PasswordHash,
 			&i.ApiKey,
 			&i.CreatedAt,
 		); err != nil {

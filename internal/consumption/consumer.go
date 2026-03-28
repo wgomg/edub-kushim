@@ -34,7 +34,7 @@ type File struct {
 	StorageOriginalPath  *string
 	MD5Checksum          string
 	SHA512Checksum       string
-	Text                 *string
+	Text                 sql.NullString
 	MimeType             string
 	Date                 time.Time
 	FileSize             int64
@@ -64,12 +64,19 @@ func (c *Consumer) Consume(reqID *string) error {
 
 	c.logger.Info(reqID, "%d files found", len(filesToConsume))
 
+	// iterations := 10000
+	// for i := range iterations {
+	// 	c.logger.Info(nil, "Starting iteration %d/%d", i+1, iterations)
 	for _, file := range filesToConsume {
 		resultFile, err := c.Process(file)
 		if err != nil {
 			c.logger.Error(nil, "failed processing for %s: %v", resultFile.OriginalPath, err)
 		}
 	}
+	// 	if (i+1)%100 == 0 {
+	// 		c.logger.Info(nil, "Completed %d iterations", i+1)
+	// 	}
+	// }
 
 	return nil
 }
@@ -126,6 +133,15 @@ func (c *Consumer) Process(file File) (File, error) {
 		}
 	}()
 
+	// timestamp := time.Now().UnixNano()
+	// uniqueSeed := fmt.Sprintf("%s:%d", file.OriginalPath, timestamp)
+
+	// md5Hash := fmt.Sprintf("%x", md5.Sum([]byte(uniqueSeed)))
+	// sha512Hash := fmt.Sprintf("%x", sha512.Sum512([]byte(uniqueSeed)))
+
+	// file.MD5Checksum = md5Hash
+	// file.SHA512Checksum = sha512Hash
+
 	queries := database.NewQueries(c.db).WithTx(tx)
 	result, err := queries.CreateDocument(ctx, database.CreateDocumentParams{
 		Title:          file.Name,
@@ -135,6 +151,7 @@ func (c *Consumer) Process(file File) (File, error) {
 		FileSize:       file.FileSize,
 		OriginalPath:   "",
 		StoragePath:    *file.StorageProcessedPath,
+		TextContent:    file.Text,
 	})
 	if err != nil {
 		return file, fmt.Errorf("failed to create document record: %w", err)
@@ -244,8 +261,6 @@ func (c *Consumer) isDuplicate(path string) (bool, error) {
 		return false, err
 	}
 
-	c.logger.Debug(nil, "MD5: %s", md5sum)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -256,8 +271,6 @@ func (c *Consumer) isDuplicate(path string) (bool, error) {
 		return false, err
 	}
 
-	c.logger.Debug(nil, "MD5 matches: %d", len(md5Result))
-
 	if len(md5Result) == 0 {
 		return false, nil
 	}
@@ -267,11 +280,8 @@ func (c *Consumer) isDuplicate(path string) (bool, error) {
 		return false, err
 	}
 
-	c.logger.Debug(nil, "SHA512: %s", sha512sum)
-
 	_, err = queries.GetDocumentBySHA512Checksum(ctx, sha512sum)
 	if err != nil {
-		c.logger.Debug(nil, "SHA512 check error: %v", err)
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, nil
 		}
@@ -320,7 +330,7 @@ func (c *Consumer) extractText(file File) (File, error) {
 	}
 
 	if extractResult.Text != nil && *extractResult.Text != "" {
-		file.Text = extractResult.Text
+		file.Text = sql.NullString{String: *extractResult.Text, Valid: true}
 		return file, nil
 	}
 
@@ -336,7 +346,11 @@ func (c *Consumer) extractText(file File) (File, error) {
 		return file, fmt.Errorf("text extraction failed for ocrd file: %w", err)
 	}
 
-	file.Text = extractResult.Text
+	if extractResult.Text != nil && *extractResult.Text != "" {
+		file.Text = sql.NullString{String: *extractResult.Text, Valid: true}
+	} else {
+		file.Text = sql.NullString{Valid: false}
+	}
 	file.OCRTmpPath = ocrResult.TmpPath
 
 	return file, nil

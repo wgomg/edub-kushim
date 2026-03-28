@@ -7,6 +7,7 @@ package database
 
 import (
 	"context"
+	"database/sql"
 )
 
 const addDocumentAuthor = `-- name: AddDocumentAuthor :exec
@@ -33,20 +34,36 @@ func (q *Queries) ClearDocumentAuthors(ctx context.Context, documentID int64) er
 }
 
 const getAuthorDocuments = `-- name: GetAuthorDocuments :many
-SELECT d.id, d.title, d.md5_checksum, d.sha512_checksum, d.mime_type, d.file_size, d.created_at, d.modified_at, d.document_type_id, d.original_path, d.storage_path FROM document d
+SELECT d.id, d.title, d.md5_checksum, d.sha512_checksum, d.mime_type, d.file_size,
+       d.created_at, d.modified_at, d.document_type_id, d.original_path, d.storage_path
+FROM document d
 JOIN document_author da ON d.id = da.document_id
 WHERE da.author_id = ?
 `
 
-func (q *Queries) GetAuthorDocuments(ctx context.Context, authorID int64) ([]Document, error) {
+type GetAuthorDocumentsRow struct {
+	ID             int64
+	Title          string
+	Md5Checksum    string
+	Sha512Checksum string
+	MimeType       string
+	FileSize       int64
+	CreatedAt      sql.NullTime
+	ModifiedAt     sql.NullTime
+	DocumentTypeID sql.NullInt64
+	OriginalPath   string
+	StoragePath    string
+}
+
+func (q *Queries) GetAuthorDocuments(ctx context.Context, authorID int64) ([]GetAuthorDocumentsRow, error) {
 	rows, err := q.db.QueryContext(ctx, getAuthorDocuments, authorID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Document
+	var items []GetAuthorDocumentsRow
 	for rows.Next() {
-		var i Document
+		var i GetAuthorDocumentsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.Title,

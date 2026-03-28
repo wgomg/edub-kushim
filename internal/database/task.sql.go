@@ -114,7 +114,8 @@ func (q *Queries) GetTaskByTaskID(ctx context.Context, taskID string) (Task, err
 }
 
 const listTasks = `-- name: ListTasks :many
-SELECT id, task_id, task_name, status, document_id, created_at, started_at, completed_at, error FROM task ORDER BY created_at DESC LIMIT ? OFFSET ?
+SELECT id, task_id, task_name, status, document_id, created_at, started_at, completed_at, error
+FROM task ORDER BY created_at DESC LIMIT ? OFFSET ?
 `
 
 type ListTasksParams struct {
@@ -156,7 +157,8 @@ func (q *Queries) ListTasks(ctx context.Context, arg ListTasksParams) ([]Task, e
 }
 
 const listTasksByDocument = `-- name: ListTasksByDocument :many
-SELECT id, task_id, task_name, status, document_id, created_at, started_at, completed_at, error FROM task WHERE document_id = ? ORDER BY created_at DESC
+SELECT id, task_id, task_name, status, document_id, created_at, started_at, completed_at, error
+FROM task WHERE document_id = ? ORDER BY created_at DESC
 `
 
 func (q *Queries) ListTasksByDocument(ctx context.Context, documentID sql.NullInt64) ([]Task, error) {
@@ -193,7 +195,8 @@ func (q *Queries) ListTasksByDocument(ctx context.Context, documentID sql.NullIn
 }
 
 const listTasksByStatus = `-- name: ListTasksByStatus :many
-SELECT id, task_id, task_name, status, document_id, created_at, started_at, completed_at, error FROM task WHERE status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?
+SELECT id, task_id, task_name, status, document_id, created_at, started_at, completed_at, error
+FROM task WHERE status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?
 `
 
 type ListTasksByStatusParams struct {

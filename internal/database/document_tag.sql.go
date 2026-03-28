@@ -7,6 +7,7 @@ package database
 
 import (
 	"context"
+	"database/sql"
 )
 
 const addDocumentTag = `-- name: AddDocumentTag :exec
@@ -62,20 +63,36 @@ func (q *Queries) GetDocumentTags(ctx context.Context, documentID int64) ([]Tag,
 }
 
 const getTagDocuments = `-- name: GetTagDocuments :many
-SELECT d.id, d.title, d.md5_checksum, d.sha512_checksum, d.mime_type, d.file_size, d.created_at, d.modified_at, d.document_type_id, d.original_path, d.storage_path FROM document d
+SELECT d.id, d.title, d.md5_checksum, d.sha512_checksum, d.mime_type, d.file_size,
+       d.created_at, d.modified_at, d.document_type_id, d.original_path, d.storage_path
+FROM document d
 JOIN document_tag dt ON d.id = dt.document_id
 WHERE dt.tag_id = ?
 `
 
-func (q *Queries) GetTagDocuments(ctx context.Context, tagID int64) ([]Document, error) {
+type GetTagDocumentsRow struct {
+	ID             int64
+	Title          string
+	Md5Checksum    string
+	Sha512Checksum string
+	MimeType       string
+	FileSize       int64
+	CreatedAt      sql.NullTime
+	ModifiedAt     sql.NullTime
+	DocumentTypeID sql.NullInt64
+	OriginalPath   string
+	StoragePath    string
+}
+
+func (q *Queries) GetTagDocuments(ctx context.Context, tagID int64) ([]GetTagDocumentsRow, error) {
 	rows, err := q.db.QueryContext(ctx, getTagDocuments, tagID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Document
+	var items []GetTagDocumentsRow
 	for rows.Next() {
-		var i Document
+		var i GetTagDocumentsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.Title,
