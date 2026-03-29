@@ -8,17 +8,18 @@
 
 High-performance, Go-based document management system optimized for large collections (tens of thousands of documents including full books). Headless REST API + CLI first, web UI later.
 
-**Current Status**: MVP API foundation complete. Document consumption pipeline with OCR/text extraction capabilities implemented. Core processing workflow functional.
+**Current Status**: MVP API foundation complete. Document consumption pipeline with OCR/text extraction capabilities implemented. Core processing workflow functional. Full-text search (FTS5) implemented with manual query layer due to sqlc limitations.
 
 ## Architecture
 
 ### Core Design Principles
 
 - **Headless First**: API-driven with CLI interface, web UI as optional layer
-- **Tool Agnostic**: Adapter pattern for external tools (pdftotext, ocrmypdf)
+- **Tool Agnostic**: Adapter pattern for external tools (pdftotext, ocrmypdf, ghostscript)
 - **SQLite First**: Development-friendly with migration path to production databases
 - **Fallback Processing**: Text extraction → OCR → text extraction pattern
 - **Date-based Organization**: Temporal storage structure for scalability
+- **Transaction Safety**: Coordinated database and file operations with rollback support
 
 ### Current Implementation Status
 
@@ -30,17 +31,19 @@ High-performance, Go-based document management system optimized for large collec
 - Structured logging with request correlation
 - Document API (list, get by ID)
 - CLI framework with dependency injection
-- Tools framework (pdftotext, ocrmypdf adapters)
+- Tools framework (pdftotext, ocrmypdf, ghostscript adapters)
 - Document consumption pipeline (scan → extract → OCR → store)
 - Database schema with text content storage and FTS5 virtual tables
 - File movement and cleanup operations with transaction safety
 - Full-text search implementation with manual FTS5 queries
+- PDF optimization for text-containing documents using Ghostscript
+- Deferred file cleanup for temporary OCR and optimized PDF files
 
 #### 🚧 In Progress
 
 - API endpoints for FTS search
 - Integration testing of FTS triggers
-- Performance optimization for large collections
+- Performance testing for large collections
 
 #### 📋 Planned
 
@@ -69,19 +72,23 @@ internal/
 ├── consumption/           # Document processing engine
 │   ├── consumer.go        # Main consumer logic and processing
 │   └── storage.go         # File operations and storage utilities
-├── database/              # Database layer (sqlc-generated)
+├── database/              # Database layer (sqlc-generated + manual)
 │   ├── connection.go      # Database connection and schema setup
 │   ├── models.go          # Generated data models
 │   ├── *.sql.go           # Generated query implementations
+│   ├── fts5.go            # Manual FTS5 query implementation
 │   └── db.go              # Database interface
 ├── tools/                 # External tool integration
 │   ├── adapters/
 │   │   ├── ocr/
 │   │   │   ├── adapter.go # OCR interface and factory
 │   │   │   └── ocrmypdf.go # ocrmypdf implementation
-│   │   └── textextractor/
-│   │       ├── adapter.go # Text extractor interface
-│   │       └── pdftotext.go # pdftotext implementation
+│   │   ├── textextractor/
+│   │   │   ├── adapter.go # Text extractor interface
+│   │   │   └── pdftotext.go # pdftotext implementation
+│   │   └── pdfoptimizer/
+│   │       ├── adapter.go # PDF optimizer interface
+│   │       └── ghostscript.go # Ghostscript implementation
 │   └── runner.go          # Unified tool runner
 └── utils/                 # Utilities
     ├── logger.go          # Structured logging
@@ -118,53 +125,49 @@ The system implements full-text search using SQLite's FTS5 (Full-Text Search ver
 
 The system uses SQLite's built-in FTS5 extension for full-text search capabilities. FTS5 virtual tables are created alongside regular database tables to enable efficient text searching with relevance ranking.
 
+**Key Design Decisions:**
+
+1. **Manual Implementation**: Due to sqlc's incompatibility with FTS5 syntax (`MATCH` operator, `bm25()`, `snippet()` functions), FTS queries are implemented manually in `internal/database/fts5.go`
+2. **Multi-language Support**: Uses `unicode61` tokenizer alone (without `porter` stemmer) for universal Unicode script support across all languages
+3. **Automatic Synchronization**: Database triggers (`document_ai`, `document_au`, `document_ad`) keep FTS table in sync with main document table
+4. **Performance Optimized**: `UNINDEXED` column for `document_id` enables efficient JOINs without indexing overhead
+
 #### Key Components
 
-1. **Virtual Table Structure**: A dedicated FTS5 virtual table stores searchable text fields (title and content) with document references
-2. **Automatic Indexing**: SQLite automatically creates and maintains inverted indexes for fast text search
-3. **Relevance Ranking**: Built-in ranking algorithms (BM25) provide relevance-based result ordering
-4. **Snippet Generation**: Context highlighting shows search term matches within results
+1. **Virtual Table Structure**:
+   - `document_fts` FTS5 virtual table with `unicode61` tokenizer
+   - Stores searchable text fields (title and content) with document references
+   - `document_id UNINDEXED` column for foreign key relationships
+
+2. **Manual FTS Implementation** (`internal/database/fts5.go`):
+   - `SearchDocumentsFTS()`: Performs full-text search with ranking and snippet generation
+   - Returns results with BM25 relevance scores and highlighted snippets
+
+3. **Automatic Indexing**: SQLite automatically creates and maintains inverted indexes for fast text search
+4. **Relevance Ranking**: Built-in BM25 algorithm provides relevance-based result ordering
+5. **Snippet Generation**: Context highlighting shows search term matches within results
 
 #### Integration Points
 
-- **Text Storage**: Extracted text from documents is stored in both the main document table and the FTS virtual table
+- **Text Storage**: Extracted text from documents is stored in both the main document table (`text_content`) and the FTS virtual table
 - **Search Queries**: Specialized queries use the `MATCH` operator for full-text search
 - **Result Ranking**: Search results are ordered by relevance score for optimal user experience
+- **Trigger-based Sync**: Automatic FTS updates via INSERT/UPDATE/DELETE triggers
 
 #### Performance Characteristics
 
 - **In-Memory Indexes**: FTS5 maintains search indexes in memory for fast query performance
-- **Efficient Updates**: Triggers or application logic keep FTS data synchronized with document changes
+- **Efficient Updates**: Triggers automatically keep FTS data synchronized with document changes
 - **Scalable Design**: The architecture supports tens of thousands of documents with responsive search
+- **Multi-language Ready**: `unicode61` tokenizer supports all Unicode scripts equally
 
 #### Search Features
 
 - **Phrase Search**: Exact phrase matching with quotation marks
 - **Boolean Operators**: AND, OR, NOT operators for complex queries
 - **Prefix Search**: Wildcard matching for partial terms
-- **Relevance Scoring**: Results ranked by term frequency and document structure
-
-#### Current FTS5 Implementation
-
-**Schema Features:**
-
-- `document_fts` virtual table with `unicode61` tokenizer (multi-language support)
-- Automatic synchronization via triggers (`document_ai`, `document_au`, `document_ad`)
-- `UNINDEXED` document_id column for efficient JOINs
-- Universal Unicode support for all scripts/languages
-
-**Manual Implementation (sqlc workaround):**
-Since sqlc doesn't support FTS5 syntax, FTS queries are implemented manually in:
-
-- `internal/database/fts5.go` - Raw SQL queries with `bm25()` ranking and `snippet()` highlighting
-- Triggers automatically maintain FTS table synchronization
-
-**Search Capabilities:**
-
-- Relevance ranking using BM25 algorithm
-- Snippet generation with highlighted matches
-- Multi-language support via `unicode61` tokenizer
-- Boolean operators, phrase search, wildcard matching
+- **Relevance Scoring**: Results ranked by BM25 algorithm (term frequency and document structure)
+- **Snippet Highlighting**: Context snippets with highlighted search terms
 
 ### Future Considerations
 
@@ -310,7 +313,7 @@ Since sqlc doesn't support FTS5 syntax, FTS queries are implemented manually in:
 - `StorageConfig`
   - **Fields**: `ConsumptionDir string`, `StorageDir string`
 - `ConsumerConfig`
-  - **Fields**: `SupportedFiles []string`, `TextExtractor string`, `OCR string`, `DeleteOriginal bool`
+  - **Fields**: `SupportedFiles []string`, `TextExtractor string`, `PdfOptimizer string`, `OCR string`, `DeleteOriginal bool`
 - `ToolConfig`
   - **Fields**: `Command string`, `Timeout time.Duration`
 - `Config`
@@ -325,7 +328,7 @@ Since sqlc doesn't support FTS5 syntax, FTS queries are implemented manually in:
 - `Load(path string) (*Config, error)`
   - **Params**: `path` (config file path)
   - **Returns**: `*Config` (loaded configuration), `error` (loading error)
-  - **Description**: Loads configuration from YAML file with sensible defaults. Creates required directories if they don't exist. Supports `delete_original` configuration option to remove original files after successful processing.
+  - **Description**: Loads configuration from YAML file with sensible defaults. Creates required directories if they don't exist. Supports `delete_original` configuration option to remove original files after successful processing. Default PDF optimizer is set to "gs" (Ghostscript).
 
 ### Consumption Engine (`internal/consumption/`)
 
@@ -354,7 +357,7 @@ Since sqlc doesn't support FTS5 syntax, FTS queries are implemented manually in:
       - **Description**: Checks if a file is a duplicate by computing MD5 and SHA512 checksums and comparing with database records. Uses MD5 for fast filtering and SHA512 for secure verification.
 
 - `File`
-  - **Fields**: `Name string`, `OriginalPath string`, `OCRTmpPath *string`, `StorageProcessedPath *string`, `StorageOriginalPath *string`, `MD5Checksum string`, `SHA512Checksum string`, `Text *string`, `MimeType string`, `Date time.Time`, `FileSize int64`
+  - **Fields**: `Name string`, `OriginalPath string`, `OCRTmpPath *string`, `OptimizedPdfTmpPath *string`, `StorageProcessedPath *string`, `StorageOriginalPath *string`, `MD5Checksum string`, `SHA512Checksum string`, `Text sql.NullString`, `MimeType string`, `Date time.Time`, `FileSize int64`
 
 **Functions:**
 
@@ -378,7 +381,7 @@ Since sqlc doesn't support FTS5 syntax, FTS queries are implemented manually in:
 - `MoveFile(src, dst string) error`
   - **Params**: `src` (source file path), `dst` (destination file path)
   - **Returns**: `error` (move operation error)
-  - **Description**: Moves a file from source to destination. First attempts atomic rename within same filesystem, falls back to copy+remove for cross-device moves. Creates destination directory if needed. Returns error if destination already exists.
+  - **Description**: Moves a file from source to destination. First attempts atomic rename within same filesystem, falls back to copy+remove for crossdevice moves. Creates destination directory if needed. Returns error if destination already exists.
 - `CopyFile(src, dst string) error`
   - **Params**: `src` (source file path), `dst` (destination file path)
   - **Returns**: `error` (copy operation error)
@@ -391,6 +394,10 @@ Since sqlc doesn't support FTS5 syntax, FTS queries are implemented manually in:
   - **Params**: `filePath` (path to file)
   - **Returns**: `md5Hash` (MD5 checksum), `sha512Hash` (SHA512 checksum), `error` (calculation error)
   - **Description**: Calculates both MD5 and SHA512 checksums for a file in a single pass.
+- `CleanUp(path string) error`
+  - **Params**: `path` (file path to clean up)
+  - **Returns**: `error` (cleanup error)
+  - **Description**: Safely removes a temporary file with existence check. Used for cleaning up OCR and optimized PDF temporary files.
 
 ### Database Layer (`internal/database/`)
 
@@ -413,7 +420,7 @@ Since sqlc doesn't support FTS5 syntax, FTS queries are implemented manually in:
 **Structs:**
 
 - `Author`: `ID int64`, `Name string`, `CreatedAt sql.NullTime`
-- `Document`: `ID int64`, `Title string`, `Md5Checksum string`, `Sha512Checksum string`, `MimeType string`, `FileSize int64`, `CreatedAt sql.NullTime`, `ModifiedAt sql.NullTime`, `DocumentTypeID sql.NullInt64`, `OriginalPath string`, `StoragePath string`
+- `Document`: `ID int64`, `Title string`, `Md5Checksum string`, `Sha512Checksum string`, `MimeType string`, `FileSize int64`, `CreatedAt sql.NullTime`, `ModifiedAt sql.NullTime`, `DocumentTypeID sql.NullInt64`, `OriginalPath string`, `StoragePath string`, `TextContent sql.NullString`
 - `DocumentAuthor`: `DocumentID int64`, `AuthorID int64`
 - `DocumentTag`: `DocumentID int64`, `TagID int64`
 - `DocumentType`: `ID int64`, `Name string`, `CreatedAt sql.NullTime`
@@ -444,6 +451,20 @@ Since sqlc doesn't support FTS5 syntax, FTS queries are implemented manually in:
 - `GetDocumentBySHA512Checksum(ctx context.Context, sha512Checksum string) (Document, error)`
   - **Params**: `ctx` (context), `sha512Checksum` (SHA512 checksum)
   - **Returns**: `Document` (matching document), `error` (query error)
+
+#### `fts5.go`
+
+**Struct:**
+
+- `FTSDocumentRow`
+  - **Fields**: `ID int64`, `Title string`, `Md5Checksum string`, `Sha512Checksum string`, `MimeType string`, `FileSize int64`, `CreatedAt sql.NullTime`, `ModifiedAt sql.NullTime`, `OriginalPath string`, `StoragePath string`, `TextContent sql.NullString`, `Rank float64`, `Snippet string`
+
+**Functions:**
+
+- `SearchDocumentsFTS(ctx context.Context, searchQuery string, limit, offset int32) ([]FTSDocumentRow, error)`
+  - **Params**: `ctx` (context), `searchQuery` (FTS search query), `limit` (result limit), `offset` (pagination offset)
+  - **Returns**: `[]FTSDocumentRow` (search results with ranking and snippets), `error` (query error)
+  - **Description**: Performs full-text search using SQLite FTS5 with BM25 ranking and snippet highlighting. Manual implementation due to sqlc limitations with FTS5 syntax.
 
 #### `db.go` (sqlc-generated)
 
@@ -482,11 +503,16 @@ Since sqlc doesn't support FTS5 syntax, FTS queries are implemented manually in:
     - `OCR(path string) (*OCRResult, error)`
       - **Params**: `path` (file path)
       - **Returns**: `*OCRResult` (OCR result), `error` (OCR error)
+    - `OptimizePdf(path string) (*PdfOptimizationResult, error)`
+      - **Params**: `path` (PDF file path)
+      - **Returns**: `*PdfOptimizationResult` (optimization result), `error` (optimization error)
 
 - `TextExtractionResult`
   - **Fields**: `Text *string`, `Metadata map[string]interface{}`
 - `OCRResult`
   - **Fields**: `Success bool`, `TmpPath *string`, `Confidence *float64`
+- `PdfOptimizationResult`
+  - **Fields**: `Success bool`, `TmpPath *string`
 
 #### `adapters/ocr/adapter.go`
 
@@ -567,6 +593,40 @@ Since sqlc doesn't support FTS5 syntax, FTS queries are implemented manually in:
       - **Returns**: `bool` (can handle PDF)
     - `Name() string`
       - **Returns**: `string` ("pdftotext")
+
+#### `adapters/pdfoptimizer/adapter.go`
+
+**Interface:**
+
+- `PdfOptimizer`
+  - **Methods**:
+    - `Optimize(path string) (*string, error)`
+      - **Params**: `path` (PDF file path)
+      - **Returns**: `*string` (optimized file path), `error` (optimization error)
+    - `Name() string`
+      - **Returns**: `string` (adapter name)
+
+**Function:**
+
+- `NewPdfOptimizer(logger *utils.Logger, cfg config.ToolConfig) (PdfOptimizer, error)`
+  - **Params**: `logger` (logger), `cfg` (tool config)
+  - **Returns**: `PdfOptimizer` (PDF optimizer adapter), `error` (initialization error)
+
+#### `adapters/pdfoptimizer/ghostscript.go`
+
+**Struct:**
+
+- `Ghostscript`
+  - **Fields**: `logger *utils.Logger`, `config config.ToolConfig`
+  - **Methods**:
+    - `NewGhostscript(logger *utils.Logger, cfg config.ToolConfig) (*Ghostscript, error)`
+      - **Params**: `logger` (logger), `cfg` (tool config)
+      - **Returns**: `*Ghostscript` (new Ghostscript adapter), `error` (initialization error)
+    - `Optimize(path string) (*string, error)`
+      - **Params**: `path` (PDF file path)
+      - **Returns**: `*string` (optimized file path), `error` (optimization error)
+    - `Name() string`
+      - **Returns**: `string` ("ghostscript")
 
 ### Utilities (`internal/utils/`)
 
@@ -654,7 +714,7 @@ type Document struct {
     DocumentTypeID sql.NullInt64  // Optional document type reference
     OriginalPath   string         // Path to original file
     StoragePath    string         // Path to processed/stored file
-    TextContent    sql.NullString // Extracted text content (NEW)
+    TextContent    sql.NullString // Extracted text content (for FTS)
 }
 ```
 
@@ -662,17 +722,18 @@ type Document struct {
 
 ```go
 type File struct {
-    Name                 string     // Original filename
-    OriginalPath         string     // Full path to original file
-    OCRTmpPath           *string    // Path to OCR-processed temporary file
-    StorageProcessedPath *string    // Final storage path for processed file
-    StorageOriginalPath  *string    // Storage path for original file
-    MD5Checksum          string     // MD5 checksum (fast lookup)
-    SHA512Checksum       string     // SHA512 checksum (secure verification)
-    Text                 *string    // Extracted text content
-    MimeType             string     // MIME type
-    Date                 time.Time  // Processing date for temporal organization
-    FileSize             int64      // File size in bytes
+    Name                 string         // Original filename
+    OriginalPath         string         // Full path to original file
+    OCRTmpPath           *string        // Path to OCR-processed temporary file
+    OptimizedPdfTmpPath  *string        // Path to Ghostscript-optimized temporary file
+    StorageProcessedPath *string        // Final storage path for processed file
+    StorageOriginalPath  *string        // Storage path for original file
+    MD5Checksum          string         // MD5 checksum (fast lookup)
+    SHA512Checksum       string         // SHA512 checksum (secure verification)
+    Text                 sql.NullString // Extracted text content
+    MimeType             string         // MIME type
+    Date                 time.Time      // Processing date for temporal organization
+    FileSize             int64          // File size in bytes
 }
 ```
 
@@ -708,14 +769,22 @@ type File struct {
 // Primary extraction attempt
 extractResult, err := runner.ExtractText(file.OriginalPath)
 if extractResult.Text != nil && *extractResult.Text != "" {
-    file.Text = extractResult.Text
-    return file, nil  // Success - text found
+    file.Text = sql.NullString{String: *extractResult.Text, Valid: true}
+
+    // Optimize text-containing PDFs with Ghostscript
+    optimizationResult, err := runner.OptimizePdf(file.OriginalPath)
+    file.OptimizedPdfTmpPath = optimizationResult.TmpPath
+    return file, nil
 }
 
-// OCR fallback
+// OCR fallback for scanned/image PDFs
 ocrResult, err := runner.OCR(file.OriginalPath)
 extractResult, err = runner.ExtractText(*ocrResult.TmpPath)
-file.Text = extractResult.Text
+if extractResult.Text != nil && *extractResult.Text != "" {
+    file.Text = sql.NullString{String: *extractResult.Text, Valid: true}
+} else {
+    file.Text = sql.NullString{Valid: false}
+}
 file.OCRTmpPath = ocrResult.TmpPath
 ```
 
@@ -730,7 +799,7 @@ file.OCRTmpPath = ocrResult.TmpPath
 ### 5. File Movement and Copy Operations
 
 - **OCR Case**: Moves OCR temp file to processed storage, copies original to original storage
-- **No OCR Case**: Copies original file to both original and processed storage
+- **Text PDF Case**: Copies original file to original storage, moves Ghostscript-optimized file to processed storage
 - **Transaction Safety**: File operations are rolled back if database transaction fails
 - **Cleanup**: Original file removed if `delete_original` configuration is enabled
 
@@ -740,6 +809,7 @@ file.OCRTmpPath = ocrResult.TmpPath
 - Automatic rollback on error via defer function
 - File operations coordinated with transaction commit/rollback
 - Cleanup of partially moved files on failure
+- Deferred cleanup of temporary OCR and optimized PDF files
 
 ### 7. FTS Indexing (Automatic via Triggers)
 
@@ -768,7 +838,7 @@ storage/
 │   │       └── ...
 │   └── 2025/
 │       └── ...
-└── 2024/                        # Processed files (OCR'd if needed)
+└── 2024/                        # Processed files (OCR'd or optimized)
     ├── 03/
     │   ├── 19/
     │   │   ├── 1.pdf
@@ -880,6 +950,7 @@ kushim consume
 # Scans consumption_dir, processes PDFs
 # Checks for duplicates using MD5/SHA512 checksums
 # Extracts text, runs OCR if needed
+# Optimizes text-containing PDFs with Ghostscript
 # Moves files to storage_dir with date-based organization
 # Creates database records for processed documents
 # Optionally deletes original files based on configuration
@@ -892,6 +963,7 @@ kushim consume
 - `document`: Main document storage with metadata
   - `md5_checksum`: MD5 checksum for fast duplicate detection
   - `sha512_checksum`: SHA512 checksum for secure uniqueness (UNIQUE constraint)
+  - `text_content`: Extracted text content for FTS indexing
 - `author`: Document authors
 - `tag`: Document tags
 - `document_type`: Document categorization
@@ -952,6 +1024,7 @@ storage:
 consumer:
   supported_files: ['.pdf'] # File extensions to process
   textextractor: 'pdftotext' # Text extraction command
+  pdfoptimizer: 'gs' # PDF optimization command (Ghostscript)
   ocr: 'ocrmypdf' # OCR command
   delete_original: false # Whether to delete original files after processing
 ```
@@ -965,8 +1038,9 @@ consumer:
 go mod download
 
 # Install external tools
-brew install poppler    # pdftotext
-brew install ocrmypdf   # ocrmypdf (requires tesseract)
+brew install poppler      # pdftotext
+brew install ocrmypdf     # ocrmypdf (requires tesseract)
+brew install ghostscript  # gs (for PDF optimization)
 
 # Create config file
 cp config.example.yaml config.yaml
@@ -1011,6 +1085,12 @@ curl http://localhost:3000/api/v1/documents
 - **FTS index size**: Text content duplicated in both `document` and `document_fts` tables
 - **Trigger overhead**: Three triggers per document operation
 - **Memory usage**: FTS5 indexes maintained in memory for fast search
+
+### PDF Optimization
+
+- **Text PDFs only**: Ghostscript optimization only runs on PDFs with extractable text
+- **Scanned PDFs**: OCR processing includes its own optimization via ocrmypdf
+- **File size trade-off**: Aggressive optimization (150 DPI) reduces quality for smaller files
 
 ---
 

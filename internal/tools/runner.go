@@ -116,5 +116,4 @@ func (r *Runner) OptimizePdf(path string) (*PdfOptimizationResult, error) {
 	}
 
 	return &result, nil
-
 }
