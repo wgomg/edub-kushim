@@ -171,6 +171,24 @@ func CopyFile(src, dst string) error {
 	return nil
 }
 
+func CleanUp(path string) error {
+	if path == "" {
+		return nil
+	}
+
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil
+	}
+
+	if err := os.Remove(path); err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func moveFileCrossDevice(src, dst string, srcInfo os.FileInfo) error {
 	srcFile, err := os.Open(src)
 	if err != nil {

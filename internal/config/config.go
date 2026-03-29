@@ -42,6 +42,7 @@ type StorageConfig struct {
 type ConsumerConfig struct {
 	SupportedFiles []string
 	TextExtractor  string
+	PdfOptimizer   string
 	OCR            string
 	DeleteOriginal bool `mapstructure:"delete_original"`
 }
@@ -78,6 +79,7 @@ func Load(path string) (*Config, error) {
 
 	viper.SetDefault("consumer.supported_files", []string{".pdf"})
 	viper.SetDefault("consumer.textextractor", "pdftotext")
+	viper.SetDefault("consumer.pdfoptimizer", "gs")
 	viper.SetDefault("consumer.ocr", "ocrmypdf")
 	viper.SetDefault("consumer.delete_original", false)
 

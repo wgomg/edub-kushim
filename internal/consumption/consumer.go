@@ -30,6 +30,7 @@ type File struct {
 	Name                 string
 	OriginalPath         string
 	OCRTmpPath           *string
+	OptimizedPdfTmpPath  *string
 	StorageProcessedPath *string
 	StorageOriginalPath  *string
 	MD5Checksum          string
@@ -131,6 +132,18 @@ func (c *Consumer) Process(file File) (File, error) {
 		if err != nil {
 			tx.Rollback()
 		}
+
+		if file.OCRTmpPath != nil {
+			if err := CleanUp(*file.OCRTmpPath); err != nil {
+				c.logger.Debug(nil, "failed to clean up ocr temp file: %v", err)
+			}
+		}
+
+		if file.OptimizedPdfTmpPath != nil {
+			if err := CleanUp(*file.OptimizedPdfTmpPath); err != nil {
+				c.logger.Debug(nil, "failed to clean up optimized temp file: %v", err)
+			}
+		}
 	}()
 
 	// timestamp := time.Now().UnixNano()
@@ -214,16 +227,15 @@ func (c *Consumer) Process(file File) (File, error) {
 			return file, fmt.Errorf("failed to move original file: %w", err)
 		}
 	} else {
-		c.logger.Debug(nil, "Moving original file from %s to %s", file.OriginalPath, *file.StorageOriginalPath)
+		c.logger.Debug(nil,
+			"Copying original file from %s to %s", file.OriginalPath, *file.StorageOriginalPath)
 		if err := CopyFile(file.OriginalPath, *file.StorageOriginalPath); err != nil {
-			return file, fmt.Errorf("failed to move original file: %w", err)
+			return file, fmt.Errorf("failed to move optimized file: %w", err)
 		}
-		c.logger.Debug(nil, "Copying file from %s to %s", *file.StorageOriginalPath, *file.StorageProcessedPath)
-		if err := CopyFile(*file.StorageOriginalPath, *file.StorageProcessedPath); err != nil {
-			c.logger.Error(nil, "Failed to copy file, rolling back original move")
-			if rollbackErr := MoveFile(*file.StorageOriginalPath, file.OriginalPath); rollbackErr != nil {
-				c.logger.Error(nil, "failed to rollback original file move: %v", rollbackErr)
-			}
+
+		c.logger.Debug(nil,
+			"Moving optimized file from %s to %s", *file.OptimizedPdfTmpPath, *file.StorageProcessedPath)
+		if err := MoveFile(*file.OptimizedPdfTmpPath, *file.StorageProcessedPath); err != nil {
 			return file, fmt.Errorf("failed to copy file to processed storage: %w", err)
 		}
 	}
@@ -331,6 +343,13 @@ func (c *Consumer) extractText(file File) (File, error) {
 
 	if extractResult.Text != nil && *extractResult.Text != "" {
 		file.Text = sql.NullString{String: *extractResult.Text, Valid: true}
+
+		optimizationResult, err := runner.OptimizePdf(file.OriginalPath)
+		if err != nil {
+			return file, fmt.Errorf("pdf optimization failed: %w", err)
+		}
+		file.OptimizedPdfTmpPath = optimizationResult.TmpPath
+
 		return file, nil
 	}
 

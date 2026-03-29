@@ -37,10 +37,18 @@ func (o *OcrMyPdf) Process(path string) (*string, error) {
 	outputPath := filepath.Join(tmpDir, outputName)
 
 	args := []string{
-		"--output-type", "pdf",
-		"--optimize", "1",
+		"--output-type", "pdfa-2",
+		"--optimize", "2",
 		"--rotate-pages",
 		"--deskew",
+		"--clean",
+		"--remove-background",
+		"--pdfa-image-compression", "jpeg",
+		"--jpeg-quality", "85",
+		"--png-quality", "85",
+		"--oversample", "150",
+		// --jbig2-lossy Enable JBIG2 lossy mode (better compression, not suitable for some use cases - see documentation). Only takes effect if --optimize 1 or higher is also enabled.
+		// --jbig2-threshold T Adjust JBIG2 symbol code classification threshold (default 0.85), range 0.4 to 0.9.
 		path,
 		outputPath,
 	}

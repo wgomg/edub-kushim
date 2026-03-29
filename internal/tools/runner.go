@@ -7,6 +7,7 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/ocr"
+	"github.com/wgomg/edub-kushim/internal/tools/adapters/pdfoptimizer"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/textextractor"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -25,6 +26,11 @@ type OCRResult struct {
 	Success    bool
 	TmpPath    *string
 	Confidence *float64
+}
+
+type PdfOptimizationResult struct {
+	Success bool
+	TmpPath *string
 }
 
 func NewRunner(logger *utils.Logger, cfg *config.ConsumerConfig) *Runner {
@@ -82,4 +88,33 @@ func (r *Runner) OCR(path string) (*OCRResult, error) {
 	}
 
 	return &result, nil
+}
+
+func (r *Runner) OptimizePdf(path string) (*PdfOptimizationResult, error) {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil, fmt.Errorf("file does note xist: %s", path)
+	}
+
+	cfg := config.ToolConfig{
+		Command: r.config.PdfOptimizer,
+		Timeout: 30 * time.Second,
+	}
+
+	pdfOptimizer, err := pdfoptimizer.NewPdfOptimizer(r.logger, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	outputPath, err := pdfOptimizer.Optimize(path)
+	if err != nil {
+		return nil, err
+	}
+
+	result := PdfOptimizationResult{
+		Success: true,
+		TmpPath: outputPath,
+	}
+
+	return &result, nil
+
 }
