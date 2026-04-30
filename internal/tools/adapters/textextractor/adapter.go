@@ -18,6 +18,9 @@ func NewTextExtractor(logger *utils.Logger, cfg config.ToolConfig) (TextExtracto
 	case "pdftotext":
 		pdfToText, err := NewPDFToText(logger, cfg)
 		return pdfToText, err
+	case "go-fitz":
+		fitz, err := NewFitz(logger, cfg)
+		return fitz, err
 	default:
 		return defaultExtractor, err
 	}

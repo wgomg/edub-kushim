@@ -18,6 +18,9 @@ func NewOCR(logger *utils.Logger, cfg config.ToolConfig) (OCR, error) {
 	case "ocrmypdf":
 		ocrMyPdf, err := NewOcrMyPdf(logger, cfg)
 		return ocrMyPdf, err
+	case "gosseract":
+		gosseract, err := NewGosseract(logger, cfg)
+		return gosseract, err
 	default:
 		return defaultOCR, err
 	}

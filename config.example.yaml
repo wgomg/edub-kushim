@@ -19,8 +19,9 @@ storage:
 
 consumer:
   supported_files: ['.pdf']
-  textextractor: 'pdftotext'
-  ocr: 'ocrmypdf'
+  textextractor: 'go-fitz'
+  pdfoptimizer: 'gs'
+  ocr: 'gosseract'
 
 # Uncomment for production
 # search:
