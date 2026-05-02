@@ -30,15 +30,15 @@ build: $(TESSDATA)
 
 ## Build Leptonica and Tesseract from source (one-time setup)
 build-deps: $(TESSDATA)
-	cd $(BUILD_DIR)/leptonica && ./autogen.sh && \
+	cd $(BUILD_DIR)/leptonica && rm -rf local/ && ./autogen.sh && \
 		./configure --disable-shared --enable-static --prefix=$(BUILD_DIR)/leptonica/local \
-			--libdir=$(BUILD_DIR)/leptonica/local/lib \
+			--libdir=$(BUILD_DIR)/leptonica/local/lib64 \
 			--without-libpng --without-libtiff --without-libwebp --without-libopenjpeg \
 			--without-giflib --disable-programs && \
 		make -j$(shell nproc) && make install
-	cd $(BUILD_DIR)/tesseract && ./autogen.sh && \
+	cd $(BUILD_DIR)/tesseract && rm -rf local/ && ./autogen.sh && \
 		./configure --disable-shared --enable-static --prefix=$(BUILD_DIR)/tesseract/local \
-			--with-extra-libraries=$(BUILD_DIR)/leptonica/local/lib \
+			--with-extra-libraries=$(BUILD_DIR)/leptonica/local/lib64 \
 			--with-extra-includes=$(BUILD_DIR)/leptonica/local/include \
 			--with-curl=no --with-archive=no --disable-openmp --disable-legacy --disable-graphics && \
 		make -j$(shell nproc) && make install

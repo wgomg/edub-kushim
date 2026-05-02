@@ -20,7 +20,7 @@ storage:
 consumer:
   supported_files: ['.pdf']
   textextractor: 'go-fitz'
-  pdfoptimizer: 'gs'
+  pdfoptimizer: 'mupdf'
   ocr: 'gosseract'
 
 # Uncomment for production

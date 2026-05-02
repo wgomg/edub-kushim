@@ -14,19 +14,26 @@ import (
 	"github.com/google/uuid"
 	gosseract "github.com/otiai10/gosseract/v2"
 	"github.com/wgomg/edub-kushim/internal/config"
+	"github.com/wgomg/edub-kushim/internal/tools/adapters/pdfoptimizer"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type Gosseract struct {
-	logger *utils.Logger
-	config config.ToolConfig
+	logger    *utils.Logger
+	config    config.ToolConfig
+	optimizer pdfoptimizer.PdfOptimizer
 
 	tessdataDir string
 	setupOnce   sync.Once
 }
 
-func NewGosseract(logger *utils.Logger, cfg config.ToolConfig) (*Gosseract, error) {
-	return &Gosseract{logger: logger, config: cfg}, nil
+func NewGosseract(logger *utils.Logger, cfg config.ToolConfig, optimizerCmd string) (*Gosseract, error) {
+	optCfg := config.ToolConfig{Command: optimizerCmd, Timeout: cfg.Timeout}
+	optimizer, err := pdfoptimizer.NewPdfOptimizer(logger, optCfg)
+	if err != nil {
+		return nil, fmt.Errorf("create optimizer: %w", err)
+	}
+	return &Gosseract{logger: logger, config: cfg, optimizer: optimizer}, nil
 }
 
 // initTessdata extracts the embedded tessdata file to a temporary directory
@@ -107,20 +114,9 @@ func (o *Gosseract) Process(path string) (*string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("page %d: JPEG encode error: %w", i, err)
 		}
-		tmpFile, err := os.CreateTemp("", "kushim-page-*.jpg")
-		if err != nil {
-			return nil, fmt.Errorf("page %d: temp file error: %w", i, err)
-		}
-		_, err = tmpFile.Write(jpegData)
-		if closeErr := tmpFile.Close(); err == nil {
-			err = closeErr
-		}
-		if err != nil {
-			os.Remove(tmpFile.Name())
-			return nil, fmt.Errorf("page %d: temp file write error: %w", i, err)
-		}
-		pdf.Image(tmpFile.Name(), 0, 0, pageW, pageH, false, "JPEG", 0, "")
-		os.Remove(tmpFile.Name())
+		imgName := fmt.Sprintf("kushim-page-%d", i)
+		pdf.RegisterImageReader(imgName, "jpg", bytes.NewReader(jpegData))
+		pdf.Image(imgName, 0, 0, pageW, pageH, false, "", 0, "")
 
 		// Overlay invisible text for searchability (text rendering mode 3)
 		// Tesseract boxes are in image pixel space (300 DPI); convert to PDF
@@ -159,7 +155,19 @@ func (o *Gosseract) Process(path string) (*string, error) {
 	}
 
 	o.logger.Info(nil, "created searchable PDF: %s", outPath)
-	return &outPath, nil
+
+	// Optimize the raw fpdf output before returning. Gosseract produces
+	// full-resolution JPEG images; this matches the OCR.Process() contract
+	// of returning a final-ready PDF (equivalent to ocrmypdf's internal
+	// optimization).
+	optResult, err := o.optimizer.Optimize(outPath)
+	if err != nil {
+		os.Remove(outPath)
+		return nil, fmt.Errorf("optimize OCR output: %w", err)
+	}
+	os.Remove(outPath)
+	o.logger.Debug(nil, "optimized OCR output: %s -> %s", outPath, *optResult)
+	return optResult, nil
 }
 
 func (o *Gosseract) CanHandle(mimeType string) bool {

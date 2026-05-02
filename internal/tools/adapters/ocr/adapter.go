@@ -11,15 +11,15 @@ type OCR interface {
 	Name() string
 }
 
-func NewOCR(logger *utils.Logger, cfg config.ToolConfig) (OCR, error) {
-	defaultOCR, err := NewOcrMyPdf(logger, cfg)
+func NewOCR(logger *utils.Logger, cfg config.ToolConfig, pdfOptimizerCmd string) (OCR, error) {
+	defaultOCR, err := NewGosseract(logger, cfg, pdfOptimizerCmd)
 
 	switch cfg.Command {
 	case "ocrmypdf":
 		ocrMyPdf, err := NewOcrMyPdf(logger, cfg)
 		return ocrMyPdf, err
 	case "gosseract":
-		gosseract, err := NewGosseract(logger, cfg)
+		gosseract, err := NewGosseract(logger, cfg, pdfOptimizerCmd)
 		return gosseract, err
 	default:
 		return defaultOCR, err

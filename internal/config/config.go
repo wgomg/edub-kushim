@@ -78,9 +78,9 @@ func Load(path string) (*Config, error) {
 	viper.SetDefault("storage.storage_dir", "./storage")
 
 	viper.SetDefault("consumer.supported_files", []string{".pdf"})
-	viper.SetDefault("consumer.textextractor", "pdftotext")
-	viper.SetDefault("consumer.pdfoptimizer", "gs")
-	viper.SetDefault("consumer.ocr", "ocrmypdf")
+	viper.SetDefault("consumer.textextractor", "go-fitz")
+	viper.SetDefault("consumer.pdfoptimizer", "mupdf")
+	viper.SetDefault("consumer.ocr", "gosseract")
 	viper.SetDefault("consumer.delete_original", false)
 
 	viper.SetConfigName("config")
