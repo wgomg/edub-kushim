@@ -72,7 +72,7 @@ func (r *Runner) OCR(path string) (*OCRResult, error) {
 		Timeout: 30 * time.Second,
 	}
 
-	ocr, err := ocr.NewOCR(r.logger, cfg, r.config.PdfOptimizer)
+	ocr, err := ocr.NewOCR(r.logger, cfg, r.config.PdfOptimizer, r.config.OCRLanguages, r.config.OCRDataDir)
 	if err != nil {
 		return nil, err
 	}

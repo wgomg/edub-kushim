@@ -44,12 +44,13 @@ type ConsumerConfig struct {
 	TextExtractor  string
 	PdfOptimizer   string
 	OCR            string
-	DeleteOriginal bool `mapstructure:"delete_original"`
+	DeleteOriginal bool     `mapstructure:"delete_original"`
+	OCRLanguages   []string `mapstructure:"ocr_languages"`
+	OCRDataDir     string   `mapstructure:"ocr_data_dir"`
 }
 
 type ToolConfig struct {
 	Command string
-	// Args    []string
 	Timeout time.Duration
 }
 
@@ -61,7 +62,7 @@ type Config struct {
 	Consumer ConsumerConfig
 }
 
-func Load(path string) (*Config, error) {
+func Load(configDir string) (*Config, error) {
 	viper.SetDefault("app.environment", "development")
 	viper.SetDefault("app.log_level", "info")
 
@@ -82,10 +83,11 @@ func Load(path string) (*Config, error) {
 	viper.SetDefault("consumer.pdfoptimizer", "mupdf")
 	viper.SetDefault("consumer.ocr", "gosseract")
 	viper.SetDefault("consumer.delete_original", false)
+	viper.SetDefault("consumer.ocr_data_dir", "~/.config/kushim/ocr/tessdata")
 
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
-	viper.AddConfigPath(".")
+	viper.AddConfigPath(configDir)
 
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
@@ -101,6 +103,19 @@ func Load(path string) (*Config, error) {
 
 	cfg.Db.Name = "edub.db"
 	cfg.Consumer.SupportedFiles = []string{".pdf"}
+
+	if len(cfg.Consumer.OCRLanguages) == 0 {
+		return nil, fmt.Errorf("consumer.ocr_languages is required — run 'kushim setup --langs eng,spa,...' first")
+	}
+
+	// Expand tilde in OCR data directory
+	if len(cfg.Consumer.OCRDataDir) > 0 && cfg.Consumer.OCRDataDir[0] == '~' {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("expand home dir: %w", err)
+		}
+		cfg.Consumer.OCRDataDir = home + cfg.Consumer.OCRDataDir[1:]
+	}
 
 	if err := os.MkdirAll(cfg.Storage.ConsumptionDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create consumption directory: %w", err)

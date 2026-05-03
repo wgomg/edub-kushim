@@ -22,6 +22,8 @@ consumer:
   textextractor: 'go-fitz'
   pdfoptimizer: 'mupdf'
   ocr: 'gosseract'
+  ocr_languages: ['eng', 'spa']
+  # ocr_data_dir: '~/.config/kushim/ocr/tessdata'  # optional, this is the default
 
 # Uncomment for production
 # search:

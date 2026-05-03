@@ -7,7 +7,6 @@ TESS_INCLUDE  := $(BUILD_DIR)/tesseract/local/include
 TESS_LIB      := $(BUILD_DIR)/tesseract/local/lib64
 LEP_LIB       := $(BUILD_DIR)/leptonica/local/lib64
 BINARY        := ./dev/bin/kushim
-TESSDATA      := internal/tools/adapters/ocr/tessdata/eng.traineddata
 
 # Flags required by gosseract's C++ bridge
 export CGO_ENABLED    := 1
@@ -17,19 +16,12 @@ export CGO_CPPFLAGS   := -I$(TESS_INCLUDE)
 
 all: build
 
-## Download Tesseract language data if not present
-$(TESSDATA):
-	@echo "Downloading eng.traineddata..."
-	mkdir -p $(dir $@)
-	wget -q -O $@ https://github.com/tesseract-ocr/tessdata/raw/main/eng.traineddata
-	@echo "Done."
-
 ## Build the Go binary
-build: $(TESSDATA)
+build:
 	go build -o $(BINARY) ./cmd/kushim/main.go
 
 ## Build Leptonica and Tesseract from source (one-time setup)
-build-deps: $(TESSDATA)
+build-deps:
 	cd $(BUILD_DIR)/leptonica && rm -rf local/ && ./autogen.sh && \
 		./configure --disable-shared --enable-static --prefix=$(BUILD_DIR)/leptonica/local \
 			--libdir=$(BUILD_DIR)/leptonica/local/lib64 \

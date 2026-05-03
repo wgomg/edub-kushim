@@ -24,6 +24,16 @@ var commands = map[string]Command{
 	},
 }
 
+func init() {
+	// setup is handled in main.go before config loading, but we register it
+	// here so it shows up in usage/help output.
+	commands["setup"] = Command{
+		Name:        "setup",
+		Description: "Initialize config and download OCR language files (run once)",
+		Handler:     setupHandler,
+	}
+}
+
 type CommandRunner struct {
 	container *Container
 	commands  map[string]Command

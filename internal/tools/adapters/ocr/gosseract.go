@@ -7,7 +7,6 @@ import (
 	"image/jpeg"
 	"os"
 	"path/filepath"
-	"sync"
 
 	"github.com/gen2brain/go-fitz"
 	"github.com/go-pdf/fpdf"
@@ -23,44 +22,21 @@ type Gosseract struct {
 	config    config.ToolConfig
 	optimizer pdfoptimizer.PdfOptimizer
 
-	tessdataDir string
-	setupOnce   sync.Once
+	languages []string
+	dataDir   string
 }
 
-func NewGosseract(logger *utils.Logger, cfg config.ToolConfig, optimizerCmd string) (*Gosseract, error) {
+func NewGosseract(logger *utils.Logger, cfg config.ToolConfig, optimizerCmd string, languages []string, dataDir string) (*Gosseract, error) {
 	optCfg := config.ToolConfig{Command: optimizerCmd, Timeout: cfg.Timeout}
 	optimizer, err := pdfoptimizer.NewPdfOptimizer(logger, optCfg)
 	if err != nil {
 		return nil, fmt.Errorf("create optimizer: %w", err)
 	}
-	return &Gosseract{logger: logger, config: cfg, optimizer: optimizer}, nil
+	return &Gosseract{logger: logger, config: cfg, optimizer: optimizer, languages: languages, dataDir: dataDir}, nil
 }
 
-// initTessdata extracts the embedded tessdata file to a temporary directory
-// and sets TESSDATA_PREFIX. Only runs once per adapter lifetime.
-func (o *Gosseract) initTessdata() error {
-	var err error
-	o.setupOnce.Do(func() {
-		dir, e := os.MkdirTemp("", "kushim-tessdata")
-		if e != nil {
-			err = e
-			return
-		}
-		engPath := filepath.Join(dir, "eng.traineddata")
-		if e = os.WriteFile(engPath, tessdataEng, 0644); e != nil {
-			err = e
-			return
-		}
-		o.tessdataDir = dir
-		os.Setenv("TESSDATA_PREFIX", dir)
-		o.logger.Debug(nil, "extracted tessdata to %s", dir)
-	})
-	return err
-}
-
-// Process runs OCR on the given image‑only PDF and produces a searchable PDF.
 func (o *Gosseract) Process(path string) (*string, error) {
-	if err := o.initTessdata(); err != nil {
+	if err := EnsureLanguages(o.logger, o.dataDir, o.languages); err != nil {
 		return nil, fmt.Errorf("tessdata setup: %w", err)
 	}
 
@@ -80,7 +56,7 @@ func (o *Gosseract) Process(path string) (*string, error) {
 
 	client := gosseract.NewClient()
 	defer client.Close()
-	client.SetLanguage("eng")
+	client.SetLanguage(LangString(o.languages))
 
 	for i := range numPages {
 		bnd, err := doc.Bound(i)
@@ -198,7 +174,6 @@ func encodePPM(img image.Image) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// encodeJPEG converts an image.Image to JPEG bytes.
 func encodeJPEG(img image.Image, quality int) ([]byte, error) {
 	var buf bytes.Buffer
 	err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: quality})
@@ -208,7 +183,6 @@ func encodeJPEG(img image.Image, quality int) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// escapePDF escapes a string for use inside a PDF literal string (parentheses).
 func escapePDF(s string) string {
 	var buf bytes.Buffer
 	for _, r := range s {
