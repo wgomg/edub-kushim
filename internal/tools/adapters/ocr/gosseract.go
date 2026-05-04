@@ -54,6 +54,8 @@ func (o *Gosseract) Process(path string) (*string, error) {
 	pdf := fpdf.New("P", "pt", "A4", "")
 	pdf.SetAutoPageBreak(false, 0)
 
+	pdf.AddUTF8FontFromBytes("KushimText", "", kushimFontData)
+
 	client := gosseract.NewClient()
 	defer client.Close()
 	client.SetLanguage(LangString(o.languages))
@@ -104,7 +106,8 @@ func (o *Gosseract) Process(path string) (*string, error) {
 		imgH := float64(img.Bounds().Dy())
 		scaleX := pageW / imgW
 		scaleY := pageH / imgH
-		pdf.RawWriteStr("q\n3 Tr") // save graphics state + invisible but selectable
+
+		pdf.SetTextRenderingMode(3)
 		for _, box := range boxes {
 			width := float64(box.Box.Dx()) * scaleX
 			height := float64(box.Box.Dy()) * scaleY
@@ -116,12 +119,10 @@ func (o *Gosseract) Process(path string) (*string, error) {
 				fontSize = 2
 			}
 			left := float64(box.Box.Min.X) * scaleX
-			bottom := pageH - float64(box.Box.Max.Y)*scaleY
-			pdf.SetFont("Helvetica", "", fontSize)
-			pdf.RawWriteStr(fmt.Sprintf("BT %.2f %.2f Td (%s) Tj ET",
-				left, bottom, escapePDF(box.Word)))
+			top := float64(box.Box.Max.Y) * scaleY // fpdf top-left origin
+			pdf.SetFont("KushimText", "", fontSize)
+			pdf.Text(left, top, box.Word)
 		}
-		pdf.RawWriteStr("Q") // restore graphics state
 	}
 
 	outPath := filepath.Join(os.TempDir(), "ocr_"+uuid.New().String()+".pdf")
@@ -181,18 +182,4 @@ func encodeJPEG(img image.Image, quality int) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
-}
-
-func escapePDF(s string) string {
-	var buf bytes.Buffer
-	for _, r := range s {
-		switch r {
-		case '\\', '(', ')':
-			buf.WriteByte('\\')
-			buf.WriteRune(r)
-		default:
-			buf.WriteRune(r)
-		}
-	}
-	return buf.String()
 }
