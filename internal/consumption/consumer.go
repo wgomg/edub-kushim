@@ -83,7 +83,13 @@ func (c *Consumer) Consume(reqID *string) error {
 }
 
 func (c *Consumer) Process(file File) (File, error) {
+	start := time.Now()
 	c.logger.Info(nil, "starting processing for file %s", file.OriginalPath)
+
+	defer func() {
+		elapsed := time.Since(start)
+		c.logger.Info(nil, "finished processing %s in %s", file.OriginalPath, humanDuration(elapsed))
+	}()
 
 	duplicated, err := c.isDuplicate(file.OriginalPath)
 	if err != nil {
@@ -331,6 +337,25 @@ func calculateSHA512(path string) (string, error) {
 	}
 
 	return hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
+func humanDuration(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	case d < time.Hour:
+		d = d.Round(time.Second)
+		m := int(d.Minutes())
+		s := int(d.Seconds()) - m*60
+		return fmt.Sprintf("%dm %ds", m, s)
+	default:
+		d = d.Round(time.Second)
+		h := int(d.Hours())
+		d -= time.Duration(h) * time.Hour
+		m := int(d.Minutes())
+		s := int(d.Seconds()) - m*60
+		return fmt.Sprintf("%dh %dm %ds", h, m, s)
+	}
 }
 
 func (c *Consumer) extractText(file File) (File, error) {
