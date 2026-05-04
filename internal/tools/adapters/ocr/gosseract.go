@@ -98,7 +98,7 @@ func (o *Gosseract) Process(path string) (*string, error) {
 
 		// Overlay invisible text for searchability (text rendering mode 3)
 		// Tesseract boxes are in image pixel space (300 DPI); convert to PDF
-		// point space (72 DPI) and flip Y from top-left → bottom-left.
+		// point space (72 DPI) in fpdf's top-left origin.
 		if len(boxes) == 0 {
 			o.logger.Debug(nil, "page %d: no text recognized", i)
 		}
