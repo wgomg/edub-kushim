@@ -147,7 +147,7 @@ func (m *MuPDF) Optimize(path string) (*string, error) {
 	outputPath := filepath.Join(tmpDir, outputName)
 
 	// --- Create MuPDF context ---
-	cVersion := C.CString("1.24.9")
+	cVersion := C.CString("1.23.7")
 	defer C.free(unsafe.Pointer(cVersion))
 
 	ctx := C.fz_new_context_imp(nil, nil, C.ulong(256<<20), cVersion)

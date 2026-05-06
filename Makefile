@@ -6,11 +6,12 @@ BUILD_DIR     := $(CURDIR)/build
 TESS_INCLUDE  := $(BUILD_DIR)/tesseract/local/include
 TESS_LIB      := $(BUILD_DIR)/tesseract/local/lib64
 LEP_LIB       := $(BUILD_DIR)/leptonica/local/lib64
+LIBNG_VER     := 1.6.43
 BINARY        := ./dev/bin/kushim
 
 # Flags required by gosseract's C++ bridge
 export CGO_ENABLED    := 1
-export CGO_CPPFLAGS   := -I$(TESS_INCLUDE)
+export CGO_CPPFLAGS   := -I$(TESS_INCLUDE) -I$(BUILD_DIR)/libpng/local/include
 
 .PHONY: all build build-deps clean run consume
 
@@ -20,15 +21,30 @@ all: build
 build:
 	go build -o $(BINARY) ./cmd/kushim/main.go
 
-## Build Leptonica and Tesseract from source (one-time setup)
+## Build libraries from source (one-time setup)
 build-deps:
+	@if [ ! -d $(BUILD_DIR)/libpng ]; then \
+		echo "Downloading libpng $(LIBNG_VER)..."; \
+		mkdir -p $(BUILD_DIR); \
+		curl -Ls https://download.sourceforge.net/libpng/libpng-$(LIBNG_VER).tar.gz | \
+			tar xz -C $(BUILD_DIR); \
+		mv $(BUILD_DIR)/libpng-$(LIBNG_VER) $(BUILD_DIR)/libpng; \
+	fi
+	cd $(BUILD_DIR)/libpng && rm -rf local/ && \
+		./configure --disable-shared --enable-static --prefix=$(BUILD_DIR)/libpng/local \
+			--libdir=$(BUILD_DIR)/libpng/local/lib64 && \
+		make -j$(shell nproc) && make install
 	cd $(BUILD_DIR)/leptonica && rm -rf local/ && ./autogen.sh && \
+		CPPFLAGS="-I$(BUILD_DIR)/libpng/local/include" \
+		LDFLAGS="-L$(BUILD_DIR)/libpng/local/lib64" \
 		./configure --disable-shared --enable-static --prefix=$(BUILD_DIR)/leptonica/local \
 			--libdir=$(BUILD_DIR)/leptonica/local/lib64 \
-			--without-libpng --without-libtiff --without-libwebp --without-libopenjpeg \
+			--without-libtiff --without-libwebp --without-libopenjpeg \
 			--without-giflib --disable-programs && \
 		make -j$(shell nproc) && make install
 	cd $(BUILD_DIR)/tesseract && rm -rf local/ && ./autogen.sh && \
+		CPPFLAGS="-I$(BUILD_DIR)/libpng/local/include" \
+		LDFLAGS="-L$(BUILD_DIR)/libpng/local/lib64" \
 		./configure --disable-shared --enable-static --prefix=$(BUILD_DIR)/tesseract/local \
 			--with-extra-libraries=$(BUILD_DIR)/leptonica/local/lib64 \
 			--with-extra-includes=$(BUILD_DIR)/leptonica/local/include \
