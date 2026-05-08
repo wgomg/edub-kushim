@@ -366,7 +366,8 @@ func (c *Consumer) extractText(file File) (File, error) {
 		return file, fmt.Errorf("text extraction failed: %w", err)
 	}
 
-	if extractResult.Text != nil && *extractResult.Text != "" {
+	const minTextDensityRatio = 0.001
+	if extractResult.Text != nil && *extractResult.Text != "" && float64(len(*extractResult.Text))/float64(file.FileSize) >= minTextDensityRatio {
 		file.Text = sql.NullString{String: *extractResult.Text, Valid: true}
 
 		optimizationResult, err := runner.OptimizePdf(file.OriginalPath)

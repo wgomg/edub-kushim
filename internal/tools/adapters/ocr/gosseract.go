@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image"
 	"image/jpeg"
+	"image/png"
 	"os"
 	"path/filepath"
 
@@ -51,7 +52,7 @@ func (o *Gosseract) Process(path string) (*string, error) {
 		return nil, fmt.Errorf("PDF has no pages")
 	}
 
-	pdf := fpdf.New("P", "pt", "A4", "")
+	pdf := fpdf.New("P", "pt", "", "")
 	pdf.SetAutoPageBreak(false, 0)
 
 	pdf.AddUTF8FontFromBytes("KushimText", "", kushimFontData)
@@ -59,36 +60,46 @@ func (o *Gosseract) Process(path string) (*string, error) {
 	client := gosseract.NewClient()
 	defer client.Close()
 	client.SetLanguage(LangString(o.languages))
+	client.SetPageSegMode(gosseract.PSM_SINGLE_BLOCK)
+	client.DisableOutput()
+
+	const outputDPI = 150
 
 	for i := range numPages {
-		bnd, err := doc.Bound(i)
-		if err != nil {
-			return nil, fmt.Errorf("page %d: bound error: %w", i, err)
-		}
-		pageW := float64(bnd.Dx())
-		pageH := float64(bnd.Dy())
-
-		// Render page to image at 300 DPI (doc.Image defaults to 300)
-		img, err := doc.Image(i)
+		// Render page at 200 DPI for OCR (lower = faster, sufficient for readable text)
+		img, err := doc.ImageDPI(i, 200)
 		if err != nil {
 			return nil, fmt.Errorf("page %d: render error: %w", i, err)
 		}
 
-		// PPM‑encode for OCR (avoids libjpeg; Leptonica handles PPM natively)
-		ppmData, err := encodePPM(img)
+		// PNG‑encode for OCR (Leptonica recognizes PNG's magic header reliably;
+		// PPM auto-detection fails with some static Leptonica builds)
+		pngData, err := encodePNG(img)
 		if err != nil {
-			return nil, fmt.Errorf("page %d: PPM encode error: %w", i, err)
+			return nil, fmt.Errorf("page %d: PNG encode error: %w", i, err)
 		}
 
-		client.SetImageFromBytes(ppmData)
+		client.SetImageFromBytes(pngData)
 		boxes, err := client.GetBoundingBoxes(gosseract.RIL_WORD)
 		if err != nil {
 			return nil, fmt.Errorf("page %d: OCR error: %w", i, err)
 		}
 
+		// Render again at lower DPI for the output image to reduce memory
+		// usage in fpdf (which accumulates all images in memory).
+		// Derive page size from the rendered image dimensions (pixels → points).
+		imgLow, err := doc.ImageDPI(i, float64(outputDPI))
+		if err != nil {
+			return nil, fmt.Errorf("page %d: low-res render error: %w", i, err)
+		}
+		imgLowW := imgLow.Bounds().Dx()
+		imgLowH := imgLow.Bounds().Dy()
+		pageW := float64(imgLowW) * 72.0 / outputDPI
+		pageH := float64(imgLowH) * 72.0 / outputDPI
+
 		pdf.AddPageFormat("P", fpdf.SizeType{Wd: pageW, Ht: pageH})
 
-		jpegData, err := encodeJPEG(img, 85)
+		jpegData, err := encodeJPEG(imgLow, 60)
 		if err != nil {
 			return nil, fmt.Errorf("page %d: JPEG encode error: %w", i, err)
 		}
@@ -97,7 +108,7 @@ func (o *Gosseract) Process(path string) (*string, error) {
 		pdf.Image(imgName, 0, 0, pageW, pageH, false, "", 0, "")
 
 		// Overlay invisible text for searchability (text rendering mode 3)
-		// Tesseract boxes are in image pixel space (300 DPI); convert to PDF
+		// Tesseract boxes are in image pixel space (200 DPI); convert to PDF
 		// point space (72 DPI) in fpdf's top-left origin.
 		if len(boxes) == 0 {
 			o.logger.Debug(nil, "page %d: no text recognized", i)
@@ -155,22 +166,11 @@ func (o *Gosseract) Name() string {
 	return "gosseract"
 }
 
-// encodePPM converts an image.Image to PPM (P6 binary) bytes.
-// PPM is handled natively by Leptonica without external libraries.
-func encodePPM(img image.Image) ([]byte, error) {
-	bnd := img.Bounds()
-	w, h := bnd.Dx(), bnd.Dy()
-
+func encodePNG(img image.Image) ([]byte, error) {
 	var buf bytes.Buffer
-	fmt.Fprintf(&buf, "P6\n%d %d\n255\n", w, h)
-
-	for y := range h {
-		for x := range w {
-			r, g, b, _ := img.At(x+bnd.Min.X, y+bnd.Min.Y).RGBA()
-			buf.WriteByte(byte(r >> 8))
-			buf.WriteByte(byte(g >> 8))
-			buf.WriteByte(byte(b >> 8))
-		}
+	err := png.Encode(&buf, img)
+	if err != nil {
+		return nil, err
 	}
 	return buf.Bytes(), nil
 }
