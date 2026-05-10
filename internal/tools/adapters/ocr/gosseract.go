@@ -1,161 +1,25 @@
 package ocr
 
 import (
-	"bytes"
 	"fmt"
-	"image"
-	"image/jpeg"
-	"image/png"
-	"os"
-	"path/filepath"
 
-	"github.com/gen2brain/go-fitz"
-	"github.com/go-pdf/fpdf"
-	"github.com/google/uuid"
-	gosseract "github.com/otiai10/gosseract/v2"
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/tools/adapters/pdfoptimizer"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
+// Gosseract implements OCR using Tesseract (gosseract) with MuPDF for page
+// rendering. Currently stubbed — MuPDF CGo wrapper not yet built.
 type Gosseract struct {
-	logger    *utils.Logger
-	config    config.ToolConfig
-	optimizer pdfoptimizer.PdfOptimizer
-
-	languages []string
-	dataDir   string
+	logger *utils.Logger
+	config config.ToolConfig
 }
 
 func NewGosseract(logger *utils.Logger, cfg config.ToolConfig, optimizerCmd string, languages []string, dataDir string) (*Gosseract, error) {
-	optCfg := config.ToolConfig{Command: optimizerCmd, Timeout: cfg.Timeout}
-	optimizer, err := pdfoptimizer.NewPdfOptimizer(logger, optCfg)
-	if err != nil {
-		return nil, fmt.Errorf("create optimizer: %w", err)
-	}
-	return &Gosseract{logger: logger, config: cfg, optimizer: optimizer, languages: languages, dataDir: dataDir}, nil
+	return &Gosseract{logger: logger, config: cfg}, nil
 }
-
 func (o *Gosseract) Process(path string) (*string, error) {
-	if err := EnsureLanguages(o.logger, o.dataDir, o.languages); err != nil {
-		return nil, fmt.Errorf("tessdata setup: %w", err)
-	}
-
-	doc, err := fitz.New(path)
-	if err != nil {
-		return nil, fmt.Errorf("open PDF: %w", err)
-	}
-	defer doc.Close()
-
-	numPages := doc.NumPage()
-	if numPages == 0 {
-		return nil, fmt.Errorf("PDF has no pages")
-	}
-
-	pdf := fpdf.New("P", "pt", "", "")
-	pdf.SetAutoPageBreak(false, 0)
-
-	pdf.AddUTF8FontFromBytes("KushimText", "", kushimFontData)
-
-	client := gosseract.NewClient()
-	defer client.Close()
-	client.SetLanguage(LangString(o.languages))
-	client.SetPageSegMode(gosseract.PSM_SINGLE_BLOCK)
-	client.DisableOutput()
-
-	const outputDPI = 150
-
-	for i := range numPages {
-		// Render page at 200 DPI for OCR (lower = faster, sufficient for readable text)
-		img, err := doc.ImageDPI(i, 200)
-		if err != nil {
-			return nil, fmt.Errorf("page %d: render error: %w", i, err)
-		}
-
-		// PNG‑encode for OCR (Leptonica recognizes PNG's magic header reliably;
-		// PPM auto-detection fails with some static Leptonica builds)
-		pngData, err := encodePNG(img)
-		if err != nil {
-			return nil, fmt.Errorf("page %d: PNG encode error: %w", i, err)
-		}
-
-		client.SetImageFromBytes(pngData)
-		boxes, err := client.GetBoundingBoxes(gosseract.RIL_WORD)
-		if err != nil {
-			return nil, fmt.Errorf("page %d: OCR error: %w", i, err)
-		}
-
-		// Render again at lower DPI for the output image to reduce memory
-		// usage in fpdf (which accumulates all images in memory).
-		// Derive page size from the rendered image dimensions (pixels → points).
-		imgLow, err := doc.ImageDPI(i, float64(outputDPI))
-		if err != nil {
-			return nil, fmt.Errorf("page %d: low-res render error: %w", i, err)
-		}
-		imgLowW := imgLow.Bounds().Dx()
-		imgLowH := imgLow.Bounds().Dy()
-		pageW := float64(imgLowW) * 72.0 / outputDPI
-		pageH := float64(imgLowH) * 72.0 / outputDPI
-
-		pdf.AddPageFormat("P", fpdf.SizeType{Wd: pageW, Ht: pageH})
-
-		jpegData, err := encodeJPEG(imgLow, 60)
-		if err != nil {
-			return nil, fmt.Errorf("page %d: JPEG encode error: %w", i, err)
-		}
-		imgName := fmt.Sprintf("kushim-page-%d", i)
-		pdf.RegisterImageReader(imgName, "jpg", bytes.NewReader(jpegData))
-		pdf.Image(imgName, 0, 0, pageW, pageH, false, "", 0, "")
-
-		// Overlay invisible text for searchability (text rendering mode 3)
-		// Tesseract boxes are in image pixel space (200 DPI); convert to PDF
-		// point space (72 DPI) in fpdf's top-left origin.
-		if len(boxes) == 0 {
-			o.logger.Debug(nil, "page %d: no text recognized", i)
-		}
-		imgW := float64(img.Bounds().Dx())
-		imgH := float64(img.Bounds().Dy())
-		scaleX := pageW / imgW
-		scaleY := pageH / imgH
-
-		pdf.SetTextRenderingMode(3)
-		for _, box := range boxes {
-			width := float64(box.Box.Dx()) * scaleX
-			height := float64(box.Box.Dy()) * scaleY
-			if width < 1 || height < 1 {
-				continue
-			}
-			fontSize := height * 0.8
-			if fontSize < 2 {
-				fontSize = 2
-			}
-			left := float64(box.Box.Min.X) * scaleX
-			top := float64(box.Box.Max.Y) * scaleY // fpdf top-left origin
-			pdf.SetFont("KushimText", "", fontSize)
-			pdf.Text(left, top, box.Word)
-		}
-	}
-
-	outPath := filepath.Join(os.TempDir(), "ocr_"+uuid.New().String()+".pdf")
-	err = pdf.OutputFileAndClose(outPath)
-	if err != nil {
-		return nil, fmt.Errorf("save output PDF: %w", err)
-	}
-
-	o.logger.Info(nil, "created searchable PDF: %s", outPath)
-
-	// Optimize the raw fpdf output before returning. Gosseract produces
-	// full-resolution JPEG images; this matches the OCR.Process() contract
-	// of returning a final-ready PDF (equivalent to ocrmypdf's internal
-	// optimization).
-	optResult, err := o.optimizer.Optimize(outPath)
-	if err != nil {
-		os.Remove(outPath)
-		return nil, fmt.Errorf("optimize OCR output: %w", err)
-	}
-	os.Remove(outPath)
-	o.logger.Debug(nil, "optimized OCR output: %s -> %s", outPath, *optResult)
-	return optResult, nil
+	o.logger.Debug(nil, "gosseract OCR not available — MuPDF dependency removed")
+	return nil, fmt.Errorf("not implemented: gosseract OCR (MuPDF dependency removed)")
 }
 
 func (o *Gosseract) CanHandle(mimeType string) bool {
@@ -164,22 +28,4 @@ func (o *Gosseract) CanHandle(mimeType string) bool {
 
 func (o *Gosseract) Name() string {
 	return "gosseract"
-}
-
-func encodePNG(img image.Image) ([]byte, error) {
-	var buf bytes.Buffer
-	err := png.Encode(&buf, img)
-	if err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-
-func encodeJPEG(img image.Image, quality int) ([]byte, error) {
-	var buf bytes.Buffer
-	err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: quality})
-	if err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
 }

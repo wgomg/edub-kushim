@@ -12,15 +12,15 @@ type TextExtractor interface {
 }
 
 func NewTextExtractor(logger *utils.Logger, cfg config.ToolConfig) (TextExtractor, error) {
-	defaultExtractor, err := NewFitz(logger, cfg)
+	defaultExtractor, err := NewPDFToText(logger, cfg)
 
 	switch cfg.Command {
 	case "pdftotext":
 		pdfToText, err := NewPDFToText(logger, cfg)
 		return pdfToText, err
-	case "go-fitz":
-		fitz, err := NewFitz(logger, cfg)
-		return fitz, err
+	case "gopdf":
+		gopdf, err := NewGopdf(logger, cfg)
+		return gopdf, err
 	default:
 		return defaultExtractor, err
 	}
