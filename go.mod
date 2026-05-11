@@ -4,7 +4,9 @@ go 1.25.8
 
 require (
 	github.com/gabriel-vasile/mimetype v1.4.13
+	github.com/go-pdf/fpdf v0.9.0
 	github.com/google/uuid v1.6.0
+	github.com/otiai10/gosseract/v2 v2.4.1
 	github.com/razvandimescu/gopdf v0.8.4
 	github.com/spf13/viper v1.21.0
 	gopkg.in/yaml.v3 v3.0.1

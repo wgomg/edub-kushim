@@ -19,9 +19,9 @@ storage:
 
 consumer:
   supported_files: ['.pdf']
-  textextractor: 'pdftotext'
-  pdfoptimizer: 'gs'
-  ocr: 'ocrmypdf'
+  textextractor: 'gopdf'
+  pdfoptimizer: 'mupdf'
+  ocr: 'gosseract'
   # ocr_data_dir: '~/.config/kushim/ocr/tessdata'  # optional, this is the default
 
 # Uncomment for production

@@ -6,7 +6,10 @@ BUILD_DIR     := $(CURDIR)/build
 TESS_INCLUDE  := $(BUILD_DIR)/tesseract/local/include
 TESS_LIB      := $(BUILD_DIR)/tesseract/local/lib64
 LEP_LIB       := $(BUILD_DIR)/leptonica/local/lib64
+MUPDF_DIR     := $(BUILD_DIR)/mupdf
+MUPDF_LIB     := $(MUPDF_DIR)/local/lib
 LIBNG_VER     := 1.6.43
+MUPDF_VER     := 1.27.2
 BINARY        := ./dev/bin/kushim
 
 # Flags required by gosseract's C++ bridge
@@ -50,6 +53,13 @@ build-deps:
 			--with-extra-includes=$(BUILD_DIR)/leptonica/local/include \
 			--with-curl=no --with-archive=no --disable-openmp --disable-legacy --disable-graphics && \
 		make -j$(shell nproc) && make install
+	@if [ ! -d $(MUPDF_DIR) ]; then \
+		echo "Cloning MuPDF $(MUPDF_VER)..."; \
+		git clone --depth 1 --branch $(MUPDF_VER) https://github.com/ArtifexSoftware/mupdf.git $(MUPDF_DIR); \
+		cd $(MUPDF_DIR) && git submodule update --init --depth 1; \
+	fi
+	cd $(MUPDF_DIR) && rm -rf local/ && \
+		make prefix=$(MUPDF_DIR)/local HAVE_X11=no HAVE_GLUT=no shared=no libs install
 
 ## Run the consumer pipeline
 consume: build
