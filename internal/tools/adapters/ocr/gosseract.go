@@ -63,7 +63,6 @@ func (o *Gosseract) Process(path string) (*string, error) {
 
 	pdf := fpdf.New("P", "pt", "", "")
 	pdf.SetAutoPageBreak(false, 0)
-
 	pdf.AddUTF8FontFromBytes("KushimText", "", kushimFontData)
 
 	client := gosseract.NewClient()
@@ -81,6 +80,7 @@ func (o *Gosseract) Process(path string) (*string, error) {
 		if i > 0 && i%50 == 0 {
 			o.logger.Info(nil, "OCR page %d/%d", i, numPages)
 		}
+
 		// Render page at 200 DPI for OCR
 		ocrW, ocrH, ocrSamples, ocrPixmap, err := doc.RenderPage(ctx, i, ocrDPI)
 		if err != nil {
@@ -89,14 +89,15 @@ func (o *Gosseract) Process(path string) (*string, error) {
 		ocrImg := samplesToRGBA(ocrSamples, ocrW, ocrH)
 		adapters.FreePixmap(ctx, ocrPixmap)
 
-		// PNG-encode for OCR (Leptonica recognizes PNG's magic header reliably)
 		pngData, err := encodePNG(ocrImg)
+		ocrImg = nil
 		if err != nil {
 			return nil, fmt.Errorf("page %d: PNG encode error: %w", i, err)
 		}
 
 		client.SetImageFromBytes(pngData)
 		boxes, err := client.GetBoundingBoxes(gosseract.RIL_WORD)
+		pngData = nil
 		if err != nil {
 			return nil, fmt.Errorf("page %d: OCR error: %w", i, err)
 		}
@@ -115,12 +116,14 @@ func (o *Gosseract) Process(path string) (*string, error) {
 		pdf.AddPageFormat("P", fpdf.SizeType{Wd: pageW, Ht: pageH})
 
 		jpegData, err := encodeJPEG(lowImg, 60)
+		lowImg = nil
 		if err != nil {
 			return nil, fmt.Errorf("page %d: JPEG encode error: %w", i, err)
 		}
 		imgName := fmt.Sprintf("kushim-page-%d", i)
 		pdf.RegisterImageReader(imgName, "jpg", bytes.NewReader(jpegData))
 		pdf.Image(imgName, 0, 0, pageW, pageH, false, "", 0, "")
+		jpegData = nil
 
 		// Overlay invisible text for searchability (text rendering mode 3)
 		if len(boxes) == 0 {
@@ -141,7 +144,7 @@ func (o *Gosseract) Process(path string) (*string, error) {
 				fontSize = 2
 			}
 			left := float64(box.Box.Min.X) * scaleX
-			top := float64(box.Box.Max.Y) * scaleY // fpdf top-left origin
+			top := float64(box.Box.Max.Y) * scaleY
 			pdf.SetFont("KushimText", "", fontSize)
 			pdf.Text(left, top, box.Word)
 		}
@@ -155,7 +158,6 @@ func (o *Gosseract) Process(path string) (*string, error) {
 
 	o.logger.Info(nil, "created searchable PDF: %s", outPath)
 
-	// Optimize the raw fpdf output before returning
 	optResult, err := o.optimizer.Optimize(outPath)
 	if err != nil {
 		os.Remove(outPath)

@@ -14,11 +14,15 @@ package adapters
 // mupdf_new_context creates a MuPDF context and registers document handlers.
 // Returns 0 on success, non-zero on error.
 // NOTE: Cannot use fz_try/fz_catch here — no context exists yet.
+//
+// Store size is capped at 256 MB to prevent unbounded memory growth when
+// processing large documents with many embedded images (e.g. scanned books).
+// FZ_STORE_UNLIMITED caused ~5 GB RSS for a 963-page image-based PDF.
 static int mupdf_new_context(fz_context **out_ctx)
 {
 	fz_context *ctx;
 
-	ctx = fz_new_context_imp(NULL, NULL, FZ_STORE_UNLIMITED, FZ_VERSION);
+	ctx = fz_new_context_imp(NULL, NULL, 256 << 20, FZ_VERSION);
 	if (!ctx)
 		return 1;
 

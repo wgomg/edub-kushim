@@ -8,6 +8,13 @@ import (
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
+// Gopdf extracts text from PDFs using the razvandimescu/gopdf library (pure Go).
+//
+// NOTE: gopdf reads the entire PDF file into memory via os.ReadFile and parses
+// the full object tree upfront. For very large PDFs (1000+ pages), this can
+// cause significant memory spikes (observed: ~2 GB for a 1014-page text PDF).
+// If this becomes a problem, switch to pdftotext (external tool, streams) or
+// use the MuPDF CGo wrapper's ExtractPageText (also streams).
 type Gopdf struct {
 	logger *utils.Logger
 	config config.ToolConfig
