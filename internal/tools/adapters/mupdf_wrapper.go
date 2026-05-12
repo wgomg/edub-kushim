@@ -127,14 +127,15 @@ static int mupdf_render_page(fz_context *ctx, fz_document *doc,
 	return 0;
 }
 
-// mupdf_pdf_clean_file rewrites a PDF file, removing unused objects.
+// mupdf_pdf_clean_file rewrites a PDF file with the given clean options.
+// Pass NULL for opts to use defaults (garbage collection + compression only).
 // Returns 0 on success, non-zero on error.
 static int mupdf_pdf_clean_file(fz_context *ctx, const char *input_path,
-                                const char *output_path)
+                                const char *output_path, pdf_clean_options *opts)
 {
 	fz_try(ctx) {
 		pdf_clean_file(ctx, (char *)input_path, (char *)output_path,
-		               NULL, NULL, 0, NULL);
+		               NULL, opts, 0, NULL);
 	}
 	fz_catch(ctx) {
 		return 1;
@@ -229,15 +230,85 @@ func (c *MuContext) Close() {
 	c.p = nil
 }
 
-// PdfCleanFile rewrites a PDF, removing unused objects.
-func (c *MuContext) PdfCleanFile(inputPath, outputPath string) error {
+// PdfCleanFile rewrites a PDF, removing unused objects and optionally
+// applying optimizations (image downsampling, recompression, font subsetting).
+// Pass nil for opts to use MuPDF defaults.
+func (c *MuContext) PdfCleanFile(inputPath, outputPath string, opts *C.pdf_clean_options) error {
 	cIn := C.CString(inputPath)
 	defer C.free(unsafe.Pointer(cIn))
 	cOut := C.CString(outputPath)
 	defer C.free(unsafe.Pointer(cOut))
 
-	if C.mupdf_pdf_clean_file(c.p, cIn, cOut) != 0 {
+	// If opts has image recompress quality strings, they must be C strings.
+	// We allocate them here and free after the call.
+	var jpegQuality *C.char
+	if opts != nil && opts.image.color_lossy_image_recompress_quality != nil {
+		// Already a C string from NewCleanOptions, reuse it.
+		// But we need to free it after. Track it.
+		jpegQuality = opts.image.color_lossy_image_recompress_quality
+	}
+
+	rc := C.mupdf_pdf_clean_file(c.p, cIn, cOut, opts)
+
+	// Free the JPEG quality string if we allocated it.
+	if jpegQuality != nil {
+		C.free(unsafe.Pointer(jpegQuality))
+	}
+
+	if rc != 0 {
 		return fmt.Errorf("mupdf: pdf_clean_file failed")
 	}
 	return nil
+}
+
+// NewCleanOptions returns a pdf_clean_options struct configured to match
+// Ghostscript's -dPDFSETTINGS=/ebook: garbage collect, deduplicate, compress,
+// clean/sanitize content streams, downsample colour/grayscale images to 150 DPI
+// JPEG @85, and bitonal images to 300 DPI CCITT Fax.
+//
+// The returned struct contains a C string (JPEG quality) that is freed by
+// PdfCleanFile after the call completes.
+func NewCleanOptions() *C.pdf_clean_options {
+	cJpegQuality := C.CString("85")
+
+	opts := &C.pdf_clean_options{}
+	opts.write.do_garbage = 3
+	opts.write.do_compress = 1
+	opts.write.do_compress_images = 1
+	opts.write.do_compress_fonts = 1
+	opts.write.do_clean = 1
+	opts.write.do_sanitize = 0
+	opts.write.do_use_objstms = 1
+	opts.write.do_preserve_metadata = 1
+
+	opts.image.color_lossy_image_subsample_method = C.FZ_SUBSAMPLE_BICUBIC
+	opts.image.color_lossy_image_subsample_threshold = 72
+	opts.image.color_lossy_image_subsample_to = 150
+	opts.image.color_lossy_image_recompress_method = C.FZ_RECOMPRESS_JPEG
+	opts.image.color_lossy_image_recompress_quality = cJpegQuality
+
+	opts.image.color_lossless_image_subsample_method = C.FZ_SUBSAMPLE_BICUBIC
+	opts.image.color_lossless_image_subsample_threshold = 72
+	opts.image.color_lossless_image_subsample_to = 150
+	opts.image.color_lossless_image_recompress_method = C.FZ_RECOMPRESS_JPEG
+	opts.image.color_lossless_image_recompress_quality = cJpegQuality
+
+	opts.image.gray_lossy_image_subsample_method = C.FZ_SUBSAMPLE_BICUBIC
+	opts.image.gray_lossy_image_subsample_threshold = 72
+	opts.image.gray_lossy_image_subsample_to = 150
+	opts.image.gray_lossy_image_recompress_method = C.FZ_RECOMPRESS_JPEG
+	opts.image.gray_lossy_image_recompress_quality = cJpegQuality
+
+	opts.image.gray_lossless_image_subsample_method = C.FZ_SUBSAMPLE_BICUBIC
+	opts.image.gray_lossless_image_subsample_threshold = 72
+	opts.image.gray_lossless_image_subsample_to = 150
+	opts.image.gray_lossless_image_recompress_method = C.FZ_RECOMPRESS_JPEG
+	opts.image.gray_lossless_image_recompress_quality = cJpegQuality
+
+	opts.image.bitonal_image_subsample_method = C.FZ_SUBSAMPLE_BICUBIC
+	opts.image.bitonal_image_subsample_threshold = 72
+	opts.image.bitonal_image_subsample_to = 300
+	opts.image.bitonal_image_recompress_method = C.FZ_RECOMPRESS_FAX
+
+	return opts
 }

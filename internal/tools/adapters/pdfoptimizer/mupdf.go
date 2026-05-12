@@ -26,6 +26,10 @@ func (m *MuPDF) Name() string {
 	return "mupdf"
 }
 
+// Optimize runs MuPDF's pdf_clean_file with options that approximate
+// Ghostscript's -dPDFSETTINGS=/ebook: compress streams, garbage collect,
+// deduplicate objects, clean/sanitize content streams, downsample images
+// (colour/grayscale → 150 DPI JPEG, mono → 300 DPI FAX), and use object streams.
 func (m *MuPDF) Optimize(path string) (*string, error) {
 	tmpDir := os.TempDir()
 	ogName := filepath.Base(path)
@@ -42,7 +46,8 @@ func (m *MuPDF) Optimize(path string) (*string, error) {
 	}
 	defer ctx.Close()
 
-	if err := ctx.PdfCleanFile(path, outputPath); err != nil {
+	opts := adapters.NewCleanOptions()
+	if err := ctx.PdfCleanFile(path, outputPath, opts); err != nil {
 		os.Remove(outputPath)
 		return nil, fmt.Errorf("mupdf pdf_clean_file: %w", err)
 	}
