@@ -21,6 +21,10 @@ consumer:
   supported_files: ['.pdf']
   textextractor: 'gopdf'
   pdfoptimizer: 'mupdf'
+  # optimization_fallback: 'gs'  # optional: fallback optimizer if primary fails.
+  # Uses same tool names as pdfoptimizer.
+  # Requires the chosen tool on PATH.
+  # optimization_timeout: 120     # optional: timeout in seconds (default 30)
   ocr: 'gosseract'
   # ocr_data_dir: '~/.config/kushim/ocr/tessdata'  # optional, this is the default
 

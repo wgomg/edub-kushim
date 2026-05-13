@@ -92,28 +92,44 @@ func (r *Runner) OCR(path string) (*OCRResult, error) {
 
 func (r *Runner) OptimizePdf(path string) (*PdfOptimizationResult, error) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return nil, fmt.Errorf("file does note xist: %s", path)
+		return nil, fmt.Errorf("file does not exist: %s", path)
 	}
 
 	cfg := config.ToolConfig{
 		Command: r.config.PdfOptimizer,
-		Timeout: 30 * time.Second,
+		Timeout: r.config.OptimizationTimeout,
 	}
 
-	pdfOptimizer, err := pdfoptimizer.NewPdfOptimizer(r.logger, cfg)
+	optimizer, err := pdfoptimizer.NewPdfOptimizer(r.logger, cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	outputPath, err := pdfOptimizer.Optimize(path)
+	outputPath, err := optimizer.Optimize(path)
 	if err != nil {
-		return nil, err
+		if r.config.OptimizationFallback == "" {
+			return nil, err
+		}
+		r.logger.Info(nil, "primary optimizer (%s) failed: %v — falling back to %s",
+			r.config.PdfOptimizer, err, r.config.OptimizationFallback)
+		fbCfg := config.ToolConfig{
+			Command: r.config.OptimizationFallback,
+			Timeout: r.config.OptimizationTimeout,
+		}
+		fbOptimizer, fbErr := pdfoptimizer.NewPdfOptimizer(r.logger, fbCfg)
+		if fbErr != nil {
+			return nil, fmt.Errorf("%s: %w; fallback %s: %w",
+				r.config.PdfOptimizer, err, r.config.OptimizationFallback, fbErr)
+		}
+		outputPath, err = fbOptimizer.Optimize(path)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w; fallback %s: %w",
+				r.config.PdfOptimizer, err, r.config.OptimizationFallback, err)
+		}
 	}
 
-	result := PdfOptimizationResult{
+	return &PdfOptimizationResult{
 		Success: true,
 		TmpPath: outputPath,
-	}
-
-	return &result, nil
+	}, nil
 }

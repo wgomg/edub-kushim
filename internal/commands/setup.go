@@ -17,6 +17,7 @@ func RunSetup(args []string, logger *utils.Logger) error {
 	inboxDir := ""
 	storageDir := ""
 	dbPath := ""
+	optimizationFallback := ""
 
 	for i, a := range args {
 		switch {
@@ -30,11 +31,13 @@ func RunSetup(args []string, logger *utils.Logger) error {
 			storageDir = args[i+1]
 		case a == "--db-path" && i+1 < len(args):
 			dbPath = args[i+1]
+		case a == "--optimization-fallback" && i+1 < len(args):
+			optimizationFallback = args[i+1]
 		}
 	}
 
 	if len(langs) == 0 {
-		return fmt.Errorf("usage: kushim setup --langs eng,spa,... [--config-dir ~/.config/kushim] [--inbox-dir ./inbox] [--storage-dir ./storage] [--db-path ./data/]\n  Languages are ISO 639-3 codes (eng, spa, fra, deu, rus, chi_sim, jpn, etc.)")
+		return fmt.Errorf("usage: kushim setup --langs eng,spa,... [--config-dir ~/.config/kushim] [--inbox-dir ./inbox] [--storage-dir ./storage] [--db-path ./data/] [--optimization-fallback gs]\n  Languages are ISO 639-3 codes (eng, spa, fra, deu, rus, chi_sim, jpn, etc.)")
 	}
 
 	if configDir == "" {
@@ -71,6 +74,10 @@ func RunSetup(args []string, logger *utils.Logger) error {
 			"path": dbPath,
 		}
 	}
+	if optimizationFallback != "" {
+		consumerCfg := cfg["consumer"].(map[string]any)
+		consumerCfg["optimization_fallback"] = optimizationFallback
+	}
 
 	configPath := filepath.Join(configDir, "config.yaml")
 
@@ -87,6 +94,13 @@ func RunSetup(args []string, logger *utils.Logger) error {
 	}
 	enc.Close()
 	logger.Info(nil, "created config: %s", configPath)
+
+	if optimizationFallback != "" {
+		if _, err := exec.LookPath(optimizationFallback); err != nil {
+			logger.Info(nil, "WARNING: --optimization-fallback %s set but %q not found on PATH. "+
+				"Install it before running 'kushim consume'.", optimizationFallback, optimizationFallback)
+		}
+	}
 
 	for _, lang := range langs {
 		dest := filepath.Join(tessdataDir, lang+".traineddata")

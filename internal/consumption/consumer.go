@@ -17,6 +17,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/tools"
+	"github.com/wgomg/edub-kushim/internal/tools/adapters/pdfoptimizer"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -63,6 +64,20 @@ func (c *Consumer) Consume(reqID *string) error {
 		return nil
 	}
 
+	if c.config.Consumer.OptimizationFallback != "" {
+		cfg := config.ToolConfig{
+			Command: c.config.Consumer.OptimizationFallback,
+			Timeout: 30 * time.Second,
+		}
+		if _, err := pdfoptimizer.NewPdfOptimizer(c.logger, cfg); err != nil {
+			return fmt.Errorf(
+				"optimization_fallback is %q but tool is not available: %w — "+
+					"install it or set optimization_fallback to \"\" (empty) to disable",
+				c.config.Consumer.OptimizationFallback, err,
+			)
+		}
+	}
+
 	c.logger.Info(reqID, "%d files found", len(filesToConsume))
 
 	// iterations := 10000
@@ -88,7 +103,11 @@ func (c *Consumer) Process(file File) (File, error) {
 
 	defer func() {
 		elapsed := time.Since(start)
-		c.logger.Info(nil, "finished processing %s in %s", file.OriginalPath, humanDuration(elapsed))
+		if file.StorageProcessedPath != nil {
+			c.logger.Info(nil, "finished processing %s in %s -> %s", file.OriginalPath, humanDuration(elapsed), *file.StorageProcessedPath)
+		} else {
+			c.logger.Info(nil, "finished processing %s in %s (skipped)", file.OriginalPath, humanDuration(elapsed))
+		}
 	}()
 
 	duplicated, err := c.isDuplicate(file.OriginalPath)

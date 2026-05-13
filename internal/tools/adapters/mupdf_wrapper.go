@@ -277,7 +277,7 @@ func NewCleanOptions() *C.pdf_clean_options {
 	opts.write.do_compress_images = 1
 	opts.write.do_compress_fonts = 1
 	opts.write.do_clean = 1
-	opts.write.do_sanitize = 0
+	opts.write.do_sanitize = 1
 	opts.write.do_use_objstms = 1
 	opts.write.do_preserve_metadata = 1
 

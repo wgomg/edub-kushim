@@ -40,13 +40,15 @@ type StorageConfig struct {
 }
 
 type ConsumerConfig struct {
-	SupportedFiles []string
-	TextExtractor  string
-	PdfOptimizer   string
-	OCR            string
-	DeleteOriginal bool     `mapstructure:"delete_original"`
-	OCRLanguages   []string `mapstructure:"ocr_languages"`
-	OCRDataDir     string   `mapstructure:"ocr_data_dir"`
+	SupportedFiles       []string
+	TextExtractor        string
+	PdfOptimizer         string
+	OCR                  string
+	DeleteOriginal       bool          `mapstructure:"delete_original"`
+	OCRLanguages         []string      `mapstructure:"ocr_languages"`
+	OCRDataDir           string        `mapstructure:"ocr_data_dir"`
+	OptimizationFallback string        `mapstructure:"optimization_fallback"`
+	OptimizationTimeout  time.Duration `mapstructure:"optimization_timeout"`
 }
 
 type ToolConfig struct {
@@ -84,6 +86,8 @@ func Load(configDir string) (*Config, error) {
 	viper.SetDefault("consumer.ocr", "gosseract")
 	viper.SetDefault("consumer.delete_original", false)
 	viper.SetDefault("consumer.ocr_data_dir", "~/.config/kushim/ocr/tessdata")
+	viper.SetDefault("consumer.optimization_fallback", "")
+	viper.SetDefault("consumer.optimization_timeout", 30*time.Second)
 
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
