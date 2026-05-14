@@ -380,7 +380,10 @@ func humanDuration(d time.Duration) string {
 func (c *Consumer) extractText(file File) (File, error) {
 	runner := tools.NewRunner(c.logger, &c.config.Consumer)
 
+	memBefore := utils.ReadMemSnapshot()
 	extractResult, err := runner.ExtractText(file.OriginalPath)
+	memAfterExtract := utils.ReadMemSnapshot()
+	c.logger.Debug(nil, "extractText: %s", utils.FormatMemDelta(memBefore, memAfterExtract))
 	if err != nil {
 		return file, fmt.Errorf("text extraction failed: %w", err)
 	}
@@ -390,6 +393,8 @@ func (c *Consumer) extractText(file File) (File, error) {
 		file.Text = sql.NullString{String: *extractResult.Text, Valid: true}
 
 		optimizationResult, err := runner.OptimizePdf(file.OriginalPath)
+		memAfterOpt := utils.ReadMemSnapshot()
+		c.logger.Debug(nil, "optimizePdf: %s", utils.FormatMemDelta(memAfterExtract, memAfterOpt))
 		if err != nil {
 			return file, fmt.Errorf("pdf optimization failed: %w", err)
 		}
@@ -401,11 +406,15 @@ func (c *Consumer) extractText(file File) (File, error) {
 	c.logger.Info(nil, "no text extracted from %s, OCR needed", file.Name)
 
 	ocrResult, err := runner.OCR(file.OriginalPath)
+	memAfterOCR := utils.ReadMemSnapshot()
+	c.logger.Debug(nil, "OCR: %s", utils.FormatMemDelta(memAfterExtract, memAfterOCR))
 	if err != nil {
 		return file, err
 	}
 
 	extractResult, err = runner.ExtractText(*ocrResult.TmpPath)
+	memAfterFinal := utils.ReadMemSnapshot()
+	c.logger.Debug(nil, "extractText (post-OCR): %s", utils.FormatMemDelta(memAfterOCR, memAfterFinal))
 	if err != nil {
 		return file, fmt.Errorf("text extraction failed for ocrd file: %w", err)
 	}
