@@ -19,7 +19,7 @@ storage:
 
 consumer:
   supported_files: ['.pdf']
-  textextractor: 'gopdf'
+  textextractor: 'mupdf' # mupdf | gopdf | pdftotext
   pdfoptimizer: 'mupdf'
   # optimization_fallback: 'gs'  # optional: fallback optimizer if primary fails.
   # Uses same tool names as pdfoptimizer.

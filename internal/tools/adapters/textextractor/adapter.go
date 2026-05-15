@@ -21,6 +21,9 @@ func NewTextExtractor(logger *utils.Logger, cfg config.ToolConfig) (TextExtracto
 	case "gopdf":
 		gopdf, err := NewGopdf(logger, cfg)
 		return gopdf, err
+	case "mupdf":
+		mupdf, err := NewMuPDF(logger, cfg)
+		return mupdf, err
 	default:
 		return defaultExtractor, err
 	}

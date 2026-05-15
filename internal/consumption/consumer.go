@@ -251,17 +251,29 @@ func (c *Consumer) Process(file File) (File, error) {
 			}
 			return file, fmt.Errorf("failed to move original file: %w", err)
 		}
-	} else {
+	} else if file.OptimizedPdfTmpPath != nil {
 		c.logger.Debug(nil,
 			"Copying original file from %s to %s", file.OriginalPath, *file.StorageOriginalPath)
 		if err := CopyFile(file.OriginalPath, *file.StorageOriginalPath); err != nil {
-			return file, fmt.Errorf("failed to move optimized file: %w", err)
+			return file, fmt.Errorf("failed to copy original file: %w", err)
 		}
 
 		c.logger.Debug(nil,
 			"Moving optimized file from %s to %s", *file.OptimizedPdfTmpPath, *file.StorageProcessedPath)
 		if err := MoveFile(*file.OptimizedPdfTmpPath, *file.StorageProcessedPath); err != nil {
-			return file, fmt.Errorf("failed to copy file to processed storage: %w", err)
+			return file, fmt.Errorf("failed to move optimized file: %w", err)
+		}
+	} else {
+		// optimization failed or was skipped — use original for both.
+		c.logger.Debug(nil,
+			"Copying original file from %s to %s (no optimized version)", file.OriginalPath, *file.StorageProcessedPath)
+		if err := CopyFile(file.OriginalPath, *file.StorageProcessedPath); err != nil {
+			return file, fmt.Errorf("failed to copy original file to processed storage: %w", err)
+		}
+		c.logger.Debug(nil,
+			"Copying original file from %s to %s", file.OriginalPath, *file.StorageOriginalPath)
+		if err := CopyFile(file.OriginalPath, *file.StorageOriginalPath); err != nil {
+			return file, fmt.Errorf("failed to copy original file to originals storage: %w", err)
 		}
 	}
 
@@ -396,9 +408,10 @@ func (c *Consumer) extractText(file File) (File, error) {
 		memAfterOpt := utils.ReadMemSnapshot()
 		c.logger.Debug(nil, "optimizePdf: %s", utils.FormatMemDelta(memAfterExtract, memAfterOpt))
 		if err != nil {
-			return file, fmt.Errorf("pdf optimization failed: %w", err)
+			c.logger.Info(nil, "optimization failed for %s, using original: %v", file.Name, err)
+		} else {
+			file.OptimizedPdfTmpPath = optimizationResult.TmpPath
 		}
-		file.OptimizedPdfTmpPath = optimizationResult.TmpPath
 
 		return file, nil
 	}

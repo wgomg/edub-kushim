@@ -97,7 +97,7 @@ func (r *Runner) OptimizePdf(path string) (*PdfOptimizationResult, error) {
 
 	cfg := config.ToolConfig{
 		Command: r.config.PdfOptimizer,
-		Timeout: r.config.OptimizationTimeout,
+		Timeout: time.Duration(r.config.OptimizationTimeout) * time.Second,
 	}
 
 	optimizer, err := pdfoptimizer.NewPdfOptimizer(r.logger, cfg)
@@ -114,7 +114,7 @@ func (r *Runner) OptimizePdf(path string) (*PdfOptimizationResult, error) {
 			r.config.PdfOptimizer, err, r.config.OptimizationFallback)
 		fbCfg := config.ToolConfig{
 			Command: r.config.OptimizationFallback,
-			Timeout: r.config.OptimizationTimeout,
+			Timeout: time.Duration(r.config.OptimizationTimeout) * time.Second,
 		}
 		fbOptimizer, fbErr := pdfoptimizer.NewPdfOptimizer(r.logger, fbCfg)
 		if fbErr != nil {

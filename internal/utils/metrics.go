@@ -1,14 +1,19 @@
 package utils
 
 import (
+	"bufio"
 	"fmt"
+	"os"
 	"runtime/metrics"
+	"strconv"
+	"strings"
 )
 
 type MemSnapshot struct {
 	HeapInUse uint64 // /memory/classes/heap/objects:bytes — live heap
 	HeapAlloc uint64 // /gc/heap/allocs:bytes — cumulative allocated
 	NumGC     uint64 // /gc/cycles/automatic:gc-cycles
+	RSS       uint64 // VmRSS from /proc/self/status — total physical RAM (Go + C)
 }
 
 func ReadMemSnapshot() MemSnapshot {
@@ -29,18 +34,52 @@ func ReadMemSnapshot() MemSnapshot {
 		HeapInUse: samples[0].Value.Uint64(),
 		HeapAlloc: samples[1].Value.Uint64(),
 		NumGC:     samples[2].Value.Uint64(),
+		RSS:       readVmRSS(),
 	}
 }
 
+func readVmRSS() uint64 {
+	f, err := os.Open("/proc/self/status")
+	if err != nil {
+		return 0
+	}
+	defer f.Close()
+
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := sc.Text()
+		if !strings.HasPrefix(line, "VmRSS:") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			return 0
+		}
+		kb, err := strconv.ParseUint(fields[1], 10, 64)
+		if err != nil {
+			return 0
+		}
+		return kb * 1024
+	}
+	return 0
+}
+
 func FormatMemDelta(before, after MemSnapshot) string {
-	delta := int64(after.HeapInUse) - int64(before.HeapInUse)
+	heapDelta := int64(after.HeapInUse) - int64(before.HeapInUse)
+	rssDelta := int64(after.RSS) - int64(before.RSS)
 	gcs := after.NumGC - before.NumGC
 
 	parts := ""
-	if delta >= 0 {
-		parts = fmt.Sprintf("heap +%s", formatBytes(uint64(delta)))
+	if heapDelta >= 0 {
+		parts = fmt.Sprintf("heap +%s", formatBytes(uint64(heapDelta)))
 	} else {
-		parts = fmt.Sprintf("heap -%s", formatBytes(uint64(-delta)))
+		parts = fmt.Sprintf("heap -%s", formatBytes(uint64(-heapDelta)))
+	}
+
+	if rssDelta >= 0 {
+		parts += fmt.Sprintf(", RSS +%s", formatBytes(uint64(rssDelta)))
+	} else {
+		parts += fmt.Sprintf(", RSS -%s", formatBytes(uint64(-rssDelta)))
 	}
 
 	if gcs > 0 {

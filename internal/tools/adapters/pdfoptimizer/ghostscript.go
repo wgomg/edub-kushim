@@ -72,16 +72,14 @@ func (g *Ghostscript) Optimize(path string) (*string, error) {
 	select {
 	case err := <-done:
 		if err != nil {
-			if _, statErr := os.Stat(outputPath); statErr != nil {
-				os.Remove(outputPath)
-			}
+			os.Remove(outputPath)
 			return nil, fmt.Errorf("%s failed: %w, stderr: %s", g.Name(), err, stderr.String())
 		}
 	case <-time.After(g.config.Timeout):
-		cmd.Process.Kill()
-		if _, statErr := os.Stat(outputPath); statErr != nil {
-			os.Remove(outputPath)
+		if cmd.Process != nil {
+			cmd.Process.Kill()
 		}
+		os.Remove(outputPath)
 		return nil, fmt.Errorf("%s timed out after %v", g.Name(), g.config.Timeout)
 	}
 

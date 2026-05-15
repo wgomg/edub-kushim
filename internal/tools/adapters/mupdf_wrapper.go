@@ -18,6 +18,12 @@ package adapters
 // Store size is capped at 256 MB to prevent unbounded memory growth when
 // processing large documents with many embedded images (e.g. scanned books).
 // FZ_STORE_UNLIMITED caused ~5 GB RSS for a 963-page image-based PDF.
+//
+// MuPDF's error/warning print callback is replaced with a no-op to suppress
+// recoverable warnings (xref errors, bad patterns, bogus fonts) that pollute
+// the Go logger output.
+static void mupdf_null_print(void *user, const char *message) { (void)user; (void)message; }
+
 static int mupdf_new_context(fz_context **out_ctx)
 {
 	fz_context *ctx;
@@ -27,19 +33,19 @@ static int mupdf_new_context(fz_context **out_ctx)
 		return 1;
 
 	fz_register_document_handlers(ctx);
+
+	// Suppress MuPDF stderr output — recoverable format warnings are noise.
+	ctx->error.print = mupdf_null_print;
+	ctx->warn.print = mupdf_null_print;
+
 	*out_ctx = ctx;
 	return 0;
 }
 
 // mupdf_open_document opens a PDF file. Returns 0 on success, non-zero on error.
-// MuPDF stderr is suppressed during open to avoid noise from recoverable
-// warnings (xref errors, syntax issues in malformed PDFs).
 static int mupdf_open_document(fz_context *ctx, const char *path, fz_document **out_doc)
 {
 	fz_document *doc = NULL;
-	int rc = 0;
-	FILE *saved = stderr;
-	stderr = fopen("/dev/null", "w");
 
 	fz_var(doc);
 
@@ -47,14 +53,11 @@ static int mupdf_open_document(fz_context *ctx, const char *path, fz_document **
 		doc = fz_open_document(ctx, path);
 	}
 	fz_catch(ctx) {
-		rc = 1;
+		return 1;
 	}
 
-	if (stderr) fclose(stderr);
-	stderr = saved;
-
 	*out_doc = doc;
-	return rc;
+	return 0;
 }
 
 // mupdf_extract_page_text extracts text from a single page into a buffer.
@@ -138,30 +141,17 @@ static int mupdf_render_page(fz_context *ctx, fz_document *doc,
 // mupdf_pdf_clean_file rewrites a PDF file with the given clean options.
 // Pass NULL for opts to use defaults (garbage collection + compression only).
 // Returns 0 on success, non-zero on error.
-// MuPDF stderr output is suppressed during the call to avoid noise from
-// recoverable warnings (xref errors, missing patterns, etc.).
 static int mupdf_pdf_clean_file(fz_context *ctx, const char *input_path,
                                 const char *output_path, pdf_clean_options *opts)
 {
-	int rc = 0;
-	FILE *saved = NULL;
-
-	// Suppress MuPDF stderr during clean — warnings about xref errors,
-	// missing patterns, etc. are recoverable and pollute logs.
-	saved = stderr;
-	stderr = fopen("/dev/null", "w");
-
 	fz_try(ctx) {
 		pdf_clean_file(ctx, (char *)input_path, (char *)output_path,
 		               NULL, opts, 0, NULL);
 	}
 	fz_catch(ctx) {
-		rc = 1;
+		return 1;
 	}
-
-	if (stderr) fclose(stderr);
-	stderr = saved;
-	return rc;
+	return 0;
 }
 */
 import "C"
