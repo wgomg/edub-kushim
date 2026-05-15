@@ -22,6 +22,11 @@ var commands = map[string]Command{
 		Description: "Process documents from consumption directory",
 		Handler:     consumeHandler,
 	},
+	"search": {
+		Name:        "search",
+		Description: "Full-text search across documents",
+		Handler:     searchHandler,
+	},
 }
 
 func init() {

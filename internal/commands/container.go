@@ -6,6 +6,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/consumption"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -14,6 +15,7 @@ type Container struct {
 	logger   *utils.Logger
 	db       *sql.DB
 	consumer *consumption.Consumer
+	engine   *search.Engine
 }
 
 func NewContainer(cfg *config.Config, logger *utils.Logger) *Container {
@@ -43,6 +45,17 @@ func (c *Container) GetConsumer() (*consumption.Consumer, error) {
 		c.consumer = consumption.NewConsumer(c.config, c.logger, db)
 	}
 	return c.consumer, nil
+}
+
+func (c *Container) GetSearchEngine() (*search.Engine, error) {
+	if c.engine == nil {
+		db, err := c.GetDB()
+		if err != nil {
+			return nil, err
+		}
+		c.engine = search.NewEngine(c.logger, db)
+	}
+	return c.engine, nil
 }
 
 func (c *Container) Close() {

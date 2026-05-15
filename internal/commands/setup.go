@@ -12,33 +12,26 @@ import (
 )
 
 func RunSetup(args []string, logger *utils.Logger) error {
-	var langs []string
+	var langs string
 	configDir := ""
 	inboxDir := ""
 	storageDir := ""
 	dbPath := ""
 	optimizationFallback := ""
 
-	for i, a := range args {
-		switch {
-		case a == "--langs" && i+1 < len(args):
-			langs = strings.Split(args[i+1], ",")
-		case a == "--config-dir" && i+1 < len(args):
-			configDir = args[i+1]
-		case a == "--inbox-dir" && i+1 < len(args):
-			inboxDir = args[i+1]
-		case a == "--storage-dir" && i+1 < len(args):
-			storageDir = args[i+1]
-		case a == "--db-path" && i+1 < len(args):
-			dbPath = args[i+1]
-		case a == "--optimization-fallback" && i+1 < len(args):
-			optimizationFallback = args[i+1]
-		}
-	}
+	p := NewFlagParser(args)
+	p.String("--langs", &langs)
+	p.String("--config-dir", &configDir)
+	p.String("--inbox-dir", &inboxDir)
+	p.String("--storage-dir", &storageDir)
+	p.String("--db-path", &dbPath)
+	p.String("--optimization-fallback", &optimizationFallback)
 
-	if len(langs) == 0 {
+	if langs == "" {
 		return fmt.Errorf("usage: kushim setup --langs eng,spa,... [--config-dir ~/.config/kushim] [--inbox-dir ./inbox] [--storage-dir ./storage] [--db-path ./data/] [--optimization-fallback gs]\n  Languages are ISO 639-3 codes (eng, spa, fra, deu, rus, chi_sim, jpn, etc.)")
 	}
+
+	langList := strings.Split(langs, ",")
 
 	if configDir == "" {
 		home, err := os.UserHomeDir()
@@ -56,7 +49,7 @@ func RunSetup(args []string, logger *utils.Logger) error {
 
 	cfg := map[string]any{
 		"consumer": map[string]any{
-			"ocr_languages": langs,
+			"ocr_languages": langList,
 		},
 	}
 	if inboxDir != "" || storageDir != "" {
@@ -102,7 +95,7 @@ func RunSetup(args []string, logger *utils.Logger) error {
 		}
 	}
 
-	for _, lang := range langs {
+	for _, lang := range langList {
 		dest := filepath.Join(tessdataDir, lang+".traineddata")
 		if _, err := os.Stat(dest); err == nil {
 			logger.Info(nil, "already downloaded: %s", lang)
@@ -118,7 +111,7 @@ func RunSetup(args []string, logger *utils.Logger) error {
 		}
 	}
 
-	logger.Info(nil, "setup complete — %d languages in %s", len(langs), tessdataDir)
+	logger.Info(nil, "setup complete — %d languages in %s", len(langList), tessdataDir)
 	fmt.Println("\nNext: run 'kushim consume' to process documents")
 
 	return nil
