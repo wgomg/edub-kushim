@@ -12,8 +12,6 @@ type TextExtractor interface {
 }
 
 func NewTextExtractor(logger *utils.Logger, cfg config.ToolConfig) (TextExtractor, error) {
-	defaultExtractor, err := NewPDFToText(logger, cfg)
-
 	switch cfg.Command {
 	case "pdftotext":
 		pdfToText, err := NewPDFToText(logger, cfg)
@@ -25,6 +23,6 @@ func NewTextExtractor(logger *utils.Logger, cfg config.ToolConfig) (TextExtracto
 		mupdf, err := NewMuPDF(logger, cfg)
 		return mupdf, err
 	default:
-		return defaultExtractor, err
+		return NewMuPDF(logger, cfg)
 	}
 }

@@ -15,6 +15,6 @@ func consumeHandler(c *Container, args []string) error {
 		return fmt.Errorf("consumption failed: %w", err)
 	}
 
-	c.logger.Info(nil, "Document consumption process completed (not implemented yet)")
+	c.logger.Info(nil, "Document consumption process completed")
 	return nil
 }

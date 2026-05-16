@@ -18,7 +18,10 @@ func NewFlagParser(args []string) *FlagParser {
 
 func (p *FlagParser) String(flag string, dst *string) error {
 	for i := p.pos; i < len(p.args); i++ {
-		if p.args[i] == flag && i+1 < len(p.args) {
+		if p.args[i] == flag {
+			if i+1 >= len(p.args) {
+				return fmt.Errorf("%s requires a value", flag)
+			}
 			*dst = p.args[i+1]
 			p.pos = i + 2
 			return nil

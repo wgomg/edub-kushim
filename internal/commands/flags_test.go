@@ -24,11 +24,8 @@ func TestFlagParserStringMissingValue(t *testing.T) {
 	var s string
 	p := NewFlagParser([]string{"--limit"})
 	err := p.String("--limit", &s)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if s != "" {
-		t.Errorf("expected empty string, got %q", s)
+	if err == nil {
+		t.Fatal("expected error for missing value, got nil")
 	}
 }
 

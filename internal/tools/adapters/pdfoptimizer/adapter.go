@@ -11,8 +11,6 @@ type PdfOptimizer interface {
 }
 
 func NewPdfOptimizer(logger *utils.Logger, cfg config.ToolConfig) (PdfOptimizer, error) {
-	defaultOptimizer, err := NewGhostscript(logger, cfg)
-
 	switch cfg.Command {
 	case "gs":
 		gs, err := NewGhostscript(logger, cfg)
@@ -21,6 +19,6 @@ func NewPdfOptimizer(logger *utils.Logger, cfg config.ToolConfig) (PdfOptimizer,
 		m, err := NewMuPDF(logger, cfg)
 		return m, err
 	default:
-		return defaultOptimizer, err
+		return NewMuPDF(logger, cfg)
 	}
 }

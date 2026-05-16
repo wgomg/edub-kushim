@@ -20,12 +20,24 @@ func RunSetup(args []string, logger *utils.Logger) error {
 	optimizationFallback := ""
 
 	p := NewFlagParser(args)
-	p.String("--langs", &langs)
-	p.String("--config-dir", &configDir)
-	p.String("--inbox-dir", &inboxDir)
-	p.String("--storage-dir", &storageDir)
-	p.String("--db-path", &dbPath)
-	p.String("--optimization-fallback", &optimizationFallback)
+	if err := p.String("--langs", &langs); err != nil {
+		return err
+	}
+	if err := p.String("--config-dir", &configDir); err != nil {
+		return err
+	}
+	if err := p.String("--inbox-dir", &inboxDir); err != nil {
+		return err
+	}
+	if err := p.String("--storage-dir", &storageDir); err != nil {
+		return err
+	}
+	if err := p.String("--db-path", &dbPath); err != nil {
+		return err
+	}
+	if err := p.String("--optimization-fallback", &optimizationFallback); err != nil {
+		return err
+	}
 	_ = p.Rest()
 
 	if langs == "" {

@@ -143,7 +143,7 @@ func (c *Consumer) Process(file File) (File, error) {
 	datePath := filepath.Join(
 		strconv.Itoa(file.Date.Year()),
 		fmt.Sprintf("%02d", file.Date.Month()),
-		strconv.Itoa(file.Date.Day()),
+		fmt.Sprintf("%02d", file.Date.Day()),
 		// document type name
 	)
 
