@@ -158,9 +158,13 @@ func (q *Queries) UpdateDocumentFTS(ctx context.Context, arg struct {
 	Title      string
 	Content    string
 }) error {
-	const query = `INSERT OR REPLACE INTO document_fts(document_id, title, content) VALUES (?, ?, ?)`
+	const deleteQuery = `DELETE FROM document_fts WHERE document_id = ?`
+	const insertQuery = `INSERT INTO document_fts(document_id, title, content) VALUES (?, ?, ?)`
 
-	_, err := q.db.ExecContext(ctx, query, arg.DocumentID, arg.Title, arg.Content)
+	if _, err := q.db.ExecContext(ctx, deleteQuery, arg.DocumentID); err != nil {
+		return err
+	}
+	_, err := q.db.ExecContext(ctx, insertQuery, arg.DocumentID, arg.Title, arg.Content)
 	return err
 }
 

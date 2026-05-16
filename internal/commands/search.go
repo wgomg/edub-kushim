@@ -21,7 +21,9 @@ func searchHandler(c *Container, args []string) error {
 	if err := p.Int("--offset", &offset, 0, 1<<31); err != nil {
 		return err
 	}
-	p.Bool("--rebuild-index", &rebuild)
+	if err := p.Bool("--rebuild-index", &rebuild); err != nil {
+		return err
+	}
 	args = p.Rest()
 
 	if rebuild {

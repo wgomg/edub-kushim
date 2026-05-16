@@ -38,6 +38,9 @@ func NewEngine(logger *utils.Logger, db *sql.DB) *Engine {
 
 func (e *Engine) Search(ctx context.Context, query string, limit, offset int32) ([]Result, error) {
 	query = sanitizeQuery(query)
+	if query == "" {
+		return nil, nil
+	}
 
 	rows, err := e.queries.SearchDocumentsFTS(ctx, query, limit, offset)
 	if err != nil {

@@ -26,6 +26,7 @@ func RunSetup(args []string, logger *utils.Logger) error {
 	p.String("--storage-dir", &storageDir)
 	p.String("--db-path", &dbPath)
 	p.String("--optimization-fallback", &optimizationFallback)
+	_ = p.Rest()
 
 	if langs == "" {
 		return fmt.Errorf("usage: kushim setup --langs eng,spa,... [--config-dir ~/.config/kushim] [--inbox-dir ./inbox] [--storage-dir ./storage] [--db-path ./data/] [--optimization-fallback gs]\n  Languages are ISO 639-3 codes (eng, spa, fra, deu, rus, chi_sim, jpn, etc.)")

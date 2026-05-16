@@ -65,6 +65,19 @@ build-deps:
 consume: build
 	$(BINARY) consume
 
+## Run all pure-Go tests (tiers 1–5, no CGo required)
+test:
+	go test ./internal/search/ ./internal/commands/ ./internal/database/ ./internal/consumption/ -v
+
+## Run tests with coverage profile
+test-cover:
+	go test -coverprofile=coverage.out ./internal/search/ ./internal/commands/ ./internal/database/ ./internal/consumption/
+	go tool cover -func=coverage.out
+
+## Run integration tests (requires CGo build deps: make build-deps)
+test-integration:
+	go test -tags=integration -v ./internal/...
+
 ## Delete the binary
 clean:
 	rm -f $(BINARY)

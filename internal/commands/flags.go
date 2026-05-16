@@ -16,14 +16,15 @@ func NewFlagParser(args []string) *FlagParser {
 	return &FlagParser{args: args}
 }
 
-func (p *FlagParser) String(flag string, dst *string) {
+func (p *FlagParser) String(flag string, dst *string) error {
 	for i := p.pos; i < len(p.args); i++ {
 		if p.args[i] == flag && i+1 < len(p.args) {
 			*dst = p.args[i+1]
 			p.pos = i + 2
-			return
+			return nil
 		}
 	}
+	return nil
 }
 
 func (p *FlagParser) Int(flag string, dst *int, min, max int) error {
@@ -44,14 +45,15 @@ func (p *FlagParser) Int(flag string, dst *int, min, max int) error {
 	return nil
 }
 
-func (p *FlagParser) Bool(flag string, dst *bool) {
+func (p *FlagParser) Bool(flag string, dst *bool) error {
 	for i := p.pos; i < len(p.args); i++ {
 		if p.args[i] == flag {
 			*dst = true
 			p.pos = i + 1
-			return
+			return nil
 		}
 	}
+	return nil
 }
 
 func (p *FlagParser) Rest() []string {

@@ -19,9 +19,14 @@ type Container struct {
 }
 
 func NewContainer(cfg *config.Config, logger *utils.Logger) *Container {
+	return NewContainerWithDB(cfg, logger, nil)
+}
+
+func NewContainerWithDB(cfg *config.Config, logger *utils.Logger, db *sql.DB) *Container {
 	return &Container{
 		config: cfg,
 		logger: logger,
+		db:     db,
 	}
 }
 

@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"time"
@@ -13,8 +14,11 @@ import (
 )
 
 type Runner struct {
-	logger *utils.Logger
-	config *config.ConsumerConfig
+	logger        *utils.Logger
+	config        *config.ConsumerConfig
+	textExtractor textextractor.TextExtractor
+	ocr           ocr.OCR
+	pdfOptimizer  pdfoptimizer.PdfOptimizer
 }
 
 type TextExtractionResult struct {
@@ -34,25 +38,43 @@ type PdfOptimizationResult struct {
 }
 
 func NewRunner(logger *utils.Logger, cfg *config.ConsumerConfig) *Runner {
-	return &Runner{logger: logger, config: cfg}
+	textCfg := config.ToolConfig{Command: cfg.TextExtractor, Timeout: 30 * time.Second}
+	textExtractor, _ := textextractor.NewTextExtractor(logger, textCfg)
+
+	ocrCfg := config.ToolConfig{Command: cfg.OCR, Timeout: 30 * time.Second}
+	ocr, _ := ocr.NewOCR(logger, ocrCfg, cfg.PdfOptimizer, cfg.OCRLanguages, cfg.OCRDataDir)
+
+	optCfg := config.ToolConfig{Command: cfg.PdfOptimizer, Timeout: time.Duration(cfg.OptimizationTimeout) * time.Second}
+	pdfOptimizer, _ := pdfoptimizer.NewPdfOptimizer(logger, optCfg)
+
+	return NewRunnerWithAdapters(logger, cfg, textExtractor, ocr, pdfOptimizer)
 }
 
-func (r *Runner) ExtractText(path string) (*TextExtractionResult, error) {
+func NewRunnerWithAdapters(
+	logger *utils.Logger,
+	cfg *config.ConsumerConfig,
+	textExtractor textextractor.TextExtractor,
+	ocr ocr.OCR,
+	pdfOptimizer pdfoptimizer.PdfOptimizer,
+) *Runner {
+	return &Runner{
+		logger:        logger,
+		config:        cfg,
+		textExtractor: textExtractor,
+		ocr:           ocr,
+		pdfOptimizer:  pdfOptimizer,
+	}
+}
+
+func (r *Runner) ExtractText(ctx context.Context, path string) (*TextExtractionResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, r.configTimeout("ExtractText"))
+	defer cancel()
+
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return nil, fmt.Errorf("file does note xist: %s", path)
 	}
 
-	cfg := config.ToolConfig{
-		Command: r.config.TextExtractor,
-		Timeout: 30 * time.Second,
-	}
-
-	textExtractor, err := textextractor.NewTextExtractor(r.logger, cfg)
-	if err != nil {
-		return nil, err
-	}
-
-	text, err := textExtractor.Extract(path)
+	text, err := r.textExtractor.Extract(path)
 	if err != nil {
 		return nil, err
 	}
@@ -62,22 +84,15 @@ func (r *Runner) ExtractText(path string) (*TextExtractionResult, error) {
 	return &result, nil
 }
 
-func (r *Runner) OCR(path string) (*OCRResult, error) {
+func (r *Runner) OCR(ctx context.Context, path string) (*OCRResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, r.configTimeout("OCR"))
+	defer cancel()
+
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return nil, fmt.Errorf("file does note xist: %s", path)
 	}
 
-	cfg := config.ToolConfig{
-		Command: r.config.OCR,
-		Timeout: 30 * time.Second,
-	}
-
-	ocr, err := ocr.NewOCR(r.logger, cfg, r.config.PdfOptimizer, r.config.OCRLanguages, r.config.OCRDataDir)
-	if err != nil {
-		return nil, err
-	}
-
-	outputPath, err := ocr.Process(path)
+	outputPath, err := r.ocr.Process(path)
 	if err != nil {
 		return nil, err
 	}
@@ -90,22 +105,15 @@ func (r *Runner) OCR(path string) (*OCRResult, error) {
 	return &result, nil
 }
 
-func (r *Runner) OptimizePdf(path string) (*PdfOptimizationResult, error) {
+func (r *Runner) OptimizePdf(ctx context.Context, path string) (*PdfOptimizationResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, r.configTimeout("OptimizePdf"))
+	defer cancel()
+
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return nil, fmt.Errorf("file does not exist: %s", path)
 	}
 
-	cfg := config.ToolConfig{
-		Command: r.config.PdfOptimizer,
-		Timeout: time.Duration(r.config.OptimizationTimeout) * time.Second,
-	}
-
-	optimizer, err := pdfoptimizer.NewPdfOptimizer(r.logger, cfg)
-	if err != nil {
-		return nil, err
-	}
-
-	outputPath, err := optimizer.Optimize(path)
+	outputPath, err := r.pdfOptimizer.Optimize(path)
 	if err != nil {
 		if r.config.OptimizationFallback == "" {
 			return nil, err
@@ -132,4 +140,13 @@ func (r *Runner) OptimizePdf(path string) (*PdfOptimizationResult, error) {
 		Success: true,
 		TmpPath: outputPath,
 	}, nil
+}
+
+func (r *Runner) configTimeout(field string) time.Duration {
+	switch field {
+	case "OptimizePdf":
+		return time.Duration(r.config.OptimizationTimeout) * time.Second
+	default:
+		return 30 * time.Second
+	}
 }

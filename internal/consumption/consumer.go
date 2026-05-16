@@ -25,6 +25,7 @@ type Consumer struct {
 	config *config.Config
 	logger *utils.Logger
 	db     *sql.DB
+	runner *tools.Runner
 }
 
 type File struct {
@@ -47,6 +48,16 @@ func NewConsumer(cfg *config.Config, logger *utils.Logger, db *sql.DB) *Consumer
 		config: cfg,
 		logger: logger,
 		db:     db,
+		runner: tools.NewRunner(logger, &cfg.Consumer),
+	}
+}
+
+func NewConsumerWithRunner(cfg *config.Config, logger *utils.Logger, db *sql.DB, runner *tools.Runner) *Consumer {
+	return &Consumer{
+		config: cfg,
+		logger: logger,
+		db:     db,
+		runner: runner,
 	}
 }
 
@@ -390,10 +401,10 @@ func humanDuration(d time.Duration) string {
 }
 
 func (c *Consumer) extractText(file File) (File, error) {
-	runner := tools.NewRunner(c.logger, &c.config.Consumer)
+	ctx := context.Background()
 
 	memBefore := utils.ReadMemSnapshot()
-	extractResult, err := runner.ExtractText(file.OriginalPath)
+	extractResult, err := c.runner.ExtractText(ctx, file.OriginalPath)
 	memAfterExtract := utils.ReadMemSnapshot()
 	c.logger.Debug(nil, "extractText: %s", utils.FormatMemDelta(memBefore, memAfterExtract))
 	if err != nil {
@@ -404,7 +415,7 @@ func (c *Consumer) extractText(file File) (File, error) {
 	if extractResult.Text != nil && *extractResult.Text != "" && float64(len(*extractResult.Text))/float64(file.FileSize) >= minTextDensityRatio {
 		file.Text = sql.NullString{String: *extractResult.Text, Valid: true}
 
-		optimizationResult, err := runner.OptimizePdf(file.OriginalPath)
+		optimizationResult, err := c.runner.OptimizePdf(ctx, file.OriginalPath)
 		memAfterOpt := utils.ReadMemSnapshot()
 		c.logger.Debug(nil, "optimizePdf: %s", utils.FormatMemDelta(memAfterExtract, memAfterOpt))
 		if err != nil {
@@ -418,14 +429,14 @@ func (c *Consumer) extractText(file File) (File, error) {
 
 	c.logger.Info(nil, "no text extracted from %s, OCR needed", file.Name)
 
-	ocrResult, err := runner.OCR(file.OriginalPath)
+	ocrResult, err := c.runner.OCR(ctx, file.OriginalPath)
 	memAfterOCR := utils.ReadMemSnapshot()
 	c.logger.Debug(nil, "OCR: %s", utils.FormatMemDelta(memAfterExtract, memAfterOCR))
 	if err != nil {
 		return file, err
 	}
 
-	extractResult, err = runner.ExtractText(*ocrResult.TmpPath)
+	extractResult, err = c.runner.ExtractText(ctx, *ocrResult.TmpPath)
 	memAfterFinal := utils.ReadMemSnapshot()
 	c.logger.Debug(nil, "extractText (post-OCR): %s", utils.FormatMemDelta(memAfterOCR, memAfterFinal))
 	if err != nil {

@@ -9,5 +9,4 @@ config.yaml
 config.prod.yaml
 !config.example.yaml
 
-# Tesseract language data (downloaded by Makefile)
-internal/tools/adapters/ocr/tessdata/eng.traineddata
+coverage.out

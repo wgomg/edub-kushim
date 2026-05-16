@@ -51,6 +51,16 @@ func NewDiscardLogger() *Logger {
 	}
 }
 
+func NewLoggerWithWriter(w io.Writer) *Logger {
+	return &Logger{
+		level:       LevelInfo,
+		infoLogger:  log.New(w, "<6>INFO  : ", log.Ldate|log.Ltime|log.Lshortfile),
+		errorLogger: log.New(w, "<3>ERROR : ", log.Ldate|log.Ltime|log.Lshortfile),
+		debugLogger: log.New(w, "<7>DEBUG : ", log.Ldate|log.Ltime|log.Lshortfile),
+		fatalLogger: log.New(w, "<2>FATAL : ", log.Ldate|log.Ltime|log.Lshortfile),
+	}
+}
+
 func parseLogLevel(level string) LogLevel {
 	switch strings.ToLower(level) {
 	case "debug":
