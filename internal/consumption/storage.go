@@ -84,6 +84,41 @@ func GetFiles(src string, exts []string) ([]File, error) {
 	return files, nil
 }
 
+func FileFromPath(path string) (File, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return File{}, fmt.Errorf("stat file: %w", err)
+	}
+
+	mtype, err := mimetype.DetectFile(path)
+	if err != nil {
+		return File{}, fmt.Errorf("detect mime type: %w", err)
+	}
+
+	md5Hash, sha512Hash, err := calculateChecksums(path)
+	if err != nil {
+		return File{}, fmt.Errorf("calculate checksums: %w", err)
+	}
+
+	return File{
+		Name:           filepath.Base(path),
+		OriginalPath:   path,
+		FileSize:       info.Size(),
+		Date:           time.Now(),
+		MD5Checksum:    md5Hash,
+		SHA512Checksum: sha512Hash,
+		MimeType:       mtype.String(),
+	}, nil
+}
+
+func FilePaths(files []File) []string {
+	paths := make([]string, len(files))
+	for i, f := range files {
+		paths[i] = f.OriginalPath
+	}
+	return paths
+}
+
 func RemoveFile(path string) error {
 	if path == "" {
 		return nil

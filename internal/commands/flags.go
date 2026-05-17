@@ -6,14 +6,23 @@ import (
 )
 
 type FlagParser struct {
-	args    []string
-	pos     int
-	rest    []string
-	invalid []string
+	args []string
+	pos  int
+	rest []string
 }
 
 func NewFlagParser(args []string) *FlagParser {
 	return &FlagParser{args: args}
+}
+
+func (p *FlagParser) Help(helpText string) bool {
+	for _, a := range p.args {
+		if a == "--help" || a == "-h" {
+			fmt.Println(helpText)
+			return true
+		}
+	}
+	return false
 }
 
 func (p *FlagParser) String(flag string, dst *string) error {

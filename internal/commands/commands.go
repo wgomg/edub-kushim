@@ -27,6 +27,11 @@ var commands = map[string]Command{
 		Description: "Full-text search across documents",
 		Handler:     searchHandler,
 	},
+	"task": {
+		Name:        "task",
+		Description: "Manage tasks (list, status, retry)",
+		Handler:     taskHandler,
+	},
 }
 
 func init() {
@@ -68,11 +73,12 @@ func ListCommands() []Command {
 }
 
 func PrintUsage() {
-	fmt.Println("Usage: cli <command> [arguments]")
+	fmt.Println("Usage: kushim <command> [arguments]")
 	fmt.Println("\nAvailable commands:")
 	for _, cmd := range commands {
 		fmt.Printf("  %-15s %s\n", cmd.Name, cmd.Description)
 	}
+	fmt.Println("\nUse 'kushim <command> --help' for command-specific help.")
 	os.Exit(1)
 }
 

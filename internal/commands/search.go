@@ -10,11 +10,20 @@ import (
 )
 
 func searchHandler(c *Container, args []string) error {
+	p := NewFlagParser(args)
+
+	if p.Help("Usage: kushim search [--limit N] [--offset N] [--rebuild-index] <query>\n" +
+		"  Full-text search across documents.\n\n" +
+		"  --limit N          max results (default 20, max 100)\n" +
+		"  --offset N         result offset (default 0)\n" +
+		"  --rebuild-index    rebuild FTS5 index from document table") {
+		return nil
+	}
+
 	limit := 20
 	offset := 0
 	rebuild := false
 
-	p := NewFlagParser(args)
 	if err := p.Int("--limit", &limit, 1, 100); err != nil {
 		return err
 	}

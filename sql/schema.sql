@@ -30,6 +30,8 @@ CREATE TABLE task (
     task_name TEXT NOT NULL,
     status TEXT NOT NULL,
     document_id INTEGER,
+    batch_id TEXT,
+    file_path TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     started_at DATETIME,
     completed_at DATETIME,
@@ -95,6 +97,8 @@ BEGIN
 END;
 
 CREATE INDEX idx_task_status ON task(status);
+CREATE INDEX idx_task_batch ON task(batch_id);
+CREATE INDEX idx_task_batch_status ON task(batch_id, status);
 CREATE INDEX idx_document_md5 ON document(md5_checksum);
 CREATE INDEX idx_document_sha512 ON document(sha512_checksum);
 CREATE INDEX idx_document_created ON document(created_at);

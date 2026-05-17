@@ -49,6 +49,7 @@ type ConsumerConfig struct {
 	OCRDataDir           string   `mapstructure:"ocr_data_dir"`
 	OptimizationFallback string   `mapstructure:"optimization_fallback"`
 	OptimizationTimeout  int      `mapstructure:"optimization_timeout"`
+	Workers              int      `mapstructure:"workers"`
 }
 
 type ToolConfig struct {
@@ -88,6 +89,7 @@ func Load(configDir string) (*Config, error) {
 	viper.SetDefault("consumer.ocr_data_dir", "~/.config/kushim/ocr/tessdata")
 	viper.SetDefault("consumer.optimization_fallback", "")
 	viper.SetDefault("consumer.optimization_timeout", 120)
+	viper.SetDefault("consumer.workers", 1)
 
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")

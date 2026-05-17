@@ -15,6 +15,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/consumption"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/queue"
 	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/utils"
@@ -360,31 +361,55 @@ func setupTestConsumer(t *testing.T, db *sql.DB, inboxDir string) *consumption.C
 	return consumption.NewConsumerWithRunner(cfg, utils.NewDiscardLogger(), db, runner)
 }
 
+func setupTestQueue(t *testing.T, db *sql.DB) *queue.Queue {
+	t.Helper()
+	return queue.New(utils.NewDiscardLogger(), db, 1, &mockQueueHandler{})
+}
+
+type mockQueueHandler struct{}
+
+func (m *mockQueueHandler) Handle(ctx context.Context, task database.Task) (sql.NullInt64, error) {
+	return sql.NullInt64{}, nil
+}
+
 func TestConsumeSuccess(t *testing.T) {
 	db := setupTestDB(t)
 	inbox := t.TempDir()
 
 	pdfPath := filepath.Join(inbox, "test.pdf")
-	if err := os.WriteFile(pdfPath, []byte("pdf content"), 0644); err != nil {
+	if err := os.WriteFile(pdfPath, []byte("%PDF-1.4 fake pdf content"), 0644); err != nil {
 		t.Fatalf("write test pdf: %v", err)
 	}
 
 	consumer := setupTestConsumer(t, db, inbox)
-	handler := NewConsumeHandler(consumer, utils.NewDiscardLogger())
+	q := setupTestQueue(t, db)
+	cfg := &config.Config{
+		Storage: config.StorageConfig{
+			ConsumptionDir: inbox,
+			StorageDir:     t.TempDir(),
+		},
+		Consumer: config.ConsumerConfig{
+			SupportedFiles: []string{".pdf"},
+		},
+	}
+	handler := NewConsumeHandler(consumer, q, cfg, utils.NewDiscardLogger())
 
 	req := httptest.NewRequest("POST", "/api/v1/consume", nil)
 	req = req.WithContext(context.WithValue(req.Context(), "reqid", "test-reqid"))
 	w := httptest.NewRecorder()
 	handler.Consume(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var resp map[string]string
+	var resp map[string]interface{}
 	decodeResponse(t, w.Body.Bytes(), &resp)
-	if resp["status"] != "ok" {
-		t.Errorf("expected status ok, got %s", resp["status"])
+	if resp["batch_id"] == nil {
+		t.Errorf("expected non-nil batch_id")
+	}
+	if resp["total_files"] != float64(1) {
+		t.Errorf("expected 1 total_file, got %v", resp["total_files"])
 	}
 }
 
@@ -393,7 +418,17 @@ func TestConsumeNoFiles(t *testing.T) {
 	inbox := t.TempDir()
 
 	consumer := setupTestConsumer(t, db, inbox)
-	handler := NewConsumeHandler(consumer, utils.NewDiscardLogger())
+	q := setupTestQueue(t, db)
+	cfg := &config.Config{
+		Storage: config.StorageConfig{
+			ConsumptionDir: inbox,
+			StorageDir:     t.TempDir(),
+		},
+		Consumer: config.ConsumerConfig{
+			SupportedFiles: []string{".pdf"},
+		},
+	}
+	handler := NewConsumeHandler(consumer, q, cfg, utils.NewDiscardLogger())
 
 	req := httptest.NewRequest("POST", "/api/v1/consume", nil)
 	req = req.WithContext(context.WithValue(req.Context(), "reqid", "test-reqid"))
@@ -404,10 +439,13 @@ func TestConsumeNoFiles(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var resp map[string]string
+	var resp map[string]interface{}
 	decodeResponse(t, w.Body.Bytes(), &resp)
-	if resp["status"] != "ok" {
-		t.Errorf("expected status ok, got %s", resp["status"])
+	if resp["total_files"] != float64(0) {
+		t.Errorf("expected 0 total_files, got %v", resp["total_files"])
+	}
+	if resp["message"] != "no files found" {
+		t.Errorf("expected 'no files found' message, got %v", resp["message"])
 	}
 }
 
@@ -416,25 +454,42 @@ func TestConsumeWithInboxFile(t *testing.T) {
 	inbox := t.TempDir()
 
 	pdfPath := filepath.Join(inbox, "doc.pdf")
-	if err := os.WriteFile(pdfPath, []byte("some content"), 0644); err != nil {
+
+	if err := os.WriteFile(pdfPath, []byte("%PDF-1.4 fake pdf content"), 0644); err != nil {
 		t.Fatalf("write test pdf: %v", err)
 	}
 
 	consumer := setupTestConsumer(t, db, inbox)
-	handler := NewConsumeHandler(consumer, utils.NewDiscardLogger())
+	q := setupTestQueue(t, db)
+	cfg := &config.Config{
+		Storage: config.StorageConfig{
+			ConsumptionDir: inbox,
+			StorageDir:     t.TempDir(),
+		},
+		Consumer: config.ConsumerConfig{
+			SupportedFiles: []string{".pdf"},
+		},
+	}
+	handler := NewConsumeHandler(consumer, q, cfg, utils.NewDiscardLogger())
 
 	req := httptest.NewRequest("POST", "/api/v1/consume", nil)
 	req = req.WithContext(context.WithValue(req.Context(), "reqid", "test-reqid"))
 	w := httptest.NewRecorder()
 	handler.Consume(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var resp map[string]string
+	var resp map[string]interface{}
 	decodeResponse(t, w.Body.Bytes(), &resp)
-	if resp["status"] != "ok" {
-		t.Errorf("expected status ok, got %s", resp["status"])
+	if resp["batch_id"] == nil {
+		t.Errorf("expected non-nil batch_id")
+	}
+	if resp["total_files"] != float64(1) {
+		t.Errorf("expected 1 total_file, got %v", resp["total_files"])
+	}
+	if resp["enqueued"] != float64(1) {
+		t.Errorf("expected 1 enqueued, got %v", resp["enqueued"])
 	}
 }

@@ -63,6 +63,8 @@ type Task struct {
 	TaskName    string
 	Status      string
 	DocumentID  sql.NullInt64
+	BatchID     sql.NullString
+	FilePath    sql.NullString
 	CreatedAt   sql.NullTime
 	StartedAt   sql.NullTime
 	CompletedAt sql.NullTime

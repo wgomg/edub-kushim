@@ -79,7 +79,15 @@ func newTestContainerWithConsumer(t *testing.T, db *sql.DB, consumptionDir, stor
 		runner,
 	)
 	return &Container{
-		config:   &config.Config{},
+		config: &config.Config{
+			Storage: config.StorageConfig{
+				ConsumptionDir: consumptionDir,
+				StorageDir:     storageDir,
+			},
+			Consumer: config.ConsumerConfig{
+				SupportedFiles: []string{".pdf"},
+			},
+		},
 		logger:   logger,
 		db:       db,
 		consumer: consumer,
@@ -101,15 +109,27 @@ func TestConsumeHandlerNoFiles(t *testing.T) {
 	storageDir := t.TempDir()
 	text := "extracted"
 	textExt := &mockTextExtractor{texts: []*string{&text}}
-	c, logBuf := newTestContainerWithConsumer(t, db, consumptionDir, storageDir, textExt, nil, nil, nil, nil)
+	c, _ := newTestContainerWithConsumer(t, db, consumptionDir, storageDir, textExt, nil, nil, nil, nil)
+
+	// Capture stdout
+	r, w, _ := os.Pipe()
+	old := os.Stdout
+	os.Stdout = w
 
 	err := consumeHandler(c, []string{})
+
+	w.Close()
+	os.Stdout = old
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+	output := buf.String()
+
 	if err != nil {
 		t.Fatalf("consumeHandler: %v", err)
 	}
 
-	if !strings.Contains(logBuf.String(), "no files found") {
-		t.Errorf("expected 'no files found' in log, got: %s", logBuf.String())
+	if !strings.Contains(output, "No files found") {
+		t.Errorf("expected 'No files found' in output, got: %s", output)
 	}
 }
 
@@ -122,18 +142,30 @@ func TestConsumeHandlerFilesProcessed(t *testing.T) {
 	text := "extracted text content"
 	optOutput := writePDFFile(t, t.TempDir(), "optimized.pdf")
 	textExt := &mockTextExtractor{texts: []*string{&text}}
-	c, logBuf := newTestContainerWithConsumer(t, db, consumptionDir, storageDir, textExt, &optOutput, nil, nil, nil)
+	c, _ := newTestContainerWithConsumer(t, db, consumptionDir, storageDir, textExt, &optOutput, nil, nil, nil)
+
+	// Capture stdout
+	r, w, _ := os.Pipe()
+	old := os.Stdout
+	os.Stdout = w
 
 	err := consumeHandler(c, []string{})
+
+	w.Close()
+	os.Stdout = old
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+	output := buf.String()
+
 	if err != nil {
 		t.Fatalf("consumeHandler: %v", err)
 	}
 
-	if !strings.Contains(logBuf.String(), "1 files found") {
-		t.Errorf("expected '1 files found' in log, got: %s", logBuf.String())
+	if !strings.Contains(output, "Batch:") {
+		t.Errorf("expected 'Batch:' in output, got: %s", output)
 	}
-	if !strings.Contains(logBuf.String(), "Document consumption process completed") {
-		t.Errorf("expected completion message, got: %s", logBuf.String())
+	if !strings.Contains(output, "track progress") {
+		t.Errorf("expected progress hint in output, got: %s", output)
 	}
 }
 

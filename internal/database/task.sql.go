@@ -10,22 +10,59 @@ import (
 	"database/sql"
 )
 
+const claimTask = `-- name: ClaimTask :execrows
+UPDATE task SET
+    status = 'processing',
+    started_at = CURRENT_TIMESTAMP
+WHERE id = ? AND status = 'pending'
+`
+
+func (q *Queries) ClaimTask(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, claimTask, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const completeTask = `-- name: CompleteTask :exec
 UPDATE task SET
     status = 'completed',
+    document_id = ?,
     completed_at = CURRENT_TIMESTAMP
 WHERE id = ?
 `
 
-func (q *Queries) CompleteTask(ctx context.Context, id int64) error {
-	_, err := q.db.ExecContext(ctx, completeTask, id)
+type CompleteTaskParams struct {
+	DocumentID sql.NullInt64
+	ID         int64
+}
+
+func (q *Queries) CompleteTask(ctx context.Context, arg CompleteTaskParams) error {
+	_, err := q.db.ExecContext(ctx, completeTask, arg.DocumentID, arg.ID)
 	return err
+}
+
+const countTasksByBatchAndStatus = `-- name: CountTasksByBatchAndStatus :one
+SELECT COUNT(*) FROM task WHERE batch_id = ? AND status = ?
+`
+
+type CountTasksByBatchAndStatusParams struct {
+	BatchID sql.NullString
+	Status  string
+}
+
+func (q *Queries) CountTasksByBatchAndStatus(ctx context.Context, arg CountTasksByBatchAndStatusParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countTasksByBatchAndStatus, arg.BatchID, arg.Status)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const createTask = `-- name: CreateTask :execresult
 INSERT INTO task (
-    task_id, task_name, status, document_id
-) VALUES (?, ?, ?, ?)
+    task_id, task_name, status, document_id, batch_id, file_path
+) VALUES (?, ?, ?, ?, ?, ?)
 `
 
 type CreateTaskParams struct {
@@ -33,6 +70,8 @@ type CreateTaskParams struct {
 	TaskName   string
 	Status     string
 	DocumentID sql.NullInt64
+	BatchID    sql.NullString
+	FilePath   sql.NullString
 }
 
 func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (sql.Result, error) {
@@ -41,6 +80,8 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (sql.Res
 		arg.TaskName,
 		arg.Status,
 		arg.DocumentID,
+		arg.BatchID,
+		arg.FilePath,
 	)
 }
 
@@ -71,8 +112,19 @@ func (q *Queries) FailTask(ctx context.Context, arg FailTaskParams) error {
 	return err
 }
 
+const getNextPendingTask = `-- name: GetNextPendingTask :one
+SELECT id FROM task WHERE status = 'pending' ORDER BY created_at LIMIT 1
+`
+
+func (q *Queries) GetNextPendingTask(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getNextPendingTask)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
 const getTask = `-- name: GetTask :one
-SELECT id, task_id, task_name, status, document_id, created_at, started_at, completed_at, error FROM task WHERE id = ?
+SELECT id, task_id, task_name, status, document_id, batch_id, file_path, created_at, started_at, completed_at, error FROM task WHERE id = ?
 `
 
 func (q *Queries) GetTask(ctx context.Context, id int64) (Task, error) {
@@ -84,6 +136,8 @@ func (q *Queries) GetTask(ctx context.Context, id int64) (Task, error) {
 		&i.TaskName,
 		&i.Status,
 		&i.DocumentID,
+		&i.BatchID,
+		&i.FilePath,
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
@@ -92,8 +146,47 @@ func (q *Queries) GetTask(ctx context.Context, id int64) (Task, error) {
 	return i, err
 }
 
+const getTaskByBatchID = `-- name: GetTaskByBatchID :many
+SELECT id, task_id, task_name, status, document_id, batch_id, file_path, created_at, started_at, completed_at, error FROM task WHERE batch_id = ? ORDER BY created_at
+`
+
+func (q *Queries) GetTaskByBatchID(ctx context.Context, batchID sql.NullString) ([]Task, error) {
+	rows, err := q.db.QueryContext(ctx, getTaskByBatchID, batchID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Task
+	for rows.Next() {
+		var i Task
+		if err := rows.Scan(
+			&i.ID,
+			&i.TaskID,
+			&i.TaskName,
+			&i.Status,
+			&i.DocumentID,
+			&i.BatchID,
+			&i.FilePath,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.Error,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getTaskByTaskID = `-- name: GetTaskByTaskID :one
-SELECT id, task_id, task_name, status, document_id, created_at, started_at, completed_at, error FROM task WHERE task_id = ?
+SELECT id, task_id, task_name, status, document_id, batch_id, file_path, created_at, started_at, completed_at, error FROM task WHERE task_id = ?
 `
 
 func (q *Queries) GetTaskByTaskID(ctx context.Context, taskID string) (Task, error) {
@@ -105,6 +198,8 @@ func (q *Queries) GetTaskByTaskID(ctx context.Context, taskID string) (Task, err
 		&i.TaskName,
 		&i.Status,
 		&i.DocumentID,
+		&i.BatchID,
+		&i.FilePath,
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
@@ -114,7 +209,8 @@ func (q *Queries) GetTaskByTaskID(ctx context.Context, taskID string) (Task, err
 }
 
 const listTasks = `-- name: ListTasks :many
-SELECT id, task_id, task_name, status, document_id, created_at, started_at, completed_at, error
+SELECT id, task_id, task_name, status, document_id, batch_id, file_path,
+       created_at, started_at, completed_at, error
 FROM task ORDER BY created_at DESC LIMIT ? OFFSET ?
 `
 
@@ -138,6 +234,95 @@ func (q *Queries) ListTasks(ctx context.Context, arg ListTasksParams) ([]Task, e
 			&i.TaskName,
 			&i.Status,
 			&i.DocumentID,
+			&i.BatchID,
+			&i.FilePath,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.Error,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTasksByBatch = `-- name: ListTasksByBatch :many
+SELECT id, task_id, task_name, status, document_id, batch_id, file_path,
+       created_at, started_at, completed_at, error
+FROM task WHERE batch_id = ? ORDER BY created_at
+`
+
+func (q *Queries) ListTasksByBatch(ctx context.Context, batchID sql.NullString) ([]Task, error) {
+	rows, err := q.db.QueryContext(ctx, listTasksByBatch, batchID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Task
+	for rows.Next() {
+		var i Task
+		if err := rows.Scan(
+			&i.ID,
+			&i.TaskID,
+			&i.TaskName,
+			&i.Status,
+			&i.DocumentID,
+			&i.BatchID,
+			&i.FilePath,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.Error,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTasksByBatchAndStatus = `-- name: ListTasksByBatchAndStatus :many
+SELECT id, task_id, task_name, status, document_id, batch_id, file_path,
+       created_at, started_at, completed_at, error
+FROM task WHERE batch_id = ? AND status = ? ORDER BY created_at
+`
+
+type ListTasksByBatchAndStatusParams struct {
+	BatchID sql.NullString
+	Status  string
+}
+
+func (q *Queries) ListTasksByBatchAndStatus(ctx context.Context, arg ListTasksByBatchAndStatusParams) ([]Task, error) {
+	rows, err := q.db.QueryContext(ctx, listTasksByBatchAndStatus, arg.BatchID, arg.Status)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Task
+	for rows.Next() {
+		var i Task
+		if err := rows.Scan(
+			&i.ID,
+			&i.TaskID,
+			&i.TaskName,
+			&i.Status,
+			&i.DocumentID,
+			&i.BatchID,
+			&i.FilePath,
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.CompletedAt,
@@ -157,7 +342,8 @@ func (q *Queries) ListTasks(ctx context.Context, arg ListTasksParams) ([]Task, e
 }
 
 const listTasksByDocument = `-- name: ListTasksByDocument :many
-SELECT id, task_id, task_name, status, document_id, created_at, started_at, completed_at, error
+SELECT id, task_id, task_name, status, document_id, batch_id, file_path,
+       created_at, started_at, completed_at, error
 FROM task WHERE document_id = ? ORDER BY created_at DESC
 `
 
@@ -176,6 +362,8 @@ func (q *Queries) ListTasksByDocument(ctx context.Context, documentID sql.NullIn
 			&i.TaskName,
 			&i.Status,
 			&i.DocumentID,
+			&i.BatchID,
+			&i.FilePath,
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.CompletedAt,
@@ -195,7 +383,8 @@ func (q *Queries) ListTasksByDocument(ctx context.Context, documentID sql.NullIn
 }
 
 const listTasksByStatus = `-- name: ListTasksByStatus :many
-SELECT id, task_id, task_name, status, document_id, created_at, started_at, completed_at, error
+SELECT id, task_id, task_name, status, document_id, batch_id, file_path,
+       created_at, started_at, completed_at, error
 FROM task WHERE status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?
 `
 
@@ -220,6 +409,8 @@ func (q *Queries) ListTasksByStatus(ctx context.Context, arg ListTasksByStatusPa
 			&i.TaskName,
 			&i.Status,
 			&i.DocumentID,
+			&i.BatchID,
+			&i.FilePath,
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.CompletedAt,
@@ -236,6 +427,20 @@ func (q *Queries) ListTasksByStatus(ctx context.Context, arg ListTasksByStatusPa
 		return nil, err
 	}
 	return items, nil
+}
+
+const retryTask = `-- name: RetryTask :exec
+UPDATE task SET
+    status = 'pending',
+    error = NULL,
+    started_at = NULL,
+    completed_at = NULL
+WHERE id = ?
+`
+
+func (q *Queries) RetryTask(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, retryTask, id)
+	return err
 }
 
 const startTask = `-- name: StartTask :exec

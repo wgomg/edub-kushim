@@ -28,6 +28,11 @@ func main() {
 		return
 	}
 
+	if commandName == "--help" || commandName == "-h" {
+		commands.PrintUsage()
+		return
+	}
+
 	startupLogger := utils.NewLogger("error")
 
 	home, err := os.UserHomeDir()
