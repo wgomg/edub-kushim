@@ -74,6 +74,14 @@ func parseLogLevel(level string) LogLevel {
 	}
 }
 
+func (l *Logger) SetLevel(level LogLevel) {
+	l.level = level
+}
+
+func (l *Logger) Level() LogLevel {
+	return l.level
+}
+
 func (l *Logger) Info(reqID *string, format string, v ...any) {
 	if l.level == LevelError {
 		return

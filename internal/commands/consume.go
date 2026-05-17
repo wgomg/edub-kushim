@@ -9,6 +9,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/consumption"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/queue"
+	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 func consumeHandler(c *Container, args []string) error {
@@ -59,6 +60,7 @@ func consumeHandler(c *Container, args []string) error {
 
 	fmt.Println("Waiting for completion...")
 
+	c.logger.SetLevel(utils.LevelError)
 	q.Start()
 
 	db, err := c.GetDB()
