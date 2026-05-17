@@ -1,6 +1,12 @@
 package main
 
 import (
+	"context"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
 	"github.com/wgomg/edub-kushim/internal/api"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
@@ -26,11 +32,28 @@ func main() {
 		log.Fatal("Unable to establish database connection:", err)
 	}
 
-	srv := api.NewServer(cfg.Srv, logger, db)
+	srv := api.NewServer(*cfg, logger, db)
 
-	logger.Info(nil, "Server starting on %s:%d", cfg.Srv.Host, cfg.Srv.Port)
+	// Graceful shutdown on SIGINT/SIGTERM
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
-	if err := srv.Start(); err != nil {
-		logger.Fatal("Server failed to start:", err)
+	go func() {
+		logger.Info(nil, "Server starting on %s", srv.Addr())
+		if err := srv.Start(); err != nil {
+			logger.Fatal("Server failed to start:", err)
+		}
+	}()
+
+	sig := <-quit
+	logger.Info(nil, "Received signal %v, shutting down...", sig)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		logger.Fatal("Server forced to shutdown:", err)
 	}
+
+	logger.Info(nil, "Server stopped")
 }

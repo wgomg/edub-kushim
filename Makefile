@@ -11,6 +11,7 @@ MUPDF_LIB     := $(MUPDF_DIR)/local/lib
 LIBNG_VER     := 1.6.43
 MUPDF_VER     := 1.27.2
 BINARY        := ./dev/bin/kushim
+EDUB_BINARY   := ./dev/bin/edub
 
 # Flags required by gosseract's C++ bridge
 export CGO_ENABLED    := 1
@@ -20,9 +21,10 @@ export CGO_CPPFLAGS   := -I$(TESS_INCLUDE) -I$(BUILD_DIR)/libpng/local/include
 
 all: build
 
-## Build the Go binary
+## Build both binaries
 build:
 	go build -o $(BINARY) ./cmd/kushim/main.go
+	go build -o $(EDUB_BINARY) ./cmd/edub/main.go
 
 ## Build libraries from source (one-time setup)
 build-deps:
@@ -67,17 +69,17 @@ consume: build
 
 ## Run all pure-Go tests (tiers 1–5, no CGo required)
 test:
-	go test ./internal/search/ ./internal/commands/ ./internal/database/ ./internal/consumption/ -v
+	go test ./internal/search/ ./internal/commands/ ./internal/database/ ./internal/consumption/ ./internal/api/handlers/ -v
 
 ## Run tests with coverage profile
 test-cover:
-	go test -coverprofile=coverage.out ./internal/search/ ./internal/commands/ ./internal/database/ ./internal/consumption/
+	go test -coverprofile=coverage.out ./internal/search/ ./internal/commands/ ./internal/database/ ./internal/consumption/ ./internal/api/handlers/
 	go tool cover -func=coverage.out
 
 ## Run integration tests (requires CGo build deps: make build-deps)
 test-integration:
 	go test -tags=integration -v ./internal/...
 
-## Delete the binary
+## Delete the binaries
 clean:
-	rm -f $(BINARY)
+	rm -f $(BINARY) $(EDUB_BINARY)

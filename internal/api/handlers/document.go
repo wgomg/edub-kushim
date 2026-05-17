@@ -7,18 +7,21 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type DocumentHandler struct {
 	queries *database.Queries
 	logger  *utils.Logger
+	engine  *search.Engine
 }
 
-func NewDocumentHandler(queries *database.Queries, logger *utils.Logger) *DocumentHandler {
+func NewDocumentHandler(queries *database.Queries, logger *utils.Logger, engine *search.Engine) *DocumentHandler {
 	return &DocumentHandler{
 		queries: queries,
 		logger:  logger,
+		engine:  engine,
 	}
 }
 
@@ -110,6 +113,59 @@ func (h *DocumentHandler) GetDocument(w http.ResponseWriter, r *http.Request) {
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		h.logger.Error(&reqID, "Failed to encode document response: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+	}
+}
+
+func (h *DocumentHandler) SearchDocuments(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := ctx.Value("reqid").(string)
+	h.logger.Debug(&reqID, "Search documents requested")
+
+	pb := utils.GetParamBag(r)
+	if pb == nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	q := pb.Get("q", "")
+	if q == "" {
+		http.Error(w, "Query parameter 'q' is required", http.StatusBadRequest)
+		return
+	}
+
+	limit := pb.GetInt64("limit", 50, 1, 100)
+	offset := pb.GetInt64("offset", 0, 0, 0)
+
+	results, err := h.engine.Search(ctx, q, int32(limit), int32(offset))
+	if err != nil {
+		h.logger.Error(&reqID, "Search failed: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	response := make([]types.FTSDocumentResponse, len(results))
+	for i, r := range results {
+		response[i] = types.FTSDocumentResponse{
+			ID:             r.DocumentID,
+			Title:          r.Title,
+			MD5Checksum:    r.MD5Checksum,
+			SHA512Checksum: r.SHA512Checksum,
+			MimeType:       r.MimeType,
+			FileSize:       r.FileSize,
+			CreatedAt:      r.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			ModifiedAt:     r.ModifiedAt.Format("2006-01-02T15:04:05Z"),
+			Rank:           r.Rank,
+			Snippet:        r.Snippet,
+			TextContent:    "",
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		h.logger.Error(&reqID, "Failed to encode search response: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
 }

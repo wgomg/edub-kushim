@@ -9,7 +9,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/api/handlers"
 	"github.com/wgomg/edub-kushim/internal/config"
+	"github.com/wgomg/edub-kushim/internal/consumption"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -19,22 +21,24 @@ type Server struct {
 	addr       string
 }
 
-func NewServer(cfg config.ServerConfig, logger *utils.Logger, db *sql.DB) *Server {
-	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
+func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
+	addr := fmt.Sprintf("%s:%d", cfg.Srv.Host, cfg.Srv.Port)
 
 	mux := http.NewServeMux()
 
 	queries := database.NewQueries(db)
+	engine := search.NewEngine(logger, db)
+	consumer := consumption.NewConsumer(&cfg, logger, db)
 
-	registerRoutes(mux, logger, queries)
+	registerRoutes(mux, logger, queries, engine, consumer)
 	handler := chainMiddleware(logger, mux)
 
 	server := &http.Server{
 		Addr:         addr,
 		Handler:      handler,
-		ReadTimeout:  cfg.ReadTimeout,
-		WriteTimeout: cfg.WriteTimeout,
-		IdleTimeout:  cfg.IdleTimeout,
+		ReadTimeout:  cfg.Srv.ReadTimeout,
+		WriteTimeout: cfg.Srv.WriteTimeout,
+		IdleTimeout:  cfg.Srv.IdleTimeout,
 	}
 
 	return &Server{
@@ -44,18 +48,18 @@ func NewServer(cfg config.ServerConfig, logger *utils.Logger, db *sql.DB) *Serve
 	}
 }
 
-func registerRoutes(mux *http.ServeMux, logger *utils.Logger, queries *database.Queries) {
+func registerRoutes(mux *http.ServeMux, logger *utils.Logger, queries *database.Queries, engine *search.Engine, consumer *consumption.Consumer) {
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		handlers.HealthHandler(w, r, logger)
 	})
 
-	docHandler := handlers.NewDocumentHandler(queries, logger)
+	docHandler := handlers.NewDocumentHandler(queries, logger, engine)
 	mux.HandleFunc("GET /api/v1/documents", docHandler.ListDocuments)
 	mux.HandleFunc("GET /api/v1/documents/{id}", docHandler.GetDocument)
+	mux.HandleFunc("GET /api/v1/documents/search", docHandler.SearchDocuments)
 
-	// API v1 routes will be added here
-	// mux.HandleFunc("GET /api/v1/documents", ...)
-	// mux.HandleFunc("POST /api/v1/documents", ...)
+	consumeHandler := handlers.NewConsumeHandler(consumer, logger)
+	mux.HandleFunc("POST /api/v1/consume", consumeHandler.Consume)
 }
 
 func chainMiddleware(logger *utils.Logger, h http.Handler) http.Handler {
