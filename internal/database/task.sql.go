@@ -8,6 +8,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 )
 
 const claimTask = `-- name: ClaimTask :execrows
@@ -28,18 +29,18 @@ func (q *Queries) ClaimTask(ctx context.Context, id int64) (int64, error) {
 const completeTask = `-- name: CompleteTask :exec
 UPDATE task SET
     status = 'completed',
-    document_id = ?,
+    result = ?,
     completed_at = CURRENT_TIMESTAMP
 WHERE id = ?
 `
 
 type CompleteTaskParams struct {
-	DocumentID sql.NullInt64
-	ID         int64
+	Result *json.RawMessage
+	ID     int64
 }
 
 func (q *Queries) CompleteTask(ctx context.Context, arg CompleteTaskParams) error {
-	_, err := q.db.ExecContext(ctx, completeTask, arg.DocumentID, arg.ID)
+	_, err := q.db.ExecContext(ctx, completeTask, arg.Result, arg.ID)
 	return err
 }
 
@@ -61,27 +62,27 @@ func (q *Queries) CountTasksByBatchAndStatus(ctx context.Context, arg CountTasks
 
 const createTask = `-- name: CreateTask :execresult
 INSERT INTO task (
-    task_id, task_name, status, document_id, batch_id, file_path
+    task_id, task_type, status, batch_id, payload, dedup_key
 ) VALUES (?, ?, ?, ?, ?, ?)
 `
 
 type CreateTaskParams struct {
-	TaskID     string
-	TaskName   string
-	Status     string
-	DocumentID sql.NullInt64
-	BatchID    sql.NullString
-	FilePath   sql.NullString
+	TaskID   string
+	TaskType string
+	Status   string
+	BatchID  sql.NullString
+	Payload  json.RawMessage
+	DedupKey sql.NullString
 }
 
 func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (sql.Result, error) {
 	return q.db.ExecContext(ctx, createTask,
 		arg.TaskID,
-		arg.TaskName,
+		arg.TaskType,
 		arg.Status,
-		arg.DocumentID,
 		arg.BatchID,
-		arg.FilePath,
+		arg.Payload,
+		arg.DedupKey,
 	)
 }
 
@@ -123,8 +124,21 @@ func (q *Queries) GetNextPendingTask(ctx context.Context) (int64, error) {
 	return id, err
 }
 
+const getNextPendingTaskOfType = `-- name: GetNextPendingTaskOfType :one
+SELECT id FROM task
+WHERE status = 'pending' AND task_type = ?
+ORDER BY created_at LIMIT 1
+`
+
+func (q *Queries) GetNextPendingTaskOfType(ctx context.Context, taskType string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getNextPendingTaskOfType, taskType)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
 const getTask = `-- name: GetTask :one
-SELECT id, task_id, task_name, status, document_id, batch_id, file_path, created_at, started_at, completed_at, error FROM task WHERE id = ?
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key, created_at, started_at, completed_at, error FROM task WHERE id = ?
 `
 
 func (q *Queries) GetTask(ctx context.Context, id int64) (Task, error) {
@@ -133,11 +147,12 @@ func (q *Queries) GetTask(ctx context.Context, id int64) (Task, error) {
 	err := row.Scan(
 		&i.ID,
 		&i.TaskID,
-		&i.TaskName,
+		&i.TaskType,
 		&i.Status,
-		&i.DocumentID,
 		&i.BatchID,
-		&i.FilePath,
+		&i.Payload,
+		&i.Result,
+		&i.DedupKey,
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
@@ -147,7 +162,7 @@ func (q *Queries) GetTask(ctx context.Context, id int64) (Task, error) {
 }
 
 const getTaskByBatchID = `-- name: GetTaskByBatchID :many
-SELECT id, task_id, task_name, status, document_id, batch_id, file_path, created_at, started_at, completed_at, error FROM task WHERE batch_id = ? ORDER BY created_at
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key, created_at, started_at, completed_at, error FROM task WHERE batch_id = ? ORDER BY created_at
 `
 
 func (q *Queries) GetTaskByBatchID(ctx context.Context, batchID sql.NullString) ([]Task, error) {
@@ -162,11 +177,12 @@ func (q *Queries) GetTaskByBatchID(ctx context.Context, batchID sql.NullString) 
 		if err := rows.Scan(
 			&i.ID,
 			&i.TaskID,
-			&i.TaskName,
+			&i.TaskType,
 			&i.Status,
-			&i.DocumentID,
 			&i.BatchID,
-			&i.FilePath,
+			&i.Payload,
+			&i.Result,
+			&i.DedupKey,
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.CompletedAt,
@@ -186,7 +202,7 @@ func (q *Queries) GetTaskByBatchID(ctx context.Context, batchID sql.NullString) 
 }
 
 const getTaskByTaskID = `-- name: GetTaskByTaskID :one
-SELECT id, task_id, task_name, status, document_id, batch_id, file_path, created_at, started_at, completed_at, error FROM task WHERE task_id = ?
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key, created_at, started_at, completed_at, error FROM task WHERE task_id = ?
 `
 
 func (q *Queries) GetTaskByTaskID(ctx context.Context, taskID string) (Task, error) {
@@ -195,11 +211,12 @@ func (q *Queries) GetTaskByTaskID(ctx context.Context, taskID string) (Task, err
 	err := row.Scan(
 		&i.ID,
 		&i.TaskID,
-		&i.TaskName,
+		&i.TaskType,
 		&i.Status,
-		&i.DocumentID,
 		&i.BatchID,
-		&i.FilePath,
+		&i.Payload,
+		&i.Result,
+		&i.DedupKey,
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
@@ -209,7 +226,7 @@ func (q *Queries) GetTaskByTaskID(ctx context.Context, taskID string) (Task, err
 }
 
 const listTasks = `-- name: ListTasks :many
-SELECT id, task_id, task_name, status, document_id, batch_id, file_path,
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error
 FROM task ORDER BY created_at DESC LIMIT ? OFFSET ?
 `
@@ -231,11 +248,12 @@ func (q *Queries) ListTasks(ctx context.Context, arg ListTasksParams) ([]Task, e
 		if err := rows.Scan(
 			&i.ID,
 			&i.TaskID,
-			&i.TaskName,
+			&i.TaskType,
 			&i.Status,
-			&i.DocumentID,
 			&i.BatchID,
-			&i.FilePath,
+			&i.Payload,
+			&i.Result,
+			&i.DedupKey,
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.CompletedAt,
@@ -255,7 +273,7 @@ func (q *Queries) ListTasks(ctx context.Context, arg ListTasksParams) ([]Task, e
 }
 
 const listTasksByBatch = `-- name: ListTasksByBatch :many
-SELECT id, task_id, task_name, status, document_id, batch_id, file_path,
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error
 FROM task WHERE batch_id = ? ORDER BY created_at
 `
@@ -272,11 +290,12 @@ func (q *Queries) ListTasksByBatch(ctx context.Context, batchID sql.NullString) 
 		if err := rows.Scan(
 			&i.ID,
 			&i.TaskID,
-			&i.TaskName,
+			&i.TaskType,
 			&i.Status,
-			&i.DocumentID,
 			&i.BatchID,
-			&i.FilePath,
+			&i.Payload,
+			&i.Result,
+			&i.DedupKey,
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.CompletedAt,
@@ -296,7 +315,7 @@ func (q *Queries) ListTasksByBatch(ctx context.Context, batchID sql.NullString) 
 }
 
 const listTasksByBatchAndStatus = `-- name: ListTasksByBatchAndStatus :many
-SELECT id, task_id, task_name, status, document_id, batch_id, file_path,
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error
 FROM task WHERE batch_id = ? AND status = ? ORDER BY created_at
 `
@@ -318,52 +337,12 @@ func (q *Queries) ListTasksByBatchAndStatus(ctx context.Context, arg ListTasksBy
 		if err := rows.Scan(
 			&i.ID,
 			&i.TaskID,
-			&i.TaskName,
+			&i.TaskType,
 			&i.Status,
-			&i.DocumentID,
 			&i.BatchID,
-			&i.FilePath,
-			&i.CreatedAt,
-			&i.StartedAt,
-			&i.CompletedAt,
-			&i.Error,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listTasksByDocument = `-- name: ListTasksByDocument :many
-SELECT id, task_id, task_name, status, document_id, batch_id, file_path,
-       created_at, started_at, completed_at, error
-FROM task WHERE document_id = ? ORDER BY created_at DESC
-`
-
-func (q *Queries) ListTasksByDocument(ctx context.Context, documentID sql.NullInt64) ([]Task, error) {
-	rows, err := q.db.QueryContext(ctx, listTasksByDocument, documentID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []Task
-	for rows.Next() {
-		var i Task
-		if err := rows.Scan(
-			&i.ID,
-			&i.TaskID,
-			&i.TaskName,
-			&i.Status,
-			&i.DocumentID,
-			&i.BatchID,
-			&i.FilePath,
+			&i.Payload,
+			&i.Result,
+			&i.DedupKey,
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.CompletedAt,
@@ -383,7 +362,7 @@ func (q *Queries) ListTasksByDocument(ctx context.Context, documentID sql.NullIn
 }
 
 const listTasksByStatus = `-- name: ListTasksByStatus :many
-SELECT id, task_id, task_name, status, document_id, batch_id, file_path,
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error
 FROM task WHERE status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?
 `
@@ -406,11 +385,12 @@ func (q *Queries) ListTasksByStatus(ctx context.Context, arg ListTasksByStatusPa
 		if err := rows.Scan(
 			&i.ID,
 			&i.TaskID,
-			&i.TaskName,
+			&i.TaskType,
 			&i.Status,
-			&i.DocumentID,
 			&i.BatchID,
-			&i.FilePath,
+			&i.Payload,
+			&i.Result,
+			&i.DedupKey,
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.CompletedAt,
@@ -432,6 +412,7 @@ func (q *Queries) ListTasksByStatus(ctx context.Context, arg ListTasksByStatusPa
 const retryTask = `-- name: RetryTask :exec
 UPDATE task SET
     status = 'pending',
+    result = NULL,
     error = NULL,
     started_at = NULL,
     completed_at = NULL
@@ -440,32 +421,5 @@ WHERE id = ?
 
 func (q *Queries) RetryTask(ctx context.Context, id int64) error {
 	_, err := q.db.ExecContext(ctx, retryTask, id)
-	return err
-}
-
-const startTask = `-- name: StartTask :exec
-UPDATE task SET
-    status = 'processing',
-    started_at = CURRENT_TIMESTAMP
-WHERE id = ?
-`
-
-func (q *Queries) StartTask(ctx context.Context, id int64) error {
-	_, err := q.db.ExecContext(ctx, startTask, id)
-	return err
-}
-
-const updateTaskStatus = `-- name: UpdateTaskStatus :exec
-UPDATE task SET status = ?, error = ? WHERE id = ?
-`
-
-type UpdateTaskStatusParams struct {
-	Status string
-	Error  sql.NullString
-	ID     int64
-}
-
-func (q *Queries) UpdateTaskStatus(ctx context.Context, arg UpdateTaskStatusParams) error {
-	_, err := q.db.ExecContext(ctx, updateTaskStatus, arg.Status, arg.Error, arg.ID)
 	return err
 }

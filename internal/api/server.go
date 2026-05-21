@@ -10,10 +10,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/api/handlers"
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/consumption"
 	"github.com/wgomg/edub-kushim/internal/database"
-	"github.com/wgomg/edub-kushim/internal/queue"
+	"github.com/wgomg/edub-kushim/internal/pool"
 	"github.com/wgomg/edub-kushim/internal/search"
+	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -21,7 +21,7 @@ type Server struct {
 	httpServer *http.Server
 	logger     *utils.Logger
 	addr       string
-	queue      *queue.Queue
+	pool       *pool.Pool
 }
 
 func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
@@ -31,18 +31,21 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 
 	queries := database.NewQueries(db)
 	engine := search.NewEngine(logger, db)
-	consumer := consumption.NewConsumer(&cfg, logger, db)
 
-	// choose a default — one worker is sensible for OCR-heavy workloads
+	dispatcher, err := task.NewDispatcher(&cfg, logger, db)
+	if err != nil {
+		logger.Fatal("dispatcher: ", err)
+	}
+
 	workers := cfg.Consumer.Workers
 	if workers < 1 {
 		workers = 1
 	}
 
-	consumeHandler := consumption.NewConsumeTaskHandler(consumer)
-	taskQueue := queue.New(logger, db, workers, consumeHandler)
+	p := pool.New(logger, dispatcher, workers, 2*time.Second)
 
-	registerRoutes(mux, logger, queries, engine, consumer, taskQueue, &cfg)
+	registerRoutes(mux, logger, queries, engine, dispatcher, &cfg)
+
 	handler := chainMiddleware(logger, mux)
 
 	server := &http.Server{
@@ -57,11 +60,11 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 		httpServer: server,
 		logger:     logger,
 		addr:       addr,
-		queue:      taskQueue,
+		pool:       p,
 	}
 }
 
-func registerRoutes(mux *http.ServeMux, logger *utils.Logger, queries *database.Queries, engine *search.Engine, consumer *consumption.Consumer, taskQueue *queue.Queue, cfg *config.Config) {
+func registerRoutes(mux *http.ServeMux, logger *utils.Logger, queries *database.Queries, engine *search.Engine, dispatcher *task.Dispatcher, cfg *config.Config) {
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		handlers.HealthHandler(w, r, logger)
 	})
@@ -71,7 +74,7 @@ func registerRoutes(mux *http.ServeMux, logger *utils.Logger, queries *database.
 	mux.HandleFunc("GET /api/v1/documents/{id}", docHandler.GetDocument)
 	mux.HandleFunc("GET /api/v1/documents/search", docHandler.SearchDocuments)
 
-	consumeHandler := handlers.NewConsumeHandler(consumer, taskQueue, cfg, logger)
+	consumeHandler := handlers.NewConsumeHandler(cfg, logger, dispatcher)
 	mux.HandleFunc("POST /api/v1/consume", consumeHandler.Consume)
 
 	taskHandler := handlers.NewTaskHandler(queries, logger)
@@ -106,7 +109,7 @@ func parambagMiddleware(next http.Handler) http.Handler {
 }
 
 func (s *Server) Start() error {
-	s.queue.Start()
+	s.pool.Start()
 	s.logger.Info(nil, "Starting HTTP server on %s", s.addr)
 	return s.httpServer.ListenAndServe()
 }
@@ -114,14 +117,13 @@ func (s *Server) Start() error {
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.logger.Info(nil, "Shutting down HTTP server")
 
-	// Stop accepting new requests first, then drain the queue
 	if err := s.httpServer.Shutdown(ctx); err != nil {
 		return err
 	}
 
 	stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	s.queue.Stop(stopCtx)
+	s.pool.Stop(stopCtx)
 
 	return nil
 }

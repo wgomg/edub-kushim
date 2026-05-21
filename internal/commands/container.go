@@ -6,20 +6,19 @@ import (
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/consumption"
 	"github.com/wgomg/edub-kushim/internal/database"
-	"github.com/wgomg/edub-kushim/internal/queue"
+	"github.com/wgomg/edub-kushim/internal/pool"
 	"github.com/wgomg/edub-kushim/internal/search"
+	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type Container struct {
-	config   *config.Config
-	logger   *utils.Logger
-	db       *sql.DB
-	consumer *consumption.Consumer
-	engine   *search.Engine
-	taskQ    *queue.Queue
+	config *config.Config
+	logger *utils.Logger
+	db     *sql.DB
+	engine *search.Engine
+	pool   *pool.Pool
 }
 
 func NewContainer(cfg *config.Config, logger *utils.Logger) *Container {
@@ -45,37 +44,23 @@ func (c *Container) GetDB() (*sql.DB, error) {
 	return c.db, nil
 }
 
-func (c *Container) GetConsumer() (*consumption.Consumer, error) {
-	if c.consumer == nil {
+func (c *Container) GetPool() (*pool.Pool, error) {
+	if c.pool == nil {
 		db, err := c.GetDB()
 		if err != nil {
 			return nil, err
 		}
-		c.consumer = consumption.NewConsumer(c.config, c.logger, db)
-	}
-	return c.consumer, nil
-}
-
-func (c *Container) GetQueue() (*queue.Queue, error) {
-	if c.taskQ == nil {
-		db, err := c.GetDB()
+		dispatcher, err := task.NewDispatcher(c.config, c.logger, db)
 		if err != nil {
 			return nil, err
 		}
-		consumer, err := c.GetConsumer()
-		if err != nil {
-			return nil, err
-		}
-
 		workers := c.config.Consumer.Workers
 		if workers < 1 {
 			workers = 1
 		}
-
-		handler := consumption.NewConsumeTaskHandler(consumer)
-		c.taskQ = queue.New(c.logger, db, workers, handler)
+		c.pool = pool.New(c.logger, dispatcher, workers, 2*time.Second)
 	}
-	return c.taskQ, nil
+	return c.pool, nil
 }
 
 func (c *Container) GetSearchEngine() (*search.Engine, error) {
@@ -90,10 +75,10 @@ func (c *Container) GetSearchEngine() (*search.Engine, error) {
 }
 
 func (c *Container) Close() {
-	if c.taskQ != nil {
+	if c.pool != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		c.taskQ.Stop(ctx)
+		c.pool.Stop(ctx)
 	}
 	if c.db != nil {
 		c.db.Close()

@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -9,7 +10,7 @@ import (
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/database"
-	"github.com/wgomg/edub-kushim/internal/queue"
+	"github.com/wgomg/edub-kushim/internal/task"
 )
 
 func taskHandler(c *Container, args []string) error {
@@ -66,7 +67,7 @@ func taskListHandler(c *Container, args []string) error {
 		return fmt.Errorf("database: %w", err)
 	}
 
-	tasks, err := queue.ListTasksFiltered(context.Background(), database.NewQueries(db), queue.TaskFilter{
+	tasks, err := task.ListFiltered(context.Background(), database.NewQueries(db), task.TaskFilter{
 		BatchID: batchID,
 		Status:  statusFilter,
 		Limit:   int64(limit),
@@ -86,8 +87,12 @@ func taskListHandler(c *Container, args []string) error {
 
 	for _, t := range tasks {
 		fileName := ""
-		if t.FilePath.Valid {
-			fileName = filepath.Base(t.FilePath.String)
+		if t.Payload != nil {
+			var p struct {
+				FilePath string `json:"file_path"`
+			}
+			json.Unmarshal(t.Payload, &p)
+			fileName = filepath.Base(p.FilePath)
 		}
 		batchShort := t.BatchID.String
 		if len(batchShort) > 12 {
@@ -115,35 +120,45 @@ func taskStatusHandler(c *Container, args []string) error {
 		return fmt.Errorf("database: %w", err)
 	}
 
-	task, err := queue.GetTask(context.Background(), database.NewQueries(db), args[0])
+	t, err := task.Get(context.Background(), database.NewQueries(db), args[0])
 	if err != nil {
-		if errors.Is(err, queue.ErrTaskNotFound) {
+		if errors.Is(err, task.ErrTaskNotFound) {
 			return fmt.Errorf("task %q not found", args[0])
 		}
 		return fmt.Errorf("get task: %w", err)
 	}
 
 	fileName := ""
-	if task.FilePath.Valid {
-		fileName = filepath.Base(task.FilePath.String)
+	if t.Payload != nil {
+		var p struct {
+			FilePath string `json:"file_path"`
+		}
+		json.Unmarshal(t.Payload, &p)
+		fileName = filepath.Base(p.FilePath)
 	}
 
-	fmt.Printf("Task ID:    %s\n", task.TaskID)
-	fmt.Printf("Batch ID:   %s\n", task.BatchID.String)
-	fmt.Printf("Status:     %s\n", task.Status)
+	fmt.Printf("Task ID:    %s\n", t.TaskID)
+	fmt.Printf("Batch ID:   %s\n", t.BatchID.String)
+	fmt.Printf("Status:     %s\n", t.Status)
 	fmt.Printf("File:       %s\n", fileName)
-	fmt.Printf("Created:    %s\n", task.CreatedAt.Time.Format(time.RFC3339))
-	if task.StartedAt.Valid {
-		fmt.Printf("Started:    %s\n", task.StartedAt.Time.Format(time.RFC3339))
+	fmt.Printf("Created:    %s\n", t.CreatedAt.Time.Format(time.RFC3339))
+	if t.StartedAt.Valid {
+		fmt.Printf("Started:    %s\n", t.StartedAt.Time.Format(time.RFC3339))
 	}
-	if task.CompletedAt.Valid {
-		fmt.Printf("Completed:  %s\n", task.CompletedAt.Time.Format(time.RFC3339))
+	if t.CompletedAt.Valid {
+		fmt.Printf("Completed:  %s\n", t.CompletedAt.Time.Format(time.RFC3339))
 	}
-	if task.DocumentID.Valid {
-		fmt.Printf("Document:   %d\n", task.DocumentID.Int64)
+	if t.Result != nil {
+		var r struct {
+			DocumentID int64 `json:"document_id"`
+		}
+		json.Unmarshal(*t.Result, &r)
+		if r.DocumentID != 0 {
+			fmt.Printf("Document:   %d\n", r.DocumentID)
+		}
 	}
-	if task.Error.Valid {
-		fmt.Printf("Error:      %s\n", task.Error.String)
+	if t.Error.Valid {
+		fmt.Printf("Error:      %s\n", t.Error.String)
 	}
 
 	return nil
@@ -166,7 +181,7 @@ func taskRetryHandler(c *Container, args []string) error {
 		return fmt.Errorf("database: %w", err)
 	}
 
-	if err := queue.RetryTaskByTaskID(context.Background(), database.NewQueries(db), args[0]); err != nil {
+	if err := task.Retry(context.Background(), database.NewQueries(db), args[0]); err != nil {
 		return err
 	}
 

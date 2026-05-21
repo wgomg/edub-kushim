@@ -27,11 +27,12 @@ CREATE TABLE user (
 CREATE TABLE task (
     id INTEGER PRIMARY KEY,
     task_id TEXT NOT NULL UNIQUE,
-    task_name TEXT NOT NULL,
-    status TEXT NOT NULL,
-    document_id INTEGER,
+    task_type TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
     batch_id TEXT,
-    file_path TEXT,
+    payload JSON,
+    result JSON,
+    dedup_key TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     started_at DATETIME,
     completed_at DATETIME,
@@ -97,8 +98,13 @@ BEGIN
 END;
 
 CREATE INDEX idx_task_status ON task(status);
+CREATE INDEX idx_task_type ON task(task_type);
 CREATE INDEX idx_task_batch ON task(batch_id);
 CREATE INDEX idx_task_batch_status ON task(batch_id, status);
+CREATE INDEX idx_task_pending ON task(created_at) WHERE status = 'pending';
+
+CREATE UNIQUE INDEX idx_task_dedup ON task(task_type, dedup_key)
+    WHERE status IN ('pending', 'processing') AND dedup_key IS NOT NULL;
 CREATE INDEX idx_document_md5 ON document(md5_checksum);
 CREATE INDEX idx_document_sha512 ON document(sha512_checksum);
 CREATE INDEX idx_document_created ON document(created_at);

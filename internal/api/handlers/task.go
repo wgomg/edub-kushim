@@ -10,7 +10,7 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/database"
-	"github.com/wgomg/edub-kushim/internal/queue"
+	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -41,7 +41,7 @@ func (h *TaskHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
 	limit := pb.GetInt64("limit", 20, 1, 100)
 	offset := pb.GetInt64("offset", 0, 0, 0)
 
-	tasks, err := queue.ListTasksFiltered(ctx, h.queries, queue.TaskFilter{
+	tasks, err := task.ListFiltered(ctx, h.queries, task.TaskFilter{
 		BatchID: batchID,
 		Status:  statusFilter,
 		Limit:   limit,
@@ -78,9 +78,9 @@ func (h *TaskHandler) GetTask(w http.ResponseWriter, r *http.Request) {
 
 	taskID := r.PathValue("id")
 
-	task, err := queue.GetTask(ctx, h.queries, taskID)
+	t, err := task.Get(ctx, h.queries, taskID)
 	if err != nil {
-		if errors.Is(err, queue.ErrTaskNotFound) {
+		if errors.Is(err, task.ErrTaskNotFound) {
 			http.Error(w, "Task not found", http.StatusNotFound)
 			return
 		}
@@ -90,7 +90,7 @@ func (h *TaskHandler) GetTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(taskToResponse(task))
+	json.NewEncoder(w).Encode(taskToResponse(t))
 }
 
 func (h *TaskHandler) GetBatchSummary(w http.ResponseWriter, r *http.Request) {
@@ -108,7 +108,7 @@ func (h *TaskHandler) GetBatchSummary(w http.ResponseWriter, r *http.Request) {
 }
 
 func buildBatchSummary(ctx context.Context, queries *database.Queries, batchID string) types.BatchSummaryResponse {
-	bc := queue.CountBatchStatuses(ctx, queries, batchID)
+	bc := task.CountBatchStatuses(ctx, queries, batchID)
 
 	return types.BatchSummaryResponse{
 		BatchID:    batchID,
@@ -122,8 +122,14 @@ func buildBatchSummary(ctx context.Context, queries *database.Queries, batchID s
 
 func taskToResponse(t database.Task) types.TaskResponse {
 	var docID *int64
-	if t.DocumentID.Valid {
-		docID = &t.DocumentID.Int64
+	if t.Result != nil {
+		var r struct {
+			DocumentID int64 `json:"document_id"`
+		}
+		json.Unmarshal(*t.Result, &r)
+		if r.DocumentID != 0 {
+			docID = &r.DocumentID
+		}
 	}
 
 	var errStr *string
@@ -144,8 +150,12 @@ func taskToResponse(t database.Task) types.TaskResponse {
 	}
 
 	fileName := ""
-	if t.FilePath.Valid {
-		fileName = filepath.Base(t.FilePath.String)
+	if t.Payload != nil {
+		var p struct {
+			FilePath string `json:"file_path"`
+		}
+		json.Unmarshal(t.Payload, &p)
+		fileName = filepath.Base(p.FilePath)
 	}
 
 	return types.TaskResponse{

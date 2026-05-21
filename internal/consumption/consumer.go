@@ -35,6 +35,7 @@ type File struct {
 	OptimizedPdfTmpPath  *string
 	StorageProcessedPath *string
 	StorageOriginalPath  *string
+	DocumentID           sql.NullInt64
 	MD5Checksum          string
 	SHA512Checksum       string
 	Text                 sql.NullString
@@ -43,69 +44,33 @@ type File struct {
 	FileSize             int64
 }
 
-func NewConsumer(cfg *config.Config, logger *utils.Logger, db *sql.DB) *Consumer {
+func NewConsumer(cfg *config.Config, logger *utils.Logger, db *sql.DB) (*Consumer, error) {
+	if cfg.Consumer.OptimizationFallback != "" {
+		if _, err := pdfoptimizer.NewPdfOptimizer(logger, config.ToolConfig{
+			Command: cfg.Consumer.OptimizationFallback,
+			Timeout: 30 * time.Second,
+		}); err != nil {
+			return nil, fmt.Errorf(
+				"optimization_fallback %q not available: %w — "+
+					"install it or set optimization_fallback to \"\" (empty) to disable",
+				cfg.Consumer.OptimizationFallback, err)
+		}
+	}
 	return &Consumer{
 		config: cfg,
 		logger: logger,
 		db:     db,
 		runner: tools.NewRunner(logger, &cfg.Consumer),
-	}
+	}, nil
 }
 
-func NewConsumerWithRunner(cfg *config.Config, logger *utils.Logger, db *sql.DB, runner *tools.Runner) *Consumer {
+func NewConsumerWithRunner(cfg *config.Config, logger *utils.Logger, db *sql.DB, runner *tools.Runner) (*Consumer, error) {
 	return &Consumer{
 		config: cfg,
 		logger: logger,
 		db:     db,
 		runner: runner,
-	}
-}
-
-func (c *Consumer) Consume(reqID *string) error {
-	filesToConsume, err := GetFiles(
-		c.config.Storage.ConsumptionDir,
-		c.config.Consumer.SupportedFiles,
-	)
-	if err != nil {
-		return fmt.Errorf("error reading consumption dir: %w", err)
-	}
-
-	if len(filesToConsume) == 0 {
-		c.logger.Info(reqID, "no files found")
-		return nil
-	}
-
-	if c.config.Consumer.OptimizationFallback != "" {
-		cfg := config.ToolConfig{
-			Command: c.config.Consumer.OptimizationFallback,
-			Timeout: 30 * time.Second,
-		}
-		if _, err := pdfoptimizer.NewPdfOptimizer(c.logger, cfg); err != nil {
-			return fmt.Errorf(
-				"optimization_fallback is %q but tool is not available: %w — "+
-					"install it or set optimization_fallback to \"\" (empty) to disable",
-				c.config.Consumer.OptimizationFallback, err,
-			)
-		}
-	}
-
-	c.logger.Info(reqID, "%d files found", len(filesToConsume))
-
-	// iterations := 10000
-	// for i := range iterations {
-	// 	c.logger.Info(nil, "Starting iteration %d/%d", i+1, iterations)
-	for _, file := range filesToConsume {
-		resultFile, err := c.Process(file)
-		if err != nil {
-			c.logger.Error(nil, "failed processing for %s: %v", resultFile.OriginalPath, err)
-		}
-	}
-	// 	if (i+1)%100 == 0 {
-	// 		c.logger.Info(nil, "Completed %d iterations", i+1)
-	// 	}
-	// }
-
-	return nil
+	}, nil
 }
 
 func (c *Consumer) Process(file File) (File, error) {
@@ -212,6 +177,8 @@ func (c *Consumer) Process(file File) (File, error) {
 	}
 
 	c.logger.Debug(nil, "Created document with ID: %d", documentID)
+
+	file.DocumentID = sql.NullInt64{Int64: documentID, Valid: true}
 
 	originalFileName := strconv.FormatInt(documentID, 10) + ".pdf"
 

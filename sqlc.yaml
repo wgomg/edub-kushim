@@ -8,3 +8,6 @@ sql:
         package: 'database'
         out: 'internal/database'
         sql_package: 'database/sql'
+        overrides:
+          - column: 'task.result'
+            go_type: '*encoding/json.RawMessage'

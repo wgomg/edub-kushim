@@ -7,23 +7,21 @@ import (
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/consumption"
-	"github.com/wgomg/edub-kushim/internal/queue"
+	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type ConsumeHandler struct {
-	consumer *consumption.Consumer
-	queue    *queue.Queue
-	cfg      *config.Config
-	logger   *utils.Logger
+	cfg        *config.Config
+	logger     *utils.Logger
+	dispatcher *task.Dispatcher
 }
 
-func NewConsumeHandler(consumer *consumption.Consumer, queue *queue.Queue, cfg *config.Config, logger *utils.Logger) *ConsumeHandler {
+func NewConsumeHandler(cfg *config.Config, logger *utils.Logger, dispatcher *task.Dispatcher) *ConsumeHandler {
 	return &ConsumeHandler{
-		consumer: consumer,
-		queue:    queue,
-		cfg:      cfg,
-		logger:   logger,
+		cfg:        cfg,
+		logger:     logger,
+		dispatcher: dispatcher,
 	}
 }
 
@@ -54,8 +52,16 @@ func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 	}
 
 	batchID := uuid.New().String()
-	enqueued := h.queue.EnqueueFilePaths(ctx, "consume", batchID, consumption.FilePaths(files))
-
+	enqueued := 0
+	for _, f := range files {
+		payload, _ := json.Marshal(map[string]string{"file_path": f.OriginalPath})
+		_, err := h.dispatcher.Enqueue(ctx, "consume", batchID, payload)
+		if err != nil {
+			h.logger.Error(&reqID, "enqueue %s: %v", f.OriginalPath, err)
+			continue
+		}
+		enqueued++
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	json.NewEncoder(w).Encode(map[string]interface{}{

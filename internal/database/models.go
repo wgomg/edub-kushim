@@ -6,6 +6,7 @@ package database
 
 import (
 	"database/sql"
+	"encoding/json"
 )
 
 type Author struct {
@@ -60,11 +61,12 @@ type Tag struct {
 type Task struct {
 	ID          int64
 	TaskID      string
-	TaskName    string
+	TaskType    string
 	Status      string
-	DocumentID  sql.NullInt64
 	BatchID     sql.NullString
-	FilePath    sql.NullString
+	Payload     json.RawMessage
+	Result      *json.RawMessage
+	DedupKey    sql.NullString
 	CreatedAt   sql.NullTime
 	StartedAt   sql.NullTime
 	CompletedAt sql.NullTime
