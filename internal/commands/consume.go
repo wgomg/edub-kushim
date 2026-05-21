@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/consumption"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/pool"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -16,19 +19,57 @@ import (
 func consumeHandler(c *Container, args []string) error {
 	fp := NewFlagParser(args)
 
-	if fp.Help("Usage: kushim consume [--wait]\n" +
-		"  Scan inbox, create one task per file, and return.\n" +
-		"  Tasks are processed asynchronously by the server.\n\n" +
-		"  --wait          process inline and stream per-file progress to stdout") {
+	if fp.Help("Usage: kushim consume [--bg | --batch <id>]\n" +
+		"  Scan inbox, create one task per file, and process them.\n" +
+		"  Streams per-file progress to stdout.\n\n" +
+		"  --bg              enqueue and process in background (releases console)\n" +
+		"  --batch <id>      resume processing of an existing batch") {
 		return nil
 	}
 
-	waitFlag := false
-	fp.Bool("--wait", &waitFlag)
+	bgFlag := false
+	fp.Bool("--bg", &bgFlag)
+
+	var batchIDParam string
+	fp.String("--batch", &batchIDParam)
+
+	if bgFlag && batchIDParam != "" {
+		return fmt.Errorf("--bg and --batch are mutually exclusive")
+	}
 
 	p, err := c.GetPool()
 	if err != nil {
 		return fmt.Errorf("failed to get pool: %w", err)
+	}
+
+	db, err := c.GetDB()
+	if err != nil {
+		return fmt.Errorf("failed to get database: %w", err)
+	}
+	queries := database.NewQueries(db)
+	ctx := context.Background()
+
+	if batchIDParam != "" {
+		tasks, err := task.ListFiltered(ctx, queries, task.TaskFilter{
+			BatchID: batchIDParam,
+		})
+		if err != nil {
+			return fmt.Errorf("query batch %s: %w", batchIDParam, err)
+		}
+		if len(tasks) == 0 {
+			fmt.Println("batch not found")
+			return fmt.Errorf("batch %s not found", batchIDParam)
+		}
+
+		counts := task.CountBatchStatuses(ctx, queries, batchIDParam)
+		if counts.Pending == 0 && counts.Processing == 0 {
+			fmt.Println("batch already finished")
+			return nil
+		}
+
+		fmt.Printf("Resuming batch %s (%d pending)...\n", batchIDParam, counts.Pending)
+
+		return pollBatch(ctx, queries, p, c.logger, batchIDParam)
 	}
 
 	files, err := consumption.GetFiles(
@@ -43,13 +84,6 @@ func consumeHandler(c *Container, args []string) error {
 		fmt.Println("No files found in consumption directory")
 		return nil
 	}
-
-	db, err := c.GetDB()
-	if err != nil {
-		return fmt.Errorf("failed to get database: %w", err)
-	}
-	queries := database.NewQueries(db)
-	ctx := context.Background()
 
 	dispatcher, err := task.NewDispatcher(c.config, c.logger, db)
 	if err != nil {
@@ -75,9 +109,20 @@ func consumeHandler(c *Container, args []string) error {
 
 	fmt.Printf("Batch: %s\n", batchID)
 
-	if !waitFlag {
+	if bgFlag {
 		fmt.Printf("Files: %d\n", enqueued)
 		fmt.Printf("Use 'kushim task list --batch %s' to track progress.\n", batchID)
+
+		c.logger.SetLevel(utils.LevelError)
+
+		cmd := exec.Command(os.Args[0], "consume", "--batch", batchID)
+		cmd.Stdin = nil
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+		if err := cmd.Start(); err != nil {
+			return fmt.Errorf("failed to start background process: %w", err)
+		}
+
 		return nil
 	}
 
@@ -87,7 +132,11 @@ func consumeHandler(c *Container, args []string) error {
 
 	fmt.Println("Waiting for completion...")
 
-	c.logger.SetLevel(utils.LevelError)
+	return pollBatch(ctx, queries, p, c.logger, batchID)
+}
+
+func pollBatch(ctx context.Context, queries *database.Queries, p *pool.Pool, logger *utils.Logger, batchID string) error {
+	logger.SetLevel(utils.LevelError)
 	p.Start()
 
 	previous := make(map[string]string)
