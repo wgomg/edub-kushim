@@ -1,12 +1,14 @@
 package textextractor
 
 import (
+	"context"
+
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type TextExtractor interface {
-	Extract(path string) (*string, error)
+	Extract(ctx context.Context, path string) (*string, error)
 	CanHandle(mimeType string) bool
 	Name() string
 }

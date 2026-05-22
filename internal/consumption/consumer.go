@@ -73,7 +73,7 @@ func NewConsumerWithRunner(cfg *config.Config, logger *utils.Logger, db *sql.DB,
 	}, nil
 }
 
-func (c *Consumer) Process(file File) (File, error) {
+func (c *Consumer) Process(ctx context.Context, file File) (File, error) {
 	start := time.Now()
 	c.logger.Info(nil, "starting processing for file %s", file.OriginalPath)
 
@@ -86,7 +86,7 @@ func (c *Consumer) Process(file File) (File, error) {
 		}
 	}()
 
-	duplicated, err := c.isDuplicate(file.OriginalPath)
+	duplicated, err := c.isDuplicate(ctx, file.OriginalPath)
 	if err != nil {
 		return file, fmt.Errorf("failed to check for duplicate: %v", err)
 	}
@@ -95,15 +95,15 @@ func (c *Consumer) Process(file File) (File, error) {
 		return file, fmt.Errorf("file is a duplicate, skipping")
 	}
 
-	file, err = c.extractText(file)
+	file, err = c.extractText(ctx, file)
 	if err != nil {
 		return file, err
 	}
 
 	// llm/semantic processing for tags, title, author and doc type
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	txCtx, txCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer txCancel()
 
 	datePath := filepath.Join(
 		strconv.Itoa(file.Date.Year()),
@@ -125,7 +125,7 @@ func (c *Consumer) Process(file File) (File, error) {
 	)
 	file.StorageOriginalPath = &storeOriginalPath
 
-	tx, err := c.db.BeginTx(ctx, nil)
+	tx, err := c.db.BeginTx(txCtx, nil)
 	if err != nil {
 		return file, fmt.Errorf("failed to begin database transaction: %w", err)
 	}
@@ -157,7 +157,7 @@ func (c *Consumer) Process(file File) (File, error) {
 	// file.SHA512Checksum = sha512Hash
 
 	queries := database.NewQueries(c.db).WithTx(tx)
-	result, err := queries.CreateDocument(ctx, database.CreateDocumentParams{
+	result, err := queries.CreateDocument(txCtx, database.CreateDocumentParams{
 		Title:          file.Name,
 		Md5Checksum:    file.MD5Checksum,
 		Sha512Checksum: file.SHA512Checksum,
@@ -197,7 +197,7 @@ func (c *Consumer) Process(file File) (File, error) {
 	c.logger.Debug(nil, "Original path: %s", *file.StorageOriginalPath)
 	c.logger.Debug(nil, "Processed path: %s", *file.StorageProcessedPath)
 
-	err = queries.UpdateDocumentPaths(ctx, database.UpdateDocumentPathsParams{
+	err = queries.UpdateDocumentPaths(txCtx, database.UpdateDocumentPathsParams{
 		OriginalPath: *file.StorageOriginalPath,
 		StoragePath:  *file.StorageProcessedPath,
 		ID:           documentID,
@@ -282,18 +282,18 @@ func (c *Consumer) Process(file File) (File, error) {
 	return file, nil
 }
 
-func (c *Consumer) isDuplicate(path string) (bool, error) {
+func (c *Consumer) isDuplicate(ctx context.Context, path string) (bool, error) {
 	md5sum, err := calculateMD5(path)
 	if err != nil {
 		return false, err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	dupCtx, dupCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer dupCancel()
 
 	queries := database.NewQueries(c.db)
 
-	md5Result, err := queries.GetDocumentByMD5Checksum(ctx, md5sum)
+	md5Result, err := queries.GetDocumentByMD5Checksum(dupCtx, md5sum)
 	if err != nil {
 		return false, err
 	}
@@ -307,7 +307,7 @@ func (c *Consumer) isDuplicate(path string) (bool, error) {
 		return false, err
 	}
 
-	_, err = queries.GetDocumentBySHA512Checksum(ctx, sha512sum)
+	_, err = queries.GetDocumentBySHA512Checksum(dupCtx, sha512sum)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, nil
@@ -367,9 +367,7 @@ func humanDuration(d time.Duration) string {
 	}
 }
 
-func (c *Consumer) extractText(file File) (File, error) {
-	ctx := context.Background()
-
+func (c *Consumer) extractText(ctx context.Context, file File) (File, error) {
 	memBefore := utils.ReadMemSnapshot()
 	extractResult, err := c.runner.ExtractText(ctx, file.OriginalPath)
 	memAfterExtract := utils.ReadMemSnapshot()

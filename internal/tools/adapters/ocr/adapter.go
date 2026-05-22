@@ -1,12 +1,14 @@
 package ocr
 
 import (
+	"context"
+
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type OCR interface {
-	Process(path string) (*string, error)
+	Process(ctx context.Context, path string) (*string, error)
 	CanHandle(mimeType string) bool
 	Name() string
 }

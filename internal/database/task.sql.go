@@ -11,6 +11,32 @@ import (
 	"encoding/json"
 )
 
+const cancelPendingTasksByBatch = `-- name: CancelPendingTasksByBatch :execrows
+UPDATE task SET status = 'cancelled', completed_at = CURRENT_TIMESTAMP
+WHERE batch_id = ? AND status = 'pending'
+`
+
+func (q *Queries) CancelPendingTasksByBatch(ctx context.Context, batchID sql.NullString) (int64, error) {
+	result, err := q.db.ExecContext(ctx, cancelPendingTasksByBatch, batchID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const cancelProcessingTasksByBatch = `-- name: CancelProcessingTasksByBatch :execrows
+UPDATE task SET status = 'cancelled', completed_at = CURRENT_TIMESTAMP
+WHERE batch_id = ? AND status = 'processing'
+`
+
+func (q *Queries) CancelProcessingTasksByBatch(ctx context.Context, batchID sql.NullString) (int64, error) {
+	result, err := q.db.ExecContext(ctx, cancelProcessingTasksByBatch, batchID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const claimTask = `-- name: ClaimTask :execrows
 UPDATE task SET
     status = 'processing',

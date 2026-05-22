@@ -33,7 +33,7 @@ func (h *ConsumeTaskHandler) Handle(ctx context.Context, t database.Task) (json.
 		return nil, fmt.Errorf("build file from path: %w", err)
 	}
 
-	file, err = h.consumer.Process(file)
+	file, err = h.consumer.Process(ctx, file)
 	if err != nil {
 		return nil, err
 	}

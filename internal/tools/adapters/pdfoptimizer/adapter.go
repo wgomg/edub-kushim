@@ -1,12 +1,14 @@
 package pdfoptimizer
 
 import (
+	"context"
+
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type PdfOptimizer interface {
-	Optimize(path string) (*string, error)
+	Optimize(ctx context.Context, path string) (*string, error)
 	Name() string
 }
 

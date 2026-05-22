@@ -109,7 +109,7 @@ func parambagMiddleware(next http.Handler) http.Handler {
 }
 
 func (s *Server) Start() error {
-	s.pool.Start()
+	s.pool.Start(context.Background())
 	s.logger.Info(nil, "Starting HTTP server on %s", s.addr)
 	return s.httpServer.ListenAndServe()
 }

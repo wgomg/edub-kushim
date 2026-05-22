@@ -2,6 +2,7 @@ package ocr
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"image"
 	"image/jpeg"
@@ -39,24 +40,24 @@ func NewGosseract(logger *utils.Logger, cfg config.ToolConfig, optimizerCmd stri
 	return &Gosseract{logger: logger, config: cfg, optimizer: optimizer, languages: languages, dataDir: dataDir}, nil
 }
 
-func (o *Gosseract) Process(path string) (*string, error) {
+func (o *Gosseract) Process(ctx context.Context, path string) (*string, error) {
 	if err := EnsureLanguages(o.logger, o.dataDir, o.languages); err != nil {
 		return nil, fmt.Errorf("tessdata setup: %w", err)
 	}
 
-	ctx, err := adapters.NewMuContext()
+	mupdfCtx, err := adapters.NewMuContext()
 	if err != nil {
 		return nil, fmt.Errorf("mupdf context: %w", err)
 	}
-	defer ctx.Close()
+	defer mupdfCtx.Close()
 
-	doc, err := ctx.OpenMuDocument(path)
+	doc, err := mupdfCtx.OpenMuDocument(path)
 	if err != nil {
 		return nil, fmt.Errorf("open PDF: %w", err)
 	}
-	defer doc.Close(ctx)
+	defer doc.Close(mupdfCtx)
 
-	numPages := doc.NumPages(ctx)
+	numPages := doc.NumPages(mupdfCtx)
 	if numPages == 0 {
 		return nil, fmt.Errorf("PDF has no pages")
 	}
@@ -77,17 +78,22 @@ func (o *Gosseract) Process(path string) (*string, error) {
 	const outputDPI = 150
 
 	for i := range numPages {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
 		if i > 0 && i%50 == 0 {
 			o.logger.Info(nil, "OCR page %d/%d", i, numPages)
 		}
 
 		// Render page at 200 DPI for OCR
-		ocrW, ocrH, ocrSamples, ocrPixmap, err := doc.RenderPage(ctx, i, ocrDPI)
+		ocrW, ocrH, ocrSamples, ocrPixmap, err := doc.RenderPage(mupdfCtx, i, ocrDPI)
 		if err != nil {
 			return nil, fmt.Errorf("page %d: render error: %w", i, err)
 		}
 		ocrImg := samplesToRGBA(ocrSamples, ocrW, ocrH)
-		adapters.FreePixmap(ctx, ocrPixmap)
+		adapters.FreePixmap(mupdfCtx, ocrPixmap)
 
 		pngData, err := encodePNG(ocrImg)
 		ocrImg = nil
@@ -103,12 +109,12 @@ func (o *Gosseract) Process(path string) (*string, error) {
 		}
 
 		// Render again at lower DPI for the output image
-		lowW, lowH, lowSamples, lowPixmap, err := doc.RenderPage(ctx, i, outputDPI)
+		lowW, lowH, lowSamples, lowPixmap, err := doc.RenderPage(mupdfCtx, i, outputDPI)
 		if err != nil {
 			return nil, fmt.Errorf("page %d: low-res render error: %w", i, err)
 		}
 		lowImg := samplesToRGBA(lowSamples, lowW, lowH)
-		adapters.FreePixmap(ctx, lowPixmap)
+		adapters.FreePixmap(mupdfCtx, lowPixmap)
 
 		pageW := float64(lowW) * 72.0 / outputDPI
 		pageH := float64(lowH) * 72.0 / outputDPI
@@ -158,7 +164,7 @@ func (o *Gosseract) Process(path string) (*string, error) {
 
 	o.logger.Info(nil, "created searchable PDF: %s", outPath)
 
-	optResult, err := o.optimizer.Optimize(outPath)
+	optResult, err := o.optimizer.Optimize(ctx, outPath)
 	if err != nil {
 		os.Remove(outPath)
 		return nil, fmt.Errorf("optimize OCR output: %w", err)

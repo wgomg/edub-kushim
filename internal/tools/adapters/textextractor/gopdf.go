@@ -1,6 +1,7 @@
 package textextractor
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/razvandimescu/gopdf/pdf"
@@ -24,7 +25,7 @@ func NewGopdf(logger *utils.Logger, cfg config.ToolConfig) (*Gopdf, error) {
 	return &Gopdf{logger: logger, config: cfg}, nil
 }
 
-func (f *Gopdf) Extract(path string) (*string, error) {
+func (f *Gopdf) Extract(ctx context.Context, path string) (*string, error) {
 	doc, err := pdf.OpenFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("gopdf: %w", err)

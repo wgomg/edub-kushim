@@ -74,7 +74,7 @@ func (r *Runner) ExtractText(ctx context.Context, path string) (*TextExtractionR
 		return nil, fmt.Errorf("file does note xist: %s", path)
 	}
 
-	text, err := r.textExtractor.Extract(path)
+	text, err := r.textExtractor.Extract(ctx, path)
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +92,7 @@ func (r *Runner) OCR(ctx context.Context, path string) (*OCRResult, error) {
 		return nil, fmt.Errorf("file does note xist: %s", path)
 	}
 
-	outputPath, err := r.ocr.Process(path)
+	outputPath, err := r.ocr.Process(ctx, path)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +113,7 @@ func (r *Runner) OptimizePdf(ctx context.Context, path string) (*PdfOptimization
 		return nil, fmt.Errorf("file does not exist: %s", path)
 	}
 
-	outputPath, err := r.pdfOptimizer.Optimize(path)
+	outputPath, err := r.pdfOptimizer.Optimize(ctx, path)
 	if err != nil {
 		if r.config.OptimizationFallback == "" {
 			return nil, err
@@ -129,7 +129,7 @@ func (r *Runner) OptimizePdf(ctx context.Context, path string) (*PdfOptimization
 			return nil, fmt.Errorf("%s: %w; fallback %s: %w",
 				r.config.PdfOptimizer, err, r.config.OptimizationFallback, fbErr)
 		}
-		outputPath, err = fbOptimizer.Optimize(path)
+		outputPath, err = fbOptimizer.Optimize(ctx, path)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w; fallback %s: %w",
 				r.config.PdfOptimizer, err, r.config.OptimizationFallback, err)

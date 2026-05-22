@@ -1,6 +1,7 @@
 package textextractor
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -18,22 +19,27 @@ func NewMuPDF(logger *utils.Logger, cfg config.ToolConfig) (*MuPDF, error) {
 	return &MuPDF{logger: logger, config: cfg}, nil
 }
 
-func (m *MuPDF) Extract(path string) (*string, error) {
-	ctx, err := adapters.NewMuContext()
+func (m *MuPDF) Extract(ctx context.Context, path string) (*string, error) {
+	mupdfCtx, err := adapters.NewMuContext()
 	if err != nil {
 		return nil, fmt.Errorf("mupdf: %w", err)
 	}
-	defer ctx.Close()
+	defer mupdfCtx.Close()
 
-	doc, err := ctx.OpenMuDocument(path)
+	doc, err := mupdfCtx.OpenMuDocument(path)
 	if err != nil {
 		return nil, fmt.Errorf("mupdf: %w", err)
 	}
-	defer doc.Close(ctx)
+	defer doc.Close(mupdfCtx)
 
 	var buf strings.Builder
-	for i := range doc.NumPages(ctx) {
-		text, err := doc.ExtractPageText(ctx, i)
+	for i := range doc.NumPages(mupdfCtx) {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+		text, err := doc.ExtractPageText(mupdfCtx, i)
 		if err != nil {
 			return nil, fmt.Errorf("mupdf: page %d: %w", i, err)
 		}

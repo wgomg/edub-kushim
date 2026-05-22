@@ -74,3 +74,11 @@ WHERE id = ?;
 
 -- name: DeleteTask :exec
 DELETE FROM task WHERE id = ?;
+
+-- name: CancelPendingTasksByBatch :execrows
+UPDATE task SET status = 'cancelled', completed_at = CURRENT_TIMESTAMP
+WHERE batch_id = ? AND status = 'pending';
+
+-- name: CancelProcessingTasksByBatch :execrows
+UPDATE task SET status = 'cancelled', completed_at = CURRENT_TIMESTAMP
+WHERE batch_id = ? AND status = 'processing';

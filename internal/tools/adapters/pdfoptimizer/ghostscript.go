@@ -2,6 +2,7 @@ package pdfoptimizer
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -26,7 +27,7 @@ func NewGhostscript(logger *utils.Logger, cfg config.ToolConfig) (*Ghostscript, 
 	return &Ghostscript{logger: logger, config: cfg}, nil
 }
 
-func (g *Ghostscript) Optimize(path string) (*string, error) {
+func (g *Ghostscript) Optimize(ctx context.Context, path string) (*string, error) {
 	tmpDir := os.TempDir()
 	ogName := filepath.Base(path)
 	outputName := fmt.Sprintf(
@@ -58,29 +59,15 @@ func (g *Ghostscript) Optimize(path string) (*string, error) {
 		path,
 	}
 
-	cmd := exec.Command(g.config.Command, args...)
+	cmd := exec.CommandContext(ctx, g.config.Command, args...)
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	done := make(chan error, 1)
-	go func() {
-		done <- cmd.Run()
-	}()
-
-	select {
-	case err := <-done:
-		if err != nil {
-			os.Remove(outputPath)
-			return nil, fmt.Errorf("%s failed: %w, stderr: %s", g.Name(), err, stderr.String())
-		}
-	case <-time.After(g.config.Timeout):
-		if cmd.Process != nil {
-			cmd.Process.Kill()
-		}
+	if err := cmd.Run(); err != nil {
 		os.Remove(outputPath)
-		return nil, fmt.Errorf("%s timed out after %v", g.Name(), g.config.Timeout)
+		return nil, fmt.Errorf("%s failed: %w, stderr: %s", g.Name(), err, stderr.String())
 	}
 
 	if _, err := os.Stat(outputPath); os.IsNotExist(err) {

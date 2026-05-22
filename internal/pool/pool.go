@@ -21,6 +21,8 @@ type Pool struct {
 	stopCh   chan struct{}
 	stopOnce sync.Once
 	wg       sync.WaitGroup
+	ctx      context.Context
+	cancel   context.CancelFunc
 }
 
 func New(logger *utils.Logger, runner Runner, workers int, interval time.Duration) *Pool {
@@ -33,7 +35,8 @@ func New(logger *utils.Logger, runner Runner, workers int, interval time.Duratio
 	}
 }
 
-func (p *Pool) Start() {
+func (p *Pool) Start(ctx context.Context) {
+	p.ctx, p.cancel = context.WithCancel(ctx)
 	for i := range p.workers {
 		p.wg.Add(1)
 		go p.workerLoop(i)
@@ -44,6 +47,9 @@ func (p *Pool) Start() {
 func (p *Pool) Stop(ctx context.Context) {
 	p.stopOnce.Do(func() {
 		close(p.stopCh)
+		if p.cancel != nil {
+			p.cancel()
+		}
 	})
 
 	done := make(chan struct{})
@@ -69,8 +75,10 @@ func (p *Pool) workerLoop(id int) {
 		case <-p.stopCh:
 			p.logger.Info(nil, "%s stopping", logPrefix)
 			return
+		case <-p.ctx.Done():
+			return
 		case <-time.After(p.interval):
-			if err := p.runner.Next(context.Background()); err != nil {
+			if err := p.runner.Next(p.ctx); err != nil {
 				p.logger.Error(nil, "%s: %v", logPrefix, err)
 			}
 		}
