@@ -133,7 +133,7 @@ func consumeHandler(c *Container, args []string) error {
 		fmt.Printf("Files: %d\n", enqueued)
 		fmt.Printf("Use 'kushim task list --batch %s' to track progress.\n", batchID)
 
-		c.logger.SetLevel(utils.LevelError)
+		c.logger.SetLevel(utils.LevelSilent)
 
 		cmd := exec.Command(os.Args[0], "consume", "--batch", batchID)
 		cmd.Stdin = nil
@@ -214,7 +214,7 @@ func consumeCancelHandler(c *Container, args []string) error {
 }
 
 func pollBatch(ctx context.Context, queries *database.Queries, p *pool.Pool, logger *utils.Logger, batchID string) error {
-	logger.SetLevel(utils.LevelError)
+	logger.SetLevel(utils.LevelSilent)
 	p.Start(ctx)
 
 	previous := make(map[string]string)
