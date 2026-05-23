@@ -37,6 +37,29 @@ type PdfOptimizationResult struct {
 	TmpPath *string
 }
 
+// runWithTimeout runs fn in a goroutine and returns its result,
+// or ctx.Err() if the context expires first. This ensures timeout
+// detection works for any adapter, regardless of whether it checks
+// ctx internally (CommandContext, per-page selects, or none at all).
+func runWithTimeout[T any](ctx context.Context, fn func() (T, error)) (T, error) {
+	type result struct {
+		val T
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		v, e := fn()
+		ch <- result{v, e}
+	}()
+	select {
+	case <-ctx.Done():
+		var zero T
+		return zero, ctx.Err()
+	case r := <-ch:
+		return r.val, r.err
+	}
+}
+
 func NewRunner(logger *utils.Logger, cfg *config.ConsumerConfig) *Runner {
 	textCfg := config.ToolConfig{
 		Command: cfg.TextExtractor,
@@ -80,12 +103,14 @@ func (r *Runner) ExtractText(ctx context.Context, path string) (*TextExtractionR
 	defer cancel()
 
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return nil, fmt.Errorf("file does note xist: %s", path)
+		return nil, fmt.Errorf("file does not exist: %s", path)
 	}
 
-	text, err := r.textExtractor.Extract(ctx, path)
+	text, err := runWithTimeout(ctx, func() (*string, error) {
+		return r.textExtractor.Extract(ctx, path)
+	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("text extractor: %w", err)
 	}
 
 	result := TextExtractionResult{Text: text}
@@ -98,12 +123,14 @@ func (r *Runner) OCR(ctx context.Context, path string) (*OCRResult, error) {
 	defer cancel()
 
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return nil, fmt.Errorf("file does note xist: %s", path)
+		return nil, fmt.Errorf("file does not exist: %s", path)
 	}
 
-	outputPath, err := r.ocr.Process(ctx, path)
+	outputPath, err := runWithTimeout(ctx, func() (*string, error) {
+		return r.ocr.Process(ctx, path)
+	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("ocr: %w", err)
 	}
 
 	result := OCRResult{
@@ -122,10 +149,12 @@ func (r *Runner) OptimizePdf(ctx context.Context, path string) (*PdfOptimization
 		return nil, fmt.Errorf("file does not exist: %s", path)
 	}
 
-	outputPath, err := r.pdfOptimizer.Optimize(ctx, path)
+	outputPath, err := runWithTimeout(ctx, func() (*string, error) {
+		return r.pdfOptimizer.Optimize(ctx, path)
+	})
 	if err != nil {
 		if r.config.OptimizationFallback == "" {
-			return nil, err
+			return nil, fmt.Errorf("pdf optimizer: %w", err)
 		}
 		r.logger.Info(nil, "primary optimizer (%s) failed: %v — falling back to %s",
 			r.config.PdfOptimizer, err, r.config.OptimizationFallback)
@@ -138,7 +167,9 @@ func (r *Runner) OptimizePdf(ctx context.Context, path string) (*PdfOptimization
 			return nil, fmt.Errorf("%s: %w; fallback %s: %w",
 				r.config.PdfOptimizer, err, r.config.OptimizationFallback, fbErr)
 		}
-		outputPath, err = fbOptimizer.Optimize(ctx, path)
+		outputPath, err = runWithTimeout(ctx, func() (*string, error) {
+			return fbOptimizer.Optimize(ctx, path)
+		})
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w; fallback %s: %w",
 				r.config.PdfOptimizer, err, r.config.OptimizationFallback, err)
