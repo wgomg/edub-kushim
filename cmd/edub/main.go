@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -16,7 +17,13 @@ import (
 func main() {
 	startupLogger := utils.NewLogger("error")
 
-	cfg, err := config.Load("./config.yaml")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		startupLogger.Fatal("Cannot determine home directory:", err)
+	}
+	configDir := filepath.Join(home, ".config", "kushim")
+
+	cfg, err := config.Load(configDir)
 	if err != nil {
 		startupLogger.Fatal("Failed to load configuration:", err)
 	}
