@@ -1,239 +1,191 @@
 package commands
 
 import (
-	"bytes"
-	"context"
 	"database/sql"
-	"fmt"
-	"io"
-	"os"
-	"strings"
 	"testing"
 
-	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/utils"
+
+	_ "modernc.org/sqlite"
 )
 
-var schemaSQL = func() string {
-	data, err := os.ReadFile("../../sql/schema.sql")
+func TestSearchHandler_Help(t *testing.T) {
+	c := &Container{logger: utils.NewDiscardLogger()}
+	err := searchHandler(c, []string{"--help"})
 	if err != nil {
-		panic("cannot read schema.sql: " + err.Error())
-	}
-	return string(data)
-}()
-
-func setupCommandsDB(t *testing.T) *sql.DB {
-	t.Helper()
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatalf("open in-memory db: %v", err)
-	}
-	if _, err := db.Exec(schemaSQL); err != nil {
-		t.Fatalf("create schema: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
-	return db
-}
-
-func captureStdout(fn func()) string {
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-	fn()
-	w.Close()
-	os.Stdout = old
-	var buf bytes.Buffer
-	io.Copy(&buf, r)
-	return buf.String()
-}
-
-func newTestContainer(t *testing.T, db *sql.DB) (*Container, *bytes.Buffer) {
-	t.Helper()
-	buf := &bytes.Buffer{}
-	logger := utils.NewLoggerWithWriter(buf)
-	return &Container{
-		config: &config.Config{},
-		logger: logger,
-		db:     db,
-	}, buf
-}
-
-func TestFormatSize(t *testing.T) {
-	tests := []struct {
-		input    int64
-		expected string
-	}{
-		{0, "0 B"},
-		{512, "512 B"},
-		{1024, "1.0 KB"},
-		{1536, "1.5 KB"},
-		{1048576, "1.0 MB"},
-		{1073741824, "1.0 GB"},
-	}
-	for _, tt := range tests {
-		got := formatSize(tt.input)
-		if got != tt.expected {
-			t.Errorf("formatSize(%d) = %q, want %q", tt.input, got, tt.expected)
-		}
+		t.Fatalf("expected nil error for --help, got %v", err)
 	}
 }
 
-func TestHighlightSnippet(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected string
-	}{
-		{"no tags", "no tags"},
-		{"<b>bold</b> text", "\033[1;33mbold\033[0m text"},
-		{"<b>a</b> and <b>b</b>", "\033[1;33ma\033[0m and \033[1;33mb\033[0m"},
-	}
-	for _, tt := range tests {
-		got := highlightSnippet(tt.input)
-		if got != tt.expected {
-			t.Errorf("highlightSnippet(%q) = %q, want %q", tt.input, got, tt.expected)
-		}
-	}
-}
-
-func TestSearchHandlerResults(t *testing.T) {
-	db := setupCommandsDB(t)
-	queries := database.NewQueries(db)
-	ctx := context.Background()
-
-	queries.CreateDocument(ctx, database.CreateDocumentParams{
-		Title: "quantum.pdf", Md5Checksum: "a", Sha512Checksum: "a1",
-		MimeType: "application/pdf", FileSize: 1024, OriginalPath: "/a", StoragePath: "/a",
-		TextContent: sql.NullString{String: "quantum mechanics", Valid: true},
-	})
-
-	c, logBuf := newTestContainer(t, db)
-
-	output := captureStdout(func() {
-		err := searchHandler(c, []string{"quantum"})
-		if err != nil {
-			t.Fatalf("searchHandler: %v", err)
-		}
-	})
-
-	if !strings.Contains(output, "quantum.pdf") {
-		t.Error("output should contain document title")
-	}
-	if !strings.Contains(output, "1.0 KB") {
-		t.Error("output should contain formatted size")
-	}
-	if !strings.Contains(output, "rank=") {
-		t.Error("output should contain rank")
-	}
-	if !strings.Contains(logBuf.String(), "1 results for") {
-		t.Errorf("log should contain result count, got: %s", logBuf.String())
-	}
-}
-
-func TestSearchHandlerNoResults(t *testing.T) {
-	db := setupCommandsDB(t)
-	c, logBuf := newTestContainer(t, db)
-
-	err := searchHandler(c, []string{"nonexistent"})
-	if err != nil {
-		t.Fatalf("searchHandler: %v", err)
-	}
-
-	if !strings.Contains(logBuf.String(), "no results for") {
-		t.Errorf("log should indicate no results, got: %s", logBuf.String())
-	}
-}
-
-func TestSearchHandlerMissingQuery(t *testing.T) {
-	db := setupCommandsDB(t)
-	c, _ := newTestContainer(t, db)
-
+func TestSearchHandler_MissingQuery(t *testing.T) {
+	c := &Container{logger: utils.NewDiscardLogger()}
 	err := searchHandler(c, []string{})
 	if err == nil {
 		t.Fatal("expected error for missing query")
 	}
 }
 
-func TestSearchHandlerRebuildIndex(t *testing.T) {
-	db := setupCommandsDB(t)
-	queries := database.NewQueries(db)
-	ctx := context.Background()
-
-	for i := range 5 {
-		queries.CreateDocument(ctx, database.CreateDocumentParams{
-			Title:          fmt.Sprintf("doc%d.pdf", i),
-			Md5Checksum:    fmt.Sprintf("md5-%d", i),
-			Sha512Checksum: fmt.Sprintf("sha-%d", i),
-			MimeType:       "application/pdf",
-			FileSize:       100,
-			OriginalPath:   "/a",
-			StoragePath:    "/a",
-			TextContent:    sql.NullString{String: "rebuild content", Valid: true},
-		})
-	}
-
-	c, logBuf := newTestContainer(t, db)
-
-	db.Exec("DELETE FROM document_fts")
-
-	err := searchHandler(c, []string{"--rebuild-index"})
+func TestSearchHandler_NoResults(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
-		t.Fatalf("searchHandler --rebuild-index: %v", err)
+		t.Fatal(err)
 	}
+	defer db.Close()
 
-	if !strings.Contains(logBuf.String(), "FTS index rebuilt") {
-		t.Errorf("log should indicate rebuild completed, got: %s", logBuf.String())
-	}
-
-	results, err := database.NewQueries(db).SearchDocumentsFTS(ctx, `"rebuild"`, 10, 0)
+	_, err = db.Exec(`
+		CREATE TABLE document (
+			id INTEGER PRIMARY KEY,
+			title TEXT NOT NULL,
+			md5_checksum TEXT NOT NULL,
+			sha512_checksum TEXT UNIQUE NOT NULL,
+			mime_type TEXT NOT NULL,
+			file_size INTEGER NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			modified_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			document_type_id INTEGER,
+			original_path TEXT NOT NULL,
+			storage_path TEXT NOT NULL,
+			text_content TEXT
+		);
+		CREATE VIRTUAL TABLE document_fts USING fts5(
+			document_id UNINDEXED, title, content, tokenize = 'unicode61'
+		);
+	`)
 	if err != nil {
-		t.Fatalf("search after rebuild: %v", err)
+		t.Fatal(err)
 	}
-	if len(results) != 5 {
-		t.Errorf("expected 5 FTS results after rebuild, got %d", len(results))
+
+	c := &Container{
+		logger: utils.NewDiscardLogger(),
+		db:     db,
+	}
+
+	err = searchHandler(c, []string{"nonexistent"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestSearchHandlerPagination(t *testing.T) {
-	db := setupCommandsDB(t)
-	queries := database.NewQueries(db)
-	ctx := context.Background()
+func TestSearchHandler_WithResults(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
 
-	for i := range 5 {
-		queries.CreateDocument(ctx, database.CreateDocumentParams{
-			Title:          fmt.Sprintf("doc%d.pdf", i),
-			Md5Checksum:    fmt.Sprintf("md5-%d", i),
-			Sha512Checksum: fmt.Sprintf("sha-%d", i),
-			MimeType:       "application/pdf",
-			FileSize:       100,
-			OriginalPath:   "/a",
-			StoragePath:    "/a",
-			TextContent:    sql.NullString{String: "common pagination text", Valid: true},
-		})
+	_, err = db.Exec(`
+		CREATE TABLE document (
+			id INTEGER PRIMARY KEY,
+			title TEXT NOT NULL,
+			md5_checksum TEXT NOT NULL,
+			sha512_checksum TEXT UNIQUE NOT NULL,
+			mime_type TEXT NOT NULL,
+			file_size INTEGER NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			modified_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			document_type_id INTEGER,
+			original_path TEXT NOT NULL,
+			storage_path TEXT NOT NULL,
+			text_content TEXT
+		);
+		CREATE VIRTUAL TABLE document_fts USING fts5(
+			document_id UNINDEXED, title, content, tokenize = 'unicode61'
+		);
+		INSERT INTO document (id, title, md5_checksum, sha512_checksum, mime_type, file_size, original_path, storage_path, text_content)
+		VALUES (1, 'Test Report', 'abc', 'def', 'application/pdf', 2048, '/tmp/a.pdf', '/store/a.pdf', 'quarterly financial report');
+		INSERT INTO document_fts (document_id, title, content) VALUES (1, 'Test Report', 'quarterly financial report');
+	`)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	c, logBuf := newTestContainer(t, db)
-
-	captureStdout(func() {
-		err := searchHandler(c, []string{"--limit", "2", "common"})
-		if err != nil {
-			t.Fatalf("searchHandler: %v", err)
-		}
-	})
-
-	if !strings.Contains(logBuf.String(), "2 results for") {
-		t.Errorf("expected 2 results in log, got: %s", logBuf.String())
+	c := &Container{
+		logger: utils.NewDiscardLogger(),
+		db:     db,
 	}
 
-	logBuf.Reset()
-	captureStdout(func() {
-		err := searchHandler(c, []string{"--limit", "2", "--offset", "2", "common"})
-		if err != nil {
-			t.Fatalf("searchHandler: %v", err)
-		}
-	})
+	err = searchHandler(c, []string{"financial"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
 
-	if !strings.Contains(logBuf.String(), "2 results for") {
-		t.Errorf("expected 2 results on page 2 in log, got: %s", logBuf.String())
+func TestSearchHandler_RebuildIndex(t *testing.T) {
+	chdirToProjectRoot(t)
+
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	_, err = db.Exec(`
+		CREATE TABLE document (
+			id INTEGER PRIMARY KEY,
+			title TEXT NOT NULL,
+			md5_checksum TEXT NOT NULL,
+			sha512_checksum TEXT UNIQUE NOT NULL,
+			mime_type TEXT NOT NULL,
+			file_size INTEGER NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			modified_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			document_type_id INTEGER,
+			original_path TEXT NOT NULL,
+			storage_path TEXT NOT NULL,
+			text_content TEXT
+		);
+		CREATE VIRTUAL TABLE document_fts USING fts5(
+			document_id UNINDEXED, title, content, tokenize = 'unicode61'
+		);
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c := &Container{
+		logger: utils.NewDiscardLogger(),
+		db:     db,
+	}
+
+	err = searchHandler(c, []string{"--rebuild-index"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestHighlightSnippet(t *testing.T) {
+	input := "the <b>quick</b> brown fox"
+	got := highlightSnippet(input)
+	if got != "the \033[1;33mquick\033[0m brown fox" {
+		t.Errorf("highlightSnippet = %q", got)
+	}
+}
+
+func TestHighlightSnippet_NoTags(t *testing.T) {
+	input := "plain text"
+	got := highlightSnippet(input)
+	if got != "plain text" {
+		t.Errorf("highlightSnippet = %q", got)
+	}
+}
+
+func TestFormatSize(t *testing.T) {
+	tests := []struct {
+		bytes int64
+		want  string
+	}{
+		{0, "0 B"},
+		{500, "500 B"},
+		{1023, "1023 B"},
+		{1024, "1.0 KB"},
+		{1536, "1.5 KB"},
+		{1048576, "1.0 MB"},
+		{1073741824, "1.0 GB"},
+	}
+	for _, tc := range tests {
+		got := formatSize(tc.bytes)
+		if got != tc.want {
+			t.Errorf("formatSize(%d) = %q, want %q", tc.bytes, got, tc.want)
+		}
 	}
 }

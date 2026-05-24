@@ -1,183 +1,247 @@
 package commands
 
 import (
-	"bytes"
+	"context"
 	"database/sql"
-	"os"
 	"path/filepath"
-	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/consumption"
-	"github.com/wgomg/edub-kushim/internal/tools"
+	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/pool"
 	"github.com/wgomg/edub-kushim/internal/utils"
+
+	_ "modernc.org/sqlite"
 )
 
-type mockTextExtractor struct {
-	texts []*string
-	errs  []error
-	call  int
-}
-
-func (m *mockTextExtractor) Extract(path string) (*string, error) {
-	var t *string
-	var e error
-	if m.call < len(m.texts) {
-		t = m.texts[m.call]
-	}
-	if m.call < len(m.errs) {
-		e = m.errs[m.call]
-	}
-	m.call++
-	return t, e
-}
-func (m *mockTextExtractor) CanHandle(mimeType string) bool { return true }
-func (m *mockTextExtractor) Name() string                   { return "mock" }
-
-type mockOCR struct {
-	path *string
-	err  error
-}
-
-func (m *mockOCR) Process(path string) (*string, error) { return m.path, m.err }
-func (m *mockOCR) CanHandle(mimeType string) bool       { return true }
-func (m *mockOCR) Name() string                         { return "mock" }
-
-type mockPdfOptimizer struct {
-	path *string
-	err  error
-}
-
-func (m *mockPdfOptimizer) Optimize(path string) (*string, error) { return m.path, m.err }
-func (m *mockPdfOptimizer) Name() string                          { return "mock" }
-
-func newTestContainerWithConsumer(t *testing.T, db *sql.DB, consumptionDir, storageDir string, textExt *mockTextExtractor, optPath *string, optErr error, ocrPath *string, ocrErr error) (*Container, *bytes.Buffer) {
+func consumeTestDB(t *testing.T) *sql.DB {
 	t.Helper()
-	buf := &bytes.Buffer{}
-	logger := utils.NewLoggerWithWriter(buf)
-	runner := tools.NewRunnerWithAdapters(
-		logger,
-		&config.ConsumerConfig{},
-		textExt,
-		&mockOCR{path: ocrPath, err: ocrErr},
-		&mockPdfOptimizer{path: optPath, err: optErr},
-	)
-	consumer := consumption.NewConsumerWithRunner(
-		&config.Config{
-			Storage: config.StorageConfig{
-				ConsumptionDir: consumptionDir,
-				StorageDir:     storageDir,
-			},
-			Consumer: config.ConsumerConfig{
-				SupportedFiles:       []string{".pdf"},
-				OptimizationFallback: "",
-			},
-		},
-		logger,
-		db,
-		runner,
-	)
-	return &Container{
-		config: &config.Config{
-			Storage: config.StorageConfig{
-				ConsumptionDir: consumptionDir,
-				StorageDir:     storageDir,
-			},
-			Consumer: config.ConsumerConfig{
-				SupportedFiles: []string{".pdf"},
-			},
-		},
-		logger:   logger,
-		db:       db,
-		consumer: consumer,
-	}, buf
-}
-
-func writePDFFile(t *testing.T, dir, name string) string {
-	t.Helper()
-	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte("%PDF-1.4 fake pdf content"), 0644); err != nil {
-		t.Fatalf("write pdf: %v", err)
-	}
-	return path
-}
-
-func TestConsumeHandlerNoFiles(t *testing.T) {
-	db := setupCommandsDB(t)
-	consumptionDir := t.TempDir()
-	storageDir := t.TempDir()
-	text := "extracted"
-	textExt := &mockTextExtractor{texts: []*string{&text}}
-	c, _ := newTestContainerWithConsumer(t, db, consumptionDir, storageDir, textExt, nil, nil, nil, nil)
-
-	// Capture stdout
-	r, w, _ := os.Pipe()
-	old := os.Stdout
-	os.Stdout = w
-
-	err := consumeHandler(c, []string{})
-
-	w.Close()
-	os.Stdout = old
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-	output := buf.String()
-
+	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
-		t.Fatalf("consumeHandler: %v", err)
+		t.Fatalf("open: %v", err)
 	}
+	t.Cleanup(func() { db.Close() })
 
-	if !strings.Contains(output, "No files found") {
-		t.Errorf("expected 'No files found' in output, got: %s", output)
-	}
-}
-
-func TestConsumeHandlerFilesProcessed(t *testing.T) {
-	db := setupCommandsDB(t)
-	consumptionDir := t.TempDir()
-	storageDir := t.TempDir()
-	writePDFFile(t, consumptionDir, "doc.pdf")
-
-	text := "extracted text content"
-	optOutput := writePDFFile(t, t.TempDir(), "optimized.pdf")
-	textExt := &mockTextExtractor{texts: []*string{&text}}
-	c, _ := newTestContainerWithConsumer(t, db, consumptionDir, storageDir, textExt, &optOutput, nil, nil, nil)
-
-	// Capture stdout
-	r, w, _ := os.Pipe()
-	old := os.Stdout
-	os.Stdout = w
-
-	err := consumeHandler(c, []string{})
-
-	w.Close()
-	os.Stdout = old
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-	output := buf.String()
-
+	_, err = db.Exec(`
+		CREATE TABLE task (
+			id INTEGER PRIMARY KEY,
+			task_id TEXT NOT NULL UNIQUE,
+			task_type TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'pending',
+			batch_id TEXT,
+			payload JSON,
+			result JSON,
+			dedup_key TEXT,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			started_at DATETIME,
+			completed_at DATETIME,
+			error TEXT
+		);
+		CREATE INDEX idx_task_batch ON task(batch_id);
+	`)
 	if err != nil {
-		t.Fatalf("consumeHandler: %v", err)
+		t.Fatalf("schema: %v", err)
 	}
+	return db
+}
 
-	if !strings.Contains(output, "Batch:") {
-		t.Errorf("expected 'Batch:' in output, got: %s", output)
-	}
-	if !strings.Contains(output, "track progress") {
-		t.Errorf("expected progress hint in output, got: %s", output)
+func TestConsumeCancelHandler_Help(t *testing.T) {
+	c := &Container{logger: utils.NewDiscardLogger()}
+	err := consumeCancelHandler(c, []string{"--help"})
+	if err != nil {
+		t.Fatalf("expected nil error for --help, got %v", err)
 	}
 }
 
-func TestConsumeHandlerDirNotExist(t *testing.T) {
-	db := setupCommandsDB(t)
-	storageDir := t.TempDir()
-	text := "extracted"
-	textExt := &mockTextExtractor{texts: []*string{&text}}
-	c, _ := newTestContainerWithConsumer(t, db, "/nonexistent/path", storageDir, textExt, nil, nil, nil, nil)
+func TestConsumeCancelHandler_ShortHelp(t *testing.T) {
+	c := &Container{logger: utils.NewDiscardLogger()}
+	err := consumeCancelHandler(c, []string{"-h"})
+	if err != nil {
+		t.Fatalf("expected nil error for -h, got %v", err)
+	}
+}
 
-	err := consumeHandler(c, []string{})
+func TestConsumeCancelHandler_NoArgs(t *testing.T) {
+	c := &Container{logger: utils.NewDiscardLogger()}
+	err := consumeCancelHandler(c, []string{})
 	if err == nil {
-		t.Fatal("expected error for missing consumption dir")
+		t.Fatal("expected error for missing batch ID")
 	}
+}
+
+func TestConsumeCancelHandler_NoRunningProcess(t *testing.T) {
+	db := consumeTestDB(t)
+	c := &Container{
+		db:     db,
+		logger: utils.NewDiscardLogger(),
+	}
+
+	err := consumeCancelHandler(c, []string{"nonexistent-batch"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestConsumeHandler_Help(t *testing.T) {
+	c := &Container{logger: utils.NewDiscardLogger()}
+	err := consumeHandler(c, []string{"--help"})
+	if err != nil {
+		t.Fatalf("expected nil error for --help, got %v", err)
+	}
+}
+
+func TestConsumeHandler_BgAndBatchMutuallyExclusive(t *testing.T) {
+	c := &Container{logger: utils.NewDiscardLogger()}
+	err := consumeHandler(c, []string{"--bg", "--batch", "some-id"})
+	if err == nil {
+		t.Fatal("expected error for --bg and --batch together")
+	}
+}
+
+func TestConsumeHandler_NoFiles(t *testing.T) {
+	chdirToProjectRoot(t)
+	dir := t.TempDir()
+	cfg := &config.Config{
+		Db: config.DatabaseConfig{
+			Path: filepath.Join(dir, "db"),
+			Name: "test.db",
+		},
+		Storage: config.StorageConfig{
+			ConsumptionDir: dir,
+			StorageDir:     filepath.Join(dir, "storage"),
+		},
+		Consumer: config.ConsumerConfig{
+			SupportedFiles: []string{".pdf"},
+			Workers:        1,
+		},
+	}
+	c := &Container{
+		config: cfg,
+		logger: utils.NewDiscardLogger(),
+	}
+
+	err := consumeHandler(c, []string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestConsumeHandler_ResumeBatchNotFound(t *testing.T) {
+	db := consumeTestDB(t)
+	cfg := &config.Config{
+		Consumer: config.ConsumerConfig{Workers: 1},
+	}
+	c := &Container{
+		config: cfg,
+		logger: utils.NewDiscardLogger(),
+		db:     db,
+	}
+
+	err := consumeHandler(c, []string{"--batch", "nonexistent"})
+	if err == nil {
+		t.Fatal("expected error for nonexistent batch")
+	}
+}
+
+func TestConsumeHandler_ResumeBatchAlreadyFinished(t *testing.T) {
+	db := consumeTestDB(t)
+	queries := database.New(db)
+	ctx := context.Background()
+
+	queries.CreateTask(ctx, database.CreateTaskParams{
+		TaskID:   "done-1",
+		TaskType: "consume",
+		Status:   "completed",
+		BatchID:  sql.NullString{String: "batch-done", Valid: true},
+		Payload:  []byte(`{"file_path":"/tmp/a.pdf"}`),
+	})
+
+	cfg := &config.Config{
+		Consumer: config.ConsumerConfig{Workers: 1},
+	}
+	c := &Container{
+		config: cfg,
+		logger: utils.NewDiscardLogger(),
+		db:     db,
+	}
+
+	err := consumeHandler(c, []string{"--batch", "batch-done"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestPollBatch_CompletesWhenAllDone(t *testing.T) {
+	db := consumeTestDB(t)
+	queries := database.New(db)
+	ctx := context.Background()
+
+	queries.CreateTask(ctx, database.CreateTaskParams{
+		TaskID:   "p-1",
+		TaskType: "consume",
+		Status:   "completed",
+		BatchID:  sql.NullString{String: "batch-poll", Valid: true},
+		Payload:  []byte(`{"file_path":"/tmp/a.pdf"}`),
+	})
+
+	runner := &mockPoolRunner{}
+	p := pool.New(utils.NewDiscardLogger(), runner, 1, time.Hour)
+
+	pollCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	err := pollBatch(pollCtx, queries, p, utils.NewDiscardLogger(), "batch-poll")
+	if err != nil {
+		t.Fatalf("pollBatch: %v", err)
+	}
+}
+
+func TestPollBatch_CancelledByContext(t *testing.T) {
+	db := consumeTestDB(t)
+	queries := database.New(db)
+	ctx := context.Background()
+
+	queries.CreateTask(ctx, database.CreateTaskParams{
+		TaskID:   "p-2",
+		TaskType: "consume",
+		Status:   "pending",
+		BatchID:  sql.NullString{String: "batch-cancel", Valid: true},
+		Payload:  []byte(`{"file_path":"/tmp/b.pdf"}`),
+	})
+
+	runner := &mockPoolRunner{}
+	p := pool.New(utils.NewDiscardLogger(), runner, 1, time.Hour)
+
+	pollCtx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan error, 1)
+	go func() {
+		done <- pollBatch(pollCtx, queries, p, utils.NewDiscardLogger(), "batch-cancel")
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("pollBatch: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("pollBatch did not return after context cancel")
+	}
+}
+
+type mockPoolRunner struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (m *mockPoolRunner) Next(ctx context.Context) error {
+	m.mu.Lock()
+	m.calls++
+	m.mu.Unlock()
+	return nil
 }

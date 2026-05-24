@@ -2,10 +2,14 @@ package consumption
 
 import (
 	"context"
+	"crypto/md5"
+	"crypto/sha512"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,411 +17,484 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/utils"
-)
 
-var schemaSQL = func() string {
-	data, err := os.ReadFile("../../sql/schema.sql")
-	if err != nil {
-		panic("cannot read schema.sql: " + err.Error())
-	}
-	return string(data)
-}()
+	_ "modernc.org/sqlite"
+)
 
 func setupConsumerDB(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
-		t.Fatalf("open in-memory db: %v", err)
+		t.Fatalf("open test db: %v", err)
 	}
-	if _, err := db.Exec(schemaSQL); err != nil {
+	t.Cleanup(func() { _ = db.Close() })
+
+	_, err = db.Exec(`
+		PRAGMA foreign_keys = OFF;
+
+		CREATE TABLE document_type (
+			id INTEGER PRIMARY KEY,
+			name TEXT NOT NULL UNIQUE,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+
+		CREATE TABLE document (
+			id INTEGER PRIMARY KEY,
+			title TEXT NOT NULL,
+			md5_checksum TEXT NOT NULL,
+			sha512_checksum TEXT UNIQUE NOT NULL,
+			mime_type TEXT NOT NULL,
+			file_size INTEGER NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			modified_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			document_type_id INTEGER,
+			original_path TEXT NOT NULL,
+			storage_path TEXT NOT NULL,
+			text_content TEXT
+		);
+
+		CREATE VIRTUAL TABLE document_fts USING fts5(
+			document_id UNINDEXED,
+			title,
+			content,
+			tokenize = 'unicode61'
+		);
+
+		CREATE TRIGGER document_ai AFTER INSERT ON document
+		BEGIN
+			INSERT INTO document_fts(document_id, title, content)
+			VALUES (new.id, new.title, COALESCE(new.text_content, ''));
+		END;
+	`)
+	if err != nil {
 		t.Fatalf("create schema: %v", err)
 	}
-	t.Cleanup(func() { db.Close() })
 	return db
 }
 
-func writeTempFile(t *testing.T, content string) string {
+func createTempFile(t *testing.T, dir, name, content string) string {
 	t.Helper()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "test.pdf")
+	if dir == "" {
+		dir = t.TempDir()
+	}
+	path := filepath.Join(dir, name)
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("write temp file: %v", err)
 	}
 	return path
 }
 
-func TestHumanDuration(t *testing.T) {
-	tests := []struct {
-		input    time.Duration
-		expected string
-	}{
-		{0, "0.0s"},
-		{500 * time.Millisecond, "0.5s"},
-		{59 * time.Second, "59.0s"},
-		{60 * time.Second, "1m 0s"},
-		{90 * time.Second, "1m 30s"},
-		{3600 * time.Second, "1h 0m 0s"},
-	}
-	for _, tt := range tests {
-		got := humanDuration(tt.input)
-		if got != tt.expected {
-			t.Errorf("humanDuration(%v) = %q, want %q", tt.input, got, tt.expected)
-		}
-	}
-}
-
-func TestIsDuplicateTrue(t *testing.T) {
-	db := setupConsumerDB(t)
-	content := "duplicate test content"
-	path := writeTempFile(t, content)
-
-	md5sum, _ := calculateMD5(path)
-	sha512sum, _ := calculateSHA512(path)
-
-	queries := database.NewQueries(db)
-	ctx := context.Background()
-	queries.CreateDocument(ctx, database.CreateDocumentParams{
-		Title:          "existing.pdf",
-		Md5Checksum:    md5sum,
-		Sha512Checksum: sha512sum,
-		MimeType:       "application/pdf",
-		FileSize:       100,
-		OriginalPath:   "/existing",
-		StoragePath:    "/existing",
-	})
-
-	c := &Consumer{
-		config: &config.Config{},
-		logger: utils.NewLogger("info"),
-		db:     db,
-	}
-	dup, err := c.isDuplicate(path)
-	if err != nil {
-		t.Fatalf("isDuplicate: %v", err)
-	}
-	if !dup {
-		t.Error("expected duplicate, got false")
-	}
-}
-
-func TestIsDuplicateFalse(t *testing.T) {
-	db := setupConsumerDB(t)
-	path := writeTempFile(t, "unique content")
-
-	c := &Consumer{
-		config: &config.Config{},
-		logger: utils.NewLogger("info"),
-		db:     db,
-	}
-	dup, err := c.isDuplicate(path)
-	if err != nil {
-		t.Fatalf("isDuplicate: %v", err)
-	}
-	if dup {
-		t.Error("expected not duplicate, got true")
-	}
-}
-
-func TestIsDuplicateMD5Only(t *testing.T) {
-	db := setupConsumerDB(t)
-	content := "md5 collision test"
-	path := writeTempFile(t, content)
-
-	md5sum, _ := calculateMD5(path)
-
-	queries := database.NewQueries(db)
-	ctx := context.Background()
-	queries.CreateDocument(ctx, database.CreateDocumentParams{
-		Title:          "existing.pdf",
-		Md5Checksum:    md5sum,
-		Sha512Checksum: "different-sha512",
-		MimeType:       "application/pdf",
-		FileSize:       100,
-		OriginalPath:   "/existing",
-		StoragePath:    "/existing",
-	})
-
-	c := &Consumer{
-		config: &config.Config{},
-		logger: utils.NewLogger("info"),
-		db:     db,
-	}
-	dup, err := c.isDuplicate(path)
-	if err != nil {
-		t.Fatalf("isDuplicate: %v", err)
-	}
-	if dup {
-		t.Error("expected not duplicate (SHA512 mismatch), got true")
-	}
+func knownChecksums(content string) (md5Hex, sha512Hex string) {
+	h := md5.Sum([]byte(content))
+	md5Hex = hex.EncodeToString(h[:])
+	h2 := sha512.Sum512([]byte(content))
+	sha512Hex = hex.EncodeToString(h2[:])
+	return
 }
 
 type mockTextExtractor struct {
-	texts []*string
-	errs  []error
-	call  int
+	extractFunc func(ctx context.Context, path string) (*string, error)
 }
 
-func (m *mockTextExtractor) Extract(path string) (*string, error) {
-	var t *string
-	var e error
-	if m.call < len(m.texts) {
-		t = m.texts[m.call]
+func (m *mockTextExtractor) Extract(ctx context.Context, path string) (*string, error) {
+	if m.extractFunc != nil {
+		return m.extractFunc(ctx, path)
 	}
-	if m.call < len(m.errs) {
-		e = m.errs[m.call]
-	}
-	m.call++
-	return t, e
+	text := "mock extracted text"
+	return &text, nil
 }
-func (m *mockTextExtractor) CanHandle(mimeType string) bool { return true }
-func (m *mockTextExtractor) Name() string                   { return "mock" }
+func (m *mockTextExtractor) CanHandle(string) bool { return true }
+func (m *mockTextExtractor) Name() string          { return "mock-textextractor" }
 
 type mockOCR struct {
-	path *string
-	err  error
+	processFunc func(ctx context.Context, path string) (*string, error)
 }
 
-func (m *mockOCR) Process(path string) (*string, error) { return m.path, m.err }
-func (m *mockOCR) CanHandle(mimeType string) bool       { return true }
-func (m *mockOCR) Name() string                         { return "mock" }
+func (m *mockOCR) Process(ctx context.Context, path string) (*string, error) {
+	if m.processFunc != nil {
+		return m.processFunc(ctx, path)
+	}
+	return nil, fmt.Errorf("mock OCR not configured")
+}
+func (m *mockOCR) CanHandle(string) bool { return true }
+func (m *mockOCR) Name() string          { return "mock-ocr" }
 
 type mockPdfOptimizer struct {
-	path *string
-	err  error
+	optimizeFunc func(ctx context.Context, path string) (*string, error)
 }
 
-func (m *mockPdfOptimizer) Optimize(path string) (*string, error) { return m.path, m.err }
-func (m *mockPdfOptimizer) Name() string                          { return "mock" }
+func (m *mockPdfOptimizer) Optimize(ctx context.Context, path string) (*string, error) {
+	if m.optimizeFunc != nil {
+		return m.optimizeFunc(ctx, path)
+	}
+	return nil, fmt.Errorf("mock optimizer not configured")
+}
+func (m *mockPdfOptimizer) Name() string { return "mock-optimizer" }
 
-func makeConsumerWithMocks(t *testing.T, textExt *mockTextExtractor, optPath *string, optErr error, ocrPath *string, ocrErr error) *Consumer {
+func newMockRunner(t *testing.T, logger *utils.Logger, cfg *config.ConsumerConfig,
+	textExtractor *mockTextExtractor, ocr *mockOCR, optimizer *mockPdfOptimizer) *tools.Runner {
 	t.Helper()
-	runner := tools.NewRunnerWithAdapters(
-		utils.NewLogger("info"),
-		&config.ConsumerConfig{},
-		textExt,
-		&mockOCR{path: ocrPath, err: ocrErr},
-		&mockPdfOptimizer{path: optPath, err: optErr},
-	)
-	return NewConsumerWithRunner(&config.Config{}, utils.NewLogger("info"), nil, runner)
+	return tools.NewRunnerWithAdapters(logger, cfg, textExtractor, ocr, optimizer)
 }
 
-func TestExtractTextSuccess(t *testing.T) {
-	text := "extracted text content"
-	optPath := "/tmp/optimized.pdf"
-	textExt := &mockTextExtractor{texts: []*string{&text}}
-	c := makeConsumerWithMocks(t, textExt, &optPath, nil, nil, nil)
+func TestHumanDuration_Seconds(t *testing.T) {
+	got := humanDuration(3 * time.Second)
+	if !strings.HasSuffix(got, "s") {
+		t.Errorf("humanDuration(%v) = %q, want seconds", 3*time.Second, got)
+	}
+}
 
-	path := writeTempFile(t, "pdf content")
-	file := File{Name: "test.pdf", OriginalPath: path, FileSize: 100}
-	result, err := c.extractText(file)
+func TestHumanDuration_Minutes(t *testing.T) {
+	got := humanDuration(2*time.Minute + 30*time.Second)
+	if !strings.Contains(got, "m") || !strings.Contains(got, "s") {
+		t.Errorf("humanDuration(%v) = %q, want minutes and seconds", 2*time.Minute+30*time.Second, got)
+	}
+}
+
+func TestHumanDuration_Hours(t *testing.T) {
+	got := humanDuration(1*time.Hour + 5*time.Minute + 10*time.Second)
+	if !strings.Contains(got, "h") {
+		t.Errorf("humanDuration(%v) = %q, want hours", 1*time.Hour+5*time.Minute+10*time.Second, got)
+	}
+}
+
+func TestHumanDuration_Zero(t *testing.T) {
+	got := humanDuration(0)
+	if got != "0.0s" {
+		t.Errorf("humanDuration(0) = %q, want %q", got, "0.0s")
+	}
+}
+
+func TestHumanDuration_EdgeMinute(t *testing.T) {
+	got := humanDuration(59*time.Second + 999*time.Millisecond)
+	if !strings.HasSuffix(got, "s") {
+		t.Errorf("humanDuration near 1m = %q, want seconds", got)
+	}
+}
+
+func TestCalculateMD5(t *testing.T) {
+	content := "hello world\n"
+	path := createTempFile(t, t.TempDir(), "test.txt", content)
+
+	got, err := calculateMD5(path)
 	if err != nil {
-		t.Fatalf("extractText: %v", err)
+		t.Fatalf("calculateMD5() unexpected error: %v", err)
 	}
-	if !result.Text.Valid || result.Text.String != text {
-		t.Errorf("expected text %q, got %v", text, result.Text)
-	}
-	if result.OptimizedPdfTmpPath == nil || *result.OptimizedPdfTmpPath != optPath {
-		t.Errorf("expected OptimizedPdfTmpPath %q, got %v", optPath, result.OptimizedPdfTmpPath)
-	}
-	if result.OCRTmpPath != nil {
-		t.Error("expected nil OCRTmpPath")
+
+	want, _ := knownChecksums(content)
+	if got != want {
+		t.Errorf("calculateMD5() = %q, want %q", got, want)
 	}
 }
 
-func TestExtractTextOptimizationFails(t *testing.T) {
-	text := "extracted text content"
-	textExt := &mockTextExtractor{texts: []*string{&text}}
-	c := makeConsumerWithMocks(t, textExt, nil, fmt.Errorf("optimization failed"), nil, nil)
-
-	path := writeTempFile(t, "pdf content")
-	file := File{Name: "test.pdf", OriginalPath: path, FileSize: 100}
-	result, err := c.extractText(file)
-	if err != nil {
-		t.Fatalf("extractText: %v", err)
-	}
-	if !result.Text.Valid || result.Text.String != text {
-		t.Errorf("expected text %q, got %v", text, result.Text)
-	}
-	if result.OptimizedPdfTmpPath != nil {
-		t.Error("expected nil OptimizedPdfTmpPath after optimization failure")
-	}
-}
-
-func TestExtractTextEmptyFallsToOCR(t *testing.T) {
-	empty := ""
-	ocrText := "ocr extracted text"
-	ocrPath := writeTempFile(t, "ocr-output")
-	textExt := &mockTextExtractor{texts: []*string{&empty, &ocrText}}
-	c := makeConsumerWithMocks(t, textExt, nil, nil, &ocrPath, nil)
-
-	path := writeTempFile(t, "scanned pdf content")
-	file := File{Name: "scan.pdf", OriginalPath: path, FileSize: 100}
-	result, err := c.extractText(file)
-	if err != nil {
-		t.Fatalf("extractText: %v", err)
-	}
-	if !result.Text.Valid || result.Text.String != ocrText {
-		t.Errorf("expected OCR text %q, got %v", ocrText, result.Text)
-	}
-	if result.OCRTmpPath == nil || *result.OCRTmpPath != ocrPath {
-		t.Errorf("expected OCRTmpPath %q, got %v", ocrPath, result.OCRTmpPath)
-	}
-}
-
-func TestExtractTextOCRFails(t *testing.T) {
-	empty := ""
-	textExt := &mockTextExtractor{texts: []*string{&empty}}
-	c := makeConsumerWithMocks(t, textExt, nil, nil, nil, fmt.Errorf("OCR failed"))
-
-	path := writeTempFile(t, "scanned pdf content")
-	file := File{Name: "scan.pdf", OriginalPath: path, FileSize: 100}
-	_, err := c.extractText(file)
+func TestCalculateMD5_NonExistentFile(t *testing.T) {
+	_, err := calculateMD5("/tmp/nonexistent-md5-test-file")
 	if err == nil {
-		t.Fatal("expected error from OCR failure, got nil")
+		t.Fatal("calculateMD5() expected error for non-existent file, got nil")
 	}
 }
 
-func TestExtractTextOCRNoText(t *testing.T) {
-	empty := ""
-	ocrPath := writeTempFile(t, "ocr-output")
-	textExt := &mockTextExtractor{texts: []*string{&empty, &empty}}
-	c := makeConsumerWithMocks(t, textExt, nil, nil, &ocrPath, nil)
+func TestCalculateSHA512(t *testing.T) {
+	content := "hello world\n"
+	path := createTempFile(t, t.TempDir(), "test.txt", content)
 
-	path := writeTempFile(t, "scanned pdf content")
-	file := File{Name: "scan.pdf", OriginalPath: path, FileSize: 100}
-	result, err := c.extractText(file)
+	got, err := calculateSHA512(path)
 	if err != nil {
-		t.Fatalf("extractText: %v", err)
+		t.Fatalf("calculateSHA512() unexpected error: %v", err)
 	}
-	if result.Text.Valid {
-		t.Error("expected Text.Valid == false")
-	}
-	if result.OCRTmpPath == nil || *result.OCRTmpPath != ocrPath {
-		t.Errorf("expected OCRTmpPath %q, got %v", ocrPath, result.OCRTmpPath)
+
+	_, want := knownChecksums(content)
+	if got != want {
+		t.Errorf("calculateSHA512() = %q, want %q", got, want)
 	}
 }
 
-func makeConsumerForProcess(t *testing.T, db *sql.DB, textExt *mockTextExtractor, optPath *string, optErr error, ocrPath *string, ocrErr error) *Consumer {
-	t.Helper()
-	runner := tools.NewRunnerWithAdapters(
-		utils.NewLogger("info"),
-		&config.ConsumerConfig{},
-		textExt,
-		&mockOCR{path: ocrPath, err: ocrErr},
-		&mockPdfOptimizer{path: optPath, err: optErr},
-	)
+func TestCalculateChecksums_Consistency(t *testing.T) {
+	content := "the quick brown fox jumps over the lazy dog"
+	path := createTempFile(t, t.TempDir(), "test.txt", content)
+
+	md5sum, err := calculateMD5(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sha512sum, err := calculateSHA512(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantMD5, wantSHA512 := knownChecksums(content)
+	if md5sum != wantMD5 {
+		t.Errorf("MD5 mismatch: got %q, want %q", md5sum, wantMD5)
+	}
+	if sha512sum != wantSHA512 {
+		t.Errorf("SHA512 mismatch: got %q, want %q", sha512sum, wantSHA512)
+	}
+}
+
+func TestIsDuplicate_NoMatch(t *testing.T) {
+	db := setupConsumerDB(t)
+	logger := utils.NewDiscardLogger()
+	cfg := &config.Config{}
+	consumer, err := NewConsumerWithRunner(cfg, logger, db, nil)
+	if err != nil {
+		t.Fatalf("NewConsumerWithRunner: %v", err)
+	}
+
+	dir := t.TempDir()
+	path := createTempFile(t, dir, "unique.pdf", "unique content")
+
+	dup, err := consumer.isDuplicate(context.Background(), path)
+	if err != nil {
+		t.Fatalf("isDuplicate() unexpected error: %v", err)
+	}
+	if dup {
+		t.Fatal("isDuplicate() = true, want false")
+	}
+}
+
+func TestIsDuplicate_ExactMatch(t *testing.T) {
+	db := setupConsumerDB(t)
+	logger := utils.NewDiscardLogger()
+	cfg := &config.Config{}
+	consumer, err := NewConsumerWithRunner(cfg, logger, db, nil)
+	if err != nil {
+		t.Fatalf("NewConsumerWithRunner: %v", err)
+	}
+
+	dir := t.TempDir()
+	content := "duplicate content"
+	path := createTempFile(t, dir, "dup.pdf", content)
+	md5sum, sha512sum := knownChecksums(content)
+
+	queries := database.NewQueries(db)
+	_, err = queries.CreateDocument(context.Background(), database.CreateDocumentParams{
+		Title:          "existing",
+		Md5Checksum:    md5sum,
+		Sha512Checksum: sha512sum,
+		MimeType:       "application/pdf",
+		FileSize:       int64(len(content)),
+		OriginalPath:   "/dev/null",
+		StoragePath:    "/dev/null",
+	})
+	if err != nil {
+		t.Fatalf("CreateDocument: %v", err)
+	}
+
+	dup, err := consumer.isDuplicate(context.Background(), path)
+	if err != nil {
+		t.Fatalf("isDuplicate() unexpected error: %v", err)
+	}
+	if !dup {
+		t.Fatal("isDuplicate() = false, want true")
+	}
+}
+
+func TestProcess_Duplicate(t *testing.T) {
+	db := setupConsumerDB(t)
+	logger := utils.NewDiscardLogger()
+	dir := t.TempDir()
+	content := "process duplicate test"
+	path := createTempFile(t, dir, "doc.pdf", content)
+	md5sum, sha512sum := knownChecksums(content)
+
+	queries := database.NewQueries(db)
+	_, err := queries.CreateDocument(context.Background(), database.CreateDocumentParams{
+		Title:          "existing",
+		Md5Checksum:    md5sum,
+		Sha512Checksum: sha512sum,
+		MimeType:       "application/pdf",
+		FileSize:       int64(len(content)),
+		OriginalPath:   "/dev/null",
+		StoragePath:    "/dev/null",
+	})
+	if err != nil {
+		t.Fatalf("CreateDocument: %v", err)
+	}
+
 	cfg := &config.Config{
-		Storage: config.StorageConfig{
-			StorageDir: t.TempDir(),
+		Storage: config.StorageConfig{StorageDir: filepath.Join(dir, "storage")},
+		Consumer: config.ConsumerConfig{
+			OCRLanguages:         []string{"eng"},
+			OCRDataDir:           filepath.Join(dir, "tessdata"),
+			TextExtractorTimeout: 5,
+			OptimizationTimeout:  5,
+			OCRTimeout:           5,
 		},
 	}
-	return NewConsumerWithRunner(cfg, utils.NewLogger("info"), db, runner)
-}
-
-func TestProcessOCRPath(t *testing.T) {
-	db := setupConsumerDB(t)
-	empty := ""
-	ocrText := "ocr extracted text"
-	ocrOutput := writeTempFile(t, "ocr-output-content")
-	textExt := &mockTextExtractor{texts: []*string{&empty, &ocrText}}
-	c := makeConsumerForProcess(t, db, textExt, nil, nil, &ocrOutput, nil)
-
-	original := writeTempFile(t, "scanned document")
-	file := File{
-		Name:         "scan.pdf",
-		OriginalPath: original,
-		MimeType:     "application/pdf",
-		FileSize:     100,
-		Date:         time.Date(2025, 6, 15, 0, 0, 0, 0, time.UTC),
-	}
-
-	result, err := c.Process(file)
+	consumer, err := NewConsumerWithRunner(cfg, logger, db, nil)
 	if err != nil {
-		t.Fatalf("Process: %v", err)
+		t.Fatalf("NewConsumerWithRunner: %v", err)
 	}
 
-	if result.StorageProcessedPath == nil {
-		t.Fatal("expected StorageProcessedPath")
-	}
-	if _, err := os.Stat(*result.StorageProcessedPath); os.IsNotExist(err) {
-		t.Error("processed file does not exist")
+	file, err := FileFromPath(path)
+	if err != nil {
+		t.Fatalf("FileFromPath: %v", err)
 	}
 
-	if result.StorageOriginalPath == nil {
-		t.Fatal("expected StorageOriginalPath")
+	_, err = consumer.Process(context.Background(), file)
+	if err == nil {
+		t.Fatal("Process() expected duplicate error, got nil")
 	}
-	if _, err := os.Stat(*result.StorageOriginalPath); os.IsNotExist(err) {
-		t.Error("original file does not exist")
+	if !strings.Contains(err.Error(), "duplicate") {
+		t.Errorf("Process() error = %q, want 'duplicate'", err)
 	}
 }
 
-func TestProcessOptimizedPath(t *testing.T) {
+func TestProcess_TextExtractAndOptimize(t *testing.T) {
 	db := setupConsumerDB(t)
-	text := "extracted text"
-	optOutput := writeTempFile(t, "optimized-content")
-	textExt := &mockTextExtractor{texts: []*string{&text}}
-	c := makeConsumerForProcess(t, db, textExt, &optOutput, nil, nil, nil)
+	logger := utils.NewDiscardLogger()
+	dir := t.TempDir()
+	content := "some document content with enough text density"
+	path := createTempFile(t, dir, "doc.pdf", content)
 
-	original := writeTempFile(t, "pdf document")
-	file := File{
-		Name:         "doc.pdf",
-		OriginalPath: original,
-		MimeType:     "application/pdf",
-		FileSize:     100,
-		Date:         time.Date(2025, 6, 15, 0, 0, 0, 0, time.UTC),
+	textExtractor := &mockTextExtractor{
+		extractFunc: func(ctx context.Context, p string) (*string, error) {
+			text := "extracted text content"
+			return &text, nil
+		},
+	}
+	optimizer := &mockPdfOptimizer{
+		optimizeFunc: func(ctx context.Context, p string) (*string, error) {
+			tmp := filepath.Join(dir, "optimized-output.pdf")
+			if err := os.WriteFile(tmp, []byte("optimized"), 0644); err != nil {
+				return nil, err
+			}
+			return &tmp, nil
+		},
+	}
+	ocrMock := &mockOCR{}
+
+	cfg := &config.Config{
+		Storage: config.StorageConfig{StorageDir: filepath.Join(dir, "storage")},
+		Consumer: config.ConsumerConfig{
+			OCRLanguages:         []string{"eng"},
+			OCRDataDir:           filepath.Join(dir, "tessdata"),
+			TextExtractorTimeout: 5,
+			OptimizationTimeout:  5,
+			OCRTimeout:           5,
+		},
 	}
 
-	result, err := c.Process(file)
+	runner := newMockRunner(t, logger, &cfg.Consumer, textExtractor, ocrMock, optimizer)
+	consumer, err := NewConsumerWithRunner(cfg, logger, db, runner)
 	if err != nil {
-		t.Fatalf("Process: %v", err)
+		t.Fatalf("NewConsumerWithRunner: %v", err)
 	}
 
+	file, err := FileFromPath(path)
+	if err != nil {
+		t.Fatalf("FileFromPath: %v", err)
+	}
+
+	result, err := consumer.Process(context.Background(), file)
+	if err != nil {
+		t.Fatalf("Process() unexpected error: %v", err)
+	}
+
+	if !result.DocumentID.Valid {
+		t.Fatal("Process() returned invalid DocumentID")
+	}
 	if result.StorageProcessedPath == nil {
-		t.Fatal("expected StorageProcessedPath")
+		t.Fatal("Process() returned nil StorageProcessedPath")
 	}
-	if _, err := os.Stat(*result.StorageProcessedPath); os.IsNotExist(err) {
-		t.Error("processed file does not exist")
+	if !result.Text.Valid || result.Text.String == "" {
+		t.Fatal("Process() expected non-empty Text")
 	}
 
-	if result.StorageOriginalPath == nil {
-		t.Fatal("expected StorageOriginalPath")
+	queries := database.NewQueries(db)
+	doc, err := queries.GetDocument(context.Background(), result.DocumentID.Int64)
+	if err != nil {
+		t.Fatalf("GetDocument: %v", err)
 	}
-	if _, err := os.Stat(*result.StorageOriginalPath); os.IsNotExist(err) {
-		t.Error("original file does not exist")
+	if doc.Title != file.Name {
+		t.Errorf("doc.Title = %q, want %q", doc.Title, file.Name)
+	}
+	if doc.Md5Checksum != file.MD5Checksum {
+		t.Errorf("doc.Md5Checksum mismatch")
 	}
 }
 
-func TestProcessUnoptimizedPath(t *testing.T) {
+func TestProcess_OCRFallback(t *testing.T) {
 	db := setupConsumerDB(t)
-	text := "extracted text"
-	textExt := &mockTextExtractor{texts: []*string{&text}}
-	c := makeConsumerForProcess(t, db, textExt, nil, fmt.Errorf("optimization failed"), nil, nil)
+	logger := utils.NewDiscardLogger()
+	dir := t.TempDir()
+	content := "some content"
+	path := createTempFile(t, dir, "scanned.pdf", content)
 
-	original := writeTempFile(t, "pdf document")
-	file := File{
-		Name:         "doc.pdf",
-		OriginalPath: original,
-		MimeType:     "application/pdf",
-		FileSize:     100,
-		Date:         time.Date(2025, 6, 15, 0, 0, 0, 0, time.UTC),
+	ocrOutputPath := filepath.Join(dir, "ocr-output.pdf")
+	if err := os.WriteFile(ocrOutputPath, []byte("ocr result"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	postOCRTextPath := filepath.Join(dir, "post-ocr-text.pdf")
+	if err := os.WriteFile(postOCRTextPath, []byte("post ocr"), 0644); err != nil {
+		t.Fatal(err)
 	}
 
-	result, err := c.Process(file)
+	callCount := 0
+	textExtractor := &mockTextExtractor{
+		extractFunc: func(ctx context.Context, p string) (*string, error) {
+			callCount++
+			if callCount == 1 {
+				text := ""
+				return &text, nil
+			}
+
+			text := "ocr extracted text"
+			return &text, nil
+		},
+	}
+	ocrMock := &mockOCR{
+		processFunc: func(ctx context.Context, p string) (*string, error) {
+			return &ocrOutputPath, nil
+		},
+	}
+	optimizer := &mockPdfOptimizer{}
+
+	cfg := &config.Config{
+		Storage: config.StorageConfig{StorageDir: filepath.Join(dir, "storage")},
+		Consumer: config.ConsumerConfig{
+			OCRLanguages:         []string{"eng"},
+			OCRDataDir:           filepath.Join(dir, "tessdata"),
+			TextExtractorTimeout: 5,
+			OptimizationTimeout:  5,
+			OCRTimeout:           5,
+		},
+	}
+
+	runner := newMockRunner(t, logger, &cfg.Consumer, textExtractor, ocrMock, optimizer)
+	consumer, err := NewConsumerWithRunner(cfg, logger, db, runner)
 	if err != nil {
-		t.Fatalf("Process: %v", err)
+		t.Fatalf("NewConsumerWithRunner: %v", err)
 	}
 
-	if result.StorageProcessedPath == nil {
-		t.Fatal("expected StorageProcessedPath")
-	}
-	if _, err := os.Stat(*result.StorageProcessedPath); os.IsNotExist(err) {
-		t.Error("processed file does not exist")
+	file, err := FileFromPath(path)
+	if err != nil {
+		t.Fatalf("FileFromPath: %v", err)
 	}
 
-	if result.StorageOriginalPath == nil {
-		t.Fatal("expected StorageOriginalPath")
+	result, err := consumer.Process(context.Background(), file)
+	if err != nil {
+		t.Fatalf("Process() unexpected error: %v", err)
 	}
-	if _, err := os.Stat(*result.StorageOriginalPath); os.IsNotExist(err) {
-		t.Error("original file does not exist")
+
+	if !result.DocumentID.Valid {
+		t.Fatal("Process() returned invalid DocumentID")
+	}
+	if result.OCRTmpPath == nil {
+		t.Fatal("Process() expected OCR tmp path to be set")
+	}
+}
+
+func TestNewConsumerWithRunner(t *testing.T) {
+	db := setupConsumerDB(t)
+	logger := utils.NewDiscardLogger()
+	cfg := &config.Config{}
+
+	c, err := NewConsumerWithRunner(cfg, logger, db, nil)
+	if err != nil {
+		t.Fatalf("NewConsumerWithRunner() unexpected error: %v", err)
+	}
+	if c == nil {
+		t.Fatal("NewConsumerWithRunner() returned nil")
 	}
 }

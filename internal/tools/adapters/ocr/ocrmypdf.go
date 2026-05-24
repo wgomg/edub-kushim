@@ -43,7 +43,6 @@ func (o *OcrMyPdf) Process(ctx context.Context, path string) (*string, error) {
 		"--rotate-pages",
 		"--deskew",
 		"--clean",
-		"--remove-background",
 		"--pdfa-image-compression", "jpeg",
 		"--jpeg-quality", "85",
 		"--png-quality", "85",

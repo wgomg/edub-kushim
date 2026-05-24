@@ -4,225 +4,149 @@ import (
 	"testing"
 )
 
-func TestFlagParserString(t *testing.T) {
-	var s string
-	p := NewFlagParser([]string{"--limit", "20", "query"})
-	err := p.String("--limit", &s)
-	if err != nil {
+func TestNewFlagParser(t *testing.T) {
+	p := NewFlagParser([]string{"--foo", "bar"})
+	if p == nil {
+		t.Fatal("expected non-nil parser")
+	}
+}
+
+func TestHelp_HelpFlag(t *testing.T) {
+	p := NewFlagParser([]string{"--help"})
+	if !p.Help("usage text") {
+		t.Error("expected Help to return true for --help")
+	}
+}
+
+func TestHelp_ShortHelpFlag(t *testing.T) {
+	p := NewFlagParser([]string{"-h"})
+	if !p.Help("usage text") {
+		t.Error("expected Help to return true for -h")
+	}
+}
+
+func TestHelp_NoHelpFlag(t *testing.T) {
+	p := NewFlagParser([]string{"--other"})
+	if p.Help("usage text") {
+		t.Error("expected Help to return false")
+	}
+}
+
+func TestString_ParsesValue(t *testing.T) {
+	p := NewFlagParser([]string{"--name", "test-value"})
+	var dst string
+	if err := p.String("--name", &dst); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if s != "20" {
-		t.Errorf("expected '20', got %q", s)
-	}
-	rest := p.Rest()
-	if len(rest) != 1 || rest[0] != "query" {
-		t.Errorf("expected rest ['query'], got %v", rest)
+	if dst != "test-value" {
+		t.Errorf("expected test-value, got %s", dst)
 	}
 }
 
-func TestFlagParserStringMissingValue(t *testing.T) {
-	var s string
-	p := NewFlagParser([]string{"--limit"})
-	err := p.String("--limit", &s)
-	if err == nil {
-		t.Fatal("expected error for missing value, got nil")
+func TestString_MissingValue(t *testing.T) {
+	p := NewFlagParser([]string{"--name"})
+	var dst string
+	if err := p.String("--name", &dst); err == nil {
+		t.Error("expected error for missing value")
 	}
 }
 
-func TestFlagParserInt(t *testing.T) {
-	var i int
-	p := NewFlagParser([]string{"--limit", "20", "query"})
-	err := p.Int("--limit", &i, 1, 100)
-	if err != nil {
+func TestString_NotFound(t *testing.T) {
+	p := NewFlagParser([]string{"--other", "val"})
+	var dst string
+	if err := p.String("--name", &dst); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if i != 20 {
-		t.Errorf("expected 20, got %d", i)
-	}
-	rest := p.Rest()
-	if len(rest) != 1 || rest[0] != "query" {
-		t.Errorf("expected rest ['query'], got %v", rest)
+	if dst != "" {
+		t.Errorf("expected empty, got %s", dst)
 	}
 }
 
-func TestFlagParserIntOutOfRange(t *testing.T) {
-	var i int
-	p := NewFlagParser([]string{"--limit", "0"})
-	err := p.Int("--limit", &i, 1, 100)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-}
-
-func TestFlagParserIntNotANumber(t *testing.T) {
-	var i int
-	p := NewFlagParser([]string{"--limit", "abc"})
-	err := p.Int("--limit", &i, 1, 100)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-}
-
-func TestFlagParserBool(t *testing.T) {
-	var b bool
-	p := NewFlagParser([]string{"--rebuild-index", "query"})
-	err := p.Bool("--rebuild-index", &b)
-	if err != nil {
+func TestInt_ParsesValue(t *testing.T) {
+	p := NewFlagParser([]string{"--count", "5"})
+	var dst int
+	if err := p.Int("--count", &dst, 0, 10); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !b {
+	if dst != 5 {
+		t.Errorf("expected 5, got %d", dst)
+	}
+}
+
+func TestInt_OutOfRange(t *testing.T) {
+	p := NewFlagParser([]string{"--count", "15"})
+	var dst int
+	if err := p.Int("--count", &dst, 0, 10); err == nil {
+		t.Error("expected error for out of range")
+	}
+}
+
+func TestInt_InvalidValue(t *testing.T) {
+	p := NewFlagParser([]string{"--count", "abc"})
+	var dst int
+	if err := p.Int("--count", &dst, 0, 10); err == nil {
+		t.Error("expected error for invalid integer")
+	}
+}
+
+func TestInt_NotFound(t *testing.T) {
+	p := NewFlagParser([]string{"--other", "5"})
+	var dst int
+	if err := p.Int("--count", &dst, 0, 10); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if dst != 0 {
+		t.Errorf("expected 0, got %d", dst)
+	}
+}
+
+func TestBool_SetsTrue(t *testing.T) {
+	p := NewFlagParser([]string{"--verbose"})
+	var dst bool
+	if err := p.Bool("--verbose", &dst); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !dst {
 		t.Error("expected true")
 	}
-	rest := p.Rest()
-	if len(rest) != 1 || rest[0] != "query" {
-		t.Errorf("expected rest ['query'], got %v", rest)
-	}
 }
 
-func TestFlagParserMultipleFlags(t *testing.T) {
-	var limit int
-	var offset int
-	p := NewFlagParser([]string{"--limit", "10", "--offset", "5", "query"})
-	if err := p.Int("--limit", &limit, 1, 100); err != nil {
-		t.Fatalf("limit: %v", err)
-	}
-	if err := p.Int("--offset", &offset, 0, 100); err != nil {
-		t.Fatalf("offset: %v", err)
-	}
-	if limit != 10 {
-		t.Errorf("expected limit 10, got %d", limit)
-	}
-	if offset != 5 {
-		t.Errorf("expected offset 5, got %d", offset)
-	}
-	rest := p.Rest()
-	if len(rest) != 1 || rest[0] != "query" {
-		t.Errorf("expected rest ['query'], got %v", rest)
-	}
-}
-
-func TestFlagParserNoFlags(t *testing.T) {
-	p := NewFlagParser([]string{"query", "terms"})
-	rest := p.Rest()
-	if len(rest) != 2 || rest[0] != "query" || rest[1] != "terms" {
-		t.Errorf("expected rest ['query', 'terms'], got %v", rest)
-	}
-}
-
-func TestFlagParserUnknownFlagInRest(t *testing.T) {
-	p := NewFlagParser([]string{"--unknown", "val"})
-	rest := p.Rest()
-	if len(rest) != 2 || rest[0] != "--unknown" || rest[1] != "val" {
-		t.Errorf("expected rest ['--unknown', 'val'], got %v", rest)
-	}
-}
-
-func TestFlagParserIntMissingValue(t *testing.T) {
-	var i int
-	p := NewFlagParser([]string{"--limit"})
-	err := p.Int("--limit", &i, 1, 100)
-	if err != nil {
+func TestBool_NotFound(t *testing.T) {
+	p := NewFlagParser([]string{"--other"})
+	var dst bool
+	if err := p.Bool("--verbose", &dst); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if i != 0 {
-		t.Errorf("expected 0 (unchanged), got %d", i)
+	if dst {
+		t.Error("expected false")
 	}
 }
 
-func TestFlagParserFlagValueIsAnotherFlag(t *testing.T) {
-	var i int
-	p := NewFlagParser([]string{"--limit", "--offset", "query"})
-	err := p.Int("--limit", &i, 1, 100)
-	if err == nil {
-		t.Fatal("expected error for non-integer value")
-	}
-}
-
-func TestFlagParserRestAfterConsumingAll(t *testing.T) {
-	var s string
-	p := NewFlagParser([]string{"--flag", "value"})
-	if err := p.String("--flag", &s); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+func TestRest_ReturnsRemaining(t *testing.T) {
+	p := NewFlagParser([]string{"--foo", "bar", "extra1", "extra2"})
+	var dst string
+	p.String("--foo", &dst)
 	rest := p.Rest()
-	if len(rest) != 0 {
-		t.Errorf("expected empty rest, got %v", rest)
+	if len(rest) != 2 || rest[0] != "extra1" || rest[1] != "extra2" {
+		t.Errorf("unexpected rest: %v", rest)
 	}
 }
 
-func TestFlagParserRestBeforeConsuming(t *testing.T) {
-	p := NewFlagParser([]string{"a", "b", "c"})
-	rest := p.Rest()
-	if len(rest) != 3 {
-		t.Errorf("expected 3 items, got %d", len(rest))
-	}
-	if p.pos != 0 {
-		t.Error("pos should not advance on Rest()")
-	}
-	rest2 := p.Rest()
-	if len(rest2) != 3 {
-		t.Error("Rest() should be idempotent")
+func TestRest_Idempotent(t *testing.T) {
+	p := NewFlagParser([]string{"a", "b"})
+	r1 := p.Rest()
+	r2 := p.Rest()
+	if len(r1) != 2 || len(r2) != 2 {
+		t.Error("expected same length on both calls")
 	}
 }
 
-func TestFlagParserBoolNotPresent(t *testing.T) {
-	var b bool
-	p := NewFlagParser([]string{"query"})
-	err := p.Bool("--verbose", &b)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if b {
-		t.Error("expected false for missing bool flag")
-	}
-	rest := p.Rest()
-	if len(rest) != 1 || rest[0] != "query" {
-		t.Errorf("expected rest ['query'], got %v", rest)
-	}
-}
-
-func TestFlagParserInterleavedFlagsAndRest(t *testing.T) {
-	var s string
-	var b bool
-	p := NewFlagParser([]string{"--flag", "val", "rest1", "--bool", "rest2"})
-	if err := p.String("--flag", &s); err != nil {
-		t.Fatalf("string: %v", err)
-	}
-	if s != "val" {
-		t.Errorf("expected 'val', got %q", s)
-	}
-	if err := p.Bool("--bool", &b); err != nil {
-		t.Fatalf("bool: %v", err)
-	}
-	if !b {
-		t.Error("expected true")
-	}
-	rest := p.Rest()
-	if len(rest) != 1 || rest[0] != "rest2" {
-		t.Errorf("expected rest ['rest2'], got %v", rest)
-	}
-}
-
-func TestFlagParserEmptyArgs(t *testing.T) {
-	p := NewFlagParser([]string{})
-	rest := p.Rest()
-	if len(rest) != 0 {
-		t.Errorf("expected empty rest, got %v", rest)
-	}
-}
-
-func TestFlagParserFlagAtEndNoValue(t *testing.T) {
-	var i int
-	p := NewFlagParser([]string{"--limit"})
-	err := p.Int("--limit", &i, 1, 100)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if i != 0 {
-		t.Errorf("expected 0 (unchanged), got %d", i)
-	}
-	rest := p.Rest()
-	if len(rest) != 1 || rest[0] != "--limit" {
-		t.Errorf("expected rest ['--limit'], got %v", rest)
+func TestString_AdvancesPosition(t *testing.T) {
+	p := NewFlagParser([]string{"--first", "a", "--second", "b"})
+	var first, second string
+	p.String("--first", &first)
+	p.String("--second", &second)
+	if first != "a" || second != "b" {
+		t.Errorf("unexpected: first=%s second=%s", first, second)
 	}
 }

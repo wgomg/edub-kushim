@@ -1,6 +1,3 @@
-# Makefile
-
-# Paths
 CURDIR        ?= $(abspath .)
 BUILD_DIR     := $(CURDIR)/build
 TESS_INCLUDE  := $(BUILD_DIR)/tesseract/local/include
@@ -17,16 +14,31 @@ EDUB_BINARY   := ./dev/bin/edub
 export CGO_ENABLED    := 1
 export CGO_CPPFLAGS   := -I$(TESS_INCLUDE) -I$(BUILD_DIR)/libpng/local/include
 
-.PHONY: all build build-deps clean run consume
+# TEST_FLAGS — extra flags passed to `go test` (e.g. -run, -count, -short).
+# TEST_PKG   — Go package pattern(s) to test (e.g. ./internal/..., ./cmd/...).
+#
+# Host tests (make test / test-verbose / test-race):
+#   Run on the host. Tests that depend on external tools (ocrmypdf, gs, pdftotext)
+#   will FAIL if those tools are not installed — install them to run the full suite.
+#
+# Container tests (make test-container):
+#   Run inside an Arch Linux container with all external tools pre-installed.
+#   Use this for CI or when you don't want to install tools on the host.
+#
+# Examples:
+#   make test TEST_PKG="./internal/task"
+#   make test-verbose TEST_PKG="./internal/task/..." TEST_FLAGS="-run TestEnqueue"
+#   make test-race TEST_PKG="./internal/..." TEST_FLAGS="-count=1"
+#   make test-container TEST_PKG="./internal/tools/adapters/..."
+
+.PHONY: all build build-deps clean run consume test test-race test-verbose test-container test-container-build
 
 all: build
 
-## Build both binaries
 build:
 	go build -o $(BINARY) ./cmd/kushim/main.go
 	go build -o $(EDUB_BINARY) ./cmd/edub/main.go
 
-## Build libraries from source (one-time setup)
 build-deps:
 	@if [ ! -d $(BUILD_DIR)/libpng ]; then \
 		echo "Downloading libpng $(LIBNG_VER)..."; \
@@ -63,23 +75,29 @@ build-deps:
 	cd $(MUPDF_DIR) && rm -rf local/ && \
 		make prefix=$(MUPDF_DIR)/local HAVE_X11=no HAVE_GLUT=no shared=no libs install
 
-## Run the consumer pipeline
 consume: build
 	$(BINARY) consume
 
-## Run all pure-Go tests (tiers 1–5, no CGo required)
 test:
-	go test ./internal/search/ ./internal/commands/ ./internal/database/ ./internal/consumption/ ./internal/api/handlers/ -v
+	go test $(TEST_FLAGS) $(TEST_PKG)
 
-## Run tests with coverage profile
-test-cover:
-	go test -coverprofile=coverage.out ./internal/search/ ./internal/commands/ ./internal/database/ ./internal/consumption/ ./internal/api/handlers/
-	go tool cover -func=coverage.out
+test-race:
+	go test -race $(TEST_FLAGS) $(TEST_PKG)
 
-## Run integration tests (requires CGo build deps: make build-deps)
-test-integration:
-	go test -tags=integration -v ./internal/...
+test-verbose:
+	go test -v $(TEST_FLAGS) $(TEST_PKG)
 
-## Delete the binaries
+test-container-build:
+	podman build -t kushim-test -f Containerfile.test .
+
+test-container: test-container-build
+	podman run --rm \
+		-v $(CURDIR):/app:Z \
+		-w /app \
+		-e CGO_ENABLED=1 \
+		-e CGO_CPPFLAGS="$(CGO_CPPFLAGS)" \
+		kushim-test \
+		test $(TEST_FLAGS) $(TEST_PKG)
+
 clean:
 	rm -f $(BINARY) $(EDUB_BINARY)

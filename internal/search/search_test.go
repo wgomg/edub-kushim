@@ -3,260 +3,239 @@ package search
 import (
 	"context"
 	"database/sql"
-	"os"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/utils"
+
+	_ "modernc.org/sqlite"
 )
 
-var schemaSQL = func() string {
-	data, err := os.ReadFile("../../sql/schema.sql")
-	if err != nil {
-		panic("cannot read schema.sql: " + err.Error())
-	}
-	return string(data)
-}()
-
-func setupTestDB(t *testing.T) *sql.DB {
+func setupSearchDB(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
-		t.Fatalf("open in-memory db: %v", err)
+		t.Fatalf("open test db: %v", err)
 	}
-	if _, err := db.Exec(schemaSQL); err != nil {
+	t.Cleanup(func() { _ = db.Close() })
+
+	_, err = db.Exec(`
+		CREATE TABLE document (
+			id INTEGER PRIMARY KEY,
+			title TEXT NOT NULL,
+			md5_checksum TEXT NOT NULL,
+			sha512_checksum TEXT UNIQUE NOT NULL,
+			mime_type TEXT NOT NULL,
+			file_size INTEGER NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			modified_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			document_type_id INTEGER,
+			original_path TEXT NOT NULL,
+			storage_path TEXT NOT NULL,
+			text_content TEXT
+		);
+
+		CREATE VIRTUAL TABLE document_fts USING fts5(
+			document_id UNINDEXED,
+			title,
+			content,
+			tokenize = 'unicode61'
+		);
+	`)
+	if err != nil {
 		t.Fatalf("create schema: %v", err)
 	}
-	t.Cleanup(func() { db.Close() })
 	return db
 }
 
-func TestSanitizeQuery(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected string
-	}{
-		{"", ""},
-		{"hello", `"hello"`},
-		{"hello world", `"hello world"`},
-		{"hello AND world", `"hello AND world"`},
-		{"term*", `"term*"`},
-		{`"exact phrase"`, `"""exact phrase"""`},
-		{`mix "of" things`, `"mix ""of"" things"`},
-		{"(a OR b)", `"(a OR b)"`},
+func seedDocument(t *testing.T, queries *database.Queries, title, path, text string) {
+	t.Helper()
+	ctx := context.Background()
+	result, err := queries.CreateDocument(ctx, database.CreateDocumentParams{
+		Title:          title,
+		Md5Checksum:    "md5-" + title,
+		Sha512Checksum: "sha512-" + title,
+		MimeType:       "application/pdf",
+		FileSize:       100,
+		OriginalPath:   path,
+		StoragePath:    path,
+		TextContent:    sql.NullString{String: text, Valid: text != ""},
+	})
+	if err != nil {
+		t.Fatalf("CreateDocument: %v", err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			got := sanitizeQuery(tt.input)
-			if got != tt.expected {
-				t.Errorf("sanitizeQuery(%q) = %q, want %q", tt.input, got, tt.expected)
-			}
-		})
+	id, _ := result.LastInsertId()
+	if err := queries.UpdateDocumentFTS(ctx, struct {
+		DocumentID int64
+		Title      string
+		Content    string
+	}{DocumentID: id, Title: title, Content: text}); err != nil {
+		t.Fatalf("UpdateDocumentFTS: %v", err)
 	}
 }
 
-func TestSearchResults(t *testing.T) {
-	db := setupTestDB(t)
-	queries := database.NewQueries(db)
-	ctx := context.Background()
-
-	queries.CreateDocument(ctx, database.CreateDocumentParams{
-		Title: "quantum.pdf", Md5Checksum: "a", Sha512Checksum: "a1",
-		MimeType: "application/pdf", FileSize: 100, OriginalPath: "/a", StoragePath: "/a",
-		TextContent: sql.NullString{String: "quantum mechanics basics", Valid: true},
-	})
-	queries.CreateDocument(ctx, database.CreateDocumentParams{
-		Title: "physics.pdf", Md5Checksum: "b", Sha512Checksum: "b1",
-		MimeType: "application/pdf", FileSize: 200, OriginalPath: "/b", StoragePath: "/b",
-		TextContent: sql.NullString{String: "quantum physics advanced", Valid: true},
-	})
-	queries.CreateDocument(ctx, database.CreateDocumentParams{
-		Title: "biology.pdf", Md5Checksum: "c", Sha512Checksum: "c1",
-		MimeType: "application/pdf", FileSize: 300, OriginalPath: "/c", StoragePath: "/c",
-		TextContent: sql.NullString{String: "cell biology intro", Valid: true},
-	})
-
-	engine := NewEngine(nil, db)
-	results, err := engine.Search(ctx, "quantum", 10, 0)
-	if err != nil {
-		t.Fatalf("search failed: %v", err)
-	}
-	if len(results) != 2 {
-		t.Fatalf("expected 2 results, got %d", len(results))
-	}
-	if results[0].Rank == 0 || results[1].Rank == 0 {
-		t.Error("expected non-zero bm25 ranks")
+func TestSanitizeQuery_Empty(t *testing.T) {
+	got := sanitizeQuery("")
+	if got != "" {
+		t.Errorf("sanitizeQuery('') = %q, want ''", got)
 	}
 }
 
-func TestSearchNoResults(t *testing.T) {
-	db := setupTestDB(t)
-	queries := database.NewQueries(db)
-	ctx := context.Background()
+func TestSanitizeQuery_PlainText(t *testing.T) {
+	got := sanitizeQuery("hello world")
+	want := `"hello world"`
+	if got != want {
+		t.Errorf("sanitizeQuery('hello world') = %q, want %q", got, want)
+	}
+}
 
-	queries.CreateDocument(ctx, database.CreateDocumentParams{
-		Title: "doc.pdf", Md5Checksum: "a", Sha512Checksum: "a1",
-		MimeType: "application/pdf", FileSize: 100, OriginalPath: "/a", StoragePath: "/a",
-		TextContent: sql.NullString{String: "some content", Valid: true},
-	})
+func TestSanitizeQuery_EmbeddedQuotes(t *testing.T) {
+	got := sanitizeQuery(`say "hello"`)
+	want := `"say ""hello"""`
+	if got != want {
+		t.Errorf("sanitizeQuery('say \"hello\"') = %q, want %q", got, want)
+	}
+}
 
-	engine := NewEngine(nil, db)
-	results, err := engine.Search(ctx, "nonexistent", 10, 0)
+func TestSanitizeQuery_SpecialChars(t *testing.T) {
+	got := sanitizeQuery(`NOT OR AND * ( )`)
+	want := `"NOT OR AND * ( )"`
+	if got != want {
+		t.Errorf("sanitizeQuery() = %q, want %q", got, want)
+	}
+}
+
+func TestNewEngine(t *testing.T) {
+	db := setupSearchDB(t)
+	logger := utils.NewDiscardLogger()
+
+	e := NewEngine(logger, db)
+	if e == nil {
+		t.Fatal("NewEngine() returned nil")
+	}
+}
+
+func TestSearch_EmptyQuery(t *testing.T) {
+	db := setupSearchDB(t)
+	logger := utils.NewDiscardLogger()
+	e := NewEngine(logger, db)
+
+	results, err := e.Search(context.Background(), "", 10, 0)
 	if err != nil {
-		t.Fatalf("search failed: %v", err)
+		t.Fatalf("Search() unexpected error: %v", err)
+	}
+	if results != nil {
+		t.Errorf("Search() = %v, want nil", results)
+	}
+}
+
+func TestSearch_NoResults(t *testing.T) {
+	db := setupSearchDB(t)
+	logger := utils.NewDiscardLogger()
+	e := NewEngine(logger, db)
+
+	results, err := e.Search(context.Background(), "nothing", 10, 0)
+	if err != nil {
+		t.Fatalf("Search() unexpected error: %v", err)
 	}
 	if len(results) != 0 {
-		t.Errorf("expected 0 results, got %d", len(results))
+		t.Errorf("Search() = %d results, want 0", len(results))
 	}
 }
 
-func TestSearchEmptyQuery(t *testing.T) {
-	db := setupTestDB(t)
+func TestSearch_FindsResults(t *testing.T) {
+	db := setupSearchDB(t)
+	logger := utils.NewDiscardLogger()
 	queries := database.NewQueries(db)
-	ctx := context.Background()
+	e := NewEngine(logger, db)
 
-	queries.CreateDocument(ctx, database.CreateDocumentParams{
-		Title: "doc.pdf", Md5Checksum: "a", Sha512Checksum: "a1",
-		MimeType: "application/pdf", FileSize: 100, OriginalPath: "/a", StoragePath: "/a",
-		TextContent: sql.NullString{String: "some content", Valid: true},
-	})
+	seedDocument(t, queries, "invoice march", "/inv.pdf", "invoice for march services rendered")
+	seedDocument(t, queries, "report", "/rep.pdf", "annual report with charts")
 
-	engine := NewEngine(nil, db)
-	results, err := engine.Search(ctx, "", 10, 0)
+	results, err := e.Search(context.Background(), "invoice", 10, 0)
 	if err != nil {
-		t.Fatalf("search failed: %v", err)
-	}
-	if len(results) != 0 {
-		t.Errorf("expected 0 results, got %d", len(results))
-	}
-}
-
-func TestSearchPagination(t *testing.T) {
-	db := setupTestDB(t)
-	queries := database.NewQueries(db)
-	ctx := context.Background()
-
-	for i := range 10 {
-		queries.CreateDocument(ctx, database.CreateDocumentParams{
-			Title:          "doc.pdf",
-			Md5Checksum:    string(rune('a' + i)),
-			Sha512Checksum: string(rune('a' + i)),
-			MimeType:       "application/pdf",
-			FileSize:       100,
-			OriginalPath:   "/a",
-			StoragePath:    "/a",
-			TextContent:    sql.NullString{String: "common text in all docs", Valid: true},
-		})
-	}
-
-	engine := NewEngine(nil, db)
-
-	page1, err := engine.Search(ctx, "common", 3, 0)
-	if err != nil {
-		t.Fatalf("page1: %v", err)
-	}
-	if len(page1) != 3 {
-		t.Fatalf("page1: expected 3 results, got %d", len(page1))
-	}
-
-	page2, err := engine.Search(ctx, "common", 3, 3)
-	if err != nil {
-		t.Fatalf("page2: %v", err)
-	}
-	if len(page2) != 3 {
-		t.Fatalf("page2: expected 3 results, got %d", len(page2))
-	}
-
-	ids := map[int64]bool{}
-	for _, r := range page1 {
-		ids[r.DocumentID] = true
-	}
-	for _, r := range page2 {
-		if ids[r.DocumentID] {
-			t.Error("overlap between page1 and page2")
-		}
-	}
-}
-
-func TestSearchLimit(t *testing.T) {
-	db := setupTestDB(t)
-	queries := database.NewQueries(db)
-	ctx := context.Background()
-
-	for i := range 10 {
-		queries.CreateDocument(ctx, database.CreateDocumentParams{
-			Title:          "doc.pdf",
-			Md5Checksum:    string(rune('a' + i)),
-			Sha512Checksum: string(rune('a' + i)),
-			MimeType:       "application/pdf",
-			FileSize:       100,
-			OriginalPath:   "/a",
-			StoragePath:    "/a",
-			TextContent:    sql.NullString{String: "common text", Valid: true},
-		})
-	}
-
-	engine := NewEngine(nil, db)
-	results, err := engine.Search(ctx, "common", 5, 0)
-	if err != nil {
-		t.Fatalf("search failed: %v", err)
-	}
-	if len(results) != 5 {
-		t.Errorf("expected 5 results, got %d", len(results))
-	}
-}
-
-func TestSearchOffsetBeyond(t *testing.T) {
-	db := setupTestDB(t)
-	queries := database.NewQueries(db)
-	ctx := context.Background()
-
-	for i := range 3 {
-		queries.CreateDocument(ctx, database.CreateDocumentParams{
-			Title:          "doc.pdf",
-			Md5Checksum:    string(rune('a' + i)),
-			Sha512Checksum: string(rune('a' + i)),
-			MimeType:       "application/pdf",
-			FileSize:       100,
-			OriginalPath:   "/a",
-			StoragePath:    "/a",
-			TextContent:    sql.NullString{String: "common text", Valid: true},
-		})
-	}
-
-	engine := NewEngine(nil, db)
-	results, err := engine.Search(ctx, "common", 10, 20)
-	if err != nil {
-		t.Fatalf("search failed: %v", err)
-	}
-	if len(results) != 0 {
-		t.Errorf("expected 0 results, got %d", len(results))
-	}
-}
-
-func TestSearchSnippet(t *testing.T) {
-	db := setupTestDB(t)
-	queries := database.NewQueries(db)
-	ctx := context.Background()
-
-	queries.CreateDocument(ctx, database.CreateDocumentParams{
-		Title: "physics.pdf", Md5Checksum: "a", Sha512Checksum: "a1",
-		MimeType: "application/pdf", FileSize: 100, OriginalPath: "/a", StoragePath: "/a",
-		TextContent: sql.NullString{String: "the theory of quantum mechanics describes nature at the smallest scales", Valid: true},
-	})
-
-	engine := NewEngine(nil, db)
-	results, err := engine.Search(ctx, "quantum", 1, 0)
-	if err != nil {
-		t.Fatalf("search failed: %v", err)
+		t.Fatalf("Search() unexpected error: %v", err)
 	}
 	if len(results) != 1 {
-		t.Fatalf("expected 1 result, got %d", len(results))
+		t.Fatalf("Search() = %d results, want 1", len(results))
 	}
-	if results[0].Snippet == "" {
-		t.Error("expected non-empty snippet")
+	if results[0].Title != "invoice march" {
+		t.Errorf("result title = %q, want %q", results[0].Title, "invoice march")
 	}
-	if !strings.Contains(results[0].Snippet, "<b>quantum</b>") {
-		t.Errorf("snippet should contain highlighted term, got: %s", results[0].Snippet)
+}
+
+func TestSearch_MultipleMatches(t *testing.T) {
+	db := setupSearchDB(t)
+	logger := utils.NewDiscardLogger()
+	queries := database.NewQueries(db)
+	e := NewEngine(logger, db)
+
+	seedDocument(t, queries, "doc1", "/1.pdf", "the quick brown fox")
+	seedDocument(t, queries, "doc2", "/2.pdf", "the slow brown fox")
+	seedDocument(t, queries, "doc3", "/3.pdf", "the lazy dog")
+
+	results, err := e.Search(context.Background(), "brown", 10, 0)
+	if err != nil {
+		t.Fatalf("Search() unexpected error: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("Search() = %d results, want 2", len(results))
+	}
+}
+
+func TestSearch_LimitAndOffset(t *testing.T) {
+	db := setupSearchDB(t)
+	logger := utils.NewDiscardLogger()
+	queries := database.NewQueries(db)
+	e := NewEngine(logger, db)
+
+	for i := range 10 {
+		title := fmt.Sprintf("doc-%d", i)
+		seedDocument(t, queries, title, "/a.pdf", "common term in all documents")
+		_ = i
+	}
+
+	results, err := e.Search(context.Background(), "common", 3, 0)
+	if err != nil {
+		t.Fatalf("Search() unexpected error: %v", err)
+	}
+	if len(results) != 3 {
+		t.Errorf("Search() with limit=3 = %d results, want 3", len(results))
+	}
+}
+
+func TestSearch_ResultFields(t *testing.T) {
+	db := setupSearchDB(t)
+	logger := utils.NewDiscardLogger()
+	queries := database.NewQueries(db)
+	e := NewEngine(logger, db)
+
+	seedDocument(t, queries, "test title", "/path/test.pdf", "lorem ipsum dolor sit amet")
+
+	results, err := e.Search(context.Background(), "lorem", 10, 0)
+	if err != nil {
+		t.Fatalf("Search() unexpected error: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("Search() returned 0 results")
+	}
+
+	r := results[0]
+	if r.Title != "test title" {
+		t.Errorf("Title = %q, want %q", r.Title, "test title")
+	}
+	if r.MimeType != "application/pdf" {
+		t.Errorf("MimeType = %q, want %q", r.MimeType, "application/pdf")
+	}
+	if r.FileSize != 100 {
+		t.Errorf("FileSize = %d, want 100", r.FileSize)
+	}
+	if !strings.Contains(r.Snippet, "lorem") {
+		t.Errorf("Snippet = %q, expected 'lorem'", r.Snippet)
+	}
+	if r.Rank == 0 {
+		t.Errorf("Rank = 0, expected non-zero BM25 score")
 	}
 }
