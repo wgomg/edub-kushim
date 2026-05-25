@@ -39,6 +39,24 @@ func ftsTestDB(t *testing.T) *sql.DB {
 			content,
 			tokenize = 'unicode61'
 		);
+
+		CREATE TRIGGER document_ai AFTER INSERT ON document
+		BEGIN
+			INSERT INTO document_fts(document_id, title, content)
+			VALUES (new.id, new.title, COALESCE(new.text_content, ''));
+		END;
+
+		CREATE TRIGGER document_ad AFTER DELETE ON document
+		BEGIN
+			DELETE FROM document_fts WHERE document_id = old.id;
+		END;
+
+		CREATE TRIGGER document_au AFTER UPDATE ON document
+		BEGIN
+			DELETE FROM document_fts WHERE document_id = old.id;
+			INSERT INTO document_fts(document_id, title, content)
+			VALUES (new.id, new.title, COALESCE(new.text_content, ''));
+		END;
 	`)
 	if err != nil {
 		t.Fatalf("schema: %v", err)
@@ -326,5 +344,71 @@ func TestRebuildDocumentFTS(t *testing.T) {
 	}
 	if len(rows) != 2 {
 		t.Errorf("got %d results after rebuild, want 2", len(rows))
+	}
+}
+
+func TestFTS_InsertTrigger(t *testing.T) {
+	db := ftsTestDB(t)
+	q := New(db)
+
+	insertFTSDoc(t, q, "trigger-test", "hello world", "text/plain")
+
+	rows, err := q.SearchDocumentsFTS(context.Background(), "hello", 10, 0)
+	if err != nil {
+		t.Fatalf("SearchDocumentsFTS: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d results, want 1", len(rows))
+	}
+	if rows[0].Title != "trigger-test" {
+		t.Errorf("Title = %q, want 'trigger-test'", rows[0].Title)
+	}
+}
+
+func TestFTS_UpdateTrigger(t *testing.T) {
+	db := ftsTestDB(t)
+	q := New(db)
+
+	id := insertFTSDoc(t, q, "update-trigger", "old content", "text/plain")
+
+	_, err := db.Exec("UPDATE document SET text_content = 'new content' WHERE id = ?", id)
+	if err != nil {
+		t.Fatalf("UPDATE: %v", err)
+	}
+
+	rows, err := q.SearchDocumentsFTS(context.Background(), "old", 10, 0)
+	if err != nil {
+		t.Fatalf("SearchDocumentsFTS: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("got %d results for 'old', want 0", len(rows))
+	}
+
+	rows, err = q.SearchDocumentsFTS(context.Background(), "new", 10, 0)
+	if err != nil {
+		t.Fatalf("SearchDocumentsFTS: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d results for 'new', want 1", len(rows))
+	}
+}
+
+func TestFTS_DeleteTrigger(t *testing.T) {
+	db := ftsTestDB(t)
+	q := New(db)
+
+	id := insertFTSDoc(t, q, "delete-trigger", "delete me", "text/plain")
+
+	_, err := db.Exec("DELETE FROM document WHERE id = ?", id)
+	if err != nil {
+		t.Fatalf("DELETE: %v", err)
+	}
+
+	rows, err := q.SearchDocumentsFTS(context.Background(), "delete", 10, 0)
+	if err != nil {
+		t.Fatalf("SearchDocumentsFTS: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("got %d results, want 0", len(rows))
 	}
 }
