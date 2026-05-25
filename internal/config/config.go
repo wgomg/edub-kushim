@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/spf13/viper"
@@ -78,17 +79,17 @@ func Load(configDir string) (*Config, error) {
 	viper.SetDefault("server.idle_timeout", 60*time.Second)
 
 	viper.SetDefault("database.type", "sqlite")
-	viper.SetDefault("database.path", "./data/")
+	viper.SetDefault("database.path", filepath.Join(configDir, "data"))
 
-	viper.SetDefault("storage.consumption_dir", "./inbox")
-	viper.SetDefault("storage.storage_dir", "./storage")
+	viper.SetDefault("storage.consumption_dir", filepath.Join(configDir, "inbox"))
+	viper.SetDefault("storage.storage_dir", filepath.Join(configDir, "storage"))
 
 	viper.SetDefault("consumer.supported_files", []string{".pdf"})
 	viper.SetDefault("consumer.textextractor", "mupdf")
 	viper.SetDefault("consumer.pdfoptimizer", "mupdf")
 	viper.SetDefault("consumer.ocr", "gosseract")
 	viper.SetDefault("consumer.delete_original", false)
-	viper.SetDefault("consumer.ocr_data_dir", "~/.config/kushim/ocr/tessdata")
+	viper.SetDefault("consumer.ocr_data_dir", filepath.Join(configDir, "ocr/tessdata"))
 	viper.SetDefault("consumer.optimization_fallback", "")
 	viper.SetDefault("consumer.optimization_timeout", 120)
 	viper.SetDefault("consumer.textextractor_timeout", 120)
@@ -118,14 +119,15 @@ func Load(configDir string) (*Config, error) {
 		return nil, fmt.Errorf("consumer.ocr_languages is required — run 'kushim setup --langs eng,spa,...' first")
 	}
 
-	// Expand tilde in OCR data directory
-	if len(cfg.Consumer.OCRDataDir) > 0 && cfg.Consumer.OCRDataDir[0] == '~' {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, fmt.Errorf("expand home dir: %w", err)
-		}
-		cfg.Consumer.OCRDataDir = home + cfg.Consumer.OCRDataDir[1:]
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("expand home dir: %w", err)
 	}
+
+	cfg.Db.Path = expandPath(cfg.Db.Path, homeDir)
+	cfg.Storage.ConsumptionDir = expandPath(cfg.Storage.ConsumptionDir, homeDir)
+	cfg.Storage.StorageDir = expandPath(cfg.Storage.StorageDir, homeDir)
+	cfg.Consumer.OCRDataDir = expandPath(cfg.Consumer.OCRDataDir, homeDir)
 
 	if err := os.MkdirAll(cfg.Storage.ConsumptionDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create consumption directory: %w", err)
@@ -135,4 +137,11 @@ func Load(configDir string) (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+func expandPath(path, homeDir string) string {
+	if len(path) > 0 && path[0] == '~' {
+		return homeDir + path[1:]
+	}
+	return path
 }

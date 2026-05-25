@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/wgomg/edub-kushim/internal/commands"
@@ -35,13 +34,12 @@ func main() {
 
 	startupLogger := utils.NewLogger("error")
 
-	home, err := os.UserHomeDir()
+	configDir, err := utils.ConfigDir()
 	if err != nil {
 		startupLogger.Fatal("Cannot determine home directory:", err)
 	}
-	configDir := filepath.Join(home, ".config", "kushim")
 
-	cfg, err := config.Load(configDir)
+	cfg, err := config.Load(*configDir)
 	if err != nil {
 		if strings.Contains(err.Error(), "ocr_languages is required") {
 			startupLogger.Fatal("Not initialized: run 'kushim setup --langs eng,spa,...' first")

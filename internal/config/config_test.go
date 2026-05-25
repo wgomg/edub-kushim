@@ -27,11 +27,11 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.Db.Name != "edub.db" {
 		t.Errorf("Db.Name = %q, want edub.db", cfg.Db.Name)
 	}
-	if cfg.Storage.ConsumptionDir != "./inbox" {
-		t.Errorf("Storage.ConsumptionDir = %q, want ./inbox", cfg.Storage.ConsumptionDir)
+	if cfg.Storage.ConsumptionDir != filepath.Join(dir, "inbox") {
+		t.Errorf("Storage.ConsumptionDir = %q, want %q", cfg.Storage.ConsumptionDir, filepath.Join(dir, "inbox"))
 	}
-	if cfg.Storage.StorageDir != "./storage" {
-		t.Errorf("Storage.StorageDir = %q, want ./storage", cfg.Storage.StorageDir)
+	if cfg.Storage.StorageDir != filepath.Join(dir, "storage") {
+		t.Errorf("Storage.StorageDir = %q, want %q", cfg.Storage.StorageDir, filepath.Join(dir, "storage"))
 	}
 	if len(cfg.Consumer.SupportedFiles) != 1 || cfg.Consumer.SupportedFiles[0] != ".pdf" {
 		t.Errorf("Consumer.SupportedFiles = %v", cfg.Consumer.SupportedFiles)

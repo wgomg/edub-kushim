@@ -4,7 +4,7 @@ import (
 	"context"
 	"os"
 	"os/signal"
-	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -16,16 +16,8 @@ import (
 )
 
 func main() {
-	var configPath string
-	for i, arg := range os.Args {
-		if arg == "--config" && i+1 < len(os.Args) {
-			configPath = os.Args[i+1]
-			break
-		}
-	}
-
 	if len(os.Args) < 2 {
-		startServer(configPath)
+		startServer()
 		return
 	}
 
@@ -37,26 +29,23 @@ func main() {
 
 	runner := commands.NewCommandRunner(nil, "server")
 	if err := runner.ExecuteCommand(cmd, os.Args[2:]); err != nil {
-		startServer(configPath)
+		startServer()
 	}
 }
 
-func startServer(configPath string) {
+func startServer() {
 	startupLogger := utils.NewLogger("error")
 
-	var configDir string
-	if configPath != "" {
-		configDir = configPath
-	} else {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			startupLogger.Fatal("Cannot determine home directory:", err)
-		}
-		configDir = filepath.Join(home, ".config", "kushim")
+	configDir, err := utils.ConfigDir()
+	if err != nil {
+		startupLogger.Fatal("Cannot determine home directory:", err)
 	}
 
-	cfg, err := config.Load(configDir)
+	cfg, err := config.Load(*configDir)
 	if err != nil {
+		if strings.Contains(err.Error(), "ocr_languages is required") {
+			startupLogger.Fatal("Not initialized: run 'kushim setup --langs eng,spa,...' first")
+		}
 		startupLogger.Fatal("Failed to load configuration:", err)
 	}
 

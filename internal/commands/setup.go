@@ -13,7 +13,6 @@ import (
 
 func RunSetup(args []string, logger *utils.Logger) error {
 	var langs string
-	configDir := ""
 	inboxDir := ""
 	storageDir := ""
 	dbPath := ""
@@ -21,9 +20,6 @@ func RunSetup(args []string, logger *utils.Logger) error {
 
 	p := NewFlagParser(args)
 	if err := p.String("--langs", &langs); err != nil {
-		return err
-	}
-	if err := p.String("--config-dir", &configDir); err != nil {
 		return err
 	}
 	if err := p.String("--inbox-dir", &inboxDir); err != nil {
@@ -41,20 +37,17 @@ func RunSetup(args []string, logger *utils.Logger) error {
 	_ = p.Rest()
 
 	if langs == "" {
-		return fmt.Errorf("usage: kushim setup --langs eng,spa,... [--config-dir ~/.config/kushim] [--inbox-dir ./inbox] [--storage-dir ./storage] [--db-path ./data/] [--optimization-fallback gs]\n  Languages are ISO 639-3 codes (eng, spa, fra, deu, rus, chi_sim, jpn, etc.)")
+		return fmt.Errorf("usage: kushim setup --langs eng,spa,... [--inbox-dir ./inbox] [--storage-dir ./storage] [--db-path ./data/] [--optimization-fallback gs]\n  Languages are ISO 639-3 codes (eng, spa, fra, deu, rus, chi_sim, jpn, etc.)")
 	}
 
 	langList := strings.Split(langs, ",")
 
-	if configDir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return fmt.Errorf("get home dir: %w", err)
-		}
-		configDir = filepath.Join(home, ".config", "kushim")
+	configDir, err := utils.ConfigDir()
+	if err != nil {
+		logger.Fatal("Cannot determine home directory:", err)
 	}
 
-	tessdataDir := filepath.Join(configDir, "ocr", "tessdata")
+	tessdataDir := filepath.Join(*configDir, "ocr", "tessdata")
 
 	if err := os.MkdirAll(tessdataDir, 0755); err != nil {
 		return fmt.Errorf("create tessdata dir: %w", err)
@@ -85,7 +78,7 @@ func RunSetup(args []string, logger *utils.Logger) error {
 		consumerCfg["optimization_fallback"] = optimizationFallback
 	}
 
-	configPath := filepath.Join(configDir, "config.yaml")
+	configPath := filepath.Join(*configDir, "config.yaml")
 
 	f, err := os.Create(configPath)
 	if err != nil {

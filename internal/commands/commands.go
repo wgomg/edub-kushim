@@ -99,7 +99,6 @@ func PrintServerUsage() {
 		fmt.Printf("  %-15s %s\n", cmd.Name, cmd.Description)
 	}
 	fmt.Println("\nFlags:")
-	fmt.Println("  --config <path>   Path to config file (default ~/.config/kushim)")
 	fmt.Println("  --help, -h        Print this help message")
 	os.Exit(1)
 }

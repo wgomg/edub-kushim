@@ -11,11 +11,11 @@ server:
 
 database:
   type: sqlite
-  path: ./data
+  path: '~/.config/edub-kushim/data'
 
 storage:
-  consumption_dir: ./inbox
-  storage_dir: ./storage
+  consumption_dir: '~/.config/edub-kushim/inbox'
+  storage_dir: '~/.config/edub-kushim/storage'
 
 consumer:
   supported_files: ['.pdf']
@@ -28,7 +28,7 @@ consumer:
   # textextractor_timeout: 120     # optional: timeout in seconds (default 120)
   # ocr_timeout: 120     # optional: timeout in seconds (default 120)
   ocr: 'gosseract'
-  # ocr_data_dir: '~/.config/kushim/ocr/tessdata'  # optional, this is the default
+  # ocr_data_dir: '~/.config/edub-kushim/ocr/tessdata'  # optional, this is the default
 
 # Uncomment for production
 # search:

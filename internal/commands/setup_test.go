@@ -32,6 +32,8 @@ func TestRunSetup_HelpShowsUsage(t *testing.T) {
 
 func TestRunSetup_CreatesConfig(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
 	configDir := filepath.Join(dir, "config")
 	inboxDir := filepath.Join(dir, "inbox")
 	storageDir := filepath.Join(dir, "storage")
@@ -39,7 +41,6 @@ func TestRunSetup_CreatesConfig(t *testing.T) {
 
 	err := RunSetup([]string{
 		"--langs", "eng",
-		"--config-dir", configDir,
 		"--inbox-dir", inboxDir,
 		"--storage-dir", storageDir,
 		"--db-path", dbPath,
@@ -68,7 +69,7 @@ func TestRunSetup_DefaultsHomeDir(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	configPath := filepath.Join(dir, ".config", "kushim", "config.yaml")
+	configPath := filepath.Join(dir, ".config", "edub-kushim", "config.yaml")
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		t.Fatal("config.yaml was not created in default location")
 	}
