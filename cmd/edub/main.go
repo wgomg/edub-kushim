@@ -9,19 +9,51 @@ import (
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/api"
+	"github.com/wgomg/edub-kushim/internal/commands"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 func main() {
+	var configPath string
+	for i, arg := range os.Args {
+		if arg == "--config" && i+1 < len(os.Args) {
+			configPath = os.Args[i+1]
+			break
+		}
+	}
+
+	if len(os.Args) < 2 {
+		startServer(configPath)
+		return
+	}
+
+	cmd := os.Args[1]
+
+	if cmd == "--help" || cmd == "-h" {
+		commands.PrintServerUsage()
+	}
+
+	runner := commands.NewCommandRunner(nil, "server")
+	if err := runner.ExecuteCommand(cmd, os.Args[2:]); err != nil {
+		startServer(configPath)
+	}
+}
+
+func startServer(configPath string) {
 	startupLogger := utils.NewLogger("error")
 
-	home, err := os.UserHomeDir()
-	if err != nil {
-		startupLogger.Fatal("Cannot determine home directory:", err)
+	var configDir string
+	if configPath != "" {
+		configDir = configPath
+	} else {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			startupLogger.Fatal("Cannot determine home directory:", err)
+		}
+		configDir = filepath.Join(home, ".config", "kushim")
 	}
-	configDir := filepath.Join(home, ".config", "kushim")
 
 	cfg, err := config.Load(configDir)
 	if err != nil {

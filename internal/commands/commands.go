@@ -3,6 +3,8 @@ package commands
 import (
 	"fmt"
 	"os"
+
+	"github.com/wgomg/edub-kushim/internal/version"
 )
 
 type Command struct {
@@ -11,37 +13,41 @@ type Command struct {
 	Handler     func(container *Container, args []string) error
 }
 
-var commands = map[string]Command{
-	"version": {
-		Name:        "version",
-		Description: "Show application version",
-		Handler:     versionHandler,
+var commandSets = map[string]map[string]Command{
+	"cli": {
+		"version": {
+			Name:        "version",
+			Description: "Show application version",
+			Handler:     versionHandler,
+		},
+		"consume": {
+			Name:        "consume",
+			Description: "Process documents from consumption directory",
+			Handler:     consumeHandler,
+		},
+		"search": {
+			Name:        "search",
+			Description: "Full-text search across documents",
+			Handler:     searchHandler,
+		},
+		"task": {
+			Name:        "task",
+			Description: "Manage tasks (list, status, retry)",
+			Handler:     taskHandler,
+		},
+		"setup": {
+			Name:        "setup",
+			Description: "Initialize config and download OCR language files (run once)",
+			Handler:     setupHandler,
+		},
 	},
-	"consume": {
-		Name:        "consume",
-		Description: "Process documents from consumption directory",
-		Handler:     consumeHandler,
+	"server": {
+		"version": {
+			Name:        "version",
+			Description: "Show application version",
+			Handler:     versionHandler,
+		},
 	},
-	"search": {
-		Name:        "search",
-		Description: "Full-text search across documents",
-		Handler:     searchHandler,
-	},
-	"task": {
-		Name:        "task",
-		Description: "Manage tasks (list, status, retry)",
-		Handler:     taskHandler,
-	},
-}
-
-func init() {
-	// setup is handled in main.go before config loading, but we register it
-	// here so it shows up in usage/help output.
-	commands["setup"] = Command{
-		Name:        "setup",
-		Description: "Initialize config and download OCR language files (run once)",
-		Handler:     setupHandler,
-	}
 }
 
 type CommandRunner struct {
@@ -49,10 +55,14 @@ type CommandRunner struct {
 	commands  map[string]Command
 }
 
-func NewCommandRunner(container *Container) *CommandRunner {
+func NewCommandRunner(container *Container, set string) *CommandRunner {
+	cmds := commandSets["cli"]
+	if s, ok := commandSets[set]; ok {
+		cmds = s
+	}
 	return &CommandRunner{
 		container: container,
-		commands:  commands,
+		commands:  cmds,
 	}
 }
 
@@ -66,7 +76,7 @@ func (r *CommandRunner) ExecuteCommand(name string, args []string) error {
 
 func ListCommands() []Command {
 	var cmdList []Command
-	for _, cmd := range commands {
+	for _, cmd := range commandSets["cli"] {
 		cmdList = append(cmdList, cmd)
 	}
 	return cmdList
@@ -75,14 +85,26 @@ func ListCommands() []Command {
 func PrintUsage() {
 	fmt.Println("Usage: kushim <command> [arguments]")
 	fmt.Println("\nAvailable commands:")
-	for _, cmd := range commands {
+	for _, cmd := range commandSets["cli"] {
 		fmt.Printf("  %-15s %s\n", cmd.Name, cmd.Description)
 	}
 	fmt.Println("\nUse 'kushim <command> --help' for command-specific help.")
 	os.Exit(1)
 }
 
+func PrintServerUsage() {
+	fmt.Println("Usage: edub [command]")
+	fmt.Println("\nCommands:")
+	for _, cmd := range commandSets["server"] {
+		fmt.Printf("  %-15s %s\n", cmd.Name, cmd.Description)
+	}
+	fmt.Println("\nFlags:")
+	fmt.Println("  --config <path>   Path to config file (default ~/.config/kushim)")
+	fmt.Println("  --help, -h        Print this help message")
+	os.Exit(1)
+}
+
 func versionHandler(container *Container, args []string) error {
-	fmt.Println("Document Management System v0.1.0")
+	fmt.Printf("Document Management System v%s\n", version.Version)
 	return nil
 }

@@ -53,7 +53,7 @@ func main() {
 	container := commands.NewContainer(cfg, logger)
 	defer container.Close()
 
-	runner := commands.NewCommandRunner(container)
+	runner := commands.NewCommandRunner(container, "cli")
 
 	if err := runner.ExecuteCommand(commandName, args); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
