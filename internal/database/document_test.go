@@ -503,3 +503,32 @@ func TestUpdateDocumentWithText(t *testing.T) {
 		t.Errorf("TextContent = %v", doc.TextContent)
 	}
 }
+
+func TestSumDocumentFileSizes(t *testing.T) {
+	db := docTestDB(t)
+	q := New(db)
+
+	insertDoc(t, q, map[string]any{"sha512": "a", "size": int64(1024 * 1024)})
+	insertDoc(t, q, map[string]any{"sha512": "b", "size": int64(2048 * 1024)})
+
+	total, err := q.SumDocumentFileSizes(context.Background())
+	if err != nil {
+		t.Fatalf("SumDocumentFileSizes: %v", err)
+	}
+	if total != 1024*1024+2048*1024 {
+		t.Errorf("total = %d, want %d", total, 1024*1024+2048*1024)
+	}
+}
+
+func TestSumDocumentFileSizes_Empty(t *testing.T) {
+	db := docTestDB(t)
+	q := New(db)
+
+	total, err := q.SumDocumentFileSizes(context.Background())
+	if err != nil {
+		t.Fatalf("SumDocumentFileSizes: %v", err)
+	}
+	if total != 0 {
+		t.Errorf("total = %d, want 0", total)
+	}
+}

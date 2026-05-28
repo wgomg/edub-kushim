@@ -31,11 +31,16 @@ export CGO_CPPFLAGS   := -I$(TESS_INCLUDE) -I$(BUILD_DIR)/libpng/local/include
 #   make test-race TEST_PKG="./internal/..." TEST_FLAGS="-count=1"
 #   make test-container TEST_PKG="./internal/tools/adapters/..."
 
-.PHONY: all build build-deps clean run consume test test-race test-verbose test-container test-container-build
+.PHONY: all build build-deps web-build clean run consume test test-race test-verbose test-container test-container-build
 
 all: build
 
-build:
+web-build:
+	cd web && npm ci && npm run build
+	rm -rf internal/static/build
+	cp -r web/build internal/static/build
+
+build: web-build
 	go build -o $(BINARY) ./cmd/kushim/main.go
 	go build -o $(EDUB_BINARY) ./cmd/edub/main.go
 

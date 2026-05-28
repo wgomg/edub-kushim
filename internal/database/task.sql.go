@@ -70,6 +70,28 @@ func (q *Queries) CompleteTask(ctx context.Context, arg CompleteTaskParams) erro
 	return err
 }
 
+const countAllTasks = `-- name: CountAllTasks :one
+SELECT COUNT(*) FROM task
+`
+
+func (q *Queries) CountAllTasks(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countAllTasks)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countDistinctBatches = `-- name: CountDistinctBatches :one
+SELECT COUNT(DISTINCT batch_id) FROM task WHERE batch_id IS NOT NULL
+`
+
+func (q *Queries) CountDistinctBatches(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countDistinctBatches)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countTasksByBatchAndStatus = `-- name: CountTasksByBatchAndStatus :one
 SELECT COUNT(*) FROM task WHERE batch_id = ? AND status = ?
 `
@@ -84,6 +106,38 @@ func (q *Queries) CountTasksByBatchAndStatus(ctx context.Context, arg CountTasks
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const countTasksByStatus = `-- name: CountTasksByStatus :many
+SELECT status, COUNT(*) as count FROM task GROUP BY status
+`
+
+type CountTasksByStatusRow struct {
+	Status string
+	Count  int64
+}
+
+func (q *Queries) CountTasksByStatus(ctx context.Context) ([]CountTasksByStatusRow, error) {
+	rows, err := q.db.QueryContext(ctx, countTasksByStatus)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CountTasksByStatusRow
+	for rows.Next() {
+		var i CountTasksByStatusRow
+		if err := rows.Scan(&i.Status, &i.Count); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const createTask = `-- name: CreateTask :execresult
@@ -249,6 +303,79 @@ func (q *Queries) GetTaskByTaskID(ctx context.Context, taskID string) (Task, err
 		&i.Error,
 	)
 	return i, err
+}
+
+const listDistinctBatchIDs = `-- name: ListDistinctBatchIDs :many
+SELECT batch_id FROM task
+WHERE batch_id IS NOT NULL
+GROUP BY batch_id
+ORDER BY MAX(created_at) DESC
+LIMIT ? OFFSET ?
+`
+
+type ListDistinctBatchIDsParams struct {
+	Limit  int64
+	Offset int64
+}
+
+func (q *Queries) ListDistinctBatchIDs(ctx context.Context, arg ListDistinctBatchIDsParams) ([]sql.NullString, error) {
+	rows, err := q.db.QueryContext(ctx, listDistinctBatchIDs, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []sql.NullString
+	for rows.Next() {
+		var batch_id sql.NullString
+		if err := rows.Scan(&batch_id); err != nil {
+			return nil, err
+		}
+		items = append(items, batch_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDistinctBatchIDsByStatus = `-- name: ListDistinctBatchIDsByStatus :many
+SELECT batch_id FROM task
+WHERE batch_id IS NOT NULL AND status = ?
+GROUP BY batch_id
+ORDER BY MAX(created_at) DESC
+LIMIT ? OFFSET ?
+`
+
+type ListDistinctBatchIDsByStatusParams struct {
+	Status string
+	Limit  int64
+	Offset int64
+}
+
+func (q *Queries) ListDistinctBatchIDsByStatus(ctx context.Context, arg ListDistinctBatchIDsByStatusParams) ([]sql.NullString, error) {
+	rows, err := q.db.QueryContext(ctx, listDistinctBatchIDsByStatus, arg.Status, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []sql.NullString
+	for rows.Next() {
+		var batch_id sql.NullString
+		if err := rows.Scan(&batch_id); err != nil {
+			return nil, err
+		}
+		items = append(items, batch_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listTasks = `-- name: ListTasks :many

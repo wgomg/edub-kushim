@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -352,5 +353,259 @@ func TestTaskToResponse(t *testing.T) {
 	}
 	if resp.Status != "completed" {
 		t.Errorf("Status = %q", resp.Status)
+	}
+}
+
+func summaryTestDB(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	_, err = db.Exec(`
+		CREATE TABLE task (
+			id INTEGER PRIMARY KEY,
+			task_id TEXT NOT NULL UNIQUE,
+			task_type TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'pending',
+			batch_id TEXT,
+			payload JSON,
+			result JSON,
+			dedup_key TEXT,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			started_at DATETIME,
+			completed_at DATETIME,
+			error TEXT
+		);
+		CREATE TABLE document (
+			id INTEGER PRIMARY KEY,
+			title TEXT NOT NULL,
+			md5_checksum TEXT NOT NULL,
+			sha512_checksum TEXT UNIQUE NOT NULL,
+			mime_type TEXT NOT NULL,
+			file_size INTEGER NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			modified_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			document_type_id INTEGER,
+			original_path TEXT NOT NULL,
+			storage_path TEXT NOT NULL,
+			text_content TEXT
+		);
+	`)
+	if err != nil {
+		t.Fatalf("schema: %v", err)
+	}
+	return db
+}
+
+func seedSummaryDoc(t *testing.T, q *database.Queries, fileSize int64) {
+	t.Helper()
+	_, err := q.CreateDocument(context.Background(), database.CreateDocumentParams{
+		Title:          "doc.pdf",
+		Md5Checksum:    fmt.Sprintf("md5-%d", fileSize),
+		Sha512Checksum: fmt.Sprintf("sha512-%d", fileSize),
+		MimeType:       "application/pdf",
+		FileSize:       fileSize,
+		OriginalPath:   "/tmp/doc.pdf",
+		StoragePath:    "/store/doc.pdf",
+	})
+	if err != nil {
+		t.Fatalf("seedSummaryDoc: %v", err)
+	}
+}
+
+func TestListBatches_Empty(t *testing.T) {
+	db := taskHandlerTestDB(t)
+	q := database.New(db)
+	h := NewTaskHandler(q, utils.NewDiscardLogger())
+
+	w := httptest.NewRecorder()
+	req := makeReq(t, "GET", "/batches", "")
+	h.ListBatches(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+
+	var resp types.ListBatchesResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Batches) != 0 {
+		t.Errorf("got %d batches, want 0", len(resp.Batches))
+	}
+}
+
+func TestListBatches_WithBatches(t *testing.T) {
+	db := taskHandlerTestDB(t)
+	q := database.New(db)
+	h := NewTaskHandler(q, utils.NewDiscardLogger())
+
+	seedTask(t, q, "b1", "pending", "batch-a")
+	seedTask(t, q, "b2", "completed", "batch-a")
+	seedTask(t, q, "b3", "pending", "batch-b")
+	seedTask(t, q, "b4", "failed", "batch-b")
+	seedTask(t, q, "b5", "cancelled", "batch-b")
+
+	w := httptest.NewRecorder()
+	req := makeReq(t, "GET", "/batches", "")
+	h.ListBatches(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+
+	var resp types.ListBatchesResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Batches) != 2 {
+		t.Fatalf("got %d batches, want 2", len(resp.Batches))
+	}
+
+	byID := map[string]types.BatchSummaryResponse{}
+	for _, b := range resp.Batches {
+		byID[b.BatchID] = b
+	}
+
+	a := byID["batch-a"]
+	if a.Total != 2 || a.Pending != 1 || a.Completed != 1 {
+		t.Errorf("batch-a: Total=%d Pending=%d Completed=%d", a.Total, a.Pending, a.Completed)
+	}
+
+	b := byID["batch-b"]
+	if b.Total != 3 || b.Pending != 1 || b.Failed != 1 || b.Cancelled != 1 {
+		t.Errorf("batch-b: Total=%d Pending=%d Failed=%d Cancelled=%d", b.Total, b.Pending, b.Failed, b.Cancelled)
+	}
+}
+
+func TestListBatches_WithStatusFilter(t *testing.T) {
+	db := taskHandlerTestDB(t)
+	q := database.New(db)
+	h := NewTaskHandler(q, utils.NewDiscardLogger())
+
+	seedTask(t, q, "x1", "pending", "batch-x")
+	seedTask(t, q, "x2", "completed", "batch-x")
+	seedTask(t, q, "y1", "pending", "batch-y")
+
+	w := httptest.NewRecorder()
+	req := makeReq(t, "GET", "/batches?status=pending", "")
+	h.ListBatches(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+
+	var resp types.ListBatchesResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Batches) != 2 {
+		t.Fatalf("got %d batches, want 2", len(resp.Batches))
+	}
+}
+
+func TestListBatches_LimitOffset(t *testing.T) {
+	db := taskHandlerTestDB(t)
+	q := database.New(db)
+	h := NewTaskHandler(q, utils.NewDiscardLogger())
+
+	for i := 0; i < 5; i++ {
+		seedTask(t, q, "t"+fmt.Sprint(i), "pending", "batch-"+fmt.Sprint(i))
+	}
+
+	w := httptest.NewRecorder()
+	req := makeReq(t, "GET", "/batches?limit=2&offset=1", "")
+	h.ListBatches(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+
+	var resp types.ListBatchesResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Batches) != 2 {
+		t.Errorf("got %d batches, want 2", len(resp.Batches))
+	}
+}
+
+func TestGlobalSummary_Empty(t *testing.T) {
+	db := summaryTestDB(t)
+	q := database.New(db)
+	h := NewTaskHandler(q, utils.NewDiscardLogger())
+
+	w := httptest.NewRecorder()
+	req := makeReq(t, "GET", "/summary", "")
+	h.GlobalSummary(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+
+	var resp types.GlobalSummaryResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	if resp.TotalBatches != 0 || resp.TotalFiles != 0 || resp.TotalSizeGB != 0 {
+		t.Errorf("expected all zeros, got batches=%d files=%d size=%f", resp.TotalBatches, resp.TotalFiles, resp.TotalSizeGB)
+	}
+}
+
+func TestGlobalSummary_WithData(t *testing.T) {
+	db := summaryTestDB(t)
+	q := database.New(db)
+	h := NewTaskHandler(q, utils.NewDiscardLogger())
+
+	seedTask(t, q, "t1", "pending", "batch-a")
+	seedTask(t, q, "t2", "completed", "batch-a")
+	seedTask(t, q, "t3", "processing", "batch-b")
+	seedTask(t, q, "t4", "failed", "batch-b")
+	seedTask(t, q, "t5", "cancelled", "batch-b")
+	seedTask(t, q, "t6", "pending", "")
+
+	seedSummaryDoc(t, q, 1024*1024*1024)
+	seedSummaryDoc(t, q, 1024*1024*512)
+
+	w := httptest.NewRecorder()
+	req := makeReq(t, "GET", "/summary", "")
+	h.GlobalSummary(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+
+	var resp types.GlobalSummaryResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	if resp.TotalBatches != 2 {
+		t.Errorf("TotalBatches = %d, want 2", resp.TotalBatches)
+	}
+	if resp.TotalFiles != 6 {
+		t.Errorf("TotalFiles = %d, want 6", resp.TotalFiles)
+	}
+	if resp.Pending != 2 {
+		t.Errorf("Pending = %d, want 2", resp.Pending)
+	}
+	if resp.Processing != 1 {
+		t.Errorf("Processing = %d, want 1", resp.Processing)
+	}
+	if resp.Completed != 1 {
+		t.Errorf("Completed = %d, want 1", resp.Completed)
+	}
+	if resp.Failed != 1 {
+		t.Errorf("Failed = %d, want 1", resp.Failed)
+	}
+	if resp.Cancelled != 1 {
+		t.Errorf("Cancelled = %d, want 1", resp.Cancelled)
+	}
+	if resp.TotalSizeGB != 1.5 {
+		t.Errorf("TotalSizeGB = %f, want 1.5", resp.TotalSizeGB)
 	}
 }

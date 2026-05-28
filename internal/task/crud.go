@@ -9,6 +9,12 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 )
 
+type BatchFilter struct {
+	Status string
+	Limit  int64
+	Offset int64
+}
+
 var ErrTaskNotFound = errors.New("task not found")
 
 type TaskFilter struct {
@@ -19,14 +25,16 @@ type TaskFilter struct {
 }
 
 type BatchCounts struct {
+	BatchID    string
 	Pending    int64
 	Processing int64
 	Completed  int64
 	Failed     int64
+	Cancelled  int64
 }
 
 func (bc BatchCounts) Total() int64 {
-	return bc.Pending + bc.Processing + bc.Completed + bc.Failed
+	return bc.Pending + bc.Processing + bc.Completed + bc.Failed + bc.Cancelled
 }
 
 func Get(ctx context.Context, queries *database.Queries, taskID string) (database.Task, error) {
@@ -78,8 +86,8 @@ func Retry(ctx context.Context, queries *database.Queries, taskID string) error 
 }
 
 func CountBatchStatuses(ctx context.Context, queries *database.Queries, batchID string) BatchCounts {
-	statuses := []string{"pending", "processing", "completed", "failed"}
-	counts := BatchCounts{}
+	statuses := []string{"pending", "processing", "completed", "failed", "cancelled"}
+	counts := BatchCounts{BatchID: batchID}
 
 	for _, status := range statuses {
 		count, err := queries.CountTasksByBatchAndStatus(ctx, database.CountTasksByBatchAndStatusParams{
@@ -98,7 +106,40 @@ func CountBatchStatuses(ctx context.Context, queries *database.Queries, batchID 
 			counts.Completed = count
 		case "failed":
 			counts.Failed = count
+		case "cancelled":
+			counts.Cancelled = count
 		}
 	}
 	return counts
+}
+
+func ListBatchSummaries(ctx context.Context, queries *database.Queries, f BatchFilter) ([]BatchCounts, error) {
+	var rows []sql.NullString
+	var err error
+
+	if f.Status != "" {
+		rows, err = queries.ListDistinctBatchIDsByStatus(ctx, database.ListDistinctBatchIDsByStatusParams{
+			Status: f.Status,
+			Limit:  f.Limit,
+			Offset: f.Offset,
+		})
+	} else {
+		rows, err = queries.ListDistinctBatchIDs(ctx, database.ListDistinctBatchIDsParams{
+			Limit:  f.Limit,
+			Offset: f.Offset,
+		})
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	summaries := make([]BatchCounts, 0, len(rows))
+	for _, row := range rows {
+		if !row.Valid {
+			continue
+		}
+		counts := CountBatchStatuses(ctx, queries, row.String)
+		summaries = append(summaries, counts)
+	}
+	return summaries, nil
 }

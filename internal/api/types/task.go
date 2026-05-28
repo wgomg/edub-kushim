@@ -19,10 +19,26 @@ type BatchSummaryResponse struct {
 	Processing int64  `json:"processing"`
 	Completed  int64  `json:"completed"`
 	Failed     int64  `json:"failed"`
+	Cancelled  int64  `json:"cancelled"`
+}
+
+type ListBatchesResponse struct {
+	Batches []BatchSummaryResponse `json:"batches"`
 }
 
 type ListTasksResponse struct {
 	BatchID string                `json:"batch_id,omitempty"`
 	Summary *BatchSummaryResponse `json:"summary,omitempty"`
 	Tasks   []TaskResponse        `json:"tasks"`
+}
+
+type GlobalSummaryResponse struct {
+	TotalBatches int64   `json:"total_batches"`
+	TotalFiles   int64   `json:"total_files"`
+	Pending      int64   `json:"pending"`
+	Processing   int64   `json:"processing"`
+	Completed    int64   `json:"completed"`
+	Failed       int64   `json:"failed"`
+	Cancelled    int64   `json:"cancelled"`
+	TotalSizeGB  float64 `json:"total_size_gb"`
 }

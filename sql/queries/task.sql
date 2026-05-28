@@ -82,3 +82,26 @@ WHERE batch_id = ? AND status = 'pending';
 -- name: CancelProcessingTasksByBatch :execrows
 UPDATE task SET status = 'cancelled', completed_at = CURRENT_TIMESTAMP
 WHERE batch_id = ? AND status = 'processing';
+
+-- name: ListDistinctBatchIDs :many
+SELECT batch_id FROM task
+WHERE batch_id IS NOT NULL
+GROUP BY batch_id
+ORDER BY MAX(created_at) DESC
+LIMIT ? OFFSET ?;
+
+-- name: ListDistinctBatchIDsByStatus :many
+SELECT batch_id FROM task
+WHERE batch_id IS NOT NULL AND status = ?
+GROUP BY batch_id
+ORDER BY MAX(created_at) DESC
+LIMIT ? OFFSET ?;
+
+-- name: CountDistinctBatches :one
+SELECT COUNT(DISTINCT batch_id) FROM task WHERE batch_id IS NOT NULL;
+
+-- name: CountAllTasks :one
+SELECT COUNT(*) FROM task;
+
+-- name: CountTasksByStatus :many
+SELECT status, COUNT(*) as count FROM task GROUP BY status;

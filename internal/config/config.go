@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/viper"
@@ -129,6 +130,19 @@ func Load(configDir string) (*Config, error) {
 	cfg.Storage.StorageDir = expandPath(cfg.Storage.StorageDir, homeDir)
 	cfg.Consumer.OCRDataDir = expandPath(cfg.Consumer.OCRDataDir, homeDir)
 
+	if err := requireAbsPath(cfg.Db.Path, "database.path"); err != nil {
+		return nil, err
+	}
+	if err := requireAbsPath(cfg.Storage.ConsumptionDir, "storage.consumption_dir"); err != nil {
+		return nil, err
+	}
+	if err := requireAbsPath(cfg.Storage.StorageDir, "storage.storage_dir"); err != nil {
+		return nil, err
+	}
+	if err := requireAbsPath(cfg.Consumer.OCRDataDir, "consumer.ocr_data_dir"); err != nil {
+		return nil, err
+	}
+
 	if err := os.MkdirAll(cfg.Storage.ConsumptionDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create consumption directory: %w", err)
 	}
@@ -144,4 +158,11 @@ func expandPath(path, homeDir string) string {
 		return homeDir + path[1:]
 	}
 	return path
+}
+
+func requireAbsPath(path, name string) error {
+	if !strings.HasPrefix(path, "/") {
+		return fmt.Errorf("%s must be an absolute path or start with '~', got: %s", name, path)
+	}
+	return nil
 }

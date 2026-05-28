@@ -33,9 +33,9 @@ func NewLogger(level string) *Logger {
 	return &Logger{
 		level:       logLevel,
 		infoLogger:  log.New(os.Stdout, fmt.Sprintf("<%d>INFO  : ", LevelInfo), log.Ldate|log.Ltime|log.Lshortfile),
-		errorLogger: log.New(os.Stderr, fmt.Sprintf("<%d>ERROR  : ", LevelError), log.Ldate|log.Ltime|log.Lshortfile),
-		debugLogger: log.New(os.Stdout, fmt.Sprintf("<%d>DEBUG  : ", LevelDebug), log.Ldate|log.Ltime|log.Lshortfile),
-		fatalLogger: log.New(os.Stderr, fmt.Sprintf("<%d>FATAL  : ", LevelFatal), log.Ldate|log.Ltime|log.Lshortfile),
+		errorLogger: log.New(os.Stderr, fmt.Sprintf("<%d>ERROR : ", LevelError), log.Ldate|log.Ltime|log.Lshortfile),
+		debugLogger: log.New(os.Stdout, fmt.Sprintf("<%d>DEBUG : ", LevelDebug), log.Ldate|log.Ltime|log.Lshortfile),
+		fatalLogger: log.New(os.Stderr, fmt.Sprintf("<%d>FATAL : ", LevelFatal), log.Ldate|log.Ltime|log.Lshortfile),
 	}
 }
 
@@ -53,9 +53,9 @@ func NewLoggerWithWriter(w io.Writer) *Logger {
 	return &Logger{
 		level:       LevelInfo,
 		infoLogger:  log.New(w, fmt.Sprintf("<%d>INFO  : ", LevelInfo), log.Ldate|log.Ltime|log.Lshortfile),
-		errorLogger: log.New(w, fmt.Sprintf("<%d>ERROR  : ", LevelError), log.Ldate|log.Ltime|log.Lshortfile),
-		debugLogger: log.New(w, fmt.Sprintf("<%d>DEBUG  : ", LevelDebug), log.Ldate|log.Ltime|log.Lshortfile),
-		fatalLogger: log.New(w, fmt.Sprintf("<%d>FATAL  : ", LevelFatal), log.Ldate|log.Ltime|log.Lshortfile),
+		errorLogger: log.New(w, fmt.Sprintf("<%d>ERROR : ", LevelError), log.Ldate|log.Ltime|log.Lshortfile),
+		debugLogger: log.New(w, fmt.Sprintf("<%d>DEBUG : ", LevelDebug), log.Ldate|log.Ltime|log.Lshortfile),
+		fatalLogger: log.New(w, fmt.Sprintf("<%d>FATAL : ", LevelFatal), log.Ldate|log.Ltime|log.Lshortfile),
 	}
 }
 

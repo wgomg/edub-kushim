@@ -178,11 +178,15 @@ func (q *Queries) DeleteDocumentFTS(ctx context.Context, documentID int64) error
 
 // RebuildDocumentFTS rebuilds the FTS5 search index by copying all documents into the document_fts table
 func (q *Queries) RebuildDocumentFTS(ctx context.Context) error {
-	const query = `
-		INSERT OR REPLACE INTO document_fts (document_id, title, content)
+	const deleteAll = `DELETE FROM document_fts`
+	const insertAll = `
+		INSERT INTO document_fts (document_id, title, content)
 		SELECT id, title, COALESCE(text_content, '') FROM document
 	`
 
-	_, err := q.db.ExecContext(ctx, query)
+	if _, err := q.db.ExecContext(ctx, deleteAll); err != nil {
+		return err
+	}
+	_, err := q.db.ExecContext(ctx, insertAll)
 	return err
 }

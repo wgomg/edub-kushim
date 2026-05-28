@@ -39,10 +39,17 @@ func (h *DocumentHandler) ListDocuments(w http.ResponseWriter, r *http.Request) 
 
 	limit := pb.GetInt64("limit", 50, 1, 100)
 	offset := pb.GetInt64("offset", 0, 0, 0)
+	sortBy := pb.Get("sort_by", "created_at")
+	sortOrder := pb.Get("sort_order", "desc")
 
-	documents, err := h.queries.ListDocuments(
+	documents, err := h.queries.ListDocumentsWithSort(
 		r.Context(),
-		database.ListDocumentsParams{Limit: limit, Offset: offset},
+		database.ListDocumentsWithSortParams{
+			Limit:     limit,
+			Offset:    offset,
+			SortBy:    sortBy,
+			SortOrder: sortOrder,
+		},
 	)
 	if err != nil {
 		h.logger.Error(&reqID, "Failed to list documents: %w", err)
@@ -168,4 +175,36 @@ func (h *DocumentHandler) SearchDocuments(w http.ResponseWriter, r *http.Request
 		h.logger.Error(&reqID, "Failed to encode search response: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
+}
+
+func (h *DocumentHandler) GetDocumentFile(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := ctx.Value("reqid").(string)
+
+	idStr := r.PathValue("id")
+	if idStr == "" {
+		http.Error(w, "Document ID is required", http.StatusBadRequest)
+		return
+	}
+
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid document ID", http.StatusBadRequest)
+		return
+	}
+
+	doc, err := h.queries.GetDocument(ctx, id)
+	if err != nil {
+		h.logger.Error(&reqID, "Failed to get document %d: %v", id, err)
+		http.Error(w, "Document not found", http.StatusNotFound)
+		return
+	}
+
+	if doc.MimeType != "application/pdf" {
+		http.Error(w, "File type not supported for viewing", http.StatusUnsupportedMediaType)
+		return
+	}
+
+	w.Header().Set("Content-Disposition", `inline; filename="`+doc.Title+`"`)
+	http.ServeFile(w, r, doc.StoragePath)
 }

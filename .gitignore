@@ -10,3 +10,5 @@ config.prod.yaml
 !config.example.yaml
 
 coverage.out
+
+internal/static/build/*

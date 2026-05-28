@@ -13,6 +13,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/pool"
 	"github.com/wgomg/edub-kushim/internal/search"
+	"github.com/wgomg/edub-kushim/internal/static"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -45,6 +46,7 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 	p := pool.New(logger, dispatcher, workers, 2*time.Second)
 
 	registerRoutes(mux, logger, queries, engine, dispatcher, &cfg)
+	registerStaticRoutes(mux)
 
 	handler := chainMiddleware(logger, mux)
 
@@ -64,6 +66,30 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 	}
 }
 
+func registerStaticRoutes(mux *http.ServeMux) {
+	fsys := static.WebFS()
+	fileServer := http.FileServer(http.FS(fsys))
+
+	mux.HandleFunc("GET /{path...}", func(w http.ResponseWriter, r *http.Request) {
+		path := r.PathValue("path")
+		if path == "" {
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+
+		f, err := fsys.Open(path)
+		if err != nil {
+			// SPA fallback: serve index.html for client-side routes
+			r.URL.Path = "/"
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+		f.Close()
+
+		fileServer.ServeHTTP(w, r)
+	})
+}
+
 func registerRoutes(mux *http.ServeMux, logger *utils.Logger, queries *database.Queries, engine *search.Engine, dispatcher *task.Dispatcher, cfg *config.Config) {
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		handlers.HealthHandler(w, r, logger)
@@ -72,6 +98,7 @@ func registerRoutes(mux *http.ServeMux, logger *utils.Logger, queries *database.
 	docHandler := handlers.NewDocumentHandler(queries, logger, engine)
 	mux.HandleFunc("GET /api/v1/documents", docHandler.ListDocuments)
 	mux.HandleFunc("GET /api/v1/documents/{id}", docHandler.GetDocument)
+	mux.HandleFunc("GET /api/v1/documents/{id}/file", docHandler.GetDocumentFile)
 	mux.HandleFunc("GET /api/v1/documents/search", docHandler.SearchDocuments)
 
 	consumeHandler := handlers.NewConsumeHandler(cfg, logger, dispatcher)
@@ -80,7 +107,9 @@ func registerRoutes(mux *http.ServeMux, logger *utils.Logger, queries *database.
 	taskHandler := handlers.NewTaskHandler(queries, logger)
 	mux.HandleFunc("GET /api/v1/tasks", taskHandler.ListTasks)
 	mux.HandleFunc("GET /api/v1/tasks/{id}", taskHandler.GetTask)
+	mux.HandleFunc("GET /api/v1/batches", taskHandler.ListBatches)
 	mux.HandleFunc("GET /api/v1/batches/{id}", taskHandler.GetBatchSummary)
+	mux.HandleFunc("GET /api/v1/summary", taskHandler.GlobalSummary)
 }
 
 func chainMiddleware(logger *utils.Logger, h http.Handler) http.Handler {

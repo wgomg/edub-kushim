@@ -79,3 +79,6 @@ FROM document WHERE md5_checksum = ?;
 SELECT id, title, md5_checksum, sha512_checksum, mime_type, file_size,
        created_at, modified_at, document_type_id, original_path, storage_path
 FROM document WHERE sha512_checksum = ?;
+
+-- name: SumDocumentFileSizes :one
+SELECT CAST(COALESCE(SUM(file_size), 0) AS INTEGER) AS total_bytes FROM document;

@@ -93,6 +93,51 @@ func (h *TaskHandler) GetTask(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(taskToResponse(t))
 }
 
+func (h *TaskHandler) ListBatches(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := ctx.Value("reqid").(string)
+
+	pb := utils.GetParamBag(r)
+	if pb == nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	statusFilter := pb.Get("status", "")
+	limit := pb.GetInt64("limit", 20, 1, 100)
+	offset := pb.GetInt64("offset", 0, 0, 0)
+
+	summaries, err := task.ListBatchSummaries(ctx, h.queries, task.BatchFilter{
+		Status: statusFilter,
+		Limit:  limit,
+		Offset: offset,
+	})
+	if err != nil {
+		h.logger.Error(&reqID, "list batches: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	resp := types.ListBatchesResponse{
+		Batches: make([]types.BatchSummaryResponse, 0, len(summaries)),
+	}
+
+	for _, bc := range summaries {
+		resp.Batches = append(resp.Batches, types.BatchSummaryResponse{
+			BatchID:    bc.BatchID,
+			Total:      bc.Total(),
+			Pending:    bc.Pending,
+			Processing: bc.Processing,
+			Completed:  bc.Completed,
+			Failed:     bc.Failed,
+			Cancelled:  bc.Cancelled,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
 func (h *TaskHandler) GetBatchSummary(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -107,6 +152,57 @@ func (h *TaskHandler) GetBatchSummary(w http.ResponseWriter, r *http.Request) {
 	h.logger.Debug(&reqID, "batch summary: %+v", summary)
 }
 
+func (h *TaskHandler) GlobalSummary(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := ctx.Value("reqid").(string)
+
+	totalBatches, err := h.queries.CountDistinctBatches(ctx)
+	if err != nil {
+		h.logger.Error(&reqID, "count distinct batches: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	totalFiles, err := h.queries.CountAllTasks(ctx)
+	if err != nil {
+		h.logger.Error(&reqID, "count all tasks: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	rows, err := h.queries.CountTasksByStatus(ctx)
+	if err != nil {
+		h.logger.Error(&reqID, "count tasks by status: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	perStatus := map[string]int64{}
+	for _, row := range rows {
+		perStatus[row.Status] = row.Count
+	}
+
+	totalBytes, err := h.queries.SumDocumentFileSizes(ctx)
+	if err != nil {
+		h.logger.Error(&reqID, "sum document file sizes: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	resp := types.GlobalSummaryResponse{
+		TotalBatches: totalBatches,
+		TotalFiles:   totalFiles,
+		Pending:      perStatus["pending"],
+		Processing:   perStatus["processing"],
+		Completed:    perStatus["completed"],
+		Failed:       perStatus["failed"],
+		Cancelled:    perStatus["cancelled"],
+		TotalSizeGB:  float64(totalBytes) / (1024 * 1024 * 1024),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
 func buildBatchSummary(ctx context.Context, queries *database.Queries, batchID string) types.BatchSummaryResponse {
 	bc := task.CountBatchStatuses(ctx, queries, batchID)
 
@@ -117,6 +213,7 @@ func buildBatchSummary(ctx context.Context, queries *database.Queries, batchID s
 		Processing: bc.Processing,
 		Completed:  bc.Completed,
 		Failed:     bc.Failed,
+		Cancelled:  bc.Cancelled,
 	}
 }
 

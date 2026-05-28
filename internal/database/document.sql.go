@@ -386,6 +386,17 @@ func (q *Queries) SearchDocumentsByTitle(ctx context.Context, arg SearchDocument
 	return items, nil
 }
 
+const sumDocumentFileSizes = `-- name: SumDocumentFileSizes :one
+SELECT CAST(COALESCE(SUM(file_size), 0) AS INTEGER) AS total_bytes FROM document
+`
+
+func (q *Queries) SumDocumentFileSizes(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, sumDocumentFileSizes)
+	var total_bytes int64
+	err := row.Scan(&total_bytes)
+	return total_bytes, err
+}
+
 const updateDocumentPaths = `-- name: UpdateDocumentPaths :exec
 UPDATE document SET
     original_path = ?,

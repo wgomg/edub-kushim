@@ -504,3 +504,81 @@ func TestCancelProcessingTasksByBatch(t *testing.T) {
 		t.Errorf("rows affected = %d, want 2", rows)
 	}
 }
+
+func TestCountDistinctBatches(t *testing.T) {
+	db := taskTestDB(t)
+	q := New(db)
+
+	insertTask(t, q, map[string]any{"task_id": "d1", "batch_id": "batch-d"})
+	insertTask(t, q, map[string]any{"task_id": "d2", "batch_id": "batch-d"})
+	insertTask(t, q, map[string]any{"task_id": "e1", "batch_id": "batch-e"})
+	insertTask(t, q, map[string]any{"task_id": "nil1"})
+
+	count, err := q.CountDistinctBatches(context.Background())
+	if err != nil {
+		t.Fatalf("CountDistinctBatches: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("count = %d, want 2", count)
+	}
+}
+
+func TestCountDistinctBatches_Empty(t *testing.T) {
+	db := taskTestDB(t)
+	q := New(db)
+
+	count, err := q.CountDistinctBatches(context.Background())
+	if err != nil {
+		t.Fatalf("CountDistinctBatches: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("count = %d, want 0", count)
+	}
+}
+
+func TestCountAllTasks(t *testing.T) {
+	db := taskTestDB(t)
+	q := New(db)
+
+	insertTask(t, q, map[string]any{"task_id": "f1"})
+	insertTask(t, q, map[string]any{"task_id": "f2"})
+	insertTask(t, q, map[string]any{"task_id": "f3"})
+
+	count, err := q.CountAllTasks(context.Background())
+	if err != nil {
+		t.Fatalf("CountAllTasks: %v", err)
+	}
+	if count != 3 {
+		t.Errorf("count = %d, want 3", count)
+	}
+}
+
+func TestCountTasksByStatus(t *testing.T) {
+	db := taskTestDB(t)
+	q := New(db)
+
+	insertTask(t, q, map[string]any{"task_id": "s1", "status": "pending"})
+	insertTask(t, q, map[string]any{"task_id": "s2", "status": "pending"})
+	insertTask(t, q, map[string]any{"task_id": "s3", "status": "completed"})
+	insertTask(t, q, map[string]any{"task_id": "s4", "status": "failed"})
+
+	rows, err := q.CountTasksByStatus(context.Background())
+	if err != nil {
+		t.Fatalf("CountTasksByStatus: %v", err)
+	}
+
+	byStatus := map[string]int64{}
+	for _, r := range rows {
+		byStatus[r.Status] = r.Count
+	}
+
+	if byStatus["pending"] != 2 {
+		t.Errorf("pending = %d, want 2", byStatus["pending"])
+	}
+	if byStatus["completed"] != 1 {
+		t.Errorf("completed = %d, want 1", byStatus["completed"])
+	}
+	if byStatus["failed"] != 1 {
+		t.Errorf("failed = %d, want 1", byStatus["failed"])
+	}
+}
