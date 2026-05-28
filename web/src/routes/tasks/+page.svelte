@@ -147,8 +147,6 @@
 			fetch={fetchTasks}
 			onRowClick={viewTask}
 			title={'Batch: ' + currentBatch}
-			defaultPageSize={20}
-			pageSizes={[10, 20, 50, 100]}
 			keyField="task_id"
 		/>
 	</div>
@@ -158,8 +156,6 @@
 		fetch={fetchBatches}
 		onRowClick={viewBatch}
 		title="Batches"
-		defaultPageSize={20}
-		pageSizes={[10, 20, 50, 100]}
 		keyField="batch_id"
 	/>
 {/if}

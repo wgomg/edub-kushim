@@ -428,11 +428,17 @@ func (q *Queries) ListTasks(ctx context.Context, arg ListTasksParams) ([]Task, e
 const listTasksByBatch = `-- name: ListTasksByBatch :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error
-FROM task WHERE batch_id = ? ORDER BY created_at
+FROM task WHERE batch_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?
 `
 
-func (q *Queries) ListTasksByBatch(ctx context.Context, batchID sql.NullString) ([]Task, error) {
-	rows, err := q.db.QueryContext(ctx, listTasksByBatch, batchID)
+type ListTasksByBatchParams struct {
+	BatchID sql.NullString
+	Limit   int64
+	Offset  int64
+}
+
+func (q *Queries) ListTasksByBatch(ctx context.Context, arg ListTasksByBatchParams) ([]Task, error) {
+	rows, err := q.db.QueryContext(ctx, listTasksByBatch, arg.BatchID, arg.Limit, arg.Offset)
 	if err != nil {
 		return nil, err
 	}
@@ -470,16 +476,23 @@ func (q *Queries) ListTasksByBatch(ctx context.Context, batchID sql.NullString) 
 const listTasksByBatchAndStatus = `-- name: ListTasksByBatchAndStatus :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error
-FROM task WHERE batch_id = ? AND status = ? ORDER BY created_at
+FROM task WHERE batch_id = ? AND status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?
 `
 
 type ListTasksByBatchAndStatusParams struct {
 	BatchID sql.NullString
 	Status  string
+	Limit   int64
+	Offset  int64
 }
 
 func (q *Queries) ListTasksByBatchAndStatus(ctx context.Context, arg ListTasksByBatchAndStatusParams) ([]Task, error) {
-	rows, err := q.db.QueryContext(ctx, listTasksByBatchAndStatus, arg.BatchID, arg.Status)
+	rows, err := q.db.QueryContext(ctx, listTasksByBatchAndStatus,
+		arg.BatchID,
+		arg.Status,
+		arg.Limit,
+		arg.Offset,
+	)
 	if err != nil {
 		return nil, err
 	}

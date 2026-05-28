@@ -154,7 +154,7 @@ func TestListFiltered_ByBatchAndStatus(t *testing.T) {
 	seedTask(t, queries, map[string]any{"task_id": "t2", "batch_id": "batch-a", "status": "completed"})
 	seedTask(t, queries, map[string]any{"task_id": "t3", "batch_id": "batch-b", "status": "pending"})
 
-	tasks, err := ListFiltered(ctx, queries, TaskFilter{BatchID: "batch-a", Status: "completed"})
+	tasks, err := ListFiltered(ctx, queries, TaskFilter{BatchID: "batch-a", Status: "completed", Limit: 10, Offset: 0})
 	if err != nil {
 		t.Fatalf("ListFiltered() unexpected error: %v", err)
 	}

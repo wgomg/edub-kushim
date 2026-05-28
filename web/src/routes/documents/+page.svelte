@@ -30,11 +30,4 @@
 	}
 </script>
 
-<DataTable
-	{columns}
-	{fetch}
-	onRowClick={view}
-	title="Documents"
-	defaultPageSize={50}
-	pageSizes={[5, 10, 25, 50, 100]}
-/>
+<DataTable {columns} {fetch} onRowClick={view} title="Documents" />

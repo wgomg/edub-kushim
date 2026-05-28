@@ -381,7 +381,11 @@ func TestListTasksByBatch(t *testing.T) {
 	insertTask(t, q, map[string]any{"task_id": "b1t2", "batch_id": "batch-x"})
 	insertTask(t, q, map[string]any{"task_id": "other", "batch_id": "batch-y"})
 
-	tasks, err := q.ListTasksByBatch(context.Background(), sql.NullString{String: "batch-x", Valid: true})
+	tasks, err := q.ListTasksByBatch(context.Background(), ListTasksByBatchParams{
+		BatchID: sql.NullString{String: "batch-x", Valid: true},
+		Limit:   10,
+		Offset:  0,
+	})
 	if err != nil {
 		t.Fatalf("ListTasksByBatch: %v", err)
 	}
@@ -422,6 +426,8 @@ func TestListTasksByBatchAndStatus(t *testing.T) {
 	tasks, err := q.ListTasksByBatchAndStatus(context.Background(), ListTasksByBatchAndStatusParams{
 		BatchID: sql.NullString{String: "batch-z", Valid: true},
 		Status:  "pending",
+		Limit:   10,
+		Offset:  0,
 	})
 	if err != nil {
 		t.Fatalf("ListTasksByBatchAndStatus: %v", err)

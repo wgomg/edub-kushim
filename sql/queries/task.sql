@@ -28,12 +28,12 @@ FROM task WHERE status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?;
 -- name: ListTasksByBatch :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error
-FROM task WHERE batch_id = ? ORDER BY created_at;
+FROM task WHERE batch_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?;
 
 -- name: ListTasksByBatchAndStatus :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error
-FROM task WHERE batch_id = ? AND status = ? ORDER BY created_at;
+FROM task WHERE batch_id = ? AND status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?;
 
 -- name: CountTasksByBatchAndStatus :one
 SELECT COUNT(*) FROM task WHERE batch_id = ? AND status = ?;

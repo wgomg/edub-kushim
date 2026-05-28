@@ -29,7 +29,7 @@
 		fetch = async () => [],
 		onRowClick = null,
 		pageSizes = [10, 25, 50, 100],
-		defaultPageSize = 50,
+		defaultPageSize = 25,
 		keyField = 'id',
 		title = ''
 	} = $props();

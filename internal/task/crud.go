@@ -54,9 +54,15 @@ func ListFiltered(ctx context.Context, queries *database.Queries, f TaskFilter) 
 		return queries.ListTasksByBatchAndStatus(ctx, database.ListTasksByBatchAndStatusParams{
 			BatchID: sql.NullString{String: f.BatchID, Valid: true},
 			Status:  f.Status,
+			Limit:   f.Limit,
+			Offset:  f.Offset,
 		})
 	case f.BatchID != "":
-		return queries.ListTasksByBatch(ctx, sql.NullString{String: f.BatchID, Valid: true})
+		return queries.ListTasksByBatch(ctx, database.ListTasksByBatchParams{
+			BatchID: sql.NullString{String: f.BatchID, Valid: true},
+			Limit:   f.Limit,
+			Offset:  f.Offset,
+		})
 	case f.Status != "":
 		return queries.ListTasksByStatus(ctx, database.ListTasksByStatusParams{
 			Status: f.Status,
