@@ -10,7 +10,7 @@ import (
 )
 
 type Runner interface {
-	Next(ctx context.Context) error
+	Next(ctx context.Context, taskType string) error
 }
 
 type Pool struct {
@@ -18,6 +18,7 @@ type Pool struct {
 	runner   Runner
 	workers  int
 	interval time.Duration
+	taskType string
 	stopCh   chan struct{}
 	stopOnce sync.Once
 	wg       sync.WaitGroup
@@ -25,12 +26,13 @@ type Pool struct {
 	cancel   context.CancelFunc
 }
 
-func New(logger *utils.Logger, runner Runner, workers int, interval time.Duration) *Pool {
+func New(logger *utils.Logger, runner Runner, workers int, interval time.Duration, taskType string) *Pool {
 	return &Pool{
 		logger:   logger,
 		runner:   runner,
 		workers:  workers,
 		interval: interval,
+		taskType: taskType,
 		stopCh:   make(chan struct{}),
 	}
 }
@@ -78,7 +80,7 @@ func (p *Pool) workerLoop(id int) {
 		case <-p.ctx.Done():
 			return
 		case <-time.After(p.interval):
-			if err := p.runner.Next(p.ctx); err != nil {
+			if err := p.runner.Next(p.ctx, p.taskType); err != nil {
 				p.logger.Error(nil, "%s: %v", logPrefix, err)
 			}
 		}

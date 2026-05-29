@@ -11,13 +11,13 @@ import (
 )
 
 type mockRunner struct {
-	mu       sync.Mutex
-	calls    int32
-	err      error
-	blockCh  chan struct{}
+	mu      sync.Mutex
+	calls   int32
+	err     error
+	blockCh chan struct{}
 }
 
-func (m *mockRunner) Next(ctx context.Context) error {
+func (m *mockRunner) Next(ctx context.Context, taskType string) error {
 	atomic.AddInt32(&m.calls, 1)
 	if m.blockCh != nil {
 		<-m.blockCh
@@ -30,7 +30,7 @@ func (m *mockRunner) callCount() int32 {
 }
 
 func TestNew(t *testing.T) {
-	p := New(utils.NewDiscardLogger(), &mockRunner{}, 3, 100*time.Millisecond)
+	p := New(utils.NewDiscardLogger(), &mockRunner{}, 3, 100*time.Millisecond, "consume")
 	if p == nil {
 		t.Fatal("expected non-nil pool")
 	}
@@ -44,7 +44,7 @@ func TestNew(t *testing.T) {
 
 func TestStartStop(t *testing.T) {
 	runner := &mockRunner{}
-	p := New(utils.NewDiscardLogger(), runner, 2, 10*time.Millisecond)
+	p := New(utils.NewDiscardLogger(), runner, 2, 10*time.Millisecond, "consume")
 
 	ctx := context.Background()
 	p.Start(ctx)
@@ -63,7 +63,7 @@ func TestStartStop(t *testing.T) {
 
 func TestStop_TwiceIsSafe(t *testing.T) {
 	runner := &mockRunner{}
-	p := New(utils.NewDiscardLogger(), runner, 1, time.Hour)
+	p := New(utils.NewDiscardLogger(), runner, 1, time.Hour, "consume")
 	p.Start(context.Background())
 
 	stopCtx := context.Background()
@@ -73,7 +73,7 @@ func TestStop_TwiceIsSafe(t *testing.T) {
 
 func TestStop_Timeout(t *testing.T) {
 	runner := &mockRunner{blockCh: make(chan struct{})}
-	p := New(utils.NewDiscardLogger(), runner, 1, 10*time.Millisecond)
+	p := New(utils.NewDiscardLogger(), runner, 1, 10*time.Millisecond, "consume")
 	p.Start(context.Background())
 
 	time.Sleep(20 * time.Millisecond)
@@ -87,7 +87,7 @@ func TestStop_Timeout(t *testing.T) {
 
 func TestWorkerLoop_RespectsStopCh(t *testing.T) {
 	runner := &mockRunner{}
-	p := New(utils.NewDiscardLogger(), runner, 1, time.Hour)
+	p := New(utils.NewDiscardLogger(), runner, 1, time.Hour, "consume")
 	p.Start(context.Background())
 
 	stopCtx := context.Background()
@@ -104,7 +104,7 @@ func TestWorkerLoop_RespectsStopCh(t *testing.T) {
 
 func TestWorkerLoop_ContextCancelled(t *testing.T) {
 	runner := &mockRunner{}
-	p := New(utils.NewDiscardLogger(), runner, 1, 10*time.Millisecond)
+	p := New(utils.NewDiscardLogger(), runner, 1, 10*time.Millisecond, "consume")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	p.Start(ctx)
@@ -122,7 +122,7 @@ func TestWorkerLoop_ContextCancelled(t *testing.T) {
 
 func TestWorkerLoop_RunnerError(t *testing.T) {
 	runner := &mockRunner{err: context.DeadlineExceeded}
-	p := New(utils.NewDiscardLogger(), runner, 1, 10*time.Millisecond)
+	p := New(utils.NewDiscardLogger(), runner, 1, 10*time.Millisecond, "consume")
 	p.Start(context.Background())
 
 	time.Sleep(30 * time.Millisecond)

@@ -30,8 +30,5 @@ consumer:
   ocr: 'gosseract'
   # ocr_data_dir: '~/.config/edub-kushim/ocr/tessdata'  # optional, this is the default
 
-# Uncomment for production
-# search:
-#   engine: zincsearch
-#   url: http://localhost:4080
-#   index: documents
+enricher:
+  workers: 1

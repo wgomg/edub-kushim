@@ -10,12 +10,14 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/consumption"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/enrichment"
 	"github.com/wgomg/edub-kushim/internal/task/handlers"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type Dispatcher struct {
 	consumer *consumption.Consumer
+	enricher *enrichment.Enricher
 	logger   *utils.Logger
 	queries  *database.Queries
 }
@@ -25,8 +27,15 @@ func NewDispatcher(cfg *config.Config, logger *utils.Logger, db *sql.DB) (*Dispa
 	if err != nil {
 		return nil, err
 	}
+
+	enricher, err := enrichment.NewEnricher(cfg, logger, db)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Dispatcher{
 		consumer: consumer,
+		enricher: enricher,
 		logger:   logger,
 		queries:  database.NewQueries(db),
 	}, nil
@@ -61,8 +70,8 @@ func (d *Dispatcher) Enqueue(ctx context.Context, taskType, batchID string, payl
 	return taskID, nil
 }
 
-func (d *Dispatcher) Next(ctx context.Context) error {
-	id, err := d.queries.GetNextPendingTask(ctx)
+func (d *Dispatcher) Next(ctx context.Context, taskType string) error {
+	id, err := d.queries.GetNextPendingTaskOfType(ctx, taskType)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil
@@ -109,6 +118,22 @@ func (d *Dispatcher) Next(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("complete task %d: %w", id, err)
 	}
+
+	// Enqueue enrichment after the task is fully committed.
+	if taskType == "consume" && result != nil {
+		var consumeResult struct {
+			DocumentID int64 `json:"document_id"`
+		}
+		if err := json.Unmarshal(result, &consumeResult); err == nil && consumeResult.DocumentID != 0 {
+			payload, _ := json.Marshal(struct {
+				DocumentID int64 `json:"document_id"`
+			}{DocumentID: consumeResult.DocumentID})
+			if _, err := d.Enqueue(ctx, "enrich", t.BatchID.String, payload); err != nil {
+				d.logger.Error(nil, "failed to enqueue enrich task for document %d: %v", consumeResult.DocumentID, err)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -116,6 +141,8 @@ func (d *Dispatcher) getHandler(taskType string) (Handler, error) {
 	switch taskType {
 	case "consume":
 		return handlers.NewConsumeTaskHandler(d.consumer), nil
+	case "enrich":
+		return handlers.NewEnrichTaskHandler(d.enricher), nil
 	default:
 		return nil, fmt.Errorf("unknown task type: %q", taskType)
 	}

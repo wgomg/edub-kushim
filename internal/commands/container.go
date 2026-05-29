@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/config"
@@ -18,7 +19,10 @@ type Container struct {
 	logger *utils.Logger
 	db     *sql.DB
 	engine *search.Engine
-	pool   *pool.Pool
+	pools  struct {
+		consume *pool.Pool
+		enrich  *pool.Pool
+	}
 }
 
 func NewContainer(cfg *config.Config, logger *utils.Logger) *Container {
@@ -44,8 +48,18 @@ func (c *Container) GetDB() (*sql.DB, error) {
 	return c.db, nil
 }
 
-func (c *Container) GetPool() (*pool.Pool, error) {
-	if c.pool == nil {
+func (c *Container) GetPool(taskType string) (*pool.Pool, error) {
+	var pp **pool.Pool
+	switch taskType {
+	case "consume":
+		pp = &c.pools.consume
+	case "enrich":
+		pp = &c.pools.enrich
+	default:
+		return nil, fmt.Errorf("unknown pool task type: %q", taskType)
+	}
+
+	if *pp == nil {
 		db, err := c.GetDB()
 		if err != nil {
 			return nil, err
@@ -54,13 +68,25 @@ func (c *Container) GetPool() (*pool.Pool, error) {
 		if err != nil {
 			return nil, err
 		}
-		workers := c.config.Consumer.Workers
-		if workers < 1 {
-			workers = 1
+		var workers int
+		var interval time.Duration
+		switch taskType {
+		case "consume":
+			workers = c.config.Consumer.Workers
+			if workers < 1 {
+				workers = 1
+			}
+			interval = 2 * time.Second
+		case "enrich":
+			workers = c.config.Enricher.Workers
+			if workers < 1 {
+				workers = 1
+			}
+			interval = 5 * time.Second
 		}
-		c.pool = pool.New(c.logger, dispatcher, workers, 2*time.Second)
+		*pp = pool.New(c.logger, dispatcher, workers, interval, taskType)
 	}
-	return c.pool, nil
+	return *pp, nil
 }
 
 func (c *Container) GetSearchEngine() (*search.Engine, error) {
@@ -75,10 +101,15 @@ func (c *Container) GetSearchEngine() (*search.Engine, error) {
 }
 
 func (c *Container) Close() {
-	if c.pool != nil {
+	if c.pools.consume != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		c.pool.Stop(ctx)
+		c.pools.consume.Stop(ctx)
+	}
+	if c.pools.enrich != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		c.pools.enrich.Stop(ctx)
 	}
 	if c.db != nil {
 		c.db.Close()

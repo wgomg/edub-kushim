@@ -187,12 +187,13 @@ func TestPollBatch_CompletesWhenAllDone(t *testing.T) {
 	})
 
 	runner := &mockPoolRunner{}
-	p := pool.New(utils.NewDiscardLogger(), runner, 1, time.Hour)
+	cp := pool.New(utils.NewDiscardLogger(), runner, 1, time.Hour, "consume")
+	ep := pool.New(utils.NewDiscardLogger(), runner, 1, time.Hour, "enrich")
 
 	pollCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	err := pollBatch(pollCtx, queries, p, utils.NewDiscardLogger(), "batch-poll")
+	err := pollBatch(pollCtx, queries, cp, ep, utils.NewDiscardLogger(), "batch-poll")
 	if err != nil {
 		t.Fatalf("pollBatch: %v", err)
 	}
@@ -212,13 +213,14 @@ func TestPollBatch_CancelledByContext(t *testing.T) {
 	})
 
 	runner := &mockPoolRunner{}
-	p := pool.New(utils.NewDiscardLogger(), runner, 1, time.Hour)
+	cp := pool.New(utils.NewDiscardLogger(), runner, 1, time.Hour, "consume")
+	ep := pool.New(utils.NewDiscardLogger(), runner, 1, time.Hour, "enrich")
 
 	pollCtx, cancel := context.WithCancel(context.Background())
 
 	done := make(chan error, 1)
 	go func() {
-		done <- pollBatch(pollCtx, queries, p, utils.NewDiscardLogger(), "batch-cancel")
+		done <- pollBatch(pollCtx, queries, cp, ep, utils.NewDiscardLogger(), "batch-cancel")
 	}()
 
 	time.Sleep(100 * time.Millisecond)
@@ -239,7 +241,7 @@ type mockPoolRunner struct {
 	calls int
 }
 
-func (m *mockPoolRunner) Next(ctx context.Context) error {
+func (m *mockPoolRunner) Next(ctx context.Context, taskType string) error {
 	m.mu.Lock()
 	m.calls++
 	m.mu.Unlock()

@@ -22,7 +22,10 @@ type Server struct {
 	httpServer *http.Server
 	logger     *utils.Logger
 	addr       string
-	pool       *pool.Pool
+	pools      struct {
+		consume *pool.Pool
+		enrich  *pool.Pool
+	}
 }
 
 func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
@@ -38,12 +41,17 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 		logger.Fatal("dispatcher: ", err)
 	}
 
-	workers := cfg.Consumer.Workers
-	if workers < 1 {
-		workers = 1
+	consumeWorkers := cfg.Consumer.Workers
+	if consumeWorkers < 1 {
+		consumeWorkers = 1
+	}
+	enrichWorkers := cfg.Enricher.Workers
+	if enrichWorkers < 1 {
+		enrichWorkers = 1
 	}
 
-	p := pool.New(logger, dispatcher, workers, 2*time.Second)
+	consumePool := pool.New(logger, dispatcher, consumeWorkers, 2*time.Second, "consume")
+	enrichPool := pool.New(logger, dispatcher, enrichWorkers, 5*time.Second, "enrich")
 
 	registerRoutes(mux, logger, queries, engine, dispatcher, &cfg)
 	registerStaticRoutes(mux)
@@ -58,12 +66,14 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 		IdleTimeout:  cfg.Srv.IdleTimeout,
 	}
 
-	return &Server{
+	s := &Server{
 		httpServer: server,
 		logger:     logger,
 		addr:       addr,
-		pool:       p,
 	}
+	s.pools.consume = consumePool
+	s.pools.enrich = enrichPool
+	return s
 }
 
 func registerStaticRoutes(mux *http.ServeMux) {
@@ -138,7 +148,8 @@ func parambagMiddleware(next http.Handler) http.Handler {
 }
 
 func (s *Server) Start() error {
-	s.pool.Start(context.Background())
+	s.pools.consume.Start(context.Background())
+	s.pools.enrich.Start(context.Background())
 	s.logger.Info(nil, "Starting HTTP server on %s", s.addr)
 	return s.httpServer.ListenAndServe()
 }
@@ -152,7 +163,8 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 	stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	s.pool.Stop(stopCtx)
+	s.pools.consume.Stop(stopCtx)
+	s.pools.enrich.Stop(stopCtx)
 
 	return nil
 }

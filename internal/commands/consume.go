@@ -50,7 +50,7 @@ func consumeHandler(c *Container, args []string) error {
 		return fmt.Errorf("--bg and --batch are mutually exclusive")
 	}
 
-	p, err := c.GetPool()
+	p, err := c.GetPool("consume")
 	if err != nil {
 		return fmt.Errorf("failed to get pool: %w", err)
 	}
@@ -83,13 +83,18 @@ func consumeHandler(c *Container, args []string) error {
 
 		fmt.Printf("Resuming batch %s (%d pending)...\n", batchIDParam, counts.Pending)
 
+		ep, err := c.GetPool("enrich")
+		if err != nil {
+			return fmt.Errorf("failed to get enrich pool: %w", err)
+		}
+
 		lock, err := pidfile.Acquire(batchIDParam, force, cancel)
 		if err != nil {
 			return err
 		}
 		defer lock.Release()
 
-		return pollBatch(ctx, queries, p, c.logger, batchIDParam)
+		return pollBatch(ctx, queries, p, ep, c.logger, batchIDParam)
 	}
 
 	files, err := consumption.GetFiles(
@@ -152,13 +157,18 @@ func consumeHandler(c *Container, args []string) error {
 
 	fmt.Println("Waiting for completion...")
 
+	ep, err := c.GetPool("enrich")
+	if err != nil {
+		return fmt.Errorf("failed to get enrich pool: %w", err)
+	}
+
 	lock, err := pidfile.Acquire(batchID, false, cancel)
 	if err != nil {
 		return err
 	}
 	defer lock.Release()
 
-	return pollBatch(ctx, queries, p, c.logger, batchID)
+	return pollBatch(ctx, queries, p, ep, c.logger, batchID)
 }
 
 func consumeCancelHandler(c *Container, args []string) error {
@@ -213,9 +223,10 @@ func consumeCancelHandler(c *Container, args []string) error {
 	return nil
 }
 
-func pollBatch(ctx context.Context, queries *database.Queries, p *pool.Pool, logger *utils.Logger, batchID string) error {
+func pollBatch(ctx context.Context, queries *database.Queries, cp, ep *pool.Pool, logger *utils.Logger, batchID string) error {
 	logger.SetLevel(utils.LevelSilent)
-	p.Start(ctx)
+	cp.Start(ctx)
+	ep.Start(ctx)
 
 	previous := make(map[string]string)
 
@@ -229,7 +240,8 @@ func pollBatch(ctx context.Context, queries *database.Queries, p *pool.Pool, log
 			fmt.Println("\nBatch cancelled")
 			stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer stopCancel()
-			p.Stop(stopCtx)
+			cp.Stop(stopCtx)
+			ep.Stop(stopCtx)
 			return nil
 		}
 		tasks, err := task.ListFiltered(ctx, queries, task.TaskFilter{
@@ -295,7 +307,8 @@ func pollBatch(ctx context.Context, queries *database.Queries, p *pool.Pool, log
 
 			stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			p.Stop(stopCtx)
+			cp.Stop(stopCtx)
+			ep.Stop(stopCtx)
 			return nil
 		}
 	}

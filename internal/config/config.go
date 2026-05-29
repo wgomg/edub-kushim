@@ -56,6 +56,10 @@ type ConsumerConfig struct {
 	Workers              int      `mapstructure:"workers"`
 }
 
+type EnricherConfig struct {
+	Workers int `mapstructure:"workers"`
+}
+
 type ToolConfig struct {
 	Command string
 	Timeout time.Duration
@@ -67,6 +71,7 @@ type Config struct {
 	Db       DatabaseConfig `mapstructure:"database"`
 	Storage  StorageConfig  `mapstructure:"storage"`
 	Consumer ConsumerConfig
+	Enricher EnricherConfig `mapstructure:"enricher"`
 }
 
 func Load(configDir string) (*Config, error) {
@@ -96,6 +101,8 @@ func Load(configDir string) (*Config, error) {
 	viper.SetDefault("consumer.textextractor_timeout", 120)
 	viper.SetDefault("consumer.ocr_timeout", 120)
 	viper.SetDefault("consumer.workers", 1)
+
+	viper.SetDefault("enricher.workers", 1)
 
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")

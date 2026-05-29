@@ -11,6 +11,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/consumption"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/enrichment"
 	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/utils"
 
@@ -154,7 +155,7 @@ func TestNext_NoPendingTasks(t *testing.T) {
 	d := makeDispatcher(db)
 	ctx := context.Background()
 
-	err := d.Next(ctx)
+	err := d.Next(ctx, "consume")
 	if err != nil {
 		t.Fatalf("Next() on empty DB unexpected error: %v", err)
 	}
@@ -176,7 +177,7 @@ func TestNext_UnknownTaskType(t *testing.T) {
 		t.Fatalf("CreateTask() failed: %v", err)
 	}
 
-	err = d.Next(ctx)
+	err = d.Next(ctx, "nonexistent")
 	if err != nil {
 		t.Fatalf("Next() unexpected error: %v", err)
 	}
@@ -240,7 +241,7 @@ func TestNext_ProcessesPendingTask(t *testing.T) {
 		t.Fatalf("Enqueue: %v", err)
 	}
 
-	err = d.Next(ctx)
+	err = d.Next(ctx, "consume")
 	if err != nil {
 		t.Fatalf("Next() unexpected error: %v", err)
 	}
@@ -267,6 +268,175 @@ func TestNext_ProcessesPendingTask(t *testing.T) {
 	}
 	if result.StoragePath == "" {
 		t.Error("expected non-empty storage_path in result")
+	}
+}
+
+func TestNext_ConsumeEnqueuesEnrichTask(t *testing.T) {
+	db := setupTestDB(t)
+	logger := utils.NewDiscardLogger()
+	dir := t.TempDir()
+
+	content := []byte("test file content for enrich enqueue test")
+	srcPath := filepath.Join(dir, "test.pdf")
+	if err := os.WriteFile(srcPath, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{
+		Storage: config.StorageConfig{
+			StorageDir: filepath.Join(dir, "storage"),
+		},
+		Consumer: config.ConsumerConfig{
+			TextExtractorTimeout: 5,
+			OptimizationTimeout:  5,
+			OCRTimeout:           5,
+		},
+	}
+
+	runner := tools.NewRunnerWithAdapters(
+		logger,
+		&cfg.Consumer,
+		&mockTextExtractor{},
+		&mockOCR{},
+		&mockPdfOptimizer{},
+	)
+	consumer, err := consumption.NewConsumerWithRunner(cfg, logger, db, runner)
+	if err != nil {
+		t.Fatalf("NewConsumerWithRunner: %v", err)
+	}
+
+	d := &Dispatcher{
+		consumer: consumer,
+		logger:   logger,
+		queries:  database.NewQueries(db),
+	}
+
+	ctx := context.Background()
+	payload := json.RawMessage(`{"file_path":"` + srcPath + `"}`)
+	_, err = d.Enqueue(ctx, "consume", "batch-enrich-test", payload)
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	err = d.Next(ctx, "consume")
+	if err != nil {
+		t.Fatalf("Next(consume): %v", err)
+	}
+
+	tasks, err := d.queries.ListTasks(ctx, database.ListTasksParams{Limit: 10, Offset: 0})
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+
+	var enrichTask *database.Task
+	for i := range tasks {
+		if tasks[i].TaskType == "enrich" {
+			enrichTask = &tasks[i]
+			break
+		}
+	}
+	if enrichTask == nil {
+		t.Fatal("expected an enrich task to be enqueued after consume")
+	}
+	if enrichTask.Status != "pending" {
+		t.Errorf("enrich task status = %q, want %q", enrichTask.Status, "pending")
+	}
+	if enrichTask.BatchID.String != "batch-enrich-test" {
+		t.Errorf("enrich task batch_id = %q, want %q", enrichTask.BatchID.String, "batch-enrich-test")
+	}
+
+	var enrichPayload struct {
+		DocumentID int64 `json:"document_id"`
+	}
+	if err := json.Unmarshal(enrichTask.Payload, &enrichPayload); err != nil {
+		t.Fatalf("unmarshal enrich payload: %v", err)
+	}
+	if enrichPayload.DocumentID == 0 {
+		t.Error("expected non-zero document_id in enrich payload")
+	}
+}
+
+func TestNext_EnrichProcessesTask(t *testing.T) {
+	db := setupTestDB(t)
+	logger := utils.NewDiscardLogger()
+
+	cfg := &config.Config{}
+	enricher, err := enrichment.NewEnricher(cfg, logger, db)
+	if err != nil {
+		t.Fatalf("NewEnricher: %v", err)
+	}
+
+	d := &Dispatcher{
+		enricher: enricher,
+		logger:   logger,
+		queries:  database.NewQueries(db),
+	}
+
+	ctx := context.Background()
+	payload := json.RawMessage(`{"document_id":42}`)
+	taskID, err := d.Enqueue(ctx, "enrich", "batch-enrich", payload)
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	err = d.Next(ctx, "enrich")
+	if err != nil {
+		t.Fatalf("Next(enrich): %v", err)
+	}
+
+	task, err := d.queries.GetTaskByTaskID(ctx, taskID)
+	if err != nil {
+		t.Fatalf("GetTaskByTaskID: %v", err)
+	}
+	if task.Status != "completed" {
+		t.Fatalf("enrich task status = %q, want %q", task.Status, "completed")
+	}
+	if task.Result == nil {
+		t.Fatal("expected non-nil result on completed enrich task")
+	}
+
+	var result struct {
+		DocumentID int64  `json:"document_id"`
+		Status     string `json:"status"`
+	}
+	if err := json.Unmarshal(*task.Result, &result); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	if result.DocumentID != 42 {
+		t.Errorf("document_id = %d, want 42", result.DocumentID)
+	}
+	if result.Status != "skipped" {
+		t.Errorf("status = %q, want %q", result.Status, "skipped")
+	}
+}
+
+func TestNext_EnrichDedup(t *testing.T) {
+	db := setupTestDB(t)
+	logger := utils.NewDiscardLogger()
+
+	cfg := &config.Config{}
+	enricher, err := enrichment.NewEnricher(cfg, logger, db)
+	if err != nil {
+		t.Fatalf("NewEnricher: %v", err)
+	}
+
+	d := &Dispatcher{
+		enricher: enricher,
+		logger:   logger,
+		queries:  database.NewQueries(db),
+	}
+
+	ctx := context.Background()
+	payload := json.RawMessage(`{"document_id":42}`)
+
+	_, err = d.Enqueue(ctx, "enrich", "batch-dedup", payload)
+	if err != nil {
+		t.Fatalf("first Enqueue: %v", err)
+	}
+
+	_, err = d.Enqueue(ctx, "enrich", "batch-dedup", payload)
+	if err == nil {
+		t.Fatal("second Enqueue() expected dedup error, got nil")
 	}
 }
 

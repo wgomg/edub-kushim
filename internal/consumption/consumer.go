@@ -100,8 +100,6 @@ func (c *Consumer) Process(ctx context.Context, file File) (File, error) {
 		return file, err
 	}
 
-	// llm/semantic processing for tags, title, author and doc type
-
 	txCtx, txCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer txCancel()
 
@@ -109,7 +107,6 @@ func (c *Consumer) Process(ctx context.Context, file File) (File, error) {
 		strconv.Itoa(file.Date.Year()),
 		fmt.Sprintf("%02d", file.Date.Month()),
 		fmt.Sprintf("%02d", file.Date.Day()),
-		// document type name
 	)
 
 	storePath := filepath.Join(
