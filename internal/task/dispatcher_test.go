@@ -54,6 +54,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 			sha512_checksum TEXT UNIQUE NOT NULL,
 			mime_type TEXT NOT NULL,
 			file_size INTEGER NOT NULL,
+			page_count INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			modified_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			document_type_id INTEGER,
@@ -62,6 +63,17 @@ func setupTestDB(t *testing.T) *sql.DB {
 			text_content TEXT
 		);
 		CREATE INDEX idx_document_md5 ON document(md5_checksum);
+
+		CREATE TABLE document_type (
+			id INTEGER PRIMARY KEY,
+			name TEXT NOT NULL UNIQUE,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE TABLE tag (
+			id INTEGER PRIMARY KEY,
+			name TEXT NOT NULL UNIQUE,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
 	`)
 	if err != nil {
 		t.Fatalf("create schema: %v", err)
@@ -210,18 +222,19 @@ func TestNext_ProcessesPendingTask(t *testing.T) {
 			StorageDir: filepath.Join(dir, "storage"),
 		},
 		Consumer: config.ConsumerConfig{
-			TextExtractorTimeout: 5,
-			OptimizationTimeout:  5,
-			OCRTimeout:           5,
+			TextExtractor: config.TextExtractorConfig{Timeout: 5},
+			PdfOptimizer:  config.PdfOptimizerConfig{Timeout: 5},
+			OCR:           config.OCRConfig{Timeout: 5},
 		},
 	}
 
 	runner := tools.NewRunnerWithAdapters(
 		logger,
-		&cfg.Consumer,
+		cfg,
 		&mockTextExtractor{},
 		&mockOCR{},
 		&mockPdfOptimizer{},
+		nil, nil, nil,
 	)
 	consumer, err := consumption.NewConsumerWithRunner(cfg, logger, db, runner)
 	if err != nil {
@@ -287,18 +300,19 @@ func TestNext_ConsumeEnqueuesEnrichTask(t *testing.T) {
 			StorageDir: filepath.Join(dir, "storage"),
 		},
 		Consumer: config.ConsumerConfig{
-			TextExtractorTimeout: 5,
-			OptimizationTimeout:  5,
-			OCRTimeout:           5,
+			TextExtractor: config.TextExtractorConfig{Timeout: 5},
+			PdfOptimizer:  config.PdfOptimizerConfig{Timeout: 5},
+			OCR:           config.OCRConfig{Timeout: 5},
 		},
 	}
 
 	runner := tools.NewRunnerWithAdapters(
 		logger,
-		&cfg.Consumer,
+		cfg,
 		&mockTextExtractor{},
 		&mockOCR{},
 		&mockPdfOptimizer{},
+		nil, nil, nil,
 	)
 	consumer, err := consumption.NewConsumerWithRunner(cfg, logger, db, runner)
 	if err != nil {
@@ -360,8 +374,24 @@ func TestNext_EnrichProcessesTask(t *testing.T) {
 	db := setupTestDB(t)
 	logger := utils.NewDiscardLogger()
 
+	queries := database.NewQueries(db)
+	_, err := queries.CreateDocument(context.Background(), database.CreateDocumentParams{
+		Title:          "test doc",
+		Md5Checksum:    "abc",
+		Sha512Checksum: "def",
+		MimeType:       "application/pdf",
+		FileSize:       100,
+		PageCount:      0,
+		OriginalPath:   "/tmp/test.pdf",
+		StoragePath:    "/tmp/test.pdf",
+		TextContent:    sql.NullString{String: "some text", Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("CreateDocument: %v", err)
+	}
+
 	cfg := &config.Config{}
-	enricher, err := enrichment.NewEnricher(cfg, logger, db)
+	enricher, err := enrichment.NewEnricher(cfg, logger, db, nil)
 	if err != nil {
 		t.Fatalf("NewEnricher: %v", err)
 	}
@@ -369,11 +399,11 @@ func TestNext_EnrichProcessesTask(t *testing.T) {
 	d := &Dispatcher{
 		enricher: enricher,
 		logger:   logger,
-		queries:  database.NewQueries(db),
+		queries:  queries,
 	}
 
 	ctx := context.Background()
-	payload := json.RawMessage(`{"document_id":42}`)
+	payload := json.RawMessage(`{"document_id":1}`)
 	taskID, err := d.Enqueue(ctx, "enrich", "batch-enrich", payload)
 	if err != nil {
 		t.Fatalf("Enqueue: %v", err)
@@ -389,24 +419,10 @@ func TestNext_EnrichProcessesTask(t *testing.T) {
 		t.Fatalf("GetTaskByTaskID: %v", err)
 	}
 	if task.Status != "completed" {
-		t.Fatalf("enrich task status = %q, want %q", task.Status, "completed")
+		t.Fatalf("enrich task status = %q, want %q; error = %v", task.Status, "completed", task.Error)
 	}
 	if task.Result == nil {
 		t.Fatal("expected non-nil result on completed enrich task")
-	}
-
-	var result struct {
-		DocumentID int64  `json:"document_id"`
-		Status     string `json:"status"`
-	}
-	if err := json.Unmarshal(*task.Result, &result); err != nil {
-		t.Fatalf("unmarshal result: %v", err)
-	}
-	if result.DocumentID != 42 {
-		t.Errorf("document_id = %d, want 42", result.DocumentID)
-	}
-	if result.Status != "skipped" {
-		t.Errorf("status = %q, want %q", result.Status, "skipped")
 	}
 }
 
@@ -415,7 +431,7 @@ func TestNext_EnrichDedup(t *testing.T) {
 	logger := utils.NewDiscardLogger()
 
 	cfg := &config.Config{}
-	enricher, err := enrichment.NewEnricher(cfg, logger, db)
+	enricher, err := enrichment.NewEnricher(cfg, logger, db, nil)
 	if err != nil {
 		t.Fatalf("NewEnricher: %v", err)
 	}

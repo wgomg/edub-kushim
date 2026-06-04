@@ -24,6 +24,7 @@ type Logger struct {
 	errorLogger *log.Logger
 	debugLogger *log.Logger
 	fatalLogger *log.Logger
+	fileLogger  *log.Logger
 	RawBodyLog  bool
 }
 
@@ -59,6 +60,15 @@ func NewLoggerWithWriter(w io.Writer) *Logger {
 	}
 }
 
+func (l *Logger) SetLogFile(path string) error {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("open log file %s: %w", path, err)
+	}
+	l.fileLogger = log.New(f, "", log.Ldate|log.Ltime)
+	return nil
+}
+
 func parseLogLevel(level string) LogLevel {
 	switch strings.ToLower(level) {
 	case "silent":
@@ -84,46 +94,56 @@ func (l *Logger) Level() LogLevel {
 	return l.level
 }
 
+func (l *Logger) writeFile(prefix string, format string, v ...any) {
+	if l.fileLogger != nil {
+		l.fileLogger.Printf(prefix+format, v...)
+	}
+}
+
 func (l *Logger) Info(reqID *string, format string, v ...any) {
+	msg := format
+	if reqID != nil {
+		msg = fmt.Sprintf("REQID=%s ", *reqID) + msg
+	}
+	l.writeFile("INFO  : ", msg, v...)
+
 	if LevelInfo > l.level {
 		return
 	}
-
-	if reqID != nil {
-		format = fmt.Sprintf("REQID=%s ", *reqID) + format
-	}
-
-	l.infoLogger.Printf(format, v...)
+	l.infoLogger.Printf(msg, v...)
 }
 
 func (l *Logger) Error(reqID *string, format string, v ...any) {
+	msg := format
+	if reqID != nil {
+		msg = fmt.Sprintf("REQID=%s ", *reqID) + msg
+	}
+	l.writeFile("ERROR : ", msg, v...)
+
 	if LevelError > l.level {
 		return
 	}
-
-	if reqID != nil {
-		format = fmt.Sprintf("REQID=%s ", *reqID) + format
-	}
-
-	l.errorLogger.Printf(format, v...)
+	l.errorLogger.Printf(msg, v...)
 }
 
 func (l *Logger) Debug(reqID *string, format string, v ...any) {
+	msg := format
+	if reqID != nil {
+		msg = fmt.Sprintf("REQID=%s ", *reqID) + msg
+	}
+	l.writeFile("DEBUG : ", msg, v...)
+
 	if LevelDebug > l.level {
 		return
 	}
-
-	if reqID != nil {
-		format = fmt.Sprintf("REQID=%s ", *reqID) + format
-	}
-	l.debugLogger.Printf(format, v...)
+	l.debugLogger.Printf(msg, v...)
 }
 
 func (l *Logger) Fatal(v ...any) {
+	l.writeFile("FATAL : ", fmt.Sprint(v...))
 	if LevelFatal > l.level {
 		os.Exit(1)
 		return
 	}
-
 	l.fatalLogger.Fatal(v...)
 }

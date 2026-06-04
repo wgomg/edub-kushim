@@ -12,9 +12,9 @@ import (
 
 const createDocument = `-- name: CreateDocument :execresult
 INSERT INTO document (
-    title, md5_checksum, sha512_checksum, mime_type, file_size,
+    title, md5_checksum, sha512_checksum, mime_type, file_size, page_count,
     original_path, storage_path, text_content
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateDocumentParams struct {
@@ -23,6 +23,7 @@ type CreateDocumentParams struct {
 	Sha512Checksum string
 	MimeType       string
 	FileSize       int64
+	PageCount      int64
 	OriginalPath   string
 	StoragePath    string
 	TextContent    sql.NullString
@@ -35,6 +36,7 @@ func (q *Queries) CreateDocument(ctx context.Context, arg CreateDocumentParams) 
 		arg.Sha512Checksum,
 		arg.MimeType,
 		arg.FileSize,
+		arg.PageCount,
 		arg.OriginalPath,
 		arg.StoragePath,
 		arg.TextContent,
@@ -51,7 +53,7 @@ func (q *Queries) DeleteDocument(ctx context.Context, id int64) error {
 }
 
 const getDocument = `-- name: GetDocument :one
-SELECT id, title, md5_checksum, sha512_checksum, mime_type, file_size,
+SELECT id, title, md5_checksum, sha512_checksum, mime_type, file_size, page_count,
        created_at, modified_at, document_type_id, original_path, storage_path, text_content
 FROM document WHERE id = ?
 `
@@ -66,6 +68,7 @@ func (q *Queries) GetDocument(ctx context.Context, id int64) (Document, error) {
 		&i.Sha512Checksum,
 		&i.MimeType,
 		&i.FileSize,
+		&i.PageCount,
 		&i.CreatedAt,
 		&i.ModifiedAt,
 		&i.DocumentTypeID,
@@ -77,7 +80,7 @@ func (q *Queries) GetDocument(ctx context.Context, id int64) (Document, error) {
 }
 
 const getDocumentByMD5Checksum = `-- name: GetDocumentByMD5Checksum :many
-SELECT id, title, md5_checksum, sha512_checksum, mime_type, file_size,
+SELECT id, title, md5_checksum, sha512_checksum, mime_type, file_size, page_count,
        created_at, modified_at, document_type_id, original_path, storage_path
 FROM document WHERE md5_checksum = ?
 `
@@ -89,6 +92,7 @@ type GetDocumentByMD5ChecksumRow struct {
 	Sha512Checksum string
 	MimeType       string
 	FileSize       int64
+	PageCount      int64
 	CreatedAt      sql.NullTime
 	ModifiedAt     sql.NullTime
 	DocumentTypeID sql.NullInt64
@@ -112,6 +116,7 @@ func (q *Queries) GetDocumentByMD5Checksum(ctx context.Context, md5Checksum stri
 			&i.Sha512Checksum,
 			&i.MimeType,
 			&i.FileSize,
+			&i.PageCount,
 			&i.CreatedAt,
 			&i.ModifiedAt,
 			&i.DocumentTypeID,
@@ -132,7 +137,7 @@ func (q *Queries) GetDocumentByMD5Checksum(ctx context.Context, md5Checksum stri
 }
 
 const getDocumentBySHA512Checksum = `-- name: GetDocumentBySHA512Checksum :one
-SELECT id, title, md5_checksum, sha512_checksum, mime_type, file_size,
+SELECT id, title, md5_checksum, sha512_checksum, mime_type, file_size, page_count,
        created_at, modified_at, document_type_id, original_path, storage_path
 FROM document WHERE sha512_checksum = ?
 `
@@ -144,6 +149,7 @@ type GetDocumentBySHA512ChecksumRow struct {
 	Sha512Checksum string
 	MimeType       string
 	FileSize       int64
+	PageCount      int64
 	CreatedAt      sql.NullTime
 	ModifiedAt     sql.NullTime
 	DocumentTypeID sql.NullInt64
@@ -161,6 +167,7 @@ func (q *Queries) GetDocumentBySHA512Checksum(ctx context.Context, sha512Checksu
 		&i.Sha512Checksum,
 		&i.MimeType,
 		&i.FileSize,
+		&i.PageCount,
 		&i.CreatedAt,
 		&i.ModifiedAt,
 		&i.DocumentTypeID,
@@ -171,7 +178,7 @@ func (q *Queries) GetDocumentBySHA512Checksum(ctx context.Context, sha512Checksu
 }
 
 const getDocumentWithDetails = `-- name: GetDocumentWithDetails :one
-SELECT d.id, d.title, d.md5_checksum, d.sha512_checksum, d.mime_type, d.file_size,
+SELECT d.id, d.title, d.md5_checksum, d.sha512_checksum, d.mime_type, d.file_size, d.page_count,
        d.created_at, d.modified_at, d.document_type_id, d.original_path, d.storage_path, d.text_content,
        dt.name as document_type_name
 FROM document d
@@ -186,6 +193,7 @@ type GetDocumentWithDetailsRow struct {
 	Sha512Checksum   string
 	MimeType         string
 	FileSize         int64
+	PageCount        int64
 	CreatedAt        sql.NullTime
 	ModifiedAt       sql.NullTime
 	DocumentTypeID   sql.NullInt64
@@ -205,6 +213,7 @@ func (q *Queries) GetDocumentWithDetails(ctx context.Context, id int64) (GetDocu
 		&i.Sha512Checksum,
 		&i.MimeType,
 		&i.FileSize,
+		&i.PageCount,
 		&i.CreatedAt,
 		&i.ModifiedAt,
 		&i.DocumentTypeID,
@@ -217,7 +226,7 @@ func (q *Queries) GetDocumentWithDetails(ctx context.Context, id int64) (GetDocu
 }
 
 const getDocumentWithText = `-- name: GetDocumentWithText :one
-SELECT d.id, d.title, d.md5_checksum, d.sha512_checksum, d.mime_type, d.file_size,
+SELECT d.id, d.title, d.md5_checksum, d.sha512_checksum, d.mime_type, d.file_size, d.page_count,
        d.created_at, d.modified_at, d.document_type_id, d.original_path, d.storage_path, d.text_content,
        dt.name as document_type_name
 FROM document d
@@ -232,6 +241,7 @@ type GetDocumentWithTextRow struct {
 	Sha512Checksum   string
 	MimeType         string
 	FileSize         int64
+	PageCount        int64
 	CreatedAt        sql.NullTime
 	ModifiedAt       sql.NullTime
 	DocumentTypeID   sql.NullInt64
@@ -251,6 +261,7 @@ func (q *Queries) GetDocumentWithText(ctx context.Context, id int64) (GetDocumen
 		&i.Sha512Checksum,
 		&i.MimeType,
 		&i.FileSize,
+		&i.PageCount,
 		&i.CreatedAt,
 		&i.ModifiedAt,
 		&i.DocumentTypeID,
@@ -263,7 +274,7 @@ func (q *Queries) GetDocumentWithText(ctx context.Context, id int64) (GetDocumen
 }
 
 const listDocuments = `-- name: ListDocuments :many
-SELECT id, title, md5_checksum, sha512_checksum, mime_type, file_size,
+SELECT id, title, md5_checksum, sha512_checksum, mime_type, file_size, page_count,
        created_at, modified_at, document_type_id, original_path, storage_path
 FROM document ORDER BY created_at DESC LIMIT ? OFFSET ?
 `
@@ -280,6 +291,7 @@ type ListDocumentsRow struct {
 	Sha512Checksum string
 	MimeType       string
 	FileSize       int64
+	PageCount      int64
 	CreatedAt      sql.NullTime
 	ModifiedAt     sql.NullTime
 	DocumentTypeID sql.NullInt64
@@ -303,6 +315,7 @@ func (q *Queries) ListDocuments(ctx context.Context, arg ListDocumentsParams) ([
 			&i.Sha512Checksum,
 			&i.MimeType,
 			&i.FileSize,
+			&i.PageCount,
 			&i.CreatedAt,
 			&i.ModifiedAt,
 			&i.DocumentTypeID,
@@ -323,7 +336,7 @@ func (q *Queries) ListDocuments(ctx context.Context, arg ListDocumentsParams) ([
 }
 
 const searchDocumentsByTitle = `-- name: SearchDocumentsByTitle :many
-SELECT id, title, md5_checksum, sha512_checksum, mime_type, file_size,
+SELECT id, title, md5_checksum, sha512_checksum, mime_type, file_size, page_count,
        created_at, modified_at, document_type_id, original_path, storage_path
 FROM document
 WHERE title LIKE ?
@@ -344,6 +357,7 @@ type SearchDocumentsByTitleRow struct {
 	Sha512Checksum string
 	MimeType       string
 	FileSize       int64
+	PageCount      int64
 	CreatedAt      sql.NullTime
 	ModifiedAt     sql.NullTime
 	DocumentTypeID sql.NullInt64
@@ -367,6 +381,7 @@ func (q *Queries) SearchDocumentsByTitle(ctx context.Context, arg SearchDocument
 			&i.Sha512Checksum,
 			&i.MimeType,
 			&i.FileSize,
+			&i.PageCount,
 			&i.CreatedAt,
 			&i.ModifiedAt,
 			&i.DocumentTypeID,

@@ -35,6 +35,26 @@ SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error
 FROM task WHERE batch_id = ? AND status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?;
 
+-- name: ListAllTasks :many
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
+       created_at, started_at, completed_at, error
+FROM task ORDER BY created_at DESC;
+
+-- name: ListAllTasksByStatus :many
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
+       created_at, started_at, completed_at, error
+FROM task WHERE status = ? ORDER BY created_at DESC;
+
+-- name: ListAllTasksByBatch :many
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
+       created_at, started_at, completed_at, error
+FROM task WHERE batch_id = ? ORDER BY created_at DESC;
+
+-- name: ListAllTasksByBatchAndStatus :many
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
+       created_at, started_at, completed_at, error
+FROM task WHERE batch_id = ? AND status = ? ORDER BY created_at DESC;
+
 -- name: CountTasksByBatchAndStatus :one
 SELECT COUNT(*) FROM task WHERE batch_id = ? AND status = ?;
 

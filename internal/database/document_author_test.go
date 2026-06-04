@@ -29,6 +29,7 @@ func docAuthorTestDB(t *testing.T) *sql.DB {
 			sha512_checksum TEXT UNIQUE NOT NULL,
 			mime_type TEXT NOT NULL,
 			file_size INTEGER NOT NULL,
+			page_count INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			modified_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			document_type_id INTEGER,
@@ -70,6 +71,7 @@ func seedDocForAuthor(t *testing.T, q *Queries, title, md5, sha512 string) int64
 		Sha512Checksum: sha512,
 		MimeType:       "application/pdf",
 		FileSize:       100,
+		PageCount:      0,
 		OriginalPath:   "/" + title,
 		StoragePath:    "/store/" + title,
 	})

@@ -1,12 +1,14 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
+	"github.com/knights-analytics/hugot"
 	"github.com/wgomg/edub-kushim/internal/utils"
 	"gopkg.in/yaml.v3"
 )
@@ -17,6 +19,7 @@ func RunSetup(args []string, logger *utils.Logger) error {
 	storageDir := ""
 	dbPath := ""
 	optimizationFallback := ""
+	tagMatcher := ""
 
 	p := NewFlagParser(args)
 	if err := p.String("--langs", &langs); err != nil {
@@ -34,10 +37,13 @@ func RunSetup(args []string, logger *utils.Logger) error {
 	if err := p.String("--optimization-fallback", &optimizationFallback); err != nil {
 		return err
 	}
+	if err := p.String("--tag-matcher", &tagMatcher); err != nil {
+		return err
+	}
 	_ = p.Rest()
 
 	if langs == "" {
-		return fmt.Errorf("usage: kushim setup --langs eng,spa,... [--inbox-dir ./inbox] [--storage-dir ./storage] [--db-path ./data/] [--optimization-fallback gs]\n  Languages are ISO 639-3 codes (eng, spa, fra, deu, rus, chi_sim, jpn, etc.)")
+		return fmt.Errorf("usage: kushim setup --langs eng,spa,... [--inbox-dir ./inbox] [--storage-dir ./storage] [--db-path ./data/] [--optimization-fallback gs] [--tag-matcher hugot|none]\n  Languages are ISO 639-3 codes (eng, spa, fra, deu, rus, chi_sim, jpn, etc.)")
 	}
 
 	langList := strings.Split(langs, ",")
@@ -55,7 +61,9 @@ func RunSetup(args []string, logger *utils.Logger) error {
 
 	cfg := map[string]any{
 		"consumer": map[string]any{
-			"ocr_languages": langList,
+			"ocr": map[string]any{
+				"languages": langList,
+			},
 		},
 	}
 	if inboxDir != "" || storageDir != "" {
@@ -75,8 +83,27 @@ func RunSetup(args []string, logger *utils.Logger) error {
 	}
 	if optimizationFallback != "" {
 		consumerCfg := cfg["consumer"].(map[string]any)
-		consumerCfg["optimization_fallback"] = optimizationFallback
+		pdfOptimizerCfg, ok := consumerCfg["pdfoptimizer"].(map[string]any)
+		if !ok {
+			pdfOptimizerCfg = map[string]any{}
+			consumerCfg["pdfoptimizer"] = pdfOptimizerCfg
+		}
+		pdfOptimizerCfg["fallback"] = optimizationFallback
 	}
+
+	enricherCfg := map[string]any{}
+	switch tagMatcher {
+	case "hugot":
+		enricherCfg["tagmatcher"] = "hugot"
+	case "none":
+		enricherCfg["tagmatcher"] = ""
+	case "":
+		enricherCfg["tagmatcher"] = "hugot"
+		tagMatcher = "hugot"
+	default:
+		return fmt.Errorf("unsupported tag matcher %q: use 'hugot' or 'none'", tagMatcher)
+	}
+	cfg["enricher"] = enricherCfg
 
 	configPath := filepath.Join(*configDir, "config.yaml")
 
@@ -93,6 +120,12 @@ func RunSetup(args []string, logger *utils.Logger) error {
 	}
 	enc.Close()
 	logger.Info(nil, "created config: %s", configPath)
+
+	if tagMatcher == "hugot" {
+		if err := setupHugotModel(context.Background(), *configDir, logger); err != nil {
+			return fmt.Errorf("hugot model download: %w", err)
+		}
+	}
 
 	if optimizationFallback != "" {
 		if _, err := exec.LookPath(optimizationFallback); err != nil {
@@ -128,6 +161,40 @@ func downloadFile(url, dest string) error {
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	return cmd.Run()
+}
+
+const hugotModelHFRepo = "BAAI/bge-m3" // full HuggingFace repo ID
+const hugotModelDirName = "bge-m3"     // short name for the local directory
+
+func setupHugotModel(ctx context.Context, configDir string, logger *utils.Logger) error {
+	modelsParent := filepath.Join(configDir, "tagmatcher", "hugot", "models")
+	targetModelPath := filepath.Join(modelsParent, hugotModelDirName)
+
+	if _, err := os.Stat(targetModelPath); err == nil {
+		logger.Info(nil, "hugot model already downloaded at %s", targetModelPath)
+		return nil
+	}
+
+	logger.Info(nil, "downloading %s model for hugot...", hugotModelHFRepo)
+
+	opts := hugot.NewDownloadOptions()
+	opts.Verbose = true
+	opts.OnnxFilePath = "onnx/model.onnx"
+	opts.ExternalDataPath = "onnx/model.onnx_data"
+
+	_, err := hugot.DownloadModel(ctx, hugotModelHFRepo, modelsParent, opts)
+	if err != nil {
+		return fmt.Errorf("download %s: %w", hugotModelHFRepo, err)
+	}
+
+	hfDir := strings.ReplaceAll(hugotModelHFRepo, "/", "_")
+	downloadedPath := filepath.Join(modelsParent, hfDir)
+	if err := os.Rename(downloadedPath, targetModelPath); err != nil {
+		return fmt.Errorf("rename model dir %s → %s: %w", downloadedPath, targetModelPath, err)
+	}
+
+	logger.Info(nil, "hugot model downloaded to %s", targetModelPath)
+	return nil
 }
 
 func setupHandler(container *Container, args []string) error {

@@ -14,7 +14,7 @@ import (
 func TestEnrichTaskHandler_Handle_Success(t *testing.T) {
 	cfg := &config.Config{}
 	logger := utils.NewDiscardLogger()
-	e, err := enrichment.NewEnricher(cfg, logger, nil)
+	e, err := enrichment.NewEnricher(cfg, logger, nil, nil)
 	if err != nil {
 		t.Fatalf("NewEnricher: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestEnrichTaskHandler_Handle_Success(t *testing.T) {
 func TestEnrichTaskHandler_Handle_InvalidPayload(t *testing.T) {
 	cfg := &config.Config{}
 	logger := utils.NewDiscardLogger()
-	e, err := enrichment.NewEnricher(cfg, logger, nil)
+	e, err := enrichment.NewEnricher(cfg, logger, nil, nil)
 	if err != nil {
 		t.Fatalf("NewEnricher: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestEnrichTaskHandler_Handle_InvalidPayload(t *testing.T) {
 func TestEnrichTaskHandler_Handle_MissingDocumentID(t *testing.T) {
 	cfg := &config.Config{}
 	logger := utils.NewDiscardLogger()
-	e, err := enrichment.NewEnricher(cfg, logger, nil)
+	e, err := enrichment.NewEnricher(cfg, logger, nil, nil)
 	if err != nil {
 		t.Fatalf("NewEnricher: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestEnrichTaskHandler_Handle_MissingDocumentID(t *testing.T) {
 func TestEnrichTaskHandler_DedupKey(t *testing.T) {
 	cfg := &config.Config{}
 	logger := utils.NewDiscardLogger()
-	e, err := enrichment.NewEnricher(cfg, logger, nil)
+	e, err := enrichment.NewEnricher(cfg, logger, nil, nil)
 	if err != nil {
 		t.Fatalf("NewEnricher: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestEnrichTaskHandler_DedupKey(t *testing.T) {
 func TestEnrichTaskHandler_DedupKey_Empty(t *testing.T) {
 	cfg := &config.Config{}
 	logger := utils.NewDiscardLogger()
-	e, err := enrichment.NewEnricher(cfg, logger, nil)
+	e, err := enrichment.NewEnricher(cfg, logger, nil, nil)
 	if err != nil {
 		t.Fatalf("NewEnricher: %v", err)
 	}

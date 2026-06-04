@@ -28,7 +28,20 @@ func (h *EnrichTaskHandler) Handle(ctx context.Context, t database.Task) (json.R
 		return nil, fmt.Errorf("enrich task %s has no document_id in payload", t.TaskID)
 	}
 
-	return h.enricher.Enrich(ctx, p.DocumentID)
+	db := h.enricher.GetDb()
+	queries := database.NewQueries(db)
+
+	document, err := queries.GetDocument(ctx, p.DocumentID)
+	if err != nil {
+		return nil, fmt.Errorf("document %d not found", p.DocumentID)
+	}
+
+	result, err := h.enricher.Enrich(ctx, document)
+	if err != nil {
+		return nil, err
+	}
+
+	return *result, nil
 }
 
 func (h *EnrichTaskHandler) DedupKey(payload json.RawMessage) string {

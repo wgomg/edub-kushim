@@ -50,33 +50,43 @@ func Get(ctx context.Context, queries *database.Queries, taskID string) (databas
 
 func ListFiltered(ctx context.Context, queries *database.Queries, f TaskFilter) ([]database.Task, error) {
 	switch {
-	case f.BatchID != "" && f.Status != "":
+	case f.BatchID != "" && f.Status != "" && f.Limit > 0:
 		return queries.ListTasksByBatchAndStatus(ctx, database.ListTasksByBatchAndStatusParams{
 			BatchID: sql.NullString{String: f.BatchID, Valid: true},
 			Status:  f.Status,
 			Limit:   f.Limit,
 			Offset:  f.Offset,
 		})
-	case f.BatchID != "":
+	case f.BatchID != "" && f.Status != "":
+		return queries.ListAllTasksByBatchAndStatus(ctx, database.ListAllTasksByBatchAndStatusParams{
+			BatchID: sql.NullString{String: f.BatchID, Valid: true},
+			Status:  f.Status,
+		})
+	case f.BatchID != "" && f.Limit > 0:
 		return queries.ListTasksByBatch(ctx, database.ListTasksByBatchParams{
 			BatchID: sql.NullString{String: f.BatchID, Valid: true},
 			Limit:   f.Limit,
 			Offset:  f.Offset,
 		})
-	case f.Status != "":
+	case f.BatchID != "":
+		return queries.ListAllTasksByBatch(ctx, sql.NullString{String: f.BatchID, Valid: true})
+	case f.Status != "" && f.Limit > 0:
 		return queries.ListTasksByStatus(ctx, database.ListTasksByStatusParams{
 			Status: f.Status,
 			Limit:  f.Limit,
 			Offset: f.Offset,
 		})
-	default:
+	case f.Status != "":
+		return queries.ListAllTasksByStatus(ctx, f.Status)
+	case f.Limit > 0:
 		return queries.ListTasks(ctx, database.ListTasksParams{
 			Limit:  f.Limit,
 			Offset: f.Offset,
 		})
+	default:
+		return queries.ListAllTasks(ctx)
 	}
 }
-
 func Retry(ctx context.Context, queries *database.Queries, taskID string) error {
 	task, err := queries.GetTaskByTaskID(ctx, taskID)
 	if err != nil {

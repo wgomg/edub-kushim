@@ -7,6 +7,7 @@ import (
 	"runtime/metrics"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type MemSnapshot struct {
@@ -98,5 +99,24 @@ func formatBytes(b uint64) string {
 		return fmt.Sprintf("%.1f KiB", float64(b)/(1<<10))
 	default:
 		return fmt.Sprintf("%d B", b)
+	}
+}
+
+func HumanDuration(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	case d < time.Hour:
+		d = d.Round(time.Second)
+		m := int(d.Minutes())
+		s := int(d.Seconds()) - m*60
+		return fmt.Sprintf("%dm %ds", m, s)
+	default:
+		d = d.Round(time.Second)
+		h := int(d.Hours())
+		d -= time.Duration(h) * time.Hour
+		m := int(d.Minutes())
+		s := int(d.Seconds()) - m*60
+		return fmt.Sprintf("%dh %dm %ds", h, m, s)
 	}
 }

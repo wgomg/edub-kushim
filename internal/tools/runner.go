@@ -2,28 +2,34 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/config"
+	"github.com/wgomg/edub-kushim/internal/tools/adapters/contentanalyzer"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/ocr"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/pdfoptimizer"
+	"github.com/wgomg/edub-kushim/internal/tools/adapters/tagmatcher"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/textextractor"
+	"github.com/wgomg/edub-kushim/internal/tools/adapters/textreducer"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type Runner struct {
-	logger        *utils.Logger
-	config        *config.ConsumerConfig
-	textExtractor textextractor.TextExtractor
-	ocr           ocr.OCR
-	pdfOptimizer  pdfoptimizer.PdfOptimizer
+	logger          *utils.Logger
+	config          *config.Config
+	textExtractor   textextractor.TextExtractor
+	ocr             ocr.OCR
+	pdfOptimizer    pdfoptimizer.PdfOptimizer
+	tagMatcher      tagmatcher.TagMatcher
+	contentAnalyzer contentanalyzer.ContentAnalyzer
+	textReducer     textreducer.TextReducer
 }
 
 type TextExtractionResult struct {
-	Text     *string
-	Metadata map[string]any
+	Text *string
 }
 
 type OCRResult struct {
@@ -35,6 +41,24 @@ type OCRResult struct {
 type PdfOptimizationResult struct {
 	Success bool
 	TmpPath *string
+}
+
+type TextReducerResult struct {
+	Text string
+}
+
+type TagMatchResult struct {
+	Tags []string
+}
+
+type ContentAnalysisResult struct {
+	Title    string           `json:"title"`
+	DocType  string           `json:"type"`
+	Tags     []string         `json:"tags"`
+	Authors  []string         `json:"authors"`
+	Language string           `json:"language"`
+	Stats    *json.RawMessage `json:"stats"`
+	Prompt   string           `json:"prompt"`
 }
 
 // runWithTimeout runs fn in a goroutine and returns its result,
@@ -60,46 +84,79 @@ func runWithTimeout[T any](ctx context.Context, fn func() (T, error)) (T, error)
 	}
 }
 
-func NewRunner(logger *utils.Logger, cfg *config.ConsumerConfig) *Runner {
-	textCfg := config.ToolConfig{
-		Command: cfg.TextExtractor,
-		Timeout: time.Duration(cfg.TextExtractorTimeout) * time.Second,
+func NewRunner(logger *utils.Logger, cfg *config.Config, tools []string) *Runner {
+	r := &Runner{logger: logger, config: cfg}
+	for _, name := range tools {
+		switch name {
+		case "textextractor":
+			toolCfg := config.ToolConfig{
+				Command: cfg.Consumer.TextExtractor.Engine,
+				Timeout: time.Duration(cfg.Consumer.TextExtractor.Timeout) * time.Second,
+			}
+			r.textExtractor, _ = textextractor.NewTextExtractor(logger, toolCfg)
+		case "ocr":
+			toolCfg := config.ToolConfig{
+				Command: cfg.Consumer.OCR.Engine,
+				Timeout: time.Duration(cfg.Consumer.OCR.Timeout) * time.Second,
+			}
+			r.ocr, _ = ocr.NewOCR(logger, toolCfg, cfg.Consumer.PdfOptimizer.Engine, cfg.Consumer.OCR.Languages, cfg.Consumer.OCR.DataDir)
+		case "pdfoptimizer":
+			toolCfg := config.ToolConfig{
+				Command: cfg.Consumer.PdfOptimizer.Engine,
+				Timeout: time.Duration(cfg.Consumer.PdfOptimizer.Timeout) * time.Second,
+			}
+			r.pdfOptimizer, _ = pdfoptimizer.NewPdfOptimizer(logger, toolCfg)
+		case "textreducer":
+			toolCfg := config.ToolConfig{
+				Command: cfg.Enricher.TextReducer.Engine,
+				Timeout: time.Duration(cfg.Enricher.TextReducer.Timeout) * time.Second,
+			}
+			r.textReducer, _ = textreducer.NewTextReducer(logger, toolCfg)
+		case "tagmatcher":
+			tm, err := tagmatcher.NewTagMatcher(logger, cfg.Enricher.TagMatcher)
+			if err != nil {
+				logger.Error(nil, "tag matcher init: %v", err)
+			} else {
+				r.tagMatcher = tm
+			}
+		case "contentanalyzer":
+			toolCfg := config.ToolConfig{
+				Command: cfg.Enricher.ContentAnalyzer.Engine,
+				Timeout: time.Duration(cfg.Enricher.ContentAnalyzer.Timeout) * time.Second,
+			}
+			r.contentAnalyzer, _ = contentanalyzer.NewContentAnalyzer(logger, toolCfg, &cfg.Enricher.ContentAnalyzer.Llm)
+		}
 	}
-	textExtractor, _ := textextractor.NewTextExtractor(logger, textCfg)
-
-	ocrCfg := config.ToolConfig{
-		Command: cfg.OCR,
-		Timeout: time.Duration(cfg.OCRTimeout) * time.Second,
-	}
-	ocr, _ := ocr.NewOCR(logger, ocrCfg, cfg.PdfOptimizer, cfg.OCRLanguages, cfg.OCRDataDir)
-
-	optCfg := config.ToolConfig{
-		Command: cfg.PdfOptimizer,
-		Timeout: time.Duration(cfg.OptimizationTimeout) * time.Second,
-	}
-	pdfOptimizer, _ := pdfoptimizer.NewPdfOptimizer(logger, optCfg)
-
-	return NewRunnerWithAdapters(logger, cfg, textExtractor, ocr, pdfOptimizer)
+	return r
 }
 
 func NewRunnerWithAdapters(
 	logger *utils.Logger,
-	cfg *config.ConsumerConfig,
+	cfg *config.Config,
 	textExtractor textextractor.TextExtractor,
 	ocr ocr.OCR,
 	pdfOptimizer pdfoptimizer.PdfOptimizer,
+	tagMatcher tagmatcher.TagMatcher,
+	contentAnalyzer contentanalyzer.ContentAnalyzer,
+	textReducer textreducer.TextReducer,
 ) *Runner {
 	return &Runner{
-		logger:        logger,
-		config:        cfg,
-		textExtractor: textExtractor,
-		ocr:           ocr,
-		pdfOptimizer:  pdfOptimizer,
+		logger:          logger,
+		config:          cfg,
+		textExtractor:   textExtractor,
+		ocr:             ocr,
+		pdfOptimizer:    pdfOptimizer,
+		tagMatcher:      tagMatcher,
+		contentAnalyzer: contentAnalyzer,
+		textReducer:     textReducer,
 	}
 }
 
 func (r *Runner) ExtractText(ctx context.Context, path string) (*TextExtractionResult, error) {
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(r.config.TextExtractorTimeout)*time.Second)
+	if r.textExtractor == nil {
+		return nil, fmt.Errorf("text extractor not configured")
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(r.config.Consumer.TextExtractor.Timeout)*time.Second)
 	defer cancel()
 
 	if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -119,7 +176,10 @@ func (r *Runner) ExtractText(ctx context.Context, path string) (*TextExtractionR
 }
 
 func (r *Runner) OCR(ctx context.Context, path string) (*OCRResult, error) {
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(r.config.OCRTimeout)*time.Second)
+	if r.ocr == nil {
+		return nil, fmt.Errorf("OCR not configured")
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(r.config.Consumer.OCR.Timeout)*time.Second)
 	defer cancel()
 
 	if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -142,7 +202,10 @@ func (r *Runner) OCR(ctx context.Context, path string) (*OCRResult, error) {
 }
 
 func (r *Runner) OptimizePdf(ctx context.Context, path string) (*PdfOptimizationResult, error) {
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(r.config.OptimizationTimeout)*time.Second)
+	if r.pdfOptimizer == nil {
+		return nil, fmt.Errorf("PDF optimizer not configured")
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(r.config.Consumer.PdfOptimizer.Timeout)*time.Second)
 	defer cancel()
 
 	if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -153,31 +216,96 @@ func (r *Runner) OptimizePdf(ctx context.Context, path string) (*PdfOptimization
 		return r.pdfOptimizer.Optimize(ctx, path)
 	})
 	if err != nil {
-		if r.config.OptimizationFallback == "" {
+		if r.config.Consumer.PdfOptimizer.Fallback == "" {
 			return nil, fmt.Errorf("pdf optimizer: %w", err)
 		}
 		r.logger.Info(nil, "primary optimizer (%s) failed: %v — falling back to %s",
-			r.config.PdfOptimizer, err, r.config.OptimizationFallback)
+			r.config.Consumer.PdfOptimizer.Engine, err, r.config.Consumer.PdfOptimizer.Fallback)
 		fbCfg := config.ToolConfig{
-			Command: r.config.OptimizationFallback,
-			Timeout: time.Duration(r.config.OptimizationTimeout) * time.Second,
+			Command: r.config.Consumer.PdfOptimizer.Fallback,
+			Timeout: time.Duration(r.config.Consumer.PdfOptimizer.Timeout) * time.Second,
 		}
 		fbOptimizer, fbErr := pdfoptimizer.NewPdfOptimizer(r.logger, fbCfg)
 		if fbErr != nil {
 			return nil, fmt.Errorf("%s: %w; fallback %s: %w",
-				r.config.PdfOptimizer, err, r.config.OptimizationFallback, fbErr)
+				r.config.Consumer.PdfOptimizer.Engine, err, r.config.Consumer.PdfOptimizer.Fallback, fbErr)
 		}
 		outputPath, err = runWithTimeout(ctx, func() (*string, error) {
 			return fbOptimizer.Optimize(ctx, path)
 		})
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w; fallback %s: %w",
-				r.config.PdfOptimizer, err, r.config.OptimizationFallback, err)
+				r.config.Consumer.PdfOptimizer.Engine, err, r.config.Consumer.PdfOptimizer.Fallback, err)
 		}
 	}
 
 	return &PdfOptimizationResult{
 		Success: true,
 		TmpPath: outputPath,
+	}, nil
+}
+
+func (r *Runner) ReduceContent(ctx context.Context, content string, chunkSize, targetWordCount int) (*TextReducerResult, error) {
+	if targetWordCount == 0 {
+		return &TextReducerResult{Text: content}, nil
+	}
+
+	if r.textReducer == nil {
+		return nil, fmt.Errorf("tag reducer not configured")
+	}
+	reducedContent, err := runWithTimeout(ctx, func() (*string, error) {
+		return r.textReducer.Reduce(ctx, content, chunkSize, targetWordCount)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("text reducer: %w", err)
+	}
+	return &TextReducerResult{Text: *reducedContent}, nil
+}
+
+func (r *Runner) MatchTags(ctx context.Context, input string, tagsToMatch map[string][]float32) (*TagMatchResult, error) {
+	if r.tagMatcher == nil {
+		return nil, fmt.Errorf("tag matcher not configured")
+	}
+	tags, err := runWithTimeout(ctx, func() ([]string, error) {
+		return r.tagMatcher.Match(ctx, input, tagsToMatch)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("tag matcher: %w", err)
+	}
+	return &TagMatchResult{Tags: tags}, nil
+}
+
+func (r *Runner) MatchEach(ctx context.Context, queries []string, tagsToMatch map[string][]float32) (*TagMatchResult, error) {
+	if r.tagMatcher == nil {
+		return &TagMatchResult{Tags: queries}, nil
+	}
+	tags, err := runWithTimeout(ctx, func() ([]string, error) {
+		return r.tagMatcher.MatchEach(ctx, queries, tagsToMatch)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("tag matcher: %w", err)
+	}
+	return &TagMatchResult{Tags: tags}, nil
+}
+
+func (r *Runner) AnalyzeContent(ctx context.Context, text string, docTypes []string, tagSuggestions []string) (*ContentAnalysisResult, error) {
+	if r.contentAnalyzer == nil {
+		return nil, fmt.Errorf("content analyzer not configured")
+	}
+	result, err := runWithTimeout(ctx, func() (*contentanalyzer.AnalysisResult, error) {
+		return r.contentAnalyzer.Analyze(ctx, text, docTypes, tagSuggestions)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("content analyzer: %w", err)
+	}
+
+	return &ContentAnalysisResult{
+		Title:    result.Title,
+		DocType:  result.DocType,
+		Tags:     result.Tags,
+		Authors:  result.Authors,
+		Language: result.Language,
+		Stats:    result.Stats,
+		Prompt:   result.Prompt,
 	}, nil
 }

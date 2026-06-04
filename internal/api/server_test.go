@@ -69,12 +69,11 @@ func testConfig(t *testing.T) config.Config {
 			Port: 0,
 		},
 		Consumer: config.ConsumerConfig{
-			Workers:              1,
-			SupportedFiles:       []string{".pdf"},
-			OptimizationFallback: "",
-			TextExtractorTimeout: 5,
-			OCRTimeout:           5,
-			OptimizationTimeout:  5,
+			Workers:        1,
+			SupportedFiles: []string{".pdf"},
+			TextExtractor:  config.TextExtractorConfig{Timeout: 5},
+			PdfOptimizer:   config.PdfOptimizerConfig{Timeout: 5},
+			OCR:            config.OCRConfig{Timeout: 5},
 		},
 	}
 }

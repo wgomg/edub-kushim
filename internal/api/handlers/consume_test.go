@@ -67,11 +67,10 @@ func cfgWithConsumptionDir(t *testing.T, dir string) *config.Config {
 			ConsumptionDir: dir,
 		},
 		Consumer: config.ConsumerConfig{
-			SupportedFiles:       []string{".pdf"},
-			OptimizationFallback: "",
-			TextExtractorTimeout: 5,
-			OCRTimeout:           5,
-			OptimizationTimeout:  5,
+			SupportedFiles: []string{".pdf"},
+			TextExtractor:  config.TextExtractorConfig{Timeout: 5},
+			PdfOptimizer:   config.PdfOptimizerConfig{Timeout: 5},
+			OCR:            config.OCRConfig{Timeout: 5},
 		},
 	}
 }
@@ -89,7 +88,7 @@ func writePDF(t *testing.T, dir, name string) string {
 func TestNewConsumeHandler(t *testing.T) {
 	db := consumeTestDB(t)
 	dir := t.TempDir()
-	d, err := task.NewDispatcher(cfgWithConsumptionDir(t, dir), utils.NewDiscardLogger(), db)
+	d, err := task.NewDispatcher(cfgWithConsumptionDir(t, dir), utils.NewDiscardLogger(), db, nil)
 	if err != nil {
 		t.Fatalf("NewDispatcher: %v", err)
 	}
@@ -103,7 +102,7 @@ func TestNewConsumeHandler(t *testing.T) {
 func TestConsumeHandler_NoFiles(t *testing.T) {
 	db := consumeTestDB(t)
 	dir := t.TempDir()
-	d, err := task.NewDispatcher(cfgWithConsumptionDir(t, dir), utils.NewDiscardLogger(), db)
+	d, err := task.NewDispatcher(cfgWithConsumptionDir(t, dir), utils.NewDiscardLogger(), db, nil)
 	if err != nil {
 		t.Fatalf("NewDispatcher: %v", err)
 	}
@@ -133,7 +132,7 @@ func TestConsumeHandler_NoFiles(t *testing.T) {
 func TestConsumeHandler_WithFiles(t *testing.T) {
 	db := consumeTestDB(t)
 	dir := t.TempDir()
-	d, err := task.NewDispatcher(cfgWithConsumptionDir(t, dir), utils.NewDiscardLogger(), db)
+	d, err := task.NewDispatcher(cfgWithConsumptionDir(t, dir), utils.NewDiscardLogger(), db, nil)
 	if err != nil {
 		t.Fatalf("NewDispatcher: %v", err)
 	}

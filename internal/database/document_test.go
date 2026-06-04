@@ -30,6 +30,7 @@ func docTestDB(t *testing.T) *sql.DB {
 			sha512_checksum TEXT UNIQUE NOT NULL,
 			mime_type TEXT NOT NULL,
 			file_size INTEGER NOT NULL,
+			page_count INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			modified_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			document_type_id INTEGER,
@@ -88,6 +89,7 @@ func insertDoc(t *testing.T, q *Queries, overrides map[string]any) int64 {
 		Sha512Checksum: sha512,
 		MimeType:       mime,
 		FileSize:       size,
+		PageCount:      0,
 		OriginalPath:   origPath,
 		StoragePath:    storePath,
 		TextContent:    text,
@@ -125,6 +127,7 @@ func TestCreateDocument_UniqueSHA512(t *testing.T) {
 		Sha512Checksum: "dup-sha",
 		MimeType:       "text/plain",
 		FileSize:       1,
+		PageCount:      0,
 		OriginalPath:   "/o",
 		StoragePath:    "/s",
 	})

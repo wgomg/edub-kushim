@@ -38,6 +38,60 @@ func (q *Queries) GetDocumentType(ctx context.Context, id int64) (DocumentType, 
 	return i, err
 }
 
+const listAllDocumentTypes = `-- name: ListAllDocumentTypes :many
+SELECT id, name, created_at FROM document_type ORDER BY created_at DESC
+`
+
+func (q *Queries) ListAllDocumentTypes(ctx context.Context) ([]DocumentType, error) {
+	rows, err := q.db.QueryContext(ctx, listAllDocumentTypes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DocumentType
+	for rows.Next() {
+		var i DocumentType
+		if err := rows.Scan(&i.ID, &i.Name, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllDocumentTypesNames = `-- name: ListAllDocumentTypesNames :many
+SELECT name FROM document_type ORDER BY created_at DESC
+`
+
+func (q *Queries) ListAllDocumentTypesNames(ctx context.Context) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listAllDocumentTypesNames)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		items = append(items, name)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDocumentTypes = `-- name: ListDocumentTypes :many
 SELECT id, name, created_at FROM document_type ORDER BY created_at DESC LIMIT ? OFFSET ?
 `

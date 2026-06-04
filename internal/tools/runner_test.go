@@ -24,7 +24,7 @@ func (m *mockTextExtractor) Extract(ctx context.Context, path string) (*string, 
 	return &text, nil
 }
 func (m *mockTextExtractor) CanHandle(string) bool { return true }
-func (m *mockTextExtractor) Name() string           { return "mock-textextractor" }
+func (m *mockTextExtractor) Name() string          { return "mock-textextractor" }
 
 type mockOCR struct {
 	processFunc func(ctx context.Context, path string) (*string, error)
@@ -38,7 +38,7 @@ func (m *mockOCR) Process(ctx context.Context, path string) (*string, error) {
 	return &out, nil
 }
 func (m *mockOCR) CanHandle(string) bool { return true }
-func (m *mockOCR) Name() string           { return "mock-ocr" }
+func (m *mockOCR) Name() string          { return "mock-ocr" }
 
 type mockPdfOptimizer struct {
 	optimizeFunc func(ctx context.Context, path string) (*string, error)
@@ -114,10 +114,11 @@ func TestRunWithTimeout_TakesLongerThanContext(t *testing.T) {
 func TestNewRunnerWithAdapters(t *testing.T) {
 	r := NewRunnerWithAdapters(
 		utils.NewDiscardLogger(),
-		&config.ConsumerConfig{TextExtractorTimeout: 5, OCRTimeout: 5, OptimizationTimeout: 5},
+		&config.Config{Consumer: config.ConsumerConfig{TextExtractor: config.TextExtractorConfig{Timeout: 5}, OCR: config.OCRConfig{Timeout: 5}, PdfOptimizer: config.PdfOptimizerConfig{Timeout: 5}}},
 		&mockTextExtractor{},
 		&mockOCR{},
 		&mockPdfOptimizer{},
+		nil, nil, nil,
 	)
 	if r == nil {
 		t.Fatal("expected non-nil Runner")
@@ -128,10 +129,11 @@ func TestExtractText_Success(t *testing.T) {
 	path := tempFile(t, "content")
 	r := NewRunnerWithAdapters(
 		utils.NewDiscardLogger(),
-		&config.ConsumerConfig{TextExtractorTimeout: 5},
+		&config.Config{Consumer: config.ConsumerConfig{TextExtractor: config.TextExtractorConfig{Timeout: 5}}},
 		&mockTextExtractor{},
 		&mockOCR{},
 		&mockPdfOptimizer{},
+		nil, nil, nil,
 	)
 
 	result, err := r.ExtractText(context.Background(), path)
@@ -146,10 +148,11 @@ func TestExtractText_Success(t *testing.T) {
 func TestExtractText_FileNotFound(t *testing.T) {
 	r := NewRunnerWithAdapters(
 		utils.NewDiscardLogger(),
-		&config.ConsumerConfig{TextExtractorTimeout: 5},
+		&config.Config{Consumer: config.ConsumerConfig{TextExtractor: config.TextExtractorConfig{Timeout: 5}}},
 		&mockTextExtractor{},
 		&mockOCR{},
 		&mockPdfOptimizer{},
+		nil, nil, nil,
 	)
 
 	_, err := r.ExtractText(context.Background(), "/nonexistent/path")
@@ -162,7 +165,7 @@ func TestExtractText_AdapterError(t *testing.T) {
 	path := tempFile(t, "content")
 	r := NewRunnerWithAdapters(
 		utils.NewDiscardLogger(),
-		&config.ConsumerConfig{TextExtractorTimeout: 5},
+		&config.Config{Consumer: config.ConsumerConfig{TextExtractor: config.TextExtractorConfig{Timeout: 5}}},
 		&mockTextExtractor{
 			extractFunc: func(ctx context.Context, path string) (*string, error) {
 				return nil, fmt.Errorf("adapter failure")
@@ -170,6 +173,7 @@ func TestExtractText_AdapterError(t *testing.T) {
 		},
 		&mockOCR{},
 		&mockPdfOptimizer{},
+		nil, nil, nil,
 	)
 
 	_, err := r.ExtractText(context.Background(), path)
@@ -182,10 +186,11 @@ func TestOCR_Success(t *testing.T) {
 	path := tempFile(t, "content")
 	r := NewRunnerWithAdapters(
 		utils.NewDiscardLogger(),
-		&config.ConsumerConfig{OCRTimeout: 5},
+		&config.Config{Consumer: config.ConsumerConfig{OCR: config.OCRConfig{Timeout: 5}}},
 		&mockTextExtractor{},
 		&mockOCR{},
 		&mockPdfOptimizer{},
+		nil, nil, nil,
 	)
 
 	result, err := r.OCR(context.Background(), path)
@@ -203,10 +208,11 @@ func TestOCR_Success(t *testing.T) {
 func TestOCR_FileNotFound(t *testing.T) {
 	r := NewRunnerWithAdapters(
 		utils.NewDiscardLogger(),
-		&config.ConsumerConfig{OCRTimeout: 5},
+		&config.Config{Consumer: config.ConsumerConfig{OCR: config.OCRConfig{Timeout: 5}}},
 		&mockTextExtractor{},
 		&mockOCR{},
 		&mockPdfOptimizer{},
+		nil, nil, nil,
 	)
 
 	_, err := r.OCR(context.Background(), "/nonexistent")
@@ -219,7 +225,7 @@ func TestOCR_AdapterError(t *testing.T) {
 	path := tempFile(t, "content")
 	r := NewRunnerWithAdapters(
 		utils.NewDiscardLogger(),
-		&config.ConsumerConfig{OCRTimeout: 5},
+		&config.Config{Consumer: config.ConsumerConfig{OCR: config.OCRConfig{Timeout: 5}}},
 		&mockTextExtractor{},
 		&mockOCR{
 			processFunc: func(ctx context.Context, path string) (*string, error) {
@@ -227,6 +233,7 @@ func TestOCR_AdapterError(t *testing.T) {
 			},
 		},
 		&mockPdfOptimizer{},
+		nil, nil, nil,
 	)
 
 	_, err := r.OCR(context.Background(), path)
@@ -239,10 +246,11 @@ func TestOptimizePdf_Success(t *testing.T) {
 	path := tempFile(t, "content")
 	r := NewRunnerWithAdapters(
 		utils.NewDiscardLogger(),
-		&config.ConsumerConfig{OptimizationTimeout: 5},
+		&config.Config{Consumer: config.ConsumerConfig{PdfOptimizer: config.PdfOptimizerConfig{Timeout: 5}}},
 		&mockTextExtractor{},
 		&mockOCR{},
 		&mockPdfOptimizer{},
+		nil, nil, nil,
 	)
 
 	result, err := r.OptimizePdf(context.Background(), path)
@@ -260,10 +268,11 @@ func TestOptimizePdf_Success(t *testing.T) {
 func TestOptimizePdf_FileNotFound(t *testing.T) {
 	r := NewRunnerWithAdapters(
 		utils.NewDiscardLogger(),
-		&config.ConsumerConfig{OptimizationTimeout: 5},
+		&config.Config{Consumer: config.ConsumerConfig{PdfOptimizer: config.PdfOptimizerConfig{Timeout: 5}}},
 		&mockTextExtractor{},
 		&mockOCR{},
 		&mockPdfOptimizer{},
+		nil, nil, nil,
 	)
 
 	_, err := r.OptimizePdf(context.Background(), "/nonexistent")
@@ -276,7 +285,7 @@ func TestOptimizePdf_AdapterErrorNoFallback(t *testing.T) {
 	path := tempFile(t, "content")
 	r := NewRunnerWithAdapters(
 		utils.NewDiscardLogger(),
-		&config.ConsumerConfig{OptimizationTimeout: 5},
+		&config.Config{Consumer: config.ConsumerConfig{PdfOptimizer: config.PdfOptimizerConfig{Timeout: 5}}},
 		&mockTextExtractor{},
 		&mockOCR{},
 		&mockPdfOptimizer{
@@ -284,6 +293,7 @@ func TestOptimizePdf_AdapterErrorNoFallback(t *testing.T) {
 				return nil, fmt.Errorf("primary failure")
 			},
 		},
+		nil, nil, nil,
 	)
 
 	_, err := r.OptimizePdf(context.Background(), path)
@@ -296,10 +306,13 @@ func TestOptimizePdf_FallbackUsed(t *testing.T) {
 	path := tempFile(t, "content")
 	r := NewRunnerWithAdapters(
 		utils.NewDiscardLogger(),
-		&config.ConsumerConfig{
-			OptimizationTimeout:   5,
-			OptimizationFallback:  "ghostscript",
-			PdfOptimizer:          "qpdf",
+		&config.Config{
+			Consumer: config.ConsumerConfig{
+				PdfOptimizer: config.PdfOptimizerConfig{
+					Timeout:  5,
+					Fallback: "ghostscript",
+				},
+			},
 		},
 		&mockTextExtractor{},
 		&mockOCR{},
@@ -308,6 +321,7 @@ func TestOptimizePdf_FallbackUsed(t *testing.T) {
 				return nil, fmt.Errorf("primary failure")
 			},
 		},
+		nil, nil, nil,
 	)
 
 	_, err := r.OptimizePdf(context.Background(), path)

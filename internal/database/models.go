@@ -22,6 +22,7 @@ type Document struct {
 	Sha512Checksum string
 	MimeType       string
 	FileSize       int64
+	PageCount      int64
 	CreatedAt      sql.NullTime
 	ModifiedAt     sql.NullTime
 	DocumentTypeID sql.NullInt64

@@ -43,13 +43,18 @@ func startServer() {
 
 	cfg, err := config.Load(*configDir)
 	if err != nil {
-		if strings.Contains(err.Error(), "ocr_languages is required") {
+		if strings.Contains(err.Error(), "ocr.languages is required") {
 			startupLogger.Fatal("Not initialized: run 'kushim setup --langs eng,spa,...' first")
 		}
 		startupLogger.Fatal("Failed to load configuration:", err)
 	}
 
 	logger := utils.NewLogger(cfg.App.LogLevel)
+	if cfg.App.LogFile != "" {
+		if err := logger.SetLogFile(cfg.App.LogFile); err != nil {
+			logger.Error(nil, "failed to open log file: %v", err)
+		}
+	}
 	logger.Info(nil, "Starting App...")
 	logger.Info(nil, "Environment: %s", cfg.App.Env)
 	logger.Info(nil, "Log level: %s", cfg.App.LogLevel)

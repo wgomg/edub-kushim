@@ -1,0 +1,410 @@
+package tagmatcher
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"github.com/knights-analytics/hugot"
+	"github.com/knights-analytics/hugot/backends"
+	"github.com/knights-analytics/hugot/options"
+	"github.com/knights-analytics/hugot/pipelines"
+	"github.com/knights-analytics/hugot/util/safeconv"
+
+	"github.com/wgomg/edub-kushim/internal/config"
+	"github.com/wgomg/edub-kushim/internal/utils"
+)
+
+type modelConfigJSON struct {
+	MaxPositionEmbeddings int `json:"max_position_embeddings"`
+}
+
+type Hugot struct {
+	logger        *utils.Logger
+	session       *hugot.Session
+	pipeline      *pipelines.FeatureExtractionPipeline
+	topN          int
+	minSimilarity float64
+	chunkSize     int // effective max tokens per chunk
+	chunkOverlap  int // overlap in tokens between consecutive chunks
+}
+
+type match struct {
+	tag        string
+	similarity float64
+}
+
+func NewHugot(logger *utils.Logger, tmCfg config.TagMatcherConfig, pipeName string) (*Hugot, error) {
+	session, err := getBackendSession(tmCfg, logger)
+	if err != nil {
+		return nil, fmt.Errorf("hugot session (%s): %w", tmCfg.Hugot.Backend, err)
+	}
+
+	modelPath := tmCfg.Hugot.ModelPath
+	pipeline, err := hugot.NewPipeline(session, hugot.FeatureExtractionConfig{
+		ModelPath:    modelPath,
+		OnnxFilename: "model.onnx",
+		Name:         pipeName,
+		Options: []backends.PipelineOption[*pipelines.FeatureExtractionPipeline]{
+			pipelines.WithNormalization(),
+		},
+	})
+	if err != nil {
+		session.Destroy()
+		return nil, fmt.Errorf("hugot pipeline: %w", err)
+	}
+
+	topN := max(tmCfg.TopN, 0)
+	minSim := max(tmCfg.MinSimilarity, 0.0)
+
+	// Read model config to determine max_position_embeddings
+	modelConfigPath := filepath.Join(tmCfg.Hugot.ModelPath, "config.json")
+	maxPos, err := readMaxPositionEmbeddings(modelConfigPath)
+	if err != nil {
+		session.Destroy()
+		return nil, fmt.Errorf("read model config: %w", err)
+	}
+
+	// Compute effective chunk size
+	safetyMargin := 12
+	effectiveChunkSize := tmCfg.ChunkSize
+	if effectiveChunkSize <= 0 || effectiveChunkSize > maxPos-safetyMargin {
+		effectiveChunkSize = maxPos - safetyMargin
+	}
+	chunkOverlap := effectiveChunkSize / 10
+
+	logger.Debug(nil, "hugot: chunk_size=%d overlap=%d topN=%d min_sim=%.2f",
+		effectiveChunkSize, chunkOverlap, topN, minSim)
+
+	return &Hugot{
+		logger:        logger,
+		session:       session,
+		pipeline:      pipeline,
+		topN:          topN,
+		minSimilarity: minSim,
+		chunkSize:     effectiveChunkSize,
+		chunkOverlap:  chunkOverlap,
+	}, nil
+}
+
+func (h *Hugot) Close() {
+	if h.session != nil {
+		h.session.Destroy()
+	}
+}
+
+func (h *Hugot) Match(ctx context.Context, input string, tagsToMatch map[string][]float32) ([]string, error) {
+	if len(tagsToMatch) == 0 || h.topN == 0.0 {
+		return nil, nil
+	}
+
+	embeddings, err := h.Encode(ctx, []string{input})
+	if err != nil {
+		return nil, err
+	}
+	if len(embeddings) == 0 || embeddings[0] == nil {
+		return nil, nil
+	}
+	inputEmb := embeddings[0]
+
+	entries := tagsToMatch
+	matches := h.rankMatches(inputEmb, entries)
+	topN := min(h.topN, len(matches))
+
+	result := make([]string, topN)
+	for i := range topN {
+		result[i] = matches[i].tag
+	}
+
+	// Log top-15 similarity scores for debugging
+	showN := min(15, len(matches))
+	if showN > 0 {
+		topScores := make([]string, showN)
+		for i := range showN {
+			topScores[i] = fmt.Sprintf("%s(%.3f)", matches[i].tag, matches[i].similarity)
+		}
+		h.logger.Debug(nil, "hugot: top-%d matches: %v", showN, topScores)
+	} else {
+		h.logger.Debug(nil, "hugot: no matches above min_sim=%.2f", h.minSimilarity)
+	}
+
+	return result, nil
+}
+
+func (h *Hugot) MatchEach(ctx context.Context, queries []string, tagsToMatch map[string][]float32) ([]string, error) {
+	if len(tagsToMatch) == 0 || h.topN == 0.0 {
+		return nil, nil
+	}
+
+	out, err := h.pipeline.RunPipeline(ctx, queries)
+	if err != nil {
+		return nil, fmt.Errorf("encode queries: %w", err)
+	}
+	if len(out.Embeddings) != len(queries) {
+		return queries, nil
+	}
+
+	entries := tagsToMatch
+
+	result := make([]string, len(queries))
+	for i, qEmb := range out.Embeddings {
+		matches := h.rankMatches(qEmb, entries)
+		if len(matches) > 0 && matches[0].similarity >= h.minSimilarity {
+			h.logger.Debug(nil, "hugot: matchEach %q → %s (%.3f)", queries[i], matches[0].tag, matches[0].similarity)
+			result[i] = matches[0].tag
+		} else {
+			result[i] = queries[i]
+		}
+	}
+
+	return result, nil
+}
+
+func (h *Hugot) Name() string {
+	return "hugot"
+}
+
+// Encode computes embeddings for a batch of texts. Short texts (≤ chunkSize tokens)
+// are batched into a single pipeline call. Longer texts are encoded individually
+// with overlapping token chunks and mean-pooling.
+func (h *Hugot) Encode(ctx context.Context, texts []string) ([][]float32, error) {
+	if len(texts) == 0 {
+		return nil, nil
+	}
+
+	tk := h.pipeline.Model.Tokenizer
+	if tk == nil {
+		return nil, fmt.Errorf("tokenizer not available")
+	}
+
+	type item struct {
+		index int
+		short bool
+	}
+	items := make([]item, len(texts))
+	var shortTexts []string
+	shortIdx := make([]int, 0, len(texts))
+
+	for i, text := range texts {
+		ids, err := h.tokenize(text, tk)
+		if err != nil {
+			return nil, fmt.Errorf("tokenize %q: %w", text, err)
+		}
+		if len(ids) <= h.chunkSize {
+			items[i] = item{index: i, short: true}
+			shortTexts = append(shortTexts, text)
+			shortIdx = append(shortIdx, i)
+		} else {
+			items[i] = item{index: i, short: false}
+		}
+	}
+
+	result := make([][]float32, len(texts))
+
+	// Batch-encode all short texts at once.
+	if len(shortTexts) > 0 {
+		out, err := h.pipeline.RunPipeline(ctx, shortTexts)
+		if err != nil {
+			return nil, fmt.Errorf("encode batch: %w", err)
+		}
+		for j, idx := range shortIdx {
+			result[idx] = out.Embeddings[j]
+		}
+	}
+
+	// Encode long texts individually with chunking.
+	for _, it := range items {
+		if it.short {
+			continue
+		}
+		emb, err := h.encodeChunked(ctx, texts[it.index])
+		if err != nil {
+			return nil, fmt.Errorf("encode %q: %w", texts[it.index], err)
+		}
+		result[it.index] = emb
+	}
+
+	return result, nil
+}
+
+// encodeChunked embeds a single long input by splitting token IDs into
+// overlapping chunks, embedding each chunk, and mean-pooling the results.
+func (h *Hugot) encodeChunked(ctx context.Context, input string) ([]float32, error) {
+	tk := h.pipeline.Model.Tokenizer
+	if tk == nil {
+		return nil, fmt.Errorf("tokenizer not available")
+	}
+
+	tokenIDs, err := h.tokenize(input, tk)
+	if err != nil {
+		return nil, fmt.Errorf("tokenize input: %w", err)
+	}
+
+	n := len(tokenIDs)
+	step := h.chunkSize - h.chunkOverlap
+	if step <= 0 {
+		step = h.chunkSize / 2
+	}
+	numChunks := ((n - 1) / step) + 1
+	h.logger.Debug(nil, "hugot: chunked path — %d tokens into ~%d chunks (step=%d)", n, numChunks, step)
+
+	var allEmbeddings [][]float32
+	for i := 0; i < n; i += step {
+		end := i + h.chunkSize
+		if end > n {
+			end = n
+		}
+		chunkIDs := tokenIDs[i:end]
+
+		chunkText, err := backends.Decode(chunkIDs, tk)
+		if err != nil {
+			return nil, fmt.Errorf("decode chunk at offset %d: %w", i, err)
+		}
+
+		out, err := h.pipeline.RunPipeline(ctx, []string{chunkText})
+		if err != nil {
+			return nil, fmt.Errorf("encode chunk at offset %d: %w", i, err)
+		}
+		if len(out.Embeddings) > 0 {
+			allEmbeddings = append(allEmbeddings, out.Embeddings[0])
+		}
+	}
+
+	if len(allEmbeddings) == 0 {
+		return nil, nil
+	}
+
+	return meanPool(allEmbeddings), nil
+}
+
+// tokenize returns the token IDs for the given input text using the Go tokenizer.
+// This is the only runtime used by NewGoSession; the Rust/ORT path is omitted
+// because its RustTokenizer type is an empty stub when built without cgo+ORT/XLA.
+func (h *Hugot) tokenize(input string, tk *backends.Tokenizer) ([]uint32, error) {
+	if tk.GoTokenizer != nil {
+		output := tk.GoTokenizer.Tokenizer.EncodeWithAnnotations(input)
+		return safeconv.IntSliceToUint32Slice(output.IDs), nil
+	}
+	if tk.RustTokenizer != nil {
+		ids, _ := tk.RustTokenizer.Tokenizer.Encode(input, true)
+		return ids, nil
+	}
+	return nil, fmt.Errorf("tokenizer not available")
+}
+
+// meanPool computes the element-wise average of a slice of embeddings.
+func meanPool(embeddings [][]float32) []float32 {
+	if len(embeddings) == 0 {
+		return nil
+	}
+	dim := len(embeddings[0])
+	result := make([]float32, dim)
+	for _, emb := range embeddings {
+		for j := range emb {
+			result[j] += emb[j]
+		}
+	}
+	n := float32(len(embeddings))
+	for j := range result {
+		result[j] /= n
+	}
+	return result
+}
+
+// rankMatches computes cosine similarity between a query embedding and all cached
+// tag embeddings, returns matches sorted descending by similarity above threshold.
+func (h *Hugot) rankMatches(queryEmb []float32, entries map[string][]float32) []match {
+	matches := make([]match, 0, len(entries))
+	for tag, tagEmb := range entries {
+		sim := cosineSimilarity(queryEmb, tagEmb)
+		if sim >= h.minSimilarity {
+			matches = append(matches, match{tag: tag, similarity: sim})
+		}
+	}
+	sort.Slice(matches, func(i, j int) bool {
+		return matches[i].similarity > matches[j].similarity
+	})
+	return matches
+}
+
+// cosineSimilarity computes the cosine similarity between two normalized vectors.
+// Since both vectors are L2-normalized (enforced by pipeline.WithNormalization()),
+// this is equivalent to a simple dot product.
+func cosineSimilarity(a, b []float32) float64 {
+	if len(a) != len(b) {
+		return 0
+	}
+	var dot float64
+	for i := range a {
+		dot += float64(a[i]) * float64(b[i])
+	}
+	return dot
+}
+
+// readMaxPositionEmbeddings reads the max_position_embeddings field from a
+// HuggingFace model's config.json file. Returns 512 as a safe default if the
+// field is missing or unreadable.
+func readMaxPositionEmbeddings(path string) (int, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, fmt.Errorf("read %s: %w", path, err)
+	}
+	var cfg modelConfigJSON
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return 0, fmt.Errorf("parse %s: %w", path, err)
+	}
+	if cfg.MaxPositionEmbeddings == 0 {
+		return 0, fmt.Errorf("%s: max_position_embeddings is 0 or missing", path)
+	}
+	return cfg.MaxPositionEmbeddings, nil
+}
+
+func getBackendSession(tmCfg config.TagMatcherConfig, logger *utils.Logger) (*hugot.Session, error) {
+	switch strings.ToLower(tmCfg.Hugot.Backend) {
+	// case "XLA":
+	// 	session, err = hugot.NewXLASession(context.Background())
+	case "ort":
+		soPath := filepath.Join(tmCfg.Hugot.BackendLibPath, "libonnxruntime.so")
+		if err := downloadLib(tmCfg.Hugot.BackendLibPath, soPath, logger); err != nil {
+			return nil, err
+		}
+		return hugot.NewORTSession(context.Background(), options.WithOnnxLibraryPath(tmCfg.Hugot.BackendLibPath))
+	default:
+		return hugot.NewGoSession(context.Background())
+	}
+}
+
+func downloadLib(dest, soPath string, logger *utils.Logger) error {
+	if _, err := os.Stat(soPath); err == nil {
+		return nil
+	}
+
+	url := "https://github.com/microsoft/onnxruntime/releases/download/v1.26.0/onnxruntime-linux-x64-1.26.0.tgz"
+
+	logger.Debug(nil, "ort backend selected: downloading libonnxruntime from %s ...", url)
+
+	if err := os.MkdirAll(dest, 0755); err != nil {
+		return err
+	}
+
+	tgzPath := filepath.Join(dest, "onnxruntime.tgz")
+	defer os.Remove(tgzPath)
+
+	if err := exec.Command("curl", "-fsSL", "--retry", "3", "-o", tgzPath, url).Run(); err != nil {
+		return err
+	}
+
+	if err := exec.Command("tar", "xzf", tgzPath, "-C", dest,
+		"--strip-components=2",
+		"onnxruntime-linux-x64-1.26.0/lib/libonnxruntime.so.1.26.0",
+	).Run(); err != nil {
+		return err
+	}
+
+	return os.Rename(filepath.Join(dest, "libonnxruntime.so.1.26.0"), soPath)
+}

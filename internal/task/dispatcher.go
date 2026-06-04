@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 
 	"github.com/google/uuid"
+	"github.com/wgomg/edub-kushim/internal/cache"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/consumption"
 	"github.com/wgomg/edub-kushim/internal/database"
@@ -22,13 +24,13 @@ type Dispatcher struct {
 	queries  *database.Queries
 }
 
-func NewDispatcher(cfg *config.Config, logger *utils.Logger, db *sql.DB) (*Dispatcher, error) {
+func NewDispatcher(cfg *config.Config, logger *utils.Logger, db *sql.DB, embeddingCache *cache.Cache) (*Dispatcher, error) {
 	consumer, err := consumption.NewConsumer(cfg, logger, db)
 	if err != nil {
 		return nil, err
 	}
 
-	enricher, err := enrichment.NewEnricher(cfg, logger, db)
+	enricher, err := enrichment.NewEnricher(cfg, logger, db, embeddingCache)
 	if err != nil {
 		return nil, err
 	}
@@ -124,10 +126,20 @@ func (d *Dispatcher) Next(ctx context.Context, taskType string) error {
 		var consumeResult struct {
 			DocumentID int64 `json:"document_id"`
 		}
-		if err := json.Unmarshal(result, &consumeResult); err == nil && consumeResult.DocumentID != 0 {
-			payload, _ := json.Marshal(struct {
-				DocumentID int64 `json:"document_id"`
-			}{DocumentID: consumeResult.DocumentID})
+		json.Unmarshal(result, &consumeResult)
+
+		var consumePayload struct {
+			FilePath  string `json:"file_path"`
+			FileIndex int    `json:"file_index"`
+		}
+		json.Unmarshal(t.Payload, &consumePayload)
+
+		if consumeResult.DocumentID != 0 {
+			payload, _ := json.Marshal(map[string]any{
+				"document_id": consumeResult.DocumentID,
+				"file_name":   filepath.Base(consumePayload.FilePath),
+				"file_index":  consumePayload.FileIndex,
+			})
 			if _, err := d.Enqueue(ctx, "enrich", t.BatchID.String, payload); err != nil {
 				d.logger.Error(nil, "failed to enqueue enrich task for document %d: %v", consumeResult.DocumentID, err)
 			}

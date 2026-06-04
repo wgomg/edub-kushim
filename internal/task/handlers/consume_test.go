@@ -81,6 +81,7 @@ func TestHandle_Success(t *testing.T) {
 			sha512_checksum TEXT UNIQUE NOT NULL,
 			mime_type TEXT NOT NULL,
 			file_size INTEGER NOT NULL,
+			page_count INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			modified_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			document_type_id INTEGER,
@@ -107,18 +108,19 @@ func TestHandle_Success(t *testing.T) {
 			StorageDir: filepath.Join(dir, "storage"),
 		},
 		Consumer: config.ConsumerConfig{
-			TextExtractorTimeout: 5,
-			OptimizationTimeout:  5,
-			OCRTimeout:           5,
+			TextExtractor: config.TextExtractorConfig{Timeout: 5},
+			PdfOptimizer:  config.PdfOptimizerConfig{Timeout: 5},
+			OCR:           config.OCRConfig{Timeout: 5},
 		},
 	}
 
 	runner := tools.NewRunnerWithAdapters(
 		logger,
-		&cfg.Consumer,
+		cfg,
 		&mockTextExtractor{},
 		&mockOCR{},
 		&mockPdfOptimizer{},
+		nil, nil, nil,
 	)
 	consumer, err := consumption.NewConsumerWithRunner(cfg, logger, db, runner)
 	if err != nil {

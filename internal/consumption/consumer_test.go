@@ -45,6 +45,7 @@ func setupConsumerDB(t *testing.T) *sql.DB {
 			sha512_checksum TEXT UNIQUE NOT NULL,
 			mime_type TEXT NOT NULL,
 			file_size INTEGER NOT NULL,
+			page_count INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			modified_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			document_type_id INTEGER,
@@ -131,44 +132,44 @@ func (m *mockPdfOptimizer) Optimize(ctx context.Context, path string) (*string, 
 }
 func (m *mockPdfOptimizer) Name() string { return "mock-optimizer" }
 
-func newMockRunner(t *testing.T, logger *utils.Logger, cfg *config.ConsumerConfig,
+func newMockRunner(t *testing.T, logger *utils.Logger, cfg *config.Config,
 	textExtractor *mockTextExtractor, ocr *mockOCR, optimizer *mockPdfOptimizer) *tools.Runner {
 	t.Helper()
-	return tools.NewRunnerWithAdapters(logger, cfg, textExtractor, ocr, optimizer)
+	return tools.NewRunnerWithAdapters(logger, cfg, textExtractor, ocr, optimizer, nil, nil, nil)
 }
 
 func TestHumanDuration_Seconds(t *testing.T) {
-	got := humanDuration(3 * time.Second)
+	got := utils.HumanDuration(3 * time.Second)
 	if !strings.HasSuffix(got, "s") {
-		t.Errorf("humanDuration(%v) = %q, want seconds", 3*time.Second, got)
+		t.Errorf("utils.HumanDuration(%v) = %q, want seconds", 3*time.Second, got)
 	}
 }
 
 func TestHumanDuration_Minutes(t *testing.T) {
-	got := humanDuration(2*time.Minute + 30*time.Second)
+	got := utils.HumanDuration(2*time.Minute + 30*time.Second)
 	if !strings.Contains(got, "m") || !strings.Contains(got, "s") {
-		t.Errorf("humanDuration(%v) = %q, want minutes and seconds", 2*time.Minute+30*time.Second, got)
+		t.Errorf("utils.HumanDuration(%v) = %q, want minutes and seconds", 2*time.Minute+30*time.Second, got)
 	}
 }
 
 func TestHumanDuration_Hours(t *testing.T) {
-	got := humanDuration(1*time.Hour + 5*time.Minute + 10*time.Second)
+	got := utils.HumanDuration(1*time.Hour + 5*time.Minute + 10*time.Second)
 	if !strings.Contains(got, "h") {
-		t.Errorf("humanDuration(%v) = %q, want hours", 1*time.Hour+5*time.Minute+10*time.Second, got)
+		t.Errorf("utils.HumanDuration(%v) = %q, want hours", 1*time.Hour+5*time.Minute+10*time.Second, got)
 	}
 }
 
 func TestHumanDuration_Zero(t *testing.T) {
-	got := humanDuration(0)
+	got := utils.HumanDuration(0)
 	if got != "0.0s" {
-		t.Errorf("humanDuration(0) = %q, want %q", got, "0.0s")
+		t.Errorf("utils.HumanDuration(0) = %q, want %q", got, "0.0s")
 	}
 }
 
 func TestHumanDuration_EdgeMinute(t *testing.T) {
-	got := humanDuration(59*time.Second + 999*time.Millisecond)
+	got := utils.HumanDuration(59*time.Second + 999*time.Millisecond)
 	if !strings.HasSuffix(got, "s") {
-		t.Errorf("humanDuration near 1m = %q, want seconds", got)
+		t.Errorf("utils.HumanDuration near 1m = %q, want seconds", got)
 	}
 }
 
@@ -273,6 +274,7 @@ func TestIsDuplicate_ExactMatch(t *testing.T) {
 		Sha512Checksum: sha512sum,
 		MimeType:       "application/pdf",
 		FileSize:       int64(len(content)),
+		PageCount:      0,
 		OriginalPath:   "/dev/null",
 		StoragePath:    "/dev/null",
 	})
@@ -304,6 +306,7 @@ func TestProcess_Duplicate(t *testing.T) {
 		Sha512Checksum: sha512sum,
 		MimeType:       "application/pdf",
 		FileSize:       int64(len(content)),
+		PageCount:      0,
 		OriginalPath:   "/dev/null",
 		StoragePath:    "/dev/null",
 	})
@@ -314,11 +317,9 @@ func TestProcess_Duplicate(t *testing.T) {
 	cfg := &config.Config{
 		Storage: config.StorageConfig{StorageDir: filepath.Join(dir, "storage")},
 		Consumer: config.ConsumerConfig{
-			OCRLanguages:         []string{"eng"},
-			OCRDataDir:           filepath.Join(dir, "tessdata"),
-			TextExtractorTimeout: 5,
-			OptimizationTimeout:  5,
-			OCRTimeout:           5,
+			TextExtractor: config.TextExtractorConfig{Timeout: 5},
+			PdfOptimizer:  config.PdfOptimizerConfig{Timeout: 5},
+			OCR:           config.OCRConfig{Languages: []string{"eng"}, DataDir: filepath.Join(dir, "tessdata"), Timeout: 5},
 		},
 	}
 	consumer, err := NewConsumerWithRunner(cfg, logger, db, nil)
@@ -367,15 +368,13 @@ func TestProcess_TextExtractAndOptimize(t *testing.T) {
 	cfg := &config.Config{
 		Storage: config.StorageConfig{StorageDir: filepath.Join(dir, "storage")},
 		Consumer: config.ConsumerConfig{
-			OCRLanguages:         []string{"eng"},
-			OCRDataDir:           filepath.Join(dir, "tessdata"),
-			TextExtractorTimeout: 5,
-			OptimizationTimeout:  5,
-			OCRTimeout:           5,
+			TextExtractor: config.TextExtractorConfig{Timeout: 5},
+			PdfOptimizer:  config.PdfOptimizerConfig{Timeout: 5},
+			OCR:           config.OCRConfig{Languages: []string{"eng"}, DataDir: filepath.Join(dir, "tessdata"), Timeout: 5},
 		},
 	}
 
-	runner := newMockRunner(t, logger, &cfg.Consumer, textExtractor, ocrMock, optimizer)
+	runner := newMockRunner(t, logger, cfg, textExtractor, ocrMock, optimizer)
 	consumer, err := NewConsumerWithRunner(cfg, logger, db, runner)
 	if err != nil {
 		t.Fatalf("NewConsumerWithRunner: %v", err)
@@ -453,15 +452,13 @@ func TestProcess_OCRFallback(t *testing.T) {
 	cfg := &config.Config{
 		Storage: config.StorageConfig{StorageDir: filepath.Join(dir, "storage")},
 		Consumer: config.ConsumerConfig{
-			OCRLanguages:         []string{"eng"},
-			OCRDataDir:           filepath.Join(dir, "tessdata"),
-			TextExtractorTimeout: 5,
-			OptimizationTimeout:  5,
-			OCRTimeout:           5,
+			TextExtractor: config.TextExtractorConfig{Timeout: 5},
+			PdfOptimizer:  config.PdfOptimizerConfig{Timeout: 5},
+			OCR:           config.OCRConfig{Languages: []string{"eng"}, DataDir: filepath.Join(dir, "tessdata"), Timeout: 5},
 		},
 	}
 
-	runner := newMockRunner(t, logger, &cfg.Consumer, textExtractor, ocrMock, optimizer)
+	runner := newMockRunner(t, logger, cfg, textExtractor, ocrMock, optimizer)
 	consumer, err := NewConsumerWithRunner(cfg, logger, db, runner)
 	if err != nil {
 		t.Fatalf("NewConsumerWithRunner: %v", err)

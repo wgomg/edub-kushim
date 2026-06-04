@@ -12,3 +12,9 @@ UPDATE document_type SET name = ? WHERE id = ?;
 
 -- name: DeleteDocumentType :exec
 DELETE FROM document_type WHERE id = ?;
+
+-- name: ListAllDocumentTypes :many
+SELECT * FROM document_type ORDER BY created_at DESC;
+
+-- name: ListAllDocumentTypesNames :many
+SELECT name FROM document_type ORDER BY created_at DESC;

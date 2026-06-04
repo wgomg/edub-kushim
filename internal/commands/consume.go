@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -110,16 +111,14 @@ func consumeHandler(c *Container, args []string) error {
 		return nil
 	}
 
-	dispatcher, err := task.NewDispatcher(c.config, c.logger, db)
-	if err != nil {
-		return fmt.Errorf("dispatcher: %w", err)
-	}
-
 	batchID := uuid.New().String()
 	enqueued := 0
-	for _, f := range files {
-		payload, _ := json.Marshal(map[string]string{"file_path": f.OriginalPath})
-		_, err := dispatcher.Enqueue(ctx, "consume", batchID, payload)
+	for i, f := range files {
+		payload, _ := json.Marshal(map[string]any{
+			"file_path":  f.OriginalPath,
+			"file_index": i + 1,
+		})
+		_, err := c.dispatcher.Enqueue(ctx, "consume", batchID, payload)
 		if err != nil {
 			c.logger.Error(nil, "enqueue %s: %v", f.OriginalPath, err)
 			continue
@@ -223,6 +222,55 @@ func consumeCancelHandler(c *Container, args []string) error {
 	return nil
 }
 
+type taskDisplay struct {
+	index    int
+	fileName string
+	taskType string
+}
+
+func taskDisplayInfo(t database.Task) taskDisplay {
+	info := taskDisplay{taskType: t.TaskType}
+	if t.Payload == nil {
+		return info
+	}
+	var p struct {
+		FilePath  string `json:"file_path"`
+		FileName  string `json:"file_name"`
+		FileIndex int    `json:"file_index"`
+	}
+	json.Unmarshal(t.Payload, &p)
+	info.index = p.FileIndex
+	if p.FilePath != "" {
+		info.fileName = filepath.Base(p.FilePath)
+	} else {
+		info.fileName = p.FileName
+	}
+	return info
+}
+
+func totalFiles(tasks []database.Task) int {
+	maxIdx := 0
+	for _, t := range tasks {
+		if t.TaskType == "consume" {
+			info := taskDisplayInfo(t)
+			if info.index > maxIdx {
+				maxIdx = info.index
+			}
+		}
+	}
+	if maxIdx > 0 {
+		return maxIdx
+	}
+
+	n := 0
+	for _, t := range tasks {
+		if t.TaskType == "consume" {
+			n++
+		}
+	}
+	return n
+}
+
 func pollBatch(ctx context.Context, queries *database.Queries, cp, ep *pool.Pool, logger *utils.Logger, batchID string) error {
 	logger.SetLevel(utils.LevelSilent)
 	cp.Start(ctx)
@@ -251,36 +299,29 @@ func pollBatch(ctx context.Context, queries *database.Queries, cp, ep *pool.Pool
 			continue
 		}
 
+		total := totalFiles(tasks)
+
 		remain := 0
 		for _, t := range tasks {
 			switch t.Status {
+			case "processing":
+				if previous[t.TaskID] != "processing" && previous[t.TaskID] == "pending" {
+					info := taskDisplayInfo(t)
+					fmt.Printf("  [%d/%d] %-8s %s ... processing\n", info.index, total, info.taskType, info.fileName)
+				}
 			case "completed":
 				if previous[t.TaskID] != "completed" && previous[t.TaskID] != "" {
-					fileName := ""
-					if t.Payload != nil {
-						var p struct {
-							FilePath string `json:"file_path"`
-						}
-						json.Unmarshal(t.Payload, &p)
-						fileName = p.FilePath
-					}
-					fmt.Printf("%s → completed\n", fileName)
+					info := taskDisplayInfo(t)
+					fmt.Printf("  [%d/%d] %-8s %s ... done\n", info.index, total, info.taskType, info.fileName)
 				}
 			case "failed":
 				if previous[t.TaskID] != "failed" && previous[t.TaskID] != "" {
-					fileName := ""
-					if t.Payload != nil {
-						var p struct {
-							FilePath string `json:"file_path"`
-						}
-						json.Unmarshal(t.Payload, &p)
-						fileName = p.FilePath
-					}
+					info := taskDisplayInfo(t)
 					errMsg := ""
 					if t.Error.Valid {
 						errMsg = fmt.Sprintf(": %s", t.Error.String)
 					}
-					fmt.Printf("%s → failed%s\n", fileName, errMsg)
+					fmt.Printf("  [%d/%d] %-8s %s ... failed%s\n", info.index, total, info.taskType, info.fileName, errMsg)
 				}
 			}
 			if t.Status == "pending" || t.Status == "processing" {
@@ -290,19 +331,20 @@ func pollBatch(ctx context.Context, queries *database.Queries, cp, ep *pool.Pool
 		}
 
 		if remain == 0 {
-			var completed, failed int64
+			var files, taskCount, failed int64
 			for _, t := range tasks {
-				switch t.Status {
-				case "completed":
-					completed++
-				case "failed":
+				taskCount++
+				if t.TaskType == "consume" {
+					files++
+				}
+				if t.Status == "failed" {
 					failed++
 				}
 			}
 			if failed > 0 {
-				fmt.Printf("\nBatch finished: %d completed, %d failed\n", completed, failed)
+				fmt.Printf("\nSummary: %d files, %d tasks — %d successful, %d failed\n", files, taskCount, taskCount-failed, failed)
 			} else {
-				fmt.Printf("\nBatch finished: all %d files processed successfully\n", completed)
+				fmt.Printf("\nSummary: %d files, %d tasks — all successful\n", files, taskCount)
 			}
 
 			stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

@@ -305,6 +305,179 @@ func (q *Queries) GetTaskByTaskID(ctx context.Context, taskID string) (Task, err
 	return i, err
 }
 
+const listAllTasks = `-- name: ListAllTasks :many
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
+       created_at, started_at, completed_at, error
+FROM task ORDER BY created_at DESC
+`
+
+func (q *Queries) ListAllTasks(ctx context.Context) ([]Task, error) {
+	rows, err := q.db.QueryContext(ctx, listAllTasks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Task
+	for rows.Next() {
+		var i Task
+		if err := rows.Scan(
+			&i.ID,
+			&i.TaskID,
+			&i.TaskType,
+			&i.Status,
+			&i.BatchID,
+			&i.Payload,
+			&i.Result,
+			&i.DedupKey,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.Error,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllTasksByBatch = `-- name: ListAllTasksByBatch :many
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
+       created_at, started_at, completed_at, error
+FROM task WHERE batch_id = ? ORDER BY created_at DESC
+`
+
+func (q *Queries) ListAllTasksByBatch(ctx context.Context, batchID sql.NullString) ([]Task, error) {
+	rows, err := q.db.QueryContext(ctx, listAllTasksByBatch, batchID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Task
+	for rows.Next() {
+		var i Task
+		if err := rows.Scan(
+			&i.ID,
+			&i.TaskID,
+			&i.TaskType,
+			&i.Status,
+			&i.BatchID,
+			&i.Payload,
+			&i.Result,
+			&i.DedupKey,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.Error,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllTasksByBatchAndStatus = `-- name: ListAllTasksByBatchAndStatus :many
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
+       created_at, started_at, completed_at, error
+FROM task WHERE batch_id = ? AND status = ? ORDER BY created_at DESC
+`
+
+type ListAllTasksByBatchAndStatusParams struct {
+	BatchID sql.NullString
+	Status  string
+}
+
+func (q *Queries) ListAllTasksByBatchAndStatus(ctx context.Context, arg ListAllTasksByBatchAndStatusParams) ([]Task, error) {
+	rows, err := q.db.QueryContext(ctx, listAllTasksByBatchAndStatus, arg.BatchID, arg.Status)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Task
+	for rows.Next() {
+		var i Task
+		if err := rows.Scan(
+			&i.ID,
+			&i.TaskID,
+			&i.TaskType,
+			&i.Status,
+			&i.BatchID,
+			&i.Payload,
+			&i.Result,
+			&i.DedupKey,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.Error,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllTasksByStatus = `-- name: ListAllTasksByStatus :many
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
+       created_at, started_at, completed_at, error
+FROM task WHERE status = ? ORDER BY created_at DESC
+`
+
+func (q *Queries) ListAllTasksByStatus(ctx context.Context, status string) ([]Task, error) {
+	rows, err := q.db.QueryContext(ctx, listAllTasksByStatus, status)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Task
+	for rows.Next() {
+		var i Task
+		if err := rows.Scan(
+			&i.ID,
+			&i.TaskID,
+			&i.TaskType,
+			&i.Status,
+			&i.BatchID,
+			&i.Payload,
+			&i.Result,
+			&i.DedupKey,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.Error,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDistinctBatchIDs = `-- name: ListDistinctBatchIDs :many
 SELECT batch_id FROM task
 WHERE batch_id IS NOT NULL

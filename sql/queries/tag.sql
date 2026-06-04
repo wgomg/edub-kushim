@@ -4,6 +4,12 @@ SELECT * FROM tag WHERE id = ?;
 -- name: ListTags :many
 SELECT * FROM tag ORDER BY created_at DESC LIMIT ? OFFSET ?;
 
+-- name: ListAllTags :many
+SELECT * FROM tag ORDER BY created_at DESC;
+
+-- name: ListAllTagsNames :many
+SELECT name FROM tag ORDER BY created_at DESC;
+
 -- name: CreateTag :execresult
 INSERT INTO tag (
     name

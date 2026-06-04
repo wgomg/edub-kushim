@@ -40,6 +40,60 @@ func (q *Queries) GetTag(ctx context.Context, id int64) (Tag, error) {
 	return i, err
 }
 
+const listAllTags = `-- name: ListAllTags :many
+SELECT id, name, created_at FROM tag ORDER BY created_at DESC
+`
+
+func (q *Queries) ListAllTags(ctx context.Context) ([]Tag, error) {
+	rows, err := q.db.QueryContext(ctx, listAllTags)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Tag
+	for rows.Next() {
+		var i Tag
+		if err := rows.Scan(&i.ID, &i.Name, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllTagsNames = `-- name: ListAllTagsNames :many
+SELECT name FROM tag ORDER BY created_at DESC
+`
+
+func (q *Queries) ListAllTagsNames(ctx context.Context) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listAllTagsNames)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		items = append(items, name)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTags = `-- name: ListTags :many
 SELECT id, name, created_at FROM tag ORDER BY created_at DESC LIMIT ? OFFSET ?
 `

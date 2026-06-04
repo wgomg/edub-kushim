@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/api/handlers"
+	"github.com/wgomg/edub-kushim/internal/cache"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/pool"
@@ -36,19 +37,19 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 	queries := database.NewQueries(db)
 	engine := search.NewEngine(logger, db)
 
-	dispatcher, err := task.NewDispatcher(&cfg, logger, db)
+	tagCache, err := cache.BuildTagCache(context.Background(), db, logger, cfg.Enricher.TagMatcher)
+	if err != nil {
+		logger.Error(nil, "failed to build tag cache: %v — continuing with empty cache", err)
+		tagCache = cache.New()
+	}
+
+	dispatcher, err := task.NewDispatcher(&cfg, logger, db, tagCache)
 	if err != nil {
 		logger.Fatal("dispatcher: ", err)
 	}
 
-	consumeWorkers := cfg.Consumer.Workers
-	if consumeWorkers < 1 {
-		consumeWorkers = 1
-	}
-	enrichWorkers := cfg.Enricher.Workers
-	if enrichWorkers < 1 {
-		enrichWorkers = 1
-	}
+	consumeWorkers := max(cfg.Consumer.Workers, 1)
+	enrichWorkers := max(cfg.Enricher.Workers, 1)
 
 	consumePool := pool.New(logger, dispatcher, consumeWorkers, 2*time.Second, "consume")
 	enrichPool := pool.New(logger, dispatcher, enrichWorkers, 5*time.Second, "enrich")

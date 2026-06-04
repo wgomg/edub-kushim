@@ -1,5 +1,7 @@
 CURDIR        ?= $(abspath .)
 BUILD_DIR     := $(CURDIR)/build
+BINARY        := ./dev/bin/kushim
+EDUB_BINARY   := ./dev/bin/edub
 TESS_INCLUDE  := $(BUILD_DIR)/tesseract/local/include
 TESS_LIB      := $(BUILD_DIR)/tesseract/local/lib64
 LEP_LIB       := $(BUILD_DIR)/leptonica/local/lib64
@@ -7,12 +9,12 @@ MUPDF_DIR     := $(BUILD_DIR)/mupdf
 MUPDF_LIB     := $(MUPDF_DIR)/local/lib
 LIBNG_VER     := 1.6.43
 MUPDF_VER     := 1.27.2
-BINARY        := ./dev/bin/kushim
-EDUB_BINARY   := ./dev/bin/edub
+TOKENIZERS_DIR := $(BUILD_DIR)/tokenizers
 
 # Flags required by gosseract's C++ bridge
 export CGO_ENABLED    := 1
 export CGO_CPPFLAGS   := -I$(TESS_INCLUDE) -I$(BUILD_DIR)/libpng/local/include
+export CGO_LDFLAGS    := -L$(TOKENIZERS_DIR)
 
 # TEST_FLAGS — extra flags passed to `go test` (e.g. -run, -count, -short).
 # TEST_PKG   — Go package pattern(s) to test (e.g. ./internal/..., ./cmd/...).
@@ -41,8 +43,8 @@ web-build:
 	cp -r web/build internal/static/build
 
 build: web-build
-	go build -o $(BINARY) ./cmd/kushim/main.go
-	go build -o $(EDUB_BINARY) ./cmd/edub/main.go
+	go build -tags "XLA,ORT" -o $(BINARY) ./cmd/kushim/main.go
+	go build -tags "XLA,ORT" -o $(EDUB_BINARY) ./cmd/edub/main.go
 
 build-deps:
 	@if [ ! -d $(BUILD_DIR)/libpng ]; then \
@@ -62,7 +64,7 @@ build-deps:
 		./configure --disable-shared --enable-static --prefix=$(BUILD_DIR)/leptonica/local \
 			--libdir=$(BUILD_DIR)/leptonica/local/lib64 \
 			--without-libtiff --without-libwebp --without-libopenjpeg \
-			--without-giflib --disable-programs && \
+			--without-giflib --without-jpeg --disable-programs && \
 		make -j$(shell nproc) && make install
 	cd $(BUILD_DIR)/tesseract && rm -rf local/ && ./autogen.sh && \
 		CPPFLAGS="-I$(BUILD_DIR)/libpng/local/include" \
@@ -79,6 +81,15 @@ build-deps:
 	fi
 	cd $(MUPDF_DIR) && rm -rf local/ && \
 		make prefix=$(MUPDF_DIR)/local HAVE_X11=no HAVE_GLUT=no shared=no libs install
+	@if [ ! -f $(TOKENIZERS_DIR)/libtokenizers.a ]; then \
+		echo "Downloading libtokenizers.a..."; \
+		mkdir -p $(TOKENIZERS_DIR); \
+		curl -sL https://github.com/daulet/tokenizers/releases/latest/download/libtokenizers.linux-amd64.tar.gz \
+			-o $(TOKENIZERS_DIR)/libtokenizers.tar.gz; \
+		tar xzf $(TOKENIZERS_DIR)/libtokenizers.tar.gz -C $(TOKENIZERS_DIR); \
+		rm $(TOKENIZERS_DIR)/libtokenizers.tar.gz; \
+		echo "Downloaded libtokenizers.a to $(TOKENIZERS_DIR)"; \
+	fi
 
 consume: build
 	$(BINARY) consume

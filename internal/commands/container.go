@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/wgomg/edub-kushim/internal/cache"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/pool"
@@ -15,11 +16,13 @@ import (
 )
 
 type Container struct {
-	config *config.Config
-	logger *utils.Logger
-	db     *sql.DB
-	engine *search.Engine
-	pools  struct {
+	config     *config.Config
+	logger     *utils.Logger
+	db         *sql.DB
+	engine     *search.Engine
+	cache      *cache.Cache
+	dispatcher *task.Dispatcher
+	pools      struct {
 		consume *pool.Pool
 		enrich  *pool.Pool
 	}
@@ -48,6 +51,46 @@ func (c *Container) GetDB() (*sql.DB, error) {
 	return c.db, nil
 }
 
+func (c *Container) GetCache() (*cache.Cache, error) {
+	db, err := c.GetDB()
+	if err != nil {
+		return nil, err
+	}
+
+	if c.cache == nil {
+		tagCache, err := cache.BuildTagCache(context.Background(), db, c.logger, c.config.Enricher.TagMatcher)
+		if err != nil {
+			c.logger.Error(nil, "failed to build tag cache: %v — continuing with empty cache", err)
+			c.cache = cache.New()
+		} else {
+			c.cache = tagCache
+		}
+	}
+	return c.cache, nil
+}
+
+func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
+	db, err := c.GetDB()
+	if err != nil {
+		return nil, err
+	}
+
+	cache, err := c.GetCache()
+	if err != nil {
+		return nil, err
+	}
+
+	if c.dispatcher == nil {
+		dispatcher, err := task.NewDispatcher(c.config, c.logger, db, cache)
+		if err != nil {
+			return nil, err
+		}
+		c.dispatcher = dispatcher
+	}
+
+	return c.dispatcher, nil
+}
+
 func (c *Container) GetPool(taskType string) (*pool.Pool, error) {
 	var pp **pool.Pool
 	switch taskType {
@@ -60,11 +103,7 @@ func (c *Container) GetPool(taskType string) (*pool.Pool, error) {
 	}
 
 	if *pp == nil {
-		db, err := c.GetDB()
-		if err != nil {
-			return nil, err
-		}
-		dispatcher, err := task.NewDispatcher(c.config, c.logger, db)
+		dispatcher, err := c.GetDispatcher()
 		if err != nil {
 			return nil, err
 		}
@@ -72,16 +111,10 @@ func (c *Container) GetPool(taskType string) (*pool.Pool, error) {
 		var interval time.Duration
 		switch taskType {
 		case "consume":
-			workers = c.config.Consumer.Workers
-			if workers < 1 {
-				workers = 1
-			}
+			workers = max(c.config.Consumer.Workers, 1)
 			interval = 2 * time.Second
 		case "enrich":
-			workers = c.config.Enricher.Workers
-			if workers < 1 {
-				workers = 1
-			}
+			workers = max(c.config.Enricher.Workers, 1)
 			interval = 5 * time.Second
 		}
 		*pp = pool.New(c.logger, dispatcher, workers, interval, taskType)

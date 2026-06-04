@@ -47,6 +47,12 @@ func NewSQLiteDB(cfg config.DatabaseConfig) (*sql.DB, error) {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
+	for _, seeder := range cfg.Seeders {
+		if err := seedSchema(db, seeder); err != nil {
+			return nil, fmt.Errorf("failed to seed %q: %w", seeder, err)
+		}
+	}
+
 	return db, nil
 }
 
@@ -72,6 +78,25 @@ func createSchema(db *sql.DB) error {
 	_, err = db.Exec(string(schemaSQL))
 	if err != nil {
 		return fmt.Errorf("failed to create schema: %w", err)
+	}
+
+	return nil
+}
+
+func seedSchema(db *sql.DB, seedType string) error {
+	switch seedType {
+	case "tags":
+		path := fmt.Sprintf("sql/seed-%s.sql", seedType)
+		sql, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("failed to read seed file %s: %w", path, err)
+		}
+		_, err = db.Exec(string(sql))
+		if err != nil {
+			return fmt.Errorf("failed to execute seed %q: %w", seedType, err)
+		}
+	default:
+		return fmt.Errorf("unknown seed type: %s", seedType)
 	}
 
 	return nil

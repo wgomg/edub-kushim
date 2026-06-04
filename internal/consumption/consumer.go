@@ -17,6 +17,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/tools"
+	"github.com/wgomg/edub-kushim/internal/tools/adapters"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/pdfoptimizer"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -42,25 +43,26 @@ type File struct {
 	MimeType             string
 	Date                 time.Time
 	FileSize             int64
+	PageCount            int
 }
 
 func NewConsumer(cfg *config.Config, logger *utils.Logger, db *sql.DB) (*Consumer, error) {
-	if cfg.Consumer.OptimizationFallback != "" {
+	if cfg.Consumer.PdfOptimizer.Fallback != "" {
 		if _, err := pdfoptimizer.NewPdfOptimizer(logger, config.ToolConfig{
-			Command: cfg.Consumer.OptimizationFallback,
+			Command: cfg.Consumer.PdfOptimizer.Fallback,
 			Timeout: 30 * time.Second,
 		}); err != nil {
 			return nil, fmt.Errorf(
-				"optimization_fallback %q not available: %w — "+
-					"install it or set optimization_fallback to \"\" (empty) to disable",
-				cfg.Consumer.OptimizationFallback, err)
+				"pdfoptimizer.fallback %q not available: %w — "+
+					"install it or set pdfoptimizer.fallback to \"\" (empty) to disable",
+				cfg.Consumer.PdfOptimizer.Fallback, err)
 		}
 	}
 	return &Consumer{
 		config: cfg,
 		logger: logger,
 		db:     db,
-		runner: tools.NewRunner(logger, &cfg.Consumer),
+		runner: tools.NewRunner(logger, cfg, []string{"textextractor", "ocr", "pdfoptimizer"}),
 	}, nil
 }
 
@@ -75,14 +77,14 @@ func NewConsumerWithRunner(cfg *config.Config, logger *utils.Logger, db *sql.DB,
 
 func (c *Consumer) Process(ctx context.Context, file File) (File, error) {
 	start := time.Now()
-	c.logger.Info(nil, "starting processing for file %s", file.OriginalPath)
+	c.logger.Info(nil, "starting consumption for file %s", file.OriginalPath)
 
 	defer func() {
 		elapsed := time.Since(start)
 		if file.StorageProcessedPath != nil {
-			c.logger.Info(nil, "finished processing %s in %s -> %s", file.OriginalPath, humanDuration(elapsed), *file.StorageProcessedPath)
+			c.logger.Info(nil, "finished consumption %s in %s -> %s", file.OriginalPath, utils.HumanDuration(elapsed), *file.StorageProcessedPath)
 		} else {
-			c.logger.Info(nil, "finished processing %s in %s (skipped)", file.OriginalPath, humanDuration(elapsed))
+			c.logger.Info(nil, "finished consumption %s in %s (skipped)", file.OriginalPath, utils.HumanDuration(elapsed))
 		}
 	}()
 
@@ -163,6 +165,7 @@ func (c *Consumer) Process(ctx context.Context, file File) (File, error) {
 		OriginalPath:   "",
 		StoragePath:    *file.StorageProcessedPath,
 		TextContent:    file.Text,
+		PageCount:      int64(file.PageCount),
 	})
 	if err != nil {
 		return file, fmt.Errorf("failed to create document record: %w", err)
@@ -345,27 +348,13 @@ func calculateSHA512(path string) (string, error) {
 	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
-func humanDuration(d time.Duration) string {
-	switch {
-	case d < time.Minute:
-		return fmt.Sprintf("%.1fs", d.Seconds())
-	case d < time.Hour:
-		d = d.Round(time.Second)
-		m := int(d.Minutes())
-		s := int(d.Seconds()) - m*60
-		return fmt.Sprintf("%dm %ds", m, s)
-	default:
-		d = d.Round(time.Second)
-		h := int(d.Hours())
-		d -= time.Duration(h) * time.Hour
-		m := int(d.Minutes())
-		s := int(d.Seconds()) - m*60
-		return fmt.Sprintf("%dh %dm %ds", h, m, s)
-	}
-}
-
 func (c *Consumer) extractText(ctx context.Context, file File) (File, error) {
 	memBefore := utils.ReadMemSnapshot()
+
+	if file.MimeType == "application/pdf" {
+		file.PageCount = countPages(file.OriginalPath)
+	}
+
 	extractResult, err := c.runner.ExtractText(ctx, file.OriginalPath)
 	memAfterExtract := utils.ReadMemSnapshot()
 	c.logger.Debug(nil, "extractText: %s", utils.FormatMemDelta(memBefore, memAfterExtract))
@@ -413,4 +402,20 @@ func (c *Consumer) extractText(ctx context.Context, file File) (File, error) {
 	file.OCRTmpPath = ocrResult.TmpPath
 
 	return file, nil
+}
+
+func countPages(path string) int {
+	mupdfCtx, err := adapters.NewMuContext()
+	if err != nil {
+		return 0
+	}
+	defer mupdfCtx.Close()
+
+	doc, err := mupdfCtx.OpenMuDocument(path)
+	if err != nil {
+		return 0
+	}
+	defer doc.Close(mupdfCtx)
+
+	return doc.NumPages(mupdfCtx)
 }

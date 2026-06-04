@@ -386,6 +386,7 @@ func summaryTestDB(t *testing.T) *sql.DB {
 			sha512_checksum TEXT UNIQUE NOT NULL,
 			mime_type TEXT NOT NULL,
 			file_size INTEGER NOT NULL,
+			page_count INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			modified_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			document_type_id INTEGER,
@@ -408,6 +409,7 @@ func seedSummaryDoc(t *testing.T, q *database.Queries, fileSize int64) {
 		Sha512Checksum: fmt.Sprintf("sha512-%d", fileSize),
 		MimeType:       "application/pdf",
 		FileSize:       fileSize,
+		PageCount:      0,
 		OriginalPath:   "/tmp/doc.pdf",
 		StoragePath:    "/store/doc.pdf",
 	})
