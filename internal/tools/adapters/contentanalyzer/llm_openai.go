@@ -34,7 +34,7 @@ type LlmOpenAiRequest struct {
 	FrequencyPenalty float64        `json:"frequency_penalty,omitempty"`
 	MaxTokens        int            `json:"max_completion_tokens,omitempty"`
 	PresencePenalty  float64        `json:"presence_penalty,omitempty"`
-	ResponseFormat   ResponseFormat `json:"response_format,omitempty"`
+	ResponseFormat   ResponseFormat `json:"response_format"`
 	Stop             any            `json:"stop,omitempty"`
 	Stream           bool           `json:"stream"`
 	Temperature      float64        `json:"temperature,omitempty"`
