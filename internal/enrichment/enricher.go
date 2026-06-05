@@ -56,6 +56,9 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 		tagMatcherReduceTargetWords = documentWordCount / -tagMatcherReduceTargetWords
 	}
 
+	textReducerTargetWords = max(2000, textReducerTargetWords)
+	tagMatcherReduceTargetWords = max(2000, tagMatcherReduceTargetWords)
+
 	// estimatedTokens := estimateTokens(document.TextContent.String)
 	shouldReduceLlm := shouldReduceContent(documentWordCount, textReducerTargetWords)
 	shouldReduceTags := shouldReduceContent(documentWordCount, tagMatcherReduceTargetWords)

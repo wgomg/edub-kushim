@@ -117,7 +117,7 @@ func TestConsumeHandler_NoFiles(t *testing.T) {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
 	}
 
-	var body map[string]interface{}
+	var body map[string]any
 	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestConsumeHandler_WithFiles(t *testing.T) {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusAccepted)
 	}
 
-	var body map[string]interface{}
+	var body map[string]any
 	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestConsumeHandler_WithFiles(t *testing.T) {
 	if !ok || batchID == "" {
 		t.Errorf("batch_id missing or empty")
 	}
-	links, ok := body["_links"].(map[string]interface{})
+	links, ok := body["_links"].(map[string]any)
 	if !ok {
 		t.Fatal("_links missing")
 	}

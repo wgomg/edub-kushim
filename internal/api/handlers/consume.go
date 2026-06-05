@@ -43,7 +43,7 @@ func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 	if len(files) == 0 {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		json.NewEncoder(w).Encode(map[string]any{
 			"batch_id":    nil,
 			"total_files": 0,
 			"message":     "no files found",
@@ -64,7 +64,7 @@ func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	json.NewEncoder(w).Encode(map[string]any{
 		"batch_id":    batchID,
 		"total_files": len(files),
 		"enqueued":    enqueued,

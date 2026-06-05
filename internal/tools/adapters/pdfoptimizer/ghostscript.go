@@ -79,5 +79,5 @@ func (g *Ghostscript) Optimize(ctx context.Context, path string) (*string, error
 }
 
 func (g *Ghostscript) Name() string {
-	return "ghostscript"
+	return "gs"
 }

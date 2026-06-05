@@ -13,7 +13,7 @@ func TestNewPdfOptimizer_Ghostscript(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPdfOptimizer: %v", err)
 	}
-	if opt.Name() != "ghostscript" {
+	if opt.Name() != "gs" {
 		t.Errorf("Name() = %q, want ghostscript", opt.Name())
 	}
 }

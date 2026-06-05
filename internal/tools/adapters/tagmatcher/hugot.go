@@ -25,13 +25,14 @@ type modelConfigJSON struct {
 }
 
 type Hugot struct {
-	logger        *utils.Logger
-	session       *hugot.Session
-	pipeline      *pipelines.FeatureExtractionPipeline
-	topN          int
-	minSimilarity float64
-	chunkSize     int // effective max tokens per chunk
-	chunkOverlap  int // overlap in tokens between consecutive chunks
+	logger           *utils.Logger
+	session          *hugot.Session
+	pipeline         *pipelines.FeatureExtractionPipeline
+	topN             int
+	minSimilarity    float64
+	consolidationSim float64 // tag→tag matching (post-LLM, higher)
+	chunkSize        int     // effective max tokens per chunk
+	chunkOverlap     int     // overlap in tokens between consecutive chunks
 }
 
 type match struct {
@@ -40,6 +41,7 @@ type match struct {
 }
 
 func NewHugot(logger *utils.Logger, tmCfg config.TagMatcherConfig, pipeName string) (*Hugot, error) {
+	logger.Debug(nil, "tagmatcher configured: engine=%s, backend=%s", tmCfg.Engine, tmCfg.Hugot.Backend)
 	session, err := getBackendSession(tmCfg, logger)
 	if err != nil {
 		return nil, fmt.Errorf("hugot session (%s): %w", tmCfg.Hugot.Backend, err)
@@ -82,13 +84,14 @@ func NewHugot(logger *utils.Logger, tmCfg config.TagMatcherConfig, pipeName stri
 		effectiveChunkSize, chunkOverlap, topN, minSim)
 
 	return &Hugot{
-		logger:        logger,
-		session:       session,
-		pipeline:      pipeline,
-		topN:          topN,
-		minSimilarity: minSim,
-		chunkSize:     effectiveChunkSize,
-		chunkOverlap:  chunkOverlap,
+		logger:           logger,
+		session:          session,
+		pipeline:         pipeline,
+		topN:             topN,
+		minSimilarity:    minSim,
+		chunkSize:        effectiveChunkSize,
+		chunkOverlap:     chunkOverlap,
+		consolidationSim: tmCfg.ConsolidationSimilarity,
 	}, nil
 }
 
@@ -113,7 +116,7 @@ func (h *Hugot) Match(ctx context.Context, input string, tagsToMatch map[string]
 	inputEmb := embeddings[0]
 
 	entries := tagsToMatch
-	matches := h.rankMatches(inputEmb, entries)
+	matches := h.rankMatches(inputEmb, entries, h.minSimilarity)
 	topN := min(h.topN, len(matches))
 
 	result := make([]string, topN)
@@ -153,8 +156,8 @@ func (h *Hugot) MatchEach(ctx context.Context, queries []string, tagsToMatch map
 
 	result := make([]string, len(queries))
 	for i, qEmb := range out.Embeddings {
-		matches := h.rankMatches(qEmb, entries)
-		if len(matches) > 0 && matches[0].similarity >= h.minSimilarity {
+		matches := h.rankMatches(qEmb, entries, h.consolidationSim)
+		if len(matches) > 0 {
 			h.logger.Debug(nil, "hugot: matchEach %q → %s (%.3f)", queries[i], matches[0].tag, matches[0].similarity)
 			result[i] = matches[0].tag
 		} else {
@@ -255,10 +258,7 @@ func (h *Hugot) encodeChunked(ctx context.Context, input string) ([]float32, err
 
 	var allEmbeddings [][]float32
 	for i := 0; i < n; i += step {
-		end := i + h.chunkSize
-		if end > n {
-			end = n
-		}
+		end := min(i+h.chunkSize, n)
 		chunkIDs := tokenIDs[i:end]
 
 		chunkText, err := backends.Decode(chunkIDs, tk)
@@ -318,11 +318,11 @@ func meanPool(embeddings [][]float32) []float32 {
 
 // rankMatches computes cosine similarity between a query embedding and all cached
 // tag embeddings, returns matches sorted descending by similarity above threshold.
-func (h *Hugot) rankMatches(queryEmb []float32, entries map[string][]float32) []match {
+func (h *Hugot) rankMatches(queryEmb []float32, entries map[string][]float32, minSim float64) []match {
 	matches := make([]match, 0, len(entries))
 	for tag, tagEmb := range entries {
 		sim := cosineSimilarity(queryEmb, tagEmb)
-		if sim >= h.minSimilarity {
+		if sim >= minSim {
 			matches = append(matches, match{tag: tag, similarity: sim})
 		}
 	}
@@ -373,8 +373,10 @@ func getBackendSession(tmCfg config.TagMatcherConfig, logger *utils.Logger) (*hu
 		if err := downloadLib(tmCfg.Hugot.BackendLibPath, soPath, logger); err != nil {
 			return nil, err
 		}
+		logger.Debug(nil, "tagmatcher used: engine=%s, backend=%s", tmCfg.Engine, "ort")
 		return hugot.NewORTSession(context.Background(), options.WithOnnxLibraryPath(tmCfg.Hugot.BackendLibPath))
 	default:
+		logger.Debug(nil, "tagmatcher used: engine=%s, backend=%s", tmCfg.Engine, "go")
 		return hugot.NewGoSession(context.Background())
 	}
 }

@@ -88,30 +88,6 @@ func TestNewSQLiteDB_DBFileExists(t *testing.T) {
 	db.Close()
 }
 
-func TestNewSQLiteDB_SchemaCreated(t *testing.T) {
-	chdirToProjectRoot(t)
-	cfg := config.DatabaseConfig{
-		Path: t.TempDir(),
-		Name: "schema-test.db",
-	}
-
-	db, err := NewSQLiteDB(cfg)
-	if err != nil {
-		t.Fatalf("NewSQLiteDB: %v", err)
-	}
-	defer db.Close()
-
-	var tableExists bool
-	err = db.QueryRow("SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='document'").
-		Scan(&tableExists)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !tableExists {
-		t.Fatal("expected 'document' table to exist after NewSQLiteDB")
-	}
-}
-
 func TestNewQueries(t *testing.T) {
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
@@ -125,21 +101,48 @@ func TestNewQueries(t *testing.T) {
 	}
 }
 
-func TestCreateSchema_AlreadyExists(t *testing.T) {
+func TestNewSQLiteDB_SchemaCreated(t *testing.T) {
+	chdirToProjectRoot(t)
+	cfg := config.DatabaseConfig{
+		Path: t.TempDir(),
+		Name: "schema-test.db",
+	}
+
+	db, err := NewSQLiteDB(cfg)
+	if err != nil {
+		t.Fatalf("NewSQLiteDB: %v", err)
+	}
+	defer db.Close()
+
+	if err := InitializeSchema(db); err != nil {
+		t.Fatalf("InitializeSchema: %v", err)
+	}
+
+	var tableExists bool
+	err = db.QueryRow("SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='document'").
+		Scan(&tableExists)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tableExists {
+		t.Fatal("expected 'document' table to exist after InitializeSchema")
+	}
+}
+
+func TestInitializeSchema_TwiceIsSafe(t *testing.T) {
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
 
-	_, err = db.Exec("CREATE TABLE document (id INTEGER PRIMARY KEY)")
-	if err != nil {
-		t.Fatal(err)
+	if err := InitializeSchema(db); err != nil {
+		t.Fatalf("first InitializeSchema: %v", err)
 	}
 
-	err = createSchema(db)
-	if err != nil {
-		t.Fatalf("createSchema when table exists: %v", err)
+	err = InitializeSchema(db)
+	if err == nil {
+		t.Fatal("expected error on second InitializeSchema (tables already exist)")
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/wgomg/edub-kushim/internal/config"
@@ -145,7 +146,7 @@ func TestEnrich_ReturnsStatsOnSuccess(t *testing.T) {
 		t.Fatal("expected non-nil result")
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(*raw, &result); err != nil {
 		t.Fatalf("unmarshal result: %v", err)
 	}
@@ -161,19 +162,19 @@ func TestEnrich_LongTextTriggersReducer(t *testing.T) {
 		t.Fatalf("NewEnricher: %v", err)
 	}
 
-	longText := ""
-	for i := 0; i < 5000; i++ {
-		longText += "word "
+	var longText strings.Builder
+	for range 5000 {
+		longText.WriteString("word ")
 	}
 
 	doc := database.Document{
 		ID:             1,
 		StoragePath:    "/tmp/test.pdf",
-		TextContent:    sql.NullString{String: longText, Valid: true},
+		TextContent:    sql.NullString{String: longText.String(), Valid: true},
 		Md5Checksum:    "abc",
 		Sha512Checksum: "def",
 		MimeType:       "application/pdf",
-		FileSize:       int64(len(longText)),
+		FileSize:       int64(len(longText.String())),
 		OriginalPath:   "/tmp/test.pdf",
 	}
 

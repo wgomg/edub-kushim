@@ -1,0 +1,17 @@
+FROM ubuntu:22.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc g++ make autoconf automake libtool pkg-config \
+    linux-headers-generic git curl ca-certificates \
+    zlib1g-dev \
+    libfreetype-dev libharfbuzz-dev libjpeg-dev libopenjp2-7-dev \
+    unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL https://go.dev/dl/go1.26.4.linux-amd64.tar.gz | \
+    tar -C /usr/local -xz
+
+ENV PATH=/usr/local/go/bin:$PATH
+ENV GOMODCACHE=/go/pkg/mod
+
+WORKDIR /workspace

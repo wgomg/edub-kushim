@@ -33,7 +33,6 @@ func main() {
 	}
 
 	startupLogger := utils.NewLogger("error")
-
 	configDir, err := utils.ConfigDir()
 	if err != nil {
 		startupLogger.Fatal("Cannot determine home directory:", err)

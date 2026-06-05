@@ -310,7 +310,7 @@ func TestOptimizePdf_FallbackUsed(t *testing.T) {
 			Consumer: config.ConsumerConfig{
 				PdfOptimizer: config.PdfOptimizerConfig{
 					Timeout:  5,
-					Fallback: "ghostscript",
+					Fallback: "gs",
 				},
 			},
 		},

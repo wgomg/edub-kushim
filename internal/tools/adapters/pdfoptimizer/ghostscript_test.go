@@ -39,7 +39,7 @@ func TestGhostscript_Name(t *testing.T) {
 	if err != nil {
 		t.Fatalf("gs not available: %v", err)
 	}
-	if opt.Name() != "ghostscript" {
+	if opt.Name() != "gs" {
 		t.Errorf("Name() = %q, want ghostscript", opt.Name())
 	}
 }

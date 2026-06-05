@@ -183,7 +183,7 @@ func TestEmbeddingStoreConcurrentReadWrite(t *testing.T) {
 	var wg sync.WaitGroup
 	n := 100
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
@@ -191,15 +191,13 @@ func TestEmbeddingStoreConcurrentReadWrite(t *testing.T) {
 		}(i)
 	}
 
-	for i := 0; i < n; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range n {
+		wg.Go(func() {
 			s.Get("key")
 			s.Keys()
 			s.Len()
 			s.Entries()
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -322,17 +320,15 @@ func TestCacheConcurrentGet(t *testing.T) {
 	var wg sync.WaitGroup
 	n := 100
 
-	for i := 0; i < n; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range n {
+		wg.Go(func() {
 			got, ok := c.Get("s")
 			if !ok {
 				t.Error("Get('s') not found")
 				return
 			}
 			_ = got.(*EmbeddingStore)
-		}()
+		})
 	}
 
 	wg.Wait()

@@ -514,7 +514,7 @@ func TestListBatches_LimitOffset(t *testing.T) {
 	q := database.New(db)
 	h := NewTaskHandler(q, utils.NewDiscardLogger())
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		seedTask(t, q, "t"+fmt.Sprint(i), "pending", "batch-"+fmt.Sprint(i))
 	}
 

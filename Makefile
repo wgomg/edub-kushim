@@ -42,70 +42,71 @@ web-build:
 	rm -rf internal/static/build
 	cp -r web/build internal/static/build
 
-build-deps:
-###	build lipng
-	@if [ ! -d $(BUILD_DIR)/libpng ]; then \
-		echo "Downloading libpng $(LIBNG_VER)..."; \
-		mkdir -p $(BUILD_DIR); \
-		curl -Ls https://download.sourceforge.net/libpng/libpng-$(LIBNG_VER).tar.gz | \
-			tar xz -C $(BUILD_DIR); \
-		mv $(BUILD_DIR)/libpng-$(LIBNG_VER) $(BUILD_DIR)/libpng; \
-	fi
-	cd $(BUILD_DIR)/libpng && rm -rf local/ && \
-		./configure --disable-shared --enable-static --prefix=$(BUILD_DIR)/libpng/local \
-			--libdir=$(BUILD_DIR)/libpng/local/lib64 && \
-		make -j$(shell nproc) && make install
+build:
+	go build -tags "XLA,ORT" -o $(BINARY) ./cmd/kushim/main.go
+	go build -tags "XLA,ORT" -o $(EDUB_BINARY) ./cmd/edub/main.go
 
-###	build leptonica
-	@if [ ! -d $(BUILD_DIR)/leptonica ]; then \
-		echo "Cloning leptonica..."; \
-		git clone https://github.com/DanBloomberg/leptonica.git $(BUILD_DIR)/leptonica; \
-	fi
-	cd $(BUILD_DIR)/leptonica && rm -rf local/ && ./autogen.sh && \
-		CPPFLAGS="-I$(BUILD_DIR)/libpng/local/include" \
-		LDFLAGS="-L$(BUILD_DIR)/libpng/local/lib64" \
-		./configure --disable-shared --enable-static --prefix=$(BUILD_DIR)/leptonica/local \
-			--libdir=$(BUILD_DIR)/leptonica/local/lib64 \
-			--without-libtiff --without-libwebp --without-libopenjpeg \
-			--without-giflib --without-jpeg --disable-programs && \
-		make -j$(shell nproc) && make install
+build-glibc:
+	podman run --rm \
+		-v $(CURDIR):/workspace:Z \
+		-v $(HOME)/go/pkg/mod:/go/pkg/mod:Z \
+		-w /workspace \
+		--network host \
+		-e GOMODCACHE=/go/pkg/mod \
+		-e CGO_ENABLED=1 \
+		kushim-glibc-builder \
+		make build \
+			BINARY=$(BINARY) \
+			EDUB_BINARY=$(EDUB_BINARY)
 
-###	build tesseract
-	@if [ ! -d $(BUILD_DIR)/tesseract ]; then \
-		echo "Cloning tesseract..."; \
-		git clone https://github.com/tesseract-ocr/tesseract.git $(BUILD_DIR)/tesseract; \
-	fi
-	cd $(BUILD_DIR)/tesseract && rm -rf local/ && ./autogen.sh && \
-		CPPFLAGS="-I$(BUILD_DIR)/libpng/local/include" \
-		LDFLAGS="-L$(BUILD_DIR)/libpng/local/lib64" \
-		PKG_CONFIG_PATH="$(BUILD_DIR)/leptonica/local/lib64/pkgconfig:$(BUILD_DIR)/libpng/local/lib64/pkgconfig" \
-		./configure --disable-shared --enable-static --prefix=$(BUILD_DIR)/tesseract/local \
-			--with-extra-libraries=$(BUILD_DIR)/leptonica/local/lib64 \
-			--with-extra-includes=$(BUILD_DIR)/leptonica/local/include \
-			--with-curl=no --with-archive=no --disable-openmp --disable-legacy --disable-graphics && \
-		make -j$(shell nproc) && make install
+build-musl: web-build
+	podman run --rm \
+		-v $(CURDIR):/workspace:Z \
+		-v $(HOME)/go/pkg/mod:/go/pkg/mod:Z \
+		-w /workspace \
+		--network host \
+		-e GOMODCACHE=/go/pkg/mod \
+		-e CGO_ENABLED=1 \
+		kushim-musl-builder \
+		make build \
+			BINARY=$(BINARY) \
+			EDUB_BINARY=$(EDUB_BINARY)
 
-###	build mupdf
-	@if [ ! -d $(MUPDF_DIR) ]; then \
-		echo "Cloning MuPDF $(MUPDF_VER)..."; \
-		git clone --depth 1 --branch $(MUPDF_VER) https://github.com/ArtifexSoftware/mupdf.git $(MUPDF_DIR); \
-		cd $(MUPDF_DIR) && git submodule update --init --depth 1; \
-	fi
-	cd $(MUPDF_DIR) && rm -rf local/ && \
-		make prefix=$(MUPDF_DIR)/local HAVE_X11=no HAVE_GLUT=no shared=no libs install
+build-deps: build-libpng build-leptonica build-tesseract build-mupdf download-tokenizers
 
-###	build tokenizers
-	@if [ ! -f $(TOKENIZERS_DIR)/libtokenizers.a ]; then \
-		echo "Cloning and building tokenizers from source for musl..."; \
-		git clone --depth 1 https://github.com/daulet/tokenizers.git $(TOKENIZERS_DIR)/src; \
-		cd $(TOKENIZERS_DIR)/src && \
-			cargo build --release -p tokenizers-ffi; \
-		cp $(TOKENIZERS_DIR)/src/target/release/libtokenizers_ffi.a $(TOKENIZERS_DIR)/libtokenizers.a; \
-		echo "Built musl-compatible libtokenizers.a"; \
-	fi
+build-deps-musl: build-libpng build-leptonica build-tesseract build-mupdf build-tokenizers
 
-consume: build
-	$(BINARY) consume
+build-musl-image:
+	podman build -t kushim-musl-builder -f Containerfile.musl .
+
+build-glibc-image:
+	podman build -t kushim-glibc-builder -f Containerfile.glibc .
+
+build-musl-deps:
+	podman run --rm \
+		-v $(CURDIR):/workspace:Z \
+		-v $(HOME)/go/pkg/mod:/go/pkg/mod:Z \
+		-w /workspace \
+		--network host \
+		-e GOMODCACHE=/go/pkg/mod \
+		-e CGO_ENABLED=1 \
+		kushim-musl-builder \
+		make build-deps-musl \
+			BINARY=$(BINARY) \
+			EDUB_BINARY=$(EDUB_BINARY)
+
+build-glibc-deps:
+	podman run --rm \
+		-v $(CURDIR):/workspace:Z \
+		-v $(HOME)/go/pkg/mod:/go/pkg/mod:Z \
+		-w /workspace \
+		--network host \
+		-e GOMODCACHE=/go/pkg/mod \
+		-e CGO_ENABLED=1 \
+		kushim-glibc-builder \
+		make build-deps \
+			BINARY=$(BINARY) \
+			EDUB_BINARY=$(EDUB_BINARY)
 
 test:
 	go test $(TEST_FLAGS) $(TEST_PKG)
@@ -127,43 +128,75 @@ test-container: test-container-build
 		kushim-test \
 		test $(TEST_FLAGS) $(TEST_PKG)
 
-build-musl-image:
-	podman build -t kushim-musl-builder -f Containerfile.musl .
+build-libpng:
+	@if [ ! -d $(BUILD_DIR)/libpng ]; then \
+		echo "Downloading libpng $(LIBNG_VER)..."; \
+		mkdir -p $(BUILD_DIR); \
+		curl -Ls https://download.sourceforge.net/libpng/libpng-$(LIBNG_VER).tar.gz | \
+			tar xz -C $(BUILD_DIR); \
+		mv $(BUILD_DIR)/libpng-$(LIBNG_VER) $(BUILD_DIR)/libpng; \
+	fi
+	cd $(BUILD_DIR)/libpng && rm -rf local/ && \
+		./configure --disable-shared --enable-static --prefix=$(BUILD_DIR)/libpng/local \
+			--libdir=$(BUILD_DIR)/libpng/local/lib64 && \
+		make -j$(shell nproc) && make install
 
-_musl-build-deps:
-	go mod download
-	$(MAKE) build-deps
+build-leptonica:
+	@if [ ! -d $(BUILD_DIR)/leptonica ]; then \
+		echo "Cloning leptonica..."; \
+		git clone https://github.com/DanBloomberg/leptonica.git $(BUILD_DIR)/leptonica; \
+	fi
+	cd $(BUILD_DIR)/leptonica && rm -rf local/ && ./autogen.sh && \
+		CPPFLAGS="-I$(BUILD_DIR)/libpng/local/include" \
+		LDFLAGS="-L$(BUILD_DIR)/libpng/local/lib64" \
+		./configure --disable-shared --enable-static --prefix=$(BUILD_DIR)/leptonica/local \
+			--libdir=$(BUILD_DIR)/leptonica/local/lib64 \
+			--without-libtiff --without-libwebp --without-libopenjpeg \
+			--without-giflib --without-jpeg --disable-programs && \
+		make -j$(shell nproc) && make install
 
-_musl-build:
-	go build -tags "XLA,ORT" -o $(BINARY) ./cmd/kushim/main.go
-	go build -tags "XLA,ORT" -o $(EDUB_BINARY) ./cmd/edub/main.go
-	@echo "=== Done: static binaries at $(BINARY) and $(EDUB_BINARY) ==="
+build-tesseract:
+	@if [ ! -d $(BUILD_DIR)/tesseract ]; then \
+		echo "Cloning tesseract..."; \
+		git clone https://github.com/tesseract-ocr/tesseract.git $(BUILD_DIR)/tesseract; \
+	fi
+	cd $(BUILD_DIR)/tesseract && rm -rf local/ && ./autogen.sh && \
+		CPPFLAGS="-I$(BUILD_DIR)/libpng/local/include" \
+		LDFLAGS="-L$(BUILD_DIR)/libpng/local/lib64" \
+		PKG_CONFIG_PATH="$(BUILD_DIR)/leptonica/local/lib64/pkgconfig:$(BUILD_DIR)/libpng/local/lib64/pkgconfig" \
+		./configure --disable-shared --enable-static --prefix=$(BUILD_DIR)/tesseract/local \
+			--libdir=$(BUILD_DIR)/tesseract/local/lib64
+			--with-extra-libraries=$(BUILD_DIR)/leptonica/local/lib64 \
+			--with-extra-includes=$(BUILD_DIR)/leptonica/local/include \
+			--with-curl=no --with-archive=no --disable-openmp --disable-legacy --disable-graphics && \
+		make -j$(shell nproc) && make install
 
-build-musl-deps: build-musl-image
-	podman run --rm \
-		-v $(CURDIR):/workspace:Z \
-		-v $(HOME)/go/pkg/mod:/go/pkg/mod:Z \
-		-w /workspace \
-		--network host \
-		-e GOMODCACHE=/go/pkg/mod \
-		-e CGO_ENABLED=1 \
-		kushim-musl-builder \
-		make _musl-build-deps \
-			BINARY=$(BINARY) \
-			EDUB_BINARY=$(EDUB_BINARY)
+build-mupdf:
+	@if [ ! -d $(MUPDF_DIR) ]; then \
+		echo "Cloning MuPDF $(MUPDF_VER)..."; \
+		git clone --depth 1 --branch $(MUPDF_VER) https://github.com/ArtifexSoftware/mupdf.git $(MUPDF_DIR); \
+		cd $(MUPDF_DIR) && git submodule update --init --depth 1; \
+	fi
+	cd $(MUPDF_DIR) && rm -rf local/ && \
+		make prefix=$(MUPDF_DIR)/local HAVE_X11=no HAVE_GLUT=no shared=no libs install
 
-build-musl: web-build
-	podman run --rm \
-		-v $(CURDIR):/workspace:Z \
-		-v $(HOME)/go/pkg/mod:/go/pkg/mod:Z \
-		-w /workspace \
-		--network host \
-		-e GOMODCACHE=/go/pkg/mod \
-		-e CGO_ENABLED=1 \
-		kushim-musl-builder \
-		make _musl-build \
-			BINARY=$(BINARY) \
-			EDUB_BINARY=$(EDUB_BINARY)
+download-tokenizers:
+	@if [ ! -f $(TOKENIZERS_DIR)/libtokenizers.a ]; then \
+		echo "Downloading libtokenizers.a..."; \
+		mkdir -p $(TOKENIZERS_DIR); \
+		curl -sL https://github.com/daulet/tokenizers/releases/latest/download/libtokenizers.linux-amd64.tar.gz \
+			-o $(TOKENIZERS_DIR)/libtokenizers.tar.gz; \
+		tar xzf $(TOKENIZERS_DIR)/libtokenizers.tar.gz -C $(TOKENIZERS_DIR); \
+		rm $(TOKENIZERS_DIR)/libtokenizers.tar.gz; \
+		echo "Downloaded libtokenizers.a to $(TOKENIZERS_DIR)"; \
+	fi
 
-clean:
-	rm -f $(BINARY) $(EDUB_BINARY)
+build-tokenizers:
+	@if [ ! -f $(TOKENIZERS_DIR)/libtokenizers.a ]; then \
+		echo "Cloning and building tokenizers from source for musl..."; \
+		git clone --depth 1 https://github.com/daulet/tokenizers.git $(TOKENIZERS_DIR)/src; \
+		cd $(TOKENIZERS_DIR)/src && \
+			cargo build --release -p tokenizers-ffi; \
+		cp $(TOKENIZERS_DIR)/src/target/release/libtokenizers_ffi.a $(TOKENIZERS_DIR)/libtokenizers.a; \
+		echo "Built musl-compatible libtokenizers.a"; \
+	fi
