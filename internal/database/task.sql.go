@@ -762,3 +762,20 @@ func (q *Queries) RetryTask(ctx context.Context, id int64) error {
 	_, err := q.db.ExecContext(ctx, retryTask, id)
 	return err
 }
+
+const setEnrichTaskPending = `-- name: SetEnrichTaskPending :exec
+UPDATE task SET
+    status = 'pending',
+    payload = ?
+WHERE id = ? AND status = 'waiting' AND task_type = 'enrich'
+`
+
+type SetEnrichTaskPendingParams struct {
+	Payload json.RawMessage
+	ID      int64
+}
+
+func (q *Queries) SetEnrichTaskPending(ctx context.Context, arg SetEnrichTaskPendingParams) error {
+	_, err := q.db.ExecContext(ctx, setEnrichTaskPending, arg.Payload, arg.ID)
+	return err
+}

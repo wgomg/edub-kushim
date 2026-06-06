@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/config"
@@ -53,14 +54,30 @@ func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 
 	batchID := uuid.New().String()
 	enqueued := 0
-	for _, f := range files {
-		payload, _ := json.Marshal(map[string]string{"file_path": f.OriginalPath})
-		_, err := h.dispatcher.Enqueue(ctx, "consume", batchID, payload)
+	for i, f := range files {
+		consumeTaskID := uuid.New().String()
+		enrichTaskID := uuid.New().String()
+
+		consumePayload, _ := json.Marshal(map[string]any{
+			"file_path":    f.OriginalPath,
+			"file_index":   i + 1,
+			"on_completed": enrichTaskID,
+		})
+		_, err := h.dispatcher.Enqueue(ctx, "consume", batchID, consumePayload, consumeTaskID)
 		if err != nil {
 			h.logger.Error(&reqID, "enqueue %s: %v", f.OriginalPath, err)
 			continue
 		}
 		enqueued++
+
+		enrichPayload, _ := json.Marshal(map[string]any{
+			"waiting_for": consumeTaskID,
+			"file_name":   filepath.Base(f.OriginalPath),
+			"file_index":  i + 1,
+		})
+		if _, err := h.dispatcher.Enqueue(ctx, "enrich", batchID, enrichPayload, enrichTaskID, "waiting"); err != nil {
+			h.logger.Error(&reqID, "create enrich task for %s: %v", f.OriginalPath, err)
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)

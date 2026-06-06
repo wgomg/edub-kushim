@@ -15,6 +15,7 @@ type TaskResponse struct {
 type BatchSummaryResponse struct {
 	BatchID    string `json:"batch_id"`
 	Total      int64  `json:"total"`
+	Waiting    int64  `json:"waiting"`
 	Pending    int64  `json:"pending"`
 	Processing int64  `json:"processing"`
 	Completed  int64  `json:"completed"`
@@ -35,6 +36,7 @@ type ListTasksResponse struct {
 type GlobalSummaryResponse struct {
 	TotalBatches int64   `json:"total_batches"`
 	TotalFiles   int64   `json:"total_files"`
+	Waiting      int64   `json:"waiting"`
 	Pending      int64   `json:"pending"`
 	Processing   int64   `json:"processing"`
 	Completed    int64   `json:"completed"`

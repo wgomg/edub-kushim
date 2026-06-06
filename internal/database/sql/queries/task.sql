@@ -92,6 +92,12 @@ UPDATE task SET
     completed_at = NULL
 WHERE id = ?;
 
+-- name: SetEnrichTaskPending :exec
+UPDATE task SET
+    status = 'pending',
+    payload = ?
+WHERE id = ? AND status = 'waiting' AND task_type = 'enrich';
+
 -- name: DeleteTask :exec
 DELETE FROM task WHERE id = ?;
 

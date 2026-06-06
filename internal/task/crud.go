@@ -26,6 +26,7 @@ type TaskFilter struct {
 
 type BatchCounts struct {
 	BatchID    string
+	Waiting    int64
 	Pending    int64
 	Processing int64
 	Completed  int64
@@ -34,7 +35,7 @@ type BatchCounts struct {
 }
 
 func (bc BatchCounts) Total() int64 {
-	return bc.Pending + bc.Processing + bc.Completed + bc.Failed + bc.Cancelled
+	return bc.Waiting + bc.Pending + bc.Processing + bc.Completed + bc.Failed + bc.Cancelled
 }
 
 func Get(ctx context.Context, queries *database.Queries, taskID string) (database.Task, error) {
@@ -102,7 +103,7 @@ func Retry(ctx context.Context, queries *database.Queries, taskID string) error 
 }
 
 func CountBatchStatuses(ctx context.Context, queries *database.Queries, batchID string) BatchCounts {
-	statuses := []string{"pending", "processing", "completed", "failed", "cancelled"}
+	statuses := []string{"waiting", "pending", "processing", "completed", "failed", "cancelled"}
 	counts := BatchCounts{BatchID: batchID}
 
 	for _, status := range statuses {
@@ -114,6 +115,8 @@ func CountBatchStatuses(ctx context.Context, queries *database.Queries, batchID 
 			continue
 		}
 		switch status {
+		case "waiting":
+			counts.Waiting = count
 		case "pending":
 			counts.Pending = count
 		case "processing":

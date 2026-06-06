@@ -44,7 +44,7 @@ func taskListHandler(c *Container, args []string) error {
 	if fp.Help("Usage: kushim task list [--batch <id>] [--status <status>] [--limit N] [--offset N]\n" +
 		"  List tasks with optional filters.\n\n" +
 		"  --batch <id>      filter by batch UUID\n" +
-		"  --status <s>      filter by status (pending|processing|completed|failed)\n" +
+		"  --status <s>      filter by status (waiting|pending|processing|completed|failed)\n" +
 		"  --limit N         max results (default 20, max 100)\n" +
 		"  --offset N        result offset (default 0)") {
 		return nil

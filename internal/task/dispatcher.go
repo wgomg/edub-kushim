@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/cache"
@@ -43,7 +42,7 @@ func NewDispatcher(cfg *config.Config, logger *utils.Logger, db *sql.DB, embeddi
 	}, nil
 }
 
-func (d *Dispatcher) Enqueue(ctx context.Context, taskType, batchID string, payload json.RawMessage) (string, error) {
+func (d *Dispatcher) Enqueue(ctx context.Context, taskType, batchID string, payload json.RawMessage, taskID string, status ...string) (string, error) {
 	h, err := d.getHandler(taskType)
 	if err != nil {
 		return "", err
@@ -57,11 +56,17 @@ func (d *Dispatcher) Enqueue(ctx context.Context, taskType, batchID string, payl
 		}
 	}
 
-	taskID := uuid.New().String()
+	if taskID == "" {
+		taskID = uuid.New().String()
+	}
+	taskStatus := "pending"
+	if len(status) > 0 && status[0] != "" {
+		taskStatus = status[0]
+	}
 	_, err = d.queries.CreateTask(ctx, database.CreateTaskParams{
 		TaskID:   taskID,
 		TaskType: taskType,
-		Status:   "pending",
+		Status:   taskStatus,
 		BatchID:  sql.NullString{String: batchID, Valid: batchID != ""},
 		Payload:  payload,
 		DedupKey: dedupKey,
@@ -69,6 +74,7 @@ func (d *Dispatcher) Enqueue(ctx context.Context, taskType, batchID string, payl
 	if err != nil {
 		return "", fmt.Errorf("create task: %w", err)
 	}
+
 	return taskID, nil
 }
 
@@ -113,37 +119,53 @@ func (d *Dispatcher) Next(ctx context.Context, taskType string) error {
 		return nil
 	}
 
-	err = d.queries.CompleteTask(ctx, database.CompleteTaskParams{
-		ID:     id,
-		Result: &result,
-	})
-	if err != nil {
-		return fmt.Errorf("complete task %d: %w", id, err)
-	}
-
-	// Enqueue enrichment after the task is fully committed.
+	// Activate the waiting enrich task before marking consume as completed,
+	// so the poll loop never sees a gap where the batch looks finished.
 	if taskType == "consume" && result != nil {
 		var consumeResult struct {
 			DocumentID int64 `json:"document_id"`
 		}
 		json.Unmarshal(result, &consumeResult)
 
-		var consumePayload struct {
-			FilePath  string `json:"file_path"`
-			FileIndex int    `json:"file_index"`
-		}
-		json.Unmarshal(t.Payload, &consumePayload)
-
 		if consumeResult.DocumentID != 0 {
-			payload, _ := json.Marshal(map[string]any{
-				"document_id": consumeResult.DocumentID,
-				"file_name":   filepath.Base(consumePayload.FilePath),
-				"file_index":  consumePayload.FileIndex,
-			})
-			if _, err := d.Enqueue(ctx, "enrich", t.BatchID.String, payload); err != nil {
-				d.logger.Error(nil, "failed to enqueue enrich task for document %d: %v", consumeResult.DocumentID, err)
+			var consumePayload struct {
+				OnCompleted string `json:"on_completed"`
+			}
+			if err := json.Unmarshal(t.Payload, &consumePayload); err != nil || consumePayload.OnCompleted == "" {
+				d.logger.Error(nil, "consume task %s missing on_completed in payload", t.TaskID)
+			} else {
+				enrichTask, err := d.queries.GetTaskByTaskID(ctx, consumePayload.OnCompleted)
+				if err != nil {
+					d.logger.Error(nil, "failed to find waiting enrich task %s for consume %s: %v", consumePayload.OnCompleted, t.TaskID, err)
+				} else {
+					var enrichPayload struct {
+						WaitingFor string `json:"waiting_for"`
+					}
+					json.Unmarshal(enrichTask.Payload, &enrichPayload)
+
+					if enrichPayload.WaitingFor != t.TaskID {
+						d.logger.Error(nil, "waiting_for mismatch: enrich %s has waiting_for=%q, expected %q", enrichTask.TaskID, enrichPayload.WaitingFor, t.TaskID)
+					} else {
+						var p map[string]any
+						json.Unmarshal(enrichTask.Payload, &p)
+						p["document_id"] = consumeResult.DocumentID
+						updatedPayload, _ := json.Marshal(p)
+
+						if err := d.setEnrichTaskPending(ctx, enrichTask.ID, updatedPayload); err != nil {
+							d.logger.Error(nil, "failed to activate enrich task %s: %v", enrichTask.TaskID, err)
+						}
+					}
+				}
 			}
 		}
+	}
+
+	err = d.queries.CompleteTask(ctx, database.CompleteTaskParams{
+		ID:     id,
+		Result: &result,
+	})
+	if err != nil {
+		return fmt.Errorf("complete task %d: %w", id, err)
 	}
 
 	return nil
@@ -158,4 +180,11 @@ func (d *Dispatcher) getHandler(taskType string) (Handler, error) {
 	default:
 		return nil, fmt.Errorf("unknown task type: %q", taskType)
 	}
+}
+
+func (d *Dispatcher) setEnrichTaskPending(ctx context.Context, id int64, payload json.RawMessage) error {
+	return d.queries.SetEnrichTaskPending(ctx, database.SetEnrichTaskPendingParams{
+		ID:      id,
+		Payload: payload,
+	})
 }

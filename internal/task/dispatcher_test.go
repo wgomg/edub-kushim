@@ -96,7 +96,7 @@ func TestEnqueue_ValidTaskType(t *testing.T) {
 	ctx := context.Background()
 
 	payload := json.RawMessage(`{"file_path":"/tmp/test.pdf"}`)
-	taskID, err := d.Enqueue(ctx, "consume", "batch-1", payload)
+	taskID, err := d.Enqueue(ctx, "consume", "batch-1", payload, "")
 	if err != nil {
 		t.Fatalf("Enqueue() unexpected error: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestEnqueue_InvalidTaskType(t *testing.T) {
 	ctx := context.Background()
 
 	payload := json.RawMessage(`{}`)
-	_, err := d.Enqueue(ctx, "nonexistent", "", payload)
+	_, err := d.Enqueue(ctx, "nonexistent", "", payload, "")
 	if err == nil {
 		t.Fatal("Enqueue() expected error for unknown task type, got nil")
 	}
@@ -148,7 +148,7 @@ func TestEnqueue_DedupKey(t *testing.T) {
 
 	payload := json.RawMessage(`{"file_path":"/tmp/test.pdf"}`)
 
-	id1, err := d.Enqueue(ctx, "consume", "batch-1", payload)
+	id1, err := d.Enqueue(ctx, "consume", "batch-1", payload, "")
 	if err != nil {
 		t.Fatalf("first Enqueue() unexpected error: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestEnqueue_DedupKey(t *testing.T) {
 		t.Fatal("first Enqueue() returned empty task ID")
 	}
 
-	_, err = d.Enqueue(ctx, "consume", "batch-1", payload)
+	_, err = d.Enqueue(ctx, "consume", "batch-1", payload, "")
 	if err == nil {
 		t.Fatal("second Enqueue() expected dedup error, got nil")
 	}
@@ -249,7 +249,7 @@ func TestNext_ProcessesPendingTask(t *testing.T) {
 
 	ctx := context.Background()
 	payload := json.RawMessage(`{"file_path":"` + srcPath + `"}`)
-	taskID, err := d.Enqueue(ctx, "consume", "batch-next", payload)
+	taskID, err := d.Enqueue(ctx, "consume", "batch-next", payload, "")
 	if err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
@@ -284,12 +284,12 @@ func TestNext_ProcessesPendingTask(t *testing.T) {
 	}
 }
 
-func TestNext_ConsumeEnqueuesEnrichTask(t *testing.T) {
+func TestNext_ConsumeResolvesWaitingEnrich(t *testing.T) {
 	db := setupTestDB(t)
 	logger := utils.NewDiscardLogger()
 	dir := t.TempDir()
 
-	content := []byte("test file content for enrich enqueue test")
+	content := []byte("test file content for enrich resolution test")
 	srcPath := filepath.Join(dir, "test.pdf")
 	if err := os.WriteFile(srcPath, content, 0644); err != nil {
 		t.Fatal(err)
@@ -326,47 +326,64 @@ func TestNext_ConsumeEnqueuesEnrichTask(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	payload := json.RawMessage(`{"file_path":"` + srcPath + `"}`)
-	_, err = d.Enqueue(ctx, "consume", "batch-enrich-test", payload)
+
+	// Create consume task with on_completed pointing to the enrich task.
+	consumeTaskID := "consume-uuid-resolve"
+	enrichTaskID := "enrich-uuid-resolve"
+	batchID := "batch-resolve-test"
+
+	consumePayload, _ := json.Marshal(map[string]any{
+		"file_path":    srcPath,
+		"file_index":   1,
+		"on_completed": enrichTaskID,
+	})
+	_, err = d.Enqueue(ctx, "consume", batchID, consumePayload, consumeTaskID)
 	if err != nil {
-		t.Fatalf("Enqueue: %v", err)
+		t.Fatalf("Enqueue(consume): %v", err)
 	}
 
+	// Create waiting enrich task linked to the consume task.
+	enrichPayload, _ := json.Marshal(map[string]any{
+		"waiting_for": consumeTaskID,
+		"file_name":   "test.pdf",
+		"file_index":  1,
+	})
+	_, err = d.Enqueue(ctx, "enrich", batchID, enrichPayload, enrichTaskID, "waiting")
+	if err != nil {
+		t.Fatalf("Enqueue(enrich): %v", err)
+	}
+
+	// Process the consume task — should activate the waiting enrich.
 	err = d.Next(ctx, "consume")
 	if err != nil {
 		t.Fatalf("Next(consume): %v", err)
 	}
 
-	tasks, err := d.queries.ListTasks(ctx, database.ListTasksParams{Limit: 10, Offset: 0})
+	// Verify the waiting enrich task was activated.
+	enrichTask, err := d.queries.GetTaskByTaskID(ctx, enrichTaskID)
 	if err != nil {
-		t.Fatalf("ListTasks: %v", err)
-	}
-
-	var enrichTask *database.Task
-	for i := range tasks {
-		if tasks[i].TaskType == "enrich" {
-			enrichTask = &tasks[i]
-			break
-		}
-	}
-	if enrichTask == nil {
-		t.Fatal("expected an enrich task to be enqueued after consume")
+		t.Fatalf("GetTaskByTaskID(enrich): %v", err)
 	}
 	if enrichTask.Status != "pending" {
 		t.Errorf("enrich task status = %q, want %q", enrichTask.Status, "pending")
 	}
-	if enrichTask.BatchID.String != "batch-enrich-test" {
-		t.Errorf("enrich task batch_id = %q, want %q", enrichTask.BatchID.String, "batch-enrich-test")
+	if enrichTask.BatchID.String != batchID {
+		t.Errorf("enrich task batch_id = %q, want %q", enrichTask.BatchID.String, batchID)
 	}
 
-	var enrichPayload struct {
-		DocumentID int64 `json:"document_id"`
+	var enrichPayloadData struct {
+		DocumentID int64  `json:"document_id"`
+		WaitingFor string `json:"waiting_for"`
+		FileName   string `json:"file_name"`
 	}
-	if err := json.Unmarshal(enrichTask.Payload, &enrichPayload); err != nil {
+	if err := json.Unmarshal(enrichTask.Payload, &enrichPayloadData); err != nil {
 		t.Fatalf("unmarshal enrich payload: %v", err)
 	}
-	if enrichPayload.DocumentID == 0 {
-		t.Error("expected non-zero document_id in enrich payload")
+	if enrichPayloadData.DocumentID == 0 {
+		t.Error("expected non-zero document_id in enrich payload after activation")
+	}
+	if enrichPayloadData.WaitingFor != consumeTaskID {
+		t.Errorf("waiting_for = %q, want %q", enrichPayloadData.WaitingFor, consumeTaskID)
 	}
 }
 
@@ -404,7 +421,7 @@ func TestNext_EnrichProcessesTask(t *testing.T) {
 
 	ctx := context.Background()
 	payload := json.RawMessage(`{"document_id":1}`)
-	taskID, err := d.Enqueue(ctx, "enrich", "batch-enrich", payload)
+	taskID, err := d.Enqueue(ctx, "enrich", "batch-enrich", payload, "")
 	if err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
@@ -445,12 +462,12 @@ func TestNext_EnrichDedup(t *testing.T) {
 	ctx := context.Background()
 	payload := json.RawMessage(`{"document_id":42}`)
 
-	_, err = d.Enqueue(ctx, "enrich", "batch-dedup", payload)
+	_, err = d.Enqueue(ctx, "enrich", "batch-dedup", payload, "")
 	if err != nil {
 		t.Fatalf("first Enqueue: %v", err)
 	}
 
-	_, err = d.Enqueue(ctx, "enrich", "batch-dedup", payload)
+	_, err = d.Enqueue(ctx, "enrich", "batch-dedup", payload, "")
 	if err == nil {
 		t.Fatal("second Enqueue() expected dedup error, got nil")
 	}

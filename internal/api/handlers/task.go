@@ -126,6 +126,7 @@ func (h *TaskHandler) ListBatches(w http.ResponseWriter, r *http.Request) {
 		resp.Batches = append(resp.Batches, types.BatchSummaryResponse{
 			BatchID:    bc.BatchID,
 			Total:      bc.Total(),
+			Waiting:    bc.Waiting,
 			Pending:    bc.Pending,
 			Processing: bc.Processing,
 			Completed:  bc.Completed,
@@ -191,6 +192,7 @@ func (h *TaskHandler) GlobalSummary(w http.ResponseWriter, r *http.Request) {
 	resp := types.GlobalSummaryResponse{
 		TotalBatches: totalBatches,
 		TotalFiles:   totalFiles,
+		Waiting:      perStatus["waiting"],
 		Pending:      perStatus["pending"],
 		Processing:   perStatus["processing"],
 		Completed:    perStatus["completed"],
@@ -209,6 +211,7 @@ func buildBatchSummary(ctx context.Context, queries *database.Queries, batchID s
 	return types.BatchSummaryResponse{
 		BatchID:    batchID,
 		Total:      bc.Total(),
+		Waiting:    bc.Waiting,
 		Pending:    bc.Pending,
 		Processing: bc.Processing,
 		Completed:  bc.Completed,

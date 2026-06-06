@@ -222,7 +222,8 @@ func TestCountBatchStatuses(t *testing.T) {
 	queries := database.NewQueries(db)
 	ctx := context.Background()
 
-	// batch-a: 1 pending, 1 processing, 2 completed, 1 failed = 5 total
+	// batch-a: 1 waiting, 1 pending, 1 processing, 2 completed, 1 failed = 6 total
+	seedTask(t, queries, map[string]any{"task_id": "a0", "batch_id": "batch-a", "status": "waiting"})
 	seedTask(t, queries, map[string]any{"task_id": "a1", "batch_id": "batch-a", "status": "pending"})
 	seedTask(t, queries, map[string]any{"task_id": "a2", "batch_id": "batch-a", "status": "processing"})
 	seedTask(t, queries, map[string]any{"task_id": "a3", "batch_id": "batch-a", "status": "completed"})
@@ -231,6 +232,9 @@ func TestCountBatchStatuses(t *testing.T) {
 
 	counts := CountBatchStatuses(ctx, queries, "batch-a")
 
+	if counts.Waiting != 1 {
+		t.Errorf("Waiting = %d, want 1", counts.Waiting)
+	}
 	if counts.Pending != 1 {
 		t.Errorf("Pending = %d, want 1", counts.Pending)
 	}
@@ -243,8 +247,8 @@ func TestCountBatchStatuses(t *testing.T) {
 	if counts.Failed != 1 {
 		t.Errorf("Failed = %d, want 1", counts.Failed)
 	}
-	if counts.Total() != 5 {
-		t.Errorf("Total() = %d, want 5", counts.Total())
+	if counts.Total() != 6 {
+		t.Errorf("Total() = %d, want 6", counts.Total())
 	}
 }
 
@@ -261,8 +265,8 @@ func TestCountBatchStatuses_EmptyBatch(t *testing.T) {
 }
 
 func TestBatchCounts_Total(t *testing.T) {
-	bc := BatchCounts{Pending: 2, Processing: 1, Completed: 5, Failed: 1}
-	if bc.Total() != 9 {
-		t.Errorf("Total() = %d, want 9", bc.Total())
+	bc := BatchCounts{Waiting: 1, Pending: 2, Processing: 1, Completed: 5, Failed: 1}
+	if bc.Total() != 10 {
+		t.Errorf("Total() = %d, want 10", bc.Total())
 	}
 }
