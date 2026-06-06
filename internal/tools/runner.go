@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/contentanalyzer"
@@ -44,7 +46,10 @@ type PdfOptimizationResult struct {
 }
 
 type TextReducerResult struct {
-	Text string
+	Text            string
+	WordCount       int
+	CharCount       int
+	TargetWordCount int
 }
 
 type TagMatchResult struct {
@@ -246,20 +251,35 @@ func (r *Runner) OptimizePdf(ctx context.Context, path string) (*PdfOptimization
 }
 
 func (r *Runner) ReduceContent(ctx context.Context, content string, chunkSize, targetWordCount int) (*TextReducerResult, error) {
-	if targetWordCount == 0 {
-		return &TextReducerResult{Text: content}, nil
+	contentWordCount := len(strings.Fields(content))
+	charWordCount := utf8.RuneCountInString(content)
+
+	result := &TextReducerResult{
+		Text:            content,
+		WordCount:       contentWordCount,
+		CharCount:       charWordCount,
+		TargetWordCount: targetWordCount,
+	}
+
+	if targetWordCount == 0 || contentWordCount < targetWordCount {
+		return result, nil
 	}
 
 	if r.textReducer == nil {
-		return nil, fmt.Errorf("tag reducer not configured")
+		return result, fmt.Errorf("text reducer not configured")
 	}
 	reducedContent, err := runWithTimeout(ctx, func() (*string, error) {
 		return r.textReducer.Reduce(ctx, content, chunkSize, targetWordCount)
 	})
 	if err != nil {
-		return nil, fmt.Errorf("text reducer: %w", err)
+		return result, fmt.Errorf("text reducer: %w", err)
 	}
-	return &TextReducerResult{Text: *reducedContent}, nil
+	return &TextReducerResult{
+		Text:            *reducedContent,
+		WordCount:       len(strings.Fields(*reducedContent)),
+		CharCount:       utf8.RuneCountInString(*reducedContent),
+		TargetWordCount: targetWordCount,
+	}, nil
 }
 
 func (r *Runner) MatchTags(ctx context.Context, input string, tagsToMatch map[string][]float32) (*TagMatchResult, error) {

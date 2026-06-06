@@ -31,6 +31,8 @@ func docTestDB(t *testing.T) *sql.DB {
 			mime_type TEXT NOT NULL,
 			file_size INTEGER NOT NULL,
 			page_count INTEGER NOT NULL DEFAULT 0,
+			word_count INTEGER NOT NULL DEFAULT 0,
+			char_count INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			modified_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			document_type_id INTEGER,
@@ -419,91 +421,6 @@ func TestUpdateDocumentPaths(t *testing.T) {
 	}
 	if doc.StoragePath != "/new/store" {
 		t.Errorf("StoragePath = %q", doc.StoragePath)
-	}
-}
-
-func TestUpdateDocumentText(t *testing.T) {
-	db := docTestDB(t)
-	q := New(db)
-
-	id := insertDoc(t, q, nil)
-
-	err := q.UpdateDocumentText(context.Background(), UpdateDocumentTextParams{
-		TextContent: sql.NullString{String: "updated text", Valid: true},
-		ID:          id,
-	})
-	if err != nil {
-		t.Fatalf("UpdateDocumentText: %v", err)
-	}
-
-	doc, err := q.GetDocument(context.Background(), id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !doc.TextContent.Valid || doc.TextContent.String != "updated text" {
-		t.Errorf("TextContent = %v", doc.TextContent)
-	}
-}
-
-func TestUpdateDocumentPathsWithText(t *testing.T) {
-	db := docTestDB(t)
-	q := New(db)
-
-	id := insertDoc(t, q, nil)
-
-	err := q.UpdateDocumentPathsWithText(context.Background(), UpdateDocumentPathsWithTextParams{
-		OriginalPath: "/new/orig",
-		StoragePath:  "/new/store",
-		TextContent:  sql.NullString{String: "with text", Valid: true},
-		ID:           id,
-	})
-	if err != nil {
-		t.Fatalf("UpdateDocumentPathsWithText: %v", err)
-	}
-
-	doc, err := q.GetDocument(context.Background(), id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if doc.OriginalPath != "/new/orig" {
-		t.Errorf("OriginalPath = %q", doc.OriginalPath)
-	}
-	if doc.StoragePath != "/new/store" {
-		t.Errorf("StoragePath = %q", doc.StoragePath)
-	}
-	if !doc.TextContent.Valid || doc.TextContent.String != "with text" {
-		t.Errorf("TextContent = %v", doc.TextContent)
-	}
-}
-
-func TestUpdateDocumentWithText(t *testing.T) {
-	db := docTestDB(t)
-	q := New(db)
-
-	id := insertDoc(t, q, nil)
-
-	err := q.UpdateDocumentWithText(context.Background(), UpdateDocumentWithTextParams{
-		OriginalPath: "/new/orig",
-		StoragePath:  "/new/store",
-		TextContent:  sql.NullString{String: "via with text", Valid: true},
-		ID:           id,
-	})
-	if err != nil {
-		t.Fatalf("UpdateDocumentWithText: %v", err)
-	}
-
-	doc, err := q.GetDocument(context.Background(), id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if doc.OriginalPath != "/new/orig" {
-		t.Errorf("OriginalPath = %q", doc.OriginalPath)
-	}
-	if doc.StoragePath != "/new/store" {
-		t.Errorf("StoragePath = %q", doc.StoragePath)
-	}
-	if !doc.TextContent.Valid || doc.TextContent.String != "via with text" {
-		t.Errorf("TextContent = %v", doc.TextContent)
 	}
 }
 

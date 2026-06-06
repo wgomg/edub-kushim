@@ -109,13 +109,13 @@ build-glibc-deps:
 			EDUB_BINARY=$(EDUB_BINARY)
 
 test:
-	go test $(TEST_FLAGS) $(TEST_PKG)
+	go test -tags "XLA,ORT" $(TEST_FLAGS) $(TEST_PKG)
 
 test-race:
-	go test -race $(TEST_FLAGS) $(TEST_PKG)
+	go test -tags "XLA,ORT" -race $(TEST_FLAGS) $(TEST_PKG)
 
 test-verbose:
-	go test -v $(TEST_FLAGS) $(TEST_PKG)
+	go test -tags "XLA,ORT" -v $(TEST_FLAGS) $(TEST_PKG)
 
 test-container-build:
 	podman build -t kushim-test -f Containerfile.test .

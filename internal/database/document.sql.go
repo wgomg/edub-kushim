@@ -12,9 +12,9 @@ import (
 
 const createDocument = `-- name: CreateDocument :execresult
 INSERT INTO document (
-    title, md5_checksum, sha512_checksum, mime_type, file_size, page_count,
-    original_path, storage_path, text_content
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    title, md5_checksum, sha512_checksum, mime_type, file_size, page_count, word_count,
+    char_count, original_path, storage_path, text_content
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateDocumentParams struct {
@@ -24,6 +24,8 @@ type CreateDocumentParams struct {
 	MimeType       string
 	FileSize       int64
 	PageCount      int64
+	WordCount      int64
+	CharCount      int64
 	OriginalPath   string
 	StoragePath    string
 	TextContent    sql.NullString
@@ -37,6 +39,8 @@ func (q *Queries) CreateDocument(ctx context.Context, arg CreateDocumentParams) 
 		arg.MimeType,
 		arg.FileSize,
 		arg.PageCount,
+		arg.WordCount,
+		arg.CharCount,
 		arg.OriginalPath,
 		arg.StoragePath,
 		arg.TextContent,
@@ -53,8 +57,8 @@ func (q *Queries) DeleteDocument(ctx context.Context, id int64) error {
 }
 
 const getDocument = `-- name: GetDocument :one
-SELECT id, title, md5_checksum, sha512_checksum, mime_type, file_size, page_count,
-       created_at, modified_at, document_type_id, original_path, storage_path, text_content
+SELECT id, title, md5_checksum, sha512_checksum, mime_type, file_size, page_count, word_count,
+       char_count, created_at, modified_at, document_type_id, original_path, storage_path, text_content
 FROM document WHERE id = ?
 `
 
@@ -69,6 +73,8 @@ func (q *Queries) GetDocument(ctx context.Context, id int64) (Document, error) {
 		&i.MimeType,
 		&i.FileSize,
 		&i.PageCount,
+		&i.WordCount,
+		&i.CharCount,
 		&i.CreatedAt,
 		&i.ModifiedAt,
 		&i.DocumentTypeID,
@@ -80,7 +86,7 @@ func (q *Queries) GetDocument(ctx context.Context, id int64) (Document, error) {
 }
 
 const getDocumentByMD5Checksum = `-- name: GetDocumentByMD5Checksum :many
-SELECT id, title, md5_checksum, sha512_checksum, mime_type, file_size, page_count,
+SELECT id, title, md5_checksum, sha512_checksum, mime_type, file_size, page_count, word_count, char_count,
        created_at, modified_at, document_type_id, original_path, storage_path
 FROM document WHERE md5_checksum = ?
 `
@@ -93,6 +99,8 @@ type GetDocumentByMD5ChecksumRow struct {
 	MimeType       string
 	FileSize       int64
 	PageCount      int64
+	WordCount      int64
+	CharCount      int64
 	CreatedAt      sql.NullTime
 	ModifiedAt     sql.NullTime
 	DocumentTypeID sql.NullInt64
@@ -117,6 +125,8 @@ func (q *Queries) GetDocumentByMD5Checksum(ctx context.Context, md5Checksum stri
 			&i.MimeType,
 			&i.FileSize,
 			&i.PageCount,
+			&i.WordCount,
+			&i.CharCount,
 			&i.CreatedAt,
 			&i.ModifiedAt,
 			&i.DocumentTypeID,
@@ -137,7 +147,7 @@ func (q *Queries) GetDocumentByMD5Checksum(ctx context.Context, md5Checksum stri
 }
 
 const getDocumentBySHA512Checksum = `-- name: GetDocumentBySHA512Checksum :one
-SELECT id, title, md5_checksum, sha512_checksum, mime_type, file_size, page_count,
+SELECT id, title, md5_checksum, sha512_checksum, mime_type, file_size, page_count, word_count, char_count,
        created_at, modified_at, document_type_id, original_path, storage_path
 FROM document WHERE sha512_checksum = ?
 `
@@ -150,6 +160,8 @@ type GetDocumentBySHA512ChecksumRow struct {
 	MimeType       string
 	FileSize       int64
 	PageCount      int64
+	WordCount      int64
+	CharCount      int64
 	CreatedAt      sql.NullTime
 	ModifiedAt     sql.NullTime
 	DocumentTypeID sql.NullInt64
@@ -168,6 +180,8 @@ func (q *Queries) GetDocumentBySHA512Checksum(ctx context.Context, sha512Checksu
 		&i.MimeType,
 		&i.FileSize,
 		&i.PageCount,
+		&i.WordCount,
+		&i.CharCount,
 		&i.CreatedAt,
 		&i.ModifiedAt,
 		&i.DocumentTypeID,
@@ -178,9 +192,9 @@ func (q *Queries) GetDocumentBySHA512Checksum(ctx context.Context, sha512Checksu
 }
 
 const getDocumentWithDetails = `-- name: GetDocumentWithDetails :one
-SELECT d.id, d.title, d.md5_checksum, d.sha512_checksum, d.mime_type, d.file_size, d.page_count,
-       d.created_at, d.modified_at, d.document_type_id, d.original_path, d.storage_path, d.text_content,
-       dt.name as document_type_name
+SELECT d.id, d.title, d.md5_checksum, d.sha512_checksum, d.mime_type, d.file_size, d.page_count, d.word_count,
+       d.char_count, d.created_at, d.modified_at, d.document_type_id, d.original_path, d.storage_path,
+       d.text_content, dt.name as document_type_name
 FROM document d
 LEFT JOIN document_type dt ON d.document_type_id = dt.id
 WHERE d.id = ?
@@ -194,6 +208,8 @@ type GetDocumentWithDetailsRow struct {
 	MimeType         string
 	FileSize         int64
 	PageCount        int64
+	WordCount        int64
+	CharCount        int64
 	CreatedAt        sql.NullTime
 	ModifiedAt       sql.NullTime
 	DocumentTypeID   sql.NullInt64
@@ -214,6 +230,8 @@ func (q *Queries) GetDocumentWithDetails(ctx context.Context, id int64) (GetDocu
 		&i.MimeType,
 		&i.FileSize,
 		&i.PageCount,
+		&i.WordCount,
+		&i.CharCount,
 		&i.CreatedAt,
 		&i.ModifiedAt,
 		&i.DocumentTypeID,
@@ -226,9 +244,9 @@ func (q *Queries) GetDocumentWithDetails(ctx context.Context, id int64) (GetDocu
 }
 
 const getDocumentWithText = `-- name: GetDocumentWithText :one
-SELECT d.id, d.title, d.md5_checksum, d.sha512_checksum, d.mime_type, d.file_size, d.page_count,
-       d.created_at, d.modified_at, d.document_type_id, d.original_path, d.storage_path, d.text_content,
-       dt.name as document_type_name
+SELECT d.id, d.title, d.md5_checksum, d.sha512_checksum, d.mime_type, d.file_size, d.page_count, d.word_count,
+       d.char_count, d.created_at, d.modified_at, d.document_type_id, d.original_path, d.storage_path,
+       d.text_content, dt.name as document_type_name
 FROM document d
 LEFT JOIN document_type dt ON d.document_type_id = dt.id
 WHERE d.id = ?
@@ -242,6 +260,8 @@ type GetDocumentWithTextRow struct {
 	MimeType         string
 	FileSize         int64
 	PageCount        int64
+	WordCount        int64
+	CharCount        int64
 	CreatedAt        sql.NullTime
 	ModifiedAt       sql.NullTime
 	DocumentTypeID   sql.NullInt64
@@ -262,6 +282,8 @@ func (q *Queries) GetDocumentWithText(ctx context.Context, id int64) (GetDocumen
 		&i.MimeType,
 		&i.FileSize,
 		&i.PageCount,
+		&i.WordCount,
+		&i.CharCount,
 		&i.CreatedAt,
 		&i.ModifiedAt,
 		&i.DocumentTypeID,
@@ -274,8 +296,8 @@ func (q *Queries) GetDocumentWithText(ctx context.Context, id int64) (GetDocumen
 }
 
 const listDocuments = `-- name: ListDocuments :many
-SELECT id, title, md5_checksum, sha512_checksum, mime_type, file_size, page_count,
-       created_at, modified_at, document_type_id, original_path, storage_path
+SELECT id, title, md5_checksum, sha512_checksum, mime_type, file_size, page_count, word_count,
+       char_count, created_at, modified_at, document_type_id, original_path, storage_path
 FROM document ORDER BY created_at DESC LIMIT ? OFFSET ?
 `
 
@@ -292,6 +314,8 @@ type ListDocumentsRow struct {
 	MimeType       string
 	FileSize       int64
 	PageCount      int64
+	WordCount      int64
+	CharCount      int64
 	CreatedAt      sql.NullTime
 	ModifiedAt     sql.NullTime
 	DocumentTypeID sql.NullInt64
@@ -316,6 +340,8 @@ func (q *Queries) ListDocuments(ctx context.Context, arg ListDocumentsParams) ([
 			&i.MimeType,
 			&i.FileSize,
 			&i.PageCount,
+			&i.WordCount,
+			&i.CharCount,
 			&i.CreatedAt,
 			&i.ModifiedAt,
 			&i.DocumentTypeID,
@@ -336,7 +362,7 @@ func (q *Queries) ListDocuments(ctx context.Context, arg ListDocumentsParams) ([
 }
 
 const searchDocumentsByTitle = `-- name: SearchDocumentsByTitle :many
-SELECT id, title, md5_checksum, sha512_checksum, mime_type, file_size, page_count,
+SELECT id, title, md5_checksum, sha512_checksum, mime_type, file_size, page_count, word_count, char_count,
        created_at, modified_at, document_type_id, original_path, storage_path
 FROM document
 WHERE title LIKE ?
@@ -358,6 +384,8 @@ type SearchDocumentsByTitleRow struct {
 	MimeType       string
 	FileSize       int64
 	PageCount      int64
+	WordCount      int64
+	CharCount      int64
 	CreatedAt      sql.NullTime
 	ModifiedAt     sql.NullTime
 	DocumentTypeID sql.NullInt64
@@ -382,6 +410,8 @@ func (q *Queries) SearchDocumentsByTitle(ctx context.Context, arg SearchDocument
 			&i.MimeType,
 			&i.FileSize,
 			&i.PageCount,
+			&i.WordCount,
+			&i.CharCount,
 			&i.CreatedAt,
 			&i.ModifiedAt,
 			&i.DocumentTypeID,
@@ -428,74 +458,5 @@ type UpdateDocumentPathsParams struct {
 
 func (q *Queries) UpdateDocumentPaths(ctx context.Context, arg UpdateDocumentPathsParams) error {
 	_, err := q.db.ExecContext(ctx, updateDocumentPaths, arg.OriginalPath, arg.StoragePath, arg.ID)
-	return err
-}
-
-const updateDocumentPathsWithText = `-- name: UpdateDocumentPathsWithText :exec
-UPDATE document SET
-    original_path = ?,
-    storage_path = ?,
-    text_content = ?,
-    modified_at = CURRENT_TIMESTAMP
-WHERE id = ?
-`
-
-type UpdateDocumentPathsWithTextParams struct {
-	OriginalPath string
-	StoragePath  string
-	TextContent  sql.NullString
-	ID           int64
-}
-
-func (q *Queries) UpdateDocumentPathsWithText(ctx context.Context, arg UpdateDocumentPathsWithTextParams) error {
-	_, err := q.db.ExecContext(ctx, updateDocumentPathsWithText,
-		arg.OriginalPath,
-		arg.StoragePath,
-		arg.TextContent,
-		arg.ID,
-	)
-	return err
-}
-
-const updateDocumentText = `-- name: UpdateDocumentText :exec
-UPDATE document SET
-    text_content = ?,
-    modified_at = CURRENT_TIMESTAMP
-WHERE id = ?
-`
-
-type UpdateDocumentTextParams struct {
-	TextContent sql.NullString
-	ID          int64
-}
-
-func (q *Queries) UpdateDocumentText(ctx context.Context, arg UpdateDocumentTextParams) error {
-	_, err := q.db.ExecContext(ctx, updateDocumentText, arg.TextContent, arg.ID)
-	return err
-}
-
-const updateDocumentWithText = `-- name: UpdateDocumentWithText :exec
-UPDATE document SET
-    original_path = ?,
-    storage_path = ?,
-    text_content = ?,
-    modified_at = CURRENT_TIMESTAMP
-WHERE id = ?
-`
-
-type UpdateDocumentWithTextParams struct {
-	OriginalPath string
-	StoragePath  string
-	TextContent  sql.NullString
-	ID           int64
-}
-
-func (q *Queries) UpdateDocumentWithText(ctx context.Context, arg UpdateDocumentWithTextParams) error {
-	_, err := q.db.ExecContext(ctx, updateDocumentWithText,
-		arg.OriginalPath,
-		arg.StoragePath,
-		arg.TextContent,
-		arg.ID,
-	)
 	return err
 }

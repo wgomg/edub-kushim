@@ -5,9 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/wgomg/edub-kushim/internal/cache"
 	"github.com/wgomg/edub-kushim/internal/config"
@@ -44,50 +42,27 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 		e.logger.Info(nil, "finished enrichment %s in %s", document.StoragePath, utils.HumanDuration(elapsed))
 	}()
 
-	documentWordCount := len(strings.Fields(document.TextContent.String))
+	chunkSize := 150
 
-	textReducerTargetWords := e.config.Enricher.TextReducer.TargetWords
-	if textReducerTargetWords < 0 {
-		textReducerTargetWords = documentWordCount / -textReducerTargetWords
-	}
-
-	tagMatcherReduceTargetWords := e.config.Enricher.TagMatcher.ReduceTargetWords
-	if tagMatcherReduceTargetWords < 0 {
-		tagMatcherReduceTargetWords = documentWordCount / -tagMatcherReduceTargetWords
-	}
-
-	textReducerTargetWords = max(2000, textReducerTargetWords)
-	tagMatcherReduceTargetWords = max(2000, tagMatcherReduceTargetWords)
-
-	// estimatedTokens := estimateTokens(document.TextContent.String)
-	shouldReduceLlm := shouldReduceContent(documentWordCount, textReducerTargetWords)
-	shouldReduceTags := shouldReduceContent(documentWordCount, tagMatcherReduceTargetWords)
-
-	llmContent := document.TextContent.String
-	tagsContent := document.TextContent.String
-
-	if shouldReduceLlm {
-		e.logger.Info(nil, "long path selected for llm text reduction: document_length=%d,  document_word_count=%d, reducer_target_word_count=%d, should_reduce=%v", utf8.RuneCountInString(llmContent), documentWordCount, textReducerTargetWords, shouldReduceLlm)
-
-		reduceStart := time.Now()
-		reducedContent, err := e.runner.ReduceContent(ctx, document.TextContent.String, 150, textReducerTargetWords)
-		if err != nil {
-			return nil, fmt.Errorf("llm text reduction failed, using raw text: %w", err)
+	llmContent, err := e.runner.ReduceContent(ctx, document.TextContent.String, chunkSize,
+		targetWordCount(int(document.WordCount), e.config.Enricher.TextReducer.TargetWords))
+	if err != nil {
+		e.logger.Error(nil, "llm text reduction failed, using raw text: %w", err)
+	} else {
+		if document.WordCount > int64(llmContent.TargetWordCount) {
+			e.logger.Info(nil, "long path selected for llm text reduction: document_length=(%d -> %d),  document_word_count=(%d -> %d), target_word_count=%d",
+				document.CharCount, llmContent.CharCount, document.WordCount, llmContent.WordCount, llmContent.TargetWordCount)
 		}
-		llmContent = reducedContent.Text
-		e.logger.Debug(nil, "llm text reduction: %d length (%s)", utf8.RuneCountInString(llmContent), time.Since(reduceStart))
 	}
 
-	if shouldReduceTags {
-		e.logger.Info(nil, "long path selected for tags matcher text reduction: document_length=%d, document_word_count=%d, reducer_target_word_count=%d, should_reduce=%v", utf8.RuneCountInString(tagsContent), documentWordCount, tagMatcherReduceTargetWords, shouldReduceTags)
-
-		tagReduceStart := time.Now()
-		tagReducedContent, err := e.runner.ReduceContent(ctx, document.TextContent.String, 150, tagMatcherReduceTargetWords)
-		if err != nil {
-			e.logger.Error(nil, "tag text reduction failed, using raw text: %v", err)
-		} else {
-			tagsContent = tagReducedContent.Text
-			e.logger.Debug(nil, "tag text reduction: %d length (%s)", utf8.RuneCountInString(tagsContent), time.Since(tagReduceStart))
+	tagsContent, err := e.runner.ReduceContent(ctx, document.TextContent.String, chunkSize,
+		targetWordCount(int(document.WordCount), e.config.Enricher.TagMatcher.ReduceTargetWords))
+	if err != nil {
+		e.logger.Error(nil, "tag text reduction failed, using raw text: %w", err)
+	} else {
+		if document.WordCount > int64(tagsContent.TargetWordCount) {
+			e.logger.Info(nil, "long path selected for tag text reduction: document_length=(%d -> %d),  document_word_count=(%d -> %d), target_word_count=%d",
+				document.CharCount, tagsContent.CharCount, document.WordCount, tagsContent.WordCount, tagsContent.TargetWordCount)
 		}
 	}
 
@@ -116,7 +91,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 	e.logger.Debug(nil, "tags store cache length: %d", len(tagsToMatch))
 
 	matchTagsStart := time.Now()
-	matchedTags, err := e.runner.MatchTags(ctx, tagsContent, tagsToMatch)
+	matchedTags, err := e.runner.MatchTags(ctx, tagsContent.Text, tagsToMatch)
 	if err != nil {
 		e.logger.Error(nil, "tag matching failed, using all tags: %v", err)
 		tagSuggestions = allTags
@@ -125,7 +100,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 		e.logger.Debug(nil, "tag matching: %d tags (%s)", len(tagSuggestions), time.Since(matchTagsStart))
 	}
 
-	analysis, err := e.runner.AnalyzeContent(ctx, llmContent, docTypes, tagSuggestions)
+	analysis, err := e.runner.AnalyzeContent(ctx, llmContent.Text, docTypes, tagSuggestions)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze content: %w", err)
 	}
@@ -161,19 +136,10 @@ func (e *Enricher) GetDb() *sql.DB {
 	return e.db
 }
 
-func shouldReduceContent(wordCount int, targetWordCount int) bool {
-	return wordCount > targetWordCount
+func targetWordCount(contentWC, targetWC int) int {
+	result := targetWC
+	if result < 0 {
+		result = contentWC / -result
+	}
+	return max(2000, result)
 }
-
-// func shouldReduceContent(estimatedTokens int, thresholdTokens int) bool {
-// 	return estimatedTokens > thresholdTokens
-// }
-
-// func estimateTokens(content string) int {
-// 	cleanedUpContent := utils.CleanUp(content)
-
-// 	wordCount := utils.CountWords(cleanedUpContent)
-// 	estimatedTokens := utils.EstimateTokensFromWords(wordCount)
-
-// 	return estimatedTokens
-// }

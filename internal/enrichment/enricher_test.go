@@ -40,6 +40,9 @@ func setupEnricherDB(t *testing.T) *sql.DB {
 			sha512_checksum TEXT UNIQUE NOT NULL,
 			mime_type TEXT NOT NULL,
 			file_size INTEGER NOT NULL,
+			page_count INTEGER NOT NULL DEFAULT 0,
+			word_count INTEGER NOT NULL DEFAULT 0,
+			char_count INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			modified_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			document_type_id INTEGER,
@@ -105,15 +108,6 @@ func TestEnrich_ShortTextSkipsReducer(t *testing.T) {
 	_, err = e.Enrich(context.Background(), doc)
 	if err == nil {
 		t.Fatal("expected error from content analyzer stub, got nil")
-	}
-}
-
-func TestShouldReduceContent(t *testing.T) {
-	if !shouldReduceContent(3000, 2000) {
-		t.Error("shouldReduceContent(3000, 2000) = false, want true")
-	}
-	if shouldReduceContent(1000, 2000) {
-		t.Error("shouldReduceContent(1000, 2000) = true, want false")
 	}
 }
 

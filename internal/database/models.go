@@ -23,6 +23,8 @@ type Document struct {
 	MimeType       string
 	FileSize       int64
 	PageCount      int64
+	WordCount      int64
+	CharCount      int64
 	CreatedAt      sql.NullTime
 	ModifiedAt     sql.NullTime
 	DocumentTypeID sql.NullInt64

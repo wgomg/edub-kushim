@@ -12,7 +12,9 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
@@ -166,6 +168,8 @@ func (c *Consumer) Process(ctx context.Context, file File) (File, error) {
 		StoragePath:    *file.StorageProcessedPath,
 		TextContent:    file.Text,
 		PageCount:      int64(file.PageCount),
+		WordCount:      int64(len(strings.Fields(file.Text.String))),
+		CharCount:      int64(utf8.RuneCountInString(file.Text.String)),
 	})
 	if err != nil {
 		return file, fmt.Errorf("failed to create document record: %w", err)
