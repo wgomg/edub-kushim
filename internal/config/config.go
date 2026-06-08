@@ -21,7 +21,7 @@ type AppConfig struct {
 	Env       Environment `mapstructure:"environment" yaml:"environment"`
 	LogLevel  string      `mapstructure:"log_level" yaml:"log_level"`
 	LogFile   string      `mapstructure:"log_file" yaml:"log_file"`
-	ConfigDir string      `yaml:"config_dir"`
+	ConfigDir string
 }
 
 type ServerConfig struct {
@@ -58,12 +58,12 @@ type PdfOptimizerConfig struct {
 type OCRConfig struct {
 	Engine    string   `mapstructure:"engine" yaml:"engine"`
 	Languages []string `mapstructure:"languages" yaml:"languages"`
-	DataDir   string   `mapstructure:"data_dir" yaml:"data_dir"`
+	DataDir   string   `mapstructure:"data_dir"`
 	Timeout   int      `mapstructure:"timeout" yaml:"timeout"`
 }
 
 type ConsumerConfig struct {
-	SupportedFiles []string            `yaml:"supported_files"`
+	SupportedFiles []string
 	DeleteOriginal bool                `mapstructure:"delete_original" yaml:"delete_original"`
 	Workers        int                 `mapstructure:"workers" yaml:"workers"`
 	TextExtractor  TextExtractorConfig `mapstructure:"textextractor" yaml:"textextractor"`
@@ -106,8 +106,8 @@ type LlmToolsConfig struct {
 type HugotConfig struct {
 	Model          string `mapstructure:"model" yaml:"model"`
 	Backend        string `mapstructure:"backend" yaml:"backend"`
-	ModelPath      string `yaml:"model_path"`
-	BackendLibPath string `yaml:"backend_lib_path"`
+	ModelPath      string
+	BackendLibPath string
 }
 
 type TagMatcherConfig struct {
@@ -116,9 +116,9 @@ type TagMatcherConfig struct {
 	ReduceTargetWords       int         `mapstructure:"reduce_target_words" yaml:"reduce_target_words"`
 	ChunkSize               int         `mapstructure:"chunk_size" yaml:"chunk_size"`
 	Hugot                   HugotConfig `mapstructure:"hugot" yaml:"hugot"`
-	TopN                    int         `yaml:"top_n"`
-	MinSimilarity           float64     `yaml:"min_similarity"`
-	ConsolidationSimilarity float64     `yaml:"consolidation_similarity"`
+	TopN                    int
+	MinSimilarity           float64
+	ConsolidationSimilarity float64
 }
 
 type ToolConfig struct {

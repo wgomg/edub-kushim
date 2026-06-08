@@ -1,10 +1,18 @@
 CREATE TABLE document_type (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
+    description TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE author (
+CREATE TABLE people_type (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    description TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE people (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -49,21 +57,24 @@ CREATE TABLE document (
     page_count INTEGER NOT NULL DEFAULT 0,
     word_count INTEGER NOT NULL DEFAULT 0,
     char_count INTEGER NOT NULL DEFAULT 0,
+    language TEXT NOT NULL DEFAULT 'und',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     modified_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    document_type_id INTEGER,
+    document_type_id INTEGER NOT NULL DEFAULT 1,
     original_path TEXT NOT NULL,
     storage_path TEXT NOT NULL,
     text_content TEXT,
     FOREIGN KEY (document_type_id) REFERENCES document_type(id)
 );
 
-CREATE TABLE document_author (
+CREATE TABLE document_people (
     document_id INTEGER NOT NULL,
-    author_id INTEGER NOT NULL,
-    PRIMARY KEY (document_id, author_id),
+    people_id INTEGER NOT NULL,
+    people_type_id INTEGER NOT NULL,
+    PRIMARY KEY (document_id, people_id, people_type_id),
     FOREIGN KEY (document_id) REFERENCES document(id) ON DELETE CASCADE,
-    FOREIGN KEY (author_id) REFERENCES author(id) ON DELETE CASCADE
+    FOREIGN KEY (people_id) REFERENCES people(id) ON DELETE CASCADE,
+    FOREIGN KEY (people_type_id) REFERENCES people_type(id)
 );
 
 CREATE TABLE document_tag (
@@ -81,7 +92,6 @@ CREATE VIRTUAL TABLE document_fts USING fts5(
     tokenize = 'unicode61'
 );
 
--- Add these triggers after creating the document_fts table
 CREATE TRIGGER document_ai AFTER INSERT ON document
 BEGIN
     INSERT INTO document_fts(document_id, title, content)
@@ -111,7 +121,7 @@ CREATE UNIQUE INDEX idx_task_dedup ON task(task_type, dedup_key)
 CREATE INDEX idx_document_md5 ON document(md5_checksum);
 CREATE INDEX idx_document_sha512 ON document(sha512_checksum);
 CREATE INDEX idx_document_created ON document(created_at);
-CREATE INDEX idx_document_author_doc ON document_author(document_id);
-CREATE INDEX idx_document_author_author ON document_author(author_id);
+CREATE INDEX idx_document_people_doc ON document_people(document_id);
+CREATE INDEX idx_document_people_people ON document_people(people_id);
 CREATE INDEX idx_document_tag_doc ON document_tag(document_id);
 CREATE INDEX idx_document_tag_tag ON document_tag(tag_id);

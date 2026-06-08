@@ -9,12 +9,6 @@ import (
 	"encoding/json"
 )
 
-type Author struct {
-	ID        int64
-	Name      string
-	CreatedAt sql.NullTime
-}
-
 type Document struct {
 	ID             int64
 	Title          string
@@ -25,17 +19,13 @@ type Document struct {
 	PageCount      int64
 	WordCount      int64
 	CharCount      int64
+	Language       string
 	CreatedAt      sql.NullTime
 	ModifiedAt     sql.NullTime
-	DocumentTypeID sql.NullInt64
+	DocumentTypeID int64
 	OriginalPath   string
 	StoragePath    string
 	TextContent    sql.NullString
-}
-
-type DocumentAuthor struct {
-	DocumentID int64
-	AuthorID   int64
 }
 
 type DocumentFt struct {
@@ -44,15 +34,35 @@ type DocumentFt struct {
 	Content    string
 }
 
+type DocumentPeople struct {
+	DocumentID   int64
+	PeopleID     int64
+	PeopleTypeID int64
+}
+
 type DocumentTag struct {
 	DocumentID int64
 	TagID      int64
 }
 
 type DocumentType struct {
+	ID          int64
+	Name        string
+	Description string
+	CreatedAt   sql.NullTime
+}
+
+type People struct {
 	ID        int64
 	Name      string
 	CreatedAt sql.NullTime
+}
+
+type PeopleType struct {
+	ID          int64
+	Name        string
+	Description string
+	CreatedAt   sql.NullTime
 }
 
 type Tag struct {

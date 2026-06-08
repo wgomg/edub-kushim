@@ -11,31 +11,11 @@ LIBNG_VER     := 1.6.43
 MUPDF_VER     := 1.27.2
 TOKENIZERS_DIR := $(BUILD_DIR)/tokenizers
 
-# Flags required by gosseract's C++ bridge
 export CGO_ENABLED  := 1
 export CGO_CPPFLAGS := -I$(TESS_INCLUDE) -I$(BUILD_DIR)/leptonica/local/include -I$(BUILD_DIR)/libpng/local/include
 export CGO_LDFLAGS  := -L$(TOKENIZERS_DIR)
 
-# TEST_FLAGS — extra flags passed to `go test` (e.g. -run, -count, -short).
-# TEST_PKG   — Go package pattern(s) to test (e.g. ./internal/..., ./cmd/...).
-#
-# Host tests (make test / test-verbose / test-race):
-#   Run on the host. Tests that depend on external tools (ocrmypdf, gs, pdftotext)
-#   will FAIL if those tools are not installed — install them to run the full suite.
-#
-# Container tests (make test-container):
-#   Run inside an Arch Linux container with all external tools pre-installed.
-#   Use this for CI or when you don't want to install tools on the host.
-#
-# Examples:
-#   make test TEST_PKG="./internal/task"
-#   make test-verbose TEST_PKG="./internal/task/..." TEST_FLAGS="-run TestEnqueue"
-#   make test-race TEST_PKG="./internal/..." TEST_FLAGS="-count=1"
-#   make test-container TEST_PKG="./internal/tools/adapters/..."
-
-.PHONY: all build build-deps web-build clean run consume test test-race test-verbose test-container test-container-build build-musl-image build-musl
-
-all: build
+.PHONY: build build-deps web-build clean run consume build-musl-image build-musl
 
 web-build:
 	cd web && npm ci && npm run build
@@ -82,6 +62,9 @@ build-musl-image:
 build-glibc-image:
 	podman build -t kushim-glibc-builder -f Containerfile.glibc .
 
+build-tools-image:
+	podman build -t localhost/edub-kushim:latest -f Containerfile.full .
+
 build-musl-deps:
 	podman run --rm \
 		-v $(CURDIR):/workspace:Z \
@@ -107,26 +90,6 @@ build-glibc-deps:
 		make build-deps \
 			BINARY=$(BINARY) \
 			EDUB_BINARY=$(EDUB_BINARY)
-
-test:
-	go test -tags "XLA,ORT" $(TEST_FLAGS) $(TEST_PKG)
-
-test-race:
-	go test -tags "XLA,ORT" -race $(TEST_FLAGS) $(TEST_PKG)
-
-test-verbose:
-	go test -tags "XLA,ORT" -v $(TEST_FLAGS) $(TEST_PKG)
-
-test-container-build:
-	podman build -t kushim-test -f Containerfile.test .
-
-test-container: test-container-build
-	podman run --rm \
-		-v $(CURDIR):/app:Z \
-		-w /app \
-		-e CGO_ENABLED=1 \
-		kushim-test \
-		test $(TEST_FLAGS) $(TEST_PKG)
 
 build-libpng:
 	@if [ ! -d $(BUILD_DIR)/libpng ]; then \

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/wgomg/edub-kushim/internal/config"
+	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -58,10 +59,10 @@ func NewLlmOllama(logger *utils.Logger, cfg config.ToolConfig, llmCfg config.Llm
 	return &LlmOllama{logger: logger, config: cfg, llmCfg: llmCfg}, nil
 }
 
-func (l *LlmOllama) Analyze(ctx context.Context, text string, docTypes []string, tagSuggestions []string) (*AnalysisResult, error) {
+func (l *LlmOllama) Analyze(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*AnalysisResult, error) {
 	temp := 0.0
 
-	prompt := BuildPrompt(text, docTypes, tagSuggestions)
+	prompt := BuildPrompt(text, docTypes, peopleTypes, tagSuggestions)
 
 	reqBody := ollamaRequest{
 		Model: l.llmCfg.Model,

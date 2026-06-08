@@ -11,7 +11,7 @@ SELECT * FROM tag ORDER BY created_at DESC;
 SELECT name FROM tag ORDER BY created_at DESC;
 
 -- name: CreateTag :execresult
-INSERT INTO tag (
+INSERT OR IGNORE INTO tag (
     name
 ) VALUES (?);
 

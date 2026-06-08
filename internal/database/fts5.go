@@ -15,9 +15,10 @@ type FTSDocumentRow struct {
 	Sha512Checksum string         `json:"sha512_checksum"`
 	MimeType       string         `json:"mime_type"`
 	FileSize       int64          `json:"file_size"`
+	Language       string         `json:"language"`
 	CreatedAt      sql.NullTime   `json:"created_at"`
 	ModifiedAt     sql.NullTime   `json:"modified_at"`
-	DocumentTypeID sql.NullInt64  `json:"document_type_id"`
+	DocumentTypeID int64          `json:"document_type_id"`
 	OriginalPath   string         `json:"original_path"`
 	StoragePath    string         `json:"storage_path"`
 	TextContent    sql.NullString `json:"text_content"`
@@ -34,7 +35,8 @@ func (q *Queries) SearchDocumentsFTS(
 	const query = `
 		SELECT
 			d.id, d.title, d.md5_checksum, d.sha512_checksum, d.mime_type, d.file_size,
-			d.created_at, d.modified_at, d.document_type_id, d.original_path, d.storage_path, d.text_content,
+			d.language, d.created_at, d.modified_at, d.document_type_id, d.original_path,
+			d.storage_path, d.text_content,
 			bm25(document_fts) as rank,
 			snippet(document_fts, 2, '<b>', '</b>', '...', 64) as snippet
 		FROM document_fts
@@ -60,6 +62,7 @@ func (q *Queries) SearchDocumentsFTS(
 			&i.Sha512Checksum,
 			&i.MimeType,
 			&i.FileSize,
+			&i.Language,
 			&i.CreatedAt,
 			&i.ModifiedAt,
 			&i.DocumentTypeID,
@@ -93,7 +96,8 @@ func (q *Queries) SearchDocumentsFTSWithFilters(ctx context.Context, arg struct 
 	const query = `
 		SELECT
 			d.id, d.title, d.md5_checksum, d.sha512_checksum, d.mime_type, d.file_size,
-			d.created_at, d.modified_at, d.document_type_id, d.original_path, d.storage_path, d.text_content,
+			d.language, d.created_at, d.modified_at, d.document_type_id, d.original_path,
+			d.storage_path, d.text_content,
 			bm25(document_fts) as rank,
 			snippet(document_fts, 2, '<b>', '</b>', '...', 64) as snippet
 		FROM document_fts
@@ -120,6 +124,7 @@ func (q *Queries) SearchDocumentsFTSWithFilters(ctx context.Context, arg struct 
 			&i.Sha512Checksum,
 			&i.MimeType,
 			&i.FileSize,
+			&i.Language,
 			&i.CreatedAt,
 			&i.ModifiedAt,
 			&i.DocumentTypeID,

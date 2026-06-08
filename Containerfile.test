@@ -1,8 +1,0 @@
-FROM archlinux:latest
-
-RUN pacman -Sy --noconfirm go gcc mupdf-tools ghostscript poppler unpaper pngquant tesseract-data-eng python-pip && \
-    pacman -Scc --noconfirm && \
-    pip install --break-system-packages ocrmypdf
-
-WORKDIR /app
-ENTRYPOINT ["go"]

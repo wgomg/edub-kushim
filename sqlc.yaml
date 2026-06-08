@@ -8,6 +8,9 @@ sql:
         package: 'database'
         out: 'internal/database'
         sql_package: 'database/sql'
+        inflection_exclude_table_names:
+          - 'people'
+          - 'document_people'
         overrides:
           - column: 'task.result'
             go_type: '*encoding/json.RawMessage'

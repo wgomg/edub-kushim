@@ -5,11 +5,17 @@ import (
 	"encoding/json"
 
 	"github.com/wgomg/edub-kushim/internal/config"
+	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
+type PeopleResult struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
 type ContentAnalyzer interface {
-	Analyze(ctx context.Context, text string, docTypes []string, tagSuggestions []string) (*AnalysisResult, error)
+	Analyze(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*AnalysisResult, error)
 	Name() string
 }
 
@@ -17,7 +23,7 @@ type AnalysisResult struct {
 	Title    string           `json:"title"`
 	DocType  string           `json:"type"`
 	Tags     []string         `json:"tags"`
-	Authors  []string         `json:"authors"`
+	People   []PeopleResult   `json:"people"`
 	Language string           `json:"language"`
 	Stats    *json.RawMessage `json:"stats"`
 	Prompt   string           `json:"prompt"`

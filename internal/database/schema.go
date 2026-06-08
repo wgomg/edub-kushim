@@ -18,12 +18,16 @@ func InitializeSchema(db *sql.DB) error {
 		return fmt.Errorf("create schema: %w", err)
 	}
 
-	seed, err := schemaFS.ReadFile("sql/schema/seed-tags.sql")
-	if err != nil {
-		return fmt.Errorf("read embedded seed: %w", err)
-	}
-	if _, err := db.Exec(string(seed)); err != nil {
-		return fmt.Errorf("seed tags: %w", err)
+	seeders := []string{"tags", "document-types", "people-types"}
+
+	for _, seed := range seeders {
+		seeder, err := schemaFS.ReadFile(fmt.Sprintf("sql/schema/seed-%s.sql", seed))
+		if err != nil {
+			return fmt.Errorf("read embedded %s: %w", seed, err)
+		}
+		if _, err := db.Exec(string(seeder)); err != nil {
+			return fmt.Errorf("seed %s: %w", seed, err)
+		}
 	}
 
 	return nil

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/wgomg/edub-kushim/internal/config"
+	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -71,13 +72,13 @@ func NewLlmOpenAi(logger *utils.Logger, cfg config.ToolConfig, llmCfg config.Llm
 	return &LlmOpenAi{logger: logger, config: cfg, llmCfg: llmCfg}, nil
 }
 
-func (l *LlmOpenAi) Analyze(ctx context.Context, text string, docTypes []string, tagSuggestions []string) (*AnalysisResult, error) {
+func (l *LlmOpenAi) Analyze(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*AnalysisResult, error) {
 	freqPen := 0.0
 	maxTokens := 0
 	prescPen := 0.0
 	temp := 0.0
 
-	prompt := BuildPrompt(text, docTypes, tagSuggestions)
+	prompt := BuildPrompt(text, docTypes, peopleTypes, tagSuggestions)
 
 	reqBody := LlmOpenAiRequest{
 		Messages: []ChatMessage{

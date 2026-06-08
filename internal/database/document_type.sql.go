@@ -28,18 +28,23 @@ func (q *Queries) DeleteDocumentType(ctx context.Context, id int64) error {
 }
 
 const getDocumentType = `-- name: GetDocumentType :one
-SELECT id, name, created_at FROM document_type WHERE id = ?
+SELECT id, name, description, created_at FROM document_type WHERE id = ?
 `
 
 func (q *Queries) GetDocumentType(ctx context.Context, id int64) (DocumentType, error) {
 	row := q.db.QueryRowContext(ctx, getDocumentType, id)
 	var i DocumentType
-	err := row.Scan(&i.ID, &i.Name, &i.CreatedAt)
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Description,
+		&i.CreatedAt,
+	)
 	return i, err
 }
 
 const listAllDocumentTypes = `-- name: ListAllDocumentTypes :many
-SELECT id, name, created_at FROM document_type ORDER BY created_at DESC
+SELECT id, name, description, created_at FROM document_type ORDER BY created_at DESC
 `
 
 func (q *Queries) ListAllDocumentTypes(ctx context.Context) ([]DocumentType, error) {
@@ -51,7 +56,12 @@ func (q *Queries) ListAllDocumentTypes(ctx context.Context) ([]DocumentType, err
 	var items []DocumentType
 	for rows.Next() {
 		var i DocumentType
-		if err := rows.Scan(&i.ID, &i.Name, &i.CreatedAt); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Description,
+			&i.CreatedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -93,7 +103,7 @@ func (q *Queries) ListAllDocumentTypesNames(ctx context.Context) ([]string, erro
 }
 
 const listDocumentTypes = `-- name: ListDocumentTypes :many
-SELECT id, name, created_at FROM document_type ORDER BY created_at DESC LIMIT ? OFFSET ?
+SELECT id, name, description, created_at FROM document_type ORDER BY created_at DESC LIMIT ? OFFSET ?
 `
 
 type ListDocumentTypesParams struct {
@@ -110,7 +120,12 @@ func (q *Queries) ListDocumentTypes(ctx context.Context, arg ListDocumentTypesPa
 	var items []DocumentType
 	for rows.Next() {
 		var i DocumentType
-		if err := rows.Scan(&i.ID, &i.Name, &i.CreatedAt); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Description,
+			&i.CreatedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

@@ -68,12 +68,15 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 
 	queries := database.NewQueries(e.db)
 
-	docTypes, err := queries.ListAllDocumentTypesNames(ctx)
+	docTypes, err := queries.ListAllDocumentTypes(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve document types: %w", err)
 	}
-
-	allTags, err := queries.ListAllTagsNames(ctx)
+	peopleTypes, err := queries.ListAllPeopleTypes(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve people types: %w", err)
+	}
+	allTags, err := queries.ListAllTags(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve tags: %w", err)
 	}
@@ -90,17 +93,22 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 	tagsToMatch := embStore.Entries()
 	e.logger.Debug(nil, "tags store cache length: %d", len(tagsToMatch))
 
+	var tagsNames []string
+	for _, t := range allTags {
+		tagsNames = append(tagsNames, t.Name)
+	}
+
 	matchTagsStart := time.Now()
 	matchedTags, err := e.runner.MatchTags(ctx, tagsContent.Text, tagsToMatch)
 	if err != nil {
 		e.logger.Error(nil, "tag matching failed, using all tags: %v", err)
-		tagSuggestions = allTags
+		tagSuggestions = tagsNames
 	} else {
 		tagSuggestions = matchedTags.Tags
 		e.logger.Debug(nil, "tag matching: %d tags (%s)", len(tagSuggestions), time.Since(matchTagsStart))
 	}
 
-	analysis, err := e.runner.AnalyzeContent(ctx, llmContent.Text, docTypes, tagSuggestions)
+	analysis, err := e.runner.AnalyzeContent(ctx, llmContent.Text, docTypes, peopleTypes, tagSuggestions)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze content: %w", err)
 	}
@@ -118,12 +126,107 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 	if analysis.Stats != nil {
 		statsStr = string(*analysis.Stats)
 	}
-	e.logger.Debug(nil, "analysis result: title=%q type=%q tags=%v authors=%v lang=%q stats=%s",
-		analysis.Title, analysis.DocType, analysis.Tags, analysis.Authors, analysis.Language, statsStr)
 	e.logger.Debug(nil, "prompt: %s", analysis.Prompt)
+	e.logger.Info(nil, "analysis result: title=%q type=%q tags=%v people=%v lang=%q stats=%s",
+		analysis.Title, analysis.DocType, analysis.Tags, analysis.People, analysis.Language, statsStr)
 
-	// save analysis results
-	// update cache
+	docTypeMap := make(map[string]int64, len(docTypes))
+	for _, dt := range docTypes {
+		docTypeMap[dt.Name] = dt.ID
+	}
+	if _, ok := docTypeMap[analysis.DocType]; !ok {
+		analysis.DocType = "undetermined"
+	}
+	docTypeID := docTypeMap[analysis.DocType]
+
+	if err := queries.UpdateDocumentMetadata(ctx, database.UpdateDocumentMetadataParams{
+		Title:          analysis.Title,
+		DocumentTypeID: docTypeID,
+		Language:       analysis.Language,
+		ID:             document.ID,
+	}); err != nil {
+		e.logger.Error(nil, "update document metadata: %w", err)
+	}
+
+	tagMap := make(map[string]int64, len(allTags))
+	for _, t := range allTags {
+		tagMap[t.Name] = t.ID
+	}
+	var tagIDs []int64
+	for _, tagName := range analysis.Tags {
+		id, ok := tagMap[tagName]
+		if !ok {
+			result, err := queries.CreateTag(ctx, tagName)
+			if err != nil {
+				e.logger.Error(nil, "create tag %q: %v", tagName, err)
+				continue
+			}
+			e.logger.Debug(nil, "tag created %s", tagName)
+			id, _ = result.LastInsertId()
+			tagMap[tagName] = id
+		}
+		tagIDs = append(tagIDs, id)
+	}
+	if err := queries.ClearDocumentTags(ctx, document.ID); err != nil {
+		return nil, fmt.Errorf("clear document tags: %w", err)
+	}
+	for _, tagID := range tagIDs {
+		if err := queries.AddDocumentTag(ctx, database.AddDocumentTagParams{
+			DocumentID: document.ID,
+			TagID:      tagID,
+		}); err != nil {
+			e.logger.Error(nil, "add document tag: %w", err)
+		}
+	}
+
+	existingPeople, err := queries.ListAllPeople(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list existing people: %w", err)
+	}
+	peopleMap := make(map[string]int64, len(existingPeople))
+	for _, p := range existingPeople {
+		peopleMap[p.Name] = p.ID
+	}
+	var peopleIDs []int64
+	for _, p := range analysis.People {
+		id, ok := peopleMap[p.Name]
+		if !ok {
+			result, err := queries.CreatePeople(ctx, p.Name)
+			if err != nil {
+				e.logger.Error(nil, "create people %q: %v", p.Name, err)
+				continue
+			}
+			e.logger.Debug(nil, "people created %s", p.Name)
+			id, _ = result.LastInsertId()
+			peopleMap[p.Name] = id
+		}
+		peopleIDs = append(peopleIDs, id)
+	}
+
+	if err := queries.ClearDocumentPeople(ctx, document.ID); err != nil {
+		return nil, fmt.Errorf("clear document people: %w", err)
+	}
+
+	peopleTypeMap := make(map[string]int64, len(peopleTypes))
+	for _, pt := range peopleTypes {
+		peopleTypeMap[pt.Name] = pt.ID
+	}
+	for i, p := range analysis.People {
+		if _, ok := peopleTypeMap[p.Type]; !ok {
+			analysis.People[i].Type = "unknown"
+		}
+	}
+	for i, peopleID := range peopleIDs {
+		typeName := analysis.People[i].Type
+		typeID := peopleTypeMap[typeName]
+		if err := queries.AddDocumentPeople(ctx, database.AddDocumentPeopleParams{
+			DocumentID:   document.ID,
+			PeopleID:     peopleID,
+			PeopleTypeID: typeID,
+		}); err != nil {
+			e.logger.Error(nil, "add document people: %w", err)
+		}
+	}
 
 	if analysis.Stats == nil {
 		emptyStats := json.RawMessage("{}")

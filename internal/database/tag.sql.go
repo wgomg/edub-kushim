@@ -11,7 +11,7 @@ import (
 )
 
 const createTag = `-- name: CreateTag :execresult
-INSERT INTO tag (
+INSERT OR IGNORE INTO tag (
     name
 ) VALUES (?)
 `

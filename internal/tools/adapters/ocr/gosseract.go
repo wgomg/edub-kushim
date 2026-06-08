@@ -37,6 +37,11 @@ func NewGosseract(logger *utils.Logger, cfg config.ToolConfig, optimizerCmd stri
 	if err != nil {
 		return nil, fmt.Errorf("create optimizer: %w", err)
 	}
+
+	if len(languages) == 0 {
+		languages = []string{"eng"}
+	}
+
 	return &Gosseract{logger: logger, config: cfg, optimizer: optimizer, languages: languages, dataDir: dataDir}, nil
 }
 

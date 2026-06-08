@@ -59,6 +59,8 @@ func (h *DocumentHandler) ListDocuments(w http.ResponseWriter, r *http.Request) 
 
 	response := make([]types.DocumentResponse, len(documents))
 	for i, doc := range documents {
+		docTypeID := doc.DocumentTypeID
+
 		response[i] = types.DocumentResponse{
 			ID:             doc.ID,
 			Title:          doc.Title,
@@ -66,6 +68,8 @@ func (h *DocumentHandler) ListDocuments(w http.ResponseWriter, r *http.Request) 
 			SHA512Checksum: doc.Sha512Checksum,
 			MimeType:       doc.MimeType,
 			FileSize:       doc.FileSize,
+			Language:       doc.Language,
+			DocumentTypeID: &docTypeID,
 			CreatedAt:      doc.CreatedAt.Time.Format("2006-01-02T15:04:05Z"),
 			ModifiedAt:     doc.ModifiedAt.Time.Format("2006-01-02T15:04:05Z"),
 		}
@@ -97,22 +101,63 @@ func (h *DocumentHandler) GetDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	doc, err := h.queries.GetDocument(r.Context(), id)
+	doc, err := h.queries.GetDocumentWithDetails(r.Context(), id)
 	if err != nil {
 		h.logger.Error(&reqID, "Failed to get document %d: %v", id, err)
 		http.Error(w, "Document not found", http.StatusNotFound)
 		return
 	}
 
+	tags, err := h.queries.GetDocumentTags(r.Context(), id)
+	if err != nil {
+		h.logger.Error(&reqID, "Failed to get tags for document %d: %v", id, err)
+	}
+
+	people, err := h.queries.GetDocumentPeopleWithType(r.Context(), id)
+	if err != nil {
+		h.logger.Error(&reqID, "Failed to get people for document %d: %v", id, err)
+	}
+
+	docTypeID := doc.DocumentTypeID
+
+	var docTypeName *string
+	if doc.DocumentTypeName.Valid {
+		docTypeName = &doc.DocumentTypeName.String
+	}
+
+	tagResponses := make([]types.TagResponse, len(tags))
+	for i, t := range tags {
+		tagResponses[i] = types.TagResponse{
+			ID:   t.ID,
+			Name: t.Name,
+		}
+	}
+
+	personResponses := make([]types.PersonResponse, len(people))
+	for i, p := range people {
+		personResponses[i] = types.PersonResponse{
+			ID:                    p.ID,
+			Name:                  p.Name,
+			PersonTypeID:          p.PeopleTypeID,
+			PersonTypeName:        p.PeopleTypeName,
+			PersonTypeDescription: p.PeopleTypeDescription,
+		}
+	}
+
 	response := types.DocumentResponse{
-		ID:             doc.ID,
-		Title:          doc.Title,
-		MD5Checksum:    doc.Md5Checksum,
-		SHA512Checksum: doc.Sha512Checksum,
-		MimeType:       doc.MimeType,
-		FileSize:       doc.FileSize,
-		CreatedAt:      doc.CreatedAt.Time.Format("2006-01-02T15:04:05Z"),
-		ModifiedAt:     doc.ModifiedAt.Time.Format("2006-01-02T15:04:05Z"),
+		ID:               doc.ID,
+		Title:            doc.Title,
+		MD5Checksum:      doc.Md5Checksum,
+		SHA512Checksum:   doc.Sha512Checksum,
+		MimeType:         doc.MimeType,
+		FileSize:         doc.FileSize,
+		Language:         doc.Language,
+		DocumentTypeID:   &docTypeID,
+		DocumentTypeName: docTypeName,
+		Tags:             tagResponses,
+		People:           personResponses,
+		CreatedAt:        doc.CreatedAt.Time.Format("2006-01-02T15:04:05Z"),
+		ModifiedAt:       doc.ModifiedAt.Time.Format("2006-01-02T15:04:05Z"),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -153,6 +198,8 @@ func (h *DocumentHandler) SearchDocuments(w http.ResponseWriter, r *http.Request
 
 	response := make([]types.FTSDocumentResponse, len(results))
 	for i, r := range results {
+		docTypeID := r.DocumentTypeID
+
 		response[i] = types.FTSDocumentResponse{
 			ID:             r.DocumentID,
 			Title:          r.Title,
@@ -160,6 +207,8 @@ func (h *DocumentHandler) SearchDocuments(w http.ResponseWriter, r *http.Request
 			SHA512Checksum: r.SHA512Checksum,
 			MimeType:       r.MimeType,
 			FileSize:       r.FileSize,
+			Language:       r.Language,
+			DocumentTypeID: &docTypeID,
 			CreatedAt:      r.CreatedAt.Format("2006-01-02T15:04:05Z"),
 			ModifiedAt:     r.ModifiedAt.Format("2006-01-02T15:04:05Z"),
 			Rank:           r.Rank,

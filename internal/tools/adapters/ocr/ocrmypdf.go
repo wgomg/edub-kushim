@@ -15,16 +15,21 @@ import (
 )
 
 type OcrMyPdf struct {
-	logger *utils.Logger
-	config config.ToolConfig
+	logger    *utils.Logger
+	config    config.ToolConfig
+	languages []string
 }
 
-func NewOcrMyPdf(logger *utils.Logger, cfg config.ToolConfig) (*OcrMyPdf, error) {
+func NewOcrMyPdf(logger *utils.Logger, cfg config.ToolConfig, languages []string) (*OcrMyPdf, error) {
 	if _, err := exec.LookPath(cfg.Command); err != nil {
 		return nil, fmt.Errorf("%s not found in PATH: %w", cfg.Command, err)
 	}
 
-	return &OcrMyPdf{logger: logger, config: cfg}, nil
+	if len(languages) == 0 {
+		languages = []string{"eng"}
+	}
+
+	return &OcrMyPdf{logger: logger, config: cfg, languages: languages}, nil
 }
 
 func (o *OcrMyPdf) Process(ctx context.Context, path string) (*string, error) {
@@ -38,6 +43,7 @@ func (o *OcrMyPdf) Process(ctx context.Context, path string) (*string, error) {
 	outputPath := filepath.Join(tmpDir, outputName)
 
 	args := []string{
+		"--language", strings.Join(o.languages, "+"),
 		"--output-type", "pdfa-2",
 		"--optimize", "2",
 		"--rotate-pages",

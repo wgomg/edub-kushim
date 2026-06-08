@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/wgomg/edub-kushim/internal/config"
+	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -63,10 +64,10 @@ func NewLlmAnthropic(logger *utils.Logger, cfg config.ToolConfig, llmCfg config.
 	return &LlmAnthropic{logger: logger, config: cfg, llmCfg: llmCfg}, nil
 }
 
-func (l *LlmAnthropic) Analyze(ctx context.Context, text string, docTypes []string, tagSuggestions []string) (*AnalysisResult, error) {
+func (l *LlmAnthropic) Analyze(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*AnalysisResult, error) {
 	maxTokens := 0
 
-	prompt := BuildPrompt(text, docTypes, tagSuggestions)
+	prompt := BuildPrompt(text, docTypes, peopleTypes, tagSuggestions)
 
 	reqBody := anthropicRequest{
 		Model:     l.llmCfg.Model,

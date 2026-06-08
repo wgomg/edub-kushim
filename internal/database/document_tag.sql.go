@@ -79,7 +79,7 @@ type GetTagDocumentsRow struct {
 	FileSize       int64
 	CreatedAt      sql.NullTime
 	ModifiedAt     sql.NullTime
-	DocumentTypeID sql.NullInt64
+	DocumentTypeID int64
 	OriginalPath   string
 	StoragePath    string
 }

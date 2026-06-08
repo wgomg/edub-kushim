@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/wgomg/edub-kushim/internal/config"
+	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -65,11 +66,11 @@ func NewLlmDeepSeek(logger *utils.Logger, cfg config.ToolConfig, llmCfg config.L
 	return &LlmDeepSeek{logger: logger, config: cfg, llmCfg: llmCfg}, nil
 }
 
-func (l *LlmDeepSeek) Analyze(ctx context.Context, text string, docTypes []string, tagSuggestions []string) (*AnalysisResult, error) {
+func (l *LlmDeepSeek) Analyze(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*AnalysisResult, error) {
 	maxTokens := 0
 	temp := 0.0
 
-	prompt := BuildPrompt(text, docTypes, tagSuggestions)
+	prompt := BuildPrompt(text, docTypes, peopleTypes, tagSuggestions)
 
 	reqBody := deepSeekRequest{
 		Messages: []deepSeekMessage{

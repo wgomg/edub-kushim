@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/wgomg/edub-kushim/internal/config"
+	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/contentanalyzer"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/ocr"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/pdfoptimizer"
@@ -57,13 +58,13 @@ type TagMatchResult struct {
 }
 
 type ContentAnalysisResult struct {
-	Title    string           `json:"title"`
-	DocType  string           `json:"type"`
-	Tags     []string         `json:"tags"`
-	Authors  []string         `json:"authors"`
-	Language string           `json:"language"`
-	Stats    *json.RawMessage `json:"stats"`
-	Prompt   string           `json:"prompt"`
+	Title    string                         `json:"title"`
+	DocType  string                         `json:"type"`
+	Tags     []string                       `json:"tags"`
+	People   []contentanalyzer.PeopleResult `json:"people"`
+	Language string                         `json:"language"`
+	Stats    *json.RawMessage               `json:"stats"`
+	Prompt   string                         `json:"prompt"`
 }
 
 // runWithTimeout runs fn in a goroutine and returns its result,
@@ -308,12 +309,12 @@ func (r *Runner) MatchEach(ctx context.Context, queries []string, tagsToMatch ma
 	return &TagMatchResult{Tags: tags}, nil
 }
 
-func (r *Runner) AnalyzeContent(ctx context.Context, text string, docTypes []string, tagSuggestions []string) (*ContentAnalysisResult, error) {
+func (r *Runner) AnalyzeContent(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*ContentAnalysisResult, error) {
 	if r.contentAnalyzer == nil {
 		return nil, fmt.Errorf("content analyzer not configured")
 	}
 	result, err := runWithTimeout(ctx, func() (*contentanalyzer.AnalysisResult, error) {
-		return r.contentAnalyzer.Analyze(ctx, text, docTypes, tagSuggestions)
+		return r.contentAnalyzer.Analyze(ctx, text, docTypes, peopleTypes, tagSuggestions)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("content analyzer: %w", err)
@@ -323,7 +324,7 @@ func (r *Runner) AnalyzeContent(ctx context.Context, text string, docTypes []str
 		Title:    result.Title,
 		DocType:  result.DocType,
 		Tags:     result.Tags,
-		Authors:  result.Authors,
+		People:   result.People,
 		Language: result.Language,
 		Stats:    result.Stats,
 		Prompt:   result.Prompt,

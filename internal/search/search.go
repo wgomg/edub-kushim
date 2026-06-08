@@ -18,6 +18,8 @@ type Result struct {
 	SHA512Checksum string
 	MimeType       string
 	FileSize       int64
+	Language       string
+	DocumentTypeID int64
 	CreatedAt      time.Time
 	ModifiedAt     time.Time
 	OriginalPath   string
@@ -58,6 +60,8 @@ func (e *Engine) Search(ctx context.Context, query string, limit, offset int32) 
 			SHA512Checksum: r.Sha512Checksum,
 			MimeType:       r.MimeType,
 			FileSize:       r.FileSize,
+			Language:       r.Language,
+			DocumentTypeID: r.DocumentTypeID,
 			CreatedAt:      r.CreatedAt.Time,
 			ModifiedAt:     r.ModifiedAt.Time,
 			OriginalPath:   r.OriginalPath,
