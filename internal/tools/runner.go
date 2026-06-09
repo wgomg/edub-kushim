@@ -330,3 +330,11 @@ func (r *Runner) AnalyzeContent(ctx context.Context, text string, docTypes []dat
 		Prompt:   result.Prompt,
 	}, nil
 }
+
+// see comment at internal/tools/adapters/tagmatcher/adapter.go
+func (r *Runner) EncodeTags(ctx context.Context, tags []string) ([][]float32, error) {
+	if r.tagMatcher == nil {
+		return nil, fmt.Errorf("tag matcher not configured")
+	}
+	return r.tagMatcher.Encode(ctx, tags)
+}

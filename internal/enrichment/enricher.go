@@ -153,6 +153,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 		tagMap[t.Name] = t.ID
 	}
 	var tagIDs []int64
+	var newTags []string
 	for _, tagName := range analysis.Tags {
 		id, ok := tagMap[tagName]
 		if !ok {
@@ -164,9 +165,23 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 			e.logger.Debug(nil, "tag created %s", tagName)
 			id, _ = result.LastInsertId()
 			tagMap[tagName] = id
+			newTags = append(newTags, tagName)
 		}
 		tagIDs = append(tagIDs, id)
 	}
+
+	if len(newTags) > 0 {
+		newTagsEmbeddings, err := e.runner.EncodeTags(ctx, newTags)
+		if err != nil {
+			e.logger.Error(nil, "encode new tags for cache: %w", err)
+		} else {
+			for i, name := range newTags {
+				embStore.Add(name, newTagsEmbeddings[i])
+			}
+			e.logger.Debug(nil, "cached %v new tag embeddings", newTags)
+		}
+	}
+
 	if err := queries.ClearDocumentTags(ctx, document.ID); err != nil {
 		return nil, fmt.Errorf("clear document tags: %w", err)
 	}
