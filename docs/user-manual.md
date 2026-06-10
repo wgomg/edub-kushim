@@ -9,7 +9,7 @@ Both share the same OCR, text extraction, and PDF optimization pipeline.
 
 ```bash
 # One‑time: create config, download OCR languages + Hugot model (BAAI/bge-m3)
-kushim setup --langs eng,spa
+kushim setup --languages eng,spa
 
 # Process documents
 cp my-documents/*.pdf ~/.config/edub-kushim/inbox/
@@ -48,20 +48,21 @@ database schema, download OCR language data from `tessdata_fast`, and
 download the Hugot embedding model (`BAAI/bge-m3`).
 
 ```
-kushim setup --langs eng,spa
+kushim setup --languages eng,spa
 ```
 
 | Flag                               | Default                | Description                                                 |
 | ---------------------------------- | ---------------------- | ----------------------------------------------------------- |
-| `--langs`                          | — (required)           | Comma‑separated OCR language codes (e.g. `eng,spa,deu`)     |
-| `--inbox-dir`                      | _config-dir_`/inbox`   | Consumption directory (scanned for files)                   |
-| `--storage-dir`                    | _config-dir_`/storage` | Processed file storage root                                 |
-| `--db-path`                        | _config-dir_`/data`    | SQLite database directory                                   |
+| `--languages`                      | — (required)           | Comma‑separated OCR language codes (e.g. `eng,spa,deu`)     |
+| `--inbox-path`                     | _config-dir_`/inbox`   | Consumption directory (scanned for files)                   |
+| `--storage-path`                   | _config-dir_`/storage` | Processed file storage root                                 |
+| `--database-path`                  | _config-dir_`/data`    | SQLite database directory                                   |
 | `--consumer-pdfoptimizer-engine`   | `mupdf`                | PDF optimizer: `mupdf` or `gs`                              |
 | `--consumer-pdfoptimizer-fallback` | —                      | Fallback PDF optimizer binary (ignored when engine is `gs`) |
 | `--consumer-ocr-engine`            | `gosseract`            | OCR engine: `gosseract` or `ocrmypdf`                       |
+| `--reset-database`                 | `false`                | Drop all tables and re-run schema + seeders                 |
 
-The flags `--inbox-dir`, `--storage-dir`, and `--db-path` accept either
+The flags `--inbox-path`, `--storage-path`, and `--database-path` accept either
 absolute paths or paths starting with `~` (expanded to the home directory).
 
 ### `kushim consume`
@@ -268,7 +269,7 @@ File:       report.pdf
 Created:    2024-03-19T10:30:00Z
 Started:    2024-03-19T10:30:05Z
 Completed:  2024-03-19T10:30:12Z
-Document:   42
+Document: 550e8400-e29b-41d4-a716-446655440000
 ```
 
 Note: `Error:` only appears when the task has failed.
@@ -424,7 +425,7 @@ Response `200`:
       "batch_id": "550e8400-e29b-41d4-a716-446655440000",
       "file_name": "report.pdf",
       "status": "completed",
-      "document_id": 42,
+      "document_id": "550e8400-e29b-41d4-a716-446655440000",
       "error": null,
       "created_at": "2024-03-19T10:30:00Z",
       "started_at": "2024-03-19T10:30:05Z",
@@ -524,7 +525,7 @@ Response `200`:
 
 ```json
 {
-  "id": 1,
+  "document_id": "550e8400-e29b-41d4-a716-446655440000",
   "title": "document.pdf",
   "md5_checksum": "d41d8cd98f00b204e9800998ecf8427e",
   "sha512_checksum": "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e",
@@ -542,7 +543,7 @@ additional fields are populated:
 
 ```json
 {
-  "id": 1,
+  "document_id": "550e8400-e29b-41d4-a716-446655440000",
   "title": "document.pdf",
   "md5_checksum": "d41d8cd98f00b204e9800998ecf8427e",
   "sha512_checksum": "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e",
@@ -591,7 +592,7 @@ Same as DocumentResponse with these extra fields:
   "batch_id": "550e8400-e29b-41d4-a716-446655440000",
   "file_name": "report.pdf",
   "status": "completed",
-  "document_id": 42,
+  "document_id": "550e8400-e29b-41d4-a716-446655440000",
   "error": null,
   "created_at": "2024-03-19T10:30:00Z",
   "started_at": "2024-03-19T10:30:05Z",

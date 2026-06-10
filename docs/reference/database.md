@@ -12,9 +12,11 @@
 
 ## `schema.go`
 
-### Function
+### Functions
 
 `InitializeSchema(db) error` — Reads embedded schema from `sql/schema/schema.sql`, runs seeders: `tags`, `document-types`, `people-types`
+
+`ResetDatabase(db) error` — Drops all non-system tables via `DROP TABLE IF EXISTS` (disables foreign keys first) and re-runs `InitializeSchema`. Used by `kushim setup --reset-database`.
 
 ---
 
@@ -22,7 +24,7 @@
 
 ### Key structs
 
-- `Document` — 16 fields: `ID`, `Title`, `Md5Checksum`, `Sha512Checksum`, `MimeType`, `FileSize`, `PageCount`, `WordCount`, `CharCount`, `Language`, `CreatedAt`, `ModifiedAt`, `DocumentTypeID`, `OriginalPath`, `StoragePath`, `TextContent`
+- `Document` — 17 fields: `ID`, `DocumentID` (UUID string), `Title`, `Md5Checksum`, `Sha512Checksum`, `MimeType`, `FileSize`, `PageCount`, `WordCount`, `CharCount`, `Language`, `CreatedAt`, `ModifiedAt`, `DocumentTypeID`, `OriginalPath`, `StoragePath`, `TextContent`
 - `DocumentFt` — `DocumentID`, `Title`, `Content`
 - `Task` — 12 fields: `ID`, `TaskID`, `TaskType`, `Status`, `BatchID sql.NullString`, `Payload json.RawMessage`, `Result *json.RawMessage`, `DedupKey sql.NullString`, `CreatedAt`, `StartedAt`, `CompletedAt`, `Error`
 - `Tag` — `ID`, `Name`, `CreatedAt`
@@ -58,7 +60,7 @@
 
 ### Document
 
-`CreateDocument` (with WordCount, CharCount, Language, PageCount), `GetDocument`, `ListDocuments`, `UpdateDocumentPaths`, `UpdateDocumentMetadata`, `GetDocumentByMD5Checksum`, `GetDocumentBySHA512Checksum`, `GetDocumentWithDetails`, `GetDocumentWithText`, `SearchDocumentsByTitle`, `SumDocumentFileSizes`, `DeleteDocument`
+`CreateDocument` (with `DocumentID` UUID, WordCount, CharCount, Language, PageCount), `GetDocument` (by `document_id`), `GetDocumentById`, `ListDocuments`, `UpdateDocumentPaths` (by `document_id`), `UpdateDocumentPathsById`, `UpdateDocumentMetadata` (by `document_id`), `UpdateDocumentMetadataById`, `GetDocumentByMD5Checksum`, `GetDocumentBySHA512Checksum`, `GetDocumentWithDetails` (by `document_id`), `GetDocumentWithDetailsById`, `GetDocumentWithText` (by `document_id`), `GetDocumentWithTextById`, `SearchDocumentsByTitle`, `SumDocumentFileSizes`, `DeleteDocument` (by `document_id`), `DeleteDocumentById`
 
 ### Tag
 
@@ -110,7 +112,7 @@
 
 ## Core Tables
 
-- `document` — Main storage: `md5_checksum`, `sha512_checksum` (UNIQUE), `page_count`, `word_count`, `char_count`, `language` (all int64/text defaults), `text_content`, file paths
+- `document` — Main storage: `document_id` (UUID, UNIQUE), `md5_checksum`, `sha512_checksum` (UNIQUE), `page_count`, `word_count`, `char_count`, `language` (all int64/text defaults), `text_content`, file paths
 - `task` — Async processing: `task_id` (UUID), `batch_id` (nullable), `task_type`, `payload` (JSON), `result` (JSON), `dedup_key` (nullable), `status`, timestamps, `error`
 - `tag` — Classification tags (seeded with 110+ Dewey Decimal tags)
 - `document_type` — Document type classification (seeded with types like `article`, `book`, `report`, `letter`, etc.)
@@ -140,6 +142,13 @@ CREATE VIRTUAL TABLE document_fts USING fts5(
 - `document_ai` — INSERT: auto-adds to `document_fts`
 - `document_au` — UPDATE: syncs FTS index
 - `document_ad` — DELETE: removes from FTS index
+
+## Schema Idempotency
+
+All `CREATE TABLE`, `CREATE INDEX`, and `CREATE TRIGGER` statements use `IF NOT EXISTS`
+to allow safe re-runs of the schema. Junction table inserts (`document_tag`, `document_people`)
+use `INSERT OR IGNORE` instead of plain `INSERT` to avoid duplicate-key errors on
+re-enrichment.
 
 ## Key Indexes
 

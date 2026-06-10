@@ -20,11 +20,13 @@
 
 ### Document Pipeline
 
+- UUID-based `document_id` column added to document table for external identification and log correlation
 - Document consumption pipeline: scan inbox → extract text → OCR fallback → optimize → store
 - Text extraction via MuPDF CGo wrapper (default), gopdf (pure Go), or pdftotext (external tool)
 - OCR via gosseract (Tesseract + MuPDF at 200 DPI) or ocrmypdf (external tool)
 - Searchable PDF generation with invisible text layer (PDF text rendering mode 3)
 - PDF optimization via MuPDF (CGo wrapper) or Ghostscript (external tool)
+- Database reset capability (`kushim setup --reset-database`) — drops all tables and re-runs schema + seeders
 - MD5 → SHA512 two-step duplicate detection
 - Dual storage: originals preserved alongside processed/OCR'd versions
 - Date-based storage organization (`year/month/day/documentID.ext`)
@@ -42,6 +44,7 @@
 - Dual text reduction: separate `target_words` for LLM and `reduce_target_words` for tag matching
 - Post-LLM tag consolidation via `MatchEach` (fixes casing, hyphenation, synonym mismatches)
 - Tag embedding cache (`BuildTagCache`) — pre-computed tag embeddings at startup
+- **New tag cache update**: newly created tags during enrichment are immediately encoded and added to the embedding cache
 - **Classification persistence**: enrichment writes to `document_tag`, `document_people`, `document.document_type_id` including auto-creating new tags/people as needed
 - Seeded tag vocabulary (110+ Dewey Decimal tags via `sql/seed-tags.sql`)
 - Seeded document types (`sql/seed-document-types.sql`)

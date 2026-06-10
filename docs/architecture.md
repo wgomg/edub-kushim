@@ -52,9 +52,12 @@ OCRs from PNG, and builds a searchable PDF with `go‑pdf/fpdf` using
 
 ### 4. Database Integration
 
-Document record created via `CreateDocument`, ID obtained from `LastInsertId()`,
-date‑based storage paths generated, paths updated via `UpdateDocumentPaths`. All
-wrapped in a database transaction with rollback on file‑operation failure.
+Document record created via `CreateDocument` with a generated `document_id` UUID,
+auto-increment ID obtained from `LastInsertId()`, date‑based storage paths
+generated, paths updated via `UpdateDocumentPaths`. All wrapped in a database
+transaction with rollback on file‑operation failure. The UUID serves as the
+stable external identifier for the API, while the auto-increment ID is used
+for internal storage paths.
 
 ### 5. File Movement
 
@@ -89,7 +92,10 @@ After a `consume` task completes, an `enrich` task is automatically enqueued
    JSON: title, type, tags, people (with types like author, sender), language.
 4. **Post-LLM Tag Consolidation** — LLM output labels are re-matched against canonical
    tag embeddings via `MatchEach`, fixing casing, hyphenation, and synonym mismatches.
-5. **Result Logging** — token usage stats and prompt text are logged.
+5. **New Tag Cache Update** — any new tags created during enrichment are immediately
+   encoded via Hugot and added to the embedding cache, making them available for
+   matching against subsequent documents.
+6. **Result Logging** — token usage stats and prompt text are logged.
 
 This pipeline is non-blocking: documents are stored and searchable immediately via
 FTS5, with enrichment arriving asynchronously.

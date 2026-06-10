@@ -9,12 +9,12 @@
   - **Methods**:
     - `NewConsumer(cfg, logger, db) (*Consumer, error)` — Validates `PdfOptimizer.Fallback` at startup
     - `NewConsumerWithRunner(cfg, logger, db, runner) (*Consumer, error)` — DI variant
-    - `Process(ctx, file File) (File, error)` — Extract → OCR fallback → optimize → store (creates document with PageCount, WordCount, CharCount)
-    - `extractText(ctx, file File) (File, error)` — Uses `minTextDensityRatio` (0.001) to decide OCR vs text
+    - `Process(ctx, file File, documentID string) (File, error)` — Extract → OCR fallback → optimize → store (creates document with PageCount, WordCount, CharCount)
+    - `extractText(ctx, file File, documentID string) (File, error)` — Uses `minTextDensityRatio` (0.001) to decide OCR vs text
     - `isDuplicate(ctx, path) (bool, error)` — MD5 → SHA512 two-step duplicate check
 
 - `File`
-  - **Fields**: `Name`, `OriginalPath`, `OCRTmpPath *string`, `OptimizedPdfTmpPath *string`, `StorageProcessedPath *string`, `StorageOriginalPath *string`, `DocumentID sql.NullInt64`, `MD5Checksum`, `SHA512Checksum`, `Text sql.NullString`, `MimeType`, `Date time.Time`, `FileSize int64`, `PageCount int`
+  - **Fields**: `Name`, `OriginalPath`, `OCRTmpPath *string`, `OptimizedPdfTmpPath *string`, `StorageProcessedPath *string`, `StorageOriginalPath *string`, `DocumentID string` (UUID), `DocumentDbId sql.NullInt64` (DB auto-increment ID), `MD5Checksum`, `SHA512Checksum`, `Text sql.NullString`, `MimeType`, `Date time.Time`, `FileSize int64`, `PageCount int`
 
 ### Functions
 
@@ -49,9 +49,10 @@
       4. Semantic tag matching against cached tag embeddings (falls back to all tags on failure)
       5. LLM content analysis (title, doc type, tags, people, language)
       6. Post-LLM tag consolidation via `MatchEach` (creates new tags if needed)
-      7. Update document metadata (title, doc_type, language)
-      8. Manage document_tag junction (clear + add, create new tags as needed)
-      9. Manage document_people junction (clear + add, create new people as needed; unknown types default to `"unknown"`)
+      7. Newly created tags are immediately encoded and added to the embedding cache so subsequent documents can match them
+      8. Update document metadata (title, doc_type, language)
+      9. Manage document_tag junction (clear + add, create new tags as needed)
+      10. Manage document_people junction (clear + add, create new people as needed; unknown types default to `"unknown"`)
     - `GetDb() *sql.DB`
 
 ### Helpers

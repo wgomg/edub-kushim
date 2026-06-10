@@ -30,7 +30,7 @@
   - **Fields**: `cfg *config.Config`, `logger *utils.Logger`, `dispatcher *task.Dispatcher`
   - **Methods**:
     - `NewConsumeHandler(cfg *config.Config, logger *utils.Logger, dispatcher *task.Dispatcher) *ConsumeHandler`
-    - `Consume(w, r)` — Scans inbox, enqueues one pair of (consume + enrich) tasks per file via `dispatcher.Enqueue`. Consume tasks have `on_completed` pointing to enrich task ID; enrich tasks start as `"waiting"` status with `waiting_for` pointer. Returns `202` with `batch_id`, `total_files`, `enqueued`, and `_links.tasks`. Returns `200` JSON `{batch_id:null, total_files:0, message:"no files found"}` when inbox is empty.
+    - `Consume(w, r)` — Scans inbox, enqueues one pair of (consume + enrich) tasks per file via `dispatcher.Enqueue`. Each consume task payload includes a `document_id` UUID for log correlation, plus `file_path`, `file_index`, and `on_completed` pointing to the enrich task ID. Enrich tasks start as `"waiting"` status with `waiting_for` pointer. Returns `202` with `batch_id`, `total_files`, `enqueued`, and `_links.tasks`. Returns `200` JSON `{batch_id:null, total_files:0, message:"no files found"}` when inbox is empty.
 
 ---
 
@@ -85,7 +85,7 @@
 - `TagResponse` — `ID int64`, `Name string`
 - `PersonResponse` — `ID`, `Name`, `PersonTypeID`, `PersonTypeName`, `PersonTypeDescription`
 - `DocumentResponse`
-  - **Fields**: `ID`, `Title`, `MD5Checksum`, `SHA512Checksum`, `MimeType`, `FileSize`, `Language`, `DocumentTypeID *int64`, `DocumentTypeName *string`, `Tags []TagResponse`, `People []PersonResponse`, `CreatedAt`, `ModifiedAt`
+  - **Fields**: `DocumentID string` (UUID), `Title`, `MD5Checksum`, `SHA512Checksum`, `MimeType`, `FileSize`, `Language`, `DocumentTypeID *int64`, `DocumentTypeName *string`, `Tags []TagResponse`, `People []PersonResponse`, `CreatedAt`, `ModifiedAt`
 - `FTSDocumentResponse`
   - **Fields**: Same as `DocumentResponse` (including `DocumentTypeName`, `Tags`, `People`) plus `Rank float64`, `Snippet string`, `TextContent string`
 

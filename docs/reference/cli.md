@@ -74,7 +74,7 @@
 
 ### Functions
 
-- `RunSetup(args, logger) error` — Accepts `--langs`, `--inbox-dir`, `--storage-dir`, `--db-path`, `--consumer-pdfoptimizer-fallback`, `--consumer-pdfoptimizer-engine`, `--consumer-ocr-engine`. Downloads Tesseract language data and Hugot model (`BAAI/bge-m3`). Creates config.yaml, directories, initializes database schema.
+- `RunSetup(args, logger) error` — Accepts `--languages`, `--inbox-path`, `--storage-path`, `--database-path`, `--consumer-pdfoptimizer-fallback`, `--consumer-pdfoptimizer-engine`, `--consumer-ocr-engine`, `--reset-database`. Downloads Tesseract language data and Hugot model (`BAAI/bge-m3`). Creates config.yaml, directories, initializes database schema (or resets it with `--reset-database`).
 - `downloadFile(url, dest) error` — Downloads via curl
 - `setupHugotModel(ctx, configDir, logger) error` — Downloads Hugot model using `hugot.DownloadModel`, renames to model short name
 - `setupHandler(c, args) error` — Returns error (setup must be run without config)

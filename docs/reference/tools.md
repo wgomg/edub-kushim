@@ -8,9 +8,9 @@
 
 - **Fields**: `logger`, `config`, `textExtractor`, `ocr`, `pdfOptimizer`, `tagMatcher`, `contentAnalyzer`, `textReducer`
 - **Functions**:
-  - `NewRunner(logger, cfg, tools []string) *Runner` — Initializes only the listed tool adapters (e.g., `["textextractor","ocr","pdfoptimizer"]` for consumer, `["textreducer","contentanalyzer","tagmatcher"]` for enricher)
+  - `NewRunner(logger, cfg, tools []string) *Runner` — Initializes only the listed tool adapters (e.g., `["textextractor","ocr","pdfoptimizer"]` for consumer, `["textreducer","contentanalyzer","tagmatcher"]` for enricher). Tag matcher init errors are silently ignored (runner continues without it).
   - `NewRunnerWithAdapters(logger, cfg, adapters...) *Runner` — Dependency injection variant
-- **Methods**: `ExtractText`, `OCR`, `OptimizePdf`, `ReduceContent`, `MatchTags`, `MatchEach`, `AnalyzeContent`
+- **Methods**: `ExtractText`, `OCR(ctx, docId, path)`, `OptimizePdf(ctx, docId, path)`, `ReduceContent`, `MatchTags(ctx, docId, input, tagsToMatch)`, `MatchEach(ctx, docId, queries, tagsToMatch)`, `EncodeTags(ctx, *docId, tags)`, `AnalyzeContent`
 - **Result types**: `TextExtractionResult`, `OCRResult`, `PdfOptimizationResult`, `TextReducerResult` (with Text, WordCount, CharCount, TargetWordCount), `TagMatchResult`, `ContentAnalysisResult` (with People)
 - **Helper**: `runWithTimeout[T](ctx, fn) (T, error)` — Generic goroutine wrapper with context cancellation
 
@@ -52,6 +52,7 @@ type ContentAnalyzer interface {
 ### Struct
 
 `LlmOpenAi` — OpenAI `/chat/completions` API
+
 - Messages: system + user with `json_object` response format
 - Headers: `Authorization: Bearer {token}`
 - Token usage from `usage` field
@@ -63,6 +64,7 @@ type ContentAnalyzer interface {
 ### Struct
 
 `LlmAnthropic` — Anthropic `/messages` API
+
 - System message via `system` field, user message via `messages`
 - Headers: `x-api-key`, `anthropic-version: 2023-06-01`
 - Token usage from `usage.input_tokens` + `usage.output_tokens`
@@ -74,6 +76,7 @@ type ContentAnalyzer interface {
 ### Struct
 
 `LlmDeepSeek` — DeepSeek `/chat/completions` API (OpenAI-compatible)
+
 - Messages: system + user with `json_object` response format, thinking disabled
 - Headers: `Authorization: Bearer {token}`
 - Token usage from `usage` field
@@ -85,6 +88,7 @@ type ContentAnalyzer interface {
 ### Struct
 
 `LlmOllama` — Local Ollama `/api/chat` API
+
 - Messages: system + user with `json` format field
 - No auth headers needed; `KeepAlive: 5m`
 - Token usage from `prompt_eval_count` + `eval_count`
@@ -97,8 +101,9 @@ type ContentAnalyzer interface {
 
 ```go
 type TagMatcher interface {
-    Match(ctx, input string, tagsToMatch map[string][]float32) ([]string, error)
-    MatchEach(ctx, queries []string, tagsToMatch map[string][]float32) ([]string, error)
+    Match(ctx, docId, input string, tagsToMatch map[string][]float32) ([]string, error)
+    MatchEach(ctx, docId string, queries []string, tagsToMatch map[string][]float32) ([]string, error)
+    Encode(ctx, docId *string, texts []string) ([][]float32, error)
     Close()
     Name() string
 }
@@ -120,7 +125,7 @@ type TagMatcher interface {
 - **Chunked encoding**: Documents exceeding `max_position_embeddings` are split into overlapping token chunks, mean-pooled
 - **Ranking**: Cosine similarity on L2-normalized embeddings (dot product); separate `minSimilarity` (doc→tag) and `consolidationSim` (tag→tag consolidation)
 - **Config**: `TopN`, `MinSimilarity`, `ConsolidationSimilarity`, `ChunkSize` (auto-derived from model config), `ChunkOverlap` (10% of chunk size)
-- **Methods**: `Encode(ctx, texts)`, `Match(ctx, input, tagsToMatch)`, `MatchEach(ctx, queries, tagsToMatch)`, `Close()`
+- **Methods**: `Encode(ctx, *docId, texts)`, `Match(ctx, docId, input, tagsToMatch)`, `MatchEach(ctx, docId, queries, tagsToMatch)`, `Close()`
 - **Helpers**: `meanPool`, `rankMatches`, `cosineSimilarity`, `tokenize`, `encodeChunked`, `readMaxPositionEmbeddings`, `downloadLib`, `getBackendSession`
 
 ---
@@ -166,7 +171,7 @@ type TextReducer interface {
 
 ### Interface
 
-`OCR` — `Process`, `CanHandle`, `Name`
+`OCR` — `Process(ctx, docId, path)`, `CanHandle`, `Name`
 
 ### Factory
 
@@ -204,7 +209,7 @@ type TextReducer interface {
 
 ### Interface
 
-`PdfOptimizer` — `Optimize`, `Name`
+`PdfOptimizer` — `Optimize(ctx, docId, path)`, `Name`
 
 ### Factory
 

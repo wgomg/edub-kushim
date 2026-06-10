@@ -36,7 +36,7 @@
   - **Methods**:
     - `NewDispatcher(cfg, logger, db, embeddingCache *cache.Cache) (*Dispatcher, error)` — Creates consumer and enricher with cache
     - `Enqueue(ctx, taskType, batchID, payload, taskID string, status ...string) (string, error)` — Validates task type, computes dedup key, inserts row. Supports custom taskID and initial status (e.g., `"waiting"`)
-    - `Next(ctx, taskType string) error` — Implements `pool.Runner`: fetch pending task of type via `GetNextPendingTaskOfType` → claim → handle → result. For `"consume"` tasks, activates the waiting enrich task (matched via `on_completed`/`waiting_for` pointers) by calling `SetEnrichTaskPending` **before** `CompleteTask`, so the poll loop never sees a gap where the batch looks finished.
+    - `Next(ctx, taskType string) error` — Implements `pool.Runner`: fetch pending task of type via `GetNextPendingTaskOfType` → claim → handle → result. For `"consume"` tasks, extracts `document_db_id` (int64) and `document_id` (UUID) from the result, activates the waiting enrich task (matched via `on_completed`/`waiting_for` pointers) by calling `SetEnrichTaskPending` **before** `CompleteTask`, so the poll loop never sees a gap where the batch looks finished.
     - `setEnrichTaskPending(ctx, id, payload) error` — Updates enrich task status to pending and injects `document_id`
 
 ### Functions
@@ -72,7 +72,7 @@
 - `ConsumeTaskHandler` — `consumer *consumption.Consumer`
   - **Methods**:
     - `NewConsumeTaskHandler(consumer) *ConsumeTaskHandler`
-    - `Handle(ctx, t) (json.RawMessage, error)` — Unmarshals payload, calls `FileFromPath` + `consumer.Process`, returns `{"document_id":N,"storage_path":"..."}`
+    - `Handle(ctx, t) (json.RawMessage, error)` — Unmarshals payload (with `file_path` and `document_id` UUID), calls `FileFromPath` + `consumer.Process`, returns `{"document_db_id":N,"storage_path":"...","document_id":"<uuid>"}`
     - `DedupKey(payload) string` — Returns file path from payload
 
 ---
@@ -84,8 +84,8 @@
 - `EnrichTaskHandler` — `enricher *enrichment.Enricher`
   - **Methods**:
     - `NewEnrichTaskHandler(enricher) *EnrichTaskHandler`
-    - `Handle(ctx, t) (json.RawMessage, error)` — Unmarshals `{"document_id":N}`, calls `enricher.GetDb()` + `GetDocument`, then `enricher.Enrich`
-    - `DedupKey(payload) string` — Returns `"enrich:doc:N"` or empty string
+    - `Handle(ctx, t) (json.RawMessage, error)` — Unmarshals `{"document_id":"<uuid>"}`, calls `enricher.GetDb()` + `GetDocument` (lookup by UUID), then `enricher.Enrich`
+    - `DedupKey(payload) string` — Returns `"enrich:doc:<uuid>"` or empty string
 
 ---
 
