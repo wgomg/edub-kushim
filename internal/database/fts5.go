@@ -10,11 +10,15 @@ import (
 // FTSDocumentRow represents a row from the FTS5 search results
 type FTSDocumentRow struct {
 	ID             int64          `json:"id"`
+	DocumentID     string         `json:"document_id"`
 	Title          string         `json:"title"`
 	Md5Checksum    string         `json:"md5_checksum"`
 	Sha512Checksum string         `json:"sha512_checksum"`
 	MimeType       string         `json:"mime_type"`
 	FileSize       int64          `json:"file_size"`
+	PageCount      int64          `json:"page_count"`
+	WordCount      int64          `json:"word_count"`
+	CharCount      int64          `json:"char_count"`
 	Language       string         `json:"language"`
 	CreatedAt      sql.NullTime   `json:"created_at"`
 	ModifiedAt     sql.NullTime   `json:"modified_at"`
@@ -34,9 +38,9 @@ func (q *Queries) SearchDocumentsFTS(
 ) ([]FTSDocumentRow, error) {
 	const query = `
 		SELECT
-			d.id, d.title, d.md5_checksum, d.sha512_checksum, d.mime_type, d.file_size,
-			d.language, d.created_at, d.modified_at, d.document_type_id, d.original_path,
-			d.storage_path, d.text_content,
+			d.id, d.document_id, d.title, d.md5_checksum, d.sha512_checksum, d.mime_type, d.file_size,
+			d.page_count, d.word_count, d.char_count, d.language, d.created_at, d.modified_at,
+			d.document_type_id, d.original_path, d.storage_path, d.text_content,
 			bm25(document_fts) as rank,
 			snippet(document_fts, 2, '<b>', '</b>', '...', 64) as snippet
 		FROM document_fts
@@ -57,11 +61,15 @@ func (q *Queries) SearchDocumentsFTS(
 		var i FTSDocumentRow
 		if err := rows.Scan(
 			&i.ID,
+			&i.DocumentID,
 			&i.Title,
 			&i.Md5Checksum,
 			&i.Sha512Checksum,
 			&i.MimeType,
 			&i.FileSize,
+			&i.PageCount,
+			&i.WordCount,
+			&i.CharCount,
 			&i.Language,
 			&i.CreatedAt,
 			&i.ModifiedAt,
@@ -95,15 +103,14 @@ func (q *Queries) SearchDocumentsFTSWithFilters(ctx context.Context, arg struct 
 }) ([]FTSDocumentRow, error) {
 	const query = `
 		SELECT
-			d.id, d.title, d.md5_checksum, d.sha512_checksum, d.mime_type, d.file_size,
-			d.language, d.created_at, d.modified_at, d.document_type_id, d.original_path,
-			d.storage_path, d.text_content,
+			d.id, d.document_id, d.title, d.md5_checksum, d.sha512_checksum, d.mime_type, d.file_size,
+			d.page_count, d.word_count, d.char_count, d.language, d.created_at, d.modified_at,
+			d.document_type_id, d.original_path, d.storage_path, d.text_content,
 			bm25(document_fts) as rank,
 			snippet(document_fts, 2, '<b>', '</b>', '...', 64) as snippet
 		FROM document_fts
 		JOIN document d ON document_fts.document_id = d.id
-		WHERE document_fts MATCH ?
-		  AND d.mime_type = ?
+		WHERE document_fts MATCH ? AND d.mime_type = ?
 		ORDER BY rank
 		LIMIT ? OFFSET ?
 	`
@@ -119,11 +126,15 @@ func (q *Queries) SearchDocumentsFTSWithFilters(ctx context.Context, arg struct 
 		var i FTSDocumentRow
 		if err := rows.Scan(
 			&i.ID,
+			&i.DocumentID,
 			&i.Title,
 			&i.Md5Checksum,
 			&i.Sha512Checksum,
 			&i.MimeType,
 			&i.FileSize,
+			&i.PageCount,
+			&i.WordCount,
+			&i.CharCount,
 			&i.Language,
 			&i.CreatedAt,
 			&i.ModifiedAt,

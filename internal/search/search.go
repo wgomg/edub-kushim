@@ -12,12 +12,15 @@ import (
 )
 
 type Result struct {
-	DocumentID     int64
+	DocumentID     string
 	Title          string
 	MD5Checksum    string
 	SHA512Checksum string
 	MimeType       string
 	FileSize       int64
+	PageCount      int64
+	WordCount      int64
+	CharCount      int64
 	Language       string
 	DocumentTypeID int64
 	CreatedAt      time.Time
@@ -54,12 +57,15 @@ func (e *Engine) Search(ctx context.Context, query string, limit, offset int32) 
 	results := make([]Result, len(rows))
 	for i, r := range rows {
 		results[i] = Result{
-			DocumentID:     r.ID,
+			DocumentID:     r.DocumentID,
 			Title:          r.Title,
 			MD5Checksum:    r.Md5Checksum,
 			SHA512Checksum: r.Sha512Checksum,
 			MimeType:       r.MimeType,
 			FileSize:       r.FileSize,
+			PageCount:      r.PageCount,
+			WordCount:      r.WordCount,
+			CharCount:      r.CharCount,
 			Language:       r.Language,
 			DocumentTypeID: r.DocumentTypeID,
 			CreatedAt:      r.CreatedAt.Time,

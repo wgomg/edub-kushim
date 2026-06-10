@@ -8,7 +8,7 @@
 	let error = $state('');
 
 	onMount(async () => {
-		doc = await api.documents.get(Number(params.id));
+		doc = await api.documents.get(params.id);
 		if (!doc) error = 'Failed to load document';
 	});
 </script>
@@ -51,6 +51,25 @@
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-xs font-medium tracking-wider text-parchment-500 uppercase">File Size</p>
 					<p class="mt-1 text-parchment-200">{(doc.file_size / 1024).toFixed(0)} KB</p>
+				</div>
+				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
+					<p class="text-xs font-medium tracking-wider text-parchment-500 uppercase">
+						Content Stats
+					</p>
+					<div class="mt-2 space-y-1 text-sm">
+						<div class="flex justify-between">
+							<span class="text-parchment-500">Pages</span>
+							<span class="text-parchment-200">{doc.page_count ?? '—'}</span>
+						</div>
+						<div class="flex justify-between">
+							<span class="text-parchment-500">Words</span>
+							<span class="text-parchment-200">{doc.word_count ?? '—'}</span>
+						</div>
+						<div class="flex justify-between">
+							<span class="text-parchment-500">Characters</span>
+							<span class="text-parchment-200">{doc.char_count ?? '—'}</span>
+						</div>
+					</div>
 				</div>
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-xs font-medium tracking-wider text-parchment-500 uppercase">Created</p>

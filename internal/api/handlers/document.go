@@ -61,12 +61,15 @@ func (h *DocumentHandler) ListDocuments(w http.ResponseWriter, r *http.Request) 
 		docTypeID := doc.DocumentTypeID
 
 		response[i] = types.DocumentResponse{
-			DocumentID:     doc.DocumentID,
+			ID:             doc.DocumentID,
 			Title:          doc.Title,
 			MD5Checksum:    doc.Md5Checksum,
 			SHA512Checksum: doc.Sha512Checksum,
 			MimeType:       doc.MimeType,
 			FileSize:       doc.FileSize,
+			PageCount:      doc.PageCount,
+			WordCount:      doc.WordCount,
+			CharCount:      doc.CharCount,
 			Language:       doc.Language,
 			DocumentTypeID: &docTypeID,
 			CreatedAt:      doc.CreatedAt.Time.Format("2006-01-02T15:04:05Z"),
@@ -138,12 +141,15 @@ func (h *DocumentHandler) GetDocument(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := types.DocumentResponse{
-		DocumentID:       doc.DocumentID,
+		ID:               doc.DocumentID,
 		Title:            doc.Title,
 		MD5Checksum:      doc.Md5Checksum,
 		SHA512Checksum:   doc.Sha512Checksum,
 		MimeType:         doc.MimeType,
 		FileSize:         doc.FileSize,
+		PageCount:        doc.PageCount,
+		WordCount:        doc.WordCount,
+		CharCount:        doc.CharCount,
 		Language:         doc.Language,
 		DocumentTypeID:   &docTypeID,
 		DocumentTypeName: docTypeName,
@@ -200,6 +206,9 @@ func (h *DocumentHandler) SearchDocuments(w http.ResponseWriter, r *http.Request
 			SHA512Checksum: r.SHA512Checksum,
 			MimeType:       r.MimeType,
 			FileSize:       r.FileSize,
+			PageCount:      r.PageCount,
+			WordCount:      r.WordCount,
+			CharCount:      r.CharCount,
 			Language:       r.Language,
 			DocumentTypeID: &docTypeID,
 			CreatedAt:      r.CreatedAt.Format("2006-01-02T15:04:05Z"),

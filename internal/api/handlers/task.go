@@ -250,23 +250,36 @@ func taskToResponse(t database.Task) types.TaskResponse {
 	}
 
 	fileName := ""
+	payloadDocID := ""
 	if t.Payload != nil {
 		var p struct {
-			FilePath string `json:"file_path"`
+			FilePath   string `json:"file_path"`
+			FileName   string `json:"file_name"`
+			DocumentID string `json:"document_id"`
 		}
 		json.Unmarshal(t.Payload, &p)
-		fileName = filepath.Base(p.FilePath)
+		if p.FilePath != "" {
+			fileName = filepath.Base(p.FilePath)
+		} else {
+			fileName = p.FileName
+		}
+
+		if t.TaskType == "enrich" || (t.TaskType == "consume" && t.Status == "completed") {
+			payloadDocID = p.DocumentID
+		}
 	}
 
 	return types.TaskResponse{
-		TaskID:      t.TaskID,
-		BatchID:     t.BatchID.String,
-		FileName:    fileName,
-		Status:      t.Status,
-		DocumentID:  docID,
-		Error:       errStr,
-		CreatedAt:   t.CreatedAt.Time.Format(time.RFC3339),
-		StartedAt:   started,
-		CompletedAt: completed,
+		TaskID:       t.TaskID,
+		BatchID:      t.BatchID.String,
+		TaskType:     t.TaskType,
+		FileName:     fileName,
+		PayloadDocID: payloadDocID,
+		Status:       t.Status,
+		DocumentID:   docID,
+		Error:        errStr,
+		CreatedAt:    t.CreatedAt.Time.Format(time.RFC3339),
+		StartedAt:    started,
+		CompletedAt:  completed,
 	}
 }

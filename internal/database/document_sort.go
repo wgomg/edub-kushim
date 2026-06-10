@@ -32,7 +32,7 @@ func (q *Queries) ListDocumentsWithSort(ctx context.Context, arg ListDocumentsWi
 	}
 
 	query := fmt.Sprintf(
-		`SELECT id, title, md5_checksum, sha512_checksum, mime_type, file_size,
+		`SELECT id, document_id, title, md5_checksum, sha512_checksum, mime_type, file_size,
                 page_count, word_count, char_count, language,
                 created_at, modified_at, document_type_id, original_path, storage_path
          FROM document ORDER BY %s %s LIMIT ? OFFSET ?`,
@@ -50,6 +50,7 @@ func (q *Queries) ListDocumentsWithSort(ctx context.Context, arg ListDocumentsWi
 		var i ListDocumentsRow
 		if err := rows.Scan(
 			&i.ID,
+			&i.DocumentID,
 			&i.Title,
 			&i.Md5Checksum,
 			&i.Sha512Checksum,

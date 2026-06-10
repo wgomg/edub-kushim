@@ -1,15 +1,17 @@
 package types
 
 type TaskResponse struct {
-	TaskID      string  `json:"task_id"`
-	BatchID     string  `json:"batch_id"`
-	FileName    string  `json:"file_name"`
-	Status      string  `json:"status"`
-	DocumentID  *int64  `json:"document_id"`
-	Error       *string `json:"error"`
-	CreatedAt   string  `json:"created_at"`
-	StartedAt   *string `json:"started_at"`
-	CompletedAt *string `json:"completed_at"`
+	TaskID       string  `json:"task_id"`
+	BatchID      string  `json:"batch_id"`
+	TaskType     string  `json:"task_type"`
+	FileName     string  `json:"file_name"`
+	PayloadDocID string  `json:"payload_doc_id"`
+	Status       string  `json:"status"`
+	DocumentID   *int64  `json:"document_id"`
+	Error        *string `json:"error"`
+	CreatedAt    string  `json:"created_at"`
+	StartedAt    *string `json:"started_at"`
+	CompletedAt  *string `json:"completed_at"`
 }
 
 type BatchSummaryResponse struct {

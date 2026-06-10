@@ -11,6 +11,7 @@
 
 	function statusBadge(status) {
 		const colors = {
+			waiting: 'bg-amber-600/20 text-amber-400',
 			pending: 'bg-parchment-500/20 text-parchment-400',
 			processing: 'bg-lapis-600/20 text-lapis-600',
 			completed: 'bg-emerald-600/20 text-emerald-500',
@@ -47,6 +48,13 @@
 			minWidth: '100px'
 		},
 		{
+			key: 'waiting',
+			label: 'Waiting',
+			sortable: true,
+			cell: (v) => `<span class="font-semibold text-amber-400">${v}</span>`,
+			minWidth: '90px'
+		},
+		{
 			key: 'pending',
 			label: 'Pending',
 			sortable: true,
@@ -78,10 +86,37 @@
 
 	const taskColumns = [
 		{
-			key: 'file_name',
-			label: 'File',
+			key: 'task_type',
+			label: 'Type',
 			sortable: true,
-			width: '100%'
+			minWidth: '100px'
+		},
+		{
+			key: 'payload',
+			label: 'Payload',
+			sortable: false,
+			width: '100%',
+			cell: (_v, row) => {
+				const parts = [];
+				if (
+					row.task_type === 'enrich' ||
+					(row.task_type === 'consume' && row.status === 'completed')
+				) {
+					if (row.payload_doc_id) {
+						parts.push(
+							`<span class="text-parchment-400 text-xs">document:</span> <span class="font-mono text-parchment-300">${row.payload_doc_id}</span>`
+						);
+					}
+				}
+				if (row.file_name) {
+					parts.push(
+						`<span class="text-parchment-400 text-xs">file:</span> <span class="text-parchment-200">${row.file_name}</span>`
+					);
+				} else {
+					parts.push(`<span class="text-parchment-500 italic">no file</span>`);
+				}
+				return parts.join('<br>') || '<span class="text-parchment-500 italic">—</span>';
+			}
 		},
 		{
 			key: 'status',
@@ -93,6 +128,20 @@
 		{
 			key: 'created_at',
 			label: 'Created',
+			sortable: true,
+			cell: (v) => formatDate(v),
+			minWidth: '160px'
+		},
+		{
+			key: 'started_at',
+			label: 'Started',
+			sortable: true,
+			cell: (v) => formatDate(v),
+			minWidth: '160px'
+		},
+		{
+			key: 'completed_at',
+			label: 'Completed',
 			sortable: true,
 			cell: (v) => formatDate(v),
 			minWidth: '160px'

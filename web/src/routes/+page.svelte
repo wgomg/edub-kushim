@@ -62,7 +62,11 @@
 	{#if summary}
 		<section>
 			<h2 class="mb-3 text-lg font-semibold text-parchment-200">Task Status</h2>
-			<div class="grid grid-cols-2 gap-4 sm:grid-cols-5">
+			<div class="grid grid-cols-2 gap-4 sm:grid-cols-6">
+				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
+					<p class="text-sm text-parchment-500">Waiting</p>
+					<p class="mt-1 text-lg font-semibold text-amber-400">{summary.waiting}</p>
+				</div>
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-sm text-parchment-500">Pending</p>
 					<p class="mt-1 text-lg font-semibold text-parchment-400">{summary.pending}</p>
