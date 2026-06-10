@@ -49,7 +49,7 @@
 
 ### Types
 
-- `TaskFilter` — `BatchID`, `Status`, `Limit`, `Offset`
+- `TaskFilter` — `BatchID`, `Status`, `TaskType`, `Limit`, `Offset`
 - `BatchFilter` — `Status`, `Limit`, `Offset`
 - `BatchCounts` — `BatchID`, `Waiting`, `Pending`, `Processing`, `Completed`, `Failed`, `Cancelled`
   - `Total() int64` — Sum of all statuses including Waiting
@@ -58,7 +58,7 @@
 ### Functions
 
 - `Get(ctx, queries, taskID) (database.Task, error)` — By UUID task_id
-- `ListFiltered(ctx, queries, filter) ([]database.Task, error)` — By batch/status/pagination; handles all combinations of filters
+- `ListFiltered(ctx, queries, filter) ([]database.Task, error)` — By batch/status/type/pagination; handles all combinations of filters via sqlc-generated queries (`ListTasks`, `ListTasksByStatus`, `ListTasksByBatch`, `ListTasksByBatchAndStatus`, `ListTasksByType`, `ListTasksByBatchAndType`, `ListTasksByStatusAndType`, `ListTasksByBatchAndStatusAndType` and their `All` variants)
 - `Retry(ctx, queries, taskID) error` — Failed tasks only
 - `CountBatchStatuses(ctx, queries, batchID) BatchCounts` — Counts per status including `waiting`
 - `ListBatchSummaries(ctx, queries, filter) ([]BatchCounts, error)` — Lists batch summaries with filtering; uses `ListDistinctBatchIDs` or `ListDistinctBatchIDsByStatus`

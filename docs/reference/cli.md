@@ -86,8 +86,8 @@
 ### Functions
 
 - `taskHandler(c, args) error` — Routes to list, status, retry subcommand
-- `taskListHandler(c, args) error` — Lists tasks with batch/status/limit/offset filters
-- `taskStatusHandler(c, args) error` — Shows task details with timestamps, document ID, error
+- `taskListHandler(c, args) error` — Lists tasks with batch/status/type/limit/offset filters; columns: TASK ID, TYPE, STATUS, BATCH, FILE
+- `taskStatusHandler(c, args) error` — Shows task details with type, timestamps, document DB ID, document UUID, error for failed tasks
 - `taskRetryHandler(c, args) error` — Re-enqueues a failed task as pending
 
 ---
