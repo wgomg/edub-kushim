@@ -18,10 +18,11 @@ type BatchFilter struct {
 var ErrTaskNotFound = errors.New("task not found")
 
 type TaskFilter struct {
-	BatchID string
-	Status  string
-	Limit   int64
-	Offset  int64
+	BatchID  string
+	Status   string
+	TaskType string
+	Limit    int64
+	Offset   int64
 }
 
 type BatchCounts struct {
@@ -51,6 +52,52 @@ func Get(ctx context.Context, queries *database.Queries, taskID string) (databas
 
 func ListFiltered(ctx context.Context, queries *database.Queries, f TaskFilter) ([]database.Task, error) {
 	switch {
+	case f.BatchID != "" && f.Status != "" && f.TaskType != "" && f.Limit > 0:
+		return queries.ListTasksByBatchAndStatusAndType(ctx, database.ListTasksByBatchAndStatusAndTypeParams{
+			BatchID:  sql.NullString{String: f.BatchID, Valid: true},
+			Status:   f.Status,
+			TaskType: f.TaskType,
+			Limit:    f.Limit,
+			Offset:   f.Offset,
+		})
+	case f.BatchID != "" && f.Status != "" && f.TaskType != "":
+		return queries.ListAllTasksByBatchAndStatusAndType(ctx, database.ListAllTasksByBatchAndStatusAndTypeParams{
+			BatchID:  sql.NullString{String: f.BatchID, Valid: true},
+			Status:   f.Status,
+			TaskType: f.TaskType,
+		})
+	case f.BatchID != "" && f.TaskType != "" && f.Limit > 0:
+		return queries.ListTasksByBatchAndType(ctx, database.ListTasksByBatchAndTypeParams{
+			BatchID:  sql.NullString{String: f.BatchID, Valid: true},
+			TaskType: f.TaskType,
+			Limit:    f.Limit,
+			Offset:   f.Offset,
+		})
+	case f.BatchID != "" && f.TaskType != "":
+		return queries.ListAllTasksByBatchAndType(ctx, database.ListAllTasksByBatchAndTypeParams{
+			BatchID:  sql.NullString{String: f.BatchID, Valid: true},
+			TaskType: f.TaskType,
+		})
+	case f.Status != "" && f.TaskType != "" && f.Limit > 0:
+		return queries.ListTasksByStatusAndType(ctx, database.ListTasksByStatusAndTypeParams{
+			Status:   f.Status,
+			TaskType: f.TaskType,
+			Limit:    f.Limit,
+			Offset:   f.Offset,
+		})
+	case f.Status != "" && f.TaskType != "":
+		return queries.ListAllTasksByStatusAndType(ctx, database.ListAllTasksByStatusAndTypeParams{
+			Status:   f.Status,
+			TaskType: f.TaskType,
+		})
+	case f.TaskType != "" && f.Limit > 0:
+		return queries.ListTasksByType(ctx, database.ListTasksByTypeParams{
+			TaskType: f.TaskType,
+			Limit:    f.Limit,
+			Offset:   f.Offset,
+		})
+	case f.TaskType != "":
+		return queries.ListAllTasksByType(ctx, f.TaskType)
 	case f.BatchID != "" && f.Status != "" && f.Limit > 0:
 		return queries.ListTasksByBatchAndStatus(ctx, database.ListTasksByBatchAndStatusParams{
 			BatchID: sql.NullString{String: f.BatchID, Valid: true},

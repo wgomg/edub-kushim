@@ -436,6 +436,101 @@ func (q *Queries) ListAllTasksByBatchAndStatus(ctx context.Context, arg ListAllT
 	return items, nil
 }
 
+const listAllTasksByBatchAndStatusAndType = `-- name: ListAllTasksByBatchAndStatusAndType :many
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
+       created_at, started_at, completed_at, error
+FROM task WHERE batch_id = ? AND status = ? AND task_type = ? ORDER BY created_at DESC
+`
+
+type ListAllTasksByBatchAndStatusAndTypeParams struct {
+	BatchID  sql.NullString
+	Status   string
+	TaskType string
+}
+
+func (q *Queries) ListAllTasksByBatchAndStatusAndType(ctx context.Context, arg ListAllTasksByBatchAndStatusAndTypeParams) ([]Task, error) {
+	rows, err := q.db.QueryContext(ctx, listAllTasksByBatchAndStatusAndType, arg.BatchID, arg.Status, arg.TaskType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Task
+	for rows.Next() {
+		var i Task
+		if err := rows.Scan(
+			&i.ID,
+			&i.TaskID,
+			&i.TaskType,
+			&i.Status,
+			&i.BatchID,
+			&i.Payload,
+			&i.Result,
+			&i.DedupKey,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.Error,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllTasksByBatchAndType = `-- name: ListAllTasksByBatchAndType :many
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
+       created_at, started_at, completed_at, error
+FROM task WHERE batch_id = ? AND task_type = ? ORDER BY created_at DESC
+`
+
+type ListAllTasksByBatchAndTypeParams struct {
+	BatchID  sql.NullString
+	TaskType string
+}
+
+func (q *Queries) ListAllTasksByBatchAndType(ctx context.Context, arg ListAllTasksByBatchAndTypeParams) ([]Task, error) {
+	rows, err := q.db.QueryContext(ctx, listAllTasksByBatchAndType, arg.BatchID, arg.TaskType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Task
+	for rows.Next() {
+		var i Task
+		if err := rows.Scan(
+			&i.ID,
+			&i.TaskID,
+			&i.TaskType,
+			&i.Status,
+			&i.BatchID,
+			&i.Payload,
+			&i.Result,
+			&i.DedupKey,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.Error,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAllTasksByStatus = `-- name: ListAllTasksByStatus :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error
@@ -444,6 +539,95 @@ FROM task WHERE status = ? ORDER BY created_at DESC
 
 func (q *Queries) ListAllTasksByStatus(ctx context.Context, status string) ([]Task, error) {
 	rows, err := q.db.QueryContext(ctx, listAllTasksByStatus, status)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Task
+	for rows.Next() {
+		var i Task
+		if err := rows.Scan(
+			&i.ID,
+			&i.TaskID,
+			&i.TaskType,
+			&i.Status,
+			&i.BatchID,
+			&i.Payload,
+			&i.Result,
+			&i.DedupKey,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.Error,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllTasksByStatusAndType = `-- name: ListAllTasksByStatusAndType :many
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
+       created_at, started_at, completed_at, error
+FROM task WHERE status = ? AND task_type = ? ORDER BY created_at DESC
+`
+
+type ListAllTasksByStatusAndTypeParams struct {
+	Status   string
+	TaskType string
+}
+
+func (q *Queries) ListAllTasksByStatusAndType(ctx context.Context, arg ListAllTasksByStatusAndTypeParams) ([]Task, error) {
+	rows, err := q.db.QueryContext(ctx, listAllTasksByStatusAndType, arg.Status, arg.TaskType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Task
+	for rows.Next() {
+		var i Task
+		if err := rows.Scan(
+			&i.ID,
+			&i.TaskID,
+			&i.TaskType,
+			&i.Status,
+			&i.BatchID,
+			&i.Payload,
+			&i.Result,
+			&i.DedupKey,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.Error,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllTasksByType = `-- name: ListAllTasksByType :many
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
+       created_at, started_at, completed_at, error
+FROM task WHERE task_type = ? ORDER BY created_at DESC
+`
+
+func (q *Queries) ListAllTasksByType(ctx context.Context, taskType string) ([]Task, error) {
+	rows, err := q.db.QueryContext(ctx, listAllTasksByType, taskType)
 	if err != nil {
 		return nil, err
 	}
@@ -700,6 +884,116 @@ func (q *Queries) ListTasksByBatchAndStatus(ctx context.Context, arg ListTasksBy
 	return items, nil
 }
 
+const listTasksByBatchAndStatusAndType = `-- name: ListTasksByBatchAndStatusAndType :many
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
+       created_at, started_at, completed_at, error
+FROM task WHERE batch_id = ? AND status = ? AND task_type = ? ORDER BY created_at DESC LIMIT ? OFFSET ?
+`
+
+type ListTasksByBatchAndStatusAndTypeParams struct {
+	BatchID  sql.NullString
+	Status   string
+	TaskType string
+	Limit    int64
+	Offset   int64
+}
+
+func (q *Queries) ListTasksByBatchAndStatusAndType(ctx context.Context, arg ListTasksByBatchAndStatusAndTypeParams) ([]Task, error) {
+	rows, err := q.db.QueryContext(ctx, listTasksByBatchAndStatusAndType,
+		arg.BatchID,
+		arg.Status,
+		arg.TaskType,
+		arg.Limit,
+		arg.Offset,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Task
+	for rows.Next() {
+		var i Task
+		if err := rows.Scan(
+			&i.ID,
+			&i.TaskID,
+			&i.TaskType,
+			&i.Status,
+			&i.BatchID,
+			&i.Payload,
+			&i.Result,
+			&i.DedupKey,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.Error,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTasksByBatchAndType = `-- name: ListTasksByBatchAndType :many
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
+       created_at, started_at, completed_at, error
+FROM task WHERE batch_id = ? AND task_type = ? ORDER BY created_at DESC LIMIT ? OFFSET ?
+`
+
+type ListTasksByBatchAndTypeParams struct {
+	BatchID  sql.NullString
+	TaskType string
+	Limit    int64
+	Offset   int64
+}
+
+func (q *Queries) ListTasksByBatchAndType(ctx context.Context, arg ListTasksByBatchAndTypeParams) ([]Task, error) {
+	rows, err := q.db.QueryContext(ctx, listTasksByBatchAndType,
+		arg.BatchID,
+		arg.TaskType,
+		arg.Limit,
+		arg.Offset,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Task
+	for rows.Next() {
+		var i Task
+		if err := rows.Scan(
+			&i.ID,
+			&i.TaskID,
+			&i.TaskType,
+			&i.Status,
+			&i.BatchID,
+			&i.Payload,
+			&i.Result,
+			&i.DedupKey,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.Error,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTasksByStatus = `-- name: ListTasksByStatus :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error
@@ -714,6 +1008,108 @@ type ListTasksByStatusParams struct {
 
 func (q *Queries) ListTasksByStatus(ctx context.Context, arg ListTasksByStatusParams) ([]Task, error) {
 	rows, err := q.db.QueryContext(ctx, listTasksByStatus, arg.Status, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Task
+	for rows.Next() {
+		var i Task
+		if err := rows.Scan(
+			&i.ID,
+			&i.TaskID,
+			&i.TaskType,
+			&i.Status,
+			&i.BatchID,
+			&i.Payload,
+			&i.Result,
+			&i.DedupKey,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.Error,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTasksByStatusAndType = `-- name: ListTasksByStatusAndType :many
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
+       created_at, started_at, completed_at, error
+FROM task WHERE status = ? AND task_type = ? ORDER BY created_at DESC LIMIT ? OFFSET ?
+`
+
+type ListTasksByStatusAndTypeParams struct {
+	Status   string
+	TaskType string
+	Limit    int64
+	Offset   int64
+}
+
+func (q *Queries) ListTasksByStatusAndType(ctx context.Context, arg ListTasksByStatusAndTypeParams) ([]Task, error) {
+	rows, err := q.db.QueryContext(ctx, listTasksByStatusAndType,
+		arg.Status,
+		arg.TaskType,
+		arg.Limit,
+		arg.Offset,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Task
+	for rows.Next() {
+		var i Task
+		if err := rows.Scan(
+			&i.ID,
+			&i.TaskID,
+			&i.TaskType,
+			&i.Status,
+			&i.BatchID,
+			&i.Payload,
+			&i.Result,
+			&i.DedupKey,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.Error,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTasksByType = `-- name: ListTasksByType :many
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
+       created_at, started_at, completed_at, error
+FROM task WHERE task_type = ? ORDER BY created_at DESC LIMIT ? OFFSET ?
+`
+
+type ListTasksByTypeParams struct {
+	TaskType string
+	Limit    int64
+	Offset   int64
+}
+
+func (q *Queries) ListTasksByType(ctx context.Context, arg ListTasksByTypeParams) ([]Task, error) {
+	rows, err := q.db.QueryContext(ctx, listTasksByType, arg.TaskType, arg.Limit, arg.Offset)
 	if err != nil {
 		return nil, err
 	}

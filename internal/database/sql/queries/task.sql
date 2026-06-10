@@ -55,6 +55,46 @@ SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error
 FROM task WHERE batch_id = ? AND status = ? ORDER BY created_at DESC;
 
+-- name: ListTasksByBatchAndStatusAndType :many
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
+       created_at, started_at, completed_at, error
+FROM task WHERE batch_id = ? AND status = ? AND task_type = ? ORDER BY created_at DESC LIMIT ? OFFSET ?;
+
+-- name: ListAllTasksByBatchAndStatusAndType :many
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
+       created_at, started_at, completed_at, error
+FROM task WHERE batch_id = ? AND status = ? AND task_type = ? ORDER BY created_at DESC;
+
+-- name: ListTasksByBatchAndType :many
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
+       created_at, started_at, completed_at, error
+FROM task WHERE batch_id = ? AND task_type = ? ORDER BY created_at DESC LIMIT ? OFFSET ?;
+
+-- name: ListAllTasksByBatchAndType :many
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
+       created_at, started_at, completed_at, error
+FROM task WHERE batch_id = ? AND task_type = ? ORDER BY created_at DESC;
+
+-- name: ListTasksByStatusAndType :many
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
+       created_at, started_at, completed_at, error
+FROM task WHERE status = ? AND task_type = ? ORDER BY created_at DESC LIMIT ? OFFSET ?;
+
+-- name: ListAllTasksByStatusAndType :many
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
+       created_at, started_at, completed_at, error
+FROM task WHERE status = ? AND task_type = ? ORDER BY created_at DESC;
+
+-- name: ListTasksByType :many
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
+       created_at, started_at, completed_at, error
+FROM task WHERE task_type = ? ORDER BY created_at DESC LIMIT ? OFFSET ?;
+
+-- name: ListAllTasksByType :many
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
+       created_at, started_at, completed_at, error
+FROM task WHERE task_type = ? ORDER BY created_at DESC;
+
 -- name: CountTasksByBatchAndStatus :one
 SELECT COUNT(*) FROM task WHERE batch_id = ? AND status = ?;
 

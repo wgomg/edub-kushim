@@ -11,7 +11,7 @@ import (
 )
 
 const addDocumentPeople = `-- name: AddDocumentPeople :exec
-INSERT INTO document_people (document_id, people_id, people_type_id) VALUES (?, ?, ?)
+INSERT OR IGNORE INTO document_people (document_id, people_id, people_type_id) VALUES (?, ?, ?)
 `
 
 type AddDocumentPeopleParams struct {

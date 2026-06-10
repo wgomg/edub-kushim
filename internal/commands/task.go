@@ -41,20 +41,22 @@ func taskHandler(c *Container, args []string) error {
 func taskListHandler(c *Container, args []string) error {
 	fp := NewFlagParser(args)
 
-	if fp.Help("Usage: kushim task list [--batch <id>] [--status <status>] [--limit N] [--offset N]\n" +
+	if fp.Help("Usage: kushim task list [--batch <id>] [--status <status>] [--type <type>] [--limit N] [--offset N]\n" +
 		"  List tasks with optional filters.\n\n" +
 		"  --batch <id>      filter by batch UUID\n" +
 		"  --status <s>      filter by status (waiting|pending|processing|completed|failed)\n" +
+		"  --type <type>     filter by task type (consume|enrich)\n" +
 		"  --limit N         max results (default 20, max 100)\n" +
 		"  --offset N        result offset (default 0)") {
 		return nil
 	}
 
-	var batchID, statusFilter string
+	var batchID, statusFilter, taskTypeFilter string
 	var limit, offset int
 
 	fp.String("--batch", &batchID)
 	fp.String("--status", &statusFilter)
+	fp.String("--type", &taskTypeFilter)
 	fp.Int("--limit", &limit, 1, 100)
 	fp.Int("--offset", &offset, 0, 0)
 
@@ -68,10 +70,11 @@ func taskListHandler(c *Container, args []string) error {
 	}
 
 	tasks, err := task.ListFiltered(context.Background(), database.NewQueries(db), task.TaskFilter{
-		BatchID: batchID,
-		Status:  statusFilter,
-		Limit:   int64(limit),
-		Offset:  int64(offset),
+		BatchID:  batchID,
+		Status:   statusFilter,
+		TaskType: taskTypeFilter,
+		Limit:    int64(limit),
+		Offset:   int64(offset),
 	})
 	if err != nil {
 		return fmt.Errorf("list tasks: %w", err)
@@ -82,7 +85,7 @@ func taskListHandler(c *Container, args []string) error {
 		return nil
 	}
 
-	fmt.Printf("%-36s %-12s %-12s %s\n", "TASK ID", "STATUS", "BATCH", "FILE")
+	fmt.Printf("%-36s %-10s %-12s %-12s %s\n", "TASK ID", "TYPE", "STATUS", "BATCH", "FILE")
 	fmt.Println(strings.Repeat("-", 80))
 
 	for _, t := range tasks {
@@ -90,15 +93,20 @@ func taskListHandler(c *Container, args []string) error {
 		if t.Payload != nil {
 			var p struct {
 				FilePath string `json:"file_path"`
+				FileName string `json:"file_name"`
 			}
 			json.Unmarshal(t.Payload, &p)
-			fileName = filepath.Base(p.FilePath)
+			if p.FilePath != "" {
+				fileName = filepath.Base(p.FilePath)
+			} else {
+				fileName = p.FileName
+			}
 		}
 		batchShort := t.BatchID.String
 		if len(batchShort) > 12 {
 			batchShort = batchShort[:12] + "…"
 		}
-		fmt.Printf("%-36s %-12s %-12s %s\n", t.TaskID, t.Status, batchShort, fileName)
+		fmt.Printf("%-36s %-10s %-12s %-12s %s\n", t.TaskID, t.TaskType, t.Status, batchShort, fileName)
 	}
 
 	return nil
@@ -129,15 +137,24 @@ func taskStatusHandler(c *Container, args []string) error {
 	}
 
 	fileName := ""
+	payloadDocID := ""
 	if t.Payload != nil {
 		var p struct {
-			FilePath string `json:"file_path"`
+			FilePath   string `json:"file_path"`
+			FileName   string `json:"file_name"`
+			DocumentID string `json:"document_id"`
 		}
 		json.Unmarshal(t.Payload, &p)
-		fileName = filepath.Base(p.FilePath)
+		if p.FilePath != "" {
+			fileName = filepath.Base(p.FilePath)
+		} else {
+			fileName = p.FileName
+		}
+		payloadDocID = p.DocumentID
 	}
 
 	fmt.Printf("Task ID:    %s\n", t.TaskID)
+	fmt.Printf("Type:       %s\n", t.TaskType)
 	fmt.Printf("Batch ID:   %s\n", t.BatchID.String)
 	fmt.Printf("Status:     %s\n", t.Status)
 	fmt.Printf("File:       %s\n", fileName)
@@ -148,13 +165,26 @@ func taskStatusHandler(c *Container, args []string) error {
 	if t.CompletedAt.Valid {
 		fmt.Printf("Completed:  %s\n", t.CompletedAt.Time.Format(time.RFC3339))
 	}
-	if t.Result != nil {
-		var r struct {
-			DocumentID int64 `json:"document_id"`
+	if t.Status != "failed" {
+		docID := ""
+		docDbID := int64(0)
+		if t.Result != nil {
+			var r struct {
+				DocumentDbId int64  `json:"document_db_id"`
+				DocumentID   string `json:"document_id"`
+			}
+			json.Unmarshal(*t.Result, &r)
+			docDbID = r.DocumentDbId
+			docID = r.DocumentID
 		}
-		json.Unmarshal(*t.Result, &r)
-		if r.DocumentID != 0 {
-			fmt.Printf("Document:   %d\n", r.DocumentID)
+		if docID == "" {
+			docID = payloadDocID
+		}
+		if docDbID != 0 {
+			fmt.Printf("Document DB: %d\n", docDbID)
+		}
+		if docID != "" {
+			fmt.Printf("Document ID: %s\n", docID)
 		}
 	}
 	if t.Error.Valid {

@@ -11,7 +11,7 @@ import (
 )
 
 const addDocumentTag = `-- name: AddDocumentTag :exec
-INSERT INTO document_tag (document_id, tag_id) VALUES (?, ?)
+INSERT OR IGNORE INTO document_tag (document_id, tag_id) VALUES (?, ?)
 `
 
 type AddDocumentTagParams struct {
