@@ -123,20 +123,21 @@ func (d *Dispatcher) Next(ctx context.Context, taskType string) error {
 	// so the poll loop never sees a gap where the batch looks finished.
 	if taskType == "consume" && result != nil {
 		var consumeResult struct {
-			DocumentID int64 `json:"document_id"`
+			DocumentDbId int64  `json:"document_db_id"`
+			DocumentID   string `json:"document_id"`
 		}
 		json.Unmarshal(result, &consumeResult)
 
-		if consumeResult.DocumentID != 0 {
+		if consumeResult.DocumentDbId != 0 {
 			var consumePayload struct {
 				OnCompleted string `json:"on_completed"`
 			}
 			if err := json.Unmarshal(t.Payload, &consumePayload); err != nil || consumePayload.OnCompleted == "" {
-				d.logger.Error(nil, "consume task %s missing on_completed in payload", t.TaskID)
+				d.logger.Error(&consumeResult.DocumentID, "consume task %s missing on_completed in payload", t.TaskID)
 			} else {
 				enrichTask, err := d.queries.GetTaskByTaskID(ctx, consumePayload.OnCompleted)
 				if err != nil {
-					d.logger.Error(nil, "failed to find waiting enrich task %s for consume %s: %v", consumePayload.OnCompleted, t.TaskID, err)
+					d.logger.Error(&consumeResult.DocumentID, "failed to find waiting enrich task %s for consume %s: %v", consumePayload.OnCompleted, t.TaskID, err)
 				} else {
 					var enrichPayload struct {
 						WaitingFor string `json:"waiting_for"`
@@ -144,7 +145,7 @@ func (d *Dispatcher) Next(ctx context.Context, taskType string) error {
 					json.Unmarshal(enrichTask.Payload, &enrichPayload)
 
 					if enrichPayload.WaitingFor != t.TaskID {
-						d.logger.Error(nil, "waiting_for mismatch: enrich %s has waiting_for=%q, expected %q", enrichTask.TaskID, enrichPayload.WaitingFor, t.TaskID)
+						d.logger.Error(&consumeResult.DocumentID, "waiting_for mismatch: enrich %s has waiting_for=%q, expected %q", enrichTask.TaskID, enrichPayload.WaitingFor, t.TaskID)
 					} else {
 						var p map[string]any
 						json.Unmarshal(enrichTask.Payload, &p)
@@ -152,7 +153,7 @@ func (d *Dispatcher) Next(ctx context.Context, taskType string) error {
 						updatedPayload, _ := json.Marshal(p)
 
 						if err := d.setEnrichTaskPending(ctx, enrichTask.ID, updatedPayload); err != nil {
-							d.logger.Error(nil, "failed to activate enrich task %s: %v", enrichTask.TaskID, err)
+							d.logger.Error(&consumeResult.DocumentID, "failed to activate enrich task %s: %v", enrichTask.TaskID, err)
 						}
 					}
 				}

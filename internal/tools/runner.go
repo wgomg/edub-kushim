@@ -119,12 +119,7 @@ func NewRunner(logger *utils.Logger, cfg *config.Config, tools []string) *Runner
 			}
 			r.textReducer, _ = textreducer.NewTextReducer(logger, toolCfg)
 		case "tagmatcher":
-			tm, err := tagmatcher.NewTagMatcher(logger, cfg.Enricher.TagMatcher)
-			if err != nil {
-				logger.Error(nil, "tag matcher init: %v", err)
-			} else {
-				r.tagMatcher = tm
-			}
+			r.tagMatcher, _ = tagmatcher.NewTagMatcher(logger, cfg.Enricher.TagMatcher)
 		case "contentanalyzer":
 			toolCfg := config.ToolConfig{
 				Command: cfg.Enricher.ContentAnalyzer.Engine,
@@ -181,7 +176,7 @@ func (r *Runner) ExtractText(ctx context.Context, path string) (*TextExtractionR
 	return &result, nil
 }
 
-func (r *Runner) OCR(ctx context.Context, path string) (*OCRResult, error) {
+func (r *Runner) OCR(ctx context.Context, docId, path string) (*OCRResult, error) {
 	if r.ocr == nil {
 		return nil, fmt.Errorf("OCR not configured")
 	}
@@ -193,7 +188,7 @@ func (r *Runner) OCR(ctx context.Context, path string) (*OCRResult, error) {
 	}
 
 	outputPath, err := runWithTimeout(ctx, func() (*string, error) {
-		return r.ocr.Process(ctx, path)
+		return r.ocr.Process(ctx, docId, path)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("ocr: %w", err)
@@ -207,7 +202,7 @@ func (r *Runner) OCR(ctx context.Context, path string) (*OCRResult, error) {
 	return &result, nil
 }
 
-func (r *Runner) OptimizePdf(ctx context.Context, path string) (*PdfOptimizationResult, error) {
+func (r *Runner) OptimizePdf(ctx context.Context, docId, path string) (*PdfOptimizationResult, error) {
 	if r.pdfOptimizer == nil {
 		return nil, fmt.Errorf("PDF optimizer not configured")
 	}
@@ -219,7 +214,7 @@ func (r *Runner) OptimizePdf(ctx context.Context, path string) (*PdfOptimization
 	}
 
 	outputPath, err := runWithTimeout(ctx, func() (*string, error) {
-		return r.pdfOptimizer.Optimize(ctx, path)
+		return r.pdfOptimizer.Optimize(ctx, docId, path)
 	})
 	if err != nil {
 		if r.config.Consumer.PdfOptimizer.Fallback == "" {
@@ -237,7 +232,7 @@ func (r *Runner) OptimizePdf(ctx context.Context, path string) (*PdfOptimization
 				r.config.Consumer.PdfOptimizer.Engine, err, r.config.Consumer.PdfOptimizer.Fallback, fbErr)
 		}
 		outputPath, err = runWithTimeout(ctx, func() (*string, error) {
-			return fbOptimizer.Optimize(ctx, path)
+			return fbOptimizer.Optimize(ctx, docId, path)
 		})
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w; fallback %s: %w",
@@ -283,12 +278,12 @@ func (r *Runner) ReduceContent(ctx context.Context, content string, chunkSize, t
 	}, nil
 }
 
-func (r *Runner) MatchTags(ctx context.Context, input string, tagsToMatch map[string][]float32) (*TagMatchResult, error) {
+func (r *Runner) MatchTags(ctx context.Context, docId, input string, tagsToMatch map[string][]float32) (*TagMatchResult, error) {
 	if r.tagMatcher == nil {
 		return nil, fmt.Errorf("tag matcher not configured")
 	}
 	tags, err := runWithTimeout(ctx, func() ([]string, error) {
-		return r.tagMatcher.Match(ctx, input, tagsToMatch)
+		return r.tagMatcher.Match(ctx, docId, input, tagsToMatch)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("tag matcher: %w", err)
@@ -296,12 +291,12 @@ func (r *Runner) MatchTags(ctx context.Context, input string, tagsToMatch map[st
 	return &TagMatchResult{Tags: tags}, nil
 }
 
-func (r *Runner) MatchEach(ctx context.Context, queries []string, tagsToMatch map[string][]float32) (*TagMatchResult, error) {
+func (r *Runner) MatchEach(ctx context.Context, docId string, queries []string, tagsToMatch map[string][]float32) (*TagMatchResult, error) {
 	if r.tagMatcher == nil {
 		return &TagMatchResult{Tags: queries}, nil
 	}
 	tags, err := runWithTimeout(ctx, func() ([]string, error) {
-		return r.tagMatcher.MatchEach(ctx, queries, tagsToMatch)
+		return r.tagMatcher.MatchEach(ctx, docId, queries, tagsToMatch)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("tag matcher: %w", err)
@@ -332,9 +327,9 @@ func (r *Runner) AnalyzeContent(ctx context.Context, text string, docTypes []dat
 }
 
 // see comment at internal/tools/adapters/tagmatcher/adapter.go
-func (r *Runner) EncodeTags(ctx context.Context, tags []string) ([][]float32, error) {
+func (r *Runner) EncodeTags(ctx context.Context, docId *string, tags []string) ([][]float32, error) {
 	if r.tagMatcher == nil {
 		return nil, fmt.Errorf("tag matcher not configured")
 	}
-	return r.tagMatcher.Encode(ctx, tags)
+	return r.tagMatcher.Encode(ctx, docId, tags)
 }

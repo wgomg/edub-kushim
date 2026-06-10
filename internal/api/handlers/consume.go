@@ -57,11 +57,13 @@ func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 	for i, f := range files {
 		consumeTaskID := uuid.New().String()
 		enrichTaskID := uuid.New().String()
+		documentID := uuid.New().String()
 
 		consumePayload, _ := json.Marshal(map[string]any{
 			"file_path":    f.OriginalPath,
 			"file_index":   i + 1,
 			"on_completed": enrichTaskID,
+			"document_id":  documentID,
 		})
 		_, err := h.dispatcher.Enqueue(ctx, "consume", batchID, consumePayload, consumeTaskID)
 		if err != nil {
@@ -74,6 +76,7 @@ func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 			"waiting_for": consumeTaskID,
 			"file_name":   filepath.Base(f.OriginalPath),
 			"file_index":  i + 1,
+			"document_id": documentID,
 		})
 		if _, err := h.dispatcher.Enqueue(ctx, "enrich", batchID, enrichPayload, enrichTaskID, "waiting"); err != nil {
 			h.logger.Error(&reqID, "create enrich task for %s: %v", f.OriginalPath, err)

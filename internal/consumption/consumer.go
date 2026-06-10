@@ -38,7 +38,8 @@ type File struct {
 	OptimizedPdfTmpPath  *string
 	StorageProcessedPath *string
 	StorageOriginalPath  *string
-	DocumentID           sql.NullInt64
+	DocumentID           string
+	DocumentDbId         sql.NullInt64
 	MD5Checksum          string
 	SHA512Checksum       string
 	Text                 sql.NullString
@@ -77,16 +78,16 @@ func NewConsumerWithRunner(cfg *config.Config, logger *utils.Logger, db *sql.DB,
 	}, nil
 }
 
-func (c *Consumer) Process(ctx context.Context, file File) (File, error) {
+func (c *Consumer) Process(ctx context.Context, file File, documentID string) (File, error) {
 	start := time.Now()
-	c.logger.Info(nil, "starting consumption for file %s", file.OriginalPath)
+	c.logger.Info(&documentID, "starting consumption for file %s", file.OriginalPath)
 
 	defer func() {
 		elapsed := time.Since(start)
 		if file.StorageProcessedPath != nil {
-			c.logger.Info(nil, "finished consumption %s in %s -> %s", file.OriginalPath, utils.HumanDuration(elapsed), *file.StorageProcessedPath)
+			c.logger.Info(&documentID, "finished consumption %s in %s -> %s", file.OriginalPath, utils.HumanDuration(elapsed), *file.StorageProcessedPath)
 		} else {
-			c.logger.Info(nil, "finished consumption %s in %s (skipped)", file.OriginalPath, utils.HumanDuration(elapsed))
+			c.logger.Info(&documentID, "finished consumption %s in %s (skipped)", file.OriginalPath, utils.HumanDuration(elapsed))
 		}
 	}()
 
@@ -99,7 +100,7 @@ func (c *Consumer) Process(ctx context.Context, file File) (File, error) {
 		return file, fmt.Errorf("file is a duplicate, skipping")
 	}
 
-	file, err = c.extractText(ctx, file)
+	file, err = c.extractText(ctx, file, documentID)
 	if err != nil {
 		return file, err
 	}
@@ -137,13 +138,13 @@ func (c *Consumer) Process(ctx context.Context, file File) (File, error) {
 
 		if file.OCRTmpPath != nil {
 			if err := CleanUp(*file.OCRTmpPath); err != nil {
-				c.logger.Debug(nil, "failed to clean up ocr temp file: %v", err)
+				c.logger.Debug(&documentID, "failed to clean up ocr temp file: %v", err)
 			}
 		}
 
 		if file.OptimizedPdfTmpPath != nil {
 			if err := CleanUp(*file.OptimizedPdfTmpPath); err != nil {
-				c.logger.Debug(nil, "failed to clean up optimized temp file: %v", err)
+				c.logger.Debug(&documentID, "failed to clean up optimized temp file: %v", err)
 			}
 		}
 	}()
@@ -159,6 +160,7 @@ func (c *Consumer) Process(ctx context.Context, file File) (File, error) {
 
 	queries := database.NewQueries(c.db).WithTx(tx)
 	result, err := queries.CreateDocument(txCtx, database.CreateDocumentParams{
+		DocumentID:     documentID,
 		Title:          file.Name,
 		Md5Checksum:    file.MD5Checksum,
 		Sha512Checksum: file.SHA512Checksum,
@@ -175,16 +177,17 @@ func (c *Consumer) Process(ctx context.Context, file File) (File, error) {
 		return file, fmt.Errorf("failed to create document record: %w", err)
 	}
 
-	documentID, err := result.LastInsertId()
+	documentDbId, err := result.LastInsertId()
 	if err != nil {
 		return file, fmt.Errorf("failed to get document ID: %w", err)
 	}
 
-	c.logger.Debug(nil, "Created document with ID: %d", documentID)
+	c.logger.Debug(&documentID, "Created document with ID: %d", documentDbId)
 
-	file.DocumentID = sql.NullInt64{Int64: documentID, Valid: true}
+	file.DocumentID = documentID
+	file.DocumentDbId = sql.NullInt64{Int64: documentDbId, Valid: true}
 
-	originalFileName := strconv.FormatInt(documentID, 10) + ".pdf"
+	originalFileName := strconv.FormatInt(documentDbId, 10) + ".pdf"
 
 	fullOriginalPath := filepath.Join(
 		*file.StorageOriginalPath,
@@ -198,13 +201,13 @@ func (c *Consumer) Process(ctx context.Context, file File) (File, error) {
 	)
 	file.StorageProcessedPath = &fullStoragePath
 
-	c.logger.Debug(nil, "Original path: %s", *file.StorageOriginalPath)
-	c.logger.Debug(nil, "Processed path: %s", *file.StorageProcessedPath)
+	c.logger.Debug(&documentID, "Original path: %s", *file.StorageOriginalPath)
+	c.logger.Debug(&documentID, "Processed path: %s", *file.StorageProcessedPath)
 
 	err = queries.UpdateDocumentPaths(txCtx, database.UpdateDocumentPathsParams{
 		OriginalPath: *file.StorageOriginalPath,
 		StoragePath:  *file.StorageProcessedPath,
-		ID:           documentID,
+		DocumentID:   documentID,
 	})
 	if err != nil {
 		return file, fmt.Errorf("failed to update storage path: %w", err)
@@ -212,7 +215,7 @@ func (c *Consumer) Process(ctx context.Context, file File) (File, error) {
 
 	if file.OCRTmpPath != nil {
 		c.logger.Debug(
-			nil,
+			&documentID,
 			"Moving OCR file from %s to %s",
 			*file.OCRTmpPath,
 			*file.StorageProcessedPath,
@@ -221,51 +224,51 @@ func (c *Consumer) Process(ctx context.Context, file File) (File, error) {
 			return file, fmt.Errorf("failed to move OCR processed file: %w", err)
 		}
 		c.logger.Debug(
-			nil,
+			&documentID,
 			"Moving original file from %s to %s",
 			file.OriginalPath,
 			*file.StorageOriginalPath,
 		)
 		if err := CopyFile(file.OriginalPath, *file.StorageOriginalPath); err != nil {
-			c.logger.Error(nil, "Failed to move original file, cleaning up OCR file")
+			c.logger.Error(&documentID, "Failed to move original file, cleaning up OCR file")
 			if removeErr := RemoveFile(*file.StorageProcessedPath); removeErr != nil {
-				c.logger.Error(nil, "failed to clean up OCR file: %v", removeErr)
+				c.logger.Error(&documentID, "failed to clean up OCR file: %v", removeErr)
 			}
 			return file, fmt.Errorf("failed to move original file: %w", err)
 		}
 	} else if file.OptimizedPdfTmpPath != nil {
-		c.logger.Debug(nil,
+		c.logger.Debug(&documentID,
 			"Copying original file from %s to %s", file.OriginalPath, *file.StorageOriginalPath)
 		if err := CopyFile(file.OriginalPath, *file.StorageOriginalPath); err != nil {
 			return file, fmt.Errorf("failed to copy original file: %w", err)
 		}
 
-		c.logger.Debug(nil,
+		c.logger.Debug(&documentID,
 			"Moving optimized file from %s to %s", *file.OptimizedPdfTmpPath, *file.StorageProcessedPath)
 		if err := MoveFile(*file.OptimizedPdfTmpPath, *file.StorageProcessedPath); err != nil {
 			return file, fmt.Errorf("failed to move optimized file: %w", err)
 		}
 	} else {
 		// optimization failed or was skipped — use original for both.
-		c.logger.Debug(nil,
+		c.logger.Debug(&documentID,
 			"Copying original file from %s to %s (no optimized version)", file.OriginalPath, *file.StorageProcessedPath)
 		if err := CopyFile(file.OriginalPath, *file.StorageProcessedPath); err != nil {
 			return file, fmt.Errorf("failed to copy original file to processed storage: %w", err)
 		}
-		c.logger.Debug(nil,
+		c.logger.Debug(&documentID,
 			"Copying original file from %s to %s", file.OriginalPath, *file.StorageOriginalPath)
 		if err := CopyFile(file.OriginalPath, *file.StorageOriginalPath); err != nil {
 			return file, fmt.Errorf("failed to copy original file to originals storage: %w", err)
 		}
 	}
 
-	c.logger.Debug(nil, "Committing transaction")
+	c.logger.Debug(&documentID, "Committing transaction")
 	if err := tx.Commit(); err != nil {
-		c.logger.Error(nil, "Transaction commit failed: %v", err)
-		c.logger.Error(nil, "Attempting to rollback file operations")
+		c.logger.Error(&documentID, "Transaction commit failed: %v", err)
+		c.logger.Error(&documentID, "Attempting to rollback file operations")
 		if removeErr := RemoveFile(*file.StorageProcessedPath); removeErr != nil {
 			c.logger.Error(
-				nil,
+				&documentID,
 				"Failed to rollback original file move after commit failure: %v",
 				removeErr,
 			)
@@ -275,7 +278,7 @@ func (c *Consumer) Process(ctx context.Context, file File) (File, error) {
 		if c.config.Consumer.DeleteOriginal {
 			if removeErr := RemoveFile(file.OriginalPath); removeErr != nil {
 				c.logger.Error(
-					nil,
+					&documentID,
 					"Failed to rollback original file move after commit failure: %v",
 					removeErr,
 				)
@@ -352,7 +355,7 @@ func calculateSHA512(path string) (string, error) {
 	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
-func (c *Consumer) extractText(ctx context.Context, file File) (File, error) {
+func (c *Consumer) extractText(ctx context.Context, file File, documentID string) (File, error) {
 	memBefore := utils.ReadMemSnapshot()
 
 	if file.MimeType == "application/pdf" {
@@ -361,7 +364,7 @@ func (c *Consumer) extractText(ctx context.Context, file File) (File, error) {
 
 	extractResult, err := c.runner.ExtractText(ctx, file.OriginalPath)
 	memAfterExtract := utils.ReadMemSnapshot()
-	c.logger.Debug(nil, "extractText: %s", utils.FormatMemDelta(memBefore, memAfterExtract))
+	c.logger.Debug(&documentID, "extractText: %s", utils.FormatMemDelta(memBefore, memAfterExtract))
 	if err != nil {
 		return file, fmt.Errorf("text extraction failed: %w", err)
 	}
@@ -370,11 +373,11 @@ func (c *Consumer) extractText(ctx context.Context, file File) (File, error) {
 	if extractResult.Text != nil && *extractResult.Text != "" && float64(len(*extractResult.Text))/float64(file.FileSize) >= minTextDensityRatio {
 		file.Text = sql.NullString{String: *extractResult.Text, Valid: true}
 
-		optimizationResult, err := c.runner.OptimizePdf(ctx, file.OriginalPath)
+		optimizationResult, err := c.runner.OptimizePdf(ctx, documentID, file.OriginalPath)
 		memAfterOpt := utils.ReadMemSnapshot()
-		c.logger.Debug(nil, "optimizePdf: %s", utils.FormatMemDelta(memAfterExtract, memAfterOpt))
+		c.logger.Debug(&documentID, "optimizePdf: %s", utils.FormatMemDelta(memAfterExtract, memAfterOpt))
 		if err != nil {
-			c.logger.Info(nil, "optimization failed for %s, using original: %v", file.Name, err)
+			c.logger.Info(&documentID, "optimization failed for %s, using original: %v", file.Name, err)
 		} else {
 			file.OptimizedPdfTmpPath = optimizationResult.TmpPath
 		}
@@ -382,18 +385,18 @@ func (c *Consumer) extractText(ctx context.Context, file File) (File, error) {
 		return file, nil
 	}
 
-	c.logger.Info(nil, "no text extracted from %s, OCR needed", file.Name)
+	c.logger.Info(&documentID, "no text extracted from %s, OCR needed", file.Name)
 
-	ocrResult, err := c.runner.OCR(ctx, file.OriginalPath)
+	ocrResult, err := c.runner.OCR(ctx, documentID, file.OriginalPath)
 	memAfterOCR := utils.ReadMemSnapshot()
-	c.logger.Debug(nil, "OCR: %s", utils.FormatMemDelta(memAfterExtract, memAfterOCR))
+	c.logger.Debug(&documentID, "OCR: %s", utils.FormatMemDelta(memAfterExtract, memAfterOCR))
 	if err != nil {
 		return file, err
 	}
 
 	extractResult, err = c.runner.ExtractText(ctx, *ocrResult.TmpPath)
 	memAfterFinal := utils.ReadMemSnapshot()
-	c.logger.Debug(nil, "extractText (post-OCR): %s", utils.FormatMemDelta(memAfterOCR, memAfterFinal))
+	c.logger.Debug(&documentID, "extractText (post-OCR): %s", utils.FormatMemDelta(memAfterOCR, memAfterFinal))
 	if err != nil {
 		return file, fmt.Errorf("text extraction failed for ocrd file: %w", err)
 	}

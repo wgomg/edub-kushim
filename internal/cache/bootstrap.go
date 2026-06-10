@@ -48,7 +48,7 @@ func BuildTagCache(ctx context.Context, db *sql.DB, logger *utils.Logger, tmCfg 
 		end := min(i+batchSize, len(tagNames))
 		batch := tagNames[i:end]
 
-		out, err := hugot.Encode(ctx, batch)
+		out, err := hugot.Encode(ctx, nil, batch)
 		if err != nil {
 			return nil, fmt.Errorf("build tag cache encoding failed: %w", err)
 		}

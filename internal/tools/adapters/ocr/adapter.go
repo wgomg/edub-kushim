@@ -8,14 +8,12 @@ import (
 )
 
 type OCR interface {
-	Process(ctx context.Context, path string) (*string, error)
+	Process(ctx context.Context, docId, path string) (*string, error)
 	CanHandle(mimeType string) bool
 	Name() string
 }
 
 func NewOCR(logger *utils.Logger, cfg config.ToolConfig, pdfOptimizerCmd string, languages []string, dataDir string) (OCR, error) {
-	logger.Debug(nil, "ocr: languages: %v", languages)
-
 	switch cfg.Command {
 	case "ocrmypdf":
 		ocrMyPdf, err := NewOcrMyPdf(logger, cfg, languages)

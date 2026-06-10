@@ -116,15 +116,17 @@ func consumeHandler(c *Container, args []string) error {
 	for i, f := range files {
 		consumeTaskID := uuid.New().String()
 		enrichTaskID := uuid.New().String()
+		documentID := uuid.New().String()
 
 		consumePayload, _ := json.Marshal(map[string]any{
 			"file_path":    f.OriginalPath,
 			"file_index":   i + 1,
 			"on_completed": enrichTaskID,
+			"document_id":  documentID,
 		})
 		_, err := c.dispatcher.Enqueue(ctx, "consume", batchID, consumePayload, consumeTaskID)
 		if err != nil {
-			c.logger.Error(nil, "enqueue %s: %v", f.OriginalPath, err)
+			c.logger.Error(&documentID, "enqueue %s: %v", f.OriginalPath, err)
 			continue
 		}
 		enqueued++
@@ -135,7 +137,7 @@ func consumeHandler(c *Container, args []string) error {
 			"file_index":  i + 1,
 		})
 		if _, err := c.dispatcher.Enqueue(ctx, "enrich", batchID, enrichPayload, enrichTaskID, "waiting"); err != nil {
-			c.logger.Error(nil, "create enrich task for %s: %v", f.OriginalPath, err)
+			c.logger.Error(&documentID, "create enrich task for %s: %v", f.OriginalPath, err)
 		}
 	}
 

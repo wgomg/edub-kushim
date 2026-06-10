@@ -26,7 +26,7 @@ func (m *MuPDF) Name() string {
 	return "mupdf"
 }
 
-func (m *MuPDF) Optimize(ctx context.Context, path string) (*string, error) {
+func (m *MuPDF) Optimize(ctx context.Context, docId, path string) (*string, error) {
 	tmpDir := os.TempDir()
 	ogName := filepath.Base(path)
 	outputName := fmt.Sprintf(
@@ -52,6 +52,6 @@ func (m *MuPDF) Optimize(ctx context.Context, path string) (*string, error) {
 		return nil, fmt.Errorf("mupdf did not create output file")
 	}
 
-	m.logger.Debug(nil, "mupdf processed %s -> %s", path, outputPath)
+	m.logger.Debug(&docId, "mupdf processed %s -> %s", path, outputPath)
 	return &outputPath, nil
 }

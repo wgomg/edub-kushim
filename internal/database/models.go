@@ -11,6 +11,7 @@ import (
 
 type Document struct {
 	ID             int64
+	DocumentID     string
 	Title          string
 	Md5Checksum    string
 	Sha512Checksum string

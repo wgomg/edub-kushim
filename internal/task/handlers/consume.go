@@ -19,7 +19,8 @@ func NewConsumeTaskHandler(consumer *consumption.Consumer) *ConsumeTaskHandler {
 
 func (h *ConsumeTaskHandler) Handle(ctx context.Context, t database.Task) (json.RawMessage, error) {
 	var p struct {
-		FilePath string `json:"file_path"`
+		FilePath   string `json:"file_path"`
+		DocumentID string `json:"document_id"`
 	}
 	if err := json.Unmarshal(t.Payload, &p); err != nil {
 		return nil, fmt.Errorf("unmarshal payload: %w", err)
@@ -33,17 +34,19 @@ func (h *ConsumeTaskHandler) Handle(ctx context.Context, t database.Task) (json.
 		return nil, fmt.Errorf("build file from path: %w", err)
 	}
 
-	file, err = h.consumer.Process(ctx, file)
+	file, err = h.consumer.Process(ctx, file, p.DocumentID)
 	if err != nil {
 		return nil, err
 	}
 
 	result := struct {
-		DocumentID  int64  `json:"document_id"`
-		StoragePath string `json:"storage_path"`
+		DocumentDbId int64  `json:"document_db_id"`
+		StoragePath  string `json:"storage_path"`
+		DocumentID   string `json:"document_id"`
 	}{
-		DocumentID:  file.DocumentID.Int64,
-		StoragePath: *file.StorageProcessedPath,
+		DocumentDbId: file.DocumentDbId.Int64,
+		StoragePath:  *file.StorageProcessedPath,
+		DocumentID:   p.DocumentID,
 	}
 	raw, err := json.Marshal(result)
 	if err != nil {

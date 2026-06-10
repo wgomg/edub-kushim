@@ -34,12 +34,14 @@ func NewEnricher(cfg *config.Config, logger *utils.Logger, db *sql.DB, embedding
 }
 
 func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*json.RawMessage, error) {
+	logId := document.DocumentID
+
 	start := time.Now()
-	e.logger.Info(nil, "starting enrichment for file %s", document.StoragePath)
+	e.logger.Info(&logId, "starting enrichment for file %s", document.StoragePath)
 
 	defer func() {
 		elapsed := time.Since(start)
-		e.logger.Info(nil, "finished enrichment %s in %s", document.StoragePath, utils.HumanDuration(elapsed))
+		e.logger.Info(&logId, "finished enrichment %s in %s", document.StoragePath, utils.HumanDuration(elapsed))
 	}()
 
 	chunkSize := 150
@@ -47,10 +49,10 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 	llmContent, err := e.runner.ReduceContent(ctx, document.TextContent.String, chunkSize,
 		targetWordCount(int(document.WordCount), e.config.Enricher.TextReducer.TargetWords))
 	if err != nil {
-		e.logger.Error(nil, "llm text reduction failed, using raw text: %w", err)
+		e.logger.Error(&logId, "llm text reduction failed, using raw text: %w", err)
 	} else {
 		if document.WordCount > int64(llmContent.TargetWordCount) {
-			e.logger.Info(nil, "long path selected for llm text reduction: document_length=(%d -> %d),  document_word_count=(%d -> %d), target_word_count=%d",
+			e.logger.Info(&logId, "long path selected for llm text reduction: document_length=(%d -> %d),  document_word_count=(%d -> %d), target_word_count=%d",
 				document.CharCount, llmContent.CharCount, document.WordCount, llmContent.WordCount, llmContent.TargetWordCount)
 		}
 	}
@@ -58,10 +60,10 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 	tagsContent, err := e.runner.ReduceContent(ctx, document.TextContent.String, chunkSize,
 		targetWordCount(int(document.WordCount), e.config.Enricher.TagMatcher.ReduceTargetWords))
 	if err != nil {
-		e.logger.Error(nil, "tag text reduction failed, using raw text: %w", err)
+		e.logger.Error(&logId, "tag text reduction failed, using raw text: %w", err)
 	} else {
 		if document.WordCount > int64(tagsContent.TargetWordCount) {
-			e.logger.Info(nil, "long path selected for tag text reduction: document_length=(%d -> %d),  document_word_count=(%d -> %d), target_word_count=%d",
+			e.logger.Info(&logId, "long path selected for tag text reduction: document_length=(%d -> %d),  document_word_count=(%d -> %d), target_word_count=%d",
 				document.CharCount, tagsContent.CharCount, document.WordCount, tagsContent.WordCount, tagsContent.TargetWordCount)
 		}
 	}
@@ -84,14 +86,14 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 	var tagSuggestions []string
 	store, ok := e.cache.Get("tags")
 	if !ok {
-		e.logger.Error(nil, "get tags cache: store not found")
+		e.logger.Error(&logId, "get tags cache: store not found")
 	}
 	embStore, ok := store.(*cache.EmbeddingStore)
 	if !ok {
-		e.logger.Error(nil, "get tags cache: unexpected store type")
+		e.logger.Error(&logId, "get tags cache: unexpected store type")
 	}
 	tagsToMatch := embStore.Entries()
-	e.logger.Debug(nil, "tags store cache length: %d", len(tagsToMatch))
+	e.logger.Debug(&logId, "tags store cache length: %d", len(tagsToMatch))
 
 	var tagsNames []string
 	for _, t := range allTags {
@@ -99,13 +101,13 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 	}
 
 	matchTagsStart := time.Now()
-	matchedTags, err := e.runner.MatchTags(ctx, tagsContent.Text, tagsToMatch)
+	matchedTags, err := e.runner.MatchTags(ctx, document.DocumentID, tagsContent.Text, tagsToMatch)
 	if err != nil {
-		e.logger.Error(nil, "tag matching failed, using all tags: %v", err)
+		e.logger.Error(&logId, "tag matching failed, using all tags: %v", err)
 		tagSuggestions = tagsNames
 	} else {
 		tagSuggestions = matchedTags.Tags
-		e.logger.Debug(nil, "tag matching: %d tags (%s)", len(tagSuggestions), time.Since(matchTagsStart))
+		e.logger.Debug(&logId, "tag matching: %d tags (%s)", len(tagSuggestions), time.Since(matchTagsStart))
 	}
 
 	analysis, err := e.runner.AnalyzeContent(ctx, llmContent.Text, docTypes, peopleTypes, tagSuggestions)
@@ -114,20 +116,20 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 	}
 
 	consolidateStart := time.Now()
-	consolidated, err := e.runner.MatchEach(ctx, analysis.Tags, tagsToMatch)
+	consolidated, err := e.runner.MatchEach(ctx, document.DocumentID, analysis.Tags, tagsToMatch)
 	if err != nil {
-		e.logger.Error(nil, "post-LLM consolidation failed: %v", err)
+		e.logger.Error(&logId, "post-LLM consolidation failed: %v", err)
 	} else {
 		analysis.Tags = consolidated.Tags
-		e.logger.Debug(nil, "post-LLM consolidation: %d tags (%s)", len(consolidated.Tags), time.Since(consolidateStart))
+		e.logger.Debug(&logId, "post-LLM consolidation: %d tags (%s)", len(consolidated.Tags), time.Since(consolidateStart))
 	}
 
 	statsStr := "null"
 	if analysis.Stats != nil {
 		statsStr = string(*analysis.Stats)
 	}
-	e.logger.Debug(nil, "prompt: %s", analysis.Prompt)
-	e.logger.Info(nil, "analysis result: title=%q type=%q tags=%v people=%v lang=%q stats=%s",
+	e.logger.Debug(&logId, "prompt: %s", analysis.Prompt)
+	e.logger.Info(&logId, "analysis result: title=%q type=%q tags=%v people=%v lang=%q stats=%s",
 		analysis.Title, analysis.DocType, analysis.Tags, analysis.People, analysis.Language, statsStr)
 
 	docTypeMap := make(map[string]int64, len(docTypes))
@@ -143,9 +145,9 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 		Title:          analysis.Title,
 		DocumentTypeID: docTypeID,
 		Language:       analysis.Language,
-		ID:             document.ID,
+		DocumentID:     document.DocumentID,
 	}); err != nil {
-		e.logger.Error(nil, "update document metadata: %w", err)
+		e.logger.Error(&logId, "update document metadata: %w", err)
 	}
 
 	tagMap := make(map[string]int64, len(allTags))
@@ -159,10 +161,10 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 		if !ok {
 			result, err := queries.CreateTag(ctx, tagName)
 			if err != nil {
-				e.logger.Error(nil, "create tag %q: %v", tagName, err)
+				e.logger.Error(&logId, "create tag %q: %v", tagName, err)
 				continue
 			}
-			e.logger.Debug(nil, "tag created %s", tagName)
+			e.logger.Debug(&logId, "tag created %s", tagName)
 			id, _ = result.LastInsertId()
 			tagMap[tagName] = id
 			newTags = append(newTags, tagName)
@@ -171,14 +173,14 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 	}
 
 	if len(newTags) > 0 {
-		newTagsEmbeddings, err := e.runner.EncodeTags(ctx, newTags)
+		newTagsEmbeddings, err := e.runner.EncodeTags(ctx, &document.DocumentID, newTags)
 		if err != nil {
-			e.logger.Error(nil, "encode new tags for cache: %w", err)
+			e.logger.Error(&logId, "encode new tags for cache: %w", err)
 		} else {
 			for i, name := range newTags {
 				embStore.Add(name, newTagsEmbeddings[i])
 			}
-			e.logger.Debug(nil, "cached %v new tag embeddings", newTags)
+			e.logger.Debug(&logId, "cached %v new tag embeddings", newTags)
 		}
 	}
 
@@ -190,7 +192,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 			DocumentID: document.ID,
 			TagID:      tagID,
 		}); err != nil {
-			e.logger.Error(nil, "add document tag: %w", err)
+			e.logger.Error(&logId, "add document tag: %w", err)
 		}
 	}
 
@@ -208,10 +210,10 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 		if !ok {
 			result, err := queries.CreatePeople(ctx, p.Name)
 			if err != nil {
-				e.logger.Error(nil, "create people %q: %v", p.Name, err)
+				e.logger.Error(&logId, "create people %q: %v", p.Name, err)
 				continue
 			}
-			e.logger.Debug(nil, "people created %s", p.Name)
+			e.logger.Debug(&logId, "people created %s", p.Name)
 			id, _ = result.LastInsertId()
 			peopleMap[p.Name] = id
 		}
@@ -239,7 +241,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 			PeopleID:     peopleID,
 			PeopleTypeID: typeID,
 		}); err != nil {
-			e.logger.Error(nil, "add document people: %w", err)
+			e.logger.Error(&logId, "add document people: %w", err)
 		}
 	}
 

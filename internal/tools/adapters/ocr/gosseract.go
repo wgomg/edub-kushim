@@ -45,7 +45,7 @@ func NewGosseract(logger *utils.Logger, cfg config.ToolConfig, optimizerCmd stri
 	return &Gosseract{logger: logger, config: cfg, optimizer: optimizer, languages: languages, dataDir: dataDir}, nil
 }
 
-func (o *Gosseract) Process(ctx context.Context, path string) (*string, error) {
+func (o *Gosseract) Process(ctx context.Context, docId, path string) (*string, error) {
 	if err := EnsureLanguages(o.logger, o.dataDir, o.languages); err != nil {
 		return nil, fmt.Errorf("tessdata setup: %w", err)
 	}
@@ -77,7 +77,7 @@ func (o *Gosseract) Process(ctx context.Context, path string) (*string, error) {
 	client.SetPageSegMode(gosseract.PSM_SINGLE_BLOCK)
 	client.DisableOutput()
 
-	o.logger.Info(nil, "starting OCR on %d pages", numPages)
+	o.logger.Info(&docId, "starting OCR on %d pages", numPages)
 
 	const ocrDPI = 200
 	const outputDPI = 150
@@ -89,7 +89,7 @@ func (o *Gosseract) Process(ctx context.Context, path string) (*string, error) {
 		default:
 		}
 		if i > 0 && i%50 == 0 {
-			o.logger.Info(nil, "OCR page %d/%d", i, numPages)
+			o.logger.Info(&docId, "OCR page %d/%d", i, numPages)
 		}
 
 		// Render page at 200 DPI for OCR
@@ -138,7 +138,7 @@ func (o *Gosseract) Process(ctx context.Context, path string) (*string, error) {
 
 		// Overlay invisible text for searchability (text rendering mode 3)
 		if len(boxes) == 0 {
-			o.logger.Debug(nil, "page %d: no text recognized", i)
+			o.logger.Debug(&docId, "page %d: no text recognized", i)
 		}
 		scaleX := pageW / float64(ocrW)
 		scaleY := pageH / float64(ocrH)
@@ -167,15 +167,15 @@ func (o *Gosseract) Process(ctx context.Context, path string) (*string, error) {
 		return nil, fmt.Errorf("save output PDF: %w", err)
 	}
 
-	o.logger.Info(nil, "created searchable PDF: %s", outPath)
+	o.logger.Info(&docId, "created searchable PDF: %s", outPath)
 
-	optResult, err := o.optimizer.Optimize(ctx, outPath)
+	optResult, err := o.optimizer.Optimize(ctx, docId, outPath)
 	if err != nil {
 		os.Remove(outPath)
 		return nil, fmt.Errorf("optimize OCR output: %w", err)
 	}
 	os.Remove(outPath)
-	o.logger.Debug(nil, "optimized OCR output: %s -> %s", outPath, *optResult)
+	o.logger.Debug(&docId, "optimized OCR output: %s -> %s", outPath, *optResult)
 	return optResult, nil
 }
 

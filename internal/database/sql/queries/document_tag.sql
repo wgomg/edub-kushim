@@ -11,7 +11,7 @@ JOIN document_tag dt ON d.id = dt.document_id
 WHERE dt.tag_id = ?;
 
 -- name: AddDocumentTag :exec
-INSERT INTO document_tag (document_id, tag_id) VALUES (?, ?);
+INSERT OR IGNORE INTO document_tag (document_id, tag_id) VALUES (?, ?);
 
 -- name: RemoveDocumentTag :exec
 DELETE FROM document_tag WHERE document_id = ? AND tag_id = ?;

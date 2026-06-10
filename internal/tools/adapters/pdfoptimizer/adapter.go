@@ -8,7 +8,7 @@ import (
 )
 
 type PdfOptimizer interface {
-	Optimize(ctx context.Context, path string) (*string, error)
+	Optimize(ctx context.Context, docId, path string) (*string, error)
 	Name() string
 }
 

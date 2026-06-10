@@ -27,7 +27,7 @@ func NewGhostscript(logger *utils.Logger, cfg config.ToolConfig) (*Ghostscript, 
 	return &Ghostscript{logger: logger, config: cfg}, nil
 }
 
-func (g *Ghostscript) Optimize(ctx context.Context, path string) (*string, error) {
+func (g *Ghostscript) Optimize(ctx context.Context, docId, path string) (*string, error) {
 	tmpDir := os.TempDir()
 	ogName := filepath.Base(path)
 	outputName := fmt.Sprintf(
@@ -74,7 +74,7 @@ func (g *Ghostscript) Optimize(ctx context.Context, path string) (*string, error
 		return nil, fmt.Errorf("%s did not create output file", g.Name())
 	}
 
-	g.logger.Debug(nil, "%s processed %s -> %s", g.Name(), path, outputPath)
+	g.logger.Debug(&docId, "%s processed %s -> %s", g.Name(), path, outputPath)
 	return &outputPath, nil
 }
 

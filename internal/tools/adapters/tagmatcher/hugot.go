@@ -101,12 +101,12 @@ func (h *Hugot) Close() {
 	}
 }
 
-func (h *Hugot) Match(ctx context.Context, input string, tagsToMatch map[string][]float32) ([]string, error) {
+func (h *Hugot) Match(ctx context.Context, docId, input string, tagsToMatch map[string][]float32) ([]string, error) {
 	if len(tagsToMatch) == 0 || h.topN == 0.0 {
 		return nil, nil
 	}
 
-	embeddings, err := h.Encode(ctx, []string{input})
+	embeddings, err := h.Encode(ctx, &docId, []string{input})
 	if err != nil {
 		return nil, err
 	}
@@ -131,15 +131,15 @@ func (h *Hugot) Match(ctx context.Context, input string, tagsToMatch map[string]
 		for i := range showN {
 			topScores[i] = fmt.Sprintf("%s(%.3f)", matches[i].tag, matches[i].similarity)
 		}
-		h.logger.Debug(nil, "hugot: top-%d matches: %v", showN, topScores)
+		h.logger.Debug(&docId, "hugot: top-%d matches: %v", showN, topScores)
 	} else {
-		h.logger.Debug(nil, "hugot: no matches above min_sim=%.2f", h.minSimilarity)
+		h.logger.Debug(&docId, "hugot: no matches above min_sim=%.2f", h.minSimilarity)
 	}
 
 	return result, nil
 }
 
-func (h *Hugot) MatchEach(ctx context.Context, queries []string, tagsToMatch map[string][]float32) ([]string, error) {
+func (h *Hugot) MatchEach(ctx context.Context, docId string, queries []string, tagsToMatch map[string][]float32) ([]string, error) {
 	if len(tagsToMatch) == 0 || h.topN == 0.0 {
 		return nil, nil
 	}
@@ -158,7 +158,7 @@ func (h *Hugot) MatchEach(ctx context.Context, queries []string, tagsToMatch map
 	for i, qEmb := range out.Embeddings {
 		matches := h.rankMatches(qEmb, entries, h.consolidationSim)
 		if len(matches) > 0 {
-			h.logger.Debug(nil, "hugot: matchEach %q → %s (%.3f)", queries[i], matches[0].tag, matches[0].similarity)
+			h.logger.Debug(&docId, "hugot: matchEach %q → %s (%.3f)", queries[i], matches[0].tag, matches[0].similarity)
 			result[i] = matches[0].tag
 		} else {
 			result[i] = queries[i]
@@ -175,7 +175,7 @@ func (h *Hugot) Name() string {
 // Encode computes embeddings for a batch of texts. Short texts (≤ chunkSize tokens)
 // are batched into a single pipeline call. Longer texts are encoded individually
 // with overlapping token chunks and mean-pooling.
-func (h *Hugot) Encode(ctx context.Context, texts []string) ([][]float32, error) {
+func (h *Hugot) Encode(ctx context.Context, docId *string, texts []string) ([][]float32, error) {
 	if len(texts) == 0 {
 		return nil, nil
 	}
@@ -225,7 +225,7 @@ func (h *Hugot) Encode(ctx context.Context, texts []string) ([][]float32, error)
 		if it.short {
 			continue
 		}
-		emb, err := h.encodeChunked(ctx, texts[it.index])
+		emb, err := h.encodeChunked(ctx, docId, texts[it.index])
 		if err != nil {
 			return nil, fmt.Errorf("encode %q: %w", texts[it.index], err)
 		}
@@ -237,7 +237,7 @@ func (h *Hugot) Encode(ctx context.Context, texts []string) ([][]float32, error)
 
 // encodeChunked embeds a single long input by splitting token IDs into
 // overlapping chunks, embedding each chunk, and mean-pooling the results.
-func (h *Hugot) encodeChunked(ctx context.Context, input string) ([]float32, error) {
+func (h *Hugot) encodeChunked(ctx context.Context, docId *string, input string) ([]float32, error) {
 	tk := h.pipeline.Model.Tokenizer
 	if tk == nil {
 		return nil, fmt.Errorf("tokenizer not available")
@@ -254,7 +254,7 @@ func (h *Hugot) encodeChunked(ctx context.Context, input string) ([]float32, err
 		step = h.chunkSize / 2
 	}
 	numChunks := ((n - 1) / step) + 1
-	h.logger.Debug(nil, "hugot: chunked path — %d tokens into ~%d chunks (step=%d)", n, numChunks, step)
+	h.logger.Debug(docId, "hugot: chunked path — %d tokens into ~%d chunks (step=%d)", n, numChunks, step)
 
 	var allEmbeddings [][]float32
 	for i := 0; i < n; i += step {

@@ -32,7 +32,7 @@ func NewOcrMyPdf(logger *utils.Logger, cfg config.ToolConfig, languages []string
 	return &OcrMyPdf{logger: logger, config: cfg, languages: languages}, nil
 }
 
-func (o *OcrMyPdf) Process(ctx context.Context, path string) (*string, error) {
+func (o *OcrMyPdf) Process(ctx context.Context, docId, path string) (*string, error) {
 	tmpDir := os.TempDir()
 	ogName := filepath.Base(path)
 	outputName := fmt.Sprintf(
@@ -74,7 +74,7 @@ func (o *OcrMyPdf) Process(ctx context.Context, path string) (*string, error) {
 		return nil, fmt.Errorf("%s did not create output file", o.Name())
 	}
 
-	o.logger.Debug(nil, "%s processed %s -> %s", o.Name(), path, outputPath)
+	o.logger.Debug(&docId, "%s processed %s -> %s", o.Name(), path, outputPath)
 	return &outputPath, nil
 }
 

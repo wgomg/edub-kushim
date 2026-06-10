@@ -3,7 +3,6 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
-	"strconv"
 
 	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/database"
@@ -62,7 +61,7 @@ func (h *DocumentHandler) ListDocuments(w http.ResponseWriter, r *http.Request) 
 		docTypeID := doc.DocumentTypeID
 
 		response[i] = types.DocumentResponse{
-			ID:             doc.ID,
+			DocumentID:     doc.DocumentID,
 			Title:          doc.Title,
 			MD5Checksum:    doc.Md5Checksum,
 			SHA512Checksum: doc.Sha512Checksum,
@@ -89,33 +88,27 @@ func (h *DocumentHandler) GetDocument(w http.ResponseWriter, r *http.Request) {
 	reqID := ctx.Value("reqid").(string)
 	h.logger.Debug(&reqID, "Get document requested")
 
-	idStr := r.PathValue("id")
-	if idStr == "" {
+	documentId := r.PathValue("id")
+	if documentId == "" {
 		http.Error(w, "Document ID is required", http.StatusBadRequest)
 		return
 	}
 
-	id, err := strconv.ParseInt(idStr, 10, 64)
+	doc, err := h.queries.GetDocumentWithDetails(r.Context(), documentId)
 	if err != nil {
-		http.Error(w, "Invalid document ID", http.StatusBadRequest)
-		return
-	}
-
-	doc, err := h.queries.GetDocumentWithDetails(r.Context(), id)
-	if err != nil {
-		h.logger.Error(&reqID, "Failed to get document %d: %v", id, err)
+		h.logger.Error(&reqID, "Failed to get document %d: %v", documentId, err)
 		http.Error(w, "Document not found", http.StatusNotFound)
 		return
 	}
 
-	tags, err := h.queries.GetDocumentTags(r.Context(), id)
+	tags, err := h.queries.GetDocumentTags(r.Context(), doc.ID)
 	if err != nil {
-		h.logger.Error(&reqID, "Failed to get tags for document %d: %v", id, err)
+		h.logger.Error(&reqID, "Failed to get tags for document %d: %v", doc.DocumentID, err)
 	}
 
-	people, err := h.queries.GetDocumentPeopleWithType(r.Context(), id)
+	people, err := h.queries.GetDocumentPeopleWithType(r.Context(), doc.ID)
 	if err != nil {
-		h.logger.Error(&reqID, "Failed to get people for document %d: %v", id, err)
+		h.logger.Error(&reqID, "Failed to get people for document %d: %v", doc.DocumentID, err)
 	}
 
 	docTypeID := doc.DocumentTypeID
@@ -145,7 +138,7 @@ func (h *DocumentHandler) GetDocument(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := types.DocumentResponse{
-		ID:               doc.ID,
+		DocumentID:       doc.DocumentID,
 		Title:            doc.Title,
 		MD5Checksum:      doc.Md5Checksum,
 		SHA512Checksum:   doc.Sha512Checksum,
@@ -230,21 +223,15 @@ func (h *DocumentHandler) GetDocumentFile(w http.ResponseWriter, r *http.Request
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
 
-	idStr := r.PathValue("id")
-	if idStr == "" {
+	documentId := r.PathValue("id")
+	if documentId == "" {
 		http.Error(w, "Document ID is required", http.StatusBadRequest)
 		return
 	}
 
-	id, err := strconv.ParseInt(idStr, 10, 64)
+	doc, err := h.queries.GetDocument(ctx, documentId)
 	if err != nil {
-		http.Error(w, "Invalid document ID", http.StatusBadRequest)
-		return
-	}
-
-	doc, err := h.queries.GetDocument(ctx, id)
-	if err != nil {
-		h.logger.Error(&reqID, "Failed to get document %d: %v", id, err)
+		h.logger.Error(&reqID, "Failed to get document %d: %v", documentId, err)
 		http.Error(w, "Document not found", http.StatusNotFound)
 		return
 	}

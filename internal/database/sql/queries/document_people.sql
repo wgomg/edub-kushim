@@ -19,7 +19,7 @@ JOIN document_people dp ON d.id = dp.document_id
 WHERE dp.people_id = ?;
 
 -- name: AddDocumentPeople :exec
-INSERT INTO document_people (document_id, people_id, people_type_id) VALUES (?, ?, ?);
+INSERT OR IGNORE INTO document_people (document_id, people_id, people_type_id) VALUES (?, ?, ?);
 
 -- name: RemoveDocumentPeople :exec
 DELETE FROM document_people WHERE document_id = ? AND people_id = ?;

@@ -14,7 +14,7 @@ type PersonResponse struct {
 }
 
 type DocumentResponse struct {
-	ID               int64            `json:"id"`
+	DocumentID       string           `json:"document_id"`
 	Title            string           `json:"title"`
 	MD5Checksum      string           `json:"md5_checksum"`
 	SHA512Checksum   string           `json:"sha512_checksum"`
