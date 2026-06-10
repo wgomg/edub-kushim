@@ -20,18 +20,22 @@ import (
 
 func RunSetup(args []string, logger *utils.Logger) error {
 	var langs, inboxDir, storageDir, dbPath, optimizationFallback, ocrEngine, pdfEngine string
+	var resetDb bool
 
 	p := NewFlagParser(args)
-	if err := p.String("--langs", &langs); err != nil {
+	if err := p.Bool("--reset-database", &resetDb); err != nil {
 		return err
 	}
-	if err := p.String("--inbox-dir", &inboxDir); err != nil {
+	if err := p.String("--languages", &langs); err != nil {
 		return err
 	}
-	if err := p.String("--storage-dir", &storageDir); err != nil {
+	if err := p.String("--inbox-path", &inboxDir); err != nil {
 		return err
 	}
-	if err := p.String("--db-path", &dbPath); err != nil {
+	if err := p.String("--storage-path", &storageDir); err != nil {
+		return err
+	}
+	if err := p.String("--database-path", &dbPath); err != nil {
 		return err
 	}
 	if err := p.String("--consumer-pdfoptimizer-fallback", &optimizationFallback); err != nil {
@@ -51,13 +55,14 @@ func RunSetup(args []string, logger *utils.Logger) error {
 		return fmt.Errorf(`usage: kushim setup --langs eng,spa,...
 
 Flags:
-  --langs                            ISO 639-3 codes (eng, spa, fra, ...)
-  --inbox-dir                        inbox directory (default: ~/.config/edub-kushim/inbox)
-  --storage-dir                      storage directory (default: ~/.config/edub-kushim/storage)
-  --db-path                          database path (default: ~/.config/edub-kushim/data)
+  --languagess                       ISO 639-3 codes (eng, spa, fra, ...)
+  --inbox-path                       inbox directory (default: ~/.config/edub-kushim/inbox)
+  --storage-path                     storage directory (default: ~/.config/edub-kushim/storage)
+  --database-path                    database path (default: ~/.config/edub-kushim/data)
   --consumer-ocr-engine              gosseract | ocrmypdf (default: gosseract)
   --consumer-pdfoptimizer-engine     mupdf | gs (default: mupdf)
-  --consumer-pdfoptimizer-fallback   external PDF optimizer binary (ignored when engine is gs)`)
+  --consumer-pdfoptimizer-fallback   external PDF optimizer binary (ignored when engine is gs)
+  --reset-database                   drop all tables and re-run schema + seeders`)
 	}
 
 	langList := strings.Split(langs, ",")
@@ -157,9 +162,19 @@ Flags:
 		db.Close()
 		return fmt.Errorf("enable foreign keys: %w", err)
 	}
-	if err := database.InitializeSchema(db); err != nil {
-		db.Close()
-		return err
+
+	if resetDb {
+		logger.Info(nil, "resetting database...")
+		if err := database.ResetDatabase(db); err != nil {
+			db.Close()
+			return err
+		}
+		logger.Info(nil, "database reset complete")
+	} else {
+		if err := database.InitializeSchema(db); err != nil {
+			db.Close()
+			return err
+		}
 	}
 	db.Close()
 	logger.Info(nil, "created database: %s", dsn)
