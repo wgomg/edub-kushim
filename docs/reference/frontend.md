@@ -6,13 +6,13 @@ Located in `web/`, built via `npm ci && npm run build`, output copied to `intern
 
 ## Routes
 
-| Route             | File                          | Description                                   |
-| ----------------- | ----------------------------- | --------------------------------------------- |
-| `/`               | `+page.svelte`                | Dashboard / home                              |
-| `/documents`      | `documents/+page.svelte`      | Document list with search, sort, pagination   |
-| `/documents/[id]` | `documents/[id]/+page.svelte` | Document detail: metadata, tags, people, file |
-| `/tags`           | `tags/+page.svelte`           | Tag management (list, create, delete)         |
-| `/tasks`          | `tasks/+page.svelte`          | Task/batch monitoring (status, retry)         |
+| Route             | File                          | Description                                                                                                          |
+| ----------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `/`               | `+page.svelte`                | Dashboard / home — shows Task Status summary including `Waiting` count                                               |
+| `/documents`      | `documents/+page.svelte`      | Document list with search, sort, pagination; shows **Tags** and **People** columns inline                            |
+| `/documents/[id]` | `documents/[id]/+page.svelte` | Document detail: metadata, tags, people, file, **Content Stats** (pages, words, characters)                          |
+| `/tags`           | `tags/+page.svelte`           | Tag management (list, create, delete)                                                                                |
+| `/tasks`          | `tasks/+page.svelte`          | Task/batch monitoring — shows **Type**, **Payload** (document ID + file name), **Started** and **Completed** columns |
 
 ## Key files
 

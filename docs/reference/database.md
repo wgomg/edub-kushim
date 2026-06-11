@@ -52,7 +52,7 @@
 
 ### Function
 
-`ListDocumentsWithSort(ctx, params)` — Dynamic ORDER BY with whitelisted columns (`title`, `mime_type`, `file_size`, `created_at`)
+`ListDocumentsWithSort(ctx, params)` — Dynamic ORDER BY with whitelisted columns (`title`, `mime_type`, `file_size`, `created_at`); now selects `document_id` (UUID) in addition to the numeric `id`
 
 ---
 
@@ -100,7 +100,7 @@
 
 ### Struct
 
-`FTSDocumentRow` — `ID`, `Title`, `Md5Checksum`, `Sha512Checksum`, `MimeType`, `FileSize`, `Language`, `CreatedAt`, `ModifiedAt`, `DocumentTypeID`, `OriginalPath`, `StoragePath`, `TextContent`, `Rank`, `Snippet`
+`FTSDocumentRow` — `ID`, `DocumentID` (UUID string), `Title`, `Md5Checksum`, `Sha512Checksum`, `MimeType`, `FileSize`, `PageCount`, `WordCount`, `CharCount`, `Language`, `CreatedAt`, `ModifiedAt`, `DocumentTypeID`, `OriginalPath`, `StoragePath`, `TextContent`, `Rank`, `Snippet`
 
 ### Functions
 

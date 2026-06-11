@@ -42,7 +42,7 @@
   - **Fields**: `queries *database.Queries`, `logger *utils.Logger`, `engine *search.Engine`
   - **Methods**:
     - `NewDocumentHandler(queries, logger, engine) *DocumentHandler`
-    - `ListDocuments(w, r)` — Supports `sort_by` and `sort_order` query params; response includes `Language`, `DocumentTypeID`
+    - `ListDocuments(w, r)` — Supports `sort_by` and `sort_order` query params; response includes tags (`TagResponse`), people (`PersonResponse`), content stats (`PageCount`, `WordCount`, `CharCount`), `Language`, `DocumentTypeID`
     - `GetDocument(w, r)` — Returns full document with tags (`TagResponse`), people (`PersonResponse`), doc type name
     - `GetDocumentFile(w, r)` — Serves raw PDF via `http.ServeFile`; rejects non-PDF content
     - `SearchDocuments(w, r)` — Returns `FTSDocumentResponse` with enhanced fields
@@ -85,9 +85,9 @@
 - `TagResponse` — `ID int64`, `Name string`
 - `PersonResponse` — `ID`, `Name`, `PersonTypeID`, `PersonTypeName`, `PersonTypeDescription`
 - `DocumentResponse`
-  - **Fields**: `DocumentID string` (UUID), `Title`, `MD5Checksum`, `SHA512Checksum`, `MimeType`, `FileSize`, `Language`, `DocumentTypeID *int64`, `DocumentTypeName *string`, `Tags []TagResponse`, `People []PersonResponse`, `CreatedAt`, `ModifiedAt`
+  - **Fields**: `ID string` (UUID, JSON `"id"`), `Title`, `MD5Checksum`, `SHA512Checksum`, `MimeType`, `FileSize`, `PageCount`, `WordCount`, `CharCount`, `Language`, `DocumentTypeID *int64`, `DocumentTypeName *string`, `Tags []TagResponse`, `People []PersonResponse`, `CreatedAt`, `ModifiedAt`
 - `FTSDocumentResponse`
-  - **Fields**: Same as `DocumentResponse` (including `DocumentTypeName`, `Tags`, `People`) plus `Rank float64`, `Snippet string`, `TextContent string`
+  - **Fields**: `ID string` (UUID, replaces the old int64 `id`), `Title`, `MD5Checksum`, `SHA512Checksum`, `MimeType`, `FileSize`, `PageCount`, `WordCount`, `CharCount`, `Language`, `DocumentTypeID *int64`, `DocumentTypeName *string`, `Tags []TagResponse`, `People []PersonResponse`, `Rank float64`, `Snippet string`, `TextContent string`
 
 ---
 
@@ -95,7 +95,7 @@
 
 ### Structs
 
-- `TaskResponse` — `TaskID`, `BatchID`, `FileName`, `Status`, `DocumentID *int64`, `Error *string`, `CreatedAt`, `StartedAt *string`, `CompletedAt *string`
+- `TaskResponse` — `TaskID`, `BatchID`, `TaskType`, `FileName`, `PayloadDocID`, `Status`, `DocumentID *int64`, `Error *string`, `CreatedAt`, `StartedAt *string`, `CompletedAt *string`
 - `BatchSummaryResponse` — `BatchID`, `Total`, `Waiting`, `Pending`, `Processing`, `Completed`, `Failed`, `Cancelled`
 - `ListBatchesResponse` — `Batches []BatchSummaryResponse`
 - `ListTasksResponse` — `BatchID`, `Summary *BatchSummaryResponse`, `Tasks []TaskResponse`
