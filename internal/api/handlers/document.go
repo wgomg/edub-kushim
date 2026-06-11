@@ -60,6 +60,27 @@ func (h *DocumentHandler) ListDocuments(w http.ResponseWriter, r *http.Request) 
 	for i, doc := range documents {
 		docTypeID := doc.DocumentTypeID
 
+		tags, _ := h.queries.GetDocumentTags(r.Context(), doc.ID)
+		tagResponses := make([]types.TagResponse, len(tags))
+		for j, t := range tags {
+			tagResponses[j] = types.TagResponse{
+				ID:   t.ID,
+				Name: t.Name,
+			}
+		}
+
+		people, _ := h.queries.GetDocumentPeopleWithType(r.Context(), doc.ID)
+		personResponses := make([]types.PersonResponse, len(people))
+		for j, p := range people {
+			personResponses[j] = types.PersonResponse{
+				ID:                    p.ID,
+				Name:                  p.Name,
+				PersonTypeID:          p.PeopleTypeID,
+				PersonTypeName:        p.PeopleTypeName,
+				PersonTypeDescription: p.PeopleTypeDescription,
+			}
+		}
+
 		response[i] = types.DocumentResponse{
 			ID:             doc.DocumentID,
 			Title:          doc.Title,
@@ -71,6 +92,8 @@ func (h *DocumentHandler) ListDocuments(w http.ResponseWriter, r *http.Request) 
 			WordCount:      doc.WordCount,
 			CharCount:      doc.CharCount,
 			Language:       doc.Language,
+			Tags:           tagResponses,
+			People:         personResponses,
 			DocumentTypeID: &docTypeID,
 			CreatedAt:      doc.CreatedAt.Time.Format("2006-01-02T15:04:05Z"),
 			ModifiedAt:     doc.ModifiedAt.Time.Format("2006-01-02T15:04:05Z"),

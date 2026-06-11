@@ -125,7 +125,7 @@
 					class="rounded-lg border border-clay-800 bg-clay-900 px-3 py-1.5 text-parchment-200"
 				>
 					{#each pageSizes as size}
-						<option value={size}>{size}</option>
+						<option value={size}>{size} </option>
 					{/each}
 				</select>
 			{/if}
