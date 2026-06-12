@@ -69,7 +69,7 @@
 ### Task System
 
 - Generic `task.Dispatcher` + `pool.Pool` with `task.Handler` / `Dedupable` interfaces
-- Task lifecycle: `waiting` → `pending` → `processing` → `completed` / `failed` / `cancelled`
+- Task lifecycle: `waiting` → `pending` → `processing` → `completed` / `failed` / `cancelled` / `discarded`
 - Linked task pairs: enrich tasks start `waiting` until their consume task completes
 - Batch cancellation: cancels pending tasks, sends SIGTERM, marks in-flight as cancelled
 - Retry support for failed tasks

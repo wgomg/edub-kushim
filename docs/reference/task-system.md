@@ -36,8 +36,9 @@
   - **Methods**:
     - `NewDispatcher(cfg, logger, db, embeddingCache *cache.Cache) (*Dispatcher, error)` — Creates consumer and enricher with cache
     - `Enqueue(ctx, taskType, batchID, payload, taskID string, status ...string) (string, error)` — Validates task type, computes dedup key, inserts row. Supports custom taskID and initial status (e.g., `"waiting"`)
-    - `Next(ctx, taskType string) error` — Implements `pool.Runner`: fetch pending task of type via `GetNextPendingTaskOfType` → claim → handle → result. For `"consume"` tasks, extracts `document_db_id` (int64) and `document_id` (UUID) from the result, activates the waiting enrich task (matched via `on_completed`/`waiting_for` pointers) by calling `SetEnrichTaskPending` **before** `CompleteTask`, so the poll loop never sees a gap where the batch looks finished.
+    - `Next(ctx, taskType string) error` — Implements `pool.Runner`: fetch pending task of type via `GetNextPendingTaskOfType` → claim → handle → result. For `"consume"` tasks, extracts `document_db_id` (int64) and `document_id` (UUID) from the result, activates the waiting enrich task (matched via `on_completed`/`waiting_for` pointers) by calling `SetEnrichTaskPending` **before** `CompleteTask`, so the poll loop never sees a gap where the batch looks finished. If the consume task fails at any point, calls `discardChildEnrichTask` to mark the linked enrich task as `discarded` with the error message, preventing orphaned waiting tasks.
     - `setEnrichTaskPending(ctx, id, payload) error` — Updates enrich task status to pending and injects `document_id`
+    - `discardChildEnrichTask(ctx, t, failureErr)` — When a consume task fails, extracts `on_completed` from its payload, looks up the linked enrich task by that ID, and sets its status to `discarded` with the provided error message (e.g. `"parent task failed: ..."`).
 
 ### Functions
 

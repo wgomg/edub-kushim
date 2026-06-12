@@ -64,7 +64,7 @@ internal/
 │   ├── tag.sql.go         # Generated tag queries (includes SearchTagsByName)
 │   ├── people.sql.go      # Generated people queries (CreatePeople, ListAllPeople, SearchPeopleByName)
 │   ├── people_type.sql.go # Generated people type queries
-│   ├── task.sql.go        # Generated task queries (includes SetEnrichTaskPending)
+│   ├── task.sql.go        # Generated task queries (includes SetEnrichTaskPending, DiscardEnrichTask)
 │   ├── user.sql.go        # Generated user queries
 │   ├── saved_search.sql.go # Generated saved search queries (CreateSavedSearch, ListSavedSearches, DeleteSavedSearch)
 │   ├── fts5.go            # Manual FTS5 query implementation (SearchDocumentsFTS, etc.)

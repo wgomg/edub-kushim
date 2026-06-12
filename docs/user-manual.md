@@ -234,12 +234,12 @@ kushim task list --batch 550e8400-e29b-41d4-a716-446655440000 --status failed
 kushim task list --status pending --limit 50
 ```
 
-| Flag       | Default | Description                                                                              |
-| ---------- | ------- | ---------------------------------------------------------------------------------------- |
-| `--batch`  | all     | Filter by batch UUID                                                                     |
-| `--status` | all     | Filter by status: `waiting`, `pending`, `processing`, `completed`, `failed`, `cancelled` |
-| `--limit`  | `20`    | Max results (1–100)                                                                      |
-| `--offset` | `0`     | Result offset for pagination                                                             |
+| Flag       | Default | Description                                                                                           |
+| ---------- | ------- | ----------------------------------------------------------------------------------------------------- |
+| `--batch`  | all     | Filter by batch UUID                                                                                  |
+| `--status` | all     | Filter by status: `waiting`, `pending`, `processing`, `completed`, `failed`, `cancelled`, `discarded` |
+| `--limit`  | `20`    | Max results (1–100)                                                                                   |
+| `--offset` | `0`     | Result offset for pagination                                                                          |
 
 Output:
 
@@ -486,12 +486,12 @@ GET /api/v1/tasks?batch=<batch_id>&status=pending&limit=20&offset=0
 GET /api/v1/tasks?status=failed
 ```
 
-| Query param | Default | Description                                                                    |
-| ----------- | ------- | ------------------------------------------------------------------------------ |
-| `batch`     | all     | Filter by batch UUID                                                           |
-| `status`    | all     | Filter: `waiting`, `pending`, `processing`, `completed`, `failed`, `cancelled` |
-| `limit`     | `20`    | Max results (1–100)                                                            |
-| `offset`    | `0`     | Pagination offset                                                              |
+| Query param | Default | Description                                                                                 |
+| ----------- | ------- | ------------------------------------------------------------------------------------------- |
+| `batch`     | all     | Filter by batch UUID                                                                        |
+| `status`    | all     | Filter: `waiting`, `pending`, `processing`, `completed`, `failed`, `cancelled`, `discarded` |
+| `limit`     | `20`    | Max results (1–100)                                                                         |
+| `offset`    | `0`     | Pagination offset                                                                           |
 
 Response `200`:
 
@@ -829,6 +829,7 @@ ensures enrichment never runs before the document is fully ingested.
 | `completed`  | Finished successfully                                         |
 | `failed`     | Finished with an error (retryable via `kushim task retry`)    |
 | `cancelled`  | Cancelled via `kushim consume cancel`                         |
+| `discarded`  | Enrich task orphaned because its parent consume task failed   |
 
 ---
 
