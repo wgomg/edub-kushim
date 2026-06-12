@@ -74,7 +74,7 @@
     - `GetTask(w, r)` — Single task by UUID
     - `ListBatches(w, r)` — Lists all batch summaries with filtering (`status`, `limit`, `offset`)
     - `GetBatchSummary(w, r)` — Counts per status for a single batch (via `{id}`)
-    - `GlobalSummary(w, r)` — Global totals: number of batches, total files, per-status counts (including `waiting`), total file size in GB
+    - `GlobalSummary(w, r)` — Global totals: number of batches, total files, per-status counts (including `waiting` and `discarded`), total file size in GB
     - **Helpers**: `buildBatchSummary(ctx, queries, batchID) BatchSummaryResponse`, `taskToResponse(t) TaskResponse`
 
 ---
@@ -97,10 +97,10 @@
 ### Structs
 
 - `TaskResponse` — `TaskID`, `BatchID`, `TaskType`, `FileName`, `PayloadDocID`, `Status`, `DocumentID *int64`, `Error *string`, `CreatedAt`, `StartedAt *string`, `CompletedAt *string`
-- `BatchSummaryResponse` — `BatchID`, `Total`, `Waiting`, `Pending`, `Processing`, `Completed`, `Failed`, `Cancelled`
+- `BatchSummaryResponse` — `BatchID`, `Total`, `Waiting`, `Pending`, `Processing`, `Completed`, `Failed`, `Cancelled`, `Discarded`
 - `ListBatchesResponse` — `Batches []BatchSummaryResponse`
 - `ListTasksResponse` — `BatchID`, `Summary *BatchSummaryResponse`, `Tasks []TaskResponse`
-- `GlobalSummaryResponse` — `TotalBatches`, `TotalFiles`, `Waiting`, `Pending`, `Processing`, `Completed`, `Failed`, `Cancelled`, `TotalSizeGB`
+- `GlobalSummaryResponse` — `TotalBatches`, `TotalFiles`, `Waiting`, `Pending`, `Processing`, `Completed`, `Failed`, `Cancelled`, `Discarded`, `TotalSizeGB`
 
 ---
 

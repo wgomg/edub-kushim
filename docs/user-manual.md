@@ -604,6 +604,7 @@ Response `200`:
   "completed": 130,
   "failed": 5,
   "cancelled": 3,
+  "discarded": 0,
   "total_size_gb": 12.45
 }
 ```
@@ -700,7 +701,8 @@ Same as DocumentResponse with these extra fields:
   "processing": 1,
   "completed": 1,
   "failed": 1,
-  "cancelled": 0
+  "cancelled": 0,
+  "discarded": 0
 }
 ```
 
