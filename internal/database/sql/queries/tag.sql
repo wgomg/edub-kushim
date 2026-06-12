@@ -20,5 +20,8 @@ UPDATE tag SET
     name = ?
 WHERE id = ?;
 
+-- name: SearchTagsByName :many
+SELECT * FROM tag WHERE name LIKE ? ORDER BY name ASC LIMIT ?;
+
 -- name: DeleteTag :exec
 DELETE FROM tag WHERE id = ?;

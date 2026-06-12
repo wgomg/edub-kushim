@@ -66,6 +66,13 @@ type PeopleType struct {
 	CreatedAt   sql.NullTime
 }
 
+type SavedSearch struct {
+	ID         int64
+	Name       string
+	FilterJson string
+	CreatedAt  string
+}
+
 type Tag struct {
 	ID        int64
 	Name      string

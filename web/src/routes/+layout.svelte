@@ -41,13 +41,7 @@
 	<div class="flex flex-1 flex-col overflow-hidden">
 		<!-- Top bar -->
 		<header class="flex h-14 shrink-0 items-center gap-4 border-b border-clay-800 bg-clay-900 px-6">
-			<div class="relative flex flex-1">
-				<input
-					type="search"
-					placeholder="Search documents..."
-					class="w-full max-w-md rounded-lg border border-clay-800 bg-clay-950 px-4 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus:ring-1 focus:ring-gold-500"
-				/>
-			</div>
+			<div class="flex-1"></div>
 			<button
 				class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600"
 				>Upload</button

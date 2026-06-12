@@ -99,6 +99,38 @@ func (q *Queries) ListPeople(ctx context.Context, arg ListPeopleParams) ([]Peopl
 	return items, nil
 }
 
+const searchPeopleByName = `-- name: SearchPeopleByName :many
+SELECT id, name, created_at FROM people WHERE name LIKE ? ORDER BY name ASC LIMIT ?
+`
+
+type SearchPeopleByNameParams struct {
+	Name  string
+	Limit int64
+}
+
+func (q *Queries) SearchPeopleByName(ctx context.Context, arg SearchPeopleByNameParams) ([]People, error) {
+	rows, err := q.db.QueryContext(ctx, searchPeopleByName, arg.Name, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []People
+	for rows.Next() {
+		var i People
+		if err := rows.Scan(&i.ID, &i.Name, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updatePeople = `-- name: UpdatePeople :exec
 UPDATE people SET
     name = ?

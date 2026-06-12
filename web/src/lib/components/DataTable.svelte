@@ -1,5 +1,5 @@
 <script>
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 
 	/**
 	 * @typedef {Object} Column
@@ -31,10 +31,12 @@
 		pageSizes = [10, 25, 50, 100],
 		defaultPageSize = 25,
 		keyField = 'id',
-		title = ''
+		title = '',
+		refreshKey = 0
 	} = $props();
 
 	let data = $state([]);
+	let total = $state(null);
 	let loading = $state(true);
 	let error = $state('');
 
@@ -53,6 +55,15 @@
 		}
 	});
 
+	$effect(() => {
+		if (refreshKey) {
+			untrack(() => {
+				pageIndex = 0;
+				load();
+			});
+		}
+	});
+
 	onMount(() => {
 		load();
 	});
@@ -67,10 +78,20 @@
 				limit: pageSize,
 				offset: pageIndex * pageSize
 			});
-			data = result;
+			if (Array.isArray(result)) {
+				data = result;
+				total = null;
+			} else if (result && Array.isArray(result.results)) {
+				data = result.results;
+				total = result.total ?? null;
+			} else {
+				data = [];
+				total = null;
+			}
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load data';
 			data = [];
+			total = null;
 		} finally {
 			loading = false;
 		}
@@ -219,11 +240,16 @@
 	<!-- Pagination footer -->
 	{#if !loading || data.length > 0}
 		{@const showing = data.length}
+		{@const hasMore = total != null ? pageIndex * pageSize + showing < total : showing >= pageSize}
 		<div class="flex items-center justify-between text-sm">
 			<p class="text-parchment-500">
-				Showing {showing} result{showing !== 1 ? 's' : ''}
-				{#if pageIndex > 0}
-					(starting at #{pageIndex * pageSize + 1})
+				{#if total != null}
+					Showing {pageIndex * pageSize + 1}–{pageIndex * pageSize + showing} of {total}
+				{:else}
+					Showing {showing} result{showing !== 1 ? 's' : ''}
+					{#if pageIndex > 0}
+						(starting at #{pageIndex * pageSize + 1})
+					{/if}
 				{/if}
 			</p>
 			<div class="flex gap-2">
@@ -235,7 +261,7 @@
 					Previous
 				</button>
 				<button
-					disabled={data.length < pageSize}
+					disabled={!hasMore}
 					onclick={nextPage}
 					class="rounded-lg border border-clay-800 bg-clay-900 px-3 py-1.5 text-parchment-400 transition-colors hover:bg-clay-800 disabled:opacity-40"
 				>

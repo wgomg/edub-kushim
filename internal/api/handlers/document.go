@@ -251,6 +251,91 @@ func (h *DocumentHandler) SearchDocuments(w http.ResponseWriter, r *http.Request
 	}
 }
 
+func (h *DocumentHandler) SearchDocumentsStructured(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := ctx.Value("reqid").(string)
+	h.logger.Debug(&reqID, "Structured search requested")
+
+	var filter search.Filter
+	if err := json.NewDecoder(r.Body).Decode(&filter); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if filter.Limit == 0 {
+		filter.Limit = 50
+	}
+	if filter.Limit > 100 {
+		filter.Limit = 100
+	}
+
+	results, total, err := h.engine.SearchStructured(ctx, filter)
+	if err != nil {
+		h.logger.Error(&reqID, "Structured search failed: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	response := make([]types.FTSDocumentResponse, len(results))
+	for i, r := range results {
+		docTypeID := r.DocumentTypeID
+
+		tags, _ := h.queries.GetDocumentTags(ctx, r.ID)
+		tagResponses := make([]types.TagResponse, len(tags))
+		for j, t := range tags {
+			tagResponses[j] = types.TagResponse{
+				ID:   t.ID,
+				Name: t.Name,
+			}
+		}
+
+		people, _ := h.queries.GetDocumentPeopleWithType(ctx, r.ID)
+		personResponses := make([]types.PersonResponse, len(people))
+		for j, p := range people {
+			personResponses[j] = types.PersonResponse{
+				ID:                    p.ID,
+				Name:                  p.Name,
+				PersonTypeID:          p.PeopleTypeID,
+				PersonTypeName:        p.PeopleTypeName,
+				PersonTypeDescription: p.PeopleTypeDescription,
+			}
+		}
+
+		response[i] = types.FTSDocumentResponse{
+			ID:             r.DocumentID,
+			Title:          r.Title,
+			MD5Checksum:    r.MD5Checksum,
+			SHA512Checksum: r.SHA512Checksum,
+			MimeType:       r.MimeType,
+			FileSize:       r.FileSize,
+			PageCount:      r.PageCount,
+			WordCount:      r.WordCount,
+			CharCount:      r.CharCount,
+			Language:       r.Language,
+			DocumentTypeID: &docTypeID,
+			Tags:           tagResponses,
+			People:         personResponses,
+			CreatedAt:      r.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			ModifiedAt:     r.ModifiedAt.Format("2006-01-02T15:04:05Z"),
+			Rank:           r.Rank,
+			Snippet:        r.Snippet,
+			TextContent:    "",
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	searchResponse := types.SearchResponse{
+		Results: response,
+		Total:   total,
+	}
+
+	if err := json.NewEncoder(w).Encode(searchResponse); err != nil {
+		h.logger.Error(&reqID, "Failed to encode search response: %v", err)
+	}
+}
+
 func (h *DocumentHandler) GetDocumentFile(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)

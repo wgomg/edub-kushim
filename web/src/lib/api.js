@@ -1,6 +1,6 @@
-async function request(path) {
+async function request(path, opts = {}) {
 	try {
-		const res = await fetch(path);
+		const res = await fetch(path, opts);
 		if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
 		return await res.json();
 	} catch (err) {
@@ -24,7 +24,14 @@ export const api = {
 		search: (q, limit = 50, offset = 0) =>
 			request(
 				`/api/v1/documents/search?q=${encodeURIComponent(q)}&limit=${limit}&offset=${offset}`
-			).then((data) => data ?? [])
+			).then((data) => data ?? []),
+
+		searchStructured: (body) =>
+			request('/api/v1/documents/search', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(body)
+			}).then((data) => data ?? { results: [], total: 0 })
 	},
 
 	tasks: {
@@ -52,5 +59,32 @@ export const api = {
 
 	summary: {
 		get: () => request('/api/v1/summary').then((data) => data ?? null)
+	},
+
+	autocomplete: {
+		tags: (q, limit = 20) =>
+			request(`/api/v1/tags?q=${encodeURIComponent(q)}&limit=${limit}`).then((data) => data ?? []),
+
+		people: (q, limit = 20) =>
+			request(`/api/v1/people?q=${encodeURIComponent(q)}&limit=${limit}`).then(
+				(data) => data ?? []
+			),
+
+		peopleTypes: () => request('/api/v1/people-types').then((data) => data ?? []),
+
+		documentTypes: () => request('/api/v1/document-types').then((data) => data ?? [])
+	},
+
+	savedSearches: {
+		list: () => request('/api/v1/saved-searches').then((data) => data ?? []),
+
+		create: (name, filter) =>
+			request('/api/v1/saved-searches', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ name, filter })
+			}),
+
+		delete: (id) => request(`/api/v1/saved-searches/${id}`, { method: 'DELETE' })
 	}
 };

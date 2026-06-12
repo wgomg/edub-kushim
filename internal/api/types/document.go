@@ -53,3 +53,8 @@ type FTSDocumentResponse struct {
 	Snippet          string           `json:"snippet"`
 	TextContent      string           `json:"text_content"`
 }
+
+type SearchResponse struct {
+	Results []FTSDocumentResponse `json:"results"`
+	Total   int64                 `json:"total"`
+}

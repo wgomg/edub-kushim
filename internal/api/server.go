@@ -111,6 +111,13 @@ func registerRoutes(mux *http.ServeMux, logger *utils.Logger, queries *database.
 	mux.HandleFunc("GET /api/v1/documents/{id}", docHandler.GetDocument)
 	mux.HandleFunc("GET /api/v1/documents/{id}/file", docHandler.GetDocumentFile)
 	mux.HandleFunc("GET /api/v1/documents/search", docHandler.SearchDocuments)
+	mux.HandleFunc("POST /api/v1/documents/search", docHandler.SearchDocumentsStructured)
+
+	autocompleteHandler := handlers.NewAutocompleteHandler(queries, logger)
+	mux.HandleFunc("GET /api/v1/tags", autocompleteHandler.ListTags)
+	mux.HandleFunc("GET /api/v1/people", autocompleteHandler.ListPeople)
+	mux.HandleFunc("GET /api/v1/people-types", autocompleteHandler.ListPeopleTypes)
+	mux.HandleFunc("GET /api/v1/document-types", autocompleteHandler.ListDocumentTypes)
 
 	consumeHandler := handlers.NewConsumeHandler(cfg, logger, dispatcher)
 	mux.HandleFunc("POST /api/v1/consume", consumeHandler.Consume)
@@ -121,6 +128,11 @@ func registerRoutes(mux *http.ServeMux, logger *utils.Logger, queries *database.
 	mux.HandleFunc("GET /api/v1/batches", taskHandler.ListBatches)
 	mux.HandleFunc("GET /api/v1/batches/{id}", taskHandler.GetBatchSummary)
 	mux.HandleFunc("GET /api/v1/summary", taskHandler.GlobalSummary)
+
+	savedSearchHandler := handlers.NewSavedSearchHandler(queries, logger)
+	mux.HandleFunc("GET /api/v1/saved-searches", savedSearchHandler.List)
+	mux.HandleFunc("POST /api/v1/saved-searches", savedSearchHandler.Create)
+	mux.HandleFunc("DELETE /api/v1/saved-searches/{id}", savedSearchHandler.Delete)
 }
 
 func chainMiddleware(logger *utils.Logger, h http.Handler) http.Handler {

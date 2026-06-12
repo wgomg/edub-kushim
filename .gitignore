@@ -3,6 +3,7 @@ dev/
 
 # editor directories and files
 .vscode/
+.continue/
 
 # configuration files (except example)
 config.yaml

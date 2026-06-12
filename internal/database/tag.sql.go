@@ -126,6 +126,38 @@ func (q *Queries) ListTags(ctx context.Context, arg ListTagsParams) ([]Tag, erro
 	return items, nil
 }
 
+const searchTagsByName = `-- name: SearchTagsByName :many
+SELECT id, name, created_at FROM tag WHERE name LIKE ? ORDER BY name ASC LIMIT ?
+`
+
+type SearchTagsByNameParams struct {
+	Name  string
+	Limit int64
+}
+
+func (q *Queries) SearchTagsByName(ctx context.Context, arg SearchTagsByNameParams) ([]Tag, error) {
+	rows, err := q.db.QueryContext(ctx, searchTagsByName, arg.Name, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Tag
+	for rows.Next() {
+		var i Tag
+		if err := rows.Scan(&i.ID, &i.Name, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateTag = `-- name: UpdateTag :exec
 UPDATE tag SET
     name = ?
