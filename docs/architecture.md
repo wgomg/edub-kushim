@@ -126,6 +126,77 @@ at scale. Dual storage preserves originals alongside processed versions.
 
 ---
 
+## Search & Retrieval
+
+The search system provides two tiers of document retrieval, both backed by SQLite FTS5 and a dynamic SQL query builder:
+
+### Tier 1: Simple FTS5 Search (`GET /api/v1/documents/search?q=...`)
+
+Quick keyword search for users who just need to find documents by content. The query is sanitized via phrase wrapping and passed to the `document_fts` virtual table. Results are ranked by BM25 relevance and include highlighted `<b>` snippets. No metadata filtering — search terms match against `title` and `text_content` columns.
+
+### Tier 2: Structured Search (`POST /api/v1/documents/search`)
+
+Combines full-text search with arbitrary metadata filters in a single request. The API accepts a JSON `Filter` struct and returns both paginated results and a `total` count for UI pagination. This avoids the common REST anti-pattern of requiring multiple API round-trips (one for filtering, one for counting).
+
+The structured search flows through three layers:
+
+1. **`search.Engine.SearchStructured()`** (`internal/search/search.go`) — Accepts the high-level `Filter` struct (tags, people, document type, language, MIME type, date ranges, file size). Translates it into the database-layer `SearchFilter` struct and calls count + query in sequence.
+
+2. **`queryBuilder`** (`internal/database/structured_search.go`) — Dynamic SQL composition helper that builds `WHERE` clauses with proper positional parameterization (prevents SQL injection). Key patterns:
+   - **Tags**: Subquery via `document_tag JOIN tag WHERE tag.name IN (?,?,...)`
+   - **People**: Two subqueries — one for person name, one for person type — joined on `document_people`
+   - **Document type / language / MIME**: Simple `d.col = ?` equality (skipped when empty)
+   - **Date ranges**: `d.col >= ? AND d.col <= ?` with optional from/to
+   - **File size**: `d.file_size >= ? AND d.file_size <= ?`
+   - **Sorting**: Whitelisted column names (`title`, `mime_type`, `file_size`, `created_at`). When a FTS5 query is present, defaults to BM25 `rank` instead.
+   - **Limit/Offset**: Standard `LIMIT ? OFFSET ?` pagination
+
+3. **FTS5 virtual table** (`internal/database/fts5.go`) — Uses `unicode61` tokenizer with no language-specific stemming for multilingual support. Index kept in sync via SQLite triggers (`document_ai`, `document_au`, `document_ad`).
+
+### Result Enrichment
+
+After the database returns rows, the handler batch-fetches tags and people for all result documents in two queries (avoiding N+1), then maps them back to each result.
+
+### Autocomplete System
+
+Four API endpoints support progressive filtering in the UI via prefix-scanned B-tree lookups (no full-text index needed):
+
+| Endpoint                     | Source table    | SQL pattern                       |
+| ---------------------------- | --------------- | --------------------------------- |
+| `GET /api/v1/tags?q=fin`     | `tag`           | `WHERE name LIKE 'fin%' LIMIT 20` |
+| `GET /api/v1/people?q=john`  | `people`        | Same pattern                      |
+| `GET /api/v1/people-types`   | `people_type`   | Full list, no filter              |
+| `GET /api/v1/document-types` | `document_type` | Full list, no filter              |
+
+### Saved Searches
+
+Users persist search configurations via a simple CRUD API (`saved_search` table). The `filter_json` column stores the raw `Filter` struct as JSON. The frontend restores full filter state (SearchBar chips + FilterPanel) from a single click.
+
+### Frontend Search State
+
+Three layers manage search state on the client:
+
+- **`searchFilter.js`** — Pure utility tokenizer. Parses `field:value` syntax (e.g. `tag:finance size:>1MB`), normalizes date ranges and file sizes, serializes filter state to query strings.
+- **`filterStore.js`** — Svelte writable store holding the current `Filter`. Exposes `setPartial()` for incremental updates, `reset()` for clearing. A derived `queryString` store syncs to URL search params.
+- **`SearchBar.svelte`** / **`FilterPanel.svelte`** — UI components consuming the store. The search bar shows active filters as color-coded chips with autocomplete on `:` keystrokes. The filter panel provides structured form controls per dimension.
+
+The `field:value` syntax in the search bar supports:
+
+| Prefix     | Example                          | SQL effect                   |
+| ---------- | -------------------------------- | ---------------------------- |
+| `tag:`     | `tag:finance`                    | Tag subquery filter          |
+| `author:`  | `author:"Jane Smith"`            | People subquery, type=author |
+| `type:`    | `type:invoice`                   | Document type equality       |
+| `lang:`    | `lang:eng`                       | Language equality            |
+| `size:`    | `size:>1MB`                      | File size range              |
+| `created:` | `created:2024-01-01..2024-06-30` | Date range filter            |
+
+### Why Not a Dedicated Search Engine?
+
+FTS5 is "good enough" for the expected document volume (thousands to low tens of thousands). It provides zero operational overhead, transactionally consistent indexing, and no external processes to manage. The `search.Engine` abstraction provides a clear upgrade path to Meilisearch, ZincSearch, or Elasticsearch should the need arise — the API contract and `Filter` struct remain unchanged.
+
+---
+
 ## See Also
 
 - [Roadmap](roadmap.md) — Implementation status and priority queue
@@ -133,6 +204,7 @@ at scale. Dual storage preserves originals alongside processed versions.
 - [Tools Reference](reference/tools.md) — Adapter interfaces for enrichment pipeline
 - [Pipeline Reference](reference/pipeline.md) — Consumption and enrichment engine details
 - [Task System Reference](reference/task-system.md) — Dispatcher and pool internals
+- [Search Reference](reference/search.md) — Search engine, structured search, autocomplete, query syntax
 
 ## Key Design Decisions
 

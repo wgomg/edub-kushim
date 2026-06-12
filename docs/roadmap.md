@@ -59,6 +59,12 @@
 - BM25 relevance ranking, snippet highlighting
 - Automatic FTS index sync via SQLite triggers (INSERT, UPDATE, DELETE)
 - `RebuildDocumentFTS` for disaster recovery
+- **Structured search** (`POST /api/v1/documents/search`) — dynamic SQL query builder with filters for tags, people, document type, language, MIME type, date range, file size
+- **Search engine** (`internal/search/search.go`) — `Engine.SearchStructured()` returning results + total count
+- **Database query builder** (`internal/database/structured_search.go`) — dynamic `WHERE` clause composition with proper parameterization, batch tag/people fetching
+- **Autocomplete endpoints** — prefix search for tags (`SearchTagsByName`), people (`SearchPeopleByName`), document types, person types
+- **Saved searches** — `saved_search` table, CRUD API, frontend save/load/delete
+- **Frontend query parser** (`searchFilter.js`) — tokenizes `field:value` syntax into structured filter state
 
 ### Task System
 
@@ -71,19 +77,27 @@
 
 ### API Endpoints
 
-| Endpoint                          | Description                          |
-| --------------------------------- | ------------------------------------ |
-| `GET /health`                     | Health check                         |
-| `GET /api/v1/documents`           | List documents (sortable, paginated) |
-| `GET /api/v1/documents/{id}`      | Get document with tags, people       |
-| `GET /api/v1/documents/{id}/file` | Download PDF file                    |
-| `GET /api/v1/documents/search`    | FTS5 search with snippets            |
-| `POST /api/v1/consume`            | Enqueue inbox files                  |
-| `GET /api/v1/tasks`               | List tasks (batch, status filters)   |
-| `GET /api/v1/tasks/{id}`          | Get single task                      |
-| `GET /api/v1/batches`             | List batch summaries                 |
-| `GET /api/v1/batches/{id}`        | Get single batch summary             |
-| `GET /api/v1/summary`             | Global totals across all batches     |
+| Endpoint                             | Description                                   |
+| ------------------------------------ | --------------------------------------------- |
+| `GET /health`                        | Health check                                  |
+| `GET /api/v1/documents`              | List documents (sortable, paginated)          |
+| `GET /api/v1/documents/{id}`         | Get document with tags, people                |
+| `GET /api/v1/documents/{id}/file`    | Download PDF file                             |
+| `GET /api/v1/documents/search`       | FTS5 search with snippets                     |
+| `POST /api/v1/documents/search`      | Structured search (tags, people, dates, size) |
+| `GET /api/v1/tags?q=`                | Autocomplete tag names                        |
+| `GET /api/v1/people?q=`              | Autocomplete people names                     |
+| `GET /api/v1/people-types`           | List person types                             |
+| `GET /api/v1/document-types`         | List document types                           |
+| `GET /api/v1/saved-searches`         | List saved searches                           |
+| `POST /api/v1/saved-searches`        | Create saved search                           |
+| `DELETE /api/v1/saved-searches/{id}` | Delete saved search                           |
+| `POST /api/v1/consume`               | Enqueue inbox files                           |
+| `GET /api/v1/tasks`                  | List tasks (batch, status filters)            |
+| `GET /api/v1/tasks/{id}`             | Get single task                               |
+| `GET /api/v1/batches`                | List batch summaries                          |
+| `GET /api/v1/batches/{id}`           | Get single batch summary                      |
+| `GET /api/v1/summary`                | Global totals across all batches              |
 
 ### CLI Commands
 
@@ -107,20 +121,24 @@
 
 - SvelteKit SPA with embedded Go binary (`//go:embed`)
 - CSS custom properties design system (clay/gold/lapis/parchment palette)
-- Reusable `DataTable` component (sortable columns, paginated, configurable page sizes)
-- API client module (`src/lib/api.js`) — documents, tasks, batches, summary, health
+- Reusable `DataTable` component (sortable columns, paginated, configurable page sizes, total count)
+- API client module (`src/lib/api.js`) — documents, tasks, batches, summary, health, autocomplete, saved searches
 - Hot-reload dev server (`npm run dev`), production build via `make web-build`
+- **Structured search UI**: `SearchBar.svelte` with chip display and autocomplete suggestions
+- **Filter panel**: `FilterPanel.svelte` — collapsible panel with tags, people, document type, language, MIME type, date range, file size filters
+- **Filter state management**: shared reactive store (`filterStore.js`) + query parser (`searchFilter.js`)
+- **Saved searches**: save/load/delete search configurations via API
 
 #### Web UI — Page Status
 
-| Route             | Status | Notes                                                             |
-| ----------------- | ------ | ----------------------------------------------------------------- |
-| `/` (dashboard)   | ✓      | Health + summary stats + recent docs                              |
-| `/documents`      | ✓      | DataTable with sort/paginate                                      |
-| `/documents/[id]` | ◐      | PDF preview + metadata sidebar; no tags/people/type displayed yet |
-| `/tags`           | ✗      | Placeholder: "Tag management will go here."                       |
-| `/tasks`          | ✓      | Batch list + task drill-down                                      |
-| `/tasks/[id]`     | ✗      | Route does not exist                                              |
+| Route             | Status | Notes                                                                      |
+| ----------------- | ------ | -------------------------------------------------------------------------- |
+| `/` (dashboard)   | ✓      | Health + summary stats + recent docs                                       |
+| `/documents`      | ✓      | Structured search bar + filter panel + saved searches + sortable DataTable |
+| `/documents/[id]` | ◐      | PDF preview + metadata sidebar; no tags/people/type displayed yet          |
+| `/tags`           | ✗      | Placeholder: "Tag management will go here."                                |
+| `/tasks`          | ✓      | Batch list + task drill-down                                               |
+| `/tasks/[id]`     | ✗      | Route does not exist                                                       |
 
 ### Quality
 
@@ -167,13 +185,11 @@
 | 11  | **Document type management page**      | New route: list, create, edit, delete document types                      |
 | 12  | **Document detail — tags/people/type** | Display tags, people, and document type in the sidebar                    |
 | 13  | **Document metadata editing**          | Detail page sidebar — edit tags, people, type, title (override LLM)       |
-| 14  | **Functional search**                  | Wire header search input to `/api/v1/documents/search`, show results      |
-| 15  | **Document upload/consume flow**       | Wire Upload button to `POST /api/v1/consume`, show progress feedback      |
-| 16  | **Single task detail page**            | New route `/tasks/{taskID}` — status, file, timestamps, error information |
-| 17  | **Tag-based filtering**                | Click tag → filter document list; date range, type, people filters        |
-| 18  | **Bulk operations**                    | Batch delete, batch tag assignment, batch download                        |
-| 19  | **Dashboard enhancements**             | Storage usage trend, recent batch status, activity timeline               |
-| 20  | **Post-classification notification**   | Optional webhook or websocket event when a classification batch completes |
+| 14  | **Document upload/consume flow**       | Wire Upload button to `POST /api/v1/consume`, show progress feedback      |
+| 15  | **Single task detail page**            | New route `/tasks/{taskID}` — status, file, timestamps, error information |
+| 16  | **Bulk operations**                    | Batch delete, batch tag assignment, batch download                        |
+| 17  | **Dashboard enhancements**             | Storage usage trend, recent batch status, activity timeline               |
+| 18  | **Post-classification notification**   | Optional webhook or websocket event when a classification batch completes |
 
 ---
 

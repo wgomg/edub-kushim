@@ -45,7 +45,8 @@
     - `ListDocuments(w, r)` — Supports `sort_by` and `sort_order` query params; response includes tags (`TagResponse`), people (`PersonResponse`), content stats (`PageCount`, `WordCount`, `CharCount`), `Language`, `DocumentTypeID`
     - `GetDocument(w, r)` — Returns full document with tags (`TagResponse`), people (`PersonResponse`), doc type name
     - `GetDocumentFile(w, r)` — Serves raw PDF via `http.ServeFile`; rejects non-PDF content
-    - `SearchDocuments(w, r)` — Returns `FTSDocumentResponse` with enhanced fields
+    - `SearchDocuments(w, r)` — `GET /api/v1/documents/search` — Returns `FTSDocumentResponse` array with enhanced fields
+    - `SearchDocumentsStructured(w, r)` — `POST /api/v1/documents/search` — Accepts `search.Filter` JSON body, calls `engine.SearchStructured(ctx, filter)`, returns `SearchResponse` with `results` array and `total` count. Enriches each result with tags and people from DB to avoid N+1.
 
 ---
 
@@ -103,8 +104,88 @@
 
 ---
 
+---
+
+## `handlers/autocomplete.go`
+
+### Struct
+
+- `AutocompleteHandler`
+  - **Fields**: `queries *database.Queries`, `logger *utils.Logger`
+  - **Methods**:
+    - `NewAutocompleteHandler(queries, logger) *AutocompleteHandler`
+    - `ListTags(w, r)` — `GET /api/v1/tags?q=<prefix>&limit=20` — Searches tag names by prefix (uses `SearchTagsByName` sqlc query). Falls back to `ListAllTags` when `q` is empty.
+    - `ListPeople(w, r)` — `GET /api/v1/people?q=<prefix>&limit=20` — Searches people names by prefix (uses `SearchPeopleByName` sqlc query). Falls back to `ListAllPeople` when `q` is empty.
+    - `ListPeopleTypes(w, r)` — `GET /api/v1/people-types` — Lists all person types from DB
+    - `ListDocumentTypes(w, r)` — `GET /api/v1/document-types` — Lists all document types from DB
+
+---
+
+## `handlers/saved_search.go`
+
+### Struct
+
+- `SavedSearchHandler`
+  - **Fields**: `queries *database.Queries`, `logger *utils.Logger`
+  - **Methods**:
+    - `NewSavedSearchHandler(queries, logger) *SavedSearchHandler`
+    - `Create(w, r)` — `POST /api/v1/saved-searches` — Accepts `CreateSavedSearchRequest` JSON, inserts into `saved_search` table, returns `{"id": <new_id>}` with `201 Created`
+    - `List(w, r)` — `GET /api/v1/saved-searches` — Returns array of `SavedSearchResponse` ordered by `created_at DESC`
+    - `Delete(w, r)` — `DELETE /api/v1/saved-searches/{id}` — Parses ID from path, deletes record, returns `204 No Content`
+
+---
+
+## `types/autocomplete.go`
+
+### Structs
+
+- `PersonRefResponse` — `ID int64`, `Name string`
+- `DocumentTypeRefResponse` — `ID int64`, `Name string`, `Description string`
+- `PeopleTypeRefResponse` — `ID int64`, `Name string`, `Description string`
+
+---
+
+## `types/saved_search.go`
+
+### Structs
+
+- `CreateSavedSearchRequest` — `Name string`, `Filter json.RawMessage`
+- `SavedSearchResponse` — `ID int64`, `Name string`, `Filter json.RawMessage`, `CreatedAt string`
+
+---
+
+## `types/document.go` (additions)
+
+### Structs
+
+- `SearchResponse`
+  - **Fields**: `Results []FTSDocumentResponse`, `Total int64`
+  - Used by `SearchDocumentsStructured` to return both results and total count
+
+---
+
+## Route Registration (`server.go`)
+
+New routes added:
+
+```go
+mux.HandleFunc("POST /api/v1/documents/search", docHandler.SearchDocumentsStructured)
+
+mux.HandleFunc("GET /api/v1/tags", autocompleteHandler.ListTags)
+mux.HandleFunc("GET /api/v1/people", autocompleteHandler.ListPeople)
+mux.HandleFunc("GET /api/v1/people-types", autocompleteHandler.ListPeopleTypes)
+mux.HandleFunc("GET /api/v1/document-types", autocompleteHandler.ListDocumentTypes)
+
+mux.HandleFunc("GET /api/v1/saved-searches", savedSearchHandler.List)
+mux.HandleFunc("POST /api/v1/saved-searches", savedSearchHandler.Create)
+mux.HandleFunc("DELETE /api/v1/saved-searches/{id}", savedSearchHandler.Delete)
+```
+
+---
+
 ## See Also
 
+- [Search](search.md) — Search engine architecture and structured search
 - [Task System](task-system.md) — Dispatcher and task lifecycle used by the consume handler
 - [Pipeline](pipeline.md) — Consumption and enrichment engines triggered via API
 - [Database](database.md) — Document and task queries used by handlers

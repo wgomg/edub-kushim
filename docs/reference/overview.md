@@ -6,14 +6,18 @@
 internal/
 ├── api/                    # HTTP handlers, middleware, types
 │   ├── handlers/
+│   │   ├── autocomplete.go # Autocomplete handlers (tags, people, person types, doc types)
 │   │   ├── consume.go     # Consume handler (async, creates paired consume+enrich tasks, returns batch ID)
-│   │   ├── document.go    # Document API handlers (list, get, search, get file) — returns tags, people, language, doc type
+│   │   ├── document.go    # Document API handlers (list, get, search, structured search, get file) — returns tags, people, language, doc type
 │   │   ├── health.go      # Health check handler
+│   │   └── saved_search.go # Saved search CRUD handlers (create, list, delete)
 │   │   └── task.go        # Task API handlers (list, get, batch summary, global summary with waiting status)
 │   ├── server.go          # HTTP server setup, middleware, route registration, static SPA (Go 1.22+ patterns)
 │   └── types/
-│       ├── document.go    # API response types (with tags, people, language, doc type)
-│       └── task.go        # Task/batch/global summary response types (with waiting status)
+│       ├── autocomplete.go    # Autocomplete response types (PersonRef, DocumentTypeRef, PeopleTypeRef)
+│       ├── document.go        # API response types (with tags, people, language, doc type, SearchResponse)
+│       └── saved_search.go    # Saved search request/response types
+│       └── task.go            # Task/batch/global summary response types (with waiting status)
 ├── cache/                 # Embedding cache system
 │   ├── cache.go           # Generic thread-safe store (Set, Get)
 │   ├── bootstrap.go       # BuildTagCache — pre-compute tag embeddings at startup
@@ -40,7 +44,7 @@ internal/
 │       ├── consume.go     # ConsumeTaskHandler (uses FileFromPath)
 │       └── enrich.go      # EnrichTaskHandler (fetches document, calls Enricher.Enrich)
 ├── search/                # Full-text search engine
-│   └── search.go          # Engine, Result (with Language, DocumentTypeID, checksums), sanitizeQuery
+│   └── search.go          # Engine, Result (with Language, DocumentTypeID, checksums), Filter (structured search), sanitizeQuery, SearchStructured (returns results + total count)
 ├── config/                # Configuration parsing
 │   └── config.go          # Configuration structs and loading (ConsolidationSimilarity, default thresholds)
 ├── consumption/           # Document processing engine
@@ -49,18 +53,20 @@ internal/
 ├── database/              # Database layer (sqlc-generated + manual)
 │   ├── connection.go      # DB connection (SQLite WAL mode, 1 max conn) — schema init moved to schema.go
 │   ├── schema.go          # InitializeSchema — embedded schema + seeders (tags, doc-types, people-types)
-│   ├── models.go          # Generated data models (Document now has PageCount, WordCount, CharCount, Language)
+│   ├── models.go          # Generated data models (Document now has PageCount, WordCount, CharCount, Language; added SavedSearch)
 │   ├── db.go              # Database interface (Queries, WithTx)
 │   ├── document_sort.go   # ListDocumentsWithSort (whitelisted sort columns)
+│   ├── structured_search.go # Dynamic SQL query builder for structured search (SearchDocumentsStructured, CountDocumentsStructured)
 │   ├── document.sql.go    # Generated document queries (with WordCount, CharCount, Language)
 │   ├── document_tag.sql.go # Generated document_tag junction queries
 │   ├── document_people.sql.go # Generated document_people junction queries
 │   ├── document_type.sql.go # Generated document type queries (includes UpdateDocumentType)
-│   ├── tag.sql.go         # Generated tag queries
-│   ├── people.sql.go      # Generated people queries (CreatePeople, ListAllPeople)
+│   ├── tag.sql.go         # Generated tag queries (includes SearchTagsByName)
+│   ├── people.sql.go      # Generated people queries (CreatePeople, ListAllPeople, SearchPeopleByName)
 │   ├── people_type.sql.go # Generated people type queries
 │   ├── task.sql.go        # Generated task queries (includes SetEnrichTaskPending)
 │   ├── user.sql.go        # Generated user queries
+│   ├── saved_search.sql.go # Generated saved search queries (CreateSavedSearch, ListSavedSearches, DeleteSavedSearch)
 │   ├── fts5.go            # Manual FTS5 query implementation (SearchDocumentsFTS, etc.)
 │   └── sql/               # Embedded SQL assets
 │       ├── schema/        # Schema + seed SQL files (schema.sql, seed-tags.sql, seed-document-types.sql, seed-people-types.sql)
@@ -128,18 +134,23 @@ web/                      # SvelteKit SPA frontend
 ├── src/
 │   ├── app.html          # HTML shell
 │   ├── lib/
-│   │   ├── api.js        # API client (fetch helper)
+│   │   ├── api.js        # API client (fetch helper) — documents, tasks, autocomplete, saved searches
 │   │   ├── index.js
 │   │   ├── assets/
 │   │   │   └── favicon.svg
+│   │   ├── stores/
+│   │   │   ├── filterStore.js   # Reactive filter state store (setPartial, reset, fromQueryString)
+│   │   │   └── searchFilter.js  # Query parser, tokenizer, size/date formatting utilities
 │   │   └── components/
-│   │       └── DataTable.svelte  # Reusable data table component
+│   │       ├── DataTable.svelte   # Reusable data table (sortable, paginated, total count, refreshKey)
+│   │       ├── FilterPanel.svelte # Collapsible advanced filter panel (tags, people, dates, size, etc.)
+│   │       └── SearchBar.svelte   # Rich search input with chips, autocomplete, keyboard navigation
 │   └── routes/
-│       ├── +layout.svelte        # App layout shell
+│       ├── +layout.svelte        # App layout shell (removed old header search input)
 │       ├── +page.svelte          # Home/dashboard page
 │       ├── layout.css            # Global styles (CSS custom properties)
 │       ├── documents/
-│       │   ├── +page.svelte      # Document list page
+│       │   ├── +page.svelte      # Document list with search bar, filters, saved searches, DataTable
 │       │   └── [id]/
 │       │       └── +page.svelte  # Single document detail page
 │       ├── tags/
@@ -172,6 +183,7 @@ Processing is async via a task queue with batch tracking, worker pools, and a po
 - [Pipeline](pipeline.md) — Consumption and enrichment engines
 - [Task System](task-system.md) — Pool, dispatcher, CRUD, task handlers
 - [Database](database.md) — Schema, queries, FTS5
+- [Search](search.md) — Search engine, structured search, autocomplete
 - [Tools](tools.md) — Adapter framework for all processing tools
 - [Config & Utils](config-and-utils.md) — Configuration, cache, logging, utilities
 - [Frontend](frontend.md) — SvelteKit UI and build system

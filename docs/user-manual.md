@@ -367,6 +367,95 @@ GET /api/v1/documents/search?q=<query>&limit=50&offset=0
 
 Response `200` — array of `FTSDocumentResponse` (adds `rank`, `snippet`, `text_content`).
 
+### Structured Search
+
+Searches documents with combined full-text and metadata filters.
+
+```
+POST /api/v1/documents/search
+Content-Type: application/json
+
+{
+  "query": "quarterly report",
+  "tags": ["finance", "budget"],
+  "people": [{ "name": "John Doe", "type": "author" }],
+  "document_type": "invoice",
+  "language": "eng",
+  "mime_type": "application/pdf",
+  "date_created": { "from": "2024-01-01", "to": "2024-12-31" },
+  "date_modified": { "from": null, "to": "2024-06-01" },
+  "file_size": { "min": 0, "max": 10485760 },
+  "sort_by": "created_at",
+  "sort_order": "desc",
+  "limit": 50,
+  "offset": 0
+}
+```
+
+Response `200` — `SearchResponse`:
+
+```json
+{
+  "results": [
+    {
+      "document_id": "550e8400-e29b-41d4-a716-446655440000",
+      "title": "report.pdf",
+      "rank": 0.4213,
+      "snippet": "The <b>budget</b> forecast...",
+      "tags": [{ "id": 1, "name": "finance" }],
+      "people": [{ "id": 1, "name": "John Doe", "person_type_name": "author" }]
+    }
+  ],
+  "total": 42
+}
+```
+
+### Autocomplete (Tags, People, Document Types, Person Types)
+
+```
+GET /api/v1/tags?q=fin&limit=10
+GET /api/v1/people?q=john&limit=10
+GET /api/v1/people-types
+GET /api/v1/document-types
+```
+
+Response `200` — array of `{ id, name }` (people-types and document-types add `description`).
+
+### Saved Searches
+
+Save, list, and delete named search configurations.
+
+```
+POST /api/v1/saved-searches
+Content-Type: application/json
+
+{ "name": "Invoices from Q1", "filter": { "tags": ["finance"], "document_type": "invoice", ... } }
+```
+
+Response `201`:
+
+```json
+{ "id": 1 }
+```
+
+```
+GET /api/v1/saved-searches
+```
+
+Response `200`:
+
+```json
+[
+  { "id": 1, "name": "Invoices from Q1", "filter": { ... }, "created_at": "2024-03-19T10:30:00Z" }
+]
+```
+
+```
+DELETE /api/v1/saved-searches/{id}
+```
+
+Response `204 No Content`.
+
 ### Consume
 
 Enqueue all files in the consumption directory as tasks.

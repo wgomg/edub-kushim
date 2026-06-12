@@ -34,6 +34,7 @@
 - `People` — `ID`, `Name`, `CreatedAt`
 - `PeopleType` — `ID`, `Name`, `Description`, `CreatedAt`
 - `User` — `ID`, `Username`, `PasswordHash sql.NullString`, `ApiKey interface{}`, `CreatedAt`
+- `SavedSearch` — `ID`, `Name`, `FilterJson string`, `CreatedAt string`
 
 ---
 
@@ -64,7 +65,7 @@
 
 ### Tag
 
-`CreateTag`, `GetTag`, `ListTags`, `ListAllTags`, `ListAllTagsNames`, `UpdateTag`, `DeleteTag`
+`CreateTag`, `GetTag`, `ListTags`, `ListAllTags`, `ListAllTagsNames`, `SearchTagsByName` (prefix search with `LIKE ?` + `LIMIT`), `UpdateTag`, `DeleteTag`
 
 ### Document tag
 
@@ -76,7 +77,7 @@
 
 ### People
 
-`CreatePeople`, `GetPeople`, `ListPeople`, `ListAllPeople`, `UpdatePeople`, `DeletePeople`
+`CreatePeople`, `GetPeople`, `ListPeople`, `ListAllPeople`, `SearchPeopleByName` (prefix search with `LIKE ?` + `LIMIT`), `UpdatePeople`, `DeletePeople`
 
 ### People type
 
@@ -94,6 +95,10 @@
 
 `CreateUser`, `GetUser`, `GetUserByUsername`, `GetUserByAPIKey`, `ListUsers`, `UpdateUser`, `UpdateUserPassword`, `DeleteUser`
 
+### Saved search
+
+`CreateSavedSearch`, `ListSavedSearches`, `DeleteSavedSearch`
+
 ---
 
 ## `fts5.go`
@@ -108,11 +113,39 @@
 
 ---
 
+## `structured_search.go`
+
+### Struct
+
+`SearchFilter` — `Query`, `Tags []string`, `People []struct{ Name, Type string }`, `DocumentType`, `Language`, `MimeType`, `DateCreated *struct{ From, To *string }`, `DateModified *struct{ From, To *string }`, `FileSize *struct{ Min, Max *int64 }`, `SortBy`, `SortOrder`, `Limit`, `Offset`
+
+### Internal: `queryBuilder`
+
+A flexible SQL query builder that composes `WHERE` clauses dynamically:
+
+- `add(clause, args...)` — Appends raw clause with positional parameters
+- `eq(col, val)` — Adds `AND d.col = ?` if val is non-empty
+- `subqueryIn(col, subquery, values)` — Adds `AND d.col IN (SELECT ... WHERE t.name IN (?,?...))`
+- `rangeClause(col, min, max)` — Adds `AND d.col >= ?` / `AND d.col <= ?`
+- `dateRange(col, range)` — Adds date range filters with optional from/to
+
+### Functions
+
+- `SearchDocumentsStructured(ctx, filter) ([]FTSDocumentRow, error)` — Dynamically builds a SELECT query:
+  - If `query` is non-empty: joins `document_fts`, adds `MATCH ?`, `bm25()` rank, `snippet()` highlighting
+  - Applies tag subquery, people subqueries, document type subquery, language/MIME equality, date ranges, file size ranges
+  - When FTS query present: ordered by `rank`; otherwise ordered by requested `sort_by`/`sort_order`
+  - Uses `LIMIT ? OFFSET ?` for pagination
+- `CountDocumentsStructured(ctx, filter) (int64, error)` — Same filters but `SELECT COUNT(*)` for total count
+
+---
+
 # Database Schema
 
 ## Core Tables
 
 - `document` — Main storage: `document_id` (UUID, UNIQUE), `md5_checksum`, `sha512_checksum` (UNIQUE), `page_count`, `word_count`, `char_count`, `language` (all int64/text defaults), `text_content`, file paths
+- `saved_search` — Saved search configurations: `id`, `name`, `filter_json` (JSON), `created_at`
 - `task` — Async processing: `task_id` (UUID), `batch_id` (nullable), `task_type`, `payload` (JSON), `result` (JSON), `dedup_key` (nullable), `status`, timestamps, `error`
 - `tag` — Classification tags (seeded with 110+ Dewey Decimal tags)
 - `document_type` — Document type classification (seeded with types like `article`, `book`, `report`, `letter`, etc.)
@@ -175,6 +208,7 @@ CREATE UNIQUE INDEX idx_task_dedup ON task(task_type, dedup_key, active_token);
 
 ## See Also
 
+- [Search](search.md) — Search engine, structured search queries, autocomplete queries
 - [API](api.md) — Document and task response types that map to DB models
 - [Task System](task-system.md) — Task CRUD operations
 - [Pipeline](pipeline.md) — Consumer and enrichment engines that read/write documents

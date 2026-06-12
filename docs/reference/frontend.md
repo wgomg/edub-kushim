@@ -6,20 +6,22 @@ Located in `web/`, built via `npm ci && npm run build`, output copied to `intern
 
 ## Routes
 
-| Route             | File                          | Description                                                                                                          |
-| ----------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `/`               | `+page.svelte`                | Dashboard / home — shows Task Status summary including `Waiting` count                                               |
-| `/documents`      | `documents/+page.svelte`      | Document list with search, sort, pagination; shows **Tags** and **People** columns inline                            |
-| `/documents/[id]` | `documents/[id]/+page.svelte` | Document detail: metadata, tags, people, file, **Content Stats** (pages, words, characters)                          |
-| `/tags`           | `tags/+page.svelte`           | Tag management (list, create, delete)                                                                                |
-| `/tasks`          | `tasks/+page.svelte`          | Task/batch monitoring — shows **Type**, **Payload** (document ID + file name), **Started** and **Completed** columns |
+| Route             | File                          | Description                                                                                                                                                          |
+| ----------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/`               | `+page.svelte`                | Dashboard / home — shows Task Status summary including `Waiting` count                                                                                               |
+| `/documents`      | `documents/+page.svelte`      | Document list with structured search bar, filter panel, saved searches, sort/pagination; shows **Tags** and **People** columns inline; snippet column when searching |
+| `/documents/[id]` | `documents/[id]/+page.svelte` | Document detail: metadata, tags, people, file, **Content Stats** (pages, words, characters)                                                                          |
+| `/tags`           | `tags/+page.svelte`           | Tag management (list, create, delete)                                                                                                                                |
+| `/tasks`          | `tasks/+page.svelte`          | Task/batch monitoring — shows **Type**, **Payload** (document ID + file name), **Started** and **Completed** columns                                                 |
 
 ## Key files
 
-- **`src/lib/api.js`** — API client wrapping `fetch()` for all backend endpoints
-- **`src/lib/components/DataTable.svelte`** — Reusable sortable/paginated table component
-- **`src/routes/layout.css`** — Global design tokens via CSS custom properties
-- **`src/routes/+layout.svelte`** — App shell with nav sidebar and layout
+- **`src/lib/api.js`** — API client wrapping `fetch()` for all backend endpoints including autocomplete and saved searches
+- **`src/lib/components/DataTable.svelte`** — Reusable sortable/paginated table component; supports `refreshKey` prop for external reload triggers; handles both array and `{results, total}` response formats; shows "X–Y of Z" pagination when total is available
+- **`src/lib/components/SearchBar.svelte`** — Rich search input with field token chips (tags, people, document type, language, MIME, dates, size), autocomplete suggestions, keyboard navigation (arrow keys, Enter, Backspace for chip removal, Escape to close dropdown), and `field:value` syntax parsing
+- **`src/lib/components/FilterPanel.svelte`** — Collapsible filter panel with sections for tags (autocomplete + chips), people (two-stage type + name selection), document type (dropdown), language (dropdown), MIME type (dropdown), date created (dual date pickers), date modified (dual date pickers), file size (min/max text input with unit parsing), and "Clear all filters" button
+- **`src/lib/stores/filterStore.js`** — Reactive Svelte writable store for shared search filter state with `setPartial()`, `reset()`, and `fromQueryString()` methods; `queryString` derived store for serialization
+- **`src/lib/stores/searchFilter.js`** — Query string utilities: `tokenizeQuery()` (tokenizes `field:value` syntax), `parseQueryString()` (converts string to filter object), `serializeFilter()` (converts filter object to string), `parseSize()`/`formatSize()` (file size parsing/formatting with KB/MB/GB), `parseDateRange()` (date range from string), `setPersonTypes()`/`getPersonTypes()` (person type set management)
 
 ---
 
@@ -83,5 +85,6 @@ Linker flags are embedded in source files:
 
 ## See Also
 
+- [Search](search.md) — Search engine, frontend filter state, query parser
 - [API](api.md) — REST API endpoints consumed by the frontend
 - [Overview](overview.md) — Project structure showing frontend file locations
