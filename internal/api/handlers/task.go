@@ -264,7 +264,17 @@ func taskToResponse(t database.Task) types.TaskResponse {
 			fileName = p.FileName
 		}
 
-		if t.TaskType == "enrich" || (t.TaskType == "consume" && t.Status == "completed") {
+		if t.TaskType == "enrich" {
+			if t.Status == "discarded" {
+				var enrichPayload struct {
+					WaitingFor string `json:"waiting_for"`
+				}
+				json.Unmarshal(t.Payload, &enrichPayload)
+				payloadDocID = enrichPayload.WaitingFor
+			} else {
+				payloadDocID = p.DocumentID
+			}
+		} else if t.TaskType == "consume" && t.Status == "completed" {
 			payloadDocID = p.DocumentID
 		}
 	}

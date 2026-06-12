@@ -138,6 +138,13 @@ UPDATE task SET
     payload = ?
 WHERE id = ? AND status = 'waiting' AND task_type = 'enrich';
 
+-- name: DiscardEnrichTask :exec
+UPDATE task SET
+    status = 'discarded',
+    completed_at = CURRENT_TIMESTAMP,
+    error = ?
+WHERE id = ? AND status = 'waiting' AND task_type = 'enrich';
+
 -- name: DeleteTask :exec
 DELETE FROM task WHERE id = ?;
 

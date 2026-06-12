@@ -106,6 +106,9 @@ func (d *Dispatcher) Next(ctx context.Context, taskType string) error {
 			ID:    id,
 			Error: sql.NullString{String: err.Error(), Valid: true},
 		})
+		if t.TaskType == "consume" {
+			d.discardChildEnrichTask(ctx, t, "parent task failed: "+err.Error())
+		}
 		return nil
 	}
 
@@ -115,6 +118,9 @@ func (d *Dispatcher) Next(ctx context.Context, taskType string) error {
 			ID:    id,
 			Error: sql.NullString{String: err.Error(), Valid: true},
 		})
+		if t.TaskType == "consume" {
+			d.discardChildEnrichTask(ctx, t, "parent task failed: "+err.Error())
+		}
 		d.logger.Error(nil, "task %s failed: %v", t.TaskID, err)
 		return nil
 	}
@@ -188,4 +194,27 @@ func (d *Dispatcher) setEnrichTaskPending(ctx context.Context, id int64, payload
 		ID:      id,
 		Payload: payload,
 	})
+}
+
+func (d *Dispatcher) discardChildEnrichTask(ctx context.Context, t database.Task, failureErr string) {
+	var payload struct {
+		OnCompleted string `json:"on_completed"`
+	}
+	if err := json.Unmarshal(t.Payload, &payload); err != nil || payload.OnCompleted == "" {
+		return
+	}
+
+	enrichTask, err := d.queries.GetTaskByTaskID(ctx, payload.OnCompleted)
+	if err != nil {
+		d.logger.Error(nil, "failed to find waiting enrich task %s for consume %s: %v", payload.OnCompleted, t.TaskID, err)
+		return
+	}
+
+	err = d.queries.DiscardEnrichTask(ctx, database.DiscardEnrichTaskParams{
+		ID:    enrichTask.ID,
+		Error: sql.NullString{String: failureErr, Valid: true},
+	})
+	if err != nil {
+		d.logger.Error(nil, "failed to discard enrich task %s: %v", enrichTask.TaskID, err)
+	}
 }

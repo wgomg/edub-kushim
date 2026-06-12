@@ -175,6 +175,24 @@ func (q *Queries) DeleteTask(ctx context.Context, id int64) error {
 	return err
 }
 
+const discardEnrichTask = `-- name: DiscardEnrichTask :exec
+UPDATE task SET
+    status = 'discarded',
+    completed_at = CURRENT_TIMESTAMP,
+    error = ?
+WHERE id = ? AND status = 'waiting' AND task_type = 'enrich'
+`
+
+type DiscardEnrichTaskParams struct {
+	Error sql.NullString
+	ID    int64
+}
+
+func (q *Queries) DiscardEnrichTask(ctx context.Context, arg DiscardEnrichTaskParams) error {
+	_, err := q.db.ExecContext(ctx, discardEnrichTask, arg.Error, arg.ID)
+	return err
+}
+
 const failTask = `-- name: FailTask :exec
 UPDATE task SET
     status = 'failed',
