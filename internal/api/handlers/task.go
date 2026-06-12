@@ -132,6 +132,7 @@ func (h *TaskHandler) ListBatches(w http.ResponseWriter, r *http.Request) {
 			Completed:  bc.Completed,
 			Failed:     bc.Failed,
 			Cancelled:  bc.Cancelled,
+			Discarded:  bc.Discarded,
 		})
 	}
 
@@ -198,6 +199,7 @@ func (h *TaskHandler) GlobalSummary(w http.ResponseWriter, r *http.Request) {
 		Completed:    perStatus["completed"],
 		Failed:       perStatus["failed"],
 		Cancelled:    perStatus["cancelled"],
+		Discarded:    perStatus["discarded"],
 		TotalSizeGB:  float64(totalBytes) / (1024 * 1024 * 1024),
 	}
 
@@ -217,6 +219,7 @@ func buildBatchSummary(ctx context.Context, queries *database.Queries, batchID s
 		Completed:  bc.Completed,
 		Failed:     bc.Failed,
 		Cancelled:  bc.Cancelled,
+		Discarded:  bc.Discarded,
 	}
 }
 

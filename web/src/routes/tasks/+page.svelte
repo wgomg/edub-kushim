@@ -16,7 +16,8 @@
 			processing: 'bg-lapis-600/20 text-lapis-600',
 			completed: 'bg-emerald-600/20 text-emerald-500',
 			failed: 'bg-terracotta-600/20 text-terracotta-500',
-			cancelled: 'bg-parchment-500/10 text-parchment-500'
+			cancelled: 'bg-parchment-500/10 text-parchment-500',
+			discarded: 'bg-terracotta-600/10 text-terracotta-400'
 		};
 		const cls = colors[status] ?? 'bg-parchment-500/10 text-parchment-500';
 		return `<span class="inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ${cls}">${status}</span>`;
@@ -80,6 +81,13 @@
 			label: 'Cancelled',
 			sortable: true,
 			cell: (v) => `<span class="font-semibold text-parchment-500">${v}</span>`,
+			minWidth: '100px'
+		},
+		{
+			key: 'discarded',
+			label: 'Discarded',
+			sortable: true,
+			cell: (v) => `<span class="font-semibold text-terracotta-400">${v}</span>`,
 			minWidth: '100px'
 		}
 	];

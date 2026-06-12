@@ -23,6 +23,7 @@ type BatchSummaryResponse struct {
 	Completed  int64  `json:"completed"`
 	Failed     int64  `json:"failed"`
 	Cancelled  int64  `json:"cancelled"`
+	Discarded  int64  `json:"discarded"`
 }
 
 type ListBatchesResponse struct {
@@ -44,5 +45,6 @@ type GlobalSummaryResponse struct {
 	Completed    int64   `json:"completed"`
 	Failed       int64   `json:"failed"`
 	Cancelled    int64   `json:"cancelled"`
+	Discarded    int64   `json:"discarded"`
 	TotalSizeGB  float64 `json:"total_size_gb"`
 }
