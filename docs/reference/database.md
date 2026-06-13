@@ -14,9 +14,24 @@
 
 ### Functions
 
-`InitializeSchema(db) error` — Reads embedded schema from `sql/schema/schema.sql`, runs seeders: `tags`, `document-types`, `people-types`
+`InitializeSchema(db) error` — Configures goose (`SetBaseFS`, `SetDialect`), runs pending migrations via `goose.Up()` from the embedded `sql/schema/migrations/` directory, then runs seeders: `tags`, `document-types`, `people-types`. On a fresh database, the baseline migration (`00001_baseline.sql`) creates all tables, indexes, triggers, and the FTS5 virtual table. On existing databases, only unapplied migrations are executed.
 
-`ResetDatabase(db) error` — Drops all non-system tables via `DROP TABLE IF EXISTS` (disables foreign keys first) and re-runs `InitializeSchema`. Used by `kushim setup --reset-database`.
+`ResetDatabase(db) error` — Rolls back all migrations via `goose.Reset()` (down → up), then re-runs seeders. Used by `kushim setup --reset-database`.
+
+### Migration files
+
+Numbered SQL files in `internal/database/sql/schema/migrations/`. Each file uses goose annotations:
+
+- `-- +goose Up` — applied when migrating forward
+- `-- +goose Down` — applied when rolling back
+- `-- +goose StatementBegin` / `-- +goose StatementEnd` — wraps multi-statement SQL (triggers, functions) so goose's semicolon-based parser doesn't split them prematurely
+
+### Migration auto-apply
+
+Migrations run automatically on startup (no manual CLI command needed):
+
+- **Server** (`edub`) — called in `cmd/edub/main.go` after `NewSQLiteDB()`
+- **CLI commands** (`kushim consume`, `search`, `task`) — called in `internal/commands/container.go` `GetDB()` when the connection is first acquired
 
 ---
 
@@ -179,9 +194,17 @@ CREATE VIRTUAL TABLE document_fts USING fts5(
 ## Schema Idempotency
 
 All `CREATE TABLE`, `CREATE INDEX`, and `CREATE TRIGGER` statements use `IF NOT EXISTS`
-to allow safe re-runs of the schema. Junction table inserts (`document_tag`, `document_people`)
+to allow safe re-runs of the baseline migration. Junction table inserts (`document_tag`, `document_people`)
 use `INSERT OR IGNORE` instead of plain `INSERT` to avoid duplicate-key errors on
 re-enrichment.
+
+New schema changes after the baseline are written as numbered migration files with
+`IF NOT EXISTS` not strictly required (goose tracks which versions have been applied),
+but using it is still recommended for idempotent re-runs during development.
+
+## Migration Version Table
+
+A `schema_version` table (managed by goose) tracks applied migrations with columns: `version_id`, `is_applied`, `t_at`. Created automatically on first `goose.Up()` call.
 
 ## Key Indexes
 

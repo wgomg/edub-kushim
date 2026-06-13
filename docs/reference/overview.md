@@ -51,8 +51,8 @@ internal/
 │   ├── consumer.go        # Main consumer (extract → OCR → optimize → store), duplicate detection (MD5+SHA512)
 │   └── storage.go         # File operations, checksums, FileFromPath, MIME detection via mimetype lib
 ├── database/              # Database layer (sqlc-generated + manual)
-│   ├── connection.go      # DB connection (SQLite WAL mode, 1 max conn) — schema init moved to schema.go
-│   ├── schema.go          # InitializeSchema — embedded schema + seeders (tags, doc-types, people-types)
+│   ├── connection.go      # DB connection (SQLite WAL mode, 1 max conn)
+│   ├── schema.go          # InitializeSchema — goose migrations + seeders (tags, doc-types, people-types)
 │   ├── models.go          # Generated data models (Document now has PageCount, WordCount, CharCount, Language; added SavedSearch)
 │   ├── db.go              # Database interface (Queries, WithTx)
 │   ├── document_sort.go   # ListDocumentsWithSort (whitelisted sort columns)
@@ -70,6 +70,7 @@ internal/
 │   ├── fts5.go            # Manual FTS5 query implementation (SearchDocumentsFTS, etc.)
 │   └── sql/               # Embedded SQL assets
 │       ├── schema/        # Schema + seed SQL files (schema.sql, seed-tags.sql, seed-document-types.sql, seed-people-types.sql)
+│       │   └── migrations/ # goose versioned migrations (00001_baseline.sql, ...)
 │       └── queries/       # SQL queries for sqlc
 ├── static/                # Embedded web UI
 │   └── fs.go              # Embedded SvelteKit build (build/ directory via //go:embed)

@@ -41,7 +41,7 @@
   - **Methods**:
     - `NewContainer(cfg, logger)` — No DB
     - `NewContainerWithDB(cfg, logger, db)` — With provided DB
-    - `GetDB() (*sql.DB, error)` — Creates DB lazily
+    -     `GetDB() (*sql.DB, error)` — Creates DB lazily, runs goose migrations on first open
     - `GetCache() (*cache.Cache, error)` — Builds tag embedding cache lazily via `cache.BuildTagCache`
     - `GetDispatcher() (*task.Dispatcher, error)` — Lazily creates dispatcher with cache
     - `GetPool(taskType) (*pool.Pool, error)` — Returns the pool for "consume" or "enrich", lazily creates with dispatcher
