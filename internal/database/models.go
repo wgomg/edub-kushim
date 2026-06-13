@@ -54,9 +54,10 @@ type DocumentType struct {
 }
 
 type People struct {
-	ID        int64
-	Name      string
-	CreatedAt sql.NullTime
+	ID         int64
+	Name       string
+	NameNative sql.NullString
+	CreatedAt  sql.NullTime
 }
 
 type PeopleType struct {

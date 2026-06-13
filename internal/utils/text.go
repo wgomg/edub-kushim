@@ -4,6 +4,9 @@ import (
 	"math"
 	"regexp"
 	"strings"
+	"unicode"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 func CountWords(text string) int {
@@ -45,4 +48,63 @@ func CleanCodeBlock(s string) string {
 	s = strings.TrimSuffix(s, "```")
 
 	return strings.TrimSpace(s)
+}
+
+func ContainsNonLatin(s string) bool {
+	for _, r := range s {
+		if unicode.Is(unicode.Hangul, r) ||
+			unicode.Is(unicode.Hiragana, r) ||
+			unicode.Is(unicode.Katakana, r) ||
+			unicode.Is(unicode.Cyrillic, r) ||
+			unicode.Is(unicode.Arabic, r) ||
+			unicode.Is(unicode.Hebrew, r) ||
+			unicode.Is(unicode.Greek, r) ||
+			unicode.Is(unicode.Thai, r) ||
+			unicode.Is(unicode.Devanagari, r) ||
+			unicode.Is(unicode.Bengali, r) ||
+			unicode.Is(unicode.Han, r) {
+			return true
+		}
+	}
+	return false
+}
+
+// NormalizeName normalizes a name for consistent matching.
+// Steps: NFKC normalization → lowercase → remove dots, commas, apostrophes,
+// quotes → replace dashes with space → collapse whitespace.
+func NormalizeName(name string) string {
+	name = norm.NFKC.String(name)
+
+	name = strings.ToLower(name)
+
+	name = strings.NewReplacer(
+		".", "",
+		",", "",
+		"'", "",
+		"’", "",
+		"ʻ", "",
+		"\"", "",
+		"“", "",
+		"”", "",
+		"«", "",
+		"»", "",
+		":", "",
+		";", "",
+		"!", "",
+		"?", "",
+		"`", "",
+		"_", "",
+	).Replace(name)
+
+	name = strings.NewReplacer(
+		"-", " ",
+		"–", " ",
+		"—", " ",
+		"－", " ",
+		"‐", " ",
+		"‑", " ",
+	).Replace(name)
+
+	name = strings.Join(strings.Fields(name), " ")
+	return strings.TrimSpace(name)
 }

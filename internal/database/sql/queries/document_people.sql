@@ -4,7 +4,7 @@ JOIN document_people dp ON p.id = dp.people_id
 WHERE dp.document_id = ?;
 
 -- name: GetDocumentPeopleWithType :many
-SELECT p.id, p.name, p.created_at AS people_created_at,
+SELECT p.id, p.name, p.name_native, p.created_at AS people_created_at,
        pt.id AS people_type_id, pt.name AS people_type_name, pt.description AS people_type_description
 FROM people p
 JOIN document_people dp ON p.id = dp.people_id

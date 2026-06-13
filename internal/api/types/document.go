@@ -8,6 +8,7 @@ type TagResponse struct {
 type PersonResponse struct {
 	ID                    int64  `json:"id"`
 	Name                  string `json:"name"`
+	NameNative            string `json:"name_native,omitempty"`
 	PersonTypeID          int64  `json:"person_type_id"`
 	PersonTypeName        string `json:"person_type_name"`
 	PersonTypeDescription string `json:"person_type_description"`

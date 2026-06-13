@@ -35,7 +35,7 @@ func (q *Queries) ClearDocumentPeople(ctx context.Context, documentID int64) err
 }
 
 const getDocumentPeople = `-- name: GetDocumentPeople :many
-SELECT p.id, p.name, p.created_at, dp.people_type_id FROM people p
+SELECT p.id, p.name, p.name_native, p.created_at, dp.people_type_id FROM people p
 JOIN document_people dp ON p.id = dp.people_id
 WHERE dp.document_id = ?
 `
@@ -43,6 +43,7 @@ WHERE dp.document_id = ?
 type GetDocumentPeopleRow struct {
 	ID           int64
 	Name         string
+	NameNative   sql.NullString
 	CreatedAt    sql.NullTime
 	PeopleTypeID int64
 }
@@ -59,6 +60,7 @@ func (q *Queries) GetDocumentPeople(ctx context.Context, documentID int64) ([]Ge
 		if err := rows.Scan(
 			&i.ID,
 			&i.Name,
+			&i.NameNative,
 			&i.CreatedAt,
 			&i.PeopleTypeID,
 		); err != nil {
@@ -76,7 +78,7 @@ func (q *Queries) GetDocumentPeople(ctx context.Context, documentID int64) ([]Ge
 }
 
 const getDocumentPeopleWithType = `-- name: GetDocumentPeopleWithType :many
-SELECT p.id, p.name, p.created_at AS people_created_at,
+SELECT p.id, p.name, p.name_native, p.created_at AS people_created_at,
        pt.id AS people_type_id, pt.name AS people_type_name, pt.description AS people_type_description
 FROM people p
 JOIN document_people dp ON p.id = dp.people_id
@@ -87,6 +89,7 @@ WHERE dp.document_id = ?
 type GetDocumentPeopleWithTypeRow struct {
 	ID                    int64
 	Name                  string
+	NameNative            sql.NullString
 	PeopleCreatedAt       sql.NullTime
 	PeopleTypeID          int64
 	PeopleTypeName        string
@@ -105,6 +108,7 @@ func (q *Queries) GetDocumentPeopleWithType(ctx context.Context, documentID int6
 		if err := rows.Scan(
 			&i.ID,
 			&i.Name,
+			&i.NameNative,
 			&i.PeopleCreatedAt,
 			&i.PeopleTypeID,
 			&i.PeopleTypeName,

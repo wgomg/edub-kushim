@@ -75,6 +75,7 @@ func (h *DocumentHandler) ListDocuments(w http.ResponseWriter, r *http.Request) 
 			personResponses[j] = types.PersonResponse{
 				ID:                    p.ID,
 				Name:                  p.Name,
+				NameNative:            p.NameNative.String,
 				PersonTypeID:          p.PeopleTypeID,
 				PersonTypeName:        p.PeopleTypeName,
 				PersonTypeDescription: p.PeopleTypeDescription,
@@ -157,6 +158,7 @@ func (h *DocumentHandler) GetDocument(w http.ResponseWriter, r *http.Request) {
 		personResponses[i] = types.PersonResponse{
 			ID:                    p.ID,
 			Name:                  p.Name,
+			NameNative:            p.NameNative.String,
 			PersonTypeID:          p.PeopleTypeID,
 			PersonTypeName:        p.PeopleTypeName,
 			PersonTypeDescription: p.PeopleTypeDescription,
@@ -295,6 +297,7 @@ func (h *DocumentHandler) SearchDocumentsStructured(w http.ResponseWriter, r *ht
 			personResponses[j] = types.PersonResponse{
 				ID:                    p.ID,
 				Name:                  p.Name,
+				NameNative:            p.NameNative.String,
 				PersonTypeID:          p.PeopleTypeID,
 				PersonTypeName:        p.PeopleTypeName,
 				PersonTypeDescription: p.PeopleTypeDescription,

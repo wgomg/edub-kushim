@@ -12,12 +12,17 @@ import (
 
 const createPeople = `-- name: CreatePeople :execresult
 INSERT OR IGNORE INTO people (
-    name
-) VALUES (?)
+    name, name_native
+) VALUES (?, ?)
 `
 
-func (q *Queries) CreatePeople(ctx context.Context, name string) (sql.Result, error) {
-	return q.db.ExecContext(ctx, createPeople, name)
+type CreatePeopleParams struct {
+	Name       string
+	NameNative sql.NullString
+}
+
+func (q *Queries) CreatePeople(ctx context.Context, arg CreatePeopleParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, createPeople, arg.Name, arg.NameNative)
 }
 
 const deletePeople = `-- name: DeletePeople :exec
@@ -30,18 +35,39 @@ func (q *Queries) DeletePeople(ctx context.Context, id int64) error {
 }
 
 const getPeople = `-- name: GetPeople :one
-SELECT id, name, created_at FROM people WHERE id = ?
+SELECT id, name, name_native, created_at FROM people WHERE id = ?
 `
 
 func (q *Queries) GetPeople(ctx context.Context, id int64) (People, error) {
 	row := q.db.QueryRowContext(ctx, getPeople, id)
 	var i People
-	err := row.Scan(&i.ID, &i.Name, &i.CreatedAt)
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.NameNative,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getPeopleByName = `-- name: GetPeopleByName :one
+SELECT id, name, name_native, created_at FROM people WHERE name = ?
+`
+
+func (q *Queries) GetPeopleByName(ctx context.Context, name string) (People, error) {
+	row := q.db.QueryRowContext(ctx, getPeopleByName, name)
+	var i People
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.NameNative,
+		&i.CreatedAt,
+	)
 	return i, err
 }
 
 const listAllPeople = `-- name: ListAllPeople :many
-SELECT id, name, created_at FROM people ORDER BY created_at DESC
+SELECT id, name, name_native, created_at FROM people ORDER BY created_at DESC
 `
 
 func (q *Queries) ListAllPeople(ctx context.Context) ([]People, error) {
@@ -53,7 +79,12 @@ func (q *Queries) ListAllPeople(ctx context.Context) ([]People, error) {
 	var items []People
 	for rows.Next() {
 		var i People
-		if err := rows.Scan(&i.ID, &i.Name, &i.CreatedAt); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.NameNative,
+			&i.CreatedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -68,7 +99,7 @@ func (q *Queries) ListAllPeople(ctx context.Context) ([]People, error) {
 }
 
 const listPeople = `-- name: ListPeople :many
-SELECT id, name, created_at FROM people ORDER BY created_at DESC LIMIT ? OFFSET ?
+SELECT id, name, name_native, created_at FROM people ORDER BY created_at DESC LIMIT ? OFFSET ?
 `
 
 type ListPeopleParams struct {
@@ -85,7 +116,12 @@ func (q *Queries) ListPeople(ctx context.Context, arg ListPeopleParams) ([]Peopl
 	var items []People
 	for rows.Next() {
 		var i People
-		if err := rows.Scan(&i.ID, &i.Name, &i.CreatedAt); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.NameNative,
+			&i.CreatedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -100,7 +136,7 @@ func (q *Queries) ListPeople(ctx context.Context, arg ListPeopleParams) ([]Peopl
 }
 
 const searchPeopleByName = `-- name: SearchPeopleByName :many
-SELECT id, name, created_at FROM people WHERE name LIKE ? ORDER BY name ASC LIMIT ?
+SELECT id, name, name_native, created_at FROM people WHERE name LIKE ? ORDER BY name ASC LIMIT ?
 `
 
 type SearchPeopleByNameParams struct {
@@ -117,7 +153,12 @@ func (q *Queries) SearchPeopleByName(ctx context.Context, arg SearchPeopleByName
 	var items []People
 	for rows.Next() {
 		var i People
-		if err := rows.Scan(&i.ID, &i.Name, &i.CreatedAt); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.NameNative,
+			&i.CreatedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -144,5 +185,21 @@ type UpdatePeopleParams struct {
 
 func (q *Queries) UpdatePeople(ctx context.Context, arg UpdatePeopleParams) error {
 	_, err := q.db.ExecContext(ctx, updatePeople, arg.Name, arg.ID)
+	return err
+}
+
+const updatePeopleNative = `-- name: UpdatePeopleNative :exec
+UPDATE people SET
+    name_native = ?
+WHERE id = ? AND name_native IS NULL
+`
+
+type UpdatePeopleNativeParams struct {
+	NameNative sql.NullString
+	ID         int64
+}
+
+func (q *Queries) UpdatePeopleNative(ctx context.Context, arg UpdatePeopleNativeParams) error {
+	_, err := q.db.ExecContext(ctx, updatePeopleNative, arg.NameNative, arg.ID)
 	return err
 }

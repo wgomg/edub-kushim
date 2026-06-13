@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"time"
 
+	anyascii "github.com/anyascii/go"
 	"github.com/wgomg/edub-kushim/internal/cache"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/tools"
+	"github.com/wgomg/edub-kushim/internal/tools/adapters/contentanalyzer"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -202,20 +204,38 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 	}
 	peopleMap := make(map[string]int64, len(existingPeople))
 	for _, p := range existingPeople {
-		peopleMap[p.Name] = p.ID
+		key := utils.NormalizeName(p.Name)
+		peopleMap[key] = p.ID
 	}
 	var peopleIDs []int64
 	for _, p := range analysis.People {
-		id, ok := peopleMap[p.Name]
+		canonicalName, nameNative := canonicalPersonName(p)
+
+		normalized := utils.NormalizeName(canonicalName)
+		id, ok := peopleMap[normalized]
 		if !ok {
-			result, err := queries.CreatePeople(ctx, p.Name)
+			var nameNativeArg sql.NullString
+			if nameNative != "" {
+				nameNativeArg = sql.NullString{String: nameNative, Valid: true}
+			}
+			result, err := queries.CreatePeople(ctx, database.CreatePeopleParams{
+				Name:       canonicalName,
+				NameNative: nameNativeArg,
+			})
 			if err != nil {
-				e.logger.Error(&logId, "create people %q: %v", p.Name, err)
+				e.logger.Error(&logId, "create people %q: %v", canonicalName, err)
 				continue
 			}
-			e.logger.Debug(&logId, "people created %s", p.Name)
+			e.logger.Debug(&logId, "people created %s", canonicalName)
 			id, _ = result.LastInsertId()
-			peopleMap[p.Name] = id
+			peopleMap[normalized] = id
+		} else if nameNative != "" {
+			if err := queries.UpdatePeopleNative(ctx, database.UpdatePeopleNativeParams{
+				NameNative: sql.NullString{String: nameNative, Valid: true},
+				ID:         id,
+			}); err != nil {
+				e.logger.Debug(&logId, "update people native name %q: %v", nameNative, err)
+			}
 		}
 		peopleIDs = append(peopleIDs, id)
 	}
@@ -262,4 +282,25 @@ func targetWordCount(contentWC, targetWC int) int {
 		result = contentWC / -result
 	}
 	return max(2000, result)
+}
+
+// canonicalPersonName returns the canonical (Latin-script) name and the
+// original non-Latin name (if any) for a person result from the LLM.
+// If the LLM provided a romanized name for a non-Latin name, it uses that.
+// Otherwise it falls back to anyascii transliteration.
+func canonicalPersonName(p contentanalyzer.PeopleResult) (canonical, native string) {
+	raw := p.Name
+	hasNonLatin := utils.ContainsNonLatin(raw)
+
+	if !hasNonLatin {
+		return raw, ""
+	}
+
+	if p.NameRomanized != "" {
+		return p.NameRomanized, raw
+	}
+
+	// Fallback: transliterate non-Latin script to ASCII
+	romanized := anyascii.Transliterate(raw)
+	return romanized, raw
 }
