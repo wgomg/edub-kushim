@@ -30,7 +30,7 @@ type ContentAnalyzer interface {
 ### Structs
 
 - `AnalysisResult` — `Title`, `DocType`, `Tags`, `People []PeopleResult`, `Language`, `Stats *json.RawMessage`, `Prompt`
-- `PeopleResult` — `Name`, `Type`
+- `PeopleResult` — `Name`, `NameRomanized` (optional, for non-Latin names), `Type`
 
 ### Factory
 
@@ -42,7 +42,7 @@ type ContentAnalyzer interface {
 
 ### Functions
 
-- `BuildPrompt(text, docTypes, peopleTypes, tagSuggestions) string` — Builds system prompt with JSON output instructions including people types
+- `BuildPrompt(text, docTypes, peopleTypes, tagSuggestions) string` — Builds system prompt with JSON output instructions including people types. Prompts the LLM to provide a `name_romanized` field for any name containing non-Latin characters (Korean, Arabic, Cyrillic, Hebrew, etc.).
 - `buildTokenUsageStats(prompt, completion, total int) *json.RawMessage` — Creates token usage stats JSON
 
 ---

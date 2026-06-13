@@ -31,7 +31,7 @@
 - `DocumentType` — `ID`, `Name`, `Description`, `CreatedAt`
 - `DocumentTag` — `DocumentID`, `TagID`
 - `DocumentPeople` — `DocumentID`, `PeopleID`, `PeopleTypeID`
-- `People` — `ID`, `Name`, `CreatedAt`
+- `People` — `ID`, `Name`, `NameNative sql.NullString`, `CreatedAt`
 - `PeopleType` — `ID`, `Name`, `Description`, `CreatedAt`
 - `User` — `ID`, `Username`, `PasswordHash sql.NullString`, `ApiKey interface{}`, `CreatedAt`
 - `SavedSearch` — `ID`, `Name`, `FilterJson string`, `CreatedAt string`
@@ -77,7 +77,7 @@
 
 ### People
 
-`CreatePeople`, `GetPeople`, `ListPeople`, `ListAllPeople`, `SearchPeopleByName` (prefix search with `LIKE ?` + `LIMIT`), `UpdatePeople`, `DeletePeople`
+`CreatePeople` (with `Name` + `NameNative`), `GetPeople`, `GetPeopleByName`, `ListPeople`, `ListAllPeople`, `SearchPeopleByName` (prefix search with `LIKE ?` + `LIMIT`), `UpdatePeople`, `UpdatePeopleNative` (fills `name_native` only if currently NULL), `DeletePeople`
 
 ### People type
 
@@ -149,7 +149,7 @@ A flexible SQL query builder that composes `WHERE` clauses dynamically:
 - `task` — Async processing: `task_id` (UUID), `batch_id` (nullable), `task_type`, `payload` (JSON), `result` (JSON), `dedup_key` (nullable), `status`, timestamps, `error`
 - `tag` — Classification tags (seeded with 110+ Dewey Decimal tags)
 - `document_type` — Document type classification (seeded with types like `article`, `book`, `report`, `letter`, etc.)
-- `people` — People/entities associated with documents
+- `people` — People/entities associated with documents (`name` UNIQUE, `name_native` nullable for original non-Latin script)
 - `people_type` — Roles for people (e.g., `author`, `editor`, `translator`, `subject`)
 - `user` — Authentication (username, password_hash, api_key)
 

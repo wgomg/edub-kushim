@@ -52,7 +52,12 @@
       7. Newly created tags are immediately encoded and added to the embedding cache so subsequent documents can match them
       8. Update document metadata (title, doc_type, language)
       9. Manage document_tag junction (clear + add, create new tags as needed)
-      10. Manage document_people junction (clear + add, create new people as needed; unknown types default to `"unknown"`)
+      10. Manage document_people junction (clear + add) — for each person:
+          - Determines canonical name via `canonicalPersonName`: uses LLM's `name_romanized` if provided (for non-Latin names), falls back to AnyAscii transliteration
+          - Normalizes the canonical name via `utils.NormalizeName` (NFKC, lowercase, punctuation/dash cleanup) for exact-match lookup
+          - Creates new people with `name` (canonical) + `name_native` (original non-Latin script) when no match found
+          - Updates `name_native` on existing people if currently empty
+          - Unknown people types default to `"unknown"`
     - `GetDb() *sql.DB`
 
 ### Helpers

@@ -31,7 +31,7 @@ internal/
 │   ├── setup.go           # Setup command (config + OCR languages + Hugot model)
 │   └── task.go            # Task commands (list, status, retry)
 ├── enrichment/            # Enrichment engine (LLM pipeline)
-│   ├── enricher.go        # Enricher: dual text reduction → tag matching → LLM → consolidation → people/tag/doc type
+│   ├── enricher.go        # Enricher: dual text reduction → tag matching → LLM → consolidation → people/tag/doc type with romanization + normalization
 ├── pidfile/               # PID file locking for batch consumption
 │   └── pidfile.go         # Lock, Acquire/Release, IsAlive, Read
 ├── pool/                  # Generic worker pool
@@ -62,7 +62,7 @@ internal/
 │   ├── document_people.sql.go # Generated document_people junction queries
 │   ├── document_type.sql.go # Generated document type queries (includes UpdateDocumentType)
 │   ├── tag.sql.go         # Generated tag queries (includes SearchTagsByName)
-│   ├── people.sql.go      # Generated people queries (CreatePeople, ListAllPeople, SearchPeopleByName)
+│   ├── people.sql.go      # Generated people queries (CreatePeople with name_native, ListAllPeople, SearchPeopleByName, UpdatePeopleNative, GetPeopleByName)
 │   ├── people_type.sql.go # Generated people type queries
 │   ├── task.sql.go        # Generated task queries (includes SetEnrichTaskPending, DiscardEnrichTask)
 │   ├── user.sql.go        # Generated user queries
@@ -78,7 +78,7 @@ internal/
 │   ├── logger.go          # Structured logging (file logging support, numeric level filtering)
 │   ├── metrics.go         # Memory metrics (HeapInUse, RSS, NumGC), HumanDuration, FormatMemDelta
 │   ├── parambag.go        # HTTP parameter parsing (query params, path values)
-│   └── text.go            # CountWords, EstimateTokensFromWords, CleanUp, Truncate, CleanCodeBlock
+│   └── text.go            # CountWords, EstimateTokensFromWords, CleanUp, Truncate, CleanCodeBlock, ContainsNonLatin, NormalizeName
 ├── pidfile/               # PID file locking for batch consumption
 │   └── pidfile.go         # Lock, Acquire/Release, IsAlive, Read with cross-process safety
 └── version/               # Application version
@@ -86,8 +86,8 @@ internal/
 │   ├── adapters/
 │   │   ├── mupdf_wrapper.go    # MuPDF CGo wrapper (6 C helpers + Go API)
 │   │   ├── contentanalyzer/    # LLM classification providers
-│   │   │   ├── adapter.go          # ContentAnalyzer interface + factory (NewContentAnalyzer)
-│   │   │   ├── shared.go           # BuildPrompt, system message, tokenUsage, buildTokenUsageStats
+│   │   │   ├── adapter.go          # ContentAnalyzer interface + factory (NewContentAnalyzer); PeopleResult with NameRomanized
+│   │   │   ├── shared.go           # BuildPrompt, system message, prompt asks for name_romanized on non-Latin names
 │   │   │   ├── llm_openai.go       # OpenAI-compatible API (OpenAI, OpenRouter)
 │   │   │   ├── llm_anthropic.go    # Anthropic Messages API
 │   │   │   ├── llm_deepseek.go     # DeepSeek Chat API

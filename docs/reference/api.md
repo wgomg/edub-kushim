@@ -84,7 +84,7 @@
 ### Structs
 
 - `TagResponse` — `ID int64`, `Name string`
-- `PersonResponse` — `ID`, `Name`, `PersonTypeID`, `PersonTypeName`, `PersonTypeDescription`
+- `PersonResponse` — `ID`, `Name`, `NameNative` (original non-Latin script, if any), `PersonTypeID`, `PersonTypeName`, `PersonTypeDescription`
 - `DocumentResponse`
   - **Fields**: `ID string` (UUID, JSON `"id"`), `Title`, `MD5Checksum`, `SHA512Checksum`, `MimeType`, `FileSize`, `PageCount`, `WordCount`, `CharCount`, `Language`, `DocumentTypeID *int64`, `DocumentTypeName *string`, `Tags []TagResponse`, `People []PersonResponse`, `CreatedAt`, `ModifiedAt`
 - `FTSDocumentResponse`

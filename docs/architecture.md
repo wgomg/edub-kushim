@@ -90,12 +90,28 @@ After a `consume` task completes, an `enrich` task is automatically enqueued
 3. **LLM Classification** — the reduced content, along with available document types
    and tag suggestions, is sent to the configured LLM provider. Returns structured
    JSON: title, type, tags, people (with types like author, sender), language.
+   For non-Latin names (Korean, Arabic, Cyrillic, etc.), the LLM is prompted to
+   provide a `name_romanized` field alongside the original name.
 4. **Post-LLM Tag Consolidation** — LLM output labels are re-matched against canonical
    tag embeddings via `MatchEach`, fixing casing, hyphenation, and synonym mismatches.
 5. **New Tag Cache Update** — any new tags created during enrichment are immediately
    encoded via Hugot and added to the embedding cache, making them available for
    matching against subsequent documents.
 6. **Result Logging** — token usage stats and prompt text are logged.
+
+### People Deduplication
+
+When storing people from LLM results, the enricher:
+
+1. **Romanizes** — if the LLM provided a `name_romanized` for a non-Latin name,
+   that becomes the canonical form. Falls back to AnyAscii transliteration.
+2. **Normalizes** — NFKC normalization, lowercase, dots/commas/apostrophes/quotes
+   removed, dash variants collapsed to spaces, whitespace trimmed. This makes
+   `"Itamar Ben-Gvir"` match `"Itamar Ben Gvir"` and `"O'Brien"` match `"Obrien"`.
+3. **Exact-match lookup** — looks up the normalized name against existing people;
+   creates a new entry only when no match is found.
+4. **Stores native script** — when the original name contains non-Latin characters,
+   it is stored in the `name_native` column for display in the UI.
 
 This pipeline is non-blocking: documents are stored and searchable immediately via
 FTS5, with enrichment arriving asynchronously.

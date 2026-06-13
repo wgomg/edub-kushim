@@ -135,7 +135,7 @@
 
 ### Functions
 
-`CountWords`, `EstimateTokensFromWords`, `CleanUp` (removes special chars), `Truncate` (returns "Unknown" for whitespace-only), `CleanCodeBlock`
+`CountWords`, `EstimateTokensFromWords`, `CleanUp` (removes special chars), `Truncate` (returns "Unknown" for whitespace-only), `CleanCodeBlock`, `ContainsNonLatin` (checks for CJK, Cyrillic, Arabic, Hebrew, Greek, Thai, Devanagari, Bengali, Hangul), `NormalizeName` (NFKC → lowercase → remove dots/commas/apostrophes/quotes → dash variants to space → whitespace collapse)
 
 ---
 
