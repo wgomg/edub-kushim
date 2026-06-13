@@ -65,6 +65,10 @@ func startServer() {
 		log.Fatal("Unable to establish database connection:", err)
 	}
 
+	if err := database.InitializeSchema(db); err != nil {
+		logger.Fatal("Unable to initialize database schema:", err)
+	}
+
 	srv := api.NewServer(*cfg, logger, db)
 
 	// Graceful shutdown on SIGINT/SIGTERM

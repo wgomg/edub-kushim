@@ -46,6 +46,10 @@ func (c *Container) GetDB() (*sql.DB, error) {
 		if err != nil {
 			return nil, err
 		}
+		if err := database.InitializeSchema(db); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("initialize schema: %w", err)
+		}
 		c.db = db
 	}
 	return c.db, nil
