@@ -163,47 +163,39 @@
 > document type) with semantic tag matching — the feature that distinguishes this project
 > from paperless-ngx.
 
-### 🔴 Tier 2 — API Foundation (Remaining)
-
-| #   | Feature                            | Description                                                                                                                                     |
-| --- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | **Tags API**                       | `GET/POST/PUT/DELETE /api/v1/tags` — CRUD handlers (sqlc queries exist)                                                                         |
-| 2   | **People API**                     | `GET/POST/PUT/DELETE /api/v1/people` — CRUD handlers for people + people_types                                                                  |
-| 3   | **Document Types API**             | `GET/POST/PUT/DELETE /api/v1/document_types` — CRUD handlers (sqlc queries exist)                                                               |
-| 4   | **Document update endpoint**       | `PUT /api/v1/documents/{id}` — update title, document_type_id, text_content                                                                     |
-| 5   | **Document delete endpoint**       | `DELETE /api/v1/documents/{id}` — remove document + files                                                                                       |
-| 6   | **Document tag/people assignment** | `POST/DELETE /api/v1/documents/{id}/tags` and `/people` — junction management                                                                   |
-| 7   | **Batch cancel API endpoint**      | `POST /api/v1/batches/{id}/cancel` — expose `kushim consume cancel` through the API                                                             |
-| 8   | **Test coverage**                  | Add automated tests for: adapters, CLI commands, database queries, API handlers, search engine, worker pool, enrichment pipeline, and utilities |
-
-### 🟢 Tier 3 — Web UI (Manual Management & UX)
-
-| #   | Feature                                | Description                                                               |
-| --- | -------------------------------------- | ------------------------------------------------------------------------- |
-| 9   | **Tag management page**                | Replace placeholder: list, create, edit, delete tags                      |
-| 10  | **People management page**             | New route: list, create, edit, delete people and their types              |
-| 11  | **Document type management page**      | New route: list, create, edit, delete document types                      |
-| 12  | **Document detail — tags/people/type** | Display tags, people, and document type in the sidebar                    |
-| 13  | **Document metadata editing**          | Detail page sidebar — edit tags, people, type, title (override LLM)       |
-| 14  | **Document upload/consume flow**       | Wire Upload button to `POST /api/v1/consume`, show progress feedback      |
-| 15  | **Single task detail page**            | New route `/tasks/{taskID}` — status, file, timestamps, error information |
-| 16  | **Bulk operations**                    | Batch delete, batch tag assignment, batch download                        |
-| 17  | **Dashboard enhancements**             | Storage usage trend, recent batch status, activity timeline               |
-| 18  | **Post-classification notification**   | Optional webhook or websocket event when a classification batch completes |
-
----
-
-## 🔵 Planned (Post-MVP)
-
-- Authentication and user management (login, API keys, roles)
-- ZincSearch or Meilisearch integration for large-scale search
-- User preferences (theme, pagination defaults, notification settings)
-- Document notes/comments and annotations
-- Document relationships (parent/child, cross-references)
-- Email ingestion (IMAP inbox scanning)
-- Metrics and monitoring (prometheus endpoints, structured metrics)
-- MySQL / MariaDB database backend support
-- Pre-built binaries and package manager distribution
+| #   | Feature                                  | Description                                                                                        |
+| --- | ---------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| 1   | **Configuration/setup wizard in web UI** | In-app configuration page (LLM providers, Tesseract languages, storage paths, model downloads)     |
+| 2   | **Docker Compose quick-start**           | Single `docker compose up` command to run the full stack — eliminates build friction for new users |
+| 3   | **Document detail — tags/people/type**   | Display tags, people, and document type in the sidebar                                             |
+| 4   | **Document metadata editing**            | Detail page sidebar — edit tags, people, type, title (override LLM)                                |
+| 5   | **Document update endpoint**             | `PUT /api/v1/documents/{id}` — update title, document_type_id, text_content                        |
+| 6   | **Document delete endpoint**             | `DELETE /api/v1/documents/{id}` — remove document + files                                          |
+| 7   | **Document tag/people assignment**       | `POST/DELETE /api/v1/documents/{id}/tags` and `/people` — junction management                      |
+| 8   | **Tags CRUD API**                        | `GET/POST/PUT/DELETE /api/v1/tags` — create, read, update, delete (sqlc queries exist)             |
+| 9   | **People CRUD API**                      | `GET/POST/PUT/DELETE /api/v1/people` — manage people + people_types                                |
+| 10  | **Document Types CRUD API**              | `GET/POST/PUT/DELETE /api/v1/document_types` — manage document types (sqlc queries exist)          |
+| 11  | **Tag management page**                  | Replace placeholder: list, create, edit, delete tags                                               |
+| 12  | **People management page**               | New route: list, create, edit, delete people and their types                                       |
+| 13  | **Document type management page**        | New route: list, create, edit, delete document types                                               |
+| 14  | **Document upload/consume flow**         | Wire Upload button to `POST /api/v1/consume`, show progress feedback                               |
+| 15  | **Single task detail page**              | New route `/tasks/{taskID}` — status, file, timestamps, error information                          |
+| 16  | **Integration test**                     | End-to-end test: consume a known PDF, verify DB state — signals project reliability                |
+| 17  | **Test coverage**                        | Automated tests for: adapters, CLI commands, database queries, API handlers, search engine, pool   |
+| 18  | **Bulk operations**                      | Batch delete, batch tag assignment, batch download                                                 |
+| 19  | **Batch cancel API endpoint**            | `POST /api/v1/batches/{id}/cancel` — expose `kushim consume cancel` through the API                |
+| 20  | **Post-classification notification**     | Optional webhook or websocket event when a classification batch completes                          |
+| 21  | **Dashboard enhancements**               | Storage usage trend, recent batch status, activity timeline                                        |
+| 22  | **Contributing guide & issue templates** | `CONTRIBUTING.md`, issue/PR templates, and GitHub community setup to encourage contributions       |
+| 23  | **Authentication and user management**   | Login, API keys, roles                                                                             |
+| 24  | **Pre-built binaries**                   | Release binaries for major platforms (Linux amd64/arm64)                                           |
+| 25  | **Email ingestion**                      | IMAP inbox scanning                                                                                |
+| 26  | **Document notes/comments**              | User-added notes and annotations on documents                                                      |
+| 27  | **Metrics and monitoring**               | Prometheus endpoints, structured metrics                                                           |
+| 28  | **Document relationships**               | Parent/child, cross-references between documents                                                   |
+| 29  | **External search engine**               | ZincSearch or Meilisearch integration for large-scale search                                       |
+| 30  | **MySQL / MariaDB database backend**     | Additional database backend support                                                                |
+| 31  | **User preferences**                     | Theme, pagination defaults, notification settings                                                  |
 
 ---
 
