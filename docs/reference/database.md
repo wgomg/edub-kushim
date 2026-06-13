@@ -26,6 +26,22 @@ Numbered SQL files in `internal/database/sql/schema/migrations/`. Each file uses
 - `-- +goose Down` — applied when rolling back
 - `-- +goose StatementBegin` / `-- +goose StatementEnd` — wraps multi-statement SQL (triggers, functions) so goose's semicolon-based parser doesn't split them prematurely
 
+### sqlc integration
+
+sqlc is configured in `sqlc.yaml` to read its schema from the same `migrations/` directory, not from a separate `schema.sql` file:
+
+```yaml
+schema: 'internal/database/sql/schema/migrations'
+```
+
+sqlc natively understands goose annotations — it recognises `-- +goose Up`/`-- +goose Down` boundaries and ignores down migrations when building its schema model. This ensures the generated Go code always matches the actual database schema without duplication.
+
+When adding a new migration:
+
+1. Write `00002_description.sql` in `migrations/` with `-- +goose Up` / `-- +goose Down` sections
+2. Run `sqlc generate` — sqlc picks up the new file from the same directory
+3. No separate `schema.sql` update is needed
+
 ### Migration auto-apply
 
 Migrations run automatically on startup (no manual CLI command needed):
@@ -40,7 +56,7 @@ Migrations run automatically on startup (no manual CLI command needed):
 ### Key structs
 
 - `Document` — 17 fields: `ID`, `DocumentID` (UUID string), `Title`, `Md5Checksum`, `Sha512Checksum`, `MimeType`, `FileSize`, `PageCount`, `WordCount`, `CharCount`, `Language`, `CreatedAt`, `ModifiedAt`, `DocumentTypeID`, `OriginalPath`, `StoragePath`, `TextContent`
-- `DocumentFt` — `DocumentID`, `Title`, `Content`
+- `DocumentFt` — `Title`, `Content`, `DocumentID`
 - `Task` — 12 fields: `ID`, `TaskID`, `TaskType`, `Status`, `BatchID sql.NullString`, `Payload json.RawMessage`, `Result *json.RawMessage`, `DedupKey sql.NullString`, `CreatedAt`, `StartedAt`, `CompletedAt`, `Error`
 - `Tag` — `ID`, `Name`, `CreatedAt`
 - `DocumentType` — `ID`, `Name`, `Description`, `CreatedAt`
@@ -48,7 +64,7 @@ Migrations run automatically on startup (no manual CLI command needed):
 - `DocumentPeople` — `DocumentID`, `PeopleID`, `PeopleTypeID`
 - `People` — `ID`, `Name`, `NameNative sql.NullString`, `CreatedAt`
 - `PeopleType` — `ID`, `Name`, `Description`, `CreatedAt`
-- `User` — `ID`, `Username`, `PasswordHash sql.NullString`, `ApiKey interface{}`, `CreatedAt`
+- `User` — `ID`, `Username`, `PasswordHash sql.NullString`, `ApiKey sql.NullString`, `CreatedAt`
 - `SavedSearch` — `ID`, `Name`, `FilterJson string`, `CreatedAt string`
 
 ---
@@ -204,7 +220,7 @@ but using it is still recommended for idempotent re-runs during development.
 
 ## Migration Version Table
 
-A `schema_version` table (managed by goose) tracks applied migrations with columns: `version_id`, `is_applied`, `t_at`. Created automatically on first `goose.Up()` call.
+A `goose_db_version` table (managed by goose) tracks applied migrations with columns: `version_id`, `is_applied`, `tstamp`. Created automatically on first `goose.Up()` call.
 
 ## Key Indexes
 

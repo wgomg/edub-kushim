@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS user (
     id INTEGER PRIMARY KEY,
     username TEXT NOT NULL UNIQUE,
     password_hash TEXT,
-    api_key TEXT UNIQUE NULL,
+    api_key TEXT UNIQUE,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 

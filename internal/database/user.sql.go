@@ -21,7 +21,7 @@ INSERT INTO user (
 type CreateUserParams struct {
 	Username     string
 	PasswordHash sql.NullString
-	ApiKey       interface{}
+	ApiKey       sql.NullString
 }
 
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (sql.Result, error) {
@@ -58,7 +58,7 @@ const getUserByAPIKey = `-- name: GetUserByAPIKey :one
 SELECT id, username, password_hash, api_key, created_at FROM user WHERE api_key = ?
 `
 
-func (q *Queries) GetUserByAPIKey(ctx context.Context, apiKey interface{}) (User, error) {
+func (q *Queries) GetUserByAPIKey(ctx context.Context, apiKey sql.NullString) (User, error) {
 	row := q.db.QueryRowContext(ctx, getUserByAPIKey, apiKey)
 	var i User
 	err := row.Scan(
@@ -101,7 +101,7 @@ type ListUsersParams struct {
 type ListUsersRow struct {
 	ID        int64
 	Username  string
-	ApiKey    interface{}
+	ApiKey    sql.NullString
 	CreatedAt sql.NullTime
 }
 
@@ -142,7 +142,7 @@ WHERE id = ?
 
 type UpdateUserParams struct {
 	Username string
-	ApiKey   interface{}
+	ApiKey   sql.NullString
 	ID       int64
 }
 

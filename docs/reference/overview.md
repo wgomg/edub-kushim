@@ -69,8 +69,8 @@ internal/
 │   ├── saved_search.sql.go # Generated saved search queries (CreateSavedSearch, ListSavedSearches, DeleteSavedSearch)
 │   ├── fts5.go            # Manual FTS5 query implementation (SearchDocumentsFTS, etc.)
 │   └── sql/               # Embedded SQL assets
-│       ├── schema/        # Schema + seed SQL files (schema.sql, seed-tags.sql, seed-document-types.sql, seed-people-types.sql)
-│       │   └── migrations/ # goose versioned migrations (00001_baseline.sql, ...)
+│       ├── schema/        # Seed SQL files (seed-tags.sql, seed-document-types.sql, seed-people-types.sql)
+│       │   └── migrations/ # goose versioned migrations (00001_baseline.sql, ...) — also read by sqlc
 │       └── queries/       # SQL queries for sqlc
 ├── static/                # Embedded web UI
 │   └── fs.go              # Embedded SvelteKit build (build/ directory via //go:embed)
@@ -119,8 +119,7 @@ internal/
 │   └── runner.go          # Unified tool runner (all adapters), runWithTimeout generic wrapper
 sql/                       # NOTE: Moved under internal/database/sql/
 ├── queries/               # SQL queries for sqlc
-└── schema/                # Database schema + seed data
-    ├── schema.sql
+└── schema/                # Seed data
     ├── seed-tags.sql
     ├── seed-document-types.sql
     └── seed-people-types.sql

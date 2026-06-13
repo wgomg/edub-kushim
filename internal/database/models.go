@@ -30,9 +30,9 @@ type Document struct {
 }
 
 type DocumentFt struct {
-	DocumentID string
 	Title      string
 	Content    string
+	DocumentID string
 }
 
 type DocumentPeople struct {
@@ -99,6 +99,6 @@ type User struct {
 	ID           int64
 	Username     string
 	PasswordHash sql.NullString
-	ApiKey       interface{}
+	ApiKey       sql.NullString
 	CreatedAt    sql.NullTime
 }
