@@ -52,7 +52,7 @@ func RunSetup(args []string, logger *utils.Logger) error {
 	}
 
 	if langs == "" {
-		return fmt.Errorf(`usage: kushim setup --langs eng,spa,...
+		return fmt.Errorf(`usage: kushim setup --languages eng,spa,...
 
 Flags:
   --languagess                       ISO 639-3 codes (eng, spa, fra, ...)
@@ -262,5 +262,5 @@ func setupHugotModel(ctx context.Context, configDir string, logger *utils.Logger
 }
 
 func setupHandler(container *Container, args []string) error {
-	return fmt.Errorf("setup must be run without a config file — use 'kushim setup --langs ...' directly")
+	return fmt.Errorf("setup must be run without a config file — use 'kushim setup --languages ...' directly")
 }

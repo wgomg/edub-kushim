@@ -748,7 +748,7 @@ consumer:
     # fallback: 'gs'            # secondary optimizer when primary fails
   ocr:
     engine: 'gosseract' # gosseract | ocrmypdf
-    languages: [eng] # required — set via kushim setup --langs
+    languages: [eng] # required — set via kushim setup --languages
     timeout: 120
 
 enricher:

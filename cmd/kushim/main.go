@@ -41,7 +41,7 @@ func main() {
 	cfg, err := config.Load(*configDir)
 	if err != nil {
 		if strings.Contains(err.Error(), "ocr.languages is required") {
-			startupLogger.Fatal("Not initialized: run 'kushim setup --langs eng,spa,...' first")
+			startupLogger.Fatal("Not initialized: run 'kushim setup --languages eng,spa,...' first")
 		}
 		startupLogger.Fatal("Failed to load configuration:", err)
 	}

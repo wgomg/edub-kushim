@@ -243,7 +243,7 @@ func Load(configDir string) (*Config, error) {
 
 func finalizeConfig(cfg *Config, configDir string) error {
 	if len(cfg.Consumer.OCR.Languages) == 0 {
-		return fmt.Errorf("consumer.ocr.languages is required — run 'kushim setup --langs eng,spa,...' first")
+		return fmt.Errorf("consumer.ocr.languages is required — run 'kushim setup --languages eng,spa,...' first")
 	}
 
 	homeDir, err := os.UserHomeDir()

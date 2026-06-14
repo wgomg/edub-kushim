@@ -33,7 +33,7 @@ consumer:
 
   ocr:
     engine: 'gosseract'
-    languages: [eng] # required — run 'kushim setup --langs eng,spa,...'
+    languages: [eng] # required — run 'kushim setup --languages eng,spa,...'
     # data_dir: '~/.config/edub-kushim/ocr/tessdata'
     timeout: 120
 
