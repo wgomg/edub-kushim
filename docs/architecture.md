@@ -79,8 +79,9 @@ Uses `unicode61` tokenizer for multi‑language support without language‑speci
 
 ### 7. Async Enrichment (Post-Consume)
 
-After a `consume` task completes, an `enrich` task is automatically enqueued
-(via `Dispatcher.Next()` after `CompleteTask`). The enrichment pipeline:
+After a `consume` task completes, its handler activates the waiting `enrich`
+task by updating its payload with the document ID and setting its status to
+`pending` (via `Store.SetPending`). The enrichment pipeline:
 
 1. **Text Reduction** (optional, configurable threshold) — if the document exceeds
    `enricher.textreducer.target_words`, TextRank extracts the most salient content.

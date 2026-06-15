@@ -12,39 +12,67 @@
 
 ### Interface
 
-- `Runner` — `Next(ctx, taskType string) error` (implemented by `task.Dispatcher`)
+- `Runner` — `Next(ctx, taskType string) error` (implemented by `task.Runner`)
 
 ---
 
 # Task System (`internal/task/`)
 
+## `types.go`
+
+### Types
+
+- `Task` — domain struct with `ID int64`, `TaskID string`, `TaskType string`, `Payload json.RawMessage`
+
 ## `handler.go`
 
 ### Interfaces
 
-- `Handler` — `Handle(ctx, database.Task) (json.RawMessage, error)`
+- `Handler` — `Handle(ctx, task.Task) (json.RawMessage, error)`
 - `Dedupable` — `DedupKey(payload json.RawMessage) string`
 
----
+## `store.go`
+
+### Struct
+
+- `Store` — wraps `*database.Queries`
+  - **Methods**:
+    - `CreateTask(ctx, taskType, batchID, payload, taskID, status, dedupKey string) (string, error)`
+    - `ClaimNextPending(ctx, taskType) (database.Task, error)`
+    - `GetTask(ctx, id) (database.Task, error)`
+    - `GetTaskByTaskID(ctx, taskID) (database.Task, error)`
+    - `CompleteTask(ctx, id, result) error`
+    - `FailTask(ctx, id, errMsg) error`
+    - `SetPending(ctx, id, payload) error`
+    - `Discard(ctx, id, errMsg) error`
+
+## `registry.go`
+
+### Struct
+
+- `Registry` — maps task type strings to `Handler` implementations
+  - **Methods**:
+    - `Register(taskType, handler)` — registers a handler
+    - `Get(taskType) (Handler, error)` — looks up a handler
+    - `DedupKey(taskType, payload) string` — extracts a handler-specific dedup key when available
+
+## `runner.go`
+
+### Struct
+
+- `Runner` — owns `Store` and `Registry`; implements `pool.Runner`
+  - **Methods**:
+    - `NewRunner(store, registry, logger) *Runner`
+    - `Next(ctx, taskType) error` — generic poll loop: claim next pending task, get handler, execute, complete/fail
 
 ## `dispatcher.go`
 
 ### Struct
 
-- `Dispatcher`
-  - **Fields**: `consumer *consumption.Consumer`, `enricher *enrichment.Enricher`, `logger *utils.Logger`, `queries *database.Queries`
+- `Dispatcher` — thin coordinator that owns `Store` and `Registry`; exposes a concise `Enqueue` API
   - **Methods**:
-    - `NewDispatcher(cfg, logger, db, embeddingCache *cache.Cache) (*Dispatcher, error)` — Creates consumer and enricher with cache
-    - `Enqueue(ctx, taskType, batchID, payload, taskID string, status ...string) (string, error)` — Validates task type, computes dedup key, inserts row. Supports custom taskID and initial status (e.g., `"waiting"`)
-    - `Next(ctx, taskType string) error` — Implements `pool.Runner`: fetch pending task of type via `GetNextPendingTaskOfType` → claim → handle → result. For `"consume"` tasks, extracts `document_db_id` (int64) and `document_id` (UUID) from the result, activates the waiting enrich task (matched via `on_completed`/`waiting_for` pointers) by calling `SetEnrichTaskPending` **before** `CompleteTask`, so the poll loop never sees a gap where the batch looks finished. If the consume task fails at any point, calls `discardChildEnrichTask` to mark the linked enrich task as `discarded` with the error message, preventing orphaned waiting tasks.
-    - `setEnrichTaskPending(ctx, id, payload) error` — Updates enrich task status to pending and injects `document_id`
-    - `discardChildEnrichTask(ctx, t, failureErr)` — When a consume task fails, extracts `on_completed` from its payload, looks up the linked enrich task by that ID, and sets its status to `discarded` with the provided error message (e.g. `"parent task failed: ..."`).
-
-### Functions
-
-- `Dispatcher.getHandler(taskType string) (Handler, error)` — Type switch; supports `"consume"` → `handlers.ConsumeTaskHandler`, `"enrich"` → `handlers.EnrichTaskHandler`
-
----
+    - `NewDispatcher(logger, store, registry) *Dispatcher`
+    - `Enqueue(ctx, taskType, batchID, payload, taskID string, status ...string) (string, error)` — validates task type, computes dedup key via registry, delegates persistence to store. Supports custom taskID and initial status (e.g., `"waiting"`)
 
 ## `crud.go`
 
@@ -70,13 +98,11 @@
 
 ### Struct
 
-- `ConsumeTaskHandler` — `consumer *consumption.Consumer`
+- `ConsumeTaskHandler` — `consumer *consumption.Consumer`, `store *task.Store`, `logger *utils.Logger`
   - **Methods**:
-    - `NewConsumeTaskHandler(consumer) *ConsumeTaskHandler`
-    - `Handle(ctx, t) (json.RawMessage, error)` — Unmarshals payload (with `file_path` and `document_id` UUID), calls `FileFromPath` + `consumer.Process`, returns `{"document_db_id":N,"storage_path":"...","document_id":"<uuid>"}`
+    - `NewConsumeTaskHandler(consumer, store, logger) *ConsumeTaskHandler`
+    - `Handle(ctx, t) (json.RawMessage, error)` — Unmarshals payload (`file_path`, `document_id` UUID, `on_completed` enrich task ID), calls `FileFromPath` + `consumer.Process`. On success, if `on_completed` is set and a document was created, activates the linked enrich task via `Store.SetPending`.
     - `DedupKey(payload) string` — Returns file path from payload
-
----
 
 ## `handlers/enrich.go`
 
