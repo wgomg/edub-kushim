@@ -6,21 +6,29 @@ import (
 	"fmt"
 
 	"github.com/wgomg/edub-kushim/internal/consumption"
-	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/task"
+	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type ConsumeTaskHandler struct {
 	consumer *consumption.Consumer
+	store    *task.Store
+	logger   *utils.Logger
 }
 
-func NewConsumeTaskHandler(consumer *consumption.Consumer) *ConsumeTaskHandler {
-	return &ConsumeTaskHandler{consumer: consumer}
+func NewConsumeTaskHandler(consumer *consumption.Consumer, store *task.Store, logger *utils.Logger) *ConsumeTaskHandler {
+	return &ConsumeTaskHandler{
+		consumer: consumer,
+		store:    store,
+		logger:   logger,
+	}
 }
 
-func (h *ConsumeTaskHandler) Handle(ctx context.Context, t database.Task) (json.RawMessage, error) {
+func (h *ConsumeTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMessage, error) {
 	var p struct {
-		FilePath   string `json:"file_path"`
-		DocumentID string `json:"document_id"`
+		FilePath    string `json:"file_path"`
+		DocumentID  string `json:"document_id"`
+		OnCompleted string `json:"on_completed"`
 	}
 	if err := json.Unmarshal(t.Payload, &p); err != nil {
 		return nil, fmt.Errorf("unmarshal payload: %w", err)
@@ -52,7 +60,48 @@ func (h *ConsumeTaskHandler) Handle(ctx context.Context, t database.Task) (json.
 	if err != nil {
 		return nil, fmt.Errorf("marshal result: %w", err)
 	}
+
+	if p.OnCompleted != "" && file.DocumentDbId.Int64 != 0 {
+		if err := h.activateChildEnrich(ctx, t, p.OnCompleted, p.DocumentID); err != nil {
+			h.logger.Error(&p.DocumentID, "failed to activate enrich task for consume %s: %v", t.TaskID, err)
+		}
+	}
+
 	return raw, nil
+}
+
+func (h *ConsumeTaskHandler) activateChildEnrich(
+	ctx context.Context,
+	parent task.Task,
+	onCompleted, documentID string,
+) error {
+	enrichTask, err := h.store.GetTaskByTaskID(ctx, onCompleted)
+	if err != nil {
+		return fmt.Errorf("find waiting enrich task %s: %w", onCompleted, err)
+	}
+
+	var enrichPayload struct {
+		WaitingFor string `json:"waiting_for"`
+	}
+	if err := json.Unmarshal(enrichTask.Payload, &enrichPayload); err != nil {
+		return fmt.Errorf("parse enrich payload for %s: %w", enrichTask.TaskID, err)
+	}
+	if enrichPayload.WaitingFor != parent.TaskID {
+		return fmt.Errorf("waiting_for mismatch: enrich %s has waiting_for=%q, expected %q",
+			enrichTask.TaskID, enrichPayload.WaitingFor, parent.TaskID)
+	}
+
+	var p map[string]any
+	if err := json.Unmarshal(enrichTask.Payload, &p); err != nil {
+		return fmt.Errorf("parse enrich payload for update %s: %w", enrichTask.TaskID, err)
+	}
+	p["document_id"] = documentID
+	updatedPayload, _ := json.Marshal(p)
+
+	if err := h.store.SetPending(ctx, enrichTask.ID, updatedPayload); err != nil {
+		return fmt.Errorf("activate enrich task %s: %w", enrichTask.TaskID, err)
+	}
+	return nil
 }
 
 func (h *ConsumeTaskHandler) DedupKey(payload json.RawMessage) string {

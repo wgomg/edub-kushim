@@ -8,10 +8,13 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/cache"
 	"github.com/wgomg/edub-kushim/internal/config"
+	"github.com/wgomg/edub-kushim/internal/consumption"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/enrichment"
 	"github.com/wgomg/edub-kushim/internal/pool"
 	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/task"
+	taskhandlers "github.com/wgomg/edub-kushim/internal/task/handlers"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -22,6 +25,7 @@ type Container struct {
 	engine     *search.Engine
 	cache      *cache.Cache
 	dispatcher *task.Dispatcher
+	runner     *task.Runner
 	pools      struct {
 		consume *pool.Pool
 		enrich  *pool.Pool
@@ -74,6 +78,10 @@ func (c *Container) GetCache() (*cache.Cache, error) {
 }
 
 func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
+	if c.dispatcher != nil {
+		return c.dispatcher, nil
+	}
+
 	db, err := c.GetDB()
 	if err != nil {
 		return nil, err
@@ -84,15 +92,33 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 		return nil, err
 	}
 
-	if c.dispatcher == nil {
-		dispatcher, err := task.NewDispatcher(c.config, c.logger, db, cache)
-		if err != nil {
-			return nil, err
-		}
-		c.dispatcher = dispatcher
+	store := task.NewStore(database.NewQueries(db))
+
+	consumer, err := consumption.NewConsumer(c.config, c.logger, db)
+	if err != nil {
+		return nil, err
 	}
 
+	enricher, err := enrichment.NewEnricher(c.config, c.logger, db, cache)
+	if err != nil {
+		return nil, err
+	}
+
+	registry := task.NewRegistry()
+	registry.Register("consume", taskhandlers.NewConsumeTaskHandler(consumer, store, c.logger))
+	registry.Register("enrich", taskhandlers.NewEnrichTaskHandler(enricher))
+
+	c.dispatcher = task.NewDispatcher(c.logger, store, registry)
+	c.runner = task.NewRunner(store, registry, c.logger)
+
 	return c.dispatcher, nil
+}
+
+func (c *Container) GetRunner() (*task.Runner, error) {
+	if _, err := c.GetDispatcher(); err != nil {
+		return nil, err
+	}
+	return c.runner, nil
 }
 
 func (c *Container) GetPool(taskType string) (*pool.Pool, error) {
@@ -107,7 +133,7 @@ func (c *Container) GetPool(taskType string) (*pool.Pool, error) {
 	}
 
 	if *pp == nil {
-		dispatcher, err := c.GetDispatcher()
+		runner, err := c.GetRunner()
 		if err != nil {
 			return nil, err
 		}
@@ -121,7 +147,7 @@ func (c *Container) GetPool(taskType string) (*pool.Pool, error) {
 			workers = max(c.config.Enricher.Workers, 1)
 			interval = 5 * time.Second
 		}
-		*pp = pool.New(c.logger, dispatcher, workers, interval, taskType)
+		*pp = pool.New(c.logger, runner, workers, interval, taskType)
 	}
 	return *pp, nil
 }

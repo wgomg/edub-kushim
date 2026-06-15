@@ -7,6 +7,7 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/enrichment"
+	"github.com/wgomg/edub-kushim/internal/task"
 )
 
 type EnrichTaskHandler struct {
@@ -17,7 +18,7 @@ func NewEnrichTaskHandler(enricher *enrichment.Enricher) *EnrichTaskHandler {
 	return &EnrichTaskHandler{enricher: enricher}
 }
 
-func (h *EnrichTaskHandler) Handle(ctx context.Context, t database.Task) (json.RawMessage, error) {
+func (h *EnrichTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMessage, error) {
 	var p struct {
 		DocumentID string `json:"document_id"`
 	}

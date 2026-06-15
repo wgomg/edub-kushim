@@ -11,11 +11,14 @@ import (
 	"github.com/wgomg/edub-kushim/internal/api/handlers"
 	"github.com/wgomg/edub-kushim/internal/cache"
 	"github.com/wgomg/edub-kushim/internal/config"
+	"github.com/wgomg/edub-kushim/internal/consumption"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/enrichment"
 	"github.com/wgomg/edub-kushim/internal/pool"
 	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/static"
 	"github.com/wgomg/edub-kushim/internal/task"
+	taskhandlers "github.com/wgomg/edub-kushim/internal/task/handlers"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -43,16 +46,30 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 		tagCache = cache.New()
 	}
 
-	dispatcher, err := task.NewDispatcher(&cfg, logger, db, tagCache)
+	store := task.NewStore(queries)
+
+	consumer, err := consumption.NewConsumer(&cfg, logger, db)
 	if err != nil {
-		logger.Fatal("dispatcher: ", err)
+		logger.Fatal("consumer: ", err)
 	}
+
+	enricher, err := enrichment.NewEnricher(&cfg, logger, db, tagCache)
+	if err != nil {
+		logger.Fatal("enricher: ", err)
+	}
+
+	registry := task.NewRegistry()
+	registry.Register("consume", taskhandlers.NewConsumeTaskHandler(consumer, store, logger))
+	registry.Register("enrich", taskhandlers.NewEnrichTaskHandler(enricher))
+
+	dispatcher := task.NewDispatcher(logger, store, registry)
+	runner := task.NewRunner(store, registry, logger)
 
 	consumeWorkers := max(cfg.Consumer.Workers, 1)
 	enrichWorkers := max(cfg.Enricher.Workers, 1)
 
-	consumePool := pool.New(logger, dispatcher, consumeWorkers, 2*time.Second, "consume")
-	enrichPool := pool.New(logger, dispatcher, enrichWorkers, 5*time.Second, "enrich")
+	consumePool := pool.New(logger, runner, consumeWorkers, 2*time.Second, "consume")
+	enrichPool := pool.New(logger, runner, enrichWorkers, 5*time.Second, "enrich")
 
 	registerRoutes(mux, logger, queries, engine, dispatcher, &cfg)
 	registerStaticRoutes(mux)
