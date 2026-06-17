@@ -1,5 +1,6 @@
 # dev directory
 dev/
+docs/dev
 
 # editor directories and files
 .vscode/

@@ -168,3 +168,6 @@ build-tokenizers:
 		cp $(TOKENIZERS_DIR)/src/target/release/libtokenizers_ffi.a $(TOKENIZERS_DIR)/libtokenizers.a; \
 		echo "Built musl-compatible libtokenizers.a"; \
 	fi
+
+fix:
+	go fix -tags "XLA,ORT" ./...
