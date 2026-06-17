@@ -73,21 +73,21 @@
 			'enricher.textreducer.target_words': Number(cfg.enricher.textreducer.target_words),
 			'enricher.contentanalyzer.engine': cfg.enricher.contentanalyzer.engine,
 			'enricher.contentanalyzer.timeout': Number(cfg.enricher.contentanalyzer.timeout),
-			'enricher.contentanalyzer.llm.openai.base_url': cfg.enricher.contentanalyzer.llm.openai.base_url,
-			'enricher.contentanalyzer.llm.openai.model': cfg.enricher.contentanalyzer.llm.openai.model,
-			'enricher.contentanalyzer.llm.openai.token': cfg.enricher.contentanalyzer.llm.openai.token,
-			'enricher.contentanalyzer.llm.anthropic.base_url': cfg.enricher.contentanalyzer.llm.anthropic.base_url,
-			'enricher.contentanalyzer.llm.anthropic.model': cfg.enricher.contentanalyzer.llm.anthropic.model,
-			'enricher.contentanalyzer.llm.anthropic.token': cfg.enricher.contentanalyzer.llm.anthropic.token,
-			'enricher.contentanalyzer.llm.deepseek.base_url': cfg.enricher.contentanalyzer.llm.deepseek.base_url,
-			'enricher.contentanalyzer.llm.deepseek.model': cfg.enricher.contentanalyzer.llm.deepseek.model,
-			'enricher.contentanalyzer.llm.deepseek.token': cfg.enricher.contentanalyzer.llm.deepseek.token,
-			'enricher.contentanalyzer.llm.ollama.base_url': cfg.enricher.contentanalyzer.llm.ollama.base_url,
-			'enricher.contentanalyzer.llm.ollama.model': cfg.enricher.contentanalyzer.llm.ollama.model,
-			'enricher.contentanalyzer.llm.ollama.token': cfg.enricher.contentanalyzer.llm.ollama.token,
+			...(providerKey
+				? {
+						[`enricher.contentanalyzer.llm.${providerKey}.base_url`]:
+							cfg.enricher.contentanalyzer.llm[providerKey].base_url,
+						[`enricher.contentanalyzer.llm.${providerKey}.model`]:
+							cfg.enricher.contentanalyzer.llm[providerKey].model,
+						[`enricher.contentanalyzer.llm.${providerKey}.token`]:
+							cfg.enricher.contentanalyzer.llm[providerKey].token
+					}
+				: {}),
 			'enricher.tagmatcher.engine': cfg.enricher.tagmatcher.engine,
 			'enricher.tagmatcher.timeout': Number(cfg.enricher.tagmatcher.timeout),
-			'enricher.tagmatcher.reduce_target_words': Number(cfg.enricher.tagmatcher.reduce_target_words),
+			'enricher.tagmatcher.reduce_target_words': Number(
+				cfg.enricher.tagmatcher.reduce_target_words
+			),
 			'enricher.tagmatcher.chunk_size': Number(cfg.enricher.tagmatcher.chunk_size),
 			'enricher.tagmatcher.hugot.model': cfg.enricher.tagmatcher.hugot.model,
 			'enricher.tagmatcher.hugot.backend': cfg.enricher.tagmatcher.hugot.backend
@@ -408,7 +408,7 @@
 
 			{#if providerKey}
 				<div class="mt-4 rounded-lg border border-clay-800 bg-clay-950 p-4">
-					<h3 class="mb-3 text-sm font-semibold capitalize text-parchment-200">
+					<h3 class="mb-3 text-sm font-semibold text-parchment-200 capitalize">
 						{providerKey} provider
 					</h3>
 					<div class="grid gap-4 sm:grid-cols-2">
@@ -506,8 +506,9 @@
 					/>
 				</div>
 				<div>
-					<label for="tag-matcher-chunk-size" class="mb-1 block text-sm font-medium text-parchment-200"
-						>Chunk size</label
+					<label
+						for="tag-matcher-chunk-size"
+						class="mb-1 block text-sm font-medium text-parchment-200">Chunk size</label
 					>
 					<input
 						id="tag-matcher-chunk-size"
@@ -518,8 +519,9 @@
 					/>
 				</div>
 				<div>
-					<label for="tag-matcher-hugot-model" class="mb-1 block text-sm font-medium text-parchment-200"
-						>Hugot model</label
+					<label
+						for="tag-matcher-hugot-model"
+						class="mb-1 block text-sm font-medium text-parchment-200">Hugot model</label
 					>
 					<input
 						id="tag-matcher-hugot-model"
@@ -563,8 +565,9 @@
 					</select>
 				</div>
 				<div>
-					<label for="text-reducer-timeout" class="mb-1 block text-sm font-medium text-parchment-200"
-						>Timeout (s)</label
+					<label
+						for="text-reducer-timeout"
+						class="mb-1 block text-sm font-medium text-parchment-200">Timeout (s)</label
 					>
 					<input
 						id="text-reducer-timeout"
