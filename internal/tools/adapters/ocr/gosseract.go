@@ -184,7 +184,7 @@ func (o *Gosseract) CanHandle(mimeType string) bool {
 }
 
 func (o *Gosseract) Name() string {
-	return "gosseract"
+	return config.OCR.Gosseract
 }
 
 // samplesToRGBA converts raw RGB samples (width * height * 3 bytes) to image.RGBA.

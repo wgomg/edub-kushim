@@ -145,5 +145,5 @@ func (l *LlmAnthropic) Analyze(ctx context.Context, text string, docTypes []data
 }
 
 func (l *LlmAnthropic) Name() string {
-	return "llmanthropic"
+	return config.ContentAnalyzer.Anthropic
 }

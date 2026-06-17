@@ -86,5 +86,16 @@ export const api = {
 			}),
 
 		delete: (id) => request(`/api/v1/saved-searches/${id}`, { method: 'DELETE' })
+	},
+
+	config: {
+		get: () => request('/wizard/config'),
+		update: (body) =>
+			request('/wizard/config', {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(body)
+			}),
+		status: () => request('/wizard/config/status')
 	}
 };

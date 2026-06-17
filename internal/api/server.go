@@ -29,6 +29,7 @@ type Server struct {
 	pools      struct {
 		consume *pool.Pool
 		enrich  *pool.Pool
+		config  *pool.Pool
 	}
 }
 
@@ -61,6 +62,7 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 	registry := task.NewRegistry()
 	registry.Register("consume", taskhandlers.NewConsumeTaskHandler(consumer, store, logger))
 	registry.Register("enrich", taskhandlers.NewEnrichTaskHandler(enricher))
+	registry.Register("config", taskhandlers.NewConfigTaskHandler(logger))
 
 	dispatcher := task.NewDispatcher(logger, store, registry)
 	runner := task.NewRunner(store, registry, logger)
@@ -70,6 +72,7 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 
 	consumePool := pool.New(logger, runner, consumeWorkers, 2*time.Second, "consume")
 	enrichPool := pool.New(logger, runner, enrichWorkers, 5*time.Second, "enrich")
+	configPool := pool.New(logger, runner, 1, 5*time.Second, "config")
 
 	registerRoutes(mux, logger, queries, engine, dispatcher, &cfg)
 	registerStaticRoutes(mux)
@@ -91,6 +94,7 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 	}
 	s.pools.consume = consumePool
 	s.pools.enrich = enrichPool
+	s.pools.config = configPool
 	return s
 }
 
@@ -139,6 +143,11 @@ func registerRoutes(mux *http.ServeMux, logger *utils.Logger, queries *database.
 	consumeHandler := handlers.NewConsumeHandler(cfg, logger, dispatcher)
 	mux.HandleFunc("POST /api/v1/consume", consumeHandler.Consume)
 
+	configHandler := handlers.NewConfigHandler(cfg, queries, logger, dispatcher)
+	mux.HandleFunc("GET /wizard/config", configHandler.GetConfig)
+	mux.HandleFunc("PUT /wizard/config", configHandler.PutConfig)
+	mux.HandleFunc("GET /wizard/config/status", configHandler.ConfigStatus)
+
 	taskHandler := handlers.NewTaskHandler(queries, logger)
 	mux.HandleFunc("GET /api/v1/tasks", taskHandler.ListTasks)
 	mux.HandleFunc("GET /api/v1/tasks/{id}", taskHandler.GetTask)
@@ -180,6 +189,7 @@ func parambagMiddleware(next http.Handler) http.Handler {
 func (s *Server) Start() error {
 	s.pools.consume.Start(context.Background())
 	s.pools.enrich.Start(context.Background())
+	s.pools.config.Start(context.Background())
 	s.logger.Info(nil, "Starting HTTP server on %s", s.addr)
 	return s.httpServer.ListenAndServe()
 }
@@ -195,6 +205,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	defer cancel()
 	s.pools.consume.Stop(stopCtx)
 	s.pools.enrich.Stop(stopCtx)
+	s.pools.config.Stop(stopCtx)
 
 	return nil
 }

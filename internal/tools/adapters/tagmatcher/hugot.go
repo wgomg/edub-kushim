@@ -169,7 +169,7 @@ func (h *Hugot) MatchEach(ctx context.Context, docId string, queries []string, t
 }
 
 func (h *Hugot) Name() string {
-	return "hugot"
+	return config.TagMatcher.Hugot
 }
 
 // Encode computes embeddings for a batch of texts. Short texts (≤ chunkSize tokens)

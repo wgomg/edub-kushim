@@ -136,9 +136,10 @@
 | `/` (dashboard)   | ✓      | Health + summary stats + recent docs                                       |
 | `/documents`      | ✓      | Structured search bar + filter panel + saved searches + sortable DataTable |
 | `/documents/[id]` | ◐      | PDF preview + metadata sidebar; no tags/people/type displayed yet          |
-| `/tags`           | ✗      | Placeholder: "Tag management will go here."                                |
-| `/tasks`          | ✓      | Batch list + task drill-down                                               |
-| `/tasks/[id]`     | ✗      | Route does not exist                                                       |
+| `/settings`       | ✓      | Configuration form (OCR engine, languages, consumer/enricher workers, PDF optimizer, etc.)         |
+| `/tags`           | ✗      | Placeholder: "Tag management will go here."                                                        |
+| `/tasks`          | ✓      | Batch list + task drill-down                                                                       |
+| `/tasks/[id]`     | ✗      | Route does not exist                                                                               |
 
 ### Quality
 
@@ -165,7 +166,7 @@
 
 | #   | Feature                                  | Description                                                                                        |
 | --- | ---------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| 1   | **Configuration/setup wizard in web UI** | In-app configuration page (LLM providers, Tesseract languages, storage paths, model downloads)     |
+| 1   | **Configuration/setup wizard in web UI** | ✓ In-app configuration page (LLM providers, Tesseract languages, storage paths, model downloads)   |
 | 2   | **Docker Compose quick-start**           | Single `docker compose up` command to run the full stack — eliminates build friction for new users |
 | 3   | **Document detail — tags/people/type**   | Display tags, people, and document type in the sidebar                                             |
 | 4   | **Document metadata editing**            | Detail page sidebar — edit tags, people, type, title (override LLM)                                |

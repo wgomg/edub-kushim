@@ -34,7 +34,7 @@ type ContentAnalyzer interface {
 
 ### Factory
 
-`NewContentAnalyzer(logger, cfg, llmCfg)` — Selects provider by `cfg.Command`: `"llmopenai"`, `"llmanthropic"`, `"llmdeepseek"`, `"llmollama"`. Default: OpenAI.
+`NewContentAnalyzer(logger, cfg, llmCfg)` — Selects provider by `cfg.Command` using `config.ContentAnalyzer` constants (`OpenAI`, `Anthropic`, `DeepSeek`, `Ollama`). Default: OpenAI.
 
 ---
 

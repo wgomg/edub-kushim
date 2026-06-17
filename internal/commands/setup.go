@@ -10,15 +10,46 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/knights-analytics/hugot"
 	"github.com/spf13/viper"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/wizard"
 	_ "modernc.org/sqlite"
 )
 
 func RunSetup(args []string, logger *utils.Logger) error {
+	var cli bool
+	p := NewFlagParser(args)
+	if err := p.Bool("--cli", &cli); err != nil {
+		return err
+	}
+
+	if cli {
+		return runSetupCLI(args, logger)
+	}
+	return runSetupWizard(args, logger)
+}
+
+func runSetupWizard(args []string, logger *utils.Logger) error {
+	addr := "0.0.0.0:8420"
+
+	srv := wizard.NewServer(addr, logger)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.Start()
+	}()
+
+	logger.Info(nil, "Setup wizard running at http://%s", addr)
+
+	select {
+	case err := <-errCh:
+		return err
+	}
+}
+
+func runSetupCLI(args []string, logger *utils.Logger) error {
 	var langs, inboxDir, storageDir, dbPath, optimizationFallback, ocrEngine, pdfEngine string
 	var resetDb bool
 
@@ -67,11 +98,11 @@ Flags:
 
 	langList := strings.Split(langs, ",")
 
-	validOCREngines := []string{"gosseract", "ocrmypdf"}
+	validOCREngines := []string{config.OCR.Gosseract, config.OCR.OcrMyPdf}
 	if ocrEngine != "" && !slices.Contains(validOCREngines, ocrEngine) {
 		return fmt.Errorf("invalid --consumer-ocr-engine %q: must be one of %v", ocrEngine, validOCREngines)
 	}
-	validPdfEngines := []string{"mupdf", "gs"}
+	validPdfEngines := []string{config.PdfOptimizer.MuPDF, config.PdfOptimizer.GS}
 	if pdfEngine != "" && !slices.Contains(validPdfEngines, pdfEngine) {
 		return fmt.Errorf("invalid --consumer-pdfoptimizer-engine %q: must be one of %v", pdfEngine, validPdfEngines)
 	}
@@ -101,13 +132,12 @@ Flags:
 		cfg.Db.Path = dbPath
 	}
 
-	if pdfEngine == "gs" {
+	if pdfEngine == config.PdfOptimizer.GS {
 		optimizationFallback = ""
 	} else if optimizationFallback != "" {
 		cfg.Consumer.PdfOptimizer.Fallback = optimizationFallback
 	}
 
-	// Write minimal config.yaml with only user-specified overrides
 	v := viper.New()
 	v.SetConfigType("yaml")
 	v.Set("consumer.ocr.languages", langList)
@@ -136,7 +166,6 @@ Flags:
 	}
 	logger.Info(nil, "created config: %s", configPath)
 
-	// Create required directories
 	if err := os.MkdirAll(cfg.Db.Path, 0755); err != nil {
 		return fmt.Errorf("create data directory: %w", err)
 	}
@@ -152,7 +181,6 @@ Flags:
 		return fmt.Errorf("create tessdata directory: %w", err)
 	}
 
-	// Initialize database
 	dsn := filepath.Join(cfg.Db.Path, cfg.Db.Name)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -179,37 +207,32 @@ Flags:
 	db.Close()
 	logger.Info(nil, "created database: %s", dsn)
 
-	// Download hugot model
-	if err := setupHugotModel(context.Background(), *configDir, logger); err != nil {
+	cfg, err = config.Load(*configDir)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+
+	if err := config.DownloadHugotModel(context.Background(), cfg, logger); err != nil {
 		return fmt.Errorf("hugot model download: %w", err)
 	}
 
-	if cfg.Consumer.PdfOptimizer.Engine == "mupdf" && optimizationFallback != "" {
+	if cfg.Consumer.PdfOptimizer.Engine == config.PdfOptimizer.MuPDF && optimizationFallback != "" {
 		if _, err := exec.LookPath(optimizationFallback); err != nil {
 			logger.Info(nil, "WARNING: --consumer-pdfoptimizer-fallback %s set but %q not found on PATH. "+
 				"Install it before running 'kushim consume'.", optimizationFallback, optimizationFallback)
 		}
 	}
 
-	if cfg.Consumer.OCR.Engine == "gosseract" {
+	if cfg.Consumer.OCR.Engine == config.OCR.Gosseract {
 		for _, lang := range langList {
-			dest := filepath.Join(tessdataDir, lang+".traineddata")
-			if _, err := os.Stat(dest); err == nil {
-				logger.Info(nil, "already downloaded: %s", lang)
-				continue
+			if err := config.DownloadTessdataLanguage(context.Background(), cfg, lang); err != nil {
+				return err
 			}
-
-			url := fmt.Sprintf("https://github.com/tesseract-ocr/tessdata_fast/raw/main/%s.traineddata", lang)
-			logger.Info(nil, "downloading %s...", lang)
-
-			if err := downloadFile(url, dest); err != nil {
-				os.Remove(dest)
-				return fmt.Errorf("download %s: %w", lang, err)
-			}
+			logger.Info(nil, "downloaded: %s", lang)
 		}
 	}
 
-	if cfg.Consumer.OCR.Engine == "gosseract" {
+	if cfg.Consumer.OCR.Engine == config.OCR.Gosseract {
 		logger.Info(nil, "setup complete — %d languages in %s", len(langList), tessdataDir)
 	} else {
 		logger.Info(nil, "setup complete — %d languages configured with %s engine",
@@ -220,47 +243,6 @@ Flags:
 	return nil
 }
 
-func downloadFile(url, dest string) error {
-	cmd := exec.Command("curl", "-fsSL", "--retry", "3", "-o", dest, url)
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	return cmd.Run()
-}
-
-const hugotModelHFRepo = "BAAI/bge-m3"
-const hugotModelDirName = "bge-m3"
-
-func setupHugotModel(ctx context.Context, configDir string, logger *utils.Logger) error {
-	modelsParent := filepath.Join(configDir, "tagmatcher", "hugot", "models")
-	targetModelPath := filepath.Join(modelsParent, hugotModelDirName)
-
-	if _, err := os.Stat(targetModelPath); err == nil {
-		logger.Info(nil, "hugot model already downloaded at %s", targetModelPath)
-		return nil
-	}
-
-	logger.Info(nil, "downloading %s model for hugot...", hugotModelHFRepo)
-
-	opts := hugot.NewDownloadOptions()
-	opts.Verbose = true
-	opts.OnnxFilePath = "onnx/model.onnx"
-	opts.ExternalDataPath = "onnx/model.onnx_data"
-
-	_, err := hugot.DownloadModel(ctx, hugotModelHFRepo, modelsParent, opts)
-	if err != nil {
-		return fmt.Errorf("download %s: %w", hugotModelHFRepo, err)
-	}
-
-	hfDir := strings.ReplaceAll(hugotModelHFRepo, "/", "_")
-	downloadedPath := filepath.Join(modelsParent, hfDir)
-	if err := os.Rename(downloadedPath, targetModelPath); err != nil {
-		return fmt.Errorf("rename model dir %s → %s: %w", downloadedPath, targetModelPath, err)
-	}
-
-	logger.Info(nil, "hugot model downloaded to %s", targetModelPath)
-	return nil
-}
-
 func setupHandler(container *Container, args []string) error {
-	return fmt.Errorf("setup must be run without a config file — use 'kushim setup --languages ...' directly")
+	return fmt.Errorf("setup must be run without a config file — use 'kushim setup' for the wizard or 'kushim setup --cli --languages ...' for terminal setup")
 }

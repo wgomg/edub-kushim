@@ -83,5 +83,5 @@ func (o *OcrMyPdf) CanHandle(mimeType string) bool {
 }
 
 func (o *OcrMyPdf) Name() string {
-	return "ocrmypdf"
+	return config.OCR.OcrMyPdf
 }

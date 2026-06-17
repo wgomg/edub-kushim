@@ -23,7 +23,7 @@ func NewMuPDF(logger *utils.Logger, cfg config.ToolConfig) (*MuPDF, error) {
 }
 
 func (m *MuPDF) Name() string {
-	return "mupdf"
+	return config.PdfOptimizer.MuPDF
 }
 
 func (m *MuPDF) Optimize(ctx context.Context, docId, path string) (*string, error) {

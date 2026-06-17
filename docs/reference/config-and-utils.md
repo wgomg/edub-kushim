@@ -32,6 +32,49 @@
 - `defaultConsolidationSimilarity(modelShortName string) float64` — Tag-to-tag thresholds (bge-m3: 0.82)
 - `finalizeConfig(cfg, configDir) error`
 
+## Engine Identifier Constants
+
+Named constants for all adapter engine strings, used throughout the codebase
+instead of string literals:
+
+| Group              | Constants                                                                                     |
+| ------------------ | --------------------------------------------------------------------------------------------- |
+| `ContentAnalyzer`  | `OpenAI` (`"llmopenai"`), `Anthropic` (`"llmanthropic"`), `DeepSeek` (`"llmdeepseek"`), `Ollama` (`"llmollama"`) |
+| `OCR`              | `Gosseract` (`"gosseract"`), `OcrMyPdf` (`"ocrmypdf"`)                                       |
+| `PdfOptimizer`     | `MuPDF` (`"mupdf"`), `GS` (`"gs"`)                                                           |
+| `TextExtractor`    | `MuPDF` (`"mupdf"`), `GoPdf` (`"gopdf"`), `PdfToText` (`"pdftotext"`)                        |
+| `TextReducer`      | `TextRank` (`"textrank"`)                                                                     |
+| `TagMatcher`       | `Hugot` (`"hugot"`)                                                                           |
+
+## AvailableEngines
+
+`AvailableEngines` is a `map[string][]EngineEntry` that lists all available engines
+per tool category, used by the frontend settings UI to populate select dropdowns:
+
+| Key                  | Entries                                           |
+| -------------------- | ------------------------------------------------- |
+| `content_analyzer`   | openai, anthropic, deepseek, ollama               |
+| `ocr`                | gosseract, ocrmypdf                               |
+| `pdf_optimizer`      | mupdf, gs                                         |
+| `text_extractor`     | mupdf, gopdf, pdftotext                           |
+| `text_reducer`       | textrank                                          |
+| `tag_matcher`        | hugot                                             |
+
+`EngineEntry` has `Value string` and `Label string` fields for UI display.
+
+---
+
+# Config Setup (`internal/config/setup.go`)
+
+## Functions
+
+- `Bootstrap(configDir string) (*Config, error)` — Creates config directory, subdirectories (data, inbox, storage, tessdata), writes skeleton `config.yaml`, initializes SQLite schema. Returns the default config.
+- `SaveMap(configDir string, body map[string]any) error` — Writes arbitrary key-value map to `config.yaml` using viper. Keys use dot notation (e.g., `"consumer.ocr.languages"`).
+- `MissingTessdataLanguages(cfg *Config) []string` — Returns languages whose `.traineddata` files are missing from the tessdata directory. Only checks when OCR engine is `"gosseract"`.
+- `MissingHugotModel(cfg *Config) bool` — Returns true if the Hugot model directory does not exist.
+- `DownloadTessdataLanguage(ctx context.Context, cfg *Config, lang string) error` — Downloads a single tessdata language file from GitHub. Idempotent (skips if already present).
+- `DownloadHugotModel(ctx context.Context, cfg *Config, logger *utils.Logger) error` — Downloads the Hugot ONNX model from HuggingFace. Idempotent.
+
 ---
 
 # Cache (`internal/cache/`)
@@ -153,7 +196,8 @@
 
 ## See Also
 
-- [API](api.md) — Uses ParamBag middleware
-- [CLI](cli.md) — Uses ConfigDir, Logger, FlagParser
+- [API](api.md) — Uses ParamBag middleware, ConfigHandler for `/wizard/config` endpoints
+- [CLI](cli.md) — Uses ConfigDir, Logger, FlagParser, config setup functions
 - [Pipeline](pipeline.md) — Uses Config structs for Consumer/Enricher settings
 - [Tools](tools.md) — Uses Config for tool adapter selection
+- [Task System](task-system.md) — ConfigTaskHandler processes config-related async tasks

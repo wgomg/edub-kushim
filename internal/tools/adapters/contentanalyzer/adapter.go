@@ -32,16 +32,16 @@ type AnalysisResult struct {
 
 func NewContentAnalyzer(logger *utils.Logger, cfg config.ToolConfig, llmCfg *config.LlmToolsConfig) (ContentAnalyzer, error) {
 	switch cfg.Command {
-	case "llmopenai":
+	case config.ContentAnalyzer.OpenAI:
 		ca, err := NewLlmOpenAi(logger, cfg, llmCfg.OpenAI)
 		return ca, err
-	case "llmanthropic":
+	case config.ContentAnalyzer.Anthropic:
 		ca, err := NewLlmAnthropic(logger, cfg, llmCfg.Anthropic)
 		return ca, err
-	case "llmdeepseek":
+	case config.ContentAnalyzer.DeepSeek:
 		ca, err := NewLlmDeepSeek(logger, cfg, llmCfg.DeepSeek)
 		return ca, err
-	case "llmollama":
+	case config.ContentAnalyzer.Ollama:
 		ca, err := NewLlmOllama(logger, cfg, llmCfg.Ollama)
 		return ca, err
 	default:

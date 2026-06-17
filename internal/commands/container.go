@@ -29,6 +29,7 @@ type Container struct {
 	pools      struct {
 		consume *pool.Pool
 		enrich  *pool.Pool
+		config  *pool.Pool
 	}
 }
 
@@ -46,7 +47,7 @@ func NewContainerWithDB(cfg *config.Config, logger *utils.Logger, db *sql.DB) *C
 
 func (c *Container) GetDB() (*sql.DB, error) {
 	if c.db == nil {
-		db, err := database.NewSQLiteDB(c.config.Db)
+		db, err := database.NewSQLiteDB(c.config.Db.Path, c.config.Db.Name)
 		if err != nil {
 			return nil, err
 		}
@@ -107,6 +108,7 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 	registry := task.NewRegistry()
 	registry.Register("consume", taskhandlers.NewConsumeTaskHandler(consumer, store, c.logger))
 	registry.Register("enrich", taskhandlers.NewEnrichTaskHandler(enricher))
+	registry.Register("config", taskhandlers.NewConfigTaskHandler(c.logger))
 
 	c.dispatcher = task.NewDispatcher(c.logger, store, registry)
 	c.runner = task.NewRunner(store, registry, c.logger)
@@ -128,6 +130,8 @@ func (c *Container) GetPool(taskType string) (*pool.Pool, error) {
 		pp = &c.pools.consume
 	case "enrich":
 		pp = &c.pools.enrich
+	case "config":
+		pp = &c.pools.config
 	default:
 		return nil, fmt.Errorf("unknown pool task type: %q", taskType)
 	}
@@ -145,6 +149,9 @@ func (c *Container) GetPool(taskType string) (*pool.Pool, error) {
 			interval = 2 * time.Second
 		case "enrich":
 			workers = max(c.config.Enricher.Workers, 1)
+			interval = 5 * time.Second
+		case "config":
+			workers = 1
 			interval = 5 * time.Second
 		}
 		*pp = pool.New(c.logger, runner, workers, interval, taskType)
@@ -173,6 +180,11 @@ func (c *Container) Close() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		c.pools.enrich.Stop(ctx)
+	}
+	if c.pools.config != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		c.pools.config.Stop(ctx)
 	}
 	if c.db != nil {
 		c.db.Close()

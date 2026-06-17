@@ -125,7 +125,7 @@ func (t *TextRank) Reduce(ctx context.Context, content string, chunkSize int, ta
 }
 
 func (t *TextRank) Name() string {
-	return "textrank"
+	return config.TextReducer.TextRank
 }
 
 var sentenceBreak = regexp.MustCompile(`[.!?]\s+|\n\n`)

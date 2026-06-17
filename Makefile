@@ -22,6 +22,11 @@ web-build:
 	rm -rf internal/static/build
 	cp -r web/build internal/static/build
 
+wizard-build:
+	cd web-wizard && npm ci && npm run build
+	rm -rf internal/wizard/static
+	cp -r web-wizard/build internal/wizard/static
+
 build:
 	go build -tags "XLA,ORT" -o $(BINARY) ./cmd/kushim/main.go
 	go build -tags "XLA,ORT" -o $(EDUB_BINARY) ./cmd/edub/main.go

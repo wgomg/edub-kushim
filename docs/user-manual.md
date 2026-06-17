@@ -8,8 +8,11 @@ Both share the same OCR, text extraction, and PDF optimization pipeline.
 ## Quick Start
 
 ```bash
-# One‑time: create config, download OCR languages + Hugot model (BAAI/bge-m3)
-kushim setup --languages eng,spa
+# One‑time setup — launches a web wizard at http://0.0.0.0:8420
+kushim setup
+
+# Or use terminal-based setup (headless / CI)
+kushim setup --cli --languages eng,spa
 
 # Process documents
 cp my-documents/*.pdf ~/.config/edub-kushim/inbox/
@@ -47,13 +50,24 @@ Generate a config file, create required directories, initialize the SQLite
 database schema, download OCR language data from `tessdata_fast`, and
 download the Hugot embedding model (`BAAI/bge-m3`).
 
+By default, `kushim setup` launches a **web-based setup wizard** at
+`http://0.0.0.0:8420`. The wizard provides a four-step guided flow:
+
+1. **Config directory** — specify where configuration, database, and models are stored
+2. **Settings** — choose OCR engine, add languages, configure worker counts
+3. **Progress** — shows download progress for tessdata and Hugot model
+4. **Completion** — ready to run `edub` to start the server
+
+Use `--cli` for terminal-based setup in headless or CI environments:
+
 ```
-kushim setup --languages eng,spa
+kushim setup --cli --languages eng,spa
 ```
 
 | Flag                               | Default                | Description                                                 |
 | ---------------------------------- | ---------------------- | ----------------------------------------------------------- |
-| `--languages`                      | — (required)           | Comma‑separated OCR language codes (e.g. `eng,spa,deu`)     |
+| `--cli`                            | `false`                | Run terminal-based setup instead of the web wizard          |
+| `--languages`                      | — (required for CLI)   | Comma‑separated OCR language codes (e.g. `eng,spa,deu`)     |
 | `--inbox-path`                     | _config-dir_`/inbox`   | Consumption directory (scanned for files)                   |
 | `--storage-path`                   | _config-dir_`/storage` | Processed file storage root                                 |
 | `--database-path`                  | _config-dir_`/data`    | SQLite database directory                                   |
@@ -456,6 +470,54 @@ DELETE /api/v1/saved-searches/{id}
 
 Response `204 No Content`.
 
+### Configuration (Wizard API)
+
+Read and update the configuration via the API. These endpoints are used by
+both the web wizard and the in-app settings page.
+
+```
+GET /wizard/config
+```
+
+Returns the current configuration as a `ConfigResponse` JSON object with
+`consumer` and `enricher` sections plus `available_engines` for UI dropdowns.
+Returns `{}` when no config has been bootstrapped yet.
+
+```
+PUT /wizard/config
+Content-Type: application/json
+
+{ "config_dir": "/home/user/.config/edub-kushim" }
+```
+
+Two-phase API:
+- **Bootstrap phase** — send `{ "config_dir": "..." }` to create directories,
+  write skeleton config, and initialize the database. Returns `200` with
+  `{ "config_dir": "..." }`.
+- **Update phase** — send settings key-value pairs (dot notation) to update
+  the config and trigger background downloads:
+
+```json
+{
+  "consumer.ocr.engine": "gosseract",
+  "consumer.ocr.languages": ["eng", "spa"],
+  "consumer.workers": 2,
+  "enricher.workers": 2
+}
+```
+
+Returns `201` with `{ "pending_tasks": 3 }` when downloads are enqueued,
+or `200` with `{ "configured": true }` when all dependencies are already present.
+
+```
+GET /wizard/config/status
+```
+
+Returns `{ "configured": bool, "pending_tasks": int, "errors": []string }`.
+The wizard and settings page poll this endpoint to track download progress.
+
+---
+
 ### Consume
 
 Enqueue all files in the consumption directory as tasks.
@@ -842,7 +904,7 @@ ensures enrichment never runs before the document is fully ingested.
 edub
 ```
 
-The server starts the task queue workers (consume and enrich pools)
+The server starts the task queue workers (consume, enrich, and config pools)
 automatically. Logs are written to stdout. Graceful shutdown on
 SIGINT/SIGTERM.
 
@@ -854,3 +916,31 @@ edub version
 # Start server (default when no command is given)
 edub
 ```
+
+## Settings Page
+
+The main web UI includes a **Settings** page at `/settings` that provides
+a structured form for all user-configurable settings:
+
+- **OCR**: engine selector, languages list (add/remove), timeout
+- **Consumer**: worker count, PDF optimizer engine, text extractor engine,
+  delete original after processing toggle
+- **Enricher**: worker count, content analyzer engine, tag matcher engine,
+  text reducer engine
+
+Changes are saved via the `/wizard/config` API and trigger background
+downloads for any missing tessdata or Hugot model files. A spinner and
+pending-task counter show download progress.
+
+## Build: Setup Wizard
+
+The setup wizard is a separate SvelteKit SPA located in `web-wizard/`. To
+rebuild it:
+
+```bash
+make wizard-build         # Build SvelteKit wizard, copy to internal/wizard/static
+```
+
+The wizard uses the same design system (clay/gold/lapis/parchment palette)
+and is embedded into the `kushim` binary via `//go:embed` on
+`internal/wizard/static/`.

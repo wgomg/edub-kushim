@@ -46,5 +46,5 @@ func (p *PDFToText) CanHandle(mimeType string) bool {
 }
 
 func (p *PDFToText) Name() string {
-	return "pdftotext"
+	return config.TextExtractor.PdfToText
 }

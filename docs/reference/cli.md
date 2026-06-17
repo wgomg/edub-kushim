@@ -37,16 +37,16 @@
 
 ### Struct
 
-- `Container` — `config`, `logger`, `db`, `engine`, `cache`, `dispatcher`, `pools struct { consume *pool.Pool; enrich *pool.Pool }`
+- `Container` — `config`, `logger`, `db`, `engine`, `cache`, `dispatcher`, `pools struct { consume *pool.Pool; enrich *pool.Pool; config *pool.Pool }`
   - **Methods**:
     - `NewContainer(cfg, logger)` — No DB
     - `NewContainerWithDB(cfg, logger, db)` — With provided DB
     -     `GetDB() (*sql.DB, error)` — Creates DB lazily, runs goose migrations on first open
     - `GetCache() (*cache.Cache, error)` — Builds tag embedding cache lazily via `cache.BuildTagCache`
     - `GetDispatcher() (*task.Dispatcher, error)` — Lazily creates dispatcher with cache
-    - `GetPool(taskType) (*pool.Pool, error)` — Returns the pool for "consume" or "enrich", lazily creates with dispatcher
+    - `GetPool(taskType) (*pool.Pool, error)` — Returns the pool for "consume", "enrich", or "config", lazily creates with dispatcher. Config pool uses 1 worker and 5s poll interval.
     - `GetSearchEngine() (*search.Engine, error)`
-    - `Close()` — Stops both pools if created, closes DB
+    - `Close()` — Stops all pools if created, closes DB
 
 ---
 
@@ -74,10 +74,10 @@
 
 ### Functions
 
-- `RunSetup(args, logger) error` — Accepts `--languages`, `--inbox-path`, `--storage-path`, `--database-path`, `--consumer-pdfoptimizer-fallback`, `--consumer-pdfoptimizer-engine`, `--consumer-ocr-engine`, `--reset-database`. Downloads Tesseract language data and Hugot model (`BAAI/bge-m3`). Creates config.yaml, directories, initializes database schema (or resets it with `--reset-database`).
-- `downloadFile(url, dest) error` — Downloads via curl
-- `setupHugotModel(ctx, configDir, logger) error` — Downloads Hugot model using `hugot.DownloadModel`, renames to model short name
-- `setupHandler(c, args) error` — Returns error (setup must be run without config)
+- `RunSetup(args, logger) error` — Dispatches to either `runSetupWizard` (default) or `runSetupCLI` (when `--cli` flag is set).
+- `runSetupWizard(args, logger) error` — Starts a standalone HTTP wizard server on `0.0.0.0:8420` serving the embedded SvelteKit wizard SPA. The server bootstraps config on first PUT request.
+- `runSetupCLI(args, logger) error` — Accepts `--languages`, `--inbox-path`, `--storage-path`, `--database-path`, `--consumer-pdfoptimizer-fallback`, `--consumer-pdfoptimizer-engine`, `--consumer-ocr-engine`, `--reset-database`. Downloads Tesseract language data and Hugot model (`BAAI/bge-m3`). Creates config.yaml, directories, initializes database schema (or resets it with `--reset-database`).
+- `setupHandler(c, args) error` — Returns error telling the user to use `kushim setup` for the wizard or `kushim setup --cli --languages ...` for terminal setup
 
 ---
 

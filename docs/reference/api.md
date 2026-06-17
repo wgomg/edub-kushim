@@ -121,6 +121,42 @@
 
 ---
 
+## `handlers/config.go`
+
+### Struct
+
+- `ConfigHandler`
+  - **Fields**: `cfg *config.Config`, `queries *database.Queries`, `logger *utils.Logger`, `dispatcher *task.Dispatcher`, `OnBootstrap func(configDir string) (*config.Config, *database.Queries, *task.Dispatcher, error)`
+  - **Methods**:
+    - `NewConfigHandler(cfg, queries, logger, dispatcher) *ConfigHandler`
+    - `GetConfig(w, r)` — `GET /wizard/config` — Returns user-configurable settings as `ConfigResponse` (consumer + enricher sections). Returns `{}` when no config is loaded (wizard not yet bootstrapped).
+    - `PutConfig(w, r)` — `PUT /wizard/config` — Two-phase: if `config_dir` is present and no config exists, bootstraps config directory, DB, and skeleton YAML. Otherwise writes config via `SaveMap`, reloads, and enqueues config tasks for missing downloads (tessdata, hugot). Returns `200` or `201` with pending task count.
+    - `ConfigStatus(w, r)` — `GET /wizard/config/status` — Returns `ConfigStatusResponse` with `configured` flag, `pending_tasks` count, and any `errors`.
+
+---
+
+## `types/config.go`
+
+### Structs
+
+- `ConfigResponse` — `Consumer ConsumerConfigResponse`, `Enricher EnricherConfigResponse`
+- `ConsumerConfigResponse` — `DeleteOriginal bool`, `Workers int`, `TextExtractor TextExtractorResponse`, `PdfOptimizer PdfOptimizerResponse`, `OCR OCRResponse`
+- `TextExtractorResponse` — `Engine string`, `Timeout int`
+- `PdfOptimizerResponse` — `Engine string`, `Fallback string`, `Timeout int`
+- `OCRResponse` — `Engine string`, `Languages []string`, `DataDir string`, `Timeout int`
+- `EnricherConfigResponse` — `Workers int`, `TextReducer TextReducerResponse`, `ContentAnalyzer ContentAnalyzerResponse`, `TagMatcher TagMatcherResponse`
+- `TextReducerResponse` — `Engine string`, `Timeout int`, `TargetWords int`
+- `ContentAnalyzerResponse` — `Engine string`, `Timeout int`
+- `TagMatcherResponse` — `Engine string`, `Timeout int`, `ReduceTargetWords int`, `ChunkSize int`, `Hugot HugotResponse`
+- `HugotResponse` — `Model string`, `Backend string`
+- `ConfigStatusResponse` — `Configured bool`, `PendingTasks int`, `Errors []string`
+
+### Functions
+
+- `ConfigResponseFrom(cfg *config.Config) ConfigResponse` — Maps internal config to the API response, excluding internal/computed fields (LLM tokens, model paths, similarity thresholds, etc.)
+
+---
+
 ## `handlers/saved_search.go`
 
 ### Struct
@@ -166,15 +202,33 @@
 
 ## Route Registration (`server.go`)
 
-New routes added:
+All registered routes:
 
 ```go
+mux.HandleFunc("GET /health", ...)
+
+mux.HandleFunc("GET /api/v1/documents", docHandler.ListDocuments)
+mux.HandleFunc("GET /api/v1/documents/{id}", docHandler.GetDocument)
+mux.HandleFunc("GET /api/v1/documents/{id}/file", docHandler.GetDocumentFile)
+mux.HandleFunc("GET /api/v1/documents/search", docHandler.SearchDocuments)
 mux.HandleFunc("POST /api/v1/documents/search", docHandler.SearchDocumentsStructured)
 
 mux.HandleFunc("GET /api/v1/tags", autocompleteHandler.ListTags)
 mux.HandleFunc("GET /api/v1/people", autocompleteHandler.ListPeople)
 mux.HandleFunc("GET /api/v1/people-types", autocompleteHandler.ListPeopleTypes)
 mux.HandleFunc("GET /api/v1/document-types", autocompleteHandler.ListDocumentTypes)
+
+mux.HandleFunc("POST /api/v1/consume", consumeHandler.Consume)
+
+mux.HandleFunc("GET /wizard/config", configHandler.GetConfig)
+mux.HandleFunc("PUT /wizard/config", configHandler.PutConfig)
+mux.HandleFunc("GET /wizard/config/status", configHandler.ConfigStatus)
+
+mux.HandleFunc("GET /api/v1/tasks", taskHandler.ListTasks)
+mux.HandleFunc("GET /api/v1/tasks/{id}", taskHandler.GetTask)
+mux.HandleFunc("GET /api/v1/batches", taskHandler.ListBatches)
+mux.HandleFunc("GET /api/v1/batches/{id}", taskHandler.GetBatchSummary)
+mux.HandleFunc("GET /api/v1/summary", taskHandler.GlobalSummary)
 
 mux.HandleFunc("GET /api/v1/saved-searches", savedSearchHandler.List)
 mux.HandleFunc("POST /api/v1/saved-searches", savedSearchHandler.Create)
@@ -190,3 +244,4 @@ mux.HandleFunc("DELETE /api/v1/saved-searches/{id}", savedSearchHandler.Delete)
 - [Pipeline](pipeline.md) — Consumption and enrichment engines triggered via API
 - [Database](database.md) — Document and task queries used by handlers
 - [Frontend](frontend.md) — SvelteKit SPA that consumes these API endpoints
+- [Config & Utils](config-and-utils.md) — Config setup functions and response types

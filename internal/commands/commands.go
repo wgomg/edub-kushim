@@ -37,7 +37,7 @@ var commandSets = map[string]map[string]Command{
 		},
 		"setup": {
 			Name:        "setup",
-			Description: "Initialize config and download OCR language files (run once)",
+			Description: "Initialize config and download OCR language files (run once). Use --cli for terminal-based setup.",
 			Handler:     setupHandler,
 		},
 	},

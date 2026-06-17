@@ -44,5 +44,5 @@ func (f *Gopdf) CanHandle(mimeType string) bool {
 }
 
 func (f *Gopdf) Name() string {
-	return "gopdf"
+	return config.TextExtractor.GoPdf
 }

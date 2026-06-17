@@ -139,5 +139,5 @@ func (l *LlmDeepSeek) Analyze(ctx context.Context, text string, docTypes []datab
 }
 
 func (l *LlmDeepSeek) Name() string {
-	return "llmdeepseek"
+	return config.ContentAnalyzer.DeepSeek
 }

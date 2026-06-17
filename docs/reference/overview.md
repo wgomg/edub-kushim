@@ -7,6 +7,7 @@ internal/
 ├── api/                    # HTTP handlers, middleware, types
 │   ├── handlers/
 │   │   ├── autocomplete.go # Autocomplete handlers (tags, people, person types, doc types)
+│   │   ├── config.go       # Config handler: GET/PUT /wizard/config, GET /wizard/config/status
 │   │   ├── consume.go     # Consume handler (async, creates paired consume+enrich tasks, returns batch ID)
 │   │   ├── document.go    # Document API handlers (list, get, search, structured search, get file) — returns tags, people, language, doc type
 │   │   ├── health.go      # Health check handler
@@ -15,6 +16,7 @@ internal/
 │   ├── server.go          # HTTP server setup, middleware, route registration, static SPA (Go 1.22+ patterns)
 │   └── types/
 │       ├── autocomplete.go    # Autocomplete response types (PersonRef, DocumentTypeRef, PeopleTypeRef)
+│       ├── config.go          # Config response types (ConfigResponse, ConfigStatusResponse, engine responses)
 │       ├── document.go        # API response types (with tags, people, language, doc type, SearchResponse)
 │       └── saved_search.go    # Saved search request/response types
 │       └── task.go            # Task/batch/global summary response types (with waiting status)
@@ -25,10 +27,10 @@ internal/
 ├── commands/              # CLI command framework
 │   ├── commands.go        # Command definitions and runner
 │   ├── consume.go         # Document consumption command (--bg, --batch, cancel)
-│   ├── container.go       # Dependency injection container (DB, pools, cache, dispatcher)
+│   ├── container.go       # Dependency injection container (DB, pools, cache, dispatcher); includes config pool
 │   ├── flags.go           # CLI flag parser (shared by commands)
 │   ├── search.go          # Search command (CLI)
-│   ├── setup.go           # Setup command (config + OCR languages + Hugot model)
+│   ├── setup.go           # Setup command — launches web wizard by default, --cli for terminal mode
 │   └── task.go            # Task commands (list, status, retry)
 ├── enrichment/            # Enrichment engine (LLM pipeline)
 │   ├── enricher.go        # Enricher: dual text reduction → tag matching → LLM → consolidation → people/tag/doc type with romanization + normalization
@@ -41,12 +43,14 @@ internal/
 │   ├── dispatcher.go      # Task dispatcher (Enqueue with custom taskID/status, Next uses GetNextPendingTaskOfType)
 │   ├── handler.go         # Handler + Dedupable interfaces
 │   └── handlers/
+│       ├── config.go      # ConfigTaskHandler — downloads tessdata/Hugot model in background ("config" task type)
 │       ├── consume.go     # ConsumeTaskHandler (uses FileFromPath)
 │       └── enrich.go      # EnrichTaskHandler (fetches document, calls Enricher.Enrich)
 ├── search/                # Full-text search engine
 │   └── search.go          # Engine, Result (with Language, DocumentTypeID, checksums), Filter (structured search), sanitizeQuery, SearchStructured (returns results + total count)
 ├── config/                # Configuration parsing
-│   └── config.go          # Configuration structs and loading (ConsolidationSimilarity, default thresholds)
+│   ├── config.go          # Configuration structs and loading (ConsolidationSimilarity, default thresholds, engine identifier constants, AvailableEngines map)
+│   └── setup.go           # Bootstrap config, SaveMap, tessdata/Hugot model download helpers
 ├── consumption/           # Document processing engine
 │   ├── consumer.go        # Main consumer (extract → OCR → optimize → store), duplicate detection (MD5+SHA512)
 │   └── storage.go         # File operations, checksums, FileFromPath, MIME detection via mimetype lib
@@ -72,8 +76,13 @@ internal/
 │       ├── schema/        # Seed SQL files (seed-tags.sql, seed-document-types.sql, seed-people-types.sql)
 │       │   └── migrations/ # goose versioned migrations (00001_baseline.sql, ...) — also read by sqlc
 │       └── queries/       # SQL queries for sqlc
-├── static/                # Embedded web UI
+├── static/                # Embedded web UI (main app)
 │   └── fs.go              # Embedded SvelteKit build (build/ directory via //go:embed)
+├── version/               # Application version
+│   └── version.go         # const Version = "0.1.0"
+├── wizard/                # Setup wizard HTTP server
+│   ├── server.go          # Standalone HTTP server on :8420, serves wizard SPA + config API
+│   └── fs.go              # Embedded SvelteKit wizard build (static/ via //go:embed)
 ├── utils/                 # Utilities
 │   ├── config.go          # ConfigDir() — returns ~/.config/edub-kushim
 │   ├── logger.go          # Structured logging (file logging support, numeric level filtering)
@@ -82,9 +91,7 @@ internal/
 │   └── text.go            # CountWords, EstimateTokensFromWords, CleanUp, Truncate, CleanCodeBlock, ContainsNonLatin, NormalizeName
 ├── pidfile/               # PID file locking for batch consumption
 │   └── pidfile.go         # Lock, Acquire/Release, IsAlive, Read with cross-process safety
-└── version/               # Application version
-    └── version.go         # const Version = "0.1.0"
-│   ├── adapters/
+├── adapters/
 │   │   ├── mupdf_wrapper.go    # MuPDF CGo wrapper (6 C helpers + Go API)
 │   │   ├── contentanalyzer/    # LLM classification providers
 │   │   │   ├── adapter.go          # ContentAnalyzer interface + factory (NewContentAnalyzer); PeopleResult with NameRomanized
@@ -130,11 +137,11 @@ cmd/
 └── edub/                 # API server entry point
     └── main.go
 
-web/                      # SvelteKit SPA frontend
+web/                      # SvelteKit SPA frontend (main UI)
 ├── src/
 │   ├── app.html          # HTML shell
 │   ├── lib/
-│   │   ├── api.js        # API client (fetch helper) — documents, tasks, autocomplete, saved searches
+│   │   ├── api.js        # API client (fetch helper) — documents, tasks, autocomplete, saved searches, config
 │   │   ├── index.js
 │   │   ├── assets/
 │   │   │   └── favicon.svg
@@ -146,13 +153,15 @@ web/                      # SvelteKit SPA frontend
 │   │       ├── FilterPanel.svelte # Collapsible advanced filter panel (tags, people, dates, size, etc.)
 │   │       └── SearchBar.svelte   # Rich search input with chips, autocomplete, keyboard navigation
 │   └── routes/
-│       ├── +layout.svelte        # App layout shell (removed old header search input)
+│       ├── +layout.svelte        # App layout shell — includes Settings sidebar link
 │       ├── +page.svelte          # Home/dashboard page
 │       ├── layout.css            # Global styles (CSS custom properties)
 │       ├── documents/
 │       │   ├── +page.svelte      # Document list with search bar, filters, saved searches, DataTable
 │       │   └── [id]/
 │       │       └── +page.svelte  # Single document detail page
+│       ├── settings/
+│       │   └── +page.svelte      # Settings page — OCR, consumer, enricher config via /wizard/config API
 │       ├── tags/
 │       │   └── +page.svelte      # Tag management page
 │       └── tasks/
@@ -164,6 +173,23 @@ web/                      # SvelteKit SPA frontend
 ├── vite.config.js
 ├── eslint.config.js
 └── .npmrc
+
+web-wizard/               # SvelteKit SPA setup wizard (embedded in kushim binary)
+├── src/
+│   ├── app.html          # HTML shell
+│   ├── app.css           # Tailwind styles (clay/gold/lapis/parchment palette)
+│   ├── lib/
+│   │   └── api.js        # API client for /wizard/config endpoints
+│   └── routes/
+│       ├── +layout.svelte  # Wizard layout shell
+│       └── +page.svelte   # Four-step setup wizard flow
+├── package.json
+├── svelte.config.js
+├── vite.config.js
+├── eslint.config.js
+├── .prettierrc
+├── .npmrc
+└── .gitignore
 ```
 
 ## Architecture Overview

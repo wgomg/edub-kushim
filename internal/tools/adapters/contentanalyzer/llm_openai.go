@@ -150,5 +150,5 @@ func (l *LlmOpenAi) Analyze(ctx context.Context, text string, docTypes []databas
 }
 
 func (l *LlmOpenAi) Name() string {
-	return "llmopenai"
+	return config.ContentAnalyzer.OpenAI
 }

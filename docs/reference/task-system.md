@@ -114,6 +114,34 @@
     - `Handle(ctx, t) (json.RawMessage, error)` — Unmarshals `{"document_id":"<uuid>"}`, calls `enricher.GetDb()` + `GetDocument` (lookup by UUID), then `enricher.Enrich`
     - `DedupKey(payload) string` — Returns `"enrich:doc:<uuid>"` or empty string
 
+## `handlers/config.go`
+
+### Constants
+
+- `TaskTypeConfig = "config"` — Task type string for config-related async work
+
+### Struct
+
+- `ConfigTaskHandler` — `logger *utils.Logger`
+  - **Methods**:
+    - `NewConfigTaskHandler(logger) *ConfigTaskHandler`
+    - `Handle(ctx, t) (json.RawMessage, error)` — Unmarshals `{"config_dir":"...", "op":"tessdata|hugot", "lang":"..."}`, loads config from disk, dispatches to `config.DownloadTessdataLanguage` or `config.DownloadHugotModel`
+
+---
+
+## Container Integration (`internal/commands/container.go`)
+
+The `Container` (used by CLI commands) and `Server` (used by `edub`) both register
+the `"config"` task type alongside `"consume"` and `"enrich"`:
+
+```go
+registry.Register("config", taskhandlers.NewConfigTaskHandler(logger))
+```
+
+Both create a dedicated pool for config tasks with 1 worker and a 5-second poll
+interval. The config pool is started with the other pools on server start and
+stopped on shutdown.
+
 ---
 
 ## See Also
@@ -122,3 +150,4 @@
 - [CLI](cli.md) — Task CLI commands (list, status, retry)
 - [Database](database.md) — Task table schema, generated task queries
 - [Pipeline](pipeline.md) — Consumer and Enricher invoked by task handlers
+- [Config & Utils](config-and-utils.md) — Config setup functions used by ConfigTaskHandler

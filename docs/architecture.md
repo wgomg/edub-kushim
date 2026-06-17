@@ -117,6 +117,93 @@ When storing people from LLM results, the enricher:
 This pipeline is non-blocking: documents are stored and searchable immediately via
 FTS5, with enrichment arriving asynchronously.
 
+---
+
+## Setup Wizard
+
+The project provides two setup modes:
+
+### 1. Standalone Web Wizard (default)
+
+When `kushim setup` is invoked without the `--cli` flag, a standalone HTTP server starts
+on `0.0.0.0:8420` serving an embedded SvelteKit SPA (`web-wizard/`). The wizard is a
+four-step guided flow:
+
+1. **Config directory** — user specifies where `config.yaml`, database, and models are stored
+2. **Settings** — OCR engine + languages, consumer/enricher worker counts
+3. **Progress** — background tasks download tessdata language files and the Hugot ONNX model;
+   the UI polls `GET /wizard/config/status` every 3 seconds
+4. **Completion** — all downloads are finished; the server is ready to run
+
+The wizard server uses a stripped-down version of the full server stack: it bootstraps
+the config directory (via `config.Bootstrap`), initializes the SQLite schema, creates
+a dispatcher with only the `"config"` task type registered, and runs a single-worker
+pool for background downloads. It serves the wizard UI directly via `//go:embed` on
+`internal/wizard/static/`.
+
+### 2. Terminal Setup (`kushim setup --cli`)
+
+The original terminal-based flow: accepts `--languages`, path flags, and engine selection
+flags, downloads models synchronously, prints progress to stdout. Suitable for headless
+environments or CI.
+
+### In-App Settings Page
+
+The main web UI (`web/`) includes a **Settings** page at `/settings` backed by the same
+`/wizard/config` API endpoints. Users can update OCR engine/languages, consumer worker
+count, PDF optimizer engine, text extractor engine, enricher worker count, content analyzer
+engine, tag matcher engine, and text reducer engine — all through a structured form. Changes
+trigger background downloads for any missing tessdata or Hugot model files.
+
+### Config API
+
+Three endpoints serve both the wizard and the settings page:
+
+| Endpoint                          | Purpose                                                        |
+| --------------------------------- | -------------------------------------------------------------- |
+| `GET /wizard/config`              | Returns current config as `ConfigResponse` (user-facing subset)|
+| `PUT /wizard/config`              | Accepts `config_dir` for bootstrap, or settings map for update |
+| `GET /wizard/config/status`       | Returns `ConfigStatusResponse` — `configured`, `pending_tasks` |
+
+The `PUT` handler has two phases:
+- **Bootstrap phase**: when `config_dir` is present and no config exists, it calls
+  `config.Bootstrap()` to create directories, write skeleton config, and initialize the DB.
+- **Update phase**: otherwise, it writes the provided key-value pairs via `config.SaveMap`,
+  reloads the config, and enqueues `"config"` tasks for any missing downloads.
+
+### Config Task Handler
+
+A new task type `"config"` handles background downloads:
+
+| Operation   | Payload                                                       |
+| ----------- | ------------------------------------------------------------- |
+| `tessdata`  | `{"config_dir":"...", "op":"tessdata", "lang":"eng"}`         |
+| `hugot`     | `{"config_dir":"...", "op":"hugot"}`                          |
+
+The handler loads the config from disk, then delegates to `config.DownloadTessdataLanguage`
+or `config.DownloadHugotModel`. This keeps the API response fast and moves the actual
+download work to the worker pool, with retry support via the task system.
+
+### Engine Identifiers
+
+Engine names (e.g. `"mupdf"`, `"gosseract"`, `"llmopenai"`) are now defined as
+exported package-level vars in `internal/config/config.go`:
+
+| Group              | Constants                                                                                     |
+| ------------------ | --------------------------------------------------------------------------------------------- |
+| `ContentAnalyzer`  | `OpenAI` (`"llmopenai"`), `Anthropic` (`"llmanthropic"`), `DeepSeek` (`"llmdeepseek"`), `Ollama` (`"llmollama"`) |
+| `OCR`              | `Gosseract` (`"gosseract"`), `OcrMyPdf` (`"ocrmypdf"`)                                       |
+| `PdfOptimizer`     | `MuPDF` (`"mupdf"`), `GS` (`"gs"`)                                                           |
+| `TextExtractor`    | `MuPDF` (`"mupdf"`), `GoPdf` (`"gopdf"`), `PdfToText` (`"pdftotext"`)                        |
+| `TextReducer`      | `TextRank` (`"textrank"`)                                                                     |
+| `TagMatcher`       | `Hugot` (`"hugot"`)                                                                           |
+
+A corresponding `AvailableEngines` map provides structured engine listings for the frontend
+UI (engine selector dropdowns). All adapter factories (`NewOCR`, `NewTextExtractor`, etc.)
+and `Name()` methods use these constants instead of string literals.
+
+---
+
 ### Design Note: Context Cancellation in Adapters
 
 Each adapter (CGo and external‑tool) checks for context cancellation at page boundaries.

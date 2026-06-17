@@ -59,7 +59,7 @@ func startServer() {
 	logger.Info(nil, "Environment: %s", cfg.App.Env)
 	logger.Info(nil, "Log level: %s", cfg.App.LogLevel)
 
-	db, err := database.NewSQLiteDB(cfg.Db)
+	db, err := database.NewSQLiteDB(cfg.Db.Path, cfg.Db.Name)
 	if err != nil {
 		log := utils.NewLogger("error")
 		log.Fatal("Unable to establish database connection:", err)

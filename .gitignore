@@ -4,6 +4,7 @@ dev/
 # editor directories and files
 .vscode/
 .continue/
+.kilo/
 
 # configuration files (except example)
 config.yaml
@@ -13,3 +14,4 @@ config.prod.yaml
 coverage.out
 
 internal/static/build/*
+internal/wizard/static/*

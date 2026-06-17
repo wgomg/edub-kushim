@@ -79,5 +79,5 @@ func (g *Ghostscript) Optimize(ctx context.Context, docId, path string) (*string
 }
 
 func (g *Ghostscript) Name() string {
-	return "gs"
+	return config.PdfOptimizer.GS
 }

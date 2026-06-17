@@ -14,7 +14,7 @@ type TextReducer interface {
 
 func NewTextReducer(logger *utils.Logger, cfg config.ToolConfig) (TextReducer, error) {
 	switch cfg.Command {
-	case "textrank":
+	case config.TextReducer.TextRank:
 		tr, err := NewTextRank(logger, cfg)
 		return tr, err
 	default:

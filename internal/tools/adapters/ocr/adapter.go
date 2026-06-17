@@ -15,10 +15,10 @@ type OCR interface {
 
 func NewOCR(logger *utils.Logger, cfg config.ToolConfig, pdfOptimizerCmd string, languages []string, dataDir string) (OCR, error) {
 	switch cfg.Command {
-	case "ocrmypdf":
+	case config.OCR.OcrMyPdf:
 		ocrMyPdf, err := NewOcrMyPdf(logger, cfg, languages)
 		return ocrMyPdf, err
-	case "gosseract":
+	case config.OCR.Gosseract:
 		gosseract, err := NewGosseract(logger, cfg, pdfOptimizerCmd, languages, dataDir)
 		return gosseract, err
 	default:

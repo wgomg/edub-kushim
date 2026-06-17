@@ -18,121 +18,207 @@ const (
 )
 
 type AppConfig struct {
-	Env       Environment `mapstructure:"environment" yaml:"environment"`
-	LogLevel  string      `mapstructure:"log_level" yaml:"log_level"`
-	LogFile   string      `mapstructure:"log_file" yaml:"log_file"`
-	ConfigDir string
+	Env       Environment `mapstructure:"environment" yaml:"environment" json:"environment"`
+	LogLevel  string      `mapstructure:"log_level" yaml:"log_level" json:"log_level"`
+	LogFile   string      `mapstructure:"log_file" yaml:"log_file" json:"log_file"`
+	ConfigDir string      `json:"config_dir"`
 }
 
 type ServerConfig struct {
-	Host         string        `mapstructure:"host" yaml:"host"`
-	Port         int           `mapstructure:"port" yaml:"port"`
-	ReadTimeout  time.Duration `mapstructure:"read_timeout" yaml:"read_timeout"`
-	WriteTimeout time.Duration `mapstructure:"write_timeout" yaml:"write_timeout"`
-	IdleTimeout  time.Duration `mapstructure:"idle_timeout" yaml:"idle_timeout"`
+	Host         string        `mapstructure:"host" yaml:"host" json:"host"`
+	Port         int           `mapstructure:"port" yaml:"port" json:"port"`
+	ReadTimeout  time.Duration `mapstructure:"read_timeout" yaml:"read_timeout" json:"read_timeout"`
+	WriteTimeout time.Duration `mapstructure:"write_timeout" yaml:"write_timeout" json:"write_timeout"`
+	IdleTimeout  time.Duration `mapstructure:"idle_timeout" yaml:"idle_timeout" json:"idle_timeout"`
 }
 
 type DatabaseConfig struct {
-	Type    string   `mapstructure:"type" yaml:"type"`
-	Path    string   `mapstructure:"path" yaml:"path"`
-	Name    string   `yaml:"name"`
-	Seeders []string `yaml:"seeders"`
+	Type    string   `mapstructure:"type" yaml:"type" json:"type"`
+	Path    string   `mapstructure:"path" yaml:"path" json:"path"`
+	Name    string   `yaml:"name" json:"name"`
+	Seeders []string `yaml:"seeders" json:"seeders"`
 }
 
 type StorageConfig struct {
-	ConsumptionDir string `mapstructure:"consumption_dir" yaml:"consumption_dir"`
-	StorageDir     string `mapstructure:"storage_dir" yaml:"storage_dir"`
+	ConsumptionDir string `mapstructure:"consumption_dir" yaml:"consumption_dir" json:"consumption_dir"`
+	StorageDir     string `mapstructure:"storage_dir" yaml:"storage_dir" json:"storage_dir"`
 }
 
 type TextExtractorConfig struct {
-	Engine  string `mapstructure:"engine" yaml:"engine"`
-	Timeout int    `mapstructure:"timeout" yaml:"timeout"`
+	Engine  string `mapstructure:"engine" yaml:"engine" json:"engine"`
+	Timeout int    `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
 }
 
 type PdfOptimizerConfig struct {
-	Engine   string `mapstructure:"engine" yaml:"engine"`
-	Fallback string `mapstructure:"fallback" yaml:"fallback"`
-	Timeout  int    `mapstructure:"timeout" yaml:"timeout"`
+	Engine   string `mapstructure:"engine" yaml:"engine" json:"engine"`
+	Fallback string `mapstructure:"fallback" yaml:"fallback" json:"fallback"`
+	Timeout  int    `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
 }
 
 type OCRConfig struct {
-	Engine    string   `mapstructure:"engine" yaml:"engine"`
-	Languages []string `mapstructure:"languages" yaml:"languages"`
-	DataDir   string   `mapstructure:"data_dir"`
-	Timeout   int      `mapstructure:"timeout" yaml:"timeout"`
+	Engine    string   `mapstructure:"engine" yaml:"engine" json:"engine"`
+	Languages []string `mapstructure:"languages" yaml:"languages" json:"languages"`
+	DataDir   string   `mapstructure:"data_dir" yaml:"data_dir" json:"data_dir"`
+	Timeout   int      `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
 }
 
 type ConsumerConfig struct {
-	SupportedFiles []string
-	DeleteOriginal bool                `mapstructure:"delete_original" yaml:"delete_original"`
-	Workers        int                 `mapstructure:"workers" yaml:"workers"`
-	TextExtractor  TextExtractorConfig `mapstructure:"textextractor" yaml:"textextractor"`
-	PdfOptimizer   PdfOptimizerConfig  `mapstructure:"pdfoptimizer" yaml:"pdfoptimizer"`
-	OCR            OCRConfig           `mapstructure:"ocr" yaml:"ocr"`
+	SupportedFiles []string            `json:"supported_files"`
+	DeleteOriginal bool                `mapstructure:"delete_original" yaml:"delete_original" json:"delete_original"`
+	Workers        int                 `mapstructure:"workers" yaml:"workers" json:"workers"`
+	TextExtractor  TextExtractorConfig `mapstructure:"textextractor" yaml:"textextractor" json:"textextractor"`
+	PdfOptimizer   PdfOptimizerConfig  `mapstructure:"pdfoptimizer" yaml:"pdfoptimizer" json:"pdfoptimizer"`
+	OCR            OCRConfig           `mapstructure:"ocr" yaml:"ocr" json:"ocr"`
 }
 
 type TextReducerConfig struct {
-	Engine      string `mapstructure:"engine" yaml:"engine"`
-	Timeout     int    `mapstructure:"timeout" yaml:"timeout"`
-	TargetWords int    `mapstructure:"target_words" yaml:"target_words"`
+	Engine      string `mapstructure:"engine" yaml:"engine" json:"engine"`
+	Timeout     int    `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
+	TargetWords int    `mapstructure:"target_words" yaml:"target_words" json:"target_words"`
 }
 
 type ContentAnalyzerConfig struct {
-	Engine  string         `mapstructure:"engine" yaml:"engine"`
-	Timeout int            `mapstructure:"timeout" yaml:"timeout"`
-	Llm     LlmToolsConfig `mapstructure:"llm" yaml:"llm"`
+	Engine  string         `mapstructure:"engine" yaml:"engine" json:"engine"`
+	Timeout int            `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
+	Llm     LlmToolsConfig `mapstructure:"llm" yaml:"llm" json:"llm"`
 }
 
 type EnricherConfig struct {
-	Workers         int                   `mapstructure:"workers" yaml:"workers"`
-	TextReducer     TextReducerConfig     `mapstructure:"textreducer" yaml:"textreducer"`
-	ContentAnalyzer ContentAnalyzerConfig `mapstructure:"contentanalyzer" yaml:"contentanalyzer"`
-	TagMatcher      TagMatcherConfig      `mapstructure:"tagmatcher" yaml:"tagmatcher"`
+	Workers         int                   `mapstructure:"workers" yaml:"workers" json:"workers"`
+	TextReducer     TextReducerConfig     `mapstructure:"textreducer" yaml:"textreducer" json:"textreducer"`
+	ContentAnalyzer ContentAnalyzerConfig `mapstructure:"contentanalyzer" yaml:"contentanalyzer" json:"contentanalyzer"`
+	TagMatcher      TagMatcherConfig      `mapstructure:"tagmatcher" yaml:"tagmatcher" json:"tagmatcher"`
 }
 
 type LlmToolConfig struct {
-	BaseURL string `mapstructure:"base_url" yaml:"base_url"`
-	Model   string `mapstructure:"model" yaml:"model"`
-	Token   string `mapstructure:"token" yaml:"token"`
+	BaseURL string `mapstructure:"base_url" yaml:"base_url" json:"base_url"`
+	Model   string `mapstructure:"model" yaml:"model" json:"model"`
+	Token   string `mapstructure:"token" yaml:"token" json:"token"`
 }
 
 type LlmToolsConfig struct {
-	OpenAI    LlmToolConfig `mapstructure:"openai" yaml:"openai"`
-	Anthropic LlmToolConfig `mapstructure:"anthropic" yaml:"anthropic"`
-	DeepSeek  LlmToolConfig `mapstructure:"deepseek" yaml:"deepseek"`
-	Ollama    LlmToolConfig `mapstructure:"ollama" yaml:"ollama"`
+	OpenAI    LlmToolConfig `mapstructure:"openai" yaml:"openai" json:"openai"`
+	Anthropic LlmToolConfig `mapstructure:"anthropic" yaml:"anthropic" json:"anthropic"`
+	DeepSeek  LlmToolConfig `mapstructure:"deepseek" yaml:"deepseek" json:"deepseek"`
+	Ollama    LlmToolConfig `mapstructure:"ollama" yaml:"ollama" json:"ollama"`
 }
 
 type HugotConfig struct {
-	Model          string `mapstructure:"model" yaml:"model"`
-	Backend        string `mapstructure:"backend" yaml:"backend"`
-	ModelPath      string
-	BackendLibPath string
+	Model          string `mapstructure:"model" yaml:"model" json:"model"`
+	Backend        string `mapstructure:"backend" yaml:"backend" json:"backend"`
+	ModelPath      string `json:"model_path"`
+	BackendLibPath string `json:"backend_lib_path"`
 }
 
 type TagMatcherConfig struct {
-	Engine                  string      `mapstructure:"engine" yaml:"engine"`
-	Timeout                 int         `mapstructure:"timeout" yaml:"timeout"`
-	ReduceTargetWords       int         `mapstructure:"reduce_target_words" yaml:"reduce_target_words"`
-	ChunkSize               int         `mapstructure:"chunk_size" yaml:"chunk_size"`
-	Hugot                   HugotConfig `mapstructure:"hugot" yaml:"hugot"`
-	TopN                    int
-	MinSimilarity           float64
-	ConsolidationSimilarity float64
+	Engine                  string      `mapstructure:"engine" yaml:"engine" json:"engine"`
+	Timeout                 int         `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
+	ReduceTargetWords       int         `mapstructure:"reduce_target_words" yaml:"reduce_target_words" json:"reduce_target_words"`
+	ChunkSize               int         `mapstructure:"chunk_size" yaml:"chunk_size" json:"chunk_size"`
+	Hugot                   HugotConfig `mapstructure:"hugot" yaml:"hugot" json:"hugot"`
+	TopN                    int         `json:"top_n"`
+	MinSimilarity           float64     `json:"min_similarity"`
+	ConsolidationSimilarity float64     `json:"consolidation_similarity"`
 }
 
 type ToolConfig struct {
-	Command string        `yaml:"command"`
-	Timeout time.Duration `yaml:"timeout"`
+	Command string        `yaml:"command" json:"command"`
+	Timeout time.Duration `yaml:"timeout" json:"timeout"`
 }
 
 type Config struct {
-	App      AppConfig      `mapstructure:"app" yaml:"app"`
-	Srv      ServerConfig   `mapstructure:"server" yaml:"server"`
-	Db       DatabaseConfig `mapstructure:"database" yaml:"database"`
-	Storage  StorageConfig  `mapstructure:"storage" yaml:"storage"`
-	Consumer ConsumerConfig `yaml:"consumer"`
-	Enricher EnricherConfig `mapstructure:"enricher" yaml:"enricher"`
+	App      AppConfig      `mapstructure:"app" yaml:"app" json:"app"`
+	Srv      ServerConfig   `mapstructure:"server" yaml:"server" json:"server"`
+	Db       DatabaseConfig `mapstructure:"database" yaml:"database" json:"database"`
+	Storage  StorageConfig  `mapstructure:"storage" yaml:"storage" json:"storage"`
+	Consumer ConsumerConfig `yaml:"consumer" json:"consumer"`
+	Enricher EnricherConfig `mapstructure:"enricher" yaml:"enricher" json:"enricher"`
+}
+
+// engine identifiers grouped by tool category.
+var (
+	ContentAnalyzer = struct {
+		OpenAI    string
+		Anthropic string
+		DeepSeek  string
+		Ollama    string
+	}{
+		OpenAI:    "llmopenai",
+		Anthropic: "llmanthropic",
+		DeepSeek:  "llmdeepseek",
+		Ollama:    "llmollama",
+	}
+
+	OCR = struct {
+		Gosseract string
+		OcrMyPdf  string
+	}{
+		Gosseract: "gosseract",
+		OcrMyPdf:  "ocrmypdf",
+	}
+
+	PdfOptimizer = struct {
+		MuPDF string
+		GS    string
+	}{
+		MuPDF: "mupdf",
+		GS:    "gs",
+	}
+
+	TextExtractor = struct {
+		MuPDF     string
+		GoPdf     string
+		PdfToText string
+	}{
+		MuPDF:     "mupdf",
+		GoPdf:     "gopdf",
+		PdfToText: "pdftotext",
+	}
+
+	TextReducer = struct {
+		TextRank string
+	}{
+		TextRank: "textrank",
+	}
+
+	TagMatcher = struct {
+		Hugot string
+	}{
+		Hugot: "hugot",
+	}
+)
+
+type EngineEntry struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+}
+
+var AvailableEngines = map[string][]EngineEntry{
+	"content_analyzer": {
+		{Value: ContentAnalyzer.OpenAI, Label: "OpenAI"},
+		{Value: ContentAnalyzer.Anthropic, Label: "Anthropic"},
+		{Value: ContentAnalyzer.DeepSeek, Label: "DeepSeek"},
+		{Value: ContentAnalyzer.Ollama, Label: "Ollama"},
+	},
+	"ocr": {
+		{Value: OCR.Gosseract, Label: "gosseract"},
+		{Value: OCR.OcrMyPdf, Label: "ocrmypdf"},
+	},
+	"pdf_optimizer": {
+		{Value: PdfOptimizer.MuPDF, Label: "mupdf"},
+		{Value: PdfOptimizer.GS, Label: "gs"},
+	},
+	"text_extractor": {
+		{Value: TextExtractor.MuPDF, Label: "mupdf"},
+		{Value: TextExtractor.GoPdf, Label: "gopdf"},
+		{Value: TextExtractor.PdfToText, Label: "pdftotext"},
+	},
+	"text_reducer": {
+		{Value: TextReducer.TextRank, Label: "textrank"},
+	},
+	"tag_matcher": {
+		{Value: TagMatcher.Hugot, Label: "hugot"},
+	},
 }
 
 func DefaultConfig(configDir string) *Config {
@@ -164,15 +250,15 @@ func DefaultConfig(configDir string) *Config {
 			DeleteOriginal: false,
 			Workers:        1,
 			TextExtractor: TextExtractorConfig{
-				Engine:  "mupdf",
+				Engine:  TextExtractor.MuPDF,
 				Timeout: 120,
 			},
 			PdfOptimizer: PdfOptimizerConfig{
-				Engine:  "mupdf",
+				Engine:  PdfOptimizer.MuPDF,
 				Timeout: 120,
 			},
 			OCR: OCRConfig{
-				Engine:  "gosseract",
+				Engine:  OCR.Gosseract,
 				DataDir: filepath.Join(configDir, "ocr/tessdata"),
 				Timeout: 120,
 			},
@@ -180,12 +266,12 @@ func DefaultConfig(configDir string) *Config {
 		Enricher: EnricherConfig{
 			Workers: 1,
 			TextReducer: TextReducerConfig{
-				Engine:      "textrank",
+				Engine:      TextReducer.TextRank,
 				Timeout:     120,
 				TargetWords: 2000,
 			},
 			ContentAnalyzer: ContentAnalyzerConfig{
-				Engine:  "llmopenai",
+				Engine:  ContentAnalyzer.OpenAI,
 				Timeout: 120,
 				Llm: LlmToolsConfig{
 					OpenAI: LlmToolConfig{
@@ -207,7 +293,7 @@ func DefaultConfig(configDir string) *Config {
 				},
 			},
 			TagMatcher: TagMatcherConfig{
-				Engine:            "hugot",
+				Engine:            TagMatcher.Hugot,
 				Timeout:           120,
 				ReduceTargetWords: 4000,
 				ChunkSize:         0,

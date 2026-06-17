@@ -7,16 +7,15 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/wgomg/edub-kushim/internal/config"
 	_ "modernc.org/sqlite"
 )
 
-func NewSQLiteDB(cfg config.DatabaseConfig) (*sql.DB, error) {
-	if err := os.MkdirAll(cfg.Path, 0755); err != nil {
+func NewSQLiteDB(path, name string) (*sql.DB, error) {
+	if err := os.MkdirAll(path, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create data directory: %w", err)
 	}
 
-	dbPath := filepath.Join(cfg.Path, cfg.Name)
+	dbPath := filepath.Join(path, name)
 
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {

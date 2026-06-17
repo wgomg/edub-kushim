@@ -24,10 +24,10 @@ type SearchFilter struct {
 
 type queryBuilder struct {
 	clauses []string
-	args    []interface{}
+	args    []any
 }
 
-func (b *queryBuilder) add(clause string, args ...interface{}) {
+func (b *queryBuilder) add(clause string, args ...any) {
 	b.clauses = append(b.clauses, clause)
 	b.args = append(b.args, args...)
 }
@@ -47,7 +47,7 @@ func (b *queryBuilder) subqueryIn(col, subquery string, values []string) {
 	for i := range values {
 		placeholders[i] = "?"
 	}
-	args := make([]interface{}, len(values))
+	args := make([]any, len(values))
 	for i, v := range values {
 		args[i] = v
 	}

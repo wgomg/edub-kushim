@@ -11,12 +11,13 @@ Located in `web/`, built via `npm ci && npm run build`, output copied to `intern
 | `/`               | `+page.svelte`                | Dashboard / home — shows Task Status summary including `Waiting` count                                                                                               |
 | `/documents`      | `documents/+page.svelte`      | Document list with structured search bar, filter panel, saved searches, sort/pagination; shows **Tags** and **People** columns inline; snippet column when searching |
 | `/documents/[id]` | `documents/[id]/+page.svelte` | Document detail: metadata, tags, people, file, **Content Stats** (pages, words, characters)                                                                          |
+| `/settings`       | `settings/+page.svelte`       | Configuration form: OCR engine/languages, consumer worker count, PDF optimizer, text extractor, enricher workers, content analyzer, tag matcher, text reducer       |
 | `/tags`           | `tags/+page.svelte`           | Tag management (list, create, delete)                                                                                                                                |
 | `/tasks`          | `tasks/+page.svelte`          | Task/batch monitoring — shows **Type**, **Payload** (document ID + file name), **Started** and **Completed** columns                                                 |
 
 ## Key files
 
-- **`src/lib/api.js`** — API client wrapping `fetch()` for all backend endpoints including autocomplete and saved searches
+- **`src/lib/api.js`** — API client wrapping `fetch()` for all backend endpoints including autocomplete, saved searches, and config (`api.config.get()`, `api.config.update()`, `api.config.status()` via `/wizard/config`)
 - **`src/lib/components/DataTable.svelte`** — Reusable sortable/paginated table component; supports `refreshKey` prop for external reload triggers; handles both array and `{results, total}` response formats; shows "X–Y of Z" pagination when total is available
 - **`src/lib/components/SearchBar.svelte`** — Rich search input with field token chips (tags, people, document type, language, MIME, dates, size), autocomplete suggestions, keyboard navigation (arrow keys, Enter, Backspace for chip removal, Escape to close dropdown), and `field:value` syntax parsing
 - **`src/lib/components/FilterPanel.svelte`** — Collapsible filter panel with sections for tags (autocomplete + chips), people (two-stage type + name selection), document type (dropdown), language (dropdown), MIME type (dropdown), date created (dual date pickers), date modified (dual date pickers), file size (min/max text input with unit parsing), and "Clear all filters" button
@@ -82,6 +83,37 @@ Linker flags are embedded in source files:
 - `internal/tools/adapters/mupdf_wrapper.go` — Static linking for MuPDF + platform libraries and `lfreetype`, `ljbig2dec`, `lmujs`, `lopenjp2`, `lz`, `lcrypto`
 
 ---
+
+---
+
+# Setup Wizard (`web-wizard/`)
+
+A standalone SvelteKit SPA for initial configuration, embedded into the `kushim`
+binary at `internal/wizard/static/`.
+
+## Purpose
+
+Provides a browser-based four-step setup flow when `kushim setup` is run (default).
+Replaces the terminal-only setup for users who prefer a GUI.
+
+## Routes
+
+| Route | File             | Description                                                                 |
+| ----- | ---------------- | --------------------------------------------------------------------------- |
+| `/`   | `+page.svelte`   | Four-step wizard: config directory → OCR settings + workers → progress → done |
+
+The wizard layout uses the same design system as the main UI (clay/gold/lapis/
+parchment palette) via Tailwind CSS.
+
+## API client
+
+**`src/lib/api.js`** — `configApi.get()`, `configApi.update(body)`, `configApi.status()` — communicates with `/wizard/config` endpoints proxied through the Vite dev server.
+
+## Build
+
+```bash
+make wizard-build         # npm ci && npm run build, copy to internal/wizard/static
+```
 
 ## See Also
 

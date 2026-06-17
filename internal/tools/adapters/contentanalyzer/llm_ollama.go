@@ -127,5 +127,5 @@ func (l *LlmOllama) Analyze(ctx context.Context, text string, docTypes []databas
 }
 
 func (l *LlmOllama) Name() string {
-	return "llmollama"
+	return config.ContentAnalyzer.Ollama
 }

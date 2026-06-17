@@ -56,5 +56,5 @@ func (m *MuPDF) CanHandle(mimeType string) bool {
 }
 
 func (m *MuPDF) Name() string {
-	return "mupdf"
+	return config.TextExtractor.MuPDF
 }
