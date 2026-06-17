@@ -8,7 +8,12 @@ type ConfigStatusResponse struct {
 	Errors       []string `json:"errors"`
 }
 
+type AppConfigResponse struct {
+	ConfigDir string `json:"config_dir"`
+}
+
 type ConfigResponse struct {
+	App              AppConfigResponse               `json:"app"`
 	Consumer         ConsumerConfigResponse          `json:"consumer"`
 	Enricher         EnricherConfigResponse          `json:"enricher"`
 	AvailableEngines map[string][]config.EngineEntry `json:"available_engines"`
@@ -96,6 +101,7 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Enricher.TagMatcher.ChunkSize = cfg.Enricher.TagMatcher.ChunkSize
 	resp.Enricher.TagMatcher.Hugot.Model = cfg.Enricher.TagMatcher.Hugot.Model
 	resp.Enricher.TagMatcher.Hugot.Backend = cfg.Enricher.TagMatcher.Hugot.Backend
+	resp.App.ConfigDir = cfg.App.ConfigDir
 	resp.AvailableEngines = config.AvailableEngines
 	return resp
 }

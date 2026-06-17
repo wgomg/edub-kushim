@@ -31,14 +31,12 @@ func NewConfigHandler(cfg *config.Config, queries *database.Queries, logger *uti
 }
 
 func (h *ConfigHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
-	if h.cfg == nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]any{})
-		return
+	cfg := h.cfg
+	if cfg == nil {
+		cfg = config.DefaultConfig("")
 	}
 
-	resp := types.ConfigResponseFrom(h.cfg)
+	resp := types.ConfigResponseFrom(cfg)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

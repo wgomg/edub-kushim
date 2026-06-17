@@ -6,7 +6,7 @@
 	let configDir = $state('');
 	let engines = $state(null);
 	let settings = $state({
-		ocr: { engine: 'gosseract', languages: ['eng'] },
+		ocr: { engine: '', languages: [] },
 		consumer: { workers: 1 },
 		enricher: { workers: 1 }
 	});
@@ -18,9 +18,10 @@
 	onMount(async () => {
 		try {
 			const cfg = await configApi.get();
-			if (cfg && cfg.app && cfg.app.config_dir) {
+			engines = cfg.available_engines;
+			settings = restoreFormValues(cfg);
+			if (cfg.app.config_dir) {
 				configDir = cfg.app.config_dir;
-				settings = restoreFormValues(cfg);
 				await checkStatus();
 				if (pendingTasks > 0) {
 					step = 3;
@@ -29,9 +30,6 @@
 					step = 4;
 				}
 			}
-			if (cfg && cfg.available_engines) {
-				engines = cfg.available_engines;
-			}
 		} catch (e) {
 			error = e.message;
 		}
@@ -39,9 +37,12 @@
 
 	function restoreFormValues(cfg) {
 		return {
-			ocr: cfg.consumer?.ocr || { engine: 'gosseract', languages: ['eng'] },
-			consumer: { workers: cfg.consumer?.workers || 1 },
-			enricher: { workers: cfg.enricher?.workers || 1 }
+			ocr: {
+				engine: cfg.consumer?.ocr?.engine ?? '',
+				languages: [...(cfg.consumer?.ocr?.languages ?? [])]
+			},
+			consumer: { workers: cfg.consumer?.workers ?? 1 },
+			enricher: { workers: cfg.enricher?.workers ?? 1 }
 		};
 	}
 
@@ -159,7 +160,7 @@
 				bind:value={settings.ocr.engine}
 				class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
 			>
-				{#each engines?.ocr ?? [{value:'gosseract',label:'gosseract (local Tesseract)'},{value:'ocrmypdf',label:'ocrmypdf'}] as opt}
+				{#each engines?.ocr ?? [] as opt}
 					<option value={opt.value}>{opt.label}</option>
 				{/each}
 			</select>

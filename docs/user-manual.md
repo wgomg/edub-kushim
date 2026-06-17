@@ -480,8 +480,9 @@ GET /wizard/config
 ```
 
 Returns the current configuration as a `ConfigResponse` JSON object with
-`consumer` and `enricher` sections plus `available_engines` for UI dropdowns.
-Returns `{}` when no config has been bootstrapped yet.
+`app`, `consumer`, and `enricher` sections plus `available_engines` for UI dropdowns.
+Returns defaults from `DefaultConfig("")` when no config has been bootstrapped yet,
+so the response always has a complete shape.
 
 ```
 PUT /wizard/config

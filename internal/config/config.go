@@ -258,9 +258,10 @@ func DefaultConfig(configDir string) *Config {
 				Timeout: 120,
 			},
 			OCR: OCRConfig{
-				Engine:  OCR.Gosseract,
-				DataDir: filepath.Join(configDir, "ocr/tessdata"),
-				Timeout: 120,
+				Engine:    OCR.Gosseract,
+				Languages: []string{"eng"},
+				DataDir:   filepath.Join(configDir, "ocr/tessdata"),
+				Timeout:   120,
 			},
 		},
 		Enricher: EnricherConfig{
