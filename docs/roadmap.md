@@ -136,7 +136,7 @@
 | `/` (dashboard)   | ✓      | Health + summary stats + recent docs                                       |
 | `/documents`      | ✓      | Structured search bar + filter panel + saved searches + sortable DataTable |
 | `/documents/[id]` | ◐      | PDF preview + metadata sidebar; no tags/people/type displayed yet          |
-| `/settings`       | ✓      | Configuration form (OCR engine, languages, consumer/enricher workers, PDF optimizer, etc.)         |
+| `/settings`       | ✓      | Full configuration form: server host/port, OCR, consumer, text extractor, PDF optimizer, enricher, content analyzer (LLM) with tokens, tag matcher, text reducer |
 | `/tags`           | ✗      | Placeholder: "Tag management will go here."                                                        |
 | `/tasks`          | ✓      | Batch list + task drill-down                                                                       |
 | `/tasks/[id]`     | ✗      | Route does not exist                                                                               |

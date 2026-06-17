@@ -127,13 +127,17 @@ The project provides two setup modes:
 
 When `kushim setup` is invoked without the `--cli` flag, a standalone HTTP server starts
 on `0.0.0.0:8420` serving an embedded SvelteKit SPA (`web-wizard/`). The wizard is a
-four-step guided flow:
+five-step guided flow:
 
 1. **Config directory** — user specifies where `config.yaml`, database, and models are stored
-2. **Settings** — OCR engine + languages, consumer/enricher worker counts
-3. **Progress** — background tasks download tessdata language files and the Hugot ONNX model;
+2. **Consumer settings** — OCR engine, languages, timeout; text extractor engine/timeout; PDF optimizer
+   engine/fallback/timeout; server port; consumer workers; delete-original toggle
+3. **Enricher settings** — content analyzer engine/timeout + LLM provider config (Base URL, model, token
+   with show/hide); tag matcher engine/timeout, reduce-target-words, chunk size, Hugot model/backend;
+   text reducer engine/timeout/target-words; enricher workers
+4. **Progress** — background tasks download tessdata language files and the Hugot ONNX model;
    the UI polls `GET /wizard/config/status` every 3 seconds
-4. **Completion** — all downloads are finished; the server is ready to run
+5. **Completion** — all downloads are finished; the server is ready to run
 
 The wizard server uses a stripped-down version of the full server stack: it bootstraps
 the config directory (via `config.Bootstrap`), initializes the SQLite schema, creates
@@ -150,10 +154,13 @@ environments or CI.
 ### In-App Settings Page
 
 The main web UI (`web/`) includes a **Settings** page at `/settings` backed by the same
-`/wizard/config` API endpoints. Users can update OCR engine/languages, consumer worker
-count, PDF optimizer engine, text extractor engine, enricher worker count, content analyzer
-engine, tag matcher engine, and text reducer engine — all through a structured form. Changes
-trigger background downloads for any missing tessdata or Hugot model files.
+`/wizard/config` API endpoints. It provides a single-page form covering all configurable
+fields: server host/port; OCR engine, timeout, data directory, languages; consumer workers,
+delete-original, text extractor engine/timeout; PDF optimizer engine/fallback/timeout;
+enricher workers; content analyzer engine/timeout + LLM provider Base URL, model, token;
+tag matcher engine/timeout, reduce-target-words, chunk size, Hugot model/backend;
+text reducer engine/timeout/target-words. Changes trigger background downloads for any
+missing tessdata or Hugot model files.
 
 ### Config API
 

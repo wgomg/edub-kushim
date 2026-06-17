@@ -8,6 +8,9 @@
 	let error = $state('');
 	let pendingTasks = $state(0);
 	let pollInterval;
+	let showToken = $state(false);
+
+	let providerKey = $derived(cfg?.enricher?.contentanalyzer?.engine?.replace(/^llm/, '') ?? null);
 
 	onMount(async () => {
 		const loaded = await api.config.get();
@@ -51,6 +54,8 @@
 
 	function bodyFromConfig() {
 		return {
+			'server.host': cfg.server.host,
+			'server.port': Number(cfg.server.port),
 			'consumer.ocr.engine': cfg.consumer.ocr.engine,
 			'consumer.ocr.languages': cfg.consumer.ocr.languages.filter(Boolean),
 			'consumer.ocr.data_dir': cfg.consumer.ocr.data_dir,
@@ -68,11 +73,21 @@
 			'enricher.textreducer.target_words': Number(cfg.enricher.textreducer.target_words),
 			'enricher.contentanalyzer.engine': cfg.enricher.contentanalyzer.engine,
 			'enricher.contentanalyzer.timeout': Number(cfg.enricher.contentanalyzer.timeout),
+			'enricher.contentanalyzer.llm.openai.base_url': cfg.enricher.contentanalyzer.llm.openai.base_url,
+			'enricher.contentanalyzer.llm.openai.model': cfg.enricher.contentanalyzer.llm.openai.model,
+			'enricher.contentanalyzer.llm.openai.token': cfg.enricher.contentanalyzer.llm.openai.token,
+			'enricher.contentanalyzer.llm.anthropic.base_url': cfg.enricher.contentanalyzer.llm.anthropic.base_url,
+			'enricher.contentanalyzer.llm.anthropic.model': cfg.enricher.contentanalyzer.llm.anthropic.model,
+			'enricher.contentanalyzer.llm.anthropic.token': cfg.enricher.contentanalyzer.llm.anthropic.token,
+			'enricher.contentanalyzer.llm.deepseek.base_url': cfg.enricher.contentanalyzer.llm.deepseek.base_url,
+			'enricher.contentanalyzer.llm.deepseek.model': cfg.enricher.contentanalyzer.llm.deepseek.model,
+			'enricher.contentanalyzer.llm.deepseek.token': cfg.enricher.contentanalyzer.llm.deepseek.token,
+			'enricher.contentanalyzer.llm.ollama.base_url': cfg.enricher.contentanalyzer.llm.ollama.base_url,
+			'enricher.contentanalyzer.llm.ollama.model': cfg.enricher.contentanalyzer.llm.ollama.model,
+			'enricher.contentanalyzer.llm.ollama.token': cfg.enricher.contentanalyzer.llm.ollama.token,
 			'enricher.tagmatcher.engine': cfg.enricher.tagmatcher.engine,
 			'enricher.tagmatcher.timeout': Number(cfg.enricher.tagmatcher.timeout),
-			'enricher.tagmatcher.reduce_target_words': Number(
-				cfg.enricher.tagmatcher.reduce_target_words
-			),
+			'enricher.tagmatcher.reduce_target_words': Number(cfg.enricher.tagmatcher.reduce_target_words),
 			'enricher.tagmatcher.chunk_size': Number(cfg.enricher.tagmatcher.chunk_size),
 			'enricher.tagmatcher.hugot.model': cfg.enricher.tagmatcher.hugot.model,
 			'enricher.tagmatcher.hugot.backend': cfg.enricher.tagmatcher.hugot.backend
@@ -132,6 +147,36 @@
 		{/if}
 
 		<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+			<h2 class="mb-4 text-lg font-semibold text-parchment-200">Server</h2>
+			<div class="grid gap-4 sm:grid-cols-2">
+				<div>
+					<label for="server-host" class="mb-1 block text-sm font-medium text-parchment-200"
+						>Host</label
+					>
+					<input
+						id="server-host"
+						type="text"
+						bind:value={cfg.server.host}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+					/>
+				</div>
+				<div>
+					<label for="server-port" class="mb-1 block text-sm font-medium text-parchment-200"
+						>Port</label
+					>
+					<input
+						id="server-port"
+						type="number"
+						min="1"
+						max="65535"
+						bind:value={cfg.server.port}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+					/>
+				</div>
+			</div>
+		</section>
+
+		<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
 			<h2 class="mb-4 text-lg font-semibold text-parchment-200">OCR</h2>
 			<div class="grid gap-4 sm:grid-cols-2">
 				<div>
@@ -143,7 +188,7 @@
 						bind:value={cfg.consumer.ocr.engine}
 						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
 					>
-						{#each cfg.available_engines.ocr as opt}
+						{#each cfg.available_engines.ocr as opt (opt.value)}
 							<option value={opt.value}>{opt.label}</option>
 						{/each}
 					</select>
@@ -160,10 +205,21 @@
 						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
 					/>
 				</div>
+				<div class="sm:col-span-2">
+					<label for="ocr-data-dir" class="mb-1 block text-sm font-medium text-parchment-200"
+						>Data directory</label
+					>
+					<input
+						id="ocr-data-dir"
+						type="text"
+						bind:value={cfg.consumer.ocr.data_dir}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+					/>
+				</div>
 			</div>
 			<div class="mt-4">
 				<span class="mb-2 block text-sm font-medium text-parchment-200">Languages</span>
-				{#each cfg.consumer.ocr.languages as lang, i}
+				{#each cfg.consumer.ocr.languages as lang, i (i)}
 					<div class="mb-2 flex gap-2">
 						<input
 							type="text"
@@ -208,34 +264,6 @@
 						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
 					/>
 				</div>
-				<div>
-					<label for="pdf-engine" class="mb-1 block text-sm font-medium text-parchment-200"
-						>PDF optimizer</label
-					>
-					<select
-						id="pdf-engine"
-						bind:value={cfg.consumer.pdfoptimizer.engine}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
-					>
-						{#each cfg.available_engines.pdf_optimizer as opt}
-							<option value={opt.value}>{opt.label}</option>
-						{/each}
-					</select>
-				</div>
-				<div>
-					<label for="text-extractor" class="mb-1 block text-sm font-medium text-parchment-200"
-						>Text extractor</label
-					>
-					<select
-						id="text-extractor"
-						bind:value={cfg.consumer.textextractor.engine}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
-					>
-						{#each cfg.available_engines.text_extractor as opt}
-							<option value={opt.value}>{opt.label}</option>
-						{/each}
-					</select>
-				</div>
 				<div class="flex items-center gap-2">
 					<input
 						id="delete-original"
@@ -246,6 +274,83 @@
 					<label for="delete-original" class="text-sm text-parchment-200"
 						>Delete original files after processing</label
 					>
+				</div>
+			</div>
+		</section>
+
+		<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+			<h2 class="mb-4 text-lg font-semibold text-parchment-200">Text extractor</h2>
+			<div class="grid gap-4 sm:grid-cols-2">
+				<div>
+					<label
+						for="text-extractor-engine"
+						class="mb-1 block text-sm font-medium text-parchment-200">Engine</label
+					>
+					<select
+						id="text-extractor-engine"
+						bind:value={cfg.consumer.textextractor.engine}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+					>
+						{#each cfg.available_engines.text_extractor as opt (opt.value)}
+							<option value={opt.value}>{opt.label}</option>
+						{/each}
+					</select>
+				</div>
+				<div>
+					<label
+						for="text-extractor-timeout"
+						class="mb-1 block text-sm font-medium text-parchment-200">Timeout (s)</label
+					>
+					<input
+						id="text-extractor-timeout"
+						type="number"
+						min="1"
+						bind:value={cfg.consumer.textextractor.timeout}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+					/>
+				</div>
+			</div>
+		</section>
+
+		<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+			<h2 class="mb-4 text-lg font-semibold text-parchment-200">PDF optimizer</h2>
+			<div class="grid gap-4 sm:grid-cols-2">
+				<div>
+					<label for="pdf-engine" class="mb-1 block text-sm font-medium text-parchment-200"
+						>Engine</label
+					>
+					<select
+						id="pdf-engine"
+						bind:value={cfg.consumer.pdfoptimizer.engine}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+					>
+						{#each cfg.available_engines.pdf_optimizer as opt (opt.value)}
+							<option value={opt.value}>{opt.label}</option>
+						{/each}
+					</select>
+				</div>
+				<div>
+					<label for="pdf-fallback" class="mb-1 block text-sm font-medium text-parchment-200"
+						>Fallback (optional)</label
+					>
+					<input
+						id="pdf-fallback"
+						type="text"
+						bind:value={cfg.consumer.pdfoptimizer.fallback}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus:outline-none"
+					/>
+				</div>
+				<div class="sm:col-span-2">
+					<label for="pdf-timeout" class="mb-1 block text-sm font-medium text-parchment-200"
+						>Timeout (s)</label
+					>
+					<input
+						id="pdf-timeout"
+						type="number"
+						min="1"
+						bind:value={cfg.consumer.pdfoptimizer.timeout}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+					/>
 				</div>
 			</div>
 		</section>
@@ -265,48 +370,222 @@
 						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
 					/>
 				</div>
+			</div>
+		</section>
+
+		<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+			<h2 class="mb-4 text-lg font-semibold text-parchment-200">Content analyzer (LLM)</h2>
+			<div class="grid gap-4 sm:grid-cols-2">
 				<div>
 					<label
 						for="content-analyzer-engine"
-						class="mb-1 block text-sm font-medium text-parchment-200">Content analyzer</label
+						class="mb-1 block text-sm font-medium text-parchment-200">Engine</label
 					>
 					<select
 						id="content-analyzer-engine"
 						bind:value={cfg.enricher.contentanalyzer.engine}
 						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
 					>
-						{#each cfg.available_engines.content_analyzer as opt}
+						{#each cfg.available_engines.content_analyzer as opt (opt.value)}
 							<option value={opt.value}>{opt.label}</option>
 						{/each}
 					</select>
 				</div>
 				<div>
+					<label
+						for="content-analyzer-timeout"
+						class="mb-1 block text-sm font-medium text-parchment-200">Timeout (s)</label
+					>
+					<input
+						id="content-analyzer-timeout"
+						type="number"
+						min="1"
+						bind:value={cfg.enricher.contentanalyzer.timeout}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+					/>
+				</div>
+			</div>
+
+			{#if providerKey}
+				<div class="mt-4 rounded-lg border border-clay-800 bg-clay-950 p-4">
+					<h3 class="mb-3 text-sm font-semibold capitalize text-parchment-200">
+						{providerKey} provider
+					</h3>
+					<div class="grid gap-4 sm:grid-cols-2">
+						<div class="sm:col-span-2">
+							<label
+								for="llm-{providerKey}-base-url"
+								class="mb-1 block text-sm font-medium text-parchment-200">Base URL</label
+							>
+							<input
+								id="llm-{providerKey}-base-url"
+								type="text"
+								bind:value={cfg.enricher.contentanalyzer.llm[providerKey].base_url}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							/>
+						</div>
+						<div class="sm:col-span-2">
+							<label
+								for="llm-{providerKey}-model"
+								class="mb-1 block text-sm font-medium text-parchment-200">Model</label
+							>
+							<input
+								id="llm-{providerKey}-model"
+								type="text"
+								bind:value={cfg.enricher.contentanalyzer.llm[providerKey].model}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							/>
+						</div>
+						<div class="sm:col-span-2">
+							<label
+								for="llm-{providerKey}-token"
+								class="mb-1 block text-sm font-medium text-parchment-200">Token</label
+							>
+							<div class="flex gap-2">
+								<input
+									id="llm-{providerKey}-token"
+									type={showToken ? 'text' : 'password'}
+									bind:value={cfg.enricher.contentanalyzer.llm[providerKey].token}
+									placeholder="sk-..."
+									class="flex-1 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus:outline-none"
+								/>
+								<button
+									type="button"
+									onclick={() => (showToken = !showToken)}
+									class="rounded-lg border border-clay-800 px-3 text-sm text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
+								>
+									{showToken ? 'Hide' : 'Show'}
+								</button>
+							</div>
+						</div>
+					</div>
+				</div>
+			{/if}
+		</section>
+
+		<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+			<h2 class="mb-4 text-lg font-semibold text-parchment-200">Tag matcher</h2>
+			<div class="grid gap-4 sm:grid-cols-2">
+				<div>
 					<label for="tag-matcher-engine" class="mb-1 block text-sm font-medium text-parchment-200"
-						>Tag matcher</label
+						>Engine</label
 					>
 					<select
 						id="tag-matcher-engine"
 						bind:value={cfg.enricher.tagmatcher.engine}
 						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
 					>
-						{#each cfg.available_engines.tag_matcher as opt}
+						{#each cfg.available_engines.tag_matcher as opt (opt.value)}
 							<option value={opt.value}>{opt.label}</option>
 						{/each}
 					</select>
 				</div>
 				<div>
+					<label for="tag-matcher-timeout" class="mb-1 block text-sm font-medium text-parchment-200"
+						>Timeout (s)</label
+					>
+					<input
+						id="tag-matcher-timeout"
+						type="number"
+						min="1"
+						bind:value={cfg.enricher.tagmatcher.timeout}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+					/>
+				</div>
+				<div>
+					<label
+						for="tag-matcher-reduce-target"
+						class="mb-1 block text-sm font-medium text-parchment-200">Reduce target words</label
+					>
+					<input
+						id="tag-matcher-reduce-target"
+						type="number"
+						min="0"
+						bind:value={cfg.enricher.tagmatcher.reduce_target_words}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+					/>
+				</div>
+				<div>
+					<label for="tag-matcher-chunk-size" class="mb-1 block text-sm font-medium text-parchment-200"
+						>Chunk size</label
+					>
+					<input
+						id="tag-matcher-chunk-size"
+						type="number"
+						min="0"
+						bind:value={cfg.enricher.tagmatcher.chunk_size}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+					/>
+				</div>
+				<div>
+					<label for="tag-matcher-hugot-model" class="mb-1 block text-sm font-medium text-parchment-200"
+						>Hugot model</label
+					>
+					<input
+						id="tag-matcher-hugot-model"
+						type="text"
+						bind:value={cfg.enricher.tagmatcher.hugot.model}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+					/>
+				</div>
+				<div>
+					<label
+						for="tag-matcher-hugot-backend"
+						class="mb-1 block text-sm font-medium text-parchment-200">Hugot backend</label
+					>
+					<select
+						id="tag-matcher-hugot-backend"
+						bind:value={cfg.enricher.tagmatcher.hugot.backend}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+					>
+						<option value="ort">ort</option>
+						<option value="GO">GO</option>
+					</select>
+				</div>
+			</div>
+		</section>
+
+		<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+			<h2 class="mb-4 text-lg font-semibold text-parchment-200">Text reducer</h2>
+			<div class="grid gap-4 sm:grid-cols-2">
+				<div>
 					<label for="text-reducer-engine" class="mb-1 block text-sm font-medium text-parchment-200"
-						>Text reducer</label
+						>Engine</label
 					>
 					<select
 						id="text-reducer-engine"
 						bind:value={cfg.enricher.textreducer.engine}
 						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
 					>
-						{#each cfg.available_engines.text_reducer as opt}
+						{#each cfg.available_engines.text_reducer as opt (opt.value)}
 							<option value={opt.value}>{opt.label}</option>
 						{/each}
 					</select>
+				</div>
+				<div>
+					<label for="text-reducer-timeout" class="mb-1 block text-sm font-medium text-parchment-200"
+						>Timeout (s)</label
+					>
+					<input
+						id="text-reducer-timeout"
+						type="number"
+						min="1"
+						bind:value={cfg.enricher.textreducer.timeout}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+					/>
+				</div>
+				<div class="sm:col-span-2">
+					<label
+						for="text-reducer-target-words"
+						class="mb-1 block text-sm font-medium text-parchment-200">Target words</label
+					>
+					<input
+						id="text-reducer-target-words"
+						type="number"
+						min="1"
+						bind:value={cfg.enricher.textreducer.target_words}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+					/>
 				</div>
 			</div>
 		</section>

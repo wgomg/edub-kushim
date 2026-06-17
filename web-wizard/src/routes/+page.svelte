@@ -4,30 +4,28 @@
 
 	let step = $state(1);
 	let configDir = $state('');
-	let engines = $state(null);
-	let settings = $state({
-		ocr: { engine: '', languages: [] },
-		consumer: { workers: 1 },
-		enricher: { workers: 1 }
-	});
+	let cfg = $state(null);
 	let pendingTasks = $state(0);
-	let error = $state('');
 	let configured = $state(false);
+	let error = $state('');
 	let pollInterval;
+	let showToken = $state(false);
+
+	let providerKey = $derived(cfg?.enricher?.contentanalyzer?.engine?.replace(/^llm/, '') ?? null);
 
 	onMount(async () => {
 		try {
-			const cfg = await configApi.get();
-			engines = cfg.available_engines;
-			settings = restoreFormValues(cfg);
-			if (cfg.app.config_dir) {
-				configDir = cfg.app.config_dir;
+			const loaded = await configApi.get();
+			cfg = loaded;
+			if (cfg.app.initialized) {
 				await checkStatus();
 				if (pendingTasks > 0) {
-					step = 3;
+					step = 4;
 					startPolling();
 				} else if (configured) {
-					step = 4;
+					step = 5;
+				} else {
+					step = 2;
 				}
 			}
 		} catch (e) {
@@ -35,38 +33,33 @@
 		}
 	});
 
-	function restoreFormValues(cfg) {
-		return {
-			ocr: {
-				engine: cfg.consumer?.ocr?.engine ?? '',
-				languages: [...(cfg.consumer?.ocr?.languages ?? [])]
-			},
-			consumer: { workers: cfg.consumer?.workers ?? 1 },
-			enricher: { workers: cfg.enricher?.workers ?? 1 }
-		};
-	}
-
-	async function submitConfigDir() {
+	async function submitConfigDir(e) {
+		e.preventDefault();
 		error = '';
 		try {
 			await configApi.update({ config_dir: configDir });
+			const loaded = await configApi.get();
+			if (loaded) cfg = loaded;
 			step = 2;
 		} catch (e) {
 			error = e.message;
 		}
 	}
 
-	async function submitSettings() {
+	async function submitSettings(e) {
+		e.preventDefault();
 		error = '';
 		try {
 			const body = buildConfigBody();
 			const res = await configApi.update(body);
+			const loaded = await configApi.get();
+			if (loaded) cfg = loaded;
 			if (res && 'pending_tasks' in res && res.pending_tasks > 0) {
 				pendingTasks = res.pending_tasks;
-				step = 3;
+				step = 4;
 				startPolling();
 			} else {
-				step = 4;
+				step = 5;
 			}
 		} catch (e) {
 			error = e.message;
@@ -75,10 +68,41 @@
 
 	function buildConfigBody() {
 		return {
-			'consumer.ocr.engine': settings.ocr.engine,
-			'consumer.ocr.languages': settings.ocr.languages,
-			'consumer.workers': settings.consumer.workers,
-			'enricher.workers': settings.enricher.workers
+			'server.port': Number(cfg.server.port),
+			'consumer.ocr.engine': cfg.consumer.ocr.engine,
+			'consumer.ocr.languages': cfg.consumer.ocr.languages.filter(Boolean),
+			'consumer.ocr.timeout': Number(cfg.consumer.ocr.timeout),
+			'consumer.workers': Number(cfg.consumer.workers),
+			'consumer.delete_original': cfg.consumer.delete_original,
+			'consumer.pdfoptimizer.engine': cfg.consumer.pdfoptimizer.engine,
+			'consumer.pdfoptimizer.fallback': cfg.consumer.pdfoptimizer.fallback,
+			'consumer.pdfoptimizer.timeout': Number(cfg.consumer.pdfoptimizer.timeout),
+			'consumer.textextractor.engine': cfg.consumer.textextractor.engine,
+			'consumer.textextractor.timeout': Number(cfg.consumer.textextractor.timeout),
+			'enricher.workers': Number(cfg.enricher.workers),
+			'enricher.textreducer.engine': cfg.enricher.textreducer.engine,
+			'enricher.textreducer.timeout': Number(cfg.enricher.textreducer.timeout),
+			'enricher.textreducer.target_words': Number(cfg.enricher.textreducer.target_words),
+			'enricher.contentanalyzer.engine': cfg.enricher.contentanalyzer.engine,
+			'enricher.contentanalyzer.timeout': Number(cfg.enricher.contentanalyzer.timeout),
+			'enricher.contentanalyzer.llm.openai.base_url': cfg.enricher.contentanalyzer.llm.openai.base_url,
+			'enricher.contentanalyzer.llm.openai.model': cfg.enricher.contentanalyzer.llm.openai.model,
+			'enricher.contentanalyzer.llm.openai.token': cfg.enricher.contentanalyzer.llm.openai.token,
+			'enricher.contentanalyzer.llm.anthropic.base_url': cfg.enricher.contentanalyzer.llm.anthropic.base_url,
+			'enricher.contentanalyzer.llm.anthropic.model': cfg.enricher.contentanalyzer.llm.anthropic.model,
+			'enricher.contentanalyzer.llm.anthropic.token': cfg.enricher.contentanalyzer.llm.anthropic.token,
+			'enricher.contentanalyzer.llm.deepseek.base_url': cfg.enricher.contentanalyzer.llm.deepseek.base_url,
+			'enricher.contentanalyzer.llm.deepseek.model': cfg.enricher.contentanalyzer.llm.deepseek.model,
+			'enricher.contentanalyzer.llm.deepseek.token': cfg.enricher.contentanalyzer.llm.deepseek.token,
+			'enricher.contentanalyzer.llm.ollama.base_url': cfg.enricher.contentanalyzer.llm.ollama.base_url,
+			'enricher.contentanalyzer.llm.ollama.model': cfg.enricher.contentanalyzer.llm.ollama.model,
+			'enricher.contentanalyzer.llm.ollama.token': cfg.enricher.contentanalyzer.llm.ollama.token,
+			'enricher.tagmatcher.engine': cfg.enricher.tagmatcher.engine,
+			'enricher.tagmatcher.timeout': Number(cfg.enricher.tagmatcher.timeout),
+			'enricher.tagmatcher.reduce_target_words': Number(cfg.enricher.tagmatcher.reduce_target_words),
+			'enricher.tagmatcher.chunk_size': Number(cfg.enricher.tagmatcher.chunk_size),
+			'enricher.tagmatcher.hugot.model': cfg.enricher.tagmatcher.hugot.model,
+			'enricher.tagmatcher.hugot.backend': cfg.enricher.tagmatcher.hugot.backend
 		};
 	}
 
@@ -90,12 +114,14 @@
 	}
 
 	function startPolling() {
+		if (pollInterval) clearInterval(pollInterval);
 		pollInterval = setInterval(async () => {
 			try {
 				const status = await checkStatus();
 				if (status.pending_tasks === 0 && status.configured) {
 					clearInterval(pollInterval);
-					step = 4;
+					pollInterval = null;
+					step = 5;
 				}
 			} catch (e) {
 				error = e.message;
@@ -104,15 +130,15 @@
 	}
 
 	function addLanguage() {
-		settings.ocr.languages = [...settings.ocr.languages, ''];
+		cfg.consumer.ocr.languages = [...cfg.consumer.ocr.languages, ''];
 	}
 
 	function removeLanguage(index) {
-		settings.ocr.languages = settings.ocr.languages.filter((_, i) => i !== index);
+		cfg.consumer.ocr.languages = cfg.consumer.ocr.languages.filter((_, i) => i !== index);
 	}
 
 	function updateLanguage(index, value) {
-		settings.ocr.languages = settings.ocr.languages.map((lang, i) =>
+		cfg.consumer.ocr.languages = cfg.consumer.ocr.languages.map((lang, i) =>
 			i === index ? value : lang
 		);
 	}
@@ -122,6 +148,10 @@
 	<div class="mb-4 rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500">
 		{error}
 	</div>
+{/if}
+
+{#if !cfg && step !== 1}
+	<div class="text-center text-sm text-parchment-500">Loading configuration...</div>
 {/if}
 
 {#if step === 1}
@@ -151,103 +181,479 @@
 	</form>
 {/if}
 
-{#if step === 2}
-	<form onsubmit={submitSettings} class="space-y-5">
-		<div>
-			<label for="ocr-engine" class="mb-1 block text-sm font-medium text-parchment-200">OCR engine</label>
-			<select
-				id="ocr-engine"
-				bind:value={settings.ocr.engine}
-				class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
-			>
-				{#each engines?.ocr ?? [] as opt}
-					<option value={opt.value}>{opt.label}</option>
-				{/each}
-			</select>
-		</div>
+{#if step === 2 && cfg}
+	<div class="mb-4 text-center">
+		<p class="text-xs font-medium uppercase tracking-wide text-parchment-500">Step 2 of 5</p>
+		<h2 class="text-lg font-semibold text-parchment-200">Consumer settings</h2>
+	</div>
 
-		<div>
-			<span class="mb-2 block text-sm font-medium text-parchment-200">OCR languages</span>
-			{#each settings.ocr.languages as lang, i}
-				<div class="mb-2 flex gap-2">
-					<input
-						type="text"
-						value={lang}
-						oninput={(e) => updateLanguage(i, e.currentTarget.value)}
-						placeholder="eng"
-						required
-						class="flex-1 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus:outline-none"
-					/>
-					{#if settings.ocr.languages.length > 1}
-						<button
-							type="button"
-							onclick={() => removeLanguage(i)}
-							class="rounded-lg border border-clay-800 px-3 text-sm text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
-						>
-							Remove
-						</button>
-					{/if}
-				</div>
-			{/each}
-			<button
-				type="button"
-				onclick={addLanguage}
-				class="text-sm text-gold-500 hover:text-gold-600"
-			>
-				+ Add language
-			</button>
-		</div>
-
-		<div class="grid grid-cols-2 gap-4">
+	<form onsubmit={(e) => { e.preventDefault(); step = 3; }} class="space-y-5">
+		<section class="rounded-xl border border-clay-800 bg-clay-950/50 p-4">
+			<h3 class="mb-3 text-sm font-semibold text-parchment-200">Server</h3>
 			<div>
-				<label for="consumer-workers" class="mb-1 block text-sm font-medium text-parchment-200">
-					Consumer workers
+				<label for="server-port" class="mb-1 block text-sm font-medium text-parchment-200">
+					edub server port
 				</label>
 				<input
-					id="consumer-workers"
+					id="server-port"
 					type="number"
 					min="1"
-					bind:value={settings.consumer.workers}
+					max="65535"
+					bind:value={cfg.server.port}
 					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
 				/>
 			</div>
+		</section>
+
+		<section class="rounded-xl border border-clay-800 bg-clay-950/50 p-4">
+			<h3 class="mb-3 text-sm font-semibold text-parchment-200">OCR</h3>
+			<div class="space-y-3">
+				<div>
+					<label for="ocr-engine" class="mb-1 block text-sm font-medium text-parchment-200">
+						Engine
+					</label>
+					<select
+						id="ocr-engine"
+						bind:value={cfg.consumer.ocr.engine}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+					>
+						{#each cfg.available_engines.ocr as opt (opt.value)}
+							<option value={opt.value}>{opt.label}</option>
+						{/each}
+					</select>
+				</div>
+				<div>
+					<label for="ocr-timeout" class="mb-1 block text-sm font-medium text-parchment-200">
+						Timeout (s)
+					</label>
+					<input
+						id="ocr-timeout"
+						type="number"
+						min="1"
+						bind:value={cfg.consumer.ocr.timeout}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+					/>
+				</div>
+				<div>
+					<span class="mb-2 block text-sm font-medium text-parchment-200">Languages</span>
+					{#each cfg.consumer.ocr.languages as lang, i (i)}
+						<div class="mb-2 flex gap-2">
+							<input
+								type="text"
+								value={lang}
+								oninput={(e) => updateLanguage(i, e.currentTarget.value)}
+								placeholder="eng"
+								required
+								class="flex-1 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus:outline-none"
+							/>
+							{#if cfg.consumer.ocr.languages.length > 1}
+								<button
+									type="button"
+									onclick={() => removeLanguage(i)}
+									class="rounded-lg border border-clay-800 px-3 text-sm text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
+								>
+									Remove
+								</button>
+							{/if}
+						</div>
+					{/each}
+					<button
+						type="button"
+						onclick={addLanguage}
+						class="text-sm text-gold-500 hover:text-gold-600"
+					>
+						+ Add language
+					</button>
+				</div>
+			</div>
+		</section>
+
+		<section class="rounded-xl border border-clay-800 bg-clay-950/50 p-4">
+			<h3 class="mb-3 text-sm font-semibold text-parchment-200">Text extractor</h3>
+			<div class="grid gap-3 sm:grid-cols-2">
+				<div>
+					<label for="text-extractor-engine" class="mb-1 block text-sm font-medium text-parchment-200">
+						Engine
+					</label>
+					<select
+						id="text-extractor-engine"
+						bind:value={cfg.consumer.textextractor.engine}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+					>
+						{#each cfg.available_engines.text_extractor as opt (opt.value)}
+							<option value={opt.value}>{opt.label}</option>
+						{/each}
+					</select>
+				</div>
+				<div>
+					<label for="text-extractor-timeout" class="mb-1 block text-sm font-medium text-parchment-200">
+						Timeout (s)
+					</label>
+					<input
+						id="text-extractor-timeout"
+						type="number"
+						min="1"
+						bind:value={cfg.consumer.textextractor.timeout}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+					/>
+				</div>
+			</div>
+		</section>
+
+		<section class="rounded-xl border border-clay-800 bg-clay-950/50 p-4">
+			<h3 class="mb-3 text-sm font-semibold text-parchment-200">PDF optimizer</h3>
+			<div class="grid gap-3 sm:grid-cols-2">
+				<div>
+					<label for="pdf-optimizer-engine" class="mb-1 block text-sm font-medium text-parchment-200">
+						Engine
+					</label>
+					<select
+						id="pdf-optimizer-engine"
+						bind:value={cfg.consumer.pdfoptimizer.engine}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+					>
+						{#each cfg.available_engines.pdf_optimizer as opt (opt.value)}
+							<option value={opt.value}>{opt.label}</option>
+						{/each}
+					</select>
+				</div>
+				<div>
+					<label for="pdf-optimizer-fallback" class="mb-1 block text-sm font-medium text-parchment-200">
+						Fallback (optional)
+					</label>
+					<input
+						id="pdf-optimizer-fallback"
+						type="text"
+						bind:value={cfg.consumer.pdfoptimizer.fallback}
+						placeholder="gs"
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus:outline-none"
+					/>
+				</div>
+				<div class="sm:col-span-2">
+					<label for="pdf-optimizer-timeout" class="mb-1 block text-sm font-medium text-parchment-200">
+						Timeout (s)
+					</label>
+					<input
+						id="pdf-optimizer-timeout"
+						type="number"
+						min="1"
+						bind:value={cfg.consumer.pdfoptimizer.timeout}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+					/>
+				</div>
+			</div>
+		</section>
+
+		<section class="rounded-xl border border-clay-800 bg-clay-950/50 p-4">
+			<h3 class="mb-3 text-sm font-semibold text-parchment-200">General</h3>
+			<div class="grid gap-3 sm:grid-cols-2">
+				<div>
+					<label for="consumer-workers" class="mb-1 block text-sm font-medium text-parchment-200">
+						Workers
+					</label>
+					<input
+						id="consumer-workers"
+						type="number"
+						min="1"
+						bind:value={cfg.consumer.workers}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+					/>
+				</div>
+				<div class="flex items-center gap-2">
+					<input
+						id="delete-original"
+						type="checkbox"
+						bind:checked={cfg.consumer.delete_original}
+						class="rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
+					/>
+					<label for="delete-original" class="text-sm text-parchment-200">
+						Delete original files after processing
+					</label>
+				</div>
+			</div>
+		</section>
+
+		<div class="flex gap-3">
+			<button
+				type="button"
+				onclick={() => (step = 1)}
+				class="flex-1 rounded-lg border border-clay-800 px-4 py-2 text-sm font-medium text-parchment-200 hover:bg-clay-800"
+			>
+				Back
+			</button>
+			<button
+				type="submit"
+				class="flex-1 rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600"
+			>
+				Continue
+			</button>
+		</div>
+	</form>
+{/if}
+
+{#if step === 3 && cfg}
+	<div class="mb-4 text-center">
+		<p class="text-xs font-medium uppercase tracking-wide text-parchment-500">Step 3 of 5</p>
+		<h2 class="text-lg font-semibold text-parchment-200">Enricher settings</h2>
+	</div>
+
+	<form onsubmit={submitSettings} class="space-y-5">
+		<section class="rounded-xl border border-clay-800 bg-clay-950/50 p-4">
+			<h3 class="mb-3 text-sm font-semibold text-parchment-200">Content analyzer (LLM)</h3>
+			<div class="space-y-3">
+				<div class="grid gap-3 sm:grid-cols-2">
+					<div>
+						<label for="content-analyzer-engine" class="mb-1 block text-sm font-medium text-parchment-200">
+							Engine
+						</label>
+						<select
+							id="content-analyzer-engine"
+							bind:value={cfg.enricher.contentanalyzer.engine}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						>
+							{#each cfg.available_engines.content_analyzer as opt (opt.value)}
+								<option value={opt.value}>{opt.label}</option>
+							{/each}
+						</select>
+					</div>
+					<div>
+						<label for="content-analyzer-timeout" class="mb-1 block text-sm font-medium text-parchment-200">
+							Timeout (s)
+						</label>
+						<input
+							id="content-analyzer-timeout"
+							type="number"
+							min="1"
+							bind:value={cfg.enricher.contentanalyzer.timeout}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						/>
+					</div>
+				</div>
+
+				{#if providerKey}
+					<div class="rounded-lg border border-clay-800 bg-clay-900 p-3">
+						<h4 class="mb-2 text-sm font-medium capitalize text-parchment-200">{providerKey} provider</h4>
+						<div class="space-y-3">
+							<div>
+								<label for="llm-{providerKey}-base-url" class="mb-1 block text-sm font-medium text-parchment-200">
+									Base URL
+								</label>
+								<input
+									id="llm-{providerKey}-base-url"
+									type="text"
+									bind:value={cfg.enricher.contentanalyzer.llm[providerKey].base_url}
+									class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+								/>
+							</div>
+							<div>
+								<label for="llm-{providerKey}-model" class="mb-1 block text-sm font-medium text-parchment-200">
+									Model
+								</label>
+								<input
+									id="llm-{providerKey}-model"
+									type="text"
+									bind:value={cfg.enricher.contentanalyzer.llm[providerKey].model}
+									class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+								/>
+							</div>
+							<div>
+								<label for="llm-{providerKey}-token" class="mb-1 block text-sm font-medium text-parchment-200">
+									Token
+								</label>
+								<div class="flex gap-2">
+									<input
+										id="llm-{providerKey}-token"
+										type={showToken ? 'text' : 'password'}
+										bind:value={cfg.enricher.contentanalyzer.llm[providerKey].token}
+										placeholder="sk-..."
+										class="flex-1 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus:outline-none"
+									/>
+									<button
+										type="button"
+										onclick={() => (showToken = !showToken)}
+										class="rounded-lg border border-clay-800 px-3 text-sm text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
+									>
+										{showToken ? 'Hide' : 'Show'}
+									</button>
+								</div>
+							</div>
+						</div>
+					</div>
+				{/if}
+			</div>
+		</section>
+
+		<section class="rounded-xl border border-clay-800 bg-clay-950/50 p-4">
+			<h3 class="mb-3 text-sm font-semibold text-parchment-200">Tag matcher</h3>
+			<div class="grid gap-3 sm:grid-cols-2">
+				<div>
+					<label for="tag-matcher-engine" class="mb-1 block text-sm font-medium text-parchment-200">
+						Engine
+					</label>
+					<select
+						id="tag-matcher-engine"
+						bind:value={cfg.enricher.tagmatcher.engine}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+					>
+						{#each cfg.available_engines.tag_matcher as opt (opt.value)}
+							<option value={opt.value}>{opt.label}</option>
+						{/each}
+					</select>
+				</div>
+				<div>
+					<label for="tag-matcher-timeout" class="mb-1 block text-sm font-medium text-parchment-200">
+						Timeout (s)
+					</label>
+					<input
+						id="tag-matcher-timeout"
+						type="number"
+						min="1"
+						bind:value={cfg.enricher.tagmatcher.timeout}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+					/>
+				</div>
+				<div>
+					<label for="tag-matcher-reduce-target" class="mb-1 block text-sm font-medium text-parchment-200">
+						Reduce target words
+					</label>
+					<input
+						id="tag-matcher-reduce-target"
+						type="number"
+						min="0"
+						bind:value={cfg.enricher.tagmatcher.reduce_target_words}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+					/>
+				</div>
+				<div>
+					<label for="tag-matcher-chunk-size" class="mb-1 block text-sm font-medium text-parchment-200">
+						Chunk size
+					</label>
+					<input
+						id="tag-matcher-chunk-size"
+						type="number"
+						min="0"
+						bind:value={cfg.enricher.tagmatcher.chunk_size}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+					/>
+				</div>
+				<div>
+					<label for="tag-matcher-hugot-model" class="mb-1 block text-sm font-medium text-parchment-200">
+						Hugot model
+					</label>
+					<input
+						id="tag-matcher-hugot-model"
+						type="text"
+						bind:value={cfg.enricher.tagmatcher.hugot.model}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+					/>
+				</div>
+				<div>
+					<label for="tag-matcher-hugot-backend" class="mb-1 block text-sm font-medium text-parchment-200">
+						Hugot backend
+					</label>
+					<select
+						id="tag-matcher-hugot-backend"
+						bind:value={cfg.enricher.tagmatcher.hugot.backend}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+					>
+						<option value="ort">ort</option>
+						<option value="GO">GO</option>
+					</select>
+				</div>
+			</div>
+		</section>
+
+		<section class="rounded-xl border border-clay-800 bg-clay-950/50 p-4">
+			<h3 class="mb-3 text-sm font-semibold text-parchment-200">Text reducer</h3>
+			<div class="grid gap-3 sm:grid-cols-2">
+				<div>
+					<label for="text-reducer-engine" class="mb-1 block text-sm font-medium text-parchment-200">
+						Engine
+					</label>
+					<select
+						id="text-reducer-engine"
+						bind:value={cfg.enricher.textreducer.engine}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+					>
+						{#each cfg.available_engines.text_reducer as opt (opt.value)}
+							<option value={opt.value}>{opt.label}</option>
+						{/each}
+					</select>
+				</div>
+				<div>
+					<label for="text-reducer-timeout" class="mb-1 block text-sm font-medium text-parchment-200">
+						Timeout (s)
+					</label>
+					<input
+						id="text-reducer-timeout"
+						type="number"
+						min="1"
+						bind:value={cfg.enricher.textreducer.timeout}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+					/>
+				</div>
+				<div class="sm:col-span-2">
+					<label for="text-reducer-target-words" class="mb-1 block text-sm font-medium text-parchment-200">
+						Target words
+					</label>
+					<input
+						id="text-reducer-target-words"
+						type="number"
+						min="1"
+						bind:value={cfg.enricher.textreducer.target_words}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+					/>
+				</div>
+			</div>
+		</section>
+
+		<section class="rounded-xl border border-clay-800 bg-clay-950/50 p-4">
+			<h3 class="mb-3 text-sm font-semibold text-parchment-200">General</h3>
 			<div>
 				<label for="enricher-workers" class="mb-1 block text-sm font-medium text-parchment-200">
-					Enricher workers
+					Workers
 				</label>
 				<input
 					id="enricher-workers"
 					type="number"
 					min="1"
-					bind:value={settings.enricher.workers}
+					bind:value={cfg.enricher.workers}
 					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
 				/>
 			</div>
-		</div>
+		</section>
 
-		<button
-			type="submit"
-			class="w-full rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600"
-		>
-			Save and continue
-		</button>
+		<div class="flex gap-3">
+			<button
+				type="button"
+				onclick={() => (step = 2)}
+				class="flex-1 rounded-lg border border-clay-800 px-4 py-2 text-sm font-medium text-parchment-200 hover:bg-clay-800"
+			>
+				Back
+			</button>
+			<button
+				type="submit"
+				class="flex-1 rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600"
+			>
+				Save and continue
+			</button>
+		</div>
 	</form>
 {/if}
 
-{#if step === 3}
+{#if step === 4}
 	<div class="space-y-4 text-center">
-		<div class="text-parchment-200">
-			<h2 class="text-lg font-semibold">Setting things up...</h2>
-			<p class="mt-2 text-sm text-parchment-500">
-				Downloading required models and language files. This may take a few minutes.
-			</p>
-		</div>
+		<p class="text-xs font-medium uppercase tracking-wide text-parchment-500">Step 4 of 5</p>
+		<h2 class="text-lg font-semibold text-parchment-200">Setting things up...</h2>
+		<p class="text-sm text-parchment-500">
+			Downloading required models and language files. This may take a few minutes.
+		</p>
 		<div class="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-clay-800 border-t-gold-500"></div>
 		<p class="text-sm text-parchment-400">{pendingTasks} task(s) remaining</p>
 	</div>
 {/if}
 
-{#if step === 4}
+{#if step === 5}
 	<div class="space-y-4 text-center">
 		<h2 class="text-lg font-semibold text-parchment-200">Setup complete</h2>
 		<p class="text-sm text-parchment-500">

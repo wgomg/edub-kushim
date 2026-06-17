@@ -230,7 +230,7 @@ func DefaultConfig(configDir string) *Config {
 			ConfigDir: configDir,
 		},
 		Srv: ServerConfig{
-			Host:         "localhost",
+			Host:         "0.0.0.0",
 			Port:         3000,
 			ReadTimeout:  60 * time.Second,
 			WriteTimeout: 60 * time.Second,

@@ -315,7 +315,7 @@ worker poll cycle.
 
 ## API Reference
 
-The API server listens on `localhost:3000` by default (configurable in YAML).
+The API server listens on `0.0.0.0:3000` by default (configurable in YAML).
 
 ### Health Check
 
@@ -479,9 +479,10 @@ both the web wizard and the in-app settings page.
 GET /wizard/config
 ```
 
-Returns the current configuration as a `ConfigResponse` JSON object with
-`app`, `consumer`, and `enricher` sections plus `available_engines` for UI dropdowns.
-Returns defaults from `DefaultConfig("")` when no config has been bootstrapped yet,
+Returns the current configuration as a `ConfigResponse` JSON object with `app`
+(boolean `initialized`), `server` (host, port), `consumer`, and `enricher` sections
+(including LLM provider tokens) plus `available_engines` for UI dropdowns. Returns
+defaults from `DefaultConfig("")` when no config has been bootstrapped yet,
 so the response always has a complete shape.
 
 ```
@@ -494,16 +495,38 @@ Content-Type: application/json
 Two-phase API:
 - **Bootstrap phase** — send `{ "config_dir": "..." }` to create directories,
   write skeleton config, and initialize the database. Returns `200` with
-  `{ "config_dir": "..." }`.
+  `{ ... }`.
 - **Update phase** — send settings key-value pairs (dot notation) to update
   the config and trigger background downloads:
 
 ```json
 {
+  "server.port": 3000,
   "consumer.ocr.engine": "gosseract",
   "consumer.ocr.languages": ["eng", "spa"],
+  "consumer.ocr.timeout": 120,
   "consumer.workers": 2,
-  "enricher.workers": 2
+  "consumer.delete_original": false,
+  "consumer.textextractor.engine": "mupdf",
+  "consumer.textextractor.timeout": 120,
+  "consumer.pdfoptimizer.engine": "mupdf",
+  "consumer.pdfoptimizer.fallback": "",
+  "consumer.pdfoptimizer.timeout": 120,
+  "enricher.workers": 2,
+  "enricher.textreducer.engine": "textrank",
+  "enricher.textreducer.timeout": 120,
+  "enricher.textreducer.target_words": 2000,
+  "enricher.contentanalyzer.engine": "llmopenai",
+  "enricher.contentanalyzer.timeout": 120,
+  "enricher.contentanalyzer.llm.openai.base_url": "https://api.openai.com/v1",
+  "enricher.contentanalyzer.llm.openai.model": "gpt-4o",
+  "enricher.contentanalyzer.llm.openai.token": "",
+  "enricher.tagmatcher.engine": "hugot",
+  "enricher.tagmatcher.timeout": 120,
+  "enricher.tagmatcher.reduce_target_words": 4000,
+  "enricher.tagmatcher.chunk_size": 0,
+  "enricher.tagmatcher.hugot.model": "BAAI/bge-m3",
+  "enricher.tagmatcher.hugot.backend": "ort"
 }
 ```
 
@@ -784,7 +807,7 @@ app:
   # log_file: <config-dir>/kushim.log   # optional log file path
 
 server:
-  host: localhost
+  host: 0.0.0.0
   port: 3000
   read_timeout: 60s # Go duration string (e.g. 60s, 30s)
   write_timeout: 60s
@@ -921,13 +944,19 @@ edub
 ## Settings Page
 
 The main web UI includes a **Settings** page at `/settings` that provides
-a structured form for all user-configurable settings:
+a single-page form for all user-configurable settings:
 
-- **OCR**: engine selector, languages list (add/remove), timeout
-- **Consumer**: worker count, PDF optimizer engine, text extractor engine,
-  delete original after processing toggle
-- **Enricher**: worker count, content analyzer engine, tag matcher engine,
-  text reducer engine
+- **Server**: host, port
+- **OCR**: engine selector, timeout, data directory, languages list (add/remove)
+- **Consumer**: workers, delete-original toggle
+- **Text extractor**: engine, timeout
+- **PDF optimizer**: engine, fallback, timeout
+- **Enricher**: workers
+- **Content analyzer (LLM)**: engine, timeout, and provider-specific Base URL,
+  model, token (with show/hide toggle)
+- **Tag matcher**: engine, timeout, reduce target words, chunk size, Hugot model,
+  Hugot backend (ort/GO)
+- **Text reducer**: engine, timeout, target words
 
 Changes are saved via the `/wizard/config` API and trigger background
 downloads for any missing tessdata or Hugot model files. A spinner and

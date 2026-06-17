@@ -129,7 +129,7 @@
   - **Fields**: `cfg *config.Config`, `queries *database.Queries`, `logger *utils.Logger`, `dispatcher *task.Dispatcher`, `OnBootstrap func(configDir string) (*config.Config, *database.Queries, *task.Dispatcher, error)`
   - **Methods**:
     - `NewConfigHandler(cfg, queries, logger, dispatcher) *ConfigHandler`
-    - `GetConfig(w, r)` — `GET /wizard/config` — Returns user-configurable settings as `ConfigResponse` (app, consumer, enricher sections plus available_engines). Returns defaults from `DefaultConfig("")` when no config is loaded (wizard not yet bootstrapped), so the frontend always receives a complete config shape.
+    - `GetConfig(w, r)` — `GET /wizard/config` — Returns user-configurable settings as `ConfigResponse` (app, server, consumer, enricher sections plus available_engines; app includes boolean `initialized`; enricher includes LLM provider tokens). Returns defaults from `DefaultConfig("")` when no config is loaded (wizard not yet bootstrapped), so the frontend always receives a complete config shape.
     - `PutConfig(w, r)` — `PUT /wizard/config` — Two-phase: if `config_dir` is present and no config exists, bootstraps config directory, DB, and skeleton YAML. Otherwise writes config via `SaveMap`, reloads, and enqueues config tasks for missing downloads (tessdata, hugot). Returns `200` or `201` with pending task count.
     - `ConfigStatus(w, r)` — `GET /wizard/config/status` — Returns `ConfigStatusResponse` with `configured` flag, `pending_tasks` count, and any `errors`.
 
@@ -139,22 +139,25 @@
 
 ### Structs
 
-- `AppConfigResponse` — `ConfigDir string` (set at runtime, not persisted to config.yaml)
-- `ConfigResponse` — `App AppConfigResponse`, `Consumer ConsumerConfigResponse`, `Enricher EnricherConfigResponse`, `AvailableEngines map[string][]EngineEntry`
+- `AppConfigResponse` — `Initialized bool` (true when config_dir has been bootstrapped)
+- `ServerConfigResponse` — `Host string`, `Port int`
+- `ConfigResponse` — `App AppConfigResponse`, `Server ServerConfigResponse`, `Consumer ConsumerConfigResponse`, `Enricher EnricherConfigResponse`, `AvailableEngines map[string][]EngineEntry`
 - `ConsumerConfigResponse` — `DeleteOriginal bool`, `Workers int`, `TextExtractor TextExtractorResponse`, `PdfOptimizer PdfOptimizerResponse`, `OCR OCRResponse`
 - `TextExtractorResponse` — `Engine string`, `Timeout int`
 - `PdfOptimizerResponse` — `Engine string`, `Fallback string`, `Timeout int`
 - `OCRResponse` — `Engine string`, `Languages []string`, `DataDir string`, `Timeout int`
 - `EnricherConfigResponse` — `Workers int`, `TextReducer TextReducerResponse`, `ContentAnalyzer ContentAnalyzerResponse`, `TagMatcher TagMatcherResponse`
 - `TextReducerResponse` — `Engine string`, `Timeout int`, `TargetWords int`
-- `ContentAnalyzerResponse` — `Engine string`, `Timeout int`
+- `ContentAnalyzerResponse` — `Engine string`, `Timeout int`, `Llm LlmProvidersResponse`
+- `LlmProvidersResponse` — `OpenAI LlmProviderResponse`, `Anthropic LlmProviderResponse`, `DeepSeek LlmProviderResponse`, `Ollama LlmProviderResponse`
+- `LlmProviderResponse` — `BaseURL string`, `Model string`, `Token string`
 - `TagMatcherResponse` — `Engine string`, `Timeout int`, `ReduceTargetWords int`, `ChunkSize int`, `Hugot HugotResponse`
 - `HugotResponse` — `Model string`, `Backend string`
 - `ConfigStatusResponse` — `Configured bool`, `PendingTasks int`, `Errors []string`
 
 ### Functions
 
-- `ConfigResponseFrom(cfg *config.Config) ConfigResponse` — Maps internal config to the API response, excluding internal/computed fields (LLM tokens, model paths, similarity thresholds, etc.)
+- `ConfigResponseFrom(cfg *config.Config) ConfigResponse` — Maps internal config to the API response, excluding internal/computed fields (model paths, similarity thresholds, etc.). Includes LLM provider tokens, server host/port, and produces the `initialized` boolean in the `app` section.
 
 ---
 

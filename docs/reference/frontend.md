@@ -11,7 +11,7 @@ Located in `web/`, built via `npm ci && npm run build`, output copied to `intern
 | `/`               | `+page.svelte`                | Dashboard / home — shows Task Status summary including `Waiting` count                                                                                               |
 | `/documents`      | `documents/+page.svelte`      | Document list with structured search bar, filter panel, saved searches, sort/pagination; shows **Tags** and **People** columns inline; snippet column when searching |
 | `/documents/[id]` | `documents/[id]/+page.svelte` | Document detail: metadata, tags, people, file, **Content Stats** (pages, words, characters)                                                                          |
-| `/settings`       | `settings/+page.svelte`       | Configuration form: OCR engine/languages, consumer worker count, PDF optimizer, text extractor, enricher workers, content analyzer, tag matcher, text reducer       |
+| `/settings`       | `settings/+page.svelte`       | Full configuration form: server host/port; OCR engine/timeout/data dir/languages; consumer workers/delete-original; text extractor engine/timeout; PDF optimizer engine/fallback/timeout; enricher workers; content analyzer (LLM) engine/timeout + provider Base URL/model/token; tag matcher engine/timeout/reduce-target-words/chunk-size/Hugot model/backend; text reducer engine/timeout/target-words |
 | `/tags`           | `tags/+page.svelte`           | Tag management (list, create, delete)                                                                                                                                |
 | `/tasks`          | `tasks/+page.svelte`          | Task/batch monitoring — shows **Type**, **Payload** (document ID + file name), **Started** and **Completed** columns                                                 |
 
@@ -93,14 +93,14 @@ binary at `internal/wizard/static/`.
 
 ## Purpose
 
-Provides a browser-based four-step setup flow when `kushim setup` is run (default).
+Provides a browser-based five-step setup flow when `kushim setup` is run (default).
 Replaces the terminal-only setup for users who prefer a GUI.
 
 ## Routes
 
 | Route | File             | Description                                                                 |
 | ----- | ---------------- | --------------------------------------------------------------------------- |
-| `/`   | `+page.svelte`   | Four-step wizard: config directory → OCR settings + workers → progress → done |
+| `/`   | `+page.svelte`   | Five-step wizard: config directory → consumer settings (server, OCR, text extractor, PDF optimizer) → enricher settings (LLM, tag matcher, text reducer) → progress → done |
 
 The wizard layout uses the same design system as the main UI (clay/gold/lapis/
 parchment palette) via Tailwind CSS.
