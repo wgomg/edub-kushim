@@ -211,6 +211,33 @@ func (q *Queries) FailTask(ctx context.Context, arg FailTaskParams) error {
 	return err
 }
 
+const getConfigTaskByDedupKey = `-- name: GetConfigTaskByDedupKey :one
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
+       created_at, started_at, completed_at, error
+FROM task WHERE task_type = 'config' AND dedup_key = ?
+ORDER BY created_at DESC LIMIT 1
+`
+
+func (q *Queries) GetConfigTaskByDedupKey(ctx context.Context, dedupKey sql.NullString) (Task, error) {
+	row := q.db.QueryRowContext(ctx, getConfigTaskByDedupKey, dedupKey)
+	var i Task
+	err := row.Scan(
+		&i.ID,
+		&i.TaskID,
+		&i.TaskType,
+		&i.Status,
+		&i.BatchID,
+		&i.Payload,
+		&i.Result,
+		&i.DedupKey,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Error,
+	)
+	return i, err
+}
+
 const getNextPendingTask = `-- name: GetNextPendingTask :one
 SELECT id FROM task WHERE status = 'pending' ORDER BY created_at LIMIT 1
 `
@@ -1160,6 +1187,24 @@ func (q *Queries) ListTasksByType(ctx context.Context, arg ListTasksByTypeParams
 		return nil, err
 	}
 	return items, nil
+}
+
+const retryFailedTasksByBatch = `-- name: RetryFailedTasksByBatch :execrows
+UPDATE task SET
+    status = 'pending',
+    result = NULL,
+    error = NULL,
+    started_at = NULL,
+    completed_at = NULL
+WHERE batch_id = ? AND status = 'failed'
+`
+
+func (q *Queries) RetryFailedTasksByBatch(ctx context.Context, batchID sql.NullString) (int64, error) {
+	result, err := q.db.ExecContext(ctx, retryFailedTasksByBatch, batchID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const retryTask = `-- name: RetryTask :exec

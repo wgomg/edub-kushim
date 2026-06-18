@@ -136,6 +136,10 @@ func ListFiltered(ctx context.Context, queries *database.Queries, f TaskFilter) 
 		return queries.ListAllTasks(ctx)
 	}
 }
+func RetryBatchFailed(ctx context.Context, queries *database.Queries, batchID string) (int64, error) {
+	return queries.RetryFailedTasksByBatch(ctx, sql.NullString{String: batchID, Valid: true})
+}
+
 func Retry(ctx context.Context, queries *database.Queries, taskID string) error {
 	task, err := queries.GetTaskByTaskID(ctx, taskID)
 	if err != nil {

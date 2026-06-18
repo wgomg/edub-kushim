@@ -25,6 +25,23 @@ func NewConfigTaskHandler(logger *utils.Logger) *ConfigTaskHandler {
 	return &ConfigTaskHandler{logger: logger}
 }
 
+func (h *ConfigTaskHandler) DedupKey(payload json.RawMessage) string {
+	var p struct {
+		Op   string `json:"op"`
+		Lang string `json:"lang"`
+	}
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return ""
+	}
+	if p.Op == opTessdata {
+		return "config:tessdata:" + p.Lang
+	}
+	if p.Op == opHugot {
+		return "config:hugot"
+	}
+	return ""
+}
+
 func (h *ConfigTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMessage, error) {
 	var p struct {
 		ConfigDir string `json:"config_dir"`

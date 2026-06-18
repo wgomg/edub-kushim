@@ -72,8 +72,10 @@
     - `NewTaskHandler(queries, logger) *TaskHandler`
     - `ListTasks(w, r)` — Filters by `batch`, `status`, `limit`, `offset`; includes batch summary when `batch` is set
     - `GetTask(w, r)` — Single task by UUID
+    - `RetryTask(w, r)` — `POST /api/v1/tasks/{id}/retry` — Resets a failed task to pending. Returns `204 No Content`. Returns 404 if task not found, 409 if task is not failed.
     - `ListBatches(w, r)` — Lists all batch summaries with filtering (`status`, `limit`, `offset`)
     - `GetBatchSummary(w, r)` — Counts per status for a single batch (via `{id}`)
+    - `RetryBatch(w, r)` — `POST /api/v1/batches/{id}/retry` — Resets all failed tasks in a batch to pending. Returns `200 {"retried": <n>}`. Idempotent (0 retried is valid success).
     - `GlobalSummary(w, r)` — Global totals: number of batches, total files, per-status counts (including `waiting` and `discarded`), total file size in GB
     - **Helpers**: `buildBatchSummary(ctx, queries, batchID) BatchSummaryResponse`, `taskToResponse(t) TaskResponse`
 
@@ -129,9 +131,11 @@
   - **Fields**: `cfg *config.Config`, `queries *database.Queries`, `logger *utils.Logger`, `dispatcher *task.Dispatcher`, `OnBootstrap func(configDir string) (*config.Config, *database.Queries, *task.Dispatcher, error)`
   - **Methods**:
     - `NewConfigHandler(cfg, queries, logger, dispatcher) *ConfigHandler`
+    - `SetBootstrap(cfg, queries, dispatcher)` — Sets handler state from bootstrap results. Used by the wizard's auto-resume path to populate the handler after detecting an existing config on startup.
     - `GetConfig(w, r)` — `GET /wizard/config` — Returns user-configurable settings as `ConfigResponse` (app, server, consumer, enricher sections plus available_engines; app includes boolean `initialized`; enricher includes LLM provider tokens). Returns defaults from `DefaultConfig("")` when no config is loaded (wizard not yet bootstrapped), so the frontend always receives a complete config shape.
     - `PutConfig(w, r)` — `PUT /wizard/config` — Two-phase: if `config_dir` is present and no config exists, bootstraps config directory, DB, and skeleton YAML. Otherwise writes config via `SaveMap`, reloads, and enqueues config tasks for missing downloads (tessdata, hugot). Returns `200` or `201` with pending task count and a `missing_tools` array of hard-blocking tool-availability issues.
-    - `ConfigStatus(w, r)` — `GET /wizard/config/status` — Returns `ConfigStatusResponse` with `configured` flag, `pending_tasks` count, `errors`, plus `tools` (full `[]ExternalTool` availability list) and `missing_tools` (hard-blocking subset).
+    - `ConfigStatus(w, r)` — `GET /wizard/config/status` — Returns `ConfigStatusResponse` with `configured` flag, `pending_tasks` count, `failed_tasks` (array of `{task_id, op, lang, error}`), `errors`, plus `tools` (full `[]ExternalTool` availability list) and `missing_tools` (hard-blocking subset).
+    - `RetryFailedConfig(w, r)` — `POST /wizard/config/retry` — Retries all failed config tasks. Returns `200 {"retried": <n>}`.
 
 ---
 
@@ -153,7 +157,8 @@
 - `LlmProviderResponse` — `BaseURL string`, `Model string`, `Token string`
 - `TagMatcherResponse` — `Engine string`, `Timeout int`, `ReduceTargetWords int`, `ChunkSize int`, `Hugot HugotResponse`
 - `HugotResponse` — `Model string`, `Backend string`
-- `ConfigStatusResponse` — `Configured bool`, `PendingTasks int`, `Errors []string`, `Tools []config.ExternalTool` (full availability list), `MissingTools []config.ExternalTool` (hard-blocking subset)
+- `FailedTaskSummary` — `TaskID string`, `Op string`, `Lang string` (omitempty), `Error string`
+- `ConfigStatusResponse` — `Configured bool`, `PendingTasks int`, `FailedTasks []FailedTaskSummary` (omitempty), `Errors []string`, `Tools []config.ExternalTool` (full availability list), `MissingTools []config.ExternalTool` (hard-blocking subset)
 
 ### Functions
 
@@ -227,11 +232,14 @@ mux.HandleFunc("POST /api/v1/consume", consumeHandler.Consume)
 mux.HandleFunc("GET /wizard/config", configHandler.GetConfig)
 mux.HandleFunc("PUT /wizard/config", configHandler.PutConfig)
 mux.HandleFunc("GET /wizard/config/status", configHandler.ConfigStatus)
+mux.HandleFunc("POST /wizard/config/retry", configHandler.RetryFailedConfig)
 
 mux.HandleFunc("GET /api/v1/tasks", taskHandler.ListTasks)
 mux.HandleFunc("GET /api/v1/tasks/{id}", taskHandler.GetTask)
+mux.HandleFunc("POST /api/v1/tasks/{id}/retry", taskHandler.RetryTask)
 mux.HandleFunc("GET /api/v1/batches", taskHandler.ListBatches)
 mux.HandleFunc("GET /api/v1/batches/{id}", taskHandler.GetBatchSummary)
+mux.HandleFunc("POST /api/v1/batches/{id}/retry", taskHandler.RetryBatch)
 mux.HandleFunc("GET /api/v1/summary", taskHandler.GlobalSummary)
 
 mux.HandleFunc("GET /api/v1/saved-searches", savedSearchHandler.List)

@@ -11,6 +11,7 @@
 	let error = $state('');
 	let missingTools = $state([]);
 	let toolStatus = $state([]);
+	let failedTasks = $state([]);
 	let pollInterval;
 	let showToken = $state(false);
 
@@ -111,7 +112,18 @@
 		configured = status.configured;
 		missingTools = status.missing_tools ?? [];
 		toolStatus = status.tools ?? [];
+		failedTasks = status.failed_tasks ?? [];
 		return status;
+	}
+
+	async function retryFailed() {
+		error = '';
+		try {
+			await configApi.retryFailed();
+			await checkStatus();
+		} catch (e) {
+			error = e.message;
+		}
 	}
 
 	function startPolling() {
@@ -726,6 +738,27 @@
 		</p>
 		<div class="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-clay-800 border-t-gold-500"></div>
 		<p class="text-sm text-parchment-400">{pendingTasks} task(s) remaining</p>
+
+		{#if failedTasks.length > 0}
+			<div class="rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-4 text-left text-sm">
+				<p class="mb-2 font-medium text-terracotta-500">Some downloads failed</p>
+				<ul class="space-y-2">
+					{#each failedTasks as ft}
+						<li class="text-parchment-300">
+							<span class="font-medium text-parchment-200">{ft.op}{#if ft.lang} ({ft.lang}){/if}</span>
+							: {ft.error}
+						</li>
+					{/each}
+				</ul>
+				<button
+					type="button"
+					onclick={retryFailed}
+					class="mt-3 rounded-lg bg-terracotta-600 px-4 py-2 text-sm font-medium text-white hover:bg-terracotta-500"
+				>
+					Retry failed downloads
+				</button>
+			</div>
+		{/if}
 	</div>
 {/if}
 

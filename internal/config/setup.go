@@ -21,6 +21,18 @@ const (
 	hugotModelDirName = "bge-m3"
 )
 
+func ConfigExists(configDir string) bool {
+	_, err := os.Stat(filepath.Join(configDir, "config.yaml"))
+	return err == nil
+}
+
+func LoadOrBootstrap(configDir string) (*Config, error) {
+	if ConfigExists(configDir) {
+		return Load(configDir)
+	}
+	return Bootstrap(configDir)
+}
+
 func Bootstrap(configDir string) (*Config, error) {
 	cfg := DefaultConfig(configDir)
 

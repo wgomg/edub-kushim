@@ -147,12 +147,15 @@ func registerRoutes(mux *http.ServeMux, logger *utils.Logger, queries *database.
 	mux.HandleFunc("GET /wizard/config", configHandler.GetConfig)
 	mux.HandleFunc("PUT /wizard/config", configHandler.PutConfig)
 	mux.HandleFunc("GET /wizard/config/status", configHandler.ConfigStatus)
+	mux.HandleFunc("POST /wizard/config/retry", configHandler.RetryFailedConfig)
 
 	taskHandler := handlers.NewTaskHandler(queries, logger)
 	mux.HandleFunc("GET /api/v1/tasks", taskHandler.ListTasks)
 	mux.HandleFunc("GET /api/v1/tasks/{id}", taskHandler.GetTask)
+	mux.HandleFunc("POST /api/v1/tasks/{id}/retry", taskHandler.RetryTask)
 	mux.HandleFunc("GET /api/v1/batches", taskHandler.ListBatches)
 	mux.HandleFunc("GET /api/v1/batches/{id}", taskHandler.GetBatchSummary)
+	mux.HandleFunc("POST /api/v1/batches/{id}/retry", taskHandler.RetryBatch)
 	mux.HandleFunc("GET /api/v1/summary", taskHandler.GlobalSummary)
 
 	savedSearchHandler := handlers.NewSavedSearchHandler(queries, logger)

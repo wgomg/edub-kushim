@@ -123,6 +123,21 @@ UPDATE task SET
     error = ?
 WHERE id = ?;
 
+-- name: RetryFailedTasksByBatch :execrows
+UPDATE task SET
+    status = 'pending',
+    result = NULL,
+    error = NULL,
+    started_at = NULL,
+    completed_at = NULL
+WHERE batch_id = ? AND status = 'failed';
+
+-- name: GetConfigTaskByDedupKey :one
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
+       created_at, started_at, completed_at, error
+FROM task WHERE task_type = 'config' AND dedup_key = ?
+ORDER BY created_at DESC LIMIT 1;
+
 -- name: RetryTask :exec
 UPDATE task SET
     status = 'pending',

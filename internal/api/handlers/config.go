@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/wgomg/edub-kushim/internal/api/types"
@@ -28,6 +30,12 @@ func NewConfigHandler(cfg *config.Config, queries *database.Queries, logger *uti
 		logger:     logger,
 		dispatcher: dispatcher,
 	}
+}
+
+func (h *ConfigHandler) SetBootstrap(cfg *config.Config, queries *database.Queries, dispatcher *task.Dispatcher) {
+	h.cfg = cfg
+	h.queries = queries
+	h.dispatcher = dispatcher
 }
 
 func (h *ConfigHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
@@ -126,31 +134,51 @@ func (h *ConfigHandler) enqueueConfigTasks(ctx context.Context, cfg *config.Conf
 	enqueued := 0
 
 	for _, lang := range config.MissingTessdataLanguages(cfg) {
-		payload, _ := json.Marshal(map[string]string{
+		key := "config:tessdata:" + lang
+		if h.handleConfigTask(ctx, key, map[string]string{
 			"config_dir": cfg.App.ConfigDir,
 			"op":         "tessdata",
 			"lang":       lang,
-		})
-		if _, err := h.dispatcher.Enqueue(ctx, taskhandlers.TaskTypeConfig, "", payload, ""); err != nil {
-			h.logger.Error(nil, "enqueue tessdata download for %s: %v", lang, err)
-			continue
+		}) {
+			enqueued++
 		}
-		enqueued++
 	}
 
 	if config.MissingHugotModel(cfg) {
-		payload, _ := json.Marshal(map[string]string{
+		if h.handleConfigTask(ctx, "config:hugot", map[string]string{
 			"config_dir": cfg.App.ConfigDir,
 			"op":         "hugot",
-		})
-		if _, err := h.dispatcher.Enqueue(ctx, taskhandlers.TaskTypeConfig, "", payload, ""); err != nil {
-			h.logger.Error(nil, "enqueue hugot model download: %v", err)
-		} else {
+		}) {
 			enqueued++
 		}
 	}
 
 	return enqueued
+}
+
+func (h *ConfigHandler) handleConfigTask(ctx context.Context, dedupKey string, payloadFields map[string]string) bool {
+	existing, err := h.queries.GetConfigTaskByDedupKey(ctx, sql.NullString{String: dedupKey, Valid: true})
+	if err == nil {
+		switch existing.Status {
+		case "pending", "processing":
+			return false
+		default:
+			if err := h.queries.RetryTask(ctx, existing.ID); err != nil {
+				h.logger.Error(nil, "retry config task %d: %v", existing.ID, err)
+				return false
+			}
+			return true
+		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		h.logger.Error(nil, "lookup config task for dedup key %s: %v", dedupKey, err)
+	}
+
+	payload, _ := json.Marshal(payloadFields)
+	if _, err := h.dispatcher.Enqueue(ctx, taskhandlers.TaskTypeConfig, "", payload, ""); err != nil {
+		h.logger.Error(nil, "enqueue config task %s: %v", dedupKey, err)
+		return false
+	}
+	return true
 }
 
 func (h *ConfigHandler) ConfigStatus(w http.ResponseWriter, r *http.Request) {
@@ -161,23 +189,50 @@ func (h *ConfigHandler) ConfigStatus(w http.ResponseWriter, r *http.Request) {
 	pendingTasks := 0
 	var errors []string
 
-	if h.queries != nil {
-		rows, err := h.queries.CountTasksByStatus(ctx)
-		if err != nil {
-			errors = append(errors, err.Error())
-		} else {
-			for _, row := range rows {
-				if row.Status == "pending" || row.Status == "processing" {
-					pendingTasks += int(row.Count)
-				}
-			}
-		}
-	}
-
 	resp := types.ConfigStatusResponse{
 		Configured:   configured,
 		PendingTasks: pendingTasks,
 		Errors:       errors,
+	}
+
+	if h.queries != nil {
+		rows, err := h.queries.CountTasksByStatus(ctx)
+		if err != nil {
+			resp.Errors = append(resp.Errors, err.Error())
+		} else {
+			for _, row := range rows {
+				if row.Status == "pending" || row.Status == "processing" {
+					resp.PendingTasks += int(row.Count)
+				}
+			}
+		}
+
+		failedTasks, err := h.queries.ListAllTasksByStatusAndType(ctx, database.ListAllTasksByStatusAndTypeParams{
+			Status:   "failed",
+			TaskType: taskhandlers.TaskTypeConfig,
+		})
+		if err != nil {
+			h.logger.Error(nil, "list failed config tasks: %v", err)
+		} else {
+			respFailed := make([]types.FailedTaskSummary, 0, len(failedTasks))
+			for _, t := range failedTasks {
+				summary := types.FailedTaskSummary{TaskID: t.TaskID}
+				var p struct {
+					Op   string `json:"op"`
+					Lang string `json:"lang"`
+				}
+				if t.Payload != nil {
+					json.Unmarshal(t.Payload, &p)
+				}
+				summary.Op = p.Op
+				summary.Lang = p.Lang
+				if t.Error.Valid {
+					summary.Error = t.Error.String
+				}
+				respFailed = append(respFailed, summary)
+			}
+			resp.FailedTasks = respFailed
+		}
 	}
 
 	if h.cfg != nil {
@@ -189,6 +244,37 @@ func (h *ConfigHandler) ConfigStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(resp)
+}
+
+func (h *ConfigHandler) RetryFailedConfig(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	if h.queries == nil {
+		http.Error(w, "not initialized", http.StatusBadRequest)
+		return
+	}
+
+	failedTasks, err := h.queries.ListAllTasksByStatusAndType(ctx, database.ListAllTasksByStatusAndTypeParams{
+		Status:   "failed",
+		TaskType: taskhandlers.TaskTypeConfig,
+	})
+	if err != nil {
+		h.logger.Error(nil, "list failed config tasks: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	retried := 0
+	for _, t := range failedTasks {
+		if err := task.Retry(ctx, h.queries, t.TaskID); err != nil {
+			h.logger.Error(nil, "retry config task %s: %v", t.TaskID, err)
+			continue
+		}
+		retried++
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]int{"retried": retried})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

@@ -45,7 +45,8 @@ export const api = {
 			return request(`/api/v1/tasks${qs ? '?' + qs : ''}`).then((data) => data ?? []);
 		},
 
-		get: (taskId) => request(`/api/v1/tasks/${taskId}`)
+		get: (taskId) => request(`/api/v1/tasks/${taskId}`),
+		retry: (taskId) => request(`/api/v1/tasks/${taskId}/retry`, { method: 'POST' })
 	},
 
 	batches: {
@@ -54,7 +55,8 @@ export const api = {
 				(data) => data?.batches ?? []
 			),
 
-		get: (batchId) => request(`/api/v1/batches/${batchId}`)
+		get: (batchId) => request(`/api/v1/batches/${batchId}`),
+		retry: (batchId) => request(`/api/v1/batches/${batchId}/retry`, { method: 'POST' })
 	},
 
 	summary: {

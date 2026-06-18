@@ -89,8 +89,16 @@
 - `Get(ctx, queries, taskID) (database.Task, error)` — By UUID task_id
 - `ListFiltered(ctx, queries, filter) ([]database.Task, error)` — By batch/status/type/pagination; handles all combinations of filters via sqlc-generated queries (`ListTasks`, `ListTasksByStatus`, `ListTasksByBatch`, `ListTasksByBatchAndStatus`, `ListTasksByType`, `ListTasksByBatchAndType`, `ListTasksByStatusAndType`, `ListTasksByBatchAndStatusAndType` and their `All` variants)
 - `Retry(ctx, queries, taskID) error` — Failed tasks only
+- `RetryBatchFailed(ctx, queries, batchID string) (int64, error)` — Resets all failed tasks in a batch to pending; returns count of retried tasks. Uses `RetryFailedTasksByBatch` sqlc query with `WHERE batch_id = ? AND status = 'failed'`.
 - `CountBatchStatuses(ctx, queries, batchID) BatchCounts` — Counts per status including `waiting` and `discarded`
 - `ListBatchSummaries(ctx, queries, filter) ([]BatchCounts, error)` — Lists batch summaries with filtering; uses `ListDistinctBatchIDs` or `ListDistinctBatchIDsByStatus`
+
+---
+
+### SQL queries added
+
+- `RetryFailedTasksByBatch :execrows` — `UPDATE ... WHERE batch_id = ? AND status = 'failed'` — Resets failed batch tasks to pending (batched retry).
+- `GetConfigTaskByDedupKey :one` — Returns the most recent config task matching `dedup_key`. Used by `ConfigHandler.enqueueConfigTasks` to detect duplicate or failed config tasks before inserting.
 
 ---
 
@@ -126,6 +134,7 @@
   - **Methods**:
     - `NewConfigTaskHandler(logger) *ConfigTaskHandler`
     - `Handle(ctx, t) (json.RawMessage, error)` — Unmarshals `{"config_dir":"...", "op":"tessdata|hugot", "lang":"..."}`, loads config from disk, dispatches to `config.DownloadTessdataLanguage` or `config.DownloadHugotModel`
+    - `DedupKey(payload) string` — Returns `"config:tessdata:<lang>"` for tessdata ops, `"config:hugot"` for hugot ops. Used by the idempotent enqueue path in `ConfigHandler.enqueueConfigTasks` to avoid duplicate pending/processing config tasks.
 
 ---
 

@@ -37,10 +37,22 @@ func (s *Server) Start() error {
 	configHandler := handlers.NewConfigHandler(nil, nil, s.logger, nil)
 	configHandler.OnBootstrap = s.bootstrap
 
+	if configDir, err := utils.ConfigDir(); err == nil {
+		if config.ConfigExists(*configDir) {
+			s.logger.Info(nil, "existing config found at %s — auto-resuming", *configDir)
+			if cfg, queries, dispatcher, err := s.bootstrap(*configDir); err != nil {
+				s.logger.Error(nil, "auto-resume bootstrap: %v", err)
+			} else {
+				configHandler.SetBootstrap(cfg, queries, dispatcher)
+			}
+		}
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /wizard/config", configHandler.GetConfig)
 	mux.HandleFunc("PUT /wizard/config", configHandler.PutConfig)
 	mux.HandleFunc("GET /wizard/config/status", configHandler.ConfigStatus)
+	mux.HandleFunc("POST /wizard/config/retry", configHandler.RetryFailedConfig)
 
 	registerStaticRoutes(mux)
 
@@ -57,7 +69,11 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) bootstrap(configDir string) (*config.Config, *database.Queries, *task.Dispatcher, error) {
-	cfg, err := config.Bootstrap(configDir)
+	if s.db != nil {
+		return nil, nil, nil, fmt.Errorf("already bootstrapped")
+	}
+
+	cfg, err := config.LoadOrBootstrap(configDir)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("bootstrap config: %w", err)
 	}

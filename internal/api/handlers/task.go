@@ -93,6 +93,42 @@ func (h *TaskHandler) GetTask(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(taskToResponse(t))
 }
 
+func (h *TaskHandler) RetryTask(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := ctx.Value("reqid").(string)
+
+	taskID := r.PathValue("id")
+
+	if err := task.Retry(ctx, h.queries, taskID); err != nil {
+		if errors.Is(err, task.ErrTaskNotFound) {
+			http.Error(w, "Task not found", http.StatusNotFound)
+			return
+		}
+		h.logger.Error(&reqID, "retry task %s: %v", taskID, err)
+		http.Error(w, "can only retry failed tasks", http.StatusConflict)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *TaskHandler) RetryBatch(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := ctx.Value("reqid").(string)
+
+	batchID := r.PathValue("id")
+
+	retried, err := task.RetryBatchFailed(ctx, h.queries, batchID)
+	if err != nil {
+		h.logger.Error(&reqID, "retry batch %s: %v", batchID, err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]int64{"retried": retried})
+}
+
 func (h *TaskHandler) ListBatches(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)

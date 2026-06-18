@@ -2,9 +2,17 @@ package types
 
 import "github.com/wgomg/edub-kushim/internal/config"
 
+type FailedTaskSummary struct {
+	TaskID string `json:"task_id"`
+	Op     string `json:"op"`
+	Lang   string `json:"lang,omitempty"`
+	Error  string `json:"error"`
+}
+
 type ConfigStatusResponse struct {
 	Configured   bool                  `json:"configured"`
 	PendingTasks int                   `json:"pending_tasks"`
+	FailedTasks  []FailedTaskSummary   `json:"failed_tasks,omitempty"`
 	Errors       []string              `json:"errors"`
 	Tools        []config.ExternalTool `json:"tools"`
 	MissingTools []config.ExternalTool `json:"missing_tools"`

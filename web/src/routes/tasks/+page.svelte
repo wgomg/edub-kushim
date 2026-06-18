@@ -4,6 +4,9 @@
 	import { api } from '$lib/api';
 	import DataTable from '$lib/components/DataTable.svelte';
 
+	let taskRefreshKey = $state(0);
+	let batchRefreshKey = $state(0);
+
 	function formatDate(v) {
 		if (!v) return '—';
 		return new Date(v).toLocaleString();
@@ -89,6 +92,16 @@
 			sortable: true,
 			cell: (v) => `<span class="font-semibold text-terracotta-400">${v}</span>`,
 			minWidth: '100px'
+		},
+		{
+			key: 'actions',
+			label: 'Actions',
+			sortable: false,
+			cell: (_v, row) => {
+				if (!row.failed) return '';
+				return `<button data-retry-batch="${row.batch_id}" class="rounded-lg bg-terracotta-600 px-3 py-1 text-xs font-medium text-white hover:bg-terracotta-500">Retry failed</button>`;
+			},
+			minWidth: '120px'
 		}
 	];
 
@@ -163,6 +176,16 @@
 				return `<span title="${v}" class="text-terracotta-500">${short}</span>`;
 			},
 			minWidth: '200px'
+		},
+		{
+			key: 'actions',
+			label: 'Actions',
+			sortable: false,
+			cell: (_v, row) => {
+				if (row.status !== 'failed') return '';
+				return `<button data-retry-task="${row.task_id}" class="rounded-lg bg-gold-500 px-3 py-1 text-xs font-medium text-clay-950 hover:bg-gold-600">Retry</button>`;
+			},
+			minWidth: '100px'
 		}
 	];
 
@@ -188,7 +211,26 @@
 	function viewTask(row) {
 		goto(`/tasks/${row.task_id}`);
 	}
+
+	function handlePageClick(e) {
+		const taskBtn = e.target.closest('[data-retry-task]');
+		if (taskBtn) {
+			e.stopPropagation();
+			const taskId = taskBtn.getAttribute('data-retry-task');
+			api.tasks.retry(taskId).then(() => { taskRefreshKey++; });
+			return;
+		}
+		const batchBtn = e.target.closest('[data-retry-batch]');
+		if (batchBtn) {
+			e.stopPropagation();
+			const batchId = batchBtn.getAttribute('data-retry-batch');
+			api.batches.retry(batchId).then(() => { batchRefreshKey++; });
+			return;
+		}
+	}
 </script>
+
+<svelte:window onclick={handlePageClick} />
 
 {#if currentBatch}
 	<div class="space-y-4">
@@ -205,6 +247,7 @@
 			onRowClick={viewTask}
 			title={'Batch: ' + currentBatch}
 			keyField="task_id"
+			refreshKey={taskRefreshKey}
 		/>
 	</div>
 {:else}
@@ -214,5 +257,6 @@
 		onRowClick={viewBatch}
 		title="Batches"
 		keyField="batch_id"
+		refreshKey={batchRefreshKey}
 	/>
 {/if}

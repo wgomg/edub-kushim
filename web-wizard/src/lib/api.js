@@ -19,5 +19,6 @@ async function request(method, path, body) {
 export const configApi = {
 	get: () => request('GET', '/config'),
 	update: (body) => request('PUT', '/config', body),
-	status: () => request('GET', '/config/status')
+	status: () => request('GET', '/config/status'),
+	retryFailed: () => request('POST', '/config/retry')
 };
