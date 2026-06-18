@@ -31,6 +31,16 @@ func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 	reqID := ctx.Value("reqid").(string)
 	h.logger.Debug(&reqID, "Consume requested")
 
+	if missing := config.MissingExternalToolErrors(h.cfg); len(missing) > 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		json.NewEncoder(w).Encode(map[string]any{
+			"error":         "Cannot consume: required external tools are not installed.",
+			"missing_tools": missing,
+		})
+		return
+	}
+
 	files, err := consumption.GetFiles(
 		h.cfg.Storage.ConsumptionDir,
 		h.cfg.Consumer.SupportedFiles,

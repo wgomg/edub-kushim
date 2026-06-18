@@ -1,8 +1,26 @@
 <script>
 	import './layout.css';
 	import favicon from '$lib/assets/favicon.svg';
+	import { onMount } from 'svelte';
+	import { api } from '$lib/api.js';
 
 	let { children } = $props();
+	let missingTools = $state([]);
+
+	let missingCount = $derived(missingTools.reduce((sum, t) => {
+		let n = t.available === false ? 1 : 0;
+		if (t.companions) {
+			n += t.companions.filter(c => c.required && !c.available).length;
+		}
+		return sum + n;
+	}, 0));
+
+	onMount(async () => {
+		const status = await api.config.status();
+		if (status) {
+			missingTools = status.missing_tools ?? [];
+		}
+	});
 </script>
 
 <svelte:head><link rel="icon" href={favicon} /></svelte:head>
@@ -52,6 +70,14 @@
 				>Upload</button
 			>
 		</header>
+
+		{#if missingTools.length > 0}
+			<div class="shrink-0 border-b border-gold-500/30 bg-gold-500/10 px-6 py-2 text-sm text-gold-500">
+				⚠️ {missingCount} required tool(s) not installed —
+				document consumption is paused.
+				<a href="/settings" class="underline">Review settings</a>
+			</div>
+		{/if}
 
 		<!-- Page content -->
 		<main class="flex-1 overflow-y-auto bg-clay-950 p-6">

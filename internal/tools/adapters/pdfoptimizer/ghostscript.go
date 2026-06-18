@@ -21,7 +21,7 @@ type Ghostscript struct {
 
 func NewGhostscript(logger *utils.Logger, cfg config.ToolConfig) (*Ghostscript, error) {
 	if _, err := exec.LookPath(cfg.Command); err != nil {
-		return nil, fmt.Errorf("%s not found in PATH: %w", cfg.Command, err)
+		return nil, fmt.Errorf("%s not found in PATH: %w\nInstall it (e.g. 'sudo apt install ghostscript' or 'brew install ghostscript') or switch to the built-in 'mupdf' engine", cfg.Command, err)
 	}
 
 	return &Ghostscript{logger: logger, config: cfg}, nil

@@ -131,13 +131,20 @@ five-step guided flow:
 
 1. **Config directory** — user specifies where `config.yaml`, database, and models are stored
 2. **Consumer settings** — OCR engine, languages, timeout; text extractor engine/timeout; PDF optimizer
-   engine/fallback/timeout; server port; consumer workers; delete-original toggle
+   engine/fallback/timeout; server port; consumer workers; delete-original toggle.
+   **Inline warnings** show when a selected external tool (`ocrmypdf`, `gs`, `pdftotext`) is not found
+   in `PATH`, along with companion status (tesseract, unpaper, pngquant for ocrmypdf) and tesseract
+   language-pack guidance.
 3. **Enricher settings** — content analyzer engine/timeout + LLM provider config (Base URL, model, token
    with show/hide); tag matcher engine/timeout, reduce-target-words, chunk size, Hugot model/backend;
    text reducer engine/timeout/target-words; enricher workers
 4. **Progress** — background tasks download tessdata language files and the Hugot ONNX model;
    the UI polls `GET /wizard/config/status` every 3 seconds
-5. **Completion** — all downloads are finished; the server is ready to run
+5. **Completion** — all downloads are finished; the server is ready to run.
+   If any required external tools are missing, a notice lists what to install
+   (engine binaries, required companions like tesseract/unpaper, and the curl
+   prerequisite). The wizard does not block completion — tools can be installed
+   later.
 
 The wizard server uses a stripped-down version of the full server stack: it bootstraps
 the config directory (via `config.Bootstrap`), initializes the SQLite schema, creates
@@ -160,7 +167,9 @@ delete-original, text extractor engine/timeout; PDF optimizer engine/fallback/ti
 enricher workers; content analyzer engine/timeout + LLM provider Base URL, model, token;
 tag matcher engine/timeout, reduce-target-words, chunk size, Hugot model/backend;
 text reducer engine/timeout/target-words. Changes trigger background downloads for any
-missing tessdata or Hugot model files.
+missing tessdata or Hugot model files. **Inline tool-status warnings** appear beneath
+each engine selector when the selected external tool is missing, and a persistent
+amber banner at the top of the app shows whenever required tools are not installed.
 
 ### Config API
 
@@ -170,13 +179,15 @@ Three endpoints serve both the wizard and the settings page:
 | --------------------------------- | -------------------------------------------------------------- |
 | `GET /wizard/config`              | Returns current config as `ConfigResponse` (user-facing subset)|
 | `PUT /wizard/config`              | Accepts `config_dir` for bootstrap, or settings map for update |
-| `GET /wizard/config/status`       | Returns `ConfigStatusResponse` — `configured`, `pending_tasks` |
+| `GET /wizard/config/status`       | Returns `ConfigStatusResponse` — `configured`, `pending_tasks`, `tools` (full tool-availability list), `missing_tools` (hard-blocking subset) |
 
 The `PUT` handler has two phases:
 - **Bootstrap phase**: when `config_dir` is present and no config exists, it calls
   `config.Bootstrap()` to create directories, write skeleton config, and initialize the DB.
 - **Update phase**: otherwise, it writes the provided key-value pairs via `config.SaveMap`,
   reloads the config, and enqueues `"config"` tasks for any missing downloads.
+  The response includes a `missing_tools` array of any hard-blocking tool-availability issues
+  (missing engine binaries, required companions, or the curl prerequisite).
 
 ### Config Task Handler
 
@@ -337,7 +348,7 @@ FTS5 is "good enough" for the expected document volume (thousands to low tens of
 
 - **FTS5**: No CJK word segmentation; text duplicated in `document` and `document_fts` tables
 - **Web UI detail page**: The document detail page displays metadata and PDF preview but does not yet show tags, people, or document type. Edit functionality (title, tags, people, type) is pending the Tier 2 API endpoints.
-- **External dependencies**: `pdftotext`, `ghostscript`, and `ocrmypdf` required at runtime (only when using external-tool adapters; Go-native adapters have no runtime deps)
+- **External dependencies**: `pdftotext`, `ghostscript`, and `ocrmypdf` required at runtime (only when using external-tool adapters; Go-native adapters have no runtime deps). The ocrmypdf adapter additionally requires `tesseract` and `unpaper` as companions, with `pngquant` recommended for image optimization. `curl` is required for any download (tessdata, Hugot model). Pre-flight checks at the consume entry point surface these requirements with actionable install hints.
 - **Build‑time**: Requires `gcc`, `gcc-c++`, `make`, `autotools` for Leptonica/Tesseract/MuPDF compilation. Additionally `libtokenizers.a` downloaded as a pre-built binary for Hugot
 - **MuPDF**: Compiled from source (1.27.2) via `make build-deps`
 - **Malformed PDFs**: MuPDF's `pdf_clean_file` may fail on PDFs with invalid patterns

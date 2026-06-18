@@ -1,12 +1,15 @@
 <script>
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api.js';
+	import { hintsForEngine } from '$lib/tools.js';
 
 	let cfg = $state(null);
 	let saving = $state(false);
 	let message = $state('');
 	let error = $state('');
 	let pendingTasks = $state(0);
+	let missingTools = $state([]);
+	let toolStatus = $state([]);
 	let pollInterval;
 	let showToken = $state(false);
 
@@ -24,6 +27,8 @@
 		const status = await api.config.status();
 		if (status) {
 			pendingTasks = status.pending_tasks;
+			missingTools = status.missing_tools ?? [];
+			toolStatus = status.tools ?? [];
 		}
 	}
 
@@ -107,6 +112,9 @@
 			} else {
 				message = 'Settings saved.';
 			}
+			if (res && 'missing_tools' in res) {
+				missingTools = res.missing_tools;
+			}
 			const loaded = await api.config.get();
 			if (loaded) cfg = loaded;
 		} catch (e) {
@@ -143,6 +151,20 @@
 				class="rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500"
 			>
 				{error}
+			</div>
+		{/if}
+
+		{#if missingTools?.find((t) => t.engine === 'curl')}
+			<div
+				class="rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500"
+			>
+				<p class="font-medium">"curl" not installed (required for downloads)</p>
+				<p class="mt-1 text-parchment-400">
+					Model and language file downloads will fail without curl.
+				</p>
+				{#each Object.entries(hintsForEngine('curl')) as [system, cmd]}
+					<pre class="text-parchment-300 mt-1 text-xs">{system}: {cmd}</pre>
+				{/each}
 			</div>
 		{/if}
 
@@ -205,6 +227,68 @@
 						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
 					/>
 				</div>
+			</div>
+
+			{#if toolStatus?.find((t) => t.category === 'ocr' && !t.available)}
+				<div
+					class="mt-4 rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500"
+				>
+					<p class="font-medium">"{cfg.consumer.ocr.engine}" is not installed</p>
+					<p class="mt-1 text-parchment-400">
+						Documents won't process until it is available. Install it, e.g.:
+					</p>
+					{#each Object.entries(hintsForEngine(cfg.consumer.ocr.engine)) as [system, cmd]}
+						<pre class="text-parchment-300 mt-1 text-xs">{system}: {cmd}</pre>
+					{/each}
+				</div>
+			{/if}
+			{#if cfg.consumer.ocr.engine === 'ocrmypdf'}
+				{@const ocrTool = toolStatus?.find((t) => t.engine === 'ocrmypdf')}
+				{#if ocrTool?.lang_hints?.length}
+					<div
+						class="border-lapis-500/30 bg-lapis-500/10 mt-4 rounded-lg border p-3 text-sm text-parchment-200"
+					>
+						<p class="font-medium">Tesseract language packs required</p>
+						<p class="text-parchment-300 mt-1">
+							Install the packs for your configured languages ({ocrTool.languages.join(', ')}):
+						</p>
+						{#each Object.entries(ocrTool.lang_hints[0].install_hints) as [system, cmd]}
+							<pre class="text-parchment-300 mt-1 text-xs">{system}: {cmd}</pre>
+						{/each}
+					</div>
+				{/if}
+				{#if ocrTool?.companions?.length}
+					<div class="mt-4 space-y-2 text-sm">
+						{#each ocrTool.companions as c}
+							{#if !c.available && c.required}
+								<div
+									class="rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-terracotta-500"
+								>
+									<p class="font-medium">"{c.command}" not installed (required)</p>
+									<p class="mt-1 text-parchment-400">{c.purpose}</p>
+									{#each Object.entries(c.install_hints) as [system, cmd]}
+										<pre class="text-parchment-300 mt-1 text-xs">{system}: {cmd}</pre>
+									{/each}
+								</div>
+							{:else if !c.available}
+								<div
+									class="border-lapis-500/30 bg-lapis-500/10 text-parchment-300 rounded-lg border p-3"
+								>
+									<p class="font-medium text-parchment-200">
+										"{c.command}" not installed (optional)
+									</p>
+									<p class="mt-1">{c.purpose}. ocrmypdf will skip this feature without it.</p>
+									{#each Object.entries(c.install_hints) as [system, cmd]}
+										<pre class="text-parchment-300 mt-1 text-xs">{system}: {cmd}</pre>
+									{/each}
+								</div>
+							{/if}
+						{/each}
+					</div>
+				{/if}
+			{/if}
+
+			<div class="mt-4 grid gap-4 sm:grid-cols-2">
 				<div class="sm:col-span-2">
 					<label for="ocr-data-dir" class="mb-1 block text-sm font-medium text-parchment-200"
 						>Data directory</label
@@ -310,6 +394,19 @@
 					/>
 				</div>
 			</div>
+			{#if toolStatus?.find((t) => t.category === 'textextractor' && !t.available)}
+				<div
+					class="mt-4 rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500"
+				>
+					<p class="font-medium">"{cfg.consumer.textextractor.engine}" is not installed</p>
+					<p class="mt-1 text-parchment-400">
+						Documents won't process until it is available. Install it, e.g.:
+					</p>
+					{#each Object.entries(hintsForEngine(cfg.consumer.textextractor.engine)) as [system, cmd]}
+						<pre class="text-parchment-300 mt-1 text-xs">{system}: {cmd}</pre>
+					{/each}
+				</div>
+			{/if}
 		</section>
 
 		<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
@@ -340,6 +437,21 @@
 						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus:outline-none"
 					/>
 				</div>
+			</div>
+			{#if toolStatus?.find((t) => t.category === 'pdfoptimizer' && !t.available)}
+				<div
+					class="mt-4 rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500"
+				>
+					<p class="font-medium">"{cfg.consumer.pdfoptimizer.engine}" is not installed</p>
+					<p class="mt-1 text-parchment-400">
+						Documents won't process until it is available. Install it, e.g.:
+					</p>
+					{#each Object.entries(hintsForEngine(cfg.consumer.pdfoptimizer.engine)) as [system, cmd]}
+						<pre class="text-parchment-300 mt-1 text-xs">{system}: {cmd}</pre>
+					{/each}
+				</div>
+			{/if}
+			<div class="mt-4 grid gap-4 sm:grid-cols-2">
 				<div class="sm:col-span-2">
 					<label for="pdf-timeout" class="mb-1 block text-sm font-medium text-parchment-200"
 						>Timeout (s)</label

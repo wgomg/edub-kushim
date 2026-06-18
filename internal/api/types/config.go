@@ -3,9 +3,11 @@ package types
 import "github.com/wgomg/edub-kushim/internal/config"
 
 type ConfigStatusResponse struct {
-	Configured   bool     `json:"configured"`
-	PendingTasks int      `json:"pending_tasks"`
-	Errors       []string `json:"errors"`
+	Configured   bool                  `json:"configured"`
+	PendingTasks int                   `json:"pending_tasks"`
+	Errors       []string              `json:"errors"`
+	Tools        []config.ExternalTool `json:"tools"`
+	MissingTools []config.ExternalTool `json:"missing_tools"`
 }
 
 type AppConfigResponse struct {

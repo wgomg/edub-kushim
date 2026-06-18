@@ -1,6 +1,7 @@
 <script>
 	import { onMount } from 'svelte';
 	import { configApi } from '$lib/api.js';
+	import { hintsForEngine } from '$lib/tools.js';
 
 	let step = $state(1);
 	let configDir = $state('');
@@ -8,6 +9,8 @@
 	let pendingTasks = $state(0);
 	let configured = $state(false);
 	let error = $state('');
+	let missingTools = $state([]);
+	let toolStatus = $state([]);
 	let pollInterval;
 	let showToken = $state(false);
 
@@ -54,6 +57,9 @@
 			const res = await configApi.update(body);
 			const loaded = await configApi.get();
 			if (loaded) cfg = loaded;
+			if (res && 'missing_tools' in res) {
+				missingTools = res.missing_tools;
+			}
 			if (res && 'pending_tasks' in res && res.pending_tasks > 0) {
 				pendingTasks = res.pending_tasks;
 				step = 4;
@@ -103,6 +109,8 @@
 		const status = await configApi.status();
 		pendingTasks = status.pending_tasks;
 		configured = status.configured;
+		missingTools = status.missing_tools ?? [];
+		toolStatus = status.tools ?? [];
 		return status;
 	}
 
@@ -180,6 +188,16 @@
 		<h2 class="text-lg font-semibold text-parchment-200">Consumer settings</h2>
 	</div>
 
+	{#if missingTools?.find(t => t.engine === 'curl')}
+		<div class="mb-4 rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500">
+			<p class="font-medium">"curl" not installed (required for downloads)</p>
+			<p class="mt-1 text-parchment-400">Model and language file downloads will fail without curl.</p>
+			{#each Object.entries(hintsForEngine('curl')) as [system, cmd]}
+				<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
+			{/each}
+		</div>
+	{/if}
+
 	<form onsubmit={(e) => { e.preventDefault(); step = 3; }} class="space-y-5">
 		<section class="rounded-xl border border-clay-800 bg-clay-950/50 p-4">
 			<h3 class="mb-3 text-sm font-semibold text-parchment-200">Server</h3>
@@ -214,6 +232,51 @@
 							<option value={opt.value}>{opt.label}</option>
 						{/each}
 					</select>
+					{#if toolStatus?.find(t => t.category === 'ocr' && !t.available)}
+						<div class="mt-2 rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500">
+							<p class="font-medium">"{cfg.consumer.ocr.engine}" is not installed</p>
+							<p class="mt-1 text-parchment-400">Documents won't process until it is available. Install it, e.g.:</p>
+							{#each Object.entries(hintsForEngine(cfg.consumer.ocr.engine)) as [system, cmd]}
+								<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
+							{/each}
+						</div>
+					{/if}
+					{#if cfg.consumer.ocr.engine === 'ocrmypdf'}
+						{@const ocrTool = toolStatus?.find(t => t.engine === 'ocrmypdf')}
+						{#if ocrTool?.lang_hints?.length}
+							<div class="mt-2 rounded-lg border border-lapis-500/30 bg-lapis-500/10 p-3 text-sm text-parchment-200">
+								<p class="font-medium">Tesseract language packs required</p>
+								<p class="mt-1 text-parchment-300">Install the packs for your configured languages
+									({ocrTool.languages.join(', ')}):</p>
+								{#each Object.entries(ocrTool.lang_hints[0].install_hints) as [system, cmd]}
+									<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
+								{/each}
+							</div>
+						{/if}
+						{#if ocrTool?.companions?.length}
+							<div class="mt-2 space-y-2 text-sm">
+								{#each ocrTool.companions as c}
+									{#if !c.available && c.required}
+										<div class="rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-terracotta-500">
+											<p class="font-medium">"{c.command}" not installed (required)</p>
+											<p class="mt-1 text-parchment-400">{c.purpose}</p>
+											{#each Object.entries(c.install_hints) as [system, cmd]}
+												<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
+											{/each}
+										</div>
+									{:else if !c.available}
+										<div class="rounded-lg border border-lapis-500/30 bg-lapis-500/10 p-3 text-parchment-300">
+											<p class="font-medium text-parchment-200">"{c.command}" not installed (optional)</p>
+											<p class="mt-1">{c.purpose}. ocrmypdf will skip this feature without it.</p>
+											{#each Object.entries(c.install_hints) as [system, cmd]}
+												<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
+											{/each}
+										</div>
+									{/if}
+								{/each}
+							</div>
+						{/if}
+					{/if}
 				</div>
 				<div>
 					<label for="ocr-timeout" class="mb-1 block text-sm font-medium text-parchment-200">
@@ -291,6 +354,15 @@
 					/>
 				</div>
 			</div>
+			{#if toolStatus?.find(t => t.category === 'textextractor' && !t.available)}
+				<div class="mt-3 rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500">
+					<p class="font-medium">"{cfg.consumer.textextractor.engine}" is not installed</p>
+					<p class="mt-1 text-parchment-400">Documents won't process until it is available. Install it, e.g.:</p>
+					{#each Object.entries(hintsForEngine(cfg.consumer.textextractor.engine)) as [system, cmd]}
+						<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
+					{/each}
+				</div>
+			{/if}
 		</section>
 
 		<section class="rounded-xl border border-clay-800 bg-clay-950/50 p-4">
@@ -322,6 +394,17 @@
 						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus:outline-none"
 					/>
 				</div>
+			</div>
+			{#if toolStatus?.find(t => t.category === 'pdfoptimizer' && !t.available)}
+				<div class="mt-3 rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500">
+					<p class="font-medium">"{cfg.consumer.pdfoptimizer.engine}" is not installed</p>
+					<p class="mt-1 text-parchment-400">Documents won't process until it is available. Install it, e.g.:</p>
+					{#each Object.entries(hintsForEngine(cfg.consumer.pdfoptimizer.engine)) as [system, cmd]}
+						<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
+					{/each}
+				</div>
+			{/if}
+			<div class="mt-3 grid gap-3 sm:grid-cols-2">
 				<div class="sm:col-span-2">
 					<label for="pdf-optimizer-timeout" class="mb-1 block text-sm font-medium text-parchment-200">
 						Timeout (s)
@@ -653,6 +736,49 @@
 			Your configuration is ready. Run <code class="rounded bg-clay-800 px-1 py-0.5 text-parchment-200">edub</code>
 			to start the server.
 		</p>
+
+		{#if missingTools.length > 0}
+			<div class="rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-4 text-left text-sm text-terracotta-500">
+				<p class="font-medium text-parchment-200">Setup complete — but the following tools are not installed and must be
+				installed before you can consume documents:</p>
+				<ul class="mt-2 list-inside list-disc space-y-2">
+					{#each missingTools as t}
+						{#if t.engine === 'curl'}
+							<li>curl (required for downloads)</li>
+						{:else}
+							<li>{t.engine} ({t.category} engine)</li>
+						{/if}
+						{#each Object.entries(hintsForEngine(t.engine)) as [system, cmd]}
+							<li class="ml-4 list-none text-xs text-parchment-300">{system}: {cmd}</li>
+						{/each}
+						{#if t.companions}
+							{#each t.companions as c}
+							{#if c.required && !c.available}
+								<li class="ml-2">{c.command} (required companion — {c.purpose})</li>
+								{#each Object.entries(c.install_hints) as [system, cmd]}
+									<li class="ml-6 list-none text-xs text-parchment-300">{system}: {cmd}</li>
+								{/each}
+							{/if}
+							{/each}
+						{/if}
+					{/each}
+					</ul>
+			</div>
+		{/if}
+
+		{#if cfg?.consumer?.ocr?.engine === 'ocrmypdf'}
+			{@const ocrTool = toolStatus?.find(t => t.engine === 'ocrmypdf')}
+			{#if ocrTool?.lang_hints?.length}
+				<div class="rounded-lg border border-lapis-500/30 bg-lapis-500/10 p-4 text-left text-sm text-parchment-200">
+					<p class="font-medium">Reminder: ocrmypdf needs the tesseract language packs</p>
+					<p class="mt-1 text-parchment-300">Install the packs for your configured languages ({ocrTool.languages.join(', ')}):</p>
+					{#each Object.entries(ocrTool.lang_hints[0].install_hints) as [system, cmd]}
+						<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
+					{/each}
+				</div>
+			{/if}
+		{/if}
+
 		<button
 			type="button"
 			onclick={() => window.close()}

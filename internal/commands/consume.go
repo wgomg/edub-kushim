@@ -8,10 +8,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/consumption"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/pidfile"
@@ -64,7 +66,16 @@ func consumeHandler(c *Container, args []string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	allTools := config.MissingExternalTools(c.config)
+	missingTools := config.FilterToolErrors(allTools)
+	if len(missingTools) > 0 {
+		printToolBlock(missingTools)
+	}
+
 	if batchIDParam != "" {
+		if len(missingTools) > 0 {
+			return fmt.Errorf("consume blocked: missing required external tools")
+		}
 		tasks, err := task.ListFiltered(ctx, queries, task.TaskFilter{
 			BatchID: batchIDParam,
 		})
@@ -96,6 +107,12 @@ func consumeHandler(c *Container, args []string) error {
 		defer lock.Release()
 
 		return pollBatch(ctx, queries, p, ep, c.logger, batchIDParam)
+	}
+
+	printOcrmypdfAdvisory(c.config, allTools)
+
+	if len(missingTools) > 0 {
+		return fmt.Errorf("consume blocked: missing required external tools")
 	}
 
 	files, err := consumption.GetFiles(
@@ -235,6 +252,103 @@ func consumeCancelHandler(c *Container, args []string) error {
 	fmt.Printf("Batch %s: %d pending + %d processing cancelled, signal sent to PID %d\n",
 		batchID, count, procCount, pid)
 	return nil
+}
+
+func printToolBlock(missing []config.ExternalTool) {
+	fmt.Println("Cannot consume — the following required tools are not installed:\n")
+	for _, t := range missing {
+		if t.Engine == "curl" {
+			fmt.Printf("  Prerequisite \"curl\" — %s\n", t.Purpose)
+		} else if len(t.Companions) > 0 {
+			fmt.Printf("  OCR engine \"%s\" (binary not found in PATH)\n", t.Engine)
+		} else {
+			fmt.Printf("  %s engine \"%s\" (binary not found in PATH)\n", t.Category, t.Engine)
+		}
+		for _, system := range config.InstallHintOrder {
+			if cmd, ok := t.InstallHints[system]; ok {
+				fmt.Printf("    %-16s %s\n", system+":", cmd)
+			}
+		}
+		fmt.Println()
+		for _, c := range t.Companions {
+			if c.Required && !c.Available {
+				fmt.Printf("  Companion \"%s\" — %s\n", c.Command, c.Purpose)
+				for _, system := range config.InstallHintOrder {
+					if cmd, ok := c.InstallHints[system]; ok {
+						fmt.Printf("    %-16s %s\n", system+":", cmd)
+					}
+				}
+				fmt.Println()
+			}
+		}
+	}
+	fmt.Println("Install the missing tools, or switch to a built-in engine via `kushim setup` or the Settings page.")
+}
+
+func printOcrmypdfAdvisory(cfg *config.Config, allTools []config.ExternalTool) {
+	if cfg.Consumer.OCR.Engine != config.OCR.OcrMyPdf {
+		return
+	}
+	if len(cfg.Consumer.OCR.Languages) == 0 {
+		return
+	}
+
+	var ocrTool *config.ExternalTool
+	for i, t := range allTools {
+		if t.Engine == config.OCR.OcrMyPdf {
+			ocrTool = &allTools[i]
+			break
+		}
+	}
+	if ocrTool == nil {
+		return
+	}
+
+	// Language pack advisory
+	fmt.Printf("\nNote: ocrmypdf uses the system tesseract, which reads its own tessdata directory.\n")
+	fmt.Printf("Make sure the tesseract language packs for your configured languages are installed:\n\n")
+	fmt.Printf("  Configured languages: %s\n", strings.Join(cfg.Consumer.OCR.Languages, ", "))
+	if len(ocrTool.LangHints) > 0 {
+		combined := make(map[string][]string)
+		for _, lh := range ocrTool.LangHints {
+			for _, system := range config.InstallHintOrder {
+				if cmd, ok := lh.InstallHints[system]; ok {
+					combined[system] = append(combined[system], cmd)
+				}
+			}
+		}
+		for _, system := range config.InstallHintOrder {
+			cmds, ok := combined[system]
+			if !ok {
+				continue
+			}
+			// Deduplicate identical commands (macOS shows the same hint for all langs)
+			seen := map[string]bool{}
+			var unique []string
+			for _, c := range cmds {
+				if !seen[c] {
+					seen[c] = true
+					unique = append(unique, c)
+				}
+			}
+			fmt.Printf("    %-16s %s\n", system+":", strings.Join(unique, "  "))
+		}
+	}
+	fmt.Println()
+
+	// Optional companion advisory
+	for _, c := range ocrTool.Companions {
+		if !c.Required && !c.Available {
+			fmt.Printf("Optional companion \"%s\" — %s\n", c.Command, c.Purpose)
+			fmt.Printf("  ocrmypdf will skip this feature. Install it for best results:\n")
+			for _, system := range config.InstallHintOrder {
+				if cmd, ok := c.InstallHints[system]; ok {
+					fmt.Printf("    %-16s %s\n", system+":", cmd)
+				}
+			}
+			fmt.Println()
+		}
+	}
 }
 
 type taskDisplay struct {

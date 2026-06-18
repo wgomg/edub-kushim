@@ -128,6 +128,56 @@ No running process found for batch 550e8400-e29b-41d4-a716-446655440000
 5 pending tasks cancelled
 ```
 
+### Pre-flight Tool Check
+
+Before scanning the inbox or resuming a batch, `kushim consume` checks that all
+required external tools are available in `PATH`:
+
+- **Engine binaries**: `ocrmypdf`, `gs`, `pdftotext` — checked only when the
+  corresponding config engine is selected.
+- **Required companions**: `tesseract` and `unpaper` — needed by the ocrmypdf
+  adapter (`--clean` + `--language` flags).
+- **Prerequisite**: `curl` — required for any model/language download.
+
+If any required tool is missing, the command prints a block of install hints
+and exits with a non-zero status. Optional companions (`pngquant`) and
+tesseract language packs are shown as advisory notes but do not block.
+
+Example output with ocrmypdf + tesseract + unpaper missing:
+
+```
+Cannot consume — the following required tools are not installed:
+
+  OCR engine "ocrmypdf" (binary not found in PATH)
+    Debian/Ubuntu:  sudo apt install ocrmypdf
+    Arch:           sudo pacman -S ocrmypdf
+    macOS:          brew install ocrmypdf
+
+  Companion "tesseract" — OCR engine that ocrmypdf wraps (core dependency)
+    Debian/Ubuntu:  sudo apt install tesseract-ocr
+    Arch:           sudo pacman -S tesseract
+    macOS:          brew install tesseract
+
+  Companion "unpaper" — used by ocrmypdf's --clean flag (page cleanup)
+    Debian/Ubuntu:  sudo apt install unpaper
+    Arch:           sudo pacman -S unpaper
+
+Install the missing tools, or switch to a built-in engine via `kushim setup` or the Settings page.
+```
+
+The language-pack and optional-companion advisory follows the pre-flight block
+when the OCR engine is ocrmypdf:
+
+```
+Note: ocrmypdf uses the system tesseract, which reads its own tessdata directory.
+Make sure the tesseract language packs for your configured languages are installed:
+
+  Configured languages: eng, spa
+    Debian/Ubuntu:  sudo apt install tesseract-ocr-eng  sudo apt install tesseract-ocr-spa
+    Arch:           sudo pacman -S tesseract-data-eng  sudo pacman -S tesseract-data-spa
+    macOS:          brew install tesseract (bundles common languages)
+```
+
 Output during processing (default mode):
 
 ```
@@ -530,27 +580,35 @@ Two-phase API:
 }
 ```
 
-Returns `201` with `{ "pending_tasks": 3 }` when downloads are enqueued,
-or `200` with `{ "configured": true }` when all dependencies are already present.
+Returns `201` with `{ "pending_tasks": 3, "missing_tools": [...] }` when downloads are enqueued,
+or `200` with `{ "configured": true, "missing_tools": [...] }` when all dependencies are already
+present. The `missing_tools` array lists any hard-blocking tool-availability issues
+(missing engine binaries, required companions, or the curl prerequisite).
 
 ```
 GET /wizard/config/status
 ```
 
-Returns `{ "configured": bool, "pending_tasks": int, "errors": []string }`.
-The wizard and settings page poll this endpoint to track download progress.
+Returns `{ "configured": bool, "pending_tasks": int, "errors": []string, "tools": [...], "missing_tools": [...] }`.
+The `tools` array contains the full availability status for every relevant external tool
+(engine binaries, curl prerequisite, ocrmypdf companions, tesseract language-pack hints).
+`missing_tools` is the hard-blocking subset (missing engines, required companions, curl).
+The wizard and settings page poll this endpoint every 3 seconds to track download progress
+and refresh tool-status warnings.
 
 ---
 
 ### Consume
 
-Enqueue all files in the consumption directory as tasks.
+Enqueue all files in the consumption directory as tasks. Before scanning
+the inbox, the server checks that all required external tools are available
+(see [Pre-flight Tool Check](#pre-flight-tool-check) for the engine list).
 
 ```
 POST /api/v1/consume
 ```
 
-Response `202`:
+Response `202` (all checks pass, files enqueued):
 
 ```json
 {
@@ -560,6 +618,40 @@ Response `202`:
   "_links": {
     "tasks": "/api/v1/tasks?batch=550e8400-e29b-41d4-a716-446655440000"
   }
+}
+```
+
+Response `422 Unprocessable Entity` (required tools missing):
+
+```json
+{
+  "error": "Cannot consume: required external tools are not installed.",
+  "missing_tools": [
+    {
+      "engine": "ocrmypdf",
+      "category": "ocr",
+      "command": "ocrmypdf",
+      "available": false,
+      "install_hints": {
+        "Debian/Ubuntu": "sudo apt install ocrmypdf",
+        "Arch": "sudo pacman -S ocrmypdf",
+        "macOS": "brew install ocrmypdf"
+      },
+      "languages": ["eng", "spa"],
+      "lang_hints": [...],
+      "companions": [
+        {
+          "command": "tesseract",
+          "purpose": "OCR engine that ocrmypdf wraps (core dependency)",
+          "available": false,
+          "required": true,
+          "install_hints": {
+            "Debian/Ubuntu": "sudo apt install tesseract-ocr"
+          }
+        }
+      ]
+    }
+  ]
 }
 ```
 
@@ -961,6 +1053,18 @@ a single-page form for all user-configurable settings:
 Changes are saved via the `/wizard/config` API and trigger background
 downloads for any missing tessdata or Hugot model files. A spinner and
 pending-task counter show download progress.
+
+**Tool-status warnings** appear inline beneath each engine selector when
+the selected external tool is missing from `PATH`. When the OCR engine is
+`ocrmypdf`, additional advisory blocks show:
+- **Tesseract language packs** — which system packages to install for each
+  configured language (always shown, since system tesseract is separate
+  from the app's downloaded tessdata).
+- **Companion tools** — status of `tesseract`, `unpaper` (required), and
+  `pngquant` (optional), each with install hints.
+
+A **sticky amber banner** at the top of the app layout shows whenever
+required tools are not installed, with a link to the settings page.
 
 ## Build: Setup Wizard
 

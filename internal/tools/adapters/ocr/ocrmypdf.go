@@ -22,7 +22,7 @@ type OcrMyPdf struct {
 
 func NewOcrMyPdf(logger *utils.Logger, cfg config.ToolConfig, languages []string) (*OcrMyPdf, error) {
 	if _, err := exec.LookPath(cfg.Command); err != nil {
-		return nil, fmt.Errorf("%s not found in PATH: %w", cfg.Command, err)
+		return nil, fmt.Errorf("%s not found in PATH: %w\nInstall it (e.g. 'sudo apt install ocrmypdf' or 'brew install ocrmypdf') or switch to the built-in 'gosseract' engine", cfg.Command, err)
 	}
 
 	if len(languages) == 0 {
@@ -67,7 +67,21 @@ func (o *OcrMyPdf) Process(ctx context.Context, docId, path string) (*string, er
 		if _, statErr := os.Stat(outputPath); statErr == nil {
 			os.Remove(outputPath)
 		}
-		return nil, fmt.Errorf("%s failed: %w, stderr: %s", o.Name(), err, stderr.String())
+		stderrStr := stderr.String()
+		hint := ""
+		if strings.Contains(stderrStr, "read_params_file") || strings.Contains(stderrStr, "couldn't load languages") || strings.Contains(stderrStr, "Can't open") {
+			hint = fmt.Sprintf("ensure the tesseract language packs are installed for %v (e.g. 'sudo apt install tesseract-ocr-eng')", o.languages)
+		} else if strings.Contains(stderrStr, "unpaper") || strings.Contains(stderrStr, "--clean") {
+			hint = "install unpaper (e.g. 'sudo apt install unpaper') or disable the --clean option"
+		} else if strings.Contains(stderrStr, "pngquant") || strings.Contains(stderrStr, "optipng") || strings.Contains(stderrStr, "jbig2") || strings.Contains(stderrStr, "--optimize") {
+			hint = "install pngquant (e.g. 'sudo apt install pngquant') for image optimization, or ocrmypdf will skip it"
+		} else if strings.Contains(stderrStr, "tesseract") && strings.Contains(stderrStr, "not found") {
+			hint = "install tesseract (e.g. 'sudo apt install tesseract-ocr')"
+		}
+		if hint != "" {
+			return nil, fmt.Errorf("%s failed: %w, stderr: %s\n... %s", o.Name(), err, stderrStr, hint)
+		}
+		return nil, fmt.Errorf("%s failed: %w, stderr: %s", o.Name(), err, stderrStr)
 	}
 
 	if _, err := os.Stat(outputPath); os.IsNotExist(err) {

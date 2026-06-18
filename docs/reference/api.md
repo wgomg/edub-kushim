@@ -130,8 +130,8 @@
   - **Methods**:
     - `NewConfigHandler(cfg, queries, logger, dispatcher) *ConfigHandler`
     - `GetConfig(w, r)` — `GET /wizard/config` — Returns user-configurable settings as `ConfigResponse` (app, server, consumer, enricher sections plus available_engines; app includes boolean `initialized`; enricher includes LLM provider tokens). Returns defaults from `DefaultConfig("")` when no config is loaded (wizard not yet bootstrapped), so the frontend always receives a complete config shape.
-    - `PutConfig(w, r)` — `PUT /wizard/config` — Two-phase: if `config_dir` is present and no config exists, bootstraps config directory, DB, and skeleton YAML. Otherwise writes config via `SaveMap`, reloads, and enqueues config tasks for missing downloads (tessdata, hugot). Returns `200` or `201` with pending task count.
-    - `ConfigStatus(w, r)` — `GET /wizard/config/status` — Returns `ConfigStatusResponse` with `configured` flag, `pending_tasks` count, and any `errors`.
+    - `PutConfig(w, r)` — `PUT /wizard/config` — Two-phase: if `config_dir` is present and no config exists, bootstraps config directory, DB, and skeleton YAML. Otherwise writes config via `SaveMap`, reloads, and enqueues config tasks for missing downloads (tessdata, hugot). Returns `200` or `201` with pending task count and a `missing_tools` array of hard-blocking tool-availability issues.
+    - `ConfigStatus(w, r)` — `GET /wizard/config/status` — Returns `ConfigStatusResponse` with `configured` flag, `pending_tasks` count, `errors`, plus `tools` (full `[]ExternalTool` availability list) and `missing_tools` (hard-blocking subset).
 
 ---
 
@@ -153,7 +153,7 @@
 - `LlmProviderResponse` — `BaseURL string`, `Model string`, `Token string`
 - `TagMatcherResponse` — `Engine string`, `Timeout int`, `ReduceTargetWords int`, `ChunkSize int`, `Hugot HugotResponse`
 - `HugotResponse` — `Model string`, `Backend string`
-- `ConfigStatusResponse` — `Configured bool`, `PendingTasks int`, `Errors []string`
+- `ConfigStatusResponse` — `Configured bool`, `PendingTasks int`, `Errors []string`, `Tools []config.ExternalTool` (full availability list), `MissingTools []config.ExternalTool` (hard-blocking subset)
 
 ### Functions
 

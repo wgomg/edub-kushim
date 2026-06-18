@@ -97,18 +97,28 @@ func (h *ConfigHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.cfg = cfg
+	missing := config.MissingExternalToolErrors(cfg)
 
 	if h.dispatcher == nil {
-		writeJSON(w, http.StatusOK, map[string]bool{"configured": true})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"configured":    true,
+			"missing_tools": missing,
+		})
 		return
 	}
 
 	enqueued := h.enqueueConfigTasks(ctx, cfg)
 
 	if enqueued > 0 {
-		writeJSON(w, http.StatusCreated, map[string]int{"pending_tasks": enqueued})
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"pending_tasks": enqueued,
+			"missing_tools": missing,
+		})
 	} else {
-		writeJSON(w, http.StatusOK, map[string]bool{"configured": true})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"configured":    true,
+			"missing_tools": missing,
+		})
 	}
 }
 
@@ -168,6 +178,12 @@ func (h *ConfigHandler) ConfigStatus(w http.ResponseWriter, r *http.Request) {
 		Configured:   configured,
 		PendingTasks: pendingTasks,
 		Errors:       errors,
+	}
+
+	if h.cfg != nil {
+		allTools := config.MissingExternalTools(h.cfg)
+		resp.Tools = allTools
+		resp.MissingTools = config.FilterToolErrors(allTools)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
