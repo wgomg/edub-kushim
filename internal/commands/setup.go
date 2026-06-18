@@ -19,6 +19,15 @@ import (
 )
 
 func RunSetup(args []string, logger *utils.Logger) error {
+	configDir, err := utils.ConfigDir()
+	if err != nil {
+		return fmt.Errorf("cannot determine config directory: %w", err)
+	}
+	configPath := filepath.Join(*configDir, "config.yaml")
+	if _, err := os.Stat(configPath); err == nil {
+		return fmt.Errorf("setup has already been completed — remove %s to re-run", configPath)
+	}
+
 	var cli bool
 	p := NewFlagParser(args)
 	if err := p.Bool("--cli", &cli); err != nil {
