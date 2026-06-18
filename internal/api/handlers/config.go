@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
@@ -132,10 +133,10 @@ func (h *ConfigHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
 
 func (h *ConfigHandler) enqueueConfigTasks(ctx context.Context, cfg *config.Config) int {
 	enqueued := 0
-
+	batchID := uuid.New().String()
 	for _, lang := range config.MissingTessdataLanguages(cfg) {
 		key := "config:tessdata:" + lang
-		if h.handleConfigTask(ctx, key, map[string]string{
+		if h.handleConfigTask(ctx, key, batchID, map[string]string{
 			"config_dir": cfg.App.ConfigDir,
 			"op":         "tessdata",
 			"lang":       lang,
@@ -145,7 +146,7 @@ func (h *ConfigHandler) enqueueConfigTasks(ctx context.Context, cfg *config.Conf
 	}
 
 	if config.MissingHugotModel(cfg) {
-		if h.handleConfigTask(ctx, "config:hugot", map[string]string{
+		if h.handleConfigTask(ctx, "config:hugot", batchID, map[string]string{
 			"config_dir": cfg.App.ConfigDir,
 			"op":         "hugot",
 		}) {
@@ -156,7 +157,7 @@ func (h *ConfigHandler) enqueueConfigTasks(ctx context.Context, cfg *config.Conf
 	return enqueued
 }
 
-func (h *ConfigHandler) handleConfigTask(ctx context.Context, dedupKey string, payloadFields map[string]string) bool {
+func (h *ConfigHandler) handleConfigTask(ctx context.Context, batchId, dedupKey string, payloadFields map[string]string) bool {
 	existing, err := h.queries.GetConfigTaskByDedupKey(ctx, sql.NullString{String: dedupKey, Valid: true})
 	if err == nil {
 		switch existing.Status {
@@ -174,7 +175,7 @@ func (h *ConfigHandler) handleConfigTask(ctx context.Context, dedupKey string, p
 	}
 
 	payload, _ := json.Marshal(payloadFields)
-	if _, err := h.dispatcher.Enqueue(ctx, taskhandlers.TaskTypeConfig, "", payload, ""); err != nil {
+	if _, err := h.dispatcher.Enqueue(ctx, taskhandlers.TaskTypeConfig, batchId, payload, ""); err != nil {
 		h.logger.Error(nil, "enqueue config task %s: %v", dedupKey, err)
 		return false
 	}
