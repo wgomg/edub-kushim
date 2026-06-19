@@ -10,6 +10,7 @@ MUPDF_LIB     := $(MUPDF_DIR)/local/lib
 LIBNG_VER     := 1.6.43
 MUPDF_VER     := 1.27.2
 TOKENIZERS_DIR := $(BUILD_DIR)/tokenizers
+NVM_DIR       := $(HOME)/.config/nvm
 
 export CGO_ENABLED  := 1
 export CGO_CPPFLAGS := -I$(TESS_INCLUDE) -I$(BUILD_DIR)/leptonica/local/include -I$(BUILD_DIR)/libpng/local/include
@@ -18,12 +19,12 @@ export CGO_LDFLAGS  := -L$(TOKENIZERS_DIR)
 .PHONY: build build-deps web-build clean run consume build-musl-image build-musl compose-up compose-down
 
 web-build:
-	nvm use && cd web && npm ci && npm run build
+	. "$(NVM_DIR)/nvm.sh" && nvm use && cd web && npm ci && npm run build
 	rm -rf internal/static/build
 	cp -r web/build internal/static/build
 
 wizard-build:
-	nvm use && cd web && npm ci && npm run build
+	. "$(NVM_DIR)/nvm.sh" && nvm use && cd web && npm ci && npm run build
 	cd web-wizard && npm ci && npm run build
 	rm -rf internal/wizard/static
 	cp -r web-wizard/build internal/wizard/static
