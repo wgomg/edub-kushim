@@ -1,0 +1,16 @@
+.git/
+.gitignore
+.gitattributes
+.vscode/
+.continue/
+.kilo/
+config.yaml
+config.prod.yaml
+!config.example.yaml
+dev/
+build/
+node_modules/
+internal/static/build/
+internal/wizard/static/
+*.md
+docs/

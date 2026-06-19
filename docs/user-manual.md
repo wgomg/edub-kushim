@@ -7,6 +7,18 @@ Both share the same OCR, text extraction, and PDF optimization pipeline.
 
 ## Quick Start
 
+### Docker Compose (no host-side toolchain required)
+
+```bash
+git clone <repo-url> && cd edub-kushim
+# Set your OCR language(s) in docker-compose.yml, then:
+docker compose up
+```
+
+Open http://localhost:3000, configure your LLM provider in `/settings`, and drop PDFs into `./inbox/`. The first build compiles everything from source (~minutes); subsequent builds are cached.
+
+### Manual
+
 ```bash
 # One‑time setup — launches a web wizard at http://0.0.0.0:8420
 kushim setup
@@ -71,9 +83,10 @@ kushim setup --cli --languages eng,spa
 | `--inbox-path`                     | _config-dir_`/inbox`   | Consumption directory (scanned for files)                   |
 | `--storage-path`                   | _config-dir_`/storage` | Processed file storage root                                 |
 | `--database-path`                  | _config-dir_`/data`    | SQLite database directory                                   |
+| `--consumer-ocr-engine`            | `gosseract`            | OCR engine: `gosseract` or `ocrmypdf`                       |
+| `--consumer-textextractor-engine`  | `mupdf`                | Text extractor: `mupdf`, `gopdf`, or `pdftotext`            |
 | `--consumer-pdfoptimizer-engine`   | `mupdf`                | PDF optimizer: `mupdf` or `gs`                              |
 | `--consumer-pdfoptimizer-fallback` | —                      | Fallback PDF optimizer binary (ignored when engine is `gs`) |
-| `--consumer-ocr-engine`            | `gosseract`            | OCR engine: `gosseract` or `ocrmypdf`                       |
 | `--reset-database`                 | `false`                | Drop all tables and re-run schema + seeders                 |
 
 The flags `--inbox-path`, `--storage-path`, and `--database-path` accept either

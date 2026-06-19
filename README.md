@@ -6,6 +6,20 @@ Two binaries: **kushim** (CLI) for batch document processing and **edub** (serve
 
 ## Quick Start
 
+### Docker Compose (recommended)
+
+```bash
+git clone <repo-url> && cd edub-kushim
+# Set your OCR language(s) in docker-compose.yml, then:
+docker compose up
+```
+
+Open http://localhost:3000, configure your LLM provider in `/settings`, and drop PDFs into `./inbox/`.
+
+The first build compiles MuPDF, Tesseract, and other C libraries from source (~minutes); subsequent builds are cached by Docker.
+
+### Manual (for development)
+
 ```bash
 # Initial setup — creates config, downloads models, initializes DB
 kushim setup

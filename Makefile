@@ -15,7 +15,7 @@ export CGO_ENABLED  := 1
 export CGO_CPPFLAGS := -I$(TESS_INCLUDE) -I$(BUILD_DIR)/leptonica/local/include -I$(BUILD_DIR)/libpng/local/include
 export CGO_LDFLAGS  := -L$(TOKENIZERS_DIR)
 
-.PHONY: build build-deps web-build clean run consume build-musl-image build-musl
+.PHONY: build build-deps web-build clean run consume build-musl-image build-musl compose-up compose-down
 
 web-build:
 	cd web && npm ci && npm run build
@@ -133,7 +133,7 @@ build-tesseract:
 		LDFLAGS="-L$(BUILD_DIR)/libpng/local/lib64" \
 		PKG_CONFIG_PATH="$(BUILD_DIR)/leptonica/local/lib64/pkgconfig:$(BUILD_DIR)/libpng/local/lib64/pkgconfig" \
 		./configure --disable-shared --enable-static --prefix=$(BUILD_DIR)/tesseract/local \
-			--libdir=$(BUILD_DIR)/tesseract/local/lib64
+			--libdir=$(BUILD_DIR)/tesseract/local/lib64 \
 			--with-extra-libraries=$(BUILD_DIR)/leptonica/local/lib64 \
 			--with-extra-includes=$(BUILD_DIR)/leptonica/local/include \
 			--with-curl=no --with-archive=no --disable-openmp --disable-legacy --disable-graphics && \
@@ -168,6 +168,12 @@ build-tokenizers:
 		cp $(TOKENIZERS_DIR)/src/target/release/libtokenizers_ffi.a $(TOKENIZERS_DIR)/libtokenizers.a; \
 		echo "Built musl-compatible libtokenizers.a"; \
 	fi
+
+compose-up:
+	docker compose up --build
+
+compose-down:
+	docker compose down
 
 fix:
 	go fix -tags "XLA,ORT" ./...

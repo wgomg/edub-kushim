@@ -1,0 +1,21 @@
+services:
+  edub:
+    build: .
+    ports:
+      - '3001:3000'
+    volumes:
+      - edub-config:/home/edub/.config/edub-kushim
+      - ./inbox:/home/edub/.config/edub-kushim/inbox
+    environment:
+      # Required: set your OCR language(s) — ISO 639-3 codes, comma-separated.
+      OCR_LANGUAGES: 'eng,spa,jpn,kor,deu'
+
+      # Optional: switch to external tools by uncommenting.
+      OCR_ENGINE: 'ocrmypdf' # gosseract (default) | ocrmypdf
+      PDF_OPTIMIZER_ENGINE: 'gs' # mupdf (default) | gs
+      TEXT_EXTRACTOR_ENGINE: 'pdftotext' # mupdf (default) | gopdf | pdftotext
+      # INBOX_PATH: "/data/inbox"       # only if you bind-mount inbox elsewhere
+    restart: unless-stopped
+
+volumes:
+  edub-config:

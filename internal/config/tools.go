@@ -1,8 +1,10 @@
 package config
 
 import (
+	"bufio"
 	"fmt"
 	"os/exec"
+	"strings"
 )
 
 type ExternalTool struct {
@@ -133,6 +135,41 @@ func checkOcrmypdfCompanions() []CompanionTool {
 	return result
 }
 
+// missingTesseractLangs tries to detect which of the configured languages
+// are not installed in the system tesseract. When detection fails (tesseract
+// not found, --list-langs not supported, or unrecognizable output), it returns
+// the full list — the caller falls back to showing all hints.
+func missingTesseractLangs(configured []string) []string {
+	if len(configured) == 0 {
+		return nil
+	}
+	out, err := exec.Command("tesseract", "--list-langs").Output()
+	if err != nil {
+		return configured
+	}
+	installed := make(map[string]bool)
+	scanner := bufio.NewScanner(strings.NewReader(string(out)))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		// Output lines are either header lines or bare language codes.
+		// Language codes are 2-5 letter codes like "eng", "spa", "jpn".
+		if len(line) >= 2 && len(line) <= 6 && !strings.Contains(line, " ") && !strings.HasPrefix(line, "List") {
+			installed[line] = true
+		}
+	}
+	var missing []string
+	for _, lang := range configured {
+		if !installed[lang] {
+			missing = append(missing, lang)
+		}
+	}
+
+	if len(missing) == len(configured) {
+		return configured
+	}
+	return missing
+}
+
 func tesseractLangInstallHints(langs []string) []LangHint {
 	if len(langs) == 0 {
 		return nil
@@ -205,7 +242,7 @@ func MissingExternalTools(cfg *Config) []ExternalTool {
 	for i := range tools {
 		if tools[i].Engine == OCR.OcrMyPdf {
 			tools[i].Languages = cfg.Consumer.OCR.Languages
-			tools[i].LangHints = tesseractLangInstallHints(cfg.Consumer.OCR.Languages)
+			tools[i].LangHints = tesseractLangInstallHints(missingTesseractLangs(cfg.Consumer.OCR.Languages))
 			tools[i].Companions = checkOcrmypdfCompanions()
 			break
 		}

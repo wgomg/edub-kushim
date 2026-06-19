@@ -153,6 +153,7 @@
 - Pre-built `libtokenizers.a` for Hugot Go backend
 - Containerized builds for glibc and musl (`make build-glibc`, `make build-musl`)
 - Deployment image (`make build-tools-image`)
+- **Docker Compose quick-start** (`docker compose up`) — multi-stage build from source, zero host-side toolchain required
 - Go build tags: `XLA`, `ORT` for Hugot ONNX support
 - `make web-build` target for UI embedding
 
@@ -168,7 +169,7 @@
 | --- | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1   | **Configuration/setup wizard in web UI** | ✓ In-app configuration page (LLM providers, Tesseract languages, storage paths, model downloads)                                                                                                    |
 | 2   | **Continue interrupted tasks**           | ✓ Manual retry for failed tasks (API + web UI). Wizard auto-resumes on restart, re-submission does not duplicate tasks, failed config downloads surfaced with retry action.                          |
-| 2   | **Docker Compose quick-start**           | Single `docker compose up` command to run the full stack — eliminates build friction for new users                                                                                                  |
+| 2   | **Docker Compose quick-start**           | ✓ Single `docker compose up` command runs the full stack — multi-stage Dockerfile builds everything from source, entrypoint handles first-boot setup and conditional apt installs                     |
 | 3   | **Document detail — tags/people/type**   | Display tags, people, and document type in the sidebar                                                                                                                                              |
 | 4   | **Document metadata editing**            | Detail page sidebar — edit tags, people, type, title (override LLM)                                                                                                                                 |
 | 5   | **Document update endpoint**             | `PUT /api/v1/documents/{id}` — update title, document_type_id, text_content                                                                                                                         |

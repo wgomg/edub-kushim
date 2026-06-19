@@ -59,10 +59,13 @@ func runSetupWizard(args []string, logger *utils.Logger) error {
 }
 
 func runSetupCLI(args []string, logger *utils.Logger) error {
-	var langs, inboxDir, storageDir, dbPath, optimizationFallback, ocrEngine, pdfEngine string
-	var resetDb bool
+	var langs, inboxDir, storageDir, dbPath, optimizationFallback, ocrEngine, pdfEngine, textExtractorEngine string
+	var resetDb, cli bool
 
 	p := NewFlagParser(args)
+	if err := p.Bool("--cli", &cli); err != nil {
+		return err
+	}
 	if err := p.Bool("--reset-database", &resetDb); err != nil {
 		return err
 	}
@@ -87,6 +90,9 @@ func runSetupCLI(args []string, logger *utils.Logger) error {
 	if err := p.String("--consumer-ocr-engine", &ocrEngine); err != nil {
 		return err
 	}
+	if err := p.String("--consumer-textextractor-engine", &textExtractorEngine); err != nil {
+		return err
+	}
 	if rest := p.Rest(); len(rest) > 0 {
 		return fmt.Errorf("unknown flag(s): %v", rest)
 	}
@@ -100,6 +106,7 @@ Flags:
   --storage-path                     storage directory (default: ~/.config/edub-kushim/storage)
   --database-path                    database path (default: ~/.config/edub-kushim/data)
   --consumer-ocr-engine              gosseract | ocrmypdf (default: gosseract)
+  --consumer-textextractor-engine    mupdf | gopdf | pdftotext (default: mupdf)
   --consumer-pdfoptimizer-engine     mupdf | gs (default: mupdf)
   --consumer-pdfoptimizer-fallback   external PDF optimizer binary (ignored when engine is gs)
   --reset-database                   drop all tables and re-run schema + seeders`)
@@ -115,6 +122,10 @@ Flags:
 	if pdfEngine != "" && !slices.Contains(validPdfEngines, pdfEngine) {
 		return fmt.Errorf("invalid --consumer-pdfoptimizer-engine %q: must be one of %v", pdfEngine, validPdfEngines)
 	}
+	validTextExtractorEngines := []string{config.TextExtractor.MuPDF, config.TextExtractor.GoPdf, config.TextExtractor.PdfToText}
+	if textExtractorEngine != "" && !slices.Contains(validTextExtractorEngines, textExtractorEngine) {
+		return fmt.Errorf("invalid --consumer-textextractor-engine %q: must be one of %v", textExtractorEngine, validTextExtractorEngines)
+	}
 
 	configDir, err := utils.ConfigDir()
 	if err != nil {
@@ -129,6 +140,9 @@ Flags:
 	}
 	if pdfEngine != "" {
 		cfg.Consumer.PdfOptimizer.Engine = pdfEngine
+	}
+	if textExtractorEngine != "" {
+		cfg.Consumer.TextExtractor.Engine = textExtractorEngine
 	}
 
 	if inboxDir != "" {
@@ -155,6 +169,9 @@ Flags:
 	}
 	if pdfEngine != "" {
 		v.Set("consumer.pdfoptimizer.engine", pdfEngine)
+	}
+	if textExtractorEngine != "" {
+		v.Set("consumer.textextractor.engine", textExtractorEngine)
 	}
 	if inboxDir != "" {
 		v.Set("storage.consumption_dir", inboxDir)
