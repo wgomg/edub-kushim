@@ -69,7 +69,7 @@ Documents are searchable immediately via FTS5; enrichment (classification, taggi
 
 - Go 1.22+
 - gcc, gcc-c++, make, autotools, git, curl
-- Node.js 18+ and npm (for web UI development)
+- Node.js 24 (use [nvm](https://github.com/nvm-sh/nvm) — `.nvmrc` specifies the version, run `nvm use`)
 
 ### Build
 

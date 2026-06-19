@@ -1,14 +1,14 @@
-FROM node:20-bookworm-slim AS web-builder
+FROM node:24-bookworm-slim AS web-builder
 
 WORKDIR /build/web
 COPY web/package*.json ./
-RUN npm install
+RUN npm ci
 COPY web/ ./
 RUN npm run build
 
 WORKDIR /build/web-wizard
 COPY web-wizard/package*.json ./
-RUN npm install
+RUN npm ci
 COPY web-wizard/ ./
 RUN npm run build
 

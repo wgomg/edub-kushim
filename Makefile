@@ -18,11 +18,12 @@ export CGO_LDFLAGS  := -L$(TOKENIZERS_DIR)
 .PHONY: build build-deps web-build clean run consume build-musl-image build-musl compose-up compose-down
 
 web-build:
-	cd web && npm ci && npm run build
+	nvm use && cd web && npm ci && npm run build
 	rm -rf internal/static/build
 	cp -r web/build internal/static/build
 
 wizard-build:
+	nvm use && cd web && npm ci && npm run build
 	cd web-wizard && npm ci && npm run build
 	rm -rf internal/wizard/static
 	cp -r web-wizard/build internal/wizard/static
@@ -104,7 +105,7 @@ build-libpng:
 			tar xz -C $(BUILD_DIR); \
 		mv $(BUILD_DIR)/libpng-$(LIBNG_VER) $(BUILD_DIR)/libpng; \
 	fi
-	cd $(BUILD_DIR)/libpng && rm -rf local/ && \
+	cd $(BUILD_DIR)/libpng && rm -rf local/ .libs/ libpng16.la && \
 		./configure --disable-shared --enable-static --prefix=$(BUILD_DIR)/libpng/local \
 			--libdir=$(BUILD_DIR)/libpng/local/lib64 && \
 		make -j$(shell nproc) && make install
@@ -128,7 +129,7 @@ build-tesseract:
 		echo "Cloning tesseract..."; \
 		git clone https://github.com/tesseract-ocr/tesseract.git $(BUILD_DIR)/tesseract; \
 	fi
-	cd $(BUILD_DIR)/tesseract && rm -rf local/ && ./autogen.sh && \
+	cd $(BUILD_DIR)/tesseract && rm -rf local/ && make clean 2>/dev/null; ./autogen.sh && \
 		CPPFLAGS="-I$(BUILD_DIR)/libpng/local/include" \
 		LDFLAGS="-L$(BUILD_DIR)/libpng/local/lib64" \
 		PKG_CONFIG_PATH="$(BUILD_DIR)/leptonica/local/lib64/pkgconfig:$(BUILD_DIR)/libpng/local/lib64/pkgconfig" \

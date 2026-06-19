@@ -1085,6 +1085,7 @@ The setup wizard is a separate SvelteKit SPA located in `web-wizard/`. To
 rebuild it:
 
 ```bash
+nvm use        # activate the Node.js version from .nvmrc
 make wizard-build         # Build SvelteKit wizard, copy to internal/wizard/static
 ```
 
