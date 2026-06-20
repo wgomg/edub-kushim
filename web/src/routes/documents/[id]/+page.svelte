@@ -45,6 +45,52 @@
 
 			<div class="w-80 shrink-0 space-y-4">
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
+					<p class="text-xs font-medium tracking-wider text-parchment-500 uppercase">
+						Document Type
+					</p>
+					<p class="mt-1 text-parchment-200">{doc.document_type_name ?? '—'}</p>
+					{#if doc.language}
+						<p class="mt-0.5 text-xs text-parchment-500">{doc.language}</p>
+					{/if}
+				</div>
+				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
+					<p class="text-xs font-medium tracking-wider text-parchment-500 uppercase">Tags</p>
+					{#if (doc.tags ?? []).length > 0}
+						<div class="mt-2 flex flex-wrap gap-1.5">
+							{#each doc.tags as tag}
+								<span
+									class="inline-flex items-center gap-1 rounded-full bg-lapis-700 px-2 py-0.5 text-xs text-parchment-200"
+									>{tag.name}</span
+								>
+							{/each}
+						</div>
+					{:else}
+						<p class="mt-1 text-parchment-500">No tags</p>
+					{/if}
+				</div>
+				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
+					<p class="text-xs font-medium tracking-wider text-parchment-500 uppercase">People</p>
+					{#if (doc.people ?? []).length > 0}
+						<div class="mt-2 space-y-2">
+							{#each doc.people as person}
+								<div>
+									<p class="text-parchment-200">
+										{person.name}
+										{#if person.name_native}
+											<span class="text-parchment-500"> ({person.name_native})</span>
+										{/if}
+									</p>
+									{#if person.person_type_name}
+										<p class="text-xs text-parchment-500">{person.person_type_name}</p>
+									{/if}
+								</div>
+							{/each}
+						</div>
+					{:else}
+						<p class="mt-1 text-parchment-500">No people</p>
+					{/if}
+				</div>
+				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-xs font-medium tracking-wider text-parchment-500 uppercase">MIME Type</p>
 					<p class="mt-1 text-parchment-200">{doc.mime_type}</p>
 				</div>
