@@ -10,6 +10,17 @@ import (
 	"database/sql"
 )
 
+const countAllDocuments = `-- name: CountAllDocuments :one
+SELECT COUNT(*) FROM document
+`
+
+func (q *Queries) CountAllDocuments(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countAllDocuments)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createDocument = `-- name: CreateDocument :execresult
 INSERT INTO document (
     document_id, title, md5_checksum, sha512_checksum, mime_type, file_size, page_count, word_count,

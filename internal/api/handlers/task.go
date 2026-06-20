@@ -212,9 +212,9 @@ func (h *TaskHandler) GlobalSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	totalFiles, err := h.queries.CountAllTasks(ctx)
+	totalFiles, err := h.queries.CountAllDocuments(ctx)
 	if err != nil {
-		h.logger.Error(&reqID, "count all tasks: %v", err)
+		h.logger.Error(&reqID, "count all documents: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
