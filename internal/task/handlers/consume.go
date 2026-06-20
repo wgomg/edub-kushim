@@ -44,6 +44,11 @@ func (h *ConsumeTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawM
 
 	file, err = h.consumer.Process(ctx, file, p.DocumentID)
 	if err != nil {
+		if p.OnCompleted != "" {
+			if discardErr := h.deactivateChildEnrich(ctx, t, p.OnCompleted, err); discardErr != nil {
+				h.logger.Error(&p.DocumentID, "failed to discard enrich task for consume %s: %v", t.TaskID, discardErr)
+			}
+		}
 		return nil, err
 	}
 
@@ -102,6 +107,31 @@ func (h *ConsumeTaskHandler) activateChildEnrich(
 		return fmt.Errorf("activate enrich task %s: %w", enrichTask.TaskID, err)
 	}
 	return nil
+}
+
+func (h *ConsumeTaskHandler) deactivateChildEnrich(
+	ctx context.Context,
+	parent task.Task,
+	onCompleted string,
+	parentErr error,
+) error {
+	enrichTask, err := h.store.GetTaskByTaskID(ctx, onCompleted)
+	if err != nil {
+		return fmt.Errorf("find waiting enrich task %s: %w", onCompleted, err)
+	}
+
+	var enrichPayload struct {
+		WaitingFor string `json:"waiting_for"`
+	}
+	if err := json.Unmarshal(enrichTask.Payload, &enrichPayload); err != nil {
+		return fmt.Errorf("parse enrich payload for %s: %w", enrichTask.TaskID, err)
+	}
+	if enrichPayload.WaitingFor != parent.TaskID {
+		return fmt.Errorf("waiting_for mismatch: enrich %s has waiting_for=%q, expected %q",
+			enrichTask.TaskID, enrichPayload.WaitingFor, parent.TaskID)
+	}
+
+	return h.store.Discard(ctx, enrichTask.ID, parentErr.Error())
 }
 
 func (h *ConsumeTaskHandler) DedupKey(payload json.RawMessage) string {

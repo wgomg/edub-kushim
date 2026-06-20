@@ -81,7 +81,9 @@ Uses `unicode61` tokenizer for multi‑language support without language‑speci
 
 After a `consume` task completes, its handler activates the waiting `enrich`
 task by updating its payload with the document ID and setting its status to
-`pending` (via `Store.SetPending`). The enrichment pipeline:
+`pending` (via `Store.SetPending`). If the consume task fails, the handler
+discards the waiting enrich task by setting it to `discarded` with the
+parent error message (via `Store.Discard`). The enrichment pipeline:
 
 1. **Text Reduction** (optional, configurable threshold) — if the document exceeds
    `enricher.textreducer.target_words`, TextRank extracts the most salient content.

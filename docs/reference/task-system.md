@@ -109,7 +109,9 @@
 - `ConsumeTaskHandler` — `consumer *consumption.Consumer`, `store *task.Store`, `logger *utils.Logger`
   - **Methods**:
     - `NewConsumeTaskHandler(consumer, store, logger) *ConsumeTaskHandler`
-    - `Handle(ctx, t) (json.RawMessage, error)` — Unmarshals payload (`file_path`, `document_id` UUID, `on_completed` enrich task ID), calls `FileFromPath` + `consumer.Process`. On success, if `on_completed` is set and a document was created, activates the linked enrich task via `Store.SetPending`.
+    - `Handle(ctx, t) (json.RawMessage, error)` — Unmarshals payload (`file_path`, `document_id` UUID, `on_completed` enrich task ID), calls `FileFromPath` + `consumer.Process`. On success, if `on_completed` is set and a document was created, activates the linked enrich task via `Store.SetPending`. On failure, if `on_completed` is set, discards the linked enrich task via `Store.Discard`.
+    - `activateChildEnrich(ctx, parent, onCompleted, documentID)` — Looks up the enrich task by UUID, validates `waiting_for` matches the parent, updates its payload with the document ID, and sets it to `pending`.
+    - `deactivateChildEnrich(ctx, parent, onCompleted, parentErr)` — Looks up the enrich task by UUID, validates `waiting_for` matches the parent, and sets it to `discarded` with the parent error.
     - `DedupKey(payload) string` — Returns file path from payload
 
 ## `handlers/enrich.go`
