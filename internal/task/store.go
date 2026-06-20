@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -64,9 +63,6 @@ func (s *Store) ClaimNextPending(ctx context.Context, taskType string) (database
 			TaskType: taskType,
 			OwnerID:  s.ownerID,
 		})
-		if errors.Is(err, sql.ErrNoRows) {
-			id, err = s.queries.GetNextPendingTaskOfType(ctx, taskType)
-		}
 	} else {
 		id, err = s.queries.GetNextPendingTaskOfType(ctx, taskType)
 	}
