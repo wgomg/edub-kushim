@@ -2,6 +2,7 @@ async function request(path, opts = {}) {
 	try {
 		const res = await fetch(path, opts);
 		if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+		if (res.status === 204 || res.headers.get('content-length') === '0') return null;
 		return await res.json();
 	} catch (err) {
 		console.error(`API ${path}:`, err);
@@ -31,7 +32,46 @@ export const api = {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(body)
-			}).then((data) => data ?? { results: [], total: 0 })
+			}).then((data) => data ?? { results: [], total: 0 }),
+
+		update: (id, body) =>
+			request(`/api/v1/documents/${id}`, {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(body)
+			}),
+
+		delete: (id) => request(`/api/v1/documents/${id}`, { method: 'DELETE' }),
+
+		tags: {
+			add: (id, tagId) =>
+				request(`/api/v1/documents/${id}/tags`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ tag_id: tagId })
+				}),
+			remove: (id, tagId) =>
+				request(`/api/v1/documents/${id}/tags`, {
+					method: 'DELETE',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ tag_id: tagId })
+				})
+		},
+
+		people: {
+			add: (id, peopleId, peopleTypeId) =>
+				request(`/api/v1/documents/${id}/people`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ people_id: peopleId, people_type_id: peopleTypeId })
+				}),
+			remove: (id, peopleId, peopleTypeId) =>
+				request(`/api/v1/documents/${id}/people`, {
+					method: 'DELETE',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ people_id: peopleId, people_type_id: peopleTypeId })
+				})
+		}
 	},
 
 	tasks: {
@@ -58,9 +98,7 @@ export const api = {
 		get: (batchId) => request(`/api/v1/batches/${batchId}`),
 		retry: (batchId) => request(`/api/v1/batches/${batchId}/retry`, { method: 'POST' }),
 		adopt: (batchId) =>
-			request(`/api/v1/batches/${batchId}/adopt`, { method: 'POST' }).then(
-				(data) => data ?? {}
-			)
+			request(`/api/v1/batches/${batchId}/adopt`, { method: 'POST' }).then((data) => data ?? {})
 	},
 
 	summary: {

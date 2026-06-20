@@ -59,3 +59,28 @@ type SearchResponse struct {
 	Results []FTSDocumentResponse `json:"results"`
 	Total   int64                 `json:"total"`
 }
+
+type DocumentUpdateRequest struct {
+	Title          string  `json:"title"`
+	DocumentTypeID int64   `json:"document_type_id"`
+	Language       string  `json:"language"`
+	TextContent    *string `json:"text_content,omitempty"`
+}
+
+type AddDocumentTagRequest struct {
+	TagID int64 `json:"tag_id"`
+}
+
+type RemoveDocumentTagRequest struct {
+	TagID int64 `json:"tag_id"`
+}
+
+type AddDocumentPeopleRequest struct {
+	PeopleID     int64 `json:"people_id"`
+	PeopleTypeID int64 `json:"people_type_id"`
+}
+
+type RemoveDocumentPeopleRequest struct {
+	PeopleID     int64 `json:"people_id"`
+	PeopleTypeID int64 `json:"people_type_id"`
+}

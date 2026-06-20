@@ -47,6 +47,12 @@
     - `GetDocumentFile(w, r)` — Serves raw PDF via `http.ServeFile`; rejects non-PDF content
     - `SearchDocuments(w, r)` — `GET /api/v1/documents/search` — Returns `FTSDocumentResponse` array with enhanced fields
     - `SearchDocumentsStructured(w, r)` — `POST /api/v1/documents/search` — Accepts `search.Filter` JSON body, calls `engine.SearchStructured(ctx, filter)`, returns `SearchResponse` with `results` array and `total` count. Enriches each result with tags and people from DB to avoid N+1.
+    - `UpdateDocument(w, r)` — `PUT /api/v1/documents/{id}` — Accepts `DocumentUpdateRequest` JSON (title, document_type_id, language, text_content). Validates title non-empty, document type exists (via `GetDocumentType`), defaults language to `"und"` when empty. Preserves existing `text_content` when nil. Returns `204 No Content`.
+    - `DeleteDocument(w, r)` — `DELETE /api/v1/documents/{id}` — Fetches document to get file paths, calls `DeleteDocument` (single DELETE with cascade + FTS trigger), then best-effort `os.Remove` on original and storage paths. Returns `204 No Content`.
+    - `AddDocumentTag(w, r)` — `POST /api/v1/documents/{id}/tags` — Accepts `{tag_id}`, validates document and tag exist, calls `AddDocumentTag` (INSERT OR IGNORE). Returns `204 No Content`.
+    - `RemoveDocumentTag(w, r)` — `DELETE /api/v1/documents/{id}/tags` — Accepts `{tag_id}`, validates document exists, calls `RemoveDocumentTag`. Returns `204 No Content`.
+    - `AddDocumentPeople(w, r)` — `POST /api/v1/documents/{id}/people` — Accepts `{people_id, people_type_id}`, validates document, person, and people type exist, calls `AddDocumentPeople` (INSERT OR IGNORE). Returns `204 No Content`.
+    - `RemoveDocumentPeople(w, r)` — `DELETE /api/v1/documents/{id}/people` — Accepts `{people_id, people_type_id}`, validates document exists, calls `RemoveDocumentPeople` (now filters by all three PK columns: document_id, people_id, people_type_id). Returns `204 No Content`.
 
 ---
 
@@ -91,6 +97,14 @@
   - **Fields**: `ID string` (UUID, JSON `"id"`), `Title`, `MD5Checksum`, `SHA512Checksum`, `MimeType`, `FileSize`, `PageCount`, `WordCount`, `CharCount`, `Language`, `DocumentTypeID *int64`, `DocumentTypeName *string`, `Tags []TagResponse`, `People []PersonResponse`, `CreatedAt`, `ModifiedAt`
 - `FTSDocumentResponse`
   - **Fields**: `ID string` (UUID, replaces the old int64 `id`), `Title`, `MD5Checksum`, `SHA512Checksum`, `MimeType`, `FileSize`, `PageCount`, `WordCount`, `CharCount`, `Language`, `DocumentTypeID *int64`, `DocumentTypeName *string`, `Tags []TagResponse`, `People []PersonResponse`, `Rank float64`, `Snippet string`, `TextContent string`
+
+### Request Structs (`types/document.go`)
+
+- `DocumentUpdateRequest` — `Title string`, `DocumentTypeID int64`, `Language string`, `TextContent *string` (omitempty)
+- `AddDocumentTagRequest` — `TagID int64`
+- `RemoveDocumentTagRequest` — `TagID int64`
+- `AddDocumentPeopleRequest` — `PeopleID int64`, `PeopleTypeID int64`
+- `RemoveDocumentPeopleRequest` — `PeopleID int64`, `PeopleTypeID int64`
 
 ---
 
@@ -221,6 +235,12 @@ mux.HandleFunc("GET /api/v1/documents/{id}", docHandler.GetDocument)
 mux.HandleFunc("GET /api/v1/documents/{id}/file", docHandler.GetDocumentFile)
 mux.HandleFunc("GET /api/v1/documents/search", docHandler.SearchDocuments)
 mux.HandleFunc("POST /api/v1/documents/search", docHandler.SearchDocumentsStructured)
+mux.HandleFunc("PUT /api/v1/documents/{id}", docHandler.UpdateDocument)
+mux.HandleFunc("DELETE /api/v1/documents/{id}", docHandler.DeleteDocument)
+mux.HandleFunc("POST /api/v1/documents/{id}/tags", docHandler.AddDocumentTag)
+mux.HandleFunc("DELETE /api/v1/documents/{id}/tags", docHandler.RemoveDocumentTag)
+mux.HandleFunc("POST /api/v1/documents/{id}/people", docHandler.AddDocumentPeople)
+mux.HandleFunc("DELETE /api/v1/documents/{id}/people", docHandler.RemoveDocumentPeople)
 
 mux.HandleFunc("GET /api/v1/tags", autocompleteHandler.ListTags)
 mux.HandleFunc("GET /api/v1/people", autocompleteHandler.ListPeople)

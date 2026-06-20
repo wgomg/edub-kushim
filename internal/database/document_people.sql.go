@@ -185,15 +185,16 @@ func (q *Queries) GetPeopleDocuments(ctx context.Context, peopleID int64) ([]Get
 }
 
 const removeDocumentPeople = `-- name: RemoveDocumentPeople :exec
-DELETE FROM document_people WHERE document_id = ? AND people_id = ?
+DELETE FROM document_people WHERE document_id = ? AND people_id = ? AND people_type_id = ?
 `
 
 type RemoveDocumentPeopleParams struct {
-	DocumentID int64
-	PeopleID   int64
+	DocumentID   int64
+	PeopleID     int64
+	PeopleTypeID int64
 }
 
 func (q *Queries) RemoveDocumentPeople(ctx context.Context, arg RemoveDocumentPeopleParams) error {
-	_, err := q.db.ExecContext(ctx, removeDocumentPeople, arg.DocumentID, arg.PeopleID)
+	_, err := q.db.ExecContext(ctx, removeDocumentPeople, arg.DocumentID, arg.PeopleID, arg.PeopleTypeID)
 	return err
 }

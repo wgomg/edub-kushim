@@ -1,5 +1,6 @@
 <script>
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { api } from '$lib/api';
 
 	let { params } = $props();
@@ -7,10 +8,132 @@
 	let doc = $state();
 	let error = $state('');
 
+	let documentTypes = $state([]);
+	let peopleTypes = $state([]);
+
+	let editTitle = $state('');
+	let editDocumentTypeId = $state(1);
+	let editLanguage = $state('');
+
+	let savingMeta = $state(false);
+	let deleting = $state(false);
+	let showDeleteConfirm = $state(false);
+
+	let tagQuery = $state('');
+	let tagResults = $state([]);
+
+	let peopleQuery = $state('');
+	let peopleResults = $state([]);
+	let selectedPeopleTypeId = $state(1);
+
 	onMount(async () => {
-		doc = await api.documents.get(params.id);
-		if (!doc) error = 'Failed to load document';
+		const [data, types, pTypes] = await Promise.all([
+			api.documents.get(params.id),
+			api.autocomplete.documentTypes(),
+			api.autocomplete.peopleTypes()
+		]);
+		if (!data) {
+			error = 'Failed to load document';
+			return;
+		}
+		doc = data;
+		documentTypes = types;
+		peopleTypes = pTypes;
+		editTitle = doc.title;
+		editDocumentTypeId = doc.document_type_id ?? 1;
+		editLanguage = doc.language ?? '';
+		if (pTypes.length > 0) {
+			selectedPeopleTypeId = pTypes[0].id;
+		}
 	});
+
+	function refreshDoc() {
+		api.documents.get(params.id).then((data) => {
+			if (data) doc = data;
+		});
+	}
+
+	async function saveMetadata() {
+		savingMeta = true;
+		await api.documents.update(params.id, {
+			title: editTitle,
+			document_type_id: editDocumentTypeId,
+			language: editLanguage
+		});
+		savingMeta = false;
+		refreshDoc();
+	}
+
+	function handleDelete() {
+		showDeleteConfirm = true;
+	}
+
+	async function confirmDelete() {
+		showDeleteConfirm = false;
+		deleting = true;
+		error = '';
+		const res = await fetch(`/api/v1/documents/${params.id}`, { method: 'DELETE' });
+		if (res.ok) {
+			goto('/documents');
+		} else {
+			deleting = false;
+			error = `Failed to delete document: ${res.status} ${res.statusText}`;
+		}
+	}
+
+	function cancelDelete() {
+		showDeleteConfirm = false;
+	}
+
+	async function searchTags(q) {
+		tagQuery = q;
+		if (!q.trim()) {
+			tagResults = [];
+			return;
+		}
+		tagResults = await api.autocomplete.tags(q);
+	}
+
+	function selectTag(tag) {
+		tagQuery = '';
+		tagResults = [];
+		addTag(tag.id);
+	}
+
+	async function addTag(tagId) {
+		await api.documents.tags.add(params.id, tagId);
+		refreshDoc();
+	}
+
+	async function removeTag(tagId) {
+		await api.documents.tags.remove(params.id, tagId);
+		refreshDoc();
+	}
+
+	async function searchPeople(q) {
+		peopleQuery = q;
+		if (!q.trim()) {
+			peopleResults = [];
+			return;
+		}
+		peopleResults = await api.autocomplete.people(q);
+	}
+
+	function selectPerson(person) {
+		peopleQuery = '';
+		peopleResults = [];
+		addPerson(person.id);
+	}
+
+	async function addPerson(personId) {
+		await api.documents.people.add(params.id, personId, selectedPeopleTypeId);
+		refreshDoc();
+	}
+
+	async function removePerson(personId, personTypeId) {
+		await api.documents.people.remove(params.id, personId, personTypeId);
+		refreshDoc();
+	}
 </script>
 
 <div class="space-y-6">
@@ -23,7 +146,9 @@
 
 	{#if error}
 		<p class="text-sm text-terracotta-500">{error}</p>
-	{:else if !doc}
+	{/if}
+
+	{#if !doc}
 		<p class="text-parchment-500">Loading…</p>
 	{:else}
 		<div class="flex items-start gap-6">
@@ -46,50 +171,166 @@
 			<div class="w-80 shrink-0 space-y-4">
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-xs font-medium tracking-wider text-parchment-500 uppercase">
-						Document Type
+						Title / Type / Language
 					</p>
-					<p class="mt-1 text-parchment-200">{doc.document_type_name ?? '—'}</p>
-					{#if doc.language}
-						<p class="mt-0.5 text-xs text-parchment-500">{doc.language}</p>
-					{/if}
+					<div class="mt-2 space-y-2">
+						<div>
+							<label class="text-xs text-parchment-500" for="edit-title">Title</label>
+							<input
+								id="edit-title"
+								type="text"
+								bind:value={editTitle}
+								class="border-clay-700 placeholder-parchment-600 mt-0.5 w-full rounded-md border bg-clay-950 px-2 py-1 text-sm text-parchment-200 focus:border-gold-500 focus:ring-0 focus:outline-none"
+							/>
+						</div>
+						<div>
+							<label class="text-xs text-parchment-500" for="edit-doctype">Type</label>
+							<select
+								id="edit-doctype"
+								bind:value={editDocumentTypeId}
+								class="border-clay-700 mt-0.5 w-full rounded-md border bg-clay-950 px-2 py-1 text-sm text-parchment-200 focus:border-gold-500 focus:ring-0 focus:outline-none"
+							>
+								{#each documentTypes as dt}
+									<option value={dt.id}>{dt.name}</option>
+								{/each}
+							</select>
+						</div>
+						<div>
+							<label class="text-xs text-parchment-500" for="edit-lang">Language</label>
+							<input
+								id="edit-lang"
+								type="text"
+								bind:value={editLanguage}
+								placeholder="und"
+								class="border-clay-700 placeholder-parchment-600 mt-0.5 w-full rounded-md border bg-clay-950 px-2 py-1 text-sm text-parchment-200 focus:border-gold-500 focus:ring-0 focus:outline-none"
+							/>
+						</div>
+						<button
+							onclick={saveMetadata}
+							disabled={savingMeta}
+							class="w-full rounded-md bg-gold-600 px-3 py-1.5 text-xs font-medium text-clay-950 hover:bg-gold-500 disabled:opacity-50"
+						>
+							{savingMeta ? 'Saving…' : 'Save'}
+						</button>
+					</div>
 				</div>
+
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-xs font-medium tracking-wider text-parchment-500 uppercase">Tags</p>
 					{#if (doc.tags ?? []).length > 0}
 						<div class="mt-2 flex flex-wrap gap-1.5">
-							{#each doc.tags as tag}
+							{#each doc.tags as tag (tag.id)}
 								<span
 									class="inline-flex items-center gap-1 rounded-full bg-lapis-700 px-2 py-0.5 text-xs text-parchment-200"
-									>{tag.name}</span
 								>
+									{tag.name}
+									<button
+										onclick={() => removeTag(tag.id)}
+										class="hover:text-terracotta-400 text-parchment-400">&times;</button
+									>
+								</span>
 							{/each}
 						</div>
 					{:else}
 						<p class="mt-1 text-parchment-500">No tags</p>
 					{/if}
+					<div class="relative mt-2">
+						<input
+							type="text"
+							bind:value={tagQuery}
+							oninput={() => searchTags(tagQuery)}
+							placeholder="Search tags…"
+							class="border-clay-700 placeholder-parchment-600 w-full rounded-md border bg-clay-950 px-2 py-1 text-sm text-parchment-200 focus:border-gold-500 focus:ring-0 focus:outline-none"
+						/>
+						{#if tagResults.length > 0}
+							<div
+								class="border-clay-700 absolute top-full right-0 left-0 z-10 mt-1 max-h-40 overflow-y-auto rounded-md border bg-clay-950 shadow-lg"
+							>
+								{#each tagResults as tag, i}
+									<button
+										onclick={() => selectTag(tag)}
+										class="w-full px-2 py-1 text-left text-sm text-parchment-200 hover:bg-clay-800"
+									>
+										{tag.name}
+									</button>
+								{/each}
+							</div>
+						{/if}
+					</div>
 				</div>
+
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-xs font-medium tracking-wider text-parchment-500 uppercase">People</p>
 					{#if (doc.people ?? []).length > 0}
 						<div class="mt-2 space-y-2">
-							{#each doc.people as person}
-								<div>
-									<p class="text-parchment-200">
-										{person.name}
-										{#if person.name_native}
-											<span class="text-parchment-500"> ({person.name_native})</span>
+							{#each doc.people as person (person.id + '-' + person.person_type_id)}
+								<div class="flex items-start justify-between gap-2">
+									<div class="min-w-0">
+										<p class="text-parchment-200">
+											{person.name}
+											{#if person.name_native}
+												<span class="text-parchment-500"> ({person.name_native})</span>
+											{/if}
+										</p>
+										{#if person.person_type_name}
+											<p class="text-xs text-parchment-500">{person.person_type_name}</p>
 										{/if}
-									</p>
-									{#if person.person_type_name}
-										<p class="text-xs text-parchment-500">{person.person_type_name}</p>
-									{/if}
+									</div>
+									<button
+										onclick={() => removePerson(person.id, person.person_type_id)}
+										class="hover:text-terracotta-400 shrink-0 text-parchment-500">&times;</button
+									>
 								</div>
 							{/each}
 						</div>
 					{:else}
 						<p class="mt-1 text-parchment-500">No people</p>
 					{/if}
+					<div class="relative mt-2">
+						<input
+							type="text"
+							bind:value={peopleQuery}
+							oninput={() => searchPeople(peopleQuery)}
+							placeholder="Search people…"
+							class="border-clay-700 placeholder-parchment-600 w-full rounded-md border bg-clay-950 px-2 py-1 text-sm text-parchment-200 focus:border-gold-500 focus:ring-0 focus:outline-none"
+						/>
+						{#if peopleResults.length > 0}
+							<div
+								class="border-clay-700 absolute top-full right-0 left-0 z-10 mt-1 max-h-40 overflow-y-auto rounded-md border bg-clay-950 shadow-lg"
+							>
+								{#each peopleResults as person, i}
+									<button
+										onclick={() => selectPerson(person)}
+										class="w-full px-2 py-1 text-left text-sm text-parchment-200 hover:bg-clay-800"
+									>
+										{person.name}
+									</button>
+								{/each}
+							</div>
+						{/if}
+						<div class="mt-2 flex gap-2">
+							<select
+								bind:value={selectedPeopleTypeId}
+								class="border-clay-700 flex-1 rounded-md border bg-clay-950 px-2 py-1 text-xs text-parchment-200 focus:border-gold-500 focus:ring-0 focus:outline-none"
+							>
+								{#each peopleTypes as pt}
+									<option value={pt.id}>{pt.name}</option>
+								{/each}
+							</select>
+							<button
+								onclick={() => {
+									const first = peopleResults[0];
+									if (first) selectPerson(first);
+								}}
+								disabled={peopleResults.length === 0}
+								class="shrink-0 rounded-md bg-gold-600 px-2 py-1 text-xs font-medium text-clay-950 hover:bg-gold-500 disabled:opacity-50"
+							>
+								Add
+							</button>
+						</div>
+					</div>
 				</div>
+
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-xs font-medium tracking-wider text-parchment-500 uppercase">MIME Type</p>
 					<p class="mt-1 text-parchment-200">{doc.mime_type}</p>
@@ -137,7 +378,57 @@
 					</p>
 					<p class="mt-1 font-mono text-xs break-all text-parchment-400">{doc.sha512_checksum}</p>
 				</div>
+
+				<button
+					onclick={handleDelete}
+					disabled={deleting}
+					class="border-terracotta-600 bg-terracotta-800 text-parchment-200 hover:bg-terracotta-700 w-full rounded-lg border px-4 py-2 text-sm font-medium disabled:opacity-50"
+				>
+					{deleting ? 'Deleting…' : 'Delete Document'}
+				</button>
 			</div>
 		</div>
 	{/if}
 </div>
+
+<svelte:window onkeydown={(e) => e.key === 'Escape' && showDeleteConfirm && cancelDelete()} />
+
+{#if showDeleteConfirm}
+	<div
+		role="presentation"
+		class="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+		onclick={cancelDelete}
+		onkeydown={(e) => {
+			if (e.key === 'Enter' || e.key === ' ') cancelDelete();
+		}}
+	>
+		<div
+			role="dialog"
+			aria-modal="true"
+			tabindex="-1"
+			class="mx-4 w-full max-w-sm rounded-lg border border-clay-800 bg-clay-950 p-6 shadow-xl"
+			onclick={(e) => e.stopPropagation()}
+			onkeydown={(e) => {
+				if (e.key === 'Enter' || e.key === ' ') e.stopPropagation();
+			}}
+		>
+			<p class="text-sm text-parchment-200">
+				Are you sure you want to delete this document? This cannot be undone.
+			</p>
+			<div class="mt-4 flex justify-end gap-2">
+				<button
+					onclick={cancelDelete}
+					class="rounded-md px-3 py-1.5 text-xs font-medium text-parchment-400 hover:bg-clay-800"
+				>
+					Cancel
+				</button>
+				<button
+					onclick={confirmDelete}
+					class="bg-terracotta-700 rounded-md px-3 py-1.5 text-xs font-medium text-parchment-200 hover:bg-terracotta-600"
+				>
+					Delete
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}

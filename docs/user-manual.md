@@ -430,6 +430,90 @@ GET /api/v1/documents/{id}/file
 Returns the raw PDF file bytes for preview. Response `200` with `Content-Disposition: inline`.
 Returns `415 Unsupported Media Type` for non-PDF documents.
 
+### Update Document
+
+```
+PUT /api/v1/documents/{id}
+Content-Type: application/json
+
+{
+  "title": "Updated Title",
+  "document_type_id": 2,
+  "language": "eng"
+}
+```
+
+| Field            | Type     | Required | Description                                |
+| ---------------- | -------- | -------- | ------------------------------------------ |
+| `title`          | `string` | yes      | New title for the document                 |
+| `document_type_id` | `int`  | yes      | Must be ≥ 1 and reference an existing type |
+| `language`       | `string` | yes      | Language code (defaults to `"und"` if empty) |
+| `text_content`   | `string` | no       | Updated text content; omitted to preserve existing |
+
+Response `204 No Content`. Returns `404` if document or document type is not found.
+
+### Delete Document
+
+```
+DELETE /api/v1/documents/{id}
+```
+
+Response `204 No Content`. Deletes the database record (junction tables via cascade, FTS index via trigger), then best-effort removes the original and storage files from disk. File removal failures are logged but do not affect the response. Returns `404` if document is not found.
+
+### Add Document Tag
+
+```
+POST /api/v1/documents/{id}/tags
+Content-Type: application/json
+
+{
+  "tag_id": 1
+}
+```
+
+Response `204 No Content`. Idempotent (duplicate adds are silently ignored). Returns `404` if document or tag is not found.
+
+### Remove Document Tag
+
+```
+DELETE /api/v1/documents/{id}/tags
+Content-Type: application/json
+
+{
+  "tag_id": 1
+}
+```
+
+Response `204 No Content`. Returns `404` if document is not found.
+
+### Add Document People
+
+```
+POST /api/v1/documents/{id}/people
+Content-Type: application/json
+
+{
+  "people_id": 1,
+  "people_type_id": 1
+}
+```
+
+Both `people_id` and `people_type_id` are required. Response `204 No Content`. Idempotent (duplicate adds are silently ignored). Returns `404` if document, person, or people type is not found.
+
+### Remove Document People
+
+```
+DELETE /api/v1/documents/{id}/people
+Content-Type: application/json
+
+{
+  "people_id": 1,
+  "people_type_id": 1
+}
+```
+
+Both `people_id` and `people_type_id` are required. Response `204 No Content`. Returns `404` if document is not found.
+
 ### Search Documents
 
 ```

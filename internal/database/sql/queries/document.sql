@@ -27,6 +27,15 @@ UPDATE document SET
     modified_at = CURRENT_TIMESTAMP
 WHERE document_id = ?;
 
+-- name: UpdateDocumentEditable :exec
+UPDATE document SET
+    title = ?,
+    document_type_id = ?,
+    language = ?,
+    text_content = ?,
+    modified_at = CURRENT_TIMESTAMP
+WHERE document_id = ?;
+
 -- name: UpdateDocumentMetadataById :exec
 UPDATE document SET
     title = ?,

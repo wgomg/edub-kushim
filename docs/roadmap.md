@@ -85,7 +85,13 @@
 | `GET /api/v1/documents/{id}/file`    | Download PDF file                             |
 | `GET /api/v1/documents/search`       | FTS5 search with snippets                     |
 | `POST /api/v1/documents/search`      | Structured search (tags, people, dates, size) |
-| `GET /api/v1/tags?q=`                | Autocomplete tag names                        |
+| `PUT /api/v1/documents/{id}`         | Update document metadata (title, type, language) |
+| `DELETE /api/v1/documents/{id}`      | Delete document + files                        |
+| `POST /api/v1/documents/{id}/tags`   | Add tag assignment to document                 |
+| `DELETE /api/v1/documents/{id}/tags` | Remove tag assignment from document            |
+| `POST /api/v1/documents/{id}/people` | Add person assignment to document              |
+| `DELETE /api/v1/documents/{id}/people` | Remove person assignment from document       |
+| `GET /api/v1/tags?q=`                | Autocomplete tag names                         |
 | `GET /api/v1/people?q=`              | Autocomplete people names                     |
 | `GET /api/v1/people-types`           | List person types                             |
 | `GET /api/v1/document-types`         | List document types                           |
@@ -135,7 +141,7 @@
 | ----------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `/` (dashboard)   | ✓      | Health + summary stats + recent docs                                                                                                                             |
 | `/documents`      | ✓      | Structured search bar + filter panel + saved searches + sortable DataTable                                                                                       |
-| `/documents/[id]` | ✓      | PDF preview + metadata sidebar with document type, tags, people, file stats                                                                                      |
+| `/documents/[id]` | ✓      | PDF preview + editable metadata sidebar (title, type, language, tags, people) + delete                                                                                              |
 | `/settings`       | ✓      | Full configuration form: server host/port, OCR, consumer, text extractor, PDF optimizer, enricher, content analyzer (LLM) with tokens, tag matcher, text reducer |
 | `/tags`           | ✗      | Placeholder: "Tag management will go here."                                                                                                                      |
 | `/tasks`          | ✓      | Batch list + task drill-down                                                                                                                                     |
@@ -171,10 +177,10 @@
 | 2   | **Continue interrupted tasks**           | ✓ Manual retry for failed tasks (API + web UI). Wizard auto-resumes on restart, re-submission does not duplicate tasks, failed config downloads surfaced with retry action.       |
 | 3   | **Docker Compose quick-start**           | ✓ Single `docker compose up` command runs the full stack — multi-stage Dockerfile builds everything from source, entrypoint handles first-boot setup and conditional apt installs |
 | 4   | **Document detail — tags/people/type**   | ✓ Display tags, people, and document type in the sidebar                                                                                                                          |
-| 5   | **Document metadata editing**            | Detail page sidebar — edit tags, people, type, title (override LLM)                                                                                                               |
-| 6   | **Document update endpoint**             | `PUT /api/v1/documents/{id}` — update title, document_type_id, text_content                                                                                                       |
-| 7   | **Document delete endpoint**             | `DELETE /api/v1/documents/{id}` — remove document + files                                                                                                                         |
-| 8   | **Document tag/people assignment**       | `POST/DELETE /api/v1/documents/{id}/tags` and `/people` — junction management                                                                                                     |
+| 5   | **Document metadata editing**            | ✓ Detail page sidebar — edit tags, people, type, title (override LLM)                                                                                                               |
+| 6   | **Document update endpoint**             | ✓ `PUT /api/v1/documents/{id}` — update title, document_type_id, text_content                                                                                                       |
+| 7   | **Document delete endpoint**             | ✓ `DELETE /api/v1/documents/{id}` — remove document + files                                                                                                                         |
+| 8   | **Document tag/people assignment**       | ✓ `POST/DELETE /api/v1/documents/{id}/tags` and `/people` — junction management                                                                                                     |
 | 9   | **Tags CRUD API**                        | `GET/POST/PUT/DELETE /api/v1/tags` — create, read, update, delete (sqlc queries exist)                                                                                            |
 | 10  | **People CRUD API**                      | `GET/POST/PUT/DELETE /api/v1/people` — manage people + people_types                                                                                                               |
 | 11  | **Document Types CRUD API**              | `GET/POST/PUT/DELETE /api/v1/document_types` — manage document types (sqlc queries exist)                                                                                         |

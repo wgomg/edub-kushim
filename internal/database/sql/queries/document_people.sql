@@ -22,7 +22,7 @@ WHERE dp.people_id = ?;
 INSERT OR IGNORE INTO document_people (document_id, people_id, people_type_id) VALUES (?, ?, ?);
 
 -- name: RemoveDocumentPeople :exec
-DELETE FROM document_people WHERE document_id = ? AND people_id = ?;
+DELETE FROM document_people WHERE document_id = ? AND people_id = ? AND people_type_id = ?;
 
 -- name: ClearDocumentPeople :exec
 DELETE FROM document_people WHERE document_id = ?;

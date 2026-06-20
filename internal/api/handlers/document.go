@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
+	"os"
 
 	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/database"
@@ -363,4 +365,266 @@ func (h *DocumentHandler) GetDocumentFile(w http.ResponseWriter, r *http.Request
 
 	w.Header().Set("Content-Disposition", `inline; filename="`+doc.Title+`"`)
 	http.ServeFile(w, r, doc.StoragePath)
+}
+
+func (h *DocumentHandler) UpdateDocument(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := ctx.Value("reqid").(string)
+
+	documentID := r.PathValue("id")
+	if documentID == "" {
+		http.Error(w, "Document ID is required", http.StatusBadRequest)
+		return
+	}
+
+	var req types.DocumentUpdateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Title == "" {
+		http.Error(w, "Title is required", http.StatusBadRequest)
+		return
+	}
+
+	if req.DocumentTypeID < 1 {
+		http.Error(w, "Invalid document type", http.StatusBadRequest)
+		return
+	}
+
+	docType, err := h.queries.GetDocumentType(ctx, req.DocumentTypeID)
+	if err != nil || docType.ID == 0 {
+		http.Error(w, "Document type not found", http.StatusNotFound)
+		return
+	}
+
+	if req.Language == "" {
+		req.Language = "und"
+	}
+
+	current, err := h.queries.GetDocument(ctx, documentID)
+	if err != nil {
+		http.Error(w, "Document not found", http.StatusNotFound)
+		return
+	}
+
+	var textContent sql.NullString
+	if req.TextContent != nil {
+		textContent = sql.NullString{String: *req.TextContent, Valid: true}
+	} else {
+		textContent = current.TextContent
+	}
+
+	err = h.queries.UpdateDocumentEditable(ctx, database.UpdateDocumentEditableParams{
+		Title:          req.Title,
+		DocumentTypeID: req.DocumentTypeID,
+		Language:       req.Language,
+		TextContent:    textContent,
+		DocumentID:     documentID,
+	})
+	if err != nil {
+		h.logger.Error(&reqID, "Failed to update document %s: %v", documentID, err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *DocumentHandler) DeleteDocument(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := ctx.Value("reqid").(string)
+
+	documentID := r.PathValue("id")
+	if documentID == "" {
+		http.Error(w, "Document ID is required", http.StatusBadRequest)
+		return
+	}
+
+	doc, err := h.queries.GetDocument(ctx, documentID)
+	if err != nil {
+		http.Error(w, "Document not found", http.StatusNotFound)
+		return
+	}
+
+	err = h.queries.DeleteDocument(ctx, documentID)
+	if err != nil {
+		h.logger.Error(&reqID, "Failed to delete document %s: %v", documentID, err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	if doc.OriginalPath != "" {
+		if err := os.Remove(doc.OriginalPath); err != nil {
+			h.logger.Error(&reqID, "Warning: failed to remove original file %s: %v", doc.OriginalPath, err)
+		}
+	}
+	if doc.StoragePath != "" {
+		if err := os.Remove(doc.StoragePath); err != nil {
+			h.logger.Error(&reqID, "Warning: failed to remove storage file %s: %v", doc.StoragePath, err)
+		}
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *DocumentHandler) AddDocumentTag(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := ctx.Value("reqid").(string)
+
+	documentID := r.PathValue("id")
+	if documentID == "" {
+		http.Error(w, "Document ID is required", http.StatusBadRequest)
+		return
+	}
+
+	var req types.AddDocumentTagRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	doc, err := h.queries.GetDocument(ctx, documentID)
+	if err != nil {
+		http.Error(w, "Document not found", http.StatusNotFound)
+		return
+	}
+
+	tag, err := h.queries.GetTag(ctx, req.TagID)
+	if err != nil || tag.ID == 0 {
+		http.Error(w, "Tag not found", http.StatusNotFound)
+		return
+	}
+
+	err = h.queries.AddDocumentTag(ctx, database.AddDocumentTagParams{
+		DocumentID: doc.ID,
+		TagID:      req.TagID,
+	})
+	if err != nil {
+		h.logger.Error(&reqID, "Failed to add tag to document %s: %v", documentID, err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *DocumentHandler) RemoveDocumentTag(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := ctx.Value("reqid").(string)
+
+	documentID := r.PathValue("id")
+	if documentID == "" {
+		http.Error(w, "Document ID is required", http.StatusBadRequest)
+		return
+	}
+
+	var req types.RemoveDocumentTagRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	doc, err := h.queries.GetDocument(ctx, documentID)
+	if err != nil {
+		http.Error(w, "Document not found", http.StatusNotFound)
+		return
+	}
+
+	err = h.queries.RemoveDocumentTag(ctx, database.RemoveDocumentTagParams{
+		DocumentID: doc.ID,
+		TagID:      req.TagID,
+	})
+	if err != nil {
+		h.logger.Error(&reqID, "Failed to remove tag from document %s: %v", documentID, err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *DocumentHandler) AddDocumentPeople(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := ctx.Value("reqid").(string)
+
+	documentID := r.PathValue("id")
+	if documentID == "" {
+		http.Error(w, "Document ID is required", http.StatusBadRequest)
+		return
+	}
+
+	var req types.AddDocumentPeopleRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	doc, err := h.queries.GetDocument(ctx, documentID)
+	if err != nil {
+		http.Error(w, "Document not found", http.StatusNotFound)
+		return
+	}
+
+	person, err := h.queries.GetPeople(ctx, req.PeopleID)
+	if err != nil || person.ID == 0 {
+		http.Error(w, "Person not found", http.StatusNotFound)
+		return
+	}
+
+	peopleType, err := h.queries.GetPeopleType(ctx, req.PeopleTypeID)
+	if err != nil || peopleType.ID == 0 {
+		http.Error(w, "People type not found", http.StatusNotFound)
+		return
+	}
+
+	err = h.queries.AddDocumentPeople(ctx, database.AddDocumentPeopleParams{
+		DocumentID:   doc.ID,
+		PeopleID:     req.PeopleID,
+		PeopleTypeID: req.PeopleTypeID,
+	})
+	if err != nil {
+		h.logger.Error(&reqID, "Failed to add people to document %s: %v", documentID, err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *DocumentHandler) RemoveDocumentPeople(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := ctx.Value("reqid").(string)
+
+	documentID := r.PathValue("id")
+	if documentID == "" {
+		http.Error(w, "Document ID is required", http.StatusBadRequest)
+		return
+	}
+
+	var req types.RemoveDocumentPeopleRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	doc, err := h.queries.GetDocument(ctx, documentID)
+	if err != nil {
+		http.Error(w, "Document not found", http.StatusNotFound)
+		return
+	}
+
+	err = h.queries.RemoveDocumentPeople(ctx, database.RemoveDocumentPeopleParams{
+		DocumentID:   doc.ID,
+		PeopleID:     req.PeopleID,
+		PeopleTypeID: req.PeopleTypeID,
+	})
+	if err != nil {
+		h.logger.Error(&reqID, "Failed to remove people from document %s: %v", documentID, err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }

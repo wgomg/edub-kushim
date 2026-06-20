@@ -631,6 +631,35 @@ func (q *Queries) SumDocumentFileSizes(ctx context.Context) (int64, error) {
 	return total_bytes, err
 }
 
+const updateDocumentEditable = `-- name: UpdateDocumentEditable :exec
+UPDATE document SET
+    title = ?,
+    document_type_id = ?,
+    language = ?,
+    text_content = ?,
+    modified_at = CURRENT_TIMESTAMP
+WHERE document_id = ?
+`
+
+type UpdateDocumentEditableParams struct {
+	Title          string
+	DocumentTypeID int64
+	Language       string
+	TextContent    sql.NullString
+	DocumentID     string
+}
+
+func (q *Queries) UpdateDocumentEditable(ctx context.Context, arg UpdateDocumentEditableParams) error {
+	_, err := q.db.ExecContext(ctx, updateDocumentEditable,
+		arg.Title,
+		arg.DocumentTypeID,
+		arg.Language,
+		arg.TextContent,
+		arg.DocumentID,
+	)
+	return err
+}
+
 const updateDocumentMetadata = `-- name: UpdateDocumentMetadata :exec
 UPDATE document SET
     title = ?,

@@ -151,6 +151,12 @@ func registerRoutes(mux *http.ServeMux, logger *utils.Logger, queries *database.
 	mux.HandleFunc("GET /api/v1/documents/{id}/file", docHandler.GetDocumentFile)
 	mux.HandleFunc("GET /api/v1/documents/search", docHandler.SearchDocuments)
 	mux.HandleFunc("POST /api/v1/documents/search", docHandler.SearchDocumentsStructured)
+	mux.HandleFunc("PUT /api/v1/documents/{id}", docHandler.UpdateDocument)
+	mux.HandleFunc("DELETE /api/v1/documents/{id}", docHandler.DeleteDocument)
+	mux.HandleFunc("POST /api/v1/documents/{id}/tags", docHandler.AddDocumentTag)
+	mux.HandleFunc("DELETE /api/v1/documents/{id}/tags", docHandler.RemoveDocumentTag)
+	mux.HandleFunc("POST /api/v1/documents/{id}/people", docHandler.AddDocumentPeople)
+	mux.HandleFunc("DELETE /api/v1/documents/{id}/people", docHandler.RemoveDocumentPeople)
 
 	autocompleteHandler := handlers.NewAutocompleteHandler(queries, logger)
 	mux.HandleFunc("GET /api/v1/tags", autocompleteHandler.ListTags)
