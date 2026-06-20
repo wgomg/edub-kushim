@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -12,10 +13,15 @@ import (
 
 type Store struct {
 	queries *database.Queries
+	ownerID string
 }
 
 func NewStore(queries *database.Queries) *Store {
 	return &Store{queries: queries}
+}
+
+func (s *Store) SetOwnerID(id string) {
+	s.ownerID = id
 }
 
 func (s *Store) CreateTask(
@@ -51,7 +57,19 @@ func (s *Store) CreateTask(
 }
 
 func (s *Store) ClaimNextPending(ctx context.Context, taskType string) (database.Task, error) {
-	id, err := s.queries.GetNextPendingTaskOfType(ctx, taskType)
+	var id int64
+	var err error
+	if s.ownerID != "" {
+		id, err = s.queries.GetNextPendingTaskOfTypeForOwner(ctx, database.GetNextPendingTaskOfTypeForOwnerParams{
+			TaskType: taskType,
+			OwnerID:  s.ownerID,
+		})
+		if errors.Is(err, sql.ErrNoRows) {
+			id, err = s.queries.GetNextPendingTaskOfType(ctx, taskType)
+		}
+	} else {
+		id, err = s.queries.GetNextPendingTaskOfType(ctx, taskType)
+	}
 	if err != nil {
 		return database.Task{}, err
 	}

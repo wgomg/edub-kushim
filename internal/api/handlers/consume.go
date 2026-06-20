@@ -3,11 +3,13 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"path/filepath"
 
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/consumption"
+	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -16,13 +18,17 @@ type ConsumeHandler struct {
 	cfg        *config.Config
 	logger     *utils.Logger
 	dispatcher *task.Dispatcher
+	queries    *database.Queries
+	owner      *task.Owner
 }
 
-func NewConsumeHandler(cfg *config.Config, logger *utils.Logger, dispatcher *task.Dispatcher) *ConsumeHandler {
+func NewConsumeHandler(cfg *config.Config, logger *utils.Logger, dispatcher *task.Dispatcher, queries *database.Queries, owner *task.Owner) *ConsumeHandler {
 	return &ConsumeHandler{
 		cfg:        cfg,
 		logger:     logger,
 		dispatcher: dispatcher,
+		queries:    queries,
+		owner:      owner,
 	}
 }
 
@@ -64,6 +70,17 @@ func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 
 	batchID := uuid.New().String()
 	enqueued := 0
+
+	h.queries.CreateBatch(ctx, database.CreateBatchParams{
+		ID:     batchID,
+		Source: "api",
+	})
+	if err := h.owner.Acquire(ctx, batchID, task.StaleAfter); err != nil {
+		h.logger.Error(&reqID, "acquire batch %s: %v", batchID, err)
+	} else {
+		h.logger.Info(&reqID, "acquired batch %s (owner %s pid %d)", batchID, h.owner.OwnerID, os.Getpid())
+	}
+
 	for i, f := range files {
 		consumeTaskID := uuid.New().String()
 		enrichTaskID := uuid.New().String()

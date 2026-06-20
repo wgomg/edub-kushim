@@ -94,14 +94,32 @@
 			minWidth: '100px'
 		},
 		{
+			key: 'owner_state',
+			label: 'Owner',
+			sortable: false,
+			cell: (v, row) => {
+				if (v === 'live') return `<span class="text-emerald-500 text-xs">PID ${row.owner_pid}</span>`;
+				if (row.orphaned) return `<span class="text-amber-400 text-xs">orphaned</span>`;
+				if (v === 'stale') return `<span class="text-amber-400 text-xs">stale</span>`;
+				return '<span class="text-parchment-500 text-xs">none</span>';
+			},
+			minWidth: '90px'
+		},
+		{
 			key: 'actions',
 			label: 'Actions',
 			sortable: false,
 			cell: (_v, row) => {
-				if (!row.failed) return '';
-				return `<button data-retry-batch="${row.batch_id}" class="rounded-lg bg-terracotta-600 px-3 py-1 text-xs font-medium text-white hover:bg-terracotta-500">Retry failed</button>`;
+				let buttons = '';
+				if (row.failed) {
+					buttons += `<button data-retry-batch="${row.batch_id}" class="rounded-lg bg-terracotta-600 px-3 py-1 text-xs font-medium text-white hover:bg-terracotta-500">Retry</button>`;
+				}
+				if (row.orphaned) {
+					buttons += `<button data-adopt-batch="${row.batch_id}" class="ml-1 rounded-lg bg-lapis-600 px-3 py-1 text-xs font-medium text-white hover:bg-lapis-500">Adopt</button>`;
+				}
+				return buttons;
 			},
-			minWidth: '120px'
+			minWidth: '140px'
 		}
 	];
 
@@ -225,6 +243,13 @@
 			e.stopPropagation();
 			const batchId = batchBtn.getAttribute('data-retry-batch');
 			api.batches.retry(batchId).then(() => { batchRefreshKey++; });
+			return;
+		}
+		const adoptBtn = e.target.closest('[data-adopt-batch]');
+		if (adoptBtn) {
+			e.stopPropagation();
+			const batchId = adoptBtn.getAttribute('data-adopt-batch');
+			api.batches.adopt(batchId).then(() => { batchRefreshKey++; });
 			return;
 		}
 	}

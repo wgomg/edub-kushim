@@ -24,6 +24,9 @@ type BatchSummaryResponse struct {
 	Failed     int64  `json:"failed"`
 	Cancelled  int64  `json:"cancelled"`
 	Discarded  int64  `json:"discarded"`
+	OwnerState string `json:"owner_state,omitempty"`
+	OwnerPID   int64  `json:"owner_pid,omitempty"`
+	Orphaned   bool   `json:"orphaned"`
 }
 
 type ListBatchesResponse struct {

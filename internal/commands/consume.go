@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -16,11 +17,27 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/consumption"
 	"github.com/wgomg/edub-kushim/internal/database"
-	"github.com/wgomg/edub-kushim/internal/pidfile"
 	"github.com/wgomg/edub-kushim/internal/pool"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
+
+const (
+	heartbeatInterval = 5 * time.Second
+)
+
+func watchSignals(ctx context.Context, cancel context.CancelFunc) {
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	go func() {
+		select {
+		case <-sigCh:
+			cancel()
+		case <-ctx.Done():
+		}
+		signal.Stop(sigCh)
+	}()
+}
 
 func consumeHandler(c *Container, args []string) error {
 	if len(args) > 0 && args[0] == "cancel" {
@@ -76,37 +93,55 @@ func consumeHandler(c *Container, args []string) error {
 		if len(missingTools) > 0 {
 			return fmt.Errorf("consume blocked: missing required external tools")
 		}
-		tasks, err := task.ListFiltered(ctx, queries, task.TaskFilter{
-			BatchID: batchIDParam,
-		})
-		if err != nil {
-			return fmt.Errorf("query batch %s: %w", batchIDParam, err)
-		}
-		if len(tasks) == 0 {
-			fmt.Println("batch not found")
-			return fmt.Errorf("batch %s not found", batchIDParam)
+
+		ownerID := uuid.New().String()
+		owner := task.NewOwner(queries, ownerID, os.Getpid(), c.logger)
+
+		if err := owner.Acquire(ctx, batchIDParam, task.StaleAfter); err == task.ErrBatchLocked {
+			if !force {
+				// Get current owner PID for message
+				bo, boErr := queries.GetBatchOwner(ctx, batchIDParam)
+				if boErr == nil {
+					return fmt.Errorf("batch %s is being processed by PID %d (use --force to override)", batchIDParam, bo.Pid)
+				}
+				return fmt.Errorf("batch %s is being processed by another process (use --force to override)", batchIDParam)
+			}
+			if err := owner.AcquireForce(ctx, batchIDParam); err != nil {
+				return fmt.Errorf("force acquire: %w", err)
+			}
+		} else if err != nil {
+			return fmt.Errorf("acquire batch %s: %w", batchIDParam, err)
 		}
 
-		counts := task.CountBatchStatuses(ctx, queries, batchIDParam)
-		if counts.Pending == 0 && counts.Processing == 0 {
-			fmt.Println("batch already finished")
-			return nil
+		reset, _ := owner.ResetProcessingByBatch(ctx, batchIDParam)
+		if reset > 0 {
+			fmt.Printf("  reset %d orphaned processing tasks\n", reset)
 		}
-
-		fmt.Printf("Resuming batch %s (%d pending)...\n", batchIDParam, counts.Pending)
 
 		ep, err := c.GetPool("enrich")
 		if err != nil {
 			return fmt.Errorf("failed to get enrich pool: %w", err)
 		}
 
-		lock, err := pidfile.Acquire(batchIDParam, force, cancel)
-		if err != nil {
-			return err
+		if err := c.SetRunnerOwnerID(ownerID); err != nil {
+			return fmt.Errorf("set runner owner: %w", err)
 		}
-		defer lock.Release()
 
-		return pollBatch(ctx, queries, p, ep, c.logger, batchIDParam)
+		watchSignals(ctx, cancel)
+
+		hb := task.NewHeartbeat(owner, heartbeatInterval, c.logger)
+		hb.Start(ctx)
+
+		err = pollBatch(ctx, queries, p, ep, c.logger, batchIDParam)
+
+		hb.Stop()
+		relCtx, relCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if relErr := owner.Release(relCtx, batchIDParam); relErr != nil {
+			c.logger.Error(nil, "release batch %s: %v", batchIDParam, relErr)
+		}
+		relCancel()
+
+		return err
 	}
 
 	printOcrmypdfAdvisory(c.config, allTools)
@@ -169,6 +204,11 @@ func consumeHandler(c *Container, args []string) error {
 		fmt.Printf("Files: %d\n", enqueued)
 		fmt.Printf("Use 'kushim task list --batch %s' to track progress.\n", batchID)
 
+		queries.CreateBatch(ctx, database.CreateBatchParams{
+			ID:     batchID,
+			Source: "cli",
+		})
+
 		c.logger.SetLevel(utils.LevelSilent)
 
 		cmd := exec.Command(os.Args[0], "consume", "--batch", batchID)
@@ -193,13 +233,36 @@ func consumeHandler(c *Container, args []string) error {
 		return fmt.Errorf("failed to get enrich pool: %w", err)
 	}
 
-	lock, err := pidfile.Acquire(batchID, false, cancel)
-	if err != nil {
-		return err
-	}
-	defer lock.Release()
+	ownerID := uuid.New().String()
+	owner := task.NewOwner(queries, ownerID, os.Getpid(), c.logger)
 
-	return pollBatch(ctx, queries, p, ep, c.logger, batchID)
+	queries.CreateBatch(ctx, database.CreateBatchParams{
+		ID:     batchID,
+		Source: "cli",
+	})
+	if err := owner.Acquire(ctx, batchID, task.StaleAfter); err != nil {
+		return fmt.Errorf("acquire batch %s: %w", batchID, err)
+	}
+
+	if err := c.SetRunnerOwnerID(ownerID); err != nil {
+		return fmt.Errorf("set runner owner: %w", err)
+	}
+
+	watchSignals(ctx, cancel)
+
+	hb := task.NewHeartbeat(owner, heartbeatInterval, c.logger)
+	hb.Start(ctx)
+
+	err = pollBatch(ctx, queries, p, ep, c.logger, batchID)
+
+	hb.Stop()
+	relCtx, relCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	if relErr := owner.Release(relCtx, batchID); relErr != nil {
+		c.logger.Error(nil, "release batch %s: %v", batchID, relErr)
+	}
+	relCancel()
+
+	return err
 }
 
 func consumeCancelHandler(c *Container, args []string) error {
@@ -229,33 +292,49 @@ func consumeCancelHandler(c *Container, args []string) error {
 		return fmt.Errorf("cancel pending tasks: %w", err)
 	}
 
-	pid, err := pidfile.Read(batchID)
+	bo, err := queries.GetBatchOwner(cancelCtx, batchID)
 	if err != nil {
-		fmt.Printf("No running process found for batch %s\n", batchID)
+		if err == sql.ErrNoRows {
+			fmt.Printf("No running process found for batch %s\n", batchID)
+			fmt.Printf("%d pending tasks cancelled\n", count)
+			return nil
+		}
+		return fmt.Errorf("get batch owner: %w", err)
+	}
+
+	if !isAlive(bo.Pid) {
+		fmt.Printf("Process %d is no longer running\n", bo.Pid)
 		fmt.Printf("%d pending tasks cancelled\n", count)
+		queries.ReleaseBatchOwner(cancelCtx, database.ReleaseBatchOwnerParams{
+			BatchID: batchID,
+			OwnerID: bo.OwnerID,
+		})
 		return nil
 	}
 
-	if !pidfile.IsAlive(batchID) {
-		fmt.Printf("Process %d is no longer running\n", pid)
-		fmt.Printf("%d pending tasks cancelled\n", count)
-		return nil
-	}
-
-	syscall.Kill(pid, syscall.SIGTERM)
+	syscall.Kill(int(bo.Pid), syscall.SIGTERM)
 
 	procCount, procErr := queries.CancelProcessingTasksByBatch(cancelCtx, sql.NullString{String: batchID, Valid: true})
 	if procErr != nil {
 		return fmt.Errorf("cancel processing tasks: %w", procErr)
 	}
 
+	queries.ReleaseBatchOwner(cancelCtx, database.ReleaseBatchOwnerParams{
+		BatchID: batchID,
+		OwnerID: bo.OwnerID,
+	})
+
 	fmt.Printf("Batch %s: %d pending + %d processing cancelled, signal sent to PID %d\n",
-		batchID, count, procCount, pid)
+		batchID, count, procCount, bo.Pid)
 	return nil
 }
 
+func isAlive(pid int64) bool {
+	return syscall.Kill(int(pid), 0) == nil
+}
+
 func printToolBlock(missing []config.ExternalTool) {
-	fmt.Println("Cannot consume — the following required tools are not installed:\n")
+	fmt.Println("Cannot consume — the following required tools are not installed:")
 	for _, t := range missing {
 		if t.Engine == "curl" {
 			fmt.Printf("  Prerequisite \"curl\" — %s\n", t.Purpose)
@@ -304,7 +383,6 @@ func printOcrmypdfAdvisory(cfg *config.Config, allTools []config.ExternalTool) {
 		return
 	}
 
-	// Language pack advisory
 	fmt.Printf("\nNote: ocrmypdf uses the system tesseract, which reads its own tessdata directory.\n")
 	fmt.Printf("Make sure the tesseract language packs for your configured languages are installed:\n\n")
 	fmt.Printf("  Configured languages: %s\n", strings.Join(cfg.Consumer.OCR.Languages, ", "))
@@ -322,7 +400,6 @@ func printOcrmypdfAdvisory(cfg *config.Config, allTools []config.ExternalTool) {
 			if !ok {
 				continue
 			}
-			// Deduplicate identical commands (macOS shows the same hint for all langs)
 			seen := map[string]bool{}
 			var unique []string
 			for _, c := range cmds {
@@ -336,7 +413,6 @@ func printOcrmypdfAdvisory(cfg *config.Config, allTools []config.ExternalTool) {
 	}
 	fmt.Println()
 
-	// Optional companion advisory
 	for _, c := range ocrTool.Companions {
 		if !c.Required && !c.Available {
 			fmt.Printf("Optional companion \"%s\" — %s\n", c.Command, c.Purpose)

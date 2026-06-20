@@ -7,7 +7,22 @@ package database
 import (
 	"database/sql"
 	"encoding/json"
+	"time"
 )
+
+type Batch struct {
+	ID        string
+	Source    string
+	CreatedAt sql.NullTime
+}
+
+type BatchOwner struct {
+	BatchID       string
+	OwnerID       string
+	Pid           int64
+	AcquiredAt    time.Time
+	LastHeartbeat time.Time
+}
 
 type Document struct {
 	ID             int64

@@ -26,6 +26,7 @@ type Container struct {
 	cache      *cache.Cache
 	dispatcher *task.Dispatcher
 	runner     *task.Runner
+	store      *task.Store
 	pools      struct {
 		consume *pool.Pool
 		enrich  *pool.Pool
@@ -94,6 +95,7 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 	}
 
 	store := task.NewStore(database.NewQueries(db))
+	c.store = store
 
 	consumer, err := consumption.NewConsumer(c.config, c.logger, db)
 	if err != nil {
@@ -121,6 +123,14 @@ func (c *Container) GetRunner() (*task.Runner, error) {
 		return nil, err
 	}
 	return c.runner, nil
+}
+
+func (c *Container) SetRunnerOwnerID(id string) error {
+	if _, err := c.GetRunner(); err != nil {
+		return err
+	}
+	c.store.SetOwnerID(id)
+	return nil
 }
 
 func (c *Container) GetPool(taskType string) (*pool.Pool, error) {

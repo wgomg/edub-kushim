@@ -16,6 +16,8 @@ import (
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
+const configSource = "config"
+
 type ConfigHandler struct {
 	cfg         *config.Config
 	queries     *database.Queries
@@ -134,9 +136,15 @@ func (h *ConfigHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
 func (h *ConfigHandler) enqueueConfigTasks(ctx context.Context, cfg *config.Config) int {
 	enqueued := 0
 	batchID := uuid.New().String()
+
+	h.queries.CreateBatch(ctx, database.CreateBatchParams{
+		ID:     batchID,
+		Source: configSource,
+	})
+
 	for _, lang := range config.MissingTessdataLanguages(cfg) {
 		key := "config:tessdata:" + lang
-		if h.handleConfigTask(ctx, key, batchID, map[string]string{
+		if h.handleConfigTask(ctx, batchID, key, map[string]string{
 			"config_dir": cfg.App.ConfigDir,
 			"op":         "tessdata",
 			"lang":       lang,
@@ -146,7 +154,7 @@ func (h *ConfigHandler) enqueueConfigTasks(ctx context.Context, cfg *config.Conf
 	}
 
 	if config.MissingHugotModel(cfg) {
-		if h.handleConfigTask(ctx, "config:hugot", batchID, map[string]string{
+		if h.handleConfigTask(ctx, batchID, "config:hugot", map[string]string{
 			"config_dir": cfg.App.ConfigDir,
 			"op":         "hugot",
 		}) {

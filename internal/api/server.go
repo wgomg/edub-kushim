@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,6 +23,10 @@ import (
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
+const (
+	heartbeatInterval = 5 * time.Second
+)
+
 type Server struct {
 	httpServer *http.Server
 	logger     *utils.Logger
@@ -31,6 +36,9 @@ type Server struct {
 		enrich  *pool.Pool
 		config  *pool.Pool
 	}
+	owner    *task.Owner
+	ownerID  string
+	heartbeat *task.Heartbeat
 }
 
 func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
@@ -47,7 +55,11 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 		tagCache = cache.New()
 	}
 
-	store := task.NewStore(queries)
+	ownerID := uuid.New().String()
+
+	workStore := task.NewStore(queries)
+	workStore.SetOwnerID(ownerID)
+	configStore := task.NewStore(queries)
 
 	consumer, err := consumption.NewConsumer(&cfg, logger, db)
 	if err != nil {
@@ -60,21 +72,25 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 	}
 
 	registry := task.NewRegistry()
-	registry.Register("consume", taskhandlers.NewConsumeTaskHandler(consumer, store, logger))
+	registry.Register("consume", taskhandlers.NewConsumeTaskHandler(consumer, workStore, logger))
 	registry.Register("enrich", taskhandlers.NewEnrichTaskHandler(enricher))
 	registry.Register("config", taskhandlers.NewConfigTaskHandler(logger))
 
-	dispatcher := task.NewDispatcher(logger, store, registry)
-	runner := task.NewRunner(store, registry, logger)
+	dispatcher := task.NewDispatcher(logger, workStore, registry)
+	workRunner := task.NewRunner(workStore, registry, logger)
+	configRunner := task.NewRunner(configStore, registry, logger)
 
 	consumeWorkers := max(cfg.Consumer.Workers, 1)
 	enrichWorkers := max(cfg.Enricher.Workers, 1)
 
-	consumePool := pool.New(logger, runner, consumeWorkers, 2*time.Second, "consume")
-	enrichPool := pool.New(logger, runner, enrichWorkers, 5*time.Second, "enrich")
-	configPool := pool.New(logger, runner, 1, 5*time.Second, "config")
+	consumePool := pool.New(logger, workRunner, consumeWorkers, 2*time.Second, "consume")
+	enrichPool := pool.New(logger, workRunner, enrichWorkers, 5*time.Second, "enrich")
+	configPool := pool.New(logger, configRunner, 1, 5*time.Second, "config")
 
-	registerRoutes(mux, logger, queries, engine, dispatcher, &cfg)
+	owner := task.NewOwner(queries, ownerID, os.Getpid(), logger)
+	heartbeat := task.NewHeartbeat(owner, heartbeatInterval, logger)
+
+	registerRoutes(mux, logger, queries, engine, dispatcher, &cfg, owner)
 	registerStaticRoutes(mux)
 
 	handler := chainMiddleware(logger, mux)
@@ -91,6 +107,9 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 		httpServer: server,
 		logger:     logger,
 		addr:       addr,
+		owner:      owner,
+		ownerID:    ownerID,
+		heartbeat:  heartbeat,
 	}
 	s.pools.consume = consumePool
 	s.pools.enrich = enrichPool
@@ -111,7 +130,6 @@ func registerStaticRoutes(mux *http.ServeMux) {
 
 		f, err := fsys.Open(path)
 		if err != nil {
-			// SPA fallback: serve index.html for client-side routes
 			r.URL.Path = "/"
 			fileServer.ServeHTTP(w, r)
 			return
@@ -122,7 +140,7 @@ func registerStaticRoutes(mux *http.ServeMux) {
 	})
 }
 
-func registerRoutes(mux *http.ServeMux, logger *utils.Logger, queries *database.Queries, engine *search.Engine, dispatcher *task.Dispatcher, cfg *config.Config) {
+func registerRoutes(mux *http.ServeMux, logger *utils.Logger, queries *database.Queries, engine *search.Engine, dispatcher *task.Dispatcher, cfg *config.Config, owner *task.Owner) {
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		handlers.HealthHandler(w, r, logger)
 	})
@@ -140,7 +158,7 @@ func registerRoutes(mux *http.ServeMux, logger *utils.Logger, queries *database.
 	mux.HandleFunc("GET /api/v1/people-types", autocompleteHandler.ListPeopleTypes)
 	mux.HandleFunc("GET /api/v1/document-types", autocompleteHandler.ListDocumentTypes)
 
-	consumeHandler := handlers.NewConsumeHandler(cfg, logger, dispatcher)
+	consumeHandler := handlers.NewConsumeHandler(cfg, logger, dispatcher, queries, owner)
 	mux.HandleFunc("POST /api/v1/consume", consumeHandler.Consume)
 
 	configHandler := handlers.NewConfigHandler(cfg, queries, logger, dispatcher)
@@ -149,7 +167,7 @@ func registerRoutes(mux *http.ServeMux, logger *utils.Logger, queries *database.
 	mux.HandleFunc("GET /wizard/config/status", configHandler.ConfigStatus)
 	mux.HandleFunc("POST /wizard/config/retry", configHandler.RetryFailedConfig)
 
-	taskHandler := handlers.NewTaskHandler(queries, logger)
+	taskHandler := handlers.NewTaskHandler(queries, logger, owner)
 	mux.HandleFunc("GET /api/v1/tasks", taskHandler.ListTasks)
 	mux.HandleFunc("GET /api/v1/tasks/{id}", taskHandler.GetTask)
 	mux.HandleFunc("POST /api/v1/tasks/{id}/retry", taskHandler.RetryTask)
@@ -157,6 +175,7 @@ func registerRoutes(mux *http.ServeMux, logger *utils.Logger, queries *database.
 	mux.HandleFunc("GET /api/v1/batches/{id}", taskHandler.GetBatchSummary)
 	mux.HandleFunc("POST /api/v1/batches/{id}/retry", taskHandler.RetryBatch)
 	mux.HandleFunc("GET /api/v1/summary", taskHandler.GlobalSummary)
+	mux.HandleFunc("POST /api/v1/batches/{id}/adopt", taskHandler.AdoptBatch)
 
 	savedSearchHandler := handlers.NewSavedSearchHandler(queries, logger)
 	mux.HandleFunc("GET /api/v1/saved-searches", savedSearchHandler.List)
@@ -190,15 +209,25 @@ func parambagMiddleware(next http.Handler) http.Handler {
 }
 
 func (s *Server) Start() error {
+	if err := s.owner.CleanupCompleted(context.Background()); err != nil {
+		s.logger.Error(nil, "cleanup completed batches: %v", err)
+	}
+
 	s.pools.consume.Start(context.Background())
 	s.pools.enrich.Start(context.Background())
 	s.pools.config.Start(context.Background())
+
+	s.heartbeat.Start(context.Background())
+	s.logger.Info(nil, "worker pools started (owner %s pid %d)", s.ownerID, os.Getpid())
+
 	s.logger.Info(nil, "Starting HTTP server on %s", s.addr)
 	return s.httpServer.ListenAndServe()
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.logger.Info(nil, "Shutting down HTTP server")
+
+	s.heartbeat.Stop()
 
 	if err := s.httpServer.Shutdown(ctx); err != nil {
 		return err

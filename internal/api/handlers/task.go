@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"time"
@@ -17,12 +18,14 @@ import (
 type TaskHandler struct {
 	queries *database.Queries
 	logger  *utils.Logger
+	owner   *task.Owner
 }
 
-func NewTaskHandler(queries *database.Queries, logger *utils.Logger) *TaskHandler {
+func NewTaskHandler(queries *database.Queries, logger *utils.Logger, owner *task.Owner) *TaskHandler {
 	return &TaskHandler{
 		queries: queries,
 		logger:  logger,
+		owner:   owner,
 	}
 }
 
@@ -159,6 +162,11 @@ func (h *TaskHandler) ListBatches(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, bc := range summaries {
+		state, pid, err := task.BatchOwnerState(ctx, h.queries, bc.BatchID, task.StaleAfter)
+		if err != nil {
+			h.logger.Error(&reqID, "batch owner state for %s: %v", bc.BatchID, err)
+		}
+		orphaned := task.IsOrphaned(state, bc.Pending, bc.Processing)
 		resp.Batches = append(resp.Batches, types.BatchSummaryResponse{
 			BatchID:    bc.BatchID,
 			Total:      bc.Total(),
@@ -169,6 +177,9 @@ func (h *TaskHandler) ListBatches(w http.ResponseWriter, r *http.Request) {
 			Failed:     bc.Failed,
 			Cancelled:  bc.Cancelled,
 			Discarded:  bc.Discarded,
+			OwnerState: state.String(),
+			OwnerPID:   pid,
+			Orphaned:   orphaned,
 		})
 	}
 
@@ -245,6 +256,11 @@ func (h *TaskHandler) GlobalSummary(w http.ResponseWriter, r *http.Request) {
 
 func buildBatchSummary(ctx context.Context, queries *database.Queries, batchID string) types.BatchSummaryResponse {
 	bc := task.CountBatchStatuses(ctx, queries, batchID)
+	state, pid, err := task.BatchOwnerState(ctx, queries, batchID, task.StaleAfter)
+	if err != nil {
+		state = task.OwnerLive
+	}
+	orphaned := task.IsOrphaned(state, bc.Pending, bc.Processing)
 
 	return types.BatchSummaryResponse{
 		BatchID:    batchID,
@@ -256,7 +272,59 @@ func buildBatchSummary(ctx context.Context, queries *database.Queries, batchID s
 		Failed:     bc.Failed,
 		Cancelled:  bc.Cancelled,
 		Discarded:  bc.Discarded,
+		OwnerState: state.String(),
+		OwnerPID:   pid,
+		Orphaned:   orphaned,
 	}
+}
+
+func (h *TaskHandler) AdoptBatch(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := ctx.Value("reqid").(string)
+
+	batchID := r.PathValue("id")
+
+	bc := task.CountBatchStatuses(ctx, h.queries, batchID)
+	if bc.Pending == 0 && bc.Processing == 0 && bc.Waiting == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]any{
+			"adopted": false,
+			"reason":  "batch is already settled",
+		})
+		return
+	}
+
+	if err := h.owner.Acquire(ctx, batchID, task.StaleAfter); err != nil {
+		if errors.Is(err, task.ErrBatchLocked) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "batch is locked by a live owner",
+			})
+			return
+		}
+		h.logger.Error(&reqID, "adopt batch %s: %v", batchID, err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	reset, err := h.owner.ResetProcessingByBatch(ctx, batchID)
+	if err != nil {
+		h.logger.Error(&reqID, "reset processing tasks for batch %s: %v", batchID, err)
+		h.owner.Release(ctx, batchID)
+		http.Error(w, fmt.Sprintf("reset processing tasks: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	h.logger.Info(&reqID, "adopted batch %s, reset %d processing tasks", batchID, reset)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	json.NewEncoder(w).Encode(map[string]any{
+		"adopted": true,
+		"reset":   reset,
+	})
 }
 
 func taskToResponse(t database.Task) types.TaskResponse {
