@@ -16,7 +16,7 @@
 - CLI framework with dependency injection container (lazy DB, cache, dispatcher, pools)
 - Per-tool timeout via `ToolConfig` struct + `runWithTimeout` generic wrapper
 - Configurable worker pool size (`consumer.workers`, `enricher.workers`, default 1 each)
-- PID file system for batch locking (Acquire/Release, IsAlive, stale lock override with `--force`)
+- Database-backed batch ownership with heartbeats (`batch_owner` table, stale lease detection, `--force` override, server/CLI isolation via per-process owner UUID)
 
 ### Document Pipeline
 

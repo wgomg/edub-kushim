@@ -116,24 +116,6 @@ per tool category, used by the frontend settings UI to populate select dropdowns
 
 ---
 
-# PID File (`internal/pidfile/`)
-
-## `pidfile.go`
-
-### Struct
-
-`Lock` — `once sync.Once`, `path string`, `done chan struct{}`
-
-- **Methods**:
-  - `Acquire(batchID, force, onSignal) (*Lock, error)` — Writes PID to temp file, sets up SIGTERM/SIGINT handler
-  - `Release()` — Removes PID file
-  - `Path(batchID) string` — Returns `/tmp/kushim_<batchID>.pid`
-  - `Read(batchID) (int, error)` — Reads PID from file
-  - `IsAlive(batchID) bool` — Checks if PID is running
-  - `isAlive(path) (bool, error)` — Sends signal 0 to PID
-
----
-
 # Version (`internal/version/`)
 
 ## `version.go`

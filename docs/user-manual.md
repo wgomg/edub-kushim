@@ -103,8 +103,8 @@ kushim consume
 
 #### `--force`
 
-Override a stale PID file lock when resuming a batch. Useful if the
-previous process was killed with `SIGKILL` and the PID file was left behind.
+Override a stale batch lease when resuming a batch. Useful if the
+previous process was killed with `SIGKILL` and the lease was not released.
 
 ```
 kushim consume --batch 550e8400-e29b-41d4-a716-446655440000 --force

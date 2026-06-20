@@ -34,14 +34,14 @@ internal/
 │   └── task.go            # Task commands (list, status, retry)
 ├── enrichment/            # Enrichment engine (LLM pipeline)
 │   ├── enricher.go        # Enricher: dual text reduction → tag matching → LLM → consolidation → people/tag/doc type with romanization + normalization
-├── pidfile/               # PID file locking for batch consumption
-│   └── pidfile.go         # Lock, Acquire/Release, IsAlive, Read
 ├── pool/                  # Generic worker pool
 │   └── pool.go            # Pool struct, Start(ctx), Stop(ctx), worker loop
 ├── task/                  # Generic task system
+│   ├── batch.go           # Batch ownership — Owner.Acquire (two-step INSERT + UPDATE IF stale), Release, Heartbeat, IsOrphaned, BatchOwnerState
 │   ├── crud.go            # Task CRUD (Get, ListFiltered, Retry, CountBatchStatuses with Waiting, ListBatchSummaries)
 │   ├── dispatcher.go      # Task dispatcher (Enqueue with custom taskID/status, Next uses GetNextPendingTaskOfType)
 │   ├── handler.go         # Handler + Dedupable interfaces
+│   ├── heartbeat.go       # Heartbeat goroutine — periodic Owner.Heartbeat every 5s
 │   └── handlers/
 │       ├── config.go      # ConfigTaskHandler — downloads tessdata/Hugot model in background ("config" task type)
 │       ├── consume.go     # ConsumeTaskHandler (uses FileFromPath)
@@ -89,8 +89,6 @@ internal/
 │   ├── metrics.go         # Memory metrics (HeapInUse, RSS, NumGC), HumanDuration, FormatMemDelta
 │   ├── parambag.go        # HTTP parameter parsing (query params, path values)
 │   └── text.go            # CountWords, EstimateTokensFromWords, CleanUp, Truncate, CleanCodeBlock, ContainsNonLatin, NormalizeName
-├── pidfile/               # PID file locking for batch consumption
-│   └── pidfile.go         # Lock, Acquire/Release, IsAlive, Read with cross-process safety
 ├── adapters/
 │   │   ├── mupdf_wrapper.go    # MuPDF CGo wrapper (6 C helpers + Go API)
 │   │   ├── contentanalyzer/    # LLM classification providers
