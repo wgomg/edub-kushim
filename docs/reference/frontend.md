@@ -17,7 +17,7 @@ Located in `web/`, built via `npm ci && npm run build`, output copied to `intern
 
 ## Key files
 
-- **`src/lib/api.js`** — API client wrapping `fetch()` for all backend endpoints including autocomplete, saved searches, and config (`api.config.get()`, `api.config.update()`, `api.config.status()` via `/wizard/config`)
+- **`src/lib/api.js`** — API client wrapping `fetch()` for all backend endpoints including autocomplete, saved searches, config (`api.config.get()`, `api.config.update()`, `api.config.status()` via `/wizard/config`), and **tag CRUD** (`api.tags.list(q, limit, offset)`, `api.tags.create(name)`, `api.tags.update(id, name)`, `api.tags.delete(id)` via `/api/v1/tags`)
 - **`src/lib/components/DataTable.svelte`** — Reusable sortable/paginated table component; supports `refreshKey` prop for external reload triggers; handles both array and `{results, total}` response formats; shows "X–Y of Z" pagination when total is available
 - **`src/lib/components/SearchBar.svelte`** — Rich search input with field token chips (tags, people, document type, language, MIME, dates, size), autocomplete suggestions, keyboard navigation (arrow keys, Enter, Backspace for chip removal, Escape to close dropdown), and `field:value` syntax parsing
 - **`src/lib/components/FilterPanel.svelte`** — Collapsible filter panel with sections for tags (autocomplete + chips), people (two-stage type + name selection), document type (dropdown), language (dropdown), MIME type (dropdown), date created (dual date pickers), date modified (dual date pickers), file size (min/max text input with unit parsing), and "Clear all filters" button

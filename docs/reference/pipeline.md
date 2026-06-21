@@ -39,19 +39,19 @@
 
 ### Struct
 
-- `Enricher` — `config`, `logger`, `db`, `runner`, `cache *cache.Cache`
+- `Enricher` — `config`, `logger`, `db`, `runner`, `services *types.CrudServices`
   - **Methods**:
-    - `NewEnricher(cfg, logger, db, embeddingCache *cache.Cache) (*Enricher, error)` — Creates runner with textreducer, contentanalyzer, tagmatcher
+    - `NewEnricher(cfg, logger, db, services *types.CrudServices) (*Enricher, error)` — Creates runner with textreducer, contentanalyzer, tagmatcher
     - `Enrich(ctx, document) (*json.RawMessage, error)` — Full pipeline:
       1. Dual text reduction: LLM-targeted and tag-matching-targeted (via `targetWordCount`)
-      2. Fetch doc types, people types, all tags from DB
-      3. Retrieve tag embeddings from cache; on nil/missing store or wrong type, logs errors but continues
+      2. Fetch doc types, people types from DB; all tags via `services.Tag.ListAll`
+      3. Retrieve tag embeddings via `services.Tag.Entries()` (reads the shared `*cache.EmbeddingStore` pointer)
       4. Semantic tag matching against cached tag embeddings (falls back to all tags on failure)
       5. LLM content analysis (title, doc type, tags, people, language)
-      6. Post-LLM tag consolidation via `MatchEach` (creates new tags if needed)
-      7. Newly created tags are immediately encoded and added to the embedding cache so subsequent documents can match them
+      6. Post-LLM tag consolidation via `MatchEach`
+      7. New tags created via a single batch call `services.Tag.Create(ctx, analysis.Tags)` — returns per-index results with `Created`/`Conflict`/`Invalid` statuses. Service batches the encode of all new names (`batchSize=32`) and adds them to the shared embedding store automatically.
       8. Update document metadata (title, doc_type, language)
-      9. Manage document_tag junction (clear + add, create new tags as needed)
+      9. Manage document_tag junction (clear + add)
       10. Manage document_people junction (clear + add) — for each person:
           - Determines canonical name via `canonicalPersonName`: uses LLM's `name_romanized` if provided (for non-Latin names), falls back to AnyAscii transliteration
           - Normalizes the canonical name via `utils.NormalizeName` (NFKC, lowercase, punctuation/dash cleanup) for exact-match lookup

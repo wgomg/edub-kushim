@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	types "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/api/handlers"
 	"github.com/wgomg/edub-kushim/internal/cache"
 	"github.com/wgomg/edub-kushim/internal/config"
@@ -18,6 +19,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/pool"
 	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/static"
+	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/task"
 	taskhandlers "github.com/wgomg/edub-kushim/internal/task/handlers"
 	"github.com/wgomg/edub-kushim/internal/utils"
@@ -36,9 +38,10 @@ type Server struct {
 		enrich  *pool.Pool
 		config  *pool.Pool
 	}
-	owner    *task.Owner
-	ownerID  string
+	owner     *task.Owner
+	ownerID   string
 	heartbeat *task.Heartbeat
+	services  *types.CrudServices
 }
 
 func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
@@ -53,20 +56,34 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 	if err != nil {
 		logger.Error(nil, "failed to build tag cache: %v — continuing with empty cache", err)
 		tagCache = cache.New()
+		tagCache.Set("tags", cache.NewEmbeddingStore(nil, nil))
 	}
 
+	storeIf, _ := tagCache.Get("tags")
+	embStore := storeIf.(*cache.EmbeddingStore)
+
+	s := &Server{
+		logger:   logger,
+		addr:     addr,
+		services: &types.CrudServices{},
+	}
 	ownerID := uuid.New().String()
 
 	workStore := task.NewStore(queries)
 	workStore.SetOwnerID(ownerID)
 	configStore := task.NewStore(queries)
 
+	s.services.Tag, err = tags.NewTagService(queries, embStore, logger, cfg.Enricher.TagMatcher)
+	if err != nil {
+		logger.Fatal("tag service: ", err)
+	}
+
 	consumer, err := consumption.NewConsumer(&cfg, logger, db)
 	if err != nil {
 		logger.Fatal("consumer: ", err)
 	}
 
-	enricher, err := enrichment.NewEnricher(&cfg, logger, db, tagCache)
+	enricher, err := enrichment.NewEnricher(&cfg, logger, db, s.services)
 	if err != nil {
 		logger.Fatal("enricher: ", err)
 	}
@@ -87,15 +104,19 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 	enrichPool := pool.New(logger, workRunner, enrichWorkers, 5*time.Second, "enrich")
 	configPool := pool.New(logger, configRunner, 1, 5*time.Second, "config")
 
-	owner := task.NewOwner(queries, ownerID, os.Getpid(), logger)
-	heartbeat := task.NewHeartbeat(owner, heartbeatInterval, logger)
+	s.owner = task.NewOwner(queries, ownerID, os.Getpid(), logger)
+	s.heartbeat = task.NewHeartbeat(s.owner, heartbeatInterval, logger)
+	s.ownerID = ownerID
+	s.pools.consume = consumePool
+	s.pools.enrich = enrichPool
+	s.pools.config = configPool
 
-	registerRoutes(mux, logger, queries, engine, dispatcher, &cfg, owner)
+	registerRoutes(mux, logger, queries, engine, dispatcher, &cfg, s.owner, s.services)
 	registerStaticRoutes(mux)
 
 	handler := chainMiddleware(logger, mux)
 
-	server := &http.Server{
+	s.httpServer = &http.Server{
 		Addr:         addr,
 		Handler:      handler,
 		ReadTimeout:  cfg.Srv.ReadTimeout,
@@ -103,17 +124,6 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 		IdleTimeout:  cfg.Srv.IdleTimeout,
 	}
 
-	s := &Server{
-		httpServer: server,
-		logger:     logger,
-		addr:       addr,
-		owner:      owner,
-		ownerID:    ownerID,
-		heartbeat:  heartbeat,
-	}
-	s.pools.consume = consumePool
-	s.pools.enrich = enrichPool
-	s.pools.config = configPool
 	return s
 }
 
@@ -140,12 +150,12 @@ func registerStaticRoutes(mux *http.ServeMux) {
 	})
 }
 
-func registerRoutes(mux *http.ServeMux, logger *utils.Logger, queries *database.Queries, engine *search.Engine, dispatcher *task.Dispatcher, cfg *config.Config, owner *task.Owner) {
+func registerRoutes(mux *http.ServeMux, logger *utils.Logger, queries *database.Queries, engine *search.Engine, dispatcher *task.Dispatcher, cfg *config.Config, owner *task.Owner, services *types.CrudServices) {
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		handlers.HealthHandler(w, r, logger)
 	})
 
-	docHandler := handlers.NewDocumentHandler(queries, logger, engine)
+	docHandler := handlers.NewDocumentHandler(queries, logger, engine, services)
 	mux.HandleFunc("GET /api/v1/documents", docHandler.ListDocuments)
 	mux.HandleFunc("GET /api/v1/documents/{id}", docHandler.GetDocument)
 	mux.HandleFunc("GET /api/v1/documents/{id}/file", docHandler.GetDocumentFile)
@@ -158,8 +168,13 @@ func registerRoutes(mux *http.ServeMux, logger *utils.Logger, queries *database.
 	mux.HandleFunc("POST /api/v1/documents/{id}/people", docHandler.AddDocumentPeople)
 	mux.HandleFunc("DELETE /api/v1/documents/{id}/people", docHandler.RemoveDocumentPeople)
 
+	tagHandler := handlers.NewTagHandler(services, logger)
+	mux.HandleFunc("GET /api/v1/tags", tagHandler.List)
+	mux.HandleFunc("POST /api/v1/tags", tagHandler.Create)
+	mux.HandleFunc("PUT /api/v1/tags/{id}", tagHandler.Update)
+	mux.HandleFunc("DELETE /api/v1/tags/{id}", tagHandler.Delete)
+
 	autocompleteHandler := handlers.NewAutocompleteHandler(queries, logger)
-	mux.HandleFunc("GET /api/v1/tags", autocompleteHandler.ListTags)
 	mux.HandleFunc("GET /api/v1/people", autocompleteHandler.ListPeople)
 	mux.HandleFunc("GET /api/v1/people-types", autocompleteHandler.ListPeopleTypes)
 	mux.HandleFunc("GET /api/v1/document-types", autocompleteHandler.ListDocumentTypes)
@@ -244,6 +259,8 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	s.pools.consume.Stop(stopCtx)
 	s.pools.enrich.Stop(stopCtx)
 	s.pools.config.Stop(stopCtx)
+
+	s.services.Close()
 
 	return nil
 }

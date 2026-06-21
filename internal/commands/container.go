@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/cache"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/consumption"
@@ -13,6 +14,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/enrichment"
 	"github.com/wgomg/edub-kushim/internal/pool"
 	"github.com/wgomg/edub-kushim/internal/search"
+	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/task"
 	taskhandlers "github.com/wgomg/edub-kushim/internal/task/handlers"
 	"github.com/wgomg/edub-kushim/internal/utils"
@@ -27,6 +29,7 @@ type Container struct {
 	dispatcher *task.Dispatcher
 	runner     *task.Runner
 	store      *task.Store
+	services   *types.CrudServices
 	pools      struct {
 		consume *pool.Pool
 		enrich  *pool.Pool
@@ -72,6 +75,7 @@ func (c *Container) GetCache() (*cache.Cache, error) {
 		if err != nil {
 			c.logger.Error(nil, "failed to build tag cache: %v — continuing with empty cache", err)
 			c.cache = cache.New()
+			c.cache.Set("tags", cache.NewEmbeddingStore(nil, nil))
 		} else {
 			c.cache = tagCache
 		}
@@ -89,10 +93,20 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 		return nil, err
 	}
 
-	cache, err := c.GetCache()
+	tagCache, err := c.GetCache()
 	if err != nil {
 		return nil, err
 	}
+
+	storeIf, _ := tagCache.Get("tags")
+	embStore := storeIf.(*cache.EmbeddingStore)
+
+	tagSvc, err := tags.NewTagService(database.NewQueries(db), embStore, c.logger, c.config.Enricher.TagMatcher)
+	if err != nil {
+		return nil, fmt.Errorf("tag service: %w", err)
+	}
+
+	c.services = &types.CrudServices{Tag: tagSvc}
 
 	store := task.NewStore(database.NewQueries(db))
 	c.store = store
@@ -102,7 +116,7 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 		return nil, err
 	}
 
-	enricher, err := enrichment.NewEnricher(c.config, c.logger, db, cache)
+	enricher, err := enrichment.NewEnricher(c.config, c.logger, db, c.services)
 	if err != nil {
 		return nil, err
 	}
@@ -198,5 +212,8 @@ func (c *Container) Close() {
 	}
 	if c.db != nil {
 		c.db.Close()
+	}
+	if c.services != nil {
+		c.services.Close()
 	}
 }

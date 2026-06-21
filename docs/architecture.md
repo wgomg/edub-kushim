@@ -97,9 +97,11 @@ parent error message (via `Store.Discard`). The enrichment pipeline:
    provide a `name_romanized` field alongside the original name.
 4. **Post-LLM Tag Consolidation** — LLM output labels are re-matched against canonical
    tag embeddings via `MatchEach`, fixing casing, hyphenation, and synonym mismatches.
-5. **New Tag Cache Update** — any new tags created during enrichment are immediately
-   encoded via Hugot and added to the embedding cache, making them available for
-   matching against subsequent documents.
+5. **New Tag Cache Update** — any new tags created during enrichment are batch-created
+   via `services.Tag.Create(ctx, analysis.Tags)`. The service pre-loads existing tags
+   to avoid N+1 queries, encodes all new names in `batchSize=32` chunks, and adds them
+   to the shared embedding store (`*cache.EmbeddingStore`) — making them available for
+   matching against subsequent documents without additional encode.
 6. **Result Logging** — token usage stats and prompt text are logged.
 
 ### People Deduplication

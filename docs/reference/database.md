@@ -96,7 +96,7 @@ Migrations run automatically on startup (no manual CLI command needed):
 
 ### Tag
 
-`CreateTag`, `GetTag`, `ListTags`, `ListAllTags`, `ListAllTagsNames`, `SearchTagsByName` (prefix search with `LIKE ?` + `LIMIT`), `UpdateTag`, `DeleteTag`
+`CreateTag` (`INSERT OR IGNORE`, `:execresult`), `GetTag`, `GetTagByName`, `ListTags`, `ListAllTags`, `ListAllTagsNames`, `SearchTagsByName` (prefix search with `LIKE ?` + `LIMIT`), `UpdateTag`, `DeleteTag`
 
 ### Document tag
 

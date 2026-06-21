@@ -1,21 +1,13 @@
 FROM alpine:3.21
 
-# Install all build dependencies for musl-static compilation
 RUN apk add --no-cache \
-    # C/C++ compilers and build tools
     gcc musl-dev g++ make autoconf automake libtool pkgconfig linux-headers git curl \
-    # Rust for libtokenizers
     rust cargo \
-    # Static C++ stdlib (needed by gosseract's C++ bridge, .a is in -dev)
     libstdc++-dev \
-    # zlib (needed by libpng)
     zlib-dev zlib-static \
-    # MuPDF dependencies
     freetype-dev harfbuzz-dev jpeg-dev openjpeg-dev \
-    # Oniguruma (needed by HuggingFace tokenizers Rust crate)
     oniguruma-dev
 
-# Install Go 1.26 from the official tarball (Alpine's Go is too old for this project)
 RUN curl -fsSL https://go.dev/dl/go1.26.4.linux-amd64.tar.gz | \
     tar -C /usr/local -xz && \
     rm -f go1.26.4.linux-amd64.tar.gz
@@ -23,7 +15,6 @@ RUN curl -fsSL https://go.dev/dl/go1.26.4.linux-amd64.tar.gz | \
 ENV PATH=/usr/local/go/bin:$PATH
 ENV GOMODCACHE=/go/pkg/mod
 
-# Pre-populate CA certs for curl/git inside the container
 RUN apk add --no-cache ca-certificates && update-ca-certificates
 
 WORKDIR /workspace

@@ -1,6 +1,9 @@
 -- name: GetTag :one
 SELECT * FROM tag WHERE id = ?;
 
+-- name: GetTagByName :one
+SELECT * FROM tag WHERE name = ?;
+
 -- name: ListTags :many
 SELECT * FROM tag ORDER BY created_at DESC LIMIT ? OFFSET ?;
 

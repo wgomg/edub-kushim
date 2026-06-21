@@ -3,26 +3,31 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 
+	itypes "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/search"
+	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type DocumentHandler struct {
-	queries *database.Queries
-	logger  *utils.Logger
-	engine  *search.Engine
+	queries  *database.Queries
+	logger   *utils.Logger
+	engine   *search.Engine
+	services *itypes.CrudServices
 }
 
-func NewDocumentHandler(queries *database.Queries, logger *utils.Logger, engine *search.Engine) *DocumentHandler {
+func NewDocumentHandler(queries *database.Queries, logger *utils.Logger, engine *search.Engine, services *itypes.CrudServices) *DocumentHandler {
 	return &DocumentHandler{
-		queries: queries,
-		logger:  logger,
-		engine:  engine,
+		queries:  queries,
+		logger:   logger,
+		engine:   engine,
+		services: services,
 	}
 }
 
@@ -491,9 +496,14 @@ func (h *DocumentHandler) AddDocumentTag(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	tag, err := h.queries.GetTag(ctx, req.TagID)
-	if err != nil || tag.ID == 0 {
-		http.Error(w, "Tag not found", http.StatusNotFound)
+	_, err = h.services.Tag.Get(ctx, req.TagID)
+	if err != nil {
+		if errors.Is(err, tags.ErrNotFound) {
+			http.Error(w, "Tag not found", http.StatusNotFound)
+			return
+		}
+		h.logger.Error(&reqID, "get tag %d: %v", req.TagID, err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 

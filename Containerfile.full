@@ -1,7 +1,5 @@
 FROM ubuntu:26.04
 
-# Install runtime dependencies: external tools for text extraction,
-# PDF optimization, and OCR via ocrmypdf.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ghostscript \
     poppler-utils \
@@ -18,7 +16,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy the pre-built Go binaries (built via `make build` on the host)
 COPY dev/bin/kushim /usr/local/bin/kushim
 COPY dev/bin/edub   /usr/local/bin/edub
 

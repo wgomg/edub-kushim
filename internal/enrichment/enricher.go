@@ -8,29 +8,30 @@ import (
 	"time"
 
 	anyascii "github.com/anyascii/go"
-	"github.com/wgomg/edub-kushim/internal/cache"
+	types "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/contentanalyzer"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type Enricher struct {
-	config *config.Config
-	logger *utils.Logger
-	db     *sql.DB
-	runner *tools.Runner
-	cache  *cache.Cache
+	config   *config.Config
+	logger   *utils.Logger
+	db       *sql.DB
+	runner   *tools.Runner
+	services *types.CrudServices
 }
 
-func NewEnricher(cfg *config.Config, logger *utils.Logger, db *sql.DB, embeddingCache *cache.Cache) (*Enricher, error) {
+func NewEnricher(cfg *config.Config, logger *utils.Logger, db *sql.DB, services *types.CrudServices) (*Enricher, error) {
 	e := &Enricher{
-		config: cfg,
-		logger: logger,
-		db:     db,
-		cache:  embeddingCache,
-		runner: tools.NewRunner(logger, cfg, []string{"textreducer", "contentanalyzer", "tagmatcher"}),
+		config:   cfg,
+		logger:   logger,
+		db:       db,
+		services: services,
+		runner:   tools.NewRunner(logger, cfg, []string{"textreducer", "contentanalyzer", "tagmatcher"}),
 	}
 	return e, nil
 }
@@ -80,21 +81,13 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve people types: %w", err)
 	}
-	allTags, err := queries.ListAllTags(ctx)
+	allTags, err := e.services.Tag.ListAll(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve tags: %w", err)
 	}
 
 	var tagSuggestions []string
-	store, ok := e.cache.Get("tags")
-	if !ok {
-		e.logger.Error(&logId, "get tags cache: store not found")
-	}
-	embStore, ok := store.(*cache.EmbeddingStore)
-	if !ok {
-		e.logger.Error(&logId, "get tags cache: unexpected store type")
-	}
-	tagsToMatch := embStore.Entries()
+	tagsToMatch := e.services.Tag.Entries()
 	e.logger.Debug(&logId, "tags store cache length: %d", len(tagsToMatch))
 
 	var tagsNames []string
@@ -152,37 +145,21 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 		e.logger.Error(&logId, "update document metadata: %w", err)
 	}
 
-	tagMap := make(map[string]int64, len(allTags))
-	for _, t := range allTags {
-		tagMap[t.Name] = t.ID
-	}
-	var tagIDs []int64
-	var newTags []string
-	for _, tagName := range analysis.Tags {
-		id, ok := tagMap[tagName]
-		if !ok {
-			result, err := queries.CreateTag(ctx, tagName)
-			if err != nil {
-				e.logger.Error(&logId, "create tag %q: %v", tagName, err)
-				continue
-			}
-			e.logger.Debug(&logId, "tag created %s", tagName)
-			id, _ = result.LastInsertId()
-			tagMap[tagName] = id
-			newTags = append(newTags, tagName)
-		}
-		tagIDs = append(tagIDs, id)
+	results, err := e.services.Tag.Create(ctx, analysis.Tags)
+	if err != nil {
+		e.logger.Error(&logId, "batch create tags: %v", err)
 	}
 
-	if len(newTags) > 0 {
-		newTagsEmbeddings, err := e.runner.EncodeTags(ctx, &document.DocumentID, newTags)
-		if err != nil {
-			e.logger.Error(&logId, "encode new tags for cache: %w", err)
-		} else {
-			for i, name := range newTags {
-				embStore.Add(name, newTagsEmbeddings[i])
-			}
-			e.logger.Debug(&logId, "cached %v new tag embeddings", newTags)
+	var tagIDs []int64
+	for i, r := range results {
+		switch r.Status {
+		case tags.Created:
+			e.logger.Debug(&logId, "tag created %s", analysis.Tags[i])
+			tagIDs = append(tagIDs, r.Tag.ID)
+		case tags.Conflict:
+			tagIDs = append(tagIDs, r.Tag.ID)
+		default:
+			e.logger.Error(&logId, "create tag %q: invalid", analysis.Tags[i])
 		}
 	}
 

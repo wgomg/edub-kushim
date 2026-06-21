@@ -119,6 +119,29 @@ export const api = {
 		documentTypes: () => request('/api/v1/document-types').then((data) => data ?? [])
 	},
 
+	tags: {
+		list: (q, limit = 50, offset = 0) => {
+			const params = new URLSearchParams();
+			if (q) params.set('q', q);
+			params.set('limit', String(limit));
+			params.set('offset', String(offset));
+			return request(`/api/v1/tags?${params.toString()}`).then((data) => data ?? []);
+		},
+		create: (name) =>
+			request('/api/v1/tags', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ name })
+			}),
+		update: (id, name) =>
+			request(`/api/v1/tags/${id}`, {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ name })
+			}),
+		delete: (id) => request(`/api/v1/tags/${id}`, { method: 'DELETE' })
+	},
+
 	savedSearches: {
 		list: () => request('/api/v1/saved-searches').then((data) => data ?? []),
 

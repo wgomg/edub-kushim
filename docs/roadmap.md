@@ -91,7 +91,10 @@
 | `DELETE /api/v1/documents/{id}/tags` | Remove tag assignment from document            |
 | `POST /api/v1/documents/{id}/people` | Add person assignment to document              |
 | `DELETE /api/v1/documents/{id}/people` | Remove person assignment from document       |
-| `GET /api/v1/tags?q=`                | Autocomplete tag names                         |
+| `GET /api/v1/tags`                   | List/autocomplete tag names (`?q=`, `limit`, `offset`) |
+| `POST /api/v1/tags`                  | Create tag                             |
+| `PUT /api/v1/tags/{id}`              | Update tag name                         |
+| `DELETE /api/v1/tags/{id}`           | Delete tag                              |
 | `GET /api/v1/people?q=`              | Autocomplete people names                     |
 | `GET /api/v1/people-types`           | List person types                             |
 | `GET /api/v1/document-types`         | List document types                           |
@@ -181,7 +184,7 @@
 | 6   | **Document update endpoint**             | ✓ `PUT /api/v1/documents/{id}` — update title, document_type_id, text_content                                                                                                       |
 | 7   | **Document delete endpoint**             | ✓ `DELETE /api/v1/documents/{id}` — remove document + files                                                                                                                         |
 | 8   | **Document tag/people assignment**       | ✓ `POST/DELETE /api/v1/documents/{id}/tags` and `/people` — junction management                                                                                                     |
-| 9   | **Tags CRUD API**                        | `GET/POST/PUT/DELETE /api/v1/tags` — create, read, update, delete (sqlc queries exist)                                                                                            |
+| 9   | **Tags CRUD API**                        | ✓ `GET/POST/PUT/DELETE /api/v1/tags` with `TagService` batch CRUD, auto-encoding, cache sync                                                                                    |
 | 10  | **People CRUD API**                      | `GET/POST/PUT/DELETE /api/v1/people` — manage people + people_types                                                                                                               |
 | 11  | **Document Types CRUD API**              | `GET/POST/PUT/DELETE /api/v1/document_types` — manage document types (sqlc queries exist)                                                                                         |
 | 12  | **Tag management page**                  | Replace placeholder: list, create, edit, delete tags                                                                                                                              |

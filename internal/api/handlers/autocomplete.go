@@ -21,50 +21,6 @@ func NewAutocompleteHandler(queries *database.Queries, logger *utils.Logger) *Au
 	}
 }
 
-func (h *AutocompleteHandler) ListTags(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	pb := utils.GetParamBag(r)
-	if pb == nil {
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	q := pb.Get("q", "")
-	limit := int32(pb.GetInt64("limit", 20, 1, 100))
-
-	if q == "" {
-		tags, err := h.queries.ListAllTags(ctx)
-		if err != nil {
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
-		}
-		response := make([]types.TagResponse, len(tags))
-		for i, t := range tags {
-			response[i] = types.TagResponse{ID: t.ID, Name: t.Name}
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
-		return
-	}
-
-	tags, err := h.queries.SearchTagsByName(ctx, database.SearchTagsByNameParams{
-		Name:  q + "%",
-		Limit: int64(limit),
-	})
-	if err != nil {
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	response := make([]types.TagResponse, len(tags))
-	for i, t := range tags {
-		response[i] = types.TagResponse{ID: t.ID, Name: t.Name}
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
-}
-
 func (h *AutocompleteHandler) ListPeople(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	pb := utils.GetParamBag(r)
