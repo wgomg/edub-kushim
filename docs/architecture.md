@@ -88,15 +88,17 @@ parent error message (via `Store.Discard`). The enrichment pipeline:
 1. **Text Reduction** (optional, configurable threshold) — if the document exceeds
    `enricher.textreducer.target_words`, TextRank extracts the most salient content.
 2. **Semantic Tag Pre-filtering** — document content is embedded via Hugot and cosine-
-   matched against all known tag embeddings. Top-N matches above `min_similarity`
-   are passed to the LLM as suggestions.
+   matched against all existing tag names (embeddings resolved from the shared store,
+   with cache-miss encode-on-the-fly). Top-N matches above `min_similarity` are passed
+   to the LLM as suggestions.
 3. **LLM Classification** — the reduced content, along with available document types
    and tag suggestions, is sent to the configured LLM provider. Returns structured
    JSON: title, type, tags, people (with types like author, sender), language.
    For non-Latin names (Korean, Arabic, Cyrillic, etc.), the LLM is prompted to
    provide a `name_romanized` field alongside the original name.
 4. **Post-LLM Tag Consolidation** — LLM output labels are re-matched against canonical
-   tag embeddings via `MatchEach`, fixing casing, hyphenation, and synonym mismatches.
+   tag embeddings via `Consolidate` (delegated to `TagService` → `Embedder.Consolidate`),
+   fixing casing, hyphenation, and synonym mismatches.
 5. **New Tag Cache Update** — any new tags created during enrichment are batch-created
    via `services.Tag.Create(ctx, analysis.Tags)`. The service pre-loads existing tags
    to avoid N+1 queries, encodes all new names in `batchSize=32` chunks, and adds them

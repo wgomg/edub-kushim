@@ -42,7 +42,7 @@
 - Text reduction via TextRank extractive summarization (TF-IDF, weighted PageRank, diversity penalty)
 - Semantic tag matching via Hugot (Go or ONNX backend), cosine similarity, chunked encoding
 - Dual text reduction: separate `target_words` for LLM and `reduce_target_words` for tag matching
-- Post-LLM tag consolidation via `MatchEach` (fixes casing, hyphenation, synonym mismatches)
+- Post-LLM tag consolidation via `Consolidate` (fixes casing, hyphenation, synonym mismatches)
 - Tag embedding cache (`BuildTagCache`) — pre-computed tag embeddings at startup
 - **New tag cache update**: newly created tags during enrichment are immediately encoded and added to the embedding cache
 - **Classification persistence**: enrichment writes to `document_tag`, `document_people`, `document.document_type_id` including auto-creating new tags/people as needed

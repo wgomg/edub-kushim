@@ -14,6 +14,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/contentanalyzer"
+	"github.com/wgomg/edub-kushim/internal/tools/adapters/tagmatcher"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -25,13 +26,13 @@ type Enricher struct {
 	services *types.CrudServices
 }
 
-func NewEnricher(cfg *config.Config, logger *utils.Logger, db *sql.DB, services *types.CrudServices) (*Enricher, error) {
+func NewEnricher(cfg *config.Config, logger *utils.Logger, db *sql.DB, services *types.CrudServices, matcher tagmatcher.Matcher) (*Enricher, error) {
 	e := &Enricher{
 		config:   cfg,
 		logger:   logger,
 		db:       db,
 		services: services,
-		runner:   tools.NewRunner(logger, cfg, []string{"textreducer", "contentanalyzer", "tagmatcher"}),
+		runner:   tools.NewRunnerWithMatcher(logger, cfg, []string{"textreducer", "contentanalyzer", "tagmatcher"}, matcher),
 	}
 	return e, nil
 }
@@ -87,8 +88,6 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 	}
 
 	var tagSuggestions []string
-	tagsToMatch := e.services.Tag.Entries()
-	e.logger.Debug(&logId, "tags store cache length: %d", len(tagsToMatch))
 
 	var tagsNames []string
 	for _, t := range allTags {
@@ -96,7 +95,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 	}
 
 	matchTagsStart := time.Now()
-	matchedTags, err := e.runner.MatchTags(ctx, document.DocumentID, tagsContent.Text, tagsToMatch)
+	matchedTags, err := e.runner.MatchTags(ctx, document.DocumentID, tagsContent.Text, tagsNames)
 	if err != nil {
 		e.logger.Error(&logId, "tag matching failed, using all tags: %v", err)
 		tagSuggestions = tagsNames
@@ -111,12 +110,12 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 	}
 
 	consolidateStart := time.Now()
-	consolidated, err := e.runner.MatchEach(ctx, document.DocumentID, analysis.Tags, tagsToMatch)
+	consolidated, err := e.services.Tag.Consolidate(ctx, document.DocumentID, analysis.Tags)
 	if err != nil {
 		e.logger.Error(&logId, "post-LLM consolidation failed: %v", err)
 	} else {
-		analysis.Tags = consolidated.Tags
-		e.logger.Debug(&logId, "post-LLM consolidation: %d tags (%s)", len(consolidated.Tags), time.Since(consolidateStart))
+		analysis.Tags = consolidated
+		e.logger.Debug(&logId, "post-LLM consolidation: %d tags (%s)", len(consolidated), time.Since(consolidateStart))
 	}
 
 	statsStr := "null"

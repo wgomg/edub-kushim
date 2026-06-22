@@ -19,6 +19,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/task"
 	taskhandlers "github.com/wgomg/edub-kushim/internal/task/handlers"
+	"github.com/wgomg/edub-kushim/internal/tools/adapters/tagmatcher"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -27,7 +28,6 @@ type Container struct {
 	logger     *utils.Logger
 	db         *sql.DB
 	engine     *search.Engine
-	cache      *cache.Cache
 	dispatcher *task.Dispatcher
 	runner     *task.Runner
 	store      *task.Store
@@ -66,25 +66,6 @@ func (c *Container) GetDB() (*sql.DB, error) {
 	return c.db, nil
 }
 
-func (c *Container) GetCache() (*cache.Cache, error) {
-	db, err := c.GetDB()
-	if err != nil {
-		return nil, err
-	}
-
-	if c.cache == nil {
-		tagCache, err := cache.BuildTagCache(context.Background(), db, c.logger, c.config.Enricher.TagMatcher)
-		if err != nil {
-			c.logger.Error(nil, "failed to build tag cache: %v — continuing with empty cache", err)
-			c.cache = cache.New()
-			c.cache.Set("tags", cache.NewEmbeddingStore(nil, nil))
-		} else {
-			c.cache = tagCache
-		}
-	}
-	return c.cache, nil
-}
-
 func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 	if c.dispatcher != nil {
 		return c.dispatcher, nil
@@ -95,15 +76,21 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 		return nil, err
 	}
 
-	tagCache, err := c.GetCache()
+	queries := database.NewQueries(db)
+
+	hugot, err := tagmatcher.NewHugot(c.logger, c.config.Enricher.TagMatcher, "tagmatcher")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("tag matcher: %w", err)
 	}
 
-	storeIf, _ := tagCache.Get("tags")
-	embStore := storeIf.(*cache.EmbeddingStore)
+	embStore := cache.NewEmbeddingStore(nil, nil)
+	if err := cache.BuildTagCache(context.Background(), db, c.logger, hugot, embStore); err != nil {
+		c.logger.Error(nil, "failed to build tag cache: %v — continuing with empty cache", err)
+	}
 
-	tagSvc, err := tags.NewTagService(database.NewQueries(db), embStore, c.logger, c.config.Enricher.TagMatcher)
+	hugot.SetStore(embStore)
+
+	tagSvc, err := tags.NewTagService(queries, embStore, c.logger, hugot)
 	if err != nil {
 		return nil, fmt.Errorf("tag service: %w", err)
 	}
@@ -124,7 +111,7 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 		return nil, err
 	}
 
-	enricher, err := enrichment.NewEnricher(c.config, c.logger, db, c.services)
+	enricher, err := enrichment.NewEnricher(c.config, c.logger, db, c.services, hugot)
 	if err != nil {
 		return nil, err
 	}

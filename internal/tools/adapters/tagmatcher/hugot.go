@@ -33,6 +33,7 @@ type Hugot struct {
 	consolidationSim float64 // tag→tag matching (post-LLM, higher)
 	chunkSize        int     // effective max tokens per chunk
 	chunkOverlap     int     // overlap in tokens between consecutive chunks
+	store            EmbeddingStore
 }
 
 type match struct {
@@ -95,14 +96,22 @@ func NewHugot(logger *utils.Logger, tmCfg config.TagMatcherConfig, pipeName stri
 	}, nil
 }
 
+func (h *Hugot) SetStore(s EmbeddingStore) {
+	h.store = s
+}
+
 func (h *Hugot) Close() {
-	if h.session != nil {
+	if h != nil && h.session != nil {
 		h.session.Destroy()
+		h.session = nil
 	}
 }
 
-func (h *Hugot) Match(ctx context.Context, docId, input string, tagsToMatch map[string][]float32) ([]string, error) {
-	if len(tagsToMatch) == 0 || h.topN == 0.0 {
+func (h *Hugot) Match(ctx context.Context, docId, input string, candidateTags []string) ([]string, error) {
+	if h == nil {
+		return nil, fmt.Errorf("tag matcher not initialized")
+	}
+	if len(candidateTags) == 0 || h.topN == 0 {
 		return nil, nil
 	}
 
@@ -115,7 +124,30 @@ func (h *Hugot) Match(ctx context.Context, docId, input string, tagsToMatch map[
 	}
 	inputEmb := embeddings[0]
 
-	entries := tagsToMatch
+	entries := make(map[string][]float32, len(candidateTags))
+	var missTags []string
+	missIdx := make(map[string]int)
+	for i, tag := range candidateTags {
+		if emb, ok := h.store.Get(tag); ok {
+			entries[tag] = emb
+		} else {
+			missTags = append(missTags, tag)
+			missIdx[tag] = i
+		}
+	}
+	if len(missTags) > 0 {
+		missVecs, err := h.Encode(ctx, &docId, missTags)
+		if err != nil {
+			h.logger.Debug(&docId, "hugot: encode cache-miss tags: %v", err)
+		} else {
+			for j, tag := range missTags {
+				if j < len(missVecs) && missVecs[j] != nil {
+					entries[tag] = missVecs[j]
+				}
+			}
+		}
+	}
+
 	matches := h.rankMatches(inputEmb, entries, h.minSimilarity)
 	topN := min(h.topN, len(matches))
 
@@ -124,7 +156,6 @@ func (h *Hugot) Match(ctx context.Context, docId, input string, tagsToMatch map[
 		result[i] = matches[i].tag
 	}
 
-	// Log top-15 similarity scores for debugging
 	showN := min(15, len(matches))
 	if showN > 0 {
 		topScores := make([]string, showN)
@@ -139,9 +170,13 @@ func (h *Hugot) Match(ctx context.Context, docId, input string, tagsToMatch map[
 	return result, nil
 }
 
-func (h *Hugot) MatchEach(ctx context.Context, docId string, queries []string, tagsToMatch map[string][]float32) ([]string, error) {
-	if len(tagsToMatch) == 0 || h.topN == 0.0 {
-		return nil, nil
+func (h *Hugot) Consolidate(ctx context.Context, docId string, queries []string) ([]string, error) {
+	if h == nil {
+		return nil, fmt.Errorf("tag matcher not initialized")
+	}
+	entries := h.store.Entries()
+	if len(entries) == 0 || h.consolidationSim == 0.0 {
+		return queries, nil
 	}
 
 	out, err := h.pipeline.RunPipeline(ctx, queries)
@@ -152,13 +187,11 @@ func (h *Hugot) MatchEach(ctx context.Context, docId string, queries []string, t
 		return queries, nil
 	}
 
-	entries := tagsToMatch
-
 	result := make([]string, len(queries))
 	for i, qEmb := range out.Embeddings {
 		matches := h.rankMatches(qEmb, entries, h.consolidationSim)
 		if len(matches) > 0 {
-			h.logger.Debug(&docId, "hugot: matchEach %q → %s (%.3f)", queries[i], matches[0].tag, matches[0].similarity)
+			h.logger.Debug(&docId, "hugot: consolidate %q → %s (%.3f)", queries[i], matches[0].tag, matches[0].similarity)
 			result[i] = matches[0].tag
 		} else {
 			result[i] = queries[i]
@@ -176,6 +209,9 @@ func (h *Hugot) Name() string {
 // are batched into a single pipeline call. Longer texts are encoded individually
 // with overlapping token chunks and mean-pooling.
 func (h *Hugot) Encode(ctx context.Context, docId *string, texts []string) ([][]float32, error) {
+	if h == nil {
+		return nil, fmt.Errorf("tag matcher not initialized")
+	}
 	if len(texts) == 0 {
 		return nil, nil
 	}

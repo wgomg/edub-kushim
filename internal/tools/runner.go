@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -26,7 +27,7 @@ type Runner struct {
 	textExtractor   textextractor.TextExtractor
 	ocr             ocr.OCR
 	pdfOptimizer    pdfoptimizer.PdfOptimizer
-	tagMatcher      tagmatcher.TagMatcher
+	tagMatcher      tagmatcher.Matcher
 	contentAnalyzer contentanalyzer.ContentAnalyzer
 	textReducer     textreducer.TextReducer
 }
@@ -118,8 +119,6 @@ func NewRunner(logger *utils.Logger, cfg *config.Config, tools []string) *Runner
 				Timeout: time.Duration(cfg.Enricher.TextReducer.Timeout) * time.Second,
 			}
 			r.textReducer, _ = textreducer.NewTextReducer(logger, toolCfg)
-		case "tagmatcher":
-			r.tagMatcher, _ = tagmatcher.NewTagMatcher(logger, cfg.Enricher.TagMatcher)
 		case "contentanalyzer":
 			toolCfg := config.ToolConfig{
 				Command: cfg.Enricher.ContentAnalyzer.Engine,
@@ -131,26 +130,12 @@ func NewRunner(logger *utils.Logger, cfg *config.Config, tools []string) *Runner
 	return r
 }
 
-func NewRunnerWithAdapters(
-	logger *utils.Logger,
-	cfg *config.Config,
-	textExtractor textextractor.TextExtractor,
-	ocr ocr.OCR,
-	pdfOptimizer pdfoptimizer.PdfOptimizer,
-	tagMatcher tagmatcher.TagMatcher,
-	contentAnalyzer contentanalyzer.ContentAnalyzer,
-	textReducer textreducer.TextReducer,
-) *Runner {
-	return &Runner{
-		logger:          logger,
-		config:          cfg,
-		textExtractor:   textExtractor,
-		ocr:             ocr,
-		pdfOptimizer:    pdfOptimizer,
-		tagMatcher:      tagMatcher,
-		contentAnalyzer: contentAnalyzer,
-		textReducer:     textReducer,
+func NewRunnerWithMatcher(logger *utils.Logger, cfg *config.Config, tools []string, matcher tagmatcher.Matcher) *Runner {
+	r := NewRunner(logger, cfg, tools)
+	if matcher != nil && slices.Contains(tools, "tagmatcher") {
+		r.tagMatcher = matcher
 	}
+	return r
 }
 
 func (r *Runner) ExtractText(ctx context.Context, path string) (*TextExtractionResult, error) {
@@ -278,25 +263,12 @@ func (r *Runner) ReduceContent(ctx context.Context, content string, chunkSize, t
 	}, nil
 }
 
-func (r *Runner) MatchTags(ctx context.Context, docId, input string, tagsToMatch map[string][]float32) (*TagMatchResult, error) {
+func (r *Runner) MatchTags(ctx context.Context, docId, input string, candidateTags []string) (*TagMatchResult, error) {
 	if r.tagMatcher == nil {
 		return nil, fmt.Errorf("tag matcher not configured")
 	}
 	tags, err := runWithTimeout(ctx, func() ([]string, error) {
-		return r.tagMatcher.Match(ctx, docId, input, tagsToMatch)
-	})
-	if err != nil {
-		return nil, fmt.Errorf("tag matcher: %w", err)
-	}
-	return &TagMatchResult{Tags: tags}, nil
-}
-
-func (r *Runner) MatchEach(ctx context.Context, docId string, queries []string, tagsToMatch map[string][]float32) (*TagMatchResult, error) {
-	if r.tagMatcher == nil {
-		return &TagMatchResult{Tags: queries}, nil
-	}
-	tags, err := runWithTimeout(ctx, func() ([]string, error) {
-		return r.tagMatcher.MatchEach(ctx, docId, queries, tagsToMatch)
+		return r.tagMatcher.Match(ctx, docId, input, candidateTags)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("tag matcher: %w", err)
@@ -324,12 +296,4 @@ func (r *Runner) AnalyzeContent(ctx context.Context, text string, docTypes []dat
 		Stats:    result.Stats,
 		Prompt:   result.Prompt,
 	}, nil
-}
-
-// see comment at internal/tools/adapters/tagmatcher/adapter.go
-func (r *Runner) EncodeTags(ctx context.Context, docId *string, tags []string) ([][]float32, error) {
-	if r.tagMatcher == nil {
-		return nil, fmt.Errorf("tag matcher not configured")
-	}
-	return r.tagMatcher.Encode(ctx, docId, tags)
 }

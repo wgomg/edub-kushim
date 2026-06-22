@@ -2,11 +2,9 @@ package tags
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/wgomg/edub-kushim/internal/cache"
-	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/tagmatcher"
@@ -61,27 +59,23 @@ type DeleteResult struct {
 }
 
 type TagService struct {
-	queries *database.Queries
-	store   *cache.EmbeddingStore
-	encoder tagmatcher.TagMatcher
-	logger  *utils.Logger
+	queries  *database.Queries
+	store    *cache.EmbeddingStore
+	embedder tagmatcher.Embedder
+	logger   *utils.Logger
 }
 
-func NewTagService(queries *database.Queries, store *cache.EmbeddingStore, logger *utils.Logger, tmCfg config.TagMatcherConfig) (*TagService, error) {
-	encoder, err := tagmatcher.NewTagMatcher(logger, tmCfg)
-	if err != nil {
-		return nil, fmt.Errorf("new tag matcher: %w", err)
-	}
+func NewTagService(queries *database.Queries, store *cache.EmbeddingStore, logger *utils.Logger, embedder tagmatcher.Embedder) (*TagService, error) {
 	return &TagService{
-		queries: queries,
-		store:   store,
-		encoder: encoder,
-		logger:  logger,
+		queries:  queries,
+		store:    store,
+		embedder: embedder,
+		logger:   logger,
 	}, nil
 }
 
 func (s *TagService) Close() error {
-	s.encoder.Close()
+	s.embedder.Close()
 	return nil
 }
 
@@ -307,8 +301,8 @@ func (s *TagService) Delete(ctx context.Context, ids []int64) ([]DeleteResult, e
 	return results, nil
 }
 
-func (s *TagService) Entries() map[string][]float32 {
-	return s.store.Entries()
+func (s *TagService) Consolidate(ctx context.Context, docId string, queries []string) ([]string, error) {
+	return s.embedder.Consolidate(ctx, docId, queries)
 }
 
 func (s *TagService) encodeAndAddBatch(ctx context.Context, names []string) {
@@ -316,7 +310,7 @@ func (s *TagService) encodeAndAddBatch(ctx context.Context, names []string) {
 		end := min(i+batchSize, len(names))
 		chunk := names[i:end]
 
-		vecs, err := s.encoder.Encode(ctx, nil, chunk)
+		vecs, err := s.embedder.Encode(ctx, nil, chunk)
 		if err != nil {
 			s.logger.Error(nil, "tag service: encode batch %v: %v", chunk, err)
 			continue

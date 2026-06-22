@@ -113,7 +113,7 @@ internal/
 │   │   │   ├── font_embed.go   # LiberationSans TTF embedding
 │   │   │   └── kushim_font.ttf # Embedded font file
 │   │   ├── tagmatcher/            # Semantic tag matching (embeddings)
-│   │   │   ├── adapter.go         # TagMatcher interface + factory
+│   │   │   ├── adapter.go         # Matcher, Embedder, EmbeddingStore interfaces
 │   │   │   └── hugot.go           # Hugot session (Go or ORT backend), cosine similarity, chunked encoding
 │   │   ├── textextractor/
 │   │   │   ├── adapter.go      # Text extractor interface

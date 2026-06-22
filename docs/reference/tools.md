@@ -6,11 +6,11 @@
 
 `Runner`
 
-- **Fields**: `logger`, `config`, `textExtractor`, `ocr`, `pdfOptimizer`, `tagMatcher`, `contentAnalyzer`, `textReducer`
+- **Fields**: `logger`, `config`, `textExtractor`, `ocr`, `pdfOptimizer`, `tagMatcher tagmatcher.Matcher`, `contentAnalyzer`, `textReducer`
 - **Functions**:
-  - `NewRunner(logger, cfg, tools []string) *Runner` — Initializes only the listed tool adapters (e.g., `["textextractor","ocr","pdfoptimizer"]` for consumer, `["textreducer","contentanalyzer","tagmatcher"]` for enricher). Tag matcher init errors are silently ignored (runner continues without it).
-  - `NewRunnerWithAdapters(logger, cfg, adapters...) *Runner` — Dependency injection variant
-- **Methods**: `ExtractText`, `OCR(ctx, docId, path)`, `OptimizePdf(ctx, docId, path)`, `ReduceContent`, `MatchTags(ctx, docId, input, tagsToMatch)`, `MatchEach(ctx, docId, queries, tagsToMatch)`, `EncodeTags(ctx, *docId, tags)`, `AnalyzeContent`
+  - `NewRunner(logger, cfg, tools []string) *Runner` — Initializes only the listed tool adapters (e.g., `["textextractor","ocr","pdfoptimizer"]` for consumer). No longer creates a tagmatcher internally.
+  - `NewRunnerWithMatcher(logger, cfg, tools, matcher tagmatcher.Matcher) *Runner` — Calls `NewRunner` then conditionally sets `r.tagMatcher` if `matcher != nil` and `"tagmatcher"` is in the tools list.
+- **Methods**: `ExtractText`, `OCR(ctx, docId, path)`, `OptimizePdf(ctx, docId, path)`, `ReduceContent`, `MatchTags(ctx, docId, input, candidateTags []string)`, `AnalyzeContent`
 - **Result types**: `TextExtractionResult`, `OCRResult`, `PdfOptimizationResult`, `TextReducerResult` (with Text, WordCount, CharCount, TargetWordCount), `TagMatchResult`, `ContentAnalysisResult` (with People)
 - **Helper**: `runWithTimeout[T](ctx, fn) (T, error)` — Generic goroutine wrapper with context cancellation
 
@@ -97,21 +97,29 @@ type ContentAnalyzer interface {
 
 ## `adapters/tagmatcher/adapter.go`
 
-### Interface
+### Interfaces
 
 ```go
-type TagMatcher interface {
-    Match(ctx, docId, input string, tagsToMatch map[string][]float32) ([]string, error)
-    MatchEach(ctx, docId string, queries []string, tagsToMatch map[string][]float32) ([]string, error)
-    Encode(ctx, docId *string, texts []string) ([][]float32, error)
+type Matcher interface {
+    Match(ctx, docId, input string, candidateTags []string) ([]string, error)
     Close()
     Name() string
 }
+
+type Embedder interface {
+    Encode(ctx, docId *string, texts []string) ([][]float32, error)
+    Consolidate(ctx, docId string, queries []string) ([]string, error)
+    Close()
+    Name() string
+}
+
+type EmbeddingStore interface {
+    Get(key string) ([]float32, bool)
+    Entries() map[string][]float32
+}
 ```
 
-### Factory
-
-`NewTagMatcher(logger, tmConfig)` — Returns `Hugot` adapter
+The `Matcher` interface is used by the Runner for document-to-tag matching. The `Embedder` interface is used by TagService for encoding and post-LLM consolidation. The `EmbeddingStore` interface provides read access to the shared tag embedding cache. The composition root builds a single `*Hugot` that satisfies both `Matcher` and `Embedder`, injected into all consumers.
 
 ---
 
@@ -125,7 +133,14 @@ type TagMatcher interface {
 - **Chunked encoding**: Documents exceeding `max_position_embeddings` are split into overlapping token chunks, mean-pooled
 - **Ranking**: Cosine similarity on L2-normalized embeddings (dot product); separate `minSimilarity` (doc→tag) and `consolidationSim` (tag→tag consolidation)
 - **Config**: `TopN`, `MinSimilarity`, `ConsolidationSimilarity`, `ChunkSize` (auto-derived from model config), `ChunkOverlap` (10% of chunk size)
-- **Methods**: `Encode(ctx, *docId, texts)`, `Match(ctx, docId, input, tagsToMatch)`, `MatchEach(ctx, docId, queries, tagsToMatch)`, `Close()`
+- **Fields**: `store EmbeddingStore` — shared reference to the tag embedding cache
+- **Methods**:
+  - `Match(ctx, docId, input, candidateTags []string)` — Names-based matching: looks up each candidate in the store, encodes cache-miss tags on the fly, ranks by cosine similarity
+  - `Consolidate(ctx, docId, queries []string)` — Reads all entries from the store internally, encodes LLM output labels, re-matches against canonical tag embeddings
+  - `Encode(ctx, *docId, texts)` — Batch embedding with chunked encoding for long inputs
+  - `SetStore(s EmbeddingStore)` — Injects the shared store reference after construction
+  - `Close()` — Idempotent (nil-safe, sets session to nil after destroy)
+- **Nil-receiver guards**: `Match`, `Consolidate`, `Encode` all return an error if `h == nil`, preventing typed-nil interface panics
 - **Helpers**: `meanPool`, `rankMatches`, `cosineSimilarity`, `tokenize`, `encodeChunked`, `readMaxPositionEmbeddings`, `downloadLib`, `getBackendSession`
 
 ---

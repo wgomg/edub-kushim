@@ -24,6 +24,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/task"
 	taskhandlers "github.com/wgomg/edub-kushim/internal/task/handlers"
+	"github.com/wgomg/edub-kushim/internal/tools/adapters/tagmatcher"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -54,15 +55,17 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 	queries := database.NewQueries(db)
 	engine := search.NewEngine(logger, db)
 
-	tagCache, err := cache.BuildTagCache(context.Background(), db, logger, cfg.Enricher.TagMatcher)
+	hugot, err := tagmatcher.NewHugot(logger, cfg.Enricher.TagMatcher, "tagmatcher")
 	if err != nil {
-		logger.Error(nil, "failed to build tag cache: %v — continuing with empty cache", err)
-		tagCache = cache.New()
-		tagCache.Set("tags", cache.NewEmbeddingStore(nil, nil))
+		logger.Fatal("tag matcher: ", err)
 	}
 
-	storeIf, _ := tagCache.Get("tags")
-	embStore := storeIf.(*cache.EmbeddingStore)
+	embStore := cache.NewEmbeddingStore(nil, nil)
+	if err := cache.BuildTagCache(context.Background(), db, logger, hugot, embStore); err != nil {
+		logger.Error(nil, "failed to build tag cache: %v — continuing with empty cache", err)
+	}
+
+	hugot.SetStore(embStore)
 
 	s := &Server{
 		logger:   logger,
@@ -75,7 +78,7 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 	workStore.SetOwnerID(ownerID)
 	configStore := task.NewStore(queries)
 
-	s.services.Tag, err = tags.NewTagService(queries, embStore, logger, cfg.Enricher.TagMatcher)
+	s.services.Tag, err = tags.NewTagService(queries, embStore, logger, hugot)
 	if err != nil {
 		logger.Fatal("tag service: ", err)
 	}
@@ -89,7 +92,7 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 		logger.Fatal("consumer: ", err)
 	}
 
-	enricher, err := enrichment.NewEnricher(&cfg, logger, db, s.services)
+	enricher, err := enrichment.NewEnricher(&cfg, logger, db, s.services, hugot)
 	if err != nil {
 		logger.Fatal("enricher: ", err)
 	}
