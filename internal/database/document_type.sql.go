@@ -18,6 +18,19 @@ func (q *Queries) CreateDocumentType(ctx context.Context, name string) (sql.Resu
 	return q.db.ExecContext(ctx, createDocumentType, name)
 }
 
+const createDocumentTypeFull = `-- name: CreateDocumentTypeFull :execresult
+INSERT INTO document_type (name, description) VALUES (?, ?)
+`
+
+type CreateDocumentTypeFullParams struct {
+	Name        string
+	Description string
+}
+
+func (q *Queries) CreateDocumentTypeFull(ctx context.Context, arg CreateDocumentTypeFullParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, createDocumentTypeFull, arg.Name, arg.Description)
+}
+
 const deleteDocumentType = `-- name: DeleteDocumentType :exec
 DELETE FROM document_type WHERE id = ?
 `
@@ -33,6 +46,22 @@ SELECT id, name, description, created_at FROM document_type WHERE id = ?
 
 func (q *Queries) GetDocumentType(ctx context.Context, id int64) (DocumentType, error) {
 	row := q.db.QueryRowContext(ctx, getDocumentType, id)
+	var i DocumentType
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Description,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getDocumentTypeByName = `-- name: GetDocumentTypeByName :one
+SELECT id, name, description, created_at FROM document_type WHERE name = ?
+`
+
+func (q *Queries) GetDocumentTypeByName(ctx context.Context, name string) (DocumentType, error) {
+	row := q.db.QueryRowContext(ctx, getDocumentTypeByName, name)
 	var i DocumentType
 	err := row.Scan(
 		&i.ID,
@@ -139,6 +168,43 @@ func (q *Queries) ListDocumentTypes(ctx context.Context, arg ListDocumentTypesPa
 	return items, nil
 }
 
+const searchDocumentTypeByName = `-- name: SearchDocumentTypeByName :many
+SELECT id, name, description, created_at FROM document_type WHERE name LIKE ? ORDER BY name ASC LIMIT ?
+`
+
+type SearchDocumentTypeByNameParams struct {
+	Name  string
+	Limit int64
+}
+
+func (q *Queries) SearchDocumentTypeByName(ctx context.Context, arg SearchDocumentTypeByNameParams) ([]DocumentType, error) {
+	rows, err := q.db.QueryContext(ctx, searchDocumentTypeByName, arg.Name, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DocumentType
+	for rows.Next() {
+		var i DocumentType
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Description,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateDocumentType = `-- name: UpdateDocumentType :exec
 UPDATE document_type SET name = ? WHERE id = ?
 `
@@ -150,5 +216,20 @@ type UpdateDocumentTypeParams struct {
 
 func (q *Queries) UpdateDocumentType(ctx context.Context, arg UpdateDocumentTypeParams) error {
 	_, err := q.db.ExecContext(ctx, updateDocumentType, arg.Name, arg.ID)
+	return err
+}
+
+const updateDocumentTypeFull = `-- name: UpdateDocumentTypeFull :exec
+UPDATE document_type SET name = ?, description = ? WHERE id = ?
+`
+
+type UpdateDocumentTypeFullParams struct {
+	Name        string
+	Description string
+	ID          int64
+}
+
+func (q *Queries) UpdateDocumentTypeFull(ctx context.Context, arg UpdateDocumentTypeFullParams) error {
+	_, err := q.db.ExecContext(ctx, updateDocumentTypeFull, arg.Name, arg.Description, arg.ID)
 	return err
 }

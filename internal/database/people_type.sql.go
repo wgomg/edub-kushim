@@ -48,6 +48,22 @@ func (q *Queries) GetPeopleType(ctx context.Context, id int64) (PeopleType, erro
 	return i, err
 }
 
+const getPeopleTypeByName = `-- name: GetPeopleTypeByName :one
+SELECT id, name, description, created_at FROM people_type WHERE name = ?
+`
+
+func (q *Queries) GetPeopleTypeByName(ctx context.Context, name string) (PeopleType, error) {
+	row := q.db.QueryRowContext(ctx, getPeopleTypeByName, name)
+	var i PeopleType
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Description,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const listAllPeopleTypes = `-- name: ListAllPeopleTypes :many
 SELECT id, name, description, created_at FROM people_type ORDER BY created_at DESC
 `
@@ -118,6 +134,43 @@ type ListPeopleTypesParams struct {
 
 func (q *Queries) ListPeopleTypes(ctx context.Context, arg ListPeopleTypesParams) ([]PeopleType, error) {
 	rows, err := q.db.QueryContext(ctx, listPeopleTypes, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PeopleType
+	for rows.Next() {
+		var i PeopleType
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Description,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const searchPeopleTypeByName = `-- name: SearchPeopleTypeByName :many
+SELECT id, name, description, created_at FROM people_type WHERE name LIKE ? ORDER BY name ASC LIMIT ?
+`
+
+type SearchPeopleTypeByNameParams struct {
+	Name  string
+	Limit int64
+}
+
+func (q *Queries) SearchPeopleTypeByName(ctx context.Context, arg SearchPeopleTypeByNameParams) ([]PeopleType, error) {
+	rows, err := q.db.QueryContext(ctx, searchPeopleTypeByName, arg.Name, arg.Limit)
 	if err != nil {
 		return nil, err
 	}

@@ -6,25 +6,30 @@
 internal/
 ├── api/                    # HTTP handlers, middleware, types
 │   ├── handlers/
-│   │   ├── autocomplete.go # Autocomplete handlers (tags, people, person types, doc types)
 │   │   ├── config.go       # Config handler: GET/PUT /wizard/config, GET /wizard/config/status
 │   │   ├── consume.go     # Consume handler (async, creates paired consume+enrich tasks, returns batch ID)
 │   │   ├── document.go    # Document API handlers (list, get, search, structured search, get file) — returns tags, people, language, doc type
+│   │   ├── document_type.go # Document type CRUD handlers (list, create, update, delete)
 │   │   ├── health.go      # Health check handler
-│   │   └── saved_search.go # Saved search CRUD handlers (create, list, delete)
+│   │   ├── people.go      # People + people-type CRUD handlers (list, create, update, delete)
+│   │   ├── saved_search.go # Saved search CRUD handlers (create, list, delete)
+│   │   ├── tag.go         # Tag CRUD handlers (list, create, update, delete)
 │   │   └── task.go        # Task API handlers (list, get, batch summary, global summary with waiting status)
 │   ├── server.go          # HTTP server setup, middleware, route registration, static SPA (Go 1.22+ patterns)
 │   └── types/
-│       ├── autocomplete.go    # Autocomplete response types (PersonRef, DocumentTypeRef, PeopleTypeRef)
 │       ├── config.go          # Config response types (ConfigResponse, ConfigStatusResponse, engine responses)
 │       ├── document.go        # API response types (with tags, people, language, doc type, SearchResponse)
-│       └── saved_search.go    # Saved search request/response types
+│       ├── document_type.go   # Document type CRUD request/response types
+│       ├── people.go          # People + people-type CRUD request/response types
+│       ├── saved_search.go    # Saved search request/response types
+│       ├── tag.go             # Tag request/response types
 │       └── task.go            # Task/batch/global summary response types (with waiting status)
 ├── cache/                 # Embedding cache system
 │   ├── cache.go           # Generic thread-safe store (Set, Get)
 │   ├── bootstrap.go       # BuildTagCache — pre-compute tag embeddings at startup
 │   └── embedding_store.go # EmbeddingStore (map[string][]float32 with thread-safe ops)
 ├── commands/              # CLI command framework
+├── documenttypes/         # DocumentTypeService batch CRUD
 │   ├── commands.go        # Command definitions and runner
 │   ├── consume.go         # Document consumption command (--bg, --batch, cancel)
 │   ├── container.go       # Dependency injection container (DB, pools, cache, dispatcher); includes config pool
@@ -33,6 +38,7 @@ internal/
 │   ├── setup.go           # Setup command — launches web wizard by default, --cli for terminal mode
 │   └── task.go            # Task commands (list, status, retry)
 ├── enrichment/            # Enrichment engine (LLM pipeline)
+├── people/                # PeopleService + PeopleTypeService batch CRUD
 │   ├── enricher.go        # Enricher: dual text reduction → tag matching → LLM → consolidation → people/tag/doc type with romanization + normalization
 ├── pool/                  # Generic worker pool
 │   └── pool.go            # Pool struct, Start(ctx), Stop(ctx), worker loop

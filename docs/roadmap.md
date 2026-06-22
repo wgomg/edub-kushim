@@ -77,36 +77,45 @@
 
 ### API Endpoints
 
-| Endpoint                             | Description                                   |
-| ------------------------------------ | --------------------------------------------- |
-| `GET /health`                        | Health check                                  |
-| `GET /api/v1/documents`              | List documents (sortable, paginated)          |
-| `GET /api/v1/documents/{id}`         | Get document with tags, people                |
-| `GET /api/v1/documents/{id}/file`    | Download PDF file                             |
-| `GET /api/v1/documents/search`       | FTS5 search with snippets                     |
-| `POST /api/v1/documents/search`      | Structured search (tags, people, dates, size) |
-| `PUT /api/v1/documents/{id}`         | Update document metadata (title, type, language) |
-| `DELETE /api/v1/documents/{id}`      | Delete document + files                        |
-| `POST /api/v1/documents/{id}/tags`   | Add tag assignment to document                 |
-| `DELETE /api/v1/documents/{id}/tags` | Remove tag assignment from document            |
-| `POST /api/v1/documents/{id}/people` | Add person assignment to document              |
-| `DELETE /api/v1/documents/{id}/people` | Remove person assignment from document       |
-| `GET /api/v1/tags`                   | List/autocomplete tag names (`?q=`, `limit`, `offset`) |
-| `POST /api/v1/tags`                  | Create tag                             |
-| `PUT /api/v1/tags/{id}`              | Update tag name                         |
-| `DELETE /api/v1/tags/{id}`           | Delete tag                              |
-| `GET /api/v1/people?q=`              | Autocomplete people names                     |
-| `GET /api/v1/people-types`           | List person types                             |
-| `GET /api/v1/document-types`         | List document types                           |
-| `GET /api/v1/saved-searches`         | List saved searches                           |
-| `POST /api/v1/saved-searches`        | Create saved search                           |
-| `DELETE /api/v1/saved-searches/{id}` | Delete saved search                           |
-| `POST /api/v1/consume`               | Enqueue inbox files                           |
-| `GET /api/v1/tasks`                  | List tasks (batch, status filters)            |
-| `GET /api/v1/tasks/{id}`             | Get single task                               |
-| `GET /api/v1/batches`                | List batch summaries                          |
-| `GET /api/v1/batches/{id}`           | Get single batch summary                      |
-| `GET /api/v1/summary`                | Global totals across all batches              |
+| Endpoint                               | Description                                            |
+| -------------------------------------- | ------------------------------------------------------ |
+| `GET /health`                          | Health check                                           |
+| `GET /api/v1/documents`                | List documents (sortable, paginated)                   |
+| `GET /api/v1/documents/{id}`           | Get document with tags, people                         |
+| `GET /api/v1/documents/{id}/file`      | Download PDF file                                      |
+| `GET /api/v1/documents/search`         | FTS5 search with snippets                              |
+| `POST /api/v1/documents/search`        | Structured search (tags, people, dates, size)          |
+| `PUT /api/v1/documents/{id}`           | Update document metadata (title, type, language)       |
+| `DELETE /api/v1/documents/{id}`        | Delete document + files                                |
+| `POST /api/v1/documents/{id}/tags`     | Add tag assignment to document                         |
+| `DELETE /api/v1/documents/{id}/tags`   | Remove tag assignment from document                    |
+| `POST /api/v1/documents/{id}/people`   | Add person assignment to document                      |
+| `DELETE /api/v1/documents/{id}/people` | Remove person assignment from document                 |
+| `GET /api/v1/tags`                     | List/autocomplete tag names (`?q=`, `limit`, `offset`) |
+| `POST /api/v1/tags`                    | Create tag                                             |
+| `PUT /api/v1/tags/{id}`                | Update tag name                                        |
+| `DELETE /api/v1/tags/{id}`             | Delete tag                                             |
+| `GET /api/v1/people`                   | List/autocomplete people names (`?q=`, `limit`, `offset`) |
+| `POST /api/v1/people`                  | Create person                                          |
+| `PUT /api/v1/people/{id}`              | Update person name, native name                        |
+| `DELETE /api/v1/people/{id}`           | Delete person (CASCADE to document_people)             |
+| `GET /api/v1/people-types`             | List/autocomplete person types (`?q=`, `limit`, `offset`) |
+| `POST /api/v1/people-types`            | Create person type                                     |
+| `PUT /api/v1/people-types/{id}`        | Update person type name, description                   |
+| `DELETE /api/v1/people-types/{id}`     | Delete person type (409 if referenced)                 |
+| `GET /api/v1/document-types`           | List/autocomplete document types (`?q=`, `limit`, `offset`) |
+| `POST /api/v1/document-types`          | Create document type with description                  |
+| `PUT /api/v1/document-types/{id}`      | Update document type name, description                 |
+| `DELETE /api/v1/document-types/{id}`   | Delete document type (409 if referenced)               |
+| `GET /api/v1/saved-searches`           | List saved searches                                    |
+| `POST /api/v1/saved-searches`          | Create saved search                                    |
+| `DELETE /api/v1/saved-searches/{id}`   | Delete saved search                                    |
+| `POST /api/v1/consume`                 | Enqueue inbox files                                    |
+| `GET /api/v1/tasks`                    | List tasks (batch, status filters)                     |
+| `GET /api/v1/tasks/{id}`               | Get single task                                        |
+| `GET /api/v1/batches`                  | List batch summaries                                   |
+| `GET /api/v1/batches/{id}`             | Get single batch summary                               |
+| `GET /api/v1/summary`                  | Global totals across all batches                       |
 
 ### CLI Commands
 
@@ -144,7 +153,7 @@
 | ----------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `/` (dashboard)   | ✓      | Health + summary stats + recent docs                                                                                                                             |
 | `/documents`      | ✓      | Structured search bar + filter panel + saved searches + sortable DataTable                                                                                       |
-| `/documents/[id]` | ✓      | PDF preview + editable metadata sidebar (title, type, language, tags, people) + delete                                                                                              |
+| `/documents/[id]` | ✓      | PDF preview + editable metadata sidebar (title, type, language, tags, people) + delete                                                                           |
 | `/settings`       | ✓      | Full configuration form: server host/port, OCR, consumer, text extractor, PDF optimizer, enricher, content analyzer (LLM) with tokens, tag matcher, text reducer |
 | `/tags`           | ✗      | Placeholder: "Tag management will go here."                                                                                                                      |
 | `/tasks`          | ✓      | Batch list + task drill-down                                                                                                                                     |
@@ -180,13 +189,13 @@
 | 2   | **Continue interrupted tasks**           | ✓ Manual retry for failed tasks (API + web UI). Wizard auto-resumes on restart, re-submission does not duplicate tasks, failed config downloads surfaced with retry action.       |
 | 3   | **Docker Compose quick-start**           | ✓ Single `docker compose up` command runs the full stack — multi-stage Dockerfile builds everything from source, entrypoint handles first-boot setup and conditional apt installs |
 | 4   | **Document detail — tags/people/type**   | ✓ Display tags, people, and document type in the sidebar                                                                                                                          |
-| 5   | **Document metadata editing**            | ✓ Detail page sidebar — edit tags, people, type, title (override LLM)                                                                                                               |
-| 6   | **Document update endpoint**             | ✓ `PUT /api/v1/documents/{id}` — update title, document_type_id, text_content                                                                                                       |
-| 7   | **Document delete endpoint**             | ✓ `DELETE /api/v1/documents/{id}` — remove document + files                                                                                                                         |
-| 8   | **Document tag/people assignment**       | ✓ `POST/DELETE /api/v1/documents/{id}/tags` and `/people` — junction management                                                                                                     |
-| 9   | **Tags CRUD API**                        | ✓ `GET/POST/PUT/DELETE /api/v1/tags` with `TagService` batch CRUD, auto-encoding, cache sync                                                                                    |
-| 10  | **People CRUD API**                      | `GET/POST/PUT/DELETE /api/v1/people` — manage people + people_types                                                                                                               |
-| 11  | **Document Types CRUD API**              | `GET/POST/PUT/DELETE /api/v1/document_types` — manage document types (sqlc queries exist)                                                                                         |
+| 5   | **Document metadata editing**            | ✓ Detail page sidebar — edit tags, people, type, title (override LLM)                                                                                                             |
+| 6   | **Document update endpoint**             | ✓ `PUT /api/v1/documents/{id}` — update title, document_type_id, text_content                                                                                                     |
+| 7   | **Document delete endpoint**             | ✓ `DELETE /api/v1/documents/{id}` — remove document + files                                                                                                                       |
+| 8   | **Document tag/people assignment**       | ✓ `POST/DELETE /api/v1/documents/{id}/tags` and `/people` — junction management                                                                                                   |
+| 9   | **Tags CRUD API**                        | ✓ `GET/POST/PUT/DELETE /api/v1/tags` with `TagService` batch CRUD, auto-encoding, cache sync                                                                                      |
+| 10  | **People CRUD API**                      | ✓ `GET/POST/PUT/DELETE /api/v1/people` + `/api/v1/people-types` — `PeopleService` + `PeopleTypeService` batch CRUD                                                                 |
+| 11  | **Document Types CRUD API**              | ✓ `GET/POST/PUT/DELETE /api/v1/document-types` — `DocumentTypeService` batch CRUD                                                                                                 |
 | 12  | **Tag management page**                  | Replace placeholder: list, create, edit, delete tags                                                                                                                              |
 | 13  | **People management page**               | New route: list, create, edit, delete people and their types                                                                                                                      |
 | 14  | **Document type management page**        | New route: list, create, edit, delete document types                                                                                                                              |

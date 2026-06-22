@@ -104,15 +104,15 @@ Migrations run automatically on startup (no manual CLI command needed):
 
 ### Document type
 
-`CreateDocumentType`, `GetDocumentType`, `ListDocumentTypes`, `ListAllDocumentTypes`, `ListAllDocumentTypesNames`, `UpdateDocumentType`, `DeleteDocumentType`
+`CreateDocumentType` (name only), `CreateDocumentTypeFull` (name + description), `GetDocumentType`, `GetDocumentTypeByName`, `ListDocumentTypes`, `ListAllDocumentTypes`, `ListAllDocumentTypesNames`, `SearchDocumentTypeByName` (prefix search with `LIKE ?` + `LIMIT`), `UpdateDocumentType` (name only), `UpdateDocumentTypeFull` (name + description), `DeleteDocumentType`
 
 ### People
 
-`CreatePeople` (with `Name` + `NameNative`), `GetPeople`, `GetPeopleByName`, `ListPeople`, `ListAllPeople`, `SearchPeopleByName` (prefix search with `LIKE ?` + `LIMIT`), `UpdatePeople`, `UpdatePeopleNative` (fills `name_native` only if currently NULL), `DeletePeople`
+`CreatePeople` (`INSERT OR IGNORE` with `Name` + `NameNative`), `GetPeople`, `GetPeopleByName`, `ListPeople`, `ListAllPeople`, `SearchPeopleByName` (prefix search with `LIKE ?` + `LIMIT`), `UpdatePeople` (name only), `UpdatePeopleFull` (name + name_native), `UpdatePeopleNative` (fills `name_native` only if currently NULL), `DeletePeople`
 
 ### People type
 
-`CreatePeopleType`, `GetPeopleType`, `ListPeopleTypes`, `ListAllPeopleTypes`, `ListAllPeopleTypesNames`, `UpdatePeopleType`, `DeletePeopleType`
+`CreatePeopleType`, `GetPeopleType`, `GetPeopleTypeByName`, `ListPeopleTypes`, `ListAllPeopleTypes`, `ListAllPeopleTypesNames`, `SearchPeopleTypeByName` (prefix search with `LIKE ?` + `LIMIT`), `UpdatePeopleType`, `DeletePeopleType`
 
 ### Document people
 

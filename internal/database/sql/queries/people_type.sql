@@ -16,5 +16,11 @@ INSERT INTO people_type (name, description) VALUES (?, ?);
 -- name: UpdatePeopleType :exec
 UPDATE people_type SET name = ?, description = ? WHERE id = ?;
 
+-- name: GetPeopleTypeByName :one
+SELECT * FROM people_type WHERE name = ?;
+
+-- name: SearchPeopleTypeByName :many
+SELECT * FROM people_type WHERE name LIKE ? ORDER BY name ASC LIMIT ?;
+
 -- name: DeletePeopleType :exec
 DELETE FROM people_type WHERE id = ?;

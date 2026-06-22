@@ -7,14 +7,14 @@
 - `Server`
   - **Fields**: `httpServer *http.Server`, `logger *utils.Logger`, `addr string`, `pools struct { consume; enrich; config }`, `owner`, `ownerID`, `heartbeat`, `services *types.CrudServices`
   - **Methods**:
-    - `NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server` — Builds tag cache (`*cache.Cache` registry), extracts `*cache.EmbeddingStore` under `"tags"` key, builds `CrudServices{Tag: tagSvc}`, creates dispatcher, registers routes
+    - `NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server` — Builds tag cache (`*cache.Cache` registry), extracts `*cache.EmbeddingStore` under `"tags"` key, builds `CrudServices` with `Tag`, `People`, `PeopleType`, `DocumentType` services, creates dispatcher, registers routes
     - `Start() error` — Starts all pools, then HTTP server
     - `Shutdown(ctx context.Context) error` — Stops heartbeat, HTTP server, then pools, then `services.Close()` (which iterates all `io.Closer` fields)
     - `Addr() string`
 
 ### Functions
 
-- `registerRoutes(mux *http.ServeMux, logger, queries, engine, dispatcher, cfg, owner, services *types.CrudServices)` — Registers all API routes including document, tag CRUD, task/batch, saved-search, config wizard routes; passes `services` to `NewDocumentHandler` and `NewTagHandler`. Uses Go 1.22+ pattern routing (`"GET /api/v1/documents/{id}"`).
+- `registerRoutes(mux *http.ServeMux, logger, queries, engine, dispatcher, cfg, owner, services *types.CrudServices)` — Registers all API routes including document, tag CRUD, people CRUD, document-type CRUD, task/batch, saved-search, config wizard routes; passes `services` to `NewDocumentHandler`, `NewTagHandler`, `NewPeopleHandler`, and `NewDocumentTypeHandler`. Uses Go 1.22+ pattern routing (`"GET /api/v1/documents/{id}"`).
 - `registerStaticRoutes(mux *http.ServeMux)` — Registers `"GET /{path...}"` handler; tries to serve the requested file from the embedded FS, falls back to `index.html` for client-side SPA routes if the file doesn't exist
 - `chainMiddleware(logger *utils.Logger, h http.Handler) http.Handler` — Composes request + parambag middleware
 - `requestMiddleware(logger *utils.Logger, next http.Handler) http.Handler` — Adds reqid to context, logs requests
@@ -135,17 +135,37 @@
     - `Update(w, r)` — `PUT /api/v1/tags/{id}` — Accepts `{name}`. Calls `services.Tag.Update(ctx, []UpdatePair{{ID: id, Name: name}})`. Maps status: `Updated`/`Noop` → 200 with `{id,name}`, `Conflict` → 409, `NotFound` → 404, `Invalid` → 400.
     - `Delete(w, r)` — `DELETE /api/v1/tags/{id}` — Calls `services.Tag.Delete(ctx, []int64{id})`. Maps status: `Deleted` → 204, `NotFound` → 404.
 
-## `handlers/autocomplete.go`
+---
+
+## `handlers/people.go`
+
+### Structs
+
+- `PeopleHandler`
+  - **Fields**: `services *itypes.CrudServices`, `logger *utils.Logger`
+  - **Methods**:
+    - `NewPeopleHandler(services, logger) *PeopleHandler`
+    - `List(w, r)` — `GET /api/v1/people?q=<prefix>&limit=50&offset=0` — With `q`: searches by prefix. Without `q`: lists paginated. Returns `PersonResponse[]` (with `name_native` if present).
+    - `Create(w, r)` — `POST /api/v1/people` — Accepts `{name, name_native}`. `Created` → 201, `Conflict` → 409 with existing `{id,name,name_native}`, `Invalid` → 400.
+    - `Update(w, r)` — `PUT /api/v1/people/{id}` — Accepts `{name, name_native}`. `Updated`/`Noop` → 200, `Conflict` → 409, `NotFound` → 404, `Invalid` → 400.
+    - `Delete(w, r)` — `DELETE /api/v1/people/{id}` — `Deleted` → 204 (CASCADE removes `document_people` rows), `NotFound` → 404.
+    - `ListPeopleTypes(w, r)` — `GET /api/v1/people-types?q=<prefix>&limit=50&offset=0` — With `q`: searches by prefix. Without `q`: lists paginated.
+    - `CreatePeopleType(w, r)` — `POST /api/v1/people-types` — Accepts `{name, description}`. `Created` → 201, `Conflict` → 409, `Invalid` → 400.
+    - `UpdatePeopleType(w, r)` — `PUT /api/v1/people-types/{id}` — Accepts `{name, description}`. `Updated`/`Noop` → 200, `Conflict` → 409, `NotFound` → 404, `Invalid` → 400.
+    - `DeletePeopleType(w, r)` — `DELETE /api/v1/people-types/{id}` — `Deleted` → 204, `DeleteConflict` → 409 `{"error":"in use"}`, `NotFound` → 404.
+
+## `handlers/document_type.go`
 
 ### Struct
 
-- `AutocompleteHandler`
-  - **Fields**: `queries *database.Queries`, `logger *utils.Logger`
+- `DocumentTypeHandler`
+  - **Fields**: `services *itypes.CrudServices`, `logger *utils.Logger`
   - **Methods**:
-    - `NewAutocompleteHandler(queries, logger) *AutocompleteHandler`
-    - `ListPeople(w, r)` — `GET /api/v1/people?q=<prefix>&limit=20` — Searches people names by prefix (uses `SearchPeopleByName` sqlc query). Falls back to `ListAllPeople` when `q` is empty.
-    - `ListPeopleTypes(w, r)` — `GET /api/v1/people-types` — Lists all person types from DB
-    - `ListDocumentTypes(w, r)` — `GET /api/v1/document-types` — Lists all document types from DB
+    - `NewDocumentTypeHandler(services, logger) *DocumentTypeHandler`
+    - `List(w, r)` — `GET /api/v1/document-types?q=<prefix>&limit=50&offset=0` — With `q`: searches by prefix. Without `q`: lists paginated.
+    - `Create(w, r)` — `POST /api/v1/document-types` — Accepts `{name, description}`. `Created` → 201, `Conflict` → 409, `Invalid` → 400.
+    - `Update(w, r)` — `PUT /api/v1/document-types/{id}` — Accepts `{name, description}`. `Updated`/`Noop` → 200, `Conflict` → 409, `NotFound` → 404, `Invalid` → 400.
+    - `Delete(w, r)` — `DELETE /api/v1/document-types/{id}` — `Deleted` → 204, `DeleteConflict` → 409 `{"error":"in use"}`, `NotFound` → 404.
 
 ---
 
@@ -218,16 +238,26 @@
 
 ### Structs
 
-- `CrudServices` — `Tag *tags.TagService`
-  - `Close()` — Uses reflection to iterate struct fields; calls `Close()` on every field implementing `io.Closer`. Automatically picks up new services added as fields.
+- `CrudServices` — `Tag *tags.TagService`, `People *people.PeopleService`, `PeopleType *people.PeopleTypeService`, `DocumentType *documenttypes.DocumentTypeService`
+  - `Close()` — Uses reflection to iterate struct fields; calls `Close()` on every field implementing `io.Closer`. Automatically picks up new services added as fields (none of the new services implement `io.Closer`).
 
-## `types/autocomplete.go`
+## `types/people.go`
 
 ### Structs
 
-- `PersonRefResponse` — `ID int64`, `Name string`
-- `DocumentTypeRefResponse` — `ID int64`, `Name string`, `Description string`
-- `PeopleTypeRefResponse` — `ID int64`, `Name string`, `Description string`
+- `CreatePersonRequest` — `Name string`, `NameNative string`
+- `UpdatePersonRequest` — `Name string`, `NameNative string`
+- `CreatePeopleTypeRequest` — `Name string`, `Description string`
+- `UpdatePeopleTypeRequest` — `Name string`, `Description string`
+- `PeopleTypeResponse` — `ID int64`, `Name string`, `Description string`
+
+## `types/document_type.go`
+
+### Structs
+
+- `CreateDocumentTypeRequest` — `Name string`, `Description string`
+- `UpdateDocumentTypeRequest` — `Name string`, `Description string`
+- `DocumentTypeResponse` — `ID int64`, `Name string`, `Description string`
 
 ---
 
@@ -274,9 +304,19 @@ mux.HandleFunc("POST /api/v1/tags", tagHandler.Create)
 mux.HandleFunc("PUT /api/v1/tags/{id}", tagHandler.Update)
 mux.HandleFunc("DELETE /api/v1/tags/{id}", tagHandler.Delete)
 
-mux.HandleFunc("GET /api/v1/people", autocompleteHandler.ListPeople)
-mux.HandleFunc("GET /api/v1/people-types", autocompleteHandler.ListPeopleTypes)
-mux.HandleFunc("GET /api/v1/document-types", autocompleteHandler.ListDocumentTypes)
+mux.HandleFunc("GET /api/v1/people", peopleHandler.List)
+mux.HandleFunc("POST /api/v1/people", peopleHandler.Create)
+mux.HandleFunc("PUT /api/v1/people/{id}", peopleHandler.Update)
+mux.HandleFunc("DELETE /api/v1/people/{id}", peopleHandler.Delete)
+mux.HandleFunc("GET /api/v1/people-types", peopleHandler.ListPeopleTypes)
+mux.HandleFunc("POST /api/v1/people-types", peopleHandler.CreatePeopleType)
+mux.HandleFunc("PUT /api/v1/people-types/{id}", peopleHandler.UpdatePeopleType)
+mux.HandleFunc("DELETE /api/v1/people-types/{id}", peopleHandler.DeletePeopleType)
+
+mux.HandleFunc("GET /api/v1/document-types", docTypeHandler.List)
+mux.HandleFunc("POST /api/v1/document-types", docTypeHandler.Create)
+mux.HandleFunc("PUT /api/v1/document-types/{id}", docTypeHandler.Update)
+mux.HandleFunc("DELETE /api/v1/document-types/{id}", docTypeHandler.Delete)
 
 mux.HandleFunc("POST /api/v1/consume", consumeHandler.Consume)
 

@@ -15,7 +15,9 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/consumption"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/documenttypes"
 	"github.com/wgomg/edub-kushim/internal/enrichment"
+	"github.com/wgomg/edub-kushim/internal/people"
 	"github.com/wgomg/edub-kushim/internal/pool"
 	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/static"
@@ -77,6 +79,10 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 	if err != nil {
 		logger.Fatal("tag service: ", err)
 	}
+
+	s.services.People = people.NewPeopleService(queries, logger)
+	s.services.PeopleType = people.NewPeopleTypeService(queries, logger)
+	s.services.DocumentType = documenttypes.NewDocumentTypeService(queries, logger)
 
 	consumer, err := consumption.NewConsumer(&cfg, logger, db)
 	if err != nil {
@@ -174,10 +180,21 @@ func registerRoutes(mux *http.ServeMux, logger *utils.Logger, queries *database.
 	mux.HandleFunc("PUT /api/v1/tags/{id}", tagHandler.Update)
 	mux.HandleFunc("DELETE /api/v1/tags/{id}", tagHandler.Delete)
 
-	autocompleteHandler := handlers.NewAutocompleteHandler(queries, logger)
-	mux.HandleFunc("GET /api/v1/people", autocompleteHandler.ListPeople)
-	mux.HandleFunc("GET /api/v1/people-types", autocompleteHandler.ListPeopleTypes)
-	mux.HandleFunc("GET /api/v1/document-types", autocompleteHandler.ListDocumentTypes)
+	peopleHandler := handlers.NewPeopleHandler(services, logger)
+	mux.HandleFunc("GET /api/v1/people", peopleHandler.List)
+	mux.HandleFunc("POST /api/v1/people", peopleHandler.Create)
+	mux.HandleFunc("PUT /api/v1/people/{id}", peopleHandler.Update)
+	mux.HandleFunc("DELETE /api/v1/people/{id}", peopleHandler.Delete)
+	mux.HandleFunc("GET /api/v1/people-types", peopleHandler.ListPeopleTypes)
+	mux.HandleFunc("POST /api/v1/people-types", peopleHandler.CreatePeopleType)
+	mux.HandleFunc("PUT /api/v1/people-types/{id}", peopleHandler.UpdatePeopleType)
+	mux.HandleFunc("DELETE /api/v1/people-types/{id}", peopleHandler.DeletePeopleType)
+
+	docTypeHandler := handlers.NewDocumentTypeHandler(services, logger)
+	mux.HandleFunc("GET /api/v1/document-types", docTypeHandler.List)
+	mux.HandleFunc("POST /api/v1/document-types", docTypeHandler.Create)
+	mux.HandleFunc("PUT /api/v1/document-types/{id}", docTypeHandler.Update)
+	mux.HandleFunc("DELETE /api/v1/document-types/{id}", docTypeHandler.Delete)
 
 	consumeHandler := handlers.NewConsumeHandler(cfg, logger, dispatcher, queries, owner)
 	mux.HandleFunc("POST /api/v1/consume", consumeHandler.Consume)

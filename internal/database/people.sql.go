@@ -188,6 +188,21 @@ func (q *Queries) UpdatePeople(ctx context.Context, arg UpdatePeopleParams) erro
 	return err
 }
 
+const updatePeopleFull = `-- name: UpdatePeopleFull :exec
+UPDATE people SET name = ?, name_native = ? WHERE id = ?
+`
+
+type UpdatePeopleFullParams struct {
+	Name       string
+	NameNative sql.NullString
+	ID         int64
+}
+
+func (q *Queries) UpdatePeopleFull(ctx context.Context, arg UpdatePeopleFullParams) error {
+	_, err := q.db.ExecContext(ctx, updatePeopleFull, arg.Name, arg.NameNative, arg.ID)
+	return err
+}
+
 const updatePeopleNative = `-- name: UpdatePeopleNative :exec
 UPDATE people SET
     name_native = ?

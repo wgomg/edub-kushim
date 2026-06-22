@@ -11,7 +11,9 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/consumption"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/documenttypes"
 	"github.com/wgomg/edub-kushim/internal/enrichment"
+	"github.com/wgomg/edub-kushim/internal/people"
 	"github.com/wgomg/edub-kushim/internal/pool"
 	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/tags"
@@ -106,7 +108,13 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 		return nil, fmt.Errorf("tag service: %w", err)
 	}
 
-	c.services = &types.CrudServices{Tag: tagSvc}
+	peopleSvc := people.NewPeopleService(database.NewQueries(db), c.logger)
+	peopleTypeSvc := people.NewPeopleTypeService(database.NewQueries(db), c.logger)
+	docTypeSvc := documenttypes.NewDocumentTypeService(database.NewQueries(db), c.logger)
+
+	c.services = &types.CrudServices{
+		Tag: tagSvc, People: peopleSvc, PeopleType: peopleTypeSvc, DocumentType: docTypeSvc,
+	}
 
 	store := task.NewStore(database.NewQueries(db))
 	c.store = store

@@ -28,5 +28,8 @@ SELECT * FROM people WHERE name = ?;
 -- name: SearchPeopleByName :many
 SELECT * FROM people WHERE name LIKE ? ORDER BY name ASC LIMIT ?;
 
+-- name: UpdatePeopleFull :exec
+UPDATE people SET name = ?, name_native = ? WHERE id = ?;
+
 -- name: DeletePeople :exec
 DELETE FROM people WHERE id = ?;
