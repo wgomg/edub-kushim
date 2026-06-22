@@ -40,8 +40,7 @@ func (h *DocumentTypeHandler) List(w http.ResponseWriter, r *http.Request) {
 	if q != "" {
 		dts, err := h.services.DocumentType.Search(ctx, q, limit)
 		if err != nil {
-			h.logger.Error(&reqID, "list document types: %v", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			writeServiceError(w, h.logger, &reqID, "list document types", err)
 			return
 		}
 		result = make([]types.DocumentTypeResponse, len(dts))
@@ -51,8 +50,7 @@ func (h *DocumentTypeHandler) List(w http.ResponseWriter, r *http.Request) {
 	} else {
 		dts, err := h.services.DocumentType.List(ctx, limit, offset)
 		if err != nil {
-			h.logger.Error(&reqID, "list document types: %v", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			writeServiceError(w, h.logger, &reqID, "list document types", err)
 			return
 		}
 		result = make([]types.DocumentTypeResponse, len(dts))
@@ -84,8 +82,7 @@ func (h *DocumentTypeHandler) Create(w http.ResponseWriter, r *http.Request) {
 		{Name: req.Name, Description: req.Description},
 	})
 	if err != nil {
-		h.logger.Error(&reqID, "create document type: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeServiceError(w, h.logger, &reqID, "create document type", err)
 		return
 	}
 
@@ -135,8 +132,7 @@ func (h *DocumentTypeHandler) Update(w http.ResponseWriter, r *http.Request) {
 		{ID: id, Name: req.Name, Description: req.Description},
 	})
 	if err != nil {
-		h.logger.Error(&reqID, "update document type %d: %v", id, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeServiceError(w, h.logger, &reqID, "update document type", err)
 		return
 	}
 
@@ -174,8 +170,7 @@ func (h *DocumentTypeHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	results, err := h.services.DocumentType.Delete(ctx, []int64{id})
 	if err != nil {
-		h.logger.Error(&reqID, "delete document type %d: %v", id, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeServiceError(w, h.logger, &reqID, "delete document type", err)
 		return
 	}
 

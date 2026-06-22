@@ -3,15 +3,14 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"os"
 
 	itypes "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/search"
-	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -130,8 +129,7 @@ func (h *DocumentHandler) GetDocument(w http.ResponseWriter, r *http.Request) {
 
 	doc, err := h.queries.GetDocumentWithDetails(r.Context(), documentId)
 	if err != nil {
-		h.logger.Error(&reqID, "Failed to get document %d: %v", documentId, err)
-		http.Error(w, "Document not found", http.StatusNotFound)
+		writeServiceError(w, h.logger, &reqID, "get document", errs.FromDB(err, "get document"))
 		return
 	}
 
@@ -358,8 +356,7 @@ func (h *DocumentHandler) GetDocumentFile(w http.ResponseWriter, r *http.Request
 
 	doc, err := h.queries.GetDocument(ctx, documentId)
 	if err != nil {
-		h.logger.Error(&reqID, "Failed to get document %d: %v", documentId, err)
-		http.Error(w, "Document not found", http.StatusNotFound)
+		writeServiceError(w, h.logger, &reqID, "get document", errs.FromDB(err, "get document"))
 		return
 	}
 
@@ -399,7 +396,11 @@ func (h *DocumentHandler) UpdateDocument(w http.ResponseWriter, r *http.Request)
 	}
 
 	docType, err := h.queries.GetDocumentType(ctx, req.DocumentTypeID)
-	if err != nil || docType.ID == 0 {
+	if err != nil {
+		writeServiceError(w, h.logger, &reqID, "get document type", errs.FromDB(err, "get document type"))
+		return
+	}
+	if docType.ID == 0 {
 		http.Error(w, "Document type not found", http.StatusNotFound)
 		return
 	}
@@ -410,7 +411,7 @@ func (h *DocumentHandler) UpdateDocument(w http.ResponseWriter, r *http.Request)
 
 	current, err := h.queries.GetDocument(ctx, documentID)
 	if err != nil {
-		http.Error(w, "Document not found", http.StatusNotFound)
+		writeServiceError(w, h.logger, &reqID, "get document", errs.FromDB(err, "get document"))
 		return
 	}
 
@@ -429,8 +430,7 @@ func (h *DocumentHandler) UpdateDocument(w http.ResponseWriter, r *http.Request)
 		DocumentID:     documentID,
 	})
 	if err != nil {
-		h.logger.Error(&reqID, "Failed to update document %s: %v", documentID, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeServiceError(w, h.logger, &reqID, "update document", errs.FromDB(err, "update document"))
 		return
 	}
 
@@ -449,14 +449,13 @@ func (h *DocumentHandler) DeleteDocument(w http.ResponseWriter, r *http.Request)
 
 	doc, err := h.queries.GetDocument(ctx, documentID)
 	if err != nil {
-		http.Error(w, "Document not found", http.StatusNotFound)
+		writeServiceError(w, h.logger, &reqID, "get document", errs.FromDB(err, "get document"))
 		return
 	}
 
 	err = h.queries.DeleteDocument(ctx, documentID)
 	if err != nil {
-		h.logger.Error(&reqID, "Failed to delete document %s: %v", documentID, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeServiceError(w, h.logger, &reqID, "delete document", errs.FromDB(err, "delete document"))
 		return
 	}
 
@@ -492,18 +491,13 @@ func (h *DocumentHandler) AddDocumentTag(w http.ResponseWriter, r *http.Request)
 
 	doc, err := h.queries.GetDocument(ctx, documentID)
 	if err != nil {
-		http.Error(w, "Document not found", http.StatusNotFound)
+		writeServiceError(w, h.logger, &reqID, "get document", errs.FromDB(err, "get document"))
 		return
 	}
 
 	_, err = h.services.Tag.Get(ctx, req.TagID)
 	if err != nil {
-		if errors.Is(err, tags.ErrNotFound) {
-			http.Error(w, "Tag not found", http.StatusNotFound)
-			return
-		}
-		h.logger.Error(&reqID, "get tag %d: %v", req.TagID, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeServiceError(w, h.logger, &reqID, "get tag", err)
 		return
 	}
 
@@ -512,8 +506,7 @@ func (h *DocumentHandler) AddDocumentTag(w http.ResponseWriter, r *http.Request)
 		TagID:      req.TagID,
 	})
 	if err != nil {
-		h.logger.Error(&reqID, "Failed to add tag to document %s: %v", documentID, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeServiceError(w, h.logger, &reqID, "add document tag", errs.FromDB(err, "add document tag"))
 		return
 	}
 
@@ -538,7 +531,7 @@ func (h *DocumentHandler) RemoveDocumentTag(w http.ResponseWriter, r *http.Reque
 
 	doc, err := h.queries.GetDocument(ctx, documentID)
 	if err != nil {
-		http.Error(w, "Document not found", http.StatusNotFound)
+		writeServiceError(w, h.logger, &reqID, "get document", errs.FromDB(err, "get document"))
 		return
 	}
 
@@ -547,8 +540,7 @@ func (h *DocumentHandler) RemoveDocumentTag(w http.ResponseWriter, r *http.Reque
 		TagID:      req.TagID,
 	})
 	if err != nil {
-		h.logger.Error(&reqID, "Failed to remove tag from document %s: %v", documentID, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeServiceError(w, h.logger, &reqID, "remove document tag", errs.FromDB(err, "remove document tag"))
 		return
 	}
 
@@ -573,19 +565,19 @@ func (h *DocumentHandler) AddDocumentPeople(w http.ResponseWriter, r *http.Reque
 
 	doc, err := h.queries.GetDocument(ctx, documentID)
 	if err != nil {
-		http.Error(w, "Document not found", http.StatusNotFound)
+		writeServiceError(w, h.logger, &reqID, "get document", errs.FromDB(err, "get document"))
 		return
 	}
 
-	person, err := h.queries.GetPeople(ctx, req.PeopleID)
-	if err != nil || person.ID == 0 {
-		http.Error(w, "Person not found", http.StatusNotFound)
+	_, err = h.queries.GetPeople(ctx, req.PeopleID)
+	if err != nil {
+		writeServiceError(w, h.logger, &reqID, "get person", errs.FromDB(err, "get person"))
 		return
 	}
 
-	peopleType, err := h.queries.GetPeopleType(ctx, req.PeopleTypeID)
-	if err != nil || peopleType.ID == 0 {
-		http.Error(w, "People type not found", http.StatusNotFound)
+	_, err = h.queries.GetPeopleType(ctx, req.PeopleTypeID)
+	if err != nil {
+		writeServiceError(w, h.logger, &reqID, "get people type", errs.FromDB(err, "get people type"))
 		return
 	}
 
@@ -595,8 +587,7 @@ func (h *DocumentHandler) AddDocumentPeople(w http.ResponseWriter, r *http.Reque
 		PeopleTypeID: req.PeopleTypeID,
 	})
 	if err != nil {
-		h.logger.Error(&reqID, "Failed to add people to document %s: %v", documentID, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeServiceError(w, h.logger, &reqID, "add document people", errs.FromDB(err, "add document people"))
 		return
 	}
 
@@ -621,7 +612,7 @@ func (h *DocumentHandler) RemoveDocumentPeople(w http.ResponseWriter, r *http.Re
 
 	doc, err := h.queries.GetDocument(ctx, documentID)
 	if err != nil {
-		http.Error(w, "Document not found", http.StatusNotFound)
+		writeServiceError(w, h.logger, &reqID, "get document", errs.FromDB(err, "get document"))
 		return
 	}
 
@@ -631,8 +622,7 @@ func (h *DocumentHandler) RemoveDocumentPeople(w http.ResponseWriter, r *http.Re
 		PeopleTypeID: req.PeopleTypeID,
 	})
 	if err != nil {
-		h.logger.Error(&reqID, "Failed to remove people from document %s: %v", documentID, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeServiceError(w, h.logger, &reqID, "remove document people", errs.FromDB(err, "remove document people"))
 		return
 	}
 

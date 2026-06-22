@@ -38,8 +38,7 @@ func (h *PeopleHandler) List(w http.ResponseWriter, r *http.Request) {
 	if q != "" {
 		people, err := h.services.People.Search(ctx, q, limit)
 		if err != nil {
-			h.logger.Error(&reqID, "list people: %v", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			writeServiceError(w, h.logger, &reqID, "list people", err)
 			return
 		}
 		response := make([]types.PersonResponse, len(people))
@@ -57,8 +56,7 @@ func (h *PeopleHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	people, err := h.services.People.List(ctx, limit, offset)
 	if err != nil {
-		h.logger.Error(&reqID, "list people: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeServiceError(w, h.logger, &reqID, "list people", err)
 		return
 	}
 
@@ -94,8 +92,7 @@ func (h *PeopleHandler) Create(w http.ResponseWriter, r *http.Request) {
 		{Name: req.Name, NameNative: req.NameNative},
 	})
 	if err != nil {
-		h.logger.Error(&reqID, "create person: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeServiceError(w, h.logger, &reqID, "create person", err)
 		return
 	}
 
@@ -153,8 +150,7 @@ func (h *PeopleHandler) Update(w http.ResponseWriter, r *http.Request) {
 		{ID: id, Name: req.Name, NameNative: req.NameNative},
 	})
 	if err != nil {
-		h.logger.Error(&reqID, "update person %d: %v", id, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeServiceError(w, h.logger, &reqID, "update person", err)
 		return
 	}
 
@@ -200,8 +196,7 @@ func (h *PeopleHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	results, err := h.services.People.Delete(ctx, []int64{id})
 	if err != nil {
-		h.logger.Error(&reqID, "delete person %d: %v", id, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeServiceError(w, h.logger, &reqID, "delete person", err)
 		return
 	}
 
@@ -232,8 +227,7 @@ func (h *PeopleHandler) ListPeopleTypes(w http.ResponseWriter, r *http.Request) 
 	if q != "" {
 		pts, err := h.services.PeopleType.Search(ctx, q, limit)
 		if err != nil {
-			h.logger.Error(&reqID, "list people types: %v", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			writeServiceError(w, h.logger, &reqID, "list people types", err)
 			return
 		}
 		result = make([]types.PeopleTypeResponse, len(pts))
@@ -243,8 +237,7 @@ func (h *PeopleHandler) ListPeopleTypes(w http.ResponseWriter, r *http.Request) 
 	} else {
 		pts, err := h.services.PeopleType.List(ctx, limit, offset)
 		if err != nil {
-			h.logger.Error(&reqID, "list people types: %v", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			writeServiceError(w, h.logger, &reqID, "list people types", err)
 			return
 		}
 		result = make([]types.PeopleTypeResponse, len(pts))
@@ -276,8 +269,7 @@ func (h *PeopleHandler) CreatePeopleType(w http.ResponseWriter, r *http.Request)
 		{Name: req.Name, Description: req.Description},
 	})
 	if err != nil {
-		h.logger.Error(&reqID, "create people type: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeServiceError(w, h.logger, &reqID, "create people type", err)
 		return
 	}
 
@@ -327,8 +319,7 @@ func (h *PeopleHandler) UpdatePeopleType(w http.ResponseWriter, r *http.Request)
 		{ID: id, Name: req.Name, Description: req.Description},
 	})
 	if err != nil {
-		h.logger.Error(&reqID, "update people type %d: %v", id, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeServiceError(w, h.logger, &reqID, "update people type", err)
 		return
 	}
 
@@ -366,8 +357,7 @@ func (h *PeopleHandler) DeletePeopleType(w http.ResponseWriter, r *http.Request)
 
 	results, err := h.services.PeopleType.Delete(ctx, []int64{id})
 	if err != nil {
-		h.logger.Error(&reqID, "delete people type %d: %v", id, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeServiceError(w, h.logger, &reqID, "delete people type", err)
 		return
 	}
 

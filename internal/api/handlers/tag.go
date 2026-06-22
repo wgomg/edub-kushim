@@ -45,8 +45,7 @@ func (h *TagHandler) List(w http.ResponseWriter, r *http.Request) {
 		result, err = h.services.Tag.List(ctx, limit, offset)
 	}
 	if err != nil {
-		h.logger.Error(&reqID, "list tags: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeServiceError(w, h.logger, &reqID, "list tags", err)
 		return
 	}
 
@@ -76,8 +75,7 @@ func (h *TagHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	results, err := h.services.Tag.Create(ctx, []string{req.Name})
 	if err != nil {
-		h.logger.Error(&reqID, "create tag: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeServiceError(w, h.logger, &reqID, "create tag", err)
 		return
 	}
 
@@ -122,8 +120,7 @@ func (h *TagHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	results, err := h.services.Tag.Update(ctx, []tags.UpdatePair{{ID: id, Name: req.Name}})
 	if err != nil {
-		h.logger.Error(&reqID, "update tag %d: %v", id, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeServiceError(w, h.logger, &reqID, "update tag", err)
 		return
 	}
 
@@ -158,8 +155,7 @@ func (h *TagHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	results, err := h.services.Tag.Delete(ctx, []int64{id})
 	if err != nil {
-		h.logger.Error(&reqID, "delete tag %d: %v", id, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeServiceError(w, h.logger, &reqID, "delete tag", err)
 		return
 	}
 

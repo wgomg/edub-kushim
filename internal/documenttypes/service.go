@@ -2,12 +2,10 @@ package documenttypes
 
 import (
 	"context"
-	"database/sql"
-	"errors"
-	"fmt"
 	"strings"
 
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -63,10 +61,6 @@ type DeleteResult struct {
 	Status DeleteStatus
 }
 
-var (
-	ErrNotFound = errors.New("documenttypes: not found")
-)
-
 type DocumentTypeService struct {
 	queries *database.Queries
 	logger  *utils.Logger
@@ -79,10 +73,7 @@ func NewDocumentTypeService(queries *database.Queries, logger *utils.Logger) *Do
 func (s *DocumentTypeService) Get(ctx context.Context, id int64) (database.DocumentType, error) {
 	dt, err := s.queries.GetDocumentType(ctx, id)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return database.DocumentType{}, ErrNotFound
-		}
-		return database.DocumentType{}, fmt.Errorf("get document type: %w", err)
+		return database.DocumentType{}, errs.FromDB(err, "get document type")
 	}
 	return dt, nil
 }
@@ -90,10 +81,7 @@ func (s *DocumentTypeService) Get(ctx context.Context, id int64) (database.Docum
 func (s *DocumentTypeService) GetByName(ctx context.Context, name string) (database.DocumentType, error) {
 	dt, err := s.queries.GetDocumentTypeByName(ctx, name)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return database.DocumentType{}, ErrNotFound
-		}
-		return database.DocumentType{}, fmt.Errorf("get document type by name: %w", err)
+		return database.DocumentType{}, errs.FromDB(err, "get document type by name")
 	}
 	return dt, nil
 }
@@ -101,7 +89,7 @@ func (s *DocumentTypeService) GetByName(ctx context.Context, name string) (datab
 func (s *DocumentTypeService) List(ctx context.Context, limit, offset int64) ([]database.DocumentType, error) {
 	dts, err := s.queries.ListDocumentTypes(ctx, database.ListDocumentTypesParams{Limit: limit, Offset: offset})
 	if err != nil {
-		return nil, fmt.Errorf("list document types: %w", err)
+		return nil, errs.FromDB(err, "list document types")
 	}
 	return dts, nil
 }
@@ -109,7 +97,7 @@ func (s *DocumentTypeService) List(ctx context.Context, limit, offset int64) ([]
 func (s *DocumentTypeService) ListAll(ctx context.Context) ([]database.DocumentType, error) {
 	dts, err := s.queries.ListAllDocumentTypes(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("list all document types: %w", err)
+		return nil, errs.FromDB(err, "list all document types")
 	}
 	return dts, nil
 }
@@ -120,7 +108,7 @@ func (s *DocumentTypeService) Search(ctx context.Context, prefix string, limit i
 		Limit: limit,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("search document types: %w", err)
+		return nil, errs.FromDB(err, "search document types")
 	}
 	return dts, nil
 }
@@ -130,7 +118,7 @@ func (s *DocumentTypeService) Create(ctx context.Context, inputs []CreateDocumen
 
 	existing, err := s.queries.ListAllDocumentTypes(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("load existing document types: %w", err)
+		return nil, errs.FromDB(err, "load existing document types")
 	}
 	existingMap := make(map[string]database.DocumentType, len(existing))
 	for _, dt := range existing {
@@ -154,12 +142,20 @@ func (s *DocumentTypeService) Create(ctx context.Context, inputs []CreateDocumen
 			Description: strings.TrimSpace(input.Description),
 		})
 		if err != nil {
-			return nil, fmt.Errorf("create document type %q: %w", name, err)
+			if errs.IsConstraint(err) {
+				existing, err := s.queries.GetDocumentTypeByName(ctx, name)
+				if err != nil {
+					return nil, errs.FromDB(err, "get document type by name after conflict "+name)
+				}
+				results[i] = CreateResult{DocumentType: existing, Status: Conflict}
+				continue
+			}
+			return nil, errs.FromDB(err, "create document type "+name)
 		}
 
 		id, err := res.LastInsertId()
 		if err != nil {
-			return nil, fmt.Errorf("last insert id for %q: %w", name, err)
+			return nil, errs.FromDB(err, "last insert id for "+name)
 		}
 
 		results[i] = CreateResult{
@@ -176,7 +172,7 @@ func (s *DocumentTypeService) Update(ctx context.Context, pairs []UpdatePair) ([
 
 	all, err := s.queries.ListAllDocumentTypes(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("load all document types: %w", err)
+		return nil, errs.FromDB(err, "load all document types")
 	}
 	itemMap := make(map[int64]database.DocumentType, len(all))
 	nameMap := make(map[string]database.DocumentType, len(all))
@@ -215,7 +211,15 @@ func (s *DocumentTypeService) Update(ctx context.Context, pairs []UpdatePair) ([
 			Description: desc,
 			ID:          p.ID,
 		}); err != nil {
-			return nil, fmt.Errorf("update document type %d: %w", p.ID, err)
+			if errs.IsConstraint(err) {
+				var existing database.DocumentType
+				if e, ok := nameMap[name]; ok {
+					existing = e
+				}
+				results[i] = UpdateResult{DocumentType: existing, Status: UpdateConflict}
+				continue
+			}
+			return nil, errs.FromDB(err, "update document type")
 		}
 
 		results[i] = UpdateResult{
@@ -232,7 +236,7 @@ func (s *DocumentTypeService) Delete(ctx context.Context, ids []int64) ([]Delete
 
 	all, err := s.queries.ListAllDocumentTypes(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("load all document types: %w", err)
+		return nil, errs.FromDB(err, "load all document types")
 	}
 	itemMap := make(map[int64]database.DocumentType, len(all))
 	for _, dt := range all {
@@ -246,11 +250,11 @@ func (s *DocumentTypeService) Delete(ctx context.Context, ids []int64) ([]Delete
 		}
 
 		if err := s.queries.DeleteDocumentType(ctx, id); err != nil {
-			if strings.Contains(err.Error(), "FOREIGN KEY") {
+			if errs.IsForeignKey(err) {
 				results[i] = DeleteResult{ID: id, Status: DeleteConflict}
 				continue
 			}
-			return nil, fmt.Errorf("delete document type %d: %w", id, err)
+			return nil, errs.FromDB(err, "delete document type")
 		}
 
 		results[i] = DeleteResult{ID: id, Status: Deleted}

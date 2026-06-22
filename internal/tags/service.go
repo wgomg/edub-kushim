@@ -2,14 +2,13 @@ package tags
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/wgomg/edub-kushim/internal/cache"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/tagmatcher"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -61,10 +60,6 @@ type DeleteResult struct {
 	Status DeleteStatus
 }
 
-var (
-	ErrNotFound = errors.New("tag not found")
-)
-
 type TagService struct {
 	queries *database.Queries
 	store   *cache.EmbeddingStore
@@ -93,10 +88,7 @@ func (s *TagService) Close() error {
 func (s *TagService) Get(ctx context.Context, id int64) (database.Tag, error) {
 	tag, err := s.queries.GetTag(ctx, id)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return database.Tag{}, ErrNotFound
-		}
-		return database.Tag{}, fmt.Errorf("get tag: %w", err)
+		return database.Tag{}, errs.FromDB(err, "get tag")
 	}
 	return tag, nil
 }
@@ -104,10 +96,7 @@ func (s *TagService) Get(ctx context.Context, id int64) (database.Tag, error) {
 func (s *TagService) GetByName(ctx context.Context, name string) (database.Tag, error) {
 	tag, err := s.queries.GetTagByName(ctx, name)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return database.Tag{}, ErrNotFound
-		}
-		return database.Tag{}, fmt.Errorf("get tag by name: %w", err)
+		return database.Tag{}, errs.FromDB(err, "get tag by name")
 	}
 	return tag, nil
 }
@@ -118,7 +107,7 @@ func (s *TagService) List(ctx context.Context, limit, offset int64) ([]database.
 		Offset: offset,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("list tags: %w", err)
+		return nil, errs.FromDB(err, "list tags")
 	}
 	return tags, nil
 }
@@ -126,7 +115,7 @@ func (s *TagService) List(ctx context.Context, limit, offset int64) ([]database.
 func (s *TagService) ListAll(ctx context.Context) ([]database.Tag, error) {
 	tags, err := s.queries.ListAllTags(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("list all tags: %w", err)
+		return nil, errs.FromDB(err, "list all tags")
 	}
 	return tags, nil
 }
@@ -137,7 +126,7 @@ func (s *TagService) Search(ctx context.Context, prefix string, limit int64) ([]
 		Limit: limit,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("search tags: %w", err)
+		return nil, errs.FromDB(err, "search tags")
 	}
 	return tags, nil
 }
@@ -149,7 +138,7 @@ func (s *TagService) Create(ctx context.Context, names []string) ([]CreateResult
 
 	existingTags, err := s.queries.ListAllTags(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("load existing tags: %w", err)
+		return nil, errs.FromDB(err, "load existing tags")
 	}
 	existingMap := make(map[string]database.Tag, len(existingTags))
 	for _, t := range existingTags {
@@ -170,18 +159,18 @@ func (s *TagService) Create(ctx context.Context, names []string) ([]CreateResult
 
 		res, err := s.queries.CreateTag(ctx, name)
 		if err != nil {
-			return nil, fmt.Errorf("create tag %q: %w", name, err)
+			return nil, errs.FromDB(err, "create tag "+name)
 		}
 
 		rows, err := res.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("rows affected for %q: %w", name, err)
+			return nil, errs.FromDB(err, "rows affected for "+name)
 		}
 
 		if rows == 0 {
 			existing, err := s.queries.GetTagByName(ctx, name)
 			if err != nil {
-				return nil, fmt.Errorf("get tag by name after conflict %q: %w", name, err)
+				return nil, errs.FromDB(err, "get tag by name after conflict "+name)
 			}
 			results[i] = CreateResult{Tag: existing, Status: Conflict}
 			continue
@@ -189,7 +178,7 @@ func (s *TagService) Create(ctx context.Context, names []string) ([]CreateResult
 
 		id, err := res.LastInsertId()
 		if err != nil {
-			return nil, fmt.Errorf("last insert id for %q: %w", name, err)
+			return nil, errs.FromDB(err, "last insert id for "+name)
 		}
 
 		results[i] = CreateResult{Tag: database.Tag{ID: id, Name: name}, Status: Created}
@@ -218,7 +207,7 @@ func (s *TagService) Update(ctx context.Context, pairs []UpdatePair) ([]UpdateRe
 
 	allTags, err := s.queries.ListAllTags(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("load all tags: %w", err)
+		return nil, errs.FromDB(err, "load all tags")
 	}
 	tagMap := make(map[int64]database.Tag, len(allTags))
 	nameMap := make(map[string]database.Tag, len(allTags))
@@ -254,7 +243,15 @@ func (s *TagService) Update(ctx context.Context, pairs []UpdatePair) ([]UpdateRe
 			Name: name,
 			ID:   p.ID,
 		}); err != nil {
-			return nil, fmt.Errorf("update tag %d: %w", p.ID, err)
+			if errs.IsConstraint(err) {
+				var existing database.Tag
+				if e, ok := nameMap[name]; ok {
+					existing = e
+				}
+				results[i] = UpdateResult{Tag: existing, Status: UpdateConflict}
+				continue
+			}
+			return nil, errs.FromDB(err, "update tag")
 		}
 
 		newNames = append(newNames, name)
@@ -285,7 +282,7 @@ func (s *TagService) Delete(ctx context.Context, ids []int64) ([]DeleteResult, e
 
 	allTags, err := s.queries.ListAllTags(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("load all tags: %w", err)
+		return nil, errs.FromDB(err, "load all tags")
 	}
 	tagMap := make(map[int64]database.Tag, len(allTags))
 	for _, t := range allTags {
@@ -300,7 +297,7 @@ func (s *TagService) Delete(ctx context.Context, ids []int64) ([]DeleteResult, e
 		}
 
 		if err := s.queries.DeleteTag(ctx, id); err != nil {
-			return nil, fmt.Errorf("delete tag %d: %w", id, err)
+			return nil, errs.FromDB(err, "delete tag")
 		}
 
 		s.store.Remove(tag.Name)
