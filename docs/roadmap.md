@@ -155,7 +155,9 @@
 | `/documents`      | ✓      | Structured search bar + filter panel + saved searches + sortable DataTable                                                                                       |
 | `/documents/[id]` | ✓      | PDF preview + editable metadata sidebar (title, type, language, tags, people) + delete                                                                           |
 | `/settings`       | ✓      | Full configuration form: server host/port, OCR, consumer, text extractor, PDF optimizer, enricher, content analyzer (LLM) with tokens, tag matcher, text reducer |
-| `/tags`           | ✗      | Placeholder: "Tag management will go here."                                                                                                                      |
+| `/tags`           | ✓      | List, filter, create, edit, delete tags                                                                                                                          |
+| `/people`         | ✓      | Two tabs: People (name + native name) and Person Types (name + description)                                                                                      |
+| `/document-types` | ✓      | List, create, edit, delete document types                                                                                                                        |
 | `/tasks`          | ✓      | Batch list + task drill-down                                                                                                                                     |
 | `/tasks/[id]`     | ✗      | Route does not exist                                                                                                                                             |
 
@@ -196,9 +198,9 @@
 | 9   | **Tags CRUD API**                        | ✓ `GET/POST/PUT/DELETE /api/v1/tags` with `TagService` batch CRUD, auto-encoding, cache sync                                                                                      |
 | 10  | **People CRUD API**                      | ✓ `GET/POST/PUT/DELETE /api/v1/people` + `/api/v1/people-types` — `PeopleService` + `PeopleTypeService` batch CRUD                                                                 |
 | 11  | **Document Types CRUD API**              | ✓ `GET/POST/PUT/DELETE /api/v1/document-types` — `DocumentTypeService` batch CRUD                                                                                                 |
-| 12  | **Tag management page**                  | Replace placeholder: list, create, edit, delete tags                                                                                                                              |
-| 13  | **People management page**               | New route: list, create, edit, delete people and their types                                                                                                                      |
-| 14  | **Document type management page**        | New route: list, create, edit, delete document types                                                                                                                              |
+| 12  | **Tag management page**                  | ✓ List, create, edit, delete tags with filter input + conflict detection                                                                                                           |
+| 13  | **People management page**               | ✓ Two-tab route: People (name, native name, cascade delete) and Person Types (name, description, 409 handling)                                                                    |
+| 14  | **Document type management page**        | ✓ List, create, edit, delete document types with 409 conflict handling                                                                                                            |
 | 15  | **Document upload/consume flow**         | Wire Upload button to `POST /api/v1/consume`, show progress feedback                                                                                                              |
 | 16  | **Single task detail page**              | New route `/tasks/{taskID}` — status, file, timestamps, error information                                                                                                         |
 | 17  | **Integration test**                     | End-to-end test: consume a known PDF, verify DB state — signals project reliability                                                                                               |

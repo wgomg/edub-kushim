@@ -10,6 +10,25 @@ async function request(path, opts = {}) {
 	}
 }
 
+async function requestRaw(path, opts = {}) {
+	try {
+		const res = await fetch(path, opts);
+		let data = null;
+		const contentType = res.headers.get('content-type') || '';
+		if (contentType.includes('application/json') && res.status !== 204) {
+			try {
+				data = await res.json();
+			} catch {
+				data = null;
+			}
+		}
+		return { ok: res.ok, status: res.status, data };
+	} catch (err) {
+		console.error(`API ${path}:`, err);
+		return { ok: false, status: 0, data: null };
+	}
+}
+
 export const api = {
 	health: () =>
 		request('/health').then((data) => data ?? { status: 'unreachable', version: '-', time: '-' }),
@@ -128,18 +147,87 @@ export const api = {
 			return request(`/api/v1/tags?${params.toString()}`).then((data) => data ?? []);
 		},
 		create: (name) =>
-			request('/api/v1/tags', {
+			requestRaw('/api/v1/tags', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ name })
 			}),
 		update: (id, name) =>
-			request(`/api/v1/tags/${id}`, {
+			requestRaw(`/api/v1/tags/${id}`, {
 				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ name })
 			}),
-		delete: (id) => request(`/api/v1/tags/${id}`, { method: 'DELETE' })
+		delete: (id) => requestRaw(`/api/v1/tags/${id}`, { method: 'DELETE' })
+	},
+
+	people: {
+		list: (q, limit = 50, offset = 0) => {
+			const params = new URLSearchParams();
+			if (q) params.set('q', q);
+			params.set('limit', String(limit));
+			params.set('offset', String(offset));
+			return request(`/api/v1/people?${params.toString()}`).then((data) => data ?? []);
+		},
+		create: (body) =>
+			requestRaw('/api/v1/people', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(body)
+			}),
+		update: (id, body) =>
+			requestRaw(`/api/v1/people/${id}`, {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(body)
+			}),
+		delete: (id) => requestRaw(`/api/v1/people/${id}`, { method: 'DELETE' })
+	},
+
+	peopleTypes: {
+		list: (q, limit = 50, offset = 0) => {
+			const params = new URLSearchParams();
+			if (q) params.set('q', q);
+			params.set('limit', String(limit));
+			params.set('offset', String(offset));
+			return request(`/api/v1/people-types?${params.toString()}`).then((data) => data ?? []);
+		},
+		create: (body) =>
+			requestRaw('/api/v1/people-types', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(body)
+			}),
+		update: (id, body) =>
+			requestRaw(`/api/v1/people-types/${id}`, {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(body)
+			}),
+		delete: (id) => requestRaw(`/api/v1/people-types/${id}`, { method: 'DELETE' })
+	},
+
+	documentTypes: {
+		list: (q, limit = 50, offset = 0) => {
+			const params = new URLSearchParams();
+			if (q) params.set('q', q);
+			params.set('limit', String(limit));
+			params.set('offset', String(offset));
+			return request(`/api/v1/document-types?${params.toString()}`).then((data) => data ?? []);
+		},
+		create: (body) =>
+			requestRaw('/api/v1/document-types', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(body)
+			}),
+		update: (id, body) =>
+			requestRaw(`/api/v1/document-types/${id}`, {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(body)
+			}),
+		delete: (id) => requestRaw(`/api/v1/document-types/${id}`, { method: 'DELETE' })
 	},
 
 	savedSearches: {
