@@ -2,6 +2,8 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
 	import Modal from '$lib/components/Modal.svelte';
+	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
+	import { toastStore } from '$lib/stores/toastStore.svelte.js';
 
 	let documentTypes = $state([]);
 	let showModal = $state(false);
@@ -52,18 +54,22 @@
 		} else if (result.status === 409) {
 			error = 'Document type already exists';
 		} else {
-			error = 'Failed to save document type';
+			toastStore.error('Failed to save document type');
 		}
 	}
 
 	async function handleDelete(dt) {
-		if (!window.confirm(`Delete document type "${dt.name}"?`)) return;
+		const ok = await confirmStore.confirm({
+			title: 'Delete document type',
+			message: `Delete document type "${dt.name}"?`,
+			danger: true
+		});
+		if (!ok) return;
 		const result = await api.documentTypes.delete(dt.id);
 		if (result.ok) {
-			error = '';
 			await load();
 		} else if (result.status === 409) {
-			error = 'Document type is in use by documents — remove/reassign first.';
+			toastStore.error('Document type is in use by documents — remove/reassign first.');
 		} else {
 			await load();
 		}
@@ -91,7 +97,7 @@
 				<tr>
 					<th class="px-4 py-3 font-medium whitespace-nowrap">Name</th>
 					<th class="px-4 py-3 font-medium whitespace-nowrap">Description</th>
-					<th class="px-4 py-3 font-medium whitespace-nowrap w-40">Actions</th>
+					<th class="w-40 px-4 py-3 font-medium whitespace-nowrap">Actions</th>
 				</tr>
 			</thead>
 			<tbody class="divide-y divide-clay-800">
@@ -128,8 +134,17 @@
 	</div>
 </div>
 
-	<Modal open={showModal} title={editing ? 'Edit Document Type' : 'New Document Type'} onClose={() => (showModal = false)}>
-	<form onsubmit={(e) => { e.preventDefault(); save(); }}>
+<Modal
+	open={showModal}
+	title={editing ? 'Edit Document Type' : 'New Document Type'}
+	onClose={() => (showModal = false)}
+>
+	<form
+		onsubmit={(e) => {
+			e.preventDefault();
+			save();
+		}}
+	>
 		<div class="space-y-4">
 			<div>
 				<label for="dt-name" class="mb-1 block text-xs font-medium text-parchment-400">Name</label>
@@ -142,7 +157,9 @@
 				/>
 			</div>
 			<div>
-				<label for="dt-description" class="mb-1 block text-xs font-medium text-parchment-400">Description</label>
+				<label for="dt-description" class="mb-1 block text-xs font-medium text-parchment-400"
+					>Description</label
+				>
 				<input
 					id="dt-description"
 					type="text"

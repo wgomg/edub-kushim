@@ -7,6 +7,7 @@
 	import { filterStore } from '$lib/stores/filterStore.js';
 	import { setPersonTypes } from '$lib/stores/searchFilter.js';
 	import { onMount } from 'svelte';
+	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
 
 	let columns = $derived.by(() => {
 		const cols = [{ key: 'title', label: 'Title', sortable: true, width: '100%' }];
@@ -171,7 +172,12 @@
 	}
 
 	async function handleDelete(id) {
-		if (!window.confirm('Delete this saved search?')) return;
+		const ok = await confirmStore.confirm({
+			title: 'Delete saved search',
+			message: 'Delete this saved search?',
+			danger: true
+		});
+		if (!ok) return;
 		await api.savedSearches.delete(id);
 		await refreshSavedSearches();
 	}

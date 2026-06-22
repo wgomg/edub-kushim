@@ -98,7 +98,8 @@
 			label: 'Owner',
 			sortable: false,
 			cell: (v, row) => {
-				if (v === 'live') return `<span class="text-emerald-500 text-xs">PID ${row.owner_pid}</span>`;
+				if (v === 'live')
+					return `<span class="text-emerald-500 text-xs">PID ${row.owner_pid}</span>`;
 				if (row.orphaned) return `<span class="text-amber-400 text-xs">orphaned</span>`;
 				if (v === 'stale') return `<span class="text-amber-400 text-xs">stale</span>`;
 				return '<span class="text-parchment-500 text-xs">none</span>';
@@ -235,21 +236,27 @@
 		if (taskBtn) {
 			e.stopPropagation();
 			const taskId = taskBtn.getAttribute('data-retry-task');
-			api.tasks.retry(taskId).then(() => { taskRefreshKey++; });
+			api.tasks.retry(taskId).then(() => {
+				taskRefreshKey++;
+			});
 			return;
 		}
 		const batchBtn = e.target.closest('[data-retry-batch]');
 		if (batchBtn) {
 			e.stopPropagation();
 			const batchId = batchBtn.getAttribute('data-retry-batch');
-			api.batches.retry(batchId).then(() => { batchRefreshKey++; });
+			api.batches.retry(batchId).then(() => {
+				batchRefreshKey++;
+			});
 			return;
 		}
 		const adoptBtn = e.target.closest('[data-adopt-batch]');
 		if (adoptBtn) {
 			e.stopPropagation();
 			const batchId = adoptBtn.getAttribute('data-adopt-batch');
-			api.batches.adopt(batchId).then(() => { batchRefreshKey++; });
+			api.batches.adopt(batchId).then(() => {
+				batchRefreshKey++;
+			});
 			return;
 		}
 	}

@@ -2,11 +2,12 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { api } from '$lib/api';
+	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
+	import { toastStore } from '$lib/stores/toastStore.svelte.js';
 
 	let { params } = $props();
 
 	let doc = $state();
-	let error = $state('');
 
 	let documentTypes = $state([]);
 	let peopleTypes = $state([]);
@@ -17,7 +18,6 @@
 
 	let savingMeta = $state(false);
 	let deleting = $state(false);
-	let showDeleteConfirm = $state(false);
 
 	let tagQuery = $state('');
 	let tagResults = $state([]);
@@ -33,7 +33,7 @@
 			api.autocomplete.peopleTypes()
 		]);
 		if (!data) {
-			error = 'Failed to load document';
+			toastStore.error('Failed to load document');
 			return;
 		}
 		doc = data;
@@ -64,25 +64,21 @@
 		refreshDoc();
 	}
 
-	function handleDelete() {
-		showDeleteConfirm = true;
-	}
-
-	async function confirmDelete() {
-		showDeleteConfirm = false;
+	async function handleDelete() {
+		const ok = await confirmStore.confirm({
+			title: 'Delete document',
+			message: 'Are you sure you want to delete this document? This cannot be undone.',
+			danger: true
+		});
+		if (!ok || deleting) return;
 		deleting = true;
-		error = '';
 		const res = await fetch(`/api/v1/documents/${params.id}`, { method: 'DELETE' });
 		if (res.ok) {
 			goto('/documents');
 		} else {
 			deleting = false;
-			error = `Failed to delete document: ${res.status} ${res.statusText}`;
+			toastStore.error(`Failed to delete document: ${res.status} ${res.statusText}`);
 		}
-	}
-
-	function cancelDelete() {
-		showDeleteConfirm = false;
 	}
 
 	async function searchTags(q) {
@@ -143,10 +139,6 @@
 	>
 		&larr; Back to documents
 	</a>
-
-	{#if error}
-		<p class="text-sm text-terracotta-500">{error}</p>
-	{/if}
 
 	{#if !doc}
 		<p class="text-parchment-500">Loading…</p>
@@ -382,7 +374,7 @@
 				<button
 					onclick={handleDelete}
 					disabled={deleting}
-					class="border-terracotta-600 bg-terracotta-800 text-parchment-200 hover:bg-terracotta-700 w-full rounded-lg border px-4 py-2 text-sm font-medium disabled:opacity-50"
+					class="bg-terracotta-800 hover:bg-terracotta-700 w-full rounded-lg border border-terracotta-600 px-4 py-2 text-sm font-medium text-parchment-200 disabled:opacity-50"
 				>
 					{deleting ? 'Deleting…' : 'Delete Document'}
 				</button>
@@ -390,45 +382,3 @@
 		</div>
 	{/if}
 </div>
-
-<svelte:window onkeydown={(e) => e.key === 'Escape' && showDeleteConfirm && cancelDelete()} />
-
-{#if showDeleteConfirm}
-	<div
-		role="presentation"
-		class="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
-		onclick={cancelDelete}
-		onkeydown={(e) => {
-			if (e.key === 'Enter' || e.key === ' ') cancelDelete();
-		}}
-	>
-		<div
-			role="dialog"
-			aria-modal="true"
-			tabindex="-1"
-			class="mx-4 w-full max-w-sm rounded-lg border border-clay-800 bg-clay-950 p-6 shadow-xl"
-			onclick={(e) => e.stopPropagation()}
-			onkeydown={(e) => {
-				if (e.key === 'Enter' || e.key === ' ') e.stopPropagation();
-			}}
-		>
-			<p class="text-sm text-parchment-200">
-				Are you sure you want to delete this document? This cannot be undone.
-			</p>
-			<div class="mt-4 flex justify-end gap-2">
-				<button
-					onclick={cancelDelete}
-					class="rounded-md px-3 py-1.5 text-xs font-medium text-parchment-400 hover:bg-clay-800"
-				>
-					Cancel
-				</button>
-				<button
-					onclick={confirmDelete}
-					class="bg-terracotta-700 rounded-md px-3 py-1.5 text-xs font-medium text-parchment-200 hover:bg-terracotta-600"
-				>
-					Delete
-				</button>
-			</div>
-		</div>
-	</div>
-{/if}

@@ -2,11 +2,10 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api.js';
 	import { hintsForEngine } from '$lib/tools.js';
+	import { toastStore } from '$lib/stores/toastStore.svelte.js';
 
 	let cfg = $state(null);
 	let saving = $state(false);
-	let message = $state('');
-	let error = $state('');
 	let pendingTasks = $state(0);
 	let missingTools = $state([]);
 	let toolStatus = $state([]);
@@ -101,16 +100,14 @@
 
 	async function save() {
 		saving = true;
-		message = '';
-		error = '';
 		try {
 			const res = await api.config.update(bodyFromConfig());
 			if (res && 'pending_tasks' in res && res.pending_tasks > 0) {
 				pendingTasks = res.pending_tasks;
-				message = 'Settings saved. Downloads in progress...';
+				toastStore.success('Settings saved. Downloads in progress...');
 				startPolling();
 			} else {
-				message = 'Settings saved.';
+				toastStore.success('Settings saved.');
 			}
 			if (res && 'missing_tools' in res) {
 				missingTools = res.missing_tools;
@@ -118,7 +115,7 @@
 			const loaded = await api.config.get();
 			if (loaded) cfg = loaded;
 		} catch (e) {
-			error = e.message;
+			toastStore.error(e.message);
 		} finally {
 			saving = false;
 		}
@@ -140,19 +137,6 @@
 				</div>
 			{/if}
 		</div>
-
-		{#if message}
-			<div class="rounded-lg border border-gold-500/30 bg-gold-500/10 p-3 text-sm text-gold-500">
-				{message}
-			</div>
-		{/if}
-		{#if error}
-			<div
-				class="rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500"
-			>
-				{error}
-			</div>
-		{/if}
 
 		{#if missingTools?.find((t) => t.engine === 'curl')}
 			<div

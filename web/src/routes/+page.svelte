@@ -89,7 +89,7 @@
 				</div>
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-sm text-parchment-500">Discarded</p>
-					<p class="mt-1 text-lg font-semibold text-terracotta-400">{summary.discarded}</p>
+					<p class="text-terracotta-400 mt-1 text-lg font-semibold">{summary.discarded}</p>
 				</div>
 			</div>
 		</section>

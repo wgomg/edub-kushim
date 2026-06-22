@@ -2,6 +2,8 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
 	import Modal from '$lib/components/Modal.svelte';
+	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
+	import { toastStore } from '$lib/stores/toastStore.svelte.js';
 
 	let activeTab = $state('people');
 
@@ -66,12 +68,17 @@
 			showPeopleModal = false;
 			await loadPeople();
 		} else {
-			personError = 'Failed to save person';
+			toastStore.error('Failed to save person');
 		}
 	}
 
 	async function handleDeletePerson(p) {
-		if (!window.confirm(`Remove "${p.name}" from people? This will also remove this person from all documents.`)) return;
+		const ok = await confirmStore.confirm({
+			title: 'Delete person',
+			message: `Remove "${p.name}" from people? This will also remove this person from all documents.`,
+			danger: true
+		});
+		if (!ok) return;
 		await api.people.delete(p.id);
 		await loadPeople();
 	}
@@ -112,18 +119,22 @@
 		} else if (result.status === 409) {
 			personTypeError = 'Person type already exists';
 		} else {
-			personTypeError = 'Failed to save person type';
+			toastStore.error('Failed to save person type');
 		}
 	}
 
 	async function handleDeletePersonType(pt) {
-		if (!window.confirm(`Delete person type "${pt.name}"?`)) return;
+		const ok = await confirmStore.confirm({
+			title: 'Delete person type',
+			message: `Delete person type "${pt.name}"?`,
+			danger: true
+		});
+		if (!ok) return;
 		const result = await api.peopleTypes.delete(pt.id);
 		if (result.ok) {
-			personTypeError = '';
 			await loadPersonTypes();
 		} else if (result.status === 409) {
-			personTypeError = 'Person type is in use by people — remove/reassign first.';
+			toastStore.error('Person type is in use by people — remove/reassign first.');
 		} else {
 			await loadPersonTypes();
 		}
@@ -133,13 +144,17 @@
 <div class="space-y-4">
 	<div class="flex items-center gap-4 border-b border-clay-800">
 		<button
-			class="px-1 pb-2 text-sm font-medium transition-colors {activeTab === 'people' ? 'border-b-2 border-gold-500 text-parchment-200' : 'text-parchment-500 hover:text-parchment-200'}"
+			class="px-1 pb-2 text-sm font-medium transition-colors {activeTab === 'people'
+				? 'border-b-2 border-gold-500 text-parchment-200'
+				: 'text-parchment-500 hover:text-parchment-200'}"
 			onclick={() => (activeTab = 'people')}
 		>
 			People
 		</button>
 		<button
-			class="px-1 pb-2 text-sm font-medium transition-colors {activeTab === 'types' ? 'border-b-2 border-gold-500 text-parchment-200' : 'text-parchment-500 hover:text-parchment-200'}"
+			class="px-1 pb-2 text-sm font-medium transition-colors {activeTab === 'types'
+				? 'border-b-2 border-gold-500 text-parchment-200'
+				: 'text-parchment-500 hover:text-parchment-200'}"
 			onclick={() => (activeTab = 'types')}
 		>
 			Person Types
@@ -164,7 +179,7 @@
 						<tr>
 							<th class="px-4 py-3 font-medium whitespace-nowrap">Name</th>
 							<th class="px-4 py-3 font-medium whitespace-nowrap">Native Name</th>
-							<th class="px-4 py-3 font-medium whitespace-nowrap w-40">Actions</th>
+							<th class="w-40 px-4 py-3 font-medium whitespace-nowrap">Actions</th>
 						</tr>
 					</thead>
 					<tbody class="divide-y divide-clay-800">
@@ -201,11 +216,22 @@
 			</div>
 		</div>
 
-		<Modal open={showPeopleModal} title={editingPerson ? 'Edit Person' : 'New Person'} onClose={() => (showPeopleModal = false)}>
-			<form onsubmit={(e) => { e.preventDefault(); savePerson(); }}>
+		<Modal
+			open={showPeopleModal}
+			title={editingPerson ? 'Edit Person' : 'New Person'}
+			onClose={() => (showPeopleModal = false)}
+		>
+			<form
+				onsubmit={(e) => {
+					e.preventDefault();
+					savePerson();
+				}}
+			>
 				<div class="space-y-4">
 					<div>
-						<label for="person-name" class="mb-1 block text-xs font-medium text-parchment-400">Name</label>
+						<label for="person-name" class="mb-1 block text-xs font-medium text-parchment-400"
+							>Name</label
+						>
 						<input
 							id="person-name"
 							type="text"
@@ -215,7 +241,10 @@
 						/>
 					</div>
 					<div>
-						<label for="person-native-name" class="mb-1 block text-xs font-medium text-parchment-400">Native Name</label>
+						<label
+							for="person-native-name"
+							class="mb-1 block text-xs font-medium text-parchment-400">Native Name</label
+						>
 						<input
 							id="person-native-name"
 							type="text"
@@ -268,7 +297,7 @@
 						<tr>
 							<th class="px-4 py-3 font-medium whitespace-nowrap">Name</th>
 							<th class="px-4 py-3 font-medium whitespace-nowrap">Description</th>
-							<th class="px-4 py-3 font-medium whitespace-nowrap w-40">Actions</th>
+							<th class="w-40 px-4 py-3 font-medium whitespace-nowrap">Actions</th>
 						</tr>
 					</thead>
 					<tbody class="divide-y divide-clay-800">
@@ -305,11 +334,22 @@
 			</div>
 		</div>
 
-		<Modal open={showPersonTypesModal} title={editingPersonType ? 'Edit Person Type' : 'New Person Type'} onClose={() => (showPersonTypesModal = false)}>
-			<form onsubmit={(e) => { e.preventDefault(); savePersonType(); }}>
+		<Modal
+			open={showPersonTypesModal}
+			title={editingPersonType ? 'Edit Person Type' : 'New Person Type'}
+			onClose={() => (showPersonTypesModal = false)}
+		>
+			<form
+				onsubmit={(e) => {
+					e.preventDefault();
+					savePersonType();
+				}}
+			>
 				<div class="space-y-4">
 					<div>
-						<label for="pt-name" class="mb-1 block text-xs font-medium text-parchment-400">Name</label>
+						<label for="pt-name" class="mb-1 block text-xs font-medium text-parchment-400"
+							>Name</label
+						>
 						<input
 							id="pt-name"
 							type="text"
@@ -319,7 +359,9 @@
 						/>
 					</div>
 					<div>
-						<label for="pt-description" class="mb-1 block text-xs font-medium text-parchment-400">Description</label>
+						<label for="pt-description" class="mb-1 block text-xs font-medium text-parchment-400"
+							>Description</label
+						>
 						<input
 							id="pt-description"
 							type="text"
