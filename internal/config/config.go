@@ -25,11 +25,12 @@ type AppConfig struct {
 }
 
 type ServerConfig struct {
-	Host         string        `mapstructure:"host" yaml:"host" json:"host"`
-	Port         int           `mapstructure:"port" yaml:"port" json:"port"`
-	ReadTimeout  time.Duration `mapstructure:"read_timeout" yaml:"read_timeout" json:"read_timeout"`
-	WriteTimeout time.Duration `mapstructure:"write_timeout" yaml:"write_timeout" json:"write_timeout"`
-	IdleTimeout  time.Duration `mapstructure:"idle_timeout" yaml:"idle_timeout" json:"idle_timeout"`
+	Host          string        `mapstructure:"host" yaml:"host" json:"host"`
+	Port          int           `mapstructure:"port" yaml:"port" json:"port"`
+	ReadTimeout   time.Duration `mapstructure:"read_timeout" yaml:"read_timeout" json:"read_timeout"`
+	WriteTimeout  time.Duration `mapstructure:"write_timeout" yaml:"write_timeout" json:"write_timeout"`
+	IdleTimeout   time.Duration `mapstructure:"idle_timeout" yaml:"idle_timeout" json:"idle_timeout"`
+	MaxUploadSize int64         `mapstructure:"max_upload_size" yaml:"max_upload_size" json:"max_upload_size"`
 }
 
 type DatabaseConfig struct {
@@ -230,11 +231,12 @@ func DefaultConfig(configDir string) *Config {
 			ConfigDir: configDir,
 		},
 		Srv: ServerConfig{
-			Host:         "0.0.0.0",
-			Port:         3000,
-			ReadTimeout:  60 * time.Second,
-			WriteTimeout: 60 * time.Second,
-			IdleTimeout:  60 * time.Second,
+			Host:          "0.0.0.0",
+			Port:          3000,
+			ReadTimeout:   60 * time.Second,
+			WriteTimeout:  60 * time.Second,
+			IdleTimeout:   60 * time.Second,
+			MaxUploadSize: 100,
 		},
 		Db: DatabaseConfig{
 			Type: "sqlite",

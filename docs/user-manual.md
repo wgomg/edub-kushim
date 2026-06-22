@@ -752,6 +752,51 @@ Response `422 Unprocessable Entity` (required tools missing):
 }
 ```
 
+### Upload Files
+
+Upload files via multipart form. Before scanning the uploaded files, the server checks
+that all required external tools are available (see [Pre-flight Tool Check](#pre-flight-tool-check)).
+
+```
+POST /api/v1/consume/upload
+```
+
+The request must be `multipart/form-data` with one or more `files` parts.
+
+Response `202` (files accepted):
+
+```json
+{
+  "batch_id": "550e8400-e29b-41d4-a716-446655440000",
+  "accepted": 3,
+  "rejected": [
+    { "name": "notes.docx", "reason": "unsupported type: .docx" }
+  ],
+  "_links": {
+    "tasks": "/api/v1/tasks?batch=550e8400-e29b-41d4-a716-446655440000"
+  }
+}
+```
+
+Response `413 Payload Too Large` (body exceeds `server.max_upload_size`):
+
+```json
+{
+  "error": "upload exceeds max_upload_size (100 MB)"
+}
+```
+
+Response `422 Unprocessable Entity` (all files rejected or missing tools):
+
+```json
+{
+  "error": "no supported files",
+  "rejected": [
+    { "name": "readme.txt", "reason": "unsupported type: .txt" }
+  ]
+}
+```
+
 ### List Tasks
 
 ```

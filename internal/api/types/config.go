@@ -31,8 +31,9 @@ type ConfigResponse struct {
 }
 
 type ServerConfigResponse struct {
-	Host string `json:"host"`
-	Port int    `json:"port"`
+	Host          string `json:"host"`
+	Port          int    `json:"port"`
+	MaxUploadSize int64  `json:"max_upload_size"`
 }
 
 type ConsumerConfigResponse struct {
@@ -146,6 +147,7 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.App.Initialized = cfg.App.ConfigDir != ""
 	resp.Server.Host = cfg.Srv.Host
 	resp.Server.Port = cfg.Srv.Port
+	resp.Server.MaxUploadSize = cfg.Srv.MaxUploadSize
 	resp.AvailableEngines = config.AvailableEngines
 	return resp
 }

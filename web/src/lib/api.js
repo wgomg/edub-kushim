@@ -243,6 +243,14 @@ export const api = {
 		delete: (id) => request(`/api/v1/saved-searches/${id}`, { method: 'DELETE' })
 	},
 
+	consume: {
+		upload: async (files) => {
+			const fd = new FormData();
+			for (const f of files) fd.append('files', f);
+			return requestRaw('/api/v1/consume/upload', { method: 'POST', body: fd });
+		}
+	},
+
 	config: {
 		get: () => request('/wizard/config'),
 		update: (body) =>

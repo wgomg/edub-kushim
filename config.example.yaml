@@ -8,6 +8,7 @@ server:
   read_timeout: 60
   write_timeout: 60
   idle_timeout: 60
+  max_upload_size: 100 # max multipart upload size in MB
 
 database:
   type: sqlite

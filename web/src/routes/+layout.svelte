@@ -5,9 +5,11 @@
 	import { api } from '$lib/api.js';
 	import Toast from '$lib/components/Toast.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+	import UploadModal from '$lib/components/UploadModal.svelte';
 
 	let { children } = $props();
 	let missingTools = $state([]);
+	let uploadOpen = $state(false);
 
 	let missingCount = $derived(
 		missingTools.reduce((sum, t) => {
@@ -80,6 +82,7 @@
 		<header class="flex h-14 shrink-0 items-center gap-4 border-b border-clay-800 bg-clay-900 px-6">
 			<div class="flex-1"></div>
 			<button
+				onclick={() => (uploadOpen = true)}
 				class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600"
 				>Upload</button
 			>
@@ -101,5 +104,6 @@
 
 		<Toast />
 		<ConfirmDialog />
+		<UploadModal open={uploadOpen} onClose={() => (uploadOpen = false)} />
 	</div>
 </div>

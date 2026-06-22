@@ -27,10 +27,11 @@
 ### Struct
 
 - `ConsumeHandler`
-  - **Fields**: `cfg *config.Config`, `logger *utils.Logger`, `dispatcher *task.Dispatcher`
+  - **Fields**: `cfg *config.Config`, `logger *utils.Logger`, `dispatcher *task.Dispatcher`, `queries *database.Queries`, `owner *task.Owner`
   - **Methods**:
-    - `NewConsumeHandler(cfg *config.Config, logger *utils.Logger, dispatcher *task.Dispatcher) *ConsumeHandler`
+    - `NewConsumeHandler(cfg *config.Config, logger *utils.Logger, dispatcher *task.Dispatcher, queries *database.Queries, owner *task.Owner) *ConsumeHandler`
     - `Consume(w, r)` — Scans inbox, enqueues one pair of (consume + enrich) tasks per file via `dispatcher.Enqueue`. Each consume task payload includes a `document_id` UUID for log correlation, plus `file_path`, `file_index`, and `on_completed` pointing to the enrich task ID. Enrich tasks start as `"waiting"` status with `waiting_for` pointer. Returns `202` with `batch_id`, `total_files`, `enqueued`, and `_links.tasks`. Returns `200` JSON `{batch_id:null, total_files:0, message:"no files found"}` when inbox is empty.
+    - `Upload(w, r)` — Accepts multipart upload (`files` field, repeatable), streams bytes to temp files in the inbox, validates MIME type against `consumer.supported_files`, and enqueues one pair of (consume + enrich) tasks per accepted file via `dispatcher.Enqueue`. Returns `202` with `batch_id`, `accepted`, `rejected`, and `_links.tasks`. Returns `413` when body exceeds `server.max_upload_size`. Returns `422` when no supported files are found or required tools are missing.
 
 ---
 
@@ -319,6 +320,7 @@ mux.HandleFunc("PUT /api/v1/document-types/{id}", docTypeHandler.Update)
 mux.HandleFunc("DELETE /api/v1/document-types/{id}", docTypeHandler.Delete)
 
 mux.HandleFunc("POST /api/v1/consume", consumeHandler.Consume)
+mux.HandleFunc("POST /api/v1/consume/upload", consumeHandler.Upload)
 
 mux.HandleFunc("GET /wizard/config", configHandler.GetConfig)
 mux.HandleFunc("PUT /wizard/config", configHandler.PutConfig)

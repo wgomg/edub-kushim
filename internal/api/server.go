@@ -201,6 +201,7 @@ func registerRoutes(mux *http.ServeMux, logger *utils.Logger, queries *database.
 
 	consumeHandler := handlers.NewConsumeHandler(cfg, logger, dispatcher, queries, owner)
 	mux.HandleFunc("POST /api/v1/consume", consumeHandler.Consume)
+	mux.HandleFunc("POST /api/v1/consume/upload", consumeHandler.Upload)
 
 	configHandler := handlers.NewConfigHandler(cfg, queries, logger, dispatcher)
 	mux.HandleFunc("GET /wizard/config", configHandler.GetConfig)
