@@ -118,7 +118,7 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 
 	registry := task.NewRegistry()
 	registry.Register("consume", taskhandlers.NewConsumeTaskHandler(consumer, store, c.logger))
-	registry.Register("enrich", taskhandlers.NewEnrichTaskHandler(enricher))
+	registry.Register("enrich", taskhandlers.NewEnrichTaskHandler(enricher, c.logger))
 	registry.Register("config", taskhandlers.NewConfigTaskHandler(c.logger))
 
 	c.dispatcher = task.NewDispatcher(c.logger, store, registry)

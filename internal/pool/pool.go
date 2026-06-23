@@ -70,7 +70,10 @@ func (p *Pool) Stop(ctx context.Context) {
 
 func (p *Pool) workerLoop(id int) {
 	defer p.wg.Done()
-	logPrefix := fmt.Sprintf("[worker %d]", id)
+	logPrefix := fmt.Sprintf("[%s worker %d]", p.taskType, id)
+
+	memTicker := time.NewTicker(5 * time.Minute)
+	defer memTicker.Stop()
 
 	for {
 		select {
@@ -79,6 +82,9 @@ func (p *Pool) workerLoop(id int) {
 			return
 		case <-p.ctx.Done():
 			return
+		case <-memTicker.C:
+			mem := utils.ReadMemFull()
+			p.logger.Debug(nil, "%s periodic memory: %s", logPrefix, utils.FormatMemFull(mem))
 		case <-time.After(p.interval):
 			if err := p.runner.Next(p.ctx, p.taskType); err != nil {
 				p.logger.Error(nil, "%s: %v", logPrefix, err)

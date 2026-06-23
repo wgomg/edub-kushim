@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"runtime"
 	"runtime/metrics"
 	"strconv"
 	"strings"
@@ -65,6 +66,45 @@ func readVmRSS() uint64 {
 	return 0
 }
 
+// MemFull adds runtime.MemStats fields (HeapSys, HeapIdle, HeapReleased) that
+// are not available through runtime/metrics. Use this for diagnostic logging
+// when you need to know how much memory Go is holding vs. has returned to the OS.
+type MemFull struct {
+	MemSnapshot
+	HeapSys      uint64 // bytes obtained from OS for the heap
+	HeapIdle     uint64 // bytes in idle spans
+	HeapReleased uint64 // bytes returned to the OS
+}
+
+func ReadMemFull() MemFull {
+	snap := ReadMemSnapshot()
+
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+
+	return MemFull{
+		MemSnapshot:  snap,
+		HeapSys:      ms.HeapSys,
+		HeapIdle:     ms.HeapIdle,
+		HeapReleased: ms.HeapReleased,
+	}
+}
+
+// FormatMemFull returns a one-line summary of key memory metrics. The format:
+//
+//	RSS: 2.3 GiB | heap in-use: 1.1 GiB | heap sys: 3.0 GiB | heap idle: 1.9 GiB | heap released: 0.5 GiB | GCs: 14
+func FormatMemFull(m MemFull) string {
+	return fmt.Sprintf(
+		"RSS: %s | heap in-use: %s | heap sys: %s | heap idle: %s | heap released: %s | GCs: %d",
+		FormatBytes(m.RSS),
+		FormatBytes(m.HeapInUse),
+		FormatBytes(m.HeapSys),
+		FormatBytes(m.HeapIdle),
+		FormatBytes(m.HeapReleased),
+		m.NumGC,
+	)
+}
+
 func FormatMemDelta(before, after MemSnapshot) string {
 	heapDelta := int64(after.HeapInUse) - int64(before.HeapInUse)
 	rssDelta := int64(after.RSS) - int64(before.RSS)
@@ -72,15 +112,15 @@ func FormatMemDelta(before, after MemSnapshot) string {
 
 	parts := ""
 	if heapDelta >= 0 {
-		parts = fmt.Sprintf("heap +%s", formatBytes(uint64(heapDelta)))
+		parts = fmt.Sprintf("heap +%s", FormatBytes(uint64(heapDelta)))
 	} else {
-		parts = fmt.Sprintf("heap -%s", formatBytes(uint64(-heapDelta)))
+		parts = fmt.Sprintf("heap -%s", FormatBytes(uint64(-heapDelta)))
 	}
 
 	if rssDelta >= 0 {
-		parts += fmt.Sprintf(", RSS +%s", formatBytes(uint64(rssDelta)))
+		parts += fmt.Sprintf(", RSS +%s", FormatBytes(uint64(rssDelta)))
 	} else {
-		parts += fmt.Sprintf(", RSS -%s", formatBytes(uint64(-rssDelta)))
+		parts += fmt.Sprintf(", RSS -%s", FormatBytes(uint64(-rssDelta)))
 	}
 
 	if gcs > 0 {
@@ -89,7 +129,7 @@ func FormatMemDelta(before, after MemSnapshot) string {
 	return parts
 }
 
-func formatBytes(b uint64) string {
+func FormatBytes(b uint64) string {
 	switch {
 	case b >= 1<<30:
 		return fmt.Sprintf("%.1f GiB", float64(b)/(1<<30))

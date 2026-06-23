@@ -43,6 +43,10 @@ func (h *ConsumeTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawM
 	}
 
 	file, err = h.consumer.Process(ctx, file, p.DocumentID)
+	{
+		mem := utils.ReadMemFull()
+		h.logger.Debug(&p.DocumentID, "post-consume memory: %s", utils.FormatMemFull(mem))
+	}
 	if err != nil {
 		if p.OnCompleted != "" {
 			if discardErr := h.deactivateChildEnrich(ctx, t, p.OnCompleted, err); discardErr != nil {

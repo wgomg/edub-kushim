@@ -99,7 +99,7 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 
 	registry := task.NewRegistry()
 	registry.Register("consume", taskhandlers.NewConsumeTaskHandler(consumer, workStore, logger))
-	registry.Register("enrich", taskhandlers.NewEnrichTaskHandler(enricher))
+	registry.Register("enrich", taskhandlers.NewEnrichTaskHandler(enricher, logger))
 	registry.Register("config", taskhandlers.NewConfigTaskHandler(logger))
 
 	dispatcher := task.NewDispatcher(logger, workStore, registry)

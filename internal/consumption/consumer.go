@@ -389,7 +389,7 @@ func (c *Consumer) extractText(ctx context.Context, file File, documentID string
 
 	ocrResult, err := c.runner.OCR(ctx, documentID, file.OriginalPath)
 	memAfterOCR := utils.ReadMemSnapshot()
-	c.logger.Debug(&documentID, "OCR: %s", utils.FormatMemDelta(memAfterExtract, memAfterOCR))
+	c.logger.Debug(&documentID, "OCR: %s (RSS now %s)", utils.FormatMemDelta(memAfterExtract, memAfterOCR), utils.FormatBytes(memAfterOCR.RSS))
 	if err != nil {
 		return file, err
 	}
@@ -407,6 +407,10 @@ func (c *Consumer) extractText(ctx context.Context, file File, documentID string
 		file.Text = sql.NullString{Valid: false}
 	}
 	file.OCRTmpPath = ocrResult.TmpPath
+
+	c.logger.Debug(&documentID, "extractText complete: RSS %s (total delta: %s)",
+		utils.FormatBytes(memAfterFinal.RSS),
+		utils.FormatMemDelta(memBefore, memAfterFinal))
 
 	return file, nil
 }

@@ -8,14 +8,16 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/enrichment"
 	"github.com/wgomg/edub-kushim/internal/task"
+	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type EnrichTaskHandler struct {
 	enricher *enrichment.Enricher
+	logger   *utils.Logger
 }
 
-func NewEnrichTaskHandler(enricher *enrichment.Enricher) *EnrichTaskHandler {
-	return &EnrichTaskHandler{enricher: enricher}
+func NewEnrichTaskHandler(enricher *enrichment.Enricher, logger *utils.Logger) *EnrichTaskHandler {
+	return &EnrichTaskHandler{enricher: enricher, logger: logger}
 }
 
 func (h *EnrichTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMessage, error) {
@@ -35,6 +37,10 @@ func (h *EnrichTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMe
 	}
 
 	result, err := h.enricher.Enrich(ctx, document)
+	{
+		mem := utils.ReadMemFull()
+		h.logger.Debug(&p.DocumentID, "post-enrich memory: %s", utils.FormatMemFull(mem))
+	}
 	if err != nil {
 		return nil, err
 	}
