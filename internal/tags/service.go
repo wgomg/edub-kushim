@@ -4,14 +4,11 @@ import (
 	"context"
 	"strings"
 
-	"github.com/wgomg/edub-kushim/internal/cache"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/tagmatcher"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
-
-const batchSize = 32
 
 type CreateStatus int
 
@@ -60,15 +57,13 @@ type DeleteResult struct {
 
 type TagService struct {
 	queries  *database.Queries
-	store    *cache.EmbeddingStore
 	embedder tagmatcher.Embedder
 	logger   *utils.Logger
 }
 
-func NewTagService(queries *database.Queries, store *cache.EmbeddingStore, logger *utils.Logger, embedder tagmatcher.Embedder) (*TagService, error) {
+func NewTagService(queries *database.Queries, logger *utils.Logger, embedder tagmatcher.Embedder) (*TagService, error) {
 	return &TagService{
 		queries:  queries,
-		store:    store,
 		embedder: embedder,
 		logger:   logger,
 	}, nil
@@ -253,7 +248,9 @@ func (s *TagService) Update(ctx context.Context, pairs []UpdatePair) ([]UpdateRe
 	}
 
 	for _, r := range renames {
-		s.store.Remove(r.oldName)
+		if err := s.embedder.RemoveFromStore(ctx, []string{r.oldName}); err != nil {
+			s.logger.Error(nil, "tag service: remove from store: %v", err)
+		}
 	}
 
 	if len(newNames) > 0 {
@@ -294,7 +291,9 @@ func (s *TagService) Delete(ctx context.Context, ids []int64) ([]DeleteResult, e
 			return nil, errs.FromDB(err, "delete tag")
 		}
 
-		s.store.Remove(tag.Name)
+		if err := s.embedder.RemoveFromStore(ctx, []string{tag.Name}); err != nil {
+			s.logger.Error(nil, "tag service: remove from store: %v", err)
+		}
 		results[i] = DeleteResult{ID: id, Status: Deleted}
 	}
 
@@ -306,19 +305,7 @@ func (s *TagService) Consolidate(ctx context.Context, docId string, queries []st
 }
 
 func (s *TagService) encodeAndAddBatch(ctx context.Context, names []string) {
-	for i := 0; i < len(names); i += batchSize {
-		end := min(i+batchSize, len(names))
-		chunk := names[i:end]
-
-		vecs, err := s.embedder.Encode(ctx, nil, chunk)
-		if err != nil {
-			s.logger.Error(nil, "tag service: encode batch %v: %v", chunk, err)
-			continue
-		}
-		for j, name := range chunk {
-			if j < len(vecs) && vecs[j] != nil {
-				s.store.Add(name, vecs[j])
-			}
-		}
+	if err := s.embedder.AddToStore(ctx, names); err != nil {
+		s.logger.Error(nil, "tag service: add to store: %v", err)
 	}
 }

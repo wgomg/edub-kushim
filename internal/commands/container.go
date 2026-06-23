@@ -90,7 +90,7 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 
 	hugot.SetStore(embStore)
 
-	tagSvc, err := tags.NewTagService(queries, embStore, c.logger, hugot)
+	tagSvc, err := tags.NewTagService(queries, c.logger, hugot)
 	if err != nil {
 		return nil, fmt.Errorf("tag service: %w", err)
 	}

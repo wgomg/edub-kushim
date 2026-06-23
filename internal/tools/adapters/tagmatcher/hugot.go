@@ -1,3 +1,5 @@
+//go:build cgo
+
 package tagmatcher
 
 import (
@@ -96,8 +98,42 @@ func NewHugot(logger *utils.Logger, tmCfg config.TagMatcherConfig, pipeName stri
 	}, nil
 }
 
+const embedBatchSize = 32
+
 func (h *Hugot) SetStore(s EmbeddingStore) {
 	h.store = s
+}
+
+func (h *Hugot) AddToStore(ctx context.Context, names []string) error {
+	if h == nil {
+		return fmt.Errorf("tag matcher not initialized")
+	}
+	for i := 0; i < len(names); i += embedBatchSize {
+		end := min(i+embedBatchSize, len(names))
+		chunk := names[i:end]
+
+		vecs, err := h.Encode(ctx, nil, chunk)
+		if err != nil {
+			h.logger.Error(nil, "hugot: add to store: encode batch %v: %v", chunk, err)
+			continue
+		}
+		for j, name := range chunk {
+			if j < len(vecs) && vecs[j] != nil {
+				h.store.Add(name, vecs[j])
+			}
+		}
+	}
+	return nil
+}
+
+func (h *Hugot) RemoveFromStore(ctx context.Context, names []string) error {
+	if h == nil {
+		return fmt.Errorf("tag matcher not initialized")
+	}
+	for _, name := range names {
+		h.store.Remove(name)
+	}
+	return nil
 }
 
 func (h *Hugot) Close() {

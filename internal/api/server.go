@@ -78,7 +78,7 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 	workStore.SetOwnerID(ownerID)
 	configStore := task.NewStore(queries)
 
-	s.services.Tag, err = tags.NewTagService(queries, embStore, logger, hugot)
+	s.services.Tag, err = tags.NewTagService(queries, logger, hugot)
 	if err != nil {
 		logger.Fatal("tag service: ", err)
 	}
