@@ -233,6 +233,16 @@
 
 ---
 
+## 🔵 Icebox
+
+Low-priority items worth revisiting when nothing more impactful demands attention.
+
+| #   | Feature                                                     | Description                                                                                                                                                  |
+| --- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | **Double tokenization in chunked encoding**                 | `Encode()` and `encodeChunked()` redundantly tokenize the same text; per-chunk decode→re-encode round-trip adds unnecessary overhead. See [report](research/double-tokenization-chunked-encoding.md). |
+
+---
+
 ## See Also
 
 - [Architecture & Design](architecture.md) — Core design principles and pipeline narrative
