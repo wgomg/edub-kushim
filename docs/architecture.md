@@ -12,9 +12,77 @@
 - **Fallback Processing**: Text extraction → OCR → text extraction pattern
 - **Date-based Organization**: Temporal storage structure for scalability
 - **Transaction Safety**: Coordinated database and file operations with rollback
-- **Two Binaries**: **kushim** (CLI document processing) and **edub** (REST API server). Static C dependencies (Tesseract, Leptonica, MuPDF) linked into both.
+- **Process Isolation**: The Hugot embedding model runs as a **separate process** (`kushim serve-matching`), communicating over a Unix domain socket. The API server (`edub`) is pure Go (`CGO_ENABLED=0`) — it forks `kushim` child processes for document processing and communicates with the matcher via RPC.
+- **Two Binaries**: **kushim** (CLI document processing + matcher server) and **edub** (REST API server). Static C dependencies (Tesseract, Leptonica, MuPDF) linked only into **kushim**; **edub** is compiled with `CGO_ENABLED=0`.
 
 See [Roadmap](roadmap.md) for the implementation status and upcoming priorities.
+
+---
+
+## Process Architecture
+
+The system runs three cooperating processes:
+
+### 1. Matcher Server (`kushim serve-matching`)
+
+A standalone HTTP server over a Unix domain socket (`kushim-matcher.sock` in the config directory). Hosts the Hugot embedding model, manages the tag embedding store, and exposes RPC endpoints:
+
+| Endpoint                        | Method | Purpose                    |
+| ------------------------------- | ------ | -------------------------- |
+| `POST /rpc/v1/encode`           | POST   | Encode text to embeddings  |
+| `POST /rpc/v1/match`            | POST   | Match text against tags    |
+| `POST /rpc/v1/consolidate`      | POST   | Consolidate tag names      |
+| `POST /rpc/v1/add-to-store`     | POST   | Add names to embedding store |
+| `POST /rpc/v1/remove-from-store`| POST   | Remove names from store    |
+| `GET /health`                   | GET    | Health check               |
+
+This process requires CGo (Tesseract/Hugot libraries) and should be started before the API server.
+
+### 2. API Server (`edub`)
+
+Pure Go binary (`CGO_ENABLED=0`) that handles HTTP requests. It:
+- Enqueues consume/enrich tasks when `POST /api/v1/consume` is called
+- **Forks** `kushim consume --batch <id>` as a child process to handle actual document processing
+- Runs a config pool for background download tasks (tessdata, Hugot model)
+- Probes the matcher socket on startup; tag CRUD returns 503 if matcher is unreachable
+- Uses `Semaphore` to limit concurrent forked workers (`server.max_concurrent_batches`)
+
+### 3. CLI / Worker (`kushim`)
+
+The CGo binary that performs actual document processing:
+- `kushim consume` — scans inbox, processes files, runs enrichment
+- `kushim consume --batch <id>` — resumes a previously enqueued batch (used by `edub`'s fork)
+- `kushim serve-matching` — starts the matcher RPC server
+- `kushim setup` — setup wizard
+
+### Communication Flow
+
+```
+  HTTP Request
+       │
+       ▼
+┌──────────────┐     enqueue tasks      ┌──────────────┐
+│    edub      │ ──────────────────────▶ │   SQLite DB  │
+│ (CGO_ENABLED │                         └──────────────┘
+│     =0)      │                              │
+└──────┬───────┘                              │
+       │ fork kushim consume --batch           │
+       ▼                                      ▼
+┌──────────────┐                     ┌──────────────┐
+│   kushim     │ ◀───── polls ────── │  task queue  │
+│ (CGo binary) │                     └──────────────┘
+│              │
+│  Matcher RPC │◀──── Unix socket ───┐
+└──────────────┘                     │
+       │                            │
+       ▼                            │
+┌──────────────┐                    │
+│   Hugot /    │                    │
+│  Embeddings  │◀───────────────────┘
+└──────────────┘
+```
+
+The matcher is optional — if it's not running, `edub` logs a warning and tag CRUD returns 503. The `kushim` CLI (used for document processing) can start its own matcher when run directly (via the consume command which has direct Hugot access), or communicate with the external matcher via the same RPC interface.
 
 ---
 
@@ -87,23 +155,25 @@ parent error message (via `Store.Discard`). The enrichment pipeline:
 
 1. **Text Reduction** (optional, configurable threshold) — if the document exceeds
    `enricher.textreducer.target_words`, TextRank extracts the most salient content.
-2. **Semantic Tag Pre-filtering** — document content is embedded via Hugot and cosine-
-   matched against all existing tag names (embeddings resolved from the shared store,
-   with cache-miss encode-on-the-fly). Top-N matches above `min_similarity` are passed
-   to the LLM as suggestions.
+2. **Semantic Tag Pre-filtering** — document content is matched against all existing tag
+   names via the `Matcher` interface. In the `kushim` CLI, this uses direct Hugot calls
+   and the local embedding store. In the `edub` API server, the `MatcherClient` forwards
+   the request over a Unix socket to the external matcher process. Falls back to all tags
+   on failure.
 3. **LLM Classification** — the reduced content, along with available document types
    and tag suggestions, is sent to the configured LLM provider. Returns structured
    JSON: title, type, tags, people (with types like author, sender), language.
    For non-Latin names (Korean, Arabic, Cyrillic, etc.), the LLM is prompted to
    provide a `name_romanized` field alongside the original name.
 4. **Post-LLM Tag Consolidation** — LLM output labels are re-matched against canonical
-   tag embeddings via `Consolidate` (delegated to `TagService` → `Embedder.Consolidate`),
-   fixing casing, hyphenation, and synonym mismatches.
-5. **New Tag Cache Update** — any new tags created during enrichment are batch-created
-   via `services.Tag.Create(ctx, analysis.Tags)`. The service pre-loads existing tags
-   to avoid N+1 queries, encodes all new names in `batchSize=32` chunks, and adds them
-   to the shared embedding store (`*cache.EmbeddingStore`) — making them available for
-   matching against subsequent documents without additional encode.
+   tag embeddings via `Consolidate` (delegated to the matcher interface), fixing casing,
+   hyphenation, and synonym mismatches.
+5. **New Tag Store Update** — any new tags created during enrichment are batch-created
+   via `services.Tag.Create(ctx, analysis.Tags)`. The service delegates store management
+   to the matcher via `AddToStore`, which encodes new names and adds them to the shared
+   embedding store. This makes them available for matching against subsequent documents
+   without additional encode. When using the RPC client, this forwards the request to the
+   matcher process over the Unix socket.
 6. **Result Logging** — token usage stats and prompt text are logged.
 
 ### People Deduplication
@@ -347,6 +417,10 @@ FTS5 is "good enough" for the expected document volume (thousands to low tens of
 | Hugot with Go backend (default) | Pure Go inference — static linking via `libtokenizers.a`. No external runtime deps. ORT backend available for ONNX acceleration, auto-downloads `libonnxruntime.so`.                                             |
 | `runWithTimeout` wrapper        | Ensures timeout detection for every adapter call, regardless of whether the adapter checks `ctx.Done()` internally. Eliminates the need for per-adapter cancellation wiring.                                     |
 | Seeded tag vocabulary (Dewey)   | 110+ tags organized by Dewey Decimal Classification. Provides a sensible default taxonomy for LLM classification without requiring user setup.                                                                   |
+| External matcher process        | Hugot embedding model runs as a separate process (`kushim serve-matching`) over a Unix socket. The API server (`edub`) is pure Go with no CGo dependencies.                                                      |
+| Forked processing workers       | Instead of running consume/enrich pools internally, `edub` enqueues tasks and forks `kushim consume --batch` as child processes. Clean process isolation, no in-process heartbeat/ownership management needed.  |
+| `CGO_ENABLED=0` for `edub`      | `edub` is compiled without CGo, making it a lightweight, statically linked binary. No runtime dependency on C libraries. `kushim` retains all CGo for Tesseract/Leptonica/MuPDF/Hugot.                          |
+| Semaphore-based batch concurrency | A counting semaphore limits concurrent forked worker processes to `server.max_concurrent_batches` (default 2). Prevents resource exhaustion from concurrent batches.                                           |
 
 ---
 
@@ -361,3 +435,5 @@ FTS5 is "good enough" for the expected document volume (thousands to low tens of
   copy — ingestion is not blocked. Set `pdfoptimizer.fallback: 'gs'` to fall
   back to Ghostscript for these files.
 - **Hugot ORT backend**: ONNX Runtime downloaded at runtime on first use — requires internet access. The Go backend has no runtime deps.
+- **Matcher as external process**: The tag matcher runs as a separate process (`kushim serve-matching`). If it's not running, tag CRUD operations return `503 Service Unavailable`, and enrichment falls back to LLM-only tags (no semantic tag matching). The matcher must be started before `edub` for full functionality.
+- **edub forks kushim**: When `POST /api/v1/consume` is called, `edub` finds the `kushim` binary in PATH or as a sibling of the `edub` binary. If `kushim` is not found, the consume request fails.

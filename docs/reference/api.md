@@ -5,16 +5,17 @@
 ### Struct
 
 - `Server`
-  - **Fields**: `httpServer *http.Server`, `logger *utils.Logger`, `addr string`, `pools struct { consume; enrich; config }`, `owner`, `ownerID`, `heartbeat`, `services *types.CrudServices`
+  - **Fields**: `httpServer *http.Server`, `logger *utils.Logger`, `addr string`, `matcherClient *rpc.MatcherClient`, `services *types.CrudServices`, `pools struct { config *pool.Pool }`
   - **Methods**:
-    - `NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server` — Builds tag cache (`*cache.Cache` registry), extracts `*cache.EmbeddingStore` under `"tags"` key, builds `CrudServices` with `Tag`, `People`, `PeopleType`, `DocumentType` services, creates dispatcher, registers routes
-    - `Start() error` — Starts all pools, then HTTP server
-    - `Shutdown(ctx context.Context) error` — Stops heartbeat, HTTP server, then pools, then `services.Close()` (which iterates all `io.Closer` fields)
+    - `NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server` — Creates a `MatcherClient` connected to `kushim-matcher.sock` in the config dir, builds `CrudServices` with `Tag` (wired through `MatcherClient`), `People`, `PeopleType`, `DocumentType` services, creates dispatcher with only the `"config"` task type registered, creates a `Semaphore` for batch concurrency, registers routes
+    - `Start() error` — Probes matcher health (startup warning if unreachable), starts config pool, then HTTP server
+    - `Shutdown(ctx context.Context) error` — Shuts down HTTP server, config pool, then `services.Close()`
     - `Addr() string`
 
 ### Functions
 
-- `registerRoutes(mux *http.ServeMux, logger, queries, engine, dispatcher, cfg, owner, services *types.CrudServices)` — Registers all API routes including document, tag CRUD, people CRUD, document-type CRUD, task/batch, saved-search, config wizard routes; passes `services` to `NewDocumentHandler`, `NewTagHandler`, `NewPeopleHandler`, and `NewDocumentTypeHandler`. Uses Go 1.22+ pattern routing (`"GET /api/v1/documents/{id}"`).
+- `probeMatcher()` — Calls `matcherClient.Health()` with 2s timeout. Logs warning and continues if matcher is unreachable; tag CRUD returns `503` and enrich falls back to LLM-only tags.
+- `registerRoutes(mux *http.ServeMux, logger, queries, engine, dispatcher, cfg, services, semaphore, workStore)` — Registers all API routes; passes `services` to `NewDocumentHandler`, `NewTagHandler`, `NewPeopleHandler`, and `NewDocumentTypeHandler`. Uses Go 1.22+ pattern routing (`"GET /api/v1/documents/{id}"`).
 - `registerStaticRoutes(mux *http.ServeMux)` — Registers `"GET /{path...}"` handler; tries to serve the requested file from the embedded FS, falls back to `index.html` for client-side SPA routes if the file doesn't exist
 - `chainMiddleware(logger *utils.Logger, h http.Handler) http.Handler` — Composes request + parambag middleware
 - `requestMiddleware(logger *utils.Logger, next http.Handler) http.Handler` — Adds reqid to context, logs requests
@@ -27,11 +28,12 @@
 ### Struct
 
 - `ConsumeHandler`
-  - **Fields**: `cfg *config.Config`, `logger *utils.Logger`, `dispatcher *task.Dispatcher`, `queries *database.Queries`, `owner *task.Owner`
+  - **Fields**: `cfg *config.Config`, `logger *utils.Logger`, `workStore *task.Store`, `queries *database.Queries`, `semaphore *concurrency.Semaphore`
   - **Methods**:
-    - `NewConsumeHandler(cfg *config.Config, logger *utils.Logger, dispatcher *task.Dispatcher, queries *database.Queries, owner *task.Owner) *ConsumeHandler`
-    - `Consume(w, r)` — Scans inbox, enqueues one pair of (consume + enrich) tasks per file via `dispatcher.Enqueue`. Each consume task payload includes a `document_id` UUID for log correlation, plus `file_path`, `file_index`, and `on_completed` pointing to the enrich task ID. Enrich tasks start as `"waiting"` status with `waiting_for` pointer. Returns `202` with `batch_id`, `total_files`, `enqueued`, and `_links.tasks`. Returns `200` JSON `{batch_id:null, total_files:0, message:"no files found"}` when inbox is empty.
-    - `Upload(w, r)` — Accepts multipart upload (`files` field, repeatable), streams bytes to temp files in the inbox, validates MIME type against `consumer.supported_files`, and enqueues one pair of (consume + enrich) tasks per accepted file via `dispatcher.Enqueue`. Returns `202` with `batch_id`, `accepted`, `rejected`, and `_links.tasks`. Returns `413` when body exceeds `server.max_upload_size`. Returns `422` when no supported files are found or required tools are missing.
+    - `NewConsumeHandler(cfg, logger, workStore, queries, semaphore) *ConsumeHandler`
+    - `Consume(w, r)` — Acquires semaphore slot, scans inbox using `fileresolver.GetFiles`, creates a batch, enqueues one pair of (consume + enrich) tasks per file via `workStore.CreateTask`, then **forks a `kushim consume --batch <id>` child process** to handle actual processing. Returns `202` with `batch_id`, `total_files`, `enqueued`, and `_links.tasks`. Returns `429 Too Many Requests` when semaphore slots are exhausted (`server.max_concurrent_batches`). Returns `200` JSON `{batch_id:null, total_files:0, message:"no files found"}` when inbox is empty.
+    - `Upload(w, r)` — Acquires semaphore slot, accepts multipart upload (`files` field, repeatable), streams bytes to temp files in the inbox, validates MIME type against `consumer.supported_files`, enqueues tasks, then **forks a `kushim consume --batch <id>` child process**. Returns `202` with `batch_id`, `accepted`, `rejected`, and `_links.tasks`. Returns `413` when body exceeds `server.max_upload_size`. Returns `422` when no supported files are found or required tools are missing.
+    - `forkWorker(batchID) error` — Finds the `kushim` binary (PATH or sibling of `edub`), starts it detached with `--batch <id>`, and releases the semaphore slot when the child exits.
 
 ---
 
@@ -83,6 +85,7 @@
     - `ListBatches(w, r)` — Lists all batch summaries with filtering (`status`, `limit`, `offset`)
     - `GetBatchSummary(w, r)` — Counts per status for a single batch (via `{id}`)
     - `RetryBatch(w, r)` — `POST /api/v1/batches/{id}/retry` — Resets all failed tasks in a batch to pending. Returns `200 {"retried": <n>}`. Idempotent (0 retried is valid success).
+    - `ResumeBatch(w, r)` — `POST /api/v1/batches/{id}/resume` (formerly `AdoptBatch`). Checks batch ownership via `BatchOwnerState` (returns 409 if locked by a live owner), then **forks `kushim consume --batch <id> --force`** to resume processing. Returns `202 {"resumed": true}`.
     - `GlobalSummary(w, r)` — Global totals: number of batches, total files, per-status counts (including `waiting` and `discarded`), total file size in GB
     - **Helpers**: `buildBatchSummary(ctx, queries, batchID) BatchSummaryResponse`, `taskToResponse(t) TaskResponse`
 
@@ -132,9 +135,9 @@
   - **Methods**:
     - `NewTagHandler(services, logger) *TagHandler`
     - `List(w, r)` — `GET /api/v1/tags?q=<prefix>&limit=50&offset=0` — With `q`: searches by prefix via `services.Tag.Search`. Without `q`: lists paginated via `services.Tag.List`. Returns bare JSON array of `{id,name}`.
-    - `Create(w, r)` — `POST /api/v1/tags` — Accepts `{name}`. Calls `services.Tag.Create(ctx, []string{name})`. Maps status: `Created` → 201 with `{id,name}`, `Conflict` → 409 with existing `{id,name}`, `Invalid` → 400.
-    - `Update(w, r)` — `PUT /api/v1/tags/{id}` — Accepts `{name}`. Calls `services.Tag.Update(ctx, []UpdatePair{{ID: id, Name: name}})`. Maps status: `Updated`/`Noop` → 200 with `{id,name}`, `Conflict` → 409, `NotFound` → 404, `Invalid` → 400.
-    - `Delete(w, r)` — `DELETE /api/v1/tags/{id}` — Calls `services.Tag.Delete(ctx, []int64{id})`. Maps status: `Deleted` → 204, `NotFound` → 404.
+    - `Create(w, r)` — `POST /api/v1/tags` — Accepts `{name}`. Calls `services.Tag.Create(ctx, []string{name})`. Maps status: `Created` → 201 with `{id,name}`, `Conflict` → 409 with existing `{id,name}`, `Invalid` → 400. Returns `503` with `{"error":"matcher unavailable — tag store is offline"}` when the external matcher process is unreachable.
+    - `Update(w, r)` — `PUT /api/v1/tags/{id}` — Accepts `{name}`. Calls `services.Tag.Update(ctx, []UpdatePair{{ID: id, Name: name}})`. Maps status: `Updated`/`Noop` → 200 with `{id,name}`, `Conflict` → 409, `NotFound` → 404, `Invalid` → 400. Returns `503` when matcher is unreachable.
+    - `Delete(w, r)` — `DELETE /api/v1/tags/{id}` — Calls `services.Tag.Delete(ctx, []int64{id})`. Maps status: `Deleted` → 204, `NotFound` → 404. Returns `503` when matcher is unreachable.
 
 ---
 
@@ -333,6 +336,7 @@ mux.HandleFunc("POST /api/v1/tasks/{id}/retry", taskHandler.RetryTask)
 mux.HandleFunc("GET /api/v1/batches", taskHandler.ListBatches)
 mux.HandleFunc("GET /api/v1/batches/{id}", taskHandler.GetBatchSummary)
 mux.HandleFunc("POST /api/v1/batches/{id}/retry", taskHandler.RetryBatch)
+mux.HandleFunc("POST /api/v1/batches/{id}/resume", taskHandler.ResumeBatch)
 mux.HandleFunc("GET /api/v1/summary", taskHandler.GlobalSummary)
 
 mux.HandleFunc("GET /api/v1/saved-searches", savedSearchHandler.List)

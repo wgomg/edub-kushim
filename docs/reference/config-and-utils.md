@@ -4,7 +4,7 @@
 
 - `Config` — `App AppConfig`, `Srv ServerConfig`, `Db DatabaseConfig`, `Storage StorageConfig`, `Consumer ConsumerConfig`, `Enricher EnricherConfig`
 - `AppConfig`: `Env Environment`, `LogLevel string`, `LogFile string`, `ConfigDir string`
-- `ServerConfig`: `Host`, `Port`, `ReadTimeout`, `WriteTimeout`, `IdleTimeout`
+- `ServerConfig`: `Host`, `Port`, `ReadTimeout`, `WriteTimeout`, `IdleTimeout`, `MaxUploadSize`, `MaxConcurrentBatches`
 - `DatabaseConfig`: `Type`, `Path`, `Name`, `Seeders []string`
 - `StorageConfig`: `ConsumptionDir`, `StorageDir`
 - `ConsumerConfig`: `SupportedFiles []string`, `DeleteOriginal bool`, `Workers int`, `TextExtractor TextExtractorConfig`, `PdfOptimizer PdfOptimizerConfig`, `OCR OCRConfig`
@@ -26,7 +26,7 @@
 
 ## Functions
 
-- `DefaultConfig(configDir string) *Config` — Full defaults (BAAI/bge-m3, ort backend, gosseract OCR, textrank reducer, llmopenai analyzer, etc.)
+- `DefaultConfig(configDir string) *Config` — Full defaults (BAAI/bge-m3, ort backend, gosseract OCR, textrank reducer, llmopenai analyzer, 100 MB max upload, 2 max concurrent batches, etc.)
 - `Load(configDir string) (*Config, error)` — Loads YAML over defaults, validates OCR languages required, expands paths, creates dirs
 - `defaultMinSimilarity(modelShortName string) float64` — Per-model thresholds (bge-m3: 0.40)
 - `defaultConsolidationSimilarity(modelShortName string) float64` — Tag-to-tag thresholds (bge-m3: 0.82)
@@ -102,7 +102,7 @@ per tool category, used by the frontend settings UI to populate select dropdowns
 
 ### Function
 
-- `BuildTagCache(ctx, db, logger, tmCfg) (*Cache, error)` — Fetches all tag names from DB, creates an initial empty `EmbeddingStore` at key `"tags"` with attrs `{dim:384, model:..., normalized:true}`, embeds tags in batches of 32 via `tagmatcher.NewHugot` directly, replaces the store. Graceful fallback to empty cache on Hugot init failure (returns the empty store).
+- `BuildTagCache(ctx, db, logger, hugot, store) error` — Fetches all tag names from DB, creates an initial empty `EmbeddingStore`, embeds tags in batches of 32 via the provided `Hugot` embedder, populates the store. Graceful fallback to empty cache on Hugot init failure.
 
 ---
 

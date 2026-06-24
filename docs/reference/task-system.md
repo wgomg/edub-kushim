@@ -124,7 +124,9 @@
     - `Handle(ctx, t) (json.RawMessage, error)` — Unmarshals `{"document_id":"<uuid>"}`, calls `enricher.GetDb()` + `GetDocument` (lookup by UUID), then `enricher.Enrich`
     - `DedupKey(payload) string` — Returns `"enrich:doc:<uuid>"` or empty string
 
-## `handlers/config.go`
+## `handlers/config.go` (moved to `internal/configtask/`)
+
+**Moved**: The `ConfigTaskHandler` was extracted from `internal/task/handlers/config.go` to `internal/configtask/configtask.go`.
 
 ### Constants
 
@@ -142,15 +144,31 @@
 
 ## Container Integration (`internal/commands/container.go`)
 
-The `Container` (used by CLI commands) and `Server` (used by `edub`) both register
-the `"config"` task type alongside `"consume"` and `"enrich"`:
+### CLI (`kushim`)
+
+The `Container` registers all three task types (`"consume"`, `"enrich"`, `"config"`)
+and creates a `MatcherClient` connected to the Unix socket at `<config_dir>/kushim-matcher.sock`.
+The `TagService` and `Enricher` receive the client instead of a direct Hugot reference:
 
 ```go
-registry.Register("config", taskhandlers.NewConfigTaskHandler(logger))
+matcherClient := rpc.NewMatcherClient(c.socketPath())
+tagSvc, err := tags.NewTagService(queries, logger, matcherClient)
+enricher, err := enrichment.NewEnricher(cfg, logger, db, services, matcherClient)
+registry.Register("config", configtask.NewConfigTaskHandler(logger))
 ```
 
-Both create a dedicated pool for config tasks with 1 worker and a 5-second poll
-interval. The config pool is started with the other pools on server start and
+The config pool is started alongside consume/enrich pools when a CLI command runs.
+
+### Server (`edub`)
+
+The `Server` only registers the `"config"` task type. Consume/enrich pools are **not started**
+— the server enqueues tasks and forks `kushim consume --batch <id>` subprocesses instead:
+
+```go
+registry.Register("config", configtask.NewConfigTaskHandler(logger))
+```
+
+Only the config pool (1 worker, 5s poll interval) is started on server boot and
 stopped on shutdown.
 
 ---

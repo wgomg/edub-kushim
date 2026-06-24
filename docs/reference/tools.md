@@ -109,17 +109,23 @@ type Matcher interface {
 type Embedder interface {
     Encode(ctx, docId *string, texts []string) ([][]float32, error)
     Consolidate(ctx, docId string, queries []string) ([]string, error)
+    AddToStore(ctx context.Context, names []string) error
+    RemoveFromStore(ctx context.Context, names []string) error
     Close()
     Name() string
 }
 
 type EmbeddingStore interface {
     Get(key string) ([]float32, bool)
+    Add(key string, embedding []float32)
+    Remove(key string)
     Entries() map[string][]float32
 }
 ```
 
-The `Matcher` interface is used by the Runner for document-to-tag matching. The `Embedder` interface is used by TagService for encoding and post-LLM consolidation. The `EmbeddingStore` interface provides read access to the shared tag embedding cache. The composition root builds a single `*Hugot` that satisfies both `Matcher` and `Embedder`, injected into all consumers.
+The `Matcher` interface is used by the Runner for document-to-tag matching. The `Embedder` interface is used by TagService for encoding and post-LLM consolidation; `AddToStore`/`RemoveFromStore` delegate store management to the adapter (encoding + adding to the embedding store, or removing from it). The `EmbeddingStore` interface provides read/write access to the shared tag embedding cache.
+
+The composition root builds a single `*Hugot` (for the `kushim` CLI) or uses an `*rpc.MatcherClient` (for the `edub` API server) — both satisfy the `Matcher` and `Embedder` interfaces. The `MatcherClient` forwards all calls over a Unix socket to a standalone `kushim serve-matching` process.
 
 ---
 
@@ -138,6 +144,8 @@ The `Matcher` interface is used by the Runner for document-to-tag matching. The 
   - `Match(ctx, docId, input, candidateTags []string)` — Names-based matching: looks up each candidate in the store, encodes cache-miss tags on the fly, ranks by cosine similarity
   - `Consolidate(ctx, docId, queries []string)` — Reads all entries from the store internally, encodes LLM output labels, re-matches against canonical tag embeddings
   - `Encode(ctx, *docId, texts)` — Batch embedding with chunked encoding for long inputs
+  - `AddToStore(ctx, names)` — Encodes names in batches of 32 (`embedBatchSize`) and adds them to the store (moved from TagService)
+  - `RemoveFromStore(ctx, names)` — Removes names from the store (moved from TagService)
   - `SetStore(s EmbeddingStore)` — Injects the shared store reference after construction
   - `Close()` — Idempotent (nil-safe, sets session to nil after destroy)
 - **Nil-receiver guards**: `Match`, `Consolidate`, `Encode` all return an error if `h == nil`, preventing typed-nil interface panics

@@ -4,7 +4,9 @@
 
 ### Globals
 
-`commandSets` map with `"cli"` and `"server"` keys. Server set only contains `version`. CLI set contains: `version`, `consume`, `search`, `task`, `setup`.
+`commandSets` map with `"cli"` key. CLI set contains: `version`, `consume`, `search`, `task`, `setup`, `serve-matching`.
+
+> **Note**: The `edub` binary no longer uses `CommandRunner` from the commands package. It has its own standalone runner in `cmd/edub/runner.go` that only handles the `version` command (server mode is the default when no command matches).
 
 ### Structs
 
@@ -16,7 +18,6 @@
 
 - `ListCommands() []Command`
 - `PrintUsage()` — Prints CLI usage, calls `os.Exit(1)`
-- `PrintServerUsage()` — Prints server usage, calls `os.Exit(1)`
 - `versionHandler(container, args) error` — Prints `"Document Management System v{version}"`
 
 ---
@@ -41,12 +42,31 @@
   - **Methods**:
     - `NewContainer(cfg, logger)` — No DB
     - `NewContainerWithDB(cfg, logger, db)` — With provided DB
-    -     `GetDB() (*sql.DB, error)` — Creates DB lazily, runs goose migrations on first open
+    - `GetDB() (*sql.DB, error)` — Creates DB lazily, runs goose migrations on first open
     - `GetCache() (*cache.Cache, error)` — Builds tag embedding cache lazily via `cache.BuildTagCache`
-    - `GetDispatcher() (*task.Dispatcher, error)` — Lazily creates dispatcher with cache
+    - `GetDispatcher() (*task.Dispatcher, error)` — Lazily creates dispatcher. Creates a `MatcherClient` connected to the Unix socket at `<config_dir>/kushim-matcher.sock`, builds `TagService` wired through the client, and `Enricher` with the matcher.
     - `GetPool(taskType) (*pool.Pool, error)` — Returns the pool for "consume", "enrich", or "config", lazily creates with dispatcher. Config pool uses 1 worker and 5s poll interval.
     - `GetSearchEngine() (*search.Engine, error)`
     - `Close()` — Stops all pools if created, closes DB
+
+---
+
+## `serve_matching.go`
+
+### Function
+
+- `serveMatchingHandler(c, args) error` — Starts the matcher RPC server over a Unix domain socket. Accepts optional `--socket <path>` flag (default `<config_dir>/kushim-matcher.sock`). Creates a Hugot embedding session, builds the tag cache from the database, exposes HTTP endpoints:
+
+| Endpoint                        | Method | Description                                                                 |
+| ------------------------------- | ------ | --------------------------------------------------------------------------- |
+| `POST /rpc/v1/encode`           | POST   | Accepts `{"texts": [...]}`, returns `{"embeddings": [[...], ...]}`          |
+| `POST /rpc/v1/match`            | POST   | Accepts `{"doc_id", "input", "candidate_tags"}`, returns `{"matches": []}` |
+| `POST /rpc/v1/consolidate`      | POST   | Accepts `{"doc_id", "queries"}`, returns `{"results": []}`                  |
+| `POST /rpc/v1/add-to-store`     | POST   | Accepts `{"names": [...]}`, encodes and adds to embedding store             |
+| `POST /rpc/v1/remove-from-store`| POST   | Accepts `{"names": [...]}`, removes from embedding store                    |
+| `GET /health`                   | GET    | Returns `{"ok": true}`                                                      |
+
+Listens on a Unix socket (cleaned up on shutdown). Handles SIGTERM/SIGINT for graceful shutdown.
 
 ---
 

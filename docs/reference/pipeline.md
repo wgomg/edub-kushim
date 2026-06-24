@@ -26,10 +26,11 @@
 
 ### Functions
 
-`GetFiles(src, exts) ([]File, error)`, `FileFromPath(path) (File, error)`, `RemoveFile`, `MoveFile`, `CopyFile`, `CleanUp`, `moveFileCrossDevice`, `calculateChecksums`, `FilePaths`
+`FileFromPath(path) (File, error)`, `RemoveFile`, `MoveFile`, `CopyFile`, `CleanUp`, `moveFileCrossDevice`, `calculateChecksums`
 
-- `GetFiles` uses `gabriel-vasile/mimetype` for MIME detection, filters by extension
 - `FileFromPath` builds a `File` from a single path with checksums, MIME detection, file info
+
+> **Note**: `GetFiles` and `FilePaths` were extracted to `internal/fileresolver/resolver.go` for use by both the consume handler and CLI commands without pulling in the full consumption package.
 
 ---
 
@@ -41,14 +42,14 @@
 
 - `Enricher` — `config`, `logger`, `db`, `runner`, `services *types.CrudServices`
   - **Methods**:
-    - `NewEnricher(cfg, logger, db, services, matcher tagmatcher.Matcher) (*Enricher, error)` — Creates runner via `NewRunnerWithMatcher` with textreducer, contentanalyzer, tagmatcher tools; injected matcher shared from composition root
+    - `NewEnricher(cfg, logger, db, services, matcher tagmatcher.Matcher) (*Enricher, error)` — Creates runner via `NewRunnerWithMatcher` with textreducer, contentanalyzer, tagmatcher tools; matcher is either a direct `*Hugot` (in `kushim` CLI) or an `*rpc.MatcherClient` (in `edub` API server) — both satisfy the same `tagmatcher.Matcher` interface.
     - `Enrich(ctx, document) (*json.RawMessage, error)` — Full pipeline:
       1. Dual text reduction: LLM-targeted and tag-matching-targeted (via `targetWordCount`)
       2. Fetch doc types, people types from DB; all tags via `services.Tag.ListAll`
-      3. Semantic tag matching: passes tag names directly to `Runner.MatchTags` (embeddings resolved internally via the shared hugot's store, cache-miss encoded on the fly; falls back to all tags on failure)
+      3. Semantic tag matching: passes tag names to `Runner.MatchTags`. In `kushim`, embeddings are resolved via the local Hugot store (cache-miss encoded on the fly). In `edub`, the `MatcherClient` forwards requests over the Unix socket to the external matcher process. Falls back to all tags on failure.
       4. LLM content analysis (title, doc type, tags, people, language)
-      5. Post-LLM tag consolidation via `services.Tag.Consolidate` (delegates to `Embedder.Consolidate`, reads the shared embedding store internally)
-      6. New tags created via a single batch call `services.Tag.Create(ctx, analysis.Tags)` — returns per-index results with `Created`/`Conflict`/`Invalid` statuses. Service batches the encode of all new names (`batchSize=32`) and adds them to the shared embedding store automatically.
+      5. Post-LLM tag consolidation via `services.Tag.Consolidate` (delegates to `Embedder.Consolidate` over the matcher interface)
+      6. New tags created via a single batch call `services.Tag.Create(ctx, analysis.Tags)` — returns per-index results with `Created`/`Conflict`/`Invalid` statuses. The service delegates store management to the matcher via `AddToStore`.
       8. Update document metadata (title, doc_type, language)
       9. Manage document_tag junction (clear + add)
       10. Manage document_people junction (clear + add) — for each person:

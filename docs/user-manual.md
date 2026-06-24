@@ -1,7 +1,12 @@
 # edub-kushim — User Manual
 
-Two binaries: **kushim** (CLI for document processing) and **edub** (HTTP API server).
+Two binaries: **kushim** (CLI for document processing and matcher server) and **edub** (HTTP API server).
 Both share the same OCR, text extraction, and PDF optimization pipeline.
+
+The `edub` API server is a pure Go binary (`CGO_ENABLED=0`) that does not link any
+C libraries. It **forks** `kushim` child processes for document processing and
+communicates with an external **matcher process** (`kushim serve-matching`) for
+semantic tag matching via a Unix domain socket.
 
 ---
 
@@ -373,6 +378,36 @@ Task "880e8400-e29b-41d4-a716-446655440003" retried — status reset to pending
 
 Only failed tasks can be retried. The task is picked up on the next
 worker poll cycle.
+
+### `kushim serve-matching`
+
+Start the matcher RPC server over a Unix domain socket. This process
+hosts the Hugot embedding model and provides semantic tag matching,
+encoding, and consolidation services to both the API server and CLI workers.
+
+```
+kushim serve-matching
+kushim serve-matching --socket /path/to/custom/matcher.sock
+```
+
+| Flag       | Default                                        | Description                     |
+| ---------- | ---------------------------------------------- | ------------------------------- |
+| `--socket` | `<config_dir>/kushim-matcher.sock`             | Unix socket path for RPC        |
+
+The server listens on the Unix socket and exposes the following RPC
+endpoints:
+
+| Endpoint                        | Method | Description                                  |
+| ------------------------------- | ------ | -------------------------------------------- |
+| `POST /rpc/v1/encode`           | POST   | Encode text into embedding vectors            |
+| `POST /rpc/v1/match`            | POST   | Match document content against candidate tags |
+| `POST /rpc/v1/consolidate`      | POST   | Consolidate LLM output labels to known tags   |
+| `POST /rpc/v1/add-to-store`     | POST   | Add new tag names to the embedding store      |
+| `POST /rpc/v1/remove-from-store`| POST   | Remove tag names from the embedding store     |
+| `GET /health`                   | GET    | Health check                                 |
+
+The matcher must be started before `edub` for full functionality.
+If the matcher is not running, tag CRUD operations return `503 Service Unavailable`.
 
 ---
 
@@ -1046,6 +1081,7 @@ server:
   read_timeout: 60s # Go duration string (e.g. 60s, 30s)
   write_timeout: 60s
   idle_timeout: 60s
+  max_concurrent_batches: 2 # max concurrent forked worker processes
 
 database:
   type: sqlite # currently only sqlite
@@ -1111,7 +1147,7 @@ enricher:
 | Section                        | Purpose                                                 |
 | ------------------------------ | ------------------------------------------------------- |
 | `app`                          | Environment mode and log verbosity                      |
-| `server`                       | HTTP listen address, timeouts                           |
+| `server`                       | HTTP listen address, timeouts, max concurrent batches    |
 | `database`                     | SQLite storage location and file name                   |
 | `storage`                      | Inbox and processed file directories                    |
 | `consumer`                     | Pipeline: which tools to use, which files to accept     |
@@ -1158,13 +1194,25 @@ ensures enrichment never runs before the document is fully ingested.
 ## Running the API Server
 
 ```bash
-# Start with default config
+# Start the matcher first (required for tag matching)
+kushim serve-matching &
+
+# Start the API server
 edub
 ```
 
-The server starts the task queue workers (consume, enrich, and config pools)
-automatically. Logs are written to stdout. Graceful shutdown on
-SIGINT/SIGTERM.
+The server starts the **config pool** for background downloads (tessdata,
+Hugot model). Logs are written to stdout. Graceful shutdown on SIGINT/SIGTERM.
+
+When `POST /api/v1/consume` or `POST /api/v1/consume/upload` is called, the
+server enqueues tasks in the database and **forks** `kushim consume --batch <id>`
+as a child process. The child performs the actual document processing
+(consumption + enrichment) and communicates with the matcher process for
+semantic tag matching.
+
+The maximum number of concurrent forked workers is controlled by
+`server.max_concurrent_batches` (default 2). If the limit is reached,
+subsequent consume requests receive `429 Too Many Requests`.
 
 ```bash
 # Check version
@@ -1174,6 +1222,9 @@ edub version
 # Start server (default when no command is given)
 edub
 ```
+
+The `kushim` binary must be available in PATH or as a sibling of the `edub`
+binary. If it is not found, consume requests will fail with a 500 error.
 
 ## Settings Page
 

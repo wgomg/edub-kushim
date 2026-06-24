@@ -17,6 +17,13 @@
 - Per-tool timeout via `ToolConfig` struct + `runWithTimeout` generic wrapper
 - Configurable worker pool size (`consumer.workers`, `enricher.workers`, default 1 each)
 - Database-backed batch ownership with heartbeats (`batch_owner` table, stale lease detection, `--force` override, server/CLI isolation via per-process owner UUID)
+- Matcher as external process: Hugot embedding model runs as `kushim serve-matching` over Unix domain socket RPC
+- Worker forking: `edub` enqueues tasks and forks `kushim consume --batch` for processing; `edub` is pure Go (`CGO_ENABLED=0`)
+- Matcher RPC protocol: encode, match, consolidate, add-to-store, remove-from-store operations over HTTP/Unix socket
+- Semaphore-based batch concurrency limiting (`server.max_concurrent_batches`, default 2)
+- `internal/configtask/` — ConfigTaskHandler extracted from `task/handlers/`
+- `internal/fileresolver/` — file resolution extracted from `consumption/storage`
+- Config handler `AdoptBatch` renamed to `ResumeBatch`, now forks kushim worker
 
 ### Document Pipeline
 
@@ -110,11 +117,13 @@
 | `GET /api/v1/saved-searches`           | List saved searches                                         |
 | `POST /api/v1/saved-searches`          | Create saved search                                         |
 | `DELETE /api/v1/saved-searches/{id}`   | Delete saved search                                         |
-| `POST /api/v1/consume`                 | Enqueue inbox files                                         |
+| `POST /api/v1/consume`                 | Enqueue inbox files, fork processing worker                 |
+| `POST /api/v1/consume/upload`          | Upload files via multipart, fork processing worker          |
 | `GET /api/v1/tasks`                    | List tasks (batch, status filters)                          |
 | `GET /api/v1/tasks/{id}`               | Get single task                                             |
 | `GET /api/v1/batches`                  | List batch summaries                                        |
 | `GET /api/v1/batches/{id}`             | Get single batch summary                                    |
+| `POST /api/v1/batches/{id}/resume`     | Resume batch (forks kushim worker)                          |
 | `GET /api/v1/summary`                  | Global totals across all batches                            |
 
 ### CLI Commands
@@ -132,6 +141,7 @@
 | `kushim task status <id>`     | Show task details                                 |
 | `kushim task retry <id>`      | Reset failed task to pending                      |
 | `kushim version`              | Print version                                     |
+| `kushim serve-matching`       | Start matcher RPC server over Unix socket         |
 | `edub`                        | Start API server                                  |
 | `edub version`                | Print server version                              |
 
@@ -169,7 +179,8 @@
 ### Build & Deployment
 
 - Two binaries: **kushim** (CLI) + **edub** (API server)
-- Static CGo linking for MuPDF, Tesseract, Leptonica, libpng
+- `edub` built with `CGO_ENABLED=0` (pure Go, no C dependencies)
+- `kushim` retains static CGo linking for MuPDF, Tesseract, Leptonica, libpng
 - Pre-built `libtokenizers.a` for Hugot Go backend
 - Containerized builds for glibc and musl (`make build-glibc`, `make build-musl`)
 - Deployment image (`make build-tools-image`)

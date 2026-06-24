@@ -29,27 +29,32 @@ internal/
 │   ├── bootstrap.go       # BuildTagCache — pre-compute tag embeddings at startup
 │   └── embedding_store.go # EmbeddingStore (map[string][]float32 with thread-safe ops)
 ├── commands/              # CLI command framework
-├── documenttypes/         # DocumentTypeService batch CRUD
 │   ├── commands.go        # Command definitions and runner
 │   ├── consume.go         # Document consumption command (--bg, --batch, cancel)
 │   ├── container.go       # Dependency injection container (DB, pools, cache, dispatcher); includes config pool
 │   ├── flags.go           # CLI flag parser (shared by commands)
 │   ├── search.go          # Search command (CLI)
+│   ├── serve_matching.go  # Matcher RPC server over Unix socket (encode, match, consolidate, store ops)
 │   ├── setup.go           # Setup command — launches web wizard by default, --cli for terminal mode
 │   └── task.go            # Task commands (list, status, retry)
+├── concurrency/           # Concurrency primitives
+│   └── semaphore.go       # Counting semaphore (Acquire/Release) for batch concurrency
+├── configtask/            # Config task handler (extracted from task/handlers/)
+│   └── configtask.go      # ConfigTaskHandler — downloads tessdata/Hugot model in background ("config" task type)
 ├── enrichment/            # Enrichment engine (LLM pipeline)
+│   └── enricher.go        # Enricher: dual text reduction → tag matching → LLM → consolidation → people/tag/doc type with romanization + normalization
+├── fileresolver/          # File resolution (extracted from consumption/storage)
+│   └── resolver.go        # GetFiles, FilePaths — scans inbox directories, MIME detection
 ├── people/                # PeopleService + PeopleTypeService batch CRUD
-│   ├── enricher.go        # Enricher: dual text reduction → tag matching → LLM → consolidation → people/tag/doc type with romanization + normalization
 ├── pool/                  # Generic worker pool
 │   └── pool.go            # Pool struct, Start(ctx), Stop(ctx), worker loop
 ├── task/                  # Generic task system
-│   ├── batch.go           # Batch ownership — Owner.Acquire (two-step INSERT + UPDATE IF stale), Release, Heartbeat, IsOrphaned, BatchOwnerState
-│   ├── crud.go            # Task CRUD (Get, ListFiltered, Retry, CountBatchStatuses with Waiting, ListBatchSummaries)
-│   ├── dispatcher.go      # Task dispatcher (Enqueue with custom taskID/status, Next uses GetNextPendingTaskOfType)
+│   ├── batch.go           # Batch ownership — Owner.Acquire, Release, Heartbeat, BatchOwnerState
+│   ├── crud.go            # Task CRUD (Get, ListFiltered, Retry, CountBatchStatuses, ListBatchSummaries)
+│   ├── dispatcher.go      # Task dispatcher (Enqueue with custom taskID/status)
 │   ├── handler.go         # Handler + Dedupable interfaces
 │   ├── heartbeat.go       # Heartbeat goroutine — periodic Owner.Heartbeat every 5s
 │   └── handlers/
-│       ├── config.go      # ConfigTaskHandler — downloads tessdata/Hugot model in background ("config" task type)
 │       ├── consume.go     # ConsumeTaskHandler (uses FileFromPath)
 │       └── enrich.go      # EnrichTaskHandler (fetches document, calls Enricher.Enrich)
 ├── search/                # Full-text search engine
@@ -84,6 +89,9 @@ internal/
 │       └── queries/       # SQL queries for sqlc
 ├── static/                # Embedded web UI (main app)
 │   └── fs.go              # Embedded SvelteKit build (build/ directory via //go:embed)
+├── tagmatch/              # Tag matcher RPC infrastructure
+│   └── rpc/
+│       └── client.go      # MatcherClient — HTTP client over Unix socket to external matcher process
 ├── version/               # Application version
 │   └── version.go         # const Version = "0.1.0"
 ├── wizard/                # Setup wizard HTTP server
@@ -204,7 +212,15 @@ This system is a document management pipeline with three main stages:
 2. **Enrichment** — Applies LLM-based classification (title, doc type, tags, people, language) plus semantic tag matching via embeddings
 3. **Search & API** — Full-text search via SQLite FTS5, REST API with SvelteKit SPA frontend
 
-Processing is async via a task queue with batch tracking, worker pools, and a polling CLI mode.
+Processing is async via a task queue with batch tracking and a polling CLI mode.
+
+### Process Architecture
+
+The system uses two linked binaries with **worker forking**:
+
+- **`edub`** (API server, `CGO_ENABLED=0`) — Pure Go binary handling HTTP requests. When consume/upload is called, it enqueues tasks and **forks a `kushim consume --batch <id>` subprocess** to handle actual document processing. Only runs a config pool for background download tasks.
+- **`kushim`** (CLI, CGo) — Handles all document processing (consumption, enrichment). Also hosts the **matcher RPC server** via `kushim serve-matching`.
+- **Matcher process** — A standalone `kushim serve-matching` process provides semantic tag matching (Hugot embeddings) over a Unix domain socket (`kushim-matcher.sock`). Both `edub` and `kushim` workers communicate with it via `internal/tagmatch/rpc.MatcherClient`.
 
 ## See Also
 
