@@ -10,6 +10,28 @@ import (
 	"database/sql"
 )
 
+const countTags = `-- name: CountTags :one
+SELECT COUNT(*) FROM tag
+`
+
+func (q *Queries) CountTags(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countTags)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countTagsByName = `-- name: CountTagsByName :one
+SELECT COUNT(*) FROM tag WHERE name LIKE ?
+`
+
+func (q *Queries) CountTagsByName(ctx context.Context, name string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countTagsByName, name)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createTag = `-- name: CreateTag :execresult
 INSERT OR IGNORE INTO tag (
     name
@@ -138,16 +160,17 @@ func (q *Queries) ListTags(ctx context.Context, arg ListTagsParams) ([]Tag, erro
 }
 
 const searchTagsByName = `-- name: SearchTagsByName :many
-SELECT id, name, created_at FROM tag WHERE name LIKE ? ORDER BY name ASC LIMIT ?
+SELECT id, name, created_at FROM tag WHERE name LIKE ? ORDER BY name ASC LIMIT ? OFFSET ?
 `
 
 type SearchTagsByNameParams struct {
-	Name  string
-	Limit int64
+	Name   string
+	Limit  int64
+	Offset int64
 }
 
 func (q *Queries) SearchTagsByName(ctx context.Context, arg SearchTagsByNameParams) ([]Tag, error) {
-	rows, err := q.db.QueryContext(ctx, searchTagsByName, arg.Name, arg.Limit)
+	rows, err := q.db.QueryContext(ctx, searchTagsByName, arg.Name, arg.Limit, arg.Offset)
 	if err != nil {
 		return nil, err
 	}

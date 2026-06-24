@@ -54,25 +54,32 @@ func (h *TagHandler) List(w http.ResponseWriter, r *http.Request) {
 	offset := pb.GetInt64("offset", 0, 0, 100000)
 
 	var result []database.Tag
+	var total int64
 	var err error
 
 	if q != "" {
-		result, err = h.services.Tag.Search(ctx, q, limit)
+		result, err = h.services.Tag.Search(ctx, q, limit, offset)
+		if err == nil {
+			total, err = h.services.Tag.CountByName(ctx, q)
+		}
 	} else {
 		result, err = h.services.Tag.List(ctx, limit, offset)
+		if err == nil {
+			total, err = h.services.Tag.Count(ctx)
+		}
 	}
 	if err != nil {
 		writeServiceError(w, h.logger, &reqID, "list tags", err)
 		return
 	}
 
-	response := make([]types.TagResponse, len(result))
+	responses := make([]types.TagResponse, len(result))
 	for i, t := range result {
-		response[i] = types.TagResponse{ID: t.ID, Name: t.Name}
+		responses[i] = types.TagResponse{ID: t.ID, Name: t.Name}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	json.NewEncoder(w).Encode(types.TagListResponse{Results: responses, Total: total})
 }
 
 func (h *TagHandler) Create(w http.ResponseWriter, r *http.Request) {

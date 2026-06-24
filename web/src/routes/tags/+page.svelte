@@ -1,21 +1,38 @@
 <script>
-	import { onMount } from 'svelte';
-	import { api } from '$lib/api';
+	import DataTable from '$lib/components/DataTable.svelte';
 	import Modal from '$lib/components/Modal.svelte';
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
+	import { api } from '$lib/api';
 
-	let tags = $state([]);
 	let showModal = $state(false);
 	let editingTag = $state(null);
 	let formName = $state('');
 	let error = $state('');
 	let query = $state('');
+	let refreshKey = $state(0);
 
-	onMount(() => load());
+	const columns = [
+		{
+			key: 'name',
+			label: 'Name',
+			sortable: true,
+			width: '100%'
+		},
+		{
+			key: 'actions',
+			label: 'Actions',
+			sortable: false,
+			width: '160px',
+			cell: (_v, row) => {
+				return `<button data-edit-tag="${row.id}" data-tag-name="${row.name}" class="rounded-md px-2 py-1 text-xs font-medium text-parchment-400 hover:bg-clay-800">Edit</button>
+<button data-delete-tag="${row.id}" data-tag-name="${row.name}" class="rounded-md px-2 py-1 text-xs font-medium text-terracotta-500 hover:bg-clay-800">Delete</button>`;
+			}
+		}
+	];
 
-	async function load() {
-		tags = await api.tags.list(query);
+	async function fetch({ limit, offset }) {
+		return await api.tags.list(query, limit, offset);
 	}
 
 	function openNew() {
@@ -25,9 +42,9 @@
 		showModal = true;
 	}
 
-	function openEdit(tag) {
-		editingTag = tag;
-		formName = tag.name;
+	function openEdit(tagId, tagName) {
+		editingTag = { id: tagId, name: tagName };
+		formName = tagName;
 		error = '';
 		showModal = true;
 	}
@@ -47,7 +64,7 @@
 		}
 		if (result.ok) {
 			showModal = false;
-			await load();
+			refreshKey++;
 		} else if (result.status === 409) {
 			error = 'Tag already exists';
 		} else {
@@ -55,19 +72,36 @@
 		}
 	}
 
-	async function handleDelete(tag) {
+	async function handleDelete(tagId, tagName) {
 		const ok = await confirmStore.confirm({
 			title: 'Delete tag',
-			message: `Delete tag "${tag.name}"?`,
+			message: `Delete tag "${tagName}"?`,
 			danger: true
 		});
 		if (!ok) return;
-		await api.tags.delete(tag.id);
-		await load();
+		await api.tags.delete(tagId);
+		refreshKey++;
+	}
+
+	function handlePageClick(e) {
+		const editBtn = e.target.closest('[data-edit-tag]');
+		if (editBtn) {
+			const id = parseInt(editBtn.getAttribute('data-edit-tag'));
+			const name = editBtn.getAttribute('data-tag-name');
+			openEdit(id, name);
+			return;
+		}
+		const deleteBtn = e.target.closest('[data-delete-tag]');
+		if (deleteBtn) {
+			const id = parseInt(deleteBtn.getAttribute('data-delete-tag'));
+			const name = deleteBtn.getAttribute('data-tag-name');
+			handleDelete(id, name);
+			return;
+		}
 	}
 </script>
 
-<div class="space-y-4">
+<div class="space-y-4" onclick={handlePageClick} onkeydown={() => {}} role="presentation">
 	<div class="flex items-center justify-between">
 		<h1 class="text-2xl font-semibold text-parchment-200">Tags</h1>
 		<button
@@ -82,54 +116,27 @@
 		<input
 			type="text"
 			bind:value={query}
-			oninput={() => load()}
+			oninput={() => refreshKey++}
 			placeholder="Filter tags…"
 			class="border-clay-700 placeholder-parchment-600 w-full max-w-xs rounded-md border bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 focus:border-gold-500 focus:ring-0 focus:outline-none"
 		/>
 	</div>
 
-	<div class="overflow-x-auto rounded-lg border border-clay-800">
-		<table class="w-full table-auto text-sm">
-			<thead class="sticky top-0 bg-clay-900 text-left text-parchment-400">
-				<tr>
-					<th class="px-4 py-3 font-medium whitespace-nowrap">Name</th>
-					<th class="w-40 px-4 py-3 font-medium whitespace-nowrap">Actions</th>
-				</tr>
-			</thead>
-			<tbody class="divide-y divide-clay-800">
-				{#if tags.length === 0}
-					<tr class="bg-clay-950">
-						<td class="px-4 py-8 text-parchment-500" colspan="2">No tags found.</td>
-					</tr>
-				{:else}
-					{#each tags as tag (tag.id)}
-						<tr class="bg-clay-950">
-							<td class="px-4 py-3 text-parchment-200">{tag.name}</td>
-							<td class="px-4 py-3">
-								<div class="flex gap-2">
-									<button
-										onclick={() => openEdit(tag)}
-										class="rounded-md px-2 py-1 text-xs font-medium text-parchment-400 hover:bg-clay-800"
-									>
-										Edit
-									</button>
-									<button
-										onclick={() => handleDelete(tag)}
-										class="rounded-md px-2 py-1 text-xs font-medium text-terracotta-500 hover:bg-clay-800"
-									>
-										Delete
-									</button>
-								</div>
-							</td>
-						</tr>
-					{/each}
-				{/if}
-			</tbody>
-		</table>
-	</div>
+	<DataTable
+		{columns}
+		{fetch}
+		title=""
+		defaultPageSize={50}
+		pageSizes={[10, 25, 50, 100]}
+		{refreshKey}
+	/>
 </div>
 
-<Modal open={showModal} title={editingTag ? 'Edit Tag' : 'New Tag'} onClose={() => (showModal = false)}>
+<Modal
+	open={showModal}
+	title={editingTag ? 'Edit Tag' : 'New Tag'}
+	onClose={() => (showModal = false)}
+>
 	<form
 		onsubmit={(e) => {
 			e.preventDefault();

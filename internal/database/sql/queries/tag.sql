@@ -23,8 +23,14 @@ UPDATE tag SET
     name = ?
 WHERE id = ?;
 
+-- name: CountTags :one
+SELECT COUNT(*) FROM tag;
+
+-- name: CountTagsByName :one
+SELECT COUNT(*) FROM tag WHERE name LIKE ?;
+
 -- name: SearchTagsByName :many
-SELECT * FROM tag WHERE name LIKE ? ORDER BY name ASC LIMIT ?;
+SELECT * FROM tag WHERE name LIKE ? ORDER BY name ASC LIMIT ? OFFSET ?;
 
 -- name: DeleteTag :exec
 DELETE FROM tag WHERE id = ?;

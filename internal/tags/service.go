@@ -101,6 +101,22 @@ func (s *TagService) List(ctx context.Context, limit, offset int64) ([]database.
 	return tags, nil
 }
 
+func (s *TagService) Count(ctx context.Context) (int64, error) {
+	count, err := s.queries.CountTags(ctx)
+	if err != nil {
+		return 0, errs.FromDB(err, "count tags")
+	}
+	return count, nil
+}
+
+func (s *TagService) CountByName(ctx context.Context, prefix string) (int64, error) {
+	count, err := s.queries.CountTagsByName(ctx, prefix+"%")
+	if err != nil {
+		return 0, errs.FromDB(err, "count tags by name")
+	}
+	return count, nil
+}
+
 func (s *TagService) ListAll(ctx context.Context) ([]database.Tag, error) {
 	tags, err := s.queries.ListAllTags(ctx)
 	if err != nil {
@@ -109,10 +125,11 @@ func (s *TagService) ListAll(ctx context.Context) ([]database.Tag, error) {
 	return tags, nil
 }
 
-func (s *TagService) Search(ctx context.Context, prefix string, limit int64) ([]database.Tag, error) {
+func (s *TagService) Search(ctx context.Context, prefix string, limit, offset int64) ([]database.Tag, error) {
 	tags, err := s.queries.SearchTagsByName(ctx, database.SearchTagsByNameParams{
-		Name:  prefix + "%",
-		Limit: limit,
+		Name:   prefix + "%",
+		Limit:  limit,
+		Offset: offset,
 	})
 	if err != nil {
 		return nil, errs.FromDB(err, "search tags")
