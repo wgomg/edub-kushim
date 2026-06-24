@@ -9,6 +9,7 @@ import (
 	itypes "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/documenttypes"
+	"github.com/wgomg/edub-kushim/internal/sanitize"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -73,10 +74,13 @@ func (h *DocumentTypeHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if strings.TrimSpace(req.Name) == "" {
+	req.Name = sanitize.StripTags(strings.TrimSpace(req.Name))
+	if req.Name == "" {
 		http.Error(w, "Document type name is required", http.StatusBadRequest)
 		return
 	}
+
+	req.Description = sanitize.StripTags(req.Description)
 
 	results, err := h.services.DocumentType.Create(ctx, []documenttypes.CreateDocumentTypeInput{
 		{Name: req.Name, Description: req.Description},
@@ -123,10 +127,13 @@ func (h *DocumentTypeHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if strings.TrimSpace(req.Name) == "" {
+	req.Name = sanitize.StripTags(strings.TrimSpace(req.Name))
+	if req.Name == "" {
 		http.Error(w, "Document type name is required", http.StatusBadRequest)
 		return
 	}
+
+	req.Description = sanitize.StripTags(req.Description)
 
 	results, err := h.services.DocumentType.Update(ctx, []documenttypes.UpdatePair{
 		{ID: id, Name: req.Name, Description: req.Description},

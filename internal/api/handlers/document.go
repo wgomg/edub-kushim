@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"strings"
 
 	itypes "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
+	"github.com/wgomg/edub-kushim/internal/sanitize"
 	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -365,7 +367,8 @@ func (h *DocumentHandler) GetDocumentFile(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	w.Header().Set("Content-Disposition", `inline; filename="`+doc.Title+`"`)
+	safeTitle := strings.NewReplacer("\r\n", "", "\n", "", "\"", "").Replace(doc.Title)
+	w.Header().Set("Content-Disposition", `inline; filename="`+safeTitle+`"`)
 	http.ServeFile(w, r, doc.StoragePath)
 }
 
@@ -385,10 +388,14 @@ func (h *DocumentHandler) UpdateDocument(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	req.Title = sanitize.StripTags(strings.TrimSpace(req.Title))
 	if req.Title == "" {
 		http.Error(w, "Title is required", http.StatusBadRequest)
 		return
 	}
+
+	req.Language = sanitize.StripTags(strings.TrimSpace(req.Language))
+	req.TextContent = sanitize.StripTagsPtr(req.TextContent)
 
 	if req.DocumentTypeID < 1 {
 		http.Error(w, "Invalid document type", http.StatusBadRequest)

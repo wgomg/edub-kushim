@@ -7,6 +7,7 @@
 	import { filterStore } from '$lib/stores/filterStore.js';
 	import { setPersonTypes } from '$lib/stores/searchFilter.js';
 	import { onMount } from 'svelte';
+	import { escapeHtml } from '$lib/utils/html.js';
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
 
 	let columns = $derived.by(() => {
@@ -35,7 +36,7 @@
 					return v
 						.map(
 							(t) =>
-								`<span class="inline-block rounded-full bg-clay-800 px-2 py-0.5 text-xs text-parchment-300">${t.name}</span>`
+								`<span class="inline-block rounded-full bg-clay-800 px-2 py-0.5 text-xs text-parchment-300">${escapeHtml(t.name)}</span>`
 						)
 						.join(' ');
 				},
@@ -51,12 +52,12 @@
 					for (const p of v) {
 						const type = p.person_type_name || 'Unknown';
 						if (!grouped[type]) grouped[type] = [];
-						grouped[type].push(p.name);
+						grouped[type].push(escapeHtml(p.name));
 					}
 					return Object.entries(grouped)
 						.map(
 							([type, names]) =>
-								`<span class="text-parchment-400 text-xs">${type}:</span> <span class="text-parchment-200">${names.join(', ')}</span>`
+								`<span class="text-parchment-400 text-xs">${escapeHtml(type)}:</span> <span class="text-parchment-200">${names.join(', ')}</span>`
 						)
 						.join('<br>');
 				},

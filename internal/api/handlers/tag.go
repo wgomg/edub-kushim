@@ -10,6 +10,7 @@ import (
 	itypes "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/sanitize"
 	"github.com/wgomg/edub-kushim/internal/tagmatch/rpc"
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/utils"
@@ -92,7 +93,8 @@ func (h *TagHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if strings.TrimSpace(req.Name) == "" {
+	req.Name = sanitize.StripTags(strings.TrimSpace(req.Name))
+	if req.Name == "" {
 		http.Error(w, "Tag name is required", http.StatusBadRequest)
 		return
 	}
@@ -141,7 +143,8 @@ func (h *TagHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if strings.TrimSpace(req.Name) == "" {
+	req.Name = sanitize.StripTags(strings.TrimSpace(req.Name))
+	if req.Name == "" {
 		http.Error(w, "Tag name is required", http.StatusBadRequest)
 		return
 	}

@@ -12,6 +12,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/configtask"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/sanitize"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -97,6 +98,7 @@ func (h *ConfigHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	configDir := h.cfg.App.ConfigDir
+	sanitizeConfigStrings(body)
 	if err := config.SaveMap(configDir, body); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -284,6 +286,22 @@ func (h *ConfigHandler) RetryFailedConfig(w http.ResponseWriter, r *http.Request
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]int{"retried": retried})
+}
+
+func sanitizeConfigStrings(v any) any {
+	switch m := v.(type) {
+	case string:
+		return sanitize.StripTags(m)
+	case map[string]any:
+		for k, val := range m {
+			m[k] = sanitizeConfigStrings(val)
+		}
+	case []any:
+		for i, val := range m {
+			m[i] = sanitizeConfigStrings(val)
+		}
+	}
+	return v
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

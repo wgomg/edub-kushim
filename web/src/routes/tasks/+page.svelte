@@ -1,6 +1,7 @@
 <script>
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
+	import { escapeHtml } from '$lib/utils/html.js';
 	import { api } from '$lib/api';
 	import DataTable from '$lib/components/DataTable.svelte';
 
@@ -34,7 +35,7 @@
 			width: '100%',
 			cell: (v) => {
 				if (!v) return '—';
-				return `<span class="font-mono">${v}</span>`;
+				return `<span class="font-mono">${escapeHtml(v)}</span>`;
 			}
 		},
 		{
@@ -144,13 +145,13 @@
 				) {
 					if (row.payload_doc_id) {
 						parts.push(
-							`<span class="text-parchment-400 text-xs">document:</span> <span class="font-mono text-parchment-300">${row.payload_doc_id}</span>`
+							`<span class="text-parchment-400 text-xs">document:</span> <span class="font-mono text-parchment-300">${escapeHtml(row.payload_doc_id)}</span>`
 						);
 					}
 				}
 				if (row.file_name) {
 					parts.push(
-						`<span class="text-parchment-400 text-xs">file:</span> <span class="text-parchment-200">${row.file_name}</span>`
+						`<span class="text-parchment-400 text-xs">file:</span> <span class="text-parchment-200">${escapeHtml(row.file_name)}</span>`
 					);
 				} else {
 					parts.push(`<span class="text-parchment-500 italic">no file</span>`);
@@ -192,7 +193,7 @@
 			cell: (v) => {
 				if (!v) return '';
 				const short = v.length > 40 ? v.slice(0, 40) + '…' : v;
-				return `<span title="${v}" class="text-terracotta-500">${short}</span>`;
+				return `<span title="${escapeHtml(v)}" class="text-terracotta-500">${escapeHtml(short)}</span>`;
 			},
 			minWidth: '200px'
 		},

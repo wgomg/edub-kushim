@@ -1,6 +1,7 @@
 <script>
 	import DataTable from '$lib/components/DataTable.svelte';
 	import Modal from '$lib/components/Modal.svelte';
+	import { escapeHtml } from '$lib/utils/html.js';
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
 	import { api } from '$lib/api';
@@ -25,8 +26,9 @@
 			sortable: false,
 			width: '160px',
 			cell: (_v, row) => {
-				return `<button data-edit-tag="${row.id}" data-tag-name="${row.name}" class="rounded-md px-2 py-1 text-xs font-medium text-parchment-400 hover:bg-clay-800">Edit</button>
-<button data-delete-tag="${row.id}" data-tag-name="${row.name}" class="rounded-md px-2 py-1 text-xs font-medium text-terracotta-500 hover:bg-clay-800">Delete</button>`;
+				const safeName = escapeHtml(row.name);
+				return `<button data-edit-tag="${row.id}" data-tag-name="${safeName}" class="rounded-md px-2 py-1 text-xs font-medium text-parchment-400 hover:bg-clay-800">Edit</button>
+<button data-delete-tag="${row.id}" data-tag-name="${safeName}" class="rounded-md px-2 py-1 text-xs font-medium text-terracotta-500 hover:bg-clay-800">Delete</button>`;
 			}
 		}
 	];

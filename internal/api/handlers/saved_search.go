@@ -8,6 +8,7 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/sanitize"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -34,6 +35,7 @@ func (h *SavedSearchHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	req.Name = sanitize.StripTags(strings.TrimSpace(req.Name))
 	if req.Name == "" {
 		http.Error(w, "Name is required", http.StatusBadRequest)
 		return

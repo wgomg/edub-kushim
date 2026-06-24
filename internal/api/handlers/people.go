@@ -9,6 +9,7 @@ import (
 	itypes "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/people"
+	"github.com/wgomg/edub-kushim/internal/sanitize"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -83,10 +84,13 @@ func (h *PeopleHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if strings.TrimSpace(req.Name) == "" {
+	req.Name = sanitize.StripTags(strings.TrimSpace(req.Name))
+	if req.Name == "" {
 		http.Error(w, "Person name is required", http.StatusBadRequest)
 		return
 	}
+
+	req.NameNative = sanitize.StripTags(req.NameNative)
 
 	results, err := h.services.People.Create(ctx, []people.CreatePersonInput{
 		{Name: req.Name, NameNative: req.NameNative},
@@ -141,10 +145,13 @@ func (h *PeopleHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if strings.TrimSpace(req.Name) == "" {
+	req.Name = sanitize.StripTags(strings.TrimSpace(req.Name))
+	if req.Name == "" {
 		http.Error(w, "Person name is required", http.StatusBadRequest)
 		return
 	}
+
+	req.NameNative = sanitize.StripTags(req.NameNative)
 
 	results, err := h.services.People.Update(ctx, []people.UpdatePair{
 		{ID: id, Name: req.Name, NameNative: req.NameNative},
@@ -260,10 +267,13 @@ func (h *PeopleHandler) CreatePeopleType(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if strings.TrimSpace(req.Name) == "" {
+	req.Name = sanitize.StripTags(strings.TrimSpace(req.Name))
+	if req.Name == "" {
 		http.Error(w, "People type name is required", http.StatusBadRequest)
 		return
 	}
+
+	req.Description = sanitize.StripTags(req.Description)
 
 	results, err := h.services.PeopleType.Create(ctx, []people.CreatePeopleTypeInput{
 		{Name: req.Name, Description: req.Description},
@@ -310,10 +320,13 @@ func (h *PeopleHandler) UpdatePeopleType(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if strings.TrimSpace(req.Name) == "" {
+	req.Name = sanitize.StripTags(strings.TrimSpace(req.Name))
+	if req.Name == "" {
 		http.Error(w, "People type name is required", http.StatusBadRequest)
 		return
 	}
+
+	req.Description = sanitize.StripTags(req.Description)
 
 	results, err := h.services.PeopleType.Update(ctx, []people.PeopleTypeUpdatePair{
 		{ID: id, Name: req.Name, Description: req.Description},
