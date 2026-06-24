@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"syscall"
@@ -22,14 +23,33 @@ func serveMatchingHandler(c *Container, args []string) error {
 	socketPath := filepath.Join(c.config.App.ConfigDir, "kushim-matcher.sock")
 
 	fp := NewFlagParser(args)
-	if fp.Help("Usage: kushim serve-matching [--socket <path>]") {
+	if fp.Help("Usage: kushim serve-matching [--bg] [--socket <path>]") {
 		return nil
 	}
+
+	bgFlag := false
+	fp.Bool("--bg", &bgFlag)
+
 	if err := fp.String("--socket", &socketPath); err != nil {
 		return err
 	}
 	if rest := fp.Rest(); len(rest) > 0 {
 		return fmt.Errorf("unknown flag(s): %v", rest)
+	}
+
+	if bgFlag {
+		bgArgs := []string{"serve-matching"}
+		if socketPath != filepath.Join(c.config.App.ConfigDir, "kushim-matcher.sock") {
+			bgArgs = append(bgArgs, "--socket", socketPath)
+		}
+		cmd := exec.Command(os.Args[0], bgArgs...)
+		cmd.Stdin = nil
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+		if err := cmd.Start(); err != nil {
+			return fmt.Errorf("failed to start background process: %w", err)
+		}
+		return nil
 	}
 
 	if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
