@@ -1142,6 +1142,12 @@ enricher:
       backend: 'ort' # ort (ONNX Runtime) | GO
 ```
 
+> **ORT memory**: When using the `ort` backend, ORT's CPU memory arena and memory-pattern
+> pre-allocation are disabled by default (internal `CpuMemArena: false`, `MemPattern: false`).
+> This keeps idle RSS at ~2.2–2.5 GB instead of ~4–5 GB. These are internal fields not
+> present in `config.yaml` — toggle via `DefaultConfig` if latency is preferred over
+> memory usage.
+
 ### Key sections
 
 | Section                        | Purpose                                                 |

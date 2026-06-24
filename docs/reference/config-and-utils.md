@@ -17,7 +17,7 @@
     - `LlmToolsConfig`: `OpenAI LlmToolConfig`, `Anthropic LlmToolConfig`, `DeepSeek LlmToolConfig`, `Ollama LlmToolConfig`
     - `LlmToolConfig`: `BaseURL string`, `Model string`, `Token string`
   - `TagMatcherConfig`: `Engine`, `Timeout`, `ReduceTargetWords`, `ChunkSize`, `Hugot HugotConfig`, `TopN`, `MinSimilarity`, `ConsolidationSimilarity`
-    - `HugotConfig`: `Model`, `Backend` (`"GO"` or `"ort"`), `ModelPath`, `BackendLibPath`
+    - `HugotConfig`: `Model`, `Backend` (`"GO"` or `"ort"`), `ModelPath`, `BackendLibPath`; internal-only (no yaml/json tags): `CpuMemArena bool` (default `false`), `MemPattern bool` (default `false`)
 - `ToolConfig`: `Command string`, `Timeout time.Duration`
 
 ## Constants

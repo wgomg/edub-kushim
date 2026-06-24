@@ -110,6 +110,8 @@ type HugotConfig struct {
 	Backend        string `mapstructure:"backend" yaml:"backend" json:"backend"`
 	ModelPath      string `json:"model_path"`
 	BackendLibPath string `json:"backend_lib_path"`
+	CpuMemArena    bool
+	MemPattern     bool
 }
 
 type TagMatcherConfig struct {
@@ -303,8 +305,10 @@ func DefaultConfig(configDir string) *Config {
 				ReduceTargetWords: 4000,
 				ChunkSize:         0,
 				Hugot: HugotConfig{
-					Model:   "BAAI/bge-m3",
-					Backend: "ort",
+					Model:       "BAAI/bge-m3",
+					Backend:     "ort",
+					CpuMemArena: false,
+					MemPattern:  false,
 				},
 			},
 		},
