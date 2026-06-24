@@ -703,7 +703,6 @@ Two-phase API:
   "enricher.contentanalyzer.llm.openai.base_url": "https://api.openai.com/v1",
   "enricher.contentanalyzer.llm.openai.model": "gpt-4o",
   "enricher.contentanalyzer.llm.openai.token": "",
-  "enricher.tagmatcher.engine": "hugot",
   "enricher.tagmatcher.timeout": 120,
   "enricher.tagmatcher.reduce_target_words": 4000,
   "enricher.tagmatcher.chunk_size": 0,
@@ -1133,7 +1132,6 @@ enricher:
         base_url: 'http://localhost:11434'
         model: 'llama3.2'
   tagmatcher:
-    engine: 'hugot' # hugot | (empty = skip)
     timeout: 120
     reduce_target_words: 4000 # text reduction before tag matching
     chunk_size: 0 # 0 = use model's max_position_embeddings

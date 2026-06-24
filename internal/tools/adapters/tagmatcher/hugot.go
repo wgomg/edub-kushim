@@ -44,7 +44,7 @@ type match struct {
 }
 
 func NewHugot(logger *utils.Logger, tmCfg config.TagMatcherConfig, pipeName string) (*Hugot, error) {
-	logger.Debug(nil, "tagmatcher configured: engine=%s, backend=%s", tmCfg.Engine, tmCfg.Hugot.Backend)
+	logger.Debug(nil, "tagmatcher configured: backend=%s", tmCfg.Hugot.Backend)
 	session, err := getBackendSession(tmCfg, logger)
 	if err != nil {
 		return nil, fmt.Errorf("hugot session (%s): %w", tmCfg.Hugot.Backend, err)
@@ -238,7 +238,7 @@ func (h *Hugot) Consolidate(ctx context.Context, docId string, queries []string)
 }
 
 func (h *Hugot) Name() string {
-	return config.TagMatcher.Hugot
+	return "hugot"
 }
 
 // Encode computes embeddings for a batch of texts. Short texts (≤ chunkSize tokens)
@@ -445,7 +445,7 @@ func getBackendSession(tmCfg config.TagMatcherConfig, logger *utils.Logger) (*hu
 		if err := downloadLib(tmCfg.Hugot.BackendLibPath, soPath, logger); err != nil {
 			return nil, err
 		}
-		logger.Debug(nil, "tagmatcher used: engine=%s, backend=%s", tmCfg.Engine, "ort")
+		logger.Debug(nil, "tagmatcher used: backend=%s", "ort")
 		// WithCPUMemArena(false) disables ORT's internal CPU memory arena so that
 		// intermediate tensor allocations are freed after each inference instead of
 		// being retained in a growing pool. This caps idle RSS at ~2.2-2.5 GB with
@@ -465,7 +465,7 @@ func getBackendSession(tmCfg config.TagMatcherConfig, logger *utils.Logger) (*hu
 			options.WithMemPattern(tmCfg.Hugot.MemPattern),
 		)
 	default:
-		logger.Debug(nil, "tagmatcher used: engine=%s, backend=%s", tmCfg.Engine, "go")
+		logger.Debug(nil, "tagmatcher used: backend=%s", "go")
 		return hugot.NewGoSession(context.Background())
 	}
 }

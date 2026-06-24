@@ -97,7 +97,6 @@
 				[`enricher.contentanalyzer.llm.${providerKey}.model`]: cfg.enricher.contentanalyzer.llm[providerKey].model,
 				[`enricher.contentanalyzer.llm.${providerKey}.token`]: cfg.enricher.contentanalyzer.llm[providerKey].token,
 			} : {}),
-			'enricher.tagmatcher.engine': cfg.enricher.tagmatcher.engine,
 			'enricher.tagmatcher.timeout': Number(cfg.enricher.tagmatcher.timeout),
 			'enricher.tagmatcher.reduce_target_words': Number(cfg.enricher.tagmatcher.reduce_target_words),
 			'enricher.tagmatcher.chunk_size': Number(cfg.enricher.tagmatcher.chunk_size),
@@ -574,20 +573,6 @@
 		<section class="rounded-xl border border-clay-800 bg-clay-950/50 p-4">
 			<h3 class="mb-3 text-sm font-semibold text-parchment-200">Tag matcher</h3>
 			<div class="grid gap-3 sm:grid-cols-2">
-				<div>
-					<label for="tag-matcher-engine" class="mb-1 block text-sm font-medium text-parchment-200">
-						Engine
-					</label>
-					<select
-						id="tag-matcher-engine"
-						bind:value={cfg.enricher.tagmatcher.engine}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
-					>
-						{#each cfg.available_engines.tag_matcher as opt (opt.value)}
-							<option value={opt.value}>{opt.label}</option>
-						{/each}
-					</select>
-				</div>
 				<div>
 					<label for="tag-matcher-timeout" class="mb-1 block text-sm font-medium text-parchment-200">
 						Timeout (s)

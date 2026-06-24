@@ -95,7 +95,6 @@ type LlmProviderResponse struct {
 }
 
 type TagMatcherResponse struct {
-	Engine            string        `json:"engine"`
 	Timeout           int           `json:"timeout"`
 	ReduceTargetWords int           `json:"reduce_target_words"`
 	ChunkSize         int           `json:"chunk_size"`
@@ -138,7 +137,6 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Enricher.ContentAnalyzer.Llm.Ollama.BaseURL = cfg.Enricher.ContentAnalyzer.Llm.Ollama.BaseURL
 	resp.Enricher.ContentAnalyzer.Llm.Ollama.Model = cfg.Enricher.ContentAnalyzer.Llm.Ollama.Model
 	resp.Enricher.ContentAnalyzer.Llm.Ollama.Token = cfg.Enricher.ContentAnalyzer.Llm.Ollama.Token
-	resp.Enricher.TagMatcher.Engine = cfg.Enricher.TagMatcher.Engine
 	resp.Enricher.TagMatcher.Timeout = cfg.Enricher.TagMatcher.Timeout
 	resp.Enricher.TagMatcher.ReduceTargetWords = cfg.Enricher.TagMatcher.ReduceTargetWords
 	resp.Enricher.TagMatcher.ChunkSize = cfg.Enricher.TagMatcher.ChunkSize

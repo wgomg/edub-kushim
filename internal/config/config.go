@@ -115,7 +115,6 @@ type HugotConfig struct {
 }
 
 type TagMatcherConfig struct {
-	Engine                  string      `mapstructure:"engine" yaml:"engine" json:"engine"`
 	Timeout                 int         `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
 	ReduceTargetWords       int         `mapstructure:"reduce_target_words" yaml:"reduce_target_words" json:"reduce_target_words"`
 	ChunkSize               int         `mapstructure:"chunk_size" yaml:"chunk_size" json:"chunk_size"`
@@ -185,11 +184,6 @@ var (
 		TextRank: "textrank",
 	}
 
-	TagMatcher = struct {
-		Hugot string
-	}{
-		Hugot: "hugot",
-	}
 )
 
 type EngineEntry struct {
@@ -219,9 +213,6 @@ var AvailableEngines = map[string][]EngineEntry{
 	},
 	"text_reducer": {
 		{Value: TextReducer.TextRank, Label: "textrank"},
-	},
-	"tag_matcher": {
-		{Value: TagMatcher.Hugot, Label: "hugot"},
 	},
 }
 
@@ -300,7 +291,6 @@ func DefaultConfig(configDir string) *Config {
 				},
 			},
 			TagMatcher: TagMatcherConfig{
-				Engine:            TagMatcher.Hugot,
 				Timeout:           120,
 				ReduceTargetWords: 4000,
 				ChunkSize:         0,
