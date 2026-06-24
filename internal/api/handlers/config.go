@@ -10,9 +10,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/config"
+	"github.com/wgomg/edub-kushim/internal/configtask"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/task"
-	taskhandlers "github.com/wgomg/edub-kushim/internal/task/handlers"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -183,7 +183,7 @@ func (h *ConfigHandler) handleConfigTask(ctx context.Context, batchId, dedupKey 
 	}
 
 	payload, _ := json.Marshal(payloadFields)
-	if _, err := h.dispatcher.Enqueue(ctx, taskhandlers.TaskTypeConfig, batchId, payload, ""); err != nil {
+	if _, err := h.dispatcher.Enqueue(ctx, configtask.TaskTypeConfig, batchId, payload, ""); err != nil {
 		h.logger.Error(nil, "enqueue config task %s: %v", dedupKey, err)
 		return false
 	}
@@ -218,7 +218,7 @@ func (h *ConfigHandler) ConfigStatus(w http.ResponseWriter, r *http.Request) {
 
 		failedTasks, err := h.queries.ListAllTasksByStatusAndType(ctx, database.ListAllTasksByStatusAndTypeParams{
 			Status:   "failed",
-			TaskType: taskhandlers.TaskTypeConfig,
+			TaskType: configtask.TaskTypeConfig,
 		})
 		if err != nil {
 			h.logger.Error(nil, "list failed config tasks: %v", err)
@@ -265,7 +265,7 @@ func (h *ConfigHandler) RetryFailedConfig(w http.ResponseWriter, r *http.Request
 
 	failedTasks, err := h.queries.ListAllTasksByStatusAndType(ctx, database.ListAllTasksByStatusAndTypeParams{
 		Status:   "failed",
-		TaskType: taskhandlers.TaskTypeConfig,
+		TaskType: configtask.TaskTypeConfig,
 	})
 	if err != nil {
 		h.logger.Error(nil, "list failed config tasks: %v", err)

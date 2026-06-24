@@ -9,6 +9,7 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/config"
+	"github.com/wgomg/edub-kushim/internal/configtask"
 	"github.com/wgomg/edub-kushim/internal/consumption"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/documenttypes"
@@ -113,7 +114,7 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 	registry := task.NewRegistry()
 	registry.Register("consume", taskhandlers.NewConsumeTaskHandler(consumer, store, c.logger))
 	registry.Register("enrich", taskhandlers.NewEnrichTaskHandler(enricher, c.logger))
-	registry.Register("config", taskhandlers.NewConfigTaskHandler(c.logger))
+	registry.Register("config", configtask.NewConfigTaskHandler(c.logger))
 
 	c.dispatcher = task.NewDispatcher(c.logger, store, registry)
 	c.runner = task.NewRunner(store, registry, c.logger)

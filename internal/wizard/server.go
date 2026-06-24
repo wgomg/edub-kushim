@@ -10,10 +10,10 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/api/handlers"
 	"github.com/wgomg/edub-kushim/internal/config"
+	"github.com/wgomg/edub-kushim/internal/configtask"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/pool"
 	"github.com/wgomg/edub-kushim/internal/task"
-	taskhandlers "github.com/wgomg/edub-kushim/internal/task/handlers"
 	"github.com/wgomg/edub-kushim/internal/utils"
 	_ "modernc.org/sqlite"
 )
@@ -88,7 +88,7 @@ func (s *Server) bootstrap(configDir string) (*config.Config, *database.Queries,
 	queries := database.NewQueries(db)
 	store := task.NewStore(queries)
 	registry := task.NewRegistry()
-	registry.Register("config", taskhandlers.NewConfigTaskHandler(s.logger))
+	registry.Register("config", configtask.NewConfigTaskHandler(s.logger))
 
 	dispatcher := task.NewDispatcher(s.logger, store, registry)
 	runner := task.NewRunner(store, registry, s.logger)

@@ -73,7 +73,7 @@ func serveMatchingHandler(c *Container, args []string) error {
 	server := &http.Server{
 		Handler:      mux,
 		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 60 * time.Second,
+		WriteTimeout: 120 * time.Second,
 		IdleTimeout:  30 * time.Second,
 	}
 

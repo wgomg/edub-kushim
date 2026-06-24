@@ -31,7 +31,7 @@ wizard-build:
 
 build:
 	go build -tags "XLA,ORT" -o $(BINARY) ./cmd/kushim/main.go
-	go build -tags "XLA,ORT" -o $(EDUB_BINARY) ./cmd/edub/main.go
+	CGO_ENABLED=0 go build -tags "XLA,ORT" -o $(EDUB_BINARY) ./cmd/edub
 
 build-glibc:
 	podman run --rm \

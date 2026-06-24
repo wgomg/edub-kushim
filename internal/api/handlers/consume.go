@@ -16,8 +16,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/concurrency"
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/consumption"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/fileresolver"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -139,7 +139,7 @@ func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	files, err := consumption.GetFiles(
+	files, err := fileresolver.GetFiles(
 		h.cfg.Storage.ConsumptionDir,
 		h.cfg.Consumer.SupportedFiles,
 	)
@@ -169,7 +169,7 @@ func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 		Source: "api",
 	})
 
-	paths := consumption.FilePaths(files)
+	paths := fileresolver.FilePaths(files)
 	enqueued := h.enqueueBatchFiles(ctx, batchID, paths, reqID)
 
 	if enqueued == 0 {

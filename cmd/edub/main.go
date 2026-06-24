@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/api"
-	"github.com/wgomg/edub-kushim/internal/commands"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/utils"
@@ -24,11 +23,10 @@ func main() {
 	cmd := os.Args[1]
 
 	if cmd == "--help" || cmd == "-h" {
-		commands.PrintServerUsage()
+		printUsage()
 	}
 
-	runner := commands.NewCommandRunner(nil, "server")
-	if err := runner.ExecuteCommand(cmd, os.Args[2:]); err != nil {
+	if err := Execute(cmd, os.Args[2:]); err != nil {
 		startServer()
 	}
 }

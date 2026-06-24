@@ -13,6 +13,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/api/handlers"
 	"github.com/wgomg/edub-kushim/internal/concurrency"
 	"github.com/wgomg/edub-kushim/internal/config"
+	"github.com/wgomg/edub-kushim/internal/configtask"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/documenttypes"
 	"github.com/wgomg/edub-kushim/internal/people"
@@ -22,7 +23,6 @@ import (
 	"github.com/wgomg/edub-kushim/internal/tagmatch/rpc"
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/task"
-	taskhandlers "github.com/wgomg/edub-kushim/internal/task/handlers"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -68,7 +68,7 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 	configStore := task.NewStore(queries)
 
 	registry := task.NewRegistry()
-	registry.Register("config", taskhandlers.NewConfigTaskHandler(logger))
+	registry.Register("config", configtask.NewConfigTaskHandler(logger))
 
 	dispatcher := task.NewDispatcher(logger, workStore, registry)
 	configRunner := task.NewRunner(configStore, registry, logger)
