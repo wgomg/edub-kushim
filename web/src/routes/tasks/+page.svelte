@@ -116,7 +116,7 @@
 					buttons += `<button data-retry-batch="${row.batch_id}" class="rounded-lg bg-terracotta-600 px-3 py-1 text-xs font-medium text-white hover:bg-terracotta-500">Retry</button>`;
 				}
 				if (row.orphaned) {
-					buttons += `<button data-adopt-batch="${row.batch_id}" class="ml-1 rounded-lg bg-lapis-600 px-3 py-1 text-xs font-medium text-white hover:bg-lapis-500">Adopt</button>`;
+					buttons += `<button data-resume-batch="${row.batch_id}" class="ml-1 rounded-lg bg-lapis-600 px-3 py-1 text-xs font-medium text-white hover:bg-lapis-500">Resume</button>`;
 				}
 				return buttons;
 			},
@@ -250,11 +250,11 @@
 			});
 			return;
 		}
-		const adoptBtn = e.target.closest('[data-adopt-batch]');
-		if (adoptBtn) {
+		const resumeBtn = e.target.closest('[data-resume-batch]');
+		if (resumeBtn) {
 			e.stopPropagation();
-			const batchId = adoptBtn.getAttribute('data-adopt-batch');
-			api.batches.adopt(batchId).then(() => {
+			const batchId = resumeBtn.getAttribute('data-resume-batch');
+			api.batches.resume(batchId).then(() => {
 				batchRefreshKey++;
 			});
 			return;

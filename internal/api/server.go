@@ -5,46 +5,36 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
-	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/google/uuid"
 	types "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/api/handlers"
-	"github.com/wgomg/edub-kushim/internal/cache"
+	"github.com/wgomg/edub-kushim/internal/concurrency"
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/consumption"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/documenttypes"
-	"github.com/wgomg/edub-kushim/internal/enrichment"
 	"github.com/wgomg/edub-kushim/internal/people"
 	"github.com/wgomg/edub-kushim/internal/pool"
 	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/static"
+	"github.com/wgomg/edub-kushim/internal/tagmatch/rpc"
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/task"
 	taskhandlers "github.com/wgomg/edub-kushim/internal/task/handlers"
-	"github.com/wgomg/edub-kushim/internal/tools/adapters/tagmatcher"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
-const (
-	heartbeatInterval = 5 * time.Second
-)
-
 type Server struct {
-	httpServer *http.Server
-	logger     *utils.Logger
-	addr       string
-	pools      struct {
-		consume *pool.Pool
-		enrich  *pool.Pool
-		config  *pool.Pool
+	httpServer    *http.Server
+	logger        *utils.Logger
+	addr          string
+	matcherClient *rpc.MatcherClient
+	services      *types.CrudServices
+	pools         struct {
+		config *pool.Pool
 	}
-	owner     *task.Owner
-	ownerID   string
-	heartbeat *task.Heartbeat
-	services  *types.CrudServices
 }
 
 func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
@@ -55,72 +45,39 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 	queries := database.NewQueries(db)
 	engine := search.NewEngine(logger, db)
 
-	hugot, err := tagmatcher.NewHugot(logger, cfg.Enricher.TagMatcher, "tagmatcher")
-	if err != nil {
-		logger.Fatal("tag matcher: ", err)
-	}
-
-	embStore := cache.NewEmbeddingStore(nil, nil)
-	if err := cache.BuildTagCache(context.Background(), db, logger, hugot, embStore); err != nil {
-		logger.Error(nil, "failed to build tag cache: %v — continuing with empty cache", err)
-	}
-
-	hugot.SetStore(embStore)
+	matcherClient := rpc.NewMatcherClient(filepath.Join(cfg.App.ConfigDir, "kushim-matcher.sock"))
 
 	s := &Server{
-		logger:   logger,
-		addr:     addr,
-		services: &types.CrudServices{},
+		logger:        logger,
+		addr:          addr,
+		services:      &types.CrudServices{},
+		matcherClient: matcherClient,
 	}
-	ownerID := uuid.New().String()
 
-	workStore := task.NewStore(queries)
-	workStore.SetOwnerID(ownerID)
-	configStore := task.NewStore(queries)
-
-	s.services.Tag, err = tags.NewTagService(queries, logger, hugot)
+	tagSvc, err := tags.NewTagService(queries, logger, matcherClient)
 	if err != nil {
 		logger.Fatal("tag service: ", err)
 	}
+	s.services.Tag = tagSvc
 
 	s.services.People = people.NewPeopleService(queries, logger)
 	s.services.PeopleType = people.NewPeopleTypeService(queries, logger)
 	s.services.DocumentType = documenttypes.NewDocumentTypeService(queries, logger)
 
-	consumer, err := consumption.NewConsumer(&cfg, logger, db)
-	if err != nil {
-		logger.Fatal("consumer: ", err)
-	}
-
-	enricher, err := enrichment.NewEnricher(&cfg, logger, db, s.services, hugot)
-	if err != nil {
-		logger.Fatal("enricher: ", err)
-	}
+	workStore := task.NewStore(queries)
+	configStore := task.NewStore(queries)
 
 	registry := task.NewRegistry()
-	registry.Register("consume", taskhandlers.NewConsumeTaskHandler(consumer, workStore, logger))
-	registry.Register("enrich", taskhandlers.NewEnrichTaskHandler(enricher, logger))
 	registry.Register("config", taskhandlers.NewConfigTaskHandler(logger))
 
 	dispatcher := task.NewDispatcher(logger, workStore, registry)
-	workRunner := task.NewRunner(workStore, registry, logger)
 	configRunner := task.NewRunner(configStore, registry, logger)
 
-	consumeWorkers := max(cfg.Consumer.Workers, 1)
-	enrichWorkers := max(cfg.Enricher.Workers, 1)
+	s.pools.config = pool.New(logger, configRunner, 1, 5*time.Second, "config")
 
-	consumePool := pool.New(logger, workRunner, consumeWorkers, 2*time.Second, "consume")
-	enrichPool := pool.New(logger, workRunner, enrichWorkers, 5*time.Second, "enrich")
-	configPool := pool.New(logger, configRunner, 1, 5*time.Second, "config")
+	semaphore := concurrency.NewSemaphore(max(cfg.Srv.MaxConcurrentBatches, 2))
 
-	s.owner = task.NewOwner(queries, ownerID, os.Getpid(), logger)
-	s.heartbeat = task.NewHeartbeat(s.owner, heartbeatInterval, logger)
-	s.ownerID = ownerID
-	s.pools.consume = consumePool
-	s.pools.enrich = enrichPool
-	s.pools.config = configPool
-
-	registerRoutes(mux, logger, queries, engine, dispatcher, &cfg, s.owner, s.services)
+	registerRoutes(mux, logger, queries, engine, dispatcher, &cfg, s.services, semaphore, workStore)
 	registerStaticRoutes(mux)
 
 	handler := chainMiddleware(logger, mux)
@@ -159,7 +116,7 @@ func registerStaticRoutes(mux *http.ServeMux) {
 	})
 }
 
-func registerRoutes(mux *http.ServeMux, logger *utils.Logger, queries *database.Queries, engine *search.Engine, dispatcher *task.Dispatcher, cfg *config.Config, owner *task.Owner, services *types.CrudServices) {
+func registerRoutes(mux *http.ServeMux, logger *utils.Logger, queries *database.Queries, engine *search.Engine, dispatcher *task.Dispatcher, cfg *config.Config, services *types.CrudServices, semaphore *concurrency.Semaphore, workStore *task.Store) {
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		handlers.HealthHandler(w, r, logger)
 	})
@@ -199,7 +156,7 @@ func registerRoutes(mux *http.ServeMux, logger *utils.Logger, queries *database.
 	mux.HandleFunc("PUT /api/v1/document-types/{id}", docTypeHandler.Update)
 	mux.HandleFunc("DELETE /api/v1/document-types/{id}", docTypeHandler.Delete)
 
-	consumeHandler := handlers.NewConsumeHandler(cfg, logger, dispatcher, queries, owner)
+	consumeHandler := handlers.NewConsumeHandler(cfg, logger, workStore, queries, semaphore)
 	mux.HandleFunc("POST /api/v1/consume", consumeHandler.Consume)
 	mux.HandleFunc("POST /api/v1/consume/upload", consumeHandler.Upload)
 
@@ -209,7 +166,7 @@ func registerRoutes(mux *http.ServeMux, logger *utils.Logger, queries *database.
 	mux.HandleFunc("GET /wizard/config/status", configHandler.ConfigStatus)
 	mux.HandleFunc("POST /wizard/config/retry", configHandler.RetryFailedConfig)
 
-	taskHandler := handlers.NewTaskHandler(queries, logger, owner)
+	taskHandler := handlers.NewTaskHandler(queries, logger)
 	mux.HandleFunc("GET /api/v1/tasks", taskHandler.ListTasks)
 	mux.HandleFunc("GET /api/v1/tasks/{id}", taskHandler.GetTask)
 	mux.HandleFunc("POST /api/v1/tasks/{id}/retry", taskHandler.RetryTask)
@@ -217,7 +174,7 @@ func registerRoutes(mux *http.ServeMux, logger *utils.Logger, queries *database.
 	mux.HandleFunc("GET /api/v1/batches/{id}", taskHandler.GetBatchSummary)
 	mux.HandleFunc("POST /api/v1/batches/{id}/retry", taskHandler.RetryBatch)
 	mux.HandleFunc("GET /api/v1/summary", taskHandler.GlobalSummary)
-	mux.HandleFunc("POST /api/v1/batches/{id}/adopt", taskHandler.AdoptBatch)
+	mux.HandleFunc("POST /api/v1/batches/{id}/resume", taskHandler.ResumeBatch)
 
 	savedSearchHandler := handlers.NewSavedSearchHandler(queries, logger)
 	mux.HandleFunc("GET /api/v1/saved-searches", savedSearchHandler.List)
@@ -251,25 +208,29 @@ func parambagMiddleware(next http.Handler) http.Handler {
 }
 
 func (s *Server) Start() error {
-	if err := s.owner.CleanupCompleted(context.Background()); err != nil {
-		s.logger.Error(nil, "cleanup completed batches: %v", err)
-	}
+	s.probeMatcher()
 
-	s.pools.consume.Start(context.Background())
-	s.pools.enrich.Start(context.Background())
 	s.pools.config.Start(context.Background())
-
-	s.heartbeat.Start(context.Background())
-	s.logger.Info(nil, "worker pools started (owner %s pid %d)", s.ownerID, os.Getpid())
+	s.logger.Info(nil, "config pool started")
 
 	s.logger.Info(nil, "Starting HTTP server on %s", s.addr)
 	return s.httpServer.ListenAndServe()
 }
 
+func (s *Server) probeMatcher() {
+	probeCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := s.matcherClient.Health(probeCtx); err != nil {
+		s.logger.Error(nil, "WARNING: matcher unavailable — tag CRUD will 503, enrich will fall back to LLM tags: %v", err)
+		return
+	}
+
+	s.logger.Info(nil, "matcher reachable")
+}
+
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.logger.Info(nil, "Shutting down HTTP server")
-
-	s.heartbeat.Stop()
 
 	if err := s.httpServer.Shutdown(ctx); err != nil {
 		return err
@@ -277,8 +238,6 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 	stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	s.pools.consume.Stop(stopCtx)
-	s.pools.enrich.Stop(stopCtx)
 	s.pools.config.Stop(stopCtx)
 
 	s.services.Close()

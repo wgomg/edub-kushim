@@ -49,6 +49,8 @@ func consumeHandler(c *Container, args []string) error {
 	if fp.Help("Usage: kushim consume [--bg | --batch <id>]\n" +
 		"  Scan inbox, create one task per file, and process them.\n" +
 		"  Streams per-file progress to stdout.\n\n" +
+		"  Prerequisite: kushim serve-matching must be running (sibling process).\n" +
+		"  Start it in a separate terminal or via systemd before running consume.\n\n" +
 		"  --bg              enqueue and process in background (releases console)\n" +
 		"  --batch <id>      resume processing of an existing batch\n" +
 		"  --force           override stale PID file lock\n\n" +

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -9,9 +10,25 @@ import (
 	itypes "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/tagmatch/rpc"
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
+
+func isMatcherUnavailable(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, rpc.ErrMatcherUnavailable)
+}
+
+func matcherUnavailableResponse(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusServiceUnavailable)
+	json.NewEncoder(w).Encode(map[string]string{
+		"error": "matcher unavailable — tag store is offline",
+	})
+}
 
 type TagHandler struct {
 	services *itypes.CrudServices
@@ -75,6 +92,10 @@ func (h *TagHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	results, err := h.services.Tag.Create(ctx, []string{req.Name})
 	if err != nil {
+		if isMatcherUnavailable(err) {
+			matcherUnavailableResponse(w)
+			return
+		}
 		writeServiceError(w, h.logger, &reqID, "create tag", err)
 		return
 	}
@@ -120,6 +141,10 @@ func (h *TagHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	results, err := h.services.Tag.Update(ctx, []tags.UpdatePair{{ID: id, Name: req.Name}})
 	if err != nil {
+		if isMatcherUnavailable(err) {
+			matcherUnavailableResponse(w)
+			return
+		}
 		writeServiceError(w, h.logger, &reqID, "update tag", err)
 		return
 	}
@@ -155,6 +180,10 @@ func (h *TagHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	results, err := h.services.Tag.Delete(ctx, []int64{id})
 	if err != nil {
+		if isMatcherUnavailable(err) {
+			matcherUnavailableResponse(w)
+			return
+		}
 		writeServiceError(w, h.logger, &reqID, "delete tag", err)
 		return
 	}

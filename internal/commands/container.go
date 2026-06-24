@@ -4,10 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal"
-	"github.com/wgomg/edub-kushim/internal/cache"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/consumption"
 	"github.com/wgomg/edub-kushim/internal/database"
@@ -16,10 +16,10 @@ import (
 	"github.com/wgomg/edub-kushim/internal/people"
 	"github.com/wgomg/edub-kushim/internal/pool"
 	"github.com/wgomg/edub-kushim/internal/search"
+	"github.com/wgomg/edub-kushim/internal/tagmatch/rpc"
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/task"
 	taskhandlers "github.com/wgomg/edub-kushim/internal/task/handlers"
-	"github.com/wgomg/edub-kushim/internal/tools/adapters/tagmatcher"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -66,6 +66,10 @@ func (c *Container) GetDB() (*sql.DB, error) {
 	return c.db, nil
 }
 
+func (c *Container) socketPath() string {
+	return filepath.Join(c.config.App.ConfigDir, "kushim-matcher.sock")
+}
+
 func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 	if c.dispatcher != nil {
 		return c.dispatcher, nil
@@ -78,19 +82,9 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 
 	queries := database.NewQueries(db)
 
-	hugot, err := tagmatcher.NewHugot(c.logger, c.config.Enricher.TagMatcher, "tagmatcher")
-	if err != nil {
-		return nil, fmt.Errorf("tag matcher: %w", err)
-	}
+	matcherClient := rpc.NewMatcherClient(c.socketPath())
 
-	embStore := cache.NewEmbeddingStore(nil, nil)
-	if err := cache.BuildTagCache(context.Background(), db, c.logger, hugot, embStore); err != nil {
-		c.logger.Error(nil, "failed to build tag cache: %v — continuing with empty cache", err)
-	}
-
-	hugot.SetStore(embStore)
-
-	tagSvc, err := tags.NewTagService(queries, c.logger, hugot)
+	tagSvc, err := tags.NewTagService(queries, c.logger, matcherClient)
 	if err != nil {
 		return nil, fmt.Errorf("tag service: %w", err)
 	}
@@ -111,7 +105,7 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 		return nil, err
 	}
 
-	enricher, err := enrichment.NewEnricher(c.config, c.logger, db, c.services, hugot)
+	enricher, err := enrichment.NewEnricher(c.config, c.logger, db, c.services, matcherClient)
 	if err != nil {
 		return nil, err
 	}
@@ -175,6 +169,7 @@ func (c *Container) GetPool(taskType string) (*pool.Pool, error) {
 		}
 		*pp = pool.New(c.logger, runner, workers, interval, taskType)
 	}
+
 	return *pp, nil
 }
 

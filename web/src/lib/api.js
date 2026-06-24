@@ -116,8 +116,8 @@ export const api = {
 
 		get: (batchId) => request(`/api/v1/batches/${batchId}`),
 		retry: (batchId) => request(`/api/v1/batches/${batchId}/retry`, { method: 'POST' }),
-		adopt: (batchId) =>
-			request(`/api/v1/batches/${batchId}/adopt`, { method: 'POST' }).then((data) => data ?? {})
+		resume: (batchId) =>
+			request(`/api/v1/batches/${batchId}/resume`, { method: 'POST' }).then((data) => data ?? {})
 	},
 
 	summary: {

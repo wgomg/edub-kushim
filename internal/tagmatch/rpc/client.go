@@ -125,6 +125,10 @@ func (c *MatcherClient) Consolidate(ctx context.Context, docId string, queries [
 	return resp.Results, nil
 }
 
+func (c *MatcherClient) Health(ctx context.Context) error {
+	return c.do(ctx, "GET", "/health", nil, nil)
+}
+
 func (c *MatcherClient) AddToStore(ctx context.Context, names []string) error {
 	req := struct {
 		Names []string `json:"names"`

@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
+	"os/exec"
 	"path/filepath"
 	"time"
 
@@ -18,14 +18,12 @@ import (
 type TaskHandler struct {
 	queries *database.Queries
 	logger  *utils.Logger
-	owner   *task.Owner
 }
 
-func NewTaskHandler(queries *database.Queries, logger *utils.Logger, owner *task.Owner) *TaskHandler {
+func NewTaskHandler(queries *database.Queries, logger *utils.Logger) *TaskHandler {
 	return &TaskHandler{
 		queries: queries,
 		logger:  logger,
-		owner:   owner,
 	}
 }
 
@@ -278,7 +276,7 @@ func buildBatchSummary(ctx context.Context, queries *database.Queries, batchID s
 	}
 }
 
-func (h *TaskHandler) AdoptBatch(w http.ResponseWriter, r *http.Request) {
+func (h *TaskHandler) ResumeBatch(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
 
@@ -289,41 +287,55 @@ func (h *TaskHandler) AdoptBatch(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(map[string]any{
-			"adopted": false,
+			"resumed": false,
 			"reason":  "batch is already settled",
 		})
 		return
 	}
 
-	if err := h.owner.Acquire(ctx, batchID, task.StaleAfter); err != nil {
-		if errors.Is(err, task.ErrBatchLocked) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusConflict)
-			json.NewEncoder(w).Encode(map[string]string{
-				"error": "batch is locked by a live owner",
-			})
-			return
-		}
-		h.logger.Error(&reqID, "adopt batch %s: %v", batchID, err)
+	state, _, err := task.BatchOwnerState(ctx, h.queries, batchID, task.StaleAfter)
+	if err == nil && state == task.OwnerLive {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "batch is locked by a live owner",
+		})
+		return
+	}
+
+	kushimPath, err := kushimBinaryPath()
+	if err != nil {
+		h.logger.Error(&reqID, "kushim binary not found: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	reset, err := h.owner.ResetProcessingByBatch(ctx, batchID)
-	if err != nil {
-		h.logger.Error(&reqID, "reset processing tasks for batch %s: %v", batchID, err)
-		h.owner.Release(ctx, batchID)
-		http.Error(w, fmt.Sprintf("reset processing tasks: %v", err), http.StatusInternalServerError)
+	cmd := exec.Command(kushimPath, "consume", "--batch", batchID, "--force")
+	cmd.Stdin = nil
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+
+	if err := cmd.Start(); err != nil {
+		h.logger.Error(&reqID, "fork worker for resume batch %s: %v", batchID, err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	h.logger.Info(&reqID, "adopted batch %s, reset %d processing tasks", batchID, reset)
+	go func() {
+		err := cmd.Wait()
+		if err != nil {
+			h.logger.Error(nil, "resume worker for batch %s exited: %v", batchID, err)
+		} else {
+			h.logger.Info(nil, "resume worker for batch %s completed", batchID)
+		}
+	}()
+
+	h.logger.Info(&reqID, "forked resume worker for batch %s", batchID)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	json.NewEncoder(w).Encode(map[string]any{
-		"adopted": true,
-		"reset":   reset,
+		"resumed": true,
 	})
 }
 
