@@ -74,7 +74,7 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 
 	semaphore := pool.NewSemaphore(max(cfg.Srv.MaxConcurrentBatches, 2))
 
-	registerRoutes(mux, logger, queries, engine, dispatcher, &cfg, s.services, semaphore, workStore)
+	registerRoutes(mux, logger, db, queries, engine, dispatcher, &cfg, s.services, semaphore, workStore)
 	registerStaticRoutes(mux)
 
 	handler := chainMiddleware(logger, mux)
@@ -113,12 +113,12 @@ func registerStaticRoutes(mux *http.ServeMux) {
 	})
 }
 
-func registerRoutes(mux *http.ServeMux, logger *utils.Logger, queries *database.Queries, engine *search.Engine, dispatcher *task.Dispatcher, cfg *config.Config, services *types.CrudServices, semaphore *pool.Semaphore, workStore *task.Store) {
+func registerRoutes(mux *http.ServeMux, logger *utils.Logger, db *sql.DB, queries *database.Queries, engine *search.Engine, dispatcher *task.Dispatcher, cfg *config.Config, services *types.CrudServices, semaphore *pool.Semaphore, workStore *task.Store) {
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		handlers.HealthHandler(w, r, logger)
 	})
 
-	docHandler := handlers.NewDocumentHandler(queries, logger, engine, services, cfg)
+	docHandler := handlers.NewDocumentHandler(db, queries, logger, engine, services, cfg)
 	mux.HandleFunc("GET /api/v1/documents", docHandler.ListDocuments)
 	mux.HandleFunc("GET /api/v1/documents/{id}", docHandler.GetDocument)
 	mux.HandleFunc("GET /api/v1/documents/{id}/file", docHandler.GetDocumentFile)
@@ -131,6 +131,8 @@ func registerRoutes(mux *http.ServeMux, logger *utils.Logger, queries *database.
 	mux.HandleFunc("POST /api/v1/documents/{id}/people", docHandler.AddDocumentPeople)
 	mux.HandleFunc("DELETE /api/v1/documents/{id}/people", docHandler.RemoveDocumentPeople)
 	mux.HandleFunc("POST /api/v1/documents/download", docHandler.DownloadDocuments)
+	mux.HandleFunc("POST /api/v1/documents/batch-delete", docHandler.BatchDeleteDocuments)
+	mux.HandleFunc("POST /api/v1/documents/batch-tags", docHandler.BatchAssignTags)
 
 	tagHandler := handlers.NewTagHandler(services, logger)
 	mux.HandleFunc("GET /api/v1/tags", tagHandler.List)

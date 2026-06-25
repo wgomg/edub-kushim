@@ -88,3 +88,33 @@ type RemoveDocumentPeopleRequest struct {
 type DocumentDownloadRequest struct {
 	DocumentIDs []string `json:"document_ids"`
 }
+
+type BatchDeleteRequest struct {
+	DocumentIDs []string `json:"document_ids"`
+}
+
+type BatchDeleteError struct {
+	ID    string `json:"id"`
+	Error string `json:"error"`
+}
+
+type BatchDeleteResult struct {
+	Deleted int                `json:"deleted"`
+	Failed  []BatchDeleteError `json:"failed,omitempty"`
+}
+
+type BatchTagRequest struct {
+	DocumentIDs []string `json:"document_ids"`
+	TagIDs      []int64  `json:"tag_ids"`
+	Mode        string   `json:"mode"`
+}
+
+type BatchTagError struct {
+	ID    string `json:"id"`
+	Error string `json:"error"`
+}
+
+type BatchTagResult struct {
+	Assigned int             `json:"assigned"`
+	Failed   []BatchTagError `json:"failed,omitempty"`
+}

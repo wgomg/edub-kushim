@@ -502,6 +502,93 @@ Config limits (see [Configuration Reference](#configuration-reference)):
 
 - `server.max_download_files` — max files in a single batch (default 50)
 - `server.max_download_size_mb` — max total uncompressed size in MB (default 500)
+- `server.max_batch_delete` — max documents in a single batch delete (default 50)
+
+### Batch Delete Documents
+
+Deletes multiple documents in a single request. Returns partial failure information
+when some documents cannot be deleted.
+
+```
+POST /api/v1/documents/batch-delete
+Content-Type: application/json
+
+{
+  "document_ids": ["uuid1", "uuid2", "uuid3"]
+}
+```
+
+Validation:
+
+| Condition                          | Response |
+| ---------------------------------- | -------- |
+| Empty `document_ids`               | `400` — `"document_ids is required"` |
+| Count exceeds `max_batch_delete`   | `400` — `"too many documents, max: <N>"` |
+
+Response `200` with partial failure support:
+
+```json
+{
+  "deleted": 2,
+  "failed": [
+    { "id": "uuid3", "error": "not found" }
+  ]
+}
+```
+
+When no documents could be deleted (all failed), the response is `400`. Each document is
+processed independently — the database record is deleted first, then files are best-effort
+removed from disk. File removal failures are logged but do not fail the operation.
+
+### Batch Assign Tags
+
+Assigns tags to multiple documents in a single request. Supports two modes:
+
+- **`add`**: appends tags to each document (existing tags are preserved, duplicates ignored)
+- **`replace`**: clears all existing tags from each document, then adds the specified tags
+  (wrapped in a database transaction for atomicity)
+
+```
+POST /api/v1/documents/batch-tags
+Content-Type: application/json
+
+{
+  "document_ids": ["uuid1", "uuid2"],
+  "tag_ids": [1, 2, 3],
+  "mode": "add"
+}
+```
+
+| Field          | Type       | Required | Description                                       |
+| -------------- | ---------- | -------- | ------------------------------------------------- |
+| `document_ids` | `string[]` | yes      | UUIDs of documents to tag                         |
+| `tag_ids`      | `int[]`    | yes      | Tag IDs to assign                                 |
+| `mode`         | `string`   | yes      | `"add"` or `"replace"`                            |
+
+Validation:
+
+| Condition                          | Response |
+| ---------------------------------- | -------- |
+| Empty `document_ids`               | `400` — `"document_ids is required"` |
+| Empty `tag_ids`                    | `400` — `"tag_ids is required"` |
+| Invalid `mode`                     | `400` — `"mode must be 'add' or 'replace'"` |
+| Non-existent tag ID                | `404` — returned immediately, no documents are modified |
+
+All tag IDs are validated before any document is modified. If any tag does not exist, the
+entire request is rejected and no documents are changed. Partial failures (e.g., a document
+not found) return `200` with a `failed` array:
+
+```json
+{
+  "assigned": 1,
+  "failed": [
+    { "id": "uuid2", "error": "not found" }
+  ]
+}
+```
+
+In replace mode, the clear-and-add sequence runs inside a SQLite transaction per document,
+so a mid-operation failure rolls back all tag changes for that specific document.
 
 ### Update Document
 
@@ -1118,6 +1205,7 @@ server:
   max_concurrent_batches: 2 # max concurrent forked worker processes
   max_download_files: 50 # max files in a single batch download
   max_download_size_mb: 500 # max total size in MB for batch download
+  max_batch_delete: 50 # max documents in a single batch delete
 
 database:
   type: sqlite # currently only sqlite

@@ -77,6 +77,20 @@ export const api = {
 				})
 		},
 
+		batchDelete: (ids) =>
+			requestRaw('/api/v1/documents/batch-delete', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ document_ids: ids })
+			}),
+
+		batchAssignTags: (ids, tagIds, mode = 'add') =>
+			requestRaw('/api/v1/documents/batch-tags', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ document_ids: ids, tag_ids: tagIds, mode })
+			}),
+
 		downloadBatch: (ids) => {
 			const form = document.createElement('form');
 			form.method = 'POST';

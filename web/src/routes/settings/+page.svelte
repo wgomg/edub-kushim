@@ -194,8 +194,9 @@
 					/>
 				</div>
 				<div>
-					<label for="server-max-download-files" class="mb-1 block text-sm font-medium text-parchment-200"
-						>Max download files</label
+					<label
+						for="server-max-download-files"
+						class="mb-1 block text-sm font-medium text-parchment-200">Max download files</label
 					>
 					<input
 						id="server-max-download-files"
@@ -206,8 +207,9 @@
 					/>
 				</div>
 				<div>
-					<label for="server-max-download-size" class="mb-1 block text-sm font-medium text-parchment-200"
-						>Max download size (MB)</label
+					<label
+						for="server-max-download-size"
+						class="mb-1 block text-sm font-medium text-parchment-200">Max download size (MB)</label
 					>
 					<input
 						id="server-max-download-size"

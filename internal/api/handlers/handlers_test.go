@@ -45,7 +45,7 @@ type handlerTestEnv struct {
 }
 
 func newDocHandler(env *handlerTestEnv) *DocumentHandler {
-	return NewDocumentHandler(env.queries, env.logger, env.engine, env.services, config.DefaultConfig("/tmp/test"))
+	return NewDocumentHandler(env.db, env.queries, env.logger, env.engine, env.services, config.DefaultConfig("/tmp/test"))
 }
 
 func newMockTagService(queries *database.Queries) (*service.Tag, *testutil.MockEmbedder) {
@@ -324,7 +324,7 @@ func TestDownloadDocumentsValidation(t *testing.T) {
 	cfg.Srv.MaxDownloadSizeMB = 0 // any positive size exceeds
 
 	env := newHandlerTestEnv(t)
-	h := NewDocumentHandler(env.queries, env.logger, env.engine, env.services, cfg)
+	h := NewDocumentHandler(env.db, env.queries, env.logger, env.engine, env.services, cfg)
 
 	t.Run("invalid body", func(t *testing.T) {
 		w := rec()

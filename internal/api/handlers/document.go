@@ -20,6 +20,7 @@ import (
 )
 
 type DocumentHandler struct {
+	db       *sql.DB
 	queries  *database.Queries
 	logger   *utils.Logger
 	engine   *search.Engine
@@ -27,8 +28,9 @@ type DocumentHandler struct {
 	cfg      *config.Config
 }
 
-func NewDocumentHandler(queries *database.Queries, logger *utils.Logger, engine *search.Engine, services *itypes.CrudServices, cfg *config.Config) *DocumentHandler {
+func NewDocumentHandler(db *sql.DB, queries *database.Queries, logger *utils.Logger, engine *search.Engine, services *itypes.CrudServices, cfg *config.Config) *DocumentHandler {
 	return &DocumentHandler{
+		db:       db,
 		queries:  queries,
 		logger:   logger,
 		engine:   engine,
@@ -728,6 +730,203 @@ func (h *DocumentHandler) RemoveDocumentTag(w http.ResponseWriter, r *http.Reque
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *DocumentHandler) BatchDeleteDocuments(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := ctx.Value("reqid").(string)
+
+	var req types.BatchDeleteRequest
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	ids := uniqueStrings(req.DocumentIDs)
+
+	if len(ids) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "document_ids is required"})
+		return
+	}
+
+	if len(ids) > h.cfg.Srv.MaxBatchDelete {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "too many documents, max: " + strconv.Itoa(h.cfg.Srv.MaxBatchDelete),
+		})
+		return
+	}
+
+	result := types.BatchDeleteResult{}
+
+	for _, id := range ids {
+		doc, err := h.queries.GetDocument(ctx, id)
+		if err != nil {
+			if errs.KindOf(errs.FromDB(err, "get document")) == errs.KindNotFound {
+				result.Failed = append(result.Failed, types.BatchDeleteError{ID: id, Error: "not found"})
+			} else {
+				h.logger.Error(&reqID, "batch delete: get document %s: %v", id, err)
+				result.Failed = append(result.Failed, types.BatchDeleteError{ID: id, Error: "internal error"})
+			}
+			continue
+		}
+
+		if err := h.queries.DeleteDocument(ctx, id); err != nil {
+			h.logger.Error(&reqID, "batch delete: delete document %s: %v", id, err)
+			result.Failed = append(result.Failed, types.BatchDeleteError{ID: id, Error: "delete failed"})
+			continue
+		}
+
+		if doc.OriginalPath != "" {
+			if err := os.Remove(doc.OriginalPath); err != nil {
+				h.logger.Error(&reqID, "Warning: failed to remove original file %s: %v", doc.OriginalPath, err)
+			}
+		}
+		if doc.StoragePath != "" {
+			if err := os.Remove(doc.StoragePath); err != nil {
+				h.logger.Error(&reqID, "Warning: failed to remove storage file %s: %v", doc.StoragePath, err)
+			}
+		}
+
+		result.Deleted++
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if result.Deleted == 0 && len(result.Failed) > 0 {
+		w.WriteHeader(http.StatusBadRequest)
+	} else {
+		w.WriteHeader(http.StatusOK)
+	}
+	json.NewEncoder(w).Encode(result)
+}
+
+func (h *DocumentHandler) BatchAssignTags(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := ctx.Value("reqid").(string)
+
+	var req types.BatchTagRequest
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if len(req.DocumentIDs) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "document_ids is required"})
+		return
+	}
+
+	if len(req.TagIDs) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "tag_ids is required"})
+		return
+	}
+
+	if req.Mode != "add" && req.Mode != "replace" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "mode must be 'add' or 'replace'"})
+		return
+	}
+
+	for _, tagID := range req.TagIDs {
+		if _, err := h.services.Tag.Get(ctx, tagID); err != nil {
+			writeServiceError(w, h.logger, &reqID, "validate tag", err)
+			return
+		}
+	}
+
+	ids := uniqueStrings(req.DocumentIDs)
+	result := types.BatchTagResult{}
+
+	for _, id := range ids {
+		doc, err := h.queries.GetDocument(ctx, id)
+		if err != nil {
+			if errs.KindOf(errs.FromDB(err, "get document")) == errs.KindNotFound {
+				result.Failed = append(result.Failed, types.BatchTagError{ID: id, Error: "not found"})
+			} else {
+				h.logger.Error(&reqID, "batch tag: get document %s: %v", id, err)
+				result.Failed = append(result.Failed, types.BatchTagError{ID: id, Error: "internal error"})
+			}
+			continue
+		}
+
+		failed := false
+
+		if req.Mode == "replace" {
+			tx, err := h.db.BeginTx(ctx, nil)
+			if err != nil {
+				h.logger.Error(&reqID, "batch tag: begin tx for doc %s: %v", id, err)
+				result.Failed = append(result.Failed, types.BatchTagError{ID: id, Error: "internal error"})
+				continue
+			}
+
+			tq := h.queries.WithTx(tx)
+
+			if err := tq.ClearDocumentTags(ctx, doc.ID); err != nil {
+				tx.Rollback()
+				h.logger.Error(&reqID, "batch tag: clear tags for doc %s: %v", id, err)
+				result.Failed = append(result.Failed, types.BatchTagError{ID: id, Error: "failed to clear tags"})
+				failed = true
+			}
+
+			if !failed {
+				for _, tagID := range req.TagIDs {
+					if err := tq.AddDocumentTag(ctx, database.AddDocumentTagParams{
+						DocumentID: doc.ID,
+						TagID:      tagID,
+					}); err != nil {
+						tx.Rollback()
+						h.logger.Error(&reqID, "batch tag: add tag %d to doc %s: %v", tagID, id, err)
+						result.Failed = append(result.Failed, types.BatchTagError{ID: id, Error: "failed to add tag"})
+						failed = true
+						break
+					}
+				}
+			}
+
+			if !failed {
+				if err := tx.Commit(); err != nil {
+					h.logger.Error(&reqID, "batch tag: commit tx for doc %s: %v", id, err)
+					result.Failed = append(result.Failed, types.BatchTagError{ID: id, Error: "internal error"})
+					failed = true
+				}
+			}
+		} else {
+			for _, tagID := range req.TagIDs {
+				if err := h.queries.AddDocumentTag(ctx, database.AddDocumentTagParams{
+					DocumentID: doc.ID,
+					TagID:      tagID,
+				}); err != nil {
+					h.logger.Error(&reqID, "batch tag: add tag %d to doc %s: %v", tagID, id, err)
+					result.Failed = append(result.Failed, types.BatchTagError{ID: id, Error: "failed to add tag"})
+					failed = true
+					break
+				}
+			}
+		}
+
+		if !failed {
+			result.Assigned++
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if result.Assigned == 0 && len(result.Failed) > 0 {
+		w.WriteHeader(http.StatusBadRequest)
+	} else {
+		w.WriteHeader(http.StatusOK)
+	}
+	json.NewEncoder(w).Encode(result)
 }
 
 func (h *DocumentHandler) AddDocumentPeople(w http.ResponseWriter, r *http.Request) {

@@ -97,6 +97,8 @@
 | `DELETE /api/v1/documents/{id}/tags`   | Remove tag assignment from document                         |
 | `POST /api/v1/documents/{id}/people`   | Add person assignment to document                           |
 | `DELETE /api/v1/documents/{id}/people` | Remove person assignment from document                      |
+| `POST /api/v1/documents/batch-delete`  | Batch delete documents (with partial failure reporting)     |
+| `POST /api/v1/documents/batch-tags`    | Batch assign tags (add or replace mode, with transaction)   |
 | `GET /api/v1/tags`                     | List/autocomplete tag names (`?q=`, `limit`, `offset`)      |
 | `POST /api/v1/tags`                    | Create tag                                                  |
 | `PUT /api/v1/tags/{id}`                | Update tag name                                             |
@@ -220,21 +222,19 @@
 | 16  | **Single task detail page**              | ✓ New route `/tasks/{taskID}` — status badge, batch/doc links, timestamps, error display, retry action                                                                            |
 | 17  | **Integration test**                     | ✓ End-to-end consumption test (mock runner), DB CRUD, search, task system, API handlers — covering database queries, search engine, pool, enrichment flow                         |
 | 18  | **Test coverage**                        | ✓ Database queries, API handlers, search engine, task system (store/runner/dispatcher/pool), consumption pipeline. ✗ Adapters, CLI commands (existing gap)                        |
-| 19  | **Document download**                     | Download individual documents from the document list table. Batch download with configurable limits (max file count and/or total accumulated size).                               |
-| 20  | **Bulk operations**                      | Batch delete, batch tag assignment                                                                                                                                                |
+| 19  | **Document download**                    | ✓ Download individual documents from the document list table. Batch download with configurable limits (max file count and/or total accumulated size).                             |
+| 20  | **Bulk operations**                      | ✓ Batch delete, batch tag assignment                                                                                                                                                |
 | 21  | **Batch cancel API endpoint**            | `POST /api/v1/batches/{id}/cancel` — expose `kushim consume cancel` through the API                                                                                               |
 | 22  | **Post-classification notification**     | Optional webhook or websocket event when a classification batch completes                                                                                                         |
 | 23  | **Dashboard enhancements**               | Storage usage trend, recent batch status, activity timeline                                                                                                                       |
-| 24  | **Contributing guide & issue templates** | `CONTRIBUTING.md`, issue/PR templates, and GitHub community setup to encourage contributions                                                                                      |
-| 25  | **Authentication and user management**   | Login, API keys, roles                                                                                                                                                            |
+| 24  | **Authentication and user management**   | Login, API keys, roles                                                                                                                                                            |
+| 25  | **Document notes/comments**              | User-added notes and annotations on documents                                                                                                                                     |
 | 26  | **Pre-built binaries**                   | Release binaries for major platforms (Linux amd64/arm64)                                                                                                                          |
-| 27  | **Email ingestion**                      | IMAP inbox scanning                                                                                                                                                               |
-| 28  | **Document notes/comments**              | User-added notes and annotations on documents                                                                                                                                     |
-| 29  | **Metrics and monitoring**               | Prometheus endpoints, structured metrics                                                                                                                                          |
+| 27  | **MySQL / MariaDB database backend**     | Additional database backend support                                                                                                                                               |
+| 28  | **User preferences**                     | Theme, pagination defaults, notification settings                                                                                                                                 |
+| 29  | **Email ingestion**                      | IMAP inbox scanning                                                                                                                                                               |
 | 30  | **Document relationships**               | Parent/child, cross-references between documents                                                                                                                                  |
-| 31  | **External search engine**               | ZincSearch or Meilisearch integration for large-scale search                                                                                                                      |
-| 32  | **MySQL / MariaDB database backend**     | Additional database backend support                                                                                                                                               |
-| 33  | **User preferences**                     | Theme, pagination defaults, notification settings                                                                                                                                 |
+| 31  | **Contributing guide & issue templates** | `CONTRIBUTING.md`, issue/PR templates, and GitHub community setup to encourage contributions                                                                                      |
 
 ---
 
@@ -245,6 +245,8 @@ Low-priority items worth revisiting when nothing more impactful demands attentio
 | #   | Feature                                     | Description                                                                                                                                                                                           |
 | --- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1   | **Double tokenization in chunked encoding** | `Encode()` and `encodeChunked()` redundantly tokenize the same text; per-chunk decode→re-encode round-trip adds unnecessary overhead. See [report](research/double-tokenization-chunked-encoding.md). |
+| 2   | **External search engine**                  | ZincSearch or Meilisearch integration for large-scale search                                                                                                                                          |
+| 3   | **Metrics and monitoring**                  | Prometheus endpoints, structured metrics                                                                                                                                                              |
 
 ---
 

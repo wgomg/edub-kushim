@@ -9,8 +9,16 @@
 	import { onMount } from 'svelte';
 	import { escapeHtml } from '$lib/utils/html.js';
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
+	import { toastStore } from '$lib/stores/toastStore.svelte.js';
 
 	let selectedDocs = $state([]);
+
+	let batchTagMode = $state('add');
+	let batchTagIds = $state([]);
+	let tagOptions = $state([]);
+	let tagSearchQuery = $state('');
+	let showTagPicker = $state(false);
+	let tagSearchTimer;
 
 	let columns = $derived.by(() => {
 		const cols = [
@@ -81,21 +89,21 @@
 				minWidth: '100px'
 			},
 			{
-			key: 'created_at',
-			label: 'Created',
-			sortable: true,
-			cell: (v) => new Date(v).toLocaleDateString(),
-			minWidth: '150px'
-		},
-		{
-			key: '_actions',
-			label: '',
-			sortable: false,
-			width: '50px',
-			cell: (_, row) =>
-				`<a href="/api/v1/documents/${row.id}/file?download=true" class="inline-flex items-center justify-center rounded-md p-1.5 text-parchment-500 hover:text-gold-500 hover:bg-clay-800 transition-colors" title="Download PDF">&darr;</a>`
-		}
-	);
+				key: 'created_at',
+				label: 'Created',
+				sortable: true,
+				cell: (v) => new Date(v).toLocaleDateString(),
+				minWidth: '150px'
+			},
+			{
+				key: '_actions',
+				label: '',
+				sortable: false,
+				width: '50px',
+				cell: (_, row) =>
+					`<a href="/api/v1/documents/${row.id}/file?download=true" class="inline-flex items-center justify-center rounded-md p-1.5 text-parchment-500 hover:text-gold-500 hover:bg-clay-800 transition-colors" title="Download PDF">&darr;</a>`
+			}
+		);
 
 		return cols;
 	});
@@ -201,6 +209,57 @@
 		await refreshSavedSearches();
 	}
 
+	async function handleBatchDelete() {
+		const ok = await confirmStore.confirm({
+			title: 'Delete documents',
+			message: `Delete ${selectedDocs.length} document(s)? This action cannot be undone.`,
+			danger: true
+		});
+		if (!ok) return;
+		const res = await api.documents.batchDelete(selectedDocs.map((r) => r.id));
+		if (!res.ok) {
+			toastStore.error(res.data?.error || 'Batch delete failed');
+			return;
+		}
+		if (res.data?.failed?.length > 0) {
+			const failed = res.data.failed;
+			toastStore.warning(
+				`Deleted ${res.data.deleted} of ${selectedDocs.length} documents. ${failed.length} failed.`
+			);
+		}
+		refreshKey++;
+	}
+
+	function onTagSearchInput(e) {
+		tagSearchQuery = e.target.value;
+		clearTimeout(tagSearchTimer);
+		tagSearchTimer = setTimeout(async () => {
+			tagOptions = await api.autocomplete.tags(tagSearchQuery, 20);
+		}, 200);
+	}
+
+	async function handleBatchAssign() {
+		if (batchTagIds.length === 0) return;
+		const res = await api.documents.batchAssignTags(
+			selectedDocs.map((r) => r.id),
+			batchTagIds,
+			batchTagMode
+		);
+		if (!res.ok) {
+			toastStore.error(res.data?.error || 'Batch tag assignment failed');
+			return;
+		}
+		if (res.data?.failed?.length > 0) {
+			const failed = res.data.failed;
+			toastStore.warning(
+				`Tagged ${res.data.assigned} of ${selectedDocs.length} documents. ${failed.length} failed.`
+			);
+		}
+		batchTagIds = [];
+		showTagPicker = false;
+		refreshKey++;
+	}
+
 	onMount(() => {
 		api.autocomplete.peopleTypes().then(setPersonTypes);
 		refreshSavedSearches();
@@ -246,10 +305,109 @@
 		{#if selectedDocs.length > 0}
 			<button
 				onclick={() => api.documents.downloadBatch(selectedDocs.map((r) => r.id))}
-				class="rounded-lg bg-gold-600 px-3 py-2 text-sm font-medium text-clay-950 hover:bg-gold-500 shrink-0"
+				class="shrink-0 rounded-lg bg-gold-600 px-3 py-2 text-sm font-medium text-clay-950 hover:bg-gold-500"
 			>
 				Download selected ({selectedDocs.length})
 			</button>
+			<button
+				onclick={handleBatchDelete}
+				class="bg-terracotta-700 shrink-0 rounded-lg px-3 py-2 text-sm font-medium text-parchment-200 hover:bg-terracotta-600"
+			>
+				Delete selected ({selectedDocs.length})
+			</button>
+			<div class="relative shrink-0">
+				<button
+					onclick={() => (showTagPicker = !showTagPicker)}
+					class="rounded-lg border border-clay-800 px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
+				>
+					{batchTagIds.length > 0 ? `Tags (${batchTagIds.length})` : 'Assign tags'}
+				</button>
+				{#if showTagPicker}
+					<div
+						class="absolute top-full left-0 z-30 mt-1 w-72 rounded-lg border border-clay-800 bg-clay-950 shadow-xl"
+					>
+						<div class="p-3">
+							<input
+								type="text"
+								placeholder="Search tags…"
+								oninput={onTagSearchInput}
+								class="border-clay-700 placeholder-parchment-600 mb-2 w-full rounded-md border bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 focus:border-gold-500 focus:ring-0 focus:outline-none"
+							/>
+							<div class="mb-2 max-h-40 overflow-y-auto">
+								{#each tagOptions as tag (tag.id)}
+									<label
+										class="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 hover:bg-clay-800"
+									>
+										<input
+											type="checkbox"
+											checked={batchTagIds.includes(tag.id)}
+											onchange={() => {
+												if (batchTagIds.includes(tag.id)) {
+													batchTagIds = batchTagIds.filter((t) => t !== tag.id);
+												} else {
+													batchTagIds = [...batchTagIds, tag.id];
+												}
+											}}
+											class="accent-gold-500"
+										/>
+										<span class="text-sm text-parchment-200">{tag.name}</span>
+									</label>
+								{/each}
+								{#if tagOptions.length === 0 && tagSearchQuery}
+									<p class="px-2 py-3 text-center text-xs text-parchment-500">No tags found</p>
+								{/if}
+							</div>
+							{#if batchTagIds.length > 0}
+								<div class="mb-2 flex flex-wrap gap-1">
+									{#each batchTagIds as tid}
+										{@const tag = tagOptions.find((t) => t.id === tid)}
+										{#if tag}
+											<span
+												class="text-parchment-300 inline-flex items-center gap-1 rounded-full bg-clay-800 px-2 py-0.5 text-xs"
+											>
+												{tag.name}
+												<button
+													onclick={() => (batchTagIds = batchTagIds.filter((t) => t !== tid))}
+													class="text-parchment-500 hover:text-parchment-200">&times;</button
+												>
+											</span>
+										{/if}
+									{/each}
+								</div>
+							{/if}
+							<div class="mb-3 flex gap-2">
+								<button
+									onclick={() => (batchTagMode = 'add')}
+									class={`flex-1 rounded-md px-2 py-1 text-xs font-medium ${
+										batchTagMode === 'add'
+											? 'bg-gold-600 text-clay-950'
+											: 'border border-clay-800 text-parchment-400 hover:bg-clay-800'
+									}`}
+								>
+									Add
+								</button>
+								<button
+									onclick={() => (batchTagMode = 'replace')}
+									class={`flex-1 rounded-md px-2 py-1 text-xs font-medium ${
+										batchTagMode === 'replace'
+											? 'bg-gold-600 text-clay-950'
+											: 'border border-clay-800 text-parchment-400 hover:bg-clay-800'
+									}`}
+								>
+									Replace
+								</button>
+							</div>
+							<button
+								onclick={handleBatchAssign}
+								disabled={batchTagIds.length === 0}
+								class="w-full rounded-md bg-gold-600 px-3 py-1.5 text-xs font-medium text-clay-950 hover:bg-gold-500 disabled:opacity-50"
+							>
+								Assign
+							</button>
+						</div>
+					</div>
+				{/if}
+			</div>
 		{/if}
 		<div class="relative flex-1">
 			<SearchBar

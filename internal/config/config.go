@@ -34,6 +34,7 @@ type ServerConfig struct {
 	MaxConcurrentBatches int           `mapstructure:"max_concurrent_batches" yaml:"max_concurrent_batches" json:"max_concurrent_batches"`
 	MaxDownloadFiles     int           `mapstructure:"max_download_files" yaml:"max_download_files" json:"max_download_files"`
 	MaxDownloadSizeMB    int64         `mapstructure:"max_download_size_mb" yaml:"max_download_size_mb" json:"max_download_size_mb"`
+	MaxBatchDelete       int           `mapstructure:"max_batch_delete" yaml:"max_batch_delete" json:"max_batch_delete"`
 }
 
 type DatabaseConfig struct {
@@ -235,6 +236,7 @@ func DefaultConfig(configDir string) *Config {
 			MaxConcurrentBatches: 2,
 			MaxDownloadFiles:     50,
 			MaxDownloadSizeMB:    500,
+			MaxBatchDelete:       50,
 		},
 		Db: DatabaseConfig{
 			Type: "sqlite",

@@ -373,7 +373,7 @@
 
 				<a
 					href={`/api/v1/documents/${doc.id}/file?download=true`}
-					class="block w-full rounded-lg bg-gold-600 px-4 py-2 text-sm font-medium text-clay-950 text-center hover:bg-gold-500"
+					class="block w-full rounded-lg bg-gold-600 px-4 py-2 text-center text-sm font-medium text-clay-950 hover:bg-gold-500"
 				>
 					Download PDF
 				</a>
