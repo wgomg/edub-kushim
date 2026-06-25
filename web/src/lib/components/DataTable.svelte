@@ -21,7 +21,9 @@
 	 * pageSizes?: number[],
 	 * defaultPageSize?: number,
 	 * keyField?: string,
-	 * title?: string
+	 * title?: string,
+	 * selectable?: boolean,
+	 * onselectionchange?: (selectedRows: any[]) => void
 	 * }}
 	 * */
 	let {
@@ -32,8 +34,12 @@
 		defaultPageSize = 25,
 		keyField = 'id',
 		title = '',
-		refreshKey = 0
+		refreshKey = 0,
+		selectable = false,
+		onselectionchange = null
 	} = $props();
+
+	let selectedKeys = $state(new Set());
 
 	let data = $state([]);
 	let total = $state(null);
@@ -71,6 +77,7 @@
 	async function load() {
 		if (data.length === 0) loading = true;
 		error = '';
+		selectedKeys = new Set();
 		try {
 			const result = await fetch({
 				sortBy: sortBy || columns[0]?.key || 'created_at',
@@ -95,6 +102,35 @@
 		} finally {
 			loading = false;
 		}
+	}
+
+	function toggleRow(key) {
+		const next = new Set(selectedKeys);
+		if (next.has(key)) {
+			next.delete(key);
+		} else {
+			next.add(key);
+		}
+		selectedKeys = next;
+		if (onselectionchange) onselectionchange(getSelectedRows());
+	}
+
+	function toggleAll() {
+		const allSelected = data.every((row) => selectedKeys.has(row[keyField]));
+		const next = new Set(selectedKeys);
+		for (const row of data) {
+			if (allSelected) {
+				next.delete(row[keyField]);
+			} else {
+				next.add(row[keyField]);
+			}
+		}
+		selectedKeys = next;
+		if (onselectionchange) onselectionchange(getSelectedRows());
+	}
+
+	function getSelectedRows() {
+		return data.filter((row) => selectedKeys.has(row[keyField]));
 	}
 
 	function toggleSort(key) {
@@ -158,6 +194,16 @@
 		<table class="w-full table-auto text-sm">
 			<thead class="sticky top-0 bg-clay-900 text-left text-parchment-400">
 				<tr>
+					{#if selectable}
+						<th class="w-10 px-4 py-3 font-medium whitespace-nowrap select-none" scope="col">
+							<input
+								type="checkbox"
+								checked={data.length > 0 && data.every((row) => selectedKeys.has(row[keyField]))}
+								onchange={toggleAll}
+								class="h-4 w-4 cursor-pointer accent-gold-500"
+							/>
+						</th>
+					{/if}
 					{#each columns as col, i (col.key)}
 						<th
 							class="px-4 py-3 font-medium whitespace-nowrap transition-colors select-none {col.sortable
@@ -181,6 +227,9 @@
 			<tbody class="divide-y divide-clay-800">
 				{#if loading && data.length === 0}
 					<tr class="bg-clay-950">
+						{#if selectable}
+							<td class="w-10 px-4 py-8"></td>
+						{/if}
 						{#each columns as col (col.key)}
 							<td class="px-4 py-8 text-parchment-500">
 								{#if col.key === columns[0].key}
@@ -191,6 +240,9 @@
 					</tr>
 				{:else if error && data.length === 0}
 					<tr class="bg-clay-950">
+						{#if selectable}
+							<td class="w-10 px-4 py-8"></td>
+						{/if}
 						{#each columns as col (col.key)}
 							<td class="px-4 py-8 text-terracotta-500">
 								{#if col.key === columns[0].key}
@@ -201,6 +253,9 @@
 					</tr>
 				{:else if data.length === 0}
 					<tr class="bg-clay-950">
+						{#if selectable}
+							<td class="w-10 px-4 py-8"></td>
+						{/if}
 						{#each columns as col (col.key)}
 							<td class="px-4 py-8 text-parchment-500">
 								{#if col.key === columns[0].key}
@@ -217,6 +272,17 @@
 								: ''}"
 							onclick={onRowClick ? () => onRowClick(row) : undefined}
 						>
+							{#if selectable}
+								<td class="w-10 px-4 py-3">
+									<input
+										type="checkbox"
+										checked={selectedKeys.has(row[keyField])}
+										onchange={() => toggleRow(row[keyField])}
+										class="h-4 w-4 cursor-pointer accent-gold-500"
+										onclick={(e) => e.stopPropagation()}
+									/>
+								</td>
+							{/if}
 							{#each columns as col (col.key)}
 								<td
 									class="px-4 py-3 text-parchment-200 {col.cellClass || ''} {onRowClick

@@ -77,6 +77,23 @@ export const api = {
 				})
 		},
 
+		downloadBatch: (ids) => {
+			const form = document.createElement('form');
+			form.method = 'POST';
+			form.action = '/api/v1/documents/download';
+			form.style.display = 'none';
+
+			const input = document.createElement('input');
+			input.type = 'hidden';
+			input.name = 'document_ids';
+			input.value = JSON.stringify(ids);
+			form.appendChild(input);
+
+			document.body.appendChild(form);
+			form.submit();
+			document.body.removeChild(form);
+		},
+
 		people: {
 			add: (id, peopleId, peopleTypeId) =>
 				request(`/api/v1/documents/${id}/people`, {

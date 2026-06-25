@@ -118,7 +118,7 @@ func registerRoutes(mux *http.ServeMux, logger *utils.Logger, queries *database.
 		handlers.HealthHandler(w, r, logger)
 	})
 
-	docHandler := handlers.NewDocumentHandler(queries, logger, engine, services)
+	docHandler := handlers.NewDocumentHandler(queries, logger, engine, services, cfg)
 	mux.HandleFunc("GET /api/v1/documents", docHandler.ListDocuments)
 	mux.HandleFunc("GET /api/v1/documents/{id}", docHandler.GetDocument)
 	mux.HandleFunc("GET /api/v1/documents/{id}/file", docHandler.GetDocumentFile)
@@ -130,6 +130,7 @@ func registerRoutes(mux *http.ServeMux, logger *utils.Logger, queries *database.
 	mux.HandleFunc("DELETE /api/v1/documents/{id}/tags", docHandler.RemoveDocumentTag)
 	mux.HandleFunc("POST /api/v1/documents/{id}/people", docHandler.AddDocumentPeople)
 	mux.HandleFunc("DELETE /api/v1/documents/{id}/people", docHandler.RemoveDocumentPeople)
+	mux.HandleFunc("POST /api/v1/documents/download", docHandler.DownloadDocuments)
 
 	tagHandler := handlers.NewTagHandler(services, logger)
 	mux.HandleFunc("GET /api/v1/tags", tagHandler.List)

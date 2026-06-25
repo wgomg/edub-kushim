@@ -1,14 +1,18 @@
 package handlers
 
 import (
+	"archive/zip"
 	"database/sql"
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 
 	itypes "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/api/types"
+	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/search"
@@ -20,14 +24,16 @@ type DocumentHandler struct {
 	logger   *utils.Logger
 	engine   *search.Engine
 	services *itypes.CrudServices
+	cfg      *config.Config
 }
 
-func NewDocumentHandler(queries *database.Queries, logger *utils.Logger, engine *search.Engine, services *itypes.CrudServices) *DocumentHandler {
+func NewDocumentHandler(queries *database.Queries, logger *utils.Logger, engine *search.Engine, services *itypes.CrudServices, cfg *config.Config) *DocumentHandler {
 	return &DocumentHandler{
 		queries:  queries,
 		logger:   logger,
 		engine:   engine,
 		services: services,
+		cfg:      cfg,
 	}
 }
 
@@ -366,9 +372,180 @@ func (h *DocumentHandler) GetDocumentFile(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	safeTitle := strings.NewReplacer("\r\n", "", "\n", "", "\"", "").Replace(doc.Title)
-	w.Header().Set("Content-Disposition", `inline; filename="`+safeTitle+`"`)
+	safeTitle := sanitizeFilename(doc.Title)
+	disposition := "inline"
+	if r.URL.Query().Get("download") == "true" {
+		disposition = "attachment"
+	}
+	w.Header().Set("Content-Disposition", disposition+`; filename="`+safeTitle+`"`)
 	http.ServeFile(w, r, doc.StoragePath)
+}
+
+func (h *DocumentHandler) DownloadDocuments(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := ctx.Value("reqid").(string)
+
+	var req types.DocumentDownloadRequest
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB limit on request body
+
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+	} else {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		idsJSON := r.FormValue("document_ids")
+		if idsJSON == "" {
+			http.Error(w, "document_ids is required", http.StatusBadRequest)
+			return
+		}
+		if err := json.Unmarshal([]byte(idsJSON), &req); err != nil {
+			http.Error(w, "Invalid document_ids format", http.StatusBadRequest)
+			return
+		}
+	}
+
+	if len(req.DocumentIDs) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "document_ids is required"})
+		return
+	}
+
+	ids := uniqueStrings(req.DocumentIDs)
+
+	if len(ids) > h.cfg.Srv.MaxDownloadFiles {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "too many documents, max: " + strconv.Itoa(h.cfg.Srv.MaxDownloadFiles),
+		})
+		return
+	}
+
+	var docs []database.Document
+	var invalidIDs []string
+	var totalSize int64
+
+	for _, id := range ids {
+		doc, err := h.queries.GetDocument(ctx, id)
+		if err != nil {
+			if errs.KindOf(errs.FromDB(err, "get document")) == errs.KindNotFound {
+				invalidIDs = append(invalidIDs, id)
+			} else {
+				h.logger.Error(&reqID, "download batch: get document %s: %v", id, err)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				json.NewEncoder(w).Encode(map[string]string{"error": "internal server error"})
+				return
+			}
+			continue
+		}
+		docs = append(docs, doc)
+		totalSize += doc.FileSize
+	}
+
+	if len(invalidIDs) > 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "documents not found: " + strings.Join(invalidIDs, ", "),
+		})
+		return
+	}
+
+	maxSizeBytes := h.cfg.Srv.MaxDownloadSizeMB * 1024 * 1024
+	if totalSize > maxSizeBytes {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "total size exceeds limit: " + strconv.FormatInt(totalSize, 10) + " > " + strconv.FormatInt(maxSizeBytes, 10),
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", `attachment; filename="documents.zip"`)
+
+	zw := zip.NewWriter(w)
+	var written int
+
+	for _, doc := range docs {
+		if doc.StoragePath == "" {
+			h.logger.Info(&reqID, "download batch: empty storage path for doc %s, skipping", doc.DocumentID)
+			continue
+		}
+		if _, err := os.Stat(doc.StoragePath); err != nil {
+			h.logger.Info(&reqID, "download batch: file missing for doc %s (%s): %v", doc.DocumentID, doc.StoragePath, err)
+			continue
+		}
+
+		ext := extFromMimeType(doc.MimeType)
+		name := sanitizeFilename(doc.Title) + "_" + doc.DocumentID[:8] + ext
+		fw, err := zw.Create(name)
+		if err != nil {
+			h.logger.Error(&reqID, "download batch: create zip entry %s: %v", name, err)
+			continue
+		}
+
+		fr, err := os.Open(doc.StoragePath)
+		if err != nil {
+			h.logger.Error(&reqID, "download batch: open file %s: %v", doc.StoragePath, err)
+			continue
+		}
+
+		if _, err := io.Copy(fw, fr); err != nil {
+			fr.Close()
+			h.logger.Error(&reqID, "download batch: copy file %s: %v", doc.StoragePath, err)
+			continue
+		}
+		fr.Close()
+		written++
+	}
+
+	if written == 0 {
+		zw.Close()
+		h.logger.Error(&reqID, "download batch: no files could be included in ZIP")
+		http.Error(w, "none of the requested documents could be downloaded", http.StatusNotFound)
+		return
+	}
+
+	if err := zw.Close(); err != nil {
+		h.logger.Error(&reqID, "download batch: close zip writer: %v", err)
+	}
+}
+
+func sanitizeFilename(title string) string {
+	return strings.NewReplacer("\r\n", "", "\n", "", "\"", "", "/", "_", "\\", "_", "\x00", "").Replace(title)
+}
+
+func extFromMimeType(mimeType string) string {
+	switch mimeType {
+	case "image/tiff":
+		return ".tiff"
+	case "image/jpeg":
+		return ".jpg"
+	case "image/png":
+		return ".png"
+	default:
+		return ".pdf"
+	}
+}
+
+func uniqueStrings(s []string) []string {
+	seen := make(map[string]struct{}, len(s))
+	result := make([]string, 0, len(s))
+	for _, v := range s {
+		if _, ok := seen[v]; !ok {
+			seen[v] = struct{}{}
+			result = append(result, v)
+		}
+	}
+	return result
 }
 
 func (h *DocumentHandler) UpdateDocument(w http.ResponseWriter, r *http.Request) {

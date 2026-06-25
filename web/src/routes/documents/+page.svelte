@@ -10,8 +10,18 @@
 	import { escapeHtml } from '$lib/utils/html.js';
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
 
+	let selectedDocs = $state([]);
+
 	let columns = $derived.by(() => {
-		const cols = [{ key: 'title', label: 'Title', sortable: true, width: '100%' }];
+		const cols = [
+			{
+				key: 'title',
+				label: 'Title',
+				sortable: true,
+				cell: (v, row) =>
+					`<a href="/documents/${row.id}" class="underline decoration-parchment-500/30 underline-offset-2 hover:text-gold-500">${escapeHtml(v)}</a>`
+			}
+		];
 
 		if (filter.query) {
 			cols.push({
@@ -71,13 +81,21 @@
 				minWidth: '100px'
 			},
 			{
-				key: 'created_at',
-				label: 'Created',
-				sortable: true,
-				cell: (v) => new Date(v).toLocaleDateString(),
-				minWidth: '150px'
-			}
-		);
+			key: 'created_at',
+			label: 'Created',
+			sortable: true,
+			cell: (v) => new Date(v).toLocaleDateString(),
+			minWidth: '150px'
+		},
+		{
+			key: '_actions',
+			label: '',
+			sortable: false,
+			width: '50px',
+			cell: (_, row) =>
+				`<a href="/api/v1/documents/${row.id}/file?download=true" class="inline-flex items-center justify-center rounded-md p-1.5 text-parchment-500 hover:text-gold-500 hover:bg-clay-800 transition-colors" title="Download PDF">&darr;</a>`
+		}
+	);
 
 		return cols;
 	});
@@ -225,6 +243,14 @@
 
 <div class="flex flex-col gap-4">
 	<div class="flex items-center gap-3">
+		{#if selectedDocs.length > 0}
+			<button
+				onclick={() => api.documents.downloadBatch(selectedDocs.map((r) => r.id))}
+				class="rounded-lg bg-gold-600 px-3 py-2 text-sm font-medium text-clay-950 hover:bg-gold-500 shrink-0"
+			>
+				Download selected ({selectedDocs.length})
+			</button>
+		{/if}
 		<div class="relative flex-1">
 			<SearchBar
 				query={filter.query}
@@ -332,5 +358,13 @@
 		<FilterPanel />
 	{/if}
 
-	<DataTable {columns} {fetch} onRowClick={view} title="Documents" {refreshKey} />
+	<DataTable
+		{columns}
+		{fetch}
+		onRowClick={view}
+		title="Documents"
+		{refreshKey}
+		selectable={true}
+		onselectionchange={(rows) => (selectedDocs = rows)}
+	/>
 </div>

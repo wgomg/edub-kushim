@@ -84,3 +84,7 @@ type RemoveDocumentPeopleRequest struct {
 	PeopleID     int64 `json:"people_id"`
 	PeopleTypeID int64 `json:"people_type_id"`
 }
+
+type DocumentDownloadRequest struct {
+	DocumentIDs []string `json:"document_ids"`
+}

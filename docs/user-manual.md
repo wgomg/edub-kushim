@@ -467,6 +467,42 @@ GET /api/v1/documents/{id}/file
 Returns the raw PDF file bytes for preview. Response `200` with `Content-Disposition: inline`.
 Returns `415 Unsupported Media Type` for non-PDF documents.
 
+| Query param  | Default  | Description                                                                 |
+| ------------ | -------- | --------------------------------------------------------------------------- |
+| `download`   | `false`  | When `true`, sets `Content-Disposition: attachment` to force a file download dialog instead of inline preview. |
+
+### Download Documents (Batch)
+
+Downloads multiple documents as a ZIP archive.
+
+```
+POST /api/v1/documents/download
+Content-Type: application/json
+
+{
+  "document_ids": ["uuid1", "uuid2", "uuid3"]
+}
+```
+
+The request body may also be sent as `application/x-www-form-urlencoded` with `document_ids` as a JSON string.
+
+Validation:
+
+| Condition                          | Response |
+| ---------------------------------- | -------- |
+| Empty `document_ids`               | `400` — `"document_ids is required"` |
+| Count exceeds `max_download_files` | `400` — `"too many documents, max: <N>"` |
+| Non-existent IDs                   | `400` — `"documents not found: <ids>"` |
+| Total size exceeds limit           | `400` — `"total size exceeds limit"` |
+
+Response `200` with `Content-Type: application/zip` and `Content-Disposition: attachment; filename="documents.zip"`.
+ZIP entry names follow the pattern `{sanitized_title}_{document_id_prefix}.{ext}` with extension derived from the document's MIME type.
+
+Config limits (see [Configuration Reference](#configuration-reference)):
+
+- `server.max_download_files` — max files in a single batch (default 50)
+- `server.max_download_size_mb` — max total uncompressed size in MB (default 500)
+
 ### Update Document
 
 ```
@@ -1080,6 +1116,8 @@ server:
   write_timeout: 60s
   idle_timeout: 60s
   max_concurrent_batches: 2 # max concurrent forked worker processes
+  max_download_files: 50 # max files in a single batch download
+  max_download_size_mb: 500 # max total size in MB for batch download
 
 database:
   type: sqlite # currently only sqlite
@@ -1150,7 +1188,7 @@ enricher:
 | Section                        | Purpose                                                 |
 | ------------------------------ | ------------------------------------------------------- |
 | `app`                          | Environment mode and log verbosity                      |
-| `server`                       | HTTP listen address, timeouts, max concurrent batches   |
+| `server`                       | HTTP listen address, timeouts, max concurrent batches, download limits |
 | `database`                     | SQLite storage location and file name                   |
 | `storage`                      | Inbox and processed file directories                    |
 | `consumer`                     | Pipeline: which tools to use, which files to accept     |
@@ -1234,7 +1272,7 @@ binary. If it is not found, consume requests will fail with a 500 error.
 The main web UI includes a **Settings** page at `/settings` that provides
 a single-page form for all user-configurable settings:
 
-- **Server**: host, port
+- **Server**: host, port, max upload/download sizes, max download files
 - **OCR**: engine selector, timeout, data directory, languages list (add/remove)
 - **Consumer**: workers, delete-original toggle
 - **Text extractor**: engine, timeout

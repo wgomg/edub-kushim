@@ -61,6 +61,8 @@
 			'server.host': cfg.server.host,
 			'server.port': Number(cfg.server.port),
 			'server.max_upload_size': Number(cfg.server.max_upload_size),
+			'server.max_download_files': Number(cfg.server.max_download_files),
+			'server.max_download_size_mb': Number(cfg.server.max_download_size_mb),
 			'consumer.ocr.engine': cfg.consumer.ocr.engine,
 			'consumer.ocr.languages': cfg.consumer.ocr.languages.filter(Boolean),
 			'consumer.ocr.data_dir': cfg.consumer.ocr.data_dir,
@@ -188,6 +190,30 @@
 						type="number"
 						min="1"
 						bind:value={cfg.server.max_upload_size}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+					/>
+				</div>
+				<div>
+					<label for="server-max-download-files" class="mb-1 block text-sm font-medium text-parchment-200"
+						>Max download files</label
+					>
+					<input
+						id="server-max-download-files"
+						type="number"
+						min="1"
+						bind:value={cfg.server.max_download_files}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+					/>
+				</div>
+				<div>
+					<label for="server-max-download-size" class="mb-1 block text-sm font-medium text-parchment-200"
+						>Max download size (MB)</label
+					>
+					<input
+						id="server-max-download-size"
+						type="number"
+						min="0"
+						bind:value={cfg.server.max_download_size_mb}
 						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
 					/>
 				</div>

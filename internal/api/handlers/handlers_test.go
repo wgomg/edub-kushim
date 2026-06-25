@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"sync"
 	"testing"
 	_ "time"
@@ -40,6 +42,10 @@ type handlerTestEnv struct {
 	dispatcher    *task.Dispatcher
 	registry      *task.Registry
 	semaphore     *pool.Semaphore
+}
+
+func newDocHandler(env *handlerTestEnv) *DocumentHandler {
+	return NewDocumentHandler(env.queries, env.logger, env.engine, env.services, config.DefaultConfig("/tmp/test"))
 }
 
 func newMockTagService(queries *database.Queries) (*service.Tag, *testutil.MockEmbedder) {
@@ -128,7 +134,7 @@ func docUUID(t *testing.T, queries *database.Queries, title string) string {
 
 func TestDocumentList(t *testing.T) {
 	env := newHandlerTestEnv(t)
-	h := NewDocumentHandler(env.queries, env.logger, env.engine, env.services)
+	h := newDocHandler(env)
 
 	docUUID(t, env.queries, "list-test.pdf")
 
@@ -147,7 +153,7 @@ func TestDocumentList(t *testing.T) {
 
 func TestDocumentGet(t *testing.T) {
 	env := newHandlerTestEnv(t)
-	h := NewDocumentHandler(env.queries, env.logger, env.engine, env.services)
+	h := newDocHandler(env)
 
 	dID := docUUID(t, env.queries, "get-test.pdf")
 
@@ -174,7 +180,7 @@ func TestDocumentGet(t *testing.T) {
 
 func TestDocumentUpdate(t *testing.T) {
 	env := newHandlerTestEnv(t)
-	h := NewDocumentHandler(env.queries, env.logger, env.engine, env.services)
+	h := newDocHandler(env)
 
 	dID := docUUID(t, env.queries, "before.pdf")
 
@@ -216,7 +222,7 @@ func TestDocumentUpdate(t *testing.T) {
 
 func TestDocumentDelete(t *testing.T) {
 	env := newHandlerTestEnv(t)
-	h := NewDocumentHandler(env.queries, env.logger, env.engine, env.services)
+	h := newDocHandler(env)
 
 	dID := docUUID(t, env.queries, "delete-me.pdf")
 
@@ -241,7 +247,7 @@ func TestDocumentDelete(t *testing.T) {
 
 func TestDocumentTagLifecycle(t *testing.T) {
 	env := newHandlerTestEnv(t)
-	h := NewDocumentHandler(env.queries, env.logger, env.engine, env.services)
+	h := newDocHandler(env)
 	ctx := context.Background()
 
 	docDBID, dID := database.CreateTestDocument(t, env.queries, "tags.pdf")
@@ -267,6 +273,132 @@ func TestDocumentTagLifecycle(t *testing.T) {
 		DocumentID: docDBID, TagID: tag.ID,
 	})
 	testutil.AssertNoError(t, err, "remove tag")
+}
+
+func TestGetDocumentFileDownloadParam(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	h := newDocHandler(env)
+	ctx := context.Background()
+
+	dID := docUUID(t, env.queries, "download-test.pdf")
+
+	tmpFile, err := os.CreateTemp("", "test-*.pdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpFile.WriteString("fake pdf content")
+	tmpFile.Close()
+	defer os.Remove(tmpFile.Name())
+
+	err = env.queries.UpdateDocumentPaths(ctx, database.UpdateDocumentPathsParams{
+		DocumentID: dID, OriginalPath: "/tmp/orig.pdf", StoragePath: tmpFile.Name(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("inline by default", func(t *testing.T) {
+		w := rec()
+		r := req(t, "GET", "/api/v1/documents/"+dID+"/file", nil)
+		r.SetPathValue("id", dID)
+		h.GetDocumentFile(w, r)
+		if !strings.HasPrefix(w.Header().Get("Content-Disposition"), "inline") {
+			t.Fatal("expected inline disposition")
+		}
+	})
+
+	t.Run("attachment with download=true", func(t *testing.T) {
+		w := rec()
+		r := req(t, "GET", "/api/v1/documents/"+dID+"/file?download=true", nil)
+		r.SetPathValue("id", dID)
+		h.GetDocumentFile(w, r)
+		if !strings.HasPrefix(w.Header().Get("Content-Disposition"), "attachment") {
+			t.Fatal("expected attachment disposition")
+		}
+	})
+}
+
+func TestDownloadDocumentsValidation(t *testing.T) {
+	cfg := config.DefaultConfig("/tmp/test")
+	cfg.Srv.MaxDownloadFiles = 2
+	cfg.Srv.MaxDownloadSizeMB = 0 // any positive size exceeds
+
+	env := newHandlerTestEnv(t)
+	h := NewDocumentHandler(env.queries, env.logger, env.engine, env.services, cfg)
+
+	t.Run("invalid body", func(t *testing.T) {
+		w := rec()
+		r := req(t, "POST", "/api/v1/documents/download", []byte("not json"))
+		r.Header.Set("Content-Type", "application/json")
+		h.DownloadDocuments(w, r)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", w.Code)
+		}
+	})
+
+	t.Run("empty document_ids", func(t *testing.T) {
+		w := rec()
+		body, _ := json.Marshal(types.DocumentDownloadRequest{DocumentIDs: []string{}})
+		h.DownloadDocuments(w, req(t, "POST", "/api/v1/documents/download", body))
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", w.Code)
+		}
+		var resp map[string]string
+		json.NewDecoder(w.Body).Decode(&resp)
+		if resp["error"] != "document_ids is required" {
+			t.Fatalf("unexpected error: %s", resp["error"])
+		}
+	})
+
+	t.Run("too many ids", func(t *testing.T) {
+		w := rec()
+		// 3 unique IDs exceeds MaxDownloadFiles=2
+		body, _ := json.Marshal(types.DocumentDownloadRequest{
+			DocumentIDs: []string{"a", "b", "c"},
+		})
+		h.DownloadDocuments(w, req(t, "POST", "/api/v1/documents/download", body))
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", w.Code)
+		}
+		var resp map[string]string
+		json.NewDecoder(w.Body).Decode(&resp)
+		if !strings.Contains(resp["error"], "too many") {
+			t.Fatalf("unexpected error: %s", resp["error"])
+		}
+	})
+
+	t.Run("non-existent ids", func(t *testing.T) {
+		w := rec()
+		body, _ := json.Marshal(types.DocumentDownloadRequest{
+			DocumentIDs: []string{"nonexistent-id"},
+		})
+		h.DownloadDocuments(w, req(t, "POST", "/api/v1/documents/download", body))
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", w.Code)
+		}
+		var resp map[string]string
+		json.NewDecoder(w.Body).Decode(&resp)
+		if !strings.Contains(resp["error"], "not found") {
+			t.Fatalf("unexpected error: %s", resp["error"])
+		}
+	})
+
+	t.Run("size exceeds limit", func(t *testing.T) {
+		dID := docUUID(t, env.queries, "size-test.pdf")
+		w := rec()
+		body, _ := json.Marshal(types.DocumentDownloadRequest{
+			DocumentIDs: []string{dID},
+		})
+		h.DownloadDocuments(w, req(t, "POST", "/api/v1/documents/download", body))
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", w.Code)
+		}
+		var resp map[string]string
+		json.NewDecoder(w.Body).Decode(&resp)
+		if !strings.Contains(resp["error"], "exceeds limit") {
+			t.Fatalf("unexpected error: %s", resp["error"])
+		}
+	})
 }
 
 func TestTagCrud(t *testing.T) {

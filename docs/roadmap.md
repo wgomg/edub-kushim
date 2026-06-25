@@ -1,7 +1,6 @@
 # Development Roadmap
 
-> **Development focus**: LLM-based automatic classification (tags, title, people, document type)
-> as the core differentiator against paperless-ngx, followed by the web UI layer.
+> **Development focus**: LLM-based automatic classification (tags, title, people, document type), followed by the web UI layer.
 
 ## ✅ Complete
 
@@ -199,8 +198,7 @@
 ## 🟢 Roadmap (Priority Order)
 
 > **Core differentiator achieved**: Automatic classification via LLM providers (tags, title, people,
-> document type) with semantic tag matching — the feature that distinguishes this project
-> from paperless-ngx.
+> document type) with semantic tag matching
 
 | #   | Feature                                  | Description                                                                                                                                                                       |
 | --- | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -219,23 +217,24 @@
 | 13  | **People management page**               | ✓ Two-tab route: People (name, native name, cascade delete) and Person Types (name, description, 409 handling)                                                                    |
 | 14  | **Document type management page**        | ✓ List, create, edit, delete document types with 409 conflict handling                                                                                                            |
 | 15  | **Document upload/consume flow**         | ✓ Wire Upload button to `POST /api/v1/consume/upload`, show progress feedback via modal                                                                                           |
-| 16  | **Single task detail page**              | ✓ New route `/tasks/{taskID}` — status badge, batch/doc links, timestamps, error display, retry action                                                            |
-| 17  | **Integration test**                     | ✓ End-to-end consumption test (mock runner), DB CRUD, search, task system, API handlers — covering database queries, search engine, pool, enrichment flow                        |
+| 16  | **Single task detail page**              | ✓ New route `/tasks/{taskID}` — status badge, batch/doc links, timestamps, error display, retry action                                                                            |
+| 17  | **Integration test**                     | ✓ End-to-end consumption test (mock runner), DB CRUD, search, task system, API handlers — covering database queries, search engine, pool, enrichment flow                         |
 | 18  | **Test coverage**                        | ✓ Database queries, API handlers, search engine, task system (store/runner/dispatcher/pool), consumption pipeline. ✗ Adapters, CLI commands (existing gap)                        |
-| 19  | **Bulk operations**                      | Batch delete, batch tag assignment, batch download                                                                                                                                |
-| 20  | **Batch cancel API endpoint**            | `POST /api/v1/batches/{id}/cancel` — expose `kushim consume cancel` through the API                                                                                               |
-| 21  | **Post-classification notification**     | Optional webhook or websocket event when a classification batch completes                                                                                                         |
-| 22  | **Dashboard enhancements**               | Storage usage trend, recent batch status, activity timeline                                                                                                                       |
-| 23  | **Contributing guide & issue templates** | `CONTRIBUTING.md`, issue/PR templates, and GitHub community setup to encourage contributions                                                                                      |
-| 24  | **Authentication and user management**   | Login, API keys, roles                                                                                                                                                            |
-| 25  | **Pre-built binaries**                   | Release binaries for major platforms (Linux amd64/arm64)                                                                                                                          |
-| 26  | **Email ingestion**                      | IMAP inbox scanning                                                                                                                                                               |
-| 27  | **Document notes/comments**              | User-added notes and annotations on documents                                                                                                                                     |
-| 28  | **Metrics and monitoring**               | Prometheus endpoints, structured metrics                                                                                                                                          |
-| 29  | **Document relationships**               | Parent/child, cross-references between documents                                                                                                                                  |
-| 30  | **External search engine**               | ZincSearch or Meilisearch integration for large-scale search                                                                                                                      |
-| 31  | **MySQL / MariaDB database backend**     | Additional database backend support                                                                                                                                               |
-| 32  | **User preferences**                     | Theme, pagination defaults, notification settings                                                                                                                                 |
+| 19  | **Document download**                     | Download individual documents from the document list table. Batch download with configurable limits (max file count and/or total accumulated size).                               |
+| 20  | **Bulk operations**                      | Batch delete, batch tag assignment                                                                                                                                                |
+| 21  | **Batch cancel API endpoint**            | `POST /api/v1/batches/{id}/cancel` — expose `kushim consume cancel` through the API                                                                                               |
+| 22  | **Post-classification notification**     | Optional webhook or websocket event when a classification batch completes                                                                                                         |
+| 23  | **Dashboard enhancements**               | Storage usage trend, recent batch status, activity timeline                                                                                                                       |
+| 24  | **Contributing guide & issue templates** | `CONTRIBUTING.md`, issue/PR templates, and GitHub community setup to encourage contributions                                                                                      |
+| 25  | **Authentication and user management**   | Login, API keys, roles                                                                                                                                                            |
+| 26  | **Pre-built binaries**                   | Release binaries for major platforms (Linux amd64/arm64)                                                                                                                          |
+| 27  | **Email ingestion**                      | IMAP inbox scanning                                                                                                                                                               |
+| 28  | **Document notes/comments**              | User-added notes and annotations on documents                                                                                                                                     |
+| 29  | **Metrics and monitoring**               | Prometheus endpoints, structured metrics                                                                                                                                          |
+| 30  | **Document relationships**               | Parent/child, cross-references between documents                                                                                                                                  |
+| 31  | **External search engine**               | ZincSearch or Meilisearch integration for large-scale search                                                                                                                      |
+| 32  | **MySQL / MariaDB database backend**     | Additional database backend support                                                                                                                                               |
+| 33  | **User preferences**                     | Theme, pagination defaults, notification settings                                                                                                                                 |
 
 ---
 

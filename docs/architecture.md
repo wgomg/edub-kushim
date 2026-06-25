@@ -240,7 +240,7 @@ environments or CI.
 
 The main web UI (`web/`) includes a **Settings** page at `/settings` backed by the same
 `/wizard/config` API endpoints. It provides a single-page form covering all configurable
-fields: server host/port; OCR engine, timeout, data directory, languages; consumer workers,
+fields: server host/port, max upload/download sizes, max download files; OCR engine, timeout, data directory, languages; consumer workers,
 delete-original, text extractor engine/timeout; PDF optimizer engine/fallback/timeout;
 enricher workers; content analyzer engine/timeout + LLM provider Base URL, model, token;
 tag matcher engine/timeout, reduce-target-words, chunk size, Hugot model/backend;

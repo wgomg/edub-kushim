@@ -371,6 +371,13 @@
 					<p class="mt-1 font-mono text-xs break-all text-parchment-400">{doc.sha512_checksum}</p>
 				</div>
 
+				<a
+					href={`/api/v1/documents/${doc.id}/file?download=true`}
+					class="block w-full rounded-lg bg-gold-600 px-4 py-2 text-sm font-medium text-clay-950 text-center hover:bg-gold-500"
+				>
+					Download PDF
+				</a>
+
 				<button
 					onclick={handleDelete}
 					disabled={deleting}

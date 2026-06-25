@@ -32,6 +32,8 @@ type ServerConfig struct {
 	IdleTimeout          time.Duration `mapstructure:"idle_timeout" yaml:"idle_timeout" json:"idle_timeout"`
 	MaxUploadSize        int64         `mapstructure:"max_upload_size" yaml:"max_upload_size" json:"max_upload_size"`
 	MaxConcurrentBatches int           `mapstructure:"max_concurrent_batches" yaml:"max_concurrent_batches" json:"max_concurrent_batches"`
+	MaxDownloadFiles     int           `mapstructure:"max_download_files" yaml:"max_download_files" json:"max_download_files"`
+	MaxDownloadSizeMB    int64         `mapstructure:"max_download_size_mb" yaml:"max_download_size_mb" json:"max_download_size_mb"`
 }
 
 type DatabaseConfig struct {
@@ -231,6 +233,8 @@ func DefaultConfig(configDir string) *Config {
 			IdleTimeout:          60 * time.Second,
 			MaxUploadSize:        100,
 			MaxConcurrentBatches: 2,
+			MaxDownloadFiles:     50,
+			MaxDownloadSizeMB:    500,
 		},
 		Db: DatabaseConfig{
 			Type: "sqlite",
