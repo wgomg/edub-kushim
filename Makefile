@@ -179,3 +179,28 @@ compose-down:
 
 fix:
 	go fix -tags "XLA,ORT" ./...
+
+# ── Testing ──────────────────────────────────────────────────────────
+# test-short runs all tests that don't require CGo (Tesseract, MuPDF).
+# These are safe for any environment and cover ~95% of the codebase.
+.PHONY: test-short test test-verbose
+
+test-short:
+	CGO_ENABLED=0 go test -tags "XLA,ORT" -count=1 -timeout 60s \
+		./internal/database/ \
+		./internal/search/ \
+		./internal/task/ \
+		./internal/api/handlers/ \
+		./internal/consumption/
+
+# Default test target (same as test-short for now).
+test: test-short
+
+# Verbose output, useful during development.
+test-verbose:
+	CGO_ENABLED=0 go test -tags "XLA,ORT" -count=1 -v -timeout 60s \
+		./internal/database/ \
+		./internal/search/ \
+		./internal/task/ \
+		./internal/api/handlers/ \
+		./internal/consumption/

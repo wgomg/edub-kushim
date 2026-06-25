@@ -24,11 +24,22 @@ import (
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
+// runner is an interface covering the subset of *tools.Runner methods that
+// Consumer.Process depends on. *tools.Runner satisfies it automatically.
+// This extraction exists solely to allow mock implementations in tests.
+type runner interface {
+	ExtractText(ctx context.Context, path string) (*tools.TextExtractionResult, error)
+	OCR(ctx context.Context, docId, path string) (*tools.OCRResult, error)
+	OptimizePdf(ctx context.Context, docId, path string) (*tools.PdfOptimizationResult, error)
+}
+
+var _ runner = (*tools.Runner)(nil)
+
 type Consumer struct {
 	config *config.Config
 	logger *utils.Logger
 	db     *sql.DB
-	runner *tools.Runner
+	runner runner
 }
 
 type File struct {
@@ -69,7 +80,7 @@ func NewConsumer(cfg *config.Config, logger *utils.Logger, db *sql.DB) (*Consume
 	}, nil
 }
 
-func NewConsumerWithRunner(cfg *config.Config, logger *utils.Logger, db *sql.DB, runner *tools.Runner) (*Consumer, error) {
+func NewConsumerWithRunner(cfg *config.Config, logger *utils.Logger, db *sql.DB, runner runner) (*Consumer, error) {
 	return &Consumer{
 		config: cfg,
 		logger: logger,

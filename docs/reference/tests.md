@@ -1,0 +1,216 @@
+# Testing Reference
+
+## Overview
+
+The project has **60+ integration and unit tests** across five packages, all runnable
+without CGo dependencies (no Tesseract, MuPDF, or Ghostscript required). The test
+suite validates database queries, task lifecycle, search, API handlers, and the
+consumption pipeline.
+
+### Quick Start
+
+```bash
+make test          # runs all non-CGo tests
+make test-verbose  # same with verbose output
+CGO_ENABLED=0 go test -tags "XLA,ORT" ./internal/...
+```
+
+---
+
+## Package Layout
+
+| Package | Tests | What it covers |
+|---------|-------|---------------|
+| `internal/database` | 17 | sqlc-generated CRUD, task lifecycle, enrich waiting flow, batch ownership, FTS-adjacent operations, document/tag/people/document-type CRUD, saved searches |
+| `internal/search` | 7 | FTS5 search with snippets, ranking, pagination; structured search with mime/language/date filters; query sanitization |
+| `internal/task` | 14 | Store (create/get/claim/complete/fail), dedup key uniqueness, dispatcher enqueue with custom status/ID, runner (complete/fail/no-tasks), pool lifecycle |
+| `internal/api/handlers` | 15 | Health check, document list/get/update/delete, tag CRUD, people CRUD, document type CRUD, task endpoints, saved searches, concurrent operations, error helpers |
+| `internal/consumption` | 11 | Full consumer pipeline via mock runner (file discovery, DB transaction, file movement, duplicate detection), file I/O helpers (get, move, copy, remove, clean up), checksum calculation |
+
+---
+
+## How Tests Work
+
+### In-Memory SQLite
+
+Every test creates an isolated in-memory SQLite database (`:memory:`) with the full
+schema initialized via `database.InitializeSchema`. There is zero state sharing
+between tests. Each `*sql.DB` is created fresh per test via `database.NewTestDB(t)`:
+
+```go
+db := database.NewTestDB(t)
+queries := database.New(db)
+```
+
+Key detail: `PRAGMA foreign_keys = ON` is set on every test DB, so foreign key
+constraints are enforced during testing just as they are in production. The DB
+also uses `SetMaxOpenConns(1)` to avoid SQLite locking issues.
+
+### CGo-Free Runner Mock
+
+The consumption pipeline integration tests use a **mock runner** that satisfies the
+`runner` interface (defined in `internal/consumption/consumer.go`). This avoids
+the need for real Tesseract (gosseract) or MuPDF:
+
+```go
+type runner interface {
+    ExtractText(ctx context.Context, path string) (*tools.TextExtractionResult, error)
+    OCR(ctx context.Context, docId, path string) (*tools.OCRResult, error)
+    OptimizePdf(ctx context.Context, docId, path string) (*tools.PdfOptimizationResult, error)
+}
+```
+
+The mock (`integrationTestRunner` in `internal/consumption/integration_test.go`)
+returns configurable text, OCR results, and optimization results, or injects
+errors to test failure paths.
+
+### Function Variable Override Pattern
+
+The OCR adapter uses a function variable + `init()` override to make CGo-dependent
+code testable without CGo:
+
+```go
+// adapter.go — always compiled
+var newGosseract = func(...) (OCR, error) {
+    return nil, fmt.Errorf("gosseract requires CGo")
+}
+```
+
+```go
+// gosseract.go — //go:build cgo
+func init() {
+    newGosseract = func(...) (OCR, error) { return NewGosseract(...) }
+}
+```
+
+On non-CGo builds, the default error-returning stub is used. When CGo is available,
+`init()` overrides the variable with the real constructor. This pattern is borrowed
+from `crypto/x509` root cert loading in the Go standard library.
+
+### Test Fixtures
+
+- **Minimal PDFs**: `testutil.MinimalTextPDF(content)` generates a spec-compliant
+  PDF with the given text content. Used by both database tests (for `FileFromPath`)
+  and consumption tests.
+- **Temp directories**: `testutil.NewTestConfig(t)` creates a full config with temp
+  inbox, storage, data, and OCR directories. Cleanup is handled via the returned
+  `func()`.
+- **Deterministic UUIDs**: `database.CreateTestDocument` generates UUIDs from
+  the current nanosecond timestamp (unique per call, no external dep).
+
+---
+
+## Running Tests
+
+### Makefile targets
+
+```bash
+make test          # CGO_ENABLED=0, all 5 packages, 60s timeout
+make test-verbose  # same with -v output
+```
+
+The Makefile explicitly sets `CGO_ENABLED=0` for test targets, overriding the
+`export CGO_ENABLED := 1` used for build targets. This ensures tests run in
+any environment regardless of C library availability.
+
+### Manual
+
+```bash
+# Single package
+CGO_ENABLED=0 go test -tags "XLA,ORT" -v ./internal/database/
+
+# Specific test
+CGO_ENABLED=0 go test -tags "XLA,ORT" -v -run "TestTaskLifecycle" ./internal/database/
+
+# All non-CGo packages
+CGO_ENABLED=0 go test -tags "XLA,ORT" -count=1 -timeout 60s \
+    ./internal/database/ \
+    ./internal/search/ \
+    ./internal/task/ \
+    ./internal/api/handlers/ \
+    ./internal/consumption/
+
+# Full suite (fails if C dependencies are missing)
+CGO_ENABLED=1 go test -tags "XLA,ORT" ./internal/...
+```
+
+### Test Helpers
+
+The `internal/testutil` package provides reusable test infrastructure:
+
+| Function | Purpose |
+|----------|---------|
+| `NewTestLogger()` | Discard logger for silent test output |
+| `NewTestConfig(t)` | Config with temp dirs, cleanup function |
+| `MinimalTextPDF(content)` | Valid PDF byte slice with text |
+| `CreateTestPDF(t, path, content)` | Writes minimal PDF to disk |
+| `CreateTestFile(t, path, content)` | Writes arbitrary file to disk |
+| `AssertEqual(t, got, want, msg)` | Value equality check |
+| `AssertNoError(t, err, msg)` | Nil error check |
+| `AssertError(t, err, msg)` | Non-nil error check |
+
+The `internal/database` package also exports:
+
+| Function | Purpose |
+|----------|---------|
+| `NewTestDB(t)` | In-memory SQLite with schema initialized |
+| `NewTestQueries(t)` | Helper returning both `*Queries` and `*sql.DB` |
+| `CreateTestDocument(t, queries, title)` | Inserts a document, returns auto-ID and UUID |
+| `SeedTagByName(t, queries, name)` | Returns a seeded tag (by name or first) |
+
+---
+
+## Patterns & Conventions
+
+### Assertion duplication (by design)
+
+The `database` package has local `assertNoError` / `assertEqual` / `assertError`
+helpers rather than importing from `testutil`. This is because `testutil` imports
+`config`, which imports `database` (through `setup.go`), creating an import cycle
+when the `database` test package imports `testutil`. Other packages (search, task,
+handlers, consumption) use `testutil` assertions directly.
+
+### Import cycle avoidance
+
+```
+database.test → testutil → config → database  (CYCLE)
+search.test  → testutil ✓  (no cycle)
+```
+
+The `testutil` package avoids importing any `database`-adjacent types to minimize
+the cycle surface. `NewMockTagService` was moved from `testutil` into the handler
+test file for this reason.
+
+### No CGo in tests
+
+All tests run with `CGO_ENABLED=0`. The CGo-dependent code paths (gosseract OCR,
+MuPDF text extraction/optimization) are tested via mocks at the `runner` interface
+level and via build-constrained stubs at the adapter level.
+
+---
+
+## Adding Tests
+
+### New database query
+
+1. Add SQL to `internal/database/sql/queries/`
+2. Run `sqlc generate`
+3. Add a test in `internal/database/integration_test.go`
+
+### New API endpoint
+
+1. Add the handler function
+2. Add tests in `internal/api/handlers/handlers_test.go` using `httptest.ResponseRecorder`
+   and the `req()` / `rec()` helpers
+
+### New consumption path
+
+1. Implement the adapter
+2. For CGo adapters, add a `//go:build cgo` tag and a `//go:build !cgo` stub
+3. For new consumer behavior, add mock responses to `integrationTestRunner`
+   and test in `internal/consumption/integration_test.go`
+
+### New task type
+
+1. Implement `task.Handler`
+2. Add test in `internal/task/task_test.go` using the `mockHandler` utility

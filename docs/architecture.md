@@ -406,6 +406,7 @@ FTS5 is "good enough" for the expected document volume (thousands to low tens of
 - [Pipeline Reference](reference/pipeline.md) — Consumption and enrichment engine details
 - [Task System Reference](reference/task-system.md) — Dispatcher and pool internals
 - [Search Reference](reference/search.md) — Search engine, structured search, autocomplete, query syntax
+- [Testing Reference](reference/tests.md) — Test infrastructure, patterns, and how to run
 
 ## Key Design Decisions
 

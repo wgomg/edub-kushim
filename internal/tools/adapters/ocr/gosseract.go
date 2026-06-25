@@ -1,3 +1,5 @@
+//go:build cgo
+
 package ocr
 
 import (
@@ -220,3 +222,10 @@ func encodeJPEG(img image.Image, quality int) ([]byte, error) {
 	}
 	return buf.Bytes(), nil
 }
+
+func init() {
+	newGosseract = func(logger *utils.Logger, cfg config.ToolConfig, optimizerCmd string, languages []string, dataDir string) (OCR, error) {
+		return NewGosseract(logger, cfg, optimizerCmd, languages, dataDir)
+	}
+}
+

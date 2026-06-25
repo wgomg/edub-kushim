@@ -173,8 +173,14 @@
 
 ### Quality
 
-- ✗ **No test files exist** in the internal packages (the only `*_test.go` in the repo belongs to a third-party C library)
-- FTS, search engine, enrichment, consumption, handlers, CLI, pool — none have automated tests
+- ✓ Database integration tests (17 tests) — document/tag/people CRUD, task lifecycle, enrich flow, batch ownership, FTS-adjacent operations, saved searches
+- ✓ Search engine tests (7 tests) — FTS5 search, structured search, pagination, query sanitization
+- ✓ Task system tests (14 tests) — Store, dispatcher, runner, pool lifecycle, dedup key handling
+- ✓ API handler tests (15 tests) — health, document CRUD, tag/people CRUD, task endpoints, saved searches, concurrent operations
+- ✓ Consumption pipeline tests (11 tests) — full consume flow with mock runner, file I/O, duplicate detection, error paths
+- ✓ `internal/testutil` package — assertion helpers, PDF fixtures, mock embedder
+- ✓ `Makefile` test targets (`make test`, `make test-verbose`)
+- ✗ No tests for CLI commands (kushim consume, search, task, setup)
 
 ### Build & Deployment
 
@@ -214,8 +220,8 @@
 | 14  | **Document type management page**        | ✓ List, create, edit, delete document types with 409 conflict handling                                                                                                            |
 | 15  | **Document upload/consume flow**         | ✓ Wire Upload button to `POST /api/v1/consume/upload`, show progress feedback via modal                                                                                           |
 | 16  | **Single task detail page**              | ✓ New route `/tasks/{taskID}` — status badge, batch/doc links, timestamps, error display, retry action                                                            |
-| 17  | **Integration test**                     | End-to-end test: consume a known PDF, verify DB state — signals project reliability                                                                                               |
-| 18  | **Test coverage**                        | Automated tests for: adapters, CLI commands, database queries, API handlers, search engine, pool                                                                                  |
+| 17  | **Integration test**                     | ✓ End-to-end consumption test (mock runner), DB CRUD, search, task system, API handlers — covering database queries, search engine, pool, enrichment flow                        |
+| 18  | **Test coverage**                        | ✓ Database queries, API handlers, search engine, task system (store/runner/dispatcher/pool), consumption pipeline. ✗ Adapters, CLI commands (existing gap)                        |
 | 19  | **Bulk operations**                      | Batch delete, batch tag assignment, batch download                                                                                                                                |
 | 20  | **Batch cancel API endpoint**            | `POST /api/v1/batches/{id}/cancel` — expose `kushim consume cancel` through the API                                                                                               |
 | 21  | **Post-classification notification**     | Optional webhook or websocket event when a classification batch completes                                                                                                         |
@@ -247,3 +253,4 @@ Low-priority items worth revisiting when nothing more impactful demands attentio
 
 - [Architecture & Design](architecture.md) — Core design principles and pipeline narrative
 - [Code Reference](reference/overview.md) — Detailed implementation reference per package
+- [Testing Reference](reference/tests.md) — Test infrastructure, patterns, and how to run

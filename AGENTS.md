@@ -2,72 +2,84 @@
 
 ## Build
 
-- **Never omit build tags.** All `go build`, `go test`, and `go fix` commands require `-tags "XLA,ORT"`. This is non-negotiable.
-- Build C dependencies first: `make build-deps`
-- Build Go binaries: `make build` → produces `dev/bin/kushim` and `dev/bin/edub`
-- Build the web UI before the Go binary when you need the embedded SPA: `make web-build && make build`
+- **Never omit build tags.** All `go build`, `go test`, and `go fix` require `-tags "XLA,ORT"`. Non-negotiable.
+- Build C deps first: `make build-deps`
+- Build both binaries: `make build` → `dev/bin/kushim` + `dev/bin/edub`
+- When the embedded SPA is needed: `make web-build && make build` (order matters — web-build must run first)
 - Containerized builds: `make build-glibc`, `make build-musl`, `make build-tools-image`
+- Go 1.26, module `github.com/wgomg/edub-kushim`
+- `make fix` runs `go fix -tags "XLA,ORT" ./...`
 
-## Two binaries with different CGo requirements
+## Two binaries, different CGo
 
 - **`kushim`** — CLI, document processing, matcher server. Built with `CGO_ENABLED=1`. Links Tesseract, Leptonica, MuPDF, Hugot statically.
 - **`edub`** — REST API server, web UI. Built with `CGO_ENABLED=0`. Pure Go, no C deps.
+- The Makefile handles the split. If you invent a new build command, respect it.
 
-Do not mix up which binary has CGo. The Makefile handles this, but if you invent a new build command, respect this split.
-
-## Process architecture (critical for agents doing integration work)
+## Process architecture
 
 ```
-edub (CGO_ENABLED=0)
-  ├── Forks: kushim consume --batch <id>   (per-batch document processing)
-  └── Communicates via Unix socket: kushim hugot  (tag matcher RPC)
+edub (CGO_ENABLED=0)── forks: kushim consume --batch <id> (per-batch processing)
+                    └── Unix socket RPC: kushim hugot      (tag matcher)
 ```
 
-- `edub` needs `kushim` on its sibling path or in `PATH`. It forks `kushim` as a child process when `POST /api/v1/consume` is called.
-- The matcher (`kushim hugot`) must run as a separate process before `edub` starts for tag CRUD to work. Tag endpoints return 503 if the matcher socket is unreachable.
-- The matcher UNIX socket is at `<config-dir>/kushim-matcher.sock`.
+- `edub` forks `kushim consume --batch <id>` as a child process when `POST /api/v1/consume` is called. `kushim` must be on PATH or sibling of `edub`.
+- The matcher (`kushim hugot`) must be running before `edub` starts. Tag CRUD returns 503 otherwise.
+- Socket: `<config-dir>/kushim-matcher.sock`.
 
 ## Config
 
-- Config file: `~/.config/edub-kushim/config.yaml`
-- Reference: `config.example.yaml` in repo root
-- `kushim setup` — web wizard at `http://0.0.0.0:8420`
-- `kushim setup --cli --languages eng,spa,...` — terminal mode
-- Setup only works when no config exists. To re-run setup, delete the config file first.
+- File: `~/.config/edub-kushim/config.yaml` · Example: `config.example.yaml`
+- `kushim setup` → web wizard at `http://0.0.0.0:8420`
+- `kushim setup --cli --languages eng,spa,...` → terminal mode
+- Setup only runs when no config exists. Delete the config file to re-run.
 
 ## Code generation
 
-After modifying any SQL file in `internal/database/sql/queries/`:
+After editing SQL in `internal/database/sql/queries/`:
 
 ```bash
 sqlc generate
 ```
 
-This regenerates `internal/database/*.sql.go`. Forgetting this step causes type mismatches.
+Regenerates `internal/database/*.sql.go`. Skipping this causes type mismatches.
+Config: `sqlc.yaml` (v2, sqlite engine).
 
 ## Testing
 
+**Most tests don't need CGo.** Run them with:
+
 ```bash
-go test -tags "XLA,ORT" ./...
+make test          # 60+ tests across 5 packages, CGO_ENABLED=0
+make test-verbose  # same with -v
 ```
 
-Same build tags as building. There is no test suite split — the tags apply everywhere.
+Manual equivalent:
+
+```bash
+CGO_ENABLED=0 go test -tags "XLA,ORT" -count=1 ./internal/database/ ./internal/search/ ./internal/task/ ./internal/api/handlers/ ./internal/consumption/
+```
+
+Covered: database queries, task lifecycle, search engine, API handlers, consumption pipeline
+(with mock runner). Not covered: CLI commands, real OCR/PDF adapters.
+
+The old `go test -tags "XLA,ORT" ./...` will fail without the full C toolchain installed.
+See `docs/reference/tests.md` for full testing reference.
 
 ## Web UI (SvelteKit)
 
-- Two SvelteKit SPAs: `web/` (main app → `internal/static/build/`) and `web-wizard/` (setup wizard → `internal/wizard/static/`)
-- Node.js 24 — `.nvmrc` specifies the version. Run `nvm use` first.
+- Two SPAs: `web/` (main → `internal/static/build/`) and `web-wizard/` (setup wizard → `internal/wizard/static/`)
+- Node.js 24 — `.nvmrc` specifies. Run `nvm use` first.
 - Dev server: `cd web && npm ci && npm run dev` (proxies `/api` to `localhost:3000`)
-- Both use `@sveltejs/adapter-static` with `fallback: 'index.html'` for SPA mode
-- Svelte 5 with runes enabled everywhere
-- Tailwind CSS v4 via `@tailwindcss/vite`
-- Lint: `npm run lint` (prettier + eslint). Format: `npm run format`.
+- Both use `@sveltejs/adapter-static` with `fallback: 'index.html'`
+- Svelte 5 with runes enabled everywhere. Tailwind CSS v4 via `@tailwindcss/vite`.
+- Lint: `npm run lint` · Format: `npm run format`.
 
-## Important constraints
+## Constraints
 
-- `kushim consume` blocks if required external tools are missing (depends on configured engines — e.g. `ocrmypdf` needs tesseract, unpaper; `pdftotext` needs poppler-utils).
-- The `gosseract` OCR adapter uses MuPDF to render pages to PNG at 200 DPI. It creates searchable PDFs with invisible-but-selectable text (text rendering mode 3).
-- The Hugot ORT backend downloads ONNX runtime at first use — needs internet. Go backend has no runtime deps.
-- ORT defaults disable CPU memory arena and pattern pre-allocation to keep RSS ~2.2–2.5 GB instead of ~4–5 GB. Toggle via config if performance is unacceptable.
-- Commit messages: Spanish, conventional commit format (see `kilo.json`).
-- Go module: `github.com/wgomg/edub-kushim`, Go 1.26.
+- `kushim consume` blocks if external tools are missing (`ocrmypdf` needs tesseract+unpaper; `pdftotext` needs poppler-utils).
+- The `gosseract` OCR adapter uses MuPDF to render at 200 DPI and builds searchable PDFs with text rendering mode 3 (`3 Tr`).
+- Hugot ORT backend downloads ONNX runtime on first use — needs internet. Go backend has no runtime deps.
+- ORT defaults disable CPU memory arena and pattern pre-allocation (RSS ~2.2–2.5 GB vs ~4–5 GB). Toggle via `DefaultConfig` if latency matters more.
+- Commit messages: Spanish, conventional commit format — see `.kilo/kilo.jsonc`.
+- sqlc config is at `sqlc.yaml` (v2, sqlite engine).
