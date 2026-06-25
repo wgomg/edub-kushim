@@ -169,7 +169,7 @@
 | `/people`         | ✓      | Two tabs: People (name + native name) and Person Types (name + description)                                                                                      |
 | `/document-types` | ✓      | List, create, edit, delete document types                                                                                                                        |
 | `/tasks`          | ✓      | Batch list + task drill-down                                                                                                                                     |
-| `/tasks/[id]`     | ✗      | Route does not exist                                                                                                                                             |
+| `/tasks/[id]`     | ✓      | Task detail with status badge, batch/doc links, timestamps, error display, retry action                                                                          |
 
 ### Quality
 
@@ -213,7 +213,7 @@
 | 13  | **People management page**               | ✓ Two-tab route: People (name, native name, cascade delete) and Person Types (name, description, 409 handling)                                                                    |
 | 14  | **Document type management page**        | ✓ List, create, edit, delete document types with 409 conflict handling                                                                                                            |
 | 15  | **Document upload/consume flow**         | ✓ Wire Upload button to `POST /api/v1/consume/upload`, show progress feedback via modal                                                                                           |
-| 16  | **Single task detail page**              | New route `/tasks/{taskID}` — status, file, timestamps, error information                                                                                                         |
+| 16  | **Single task detail page**              | ✓ New route `/tasks/{taskID}` — status badge, batch/doc links, timestamps, error display, retry action                                                            |
 | 17  | **Integration test**                     | End-to-end test: consume a known PDF, verify DB state — signals project reliability                                                                                               |
 | 18  | **Test coverage**                        | Automated tests for: adapters, CLI commands, database queries, API handlers, search engine, pool                                                                                  |
 | 19  | **Bulk operations**                      | Batch delete, batch tag assignment, batch download                                                                                                                                |

@@ -126,7 +126,9 @@ export const api = {
 
 	autocomplete: {
 		tags: (q, limit = 20) =>
-			request(`/api/v1/tags?q=${encodeURIComponent(q)}&limit=${limit}`).then((data) => (data && data.results) ?? []),
+			request(`/api/v1/tags?q=${encodeURIComponent(q)}&limit=${limit}`).then(
+				(data) => (data && data.results) ?? []
+			),
 
 		people: (q, limit = 20) =>
 			request(`/api/v1/people?q=${encodeURIComponent(q)}&limit=${limit}`).then(
@@ -144,7 +146,9 @@ export const api = {
 			if (q) params.set('q', q);
 			params.set('limit', String(limit));
 			params.set('offset', String(offset));
-			return request(`/api/v1/tags?${params.toString()}`).then((data) => data ?? { results: [], total: 0 });
+			return request(`/api/v1/tags?${params.toString()}`).then(
+				(data) => data ?? { results: [], total: 0 }
+			);
 		},
 		create: (name) =>
 			requestRaw('/api/v1/tags', {

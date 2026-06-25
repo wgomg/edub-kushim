@@ -24,8 +24,8 @@
 				type="button"
 				onclick={() => toastStore.dismiss(toast.id)}
 				class="shrink-0 text-lg leading-none opacity-60 hover:opacity-100"
-				aria-label="Dismiss"
-			>&times;</button>
+				aria-label="Dismiss">&times;</button
+			>
 		</div>
 	{/each}
 </div>
