@@ -8,8 +8,7 @@ import (
 
 	itypes "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/api/types"
-	"github.com/wgomg/edub-kushim/internal/people"
-	"github.com/wgomg/edub-kushim/internal/sanitize"
+	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -84,15 +83,15 @@ func (h *PeopleHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.Name = sanitize.StripTags(strings.TrimSpace(req.Name))
+	req.Name = utils.StripTags(strings.TrimSpace(req.Name))
 	if req.Name == "" {
 		http.Error(w, "Person name is required", http.StatusBadRequest)
 		return
 	}
 
-	req.NameNative = sanitize.StripTags(req.NameNative)
+	req.NameNative = utils.StripTags(req.NameNative)
 
-	results, err := h.services.People.Create(ctx, []people.CreatePersonInput{
+	results, err := h.services.People.Create(ctx, []service.CreatePersonInput{
 		{Name: req.Name, NameNative: req.NameNative},
 	})
 	if err != nil {
@@ -101,26 +100,26 @@ func (h *PeopleHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch results[0].Status {
-	case people.Created:
+	case service.Created:
 		nameNative := ""
-		if results[0].People.NameNative.Valid {
-			nameNative = results[0].People.NameNative.String
+		if results[0].Entity.NameNative.Valid {
+			nameNative = results[0].Entity.NameNative.String
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(types.PersonResponse{
-			ID: results[0].People.ID, Name: results[0].People.Name, NameNative: nameNative,
+			ID: results[0].Entity.ID, Name: results[0].Entity.Name, NameNative: nameNative,
 		})
-	case people.Conflict:
+	case service.Conflict:
 		nameNative := ""
-		if results[0].People.NameNative.Valid {
-			nameNative = results[0].People.NameNative.String
+		if results[0].Entity.NameNative.Valid {
+			nameNative = results[0].Entity.NameNative.String
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
 		json.NewEncoder(w).Encode(map[string]any{
-			"id":          results[0].People.ID,
-			"name":        results[0].People.Name,
+			"id":          results[0].Entity.ID,
+			"name":        results[0].Entity.Name,
 			"name_native": nameNative,
 		})
 	default:
@@ -145,15 +144,15 @@ func (h *PeopleHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.Name = sanitize.StripTags(strings.TrimSpace(req.Name))
+	req.Name = utils.StripTags(strings.TrimSpace(req.Name))
 	if req.Name == "" {
 		http.Error(w, "Person name is required", http.StatusBadRequest)
 		return
 	}
 
-	req.NameNative = sanitize.StripTags(req.NameNative)
+	req.NameNative = utils.StripTags(req.NameNative)
 
-	results, err := h.services.People.Update(ctx, []people.UpdatePair{
+	results, err := h.services.People.Update(ctx, []service.PeopleUpdatePair{
 		{ID: id, Name: req.Name, NameNative: req.NameNative},
 	})
 	if err != nil {
@@ -162,28 +161,28 @@ func (h *PeopleHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch results[0].Status {
-	case people.Updated, people.Noop:
+	case service.Updated, service.Noop:
 		nameNative := ""
-		if results[0].People.NameNative.Valid {
-			nameNative = results[0].People.NameNative.String
+		if results[0].Entity.NameNative.Valid {
+			nameNative = results[0].Entity.NameNative.String
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(types.PersonResponse{
-			ID: results[0].People.ID, Name: results[0].People.Name, NameNative: nameNative,
+			ID: results[0].Entity.ID, Name: results[0].Entity.Name, NameNative: nameNative,
 		})
-	case people.UpdateConflict:
+	case service.UpdateConflict:
 		nameNative := ""
-		if results[0].People.NameNative.Valid {
-			nameNative = results[0].People.NameNative.String
+		if results[0].Entity.NameNative.Valid {
+			nameNative = results[0].Entity.NameNative.String
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
 		json.NewEncoder(w).Encode(map[string]any{
-			"id":          results[0].People.ID,
-			"name":        results[0].People.Name,
+			"id":          results[0].Entity.ID,
+			"name":        results[0].Entity.Name,
 			"name_native": nameNative,
 		})
-	case people.UpdateNotFound:
+	case service.UpdateNotFound:
 		http.Error(w, "Person not found", http.StatusNotFound)
 	default:
 		http.Error(w, "Person name is required", http.StatusBadRequest)
@@ -208,7 +207,7 @@ func (h *PeopleHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch results[0].Status {
-	case people.Deleted:
+	case service.Deleted:
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		http.Error(w, "Person not found", http.StatusNotFound)
@@ -267,15 +266,15 @@ func (h *PeopleHandler) CreatePeopleType(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	req.Name = sanitize.StripTags(strings.TrimSpace(req.Name))
+	req.Name = utils.StripTags(strings.TrimSpace(req.Name))
 	if req.Name == "" {
 		http.Error(w, "People type name is required", http.StatusBadRequest)
 		return
 	}
 
-	req.Description = sanitize.StripTags(req.Description)
+	req.Description = utils.StripTags(req.Description)
 
-	results, err := h.services.PeopleType.Create(ctx, []people.CreatePeopleTypeInput{
+	results, err := h.services.PeopleType.Create(ctx, []service.CreatePeopleTypeInput{
 		{Name: req.Name, Description: req.Description},
 	})
 	if err != nil {
@@ -284,19 +283,19 @@ func (h *PeopleHandler) CreatePeopleType(w http.ResponseWriter, r *http.Request)
 	}
 
 	switch results[0].Status {
-	case people.PeopleTypeCreated:
+	case service.Created:
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(types.PeopleTypeResponse{
-			ID: results[0].PeopleType.ID, Name: results[0].PeopleType.Name, Description: results[0].PeopleType.Description,
+			ID: results[0].Entity.ID, Name: results[0].Entity.Name, Description: results[0].Entity.Description,
 		})
-	case people.PeopleTypeConflict:
+	case service.Conflict:
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
 		json.NewEncoder(w).Encode(map[string]any{
-			"id":          results[0].PeopleType.ID,
-			"name":        results[0].PeopleType.Name,
-			"description": results[0].PeopleType.Description,
+			"id":          results[0].Entity.ID,
+			"name":        results[0].Entity.Name,
+			"description": results[0].Entity.Description,
 		})
 	default:
 		http.Error(w, "People type name is required", http.StatusBadRequest)
@@ -320,15 +319,15 @@ func (h *PeopleHandler) UpdatePeopleType(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	req.Name = sanitize.StripTags(strings.TrimSpace(req.Name))
+	req.Name = utils.StripTags(strings.TrimSpace(req.Name))
 	if req.Name == "" {
 		http.Error(w, "People type name is required", http.StatusBadRequest)
 		return
 	}
 
-	req.Description = sanitize.StripTags(req.Description)
+	req.Description = utils.StripTags(req.Description)
 
-	results, err := h.services.PeopleType.Update(ctx, []people.PeopleTypeUpdatePair{
+	results, err := h.services.PeopleType.Update(ctx, []service.PeopleTypeUpdatePair{
 		{ID: id, Name: req.Name, Description: req.Description},
 	})
 	if err != nil {
@@ -337,20 +336,20 @@ func (h *PeopleHandler) UpdatePeopleType(w http.ResponseWriter, r *http.Request)
 	}
 
 	switch results[0].Status {
-	case people.PeopleTypeUpdated, people.PeopleTypeNoop:
+	case service.Updated, service.Noop:
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(types.PeopleTypeResponse{
-			ID: results[0].PeopleType.ID, Name: results[0].PeopleType.Name, Description: results[0].PeopleType.Description,
+			ID: results[0].Entity.ID, Name: results[0].Entity.Name, Description: results[0].Entity.Description,
 		})
-	case people.PeopleTypeUpdateConflict:
+	case service.UpdateConflict:
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
 		json.NewEncoder(w).Encode(map[string]any{
-			"id":          results[0].PeopleType.ID,
-			"name":        results[0].PeopleType.Name,
-			"description": results[0].PeopleType.Description,
+			"id":          results[0].Entity.ID,
+			"name":        results[0].Entity.Name,
+			"description": results[0].Entity.Description,
 		})
-	case people.PeopleTypeUpdateNotFound:
+	case service.UpdateNotFound:
 		http.Error(w, "People type not found", http.StatusNotFound)
 	default:
 		http.Error(w, "People type name is required", http.StatusBadRequest)
@@ -375,9 +374,9 @@ func (h *PeopleHandler) DeletePeopleType(w http.ResponseWriter, r *http.Request)
 	}
 
 	switch results[0].Status {
-	case people.PeopleTypeDeleted:
+	case service.Deleted:
 		w.WriteHeader(http.StatusNoContent)
-	case people.PeopleTypeDeleteConflict:
+	case service.DeleteConflict:
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
 		json.NewEncoder(w).Encode(map[string]string{"error": "in use"})

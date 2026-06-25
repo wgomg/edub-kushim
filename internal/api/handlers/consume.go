@@ -14,10 +14,9 @@ import (
 
 	"github.com/gabriel-vasile/mimetype"
 	"github.com/google/uuid"
-	"github.com/wgomg/edub-kushim/internal/concurrency"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
-	"github.com/wgomg/edub-kushim/internal/fileresolver"
+	"github.com/wgomg/edub-kushim/internal/pool"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -27,10 +26,10 @@ type ConsumeHandler struct {
 	logger    *utils.Logger
 	workStore *task.Store
 	queries   *database.Queries
-	semaphore *concurrency.Semaphore
+	semaphore *pool.Semaphore
 }
 
-func NewConsumeHandler(cfg *config.Config, logger *utils.Logger, workStore *task.Store, queries *database.Queries, semaphore *concurrency.Semaphore) *ConsumeHandler {
+func NewConsumeHandler(cfg *config.Config, logger *utils.Logger, workStore *task.Store, queries *database.Queries, semaphore *pool.Semaphore) *ConsumeHandler {
 	return &ConsumeHandler{
 		cfg:       cfg,
 		logger:    logger,
@@ -139,7 +138,7 @@ func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	files, err := fileresolver.GetFiles(
+	paths, err := utils.ListFilePaths(
 		h.cfg.Storage.ConsumptionDir,
 		h.cfg.Consumer.SupportedFiles,
 	)
@@ -150,7 +149,7 @@ func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(files) == 0 {
+	if len(paths) == 0 {
 		h.semaphore.Release()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -169,7 +168,6 @@ func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 		Source: "api",
 	})
 
-	paths := fileresolver.FilePaths(files)
 	enqueued := h.enqueueBatchFiles(ctx, batchID, paths, reqID)
 
 	if enqueued == 0 {
@@ -193,14 +191,14 @@ func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 	json.NewEncoder(w).Encode(map[string]any{
 		"batch_id":    batchID,
-		"total_files": len(files),
+		"total_files": len(paths),
 		"enqueued":    enqueued,
 		"_links": map[string]string{
 			"tasks": "/api/v1/tasks?batch=" + batchID,
 		},
 	})
 
-	h.logger.Info(&reqID, "forked worker for batch %s (%d files, %d enqueued)", batchID, len(files), enqueued)
+	h.logger.Info(&reqID, "forked worker for batch %s (%d files, %d enqueued)", batchID, len(paths), enqueued)
 }
 
 func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {

@@ -183,7 +183,6 @@ var (
 	}{
 		TextRank: "textrank",
 	}
-
 )
 
 type EngineEntry struct {

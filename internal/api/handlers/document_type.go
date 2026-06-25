@@ -8,8 +8,7 @@ import (
 
 	itypes "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/api/types"
-	"github.com/wgomg/edub-kushim/internal/documenttypes"
-	"github.com/wgomg/edub-kushim/internal/sanitize"
+	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -74,15 +73,15 @@ func (h *DocumentTypeHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.Name = sanitize.StripTags(strings.TrimSpace(req.Name))
+	req.Name = utils.StripTags(strings.TrimSpace(req.Name))
 	if req.Name == "" {
 		http.Error(w, "Document type name is required", http.StatusBadRequest)
 		return
 	}
 
-	req.Description = sanitize.StripTags(req.Description)
+	req.Description = utils.StripTags(req.Description)
 
-	results, err := h.services.DocumentType.Create(ctx, []documenttypes.CreateDocumentTypeInput{
+	results, err := h.services.DocumentType.Create(ctx, []service.CreateDocumentTypeInput{
 		{Name: req.Name, Description: req.Description},
 	})
 	if err != nil {
@@ -91,19 +90,19 @@ func (h *DocumentTypeHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch results[0].Status {
-	case documenttypes.Created:
+	case service.Created:
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(types.DocumentTypeResponse{
-			ID: results[0].DocumentType.ID, Name: results[0].DocumentType.Name, Description: results[0].DocumentType.Description,
+			ID: results[0].Entity.ID, Name: results[0].Entity.Name, Description: results[0].Entity.Description,
 		})
-	case documenttypes.Conflict:
+	case service.Conflict:
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
 		json.NewEncoder(w).Encode(map[string]any{
-			"id":          results[0].DocumentType.ID,
-			"name":        results[0].DocumentType.Name,
-			"description": results[0].DocumentType.Description,
+			"id":          results[0].Entity.ID,
+			"name":        results[0].Entity.Name,
+			"description": results[0].Entity.Description,
 		})
 	default:
 		http.Error(w, "Document type name is required", http.StatusBadRequest)
@@ -127,15 +126,15 @@ func (h *DocumentTypeHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.Name = sanitize.StripTags(strings.TrimSpace(req.Name))
+	req.Name = utils.StripTags(strings.TrimSpace(req.Name))
 	if req.Name == "" {
 		http.Error(w, "Document type name is required", http.StatusBadRequest)
 		return
 	}
 
-	req.Description = sanitize.StripTags(req.Description)
+	req.Description = utils.StripTags(req.Description)
 
-	results, err := h.services.DocumentType.Update(ctx, []documenttypes.UpdatePair{
+	results, err := h.services.DocumentType.Update(ctx, []service.DocTypeUpdatePair{
 		{ID: id, Name: req.Name, Description: req.Description},
 	})
 	if err != nil {
@@ -144,20 +143,20 @@ func (h *DocumentTypeHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch results[0].Status {
-	case documenttypes.Updated, documenttypes.Noop:
+	case service.Updated, service.Noop:
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(types.DocumentTypeResponse{
-			ID: results[0].DocumentType.ID, Name: results[0].DocumentType.Name, Description: results[0].DocumentType.Description,
+			ID: results[0].Entity.ID, Name: results[0].Entity.Name, Description: results[0].Entity.Description,
 		})
-	case documenttypes.UpdateConflict:
+	case service.UpdateConflict:
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
 		json.NewEncoder(w).Encode(map[string]any{
-			"id":          results[0].DocumentType.ID,
-			"name":        results[0].DocumentType.Name,
-			"description": results[0].DocumentType.Description,
+			"id":          results[0].Entity.ID,
+			"name":        results[0].Entity.Name,
+			"description": results[0].Entity.Description,
 		})
-	case documenttypes.UpdateNotFound:
+	case service.UpdateNotFound:
 		http.Error(w, "Document type not found", http.StatusNotFound)
 	default:
 		http.Error(w, "Document type name is required", http.StatusBadRequest)
@@ -182,9 +181,9 @@ func (h *DocumentTypeHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch results[0].Status {
-	case documenttypes.Deleted:
+	case service.Deleted:
 		w.WriteHeader(http.StatusNoContent)
-	case documenttypes.DeleteConflict:
+	case service.DeleteConflict:
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
 		json.NewEncoder(w).Encode(map[string]string{"error": "in use"})

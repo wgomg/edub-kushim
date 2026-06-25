@@ -5,7 +5,7 @@
 ### Struct
 
 - `Server`
-  - **Fields**: `httpServer *http.Server`, `logger *utils.Logger`, `addr string`, `matcherClient *rpc.MatcherClient`, `services *types.CrudServices`, `pools struct { config *pool.Pool }`
+  - **Fields**: `httpServer *http.Server`, `logger *utils.Logger`, `addr string`, `matcherClient *tagmatch.MatcherClient`, `services *types.CrudServices`, `pools struct { config *pool.Pool }`
   - **Methods**:
     - `NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server` — Creates a `MatcherClient` connected to `kushim-matcher.sock` in the config dir, builds `CrudServices` with `Tag` (wired through `MatcherClient`), `People`, `PeopleType`, `DocumentType` services, creates dispatcher with only the `"config"` task type registered, creates a `Semaphore` for batch concurrency, registers routes
     - `Start() error` — Probes matcher health (startup warning if unreachable), starts config pool, then HTTP server
@@ -28,10 +28,10 @@
 ### Struct
 
 - `ConsumeHandler`
-  - **Fields**: `cfg *config.Config`, `logger *utils.Logger`, `workStore *task.Store`, `queries *database.Queries`, `semaphore *concurrency.Semaphore`
+  - **Fields**: `cfg *config.Config`, `logger *utils.Logger`, `workStore *task.Store`, `queries *database.Queries`, `semaphore *pool.Semaphore`
   - **Methods**:
     - `NewConsumeHandler(cfg, logger, workStore, queries, semaphore) *ConsumeHandler`
-    - `Consume(w, r)` — Acquires semaphore slot, scans inbox using `fileresolver.GetFiles`, creates a batch, enqueues one pair of (consume + enrich) tasks per file via `workStore.CreateTask`, then **forks a `kushim consume --batch <id>` child process** to handle actual processing. Returns `202` with `batch_id`, `total_files`, `enqueued`, and `_links.tasks`. Returns `429 Too Many Requests` when semaphore slots are exhausted (`server.max_concurrent_batches`). Returns `200` JSON `{batch_id:null, total_files:0, message:"no files found"}` when inbox is empty.
+    - `Consume(w, r)` — Acquires semaphore slot, scans inbox using `utils.ListFilePaths`, creates a batch, enqueues one pair of (consume + enrich) tasks per file via `workStore.CreateTask`, then **forks a `kushim consume --batch <id>` child process** to handle actual processing. Returns `202` with `batch_id`, `total_files`, `enqueued`, and `_links.tasks`. Returns `429 Too Many Requests` when semaphore slots are exhausted (`server.max_concurrent_batches`). Returns `200` JSON `{batch_id:null, total_files:0, message:"no files found"}` when inbox is empty.
     - `Upload(w, r)` — Acquires semaphore slot, accepts multipart upload (`files` field, repeatable), streams bytes to temp files in the inbox, validates MIME type against `consumer.supported_files`, enqueues tasks, then **forks a `kushim consume --batch <id>` child process**. Returns `202` with `batch_id`, `accepted`, `rejected`, and `_links.tasks`. Returns `413` when body exceeds `server.max_upload_size`. Returns `422` when no supported files are found or required tools are missing.
     - `forkWorker(batchID) error` — Finds the `kushim` binary (PATH or sibling of `edub`), starts it detached with `--batch <id>`, and releases the semaphore slot when the child exits.
 
@@ -242,7 +242,7 @@
 
 ### Structs
 
-- `CrudServices` — `Tag *tags.TagService`, `People *people.PeopleService`, `PeopleType *people.PeopleTypeService`, `DocumentType *documenttypes.DocumentTypeService`
+- `CrudServices` — `Tag *service.Tag`, `People *service.People`, `PeopleType *service.PeopleType`, `DocumentType *service.DocumentType`
   - `Close()` — Uses reflection to iterate struct fields; calls `Close()` on every field implementing `io.Closer`. Automatically picks up new services added as fields (none of the new services implement `io.Closer`).
 
 ## `types/people.go`

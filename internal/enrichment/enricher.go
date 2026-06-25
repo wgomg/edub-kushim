@@ -11,7 +11,7 @@ import (
 	types "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
-	"github.com/wgomg/edub-kushim/internal/tags"
+	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/contentanalyzer"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/tagmatcher"
@@ -152,11 +152,11 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 	var tagIDs []int64
 	for i, r := range results {
 		switch r.Status {
-		case tags.Created:
+		case service.Created:
 			e.logger.Debug(&logId, "tag created %s", analysis.Tags[i])
-			tagIDs = append(tagIDs, r.Tag.ID)
-		case tags.Conflict:
-			tagIDs = append(tagIDs, r.Tag.ID)
+			tagIDs = append(tagIDs, r.Entity.ID)
+		case service.Conflict:
+			tagIDs = append(tagIDs, r.Entity.ID)
 		default:
 			e.logger.Error(&logId, "create tag %q: invalid", analysis.Tags[i])
 		}

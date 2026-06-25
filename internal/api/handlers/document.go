@@ -11,7 +11,6 @@ import (
 	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
-	"github.com/wgomg/edub-kushim/internal/sanitize"
 	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -388,14 +387,14 @@ func (h *DocumentHandler) UpdateDocument(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	req.Title = sanitize.StripTags(strings.TrimSpace(req.Title))
+	req.Title = utils.StripTags(strings.TrimSpace(req.Title))
 	if req.Title == "" {
 		http.Error(w, "Title is required", http.StatusBadRequest)
 		return
 	}
 
-	req.Language = sanitize.StripTags(strings.TrimSpace(req.Language))
-	req.TextContent = sanitize.StripTagsPtr(req.TextContent)
+	req.Language = utils.StripTags(strings.TrimSpace(req.Language))
+	req.TextContent = utils.StripTagsPtr(req.TextContent)
 
 	if req.DocumentTypeID < 1 {
 		http.Error(w, "Invalid document type", http.StatusBadRequest)

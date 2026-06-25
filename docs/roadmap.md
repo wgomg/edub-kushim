@@ -21,8 +21,8 @@
 - Worker forking: `edub` enqueues tasks and forks `kushim consume --batch` for processing; `edub` is pure Go (`CGO_ENABLED=0`)
 - Matcher RPC protocol: encode, match, consolidate, add-to-store, remove-from-store operations over HTTP/Unix socket
 - Semaphore-based batch concurrency limiting (`server.max_concurrent_batches`, default 2)
-- `internal/configtask/` — ConfigTaskHandler extracted from `task/handlers/`
-- `internal/fileresolver/` — file resolution extracted from `consumption/storage`
+- `internal/configtask/` — ConfigTaskHandler (downloads tessdata/Hugot model in background, registered as "config" task type)
+- `internal/utils/files.go` — `ListFilePaths` scans inbox directories with MIME detection (replaced `internal/fileresolver/`)
 - Config handler `AdoptBatch` renamed to `ResumeBatch`, now forks kushim worker
 
 ### Document Pipeline

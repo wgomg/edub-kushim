@@ -11,17 +11,14 @@ import (
 	"github.com/google/uuid"
 	types "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/api/handlers"
-	"github.com/wgomg/edub-kushim/internal/concurrency"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/configtask"
 	"github.com/wgomg/edub-kushim/internal/database"
-	"github.com/wgomg/edub-kushim/internal/documenttypes"
-	"github.com/wgomg/edub-kushim/internal/people"
 	"github.com/wgomg/edub-kushim/internal/pool"
 	"github.com/wgomg/edub-kushim/internal/search"
+	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/static"
-	"github.com/wgomg/edub-kushim/internal/tagmatch/rpc"
-	"github.com/wgomg/edub-kushim/internal/tags"
+	"github.com/wgomg/edub-kushim/internal/tagmatch"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -30,7 +27,7 @@ type Server struct {
 	httpServer    *http.Server
 	logger        *utils.Logger
 	addr          string
-	matcherClient *rpc.MatcherClient
+	matcherClient *tagmatch.MatcherClient
 	services      *types.CrudServices
 	pools         struct {
 		config *pool.Pool
@@ -45,7 +42,7 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 	queries := database.NewQueries(db)
 	engine := search.NewEngine(logger, db)
 
-	matcherClient := rpc.NewMatcherClient(filepath.Join(cfg.App.ConfigDir, "kushim-matcher.sock"))
+	matcherClient := tagmatch.NewMatcherClient(filepath.Join(cfg.App.ConfigDir, "kushim-matcher.sock"))
 
 	s := &Server{
 		logger:        logger,
@@ -54,15 +51,15 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 		matcherClient: matcherClient,
 	}
 
-	tagSvc, err := tags.NewTagService(queries, logger, matcherClient)
+	tagSvc, err := service.NewTag(queries, logger, matcherClient)
 	if err != nil {
 		logger.Fatal("tag service: ", err)
 	}
 	s.services.Tag = tagSvc
 
-	s.services.People = people.NewPeopleService(queries, logger)
-	s.services.PeopleType = people.NewPeopleTypeService(queries, logger)
-	s.services.DocumentType = documenttypes.NewDocumentTypeService(queries, logger)
+	s.services.People = service.NewPeople(queries, logger)
+	s.services.PeopleType = service.NewPeopleType(queries, logger)
+	s.services.DocumentType = service.NewDocumentType(queries, logger)
 
 	workStore := task.NewStore(queries)
 	configStore := task.NewStore(queries)
@@ -75,7 +72,7 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 
 	s.pools.config = pool.New(logger, configRunner, 1, 5*time.Second, "config")
 
-	semaphore := concurrency.NewSemaphore(max(cfg.Srv.MaxConcurrentBatches, 2))
+	semaphore := pool.NewSemaphore(max(cfg.Srv.MaxConcurrentBatches, 2))
 
 	registerRoutes(mux, logger, queries, engine, dispatcher, &cfg, s.services, semaphore, workStore)
 	registerStaticRoutes(mux)
@@ -116,7 +113,7 @@ func registerStaticRoutes(mux *http.ServeMux) {
 	})
 }
 
-func registerRoutes(mux *http.ServeMux, logger *utils.Logger, queries *database.Queries, engine *search.Engine, dispatcher *task.Dispatcher, cfg *config.Config, services *types.CrudServices, semaphore *concurrency.Semaphore, workStore *task.Store) {
+func registerRoutes(mux *http.ServeMux, logger *utils.Logger, queries *database.Queries, engine *search.Engine, dispatcher *task.Dispatcher, cfg *config.Config, services *types.CrudServices, semaphore *pool.Semaphore, workStore *task.Store) {
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		handlers.HealthHandler(w, r, logger)
 	})

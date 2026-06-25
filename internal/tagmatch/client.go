@@ -1,4 +1,4 @@
-package rpc
+package tagmatch
 
 import (
 	"bytes"
@@ -23,10 +23,10 @@ func NewMatcherClient(socketPath string) *MatcherClient {
 				DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 					return net.Dial("unix", socketPath)
 				},
-			MaxIdleConns:    1,
-			IdleConnTimeout: 120 * time.Second,
-		},
-		Timeout: 120 * time.Second,
+				MaxIdleConns:    1,
+				IdleConnTimeout: 120 * time.Second,
+			},
+			Timeout: 120 * time.Second,
 		},
 	}
 }

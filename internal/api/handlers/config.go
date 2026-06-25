@@ -12,7 +12,6 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/configtask"
 	"github.com/wgomg/edub-kushim/internal/database"
-	"github.com/wgomg/edub-kushim/internal/sanitize"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -291,7 +290,7 @@ func (h *ConfigHandler) RetryFailedConfig(w http.ResponseWriter, r *http.Request
 func sanitizeConfigStrings(v any) any {
 	switch m := v.(type) {
 	case string:
-		return sanitize.StripTags(m)
+		return utils.StripTags(m)
 	case map[string]any:
 		for k, val := range m {
 			m[k] = sanitizeConfigStrings(val)

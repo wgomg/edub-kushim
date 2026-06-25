@@ -18,7 +18,7 @@ var ErrBatchLocked = errors.New("batch is locked by a live owner")
 type OwnerState int
 
 const (
-	OwnerNone  OwnerState = iota
+	OwnerNone OwnerState = iota
 	OwnerLive
 	OwnerStale
 )
@@ -37,10 +37,10 @@ func (s OwnerState) String() string {
 }
 
 type Owner struct {
-	Queries  *database.Queries
-	OwnerID  string
-	PID      int
-	Logger   *utils.Logger
+	Queries *database.Queries
+	OwnerID string
+	PID     int
+	Logger  *utils.Logger
 }
 
 func NewOwner(q *database.Queries, ownerID string, pid int, logger *utils.Logger) *Owner {

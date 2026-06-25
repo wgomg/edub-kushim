@@ -125,7 +125,7 @@ type EmbeddingStore interface {
 
 The `Matcher` interface is used by the Runner for document-to-tag matching. The `Embedder` interface is used by TagService for encoding and post-LLM consolidation; `AddToStore`/`RemoveFromStore` delegate store management to the adapter (encoding + adding to the embedding store, or removing from it). The `EmbeddingStore` interface provides read/write access to the shared tag embedding cache.
 
-The composition root builds a single `*Hugot` (for the `kushim` CLI) or uses an `*rpc.MatcherClient` (for the `edub` API server) — both satisfy the `Matcher` and `Embedder` interfaces. The `MatcherClient` forwards all calls over a Unix socket to a standalone `kushim hugot` process.
+The composition root builds a single `*Hugot` (for the `kushim` CLI) or uses a `*tagmatch.MatcherClient` (for the `edub` API server) — both satisfy the `Matcher` and `Embedder` interfaces. The `MatcherClient` forwards all calls over a Unix socket to a standalone `kushim hugot` process.
 
 ---
 

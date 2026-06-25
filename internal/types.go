@@ -4,16 +4,14 @@ import (
 	"io"
 	"reflect"
 
-	"github.com/wgomg/edub-kushim/internal/documenttypes"
-	"github.com/wgomg/edub-kushim/internal/people"
-	"github.com/wgomg/edub-kushim/internal/tags"
+	"github.com/wgomg/edub-kushim/internal/service"
 )
 
 type CrudServices struct {
-	Tag          *tags.TagService
-	People       *people.PeopleService
-	PeopleType   *people.PeopleTypeService
-	DocumentType *documenttypes.DocumentTypeService
+	Tag          *service.Tag
+	People       *service.People
+	PeopleType   *service.PeopleType
+	DocumentType *service.DocumentType
 }
 
 func (s *CrudServices) Close() {

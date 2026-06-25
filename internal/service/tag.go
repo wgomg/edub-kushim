@@ -1,4 +1,4 @@
-package tags
+package service
 
 import (
 	"context"
@@ -10,71 +10,31 @@ import (
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
-type CreateStatus int
-
-const (
-	Created CreateStatus = iota
-	Conflict
-	Invalid
-)
-
-type CreateResult struct {
-	Tag    database.Tag
-	Status CreateStatus
-}
-
-type UpdateStatus int
-
-const (
-	Updated UpdateStatus = iota
-	UpdateConflict
-	UpdateNotFound
-	UpdateInvalid
-	Noop
-)
-
-type UpdateResult struct {
-	Tag    database.Tag
-	Status UpdateStatus
-}
-
-type UpdatePair struct {
+type TagUpdatePair struct {
 	ID   int64
 	Name string
 }
 
-type DeleteStatus int
-
-const (
-	Deleted DeleteStatus = iota
-	DeleteNotFound
-)
-
-type DeleteResult struct {
-	ID     int64
-	Status DeleteStatus
-}
-
-type TagService struct {
+type Tag struct {
 	queries  *database.Queries
 	embedder tagmatcher.Embedder
 	logger   *utils.Logger
 }
 
-func NewTagService(queries *database.Queries, logger *utils.Logger, embedder tagmatcher.Embedder) (*TagService, error) {
-	return &TagService{
+func NewTag(queries *database.Queries, logger *utils.Logger, embedder tagmatcher.Embedder) (*Tag, error) {
+	return &Tag{
 		queries:  queries,
 		embedder: embedder,
 		logger:   logger,
 	}, nil
 }
 
-func (s *TagService) Close() error {
+func (s *Tag) Close() error {
 	s.embedder.Close()
 	return nil
 }
 
-func (s *TagService) Get(ctx context.Context, id int64) (database.Tag, error) {
+func (s *Tag) Get(ctx context.Context, id int64) (database.Tag, error) {
 	tag, err := s.queries.GetTag(ctx, id)
 	if err != nil {
 		return database.Tag{}, errs.FromDB(err, "get tag")
@@ -82,7 +42,7 @@ func (s *TagService) Get(ctx context.Context, id int64) (database.Tag, error) {
 	return tag, nil
 }
 
-func (s *TagService) GetByName(ctx context.Context, name string) (database.Tag, error) {
+func (s *Tag) GetByName(ctx context.Context, name string) (database.Tag, error) {
 	tag, err := s.queries.GetTagByName(ctx, name)
 	if err != nil {
 		return database.Tag{}, errs.FromDB(err, "get tag by name")
@@ -90,7 +50,7 @@ func (s *TagService) GetByName(ctx context.Context, name string) (database.Tag, 
 	return tag, nil
 }
 
-func (s *TagService) List(ctx context.Context, limit, offset int64) ([]database.Tag, error) {
+func (s *Tag) List(ctx context.Context, limit, offset int64) ([]database.Tag, error) {
 	tags, err := s.queries.ListTags(ctx, database.ListTagsParams{
 		Limit:  limit,
 		Offset: offset,
@@ -101,7 +61,7 @@ func (s *TagService) List(ctx context.Context, limit, offset int64) ([]database.
 	return tags, nil
 }
 
-func (s *TagService) Count(ctx context.Context) (int64, error) {
+func (s *Tag) Count(ctx context.Context) (int64, error) {
 	count, err := s.queries.CountTags(ctx)
 	if err != nil {
 		return 0, errs.FromDB(err, "count tags")
@@ -109,7 +69,7 @@ func (s *TagService) Count(ctx context.Context) (int64, error) {
 	return count, nil
 }
 
-func (s *TagService) CountByName(ctx context.Context, prefix string) (int64, error) {
+func (s *Tag) CountByName(ctx context.Context, prefix string) (int64, error) {
 	count, err := s.queries.CountTagsByName(ctx, prefix+"%")
 	if err != nil {
 		return 0, errs.FromDB(err, "count tags by name")
@@ -117,7 +77,7 @@ func (s *TagService) CountByName(ctx context.Context, prefix string) (int64, err
 	return count, nil
 }
 
-func (s *TagService) ListAll(ctx context.Context) ([]database.Tag, error) {
+func (s *Tag) ListAll(ctx context.Context) ([]database.Tag, error) {
 	tags, err := s.queries.ListAllTags(ctx)
 	if err != nil {
 		return nil, errs.FromDB(err, "list all tags")
@@ -125,7 +85,7 @@ func (s *TagService) ListAll(ctx context.Context) ([]database.Tag, error) {
 	return tags, nil
 }
 
-func (s *TagService) Search(ctx context.Context, prefix string, limit, offset int64) ([]database.Tag, error) {
+func (s *Tag) Search(ctx context.Context, prefix string, limit, offset int64) ([]database.Tag, error) {
 	tags, err := s.queries.SearchTagsByName(ctx, database.SearchTagsByNameParams{
 		Name:   prefix + "%",
 		Limit:  limit,
@@ -137,8 +97,8 @@ func (s *TagService) Search(ctx context.Context, prefix string, limit, offset in
 	return tags, nil
 }
 
-func (s *TagService) Create(ctx context.Context, names []string) ([]CreateResult, error) {
-	results := make([]CreateResult, len(names))
+func (s *Tag) Create(ctx context.Context, names []string) ([]CreateResult[database.Tag], error) {
+	results := make([]CreateResult[database.Tag], len(names))
 	var newNames []string
 	var newIdx []int
 
@@ -154,12 +114,12 @@ func (s *TagService) Create(ctx context.Context, names []string) ([]CreateResult
 	for i, raw := range names {
 		name := strings.TrimSpace(raw)
 		if name == "" {
-			results[i] = CreateResult{Status: Invalid}
+			results[i] = CreateResult[database.Tag]{Status: Invalid}
 			continue
 		}
 
 		if existing, ok := existingMap[name]; ok {
-			results[i] = CreateResult{Tag: existing, Status: Conflict}
+			results[i] = CreateResult[database.Tag]{Entity: existing, Status: Conflict}
 			continue
 		}
 
@@ -178,7 +138,7 @@ func (s *TagService) Create(ctx context.Context, names []string) ([]CreateResult
 			if err != nil {
 				return nil, errs.FromDB(err, "get tag by name after conflict "+name)
 			}
-			results[i] = CreateResult{Tag: existing, Status: Conflict}
+			results[i] = CreateResult[database.Tag]{Entity: existing, Status: Conflict}
 			continue
 		}
 
@@ -187,7 +147,7 @@ func (s *TagService) Create(ctx context.Context, names []string) ([]CreateResult
 			return nil, errs.FromDB(err, "last insert id for "+name)
 		}
 
-		results[i] = CreateResult{Tag: database.Tag{ID: id, Name: name}, Status: Created}
+		results[i] = CreateResult[database.Tag]{Entity: database.Tag{ID: id, Name: name}, Status: Created}
 		newNames = append(newNames, name)
 		newIdx = append(newIdx, i)
 	}
@@ -195,15 +155,15 @@ func (s *TagService) Create(ctx context.Context, names []string) ([]CreateResult
 	if len(newNames) > 0 {
 		s.encodeAndAddBatch(ctx, newNames)
 		for j, name := range newNames {
-			results[newIdx[j]].Tag.Name = name
+			results[newIdx[j]].Entity.Name = name
 		}
 	}
 
 	return results, nil
 }
 
-func (s *TagService) Update(ctx context.Context, pairs []UpdatePair) ([]UpdateResult, error) {
-	results := make([]UpdateResult, len(pairs))
+func (s *Tag) Update(ctx context.Context, pairs []TagUpdatePair) ([]UpdateResult[database.Tag], error) {
+	results := make([]UpdateResult[database.Tag], len(pairs))
 	var newNames []string
 	type rename struct {
 		idx     int
@@ -225,23 +185,23 @@ func (s *TagService) Update(ctx context.Context, pairs []UpdatePair) ([]UpdateRe
 	for i, p := range pairs {
 		name := strings.TrimSpace(p.Name)
 		if name == "" {
-			results[i] = UpdateResult{Status: UpdateInvalid}
+			results[i] = UpdateResult[database.Tag]{Status: UpdateInvalid}
 			continue
 		}
 
 		old, ok := tagMap[p.ID]
 		if !ok {
-			results[i] = UpdateResult{Status: UpdateNotFound}
+			results[i] = UpdateResult[database.Tag]{Status: UpdateNotFound}
 			continue
 		}
 
 		if name == old.Name {
-			results[i] = UpdateResult{Tag: old, Status: Noop}
+			results[i] = UpdateResult[database.Tag]{Entity: old, Status: Noop}
 			continue
 		}
 
 		if existing, ok := nameMap[name]; ok && existing.ID != p.ID {
-			results[i] = UpdateResult{Tag: existing, Status: UpdateConflict}
+			results[i] = UpdateResult[database.Tag]{Entity: existing, Status: UpdateConflict}
 			continue
 		}
 
@@ -254,7 +214,7 @@ func (s *TagService) Update(ctx context.Context, pairs []UpdatePair) ([]UpdateRe
 				if e, ok := nameMap[name]; ok {
 					existing = e
 				}
-				results[i] = UpdateResult{Tag: existing, Status: UpdateConflict}
+				results[i] = UpdateResult[database.Tag]{Entity: existing, Status: UpdateConflict}
 				continue
 			}
 			return nil, errs.FromDB(err, "update tag")
@@ -279,13 +239,13 @@ func (s *TagService) Update(ctx context.Context, pairs []UpdatePair) ([]UpdateRe
 			ID:   pairs[r.idx].ID,
 			Name: pairs[r.idx].Name,
 		}
-		results[r.idx] = UpdateResult{Tag: updatedTag, Status: Updated}
+		results[r.idx] = UpdateResult[database.Tag]{Entity: updatedTag, Status: Updated}
 	}
 
 	return results, nil
 }
 
-func (s *TagService) Delete(ctx context.Context, ids []int64) ([]DeleteResult, error) {
+func (s *Tag) Delete(ctx context.Context, ids []int64) ([]DeleteResult, error) {
 	results := make([]DeleteResult, len(ids))
 
 	allTags, err := s.queries.ListAllTags(ctx)
@@ -317,11 +277,11 @@ func (s *TagService) Delete(ctx context.Context, ids []int64) ([]DeleteResult, e
 	return results, nil
 }
 
-func (s *TagService) Consolidate(ctx context.Context, docId string, queries []string) ([]string, error) {
+func (s *Tag) Consolidate(ctx context.Context, docId string, queries []string) ([]string, error) {
 	return s.embedder.Consolidate(ctx, docId, queries)
 }
 
-func (s *TagService) encodeAndAddBatch(ctx context.Context, names []string) {
+func (s *Tag) encodeAndAddBatch(ctx context.Context, names []string) {
 	if err := s.embedder.AddToStore(ctx, names); err != nil {
 		s.logger.Error(nil, "tag service: add to store: %v", err)
 	}

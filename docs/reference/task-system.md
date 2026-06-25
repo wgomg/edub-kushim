@@ -124,9 +124,9 @@
     - `Handle(ctx, t) (json.RawMessage, error)` — Unmarshals `{"document_id":"<uuid>"}`, calls `enricher.GetDb()` + `GetDocument` (lookup by UUID), then `enricher.Enrich`
     - `DedupKey(payload) string` — Returns `"enrich:doc:<uuid>"` or empty string
 
-## `handlers/config.go` (moved to `internal/configtask/`)
+## `configtask` (`internal/configtask/configtask.go`)
 
-**Moved**: The `ConfigTaskHandler` was extracted from `internal/task/handlers/config.go` to `internal/configtask/configtask.go`.
+The `ConfigTaskHandler` lives in its own package (`internal/configtask/`) to keep the edub binary free of CGo dependencies — unlike `internal/task/handlers/`, which transitively imports CGo-only `internal/tools/adapters` through `internal/consumption`.
 
 ### Constants
 
@@ -151,8 +151,8 @@ and creates a `MatcherClient` connected to the Unix socket at `<config_dir>/kush
 The `TagService` and `Enricher` receive the client instead of a direct Hugot reference:
 
 ```go
-matcherClient := rpc.NewMatcherClient(c.socketPath())
-tagSvc, err := tags.NewTagService(queries, logger, matcherClient)
+matcherClient := tagmatch.NewMatcherClient(c.socketPath())
+tagSvc, err := service.NewTag(queries, logger, matcherClient)
 enricher, err := enrichment.NewEnricher(cfg, logger, db, services, matcherClient)
 registry.Register("config", configtask.NewConfigTaskHandler(logger))
 ```

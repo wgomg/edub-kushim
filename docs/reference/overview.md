@@ -37,17 +37,20 @@ internal/
 │   ├── serve_matching.go  # Matcher RPC server over Unix socket (encode, match, consolidate, store ops)
 │   ├── setup.go           # Setup command — launches web wizard by default, --cli for terminal mode
 │   └── task.go            # Task commands (list, status, retry)
-├── concurrency/           # Concurrency primitives
-│   └── semaphore.go       # Counting semaphore (Acquire/Release) for batch concurrency
-├── configtask/            # Config task handler (extracted from task/handlers/)
+├── configtask/            # Config task handler
 │   └── configtask.go      # ConfigTaskHandler — downloads tessdata/Hugot model in background ("config" task type)
 ├── enrichment/            # Enrichment engine (LLM pipeline)
 │   └── enricher.go        # Enricher: dual text reduction → tag matching → LLM → consolidation → people/tag/doc type with romanization + normalization
-├── fileresolver/          # File resolution (extracted from consumption/storage)
-│   └── resolver.go        # GetFiles, FilePaths — scans inbox directories, MIME detection
-├── people/                # PeopleService + PeopleTypeService batch CRUD
-├── pool/                  # Generic worker pool
-│   └── pool.go            # Pool struct, Start(ctx), Stop(ctx), worker loop
+├── service/               # Merged domain service package (replaces people/tags/documenttypes)
+│   ├── status.go          # Shared CRUD enums (CreateStatus, UpdateStatus, DeleteStatus)
+│   ├── result.go          # Generic result types (CreateResult[T], UpdateResult[T], DeleteResult)
+│   ├── people.go          # People service (NewPeople, batch CRUD)
+│   ├── peopletype.go      # PeopleType service (NewPeopleType, batch CRUD)
+│   ├── tag.go             # Tag service (NewTag, batch CRUD, embedder integration)
+│   └── documenttype.go    # DocumentType service (NewDocumentType, batch CRUD)
+├── pool/                  # Generic worker pool + semaphore
+│   ├── pool.go            # Pool struct, Start(ctx), Stop(ctx), worker loop
+│   └── semaphore.go       # Counting semaphore (Acquire/Release) — moved from concurrency/
 ├── task/                  # Generic task system
 │   ├── batch.go           # Batch ownership — Owner.Acquire, Release, Heartbeat, BatchOwnerState
 │   ├── crud.go            # Task CRUD (Get, ListFiltered, Retry, CountBatchStatuses, ListBatchSummaries)
@@ -89,9 +92,8 @@ internal/
 │       └── queries/       # SQL queries for sqlc
 ├── static/                # Embedded web UI (main app)
 │   └── fs.go              # Embedded SvelteKit build (build/ directory via //go:embed)
-├── tagmatch/              # Tag matcher RPC infrastructure
-│   └── rpc/
-│       └── client.go      # MatcherClient — HTTP client over Unix socket to external matcher process
+├── tagmatch/              # Tag matcher RPC client
+│   └── client.go          # MatcherClient — HTTP client over Unix socket to external matcher process (flattened from rpc/)
 ├── version/               # Application version
 │   └── version.go         # const Version = "0.1.0"
 ├── wizard/                # Setup wizard HTTP server
@@ -99,10 +101,11 @@ internal/
 │   └── fs.go              # Embedded SvelteKit wizard build (static/ via //go:embed)
 ├── utils/                 # Utilities
 │   ├── config.go          # ConfigDir() — returns ~/.config/edub-kushim
+│   ├── files.go           # ListFilePaths — scans inbox directories with MIME detection (replaces fileresolver)
 │   ├── logger.go          # Structured logging (file logging support, numeric level filtering)
 │   ├── metrics.go         # Memory metrics (HeapInUse, RSS, NumGC), HumanDuration, FormatMemDelta
 │   ├── parambag.go        # HTTP parameter parsing (query params, path values)
-│   └── text.go            # CountWords, EstimateTokensFromWords, CleanUp, Truncate, CleanCodeBlock, ContainsNonLatin, NormalizeName
+│   └── text.go            # CountWords, EstimateTokensFromWords, CleanUp, Truncate, CleanCodeBlock, ContainsNonLatin, NormalizeName, StripTags, StripTagsPtr
 ├── adapters/
 │   │   ├── mupdf_wrapper.go    # MuPDF CGo wrapper (6 C helpers + Go API)
 │   │   ├── contentanalyzer/    # LLM classification providers
@@ -220,7 +223,7 @@ The system uses two linked binaries with **worker forking**:
 
 - **`edub`** (API server, `CGO_ENABLED=0`) — Pure Go binary handling HTTP requests. When consume/upload is called, it enqueues tasks and **forks a `kushim consume --batch <id>` subprocess** to handle actual document processing. Only runs a config pool for background download tasks.
 - **`kushim`** (CLI, CGo) — Handles all document processing (consumption, enrichment). Also hosts the **matcher RPC server** via `kushim hugot`.
-- **Matcher process** — A standalone `kushim hugot` process provides semantic tag matching (Hugot embeddings) over a Unix domain socket (`kushim-matcher.sock`). Both `edub` and `kushim` workers communicate with it via `internal/tagmatch/rpc.MatcherClient`.
+- **Matcher process** — A standalone `kushim hugot` process provides semantic tag matching (Hugot embeddings) over a Unix domain socket (`kushim-matcher.sock`). Both `edub` and `kushim` workers communicate with it via `internal/tagmatch.MatcherClient`.
 
 ## See Also
 

@@ -30,7 +30,7 @@
 
 - `FileFromPath` builds a `File` from a single path with checksums, MIME detection, file info
 
-> **Note**: `GetFiles` and `FilePaths` were extracted to `internal/fileresolver/resolver.go` for use by both the consume handler and CLI commands without pulling in the full consumption package.
+> **Note**: The file-scanning functionality was consolidated into `utils.ListFilePaths` (`internal/utils/files.go`) for use by the consume handler, replacing the former `internal/fileresolver/` package.
 
 ---
 
@@ -42,7 +42,7 @@
 
 - `Enricher` — `config`, `logger`, `db`, `runner`, `services *types.CrudServices`
   - **Methods**:
-    - `NewEnricher(cfg, logger, db, services, matcher tagmatcher.Matcher) (*Enricher, error)` — Creates runner via `NewRunnerWithMatcher` with textreducer, contentanalyzer, tagmatcher tools; matcher is either a direct `*Hugot` (in `kushim` CLI) or an `*rpc.MatcherClient` (in `edub` API server) — both satisfy the same `tagmatcher.Matcher` interface.
+    - `NewEnricher(cfg, logger, db, services, matcher tagmatcher.Matcher) (*Enricher, error)` — Creates runner via `NewRunnerWithMatcher` with textreducer, contentanalyzer, tagmatcher tools; matcher is either a direct `*Hugot` (in `kushim` CLI) or a `*tagmatch.MatcherClient` (in `edub` API server) — both satisfy the same `tagmatcher.Matcher` interface.
     - `Enrich(ctx, document) (*json.RawMessage, error)` — Full pipeline:
       1. Dual text reduction: LLM-targeted and tag-matching-targeted (via `targetWordCount`)
       2. Fetch doc types, people types from DB; all tags via `services.Tag.ListAll`

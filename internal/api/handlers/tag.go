@@ -10,9 +10,8 @@ import (
 	itypes "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/database"
-	"github.com/wgomg/edub-kushim/internal/sanitize"
-	"github.com/wgomg/edub-kushim/internal/tagmatch/rpc"
-	"github.com/wgomg/edub-kushim/internal/tags"
+	"github.com/wgomg/edub-kushim/internal/service"
+	"github.com/wgomg/edub-kushim/internal/tagmatch"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -20,7 +19,7 @@ func isMatcherUnavailable(err error) bool {
 	if err == nil {
 		return false
 	}
-	return errors.Is(err, rpc.ErrMatcherUnavailable)
+	return errors.Is(err, tagmatch.ErrMatcherUnavailable)
 }
 
 func matcherUnavailableResponse(w http.ResponseWriter) {
@@ -93,7 +92,7 @@ func (h *TagHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.Name = sanitize.StripTags(strings.TrimSpace(req.Name))
+	req.Name = utils.StripTags(strings.TrimSpace(req.Name))
 	if req.Name == "" {
 		http.Error(w, "Tag name is required", http.StatusBadRequest)
 		return
@@ -110,16 +109,16 @@ func (h *TagHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch results[0].Status {
-	case tags.Created:
+	case service.Created:
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(types.TagResponse{ID: results[0].Tag.ID, Name: results[0].Tag.Name})
-	case tags.Conflict:
+		json.NewEncoder(w).Encode(types.TagResponse{ID: results[0].Entity.ID, Name: results[0].Entity.Name})
+	case service.Conflict:
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
 		json.NewEncoder(w).Encode(map[string]any{
-			"id":   results[0].Tag.ID,
-			"name": results[0].Tag.Name,
+			"id":   results[0].Entity.ID,
+			"name": results[0].Entity.Name,
 		})
 	default:
 		http.Error(w, "Tag name is required", http.StatusBadRequest)
@@ -143,13 +142,13 @@ func (h *TagHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.Name = sanitize.StripTags(strings.TrimSpace(req.Name))
+	req.Name = utils.StripTags(strings.TrimSpace(req.Name))
 	if req.Name == "" {
 		http.Error(w, "Tag name is required", http.StatusBadRequest)
 		return
 	}
 
-	results, err := h.services.Tag.Update(ctx, []tags.UpdatePair{{ID: id, Name: req.Name}})
+	results, err := h.services.Tag.Update(ctx, []service.TagUpdatePair{{ID: id, Name: req.Name}})
 	if err != nil {
 		if isMatcherUnavailable(err) {
 			matcherUnavailableResponse(w)
@@ -160,17 +159,17 @@ func (h *TagHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch results[0].Status {
-	case tags.Updated, tags.Noop:
+	case service.Updated, service.Noop:
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(types.TagResponse{ID: results[0].Tag.ID, Name: results[0].Tag.Name})
-	case tags.UpdateConflict:
+		json.NewEncoder(w).Encode(types.TagResponse{ID: results[0].Entity.ID, Name: results[0].Entity.Name})
+	case service.UpdateConflict:
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
 		json.NewEncoder(w).Encode(map[string]any{
-			"id":   results[0].Tag.ID,
-			"name": results[0].Tag.Name,
+			"id":   results[0].Entity.ID,
+			"name": results[0].Entity.Name,
 		})
-	case tags.UpdateNotFound:
+	case service.UpdateNotFound:
 		http.Error(w, "Tag not found", http.StatusNotFound)
 	default:
 		http.Error(w, "Tag name is required", http.StatusBadRequest)
@@ -199,7 +198,7 @@ func (h *TagHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch results[0].Status {
-	case tags.Deleted:
+	case service.Deleted:
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		http.Error(w, "Tag not found", http.StatusNotFound)

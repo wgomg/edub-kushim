@@ -1,4 +1,4 @@
-package concurrency
+package pool
 
 type Semaphore struct {
 	slots chan struct{}

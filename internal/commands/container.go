@@ -12,13 +12,11 @@ import (
 	"github.com/wgomg/edub-kushim/internal/configtask"
 	"github.com/wgomg/edub-kushim/internal/consumption"
 	"github.com/wgomg/edub-kushim/internal/database"
-	"github.com/wgomg/edub-kushim/internal/documenttypes"
 	"github.com/wgomg/edub-kushim/internal/enrichment"
-	"github.com/wgomg/edub-kushim/internal/people"
 	"github.com/wgomg/edub-kushim/internal/pool"
 	"github.com/wgomg/edub-kushim/internal/search"
-	"github.com/wgomg/edub-kushim/internal/tagmatch/rpc"
-	"github.com/wgomg/edub-kushim/internal/tags"
+	"github.com/wgomg/edub-kushim/internal/service"
+	"github.com/wgomg/edub-kushim/internal/tagmatch"
 	"github.com/wgomg/edub-kushim/internal/task"
 	taskhandlers "github.com/wgomg/edub-kushim/internal/task/handlers"
 	"github.com/wgomg/edub-kushim/internal/utils"
@@ -83,16 +81,16 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 
 	queries := database.NewQueries(db)
 
-	matcherClient := rpc.NewMatcherClient(c.socketPath())
+	matcherClient := tagmatch.NewMatcherClient(c.socketPath())
 
-	tagSvc, err := tags.NewTagService(queries, c.logger, matcherClient)
+	tagSvc, err := service.NewTag(queries, c.logger, matcherClient)
 	if err != nil {
 		return nil, fmt.Errorf("tag service: %w", err)
 	}
 
-	peopleSvc := people.NewPeopleService(database.NewQueries(db), c.logger)
-	peopleTypeSvc := people.NewPeopleTypeService(database.NewQueries(db), c.logger)
-	docTypeSvc := documenttypes.NewDocumentTypeService(database.NewQueries(db), c.logger)
+	peopleSvc := service.NewPeople(database.NewQueries(db), c.logger)
+	peopleTypeSvc := service.NewPeopleType(database.NewQueries(db), c.logger)
+	docTypeSvc := service.NewDocumentType(database.NewQueries(db), c.logger)
 
 	c.services = &types.CrudServices{
 		Tag: tagSvc, People: peopleSvc, PeopleType: peopleTypeSvc, DocumentType: docTypeSvc,
