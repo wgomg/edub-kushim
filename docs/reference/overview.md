@@ -219,8 +219,8 @@ Processing is async via a task queue with batch tracking and a polling CLI mode.
 The system uses two linked binaries with **worker forking**:
 
 - **`edub`** (API server, `CGO_ENABLED=0`) — Pure Go binary handling HTTP requests. When consume/upload is called, it enqueues tasks and **forks a `kushim consume --batch <id>` subprocess** to handle actual document processing. Only runs a config pool for background download tasks.
-- **`kushim`** (CLI, CGo) — Handles all document processing (consumption, enrichment). Also hosts the **matcher RPC server** via `kushim serve-matching`.
-- **Matcher process** — A standalone `kushim serve-matching` process provides semantic tag matching (Hugot embeddings) over a Unix domain socket (`kushim-matcher.sock`). Both `edub` and `kushim` workers communicate with it via `internal/tagmatch/rpc.MatcherClient`.
+- **`kushim`** (CLI, CGo) — Handles all document processing (consumption, enrichment). Also hosts the **matcher RPC server** via `kushim hugot`.
+- **Matcher process** — A standalone `kushim hugot` process provides semantic tag matching (Hugot embeddings) over a Unix domain socket (`kushim-matcher.sock`). Both `edub` and `kushim` workers communicate with it via `internal/tagmatch/rpc.MatcherClient`.
 
 ## See Also
 

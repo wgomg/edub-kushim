@@ -23,7 +23,7 @@ func serveMatchingHandler(c *Container, args []string) error {
 	socketPath := filepath.Join(c.config.App.ConfigDir, "kushim-matcher.sock")
 
 	fp := NewFlagParser(args)
-	if fp.Help("Usage: kushim serve-matching [--bg] [--socket <path>]") {
+	if fp.Help("Usage: kushim hugot [--bg] [--socket <path>]") {
 		return nil
 	}
 
@@ -38,7 +38,7 @@ func serveMatchingHandler(c *Container, args []string) error {
 	}
 
 	if bgFlag {
-		bgArgs := []string{"serve-matching"}
+		bgArgs := []string{"hugot"}
 		if socketPath != filepath.Join(c.config.App.ConfigDir, "kushim-matcher.sock") {
 			bgArgs = append(bgArgs, "--socket", socketPath)
 		}

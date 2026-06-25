@@ -4,7 +4,7 @@
 
 ### Globals
 
-`commandSets` map with `"cli"` key. CLI set contains: `version`, `consume`, `search`, `task`, `setup`, `serve-matching`.
+`commandSets` map with `"cli"` key. CLI set contains: `version`, `consume`, `search`, `task`, `setup`, `hugot`.
 
 > **Note**: The `edub` binary no longer uses `CommandRunner` from the commands package. It has its own standalone runner in `cmd/edub/runner.go` that only handles the `version` command (server mode is the default when no command matches).
 
@@ -57,14 +57,14 @@
 
 - `serveMatchingHandler(c, args) error` — Starts the matcher RPC server over a Unix domain socket. Accepts optional `--socket <path>` flag (default `<config_dir>/kushim-matcher.sock`). Creates a Hugot embedding session, builds the tag cache from the database, exposes HTTP endpoints:
 
-| Endpoint                        | Method | Description                                                                 |
-| ------------------------------- | ------ | --------------------------------------------------------------------------- |
-| `POST /rpc/v1/encode`           | POST   | Accepts `{"texts": [...]}`, returns `{"embeddings": [[...], ...]}`          |
-| `POST /rpc/v1/match`            | POST   | Accepts `{"doc_id", "input", "candidate_tags"}`, returns `{"matches": []}` |
-| `POST /rpc/v1/consolidate`      | POST   | Accepts `{"doc_id", "queries"}`, returns `{"results": []}`                  |
-| `POST /rpc/v1/add-to-store`     | POST   | Accepts `{"names": [...]}`, encodes and adds to embedding store             |
-| `POST /rpc/v1/remove-from-store`| POST   | Accepts `{"names": [...]}`, removes from embedding store                    |
-| `GET /health`                   | GET    | Returns `{"ok": true}`                                                      |
+| Endpoint                         | Method | Description                                                                |
+| -------------------------------- | ------ | -------------------------------------------------------------------------- |
+| `POST /rpc/v1/encode`            | POST   | Accepts `{"texts": [...]}`, returns `{"embeddings": [[...], ...]}`         |
+| `POST /rpc/v1/match`             | POST   | Accepts `{"doc_id", "input", "candidate_tags"}`, returns `{"matches": []}` |
+| `POST /rpc/v1/consolidate`       | POST   | Accepts `{"doc_id", "queries"}`, returns `{"results": []}`                 |
+| `POST /rpc/v1/add-to-store`      | POST   | Accepts `{"names": [...]}`, encodes and adds to embedding store            |
+| `POST /rpc/v1/remove-from-store` | POST   | Accepts `{"names": [...]}`, removes from embedding store                   |
+| `GET /health`                    | GET    | Returns `{"ok": true}`                                                     |
 
 Listens on a Unix socket (cleaned up on shutdown). Handles SIGTERM/SIGINT for graceful shutdown.
 

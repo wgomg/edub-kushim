@@ -12,7 +12,7 @@
 - **Fallback Processing**: Text extraction → OCR → text extraction pattern
 - **Date-based Organization**: Temporal storage structure for scalability
 - **Transaction Safety**: Coordinated database and file operations with rollback
-- **Process Isolation**: The Hugot embedding model runs as a **separate process** (`kushim serve-matching`), communicating over a Unix domain socket. The API server (`edub`) is pure Go (`CGO_ENABLED=0`) — it forks `kushim` child processes for document processing and communicates with the matcher via RPC.
+- **Process Isolation**: The Hugot embedding model runs as a **separate process** (`kushim hugot`), communicating over a Unix domain socket. The API server (`edub`) is pure Go (`CGO_ENABLED=0`) — it forks `kushim` child processes for document processing and communicates with the matcher via RPC.
 - **Two Binaries**: **kushim** (CLI document processing + matcher server) and **edub** (REST API server). Static C dependencies (Tesseract, Leptonica, MuPDF) linked only into **kushim**; **edub** is compiled with `CGO_ENABLED=0`.
 
 See [Roadmap](roadmap.md) for the implementation status and upcoming priorities.
@@ -23,24 +23,25 @@ See [Roadmap](roadmap.md) for the implementation status and upcoming priorities.
 
 The system runs three cooperating processes:
 
-### 1. Matcher Server (`kushim serve-matching`)
+### 1. Matcher Server (`kushim hugot`)
 
 A standalone HTTP server over a Unix domain socket (`kushim-matcher.sock` in the config directory). Hosts the Hugot embedding model, manages the tag embedding store, and exposes RPC endpoints:
 
-| Endpoint                        | Method | Purpose                    |
-| ------------------------------- | ------ | -------------------------- |
-| `POST /rpc/v1/encode`           | POST   | Encode text to embeddings  |
-| `POST /rpc/v1/match`            | POST   | Match text against tags    |
-| `POST /rpc/v1/consolidate`      | POST   | Consolidate tag names      |
-| `POST /rpc/v1/add-to-store`     | POST   | Add names to embedding store |
-| `POST /rpc/v1/remove-from-store`| POST   | Remove names from store    |
-| `GET /health`                   | GET    | Health check               |
+| Endpoint                         | Method | Purpose                      |
+| -------------------------------- | ------ | ---------------------------- |
+| `POST /rpc/v1/encode`            | POST   | Encode text to embeddings    |
+| `POST /rpc/v1/match`             | POST   | Match text against tags      |
+| `POST /rpc/v1/consolidate`       | POST   | Consolidate tag names        |
+| `POST /rpc/v1/add-to-store`      | POST   | Add names to embedding store |
+| `POST /rpc/v1/remove-from-store` | POST   | Remove names from store      |
+| `GET /health`                    | GET    | Health check                 |
 
 This process requires CGo (Tesseract/Hugot libraries) and should be started before the API server.
 
 ### 2. API Server (`edub`)
 
 Pure Go binary (`CGO_ENABLED=0`) that handles HTTP requests. It:
+
 - Enqueues consume/enrich tasks when `POST /api/v1/consume` is called
 - **Forks** `kushim consume --batch <id>` as a child process to handle actual document processing
 - Runs a config pool for background download tasks (tessdata, Hugot model)
@@ -50,9 +51,10 @@ Pure Go binary (`CGO_ENABLED=0`) that handles HTTP requests. It:
 ### 3. CLI / Worker (`kushim`)
 
 The CGo binary that performs actual document processing:
+
 - `kushim consume` — scans inbox, processes files, runs enrichment
 - `kushim consume --batch <id>` — resumes a previously enqueued batch (used by `edub`'s fork)
-- `kushim serve-matching` — starts the matcher RPC server
+- `kushim hugot` — starts the matcher RPC server
 - `kushim setup` — setup wizard
 
 ### Communication Flow
@@ -251,13 +253,14 @@ amber banner at the top of the app shows whenever required tools are not install
 
 Three endpoints serve both the wizard and the settings page:
 
-| Endpoint                          | Purpose                                                        |
-| --------------------------------- | -------------------------------------------------------------- |
-| `GET /wizard/config`              | Returns current config as `ConfigResponse` (user-facing subset)|
-| `PUT /wizard/config`              | Accepts `config_dir` for bootstrap, or settings map for update |
-| `GET /wizard/config/status`       | Returns `ConfigStatusResponse` — `configured`, `pending_tasks`, `tools` (full tool-availability list), `missing_tools` (hard-blocking subset) |
+| Endpoint                    | Purpose                                                                                                                                       |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /wizard/config`        | Returns current config as `ConfigResponse` (user-facing subset)                                                                               |
+| `PUT /wizard/config`        | Accepts `config_dir` for bootstrap, or settings map for update                                                                                |
+| `GET /wizard/config/status` | Returns `ConfigStatusResponse` — `configured`, `pending_tasks`, `tools` (full tool-availability list), `missing_tools` (hard-blocking subset) |
 
 The `PUT` handler has two phases:
+
 - **Bootstrap phase**: when `config_dir` is present and no config exists, it calls
   `config.Bootstrap()` to create directories, write skeleton config, and initialize the DB.
 - **Update phase**: otherwise, it writes the provided key-value pairs via `config.SaveMap`,
@@ -269,10 +272,10 @@ The `PUT` handler has two phases:
 
 A new task type `"config"` handles background downloads:
 
-| Operation   | Payload                                                       |
-| ----------- | ------------------------------------------------------------- |
-| `tessdata`  | `{"config_dir":"...", "op":"tessdata", "lang":"eng"}`         |
-| `hugot`     | `{"config_dir":"...", "op":"hugot"}`                          |
+| Operation  | Payload                                               |
+| ---------- | ----------------------------------------------------- |
+| `tessdata` | `{"config_dir":"...", "op":"tessdata", "lang":"eng"}` |
+| `hugot`    | `{"config_dir":"...", "op":"hugot"}`                  |
 
 The handler loads the config from disk, then delegates to `config.DownloadTessdataLanguage`
 or `config.DownloadHugotModel`. This keeps the API response fast and moves the actual
@@ -283,14 +286,14 @@ download work to the worker pool, with retry support via the task system.
 Engine names (e.g. `"mupdf"`, `"gosseract"`, `"llmopenai"`) are now defined as
 exported package-level vars in `internal/config/config.go`:
 
-| Group              | Constants                                                                                     |
-| ------------------ | --------------------------------------------------------------------------------------------- |
-| `ContentAnalyzer`  | `OpenAI` (`"llmopenai"`), `Anthropic` (`"llmanthropic"`), `DeepSeek` (`"llmdeepseek"`), `Ollama` (`"llmollama"`) |
-| `OCR`              | `Gosseract` (`"gosseract"`), `OcrMyPdf` (`"ocrmypdf"`)                                       |
-| `PdfOptimizer`     | `MuPDF` (`"mupdf"`), `GS` (`"gs"`)                                                           |
-| `TextExtractor`    | `MuPDF` (`"mupdf"`), `GoPdf` (`"gopdf"`), `PdfToText` (`"pdftotext"`)                        |
-| `TextReducer`      | `TextRank` (`"textrank"`)                                                                     |
-| `TagMatcher`       | `Hugot` (`"hugot"`)                                                                           |
+| Group             | Constants                                                                                                        |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `ContentAnalyzer` | `OpenAI` (`"llmopenai"`), `Anthropic` (`"llmanthropic"`), `DeepSeek` (`"llmdeepseek"`), `Ollama` (`"llmollama"`) |
+| `OCR`             | `Gosseract` (`"gosseract"`), `OcrMyPdf` (`"ocrmypdf"`)                                                           |
+| `PdfOptimizer`    | `MuPDF` (`"mupdf"`), `GS` (`"gs"`)                                                                               |
+| `TextExtractor`   | `MuPDF` (`"mupdf"`), `GoPdf` (`"gopdf"`), `PdfToText` (`"pdftotext"`)                                            |
+| `TextReducer`     | `TextRank` (`"textrank"`)                                                                                        |
+| `TagMatcher`      | `Hugot` (`"hugot"`)                                                                                              |
 
 A corresponding `AvailableEngines` map provides structured engine listings for the frontend
 UI (engine selector dropdowns). All adapter factories (`NewOCR`, `NewTextExtractor`, etc.)
@@ -406,21 +409,21 @@ FTS5 is "good enough" for the expected document volume (thousands to low tens of
 
 ## Key Design Decisions
 
-| Decision                        | Why                                                                                                                                                                                                              |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| PNG for OCR, JPEG for PDF       | Two encodes for two consumers. PNG avoids libjpeg version conflicts between Leptonica and MuPDF. JPEG for fpdf is pure Go.                                                                                       |
-| Text rendering mode 3 (`3 Tr`)  | PDF standard for invisible‑but‑selectable text. Works in all viewers. Set via `SetTextRenderingMode(3)` before `Text()` calls. (Used by gosseract adapter.)                                                      |
-| Embedded CID font               | LiberationSans registered via `AddUTF8FontFromBytes`. CID Type0 font with Identity-H encoding + ToUnicode CMap makes every language selectable and extractable, even when the font lacks glyphs for that script. |
-| Static C libraries              | Tesseract, Leptonica, and MuPDF linked statically. Single binary, no runtime deps. See `build-leptonica-tesseract.md`.                                                                                           |
-| fpdf over MuPDF PDF creation    | fpdf is pure Go; MuPDF's PDF writing API requires additional CGo. (Only relevant for gosseract adapter.)                                                                                                         |
-| TextRank over LLM summarization | Extractive summarization via graph-based ranking is deterministic, zero-cost, privacy-preserving. Reduces token count before LLM call — cost saving and faster.                                                  |
-| Hugot with ORT backend (default) | ONNX Runtime for GPU-class CPU inference with BGE-M3. Auto-downloads `libonnxruntime.so`. ORT CPU memory arena and memory-pattern pre-allocation are disabled by default (internal `CpuMemArena`/`MemPattern` flags) to keep idle RSS at ~2.2–2.5 GB instead of ~4–5 GB. Go backend available as alternative with no runtime deps. |
-| `runWithTimeout` wrapper        | Ensures timeout detection for every adapter call, regardless of whether the adapter checks `ctx.Done()` internally. Eliminates the need for per-adapter cancellation wiring.                                     |
-| Seeded tag vocabulary (Dewey)   | 110+ tags organized by Dewey Decimal Classification. Provides a sensible default taxonomy for LLM classification without requiring user setup.                                                                   |
-| External matcher process        | Hugot embedding model runs as a separate process (`kushim serve-matching`) over a Unix socket. The API server (`edub`) is pure Go with no CGo dependencies.                                                      |
-| Forked processing workers       | Instead of running consume/enrich pools internally, `edub` enqueues tasks and forks `kushim consume --batch` as child processes. Clean process isolation, no in-process heartbeat/ownership management needed.  |
-| `CGO_ENABLED=0` for `edub`      | `edub` is compiled without CGo, making it a lightweight, statically linked binary. No runtime dependency on C libraries. `kushim` retains all CGo for Tesseract/Leptonica/MuPDF/Hugot.                          |
-| Semaphore-based batch concurrency | A counting semaphore limits concurrent forked worker processes to `server.max_concurrent_batches` (default 2). Prevents resource exhaustion from concurrent batches.                                           |
+| Decision                          | Why                                                                                                                                                                                                                                                                                                                                |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PNG for OCR, JPEG for PDF         | Two encodes for two consumers. PNG avoids libjpeg version conflicts between Leptonica and MuPDF. JPEG for fpdf is pure Go.                                                                                                                                                                                                         |
+| Text rendering mode 3 (`3 Tr`)    | PDF standard for invisible‑but‑selectable text. Works in all viewers. Set via `SetTextRenderingMode(3)` before `Text()` calls. (Used by gosseract adapter.)                                                                                                                                                                        |
+| Embedded CID font                 | LiberationSans registered via `AddUTF8FontFromBytes`. CID Type0 font with Identity-H encoding + ToUnicode CMap makes every language selectable and extractable, even when the font lacks glyphs for that script.                                                                                                                   |
+| Static C libraries                | Tesseract, Leptonica, and MuPDF linked statically. Single binary, no runtime deps. See `build-leptonica-tesseract.md`.                                                                                                                                                                                                             |
+| fpdf over MuPDF PDF creation      | fpdf is pure Go; MuPDF's PDF writing API requires additional CGo. (Only relevant for gosseract adapter.)                                                                                                                                                                                                                           |
+| TextRank over LLM summarization   | Extractive summarization via graph-based ranking is deterministic, zero-cost, privacy-preserving. Reduces token count before LLM call — cost saving and faster.                                                                                                                                                                    |
+| Hugot with ORT backend (default)  | ONNX Runtime for GPU-class CPU inference with BGE-M3. Auto-downloads `libonnxruntime.so`. ORT CPU memory arena and memory-pattern pre-allocation are disabled by default (internal `CpuMemArena`/`MemPattern` flags) to keep idle RSS at ~2.2–2.5 GB instead of ~4–5 GB. Go backend available as alternative with no runtime deps. |
+| `runWithTimeout` wrapper          | Ensures timeout detection for every adapter call, regardless of whether the adapter checks `ctx.Done()` internally. Eliminates the need for per-adapter cancellation wiring.                                                                                                                                                       |
+| Seeded tag vocabulary (Dewey)     | 110+ tags organized by Dewey Decimal Classification. Provides a sensible default taxonomy for LLM classification without requiring user setup.                                                                                                                                                                                     |
+| External matcher process          | Hugot embedding model runs as a separate process (`kushim hugot`) over a Unix socket. The API server (`edub`) is pure Go with no CGo dependencies.                                                                                                                                                                                 |
+| Forked processing workers         | Instead of running consume/enrich pools internally, `edub` enqueues tasks and forks `kushim consume --batch` as child processes. Clean process isolation, no in-process heartbeat/ownership management needed.                                                                                                                     |
+| `CGO_ENABLED=0` for `edub`        | `edub` is compiled without CGo, making it a lightweight, statically linked binary. No runtime dependency on C libraries. `kushim` retains all CGo for Tesseract/Leptonica/MuPDF/Hugot.                                                                                                                                             |
+| Semaphore-based batch concurrency | A counting semaphore limits concurrent forked worker processes to `server.max_concurrent_batches` (default 2). Prevents resource exhaustion from concurrent batches.                                                                                                                                                               |
 
 ---
 
@@ -435,5 +438,5 @@ FTS5 is "good enough" for the expected document volume (thousands to low tens of
   copy — ingestion is not blocked. Set `pdfoptimizer.fallback: 'gs'` to fall
   back to Ghostscript for these files.
 - **Hugot ORT backend**: ONNX Runtime downloaded at runtime on first use — requires internet access. The Go backend has no runtime deps. ORT's CPU memory arena and memory pattern pre-allocation are disabled by default (`HugotConfig.CpuMemArena=false`, `MemPattern=false`) to cap idle RSS at ~2.2–2.5 GB rather than retaining peak-inference buffers (~4–5 GB). This adds ~10–20% per-inference latency from buffer re-allocation, which is dwarfed by text extraction, OCR, and LLM API latency in the enrichment pipeline. Toggle to `true` in `DefaultConfig` to restore ORT defaults if performance is unacceptable.
-- **Matcher as external process**: The tag matcher runs as a separate process (`kushim serve-matching`). If it's not running, tag CRUD operations return `503 Service Unavailable`, and enrichment falls back to LLM-only tags (no semantic tag matching). The matcher must be started before `edub` for full functionality.
+- **Matcher as external process**: The tag matcher runs as a separate process (`kushim hugot`). If it's not running, tag CRUD operations return `503 Service Unavailable`, and enrichment falls back to LLM-only tags (no semantic tag matching). The matcher must be started before `edub` for full functionality.
 - **edub forks kushim**: When `POST /api/v1/consume` is called, `edub` finds the `kushim` binary in PATH or as a sibling of the `edub` binary. If `kushim` is not found, the consume request fails.

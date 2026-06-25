@@ -30,8 +30,8 @@ var commandSets = map[string]map[string]Command{
 			Description: "Full-text search across documents",
 			Handler:     searchHandler,
 		},
-		"serve-matching": {
-			Name:        "serve-matching",
+		"hugot": {
+			Name:        "hugot",
 			Description: "Start the matcher RPC server over a Unix socket",
 			Handler:     serveMatchingHandler,
 		},

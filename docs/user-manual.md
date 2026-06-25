@@ -5,7 +5,7 @@ Both share the same OCR, text extraction, and PDF optimization pipeline.
 
 The `edub` API server is a pure Go binary (`CGO_ENABLED=0`) that does not link any
 C libraries. It **forks** `kushim` child processes for document processing and
-communicates with an external **matcher process** (`kushim serve-matching`) for
+communicates with an external **matcher process** (`kushim hugot`) for
 semantic tag matching via a Unix domain socket.
 
 ---
@@ -379,15 +379,17 @@ Task "880e8400-e29b-41d4-a716-446655440003" retried — status reset to pending
 Only failed tasks can be retried. The task is picked up on the next
 worker poll cycle.
 
-### `kushim serve-matching`
+### `kushim hugot`
 
 Start the matcher RPC server over a Unix domain socket. This process
 hosts the Hugot embedding model and provides semantic tag matching,
 encoding, and consolidation services to both the API server and CLI workers.
 
 ```
-kushim serve-matching
-kushim serve-matching --socket /path/to/custom/matcher.sock
+
+kushim hugot
+kushim hugot --socket /path/to/custom/matcher.sock
+
 ```
 
 | Flag       | Default                                        | Description                     |
@@ -478,12 +480,12 @@ Content-Type: application/json
 }
 ```
 
-| Field            | Type     | Required | Description                                |
-| ---------------- | -------- | -------- | ------------------------------------------ |
-| `title`          | `string` | yes      | New title for the document                 |
-| `document_type_id` | `int`  | yes      | Must be ≥ 1 and reference an existing type |
-| `language`       | `string` | yes      | Language code (defaults to `"und"` if empty) |
-| `text_content`   | `string` | no       | Updated text content; omitted to preserve existing |
+| Field              | Type     | Required | Description                                        |
+| ------------------ | -------- | -------- | -------------------------------------------------- |
+| `title`            | `string` | yes      | New title for the document                         |
+| `document_type_id` | `int`    | yes      | Must be ≥ 1 and reference an existing type         |
+| `language`         | `string` | yes      | Language code (defaults to `"und"` if empty)       |
+| `text_content`     | `string` | no       | Updated text content; omitted to preserve existing |
 
 Response `204 No Content`. Returns `404` if document or document type is not found.
 
@@ -675,6 +677,7 @@ Content-Type: application/json
 ```
 
 Two-phase API:
+
 - **Bootstrap phase** — send `{ "config_dir": "..." }` to create directories,
   write skeleton config, and initialize the database. Returns `200` with
   `{ ... }`.
@@ -803,9 +806,7 @@ Response `202` (files accepted):
 {
   "batch_id": "550e8400-e29b-41d4-a716-446655440000",
   "accepted": 3,
-  "rejected": [
-    { "name": "notes.docx", "reason": "unsupported type: .docx" }
-  ],
+  "rejected": [{ "name": "notes.docx", "reason": "unsupported type: .docx" }],
   "_links": {
     "tasks": "/api/v1/tasks?batch=550e8400-e29b-41d4-a716-446655440000"
   }
@@ -825,9 +826,7 @@ Response `422 Unprocessable Entity` (all files rejected or missing tools):
 ```json
 {
   "error": "no supported files",
-  "rejected": [
-    { "name": "readme.txt", "reason": "unsupported type: .txt" }
-  ]
+  "rejected": [{ "name": "readme.txt", "reason": "unsupported type: .txt" }]
 }
 ```
 
@@ -1151,7 +1150,7 @@ enricher:
 | Section                        | Purpose                                                 |
 | ------------------------------ | ------------------------------------------------------- |
 | `app`                          | Environment mode and log verbosity                      |
-| `server`                       | HTTP listen address, timeouts, max concurrent batches    |
+| `server`                       | HTTP listen address, timeouts, max concurrent batches   |
 | `database`                     | SQLite storage location and file name                   |
 | `storage`                      | Inbox and processed file directories                    |
 | `consumer`                     | Pipeline: which tools to use, which files to accept     |
@@ -1199,7 +1198,7 @@ ensures enrichment never runs before the document is fully ingested.
 
 ```bash
 # Start the matcher first (required for tag matching)
-kushim serve-matching &
+kushim hugot &
 
 # Start the API server
 edub
@@ -1254,6 +1253,7 @@ pending-task counter show download progress.
 **Tool-status warnings** appear inline beneath each engine selector when
 the selected external tool is missing from `PATH`. When the OCR engine is
 `ocrmypdf`, additional advisory blocks show:
+
 - **Tesseract language packs** — which system packages to install for each
   configured language (always shown, since system tesseract is separate
   from the app's downloaded tessdata).

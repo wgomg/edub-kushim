@@ -17,7 +17,7 @@
 - Per-tool timeout via `ToolConfig` struct + `runWithTimeout` generic wrapper
 - Configurable worker pool size (`consumer.workers`, `enricher.workers`, default 1 each)
 - Database-backed batch ownership with heartbeats (`batch_owner` table, stale lease detection, `--force` override, server/CLI isolation via per-process owner UUID)
-- Matcher as external process: Hugot embedding model runs as `kushim serve-matching` over Unix domain socket RPC
+- Matcher as external process: Hugot embedding model runs as `kushim hugot` over Unix domain socket RPC
 - Worker forking: `edub` enqueues tasks and forks `kushim consume --batch` for processing; `edub` is pure Go (`CGO_ENABLED=0`)
 - Matcher RPC protocol: encode, match, consolidate, add-to-store, remove-from-store operations over HTTP/Unix socket
 - Semaphore-based batch concurrency limiting (`server.max_concurrent_batches`, default 2)
@@ -141,7 +141,7 @@
 | `kushim task status <id>`     | Show task details                                 |
 | `kushim task retry <id>`      | Reset failed task to pending                      |
 | `kushim version`              | Print version                                     |
-| `kushim serve-matching`       | Start matcher RPC server over Unix socket         |
+| `kushim hugot`                | Start matcher RPC server over Unix socket         |
 | `edub`                        | Start API server                                  |
 | `edub version`                | Print server version                              |
 
@@ -212,7 +212,7 @@
 | 12  | **Tag management page**                  | ✓ List, create, edit, delete tags with filter input + conflict detection                                                                                                          |
 | 13  | **People management page**               | ✓ Two-tab route: People (name, native name, cascade delete) and Person Types (name, description, 409 handling)                                                                    |
 | 14  | **Document type management page**        | ✓ List, create, edit, delete document types with 409 conflict handling                                                                                                            |
-| 15  | **Document upload/consume flow**         | ✓ Wire Upload button to `POST /api/v1/consume/upload`, show progress feedback via modal                                                                                            |
+| 15  | **Document upload/consume flow**         | ✓ Wire Upload button to `POST /api/v1/consume/upload`, show progress feedback via modal                                                                                           |
 | 16  | **Single task detail page**              | New route `/tasks/{taskID}` — status, file, timestamps, error information                                                                                                         |
 | 17  | **Integration test**                     | End-to-end test: consume a known PDF, verify DB state — signals project reliability                                                                                               |
 | 18  | **Test coverage**                        | Automated tests for: adapters, CLI commands, database queries, API handlers, search engine, pool                                                                                  |
@@ -237,9 +237,9 @@
 
 Low-priority items worth revisiting when nothing more impactful demands attention.
 
-| #   | Feature                                                     | Description                                                                                                                                                  |
-| --- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1   | **Double tokenization in chunked encoding**                 | `Encode()` and `encodeChunked()` redundantly tokenize the same text; per-chunk decode→re-encode round-trip adds unnecessary overhead. See [report](research/double-tokenization-chunked-encoding.md). |
+| #   | Feature                                     | Description                                                                                                                                                                                           |
+| --- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **Double tokenization in chunked encoding** | `Encode()` and `encodeChunked()` redundantly tokenize the same text; per-chunk decode→re-encode round-trip adds unnecessary overhead. See [report](research/double-tokenization-chunked-encoding.md). |
 
 ---
 
