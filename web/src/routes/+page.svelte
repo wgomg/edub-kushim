@@ -1,6 +1,8 @@
 <script>
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
+	import { formatSize } from '$lib/utils/html.js';
+	import StoragePanel from '$lib/components/StoragePanel.svelte';
 
 	let health = $state();
 	let summary = $state();
@@ -13,12 +15,6 @@
 			api.documents.list(15, 0)
 		]);
 	});
-
-	function formatSize(bytes) {
-		if (bytes < 1024) return bytes + ' B';
-		if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-		return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-	}
 
 	function chunk(arr, size) {
 		const result = [];
@@ -92,6 +88,19 @@
 					<p class="text-terracotta-400 mt-1 text-lg font-semibold">{summary.discarded}</p>
 				</div>
 			</div>
+		</section>
+	{/if}
+
+	{#if summary}
+		<section>
+			<h2 class="mb-3 text-lg font-semibold text-parchment-200">Storage</h2>
+			<StoragePanel
+				mimeTypeBreakdown={summary.mime_type_breakdown ?? []}
+				storageTrend={summary.storage_trend ?? []}
+				avgFileSizeBytes={summary.avg_file_size_bytes ?? 0}
+				totalPages={summary.total_pages ?? 0}
+				totalWords={summary.total_words ?? 0}
+			/>
 		</section>
 	{/if}
 

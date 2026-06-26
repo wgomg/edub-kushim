@@ -39,15 +39,33 @@ type ListTasksResponse struct {
 	Tasks   []TaskResponse        `json:"tasks"`
 }
 
+type MimeTypeStat struct {
+	MimeType   string `json:"mime_type"`
+	Count      int64  `json:"count"`
+	TotalBytes int64  `json:"total_bytes"`
+}
+
+type StorageTrendPoint struct {
+	Date            string `json:"date"`
+	DailyCount      int64  `json:"daily_count"`
+	DailyBytes      int64  `json:"daily_bytes"`
+	CumulativeBytes int64  `json:"cumulative_bytes"`
+}
+
 type GlobalSummaryResponse struct {
-	TotalBatches int64   `json:"total_batches"`
-	TotalFiles   int64   `json:"total_files"`
-	Waiting      int64   `json:"waiting"`
-	Pending      int64   `json:"pending"`
-	Processing   int64   `json:"processing"`
-	Completed    int64   `json:"completed"`
-	Failed       int64   `json:"failed"`
-	Cancelled    int64   `json:"cancelled"`
-	Discarded    int64   `json:"discarded"`
-	TotalSizeGB  float64 `json:"total_size_gb"`
+	TotalBatches     int64              `json:"total_batches"`
+	TotalFiles       int64              `json:"total_files"`
+	Waiting          int64              `json:"waiting"`
+	Pending          int64              `json:"pending"`
+	Processing       int64              `json:"processing"`
+	Completed        int64              `json:"completed"`
+	Failed           int64              `json:"failed"`
+	Cancelled        int64              `json:"cancelled"`
+	Discarded        int64              `json:"discarded"`
+	TotalSizeGB      float64            `json:"total_size_gb"`
+	MimeTypeBreakdown []MimeTypeStat    `json:"mime_type_breakdown"`
+	StorageTrend      []StorageTrendPoint `json:"storage_trend"`
+	AvgFileSizeBytes  int64             `json:"avg_file_size_bytes"`
+	TotalPages        int64             `json:"total_pages"`
+	TotalWords        int64             `json:"total_words"`
 }

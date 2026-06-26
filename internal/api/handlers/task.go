@@ -212,12 +212,14 @@ func (h *TaskHandler) GlobalSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	totalFiles, err := h.queries.CountAllDocuments(ctx)
+	agg, err := h.queries.DocumentAggregates(ctx)
 	if err != nil {
-		h.logger.Error(&reqID, "count all documents: %v", err)
+		h.logger.Error(&reqID, "document aggregates: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
+	totalFiles := agg.TotalFiles
+	totalBytes := agg.TotalBytes
 
 	rows, err := h.queries.CountTasksByStatus(ctx)
 	if err != nil {
@@ -230,24 +232,62 @@ func (h *TaskHandler) GlobalSummary(w http.ResponseWriter, r *http.Request) {
 		perStatus[row.Status] = row.Count
 	}
 
-	totalBytes, err := h.queries.SumDocumentFileSizes(ctx)
+	mimeBreakdown, err := h.queries.MimeTypeBreakdown(ctx)
 	if err != nil {
-		h.logger.Error(&reqID, "sum document file sizes: %v", err)
+		h.logger.Error(&reqID, "mime type breakdown: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
+	trendRows, err := h.queries.StorageTrendDaily(ctx)
+	if err != nil {
+		h.logger.Error(&reqID, "storage trend daily: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	var avgFileSize int64
+	if totalFiles > 0 {
+		avgFileSize = totalBytes / totalFiles
+	}
+
+	mimeStats := make([]types.MimeTypeStat, 0, len(mimeBreakdown))
+	for _, m := range mimeBreakdown {
+		mimeStats = append(mimeStats, types.MimeTypeStat{
+			MimeType:   m.MimeType,
+			Count:      m.Count,
+			TotalBytes: m.TotalBytes,
+		})
+	}
+
+	var cumulative int64
+	trendPoints := make([]types.StorageTrendPoint, 0, len(trendRows))
+	for _, t := range trendRows {
+		cumulative += t.DailyBytes
+		trendPoints = append(trendPoints, types.StorageTrendPoint{
+			Date:            t.Day,
+			DailyCount:      t.Count,
+			DailyBytes:      t.DailyBytes,
+			CumulativeBytes: cumulative,
+		})
+	}
+
 	resp := types.GlobalSummaryResponse{
-		TotalBatches: totalBatches,
-		TotalFiles:   totalFiles,
-		Waiting:      perStatus["waiting"],
-		Pending:      perStatus["pending"],
-		Processing:   perStatus["processing"],
-		Completed:    perStatus["completed"],
-		Failed:       perStatus["failed"],
-		Cancelled:    perStatus["cancelled"],
-		Discarded:    perStatus["discarded"],
-		TotalSizeGB:  float64(totalBytes) / (1024 * 1024 * 1024),
+		TotalBatches:     totalBatches,
+		TotalFiles:       totalFiles,
+		Waiting:          perStatus["waiting"],
+		Pending:          perStatus["pending"],
+		Processing:       perStatus["processing"],
+		Completed:        perStatus["completed"],
+		Failed:           perStatus["failed"],
+		Cancelled:        perStatus["cancelled"],
+		Discarded:        perStatus["discarded"],
+		TotalSizeGB:      float64(totalBytes) / (1024 * 1024 * 1024),
+		MimeTypeBreakdown: mimeStats,
+		StorageTrend:      trendPoints,
+		AvgFileSizeBytes:  avgFileSize,
+		TotalPages:        agg.TotalPages,
+		TotalWords:        agg.TotalWords,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
