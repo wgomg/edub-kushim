@@ -14,8 +14,7 @@ type TaskResponse struct {
 	CompletedAt  *string `json:"completed_at"`
 }
 
-type BatchSummaryResponse struct {
-	BatchID    string `json:"batch_id"`
+type BatchCounts struct {
 	Total      int64  `json:"total"`
 	Waiting    int64  `json:"waiting"`
 	Pending    int64  `json:"pending"`
@@ -25,8 +24,13 @@ type BatchSummaryResponse struct {
 	Cancelled  int64  `json:"cancelled"`
 	Discarded  int64  `json:"discarded"`
 	OwnerState string `json:"owner_state,omitempty"`
-	OwnerPID   int64  `json:"owner_pid,omitempty"`
 	Orphaned   bool   `json:"orphaned"`
+}
+
+type BatchSummaryResponse struct {
+	BatchID  string `json:"batch_id"`
+	BatchCounts
+	OwnerPID int64  `json:"owner_pid,omitempty"`
 }
 
 type ListBatchesResponse struct {
@@ -50,6 +54,18 @@ type StorageTrendPoint struct {
 	DailyCount      int64  `json:"daily_count"`
 	DailyBytes      int64  `json:"daily_bytes"`
 	CumulativeBytes int64  `json:"cumulative_bytes"`
+}
+
+type BatchOverviewItem struct {
+	BatchID    string `json:"batch_id"`
+	Source     string `json:"source"`
+	CreatedAt  string `json:"created_at"`
+	BatchCounts
+	DurationMs *int64 `json:"duration_ms,omitempty"`
+}
+
+type DashboardResponse struct {
+	RecentBatches []BatchOverviewItem `json:"recent_batches"`
 }
 
 type GlobalSummaryResponse struct {

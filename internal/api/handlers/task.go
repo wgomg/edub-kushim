@@ -162,29 +162,138 @@ func (h *TaskHandler) ListBatches(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, bc := range summaries {
-		state, pid, err := task.BatchOwnerState(ctx, h.queries, bc.BatchID, task.StaleAfter)
-		if err != nil {
-			h.logger.Error(&reqID, "batch owner state for %s: %v", bc.BatchID, err)
-		}
-		orphaned := task.IsOrphaned(state, bc.Pending, bc.Processing)
+		ownerState, pid, orphaned := enrichOwnerState(ctx, h.queries, bc.BatchID, bc.Pending, bc.Processing)
 		resp.Batches = append(resp.Batches, types.BatchSummaryResponse{
-			BatchID:    bc.BatchID,
-			Total:      bc.Total(),
-			Waiting:    bc.Waiting,
-			Pending:    bc.Pending,
-			Processing: bc.Processing,
-			Completed:  bc.Completed,
-			Failed:     bc.Failed,
-			Cancelled:  bc.Cancelled,
-			Discarded:  bc.Discarded,
-			OwnerState: state.String(),
-			OwnerPID:   pid,
-			Orphaned:   orphaned,
+			BatchID: bc.BatchID,
+			BatchCounts: types.BatchCounts{
+				Total:      bc.Total(),
+				Waiting:    bc.Waiting,
+				Pending:    bc.Pending,
+				Processing: bc.Processing,
+				Completed:  bc.Completed,
+				Failed:     bc.Failed,
+				Cancelled:  bc.Cancelled,
+				Discarded:  bc.Discarded,
+				OwnerState: ownerState,
+				Orphaned:   orphaned,
+			},
+			OwnerPID: pid,
 		})
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := ctx.Value("reqid").(string)
+
+	rows, err := h.queries.ListBatchOverviews(ctx, database.ListBatchOverviewsParams{
+		Limit:  20,
+		Offset: 0,
+	})
+	if err != nil {
+		h.logger.Error(&reqID, "list batch overviews: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	items := make([]types.BatchOverviewItem, 0, len(rows))
+	for _, row := range rows {
+		pending := toInt64(row.Pending)
+		processing := toInt64(row.Processing)
+		waiting := toInt64(row.Waiting)
+
+		var durationMs *int64
+		if pending == 0 && processing == 0 && waiting == 0 {
+			firstStarted := toNullTime(row.FirstStartedAt)
+			lastCompleted := toNullTime(row.LastCompletedAt)
+			if firstStarted.Valid && lastCompleted.Valid {
+				v := lastCompleted.Time.Sub(firstStarted.Time).Milliseconds()
+				durationMs = &v
+			}
+		}
+
+		var createdAt string
+		if row.BatchCreatedAt.Valid {
+			createdAt = row.BatchCreatedAt.Time.Format(time.RFC3339)
+		}
+
+		items = append(items, types.BatchOverviewItem{
+			BatchID:   row.BatchID,
+			Source:    row.Source,
+			CreatedAt: createdAt,
+			BatchCounts: types.BatchCounts{
+				Total:      row.Total,
+				Waiting:    waiting,
+				Pending:    pending,
+				Processing: processing,
+				Completed:  toInt64(row.Completed),
+				Failed:     toInt64(row.Failed),
+				Cancelled:  toInt64(row.Cancelled),
+				Discarded:  toInt64(row.Discarded),
+				OwnerState: deriveOwnerState(row.OwnerLastHeartbeat).String(),
+				Orphaned:   deriveIsOrphaned(row.OwnerLastHeartbeat, pending, processing),
+			},
+			DurationMs: durationMs,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(types.DashboardResponse{RecentBatches: items})
+}
+
+func deriveOwnerState(hb sql.NullTime) task.OwnerState {
+	if !hb.Valid {
+		return task.OwnerNone
+	}
+	if time.Since(hb.Time) > task.StaleAfter {
+		return task.OwnerStale
+	}
+	return task.OwnerLive
+}
+
+func deriveIsOrphaned(hb sql.NullTime, pending, processing int64) bool {
+	state := deriveOwnerState(hb)
+	return task.IsOrphaned(state, pending, processing)
+}
+
+func enrichOwnerState(ctx context.Context, queries *database.Queries, batchID string, pending, processing int64) (string, int64, bool) {
+	state, pid, err := task.BatchOwnerState(ctx, queries, batchID, task.StaleAfter)
+	if err != nil {
+		return "none", 0, false
+	}
+	return state.String(), pid, task.IsOrphaned(state, pending, processing)
+}
+
+func toInt64(v interface{}) int64 {
+	switch n := v.(type) {
+	case int64:
+		return n
+	case float64:
+		return int64(n)
+	default:
+		return 0
+	}
+}
+
+func toNullTime(v interface{}) sql.NullTime {
+	switch t := v.(type) {
+	case string:
+		parsed, err := time.Parse("2006-01-02T15:04:05Z", t)
+		if err != nil {
+			parsed, err = time.Parse("2006-01-02 15:04:05", t)
+			if err != nil {
+				return sql.NullTime{}
+			}
+		}
+		return sql.NullTime{Time: parsed, Valid: true}
+	case time.Time:
+		return sql.NullTime{Time: t, Valid: true}
+	default:
+		return sql.NullTime{}
+	}
 }
 
 func (h *TaskHandler) GetBatchSummary(w http.ResponseWriter, r *http.Request) {
@@ -296,25 +405,23 @@ func (h *TaskHandler) GlobalSummary(w http.ResponseWriter, r *http.Request) {
 
 func buildBatchSummary(ctx context.Context, queries *database.Queries, batchID string) types.BatchSummaryResponse {
 	bc := task.CountBatchStatuses(ctx, queries, batchID)
-	state, pid, err := task.BatchOwnerState(ctx, queries, batchID, task.StaleAfter)
-	if err != nil {
-		state = task.OwnerLive
-	}
-	orphaned := task.IsOrphaned(state, bc.Pending, bc.Processing)
+	ownerState, pid, orphaned := enrichOwnerState(ctx, queries, batchID, bc.Pending, bc.Processing)
 
 	return types.BatchSummaryResponse{
-		BatchID:    batchID,
-		Total:      bc.Total(),
-		Waiting:    bc.Waiting,
-		Pending:    bc.Pending,
-		Processing: bc.Processing,
-		Completed:  bc.Completed,
-		Failed:     bc.Failed,
-		Cancelled:  bc.Cancelled,
-		Discarded:  bc.Discarded,
-		OwnerState: state.String(),
-		OwnerPID:   pid,
-		Orphaned:   orphaned,
+		BatchID: batchID,
+		BatchCounts: types.BatchCounts{
+			Total:      bc.Total(),
+			Waiting:    bc.Waiting,
+			Pending:    bc.Pending,
+			Processing: bc.Processing,
+			Completed:  bc.Completed,
+			Failed:     bc.Failed,
+			Cancelled:  bc.Cancelled,
+			Discarded:  bc.Discarded,
+			OwnerState: ownerState,
+			Orphaned:   orphaned,
+		},
+		OwnerPID: pid,
 	}
 }
 

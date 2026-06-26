@@ -30,6 +30,8 @@ async function requestRaw(path, opts = {}) {
 }
 
 export const api = {
+	dashboard: () => request('/api/v1/dashboard'),
+
 	health: () =>
 		request('/health').then((data) => data ?? { status: 'unreachable', version: '-', time: '-' }),
 

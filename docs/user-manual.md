@@ -1126,6 +1126,56 @@ Response `200`:
 }
 ```
 
+### Dashboard
+
+```
+GET /api/v1/dashboard
+```
+
+Returns the 20 most recent batches with per-batch task status summaries, owner state, orphan detection, and duration (when settled).
+
+Response `200`:
+
+```json
+{
+  "recent_batches": [
+    {
+      "batch_id": "550e8400-e29b-41d4-a716-446655440000",
+      "source": "web",
+      "created_at": "2026-06-25T10:30:00Z",
+      "total": 5,
+      "waiting": 0,
+      "pending": 2,
+      "processing": 1,
+      "completed": 1,
+      "failed": 1,
+      "cancelled": 0,
+      "discarded": 0,
+      "owner_state": "live",
+      "orphaned": false,
+      "duration_ms": 42000
+    }
+  ]
+}
+```
+
+| Field          | Type      | Description                                                                          |
+| -------------- | --------- | ------------------------------------------------------------------------------------ |
+| `batch_id`     | `string`  | Batch UUID                                                                           |
+| `source`       | `string`  | Origin: `"cli"`, `"web"`, or `"upload"`                                             |
+| `created_at`   | `string`  | RFC 3339 timestamp                                                                   |
+| `total`        | `int`     | Total task count in batch                                                            |
+| `waiting`      | `int`     | Tasks waiting for their prerequisite                                                 |
+| `pending`      | `int`     | Tasks ready for a worker                                                             |
+| `processing`   | `int`     | Tasks currently being processed                                                      |
+| `completed`    | `int`     | Tasks finished successfully                                                          |
+| `failed`       | `int`     | Tasks that failed                                                                    |
+| `cancelled`    | `int`     | Tasks cancelled via cancel endpoint                                                  |
+| `discarded`    | `int`     | Enrich tasks orphaned by a failed consume                                            |
+| `owner_state`  | `string`  | `"none"`, `"live"`, or `"stale"`                                                     |
+| `orphaned`     | `bool`    | True when owner is not live but tasks remain pending or processing                   |
+| `duration_ms`  | `int`     | Batch duration in milliseconds. Present only when the batch is fully settled.        |
+
 ### Response Types
 
 #### DocumentResponse

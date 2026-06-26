@@ -3,16 +3,19 @@
 	import { api } from '$lib/api';
 	import { formatSize } from '$lib/utils/html.js';
 	import StoragePanel from '$lib/components/StoragePanel.svelte';
+	import BatchOverviewPanel from '$lib/components/BatchOverviewPanel.svelte';
 
 	let health = $state();
 	let summary = $state();
 	let recentDocs = $state([]);
+	let dashboard = $state();
 
 	onMount(async () => {
-		[health, summary, recentDocs] = await Promise.all([
+		[health, summary, recentDocs, dashboard] = await Promise.all([
 			api.health(),
 			api.summary.get(),
-			api.documents.list(15, 0)
+			api.documents.list(15, 0),
+			api.dashboard()
 		]);
 	});
 
@@ -88,6 +91,13 @@
 					<p class="text-terracotta-400 mt-1 text-lg font-semibold">{summary.discarded}</p>
 				</div>
 			</div>
+		</section>
+	{/if}
+
+	{#if dashboard}
+		<section>
+			<h2 class="mb-3 text-lg font-semibold text-parchment-200">Recent Batches</h2>
+			<BatchOverviewPanel recentBatches={dashboard.recent_batches ?? []} />
 		</section>
 	{/if}
 

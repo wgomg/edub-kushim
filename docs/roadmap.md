@@ -126,6 +126,7 @@
 | `GET /api/v1/batches/{id}`             | Get single batch summary                                    |
 | `POST /api/v1/batches/{id}/resume`     | Resume batch (forks kushim worker)                          |
 | `POST /api/v1/batches/{id}/cancel`     | Cancel batch (SIGTERM worker, mark tasks cancelled)         |
+| `GET /api/v1/dashboard`                | Dashboard data: recent batches with status counts, duration, owner state |
 | `GET /api/v1/summary`                  | Global totals across all batches                            |
 
 ### CLI Commands
@@ -163,7 +164,7 @@
 
 | Route             | Status | Notes                                                                                                                                                            |
 | ----------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/` (dashboard)   | ✓      | Health + summary stats + recent docs                                                                                                                             |
+| `/` (dashboard)   | ✓      | Health + summary stats + recent docs + batch overview panel                                                                                                       |
 | `/documents`      | ✓      | Structured search bar + filter panel + saved searches + sortable DataTable                                                                                       |
 | `/documents/[id]` | ✓      | PDF preview + editable metadata sidebar (title, type, language, tags, people) + delete                                                                           |
 | `/settings`       | ✓      | Full configuration form: server host/port, OCR, consumer, text extractor, PDF optimizer, enricher, content analyzer (LLM) with tokens, tag matcher, text reducer |
@@ -227,7 +228,7 @@
 | 20  | **Bulk operations**                      | ✓ Batch delete, batch tag assignment                                                                                                                                              |
 | 21  | **Batch cancel API endpoint**            | ✓ `POST /api/v1/batches/{id}/cancel` — expose `kushim consume cancel` through the API                                                                                             |
 | 22  | **Dashboard: storage panel**             | ✓ Total size, MIME type breakdown (count + size per type), cumulative storage trend by day/week, average file size, total pages, total words                                      |
-| 23  | **Dashboard: batch overview panel**      | Recent N batches with per-batch task summary, active/orphaned state, batch source, creation time, duration when complete                                                          |
+| 23  | **Dashboard: batch overview panel**      | ✓ Recent N batches with per-batch task summary, active/orphaned state, batch source, creation time, duration when complete                                                       |
 | 24  | **Dashboard: activity timeline**         | Chronological feed: document uploaded, task completed, task failed, batch created — merged from document.created_at, task.completed_at, batch.created_at                          |
 | 25  | **Dashboard: document analytics panel**  | Language distribution, document type distribution, tag frequency (top N), documents without tags/type/language counts                                                             |
 | 26  | **Dashboard: processing health panel**   | Task success rate (completed vs failed, last 7 days), avg task duration, active batch count, orphaned batch count, missing tools count                                            |
