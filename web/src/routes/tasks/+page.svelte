@@ -119,6 +119,9 @@
 				if (row.orphaned) {
 					buttons += `<button data-resume-batch="${row.batch_id}" class="ml-1 rounded-lg bg-lapis-600 px-3 py-1 text-xs font-medium text-white hover:bg-lapis-500">Resume</button>`;
 				}
+				if (row.pending || row.processing) {
+					buttons += `<button data-cancel-batch="${row.batch_id}" class="ml-1 rounded-lg bg-terracotta-600 px-3 py-1 text-xs font-medium text-white hover:bg-terracotta-500">Cancel</button>`;
+				}
 				return buttons;
 			},
 			minWidth: '140px'
@@ -256,6 +259,15 @@
 			e.stopPropagation();
 			const batchId = resumeBtn.getAttribute('data-resume-batch');
 			api.batches.resume(batchId).then(() => {
+				batchRefreshKey++;
+			});
+			return;
+		}
+		const cancelBtn = e.target.closest('[data-cancel-batch]');
+		if (cancelBtn) {
+			e.stopPropagation();
+			const batchId = cancelBtn.getAttribute('data-cancel-batch');
+			api.batches.cancel(batchId).then(() => {
 				batchRefreshKey++;
 			});
 			return;

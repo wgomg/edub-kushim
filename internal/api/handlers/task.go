@@ -2,11 +2,13 @@ package handlers
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/api/types"
@@ -336,6 +338,66 @@ func (h *TaskHandler) ResumeBatch(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 	json.NewEncoder(w).Encode(map[string]any{
 		"resumed": true,
+	})
+}
+
+func (h *TaskHandler) CancelBatch(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := ctx.Value("reqid").(string)
+
+	batchID := r.PathValue("id")
+
+	pendingCancelled, err := h.queries.CancelPendingTasksByBatch(ctx, sql.NullString{String: batchID, Valid: true})
+	if err != nil {
+		h.logger.Error(&reqID, "cancel pending tasks for batch %s: %v", batchID, err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	bo, err := h.queries.GetBatchOwner(ctx, batchID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{
+				"batch_id":            batchID,
+				"cancelled_pending":   pendingCancelled,
+				"cancelled_processing": 0,
+				"signal_sent":         false,
+			})
+			return
+		}
+		h.logger.Error(&reqID, "get batch owner for %s: %v", batchID, err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	signalSent := false
+	processingCancelled := int64(0)
+
+	if bo.Pid > 0 {
+		killErr := syscall.Kill(int(bo.Pid), syscall.SIGTERM)
+		if killErr == nil {
+			processingCancelled, err = h.queries.CancelProcessingTasksByBatch(ctx, sql.NullString{String: batchID, Valid: true})
+			if err != nil {
+				h.logger.Error(&reqID, "cancel processing tasks for batch %s: %v", batchID, err)
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+				return
+			}
+			signalSent = true
+		}
+	}
+
+	h.queries.ReleaseBatchOwner(ctx, database.ReleaseBatchOwnerParams{
+		BatchID: batchID,
+		OwnerID: bo.OwnerID,
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"batch_id":             batchID,
+		"cancelled_pending":    pendingCancelled,
+		"cancelled_processing": processingCancelled,
+		"signal_sent":          signalSent,
 	})
 }
 

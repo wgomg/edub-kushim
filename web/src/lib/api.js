@@ -148,7 +148,8 @@ export const api = {
 		get: (batchId) => request(`/api/v1/batches/${batchId}`),
 		retry: (batchId) => request(`/api/v1/batches/${batchId}/retry`, { method: 'POST' }),
 		resume: (batchId) =>
-			request(`/api/v1/batches/${batchId}/resume`, { method: 'POST' }).then((data) => data ?? {})
+			request(`/api/v1/batches/${batchId}/resume`, { method: 'POST' }).then((data) => data ?? {}),
+		cancel: (batchId) => request(`/api/v1/batches/${batchId}/cancel`, { method: 'POST' })
 	},
 
 	summary: {

@@ -1058,6 +1058,40 @@ Response `200`:
 }
 ```
 
+### Batch Cancel
+
+```
+POST /api/v1/batches/{batchID}/cancel
+```
+
+Cancels a running batch. Pending tasks are marked as `cancelled` in the
+database and a `SIGTERM` is sent to the worker process currently processing
+the batch. Any task that was in-flight at the moment of cancellation is also
+marked as `cancelled`. Idempotent — calling cancel on an already‑settled
+batch returns 200 with zero counts.
+
+Response `200`:
+
+```json
+{
+  "batch_id": "550e8400-e29b-41d4-a716-446655440000",
+  "cancelled_pending": 5,
+  "cancelled_processing": 1,
+  "signal_sent": true
+}
+```
+
+If the worker process is no longer running:
+
+```json
+{
+  "batch_id": "550e8400-e29b-41d4-a716-446655440000",
+  "cancelled_pending": 5,
+  "cancelled_processing": 0,
+  "signal_sent": false
+}
+```
+
 ### Global Summary
 
 ```

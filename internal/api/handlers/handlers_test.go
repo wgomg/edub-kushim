@@ -542,6 +542,84 @@ func TestTaskEndpoints(t *testing.T) {
 			t.Fatal("expected non-negative batch count")
 		}
 	})
+
+	t.Run("cancel nonexistent batch", func(t *testing.T) {
+		w := rec()
+		r := req(t, "POST", "/api/v1/batches/nonexistent-batch/cancel", nil)
+		r.SetPathValue("id", "nonexistent-batch")
+		h.CancelBatch(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var resp map[string]any
+		json.NewDecoder(w.Body).Decode(&resp)
+		testutil.AssertEqual(t, resp["batch_id"], "nonexistent-batch", "batch_id")
+		testutil.AssertEqual(t, resp["cancelled_pending"], float64(0), "cancelled_pending")
+		testutil.AssertEqual(t, resp["cancelled_processing"], float64(0), "cancelled_processing")
+		testutil.AssertEqual(t, resp["signal_sent"], false, "signal_sent")
+	})
+
+	t.Run("cancel batch with pending tasks", func(t *testing.T) {
+		batchID := "cancel-pending-test"
+		_, err := env.client.CreateBatch(ctx, database.CreateBatchParams{ID: batchID, Source: "test"})
+		testutil.AssertNoError(t, err, "create batch")
+
+		_, err = env.client.CreateTask(ctx, database.CreateTaskParams{
+			TaskID: "cancel-pend-1", TaskType: "consume", Status: "pending",
+			BatchID: sql.NullString{String: batchID, Valid: true},
+			Payload: []byte(`{}`),
+		})
+		testutil.AssertNoError(t, err, "create pending task")
+
+		w := rec()
+		r := req(t, "POST", "/api/v1/batches/"+batchID+"/cancel", nil)
+		r.SetPathValue("id", batchID)
+		h.CancelBatch(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var resp map[string]any
+		json.NewDecoder(w.Body).Decode(&resp)
+		testutil.AssertEqual(t, resp["batch_id"], batchID, "batch_id")
+		testutil.AssertEqual(t, resp["cancelled_pending"], float64(1), "cancelled_pending")
+		testutil.AssertEqual(t, resp["cancelled_processing"], float64(0), "cancelled_processing")
+		testutil.AssertEqual(t, resp["signal_sent"], false, "signal_sent")
+	})
+
+	t.Run("cancel batch with dead owner", func(t *testing.T) {
+		batchID := "cancel-dead-owner"
+		_, err := env.client.CreateBatch(ctx, database.CreateBatchParams{ID: batchID, Source: "test"})
+		testutil.AssertNoError(t, err, "create batch")
+
+		_, err = env.client.CreateTask(ctx, database.CreateTaskParams{
+			TaskID: "cancel-dead-1", TaskType: "consume", Status: "pending",
+			BatchID: sql.NullString{String: batchID, Valid: true},
+			Payload: []byte(`{}`),
+		})
+		testutil.AssertNoError(t, err, "create pending task")
+
+		// Insert a batch owner with a PID that won't exist in this process namespace.
+		_, err = env.client.TryInsertBatchOwner(ctx, database.TryInsertBatchOwnerParams{
+			BatchID: batchID, OwnerID: "cancel-test-owner",
+			Pid: int64(999999),
+		})
+		testutil.AssertNoError(t, err, "insert dead batch owner")
+
+		w := rec()
+		r := req(t, "POST", "/api/v1/batches/"+batchID+"/cancel", nil)
+		r.SetPathValue("id", batchID)
+		h.CancelBatch(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var resp map[string]any
+		json.NewDecoder(w.Body).Decode(&resp)
+		testutil.AssertEqual(t, resp["batch_id"], batchID, "batch_id")
+		testutil.AssertEqual(t, resp["cancelled_pending"], float64(1), "cancelled_pending")
+		testutil.AssertEqual(t, resp["cancelled_processing"], float64(0), "cancelled_processing")
+		testutil.AssertEqual(t, resp["signal_sent"], false, "signal_sent")
+
+		// Verify the batch owner row was released.
+		_, err = env.client.GetBatchOwner(ctx, batchID)
+		testutil.AssertError(t, err, "batch owner should be released")
+	})
 }
 
 func TestSavedSearchEndpoints(t *testing.T) {

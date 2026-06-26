@@ -125,6 +125,7 @@
 | `GET /api/v1/batches`                  | List batch summaries                                        |
 | `GET /api/v1/batches/{id}`             | Get single batch summary                                    |
 | `POST /api/v1/batches/{id}/resume`     | Resume batch (forks kushim worker)                          |
+| `POST /api/v1/batches/{id}/cancel`     | Cancel batch (SIGTERM worker, mark tasks cancelled)         |
 | `GET /api/v1/summary`                  | Global totals across all batches                            |
 
 ### CLI Commands
@@ -224,7 +225,7 @@
 | 18  | **Test coverage**                        | ✓ Database queries, API handlers, search engine, task system (store/runner/dispatcher/pool), consumption pipeline. ✗ Adapters, CLI commands (existing gap)                        |
 | 19  | **Document download**                    | ✓ Download individual documents from the document list table. Batch download with configurable limits (max file count and/or total accumulated size).                             |
 | 20  | **Bulk operations**                      | ✓ Batch delete, batch tag assignment                                                                                                                                                |
-| 21  | **Batch cancel API endpoint**            | `POST /api/v1/batches/{id}/cancel` — expose `kushim consume cancel` through the API                                                                                               |
+| 21  | **Batch cancel API endpoint**            | ✓ `POST /api/v1/batches/{id}/cancel` — expose `kushim consume cancel` through the API                                                                                            |
 | 22  | **Post-classification notification**     | Optional webhook or websocket event when a classification batch completes                                                                                                         |
 | 23  | **Dashboard enhancements**               | Storage usage trend, recent batch status, activity timeline                                                                                                                       |
 | 24  | **Authentication and user management**   | Login, API keys, roles                                                                                                                                                            |
