@@ -1,6 +1,7 @@
 <script>
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
+	import { RETRY_ICON, RESUME_ICON, CANCEL_ICON, actionButton } from '$lib/icons.js';
 	import { escapeHtml } from '$lib/utils/html.js';
 	import { api } from '$lib/api';
 	import DataTable from '$lib/components/DataTable.svelte';
@@ -111,20 +112,29 @@
 			key: 'actions',
 			label: 'Actions',
 			sortable: false,
+			cellClass: 'whitespace-nowrap',
 			cell: (_v, row) => {
 				let buttons = '';
 				if (row.failed) {
-					buttons += `<button data-retry-batch="${row.batch_id}" class="rounded-lg bg-terracotta-600 px-3 py-1 text-xs font-medium text-white hover:bg-terracotta-500">Retry</button>`;
+					buttons += actionButton(RETRY_ICON, 'Retry', 'text-parchment-400 hover:text-gold-500', {
+						'data-retry-batch': row.batch_id
+					});
 				}
 				if (row.orphaned) {
-					buttons += `<button data-resume-batch="${row.batch_id}" class="ml-1 rounded-lg bg-lapis-600 px-3 py-1 text-xs font-medium text-white hover:bg-lapis-500">Resume</button>`;
+					buttons += actionButton(RESUME_ICON, 'Resume', 'text-parchment-400 hover:text-gold-500', {
+						'data-resume-batch': row.batch_id
+					});
 				}
 				if (row.pending || row.processing) {
-					buttons += `<button data-cancel-batch="${row.batch_id}" class="ml-1 rounded-lg bg-terracotta-600 px-3 py-1 text-xs font-medium text-white hover:bg-terracotta-500">Cancel</button>`;
+					buttons += actionButton(
+						CANCEL_ICON,
+						'Cancel',
+						'text-parchment-400 hover:text-terracotta-500',
+						{ 'data-cancel-batch': row.batch_id }
+					);
 				}
 				return buttons;
-			},
-			minWidth: '140px'
+			}
 		}
 	];
 
@@ -154,7 +164,7 @@
 				}
 				if (row.file_name) {
 					parts.push(
-						`<span class="text-parchment-400 text-xs">file:</span> <span class="text-parchment-200">${escapeHtml(row.file_name)}</span>`
+						`<span class="text-parchment-400 text-xs">file:</span> <span class="text-parchment-200 break-all" title="${escapeHtml(row.file_name)}">${escapeHtml(row.file_name)}</span>`
 					);
 				} else {
 					parts.push(`<span class="text-parchment-500 italic">no file</span>`);
@@ -204,11 +214,13 @@
 			key: 'actions',
 			label: 'Actions',
 			sortable: false,
+			cellClass: 'whitespace-nowrap',
 			cell: (_v, row) => {
 				if (row.status !== 'failed') return '';
-				return `<button data-retry-task="${row.task_id}" class="rounded-lg bg-gold-500 px-3 py-1 text-xs font-medium text-clay-950 hover:bg-gold-600">Retry</button>`;
-			},
-			minWidth: '100px'
+				return actionButton(RETRY_ICON, 'Retry', 'text-parchment-400 hover:text-gold-500', {
+					'data-retry-task': row.task_id
+				});
+			}
 		}
 	];
 

@@ -8,6 +8,7 @@
 	import { setPersonTypes } from '$lib/stores/searchFilter.js';
 	import { onMount } from 'svelte';
 	import { escapeHtml } from '$lib/utils/html.js';
+	import { DOWNLOAD_ICON } from '$lib/icons.js';
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
 
@@ -101,7 +102,7 @@
 				sortable: false,
 				width: '50px',
 				cell: (_, row) =>
-					`<a href="/api/v1/documents/${row.id}/file?download=true" class="inline-flex items-center justify-center rounded-md p-1.5 text-parchment-500 hover:text-gold-500 hover:bg-clay-800 transition-colors" title="Download PDF">&darr;</a>`
+					`<a href="/api/v1/documents/${row.id}/file?download=true" class="inline-flex items-center justify-center rounded-md p-1.5 text-parchment-500 hover:text-gold-500 hover:bg-clay-800 transition-colors" title="Download PDF">${DOWNLOAD_ICON}</a>`
 			}
 		);
 

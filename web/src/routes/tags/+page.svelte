@@ -1,6 +1,7 @@
 <script>
 	import DataTable from '$lib/components/DataTable.svelte';
 	import Modal from '$lib/components/Modal.svelte';
+	import { EDIT_ICON, DELETE_ICON, actionButton } from '$lib/icons.js';
 	import { escapeHtml } from '$lib/utils/html.js';
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
@@ -24,11 +25,11 @@
 			key: 'actions',
 			label: 'Actions',
 			sortable: false,
-			width: '160px',
+			cellClass: 'whitespace-nowrap',
 			cell: (_v, row) => {
 				const safeName = escapeHtml(row.name);
-				return `<button data-edit-tag="${row.id}" data-tag-name="${safeName}" class="rounded-md px-2 py-1 text-xs font-medium text-parchment-400 hover:bg-clay-800">Edit</button>
-<button data-delete-tag="${row.id}" data-tag-name="${safeName}" class="rounded-md px-2 py-1 text-xs font-medium text-terracotta-500 hover:bg-clay-800">Delete</button>`;
+				return `${actionButton(EDIT_ICON, 'Edit', 'text-parchment-400 hover:text-gold-500', { 'data-edit-tag': row.id, 'data-tag-name': safeName })}
+${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-500', { 'data-delete-tag': row.id, 'data-tag-name': safeName })}`;
 			}
 		}
 	];

@@ -131,12 +131,14 @@
 									<div class="flex-1">
 										<div class="flex justify-between text-sm">
 											<span class="truncate text-parchment-200">{shortMime(item.mime_type)}</span>
-											<span class="shrink-0 text-parchment-500">{formatSize(item.total_bytes)}</span>
+											<span class="shrink-0 text-parchment-500">{formatSize(item.total_bytes)}</span
+											>
 										</div>
 										<div class="mt-1 h-2 w-full rounded-full bg-clay-800">
 											<div
 												class="h-2 rounded-full transition-all"
-												style="width: {(item.total_bytes / maxTypeBytes()) * 100}%; background-color: {chartColors[i % chartColors.length]}"
+												style="width: {(item.total_bytes / maxTypeBytes()) *
+													100}%; background-color: {chartColors[i % chartColors.length]}"
 											></div>
 										</div>
 									</div>
@@ -147,8 +149,8 @@
 							<table class="w-full text-sm">
 								<thead>
 									<tr class="border-b border-clay-800 text-left text-parchment-500">
-										<th class="pb-2 pr-4 font-medium">Type</th>
-										<th class="pb-2 pr-4 font-medium">Count</th>
+										<th class="pr-4 pb-2 font-medium">Type</th>
+										<th class="pr-4 pb-2 font-medium">Count</th>
 										<th class="pb-2 font-medium">Size</th>
 									</tr>
 								</thead>

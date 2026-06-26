@@ -1,6 +1,7 @@
 <script>
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
+	import { EDIT_ICON, DELETE_ICON, BTN_BASE } from '$lib/icons.js';
 	import Modal from '$lib/components/Modal.svelte';
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
@@ -97,7 +98,7 @@
 				<tr>
 					<th class="px-4 py-3 font-medium whitespace-nowrap">Name</th>
 					<th class="px-4 py-3 font-medium whitespace-nowrap">Description</th>
-					<th class="w-40 px-4 py-3 font-medium whitespace-nowrap">Actions</th>
+					<th class="w-[1%] px-4 py-3 font-medium whitespace-nowrap">Actions</th>
 				</tr>
 			</thead>
 			<tbody class="divide-y divide-clay-800">
@@ -110,19 +111,21 @@
 						<tr class="bg-clay-950">
 							<td class="px-4 py-3 text-parchment-200">{dt.name}</td>
 							<td class="px-4 py-3 text-parchment-400">{dt.description || ''}</td>
-							<td class="px-4 py-3">
+							<td class="px-4 py-3 whitespace-nowrap">
 								<div class="flex gap-2">
 									<button
 										onclick={() => openEdit(dt)}
-										class="rounded-md px-2 py-1 text-xs font-medium text-parchment-400 hover:bg-clay-800"
+										title="Edit"
+										class="{BTN_BASE} text-parchment-400 hover:text-gold-500"
 									>
-										Edit
+										{@html EDIT_ICON}
 									</button>
 									<button
 										onclick={() => handleDelete(dt)}
-										class="rounded-md px-2 py-1 text-xs font-medium text-terracotta-500 hover:bg-clay-800"
+										title="Delete"
+										class="{BTN_BASE} text-parchment-400 hover:text-terracotta-500"
 									>
-										Delete
+										{@html DELETE_ICON}
 									</button>
 								</div>
 							</td>

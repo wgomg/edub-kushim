@@ -12,7 +12,12 @@
 		if (!dateStr) return '—';
 		try {
 			const d = new Date(dateStr);
-			return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+			return d.toLocaleDateString(undefined, {
+				month: 'short',
+				day: 'numeric',
+				hour: '2-digit',
+				minute: '2-digit'
+			});
 		} catch {
 			return dateStr;
 		}
@@ -76,15 +81,21 @@
 							<td class="px-4 py-3 text-parchment-400">{formatDuration(batch.duration_ms)}</td>
 							<td class="px-4 py-3">
 								{#if batch.orphaned}
-									<span class="inline-block rounded-full bg-terracotta-500/20 px-2 py-0.5 text-xs font-medium text-terracotta-400">
+									<span
+										class="text-terracotta-400 inline-block rounded-full bg-terracotta-500/20 px-2 py-0.5 text-xs font-medium"
+									>
 										orphan
 									</span>
 								{:else if batch.owner_state === 'live'}
-									<span class="inline-block rounded-full bg-emerald-500/20 px-2 py-0.5 text-xs font-medium text-emerald-400">
+									<span
+										class="inline-block rounded-full bg-emerald-500/20 px-2 py-0.5 text-xs font-medium text-emerald-400"
+									>
 										live
 									</span>
 								{:else if batch.owner_state === 'stale'}
-									<span class="inline-block rounded-full bg-amber-400/20 px-2 py-0.5 text-xs font-medium text-amber-400">
+									<span
+										class="inline-block rounded-full bg-amber-400/20 px-2 py-0.5 text-xs font-medium text-amber-400"
+									>
 										stale
 									</span>
 								{:else}
