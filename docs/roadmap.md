@@ -224,18 +224,17 @@
 | 17  | **Integration test**                     | ✓ End-to-end consumption test (mock runner), DB CRUD, search, task system, API handlers — covering database queries, search engine, pool, enrichment flow                         |
 | 18  | **Test coverage**                        | ✓ Database queries, API handlers, search engine, task system (store/runner/dispatcher/pool), consumption pipeline. ✗ Adapters, CLI commands (existing gap)                        |
 | 19  | **Document download**                    | ✓ Download individual documents from the document list table. Batch download with configurable limits (max file count and/or total accumulated size).                             |
-| 20  | **Bulk operations**                      | ✓ Batch delete, batch tag assignment                                                                                                                                                |
-| 21  | **Batch cancel API endpoint**            | ✓ `POST /api/v1/batches/{id}/cancel` — expose `kushim consume cancel` through the API                                                                                            |
-| 22  | **Post-classification notification**     | Optional webhook or websocket event when a classification batch completes                                                                                                         |
-| 23  | **Dashboard enhancements**               | Storage usage trend, recent batch status, activity timeline                                                                                                                       |
-| 24  | **Authentication and user management**   | Login, API keys, roles                                                                                                                                                            |
-| 25  | **Document notes/comments**              | User-added notes and annotations on documents                                                                                                                                     |
-| 26  | **Pre-built binaries**                   | Release binaries for major platforms (Linux amd64/arm64)                                                                                                                          |
-| 27  | **MySQL / MariaDB database backend**     | Additional database backend support                                                                                                                                               |
-| 28  | **User preferences**                     | Theme, pagination defaults, notification settings                                                                                                                                 |
-| 29  | **Email ingestion**                      | IMAP inbox scanning                                                                                                                                                               |
-| 30  | **Document relationships**               | Parent/child, cross-references between documents                                                                                                                                  |
-| 31  | **Contributing guide & issue templates** | `CONTRIBUTING.md`, issue/PR templates, and GitHub community setup to encourage contributions                                                                                      |
+| 20  | **Bulk operations**                      | ✓ Batch delete, batch tag assignment                                                                                                                                              |
+| 21  | **Batch cancel API endpoint**            | ✓ `POST /api/v1/batches/{id}/cancel` — expose `kushim consume cancel` through the API                                                                                             |
+| 22  | **Dashboard enhancements**               | Storage usage trend, recent batch status, activity timeline                                                                                                                       |
+| 23  | **Authentication and user management**   | Login, API keys, roles                                                                                                                                                            |
+| 24  | **Document notes/comments**              | User-added notes and annotations on documents                                                                                                                                     |
+| 25  | **Pre-built binaries**                   | Release binaries for major platforms (Linux amd64/arm64)                                                                                                                          |
+| 26  | **MySQL / MariaDB database backend**     | Additional database backend support                                                                                                                                               |
+| 27  | **User preferences**                     | Theme, pagination defaults, notification settings                                                                                                                                 |
+| 28  | **Email ingestion**                      | IMAP inbox scanning                                                                                                                                                               |
+| 29  | **Document relationships**               | Parent/child, cross-references between documents                                                                                                                                  |
+| 30  | **Contributing guide & issue templates** | `CONTRIBUTING.md`, issue/PR templates, and GitHub community setup to encourage contributions                                                                                      |
 
 ---
 
@@ -243,11 +242,12 @@
 
 Low-priority items worth revisiting when nothing more impactful demands attention.
 
-| #   | Feature                                     | Description                                                                                                                                                                                           |
-| --- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | **Double tokenization in chunked encoding** | `Encode()` and `encodeChunked()` redundantly tokenize the same text; per-chunk decode→re-encode round-trip adds unnecessary overhead. See [report](research/double-tokenization-chunked-encoding.md). |
-| 2   | **External search engine**                  | ZincSearch or Meilisearch integration for large-scale search                                                                                                                                          |
-| 3   | **Metrics and monitoring**                  | Prometheus endpoints, structured metrics                                                                                                                                                              |
+| #   | Feature                                     | Description                                                                                                                                                                                               |
+| --- | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **Double tokenization in chunked encoding** | `Encode()` and `encodeChunked()` redundantly tokenize the same text; per-chunk decode→re-encode round-trip adds unnecessary overhead. See [report](research/double-tokenization-chunked-encoding.md).     |
+| 2   | **External search engine**                  | ZincSearch or Meilisearch integration for large-scale search                                                                                                                                              |
+| 3   | **Metrics and monitoring**                  | Prometheus endpoints, structured metrics                                                                                                                                                                  |
+| 4   | **Post-classification notification**        | Optional webhook or websocket event when a classification batch completes. Deferred: lacks auth, multi-tenancy, and notification infrastructure. A long-polling wait endpoint is a preferable first step. |
 
 ---
 
