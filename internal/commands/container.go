@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/wgomg/edub-kushim/internal"
+	types "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/configtask"
 	"github.com/wgomg/edub-kushim/internal/consumption"
@@ -26,6 +26,7 @@ type Container struct {
 	config     *config.Config
 	logger     *utils.Logger
 	db         *sql.DB
+	client     *database.Client
 	engine     *search.Engine
 	dispatcher *task.Dispatcher
 	runner     *task.Runner
@@ -65,6 +66,18 @@ func (c *Container) GetDB() (*sql.DB, error) {
 	return c.db, nil
 }
 
+func (c *Container) GetClient() (*database.Client, error) {
+	if c.client != nil {
+		return c.client, nil
+	}
+	db, err := c.GetDB()
+	if err != nil {
+		return nil, err
+	}
+	c.client = database.NewClient(db)
+	return c.client, nil
+}
+
 func (c *Container) socketPath() string {
 	return filepath.Join(c.config.App.ConfigDir, "kushim-hugot.sock")
 }
@@ -74,44 +87,42 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 		return c.dispatcher, nil
 	}
 
-	db, err := c.GetDB()
+	client, err := c.GetClient()
 	if err != nil {
 		return nil, err
 	}
 
-	queries := database.NewQueries(db)
-
 	matcherClient := tagmatch.NewMatcherClient(c.socketPath())
 
-	tagSvc, err := service.NewTag(queries, c.logger, matcherClient)
+	tagSvc, err := service.NewTag(client.Queries, c.logger, matcherClient)
 	if err != nil {
 		return nil, fmt.Errorf("tag service: %w", err)
 	}
 
-	peopleSvc := service.NewPeople(database.NewQueries(db), c.logger)
-	peopleTypeSvc := service.NewPeopleType(database.NewQueries(db), c.logger)
-	docTypeSvc := service.NewDocumentType(database.NewQueries(db), c.logger)
+	peopleSvc := service.NewPeople(client.Queries, c.logger)
+	peopleTypeSvc := service.NewPeopleType(client.Queries, c.logger)
+	docTypeSvc := service.NewDocumentType(client.Queries, c.logger)
 
 	c.services = &types.CrudServices{
 		Tag: tagSvc, People: peopleSvc, PeopleType: peopleTypeSvc, DocumentType: docTypeSvc,
 	}
 
-	store := task.NewStore(database.NewQueries(db))
+	store := task.NewStore(client.Queries)
 	c.store = store
 
-	consumer, err := consumption.NewConsumer(c.config, c.logger, db)
+	consumer, err := consumption.NewConsumer(c.config, c.logger, client)
 	if err != nil {
 		return nil, err
 	}
 
-	enricher, err := enrichment.NewEnricher(c.config, c.logger, db, c.services, matcherClient)
+	enricher, err := enrichment.NewEnricher(c.config, c.logger, client.Queries, c.services, matcherClient)
 	if err != nil {
 		return nil, err
 	}
 
 	registry := task.NewRegistry()
 	registry.Register("consume", taskhandlers.NewConsumeTaskHandler(consumer, store, c.logger))
-	registry.Register("enrich", taskhandlers.NewEnrichTaskHandler(enricher, c.logger))
+	registry.Register("enrich", taskhandlers.NewEnrichTaskHandler(enricher, client.Queries, c.logger))
 	registry.Register("config", configtask.NewConfigTaskHandler(c.logger))
 
 	c.dispatcher = task.NewDispatcher(c.logger, store, registry)
@@ -174,11 +185,11 @@ func (c *Container) GetPool(taskType string) (*pool.Pool, error) {
 
 func (c *Container) GetSearchEngine() (*search.Engine, error) {
 	if c.engine == nil {
-		db, err := c.GetDB()
+		client, err := c.GetClient()
 		if err != nil {
 			return nil, err
 		}
-		c.engine = search.NewEngine(c.logger, db)
+		c.engine = search.NewEngine(c.logger, client.Queries)
 	}
 	return c.engine, nil
 }

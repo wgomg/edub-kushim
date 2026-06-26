@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/task"
 )
 
@@ -64,12 +63,12 @@ func taskListHandler(c *Container, args []string) error {
 		limit = 20
 	}
 
-	db, err := c.GetDB()
+	client, err := c.GetClient()
 	if err != nil {
 		return fmt.Errorf("database: %w", err)
 	}
 
-	tasks, err := task.ListFiltered(context.Background(), database.NewQueries(db), task.TaskFilter{
+	tasks, err := task.ListFiltered(context.Background(), client.Queries, task.TaskFilter{
 		BatchID:  batchID,
 		Status:   statusFilter,
 		TaskType: taskTypeFilter,
@@ -123,12 +122,12 @@ func taskStatusHandler(c *Container, args []string) error {
 		return nil
 	}
 
-	db, err := c.GetDB()
+	client, err := c.GetClient()
 	if err != nil {
 		return fmt.Errorf("database: %w", err)
 	}
 
-	t, err := task.Get(context.Background(), database.NewQueries(db), args[0])
+	t, err := task.Get(context.Background(), client.Queries, args[0])
 	if err != nil {
 		if errors.Is(err, task.ErrTaskNotFound) {
 			return fmt.Errorf("task %q not found", args[0])
@@ -206,12 +205,12 @@ func taskRetryHandler(c *Container, args []string) error {
 		return nil
 	}
 
-	db, err := c.GetDB()
+	client, err := c.GetClient()
 	if err != nil {
 		return fmt.Errorf("database: %w", err)
 	}
 
-	if err := task.Retry(context.Background(), database.NewQueries(db), args[0]); err != nil {
+	if err := task.Retry(context.Background(), client.Queries, args[0]); err != nil {
 		return err
 	}
 

@@ -38,7 +38,7 @@ var _ runner = (*tools.Runner)(nil)
 type Consumer struct {
 	config *config.Config
 	logger *utils.Logger
-	db     *sql.DB
+	client *database.Client
 	runner runner
 }
 
@@ -60,7 +60,7 @@ type File struct {
 	PageCount            int
 }
 
-func NewConsumer(cfg *config.Config, logger *utils.Logger, db *sql.DB) (*Consumer, error) {
+func NewConsumer(cfg *config.Config, logger *utils.Logger, client *database.Client) (*Consumer, error) {
 	if cfg.Consumer.PdfOptimizer.Fallback != "" {
 		if _, err := pdfoptimizer.NewPdfOptimizer(logger, config.ToolConfig{
 			Command: cfg.Consumer.PdfOptimizer.Fallback,
@@ -75,16 +75,16 @@ func NewConsumer(cfg *config.Config, logger *utils.Logger, db *sql.DB) (*Consume
 	return &Consumer{
 		config: cfg,
 		logger: logger,
-		db:     db,
+		client: client,
 		runner: tools.NewRunner(logger, cfg, []string{"textextractor", "ocr", "pdfoptimizer"}),
 	}, nil
 }
 
-func NewConsumerWithRunner(cfg *config.Config, logger *utils.Logger, db *sql.DB, runner runner) (*Consumer, error) {
+func NewConsumerWithRunner(cfg *config.Config, logger *utils.Logger, client *database.Client, runner runner) (*Consumer, error) {
 	return &Consumer{
 		config: cfg,
 		logger: logger,
-		db:     db,
+		client: client,
 		runner: runner,
 	}, nil
 }
@@ -138,7 +138,7 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 	)
 	file.StorageOriginalPath = &storeOriginalPath
 
-	tx, err := c.db.BeginTx(txCtx, nil)
+	tx, err := 	c.client.BeginTx(txCtx, nil)
 	if err != nil {
 		return file, fmt.Errorf("failed to begin database transaction: %w", err)
 	}
@@ -169,8 +169,8 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 	// file.MD5Checksum = md5Hash
 	// file.SHA512Checksum = sha512Hash
 
-	queries := database.NewQueries(c.db).WithTx(tx)
-	result, err := queries.CreateDocument(txCtx, database.CreateDocumentParams{
+	tq := c.client.WithTx(tx)
+	result, err := tq.CreateDocument(txCtx, database.CreateDocumentParams{
 		DocumentID:     documentID,
 		Title:          file.Name,
 		Md5Checksum:    file.MD5Checksum,
@@ -215,7 +215,7 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 	c.logger.Debug(&documentID, "Original path: %s", *file.StorageOriginalPath)
 	c.logger.Debug(&documentID, "Processed path: %s", *file.StorageProcessedPath)
 
-	err = queries.UpdateDocumentPaths(txCtx, database.UpdateDocumentPathsParams{
+	err = tq.UpdateDocumentPaths(txCtx, database.UpdateDocumentPathsParams{
 		OriginalPath: *file.StorageOriginalPath,
 		StoragePath:  *file.StorageProcessedPath,
 		DocumentID:   documentID,
@@ -309,9 +309,7 @@ func (c *Consumer) isDuplicate(ctx context.Context, path string) (bool, error) {
 	dupCtx, dupCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer dupCancel()
 
-	queries := database.NewQueries(c.db)
-
-	md5Result, err := queries.GetDocumentByMD5Checksum(dupCtx, md5sum)
+	md5Result, err := c.client.GetDocumentByMD5Checksum(dupCtx, md5sum)
 	if err != nil {
 		return false, err
 	}
@@ -325,7 +323,7 @@ func (c *Consumer) isDuplicate(ctx context.Context, path string) (bool, error) {
 		return false, err
 	}
 
-	_, err = queries.GetDocumentBySHA512Checksum(dupCtx, sha512sum)
+	_, err = c.client.GetDocumentBySHA512Checksum(dupCtx, sha512sum)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, nil

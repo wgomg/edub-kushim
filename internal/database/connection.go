@@ -45,6 +45,3 @@ func NewSQLiteDB(path, name string) (*sql.DB, error) {
 	return db, nil
 }
 
-func NewQueries(db *sql.DB) *Queries {
-	return New(db)
-}

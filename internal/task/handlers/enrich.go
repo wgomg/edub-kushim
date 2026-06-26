@@ -13,11 +13,12 @@ import (
 
 type EnrichTaskHandler struct {
 	enricher *enrichment.Enricher
+	queries  *database.Queries
 	logger   *utils.Logger
 }
 
-func NewEnrichTaskHandler(enricher *enrichment.Enricher, logger *utils.Logger) *EnrichTaskHandler {
-	return &EnrichTaskHandler{enricher: enricher, logger: logger}
+func NewEnrichTaskHandler(enricher *enrichment.Enricher, queries *database.Queries, logger *utils.Logger) *EnrichTaskHandler {
+	return &EnrichTaskHandler{enricher: enricher, queries: queries, logger: logger}
 }
 
 func (h *EnrichTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMessage, error) {
@@ -28,10 +29,7 @@ func (h *EnrichTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMe
 		return nil, fmt.Errorf("unmarshal enrich payload: %w", err)
 	}
 
-	db := h.enricher.GetDb()
-	queries := database.NewQueries(db)
-
-	document, err := queries.GetDocument(ctx, p.DocumentID)
+	document, err := h.queries.GetDocument(ctx, p.DocumentID)
 	if err != nil {
 		return nil, fmt.Errorf("document %s not found", p.DocumentID)
 	}

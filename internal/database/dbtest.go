@@ -43,6 +43,14 @@ func NewTestQueries(t TB) (*Queries, *sql.DB) {
 	return New(db), db
 }
 
+// NewTestClient creates a Client from an in-memory test DB.
+// The caller must close the underlying DB with client.DB().Close().
+func NewTestClient(t TB) *Client {
+	t.Helper()
+	q, db := NewTestQueries(t)
+	return &Client{Queries: q, db: db}
+}
+
 // CreateTestDocument inserts a basic document into the database and returns
 // its auto-increment ID and UUID. Uses the first seeded document type.
 func CreateTestDocument(t TB, queries *Queries, title string) (int64, string) {

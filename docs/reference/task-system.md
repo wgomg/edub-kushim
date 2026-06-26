@@ -118,10 +118,10 @@
 
 ### Struct
 
-- `EnrichTaskHandler` — `enricher *enrichment.Enricher`
+- `EnrichTaskHandler` — `enricher *enrichment.Enricher`, `queries *database.Queries`
   - **Methods**:
-    - `NewEnrichTaskHandler(enricher) *EnrichTaskHandler`
-    - `Handle(ctx, t) (json.RawMessage, error)` — Unmarshals `{"document_id":"<uuid>"}`, calls `enricher.GetDb()` + `GetDocument` (lookup by UUID), then `enricher.Enrich`
+    - `NewEnrichTaskHandler(enricher, queries) *EnrichTaskHandler`
+    - `Handle(ctx, t) (json.RawMessage, error)` — Unmarshals `{"document_id":"<uuid>"}`, calls `h.queries.GetDocument` (lookup by UUID), then `enricher.Enrich`
     - `DedupKey(payload) string` — Returns `"enrich:doc:<uuid>"` or empty string
 
 ## `configtask` (`internal/configtask/configtask.go`)

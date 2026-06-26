@@ -77,11 +77,10 @@ func consumeHandler(c *Container, args []string) error {
 		return fmt.Errorf("failed to get pool: %w", err)
 	}
 
-	db, err := c.GetDB()
+	client, err := c.GetClient()
 	if err != nil {
 		return fmt.Errorf("failed to get database: %w", err)
 	}
-	queries := database.NewQueries(db)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -97,12 +96,11 @@ func consumeHandler(c *Container, args []string) error {
 		}
 
 		ownerID := uuid.New().String()
-		owner := task.NewOwner(queries, ownerID, os.Getpid(), c.logger)
+		owner := task.NewOwner(client.Queries, ownerID, os.Getpid(), c.logger)
 
 		if err := owner.Acquire(ctx, batchIDParam, task.StaleAfter); err == task.ErrBatchLocked {
 			if !force {
-				// Get current owner PID for message
-				bo, boErr := queries.GetBatchOwner(ctx, batchIDParam)
+				bo, boErr := client.GetBatchOwner(ctx, batchIDParam)
 				if boErr == nil {
 					return fmt.Errorf("batch %s is being processed by PID %d (use --force to override)", batchIDParam, bo.Pid)
 				}
@@ -134,7 +132,7 @@ func consumeHandler(c *Container, args []string) error {
 		hb := task.NewHeartbeat(owner, heartbeatInterval, c.logger)
 		hb.Start(ctx)
 
-		err = pollBatch(ctx, queries, p, ep, c.logger, batchIDParam)
+		err = pollBatch(ctx, client.Queries, p, ep, c.logger, batchIDParam)
 
 		hb.Stop()
 		relCtx, relCancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -206,7 +204,7 @@ func consumeHandler(c *Container, args []string) error {
 		fmt.Printf("Files: %d\n", enqueued)
 		fmt.Printf("Use 'kushim task list --batch %s' to track progress.\n", batchID)
 
-		queries.CreateBatch(ctx, database.CreateBatchParams{
+		client.CreateBatch(ctx, database.CreateBatchParams{
 			ID:     batchID,
 			Source: "cli",
 		})
@@ -236,9 +234,9 @@ func consumeHandler(c *Container, args []string) error {
 	}
 
 	ownerID := uuid.New().String()
-	owner := task.NewOwner(queries, ownerID, os.Getpid(), c.logger)
+	owner := task.NewOwner(client.Queries, ownerID, os.Getpid(), c.logger)
 
-	queries.CreateBatch(ctx, database.CreateBatchParams{
+	client.CreateBatch(ctx, database.CreateBatchParams{
 		ID:     batchID,
 		Source: "cli",
 	})
@@ -255,7 +253,7 @@ func consumeHandler(c *Container, args []string) error {
 	hb := task.NewHeartbeat(owner, heartbeatInterval, c.logger)
 	hb.Start(ctx)
 
-	err = pollBatch(ctx, queries, p, ep, c.logger, batchID)
+	err = pollBatch(ctx, client.Queries, p, ep, c.logger, batchID)
 
 	hb.Stop()
 	relCtx, relCancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -280,21 +278,20 @@ func consumeCancelHandler(c *Container, args []string) error {
 
 	batchID := args[0]
 
-	db, err := c.GetDB()
+	client, err := c.GetClient()
 	if err != nil {
 		return fmt.Errorf("database: %w", err)
 	}
-	queries := database.NewQueries(db)
 
 	cancelCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	count, err := queries.CancelPendingTasksByBatch(cancelCtx, sql.NullString{String: batchID, Valid: true})
+	count, err := client.CancelPendingTasksByBatch(cancelCtx, sql.NullString{String: batchID, Valid: true})
 	if err != nil {
 		return fmt.Errorf("cancel pending tasks: %w", err)
 	}
 
-	bo, err := queries.GetBatchOwner(cancelCtx, batchID)
+	bo, err := client.GetBatchOwner(cancelCtx, batchID)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			fmt.Printf("No running process found for batch %s\n", batchID)
@@ -307,7 +304,7 @@ func consumeCancelHandler(c *Container, args []string) error {
 	if !isAlive(bo.Pid) {
 		fmt.Printf("Process %d is no longer running\n", bo.Pid)
 		fmt.Printf("%d pending tasks cancelled\n", count)
-		queries.ReleaseBatchOwner(cancelCtx, database.ReleaseBatchOwnerParams{
+		client.ReleaseBatchOwner(cancelCtx, database.ReleaseBatchOwnerParams{
 			BatchID: batchID,
 			OwnerID: bo.OwnerID,
 		})
@@ -316,12 +313,12 @@ func consumeCancelHandler(c *Container, args []string) error {
 
 	syscall.Kill(int(bo.Pid), syscall.SIGTERM)
 
-	procCount, procErr := queries.CancelProcessingTasksByBatch(cancelCtx, sql.NullString{String: batchID, Valid: true})
+	procCount, procErr := client.CancelProcessingTasksByBatch(cancelCtx, sql.NullString{String: batchID, Valid: true})
 	if procErr != nil {
 		return fmt.Errorf("cancel processing tasks: %w", procErr)
 	}
 
-	queries.ReleaseBatchOwner(cancelCtx, database.ReleaseBatchOwnerParams{
+	client.ReleaseBatchOwner(cancelCtx, database.ReleaseBatchOwnerParams{
 		BatchID: batchID,
 		OwnerID: bo.OwnerID,
 	})

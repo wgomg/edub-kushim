@@ -21,16 +21,16 @@ import (
 type Enricher struct {
 	config   *config.Config
 	logger   *utils.Logger
-	db       *sql.DB
+	queries  *database.Queries
 	runner   *tools.Runner
 	services *types.CrudServices
 }
 
-func NewEnricher(cfg *config.Config, logger *utils.Logger, db *sql.DB, services *types.CrudServices, matcher tagmatcher.Matcher) (*Enricher, error) {
+func NewEnricher(cfg *config.Config, logger *utils.Logger, queries *database.Queries, services *types.CrudServices, matcher tagmatcher.Matcher) (*Enricher, error) {
 	e := &Enricher{
 		config:   cfg,
 		logger:   logger,
-		db:       db,
+		queries:  queries,
 		services: services,
 		runner:   tools.NewRunnerWithMatcher(logger, cfg, []string{"textreducer", "contentanalyzer", "tagmatcher"}, matcher),
 	}
@@ -72,13 +72,11 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 		}
 	}
 
-	queries := database.NewQueries(e.db)
-
-	docTypes, err := queries.ListAllDocumentTypes(ctx)
+	docTypes, err := e.queries.ListAllDocumentTypes(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve document types: %w", err)
 	}
-	peopleTypes, err := queries.ListAllPeopleTypes(ctx)
+	peopleTypes, err := e.queries.ListAllPeopleTypes(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve people types: %w", err)
 	}
@@ -135,7 +133,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 	}
 	docTypeID := docTypeMap[analysis.DocType]
 
-	if err := queries.UpdateDocumentMetadata(ctx, database.UpdateDocumentMetadataParams{
+	if err := e.queries.UpdateDocumentMetadata(ctx, database.UpdateDocumentMetadataParams{
 		Title:          analysis.Title,
 		DocumentTypeID: docTypeID,
 		Language:       analysis.Language,
@@ -162,11 +160,11 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 		}
 	}
 
-	if err := queries.ClearDocumentTags(ctx, document.ID); err != nil {
+	if err := e.queries.ClearDocumentTags(ctx, document.ID); err != nil {
 		return nil, fmt.Errorf("clear document tags: %w", err)
 	}
 	for _, tagID := range tagIDs {
-		if err := queries.AddDocumentTag(ctx, database.AddDocumentTagParams{
+		if err := e.queries.AddDocumentTag(ctx, database.AddDocumentTagParams{
 			DocumentID: document.ID,
 			TagID:      tagID,
 		}); err != nil {
@@ -174,7 +172,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 		}
 	}
 
-	existingPeople, err := queries.ListAllPeople(ctx)
+	existingPeople, err := e.queries.ListAllPeople(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list existing people: %w", err)
 	}
@@ -194,7 +192,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 			if nameNative != "" {
 				nameNativeArg = sql.NullString{String: nameNative, Valid: true}
 			}
-			result, err := queries.CreatePeople(ctx, database.CreatePeopleParams{
+			result, err := e.queries.CreatePeople(ctx, database.CreatePeopleParams{
 				Name:       canonicalName,
 				NameNative: nameNativeArg,
 			})
@@ -206,7 +204,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 			id, _ = result.LastInsertId()
 			peopleMap[normalized] = id
 		} else if nameNative != "" {
-			if err := queries.UpdatePeopleNative(ctx, database.UpdatePeopleNativeParams{
+			if err := e.queries.UpdatePeopleNative(ctx, database.UpdatePeopleNativeParams{
 				NameNative: sql.NullString{String: nameNative, Valid: true},
 				ID:         id,
 			}); err != nil {
@@ -216,7 +214,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 		peopleIDs = append(peopleIDs, id)
 	}
 
-	if err := queries.ClearDocumentPeople(ctx, document.ID); err != nil {
+	if err := e.queries.ClearDocumentPeople(ctx, document.ID); err != nil {
 		return nil, fmt.Errorf("clear document people: %w", err)
 	}
 
@@ -232,7 +230,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 	for i, peopleID := range peopleIDs {
 		typeName := analysis.People[i].Type
 		typeID := peopleTypeMap[typeName]
-		if err := queries.AddDocumentPeople(ctx, database.AddDocumentPeopleParams{
+		if err := e.queries.AddDocumentPeople(ctx, database.AddDocumentPeopleParams{
 			DocumentID:   document.ID,
 			PeopleID:     peopleID,
 			PeopleTypeID: typeID,
@@ -246,10 +244,6 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 		return &emptyStats, nil
 	}
 	return analysis.Stats, nil
-}
-
-func (e *Enricher) GetDb() *sql.DB {
-	return e.db
 }
 
 func targetWordCount(contentWC, targetWC int) int {

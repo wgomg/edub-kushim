@@ -28,8 +28,7 @@ import (
 )
 
 type handlerTestEnv struct {
-	db            *sql.DB
-	queries       *database.Queries
+	client        *database.Client
 	logger        *utils.Logger
 	engine        *search.Engine
 	matcherClient *tagmatch.MatcherClient
@@ -45,7 +44,7 @@ type handlerTestEnv struct {
 }
 
 func newDocHandler(env *handlerTestEnv) *DocumentHandler {
-	return NewDocumentHandler(env.db, env.queries, env.logger, env.engine, env.services, config.DefaultConfig("/tmp/test"))
+	return NewDocumentHandler(env.client, env.logger, env.engine, env.services, config.DefaultConfig("/tmp/test"))
 }
 
 func newMockTagService(queries *database.Queries) (*service.Tag, *testutil.MockEmbedder) {
@@ -56,16 +55,15 @@ func newMockTagService(queries *database.Queries) (*service.Tag, *testutil.MockE
 
 func newHandlerTestEnv(t *testing.T) *handlerTestEnv {
 	t.Helper()
-	db := database.NewTestDB(t)
-	queries := database.NewQueries(db)
+	client := database.NewTestClient(t)
 	logger := testutil.NewTestLogger()
-	engine := search.NewEngine(logger, db)
+	engine := search.NewEngine(logger, client.Queries)
 	matcherClient := tagmatch.NewMatcherClient("/nonexistent/matcher.sock")
 
-	tagSvc, _ := newMockTagService(queries)
-	peopleSvc := service.NewPeople(queries, logger)
-	peopleTypeSvc := service.NewPeopleType(queries, logger)
-	docTypeSvc := service.NewDocumentType(queries, logger)
+	tagSvc, _ := newMockTagService(client.Queries)
+	peopleSvc := service.NewPeople(client.Queries, logger)
+	peopleTypeSvc := service.NewPeopleType(client.Queries, logger)
+	docTypeSvc := service.NewDocumentType(client.Queries, logger)
 
 	services := &itypes.CrudServices{
 		Tag:          tagSvc,
@@ -74,13 +72,12 @@ func newHandlerTestEnv(t *testing.T) *handlerTestEnv {
 		DocumentType: docTypeSvc,
 	}
 
-	workStore := task.NewStore(queries)
+	workStore := task.NewStore(client.Queries)
 	registry := task.NewRegistry()
 	dispatcher := task.NewDispatcher(logger, workStore, registry)
 
 	return &handlerTestEnv{
-		db:            db,
-		queries:       queries,
+		client:        client,
 		logger:        logger,
 		engine:        engine,
 		matcherClient: matcherClient,
@@ -136,7 +133,7 @@ func TestDocumentList(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	h := newDocHandler(env)
 
-	docUUID(t, env.queries, "list-test.pdf")
+	docUUID(t, env.client.Queries, "list-test.pdf")
 
 	t.Run("lists documents", func(t *testing.T) {
 		w := rec()
@@ -155,7 +152,7 @@ func TestDocumentGet(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	h := newDocHandler(env)
 
-	dID := docUUID(t, env.queries, "get-test.pdf")
+	dID := docUUID(t, env.client.Queries, "get-test.pdf")
 
 	t.Run("found", func(t *testing.T) {
 		w := rec()
@@ -182,7 +179,7 @@ func TestDocumentUpdate(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	h := newDocHandler(env)
 
-	dID := docUUID(t, env.queries, "before.pdf")
+	dID := docUUID(t, env.client.Queries, "before.pdf")
 
 	t.Run("success", func(t *testing.T) {
 		body, _ := json.Marshal(types.DocumentUpdateRequest{
@@ -193,7 +190,7 @@ func TestDocumentUpdate(t *testing.T) {
 		r.SetPathValue("id", dID)
 		h.UpdateDocument(w, r)
 		testutil.AssertEqual(t, w.Code, http.StatusNoContent, "status")
-		doc, _ := env.queries.GetDocument(context.Background(), dID)
+		doc, _ := env.client.GetDocument(context.Background(), dID)
 		testutil.AssertEqual(t, doc.Title, "after.pdf", "title")
 	})
 
@@ -224,7 +221,7 @@ func TestDocumentDelete(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	h := newDocHandler(env)
 
-	dID := docUUID(t, env.queries, "delete-me.pdf")
+	dID := docUUID(t, env.client.Queries, "delete-me.pdf")
 
 	t.Run("success", func(t *testing.T) {
 		w := rec()
@@ -232,7 +229,7 @@ func TestDocumentDelete(t *testing.T) {
 		r.SetPathValue("id", dID)
 		h.DeleteDocument(w, r)
 		testutil.AssertEqual(t, w.Code, http.StatusNoContent, "status")
-		_, err := env.queries.GetDocument(context.Background(), dID)
+		_, err := env.client.GetDocument(context.Background(), dID)
 		testutil.AssertError(t, err, "doc gone")
 	})
 
@@ -250,10 +247,10 @@ func TestDocumentTagLifecycle(t *testing.T) {
 	h := newDocHandler(env)
 	ctx := context.Background()
 
-	docDBID, dID := database.CreateTestDocument(t, env.queries, "tags.pdf")
-	tag := database.SeedTagByName(t, env.queries, "")
+	docDBID, dID := database.CreateTestDocument(t, env.client.Queries, "tags.pdf")
+	tag := database.SeedTagByName(t, env.client.Queries, "")
 
-	err := env.queries.AddDocumentTag(ctx, database.AddDocumentTagParams{
+	err := env.client.AddDocumentTag(ctx, database.AddDocumentTagParams{
 		DocumentID: docDBID, TagID: tag.ID,
 	})
 	testutil.AssertNoError(t, err, "add tag")
@@ -269,7 +266,7 @@ func TestDocumentTagLifecycle(t *testing.T) {
 		t.Fatal("expected at least 1 tag")
 	}
 
-	err = env.queries.RemoveDocumentTag(ctx, database.RemoveDocumentTagParams{
+	err = env.client.RemoveDocumentTag(ctx, database.RemoveDocumentTagParams{
 		DocumentID: docDBID, TagID: tag.ID,
 	})
 	testutil.AssertNoError(t, err, "remove tag")
@@ -280,7 +277,7 @@ func TestGetDocumentFileDownloadParam(t *testing.T) {
 	h := newDocHandler(env)
 	ctx := context.Background()
 
-	dID := docUUID(t, env.queries, "download-test.pdf")
+	dID := docUUID(t, env.client.Queries, "download-test.pdf")
 
 	tmpFile, err := os.CreateTemp("", "test-*.pdf")
 	if err != nil {
@@ -290,7 +287,7 @@ func TestGetDocumentFileDownloadParam(t *testing.T) {
 	tmpFile.Close()
 	defer os.Remove(tmpFile.Name())
 
-	err = env.queries.UpdateDocumentPaths(ctx, database.UpdateDocumentPathsParams{
+	err = env.client.UpdateDocumentPaths(ctx, database.UpdateDocumentPathsParams{
 		DocumentID: dID, OriginalPath: "/tmp/orig.pdf", StoragePath: tmpFile.Name(),
 	})
 	if err != nil {
@@ -324,7 +321,7 @@ func TestDownloadDocumentsValidation(t *testing.T) {
 	cfg.Srv.MaxDownloadSizeMB = 0 // any positive size exceeds
 
 	env := newHandlerTestEnv(t)
-	h := NewDocumentHandler(env.db, env.queries, env.logger, env.engine, env.services, cfg)
+	h := NewDocumentHandler(env.client, env.logger, env.engine, env.services, cfg)
 
 	t.Run("invalid body", func(t *testing.T) {
 		w := rec()
@@ -384,7 +381,7 @@ func TestDownloadDocumentsValidation(t *testing.T) {
 	})
 
 	t.Run("size exceeds limit", func(t *testing.T) {
-		dID := docUUID(t, env.queries, "size-test.pdf")
+		dID := docUUID(t, env.client.Queries, "size-test.pdf")
 		w := rec()
 		body, _ := json.Marshal(types.DocumentDownloadRequest{
 			DocumentIDs: []string{dID},
@@ -498,10 +495,10 @@ func TestDocumentTypeCrud(t *testing.T) {
 
 func TestTaskEndpoints(t *testing.T) {
 	env := newHandlerTestEnv(t)
-	h := NewTaskHandler(env.queries, env.logger)
+	h := NewTaskHandler(env.client.Queries, env.logger)
 	ctx := context.Background()
 
-	_, err := env.queries.CreateTask(ctx, database.CreateTaskParams{
+	_, err := env.client.CreateTask(ctx, database.CreateTaskParams{
 		TaskID: "task-e2e-1", TaskType: "consume", Status: "completed",
 		Payload: []byte(`{"file":"test.pdf"}`),
 	})
@@ -549,7 +546,7 @@ func TestTaskEndpoints(t *testing.T) {
 
 func TestSavedSearchEndpoints(t *testing.T) {
 	env := newHandlerTestEnv(t)
-	h := NewSavedSearchHandler(env.queries, env.logger)
+	h := NewSavedSearchHandler(env.client.Queries, env.logger)
 
 	t.Run("create", func(t *testing.T) {
 		w := rec()
@@ -593,12 +590,12 @@ func TestConcurrentDocumentOps(t *testing.T) {
 			title := fmt.Sprintf("concurrent-%d.pdf", idx)
 			// Create with inline doc to avoid checksum conflicts
 			docID := fmt.Sprintf("cid-%d", idx)
-			types, _ := env.queries.ListAllDocumentTypes(ctx)
+			types, _ := env.client.ListAllDocumentTypes(ctx)
 			dtID := int64(1)
 			if len(types) > 0 {
 				dtID = types[0].ID
 			}
-			_, err := env.queries.CreateDocument(ctx, database.CreateDocumentParams{
+			_, err := env.client.CreateDocument(ctx, database.CreateDocumentParams{
 				DocumentID: docID, Title: title,
 				Md5Checksum:    fmt.Sprintf("md5-c-%d", idx),
 				Sha512Checksum: fmt.Sprintf("sha512-c-%d", idx),
@@ -611,7 +608,7 @@ func TestConcurrentDocumentOps(t *testing.T) {
 				errCh <- fmt.Errorf("create %s: %w", title, err)
 				return
 			}
-			doc, err := env.queries.GetDocument(ctx, docID)
+			doc, err := env.client.GetDocument(ctx, docID)
 			if err != nil {
 				errCh <- fmt.Errorf("get %s: %w", title, err)
 				return

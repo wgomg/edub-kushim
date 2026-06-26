@@ -4,9 +4,10 @@
 
 ### Functions
 
-`NewSQLiteDB(cfg) (*sql.DB, error)`, `NewQueries(db) *Queries`
+`NewSQLiteDB(cfg) (*sql.DB, error)`, `NewClient(db) *Client`
 
 - `NewSQLiteDB` sets `PRAGMA foreign_keys = ON`, `journal_mode = WAL`, `synchronous = NORMAL`, max 1 connection
+- `NewClient` wraps a `*sql.DB` and an embedded `*Queries` (sqlc-generated). Exposes `BeginTx(ctx, opts)` and `DB()` for direct `*sql.DB` access. All query methods on `*Queries` are promoted to `*Client`.
 
 ---
 

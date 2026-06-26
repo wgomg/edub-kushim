@@ -11,10 +11,11 @@ import (
 
 func setupSearchTest(t *testing.T) (*Engine, *database.Queries) {
 	t.Helper()
-	q, db := database.NewTestQueries(t)
-	engine := NewEngine(testutil.NewTestLogger(), db)
+	q, _ := database.NewTestQueries(t)
+	engine := NewEngine(testutil.NewTestLogger(), q)
 	return engine, q
 }
+
 
 func insertSearchDoc(t *testing.T, q *database.Queries, title, textContent string) {
 	t.Helper()
@@ -177,8 +178,8 @@ func TestSanitizeQuery(t *testing.T) {
 }
 
 func TestNewEngine(t *testing.T) {
-	db := database.NewTestDB(t)
-	engine := NewEngine(testutil.NewTestLogger(), db)
+	client := database.NewTestClient(t)
+	engine := NewEngine(testutil.NewTestLogger(), client.Queries)
 	if engine == nil {
 		t.Fatal("expected non-nil engine")
 	}

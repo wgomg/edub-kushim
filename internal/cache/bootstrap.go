@@ -2,7 +2,6 @@ package cache
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 
 	"github.com/wgomg/edub-kushim/internal/database"
@@ -15,8 +14,7 @@ const (
 	batchSize  = 32
 )
 
-func BuildTagCache(ctx context.Context, db *sql.DB, logger *utils.Logger, enc tagmatcher.Embedder, store *EmbeddingStore) error {
-	queries := database.NewQueries(db)
+func BuildTagCache(ctx context.Context, queries *database.Queries, logger *utils.Logger, enc tagmatcher.Embedder, store *EmbeddingStore) error {
 	tagNames, err := queries.ListAllTagsNames(ctx)
 	if err != nil {
 		return fmt.Errorf("list tags: %w", err)

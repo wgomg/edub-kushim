@@ -2,7 +2,6 @@ package search
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"strings"
 	"time"
@@ -68,10 +67,10 @@ type Engine struct {
 	queries *database.Queries
 }
 
-func NewEngine(logger *utils.Logger, db *sql.DB) *Engine {
+func NewEngine(logger *utils.Logger, queries *database.Queries) *Engine {
 	return &Engine{
 		logger:  logger,
-		queries: database.NewQueries(db),
+		queries: queries,
 	}
 }
 

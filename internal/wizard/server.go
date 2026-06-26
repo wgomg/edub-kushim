@@ -85,8 +85,8 @@ func (s *Server) bootstrap(configDir string) (*config.Config, *database.Queries,
 	}
 	s.db = db
 
-	queries := database.NewQueries(db)
-	store := task.NewStore(queries)
+	client := database.NewClient(db)
+	store := task.NewStore(client.Queries)
 	registry := task.NewRegistry()
 	registry.Register("config", configtask.NewConfigTaskHandler(s.logger))
 
@@ -95,7 +95,7 @@ func (s *Server) bootstrap(configDir string) (*config.Config, *database.Queries,
 	s.pool = pool.New(s.logger, runner, 1, 5*time.Second, "config")
 	s.pool.Start(context.Background())
 
-	return cfg, queries, dispatcher, nil
+	return cfg, client.Queries, dispatcher, nil
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {

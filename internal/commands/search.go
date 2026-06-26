@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"github.com/wgomg/edub-kushim/internal/database"
 )
 
 func searchHandler(c *Container, args []string) error {
@@ -103,7 +101,7 @@ func formatSize(bytes int64) string {
 }
 
 func rebuildIndex(c *Container) error {
-	db, err := c.GetDB()
+	client, err := c.GetClient()
 	if err != nil {
 		return fmt.Errorf("failed to get database: %w", err)
 	}
@@ -112,7 +110,7 @@ func rebuildIndex(c *Container) error {
 	defer cancel()
 
 	start := time.Now()
-	if err := database.NewQueries(db).RebuildDocumentFTS(ctx); err != nil {
+	if err := client.RebuildDocumentFTS(ctx); err != nil {
 		return fmt.Errorf("rebuild failed: %w", err)
 	}
 

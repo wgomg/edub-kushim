@@ -62,21 +62,20 @@ func (r *integrationTestRunner) OptimizePdf(ctx context.Context, docId, path str
 	return &tools.PdfOptimizationResult{Success: true, TmpPath: &p}, nil
 }
 
-func setupConsumerTest(t *testing.T) (*Consumer, *config.Config, *database.Queries, func()) {
+func setupConsumerTest(t *testing.T) (*Consumer, *config.Config, *database.Client, func()) {
 	t.Helper()
 
 	cfg, cleanupCfg := testutil.NewTestConfig(t)
 	cfg.Consumer.DeleteOriginal = true
 
-	db := database.NewTestDB(t)
-	queries := database.NewQueries(db)
+	client := database.NewTestClient(t)
 	logger := utils.NewDiscardLogger()
 
 	runner := &integrationTestRunner{
 		extractText: "This is sample extracted text from the test PDF document. It contains enough words to pass the minimum density check and allow the consumption pipeline to proceed normally.",
 	}
 
-	consumer, err := NewConsumerWithRunner(cfg, logger, db, runner)
+	consumer, err := NewConsumerWithRunner(cfg, logger, client, runner)
 	testutil.AssertNoError(t, err, "create consumer")
 
 	cleanup := func() {
@@ -84,13 +83,13 @@ func setupConsumerTest(t *testing.T) (*Consumer, *config.Config, *database.Queri
 		cleanupCfg()
 	}
 
-	return consumer, cfg, queries, cleanup
+	return consumer, cfg, client, cleanup
 }
 
 // --- Tests ---
 
 func TestConsumerProcessHappyPath(t *testing.T) {
-	consumer, cfg, queries, cleanup := setupConsumerTest(t)
+	consumer, cfg, client, cleanup := setupConsumerTest(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -106,7 +105,7 @@ func TestConsumerProcessHappyPath(t *testing.T) {
 	testutil.AssertEqual(t, processed.DocumentID, docID, "document ID")
 
 	t.Run("document record created", func(t *testing.T) {
-		doc, err := queries.GetDocument(ctx, docID)
+		doc, err := client.GetDocument(ctx, docID)
 		testutil.AssertNoError(t, err, "get document")
 		testutil.AssertEqual(t, doc.Title, "test-document.pdf", "title")
 		testutil.AssertEqual(t, doc.MimeType, "application/pdf", "mime type")
@@ -135,7 +134,7 @@ func TestConsumerProcessHappyPath(t *testing.T) {
 	})
 
 	t.Run("DB paths set and counts populated", func(t *testing.T) {
-		doc, _ := queries.GetDocument(ctx, docID)
+		doc, _ := client.GetDocument(ctx, docID)
 		if doc.StoragePath == "" {
 			t.Fatal("expected storage path in DB")
 		}
@@ -149,7 +148,7 @@ func TestConsumerProcessHappyPath(t *testing.T) {
 }
 
 func TestConsumerDuplicateDetection(t *testing.T) {
-	consumer, cfg, queries, cleanup := setupConsumerTest(t)
+	consumer, cfg, client, cleanup := setupConsumerTest(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -166,7 +165,7 @@ func TestConsumerDuplicateDetection(t *testing.T) {
 	_, err = consumer.Process(ctx, file2, uuid.New().String())
 	testutil.AssertError(t, err, "second process should fail as duplicate")
 
-	count := docCount(t, queries)
+	count := docCount(t, client.Queries)
 	testutil.AssertEqual(t, count, int64(1), "only one document after duplicate attempt")
 }
 
@@ -236,9 +235,9 @@ func TestConsumerDeleteOriginalDisabled(t *testing.T) {
 	defer cleanupCfg()
 	cfg.Consumer.DeleteOriginal = false
 
-	db := database.NewTestDB(t)
+	client := database.NewTestClient(t)
 	runner := &integrationTestRunner{extractText: "content"}
-	consumer, err := NewConsumerWithRunner(cfg, utils.NewDiscardLogger(), db, runner)
+	consumer, err := NewConsumerWithRunner(cfg, utils.NewDiscardLogger(), client, runner)
 	testutil.AssertNoError(t, err, "create consumer")
 
 	pdfPath := filepath.Join(cfg.Storage.ConsumptionDir, "keep.pdf")

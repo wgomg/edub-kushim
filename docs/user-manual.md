@@ -467,9 +467,9 @@ GET /api/v1/documents/{id}/file
 Returns the raw PDF file bytes for preview. Response `200` with `Content-Disposition: inline`.
 Returns `415 Unsupported Media Type` for non-PDF documents.
 
-| Query param  | Default  | Description                                                                 |
-| ------------ | -------- | --------------------------------------------------------------------------- |
-| `download`   | `false`  | When `true`, sets `Content-Disposition: attachment` to force a file download dialog instead of inline preview. |
+| Query param | Default | Description                                                                                                    |
+| ----------- | ------- | -------------------------------------------------------------------------------------------------------------- |
+| `download`  | `false` | When `true`, sets `Content-Disposition: attachment` to force a file download dialog instead of inline preview. |
 
 ### Download Documents (Batch)
 
@@ -488,12 +488,12 @@ The request body may also be sent as `application/x-www-form-urlencoded` with `d
 
 Validation:
 
-| Condition                          | Response |
-| ---------------------------------- | -------- |
-| Empty `document_ids`               | `400` — `"document_ids is required"` |
+| Condition                          | Response                                 |
+| ---------------------------------- | ---------------------------------------- |
+| Empty `document_ids`               | `400` — `"document_ids is required"`     |
 | Count exceeds `max_download_files` | `400` — `"too many documents, max: <N>"` |
-| Non-existent IDs                   | `400` — `"documents not found: <ids>"` |
-| Total size exceeds limit           | `400` — `"total size exceeds limit"` |
+| Non-existent IDs                   | `400` — `"documents not found: <ids>"`   |
+| Total size exceeds limit           | `400` — `"total size exceeds limit"`     |
 
 Response `200` with `Content-Type: application/zip` and `Content-Disposition: attachment; filename="documents.zip"`.
 ZIP entry names follow the pattern `{sanitized_title}_{document_id_prefix}.{ext}` with extension derived from the document's MIME type.
@@ -520,19 +520,17 @@ Content-Type: application/json
 
 Validation:
 
-| Condition                          | Response |
-| ---------------------------------- | -------- |
-| Empty `document_ids`               | `400` — `"document_ids is required"` |
-| Count exceeds `max_batch_delete`   | `400` — `"too many documents, max: <N>"` |
+| Condition                        | Response                                 |
+| -------------------------------- | ---------------------------------------- |
+| Empty `document_ids`             | `400` — `"document_ids is required"`     |
+| Count exceeds `max_batch_delete` | `400` — `"too many documents, max: <N>"` |
 
 Response `200` with partial failure support:
 
 ```json
 {
   "deleted": 2,
-  "failed": [
-    { "id": "uuid3", "error": "not found" }
-  ]
+  "failed": [{ "id": "uuid3", "error": "not found" }]
 }
 ```
 
@@ -559,20 +557,20 @@ Content-Type: application/json
 }
 ```
 
-| Field          | Type       | Required | Description                                       |
-| -------------- | ---------- | -------- | ------------------------------------------------- |
-| `document_ids` | `string[]` | yes      | UUIDs of documents to tag                         |
-| `tag_ids`      | `int[]`    | yes      | Tag IDs to assign                                 |
-| `mode`         | `string`   | yes      | `"add"` or `"replace"`                            |
+| Field          | Type       | Required | Description               |
+| -------------- | ---------- | -------- | ------------------------- |
+| `document_ids` | `string[]` | yes      | UUIDs of documents to tag |
+| `tag_ids`      | `int[]`    | yes      | Tag IDs to assign         |
+| `mode`         | `string`   | yes      | `"add"` or `"replace"`    |
 
 Validation:
 
-| Condition                          | Response |
-| ---------------------------------- | -------- |
-| Empty `document_ids`               | `400` — `"document_ids is required"` |
-| Empty `tag_ids`                    | `400` — `"tag_ids is required"` |
-| Invalid `mode`                     | `400` — `"mode must be 'add' or 'replace'"` |
-| Non-existent tag ID                | `404` — returned immediately, no documents are modified |
+| Condition            | Response                                                |
+| -------------------- | ------------------------------------------------------- |
+| Empty `document_ids` | `400` — `"document_ids is required"`                    |
+| Empty `tag_ids`      | `400` — `"tag_ids is required"`                         |
+| Invalid `mode`       | `400` — `"mode must be 'add' or 'replace'"`             |
+| Non-existent tag ID  | `404` — returned immediately, no documents are modified |
 
 All tag IDs are validated before any document is modified. If any tag does not exist, the
 entire request is rejected and no documents are changed. Partial failures (e.g., a document
@@ -581,9 +579,7 @@ not found) return `200` with a `failed` array:
 ```json
 {
   "assigned": 1,
-  "failed": [
-    { "id": "uuid2", "error": "not found" }
-  ]
+  "failed": [{ "id": "uuid2", "error": "not found" }]
 }
 ```
 
@@ -1273,23 +1269,23 @@ enricher:
 
 ### Key sections
 
-| Section                        | Purpose                                                 |
-| ------------------------------ | ------------------------------------------------------- |
-| `app`                          | Environment mode and log verbosity                      |
+| Section                        | Purpose                                                                |
+| ------------------------------ | ---------------------------------------------------------------------- |
+| `app`                          | Environment mode and log verbosity                                     |
 | `server`                       | HTTP listen address, timeouts, max concurrent batches, download limits |
-| `database`                     | SQLite storage location and file name                   |
-| `storage`                      | Inbox and processed file directories                    |
-| `consumer`                     | Pipeline: which tools to use, which files to accept     |
-| `consumer.textextractor`       | Text extraction engine (mupdf, gopdf, pdftotext)        |
-| `consumer.pdfoptimizer`        | PDF optimizer (mupdf, gs) + optional fallback           |
-| `consumer.ocr`                 | OCR engine (gosseract, ocrmypdf) + language data        |
-| `consumer.workers`             | Concurrent file processing workers (default 1)          |
-| `enricher`                     | Async classification pipeline                           |
-| `enricher.textreducer`         | Text summarization before LLM (TextRank)                |
-| `enricher.contentanalyzer`     | LLM provider for document classification (OpenAI, etc.) |
-| `enricher.contentanalyzer.llm` | Per-provider config (base URL, model, token)            |
-| `enricher.tagmatcher`          | Semantic tag matching via Hugot (embeddings)            |
-| `enricher.tagmatcher.hugot`    | Hugot-specific settings (model, backend)                |
+| `database`                     | SQLite storage location and file name                                  |
+| `storage`                      | Inbox and processed file directories                                   |
+| `consumer`                     | Pipeline: which tools to use, which files to accept                    |
+| `consumer.textextractor`       | Text extraction engine (mupdf, gopdf, pdftotext)                       |
+| `consumer.pdfoptimizer`        | PDF optimizer (mupdf, gs) + optional fallback                          |
+| `consumer.ocr`                 | OCR engine (gosseract, ocrmypdf) + language data                       |
+| `consumer.workers`             | Concurrent file processing workers (default 1)                         |
+| `enricher`                     | Async classification pipeline                                          |
+| `enricher.textreducer`         | Text summarization before LLM (TextRank)                               |
+| `enricher.contentanalyzer`     | LLM provider for document classification (OpenAI, etc.)                |
+| `enricher.contentanalyzer.llm` | Per-provider config (base URL, model, token)                           |
+| `enricher.tagmatcher`          | Semantic tag matching via Hugot (embeddings)                           |
+| `enricher.tagmatcher.hugot`    | Hugot-specific settings (model, backend)                               |
 
 ---
 

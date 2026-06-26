@@ -57,8 +57,7 @@
           - Normalizes the canonical name via `utils.NormalizeName` (NFKC, lowercase, punctuation/dash cleanup) for exact-match lookup
           - Creates new people with `name` (canonical) + `name_native` (original non-Latin script) when no match found
           - Updates `name_native` on existing people if currently empty
-          - Unknown people types default to `"unknown"`
-    - `GetDb() *sql.DB`
+           - Unknown people types default to `"unknown"`
 
 ### Helpers
 
@@ -73,7 +72,7 @@
 ### Struct
 
 - `Engine` — `logger`, `queries *database.Queries`
-  - **Methods**: `NewEngine(logger, db) *Engine`, `Search(ctx, query, limit, offset) ([]Result, error)`
+  - **Methods**: `NewEngine(logger, queries) *Engine`, `Search(ctx, query, limit, offset) ([]Result, error)`
 
 - `Result`
   - **Fields**: `DocumentID`, `Title`, `MD5Checksum`, `SHA512Checksum`, `MimeType`, `FileSize`, `Language`, `DocumentTypeID`, `CreatedAt`, `ModifiedAt`, `OriginalPath`, `StoragePath`, `Snippet`, `Rank`

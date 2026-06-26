@@ -20,18 +20,16 @@ import (
 )
 
 type DocumentHandler struct {
-	db       *sql.DB
-	queries  *database.Queries
+	client   *database.Client
 	logger   *utils.Logger
 	engine   *search.Engine
 	services *itypes.CrudServices
 	cfg      *config.Config
 }
 
-func NewDocumentHandler(db *sql.DB, queries *database.Queries, logger *utils.Logger, engine *search.Engine, services *itypes.CrudServices, cfg *config.Config) *DocumentHandler {
+func NewDocumentHandler(client *database.Client, logger *utils.Logger, engine *search.Engine, services *itypes.CrudServices, cfg *config.Config) *DocumentHandler {
 	return &DocumentHandler{
-		db:       db,
-		queries:  queries,
+		client:   client,
 		logger:   logger,
 		engine:   engine,
 		services: services,
@@ -56,7 +54,7 @@ func (h *DocumentHandler) ListDocuments(w http.ResponseWriter, r *http.Request) 
 	sortBy := pb.Get("sort_by", "created_at")
 	sortOrder := pb.Get("sort_order", "desc")
 
-	documents, err := h.queries.ListDocumentsWithSort(
+	documents, err := h.client.ListDocumentsWithSort(
 		r.Context(),
 		database.ListDocumentsWithSortParams{
 			Limit:     limit,
@@ -75,7 +73,7 @@ func (h *DocumentHandler) ListDocuments(w http.ResponseWriter, r *http.Request) 
 	for i, doc := range documents {
 		docTypeID := doc.DocumentTypeID
 
-		tags, _ := h.queries.GetDocumentTags(r.Context(), doc.ID)
+		tags, _ := h.client.GetDocumentTags(r.Context(), doc.ID)
 		tagResponses := make([]types.TagResponse, len(tags))
 		for j, t := range tags {
 			tagResponses[j] = types.TagResponse{
@@ -84,7 +82,7 @@ func (h *DocumentHandler) ListDocuments(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 
-		people, _ := h.queries.GetDocumentPeopleWithType(r.Context(), doc.ID)
+		people, _ := h.client.GetDocumentPeopleWithType(r.Context(), doc.ID)
 		personResponses := make([]types.PersonResponse, len(people))
 		for j, p := range people {
 			personResponses[j] = types.PersonResponse{
@@ -136,18 +134,18 @@ func (h *DocumentHandler) GetDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	doc, err := h.queries.GetDocumentWithDetails(r.Context(), documentId)
+	doc, err := h.client.GetDocumentWithDetails(r.Context(), documentId)
 	if err != nil {
 		writeServiceError(w, h.logger, &reqID, "get document", errs.FromDB(err, "get document"))
 		return
 	}
 
-	tags, err := h.queries.GetDocumentTags(r.Context(), doc.ID)
+	tags, err := h.client.GetDocumentTags(r.Context(), doc.ID)
 	if err != nil {
 		h.logger.Error(&reqID, "Failed to get tags for document %d: %v", doc.DocumentID, err)
 	}
 
-	people, err := h.queries.GetDocumentPeopleWithType(r.Context(), doc.ID)
+	people, err := h.client.GetDocumentPeopleWithType(r.Context(), doc.ID)
 	if err != nil {
 		h.logger.Error(&reqID, "Failed to get people for document %d: %v", doc.DocumentID, err)
 	}
@@ -296,7 +294,7 @@ func (h *DocumentHandler) SearchDocumentsStructured(w http.ResponseWriter, r *ht
 	for i, r := range results {
 		docTypeID := r.DocumentTypeID
 
-		tags, _ := h.queries.GetDocumentTags(ctx, r.ID)
+		tags, _ := h.client.GetDocumentTags(ctx, r.ID)
 		tagResponses := make([]types.TagResponse, len(tags))
 		for j, t := range tags {
 			tagResponses[j] = types.TagResponse{
@@ -305,7 +303,7 @@ func (h *DocumentHandler) SearchDocumentsStructured(w http.ResponseWriter, r *ht
 			}
 		}
 
-		people, _ := h.queries.GetDocumentPeopleWithType(ctx, r.ID)
+		people, _ := h.client.GetDocumentPeopleWithType(ctx, r.ID)
 		personResponses := make([]types.PersonResponse, len(people))
 		for j, p := range people {
 			personResponses[j] = types.PersonResponse{
@@ -363,7 +361,7 @@ func (h *DocumentHandler) GetDocumentFile(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	doc, err := h.queries.GetDocument(ctx, documentId)
+	doc, err := h.client.GetDocument(ctx, documentId)
 	if err != nil {
 		writeServiceError(w, h.logger, &reqID, "get document", errs.FromDB(err, "get document"))
 		return
@@ -434,7 +432,7 @@ func (h *DocumentHandler) DownloadDocuments(w http.ResponseWriter, r *http.Reque
 	var totalSize int64
 
 	for _, id := range ids {
-		doc, err := h.queries.GetDocument(ctx, id)
+		doc, err := h.client.GetDocument(ctx, id)
 		if err != nil {
 			if errs.KindOf(errs.FromDB(err, "get document")) == errs.KindNotFound {
 				invalidIDs = append(invalidIDs, id)
@@ -580,7 +578,7 @@ func (h *DocumentHandler) UpdateDocument(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	docType, err := h.queries.GetDocumentType(ctx, req.DocumentTypeID)
+	docType, err := h.client.GetDocumentType(ctx, req.DocumentTypeID)
 	if err != nil {
 		writeServiceError(w, h.logger, &reqID, "get document type", errs.FromDB(err, "get document type"))
 		return
@@ -594,7 +592,7 @@ func (h *DocumentHandler) UpdateDocument(w http.ResponseWriter, r *http.Request)
 		req.Language = "und"
 	}
 
-	current, err := h.queries.GetDocument(ctx, documentID)
+	current, err := h.client.GetDocument(ctx, documentID)
 	if err != nil {
 		writeServiceError(w, h.logger, &reqID, "get document", errs.FromDB(err, "get document"))
 		return
@@ -607,7 +605,7 @@ func (h *DocumentHandler) UpdateDocument(w http.ResponseWriter, r *http.Request)
 		textContent = current.TextContent
 	}
 
-	err = h.queries.UpdateDocumentEditable(ctx, database.UpdateDocumentEditableParams{
+	err = h.client.UpdateDocumentEditable(ctx, database.UpdateDocumentEditableParams{
 		Title:          req.Title,
 		DocumentTypeID: req.DocumentTypeID,
 		Language:       req.Language,
@@ -632,13 +630,13 @@ func (h *DocumentHandler) DeleteDocument(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	doc, err := h.queries.GetDocument(ctx, documentID)
+	doc, err := h.client.GetDocument(ctx, documentID)
 	if err != nil {
 		writeServiceError(w, h.logger, &reqID, "get document", errs.FromDB(err, "get document"))
 		return
 	}
 
-	err = h.queries.DeleteDocument(ctx, documentID)
+	err = h.client.DeleteDocument(ctx, documentID)
 	if err != nil {
 		writeServiceError(w, h.logger, &reqID, "delete document", errs.FromDB(err, "delete document"))
 		return
@@ -674,7 +672,7 @@ func (h *DocumentHandler) AddDocumentTag(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	doc, err := h.queries.GetDocument(ctx, documentID)
+	doc, err := h.client.GetDocument(ctx, documentID)
 	if err != nil {
 		writeServiceError(w, h.logger, &reqID, "get document", errs.FromDB(err, "get document"))
 		return
@@ -686,7 +684,7 @@ func (h *DocumentHandler) AddDocumentTag(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	err = h.queries.AddDocumentTag(ctx, database.AddDocumentTagParams{
+	err = h.client.AddDocumentTag(ctx, database.AddDocumentTagParams{
 		DocumentID: doc.ID,
 		TagID:      req.TagID,
 	})
@@ -714,13 +712,13 @@ func (h *DocumentHandler) RemoveDocumentTag(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	doc, err := h.queries.GetDocument(ctx, documentID)
+	doc, err := h.client.GetDocument(ctx, documentID)
 	if err != nil {
 		writeServiceError(w, h.logger, &reqID, "get document", errs.FromDB(err, "get document"))
 		return
 	}
 
-	err = h.queries.RemoveDocumentTag(ctx, database.RemoveDocumentTagParams{
+	err = h.client.RemoveDocumentTag(ctx, database.RemoveDocumentTagParams{
 		DocumentID: doc.ID,
 		TagID:      req.TagID,
 	})
@@ -765,7 +763,7 @@ func (h *DocumentHandler) BatchDeleteDocuments(w http.ResponseWriter, r *http.Re
 	result := types.BatchDeleteResult{}
 
 	for _, id := range ids {
-		doc, err := h.queries.GetDocument(ctx, id)
+		doc, err := h.client.GetDocument(ctx, id)
 		if err != nil {
 			if errs.KindOf(errs.FromDB(err, "get document")) == errs.KindNotFound {
 				result.Failed = append(result.Failed, types.BatchDeleteError{ID: id, Error: "not found"})
@@ -776,7 +774,7 @@ func (h *DocumentHandler) BatchDeleteDocuments(w http.ResponseWriter, r *http.Re
 			continue
 		}
 
-		if err := h.queries.DeleteDocument(ctx, id); err != nil {
+		if err := h.client.DeleteDocument(ctx, id); err != nil {
 			h.logger.Error(&reqID, "batch delete: delete document %s: %v", id, err)
 			result.Failed = append(result.Failed, types.BatchDeleteError{ID: id, Error: "delete failed"})
 			continue
@@ -849,7 +847,7 @@ func (h *DocumentHandler) BatchAssignTags(w http.ResponseWriter, r *http.Request
 	result := types.BatchTagResult{}
 
 	for _, id := range ids {
-		doc, err := h.queries.GetDocument(ctx, id)
+		doc, err := h.client.GetDocument(ctx, id)
 		if err != nil {
 			if errs.KindOf(errs.FromDB(err, "get document")) == errs.KindNotFound {
 				result.Failed = append(result.Failed, types.BatchTagError{ID: id, Error: "not found"})
@@ -863,14 +861,14 @@ func (h *DocumentHandler) BatchAssignTags(w http.ResponseWriter, r *http.Request
 		failed := false
 
 		if req.Mode == "replace" {
-			tx, err := h.db.BeginTx(ctx, nil)
+			tx, err := 	h.client.BeginTx(ctx, nil)
 			if err != nil {
 				h.logger.Error(&reqID, "batch tag: begin tx for doc %s: %v", id, err)
 				result.Failed = append(result.Failed, types.BatchTagError{ID: id, Error: "internal error"})
 				continue
 			}
 
-			tq := h.queries.WithTx(tx)
+			tq := h.client.WithTx(tx)
 
 			if err := tq.ClearDocumentTags(ctx, doc.ID); err != nil {
 				tx.Rollback()
@@ -903,7 +901,7 @@ func (h *DocumentHandler) BatchAssignTags(w http.ResponseWriter, r *http.Request
 			}
 		} else {
 			for _, tagID := range req.TagIDs {
-				if err := h.queries.AddDocumentTag(ctx, database.AddDocumentTagParams{
+				if err := h.client.AddDocumentTag(ctx, database.AddDocumentTagParams{
 					DocumentID: doc.ID,
 					TagID:      tagID,
 				}); err != nil {
@@ -945,25 +943,25 @@ func (h *DocumentHandler) AddDocumentPeople(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	doc, err := h.queries.GetDocument(ctx, documentID)
+	doc, err := h.client.GetDocument(ctx, documentID)
 	if err != nil {
 		writeServiceError(w, h.logger, &reqID, "get document", errs.FromDB(err, "get document"))
 		return
 	}
 
-	_, err = h.queries.GetPeople(ctx, req.PeopleID)
+	_, err = h.client.GetPeople(ctx, req.PeopleID)
 	if err != nil {
 		writeServiceError(w, h.logger, &reqID, "get person", errs.FromDB(err, "get person"))
 		return
 	}
 
-	_, err = h.queries.GetPeopleType(ctx, req.PeopleTypeID)
+	_, err = h.client.GetPeopleType(ctx, req.PeopleTypeID)
 	if err != nil {
 		writeServiceError(w, h.logger, &reqID, "get people type", errs.FromDB(err, "get people type"))
 		return
 	}
 
-	err = h.queries.AddDocumentPeople(ctx, database.AddDocumentPeopleParams{
+	err = h.client.AddDocumentPeople(ctx, database.AddDocumentPeopleParams{
 		DocumentID:   doc.ID,
 		PeopleID:     req.PeopleID,
 		PeopleTypeID: req.PeopleTypeID,
@@ -992,13 +990,13 @@ func (h *DocumentHandler) RemoveDocumentPeople(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	doc, err := h.queries.GetDocument(ctx, documentID)
+	doc, err := h.client.GetDocument(ctx, documentID)
 	if err != nil {
 		writeServiceError(w, h.logger, &reqID, "get document", errs.FromDB(err, "get document"))
 		return
 	}
 
-	err = h.queries.RemoveDocumentPeople(ctx, database.RemoveDocumentPeopleParams{
+	err = h.client.RemoveDocumentPeople(ctx, database.RemoveDocumentPeopleParams{
 		DocumentID:   doc.ID,
 		PeopleID:     req.PeopleID,
 		PeopleTypeID: req.PeopleTypeID,
