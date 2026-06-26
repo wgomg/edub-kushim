@@ -137,8 +137,8 @@
 
 		{#if task.error}
 			<div class="bg-terracotta-800/30 rounded-lg border border-terracotta-600 p-4">
-				<p class="text-terracotta-400 text-xs font-medium tracking-wider uppercase">Error</p>
-				<p class="text-terracotta-200 mt-1 text-sm whitespace-pre-wrap">{task.error}</p>
+				<p class="text-xs font-medium tracking-wider text-parchment-400 uppercase">Error</p>
+				<p class="mt-1 text-sm whitespace-pre-wrap text-parchment-200">{task.error}</p>
 			</div>
 		{/if}
 
