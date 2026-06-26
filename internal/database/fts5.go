@@ -42,7 +42,7 @@ func (q *Queries) SearchDocumentsFTS(
 			d.page_count, d.word_count, d.char_count, d.language, d.created_at, d.modified_at,
 			d.document_type_id, d.original_path, d.storage_path, d.text_content,
 			bm25(document_fts) as rank,
-			snippet(document_fts, 2, '<b>', '</b>', '...', 64) as snippet
+			snippet(document_fts, 1, '<b>', '</b>', '...', 64) as snippet
 		FROM document_fts
 		JOIN document d ON document_fts.document_id = d.id
 		WHERE document_fts MATCH ?
@@ -107,7 +107,7 @@ func (q *Queries) SearchDocumentsFTSWithFilters(ctx context.Context, arg struct 
 			d.page_count, d.word_count, d.char_count, d.language, d.created_at, d.modified_at,
 			d.document_type_id, d.original_path, d.storage_path, d.text_content,
 			bm25(document_fts) as rank,
-			snippet(document_fts, 2, '<b>', '</b>', '...', 64) as snippet
+			snippet(document_fts, 1, '<b>', '</b>', '...', 64) as snippet
 		FROM document_fts
 		JOIN document d ON document_fts.document_id = d.id
 		WHERE document_fts MATCH ? AND d.mime_type = ?

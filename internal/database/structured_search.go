@@ -86,7 +86,7 @@ func (q *Queries) SearchDocumentsStructured(ctx context.Context, filter SearchFi
 	if filter.Query != "" {
 		b.add(selectCols+`,
 			bm25(document_fts) as rank,
-			snippet(document_fts, 2, '<b>', '</b>', '...', 64) as snippet
+			snippet(document_fts, 1, '<b>', '</b>', '...', 64) as snippet
 			FROM document d
 			JOIN document_fts ON d.id = document_fts.document_id
 			WHERE document_fts MATCH ?`, filter.Query)
