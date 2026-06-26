@@ -1312,7 +1312,7 @@ ensures enrichment never runs before the document is fully ingested.
 | `completed`  | Finished successfully                                         |
 | `failed`     | Finished with an error (retryable via `kushim task retry`)    |
 | `cancelled`  | Cancelled via `kushim consume cancel`                         |
-| `discarded`  | Enrich task orphaned because its parent consume task failed   |
+| `discarded`  | Enrich task orphaned because its parent consume task failed. Re-activated to `pending` when the parent is retried and succeeds. |
 
 ---
 

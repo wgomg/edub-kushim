@@ -153,7 +153,10 @@ After a `consume` task completes, its handler activates the waiting `enrich`
 task by updating its payload with the document ID and setting its status to
 `pending` (via `Store.SetPending`). If the consume task fails, the handler
 discards the waiting enrich task by setting it to `discarded` with the
-parent error message (via `Store.Discard`). The enrichment pipeline:
+parent error message (via `Store.Discard`). **On retry** — when the failed
+consume is retried (via `kushim task retry` or the API) and subsequently
+succeeds — `activateChildEnrich` re-activates the discarded enrich task to
+`pending`, clearing the previous error and completion timestamp. The enrichment pipeline:
 
 1. **Text Reduction** (optional, configurable threshold) — if the document exceeds
    `enricher.textreducer.target_words`, TextRank extracts the most salient content.

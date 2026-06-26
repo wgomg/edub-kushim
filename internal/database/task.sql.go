@@ -1225,8 +1225,10 @@ func (q *Queries) RetryTask(ctx context.Context, id int64) error {
 const setEnrichTaskPending = `-- name: SetEnrichTaskPending :exec
 UPDATE task SET
     status = 'pending',
-    payload = ?
-WHERE id = ? AND status = 'waiting' AND task_type = 'enrich'
+    payload = ?,
+    error = NULL,
+    completed_at = NULL
+WHERE id = ? AND status IN ('waiting', 'discarded') AND task_type = 'enrich'
 `
 
 type SetEnrichTaskPendingParams struct {

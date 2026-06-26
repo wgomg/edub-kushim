@@ -43,8 +43,8 @@
     - `GetTaskByTaskID(ctx, taskID) (database.Task, error)`
     - `CompleteTask(ctx, id, result) error`
     - `FailTask(ctx, id, errMsg) error`
-    - `SetPending(ctx, id, payload) error`
-    - `Discard(ctx, id, errMsg) error`
+    - `SetPending(ctx, id, payload) error` — Wraps `SetEnrichTaskPending`; matches both `waiting` and `discarded` enrich tasks
+    - `Discard(ctx, id, errMsg) error` — Wraps `DiscardEnrichTask`; only matches `waiting` enrich tasks (idempotent on already-discarded)
 
 ## `registry.go`
 
@@ -110,8 +110,8 @@
   - **Methods**:
     - `NewConsumeTaskHandler(consumer, store, logger) *ConsumeTaskHandler`
     - `Handle(ctx, t) (json.RawMessage, error)` — Unmarshals payload (`file_path`, `document_id` UUID, `on_completed` enrich task ID), calls `FileFromPath` + `consumer.Process`. On success, if `on_completed` is set and a document was created, activates the linked enrich task via `Store.SetPending`. On failure, if `on_completed` is set, discards the linked enrich task via `Store.Discard`.
-    - `activateChildEnrich(ctx, parent, onCompleted, documentID)` — Looks up the enrich task by UUID, validates `waiting_for` matches the parent, updates its payload with the document ID, and sets it to `pending`.
-    - `deactivateChildEnrich(ctx, parent, onCompleted, parentErr)` — Looks up the enrich task by UUID, validates `waiting_for` matches the parent, and sets it to `discarded` with the parent error.
+    - `activateChildEnrich(ctx, parent, onCompleted, documentID)` — Looks up the enrich task by UUID, validates `waiting_for` matches the parent, updates its payload with the document ID, and sets it to `pending`. Works on both `waiting` and `discarded` enrich tasks so a retried consume can reactivate a previously-discarded enrich.
+    - `deactivateChildEnrich(ctx, parent, onCompleted, parentErr)` — Looks up the enrich task by UUID, validates `waiting_for` matches the parent, and sets it to `discarded` with the parent error. Only matches `waiting` enrich tasks (idempotent if already discarded).
     - `DedupKey(payload) string` — Returns file path from payload
 
 ## `handlers/enrich.go`
