@@ -66,7 +66,7 @@ func (c *Container) GetDB() (*sql.DB, error) {
 }
 
 func (c *Container) socketPath() string {
-	return filepath.Join(c.config.App.ConfigDir, "kushim-matcher.sock")
+	return filepath.Join(c.config.App.ConfigDir, "kushim-hugot.sock")
 }
 
 func (c *Container) GetDispatcher() (*task.Dispatcher, error) {

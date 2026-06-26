@@ -25,7 +25,7 @@ edub (CGO_ENABLED=0)── forks: kushim consume --batch <id> (per-batch process
 
 - `edub` forks `kushim consume --batch <id>` as a child process when `POST /api/v1/consume` is called. `kushim` must be on PATH or sibling of `edub`.
 - The matcher (`kushim hugot`) must be running before `edub` starts. Tag CRUD returns 503 otherwise.
-- Socket: `<config-dir>/kushim-matcher.sock`.
+- Socket: `<config-dir>/kushim-hugot.sock`.
 
 ## Config
 

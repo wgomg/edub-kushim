@@ -44,7 +44,7 @@
     - `NewContainerWithDB(cfg, logger, db)` — With provided DB
     - `GetDB() (*sql.DB, error)` — Creates DB lazily, runs goose migrations on first open
     - `GetCache() (*cache.Cache, error)` — Builds tag embedding cache lazily via `cache.BuildTagCache`
-    - `GetDispatcher() (*task.Dispatcher, error)` — Lazily creates dispatcher. Creates a `MatcherClient` connected to the Unix socket at `<config_dir>/kushim-matcher.sock`, builds `TagService` wired through the client, and `Enricher` with the matcher.
+    - `GetDispatcher() (*task.Dispatcher, error)` — Lazily creates dispatcher. Creates a `MatcherClient` connected to the Unix socket at `<config_dir>/kushim-hugot.sock`, builds `TagService` wired through the client, and `Enricher` with the matcher.
     - `GetPool(taskType) (*pool.Pool, error)` — Returns the pool for "consume", "enrich", or "config", lazily creates with dispatcher. Config pool uses 1 worker and 5s poll interval.
     - `GetSearchEngine() (*search.Engine, error)`
     - `Close()` — Stops all pools if created, closes DB
@@ -55,7 +55,7 @@
 
 ### Function
 
-- `serveMatchingHandler(c, args) error` — Starts the matcher RPC server over a Unix domain socket. Accepts optional `--socket <path>` flag (default `<config_dir>/kushim-matcher.sock`). Creates a Hugot embedding session, builds the tag cache from the database, exposes HTTP endpoints:
+- `serveMatchingHandler(c, args) error` — Starts the matcher RPC server over a Unix domain socket. Accepts optional `--socket <path>` flag (default `<config_dir>/kushim-hugot.sock`). Creates a Hugot embedding session, builds the tag cache from the database, exposes HTTP endpoints:
 
 | Endpoint                         | Method | Description                                                                |
 | -------------------------------- | ------ | -------------------------------------------------------------------------- |

@@ -147,7 +147,7 @@ The `ConfigTaskHandler` lives in its own package (`internal/configtask/`) to kee
 ### CLI (`kushim`)
 
 The `Container` registers all three task types (`"consume"`, `"enrich"`, `"config"`)
-and creates a `MatcherClient` connected to the Unix socket at `<config_dir>/kushim-matcher.sock`.
+and creates a `MatcherClient` connected to the Unix socket at `<config_dir>/kushim-hugot.sock`.
 The `TagService` and `Enricher` receive the client instead of a direct Hugot reference:
 
 ```go

@@ -25,7 +25,7 @@ The system runs three cooperating processes:
 
 ### 1. Matcher Server (`kushim hugot`)
 
-A standalone HTTP server over a Unix domain socket (`kushim-matcher.sock` in the config directory). Hosts the Hugot embedding model, manages the tag embedding store, and exposes RPC endpoints:
+A standalone HTTP server over a Unix domain socket (`kushim-hugot.sock` in the config directory). Hosts the Hugot embedding model, manages the tag embedding store, and exposes RPC endpoints:
 
 | Endpoint                         | Method | Purpose                      |
 | -------------------------------- | ------ | ---------------------------- |

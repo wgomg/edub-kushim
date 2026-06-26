@@ -33,7 +33,7 @@ var commandSets = map[string]map[string]Command{
 		"hugot": {
 			Name:        "hugot",
 			Description: "Start the matcher RPC server over a Unix socket",
-			Handler:     serveMatchingHandler,
+			Handler:     serveHugotHandler,
 		},
 		"task": {
 			Name:        "task",

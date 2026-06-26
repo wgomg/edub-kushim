@@ -394,7 +394,7 @@ kushim hugot --socket /path/to/custom/matcher.sock
 
 | Flag       | Default                                        | Description                     |
 | ---------- | ---------------------------------------------- | ------------------------------- |
-| `--socket` | `<config_dir>/kushim-matcher.sock`             | Unix socket path for RPC        |
+| `--socket` | `<config_dir>/kushim-hugot.sock`             | Unix socket path for RPC        |
 
 The server listens on the Unix socket and exposes the following RPC
 endpoints:

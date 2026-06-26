@@ -19,8 +19,8 @@ import (
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
-func serveMatchingHandler(c *Container, args []string) error {
-	socketPath := filepath.Join(c.config.App.ConfigDir, "kushim-matcher.sock")
+func serveHugotHandler(c *Container, args []string) error {
+	socketPath := filepath.Join(c.config.App.ConfigDir, "kushim-hugot.sock")
 
 	fp := NewFlagParser(args)
 	if fp.Help("Usage: kushim hugot [--bg] [--socket <path>]") {
@@ -39,7 +39,7 @@ func serveMatchingHandler(c *Container, args []string) error {
 
 	if bgFlag {
 		bgArgs := []string{"hugot"}
-		if socketPath != filepath.Join(c.config.App.ConfigDir, "kushim-matcher.sock") {
+		if socketPath != filepath.Join(c.config.App.ConfigDir, "kushim-hugot.sock") {
 			bgArgs = append(bgArgs, "--socket", socketPath)
 		}
 		cmd := exec.Command(os.Args[0], bgArgs...)
@@ -56,7 +56,7 @@ func serveMatchingHandler(c *Container, args []string) error {
 		return fmt.Errorf("remove stale socket %s: %w", socketPath, err)
 	}
 
-	db, err := c.GetDB()
+	client, err := c.GetClient()
 	if err != nil {
 		return fmt.Errorf("database: %w", err)
 	}
@@ -68,7 +68,7 @@ func serveMatchingHandler(c *Container, args []string) error {
 	defer hugot.Close()
 
 	embStore := cache.NewEmbeddingStore(nil, nil)
-	if err := cache.BuildTagCache(context.Background(), db, c.logger, hugot, embStore); err != nil {
+	if err := cache.BuildTagCache(context.Background(), client.Queries, c.logger, hugot, embStore); err != nil {
 		c.logger.Error(nil, "failed to build tag cache: %v — continuing with empty cache", err)
 	}
 	hugot.SetStore(embStore)
