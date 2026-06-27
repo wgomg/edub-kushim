@@ -602,7 +602,7 @@ func (h *TaskHandler) ResumeBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	kushimPath, err := kushimBinaryPath()
+	kushimPath, err := utils.KushimBinaryPath()
 	if err != nil {
 		h.logger.Error(&reqID, "kushim binary not found: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)

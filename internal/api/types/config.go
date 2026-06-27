@@ -36,11 +36,18 @@ type ServerConfigResponse struct {
 	MaxUploadSize int64  `json:"max_upload_size"`
 }
 
+type PollingConfigResponse struct {
+	Enabled  bool `json:"enabled"`
+	Interval int  `json:"interval"`
+}
+
 type ConsumerConfigResponse struct {
-	Workers        int                   `json:"workers"`
-	TextExtractor  TextExtractorResponse `json:"textextractor"`
-	PdfOptimizer   PdfOptimizerResponse  `json:"pdfoptimizer"`
-	OCR            OCRResponse           `json:"ocr"`
+	Workers          int                   `json:"workers"`
+	MaxFilesPerBatch int                   `json:"max_files_per_batch"`
+	TextExtractor    TextExtractorResponse `json:"textextractor"`
+	PdfOptimizer     PdfOptimizerResponse  `json:"pdfoptimizer"`
+	OCR              OCRResponse           `json:"ocr"`
+	Polling          PollingConfigResponse `json:"polling"`
 }
 
 type TextExtractorResponse struct {
@@ -108,6 +115,9 @@ type HugotResponse struct {
 func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	var resp ConfigResponse
 	resp.Consumer.Workers = cfg.Consumer.Workers
+	resp.Consumer.MaxFilesPerBatch = cfg.Consumer.MaxFilesPerBatch
+	resp.Consumer.Polling.Enabled = cfg.Consumer.Polling.Enabled
+	resp.Consumer.Polling.Interval = cfg.Consumer.Polling.Interval
 	resp.Consumer.TextExtractor.Engine = cfg.Consumer.TextExtractor.Engine
 	resp.Consumer.TextExtractor.Timeout = cfg.Consumer.TextExtractor.Timeout
 	resp.Consumer.PdfOptimizer.Engine = cfg.Consumer.PdfOptimizer.Engine

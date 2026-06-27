@@ -22,7 +22,11 @@ storage:
 
 consumer:
   workers: 1
+  max_files_per_batch: 10
   supported_files: ['.pdf']
+  polling:
+    enabled: false
+    interval: 5  # minutes
 
   textextractor:
     engine: 'mupdf' # mupdf | gopdf | pdftotext

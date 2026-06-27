@@ -1409,6 +1409,10 @@ storage:
 
 consumer:
   workers: 1 # concurrent file processing workers
+  max_files_per_batch: 10 # max files per consume batch (0 = unlimited)
+  polling:
+    enabled: false # auto-consume on a schedule
+    interval: 5 # polling interval in minutes
   textextractor:
     engine: 'mupdf' # mupdf | gopdf | pdftotext
     timeout: 120
@@ -1470,6 +1474,8 @@ enricher:
 | `database`                     | SQLite storage location and file name                                  |
 | `storage`                      | Inbox and processed file directories                                   |
 | `consumer`                     | Pipeline: which tools to use, which files to accept                    |
+| `consumer.max_files_per_batch` | Max files per consume batch (default 10, 0 = unlimited)                |
+| `consumer.polling`             | Auto-consume scheduler settings (enabled, interval)                    |
 | `consumer.textextractor`       | Text extraction engine (mupdf, gopdf, pdftotext)                       |
 | `consumer.pdfoptimizer`        | PDF optimizer (mupdf, gs) + optional fallback                          |
 | `consumer.ocr`                 | OCR engine (gosseract, ocrmypdf) + language data                       |

@@ -84,23 +84,8 @@ func (h *ConsumeHandler) enqueueBatchFiles(ctx context.Context, batchID string, 
 	return enqueued
 }
 
-func kushimBinaryPath() (string, error) {
-	exe, err := os.Executable()
-	if err == nil {
-		kushimPath := filepath.Join(filepath.Dir(exe), "kushim")
-		if _, err := os.Stat(kushimPath); err == nil {
-			return kushimPath, nil
-		}
-	}
-	kushimPath, err := exec.LookPath("kushim")
-	if err != nil {
-		return "", fmt.Errorf("kushim not found in PATH and not found as sibling of edub binary")
-	}
-	return kushimPath, nil
-}
-
 func (h *ConsumeHandler) forkWorker(batchID string) error {
-	kushimPath, err := kushimBinaryPath()
+	kushimPath, err := utils.KushimBinaryPath()
 	if err != nil {
 		return err
 	}
@@ -159,6 +144,11 @@ func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 		h.logger.Error(&reqID, "Failed to scan inbox: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
+	}
+
+	if max := h.cfg.Consumer.MaxFilesPerBatch; max > 0 && len(paths) > max {
+		h.logger.Info(&reqID, "limiting to %d files (found %d)", max, len(paths))
+		paths = paths[:max]
 	}
 
 	if len(paths) == 0 {
@@ -350,6 +340,18 @@ func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		}
 		accepted = append(accepted, finalPath)
 		acceptedPaths = append(acceptedPaths, finalPath)
+	}
+
+	if max := h.cfg.Consumer.MaxFilesPerBatch; max > 0 && len(accepted) > max {
+		h.semaphore.Release()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		json.NewEncoder(w).Encode(map[string]any{
+			"error":    fmt.Sprintf("too many files — max %d per batch", max),
+			"accepted": len(accepted),
+			"rejected": rejected,
+		})
+		return
 	}
 
 	if len(accepted) == 0 {

@@ -67,12 +67,19 @@ type OCRConfig struct {
 	Timeout   int      `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
 }
 
+type PollingConfig struct {
+	Enabled  bool `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
+	Interval int  `mapstructure:"interval" yaml:"interval" json:"interval"` // minutes
+}
+
 type ConsumerConfig struct {
-	SupportedFiles []string            `json:"supported_files"`
-	Workers        int                 `mapstructure:"workers" yaml:"workers" json:"workers"`
-	TextExtractor  TextExtractorConfig `mapstructure:"textextractor" yaml:"textextractor" json:"textextractor"`
-	PdfOptimizer   PdfOptimizerConfig  `mapstructure:"pdfoptimizer" yaml:"pdfoptimizer" json:"pdfoptimizer"`
-	OCR            OCRConfig           `mapstructure:"ocr" yaml:"ocr" json:"ocr"`
+	SupportedFiles  []string            `json:"supported_files"`
+	Workers         int                 `mapstructure:"workers" yaml:"workers" json:"workers"`
+	MaxFilesPerBatch int                `mapstructure:"max_files_per_batch" yaml:"max_files_per_batch" json:"max_files_per_batch"`
+	TextExtractor   TextExtractorConfig `mapstructure:"textextractor" yaml:"textextractor" json:"textextractor"`
+	PdfOptimizer    PdfOptimizerConfig  `mapstructure:"pdfoptimizer" yaml:"pdfoptimizer" json:"pdfoptimizer"`
+	OCR             OCRConfig           `mapstructure:"ocr" yaml:"ocr" json:"ocr"`
+	Polling         PollingConfig       `mapstructure:"polling" yaml:"polling" json:"polling"`
 }
 
 type TextReducerConfig struct {
@@ -247,8 +254,9 @@ func DefaultConfig(configDir string) *Config {
 			StorageDir:     filepath.Join(configDir, "storage"),
 		},
 		Consumer: ConsumerConfig{
-			SupportedFiles: []string{".pdf"},
-			Workers:        1,
+			SupportedFiles:   []string{".pdf"},
+			Workers:          1,
+			MaxFilesPerBatch: 10,
 			TextExtractor: TextExtractorConfig{
 				Engine:  TextExtractor.MuPDF,
 				Timeout: 120,
@@ -262,6 +270,9 @@ func DefaultConfig(configDir string) *Config {
 				Languages: []string{"eng"},
 				DataDir:   filepath.Join(configDir, "ocr/tessdata"),
 				Timeout:   120,
+			},
+			Polling: PollingConfig{
+				Interval: 5,
 			},
 		},
 		Enricher: EnricherConfig{

@@ -15,6 +15,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/configtask"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/pool"
+	"github.com/wgomg/edub-kushim/internal/scheduler"
 	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/static"
@@ -27,8 +28,10 @@ type Server struct {
 	httpServer    *http.Server
 	logger        *utils.Logger
 	addr          string
+	cfg           *config.Config
 	matcherClient *tagmatch.MatcherClient
 	services      *types.CrudServices
+	scheduler     *scheduler.PollingScheduler
 	pools         struct {
 		config *pool.Pool
 	}
@@ -45,11 +48,13 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 	matcherClient := tagmatch.NewMatcherClient(filepath.Join(cfg.App.ConfigDir, "kushim-hugot.sock"))
 
 	s := &Server{
+		cfg:           new(config.Config),
 		logger:        logger,
 		addr:          addr,
 		services:      &types.CrudServices{},
 		matcherClient: matcherClient,
 	}
+	*s.cfg = cfg
 
 	tagSvc, err := service.NewTag(client.Queries, logger, matcherClient)
 	if err != nil {
@@ -75,7 +80,22 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 
 	semaphore := pool.NewSemaphore(max(cfg.Srv.MaxConcurrentBatches, 2))
 
-	registerRoutes(mux, logger, client, engine, dispatcher, &cfg, s.services, semaphore, workStore)
+	var kushimPath string
+	if path, err := utils.KushimBinaryPath(); err != nil {
+		logger.Error(nil, "kushim binary not found — polling disabled: %v", err)
+	} else {
+		kushimPath = path
+	}
+	getConfig := func() config.PollingConfig {
+		return s.cfg.Consumer.Polling
+	}
+	s.scheduler = scheduler.NewPollingScheduler(getConfig, logger, kushimPath, semaphore)
+
+	onConfigReload := func(newCfg *config.Config) {
+		*s.cfg = *newCfg
+	}
+
+	registerRoutes(mux, logger, client, engine, dispatcher, s.cfg, s.services, semaphore, workStore, onConfigReload)
 	registerStaticRoutes(mux)
 
 	handler := chainMiddleware(logger, mux)
@@ -114,7 +134,7 @@ func registerStaticRoutes(mux *http.ServeMux) {
 	})
 }
 
-func registerRoutes(mux *http.ServeMux, logger *utils.Logger, client *database.Client, engine *search.Engine, dispatcher *task.Dispatcher, cfg *config.Config, services *types.CrudServices, semaphore *pool.Semaphore, workStore *task.Store) {
+func registerRoutes(mux *http.ServeMux, logger *utils.Logger, client *database.Client, engine *search.Engine, dispatcher *task.Dispatcher, cfg *config.Config, services *types.CrudServices, semaphore *pool.Semaphore, workStore *task.Store, onConfigReload func(*config.Config)) {
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		handlers.HealthHandler(w, r, logger)
 	})
@@ -169,6 +189,7 @@ func registerRoutes(mux *http.ServeMux, logger *utils.Logger, client *database.C
 	mux.HandleFunc("DELETE /api/v1/users/{id}", userHandler.Delete)
 
 	configHandler := handlers.NewConfigHandler(cfg, client.Queries, logger, dispatcher)
+	configHandler.OnConfigReloaded(onConfigReload)
 	mux.HandleFunc("GET /wizard/config", configHandler.GetConfig)
 	mux.HandleFunc("PUT /wizard/config", configHandler.PutConfig)
 	mux.HandleFunc("GET /wizard/config/status", configHandler.ConfigStatus)
@@ -222,6 +243,9 @@ func (s *Server) Start() error {
 	s.pools.config.Start(context.Background())
 	s.logger.Info(nil, "config pool started")
 
+	s.scheduler.Start()
+	s.logger.Info(nil, "polling scheduler started")
+
 	s.logger.Info(nil, "Starting HTTP server on %s", s.addr)
 	return s.httpServer.ListenAndServe()
 }
@@ -240,6 +264,9 @@ func (s *Server) probeMatcher() {
 
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.logger.Info(nil, "Shutting down HTTP server")
+
+	s.scheduler.Stop()
+	s.logger.Info(nil, "polling scheduler stopped")
 
 	if err := s.httpServer.Shutdown(ctx); err != nil {
 		return err

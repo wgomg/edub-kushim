@@ -163,6 +163,11 @@ func consumeHandler(c *Container, args []string) error {
 		return nil
 	}
 
+	if max := c.config.Consumer.MaxFilesPerBatch; max > 0 && len(files) > max {
+		fmt.Printf("Limiting to %d files (found %d)\n", max, len(files))
+		files = files[:max]
+	}
+
 	batchID := uuid.New().String()
 	enqueued := 0
 	for i, f := range files {

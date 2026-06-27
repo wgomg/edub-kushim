@@ -19,11 +19,16 @@ import (
 const configSource = "config"
 
 type ConfigHandler struct {
-	cfg         *config.Config
-	queries     *database.Queries
-	logger      *utils.Logger
-	dispatcher  *task.Dispatcher
-	OnBootstrap func(configDir string) (*config.Config, *database.Queries, *task.Dispatcher, error)
+	cfg              *config.Config
+	queries          *database.Queries
+	logger           *utils.Logger
+	dispatcher       *task.Dispatcher
+	OnBootstrap      func(configDir string) (*config.Config, *database.Queries, *task.Dispatcher, error)
+	onConfigReloaded func(cfg *config.Config)
+}
+
+func (h *ConfigHandler) OnConfigReloaded(fn func(cfg *config.Config)) {
+	h.onConfigReloaded = fn
 }
 
 func NewConfigHandler(cfg *config.Config, queries *database.Queries, logger *utils.Logger, dispatcher *task.Dispatcher) *ConfigHandler {
@@ -109,6 +114,9 @@ func (h *ConfigHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.cfg = cfg
+	if h.onConfigReloaded != nil {
+		h.onConfigReloaded(cfg)
+	}
 	missing := config.MissingExternalToolErrors(cfg)
 
 	if h.dispatcher == nil {

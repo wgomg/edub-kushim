@@ -44,6 +44,7 @@ Pure Go binary (`CGO_ENABLED=0`) that handles HTTP requests. It:
 
 - Enqueues consume/enrich tasks when `POST /api/v1/consume` is called
 - **Forks** `kushim consume --batch <id>` as a child process to handle actual document processing
+- Runs a **PollingScheduler** that periodically forks `kushim consume --bg` when polling is enabled, reusing the same semaphore that limits concurrent forked workers
 - Runs a config pool for background download tasks (tessdata, Hugot model)
 - Probes the matcher socket on startup; tag CRUD returns 503 if matcher is unreachable
 - Uses `Semaphore` to limit concurrent forked workers (`server.max_concurrent_batches`)
@@ -53,7 +54,8 @@ Pure Go binary (`CGO_ENABLED=0`) that handles HTTP requests. It:
 The CGo binary that performs actual document processing:
 
 - `kushim consume` — scans inbox, processes files, runs enrichment
-- `kushim consume --batch <id>` — resumes a previously enqueued batch (used by `edub`'s fork)
+- `kushim consume --bg` — scans inbox in the background; creates a batch and re-forks with `--batch` (used by the polling scheduler)
+- `kushim consume --batch <id>` — resumes a previously enqueued batch (used by `edub`'s API consume and resume handlers)
 - `kushim hugot` — starts the matcher RPC server
 - `kushim setup` — setup wizard
 
@@ -243,8 +245,9 @@ environments or CI.
 
 The main web UI (`web/`) includes a **Settings** page at `/settings` backed by the same
 `/wizard/config` API endpoints. It provides a single-page form covering all configurable
-fields: server host/port, max upload/download sizes, max download files; OCR engine, timeout, data directory, languages; consumer workers,
-text extractor engine/timeout; PDF optimizer engine/fallback/timeout;
+fields: server host/port, max upload/download sizes, max download files; OCR engine, timeout, data directory, languages;
+consumer workers, max files per batch; polling scheduler on/off toggle and interval; text extractor engine/timeout;
+PDF optimizer engine/fallback/timeout;
 enricher workers; content analyzer engine/timeout + LLM provider Base URL, model, token;
 tag matcher engine/timeout, reduce-target-words, chunk size, Hugot model/backend;
 text reducer engine/timeout/target-words. Changes trigger background downloads for any

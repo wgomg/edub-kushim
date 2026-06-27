@@ -112,6 +112,9 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			'consumer.ocr.data_dir': cfg.consumer.ocr.data_dir,
 			'consumer.ocr.timeout': Number(cfg.consumer.ocr.timeout),
 			'consumer.workers': Number(cfg.consumer.workers),
+			'consumer.max_files_per_batch': Number(cfg.consumer.max_files_per_batch),
+			'consumer.polling.enabled': cfg.consumer.polling.enabled,
+			'consumer.polling.interval': Number(cfg.consumer.polling.interval),
 			'consumer.pdfoptimizer.engine': cfg.consumer.pdfoptimizer.engine,
 			'consumer.pdfoptimizer.fallback': cfg.consumer.pdfoptimizer.fallback,
 			'consumer.pdfoptimizer.timeout': Number(cfg.consumer.pdfoptimizer.timeout),
@@ -267,7 +270,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			<button
 				type="button"
 				onclick={() => (activeTab = 'Configuration')}
-				class="rounded-t-lg px-4 py-2 text-sm font-medium transition-colors {activeTab === 'Configuration'
+				class="rounded-t-lg px-4 py-2 text-sm font-medium transition-colors {activeTab ===
+				'Configuration'
 					? 'border-gold-500 border-b-2 text-gold-500'
 					: 'text-parchment-400 hover:text-parchment-200'}"
 			>
@@ -354,7 +358,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 					<div>
 						<label
 							for="server-max-download-size"
-							class="mb-1 block text-sm font-medium text-parchment-200">Max download size (MB)</label
+							class="mb-1 block text-sm font-medium text-parchment-200"
+							>Max download size (MB)</label
 						>
 						<input
 							id="server-max-download-size"
@@ -517,7 +522,54 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
 						/>
 					</div>
+					<div>
+						<label
+							for="consumer-max-files-per-batch"
+							class="mb-1 block text-sm font-medium text-parchment-200">Max files per batch</label
+						>
+						<input
+							id="consumer-max-files-per-batch"
+							type="number"
+							min="0"
+							bind:value={cfg.consumer.max_files_per_batch}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						/>
 					</div>
+				</div>
+			</section>
+
+			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+				<h2 class="mb-4 text-lg font-semibold text-parchment-200">Polling</h2>
+				<div class="grid gap-4 sm:grid-cols-2">
+					<div>
+						<label for="polling-enabled" class="mb-1 block text-sm font-medium text-parchment-200"
+							>Enabled</label
+						>
+						<div class="flex items-center gap-2">
+							<input
+								id="polling-enabled"
+								type="checkbox"
+								bind:checked={cfg.consumer.polling.enabled}
+								class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
+							/>
+							<span class="text-sm text-parchment-400">
+								{cfg.consumer.polling.enabled ? 'Active' : 'Inactive'}
+							</span>
+						</div>
+					</div>
+					<div>
+						<label for="polling-interval" class="mb-1 block text-sm font-medium text-parchment-200"
+							>Interval (minutes)</label
+						>
+						<input
+							id="polling-interval"
+							type="number"
+							min="1"
+							bind:value={cfg.consumer.polling.interval}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						/>
+					</div>
+				</div>
 			</section>
 
 			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
@@ -737,8 +789,9 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 				<h2 class="mb-4 text-lg font-semibold text-parchment-200">Tag matcher</h2>
 				<div class="grid gap-4 sm:grid-cols-2">
 					<div>
-						<label for="tag-matcher-timeout" class="mb-1 block text-sm font-medium text-parchment-200"
-							>Timeout (s)</label
+						<label
+							for="tag-matcher-timeout"
+							class="mb-1 block text-sm font-medium text-parchment-200">Timeout (s)</label
 						>
 						<input
 							id="tag-matcher-timeout"
@@ -807,8 +860,9 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 				<h2 class="mb-4 text-lg font-semibold text-parchment-200">Text reducer</h2>
 				<div class="grid gap-4 sm:grid-cols-2">
 					<div>
-						<label for="text-reducer-engine" class="mb-1 block text-sm font-medium text-parchment-200"
-							>Engine</label
+						<label
+							for="text-reducer-engine"
+							class="mb-1 block text-sm font-medium text-parchment-200">Engine</label
 						>
 						<select
 							id="text-reducer-engine"
