@@ -232,14 +232,17 @@
 | 25  | **Dashboard: document analytics panel**  | ✓ Language distribution, document type distribution, tag frequency (top N), documents without tags/type/language counts                                                           |
 | 26  | **Dashboard: processing health panel**   | ✓ Task success rate (completed vs failed, last 7 days), avg task duration, active batch count, orphaned batch count, missing tools count                                          |
 | 27  | **Dashboard: summary API**               | ✓ Single `GET /api/v1/dashboard` endpoint returning all panel data — built from GROUP BY/JOIN queries on existing schema, no migrations needed                                    |
-| 28  | **Authentication and user management**   | Login, API keys, roles                                                                                                                                                            |
-| 29  | **Document notes/comments**              | User-added notes and annotations on documents                                                                                                                                     |
-| 30  | **Pre-built binaries**                   | Release binaries for major platforms (Linux amd64/arm64)                                                                                                                          |
-| 31  | **MySQL / MariaDB database backend**     | Additional database backend support                                                                                                                                               |
-| 32  | **User preferences**                     | Theme, pagination defaults, notification settings                                                                                                                                 |
-| 33  | **Email ingestion**                      | IMAP inbox scanning                                                                                                                                                               |
-| 34  | **Document relationships**               | Parent/child, cross-references between documents                                                                                                                                  |
-| 35  | **Contributing guide & issue templates** | `CONTRIBUTING.md`, issue/PR templates, and GitHub community setup to encourage contributions                                                                                      |
+| 28  | **User accounts**                        | User CRUD, password hashing (bcrypt), user list page in settings UI                                                                                                               |
+| 29  | **Login and session management**         | Login/logout endpoints, session tokens, auth middleware, protected API routes, login/register page                                                                                |
+| 30  | **API keys**                             | Key generation/revocation/rotation, Bearer token validation middleware, per-user key management                                                                                   |
+| 31  | **Roles and permissions**                | RBAC schema with admin/editor/viewer roles, permission enforcement middleware, role assignment                                                                                    |
+| 32  | **Document notes/comments**              | User-added notes and annotations on documents                                                                                                                                     |
+| 33  | **Pre-built binaries**                   | Release binaries for major platforms (Linux amd64/arm64)                                                                                                                          |
+| 34  | **MySQL / MariaDB database backend**     | Additional database backend support                                                                                                                                               |
+| 35  | **User preferences**                     | Theme, pagination defaults, notification settings                                                                                                                                 |
+| 36  | **Email ingestion**                      | IMAP inbox scanning                                                                                                                                                               |
+| 37  | **Document relationships**               | Parent/child, cross-references between documents                                                                                                                                  |
+| 38  | **Contributing guide & issue templates** | `CONTRIBUTING.md`, issue/PR templates, and GitHub community setup to encourage contributions                                                                                      |
 
 ---
 
