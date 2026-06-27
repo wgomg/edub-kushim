@@ -96,26 +96,23 @@ type ProcessingHealth struct {
 }
 
 type DashboardResponse struct {
-	RecentBatches    []BatchOverviewItem `json:"recent_batches"`
-	Activity         []ActivityEvent     `json:"activity"`
-	Analytics        *DocumentAnalytics  `json:"analytics,omitempty"`
-	ProcessingHealth *ProcessingHealth   `json:"processing_health,omitempty"`
-}
-
-type GlobalSummaryResponse struct {
-	TotalBatches     int64              `json:"total_batches"`
-	TotalFiles       int64              `json:"total_files"`
-	Waiting          int64              `json:"waiting"`
-	Pending          int64              `json:"pending"`
-	Processing       int64              `json:"processing"`
-	Completed        int64              `json:"completed"`
-	Failed           int64              `json:"failed"`
-	Cancelled        int64              `json:"cancelled"`
-	Discarded        int64              `json:"discarded"`
-	TotalSizeGB      float64            `json:"total_size_gb"`
-	MimeTypeBreakdown []MimeTypeStat    `json:"mime_type_breakdown"`
+	RecentBatches    []BatchOverviewItem  `json:"recent_batches"`
+	Activity         []ActivityEvent      `json:"activity"`
+	Analytics        *DocumentAnalytics   `json:"analytics,omitempty"`
+	ProcessingHealth *ProcessingHealth    `json:"processing_health,omitempty"`
+	TotalBatches     int64                `json:"total_batches"`
+	TotalFiles       int64                `json:"total_files"`
+	Waiting          int64                `json:"waiting"`
+	Pending          int64                `json:"pending"`
+	Processing       int64                `json:"processing"`
+	Completed        int64                `json:"completed"`
+	Failed           int64                `json:"failed"`
+	Cancelled        int64                `json:"cancelled"`
+	Discarded        int64                `json:"discarded"`
+	TotalSizeGB      float64              `json:"total_size_gb"`
+	MimeTypeBreakdown []MimeTypeStat      `json:"mime_type_breakdown"`
 	StorageTrend      []StorageTrendPoint `json:"storage_trend"`
-	AvgFileSizeBytes  int64             `json:"avg_file_size_bytes"`
-	TotalPages        int64             `json:"total_pages"`
-	TotalWords        int64             `json:"total_words"`
+	AvgFileSizeBytes  int64               `json:"avg_file_size_bytes"`
+	TotalPages        int64               `json:"total_pages"`
+	TotalWords        int64               `json:"total_words"`
 }

@@ -154,10 +154,6 @@ export const api = {
 		cancel: (batchId) => request(`/api/v1/batches/${batchId}/cancel`, { method: 'POST' })
 	},
 
-	summary: {
-		get: () => request('/api/v1/summary').then((data) => data ?? null)
-	},
-
 	autocomplete: {
 		tags: (q, limit = 20) =>
 			request(`/api/v1/tags?q=${encodeURIComponent(q)}&limit=${limit}`).then(

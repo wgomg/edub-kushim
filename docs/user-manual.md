@@ -1092,40 +1092,6 @@ If the worker process is no longer running:
 }
 ```
 
-### Global Summary
-
-```
-GET /api/v1/summary
-```
-
-Response `200`:
-
-```json
-{
-  "total_batches": 3,
-  "total_files": 150,
-  "waiting": 3,
-  "pending": 10,
-  "processing": 2,
-  "completed": 130,
-  "failed": 5,
-  "cancelled": 3,
-  "discarded": 0,
-  "total_size_gb": 12.45,
-  "mime_type_breakdown": [
-    { "mime_type": "application/pdf", "count": 120, "total_bytes": 10737418240 },
-    { "mime_type": "image/png", "count": 30, "total_bytes": 3145728000 }
-  ],
-  "storage_trend": [
-    { "date": "2026-06-01", "daily_count": 10, "daily_bytes": 524288000, "cumulative_bytes": 524288000 },
-    { "date": "2026-06-02", "daily_count": 15, "daily_bytes": 943718400, "cumulative_bytes": 1468006400 }
-  ],
-  "avg_file_size_bytes": 92563939,
-  "total_pages": 1420,
-  "total_words": 285000
-}
-```
-
 ### Dashboard
 
 ```

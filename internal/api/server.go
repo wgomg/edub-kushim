@@ -174,7 +174,6 @@ func registerRoutes(mux *http.ServeMux, logger *utils.Logger, client *database.C
 	mux.HandleFunc("GET /api/v1/batches", taskHandler.ListBatches)
 	mux.HandleFunc("GET /api/v1/batches/{id}", taskHandler.GetBatchSummary)
 	mux.HandleFunc("POST /api/v1/batches/{id}/retry", taskHandler.RetryBatch)
-	mux.HandleFunc("GET /api/v1/summary", taskHandler.GlobalSummary)
 	mux.HandleFunc("POST /api/v1/batches/{id}/resume", taskHandler.ResumeBatch)
 	mux.HandleFunc("POST /api/v1/batches/{id}/cancel", taskHandler.CancelBatch)
 

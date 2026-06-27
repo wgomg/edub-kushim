@@ -299,8 +299,97 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 		processingHealth = ph
 	}
 
+	totalBatches, batchErr := h.queries.CountDistinctBatches(ctx)
+	if batchErr != nil {
+		h.logger.Error(&reqID, "count distinct batches: %v", batchErr)
+	}
+
+	agg, aggErr := h.queries.DocumentAggregates(ctx)
+	var totalFiles, totalBytes, totalPages, totalWords int64
+	if aggErr != nil {
+		h.logger.Error(&reqID, "document aggregates: %v", aggErr)
+	} else {
+		totalFiles = agg.TotalFiles
+		totalBytes = agg.TotalBytes
+		totalPages = agg.TotalPages
+		totalWords = agg.TotalWords
+	}
+
+	statusRows, statusErr := h.queries.CountTasksByStatus(ctx)
+	if statusErr != nil {
+		h.logger.Error(&reqID, "count tasks by status: %v", statusErr)
+	}
+	perStatus := map[string]int64{}
+	if statusErr == nil {
+		for _, r := range statusRows {
+			perStatus[r.Status] = r.Count
+		}
+	}
+
+	mimeBreakdown, mimeErr := h.queries.MimeTypeBreakdown(ctx)
+	if mimeErr != nil {
+		h.logger.Error(&reqID, "mime type breakdown: %v", mimeErr)
+	}
+
+	trendRows, trendErr := h.queries.StorageTrendDaily(ctx)
+	if trendErr != nil {
+		h.logger.Error(&reqID, "storage trend daily: %v", trendErr)
+	}
+
+	var avgFileSize int64
+	if totalFiles > 0 {
+		avgFileSize = totalBytes / totalFiles
+	}
+
+	mimeStats := make([]types.MimeTypeStat, 0)
+	if mimeErr == nil {
+		mimeStats = make([]types.MimeTypeStat, 0, len(mimeBreakdown))
+		for _, m := range mimeBreakdown {
+			mimeStats = append(mimeStats, types.MimeTypeStat{
+				MimeType:   m.MimeType,
+				Count:      m.Count,
+				TotalBytes: m.TotalBytes,
+			})
+		}
+	}
+
+	var cumulative int64
+	trendPoints := make([]types.StorageTrendPoint, 0)
+	if trendErr == nil {
+		trendPoints = make([]types.StorageTrendPoint, 0, len(trendRows))
+		for _, t := range trendRows {
+			cumulative += t.DailyBytes
+			trendPoints = append(trendPoints, types.StorageTrendPoint{
+				Date:            t.Day,
+				DailyCount:      t.Count,
+				DailyBytes:      t.DailyBytes,
+				CumulativeBytes: cumulative,
+			})
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(types.DashboardResponse{RecentBatches: items, Activity: activity, Analytics: analytics, ProcessingHealth: processingHealth})
+	json.NewEncoder(w).Encode(types.DashboardResponse{
+		RecentBatches:    items,
+		Activity:         activity,
+		Analytics:        analytics,
+		ProcessingHealth: processingHealth,
+		TotalBatches:     totalBatches,
+		TotalFiles:       totalFiles,
+		Waiting:          perStatus["waiting"],
+		Pending:          perStatus["pending"],
+		Processing:       perStatus["processing"],
+		Completed:        perStatus["completed"],
+		Failed:           perStatus["failed"],
+		Cancelled:        perStatus["cancelled"],
+		Discarded:        perStatus["discarded"],
+		TotalSizeGB:      float64(totalBytes) / (1024 * 1024 * 1024),
+		MimeTypeBreakdown: mimeStats,
+		StorageTrend:      trendPoints,
+		AvgFileSizeBytes:  avgFileSize,
+		TotalPages:        totalPages,
+		TotalWords:        totalWords,
+	})
 }
 
 func (h *TaskHandler) buildDocumentAnalytics(ctx context.Context, reqID *string) *types.DocumentAnalytics {
@@ -462,99 +551,6 @@ func (h *TaskHandler) GetBatchSummary(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(summary)
 
 	h.logger.Debug(&reqID, "batch summary: %+v", summary)
-}
-
-func (h *TaskHandler) GlobalSummary(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
-
-	totalBatches, err := h.queries.CountDistinctBatches(ctx)
-	if err != nil {
-		h.logger.Error(&reqID, "count distinct batches: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	agg, err := h.queries.DocumentAggregates(ctx)
-	if err != nil {
-		h.logger.Error(&reqID, "document aggregates: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-	totalFiles := agg.TotalFiles
-	totalBytes := agg.TotalBytes
-
-	rows, err := h.queries.CountTasksByStatus(ctx)
-	if err != nil {
-		h.logger.Error(&reqID, "count tasks by status: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-	perStatus := map[string]int64{}
-	for _, row := range rows {
-		perStatus[row.Status] = row.Count
-	}
-
-	mimeBreakdown, err := h.queries.MimeTypeBreakdown(ctx)
-	if err != nil {
-		h.logger.Error(&reqID, "mime type breakdown: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	trendRows, err := h.queries.StorageTrendDaily(ctx)
-	if err != nil {
-		h.logger.Error(&reqID, "storage trend daily: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	var avgFileSize int64
-	if totalFiles > 0 {
-		avgFileSize = totalBytes / totalFiles
-	}
-
-	mimeStats := make([]types.MimeTypeStat, 0, len(mimeBreakdown))
-	for _, m := range mimeBreakdown {
-		mimeStats = append(mimeStats, types.MimeTypeStat{
-			MimeType:   m.MimeType,
-			Count:      m.Count,
-			TotalBytes: m.TotalBytes,
-		})
-	}
-
-	var cumulative int64
-	trendPoints := make([]types.StorageTrendPoint, 0, len(trendRows))
-	for _, t := range trendRows {
-		cumulative += t.DailyBytes
-		trendPoints = append(trendPoints, types.StorageTrendPoint{
-			Date:            t.Day,
-			DailyCount:      t.Count,
-			DailyBytes:      t.DailyBytes,
-			CumulativeBytes: cumulative,
-		})
-	}
-
-	resp := types.GlobalSummaryResponse{
-		TotalBatches:     totalBatches,
-		TotalFiles:       totalFiles,
-		Waiting:          perStatus["waiting"],
-		Pending:          perStatus["pending"],
-		Processing:       perStatus["processing"],
-		Completed:        perStatus["completed"],
-		Failed:           perStatus["failed"],
-		Cancelled:        perStatus["cancelled"],
-		Discarded:        perStatus["discarded"],
-		TotalSizeGB:      float64(totalBytes) / (1024 * 1024 * 1024),
-		MimeTypeBreakdown: mimeStats,
-		StorageTrend:      trendPoints,
-		AvgFileSizeBytes:  avgFileSize,
-		TotalPages:        agg.TotalPages,
-		TotalWords:        agg.TotalWords,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
 }
 
 func buildBatchSummary(ctx context.Context, queries *database.Queries, batchID string) types.BatchSummaryResponse {

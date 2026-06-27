@@ -9,14 +9,12 @@
 	import ProcessingHealthPanel from '$lib/components/ProcessingHealthPanel.svelte';
 
 	let health = $state();
-	let summary = $state();
 	let recentDocs = $state([]);
 	let dashboard = $state();
 
 	onMount(async () => {
-		[health, summary, recentDocs, dashboard] = await Promise.all([
+		[health, recentDocs, dashboard] = await Promise.all([
 			api.health(),
-			api.summary.get(),
 			api.documents.list(15, 0),
 			api.dashboard()
 		]);
@@ -47,51 +45,51 @@
 		</div>
 		<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 			<p class="text-sm text-parchment-500">Total Files</p>
-			<p class="mt-1 text-lg font-semibold text-parchment-200">{summary?.total_files ?? '…'}</p>
+			<p class="mt-1 text-lg font-semibold text-parchment-200">{dashboard?.total_files ?? '…'}</p>
 		</div>
 		<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 			<p class="text-sm text-parchment-500">Total Batches</p>
-			<p class="mt-1 text-lg font-semibold text-parchment-200">{summary?.total_batches ?? '…'}</p>
+			<p class="mt-1 text-lg font-semibold text-parchment-200">{dashboard?.total_batches ?? '…'}</p>
 		</div>
 		<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 			<p class="text-sm text-parchment-500">Total Size</p>
 			<p class="mt-1 text-lg font-semibold text-parchment-200">
-				{summary ? summary.total_size_gb.toFixed(2) + ' GB' : '…'}
+				{dashboard ? dashboard.total_size_gb.toFixed(2) + ' GB' : '…'}
 			</p>
 		</div>
 	</div>
 
-	{#if summary}
+	{#if dashboard}
 		<section>
 			<h2 class="mb-3 text-lg font-semibold text-parchment-200">Task Status</h2>
 			<div class="grid grid-cols-2 gap-4 sm:grid-cols-7">
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-sm text-parchment-500">Waiting</p>
-					<p class="mt-1 text-lg font-semibold text-amber-400">{summary.waiting}</p>
+					<p class="mt-1 text-lg font-semibold text-amber-400">{dashboard.waiting}</p>
 				</div>
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-sm text-parchment-500">Pending</p>
-					<p class="mt-1 text-lg font-semibold text-parchment-400">{summary.pending}</p>
+					<p class="mt-1 text-lg font-semibold text-parchment-400">{dashboard.pending}</p>
 				</div>
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-sm text-parchment-500">Processing</p>
-					<p class="mt-1 text-lg font-semibold text-lapis-600">{summary.processing}</p>
+					<p class="mt-1 text-lg font-semibold text-lapis-600">{dashboard.processing}</p>
 				</div>
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-sm text-parchment-500">Completed</p>
-					<p class="mt-1 text-lg font-semibold text-emerald-500">{summary.completed}</p>
+					<p class="mt-1 text-lg font-semibold text-emerald-500">{dashboard.completed}</p>
 				</div>
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-sm text-parchment-500">Failed</p>
-					<p class="mt-1 text-lg font-semibold text-terracotta-500">{summary.failed}</p>
+					<p class="mt-1 text-lg font-semibold text-terracotta-500">{dashboard.failed}</p>
 				</div>
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-sm text-parchment-500">Cancelled</p>
-					<p class="mt-1 text-lg font-semibold text-parchment-500">{summary.cancelled}</p>
+					<p class="mt-1 text-lg font-semibold text-parchment-500">{dashboard.cancelled}</p>
 				</div>
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-sm text-parchment-500">Discarded</p>
-					<p class="text-terracotta-400 mt-1 text-lg font-semibold">{summary.discarded}</p>
+					<p class="text-terracotta-400 mt-1 text-lg font-semibold">{dashboard.discarded}</p>
 				</div>
 			</div>
 		</section>
@@ -123,15 +121,15 @@
 		{/if}
 	{/if}
 
-	{#if summary}
+	{#if dashboard}
 		<section>
 			<h2 class="mb-3 text-lg font-semibold text-parchment-200">Storage</h2>
 			<StoragePanel
-				mimeTypeBreakdown={summary.mime_type_breakdown ?? []}
-				storageTrend={summary.storage_trend ?? []}
-				avgFileSizeBytes={summary.avg_file_size_bytes ?? 0}
-				totalPages={summary.total_pages ?? 0}
-				totalWords={summary.total_words ?? 0}
+				mimeTypeBreakdown={dashboard.mime_type_breakdown ?? []}
+				storageTrend={dashboard.storage_trend ?? []}
+				avgFileSizeBytes={dashboard.avg_file_size_bytes ?? 0}
+				totalPages={dashboard.total_pages ?? 0}
+				totalWords={dashboard.total_words ?? 0}
 			/>
 		</section>
 	{/if}

@@ -532,17 +532,6 @@ func TestTaskEndpoints(t *testing.T) {
 		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
 	})
 
-	t.Run("global summary", func(t *testing.T) {
-		w := rec()
-		h.GlobalSummary(w, req(t, "GET", "/api/v1/summary", nil))
-		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
-		var summary types.GlobalSummaryResponse
-		json.NewDecoder(w.Body).Decode(&summary)
-		if summary.TotalBatches < 0 {
-			t.Fatal("expected non-negative batch count")
-		}
-	})
-
 	t.Run("cancel nonexistent batch", func(t *testing.T) {
 		w := rec()
 		r := req(t, "POST", "/api/v1/batches/nonexistent-batch/cancel", nil)
@@ -821,6 +810,8 @@ func TestGetDashboardProcessingHealth(t *testing.T) {
 	h := NewTaskHandler(env.client.Queries, env.logger, nil)
 	ctx := context.Background()
 
+	database.CreateTestDocument(t, env.client.Queries, "ph-doc.pdf")
+
 	_, err := env.client.CreateBatch(ctx, database.CreateBatchParams{
 		ID: "ph-batch-1", Source: "test",
 	})
@@ -882,6 +873,34 @@ func TestGetDashboardProcessingHealth(t *testing.T) {
 	}
 	if resp.ProcessingHealth.AvgDurationMs != 0 {
 		t.Fatalf("expected avg_duration_ms 0 (no started_at), got %d", resp.ProcessingHealth.AvgDurationMs)
+	}
+
+	if resp.TotalBatches < 1 {
+		t.Fatalf("expected total_batches >= 1, got %d", resp.TotalBatches)
+	}
+	if resp.TotalFiles < 1 {
+		t.Fatalf("expected total_files >= 1, got %d", resp.TotalFiles)
+	}
+	if resp.TotalSizeGB <= 0 {
+		t.Fatalf("expected total_size_gb > 0, got %f", resp.TotalSizeGB)
+	}
+	if resp.Completed < 1 {
+		t.Fatalf("expected completed >= 1, got %d", resp.Completed)
+	}
+	if resp.Failed < 1 {
+		t.Fatalf("expected failed >= 1, got %d", resp.Failed)
+	}
+	if len(resp.MimeTypeBreakdown) == 0 {
+		t.Fatal("expected non-empty mime_type_breakdown")
+	}
+	if len(resp.StorageTrend) == 0 {
+		t.Fatal("expected non-empty storage_trend")
+	}
+	if resp.TotalPages < 1 {
+		t.Fatalf("expected total_pages >= 1, got %d", resp.TotalPages)
+	}
+	if resp.TotalWords < 1 {
+		t.Fatalf("expected total_words >= 1, got %d", resp.TotalWords)
 	}
 }
 
