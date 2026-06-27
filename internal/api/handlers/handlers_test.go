@@ -47,7 +47,7 @@ type handlerTestEnv struct {
 }
 
 func newDocHandler(env *handlerTestEnv) *DocumentHandler {
-	return NewDocumentHandler(env.client, env.logger, env.engine, env.services, config.DefaultConfig("/tmp/test"))
+	return NewDocumentHandler(env.client, env.logger, env.engine, env.services, func() *config.Config { return config.DefaultConfig("/tmp/test") })
 }
 
 func newMockTagService(queries *database.Queries) (*service.Tag, *testutil.MockEmbedder) {
@@ -327,7 +327,7 @@ func TestDownloadDocumentsValidation(t *testing.T) {
 	cfg.Srv.MaxDownloadSizeMB = 0 // any positive size exceeds
 
 	env := newHandlerTestEnv(t)
-	h := NewDocumentHandler(env.client, env.logger, env.engine, env.services, cfg)
+	h := NewDocumentHandler(env.client, env.logger, env.engine, env.services, func() *config.Config { return cfg })
 
 	t.Run("invalid body", func(t *testing.T) {
 		w := rec()
@@ -501,7 +501,7 @@ func TestDocumentTypeCrud(t *testing.T) {
 
 func TestTaskEndpoints(t *testing.T) {
 	env := newHandlerTestEnv(t)
-	h := NewTaskHandler(env.client.Queries, env.logger, nil)
+	h := NewTaskHandler(env.client.Queries, env.logger, func() *config.Config { return nil })
 	ctx := context.Background()
 
 	_, err := env.client.CreateTask(ctx, database.CreateTaskParams{
@@ -619,7 +619,7 @@ func TestTaskEndpoints(t *testing.T) {
 
 func TestGetDashboardActivity(t *testing.T) {
 	env := newHandlerTestEnv(t)
-	h := NewTaskHandler(env.client.Queries, env.logger, nil)
+	h := NewTaskHandler(env.client.Queries, env.logger, func() *config.Config { return nil })
 	ctx := context.Background()
 
 	docDBID, docUUID := database.CreateTestDocument(t, env.client.Queries, "dash-act-doc.pdf")
@@ -792,7 +792,7 @@ func TestGetDashboardActivity(t *testing.T) {
 
 func TestGetDashboardAnalyticsError(t *testing.T) {
 	env := newHandlerTestEnv(t)
-	h := NewTaskHandler(env.client.Queries, env.logger, nil)
+	h := NewTaskHandler(env.client.Queries, env.logger, func() *config.Config { return nil })
 
 	database.CreateTestDocument(t, env.client.Queries, "err-test.pdf")
 
@@ -813,7 +813,7 @@ func TestGetDashboardAnalyticsError(t *testing.T) {
 
 func TestGetDashboardProcessingHealth(t *testing.T) {
 	env := newHandlerTestEnv(t)
-	h := NewTaskHandler(env.client.Queries, env.logger, nil)
+	h := NewTaskHandler(env.client.Queries, env.logger, func() *config.Config { return nil })
 	ctx := context.Background()
 
 	database.CreateTestDocument(t, env.client.Queries, "ph-doc.pdf")
@@ -997,7 +997,7 @@ func TestEnqueueBatchFilesDedup(t *testing.T) {
 	ctx := context.Background()
 
 	cfg := config.DefaultConfig("/tmp/test")
-	h := NewConsumeHandler(cfg, env.logger, env.workStore, env.client.Queries, env.semaphore)
+	h := NewConsumeHandler(func() *config.Config { return cfg }, env.logger, env.workStore, env.client.Queries, env.semaphore)
 
 	t.Run("enqueues new file", func(t *testing.T) {
 		tmpDir := t.TempDir()
@@ -1234,6 +1234,103 @@ func TestUserCrud(t *testing.T) {
 		h.Delete(w, r)
 		testutil.AssertEqual(t, w.Code, http.StatusNotFound, "404 on missing delete")
 	})
+}
+
+func TestConfigHandlerGetConfig(t *testing.T) {
+	env := newHandlerTestEnv(t)
+
+	t.Run("nil config returns default", func(t *testing.T) {
+		h := NewConfigHandler(nil, env.client.Queries, env.logger, nil)
+		w := rec()
+		h.GetConfig(w, req(t, "GET", "/wizard/config", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var resp types.ConfigResponse
+		json.NewDecoder(w.Body).Decode(&resp)
+		testutil.AssertEqual(t, resp.Server.Host, "0.0.0.0", "default host")
+	})
+
+	t.Run("stored config is returned", func(t *testing.T) {
+		stored := config.DefaultConfig("/tmp/test-config")
+		stored.Srv.Port = 9999
+		h := NewConfigHandler(stored, env.client.Queries, env.logger, nil)
+		w := rec()
+		h.GetConfig(w, req(t, "GET", "/wizard/config", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var resp types.ConfigResponse
+		json.NewDecoder(w.Body).Decode(&resp)
+		testutil.AssertEqual(t, resp.Server.Port, 9999, "stored port")
+	})
+
+	t.Run("setbootstrap then getconfig", func(t *testing.T) {
+		h := NewConfigHandler(nil, env.client.Queries, env.logger, nil)
+		bootstrapped := config.DefaultConfig("/tmp/boot")
+		bootstrapped.Srv.Port = 7777
+		h.SetBootstrap(bootstrapped, env.client.Queries, nil)
+
+		w := rec()
+		h.GetConfig(w, req(t, "GET", "/wizard/config", nil))
+		var resp types.ConfigResponse
+		json.NewDecoder(w.Body).Decode(&resp)
+		testutil.AssertEqual(t, resp.Server.Port, 7777, "bootstrapped port")
+	})
+}
+
+func TestConfigHandlerConfigStatus(t *testing.T) {
+	env := newHandlerTestEnv(t)
+
+	t.Run("nil config reports not configured", func(t *testing.T) {
+		h := NewConfigHandler(nil, env.client.Queries, env.logger, nil)
+		w := rec()
+		h.ConfigStatus(w, req(t, "GET", "/wizard/config/status", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var resp types.ConfigStatusResponse
+		json.NewDecoder(w.Body).Decode(&resp)
+		testutil.AssertEqual(t, resp.Configured, false, "not configured when nil")
+	})
+}
+
+func TestBatchDeleteDocumentsMaxLimit(t *testing.T) {
+	cfg := config.DefaultConfig("/tmp/test")
+	cfg.Srv.MaxBatchDelete = 2
+
+	env := newHandlerTestEnv(t)
+	h := NewDocumentHandler(env.client, env.logger, env.engine, env.services, func() *config.Config { return cfg })
+
+	body, _ := json.Marshal(types.BatchDeleteRequest{
+		DocumentIDs: []string{"a", "b", "c"},
+	})
+	w := rec()
+	h.BatchDeleteDocuments(w, req(t, "POST", "/api/v1/documents/batch-delete", body))
+	testutil.AssertEqual(t, w.Code, http.StatusBadRequest, "too many docs")
+
+	var resp map[string]string
+	json.NewDecoder(w.Body).Decode(&resp)
+	if !strings.Contains(resp["error"], "too many") {
+		t.Fatalf("expected 'too many' error, got: %s", resp["error"])
+	}
+}
+
+func TestProcessingHealthMissingTools(t *testing.T) {
+	env := newHandlerTestEnv(t)
+
+	cfg := config.DefaultConfig("/tmp/test")
+	cfg.Consumer.OCR.Engine = "ocrmypdf"
+	h := NewTaskHandler(env.client.Queries, env.logger, func() *config.Config { return cfg })
+
+	ctx := context.Background()
+	_, err := env.client.CreateBatch(ctx, database.CreateBatchParams{ID: "mh-batch", Source: "test"})
+	testutil.AssertNoError(t, err, "create batch")
+
+	reqID := "missing-tools"
+	ph, err := h.buildProcessingHealth(ctx, &reqID)
+	testutil.AssertNoError(t, err, "build health")
+
+	if ph.MissingTools == 0 {
+		t.Fatal("expected missing_tools > 0 when ocrmypdf is not installed")
+	}
 }
 
 func TestErrorHelpers(t *testing.T) {

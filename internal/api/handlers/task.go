@@ -21,16 +21,16 @@ import (
 )
 
 type TaskHandler struct {
-	queries *database.Queries
-	logger  *utils.Logger
-	cfg     *config.Config
+	queries   *database.Queries
+	logger    *utils.Logger
+	getConfig func() *config.Config
 }
 
-func NewTaskHandler(queries *database.Queries, logger *utils.Logger, cfg *config.Config) *TaskHandler {
+func NewTaskHandler(queries *database.Queries, logger *utils.Logger, getConfig func() *config.Config) *TaskHandler {
 	return &TaskHandler{
-		queries: queries,
-		logger:  logger,
-		cfg:     cfg,
+		queries:   queries,
+		logger:    logger,
+		getConfig: getConfig,
 	}
 }
 
@@ -472,8 +472,9 @@ func (h *TaskHandler) buildProcessingHealth(ctx context.Context, reqID *string) 
 	}
 
 	missingTools := int64(0)
-	if h.cfg != nil {
-		missingTools = int64(len(config.MissingExternalToolErrors(h.cfg)))
+	cfg := h.getConfig()
+	if cfg != nil {
+		missingTools = int64(len(config.MissingExternalToolErrors(cfg)))
 	}
 
 	return &types.ProcessingHealth{

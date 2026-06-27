@@ -22,16 +22,16 @@ import (
 )
 
 type ConsumeHandler struct {
-	cfg       *config.Config
+	getConfig func() *config.Config
 	logger    *utils.Logger
 	workStore *task.Store
 	queries   *database.Queries
 	semaphore *pool.Semaphore
 }
 
-func NewConsumeHandler(cfg *config.Config, logger *utils.Logger, workStore *task.Store, queries *database.Queries, semaphore *pool.Semaphore) *ConsumeHandler {
+func NewConsumeHandler(getConfig func() *config.Config, logger *utils.Logger, workStore *task.Store, queries *database.Queries, semaphore *pool.Semaphore) *ConsumeHandler {
 	return &ConsumeHandler{
-		cfg:       cfg,
+		getConfig: getConfig,
 		logger:    logger,
 		workStore: workStore,
 		queries:   queries,
@@ -116,7 +116,9 @@ func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 	reqID := ctx.Value("reqid").(string)
 	h.logger.Debug(&reqID, "Consume requested")
 
-	if missing := config.MissingExternalToolErrors(h.cfg); len(missing) > 0 {
+	cfg := h.getConfig()
+
+	if missing := config.MissingExternalToolErrors(cfg); len(missing) > 0 {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		json.NewEncoder(w).Encode(map[string]any{
@@ -136,8 +138,8 @@ func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 	}
 
 	paths, err := utils.ListFilePaths(
-		h.cfg.Storage.ConsumptionDir,
-		h.cfg.Consumer.SupportedFiles,
+		cfg.Storage.ConsumptionDir,
+		cfg.Consumer.SupportedFiles,
 	)
 	if err != nil {
 		h.semaphore.Release()
@@ -146,7 +148,7 @@ func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if max := h.cfg.Consumer.MaxFilesPerBatch; max > 0 && len(paths) > max {
+	if max := cfg.Consumer.MaxFilesPerBatch; max > 0 && len(paths) > max {
 		h.logger.Info(&reqID, "limiting to %d files (found %d)", max, len(paths))
 		paths = paths[:max]
 	}
@@ -208,7 +210,9 @@ func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	reqID := ctx.Value("reqid").(string)
 	h.logger.Debug(&reqID, "Upload requested")
 
-	if missing := config.MissingExternalToolErrors(h.cfg); len(missing) > 0 {
+	cfg := h.getConfig()
+
+	if missing := config.MissingExternalToolErrors(cfg); len(missing) > 0 {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		json.NewEncoder(w).Encode(map[string]any{
@@ -227,7 +231,7 @@ func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	maxBytes := h.cfg.Srv.MaxUploadSize * 1024 * 1024
+	maxBytes := cfg.Srv.MaxUploadSize * 1024 * 1024
 	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
 
 	mr, err := r.MultipartReader()
@@ -237,10 +241,10 @@ func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	inboxDir := h.cfg.Storage.ConsumptionDir
+	inboxDir := cfg.Storage.ConsumptionDir
 
-	supportedExts := make(map[string]bool, len(h.cfg.Consumer.SupportedFiles))
-	for _, ext := range h.cfg.Consumer.SupportedFiles {
+	supportedExts := make(map[string]bool, len(cfg.Consumer.SupportedFiles))
+	for _, ext := range cfg.Consumer.SupportedFiles {
 		supportedExts[strings.ToLower(ext)] = true
 	}
 
@@ -276,7 +280,7 @@ func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusRequestEntityTooLarge)
 				json.NewEncoder(w).Encode(map[string]any{
-					"error": fmt.Sprintf("upload exceeds max_upload_size (%d MB)", h.cfg.Srv.MaxUploadSize),
+					"error": fmt.Sprintf("upload exceeds max_upload_size (%d MB)", cfg.Srv.MaxUploadSize),
 				})
 				return
 			}
@@ -313,7 +317,7 @@ func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusRequestEntityTooLarge)
 				json.NewEncoder(w).Encode(map[string]any{
-					"error": fmt.Sprintf("upload exceeds max_upload_size (%d MB)", h.cfg.Srv.MaxUploadSize),
+					"error": fmt.Sprintf("upload exceeds max_upload_size (%d MB)", cfg.Srv.MaxUploadSize),
 				})
 				return
 			}
@@ -342,7 +346,7 @@ func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		acceptedPaths = append(acceptedPaths, finalPath)
 	}
 
-	if max := h.cfg.Consumer.MaxFilesPerBatch; max > 0 && len(accepted) > max {
+	if max := cfg.Consumer.MaxFilesPerBatch; max > 0 && len(accepted) > max {
 		h.semaphore.Release()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnprocessableEntity)

@@ -24,7 +24,7 @@ CGO_ENABLED=0 go test -tags "XLA,ORT" ./internal/...
 | `internal/database` | 18 | sqlc-generated CRUD, task lifecycle, enrich waiting flow, batch ownership, FTS-adjacent operations, document/tag/people/document-type CRUD, saved searches, dashboard analytics queries (empty DB + mixed data) |
 | `internal/search` | 7 | FTS5 search with snippets, ranking, pagination; structured search with mime/language/date filters; query sanitization |
 | `internal/task` | 14 | Store (create/get/claim/complete/fail), dedup key uniqueness, dispatcher enqueue with custom status/ID, runner (complete/fail/no-tasks), pool lifecycle |
-| `internal/api/handlers` | 16 | Health check, document list/get/update/delete, tag CRUD, people CRUD, document type CRUD, task endpoints, saved searches, concurrent operations, dashboard activity + analytics, analytics error path (cancelled context), error helpers |
+| `internal/api/handlers` | 20 | Document CRUD, tag/people/DocumentType CRUD, task endpoints, saved searches, concurrent operations, dashboard activity + analytics + processing health, analytics error path, config handler get/status, batch delete limits, error helpers |
 | `internal/consumption` | 11 | Full consumer pipeline via mock runner (file discovery, DB transaction, file movement, duplicate detection), file I/O helpers (get, move, copy, remove, clean up), checksum calculation |
 
 ---

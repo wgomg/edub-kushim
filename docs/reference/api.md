@@ -15,7 +15,7 @@
 ### Functions
 
 - `probeMatcher()` — Calls `matcherClient.Health()` with 2s timeout. Logs warning and continues if matcher is unreachable; tag CRUD returns `503` and enrich falls back to LLM-only tags.
-- `registerRoutes(mux *http.ServeMux, logger, queries, engine, dispatcher, cfg, services, semaphore, workStore)` — Registers all API routes; passes `services` to `NewDocumentHandler`, `NewTagHandler`, `NewPeopleHandler`, `NewDocumentTypeHandler`, and `NewUserHandler`. Uses Go 1.22+ pattern routing (`"GET /api/v1/documents/{id}"`).
+- `registerRoutes(mux *http.ServeMux, logger, queries, engine, dispatcher, getConfig, services, semaphore, workStore)` — Registers all API routes; passes `services` to `NewDocumentHandler`, `NewTagHandler`, `NewPeopleHandler`, `NewDocumentTypeHandler`, and `NewUserHandler`. Uses Go 1.22+ pattern routing (`"GET /api/v1/documents/{id}"`).
 - `registerStaticRoutes(mux *http.ServeMux)` — Registers `"GET /{path...}"` handler; tries to serve the requested file from the embedded FS, falls back to `index.html` for client-side SPA routes if the file doesn't exist
 - `chainMiddleware(logger *utils.Logger, h http.Handler) http.Handler` — Composes request + parambag middleware
 - `requestMiddleware(logger *utils.Logger, next http.Handler) http.Handler` — Adds reqid to context, logs requests
@@ -28,9 +28,9 @@
 ### Struct
 
 - `ConsumeHandler`
-  - **Fields**: `cfg *config.Config`, `logger *utils.Logger`, `workStore *task.Store`, `queries *database.Queries`, `semaphore *pool.Semaphore`
+  - **Fields**: `getConfig func() *config.Config`, `logger *utils.Logger`, `workStore *task.Store`, `queries *database.Queries`, `semaphore *pool.Semaphore`
   - **Methods**:
-    - `NewConsumeHandler(cfg, logger, workStore, queries, semaphore) *ConsumeHandler`
+    - `NewConsumeHandler(getConfig, logger, workStore, queries, semaphore) *ConsumeHandler`
     - `Consume(w, r)` — Acquires semaphore slot, scans inbox using `utils.ListFilePaths`, creates a batch, enqueues one pair of (consume + enrich) tasks per file via `workStore.CreateTask`, then **forks a `kushim consume --batch <id>` child process** to handle actual processing. Returns `202` with `batch_id`, `total_files`, `enqueued`, and `_links.tasks`. Returns `429 Too Many Requests` when semaphore slots are exhausted (`server.max_concurrent_batches`). Returns `200` JSON `{batch_id:null, total_files:0, message:"no files found"}` when inbox is empty.
     - `Upload(w, r)` — Acquires semaphore slot, accepts multipart upload (`files` field, repeatable), streams bytes to temp files in the inbox, validates MIME type against `consumer.supported_files`, enqueues tasks, then **forks a `kushim consume --batch <id>` child process**. Returns `202` with `batch_id`, `accepted`, `rejected`, and `_links.tasks`. Returns `413` when body exceeds `server.max_upload_size`. Returns `422` when no supported files are found or required tools are missing.
     - `forkWorker(batchID) error` — Finds the `kushim` binary (PATH or sibling of `edub`), starts it detached with `--batch <id>`, and releases the semaphore slot when the child exits.
@@ -76,9 +76,9 @@
 ### Struct
 
 - `TaskHandler`
-  - **Fields**: `queries *database.Queries`, `logger *utils.Logger`, `cfg *config.Config`
+  - **Fields**: `queries *database.Queries`, `logger *utils.Logger`, `getConfig func() *config.Config`
   - **Methods**:
-    - `NewTaskHandler(queries, logger, cfg) *TaskHandler`
+    - `NewTaskHandler(queries, logger, getConfig) *TaskHandler`
     - `ListTasks(w, r)` — Filters by `batch`, `status`, `limit`, `offset`; includes batch summary when `batch` is set
     - `GetTask(w, r)` — Single task by UUID
     - `RetryTask(w, r)` — `POST /api/v1/tasks/{id}/retry` — Resets a failed task to pending. Returns `204 No Content`. Returns 404 if task not found, 409 if task is not failed.
@@ -200,7 +200,7 @@
 ### Struct
 
 - `ConfigHandler`
-  - **Fields**: `cfg *config.Config`, `queries *database.Queries`, `logger *utils.Logger`, `dispatcher *task.Dispatcher`, `OnBootstrap func(configDir string) (*config.Config, *database.Queries, *task.Dispatcher, error)`
+  - **Fields**: `cfg atomic.Pointer[config.Config]`, `queries *database.Queries`, `logger *utils.Logger`, `dispatcher *task.Dispatcher`, `OnBootstrap func(configDir string) (*config.Config, *database.Queries, *task.Dispatcher, error)`
   - **Methods**:
     - `NewConfigHandler(cfg, queries, logger, dispatcher) *ConfigHandler`
     - `SetBootstrap(cfg, queries, dispatcher)` — Sets handler state from bootstrap results. Used by the wizard's auto-resume path to populate the handler after detecting an existing config on startup.

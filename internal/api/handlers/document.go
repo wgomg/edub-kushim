@@ -20,20 +20,20 @@ import (
 )
 
 type DocumentHandler struct {
-	client   *database.Client
-	logger   *utils.Logger
-	engine   *search.Engine
-	services *itypes.CrudServices
-	cfg      *config.Config
+	client    *database.Client
+	logger    *utils.Logger
+	engine    *search.Engine
+	services  *itypes.CrudServices
+	getConfig func() *config.Config
 }
 
-func NewDocumentHandler(client *database.Client, logger *utils.Logger, engine *search.Engine, services *itypes.CrudServices, cfg *config.Config) *DocumentHandler {
+func NewDocumentHandler(client *database.Client, logger *utils.Logger, engine *search.Engine, services *itypes.CrudServices, getConfig func() *config.Config) *DocumentHandler {
 	return &DocumentHandler{
-		client:   client,
-		logger:   logger,
-		engine:   engine,
-		services: services,
-		cfg:      cfg,
+		client:    client,
+		logger:    logger,
+		engine:    engine,
+		services:  services,
+		getConfig: getConfig,
 	}
 }
 
@@ -417,12 +417,13 @@ func (h *DocumentHandler) DownloadDocuments(w http.ResponseWriter, r *http.Reque
 	}
 
 	ids := uniqueStrings(req.DocumentIDs)
+	cfg := h.getConfig()
 
-	if len(ids) > h.cfg.Srv.MaxDownloadFiles {
+	if len(ids) > cfg.Srv.MaxDownloadFiles {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{
-			"error": "too many documents, max: " + strconv.Itoa(h.cfg.Srv.MaxDownloadFiles),
+			"error": "too many documents, max: " + strconv.Itoa(cfg.Srv.MaxDownloadFiles),
 		})
 		return
 	}
@@ -458,7 +459,7 @@ func (h *DocumentHandler) DownloadDocuments(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	maxSizeBytes := h.cfg.Srv.MaxDownloadSizeMB * 1024 * 1024
+	maxSizeBytes := cfg.Srv.MaxDownloadSizeMB * 1024 * 1024
 	if totalSize > maxSizeBytes {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
@@ -743,6 +744,7 @@ func (h *DocumentHandler) BatchDeleteDocuments(w http.ResponseWriter, r *http.Re
 	}
 
 	ids := uniqueStrings(req.DocumentIDs)
+	cfg := h.getConfig()
 
 	if len(ids) == 0 {
 		w.Header().Set("Content-Type", "application/json")
@@ -751,11 +753,11 @@ func (h *DocumentHandler) BatchDeleteDocuments(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if len(ids) > h.cfg.Srv.MaxBatchDelete {
+	if len(ids) > cfg.Srv.MaxBatchDelete {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{
-			"error": "too many documents, max: " + strconv.Itoa(h.cfg.Srv.MaxBatchDelete),
+			"error": "too many documents, max: " + strconv.Itoa(cfg.Srv.MaxBatchDelete),
 		})
 		return
 	}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,7 +29,7 @@ type Server struct {
 	httpServer    *http.Server
 	logger        *utils.Logger
 	addr          string
-	cfg           *config.Config
+	cfg           atomic.Pointer[config.Config]
 	matcherClient *tagmatch.MatcherClient
 	services      *types.CrudServices
 	scheduler     *scheduler.PollingScheduler
@@ -47,14 +48,15 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 
 	matcherClient := tagmatch.NewMatcherClient(filepath.Join(cfg.App.ConfigDir, "kushim-hugot.sock"))
 
+	initial := new(config.Config)
+	*initial = cfg
 	s := &Server{
-		cfg:           new(config.Config),
 		logger:        logger,
 		addr:          addr,
 		services:      &types.CrudServices{},
 		matcherClient: matcherClient,
 	}
-	*s.cfg = cfg
+	s.cfg.Store(initial)
 
 	tagSvc, err := service.NewTag(client.Queries, logger, matcherClient)
 	if err != nil {
@@ -87,15 +89,17 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 		kushimPath = path
 	}
 	getConfig := func() config.PollingConfig {
-		return s.cfg.Consumer.Polling
+		return s.cfg.Load().Consumer.Polling
 	}
 	s.scheduler = scheduler.NewPollingScheduler(getConfig, logger, kushimPath, semaphore)
 
 	onConfigReload := func(newCfg *config.Config) {
-		*s.cfg = *newCfg
+		s.cfg.Store(newCfg)
 	}
 
-	registerRoutes(mux, logger, client, engine, dispatcher, s.cfg, s.services, semaphore, workStore, onConfigReload)
+	getConfigFn := func() *config.Config { return s.cfg.Load() }
+
+	registerRoutes(mux, logger, client, engine, dispatcher, getConfigFn, s.services, semaphore, workStore, onConfigReload)
 	registerStaticRoutes(mux)
 
 	handler := chainMiddleware(logger, mux)
@@ -134,12 +138,12 @@ func registerStaticRoutes(mux *http.ServeMux) {
 	})
 }
 
-func registerRoutes(mux *http.ServeMux, logger *utils.Logger, client *database.Client, engine *search.Engine, dispatcher *task.Dispatcher, cfg *config.Config, services *types.CrudServices, semaphore *pool.Semaphore, workStore *task.Store, onConfigReload func(*config.Config)) {
+func registerRoutes(mux *http.ServeMux, logger *utils.Logger, client *database.Client, engine *search.Engine, dispatcher *task.Dispatcher, getConfig func() *config.Config, services *types.CrudServices, semaphore *pool.Semaphore, workStore *task.Store, onConfigReload func(*config.Config)) {
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		handlers.HealthHandler(w, r, logger)
 	})
 
-	docHandler := handlers.NewDocumentHandler(client, logger, engine, services, cfg)
+	docHandler := handlers.NewDocumentHandler(client, logger, engine, services, getConfig)
 	mux.HandleFunc("GET /api/v1/documents", docHandler.ListDocuments)
 	mux.HandleFunc("GET /api/v1/documents/{id}", docHandler.GetDocument)
 	mux.HandleFunc("GET /api/v1/documents/{id}/file", docHandler.GetDocumentFile)
@@ -177,7 +181,7 @@ func registerRoutes(mux *http.ServeMux, logger *utils.Logger, client *database.C
 	mux.HandleFunc("PUT /api/v1/document-types/{id}", docTypeHandler.Update)
 	mux.HandleFunc("DELETE /api/v1/document-types/{id}", docTypeHandler.Delete)
 
-	consumeHandler := handlers.NewConsumeHandler(cfg, logger, workStore, client.Queries, semaphore)
+	consumeHandler := handlers.NewConsumeHandler(getConfig, logger, workStore, client.Queries, semaphore)
 	mux.HandleFunc("POST /api/v1/consume", consumeHandler.Consume)
 	mux.HandleFunc("POST /api/v1/consume/upload", consumeHandler.Upload)
 
@@ -188,14 +192,14 @@ func registerRoutes(mux *http.ServeMux, logger *utils.Logger, client *database.C
 	mux.HandleFunc("PUT /api/v1/users/{id}", userHandler.Update)
 	mux.HandleFunc("DELETE /api/v1/users/{id}", userHandler.Delete)
 
-	configHandler := handlers.NewConfigHandler(cfg, client.Queries, logger, dispatcher)
+	configHandler := handlers.NewConfigHandler(getConfig(), client.Queries, logger, dispatcher)
 	configHandler.OnConfigReloaded(onConfigReload)
 	mux.HandleFunc("GET /wizard/config", configHandler.GetConfig)
 	mux.HandleFunc("PUT /wizard/config", configHandler.PutConfig)
 	mux.HandleFunc("GET /wizard/config/status", configHandler.ConfigStatus)
 	mux.HandleFunc("POST /wizard/config/retry", configHandler.RetryFailedConfig)
 
-	taskHandler := handlers.NewTaskHandler(client.Queries, logger, cfg)
+	taskHandler := handlers.NewTaskHandler(client.Queries, logger, getConfig)
 	mux.HandleFunc("GET /api/v1/tasks", taskHandler.ListTasks)
 	mux.HandleFunc("GET /api/v1/tasks/{id}", taskHandler.GetTask)
 	mux.HandleFunc("POST /api/v1/tasks/{id}/retry", taskHandler.RetryTask)
