@@ -5,6 +5,7 @@
 	import StoragePanel from '$lib/components/StoragePanel.svelte';
 	import BatchOverviewPanel from '$lib/components/BatchOverviewPanel.svelte';
 	import ActivityTimeline from '$lib/components/ActivityTimeline.svelte';
+	import DocumentAnalyticsPanel from '$lib/components/DocumentAnalyticsPanel.svelte';
 
 	let health = $state();
 	let summary = $state();
@@ -105,6 +106,13 @@
 			<h2 class="mb-3 text-lg font-semibold text-parchment-200">Recent Activity</h2>
 			<ActivityTimeline activity={dashboard.activity ?? []} />
 		</section>
+
+		{#if dashboard.analytics}
+			<section>
+				<h2 class="mb-3 text-lg font-semibold text-parchment-200">Document Analytics</h2>
+				<DocumentAnalyticsPanel analytics={dashboard.analytics} />
+			</section>
+		{/if}
 	{/if}
 
 	{#if summary}

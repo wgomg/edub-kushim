@@ -291,6 +291,130 @@ func TestListTasksByType(t *testing.T) {
 	assertEqual(t, len(tasks), 1, "one task")
 }
 
+func TestAnalyticsQueries(t *testing.T) {
+	q, _ := NewTestQueries(t)
+	ctx := context.Background()
+
+	t.Run("empty database", func(t *testing.T) {
+		langs, err := q.LanguageDistribution(ctx)
+		assertNoError(t, err, "language distribution")
+		assertEqual(t, len(langs), 0, "no languages")
+
+		types, err := q.DocumentTypeDistribution(ctx)
+		assertNoError(t, err, "document type distribution")
+		assertEqual(t, len(types), 0, "no doc types")
+
+		tags, err := q.TagFrequency(ctx)
+		assertNoError(t, err, "tag frequency")
+		assertEqual(t, len(tags), 0, "no tags")
+
+		missing, err := q.MissingCounts(ctx)
+		assertNoError(t, err, "missing counts")
+		assertEqual(t, missing.MissingLanguage, int64(0), "missing language")
+		assertEqual(t, missing.MissingType, int64(0), "missing type")
+		assertEqual(t, missing.MissingTags, int64(0), "missing tags")
+	})
+
+	t.Run("with mixed data", func(t *testing.T) {
+		d1, _ := CreateTestDocument(t, q, "eng-doc.pdf")
+
+		_, err := q.db.ExecContext(ctx,
+			`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, mime_type, file_size, original_path, storage_path, page_count, word_count, char_count, language, document_type_id)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			"analytics-d2", "spa-article.pdf", "m2", "s2", "text/plain", 500,
+			"/tmp/spa.pdf", "/tmp/spa-storage.pdf", 2, 10, 50, "spa", 3,
+		)
+		assertNoError(t, err, "insert spa article doc")
+
+		_, err = q.db.ExecContext(ctx,
+			`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, mime_type, file_size, original_path, storage_path, page_count, word_count, char_count, language, document_type_id)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			"analytics-d3", "fra-book.pdf", "m3", "s3", "application/pdf", 800,
+			"/tmp/fra.pdf", "/tmp/fra-storage.pdf", 4, 20, 100, "fra", 4,
+		)
+		assertNoError(t, err, "insert fra book doc")
+
+		_, err = q.db.ExecContext(ctx,
+			`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, mime_type, file_size, original_path, storage_path, page_count, word_count, char_count, language)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			"analytics-d4", "und-doc.pdf", "m4", "s4", "text/html", 100,
+			"/tmp/und.pdf", "/tmp/und-storage.pdf", 1, 3, 15, "und",
+		)
+		assertNoError(t, err, "insert und doc")
+
+		financeTag, err := q.GetTagByName(ctx, "finance")
+		assertNoError(t, err, "get finance tag")
+		assertNoError(t, q.AddDocumentTag(ctx, AddDocumentTagParams{DocumentID: d1, TagID: financeTag.ID}), "tag d1 finance")
+
+		d2Row := q.db.QueryRowContext(ctx, `SELECT id FROM document WHERE document_id = 'analytics-d2'`)
+		var d2DBID int64
+		assertNoError(t, d2Row.Scan(&d2DBID), "get d2 db id")
+		assertNoError(t, q.AddDocumentTag(ctx, AddDocumentTagParams{DocumentID: d2DBID, TagID: financeTag.ID}), "tag d2 finance")
+
+		urgentRes, err := q.CreateTag(ctx, "urgent")
+		assertNoError(t, err, "create urgent tag")
+		urgentID := getID(t, urgentRes)
+		assertNoError(t, q.AddDocumentTag(ctx, AddDocumentTagParams{DocumentID: d1, TagID: urgentID}), "tag d1 urgent")
+
+		_, err = q.CreateTag(ctx, "unused")
+		assertNoError(t, err, "create unused tag")
+
+		langs, err := q.LanguageDistribution(ctx)
+		assertNoError(t, err, "language distribution")
+		assertEqual(t, len(langs), 3, "three determined languages")
+
+		langSet := map[string]int64{}
+		for _, l := range langs {
+			langSet[l.Label] = l.Count
+		}
+		_, engOk := langSet["eng"]
+		_, spaOk := langSet["spa"]
+		_, fraOk := langSet["fra"]
+		_, undOk := langSet["und"]
+		assertEqual(t, engOk, true, "eng present")
+		assertEqual(t, spaOk, true, "spa present")
+		assertEqual(t, fraOk, true, "fra present")
+		assertEqual(t, undOk, false, "und excluded")
+
+		docTypes, err := q.DocumentTypeDistribution(ctx)
+		assertNoError(t, err, "document type distribution")
+		assertEqual(t, len(docTypes), 2, "two determined doc types")
+
+		typeSet := map[string]int64{}
+		for _, dt := range docTypes {
+			typeSet[dt.Label] = dt.Count
+		}
+		_, articleOk := typeSet["article"]
+		_, bookOk := typeSet["book"]
+		_, undeterminedOk := typeSet["undetermined"]
+		assertEqual(t, articleOk, true, "article present")
+		assertEqual(t, bookOk, true, "book present")
+		assertEqual(t, undeterminedOk, false, "undetermined excluded")
+
+		tags, err := q.TagFrequency(ctx)
+		assertNoError(t, err, "tag frequency")
+		assertEqual(t, len(tags), 2, "two used tags")
+
+		tagSet := map[string]int64{}
+		for _, tg := range tags {
+			tagSet[tg.Label] = tg.Count
+		}
+		assertEqual(t, tagSet["finance"], int64(2), "finance count")
+		assertEqual(t, tagSet["urgent"], int64(1), "urgent count")
+		_, unusedOk := tagSet["unused"]
+		assertEqual(t, unusedOk, false, "unused excluded")
+
+		assertEqual(t, tags[0].Label, "finance", "first tag by frequency")
+		assertEqual(t, tags[1].Label, "urgent", "second tag by frequency")
+
+		missing, err := q.MissingCounts(ctx)
+		assertNoError(t, err, "missing counts")
+		assertEqual(t, missing.MissingLanguage, int64(1), "one missing language")
+		assertEqual(t, missing.MissingType, int64(2), "two missing types")
+		assertEqual(t, missing.MissingTags, int64(2), "two missing tags")
+	})
+}
+
 // --- helpers ---
 
 func insertDoc(t *testing.T, q *Queries, title, md5, sha512 string) (int64, string) {
@@ -360,12 +484,5 @@ func assertNoError(t *testing.T, err error, msg string) {
 	t.Helper()
 	if err != nil {
 		t.Fatalf("%s: unexpected error: %v", msg, err)
-	}
-}
-
-func assertError(t *testing.T, err error, msg string) {
-	t.Helper()
-	if err == nil {
-		t.Fatalf("%s: expected error, got nil", msg)
 	}
 }

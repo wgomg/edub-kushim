@@ -172,6 +172,28 @@ A flexible SQL query builder that composes `WHERE` clauses dynamically:
 
 ---
 
+## `dashboard.go`
+
+### Query methods (raw SQL, not sqlc-generated)
+
+These methods are written manually (no sqlc) and follow a consistent pattern:
+`QueryContext` → `defer Close` → scan loop → `Close` → `Err`, with error-wrapped scan errors.
+
+| Method | SQL | Returns |
+|--------|-----|---------|
+| `MimeTypeBreakdown` | `SELECT mime_type, COUNT(*), SUM(file_size) FROM document GROUP BY mime_type ORDER BY total_bytes DESC` | `[]MimeTypeBreakdownRow` |
+| `StorageTrendDaily` | `SELECT date(created_at), COUNT(*), SUM(file_size) FROM document GROUP BY day ORDER BY day` | `[]StorageTrendDailyRow` |
+| `ListActivityTimeline` | `UNION ALL` of document/task/batch events, ordered by time DESC, limit 30 | `[]ActivityEventRow` |
+| `DocumentAggregates` | `SELECT COUNT(*), SUM(file_size), SUM(page_count), SUM(word_count) FROM document` | `DocumentAggregatesRow` |
+| `LanguageDistribution` | `SELECT language, COUNT(*) FROM document WHERE language != 'und' AND language != '' GROUP BY language ORDER BY count DESC` | `[]DistributionRow` |
+| `DocumentTypeDistribution` | `SELECT dt.name, COUNT(*) FROM document d JOIN document_type dt ON d.document_type_id = dt.id WHERE d.document_type_id != 1 GROUP BY dt.id, dt.name ORDER BY count DESC` | `[]DistributionRow` |
+| `TagFrequency` | `SELECT t.name, COUNT(*) FROM document_tag dt JOIN tag t ON dt.tag_id = t.id GROUP BY t.id, t.name ORDER BY count DESC LIMIT 10` | `[]DistributionRow` |
+| `MissingCounts` | Single-row SELECT with 3 correlated subqueries: documents with `language = 'und' OR ''`, documents with `document_type_id = 1`, documents with no `document_tag` rows | `MissingCountsRow` |
+
+The last 4 methods back the dashboard analytics panel. `LanguageDistribution` and `DocumentTypeDistribution` exclude undetermined values (language `'und'`/`''` and `document_type_id = 1`) to avoid double-counting with the `MissingCounts` cards.
+
+---
+
 # Database Schema
 
 ## Core Tables

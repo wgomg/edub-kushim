@@ -86,7 +86,7 @@
     - `GetBatchSummary(w, r)` — Counts per status for a single batch (via `{id}`)
     - `RetryBatch(w, r)` — `POST /api/v1/batches/{id}/retry` — Resets all failed tasks in a batch to pending. Returns `200 {"retried": <n>}`. Idempotent (0 retried is valid success).
     - `ResumeBatch(w, r)` — `POST /api/v1/batches/{id}/resume` (formerly `AdoptBatch`). Checks batch ownership via `BatchOwnerState` (returns 409 if locked by a live owner), then **forks `kushim consume --batch <id> --force`** to resume processing. Returns `202 {"resumed": true}`.
-    - `GetDashboard(w, r)` — Returns `recent_batches` (top 20) + `activity` (top 30 chronological events from documents, tasks, batches). Activity includes: `event_type`, `title`, `timestamp`, `link`.
+    - `GetDashboard(w, r)` — Returns `recent_batches` (top 20) + `activity` (top 30 chronological events from documents, tasks, batches) + `analytics` (language/document-type/tag distributions, missing counts). Activity includes: `event_type`, `title`, `timestamp`, `link`.
     - `GlobalSummary(w, r)` — Global totals: number of batches, total files, per-status counts (including `waiting` and `discarded`), total file size in GB, MIME type breakdown, daily storage trend, average file size, total pages, total words
     - **Helpers**: `buildBatchSummary(ctx, queries, batchID) BatchSummaryResponse`, `taskToResponse(t) TaskResponse`
 
@@ -124,7 +124,9 @@
 - `MimeTypeStat` — `MimeType`, `Count`, `TotalBytes`
 - `StorageTrendPoint` — `Date`, `DailyCount`, `DailyBytes`, `CumulativeBytes`
 - `ActivityEvent` — `EventType`, `Title`, `Timestamp`, `Link`
-- `DashboardResponse` — `RecentBatches []BatchOverviewItem`, `Activity []ActivityEvent`
+- `DistributionItem` — `Label string`, `Count int64`
+- `DocumentAnalytics` — `LanguageDistribution []DistributionItem`, `DocumentTypeDistribution []DistributionItem`, `TagFrequency []DistributionItem`, `MissingLanguageCount int64`, `MissingTypeCount int64`, `MissingTagsCount int64`
+- `DashboardResponse` — `RecentBatches []BatchOverviewItem`, `Activity []ActivityEvent`, `Analytics *DocumentAnalytics`
 - `GlobalSummaryResponse` — `TotalBatches`, `TotalFiles`, `Waiting`, `Pending`, `Processing`, `Completed`, `Failed`, `Cancelled`, `Discarded`, `TotalSizeGB`, `MimeTypeBreakdown []MimeTypeStat`, `StorageTrend []StorageTrendPoint`, `AvgFileSizeBytes`, `TotalPages`, `TotalWords`
 
 ---

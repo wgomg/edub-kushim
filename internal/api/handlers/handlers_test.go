@@ -627,7 +627,7 @@ func TestGetDashboardActivity(t *testing.T) {
 	h := NewTaskHandler(env.client.Queries, env.logger)
 	ctx := context.Background()
 
-	_, docUUID := database.CreateTestDocument(t, env.client.Queries, "dash-act-doc.pdf")
+	docDBID, docUUID := database.CreateTestDocument(t, env.client.Queries, "dash-act-doc.pdf")
 
 	_, err := env.client.CreateBatch(ctx, database.CreateBatchParams{
 		ID: "dash-act-batch", Source: "manual-upload",
@@ -713,6 +713,109 @@ func TestGetDashboardActivity(t *testing.T) {
 		if _, parseErr := time.Parse(time.RFC3339, e.Timestamp); parseErr != nil {
 			t.Fatalf("event %s has non-RFC3339 timestamp %q: %v", e.EventType, e.Timestamp, parseErr)
 		}
+	}
+
+	ctx2 := context.Background()
+
+	_, err = env.client.DB().ExecContext(ctx2,
+		`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, mime_type, file_size, original_path, storage_path, page_count, word_count, char_count, language, document_type_id, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+		"analytics-doc-spa", "spanish.pdf", "a1", "b1", "text/plain", 512,
+		"/tmp/spa.pdf", "/tmp/storage/spa.pdf", 2, 10, 50, "spa", 3,
+	)
+	testutil.AssertNoError(t, err, "create spa doc")
+
+	_, err = env.client.DB().ExecContext(ctx2,
+		`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, mime_type, file_size, original_path, storage_path, page_count, word_count, char_count, language, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+		"analytics-doc-und", "und.pdf", "c2", "d2", "application/pdf", 256,
+		"/tmp/und.pdf", "/tmp/storage/und.pdf", 1, 3, 15, "und",
+	)
+	testutil.AssertNoError(t, err, "create und doc")
+
+	tag := database.SeedTagByName(t, env.client.Queries, "")
+	err = env.client.AddDocumentTag(ctx2, database.AddDocumentTagParams{
+		DocumentID: docDBID, TagID: tag.ID,
+	})
+	testutil.AssertNoError(t, err, "add tag to first doc")
+
+	w2 := rec()
+	h.GetDashboard(w2, req(t, "GET", "/api/v1/dashboard", nil))
+	testutil.AssertEqual(t, w2.Code, http.StatusOK, "dashboard status after seeding")
+
+	var resp2 types.DashboardResponse
+	if err := json.NewDecoder(w2.Body).Decode(&resp2); err != nil {
+		t.Fatalf("decode dashboard: %v", err)
+	}
+
+	if resp2.Analytics == nil {
+		t.Fatal("expected analytics field in dashboard response")
+	}
+
+	if len(resp2.Analytics.LanguageDistribution) == 0 {
+		t.Fatal("expected language_distribution to be non-empty")
+	}
+	if len(resp2.Analytics.DocumentTypeDistribution) == 0 {
+		t.Fatal("expected document_type_distribution to be non-empty")
+	}
+	if len(resp2.Analytics.TagFrequency) == 0 {
+		t.Fatal("expected tag_frequency to be non-empty")
+	}
+
+	if resp2.Analytics.MissingLanguageCount < 1 {
+		t.Fatalf("expected at least 1 missing language, got %d", resp2.Analytics.MissingLanguageCount)
+	}
+	if resp2.Analytics.MissingTypeCount < 2 {
+		t.Fatalf("expected at least 2 missing types (all docs with doc_type_id=1), got %d", resp2.Analytics.MissingTypeCount)
+	}
+	if resp2.Analytics.MissingTagsCount < 2 {
+		t.Fatalf("expected at least 2 untagged documents, got %d", resp2.Analytics.MissingTagsCount)
+	}
+
+	foundLang := false
+	for _, d := range resp2.Analytics.LanguageDistribution {
+		if d.Label == "eng" && d.Count >= 1 {
+			foundLang = true
+			break
+		}
+	}
+	if !foundLang {
+		t.Fatal("expected 'eng' in language_distribution")
+	}
+
+	foundType := false
+	for _, d := range resp2.Analytics.DocumentTypeDistribution {
+		if d.Label == "article" && d.Count >= 1 {
+			foundType = true
+			break
+		}
+	}
+	if !foundType {
+		t.Fatal("expected 'article' in document_type_distribution")
+	}
+}
+
+func TestGetDashboardAnalyticsError(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	h := NewTaskHandler(env.client.Queries, env.logger)
+
+	// Create a document so queries don't fail due to empty DB
+	database.CreateTestDocument(t, env.client.Queries, "err-test.pdf")
+
+	// Cancelled context should cause queries to fail
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	reqID := "analytics-err"
+	analytics := h.buildDocumentAnalytics(ctx, &reqID)
+	if analytics != nil {
+		t.Fatal("expected nil analytics when queries fail due to cancelled context")
+	}
+
+	// Normal context returns non-nil analytics
+	analyticsOk := h.buildDocumentAnalytics(context.Background(), &reqID)
+	if analyticsOk == nil {
+		t.Fatal("expected non-nil analytics with normal context")
 	}
 }
 

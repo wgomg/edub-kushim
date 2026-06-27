@@ -21,10 +21,10 @@ CGO_ENABLED=0 go test -tags "XLA,ORT" ./internal/...
 
 | Package | Tests | What it covers |
 |---------|-------|---------------|
-| `internal/database` | 17 | sqlc-generated CRUD, task lifecycle, enrich waiting flow, batch ownership, FTS-adjacent operations, document/tag/people/document-type CRUD, saved searches |
+| `internal/database` | 18 | sqlc-generated CRUD, task lifecycle, enrich waiting flow, batch ownership, FTS-adjacent operations, document/tag/people/document-type CRUD, saved searches, dashboard analytics queries (empty DB + mixed data) |
 | `internal/search` | 7 | FTS5 search with snippets, ranking, pagination; structured search with mime/language/date filters; query sanitization |
 | `internal/task` | 14 | Store (create/get/claim/complete/fail), dedup key uniqueness, dispatcher enqueue with custom status/ID, runner (complete/fail/no-tasks), pool lifecycle |
-| `internal/api/handlers` | 15 | Health check, document list/get/update/delete, tag CRUD, people CRUD, document type CRUD, task endpoints, saved searches, concurrent operations, error helpers |
+| `internal/api/handlers` | 16 | Health check, document list/get/update/delete, tag CRUD, people CRUD, document type CRUD, task endpoints, saved searches, concurrent operations, dashboard activity + analytics, analytics error path (cancelled context), error helpers |
 | `internal/consumption` | 11 | Full consumer pipeline via mock runner (file discovery, DB transaction, file movement, duplicate detection), file I/O helpers (get, move, copy, remove, clean up), checksum calculation |
 
 ---
@@ -157,6 +157,7 @@ The `internal/database` package also exports:
 | `NewTestQueries(t)` | Helper returning both `*Queries` and `*sql.DB` |
 | `CreateTestDocument(t, queries, title)` | Inserts a document, returns auto-ID and UUID |
 | `SeedTagByName(t, queries, name)` | Returns a seeded tag (by name or first) |
+| `insertDoc(t, queries, title, md5, sha512)` | Helper for inserting docs with raw checksums (unexported, same-package use) |
 
 ---
 
@@ -164,7 +165,7 @@ The `internal/database` package also exports:
 
 ### Assertion duplication (by design)
 
-The `database` package has local `assertNoError` / `assertEqual` / `assertError`
+The `database` package has local `assertNoError` / `assertEqual`
 helpers rather than importing from `testutil`. This is because `testutil` imports
 `config`, which imports `database` (through `setup.go`), creating an import cycle
 when the `database` test package imports `testutil`. Other packages (search, task,

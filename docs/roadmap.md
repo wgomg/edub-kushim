@@ -126,7 +126,7 @@
 | `GET /api/v1/batches/{id}`             | Get single batch summary                                                                                          |
 | `POST /api/v1/batches/{id}/resume`     | Resume batch (forks kushim worker)                                                                                |
 | `POST /api/v1/batches/{id}/cancel`     | Cancel batch (SIGTERM worker, mark tasks cancelled)                                                               |
-| `GET /api/v1/dashboard`                | Dashboard data: recent batches + activity timeline (document uploads, task completions/failures, batch creations) |
+| `GET /api/v1/dashboard`                | Dashboard data: recent batches + activity timeline + document analytics (language/type/tag distributions, missing counts) |
 | `GET /api/v1/summary`                  | Global totals across all batches                                                                                  |
 
 ### CLI Commands
@@ -230,7 +230,7 @@
 | 22  | **Dashboard: storage panel**             | ✓ Total size, MIME type breakdown (count + size per type), cumulative storage trend by day/week, average file size, total pages, total words                                      |
 | 23  | **Dashboard: batch overview panel**      | ✓ Recent N batches with per-batch task summary, active/orphaned state, batch source, creation time, duration when complete                                                        |
 | 24  | **Dashboard: activity timeline**         | ✓ Chronological feed: document uploaded, task completed, task failed, batch created — merged from document.created_at, task.completed_at, batch.created_at                        |
-| 25  | **Dashboard: document analytics panel**  | Language distribution, document type distribution, tag frequency (top N), documents without tags/type/language counts                                                             |
+| 25  | **Dashboard: document analytics panel**  | ✓ Language distribution, document type distribution, tag frequency (top N), documents without tags/type/language counts                                                             |
 | 26  | **Dashboard: processing health panel**   | Task success rate (completed vs failed, last 7 days), avg task duration, active batch count, orphaned batch count, missing tools count                                            |
 | 27  | **Dashboard: summary API**               | Single `GET /api/v1/dashboard` endpoint returning all panel data — built from GROUP BY/JOIN queries on existing schema, no migrations needed                                      |
 | 28  | **Authentication and user management**   | Login, API keys, roles                                                                                                                                                            |

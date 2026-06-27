@@ -71,9 +71,24 @@ type ActivityEvent struct {
 	Link      string `json:"link"`
 }
 
+type DistributionItem struct {
+	Label string `json:"label"`
+	Count int64  `json:"count"`
+}
+
+type DocumentAnalytics struct {
+	LanguageDistribution     []DistributionItem `json:"language_distribution"`
+	DocumentTypeDistribution []DistributionItem `json:"document_type_distribution"`
+	TagFrequency             []DistributionItem `json:"tag_frequency"`
+	MissingLanguageCount     int64              `json:"missing_language_count"`
+	MissingTypeCount         int64              `json:"missing_type_count"`
+	MissingTagsCount         int64              `json:"missing_tags_count"`
+}
+
 type DashboardResponse struct {
 	RecentBatches []BatchOverviewItem `json:"recent_batches"`
 	Activity      []ActivityEvent     `json:"activity"`
+	Analytics     *DocumentAnalytics  `json:"analytics,omitempty"`
 }
 
 type GlobalSummaryResponse struct {

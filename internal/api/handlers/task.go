@@ -285,8 +285,55 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	analytics := h.buildDocumentAnalytics(ctx, &reqID)
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(types.DashboardResponse{RecentBatches: items, Activity: activity})
+	json.NewEncoder(w).Encode(types.DashboardResponse{RecentBatches: items, Activity: activity, Analytics: analytics})
+}
+
+func (h *TaskHandler) buildDocumentAnalytics(ctx context.Context, reqID *string) *types.DocumentAnalytics {
+	langRows, err := h.queries.LanguageDistribution(ctx)
+	if err != nil {
+		h.logger.Error(reqID, "language distribution: %v", err)
+		return nil
+	}
+	docTypeRows, err := h.queries.DocumentTypeDistribution(ctx)
+	if err != nil {
+		h.logger.Error(reqID, "document type distribution: %v", err)
+		return nil
+	}
+	tagRows, err := h.queries.TagFrequency(ctx)
+	if err != nil {
+		h.logger.Error(reqID, "tag frequency: %v", err)
+		return nil
+	}
+	missing, err := h.queries.MissingCounts(ctx)
+	if err != nil {
+		h.logger.Error(reqID, "missing counts: %v", err)
+		return nil
+	}
+
+	analytics := &types.DocumentAnalytics{
+		LanguageDistribution:     make([]types.DistributionItem, 0, len(langRows)),
+		DocumentTypeDistribution: make([]types.DistributionItem, 0, len(docTypeRows)),
+		TagFrequency:             make([]types.DistributionItem, 0, len(tagRows)),
+	}
+
+	for _, r := range langRows {
+		analytics.LanguageDistribution = append(analytics.LanguageDistribution, types.DistributionItem{Label: r.Label, Count: r.Count})
+	}
+	for _, r := range docTypeRows {
+		analytics.DocumentTypeDistribution = append(analytics.DocumentTypeDistribution, types.DistributionItem{Label: r.Label, Count: r.Count})
+	}
+	for _, r := range tagRows {
+		analytics.TagFrequency = append(analytics.TagFrequency, types.DistributionItem{Label: r.Label, Count: r.Count})
+	}
+
+	analytics.MissingLanguageCount = missing.MissingLanguage
+	analytics.MissingTypeCount = missing.MissingType
+	analytics.MissingTagsCount = missing.MissingTags
+
+	return analytics
 }
 
 func deriveOwnerState(hb sql.NullTime) task.OwnerState {
