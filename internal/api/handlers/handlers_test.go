@@ -9,11 +9,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	itypes "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/config"
@@ -990,10 +992,72 @@ func TestConcurrentDocumentOps(t *testing.T) {
 	}
 }
 
-func TestConsumeHandlerConfig(t *testing.T) {
-	cfg := config.DefaultConfig("/tmp/test-consume-cfg")
-	cfg.App.LogLevel = "silent"
-	_ = cfg
+func TestEnqueueBatchFilesDedup(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	ctx := context.Background()
+
+	cfg := config.DefaultConfig("/tmp/test")
+	h := NewConsumeHandler(cfg, env.logger, env.workStore, env.client.Queries, env.semaphore)
+
+	t.Run("enqueues new file", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		filePath := filepath.Join(tmpDir, "new.pdf")
+		if err := os.WriteFile(filePath, []byte("unique content"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		batchID := uuid.New().String()
+		if _, err := h.queries.CreateBatch(ctx, database.CreateBatchParams{ID: batchID, Source: "test"}); err != nil {
+			t.Fatal(err)
+		}
+
+		enqueued := h.enqueueBatchFiles(ctx, batchID, []string{filePath}, "test-req")
+		if enqueued != 1 {
+			t.Fatalf("expected 1 enqueued, got %d", enqueued)
+		}
+	})
+
+	t.Run("skips file when document with same MD5 exists", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		filePath := filepath.Join(tmpDir, "dup.pdf")
+		content := "duplicate content"
+		if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		md5hash, err := utils.CalculateMD5(filePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		docID := uuid.New().String()
+		if _, err := h.queries.CreateDocument(ctx, database.CreateDocumentParams{
+			DocumentID:     docID,
+			Title:          "existing-doc.pdf",
+			Md5Checksum:    md5hash,
+			Sha512Checksum: "fake-sha512",
+			MimeType:       "application/pdf",
+			FileSize:       100,
+			OriginalPath:   "/tmp/orig.pdf",
+			StoragePath:    "/tmp/storage.pdf",
+			TextContent:    sql.NullString{String: "test", Valid: true},
+			PageCount:      1,
+			WordCount:      1,
+			CharCount:      4,
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		batchID := uuid.New().String()
+		if _, err := h.queries.CreateBatch(ctx, database.CreateBatchParams{ID: batchID, Source: "test"}); err != nil {
+			t.Fatal(err)
+		}
+
+		enqueued := h.enqueueBatchFiles(ctx, batchID, []string{filePath}, "test-req")
+		if enqueued != 0 {
+			t.Fatalf("expected 0 enqueued (skipped), got %d", enqueued)
+		}
+	})
 }
 
 func newUserHandler(env *handlerTestEnv) *UserHandler {

@@ -18,7 +18,8 @@
 
 ### Functions
 
-`calculateMD5`, `calculateSHA512`, `countPages(path) int` — Uses MuPDF to count PDF pages
+`calculateSHA512`, `countPages(path) int` — Uses MuPDF to count PDF pages
+- MD5 checksum computation is in `utils.CalculateMD5` — see [Config & Utils](config-and-utils.md)
 
 ---
 

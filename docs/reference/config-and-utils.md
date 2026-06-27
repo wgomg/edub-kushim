@@ -134,6 +134,15 @@ per tool category, used by the frontend settings UI to populate select dropdowns
 
 ---
 
+## `files.go`
+
+### Functions
+
+`CalculateMD5(path string) (string, error)` — Opens a file, computes its MD5 hash via `crypto/md5`, and returns the hex-encoded digest. Used by the consume handler for enqueue-time dedup and by `Consumer.isDuplicate` for processing-time dedup.
+`ListFilePaths(src string, exts []string) ([]string, error)` — Scans `src` for files matching the given MIME-type extensions. Skips directories and unsupported types.
+
+---
+
 ## `logger.go`
 
 ### Struct

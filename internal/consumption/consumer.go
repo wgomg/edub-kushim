@@ -2,7 +2,6 @@ package consumption
 
 import (
 	"context"
-	"crypto/md5"
 	"crypto/sha512"
 	"database/sql"
 	"encoding/hex"
@@ -346,7 +345,7 @@ func moveFailedFile(storageDir, originalPath, errType string, logger *utils.Logg
 }
 
 func (c *Consumer) isDuplicate(ctx context.Context, path string) (bool, error) {
-	md5sum, err := calculateMD5(path)
+	md5sum, err := utils.CalculateMD5(path)
 	if err != nil {
 		return false, err
 	}
@@ -377,21 +376,6 @@ func (c *Consumer) isDuplicate(ctx context.Context, path string) (bool, error) {
 	}
 
 	return true, nil
-}
-
-func calculateMD5(path string) (string, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return "", fmt.Errorf("failed to open file: %w", err)
-	}
-	defer file.Close()
-
-	hasher := md5.New()
-	if _, err := io.Copy(hasher, file); err != nil {
-		return "", fmt.Errorf("failed to calculate MD5: %w", err)
-	}
-
-	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
 func calculateSHA512(path string) (string, error) {

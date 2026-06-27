@@ -41,6 +41,18 @@ func NewConsumeHandler(cfg *config.Config, logger *utils.Logger, workStore *task
 
 func (h *ConsumeHandler) enqueueBatchFiles(ctx context.Context, batchID string, paths []string, reqID string) (enqueued int) {
 	for i, path := range paths {
+		md5hash, md5Err := utils.CalculateMD5(path)
+		if md5Err != nil {
+			h.logger.Error(&reqID, "md5 %s: %v", path, md5Err)
+			continue
+		}
+
+		existingDocs, _ := h.queries.GetDocumentByMD5Checksum(ctx, md5hash)
+		if len(existingDocs) > 0 {
+			h.logger.Info(&reqID, "skipping %s (duplicate of document %s)", path, existingDocs[0].DocumentID)
+			continue
+		}
+
 		consumeTaskID := uuid.New().String()
 		enrichTaskID := uuid.New().String()
 		documentID := uuid.New().String()
@@ -51,7 +63,7 @@ func (h *ConsumeHandler) enqueueBatchFiles(ctx context.Context, batchID string, 
 			"on_completed": enrichTaskID,
 			"document_id":  documentID,
 		})
-		_, err := h.workStore.CreateTask(ctx, "consume", batchID, consumePayload, consumeTaskID, "pending", "")
+		_, err := h.workStore.CreateTask(ctx, "consume", batchID, consumePayload, consumeTaskID, "pending", "consume:"+md5hash)
 		if err != nil {
 			h.logger.Error(&reqID, "enqueue %s: %v", path, err)
 			continue
