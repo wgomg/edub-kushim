@@ -64,8 +64,16 @@ type BatchOverviewItem struct {
 	DurationMs *int64 `json:"duration_ms,omitempty"`
 }
 
+type ActivityEvent struct {
+	EventType string `json:"event_type"`
+	Title     string `json:"title"`
+	Timestamp string `json:"timestamp"`
+	Link      string `json:"link"`
+}
+
 type DashboardResponse struct {
 	RecentBatches []BatchOverviewItem `json:"recent_batches"`
+	Activity      []ActivityEvent     `json:"activity"`
 }
 
 type GlobalSummaryResponse struct {

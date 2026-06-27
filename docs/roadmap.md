@@ -83,51 +83,51 @@
 
 ### API Endpoints
 
-| Endpoint                               | Description                                                 |
-| -------------------------------------- | ----------------------------------------------------------- |
-| `GET /health`                          | Health check                                                |
-| `GET /api/v1/documents`                | List documents (sortable, paginated)                        |
-| `GET /api/v1/documents/{id}`           | Get document with tags, people                              |
-| `GET /api/v1/documents/{id}/file`      | Download PDF file                                           |
-| `GET /api/v1/documents/search`         | FTS5 search with snippets                                   |
-| `POST /api/v1/documents/search`        | Structured search (tags, people, dates, size)               |
-| `PUT /api/v1/documents/{id}`           | Update document metadata (title, type, language)            |
-| `DELETE /api/v1/documents/{id}`        | Delete document + files                                     |
-| `POST /api/v1/documents/{id}/tags`     | Add tag assignment to document                              |
-| `DELETE /api/v1/documents/{id}/tags`   | Remove tag assignment from document                         |
-| `POST /api/v1/documents/{id}/people`   | Add person assignment to document                           |
-| `DELETE /api/v1/documents/{id}/people` | Remove person assignment from document                      |
-| `POST /api/v1/documents/batch-delete`  | Batch delete documents (with partial failure reporting)     |
-| `POST /api/v1/documents/batch-tags`    | Batch assign tags (add or replace mode, with transaction)   |
-| `GET /api/v1/tags`                     | List/autocomplete tag names (`?q=`, `limit`, `offset`)      |
-| `POST /api/v1/tags`                    | Create tag                                                  |
-| `PUT /api/v1/tags/{id}`                | Update tag name                                             |
-| `DELETE /api/v1/tags/{id}`             | Delete tag                                                  |
-| `GET /api/v1/people`                   | List/autocomplete people names (`?q=`, `limit`, `offset`)   |
-| `POST /api/v1/people`                  | Create person                                               |
-| `PUT /api/v1/people/{id}`              | Update person name, native name                             |
-| `DELETE /api/v1/people/{id}`           | Delete person (CASCADE to document_people)                  |
-| `GET /api/v1/people-types`             | List/autocomplete person types (`?q=`, `limit`, `offset`)   |
-| `POST /api/v1/people-types`            | Create person type                                          |
-| `PUT /api/v1/people-types/{id}`        | Update person type name, description                        |
-| `DELETE /api/v1/people-types/{id}`     | Delete person type (409 if referenced)                      |
-| `GET /api/v1/document-types`           | List/autocomplete document types (`?q=`, `limit`, `offset`) |
-| `POST /api/v1/document-types`          | Create document type with description                       |
-| `PUT /api/v1/document-types/{id}`      | Update document type name, description                      |
-| `DELETE /api/v1/document-types/{id}`   | Delete document type (409 if referenced)                    |
-| `GET /api/v1/saved-searches`           | List saved searches                                         |
-| `POST /api/v1/saved-searches`          | Create saved search                                         |
-| `DELETE /api/v1/saved-searches/{id}`   | Delete saved search                                         |
-| `POST /api/v1/consume`                 | Enqueue inbox files, fork processing worker                 |
-| `POST /api/v1/consume/upload`          | Upload files via multipart, fork processing worker          |
-| `GET /api/v1/tasks`                    | List tasks (batch, status filters)                          |
-| `GET /api/v1/tasks/{id}`               | Get single task                                             |
-| `GET /api/v1/batches`                  | List batch summaries                                        |
-| `GET /api/v1/batches/{id}`             | Get single batch summary                                    |
-| `POST /api/v1/batches/{id}/resume`     | Resume batch (forks kushim worker)                          |
-| `POST /api/v1/batches/{id}/cancel`     | Cancel batch (SIGTERM worker, mark tasks cancelled)         |
-| `GET /api/v1/dashboard`                | Dashboard data: recent batches with status counts, duration, owner state |
-| `GET /api/v1/summary`                  | Global totals across all batches                            |
+| Endpoint                               | Description                                                                                                       |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `GET /health`                          | Health check                                                                                                      |
+| `GET /api/v1/documents`                | List documents (sortable, paginated)                                                                              |
+| `GET /api/v1/documents/{id}`           | Get document with tags, people                                                                                    |
+| `GET /api/v1/documents/{id}/file`      | Download PDF file                                                                                                 |
+| `GET /api/v1/documents/search`         | FTS5 search with snippets                                                                                         |
+| `POST /api/v1/documents/search`        | Structured search (tags, people, dates, size)                                                                     |
+| `PUT /api/v1/documents/{id}`           | Update document metadata (title, type, language)                                                                  |
+| `DELETE /api/v1/documents/{id}`        | Delete document + files                                                                                           |
+| `POST /api/v1/documents/{id}/tags`     | Add tag assignment to document                                                                                    |
+| `DELETE /api/v1/documents/{id}/tags`   | Remove tag assignment from document                                                                               |
+| `POST /api/v1/documents/{id}/people`   | Add person assignment to document                                                                                 |
+| `DELETE /api/v1/documents/{id}/people` | Remove person assignment from document                                                                            |
+| `POST /api/v1/documents/batch-delete`  | Batch delete documents (with partial failure reporting)                                                           |
+| `POST /api/v1/documents/batch-tags`    | Batch assign tags (add or replace mode, with transaction)                                                         |
+| `GET /api/v1/tags`                     | List/autocomplete tag names (`?q=`, `limit`, `offset`)                                                            |
+| `POST /api/v1/tags`                    | Create tag                                                                                                        |
+| `PUT /api/v1/tags/{id}`                | Update tag name                                                                                                   |
+| `DELETE /api/v1/tags/{id}`             | Delete tag                                                                                                        |
+| `GET /api/v1/people`                   | List/autocomplete people names (`?q=`, `limit`, `offset`)                                                         |
+| `POST /api/v1/people`                  | Create person                                                                                                     |
+| `PUT /api/v1/people/{id}`              | Update person name, native name                                                                                   |
+| `DELETE /api/v1/people/{id}`           | Delete person (CASCADE to document_people)                                                                        |
+| `GET /api/v1/people-types`             | List/autocomplete person types (`?q=`, `limit`, `offset`)                                                         |
+| `POST /api/v1/people-types`            | Create person type                                                                                                |
+| `PUT /api/v1/people-types/{id}`        | Update person type name, description                                                                              |
+| `DELETE /api/v1/people-types/{id}`     | Delete person type (409 if referenced)                                                                            |
+| `GET /api/v1/document-types`           | List/autocomplete document types (`?q=`, `limit`, `offset`)                                                       |
+| `POST /api/v1/document-types`          | Create document type with description                                                                             |
+| `PUT /api/v1/document-types/{id}`      | Update document type name, description                                                                            |
+| `DELETE /api/v1/document-types/{id}`   | Delete document type (409 if referenced)                                                                          |
+| `GET /api/v1/saved-searches`           | List saved searches                                                                                               |
+| `POST /api/v1/saved-searches`          | Create saved search                                                                                               |
+| `DELETE /api/v1/saved-searches/{id}`   | Delete saved search                                                                                               |
+| `POST /api/v1/consume`                 | Enqueue inbox files, fork processing worker                                                                       |
+| `POST /api/v1/consume/upload`          | Upload files via multipart, fork processing worker                                                                |
+| `GET /api/v1/tasks`                    | List tasks (batch, status filters)                                                                                |
+| `GET /api/v1/tasks/{id}`               | Get single task                                                                                                   |
+| `GET /api/v1/batches`                  | List batch summaries                                                                                              |
+| `GET /api/v1/batches/{id}`             | Get single batch summary                                                                                          |
+| `POST /api/v1/batches/{id}/resume`     | Resume batch (forks kushim worker)                                                                                |
+| `POST /api/v1/batches/{id}/cancel`     | Cancel batch (SIGTERM worker, mark tasks cancelled)                                                               |
+| `GET /api/v1/dashboard`                | Dashboard data: recent batches + activity timeline (document uploads, task completions/failures, batch creations) |
+| `GET /api/v1/summary`                  | Global totals across all batches                                                                                  |
 
 ### CLI Commands
 
@@ -164,7 +164,7 @@
 
 | Route             | Status | Notes                                                                                                                                                            |
 | ----------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/` (dashboard)   | ✓      | Health + summary stats + recent docs + batch overview panel                                                                                                       |
+| `/` (dashboard)   | ✓      | Health + summary stats + recent docs + batch overview panel + activity timeline                                                                                  |
 | `/documents`      | ✓      | Structured search bar + filter panel + saved searches + sortable DataTable                                                                                       |
 | `/documents/[id]` | ✓      | PDF preview + editable metadata sidebar (title, type, language, tags, people) + delete                                                                           |
 | `/settings`       | ✓      | Full configuration form: server host/port, OCR, consumer, text extractor, PDF optimizer, enricher, content analyzer (LLM) with tokens, tag matcher, text reducer |
@@ -228,8 +228,8 @@
 | 20  | **Bulk operations**                      | ✓ Batch delete, batch tag assignment                                                                                                                                              |
 | 21  | **Batch cancel API endpoint**            | ✓ `POST /api/v1/batches/{id}/cancel` — expose `kushim consume cancel` through the API                                                                                             |
 | 22  | **Dashboard: storage panel**             | ✓ Total size, MIME type breakdown (count + size per type), cumulative storage trend by day/week, average file size, total pages, total words                                      |
-| 23  | **Dashboard: batch overview panel**      | ✓ Recent N batches with per-batch task summary, active/orphaned state, batch source, creation time, duration when complete                                                       |
-| 24  | **Dashboard: activity timeline**         | Chronological feed: document uploaded, task completed, task failed, batch created — merged from document.created_at, task.completed_at, batch.created_at                          |
+| 23  | **Dashboard: batch overview panel**      | ✓ Recent N batches with per-batch task summary, active/orphaned state, batch source, creation time, duration when complete                                                        |
+| 24  | **Dashboard: activity timeline**         | ✓ Chronological feed: document uploaded, task completed, task failed, batch created — merged from document.created_at, task.completed_at, batch.created_at                        |
 | 25  | **Dashboard: document analytics panel**  | Language distribution, document type distribution, tag frequency (top N), documents without tags/type/language counts                                                             |
 | 26  | **Dashboard: processing health panel**   | Task success rate (completed vs failed, last 7 days), avg task duration, active batch count, orphaned batch count, missing tools count                                            |
 | 27  | **Dashboard: summary API**               | Single `GET /api/v1/dashboard` endpoint returning all panel data — built from GROUP BY/JOIN queries on existing schema, no migrations needed                                      |

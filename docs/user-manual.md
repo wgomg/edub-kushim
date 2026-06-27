@@ -1132,7 +1132,7 @@ Response `200`:
 GET /api/v1/dashboard
 ```
 
-Returns the 20 most recent batches with per-batch task status summaries, owner state, orphan detection, and duration (when settled).
+Returns the 30 most recent activity events across documents, tasks, and batches, plus the 20 most recent batches with per-batch task status summaries, owner state, orphan detection, and duration (when settled).
 
 Response `200`:
 
@@ -1155,18 +1155,38 @@ Response `200`:
       "orphaned": false,
       "duration_ms": 42000
     }
+  ],
+  "activity": [
+    {
+      "event_type": "document_uploaded",
+      "title": "report.pdf",
+      "timestamp": "2026-06-25T10:30:00Z",
+      "link": "/documents/550e8400-e29b-41d4-a716-446655440000"
+    },
+    {
+      "event_type": "task_completed",
+      "title": "report.pdf",
+      "timestamp": "2026-06-25T10:29:00Z",
+      "link": "/tasks/task-uuid"
+    },
+    {
+      "event_type": "batch_created",
+      "title": "web",
+      "timestamp": "2026-06-25T10:28:00Z",
+      "link": "/tasks?batch=batch-uuid"
+    }
   ]
 }
 ```
 
-| Field          | Type      | Description                                                                          |
-| -------------- | --------- | ------------------------------------------------------------------------------------ |
-| `batch_id`     | `string`  | Batch UUID                                                                           |
-| `source`       | `string`  | Origin: `"cli"`, `"web"`, or `"upload"`                                             |
-| `created_at`   | `string`  | RFC 3339 timestamp                                                                   |
-| `total`        | `int`     | Total task count in batch                                                            |
-| `waiting`      | `int`     | Tasks waiting for their prerequisite                                                 |
-| `pending`      | `int`     | Tasks ready for a worker                                                             |
+| Field            | Type      | Description                                                                          |
+| ---------------- | --------- | ------------------------------------------------------------------------------------ |
+| `batch_id`       | `string`  | Batch UUID                                                                           |
+| `source`         | `string`  | Origin: `"cli"`, `"web"`, or `"upload"`                                             |
+| `created_at`     | `string`  | RFC 3339 timestamp                                                                   |
+| `total`          | `int`     | Total task count in batch                                                            |
+| `waiting`        | `int`     | Tasks waiting for their prerequisite                                                 |
+| `pending`        | `int`     | Tasks ready for a worker                                                             |
 | `processing`   | `int`     | Tasks currently being processed                                                      |
 | `completed`    | `int`     | Tasks finished successfully                                                          |
 | `failed`       | `int`     | Tasks that failed                                                                    |
@@ -1175,6 +1195,15 @@ Response `200`:
 | `owner_state`  | `string`  | `"none"`, `"live"`, or `"stale"`                                                     |
 | `orphaned`     | `bool`    | True when owner is not live but tasks remain pending or processing                   |
 | `duration_ms`  | `int`     | Batch duration in milliseconds. Present only when the batch is fully settled.        |
+
+#### Activity Event (`activity[]`)
+
+| Field        | Type     | Description                                                              |
+| ------------ | -------- | ------------------------------------------------------------------------ |
+| `event_type` | `string` | One of: `"document_uploaded"`, `"task_completed"`, `"task_failed"`, `"batch_created"` |
+| `title`      | `string` | Document title, file name, file path basename, batch source, or task ID fallback |
+| `timestamp`  | `string` | RFC 3339 timestamp                                                       |
+| `link`       | `string` | Navigable link: `/documents/{id}`, `/tasks/{id}`, `/tasks?batch={id}`   |
 
 ### Response Types
 

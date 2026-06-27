@@ -2,18 +2,65 @@
 @plugin '@tailwindcss/forms';
 
 @theme {
-	--color-clay-950: #1a1512;
-	--color-clay-900: #2a221d;
+	--color-clay-50: #f4f0eb;
+	--color-clay-100: #e8e1d9;
+	--color-clay-200: #cec3b8;
+	--color-clay-300: #b2a597;
+	--color-clay-400: #96887a;
+	--color-clay-500: #7c6e61;
+	--color-clay-600: #64584c;
+	--color-clay-700: #4e443b;
 	--color-clay-800: #3a322a;
+	--color-clay-900: #2a221d;
+	--color-clay-950: #1a1512;
+
+	--color-gold-50: #fdf6e6;
+	--color-gold-100: #faecc8;
+	--color-gold-200: #f4daa0;
+	--color-gold-300: #ebc87e;
+	--color-gold-400: #e0b45e;
 	--color-gold-500: #c9953a;
 	--color-gold-600: #b07d2e;
+	--color-gold-700: #976a25;
+	--color-gold-800: #7a551c;
+	--color-gold-900: #5e4114;
+	--color-gold-950: #3d290b;
+
+	--color-lapis-50: #e3eef9;
+	--color-lapis-100: #c4daf2;
+	--color-lapis-200: #a1c1ea;
+	--color-lapis-300: #7da8dc;
+	--color-lapis-400: #6291c9;
+	--color-lapis-500: #4d7cb5;
 	--color-lapis-600: #3b5e8a;
 	--color-lapis-700: #2e4a6e;
+	--color-lapis-800: #233956;
+	--color-lapis-900: #1a2a40;
+	--color-lapis-950: #111c2a;
+
+	--color-parchment-50: #faf6f0;
+	--color-parchment-100: #f4ede2;
 	--color-parchment-200: #e8dcc8;
+	--color-parchment-300: #d6c9b3;
 	--color-parchment-400: #c4b69e;
 	--color-parchment-500: #9a8c78;
+	--color-parchment-600: #7a6e5c;
+	--color-parchment-700: #5f5445;
+	--color-parchment-800: #453d32;
+	--color-parchment-900: #2c2620;
+	--color-parchment-950: #1e1a16;
+
+	--color-terracotta-50: #f9ddd8;
+	--color-terracotta-100: #f3bdb4;
+	--color-terracotta-200: #e89a8d;
+	--color-terracotta-300: #db7868;
+	--color-terracotta-400: #cc5e4e;
 	--color-terracotta-500: #b84a3a;
 	--color-terracotta-600: #9a3a2e;
+	--color-terracotta-700: #7d3026;
+	--color-terracotta-800: #63251d;
+	--color-terracotta-900: #491b14;
+	--color-terracotta-950: #30110c;
 }
 
 @layer base {

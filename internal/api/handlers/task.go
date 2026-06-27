@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -240,8 +241,52 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	activityRows, err := h.queries.ListActivityTimeline(ctx)
+	if err != nil {
+		h.logger.Error(&reqID, "list activity timeline: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	activity := make([]types.ActivityEvent, 0, len(activityRows))
+	for _, row := range activityRows {
+		title := strings.TrimSpace(row.Title)
+		if title == "" && row.PayloadFilePath != "" {
+			title = filepath.Base(strings.TrimSpace(row.PayloadFilePath))
+		}
+		if title == "" {
+			title = row.TaskID
+		}
+
+		var link string
+		switch row.EventType {
+		case "document_uploaded":
+			link = "/documents/" + row.RefID
+		case "task_completed", "task_failed":
+			link = "/tasks/" + row.TaskID
+		case "batch_created":
+			link = "/tasks?batch=" + row.BatchID
+		}
+
+		var timestamp string
+		if t, err := time.Parse("2006-01-02T15:04:05Z", row.EventTime); err == nil {
+			timestamp = t.Format(time.RFC3339)
+		} else if t, err := time.Parse("2006-01-02 15:04:05", row.EventTime); err == nil {
+			timestamp = t.Format(time.RFC3339)
+		} else {
+			timestamp = row.EventTime
+		}
+
+		activity = append(activity, types.ActivityEvent{
+			EventType: row.EventType,
+			Title:     title,
+			Timestamp: timestamp,
+			Link:      link,
+		})
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(types.DashboardResponse{RecentBatches: items})
+	json.NewEncoder(w).Encode(types.DashboardResponse{RecentBatches: items, Activity: activity})
 }
 
 func deriveOwnerState(hb sql.NullTime) task.OwnerState {

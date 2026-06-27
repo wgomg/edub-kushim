@@ -4,6 +4,7 @@
 	import { formatSize } from '$lib/utils/html.js';
 	import StoragePanel from '$lib/components/StoragePanel.svelte';
 	import BatchOverviewPanel from '$lib/components/BatchOverviewPanel.svelte';
+	import ActivityTimeline from '$lib/components/ActivityTimeline.svelte';
 
 	let health = $state();
 	let summary = $state();
@@ -98,6 +99,11 @@
 		<section>
 			<h2 class="mb-3 text-lg font-semibold text-parchment-200">Recent Batches</h2>
 			<BatchOverviewPanel recentBatches={dashboard.recent_batches ?? []} />
+		</section>
+
+		<section>
+			<h2 class="mb-3 text-lg font-semibold text-parchment-200">Recent Activity</h2>
+			<ActivityTimeline activity={dashboard.activity ?? []} />
 		</section>
 	{/if}
 
