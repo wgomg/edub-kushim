@@ -69,7 +69,6 @@ type OCRConfig struct {
 
 type ConsumerConfig struct {
 	SupportedFiles []string            `json:"supported_files"`
-	DeleteOriginal bool                `mapstructure:"delete_original" yaml:"delete_original" json:"delete_original"`
 	Workers        int                 `mapstructure:"workers" yaml:"workers" json:"workers"`
 	TextExtractor  TextExtractorConfig `mapstructure:"textextractor" yaml:"textextractor" json:"textextractor"`
 	PdfOptimizer   PdfOptimizerConfig  `mapstructure:"pdfoptimizer" yaml:"pdfoptimizer" json:"pdfoptimizer"`
@@ -249,7 +248,6 @@ func DefaultConfig(configDir string) *Config {
 		},
 		Consumer: ConsumerConfig{
 			SupportedFiles: []string{".pdf"},
-			DeleteOriginal: false,
 			Workers:        1,
 			TextExtractor: TextExtractorConfig{
 				Engine:  TextExtractor.MuPDF,

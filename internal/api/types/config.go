@@ -37,7 +37,6 @@ type ServerConfigResponse struct {
 }
 
 type ConsumerConfigResponse struct {
-	DeleteOriginal bool                  `json:"delete_original"`
 	Workers        int                   `json:"workers"`
 	TextExtractor  TextExtractorResponse `json:"textextractor"`
 	PdfOptimizer   PdfOptimizerResponse  `json:"pdfoptimizer"`
@@ -108,7 +107,6 @@ type HugotResponse struct {
 
 func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	var resp ConfigResponse
-	resp.Consumer.DeleteOriginal = cfg.Consumer.DeleteOriginal
 	resp.Consumer.Workers = cfg.Consumer.Workers
 	resp.Consumer.TextExtractor.Engine = cfg.Consumer.TextExtractor.Engine
 	resp.Consumer.TextExtractor.Timeout = cfg.Consumer.TextExtractor.Timeout

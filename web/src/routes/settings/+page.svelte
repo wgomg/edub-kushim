@@ -112,7 +112,6 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			'consumer.ocr.data_dir': cfg.consumer.ocr.data_dir,
 			'consumer.ocr.timeout': Number(cfg.consumer.ocr.timeout),
 			'consumer.workers': Number(cfg.consumer.workers),
-			'consumer.delete_original': cfg.consumer.delete_original,
 			'consumer.pdfoptimizer.engine': cfg.consumer.pdfoptimizer.engine,
 			'consumer.pdfoptimizer.fallback': cfg.consumer.pdfoptimizer.fallback,
 			'consumer.pdfoptimizer.timeout': Number(cfg.consumer.pdfoptimizer.timeout),
@@ -518,18 +517,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
 						/>
 					</div>
-					<div class="flex items-center gap-2">
-						<input
-							id="delete-original"
-							type="checkbox"
-							bind:checked={cfg.consumer.delete_original}
-							class="rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
-						/>
-						<label for="delete-original" class="text-sm text-parchment-200"
-							>Delete original files after processing</label
-						>
 					</div>
-				</div>
 			</section>
 
 			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">

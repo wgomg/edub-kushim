@@ -23,7 +23,6 @@ storage:
 consumer:
   workers: 1
   supported_files: ['.pdf']
-  delete_original: false
 
   textextractor:
     engine: 'mupdf' # mupdf | gopdf | pdftotext

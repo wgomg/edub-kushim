@@ -212,7 +212,7 @@ five-step guided flow:
 
 1. **Config directory** — user specifies where `config.yaml`, database, and models are stored
 2. **Consumer settings** — OCR engine, languages, timeout; text extractor engine/timeout; PDF optimizer
-   engine/fallback/timeout; server port; consumer workers; delete-original toggle.
+   engine/fallback/timeout; server port; consumer workers.
    **Inline warnings** show when a selected external tool (`ocrmypdf`, `gs`, `pdftotext`) is not found
    in `PATH`, along with companion status (tesseract, unpaper, pngquant for ocrmypdf) and tesseract
    language-pack guidance.
@@ -244,7 +244,7 @@ environments or CI.
 The main web UI (`web/`) includes a **Settings** page at `/settings` backed by the same
 `/wizard/config` API endpoints. It provides a single-page form covering all configurable
 fields: server host/port, max upload/download sizes, max download files; OCR engine, timeout, data directory, languages; consumer workers,
-delete-original, text extractor engine/timeout; PDF optimizer engine/fallback/timeout;
+text extractor engine/timeout; PDF optimizer engine/fallback/timeout;
 enricher workers; content analyzer engine/timeout + LLM provider Base URL, model, token;
 tag matcher engine/timeout, reduce-target-words, chunk size, Hugot model/backend;
 text reducer engine/timeout/target-words. Changes trigger background downloads for any
@@ -321,12 +321,18 @@ cancellation wiring.
 storage/
 ├── originals/                    # Original files (copied)
 │   └── 2024/03/19/1.pdf
-└── 2024/                         # Processed files (OCR'd or optimized)
-    └── 03/19/1.pdf
+├── errors/                       # Failed processing (auto‑quarantined)
+│   ├── duplicated/               # Duplicate files
+│   │   └── <uuid>-report.pdf
+│   └── <uuid>-corrupt.pdf
+└── processed/                    # Processed files (OCR'd or optimized)
+    └── 2024/03/19/1.pdf
 ```
 
-Date‑based (`year/month/day/documentID.ext`) to avoid "too many files in one directory"
-at scale. Dual storage preserves originals alongside processed versions.
+Date‑based (`year/month/day/documentID.ext`) under `processed/` avoids "too many files in one directory"
+at scale. Dual storage preserves originals alongside processed versions. Files that fail processing
+are moved to `errors/` (or `errors/duplicated/` for exact duplicates) with a UUID prefix to prevent
+name collisions. Inbox files are always deleted after successful processing.
 
 ---
 

@@ -7,7 +7,7 @@
 - `ServerConfig`: `Host`, `Port`, `ReadTimeout`, `WriteTimeout`, `IdleTimeout`, `MaxUploadSize`, `MaxConcurrentBatches`
 - `DatabaseConfig`: `Type`, `Path`, `Name`, `Seeders []string`
 - `StorageConfig`: `ConsumptionDir`, `StorageDir`
-- `ConsumerConfig`: `SupportedFiles []string`, `DeleteOriginal bool`, `Workers int`, `TextExtractor TextExtractorConfig`, `PdfOptimizer PdfOptimizerConfig`, `OCR OCRConfig`
+- `ConsumerConfig`: `SupportedFiles []string`, `Workers int`, `TextExtractor TextExtractorConfig`, `PdfOptimizer PdfOptimizerConfig`, `OCR OCRConfig`
   - `TextExtractorConfig`: `Engine string`, `Timeout int`
   - `PdfOptimizerConfig`: `Engine string`, `Fallback string`, `Timeout int`
   - `OCRConfig`: `Engine string`, `Languages []string`, `DataDir string`, `Timeout int`

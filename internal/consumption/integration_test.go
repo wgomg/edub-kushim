@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -66,7 +67,6 @@ func setupConsumerTest(t *testing.T) (*Consumer, *config.Config, *database.Clien
 	t.Helper()
 
 	cfg, cleanupCfg := testutil.NewTestConfig(t)
-	cfg.Consumer.DeleteOriginal = true
 
 	client := database.NewTestClient(t)
 	logger := utils.NewDiscardLogger()
@@ -79,7 +79,6 @@ func setupConsumerTest(t *testing.T) (*Consumer, *config.Config, *database.Clien
 	testutil.AssertNoError(t, err, "create consumer")
 
 	cleanup := func() {
-		cfg.Consumer.DeleteOriginal = false
 		cleanupCfg()
 	}
 
@@ -127,9 +126,9 @@ func TestConsumerProcessHappyPath(t *testing.T) {
 		}
 	})
 
-	t.Run("original deleted from inbox (delete_original=true)", func(t *testing.T) {
+	t.Run("original deleted from inbox after success", func(t *testing.T) {
 		if _, err := os.Stat(pdfPath); !os.IsNotExist(err) {
-			t.Fatal("original should have been deleted from inbox")
+			t.Fatal("original should have been deleted from inbox after success")
 		}
 	})
 
@@ -167,6 +166,16 @@ func TestConsumerDuplicateDetection(t *testing.T) {
 
 	count := docCount(t, client.Queries)
 	testutil.AssertEqual(t, count, int64(1), "only one document after duplicate attempt")
+
+	// Duplicate file should be in errors/duplicated/
+	if _, err := os.Stat(pdfPath2); !os.IsNotExist(err) {
+		t.Fatal("duplicate original should have been moved to error directory")
+	}
+	dupesDir := filepath.Join(cfg.Storage.StorageDir, errorDirName, errorDirNameDupes)
+	entries, _ := os.ReadDir(dupesDir)
+	if len(entries) == 0 {
+		t.Fatal("expected at least one file in duplicate error directory")
+	}
 }
 
 func TestConsumerEmptyTextGoesToOcr(t *testing.T) {
@@ -193,6 +202,16 @@ func TestConsumerTextExtractionFailure(t *testing.T) {
 	file, _ := FileFromPath(pdfPath)
 	_, err := consumer.Process(context.Background(), file, uuid.New().String())
 	testutil.AssertError(t, err, "extraction error should fail")
+
+	// File should be moved to error quarantine
+	if _, err := os.Stat(pdfPath); !os.IsNotExist(err) {
+		t.Fatal("original should have been moved to error directory after failure")
+	}
+	errorDir := filepath.Join(cfg.Storage.StorageDir, errorDirName)
+	entries, _ := os.ReadDir(errorDir)
+	if len(entries) == 0 {
+		t.Fatal("expected at least one file in error directory")
+	}
 }
 
 func TestConsumerFileNotFound(t *testing.T) {
@@ -230,24 +249,43 @@ func TestConsumerFileFromPath(t *testing.T) {
 	testutil.AssertEqual(t, file.FileSize > 0, true, "size > 0")
 }
 
-func TestConsumerDeleteOriginalDisabled(t *testing.T) {
-	cfg, cleanupCfg := testutil.NewTestConfig(t)
-	defer cleanupCfg()
-	cfg.Consumer.DeleteOriginal = false
+func TestMoveFailedFile(t *testing.T) {
+	tests := []struct {
+		name    string
+		errType string
+		subDir  string
+	}{
+		{name: "generic error", errType: "", subDir: "errors"},
+		{name: "duplicate error", errType: "duplicate", subDir: filepath.Join("errors", "duplicated")},
+	}
 
-	client := database.NewTestClient(t)
-	runner := &integrationTestRunner{extractText: "content"}
-	consumer, err := NewConsumerWithRunner(cfg, utils.NewDiscardLogger(), client, runner)
-	testutil.AssertNoError(t, err, "create consumer")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			storageDir := t.TempDir()
+			srcPath := filepath.Join(storageDir, "src.pdf")
+			os.WriteFile(srcPath, []byte("content"), 0644)
 
-	pdfPath := filepath.Join(cfg.Storage.ConsumptionDir, "keep.pdf")
-	os.WriteFile(pdfPath, testutil.MinimalTextPDF("Keep original"), 0644)
-	file, _ := FileFromPath(pdfPath)
-	_, err = consumer.Process(context.Background(), file, uuid.New().String())
-	testutil.AssertNoError(t, err, "process")
+			logger := utils.NewDiscardLogger()
+			docID := uuid.New().String()
 
-	if _, err := os.Stat(pdfPath); os.IsNotExist(err) {
-		t.Fatal("original should exist when delete_original=false")
+			moveFailedFile(storageDir, srcPath, tt.errType, logger, &docID)
+
+			if _, err := os.Stat(srcPath); !os.IsNotExist(err) {
+				t.Fatal("source file should no longer exist at original path")
+			}
+
+			destDir := filepath.Join(storageDir, tt.subDir)
+			entries, err := os.ReadDir(destDir)
+			if err != nil {
+				t.Fatalf("failed to read %s: %v", destDir, err)
+			}
+			if len(entries) != 1 {
+				t.Fatalf("expected 1 file in %s, got %d", destDir, len(entries))
+			}
+			if !strings.HasSuffix(entries[0].Name(), "-src.pdf") {
+				t.Fatalf("expected filename ending with '-src.pdf', got %s", entries[0].Name())
+			}
+		})
 	}
 }
 

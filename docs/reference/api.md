@@ -218,7 +218,7 @@
 - `AppConfigResponse` — `Initialized bool` (true when config_dir has been bootstrapped)
 - `ServerConfigResponse` — `Host string`, `Port int`
 - `ConfigResponse` — `App AppConfigResponse`, `Server ServerConfigResponse`, `Consumer ConsumerConfigResponse`, `Enricher EnricherConfigResponse`, `AvailableEngines map[string][]EngineEntry`
-- `ConsumerConfigResponse` — `DeleteOriginal bool`, `Workers int`, `TextExtractor TextExtractorResponse`, `PdfOptimizer PdfOptimizerResponse`, `OCR OCRResponse`
+- `ConsumerConfigResponse` — `Workers int`, `TextExtractor TextExtractorResponse`, `PdfOptimizer PdfOptimizerResponse`, `OCR OCRResponse`
 - `TextExtractorResponse` — `Engine string`, `Timeout int`
 - `PdfOptimizerResponse` — `Engine string`, `Fallback string`, `Timeout int`
 - `OCRResponse` — `Engine string`, `Languages []string`, `DataDir string`, `Timeout int`

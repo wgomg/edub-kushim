@@ -16,12 +16,18 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/pdfoptimizer"
 	"github.com/wgomg/edub-kushim/internal/utils"
+)
+
+const (
+	errorDirName     = "errors"
+	errorDirNameDupes = "duplicated"
 )
 
 // runner is an interface covering the subset of *tools.Runner methods that
@@ -104,15 +110,18 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 
 	duplicated, err := c.isDuplicate(ctx, file.OriginalPath)
 	if err != nil {
+		moveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 		return file, fmt.Errorf("failed to check for duplicate: %v", err)
 	}
 
 	if duplicated {
+		moveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "duplicate", c.logger, &documentID)
 		return file, fmt.Errorf("file is a duplicate, skipping")
 	}
 
 	file, err = c.extractText(ctx, file, documentID)
 	if err != nil {
+		moveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 		return file, err
 	}
 
@@ -127,6 +136,7 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 
 	storePath := filepath.Join(
 		c.config.Storage.StorageDir,
+		"processed",
 		datePath,
 	)
 	file.StorageProcessedPath = &storePath
@@ -140,6 +150,7 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 
 	tx, err := 	c.client.BeginTx(txCtx, nil)
 	if err != nil {
+		moveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 		return file, fmt.Errorf("failed to begin database transaction: %w", err)
 	}
 	defer func() {
@@ -185,11 +196,13 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 		CharCount:      int64(utf8.RuneCountInString(file.Text.String)),
 	})
 	if err != nil {
+		moveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 		return file, fmt.Errorf("failed to create document record: %w", err)
 	}
 
 	documentDbId, err := result.LastInsertId()
 	if err != nil {
+		moveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 		return file, fmt.Errorf("failed to get document ID: %w", err)
 	}
 
@@ -221,6 +234,7 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 		DocumentID:   documentID,
 	})
 	if err != nil {
+		moveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 		return file, fmt.Errorf("failed to update storage path: %w", err)
 	}
 
@@ -232,6 +246,7 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 			*file.StorageProcessedPath,
 		)
 		if err := MoveFile(*file.OCRTmpPath, *file.StorageProcessedPath); err != nil {
+			moveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 			return file, fmt.Errorf("failed to move OCR processed file: %w", err)
 		}
 		c.logger.Debug(
@@ -245,18 +260,21 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 			if removeErr := RemoveFile(*file.StorageProcessedPath); removeErr != nil {
 				c.logger.Error(&documentID, "failed to clean up OCR file: %v", removeErr)
 			}
+			moveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 			return file, fmt.Errorf("failed to move original file: %w", err)
 		}
 	} else if file.OptimizedPdfTmpPath != nil {
 		c.logger.Debug(&documentID,
 			"Copying original file from %s to %s", file.OriginalPath, *file.StorageOriginalPath)
 		if err := CopyFile(file.OriginalPath, *file.StorageOriginalPath); err != nil {
+			moveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 			return file, fmt.Errorf("failed to copy original file: %w", err)
 		}
 
 		c.logger.Debug(&documentID,
 			"Moving optimized file from %s to %s", *file.OptimizedPdfTmpPath, *file.StorageProcessedPath)
 		if err := MoveFile(*file.OptimizedPdfTmpPath, *file.StorageProcessedPath); err != nil {
+			moveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 			return file, fmt.Errorf("failed to move optimized file: %w", err)
 		}
 	} else {
@@ -264,11 +282,13 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 		c.logger.Debug(&documentID,
 			"Copying original file from %s to %s (no optimized version)", file.OriginalPath, *file.StorageProcessedPath)
 		if err := CopyFile(file.OriginalPath, *file.StorageProcessedPath); err != nil {
+			moveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 			return file, fmt.Errorf("failed to copy original file to processed storage: %w", err)
 		}
 		c.logger.Debug(&documentID,
 			"Copying original file from %s to %s", file.OriginalPath, *file.StorageOriginalPath)
 		if err := CopyFile(file.OriginalPath, *file.StorageOriginalPath); err != nil {
+			moveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 			return file, fmt.Errorf("failed to copy original file to originals storage: %w", err)
 		}
 	}
@@ -284,20 +304,45 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 				removeErr,
 			)
 		}
+		moveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 		return file, fmt.Errorf("failed to commit transaction: %w", err)
 	} else {
-		if c.config.Consumer.DeleteOriginal {
-			if removeErr := RemoveFile(file.OriginalPath); removeErr != nil {
-				c.logger.Error(
-					&documentID,
-					"Failed to rollback original file move after commit failure: %v",
-					removeErr,
-				)
-			}
+		if removeErr := RemoveFile(file.OriginalPath); removeErr != nil {
+			c.logger.Error(
+				&documentID,
+				"Failed to remove original file from inbox after successful processing: %v",
+				removeErr,
+			)
 		}
 	}
 
 	return file, nil
+}
+
+func moveFailedFile(storageDir, originalPath, errType string, logger *utils.Logger, docID *string) {
+	baseName := filepath.Base(originalPath)
+	uuidStr := uuid.New().String()
+	destName := uuidStr + "-" + baseName
+
+	var destDir string
+	if errType == "duplicate" {
+		destDir = filepath.Join(storageDir, errorDirName, errorDirNameDupes)
+	} else {
+		destDir = filepath.Join(storageDir, errorDirName)
+	}
+
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		logger.Error(docID, "Failed to create error directory %s: %v", destDir, err)
+		return
+	}
+
+	destPath := filepath.Join(destDir, destName)
+	if err := MoveFile(originalPath, destPath); err != nil {
+		logger.Error(docID, "Failed to move failed file %s to %s: %v", originalPath, destPath, err)
+		return
+	}
+
+	logger.Info(docID, "Moved failed file to %s", destPath)
 }
 
 func (c *Consumer) isDuplicate(ctx context.Context, path string) (bool, error) {

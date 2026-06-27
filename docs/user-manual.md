@@ -810,7 +810,6 @@ Two-phase API:
   "consumer.ocr.languages": ["eng", "spa"],
   "consumer.ocr.timeout": 120,
   "consumer.workers": 2,
-  "consumer.delete_original": false,
   "consumer.textextractor.engine": "mupdf",
   "consumer.textextractor.timeout": 120,
   "consumer.pdfoptimizer.engine": "mupdf",
@@ -1410,7 +1409,6 @@ storage:
 
 consumer:
   workers: 1 # concurrent file processing workers
-  delete_original: false
   textextractor:
     engine: 'mupdf' # mupdf | gopdf | pdftotext
     timeout: 120
