@@ -190,6 +190,12 @@ These methods are written manually (no sqlc) and follow a consistent pattern:
 | `TagFrequency` | `SELECT t.name, COUNT(*) FROM document_tag dt JOIN tag t ON dt.tag_id = t.id GROUP BY t.id, t.name ORDER BY count DESC LIMIT 10` | `[]DistributionRow` |
 | `MissingCounts` | Single-row SELECT with 3 correlated subqueries: documents with `language = 'und' OR ''`, documents with `document_type_id = 1`, documents with no `document_tag` rows | `MissingCountsRow` |
 
+| `TaskSuccessRate` | `SELECT SUM(CASE status='completed'), SUM(CASE status='failed') FROM task WHERE completed_at >= datetime('now', '-7 days')` | `TaskSuccessRateRow` |
+| `AvgTaskDurationMs` | `SELECT AVG(julianday(completed_at) - julianday(started_at)) * 86400000 FROM task WHERE status='completed' AND started_at IS NOT NULL AND completed_at >= datetime('now', '-7 days')` | `AvgTaskDurationMsRow` |
+| `ActiveBatchIDs` | `SELECT DISTINCT batch_id FROM task WHERE batch_id IS NOT NULL AND status IN ('pending', 'processing')` | `[]string` |
+
+These three methods feed the dashboard processing health panel. `ActiveBatchIDs` identifies which batches still have work, then the handler checks each batch's owner state to determine orphaned count.
+
 The last 4 methods back the dashboard analytics panel. `LanguageDistribution` and `DocumentTypeDistribution` exclude undetermined values (language `'und'`/`''` and `document_type_id = 1`) to avoid double-counting with the `MissingCounts` cards.
 
 ---

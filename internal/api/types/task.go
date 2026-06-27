@@ -85,10 +85,21 @@ type DocumentAnalytics struct {
 	MissingTagsCount         int64              `json:"missing_tags_count"`
 }
 
+type ProcessingHealth struct {
+	SuccessRate     float64 `json:"success_rate"`
+	CompletedLast7d int64   `json:"completed_last_7d"`
+	FailedLast7d    int64   `json:"failed_last_7d"`
+	AvgDurationMs   int64   `json:"avg_duration_ms"`
+	ActiveBatches   int64   `json:"active_batches"`
+	OrphanedBatches int64   `json:"orphaned_batches"`
+	MissingTools    int64   `json:"missing_tools"`
+}
+
 type DashboardResponse struct {
-	RecentBatches []BatchOverviewItem `json:"recent_batches"`
-	Activity      []ActivityEvent     `json:"activity"`
-	Analytics     *DocumentAnalytics  `json:"analytics,omitempty"`
+	RecentBatches    []BatchOverviewItem `json:"recent_batches"`
+	Activity         []ActivityEvent     `json:"activity"`
+	Analytics        *DocumentAnalytics  `json:"analytics,omitempty"`
+	ProcessingHealth *ProcessingHealth   `json:"processing_health,omitempty"`
 }
 
 type GlobalSummaryResponse struct {

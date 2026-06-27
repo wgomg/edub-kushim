@@ -6,6 +6,7 @@
 	import BatchOverviewPanel from '$lib/components/BatchOverviewPanel.svelte';
 	import ActivityTimeline from '$lib/components/ActivityTimeline.svelte';
 	import DocumentAnalyticsPanel from '$lib/components/DocumentAnalyticsPanel.svelte';
+	import ProcessingHealthPanel from '$lib/components/ProcessingHealthPanel.svelte';
 
 	let health = $state();
 	let summary = $state();
@@ -111,6 +112,13 @@
 			<section>
 				<h2 class="mb-3 text-lg font-semibold text-parchment-200">Document Analytics</h2>
 				<DocumentAnalyticsPanel analytics={dashboard.analytics} />
+			</section>
+		{/if}
+
+		{#if dashboard.processing_health}
+			<section>
+				<h2 class="mb-3 text-lg font-semibold text-parchment-200">Processing Health</h2>
+				<ProcessingHealthPanel health={dashboard.processing_health} />
 			</section>
 		{/if}
 	{/if}

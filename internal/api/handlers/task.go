@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/api/types"
+	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/utils"
@@ -21,12 +23,14 @@ import (
 type TaskHandler struct {
 	queries *database.Queries
 	logger  *utils.Logger
+	cfg     *config.Config
 }
 
-func NewTaskHandler(queries *database.Queries, logger *utils.Logger) *TaskHandler {
+func NewTaskHandler(queries *database.Queries, logger *utils.Logger, cfg *config.Config) *TaskHandler {
 	return &TaskHandler{
 		queries: queries,
 		logger:  logger,
+		cfg:     cfg,
 	}
 }
 
@@ -287,8 +291,16 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 
 	analytics := h.buildDocumentAnalytics(ctx, &reqID)
 
+	var processingHealth *types.ProcessingHealth
+	ph, err := h.buildProcessingHealth(ctx, &reqID)
+	if err != nil {
+		h.logger.Error(&reqID, "processing health: %v", err)
+	} else {
+		processingHealth = ph
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(types.DashboardResponse{RecentBatches: items, Activity: activity, Analytics: analytics})
+	json.NewEncoder(w).Encode(types.DashboardResponse{RecentBatches: items, Activity: activity, Analytics: analytics, ProcessingHealth: processingHealth})
 }
 
 func (h *TaskHandler) buildDocumentAnalytics(ctx context.Context, reqID *string) *types.DocumentAnalytics {
@@ -334,6 +346,56 @@ func (h *TaskHandler) buildDocumentAnalytics(ctx context.Context, reqID *string)
 	analytics.MissingTagsCount = missing.MissingTags
 
 	return analytics
+}
+
+func (h *TaskHandler) buildProcessingHealth(ctx context.Context, reqID *string) (*types.ProcessingHealth, error) {
+	successRow, err := h.queries.TaskSuccessRate(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("task success rate: %w", err)
+	}
+
+	var successRate float64
+	total := successRow.Completed + successRow.Failed
+	if total > 0 {
+		successRate = float64(successRow.Completed) / float64(total)
+	}
+
+	durRow, err := h.queries.AvgTaskDurationMs(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("avg task duration: %w", err)
+	}
+
+	activeIDs, err := h.queries.ActiveBatchIDs(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("active batch ids: %w", err)
+	}
+
+	orphanedCount := int64(0)
+	for _, batchID := range activeIDs {
+		state, _, err := task.BatchOwnerState(ctx, h.queries, batchID, task.StaleAfter)
+		if err != nil {
+			h.logger.Debug(reqID, "orphan check batch %s: %v", batchID, err)
+			continue
+		}
+		if state != task.OwnerLive {
+			orphanedCount++
+		}
+	}
+
+	missingTools := int64(0)
+	if h.cfg != nil {
+		missingTools = int64(len(config.MissingExternalToolErrors(h.cfg)))
+	}
+
+	return &types.ProcessingHealth{
+		SuccessRate:     successRate,
+		CompletedLast7d: successRow.Completed,
+		FailedLast7d:    successRow.Failed,
+		AvgDurationMs:   durRow.AvgDurationMs,
+		ActiveBatches:   int64(len(activeIDs)),
+		OrphanedBatches: orphanedCount,
+		MissingTools:    missingTools,
+	}, nil
 }
 
 func deriveOwnerState(hb sql.NullTime) task.OwnerState {

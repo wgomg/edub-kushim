@@ -495,7 +495,7 @@ func TestDocumentTypeCrud(t *testing.T) {
 
 func TestTaskEndpoints(t *testing.T) {
 	env := newHandlerTestEnv(t)
-	h := NewTaskHandler(env.client.Queries, env.logger)
+	h := NewTaskHandler(env.client.Queries, env.logger, nil)
 	ctx := context.Background()
 
 	_, err := env.client.CreateTask(ctx, database.CreateTaskParams{
@@ -624,7 +624,7 @@ func TestTaskEndpoints(t *testing.T) {
 
 func TestGetDashboardActivity(t *testing.T) {
 	env := newHandlerTestEnv(t)
-	h := NewTaskHandler(env.client.Queries, env.logger)
+	h := NewTaskHandler(env.client.Queries, env.logger, nil)
 	ctx := context.Background()
 
 	docDBID, docUUID := database.CreateTestDocument(t, env.client.Queries, "dash-act-doc.pdf")
@@ -797,12 +797,10 @@ func TestGetDashboardActivity(t *testing.T) {
 
 func TestGetDashboardAnalyticsError(t *testing.T) {
 	env := newHandlerTestEnv(t)
-	h := NewTaskHandler(env.client.Queries, env.logger)
+	h := NewTaskHandler(env.client.Queries, env.logger, nil)
 
-	// Create a document so queries don't fail due to empty DB
 	database.CreateTestDocument(t, env.client.Queries, "err-test.pdf")
 
-	// Cancelled context should cause queries to fail
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -812,10 +810,78 @@ func TestGetDashboardAnalyticsError(t *testing.T) {
 		t.Fatal("expected nil analytics when queries fail due to cancelled context")
 	}
 
-	// Normal context returns non-nil analytics
 	analyticsOk := h.buildDocumentAnalytics(context.Background(), &reqID)
 	if analyticsOk == nil {
 		t.Fatal("expected non-nil analytics with normal context")
+	}
+}
+
+func TestGetDashboardProcessingHealth(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	h := NewTaskHandler(env.client.Queries, env.logger, nil)
+	ctx := context.Background()
+
+	_, err := env.client.CreateBatch(ctx, database.CreateBatchParams{
+		ID: "ph-batch-1", Source: "test",
+	})
+	testutil.AssertNoError(t, err, "create batch 1")
+
+	_, err = env.client.CreateBatch(ctx, database.CreateBatchParams{
+		ID: "ph-batch-2", Source: "test",
+	})
+	testutil.AssertNoError(t, err, "create batch 2")
+
+	res, err := env.client.CreateTask(ctx, database.CreateTaskParams{
+		TaskID: "ph-completed", TaskType: "consume", Status: "pending",
+		BatchID: sql.NullString{String: "ph-batch-1", Valid: true},
+	})
+	testutil.AssertNoError(t, err, "create completed task")
+	task1ID, _ := res.LastInsertId()
+	testutil.AssertNoError(t, env.client.CompleteTask(ctx, database.CompleteTaskParams{ID: task1ID, Result: nil}), "complete")
+
+	res2, err := env.client.CreateTask(ctx, database.CreateTaskParams{
+		TaskID: "ph-failed", TaskType: "consume", Status: "pending",
+		BatchID: sql.NullString{String: "ph-batch-1", Valid: true},
+	})
+	testutil.AssertNoError(t, err, "create failed task")
+	task2ID, _ := res2.LastInsertId()
+	testutil.AssertNoError(t, env.client.FailTask(ctx, database.FailTaskParams{
+		ID: task2ID, Error: sql.NullString{String: "err", Valid: true},
+	}), "fail")
+
+	_, err = env.client.CreateTask(ctx, database.CreateTaskParams{
+		TaskID: "ph-pending", TaskType: "consume", Status: "pending",
+		BatchID: sql.NullString{String: "ph-batch-2", Valid: true},
+	})
+	testutil.AssertNoError(t, err, "create pending task")
+
+	w := rec()
+	h.GetDashboard(w, req(t, "GET", "/api/v1/dashboard", nil))
+	testutil.AssertEqual(t, w.Code, http.StatusOK, "dashboard status")
+
+	var resp types.DashboardResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode dashboard: %v", err)
+	}
+
+	if resp.ProcessingHealth == nil {
+		t.Fatal("expected processing_health in dashboard response")
+	}
+
+	if resp.ProcessingHealth.SuccessRate != 0.5 {
+		t.Fatalf("expected success_rate 0.5, got %f", resp.ProcessingHealth.SuccessRate)
+	}
+	if resp.ProcessingHealth.CompletedLast7d != 1 {
+		t.Fatalf("expected completed_last_7d 1, got %d", resp.ProcessingHealth.CompletedLast7d)
+	}
+	if resp.ProcessingHealth.FailedLast7d != 1 {
+		t.Fatalf("expected failed_last_7d 1, got %d", resp.ProcessingHealth.FailedLast7d)
+	}
+	if resp.ProcessingHealth.ActiveBatches != 1 {
+		t.Fatalf("expected active_batches 1 (ph-batch-2 has pending), got %d", resp.ProcessingHealth.ActiveBatches)
+	}
+	if resp.ProcessingHealth.AvgDurationMs != 0 {
+		t.Fatalf("expected avg_duration_ms 0 (no started_at), got %d", resp.ProcessingHealth.AvgDurationMs)
 	}
 }
 

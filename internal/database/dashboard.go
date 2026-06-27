@@ -246,6 +246,71 @@ func (q *Queries) MissingCounts(ctx context.Context) (MissingCountsRow, error) {
 	return r, err
 }
 
+type TaskSuccessRateRow struct {
+	Completed int64
+	Failed    int64
+}
+
+type AvgTaskDurationMsRow struct {
+	AvgDurationMs int64
+}
+
+func (q *Queries) TaskSuccessRate(ctx context.Context) (TaskSuccessRateRow, error) {
+	var r TaskSuccessRateRow
+	err := q.db.QueryRowContext(ctx, `
+		SELECT
+			COALESCE(SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END), 0) AS completed,
+			COALESCE(SUM(CASE WHEN status = 'failed'    THEN 1 ELSE 0 END), 0) AS failed
+		FROM task
+		WHERE completed_at >= datetime('now', '-7 days')
+	`).Scan(&r.Completed, &r.Failed)
+	return r, err
+}
+
+func (q *Queries) AvgTaskDurationMs(ctx context.Context) (AvgTaskDurationMsRow, error) {
+	var r AvgTaskDurationMsRow
+	err := q.db.QueryRowContext(ctx, `
+		SELECT CAST(COALESCE(AVG(
+			(julianday(completed_at) - julianday(started_at)) * 86400000.0
+		), 0.0) AS INTEGER) AS avg_duration_ms
+		FROM task
+		WHERE status = 'completed'
+		  AND started_at IS NOT NULL
+		  AND completed_at IS NOT NULL
+		  AND completed_at >= datetime('now', '-7 days')
+	`).Scan(&r.AvgDurationMs)
+	return r, err
+}
+
+func (q *Queries) ActiveBatchIDs(ctx context.Context) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, `
+		SELECT DISTINCT batch_id
+		FROM task
+		WHERE batch_id IS NOT NULL
+		  AND status IN ('pending', 'processing')
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan active batch id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
 func (q *Queries) DocumentAggregates(ctx context.Context) (DocumentAggregatesRow, error) {
 	var r DocumentAggregatesRow
 	err := q.db.QueryRowContext(ctx,

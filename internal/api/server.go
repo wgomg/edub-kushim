@@ -166,7 +166,7 @@ func registerRoutes(mux *http.ServeMux, logger *utils.Logger, client *database.C
 	mux.HandleFunc("GET /wizard/config/status", configHandler.ConfigStatus)
 	mux.HandleFunc("POST /wizard/config/retry", configHandler.RetryFailedConfig)
 
-	taskHandler := handlers.NewTaskHandler(client.Queries, logger)
+	taskHandler := handlers.NewTaskHandler(client.Queries, logger, cfg)
 	mux.HandleFunc("GET /api/v1/tasks", taskHandler.ListTasks)
 	mux.HandleFunc("GET /api/v1/tasks/{id}", taskHandler.GetTask)
 	mux.HandleFunc("POST /api/v1/tasks/{id}/retry", taskHandler.RetryTask)

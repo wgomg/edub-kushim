@@ -76,9 +76,9 @@
 ### Struct
 
 - `TaskHandler`
-  - **Fields**: `queries *database.Queries`, `logger *utils.Logger`
+  - **Fields**: `queries *database.Queries`, `logger *utils.Logger`, `cfg *config.Config`
   - **Methods**:
-    - `NewTaskHandler(queries, logger) *TaskHandler`
+    - `NewTaskHandler(queries, logger, cfg) *TaskHandler`
     - `ListTasks(w, r)` — Filters by `batch`, `status`, `limit`, `offset`; includes batch summary when `batch` is set
     - `GetTask(w, r)` — Single task by UUID
     - `RetryTask(w, r)` — `POST /api/v1/tasks/{id}/retry` — Resets a failed task to pending. Returns `204 No Content`. Returns 404 if task not found, 409 if task is not failed.
@@ -86,9 +86,10 @@
     - `GetBatchSummary(w, r)` — Counts per status for a single batch (via `{id}`)
     - `RetryBatch(w, r)` — `POST /api/v1/batches/{id}/retry` — Resets all failed tasks in a batch to pending. Returns `200 {"retried": <n>}`. Idempotent (0 retried is valid success).
     - `ResumeBatch(w, r)` — `POST /api/v1/batches/{id}/resume` (formerly `AdoptBatch`). Checks batch ownership via `BatchOwnerState` (returns 409 if locked by a live owner), then **forks `kushim consume --batch <id> --force`** to resume processing. Returns `202 {"resumed": true}`.
-    - `GetDashboard(w, r)` — Returns `recent_batches` (top 20) + `activity` (top 30 chronological events from documents, tasks, batches) + `analytics` (language/document-type/tag distributions, missing counts). Activity includes: `event_type`, `title`, `timestamp`, `link`.
+    - `CancelBatch(w, r)` — `POST /api/v1/batches/{id}/cancel` — Cancels pending tasks, sends `SIGTERM` to the batch owner process if alive, and releases the batch owner. Returns `200` with `cancelled_pending`, `cancelled_processing`, and `signal_sent` booleans.
+    - `GetDashboard(w, r)` — Returns `recent_batches` (top 20) + `activity` (top 30 chronological events from documents, tasks, batches) + `analytics` (language/document-type/tag distributions, missing counts) + `processing_health` (task success rate, avg duration, active/orphaned batches, missing tools count). Activity includes: `event_type`, `title`, `timestamp`, `link`. Processing health queries use a 7-day window and reuses `config.MissingExternalToolErrors` to detect missing tools at request time.
     - `GlobalSummary(w, r)` — Global totals: number of batches, total files, per-status counts (including `waiting` and `discarded`), total file size in GB, MIME type breakdown, daily storage trend, average file size, total pages, total words
-    - **Helpers**: `buildBatchSummary(ctx, queries, batchID) BatchSummaryResponse`, `taskToResponse(t) TaskResponse`
+    - **Helpers**: `buildBatchSummary(ctx, queries, batchID) BatchSummaryResponse`, `buildDocumentAnalytics(ctx, reqID) *DocumentAnalytics`, `buildProcessingHealth(ctx, reqID) *ProcessingHealth`, `taskToResponse(t) TaskResponse`
 
 ---
 
@@ -126,7 +127,8 @@
 - `ActivityEvent` — `EventType`, `Title`, `Timestamp`, `Link`
 - `DistributionItem` — `Label string`, `Count int64`
 - `DocumentAnalytics` — `LanguageDistribution []DistributionItem`, `DocumentTypeDistribution []DistributionItem`, `TagFrequency []DistributionItem`, `MissingLanguageCount int64`, `MissingTypeCount int64`, `MissingTagsCount int64`
-- `DashboardResponse` — `RecentBatches []BatchOverviewItem`, `Activity []ActivityEvent`, `Analytics *DocumentAnalytics`
+- `ProcessingHealth` — `SuccessRate float64`, `CompletedLast7d int64`, `FailedLast7d int64`, `AvgDurationMs int64`, `ActiveBatches int64`, `OrphanedBatches int64`, `MissingTools int64`
+- `DashboardResponse` — `RecentBatches []BatchOverviewItem`, `Activity []ActivityEvent`, `Analytics *DocumentAnalytics`, `ProcessingHealth *ProcessingHealth`
 - `GlobalSummaryResponse` — `TotalBatches`, `TotalFiles`, `Waiting`, `Pending`, `Processing`, `Completed`, `Failed`, `Cancelled`, `Discarded`, `TotalSizeGB`, `MimeTypeBreakdown []MimeTypeStat`, `StorageTrend []StorageTrendPoint`, `AvgFileSizeBytes`, `TotalPages`, `TotalWords`
 
 ---
@@ -340,10 +342,12 @@ mux.HandleFunc("POST /wizard/config/retry", configHandler.RetryFailedConfig)
 mux.HandleFunc("GET /api/v1/tasks", taskHandler.ListTasks)
 mux.HandleFunc("GET /api/v1/tasks/{id}", taskHandler.GetTask)
 mux.HandleFunc("POST /api/v1/tasks/{id}/retry", taskHandler.RetryTask)
+mux.HandleFunc("GET /api/v1/dashboard", taskHandler.GetDashboard)
 mux.HandleFunc("GET /api/v1/batches", taskHandler.ListBatches)
 mux.HandleFunc("GET /api/v1/batches/{id}", taskHandler.GetBatchSummary)
 mux.HandleFunc("POST /api/v1/batches/{id}/retry", taskHandler.RetryBatch)
 mux.HandleFunc("POST /api/v1/batches/{id}/resume", taskHandler.ResumeBatch)
+mux.HandleFunc("POST /api/v1/batches/{id}/cancel", taskHandler.CancelBatch)
 mux.HandleFunc("GET /api/v1/summary", taskHandler.GlobalSummary)
 
 mux.HandleFunc("GET /api/v1/saved-searches", savedSearchHandler.List)

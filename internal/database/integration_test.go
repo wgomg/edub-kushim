@@ -415,6 +415,83 @@ func TestAnalyticsQueries(t *testing.T) {
 	})
 }
 
+func TestTaskHealthQueries(t *testing.T) {
+	q, db := NewTestQueries(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	t.Run("empty database", func(t *testing.T) {
+		rate, err := q.TaskSuccessRate(ctx)
+		assertNoError(t, err, "task success rate")
+		assertEqual(t, rate.Completed, int64(0), "completed")
+		assertEqual(t, rate.Failed, int64(0), "failed")
+
+		dur, err := q.AvgTaskDurationMs(ctx)
+		assertNoError(t, err, "avg duration")
+		assertEqual(t, dur.AvgDurationMs, int64(0), "avg duration ms")
+
+		ids, err := q.ActiveBatchIDs(ctx)
+		assertNoError(t, err, "active batch ids")
+		assertEqual(t, len(ids), 0, "no active batches")
+	})
+
+	t.Run("with mixed tasks", func(t *testing.T) {
+		r1, err := q.CreateTask(ctx, CreateTaskParams{
+			TaskID: "th-completed", TaskType: "consume", Status: "pending",
+		})
+		assertNoError(t, err, "create completed task")
+		id1 := getID(t, r1)
+		assertNoError(t, q.CompleteTask(ctx, CompleteTaskParams{ID: id1, Result: nil}), "complete")
+
+		r2, err := q.CreateTask(ctx, CreateTaskParams{
+			TaskID: "th-failed", TaskType: "consume", Status: "pending",
+			BatchID: sql.NullString{String: "th-batch-1", Valid: true},
+		})
+		assertNoError(t, err, "create failed task")
+		id2 := getID(t, r2)
+		assertNoError(t, q.FailTask(ctx, FailTaskParams{ID: id2, Error: sql.NullString{String: "x", Valid: true}}), "fail")
+
+		_, err = q.CreateTask(ctx, CreateTaskParams{
+			TaskID: "th-pending", TaskType: "consume", Status: "pending",
+			BatchID: sql.NullString{String: "th-batch-1", Valid: true},
+		})
+		assertNoError(t, err, "create pending task")
+
+		r4, err := q.CreateTask(ctx, CreateTaskParams{
+			TaskID: "th-processing", TaskType: "consume", Status: "pending",
+			BatchID: sql.NullString{String: "th-batch-2", Valid: true},
+		})
+		assertNoError(t, err, "create processing task")
+		id4 := getID(t, r4)
+		rows, err := q.ClaimTask(ctx, id4)
+		assertNoError(t, err, "claim processing task")
+		assertEqual(t, rows, int64(1), "claimed")
+
+		rate, err := q.TaskSuccessRate(ctx)
+		assertNoError(t, err, "task success rate")
+		assertEqual(t, rate.Completed, int64(1), "completed")
+		assertEqual(t, rate.Failed, int64(1), "failed")
+
+		dur, err := q.AvgTaskDurationMs(ctx)
+		assertNoError(t, err, "avg duration")
+		assertEqual(t, dur.AvgDurationMs, int64(0), "avg duration ms")
+
+		ids, err := q.ActiveBatchIDs(ctx)
+		assertNoError(t, err, "active batch ids")
+		assertEqual(t, len(ids), 2, "two active batches")
+		found := map[string]bool{}
+		for _, id := range ids {
+			found[id] = true
+		}
+		if !found["th-batch-1"] {
+			t.Fatal("expected th-batch-1 in active batches")
+		}
+		if !found["th-batch-2"] {
+			t.Fatal("expected th-batch-2 in active batches")
+		}
+	})
+}
+
 // --- helpers ---
 
 func insertDoc(t *testing.T, q *Queries, title, md5, sha512 string) (int64, string) {
