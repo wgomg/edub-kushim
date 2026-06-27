@@ -15,7 +15,7 @@
 ### Functions
 
 - `probeMatcher()` — Calls `matcherClient.Health()` with 2s timeout. Logs warning and continues if matcher is unreachable; tag CRUD returns `503` and enrich falls back to LLM-only tags.
-- `registerRoutes(mux *http.ServeMux, logger, queries, engine, dispatcher, getConfig, services, semaphore, workStore)` — Registers all API routes; passes `services` to `NewDocumentHandler`, `NewTagHandler`, `NewPeopleHandler`, `NewDocumentTypeHandler`, and `NewUserHandler`. Uses Go 1.22+ pattern routing (`"GET /api/v1/documents/{id}"`).
+- `registerRoutes(logger, client, dispatcher, getConfig, services, semaphore, workStore, onConfigReload) *http.ServeMux` — Creates and returns a `*http.ServeMux` with all API routes registered; internally creates the `search.Engine` from `client`. Uses Go 1.22+ pattern routing (`"GET /api/v1/documents/{id}"`).
 - `registerStaticRoutes(mux *http.ServeMux)` — Registers `"GET /{path...}"` handler; tries to serve the requested file from the embedded FS, falls back to `index.html` for client-side SPA routes if the file doesn't exist
 - `chainMiddleware(logger *utils.Logger, h http.Handler) http.Handler` — Composes request + parambag middleware
 - `requestMiddleware(logger *utils.Logger, next http.Handler) http.Handler` — Adds reqid to context, logs requests

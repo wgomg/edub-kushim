@@ -41,10 +41,7 @@ type Server struct {
 func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 	addr := fmt.Sprintf("%s:%d", cfg.Srv.Host, cfg.Srv.Port)
 
-	mux := http.NewServeMux()
-
 	client := database.NewClient(db)
-	engine := search.NewEngine(logger, client.Queries)
 
 	matcherClient := tagmatch.NewMatcherClient(filepath.Join(cfg.App.ConfigDir, "kushim-hugot.sock"))
 
@@ -99,7 +96,7 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 
 	getConfigFn := func() *config.Config { return s.cfg.Load() }
 
-	registerRoutes(mux, logger, client, engine, dispatcher, getConfigFn, s.services, semaphore, workStore, onConfigReload)
+	mux := registerRoutes(logger, client, dispatcher, getConfigFn, s.services, semaphore, workStore, onConfigReload)
 	registerStaticRoutes(mux)
 
 	handler := chainMiddleware(logger, mux)
@@ -138,7 +135,19 @@ func registerStaticRoutes(mux *http.ServeMux) {
 	})
 }
 
-func registerRoutes(mux *http.ServeMux, logger *utils.Logger, client *database.Client, engine *search.Engine, dispatcher *task.Dispatcher, getConfig func() *config.Config, services *types.CrudServices, semaphore *pool.Semaphore, workStore *task.Store, onConfigReload func(*config.Config)) {
+func registerRoutes(
+	logger *utils.Logger,
+	client *database.Client,
+	dispatcher *task.Dispatcher,
+	getConfig func() *config.Config,
+	services *types.CrudServices,
+	semaphore *pool.Semaphore,
+	workStore *task.Store,
+	onConfigReload func(*config.Config),
+) *http.ServeMux {
+	mux := http.NewServeMux()
+	engine := search.NewEngine(logger, client.Queries)
+
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		handlers.HealthHandler(w, r, logger)
 	})
@@ -214,6 +223,8 @@ func registerRoutes(mux *http.ServeMux, logger *utils.Logger, client *database.C
 	mux.HandleFunc("GET /api/v1/saved-searches", savedSearchHandler.List)
 	mux.HandleFunc("POST /api/v1/saved-searches", savedSearchHandler.Create)
 	mux.HandleFunc("DELETE /api/v1/saved-searches/{id}", savedSearchHandler.Delete)
+
+	return mux
 }
 
 func chainMiddleware(logger *utils.Logger, h http.Handler) http.Handler {
