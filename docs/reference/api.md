@@ -7,7 +7,7 @@
 - `Server`
   - **Fields**: `httpServer *http.Server`, `logger *utils.Logger`, `addr string`, `matcherClient *tagmatch.MatcherClient`, `services *types.CrudServices`, `pools struct { config *pool.Pool }`
   - **Methods**:
-    - `NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server` — Creates a `MatcherClient` connected to `kushim-hugot.sock` in the config dir, builds `CrudServices` with `Tag` (wired through `MatcherClient`), `People`, `PeopleType`, `DocumentType` services, creates dispatcher with only the `"config"` task type registered, creates a `Semaphore` for batch concurrency, registers routes
+    - `NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server` — Creates a `MatcherClient` connected to `kushim-hugot.sock` in the config dir, builds `CrudServices` with `Tag` (wired through `MatcherClient`), `People`, `PeopleType`, `DocumentType`, `User` services, creates dispatcher with only the `"config"` task type registered, creates a `Semaphore` for batch concurrency, registers routes
     - `Start() error` — Probes matcher health (startup warning if unreachable), starts config pool, then HTTP server
     - `Shutdown(ctx context.Context) error` — Shuts down HTTP server, config pool, then `services.Close()`
     - `Addr() string`
@@ -15,7 +15,7 @@
 ### Functions
 
 - `probeMatcher()` — Calls `matcherClient.Health()` with 2s timeout. Logs warning and continues if matcher is unreachable; tag CRUD returns `503` and enrich falls back to LLM-only tags.
-- `registerRoutes(mux *http.ServeMux, logger, queries, engine, dispatcher, cfg, services, semaphore, workStore)` — Registers all API routes; passes `services` to `NewDocumentHandler`, `NewTagHandler`, `NewPeopleHandler`, and `NewDocumentTypeHandler`. Uses Go 1.22+ pattern routing (`"GET /api/v1/documents/{id}"`).
+- `registerRoutes(mux *http.ServeMux, logger, queries, engine, dispatcher, cfg, services, semaphore, workStore)` — Registers all API routes; passes `services` to `NewDocumentHandler`, `NewTagHandler`, `NewPeopleHandler`, `NewDocumentTypeHandler`, and `NewUserHandler`. Uses Go 1.22+ pattern routing (`"GET /api/v1/documents/{id}"`).
 - `registerStaticRoutes(mux *http.ServeMux)` — Registers `"GET /{path...}"` handler; tries to serve the requested file from the embedded FS, falls back to `index.html` for client-side SPA routes if the file doesn't exist
 - `chainMiddleware(logger *utils.Logger, h http.Handler) http.Handler` — Composes request + parambag middleware
 - `requestMiddleware(logger *utils.Logger, next http.Handler) http.Handler` — Adds reqid to context, logs requests
@@ -181,7 +181,21 @@
 
 ---
 
-## `handlers/config.go`
+## `handlers/user.go`
+
+### Struct
+
+- `UserHandler`
+  - **Fields**: `services *itypes.CrudServices`, `logger *utils.Logger`
+  - **Methods**:
+    - `NewUserHandler(services, logger) *UserHandler`
+    - `List(w, r)` — `GET /api/v1/users?limit=50&offset=0` — Lists paginated users. Returns `UserListResponse` with `users` array and `total` count. Excludes `password_hash` and `api_key`.
+    - `Get(w, r)` — `GET /api/v1/users/{id}` — Returns single `UserResponse`. `KindNotFound` → 404.
+    - `Create(w, r)` — `POST /api/v1/users` — Accepts `CreateUserRequest` JSON (`username`, `password`). Validates username non-empty, password ≥ 8 chars. Bcrypt hashes password on creation. `KindConflict` → 409 `{"error":"username already exists"}`. Returns `201` with `UserResponse`.
+    - `Update(w, r)` — `PUT /api/v1/users/{id}` — Accepts `UpdateUserRequest` JSON (`username`, `password` optional). Validates username non-empty, password ≥ 8 chars if provided. Bcrypts only when password provided, writes both fields in a single `UPDATE`. `KindNotFound` → 404, `KindConflict` → 409. Returns `200` with `UserResponse`.
+    - `Delete(w, r)` — `DELETE /api/v1/users/{id}` — Pre-checks existence via `Get`, then deletes. `KindNotFound` → 404. Returns `204 No Content`.
+
+---
 
 ### Struct
 
@@ -250,8 +264,17 @@
 
 ### Structs
 
-- `CrudServices` — `Tag *service.Tag`, `People *service.People`, `PeopleType *service.PeopleType`, `DocumentType *service.DocumentType`
-  - `Close()` — Uses reflection to iterate struct fields; calls `Close()` on every field implementing `io.Closer`. Automatically picks up new services added as fields (none of the new services implement `io.Closer`).
+- `CrudServices` — `Tag *service.Tag`, `People *service.People`, `PeopleType *service.PeopleType`, `DocumentType *service.DocumentType`, `User *service.User`
+  - `Close()` — Uses reflection to iterate struct fields; calls `Close()` on every field implementing `io.Closer`. Automatically picks up new services added as fields (none of the new services implement `io.Closer`, `User` included).
+
+## `types/user.go`
+
+### Structs
+
+- `CreateUserRequest` — `Username string`, `Password string`
+- `UpdateUserRequest` — `Username string`, `Password string` (omitempty — leave blank to keep current password)
+- `UserResponse` — `ID int64`, `Username string`, `CreatedAt string` (RFC 3339). Excludes `password_hash` and `api_key`.
+- `UserListResponse` — `Users []UserResponse`, `Total int64`
 
 ## `types/people.go`
 
@@ -329,6 +352,12 @@ mux.HandleFunc("GET /api/v1/document-types", docTypeHandler.List)
 mux.HandleFunc("POST /api/v1/document-types", docTypeHandler.Create)
 mux.HandleFunc("PUT /api/v1/document-types/{id}", docTypeHandler.Update)
 mux.HandleFunc("DELETE /api/v1/document-types/{id}", docTypeHandler.Delete)
+
+mux.HandleFunc("GET /api/v1/users", userHandler.List)
+mux.HandleFunc("GET /api/v1/users/{id}", userHandler.Get)
+mux.HandleFunc("POST /api/v1/users", userHandler.Create)
+mux.HandleFunc("PUT /api/v1/users/{id}", userHandler.Update)
+mux.HandleFunc("DELETE /api/v1/users/{id}", userHandler.Delete)
 
 mux.HandleFunc("POST /api/v1/consume", consumeHandler.Consume)
 mux.HandleFunc("POST /api/v1/consume/upload", consumeHandler.Upload)

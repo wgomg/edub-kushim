@@ -29,5 +29,11 @@ UPDATE user SET
     password_hash = ?
 WHERE id = ?;
 
+-- name: UpdateUserCredentials :exec
+UPDATE user SET username = ?, password_hash = ? WHERE id = ?;
+
+-- name: CountUsers :one
+SELECT COUNT(*) FROM user;
+
 -- name: DeleteUser :exec
 DELETE FROM user WHERE id = ?;

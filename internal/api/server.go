@@ -60,6 +60,7 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 	s.services.People = service.NewPeople(client.Queries, logger)
 	s.services.PeopleType = service.NewPeopleType(client.Queries, logger)
 	s.services.DocumentType = service.NewDocumentType(client.Queries, logger)
+	s.services.User = service.NewUser(client.Queries)
 
 	workStore := task.NewStore(client.Queries)
 	configStore := task.NewStore(client.Queries)
@@ -159,6 +160,13 @@ func registerRoutes(mux *http.ServeMux, logger *utils.Logger, client *database.C
 	consumeHandler := handlers.NewConsumeHandler(cfg, logger, workStore, client.Queries, semaphore)
 	mux.HandleFunc("POST /api/v1/consume", consumeHandler.Consume)
 	mux.HandleFunc("POST /api/v1/consume/upload", consumeHandler.Upload)
+
+	userHandler := handlers.NewUserHandler(services, logger)
+	mux.HandleFunc("GET /api/v1/users", userHandler.List)
+	mux.HandleFunc("GET /api/v1/users/{id}", userHandler.Get)
+	mux.HandleFunc("POST /api/v1/users", userHandler.Create)
+	mux.HandleFunc("PUT /api/v1/users/{id}", userHandler.Update)
+	mux.HandleFunc("DELETE /api/v1/users/{id}", userHandler.Delete)
 
 	configHandler := handlers.NewConfigHandler(cfg, client.Queries, logger, dispatcher)
 	mux.HandleFunc("GET /wizard/config", configHandler.GetConfig)

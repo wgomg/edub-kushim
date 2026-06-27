@@ -23,6 +23,7 @@
 - `internal/configtask/` — ConfigTaskHandler (downloads tessdata/Hugot model in background, registered as "config" task type)
 - `internal/utils/files.go` — `ListFilePaths` scans inbox directories with MIME detection (replaced `internal/fileresolver/`)
 - Config handler `AdoptBatch` renamed to `ResumeBatch`, now forks kushim worker
+- **User accounts**: CRUD with bcrypt password hashing (`golang.org/x/crypto/bcrypt`), user list page in settings UI (tab bar: Configuration / Users), 5 API endpoints, 13 handler tests
 
 ### Document Pipeline
 
@@ -118,7 +119,12 @@
 | `GET /api/v1/saved-searches`           | List saved searches                                                                                                                                                                             |
 | `POST /api/v1/saved-searches`          | Create saved search                                                                                                                                                                             |
 | `DELETE /api/v1/saved-searches/{id}`   | Delete saved search                                                                                                                                                                             |
-| `POST /api/v1/consume`                 | Enqueue inbox files, fork processing worker                                                                                                                                                     |
+| `GET /api/v1/users`                    | List users (paginated, excludes password_hash/api_key)           |
+| `GET /api/v1/users/{id}`              | Get single user                                                  |
+| `POST /api/v1/users`                   | Create user (username + bcrypt password, min 8 chars)            |
+| `PUT /api/v1/users/{id}`              | Update username + optional password                              |
+| `DELETE /api/v1/users/{id}`           | Delete user                                                      |
+| `POST /api/v1/consume`                 | Enqueue inbox files, fork processing worker                     |
 | `POST /api/v1/consume/upload`          | Upload files via multipart, fork processing worker                                                                                                                                              |
 | `GET /api/v1/tasks`                    | List tasks (batch, status filters)                                                                                                                                                              |
 | `GET /api/v1/tasks/{id}`               | Get single task                                                                                                                                                                                 |
@@ -178,7 +184,7 @@
 - ✓ Database integration tests (17 tests) — document/tag/people CRUD, task lifecycle, enrich flow, batch ownership, FTS-adjacent operations, saved searches
 - ✓ Search engine tests (7 tests) — FTS5 search, structured search, pagination, query sanitization
 - ✓ Task system tests (14 tests) — Store, dispatcher, runner, pool lifecycle, dedup key handling
-- ✓ API handler tests (15 tests) — health, document CRUD, tag/people CRUD, task endpoints, saved searches, concurrent operations
+- ✓ API handler tests (16 tests) — health, document CRUD, tag/people CRUD, user CRUD, task endpoints, saved searches, concurrent operations
 - ✓ Consumption pipeline tests (11 tests) — full consume flow with mock runner, file I/O, duplicate detection, error paths
 - ✓ `internal/testutil` package — assertion helpers, PDF fixtures, mock embedder
 - ✓ `Makefile` test targets (`make test`, `make test-verbose`)
@@ -232,7 +238,7 @@
 | 25  | **Dashboard: document analytics panel**  | ✓ Language distribution, document type distribution, tag frequency (top N), documents without tags/type/language counts                                                           |
 | 26  | **Dashboard: processing health panel**   | ✓ Task success rate (completed vs failed, last 7 days), avg task duration, active batch count, orphaned batch count, missing tools count                                          |
 | 27  | **Dashboard: summary API**               | ✓ Single `GET /api/v1/dashboard` endpoint returning all panel data — built from GROUP BY/JOIN queries on existing schema, no migrations needed                                    |
-| 28  | **User accounts**                        | User CRUD, password hashing (bcrypt), user list page in settings UI                                                                                                               |
+| 28  | **User accounts**                        | ✓ User CRUD, bcrypt password hashing, user list page in settings UI                                                                                                               |
 | 29  | **Login and session management**         | Login/logout endpoints, session tokens, auth middleware, protected API routes, login/register page                                                                                |
 | 30  | **API keys**                             | Key generation/revocation/rotation, Bearer token validation middleware, per-user key management                                                                                   |
 | 31  | **Roles and permissions**                | RBAC schema with admin/editor/viewer roles, permission enforcement middleware, role assignment                                                                                    |

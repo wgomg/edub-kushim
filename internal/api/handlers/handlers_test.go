@@ -36,6 +36,7 @@ type handlerTestEnv struct {
 	peopleSvc     *service.People
 	peopleTypeSvc *service.PeopleType
 	docTypeSvc    *service.DocumentType
+	userSvc       *service.User
 	services      *itypes.CrudServices
 	workStore     *task.Store
 	dispatcher    *task.Dispatcher
@@ -64,12 +65,14 @@ func newHandlerTestEnv(t *testing.T) *handlerTestEnv {
 	peopleSvc := service.NewPeople(client.Queries, logger)
 	peopleTypeSvc := service.NewPeopleType(client.Queries, logger)
 	docTypeSvc := service.NewDocumentType(client.Queries, logger)
+	userSvc := service.NewUser(client.Queries)
 
 	services := &itypes.CrudServices{
 		Tag:          tagSvc,
 		People:       peopleSvc,
 		PeopleType:   peopleTypeSvc,
 		DocumentType: docTypeSvc,
+		User:         userSvc,
 	}
 
 	workStore := task.NewStore(client.Queries)
@@ -85,6 +88,7 @@ func newHandlerTestEnv(t *testing.T) *handlerTestEnv {
 		peopleSvc:     peopleSvc,
 		peopleTypeSvc: peopleTypeSvc,
 		docTypeSvc:    docTypeSvc,
+		userSvc:       userSvc,
 		services:      services,
 		workStore:     workStore,
 		dispatcher:    dispatcher,
@@ -990,6 +994,182 @@ func TestConsumeHandlerConfig(t *testing.T) {
 	cfg := config.DefaultConfig("/tmp/test-consume-cfg")
 	cfg.App.LogLevel = "silent"
 	_ = cfg
+}
+
+func newUserHandler(env *handlerTestEnv) *UserHandler {
+	return NewUserHandler(env.services, env.logger)
+}
+
+func TestUserCrud(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	h := newUserHandler(env)
+
+	// Seed a user via the handler so subsequent tests reference an existing user.
+	var createdID int64
+
+	t.Run("create user", func(t *testing.T) {
+		body, _ := json.Marshal(types.CreateUserRequest{
+			Username: "alice", Password: "password123",
+		})
+		w := rec()
+		h.Create(w, req(t, "POST", "/api/v1/users", body))
+		testutil.AssertEqual(t, w.Code, http.StatusCreated, "status")
+
+		var resp types.UserResponse
+		json.NewDecoder(w.Body).Decode(&resp)
+		testutil.AssertEqual(t, resp.Username, "alice", "username")
+		if resp.ID == 0 {
+			t.Fatal("expected non-zero user id")
+		}
+		if resp.CreatedAt == "" {
+			t.Fatal("expected created_at to be set")
+		}
+		createdID = resp.ID
+	})
+
+	t.Run("create duplicate username", func(t *testing.T) {
+		body, _ := json.Marshal(types.CreateUserRequest{
+			Username: "alice", Password: "password123",
+		})
+		w := rec()
+		h.Create(w, req(t, "POST", "/api/v1/users", body))
+		testutil.AssertEqual(t, w.Code, http.StatusConflict, "409 on duplicate")
+	})
+
+	t.Run("create empty username rejected", func(t *testing.T) {
+		body, _ := json.Marshal(types.CreateUserRequest{
+			Username: "", Password: "password123",
+		})
+		w := rec()
+		h.Create(w, req(t, "POST", "/api/v1/users", body))
+		testutil.AssertEqual(t, w.Code, http.StatusBadRequest, "400 on empty username")
+	})
+
+	t.Run("create empty password rejected", func(t *testing.T) {
+		body, _ := json.Marshal(types.CreateUserRequest{
+			Username: "bob", Password: "",
+		})
+		w := rec()
+		h.Create(w, req(t, "POST", "/api/v1/users", body))
+		testutil.AssertEqual(t, w.Code, http.StatusBadRequest, "400 on empty password")
+	})
+
+	t.Run("create short password rejected", func(t *testing.T) {
+		body, _ := json.Marshal(types.CreateUserRequest{
+			Username: "bob", Password: "abc",
+		})
+		w := rec()
+		h.Create(w, req(t, "POST", "/api/v1/users", body))
+		testutil.AssertEqual(t, w.Code, http.StatusBadRequest, "400 on short password")
+	})
+
+	t.Run("get user", func(t *testing.T) {
+		w := rec()
+		r := req(t, "GET", "/api/v1/users/1", nil)
+		r.SetPathValue("id", "1")
+		h.Get(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var resp types.UserResponse
+		json.NewDecoder(w.Body).Decode(&resp)
+		testutil.AssertEqual(t, resp.ID, createdID, "id")
+		testutil.AssertEqual(t, resp.Username, "alice", "username")
+		// Ensure password_hash and api_key are NOT leaked
+		if raw, err := json.Marshal(resp); err == nil {
+			if strings.Contains(string(raw), "password_hash") || strings.Contains(string(raw), "api_key") {
+				t.Fatal("response leaked password_hash or api_key")
+			}
+		}
+	})
+
+	t.Run("get non-existent user", func(t *testing.T) {
+		w := rec()
+		r := req(t, "GET", "/api/v1/users/9999", nil)
+		r.SetPathValue("id", "9999")
+		h.Get(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusNotFound, "404 on missing user")
+	})
+
+	t.Run("list users", func(t *testing.T) {
+		w := rec()
+		h.List(w, req(t, "GET", "/api/v1/users?limit=10", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var resp types.UserListResponse
+		json.NewDecoder(w.Body).Decode(&resp)
+		if len(resp.Users) == 0 {
+			t.Fatal("expected at least 1 user")
+		}
+		if resp.Total < 1 {
+			t.Fatalf("expected total >= 1, got %d", resp.Total)
+		}
+	})
+
+	t.Run("update username", func(t *testing.T) {
+		body, _ := json.Marshal(types.UpdateUserRequest{
+			Username: "alicia",
+		})
+		w := rec()
+		r := req(t, "PUT", "/api/v1/users/1", body)
+		r.SetPathValue("id", "1")
+		h.Update(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var resp types.UserResponse
+		json.NewDecoder(w.Body).Decode(&resp)
+		testutil.AssertEqual(t, resp.Username, "alicia", "updated username")
+	})
+
+	t.Run("update non-existent user", func(t *testing.T) {
+		body, _ := json.Marshal(types.UpdateUserRequest{
+			Username: "ghost",
+		})
+		w := rec()
+		r := req(t, "PUT", "/api/v1/users/9999", body)
+		r.SetPathValue("id", "9999")
+		h.Update(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusNotFound, "404 on missing user")
+	})
+
+	t.Run("update to duplicate username", func(t *testing.T) {
+		body, _ := json.Marshal(types.CreateUserRequest{
+			Username: "bob", Password: "password123",
+		})
+		w := rec()
+		h.Create(w, req(t, "POST", "/api/v1/users", body))
+		testutil.AssertEqual(t, w.Code, http.StatusCreated, "create bob")
+
+		body2, _ := json.Marshal(types.UpdateUserRequest{
+			Username: "bob",
+		})
+		w2 := rec()
+		r := req(t, "PUT", "/api/v1/users/1", body2)
+		r.SetPathValue("id", "1")
+		h.Update(w2, r)
+		testutil.AssertEqual(t, w2.Code, http.StatusConflict, "409 on duplicate username")
+	})
+
+	t.Run("delete user", func(t *testing.T) {
+		w := rec()
+		r := req(t, "DELETE", "/api/v1/users/2", nil) // bob
+		r.SetPathValue("id", "2")
+		h.Delete(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusNoContent, "204 on delete")
+
+		w2 := rec()
+		r2 := req(t, "GET", "/api/v1/users/2", nil)
+		r2.SetPathValue("id", "2")
+		h.Get(w2, r2)
+		testutil.AssertEqual(t, w2.Code, http.StatusNotFound, "404 after delete")
+	})
+
+	t.Run("delete non-existent user", func(t *testing.T) {
+		w := rec()
+		r := req(t, "DELETE", "/api/v1/users/9999", nil)
+		r.SetPathValue("id", "9999")
+		h.Delete(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusNotFound, "404 on missing delete")
+	})
 }
 
 func TestErrorHelpers(t *testing.T) {

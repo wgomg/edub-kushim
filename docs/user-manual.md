@@ -1092,6 +1092,112 @@ If the worker process is no longer running:
 }
 ```
 
+### User CRUD
+
+Manage user accounts with bcrypt password hashing.
+
+#### Create User
+
+```
+POST /api/v1/users
+Content-Type: application/json
+
+{
+  "username": "jdoe",
+  "password": "securepass123"
+}
+```
+
+| Field      | Type     | Required | Description                        |
+| ---------- | -------- | -------- | ---------------------------------- |
+| `username` | `string` | yes      | Unique username                    |
+| `password` | `string` | yes      | Password, minimum 8 characters     |
+
+Validation:
+
+| Condition                    | Response                             |
+| ---------------------------- | ------------------------------------ |
+| Empty username               | `400` — `"Username is required"`     |
+| Empty password               | `400` — `"Password is required"`     |
+| Password < 8 characters      | `400` — `"Password must be at least 8 characters"` |
+| Duplicate username           | `409` — `{"error":"username already exists"}` |
+
+Response `201`:
+
+```json
+{
+  "id": 1,
+  "username": "jdoe",
+  "created_at": "2026-06-26T12:00:00Z"
+}
+```
+
+#### Get User
+
+```
+GET /api/v1/users/{id}
+```
+
+Response `200` — single `UserResponse` (excludes `password_hash` and `api_key`). Returns `404` if not found.
+
+#### List Users
+
+```
+GET /api/v1/users?limit=50&offset=0
+```
+
+| Query param | Default | Description         |
+| ----------- | ------- | ------------------- |
+| `limit`     | `50`    | Max results (1–100) |
+| `offset`    | `0`     | Pagination offset   |
+
+Response `200`:
+
+```json
+{
+  "users": [
+    { "id": 1, "username": "jdoe", "created_at": "2026-06-26T12:00:00Z" }
+  ],
+  "total": 1
+}
+```
+
+#### Update User
+
+```
+PUT /api/v1/users/{id}
+Content-Type: application/json
+
+{
+  "username": "jdoe",
+  "password": "newpass456"
+}
+```
+
+| Field      | Type     | Required | Description                            |
+| ---------- | -------- | -------- | -------------------------------------- |
+| `username` | `string` | yes      | New username                           |
+| `password` | `string` | no       | New password (omit to keep current)    |
+
+Validation:
+
+| Condition                    | Response                             |
+| ---------------------------- | ------------------------------------ |
+| Empty username               | `400` — `"Username is required"`     |
+| Password < 8 chars (if set) | `400` — `"Password must be at least 8 characters"` |
+| Duplicate username           | `409` — `{"error":"username already exists"}` |
+| Non-existent user            | `404`                                |
+
+Response `200` — single `UserResponse`.
+
+#### Delete User
+
+```
+DELETE /api/v1/users/{id}
+```
+
+Response `204 No Content`. Returns `404` if not found.
+
 ### Dashboard
 
 ```
@@ -1443,8 +1549,11 @@ binary. If it is not found, consume requests will fail with a 500 error.
 
 ## Settings Page
 
-The main web UI includes a **Settings** page at `/settings` that provides
-a single-page form for all user-configurable settings:
+The main web UI includes a **Settings** page at `/settings` with two tabs:
+
+### Configuration Tab
+
+A single-page form for all user-configurable settings:
 
 - **Server**: host, port, max upload/download sizes, max download files
 - **OCR**: engine selector, timeout, data directory, languages list (add/remove)
@@ -1474,6 +1583,16 @@ the selected external tool is missing from `PATH`. When the OCR engine is
 
 A **sticky amber banner** at the top of the app layout shows whenever
 required tools are not installed, with a link to the settings page.
+
+### Users Tab
+
+The Users tab provides user account management:
+
+- **DataTable** listing all users with Username, Created At, and Actions (edit, delete) columns
+- **Create User** button opens a modal with Username (required) and Password (required, min 8 characters) fields
+- **Edit** button opens a modal with Username pre-filled and Password optional (placeholder: "Leave blank to keep current")
+- **Delete** opens a confirmation dialog; on confirm the user is permanently removed
+- Pagination controls with configurable page sizes (10/25/50/100)
 
 ## Build: Setup Wizard
 

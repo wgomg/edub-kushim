@@ -10,6 +10,17 @@ import (
 	"database/sql"
 )
 
+const countUsers = `-- name: CountUsers :one
+SELECT COUNT(*) FROM user
+`
+
+func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countUsers)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createUser = `-- name: CreateUser :execresult
 INSERT INTO user (
     username,
@@ -148,6 +159,21 @@ type UpdateUserParams struct {
 
 func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) error {
 	_, err := q.db.ExecContext(ctx, updateUser, arg.Username, arg.ApiKey, arg.ID)
+	return err
+}
+
+const updateUserCredentials = `-- name: UpdateUserCredentials :exec
+UPDATE user SET username = ?, password_hash = ? WHERE id = ?
+`
+
+type UpdateUserCredentialsParams struct {
+	Username     string
+	PasswordHash sql.NullString
+	ID           int64
+}
+
+func (q *Queries) UpdateUserCredentials(ctx context.Context, arg UpdateUserCredentialsParams) error {
+	_, err := q.db.ExecContext(ctx, updateUserCredentials, arg.Username, arg.PasswordHash, arg.ID)
 	return err
 }
 

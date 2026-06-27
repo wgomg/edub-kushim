@@ -12,6 +12,7 @@ type CrudServices struct {
 	People       *service.People
 	PeopleType   *service.PeopleType
 	DocumentType *service.DocumentType
+	User         *service.User
 }
 
 func (s *CrudServices) Close() {

@@ -3,6 +3,11 @@
 	import { api } from '$lib/api.js';
 	import { hintsForEngine } from '$lib/tools.js';
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
+	import DataTable from '$lib/components/DataTable.svelte';
+	import Modal from '$lib/components/Modal.svelte';
+	import { EDIT_ICON, DELETE_ICON, actionButton } from '$lib/icons.js';
+	import { escapeHtml } from '$lib/utils/html.js';
+	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
 
 	let cfg = $state(null);
 	let saving = $state(false);
@@ -12,7 +17,46 @@
 	let pollInterval;
 	let showToken = $state(false);
 
+	let activeTab = $state('Configuration');
+
+	let showUserModal = $state(false);
+	let editingUser = $state(null);
+	let formUsername = $state('');
+	let formPassword = $state('');
+	let userError = $state('');
+	let refreshKey = $state(0);
+
 	let providerKey = $derived(cfg?.enricher?.contentanalyzer?.engine?.replace(/^llm/, '') ?? null);
+
+	const userColumns = [
+		{
+			key: 'username',
+			label: 'Username',
+			sortable: true,
+			width: '100%'
+		},
+		{
+			key: 'created_at',
+			label: 'Created At',
+			sortable: true,
+			cell: (_v, row) => {
+				if (!row.created_at) return '-';
+				const d = new Date(row.created_at);
+				return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+			}
+		},
+		{
+			key: 'actions',
+			label: 'Actions',
+			sortable: false,
+			cellClass: 'whitespace-nowrap',
+			cell: (_v, row) => {
+				const safeName = escapeHtml(row.username);
+				return `${actionButton(EDIT_ICON, 'Edit', 'text-parchment-400 hover:text-gold-500', { 'data-edit-user': row.id, 'data-user-name': safeName })}
+${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-500', { 'data-delete-user': row.id, 'data-user-name': safeName })}`;
+			}
+		}
+	];
 
 	onMount(async () => {
 		const loaded = await api.config.get();
@@ -122,6 +166,86 @@
 			saving = false;
 		}
 	}
+
+	async function fetchUsers({ limit, offset }) {
+		return await api.users.list(limit, offset);
+	}
+
+	function openNewUser() {
+		editingUser = null;
+		formUsername = '';
+		formPassword = '';
+		userError = '';
+		showUserModal = true;
+	}
+
+	function openEditUser(userId, userName) {
+		editingUser = { id: userId, username: userName };
+		formUsername = userName;
+		formPassword = '';
+		userError = '';
+		showUserModal = true;
+	}
+
+	async function saveUser() {
+		userError = '';
+		const username = formUsername.trim();
+		if (!username) {
+			userError = 'Username is required';
+			return;
+		}
+		const password = formPassword.trim();
+
+		let result;
+		if (editingUser) {
+			const body = { username };
+			if (password) body.password = password;
+			result = await api.users.update(editingUser.id, body);
+		} else {
+			if (!password) {
+				userError = 'Password is required';
+				return;
+			}
+			result = await api.users.create({ username, password });
+		}
+
+		if (result.ok) {
+			showUserModal = false;
+			refreshKey++;
+		} else if (result.status === 409) {
+			userError = 'Username already exists';
+		} else {
+			toastStore.error('Failed to save user');
+		}
+	}
+
+	async function handleDeleteUser(userId, userName) {
+		const ok = await confirmStore.confirm({
+			title: 'Delete user',
+			message: `Delete user "${userName}"? This action cannot be undone.`,
+			danger: true
+		});
+		if (!ok) return;
+		await api.users.delete(userId);
+		refreshKey++;
+	}
+
+	function handleUserPageClick(e) {
+		const editBtn = e.target.closest('[data-edit-user]');
+		if (editBtn) {
+			const id = parseInt(editBtn.getAttribute('data-edit-user'));
+			const name = editBtn.getAttribute('data-user-name');
+			openEditUser(id, name);
+			return;
+		}
+		const deleteBtn = e.target.closest('[data-delete-user]');
+		if (deleteBtn) {
+			const id = parseInt(deleteBtn.getAttribute('data-delete-user'));
+			const name = deleteBtn.getAttribute('data-user-name');
+			handleDeleteUser(id, name);
+			return;
+		}
+	}
 </script>
 
 {#if !cfg}
@@ -140,588 +264,693 @@
 			{/if}
 		</div>
 
-		{#if missingTools?.find((t) => t.engine === 'curl')}
-			<div
-				class="rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500"
+		<div class="flex gap-1 border-b border-clay-800">
+			<button
+				type="button"
+				onclick={() => (activeTab = 'Configuration')}
+				class="rounded-t-lg px-4 py-2 text-sm font-medium transition-colors {activeTab === 'Configuration'
+					? 'border-gold-500 border-b-2 text-gold-500'
+					: 'text-parchment-400 hover:text-parchment-200'}"
 			>
-				<p class="font-medium">"curl" not installed (required for downloads)</p>
-				<p class="mt-1 text-parchment-400">
-					Model and language file downloads will fail without curl.
-				</p>
-				{#each Object.entries(hintsForEngine('curl')) as [system, cmd]}
-					<pre class="text-parchment-300 mt-1 text-xs">{system}: {cmd}</pre>
-				{/each}
-			</div>
-		{/if}
+				Configuration
+			</button>
+			<button
+				type="button"
+				onclick={() => (activeTab = 'Users')}
+				class="rounded-t-lg px-4 py-2 text-sm font-medium transition-colors {activeTab === 'Users'
+					? 'border-gold-500 border-b-2 text-gold-500'
+					: 'text-parchment-400 hover:text-parchment-200'}"
+			>
+				Users
+			</button>
+		</div>
 
-		<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
-			<h2 class="mb-4 text-lg font-semibold text-parchment-200">Server</h2>
-			<div class="grid gap-4 sm:grid-cols-2">
-				<div>
-					<label for="server-host" class="mb-1 block text-sm font-medium text-parchment-200"
-						>Host</label
-					>
-					<input
-						id="server-host"
-						type="text"
-						bind:value={cfg.server.host}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
-					/>
-				</div>
-				<div>
-					<label for="server-port" class="mb-1 block text-sm font-medium text-parchment-200"
-						>Port</label
-					>
-					<input
-						id="server-port"
-						type="number"
-						min="1"
-						max="65535"
-						bind:value={cfg.server.port}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
-					/>
-				</div>
-				<div>
-					<label for="server-max-upload" class="mb-1 block text-sm font-medium text-parchment-200"
-						>Max upload size (MB)</label
-					>
-					<input
-						id="server-max-upload"
-						type="number"
-						min="1"
-						bind:value={cfg.server.max_upload_size}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
-					/>
-				</div>
-				<div>
-					<label
-						for="server-max-download-files"
-						class="mb-1 block text-sm font-medium text-parchment-200">Max download files</label
-					>
-					<input
-						id="server-max-download-files"
-						type="number"
-						min="1"
-						bind:value={cfg.server.max_download_files}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
-					/>
-				</div>
-				<div>
-					<label
-						for="server-max-download-size"
-						class="mb-1 block text-sm font-medium text-parchment-200">Max download size (MB)</label
-					>
-					<input
-						id="server-max-download-size"
-						type="number"
-						min="0"
-						bind:value={cfg.server.max_download_size_mb}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
-					/>
-				</div>
-			</div>
-		</section>
-
-		<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
-			<h2 class="mb-4 text-lg font-semibold text-parchment-200">OCR</h2>
-			<div class="grid gap-4 sm:grid-cols-2">
-				<div>
-					<label for="ocr-engine" class="mb-1 block text-sm font-medium text-parchment-200"
-						>Engine</label
-					>
-					<select
-						id="ocr-engine"
-						bind:value={cfg.consumer.ocr.engine}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
-					>
-						{#each cfg.available_engines.ocr as opt (opt.value)}
-							<option value={opt.value}>{opt.label}</option>
-						{/each}
-					</select>
-				</div>
-				<div>
-					<label for="ocr-timeout" class="mb-1 block text-sm font-medium text-parchment-200"
-						>Timeout (s)</label
-					>
-					<input
-						id="ocr-timeout"
-						type="number"
-						min="1"
-						bind:value={cfg.consumer.ocr.timeout}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
-					/>
-				</div>
-			</div>
-
-			{#if toolStatus?.find((t) => t.category === 'ocr' && !t.available)}
+		{#if activeTab === 'Configuration'}
+			{#if missingTools?.find((t) => t.engine === 'curl')}
 				<div
-					class="mt-4 rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500"
+					class="rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500"
 				>
-					<p class="font-medium">"{cfg.consumer.ocr.engine}" is not installed</p>
+					<p class="font-medium">"curl" not installed (required for downloads)</p>
 					<p class="mt-1 text-parchment-400">
-						Documents won't process until it is available. Install it, e.g.:
+						Model and language file downloads will fail without curl.
 					</p>
-					{#each Object.entries(hintsForEngine(cfg.consumer.ocr.engine)) as [system, cmd]}
+					{#each Object.entries(hintsForEngine('curl')) as [system, cmd]}
 						<pre class="text-parchment-300 mt-1 text-xs">{system}: {cmd}</pre>
 					{/each}
 				</div>
 			{/if}
-			{#if cfg.consumer.ocr.engine === 'ocrmypdf'}
-				{@const ocrTool = toolStatus?.find((t) => t.engine === 'ocrmypdf')}
-				{#if ocrTool?.lang_hints?.length}
+
+			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+				<h2 class="mb-4 text-lg font-semibold text-parchment-200">Server</h2>
+				<div class="grid gap-4 sm:grid-cols-2">
+					<div>
+						<label for="server-host" class="mb-1 block text-sm font-medium text-parchment-200"
+							>Host</label
+						>
+						<input
+							id="server-host"
+							type="text"
+							bind:value={cfg.server.host}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						/>
+					</div>
+					<div>
+						<label for="server-port" class="mb-1 block text-sm font-medium text-parchment-200"
+							>Port</label
+						>
+						<input
+							id="server-port"
+							type="number"
+							min="1"
+							max="65535"
+							bind:value={cfg.server.port}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						/>
+					</div>
+					<div>
+						<label for="server-max-upload" class="mb-1 block text-sm font-medium text-parchment-200"
+							>Max upload size (MB)</label
+						>
+						<input
+							id="server-max-upload"
+							type="number"
+							min="1"
+							bind:value={cfg.server.max_upload_size}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						/>
+					</div>
+					<div>
+						<label
+							for="server-max-download-files"
+							class="mb-1 block text-sm font-medium text-parchment-200">Max download files</label
+						>
+						<input
+							id="server-max-download-files"
+							type="number"
+							min="1"
+							bind:value={cfg.server.max_download_files}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						/>
+					</div>
+					<div>
+						<label
+							for="server-max-download-size"
+							class="mb-1 block text-sm font-medium text-parchment-200">Max download size (MB)</label
+						>
+						<input
+							id="server-max-download-size"
+							type="number"
+							min="0"
+							bind:value={cfg.server.max_download_size_mb}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						/>
+					</div>
+				</div>
+			</section>
+
+			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+				<h2 class="mb-4 text-lg font-semibold text-parchment-200">OCR</h2>
+				<div class="grid gap-4 sm:grid-cols-2">
+					<div>
+						<label for="ocr-engine" class="mb-1 block text-sm font-medium text-parchment-200"
+							>Engine</label
+						>
+						<select
+							id="ocr-engine"
+							bind:value={cfg.consumer.ocr.engine}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						>
+							{#each cfg.available_engines.ocr as opt (opt.value)}
+								<option value={opt.value}>{opt.label}</option>
+							{/each}
+						</select>
+					</div>
+					<div>
+						<label for="ocr-timeout" class="mb-1 block text-sm font-medium text-parchment-200"
+							>Timeout (s)</label
+						>
+						<input
+							id="ocr-timeout"
+							type="number"
+							min="1"
+							bind:value={cfg.consumer.ocr.timeout}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						/>
+					</div>
+				</div>
+
+				{#if toolStatus?.find((t) => t.category === 'ocr' && !t.available)}
 					<div
-						class="border-lapis-500/30 bg-lapis-500/10 mt-4 rounded-lg border p-3 text-sm text-parchment-200"
+						class="mt-4 rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500"
 					>
-						<p class="font-medium">Tesseract language packs required</p>
-						<p class="text-parchment-300 mt-1">
-							Install the packs for your configured languages ({ocrTool.languages.join(', ')}):
+						<p class="font-medium">"{cfg.consumer.ocr.engine}" is not installed</p>
+						<p class="mt-1 text-parchment-400">
+							Documents won't process until it is available. Install it, e.g.:
 						</p>
-						{#each Object.entries(ocrTool.lang_hints[0].install_hints) as [system, cmd]}
+						{#each Object.entries(hintsForEngine(cfg.consumer.ocr.engine)) as [system, cmd]}
 							<pre class="text-parchment-300 mt-1 text-xs">{system}: {cmd}</pre>
 						{/each}
 					</div>
 				{/if}
-				{#if ocrTool?.companions?.length}
-					<div class="mt-4 space-y-2 text-sm">
-						{#each ocrTool.companions as c}
-							{#if !c.available && c.required}
-								<div
-									class="rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-terracotta-500"
+				{#if cfg.consumer.ocr.engine === 'ocrmypdf'}
+					{@const ocrTool = toolStatus?.find((t) => t.engine === 'ocrmypdf')}
+					{#if ocrTool?.lang_hints?.length}
+						<div
+							class="border-lapis-500/30 bg-lapis-500/10 mt-4 rounded-lg border p-3 text-sm text-parchment-200"
+						>
+							<p class="font-medium">Tesseract language packs required</p>
+							<p class="text-parchment-300 mt-1">
+								Install the packs for your configured languages ({ocrTool.languages.join(', ')}):
+							</p>
+							{#each Object.entries(ocrTool.lang_hints[0].install_hints) as [system, cmd]}
+								<pre class="text-parchment-300 mt-1 text-xs">{system}: {cmd}</pre>
+							{/each}
+						</div>
+					{/if}
+					{#if ocrTool?.companions?.length}
+						<div class="mt-4 space-y-2 text-sm">
+							{#each ocrTool.companions as c}
+								{#if !c.available && c.required}
+									<div
+										class="rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-terracotta-500"
+									>
+										<p class="font-medium">"{c.command}" not installed (required)</p>
+										<p class="mt-1 text-parchment-400">{c.purpose}</p>
+										{#each Object.entries(c.install_hints) as [system, cmd]}
+											<pre class="text-parchment-300 mt-1 text-xs">{system}: {cmd}</pre>
+										{/each}
+									</div>
+								{:else if !c.available}
+									<div
+										class="border-lapis-500/30 bg-lapis-500/10 text-parchment-300 rounded-lg border p-3"
+									>
+										<p class="font-medium text-parchment-200">
+											"{c.command}" not installed (optional)
+										</p>
+										<p class="mt-1">{c.purpose}. ocrmypdf will skip this feature without it.</p>
+										{#each Object.entries(c.install_hints) as [system, cmd]}
+											<pre class="text-parchment-300 mt-1 text-xs">{system}: {cmd}</pre>
+										{/each}
+									</div>
+								{/if}
+							{/each}
+						</div>
+					{/if}
+				{/if}
+
+				<div class="mt-4 grid gap-4 sm:grid-cols-2">
+					<div class="sm:col-span-2">
+						<label for="ocr-data-dir" class="mb-1 block text-sm font-medium text-parchment-200"
+							>Data directory</label
+						>
+						<input
+							id="ocr-data-dir"
+							type="text"
+							bind:value={cfg.consumer.ocr.data_dir}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						/>
+					</div>
+				</div>
+				<div class="mt-4">
+					<span class="mb-2 block text-sm font-medium text-parchment-200">Languages</span>
+					{#each cfg.consumer.ocr.languages as lang, i (i)}
+						<div class="mb-2 flex gap-2">
+							<input
+								type="text"
+								value={lang}
+								oninput={(e) => updateLanguage(i, e.currentTarget.value)}
+								placeholder="eng"
+								class="flex-1 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus:outline-none"
+							/>
+							{#if cfg.consumer.ocr.languages.length > 1}
+								<button
+									type="button"
+									onclick={() => removeLanguage(i)}
+									class="rounded-lg border border-clay-800 px-3 text-sm text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
 								>
-									<p class="font-medium">"{c.command}" not installed (required)</p>
-									<p class="mt-1 text-parchment-400">{c.purpose}</p>
-									{#each Object.entries(c.install_hints) as [system, cmd]}
-										<pre class="text-parchment-300 mt-1 text-xs">{system}: {cmd}</pre>
-									{/each}
-								</div>
-							{:else if !c.available}
-								<div
-									class="border-lapis-500/30 bg-lapis-500/10 text-parchment-300 rounded-lg border p-3"
-								>
-									<p class="font-medium text-parchment-200">
-										"{c.command}" not installed (optional)
-									</p>
-									<p class="mt-1">{c.purpose}. ocrmypdf will skip this feature without it.</p>
-									{#each Object.entries(c.install_hints) as [system, cmd]}
-										<pre class="text-parchment-300 mt-1 text-xs">{system}: {cmd}</pre>
-									{/each}
-								</div>
+									Remove
+								</button>
 							{/if}
+						</div>
+					{/each}
+					<button
+						type="button"
+						onclick={addLanguage}
+						class="text-sm text-gold-500 hover:text-gold-600"
+					>
+						+ Add language
+					</button>
+				</div>
+			</section>
+
+			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+				<h2 class="mb-4 text-lg font-semibold text-parchment-200">Consumer</h2>
+				<div class="grid gap-4 sm:grid-cols-2">
+					<div>
+						<label for="consumer-workers" class="mb-1 block text-sm font-medium text-parchment-200"
+							>Workers</label
+						>
+						<input
+							id="consumer-workers"
+							type="number"
+							min="1"
+							bind:value={cfg.consumer.workers}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						/>
+					</div>
+					<div class="flex items-center gap-2">
+						<input
+							id="delete-original"
+							type="checkbox"
+							bind:checked={cfg.consumer.delete_original}
+							class="rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
+						/>
+						<label for="delete-original" class="text-sm text-parchment-200"
+							>Delete original files after processing</label
+						>
+					</div>
+				</div>
+			</section>
+
+			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+				<h2 class="mb-4 text-lg font-semibold text-parchment-200">Text extractor</h2>
+				<div class="grid gap-4 sm:grid-cols-2">
+					<div>
+						<label
+							for="text-extractor-engine"
+							class="mb-1 block text-sm font-medium text-parchment-200">Engine</label
+						>
+						<select
+							id="text-extractor-engine"
+							bind:value={cfg.consumer.textextractor.engine}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						>
+							{#each cfg.available_engines.text_extractor as opt (opt.value)}
+								<option value={opt.value}>{opt.label}</option>
+							{/each}
+						</select>
+					</div>
+					<div>
+						<label
+							for="text-extractor-timeout"
+							class="mb-1 block text-sm font-medium text-parchment-200">Timeout (s)</label
+						>
+						<input
+							id="text-extractor-timeout"
+							type="number"
+							min="1"
+							bind:value={cfg.consumer.textextractor.timeout}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						/>
+					</div>
+				</div>
+				{#if toolStatus?.find((t) => t.category === 'textextractor' && !t.available)}
+					<div
+						class="mt-4 rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500"
+					>
+						<p class="font-medium">"{cfg.consumer.textextractor.engine}" is not installed</p>
+						<p class="mt-1 text-parchment-400">
+							Documents won't process until it is available. Install it, e.g.:
+						</p>
+						{#each Object.entries(hintsForEngine(cfg.consumer.textextractor.engine)) as [system, cmd]}
+							<pre class="text-parchment-300 mt-1 text-xs">{system}: {cmd}</pre>
 						{/each}
 					</div>
 				{/if}
-			{/if}
+			</section>
 
-			<div class="mt-4 grid gap-4 sm:grid-cols-2">
-				<div class="sm:col-span-2">
-					<label for="ocr-data-dir" class="mb-1 block text-sm font-medium text-parchment-200"
-						>Data directory</label
-					>
-					<input
-						id="ocr-data-dir"
-						type="text"
-						bind:value={cfg.consumer.ocr.data_dir}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
-					/>
-				</div>
-			</div>
-			<div class="mt-4">
-				<span class="mb-2 block text-sm font-medium text-parchment-200">Languages</span>
-				{#each cfg.consumer.ocr.languages as lang, i (i)}
-					<div class="mb-2 flex gap-2">
-						<input
-							type="text"
-							value={lang}
-							oninput={(e) => updateLanguage(i, e.currentTarget.value)}
-							placeholder="eng"
-							class="flex-1 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus:outline-none"
-						/>
-						{#if cfg.consumer.ocr.languages.length > 1}
-							<button
-								type="button"
-								onclick={() => removeLanguage(i)}
-								class="rounded-lg border border-clay-800 px-3 text-sm text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
-							>
-								Remove
-							</button>
-						{/if}
+			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+				<h2 class="mb-4 text-lg font-semibold text-parchment-200">PDF optimizer</h2>
+				<div class="grid gap-4 sm:grid-cols-2">
+					<div>
+						<label for="pdf-engine" class="mb-1 block text-sm font-medium text-parchment-200"
+							>Engine</label
+						>
+						<select
+							id="pdf-engine"
+							bind:value={cfg.consumer.pdfoptimizer.engine}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						>
+							{#each cfg.available_engines.pdf_optimizer as opt (opt.value)}
+								<option value={opt.value}>{opt.label}</option>
+							{/each}
+						</select>
 					</div>
-				{/each}
-				<button
-					type="button"
-					onclick={addLanguage}
-					class="text-sm text-gold-500 hover:text-gold-600"
-				>
-					+ Add language
-				</button>
-			</div>
-		</section>
-
-		<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
-			<h2 class="mb-4 text-lg font-semibold text-parchment-200">Consumer</h2>
-			<div class="grid gap-4 sm:grid-cols-2">
-				<div>
-					<label for="consumer-workers" class="mb-1 block text-sm font-medium text-parchment-200"
-						>Workers</label
-					>
-					<input
-						id="consumer-workers"
-						type="number"
-						min="1"
-						bind:value={cfg.consumer.workers}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
-					/>
+					<div>
+						<label for="pdf-fallback" class="mb-1 block text-sm font-medium text-parchment-200"
+							>Fallback (optional)</label
+						>
+						<input
+							id="pdf-fallback"
+							type="text"
+							bind:value={cfg.consumer.pdfoptimizer.fallback}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus:outline-none"
+						/>
+					</div>
 				</div>
-				<div class="flex items-center gap-2">
-					<input
-						id="delete-original"
-						type="checkbox"
-						bind:checked={cfg.consumer.delete_original}
-						class="rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
-					/>
-					<label for="delete-original" class="text-sm text-parchment-200"
-						>Delete original files after processing</label
+				{#if toolStatus?.find((t) => t.category === 'pdfoptimizer' && !t.available)}
+					<div
+						class="mt-4 rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500"
 					>
-				</div>
-			</div>
-		</section>
-
-		<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
-			<h2 class="mb-4 text-lg font-semibold text-parchment-200">Text extractor</h2>
-			<div class="grid gap-4 sm:grid-cols-2">
-				<div>
-					<label
-						for="text-extractor-engine"
-						class="mb-1 block text-sm font-medium text-parchment-200">Engine</label
-					>
-					<select
-						id="text-extractor-engine"
-						bind:value={cfg.consumer.textextractor.engine}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
-					>
-						{#each cfg.available_engines.text_extractor as opt (opt.value)}
-							<option value={opt.value}>{opt.label}</option>
+						<p class="font-medium">"{cfg.consumer.pdfoptimizer.engine}" is not installed</p>
+						<p class="mt-1 text-parchment-400">
+							Documents won't process until it is available. Install it, e.g.:
+						</p>
+						{#each Object.entries(hintsForEngine(cfg.consumer.pdfoptimizer.engine)) as [system, cmd]}
+							<pre class="text-parchment-300 mt-1 text-xs">{system}: {cmd}</pre>
 						{/each}
-					</select>
+					</div>
+				{/if}
+				<div class="mt-4 grid gap-4 sm:grid-cols-2">
+					<div class="sm:col-span-2">
+						<label for="pdf-timeout" class="mb-1 block text-sm font-medium text-parchment-200"
+							>Timeout (s)</label
+						>
+						<input
+							id="pdf-timeout"
+							type="number"
+							min="1"
+							bind:value={cfg.consumer.pdfoptimizer.timeout}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						/>
+					</div>
 				</div>
-				<div>
-					<label
-						for="text-extractor-timeout"
-						class="mb-1 block text-sm font-medium text-parchment-200">Timeout (s)</label
-					>
-					<input
-						id="text-extractor-timeout"
-						type="number"
-						min="1"
-						bind:value={cfg.consumer.textextractor.timeout}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
-					/>
-				</div>
-			</div>
-			{#if toolStatus?.find((t) => t.category === 'textextractor' && !t.available)}
-				<div
-					class="mt-4 rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500"
-				>
-					<p class="font-medium">"{cfg.consumer.textextractor.engine}" is not installed</p>
-					<p class="mt-1 text-parchment-400">
-						Documents won't process until it is available. Install it, e.g.:
-					</p>
-					{#each Object.entries(hintsForEngine(cfg.consumer.textextractor.engine)) as [system, cmd]}
-						<pre class="text-parchment-300 mt-1 text-xs">{system}: {cmd}</pre>
-					{/each}
-				</div>
-			{/if}
-		</section>
+			</section>
 
-		<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
-			<h2 class="mb-4 text-lg font-semibold text-parchment-200">PDF optimizer</h2>
-			<div class="grid gap-4 sm:grid-cols-2">
-				<div>
-					<label for="pdf-engine" class="mb-1 block text-sm font-medium text-parchment-200"
-						>Engine</label
-					>
-					<select
-						id="pdf-engine"
-						bind:value={cfg.consumer.pdfoptimizer.engine}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
-					>
-						{#each cfg.available_engines.pdf_optimizer as opt (opt.value)}
-							<option value={opt.value}>{opt.label}</option>
-						{/each}
-					</select>
+			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+				<h2 class="mb-4 text-lg font-semibold text-parchment-200">Enricher</h2>
+				<div class="grid gap-4 sm:grid-cols-2">
+					<div>
+						<label for="enricher-workers" class="mb-1 block text-sm font-medium text-parchment-200"
+							>Workers</label
+						>
+						<input
+							id="enricher-workers"
+							type="number"
+							min="1"
+							bind:value={cfg.enricher.workers}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						/>
+					</div>
 				</div>
-				<div>
-					<label for="pdf-fallback" class="mb-1 block text-sm font-medium text-parchment-200"
-						>Fallback (optional)</label
-					>
-					<input
-						id="pdf-fallback"
-						type="text"
-						bind:value={cfg.consumer.pdfoptimizer.fallback}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus:outline-none"
-					/>
-				</div>
-			</div>
-			{#if toolStatus?.find((t) => t.category === 'pdfoptimizer' && !t.available)}
-				<div
-					class="mt-4 rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500"
-				>
-					<p class="font-medium">"{cfg.consumer.pdfoptimizer.engine}" is not installed</p>
-					<p class="mt-1 text-parchment-400">
-						Documents won't process until it is available. Install it, e.g.:
-					</p>
-					{#each Object.entries(hintsForEngine(cfg.consumer.pdfoptimizer.engine)) as [system, cmd]}
-						<pre class="text-parchment-300 mt-1 text-xs">{system}: {cmd}</pre>
-					{/each}
-				</div>
-			{/if}
-			<div class="mt-4 grid gap-4 sm:grid-cols-2">
-				<div class="sm:col-span-2">
-					<label for="pdf-timeout" class="mb-1 block text-sm font-medium text-parchment-200"
-						>Timeout (s)</label
-					>
-					<input
-						id="pdf-timeout"
-						type="number"
-						min="1"
-						bind:value={cfg.consumer.pdfoptimizer.timeout}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
-					/>
-				</div>
-			</div>
-		</section>
+			</section>
 
-		<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
-			<h2 class="mb-4 text-lg font-semibold text-parchment-200">Enricher</h2>
-			<div class="grid gap-4 sm:grid-cols-2">
-				<div>
-					<label for="enricher-workers" class="mb-1 block text-sm font-medium text-parchment-200"
-						>Workers</label
-					>
-					<input
-						id="enricher-workers"
-						type="number"
-						min="1"
-						bind:value={cfg.enricher.workers}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
-					/>
+			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+				<h2 class="mb-4 text-lg font-semibold text-parchment-200">Content analyzer (LLM)</h2>
+				<div class="grid gap-4 sm:grid-cols-2">
+					<div>
+						<label
+							for="content-analyzer-engine"
+							class="mb-1 block text-sm font-medium text-parchment-200">Engine</label
+						>
+						<select
+							id="content-analyzer-engine"
+							bind:value={cfg.enricher.contentanalyzer.engine}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						>
+							{#each cfg.available_engines.content_analyzer as opt (opt.value)}
+								<option value={opt.value}>{opt.label}</option>
+							{/each}
+						</select>
+					</div>
+					<div>
+						<label
+							for="content-analyzer-timeout"
+							class="mb-1 block text-sm font-medium text-parchment-200">Timeout (s)</label
+						>
+						<input
+							id="content-analyzer-timeout"
+							type="number"
+							min="1"
+							bind:value={cfg.enricher.contentanalyzer.timeout}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						/>
+					</div>
 				</div>
-			</div>
-		</section>
 
-		<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
-			<h2 class="mb-4 text-lg font-semibold text-parchment-200">Content analyzer (LLM)</h2>
-			<div class="grid gap-4 sm:grid-cols-2">
-				<div>
-					<label
-						for="content-analyzer-engine"
-						class="mb-1 block text-sm font-medium text-parchment-200">Engine</label
-					>
-					<select
-						id="content-analyzer-engine"
-						bind:value={cfg.enricher.contentanalyzer.engine}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
-					>
-						{#each cfg.available_engines.content_analyzer as opt (opt.value)}
-							<option value={opt.value}>{opt.label}</option>
-						{/each}
-					</select>
-				</div>
-				<div>
-					<label
-						for="content-analyzer-timeout"
-						class="mb-1 block text-sm font-medium text-parchment-200">Timeout (s)</label
-					>
-					<input
-						id="content-analyzer-timeout"
-						type="number"
-						min="1"
-						bind:value={cfg.enricher.contentanalyzer.timeout}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
-					/>
-				</div>
-			</div>
-
-			{#if providerKey}
-				<div class="mt-4 rounded-lg border border-clay-800 bg-clay-950 p-4">
-					<h3 class="mb-3 text-sm font-semibold text-parchment-200 capitalize">
-						{providerKey} provider
-					</h3>
-					<div class="grid gap-4 sm:grid-cols-2">
-						<div class="sm:col-span-2">
-							<label
-								for="llm-{providerKey}-base-url"
-								class="mb-1 block text-sm font-medium text-parchment-200">Base URL</label
-							>
-							<input
-								id="llm-{providerKey}-base-url"
-								type="text"
-								bind:value={cfg.enricher.contentanalyzer.llm[providerKey].base_url}
-								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
-							/>
-						</div>
-						<div class="sm:col-span-2">
-							<label
-								for="llm-{providerKey}-model"
-								class="mb-1 block text-sm font-medium text-parchment-200">Model</label
-							>
-							<input
-								id="llm-{providerKey}-model"
-								type="text"
-								bind:value={cfg.enricher.contentanalyzer.llm[providerKey].model}
-								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
-							/>
-						</div>
-						<div class="sm:col-span-2">
-							<label
-								for="llm-{providerKey}-token"
-								class="mb-1 block text-sm font-medium text-parchment-200">Token</label
-							>
-							<div class="flex gap-2">
-								<input
-									id="llm-{providerKey}-token"
-									type={showToken ? 'text' : 'password'}
-									bind:value={cfg.enricher.contentanalyzer.llm[providerKey].token}
-									placeholder="sk-..."
-									class="flex-1 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus:outline-none"
-								/>
-								<button
-									type="button"
-									onclick={() => (showToken = !showToken)}
-									class="rounded-lg border border-clay-800 px-3 text-sm text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
+				{#if providerKey}
+					<div class="mt-4 rounded-lg border border-clay-800 bg-clay-950 p-4">
+						<h3 class="mb-3 text-sm font-semibold text-parchment-200 capitalize">
+							{providerKey} provider
+						</h3>
+						<div class="grid gap-4 sm:grid-cols-2">
+							<div class="sm:col-span-2">
+								<label
+									for="llm-{providerKey}-base-url"
+									class="mb-1 block text-sm font-medium text-parchment-200">Base URL</label
 								>
-									{showToken ? 'Hide' : 'Show'}
-								</button>
+								<input
+									id="llm-{providerKey}-base-url"
+									type="text"
+									bind:value={cfg.enricher.contentanalyzer.llm[providerKey].base_url}
+									class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+								/>
+							</div>
+							<div class="sm:col-span-2">
+								<label
+									for="llm-{providerKey}-model"
+									class="mb-1 block text-sm font-medium text-parchment-200">Model</label
+								>
+								<input
+									id="llm-{providerKey}-model"
+									type="text"
+									bind:value={cfg.enricher.contentanalyzer.llm[providerKey].model}
+									class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+								/>
+							</div>
+							<div class="sm:col-span-2">
+								<label
+									for="llm-{providerKey}-token"
+									class="mb-1 block text-sm font-medium text-parchment-200">Token</label
+								>
+								<div class="flex gap-2">
+									<input
+										id="llm-{providerKey}-token"
+										type={showToken ? 'text' : 'password'}
+										bind:value={cfg.enricher.contentanalyzer.llm[providerKey].token}
+										placeholder="sk-..."
+										class="flex-1 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus:outline-none"
+									/>
+									<button
+										type="button"
+										onclick={() => (showToken = !showToken)}
+										class="rounded-lg border border-clay-800 px-3 text-sm text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
+									>
+										{showToken ? 'Hide' : 'Show'}
+									</button>
+								</div>
 							</div>
 						</div>
 					</div>
-				</div>
-			{/if}
-		</section>
+				{/if}
+			</section>
 
-		<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
-			<h2 class="mb-4 text-lg font-semibold text-parchment-200">Tag matcher</h2>
-			<div class="grid gap-4 sm:grid-cols-2">
-				<div>
-					<label for="tag-matcher-timeout" class="mb-1 block text-sm font-medium text-parchment-200"
-						>Timeout (s)</label
-					>
-					<input
-						id="tag-matcher-timeout"
-						type="number"
-						min="1"
-						bind:value={cfg.enricher.tagmatcher.timeout}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
-					/>
+			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+				<h2 class="mb-4 text-lg font-semibold text-parchment-200">Tag matcher</h2>
+				<div class="grid gap-4 sm:grid-cols-2">
+					<div>
+						<label for="tag-matcher-timeout" class="mb-1 block text-sm font-medium text-parchment-200"
+							>Timeout (s)</label
+						>
+						<input
+							id="tag-matcher-timeout"
+							type="number"
+							min="1"
+							bind:value={cfg.enricher.tagmatcher.timeout}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						/>
+					</div>
+					<div>
+						<label
+							for="tag-matcher-reduce-target"
+							class="mb-1 block text-sm font-medium text-parchment-200">Reduce target words</label
+						>
+						<input
+							id="tag-matcher-reduce-target"
+							type="number"
+							min="0"
+							bind:value={cfg.enricher.tagmatcher.reduce_target_words}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						/>
+					</div>
+					<div>
+						<label
+							for="tag-matcher-chunk-size"
+							class="mb-1 block text-sm font-medium text-parchment-200">Chunk size</label
+						>
+						<input
+							id="tag-matcher-chunk-size"
+							type="number"
+							min="0"
+							bind:value={cfg.enricher.tagmatcher.chunk_size}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						/>
+					</div>
+					<div>
+						<label
+							for="tag-matcher-hugot-model"
+							class="mb-1 block text-sm font-medium text-parchment-200">Hugot model</label
+						>
+						<input
+							id="tag-matcher-hugot-model"
+							type="text"
+							bind:value={cfg.enricher.tagmatcher.hugot.model}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						/>
+					</div>
+					<div>
+						<label
+							for="tag-matcher-hugot-backend"
+							class="mb-1 block text-sm font-medium text-parchment-200">Hugot backend</label
+						>
+						<select
+							id="tag-matcher-hugot-backend"
+							bind:value={cfg.enricher.tagmatcher.hugot.backend}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						>
+							<option value="ort">ort</option>
+							<option value="GO">GO</option>
+						</select>
+					</div>
 				</div>
-				<div>
-					<label
-						for="tag-matcher-reduce-target"
-						class="mb-1 block text-sm font-medium text-parchment-200">Reduce target words</label
-					>
-					<input
-						id="tag-matcher-reduce-target"
-						type="number"
-						min="0"
-						bind:value={cfg.enricher.tagmatcher.reduce_target_words}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
-					/>
+			</section>
+
+			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+				<h2 class="mb-4 text-lg font-semibold text-parchment-200">Text reducer</h2>
+				<div class="grid gap-4 sm:grid-cols-2">
+					<div>
+						<label for="text-reducer-engine" class="mb-1 block text-sm font-medium text-parchment-200"
+							>Engine</label
+						>
+						<select
+							id="text-reducer-engine"
+							bind:value={cfg.enricher.textreducer.engine}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						>
+							{#each cfg.available_engines.text_reducer as opt (opt.value)}
+								<option value={opt.value}>{opt.label}</option>
+							{/each}
+						</select>
+					</div>
+					<div>
+						<label
+							for="text-reducer-timeout"
+							class="mb-1 block text-sm font-medium text-parchment-200">Timeout (s)</label
+						>
+						<input
+							id="text-reducer-timeout"
+							type="number"
+							min="1"
+							bind:value={cfg.enricher.textreducer.timeout}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						/>
+					</div>
+					<div class="sm:col-span-2">
+						<label
+							for="text-reducer-target-words"
+							class="mb-1 block text-sm font-medium text-parchment-200">Target words</label
+						>
+						<input
+							id="text-reducer-target-words"
+							type="number"
+							min="1"
+							bind:value={cfg.enricher.textreducer.target_words}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						/>
+					</div>
 				</div>
-				<div>
-					<label
-						for="tag-matcher-chunk-size"
-						class="mb-1 block text-sm font-medium text-parchment-200">Chunk size</label
+			</section>
+
+			<button
+				type="button"
+				onclick={save}
+				disabled={saving}
+				class="w-full rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600 disabled:opacity-50"
+			>
+				{saving ? 'Saving...' : 'Save settings'}
+			</button>
+		{/if}
+
+		{#if activeTab === 'Users'}
+			<div class="space-y-4" onclick={handleUserPageClick} onkeydown={() => {}} role="presentation">
+				<div class="flex items-center justify-between">
+					<h2 class="text-lg font-semibold text-parchment-200">Users</h2>
+					<button
+						onclick={openNewUser}
+						class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600"
 					>
-					<input
-						id="tag-matcher-chunk-size"
-						type="number"
-						min="0"
-						bind:value={cfg.enricher.tagmatcher.chunk_size}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
-					/>
+						Create User
+					</button>
 				</div>
-				<div>
-					<label
-						for="tag-matcher-hugot-model"
-						class="mb-1 block text-sm font-medium text-parchment-200">Hugot model</label
-					>
-					<input
-						id="tag-matcher-hugot-model"
-						type="text"
-						bind:value={cfg.enricher.tagmatcher.hugot.model}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
-					/>
-				</div>
-				<div>
-					<label
-						for="tag-matcher-hugot-backend"
-						class="mb-1 block text-sm font-medium text-parchment-200">Hugot backend</label
-					>
-					<select
-						id="tag-matcher-hugot-backend"
-						bind:value={cfg.enricher.tagmatcher.hugot.backend}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
-					>
-						<option value="ort">ort</option>
-						<option value="GO">GO</option>
-					</select>
-				</div>
+
+				<DataTable
+					columns={userColumns}
+					fetch={fetchUsers}
+					title=""
+					defaultPageSize={25}
+					pageSizes={[10, 25, 50, 100]}
+					{refreshKey}
+				/>
 			</div>
-		</section>
 
-		<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
-			<h2 class="mb-4 text-lg font-semibold text-parchment-200">Text reducer</h2>
-			<div class="grid gap-4 sm:grid-cols-2">
-				<div>
-					<label for="text-reducer-engine" class="mb-1 block text-sm font-medium text-parchment-200"
-						>Engine</label
-					>
-					<select
-						id="text-reducer-engine"
-						bind:value={cfg.enricher.textreducer.engine}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
-					>
-						{#each cfg.available_engines.text_reducer as opt (opt.value)}
-							<option value={opt.value}>{opt.label}</option>
-						{/each}
-					</select>
-				</div>
-				<div>
-					<label
-						for="text-reducer-timeout"
-						class="mb-1 block text-sm font-medium text-parchment-200">Timeout (s)</label
-					>
-					<input
-						id="text-reducer-timeout"
-						type="number"
-						min="1"
-						bind:value={cfg.enricher.textreducer.timeout}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
-					/>
-				</div>
-				<div class="sm:col-span-2">
-					<label
-						for="text-reducer-target-words"
-						class="mb-1 block text-sm font-medium text-parchment-200">Target words</label
-					>
-					<input
-						id="text-reducer-target-words"
-						type="number"
-						min="1"
-						bind:value={cfg.enricher.textreducer.target_words}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
-					/>
-				</div>
-			</div>
-		</section>
-
-		<button
-			type="button"
-			onclick={save}
-			disabled={saving}
-			class="w-full rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600 disabled:opacity-50"
-		>
-			{saving ? 'Saving...' : 'Save settings'}
-		</button>
+			<Modal
+				open={showUserModal}
+				title={editingUser ? 'Edit User' : 'Create User'}
+				onClose={() => (showUserModal = false)}
+			>
+				<form
+					onsubmit={(e) => {
+						e.preventDefault();
+						saveUser();
+					}}
+				>
+					<div class="space-y-4">
+						<div>
+							<label for="user-username" class="mb-1 block text-xs font-medium text-parchment-400"
+								>Username</label
+							>
+							<input
+								id="user-username"
+								type="text"
+								bind:value={formUsername}
+								placeholder="Username"
+								class="border-clay-700 placeholder-parchment-600 w-full rounded-md border bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 focus:border-gold-500 focus:ring-0 focus:outline-none"
+							/>
+						</div>
+						<div>
+							<label for="user-password" class="mb-1 block text-xs font-medium text-parchment-400"
+								>Password</label
+							>
+							<input
+								id="user-password"
+								type="password"
+								bind:value={formPassword}
+								placeholder={editingUser ? 'Leave blank to keep current' : 'Password'}
+								class="border-clay-700 placeholder-parchment-600 w-full rounded-md border bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 focus:border-gold-500 focus:ring-0 focus:outline-none"
+							/>
+						</div>
+						{#if userError}
+							<p class="text-sm text-terracotta-500">{userError}</p>
+						{/if}
+						<div class="flex justify-end gap-2">
+							<button
+								type="button"
+								onclick={() => (showUserModal = false)}
+								class="rounded-md px-3 py-1.5 text-xs font-medium text-parchment-400 hover:bg-clay-800"
+							>
+								Cancel
+							</button>
+							<button
+								type="submit"
+								disabled={!formUsername.trim()}
+								class="rounded-md bg-gold-500 px-3 py-1.5 text-xs font-medium text-clay-950 hover:bg-gold-600 disabled:opacity-50"
+							>
+								{editingUser ? 'Save' : 'Create'}
+							</button>
+						</div>
+					</div>
+				</form>
+			</Modal>
+		{/if}
 	</div>
 {/if}

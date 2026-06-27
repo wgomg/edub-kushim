@@ -264,6 +264,25 @@ export const api = {
 		delete: (id) => requestRaw(`/api/v1/document-types/${id}`, { method: 'DELETE' })
 	},
 
+	users: {
+		list: (limit = 50, offset = 0) =>
+			request(`/api/v1/users?limit=${limit}&offset=${offset}`).then(data => data ?? { users: [], total: 0 }),
+		get: (id) => request(`/api/v1/users/${id}`),
+		create: (body) =>
+			requestRaw('/api/v1/users', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(body)
+			}),
+		update: (id, body) =>
+			requestRaw(`/api/v1/users/${id}`, {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(body)
+			}),
+		delete: (id) => requestRaw(`/api/v1/users/${id}`, { method: 'DELETE' })
+	},
+
 	savedSearches: {
 		list: () => request('/api/v1/saved-searches').then((data) => data ?? []),
 

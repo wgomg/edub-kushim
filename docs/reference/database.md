@@ -125,7 +125,7 @@ Migrations run automatically on startup (no manual CLI command needed):
 
 ### User
 
-`CreateUser`, `GetUser`, `GetUserByUsername`, `GetUserByAPIKey`, `ListUsers`, `UpdateUser`, `UpdateUserPassword`, `DeleteUser`
+`CreateUser`, `GetUser`, `GetUserByUsername`, `GetUserByAPIKey`, `ListUsers` (returns `ListUsersRow` without `password_hash`), `UpdateUser`, `UpdateUserPassword`, `UpdateUserCredentials` (single `UPDATE` for username + password_hash), `CountUsers`, `DeleteUser`
 
 ### Saved search
 
