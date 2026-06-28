@@ -44,13 +44,21 @@
 		if (points.length === 0) return '';
 		const xScale = (i) => padding.left + (i / Math.max(points.length - 1, 1)) * chartW;
 		const yScale = (v) => padding.top + chartH - (v / trendMax()) * chartH;
+		const bottom = padding.top + chartH;
+
+		if (points.length === 1) {
+			const barHalfWidth = 12;
+			const x = xScale(0);
+			const y = yScale(points[0].cumulative_bytes);
+			return `M ${x - barHalfWidth} ${y} L ${x - barHalfWidth} ${bottom} L ${x + barHalfWidth} ${bottom} L ${x + barHalfWidth} ${y} Z`;
+		}
 
 		let d = `M ${xScale(0)} ${yScale(points[0].cumulative_bytes)}`;
 		for (let i = 1; i < points.length; i++) {
 			d += ` L ${xScale(i)} ${yScale(points[i].cumulative_bytes)}`;
 		}
-		d += ` L ${xScale(points.length - 1)} ${padding.top + chartH}`;
-		d += ` L ${xScale(0)} ${padding.top + chartH} Z`;
+		d += ` L ${xScale(points.length - 1)} ${bottom}`;
+		d += ` L ${xScale(0)} ${bottom} Z`;
 		return d;
 	}
 
@@ -58,6 +66,12 @@
 		if (points.length === 0) return '';
 		const xScale = (i) => padding.left + (i / Math.max(points.length - 1, 1)) * chartW;
 		const yScale = (v) => padding.top + chartH - (v / trendMax()) * chartH;
+
+		if (points.length === 1) {
+			const x = xScale(0);
+			const y = yScale(points[0].cumulative_bytes);
+			return `M ${x - 4} ${y} a 4 4 0 1 1 8 0 a 4 4 0 1 1 -8 0`;
+		}
 
 		let d = `M ${xScale(0)} ${yScale(points[0].cumulative_bytes)}`;
 		for (let i = 1; i < points.length; i++) {
