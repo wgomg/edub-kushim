@@ -17,6 +17,10 @@ export CGO_ENABLED  := 1
 export CGO_CPPFLAGS := -I$(TESS_INCLUDE) -I$(BUILD_DIR)/leptonica/local/include -I$(BUILD_DIR)/libpng/local/include
 export CGO_LDFLAGS  := -L$(TOKENIZERS_DIR)
 
+BUILD_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+BUILD_DATE   := $(shell date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "unknown")
+LDFLAGS      := -s -w -X github.com/wgomg/edub-kushim/internal/version.Commit=$(BUILD_COMMIT) -X github.com/wgomg/edub-kushim/internal/version.Date=$(BUILD_DATE)
+
 .PHONY: build build-deps web-build clean run consume build-musl-image build-musl compose-up compose-down
 
 web-build:
@@ -30,8 +34,8 @@ wizard-build:
 	cp -r web-wizard/build internal/wizard/static
 
 build:
-	go build -tags "XLA,ORT" -o $(BINARY) ./cmd/kushim/main.go
-	CGO_ENABLED=0 go build -tags "XLA,ORT" -o $(EDUB_BINARY) ./cmd/edub
+	go build -tags "XLA,ORT" -ldflags="$(LDFLAGS)" -o $(BINARY) ./cmd/kushim/main.go
+	CGO_ENABLED=0 go build -tags "XLA,ORT" -ldflags="$(LDFLAGS)" -o $(EDUB_BINARY) ./cmd/edub
 
 build-glibc:
 	podman run --rm \
