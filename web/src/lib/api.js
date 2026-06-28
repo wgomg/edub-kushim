@@ -30,6 +30,8 @@ async function requestRaw(path, opts = {}) {
 }
 
 export const api = {
+	filterLanguages: () => request('/api/v1/filter-languages').then((data) => data ?? []),
+	filterMimeTypes: () => request('/api/v1/filter-mime-types').then((data) => data ?? []),
 	dashboard: () => request('/api/v1/dashboard'),
 
 	health: () =>

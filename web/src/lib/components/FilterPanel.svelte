@@ -3,31 +3,8 @@
 	import { filterStore } from '$lib/stores/filterStore.js';
 	import { getPersonTypes, formatSize } from '$lib/stores/searchFilter.js';
 
-	const LANGUAGES = [
-		{ code: 'eng', name: 'English' },
-		{ code: 'spa', name: 'Spanish' },
-		{ code: 'jpn', name: 'Japanese' },
-		{ code: 'deu', name: 'German' },
-		{ code: 'kor', name: 'Korean' },
-		{ code: 'fra', name: 'French' },
-		{ code: 'zho', name: 'Chinese' },
-		{ code: 'por', name: 'Portuguese' },
-		{ code: 'ita', name: 'Italian' },
-		{ code: 'rus', name: 'Russian' }
-	];
-
-	const MIME_TYPES = [
-		'application/pdf',
-		'text/plain',
-		'application/msword',
-		'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-		'application/vnd.ms-excel',
-		'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-		'image/jpeg',
-		'image/png',
-		'text/html',
-		'application/zip'
-	];
+	let languages = $state([]);
+	let mimeTypes = $state([]);
 
 	let f = $state({
 		tags: [],
@@ -70,6 +47,14 @@
 
 	$effect(() => {
 		api.autocomplete.documentTypes().then((d) => (documentTypes = d));
+	});
+
+	$effect(() => {
+		api.filterLanguages().then((d) => (languages = d));
+	});
+
+	$effect(() => {
+		api.filterMimeTypes().then((d) => (mimeTypes = d));
 	});
 
 	function onTagInput() {
@@ -341,8 +326,8 @@
 				class="border-clay-700 w-full rounded-md border bg-clay-950 px-3 py-1.5 text-xs text-parchment-200 focus:border-gold-500 focus:outline-none"
 			>
 				<option value="">Any</option>
-				{#each LANGUAGES as lang}
-					<option value={lang.code}>{lang.name} ({lang.code})</option>
+				{#each languages as code}
+					<option value={code}>{code}</option>
 				{/each}
 			</select>
 		</div>
@@ -359,7 +344,7 @@
 				class="border-clay-700 w-full rounded-md border bg-clay-950 px-3 py-1.5 text-xs text-parchment-200 focus:border-gold-500 focus:outline-none"
 			>
 				<option value="">Any</option>
-				{#each MIME_TYPES as mt}
+				{#each mimeTypes as mt}
 					<option value={mt}>{mt}</option>
 				{/each}
 			</select>

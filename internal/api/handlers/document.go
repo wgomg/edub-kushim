@@ -205,6 +205,46 @@ func (h *DocumentHandler) GetDocument(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (h *DocumentHandler) FilterLanguages(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := ctx.Value("reqid").(string)
+	h.logger.Debug(&reqID, "Filter languages requested")
+
+	languages, err := h.client.DistinctLanguages(ctx)
+	if err != nil {
+		h.logger.Error(&reqID, "Failed to get distinct languages: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	if err := json.NewEncoder(w).Encode(languages); err != nil {
+		h.logger.Error(&reqID, "Failed to encode languages: %v", err)
+	}
+}
+
+func (h *DocumentHandler) FilterMimeTypes(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := ctx.Value("reqid").(string)
+	h.logger.Debug(&reqID, "Filter MIME types requested")
+
+	mimeTypes, err := h.client.DistinctMimeTypes(ctx)
+	if err != nil {
+		h.logger.Error(&reqID, "Failed to get distinct MIME types: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	if err := json.NewEncoder(w).Encode(mimeTypes); err != nil {
+		h.logger.Error(&reqID, "Failed to encode MIME types: %v", err)
+	}
+}
+
 func (h *DocumentHandler) SearchDocuments(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)

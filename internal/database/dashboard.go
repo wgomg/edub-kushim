@@ -311,6 +311,58 @@ func (q *Queries) ActiveBatchIDs(ctx context.Context) ([]string, error) {
 	return ids, nil
 }
 
+func (q *Queries) DistinctLanguages(ctx context.Context) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx,
+		`SELECT DISTINCT language FROM document WHERE language != '' AND language != 'und' ORDER BY language`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, fmt.Errorf("scan distinct language: %w", err)
+		}
+		items = append(items, s)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (q *Queries) DistinctMimeTypes(ctx context.Context) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx,
+		`SELECT DISTINCT mime_type FROM document ORDER BY mime_type`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, fmt.Errorf("scan distinct mime type: %w", err)
+		}
+		items = append(items, s)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 func (q *Queries) DocumentAggregates(ctx context.Context) (DocumentAggregatesRow, error) {
 	var r DocumentAggregatesRow
 	err := q.db.QueryRowContext(ctx,

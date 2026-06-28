@@ -166,6 +166,8 @@ func registerRoutes(
 	mux.HandleFunc("POST /api/v1/documents/download", docHandler.DownloadDocuments)
 	mux.HandleFunc("POST /api/v1/documents/batch-delete", docHandler.BatchDeleteDocuments)
 	mux.HandleFunc("POST /api/v1/documents/batch-tags", docHandler.BatchAssignTags)
+	mux.HandleFunc("GET /api/v1/filter-languages", docHandler.FilterLanguages)
+	mux.HandleFunc("GET /api/v1/filter-mime-types", docHandler.FilterMimeTypes)
 
 	tagHandler := handlers.NewTagHandler(services, logger)
 	mux.HandleFunc("GET /api/v1/tags", tagHandler.List)
