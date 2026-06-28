@@ -139,7 +139,7 @@ per tool category, used by the frontend settings UI to populate select dropdowns
 ### Functions
 
 `CalculateMD5(path string) (string, error)` — Opens a file, computes its MD5 hash via `crypto/md5`, and returns the hex-encoded digest. Used by the consume handler for enqueue-time dedup and by `Consumer.isDuplicate` for processing-time dedup.
-`ListFilePaths(src string, exts []string) ([]string, error)` — Scans `src` for files matching the given MIME-type extensions. Skips directories and unsupported types.
+`ListFilePaths(src string, exts []string, maxFiles int) ([]string, error)` — Scans `src` for files matching the given MIME-type extensions, sorted by creation time (oldest first). Skips directories and unsupported types. When `maxFiles > 0`, stops after collecting that many matching files (early break, avoiding unnecessary I/O).
 
 ---
 

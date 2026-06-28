@@ -8,13 +8,15 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/gabriel-vasile/mimetype"
 )
 
-func GetFiles(src string, exts []string) ([]File, error) {
+func GetFiles(src string, exts []string, maxFiles int) ([]File, error) {
 	if _, err := os.Stat(src); os.IsNotExist(err) {
 		return nil, fmt.Errorf("consumption directory `%s` does not exist", src)
 	}
@@ -35,6 +37,14 @@ func GetFiles(src string, exts []string) ([]File, error) {
 		supportedFiles[strings.ToLower((ext))] = true
 	}
 
+	type entryWithInfo struct {
+		path  string
+		info  os.FileInfo
+		ctime time.Time
+	}
+
+	var timedEntries []entryWithInfo
+
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -42,14 +52,33 @@ func GetFiles(src string, exts []string) ([]File, error) {
 
 		entryPath := filepath.Join(src, entry.Name())
 
-		entryInfo, err := os.Stat(entryPath)
+		entryInfo, err := entry.Info()
 		if err != nil {
 			return nil, fmt.Errorf("failed to get file information: %w", err)
 		}
 
-		mtype, err := mimetype.DetectFile(entryPath)
+		stat, ok := entryInfo.Sys().(*syscall.Stat_t)
+		if !ok {
+			continue
+		}
+
+		ctime := time.Unix(stat.Ctim.Sec, stat.Ctim.Nsec)
+
+		timedEntries = append(timedEntries, entryWithInfo{
+			path:  entryPath,
+			info:  entryInfo,
+			ctime: ctime,
+		})
+	}
+
+	sort.Slice(timedEntries, func(i, j int) bool {
+		return timedEntries[i].ctime.Before(timedEntries[j].ctime)
+	})
+
+	for _, te := range timedEntries {
+		mtype, err := mimetype.DetectFile(te.path)
 		if err != nil {
-			fmt.Printf("Warning: Failed to detect MIME type for %s: %v\n", entry.Name(), err)
+			fmt.Printf("Warning: Failed to detect MIME type for %s: %v\n", filepath.Base(te.path), err)
 			continue
 		}
 
@@ -58,11 +87,11 @@ func GetFiles(src string, exts []string) ([]File, error) {
 			continue
 		}
 
-		md5Hash, sha512Hash, err := calculateChecksums(entryPath)
+		md5Hash, sha512Hash, err := calculateChecksums(te.path)
 		if err != nil {
 			return nil, fmt.Errorf(
 				"failed to calculate checksums for %s: %w",
-				entry.Name(),
+				filepath.Base(te.path),
 				err,
 			)
 		}
@@ -70,15 +99,20 @@ func GetFiles(src string, exts []string) ([]File, error) {
 		files = append(
 			files,
 			File{
-				Name:           entry.Name(),
-				OriginalPath:   entryPath,
-				FileSize:       entryInfo.Size(),
+				Name:           filepath.Base(te.path),
+				OriginalPath:   te.path,
+				FileSize:       te.info.Size(),
 				Date:           time.Now(),
 				MD5Checksum:    md5Hash,
 				SHA512Checksum: sha512Hash,
 				MimeType:       mtype.String(),
 			},
 		)
+
+		if maxFiles > 0 && len(files) >= maxFiles {
+			fmt.Printf("Warning: Reached limit of %d files, stopping scan\n", maxFiles)
+			break
+		}
 	}
 
 	return files, nil

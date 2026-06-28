@@ -140,17 +140,13 @@ func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 	paths, err := utils.ListFilePaths(
 		cfg.Storage.ConsumptionDir,
 		cfg.Consumer.SupportedFiles,
+		cfg.Consumer.MaxFilesPerBatch,
 	)
 	if err != nil {
 		h.semaphore.Release()
 		h.logger.Error(&reqID, "Failed to scan inbox: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
-	}
-
-	if max := cfg.Consumer.MaxFilesPerBatch; max > 0 && len(paths) > max {
-		h.logger.Info(&reqID, "limiting to %d files (found %d)", max, len(paths))
-		paths = paths[:max]
 	}
 
 	if len(paths) == 0 {

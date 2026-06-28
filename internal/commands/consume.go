@@ -153,6 +153,7 @@ func consumeHandler(c *Container, args []string) error {
 	files, err := consumption.GetFiles(
 		c.config.Storage.ConsumptionDir,
 		c.config.Consumer.SupportedFiles,
+		c.config.Consumer.MaxFilesPerBatch,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to scan inbox: %w", err)
@@ -161,11 +162,6 @@ func consumeHandler(c *Container, args []string) error {
 	if len(files) == 0 {
 		fmt.Println("No files found in consumption directory")
 		return nil
-	}
-
-	if max := c.config.Consumer.MaxFilesPerBatch; max > 0 && len(files) > max {
-		fmt.Printf("Limiting to %d files (found %d)\n", max, len(files))
-		files = files[:max]
 	}
 
 	batchID := uuid.New().String()

@@ -296,7 +296,7 @@ func TestGetFilesAndFiltering(t *testing.T) {
 		os.WriteFile(filepath.Join(cfg.Storage.ConsumptionDir, "a.pdf"), testutil.MinimalTextPDF("a"), 0644)
 		os.WriteFile(filepath.Join(cfg.Storage.ConsumptionDir, "b.pdf"), testutil.MinimalTextPDF("b"), 0644)
 
-		files, err := GetFiles(cfg.Storage.ConsumptionDir, []string{".pdf"})
+		files, err := GetFiles(cfg.Storage.ConsumptionDir, []string{".pdf"}, 0)
 		testutil.AssertNoError(t, err, "get files")
 		testutil.AssertEqual(t, len(files), 2, "found 2 PDFs")
 	})
@@ -307,7 +307,7 @@ func TestGetFilesAndFiltering(t *testing.T) {
 		os.WriteFile(filepath.Join(cfg.Storage.ConsumptionDir, "notes.txt"), []byte("text"), 0644)
 		os.WriteFile(filepath.Join(cfg.Storage.ConsumptionDir, "doc.pdf"), testutil.MinimalTextPDF("doc"), 0644)
 
-		files, err := GetFiles(cfg.Storage.ConsumptionDir, []string{".pdf"})
+		files, err := GetFiles(cfg.Storage.ConsumptionDir, []string{".pdf"}, 0)
 		testutil.AssertNoError(t, err, "get files")
 		testutil.AssertEqual(t, len(files), 1, "only PDF")
 		testutil.AssertEqual(t, files[0].Name, "doc.pdf", "name")
