@@ -9,11 +9,7 @@ import (
 
 var commands = map[string]func(args []string) error{
 	"version": func(args []string) error {
-		if version.Commit == "unknown" {
-			fmt.Printf("Document Management System v%s\n", version.Version)
-		} else {
-			fmt.Printf("Document Management System v%s (%s %s)\n", version.Version, version.Commit, version.Date)
-		}
+		fmt.Printf("Document Management System v%s\n", version.Version)
 		return nil
 	},
 }

@@ -109,10 +109,6 @@ func PrintServerUsage() {
 }
 
 func versionHandler(container *Container, args []string) error {
-	if version.Commit == "unknown" {
-		fmt.Printf("Document Management System v%s\n", version.Version)
-	} else {
-		fmt.Printf("Document Management System v%s (%s %s)\n", version.Version, version.Commit, version.Date)
-	}
+	fmt.Printf("Document Management System v%s\n", version.Version)
 	return nil
 }
