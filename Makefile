@@ -10,7 +10,8 @@ MUPDF_LIB     := $(MUPDF_DIR)/local/lib
 LIBNG_VER     := 1.6.43
 MUPDF_VER     := 1.27.2
 TOKENIZERS_DIR := $(BUILD_DIR)/tokenizers
-NVM_DIR       := $(HOME)/.config/nvm
+KNOWN_NVM_DIRS := $(HOME)/.nvm $(HOME)/.config/nvm
+NVM_DIR       := $(firstword $(wildcard $(KNOWN_NVM_DIRS)))
 
 export CGO_ENABLED  := 1
 export CGO_CPPFLAGS := -I$(TESS_INCLUDE) -I$(BUILD_DIR)/leptonica/local/include -I$(BUILD_DIR)/libpng/local/include
