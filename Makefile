@@ -25,7 +25,7 @@ web-build:
 	cp -r web/build internal/static/build
 
 wizard-build:
-	. "$(NVM_DIR)/nvm.sh" && nvm use cd web-wizard && npm ci && npm run build
+	. "$(NVM_DIR)/nvm.sh" && nvm use && cd web-wizard && npm ci && npm run build
 	rm -rf internal/wizard/static
 	cp -r web-wizard/build internal/wizard/static
 
