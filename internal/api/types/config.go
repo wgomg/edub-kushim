@@ -47,9 +47,15 @@ type ServerConfigResponse struct {
 	MaxUploadSize int64  `json:"max_upload_size"`
 }
 
+type PollingWindowResponse struct {
+	Start string `json:"start"`
+	End   string `json:"end"`
+}
+
 type PollingConfigResponse struct {
-	Enabled  bool `json:"enabled"`
-	Interval int  `json:"interval"`
+	Enabled  bool                  `json:"enabled"`
+	Interval int                   `json:"interval"`
+	Windows  []PollingWindowResponse `json:"windows"`
 }
 
 type ConsumerConfigResponse struct {
@@ -129,6 +135,10 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Consumer.MaxFilesPerBatch = cfg.Consumer.MaxFilesPerBatch
 	resp.Consumer.Polling.Enabled = cfg.Consumer.Polling.Enabled
 	resp.Consumer.Polling.Interval = cfg.Consumer.Polling.Interval
+	resp.Consumer.Polling.Windows = make([]PollingWindowResponse, len(cfg.Consumer.Polling.Windows))
+	for i, w := range cfg.Consumer.Polling.Windows {
+		resp.Consumer.Polling.Windows[i] = PollingWindowResponse{Start: w.Start, End: w.End}
+	}
 	resp.Consumer.TextExtractor.Engine = cfg.Consumer.TextExtractor.Engine
 	resp.Consumer.TextExtractor.Timeout = cfg.Consumer.TextExtractor.Timeout
 	resp.Consumer.PdfOptimizer.Engine = cfg.Consumer.PdfOptimizer.Engine

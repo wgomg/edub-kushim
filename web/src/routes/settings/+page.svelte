@@ -100,6 +100,14 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 		);
 	}
 
+	function addWindow() {
+		if (!cfg.consumer.polling.windows) cfg.consumer.polling.windows = [];
+		cfg.consumer.polling.windows = [...cfg.consumer.polling.windows, { start: '', end: '' }];
+	}
+	function removeWindow(index) {
+		cfg.consumer.polling.windows = cfg.consumer.polling.windows.filter((_, i) => i !== index);
+	}
+
 	function bodyFromConfig() {
 		return {
 			'server.host': cfg.server.host,
@@ -115,6 +123,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			'consumer.max_files_per_batch': Number(cfg.consumer.max_files_per_batch),
 			'consumer.polling.enabled': cfg.consumer.polling.enabled,
 			'consumer.polling.interval': Number(cfg.consumer.polling.interval),
+			'consumer.polling.windows': cfg.consumer.polling.windows ?? [],
 			'consumer.pdfoptimizer.engine': cfg.consumer.pdfoptimizer.engine,
 			'consumer.pdfoptimizer.fallback': cfg.consumer.pdfoptimizer.fallback,
 			'consumer.pdfoptimizer.timeout': Number(cfg.consumer.pdfoptimizer.timeout),
@@ -155,7 +164,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			const res = await api.config.update(bodyFromConfig());
 			if (res && 'pending_tasks' in res && res.pending_tasks > 0) {
 				pendingTasks = res.pending_tasks;
-				toastStore.success('Settings saved. Downloads in progress...');
+				toastStore.success('Settings saved. Downloads in progress…');
 				startPolling();
 			} else {
 				toastStore.success('Settings saved.');
@@ -254,7 +263,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 </script>
 
 {#if !cfg}
-	<div class="text-parchment-500">Loading settings...</div>
+	<div class="text-parchment-500">Loading settings…</div>
 {:else}
 	<div class="mx-auto max-w-3xl space-y-6">
 		<div class="flex items-center justify-between">
@@ -600,6 +609,49 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						/>
 					</div>
 				</div>
+
+				<div class="mt-4">
+					<span class="mb-2 block text-sm font-medium text-parchment-200">Active windows (optional)</span>
+					{#each cfg.consumer.polling.windows as w, i (i)}
+						<div class="mb-2 flex items-center gap-2">
+							<input
+								type="text"
+								bind:value={w.start}
+								aria-label="Start time"
+								pattern="([01][0-9]|2[0-3]):[0-5][0-9]"
+								placeholder="HH:MM"
+								minlength="5"
+								maxlength="5"
+								class="w-36 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							/>
+							<span class="text-parchment-400">to</span>
+							<input
+								type="text"
+								bind:value={w.end}
+								aria-label="End time"
+								pattern="([01][0-9]|2[0-3]):[0-5][0-9]|24:00"
+								placeholder="HH:MM"
+								minlength="5"
+								maxlength="5"
+								class="w-36 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							/>
+							<button
+								type="button"
+								onclick={() => removeWindow(i)}
+								class="rounded-lg border border-clay-800 px-3 text-sm text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
+							>
+								Remove
+							</button>
+						</div>
+					{/each}
+					<button
+						type="button"
+						onclick={addWindow}
+						class="text-sm text-gold-500 hover:text-gold-600"
+					>
+						+ Add window
+					</button>
+				</div>
 			</section>
 
 			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
@@ -939,7 +991,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 				disabled={saving}
 				class="w-full rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600 disabled:opacity-50"
 			>
-				{saving ? 'Saving...' : 'Save settings'}
+				{saving ? 'Saving…' : 'Save settings'}
 			</button>
 		{/if}
 

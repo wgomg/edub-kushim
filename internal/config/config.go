@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -66,9 +68,15 @@ type OCRConfig struct {
 	Timeout   int      `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
 }
 
+type PollingWindow struct {
+	Start string `mapstructure:"start" yaml:"start" json:"start"`
+	End   string `mapstructure:"end" yaml:"end" json:"end"`
+}
+
 type PollingConfig struct {
-	Enabled  bool `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
-	Interval int  `mapstructure:"interval" yaml:"interval" json:"interval"` // minutes
+	Enabled  bool            `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
+	Interval int             `mapstructure:"interval" yaml:"interval" json:"interval"` // minutes
+	Windows  []PollingWindow `mapstructure:"windows" yaml:"windows" json:"windows"`
 }
 
 type ConsumerConfig struct {
@@ -398,6 +406,80 @@ func requireAbsPath(path, name string) error {
 		return fmt.Errorf("%s must be an absolute path or start with '~', got: %s", name, path)
 	}
 	return nil
+}
+
+var (
+	reHHMM    = regexp.MustCompile(`^([01][0-9]|2[0-3]):[0-5][0-9]$`)
+	reEndHHMM = regexp.MustCompile(`^([01][0-9]|2[0-3]):[0-5][0-9]$|^24:00$`)
+)
+
+func parseHHMM(s string, allow2400 bool) (int, error) {
+	if s == "24:00" && allow2400 {
+		return 1440, nil
+	}
+	r := reHHMM
+	if allow2400 {
+		r = reEndHHMM
+	}
+	if !r.MatchString(s) {
+		return 0, fmt.Errorf("invalid time %q — expected HH:MM (00:00–23:59)", s)
+	}
+	hour, _ := strconv.Atoi(s[:2])
+	min, _ := strconv.Atoi(s[3:])
+	return hour*60 + min, nil
+}
+
+func ValidatePollingWindows(body map[string]any) error {
+	raw, ok := body["consumer.polling.windows"]
+	if !ok {
+		return nil
+	}
+	list, ok := raw.([]any)
+	if !ok {
+		return fmt.Errorf("consumer.polling.windows must be an array")
+	}
+	for i, item := range list {
+		entry, ok := item.(map[string]any)
+		if !ok {
+			return fmt.Errorf("consumer.polling.windows[%d]: expected object with start/end", i)
+		}
+		start, _ := entry["start"].(string)
+		end, _ := entry["end"].(string)
+		if start == "" || end == "" {
+			return fmt.Errorf("consumer.polling.windows[%d]: start and end are required", i)
+		}
+		startMins, err := parseHHMM(start, false)
+		if err != nil {
+			return fmt.Errorf("consumer.polling.windows[%d].start: %w", i, err)
+		}
+		endMins, err := parseHHMM(end, true)
+		if err != nil {
+			return fmt.Errorf("consumer.polling.windows[%d].end: %w", i, err)
+		}
+		if end == "00:00" {
+			return fmt.Errorf("consumer.polling.windows[%d].end: 00:00 is not a valid end time (use 24:00 for end-of-day)", i)
+		}
+		if startMins >= endMins {
+			return fmt.Errorf("consumer.polling.windows[%d]: start (%s) must be before end (%s)", i, start, end)
+		}
+	}
+	return nil
+}
+
+func IsWithinActiveWindows(windows []PollingWindow) bool {
+	if len(windows) == 0 {
+		return true
+	}
+	now := time.Now()
+	currentMins := now.Hour()*60 + now.Minute()
+	for _, w := range windows {
+		startMins, _ := parseHHMM(w.Start, false)
+		endMins, _ := parseHHMM(w.End, true)
+		if currentMins >= startMins && currentMins < endMins {
+			return true
+		}
+	}
+	return false
 }
 
 // defaultMinSimilarity returns a sensible default min_similarity threshold for

@@ -65,8 +65,10 @@ func (p *PollingScheduler) run() {
 	for {
 		cfg := p.getConfig()
 		interval := max(time.Duration(cfg.Interval)*time.Minute, time.Minute)
-		if cfg.Enabled {
+		if cfg.Enabled && config.IsWithinActiveWindows(cfg.Windows) {
 			p.poll()
+		} else if cfg.Enabled {
+			p.logger.Debug(nil, "polling: disabled — outside active windows")
 		} else {
 			p.logger.Debug(nil, "polling: disabled")
 		}
