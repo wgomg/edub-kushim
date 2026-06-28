@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -48,10 +49,10 @@ func startServer() {
 	}
 
 	logger := utils.NewLogger(cfg.App.LogLevel)
-	if cfg.App.LogFile != "" {
-		if err := logger.SetLogFile(cfg.App.LogFile); err != nil {
-			logger.Error(nil, "failed to open log file: %v", err)
-		}
+	logFile := filepath.Join(*configDir, "logs", "edub.log")
+	os.MkdirAll(filepath.Dir(logFile), 0755)
+	if err := logger.SetLogFile(logFile); err != nil {
+		logger.Error(nil, "failed to open log file: %v", err)
 	}
 	logger.Info(nil, "Starting App...")
 	logger.Info(nil, "Environment: %s", cfg.App.Env)

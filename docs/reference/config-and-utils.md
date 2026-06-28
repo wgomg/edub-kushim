@@ -3,7 +3,7 @@
 ## Structs
 
 - `Config` — `App AppConfig`, `Srv ServerConfig`, `Db DatabaseConfig`, `Storage StorageConfig`, `Consumer ConsumerConfig`, `Enricher EnricherConfig`
-- `AppConfig`: `Env Environment`, `LogLevel string`, `LogFile string`, `ConfigDir string`
+- `AppConfig`: `Env Environment`, `LogLevel string`, `ConfigDir string`
 - `ServerConfig`: `Host`, `Port`, `ReadTimeout`, `WriteTimeout`, `IdleTimeout`, `MaxUploadSize`, `MaxConcurrentBatches`
 - `DatabaseConfig`: `Type`, `Path`, `Name`, `Seeders []string`
 - `StorageConfig`: `ConsumptionDir`, `StorageDir`

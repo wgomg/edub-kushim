@@ -20,7 +20,6 @@ const (
 type AppConfig struct {
 	Env       Environment `mapstructure:"environment" yaml:"environment" json:"environment"`
 	LogLevel  string      `mapstructure:"log_level" yaml:"log_level" json:"log_level"`
-	LogFile   string      `mapstructure:"log_file" yaml:"log_file" json:"log_file"`
 	ConfigDir string      `json:"config_dir"`
 }
 
@@ -229,7 +228,6 @@ func DefaultConfig(configDir string) *Config {
 		App: AppConfig{
 			Env:       Development,
 			LogLevel:  "info",
-			LogFile:   filepath.Join(configDir, "kushim.log"),
 			ConfigDir: configDir,
 		},
 		Srv: ServerConfig{

@@ -37,6 +37,12 @@ func serveHugotHandler(c *Container, args []string) error {
 		return fmt.Errorf("unknown flag(s): %v", rest)
 	}
 
+	logFile := filepath.Join(c.config.App.ConfigDir, "logs", "hugot.log")
+	os.MkdirAll(filepath.Dir(logFile), 0755)
+	if err := c.logger.SetLogFile(logFile); err != nil {
+		c.logger.Error(nil, "failed to open hugot log file: %v", err)
+	}
+
 	if bgFlag {
 		bgArgs := []string{"hugot"}
 		if socketPath != filepath.Join(c.config.App.ConfigDir, "kushim-hugot.sock") {

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/wgomg/edub-kushim/internal/commands"
@@ -47,10 +48,10 @@ func main() {
 	}
 
 	logger := utils.NewLogger(cfg.App.LogLevel)
-	if cfg.App.LogFile != "" {
-		if err := logger.SetLogFile(cfg.App.LogFile); err != nil {
-			logger.Error(nil, "failed to open log file: %v", err)
-		}
+	logFile := filepath.Join(*configDir, "logs", "kushim.log")
+	os.MkdirAll(filepath.Dir(logFile), 0755)
+	if err := logger.SetLogFile(logFile); err != nil {
+		logger.Error(nil, "failed to open log file: %v", err)
 	}
 	container := commands.NewContainer(cfg, logger)
 	defer container.Close()

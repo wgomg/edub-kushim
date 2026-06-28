@@ -64,10 +64,7 @@ func (p *PollingScheduler) run() {
 	defer p.wg.Done()
 	for {
 		cfg := p.getConfig()
-		interval := time.Duration(cfg.Interval) * time.Minute
-		if interval < time.Minute {
-			interval = time.Minute
-		}
+		interval := max(time.Duration(cfg.Interval)*time.Minute, time.Minute)
 		if cfg.Enabled {
 			p.poll()
 		} else {

@@ -1,0 +1,24 @@
+[Unit]
+Description=Edub Document Management API Server
+Documentation=https://github.com/wgomg/edub-kushim
+After=network.target kushim-hugot.service
+Wants=kushim-hugot.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/edub
+ExecStop=/bin/kill -s TERM $MAINPID
+Restart=on-failure
+RestartSec=5
+
+# Security
+NoNewPrivileges=yes
+ProtectSystem=full
+PrivateTmp=yes
+
+# Log to journal; application writes its own per-process log under <configDir>/logs/
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

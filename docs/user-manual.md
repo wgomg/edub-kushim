@@ -1385,7 +1385,6 @@ is what `kushim setup` generates at `~/.config/edub-kushim/config.yaml`.
 app:
   environment: development # development | production
   log_level: info # silent | fatal | error | info | debug
-  # log_file: <config-dir>/kushim.log   # optional log file path
 
 server:
   host: 0.0.0.0
@@ -1611,3 +1610,98 @@ make wizard-build         # Build SvelteKit wizard, copy to internal/wizard/stat
 The wizard uses the same design system (clay/gold/lapis/parchment palette)
 and is embedded into the `kushim` binary via `//go:embed` on
 `internal/wizard/static/`.
+
+## Systemd Service Files
+
+Example systemd unit files are provided at `deploy/systemd/`:
+
+| File | Process |
+|------|---------|
+| `kushim-hugot.service` | Matcher server (`kushim hugot`) |
+| `edub.service` | API server (`edub`) |
+
+The `edub` service declares `Wants=kushim-hugot.service` (not `Requires=`) —
+the API starts even if the matcher is down; tag CRUD returns 503 until the
+matcher is reachable.
+
+### Quick Setup
+
+```bash
+# 1. Create a dedicated system user
+sudo useradd -r -m -d /var/lib/edub-kushim -s /usr/sbin/nologin edub
+
+# 2. Install binaries
+sudo cp dev/bin/kushim /usr/local/bin/
+sudo cp dev/bin/edub   /usr/local/bin/
+
+# 3. Initialize config as the dedicated user
+sudo -u edub kushim setup --cli --languages eng,spa,...
+
+# 4. Copy and enable services
+sudo cp deploy/systemd/*.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now kushim-hugot.service
+sudo systemctl enable --now edub.service
+```
+
+### Customizing User and Permissions
+
+The example files do not hardcode a user — they run as whatever user systemd
+defaults to (typically `root` if installed system-wide). To run under a
+dedicated user, add these directives to each `.service` file:
+
+```ini
+[Service]
+User=edub
+Group=edub
+Environment=HOME=/var/lib/edub-kushim
+StateDirectory=edub-kushim
+```
+
+| Directive | Purpose |
+|-----------|---------|
+| `User=` / `Group=` | Runs the process under a non-root system account |
+| `Environment=HOME=/var/lib/edub-kushim` | Sets `$HOME` so `utils.ConfigDir()` resolves to `/var/lib/edub-kushim/.config/edub-kushim` (see [Architecture: Config Directory](architecture.md#config-directory)) |
+| `StateDirectory=edub-kushim` | systemd creates `/var/lib/edub-kushim` with correct ownership before the service starts |
+
+If the application's writable paths (config, database, storage, inbox, logs)
+are under the user's home directory, `ProtectSystem=full` is safe — it only
+mounts `/usr`, `/etc`, `/boot`, and `/efi` read-only. Home and `/var` remain
+writable.
+
+### Logging
+
+Each process writes to its own log file under `<configDir>/logs/`:
+
+| Process | Log file |
+|---------|----------|
+| `kushim` (CLI) | `kushim.log` |
+| `kushim hugot` (matcher) | `hugot.log` |
+| `edub` (API server) | `edub.log` |
+
+systemd's `StandardOutput=journal` and `StandardError=journal` are set so
+the services also appear in the journal:
+
+```bash
+journalctl -u edub.service
+journalctl -u kushim-hugot.service
+```
+
+The per-process log files are for persistent debugging and auditing; the
+journal captures stdout/stderr (including startup messages before the log
+file is opened).
+
+### Service Dependencies and Order
+
+```
+network.target
+      |
+kushim-hugot.service  (After=network.target)
+      |
+edub.service          (After=kushim-hugot.service, Wants=kushim-hugot.service)
+```
+
+The matcher should be fully started before the API server. The example files
+use a soft dependency (`Wants=`) so `edub` doesn't fail to start if the
+matcher hasn't been initialized. The API handles the unavailable matcher
+gracefully with a 503 status on tag CRUD endpoints.

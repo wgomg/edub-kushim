@@ -370,20 +370,20 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(types.DashboardResponse{
-		RecentBatches:    items,
-		Activity:         activity,
-		Analytics:        analytics,
-		ProcessingHealth: processingHealth,
-		TotalBatches:     totalBatches,
-		TotalFiles:       totalFiles,
-		Waiting:          perStatus["waiting"],
-		Pending:          perStatus["pending"],
-		Processing:       perStatus["processing"],
-		Completed:        perStatus["completed"],
-		Failed:           perStatus["failed"],
-		Cancelled:        perStatus["cancelled"],
-		Discarded:        perStatus["discarded"],
-		TotalSizeGB:      float64(totalBytes) / (1024 * 1024 * 1024),
+		RecentBatches:     items,
+		Activity:          activity,
+		Analytics:         analytics,
+		ProcessingHealth:  processingHealth,
+		TotalBatches:      totalBatches,
+		TotalFiles:        totalFiles,
+		Waiting:           perStatus["waiting"],
+		Pending:           perStatus["pending"],
+		Processing:        perStatus["processing"],
+		Completed:         perStatus["completed"],
+		Failed:            perStatus["failed"],
+		Cancelled:         perStatus["cancelled"],
+		Discarded:         perStatus["discarded"],
+		TotalSizeGB:       float64(totalBytes) / (1024 * 1024 * 1024),
 		MimeTypeBreakdown: mimeStats,
 		StorageTrend:      trendPoints,
 		AvgFileSizeBytes:  avgFileSize,
@@ -511,7 +511,7 @@ func enrichOwnerState(ctx context.Context, queries *database.Queries, batchID st
 	return state.String(), pid, task.IsOrphaned(state, pending, processing)
 }
 
-func toInt64(v interface{}) int64 {
+func toInt64(v any) int64 {
 	switch n := v.(type) {
 	case int64:
 		return n
@@ -522,7 +522,7 @@ func toInt64(v interface{}) int64 {
 	}
 }
 
-func toNullTime(v interface{}) sql.NullTime {
+func toNullTime(v any) sql.NullTime {
 	switch t := v.(type) {
 	case string:
 		parsed, err := time.Parse("2006-01-02T15:04:05Z", t)
@@ -657,10 +657,10 @@ func (h *TaskHandler) CancelBatch(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, sql.ErrNoRows) {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]any{
-				"batch_id":            batchID,
-				"cancelled_pending":   pendingCancelled,
+				"batch_id":             batchID,
+				"cancelled_pending":    pendingCancelled,
 				"cancelled_processing": 0,
-				"signal_sent":         false,
+				"signal_sent":          false,
 			})
 			return
 		}
