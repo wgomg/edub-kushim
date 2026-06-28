@@ -11,7 +11,7 @@ LIBNG_VER     := 1.6.43
 MUPDF_VER     := 1.27.2
 TOKENIZERS_DIR := $(BUILD_DIR)/tokenizers
 KNOWN_NVM_DIRS := $(HOME)/.nvm $(HOME)/.config/nvm
-NVM_DIR       := $(firstword $(wildcard $(KNOWN_NVM_DIRS)))
+NVM_DIR       := $(HOME)/.config/nvm
 
 export CGO_ENABLED  := 1
 export CGO_CPPFLAGS := -I$(TESS_INCLUDE) -I$(BUILD_DIR)/leptonica/local/include -I$(BUILD_DIR)/libpng/local/include
@@ -25,8 +25,7 @@ web-build:
 	cp -r web/build internal/static/build
 
 wizard-build:
-	. "$(NVM_DIR)/nvm.sh" && nvm use && cd web && npm ci && npm run build
-	cd web-wizard && npm ci && npm run build
+	. "$(NVM_DIR)/nvm.sh" && nvm use cd web-wizard && npm ci && npm run build
 	rm -rf internal/wizard/static
 	cp -r web-wizard/build internal/wizard/static
 
