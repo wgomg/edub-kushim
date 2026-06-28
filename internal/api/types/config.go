@@ -22,9 +22,20 @@ type AppConfigResponse struct {
 	Initialized bool `json:"initialized"`
 }
 
+type StorageConfigResponse struct {
+	ConsumptionDir string `json:"consumption_dir"`
+	StorageDir     string `json:"storage_dir"`
+}
+
+type DatabaseConfigResponse struct {
+	Path string `json:"path"`
+}
+
 type ConfigResponse struct {
 	App              AppConfigResponse               `json:"app"`
 	Server           ServerConfigResponse            `json:"server"`
+	Storage          StorageConfigResponse           `json:"storage"`
+	Database         DatabaseConfigResponse          `json:"database"`
 	Consumer         ConsumerConfigResponse          `json:"consumer"`
 	Enricher         EnricherConfigResponse          `json:"enricher"`
 	AvailableEngines map[string][]config.EngineEntry `json:"available_engines"`
@@ -150,6 +161,9 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Enricher.TagMatcher.ChunkSize = cfg.Enricher.TagMatcher.ChunkSize
 	resp.Enricher.TagMatcher.Hugot.Model = cfg.Enricher.TagMatcher.Hugot.Model
 	resp.Enricher.TagMatcher.Hugot.Backend = cfg.Enricher.TagMatcher.Hugot.Backend
+	resp.Storage.ConsumptionDir = cfg.Storage.ConsumptionDir
+	resp.Storage.StorageDir = cfg.Storage.StorageDir
+	resp.Database.Path = cfg.Db.Path
 	resp.App.Initialized = cfg.App.ConfigDir != ""
 	resp.Server.Host = cfg.Srv.Host
 	resp.Server.Port = cfg.Srv.Port

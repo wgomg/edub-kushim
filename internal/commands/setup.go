@@ -163,6 +163,15 @@ Flags:
 
 	v := viper.New()
 	v.SetConfigType("yaml")
+	configPath := filepath.Join(*configDir, "config.yaml")
+
+	if _, err := os.Stat(configPath); err == nil {
+		v.SetConfigFile(configPath)
+		if err := v.ReadInConfig(); err != nil {
+			return fmt.Errorf("read existing config: %w", err)
+		}
+	}
+
 	v.Set("consumer.ocr.languages", langList)
 	if ocrEngine != "" {
 		v.Set("consumer.ocr.engine", ocrEngine)
@@ -186,7 +195,6 @@ Flags:
 		v.Set("consumer.pdfoptimizer.fallback", optimizationFallback)
 	}
 
-	configPath := filepath.Join(*configDir, "config.yaml")
 	if err := v.WriteConfigAs(configPath); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}

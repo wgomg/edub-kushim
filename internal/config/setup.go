@@ -77,10 +77,19 @@ func Bootstrap(configDir string) (*Config, error) {
 func SaveMap(configDir string, body map[string]any) error {
 	v := viper.New()
 	v.SetConfigType("yaml")
+	configPath := filepath.Join(configDir, "config.yaml")
+
+	if _, err := os.Stat(configPath); err == nil {
+		v.SetConfigFile(configPath)
+		if err := v.ReadInConfig(); err != nil {
+			return fmt.Errorf("read existing config: %w", err)
+		}
+	}
+
 	for key, val := range body {
 		v.Set(key, val)
 	}
-	return v.WriteConfigAs(filepath.Join(configDir, "config.yaml"))
+	return v.WriteConfigAs(configPath)
 }
 
 func MissingTessdataLanguages(cfg *Config) []string {

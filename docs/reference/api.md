@@ -217,7 +217,9 @@
 
 - `AppConfigResponse` — `Initialized bool` (true when config_dir has been bootstrapped)
 - `ServerConfigResponse` — `Host string`, `Port int`
-- `ConfigResponse` — `App AppConfigResponse`, `Server ServerConfigResponse`, `Consumer ConsumerConfigResponse`, `Enricher EnricherConfigResponse`, `AvailableEngines map[string][]EngineEntry`
+- `StorageConfigResponse` — `ConsumptionDir string` (inbox path), `StorageDir string` (processed document path)
+- `DatabaseConfigResponse` — `Path string` (SQLite database directory)
+- `ConfigResponse` — `App AppConfigResponse`, `Server ServerConfigResponse`, `Storage StorageConfigResponse`, `Database DatabaseConfigResponse`, `Consumer ConsumerConfigResponse`, `Enricher EnricherConfigResponse`, `AvailableEngines map[string][]EngineEntry`
 - `ConsumerConfigResponse` — `Workers int`, `TextExtractor TextExtractorResponse`, `PdfOptimizer PdfOptimizerResponse`, `OCR OCRResponse`
 - `TextExtractorResponse` — `Engine string`, `Timeout int`
 - `PdfOptimizerResponse` — `Engine string`, `Fallback string`, `Timeout int`

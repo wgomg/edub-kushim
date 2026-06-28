@@ -142,7 +142,10 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			),
 			'enricher.tagmatcher.chunk_size': Number(cfg.enricher.tagmatcher.chunk_size),
 			'enricher.tagmatcher.hugot.model': cfg.enricher.tagmatcher.hugot.model,
-			'enricher.tagmatcher.hugot.backend': cfg.enricher.tagmatcher.hugot.backend
+			'enricher.tagmatcher.hugot.backend': cfg.enricher.tagmatcher.hugot.backend,
+			'storage.consumption_dir': cfg.storage.consumption_dir,
+			'storage.storage_dir': cfg.storage.storage_dir,
+			'database.path': cfg.database.path
 		};
 	}
 
@@ -368,6 +371,33 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							bind:value={cfg.server.max_download_size_mb}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
 						/>
+					</div>
+				</div>
+			</section>
+
+			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+				<h2 class="mb-4 text-lg font-semibold text-parchment-200">Storage & Database</h2>
+				<div class="grid gap-4 sm:grid-cols-2">
+					<div>
+						<label for="consumption-dir" class="mb-1 block text-sm font-medium text-parchment-200">
+							Consumption directory (inbox)
+						</label>
+						<input id="consumption-dir" type="text" bind:value={cfg.storage.consumption_dir}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none" />
+					</div>
+					<div>
+						<label for="storage-dir" class="mb-1 block text-sm font-medium text-parchment-200">
+							Storage directory
+						</label>
+						<input id="storage-dir" type="text" bind:value={cfg.storage.storage_dir}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none" />
+					</div>
+					<div class="sm:col-span-2">
+						<label for="db-path" class="mb-1 block text-sm font-medium text-parchment-200">
+							Database path
+						</label>
+						<input id="db-path" type="text" bind:value={cfg.database.path}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none" />
 					</div>
 				</div>
 			</section>
