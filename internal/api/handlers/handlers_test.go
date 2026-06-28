@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1236,11 +1237,21 @@ func TestUserCrud(t *testing.T) {
 	})
 }
 
+func newTestConfigHandler(cfg *config.Config, queries *database.Queries, logger *utils.Logger, dispatcher *task.Dispatcher) *ConfigHandler {
+	var ptr atomic.Pointer[config.Config]
+	if cfg != nil {
+		ptr.Store(cfg)
+	}
+	getConfig := func() *config.Config { return ptr.Load() }
+	onConfigSet := func(c *config.Config) { ptr.Store(c) }
+	return NewConfigHandler(getConfig, onConfigSet, queries, logger, dispatcher)
+}
+
 func TestConfigHandlerGetConfig(t *testing.T) {
 	env := newHandlerTestEnv(t)
 
 	t.Run("nil config returns default", func(t *testing.T) {
-		h := NewConfigHandler(nil, env.client.Queries, env.logger, nil)
+		h := newTestConfigHandler(nil, env.client.Queries, env.logger, nil)
 		w := rec()
 		h.GetConfig(w, req(t, "GET", "/wizard/config", nil))
 		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
@@ -1256,7 +1267,7 @@ func TestConfigHandlerGetConfig(t *testing.T) {
 		stored.Storage.ConsumptionDir = "/custom/inbox"
 		stored.Storage.StorageDir = "/custom/storage"
 		stored.Db.Path = "/custom/data"
-		h := NewConfigHandler(stored, env.client.Queries, env.logger, nil)
+		h := newTestConfigHandler(stored, env.client.Queries, env.logger, nil)
 		w := rec()
 		h.GetConfig(w, req(t, "GET", "/wizard/config", nil))
 		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
@@ -1269,11 +1280,15 @@ func TestConfigHandlerGetConfig(t *testing.T) {
 		testutil.AssertEqual(t, resp.Database.Path, "/custom/data", "database path")
 	})
 
-	t.Run("setbootstrap then getconfig", func(t *testing.T) {
-		h := NewConfigHandler(nil, env.client.Queries, env.logger, nil)
+	t.Run("setservices then getconfig", func(t *testing.T) {
+		var ptr atomic.Pointer[config.Config]
+		getConfig := func() *config.Config { return ptr.Load() }
+		onConfigSet := func(c *config.Config) { ptr.Store(c) }
+		h := NewConfigHandler(getConfig, onConfigSet, env.client.Queries, env.logger, nil)
 		bootstrapped := config.DefaultConfig("/tmp/boot")
 		bootstrapped.Srv.Port = 7777
-		h.SetBootstrap(bootstrapped, env.client.Queries, nil)
+		onConfigSet(bootstrapped)
+		h.SetServices(env.client.Queries, nil)
 
 		w := rec()
 		h.GetConfig(w, req(t, "GET", "/wizard/config", nil))
@@ -1287,7 +1302,7 @@ func TestConfigHandlerConfigStatus(t *testing.T) {
 	env := newHandlerTestEnv(t)
 
 	t.Run("nil config reports not configured", func(t *testing.T) {
-		h := NewConfigHandler(nil, env.client.Queries, env.logger, nil)
+		h := newTestConfigHandler(nil, env.client.Queries, env.logger, nil)
 		w := rec()
 		h.ConfigStatus(w, req(t, "GET", "/wizard/config/status", nil))
 		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")

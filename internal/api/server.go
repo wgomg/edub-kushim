@@ -33,6 +33,7 @@ type Server struct {
 	matcherClient *tagmatch.MatcherClient
 	services      *types.CrudServices
 	scheduler     *scheduler.PollingScheduler
+	configWatcher *config.Watcher
 	pools         struct {
 		config *pool.Pool
 	}
@@ -90,13 +91,11 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 	}
 	s.scheduler = scheduler.NewPollingScheduler(getConfig, logger, kushimPath, semaphore)
 
-	onConfigReload := func(newCfg *config.Config) {
-		s.cfg.Store(newCfg)
-	}
+	onConfigSet := func(cfg *config.Config) { s.cfg.Store(cfg) }
 
 	getConfigFn := func() *config.Config { return s.cfg.Load() }
 
-	mux := registerRoutes(logger, client, dispatcher, getConfigFn, s.services, semaphore, workStore, onConfigReload)
+	mux := registerRoutes(logger, client, dispatcher, getConfigFn, onConfigSet, s.services, semaphore, workStore)
 	registerStaticRoutes(mux)
 
 	handler := chainMiddleware(logger, mux)
@@ -140,10 +139,10 @@ func registerRoutes(
 	client *database.Client,
 	dispatcher *task.Dispatcher,
 	getConfig func() *config.Config,
+	onConfigSet func(*config.Config),
 	services *types.CrudServices,
 	semaphore *pool.Semaphore,
 	workStore *task.Store,
-	onConfigReload func(*config.Config),
 ) *http.ServeMux {
 	mux := http.NewServeMux()
 	engine := search.NewEngine(logger, client.Queries)
@@ -201,8 +200,7 @@ func registerRoutes(
 	mux.HandleFunc("PUT /api/v1/users/{id}", userHandler.Update)
 	mux.HandleFunc("DELETE /api/v1/users/{id}", userHandler.Delete)
 
-	configHandler := handlers.NewConfigHandler(getConfig(), client.Queries, logger, dispatcher)
-	configHandler.OnConfigReloaded(onConfigReload)
+	configHandler := handlers.NewConfigHandler(getConfig, onConfigSet, client.Queries, logger, dispatcher)
 	mux.HandleFunc("GET /wizard/config", configHandler.GetConfig)
 	mux.HandleFunc("PUT /wizard/config", configHandler.PutConfig)
 	mux.HandleFunc("GET /wizard/config/status", configHandler.ConfigStatus)
@@ -261,6 +259,15 @@ func (s *Server) Start() error {
 	s.scheduler.Start()
 	s.logger.Info(nil, "polling scheduler started")
 
+	s.configWatcher = config.NewWatcher(
+		s.cfg.Load().App.ConfigDir,
+		5*time.Second,
+		func(cfg *config.Config) { s.cfg.Store(cfg) },
+		s.logger,
+	)
+	s.configWatcher.Start()
+	s.logger.Info(nil, "config watcher started (5s interval)")
+
 	s.logger.Info(nil, "Starting HTTP server on %s", s.addr)
 	return s.httpServer.ListenAndServe()
 }
@@ -282,6 +289,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 	s.scheduler.Stop()
 	s.logger.Info(nil, "polling scheduler stopped")
+
+	s.configWatcher.Stop()
+	s.logger.Info(nil, "config watcher stopped")
 
 	if err := s.httpServer.Shutdown(ctx); err != nil {
 		return err

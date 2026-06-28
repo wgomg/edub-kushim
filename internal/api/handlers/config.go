@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"sync/atomic"
 
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/api/types"
@@ -20,36 +19,37 @@ import (
 const configSource = "config"
 
 type ConfigHandler struct {
-	cfg              atomic.Pointer[config.Config]
-	queries          *database.Queries
-	logger           *utils.Logger
-	dispatcher       *task.Dispatcher
-	OnBootstrap      func(configDir string) (*config.Config, *database.Queries, *task.Dispatcher, error)
-	onConfigReloaded func(cfg *config.Config)
+	getConfig    func() *config.Config
+	onConfigSet  func(*config.Config)
+	queries      *database.Queries
+	logger       *utils.Logger
+	dispatcher   *task.Dispatcher
+	OnBootstrap  func(configDir string) (*config.Config, *database.Queries, *task.Dispatcher, error)
 }
 
-func (h *ConfigHandler) OnConfigReloaded(fn func(cfg *config.Config)) {
-	h.onConfigReloaded = fn
-}
-
-func NewConfigHandler(cfg *config.Config, queries *database.Queries, logger *utils.Logger, dispatcher *task.Dispatcher) *ConfigHandler {
-	h := &ConfigHandler{
-		queries:    queries,
-		logger:     logger,
-		dispatcher: dispatcher,
+func NewConfigHandler(
+	getConfig func() *config.Config,
+	onConfigSet func(*config.Config),
+	queries *database.Queries,
+	logger *utils.Logger,
+	dispatcher *task.Dispatcher,
+) *ConfigHandler {
+	return &ConfigHandler{
+		getConfig:   getConfig,
+		onConfigSet: onConfigSet,
+		queries:     queries,
+		logger:      logger,
+		dispatcher:  dispatcher,
 	}
-	h.cfg.Store(cfg)
-	return h
 }
 
-func (h *ConfigHandler) SetBootstrap(cfg *config.Config, queries *database.Queries, dispatcher *task.Dispatcher) {
-	h.cfg.Store(cfg)
+func (h *ConfigHandler) SetServices(queries *database.Queries, dispatcher *task.Dispatcher) {
 	h.queries = queries
 	h.dispatcher = dispatcher
 }
 
 func (h *ConfigHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
-	cfg := h.cfg.Load()
+	cfg := h.getConfig()
 	if cfg == nil {
 		cfg = config.DefaultConfig("")
 	}
@@ -70,7 +70,7 @@ func (h *ConfigHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if configDir, ok := body["config_dir"].(string); ok && h.cfg.Load() == nil {
+	if configDir, ok := body["config_dir"].(string); ok && h.getConfig() == nil {
 		var cfg *config.Config
 		var queries *database.Queries
 		var dispatcher *task.Dispatcher
@@ -86,7 +86,7 @@ func (h *ConfigHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		h.cfg.Store(cfg)
+		h.onConfigSet(cfg)
 		if queries != nil {
 			h.queries = queries
 		}
@@ -98,12 +98,12 @@ func (h *ConfigHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.cfg.Load() == nil {
+	if h.getConfig() == nil {
 		http.Error(w, "config not initialized — send config_dir first", http.StatusBadRequest)
 		return
 	}
 
-	configDir := h.cfg.Load().App.ConfigDir
+	configDir := h.getConfig().App.ConfigDir
 	sanitizeConfigStrings(body)
 	if err := config.SaveMap(configDir, body); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -115,10 +115,7 @@ func (h *ConfigHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	h.cfg.Store(cfg)
-	if h.onConfigReloaded != nil {
-		h.onConfigReloaded(cfg)
-	}
+	h.onConfigSet(cfg)
 	missing := config.MissingExternalToolErrors(cfg)
 
 	if h.dispatcher == nil {
@@ -204,7 +201,7 @@ func (h *ConfigHandler) handleConfigTask(ctx context.Context, batchId, dedupKey 
 func (h *ConfigHandler) ConfigStatus(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	cfg := h.cfg.Load()
+	cfg := h.getConfig()
 	configured := cfg != nil && len(cfg.Consumer.OCR.Languages) > 0
 
 	pendingTasks := 0

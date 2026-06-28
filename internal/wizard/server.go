@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/api/handlers"
@@ -34,7 +35,11 @@ func NewServer(addr string, logger *utils.Logger) *Server {
 }
 
 func (s *Server) Start() error {
-	configHandler := handlers.NewConfigHandler(nil, nil, s.logger, nil)
+	var cfgPtr atomic.Pointer[config.Config]
+	getConfig := func() *config.Config { return cfgPtr.Load() }
+	onConfigSet := func(c *config.Config) { cfgPtr.Store(c) }
+
+	configHandler := handlers.NewConfigHandler(getConfig, onConfigSet, nil, s.logger, nil)
 	configHandler.OnBootstrap = s.bootstrap
 
 	if configDir, err := utils.ConfigDir(); err == nil {
@@ -43,7 +48,8 @@ func (s *Server) Start() error {
 			if cfg, queries, dispatcher, err := s.bootstrap(*configDir); err != nil {
 				s.logger.Error(nil, "auto-resume bootstrap: %v", err)
 			} else {
-				configHandler.SetBootstrap(cfg, queries, dispatcher)
+				onConfigSet(cfg)
+				configHandler.SetServices(queries, dispatcher)
 			}
 		}
 	}
