@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/version"
 )
 
 type HealthResponse struct {
@@ -21,7 +22,7 @@ func HealthHandler(w http.ResponseWriter, r *http.Request, logger *utils.Logger)
 
 	response := HealthResponse{
 		Status:  "healthy",
-		Version: "0.1.0",
+		Version: version.Version,
 		Time:    time.Now().UTC().Format(time.RFC3339),
 	}
 
