@@ -116,7 +116,7 @@ func TestOrphanedHandler_DeleteOrphaned(t *testing.T) {
 	id := int64(files[0]["id"].(float64))
 
 	w := rec()
-	r := req(t, "DELETE", "/api/v1/documents/orphaned/1", nil)
+	r := req(t, "DELETE", "/api/v1/documents/orphaned/file/1", nil)
 	r.SetPathValue("id", "1")
 	h.DeleteOrphaned(w, r)
 	testutil.AssertEqual(t, w.Code, http.StatusNoContent, "status")
@@ -128,7 +128,7 @@ func TestOrphanedHandler_DeleteOrphaned_InvalidID(t *testing.T) {
 	h, _ := newOrphanedHandler(t)
 
 	w := rec()
-	r := req(t, "DELETE", "/api/v1/documents/orphaned/abc", nil)
+	r := req(t, "DELETE", "/api/v1/documents/orphaned/file/abc", nil)
 	r.SetPathValue("id", "abc")
 	h.DeleteOrphaned(w, r)
 	testutil.AssertEqual(t, w.Code, http.StatusBadRequest, "status")

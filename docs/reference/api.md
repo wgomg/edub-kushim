@@ -15,7 +15,7 @@
 ### Functions
 
 - `probeMatcher()` — Calls `matcherClient.Health()` with 2s timeout. Logs warning and continues if matcher is unreachable; tag CRUD returns `503` and enrich falls back to LLM-only tags.
-- `registerRoutes(logger, client, dispatcher, getConfig, onConfigSet, services, semaphore, workStore) *http.ServeMux` — Creates and returns a `*http.ServeMux` with all API routes registered; internally creates the `search.Engine` from `client`. Uses Go 1.22+ pattern routing (`"GET /api/v1/documents/{id}"`). Auth routes (`POST /api/v1/auth/login`, `POST /api/v1/auth/logout`) are registered before all other routes so they are public (bypassed by `AuthMiddleware`). Orphaned file routes (`GET/POST/DELETE /api/v1/documents/orphaned/...`) are registered via `OrphanedHandler` after the document routes.
+- `registerRoutes(logger, client, dispatcher, getConfig, onConfigSet, services, semaphore, workStore) *http.ServeMux` — Creates and returns a `*http.ServeMux` with all API routes registered; internally creates the `search.Engine` from `client`. Uses Go 1.22+ pattern routing (`"GET /api/v1/documents/{id}"`). Auth routes (`POST /api/v1/auth/login`, `POST /api/v1/auth/logout`) are registered before all other routes so they are public (bypassed by `AuthMiddleware`). Orphaned file routes (`/api/v1/orphaned/...`) are registered via `OrphanedHandler` after the document routes.
 - `registerStaticRoutes(mux *http.ServeMux)` — Registers `"GET /{path...}"` handler; tries to serve the requested file from the embedded FS, falls back to `index.html` for client-side SPA routes if the file doesn't exist
 - `chainMiddleware(logger *utils.Logger, getSecret func() string, h http.Handler) http.Handler` — Composes request + auth + parambag middleware. The auth middleware skips public paths (`/health`, `/wizard/*`, `/api/v1/auth/*`, non-API paths) and validates Bearer JWTs on all other API routes.
 - `AuthMiddleware(next http.Handler, getSecret func() string) http.Handler` — Extracts `Authorization: Bearer <token>` header, validates JWT via `auth.ValidateToken`, injects `userID` and `username` into `r.Context()` using typed context keys. Returns 401 JSON with generic error for missing/invalid/expired tokens. Bypasses auth for public paths.
@@ -266,6 +266,24 @@ See `AuthMiddleware` under `server.go` → Functions.
 
 ---
 
+## `handlers/orphaned.go`
+
+### Struct
+
+- `OrphanedHandler`
+  - **Fields**: `svc *service.Orphaned`, `logger *utils.Logger`
+  - **Methods**:
+    - `NewOrphanedHandler(svc, logger) *OrphanedHandler`
+    - `ListOrphaned(w, r)` — `GET /api/v1/orphaned` — Lists all pending orphaned file records as JSON array. Returns `200`.
+    - `ScanOrphaned(w, r)` — `POST /api/v1/orphaned/scan` — Walks `originals/` and `processed/` dirs, quarantines files without matching DB records. Returns `200 {"quarantined": <n>}`.
+    - `DeleteOrphaned(w, r)` — `DELETE /api/v1/orphaned/{id}` — Removes file from quarantine + soft-deletes DB record. Returns `204`.
+    - `RestoreOrphaned(w, r)` — `POST /api/v1/orphaned/{id}/restore` — Copies uuid-named files to inbox, creates consume task with original document_id. Returns `202`. Rejects dbid-named files and existing UUID collisions.
+    - `MoveToInbox(w, r)` — `POST /api/v1/orphaned/{id}/move-to-inbox` — Copies any orphan to inbox, creates consume task with new UUID. Returns `202`.
+    - `DeleteAllOrphaned(w, r)` — `POST /api/v1/orphaned/delete-all` — Removes all pending files + bulk marks deleted. Returns `200 {"deleted": <n>}`.
+    - `MoveAllToInbox(w, r)` — `POST /api/v1/orphaned/move-to-inbox-all` — Moves all pending orphans to inbox. Returns `200 {"moved": <n>}`.
+
+---
+
 ## `handlers/saved_search.go`
 
 ### Struct
@@ -365,13 +383,13 @@ mux.HandleFunc("DELETE /api/v1/documents/{id}/tags", docHandler.RemoveDocumentTa
 mux.HandleFunc("POST /api/v1/documents/{id}/people", docHandler.AddDocumentPeople)
 mux.HandleFunc("DELETE /api/v1/documents/{id}/people", docHandler.RemoveDocumentPeople)
 
-mux.HandleFunc("GET /api/v1/documents/orphaned", orphanedHandler.ListOrphaned)
-mux.HandleFunc("POST /api/v1/documents/orphaned/scan", orphanedHandler.ScanOrphaned)
-mux.HandleFunc("DELETE /api/v1/documents/orphaned/{id}", orphanedHandler.DeleteOrphaned)
-mux.HandleFunc("POST /api/v1/documents/orphaned/{id}/restore", orphanedHandler.RestoreOrphaned)
-mux.HandleFunc("POST /api/v1/documents/orphaned/{id}/move-to-inbox", orphanedHandler.MoveToInbox)
-mux.HandleFunc("POST /api/v1/documents/orphaned/delete-all", orphanedHandler.DeleteAllOrphaned)
-mux.HandleFunc("POST /api/v1/documents/orphaned/move-to-inbox-all", orphanedHandler.MoveAllToInbox)
+mux.HandleFunc("GET /api/v1/orphaned", orphanedHandler.ListOrphaned)
+mux.HandleFunc("POST /api/v1/orphaned/scan", orphanedHandler.ScanOrphaned)
+mux.HandleFunc("DELETE /api/v1/orphaned/{id}", orphanedHandler.DeleteOrphaned)
+mux.HandleFunc("POST /api/v1/orphaned/{id}/restore", orphanedHandler.RestoreOrphaned)
+mux.HandleFunc("POST /api/v1/orphaned/{id}/move-to-inbox", orphanedHandler.MoveToInbox)
+mux.HandleFunc("POST /api/v1/orphaned/delete-all", orphanedHandler.DeleteAllOrphaned)
+mux.HandleFunc("POST /api/v1/orphaned/move-to-inbox-all", orphanedHandler.MoveAllToInbox)
 
 mux.HandleFunc("GET /api/v1/tags", tagHandler.List)
 mux.HandleFunc("POST /api/v1/tags", tagHandler.Create)
