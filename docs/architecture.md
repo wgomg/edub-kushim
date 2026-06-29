@@ -323,13 +323,13 @@ cancellation wiring.
 ```
 storage/
 ├── originals/                    # Original files (copied)
-│   └── 2024/03/19/1.pdf
+│   └── 2024/03/19/15/<uuid>.pdf
 ├── errors/                       # Failed processing (auto‑quarantined)
 │   ├── duplicated/               # Duplicate files
 │   │   └── <uuid>-report.pdf
 │   └── <uuid>-corrupt.pdf
 └── processed/                    # Processed files (OCR'd or optimized)
-    └── 2024/03/19/15/1.pdf
+    └── 2024/03/19/15/<uuid>.pdf
 ```
 
 Date‑based (`year/month/day/hour/documentID.ext`) under `processed/` avoids "too many files in one directory"

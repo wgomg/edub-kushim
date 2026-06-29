@@ -221,7 +221,7 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 	file.DocumentID = documentID
 	file.DocumentDbId = sql.NullInt64{Int64: documentDbId, Valid: true}
 
-	originalFileName := strconv.FormatInt(documentDbId, 10) + ".pdf"
+	originalFileName := documentID + ".pdf"
 
 	fullOriginalPath := filepath.Join(
 		*file.StorageOriginalPath,
