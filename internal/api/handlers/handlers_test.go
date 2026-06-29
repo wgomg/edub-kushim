@@ -404,6 +404,41 @@ func TestDownloadDocumentsValidation(t *testing.T) {
 			t.Fatalf("unexpected error: %s", resp["error"])
 		}
 	})
+
+	t.Run("form-encoded valid array parses correctly", func(t *testing.T) {
+		w := rec()
+		idsJSON := `["a","b","c"]`
+		formBody := "document_ids=" + idsJSON
+		r := httptest.NewRequest("POST", "/api/v1/documents/download", strings.NewReader(formBody))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r = utils.WithParamBag(r, utils.NewParamBag(r))
+		r = r.WithContext(context.WithValue(r.Context(), "reqid", "test-req"))
+		h.DownloadDocuments(w, r)
+		// MaxDownloadFiles=2, so 3 IDs should fail with "too many", not a parse error
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", w.Code)
+		}
+		var resp map[string]string
+		json.NewDecoder(w.Body).Decode(&resp)
+		if !strings.Contains(resp["error"], "too many") {
+			t.Fatalf("expected 'too many' error from successful parse, got: %s", resp["error"])
+		}
+	})
+
+	t.Run("form-encoded malformed json", func(t *testing.T) {
+		w := rec()
+		r := httptest.NewRequest("POST", "/api/v1/documents/download", strings.NewReader("document_ids=NOT_VALID_JSON"))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r = utils.WithParamBag(r, utils.NewParamBag(r))
+		r = r.WithContext(context.WithValue(r.Context(), "reqid", "test-req"))
+		h.DownloadDocuments(w, r)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", w.Code)
+		}
+		if w.Body.String() != "Invalid document_ids format\n" {
+			t.Fatalf("unexpected body: %s", w.Body.String())
+		}
+	})
 }
 
 func TestTagCrud(t *testing.T) {

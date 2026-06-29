@@ -443,7 +443,7 @@ func (h *DocumentHandler) DownloadDocuments(w http.ResponseWriter, r *http.Reque
 			http.Error(w, "document_ids is required", http.StatusBadRequest)
 			return
 		}
-		if err := json.Unmarshal([]byte(idsJSON), &req); err != nil {
+		if err := json.Unmarshal([]byte(idsJSON), &req.DocumentIDs); err != nil {
 			http.Error(w, "Invalid document_ids format", http.StatusBadRequest)
 			return
 		}
