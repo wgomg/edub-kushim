@@ -195,7 +195,7 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	reqID := ctx.Value("reqid").(string)
 
 	rows, err := h.queries.ListBatchOverviews(ctx, database.ListBatchOverviewsParams{
-		Limit:  20,
+		Limit:  10,
 		Offset: 0,
 	})
 	if err != nil {
