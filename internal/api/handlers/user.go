@@ -110,15 +110,6 @@ func (h *UserHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if strings.TrimSpace(req.Password) == "" {
-		http.Error(w, "Password is required", http.StatusBadRequest)
-		return
-	}
-	if len(req.Password) < 8 {
-		http.Error(w, "Password must be at least 8 characters", http.StatusBadRequest)
-		return
-	}
-
 	user, err := h.services.User.Create(ctx, req.Username, req.Password)
 	if err != nil {
 		if errs.KindOf(err) == errs.KindConflict {
@@ -156,11 +147,6 @@ func (h *UserHandler) Update(w http.ResponseWriter, r *http.Request) {
 	req.Username = utils.StripTags(strings.TrimSpace(req.Username))
 	if req.Username == "" {
 		http.Error(w, "Username is required", http.StatusBadRequest)
-		return
-	}
-
-	if req.Password != "" && len(req.Password) < 8 {
-		http.Error(w, "Password must be at least 8 characters", http.StatusBadRequest)
 		return
 	}
 

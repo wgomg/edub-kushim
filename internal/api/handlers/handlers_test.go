@@ -1074,7 +1074,7 @@ func TestUserCrud(t *testing.T) {
 
 	t.Run("create user", func(t *testing.T) {
 		body, _ := json.Marshal(types.CreateUserRequest{
-			Username: "alice", Password: "password123",
+			Username: "alice", Password: "Password123!",
 		})
 		w := rec()
 		h.Create(w, req(t, "POST", "/api/v1/users", body))
@@ -1094,7 +1094,7 @@ func TestUserCrud(t *testing.T) {
 
 	t.Run("create duplicate username", func(t *testing.T) {
 		body, _ := json.Marshal(types.CreateUserRequest{
-			Username: "alice", Password: "password123",
+			Username: "alice", Password: "Password123!",
 		})
 		w := rec()
 		h.Create(w, req(t, "POST", "/api/v1/users", body))
@@ -1198,7 +1198,7 @@ func TestUserCrud(t *testing.T) {
 
 	t.Run("update to duplicate username", func(t *testing.T) {
 		body, _ := json.Marshal(types.CreateUserRequest{
-			Username: "bob", Password: "password123",
+			Username: "bob", Password: "Password123!",
 		})
 		w := rec()
 		h.Create(w, req(t, "POST", "/api/v1/users", body))

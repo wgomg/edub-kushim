@@ -191,8 +191,8 @@
     - `NewUserHandler(services, logger) *UserHandler`
     - `List(w, r)` — `GET /api/v1/users?limit=50&offset=0` — Lists paginated users. Returns `UserListResponse` with `users` array and `total` count. Excludes `password_hash` and `api_key`.
     - `Get(w, r)` — `GET /api/v1/users/{id}` — Returns single `UserResponse`. `KindNotFound` → 404.
-    - `Create(w, r)` — `POST /api/v1/users` — Accepts `CreateUserRequest` JSON (`username`, `password`). Validates username non-empty, password ≥ 8 chars. Bcrypt hashes password on creation. `KindConflict` → 409 `{"error":"username already exists"}`. Returns `201` with `UserResponse`.
-    - `Update(w, r)` — `PUT /api/v1/users/{id}` — Accepts `UpdateUserRequest` JSON (`username`, `password` optional). Validates username non-empty, password ≥ 8 chars if provided. Bcrypts only when password provided, writes both fields in a single `UPDATE`. `KindNotFound` → 404, `KindConflict` → 409. Returns `200` with `UserResponse`.
+    - `Create(w, r)` — `POST /api/v1/users` — Accepts `CreateUserRequest` JSON (`username`, `password`). Validates username non-empty. Password validation is delegated to the service layer (`ValidatePassword`): minimum 12 characters, maximum 128 characters, must contain at least one uppercase letter, lowercase letter, digit, and special character. Returns `400` via `writeServiceError` on validation failure. Bcrypt hashes password on creation. `KindConflict` → 409 `{"error":"username already exists"}`. Returns `201` with `UserResponse`.
+    - `Update(w, r)` — `PUT /api/v1/users/{id}` — Accepts `UpdateUserRequest` JSON (`username`, `password` optional). Validates username non-empty. Same service-layer password validation when password is provided; empty password skips validation (keep current password). Bcrypts only when password provided, writes both fields in a single `UPDATE`. `KindNotFound` → 404, `KindConflict` → 409. Returns `200` with `UserResponse`.
     - `Delete(w, r)` — `DELETE /api/v1/users/{id}` — Pre-checks existence via `Get`, then deletes. `KindNotFound` → 404. Returns `204 No Content`.
 
 ---

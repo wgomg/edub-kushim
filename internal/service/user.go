@@ -45,6 +45,10 @@ func (s *User) Get(ctx context.Context, id int64) (database.User, error) {
 }
 
 func (s *User) Create(ctx context.Context, username, password string) (database.User, error) {
+	if err := ValidatePassword(password); err != nil {
+		return database.User{}, err
+	}
+
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return database.User{}, errs.EInternal("create user", err)
@@ -79,6 +83,10 @@ func (s *User) Update(ctx context.Context, id int64, username, password string) 
 
 	passwordHash := user.PasswordHash
 	if password != "" {
+		if err := ValidatePassword(password); err != nil {
+			return database.User{}, err
+		}
+
 		hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 		if err != nil {
 			return database.User{}, errs.EInternal("update user password", err)
