@@ -1,6 +1,27 @@
+import { getToken, logout as authLogout } from '$lib/stores/authStore.js';
+import { goto } from '$app/navigation';
+
+let _redirecting = false;
+
+function handleUnauthorized() {
+	if (_redirecting) return;
+	_redirecting = true;
+	authLogout();
+	goto('/login').finally(() => { _redirecting = false; });
+}
+
+function withAuth(opts = {}) {
+	const token = getToken();
+	if (!token) return opts;
+	const headers = { ...opts.headers };
+	headers['Authorization'] = `Bearer ${token}`;
+	return { ...opts, headers };
+}
+
 async function request(path, opts = {}) {
 	try {
-		const res = await fetch(path, opts);
+		const res = await fetch(path, withAuth(opts));
+		if (res.status === 401) { handleUnauthorized(); return null; }
 		if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
 		if (res.status === 204 || res.headers.get('content-length') === '0') return null;
 		return await res.json();
@@ -12,7 +33,7 @@ async function request(path, opts = {}) {
 
 async function requestRaw(path, opts = {}) {
 	try {
-		const res = await fetch(path, opts);
+		const res = await fetch(path, withAuth(opts));
 		let data = null;
 		const contentType = res.headers.get('content-type') || '';
 		if (contentType.includes('application/json') && res.status !== 204) {
@@ -315,5 +336,14 @@ export const api = {
 				body: JSON.stringify(body)
 			}),
 		status: () => request('/wizard/config/status')
+	},
+
+	auth: {
+		login: (username, password) =>
+			requestRaw('/api/v1/auth/login', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ username, password })
+			})
 	}
 };

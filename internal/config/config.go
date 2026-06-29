@@ -36,6 +36,7 @@ type ServerConfig struct {
 	MaxDownloadFiles     int           `mapstructure:"max_download_files" yaml:"max_download_files" json:"max_download_files"`
 	MaxDownloadSizeMB    int64         `mapstructure:"max_download_size_mb" yaml:"max_download_size_mb" json:"max_download_size_mb"`
 	MaxBatchDelete       int           `mapstructure:"max_batch_delete" yaml:"max_batch_delete" json:"max_batch_delete"`
+	SessionSecret        string        `mapstructure:"session_secret" yaml:"session_secret" json:"session_secret"`
 }
 
 type DatabaseConfig struct {

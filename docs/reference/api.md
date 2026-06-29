@@ -5,9 +5,9 @@
 ### Struct
 
 - `Server`
-  - **Fields**: `httpServer *http.Server`, `logger *utils.Logger`, `addr string`, `matcherClient *tagmatch.MatcherClient`, `services *types.CrudServices`, `pools struct { config *pool.Pool }`
+  - **Fields**: `httpServer *http.Server`, `logger *utils.Logger`, `addr string`, `cfg atomic.Pointer[config.Config]`, `matcherClient *tagmatch.MatcherClient`, `services *types.CrudServices`, `pools struct { config *pool.Pool }`
   - **Methods**:
-    - `NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server` — Creates a `MatcherClient` connected to `kushim-hugot.sock` in the config dir, builds `CrudServices` with `Tag` (wired through `MatcherClient`), `People`, `PeopleType`, `DocumentType`, `User` services, creates dispatcher with only the `"config"` task type registered, creates a `Semaphore` for batch concurrency, registers routes
+    - `NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server` — Creates a `MatcherClient` connected to `kushim-hugot.sock` in the config dir, builds `CrudServices` with `Tag` (wired through `MatcherClient`), `People`, `PeopleType`, `DocumentType`, `User` services, creates dispatcher with only the `"config"` task type registered, creates a `Semaphore` for batch concurrency. Generates a random `SessionSecret` if none is configured (with a warning log). Registers routes and middleware chain (request → auth → parambag).
     - `Start() error` — Probes matcher health (startup warning if unreachable), starts config pool, then HTTP server
     - `Shutdown(ctx context.Context) error` — Shuts down HTTP server, config pool, then `services.Close()`
     - `Addr() string`
@@ -15,9 +15,10 @@
 ### Functions
 
 - `probeMatcher()` — Calls `matcherClient.Health()` with 2s timeout. Logs warning and continues if matcher is unreachable; tag CRUD returns `503` and enrich falls back to LLM-only tags.
-- `registerRoutes(logger, client, dispatcher, getConfig, services, semaphore, workStore, onConfigReload) *http.ServeMux` — Creates and returns a `*http.ServeMux` with all API routes registered; internally creates the `search.Engine` from `client`. Uses Go 1.22+ pattern routing (`"GET /api/v1/documents/{id}"`).
+- `registerRoutes(logger, client, dispatcher, getConfig, onConfigSet, services, semaphore, workStore) *http.ServeMux` — Creates and returns a `*http.ServeMux` with all API routes registered; internally creates the `search.Engine` from `client`. Uses Go 1.22+ pattern routing (`"GET /api/v1/documents/{id}"`). Auth routes (`POST /api/v1/auth/login`, `POST /api/v1/auth/logout`) are registered before all other routes so they are public (bypassed by `AuthMiddleware`).
 - `registerStaticRoutes(mux *http.ServeMux)` — Registers `"GET /{path...}"` handler; tries to serve the requested file from the embedded FS, falls back to `index.html` for client-side SPA routes if the file doesn't exist
-- `chainMiddleware(logger *utils.Logger, h http.Handler) http.Handler` — Composes request + parambag middleware
+- `chainMiddleware(logger *utils.Logger, getSecret func() string, h http.Handler) http.Handler` — Composes request + auth + parambag middleware. The auth middleware skips public paths (`/health`, `/wizard/*`, `/api/v1/auth/*`, non-API paths) and validates Bearer JWTs on all other API routes.
+- `AuthMiddleware(next http.Handler, getSecret func() string) http.Handler` — Extracts `Authorization: Bearer <token>` header, validates JWT via `auth.ValidateToken`, injects `userID` and `username` into `r.Context()` using typed context keys. Returns 401 JSON with generic error for missing/invalid/expired tokens. Bypasses auth for public paths.
 - `requestMiddleware(logger *utils.Logger, next http.Handler) http.Handler` — Adds reqid to context, logs requests
 - `parambagMiddleware(next http.Handler) http.Handler` — Injects ParamBag into request context
 
@@ -56,6 +57,31 @@
     - `RemoveDocumentTag(w, r)` — `DELETE /api/v1/documents/{id}/tags` — Accepts `{tag_id}`, validates document exists, calls `RemoveDocumentTag`. Returns `204 No Content`.
     - `AddDocumentPeople(w, r)` — `POST /api/v1/documents/{id}/people` — Accepts `{people_id, people_type_id}`, validates document, person, and people type exist, calls `AddDocumentPeople` (INSERT OR IGNORE). Returns `204 No Content`.
     - `RemoveDocumentPeople(w, r)` — `DELETE /api/v1/documents/{id}/people` — Accepts `{people_id, people_type_id}`, validates document exists, calls `RemoveDocumentPeople` (now filters by all three PK columns: document_id, people_id, people_type_id). Returns `204 No Content`.
+
+---
+
+## `handlers/auth.go`
+
+### Struct
+
+- `AuthHandler`
+  - **Fields**: `userService *service.User`, `getConfig func() *config.Config`, `logger *utils.Logger`
+  - **Methods**:
+    - `NewAuthHandler(userService, getConfig, logger) *AuthHandler`
+    - `Login(w, r)` — `POST /api/v1/auth/login` — Accepts `{"username", "password"}`. Calls `userService.Authenticate()` (bcrypt compare + DB lookup). On success: generates a 24h JWT via `auth.GenerateToken()`, returns `{"token": "...", "user": {"id", "username", "created_at"}}` with 200. On invalid credentials: returns 401 with generic `"invalid username or password"`. On empty username/password: returns 401 (same generic message to avoid user enumeration). On malformed body: returns 400.
+    - `Logout(w, r)` — `POST /api/v1/auth/logout` — Returns 204 No Content (client-side discard, no server-side revocation per design).
+
+### Internal helpers
+
+- `loginRequest` — `Username string`, `Password string`
+- `loginResponse` — `Token string`, `User types.UserResponse`
+- `writeUnauthorized(w)` — Writes 401 JSON `{"error": "invalid username or password"}`
+
+---
+
+## `auth_middleware.go`
+
+See `AuthMiddleware` under `server.go` → Functions.
 
 ---
 
@@ -323,6 +349,9 @@ All registered routes:
 
 ```go
 mux.HandleFunc("GET /health", ...)
+
+mux.HandleFunc("POST /api/v1/auth/login", authHandler.Login)
+mux.HandleFunc("POST /api/v1/auth/logout", authHandler.Logout)
 
 mux.HandleFunc("GET /api/v1/documents", docHandler.ListDocuments)
 mux.HandleFunc("GET /api/v1/documents/{id}", docHandler.GetDocument)

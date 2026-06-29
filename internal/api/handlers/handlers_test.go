@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	itypes "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/api/types"
+	"github.com/wgomg/edub-kushim/internal/auth"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/pool"
@@ -1352,6 +1353,119 @@ func TestProcessingHealthMissingTools(t *testing.T) {
 	if ph.MissingTools == 0 {
 		t.Fatal("expected missing_tools > 0 when ocrmypdf is not installed")
 	}
+}
+
+func newAuthHandler(env *handlerTestEnv) *AuthHandler {
+	return NewAuthHandler(env.userSvc, func() *config.Config { return config.DefaultConfig("/tmp/test") }, env.logger)
+}
+
+func TestAuthLogin(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	h := newAuthHandler(env)
+
+	// Ensure at least one user exists for login testing.
+	ctx := context.Background()
+	_, err := env.userSvc.Create(ctx, "logintest", "ValidPassword123!")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("valid credentials return token", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]string{
+			"username": "logintest", "password": "ValidPassword123!",
+		})
+		w := rec()
+		h.Login(w, req(t, "POST", "/api/v1/auth/login", body))
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var resp struct {
+			Token string                     `json:"token"`
+			User  map[string]any `json:"user"`
+		}
+		json.NewDecoder(w.Body).Decode(&resp)
+		if resp.Token == "" {
+			t.Fatal("expected non-empty token")
+		}
+		if resp.User == nil {
+			t.Fatal("expected user object")
+		}
+		if resp.User["username"] != "logintest" {
+			t.Fatalf("expected username 'logintest', got %v", resp.User["username"])
+		}
+	})
+
+	t.Run("wrong password returns 401", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]string{
+			"username": "logintest", "password": "WrongPassword1!",
+		})
+		w := rec()
+		h.Login(w, req(t, "POST", "/api/v1/auth/login", body))
+		testutil.AssertEqual(t, w.Code, http.StatusUnauthorized, "status")
+	})
+
+	t.Run("non-existent user returns 401", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]string{
+			"username": "nonexistent", "password": "SomePassword1!",
+		})
+		w := rec()
+		h.Login(w, req(t, "POST", "/api/v1/auth/login", body))
+		testutil.AssertEqual(t, w.Code, http.StatusUnauthorized, "status")
+	})
+
+	t.Run("empty request body returns 400", func(t *testing.T) {
+		w := rec()
+		h.Login(w, req(t, "POST", "/api/v1/auth/login", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusBadRequest, "status")
+	})
+
+	t.Run("token contains valid claims", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]string{
+			"username": "logintest", "password": "ValidPassword123!",
+		})
+		w := rec()
+		h.Login(w, req(t, "POST", "/api/v1/auth/login", body))
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var resp loginResponse
+		json.NewDecoder(w.Body).Decode(&resp)
+		claims, err := auth.ValidateToken(resp.Token, config.DefaultConfig("/tmp/test").Srv.SessionSecret)
+		if err != nil {
+			t.Fatalf("ValidateToken: %v", err)
+		}
+		if claims.UserID == 0 {
+			t.Error("expected non-zero user ID in token claims")
+		}
+		if claims.Username != "logintest" {
+			t.Errorf("expected username 'logintest' in claims, got %q", claims.Username)
+		}
+	})
+
+	t.Run("empty username returns 401", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]string{
+			"username": "", "password": "ValidPassword123!",
+		})
+		w := rec()
+		h.Login(w, req(t, "POST", "/api/v1/auth/login", body))
+		testutil.AssertEqual(t, w.Code, http.StatusUnauthorized, "status")
+	})
+
+	t.Run("empty password returns 401", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]string{
+			"username": "logintest", "password": "",
+		})
+		w := rec()
+		h.Login(w, req(t, "POST", "/api/v1/auth/login", body))
+		testutil.AssertEqual(t, w.Code, http.StatusUnauthorized, "status")
+	})
+}
+
+func TestAuthLogout(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	h := newAuthHandler(env)
+
+	w := rec()
+	h.Logout(w, req(t, "POST", "/api/v1/auth/logout", nil))
+	testutil.AssertEqual(t, w.Code, http.StatusNoContent, "status")
 }
 
 func TestErrorHelpers(t *testing.T) {

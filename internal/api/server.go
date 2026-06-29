@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	types "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/api/handlers"
+	"github.com/wgomg/edub-kushim/internal/auth"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/configtask"
 	"github.com/wgomg/edub-kushim/internal/database"
@@ -41,6 +42,15 @@ type Server struct {
 
 func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 	addr := fmt.Sprintf("%s:%d", cfg.Srv.Host, cfg.Srv.Port)
+
+	if cfg.Srv.SessionSecret == "" {
+		secret, err := auth.GenerateSessionSecret()
+		if err != nil {
+			logger.Fatal("generate session secret: ", err)
+		}
+		cfg.Srv.SessionSecret = secret
+		logger.Info(nil, "WARNING: server.session_secret is empty — generated temporary in-memory secret (sessions lost on restart)")
+	}
 
 	client := database.NewClient(db)
 
@@ -91,14 +101,20 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 	}
 	s.scheduler = scheduler.NewPollingScheduler(getConfig, logger, kushimPath, semaphore)
 
-	onConfigSet := func(cfg *config.Config) { s.cfg.Store(cfg) }
+	onConfigSet := func(cfg *config.Config) {
+		if cfg.Srv.SessionSecret == "" {
+			cfg.Srv.SessionSecret = s.cfg.Load().Srv.SessionSecret
+		}
+		s.cfg.Store(cfg)
+	}
 
 	getConfigFn := func() *config.Config { return s.cfg.Load() }
 
 	mux := registerRoutes(logger, client, dispatcher, getConfigFn, onConfigSet, s.services, semaphore, workStore)
 	registerStaticRoutes(mux)
 
-	handler := chainMiddleware(logger, mux)
+	getSecret := func() string { return s.cfg.Load().Srv.SessionSecret }
+	handler := chainMiddleware(logger, getSecret, mux)
 
 	s.httpServer = &http.Server{
 		Addr:         addr,
@@ -150,6 +166,10 @@ func registerRoutes(
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		handlers.HealthHandler(w, r, logger)
 	})
+
+	authHandler := handlers.NewAuthHandler(services.User, getConfig, logger)
+	mux.HandleFunc("POST /api/v1/auth/login", authHandler.Login)
+	mux.HandleFunc("POST /api/v1/auth/logout", authHandler.Logout)
 
 	docHandler := handlers.NewDocumentHandler(client, logger, engine, services, getConfig)
 	mux.HandleFunc("GET /api/v1/documents", docHandler.ListDocuments)
@@ -227,8 +247,8 @@ func registerRoutes(
 	return mux
 }
 
-func chainMiddleware(logger *utils.Logger, h http.Handler) http.Handler {
-	return requestMiddleware(logger, parambagMiddleware(h))
+func chainMiddleware(logger *utils.Logger, getSecret func() string, h http.Handler) http.Handler {
+	return requestMiddleware(logger, AuthMiddleware(parambagMiddleware(h), getSecret))
 }
 
 func requestMiddleware(logger *utils.Logger, next http.Handler) http.Handler {
@@ -264,7 +284,12 @@ func (s *Server) Start() error {
 	s.configWatcher = config.NewWatcher(
 		s.cfg.Load().App.ConfigDir,
 		5*time.Second,
-		func(cfg *config.Config) { s.cfg.Store(cfg) },
+		func(cfg *config.Config) {
+			if cfg.Srv.SessionSecret == "" {
+				cfg.Srv.SessionSecret = s.cfg.Load().Srv.SessionSecret
+			}
+			s.cfg.Store(cfg)
+		},
 		s.logger,
 	)
 	s.configWatcher.Start()

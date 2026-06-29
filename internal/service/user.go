@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"errors"
 
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
@@ -104,6 +105,20 @@ func (s *User) Update(ctx context.Context, id int64, username, password string) 
 
 	user.Username = username
 	user.PasswordHash = passwordHash
+	return user, nil
+}
+
+func (s *User) Authenticate(ctx context.Context, username, password string) (database.User, error) {
+	user, err := s.queries.GetUserByUsername(ctx, username)
+	if err != nil {
+		return database.User{}, errs.FromDB(err, "authenticate user")
+	}
+	if !user.PasswordHash.Valid {
+		return database.User{}, errs.EInvalid("authenticate", errors.New("no password set"))
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash.String), []byte(password)); err != nil {
+		return database.User{}, errs.EInvalid("authenticate", errors.New("invalid username or password"))
+	}
 	return user, nil
 }
 

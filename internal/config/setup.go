@@ -11,6 +11,7 @@ import (
 
 	"github.com/knights-analytics/hugot"
 	"github.com/spf13/viper"
+	"github.com/wgomg/edub-kushim/internal/auth"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/utils"
 	_ "modernc.org/sqlite"
@@ -54,6 +55,15 @@ func Bootstrap(configDir string) (*Config, error) {
 
 	if err := SaveMap(configDir, map[string]any{}); err != nil {
 		return nil, fmt.Errorf("write skeleton config: %w", err)
+	}
+
+	secret, err := auth.GenerateSessionSecret()
+	if err != nil {
+		return nil, err
+	}
+	cfg.Srv.SessionSecret = secret
+	if err := SaveMap(configDir, map[string]any{"server.session_secret": cfg.Srv.SessionSecret}); err != nil {
+		return nil, fmt.Errorf("write session secret: %w", err)
 	}
 
 	dsn := filepath.Join(cfg.Db.Path, cfg.Db.Name)

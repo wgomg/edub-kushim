@@ -2,10 +2,10 @@
 
 ## Overview
 
-The project has **60+ integration and unit tests** across five packages, all runnable
+The project has **70+ integration and unit tests** across seven packages, all runnable
 without CGo dependencies (no Tesseract, MuPDF, or Ghostscript required). The test
-suite validates database queries, task lifecycle, search, API handlers, and the
-consumption pipeline.
+suite validates database queries, task lifecycle, search, API handlers, auth,
+and the consumption pipeline.
 
 ### Quick Start
 
@@ -24,7 +24,9 @@ CGO_ENABLED=0 go test -tags "XLA,ORT" ./internal/...
 | `internal/database` | 18 | sqlc-generated CRUD, task lifecycle, enrich waiting flow, batch ownership, FTS-adjacent operations, document/tag/people/document-type CRUD, saved searches, dashboard analytics queries (empty DB + mixed data) |
 | `internal/search` | 7 | FTS5 search with snippets, ranking, pagination; structured search with mime/language/date filters; query sanitization |
 | `internal/task` | 14 | Store (create/get/claim/complete/fail), dedup key uniqueness, dispatcher enqueue with custom status/ID, runner (complete/fail/no-tasks), pool lifecycle |
-| `internal/api/handlers` | 20 | Document CRUD, tag/people/DocumentType CRUD, task endpoints, saved searches, concurrent operations, dashboard activity + analytics + processing health, analytics error path, config handler get/status, batch delete limits, error helpers |
+| `internal/api/handlers` | 24 | Document CRUD, tag/people/DocumentType CRUD, user CRUD, task endpoints, saved searches, concurrent operations, dashboard activity + analytics + processing health, analytics error path, config handler get/status, batch delete limits, error helpers, auth login (valid/invalid/empty/claims), auth logout |
+| `internal/auth` | 6 | Session secret generation, JWT generation/validation round-trip, wrong secret rejection, expired token rejection, malformed token rejection, token part structure |
+| `internal/api` | 7 | Auth middleware: public path bypass, no-token 401, invalid token 401, wrong secret 401, valid token passes with context injection, missing bearer prefix, empty authorization header |
 | `internal/consumption` | 11 | Full consumer pipeline via mock runner (file discovery, DB transaction, file movement, duplicate detection), file I/O helpers (get, move, copy, remove, clean up), checksum calculation |
 
 ---
@@ -127,6 +129,8 @@ CGO_ENABLED=0 go test -tags "XLA,ORT" -count=1 -timeout 60s \
     ./internal/database/ \
     ./internal/search/ \
     ./internal/task/ \
+    ./internal/auth/ \
+    ./internal/api/ \
     ./internal/api/handlers/ \
     ./internal/consumption/
 

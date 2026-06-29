@@ -2,10 +2,14 @@
 	import './layout.css';
 	import favicon from '$lib/assets/favicon.svg';
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
+	import { page } from '$app/stores';
 	import { api } from '$lib/api.js';
+	import * as authStore from '$lib/stores/authStore.js';
 	import Toast from '$lib/components/Toast.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import UploadModal from '$lib/components/UploadModal.svelte';
+	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
 
 	let { children } = $props();
 	let missingTools = $state([]);
@@ -21,21 +25,39 @@
 		}, 0)
 	);
 
+	$effect(() => {
+		if (!authStore.isAuthenticated() && $page.url.pathname !== '/login') {
+			goto('/login');
+		}
+	});
+
 	onMount(async () => {
 		const status = await api.config.status();
 		if (status) {
 			missingTools = status.missing_tools ?? [];
 		}
 	});
+
+	async function handleLogout() {
+		const ok = await confirmStore.confirm({
+			title: 'Log Out',
+			message: 'Are you sure you want to log out?',
+			danger: true
+		});
+		if (!ok) return;
+		authStore.logout();
+		goto('/login');
+	}
 </script>
 
 <svelte:head><link rel="icon" href={favicon} /></svelte:head>
 
+{#if $page.url.pathname !== '/login'}
 <div class="flex h-screen overflow-hidden bg-clay-950">
 	<!-- Sidebar -->
 	<aside class="flex w-56 shrink-0 flex-col border-r border-clay-800 bg-clay-900">
 		<div class="flex h-14 items-center gap-2 border-b border-clay-800 px-4">
-			<span class="text-xl font-bold tracking-tight text-parchment-200">edub-kushim</span>
+			<span class="text-xl font-bold tracking-tight text-parchment-200" translate="no">edub-kushim</span>
 		</div>
 		<nav class="flex-1 space-y-1 px-3 py-4">
 			<a
@@ -81,6 +103,15 @@
 		<!-- Top bar -->
 		<header class="flex h-14 shrink-0 items-center gap-4 border-b border-clay-800 bg-clay-900 px-6">
 			<div class="flex-1"></div>
+			{#if authStore.isAuthenticated()}
+				<span class="text-sm text-parchment-400">{authStore.getUser().username}</span>
+				<button
+					onclick={handleLogout}
+					class="text-sm text-parchment-400 hover:text-terracotta-500"
+				>
+					Logout
+				</button>
+			{/if}
 			<button
 				onclick={() => (uploadOpen = true)}
 				class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600"
@@ -107,3 +138,8 @@
 		<UploadModal open={uploadOpen} onClose={() => (uploadOpen = false)} />
 	</div>
 </div>
+{:else}
+<div class="flex min-h-screen items-center justify-center bg-clay-950 p-4">
+	{@render children()}
+</div>
+{/if}

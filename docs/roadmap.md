@@ -121,9 +121,12 @@
 | `DELETE /api/v1/saved-searches/{id}`   | Delete saved search                                                                                                                                                                             |
 | `GET /api/v1/users`                    | List users (paginated, excludes password_hash/api_key)           |
 | `GET /api/v1/users/{id}`              | Get single user                                                  |
-| `POST /api/v1/users`                   | Create user (username + bcrypt password, min 8 chars)            |
+| `POST /api/v1/users`                   | Create user (username + bcrypt password, min 12 chars)           |
 | `PUT /api/v1/users/{id}`              | Update username + optional password                              |
 | `DELETE /api/v1/users/{id}`           | Delete user                                                      |
+| `POST /api/v1/auth/login`             | Authenticate user, return JWT token + user profile               |
+| `POST /api/v1/auth/logout`            | No-op (client-side token discard)                                |
+
 | `POST /api/v1/consume`                 | Enqueue inbox files, fork processing worker                     |
 | `POST /api/v1/consume/upload`          | Upload files via multipart, fork processing worker                                                                                                                                              |
 | `GET /api/v1/tasks`                    | List tasks (batch, status filters)                                                                                                                                                              |
@@ -172,7 +175,8 @@
 | `/` (dashboard)   | ✓      | Health + summary stats + recent docs + batch overview panel + activity timeline                                                                                  |
 | `/documents`      | ✓      | Structured search bar + filter panel + saved searches + sortable DataTable                                                                                       |
 | `/documents/[id]` | ✓      | PDF preview + editable metadata sidebar (title, type, language, tags, people) + delete                                                                           |
-| `/settings`       | ✓      | Full configuration form: server host/port, OCR, consumer, text extractor, PDF optimizer, enricher, content analyzer (LLM) with tokens, tag matcher, text reducer |
+| `/settings`       | ✓      | Full configuration form: server host/port, OCR, consumer, text extractor, PDF optimizer, enricher, content analyzer (LLM) with tokens, tag matcher, text reducer, Users tab (DataTable + create/edit/delete modals), logout confirmation |
+| `/login`          | ✓      | Centered card form with username/password fields, auth-live error display, loading spinner, redirects to dashboard on success |
 | `/tags`           | ✓      | List, filter, create, edit, delete tags                                                                                                                          |
 | `/people`         | ✓      | Two tabs: People (name + native name) and Person Types (name + description)                                                                                      |
 | `/document-types` | ✓      | List, create, edit, delete document types                                                                                                                        |
@@ -184,7 +188,9 @@
 - ✓ Database integration tests (17 tests) — document/tag/people CRUD, task lifecycle, enrich flow, batch ownership, FTS-adjacent operations, saved searches
 - ✓ Search engine tests (7 tests) — FTS5 search, structured search, pagination, query sanitization
 - ✓ Task system tests (14 tests) — Store, dispatcher, runner, pool lifecycle, dedup key handling
-- ✓ API handler tests (16 tests) — health, document CRUD, tag/people CRUD, user CRUD, task endpoints, saved searches, concurrent operations
+- ✓ API handler tests (20 tests) — health, document CRUD, tag/people CRUD, user CRUD, task endpoints, saved searches, concurrent operations, auth login/logout, token claims
+- ✓ Auth package tests (6 tests) — session secret generation, JWT generation/validation, wrong secret, expired token, malformed token
+- ✓ Auth middleware tests (7 tests) — public path bypass, missing/invalid/valid token, wrong secret, missing bearer prefix, empty header
 - ✓ Consumption pipeline tests (11 tests) — full consume flow with mock runner, file I/O, duplicate detection, error paths
 - ✓ `internal/testutil` package — assertion helpers, PDF fixtures, mock embedder
 - ✓ `Makefile` test targets (`make test`, `make test-verbose`)
@@ -239,7 +245,8 @@
 | 26  | **Dashboard: processing health panel**   | ✓ Task success rate (completed vs failed, last 7 days), avg task duration, active batch count, orphaned batch count, missing tools count                                          |
 | 27  | **Dashboard: summary API**               | ✓ Single `GET /api/v1/dashboard` endpoint returning all panel data — built from GROUP BY/JOIN queries on existing schema, no migrations needed                                    |
 | 28  | **User accounts**                        | ✓ User CRUD, bcrypt password hashing, user list page in settings UI                                                                                                               |
-| 29  | **Login and session management**         | Login/logout endpoints, session tokens, auth middleware, protected API routes, login/register page                                                                                |
+| 29  | **Login and session management**         | ✓ Login/logout endpoints, JWT session tokens, auth middleware, protected API routes, login page, auth guard in root layout                                                                                |
+| 29.5 | **Setup creates initial admin user**     | `kushim setup` (CLI + wizard) prompts for admin username + password before completion, creates user via `service.User.Create()`. Session secret auto-generated and persisted during setup. |
 | 30  | **API keys**                             | Key generation/revocation/rotation, Bearer token validation middleware, per-user key management                                                                                   |
 | 31  | **Roles and permissions**                | RBAC schema with admin/editor/viewer roles, permission enforcement middleware, role assignment                                                                                    |
 | 32  | **Document notes/comments**              | User-added notes and annotations on documents                                                                                                                                     |
