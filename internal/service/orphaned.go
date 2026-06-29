@@ -50,11 +50,14 @@ func (s *Orphaned) ScanAndQuarantine(ctx context.Context) (int, error) {
 
 	quarantined := 0
 	for info := range infos {
-		if err := s.quarantineFile(ctx, storageDir, info); err != nil {
+		ok, err := s.quarantineFile(ctx, storageDir, info)
+		if err != nil {
 			s.logger.Error(nil, "quarantine file %s: %v", info.FilePath, err)
 			continue
 		}
-		quarantined++
+		if ok {
+			quarantined++
+		}
 	}
 
 	if err, ok := <-errsCh; ok && err != nil {
@@ -64,7 +67,7 @@ func (s *Orphaned) ScanAndQuarantine(ctx context.Context) (int, error) {
 	return quarantined, nil
 }
 
-func (s *Orphaned) quarantineFile(ctx context.Context, storageDir string, info storage.OrphanedFileInfo) error {
+func (s *Orphaned) quarantineFile(ctx context.Context, storageDir string, info storage.OrphanedFileInfo) (bool, error) {
 	var docExists bool
 
 	switch info.DocumentKeyType {
@@ -73,28 +76,28 @@ func (s *Orphaned) quarantineFile(ctx context.Context, storageDir string, info s
 		if err == nil {
 			docExists = true
 		} else if errs.KindOf(errs.FromDB(err, "get document")) != errs.KindNotFound {
-			return err
+			return false, err
 		}
 	case "dbid":
 		id, parseErr := strconv.ParseInt(info.DocumentKey, 10, 64)
 		if parseErr != nil {
-			return fmt.Errorf("parse dbid %s: %w", info.DocumentKey, parseErr)
+			return false, fmt.Errorf("parse dbid %s: %w", info.DocumentKey, parseErr)
 		}
 		_, err := s.queries.GetDocumentById(ctx, id)
 		if err == nil {
 			docExists = true
 		} else if errs.KindOf(errs.FromDB(err, "get document by id")) != errs.KindNotFound {
-			return err
+			return false, err
 		}
 	}
 
 	if docExists {
-		return nil
+		return false, nil
 	}
 
 	newPath, err := storage.QuarantineFile(storageDir, info)
 	if err != nil {
-		return fmt.Errorf("quarantine file: %w", err)
+		return false, fmt.Errorf("quarantine file: %w", err)
 	}
 
 	_, err = s.queries.CreateOrphanedFile(ctx, database.CreateOrphanedFileParams{
@@ -108,10 +111,10 @@ func (s *Orphaned) quarantineFile(ctx context.Context, storageDir string, info s
 	})
 	if err != nil {
 		storage.RemoveOrphanedFile(newPath)
-		return errs.FromDB(err, "create orphaned file record")
+		return false, errs.FromDB(err, "create orphaned file record")
 	}
 
-	return nil
+	return true, nil
 }
 
 func (s *Orphaned) Delete(ctx context.Context, id int64) error {
