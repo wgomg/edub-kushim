@@ -332,10 +332,12 @@ func TestMoveAndCopyFile(t *testing.T) {
 		t.Fatal("source should be gone after move")
 	}
 
-	testutil.AssertError(t, CopyFile(dst, cpy), "copy to existing should fail")
+	// CopyFile overwrites existing destinations (O_TRUNC)
+	testutil.AssertNoError(t, CopyFile(dst, cpy), "copy to existing")
 	dst2 := filepath.Join(tmpDir, "dst2.txt")
 	os.WriteFile(dst2, []byte("existing"), 0644)
-	testutil.AssertError(t, MoveFile(dst, dst2), "move to existing should fail")
+	// MoveFile replaces existing destinations via rename(2)
+	testutil.AssertNoError(t, MoveFile(dst, dst2), "move to existing")
 }
 
 func TestRemoveFileAndCleanUp(t *testing.T) {

@@ -329,10 +329,10 @@ storage/
 │   │   └── <uuid>-report.pdf
 │   └── <uuid>-corrupt.pdf
 └── processed/                    # Processed files (OCR'd or optimized)
-    └── 2024/03/19/1.pdf
+    └── 2024/03/19/15/1.pdf
 ```
 
-Date‑based (`year/month/day/documentID.ext`) under `processed/` avoids "too many files in one directory"
+Date‑based (`year/month/day/hour/documentID.ext`) under `processed/` avoids "too many files in one directory"
 at scale. Dual storage preserves originals alongside processed versions. Files that fail processing
 are moved to `errors/` (or `errors/duplicated/` for exact duplicates) with a UUID prefix to prevent
 name collisions. Inbox files are always deleted after successful processing.

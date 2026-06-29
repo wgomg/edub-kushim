@@ -184,10 +184,6 @@ func MoveFile(src, dst string) error {
 		return fmt.Errorf("failed to create destination directory %s: %w", dstDir, err)
 	}
 
-	if _, err := os.Stat(dst); err == nil {
-		return fmt.Errorf("destination file already exists: %s", dst)
-	}
-
 	err = os.Rename(src, dst)
 	if err == nil {
 		return nil
@@ -209,10 +205,6 @@ func CopyFile(src, dst string) error {
 	dstDir := filepath.Dir(dst)
 	if err := os.MkdirAll(dstDir, 0755); err != nil {
 		return fmt.Errorf("failed to create destination directory %s: %w", dstDir, err)
-	}
-
-	if _, err := os.Stat(dst); err == nil {
-		return fmt.Errorf("destination file already exists: %s", dst)
 	}
 
 	srcFile, err := os.Open(src)

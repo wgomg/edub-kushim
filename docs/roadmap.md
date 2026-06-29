@@ -36,7 +36,7 @@
 - Database reset capability (`kushim setup --reset-database`) — drops all tables and re-runs schema + seeders
 - MD5 → SHA512 two-step duplicate detection
 - Dual storage: originals preserved alongside processed/OCR'd versions
-- Date-based storage organization (`year/month/day/documentID.ext`)
+- Date-based storage organization (`year/month/day/hour/documentID.ext`)
 - Database transaction with rollback on file-operation failure
 - Deferred cleanup of temporary files
 - Embedded Tesseract language data (`eng.traineddata`)
@@ -246,16 +246,17 @@
 | 27  | **Dashboard: summary API**               | ✓ Single `GET /api/v1/dashboard` endpoint returning all panel data — built from GROUP BY/JOIN queries on existing schema, no migrations needed                                    |
 | 28  | **User accounts**                        | ✓ User CRUD, bcrypt password hashing, user list page in settings UI                                                                                                               |
 | 29  | **Login and session management**         | ✓ Login/logout endpoints, JWT session tokens, auth middleware, protected API routes, login page, auth guard in root layout                                                                                |
-| 29.5 | **Setup creates initial admin user**     | `kushim setup` (CLI + wizard) prompts for admin username + password before completion, creates user via `service.User.Create()`. Session secret auto-generated and persisted during setup. |
-| 30  | **API keys**                             | Key generation/revocation/rotation, Bearer token validation middleware, per-user key management                                                                                   |
-| 31  | **Roles and permissions**                | RBAC schema with admin/editor/viewer roles, permission enforcement middleware, role assignment                                                                                    |
-| 32  | **Document notes/comments**              | User-added notes and annotations on documents                                                                                                                                     |
-| 33  | **Pre-built binaries**                   | Release binaries for major platforms (Linux amd64/arm64)                                                                                                                          |
-| 34  | **MySQL / MariaDB database backend**     | Additional database backend support                                                                                                                                               |
-| 35  | **User preferences**                     | Theme, pagination defaults, notification settings                                                                                                                                 |
-| 36  | **Email ingestion**                      | IMAP inbox scanning                                                                                                                                                               |
-| 37  | **Document relationships**               | Parent/child, cross-references between documents                                                                                                                                  |
-| 38  | **Contributing guide & issue templates** | `CONTRIBUTING.md`, issue/PR templates, and GitHub community setup to encourage contributions                                                                                      |
+| 30  | **Setup creates initial admin user**     | `kushim setup` (CLI + wizard) prompts for admin username + password before completion, creates user via `service.User.Create()`. Session secret auto-generated and persisted during setup. |
+| 31  | **Orphaned file cleanup**                | Periodic scan of storage directories to detect and remove files without a corresponding DB record, handling the edge case where file removal fails after successful DB deletion.   |
+| 32  | **API keys**                             | Key generation/revocation/rotation, Bearer token validation middleware, per-user key management                                                                                   |
+| 33  | **Roles and permissions**                | RBAC schema with admin/editor/viewer roles, permission enforcement middleware, role assignment                                                                                    |
+| 34  | **Document notes/comments**              | User-added notes and annotations on documents                                                                                                                                     |
+| 35  | **Pre-built binaries**                   | Release binaries for major platforms (Linux amd64/arm64)                                                                                                                          |
+| 36  | **MySQL / MariaDB database backend**     | Additional database backend support                                                                                                                                               |
+| 37  | **User preferences**                     | Theme, pagination defaults, notification settings                                                                                                                                 |
+| 38  | **Email ingestion**                      | IMAP inbox scanning                                                                                                                                                               |
+| 39  | **Document relationships**               | Parent/child, cross-references between documents                                                                                                                                  |
+| 40  | **Contributing guide & issue templates** | `CONTRIBUTING.md`, issue/PR templates, and GitHub community setup to encourage contributions                                                                                      |
 
 ---
 

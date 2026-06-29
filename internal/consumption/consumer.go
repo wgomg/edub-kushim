@@ -131,6 +131,7 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 		strconv.Itoa(file.Date.Year()),
 		fmt.Sprintf("%02d", file.Date.Month()),
 		fmt.Sprintf("%02d", file.Date.Day()),
+		fmt.Sprintf("%02d", file.Date.Hour()),
 	)
 
 	storePath := filepath.Join(
@@ -155,6 +156,16 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 	defer func() {
 		if err != nil {
 			tx.Rollback()
+			if file.StorageProcessedPath != nil && strings.HasSuffix(*file.StorageProcessedPath, ".pdf") {
+				if removeErr := RemoveFile(*file.StorageProcessedPath); removeErr != nil {
+					c.logger.Error(&documentID, "failed to clean up processed storage file: %v", removeErr)
+				}
+			}
+			if file.StorageOriginalPath != nil && strings.HasSuffix(*file.StorageOriginalPath, ".pdf") {
+				if removeErr := RemoveFile(*file.StorageOriginalPath); removeErr != nil {
+					c.logger.Error(&documentID, "failed to clean up original storage file: %v", removeErr)
+				}
+			}
 		}
 
 		if file.OCRTmpPath != nil {
