@@ -81,6 +81,11 @@
 				>Documents</a
 			>
 			<a
+				href="/documents/orphaned"
+				class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
+				>Orphaned Files</a
+			>
+			<a
 				href="/tasks"
 				class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
 				>Tasks</a

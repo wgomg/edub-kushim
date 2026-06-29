@@ -84,58 +84,58 @@
 
 ### API Endpoints
 
-| Endpoint                               | Description                                                                                                                                                                                     |
-| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /health`                          | Health check                                                                                                                                                                                    |
-| `GET /api/v1/documents`                | List documents (sortable, paginated)                                                                                                                                                            |
-| `GET /api/v1/documents/{id}`           | Get document with tags, people                                                                                                                                                                  |
-| `GET /api/v1/documents/{id}/file`      | Download PDF file                                                                                                                                                                               |
-| `GET /api/v1/documents/search`         | FTS5 search with snippets                                                                                                                                                                       |
-| `POST /api/v1/documents/search`        | Structured search (tags, people, dates, size)                                                                                                                                                   |
-| `PUT /api/v1/documents/{id}`           | Update document metadata (title, type, language)                                                                                                                                                |
-| `DELETE /api/v1/documents/{id}`        | Delete document + files                                                                                                                                                                         |
-| `POST /api/v1/documents/{id}/tags`     | Add tag assignment to document                                                                                                                                                                  |
-| `DELETE /api/v1/documents/{id}/tags`   | Remove tag assignment from document                                                                                                                                                             |
-| `POST /api/v1/documents/{id}/people`   | Add person assignment to document                                                                                                                                                               |
-| `DELETE /api/v1/documents/{id}/people` | Remove person assignment from document                                                                                                                                                          |
-| `POST /api/v1/documents/batch-delete`  | Batch delete documents (with partial failure reporting)                                                                                                                                         |
-| `POST /api/v1/documents/batch-tags`    | Batch assign tags (add or replace mode, with transaction)                                                                                                                                       |
-| `GET /api/v1/tags`                     | List/autocomplete tag names (`?q=`, `limit`, `offset`)                                                                                                                                          |
-| `POST /api/v1/tags`                    | Create tag                                                                                                                                                                                      |
-| `PUT /api/v1/tags/{id}`                | Update tag name                                                                                                                                                                                 |
-| `DELETE /api/v1/tags/{id}`             | Delete tag                                                                                                                                                                                      |
-| `GET /api/v1/people`                   | List/autocomplete people names (`?q=`, `limit`, `offset`)                                                                                                                                       |
-| `POST /api/v1/people`                  | Create person                                                                                                                                                                                   |
-| `PUT /api/v1/people/{id}`              | Update person name, native name                                                                                                                                                                 |
-| `DELETE /api/v1/people/{id}`           | Delete person (CASCADE to document_people)                                                                                                                                                      |
-| `GET /api/v1/people-types`             | List/autocomplete person types (`?q=`, `limit`, `offset`)                                                                                                                                       |
-| `POST /api/v1/people-types`            | Create person type                                                                                                                                                                              |
-| `PUT /api/v1/people-types/{id}`        | Update person type name, description                                                                                                                                                            |
-| `DELETE /api/v1/people-types/{id}`     | Delete person type (409 if referenced)                                                                                                                                                          |
-| `GET /api/v1/document-types`           | List/autocomplete document types (`?q=`, `limit`, `offset`)                                                                                                                                     |
-| `POST /api/v1/document-types`          | Create document type with description                                                                                                                                                           |
-| `PUT /api/v1/document-types/{id}`      | Update document type name, description                                                                                                                                                          |
-| `DELETE /api/v1/document-types/{id}`   | Delete document type (409 if referenced)                                                                                                                                                        |
-| `GET /api/v1/saved-searches`           | List saved searches                                                                                                                                                                             |
-| `POST /api/v1/saved-searches`          | Create saved search                                                                                                                                                                             |
-| `DELETE /api/v1/saved-searches/{id}`   | Delete saved search                                                                                                                                                                             |
-| `GET /api/v1/users`                    | List users (paginated, excludes password_hash/api_key)           |
-| `GET /api/v1/users/{id}`              | Get single user                                                  |
-| `POST /api/v1/users`                   | Create user (username + bcrypt password, min 12 chars)           |
-| `PUT /api/v1/users/{id}`              | Update username + optional password                              |
-| `DELETE /api/v1/users/{id}`           | Delete user                                                      |
-| `POST /api/v1/auth/login`             | Authenticate user, return JWT token + user profile               |
-| `POST /api/v1/auth/logout`            | No-op (client-side token discard)                                |
+| Endpoint                               | Description                                                 |
+| -------------------------------------- | ----------------------------------------------------------- |
+| `GET /health`                          | Health check                                                |
+| `GET /api/v1/documents`                | List documents (sortable, paginated)                        |
+| `GET /api/v1/documents/{id}`           | Get document with tags, people                              |
+| `GET /api/v1/documents/{id}/file`      | Download PDF file                                           |
+| `GET /api/v1/documents/search`         | FTS5 search with snippets                                   |
+| `POST /api/v1/documents/search`        | Structured search (tags, people, dates, size)               |
+| `PUT /api/v1/documents/{id}`           | Update document metadata (title, type, language)            |
+| `DELETE /api/v1/documents/{id}`        | Delete document + files                                     |
+| `POST /api/v1/documents/{id}/tags`     | Add tag assignment to document                              |
+| `DELETE /api/v1/documents/{id}/tags`   | Remove tag assignment from document                         |
+| `POST /api/v1/documents/{id}/people`   | Add person assignment to document                           |
+| `DELETE /api/v1/documents/{id}/people` | Remove person assignment from document                      |
+| `POST /api/v1/documents/batch-delete`  | Batch delete documents (with partial failure reporting)     |
+| `POST /api/v1/documents/batch-tags`    | Batch assign tags (add or replace mode, with transaction)   |
+| `GET /api/v1/tags`                     | List/autocomplete tag names (`?q=`, `limit`, `offset`)      |
+| `POST /api/v1/tags`                    | Create tag                                                  |
+| `PUT /api/v1/tags/{id}`                | Update tag name                                             |
+| `DELETE /api/v1/tags/{id}`             | Delete tag                                                  |
+| `GET /api/v1/people`                   | List/autocomplete people names (`?q=`, `limit`, `offset`)   |
+| `POST /api/v1/people`                  | Create person                                               |
+| `PUT /api/v1/people/{id}`              | Update person name, native name                             |
+| `DELETE /api/v1/people/{id}`           | Delete person (CASCADE to document_people)                  |
+| `GET /api/v1/people-types`             | List/autocomplete person types (`?q=`, `limit`, `offset`)   |
+| `POST /api/v1/people-types`            | Create person type                                          |
+| `PUT /api/v1/people-types/{id}`        | Update person type name, description                        |
+| `DELETE /api/v1/people-types/{id}`     | Delete person type (409 if referenced)                      |
+| `GET /api/v1/document-types`           | List/autocomplete document types (`?q=`, `limit`, `offset`) |
+| `POST /api/v1/document-types`          | Create document type with description                       |
+| `PUT /api/v1/document-types/{id}`      | Update document type name, description                      |
+| `DELETE /api/v1/document-types/{id}`   | Delete document type (409 if referenced)                    |
+| `GET /api/v1/saved-searches`           | List saved searches                                         |
+| `POST /api/v1/saved-searches`          | Create saved search                                         |
+| `DELETE /api/v1/saved-searches/{id}`   | Delete saved search                                         |
+| `GET /api/v1/users`                    | List users (paginated, excludes password_hash/api_key)      |
+| `GET /api/v1/users/{id}`               | Get single user                                             |
+| `POST /api/v1/users`                   | Create user (username + bcrypt password, min 12 chars)      |
+| `PUT /api/v1/users/{id}`               | Update username + optional password                         |
+| `DELETE /api/v1/users/{id}`            | Delete user                                                 |
+| `POST /api/v1/auth/login`              | Authenticate user, return JWT token + user profile          |
+| `POST /api/v1/auth/logout`             | No-op (client-side token discard)                           |
 
-| `POST /api/v1/consume`                 | Enqueue inbox files, fork processing worker                     |
-| `POST /api/v1/consume/upload`          | Upload files via multipart, fork processing worker                                                                                                                                              |
-| `GET /api/v1/tasks`                    | List tasks (batch, status filters)                                                                                                                                                              |
-| `GET /api/v1/tasks/{id}`               | Get single task                                                                                                                                                                                 |
-| `GET /api/v1/batches`                  | List batch summaries                                                                                                                                                                            |
-| `GET /api/v1/batches/{id}`             | Get single batch summary                                                                                                                                                                        |
-| `POST /api/v1/batches/{id}/resume`     | Resume batch (forks kushim worker)                                                                                                                                                              |
-| `POST /api/v1/batches/{id}/cancel`     | Cancel batch (SIGTERM worker, mark tasks cancelled)                                                                                                                                             |
-| `GET /api/v1/dashboard`                | Dashboard data: recent batches + activity timeline + document analytics (language/type/tag distributions, missing counts) + storage panel (totals, MIME breakdown, storage trend, pages, words) |
+| `POST /api/v1/consume` | Enqueue inbox files, fork processing worker |
+| `POST /api/v1/consume/upload` | Upload files via multipart, fork processing worker |
+| `GET /api/v1/tasks` | List tasks (batch, status filters) |
+| `GET /api/v1/tasks/{id}` | Get single task |
+| `GET /api/v1/batches` | List batch summaries |
+| `GET /api/v1/batches/{id}` | Get single batch summary |
+| `POST /api/v1/batches/{id}/resume` | Resume batch (forks kushim worker) |
+| `POST /api/v1/batches/{id}/cancel` | Cancel batch (SIGTERM worker, mark tasks cancelled) |
+| `GET /api/v1/dashboard` | Dashboard data: recent batches + activity timeline + document analytics (language/type/tag distributions, missing counts) + storage panel (totals, MIME breakdown, storage trend, pages, words) |
 
 ### CLI Commands
 
@@ -170,18 +170,18 @@
 
 #### Web UI — Page Status
 
-| Route             | Status | Notes                                                                                                                                                            |
-| ----------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/` (dashboard)   | ✓      | Health + summary stats + recent docs + batch overview panel + activity timeline                                                                                  |
-| `/documents`      | ✓      | Structured search bar + filter panel + saved searches + sortable DataTable                                                                                       |
-| `/documents/[id]` | ✓      | PDF preview + editable metadata sidebar (title, type, language, tags, people) + delete                                                                           |
+| Route             | Status | Notes                                                                                                                                                                                                                                    |
+| ----------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/` (dashboard)   | ✓      | Health + summary stats + recent docs + batch overview panel + activity timeline                                                                                                                                                          |
+| `/documents`      | ✓      | Structured search bar + filter panel + saved searches + sortable DataTable                                                                                                                                                               |
+| `/documents/[id]` | ✓      | PDF preview + editable metadata sidebar (title, type, language, tags, people) + delete                                                                                                                                                   |
 | `/settings`       | ✓      | Full configuration form: server host/port, OCR, consumer, text extractor, PDF optimizer, enricher, content analyzer (LLM) with tokens, tag matcher, text reducer, Users tab (DataTable + create/edit/delete modals), logout confirmation |
-| `/login`          | ✓      | Centered card form with username/password fields, auth-live error display, loading spinner, redirects to dashboard on success |
-| `/tags`           | ✓      | List, filter, create, edit, delete tags                                                                                                                          |
-| `/people`         | ✓      | Two tabs: People (name + native name) and Person Types (name + description)                                                                                      |
-| `/document-types` | ✓      | List, create, edit, delete document types                                                                                                                        |
-| `/tasks`          | ✓      | Batch list + task drill-down                                                                                                                                     |
-| `/tasks/[id]`     | ✓      | Task detail with status badge, batch/doc links, timestamps, error display, retry action                                                                          |
+| `/login`          | ✓      | Centered card form with username/password fields, auth-live error display, loading spinner, redirects to dashboard on success                                                                                                            |
+| `/tags`           | ✓      | List, filter, create, edit, delete tags                                                                                                                                                                                                  |
+| `/people`         | ✓      | Two tabs: People (name + native name) and Person Types (name + description)                                                                                                                                                              |
+| `/document-types` | ✓      | List, create, edit, delete document types                                                                                                                                                                                                |
+| `/tasks`          | ✓      | Batch list + task drill-down                                                                                                                                                                                                             |
+| `/tasks/[id]`     | ✓      | Task detail with status badge, batch/doc links, timestamps, error display, retry action                                                                                                                                                  |
 
 ### Quality
 
@@ -215,48 +215,48 @@
 > **Core differentiator achieved**: Automatic classification via LLM providers (tags, title, people,
 > document type) with semantic tag matching
 
-| #   | Feature                                  | Description                                                                                                                                                                       |
-| --- | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | **Configuration/setup wizard in web UI** | ✓ In-app configuration page (LLM providers, Tesseract languages, storage paths, model downloads)                                                                                  |
-| 2   | **Continue interrupted tasks**           | ✓ Manual retry for failed tasks (API + web UI). Wizard auto-resumes on restart, re-submission does not duplicate tasks, failed config downloads surfaced with retry action.       |
-| 3   | **Docker Compose quick-start**           | ✓ Single `docker compose up` command runs the full stack — multi-stage Dockerfile builds everything from source, entrypoint handles first-boot setup and conditional apt installs |
-| 4   | **Document detail — tags/people/type**   | ✓ Display tags, people, and document type in the sidebar                                                                                                                          |
-| 5   | **Document metadata editing**            | ✓ Detail page sidebar — edit tags, people, type, title (override LLM)                                                                                                             |
-| 6   | **Document update endpoint**             | ✓ `PUT /api/v1/documents/{id}` — update title, document_type_id, text_content                                                                                                     |
-| 7   | **Document delete endpoint**             | ✓ `DELETE /api/v1/documents/{id}` — remove document + files                                                                                                                       |
-| 8   | **Document tag/people assignment**       | ✓ `POST/DELETE /api/v1/documents/{id}/tags` and `/people` — junction management                                                                                                   |
-| 9   | **Tags CRUD API**                        | ✓ `GET/POST/PUT/DELETE /api/v1/tags` with `TagService` batch CRUD, auto-encoding, cache sync                                                                                      |
-| 10  | **People CRUD API**                      | ✓ `GET/POST/PUT/DELETE /api/v1/people` + `/api/v1/people-types` — `PeopleService` + `PeopleTypeService` batch CRUD                                                                |
-| 11  | **Document Types CRUD API**              | ✓ `GET/POST/PUT/DELETE /api/v1/document-types` — `DocumentTypeService` batch CRUD                                                                                                 |
-| 12  | **Tag management page**                  | ✓ List, create, edit, delete tags with filter input + conflict detection                                                                                                          |
-| 13  | **People management page**               | ✓ Two-tab route: People (name, native name, cascade delete) and Person Types (name, description, 409 handling)                                                                    |
-| 14  | **Document type management page**        | ✓ List, create, edit, delete document types with 409 conflict handling                                                                                                            |
-| 15  | **Document upload/consume flow**         | ✓ Wire Upload button to `POST /api/v1/consume/upload`, show progress feedback via modal                                                                                           |
-| 16  | **Single task detail page**              | ✓ New route `/tasks/{taskID}` — status badge, batch/doc links, timestamps, error display, retry action                                                                            |
-| 17  | **Integration test**                     | ✓ End-to-end consumption test (mock runner), DB CRUD, search, task system, API handlers — covering database queries, search engine, pool, enrichment flow                         |
-| 18  | **Test coverage**                        | ✓ Database queries, API handlers, search engine, task system (store/runner/dispatcher/pool), consumption pipeline. ✗ Adapters, CLI commands (existing gap)                        |
-| 19  | **Document download**                    | ✓ Download individual documents from the document list table. Batch download with configurable limits (max file count and/or total accumulated size).                             |
-| 20  | **Bulk operations**                      | ✓ Batch delete, batch tag assignment                                                                                                                                              |
-| 21  | **Batch cancel API endpoint**            | ✓ `POST /api/v1/batches/{id}/cancel` — expose `kushim consume cancel` through the API                                                                                             |
-| 22  | **Dashboard: storage panel**             | ✓ Total size, MIME type breakdown (count + size per type), cumulative storage trend by day/week, average file size, total pages, total words                                      |
-| 23  | **Dashboard: batch overview panel**      | ✓ Recent N batches with per-batch task summary, active/orphaned state, batch source, creation time, duration when complete                                                        |
-| 24  | **Dashboard: activity timeline**         | ✓ Chronological feed: document uploaded, task completed, task failed, batch created — merged from document.created_at, task.completed_at, batch.created_at                        |
-| 25  | **Dashboard: document analytics panel**  | ✓ Language distribution, document type distribution, tag frequency (top N), documents without tags/type/language counts                                                           |
-| 26  | **Dashboard: processing health panel**   | ✓ Task success rate (completed vs failed, last 7 days), avg task duration, active batch count, orphaned batch count, missing tools count                                          |
-| 27  | **Dashboard: summary API**               | ✓ Single `GET /api/v1/dashboard` endpoint returning all panel data — built from GROUP BY/JOIN queries on existing schema, no migrations needed                                    |
-| 28  | **User accounts**                        | ✓ User CRUD, bcrypt password hashing, user list page in settings UI                                                                                                               |
-| 29  | **Login and session management**         | ✓ Login/logout endpoints, JWT session tokens, auth middleware, protected API routes, login page, auth guard in root layout                                                                                |
-| 30  | **Setup creates initial admin user**     | `kushim setup` (CLI + wizard) prompts for admin username + password before completion, creates user via `service.User.Create()`. Session secret auto-generated and persisted during setup. |
-| 31  | **Orphaned file cleanup**                | Periodic scan of storage directories to detect and remove files without a corresponding DB record, handling the edge case where file removal fails after successful DB deletion.   |
-| 32  | **API keys**                             | Key generation/revocation/rotation, Bearer token validation middleware, per-user key management                                                                                   |
-| 33  | **Roles and permissions**                | RBAC schema with admin/editor/viewer roles, permission enforcement middleware, role assignment                                                                                    |
-| 34  | **Document notes/comments**              | User-added notes and annotations on documents                                                                                                                                     |
-| 35  | **Pre-built binaries**                   | Release binaries for major platforms (Linux amd64/arm64)                                                                                                                          |
-| 36  | **MySQL / MariaDB database backend**     | Additional database backend support                                                                                                                                               |
-| 37  | **User preferences**                     | Theme, pagination defaults, notification settings                                                                                                                                 |
-| 38  | **Email ingestion**                      | IMAP inbox scanning                                                                                                                                                               |
-| 39  | **Document relationships**               | Parent/child, cross-references between documents                                                                                                                                  |
-| 40  | **Contributing guide & issue templates** | `CONTRIBUTING.md`, issue/PR templates, and GitHub community setup to encourage contributions                                                                                      |
+| #   | Feature                                  | Description                                                                                                                                                                                |
+| --- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | **Configuration/setup wizard in web UI** | ✓ In-app configuration page (LLM providers, Tesseract languages, storage paths, model downloads)                                                                                           |
+| 2   | **Continue interrupted tasks**           | ✓ Manual retry for failed tasks (API + web UI). Wizard auto-resumes on restart, re-submission does not duplicate tasks, failed config downloads surfaced with retry action.                |
+| 3   | **Docker Compose quick-start**           | ✓ Single `docker compose up` command runs the full stack — multi-stage Dockerfile builds everything from source, entrypoint handles first-boot setup and conditional apt installs          |
+| 4   | **Document detail — tags/people/type**   | ✓ Display tags, people, and document type in the sidebar                                                                                                                                   |
+| 5   | **Document metadata editing**            | ✓ Detail page sidebar — edit tags, people, type, title (override LLM)                                                                                                                      |
+| 6   | **Document update endpoint**             | ✓ `PUT /api/v1/documents/{id}` — update title, document_type_id, text_content                                                                                                              |
+| 7   | **Document delete endpoint**             | ✓ `DELETE /api/v1/documents/{id}` — remove document + files                                                                                                                                |
+| 8   | **Document tag/people assignment**       | ✓ `POST/DELETE /api/v1/documents/{id}/tags` and `/people` — junction management                                                                                                            |
+| 9   | **Tags CRUD API**                        | ✓ `GET/POST/PUT/DELETE /api/v1/tags` with `TagService` batch CRUD, auto-encoding, cache sync                                                                                               |
+| 10  | **People CRUD API**                      | ✓ `GET/POST/PUT/DELETE /api/v1/people` + `/api/v1/people-types` — `PeopleService` + `PeopleTypeService` batch CRUD                                                                         |
+| 11  | **Document Types CRUD API**              | ✓ `GET/POST/PUT/DELETE /api/v1/document-types` — `DocumentTypeService` batch CRUD                                                                                                          |
+| 12  | **Tag management page**                  | ✓ List, create, edit, delete tags with filter input + conflict detection                                                                                                                   |
+| 13  | **People management page**               | ✓ Two-tab route: People (name, native name, cascade delete) and Person Types (name, description, 409 handling)                                                                             |
+| 14  | **Document type management page**        | ✓ List, create, edit, delete document types with 409 conflict handling                                                                                                                     |
+| 15  | **Document upload/consume flow**         | ✓ Wire Upload button to `POST /api/v1/consume/upload`, show progress feedback via modal                                                                                                    |
+| 16  | **Single task detail page**              | ✓ New route `/tasks/{taskID}` — status badge, batch/doc links, timestamps, error display, retry action                                                                                     |
+| 17  | **Integration test**                     | ✓ End-to-end consumption test (mock runner), DB CRUD, search, task system, API handlers — covering database queries, search engine, pool, enrichment flow                                  |
+| 18  | **Test coverage**                        | ✓ Database queries, API handlers, search engine, task system (store/runner/dispatcher/pool), consumption pipeline, storage layer, orphaned service. ✗ Adapters, CLI commands (existing gap) |
+| 19  | **Document download**                    | ✓ Download individual documents from the document list table. Batch download with configurable limits (max file count and/or total accumulated size).                                      |
+| 20  | **Bulk operations**                      | ✓ Batch delete, batch tag assignment                                                                                                                                                       |
+| 21  | **Batch cancel API endpoint**            | ✓ `POST /api/v1/batches/{id}/cancel` — expose `kushim consume cancel` through the API                                                                                                      |
+| 22  | **Dashboard: storage panel**             | ✓ Total size, MIME type breakdown (count + size per type), cumulative storage trend by day/week, average file size, total pages, total words                                               |
+| 23  | **Dashboard: batch overview panel**      | ✓ Recent N batches with per-batch task summary, active/orphaned state, batch source, creation time, duration when complete                                                                 |
+| 24  | **Dashboard: activity timeline**         | ✓ Chronological feed: document uploaded, task completed, task failed, batch created — merged from document.created_at, task.completed_at, batch.created_at                                 |
+| 25  | **Dashboard: document analytics panel**  | ✓ Language distribution, document type distribution, tag frequency (top N), documents without tags/type/language counts                                                                    |
+| 26  | **Dashboard: processing health panel**   | ✓ Task success rate (completed vs failed, last 7 days), avg task duration, active batch count, orphaned batch count, missing tools count                                                   |
+| 27  | **Dashboard: summary API**               | ✓ Single `GET /api/v1/dashboard` endpoint returning all panel data — built from GROUP BY/JOIN queries on existing schema, no migrations needed                                             |
+| 28  | **User accounts**                        | ✓ User CRUD, bcrypt password hashing, user list page in settings UI                                                                                                                        |
+| 29  | **Login and session management**         | ✓ Login/logout endpoints, JWT session tokens, auth middleware, protected API routes, login page, auth guard in root layout                                                                 |
+| 30  | **Orphaned file management**             | ✓ Detect, quarantine, list, delete, restore, and re-ingest orphaned files via API, CLI (`kushim storage orphans`), and WebUI. Startup + post-batch auto-scan. SQLite-backed tracking table with soft-delete. |
+| 31  | **Setup creates initial admin user**     | `kushim setup` (CLI + wizard) prompts for admin username + password before completion, creates user via `service.User.Create()`. Session secret auto-generated and persisted during setup. |
+| 32  | **API keys**                             | Key generation/revocation/rotation, Bearer token validation middleware, per-user key management                                                                                            |
+| 33  | **Roles and permissions**                | RBAC schema with admin/editor/viewer roles, permission enforcement middleware, role assignment                                                                                             |
+| 34  | **Document notes/comments**              | User-added notes and annotations on documents                                                                                                                                              |
+| 35  | **Pre-built binaries**                   | Release binaries for major platforms (Linux amd64/arm64)                                                                                                                                   |
+| 36  | **MySQL / MariaDB database backend**     | Additional database backend support                                                                                                                                                        |
+| 37  | **User preferences**                     | Theme, pagination defaults, notification settings                                                                                                                                          |
+| 38  | **Email ingestion**                      | IMAP inbox scanning                                                                                                                                                                        |
+| 39  | **Document relationships**               | Parent/child, cross-references between documents                                                                                                                                           |
+| 40  | **Contributing guide & issue templates** | `CONTRIBUTING.md`, issue/PR templates, and GitHub community setup to encourage contributions                                                                                               |
 
 ---
 

@@ -18,6 +18,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/consumption"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/pool"
+	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -133,6 +134,8 @@ func consumeHandler(c *Container, args []string) error {
 		hb.Start(ctx)
 
 		err = pollBatch(ctx, client.Queries, p, ep, c.logger, batchIDParam)
+
+		triggerOrphanScan(c)
 
 		hb.Stop()
 		relCtx, relCancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -255,6 +258,8 @@ func consumeHandler(c *Container, args []string) error {
 	hb.Start(ctx)
 
 	err = pollBatch(ctx, client.Queries, p, ep, c.logger, batchID)
+
+	triggerOrphanScan(c)
 
 	hb.Stop()
 	relCtx, relCancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -558,5 +563,25 @@ func pollBatch(ctx context.Context, queries *database.Queries, cp, ep *pool.Pool
 			ep.Stop(stopCtx)
 			return nil
 		}
+	}
+}
+
+func triggerOrphanScan(c *Container) {
+	client, err := c.GetClient()
+	if err != nil {
+		c.logger.Error(nil, "orphan scan: get client: %v", err)
+		return
+	}
+	store := task.NewStore(client.Queries)
+	svc := service.NewOrphaned(client.Queries, c.config, c.logger, store)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	count, err := svc.ScanAndQuarantine(ctx)
+	if err != nil {
+		c.logger.Error(nil, "orphan scan after batch: %v", err)
+		return
+	}
+	if count > 0 {
+		c.logger.Info(nil, "post-batch orphan scan: %d files quarantined", count)
 	}
 }

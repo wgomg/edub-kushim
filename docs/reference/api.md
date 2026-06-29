@@ -15,7 +15,7 @@
 ### Functions
 
 - `probeMatcher()` — Calls `matcherClient.Health()` with 2s timeout. Logs warning and continues if matcher is unreachable; tag CRUD returns `503` and enrich falls back to LLM-only tags.
-- `registerRoutes(logger, client, dispatcher, getConfig, onConfigSet, services, semaphore, workStore) *http.ServeMux` — Creates and returns a `*http.ServeMux` with all API routes registered; internally creates the `search.Engine` from `client`. Uses Go 1.22+ pattern routing (`"GET /api/v1/documents/{id}"`). Auth routes (`POST /api/v1/auth/login`, `POST /api/v1/auth/logout`) are registered before all other routes so they are public (bypassed by `AuthMiddleware`).
+- `registerRoutes(logger, client, dispatcher, getConfig, onConfigSet, services, semaphore, workStore) *http.ServeMux` — Creates and returns a `*http.ServeMux` with all API routes registered; internally creates the `search.Engine` from `client`. Uses Go 1.22+ pattern routing (`"GET /api/v1/documents/{id}"`). Auth routes (`POST /api/v1/auth/login`, `POST /api/v1/auth/logout`) are registered before all other routes so they are public (bypassed by `AuthMiddleware`). Orphaned file routes (`GET/POST/DELETE /api/v1/documents/orphaned/...`) are registered via `OrphanedHandler` after the document routes.
 - `registerStaticRoutes(mux *http.ServeMux)` — Registers `"GET /{path...}"` handler; tries to serve the requested file from the embedded FS, falls back to `index.html` for client-side SPA routes if the file doesn't exist
 - `chainMiddleware(logger *utils.Logger, getSecret func() string, h http.Handler) http.Handler` — Composes request + auth + parambag middleware. The auth middleware skips public paths (`/health`, `/wizard/*`, `/api/v1/auth/*`, non-API paths) and validates Bearer JWTs on all other API routes.
 - `AuthMiddleware(next http.Handler, getSecret func() string) http.Handler` — Extracts `Authorization: Bearer <token>` header, validates JWT via `auth.ValidateToken`, injects `userID` and `username` into `r.Context()` using typed context keys. Returns 401 JSON with generic error for missing/invalid/expired tokens. Bypasses auth for public paths.
@@ -52,7 +52,7 @@
     - `SearchDocuments(w, r)` — `GET /api/v1/documents/search` — Returns `FTSDocumentResponse` array with enhanced fields
     - `SearchDocumentsStructured(w, r)` — `POST /api/v1/documents/search` — Accepts `search.Filter` JSON body, calls `engine.SearchStructured(ctx, filter)`, returns `SearchResponse` with `results` array and `total` count. Enriches each result with tags and people from DB to avoid N+1.
     - `UpdateDocument(w, r)` — `PUT /api/v1/documents/{id}` — Accepts `DocumentUpdateRequest` JSON (title, document_type_id, language, text_content). Validates title non-empty, document type exists (via `GetDocumentType`), defaults language to `"und"` when empty. Preserves existing `text_content` when nil. Returns `204 No Content`.
-    - `DeleteDocument(w, r)` — `DELETE /api/v1/documents/{id}` — Fetches document to get file paths, calls `DeleteDocument` (single DELETE with cascade + FTS trigger), then best-effort `os.Remove` on original and storage paths. Returns `204 No Content`.
+    - `DeleteDocument(w, r)` — `DELETE /api/v1/documents/{id}` — Fetches document to get file paths, calls `DeleteDocument` (single DELETE with cascade + FTS trigger), then best-effort `os.Remove` on original and storage paths. Returns `204 No Content`. Triggers async orphan scan post-deletion.
     - `AddDocumentTag(w, r)` — `POST /api/v1/documents/{id}/tags` — Accepts `{tag_id}`, validates document and tag exist via `services.Tag.Get` (maps `KindNotFound` → 404 via `writeServiceError`), calls `AddDocumentTag` (INSERT OR IGNORE). Returns `204 No Content`.
     - `RemoveDocumentTag(w, r)` — `DELETE /api/v1/documents/{id}/tags` — Accepts `{tag_id}`, validates document exists, calls `RemoveDocumentTag`. Returns `204 No Content`.
     - `AddDocumentPeople(w, r)` — `POST /api/v1/documents/{id}/people` — Accepts `{people_id, people_type_id}`, validates document, person, and people type exist, calls `AddDocumentPeople` (INSERT OR IGNORE). Returns `204 No Content`.
@@ -292,8 +292,8 @@ See `AuthMiddleware` under `server.go` → Functions.
 
 ### Structs
 
-- `CrudServices` — `Tag *service.Tag`, `People *service.People`, `PeopleType *service.PeopleType`, `DocumentType *service.DocumentType`, `User *service.User`
-  - `Close()` — Uses reflection to iterate struct fields; calls `Close()` on every field implementing `io.Closer`. Automatically picks up new services added as fields (none of the new services implement `io.Closer`, `User` included).
+- `CrudServices` — `Tag *service.Tag`, `People *service.People`, `PeopleType *service.PeopleType`, `DocumentType *service.DocumentType`, `User *service.User`, `Orphaned *service.Orphaned`
+  - `Close()` — Uses reflection to iterate struct fields; calls `Close()` on every field implementing `io.Closer`. Automatically picks up new services added as fields. `Orphaned` does not implement `io.Closer` and is skipped silently.
 
 ## `types/user.go`
 
@@ -364,6 +364,14 @@ mux.HandleFunc("POST /api/v1/documents/{id}/tags", docHandler.AddDocumentTag)
 mux.HandleFunc("DELETE /api/v1/documents/{id}/tags", docHandler.RemoveDocumentTag)
 mux.HandleFunc("POST /api/v1/documents/{id}/people", docHandler.AddDocumentPeople)
 mux.HandleFunc("DELETE /api/v1/documents/{id}/people", docHandler.RemoveDocumentPeople)
+
+mux.HandleFunc("GET /api/v1/documents/orphaned", orphanedHandler.ListOrphaned)
+mux.HandleFunc("POST /api/v1/documents/orphaned/scan", orphanedHandler.ScanOrphaned)
+mux.HandleFunc("DELETE /api/v1/documents/orphaned/{id}", orphanedHandler.DeleteOrphaned)
+mux.HandleFunc("POST /api/v1/documents/orphaned/{id}/restore", orphanedHandler.RestoreOrphaned)
+mux.HandleFunc("POST /api/v1/documents/orphaned/{id}/move-to-inbox", orphanedHandler.MoveToInbox)
+mux.HandleFunc("POST /api/v1/documents/orphaned/delete-all", orphanedHandler.DeleteAllOrphaned)
+mux.HandleFunc("POST /api/v1/documents/orphaned/move-to-inbox-all", orphanedHandler.MoveAllToInbox)
 
 mux.HandleFunc("GET /api/v1/tags", tagHandler.List)
 mux.HandleFunc("POST /api/v1/tags", tagHandler.Create)

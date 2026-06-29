@@ -14,7 +14,8 @@ internal/
 │   │   ├── people.go      # People + people-type CRUD handlers (list, create, update, delete)
 │   │   ├── saved_search.go # Saved search CRUD handlers (create, list, delete)
 │   │   ├── tag.go         # Tag CRUD handlers (list, create, update, delete)
-│   │   └── task.go        # Task API handlers (list, get, batch summary, global summary with waiting status)
+│   │   ├── task.go        # Task API handlers (list, get, batch summary, global summary with waiting status)
+│   │   └── orphaned.go     # Orphaned file management handlers (list, scan, delete, restore, move-to-inbox)
 │   ├── server.go          # HTTP server setup, middleware, route registration, static SPA (Go 1.22+ patterns)
 │   └── types/
 │       ├── config.go          # Config response types (ConfigResponse, ConfigStatusResponse, engine responses)
@@ -35,6 +36,7 @@ internal/
 │   ├── flags.go           # CLI flag parser (shared by commands)
 │   ├── search.go          # Search command (CLI)
 │   ├── serve_matching.go  # Matcher RPC server over Unix socket (encode, match, consolidate, store ops)
+│   ├── storage.go         # Storage commands: `kushim storage orphans` (list, scan, delete, restore, move-to-inbox)
 │   ├── setup.go           # Setup command — launches web wizard by default, --cli for terminal mode
 │   └── task.go            # Task commands (list, status, retry)
 ├── configtask/            # Config task handler
@@ -47,7 +49,8 @@ internal/
 │   ├── people.go          # People service (NewPeople, batch CRUD)
 │   ├── peopletype.go      # PeopleType service (NewPeopleType, batch CRUD)
 │   ├── tag.go             # Tag service (NewTag, batch CRUD, embedder integration)
-│   └── documenttype.go    # DocumentType service (NewDocumentType, batch CRUD)
+│   ├── documenttype.go    # DocumentType service (NewDocumentType, batch CRUD)
+│   └── orphaned.go        # Orphaned file service (scan, list, delete, restore, move-to-inbox)
 ├── pool/                  # Generic worker pool + semaphore
 │   ├── pool.go            # Pool struct, Start(ctx), Stop(ctx), worker loop
 │   └── semaphore.go       # Counting semaphore (Acquire/Release) — moved from concurrency/
@@ -90,6 +93,19 @@ internal/
 │       ├── schema/        # Seed SQL files (seed-tags.sql, seed-document-types.sql, seed-people-types.sql)
 │       │   └── migrations/ # goose versioned migrations (00001_baseline.sql, ...) — also read by sqlc
 │       └── queries/       # SQL queries for sqlc
+│           ├── document.sql
+│           ├── document_tag.sql
+│           ├── document_people.sql
+│           ├── document_type.sql
+│           ├── saved_search.sql
+│           ├── tag.sql
+│           ├── people.sql
+│           ├── people_type.sql
+│           ├── task.sql
+│           ├── user.sql
+│           └── orphaned.sql
+├── storage/              # Filesystem operations for orphaned file management
+│   └── orphaned.go        # Walk originals/processed, quarantine, remove, copy to inbox
 ├── static/                # Embedded web UI (main app)
 │   └── fs.go              # Embedded SvelteKit build (build/ directory via //go:embed)
 ├── tagmatch/              # Tag matcher RPC client
@@ -175,6 +191,8 @@ web/                      # SvelteKit SPA frontend (main UI)
 │       │   ├── +page.svelte      # Document list with search bar, filters, saved searches, DataTable
 │       │   └── [id]/
 │       │       └── +page.svelte  # Single document detail page
+│       ├── documents/orphaned/
+│       │   └── +page.svelte      # Orphaned file management page
 │       ├── settings/
 │       │   └── +page.svelte      # Settings page — OCR, consumer, enricher config via /wizard/config API
 │       ├── tags/

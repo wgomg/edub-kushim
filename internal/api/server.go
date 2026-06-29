@@ -80,6 +80,9 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 	workStore := task.NewStore(client.Queries)
 	configStore := task.NewStore(client.Queries)
 
+	s.services.Orphaned = service.NewOrphaned(client.Queries, &cfg, logger, workStore)
+	s.services.Orphaned.ScanAndQuarantineAsync()
+
 	registry := task.NewRegistry()
 	registry.Register("config", configtask.NewConfigTaskHandler(logger))
 
@@ -189,6 +192,15 @@ func registerRoutes(
 	mux.HandleFunc("POST /api/v1/documents/batch-tags", docHandler.BatchAssignTags)
 	mux.HandleFunc("GET /api/v1/filter-languages", docHandler.FilterLanguages)
 	mux.HandleFunc("GET /api/v1/filter-mime-types", docHandler.FilterMimeTypes)
+
+	orphanedHandler := handlers.NewOrphanedHandler(services.Orphaned, logger)
+	mux.HandleFunc("GET /api/v1/documents/orphaned", orphanedHandler.ListOrphaned)
+	mux.HandleFunc("POST /api/v1/documents/orphaned/scan", orphanedHandler.ScanOrphaned)
+	mux.HandleFunc("DELETE /api/v1/documents/orphaned/{id}", orphanedHandler.DeleteOrphaned)
+	mux.HandleFunc("POST /api/v1/documents/orphaned/{id}/restore", orphanedHandler.RestoreOrphaned)
+	mux.HandleFunc("POST /api/v1/documents/orphaned/{id}/move-to-inbox", orphanedHandler.MoveToInbox)
+	mux.HandleFunc("POST /api/v1/documents/orphaned/delete-all", orphanedHandler.DeleteAllOrphaned)
+	mux.HandleFunc("POST /api/v1/documents/orphaned/move-to-inbox-all", orphanedHandler.MoveAllToInbox)
 
 	tagHandler := handlers.NewTagHandler(services, logger)
 	mux.HandleFunc("GET /api/v1/tags", tagHandler.List)

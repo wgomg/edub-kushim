@@ -68,6 +68,21 @@ type DocumentType struct {
 	CreatedAt   sql.NullTime
 }
 
+type OrphanedFile struct {
+	ID              int64
+	DocumentKey     string
+	DocumentKeyType string
+	FilePath        string
+	OriginalPath    string
+	SourceDir       string
+	FileSize        int64
+	MimeType        string
+	DetectedAt      sql.NullTime
+	Status          string
+	ActionAt        sql.NullTime
+	ActionType      sql.NullString
+}
+
 type People struct {
 	ID         int64
 	Name       string

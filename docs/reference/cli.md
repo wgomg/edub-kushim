@@ -4,7 +4,7 @@
 
 ### Globals
 
-`commandSets` map with `"cli"` key. CLI set contains: `version`, `consume`, `search`, `task`, `setup`, `hugot`.
+`commandSets` map with `"cli"` key. CLI set contains: `version`, `consume`, `search`, `task`, `setup`, `hugot`, `storage`.
 
 > **Note**: The `edub` binary no longer uses `CommandRunner` from the commands package. It has its own standalone runner in `cmd/edub/runner.go` that only handles the `version` command (server mode is the default when no command matches).
 
@@ -109,6 +109,33 @@ Listens on a Unix socket (cleaned up on shutdown). Handles SIGTERM/SIGINT for gr
 - `taskListHandler(c, args) error` — Lists tasks with batch/status/type/limit/offset filters; columns: TASK ID, TYPE, STATUS, BATCH, FILE
 - `taskStatusHandler(c, args) error` — Shows task details with type, timestamps, document DB ID, document UUID, error for failed tasks
 - `taskRetryHandler(c, args) error` — Re-enqueues a failed task as pending
+
+---
+
+## `storage.go`
+
+### Functions
+
+- `storageHandler(c, args) error` — Entry point for `kushim storage`. Routes subcommands, currently only `orphans`.
+- `orphansHandler(c, args) error` — Manages orphaned files. Creates `docker.Orphaned` service from the container and dispatches to:
+  - `orphansList(svc, args)` — Lists pending orphaned files with ID, key, source dir, size, status
+  - `orphansScan(svc, args)` — Runs detection + quarantine
+  - `parseAndRun(svc, args, action)` — Parses `--id` flag and runs Delete/Restore
+  - `parseAndRunOrAll(svc, args, single, bulk)` — Parses `--id` or `--all` and runs MoveToInbox
+  - `orphansBulk(svc, args, label, action)` — Runs bulk action (DeleteAll, MoveAllToInbox)
+
+### Subcommands
+
+```
+kushim storage orphans list
+kushim storage orphans scan
+kushim storage orphans delete --id <n>
+kushim storage orphans restore --id <n>
+kushim storage orphans move-to-inbox --id <n>
+kushim storage orphans move-to-inbox --all
+kushim storage orphans delete-all
+kushim storage orphans move-to-inbox-all
+```
 
 ---
 

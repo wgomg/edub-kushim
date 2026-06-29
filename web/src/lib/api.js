@@ -345,5 +345,27 @@ export const api = {
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ username, password })
 			})
+	},
+
+	orphaned: {
+		list: () => request('/api/v1/documents/orphaned').then((data) => data ?? []),
+
+		scan: () =>
+			requestRaw('/api/v1/documents/orphaned/scan', { method: 'POST' }),
+
+		delete: (id) =>
+			requestRaw(`/api/v1/documents/orphaned/${id}`, { method: 'DELETE' }),
+
+		restore: (id) =>
+			requestRaw(`/api/v1/documents/orphaned/${id}/restore`, { method: 'POST' }),
+
+		moveToInbox: (id) =>
+			requestRaw(`/api/v1/documents/orphaned/${id}/move-to-inbox`, { method: 'POST' }),
+
+		deleteAll: () =>
+			requestRaw('/api/v1/documents/orphaned/delete-all', { method: 'POST' }),
+
+		moveAllToInbox: () =>
+			requestRaw('/api/v1/documents/orphaned/move-to-inbox-all', { method: 'POST' })
 	}
 };
