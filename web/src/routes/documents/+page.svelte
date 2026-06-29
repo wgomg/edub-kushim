@@ -312,7 +312,7 @@
 			</button>
 			<button
 				onclick={handleBatchDelete}
-				class="bg-terracotta-700 shrink-0 rounded-lg px-3 py-2 text-sm font-medium text-parchment-200 hover:bg-terracotta-600"
+				class="shrink-0 rounded-lg bg-terracotta-700 px-3 py-2 text-sm font-medium text-parchment-200 hover:bg-terracotta-600"
 			>
 				Delete selected ({selectedDocs.length})
 			</button>
@@ -332,7 +332,7 @@
 								type="text"
 								placeholder="Search tags…"
 								oninput={onTagSearchInput}
-								class="border-clay-700 placeholder-parchment-600 mb-2 w-full rounded-md border bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 focus:border-gold-500 focus:ring-0 focus:outline-none"
+								class="mb-2 w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus:outline-none"
 							/>
 							<div class="mb-2 max-h-40 overflow-y-auto">
 								{#each tagOptions as tag (tag.id)}
@@ -364,7 +364,7 @@
 										{@const tag = tagOptions.find((t) => t.id === tid)}
 										{#if tag}
 											<span
-												class="text-parchment-300 inline-flex items-center gap-1 rounded-full bg-clay-800 px-2 py-0.5 text-xs"
+												class="inline-flex items-center gap-1 rounded-full bg-clay-800 px-2 py-0.5 text-xs text-parchment-300"
 											>
 												{tag.name}
 												<button
@@ -490,7 +490,7 @@
 						type="text"
 						bind:value={saveName}
 						placeholder="e.g. Invoices from Q1"
-						class="border-clay-700 placeholder-parchment-600 mb-2 w-full rounded-md border bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 focus:border-gold-500 focus:ring-0 focus:outline-none"
+						class="mb-2 w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus:outline-none"
 					/>
 					<div class="flex justify-end gap-2">
 						<button
@@ -525,5 +525,7 @@
 		{refreshKey}
 		selectable={true}
 		onselectionchange={(rows) => (selectedDocs = rows)}
+		defaultSortBy="created_at"
+		defaultSortOrder="desc"
 	/>
 </div>

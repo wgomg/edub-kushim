@@ -21,6 +21,8 @@
 	 * pageSizes?: number[],
 	 * defaultPageSize?: number,
 	 * keyField?: string,
+	 * defaultSortBy?: string,
+	 * defaultSortOrder?: 'asc' | 'desc',
 	 * title?: string,
 	 * selectable?: boolean,
 	 * onselectionchange?: (selectedRows: any[]) => void
@@ -36,7 +38,9 @@
 		title = '',
 		refreshKey = 0,
 		selectable = false,
-		onselectionchange = null
+		onselectionchange = null,
+		defaultSortBy = '',
+		defaultSortOrder = 'desc'
 	} = $props();
 
 	let selectedKeys = $state(new Set());
@@ -55,8 +59,11 @@
 	$effect(() => {
 		if (!initialized) {
 			pageSize = defaultPageSize;
-			const first = columns.find((c) => c.sortable);
-			if (first) sortBy = first.key;
+			const target = (defaultSortBy && columns.find((c) => c.key === defaultSortBy))
+				|| columns.find((c) => c.sortable)
+				|| columns[0];
+			if (target) sortBy = target.key;
+			if (defaultSortOrder === 'asc') sortOrder = 'asc';
 			initialized = true;
 		}
 	});
