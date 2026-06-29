@@ -11,6 +11,7 @@ server:
   max_upload_size: 100 # max multipart upload size in MB
   max_download_files: 50 # max files in a single batch download
   max_download_size_mb: 500 # max total size in MB for batch download
+  auth_enabled: false # when false, API endpoints bypass JWT auth
 
 database:
   type: sqlite

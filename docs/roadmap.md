@@ -190,7 +190,7 @@
 - ✓ Task system tests (14 tests) — Store, dispatcher, runner, pool lifecycle, dedup key handling
 - ✓ API handler tests (20 tests) — health, document CRUD, tag/people CRUD, user CRUD, task endpoints, saved searches, concurrent operations, auth login/logout, token claims
 - ✓ Auth package tests (6 tests) — session secret generation, JWT generation/validation, wrong secret, expired token, malformed token
-- ✓ Auth middleware tests (7 tests) — public path bypass, missing/invalid/valid token, wrong secret, missing bearer prefix, empty header
+- ✓ Auth middleware tests (8 tests) — public path bypass, missing/invalid/valid token, wrong secret, missing bearer prefix, empty header, disabled flag passes all paths
 - ✓ Consumption pipeline tests (11 tests) — full consume flow with mock runner, file I/O, duplicate detection, error paths
 - ✓ `internal/testutil` package — assertion helpers, PDF fixtures, mock embedder
 - ✓ `Makefile` test targets (`make test`, `make test-verbose`)

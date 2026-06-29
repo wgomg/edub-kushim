@@ -26,7 +26,7 @@ CGO_ENABLED=0 go test -tags "XLA,ORT" ./internal/...
 | `internal/task` | 14 | Store (create/get/claim/complete/fail), dedup key uniqueness, dispatcher enqueue with custom status/ID, runner (complete/fail/no-tasks), pool lifecycle |
 | `internal/api/handlers` | 24 | Document CRUD, tag/people/DocumentType CRUD, user CRUD, task endpoints, saved searches, concurrent operations, dashboard activity + analytics + processing health, analytics error path, config handler get/status, batch delete limits, error helpers, auth login (valid/invalid/empty/claims), auth logout |
 | `internal/auth` | 6 | Session secret generation, JWT generation/validation round-trip, wrong secret rejection, expired token rejection, malformed token rejection, token part structure |
-| `internal/api` | 7 | Auth middleware: public path bypass, no-token 401, invalid token 401, wrong secret 401, valid token passes with context injection, missing bearer prefix, empty authorization header |
+| `internal/api` | 8 | Auth middleware: public path bypass, no-token 401, invalid token 401, wrong secret 401, valid token passes with context injection, missing bearer prefix, empty authorization header, disabled bypasses all paths |
 | `internal/consumption` | 11 | Full consumer pipeline via mock runner (file discovery, DB transaction, file movement, duplicate detection), file I/O helpers (get, move, copy, remove, clean up), checksum calculation |
 
 ---

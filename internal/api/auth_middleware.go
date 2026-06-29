@@ -9,8 +9,13 @@ import (
 	"github.com/wgomg/edub-kushim/internal/auth"
 )
 
-func AuthMiddleware(next http.Handler, getSecret func() string) http.Handler {
+func AuthMiddleware(next http.Handler, getSecret func() string, getAuthEnabled func() bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !getAuthEnabled() {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		path := r.URL.Path
 
 		if path == "/health" ||

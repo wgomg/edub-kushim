@@ -114,7 +114,8 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 	registerStaticRoutes(mux)
 
 	getSecret := func() string { return s.cfg.Load().Srv.SessionSecret }
-	handler := chainMiddleware(logger, getSecret, mux)
+	getAuthEnabled := func() bool { return s.cfg.Load().Srv.AuthEnabled }
+	handler := chainMiddleware(logger, getSecret, getAuthEnabled, mux)
 
 	s.httpServer = &http.Server{
 		Addr:         addr,
@@ -247,8 +248,8 @@ func registerRoutes(
 	return mux
 }
 
-func chainMiddleware(logger *utils.Logger, getSecret func() string, h http.Handler) http.Handler {
-	return requestMiddleware(logger, AuthMiddleware(parambagMiddleware(h), getSecret))
+func chainMiddleware(logger *utils.Logger, getSecret func() string, getAuthEnabled func() bool, h http.Handler) http.Handler {
+	return requestMiddleware(logger, AuthMiddleware(parambagMiddleware(h), getSecret, getAuthEnabled))
 }
 
 func requestMiddleware(logger *utils.Logger, next http.Handler) http.Handler {

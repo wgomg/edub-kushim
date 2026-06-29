@@ -36,6 +36,7 @@ type ServerConfig struct {
 	MaxDownloadFiles     int           `mapstructure:"max_download_files" yaml:"max_download_files" json:"max_download_files"`
 	MaxDownloadSizeMB    int64         `mapstructure:"max_download_size_mb" yaml:"max_download_size_mb" json:"max_download_size_mb"`
 	MaxBatchDelete       int           `mapstructure:"max_batch_delete" yaml:"max_batch_delete" json:"max_batch_delete"`
+	AuthEnabled          bool          `mapstructure:"auth_enabled" yaml:"auth_enabled" json:"auth_enabled"`
 	SessionSecret        string        `mapstructure:"session_secret" yaml:"session_secret" json:"session_secret"`
 }
 
@@ -250,6 +251,7 @@ func DefaultConfig(configDir string) *Config {
 			MaxDownloadFiles:     50,
 			MaxDownloadSizeMB:    500,
 			MaxBatchDelete:       50,
+			AuthEnabled:          true,
 		},
 		Db: DatabaseConfig{
 			Type: "sqlite",

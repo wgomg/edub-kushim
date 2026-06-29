@@ -45,6 +45,7 @@ type ServerConfigResponse struct {
 	Host          string `json:"host"`
 	Port          int    `json:"port"`
 	MaxUploadSize int64  `json:"max_upload_size"`
+	AuthEnabled   bool   `json:"auth_enabled"`
 }
 
 type PollingWindowResponse struct {
@@ -178,6 +179,7 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Server.Host = cfg.Srv.Host
 	resp.Server.Port = cfg.Srv.Port
 	resp.Server.MaxUploadSize = cfg.Srv.MaxUploadSize
+	resp.Server.AuthEnabled = cfg.Srv.AuthEnabled
 	resp.AvailableEngines = config.AvailableEngines
 	return resp
 }

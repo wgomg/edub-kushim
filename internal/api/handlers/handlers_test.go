@@ -1260,11 +1260,13 @@ func TestConfigHandlerGetConfig(t *testing.T) {
 		var resp types.ConfigResponse
 		json.NewDecoder(w.Body).Decode(&resp)
 		testutil.AssertEqual(t, resp.Server.Host, "0.0.0.0", "default host")
+		testutil.AssertEqual(t, resp.Server.AuthEnabled, true, "default auth_enabled")
 	})
 
 	t.Run("stored config is returned", func(t *testing.T) {
 		stored := config.DefaultConfig("/tmp/test-config")
 		stored.Srv.Port = 9999
+		stored.Srv.AuthEnabled = false
 		stored.Storage.ConsumptionDir = "/custom/inbox"
 		stored.Storage.StorageDir = "/custom/storage"
 		stored.Db.Path = "/custom/data"
@@ -1276,6 +1278,7 @@ func TestConfigHandlerGetConfig(t *testing.T) {
 		var resp types.ConfigResponse
 		json.NewDecoder(w.Body).Decode(&resp)
 		testutil.AssertEqual(t, resp.Server.Port, 9999, "stored port")
+		testutil.AssertEqual(t, resp.Server.AuthEnabled, false, "stored auth_enabled")
 		testutil.AssertEqual(t, resp.Storage.ConsumptionDir, "/custom/inbox", "storage consumption_dir")
 		testutil.AssertEqual(t, resp.Storage.StorageDir, "/custom/storage", "storage storage_dir")
 		testutil.AssertEqual(t, resp.Database.Path, "/custom/data", "database path")
@@ -1296,6 +1299,7 @@ func TestConfigHandlerGetConfig(t *testing.T) {
 		var resp types.ConfigResponse
 		json.NewDecoder(w.Body).Decode(&resp)
 		testutil.AssertEqual(t, resp.Server.Port, 7777, "bootstrapped port")
+		testutil.AssertEqual(t, resp.Server.AuthEnabled, true, "auth_enabled from default")
 	})
 }
 

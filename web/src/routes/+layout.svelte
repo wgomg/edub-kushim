@@ -14,6 +14,8 @@
 	let { children } = $props();
 	let missingTools = $state([]);
 	let uploadOpen = $state(false);
+	let authEnabled = $state(true);
+	let configLoaded = $state(false);
 
 	let missingCount = $derived(
 		missingTools.reduce((sum, t) => {
@@ -26,16 +28,21 @@
 	);
 
 	$effect(() => {
-		if (!authStore.isAuthenticated() && $page.url.pathname !== '/login') {
+		if (configLoaded && authEnabled && !authStore.isAuthenticated() && $page.url.pathname !== '/login') {
 			goto('/login');
 		}
 	});
 
 	onMount(async () => {
-		const status = await api.config.status();
+		const [status, cfg] = await Promise.all([
+			api.config.status(),
+			api.config.get()
+		]);
 		if (status) {
 			missingTools = status.missing_tools ?? [];
 		}
+		authEnabled = cfg?.server?.auth_enabled ?? true;
+		configLoaded = true;
 	});
 
 	async function handleLogout() {
@@ -53,6 +60,9 @@
 <svelte:head><link rel="icon" href={favicon} /></svelte:head>
 
 {#if $page.url.pathname !== '/login'}
+<a href="#main-content" class="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-clay-900 focus:px-4 focus:py-2 focus:text-parchment-200 focus:outline-none focus:ring-2 focus:ring-gold-500">
+	Skip to main content
+</a>
 <div class="flex h-screen overflow-hidden bg-clay-950">
 	<!-- Sidebar -->
 	<aside class="flex w-56 shrink-0 flex-col border-r border-clay-800 bg-clay-900">
@@ -124,12 +134,12 @@
 				class="shrink-0 border-b border-gold-500/30 bg-gold-500/10 px-6 py-2 text-sm text-gold-500"
 			>
 				⚠️ {missingCount} required tool(s) not installed — document consumption is paused.
-				<a href="/settings" class="underline">Review settings</a>
+				<a href="/settings" class="underline">Review Settings</a>
 			</div>
 		{/if}
 
 		<!-- Page content -->
-		<main class="flex-1 overflow-y-auto bg-clay-950 p-6">
+		<main id="main-content" class="flex-1 overflow-y-auto bg-clay-950 p-6">
 			{@render children()}
 		</main>
 

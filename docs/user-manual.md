@@ -783,7 +783,7 @@ GET /wizard/config
 ```
 
 Returns the current configuration as a `ConfigResponse` JSON object with `app`
-(boolean `initialized`), `server` (host, port), `consumer`, and `enricher` sections
+(boolean `initialized`), `server` (host, port, auth_enabled), `consumer`, and `enricher` sections
 (including LLM provider tokens) plus `available_engines` for UI dropdowns. Returns
 defaults from `DefaultConfig("")` when no config has been bootstrapped yet,
 so the response always has a complete shape.
@@ -1396,6 +1396,7 @@ server:
   max_download_files: 50 # max files in a single batch download
   max_download_size_mb: 500 # max total size in MB for batch download
   max_batch_delete: 50 # max documents in a single batch delete
+  auth_enabled: false # when false, API endpoints bypass JWT auth
 
 database:
   type: sqlite # currently only sqlite

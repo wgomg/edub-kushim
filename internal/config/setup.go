@@ -62,8 +62,11 @@ func Bootstrap(configDir string) (*Config, error) {
 		return nil, err
 	}
 	cfg.Srv.SessionSecret = secret
-	if err := SaveMap(configDir, map[string]any{"server.session_secret": cfg.Srv.SessionSecret}); err != nil {
-		return nil, fmt.Errorf("write session secret: %w", err)
+	if err := SaveMap(configDir, map[string]any{
+		"server.session_secret": cfg.Srv.SessionSecret,
+		"server.auth_enabled":   false,
+	}); err != nil {
+		return nil, fmt.Errorf("write bootstrap config: %w", err)
 	}
 
 	dsn := filepath.Join(cfg.Db.Path, cfg.Db.Name)
