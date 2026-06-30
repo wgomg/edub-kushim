@@ -29,6 +29,7 @@ type BatchCounts struct {
 
 type BatchSummaryResponse struct {
 	BatchID  string `json:"batch_id"`
+	Status   string `json:"status"`
 	BatchCounts
 	OwnerPID int64  `json:"owner_pid,omitempty"`
 }
@@ -58,6 +59,7 @@ type StorageTrendPoint struct {
 
 type BatchOverviewItem struct {
 	BatchID    string `json:"batch_id"`
+	Status     string `json:"status"`
 	Source     string `json:"source"`
 	CreatedAt  string `json:"created_at"`
 	BatchCounts

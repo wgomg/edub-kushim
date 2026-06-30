@@ -23,7 +23,7 @@ func TestBatch_Create(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("creates batch with valid id and source", func(t *testing.T) {
-		err := svc.Create(ctx, "batch-1", "api")
+		err := svc.Create(ctx, "batch-1", "api", "queued")
 		testutil.AssertNoError(t, err, "create batch")
 		tasks, err := client.Queries.ListAllTasksByBatch(ctx, sql.NullString{String: "batch-1", Valid: true})
 		testutil.AssertNoError(t, err, "verify batch exists via tasks")
@@ -31,7 +31,7 @@ func TestBatch_Create(t *testing.T) {
 	})
 
 	t.Run("rejects empty id", func(t *testing.T) {
-		err := svc.Create(ctx, "", "api")
+		err := svc.Create(ctx, "", "api", "queued")
 		testutil.AssertError(t, err, "empty id should fail")
 	})
 }
@@ -42,7 +42,7 @@ func TestBatch_GetSummary_OwnerState(t *testing.T) {
 
 	t.Run("no owner with pending tasks is orphaned", func(t *testing.T) {
 		_, err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-			ID: "no-owner", Source: "test",
+			ID: "no-owner", Source: "test", Status: "queued",
 		})
 		testutil.AssertNoError(t, err, "create batch")
 		_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
@@ -53,6 +53,7 @@ func TestBatch_GetSummary_OwnerState(t *testing.T) {
 
 		summary, err := svc.GetSummary(ctx, "no-owner")
 		testutil.AssertNoError(t, err, "get summary")
+		testutil.AssertEqual(t, summary.Status, "queued", "batch status")
 		testutil.AssertEqual(t, summary.OwnerState, "none", "owner state")
 		testutil.AssertEqual(t, summary.Orphaned, true, "orphaned")
 		testutil.AssertEqual(t, summary.Pending, int64(1), "pending count")
@@ -60,7 +61,7 @@ func TestBatch_GetSummary_OwnerState(t *testing.T) {
 
 	t.Run("no owner with only completed tasks is not orphaned", func(t *testing.T) {
 		_, err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-			ID: "no-owner-done", Source: "test",
+			ID: "no-owner-done", Source: "test", Status: "queued",
 		})
 		testutil.AssertNoError(t, err, "create batch")
 		_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
@@ -78,7 +79,7 @@ func TestBatch_GetSummary_OwnerState(t *testing.T) {
 
 	t.Run("live owner returns state live", func(t *testing.T) {
 		_, err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-			ID: "live-owner", Source: "test",
+			ID: "live-owner", Source: "test", Status: "queued",
 		})
 		testutil.AssertNoError(t, err, "create batch")
 		_, err = client.Queries.TryInsertBatchOwner(ctx, database.TryInsertBatchOwnerParams{
@@ -99,7 +100,7 @@ func TestBatch_GetSummary_OwnerState(t *testing.T) {
 
 	t.Run("stale owner returns state stale and orphaned when tasks pending", func(t *testing.T) {
 		_, err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-			ID: "stale-owner", Source: "test",
+			ID: "stale-owner", Source: "test", Status: "queued",
 		})
 		testutil.AssertNoError(t, err, "create batch")
 		_, err = client.Queries.TryInsertBatchOwner(ctx, database.TryInsertBatchOwnerParams{
@@ -131,7 +132,7 @@ func TestBatch_HasPendingWork(t *testing.T) {
 
 	t.Run("returns false when no tasks exist", func(t *testing.T) {
 		_, err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-			ID: "empty-batch", Source: "test",
+			ID: "empty-batch", Source: "test", Status: "queued",
 		})
 		testutil.AssertNoError(t, err, "create batch")
 
@@ -142,7 +143,7 @@ func TestBatch_HasPendingWork(t *testing.T) {
 
 	t.Run("returns true when pending tasks exist", func(t *testing.T) {
 		_, err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-			ID: "pending-batch", Source: "test",
+			ID: "pending-batch", Source: "test", Status: "queued",
 		})
 		testutil.AssertNoError(t, err, "create batch")
 		_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
@@ -158,7 +159,7 @@ func TestBatch_HasPendingWork(t *testing.T) {
 
 	t.Run("returns true when processing tasks exist", func(t *testing.T) {
 		_, err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-			ID: "proc-batch", Source: "test",
+			ID: "proc-batch", Source: "test", Status: "queued",
 		})
 		testutil.AssertNoError(t, err, "create batch")
 		_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
@@ -174,7 +175,7 @@ func TestBatch_HasPendingWork(t *testing.T) {
 
 	t.Run("returns false when only completed tasks", func(t *testing.T) {
 		_, err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-			ID: "done-batch", Source: "test",
+			ID: "done-batch", Source: "test", Status: "queued",
 		})
 		testutil.AssertNoError(t, err, "create batch")
 		_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
@@ -195,7 +196,7 @@ func TestBatch_IsLockedByLiveOwner(t *testing.T) {
 
 	t.Run("returns false when no owner", func(t *testing.T) {
 		_, err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-			ID: "no-owner-batch", Source: "test",
+			ID: "no-owner-batch", Source: "test", Status: "queued",
 		})
 		testutil.AssertNoError(t, err, "create batch")
 
@@ -206,7 +207,7 @@ func TestBatch_IsLockedByLiveOwner(t *testing.T) {
 
 	t.Run("returns true when live owner exists", func(t *testing.T) {
 		_, err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-			ID: "locked-batch", Source: "test",
+			ID: "locked-batch", Source: "test", Status: "queued",
 		})
 		testutil.AssertNoError(t, err, "create batch")
 		_, err = client.Queries.TryInsertBatchOwner(ctx, database.TryInsertBatchOwnerParams{
@@ -221,7 +222,7 @@ func TestBatch_IsLockedByLiveOwner(t *testing.T) {
 
 	t.Run("returns false when owner is stale", func(t *testing.T) {
 		_, err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-			ID: "stale-lock-batch", Source: "test",
+			ID: "stale-lock-batch", Source: "test", Status: "queued",
 		})
 		testutil.AssertNoError(t, err, "create batch")
 		_, err = client.Queries.TryInsertBatchOwner(ctx, database.TryInsertBatchOwnerParams{
@@ -247,7 +248,7 @@ func TestBatch_CountOrphaned(t *testing.T) {
 
 	t.Run("counts batches with stale owners", func(t *testing.T) {
 		_, err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-			ID: "live-batch", Source: "test",
+			ID: "live-batch", Source: "test", Status: "queued",
 		})
 		testutil.AssertNoError(t, err, "create live batch")
 		_, err = client.Queries.TryInsertBatchOwner(ctx, database.TryInsertBatchOwnerParams{
@@ -261,7 +262,7 @@ func TestBatch_CountOrphaned(t *testing.T) {
 		testutil.AssertNoError(t, err, "create pending task")
 
 		_, err = client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-			ID: "orphan-batch", Source: "test",
+			ID: "orphan-batch", Source: "test", Status: "queued",
 		})
 		testutil.AssertNoError(t, err, "create orphan batch")
 		_, err = client.Queries.TryInsertBatchOwner(ctx, database.TryInsertBatchOwnerParams{
@@ -292,7 +293,7 @@ func TestBatch_ListOverviews(t *testing.T) {
 
 	t.Run("returns batch with correct counts", func(t *testing.T) {
 		_, err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-			ID: "ov-batch", Source: "test",
+			ID: "ov-batch", Source: "test", Status: "queued",
 		})
 		testutil.AssertNoError(t, err, "create batch")
 		_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
@@ -314,6 +315,7 @@ func TestBatch_ListOverviews(t *testing.T) {
 				testutil.AssertEqual(t, ov.Pending, int64(1), "pending")
 				testutil.AssertEqual(t, ov.Completed, int64(1), "completed")
 				testutil.AssertEqual(t, ov.Source, "test", "source")
+				testutil.AssertEqual(t, ov.Status, "queued", "batch status")
 				return
 			}
 		}
@@ -322,7 +324,7 @@ func TestBatch_ListOverviews(t *testing.T) {
 
 	t.Run("duration nil when batch has pending tasks", func(t *testing.T) {
 		_, err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-			ID: "dur-pending", Source: "test",
+			ID: "dur-pending", Source: "test", Status: "queued",
 		})
 		testutil.AssertNoError(t, err, "create batch")
 		_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
@@ -351,7 +353,7 @@ func TestBatch_BeginCancel(t *testing.T) {
 
 	t.Run("returns cancelled count and no owner for batch without owner", func(t *testing.T) {
 		_, err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-			ID: "cancel-no-owner", Source: "test",
+			ID: "cancel-no-owner", Source: "test", Status: "queued",
 		})
 		testutil.AssertNoError(t, err, "create batch")
 		_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
@@ -369,7 +371,7 @@ func TestBatch_BeginCancel(t *testing.T) {
 
 	t.Run("returns owner info when owner exists", func(t *testing.T) {
 		_, err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-			ID: "cancel-with-owner", Source: "test",
+			ID: "cancel-with-owner", Source: "test", Status: "queued",
 		})
 		testutil.AssertNoError(t, err, "create batch")
 		_, err = client.Queries.TryInsertBatchOwner(ctx, database.TryInsertBatchOwnerParams{
@@ -389,7 +391,7 @@ func TestBatch_ListSummaries(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-		ID: "summ-1", Source: "test",
+		ID: "summ-1", Source: "test", Status: "queued",
 	})
 	testutil.AssertNoError(t, err, "create batch")
 	_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
@@ -423,7 +425,7 @@ func TestBatch_CountDistinct(t *testing.T) {
 	testutil.AssertNoError(t, err, "count before")
 
 	_, err = client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-		ID: "distinct-1", Source: "test",
+		ID: "distinct-1", Source: "test", Status: "queued",
 	})
 	testutil.AssertNoError(t, err, "create batch")
 	_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
@@ -446,7 +448,7 @@ func TestBatch_ActiveIDs(t *testing.T) {
 	testutil.AssertEqual(t, len(ids), 0, "no active batches initially")
 
 	_, err = client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-		ID: "active-1", Source: "test",
+		ID: "active-1", Source: "test", Status: "queued",
 	})
 	testutil.AssertNoError(t, err, "create batch")
 	_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
@@ -469,7 +471,7 @@ func TestBatch_CompleteCancel(t *testing.T) {
 
 	t.Run("cancels processing tasks and releases owner", func(t *testing.T) {
 		_, err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-			ID: "cc-batch", Source: "test",
+			ID: "cc-batch", Source: "test", Status: "queued",
 		})
 		testutil.AssertNoError(t, err, "create batch")
 		_, err = client.Queries.TryInsertBatchOwner(ctx, database.TryInsertBatchOwnerParams{
@@ -488,5 +490,60 @@ func TestBatch_CompleteCancel(t *testing.T) {
 
 		_, err = client.Queries.GetBatchOwner(ctx, "cc-batch")
 		testutil.AssertError(t, err, "owner should be released")
+
+		summary, err := svc.GetSummary(ctx, "cc-batch")
+		testutil.AssertNoError(t, err, "get summary after cancel")
+		testutil.AssertEqual(t, summary.Status, "cancelled", "batch status after cancel")
+	})
+}
+
+func TestBatch_QueueStateTransitions(t *testing.T) {
+	svc, client := newTestBatch(t)
+	ctx := context.Background()
+
+	t.Run("queued to processing to completed", func(t *testing.T) {
+		_, err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
+			ID: "qpc", Source: "test", Status: "queued",
+		})
+		testutil.AssertNoError(t, err, "create batch")
+
+		summary, _ := svc.GetSummary(ctx, "qpc")
+		testutil.AssertEqual(t, summary.Status, "queued", "initial status")
+
+		err = svc.SetBatchProcessing(ctx, "qpc")
+		testutil.AssertNoError(t, err, "set processing")
+		summary, _ = svc.GetSummary(ctx, "qpc")
+		testutil.AssertEqual(t, summary.Status, "processing", "processing status")
+
+		err = svc.SetBatchCompleted(ctx, "qpc")
+		testutil.AssertNoError(t, err, "set completed")
+		summary, _ = svc.GetSummary(ctx, "qpc")
+		testutil.AssertEqual(t, summary.Status, "completed", "completed status")
+	})
+
+	t.Run("queued to processing to failed", func(t *testing.T) {
+		_, err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
+			ID: "qpf", Source: "test", Status: "queued",
+		})
+		testutil.AssertNoError(t, err, "create batch")
+
+		err = svc.SetBatchProcessing(ctx, "qpf")
+		testutil.AssertNoError(t, err, "set processing")
+		err = svc.SetBatchFailed(ctx, "qpf")
+		testutil.AssertNoError(t, err, "set failed")
+		summary, _ := svc.GetSummary(ctx, "qpf")
+		testutil.AssertEqual(t, summary.Status, "failed", "failed status")
+	})
+
+	t.Run("requeue resets to queued", func(t *testing.T) {
+		_, err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
+			ID: "rq", Source: "test", Status: "processing",
+		})
+		testutil.AssertNoError(t, err, "create batch")
+
+		err = svc.RequeueBatch(ctx, "rq")
+		testutil.AssertNoError(t, err, "requeue")
+		summary, _ := svc.GetSummary(ctx, "rq")
+		testutil.AssertEqual(t, summary.Status, "queued", "requeued status")
 	})
 }

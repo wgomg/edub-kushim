@@ -12,6 +12,7 @@ import (
 
 type BatchSummary struct {
 	BatchID    string
+	Status     string
 	Waiting    int64
 	Pending    int64
 	Processing int64
@@ -26,6 +27,7 @@ type BatchSummary struct {
 
 type BatchOverview struct {
 	BatchID    string
+	Status     string
 	Source     string
 	CreatedAt  time.Time
 	Total      int64
@@ -52,6 +54,12 @@ func NewBatch(queries *database.Queries) *Batch {
 func (s *Batch) GetSummary(ctx context.Context, batchID string) (*BatchSummary, error) {
 	statuses := []string{"waiting", "pending", "processing", "completed", "failed", "cancelled", "discarded"}
 	summary := &BatchSummary{BatchID: batchID}
+
+	batch, err := s.queries.GetBatch(ctx, batchID)
+	if err != nil {
+		return nil, errs.FromDB(err, "get batch "+batchID)
+	}
+	summary.Status = batch.Status
 
 	for _, status := range statuses {
 		count, err := s.queries.CountTasksByBatchAndStatus(ctx, database.CountTasksByBatchAndStatusParams{
@@ -160,6 +168,7 @@ func (s *Batch) ListOverviews(ctx context.Context, limit, offset int64) ([]Batch
 
 		items = append(items, BatchOverview{
 			BatchID:    row.BatchID,
+			Status:     row.BatchStatus,
 			Source:     row.Source,
 			CreatedAt:  createdAt,
 			Total:      row.Total,
@@ -205,13 +214,14 @@ func (s *Batch) RetryFailed(ctx context.Context, batchID string) (int64, error) 
 	return count, nil
 }
 
-func (s *Batch) Create(ctx context.Context, id, source string) error {
+func (s *Batch) Create(ctx context.Context, id, source, status string) error {
 	if id == "" {
 		return errs.EInvalid("create batch", sql.ErrNoRows)
 	}
 	_, err := s.queries.CreateBatch(ctx, database.CreateBatchParams{
 		ID:     id,
 		Source: source,
+		Status: status,
 	})
 	if err != nil {
 		return errs.FromDB(err, "create batch")
@@ -246,6 +256,10 @@ func (s *Batch) CompleteCancel(ctx context.Context, batchID, ownerID string) (pr
 		BatchID: batchID,
 		OwnerID: ownerID,
 	})
+
+	if err := s.queries.SetBatchCancelled(ctx, batchID); err != nil {
+		return 0, errs.FromDB(err, "set batch cancelled "+batchID)
+	}
 
 	return processingCancelled, nil
 }
@@ -289,6 +303,73 @@ func (s *Batch) IsLockedByLiveOwner(ctx context.Context, batchID string) (bool, 
 		return false, nil
 	}
 	return state == task.OwnerLive, nil
+}
+
+func (s *Batch) CountQueuedBatches(ctx context.Context) (int64, error) {
+	count, err := s.queries.CountQueuedBatches(ctx)
+	if err != nil {
+		return 0, errs.FromDB(err, "count queued batches")
+	}
+	return count, nil
+}
+
+func (s *Batch) GetNextQueuedBatch(ctx context.Context) (database.Batch, error) {
+	b, err := s.queries.GetNextQueuedBatch(ctx)
+	if err != nil {
+		return database.Batch{}, errs.FromDB(err, "get next queued batch")
+	}
+	return b, nil
+}
+
+func (s *Batch) RequeueBatch(ctx context.Context, batchID string) error {
+	if err := s.queries.RequeueBatch(ctx, batchID); err != nil {
+		return errs.FromDB(err, "requeue batch")
+	}
+	return nil
+}
+
+func (s *Batch) SetBatchProcessing(ctx context.Context, batchID string) error {
+	if err := s.queries.SetBatchProcessing(ctx, batchID); err != nil {
+		return errs.FromDB(err, "set batch processing")
+	}
+	return nil
+}
+
+func (s *Batch) SetBatchCompleted(ctx context.Context, batchID string) error {
+	if err := s.queries.SetBatchCompleted(ctx, batchID); err != nil {
+		return errs.FromDB(err, "set batch completed")
+	}
+	return nil
+}
+
+func (s *Batch) SetBatchFailed(ctx context.Context, batchID string) error {
+	if err := s.queries.SetBatchFailed(ctx, batchID); err != nil {
+		return errs.FromDB(err, "set batch failed")
+	}
+	return nil
+}
+
+func (s *Batch) SetBatchCancelled(ctx context.Context, batchID string) error {
+	if err := s.queries.SetBatchCancelled(ctx, batchID); err != nil {
+		return errs.FromDB(err, "set batch cancelled")
+	}
+	return nil
+}
+
+func (s *Batch) CountLiveBatches(ctx context.Context) (int64, error) {
+	count, err := s.queries.CountLiveBatches(ctx)
+	if err != nil {
+		return 0, errs.FromDB(err, "count live batches")
+	}
+	return count, nil
+}
+
+func (s *Batch) ListStaleBatchOwners(ctx context.Context) ([]string, error) {
+	ids, err := s.queries.ListStaleBatchOwners(ctx)
+	if err != nil {
+		return nil, errs.FromDB(err, "list stale batch owners")
+	}
+	return ids, nil
 }
 
 func (s *Batch) batchOwnerState(ctx context.Context, batchID string) (task.OwnerState, int64, error) {

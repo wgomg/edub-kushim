@@ -53,17 +53,57 @@ func (q *Queries) CleanupCompletedBatches(ctx context.Context) (int64, error) {
 	return result.RowsAffected()
 }
 
+const countLiveBatches = `-- name: CountLiveBatches :one
+SELECT COUNT(*) FROM batch_owner
+WHERE last_heartbeat > datetime('now', '-15 seconds')
+`
+
+func (q *Queries) CountLiveBatches(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countLiveBatches)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countQueuedBatches = `-- name: CountQueuedBatches :one
+SELECT COUNT(*) FROM batch WHERE status = 'queued'
+`
+
+func (q *Queries) CountQueuedBatches(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countQueuedBatches)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createBatch = `-- name: CreateBatch :execresult
-INSERT OR IGNORE INTO batch (id, source) VALUES (?, ?)
+INSERT OR IGNORE INTO batch (id, source, status) VALUES (?, ?, ?)
 `
 
 type CreateBatchParams struct {
 	ID     string
 	Source string
+	Status string
 }
 
 func (q *Queries) CreateBatch(ctx context.Context, arg CreateBatchParams) (sql.Result, error) {
-	return q.db.ExecContext(ctx, createBatch, arg.ID, arg.Source)
+	return q.db.ExecContext(ctx, createBatch, arg.ID, arg.Source, arg.Status)
+}
+
+const getBatch = `-- name: GetBatch :one
+SELECT id, source, created_at, status FROM batch WHERE id = ?
+`
+
+func (q *Queries) GetBatch(ctx context.Context, id string) (Batch, error) {
+	row := q.db.QueryRowContext(ctx, getBatch, id)
+	var i Batch
+	err := row.Scan(
+		&i.ID,
+		&i.Source,
+		&i.CreatedAt,
+		&i.Status,
+	)
+	return i, err
 }
 
 const getBatchOwner = `-- name: GetBatchOwner :one
@@ -102,6 +142,22 @@ func (q *Queries) GetNextPendingTaskOfTypeForOwner(ctx context.Context, arg GetN
 	return id, err
 }
 
+const getNextQueuedBatch = `-- name: GetNextQueuedBatch :one
+SELECT id, source, created_at, status FROM batch WHERE status = 'queued' ORDER BY created_at LIMIT 1
+`
+
+func (q *Queries) GetNextQueuedBatch(ctx context.Context) (Batch, error) {
+	row := q.db.QueryRowContext(ctx, getNextQueuedBatch)
+	var i Batch
+	err := row.Scan(
+		&i.ID,
+		&i.Source,
+		&i.CreatedAt,
+		&i.Status,
+	)
+	return i, err
+}
+
 const heartbeatBatchOwner = `-- name: HeartbeatBatchOwner :execrows
 UPDATE batch_owner SET last_heartbeat = CURRENT_TIMESTAMP WHERE owner_id = ?
 `
@@ -119,6 +175,7 @@ SELECT
     b.id AS batch_id,
     b.source,
     b.created_at AS batch_created_at,
+    b.status AS batch_status,
     COUNT(t.id) AS total,
     COALESCE(SUM(CASE WHEN t.status = 'waiting'   THEN 1 ELSE 0 END), 0) AS waiting,
     COALESCE(SUM(CASE WHEN t.status = 'pending'   THEN 1 ELSE 0 END), 0) AS pending,
@@ -148,6 +205,7 @@ type ListBatchOverviewsRow struct {
 	BatchID            string
 	Source             string
 	BatchCreatedAt     sql.NullTime
+	BatchStatus        string
 	Total              int64
 	Waiting            interface{}
 	Pending            interface{}
@@ -175,6 +233,7 @@ func (q *Queries) ListBatchOverviews(ctx context.Context, arg ListBatchOverviews
 			&i.BatchID,
 			&i.Source,
 			&i.BatchCreatedAt,
+			&i.BatchStatus,
 			&i.Total,
 			&i.Waiting,
 			&i.Pending,
@@ -191,6 +250,37 @@ func (q *Queries) ListBatchOverviews(ctx context.Context, arg ListBatchOverviews
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listStaleBatchOwners = `-- name: ListStaleBatchOwners :many
+SELECT bo.batch_id FROM batch_owner bo
+WHERE bo.last_heartbeat < datetime('now', '-15 seconds')
+AND EXISTS (SELECT 1 FROM task t
+            WHERE t.batch_id = bo.batch_id
+            AND t.status IN ('pending', 'processing', 'waiting'))
+`
+
+func (q *Queries) ListStaleBatchOwners(ctx context.Context) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listStaleBatchOwners)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var batch_id string
+		if err := rows.Scan(&batch_id); err != nil {
+			return nil, err
+		}
+		items = append(items, batch_id)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -218,6 +308,15 @@ func (q *Queries) ReleaseBatchOwner(ctx context.Context, arg ReleaseBatchOwnerPa
 	return result.RowsAffected()
 }
 
+const requeueBatch = `-- name: RequeueBatch :exec
+UPDATE batch SET status = 'queued' WHERE id = ?
+`
+
+func (q *Queries) RequeueBatch(ctx context.Context, id string) error {
+	_, err := q.db.ExecContext(ctx, requeueBatch, id)
+	return err
+}
+
 const resetProcessingTasksByBatch = `-- name: ResetProcessingTasksByBatch :execrows
 UPDATE task SET status = 'pending'
 WHERE batch_id = ? AND status = 'processing'
@@ -229,6 +328,42 @@ func (q *Queries) ResetProcessingTasksByBatch(ctx context.Context, batchID sql.N
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const setBatchCancelled = `-- name: SetBatchCancelled :exec
+UPDATE batch SET status = 'cancelled' WHERE id = ?
+`
+
+func (q *Queries) SetBatchCancelled(ctx context.Context, id string) error {
+	_, err := q.db.ExecContext(ctx, setBatchCancelled, id)
+	return err
+}
+
+const setBatchCompleted = `-- name: SetBatchCompleted :exec
+UPDATE batch SET status = 'completed' WHERE id = ?
+`
+
+func (q *Queries) SetBatchCompleted(ctx context.Context, id string) error {
+	_, err := q.db.ExecContext(ctx, setBatchCompleted, id)
+	return err
+}
+
+const setBatchFailed = `-- name: SetBatchFailed :exec
+UPDATE batch SET status = 'failed' WHERE id = ?
+`
+
+func (q *Queries) SetBatchFailed(ctx context.Context, id string) error {
+	_, err := q.db.ExecContext(ctx, setBatchFailed, id)
+	return err
+}
+
+const setBatchProcessing = `-- name: SetBatchProcessing :exec
+UPDATE batch SET status = 'processing' WHERE id = ?
+`
+
+func (q *Queries) SetBatchProcessing(ctx context.Context, id string) error {
+	_, err := q.db.ExecContext(ctx, setBatchProcessing, id)
+	return err
 }
 
 const tryInsertBatchOwner = `-- name: TryInsertBatchOwner :execrows

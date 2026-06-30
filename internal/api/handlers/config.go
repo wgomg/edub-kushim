@@ -159,7 +159,7 @@ func (h *ConfigHandler) enqueueConfigTasks(ctx context.Context, cfg *config.Conf
 	enqueued := 0
 	batchID := uuid.New().String()
 
-	h.services.Batch.Create(ctx, batchID, configSource)
+	h.services.Batch.Create(ctx, batchID, configSource, "queued")
 
 	for _, lang := range config.MissingTessdataLanguages(cfg) {
 		key := "config:tessdata:" + lang

@@ -211,6 +211,7 @@ func consumeHandler(c *Container, args []string) error {
 		client.CreateBatch(ctx, database.CreateBatchParams{
 			ID:     batchID,
 			Source: "cli",
+			Status: "queued",
 		})
 
 		c.logger.SetLevel(utils.LevelSilent)
@@ -243,6 +244,7 @@ func consumeHandler(c *Container, args []string) error {
 	client.CreateBatch(ctx, database.CreateBatchParams{
 		ID:     batchID,
 		Source: "cli",
+		Status: "queued",
 	})
 	if err := owner.Acquire(ctx, batchID, task.StaleAfter); err != nil {
 		return fmt.Errorf("acquire batch %s: %w", batchID, err)

@@ -39,7 +39,7 @@ sqlc natively understands goose annotations — it recognises `-- +goose Up`/`--
 
 When adding a new migration:
 
-1. Write `00004_description.sql` in `migrations/` with `-- +goose Up` / `-- +goose Down` sections
+1. Write `00005_description.sql` in `migrations/` with `-- +goose Up` / `-- +goose Down` sections
 2. Run `sqlc generate` — sqlc picks up the new file from the same directory
 3. No separate `schema.sql` update is needed
 
@@ -67,6 +67,8 @@ Migrations run automatically on startup (no manual CLI command needed):
 - `PeopleType` — `ID`, `Name`, `Description`, `CreatedAt`
 - `User` — `ID`, `Username`, `PasswordHash sql.NullString`, `ApiKey sql.NullString`, `CreatedAt`
 - `SavedSearch` — `ID`, `Name`, `FilterJson string`, `CreatedAt string`
+- `Batch` — 4 fields: `ID`, `Source`, `CreatedAt sql.NullTime`, `Status` (queued/processing/completed/failed/cancelled)
+- `BatchOwner` — `BatchID`, `OwnerID`, `Pid`, `AcquiredAt`, `LastHeartbeat`
 - `OrphanedFile` — `ID`, `DocumentKey`, `DocumentKeyType` (uuid/dbid), `FilePath`, `OriginalPath`, `SourceDir` (originals/processed), `FileSize`, `MimeType`, `DetectedAt`, `Status` (pending/deleted/restored/reingested), `ActionAt`, `ActionType`
 
 ---
@@ -217,6 +219,8 @@ The last 4 methods back the dashboard analytics panel. `LanguageDistribution` an
 - `people` — People/entities associated with documents (`name` UNIQUE, `name_native` nullable for original non-Latin script)
 - `people_type` — Roles for people (e.g., `author`, `editor`, `translator`, `subject`)
 - `user` — Authentication (username, password_hash, api_key)
+- `batch` — Batch processing units: `id`, `source`, `created_at`, `status` (queued/processing/completed/failed/cancelled). The `status` column was added in migration `00005` to support queue-based processing.
+- `batch_owner` — Batch ownership: `batch_id`, `owner_id`, `pid`, `acquired_at`, `last_heartbeat`. Each processing batch is claimed by one owner (CLI or queue daemon) with a heartbeat.
 - `orphaned_file` — Detected orphaned files: `document_key`, `document_key_type` (uuid/dbid), `source_dir` (originals/processed), `file_path` (inside quarantined/orphaned/), `status` (pending/deleted/restored/reingested), `action_type`, `action_at`
 
 ## Junction Tables
@@ -261,6 +265,7 @@ A `goose_db_version` table (managed by goose) tracks applied migrations with col
 
 - `idx_document_md5`, `idx_document_sha512` (UNIQUE), `idx_document_created`
 - `idx_task_status`, `idx_task_type`, `idx_task_batch`, `idx_task_batch_status`
+- `idx_batch_status` — on `batch(status)`. Added in migration `00005` to support queue queries (`CountQueuedBatches`, `GetNextQueuedBatch`).
 - `idx_task_pending` — partial index on `task(created_at)` where `status = 'pending'`
 - `idx_task_dedup` — unique partial index on `task(task_type, dedup_key)` where
   status is `pending` or `processing` and `dedup_key IS NOT NULL`. Prevents duplicate

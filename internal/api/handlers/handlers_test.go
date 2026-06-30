@@ -593,7 +593,7 @@ func TestTaskEndpoints(t *testing.T) {
 
 	t.Run("cancel batch with pending tasks", func(t *testing.T) {
 		batchID := "cancel-pending-test"
-		_, err := env.client.CreateBatch(ctx, database.CreateBatchParams{ID: batchID, Source: "test"})
+		_, err := env.client.CreateBatch(ctx, database.CreateBatchParams{ID: batchID, Source: "test", Status: "queued"})
 		testutil.AssertNoError(t, err, "create batch")
 
 		_, err = env.client.CreateTask(ctx, database.CreateTaskParams{
@@ -619,7 +619,7 @@ func TestTaskEndpoints(t *testing.T) {
 
 	t.Run("cancel batch with dead owner", func(t *testing.T) {
 		batchID := "cancel-dead-owner"
-		_, err := env.client.CreateBatch(ctx, database.CreateBatchParams{ID: batchID, Source: "test"})
+		_, err := env.client.CreateBatch(ctx, database.CreateBatchParams{ID: batchID, Source: "test", Status: "queued"})
 		testutil.AssertNoError(t, err, "create batch")
 
 		_, err = env.client.CreateTask(ctx, database.CreateTaskParams{
@@ -663,7 +663,7 @@ func TestGetDashboardActivity(t *testing.T) {
 	docDBID, docUUID := database.CreateTestDocument(t, env.client.Queries, "dash-act-doc.pdf")
 
 	_, err := env.client.CreateBatch(ctx, database.CreateBatchParams{
-		ID: "dash-act-batch", Source: "manual-upload",
+		ID: "dash-act-batch", Source: "manual-upload", Status: "queued",
 	})
 	testutil.AssertNoError(t, err, "create batch")
 
@@ -857,12 +857,12 @@ func TestGetDashboardProcessingHealth(t *testing.T) {
 	database.CreateTestDocument(t, env.client.Queries, "ph-doc.pdf")
 
 	_, err := env.client.CreateBatch(ctx, database.CreateBatchParams{
-		ID: "ph-batch-1", Source: "test",
+		ID: "ph-batch-1", Source: "test", Status: "queued",
 	})
 	testutil.AssertNoError(t, err, "create batch 1")
 
 	_, err = env.client.CreateBatch(ctx, database.CreateBatchParams{
-		ID: "ph-batch-2", Source: "test",
+		ID: "ph-batch-2", Source: "test", Status: "queued",
 	})
 	testutil.AssertNoError(t, err, "create batch 2")
 
@@ -1045,7 +1045,7 @@ func TestEnqueueBatchFilesDedup(t *testing.T) {
 		}
 
 		batchID := uuid.New().String()
-		if _, err := h.queries.CreateBatch(ctx, database.CreateBatchParams{ID: batchID, Source: "test"}); err != nil {
+		if _, err := h.queries.CreateBatch(ctx, database.CreateBatchParams{ID: batchID, Source: "test", Status: "queued"}); err != nil {
 			t.Fatal(err)
 		}
 
@@ -1087,7 +1087,7 @@ func TestEnqueueBatchFilesDedup(t *testing.T) {
 		}
 
 		batchID := uuid.New().String()
-		if _, err := h.queries.CreateBatch(ctx, database.CreateBatchParams{ID: batchID, Source: "test"}); err != nil {
+		if _, err := h.queries.CreateBatch(ctx, database.CreateBatchParams{ID: batchID, Source: "test", Status: "queued"}); err != nil {
 			t.Fatal(err)
 		}
 
@@ -1383,7 +1383,7 @@ func TestProcessingHealthMissingTools(t *testing.T) {
 	h := NewTaskHandler(env.services, env.client.Queries, env.logger, func() *config.Config { return cfg })
 
 	ctx := context.Background()
-	_, err := env.client.CreateBatch(ctx, database.CreateBatchParams{ID: "mh-batch", Source: "test"})
+	_, err := env.client.CreateBatch(ctx, database.CreateBatchParams{ID: "mh-batch", Source: "test", Status: "queued"})
 	testutil.AssertNoError(t, err, "create batch")
 
 	reqID := "missing-tools"

@@ -14,6 +14,7 @@ type Batch struct {
 	ID        string
 	Source    string
 	CreatedAt sql.NullTime
+	Status    string
 }
 
 type BatchOwner struct {

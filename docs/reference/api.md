@@ -145,7 +145,9 @@ See `AuthMiddleware` under `server.go` → Functions.
 ### Structs
 
 - `TaskResponse` — `TaskID`, `BatchID`, `TaskType`, `FileName`, `PayloadDocID`, `Status`, `DocumentID *int64`, `Error *string`, `CreatedAt`, `StartedAt *string`, `CompletedAt *string`
-- `BatchSummaryResponse` — `BatchID`, `Total`, `Waiting`, `Pending`, `Processing`, `Completed`, `Failed`, `Cancelled`, `Discarded`
+- `BatchSummaryResponse` — `BatchID`, `Status` (queued/processing/completed/failed/cancelled), `Total`, `Waiting`, `Pending`, `Processing`, `Completed`, `Failed`, `Cancelled`, `Discarded`
+- `BatchOverviewItem` — `BatchID`, `Status`, `Source`, `CreatedAt`, `Total`, `Waiting`, `Pending`, `Processing`, `Completed`, `Failed`, `Cancelled`, `Discarded`, `OwnerState`, `Orphaned`, `DurationMs *int64`
+- `BatchCounts` — `Total`, `Waiting`, `Pending`, `Processing`, `Completed`, `Failed`, `Cancelled`, `Discarded`
 - `ListBatchesResponse` — `Batches []BatchSummaryResponse`
 - `ListTasksResponse` — `BatchID`, `Summary *BatchSummaryResponse`, `Tasks []TaskResponse`
 - `MimeTypeStat` — `MimeType`, `Count`, `TotalBytes`

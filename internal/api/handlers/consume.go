@@ -166,7 +166,7 @@ func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 
 	batchID := uuid.New().String()
 
-	h.services.Batch.Create(ctx, batchID, "api")
+	h.services.Batch.Create(ctx, batchID, "api", "queued")
 
 	enqueued := h.enqueueBatchFiles(ctx, batchID, paths, reqID)
 
@@ -366,7 +366,7 @@ func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	batchID := uuid.New().String()
-	if err := h.services.Batch.Create(ctx, batchID, "api-upload"); err != nil {
+	if err := h.services.Batch.Create(ctx, batchID, "api-upload", "queued"); err != nil {
 		h.semaphore.Release()
 		h.logger.Error(&reqID, "create batch %s: %v", batchID, err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)

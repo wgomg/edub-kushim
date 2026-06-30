@@ -158,7 +158,7 @@ func TestSavedSearchCRUD(t *testing.T) {
 func TestBatchOwnerOps(t *testing.T) {
 	q, _ := NewTestQueries(t)
 	ctx := context.Background()
-	_, err := q.CreateBatch(ctx, CreateBatchParams{ID: "bo-test", Source: "test"})
+	_, err := q.CreateBatch(ctx, CreateBatchParams{ID: "bo-test", Source: "test", Status: "queued"})
 	assertNoError(t, err, "create batch")
 	_, err = q.TryInsertBatchOwner(ctx, TryInsertBatchOwnerParams{BatchID: "bo-test", OwnerID: "o1", Pid: 123})
 	assertNoError(t, err, "insert owner")
@@ -195,7 +195,7 @@ func TestListActivityTimeline(t *testing.T) {
 
 	_, _ = CreateTestDocument(t, q, "activity-test.pdf")
 
-	_, err = q.CreateBatch(ctx, CreateBatchParams{ID: "act-batch-1", Source: "test-upload"})
+	_, err = q.CreateBatch(ctx, CreateBatchParams{ID: "act-batch-1", Source: "test-upload", Status: "queued"})
 	assertNoError(t, err, "create batch")
 
 	taskID1 := "act-task-completed"

@@ -1,5 +1,5 @@
 -- name: CreateBatch :execresult
-INSERT OR IGNORE INTO batch (id, source) VALUES (?, ?);
+INSERT OR IGNORE INTO batch (id, source, status) VALUES (?, ?, ?);
 
 -- name: GetBatchOwner :one
 SELECT batch_id, owner_id, pid, acquired_at, last_heartbeat FROM batch_owner WHERE batch_id = ?;
@@ -54,11 +54,47 @@ WHERE status = 'pending' AND task_type = ?
   AND batch_id IN (SELECT batch_id FROM batch_owner WHERE owner_id = ?)
 ORDER BY created_at LIMIT 1;
 
+-- name: GetBatch :one
+SELECT * FROM batch WHERE id = ?;
+
+-- name: CountQueuedBatches :one
+SELECT COUNT(*) FROM batch WHERE status = 'queued';
+
+-- name: GetNextQueuedBatch :one
+SELECT * FROM batch WHERE status = 'queued' ORDER BY created_at LIMIT 1;
+
+-- name: RequeueBatch :exec
+UPDATE batch SET status = 'queued' WHERE id = ?;
+
+-- name: SetBatchProcessing :exec
+UPDATE batch SET status = 'processing' WHERE id = ?;
+
+-- name: SetBatchCompleted :exec
+UPDATE batch SET status = 'completed' WHERE id = ?;
+
+-- name: SetBatchFailed :exec
+UPDATE batch SET status = 'failed' WHERE id = ?;
+
+-- name: SetBatchCancelled :exec
+UPDATE batch SET status = 'cancelled' WHERE id = ?;
+
+-- name: CountLiveBatches :one
+SELECT COUNT(*) FROM batch_owner
+WHERE last_heartbeat > datetime('now', '-15 seconds');
+
+-- name: ListStaleBatchOwners :many
+SELECT bo.batch_id FROM batch_owner bo
+WHERE bo.last_heartbeat < datetime('now', '-15 seconds')
+AND EXISTS (SELECT 1 FROM task t
+            WHERE t.batch_id = bo.batch_id
+            AND t.status IN ('pending', 'processing', 'waiting'));
+
 -- name: ListBatchOverviews :many
 SELECT
     b.id AS batch_id,
     b.source,
     b.created_at AS batch_created_at,
+    b.status AS batch_status,
     COUNT(t.id) AS total,
     COALESCE(SUM(CASE WHEN t.status = 'waiting'   THEN 1 ELSE 0 END), 0) AS waiting,
     COALESCE(SUM(CASE WHEN t.status = 'pending'   THEN 1 ELSE 0 END), 0) AS pending,

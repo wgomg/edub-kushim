@@ -185,6 +185,7 @@ func (h *TaskHandler) ListBatches(w http.ResponseWriter, r *http.Request) {
 func batchSummaryToResponse(s *service.BatchSummary) types.BatchSummaryResponse {
 	return types.BatchSummaryResponse{
 		BatchID: s.BatchID,
+		Status:  s.Status,
 		BatchCounts: types.BatchCounts{
 			Total:      s.Waiting + s.Pending + s.Processing + s.Completed + s.Failed + s.Cancelled + s.Discarded,
 			Waiting:    s.Waiting,
@@ -217,6 +218,7 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 			}
 			items = append(items, types.BatchOverviewItem{
 				BatchID:   ov.BatchID,
+				Status:    ov.Status,
 				Source:    ov.Source,
 				CreatedAt: createdAt,
 				BatchCounts: types.BatchCounts{
