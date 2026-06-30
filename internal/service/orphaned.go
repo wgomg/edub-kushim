@@ -186,27 +186,9 @@ func (s *Orphaned) MoveToInbox(ctx context.Context, id int64) error {
 		return errs.FromDB(err, "get orphaned file")
 	}
 
-	destPath, err := storage.CopyToConsumptionDir(s.cfg.Storage.ConsumptionDir, row.FilePath)
+	_, err = storage.CopyToConsumptionDir(s.cfg.Storage.ConsumptionDir, row.FilePath)
 	if err != nil {
 		return fmt.Errorf("copy to consumption dir: %w", err)
-	}
-
-	documentID := uuid.New().String()
-	batchID := uuid.New().String()
-	consumeTaskID := uuid.New().String()
-	enrichTaskID := uuid.New().String()
-
-	consumePayload, _ := json.Marshal(map[string]any{
-		"file_path":    destPath,
-		"file_index":   1,
-		"on_completed": enrichTaskID,
-		"document_id":  documentID,
-	})
-
-	_, err = s.taskCreator.CreateTask(ctx, "consume", batchID, consumePayload, consumeTaskID, "pending", "")
-	if err != nil {
-		storage.RemoveOrphanedFile(destPath)
-		return fmt.Errorf("create consume task: %w", err)
 	}
 
 	if err := s.queries.MarkOrphanedFileReingested(ctx, id); err != nil {

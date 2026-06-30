@@ -278,7 +278,7 @@ See `AuthMiddleware` under `server.go` → Functions.
     - `ScanOrphaned(w, r)` — `POST /api/v1/orphaned/scan` — Walks `originals/` and `processed/` dirs, quarantines files without matching DB records. Returns `200 {"quarantined": <n>}`.
     - `DeleteOrphaned(w, r)` — `DELETE /api/v1/orphaned/{id}` — Removes file from quarantine + soft-deletes DB record. Returns `204`.
     - `RestoreOrphaned(w, r)` — `POST /api/v1/orphaned/{id}/restore` — Copies uuid-named files to inbox, creates consume task with original document_id. Returns `202`. Rejects dbid-named files and existing UUID collisions.
-    - `MoveToInbox(w, r)` — `POST /api/v1/orphaned/{id}/move-to-inbox` — Copies any orphan to inbox, creates consume task with new UUID. Returns `202`.
+    - `MoveToInbox(w, r)` — `POST /api/v1/orphaned/{id}/move-to-inbox` — Copies any orphan to inbox without creating a consume task (the normal inbox scan will pick it up). Returns `202`.
     - `DeleteAllOrphaned(w, r)` — `POST /api/v1/orphaned/delete-all` — Removes all pending files + bulk marks deleted. Returns `200 {"deleted": <n>}`.
     - `MoveAllToInbox(w, r)` — `POST /api/v1/orphaned/move-to-inbox-all` — Moves all pending orphans to inbox. Returns `200 {"moved": <n>}`.
 
