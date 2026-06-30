@@ -17,7 +17,6 @@ import (
 	"github.com/wgomg/edub-kushim/internal/configtask"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/pool"
-	"github.com/wgomg/edub-kushim/internal/scheduler"
 	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/static"
@@ -33,7 +32,6 @@ type Server struct {
 	cfg           atomic.Pointer[config.Config]
 	matcherClient *tagmatch.MatcherClient
 	services      *types.CrudServices
-	scheduler     *scheduler.PollingScheduler
 	configWatcher *config.Watcher
 	pools         struct {
 		config *pool.Pool
@@ -93,17 +91,6 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 	s.pools.config = pool.New(logger, configRunner, 1, 5*time.Second, "config")
 
 	semaphore := pool.NewSemaphore(max(cfg.Srv.MaxConcurrentBatches, 2))
-
-	var kushimPath string
-	if path, err := utils.KushimBinaryPath(); err != nil {
-		logger.Error(nil, "kushim binary not found — polling disabled: %v", err)
-	} else {
-		kushimPath = path
-	}
-	getConfig := func() config.PollingConfig {
-		return s.cfg.Load().Consumer.Polling
-	}
-	s.scheduler = scheduler.NewPollingScheduler(getConfig, logger, kushimPath, semaphore)
 
 	onConfigSet := func(cfg *config.Config) {
 		if cfg.Srv.SessionSecret == "" {
@@ -292,9 +279,6 @@ func (s *Server) Start() error {
 	s.pools.config.Start(context.Background())
 	s.logger.Info(nil, "config pool started")
 
-	s.scheduler.Start()
-	s.logger.Info(nil, "polling scheduler started")
-
 	s.configWatcher = config.NewWatcher(
 		s.cfg.Load().App.ConfigDir,
 		5*time.Second,
@@ -327,9 +311,6 @@ func (s *Server) probeMatcher() {
 
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.logger.Info(nil, "Shutting down HTTP server")
-
-	s.scheduler.Stop()
-	s.logger.Info(nil, "polling scheduler stopped")
 
 	s.configWatcher.Stop()
 	s.logger.Info(nil, "config watcher stopped")

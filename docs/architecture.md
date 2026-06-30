@@ -25,7 +25,7 @@ The system runs four cooperating processes:
 
 ### 1. Queue Daemon (`kushim queue`)
 
-A long-lived daemon that manages batch processing. Runs a 5-second tick loop: (a) reclaims stale batch owners (>15s heartbeat with active tasks) by resetting processing→pending, re-queuing, and removing the stale owner; (b) picks the oldest queued batch and forks `kushim consume --batch <id> --force` if under the configured concurrency limit (`server.max_concurrent_batches`). Uses a PID file for single-instance enforcement and logs to `<config_dir>/logs/queue.log`. Can be daemonized via `--bg`.
+A long-lived daemon that manages batch processing and inbox polling. Runs three concurrent loops: (a) **stale reclamation** — reclaims stale batch owners (>15s heartbeat with active tasks) by resetting processing→pending, re-queuing, and removing the stale owner; (b) **queue consumption** — picks the oldest queued batch and forks `kushim consume --batch <id> --force` if under the configured concurrency limit (`server.max_concurrent_batches`); (c) **inbox polling** — periodically scans the consumption directory, deduplicates by MD5, creates `queued` batches, and lets the consumer loop pick them up. Re-reads config from disk on each poll tick so `consumer.polling` changes take effect without restart. Replaces the former `PollingScheduler`. Uses a PID file for single-instance enforcement and logs to `<config_dir>/logs/queue.log`. Can be daemonized via `--bg`.
 
 ### 2. Matcher Server (`kushim hugot`)
 
@@ -48,19 +48,19 @@ Pure Go binary (`CGO_ENABLED=0`) that handles HTTP requests. It:
 
 - Enqueues consume/enrich tasks when `POST /api/v1/consume` is called
 - **Forks** `kushim consume --batch <id>` as a child process to handle actual document processing
-- Runs a **PollingScheduler** that periodically forks `kushim consume --bg` when polling is enabled, reusing the same semaphore that limits concurrent forked workers
 - Runs a config pool for background download tasks (tessdata, Hugot model)
 - Probes the matcher socket on startup; tag CRUD returns 503 if matcher is unreachable
 - Uses `Semaphore` to limit concurrent forked workers (`server.max_concurrent_batches`)
+- Does not manage inbox polling — the queue daemon (`kushim queue`) handles scanning as a goroutine loop
 
 ### 4. CLI / Worker (`kushim`)
 
 The CGo binary that performs actual document processing:
 
 - `kushim consume` — scans inbox, processes files, runs enrichment
-- `kushim consume --bg` — scans inbox in the background; creates a batch and re-forks with `--batch` (used by the polling scheduler)
+- `kushim consume --bg` — scans inbox in the background; creates a batch and re-forks with `--batch`
 - `kushim consume --batch <id>` — resumes a previously enqueued batch (used by `edub`'s API consume and resume handlers)
-- `kushim queue` — starts the batch queue daemon for background consumption
+- `kushim queue` — starts the batch queue daemon for background consumption and inbox polling (replaces the former `PollingScheduler`)
 - `kushim hugot` — starts the matcher RPC server
 - `kushim setup` — setup wizard
 

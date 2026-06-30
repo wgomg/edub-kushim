@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wgomg/edub-kushim/internal/config"
+	"github.com/wgomg/edub-kushim/internal/consumption"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/utils"
@@ -92,6 +94,8 @@ func queueHandler(c *Container, args []string) error {
 	}
 
 	c.logger.Info(nil, "queue daemon started (max %d concurrent batches)", maxConcurrent)
+
+	go runPollingLoop(ctx, c, client, batchSvc, maxConcurrent)
 
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
@@ -186,4 +190,84 @@ func consumeNextQueuedBatch(ctx context.Context, client *database.Client, batchS
 
 	logger.Info(nil, "forked kushim consume --batch %s (PID %d)", batch.ID, cmd.Process.Pid)
 	return nil
+}
+
+func runPollingLoop(ctx context.Context, c *Container, client *database.Client, batchSvc *service.Batch, maxConcurrent int) {
+	var missingTools []config.ExternalTool
+	var lastReloaded bool
+
+	for {
+		// Re-read config from disk so that polling enabled/interval/windows changes
+		// take effect without requiring a daemon restart.
+		reloaded, rErr := config.Reload(c.config.App.ConfigDir, c.config)
+		if rErr != nil {
+			c.logger.Error(nil, "polling: reload config: %v", rErr)
+		}
+
+		// Only recompute missing tools when config was reloaded (tool landscape
+		// is deterministic at runtime and doesn't change without a config update).
+		if reloaded || !lastReloaded {
+			missingTools = config.MissingExternalToolErrors(c.config)
+		}
+		lastReloaded = reloaded
+
+		cfg := c.config.Consumer.Polling
+		interval := max(time.Duration(cfg.Interval)*time.Minute, time.Minute)
+
+		if cfg.Enabled && config.IsWithinActiveWindows(cfg.Windows) {
+			pollingTick(ctx, c, client, batchSvc, maxConcurrent, missingTools)
+		} else if cfg.Enabled {
+			c.logger.Debug(nil, "polling: disabled — outside active windows")
+		} else {
+			c.logger.Debug(nil, "polling: disabled")
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(interval):
+		}
+	}
+}
+
+func pollingTick(ctx context.Context, c *Container, client *database.Client, batchSvc *service.Batch, maxConcurrent int, missingTools []config.ExternalTool) {
+	queuedCount, err := batchSvc.CountQueuedBatches(ctx)
+	if err != nil {
+		c.logger.Error(nil, "polling: count queued batches: %v", err)
+		return
+	}
+	liveCount, err := batchSvc.CountLiveBatches(ctx)
+	if err != nil {
+		c.logger.Error(nil, "polling: count live batches: %v", err)
+		return
+	}
+	if queuedCount+liveCount >= int64(maxConcurrent) {
+		c.logger.Debug(nil, "polling: skipped — %d live, %d queued (max %d)", liveCount, queuedCount, maxConcurrent)
+		return
+	}
+
+	if len(missingTools) > 0 {
+		names := make([]string, len(missingTools))
+		for i, t := range missingTools {
+			names[i] = t.Engine
+		}
+		c.logger.Error(nil, "polling: skipped — missing external tools: %s", strings.Join(names, ", "))
+		return
+	}
+
+	batchID, enqueued, err := consumption.ScanAndEnqueue(ctx, c.config, client, c.logger)
+	if err != nil {
+		c.logger.Error(nil, "polling: scan and enqueue: %v", err)
+		return
+	}
+	if batchID == "" {
+		c.logger.Debug(nil, "polling: no new files")
+		return
+	}
+	if enqueued == 0 {
+		c.logger.Info(nil, "polling: all files were duplicates (batch %s)", batchID)
+		return
+	}
+
+	c.logger.Info(nil, "polling: batch %s created with %d files", batchID, enqueued)
 }

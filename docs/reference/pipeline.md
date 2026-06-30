@@ -35,6 +35,15 @@
 
 ---
 
+## `scan.go`
+
+### Functions
+
+- `ScanAndEnqueue(ctx, cfg, client, logger) (batchID string, enqueued int, err error)` — Shared inbox scan → dedup → batch creation function. Scans the consumption directory via `utils.ListFilePaths`, computes MD5 for each file, batch-deduplicates against existing documents via `queryDuplicatesByMD5`, and creates consume+enrich task pairs. The batch record is created **after** all tasks are committed (with status `queued`) to prevent the queue consumer from picking up an incomplete or empty batch. Returns an empty batch ID when no files or all duplicates are found.
+- `queryDuplicatesByMD5(ctx, client, hashes) (map[string]string, error)` — Single SQL query (`SELECT md5_checksum, document_id FROM document WHERE md5_checksum IN (...)`) for all MD5 hashes, returns a map for O(1) lookups in the dedup loop.
+
+---
+
 # Enrichment Engine (`internal/enrichment/`)
 
 ## `enricher.go`

@@ -349,6 +349,32 @@ func Load(configDir string) (*Config, error) {
 	return cfg, nil
 }
 
+// Reload re-reads config.yaml from disk and updates cfg in place.
+// It returns (true, nil) if the file was read successfully, (false, nil)
+// if the file does not exist, or (false, err) on I/O/parse errors.
+func Reload(configDir string, cfg *Config) (bool, error) {
+	data, err := os.ReadFile(filepath.Join(configDir, "config.yaml"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	// Reset to defaults first so removed keys revert to their defaults.
+	*cfg = *DefaultConfig(configDir)
+
+	if err := yaml.Unmarshal(data, cfg); err != nil {
+		return false, fmt.Errorf("unmarshal config: %w", err)
+	}
+
+	if err := finalizeConfig(cfg, configDir); err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
 func finalizeConfig(cfg *Config, configDir string) error {
 	if len(cfg.Consumer.OCR.Languages) == 0 {
 		return fmt.Errorf("consumer.ocr.languages is required — run 'kushim setup --languages eng,spa,...' first")
