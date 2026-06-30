@@ -4,7 +4,7 @@
 
 ### Globals
 
-`commandSets` map with `"cli"` key. CLI set contains: `version`, `consume`, `search`, `task`, `setup`, `hugot`, `storage`.
+`commandSets` map with `"cli"` key. CLI set contains: `version`, `consume`, `search`, `task`, `setup`, `hugot`, `storage`, `queue`.
 
 > **Note**: The `edub` binary no longer uses `CommandRunner` from the commands package. It has its own standalone runner in `cmd/edub/runner.go` that only handles the `version` command (server mode is the default when no command matches).
 
@@ -136,6 +136,18 @@ kushim storage orphans move-to-inbox --all
 kushim storage orphans delete-all
 kushim storage orphans move-to-inbox-all
 ```
+
+---
+
+## `queue.go`
+
+### Functions
+
+- `queueHandler(c, args) error` — Starts the batch queue daemon for background consumption. Accepts `--bg` to daemonize (re-execs without `--bg` and returns). In daemon mode: checks PID file for single-instance, sets up signal handling (SIGTERM/SIGINT → graceful shutdown with PID file cleanup), opens log file at `<config_dir>/logs/queue.log`, and runs a 5-second tick loop with two phases:
+  - **Stale reclamation** — Lists batch owners with stale heartbeats (>15s) and active tasks, resets processing tasks to pending, re-queues the batch, deletes the stale owner row.
+  - **Queue consumption** — If live batch count is below `server.max_concurrent_batches`, picks the oldest queued batch, sets it to processing, creates a placeholder `batch_owner` row (so stale reclamation can recover orphaned batches), and forks `kushim consume --batch <id> --force`.
+- `reclaimStaleBatches(ctx, batchSvc, logger) error` — Iterates stale batch owners, resets processing→pending, re-queues, deletes owner.
+- `consumeNextQueuedBatch(ctx, client, batchSvc, maxConcurrent, logger) error` — Picks and dispatches the next queued batch.
 
 ---
 

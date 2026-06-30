@@ -165,6 +165,26 @@ func TestBatchOwnerOps(t *testing.T) {
 	q.ReleaseBatchOwner(ctx, ReleaseBatchOwnerParams{BatchID: "bo-test", OwnerID: "o1"})
 }
 
+func TestDeleteBatchOwnerByBatchID(t *testing.T) {
+	q, _ := NewTestQueries(t)
+	ctx := context.Background()
+	_, err := q.CreateBatch(ctx, CreateBatchParams{ID: "del-test", Source: "test", Status: "queued"})
+	assertNoError(t, err, "create batch")
+	_, err = q.TryInsertBatchOwner(ctx, TryInsertBatchOwnerParams{BatchID: "del-test", OwnerID: "o1", Pid: 100})
+	assertNoError(t, err, "insert owner")
+
+	rows, err := q.DeleteBatchOwnerByBatchID(ctx, "del-test")
+	assertNoError(t, err, "delete by batch id")
+	assertEqual(t, rows, int64(1), "one row deleted")
+
+	_, err = q.GetBatchOwner(ctx, "del-test")
+	assertEqual(t, err, sql.ErrNoRows, "owner gone after delete")
+
+	rows, err = q.DeleteBatchOwnerByBatchID(ctx, "del-test")
+	assertNoError(t, err, "delete non-existent")
+	assertEqual(t, rows, int64(0), "no rows for missing owner")
+}
+
 func TestDocumentTagsPeople(t *testing.T) {
 	q, _ := NewTestQueries(t)
 	ctx := context.Background()

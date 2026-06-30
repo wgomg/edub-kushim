@@ -372,6 +372,21 @@ func (s *Batch) ListStaleBatchOwners(ctx context.Context) ([]string, error) {
 	return ids, nil
 }
 
+func (s *Batch) DeleteBatchOwnerByBatchID(ctx context.Context, batchID string) error {
+	if _, err := s.queries.DeleteBatchOwnerByBatchID(ctx, batchID); err != nil {
+		return errs.FromDB(err, "delete batch owner "+batchID)
+	}
+	return nil
+}
+
+func (s *Batch) ResetProcessingTasksByBatch(ctx context.Context, batchID string) (int64, error) {
+	n, err := s.queries.ResetProcessingTasksByBatch(ctx, sql.NullString{String: batchID, Valid: true})
+	if err != nil {
+		return 0, errs.FromDB(err, "reset processing tasks "+batchID)
+	}
+	return n, nil
+}
+
 func (s *Batch) batchOwnerState(ctx context.Context, batchID string) (task.OwnerState, int64, error) {
 	bo, err := s.queries.GetBatchOwner(ctx, batchID)
 	if err != nil {

@@ -45,6 +45,11 @@ var commandSets = map[string]map[string]Command{
 			Description: "Initialize config and download OCR language files (run once). Use --cli for terminal-based setup.",
 			Handler:     setupHandler,
 		},
+		"queue": {
+			Name:        "queue",
+			Description: "Start the batch queue daemon for background consumption",
+			Handler:     queueHandler,
+		},
 		"storage": {
 			Name:        "storage",
 			Description: "Manage storage: detect and quarantine orphaned files",

@@ -35,6 +35,9 @@ UPDATE batch_owner SET last_heartbeat = CURRENT_TIMESTAMP WHERE owner_id = ?;
 -- name: ReleaseBatchOwner :execrows
 DELETE FROM batch_owner WHERE batch_id = ? AND owner_id = ?;
 
+-- name: DeleteBatchOwnerByBatchID :execrows
+DELETE FROM batch_owner WHERE batch_id = ?;
+
 -- name: ResetProcessingTasksByBatch :execrows
 UPDATE task SET status = 'pending'
 WHERE batch_id = ? AND status = 'processing';

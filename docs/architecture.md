@@ -21,9 +21,13 @@ See [Roadmap](roadmap.md) for the implementation status and upcoming priorities.
 
 ## Process Architecture
 
-The system runs three cooperating processes:
+The system runs four cooperating processes:
 
-### 1. Matcher Server (`kushim hugot`)
+### 1. Queue Daemon (`kushim queue`)
+
+A long-lived daemon that manages batch processing. Runs a 5-second tick loop: (a) reclaims stale batch owners (>15s heartbeat with active tasks) by resetting processing→pending, re-queuing, and removing the stale owner; (b) picks the oldest queued batch and forks `kushim consume --batch <id> --force` if under the configured concurrency limit (`server.max_concurrent_batches`). Uses a PID file for single-instance enforcement and logs to `<config_dir>/logs/queue.log`. Can be daemonized via `--bg`.
+
+### 2. Matcher Server (`kushim hugot`)
 
 A standalone HTTP server over a Unix domain socket (`kushim-hugot.sock` in the config directory). Hosts the Hugot embedding model, manages the tag embedding store, and exposes RPC endpoints:
 
@@ -38,7 +42,7 @@ A standalone HTTP server over a Unix domain socket (`kushim-hugot.sock` in the c
 
 This process requires CGo (Tesseract/Hugot libraries) and should be started before the API server.
 
-### 2. API Server (`edub`)
+### 3. API Server (`edub`)
 
 Pure Go binary (`CGO_ENABLED=0`) that handles HTTP requests. It:
 
@@ -49,13 +53,14 @@ Pure Go binary (`CGO_ENABLED=0`) that handles HTTP requests. It:
 - Probes the matcher socket on startup; tag CRUD returns 503 if matcher is unreachable
 - Uses `Semaphore` to limit concurrent forked workers (`server.max_concurrent_batches`)
 
-### 3. CLI / Worker (`kushim`)
+### 4. CLI / Worker (`kushim`)
 
 The CGo binary that performs actual document processing:
 
 - `kushim consume` — scans inbox, processes files, runs enrichment
 - `kushim consume --bg` — scans inbox in the background; creates a batch and re-forks with `--batch` (used by the polling scheduler)
 - `kushim consume --batch <id>` — resumes a previously enqueued batch (used by `edub`'s API consume and resume handlers)
+- `kushim queue` — starts the batch queue daemon for background consumption
 - `kushim hugot` — starts the matcher RPC server
 - `kushim setup` — setup wizard
 

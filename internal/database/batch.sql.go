@@ -90,6 +90,18 @@ func (q *Queries) CreateBatch(ctx context.Context, arg CreateBatchParams) (sql.R
 	return q.db.ExecContext(ctx, createBatch, arg.ID, arg.Source, arg.Status)
 }
 
+const deleteBatchOwnerByBatchID = `-- name: DeleteBatchOwnerByBatchID :execrows
+DELETE FROM batch_owner WHERE batch_id = ?
+`
+
+func (q *Queries) DeleteBatchOwnerByBatchID(ctx context.Context, batchID string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteBatchOwnerByBatchID, batchID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const getBatch = `-- name: GetBatch :one
 SELECT id, source, created_at, status FROM batch WHERE id = ?
 `
