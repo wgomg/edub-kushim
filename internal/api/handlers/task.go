@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,21 +12,25 @@ import (
 	"syscall"
 	"time"
 
+	itypes "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type TaskHandler struct {
+	services  *itypes.CrudServices
 	queries   *database.Queries
 	logger    *utils.Logger
 	getConfig func() *config.Config
 }
 
-func NewTaskHandler(queries *database.Queries, logger *utils.Logger, getConfig func() *config.Config) *TaskHandler {
+func NewTaskHandler(services *itypes.CrudServices, queries *database.Queries, logger *utils.Logger, getConfig func() *config.Config) *TaskHandler {
 	return &TaskHandler{
+		services:  services,
 		queries:   queries,
 		logger:    logger,
 		getConfig: getConfig,
@@ -68,8 +71,13 @@ func (h *TaskHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
 
 	if batchID != "" {
 		resp.BatchID = batchID
-		s := buildBatchSummary(ctx, h.queries, batchID)
-		resp.Summary = &s
+		s, err := h.services.Batch.GetSummary(ctx, batchID)
+		if err != nil {
+			h.logger.Error(&reqID, "get batch summary for %s: %v", batchID, err)
+			s = &service.BatchSummary{BatchID: batchID, OwnerState: "none"}
+		}
+		summary := batchSummaryToResponse(s)
+		resp.Summary = &summary
 	}
 
 	for _, t := range tasks {
@@ -126,7 +134,7 @@ func (h *TaskHandler) RetryBatch(w http.ResponseWriter, r *http.Request) {
 
 	batchID := r.PathValue("id")
 
-	retried, err := task.RetryBatchFailed(ctx, h.queries, batchID)
+	retried, err := h.services.Batch.RetryFailed(ctx, batchID)
 	if err != nil {
 		h.logger.Error(&reqID, "retry batch %s: %v", batchID, err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -151,7 +159,7 @@ func (h *TaskHandler) ListBatches(w http.ResponseWriter, r *http.Request) {
 	limit := pb.GetInt64("limit", 20, 1, 100)
 	offset := pb.GetInt64("offset", 0, 0, 0)
 
-	summaries, err := task.ListBatchSummaries(ctx, h.queries, task.BatchFilter{
+	summaries, err := h.services.Batch.ListSummaries(ctx, task.BatchFilter{
 		Status: statusFilter,
 		Limit:  limit,
 		Offset: offset,
@@ -166,83 +174,66 @@ func (h *TaskHandler) ListBatches(w http.ResponseWriter, r *http.Request) {
 		Batches: make([]types.BatchSummaryResponse, 0, len(summaries)),
 	}
 
-	for _, bc := range summaries {
-		ownerState, pid, orphaned := enrichOwnerState(ctx, h.queries, bc.BatchID, bc.Pending, bc.Processing)
-		resp.Batches = append(resp.Batches, types.BatchSummaryResponse{
-			BatchID: bc.BatchID,
-			BatchCounts: types.BatchCounts{
-				Total:      bc.Total(),
-				Waiting:    bc.Waiting,
-				Pending:    bc.Pending,
-				Processing: bc.Processing,
-				Completed:  bc.Completed,
-				Failed:     bc.Failed,
-				Cancelled:  bc.Cancelled,
-				Discarded:  bc.Discarded,
-				OwnerState: ownerState,
-				Orphaned:   orphaned,
-			},
-			OwnerPID: pid,
-		})
+	for _, s := range summaries {
+		resp.Batches = append(resp.Batches, batchSummaryToResponse(&s))
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
 
+func batchSummaryToResponse(s *service.BatchSummary) types.BatchSummaryResponse {
+	return types.BatchSummaryResponse{
+		BatchID: s.BatchID,
+		BatchCounts: types.BatchCounts{
+			Total:      s.Waiting + s.Pending + s.Processing + s.Completed + s.Failed + s.Cancelled + s.Discarded,
+			Waiting:    s.Waiting,
+			Pending:    s.Pending,
+			Processing: s.Processing,
+			Completed:  s.Completed,
+			Failed:     s.Failed,
+			Cancelled:  s.Cancelled,
+			Discarded:  s.Discarded,
+			OwnerState: s.OwnerState,
+			Orphaned:   s.Orphaned,
+		},
+		OwnerPID: s.OwnerPID,
+	}
+}
+
 func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
 
-	rows, err := h.queries.ListBatchOverviews(ctx, database.ListBatchOverviewsParams{
-		Limit:  10,
-		Offset: 0,
-	})
+	items := make([]types.BatchOverviewItem, 0)
+	overviews, err := h.services.Batch.ListOverviews(ctx, 10, 0)
 	if err != nil {
 		h.logger.Error(&reqID, "list batch overviews: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	items := make([]types.BatchOverviewItem, 0, len(rows))
-	for _, row := range rows {
-		pending := toInt64(row.Pending)
-		processing := toInt64(row.Processing)
-		waiting := toInt64(row.Waiting)
-
-		var durationMs *int64
-		if pending == 0 && processing == 0 && waiting == 0 {
-			firstStarted := toNullTime(row.FirstStartedAt)
-			lastCompleted := toNullTime(row.LastCompletedAt)
-			if firstStarted.Valid && lastCompleted.Valid {
-				v := lastCompleted.Time.Sub(firstStarted.Time).Milliseconds()
-				durationMs = &v
+	} else {
+		for _, ov := range overviews {
+			var createdAt string
+			if !ov.CreatedAt.IsZero() {
+				createdAt = ov.CreatedAt.Format(time.RFC3339)
 			}
+			items = append(items, types.BatchOverviewItem{
+				BatchID:   ov.BatchID,
+				Source:    ov.Source,
+				CreatedAt: createdAt,
+				BatchCounts: types.BatchCounts{
+					Total:      ov.Total,
+					Waiting:    ov.Waiting,
+					Pending:    ov.Pending,
+					Processing: ov.Processing,
+					Completed:  ov.Completed,
+					Failed:     ov.Failed,
+					Cancelled:  ov.Cancelled,
+					Discarded:  ov.Discarded,
+					OwnerState: ov.OwnerState,
+					Orphaned:   ov.Orphaned,
+				},
+				DurationMs: ov.DurationMs,
+			})
 		}
-
-		var createdAt string
-		if row.BatchCreatedAt.Valid {
-			createdAt = row.BatchCreatedAt.Time.Format(time.RFC3339)
-		}
-
-		items = append(items, types.BatchOverviewItem{
-			BatchID:   row.BatchID,
-			Source:    row.Source,
-			CreatedAt: createdAt,
-			BatchCounts: types.BatchCounts{
-				Total:      row.Total,
-				Waiting:    waiting,
-				Pending:    pending,
-				Processing: processing,
-				Completed:  toInt64(row.Completed),
-				Failed:     toInt64(row.Failed),
-				Cancelled:  toInt64(row.Cancelled),
-				Discarded:  toInt64(row.Discarded),
-				OwnerState: deriveOwnerState(row.OwnerLastHeartbeat).String(),
-				Orphaned:   deriveIsOrphaned(row.OwnerLastHeartbeat, pending, processing),
-			},
-			DurationMs: durationMs,
-		})
 	}
 
 	activityRows, err := h.queries.ListActivityTimeline(ctx)
@@ -299,7 +290,7 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 		processingHealth = ph
 	}
 
-	totalBatches, batchErr := h.queries.CountDistinctBatches(ctx)
+	totalBatches, batchErr := h.services.Batch.CountDistinct(ctx)
 	if batchErr != nil {
 		h.logger.Error(&reqID, "count distinct batches: %v", batchErr)
 	}
@@ -454,21 +445,14 @@ func (h *TaskHandler) buildProcessingHealth(ctx context.Context, reqID *string) 
 		return nil, fmt.Errorf("avg task duration: %w", err)
 	}
 
-	activeIDs, err := h.queries.ActiveBatchIDs(ctx)
+	activeIDs, err := h.services.Batch.ActiveIDs(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("active batch ids: %w", err)
 	}
 
-	orphanedCount := int64(0)
-	for _, batchID := range activeIDs {
-		state, _, err := task.BatchOwnerState(ctx, h.queries, batchID, task.StaleAfter)
-		if err != nil {
-			h.logger.Debug(reqID, "orphan check batch %s: %v", batchID, err)
-			continue
-		}
-		if state != task.OwnerLive {
-			orphanedCount++
-		}
+	orphanedCount, err := h.services.Batch.CountOrphaned(ctx)
+	if err != nil {
+		h.logger.Debug(reqID, "count orphaned: %v", err)
 	}
 
 	missingTools := int64(0)
@@ -488,92 +472,23 @@ func (h *TaskHandler) buildProcessingHealth(ctx context.Context, reqID *string) 
 	}, nil
 }
 
-func deriveOwnerState(hb sql.NullTime) task.OwnerState {
-	if !hb.Valid {
-		return task.OwnerNone
-	}
-	if time.Since(hb.Time) > task.StaleAfter {
-		return task.OwnerStale
-	}
-	return task.OwnerLive
-}
-
-func deriveIsOrphaned(hb sql.NullTime, pending, processing int64) bool {
-	state := deriveOwnerState(hb)
-	return task.IsOrphaned(state, pending, processing)
-}
-
-func enrichOwnerState(ctx context.Context, queries *database.Queries, batchID string, pending, processing int64) (string, int64, bool) {
-	state, pid, err := task.BatchOwnerState(ctx, queries, batchID, task.StaleAfter)
-	if err != nil {
-		return "none", 0, false
-	}
-	return state.String(), pid, task.IsOrphaned(state, pending, processing)
-}
-
-func toInt64(v any) int64 {
-	switch n := v.(type) {
-	case int64:
-		return n
-	case float64:
-		return int64(n)
-	default:
-		return 0
-	}
-}
-
-func toNullTime(v any) sql.NullTime {
-	switch t := v.(type) {
-	case string:
-		parsed, err := time.Parse("2006-01-02T15:04:05Z", t)
-		if err != nil {
-			parsed, err = time.Parse("2006-01-02 15:04:05", t)
-			if err != nil {
-				return sql.NullTime{}
-			}
-		}
-		return sql.NullTime{Time: parsed, Valid: true}
-	case time.Time:
-		return sql.NullTime{Time: t, Valid: true}
-	default:
-		return sql.NullTime{}
-	}
-}
-
 func (h *TaskHandler) GetBatchSummary(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
 
 	batchID := r.PathValue("id")
 
-	summary := buildBatchSummary(ctx, h.queries, batchID)
+	s, err := h.services.Batch.GetSummary(ctx, batchID)
+	if err != nil {
+		h.logger.Error(&reqID, "get batch summary %s: %v", batchID, err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(summary)
+	json.NewEncoder(w).Encode(batchSummaryToResponse(s))
 
-	h.logger.Debug(&reqID, "batch summary: %+v", summary)
-}
-
-func buildBatchSummary(ctx context.Context, queries *database.Queries, batchID string) types.BatchSummaryResponse {
-	bc := task.CountBatchStatuses(ctx, queries, batchID)
-	ownerState, pid, orphaned := enrichOwnerState(ctx, queries, batchID, bc.Pending, bc.Processing)
-
-	return types.BatchSummaryResponse{
-		BatchID: batchID,
-		BatchCounts: types.BatchCounts{
-			Total:      bc.Total(),
-			Waiting:    bc.Waiting,
-			Pending:    bc.Pending,
-			Processing: bc.Processing,
-			Completed:  bc.Completed,
-			Failed:     bc.Failed,
-			Cancelled:  bc.Cancelled,
-			Discarded:  bc.Discarded,
-			OwnerState: ownerState,
-			Orphaned:   orphaned,
-		},
-		OwnerPID: pid,
-	}
+	h.logger.Debug(&reqID, "batch summary: %+v", s)
 }
 
 func (h *TaskHandler) ResumeBatch(w http.ResponseWriter, r *http.Request) {
@@ -582,8 +497,14 @@ func (h *TaskHandler) ResumeBatch(w http.ResponseWriter, r *http.Request) {
 
 	batchID := r.PathValue("id")
 
-	bc := task.CountBatchStatuses(ctx, h.queries, batchID)
-	if bc.Pending == 0 && bc.Processing == 0 && bc.Waiting == 0 {
+	hasWork, err := h.services.Batch.HasPendingWork(ctx, batchID)
+	if err != nil {
+		h.logger.Error(&reqID, "check pending work for batch %s: %v", batchID, err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	if !hasWork {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(map[string]any{
@@ -593,8 +514,8 @@ func (h *TaskHandler) ResumeBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	state, _, err := task.BatchOwnerState(ctx, h.queries, batchID, task.StaleAfter)
-	if err == nil && state == task.OwnerLive {
+	locked, err := h.services.Batch.IsLockedByLiveOwner(ctx, batchID)
+	if err == nil && locked {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
 		json.NewEncoder(w).Encode(map[string]string{
@@ -645,26 +566,9 @@ func (h *TaskHandler) CancelBatch(w http.ResponseWriter, r *http.Request) {
 
 	batchID := r.PathValue("id")
 
-	pendingCancelled, err := h.queries.CancelPendingTasksByBatch(ctx, sql.NullString{String: batchID, Valid: true})
+	pendingCancelled, ownerPID, ownerID, err := h.services.Batch.BeginCancel(ctx, batchID)
 	if err != nil {
-		h.logger.Error(&reqID, "cancel pending tasks for batch %s: %v", batchID, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	bo, err := h.queries.GetBatchOwner(ctx, batchID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]any{
-				"batch_id":             batchID,
-				"cancelled_pending":    pendingCancelled,
-				"cancelled_processing": 0,
-				"signal_sent":          false,
-			})
-			return
-		}
-		h.logger.Error(&reqID, "get batch owner for %s: %v", batchID, err)
+		h.logger.Error(&reqID, "cancel batch %s: %v", batchID, err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -672,23 +576,19 @@ func (h *TaskHandler) CancelBatch(w http.ResponseWriter, r *http.Request) {
 	signalSent := false
 	processingCancelled := int64(0)
 
-	if bo.Pid > 0 {
-		killErr := syscall.Kill(int(bo.Pid), syscall.SIGTERM)
+	if ownerPID > 0 {
+		killErr := syscall.Kill(int(ownerPID), syscall.SIGTERM)
 		if killErr == nil {
-			processingCancelled, err = h.queries.CancelProcessingTasksByBatch(ctx, sql.NullString{String: batchID, Valid: true})
-			if err != nil {
-				h.logger.Error(&reqID, "cancel processing tasks for batch %s: %v", batchID, err)
-				http.Error(w, "Internal server error", http.StatusInternalServerError)
-				return
-			}
 			signalSent = true
 		}
 	}
 
-	h.queries.ReleaseBatchOwner(ctx, database.ReleaseBatchOwnerParams{
-		BatchID: batchID,
-		OwnerID: bo.OwnerID,
-	})
+	processingCancelled, err = h.services.Batch.CompleteCancel(ctx, batchID, ownerID)
+	if err != nil {
+		h.logger.Error(&reqID, "complete cancel batch %s: %v", batchID, err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{

@@ -8,6 +8,7 @@ import (
 )
 
 type CrudServices struct {
+	Batch        *service.Batch
 	Tag          *service.Tag
 	People       *service.People
 	PeopleType   *service.PeopleType

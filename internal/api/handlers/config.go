@@ -8,10 +8,12 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
+	itypes "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/configtask"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -19,12 +21,13 @@ import (
 const configSource = "config"
 
 type ConfigHandler struct {
-	getConfig    func() *config.Config
-	onConfigSet  func(*config.Config)
-	queries      *database.Queries
-	logger       *utils.Logger
-	dispatcher   *task.Dispatcher
-	OnBootstrap  func(configDir string) (*config.Config, *database.Queries, *task.Dispatcher, error)
+	getConfig   func() *config.Config
+	onConfigSet func(*config.Config)
+	queries     *database.Queries
+	logger      *utils.Logger
+	dispatcher  *task.Dispatcher
+	services    *itypes.CrudServices
+	OnBootstrap func(configDir string) (*config.Config, *database.Queries, *task.Dispatcher, error)
 }
 
 func NewConfigHandler(
@@ -33,6 +36,7 @@ func NewConfigHandler(
 	queries *database.Queries,
 	logger *utils.Logger,
 	dispatcher *task.Dispatcher,
+	services *itypes.CrudServices,
 ) *ConfigHandler {
 	return &ConfigHandler{
 		getConfig:   getConfig,
@@ -40,12 +44,18 @@ func NewConfigHandler(
 		queries:     queries,
 		logger:      logger,
 		dispatcher:  dispatcher,
+		services:    services,
 	}
 }
 
 func (h *ConfigHandler) SetServices(queries *database.Queries, dispatcher *task.Dispatcher) {
 	h.queries = queries
 	h.dispatcher = dispatcher
+	if queries != nil {
+		h.services = &itypes.CrudServices{
+			Batch: service.NewBatch(queries),
+		}
+	}
 }
 
 func (h *ConfigHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
@@ -149,10 +159,7 @@ func (h *ConfigHandler) enqueueConfigTasks(ctx context.Context, cfg *config.Conf
 	enqueued := 0
 	batchID := uuid.New().String()
 
-	h.queries.CreateBatch(ctx, database.CreateBatchParams{
-		ID:     batchID,
-		Source: configSource,
-	})
+	h.services.Batch.Create(ctx, batchID, configSource)
 
 	for _, lang := range config.MissingTessdataLanguages(cfg) {
 		key := "config:tessdata:" + lang

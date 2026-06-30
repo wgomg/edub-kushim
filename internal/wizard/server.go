@@ -39,7 +39,7 @@ func (s *Server) Start() error {
 	getConfig := func() *config.Config { return cfgPtr.Load() }
 	onConfigSet := func(c *config.Config) { cfgPtr.Store(c) }
 
-	configHandler := handlers.NewConfigHandler(getConfig, onConfigSet, nil, s.logger, nil)
+	configHandler := handlers.NewConfigHandler(getConfig, onConfigSet, nil, s.logger, nil, nil)
 	configHandler.OnBootstrap = s.bootstrap
 
 	if configDir, err := utils.ConfigDir(); err == nil {

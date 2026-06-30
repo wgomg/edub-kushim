@@ -72,6 +72,7 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 	}
 	s.services.Tag = tagSvc
 
+	s.services.Batch = service.NewBatch(client.Queries)
 	s.services.People = service.NewPeople(client.Queries, logger)
 	s.services.PeopleType = service.NewPeopleType(client.Queries, logger)
 	s.services.DocumentType = service.NewDocumentType(client.Queries, logger)
@@ -224,7 +225,7 @@ func registerRoutes(
 	mux.HandleFunc("PUT /api/v1/document-types/{id}", docTypeHandler.Update)
 	mux.HandleFunc("DELETE /api/v1/document-types/{id}", docTypeHandler.Delete)
 
-	consumeHandler := handlers.NewConsumeHandler(getConfig, logger, workStore, client.Queries, semaphore)
+	consumeHandler := handlers.NewConsumeHandler(getConfig, logger, workStore, client.Queries, semaphore, services)
 	mux.HandleFunc("POST /api/v1/consume", consumeHandler.Consume)
 	mux.HandleFunc("POST /api/v1/consume/upload", consumeHandler.Upload)
 
@@ -235,13 +236,13 @@ func registerRoutes(
 	mux.HandleFunc("PUT /api/v1/users/{id}", userHandler.Update)
 	mux.HandleFunc("DELETE /api/v1/users/{id}", userHandler.Delete)
 
-	configHandler := handlers.NewConfigHandler(getConfig, onConfigSet, client.Queries, logger, dispatcher)
+	configHandler := handlers.NewConfigHandler(getConfig, onConfigSet, client.Queries, logger, dispatcher, services)
 	mux.HandleFunc("GET /wizard/config", configHandler.GetConfig)
 	mux.HandleFunc("PUT /wizard/config", configHandler.PutConfig)
 	mux.HandleFunc("GET /wizard/config/status", configHandler.ConfigStatus)
 	mux.HandleFunc("POST /wizard/config/retry", configHandler.RetryFailedConfig)
 
-	taskHandler := handlers.NewTaskHandler(client.Queries, logger, getConfig)
+	taskHandler := handlers.NewTaskHandler(services, client.Queries, logger, getConfig)
 	mux.HandleFunc("GET /api/v1/tasks", taskHandler.ListTasks)
 	mux.HandleFunc("GET /api/v1/tasks/{id}", taskHandler.GetTask)
 	mux.HandleFunc("POST /api/v1/tasks/{id}/retry", taskHandler.RetryTask)

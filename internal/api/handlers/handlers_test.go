@@ -72,6 +72,7 @@ func newHandlerTestEnv(t *testing.T) *handlerTestEnv {
 	userSvc := service.NewUser(client.Queries)
 
 	services := &itypes.CrudServices{
+		Batch:        service.NewBatch(client.Queries),
 		Tag:          tagSvc,
 		People:       peopleSvc,
 		PeopleType:   peopleTypeSvc,
@@ -538,7 +539,7 @@ func TestDocumentTypeCrud(t *testing.T) {
 
 func TestTaskEndpoints(t *testing.T) {
 	env := newHandlerTestEnv(t)
-	h := NewTaskHandler(env.client.Queries, env.logger, func() *config.Config { return nil })
+	h := NewTaskHandler(env.services, env.client.Queries, env.logger, func() *config.Config { return nil })
 	ctx := context.Background()
 
 	_, err := env.client.CreateTask(ctx, database.CreateTaskParams{
@@ -656,7 +657,7 @@ func TestTaskEndpoints(t *testing.T) {
 
 func TestGetDashboardActivity(t *testing.T) {
 	env := newHandlerTestEnv(t)
-	h := NewTaskHandler(env.client.Queries, env.logger, func() *config.Config { return nil })
+	h := NewTaskHandler(env.services, env.client.Queries, env.logger, func() *config.Config { return nil })
 	ctx := context.Background()
 
 	docDBID, docUUID := database.CreateTestDocument(t, env.client.Queries, "dash-act-doc.pdf")
@@ -829,7 +830,7 @@ func TestGetDashboardActivity(t *testing.T) {
 
 func TestGetDashboardAnalyticsError(t *testing.T) {
 	env := newHandlerTestEnv(t)
-	h := NewTaskHandler(env.client.Queries, env.logger, func() *config.Config { return nil })
+	h := NewTaskHandler(env.services, env.client.Queries, env.logger, func() *config.Config { return nil })
 
 	database.CreateTestDocument(t, env.client.Queries, "err-test.pdf")
 
@@ -850,7 +851,7 @@ func TestGetDashboardAnalyticsError(t *testing.T) {
 
 func TestGetDashboardProcessingHealth(t *testing.T) {
 	env := newHandlerTestEnv(t)
-	h := NewTaskHandler(env.client.Queries, env.logger, func() *config.Config { return nil })
+	h := NewTaskHandler(env.services, env.client.Queries, env.logger, func() *config.Config { return nil })
 	ctx := context.Background()
 
 	database.CreateTestDocument(t, env.client.Queries, "ph-doc.pdf")
@@ -1034,7 +1035,7 @@ func TestEnqueueBatchFilesDedup(t *testing.T) {
 	ctx := context.Background()
 
 	cfg := config.DefaultConfig("/tmp/test")
-	h := NewConsumeHandler(func() *config.Config { return cfg }, env.logger, env.workStore, env.client.Queries, env.semaphore)
+	h := NewConsumeHandler(func() *config.Config { return cfg }, env.logger, env.workStore, env.client.Queries, env.semaphore, nil)
 
 	t.Run("enqueues new file", func(t *testing.T) {
 		tmpDir := t.TempDir()
@@ -1280,7 +1281,7 @@ func newTestConfigHandler(cfg *config.Config, queries *database.Queries, logger 
 	}
 	getConfig := func() *config.Config { return ptr.Load() }
 	onConfigSet := func(c *config.Config) { ptr.Store(c) }
-	return NewConfigHandler(getConfig, onConfigSet, queries, logger, dispatcher)
+	return NewConfigHandler(getConfig, onConfigSet, queries, logger, dispatcher, nil)
 }
 
 func TestConfigHandlerGetConfig(t *testing.T) {
@@ -1323,7 +1324,7 @@ func TestConfigHandlerGetConfig(t *testing.T) {
 		var ptr atomic.Pointer[config.Config]
 		getConfig := func() *config.Config { return ptr.Load() }
 		onConfigSet := func(c *config.Config) { ptr.Store(c) }
-		h := NewConfigHandler(getConfig, onConfigSet, env.client.Queries, env.logger, nil)
+		h := NewConfigHandler(getConfig, onConfigSet, env.client.Queries, env.logger, nil, nil)
 		bootstrapped := config.DefaultConfig("/tmp/boot")
 		bootstrapped.Srv.Port = 7777
 		onConfigSet(bootstrapped)
@@ -1379,7 +1380,7 @@ func TestProcessingHealthMissingTools(t *testing.T) {
 
 	cfg := config.DefaultConfig("/tmp/test")
 	cfg.Consumer.OCR.Engine = "ocrmypdf"
-	h := NewTaskHandler(env.client.Queries, env.logger, func() *config.Config { return cfg })
+	h := NewTaskHandler(env.services, env.client.Queries, env.logger, func() *config.Config { return cfg })
 
 	ctx := context.Background()
 	_, err := env.client.CreateBatch(ctx, database.CreateBatchParams{ID: "mh-batch", Source: "test"})

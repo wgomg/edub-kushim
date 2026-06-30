@@ -130,18 +130,3 @@ func (o *Owner) CleanupCompleted(ctx context.Context) error {
 func IsOrphaned(state OwnerState, pending, processing int64) bool {
 	return state != OwnerLive && (pending > 0 || processing > 0)
 }
-
-func BatchOwnerState(ctx context.Context, q *database.Queries, batchID string, staleAfter time.Duration) (OwnerState, int64, error) {
-	bo, err := q.GetBatchOwner(ctx, batchID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return OwnerNone, 0, nil
-		}
-		return OwnerNone, 0, fmt.Errorf("get batch owner: %w", err)
-	}
-
-	if bo.LastHeartbeat.Before(time.Now().Add(-staleAfter)) {
-		return OwnerStale, bo.Pid, nil
-	}
-	return OwnerLive, bo.Pid, nil
-}

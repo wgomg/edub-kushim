@@ -25,21 +25,6 @@ type TaskFilter struct {
 	Offset   int64
 }
 
-type BatchCounts struct {
-	BatchID    string
-	Waiting    int64
-	Pending    int64
-	Processing int64
-	Completed  int64
-	Failed     int64
-	Cancelled  int64
-	Discarded  int64
-}
-
-func (bc BatchCounts) Total() int64 {
-	return bc.Waiting + bc.Pending + bc.Processing + bc.Completed + bc.Failed + bc.Cancelled + bc.Discarded
-}
-
 func Get(ctx context.Context, queries *database.Queries, taskID string) (database.Task, error) {
 	task, err := queries.GetTaskByTaskID(ctx, taskID)
 	if err != nil {
@@ -136,9 +121,6 @@ func ListFiltered(ctx context.Context, queries *database.Queries, f TaskFilter) 
 		return queries.ListAllTasks(ctx)
 	}
 }
-func RetryBatchFailed(ctx context.Context, queries *database.Queries, batchID string) (int64, error) {
-	return queries.RetryFailedTasksByBatch(ctx, sql.NullString{String: batchID, Valid: true})
-}
 
 func Retry(ctx context.Context, queries *database.Queries, taskID string) error {
 	task, err := queries.GetTaskByTaskID(ctx, taskID)
@@ -154,65 +136,4 @@ func Retry(ctx context.Context, queries *database.Queries, taskID string) error 
 	return queries.RetryTask(ctx, task.ID)
 }
 
-func CountBatchStatuses(ctx context.Context, queries *database.Queries, batchID string) BatchCounts {
-	statuses := []string{"waiting", "pending", "processing", "completed", "failed", "cancelled", "discarded"}
-	counts := BatchCounts{BatchID: batchID}
 
-	for _, status := range statuses {
-		count, err := queries.CountTasksByBatchAndStatus(ctx, database.CountTasksByBatchAndStatusParams{
-			BatchID: sql.NullString{String: batchID, Valid: true},
-			Status:  status,
-		})
-		if err != nil {
-			continue
-		}
-		switch status {
-		case "waiting":
-			counts.Waiting = count
-		case "pending":
-			counts.Pending = count
-		case "processing":
-			counts.Processing = count
-		case "completed":
-			counts.Completed = count
-		case "failed":
-			counts.Failed = count
-		case "cancelled":
-			counts.Cancelled = count
-		case "discarded":
-			counts.Discarded = count
-		}
-	}
-	return counts
-}
-
-func ListBatchSummaries(ctx context.Context, queries *database.Queries, f BatchFilter) ([]BatchCounts, error) {
-	var rows []sql.NullString
-	var err error
-
-	if f.Status != "" {
-		rows, err = queries.ListDistinctBatchIDsByStatus(ctx, database.ListDistinctBatchIDsByStatusParams{
-			Status: f.Status,
-			Limit:  f.Limit,
-			Offset: f.Offset,
-		})
-	} else {
-		rows, err = queries.ListDistinctBatchIDs(ctx, database.ListDistinctBatchIDsParams{
-			Limit:  f.Limit,
-			Offset: f.Offset,
-		})
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	summaries := make([]BatchCounts, 0, len(rows))
-	for _, row := range rows {
-		if !row.Valid {
-			continue
-		}
-		counts := CountBatchStatuses(ctx, queries, row.String)
-		summaries = append(summaries, counts)
-	}
-	return summaries, nil
-}

@@ -14,6 +14,7 @@ import (
 
 	"github.com/gabriel-vasile/mimetype"
 	"github.com/google/uuid"
+	itypes "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/pool"
@@ -27,15 +28,17 @@ type ConsumeHandler struct {
 	workStore *task.Store
 	queries   *database.Queries
 	semaphore *pool.Semaphore
+	services  *itypes.CrudServices
 }
 
-func NewConsumeHandler(getConfig func() *config.Config, logger *utils.Logger, workStore *task.Store, queries *database.Queries, semaphore *pool.Semaphore) *ConsumeHandler {
+func NewConsumeHandler(getConfig func() *config.Config, logger *utils.Logger, workStore *task.Store, queries *database.Queries, semaphore *pool.Semaphore, services *itypes.CrudServices) *ConsumeHandler {
 	return &ConsumeHandler{
 		getConfig: getConfig,
 		logger:    logger,
 		workStore: workStore,
 		queries:   queries,
 		semaphore: semaphore,
+		services:  services,
 	}
 }
 
@@ -163,10 +166,7 @@ func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 
 	batchID := uuid.New().String()
 
-	h.queries.CreateBatch(ctx, database.CreateBatchParams{
-		ID:     batchID,
-		Source: "api",
-	})
+	h.services.Batch.Create(ctx, batchID, "api")
 
 	enqueued := h.enqueueBatchFiles(ctx, batchID, paths, reqID)
 
@@ -366,10 +366,7 @@ func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	batchID := uuid.New().String()
-	if _, err := h.queries.CreateBatch(ctx, database.CreateBatchParams{
-		ID:     batchID,
-		Source: "api-upload",
-	}); err != nil {
+	if err := h.services.Batch.Create(ctx, batchID, "api-upload"); err != nil {
 		h.semaphore.Release()
 		h.logger.Error(&reqID, "create batch %s: %v", batchID, err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
