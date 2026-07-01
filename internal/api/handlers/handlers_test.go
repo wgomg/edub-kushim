@@ -22,7 +22,6 @@ import (
 	"github.com/wgomg/edub-kushim/internal/auth"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
-	"github.com/wgomg/edub-kushim/internal/pool"
 	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/tagmatch"
@@ -45,7 +44,6 @@ type handlerTestEnv struct {
 	workStore     *task.Store
 	dispatcher    *task.Dispatcher
 	registry      *task.Registry
-	semaphore     *pool.Semaphore
 }
 
 func newDocHandler(env *handlerTestEnv) *DocumentHandler {
@@ -98,7 +96,6 @@ func newHandlerTestEnv(t *testing.T) *handlerTestEnv {
 		workStore:     workStore,
 		dispatcher:    dispatcher,
 		registry:      registry,
-		semaphore:     pool.NewSemaphore(4),
 	}
 }
 
@@ -1035,7 +1032,7 @@ func TestEnqueueBatchFilesDedup(t *testing.T) {
 	ctx := context.Background()
 
 	cfg := config.DefaultConfig("/tmp/test")
-	h := NewConsumeHandler(func() *config.Config { return cfg }, env.logger, env.workStore, env.client.Queries, env.semaphore, nil)
+	h := NewConsumeHandler(func() *config.Config { return cfg }, env.logger, env.workStore, env.client.Queries, nil)
 
 	t.Run("enqueues new file", func(t *testing.T) {
 		tmpDir := t.TempDir()

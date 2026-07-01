@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -17,7 +16,6 @@ import (
 	itypes "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
-	"github.com/wgomg/edub-kushim/internal/pool"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -27,17 +25,15 @@ type ConsumeHandler struct {
 	logger    *utils.Logger
 	workStore *task.Store
 	queries   *database.Queries
-	semaphore *pool.Semaphore
 	services  *itypes.CrudServices
 }
 
-func NewConsumeHandler(getConfig func() *config.Config, logger *utils.Logger, workStore *task.Store, queries *database.Queries, semaphore *pool.Semaphore, services *itypes.CrudServices) *ConsumeHandler {
+func NewConsumeHandler(getConfig func() *config.Config, logger *utils.Logger, workStore *task.Store, queries *database.Queries, services *itypes.CrudServices) *ConsumeHandler {
 	return &ConsumeHandler{
 		getConfig: getConfig,
 		logger:    logger,
 		workStore: workStore,
 		queries:   queries,
-		semaphore: semaphore,
 		services:  services,
 	}
 }
@@ -87,33 +83,6 @@ func (h *ConsumeHandler) enqueueBatchFiles(ctx context.Context, batchID string, 
 	return enqueued
 }
 
-func (h *ConsumeHandler) forkWorker(batchID string) error {
-	kushimPath, err := utils.KushimBinaryPath()
-	if err != nil {
-		return err
-	}
-
-	cmd := exec.Command(kushimPath, "consume", "--batch", batchID)
-	cmd.Stdin = nil
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("fork worker: %w", err)
-	}
-
-	go func() {
-		if err := cmd.Wait(); err != nil {
-			h.logger.Error(nil, "worker for batch %s exited: %v", batchID, err)
-		} else {
-			h.logger.Info(nil, "worker for batch %s completed", batchID)
-		}
-		h.semaphore.Release()
-	}()
-
-	return nil
-}
-
 func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -131,29 +100,18 @@ func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.semaphore.Acquire() {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusTooManyRequests)
-		json.NewEncoder(w).Encode(map[string]any{
-			"error": "too many concurrent batches — try again later",
-		})
-		return
-	}
-
 	paths, err := utils.ListFilePaths(
 		cfg.Storage.ConsumptionDir,
 		cfg.Consumer.SupportedFiles,
 		cfg.Consumer.MaxFilesPerBatch,
 	)
 	if err != nil {
-		h.semaphore.Release()
 		h.logger.Error(&reqID, "Failed to scan inbox: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
 	if len(paths) == 0 {
-		h.semaphore.Release()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(map[string]any{
@@ -171,19 +129,11 @@ func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 	enqueued := h.enqueueBatchFiles(ctx, batchID, paths, reqID)
 
 	if enqueued == 0 {
-		h.semaphore.Release()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]any{
 			"error": "no files could be enqueued",
 		})
-		return
-	}
-
-	if err := h.forkWorker(batchID); err != nil {
-		h.semaphore.Release()
-		h.logger.Error(&reqID, "fork worker for batch %s: %v", batchID, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
@@ -198,7 +148,7 @@ func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 
-	h.logger.Info(&reqID, "forked worker for batch %s (%d files, %d enqueued)", batchID, len(paths), enqueued)
+	h.logger.Info(&reqID, "enqueued batch %s (%d files, %d enqueued)", batchID, len(paths), enqueued)
 }
 
 func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
@@ -218,21 +168,11 @@ func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.semaphore.Acquire() {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusTooManyRequests)
-		json.NewEncoder(w).Encode(map[string]any{
-			"error": "too many concurrent batches — try again later",
-		})
-		return
-	}
-
 	maxBytes := cfg.Srv.MaxUploadSize * 1024 * 1024
 	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
 
 	mr, err := r.MultipartReader()
 	if err != nil {
-		h.semaphore.Release()
 		http.Error(w, "Invalid multipart request", http.StatusBadRequest)
 		return
 	}
@@ -272,7 +212,6 @@ func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			var maxBytesErr *http.MaxBytesError
 			if errors.As(err, &maxBytesErr) {
-				h.semaphore.Release()
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusRequestEntityTooLarge)
 				json.NewEncoder(w).Encode(map[string]any{
@@ -281,7 +220,6 @@ func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			http.Error(w, "Error reading multipart", http.StatusBadRequest)
-			h.semaphore.Release()
 			return
 		}
 		partsSeen++
@@ -309,7 +247,6 @@ func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		if copyErr != nil {
 			var maxBytesErr *http.MaxBytesError
 			if errors.As(copyErr, &maxBytesErr) {
-				h.semaphore.Release()
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusRequestEntityTooLarge)
 				json.NewEncoder(w).Encode(map[string]any{
@@ -343,7 +280,6 @@ func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if max := cfg.Consumer.MaxFilesPerBatch; max > 0 && len(accepted) > max {
-		h.semaphore.Release()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		json.NewEncoder(w).Encode(map[string]any{
@@ -355,7 +291,6 @@ func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(accepted) == 0 {
-		h.semaphore.Release()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		json.NewEncoder(w).Encode(map[string]any{
@@ -367,7 +302,6 @@ func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 
 	batchID := uuid.New().String()
 	if err := h.services.Batch.Create(ctx, batchID, "api-upload", "queued"); err != nil {
-		h.semaphore.Release()
 		h.logger.Error(&reqID, "create batch %s: %v", batchID, err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
@@ -378,19 +312,11 @@ func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	acceptedPaths = nil
 
 	if enqueued == 0 {
-		h.semaphore.Release()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]any{
 			"error": "no files could be enqueued",
 		})
-		return
-	}
-
-	if err := h.forkWorker(batchID); err != nil {
-		h.semaphore.Release()
-		h.logger.Error(&reqID, "fork worker for batch %s: %v", batchID, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
@@ -405,5 +331,5 @@ func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 
-	h.logger.Info(&reqID, "upload batch %s: %d accepted, %d rejected, worker forked", batchID, len(accepted), len(rejected))
+	h.logger.Info(&reqID, "upload batch %s: %d accepted, %d rejected", batchID, len(accepted), len(rejected))
 }

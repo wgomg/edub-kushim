@@ -4,7 +4,7 @@ Two binaries: **kushim** (CLI for document processing and matcher server) and **
 Both share the same OCR, text extraction, and PDF optimization pipeline.
 
 The `edub` API server is a pure Go binary (`CGO_ENABLED=0`) that does not link any
-C libraries. It **forks** `kushim` child processes for document processing and
+C libraries. The `kushim queue` daemon **forks** `kushim` workers for document processing; `edub` only enqueues tasks and
 communicates with an external **matcher process** (`kushim hugot`) for
 semantic tag matching via a Unix domain socket.
 
@@ -1440,7 +1440,7 @@ server:
   read_timeout: 60s # Go duration string (e.g. 60s, 30s)
   write_timeout: 60s
   idle_timeout: 60s
-  max_concurrent_batches: 2 # max concurrent forked worker processes
+  max_concurrent_batches: 2 # max concurrent worker processes (enforced by the queue daemon)
   max_download_files: 50 # max files in a single batch download
   max_download_size_mb: 500 # max total size in MB for batch download
   max_batch_delete: 50 # max documents in a single batch delete
@@ -1579,12 +1579,9 @@ The server starts the **config pool** for background downloads (tessdata,
 Hugot model). Logs are written to stdout. Graceful shutdown on SIGINT/SIGTERM.
 
 When `POST /api/v1/consume` or `POST /api/v1/consume/upload` is called, the
-server enqueues tasks in the database and **forks** `kushim consume --batch <id>`
-as a child process. The child performs the actual document processing
-(consumption + enrichment) and communicates with the matcher process for
-semantic tag matching.
+server enqueues tasks in the database with `status='queued'`; the `kushim queue` daemon picks up the batch and **forks** `kushim consume --batch <id>`
 
-The maximum number of concurrent forked workers is controlled by
+The maximum number of concurrent workers is controlled by
 `server.max_concurrent_batches` (default 2). If the limit is reached,
 subsequent consume requests receive `429 Too Many Requests`.
 
@@ -1758,7 +1755,7 @@ edub.service          (After=kushim-hugot.service, Wants=kushim-hugot.service)
 ```
 
 `kushim-queue.service` has no dependency on the matcher — it only reads
-the database and forks consumer children.
+the database; the queue daemon forks consumer children for processing.
 
 The matcher should be fully started before the API server. The example files
 use a soft dependency (`Wants=`) so `edub` doesn't fail to start if the

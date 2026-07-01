@@ -92,8 +92,6 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 
 	s.pools.config = pool.New(logger, configRunner, 1, 5*time.Second, "config")
 
-	semaphore := pool.NewSemaphore(max(cfg.Srv.MaxConcurrentBatches, 2))
-
 	onConfigSet := func(cfg *config.Config) {
 		if cfg.Srv.SessionSecret == "" {
 			cfg.Srv.SessionSecret = s.cfg.Load().Srv.SessionSecret
@@ -103,7 +101,7 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 
 	getConfigFn := func() *config.Config { return s.cfg.Load() }
 
-	mux := registerRoutes(logger, client, dispatcher, getConfigFn, onConfigSet, s.services, semaphore, workStore)
+	mux := registerRoutes(logger, client, dispatcher, getConfigFn, onConfigSet, s.services, workStore)
 	registerStaticRoutes(mux)
 
 	getSecret := func() string { return s.cfg.Load().Srv.SessionSecret }
@@ -151,7 +149,6 @@ func registerRoutes(
 	getConfig func() *config.Config,
 	onConfigSet func(*config.Config),
 	services *types.CrudServices,
-	semaphore *pool.Semaphore,
 	workStore *task.Store,
 ) *http.ServeMux {
 	mux := http.NewServeMux()
@@ -220,7 +217,7 @@ func registerRoutes(
 	mux.HandleFunc("PUT /api/v1/document-types/{id}", docTypeHandler.Update)
 	mux.HandleFunc("DELETE /api/v1/document-types/{id}", docTypeHandler.Delete)
 
-	consumeHandler := handlers.NewConsumeHandler(getConfig, logger, workStore, client.Queries, semaphore, services)
+	consumeHandler := handlers.NewConsumeHandler(getConfig, logger, workStore, client.Queries, services)
 	mux.HandleFunc("POST /api/v1/consume", consumeHandler.Consume)
 	mux.HandleFunc("POST /api/v1/consume/upload", consumeHandler.Upload)
 

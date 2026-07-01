@@ -165,7 +165,7 @@ The config pool is started alongside consume/enrich pools when a CLI command run
 ### Server (`edub`)
 
 The `Server` only registers the `"config"` task type. Consume/enrich pools are **not started**
-— the server enqueues tasks and forks `kushim consume --batch <id>` subprocesses instead:
+— the server enqueues tasks and the `kushim queue` daemon forks `kushim consume --batch <id>` subprocesses instead:
 
 ```go
 registry.Register("config", configtask.NewConfigTaskHandler(logger))

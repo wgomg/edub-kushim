@@ -17,9 +17,9 @@
 - Configurable worker pool size (`consumer.workers`, `enricher.workers`, default 1 each)
 - Database-backed batch ownership with heartbeats (`batch_owner` table, stale lease detection, `--force` override, server/CLI isolation via per-process owner UUID)
 - Matcher as external process: Hugot embedding model runs as `kushim hugot` over Unix domain socket RPC
-- Worker forking: `edub` enqueues tasks and forks `kushim consume --batch` for processing; `edub` is pure Go (`CGO_ENABLED=0`)
+- Worker forking: `kushim queue` daemon forks `kushim consume --batch` for processing; `edub` only enqueues tasks (`CGO_ENABLED=0`)
 - Matcher RPC protocol: encode, match, consolidate, add-to-store, remove-from-store operations over HTTP/Unix socket
-- Semaphore-based batch concurrency limiting (`server.max_concurrent_batches`, default 2)
+- Queue-driven batch processing: API creates `queued` batches; `kushim queue` consumes them with configurable concurrency (`server.max_concurrent_batches`)
 - `internal/configtask/` — ConfigTaskHandler (downloads tessdata/Hugot model in background, registered as "config" task type)
 - `internal/utils/files.go` — `ListFilePaths` scans inbox directories with MIME detection (replaced `internal/fileresolver/`)
 - Config handler `AdoptBatch` renamed to `ResumeBatch`, now forks kushim worker
@@ -127,8 +127,8 @@
 | `POST /api/v1/auth/login`              | Authenticate user, return JWT token + user profile          |
 | `POST /api/v1/auth/logout`             | No-op (client-side token discard)                           |
 
-| `POST /api/v1/consume` | Enqueue inbox files, fork processing worker |
-| `POST /api/v1/consume/upload` | Upload files via multipart, fork processing worker |
+| `POST /api/v1/consume` | Scan inbox, enqueue files, create queued batch |
+| `POST /api/v1/consume/upload` | Upload files via multipart, create queued batch |
 | `GET /api/v1/tasks` | List tasks (batch, status filters) |
 | `GET /api/v1/tasks/{id}` | Get single task |
 | `GET /api/v1/batches` | List batch summaries |
@@ -262,7 +262,7 @@
 | 32  | **Batch queue schema and queries**                     | ✓ Migration adds `status` column to batch table with backfill, 10 new SQL queries (CountQueuedBatches, GetNextQueuedBatch, RequeueBatch, SetBatchProcessing/Completed/Failed/Cancelled, CountLiveBatches, ListStaleBatchOwners), sqlc regeneration, service wrappers, `CompleteCancel` sets `cancelled`. API response types include `Status`.                                                                                                                                                                                                                                                                                                                     |
 | 33  | **`kushim queue` daemon**                              | ✓ New daemon CLI command (sibling to `kushim hugot`). Runs two loops: (a) queue consumption — `GetNextQueuedBatch`, fork `kushim consume --batch <id>` when `CountLiveBatches < MaxConcurrentBatches`; (b) stale reclamation — `ListStaleBatchOwners` (>15s heartbeat with active tasks), reset processing→pending, requeue, delete stale owner. `--bg` to daemonize. PID file, signal handling, zombie reaping, orphaned-batch recovery via pre-fork owner row. |
 | 34  | **Move inbox polling to `kushim queue`**               | ✓ Remove `PollingScheduler` from edub (`internal/scheduler/`). Embed inbox scanning loop in `kushim queue` as a third loop. Before enqueueing: check `CountQueuedBatches + CountLiveBatches < MaxConcurrentBatches`. Respects existing `consumer.polling` config (interval, windows, enabled). New `config.Reload` function enables live config re-read on each poll tick. `consumption.ScanAndEnqueue` shared function supports future handler/CLI unification.                                                                                                           |
-| 35  | **API endpoints enqueue, no fork**                     | `POST /api/v1/consume` and `POST /api/v1/consume/upload` create batch with `status='queued'`, return 202 with batch ID. Remove `forkWorker()` and all semaphore acquire/release from `ConsumeHandler`. Remove `semaphore` field from handler and constructor. Remove semaphore creation and `registerRoutes` parameter from `server.go`. Inbox scanning and dedup unchanged.                           |
+| 35  | **API endpoints enqueue, no fork**                     | ✓ `POST /api/v1/consume` and `POST /api/v1/consume/upload` create batch with `status='queued'`, return 202 with batch ID. Remove `forkWorker()` and all semaphore acquire/release from `ConsumeHandler`. Remove `semaphore` field from handler and constructor. Remove semaphore creation and `registerRoutes` parameter from `server.go`. Inbox scanning and dedup unchanged.                           |
 | 36  | **API batch resume enqueues**                          | `POST /api/v1/batches/{id}/resume` sets batch status to `queued`, resets processing→pending tasks. Queue daemon picks it up instead of direct forking.                                                                                                                                                                                                                                                 |
 | 37  | **Delete `pool.Semaphore`**                            | Remove `internal/pool/semaphore.go`. No remaining call sites after features 34–36. `MaxConcurrentBatches` config stays for queue daemon (reads via `kushim queue` from shared config).                                                                                                                                                                                                                 |
 | 38  | **CLI `kushim consume` enqueues with direct-fallback** | Scans inbox, creates batch with `status='queued'`. If queue was empty before enqueueing, falls back to direct processing (current behavior). If queue was non-empty, prints "Batch <id> queued — start `kushim queue` to process". Remove `--bg` flag. `--batch <id>` unchanged for recovery.                                                                                                          |

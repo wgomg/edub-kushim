@@ -7,7 +7,7 @@
 - `Server`
   - **Fields**: `httpServer *http.Server`, `logger *utils.Logger`, `addr string`, `cfg atomic.Pointer[config.Config]`, `matcherClient *tagmatch.MatcherClient`, `services *types.CrudServices`, `pools struct { config *pool.Pool }`
   - **Methods**:
-    - `NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server` — Creates a `MatcherClient` connected to `kushim-hugot.sock` in the config dir, builds `CrudServices` with `Batch`, `Tag` (wired through `MatcherClient`), `People`, `PeopleType`, `DocumentType`, `User`, `Orphaned`, `ErroredFiles` services, creates dispatcher with only the `"config"` task type registered, creates a `Semaphore` for batch concurrency. Generates a random `SessionSecret` if none is configured (with a warning log). Registers routes and middleware chain (request → auth → parambag).
+    - `NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server` — Creates a `MatcherClient` connected to `kushim-hugot.sock` in the config dir, builds `CrudServices` with `Batch`, `Tag` (wired through `MatcherClient`), `People`, `PeopleType`, `DocumentType`, `User`, `Orphaned`, `ErroredFiles` services, creates dispatcher with only the `"config"` task type registered. Generates a random `SessionSecret` if none is configured (with a warning log). Registers routes and middleware chain (request → auth → parambag).
     - `Start() error` — Probes matcher health (startup warning if unreachable), starts config pool, then HTTP server
     - `Shutdown(ctx context.Context) error` — Shuts down HTTP server, config pool, then `services.Close()`
     - `Addr() string`
@@ -15,7 +15,7 @@
 ### Functions
 
 - `probeMatcher()` — Calls `matcherClient.Health()` with 2s timeout. Logs warning and continues if matcher is unreachable; tag CRUD returns `503` and enrich falls back to LLM-only tags.
-- `registerRoutes(logger, client, dispatcher, getConfig, onConfigSet, services, semaphore, workStore) *http.ServeMux` — Creates and returns a `*http.ServeMux` with all API routes registered; internally creates the `search.Engine` from `client`. Uses Go 1.22+ pattern routing (`"GET /api/v1/documents/{id}"`). Auth routes (`POST /api/v1/auth/login`, `POST /api/v1/auth/logout`) are registered before all other routes so they are public (bypassed by `AuthMiddleware`). Orphaned file routes (`/api/v1/orphaned/...`) are registered via `OrphanedHandler` after the document routes. Errored file routes (`/api/v1/errored/...`) are registered via `ErroredHandler` after the orphaned block.
+- `registerRoutes(logger, client, dispatcher, getConfig, onConfigSet, services, workStore) *http.ServeMux` — Creates and returns a `*http.ServeMux` with all API routes registered; internally creates the `search.Engine` from `client`. Uses Go 1.22+ pattern routing (`"GET /api/v1/documents/{id}"`). Auth routes (`POST /api/v1/auth/login`, `POST /api/v1/auth/logout`) are registered before all other routes so they are public (bypassed by `AuthMiddleware`). Orphaned file routes (`/api/v1/orphaned/...`) are registered via `OrphanedHandler` after the document routes. Errored file routes (`/api/v1/errored/...`) are registered via `ErroredHandler` after the orphaned block.
 - `registerStaticRoutes(mux *http.ServeMux)` — Registers `"GET /{path...}"` handler; tries to serve the requested file from the embedded FS, falls back to `index.html` for client-side SPA routes if the file doesn't exist
 - `chainMiddleware(logger *utils.Logger, getSecret func() string, h http.Handler) http.Handler` — Composes request + auth + parambag middleware. The auth middleware skips public paths (`/health`, `/wizard/*`, `/api/v1/auth/*`, non-API paths) and validates Bearer JWTs on all other API routes.
 - `AuthMiddleware(next http.Handler, getSecret func() string) http.Handler` — Extracts `Authorization: Bearer <token>` header, validates JWT via `auth.ValidateToken`, injects `userID` and `username` into `r.Context()` using typed context keys. Returns 401 JSON with generic error for missing/invalid/expired tokens. Bypasses auth for public paths.
@@ -29,12 +29,11 @@
 ### Struct
 
 - `ConsumeHandler`
-  - **Fields**: `getConfig func() *config.Config`, `logger *utils.Logger`, `workStore *task.Store`, `queries *database.Queries`, `semaphore *pool.Semaphore`
+  - **Fields**: `getConfig func() *config.Config`, `logger *utils.Logger`, `workStore *task.Store`, `queries *database.Queries`, `services *itypes.CrudServices`
   - **Methods**:
-    - `NewConsumeHandler(getConfig, logger, workStore, queries, semaphore) *ConsumeHandler`
-    - `Consume(w, r)` — Acquires semaphore slot, scans inbox using `utils.ListFilePaths`, creates a batch, enqueues one pair of (consume + enrich) tasks per file via `workStore.CreateTask`, then **forks a `kushim consume --batch <id>` child process** to handle actual processing. Returns `202` with `batch_id`, `total_files`, `enqueued`, and `_links.tasks`. Returns `429 Too Many Requests` when semaphore slots are exhausted (`server.max_concurrent_batches`). Returns `200` JSON `{batch_id:null, total_files:0, message:"no files found"}` when inbox is empty.
-    - `Upload(w, r)` — Acquires semaphore slot, accepts multipart upload (`files` field, repeatable), streams bytes to temp files in the inbox, validates MIME type against `consumer.supported_files`, enqueues tasks, then **forks a `kushim consume --batch <id>` child process**. Returns `202` with `batch_id`, `accepted`, `rejected`, and `_links.tasks`. Returns `413` when body exceeds `server.max_upload_size`. Returns `422` when no supported files are found or required tools are missing.
-    - `forkWorker(batchID) error` — Finds the `kushim` binary (PATH or sibling of `edub`), starts it detached with `--batch <id>`, and releases the semaphore slot when the child exits.
+    - `NewConsumeHandler(getConfig, logger, workStore, queries, services) *ConsumeHandler`
+    - `Consume(w, r)` — Scans inbox using `utils.ListFilePaths`, creates a batch with `status='queued'`, enqueues one pair of (consume + enrich) tasks per file via `workStore.CreateTask`. The `kushim queue` daemon picks up the queued batch for actual processing. Returns `202` with `batch_id`, `total_files`, `enqueued`, and `_links.tasks`. Returns `200` JSON `{batch_id:null, total_files:0, message:"no files found"}` when inbox is empty.
+    - `Upload(w, r)` — Accepts multipart upload (`files` field, repeatable), streams bytes to temp files in the inbox, validates MIME type against `consumer.supported_files`, creates a batch with `status='queued'`, enqueues tasks. The `kushim queue` daemon picks up the batch. Returns `202` with `batch_id`, `accepted`, `rejected`, and `_links.tasks`. Returns `413` when body exceeds `server.max_upload_size`. Returns `422` when no supported files are found or required tools are missing.
 
 ---
 

@@ -12,7 +12,7 @@
 - **Fallback Processing**: Text extraction → OCR → text extraction pattern
 - **Date-based Organization**: Temporal storage structure for scalability
 - **Transaction Safety**: Coordinated database and file operations with rollback
-- **Process Isolation**: The Hugot embedding model runs as a **separate process** (`kushim hugot`), communicating over a Unix domain socket. The API server (`edub`) is pure Go (`CGO_ENABLED=0`) — it forks `kushim` child processes for document processing and communicates with the matcher via RPC.
+- **Process Isolation**: The Hugot embedding model runs as a **separate process** (`kushim hugot`), communicating over a Unix domain socket. The API server (`edub`) is pure Go (`CGO_ENABLED=0`) — it enqueues tasks and the `kushim queue` daemon forks workers for document processing; `edub` communicates with the matcher via RPC.
 - **Two Binaries**: **kushim** (CLI document processing + matcher server) and **edub** (REST API server). Static C dependencies (Tesseract, Leptonica, MuPDF) linked only into **kushim**; **edub** is compiled with `CGO_ENABLED=0`.
 
 See [Roadmap](roadmap.md) for the implementation status and upcoming priorities.
@@ -46,11 +46,10 @@ This process requires CGo (Tesseract/Hugot libraries) and should be started befo
 
 Pure Go binary (`CGO_ENABLED=0`) that handles HTTP requests. It:
 
-- Enqueues consume/enrich tasks when `POST /api/v1/consume` is called
-- **Forks** `kushim consume --batch <id>` as a child process to handle actual document processing
+- Enqueues consume/enrich tasks when `POST /api/v1/consume` is called, creating batches with `status='queued'`
+- The `kushim queue` daemon picks up queued batches and forks `kushim consume --batch <id>` for processing
 - Runs a config pool for background download tasks (tessdata, Hugot model)
 - Probes the matcher socket on startup; tag CRUD returns 503 if matcher is unreachable
-- Uses `Semaphore` to limit concurrent forked workers (`server.max_concurrent_batches`)
 - Does not manage inbox polling — the queue daemon (`kushim queue`) handles scanning as a goroutine loop
 
 ### 4. CLI / Worker (`kushim`)
@@ -59,7 +58,7 @@ The CGo binary that performs actual document processing:
 
 - `kushim consume` — scans inbox, processes files, runs enrichment
 - `kushim consume --bg` — scans inbox in the background; creates a batch and re-forks with `--batch`
-- `kushim consume --batch <id>` — resumes a previously enqueued batch (used by `edub`'s API consume and resume handlers)
+- `kushim consume --batch <id>` — resumes a previously enqueued batch (used by `kushim queue` and `edub`'s API resume handler)
 - `kushim queue` — starts the batch queue daemon for background consumption and inbox polling (replaces the former `PollingScheduler`)
 - `kushim hugot` — starts the matcher RPC server
 - `kushim setup` — setup wizard
@@ -72,14 +71,25 @@ The CGo binary that performs actual document processing:
        ▼
 ┌──────────────┐     enqueue tasks      ┌──────────────┐
 │    edub      │ ──────────────────────▶ │   SQLite DB  │
-│ (CGO_ENABLED │                         └──────────────┘
-│     =0)      │                              │
-└──────┬───────┘                              │
-       │ fork kushim consume --batch           │
-       ▼                                      ▼
+│ (CGO_ENABLED │                         │  (status='   │
+│     =0)      │                         │   queued')   │
+└──────────────┘                         └──────┬───────┘
+       │                                        │
+       │                                        │ kushim queue
+       │                                        │ picks up batch
+       ▼                                        ▼
 ┌──────────────┐                     ┌──────────────┐
 │   kushim     │ ◀───── polls ────── │  task queue  │
-│ (CGo binary) │                     └──────────────┘
+│ (CGo binary) │   ┌──────────────── │              │
+│              │   │  kushim queue   └──────────────┘
+│  Matcher RPC │   │  daemon forks
+└──────────────┘   └────────────────▶┐
+       │                             │
+       ▼                             │
+┌──────────────┐                     │
+│   Hugot /    │                     │
+│  Embeddings  │◀────────────────────┘
+└──────────────┘
 │              │
 │  Matcher RPC │◀──── Unix socket ───┐
 └──────────────┘                     │
@@ -441,9 +451,9 @@ FTS5 is "good enough" for the expected document volume (thousands to low tens of
 | `runWithTimeout` wrapper          | Ensures timeout detection for every adapter call, regardless of whether the adapter checks `ctx.Done()` internally. Eliminates the need for per-adapter cancellation wiring.                                                                                                                                                       |
 | Seeded tag vocabulary (Dewey)     | 110+ tags organized by Dewey Decimal Classification. Provides a sensible default taxonomy for LLM classification without requiring user setup.                                                                                                                                                                                     |
 | External matcher process          | Hugot embedding model runs as a separate process (`kushim hugot`) over a Unix socket. The API server (`edub`) is pure Go with no CGo dependencies.                                                                                                                                                                                 |
-| Forked processing workers         | Instead of running consume/enrich pools internally, `edub` enqueues tasks and forks `kushim consume --batch` as child processes. Clean process isolation, no in-process heartbeat/ownership management needed.                                                                                                                     |
+| Forked processing workers         | The `kushim queue` daemon forks `kushim consume --batch` as child processes. Clean process isolation, no in-process heartbeat/ownership management needed. `edub` only enqueues tasks — it never forks directly (except in `ResumeBatch` for recovery).                                                                                                                                             |
 | `CGO_ENABLED=0` for `edub`        | `edub` is compiled without CGo, making it a lightweight, statically linked binary. No runtime dependency on C libraries. `kushim` retains all CGo for Tesseract/Leptonica/MuPDF/Hugot.                                                                                                                                             |
-| Semaphore-based batch concurrency | A counting semaphore limits concurrent forked worker processes to `server.max_concurrent_batches` (default 2). Prevents resource exhaustion from concurrent batches.                                                                                                                                                               |
+| Queue-driven batch processing     | Both API consume endpoints create batches with `status='queued'` and return immediately. The `kushim queue` daemon polls for queued batches, enforces its own concurrency limit (`server.max_concurrent_batches`), and forks workers. No in-process semaphore needed in `edub`.                                                     |
 
 ---
 
@@ -459,4 +469,4 @@ FTS5 is "good enough" for the expected document volume (thousands to low tens of
   back to Ghostscript for these files.
 - **Hugot ORT backend**: ONNX Runtime downloaded at runtime on first use — requires internet access. The Go backend has no runtime deps. ORT's CPU memory arena and memory pattern pre-allocation are disabled by default (`HugotConfig.CpuMemArena=false`, `MemPattern=false`) to cap idle RSS at ~2.2–2.5 GB rather than retaining peak-inference buffers (~4–5 GB). This adds ~10–20% per-inference latency from buffer re-allocation, which is dwarfed by text extraction, OCR, and LLM API latency in the enrichment pipeline. Toggle to `true` in `DefaultConfig` to restore ORT defaults if performance is unacceptable.
 - **Matcher as external process**: The tag matcher runs as a separate process (`kushim hugot`). If it's not running, tag CRUD operations return `503 Service Unavailable`, and enrichment falls back to LLM-only tags (no semantic tag matching). The matcher must be started before `edub` for full functionality.
-- **edub forks kushim**: When `POST /api/v1/consume` is called, `edub` finds the `kushim` binary in PATH or as a sibling of the `edub` binary. If `kushim` is not found, the consume request fails.
+- **Queue daemon forks kushim**: The `kushim queue` daemon finds the `kushim` binary in PATH or as a sibling of the `edub` binary. If `kushim` is not found, batch processing fails. The API consume endpoints no longer fork directly — they create `queued` batches for the daemon to pick up.
