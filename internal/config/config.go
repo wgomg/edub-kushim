@@ -152,6 +152,14 @@ type ToolConfig struct {
 	Timeout time.Duration `yaml:"timeout" json:"timeout"`
 }
 
+type BackupConfig struct {
+	Enabled  bool    `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
+	Interval float64 `mapstructure:"interval" yaml:"interval" json:"interval"`
+	Time     string  `mapstructure:"time" yaml:"time" json:"time"`
+	Path     string  `mapstructure:"path" yaml:"path" json:"path"`
+	Keep     int     `mapstructure:"keep" yaml:"keep" json:"keep"`
+}
+
 type Config struct {
 	App      AppConfig      `mapstructure:"app" yaml:"app" json:"app"`
 	Srv      ServerConfig   `mapstructure:"server" yaml:"server" json:"server"`
@@ -159,6 +167,7 @@ type Config struct {
 	Storage  StorageConfig  `mapstructure:"storage" yaml:"storage" json:"storage"`
 	Consumer ConsumerConfig `yaml:"consumer" json:"consumer"`
 	Enricher EnricherConfig `mapstructure:"enricher" yaml:"enricher" json:"enricher"`
+	Backup   BackupConfig   `mapstructure:"backup" yaml:"backup" json:"backup"`
 }
 
 // engine identifiers grouped by tool category.
@@ -291,6 +300,12 @@ func DefaultConfig(configDir string) *Config {
 			Reclaim: ReclaimConfig{
 				Enabled: true,
 			},
+		},
+		Backup: BackupConfig{
+			Enabled:  false,
+			Interval: 1,
+			Time:     "02:00",
+			Keep:     7,
 		},
 		Enricher: EnricherConfig{
 			Workers: 1,
@@ -426,6 +441,22 @@ func finalizeConfig(cfg *Config, configDir string) error {
 	}
 	if err := os.MkdirAll(cfg.Storage.StorageDir, 0755); err != nil {
 		return fmt.Errorf("failed to create storage directory: %w", err)
+	}
+
+	if cfg.Backup.Enabled {
+		if cfg.Backup.Interval <= 0 {
+			return fmt.Errorf("backup.interval must be > 0")
+		}
+		if _, err := parseHHMM(cfg.Backup.Time, false); err != nil {
+			return fmt.Errorf("backup.time: %w", err)
+		}
+		if cfg.Backup.Path == "" {
+			cfg.Backup.Path = filepath.Join(configDir, "backups")
+		}
+		cfg.Backup.Path = expandPath(cfg.Backup.Path, homeDir)
+		if err := os.MkdirAll(cfg.Backup.Path, 0755); err != nil {
+			return fmt.Errorf("failed to create backup directory: %w", err)
+		}
 	}
 
 	return nil

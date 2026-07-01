@@ -153,6 +153,8 @@
 | `kushim task retry <id>`      | Reset failed task to pending                      |
 | `kushim version`              | Print version                                     |
 | `kushim hugot`                | Start matcher RPC server over Unix socket         |
+| `kushim backup`               | Create a backup of database, config, and storage files |
+| `kushim restore`              | Restore from a backup archive                     |
 | `edub`                        | Start API server                                  |
 | `edub version`                | Print server version                              |
 
@@ -175,7 +177,7 @@
 | `/` (dashboard)   | ✓      | Health + summary stats + recent docs + batch overview panel + activity timeline                                                                                                                                                          |
 | `/documents`      | ✓      | Structured search bar + filter panel + saved searches + sortable DataTable                                                                                                                                                               |
 | `/documents/[id]` | ✓      | PDF preview + editable metadata sidebar (title, type, language, tags, people) + delete                                                                                                                                                   |
-| `/settings`       | ✓      | Full configuration form: server host/port, OCR, consumer, text extractor, PDF optimizer, enricher, content analyzer (LLM) with tokens, tag matcher, text reducer, Users tab (DataTable + create/edit/delete modals), logout confirmation |
+| `/settings`       | ✓      | Full configuration form: server host/port, OCR, consumer, text extractor, PDF optimizer, enricher, content analyzer (LLM) with tokens, tag matcher, text reducer, backup (enabled, interval, time, keep, path), Users tab (DataTable + create/edit/delete modals), logout confirmation |
 | `/login`          | ✓      | Centered card form with username/password fields, auth-live error display, loading spinner, redirects to dashboard on success                                                                                                            |
 | `/tags`           | ✓      | List, filter, create, edit, delete tags                                                                                                                                                                                                  |
 | `/people`         | ✓      | Two tabs: People (name + native name) and Person Types (name + description)                                                                                                                                                              |

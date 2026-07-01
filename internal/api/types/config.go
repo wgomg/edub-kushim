@@ -38,6 +38,7 @@ type ConfigResponse struct {
 	Database         DatabaseConfigResponse          `json:"database"`
 	Consumer         ConsumerConfigResponse          `json:"consumer"`
 	Enricher         EnricherConfigResponse          `json:"enricher"`
+	Backup           BackupConfigResponse            `json:"backup"`
 	AvailableEngines map[string][]config.EngineEntry `json:"available_engines"`
 }
 
@@ -135,6 +136,14 @@ type HugotResponse struct {
 	Backend string `json:"backend"`
 }
 
+type BackupConfigResponse struct {
+	Enabled  bool    `json:"enabled"`
+	Interval float64 `json:"interval"`
+	Time     string  `json:"time"`
+	Path     string  `json:"path"`
+	Keep     int     `json:"keep"`
+}
+
 func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	var resp ConfigResponse
 	resp.Consumer.Workers = cfg.Consumer.Workers
@@ -186,6 +195,11 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Server.Port = cfg.Srv.Port
 	resp.Server.MaxUploadSize = cfg.Srv.MaxUploadSize
 	resp.Server.AuthEnabled = cfg.Srv.AuthEnabled
+	resp.Backup.Enabled = cfg.Backup.Enabled
+	resp.Backup.Interval = cfg.Backup.Interval
+	resp.Backup.Time = cfg.Backup.Time
+	resp.Backup.Path = cfg.Backup.Path
+	resp.Backup.Keep = cfg.Backup.Keep
 	resp.AvailableEngines = config.AvailableEngines
 	return resp
 }

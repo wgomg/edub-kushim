@@ -155,7 +155,12 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			'enricher.tagmatcher.hugot.backend': cfg.enricher.tagmatcher.hugot.backend,
 			'storage.consumption_dir': cfg.storage.consumption_dir,
 			'storage.storage_dir': cfg.storage.storage_dir,
-			'database.path': cfg.database.path
+			'database.path': cfg.database.path,
+			'backup.enabled': cfg.backup.enabled,
+			'backup.interval': Number(cfg.backup.interval),
+			'backup.time': cfg.backup.time,
+			'backup.path': cfg.backup.path,
+			'backup.keep': Number(cfg.backup.keep)
 		};
 	}
 
@@ -1016,6 +1021,70 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							type="number"
 							min="1"
 							bind:value={cfg.enricher.textreducer.target_words}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						/>
+					</div>
+				</div>
+			</section>
+
+			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+				<h2 class="mb-4 text-lg font-semibold text-parchment-200">Backup</h2>
+				<div class="grid gap-4 sm:grid-cols-2">
+					<div>
+						<label for="backup-enabled" class="mb-1 block text-sm font-medium text-parchment-200">
+							Enabled
+						</label>
+						<input
+							id="backup-enabled"
+							type="checkbox"
+							bind:checked={cfg.backup.enabled}
+							class="mt-2 h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
+						/>
+					</div>
+					<div>
+						<label for="backup-interval" class="mb-1 block text-sm font-medium text-parchment-200">
+							Interval (days)
+						</label>
+						<input
+							id="backup-interval"
+							type="number"
+							min="1"
+							step="0.1"
+							bind:value={cfg.backup.interval}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						/>
+					</div>
+					<div>
+						<label for="backup-time" class="mb-1 block text-sm font-medium text-parchment-200">
+							Preferred time (HH:MM)
+						</label>
+						<input
+							id="backup-time"
+							type="text"
+							bind:value={cfg.backup.time}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						/>
+					</div>
+					<div>
+						<label for="backup-keep" class="mb-1 block text-sm font-medium text-parchment-200">
+							Keep (0 = unlimited)
+						</label>
+						<input
+							id="backup-keep"
+							type="number"
+							min="0"
+							bind:value={cfg.backup.keep}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						/>
+					</div>
+					<div class="sm:col-span-2">
+						<label for="backup-path" class="mb-1 block text-sm font-medium text-parchment-200">
+							Output directory
+						</label>
+						<input
+							id="backup-path"
+							type="text"
+							bind:value={cfg.backup.path}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
 						/>
 					</div>

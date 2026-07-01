@@ -146,8 +146,10 @@ The `ConfigTaskHandler` lives in its own package (`internal/configtask/`) to kee
 
 ### CLI (`kushim`)
 
-The `Container` registers all three task types (`"consume"`, `"enrich"`, `"config"`)
+The `Container` registers all four task types (`"consume"`, `"enrich"`, `"config"`, `"backup"`)
 and creates a `MatcherClient` connected to the Unix socket at `<config_dir>/kushim-hugot.sock`.
+The `"backup"` type is handled by `BackupTaskHandler` which acquires `backupMu.TryLock()` during execution
+and has no `DedupKey` (each backup task always runs).
 The `TagService` and `Enricher` receive the client instead of a direct Hugot reference:
 
 ```go
@@ -155,6 +157,7 @@ matcherClient := tagmatch.NewMatcherClient(c.socketPath())
 tagSvc, err := service.NewTag(queries, logger, matcherClient)
 enricher, err := enrichment.NewEnricher(cfg, logger, db, services, matcherClient)
 registry.Register("config", configtask.NewConfigTaskHandler(logger))
+registry.Register("backup", taskhandlers.NewBackupTaskHandler(cfg, logger, &backupMu))
 ```
 
 The config pool is started alongside consume/enrich pools when a CLI command runs.

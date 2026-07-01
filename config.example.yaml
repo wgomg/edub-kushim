@@ -85,3 +85,9 @@ enricher:
     hugot:
       model: BAAI/bge-m3
       backend: GO
+
+backup:
+  # enabled: true
+  # interval: 1    # days between backups
+  # time: "02:00"  # preferred time of day (HH:MM)
+  # keep: 7        # max backups to retain (0 = unlimited)

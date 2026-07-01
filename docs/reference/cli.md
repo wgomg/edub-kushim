@@ -150,6 +150,18 @@ kushim storage orphans move-to-inbox-all
 - `consumeNextQueuedBatch(ctx, client, batchSvc, maxConcurrent, logger) error` — Picks and dispatches the next queued batch.
 - `runPollingLoop(ctx, c, client, batchSvc, maxConcurrent)` — Goroutine that runs on its own dynamic ticker (configured by `consumer.polling.interval`, minimum 1 minute). Re-reads config from disk on each iteration via `config.Reload` for live config updates. Checks capacity (`CountQueuedBatches + CountLiveBatches < MaxConcurrentBatches`) and missing external tools before calling `consumption.ScanAndEnqueue`. Replaces the former `PollingScheduler` in `edub`.
 - `pollingTick(ctx, c, client, batchSvc, maxConcurrent, missingTools)` — Single polling iteration: capacity check, missing tools check, then delegates to `consumption.ScanAndEnqueue` to scan inbox, deduplicate, and create a `queued` batch with consume+enrich task pairs.
+- `maybeScheduleBackup(ctx, c) error` — Reads backup state from `backup-state.json`, checks if the next scheduled backup is due via `backup.ShouldSchedule`. If so, enqueues a `"backup"` task via the dispatcher and writes the next scheduled time to state.
+
+The daemon also starts a **backup pool** (1 worker, 60s poll interval) when `backup.enabled` is `true`. The pool executes scheduled backup tasks via `BackupTaskHandler`. The main ticker and polling loop both acquire `backupMu.TryRLock()` to skip all operations while a backup is running.
+
+---
+
+## `backup.go`
+
+### Functions
+
+- `backupHandler(c, args) error` — `kushim backup [--path <dir>]` — Runs a synchronous backup: acquires `backupMu.TryLock()`, creates a `tar.gz` archive of the DB (via `VACUUM INTO`), config file, and storage directory, prints the result, applies retention cleanup.
+- `restoreHandler(c, args) error` — `kushim restore <backup-file.tar.gz> [--force] [--dry-run]` — Validates the archive, checks the running daemon's PID file, prompts for confirmation (unless `--force`), extracts to a temp dir, and replaces DB, config, and storage via atomic rename-swap.
 
 ---
 

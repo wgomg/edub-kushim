@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"sync"
 	"time"
 
 	types "github.com/wgomg/edub-kushim/internal"
@@ -32,10 +33,12 @@ type Container struct {
 	runner     *task.Runner
 	store      *task.Store
 	services   *types.CrudServices
+	backupMu   sync.RWMutex
 	pools      struct {
 		consume *pool.Pool
 		enrich  *pool.Pool
 		config  *pool.Pool
+		backup  *pool.Pool
 	}
 }
 
@@ -124,6 +127,7 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 	registry.Register("consume", taskhandlers.NewConsumeTaskHandler(consumer, store, c.logger))
 	registry.Register("enrich", taskhandlers.NewEnrichTaskHandler(enricher, client.Queries, c.logger))
 	registry.Register("config", configtask.NewConfigTaskHandler(c.logger))
+	registry.Register("backup", taskhandlers.NewBackupTaskHandler(c.config, c.logger, &c.backupMu))
 
 	c.dispatcher = task.NewDispatcher(c.logger, store, registry)
 	c.runner = task.NewRunner(store, registry, c.logger)
@@ -155,6 +159,8 @@ func (c *Container) GetPool(taskType string) (*pool.Pool, error) {
 		pp = &c.pools.enrich
 	case "config":
 		pp = &c.pools.config
+	case "backup":
+		pp = &c.pools.backup
 	default:
 		return nil, fmt.Errorf("unknown pool task type: %q", taskType)
 	}
@@ -176,6 +182,9 @@ func (c *Container) GetPool(taskType string) (*pool.Pool, error) {
 		case "config":
 			workers = 1
 			interval = 5 * time.Second
+		case "backup":
+			workers = 1
+			interval = 60 * time.Second
 		}
 		*pp = pool.New(c.logger, runner, workers, interval, taskType)
 	}
@@ -209,6 +218,11 @@ func (c *Container) Close() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		c.pools.config.Stop(ctx)
+	}
+	if c.pools.backup != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		c.pools.backup.Stop(ctx)
 	}
 	if c.db != nil {
 		c.db.Close()

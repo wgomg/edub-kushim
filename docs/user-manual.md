@@ -413,6 +413,54 @@ If the matcher is not running, tag CRUD operations return `503 Service Unavailab
 
 ---
 
+### `kushim backup`
+
+Create a backup of the database, configuration, and storage files.
+
+```
+kushim backup
+kushim backup --path /custom/backup/dir
+
+```
+
+| Flag     | Default                              | Description                               |
+| -------- | ------------------------------------ | ----------------------------------------- |
+| `--path` | Config `backup.path` (or `<config_dir>/backups/`) | Override output directory |
+
+The backup creates a timestamped `tar.gz` archive containing:
+- `edub.db` — SQLite database snapshot via `VACUUM INTO` (compact, consistent)
+- `config.yaml` — Configuration file at backup time
+- `storage/` — Full storage directory tree (originals, processed, errors)
+- `manifest.json` — Backup metadata (version, timestamp, sizes, config SHA256 hash)
+
+Retention is applied after the backup: if the number of archives exceeds `backup.keep`, the oldest are removed.
+
+### `kushim restore`
+
+Restore database, configuration, and storage from a backup archive.
+
+```
+kushim restore /path/to/edub-backup-2026-06-30T02-00-00.tar.gz
+kushim restore /path/to/backup.tar.gz --force
+kushim restore /path/to/backup.tar.gz --dry-run
+
+```
+
+| Flag       | Description                                                |
+| ---------- | ---------------------------------------------------------- |
+| `--force`  | Skip confirmation prompt and PID file check                |
+| `--dry-run`| Validate the archive without making any changes            |
+
+The restore process:
+1. Validates the `tar.gz` archive and reads the manifest
+2. Checks that the queue daemon is not running (refuses unless `--force`)
+3. Prompts for confirmation (skipped with `--force`)
+4. Extracts the archive to a temporary directory
+5. Replaces storage (via atomic rename-swap), config, and database (last)
+6. Prints restart instructions
+
+---
+
 ## API Reference
 
 The API server listens on `0.0.0.0:3000` by default (configurable in YAML).

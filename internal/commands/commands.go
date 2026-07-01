@@ -55,6 +55,16 @@ var commandSets = map[string]map[string]Command{
 			Description: "Manage storage: detect and quarantine orphaned files",
 			Handler:     storageHandler,
 		},
+		"backup": {
+			Name:        "backup",
+			Description: "Create a backup of database, config, and storage files",
+			Handler:     backupHandler,
+		},
+		"restore": {
+			Name:        "restore",
+			Description: "Restore from a backup archive",
+			Handler:     restoreHandler,
+		},
 	},
 	"server": {
 		"version": {

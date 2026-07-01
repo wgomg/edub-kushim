@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -14,6 +15,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/wgomg/edub-kushim/internal/backup"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/consumption"
 	"github.com/wgomg/edub-kushim/internal/database"
@@ -95,6 +98,19 @@ func queueHandler(c *Container, args []string) error {
 
 	c.logger.Info(nil, "queue daemon started (max %d concurrent batches)", maxConcurrent)
 
+	if c.config.Backup.Enabled {
+		backupPool, err := c.GetPool("backup")
+		if err != nil {
+			return fmt.Errorf("get backup pool: %w", err)
+		}
+		backupPool.Start(ctx)
+		defer func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			backupPool.Stop(shutdownCtx)
+		}()
+	}
+
 	go runPollingLoop(ctx, c, client, batchSvc, maxConcurrent)
 
 	ticker := time.NewTicker(5 * time.Second)
@@ -103,6 +119,18 @@ func queueHandler(c *Container, args []string) error {
 	for {
 		select {
 		case <-ticker.C:
+			if !c.backupMu.TryRLock() {
+				c.logger.Debug(nil, "skipping tick — backup in progress")
+				continue
+			}
+			c.backupMu.RUnlock()
+
+			if c.config.Backup.Enabled {
+				if err := maybeScheduleBackup(ctx, c); err != nil {
+					c.logger.Error(nil, "backup scheduling: %v", err)
+				}
+			}
+
 			if c.config.Consumer.Reclaim.Enabled {
 				if err := reclaimStaleBatches(ctx, batchSvc, c.logger); err != nil {
 					c.logger.Error(nil, "stale reclamation: %v", err)
@@ -216,6 +244,17 @@ func runPollingLoop(ctx context.Context, c *Container, client *database.Client, 
 		cfg := c.config.Consumer.Polling
 		interval := max(time.Duration(cfg.Interval)*time.Minute, time.Minute)
 
+		if !c.backupMu.TryRLock() {
+			c.logger.Debug(nil, "polling: skipped — backup in progress")
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(interval):
+			}
+			continue
+		}
+		c.backupMu.RUnlock()
+
 		if cfg.Enabled && config.IsWithinActiveWindows(cfg.Windows) {
 			pollingTick(ctx, c, client, batchSvc, maxConcurrent, missingTools)
 		} else if cfg.Enabled {
@@ -272,4 +311,39 @@ func pollingTick(ctx context.Context, c *Container, client *database.Client, bat
 	}
 
 	c.logger.Info(nil, "polling: batch %s created with %d files", batchID, enqueued)
+}
+
+func maybeScheduleBackup(ctx context.Context, c *Container) error {
+	if !c.config.Backup.Enabled {
+		return nil
+	}
+
+	state, err := backup.ReadState(c.config.App.ConfigDir)
+	if err != nil {
+		return fmt.Errorf("read backup state: %w", err)
+	}
+
+	if !backup.ShouldSchedule(state, c.config.Backup.Interval, c.config.Backup.Time) {
+		return nil
+	}
+
+	dispatcher, err := c.GetDispatcher()
+	if err != nil {
+		return fmt.Errorf("get dispatcher: %w", err)
+	}
+
+	taskID := uuid.New().String()
+	payload, _ := json.Marshal(map[string]any{})
+	if _, err := dispatcher.Enqueue(ctx, "backup", "", payload, taskID); err != nil {
+		return fmt.Errorf("enqueue backup task: %w", err)
+	}
+
+	nextRun := backup.NextRunTime(c.config.Backup.Interval, c.config.Backup.Time)
+	state.NextScheduled = nextRun.Format(time.RFC3339)
+	if err := backup.WriteState(c.config.App.ConfigDir, state); err != nil {
+		return fmt.Errorf("write backup state: %w", err)
+	}
+
+	c.logger.Info(nil, "backup task %s scheduled (next run: %s)", taskID, state.NextScheduled)
+	return nil
 }

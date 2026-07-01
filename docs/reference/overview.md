@@ -63,9 +63,14 @@ internal/
 │   ├── heartbeat.go       # Heartbeat goroutine — periodic Owner.Heartbeat every 5s
 │   └── handlers/
 │       ├── consume.go     # ConsumeTaskHandler (uses FileFromPath)
-│       └── enrich.go      # EnrichTaskHandler (fetches document, calls Enricher.Enrich)
+│       ├── enrich.go      # EnrichTaskHandler (fetches document, calls Enricher.Enrich)
+│       └── backup.go      # BackupTaskHandler (VACUUM INTO, tar.gz, retention)
 ├── search/                # Full-text search engine
 │   └── search.go          # Engine, Result (with Language, DocumentTypeID, checksums), Filter (structured search), sanitizeQuery, SearchStructured (returns results + total count)
+├── backup/                # Backup & restore
+│   ├── backup.go          # Create backup (VACUUM INTO, tar.gz, manifest, retention)
+│   ├── restore.go         # Validate, extract, and replace files from backup archive
+│   └── scheduler.go       # Backup scheduling (NextRunTime, ShouldSchedule, state persistence)
 ├── config/                # Configuration parsing
 │   ├── config.go          # Configuration structs and loading (ConsolidationSimilarity, default thresholds, engine identifier constants, AvailableEngines map)
 │   └── setup.go           # Bootstrap config, SaveMap, tessdata/Hugot model download helpers
