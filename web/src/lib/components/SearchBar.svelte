@@ -361,7 +361,7 @@
 
 		{#if query}
 			<span
-				class="bg-clay-700 inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs text-parchment-200"
+				class="inline-flex items-center gap-1 rounded-full bg-clay-700 px-2.5 py-0.5 text-xs text-parchment-200"
 			>
 				{query}
 				<button onclick={clearQuery} class="text-parchment-400 hover:text-parchment-200"

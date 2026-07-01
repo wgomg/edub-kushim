@@ -82,7 +82,7 @@
 							<td class="px-4 py-3">
 								{#if batch.orphaned}
 									<span
-										class="text-terracotta-400 inline-block rounded-full bg-terracotta-500/20 px-2 py-0.5 text-xs font-medium"
+										class="inline-block rounded-full bg-terracotta-500/20 px-2 py-0.5 text-xs font-medium text-terracotta-400"
 									>
 										orphan
 									</span>

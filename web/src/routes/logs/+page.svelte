@@ -44,7 +44,7 @@
 		params.set('lines', String(lines));
 		const qs = params.toString();
 		const current = $page.url.search;
-		if (('?' + qs) !== current && current !== qs) {
+		if ('?' + qs !== current && current !== qs) {
 			goto(`/logs?${qs}`, { replaceState: true, noScroll: true });
 		}
 	});
@@ -129,12 +129,17 @@
 
 	function lineClass(level) {
 		switch (level) {
-			case 'INFO': return 'text-parchment-300';
+			case 'INFO':
+				return 'text-parchment-300';
 			case 'ERROR':
-			case 'FATAL': return 'text-terracotta-500';
-			case 'DEBUG': return 'text-clay-500';
-			case 'WARN': return 'text-gold-500';
-			default: return 'text-parchment-300';
+			case 'FATAL':
+				return 'text-terracotta-500';
+			case 'DEBUG':
+				return 'text-clay-500';
+			case 'WARN':
+				return 'text-gold-500';
+			default:
+				return 'text-parchment-300';
 		}
 	}
 
@@ -180,7 +185,9 @@
 			</div>
 			<button
 				onclick={toggleAutoRefresh}
-				class="rounded-md px-3 py-1.5 text-xs font-medium transition-colors {autoRefresh ? 'bg-gold-500 text-clay-950 hover:bg-gold-600' : 'bg-clay-800 text-parchment-400 hover:bg-clay-700'}"
+				class="rounded-md px-3 py-1.5 text-xs font-medium transition-colors {autoRefresh
+					? 'bg-gold-500 text-clay-950 hover:bg-gold-600'
+					: 'bg-clay-800 text-parchment-400 hover:bg-clay-700'}"
 			>
 				{autoRefresh ? '⟳ On' : '⟳ Off'}
 			</button>
@@ -191,7 +198,9 @@
 		{#each tabs as tab}
 			<button
 				onclick={() => handleTabClick(tab.id)}
-				class="rounded-t-md px-4 py-2 text-sm font-medium transition-colors {activeTab === tab.id ? 'bg-clay-800 text-parchment-200' : 'text-parchment-500 hover:text-parchment-300 hover:bg-clay-900'}"
+				class="rounded-t-md px-4 py-2 text-sm font-medium transition-colors {activeTab === tab.id
+					? 'bg-clay-800 text-parchment-200'
+					: 'text-parchment-500 hover:bg-clay-900 hover:text-parchment-300'}"
 			>
 				{tab.label}
 			</button>
@@ -228,7 +237,7 @@
 						{@const parsed = parseLine(line)}
 						{@const expanded = expandedLines.has(idx)}
 						{@const display = expanded ? { text: line, truncated: false } : displayText(line)}
-						<div class="whitespace-pre-wrap break-all {lineClass(parsed.level)}">
+						<div class="break-all whitespace-pre-wrap {lineClass(parsed.level)}">
 							{#if parsed.timestamp}
 								<span class="text-clay-500">{parsed.timestamp}</span>
 								<span class="ml-1 {lineClass(parsed.level)}">{parsed.level}</span>
@@ -240,15 +249,15 @@
 								<button
 									onclick={() => toggleExpand(idx)}
 									class="ml-1 text-gold-500 hover:text-gold-400"
-									aria-label="Expand full line"
-								>…</button>
+									aria-label="Expand full line">…</button
+								>
 							{/if}
 							{#if expanded}
 								<button
 									onclick={() => toggleExpand(idx)}
 									class="ml-1 text-gold-500 hover:text-gold-400"
-									aria-label="Collapse line"
-								>…</button>
+									aria-label="Collapse line">…</button
+								>
 							{/if}
 						</div>
 					{/each}
@@ -256,7 +265,7 @@
 				{#if !atBottom}
 					<button
 						onclick={scrollToBottom}
-						class="absolute bottom-4 right-4 rounded-lg bg-clay-800 px-3 py-2 text-xs font-medium text-parchment-400 shadow-lg transition-colors hover:bg-clay-700"
+						class="absolute right-4 bottom-4 rounded-lg bg-clay-800 px-3 py-2 text-xs font-medium text-parchment-400 shadow-lg transition-colors hover:bg-clay-700"
 						aria-label="Scroll to bottom"
 					>
 						↓ Btm

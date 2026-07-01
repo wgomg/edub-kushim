@@ -36,32 +36,38 @@
 
 <div class="w-full max-w-sm rounded-xl border border-clay-800 bg-clay-900 p-8 shadow-xl">
 	<div class="mb-8 text-center">
-		<h1 class="text-balance text-2xl font-bold tracking-tight text-parchment-200" translate="no">edub-kushim</h1>
+		<h1 class="text-2xl font-bold tracking-tight text-balance text-parchment-200" translate="no">
+			edub-kushim
+		</h1>
 		<p class="mt-1 text-sm text-parchment-500">Sign In to Your Account</p>
 	</div>
 
 	<form onsubmit={handleSubmit}>
 		<div class="space-y-4">
 			<div>
-				<label for="login-username" class="mb-1 block text-sm font-medium text-parchment-200">Username</label>
+				<label for="login-username" class="mb-1 block text-sm font-medium text-parchment-200"
+					>Username</label
+				>
 				<input
 					id="login-username"
 					type="text"
 					bind:value={username}
 					placeholder="Username"
-					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus:outline-none"
+					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
 					autocomplete="username"
 					spellcheck={false}
 				/>
 			</div>
 			<div>
-				<label for="login-password" class="mb-1 block text-sm font-medium text-parchment-200">Password</label>
+				<label for="login-password" class="mb-1 block text-sm font-medium text-parchment-200"
+					>Password</label
+				>
 				<input
 					id="login-password"
 					type="password"
 					bind:value={password}
 					placeholder="Password"
-					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus:outline-none"
+					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
 					autocomplete="current-password"
 				/>
 			</div>
@@ -77,11 +83,11 @@
 			class="mt-6 w-full rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600 disabled:opacity-50"
 		>
 			{loading ? 'Signing In…' : 'Sign In'}
-		{#if loading}
-			<div
-				class="ml-2 inline-block h-4 w-4 animate-spin rounded-full border-2 border-clay-950 border-t-gold-500"
-			></div>
-		{/if}
+			{#if loading}
+				<div
+					class="ml-2 inline-block h-4 w-4 animate-spin rounded-full border-2 border-clay-950 border-t-gold-500"
+				></div>
+			{/if}
 		</button>
 	</form>
 </div>

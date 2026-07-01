@@ -90,7 +90,7 @@
 				<p class="mt-1">
 					<a
 						href="/tasks?batch={task.batch_id}"
-						class="text-lapis-400 hover:text-lapis-300 font-mono text-sm"
+						class="font-mono text-sm text-lapis-400 hover:text-lapis-300"
 					>
 						{task.batch_id}
 					</a>
@@ -108,7 +108,7 @@
 					<p class="mt-1">
 						<a
 							href="/documents/{task.document_id}"
-							class="text-lapis-400 hover:text-lapis-300 font-mono text-sm"
+							class="font-mono text-sm text-lapis-400 hover:text-lapis-300"
 						>
 							{task.document_id}
 						</a>
@@ -136,7 +136,7 @@
 		</div>
 
 		{#if task.error}
-			<div class="bg-terracotta-800/30 rounded-lg border border-terracotta-600 p-4">
+			<div class="rounded-lg border border-terracotta-600 bg-terracotta-800/30 p-4">
 				<p class="text-xs font-medium tracking-wider text-parchment-400 uppercase">Error</p>
 				<p class="mt-1 text-sm whitespace-pre-wrap text-parchment-200">{task.error}</p>
 			</div>

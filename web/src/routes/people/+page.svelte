@@ -240,7 +240,7 @@
 							type="text"
 							bind:value={personFormName}
 							placeholder="Person name"
-							class="border-clay-700 placeholder-parchment-600 w-full rounded-md border bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 focus:border-gold-500 focus:ring-0 focus:outline-none"
+							class="w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus:outline-none"
 						/>
 					</div>
 					<div>
@@ -253,7 +253,7 @@
 							type="text"
 							bind:value={personFormNameNative}
 							placeholder="Native name (optional)"
-							class="border-clay-700 placeholder-parchment-600 w-full rounded-md border bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 focus:border-gold-500 focus:ring-0 focus:outline-none"
+							class="w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus:outline-none"
 						/>
 					</div>
 					{#if personError}
@@ -360,7 +360,7 @@
 							type="text"
 							bind:value={personTypeFormName}
 							placeholder="Person type name"
-							class="border-clay-700 placeholder-parchment-600 w-full rounded-md border bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 focus:border-gold-500 focus:ring-0 focus:outline-none"
+							class="w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus:outline-none"
 						/>
 					</div>
 					<div>
@@ -372,7 +372,7 @@
 							type="text"
 							bind:value={personTypeFormDescription}
 							placeholder="Description (optional)"
-							class="border-clay-700 placeholder-parchment-600 w-full rounded-md border bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 focus:border-gold-500 focus:ring-0 focus:outline-none"
+							class="w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus:outline-none"
 						/>
 					</div>
 					<div class="flex justify-end gap-2">

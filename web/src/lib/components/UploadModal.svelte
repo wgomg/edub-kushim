@@ -121,14 +121,14 @@
 			{#if files.length === 0}
 				<button
 					onclick={() => fileInput?.click()}
-					class="border-clay-700 hover:border-clay-600 w-full rounded-lg border-2 border-dashed px-4 py-8 text-sm text-parchment-400 hover:text-parchment-200"
+					class="w-full rounded-lg border-2 border-dashed border-clay-700 px-4 py-8 text-sm text-parchment-400 hover:border-clay-600 hover:text-parchment-200"
 					>Choose files</button
 				>
 			{:else}
 				<ul class="max-h-40 space-y-1 overflow-y-auto">
 					{#each files as file, i (file.name + i)}
 						<li
-							class="text-parchment-300 flex items-center justify-between rounded bg-clay-900 px-3 py-2 text-sm"
+							class="flex items-center justify-between rounded bg-clay-900 px-3 py-2 text-sm text-parchment-300"
 						>
 							<span class="truncate">{file.name}</span>
 							<button

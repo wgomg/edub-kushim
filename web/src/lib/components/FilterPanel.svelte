@@ -192,12 +192,12 @@
 						}
 					}}
 					placeholder="Type to search..."
-					class="border-clay-700 placeholder-parchment-600 w-full rounded-md border bg-clay-950 px-3 py-1.5 text-xs text-parchment-200 focus:border-gold-500 focus:outline-none"
+					class="w-full rounded-md border border-clay-700 bg-clay-950 px-3 py-1.5 text-xs text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none"
 				/>
 				{#if tagSuggestions.length > 0}
 					<ul
 						role="listbox"
-						class="border-clay-700 absolute top-full right-0 left-0 z-20 mt-1 max-h-32 overflow-y-auto rounded-md border bg-clay-950 shadow-lg"
+						class="absolute top-full right-0 left-0 z-20 mt-1 max-h-32 overflow-y-auto rounded-md border border-clay-700 bg-clay-950 shadow-lg"
 					>
 						{#each tagSuggestions as t}
 							<li
@@ -238,7 +238,7 @@
 				<select
 					id="fp-person-type"
 					bind:value={personType}
-					class="border-clay-700 w-1/2 rounded-md border bg-clay-950 px-2 py-1.5 text-xs text-parchment-200 focus:border-gold-500 focus:outline-none"
+					class="w-1/2 rounded-md border border-clay-700 bg-clay-950 px-2 py-1.5 text-xs text-parchment-200 focus:border-gold-500 focus:outline-none"
 				>
 					<option value="">Type...</option>
 					{#each [...getPersonTypes()] as pt}
@@ -259,12 +259,12 @@
 						}}
 						disabled={!personType}
 						placeholder={personType ? 'Name...' : 'Select type'}
-						class="border-clay-700 placeholder-parchment-600 w-full rounded-md border bg-clay-950 px-3 py-1.5 text-xs text-parchment-200 focus:border-gold-500 focus:outline-none disabled:opacity-50"
+						class="w-full rounded-md border border-clay-700 bg-clay-950 px-3 py-1.5 text-xs text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none disabled:opacity-50"
 					/>
 					{#if personSuggestions.length > 0}
 						<ul
 							role="listbox"
-							class="border-clay-700 absolute top-full right-0 left-0 z-20 mt-1 max-h-32 overflow-y-auto rounded-md border bg-clay-950 shadow-lg"
+							class="absolute top-full right-0 left-0 z-20 mt-1 max-h-32 overflow-y-auto rounded-md border border-clay-700 bg-clay-950 shadow-lg"
 						>
 							{#each personSuggestions as p}
 								<li
@@ -306,7 +306,7 @@
 				id="fp-doctype"
 				bind:value={f.documentType}
 				onchange={(e) => emit({ documentType: e.target.value })}
-				class="border-clay-700 w-full rounded-md border bg-clay-950 px-3 py-1.5 text-xs text-parchment-200 focus:border-gold-500 focus:outline-none"
+				class="w-full rounded-md border border-clay-700 bg-clay-950 px-3 py-1.5 text-xs text-parchment-200 focus:border-gold-500 focus:outline-none"
 			>
 				<option value="">Any</option>
 				{#each documentTypes as dt}
@@ -323,7 +323,7 @@
 				id="fp-lang"
 				bind:value={f.language}
 				onchange={(e) => emit({ language: e.target.value })}
-				class="border-clay-700 w-full rounded-md border bg-clay-950 px-3 py-1.5 text-xs text-parchment-200 focus:border-gold-500 focus:outline-none"
+				class="w-full rounded-md border border-clay-700 bg-clay-950 px-3 py-1.5 text-xs text-parchment-200 focus:border-gold-500 focus:outline-none"
 			>
 				<option value="">Any</option>
 				{#each languages as code}
@@ -341,7 +341,7 @@
 				id="fp-mime"
 				bind:value={f.mimeType}
 				onchange={(e) => emit({ mimeType: e.target.value })}
-				class="border-clay-700 w-full rounded-md border bg-clay-950 px-3 py-1.5 text-xs text-parchment-200 focus:border-gold-500 focus:outline-none"
+				class="w-full rounded-md border border-clay-700 bg-clay-950 px-3 py-1.5 text-xs text-parchment-200 focus:border-gold-500 focus:outline-none"
 			>
 				<option value="">Any</option>
 				{#each mimeTypes as mt}
@@ -361,7 +361,7 @@
 						emit({
 							dateCreated: { from: e.target.value || null, to: f.dateCreated.to }
 						})}
-					class="border-clay-700 w-1/2 rounded-md border bg-clay-950 px-2 py-1.5 text-xs text-parchment-200 focus:border-gold-500 focus:outline-none"
+					class="w-1/2 rounded-md border border-clay-700 bg-clay-950 px-2 py-1.5 text-xs text-parchment-200 focus:border-gold-500 focus:outline-none"
 					title="From"
 				/>
 				<input
@@ -371,7 +371,7 @@
 						emit({
 							dateCreated: { from: f.dateCreated.from, to: e.target.value || null }
 						})}
-					class="border-clay-700 w-1/2 rounded-md border bg-clay-950 px-2 py-1.5 text-xs text-parchment-200 focus:border-gold-500 focus:outline-none"
+					class="w-1/2 rounded-md border border-clay-700 bg-clay-950 px-2 py-1.5 text-xs text-parchment-200 focus:border-gold-500 focus:outline-none"
 					title="To"
 				/>
 			</div>
@@ -388,7 +388,7 @@
 						emit({
 							dateModified: { from: e.target.value || null, to: f.dateModified.to }
 						})}
-					class="border-clay-700 w-1/2 rounded-md border bg-clay-950 px-2 py-1.5 text-xs text-parchment-200 focus:border-gold-500 focus:outline-none"
+					class="w-1/2 rounded-md border border-clay-700 bg-clay-950 px-2 py-1.5 text-xs text-parchment-200 focus:border-gold-500 focus:outline-none"
 					title="From"
 				/>
 				<input
@@ -398,7 +398,7 @@
 						emit({
 							dateModified: { from: f.dateModified.from, to: e.target.value || null }
 						})}
-					class="border-clay-700 w-1/2 rounded-md border bg-clay-950 px-2 py-1.5 text-xs text-parchment-200 focus:border-gold-500 focus:outline-none"
+					class="w-1/2 rounded-md border border-clay-700 bg-clay-950 px-2 py-1.5 text-xs text-parchment-200 focus:border-gold-500 focus:outline-none"
 					title="To"
 				/>
 			</div>
@@ -416,7 +416,7 @@
 					}}
 					onblur={commitFileMin}
 					placeholder="Min (e.g. 1MB)"
-					class="border-clay-700 placeholder-parchment-600 w-1/2 rounded-md border bg-clay-950 px-2 py-1.5 text-xs text-parchment-200 focus:border-gold-500 focus:outline-none"
+					class="w-1/2 rounded-md border border-clay-700 bg-clay-950 px-2 py-1.5 text-xs text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none"
 				/>
 				<input
 					type="text"
@@ -426,7 +426,7 @@
 					}}
 					onblur={commitFileMax}
 					placeholder="Max (e.g. 10MB)"
-					class="border-clay-700 placeholder-parchment-600 w-1/2 rounded-md border bg-clay-950 px-2 py-1.5 text-xs text-parchment-200 focus:border-gold-500 focus:outline-none"
+					class="w-1/2 rounded-md border border-clay-700 bg-clay-950 px-2 py-1.5 text-xs text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none"
 				/>
 			</div>
 		</div>

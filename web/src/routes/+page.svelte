@@ -1,5 +1,5 @@
 <script>
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api';
 	import { formatSize } from '$lib/utils/html.js';
 	import StoragePanel from '$lib/components/StoragePanel.svelte';
@@ -11,13 +11,43 @@
 	let health = $state();
 	let recentDocs = $state([]);
 	let dashboard = $state();
+	let autoRefresh = $state(false);
+	let refreshInterval = $state(null);
+	let fetching = $state(false);
 
-	onMount(async () => {
-		[health, recentDocs, dashboard] = await Promise.all([
-			api.health(),
-			api.documents.list(15, 0),
-			api.dashboard()
-		]);
+	async function fetchDashboard() {
+		if (fetching) return;
+		fetching = true;
+		try {
+			[health, recentDocs, dashboard] = await Promise.all([
+				api.health(),
+				api.documents.list(15, 0),
+				api.dashboard()
+			]);
+		} finally {
+			fetching = false;
+		}
+	}
+
+	onMount(() => {
+		fetchDashboard();
+	});
+
+	$effect(() => {
+		if (refreshInterval) clearInterval(refreshInterval);
+		refreshInterval = null;
+		if (autoRefresh) {
+			refreshInterval = setInterval(() => {
+				fetchDashboard();
+			}, 10000);
+		}
+		return () => {
+			if (refreshInterval) clearInterval(refreshInterval);
+		};
+	});
+
+	onDestroy(() => {
+		if (refreshInterval) clearInterval(refreshInterval);
 	});
 
 	function chunk(arr, size) {
@@ -32,7 +62,17 @@
 </script>
 
 <div class="space-y-6">
-	<h1 class="text-2xl font-semibold text-parchment-200">Dashboard</h1>
+	<div class="flex items-center justify-between">
+		<h1 class="text-2xl font-semibold text-parchment-200">Dashboard</h1>
+		<button
+			onclick={() => (autoRefresh = !autoRefresh)}
+			class="rounded-md px-3 py-1.5 text-xs font-medium transition-colors {autoRefresh
+				? 'bg-gold-500 text-clay-950 hover:bg-gold-600'
+				: 'bg-clay-800 text-parchment-400 hover:bg-clay-700'}"
+		>
+			{autoRefresh ? '⟳ On' : '⟳ Off'}
+		</button>
+	</div>
 
 	<div class="grid grid-cols-2 gap-4 sm:grid-cols-5">
 		<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
@@ -89,7 +129,7 @@
 				</div>
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-sm text-parchment-500">Discarded</p>
-					<p class="text-terracotta-400 mt-1 text-lg font-semibold">{dashboard.discarded}</p>
+					<p class="mt-1 text-lg font-semibold text-terracotta-400">{dashboard.discarded}</p>
 				</div>
 			</div>
 		</section>

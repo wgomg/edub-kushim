@@ -172,7 +172,7 @@
 								id="edit-title"
 								type="text"
 								bind:value={editTitle}
-								class="border-clay-700 placeholder-parchment-600 mt-0.5 w-full rounded-md border bg-clay-950 px-2 py-1 text-sm text-parchment-200 focus:border-gold-500 focus:ring-0 focus:outline-none"
+								class="mt-0.5 w-full rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus:outline-none"
 							/>
 						</div>
 						<div>
@@ -180,7 +180,7 @@
 							<select
 								id="edit-doctype"
 								bind:value={editDocumentTypeId}
-								class="border-clay-700 mt-0.5 w-full rounded-md border bg-clay-950 px-2 py-1 text-sm text-parchment-200 focus:border-gold-500 focus:ring-0 focus:outline-none"
+								class="mt-0.5 w-full rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-sm text-parchment-200 focus:border-gold-500 focus:ring-0 focus:outline-none"
 							>
 								{#each documentTypes as dt}
 									<option value={dt.id}>{dt.name}</option>
@@ -194,7 +194,7 @@
 								type="text"
 								bind:value={editLanguage}
 								placeholder="und"
-								class="border-clay-700 placeholder-parchment-600 mt-0.5 w-full rounded-md border bg-clay-950 px-2 py-1 text-sm text-parchment-200 focus:border-gold-500 focus:ring-0 focus:outline-none"
+								class="mt-0.5 w-full rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus:outline-none"
 							/>
 						</div>
 						<button
@@ -218,7 +218,7 @@
 									{tag.name}
 									<button
 										onclick={() => removeTag(tag.id)}
-										class="hover:text-terracotta-400 text-parchment-400">&times;</button
+										class="text-parchment-400 hover:text-terracotta-400">&times;</button
 									>
 								</span>
 							{/each}
@@ -232,11 +232,11 @@
 							bind:value={tagQuery}
 							oninput={() => searchTags(tagQuery)}
 							placeholder="Search tags…"
-							class="border-clay-700 placeholder-parchment-600 w-full rounded-md border bg-clay-950 px-2 py-1 text-sm text-parchment-200 focus:border-gold-500 focus:ring-0 focus:outline-none"
+							class="w-full rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus:outline-none"
 						/>
 						{#if tagResults.length > 0}
 							<div
-								class="border-clay-700 absolute top-full right-0 left-0 z-10 mt-1 max-h-40 overflow-y-auto rounded-md border bg-clay-950 shadow-lg"
+								class="absolute top-full right-0 left-0 z-10 mt-1 max-h-40 overflow-y-auto rounded-md border border-clay-700 bg-clay-950 shadow-lg"
 							>
 								{#each tagResults as tag, i}
 									<button
@@ -270,7 +270,7 @@
 									</div>
 									<button
 										onclick={() => removePerson(person.id, person.person_type_id)}
-										class="hover:text-terracotta-400 shrink-0 text-parchment-500">&times;</button
+										class="shrink-0 text-parchment-500 hover:text-terracotta-400">&times;</button
 									>
 								</div>
 							{/each}
@@ -284,11 +284,11 @@
 							bind:value={peopleQuery}
 							oninput={() => searchPeople(peopleQuery)}
 							placeholder="Search people…"
-							class="border-clay-700 placeholder-parchment-600 w-full rounded-md border bg-clay-950 px-2 py-1 text-sm text-parchment-200 focus:border-gold-500 focus:ring-0 focus:outline-none"
+							class="w-full rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus:outline-none"
 						/>
 						{#if peopleResults.length > 0}
 							<div
-								class="border-clay-700 absolute top-full right-0 left-0 z-10 mt-1 max-h-40 overflow-y-auto rounded-md border bg-clay-950 shadow-lg"
+								class="absolute top-full right-0 left-0 z-10 mt-1 max-h-40 overflow-y-auto rounded-md border border-clay-700 bg-clay-950 shadow-lg"
 							>
 								{#each peopleResults as person, i}
 									<button
@@ -303,7 +303,7 @@
 						<div class="mt-2 flex gap-2">
 							<select
 								bind:value={selectedPeopleTypeId}
-								class="border-clay-700 flex-1 rounded-md border bg-clay-950 px-2 py-1 text-xs text-parchment-200 focus:border-gold-500 focus:ring-0 focus:outline-none"
+								class="flex-1 rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-xs text-parchment-200 focus:border-gold-500 focus:ring-0 focus:outline-none"
 							>
 								{#each peopleTypes as pt}
 									<option value={pt.id}>{pt.name}</option>
@@ -381,7 +381,7 @@
 				<button
 					onclick={handleDelete}
 					disabled={deleting}
-					class="bg-terracotta-800 hover:bg-terracotta-700 w-full rounded-lg border border-terracotta-600 px-4 py-2 text-sm font-medium text-parchment-200 disabled:opacity-50"
+					class="w-full rounded-lg border border-terracotta-600 bg-terracotta-800 px-4 py-2 text-sm font-medium text-parchment-200 hover:bg-terracotta-700 disabled:opacity-50"
 				>
 					{deleting ? 'Deleting…' : 'Delete Document'}
 				</button>

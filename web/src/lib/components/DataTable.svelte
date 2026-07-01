@@ -59,9 +59,10 @@
 	$effect(() => {
 		if (!initialized) {
 			pageSize = defaultPageSize;
-			const target = (defaultSortBy && columns.find((c) => c.key === defaultSortBy))
-				|| columns.find((c) => c.sortable)
-				|| columns[0];
+			const target =
+				(defaultSortBy && columns.find((c) => c.key === defaultSortBy)) ||
+				columns.find((c) => c.sortable) ||
+				columns[0];
 			if (target) sortBy = target.key;
 			if (defaultSortOrder === 'asc') sortOrder = 'asc';
 			initialized = true;
