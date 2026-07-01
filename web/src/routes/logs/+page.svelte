@@ -238,7 +238,9 @@
 						{@const expanded = expandedLines.has(idx)}
 						{@const display = expanded ? { text: line, truncated: false } : displayText(line)}
 						<div class="break-all whitespace-pre-wrap {lineClass(parsed.level)}">
-							{#if parsed.timestamp}
+							{#if display.truncated}
+								{display.text}
+							{:else if parsed.timestamp}
 								<span class="text-clay-500">{parsed.timestamp}</span>
 								<span class="ml-1 {lineClass(parsed.level)}">{parsed.level}</span>
 								<span>{parsed.rest}</span>
