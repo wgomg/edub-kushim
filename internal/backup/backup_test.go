@@ -125,7 +125,7 @@ func TestCreate_NoStorageFiles(t *testing.T) {
 func TestApplyRetention_DeleteOldest(t *testing.T) {
 	dir := t.TempDir()
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		testutil.CreateTestFile(t, filepath.Join(dir, "edub-backup-2026-06-30T02-00-0"+string(rune('0'+i))+":00.tar.gz"), "data")
 	}
 
@@ -142,7 +142,7 @@ func TestApplyRetention_DeleteOldest(t *testing.T) {
 func TestApplyRetention_KeepAll(t *testing.T) {
 	dir := t.TempDir()
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		testutil.CreateTestFile(t, filepath.Join(dir, "edub-backup-2026-06-30T02-00-0"+string(rune('0'+i))+":00.tar.gz"), "data")
 	}
 

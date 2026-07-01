@@ -82,6 +82,8 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 	s.services.Orphaned = service.NewOrphaned(client.Queries, &cfg, logger, workStore)
 	s.services.Orphaned.ScanAndQuarantineAsync()
 
+	s.services.ErroredFiles = service.NewErroredFiles(&cfg, logger)
+
 	registry := task.NewRegistry()
 	registry.Register("config", configtask.NewConfigTaskHandler(logger))
 
@@ -189,6 +191,12 @@ func registerRoutes(
 	mux.HandleFunc("POST /api/v1/orphaned/{id}/move-to-inbox", orphanedHandler.MoveToInbox)
 	mux.HandleFunc("POST /api/v1/orphaned/delete-all", orphanedHandler.DeleteAllOrphaned)
 	mux.HandleFunc("POST /api/v1/orphaned/move-to-inbox-all", orphanedHandler.MoveAllToInbox)
+
+	erroredHandler := handlers.NewErroredHandler(services.ErroredFiles, logger)
+	mux.HandleFunc("GET /api/v1/errored", erroredHandler.ListErrored)
+	mux.HandleFunc("GET /api/v1/errored/download", erroredHandler.DownloadErrored)
+	mux.HandleFunc("DELETE /api/v1/errored", erroredHandler.DeleteErrored)
+	mux.HandleFunc("POST /api/v1/errored/delete-all", erroredHandler.DeleteAllErrored)
 
 	tagHandler := handlers.NewTagHandler(services, logger)
 	mux.HandleFunc("GET /api/v1/tags", tagHandler.List)

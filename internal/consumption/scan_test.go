@@ -126,9 +126,9 @@ func TestScanAndEnqueue_SkipsDuplicates(t *testing.T) {
 		t.Fatal("no document types found")
 	}
 	_, err = client.CreateDocument(context.Background(), database.CreateDocumentParams{
-		DocumentID:  uuid.New().String(),
-		Title:       "existing-doc",
-		Md5Checksum: md5,
+		DocumentID:   uuid.New().String(),
+		Title:        "existing-doc",
+		Md5Checksum:  md5,
 		OriginalPath: "/tmp/existing.pdf",
 		StoragePath:  "/tmp/existing-stored.pdf",
 		FileSize:     1024,
@@ -167,9 +167,9 @@ func TestScanAndEnqueue_MixedNewAndDuplicate(t *testing.T) {
 		t.Fatal("no document types found")
 	}
 	_, err = client.CreateDocument(context.Background(), database.CreateDocumentParams{
-		DocumentID:  uuid.New().String(),
-		Title:       "existing-doc",
-		Md5Checksum: md5,
+		DocumentID:   uuid.New().String(),
+		Title:        "existing-doc",
+		Md5Checksum:  md5,
 		OriginalPath: "/tmp/existing.pdf",
 		StoragePath:  "/tmp/existing-stored.pdf",
 		FileSize:     1024,
@@ -207,7 +207,7 @@ func TestScanAndEnqueue_MultipleFiles(t *testing.T) {
 	cfg, client, cleanup := setupScanTest(t)
 	defer cleanup()
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		pdfPath := filepath.Join(cfg.Storage.ConsumptionDir, filepath.Base(
 			filepath.Join("", "doc"+string(rune('a'+i))+".pdf")))
 		testutil.CreateTestPDF(t, pdfPath, "content"+string(rune('a'+i)))
@@ -272,9 +272,9 @@ func TestQueryDuplicatesByMD5_WithMatch(t *testing.T) {
 
 	docID := uuid.New().String()
 	_, err = client.CreateDocument(context.Background(), database.CreateDocumentParams{
-		DocumentID:  docID,
-		Title:       "test",
-		Md5Checksum: "abc123",
+		DocumentID:   docID,
+		Title:        "test",
+		Md5Checksum:  "abc123",
 		OriginalPath: "/tmp/test.pdf",
 		StoragePath:  "/tmp/test-stored.pdf",
 		FileSize:     1024,
@@ -294,4 +294,3 @@ func TestQueryDuplicatesByMD5_WithMatch(t *testing.T) {
 		t.Errorf("duplicates[abc123] = %q, want %q", duplicates["abc123"], docID)
 	}
 }
-

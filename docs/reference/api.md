@@ -7,7 +7,7 @@
 - `Server`
   - **Fields**: `httpServer *http.Server`, `logger *utils.Logger`, `addr string`, `cfg atomic.Pointer[config.Config]`, `matcherClient *tagmatch.MatcherClient`, `services *types.CrudServices`, `pools struct { config *pool.Pool }`
   - **Methods**:
-    - `NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server` — Creates a `MatcherClient` connected to `kushim-hugot.sock` in the config dir, builds `CrudServices` with `Batch`, `Tag` (wired through `MatcherClient`), `People`, `PeopleType`, `DocumentType`, `User`, `Orphaned` services, creates dispatcher with only the `"config"` task type registered, creates a `Semaphore` for batch concurrency. Generates a random `SessionSecret` if none is configured (with a warning log). Registers routes and middleware chain (request → auth → parambag).
+    - `NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server` — Creates a `MatcherClient` connected to `kushim-hugot.sock` in the config dir, builds `CrudServices` with `Batch`, `Tag` (wired through `MatcherClient`), `People`, `PeopleType`, `DocumentType`, `User`, `Orphaned`, `ErroredFiles` services, creates dispatcher with only the `"config"` task type registered, creates a `Semaphore` for batch concurrency. Generates a random `SessionSecret` if none is configured (with a warning log). Registers routes and middleware chain (request → auth → parambag).
     - `Start() error` — Probes matcher health (startup warning if unreachable), starts config pool, then HTTP server
     - `Shutdown(ctx context.Context) error` — Shuts down HTTP server, config pool, then `services.Close()`
     - `Addr() string`
@@ -15,7 +15,7 @@
 ### Functions
 
 - `probeMatcher()` — Calls `matcherClient.Health()` with 2s timeout. Logs warning and continues if matcher is unreachable; tag CRUD returns `503` and enrich falls back to LLM-only tags.
-- `registerRoutes(logger, client, dispatcher, getConfig, onConfigSet, services, semaphore, workStore) *http.ServeMux` — Creates and returns a `*http.ServeMux` with all API routes registered; internally creates the `search.Engine` from `client`. Uses Go 1.22+ pattern routing (`"GET /api/v1/documents/{id}"`). Auth routes (`POST /api/v1/auth/login`, `POST /api/v1/auth/logout`) are registered before all other routes so they are public (bypassed by `AuthMiddleware`). Orphaned file routes (`/api/v1/orphaned/...`) are registered via `OrphanedHandler` after the document routes.
+- `registerRoutes(logger, client, dispatcher, getConfig, onConfigSet, services, semaphore, workStore) *http.ServeMux` — Creates and returns a `*http.ServeMux` with all API routes registered; internally creates the `search.Engine` from `client`. Uses Go 1.22+ pattern routing (`"GET /api/v1/documents/{id}"`). Auth routes (`POST /api/v1/auth/login`, `POST /api/v1/auth/logout`) are registered before all other routes so they are public (bypassed by `AuthMiddleware`). Orphaned file routes (`/api/v1/orphaned/...`) are registered via `OrphanedHandler` after the document routes. Errored file routes (`/api/v1/errored/...`) are registered via `ErroredHandler` after the orphaned block.
 - `registerStaticRoutes(mux *http.ServeMux)` — Registers `"GET /{path...}"` handler; tries to serve the requested file from the embedded FS, falls back to `index.html` for client-side SPA routes if the file doesn't exist
 - `chainMiddleware(logger *utils.Logger, getSecret func() string, h http.Handler) http.Handler` — Composes request + auth + parambag middleware. The auth middleware skips public paths (`/health`, `/wizard/*`, `/api/v1/auth/*`, non-API paths) and validates Bearer JWTs on all other API routes.
 - `AuthMiddleware(next http.Handler, getSecret func() string) http.Handler` — Extracts `Authorization: Bearer <token>` header, validates JWT via `auth.ValidateToken`, injects `userID` and `username` into `r.Context()` using typed context keys. Returns 401 JSON with generic error for missing/invalid/expired tokens. Bypasses auth for public paths.
@@ -286,6 +286,21 @@ See `AuthMiddleware` under `server.go` → Functions.
 
 ---
 
+## `handlers/errored.go`
+
+### Struct
+
+- `ErroredHandler`
+  - **Fields**: `svc *service.ErroredFiles`, `logger *utils.Logger`
+  - **Methods**:
+    - `NewErroredHandler(svc, logger) *ErroredHandler`
+    - `ListErrored(w, r)` — `GET /api/v1/errored` — Lists all errored files from `<storageDir>/errors/` and `<storageDir>/errors/duplicated/` as JSON array with `name`, `subdir`, `size`, `mime_type`, `modified_at`. Returns `200`.
+    - `DownloadErrored(w, r)` — `GET /api/v1/errored/download?subdir=...&file=...` — Serves an errored file as attachment. Validates path via `GetPath` to prevent traversal. Returns `200` with file, `400` on missing params, `404` if file not found.
+    - `DeleteErrored(w, r)` — `DELETE /api/v1/errored?subdir=...&file=...` — Deletes a single errored file from disk. Returns `204`. Returns `400` on missing params.
+    - `DeleteAllErrored(w, r)` — `POST /api/v1/errored/delete-all` — Deletes all errored files from both dirs. Returns `200 {"deleted": <n>}`.
+
+---
+
 ## `handlers/saved_search.go`
 
 ### Struct
@@ -312,8 +327,8 @@ See `AuthMiddleware` under `server.go` → Functions.
 
 ### Structs
 
-- `CrudServices` — `Batch *service.Batch`, `Tag *service.Tag`, `People *service.People`, `PeopleType *service.PeopleType`, `DocumentType *service.DocumentType`, `User *service.User`, `Orphaned *service.Orphaned`
-  - `Close()` — Uses reflection to iterate struct fields; calls `Close()` on every field implementing `io.Closer`. Automatically picks up new services added as fields. `Orphaned` does not implement `io.Closer` and is skipped silently.
+- `CrudServices` — `Batch *service.Batch`, `Tag *service.Tag`, `People *service.People`, `PeopleType *service.PeopleType`, `DocumentType *service.DocumentType`, `User *service.User`, `Orphaned *service.Orphaned`, `ErroredFiles *service.ErroredFiles`
+  - `Close()` — Uses reflection to iterate struct fields; calls `Close()` on every field implementing `io.Closer`. Automatically picks up new services added as fields. `Orphaned` and `ErroredFiles` do not implement `io.Closer` and are skipped silently.
 
 ## `types/user.go`
 
@@ -392,6 +407,11 @@ mux.HandleFunc("POST /api/v1/orphaned/{id}/restore", orphanedHandler.RestoreOrph
 mux.HandleFunc("POST /api/v1/orphaned/{id}/move-to-inbox", orphanedHandler.MoveToInbox)
 mux.HandleFunc("POST /api/v1/orphaned/delete-all", orphanedHandler.DeleteAllOrphaned)
 mux.HandleFunc("POST /api/v1/orphaned/move-to-inbox-all", orphanedHandler.MoveAllToInbox)
+
+mux.HandleFunc("GET /api/v1/errored", erroredHandler.ListErrored)
+mux.HandleFunc("GET /api/v1/errored/download", erroredHandler.DownloadErrored)
+mux.HandleFunc("DELETE /api/v1/errored", erroredHandler.DeleteErrored)
+mux.HandleFunc("POST /api/v1/errored/delete-all", erroredHandler.DeleteAllErrored)
 
 mux.HandleFunc("GET /api/v1/tags", tagHandler.List)
 mux.HandleFunc("POST /api/v1/tags", tagHandler.Create)

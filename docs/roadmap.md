@@ -136,6 +136,10 @@
 | `POST /api/v1/batches/{id}/resume` | Resume batch (forks kushim worker) |
 | `POST /api/v1/batches/{id}/cancel` | Cancel batch (SIGTERM worker, mark tasks cancelled) |
 | `GET /api/v1/dashboard` | Dashboard data: recent batches + activity timeline + document analytics (language/type/tag distributions, missing counts) + storage panel (totals, MIME breakdown, storage trend, pages, words) |
+| `GET /api/v1/errored` | List errored files from disk (`errors/` and `errors/duplicated/`) |
+| `GET /api/v1/errored/download` | Download single errored file (with path traversal guard) |
+| `DELETE /api/v1/errored` | Delete single errored file |
+| `POST /api/v1/errored/delete-all` | Delete all errored files |
 
 ### CLI Commands
 
@@ -184,17 +188,20 @@
 | `/document-types` | ✓      | List, create, edit, delete document types                                                                                                                                                                                                |
 | `/tasks`          | ✓      | Batch list + task drill-down                                                                                                                                                                                                             |
 | `/tasks/[id]`     | ✓      | Task detail with status badge, batch/doc links, timestamps, error display, retry action                                                                                                                                                  |
+| `/documents/orphaned` | ✓      | Two tabs: Orphaned (scan, list, delete, restore, move-to-inbox) and Errored (list, download, delete, delete-all from disk)                                                                                                          |
 
 ### Quality
 
 - ✓ Database integration tests (17 tests) — document/tag/people CRUD, task lifecycle, enrich flow, batch ownership, FTS-adjacent operations, saved searches
 - ✓ Search engine tests (7 tests) — FTS5 search, structured search, pagination, query sanitization
 - ✓ Task system tests (14 tests) — Store, dispatcher, runner, pool lifecycle, dedup key handling
-- ✓ API handler tests (20 tests) — health, document CRUD, tag/people CRUD, user CRUD, task endpoints, saved searches, concurrent operations, auth login/logout, token claims
+- ✓ API handler tests (28 tests) — health, document CRUD, tag/people CRUD, user CRUD, task endpoints, saved searches, concurrent operations, auth login/logout, token claims, errored file list/download/delete/delete-all
 - ✓ Auth package tests (6 tests) — session secret generation, JWT generation/validation, wrong secret, expired token, malformed token
 - ✓ Auth middleware tests (8 tests) — public path bypass, missing/invalid/valid token, wrong secret, missing bearer prefix, empty header, disabled flag passes all paths
 - ✓ Consumption pipeline tests (11 tests) — full consume flow with mock runner, file I/O, duplicate detection, error paths
 - ✓ `internal/testutil` package — assertion helpers, PDF fixtures, mock embedder
+- ✓ `ErroredFiles` service tests (11 tests) — list from both dirs, path resolution and traversal blocking, delete and delete-all with empty/missing dirs
+- ✓ `ErroredHandler` handler tests (8 tests) — list empty/with-data, download missing params, delete success/not-found/missing-params, delete-all
 - ✓ `Makefile` test targets (`make test`, `make test-verbose`)
 - ✗ No tests for CLI commands (kushim consume, search, task, setup)
 
@@ -236,7 +243,7 @@
 | 15  | **Document upload/consume flow**                       | ✓ Wire Upload button to `POST /api/v1/consume/upload`, show progress feedback via modal                                                                                                                                                                                                                                                                                                                |
 | 16  | **Single task detail page**                            | ✓ New route `/tasks/{taskID}` — status badge, batch/doc links, timestamps, error display, retry action                                                                                                                                                                                                                                                                                                 |
 | 17  | **Integration test**                                   | ✓ End-to-end consumption test (mock runner), DB CRUD, search, task system, API handlers — covering database queries, search engine, pool, enrichment flow                                                                                                                                                                                                                                              |
-| 18  | **Test coverage**                                      | ✓ Database queries, API handlers, search engine, task system (store/runner/dispatcher/pool), consumption pipeline, storage layer, orphaned service. ✗ Adapters, CLI commands (existing gap)                                                                                                                                                                                                            |
+| 18  | **Test coverage**                                      | ✓ Database queries, API handlers, search engine, task system (store/runner/dispatcher/pool), consumption pipeline, storage layer, orphaned service, errored file service and handler. ✗ Adapters, CLI commands (existing gap)                                                                                                                                                                            |
 | 19  | **Document download**                                  | ✓ Download individual documents from the document list table. Batch download with configurable limits (max file count and/or total accumulated size).                                                                                                                                                                                                                                                  |
 | 20  | **Bulk operations**                                    | ✓ Batch delete, batch tag assignment                                                                                                                                                                                                                                                                                                                                                                   |
 | 21  | **Batch cancel API endpoint**                          | ✓ `POST /api/v1/batches/{id}/cancel` — expose `kushim consume cancel` through the API                                                                                                                                                                                                                                                                                                                  |

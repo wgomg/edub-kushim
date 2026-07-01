@@ -15,7 +15,8 @@ internal/
 │   │   ├── saved_search.go # Saved search CRUD handlers (create, list, delete)
 │   │   ├── tag.go         # Tag CRUD handlers (list, create, update, delete)
 │   │   ├── task.go        # Task API handlers (list, get, batch summary, global summary with waiting status)
-│   │   └── orphaned.go     # Orphaned file management handlers (list, scan, delete, restore, move-to-inbox)
+│   │   ├── orphaned.go     # Orphaned file management handlers (list, scan, delete, restore, move-to-inbox)
+│   │   └── errored.go      # Errored file management handlers (list, download, delete, delete-all)
 │   ├── server.go          # HTTP server setup, middleware, route registration, static SPA (Go 1.22+ patterns)
 │   └── types/
 │       ├── config.go          # Config response types (ConfigResponse, ConfigStatusResponse, engine responses)
@@ -51,7 +52,8 @@ internal/
 │   ├── tag.go             # Tag service (NewTag, batch CRUD, embedder integration)
 │   ├── documenttype.go    # DocumentType service (NewDocumentType, batch CRUD)
 │   ├── batch.go           # Batch service (NewBatch, GetSummary, ListSummaries, ListOverviews, Create, BeginCancel/CompleteCancel, CountOrphaned, RetryFailed, HasPendingWork, IsLockedByLiveOwner)
-│   └── orphaned.go        # Orphaned file service (scan, list, delete, restore, move-to-inbox)
+│   ├── orphaned.go        # Orphaned file service (scan, list, delete, restore, move-to-inbox)
+│   └── errored.go        # Errored file service (list on disk, get path, delete, delete-all)
 ├── pool/                  # Generic worker pool + semaphore
 │   ├── pool.go            # Pool struct, Start(ctx), Stop(ctx), worker loop
 │   └── semaphore.go       # Counting semaphore (Acquire/Release) — moved from concurrency/

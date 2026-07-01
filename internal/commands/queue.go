@@ -64,7 +64,7 @@ func queueHandler(c *Container, args []string) error {
 		c.logger.Info(nil, "removing stale PID file from process %d", pid)
 	}
 
-	if err := os.WriteFile(pidFile, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0644); err != nil {
+	if err := os.WriteFile(pidFile, fmt.Appendf(nil, "%d\n", os.Getpid()), 0644); err != nil {
 		return fmt.Errorf("write PID file %s: %w", pidFile, err)
 	}
 	defer os.Remove(pidFile)

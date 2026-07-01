@@ -43,10 +43,7 @@ func TestShouldSchedule_InvalidFormat(t *testing.T) {
 
 func TestNextRunTime_FutureToday(t *testing.T) {
 	now := time.Now()
-	hour := now.Hour() + 2
-	if hour > 23 {
-		hour = 23
-	}
+	hour := min(now.Hour()+2, 23)
 
 	result := NextRunTime(1, time.Date(now.Year(), now.Month(), now.Day(), hour, 0, 0, 0, now.Location()).Format("15:04"))
 
@@ -60,10 +57,7 @@ func TestNextRunTime_FutureToday(t *testing.T) {
 
 func TestNextRunTime_PastToday(t *testing.T) {
 	now := time.Now()
-	hour := now.Hour() - 2
-	if hour < 0 {
-		hour = 0
-	}
+	hour := max(now.Hour()-2, 0)
 
 	result := NextRunTime(1, time.Date(now.Year(), now.Month(), now.Day(), hour, 0, 0, 0, now.Location()).Format("15:04"))
 

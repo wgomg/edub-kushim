@@ -15,6 +15,7 @@ type CrudServices struct {
 	DocumentType *service.DocumentType
 	User         *service.User
 	Orphaned     *service.Orphaned
+	ErroredFiles *service.ErroredFiles
 }
 
 func (s *CrudServices) Close() {

@@ -7,7 +7,9 @@ function handleUnauthorized() {
 	if (_redirecting) return;
 	_redirecting = true;
 	authLogout();
-	goto('/login').finally(() => { _redirecting = false; });
+	goto('/login').finally(() => {
+		_redirecting = false;
+	});
 }
 
 function withAuth(opts = {}) {
@@ -21,7 +23,10 @@ function withAuth(opts = {}) {
 async function request(path, opts = {}) {
 	try {
 		const res = await fetch(path, withAuth(opts));
-		if (res.status === 401) { handleUnauthorized(); return null; }
+		if (res.status === 401) {
+			handleUnauthorized();
+			return null;
+		}
 		if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
 		if (res.status === 204 || res.headers.get('content-length') === '0') return null;
 		return await res.json();
@@ -289,7 +294,9 @@ export const api = {
 
 	users: {
 		list: (limit = 50, offset = 0) =>
-			request(`/api/v1/users?limit=${limit}&offset=${offset}`).then(data => data ?? { users: [], total: 0 }),
+			request(`/api/v1/users?limit=${limit}&offset=${offset}`).then(
+				(data) => data ?? { users: [], total: 0 }
+			),
 		get: (id) => request(`/api/v1/users/${id}`),
 		create: (body) =>
 			requestRaw('/api/v1/users', {
@@ -350,22 +357,33 @@ export const api = {
 	orphaned: {
 		list: () => request('/api/v1/orphaned').then((data) => data ?? []),
 
-		scan: () =>
-			requestRaw('/api/v1/orphaned/scan', { method: 'POST' }),
+		scan: () => requestRaw('/api/v1/orphaned/scan', { method: 'POST' }),
 
-		delete: (id) =>
-			requestRaw(`/api/v1/orphaned/${id}`, { method: 'DELETE' }),
+		delete: (id) => requestRaw(`/api/v1/orphaned/${id}`, { method: 'DELETE' }),
 
-		restore: (id) =>
-			requestRaw(`/api/v1/orphaned/${id}/restore`, { method: 'POST' }),
+		restore: (id) => requestRaw(`/api/v1/orphaned/${id}/restore`, { method: 'POST' }),
 
-		moveToInbox: (id) =>
-			requestRaw(`/api/v1/orphaned/${id}/move-to-inbox`, { method: 'POST' }),
+		moveToInbox: (id) => requestRaw(`/api/v1/orphaned/${id}/move-to-inbox`, { method: 'POST' }),
 
-		deleteAll: () =>
-			requestRaw('/api/v1/orphaned/delete-all', { method: 'POST' }),
+		deleteAll: () => requestRaw('/api/v1/orphaned/delete-all', { method: 'POST' }),
 
-		moveAllToInbox: () =>
-			requestRaw('/api/v1/orphaned/move-to-inbox-all', { method: 'POST' })
+		moveAllToInbox: () => requestRaw('/api/v1/orphaned/move-to-inbox-all', { method: 'POST' })
+	},
+
+	errored: {
+		list: () => request('/api/v1/errored').then((data) => data ?? []),
+
+		download: (subdir, file) => {
+			const url = `/api/v1/errored/download?subdir=${encodeURIComponent(subdir)}&file=${encodeURIComponent(file)}`;
+			window.open(url, '_blank');
+		},
+
+		delete: (subdir, file) =>
+			requestRaw(
+				`/api/v1/errored?subdir=${encodeURIComponent(subdir)}&file=${encodeURIComponent(file)}`,
+				{ method: 'DELETE' }
+			),
+
+		deleteAll: () => requestRaw('/api/v1/errored/delete-all', { method: 'POST' })
 	}
 };
