@@ -140,6 +140,7 @@
 | `GET /api/v1/errored/download` | Download single errored file (with path traversal guard) |
 | `DELETE /api/v1/errored` | Delete single errored file |
 | `POST /api/v1/errored/delete-all` | Delete all errored files |
+| `GET /api/v1/logs/{name}` | Read log file: whitelisted names (kushim, edub, hugot, queue), `?lines=N` param (100–5000), tail-read for >2 MiB |
 
 ### CLI Commands
 
@@ -189,13 +190,14 @@
 | `/tasks`          | ✓      | Batch list + task drill-down                                                                                                                                                                                                             |
 | `/tasks/[id]`     | ✓      | Task detail with status badge, batch/doc links, timestamps, error display, retry action                                                                                                                                                  |
 | `/documents/orphaned` | ✓      | Two tabs: Orphaned (scan, list, delete, restore, move-to-inbox) and Errored (list, download, delete, delete-all from disk)                                                                                                          |
+| `/logs`               | ✓      | Tabbed log viewer (Kushim, Edub, Hugot, Queue), lines control, auto-refresh, monospace color-coded rendering, jump-to-bottom                                                                                                         |
 
 ### Quality
 
 - ✓ Database integration tests (17 tests) — document/tag/people CRUD, task lifecycle, enrich flow, batch ownership, FTS-adjacent operations, saved searches
 - ✓ Search engine tests (7 tests) — FTS5 search, structured search, pagination, query sanitization
 - ✓ Task system tests (14 tests) — Store, dispatcher, runner, pool lifecycle, dedup key handling
-- ✓ API handler tests (28 tests) — health, document CRUD, tag/people CRUD, user CRUD, task endpoints, saved searches, concurrent operations, auth login/logout, token claims, errored file list/download/delete/delete-all
+- ✓ API handler tests (54 tests) — health, document CRUD, tag/people CRUD, user CRUD, task endpoints, saved searches, concurrent operations, auth login/logout, token claims, errored file list/download/delete/delete-all, logs viewer (invalid name, file not found, success, lines clamping, large file tail, empty file)
 - ✓ Auth package tests (6 tests) — session secret generation, JWT generation/validation, wrong secret, expired token, malformed token
 - ✓ Auth middleware tests (8 tests) — public path bypass, missing/invalid/valid token, wrong secret, missing bearer prefix, empty header, disabled flag passes all paths
 - ✓ Consumption pipeline tests (11 tests) — full consume flow with mock runner, file I/O, duplicate detection, error paths

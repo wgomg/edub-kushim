@@ -385,5 +385,9 @@ export const api = {
 			),
 
 		deleteAll: () => requestRaw('/api/v1/errored/delete-all', { method: 'POST' })
+	},
+
+	logs: {
+		get: (name, lines = 500, signal) => request(`/api/v1/logs/${name}?lines=${lines}`, { signal })
 	}
 };

@@ -315,6 +315,18 @@ See `AuthMiddleware` under `server.go` → Functions.
 
 ---
 
+## `handlers/logs.go`
+
+### Struct
+
+- `LogsHandler`
+  - **Fields**: `getConfig func() *config.Config`, `logger *utils.Logger`
+  - **Methods**:
+    - `NewLogsHandler(getConfig, logger) *LogsHandler`
+    - `ListLogs(w, r)` — `GET /api/v1/logs/{name}` — Reads log files from `{configDir}/logs/{name}.log`. Whitelist restricts `name` to `kushim`, `edub`, `hugot`, `queue` (path traversal prevention). Returns `{"lines": [...]}` JSON. Supports `?lines=N` query param (default 500, floor 100, ceiling 5000). On files > 2 MiB, seeks to end and reads tail chunk. Returns 404 for invalid name or missing file, 500 on read errors.
+
+---
+
 ## `types/tag.go`
 
 ### Structs
@@ -459,6 +471,8 @@ mux.HandleFunc("POST /api/v1/batches/{id}/cancel", taskHandler.CancelBatch)
 mux.HandleFunc("GET /api/v1/saved-searches", savedSearchHandler.List)
 mux.HandleFunc("POST /api/v1/saved-searches", savedSearchHandler.Create)
 mux.HandleFunc("DELETE /api/v1/saved-searches/{id}", savedSearchHandler.Delete)
+
+mux.HandleFunc("GET /api/v1/logs/{name}", logsHandler.ListLogs)
 ```
 
 ---

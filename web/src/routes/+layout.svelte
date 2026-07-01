@@ -113,6 +113,11 @@
 					>Document Types</a
 				>
 				<a
+					href="/logs"
+					class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
+					>Logs</a
+				>
+				<a
 					href="/settings"
 					class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
 					>Settings</a

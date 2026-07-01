@@ -253,6 +253,9 @@ func registerRoutes(
 	mux.HandleFunc("POST /api/v1/saved-searches", savedSearchHandler.Create)
 	mux.HandleFunc("DELETE /api/v1/saved-searches/{id}", savedSearchHandler.Delete)
 
+	logsHandler := handlers.NewLogsHandler(getConfig, logger)
+	mux.HandleFunc("GET /api/v1/logs/{name}", logsHandler.ListLogs)
+
 	return mux
 }
 
