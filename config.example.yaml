@@ -32,6 +32,9 @@ consumer:
     #   - start: "02:00"
     #     end: "06:00"
 
+  reclaim:
+    enabled: true  # auto-resume batches interrupted by crashes or errors
+
   textextractor:
     engine: 'mupdf' # mupdf | gopdf | pdftotext
     timeout: 120

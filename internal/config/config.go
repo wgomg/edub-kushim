@@ -81,6 +81,10 @@ type PollingConfig struct {
 	Windows  []PollingWindow `mapstructure:"windows" yaml:"windows" json:"windows"`
 }
 
+type ReclaimConfig struct {
+	Enabled bool `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
+}
+
 type ConsumerConfig struct {
 	SupportedFiles  []string            `json:"supported_files"`
 	Workers         int                 `mapstructure:"workers" yaml:"workers" json:"workers"`
@@ -89,6 +93,7 @@ type ConsumerConfig struct {
 	PdfOptimizer    PdfOptimizerConfig  `mapstructure:"pdfoptimizer" yaml:"pdfoptimizer" json:"pdfoptimizer"`
 	OCR             OCRConfig           `mapstructure:"ocr" yaml:"ocr" json:"ocr"`
 	Polling         PollingConfig       `mapstructure:"polling" yaml:"polling" json:"polling"`
+	Reclaim         ReclaimConfig       `mapstructure:"reclaim" yaml:"reclaim" json:"reclaim"`
 }
 
 type TextReducerConfig struct {
@@ -282,6 +287,9 @@ func DefaultConfig(configDir string) *Config {
 			},
 			Polling: PollingConfig{
 				Interval: 5,
+			},
+			Reclaim: ReclaimConfig{
+				Enabled: true,
 			},
 		},
 		Enricher: EnricherConfig{

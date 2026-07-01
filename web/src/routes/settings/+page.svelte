@@ -124,6 +124,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			'consumer.polling.enabled': cfg.consumer.polling.enabled,
 			'consumer.polling.interval': Number(cfg.consumer.polling.interval),
 			'consumer.polling.windows': cfg.consumer.polling.windows ?? [],
+			'consumer.reclaim.enabled': cfg.consumer.reclaim.enabled,
 			'consumer.pdfoptimizer.engine': cfg.consumer.pdfoptimizer.engine,
 			'consumer.pdfoptimizer.fallback': cfg.consumer.pdfoptimizer.fallback,
 			'consumer.pdfoptimizer.timeout': Number(cfg.consumer.pdfoptimizer.timeout),
@@ -284,7 +285,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 				onclick={() => (activeTab = 'Configuration')}
 				class="rounded-t-lg px-4 py-2 text-sm font-medium transition-colors {activeTab ===
 				'Configuration'
-					? 'border-gold-500 border-b-2 text-gold-500'
+					? 'border-b-2 border-gold-500 text-gold-500'
 					: 'text-parchment-400 hover:text-parchment-200'}"
 			>
 				Configuration
@@ -293,7 +294,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 				type="button"
 				onclick={() => (activeTab = 'Users')}
 				class="rounded-t-lg px-4 py-2 text-sm font-medium transition-colors {activeTab === 'Users'
-					? 'border-gold-500 border-b-2 text-gold-500'
+					? 'border-b-2 border-gold-500 text-gold-500'
 					: 'text-parchment-400 hover:text-parchment-200'}"
 			>
 				Users
@@ -310,7 +311,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						Model and language file downloads will fail without curl.
 					</p>
 					{#each Object.entries(hintsForEngine('curl')) as [system, cmd]}
-						<pre class="text-parchment-300 mt-1 text-xs">{system}: {cmd}</pre>
+						<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
 					{/each}
 				</div>
 			{/if}
@@ -391,22 +392,34 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<label for="consumption-dir" class="mb-1 block text-sm font-medium text-parchment-200">
 							Consumption directory (inbox)
 						</label>
-						<input id="consumption-dir" type="text" bind:value={cfg.storage.consumption_dir}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none" />
+						<input
+							id="consumption-dir"
+							type="text"
+							bind:value={cfg.storage.consumption_dir}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						/>
 					</div>
 					<div>
 						<label for="storage-dir" class="mb-1 block text-sm font-medium text-parchment-200">
 							Storage directory
 						</label>
-						<input id="storage-dir" type="text" bind:value={cfg.storage.storage_dir}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none" />
+						<input
+							id="storage-dir"
+							type="text"
+							bind:value={cfg.storage.storage_dir}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						/>
 					</div>
 					<div class="sm:col-span-2">
 						<label for="db-path" class="mb-1 block text-sm font-medium text-parchment-200">
 							Database path
 						</label>
-						<input id="db-path" type="text" bind:value={cfg.database.path}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none" />
+						<input
+							id="db-path"
+							type="text"
+							bind:value={cfg.database.path}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						/>
 					</div>
 				</div>
 			</section>
@@ -451,7 +464,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							Documents won't process until it is available. Install it, e.g.:
 						</p>
 						{#each Object.entries(hintsForEngine(cfg.consumer.ocr.engine)) as [system, cmd]}
-							<pre class="text-parchment-300 mt-1 text-xs">{system}: {cmd}</pre>
+							<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
 						{/each}
 					</div>
 				{/if}
@@ -459,14 +472,14 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 					{@const ocrTool = toolStatus?.find((t) => t.engine === 'ocrmypdf')}
 					{#if ocrTool?.lang_hints?.length}
 						<div
-							class="border-lapis-500/30 bg-lapis-500/10 mt-4 rounded-lg border p-3 text-sm text-parchment-200"
+							class="mt-4 rounded-lg border border-lapis-500/30 bg-lapis-500/10 p-3 text-sm text-parchment-200"
 						>
 							<p class="font-medium">Tesseract language packs required</p>
-							<p class="text-parchment-300 mt-1">
+							<p class="mt-1 text-parchment-300">
 								Install the packs for your configured languages ({ocrTool.languages.join(', ')}):
 							</p>
 							{#each Object.entries(ocrTool.lang_hints[0].install_hints) as [system, cmd]}
-								<pre class="text-parchment-300 mt-1 text-xs">{system}: {cmd}</pre>
+								<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
 							{/each}
 						</div>
 					{/if}
@@ -480,19 +493,19 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 										<p class="font-medium">"{c.command}" not installed (required)</p>
 										<p class="mt-1 text-parchment-400">{c.purpose}</p>
 										{#each Object.entries(c.install_hints) as [system, cmd]}
-											<pre class="text-parchment-300 mt-1 text-xs">{system}: {cmd}</pre>
+											<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
 										{/each}
 									</div>
 								{:else if !c.available}
 									<div
-										class="border-lapis-500/30 bg-lapis-500/10 text-parchment-300 rounded-lg border p-3"
+										class="rounded-lg border border-lapis-500/30 bg-lapis-500/10 p-3 text-parchment-300"
 									>
 										<p class="font-medium text-parchment-200">
 											"{c.command}" not installed (optional)
 										</p>
 										<p class="mt-1">{c.purpose}. ocrmypdf will skip this feature without it.</p>
 										{#each Object.entries(c.install_hints) as [system, cmd]}
-											<pre class="text-parchment-300 mt-1 text-xs">{system}: {cmd}</pre>
+											<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
 										{/each}
 									</div>
 								{/if}
@@ -611,7 +624,9 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 				</div>
 
 				<div class="mt-4">
-					<span class="mb-2 block text-sm font-medium text-parchment-200">Active windows (optional)</span>
+					<span class="mb-2 block text-sm font-medium text-parchment-200"
+						>Active windows (optional)</span
+					>
 					{#each cfg.consumer.polling.windows as w, i (i)}
 						<div class="mb-2 flex items-center gap-2">
 							<input
@@ -651,6 +666,28 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 					>
 						+ Add window
 					</button>
+				</div>
+			</section>
+
+			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+				<h2 class="mb-4 text-lg font-semibold text-parchment-200">Reclaim</h2>
+				<div class="grid gap-4 sm:grid-cols-2">
+					<div>
+						<label for="reclaim-enabled" class="mb-1 block text-sm font-medium text-parchment-200"
+							>Auto-resume interrupted batches</label
+						>
+						<div class="flex items-center gap-2">
+							<input
+								id="reclaim-enabled"
+								type="checkbox"
+								bind:checked={cfg.consumer.reclaim.enabled}
+								class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
+							/>
+							<span class="text-sm text-parchment-400">
+								{cfg.consumer.reclaim.enabled ? 'Active' : 'Inactive'}
+							</span>
+						</div>
+					</div>
 				</div>
 			</section>
 
@@ -695,7 +732,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							Documents won't process until it is available. Install it, e.g.:
 						</p>
 						{#each Object.entries(hintsForEngine(cfg.consumer.textextractor.engine)) as [system, cmd]}
-							<pre class="text-parchment-300 mt-1 text-xs">{system}: {cmd}</pre>
+							<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
 						{/each}
 					</div>
 				{/if}
@@ -739,7 +776,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							Documents won't process until it is available. Install it, e.g.:
 						</p>
 						{#each Object.entries(hintsForEngine(cfg.consumer.pdfoptimizer.engine)) as [system, cmd]}
-							<pre class="text-parchment-300 mt-1 text-xs">{system}: {cmd}</pre>
+							<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
 						{/each}
 					</div>
 				{/if}
@@ -1038,7 +1075,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 								type="text"
 								bind:value={formUsername}
 								placeholder="Username"
-								class="border-clay-700 placeholder-parchment-600 w-full rounded-md border bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 focus:border-gold-500 focus:ring-0 focus:outline-none"
+								class="w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus:outline-none"
 							/>
 						</div>
 						<div>
@@ -1050,7 +1087,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 								type="password"
 								bind:value={formPassword}
 								placeholder={editingUser ? 'Leave blank to keep current' : 'Password'}
-								class="border-clay-700 placeholder-parchment-600 w-full rounded-md border bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 focus:border-gold-500 focus:ring-0 focus:outline-none"
+								class="w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus:outline-none"
 							/>
 						</div>
 						{#if userError}

@@ -103,8 +103,10 @@ func queueHandler(c *Container, args []string) error {
 	for {
 		select {
 		case <-ticker.C:
-			if err := reclaimStaleBatches(ctx, batchSvc, c.logger); err != nil {
-				c.logger.Error(nil, "stale reclamation: %v", err)
+			if c.config.Consumer.Reclaim.Enabled {
+				if err := reclaimStaleBatches(ctx, batchSvc, c.logger); err != nil {
+					c.logger.Error(nil, "stale reclamation: %v", err)
+				}
 			}
 			if err := consumeNextQueuedBatch(ctx, client, batchSvc, maxConcurrent, c.logger); err != nil {
 				c.logger.Error(nil, "queue consumption: %v", err)

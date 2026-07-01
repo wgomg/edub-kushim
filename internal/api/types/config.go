@@ -59,6 +59,10 @@ type PollingConfigResponse struct {
 	Windows  []PollingWindowResponse `json:"windows"`
 }
 
+type ReclaimConfigResponse struct {
+	Enabled bool `json:"enabled"`
+}
+
 type ConsumerConfigResponse struct {
 	Workers          int                   `json:"workers"`
 	MaxFilesPerBatch int                   `json:"max_files_per_batch"`
@@ -66,6 +70,7 @@ type ConsumerConfigResponse struct {
 	PdfOptimizer     PdfOptimizerResponse  `json:"pdfoptimizer"`
 	OCR              OCRResponse           `json:"ocr"`
 	Polling          PollingConfigResponse `json:"polling"`
+	Reclaim          ReclaimConfigResponse `json:"reclaim"`
 }
 
 type TextExtractorResponse struct {
@@ -140,6 +145,7 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	for i, w := range cfg.Consumer.Polling.Windows {
 		resp.Consumer.Polling.Windows[i] = PollingWindowResponse{Start: w.Start, End: w.End}
 	}
+	resp.Consumer.Reclaim.Enabled = cfg.Consumer.Reclaim.Enabled
 	resp.Consumer.TextExtractor.Engine = cfg.Consumer.TextExtractor.Engine
 	resp.Consumer.TextExtractor.Timeout = cfg.Consumer.TextExtractor.Timeout
 	resp.Consumer.PdfOptimizer.Engine = cfg.Consumer.PdfOptimizer.Engine
