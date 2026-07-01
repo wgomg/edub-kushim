@@ -12,7 +12,7 @@
 	let recentDocs = $state([]);
 	let dashboard = $state();
 	let autoRefresh = $state(false);
-	let refreshInterval = $state(null);
+	let refreshInterval = null;
 	let fetching = $state(false);
 
 	async function fetchDashboard() {

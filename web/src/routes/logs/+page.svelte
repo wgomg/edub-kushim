@@ -21,7 +21,7 @@
 	let scrollContainer = $state(null);
 	let expandedLines = $state(new Set());
 
-	let refreshInterval = $state(null);
+	let refreshInterval = null;
 	let controller = $state(null);
 
 	function syncFromURL() {
