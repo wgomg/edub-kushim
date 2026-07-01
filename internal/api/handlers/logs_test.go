@@ -88,7 +88,7 @@ func TestLogsHandler_ListLogs_LinesClamping(t *testing.T) {
 	h, configDir := newLogsHandler(t)
 
 	var logLines []string
-	for i := 0; i < 200; i++ {
+	for i := range 200 {
 		logLines = append(logLines, fmt.Sprintf("line %d", i))
 	}
 	writeLogFile(t, configDir, "edub", logLines)
@@ -127,7 +127,7 @@ func TestLogsHandler_ListLogs_LargeFileTail(t *testing.T) {
 	h, configDir := newLogsHandler(t)
 
 	var logLines []string
-	for i := 0; i < 50000; i++ {
+	for i := range 50000 {
 		logLines = append(logLines, fmt.Sprintf("line %06d: %s", i, strings.Repeat("x", 50)))
 	}
 	writeLogFile(t, configDir, "queue", logLines)
