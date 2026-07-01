@@ -31,8 +31,10 @@ SELECT
     created_at, modified_at, document_type_id, original_path, storage_path, text_content
 FROM document;
 
+PRAGMA foreign_keys = OFF;
 DROP TABLE document;
 ALTER TABLE document_new RENAME TO document;
+PRAGMA foreign_keys = ON;
 
 CREATE INDEX IF NOT EXISTS idx_document_md5 ON document(md5_checksum);
 CREATE INDEX IF NOT EXISTS idx_document_sha512 ON document(sha512_checksum);
@@ -85,8 +87,10 @@ CREATE TABLE document_old (
 );
 
 INSERT INTO document_old SELECT * FROM document;
+PRAGMA foreign_keys = OFF;
 DROP TABLE document;
 ALTER TABLE document_old RENAME TO document;
+PRAGMA foreign_keys = ON;
 
 CREATE INDEX IF NOT EXISTS idx_document_md5 ON document(md5_checksum);
 CREATE INDEX IF NOT EXISTS idx_document_sha512 ON document(sha512_checksum);
