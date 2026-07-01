@@ -1619,6 +1619,7 @@ Example systemd unit files are provided at `deploy/systemd/`:
 | File | Process |
 |------|---------|
 | `kushim-hugot.service` | Matcher server (`kushim hugot`) |
+| `kushim-queue.service` | Batch queue daemon (`kushim queue`) |
 | `edub.service` | API server (`edub`) |
 
 The `edub` service declares `Wants=kushim-hugot.service` (not `Requires=`) —
@@ -1642,6 +1643,7 @@ sudo -u edub kushim setup --cli --languages eng,spa,...
 sudo cp deploy/systemd/*.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now kushim-hugot.service
+sudo systemctl enable --now kushim-queue.service
 sudo systemctl enable --now edub.service
 ```
 
@@ -1678,6 +1680,7 @@ Each process writes to its own log file under `<configDir>/logs/`:
 |---------|----------|
 | `kushim` (CLI) | `kushim.log` |
 | `kushim hugot` (matcher) | `hugot.log` |
+| `kushim queue` (daemon) | `queue.log` |
 | `edub` (API server) | `edub.log` |
 
 systemd's `StandardOutput=journal` and `StandardError=journal` are set so
@@ -1686,6 +1689,7 @@ the services also appear in the journal:
 ```bash
 journalctl -u edub.service
 journalctl -u kushim-hugot.service
+journalctl -u kushim-queue.service
 ```
 
 The per-process log files are for persistent debugging and auditing; the
@@ -1697,10 +1701,15 @@ file is opened).
 ```
 network.target
       |
-kushim-hugot.service  (After=network.target)
+      +-- kushim-hugot.service  (After=network.target)
+      |
+      +-- kushim-queue.service  (After=network.target)
       |
 edub.service          (After=kushim-hugot.service, Wants=kushim-hugot.service)
 ```
+
+`kushim-queue.service` has no dependency on the matcher — it only reads
+the database and forks consumer children.
 
 The matcher should be fully started before the API server. The example files
 use a soft dependency (`Wants=`) so `edub` doesn't fail to start if the
