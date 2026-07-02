@@ -322,7 +322,7 @@ See `AuthMiddleware` under `server.go` → Functions.
   - **Fields**: `getConfig func() *config.Config`, `logger *utils.Logger`
   - **Methods**:
     - `NewLogsHandler(getConfig, logger) *LogsHandler`
-    - `ListLogs(w, r)` — `GET /api/v1/logs/{name}` — Reads log files from `{configDir}/logs/{name}.log`. Whitelist restricts `name` to `kushim`, `edub`, `hugot`, `queue` (path traversal prevention). Returns `{"lines": [...]}` JSON. Supports `?lines=N` query param (default 500, floor 100, ceiling 5000). On files > 2 MiB, seeks to end and reads tail chunk. Returns 404 for invalid name or missing file, 500 on read errors.
+    - `ListLogs(w, r)` — `GET /api/v1/logs/{name}` — Reads log files from `{configDir}/logs/{name}.log`. Whitelist restricts `name` to `kushim`, `edub`, `hugot`, `queue` (path traversal prevention). Returns `{"lines": [...]}` JSON. Supports `?lines=N` query param (default 500, floor 100, ceiling 5000). Multi-line entries (e.g. LLM prompt dumps) are merged by timestamp prefix detection so they appear as a single entry. On files > 2 MiB, seeks to end and reads tail chunk. Returns 404 for invalid name or missing file, 500 on read errors.
 
 ---
 

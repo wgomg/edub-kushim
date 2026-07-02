@@ -140,7 +140,7 @@
 | `GET /api/v1/errored/download` | Download single errored file (with path traversal guard) |
 | `DELETE /api/v1/errored` | Delete single errored file |
 | `POST /api/v1/errored/delete-all` | Delete all errored files |
-| `GET /api/v1/logs/{name}` | Read log file: whitelisted names (kushim, edub, hugot, queue), `?lines=N` param (100–5000), tail-read for >2 MiB |
+| `GET /api/v1/logs/{name}` | Read log file: whitelisted names (kushim, edub, hugot, queue), `?lines=N` param (100–5000), tail-read for >2 MiB, multi-line entry merge via timestamp prefix detection |
 
 ### CLI Commands
 
@@ -190,7 +190,7 @@
 | `/tasks`          | ✓      | Batch list + task drill-down                                                                                                                                                                                                             |
 | `/tasks/[id]`     | ✓      | Task detail with status badge, batch/doc links, timestamps, error display, retry action                                                                                                                                                  |
 | `/documents/orphaned` | ✓      | Two tabs: Orphaned (scan, list, delete, restore, move-to-inbox) and Errored (list, download, delete, delete-all from disk)                                                                                                          |
-| `/logs`               | ✓      | Tabbed log viewer (Kushim, Edub, Hugot, Queue), lines control, auto-refresh, monospace color-coded rendering, jump-to-bottom                                                                                                         |
+| `/logs`               | ✓      | Tabbed log viewer (Kushim, Edub, Hugot, Queue), lines control, auto-refresh, monospace color-coded rendering with expandable long lines, multi-line entry merge, jump-to-bottom                                                     |
 
 ### Quality
 

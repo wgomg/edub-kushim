@@ -89,7 +89,7 @@ func TestLogsHandler_ListLogs_LinesClamping(t *testing.T) {
 
 	var logLines []string
 	for i := range 200 {
-		logLines = append(logLines, fmt.Sprintf("line %d", i))
+		logLines = append(logLines, fmt.Sprintf("2026/01/01 10:00:00 INFO  : line %d", i))
 	}
 	writeLogFile(t, configDir, "edub", logLines)
 
@@ -128,7 +128,7 @@ func TestLogsHandler_ListLogs_LargeFileTail(t *testing.T) {
 
 	var logLines []string
 	for i := range 50000 {
-		logLines = append(logLines, fmt.Sprintf("line %06d: %s", i, strings.Repeat("x", 50)))
+		logLines = append(logLines, fmt.Sprintf("2026/01/01 10:00:00 INFO  : line %06d: %s", i, strings.Repeat("x", 50)))
 	}
 	writeLogFile(t, configDir, "queue", logLines)
 
@@ -143,7 +143,7 @@ func TestLogsHandler_ListLogs_LargeFileTail(t *testing.T) {
 	lines := body["lines"].([]any)
 	testutil.AssertEqual(t, len(lines), 500, "last 500 lines from large file")
 	lastLine := lines[499].(string)
-	testutil.AssertEqual(t, strings.HasPrefix(lastLine, "line 049999:"), true, "last line from end")
+	testutil.AssertEqual(t, strings.HasPrefix(lastLine, "2026/01/01 10:00:00 INFO  : line 049999:"), true, "last line from end")
 }
 
 func TestLogsHandler_ListLogs_EmptyFile(t *testing.T) {

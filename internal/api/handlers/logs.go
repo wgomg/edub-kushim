@@ -8,11 +8,14 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
+
+var logLineStart = regexp.MustCompile(`^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}\s+(ERROR|FATAL|DEBUG|WARN|INFO)\s*:`)
 
 var allowedLogNames = map[string]bool{
 	"kushim": true,
@@ -103,12 +106,21 @@ func (h *LogsHandler) ListLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if partialFirstLine && len(allLines) > 0 {
-		allLines = allLines[1:]
+	var merged []string
+	for _, line := range allLines {
+		if logLineStart.MatchString(line) || len(merged) == 0 {
+			merged = append(merged, line)
+		} else {
+			merged[len(merged)-1] += "\n" + line
+		}
 	}
 
-	start := int(math.Max(0, float64(len(allLines)-lines)))
-	result := allLines[start:]
+	if partialFirstLine && len(merged) > 0 {
+		merged = merged[1:]
+	}
+
+	start := int(math.Max(0, float64(len(merged)-lines)))
+	result := merged[start:]
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"lines": result})
