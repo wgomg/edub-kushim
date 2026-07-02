@@ -34,11 +34,8 @@ kushim setup --cli --languages eng,spa
 # Process documents
 cp my-documents/*.pdf ~/.config/edub-kushim/inbox/
 
-# CLI mode (foreground, enqueue + process + show per-file progress)
+# CLI mode (enqueue + direct-fallback if queue empty + show per-file progress)
 kushim consume
-
-# CLI mode (background, releases console immediately)
-kushim consume --bg
 
 # Resume an existing batch
 kushim consume --batch <batch-id>
@@ -222,26 +219,6 @@ failures show per-task error messages:
   [3/3] consume  contract.pdf ... failed: text extraction failed
 ```
 
-#### `--bg`
-
-Enqueue all files, then hand off processing to a detached child process
-and return immediately. The console is released.
-
-```
-kushim consume --bg
-```
-
-Output:
-
-```
-Batch: 550e8400-e29b-41d4-a716-446655440000
-Files: 3
-Use 'kushim task list --batch 550e8400-e29b-41d4-a716-446655440000' to track progress.
-```
-
-The child process runs `consume --batch <id>` independently and inherits
-the same config and database path. Use `kushim task list` to monitor progress.
-
 #### `--batch <id>`
 
 Resume processing of an already-enqueued batch. Skips the inbox scan
@@ -273,8 +250,6 @@ If the batch does not exist:
 ```
 batch not found
 ```
-
-`--bg` and `--batch` are mutually exclusive.
 
 ### `kushim search`
 

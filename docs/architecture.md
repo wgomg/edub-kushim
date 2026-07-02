@@ -56,8 +56,7 @@ Pure Go binary (`CGO_ENABLED=0`) that handles HTTP requests. It:
 
 The CGo binary that performs actual document processing:
 
-- `kushim consume` — scans inbox, processes files, runs enrichment
-- `kushim consume --bg` — scans inbox in the background; creates a batch and re-forks with `--batch`
+- `kushim consume` — scans inbox, enqueues tasks, direct-fallback if queue empty
 - `kushim consume --batch <id>` — resumes a previously enqueued batch (used by `kushim queue` and `edub`'s API resume handler)
 - `kushim queue` — starts the batch queue daemon for background consumption and inbox polling (replaces the former `PollingScheduler`)
 - `kushim hugot` — starts the matcher RPC server

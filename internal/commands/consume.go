@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -47,12 +46,11 @@ func consumeHandler(c *Container, args []string) error {
 
 	fp := NewFlagParser(args)
 
-	if fp.Help("Usage: kushim consume [--bg | --batch <id>]\n" +
+	if fp.Help("Usage: kushim consume [--batch <id>]\n" +
 		"  Scan inbox, create one task per file, and process them.\n" +
 		"  Streams per-file progress to stdout.\n\n" +
 		"  Prerequisite: kushim hugot must be running (sibling process).\n" +
 		"  Start it in a separate terminal or via systemd before running consume.\n\n" +
-		"  --bg              enqueue and process in background (releases console)\n" +
 		"  --batch <id>      resume processing of an existing batch\n" +
 		"  --force           override stale PID file lock\n\n" +
 		"Subcommands:\n" +
@@ -60,17 +58,14 @@ func consumeHandler(c *Container, args []string) error {
 		return nil
 	}
 
-	bgFlag := false
-	fp.Bool("--bg", &bgFlag)
-
 	var batchIDParam string
 	fp.String("--batch", &batchIDParam)
 
 	force := false
 	fp.Bool("--force", &force)
 
-	if bgFlag && batchIDParam != "" {
-		return fmt.Errorf("--bg and --batch are mutually exclusive")
+	if rest := fp.Rest(); len(rest) > 0 {
+		return fmt.Errorf("unknown flag: %s", rest[0])
 	}
 
 	p, err := c.GetPool("consume")
@@ -202,28 +197,25 @@ func consumeHandler(c *Container, args []string) error {
 		return nil
 	}
 
+	batchSvc := service.NewBatch(client.Queries)
+
+	countBefore, err := batchSvc.CountQueuedBatches(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to check queue: %w", err)
+	}
+
+	if _, err := client.CreateBatch(ctx, database.CreateBatchParams{
+		ID:     batchID,
+		Source: "cli",
+		Status: "queued",
+	}); err != nil {
+		return fmt.Errorf("create batch: %w", err)
+	}
+
 	fmt.Printf("Batch: %s\n", batchID)
 
-	if bgFlag {
-		fmt.Printf("Files: %d\n", enqueued)
-		fmt.Printf("Use 'kushim task list --batch %s' to track progress.\n", batchID)
-
-		client.CreateBatch(ctx, database.CreateBatchParams{
-			ID:     batchID,
-			Source: "cli",
-			Status: "queued",
-		})
-
-		c.logger.SetLevel(utils.LevelSilent)
-
-		cmd := exec.Command(os.Args[0], "consume", "--batch", batchID)
-		cmd.Stdin = nil
-		cmd.Stdout = nil
-		cmd.Stderr = nil
-		if err := cmd.Start(); err != nil {
-			return fmt.Errorf("failed to start background process: %w", err)
-		}
-
+	if countBefore > 0 {
+		fmt.Println("Batch queued — kushim queue will pick it up. Run 'kushim queue' if you haven't started it yet.")
 		return nil
 	}
 
@@ -241,11 +233,6 @@ func consumeHandler(c *Container, args []string) error {
 	ownerID := uuid.New().String()
 	owner := task.NewOwner(client.Queries, ownerID, os.Getpid(), c.logger)
 
-	client.CreateBatch(ctx, database.CreateBatchParams{
-		ID:     batchID,
-		Source: "cli",
-		Status: "queued",
-	})
 	if err := owner.Acquire(ctx, batchID, task.StaleAfter); err != nil {
 		return fmt.Errorf("acquire batch %s: %w", batchID, err)
 	}

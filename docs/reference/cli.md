@@ -26,7 +26,7 @@
 
 ### Functions
 
-- `consumeHandler(c, args) error` — Enqueues files in paired (consume + enrich) tasks; `--bg` for background processing (spawns subprocess with `--batch`), `--batch <id>` for batch resume, `--force` to override a stale lease when resuming a batch. Subcommand `cancel <batch-id>` cancels a running batch.
+- `consumeHandler(c, args) error` — Enqueues files in paired (consume + enrich) tasks; direct-fallback if queue empty, `--batch <id>` for batch resume, `--force` to override a stale lease when resuming a batch. Subcommand `cancel <batch-id>` cancels a running batch.
 - `consumeCancelHandler(c, args) error` — Cancels pending + processing tasks via DB, reads batch owner PID from batch_owner table, sends SIGTERM.
 - `pollBatch(ctx, queries, cp, ep, logger, batchID) error` — Streams per-file progress to stdout; stops when no pending/processing tasks remain.
 - `taskDisplayInfo(t) taskDisplay` — Extracts index, filename, task type from payload.

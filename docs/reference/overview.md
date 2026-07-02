@@ -32,7 +32,7 @@ internal/
 │   └── embedding_store.go # EmbeddingStore (map[string][]float32 with thread-safe ops)
 ├── commands/              # CLI command framework
 │   ├── commands.go        # Command definitions and runner
-│   ├── consume.go         # Document consumption command (--bg, --batch, cancel)
+│   ├── consume.go         # Document consumption command (--batch, cancel)
 │   ├── container.go       # Dependency injection container (DB, pools, cache, dispatcher); includes config pool
 │   ├── flags.go           # CLI flag parser (shared by commands)
 │   ├── search.go          # Search command (CLI)
