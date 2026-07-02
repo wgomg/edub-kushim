@@ -92,7 +92,9 @@ func consumeHandler(c *Container, args []string) error {
 		}
 
 		ownerID := uuid.New().String()
-		owner := task.NewOwner(client.Queries, ownerID, os.Getpid(), c.logger)
+		pid := os.Getpid()
+		owner := task.NewOwner(client.Queries, ownerID, pid, c.logger)
+		c.logger.Info(nil, "consume: acquiring batch %s (PID=%d, ownerID=%s)", batchIDParam, pid, ownerID)
 
 		if err := owner.Acquire(ctx, batchIDParam, task.StaleAfter); err == task.ErrBatchLocked {
 			if !force {

@@ -27,19 +27,35 @@ func NewHeartbeat(owner *Owner, interval time.Duration, logger *utils.Logger) *H
 
 func (h *Heartbeat) Start(ctx context.Context) {
 	go func() {
+		if h.logger != nil {
+			h.logger.Info(nil, "heartbeat: started (ownerID=%s)", h.owner.OwnerID)
+		}
 		ticker := time.NewTicker(h.interval)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
-				if err := h.owner.Heartbeat(ctx); err != nil {
+				rows, err := h.owner.Heartbeat(ctx)
+				if err != nil {
 					if h.logger != nil {
 						h.logger.Error(nil, "heartbeat: %v", err)
 					}
+				} else if rows == 0 {
+					if h.logger != nil {
+						h.logger.Error(nil, "heartbeat: updated 0 rows (ownerID=%s — row missing or owner_id mismatch)", h.owner.OwnerID)
+					}
+				} else if h.logger != nil {
+					h.logger.Debug(nil, "heartbeat: tick ok (ownerID=%s)", h.owner.OwnerID)
 				}
 			case <-h.done:
+				if h.logger != nil {
+					h.logger.Debug(nil, "heartbeat: stopped via done channel (ownerID=%s)", h.owner.OwnerID)
+				}
 				return
 			case <-ctx.Done():
+				if h.logger != nil {
+					h.logger.Debug(nil, "heartbeat: stopped via ctx.Done (ownerID=%s)", h.owner.OwnerID)
+				}
 				return
 			}
 		}

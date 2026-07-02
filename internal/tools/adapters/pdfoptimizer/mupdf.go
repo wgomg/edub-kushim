@@ -36,6 +36,8 @@ func (m *MuPDF) Optimize(ctx context.Context, docId, path string) (*string, erro
 	)
 	outputPath := filepath.Join(tmpDir, outputName)
 
+	m.logger.Debug(&docId, "mupdf: cleaning %s -> %s (PID=%d)", path, outputPath, os.Getpid())
+
 	mupdfCtx, err := adapters.NewMuContext()
 	if err != nil {
 		return nil, fmt.Errorf("mupdf context: %w", err)

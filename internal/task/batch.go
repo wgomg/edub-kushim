@@ -81,7 +81,7 @@ func (o *Owner) Acquire(ctx context.Context, batchID string, staleAfter time.Dur
 }
 
 func (o *Owner) AcquireForce(ctx context.Context, batchID string) error {
-	_, err := o.Queries.AcquireBatchOwnerForce(ctx, database.AcquireBatchOwnerForceParams{
+	rows, err := o.Queries.AcquireBatchOwnerForce(ctx, database.AcquireBatchOwnerForceParams{
 		BatchID: batchID,
 		OwnerID: o.OwnerID,
 		Pid:     int64(o.PID),
@@ -89,15 +89,18 @@ func (o *Owner) AcquireForce(ctx context.Context, batchID string) error {
 	if err != nil {
 		return fmt.Errorf("force acquire batch owner: %w", err)
 	}
+	if rows == 0 && o.Logger != nil {
+		o.Logger.Error(nil, "AcquireForce for batch %s returned 0 rows — batch_owner row not written (ownerID=%s, pid=%d)", batchID, o.OwnerID, o.PID)
+	}
 	return nil
 }
 
-func (o *Owner) Heartbeat(ctx context.Context) error {
-	_, err := o.Queries.HeartbeatBatchOwner(ctx, o.OwnerID)
+func (o *Owner) Heartbeat(ctx context.Context) (int64, error) {
+	rows, err := o.Queries.HeartbeatBatchOwner(ctx, o.OwnerID)
 	if err != nil {
-		return fmt.Errorf("heartbeat: %w", err)
+		return rows, fmt.Errorf("heartbeat: %w", err)
 	}
-	return nil
+	return rows, nil
 }
 
 func (o *Owner) Release(ctx context.Context, batchID string) error {

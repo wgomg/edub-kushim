@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -201,6 +202,10 @@ func (r *Runner) OptimizePdf(ctx context.Context, docId, path string) (*PdfOptim
 	outputPath, err := runWithTimeout(ctx, func() (*string, error) {
 		return r.pdfOptimizer.Optimize(ctx, docId, path)
 	})
+	if errors.Is(err, context.DeadlineExceeded) {
+		r.logger.Error(&docId, "pdf optimizer (%s) timed out after %ds — underlying call abandoned, may still be running",
+			r.config.Consumer.PdfOptimizer.Engine, r.config.Consumer.PdfOptimizer.Timeout)
+	}
 	if err != nil {
 		if r.config.Consumer.PdfOptimizer.Fallback == "" {
 			return nil, fmt.Errorf("pdf optimizer: %w", err)
@@ -219,6 +224,10 @@ func (r *Runner) OptimizePdf(ctx context.Context, docId, path string) (*PdfOptim
 		outputPath, err = runWithTimeout(ctx, func() (*string, error) {
 			return fbOptimizer.Optimize(ctx, docId, path)
 		})
+		if errors.Is(err, context.DeadlineExceeded) {
+			r.logger.Error(&docId, "pdf optimizer fallback (%s) timed out after %ds — underlying call abandoned, may still be running",
+				r.config.Consumer.PdfOptimizer.Fallback, r.config.Consumer.PdfOptimizer.Timeout)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w; fallback %s: %w",
 				r.config.Consumer.PdfOptimizer.Engine, err, r.config.Consumer.PdfOptimizer.Fallback, err)

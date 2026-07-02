@@ -422,6 +422,7 @@ func (c *Consumer) extractText(ctx context.Context, file File, documentID string
 	if extractResult.Text != nil && *extractResult.Text != "" && float64(len(*extractResult.Text))/float64(file.FileSize) >= minTextDensityRatio {
 		file.Text = sql.NullString{String: *extractResult.Text, Valid: true}
 
+		c.logger.Debug(&documentID, "optimizePdf: entering for %s", file.OriginalPath)
 		optimizationResult, err := c.runner.OptimizePdf(ctx, documentID, file.OriginalPath)
 		memAfterOpt := utils.ReadMemSnapshot()
 		c.logger.Debug(&documentID, "optimizePdf: %s", utils.FormatMemDelta(memAfterExtract, memAfterOpt))
