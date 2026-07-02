@@ -54,9 +54,8 @@ internal/
 │   ├── batch.go           # Batch service (NewBatch, GetSummary, ListSummaries, ListOverviews, Create, BeginCancel/CompleteCancel, CountOrphaned, RetryFailed, HasPendingWork, IsLockedByLiveOwner)
 │   ├── orphaned.go        # Orphaned file service (scan, list, delete, restore, move-to-inbox)
 │   └── errored.go        # Errored file service (list on disk, get path, delete, delete-all)
-├── pool/                  # Generic worker pool + semaphore
-│   ├── pool.go            # Pool struct, Start(ctx), Stop(ctx), worker loop
-│   └── semaphore.go       # Counting semaphore (Acquire/Release) — moved from concurrency/
+├── pool/                  # Generic worker pool
+│   └── pool.go            # Pool struct, Start(ctx), Stop(ctx), worker loop
 ├── task/                  # Generic task system
 │   ├── batch.go           # Batch ownership — Owner.Acquire, Release, Heartbeat, BatchOwnerState
 │   ├── crud.go            # Task CRUD (Get, ListFiltered, Retry, CountBatchStatuses, ListBatchSummaries)
