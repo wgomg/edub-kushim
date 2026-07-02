@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -526,34 +525,19 @@ func (h *TaskHandler) ResumeBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	kushimPath, err := utils.KushimBinaryPath()
-	if err != nil {
-		h.logger.Error(&reqID, "kushim binary not found: %v", err)
+	if _, err := h.services.Batch.ResetProcessingTasksByBatch(ctx, batchID); err != nil {
+		h.logger.Error(&reqID, "reset processing tasks for batch %s: %v", batchID, err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	cmd := exec.Command(kushimPath, "consume", "--batch", batchID, "--force")
-	cmd.Stdin = nil
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-
-	if err := cmd.Start(); err != nil {
-		h.logger.Error(&reqID, "fork worker for resume batch %s: %v", batchID, err)
+	if err := h.services.Batch.RequeueBatch(ctx, batchID); err != nil {
+		h.logger.Error(&reqID, "requeue batch %s: %v", batchID, err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	go func() {
-		err := cmd.Wait()
-		if err != nil {
-			h.logger.Error(nil, "resume worker for batch %s exited: %v", batchID, err)
-		} else {
-			h.logger.Info(nil, "resume worker for batch %s completed", batchID)
-		}
-	}()
-
-	h.logger.Info(&reqID, "forked resume worker for batch %s", batchID)
+	h.logger.Info(&reqID, "enqueued batch %s for resumption", batchID)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
