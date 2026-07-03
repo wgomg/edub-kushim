@@ -69,7 +69,7 @@ make fix               # go fix -tags "XLA,ORT" ./...
 1. **libpng** (`1.6.43`) — Downloaded from SourceForge. Minimal configure: `--disable-shared --enable-static`.
 2. **Leptonica** — Cloned from GitHub. Built against local libpng. Disables TIFF, WebP, OpenJPEG, GIF, JPEG and programs.
 3. **Tesseract** — Cloned from GitHub. Statically linked against local Leptonica and libpng. Disables curl, libarchive, OpenMP, legacy API, and graphics.
-4. **MuPDF** (`1.27.2`) — Cloned from GitHub (with submodules). Configured with `HAVE_X11=no HAVE_GLUT=no shared=no`.
+4. **MuPDF** (`1.28.0`) — Cloned from GitHub (with submodules). Configured with `HAVE_X11=no HAVE_GLUT=no shared=no`.
 
 Additional C dependency for Hugot Go backend:
 

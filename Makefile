@@ -8,7 +8,7 @@ LEP_LIB       := $(BUILD_DIR)/leptonica/local/lib64
 MUPDF_DIR     := $(BUILD_DIR)/mupdf
 MUPDF_LIB     := $(MUPDF_DIR)/local/lib
 LIBNG_VER     := 1.6.43
-MUPDF_VER     := 1.27.2
+MUPDF_VER     := 1.28.0
 TOKENIZERS_DIR := $(BUILD_DIR)/tokenizers
 KNOWN_NVM_DIRS := $(HOME)/.nvm $(HOME)/.config/nvm
 NVM_DIR       := $(firstword $(wildcard $(KNOWN_NVM_DIRS)))
@@ -21,7 +21,7 @@ BUILD_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown"
 BUILD_DATE   := $(shell date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "unknown")
 LDFLAGS      := -s -w -X github.com/wgomg/edub-kushim/internal/version.Commit=$(BUILD_COMMIT) -X github.com/wgomg/edub-kushim/internal/version.Date=$(BUILD_DATE)
 
-.PHONY: build build-deps web-build clean run consume build-musl-image build-musl compose-up compose-down
+.PHONY: build build-deps web-build clean run consume build-musl-image build-musl build-mupdf-force compose-up compose-down
 
 web-build:
 	. "$(NVM_DIR)/nvm.sh" && nvm use && cd web && npm ci && npm run build
@@ -144,6 +144,10 @@ build-tesseract:
 			--with-extra-includes=$(BUILD_DIR)/leptonica/local/include \
 			--with-curl=no --with-archive=no --disable-openmp --disable-legacy --disable-graphics && \
 		make -j$(shell nproc) && make install
+
+build-mupdf-force:
+	rm -rf $(MUPDF_DIR)
+	$(MAKE) build-mupdf
 
 build-mupdf:
 	@if [ ! -d $(MUPDF_DIR) ]; then \

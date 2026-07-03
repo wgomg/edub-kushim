@@ -461,7 +461,7 @@ FTS5 is "good enough" for the expected document volume (thousands to low tens of
 - **FTS5**: No CJK word segmentation; text duplicated in `document` and `document_fts` tables
 - **External dependencies**: `pdftotext`, `ghostscript`, and `ocrmypdf` required at runtime (only when using external-tool adapters; Go-native adapters have no runtime deps). The ocrmypdf adapter additionally requires `tesseract` and `unpaper` as companions, with `pngquant` recommended for image optimization. `curl` is required for any download (tessdata, Hugot model). Pre-flight checks at the consume entry point surface these requirements with actionable install hints.
 - **Build‑time**: Requires `gcc`, `gcc-c++`, `make`, `autotools` for Leptonica/Tesseract/MuPDF compilation. Additionally `libtokenizers.a` downloaded as a pre-built binary for Hugot. The web UI requires Node.js 24 (see `.nvmrc` — run `nvm use` to activate). Use `docker compose up` to avoid installing any host-side toolchain — the multi-stage Dockerfile handles all build dependencies inside a container.
-- **MuPDF**: Compiled from source (1.27.2) via `make build-deps` (or inside the Docker build)
+- **MuPDF**: Compiled from source (1.28.0) via `make build-deps` (or inside the Docker build)
 - **Malformed PDFs**: MuPDF's `pdf_clean_file` may fail on PDFs with invalid patterns
   or bogus font metrics. When this happens, the original file is used as the processed
   copy — ingestion is not blocked. Set `pdfoptimizer.fallback: 'gs'` to fall

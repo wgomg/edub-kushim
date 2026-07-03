@@ -247,7 +247,7 @@ type TextReducer interface {
 
 ## `adapters/mupdf_wrapper.go`
 
-MuPDF 1.27.2 CGo wrapper. 6 C helpers: document open/close, page rendering, text extraction, `pdf_clean_file`.
+MuPDF 1.28.0 CGo wrapper. 6 C helpers: document open/close, page rendering, text extraction, `pdf_clean_file`.
 
 ---
 

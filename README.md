@@ -129,7 +129,7 @@ Building from source requires compiling four static libraries from source (autom
 - **libpng** 1.6.43
 - **Leptonica** (latest)
 - **Tesseract** (latest)
-- **MuPDF** 1.27.2
+- **MuPDF** 1.28.0
 - **libtokenizers** (for Hugot Go backend)
 
 See the [overview reference](docs/reference/overview.md) for the full dependency chain. Pre-built binaries are planned.

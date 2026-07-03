@@ -6,6 +6,7 @@ docs/dev
 .vscode/
 .continue/
 .kilo/
+.claude/
 
 # configuration files (except example)
 config.yaml
