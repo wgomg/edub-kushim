@@ -95,7 +95,7 @@ SELECT COUNT(*) FROM batch_owner
 WHERE last_heartbeat > datetime('now', '-15 seconds');
 
 -- name: ListStaleBatchOwners :many
-SELECT bo.batch_id FROM batch_owner bo
+SELECT bo.batch_id, bo.owner_id, bo.pid FROM batch_owner bo
 WHERE bo.last_heartbeat < datetime('now', '-15 seconds')
 AND EXISTS (SELECT 1 FROM task t
             WHERE t.batch_id = bo.batch_id

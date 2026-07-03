@@ -273,26 +273,32 @@ func (q *Queries) ListBatchOverviews(ctx context.Context, arg ListBatchOverviews
 }
 
 const listStaleBatchOwners = `-- name: ListStaleBatchOwners :many
-SELECT bo.batch_id FROM batch_owner bo
+SELECT bo.batch_id, bo.owner_id, bo.pid FROM batch_owner bo
 WHERE bo.last_heartbeat < datetime('now', '-15 seconds')
 AND EXISTS (SELECT 1 FROM task t
             WHERE t.batch_id = bo.batch_id
             AND t.status IN ('pending', 'processing', 'waiting'))
 `
 
-func (q *Queries) ListStaleBatchOwners(ctx context.Context) ([]string, error) {
+type ListStaleBatchOwnersRow struct {
+	BatchID string
+	OwnerID string
+	Pid     int64
+}
+
+func (q *Queries) ListStaleBatchOwners(ctx context.Context) ([]ListStaleBatchOwnersRow, error) {
 	rows, err := q.db.QueryContext(ctx, listStaleBatchOwners)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []string
+	var items []ListStaleBatchOwnersRow
 	for rows.Next() {
-		var batch_id string
-		if err := rows.Scan(&batch_id); err != nil {
+		var i ListStaleBatchOwnersRow
+		if err := rows.Scan(&i.BatchID, &i.OwnerID, &i.Pid); err != nil {
 			return nil, err
 		}
-		items = append(items, batch_id)
+		items = append(items, i)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

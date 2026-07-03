@@ -705,11 +705,11 @@ func TestBatch_ListStaleBatchOwners(t *testing.T) {
 		)
 		testutil.AssertNoError(t, err, "backdate heartbeat")
 
-		ids, err := svc.ListStaleBatchOwners(ctx)
+		owners, err := svc.ListStaleBatchOwners(ctx)
 		testutil.AssertNoError(t, err, "list stale")
 		found := false
-		for _, id := range ids {
-			if id == "stale-find" {
+		for _, owner := range owners {
+			if owner.BatchID == "stale-find" {
 				found = true
 			}
 		}
@@ -731,10 +731,10 @@ func TestBatch_ListStaleBatchOwners(t *testing.T) {
 		})
 		testutil.AssertNoError(t, err, "create pending task")
 
-		ids, err := svc.ListStaleBatchOwners(ctx)
+		owners, err := svc.ListStaleBatchOwners(ctx)
 		testutil.AssertNoError(t, err, "list stale")
-		for _, id := range ids {
-			testutil.AssertEqual(t, id != "live-skip", true, "live batch not in stale list")
+		for _, owner := range owners {
+			testutil.AssertEqual(t, owner.BatchID != "live-skip", true, "live batch not in stale list")
 		}
 	})
 
@@ -760,10 +760,10 @@ func TestBatch_ListStaleBatchOwners(t *testing.T) {
 		)
 		testutil.AssertNoError(t, err, "backdate heartbeat")
 
-		ids, err := svc.ListStaleBatchOwners(ctx)
+		owners, err := svc.ListStaleBatchOwners(ctx)
 		testutil.AssertNoError(t, err, "list stale")
-		for _, id := range ids {
-			testutil.AssertEqual(t, id != "stale-done", true, "completed batch not in stale list")
+		for _, owner := range owners {
+			testutil.AssertEqual(t, owner.BatchID != "stale-done", true, "completed batch not in stale list")
 		}
 	})
 }

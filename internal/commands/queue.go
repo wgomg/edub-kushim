@@ -147,25 +147,30 @@ func queueHandler(c *Container, args []string) error {
 }
 
 func reclaimStaleBatches(ctx context.Context, batchSvc *service.Batch, logger *utils.Logger) error {
-	staleIDs, err := batchSvc.ListStaleBatchOwners(ctx)
+	owners, err := batchSvc.ListStaleBatchOwners(ctx)
 	if err != nil {
 		return fmt.Errorf("list stale batch owners: %w", err)
 	}
-	for _, batchID := range staleIDs {
-		logger.Info(nil, "reclaiming stale batch %s", batchID)
-		if _, err := batchSvc.ResetProcessingTasksByBatch(ctx, batchID); err != nil {
-			logger.Error(nil, "reset processing tasks for batch %s: %v", batchID, err)
+	for _, owner := range owners {
+		logger.Info(nil, "reclaiming stale batch %s (owner=%s pid=%d)", owner.BatchID, owner.OwnerID, owner.Pid)
+		if isAlive(owner.Pid) {
+			if err := syscall.Kill(int(owner.Pid), syscall.SIGTERM); err != nil {
+				logger.Error(nil, "signal SIGTERM to PID %d for batch %s: %v", owner.Pid, owner.BatchID, err)
+			}
+		}
+		if _, err := batchSvc.ResetProcessingTasksByBatch(ctx, owner.BatchID); err != nil {
+			logger.Error(nil, "reset processing tasks for batch %s: %v", owner.BatchID, err)
 			continue
 		}
-		if err := batchSvc.RequeueBatch(ctx, batchID); err != nil {
-			logger.Error(nil, "requeue batch %s: %v", batchID, err)
+		if err := batchSvc.RequeueBatch(ctx, owner.BatchID); err != nil {
+			logger.Error(nil, "requeue batch %s: %v", owner.BatchID, err)
 			continue
 		}
-		if err := batchSvc.DeleteBatchOwnerByBatchID(ctx, batchID); err != nil {
-			logger.Error(nil, "delete batch owner for batch %s: %v", batchID, err)
+		if err := batchSvc.DeleteBatchOwnerByBatchID(ctx, owner.BatchID); err != nil {
+			logger.Error(nil, "delete batch owner for batch %s: %v", owner.BatchID, err)
 			continue
 		}
-		logger.Info(nil, "stale batch %s reclaimed and requeued", batchID)
+		logger.Info(nil, "stale batch %s reclaimed and requeued", owner.BatchID)
 	}
 	return nil
 }

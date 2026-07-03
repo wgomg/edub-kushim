@@ -366,12 +366,12 @@ func (s *Batch) CountLiveBatches(ctx context.Context) (int64, error) {
 	return count, nil
 }
 
-func (s *Batch) ListStaleBatchOwners(ctx context.Context) ([]string, error) {
-	ids, err := s.queries.ListStaleBatchOwners(ctx)
+func (s *Batch) ListStaleBatchOwners(ctx context.Context) ([]database.ListStaleBatchOwnersRow, error) {
+	owners, err := s.queries.ListStaleBatchOwners(ctx)
 	if err != nil {
 		return nil, errs.FromDB(err, "list stale batch owners")
 	}
-	return ids, nil
+	return owners, nil
 }
 
 func (s *Batch) DeleteBatchOwnerByBatchID(ctx context.Context, batchID string) error {
