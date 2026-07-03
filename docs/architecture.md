@@ -463,9 +463,11 @@ FTS5 is "good enough" for the expected document volume (thousands to low tens of
 - **Build‑time**: Requires `gcc`, `gcc-c++`, `make`, `autotools` for Leptonica/Tesseract/MuPDF compilation. Additionally `libtokenizers.a` downloaded as a pre-built binary for Hugot. The web UI requires Node.js 24 (see `.nvmrc` — run `nvm use` to activate). Use `docker compose up` to avoid installing any host-side toolchain — the multi-stage Dockerfile handles all build dependencies inside a container.
 - **MuPDF**: Compiled from source (1.28.0) via `make build-deps` (or inside the Docker build)
 - **Malformed PDFs**: MuPDF's `pdf_clean_file` may fail on PDFs with invalid patterns
-  or bogus font metrics. When this happens, the original file is used as the processed
-  copy — ingestion is not blocked. Set `pdfoptimizer.fallback: 'gs'` to fall
-  back to Ghostscript for these files.
+  or bogus font metrics. The call runs in a **subprocess** (`kushim internal-mupdf-clean`)
+  — a crash kills only the child and returns a normal Go error to the parent. When MuPDF
+  fails, the configured fallback engine is invoked, or the original file is used as the
+  processed copy if no fallback is set. Configure via `pdfoptimizer.fallback: 'gs'` to
+  use Ghostscript as the alternative.
 - **Hugot ORT backend**: ONNX Runtime downloaded at runtime on first use — requires internet access. The Go backend has no runtime deps. ORT's CPU memory arena and memory pattern pre-allocation are disabled by default (`HugotConfig.CpuMemArena=false`, `MemPattern=false`) to cap idle RSS at ~2.2–2.5 GB rather than retaining peak-inference buffers (~4–5 GB). This adds ~10–20% per-inference latency from buffer re-allocation, which is dwarfed by text extraction, OCR, and LLM API latency in the enrichment pipeline. Toggle to `true` in `DefaultConfig` to restore ORT defaults if performance is unacceptable.
 - **Matcher as external process**: The tag matcher runs as a separate process (`kushim hugot`). If it's not running, tag CRUD operations return `503 Service Unavailable`, and enrichment falls back to LLM-only tags (no semantic tag matching). The matcher must be started before `edub` for full functionality.
 - **Queue daemon forks kushim**: The `kushim queue` daemon finds the `kushim` binary in PATH or as a sibling of the `edub` binary. If `kushim` is not found, batch processing fails. The API consume endpoints no longer fork directly — they create `queued` batches for the daemon to pick up.

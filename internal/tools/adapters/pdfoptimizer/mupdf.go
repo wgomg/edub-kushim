@@ -1,15 +1,16 @@
 package pdfoptimizer
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/tools/adapters"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -38,16 +39,12 @@ func (m *MuPDF) Optimize(ctx context.Context, docId, path string) (*string, erro
 
 	m.logger.Debug(&docId, "mupdf: cleaning %s -> %s (PID=%d)", path, outputPath, os.Getpid())
 
-	mupdfCtx, err := adapters.NewMuContext()
-	if err != nil {
-		return nil, fmt.Errorf("mupdf context: %w", err)
-	}
-	defer mupdfCtx.Close()
-
-	opts := adapters.NewCleanOptions()
-	if err := mupdfCtx.PdfCleanFile(path, outputPath, opts); err != nil {
+	cmd := exec.CommandContext(ctx, os.Args[0], "internal-mupdf-clean", "--input", path, "--output", outputPath)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
 		os.Remove(outputPath)
-		return nil, fmt.Errorf("mupdf pdf_clean_file: %w", err)
+		return nil, fmt.Errorf("mupdf pdf_clean_file: %w (stderr: %s)", err, stderr.String())
 	}
 
 	if _, err := os.Stat(outputPath); os.IsNotExist(err) {

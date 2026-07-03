@@ -8,6 +8,7 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/commands"
 	"github.com/wgomg/edub-kushim/internal/config"
+	"github.com/wgomg/edub-kushim/internal/tools/adapters"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -25,6 +26,40 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
+		return
+	}
+
+	if commandName == "internal-mupdf-clean" {
+		var inputPath, outputPath string
+		for i := 0; i < len(args); i++ {
+			switch args[i] {
+			case "--input":
+				if i+1 < len(args) {
+					inputPath = args[i+1]
+					i++
+				}
+			case "--output":
+				if i+1 < len(args) {
+					outputPath = args[i+1]
+					i++
+				}
+			}
+		}
+		if inputPath == "" || outputPath == "" {
+			fmt.Fprintf(os.Stderr, "usage: kushim internal-mupdf-clean --input <file> --output <file>\n")
+			os.Exit(1)
+		}
+		ctx, err := adapters.NewMuContext()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "mupdf context: %v\n", err)
+			os.Exit(1)
+		}
+		opts := adapters.NewCleanOptions()
+		if err := ctx.PdfCleanFile(inputPath, outputPath, opts); err != nil {
+			fmt.Fprintf(os.Stderr, "mupdf pdf_clean_file: %v\n", err)
+			os.Exit(1)
+		}
+		ctx.Close()
 		return
 	}
 
