@@ -27,7 +27,7 @@ type ConfigHandler struct {
 	logger      *utils.Logger
 	dispatcher  *task.Dispatcher
 	services    *itypes.CrudServices
-	OnBootstrap func(configDir string) (*config.Config, *database.Queries, *task.Dispatcher, error)
+	OnBootstrap func(configDir string) (*config.Config, *database.Client, *task.Dispatcher, error)
 }
 
 func NewConfigHandler(
@@ -48,12 +48,12 @@ func NewConfigHandler(
 	}
 }
 
-func (h *ConfigHandler) SetServices(queries *database.Queries, dispatcher *task.Dispatcher) {
-	h.queries = queries
+func (h *ConfigHandler) SetServices(client *database.Client, dispatcher *task.Dispatcher) {
 	h.dispatcher = dispatcher
-	if queries != nil {
+	if client != nil {
+		h.queries = client.Queries
 		h.services = &itypes.CrudServices{
-			Batch: service.NewBatch(queries),
+			Batch: service.NewBatch(client, h.getConfig().Consumer.Reclaim.MaxRetries),
 		}
 	}
 }
@@ -82,12 +82,12 @@ func (h *ConfigHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
 
 	if configDir, ok := body["config_dir"].(string); ok && h.getConfig() == nil {
 		var cfg *config.Config
-		var queries *database.Queries
+		var client *database.Client
 		var dispatcher *task.Dispatcher
 		var err error
 
 		if h.OnBootstrap != nil {
-			cfg, queries, dispatcher, err = h.OnBootstrap(configDir)
+			cfg, client, dispatcher, err = h.OnBootstrap(configDir)
 		} else {
 			cfg, err = config.Bootstrap(configDir)
 		}
@@ -97,8 +97,8 @@ func (h *ConfigHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
 		}
 
 		h.onConfigSet(cfg)
-		if queries != nil {
-			h.queries = queries
+		if client != nil {
+			h.queries = client.Queries
 		}
 		if dispatcher != nil {
 			h.dispatcher = dispatcher

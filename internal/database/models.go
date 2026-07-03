@@ -124,6 +124,7 @@ type Task struct {
 	StartedAt   sql.NullTime
 	CompletedAt sql.NullTime
 	Error       sql.NullString
+	Attempts    int64
 }
 
 type User struct {

@@ -82,7 +82,8 @@ type PollingConfig struct {
 }
 
 type ReclaimConfig struct {
-	Enabled bool `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
+	Enabled    bool `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
+	MaxRetries int  `mapstructure:"max_retries" yaml:"max_retries" json:"max_retries"`
 }
 
 type ConsumerConfig struct {
@@ -298,7 +299,8 @@ func DefaultConfig(configDir string) *Config {
 				Interval: 5,
 			},
 			Reclaim: ReclaimConfig{
-				Enabled: true,
+				Enabled:    true,
+				MaxRetries: 3,
 			},
 		},
 		Backup: BackupConfig{
@@ -401,6 +403,10 @@ func Reload(configDir string, cfg *Config) (bool, error) {
 func finalizeConfig(cfg *Config, configDir string) error {
 	if len(cfg.Consumer.OCR.Languages) == 0 {
 		return fmt.Errorf("consumer.ocr.languages is required — run 'kushim setup --languages eng,spa,...' first")
+	}
+
+	if cfg.Consumer.Reclaim.Enabled && cfg.Consumer.Reclaim.MaxRetries <= 0 {
+		return fmt.Errorf("consumer.reclaim.max_retries must be > 0 when reclaim is enabled")
 	}
 
 	homeDir, err := os.UserHomeDir()

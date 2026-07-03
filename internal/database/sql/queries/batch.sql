@@ -38,9 +38,18 @@ DELETE FROM batch_owner WHERE batch_id = ? AND owner_id = ?;
 -- name: DeleteBatchOwnerByBatchID :execrows
 DELETE FROM batch_owner WHERE batch_id = ?;
 
+-- name: QuarantineProcessingTasksByBatch :execrows
+UPDATE task SET
+    status = 'failed',
+    error = 'Max retries exceeded (' || attempts || ')',
+    completed_at = CURRENT_TIMESTAMP
+WHERE batch_id = ? AND status = 'processing' AND attempts >= ?;
+
 -- name: ResetProcessingTasksByBatch :execrows
-UPDATE task SET status = 'pending'
-WHERE batch_id = ? AND status = 'processing';
+UPDATE task SET
+    status = 'pending',
+    attempts = attempts + 1
+WHERE batch_id = ? AND status = 'processing' AND attempts < ?;
 
 -- name: CleanupCompletedBatches :execrows
 DELETE FROM batch_owner WHERE batch_id IN (

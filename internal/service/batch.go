@@ -44,11 +44,13 @@ type BatchOverview struct {
 }
 
 type Batch struct {
-	queries *database.Queries
+	client     *database.Client
+	queries    *database.Queries
+	maxRetries int64
 }
 
-func NewBatch(queries *database.Queries) *Batch {
-	return &Batch{queries: queries}
+func NewBatch(client *database.Client, maxRetries int) *Batch {
+	return &Batch{client: client, queries: client.Queries, maxRetries: int64(maxRetries)}
 }
 
 func (s *Batch) GetSummary(ctx context.Context, batchID string) (*BatchSummary, error) {
@@ -380,11 +382,36 @@ func (s *Batch) DeleteBatchOwnerByBatchID(ctx context.Context, batchID string) e
 }
 
 func (s *Batch) ResetProcessingTasksByBatch(ctx context.Context, batchID string) (int64, error) {
-	n, err := s.queries.ResetProcessingTasksByBatch(ctx, sql.NullString{String: batchID, Valid: true})
+	tx, err := s.client.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, errs.FromDB(err, "begin transaction for reset "+batchID)
+	}
+	defer tx.Rollback()
+
+	bid := sql.NullString{String: batchID, Valid: true}
+	txQ := s.client.Queries.WithTx(tx)
+
+	quarantined, err := txQ.QuarantineProcessingTasksByBatch(ctx, database.QuarantineProcessingTasksByBatchParams{
+		BatchID:  bid,
+		Attempts: s.maxRetries,
+	})
+	if err != nil {
+		return 0, errs.FromDB(err, "quarantine processing tasks "+batchID)
+	}
+
+	reset, err := txQ.ResetProcessingTasksByBatch(ctx, database.ResetProcessingTasksByBatchParams{
+		BatchID:  bid,
+		Attempts: s.maxRetries,
+	})
 	if err != nil {
 		return 0, errs.FromDB(err, "reset processing tasks "+batchID)
 	}
-	return n, nil
+
+	if err := tx.Commit(); err != nil {
+		return 0, errs.FromDB(err, "commit transaction for reset "+batchID)
+	}
+
+	return quarantined + reset, nil
 }
 
 func (s *Batch) batchOwnerState(ctx context.Context, batchID string) (task.OwnerState, int64, error) {

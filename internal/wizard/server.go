@@ -45,11 +45,11 @@ func (s *Server) Start() error {
 	if configDir, err := utils.ConfigDir(); err == nil {
 		if config.ConfigExists(*configDir) {
 			s.logger.Info(nil, "existing config found at %s — auto-resuming", *configDir)
-			if cfg, queries, dispatcher, err := s.bootstrap(*configDir); err != nil {
+			if cfg, client, dispatcher, err := s.bootstrap(*configDir); err != nil {
 				s.logger.Error(nil, "auto-resume bootstrap: %v", err)
 			} else {
 				onConfigSet(cfg)
-				configHandler.SetServices(queries, dispatcher)
+				configHandler.SetServices(client, dispatcher)
 			}
 		}
 	}
@@ -74,7 +74,7 @@ func (s *Server) Start() error {
 	return s.httpServer.ListenAndServe()
 }
 
-func (s *Server) bootstrap(configDir string) (*config.Config, *database.Queries, *task.Dispatcher, error) {
+func (s *Server) bootstrap(configDir string) (*config.Config, *database.Client, *task.Dispatcher, error) {
 	if s.db != nil {
 		return nil, nil, nil, fmt.Errorf("already bootstrapped")
 	}
@@ -101,7 +101,7 @@ func (s *Server) bootstrap(configDir string) (*config.Config, *database.Queries,
 	s.pool = pool.New(s.logger, runner, 1, 5*time.Second, "config")
 	s.pool.Start(context.Background())
 
-	return cfg, client.Queries, dispatcher, nil
+	return cfg, client, dispatcher, nil
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {

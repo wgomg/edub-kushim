@@ -93,7 +93,7 @@ func consumeHandler(c *Container, args []string) error {
 
 		ownerID := uuid.New().String()
 		pid := os.Getpid()
-		owner := task.NewOwner(client.Queries, ownerID, pid, c.logger)
+		owner := task.NewOwner(client, ownerID, pid, c.logger, c.config.Consumer.Reclaim.MaxRetries)
 		c.logger.Info(nil, "consume: acquiring batch %s (PID=%d, ownerID=%s)", batchIDParam, pid, ownerID)
 
 		if err := owner.Acquire(ctx, batchIDParam, task.StaleAfter); err == task.ErrBatchLocked {
@@ -199,7 +199,7 @@ func consumeHandler(c *Container, args []string) error {
 		return nil
 	}
 
-	batchSvc := service.NewBatch(client.Queries)
+	batchSvc := service.NewBatch(client, c.config.Consumer.Reclaim.MaxRetries)
 
 	countBefore, err := batchSvc.CountQueuedBatches(ctx)
 	if err != nil {
@@ -233,7 +233,7 @@ func consumeHandler(c *Container, args []string) error {
 	}
 
 	ownerID := uuid.New().String()
-	owner := task.NewOwner(client.Queries, ownerID, os.Getpid(), c.logger)
+	owner := task.NewOwner(client, ownerID, os.Getpid(), c.logger, c.config.Consumer.Reclaim.MaxRetries)
 
 	if err := owner.Acquire(ctx, batchID, task.StaleAfter); err != nil {
 		return fmt.Errorf("acquire batch %s: %w", batchID, err)

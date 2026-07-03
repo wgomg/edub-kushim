@@ -70,7 +70,7 @@ func newHandlerTestEnv(t *testing.T) *handlerTestEnv {
 	userSvc := service.NewUser(client.Queries)
 
 	services := &itypes.CrudServices{
-		Batch:        service.NewBatch(client.Queries),
+		Batch:        service.NewBatch(client, 3),
 		Tag:          tagSvc,
 		People:       peopleSvc,
 		PeopleType:   peopleTypeSvc,
@@ -1325,7 +1325,7 @@ func TestConfigHandlerGetConfig(t *testing.T) {
 		bootstrapped := config.DefaultConfig("/tmp/boot")
 		bootstrapped.Srv.Port = 7777
 		onConfigSet(bootstrapped)
-		h.SetServices(env.client.Queries, nil)
+		h.SetServices(env.client, nil)
 
 		w := rec()
 		h.GetConfig(w, req(t, "GET", "/wizard/config", nil))

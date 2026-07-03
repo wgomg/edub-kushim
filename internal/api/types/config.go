@@ -61,7 +61,8 @@ type PollingConfigResponse struct {
 }
 
 type ReclaimConfigResponse struct {
-	Enabled bool `json:"enabled"`
+	Enabled    bool `json:"enabled"`
+	MaxRetries int  `json:"max_retries"`
 }
 
 type ConsumerConfigResponse struct {
@@ -155,6 +156,7 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 		resp.Consumer.Polling.Windows[i] = PollingWindowResponse{Start: w.Start, End: w.End}
 	}
 	resp.Consumer.Reclaim.Enabled = cfg.Consumer.Reclaim.Enabled
+	resp.Consumer.Reclaim.MaxRetries = cfg.Consumer.Reclaim.MaxRetries
 	resp.Consumer.TextExtractor.Engine = cfg.Consumer.TextExtractor.Engine
 	resp.Consumer.TextExtractor.Timeout = cfg.Consumer.TextExtractor.Timeout
 	resp.Consumer.PdfOptimizer.Engine = cfg.Consumer.PdfOptimizer.Engine

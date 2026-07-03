@@ -149,3 +149,51 @@ func TestIsWithinActiveWindows_EmptyWindows(t *testing.T) {
 		t.Error("IsWithinActiveWindows([]) = false, want true")
 	}
 }
+
+func TestFinalizeConfig_ReclaimMaxRetries(t *testing.T) {
+	configDir := t.TempDir()
+
+	t.Run("rejects max_retries zero when reclaim enabled", func(t *testing.T) {
+		cfg := DefaultConfig(configDir)
+		cfg.Consumer.Reclaim.Enabled = true
+		cfg.Consumer.Reclaim.MaxRetries = 0
+
+		err := finalizeConfig(cfg, configDir)
+		if err == nil {
+			t.Fatal("expected error for MaxRetries=0 with reclaim enabled")
+		}
+	})
+
+	t.Run("rejects negative max_retries when reclaim enabled", func(t *testing.T) {
+		cfg := DefaultConfig(configDir)
+		cfg.Consumer.Reclaim.Enabled = true
+		cfg.Consumer.Reclaim.MaxRetries = -1
+
+		err := finalizeConfig(cfg, configDir)
+		if err == nil {
+			t.Fatal("expected error for MaxRetries=-1 with reclaim enabled")
+		}
+	})
+
+	t.Run("allows zero max_retries when reclaim disabled", func(t *testing.T) {
+		cfg := DefaultConfig(configDir)
+		cfg.Consumer.Reclaim.Enabled = false
+		cfg.Consumer.Reclaim.MaxRetries = 0
+
+		err := finalizeConfig(cfg, configDir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("accepts positive max_retries when reclaim enabled", func(t *testing.T) {
+		cfg := DefaultConfig(configDir)
+		cfg.Consumer.Reclaim.Enabled = true
+		cfg.Consumer.Reclaim.MaxRetries = 5
+
+		err := finalizeConfig(cfg, configDir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+}

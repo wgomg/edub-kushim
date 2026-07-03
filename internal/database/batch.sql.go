@@ -303,6 +303,27 @@ func (q *Queries) ListStaleBatchOwners(ctx context.Context) ([]string, error) {
 	return items, nil
 }
 
+const quarantineProcessingTasksByBatch = `-- name: QuarantineProcessingTasksByBatch :execrows
+UPDATE task SET
+    status = 'failed',
+    error = 'Max retries exceeded (' || attempts || ')',
+    completed_at = CURRENT_TIMESTAMP
+WHERE batch_id = ? AND status = 'processing' AND attempts >= ?
+`
+
+type QuarantineProcessingTasksByBatchParams struct {
+	BatchID  sql.NullString
+	Attempts int64
+}
+
+func (q *Queries) QuarantineProcessingTasksByBatch(ctx context.Context, arg QuarantineProcessingTasksByBatchParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, quarantineProcessingTasksByBatch, arg.BatchID, arg.Attempts)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const releaseBatchOwner = `-- name: ReleaseBatchOwner :execrows
 DELETE FROM batch_owner WHERE batch_id = ? AND owner_id = ?
 `
@@ -330,12 +351,19 @@ func (q *Queries) RequeueBatch(ctx context.Context, id string) error {
 }
 
 const resetProcessingTasksByBatch = `-- name: ResetProcessingTasksByBatch :execrows
-UPDATE task SET status = 'pending'
-WHERE batch_id = ? AND status = 'processing'
+UPDATE task SET
+    status = 'pending',
+    attempts = attempts + 1
+WHERE batch_id = ? AND status = 'processing' AND attempts < ?
 `
 
-func (q *Queries) ResetProcessingTasksByBatch(ctx context.Context, batchID sql.NullString) (int64, error) {
-	result, err := q.db.ExecContext(ctx, resetProcessingTasksByBatch, batchID)
+type ResetProcessingTasksByBatchParams struct {
+	BatchID  sql.NullString
+	Attempts int64
+}
+
+func (q *Queries) ResetProcessingTasksByBatch(ctx context.Context, arg ResetProcessingTasksByBatchParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, resetProcessingTasksByBatch, arg.BatchID, arg.Attempts)
 	if err != nil {
 		return 0, err
 	}

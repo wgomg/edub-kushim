@@ -15,7 +15,7 @@ func newTestBatch(t *testing.T) (*Batch, *database.Client) {
 	t.Helper()
 	client := database.NewTestClient(t)
 	t.Cleanup(func() { client.DB().Close() })
-	return NewBatch(client.Queries), client
+	return NewBatch(client, 3), client
 }
 
 func TestBatch_Create(t *testing.T) {
@@ -579,7 +579,7 @@ func TestBatch_ResetProcessingTasksByBatch(t *testing.T) {
 	svc, client := newTestBatch(t)
 	ctx := context.Background()
 
-	t.Run("resets processing tasks to pending", func(t *testing.T) {
+	t.Run("resets processing task below threshold and increments attempts", func(t *testing.T) {
 		_, err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
 			ID: "rst-proc", Source: "test", Status: "processing",
 		})
@@ -601,6 +601,70 @@ func TestBatch_ResetProcessingTasksByBatch(t *testing.T) {
 		task, err := client.Queries.GetTask(ctx, taskID)
 		testutil.AssertNoError(t, err, "get task")
 		testutil.AssertEqual(t, task.Status, "pending", "task now pending")
+		testutil.AssertEqual(t, task.Attempts, int64(1), "attempts incremented to 1")
+	})
+
+	t.Run("quarantines task at retry threshold", func(t *testing.T) {
+		_, err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
+			ID: "rst-quar", Source: "test", Status: "processing",
+		})
+		testutil.AssertNoError(t, err, "create batch")
+
+		res, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
+			TaskID: "rst-q1", TaskType: "consume", Status: "processing",
+			Payload:  []byte("{}"),
+			BatchID: sql.NullString{String: "rst-quar", Valid: true},
+		})
+		testutil.AssertNoError(t, err, "create processing task")
+		taskID, err := res.LastInsertId()
+		testutil.AssertNoError(t, err, "get task id")
+
+		client.DB().ExecContext(ctx, "UPDATE task SET attempts = 3 WHERE id = ?", taskID)
+
+		n, err := svc.ResetProcessingTasksByBatch(ctx, "rst-quar")
+		testutil.AssertNoError(t, err, "reset")
+		testutil.AssertEqual(t, n, int64(1), "one task quarantined")
+
+		task, err := client.Queries.GetTask(ctx, taskID)
+		testutil.AssertNoError(t, err, "get task")
+		testutil.AssertEqual(t, task.Status, "failed", "task quarantined to failed")
+		testutil.AssertEqual(t, task.Error.String, "Max retries exceeded (3)", "error message")
+	})
+
+	t.Run("mixed batch: resets below threshold and quarantines at threshold", func(t *testing.T) {
+		_, err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
+			ID: "rst-mix", Source: "test", Status: "processing",
+		})
+		testutil.AssertNoError(t, err, "create batch")
+
+		res1, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
+			TaskID: "rst-m1", TaskType: "consume", Status: "processing",
+			Payload:  []byte("{}"),
+			BatchID: sql.NullString{String: "rst-mix", Valid: true},
+		})
+		testutil.AssertNoError(t, err, "create task 1")
+		id1, _ := res1.LastInsertId()
+		client.DB().ExecContext(ctx, "UPDATE task SET attempts = 2 WHERE id = ?", id1)
+
+		res2, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
+			TaskID: "rst-m2", TaskType: "consume", Status: "processing",
+			Payload:  []byte("{}"),
+			BatchID: sql.NullString{String: "rst-mix", Valid: true},
+		})
+		testutil.AssertNoError(t, err, "create task 2")
+		id2, _ := res2.LastInsertId()
+		client.DB().ExecContext(ctx, "UPDATE task SET attempts = 3 WHERE id = ?", id2)
+
+		n, err := svc.ResetProcessingTasksByBatch(ctx, "rst-mix")
+		testutil.AssertNoError(t, err, "reset mixed")
+		testutil.AssertEqual(t, n, int64(2), "one reset + one quarantined")
+
+		t1, _ := client.Queries.GetTask(ctx, id1)
+		testutil.AssertEqual(t, t1.Status, "pending", "task below threshold reset")
+		testutil.AssertEqual(t, t1.Attempts, int64(3), "attempts incremented")
+
+		t2, _ := client.Queries.GetTask(ctx, id2)
+		testutil.AssertEqual(t, t2.Status, "failed", "task at threshold quarantined")
 	})
 
 	t.Run("returns zero when no processing tasks", func(t *testing.T) {

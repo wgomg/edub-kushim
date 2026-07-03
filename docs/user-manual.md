@@ -1499,7 +1499,7 @@ enricher:
 | `consumer`                     | Pipeline: which tools to use, which files to accept                    |
 | `consumer.max_files_per_batch` | Max files per consume batch (default 10, 0 = unlimited)                |
 | `consumer.polling`             | Auto-consume scheduler settings (enabled, interval)                    |
-| `consumer.reclaim`             | Auto-resume of interrupted batches (enabled, default `true`)           |
+| `consumer.reclaim`             | Auto-resume of interrupted batches (enabled, max_retries 3)            |
 | `consumer.textextractor`       | Text extraction engine (mupdf, gopdf, pdftotext)                       |
 | `consumer.pdfoptimizer`        | PDF optimizer (mupdf, gs) + optional fallback                          |
 | `consumer.ocr`                 | OCR engine (gosseract, ocrmypdf) + language data                       |

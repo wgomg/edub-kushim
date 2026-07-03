@@ -17,82 +17,82 @@ ORDER BY created_at LIMIT 1;
 
 -- name: ListTasks :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error
+       created_at, started_at, completed_at, error, attempts
 FROM task ORDER BY created_at DESC LIMIT ? OFFSET ?;
 
 -- name: ListTasksByStatus :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error
+       created_at, started_at, completed_at, error, attempts
 FROM task WHERE status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?;
 
 -- name: ListTasksByBatch :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error
+       created_at, started_at, completed_at, error, attempts
 FROM task WHERE batch_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?;
 
 -- name: ListTasksByBatchAndStatus :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error
+       created_at, started_at, completed_at, error, attempts
 FROM task WHERE batch_id = ? AND status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?;
 
 -- name: ListAllTasks :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error
+       created_at, started_at, completed_at, error, attempts
 FROM task ORDER BY created_at DESC;
 
 -- name: ListAllTasksByStatus :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error
+       created_at, started_at, completed_at, error, attempts
 FROM task WHERE status = ? ORDER BY created_at DESC;
 
 -- name: ListAllTasksByBatch :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error
+       created_at, started_at, completed_at, error, attempts
 FROM task WHERE batch_id = ? ORDER BY created_at DESC;
 
 -- name: ListAllTasksByBatchAndStatus :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error
+       created_at, started_at, completed_at, error, attempts
 FROM task WHERE batch_id = ? AND status = ? ORDER BY created_at DESC;
 
 -- name: ListTasksByBatchAndStatusAndType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error
+       created_at, started_at, completed_at, error, attempts
 FROM task WHERE batch_id = ? AND status = ? AND task_type = ? ORDER BY created_at DESC LIMIT ? OFFSET ?;
 
 -- name: ListAllTasksByBatchAndStatusAndType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error
+       created_at, started_at, completed_at, error, attempts
 FROM task WHERE batch_id = ? AND status = ? AND task_type = ? ORDER BY created_at DESC;
 
 -- name: ListTasksByBatchAndType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error
+       created_at, started_at, completed_at, error, attempts
 FROM task WHERE batch_id = ? AND task_type = ? ORDER BY created_at DESC LIMIT ? OFFSET ?;
 
 -- name: ListAllTasksByBatchAndType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error
+       created_at, started_at, completed_at, error, attempts
 FROM task WHERE batch_id = ? AND task_type = ? ORDER BY created_at DESC;
 
 -- name: ListTasksByStatusAndType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error
+       created_at, started_at, completed_at, error, attempts
 FROM task WHERE status = ? AND task_type = ? ORDER BY created_at DESC LIMIT ? OFFSET ?;
 
 -- name: ListAllTasksByStatusAndType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error
+       created_at, started_at, completed_at, error, attempts
 FROM task WHERE status = ? AND task_type = ? ORDER BY created_at DESC;
 
 -- name: ListTasksByType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error
+       created_at, started_at, completed_at, error, attempts
 FROM task WHERE task_type = ? ORDER BY created_at DESC LIMIT ? OFFSET ?;
 
 -- name: ListAllTasksByType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error
+       created_at, started_at, completed_at, error, attempts
 FROM task WHERE task_type = ? ORDER BY created_at DESC;
 
 -- name: CountTasksByBatchAndStatus :one
@@ -113,7 +113,8 @@ WHERE id = ? AND status = 'pending';
 UPDATE task SET
     status = 'completed',
     result = ?,
-    completed_at = CURRENT_TIMESTAMP
+    completed_at = CURRENT_TIMESTAMP,
+    attempts = 0
 WHERE id = ?;
 
 -- name: FailTask :exec
@@ -129,12 +130,13 @@ UPDATE task SET
     result = NULL,
     error = NULL,
     started_at = NULL,
-    completed_at = NULL
+    completed_at = NULL,
+    attempts = 0
 WHERE batch_id = ? AND status = 'failed';
 
 -- name: GetConfigTaskByDedupKey :one
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error
+       created_at, started_at, completed_at, error, attempts
 FROM task WHERE task_type = 'config' AND dedup_key = ?
 ORDER BY created_at DESC LIMIT 1;
 
@@ -144,7 +146,8 @@ UPDATE task SET
     result = NULL,
     error = NULL,
     started_at = NULL,
-    completed_at = NULL
+    completed_at = NULL,
+    attempts = 0
 WHERE id = ?;
 
 -- name: SetEnrichTaskPending :exec

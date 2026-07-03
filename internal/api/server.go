@@ -70,7 +70,7 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 	}
 	s.services.Tag = tagSvc
 
-	s.services.Batch = service.NewBatch(client.Queries)
+	s.services.Batch = service.NewBatch(client, cfg.Consumer.Reclaim.MaxRetries)
 	s.services.People = service.NewPeople(client.Queries, logger)
 	s.services.PeopleType = service.NewPeopleType(client.Queries, logger)
 	s.services.DocumentType = service.NewDocumentType(client.Queries, logger)

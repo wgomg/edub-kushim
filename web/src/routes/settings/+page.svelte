@@ -125,6 +125,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			'consumer.polling.interval': Number(cfg.consumer.polling.interval),
 			'consumer.polling.windows': cfg.consumer.polling.windows ?? [],
 			'consumer.reclaim.enabled': cfg.consumer.reclaim.enabled,
+			'consumer.reclaim.max_retries': Number(cfg.consumer.reclaim.max_retries),
 			'consumer.pdfoptimizer.engine': cfg.consumer.pdfoptimizer.engine,
 			'consumer.pdfoptimizer.fallback': cfg.consumer.pdfoptimizer.fallback,
 			'consumer.pdfoptimizer.timeout': Number(cfg.consumer.pdfoptimizer.timeout),
@@ -692,6 +693,19 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 								{cfg.consumer.reclaim.enabled ? 'Active' : 'Inactive'}
 							</span>
 						</div>
+					</div>
+					<div>
+						<label for="reclaim-max-retries" class="mb-1 block text-sm font-medium text-parchment-200"
+							>Max retries per task</label
+						>
+						<input
+							id="reclaim-max-retries"
+							type="number"
+							min="1"
+							max="10"
+							class="w-24 rounded-lg border border-clay-700 bg-clay-950 px-3 py-2 text-parchment-200 focus:border-gold-500 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gold-500"
+							bind:value={cfg.consumer.reclaim.max_retries}
+						/>
 					</div>
 				</div>
 			</section>

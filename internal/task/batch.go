@@ -37,14 +37,16 @@ func (s OwnerState) String() string {
 }
 
 type Owner struct {
-	Queries *database.Queries
-	OwnerID string
-	PID     int
-	Logger  *utils.Logger
+	Queries    *database.Queries
+	OwnerID    string
+	PID        int
+	Logger     *utils.Logger
+	client     *database.Client
+	maxRetries int64
 }
 
-func NewOwner(q *database.Queries, ownerID string, pid int, logger *utils.Logger) *Owner {
-	return &Owner{Queries: q, OwnerID: ownerID, PID: pid, Logger: logger}
+func NewOwner(c *database.Client, ownerID string, pid int, logger *utils.Logger, maxRetries int) *Owner {
+	return &Owner{Queries: c.Queries, OwnerID: ownerID, PID: pid, Logger: logger, client: c, maxRetries: int64(maxRetries)}
 }
 
 func (o *Owner) Acquire(ctx context.Context, batchID string, staleAfter time.Duration) error {
@@ -115,11 +117,36 @@ func (o *Owner) Release(ctx context.Context, batchID string) error {
 }
 
 func (o *Owner) ResetProcessingByBatch(ctx context.Context, batchID string) (int64, error) {
-	rows, err := o.Queries.ResetProcessingTasksByBatch(ctx, sql.NullString{String: batchID, Valid: true})
+	tx, err := o.client.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("begin transaction for reset processing tasks by batch: %w", err)
+	}
+	defer tx.Rollback()
+
+	bid := sql.NullString{String: batchID, Valid: true}
+	txQ := o.client.Queries.WithTx(tx)
+
+	quarantined, err := txQ.QuarantineProcessingTasksByBatch(ctx, database.QuarantineProcessingTasksByBatchParams{
+		BatchID:  bid,
+		Attempts: o.maxRetries,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("quarantine processing tasks by batch: %w", err)
+	}
+
+	reset, err := txQ.ResetProcessingTasksByBatch(ctx, database.ResetProcessingTasksByBatchParams{
+		BatchID:  bid,
+		Attempts: o.maxRetries,
+	})
 	if err != nil {
 		return 0, fmt.Errorf("reset processing tasks by batch: %w", err)
 	}
-	return rows, nil
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit transaction for reset processing tasks by batch: %w", err)
+	}
+
+	return quarantined + reset, nil
 }
 
 func (o *Owner) CleanupCompleted(ctx context.Context) error {

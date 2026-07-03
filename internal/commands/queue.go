@@ -90,7 +90,7 @@ func queueHandler(c *Container, args []string) error {
 		return fmt.Errorf("database: %w", err)
 	}
 
-	batchSvc := service.NewBatch(client.Queries)
+	batchSvc := service.NewBatch(client, c.config.Consumer.Reclaim.MaxRetries)
 	maxConcurrent := c.config.Srv.MaxConcurrentBatches
 	if maxConcurrent < 1 {
 		maxConcurrent = 2
