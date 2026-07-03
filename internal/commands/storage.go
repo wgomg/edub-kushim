@@ -50,7 +50,8 @@ func orphansHandler(c *Container, args []string) error {
 	}
 
 	store := task.NewStore(client.Queries)
-	svc := service.NewOrphaned(client.Queries, c.config, c.logger, store)
+	batchSvc := service.NewBatch(client, c.config.Consumer.Reclaim.MaxRetries)
+	svc := service.NewOrphaned(client.Queries, c.config, c.logger, store, batchSvc)
 
 	action := args[0]
 	remaining := args[1:]

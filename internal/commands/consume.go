@@ -564,7 +564,8 @@ func triggerOrphanScan(c *Container) {
 		return
 	}
 	store := task.NewStore(client.Queries)
-	svc := service.NewOrphaned(client.Queries, c.config, c.logger, store)
+	batchSvc := service.NewBatch(client, c.config.Consumer.Reclaim.MaxRetries)
+	svc := service.NewOrphaned(client.Queries, c.config, c.logger, store, batchSvc)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	count, err := svc.ScanAndQuarantine(ctx)

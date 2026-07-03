@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -20,19 +21,25 @@ type TaskCreator interface {
 		taskID, status, dedupKey string) (string, error)
 }
 
-type Orphaned struct {
-	queries     *database.Queries
-	cfg         *config.Config
-	logger      *utils.Logger
-	taskCreator TaskCreator
+type BatchCreator interface {
+	Create(ctx context.Context, id, source, status string) error
 }
 
-func NewOrphaned(queries *database.Queries, cfg *config.Config, logger *utils.Logger, taskCreator TaskCreator) *Orphaned {
+type Orphaned struct {
+	queries      *database.Queries
+	cfg          *config.Config
+	logger       *utils.Logger
+	taskCreator  TaskCreator
+	batchCreator BatchCreator
+}
+
+func NewOrphaned(queries *database.Queries, cfg *config.Config, logger *utils.Logger, taskCreator TaskCreator, batchCreator BatchCreator) *Orphaned {
 	return &Orphaned{
-		queries:     queries,
-		cfg:         cfg,
-		logger:      logger,
-		taskCreator: taskCreator,
+		queries:      queries,
+		cfg:          cfg,
+		logger:       logger,
+		taskCreator:  taskCreator,
+		batchCreator: batchCreator,
 	}
 }
 
@@ -156,6 +163,12 @@ func (s *Orphaned) Restore(ctx context.Context, id int64) error {
 		return fmt.Errorf("copy to consumption dir: %w", err)
 	}
 
+	md5, err := utils.CalculateMD5(destPath)
+	if err != nil {
+		storage.RemoveOrphanedFile(destPath)
+		return fmt.Errorf("compute md5: %w", err)
+	}
+
 	batchID := uuid.New().String()
 	consumeTaskID := uuid.New().String()
 	enrichTaskID := uuid.New().String()
@@ -167,10 +180,28 @@ func (s *Orphaned) Restore(ctx context.Context, id int64) error {
 		"document_id":  row.DocumentKey,
 	})
 
-	_, err = s.taskCreator.CreateTask(ctx, "consume", batchID, consumePayload, consumeTaskID, "pending", "")
+	_, err = s.taskCreator.CreateTask(ctx, "consume", batchID, consumePayload, consumeTaskID, "pending", "consume:"+md5)
 	if err != nil {
 		storage.RemoveOrphanedFile(destPath)
 		return fmt.Errorf("create consume task: %w", err)
+	}
+
+	enrichPayload, _ := json.Marshal(map[string]any{
+		"waiting_for": consumeTaskID,
+		"file_name":   filepath.Base(destPath),
+		"file_index":  1,
+		"document_id": row.DocumentKey,
+	})
+
+	_, err = s.taskCreator.CreateTask(ctx, "enrich", batchID, enrichPayload, enrichTaskID, "waiting", "")
+	if err != nil {
+		storage.RemoveOrphanedFile(destPath)
+		return fmt.Errorf("create enrich task: %w", err)
+	}
+
+	if err := s.batchCreator.Create(ctx, batchID, "orphaned-restore", "queued"); err != nil {
+		storage.RemoveOrphanedFile(destPath)
+		return fmt.Errorf("create batch: %w", err)
 	}
 
 	if err := s.queries.MarkOrphanedFileRestored(ctx, id); err != nil {

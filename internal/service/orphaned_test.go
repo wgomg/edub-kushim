@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -15,7 +16,8 @@ import (
 )
 
 type mockTaskCreator struct {
-	calls []mockTaskCall
+	calls     []mockTaskCall
+	createErr error
 }
 
 type mockTaskCall struct {
@@ -23,14 +25,22 @@ type mockTaskCall struct {
 	BatchID  string
 	Payload  json.RawMessage
 	TaskID   string
+	Status   string
+	DedupKey string
+	Source   string
 }
 
-func (m *mockTaskCreator) CreateTask(_ context.Context, taskType, batchID string, payload json.RawMessage, taskID, _, _ string) (string, error) {
-	m.calls = append(m.calls, mockTaskCall{TaskType: taskType, BatchID: batchID, Payload: payload, TaskID: taskID})
+func (m *mockTaskCreator) CreateTask(_ context.Context, taskType, batchID string, payload json.RawMessage, taskID, status, dedupKey string) (string, error) {
+	m.calls = append(m.calls, mockTaskCall{TaskType: taskType, BatchID: batchID, Payload: payload, TaskID: taskID, Status: status, DedupKey: dedupKey})
 	return taskID, nil
 }
 
-func newTestOrphaned(t *testing.T) (*Orphaned, *config.Config, *database.Client, func()) {
+func (m *mockTaskCreator) Create(_ context.Context, id, source, status string) error {
+	m.calls = append(m.calls, mockTaskCall{BatchID: id, Source: source, Status: status})
+	return m.createErr
+}
+
+func newTestOrphaned(t *testing.T) (*Orphaned, *config.Config, *database.Client, *mockTaskCreator, func()) {
 	t.Helper()
 	client := database.NewTestClient(t)
 	logger := testutil.NewTestLogger()
@@ -45,10 +55,10 @@ func newTestOrphaned(t *testing.T) (*Orphaned, *config.Config, *database.Client,
 	os.MkdirAll(filepath.Join(cfg.Storage.StorageDir, "processed"), 0755)
 
 	mock := &mockTaskCreator{}
-	svc := NewOrphaned(client.Queries, cfg, logger, mock)
+	svc := NewOrphaned(client.Queries, cfg, logger, mock, mock)
 
 	cleanup := func() { client.DB().Close() }
-	return svc, cfg, client, cleanup
+	return svc, cfg, client, mock, cleanup
 }
 
 func createTestOrphanFile(t *testing.T, storageDir, sourceDir, filename string) string {
@@ -63,7 +73,7 @@ func createTestOrphanFile(t *testing.T, storageDir, sourceDir, filename string) 
 }
 
 func TestOrphaned_ScanAndQuarantine_QuarantinesOrphans(t *testing.T) {
-	svc, cfg, _, cleanup := newTestOrphaned(t)
+	svc, cfg, _, _, cleanup := newTestOrphaned(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -90,7 +100,7 @@ func TestOrphaned_ScanAndQuarantine_QuarantinesOrphans(t *testing.T) {
 }
 
 func TestOrphaned_ScanAndQuarantine_SkipsKnownDocuments(t *testing.T) {
-	svc, cfg, _, cleanup := newTestOrphaned(t)
+	svc, cfg, _, _, cleanup := newTestOrphaned(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -106,7 +116,7 @@ func TestOrphaned_ScanAndQuarantine_SkipsKnownDocuments(t *testing.T) {
 }
 
 func TestOrphaned_ScanAndQuarantine_SkipsDBIDNamedFiles(t *testing.T) {
-	svc, cfg, _, cleanup := newTestOrphaned(t)
+	svc, cfg, _, _, cleanup := newTestOrphaned(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -123,7 +133,7 @@ func TestOrphaned_ScanAndQuarantine_SkipsDBIDNamedFiles(t *testing.T) {
 }
 
 func TestOrphaned_Delete(t *testing.T) {
-	svc, cfg, _, cleanup := newTestOrphaned(t)
+	svc, cfg, _, _, cleanup := newTestOrphaned(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -142,7 +152,7 @@ func TestOrphaned_Delete(t *testing.T) {
 }
 
 func TestOrphaned_Delete_NotFound(t *testing.T) {
-	svc, _, _, cleanup := newTestOrphaned(t)
+	svc, _, _, _, cleanup := newTestOrphaned(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -151,7 +161,7 @@ func TestOrphaned_Delete_NotFound(t *testing.T) {
 }
 
 func TestOrphaned_Restore_UUIDOnly(t *testing.T) {
-	svc, cfg, _, cleanup := newTestOrphaned(t)
+	svc, cfg, _, mock, cleanup := newTestOrphaned(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -167,13 +177,44 @@ func TestOrphaned_Restore_UUIDOnly(t *testing.T) {
 	files, _ = svc.List(ctx)
 	testutil.AssertEqual(t, len(files), 0, "status changed from pending")
 
-	if _, err := os.Stat(filepath.Join(cfg.Storage.ConsumptionDir, uuid+".pdf")); os.IsNotExist(err) {
+	destPath := filepath.Join(cfg.Storage.ConsumptionDir, uuid+".pdf")
+	if _, err := os.Stat(destPath); os.IsNotExist(err) {
 		t.Fatal("file should be copied to consumption dir")
 	}
+
+	md5, err := utils.CalculateMD5(destPath)
+	testutil.AssertNoError(t, err, "compute md5")
+
+	testutil.AssertEqual(t, len(mock.calls), 3, "should have 3 mock calls (consume + enrich + batch)")
+
+	consumeCall := mock.calls[0]
+	testutil.AssertEqual(t, consumeCall.TaskType, "consume", "call 1 type")
+	testutil.AssertEqual(t, consumeCall.Status, "pending", "consume status")
+	testutil.AssertEqual(t, consumeCall.DedupKey, "consume:"+md5, "consume dedup key")
+
+	var consumePayload map[string]any
+	json.Unmarshal(consumeCall.Payload, &consumePayload)
+
+	enrichCall := mock.calls[1]
+	testutil.AssertEqual(t, enrichCall.TaskType, "enrich", "call 2 type")
+	testutil.AssertEqual(t, enrichCall.Status, "waiting", "enrich status")
+	testutil.AssertEqual(t, enrichCall.BatchID, consumeCall.BatchID, "enrich should share batch id with consume")
+
+	var enrichPayload map[string]any
+	json.Unmarshal(enrichCall.Payload, &enrichPayload)
+	testutil.AssertEqual(t, enrichPayload["waiting_for"], consumeCall.TaskID, "enrich waiting_for references consume task")
+	testutil.AssertEqual(t, consumePayload["on_completed"], enrichCall.TaskID, "consume on_completed references enrich task")
+	testutil.AssertEqual(t, consumePayload["document_id"], uuid, "consume document_id")
+	testutil.AssertEqual(t, enrichPayload["document_id"], uuid, "enrich document_id")
+
+	batchCall := mock.calls[2]
+	testutil.AssertEqual(t, batchCall.Source, "orphaned-restore", "batch source")
+	testutil.AssertEqual(t, batchCall.Status, "queued", "batch status")
+	testutil.AssertEqual(t, batchCall.BatchID, consumeCall.BatchID, "batch id matches tasks")
 }
 
 func TestOrphaned_Restore_RejectsDBID(t *testing.T) {
-	svc, cfg, _, cleanup := newTestOrphaned(t)
+	svc, cfg, _, _, cleanup := newTestOrphaned(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -187,7 +228,7 @@ func TestOrphaned_Restore_RejectsDBID(t *testing.T) {
 }
 
 func TestOrphaned_Restore_RejectsExistingDocument(t *testing.T) {
-	svc, cfg, client, cleanup := newTestOrphaned(t)
+	svc, cfg, client, _, cleanup := newTestOrphaned(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -212,8 +253,31 @@ func TestOrphaned_Restore_RejectsExistingDocument(t *testing.T) {
 	testutil.AssertError(t, err, "restore should fail when doc exists")
 }
 
+func TestOrphaned_Restore_BatchFailure(t *testing.T) {
+	svc, cfg, _, mock, cleanup := newTestOrphaned(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	uuid := "550e8400-e29b-41d4-a716-446655440000"
+	createTestOrphanFile(t, cfg.Storage.StorageDir, "originals", uuid+".pdf")
+	svc.ScanAndQuarantine(ctx)
+	files, _ := svc.List(ctx)
+	testutil.AssertEqual(t, len(files), 1, "quarantined")
+
+	mock.createErr = fmt.Errorf("batch creation failed")
+	err := svc.Restore(ctx, files[0].ID)
+	testutil.AssertError(t, err, "restore should fail on batch creation error")
+
+	if _, err := os.Stat(filepath.Join(cfg.Storage.ConsumptionDir, uuid+".pdf")); !os.IsNotExist(err) {
+		t.Fatal("consumption dir copy should be cleaned up after batch failure")
+	}
+
+	files, _ = svc.List(ctx)
+	testutil.AssertEqual(t, len(files), 1, "orphaned file not marked restored after batch failure")
+}
+
 func TestOrphaned_MoveToInbox(t *testing.T) {
-	svc, cfg, _, cleanup := newTestOrphaned(t)
+	svc, cfg, _, _, cleanup := newTestOrphaned(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -240,7 +304,7 @@ func TestOrphaned_MoveToInbox(t *testing.T) {
 }
 
 func TestOrphaned_DeleteAll(t *testing.T) {
-	svc, cfg, _, cleanup := newTestOrphaned(t)
+	svc, cfg, _, _, cleanup := newTestOrphaned(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -259,7 +323,7 @@ func TestOrphaned_DeleteAll(t *testing.T) {
 }
 
 func TestOrphaned_MoveAllToInbox(t *testing.T) {
-	svc, cfg, _, cleanup := newTestOrphaned(t)
+	svc, cfg, _, _, cleanup := newTestOrphaned(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -287,7 +351,7 @@ func TestOrphaned_MoveAllToInbox(t *testing.T) {
 }
 
 func TestOrphaned_List(t *testing.T) {
-	svc, cfg, _, cleanup := newTestOrphaned(t)
+	svc, cfg, _, _, cleanup := newTestOrphaned(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -311,7 +375,7 @@ func TestNewOrphaned(t *testing.T) {
 	cfg := config.DefaultConfig(configDir)
 	mock := &mockTaskCreator{}
 
-	svc := NewOrphaned(client.Queries, cfg, logger, mock)
+	svc := NewOrphaned(client.Queries, cfg, logger, mock, mock)
 	if svc == nil {
 		t.Fatal("expected non-nil service")
 	}

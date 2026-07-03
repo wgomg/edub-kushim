@@ -30,7 +30,7 @@ func newOrphanedHandler(t *testing.T) (*OrphanedHandler, *config.Config) {
 	os.MkdirAll(cfg.Storage.ConsumptionDir, 0755)
 
 	mock := &mockTaskCreator{}
-	svc := service.NewOrphaned(client.Queries, cfg, logger, mock)
+	svc := service.NewOrphaned(client.Queries, cfg, logger, mock, mock)
 	h := NewOrphanedHandler(svc, logger)
 	return h, cfg
 }
@@ -39,6 +39,10 @@ type mockTaskCreator struct{}
 
 func (m *mockTaskCreator) CreateTask(_ context.Context, _, _ string, _ json.RawMessage, _, _, _ string) (string, error) {
 	return "", nil
+}
+
+func (m *mockTaskCreator) Create(_ context.Context, _, _, _ string) error {
+	return nil
 }
 
 func createOrphanedPDF(t *testing.T, storageDir, sourceDir, filename string) string {

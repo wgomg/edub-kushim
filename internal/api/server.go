@@ -79,7 +79,7 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 	workStore := task.NewStore(client.Queries)
 	configStore := task.NewStore(client.Queries)
 
-	s.services.Orphaned = service.NewOrphaned(client.Queries, &cfg, logger, workStore)
+	s.services.Orphaned = service.NewOrphaned(client.Queries, &cfg, logger, workStore, s.services.Batch)
 	s.services.Orphaned.ScanAndQuarantineAsync()
 
 	s.services.ErroredFiles = service.NewErroredFiles(&cfg, logger)
