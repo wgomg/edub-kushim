@@ -303,6 +303,80 @@ func TestListActivityTimeline(t *testing.T) {
 	}
 }
 
+func TestGetQuarantinedConsumeTaskPayloads(t *testing.T) {
+	q, _ := NewTestQueries(t)
+	ctx := context.Background()
+
+	_, err := q.CreateBatch(ctx, CreateBatchParams{ID: "gq-batch", Source: "test", Status: "processing"})
+	assertNoError(t, err, "create batch")
+
+	res, err := q.CreateTask(ctx, CreateTaskParams{
+		TaskID:   "gq-quarantined",
+		TaskType: "consume",
+		Status:   "pending",
+		Payload:  json.RawMessage(`{"file_path":"/tmp/test.pdf","on_completed":"enrich-1"}`),
+		BatchID:  sql.NullString{String: "gq-batch", Valid: true},
+	})
+	assertNoError(t, err, "create task")
+	id := getID(t, res)
+
+	assertNoError(t, q.FailTask(ctx, FailTaskParams{
+		ID:    id,
+		Error: sql.NullString{String: "Max retries exceeded (3)", Valid: true},
+	}), "fail task")
+
+	res2, err := q.CreateTask(ctx, CreateTaskParams{
+		TaskID:   "gq-other-failed",
+		TaskType: "consume",
+		Status:   "pending",
+		Payload:  json.RawMessage(`{}`),
+		BatchID:  sql.NullString{String: "gq-batch", Valid: true},
+	})
+	assertNoError(t, err, "create other task")
+	id2 := getID(t, res2)
+
+	assertNoError(t, q.FailTask(ctx, FailTaskParams{
+		ID:    id2,
+		Error: sql.NullString{String: "some other error", Valid: true},
+	}), "fail other task")
+
+	rows, err := q.GetQuarantinedConsumeTaskPayloads(ctx, sql.NullString{String: "gq-batch", Valid: true})
+	assertNoError(t, err, "get quarantined")
+	assertEqual(t, len(rows), 1, "only quarantine-matched task")
+	assertEqual(t, rows[0].TaskID, "gq-quarantined", "task id")
+}
+
+func TestDiscardEnrichTaskByTaskID(t *testing.T) {
+	q, _ := NewTestQueries(t)
+	ctx := context.Background()
+
+	_, err := q.CreateTask(ctx, CreateTaskParams{
+		TaskID:   "de-by-tid",
+		TaskType: "enrich",
+		Status:   "waiting",
+		Payload:  json.RawMessage(`{}`),
+	})
+	assertNoError(t, err, "create enrich task")
+
+	n, err := q.DiscardEnrichTaskByTaskID(ctx, DiscardEnrichTaskByTaskIDParams{
+		TaskID: "de-by-tid",
+		Error:  sql.NullString{String: "parent task quarantined", Valid: true},
+	})
+	assertNoError(t, err, "discard by task id")
+	assertEqual(t, n, int64(1), "one row affected")
+
+	task, err := q.GetTaskByTaskID(ctx, "de-by-tid")
+	assertNoError(t, err, "get task")
+	assertEqual(t, task.Status, "discarded", "status")
+
+	n, err = q.DiscardEnrichTaskByTaskID(ctx, DiscardEnrichTaskByTaskIDParams{
+		TaskID: "de-by-tid",
+		Error:  sql.NullString{String: "parent task quarantined", Valid: true},
+	})
+	assertNoError(t, err, "discard again (idempotent)")
+	assertEqual(t, n, int64(0), "no rows on second call")
+}
+
 func TestListTasksByType(t *testing.T) {
 	q, _ := NewTestQueries(t)
 	ctx := context.Background()

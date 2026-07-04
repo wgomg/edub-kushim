@@ -5,6 +5,7 @@ import (
 	"crypto/sha512"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -109,18 +110,18 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 
 	duplicated, err := c.isDuplicate(ctx, file.OriginalPath)
 	if err != nil {
-		moveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
+		MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 		return file, fmt.Errorf("failed to check for duplicate: %v", err)
 	}
 
 	if duplicated {
-		moveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "duplicate", c.logger, &documentID)
+		MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "duplicate", c.logger, &documentID)
 		return file, fmt.Errorf("file is a duplicate, skipping")
 	}
 
 	file, err = c.extractText(ctx, file, documentID)
 	if err != nil {
-		moveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
+		MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 		return file, err
 	}
 
@@ -150,7 +151,7 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 
 	tx, err := 	c.client.BeginTx(txCtx, nil)
 	if err != nil {
-		moveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
+		MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 		return file, fmt.Errorf("failed to begin database transaction: %w", err)
 	}
 	defer func() {
@@ -206,13 +207,13 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 		CharCount:      int64(utf8.RuneCountInString(file.Text.String)),
 	})
 	if err != nil {
-		moveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
+		MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 		return file, fmt.Errorf("failed to create document record: %w", err)
 	}
 
 	documentDbId, err := result.LastInsertId()
 	if err != nil {
-		moveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
+		MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 		return file, fmt.Errorf("failed to get document ID: %w", err)
 	}
 
@@ -244,7 +245,7 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 		DocumentID:   documentID,
 	})
 	if err != nil {
-		moveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
+		MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 		return file, fmt.Errorf("failed to update storage path: %w", err)
 	}
 
@@ -256,7 +257,7 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 			*file.StorageProcessedPath,
 		)
 		if err := MoveFile(*file.OCRTmpPath, *file.StorageProcessedPath); err != nil {
-			moveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
+			MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 			return file, fmt.Errorf("failed to move OCR processed file: %w", err)
 		}
 		c.logger.Debug(
@@ -270,21 +271,21 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 			if removeErr := RemoveFile(*file.StorageProcessedPath); removeErr != nil {
 				c.logger.Error(&documentID, "failed to clean up OCR file: %v", removeErr)
 			}
-			moveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
+			MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 			return file, fmt.Errorf("failed to move original file: %w", err)
 		}
 	} else if file.OptimizedPdfTmpPath != nil {
 		c.logger.Debug(&documentID,
 			"Copying original file from %s to %s", file.OriginalPath, *file.StorageOriginalPath)
 		if err := CopyFile(file.OriginalPath, *file.StorageOriginalPath); err != nil {
-			moveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
+			MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 			return file, fmt.Errorf("failed to copy original file: %w", err)
 		}
 
 		c.logger.Debug(&documentID,
 			"Moving optimized file from %s to %s", *file.OptimizedPdfTmpPath, *file.StorageProcessedPath)
 		if err := MoveFile(*file.OptimizedPdfTmpPath, *file.StorageProcessedPath); err != nil {
-			moveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
+			MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 			return file, fmt.Errorf("failed to move optimized file: %w", err)
 		}
 	} else {
@@ -292,13 +293,13 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 		c.logger.Debug(&documentID,
 			"Copying original file from %s to %s (no optimized version)", file.OriginalPath, *file.StorageProcessedPath)
 		if err := CopyFile(file.OriginalPath, *file.StorageProcessedPath); err != nil {
-			moveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
+			MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 			return file, fmt.Errorf("failed to copy original file to processed storage: %w", err)
 		}
 		c.logger.Debug(&documentID,
 			"Copying original file from %s to %s", file.OriginalPath, *file.StorageOriginalPath)
 		if err := CopyFile(file.OriginalPath, *file.StorageOriginalPath); err != nil {
-			moveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
+			MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 			return file, fmt.Errorf("failed to copy original file to originals storage: %w", err)
 		}
 	}
@@ -314,7 +315,7 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 				removeErr,
 			)
 		}
-		moveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
+		MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 		return file, fmt.Errorf("failed to commit transaction: %w", err)
 	} else {
 		if removeErr := RemoveFile(file.OriginalPath); removeErr != nil {
@@ -329,7 +330,7 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 	return file, nil
 }
 
-func moveFailedFile(storageDir, originalPath, errType string, logger *utils.Logger, docID *string) {
+func MoveFailedFile(storageDir, originalPath, errType string, logger *utils.Logger, docID *string) {
 	baseName := filepath.Base(originalPath)
 	uuidStr := uuid.New().String()
 	destName := uuidStr + "-" + baseName
@@ -353,6 +354,45 @@ func moveFailedFile(storageDir, originalPath, errType string, logger *utils.Logg
 	}
 
 	logger.Info(docID, "Moved failed file to %s", destPath)
+}
+
+type consumePayload struct {
+	FilePath    string `json:"file_path"`
+	OnCompleted string `json:"on_completed"`
+}
+
+func QuarantineFailedFiles(ctx context.Context, queries *database.Queries, storageDir string, logger *utils.Logger, batchID string) error {
+	rows, err := queries.GetQuarantinedConsumeTaskPayloads(ctx, sql.NullString{String: batchID, Valid: true})
+	if err != nil {
+		return fmt.Errorf("get quarantined consume task payloads: %w", err)
+	}
+
+	var firstErr error
+	for _, row := range rows {
+		var p consumePayload
+		if err := json.Unmarshal(row.Payload, &p); err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("unmarshal payload for task %s: %w", row.TaskID, err)
+			}
+			continue
+		}
+
+		if p.FilePath != "" {
+			MoveFailedFile(storageDir, p.FilePath, "", logger, nil)
+		}
+
+		if p.OnCompleted != "" {
+			if _, err := queries.DiscardEnrichTaskByTaskID(ctx, database.DiscardEnrichTaskByTaskIDParams{
+				TaskID: p.OnCompleted,
+				Error:  sql.NullString{String: "parent task quarantined", Valid: true},
+			}); err != nil {
+				if firstErr == nil {
+					firstErr = fmt.Errorf("discard enrich task %s: %w", p.OnCompleted, err)
+				}
+			}
+		}
+	}
+	return firstErr
 }
 
 func (c *Consumer) isDuplicate(ctx context.Context, path string) (bool, error) {
@@ -441,6 +481,7 @@ func (c *Consumer) extractText(ctx context.Context, file File, documentID string
 	memAfterOCR := utils.ReadMemSnapshot()
 	c.logger.Debug(&documentID, "OCR: %s (RSS now %s)", utils.FormatMemDelta(memAfterExtract, memAfterOCR), utils.FormatBytes(memAfterOCR.RSS))
 	if err != nil {
+		c.logger.Error(&documentID, "OCR failed for %s: %v", file.Name, err)
 		return file, err
 	}
 

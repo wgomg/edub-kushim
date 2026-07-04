@@ -115,6 +115,9 @@ func consumeHandler(c *Container, args []string) error {
 		if reset > 0 {
 			fmt.Printf("  reset %d orphaned processing tasks\n", reset)
 		}
+		if err := consumption.QuarantineFailedFiles(ctx, client.Queries, c.config.Storage.StorageDir, c.logger, batchIDParam); err != nil {
+			c.logger.Error(nil, "quarantine files for batch %s: %v", batchIDParam, err)
+		}
 
 		ep, err := c.GetPool("enrich")
 		if err != nil {
@@ -131,6 +134,12 @@ func consumeHandler(c *Container, args []string) error {
 		hb.Start(ctx)
 
 		err = pollBatch(ctx, client.Queries, p, ep, c.logger, batchIDParam)
+		batchSvc := service.NewBatch(client, c.config.Consumer.Reclaim.MaxRetries)
+		if err == nil {
+			if setErr := setBatchTerminalStatus(ctx, client.Queries, batchSvc, batchIDParam); setErr != nil {
+				c.logger.Error(nil, "set batch terminal status %s: %v", batchIDParam, setErr)
+			}
+		}
 
 		triggerOrphanScan(c)
 
@@ -249,6 +258,11 @@ func consumeHandler(c *Container, args []string) error {
 	hb.Start(ctx)
 
 	err = pollBatch(ctx, client.Queries, p, ep, c.logger, batchID)
+	if err == nil {
+		if setErr := setBatchTerminalStatus(ctx, client.Queries, batchSvc, batchID); setErr != nil {
+			c.logger.Error(nil, "set batch terminal status %s: %v", batchID, setErr)
+		}
+	}
 
 	triggerOrphanScan(c)
 
@@ -491,7 +505,7 @@ func pollBatch(ctx context.Context, queries *database.Queries, cp, ep *pool.Pool
 			defer stopCancel()
 			cp.Stop(stopCtx)
 			ep.Stop(stopCtx)
-			return nil
+			return ctx.Err()
 		}
 		tasks, err := task.ListFiltered(ctx, queries, task.TaskFilter{
 			BatchID: batchID,
@@ -555,6 +569,26 @@ func pollBatch(ctx context.Context, queries *database.Queries, cp, ep *pool.Pool
 			return nil
 		}
 	}
+}
+
+func setBatchTerminalStatus(ctx context.Context, queries *database.Queries, batchSvc *service.Batch, batchID string) error {
+	tasks, err := task.ListFiltered(ctx, queries, task.TaskFilter{BatchID: batchID})
+	if err != nil {
+		return fmt.Errorf("list tasks: %w", err)
+	}
+
+	hasFailed := false
+	for _, t := range tasks {
+		if t.Status == "failed" {
+			hasFailed = true
+			break
+		}
+	}
+
+	if hasFailed {
+		return batchSvc.SetBatchFailed(ctx, batchID)
+	}
+	return batchSvc.SetBatchCompleted(ctx, batchID)
 }
 
 func triggerOrphanScan(c *Container) {

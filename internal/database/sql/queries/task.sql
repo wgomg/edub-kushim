@@ -165,6 +165,13 @@ UPDATE task SET
     error = ?
 WHERE id = ? AND status = 'waiting' AND task_type = 'enrich';
 
+-- name: DiscardEnrichTaskByTaskID :execrows
+UPDATE task SET
+    status = 'discarded',
+    completed_at = CURRENT_TIMESTAMP,
+    error = ?
+WHERE task_id = ? AND status = 'waiting' AND task_type = 'enrich';
+
 -- name: DeleteTask :exec
 DELETE FROM task WHERE id = ?;
 

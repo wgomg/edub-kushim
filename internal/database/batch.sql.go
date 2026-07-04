@@ -8,6 +8,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"time"
 )
 
@@ -168,6 +169,39 @@ func (q *Queries) GetNextQueuedBatch(ctx context.Context) (Batch, error) {
 		&i.Status,
 	)
 	return i, err
+}
+
+const getQuarantinedConsumeTaskPayloads = `-- name: GetQuarantinedConsumeTaskPayloads :many
+SELECT task_id, payload FROM task
+WHERE batch_id = ? AND status = 'failed' AND error LIKE 'Max retries exceeded%'
+`
+
+type GetQuarantinedConsumeTaskPayloadsRow struct {
+	TaskID  string
+	Payload json.RawMessage
+}
+
+func (q *Queries) GetQuarantinedConsumeTaskPayloads(ctx context.Context, batchID sql.NullString) ([]GetQuarantinedConsumeTaskPayloadsRow, error) {
+	rows, err := q.db.QueryContext(ctx, getQuarantinedConsumeTaskPayloads, batchID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetQuarantinedConsumeTaskPayloadsRow
+	for rows.Next() {
+		var i GetQuarantinedConsumeTaskPayloadsRow
+		if err := rows.Scan(&i.TaskID, &i.Payload); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const heartbeatBatchOwner = `-- name: HeartbeatBatchOwner :execrows

@@ -194,6 +194,27 @@ func (q *Queries) DiscardEnrichTask(ctx context.Context, arg DiscardEnrichTaskPa
 	return err
 }
 
+const discardEnrichTaskByTaskID = `-- name: DiscardEnrichTaskByTaskID :execrows
+UPDATE task SET
+    status = 'discarded',
+    completed_at = CURRENT_TIMESTAMP,
+    error = ?
+WHERE task_id = ? AND status = 'waiting' AND task_type = 'enrich'
+`
+
+type DiscardEnrichTaskByTaskIDParams struct {
+	Error  sql.NullString
+	TaskID string
+}
+
+func (q *Queries) DiscardEnrichTaskByTaskID(ctx context.Context, arg DiscardEnrichTaskByTaskIDParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, discardEnrichTaskByTaskID, arg.Error, arg.TaskID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const failTask = `-- name: FailTask :exec
 UPDATE task SET
     status = 'failed',

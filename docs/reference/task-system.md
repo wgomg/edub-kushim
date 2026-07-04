@@ -99,6 +99,7 @@
 
 - `RetryFailedTasksByBatch :execrows` — `UPDATE ... WHERE batch_id = ? AND status = 'failed'` — Resets failed batch tasks to pending with `attempts = 0` (batched retry).
 - `GetConfigTaskByDedupKey :one` — Returns the most recent config task matching `dedup_key`. Used by `ConfigHandler.enqueueConfigTasks` to detect duplicate or failed config tasks before inserting.
+- `DiscardEnrichTaskByTaskID :execrows` — `UPDATE ... WHERE task_id = ? AND status = 'waiting' AND task_type = 'enrich'` — Discards an enrich task by UUID `task_id` (not the internal integer `id`). Used by `QuarantineFailedFiles` to discard orphaned enrich tasks during stale batch reclamation. The existing `DiscardEnrichTask` operates by internal `id`; this variant is needed because the consume task payload's `on_completed` field contains the UUID.
 
 ---
 

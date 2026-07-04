@@ -101,6 +101,10 @@ AND EXISTS (SELECT 1 FROM task t
             WHERE t.batch_id = bo.batch_id
             AND t.status IN ('pending', 'processing', 'waiting'));
 
+-- name: GetQuarantinedConsumeTaskPayloads :many
+SELECT task_id, payload FROM task
+WHERE batch_id = ? AND status = 'failed' AND error LIKE 'Max retries exceeded%';
+
 -- name: ListBatchOverviews :many
 SELECT
     b.id AS batch_id,

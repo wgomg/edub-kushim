@@ -19,6 +19,11 @@
 ### Functions
 
 `calculateSHA512`, `countPages(path) int` — Uses MuPDF to count PDF pages
+
+`MoveFailedFile(storageDir, originalPath, errType, logger, docID)` — Moves a failed file from the inbox to `storage/errors/<uuid>-<filename>.pdf`. If `errType` is `"duplicate"`, moves to `storage/errors/duplicated/`. Creates destination directories as needed. Handles non-existent source files gracefully (logs error, no-op).
+
+`QuarantineFailedFiles(ctx, queries, storageDir, logger, batchID) error` — For a batch with recently-quarantined consume tasks (status=`failed`, error `LIKE 'Max retries exceeded%'`), moves each task's inbox file to `storage/errors/` via `MoveFailedFile` and discards orphaned waiting enrich tasks via `DiscardEnrichTaskByTaskID`. Called from `reclaimStaleBatches` (queue daemon) and `consumeHandler` (CLI resume path). Returns the first error encountered (continues processing remaining tasks on error).
+
 - MD5 checksum computation is in `utils.CalculateMD5` — see [Config & Utils](config-and-utils.md)
 
 ---

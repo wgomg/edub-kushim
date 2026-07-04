@@ -2,6 +2,8 @@ package consumption
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -268,7 +270,7 @@ func TestMoveFailedFile(t *testing.T) {
 			logger := utils.NewDiscardLogger()
 			docID := uuid.New().String()
 
-			moveFailedFile(storageDir, srcPath, tt.errType, logger, &docID)
+			MoveFailedFile(storageDir, srcPath, tt.errType, logger, &docID)
 
 			if _, err := os.Stat(srcPath); !os.IsNotExist(err) {
 				t.Fatal("source file should no longer exist at original path")
@@ -355,6 +357,160 @@ func TestRemoveFileAndCleanUp(t *testing.T) {
 	tmp2.Close()
 	testutil.AssertNoError(t, CleanUp(path2), "clean up existing")
 	testutil.AssertNoError(t, CleanUp("/tmp/nonexistent-cleanup-file"), "clean up non-existent")
+}
+
+func TestQuarantineFailedFiles(t *testing.T) {
+	t.Run("moves files and discards enrich tasks", func(t *testing.T) {
+		client := database.NewTestClient(t)
+		defer client.DB().Close()
+		ctx := context.Background()
+		storageDir := t.TempDir()
+		logger := utils.NewDiscardLogger()
+
+		batchID := uuid.New().String()
+		_, err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
+			ID: batchID, Source: "test", Status: "processing",
+		})
+		testutil.AssertNoError(t, err, "create batch")
+
+		inboxDir := filepath.Join(t.TempDir(), "inbox")
+		os.MkdirAll(inboxDir, 0755)
+		filePath := filepath.Join(inboxDir, "quarantine-doc.pdf")
+		os.WriteFile(filePath, []byte("test content"), 0644)
+
+		enrichTaskID := uuid.New().String()
+		payload, _ := json.Marshal(map[string]any{
+			"file_path":    filePath,
+			"on_completed": enrichTaskID,
+		})
+
+		res, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
+			TaskID:   uuid.New().String(),
+			TaskType: "consume",
+			Status:   "pending",
+			Payload:  payload,
+			BatchID:  sql.NullString{String: batchID, Valid: true},
+		})
+		testutil.AssertNoError(t, err, "create consume task")
+		taskID, _ := res.LastInsertId()
+
+		_, err = client.DB().ExecContext(ctx,
+			"UPDATE task SET status = 'failed', error = 'Max retries exceeded (3)', completed_at = CURRENT_TIMESTAMP WHERE id = ?",
+			taskID)
+		testutil.AssertNoError(t, err, "quarantine task")
+
+		_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
+			TaskID:   enrichTaskID,
+			TaskType: "enrich",
+			Status:   "waiting",
+			Payload:  []byte(`{}`),
+			BatchID:  sql.NullString{String: batchID, Valid: true},
+		})
+		testutil.AssertNoError(t, err, "create enrich task")
+
+		err = QuarantineFailedFiles(ctx, client.Queries, storageDir, logger, batchID)
+		testutil.AssertNoError(t, err, "quarantine failed files")
+
+		if _, err := os.Stat(filePath); !os.IsNotExist(err) {
+			t.Fatal("file should have been moved from original path")
+		}
+
+		errorDir := filepath.Join(storageDir, "errors")
+		entries, _ := os.ReadDir(errorDir)
+		if len(entries) != 1 {
+			t.Fatalf("expected 1 file in errors dir, got %d", len(entries))
+		}
+
+		enrichTask, err := client.Queries.GetTaskByTaskID(ctx, enrichTaskID)
+		testutil.AssertNoError(t, err, "get enrich task")
+		testutil.AssertEqual(t, enrichTask.Status, "discarded", "enrich task should be discarded")
+	})
+
+	t.Run("no quarantined tasks is a no-op", func(t *testing.T) {
+		client := database.NewTestClient(t)
+		defer client.DB().Close()
+		ctx := context.Background()
+		storageDir := t.TempDir()
+		logger := utils.NewDiscardLogger()
+
+		batchID := uuid.New().String()
+		_, err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
+			ID: batchID, Source: "test", Status: "processing",
+		})
+		testutil.AssertNoError(t, err, "create batch")
+
+		_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
+			TaskID:   uuid.New().String(),
+			TaskType: "consume",
+			Status:   "pending",
+			Payload:  []byte(`{}`),
+			BatchID:  sql.NullString{String: batchID, Valid: true},
+		})
+		testutil.AssertNoError(t, err, "create task")
+
+		err = QuarantineFailedFiles(ctx, client.Queries, storageDir, logger, batchID)
+		testutil.AssertNoError(t, err, "quarantine should succeed")
+
+		errorDir := filepath.Join(storageDir, "errors")
+		if _, err := os.Stat(errorDir); !os.IsNotExist(err) {
+			t.Fatal("errors dir should not have been created")
+		}
+	})
+
+	t.Run("discards enrich task without file_path", func(t *testing.T) {
+		client := database.NewTestClient(t)
+		defer client.DB().Close()
+		ctx := context.Background()
+		storageDir := t.TempDir()
+		logger := utils.NewDiscardLogger()
+
+		batchID := uuid.New().String()
+		_, err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
+			ID: batchID, Source: "test", Status: "processing",
+		})
+		testutil.AssertNoError(t, err, "create batch")
+
+		enrichTaskID := uuid.New().String()
+		payload, _ := json.Marshal(map[string]any{
+			"on_completed": enrichTaskID,
+		})
+
+		res, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
+			TaskID:   uuid.New().String(),
+			TaskType: "consume",
+			Status:   "pending",
+			Payload:  payload,
+			BatchID:  sql.NullString{String: batchID, Valid: true},
+		})
+		testutil.AssertNoError(t, err, "create consume task")
+		taskID, _ := res.LastInsertId()
+
+		_, err = client.DB().ExecContext(ctx,
+			"UPDATE task SET status = 'failed', error = 'Max retries exceeded (3)', completed_at = CURRENT_TIMESTAMP WHERE id = ?",
+			taskID)
+		testutil.AssertNoError(t, err, "quarantine task")
+
+		_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
+			TaskID:   enrichTaskID,
+			TaskType: "enrich",
+			Status:   "waiting",
+			Payload:  []byte(`{}`),
+			BatchID:  sql.NullString{String: batchID, Valid: true},
+		})
+		testutil.AssertNoError(t, err, "create enrich task")
+
+		err = QuarantineFailedFiles(ctx, client.Queries, storageDir, logger, batchID)
+		testutil.AssertNoError(t, err, "quarantine should succeed")
+
+		enrichTask, err := client.Queries.GetTaskByTaskID(ctx, enrichTaskID)
+		testutil.AssertNoError(t, err, "get enrich task")
+		testutil.AssertEqual(t, enrichTask.Status, "discarded", "enrich task should be discarded")
+
+		errorDir := filepath.Join(storageDir, "errors")
+		if _, err := os.Stat(errorDir); !os.IsNotExist(err) {
+			t.Fatal("errors dir should not exist when no file_path")
+		}
+	})
 }
 
 // --- helpers ---

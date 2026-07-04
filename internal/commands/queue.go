@@ -132,7 +132,7 @@ func queueHandler(c *Container, args []string) error {
 			}
 
 			if c.config.Consumer.Reclaim.Enabled {
-				if err := reclaimStaleBatches(ctx, batchSvc, c.logger); err != nil {
+				if err := reclaimStaleBatches(ctx, c.config, client, batchSvc, c.logger); err != nil {
 					c.logger.Error(nil, "stale reclamation: %v", err)
 				}
 			}
@@ -146,7 +146,7 @@ func queueHandler(c *Container, args []string) error {
 	}
 }
 
-func reclaimStaleBatches(ctx context.Context, batchSvc *service.Batch, logger *utils.Logger) error {
+func reclaimStaleBatches(ctx context.Context, cfg *config.Config, client *database.Client, batchSvc *service.Batch, logger *utils.Logger) error {
 	owners, err := batchSvc.ListStaleBatchOwners(ctx)
 	if err != nil {
 		return fmt.Errorf("list stale batch owners: %w", err)
@@ -162,15 +162,34 @@ func reclaimStaleBatches(ctx context.Context, batchSvc *service.Batch, logger *u
 			logger.Error(nil, "reset processing tasks for batch %s: %v", owner.BatchID, err)
 			continue
 		}
-		if err := batchSvc.RequeueBatch(ctx, owner.BatchID); err != nil {
-			logger.Error(nil, "requeue batch %s: %v", owner.BatchID, err)
+		if err := consumption.QuarantineFailedFiles(ctx, client.Queries, cfg.Storage.StorageDir, logger, owner.BatchID); err != nil {
+			logger.Error(nil, "quarantine files for batch %s: %v", owner.BatchID, err)
+		}
+
+		hasWork, err := batchSvc.HasPendingWork(ctx, owner.BatchID)
+		if err != nil {
+			logger.Error(nil, "check pending work for batch %s: %v", owner.BatchID, err)
 			continue
+		}
+		if !hasWork {
+			if err := batchSvc.SetBatchFailed(ctx, owner.BatchID); err != nil {
+				logger.Error(nil, "set batch failed %s: %v", owner.BatchID, err)
+			}
+		} else {
+			if err := batchSvc.RequeueBatch(ctx, owner.BatchID); err != nil {
+				logger.Error(nil, "requeue batch %s: %v", owner.BatchID, err)
+				continue
+			}
 		}
 		if err := batchSvc.DeleteBatchOwnerByBatchID(ctx, owner.BatchID); err != nil {
 			logger.Error(nil, "delete batch owner for batch %s: %v", owner.BatchID, err)
 			continue
 		}
-		logger.Info(nil, "stale batch %s reclaimed and requeued", owner.BatchID)
+		if hasWork {
+			logger.Info(nil, "stale batch %s reclaimed and requeued", owner.BatchID)
+		} else {
+			logger.Info(nil, "stale batch %s failed — all tasks quarantined", owner.BatchID)
+		}
 	}
 	return nil
 }
