@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -110,6 +111,8 @@ func consumeHandler(c *Container, args []string) error {
 		} else if err != nil {
 			return fmt.Errorf("acquire batch %s: %w", batchIDParam, err)
 		}
+
+		c.logger.Debug(nil, "consume: GOMAXPROCS=%d", runtime.GOMAXPROCS(0))
 
 		reset, _ := owner.ResetProcessingByBatch(ctx, batchIDParam)
 		if reset > 0 {

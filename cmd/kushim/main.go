@@ -9,6 +9,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/commands"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters"
+	"github.com/wgomg/edub-kushim/internal/tools/adapters/ocr"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -24,6 +25,44 @@ func main() {
 		startupLogger := utils.NewLogger("info")
 		if err := commands.RunSetup(args, startupLogger); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	if commandName == "internal-ocr" {
+		var inputPath, outputPath, languagesStr, dataDir string
+		for i := 0; i < len(args); i++ {
+			switch args[i] {
+			case "--input":
+				if i+1 < len(args) {
+					inputPath = args[i+1]
+					i++
+				}
+			case "--output":
+				if i+1 < len(args) {
+					outputPath = args[i+1]
+					i++
+				}
+			case "--languages":
+				if i+1 < len(args) {
+					languagesStr = args[i+1]
+					i++
+				}
+			case "--datadir":
+				if i+1 < len(args) {
+					dataDir = args[i+1]
+					i++
+				}
+			}
+		}
+		if inputPath == "" || outputPath == "" || languagesStr == "" || dataDir == "" {
+			fmt.Fprintf(os.Stderr, "usage: kushim internal-ocr --input <file> --output <file> --languages <lang,lang> --datadir <path>\n")
+			os.Exit(1)
+		}
+		languages := strings.Split(languagesStr, ",")
+		if err := ocr.RunStandalone(inputPath, outputPath, languages, dataDir); err != nil {
+			fmt.Fprintf(os.Stderr, "ocr: %v\n", err)
 			os.Exit(1)
 		}
 		return

@@ -40,6 +40,7 @@
 - Database transaction with rollback on file-operation failure
 - Deferred cleanup of temporary files
 - Embedded Tesseract language data (`eng.traineddata`)
+- OCR subprocess isolation: gosseract adapter forks `kushim internal-ocr` to prevent heartbeat starvation during image-only PDF processing
 - Custom MuPDF 1.27.2 CGo wrapper (document open/close, page rendering, text extraction, `pdf_clean_file`)
 
 ### Enrichment Pipeline

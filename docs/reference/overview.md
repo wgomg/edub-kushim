@@ -140,7 +140,8 @@ internal/
 │   │   │   └── llm_ollama.go       # Local Ollama API
 │   │   ├── ocr/
 │   │   │   ├── adapter.go      # OCR interface and factory
-│   │   │   ├── gosseract.go    # gosseract OCR (Tesseract + MuPDF)
+│   │   │   ├── gosseract.go    # gosseract OCR with subprocess fork
+│   │   │   ├── standalone.go   # RunStandalone OCR pipeline (subprocess entry)
 │   │   │   ├── ocrmypdf.go     # ocrmypdf external tool
 │   │   │   ├── tesseract_link.go  # CGo linker flags for static Tesseract
 │   │   │   ├── tessdata.go     # Embedded traineddata + download

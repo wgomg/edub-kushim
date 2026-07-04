@@ -206,7 +206,13 @@ type TextReducer interface {
 
 ### Struct
 
-`Gosseract` — Tesseract + MuPDF CGo. Renders pages at 200 DPI via MuPDF, OCRs with gosseract (PNG input), builds searchable PDF with fpdf (text rendering mode 3 for invisible selectable text). Embedded LiberationSans TTF for Unicode text layers.
+`Gosseract` — Tesseract + MuPDF CGo adapter. The `Process()` method forks `kushim internal-ocr` as a subprocess to run the OCR pipeline (MuPDF render at 200 DPI → Tesseract recognition → fpdf searchable PDF assembly with text rendering mode 3). The parent waits on `exec.CommandContext` which yields the Go scheduler via `entersyscall`, preventing CGo heartbeat starvation. Optimization runs in the parent after the child exits.
+
+## `adapters/ocr/standalone.go`
+
+### Function
+
+`RunStandalone(inputPath, outputPath, languages, dataDir)` — Self-contained OCR pipeline called by the `internal-ocr` subcommand. Renders pages, OCRs with Tesseract, assembles a searchable PDF. No context or logger — parent handles cancellation and logging. Same package-level helpers (`samplesToRGBA`, `encodePNG`, `encodeJPEG`) used by the in-process code.
 
 ---
 
