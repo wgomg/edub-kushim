@@ -147,7 +147,7 @@ per tool category, used by the frontend settings UI to populate select dropdowns
 
 ### Struct
 
-`Logger` — `NewLogger(level string)`, `NewDiscardLogger()`, `NewLoggerWithWriter(w)`, `SetLevel(LogLevel)`, `Level()`, `Info(reqID *string, format, v...)`, `Error`, `Debug`, `Fatal`, `SetLogFile(path string) error`
+`Logger` — `NewLogger(level string)`, `NewDiscardLogger()`, `NewLoggerWithWriter(w)`, `SetLevel(LogLevel)`, `Level()`, `Info(reqID *string, format, v...)`, `Error`, `Debug`, `Fatal`, `SetLogFile(LogFileConfig) error`
 
 - Numeric log levels: `LevelSilent` (1), `LevelFatal` (2), `LevelError` (3), `LevelInfo` (6), `LevelDebug` (7)
 - File logging writes to file regardless of console level

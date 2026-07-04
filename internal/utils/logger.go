@@ -6,6 +6,8 @@ import (
 	"log"
 	"os"
 	"strings"
+
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 type LogLevel int
@@ -60,12 +62,33 @@ func NewLoggerWithWriter(w io.Writer) *Logger {
 	}
 }
 
-func (l *Logger) SetLogFile(path string) error {
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("open log file %s: %w", path, err)
+type LogFileConfig struct {
+	Path       string
+	MaxSize    int
+	MaxBackups int
+	MaxAge     int
+	Compress   bool
+}
+
+func (l *Logger) SetLogFile(cfg LogFileConfig) error {
+	var writer io.Writer
+	if cfg.MaxSize > 0 {
+		writer = &lumberjack.Logger{
+			Filename:   cfg.Path,
+			MaxSize:    cfg.MaxSize,
+			MaxBackups: cfg.MaxBackups,
+			MaxAge:     cfg.MaxAge,
+			Compress:   cfg.Compress,
+			LocalTime:  true,
+		}
+	} else {
+		f, err := os.OpenFile(cfg.Path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			return fmt.Errorf("open log file %s: %w", cfg.Path, err)
+		}
+		writer = f
 	}
-	l.fileLogger = log.New(f, "", log.Ldate|log.Ltime)
+	l.fileLogger = log.New(writer, "", log.Ldate|log.Ltime)
 	return nil
 }
 

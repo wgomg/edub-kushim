@@ -1,6 +1,11 @@
 app:
   environment: development
   log_level: debug
+  logging:
+    max_size: 100      # MB per file before rotation
+    max_backups: 7     # rotated files to keep
+    max_age: 30        # days before deleting old backups
+    compress: true     # gzip rotated files
 
 server:
   host: 0.0.0.0

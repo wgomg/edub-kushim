@@ -18,8 +18,17 @@ type ConfigStatusResponse struct {
 	MissingTools []config.ExternalTool `json:"missing_tools"`
 }
 
+type LoggingConfigResponse struct {
+	MaxSize    int  `json:"max_size"`
+	MaxBackups int  `json:"max_backups"`
+	MaxAge     int  `json:"max_age"`
+	Compress   bool `json:"compress"`
+}
+
 type AppConfigResponse struct {
-	Initialized bool `json:"initialized"`
+	Initialized bool                `json:"initialized"`
+	LogLevel    string              `json:"log_level"`
+	Logging     LoggingConfigResponse `json:"logging"`
 }
 
 type StorageConfigResponse struct {
@@ -193,6 +202,13 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Storage.StorageDir = cfg.Storage.StorageDir
 	resp.Database.Path = cfg.Db.Path
 	resp.App.Initialized = cfg.App.ConfigDir != ""
+	resp.App.LogLevel = cfg.App.LogLevel
+	resp.App.Logging = LoggingConfigResponse{
+		MaxSize:    cfg.App.Logging.MaxSize,
+		MaxBackups: cfg.App.Logging.MaxBackups,
+		MaxAge:     cfg.App.Logging.MaxAge,
+		Compress:   cfg.App.Logging.Compress,
+	}
 	resp.Server.Host = cfg.Srv.Host
 	resp.Server.Port = cfg.Srv.Port
 	resp.Server.MaxUploadSize = cfg.Srv.MaxUploadSize

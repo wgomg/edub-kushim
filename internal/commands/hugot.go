@@ -39,7 +39,13 @@ func serveHugotHandler(c *Container, args []string) error {
 
 	logFile := filepath.Join(c.config.App.ConfigDir, "logs", "hugot.log")
 	os.MkdirAll(filepath.Dir(logFile), 0755)
-	if err := c.logger.SetLogFile(logFile); err != nil {
+	if err := c.logger.SetLogFile(utils.LogFileConfig{
+		Path:       logFile,
+		MaxSize:    c.config.App.Logging.MaxSize,
+		MaxBackups: c.config.App.Logging.MaxBackups,
+		MaxAge:     c.config.App.Logging.MaxAge,
+		Compress:   c.config.App.Logging.Compress,
+	}); err != nil {
 		c.logger.Error(nil, "failed to open hugot log file: %v", err)
 	}
 

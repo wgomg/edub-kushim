@@ -124,7 +124,13 @@ func main() {
 	logger := utils.NewLogger(cfg.App.LogLevel)
 	logFile := filepath.Join(*configDir, "logs", "kushim.log")
 	os.MkdirAll(filepath.Dir(logFile), 0755)
-	if err := logger.SetLogFile(logFile); err != nil {
+	if err := logger.SetLogFile(utils.LogFileConfig{
+		Path:       logFile,
+		MaxSize:    cfg.App.Logging.MaxSize,
+		MaxBackups: cfg.App.Logging.MaxBackups,
+		MaxAge:     cfg.App.Logging.MaxAge,
+		Compress:   cfg.App.Logging.Compress,
+	}); err != nil {
 		logger.Error(nil, "failed to open log file: %v", err)
 	}
 	container := commands.NewContainer(cfg, logger)

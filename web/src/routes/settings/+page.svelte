@@ -161,7 +161,12 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			'backup.interval': Number(cfg.backup.interval),
 			'backup.time': cfg.backup.time,
 			'backup.path': cfg.backup.path,
-			'backup.keep': Number(cfg.backup.keep)
+			'backup.keep': Number(cfg.backup.keep),
+			'app.log_level': cfg.app.log_level,
+			'app.logging.max_size': Number(cfg.app.logging.max_size),
+			'app.logging.max_backups': Number(cfg.app.logging.max_backups),
+			'app.logging.max_age': Number(cfg.app.logging.max_age),
+			'app.logging.compress': cfg.app.logging.compress
 		};
 	}
 
@@ -1101,6 +1106,80 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							bind:value={cfg.backup.path}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
 						/>
+					</div>
+				</div>
+			</section>
+
+			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+				<h2 class="mb-4 text-lg font-semibold text-parchment-200">Logging</h2>
+				<div class="grid gap-4 sm:grid-cols-2">
+					<div>
+						<label for="log-level" class="mb-1 block text-sm font-medium text-parchment-200"
+							>Log level</label
+						>
+						<select
+							id="log-level"
+							bind:value={cfg.app.log_level}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						>
+							<option value="silent">silent</option>
+							<option value="fatal">fatal</option>
+							<option value="error">error</option>
+							<option value="info">info</option>
+							<option value="debug">debug</option>
+						</select>
+					</div>
+					<div>
+						<label for="log-max-size" class="mb-1 block text-sm font-medium text-parchment-200"
+							>Max size per file (MB, 0 = no rotation)</label
+						>
+						<input
+							id="log-max-size"
+							type="number"
+							min="0"
+							bind:value={cfg.app.logging.max_size}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						/>
+					</div>
+					<div>
+						<label for="log-max-backups" class="mb-1 block text-sm font-medium text-parchment-200"
+							>Max backups to keep</label
+						>
+						<input
+							id="log-max-backups"
+							type="number"
+							min="0"
+							bind:value={cfg.app.logging.max_backups}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						/>
+					</div>
+					<div>
+						<label for="log-max-age" class="mb-1 block text-sm font-medium text-parchment-200"
+							>Max age (days, 0 = no limit)</label
+						>
+						<input
+							id="log-max-age"
+							type="number"
+							min="0"
+							bind:value={cfg.app.logging.max_age}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						/>
+					</div>
+					<div>
+						<label for="log-compress" class="mb-1 block text-sm font-medium text-parchment-200"
+							>Compress rotated logs</label
+						>
+						<div class="mt-2 flex items-center gap-2">
+							<input
+								id="log-compress"
+								type="checkbox"
+								bind:checked={cfg.app.logging.compress}
+								class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
+							/>
+							<span class="text-sm text-parchment-400">
+								{cfg.app.logging.compress ? 'Enabled' : 'Disabled'}
+							</span>
+						</div>
 					</div>
 				</div>
 			</section>

@@ -1717,6 +1717,12 @@ The per-process log files are for persistent debugging and auditing; the
 journal captures stdout/stderr (including startup messages before the log
 file is opened).
 
+Log files are automatically rotated when they reach a configured size
+(default 100 MB). Rotated files are gzip-compressed and appear alongside
+the active `.log` as `{name}-{timestamp}.log.gz`. The number of old
+backups to keep and the maximum age (in days) before deletion are
+configurable. See the `app.logging` section in `config.yaml`.
+
 ### Service Dependencies and Order
 
 ```

@@ -19,10 +19,18 @@ const (
 	Production  Environment = "production"
 )
 
+type LoggingConfig struct {
+	MaxSize    int  `mapstructure:"max_size" yaml:"max_size" json:"max_size"`
+	MaxBackups int  `mapstructure:"max_backups" yaml:"max_backups" json:"max_backups"`
+	MaxAge     int  `mapstructure:"max_age" yaml:"max_age" json:"max_age"`
+	Compress   bool `mapstructure:"compress" yaml:"compress" json:"compress"`
+}
+
 type AppConfig struct {
-	Env       Environment `mapstructure:"environment" yaml:"environment" json:"environment"`
-	LogLevel  string      `mapstructure:"log_level" yaml:"log_level" json:"log_level"`
-	ConfigDir string      `json:"config_dir"`
+	Env       Environment   `mapstructure:"environment" yaml:"environment" json:"environment"`
+	LogLevel  string        `mapstructure:"log_level" yaml:"log_level" json:"log_level"`
+	Logging   LoggingConfig `mapstructure:"logging" yaml:"logging" json:"logging"`
+	ConfigDir string        `json:"config_dir"`
 }
 
 type ServerConfig struct {
@@ -251,8 +259,14 @@ var AvailableEngines = map[string][]EngineEntry{
 func DefaultConfig(configDir string) *Config {
 	return &Config{
 		App: AppConfig{
-			Env:       Development,
-			LogLevel:  "info",
+			Env:      Development,
+			LogLevel: "info",
+			Logging: LoggingConfig{
+				MaxSize:    100,
+				MaxBackups: 7,
+				MaxAge:     30,
+				Compress:   true,
+			},
 			ConfigDir: configDir,
 		},
 		Srv: ServerConfig{
