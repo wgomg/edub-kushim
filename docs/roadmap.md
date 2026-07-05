@@ -166,6 +166,7 @@
 | `kushim task list`            | List tasks with filters                                |
 | `kushim task status <id>`     | Show task details                                      |
 | `kushim task retry <id>`      | Reset failed task to pending                           |
+| `kushim user create`          | Create a user with role assignment via CLI             |
 | `kushim version`              | Print version                                          |
 | `kushim hugot`                | Start matcher RPC server over Unix socket              |
 | `kushim backup`               | Create a backup of database, config, and storage files |

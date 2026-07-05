@@ -40,6 +40,11 @@ var commandSets = map[string]map[string]Command{
 			Description: "Manage tasks (list, status, retry)",
 			Handler:     taskHandler,
 		},
+		"user": {
+			Name:        "user",
+			Description: "Manage users (create)",
+			Handler:     userHandler,
+		},
 		"setup": {
 			Name:        "setup",
 			Description: "Initialize config and download OCR language files (run once). Use --cli for terminal-based setup.",

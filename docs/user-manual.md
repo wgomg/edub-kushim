@@ -357,6 +357,56 @@ Task "880e8400-e29b-41d4-a716-446655440003" retried — status reset to pending
 Only failed tasks can be retried. The task is picked up on the next
 worker poll cycle.
 
+### `kushim user create`
+
+Create a user with a specific role. Useful for bootstrapping admin
+access on systems where `kushim setup` has already been run but no
+admin user exists. Connects directly to the existing database —
+no authentication required (CLI-only).
+
+```
+kushim user create --username admin --password secret123 --role admin
+kushim user create --username bob --password "my$ecureP@ss1" --role editor
+```
+
+Flags:
+
+| Flag         | Required | Default | Description                                                   |
+| ------------ | -------- | ------- | ------------------------------------------------------------- |
+| `--username` | Prompted | —       | Username for the new account                                  |
+| `--password` | Prompted | —       | Password (use in scripts; omitted for masked interactive prompt) |
+| `--role`     | No       | `admin` | Role: `admin`, `editor`, or `viewer`                          |
+
+When flags are omitted, the command prompts interactively:
+
+1. Username is read from stdin
+2. Password is read with masked input (`term.ReadPassword`)
+3. Password is confirmed (must match)
+
+Output on success:
+
+```
+user 'admin' created with role 'admin'
+```
+
+If the username already exists:
+
+```
+Error: user 'admin' already exists
+```
+
+If the role is invalid:
+
+```
+Error: invalid role "superadmin": must be admin, editor, or viewer
+```
+
+If passwords do not match:
+
+```
+Error: passwords do not match
+```
+
 ### `kushim hugot`
 
 Start the matcher RPC server over a Unix domain socket. This process
