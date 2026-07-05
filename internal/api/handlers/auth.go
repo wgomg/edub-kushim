@@ -80,7 +80,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	resp := loginResponse{
 		Token: token,
-		User:  toUserResponse(user.ID, user.Username, user.CreatedAt),
+		User:  toUserResponse(user),
 	}
 
 	w.Header().Set("Content-Type", "application/json")

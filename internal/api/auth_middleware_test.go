@@ -1,30 +1,47 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/wgomg/edub-kushim/internal/auth"
+	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/errs"
 )
 
 const testSecret = "test-middleware-secret"
+
+var testUser = &database.User{
+	ID:       99,
+	Username: "apikey-user",
+}
 
 func authHandler() http.HandlerFunc {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		userID, _ := r.Context().Value(auth.UserIDKey).(int64)
 		username, _ := r.Context().Value(auth.UsernameKey).(string)
+		authSource, _ := r.Context().Value(auth.AuthSourceKey).(string)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
-			"user_id":  userID,
-			"username": username,
+			"user_id":     userID,
+			"username":    username,
+			"auth_source": authSource,
 		})
 	})
 }
 
+func mockValidateAPIKey(user *database.User, err error) func(ctx context.Context, rawKey string) (*database.User, error) {
+	return func(ctx context.Context, rawKey string) (*database.User, error) {
+		return user, err
+	}
+}
+
 func TestAuthMiddleware_PublicPaths_BypassAuth(t *testing.T) {
-	middleware := AuthMiddleware(authHandler(), func() string { return testSecret }, func() bool { return true })
+	middleware := AuthMiddleware(authHandler(), func() string { return testSecret }, func() bool { return true }, mockValidateAPIKey(nil, errors.New("should not be called")))
 	publicPaths := []string{
 		"/health",
 		"/wizard/config",
@@ -47,7 +64,7 @@ func TestAuthMiddleware_PublicPaths_BypassAuth(t *testing.T) {
 }
 
 func TestAuthMiddleware_ProtectedPath_NoToken(t *testing.T) {
-	middleware := AuthMiddleware(authHandler(), func() string { return testSecret }, func() bool { return true })
+	middleware := AuthMiddleware(authHandler(), func() string { return testSecret }, func() bool { return true }, mockValidateAPIKey(nil, errors.New("should not be called")))
 	r := httptest.NewRequest("GET", "/api/v1/documents", nil)
 	w := httptest.NewRecorder()
 	middleware.ServeHTTP(w, r)
@@ -57,7 +74,7 @@ func TestAuthMiddleware_ProtectedPath_NoToken(t *testing.T) {
 }
 
 func TestAuthMiddleware_ProtectedPath_InvalidToken(t *testing.T) {
-	middleware := AuthMiddleware(authHandler(), func() string { return testSecret }, func() bool { return true })
+	middleware := AuthMiddleware(authHandler(), func() string { return testSecret }, func() bool { return true }, mockValidateAPIKey(nil, errors.New("should not be called")))
 	r := httptest.NewRequest("GET", "/api/v1/documents", nil)
 	r.Header.Set("Authorization", "Bearer invalid.jwt.token")
 	w := httptest.NewRecorder()
@@ -69,7 +86,7 @@ func TestAuthMiddleware_ProtectedPath_InvalidToken(t *testing.T) {
 
 func TestAuthMiddleware_ProtectedPath_WrongSecret(t *testing.T) {
 	token, _ := auth.GenerateToken(1, "user", "other-secret")
-	middleware := AuthMiddleware(authHandler(), func() string { return testSecret }, func() bool { return true })
+	middleware := AuthMiddleware(authHandler(), func() string { return testSecret }, func() bool { return true }, mockValidateAPIKey(nil, errors.New("should not be called")))
 	r := httptest.NewRequest("GET", "/api/v1/documents", nil)
 	r.Header.Set("Authorization", "Bearer "+token)
 	w := httptest.NewRecorder()
@@ -84,7 +101,7 @@ func TestAuthMiddleware_ProtectedPath_ValidToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateToken: %v", err)
 	}
-	middleware := AuthMiddleware(authHandler(), func() string { return testSecret }, func() bool { return true })
+	middleware := AuthMiddleware(authHandler(), func() string { return testSecret }, func() bool { return true }, mockValidateAPIKey(nil, errors.New("should not be called")))
 	r := httptest.NewRequest("GET", "/api/v1/documents", nil)
 	r.Header.Set("Authorization", "Bearer "+token)
 	w := httptest.NewRecorder()
@@ -93,8 +110,9 @@ func TestAuthMiddleware_ProtectedPath_ValidToken(t *testing.T) {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
 	var resp struct {
-		UserID   int64  `json:"user_id"`
-		Username string `json:"username"`
+		UserID     int64  `json:"user_id"`
+		Username   string `json:"username"`
+		AuthSource string `json:"auth_source"`
 	}
 	json.NewDecoder(w.Body).Decode(&resp)
 	if resp.UserID != 42 {
@@ -103,11 +121,14 @@ func TestAuthMiddleware_ProtectedPath_ValidToken(t *testing.T) {
 	if resp.Username != "alice" {
 		t.Errorf("expected username 'alice', got %q", resp.Username)
 	}
+	if resp.AuthSource != "session" {
+		t.Errorf("expected auth_source 'session', got %q", resp.AuthSource)
+	}
 }
 
 func TestAuthMiddleware_MissingBearerPrefix(t *testing.T) {
 	token, _ := auth.GenerateToken(1, "user", testSecret)
-	middleware := AuthMiddleware(authHandler(), func() string { return testSecret }, func() bool { return true })
+	middleware := AuthMiddleware(authHandler(), func() string { return testSecret }, func() bool { return true }, mockValidateAPIKey(nil, errors.New("should not be called")))
 	r := httptest.NewRequest("GET", "/api/v1/documents", nil)
 	r.Header.Set("Authorization", token)
 	w := httptest.NewRecorder()
@@ -118,7 +139,7 @@ func TestAuthMiddleware_MissingBearerPrefix(t *testing.T) {
 }
 
 func TestAuthMiddleware_EmptyAuthorizationHeader(t *testing.T) {
-	middleware := AuthMiddleware(authHandler(), func() string { return testSecret }, func() bool { return true })
+	middleware := AuthMiddleware(authHandler(), func() string { return testSecret }, func() bool { return true }, mockValidateAPIKey(nil, errors.New("should not be called")))
 	r := httptest.NewRequest("GET", "/api/v1/documents", nil)
 	r.Header.Set("Authorization", "")
 	w := httptest.NewRecorder()
@@ -129,7 +150,7 @@ func TestAuthMiddleware_EmptyAuthorizationHeader(t *testing.T) {
 }
 
 func TestAuthMiddleware_Disabled_PassesAllRequests(t *testing.T) {
-	middleware := AuthMiddleware(authHandler(), func() string { return testSecret }, func() bool { return false })
+	middleware := AuthMiddleware(authHandler(), func() string { return testSecret }, func() bool { return false }, mockValidateAPIKey(nil, errors.New("should not be called")))
 	protectedPaths := []string{
 		"/api/v1/documents",
 		"/api/v1/tags",
@@ -152,5 +173,75 @@ func TestAuthMiddleware_Disabled_PassesAllRequests(t *testing.T) {
 		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 			t.Errorf("path %s: failed to decode response: %v", path, err)
 		}
+	}
+}
+
+func TestAuthMiddleware_ValidAPIKey(t *testing.T) {
+	middleware := AuthMiddleware(authHandler(), func() string { return testSecret }, func() bool { return true }, mockValidateAPIKey(testUser, nil))
+	r := httptest.NewRequest("GET", "/api/v1/documents", nil)
+	r.Header.Set("Authorization", "Bearer ek_abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890")
+	w := httptest.NewRecorder()
+	middleware.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var resp struct {
+		UserID     int64  `json:"user_id"`
+		Username   string `json:"username"`
+		AuthSource string `json:"auth_source"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.UserID != 99 {
+		t.Errorf("expected user_id 99, got %d", resp.UserID)
+	}
+	if resp.Username != "apikey-user" {
+		t.Errorf("expected username 'apikey-user', got %q", resp.Username)
+	}
+	if resp.AuthSource != "apikey" {
+		t.Errorf("expected auth_source 'apikey', got %q", resp.AuthSource)
+	}
+}
+
+func TestAuthMiddleware_InvalidAPIKey(t *testing.T) {
+	middleware := AuthMiddleware(authHandler(), func() string { return testSecret }, func() bool { return true }, mockValidateAPIKey(nil, errs.ENotFound("validate api key", errors.New("invalid api key"))))
+	r := httptest.NewRequest("GET", "/api/v1/documents", nil)
+	r.Header.Set("Authorization", "Bearer ek_boguskey1234567890abcdef1234567890abcdef1234567890abcdef1234567890")
+	w := httptest.NewRecorder()
+	middleware.ServeHTTP(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", w.Code)
+	}
+}
+
+func TestAuthMiddleware_APIKeyWrongPrefix_FallsThrough(t *testing.T) {
+	middleware := AuthMiddleware(authHandler(), func() string { return testSecret }, func() bool { return true }, mockValidateAPIKey(nil, errors.New("should not be called")))
+	r := httptest.NewRequest("GET", "/api/v1/documents", nil)
+	r.Header.Set("Authorization", "Bearer not_ek_prefix")
+	w := httptest.NewRecorder()
+	middleware.ServeHTTP(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", w.Code)
+	}
+}
+
+func TestAuthMiddleware_APIKeyAuthDisabled_Bypasses(t *testing.T) {
+	middleware := AuthMiddleware(authHandler(), func() string { return testSecret }, func() bool { return false }, mockValidateAPIKey(nil, errors.New("should not be called")))
+	r := httptest.NewRequest("GET", "/api/v1/documents", nil)
+	r.Header.Set("Authorization", "Bearer ek_abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890")
+	w := httptest.NewRecorder()
+	middleware.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+}
+
+func TestAuthMiddleware_APIKeyInternalError(t *testing.T) {
+	middleware := AuthMiddleware(authHandler(), func() string { return testSecret }, func() bool { return true }, mockValidateAPIKey(nil, errs.EInternal("validate api key", errors.New("db connection failed"))))
+	r := httptest.NewRequest("GET", "/api/v1/documents", nil)
+	r.Header.Set("Authorization", "Bearer ek_abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890")
+	w := httptest.NewRecorder()
+	middleware.ServeHTTP(w, r)
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 for internal error, got %d", w.Code)
 	}
 }

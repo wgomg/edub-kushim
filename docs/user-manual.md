@@ -1163,7 +1163,7 @@ Response `201`:
 GET /api/v1/users/{id}
 ```
 
-Response `200` — single `UserResponse` (excludes `password_hash` and `api_key`). Returns `404` if not found.
+Response `200` — single `UserResponse` (excludes `password_hash` and `api_key_hash`). Returns `404` if not found.
 
 #### List Users
 

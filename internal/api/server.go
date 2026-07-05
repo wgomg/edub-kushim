@@ -106,7 +106,14 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 
 	getSecret := func() string { return s.cfg.Load().Srv.SessionSecret }
 	getAuthEnabled := func() bool { return s.cfg.Load().Srv.AuthEnabled }
-	handler := chainMiddleware(logger, getSecret, getAuthEnabled, mux)
+	validateAPIKey := func(ctx context.Context, rawKey string) (*database.User, error) {
+		u, err := s.services.User.ValidateAPIKey(ctx, rawKey)
+		if err != nil {
+			return nil, err
+		}
+		return &u, nil
+	}
+	handler := chainMiddleware(logger, getSecret, getAuthEnabled, validateAPIKey, mux)
 
 	s.httpServer = &http.Server{
 		Addr:         addr,
@@ -228,6 +235,12 @@ func registerRoutes(
 	mux.HandleFunc("PUT /api/v1/users/{id}", userHandler.Update)
 	mux.HandleFunc("DELETE /api/v1/users/{id}", userHandler.Delete)
 
+	apiKeyHandler := handlers.NewAPIKeyHandler(services.User, logger)
+	mux.HandleFunc("POST /api/v1/users/{id}/api-key", apiKeyHandler.GenerateKey)
+	mux.HandleFunc("DELETE /api/v1/users/{id}/api-key", apiKeyHandler.RevokeKey)
+	mux.HandleFunc("PUT /api/v1/users/{id}/api-key", apiKeyHandler.RotateKey)
+	mux.HandleFunc("GET /api/v1/users/{id}/api-key", apiKeyHandler.GetKeyStatus)
+
 	configHandler := handlers.NewConfigHandler(getConfig, onConfigSet, client.Queries, logger, dispatcher, services)
 	mux.HandleFunc("GET /wizard/config", configHandler.GetConfig)
 	mux.HandleFunc("PUT /wizard/config", configHandler.PutConfig)
@@ -256,8 +269,8 @@ func registerRoutes(
 	return mux
 }
 
-func chainMiddleware(logger *utils.Logger, getSecret func() string, getAuthEnabled func() bool, h http.Handler) http.Handler {
-	return requestMiddleware(logger, AuthMiddleware(parambagMiddleware(h), getSecret, getAuthEnabled))
+func chainMiddleware(logger *utils.Logger, getSecret func() string, getAuthEnabled func() bool, validateAPIKey func(ctx context.Context, rawKey string) (*database.User, error), h http.Handler) http.Handler {
+	return requestMiddleware(logger, AuthMiddleware(parambagMiddleware(h), getSecret, getAuthEnabled, validateAPIKey))
 }
 
 func requestMiddleware(logger *utils.Logger, next http.Handler) http.Handler {

@@ -17,8 +17,8 @@
 - `probeMatcher()` — Calls `matcherClient.Health()` with 2s timeout. Logs warning and continues if matcher is unreachable; tag CRUD returns `503` and enrich falls back to LLM-only tags.
 - `registerRoutes(logger, client, dispatcher, getConfig, onConfigSet, services, workStore) *http.ServeMux` — Creates and returns a `*http.ServeMux` with all API routes registered; internally creates the `search.Engine` from `client`. Uses Go 1.22+ pattern routing (`"GET /api/v1/documents/{id}"`). Auth routes (`POST /api/v1/auth/login`, `POST /api/v1/auth/logout`) are registered before all other routes so they are public (bypassed by `AuthMiddleware`). Orphaned file routes (`/api/v1/orphaned/...`) are registered via `OrphanedHandler` after the document routes. Errored file routes (`/api/v1/errored/...`) are registered via `ErroredHandler` after the orphaned block.
 - `registerStaticRoutes(mux *http.ServeMux)` — Registers `"GET /{path...}"` handler; tries to serve the requested file from the embedded FS, falls back to `index.html` for client-side SPA routes if the file doesn't exist
-- `chainMiddleware(logger *utils.Logger, getSecret func() string, h http.Handler) http.Handler` — Composes request + auth + parambag middleware. The auth middleware skips public paths (`/health`, `/wizard/*`, `/api/v1/auth/*`, non-API paths) and validates Bearer JWTs on all other API routes.
-- `AuthMiddleware(next http.Handler, getSecret func() string) http.Handler` — Extracts `Authorization: Bearer <token>` header, validates JWT via `auth.ValidateToken`, injects `userID` and `username` into `r.Context()` using typed context keys. Returns 401 JSON with generic error for missing/invalid/expired tokens. Bypasses auth for public paths.
+- `chainMiddleware(logger *utils.Logger, getSecret func() string, getAuthEnabled func() bool, validateAPIKey func(ctx context.Context, rawKey string) (*database.User, error), h http.Handler) http.Handler` — Composes request + auth + parambag middleware. The auth middleware skips public paths (`/health`, `/wizard/*`, `/api/v1/auth/*`, non-API paths) and validates Bearer tokens on all other API routes. Tokens with `ek_` prefix are validated via `validateAPIKey` closure (hashes + DB lookup); other tokens are validated as JWT via `auth.ValidateToken`.
+- `AuthMiddleware(next http.Handler, getSecret func() string, getAuthEnabled func() bool, validateAPIKey func(ctx context.Context, rawKey string) (*database.User, error)) http.Handler` — Extracts `Authorization: Bearer <token>` header. If token starts with `ek_`, validates via `validateAPIKey` (hashes key, DB lookup) and injects `userID`, `username`, and `authSource="apikey"` into context. Otherwise, validates JWT via `auth.ValidateToken` and injects `userID`, `username`, and `authSource="session"`. Returns 401 JSON for missing/invalid/expired tokens, 500 JSON for internal errors. Bypasses auth for public paths.
 - `requestMiddleware(logger *utils.Logger, next http.Handler) http.Handler` — Adds reqid to context, logs requests
 - `parambagMiddleware(next http.Handler) http.Handler` — Injects ParamBag into request context
 
@@ -216,13 +216,30 @@ See `AuthMiddleware` under `server.go` → Functions.
   - **Fields**: `services *itypes.CrudServices`, `logger *utils.Logger`
   - **Methods**:
     - `NewUserHandler(services, logger) *UserHandler`
-    - `List(w, r)` — `GET /api/v1/users?limit=50&offset=0` — Lists paginated users. Returns `UserListResponse` with `users` array and `total` count. Excludes `password_hash` and `api_key`.
+    - `List(w, r)` — `GET /api/v1/users?limit=50&offset=0` — Lists paginated users. Returns `UserListResponse` with `users` array and `total` count. Excludes `password_hash` and `api_key_hash`.
     - `Get(w, r)` — `GET /api/v1/users/{id}` — Returns single `UserResponse`. `KindNotFound` → 404.
     - `Create(w, r)` — `POST /api/v1/users` — Accepts `CreateUserRequest` JSON (`username`, `password`). Validates username non-empty. Password validation is delegated to the service layer (`ValidatePassword`): minimum 12 characters, maximum 128 characters, must contain at least one uppercase letter, lowercase letter, digit, and special character. Returns `400` via `writeServiceError` on validation failure. Bcrypt hashes password on creation. `KindConflict` → 409 `{"error":"username already exists"}`. Returns `201` with `UserResponse`.
     - `Update(w, r)` — `PUT /api/v1/users/{id}` — Accepts `UpdateUserRequest` JSON (`username`, `password` optional). Validates username non-empty. Same service-layer password validation when password is provided; empty password skips validation (keep current password). Bcrypts only when password provided, writes both fields in a single `UPDATE`. `KindNotFound` → 404, `KindConflict` → 409. Returns `200` with `UserResponse`.
     - `Delete(w, r)` — `DELETE /api/v1/users/{id}` — Pre-checks existence via `Get`, then deletes. `KindNotFound` → 404. Returns `204 No Content`.
 
 ---
+
+## `handlers/api_key.go`
+
+### Struct
+
+- `APIKeyHandler`
+  - **Fields**: `userService *service.User`, `logger *utils.Logger`
+  - **Methods**:
+    - `NewAPIKeyHandler(userService, logger) *APIKeyHandler`
+    - `GenerateKey(w, r)` — `POST /api/v1/users/{id}/api-key` — Generates a new `ek_`-prefixed API key. Hash (SHA-256), prefix (`ek_` + 9 hex chars), and timestamp are stored in DB. Returns `201` with `{api_key, prefix, message}`. Returns `403` Forbidden for mismatched caller ID. `KindNotFound` → 404.
+    - `RevokeKey(w, r)` — `DELETE /api/v1/users/{id}/api-key` — Sets `api_key_hash`, `api_key_prefix`, `api_key_created_at` to NULL. Returns `204 No Content`. Returns `403` Forbidden for mismatched caller ID. `KindNotFound` → 404.
+    - `RotateKey(w, r)` — `PUT /api/v1/users/{id}/api-key` — Overwrites existing key with a new one (same as Generate). Returns `200` with `{api_key, prefix, message}`. Returns `403` Forbidden for mismatched caller ID. `KindNotFound` → 404.
+    - `GetKeyStatus(w, r)` — `GET /api/v1/users/{id}/api-key` — Returns `200` with `{has_api_key, api_key_prefix, api_key_created_at}`. Does not return the raw key. Returns `403` Forbidden for mismatched caller ID. `KindNotFound` → 404.
+
+---
+
+## Config Handler (`handlers/config.go`)
 
 ### Struct
 
@@ -348,8 +365,10 @@ See `AuthMiddleware` under `server.go` → Functions.
 
 - `CreateUserRequest` — `Username string`, `Password string`
 - `UpdateUserRequest` — `Username string`, `Password string` (omitempty — leave blank to keep current password)
-- `UserResponse` — `ID int64`, `Username string`, `CreatedAt string` (RFC 3339). Excludes `password_hash` and `api_key`.
+- `UserResponse` — `ID int64`, `Username string`, `CreatedAt string` (RFC 3339), `HasAPIKey bool`, `APIKeyPrefix *string` (omitempty), `APIKeyCreatedAt *string` (omitempty). Excludes `password_hash` and `api_key_hash`.
 - `UserListResponse` — `Users []UserResponse`, `Total int64`
+- `CreateAPIKeyResponse` — `APIKey string` (raw key, returned only at creation), `Prefix string` (display-safe prefix `ek_` + first 9 hex chars), `Message string`
+- `APIKeyStatusResponse` — `HasAPIKey bool`, `APIKeyPrefix *string` (omitempty), `APIKeyCreatedAt *string` (omitempty)
 
 ## `types/people.go`
 
@@ -449,6 +468,11 @@ mux.HandleFunc("GET /api/v1/users/{id}", userHandler.Get)
 mux.HandleFunc("POST /api/v1/users", userHandler.Create)
 mux.HandleFunc("PUT /api/v1/users/{id}", userHandler.Update)
 mux.HandleFunc("DELETE /api/v1/users/{id}", userHandler.Delete)
+
+mux.HandleFunc("POST /api/v1/users/{id}/api-key", apiKeyHandler.GenerateKey)
+mux.HandleFunc("DELETE /api/v1/users/{id}/api-key", apiKeyHandler.RevokeKey)
+mux.HandleFunc("PUT /api/v1/users/{id}/api-key", apiKeyHandler.RotateKey)
+mux.HandleFunc("GET /api/v1/users/{id}/api-key", apiKeyHandler.GetKeyStatus)
 
 mux.HandleFunc("POST /api/v1/consume", consumeHandler.Consume)
 mux.HandleFunc("POST /api/v1/consume/upload", consumeHandler.Upload)

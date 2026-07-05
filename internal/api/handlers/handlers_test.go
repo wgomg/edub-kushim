@@ -1123,6 +1123,9 @@ func TestUserCrud(t *testing.T) {
 		if resp.CreatedAt == "" {
 			t.Fatal("expected created_at to be set")
 		}
+		if resp.HasAPIKey {
+			t.Fatal("expected has_api_key to be false for new user")
+		}
 		createdID = resp.ID
 	})
 
@@ -1173,10 +1176,10 @@ func TestUserCrud(t *testing.T) {
 		json.NewDecoder(w.Body).Decode(&resp)
 		testutil.AssertEqual(t, resp.ID, createdID, "id")
 		testutil.AssertEqual(t, resp.Username, "alice", "username")
-		// Ensure password_hash and api_key are NOT leaked
+		// Ensure password_hash and api_key_hash are NOT leaked
 		if raw, err := json.Marshal(resp); err == nil {
-			if strings.Contains(string(raw), "password_hash") || strings.Contains(string(raw), "api_key") {
-				t.Fatal("response leaked password_hash or api_key")
+			if strings.Contains(string(raw), "password_hash") || strings.Contains(string(raw), "api_key_hash") {
+				t.Fatal("response leaked password_hash or api_key_hash")
 			}
 		}
 	})
@@ -1578,5 +1581,118 @@ func TestErrorHelpers(t *testing.T) {
 		w := rec()
 		writeServiceError(w, env.logger, nil, "do", fmt.Errorf("boom"))
 		testutil.AssertEqual(t, w.Code, http.StatusInternalServerError, "500")
+	})
+}
+
+func reqWithAuth(t *testing.T, method, path string, body []byte, userID int64) *http.Request {
+	r := req(t, method, path, body)
+	r = r.WithContext(context.WithValue(r.Context(), auth.UserIDKey, userID))
+	return r
+}
+
+func TestAPIKeyHandler(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	h := NewAPIKeyHandler(env.userSvc, env.logger)
+
+	ctx := context.Background()
+	user, err := env.userSvc.Create(ctx, "keyuser", "Password123!")
+	testutil.AssertNoError(t, err, "create user")
+
+	t.Run("generate key", func(t *testing.T) {
+		w := rec()
+		r := reqWithAuth(t, "POST", "/api/v1/users/1/api-key", nil, user.ID)
+		r.SetPathValue("id", fmt.Sprintf("%d", user.ID))
+		h.GenerateKey(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusCreated, "status")
+
+		var resp types.CreateAPIKeyResponse
+		json.NewDecoder(w.Body).Decode(&resp)
+		if !strings.HasPrefix(resp.APIKey, "ek_") {
+			t.Fatalf("expected api_key to start with ek_, got %q", resp.APIKey)
+		}
+		if resp.Prefix == "" {
+			t.Fatal("expected prefix to be set")
+		}
+	})
+
+	t.Run("get key status after generate", func(t *testing.T) {
+		w := rec()
+		r := reqWithAuth(t, "GET", "/api/v1/users/1/api-key", nil, user.ID)
+		r.SetPathValue("id", fmt.Sprintf("%d", user.ID))
+		h.GetKeyStatus(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var resp types.APIKeyStatusResponse
+		json.NewDecoder(w.Body).Decode(&resp)
+		if !resp.HasAPIKey {
+			t.Fatal("expected has_api_key to be true")
+		}
+		if resp.APIKeyPrefix == nil {
+			t.Fatal("expected api_key_prefix to be set")
+		}
+		if resp.APIKeyCreatedAt == nil {
+			t.Fatal("expected api_key_created_at to be set")
+		}
+	})
+
+	t.Run("rotate key", func(t *testing.T) {
+		w := rec()
+		r := reqWithAuth(t, "PUT", "/api/v1/users/1/api-key", nil, user.ID)
+		r.SetPathValue("id", fmt.Sprintf("%d", user.ID))
+		h.RotateKey(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var resp types.CreateAPIKeyResponse
+		json.NewDecoder(w.Body).Decode(&resp)
+		if !strings.HasPrefix(resp.APIKey, "ek_") {
+			t.Fatalf("expected rotated api_key to start with ek_, got %q", resp.APIKey)
+		}
+	})
+
+	t.Run("revoke key", func(t *testing.T) {
+		w := rec()
+		r := reqWithAuth(t, "DELETE", "/api/v1/users/1/api-key", nil, user.ID)
+		r.SetPathValue("id", fmt.Sprintf("%d", user.ID))
+		h.RevokeKey(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusNoContent, "status")
+	})
+
+	t.Run("get key status after revoke", func(t *testing.T) {
+		w := rec()
+		r := reqWithAuth(t, "GET", "/api/v1/users/1/api-key", nil, user.ID)
+		r.SetPathValue("id", fmt.Sprintf("%d", user.ID))
+		h.GetKeyStatus(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var resp types.APIKeyStatusResponse
+		json.NewDecoder(w.Body).Decode(&resp)
+		if resp.HasAPIKey {
+			t.Fatal("expected has_api_key to be false after revoke")
+		}
+	})
+
+	t.Run("generate for non-existent user", func(t *testing.T) {
+		w := rec()
+		r := reqWithAuth(t, "POST", "/api/v1/users/9999/api-key", nil, 9999)
+		r.SetPathValue("id", "9999")
+		h.GenerateKey(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusNotFound, "status")
+	})
+
+	t.Run("rejects invalid id", func(t *testing.T) {
+		w := rec()
+		r := req(t, "POST", "/api/v1/users/abc/api-key", nil)
+		r = r.WithContext(context.WithValue(r.Context(), auth.UserIDKey, int64(0)))
+		r.SetPathValue("id", "abc")
+		h.GenerateKey(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusBadRequest, "status")
+	})
+
+	t.Run("forbidden for other user", func(t *testing.T) {
+		w := rec()
+		r := reqWithAuth(t, "POST", "/api/v1/users/1/api-key", nil, 999)
+		r.SetPathValue("id", fmt.Sprintf("%d", user.ID))
+		h.GenerateKey(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusForbidden, "status")
 	})
 }

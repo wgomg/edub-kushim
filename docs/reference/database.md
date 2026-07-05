@@ -222,7 +222,7 @@ The last 4 methods back the dashboard analytics panel. `LanguageDistribution` an
 - `document_type` — Document type classification (seeded with types like `article`, `book`, `report`, `letter`, etc.)
 - `people` — People/entities associated with documents (`name` UNIQUE, `name_native` nullable for original non-Latin script)
 - `people_type` — Roles for people (e.g., `author`, `editor`, `translator`, `subject`)
-- `user` — Authentication (username, password_hash, api_key)
+- `user` — Authentication (username, password_hash, api_key_hash, api_key_prefix, api_key_created_at)
 - `batch` — Batch processing units: `id`, `source`, `created_at`, `status` (queued/processing/completed/failed/cancelled). The `status` column was added in migration `00005` to support queue-based processing.
 - `batch_owner` — Batch ownership: `batch_id`, `owner_id`, `pid`, `acquired_at`, `last_heartbeat`. Each processing batch is claimed by one owner (CLI or queue daemon) with a heartbeat.
 - `orphaned_file` — Detected orphaned files: `document_key`, `document_key_type` (uuid/dbid), `source_dir` (originals/processed), `file_path` (inside quarantined/orphaned/), `status` (pending/deleted/restored/reingested), `action_type`, `action_at`

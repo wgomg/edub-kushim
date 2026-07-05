@@ -128,9 +128,11 @@ type Task struct {
 }
 
 type User struct {
-	ID           int64
-	Username     string
-	PasswordHash sql.NullString
-	ApiKey       sql.NullString
-	CreatedAt    sql.NullTime
+	ID              int64
+	Username        string
+	PasswordHash    sql.NullString
+	ApiKeyHash      sql.NullString
+	CreatedAt       sql.NullTime
+	ApiKeyPrefix    sql.NullString
+	ApiKeyCreatedAt sql.NullTime
 }

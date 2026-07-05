@@ -7,9 +7,16 @@ import (
 	"strings"
 
 	"github.com/wgomg/edub-kushim/internal/auth"
+	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/errs"
 )
 
-func AuthMiddleware(next http.Handler, getSecret func() string, getAuthEnabled func() bool) http.Handler {
+func AuthMiddleware(
+	next http.Handler,
+	getSecret func() string,
+	getAuthEnabled func() bool,
+	validateAPIKey func(ctx context.Context, rawKey string) (*database.User, error),
+) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !getAuthEnabled() {
 			next.ServeHTTP(w, r)
@@ -35,6 +42,28 @@ func AuthMiddleware(next http.Handler, getSecret func() string, getAuthEnabled f
 		}
 
 		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+
+		if strings.HasPrefix(tokenString, auth.APIKeyPrefix) {
+			user, err := validateAPIKey(r.Context(), tokenString)
+			if err != nil {
+				w.Header().Set("Content-Type", "application/json")
+				if errs.KindOf(err) == errs.KindInternal {
+					w.WriteHeader(http.StatusInternalServerError)
+					json.NewEncoder(w).Encode(map[string]string{"error": "internal server error"})
+				} else {
+					w.WriteHeader(http.StatusUnauthorized)
+					json.NewEncoder(w).Encode(map[string]string{"error": "invalid or expired token"})
+				}
+				return
+			}
+
+			ctx := context.WithValue(r.Context(), auth.UserIDKey, user.ID)
+			ctx = context.WithValue(ctx, auth.UsernameKey, user.Username)
+			ctx = context.WithValue(ctx, auth.AuthSourceKey, "apikey")
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
+
 		claims, err := auth.ValidateToken(tokenString, getSecret())
 		if err != nil {
 			w.Header().Set("Content-Type", "application/json")
@@ -45,6 +74,7 @@ func AuthMiddleware(next http.Handler, getSecret func() string, getAuthEnabled f
 
 		ctx := context.WithValue(r.Context(), auth.UserIDKey, claims.UserID)
 		ctx = context.WithValue(ctx, auth.UsernameKey, claims.Username)
+		ctx = context.WithValue(ctx, auth.AuthSourceKey, "session")
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

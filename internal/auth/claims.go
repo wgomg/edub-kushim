@@ -13,3 +13,5 @@ type contextKey string
 const UserIDKey contextKey = "userID"
 
 const UsernameKey contextKey = "username"
+
+const AuthSourceKey contextKey = "authSource"

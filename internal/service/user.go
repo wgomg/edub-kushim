@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"time"
 
+	"github.com/wgomg/edub-kushim/internal/auth"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
 	"golang.org/x/crypto/bcrypt"
@@ -56,9 +58,11 @@ func (s *User) Create(ctx context.Context, username, password string) (database.
 	}
 
 	result, err := s.queries.CreateUser(ctx, database.CreateUserParams{
-		Username:     username,
-		PasswordHash: sql.NullString{String: string(hash), Valid: true},
-		ApiKey:       sql.NullString{},
+		Username:        username,
+		PasswordHash:    sql.NullString{String: string(hash), Valid: true},
+		ApiKeyHash:      sql.NullString{},
+		ApiKeyPrefix:    sql.NullString{},
+		ApiKeyCreatedAt: sql.NullTime{},
 	})
 	if err != nil {
 		return database.User{}, errs.FromDB(err, "create user")
@@ -127,4 +131,60 @@ func (s *User) Delete(ctx context.Context, id int64) error {
 		return errs.FromDB(err, "delete user")
 	}
 	return nil
+}
+
+func (s *User) CreateAPIKey(ctx context.Context, userID int64) (rawKey string, err error) {
+	rawKey, hash, prefix, err := auth.GenerateAPIKey()
+	if err != nil {
+		return "", errs.EInternal("create api key", err)
+	}
+
+	now := sql.NullTime{Time: currentTime(), Valid: true}
+	result, err := s.queries.UpdateUserAPIKey(ctx, database.UpdateUserAPIKeyParams{
+		ApiKeyHash:      sql.NullString{String: hash, Valid: true},
+		ApiKeyPrefix:    sql.NullString{String: prefix, Valid: true},
+		ApiKeyCreatedAt: now,
+		ID:              userID,
+	})
+	if err != nil {
+		return "", errs.FromDB(err, "create api key")
+	}
+
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return "", errs.ENotFound("create api key", errors.New("user not found"))
+	}
+
+	return rawKey, nil
+}
+
+func (s *User) RevokeAPIKey(ctx context.Context, userID int64) error {
+	result, err := s.queries.RevokeUserAPIKey(ctx, userID)
+	if err != nil {
+		return errs.FromDB(err, "revoke api key")
+	}
+
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return errs.ENotFound("revoke api key", errors.New("user not found"))
+	}
+
+	return nil
+}
+
+func (s *User) RotateAPIKey(ctx context.Context, userID int64) (rawKey string, err error) {
+	return s.CreateAPIKey(ctx, userID)
+}
+
+func (s *User) ValidateAPIKey(ctx context.Context, rawKey string) (database.User, error) {
+	hash := auth.HashAPIKey(rawKey)
+	user, err := s.queries.GetUserByAPIKeyHash(ctx, sql.NullString{String: hash, Valid: true})
+	if err != nil {
+		return database.User{}, errs.FromDB(err, "validate api key")
+	}
+	return user, nil
+}
+
+var currentTime = func() time.Time {
+	return time.Now()
 }

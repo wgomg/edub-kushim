@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"database/sql"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -10,6 +9,7 @@ import (
 
 	itypes "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/api/types"
+	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -23,15 +23,54 @@ func NewUserHandler(services *itypes.CrudServices, logger *utils.Logger) *UserHa
 	return &UserHandler{services: services, logger: logger}
 }
 
-func toUserResponse(id int64, username string, createdAt sql.NullTime) types.UserResponse {
+func toUserResponse(user database.User) types.UserResponse {
 	created := ""
-	if createdAt.Valid {
-		created = createdAt.Time.Format(time.RFC3339)
+	if user.CreatedAt.Valid {
+		created = user.CreatedAt.Time.Format(time.RFC3339)
+	}
+	hasKey := user.ApiKeyHash.Valid
+	var prefix *string
+	if user.ApiKeyPrefix.Valid {
+		p := user.ApiKeyPrefix.String
+		prefix = &p
+	}
+	var createdAt *string
+	if user.ApiKeyCreatedAt.Valid {
+		t := user.ApiKeyCreatedAt.Time.Format(time.RFC3339)
+		createdAt = &t
 	}
 	return types.UserResponse{
-		ID:        id,
-		Username:  username,
-		CreatedAt: created,
+		ID:              user.ID,
+		Username:        user.Username,
+		CreatedAt:       created,
+		HasAPIKey:       hasKey,
+		APIKeyPrefix:    prefix,
+		APIKeyCreatedAt: createdAt,
+	}
+}
+
+func toUserResponseFromRow(row database.ListUsersRow) types.UserResponse {
+	created := ""
+	if row.CreatedAt.Valid {
+		created = row.CreatedAt.Time.Format(time.RFC3339)
+	}
+	var prefix *string
+	if row.ApiKeyPrefix.Valid {
+		p := row.ApiKeyPrefix.String
+		prefix = &p
+	}
+	var createdAt *string
+	if row.ApiKeyCreatedAt.Valid {
+		t := row.ApiKeyCreatedAt.Time.Format(time.RFC3339)
+		createdAt = &t
+	}
+	return types.UserResponse{
+		ID:              row.ID,
+		Username:        row.Username,
+		CreatedAt:       created,
+		HasAPIKey:       prefix != nil,
+		APIKeyPrefix:    prefix,
+		APIKeyCreatedAt: createdAt,
 	}
 }
 
@@ -62,7 +101,7 @@ func (h *UserHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	responses := make([]types.UserResponse, len(users))
 	for i, u := range users {
-		responses[i] = toUserResponse(u.ID, u.Username, u.CreatedAt)
+		responses[i] = toUserResponseFromRow(u)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -91,7 +130,7 @@ func (h *UserHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(toUserResponse(user.ID, user.Username, user.CreatedAt))
+	json.NewEncoder(w).Encode(toUserResponse(user))
 }
 
 func (h *UserHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -124,7 +163,7 @@ func (h *UserHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(toUserResponse(user.ID, user.Username, user.CreatedAt))
+	json.NewEncoder(w).Encode(toUserResponse(user))
 }
 
 func (h *UserHandler) Update(w http.ResponseWriter, r *http.Request) {
@@ -163,7 +202,7 @@ func (h *UserHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(toUserResponse(user.ID, user.Username, user.CreatedAt))
+	json.NewEncoder(w).Encode(toUserResponse(user))
 }
 
 func (h *UserHandler) Delete(w http.ResponseWriter, r *http.Request) {
