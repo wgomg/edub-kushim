@@ -5,6 +5,7 @@
 	import { escapeHtml } from '$lib/utils/html.js';
 	import { api } from '$lib/api';
 	import DataTable from '$lib/components/DataTable.svelte';
+	import * as authStore from '$lib/stores/authStore.js';
 
 	let taskRefreshKey = $state(0);
 	let batchRefreshKey = $state(0);
@@ -114,6 +115,7 @@
 			sortable: false,
 			cellClass: 'whitespace-nowrap',
 			cell: (_v, row) => {
+				if (authStore.authEnabled() && !authStore.isEditor()) return '';
 				let buttons = '';
 				if (row.failed) {
 					buttons += actionButton(RETRY_ICON, 'Retry', 'text-parchment-400 hover:text-gold-500', {
@@ -216,6 +218,7 @@
 			sortable: false,
 			cellClass: 'whitespace-nowrap',
 			cell: (_v, row) => {
+				if (authStore.authEnabled() && !authStore.isEditor()) return '';
 				if (row.status !== 'failed') return '';
 				return actionButton(RETRY_ICON, 'Retry', 'text-parchment-400 hover:text-gold-500', {
 					'data-retry-task': row.task_id

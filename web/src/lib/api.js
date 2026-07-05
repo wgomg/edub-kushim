@@ -1,15 +1,18 @@
 import { getToken, logout as authLogout } from '$lib/stores/authStore.js';
 import { goto } from '$app/navigation';
+import { resolve } from '$app/paths';
 
 let _redirecting = false;
 
-function handleUnauthorized() {
+async function handleUnauthorized() {
 	if (_redirecting) return;
 	_redirecting = true;
 	authLogout();
-	goto('/login').finally(() => {
+	try {
+		await goto(resolve('/login'));
+	} finally {
 		_redirecting = false;
-	});
+	}
 }
 
 function withAuth(opts = {}) {
@@ -352,6 +355,14 @@ export const api = {
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ username, password })
 			})
+	},
+
+	me: {
+		profile: () => request('/api/v1/me'),
+		generateKey: () => requestRaw('/api/v1/me/api-key', { method: 'POST' }),
+		revokeKey: () => requestRaw('/api/v1/me/api-key', { method: 'DELETE' }),
+		rotateKey: () => requestRaw('/api/v1/me/api-key', { method: 'PUT' }),
+		keyStatus: () => request('/api/v1/me/api-key')
 	},
 
 	orphaned: {

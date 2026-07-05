@@ -5,6 +5,7 @@
 	import Modal from '$lib/components/Modal.svelte';
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
+	import * as authStore from '$lib/stores/authStore.js';
 
 	let documentTypes = $state([]);
 	let showModal = $state(false);
@@ -80,12 +81,14 @@
 <div class="space-y-4">
 	<div class="flex items-center justify-between">
 		<h1 class="text-2xl font-semibold text-parchment-200">Document Types</h1>
-		<button
-			onclick={openNew}
-			class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600"
-		>
-			New Document Type
-		</button>
+		{#if !authStore.authEnabled() || authStore.isEditor()}
+			<button
+				onclick={openNew}
+				class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600"
+			>
+				New Document Type
+			</button>
+		{/if}
 	</div>
 
 	{#if error}
@@ -112,22 +115,24 @@
 							<td class="px-4 py-3 text-parchment-200">{dt.name}</td>
 							<td class="px-4 py-3 text-parchment-400">{dt.description || ''}</td>
 							<td class="px-4 py-3 whitespace-nowrap">
-								<div class="flex gap-2">
-									<button
-										onclick={() => openEdit(dt)}
-										title="Edit"
-										class="{BTN_BASE} text-parchment-400 hover:text-gold-500"
-									>
-										{@html EDIT_ICON}
-									</button>
-									<button
-										onclick={() => handleDelete(dt)}
-										title="Delete"
-										class="{BTN_BASE} text-parchment-400 hover:text-terracotta-500"
-									>
-										{@html DELETE_ICON}
-									</button>
-								</div>
+								{#if !authStore.authEnabled() || authStore.isEditor()}
+									<div class="flex gap-2">
+										<button
+											onclick={() => openEdit(dt)}
+											title="Edit"
+											class="{BTN_BASE} text-parchment-400 hover:text-gold-500"
+										>
+											{@html EDIT_ICON}
+										</button>
+										<button
+											onclick={() => handleDelete(dt)}
+											title="Delete"
+											class="{BTN_BASE} text-parchment-400 hover:text-terracotta-500"
+										>
+											{@html DELETE_ICON}
+										</button>
+									</div>
+								{/if}
 							</td>
 						</tr>
 					{/each}

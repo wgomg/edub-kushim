@@ -5,6 +5,7 @@
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
+	import * as authStore from '$lib/stores/authStore.js';
 
 	let activeTab = $state($page.url.searchParams.get('tab') || 'orphaned');
 
@@ -170,209 +171,213 @@
 	}
 </script>
 
-<div class="space-y-4">
-	<div class="flex items-center gap-4 border-b border-clay-800">
-		<button
-			class="px-1 pb-2 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-950 {activeTab ===
-			'orphaned'
-				? 'border-b-2 border-gold-500 text-parchment-200'
-				: 'text-parchment-500 hover:text-parchment-200'}"
-			onclick={() => switchTab('orphaned')}
-		>
-			Orphaned
-		</button>
-		<button
-			class="px-1 pb-2 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-950 {activeTab ===
-			'errored'
-				? 'border-b-2 border-gold-500 text-parchment-200'
-				: 'text-parchment-500 hover:text-parchment-200'}"
-			onclick={() => switchTab('errored')}
-		>
-			Errored {#if erroredFiles.length > 0}({erroredFiles.length}){/if}
-		</button>
-	</div>
-
-	{#if activeTab === 'orphaned'}
-		<div class="space-y-4">
-			<div class="flex items-center justify-between">
-				<h1 class="text-2xl font-semibold text-parchment-200">Orphaned Files</h1>
-				<div class="flex gap-2">
-					<button
-						onclick={scan}
-						disabled={scanning}
-						class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600 disabled:opacity-50"
-					>
-						{scanning ? 'Scanning…' : 'Scan Now'}
-					</button>
-				</div>
-			</div>
-
-			{#if files.length > 0}
-				<div class="flex gap-2">
-					<button
-						onclick={handleDeleteAll}
-						class="rounded-lg bg-terracotta-700 px-3 py-1.5 text-xs font-medium text-parchment-200 hover:bg-terracotta-600"
-					>
-						Delete All
-					</button>
-					<button
-						onclick={handleMoveAllToInbox}
-						class="rounded-lg border border-clay-800 px-3 py-1.5 text-xs font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
-					>
-						Move All to Inbox
-					</button>
-				</div>
-			{/if}
-
-			{#if loading}
-				<p class="text-parchment-500">Loading…</p>
-			{:else if files.length === 0}
-				<div class="rounded-lg border border-clay-800 p-8 text-center">
-					<p class="text-parchment-500">No orphaned files found.</p>
-					<p class="mt-1 text-xs text-parchment-600">
-						Run a scan to detect files in storage with no corresponding database entry.
-					</p>
-				</div>
-			{:else}
-				<div class="overflow-x-auto rounded-lg border border-clay-800">
-					<table class="w-full text-left text-sm">
-						<thead>
-							<tr class="border-b border-clay-800 bg-clay-900">
-								<th class="px-4 py-3 font-medium text-parchment-400">Key</th>
-								<th class="px-4 py-3 font-medium text-parchment-400">Type</th>
-								<th class="px-4 py-3 font-medium text-parchment-400">Source</th>
-								<th class="px-4 py-3 font-medium text-parchment-400">Size</th>
-								<th class="px-4 py-3 font-medium text-parchment-400">Detected</th>
-								<th class="px-4 py-3 font-medium text-parchment-400">Actions</th>
-							</tr>
-						</thead>
-						<tbody>
-							{#each files as f (f.id)}
-								<tr class="border-b border-clay-800 last:border-b-0 hover:bg-clay-900/50">
-									<td class="px-4 py-3 font-mono text-xs text-parchment-200">{f.document_key}</td>
-									<td class="px-4 py-3">
-										<span
-											class="inline-block rounded-full px-2 py-0.5 text-xs {f.document_key_type ===
-											'uuid'
-												? 'bg-blue-900/50 text-blue-400'
-												: 'bg-amber-900/50 text-amber-400'}"
-										>
-											{f.document_key_type}
-										</span>
-									</td>
-									<td class="px-4 py-3 text-parchment-300">{f.source_dir}</td>
-									<td
-										class="px-4 py-3 text-parchment-300"
-										style="font-variant-numeric: tabular-nums">{formatSize(f.file_size)}</td
-									>
-									<td class="px-4 py-3 text-parchment-300">{formatTime(f.detected_at)}</td>
-									<td class="px-4 py-3">
-										<div class="flex gap-1">
-											<button
-												onclick={() => handleDelete(f.id)}
-												class="rounded-md px-2 py-1 text-xs font-medium text-terracotta-400 hover:bg-terracotta-900/50 hover:text-terracotta-300"
-											>
-												Delete
-											</button>
-											{#if f.document_key_type === 'uuid'}
-												<button
-													onclick={() => handleRestore(f.id)}
-													class="rounded-md px-2 py-1 text-xs font-medium text-emerald-400 hover:bg-emerald-900/50 hover:text-emerald-300"
-												>
-													Restore
-												</button>
-											{/if}
-											<button
-												onclick={() => handleMoveToInbox(f.id)}
-												class="rounded-md px-2 py-1 text-xs font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
-											>
-												Move to Inbox
-											</button>
-										</div>
-									</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
-				</div>
-			{/if}
+{#if authStore.authEnabled() && !authStore.isEditor()}
+	<p class="text-parchment-500">You do not have permission to view this page.</p>
+{:else}
+	<div class="space-y-4">
+		<div class="flex items-center gap-4 border-b border-clay-800">
+			<button
+				class="px-1 pb-2 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-950 {activeTab ===
+				'orphaned'
+					? 'border-b-2 border-gold-500 text-parchment-200'
+					: 'text-parchment-500 hover:text-parchment-200'}"
+				onclick={() => switchTab('orphaned')}
+			>
+				Orphaned
+			</button>
+			<button
+				class="px-1 pb-2 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-950 {activeTab ===
+				'errored'
+					? 'border-b-2 border-gold-500 text-parchment-200'
+					: 'text-parchment-500 hover:text-parchment-200'}"
+				onclick={() => switchTab('errored')}
+			>
+				Errored {#if erroredFiles.length > 0}({erroredFiles.length}){/if}
+			</button>
 		</div>
-	{:else if activeTab === 'errored'}
-		<div class="space-y-4">
-			<div class="flex items-center justify-between">
-				<h1 class="text-2xl font-semibold text-parchment-200">Errored Files</h1>
-				{#if erroredFiles.length > 0}
-					<button
-						onclick={handleErroredDeleteAll}
-						class="rounded-lg bg-terracotta-700 px-3 py-1.5 text-xs font-medium text-parchment-200 hover:bg-terracotta-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-950"
-					>
-						Delete All
-					</button>
+
+		{#if activeTab === 'orphaned'}
+			<div class="space-y-4">
+				<div class="flex items-center justify-between">
+					<h1 class="text-2xl font-semibold text-parchment-200">Orphaned Files</h1>
+					<div class="flex gap-2">
+						<button
+							onclick={scan}
+							disabled={scanning}
+							class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600 disabled:opacity-50"
+						>
+							{scanning ? 'Scanning…' : 'Scan Now'}
+						</button>
+					</div>
+				</div>
+
+				{#if files.length > 0}
+					<div class="flex gap-2">
+						<button
+							onclick={handleDeleteAll}
+							class="rounded-lg bg-terracotta-700 px-3 py-1.5 text-xs font-medium text-parchment-200 hover:bg-terracotta-600"
+						>
+							Delete All
+						</button>
+						<button
+							onclick={handleMoveAllToInbox}
+							class="rounded-lg border border-clay-800 px-3 py-1.5 text-xs font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
+						>
+							Move All to Inbox
+						</button>
+					</div>
+				{/if}
+
+				{#if loading}
+					<p class="text-parchment-500">Loading…</p>
+				{:else if files.length === 0}
+					<div class="rounded-lg border border-clay-800 p-8 text-center">
+						<p class="text-parchment-500">No orphaned files found.</p>
+						<p class="mt-1 text-xs text-parchment-600">
+							Run a scan to detect files in storage with no corresponding database entry.
+						</p>
+					</div>
+				{:else}
+					<div class="overflow-x-auto rounded-lg border border-clay-800">
+						<table class="w-full text-left text-sm">
+							<thead>
+								<tr class="border-b border-clay-800 bg-clay-900">
+									<th class="px-4 py-3 font-medium text-parchment-400">Key</th>
+									<th class="px-4 py-3 font-medium text-parchment-400">Type</th>
+									<th class="px-4 py-3 font-medium text-parchment-400">Source</th>
+									<th class="px-4 py-3 font-medium text-parchment-400">Size</th>
+									<th class="px-4 py-3 font-medium text-parchment-400">Detected</th>
+									<th class="px-4 py-3 font-medium text-parchment-400">Actions</th>
+								</tr>
+							</thead>
+							<tbody>
+								{#each files as f (f.id)}
+									<tr class="border-b border-clay-800 last:border-b-0 hover:bg-clay-900/50">
+										<td class="px-4 py-3 font-mono text-xs text-parchment-200">{f.document_key}</td>
+										<td class="px-4 py-3">
+											<span
+												class="inline-block rounded-full px-2 py-0.5 text-xs {f.document_key_type ===
+												'uuid'
+													? 'bg-blue-900/50 text-blue-400'
+													: 'bg-amber-900/50 text-amber-400'}"
+											>
+												{f.document_key_type}
+											</span>
+										</td>
+										<td class="px-4 py-3 text-parchment-300">{f.source_dir}</td>
+										<td
+											class="px-4 py-3 text-parchment-300"
+											style="font-variant-numeric: tabular-nums">{formatSize(f.file_size)}</td
+										>
+										<td class="px-4 py-3 text-parchment-300">{formatTime(f.detected_at)}</td>
+										<td class="px-4 py-3">
+											<div class="flex gap-1">
+												<button
+													onclick={() => handleDelete(f.id)}
+													class="rounded-md px-2 py-1 text-xs font-medium text-terracotta-400 hover:bg-terracotta-900/50 hover:text-terracotta-300"
+												>
+													Delete
+												</button>
+												{#if f.document_key_type === 'uuid'}
+													<button
+														onclick={() => handleRestore(f.id)}
+														class="rounded-md px-2 py-1 text-xs font-medium text-emerald-400 hover:bg-emerald-900/50 hover:text-emerald-300"
+													>
+														Restore
+													</button>
+												{/if}
+												<button
+													onclick={() => handleMoveToInbox(f.id)}
+													class="rounded-md px-2 py-1 text-xs font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
+												>
+													Move to Inbox
+												</button>
+											</div>
+										</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
 				{/if}
 			</div>
+		{:else if activeTab === 'errored'}
+			<div class="space-y-4">
+				<div class="flex items-center justify-between">
+					<h1 class="text-2xl font-semibold text-parchment-200">Errored Files</h1>
+					{#if erroredFiles.length > 0}
+						<button
+							onclick={handleErroredDeleteAll}
+							class="rounded-lg bg-terracotta-700 px-3 py-1.5 text-xs font-medium text-parchment-200 hover:bg-terracotta-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-950"
+						>
+							Delete All
+						</button>
+					{/if}
+				</div>
 
-			{#if erroredLoading}
-				<p class="text-parchment-500">Loading…</p>
-			{:else if erroredFiles.length === 0}
-				<div class="rounded-lg border border-clay-800 p-8 text-center">
-					<p class="text-parchment-500">No errored files found.</p>
-				</div>
-			{:else}
-				<div class="overflow-x-auto rounded-lg border border-clay-800">
-					<table class="w-full text-left text-sm">
-						<thead>
-							<tr class="border-b border-clay-800 bg-clay-900">
-								<th class="px-4 py-3 font-medium text-parchment-400">Name</th>
-								<th class="px-4 py-3 font-medium text-parchment-400">Subdir</th>
-								<th class="px-4 py-3 font-medium text-parchment-400">Size</th>
-								<th class="px-4 py-3 font-medium text-parchment-400">Modified</th>
-								<th class="px-4 py-3 font-medium text-parchment-400">Actions</th>
-							</tr>
-						</thead>
-						<tbody>
-							{#each erroredFiles as f (f.name + f.subdir)}
-								<tr class="border-b border-clay-800 last:border-b-0 hover:bg-clay-900/50">
-									<td
-										class="max-w-xs truncate px-4 py-3 font-mono text-xs text-parchment-200"
-										title={f.name}>{f.name}</td
-									>
-									<td class="px-4 py-3">
-										<span
-											class="inline-block rounded-full px-2 py-0.5 text-xs {f.subdir ===
-											'duplicated'
-												? 'bg-amber-900/50 text-amber-400'
-												: 'bg-terracotta-900/50 text-terracotta-400'}"
-										>
-											{f.subdir}
-										</span>
-									</td>
-									<td
-										class="px-4 py-3 text-parchment-300"
-										style="font-variant-numeric: tabular-nums">{formatSize(f.size)}</td
-									>
-									<td class="px-4 py-3 text-parchment-300">{formatTime(f.modified_at)}</td>
-									<td class="px-4 py-3">
-										<div class="flex gap-1">
-											<button
-												onclick={() => api.errored.download(f.subdir, f.name)}
-												class="rounded-md px-2 py-1 text-xs font-medium text-blue-400 hover:bg-blue-900/50 hover:text-blue-300 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-950"
-											>
-												Download
-											</button>
-											<button
-												onclick={() => handleErroredDelete(f.subdir, f.name)}
-												class="rounded-md px-2 py-1 text-xs font-medium text-terracotta-400 hover:bg-terracotta-900/50 hover:text-terracotta-300 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-950"
-											>
-												Delete
-											</button>
-										</div>
-									</td>
+				{#if erroredLoading}
+					<p class="text-parchment-500">Loading…</p>
+				{:else if erroredFiles.length === 0}
+					<div class="rounded-lg border border-clay-800 p-8 text-center">
+						<p class="text-parchment-500">No errored files found.</p>
+					</div>
+				{:else}
+					<div class="overflow-x-auto rounded-lg border border-clay-800">
+						<table class="w-full text-left text-sm">
+							<thead>
+								<tr class="border-b border-clay-800 bg-clay-900">
+									<th class="px-4 py-3 font-medium text-parchment-400">Name</th>
+									<th class="px-4 py-3 font-medium text-parchment-400">Subdir</th>
+									<th class="px-4 py-3 font-medium text-parchment-400">Size</th>
+									<th class="px-4 py-3 font-medium text-parchment-400">Modified</th>
+									<th class="px-4 py-3 font-medium text-parchment-400">Actions</th>
 								</tr>
-							{/each}
-						</tbody>
-					</table>
-				</div>
-			{/if}
-		</div>
-	{/if}
-</div>
+							</thead>
+							<tbody>
+								{#each erroredFiles as f (f.name + f.subdir)}
+									<tr class="border-b border-clay-800 last:border-b-0 hover:bg-clay-900/50">
+										<td
+											class="max-w-xs truncate px-4 py-3 font-mono text-xs text-parchment-200"
+											title={f.name}>{f.name}</td
+										>
+										<td class="px-4 py-3">
+											<span
+												class="inline-block rounded-full px-2 py-0.5 text-xs {f.subdir ===
+												'duplicated'
+													? 'bg-amber-900/50 text-amber-400'
+													: 'bg-terracotta-900/50 text-terracotta-400'}"
+											>
+												{f.subdir}
+											</span>
+										</td>
+										<td
+											class="px-4 py-3 text-parchment-300"
+											style="font-variant-numeric: tabular-nums">{formatSize(f.size)}</td
+										>
+										<td class="px-4 py-3 text-parchment-300">{formatTime(f.modified_at)}</td>
+										<td class="px-4 py-3">
+											<div class="flex gap-1">
+												<button
+													onclick={() => api.errored.download(f.subdir, f.name)}
+													class="rounded-md px-2 py-1 text-xs font-medium text-blue-400 hover:bg-blue-900/50 hover:text-blue-300 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-950"
+												>
+													Download
+												</button>
+												<button
+													onclick={() => handleErroredDelete(f.subdir, f.name)}
+													class="rounded-md px-2 py-1 text-xs font-medium text-terracotta-400 hover:bg-terracotta-900/50 hover:text-terracotta-300 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-950"
+												>
+													Delete
+												</button>
+											</div>
+										</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
+				{/if}
+			</div>
+		{/if}
+	</div>
+{/if}

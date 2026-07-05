@@ -4,6 +4,7 @@
 	import { api } from '$lib/api';
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
+	import * as authStore from '$lib/stores/authStore.js';
 
 	let { params } = $props();
 
@@ -161,51 +162,53 @@
 			</div>
 
 			<div class="w-80 shrink-0 space-y-4">
-				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
-					<p class="text-xs font-medium tracking-wider text-parchment-500 uppercase">
-						Title / Type / Language
-					</p>
-					<div class="mt-2 space-y-2">
-						<div>
-							<label class="text-xs text-parchment-500" for="edit-title">Title</label>
-							<input
-								id="edit-title"
-								type="text"
-								bind:value={editTitle}
-								class="mt-0.5 w-full rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus:outline-none"
-							/>
-						</div>
-						<div>
-							<label class="text-xs text-parchment-500" for="edit-doctype">Type</label>
-							<select
-								id="edit-doctype"
-								bind:value={editDocumentTypeId}
-								class="mt-0.5 w-full rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-sm text-parchment-200 focus:border-gold-500 focus:ring-0 focus:outline-none"
+				{#if !authStore.authEnabled() || authStore.isEditor()}
+					<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
+						<p class="text-xs font-medium tracking-wider text-parchment-500 uppercase">
+							Title / Type / Language
+						</p>
+						<div class="mt-2 space-y-2">
+							<div>
+								<label class="text-xs text-parchment-500" for="edit-title">Title</label>
+								<input
+									id="edit-title"
+									type="text"
+									bind:value={editTitle}
+									class="mt-0.5 w-full rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus:outline-none"
+								/>
+							</div>
+							<div>
+								<label class="text-xs text-parchment-500" for="edit-doctype">Type</label>
+								<select
+									id="edit-doctype"
+									bind:value={editDocumentTypeId}
+									class="mt-0.5 w-full rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-sm text-parchment-200 focus:border-gold-500 focus:ring-0 focus:outline-none"
+								>
+									{#each documentTypes as dt}
+										<option value={dt.id}>{dt.name}</option>
+									{/each}
+								</select>
+							</div>
+							<div>
+								<label class="text-xs text-parchment-500" for="edit-lang">Language</label>
+								<input
+									id="edit-lang"
+									type="text"
+									bind:value={editLanguage}
+									placeholder="und"
+									class="mt-0.5 w-full rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus:outline-none"
+								/>
+							</div>
+							<button
+								onclick={saveMetadata}
+								disabled={savingMeta}
+								class="w-full rounded-md bg-gold-600 px-3 py-1.5 text-xs font-medium text-clay-950 hover:bg-gold-500 disabled:opacity-50"
 							>
-								{#each documentTypes as dt}
-									<option value={dt.id}>{dt.name}</option>
-								{/each}
-							</select>
+								{savingMeta ? 'Saving…' : 'Save'}
+							</button>
 						</div>
-						<div>
-							<label class="text-xs text-parchment-500" for="edit-lang">Language</label>
-							<input
-								id="edit-lang"
-								type="text"
-								bind:value={editLanguage}
-								placeholder="und"
-								class="mt-0.5 w-full rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus:outline-none"
-							/>
-						</div>
-						<button
-							onclick={saveMetadata}
-							disabled={savingMeta}
-							class="w-full rounded-md bg-gold-600 px-3 py-1.5 text-xs font-medium text-clay-950 hover:bg-gold-500 disabled:opacity-50"
-						>
-							{savingMeta ? 'Saving…' : 'Save'}
-						</button>
 					</div>
-				</div>
+				{/if}
 
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-xs font-medium tracking-wider text-parchment-500 uppercase">Tags</p>
@@ -216,39 +219,43 @@
 									class="inline-flex items-center gap-1 rounded-full bg-lapis-700 px-2 py-0.5 text-xs text-parchment-200"
 								>
 									{tag.name}
-									<button
-										onclick={() => removeTag(tag.id)}
-										class="text-parchment-400 hover:text-terracotta-400">&times;</button
-									>
+									{#if !authStore.authEnabled() || authStore.isEditor()}
+										<button
+											onclick={() => removeTag(tag.id)}
+											class="text-parchment-400 hover:text-terracotta-400">&times;</button
+										>
+									{/if}
 								</span>
 							{/each}
 						</div>
 					{:else}
 						<p class="mt-1 text-parchment-500">No tags</p>
 					{/if}
-					<div class="relative mt-2">
-						<input
-							type="text"
-							bind:value={tagQuery}
-							oninput={() => searchTags(tagQuery)}
-							placeholder="Search tags…"
-							class="w-full rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus:outline-none"
-						/>
-						{#if tagResults.length > 0}
-							<div
-								class="absolute top-full right-0 left-0 z-10 mt-1 max-h-40 overflow-y-auto rounded-md border border-clay-700 bg-clay-950 shadow-lg"
-							>
-								{#each tagResults as tag, i}
-									<button
-										onclick={() => selectTag(tag)}
-										class="w-full px-2 py-1 text-left text-sm text-parchment-200 hover:bg-clay-800"
-									>
-										{tag.name}
-									</button>
-								{/each}
-							</div>
-						{/if}
-					</div>
+					{#if !authStore.authEnabled() || authStore.isEditor()}
+						<div class="relative mt-2">
+							<input
+								type="text"
+								bind:value={tagQuery}
+								oninput={() => searchTags(tagQuery)}
+								placeholder="Search tags…"
+								class="w-full rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus:outline-none"
+							/>
+							{#if tagResults.length > 0}
+								<div
+									class="absolute top-full right-0 left-0 z-10 mt-1 max-h-40 overflow-y-auto rounded-md border border-clay-700 bg-clay-950 shadow-lg"
+								>
+									{#each tagResults as tag, i}
+										<button
+											onclick={() => selectTag(tag)}
+											class="w-full px-2 py-1 text-left text-sm text-parchment-200 hover:bg-clay-800"
+										>
+											{tag.name}
+										</button>
+									{/each}
+								</div>
+							{/if}
+						</div>
+					{/if}
 				</div>
 
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
@@ -268,59 +275,63 @@
 											<p class="text-xs text-parchment-500">{person.person_type_name}</p>
 										{/if}
 									</div>
-									<button
-										onclick={() => removePerson(person.id, person.person_type_id)}
-										class="shrink-0 text-parchment-500 hover:text-terracotta-400">&times;</button
-									>
+									{#if !authStore.authEnabled() || authStore.isEditor()}
+										<button
+											onclick={() => removePerson(person.id, person.person_type_id)}
+											class="shrink-0 text-parchment-500 hover:text-terracotta-400">&times;</button
+										>
+									{/if}
 								</div>
 							{/each}
 						</div>
 					{:else}
 						<p class="mt-1 text-parchment-500">No people</p>
 					{/if}
-					<div class="relative mt-2">
-						<input
-							type="text"
-							bind:value={peopleQuery}
-							oninput={() => searchPeople(peopleQuery)}
-							placeholder="Search people…"
-							class="w-full rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus:outline-none"
-						/>
-						{#if peopleResults.length > 0}
-							<div
-								class="absolute top-full right-0 left-0 z-10 mt-1 max-h-40 overflow-y-auto rounded-md border border-clay-700 bg-clay-950 shadow-lg"
-							>
-								{#each peopleResults as person, i}
-									<button
-										onclick={() => selectPerson(person)}
-										class="w-full px-2 py-1 text-left text-sm text-parchment-200 hover:bg-clay-800"
-									>
-										{person.name}
-									</button>
-								{/each}
+					{#if !authStore.authEnabled() || authStore.isEditor()}
+						<div class="relative mt-2">
+							<input
+								type="text"
+								bind:value={peopleQuery}
+								oninput={() => searchPeople(peopleQuery)}
+								placeholder="Search people…"
+								class="w-full rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus:outline-none"
+							/>
+							{#if peopleResults.length > 0}
+								<div
+									class="absolute top-full right-0 left-0 z-10 mt-1 max-h-40 overflow-y-auto rounded-md border border-clay-700 bg-clay-950 shadow-lg"
+								>
+									{#each peopleResults as person, i}
+										<button
+											onclick={() => selectPerson(person)}
+											class="w-full px-2 py-1 text-left text-sm text-parchment-200 hover:bg-clay-800"
+										>
+											{person.name}
+										</button>
+									{/each}
+								</div>
+							{/if}
+							<div class="mt-2 flex gap-2">
+								<select
+									bind:value={selectedPeopleTypeId}
+									class="flex-1 rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-xs text-parchment-200 focus:border-gold-500 focus:ring-0 focus:outline-none"
+								>
+									{#each peopleTypes as pt}
+										<option value={pt.id}>{pt.name}</option>
+									{/each}
+								</select>
+								<button
+									onclick={() => {
+										const first = peopleResults[0];
+										if (first) selectPerson(first);
+									}}
+									disabled={peopleResults.length === 0}
+									class="shrink-0 rounded-md bg-gold-600 px-2 py-1 text-xs font-medium text-clay-950 hover:bg-gold-500 disabled:opacity-50"
+								>
+									Add
+								</button>
 							</div>
-						{/if}
-						<div class="mt-2 flex gap-2">
-							<select
-								bind:value={selectedPeopleTypeId}
-								class="flex-1 rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-xs text-parchment-200 focus:border-gold-500 focus:ring-0 focus:outline-none"
-							>
-								{#each peopleTypes as pt}
-									<option value={pt.id}>{pt.name}</option>
-								{/each}
-							</select>
-							<button
-								onclick={() => {
-									const first = peopleResults[0];
-									if (first) selectPerson(first);
-								}}
-								disabled={peopleResults.length === 0}
-								class="shrink-0 rounded-md bg-gold-600 px-2 py-1 text-xs font-medium text-clay-950 hover:bg-gold-500 disabled:opacity-50"
-							>
-								Add
-							</button>
 						</div>
-					</div>
+					{/if}
 				</div>
 
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
@@ -378,13 +389,15 @@
 					Download PDF
 				</a>
 
-				<button
-					onclick={handleDelete}
-					disabled={deleting}
-					class="w-full rounded-lg border border-terracotta-600 bg-terracotta-800 px-4 py-2 text-sm font-medium text-parchment-200 hover:bg-terracotta-700 disabled:opacity-50"
-				>
-					{deleting ? 'Deleting…' : 'Delete Document'}
-				</button>
+				{#if !authStore.authEnabled() || authStore.isEditor()}
+					<button
+						onclick={handleDelete}
+						disabled={deleting}
+						class="w-full rounded-lg border border-terracotta-600 bg-terracotta-800 px-4 py-2 text-sm font-medium text-parchment-200 hover:bg-terracotta-700 disabled:opacity-50"
+					>
+						{deleting ? 'Deleting…' : 'Delete Document'}
+					</button>
+				{/if}
 			</div>
 		</div>
 	{/if}

@@ -6,6 +6,7 @@
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
 	import { api } from '$lib/api';
+	import * as authStore from '$lib/stores/authStore.js';
 
 	let showModal = $state(false);
 	let editingTag = $state(null);
@@ -27,6 +28,7 @@
 			sortable: false,
 			cellClass: 'whitespace-nowrap',
 			cell: (_v, row) => {
+				if (!authStore.authEnabled() || !authStore.isEditor()) return '';
 				const safeName = escapeHtml(row.name);
 				return `${actionButton(EDIT_ICON, 'Edit', 'text-parchment-400 hover:text-gold-500', { 'data-edit-tag': row.id, 'data-tag-name': safeName })}
 ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-500', { 'data-delete-tag': row.id, 'data-tag-name': safeName })}`;
@@ -107,12 +109,14 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 <div class="space-y-4" onclick={handlePageClick} onkeydown={() => {}} role="presentation">
 	<div class="flex items-center justify-between">
 		<h1 class="text-2xl font-semibold text-parchment-200">Tags</h1>
-		<button
-			onclick={openNew}
-			class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600"
-		>
-			New Tag
-		</button>
+		{#if !authStore.authEnabled() || authStore.isEditor()}
+			<button
+				onclick={openNew}
+				class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600"
+			>
+				New Tag
+			</button>
+		{/if}
 	</div>
 
 	<div class="flex items-center gap-2">

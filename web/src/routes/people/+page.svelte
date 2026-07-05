@@ -5,6 +5,7 @@
 	import Modal from '$lib/components/Modal.svelte';
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
+	import * as authStore from '$lib/stores/authStore.js';
 
 	let activeTab = $state('people');
 
@@ -166,12 +167,14 @@
 		<div class="space-y-4">
 			<div class="flex items-center justify-between">
 				<h2 class="text-xl font-semibold text-parchment-200">People</h2>
-				<button
-					onclick={openNewPerson}
-					class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600"
-				>
-					New Person
-				</button>
+				{#if !authStore.authEnabled() || authStore.isEditor()}
+					<button
+						onclick={openNewPerson}
+						class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600"
+					>
+						New Person
+					</button>
+				{/if}
 			</div>
 
 			<div class="overflow-x-auto rounded-lg border border-clay-800">
@@ -194,22 +197,24 @@
 									<td class="px-4 py-3 text-parchment-200">{p.name}</td>
 									<td class="px-4 py-3 text-parchment-400">{p.name_native || ''}</td>
 									<td class="px-4 py-3 whitespace-nowrap">
-										<div class="flex gap-2">
-											<button
-												onclick={() => openEditPerson(p)}
-												title="Edit"
-												class="{BTN_BASE} text-parchment-400 hover:text-gold-500"
-											>
-												{@html EDIT_ICON}
-											</button>
-											<button
-												onclick={() => handleDeletePerson(p)}
-												title="Delete"
-												class="{BTN_BASE} text-parchment-400 hover:text-terracotta-500"
-											>
-												{@html DELETE_ICON}
-											</button>
-										</div>
+										{#if !authStore.authEnabled() || authStore.isEditor()}
+											<div class="flex gap-2">
+												<button
+													onclick={() => openEditPerson(p)}
+													title="Edit"
+													class="{BTN_BASE} text-parchment-400 hover:text-gold-500"
+												>
+													{@html EDIT_ICON}
+												</button>
+												<button
+													onclick={() => handleDeletePerson(p)}
+													title="Delete"
+													class="{BTN_BASE} text-parchment-400 hover:text-terracotta-500"
+												>
+													{@html DELETE_ICON}
+												</button>
+											</div>
+										{/if}
 									</td>
 								</tr>
 							{/each}
@@ -282,12 +287,14 @@
 		<div class="space-y-4">
 			<div class="flex items-center justify-between">
 				<h2 class="text-xl font-semibold text-parchment-200">Person Types</h2>
-				<button
-					onclick={openNewPersonType}
-					class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600"
-				>
-					New Person Type
-				</button>
+				{#if !authStore.authEnabled() || authStore.isEditor()}
+					<button
+						onclick={openNewPersonType}
+						class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600"
+					>
+						New Person Type
+					</button>
+				{/if}
 			</div>
 
 			{#if personTypeError}
@@ -314,22 +321,24 @@
 									<td class="px-4 py-3 text-parchment-200">{pt.name}</td>
 									<td class="px-4 py-3 text-parchment-400">{pt.description || ''}</td>
 									<td class="px-4 py-3 whitespace-nowrap">
-										<div class="flex gap-2">
-											<button
-												onclick={() => openEditPersonType(pt)}
-												title="Edit"
-												class="{BTN_BASE} text-parchment-400 hover:text-gold-500"
-											>
-												{@html EDIT_ICON}
-											</button>
-											<button
-												onclick={() => handleDeletePersonType(pt)}
-												title="Delete"
-												class="{BTN_BASE} text-parchment-400 hover:text-terracotta-500"
-											>
-												{@html DELETE_ICON}
-											</button>
-										</div>
+										{#if !authStore.authEnabled() || authStore.isEditor()}
+											<div class="flex gap-2">
+												<button
+													onclick={() => openEditPersonType(pt)}
+													title="Edit"
+													class="{BTN_BASE} text-parchment-400 hover:text-gold-500"
+												>
+													{@html EDIT_ICON}
+												</button>
+												<button
+													onclick={() => handleDeletePersonType(pt)}
+													title="Delete"
+													class="{BTN_BASE} text-parchment-400 hover:text-terracotta-500"
+												>
+													{@html DELETE_ICON}
+												</button>
+											</div>
+										{/if}
 									</td>
 								</tr>
 							{/each}

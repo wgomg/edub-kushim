@@ -1,6 +1,6 @@
 <script>
 	import { onMount } from 'svelte';
-	import { api } from '$lib/api.js';
+	import { api } from '$lib/api';
 	import { hintsForEngine } from '$lib/tools.js';
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
 	import DataTable from '$lib/components/DataTable.svelte';
@@ -8,6 +8,7 @@
 	import { EDIT_ICON, DELETE_ICON, actionButton } from '$lib/icons.js';
 	import { escapeHtml } from '$lib/utils/html.js';
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
+	import * as authStore from '$lib/stores/authStore.js';
 
 	let cfg = $state(null);
 	let saving = $state(false);
@@ -23,6 +24,7 @@
 	let editingUser = $state(null);
 	let formUsername = $state('');
 	let formPassword = $state('');
+	let formRole = $state('viewer');
 	let userError = $state('');
 	let refreshKey = $state(0);
 
@@ -34,6 +36,15 @@
 			label: 'Username',
 			sortable: true,
 			width: '100%'
+		},
+		{
+			key: 'role',
+			label: 'Role',
+			sortable: true,
+			cell: (_v, row) => {
+				const cls = authStore.roleBadgeClass(row.role);
+				return `<span class="inline-block rounded-full px-2 py-0.5 text-xs font-medium ${cls}">${escapeHtml(row.role)}</span>`;
+			}
 		},
 		{
 			key: 'created_at',
@@ -52,7 +63,8 @@
 			cellClass: 'whitespace-nowrap',
 			cell: (_v, row) => {
 				const safeName = escapeHtml(row.username);
-				return `${actionButton(EDIT_ICON, 'Edit', 'text-parchment-400 hover:text-gold-500', { 'data-edit-user': row.id, 'data-user-name': safeName })}
+				const safeRole = escapeHtml(row.role || 'viewer');
+				return `${actionButton(EDIT_ICON, 'Edit', 'text-parchment-400 hover:text-gold-500', { 'data-edit-user': row.id, 'data-user-name': safeName, 'data-user-role': safeRole })}
 ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-500', { 'data-delete-user': row.id, 'data-user-name': safeName })}`;
 			}
 		}
@@ -201,16 +213,36 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 		editingUser = null;
 		formUsername = '';
 		formPassword = '';
+		formRole = 'viewer';
 		userError = '';
 		showUserModal = true;
 	}
 
-	function openEditUser(userId, userName) {
+	function openEditUser(userId, userName, userRole) {
 		editingUser = { id: userId, username: userName };
 		formUsername = userName;
 		formPassword = '';
+		formRole = userRole || 'viewer';
 		userError = '';
 		showUserModal = true;
+	}
+
+	function handleUserPageClick(e) {
+		const editBtn = e.target.closest('[data-edit-user]');
+		if (editBtn) {
+			const id = parseInt(editBtn.getAttribute('data-edit-user'));
+			const name = editBtn.getAttribute('data-user-name');
+			const role = editBtn.getAttribute('data-user-role') || 'viewer';
+			openEditUser(id, name, role);
+			return;
+		}
+		const deleteBtn = e.target.closest('[data-delete-user]');
+		if (deleteBtn) {
+			const id = parseInt(deleteBtn.getAttribute('data-delete-user'));
+			const name = deleteBtn.getAttribute('data-user-name');
+			handleDeleteUser(id, name);
+			return;
+		}
 	}
 
 	async function saveUser() {
@@ -224,7 +256,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 
 		let result;
 		if (editingUser) {
-			const body = { username };
+			const body = { username, role: formRole };
 			if (password) body.password = password;
 			result = await api.users.update(editingUser.id, body);
 		} else {
@@ -232,7 +264,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 				userError = 'Password is required';
 				return;
 			}
-			result = await api.users.create({ username, password });
+			result = await api.users.create({ username, password, role: formRole });
 		}
 
 		if (result.ok) {
@@ -255,26 +287,11 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 		await api.users.delete(userId);
 		refreshKey++;
 	}
-
-	function handleUserPageClick(e) {
-		const editBtn = e.target.closest('[data-edit-user]');
-		if (editBtn) {
-			const id = parseInt(editBtn.getAttribute('data-edit-user'));
-			const name = editBtn.getAttribute('data-user-name');
-			openEditUser(id, name);
-			return;
-		}
-		const deleteBtn = e.target.closest('[data-delete-user]');
-		if (deleteBtn) {
-			const id = parseInt(deleteBtn.getAttribute('data-delete-user'));
-			const name = deleteBtn.getAttribute('data-user-name');
-			handleDeleteUser(id, name);
-			return;
-		}
-	}
 </script>
 
-{#if !cfg}
+{#if authStore.authEnabled() && !authStore.isAdmin()}
+	<p class="text-parchment-500">You do not have permission to view this page.</p>
+{:else if !cfg}
 	<div class="text-parchment-500">Loading settings…</div>
 {:else}
 	<div class="mx-auto max-w-3xl space-y-6">
@@ -700,15 +717,16 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						</div>
 					</div>
 					<div>
-						<label for="reclaim-max-retries" class="mb-1 block text-sm font-medium text-parchment-200"
-							>Max retries per task</label
+						<label
+							for="reclaim-max-retries"
+							class="mb-1 block text-sm font-medium text-parchment-200">Max retries per task</label
 						>
 						<input
 							id="reclaim-max-retries"
 							type="number"
 							min="1"
 							max="10"
-							class="w-24 rounded-lg border border-clay-700 bg-clay-950 px-3 py-2 text-parchment-200 focus:border-gold-500 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gold-500"
+							class="w-24 rounded-lg border border-clay-700 bg-clay-950 px-3 py-2 text-parchment-200 focus:border-gold-500 focus-visible:ring-1 focus-visible:ring-gold-500 focus-visible:outline-none"
 							bind:value={cfg.consumer.reclaim.max_retries}
 						/>
 					</div>
@@ -1239,6 +1257,20 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 								placeholder="Username"
 								class="w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus:outline-none"
 							/>
+						</div>
+						<div>
+							<label for="user-role" class="mb-1 block text-xs font-medium text-parchment-400"
+								>Role</label
+							>
+							<select
+								id="user-role"
+								bind:value={formRole}
+								class="w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 focus:border-gold-500 focus:ring-0 focus:outline-none"
+							>
+								<option value="viewer">Viewer</option>
+								<option value="editor">Editor</option>
+								<option value="admin">Admin</option>
+							</select>
 						</div>
 						<div>
 							<label for="user-password" class="mb-1 block text-xs font-medium text-parchment-400"

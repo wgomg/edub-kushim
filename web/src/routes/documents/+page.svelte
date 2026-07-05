@@ -11,6 +11,7 @@
 	import { DOWNLOAD_ICON } from '$lib/icons.js';
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
+	import * as authStore from '$lib/stores/authStore.js';
 
 	let selectedDocs = $state([]);
 
@@ -310,105 +311,109 @@
 			>
 				Download selected ({selectedDocs.length})
 			</button>
-			<button
-				onclick={handleBatchDelete}
-				class="shrink-0 rounded-lg bg-terracotta-700 px-3 py-2 text-sm font-medium text-parchment-200 hover:bg-terracotta-600"
-			>
-				Delete selected ({selectedDocs.length})
-			</button>
-			<div class="relative shrink-0">
+			{#if !authStore.authEnabled() || authStore.isEditor()}
 				<button
-					onclick={() => (showTagPicker = !showTagPicker)}
-					class="rounded-lg border border-clay-800 px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
+					onclick={handleBatchDelete}
+					class="shrink-0 rounded-lg bg-terracotta-700 px-3 py-2 text-sm font-medium text-parchment-200 hover:bg-terracotta-600"
 				>
-					{batchTagIds.length > 0 ? `Tags (${batchTagIds.length})` : 'Assign tags'}
+					Delete selected ({selectedDocs.length})
 				</button>
-				{#if showTagPicker}
-					<div
-						class="absolute top-full left-0 z-30 mt-1 w-72 rounded-lg border border-clay-800 bg-clay-950 shadow-xl"
+			{/if}
+			{#if !authStore.authEnabled() || authStore.isEditor()}
+				<div class="relative shrink-0">
+					<button
+						onclick={() => (showTagPicker = !showTagPicker)}
+						class="rounded-lg border border-clay-800 px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
 					>
-						<div class="p-3">
-							<input
-								type="text"
-								placeholder="Search tags…"
-								oninput={onTagSearchInput}
-								class="mb-2 w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus:outline-none"
-							/>
-							<div class="mb-2 max-h-40 overflow-y-auto">
-								{#each tagOptions as tag (tag.id)}
-									<label
-										class="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 hover:bg-clay-800"
-									>
-										<input
-											type="checkbox"
-											checked={batchTagIds.includes(tag.id)}
-											onchange={() => {
-												if (batchTagIds.includes(tag.id)) {
-													batchTagIds = batchTagIds.filter((t) => t !== tag.id);
-												} else {
-													batchTagIds = [...batchTagIds, tag.id];
-												}
-											}}
-											class="accent-gold-500"
-										/>
-										<span class="text-sm text-parchment-200">{tag.name}</span>
-									</label>
-								{/each}
-								{#if tagOptions.length === 0 && tagSearchQuery}
-									<p class="px-2 py-3 text-center text-xs text-parchment-500">No tags found</p>
-								{/if}
-							</div>
-							{#if batchTagIds.length > 0}
-								<div class="mb-2 flex flex-wrap gap-1">
-									{#each batchTagIds as tid}
-										{@const tag = tagOptions.find((t) => t.id === tid)}
-										{#if tag}
-											<span
-												class="inline-flex items-center gap-1 rounded-full bg-clay-800 px-2 py-0.5 text-xs text-parchment-300"
-											>
-												{tag.name}
-												<button
-													onclick={() => (batchTagIds = batchTagIds.filter((t) => t !== tid))}
-													class="text-parchment-500 hover:text-parchment-200">&times;</button
-												>
-											</span>
-										{/if}
+						{batchTagIds.length > 0 ? `Tags (${batchTagIds.length})` : 'Assign tags'}
+					</button>
+					{#if showTagPicker}
+						<div
+							class="absolute top-full left-0 z-30 mt-1 w-72 rounded-lg border border-clay-800 bg-clay-950 shadow-xl"
+						>
+							<div class="p-3">
+								<input
+									type="text"
+									placeholder="Search tags…"
+									oninput={onTagSearchInput}
+									class="mb-2 w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus:outline-none"
+								/>
+								<div class="mb-2 max-h-40 overflow-y-auto">
+									{#each tagOptions as tag (tag.id)}
+										<label
+											class="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 hover:bg-clay-800"
+										>
+											<input
+												type="checkbox"
+												checked={batchTagIds.includes(tag.id)}
+												onchange={() => {
+													if (batchTagIds.includes(tag.id)) {
+														batchTagIds = batchTagIds.filter((t) => t !== tag.id);
+													} else {
+														batchTagIds = [...batchTagIds, tag.id];
+													}
+												}}
+												class="accent-gold-500"
+											/>
+											<span class="text-sm text-parchment-200">{tag.name}</span>
+										</label>
 									{/each}
+									{#if tagOptions.length === 0 && tagSearchQuery}
+										<p class="px-2 py-3 text-center text-xs text-parchment-500">No tags found</p>
+									{/if}
 								</div>
-							{/if}
-							<div class="mb-3 flex gap-2">
+								{#if batchTagIds.length > 0}
+									<div class="mb-2 flex flex-wrap gap-1">
+										{#each batchTagIds as tid}
+											{@const tag = tagOptions.find((t) => t.id === tid)}
+											{#if tag}
+												<span
+													class="inline-flex items-center gap-1 rounded-full bg-clay-800 px-2 py-0.5 text-xs text-parchment-300"
+												>
+													{tag.name}
+													<button
+														onclick={() => (batchTagIds = batchTagIds.filter((t) => t !== tid))}
+														class="text-parchment-500 hover:text-parchment-200">&times;</button
+													>
+												</span>
+											{/if}
+										{/each}
+									</div>
+								{/if}
+								<div class="mb-3 flex gap-2">
+									<button
+										onclick={() => (batchTagMode = 'add')}
+										class={`flex-1 rounded-md px-2 py-1 text-xs font-medium ${
+											batchTagMode === 'add'
+												? 'bg-gold-600 text-clay-950'
+												: 'border border-clay-800 text-parchment-400 hover:bg-clay-800'
+										}`}
+									>
+										Add
+									</button>
+									<button
+										onclick={() => (batchTagMode = 'replace')}
+										class={`flex-1 rounded-md px-2 py-1 text-xs font-medium ${
+											batchTagMode === 'replace'
+												? 'bg-gold-600 text-clay-950'
+												: 'border border-clay-800 text-parchment-400 hover:bg-clay-800'
+										}`}
+									>
+										Replace
+									</button>
+								</div>
 								<button
-									onclick={() => (batchTagMode = 'add')}
-									class={`flex-1 rounded-md px-2 py-1 text-xs font-medium ${
-										batchTagMode === 'add'
-											? 'bg-gold-600 text-clay-950'
-											: 'border border-clay-800 text-parchment-400 hover:bg-clay-800'
-									}`}
+									onclick={handleBatchAssign}
+									disabled={batchTagIds.length === 0}
+									class="w-full rounded-md bg-gold-600 px-3 py-1.5 text-xs font-medium text-clay-950 hover:bg-gold-500 disabled:opacity-50"
 								>
-									Add
-								</button>
-								<button
-									onclick={() => (batchTagMode = 'replace')}
-									class={`flex-1 rounded-md px-2 py-1 text-xs font-medium ${
-										batchTagMode === 'replace'
-											? 'bg-gold-600 text-clay-950'
-											: 'border border-clay-800 text-parchment-400 hover:bg-clay-800'
-									}`}
-								>
-									Replace
+									Assign
 								</button>
 							</div>
-							<button
-								onclick={handleBatchAssign}
-								disabled={batchTagIds.length === 0}
-								class="w-full rounded-md bg-gold-600 px-3 py-1.5 text-xs font-medium text-clay-950 hover:bg-gold-500 disabled:opacity-50"
-							>
-								Assign
-							</button>
 						</div>
-					</div>
-				{/if}
-			</div>
+					{/if}
+				</div>
+			{/if}
 		{/if}
 		<div class="relative flex-1">
 			<SearchBar
@@ -430,13 +435,15 @@
 		>
 			{showFilters ? 'Hide Filters' : 'Filters'}
 		</button>
-		<button
-			onclick={openSaveInput}
-			disabled={saving}
-			class="rounded-lg border border-clay-800 px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 disabled:opacity-50"
-		>
-			{saving ? 'Saving…' : 'Save'}
-		</button>
+		{#if !authStore.authEnabled() || authStore.isEditor()}
+			<button
+				onclick={openSaveInput}
+				disabled={saving}
+				class="rounded-lg border border-clay-800 px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 disabled:opacity-50"
+			>
+				{saving ? 'Saving…' : 'Save'}
+			</button>
+		{/if}
 		<div class="relative">
 			<button
 				onclick={() => (showSaved = !showSaved)}
@@ -460,11 +467,13 @@
 									>
 										{s.name}
 									</button>
-									<button
-										onclick={() => handleDelete(s.id)}
-										class="shrink-0 rounded p-0.5 text-parchment-500 opacity-0 group-hover:opacity-100 hover:text-red-400"
-										title="Delete">&times;</button
-									>
+									{#if !authStore.authEnabled() || authStore.isEditor()}
+										<button
+											onclick={() => handleDelete(s.id)}
+											class="shrink-0 rounded p-0.5 text-parchment-500 opacity-0 group-hover:opacity-100 hover:text-red-400"
+											title="Delete">&times;</button
+										>
+									{/if}
 								</div>
 							{/each}
 						{/if}

@@ -44,7 +44,11 @@
 			missingTools = status.missing_tools ?? [];
 		}
 		authEnabled = cfg?.server?.auth_enabled ?? true;
+		authStore.setAuthEnabled(authEnabled);
 		configLoaded = true;
+		if (authStore.isAuthenticated()) {
+			await authStore.refreshMe();
+		}
 	});
 
 	async function handleLogout() {
@@ -87,11 +91,13 @@
 					class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
 					>Documents</a
 				>
-				<a
-					href="/documents/orphaned"
-					class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
-					>Orphaned &amp; Errored</a
-				>
+				{#if !authEnabled || authStore.isEditor()}
+					<a
+						href="/documents/orphaned"
+						class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
+						>Orphaned &amp; Errored</a
+					>
+				{/if}
 				<a
 					href="/tasks"
 					class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
@@ -112,16 +118,27 @@
 					class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
 					>Document Types</a
 				>
-				<a
-					href="/logs"
-					class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
-					>Logs</a
-				>
-				<a
-					href="/settings"
-					class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
-					>Settings</a
-				>
+				{#if !authEnabled || authStore.isAdmin()}
+					<a
+						href="/logs"
+						class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
+						>Logs</a
+					>
+				{/if}
+				{#if !authEnabled || authStore.isAdmin()}
+					<a
+						href="/settings"
+						class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
+						>Settings</a
+					>
+				{/if}
+				{#if authStore.isAuthenticated() && authEnabled}
+					<a
+						href="/profile"
+						class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
+						>Profile</a
+					>
+				{/if}
 			</nav>
 		</aside>
 
@@ -133,6 +150,11 @@
 			>
 				<div class="flex-1"></div>
 				{#if authStore.isAuthenticated()}
+					{#if authEnabled}
+						<a href="/profile" class="text-sm text-parchment-500 hover:text-parchment-200"
+							>Profile</a
+						>
+					{/if}
 					<span class="text-sm text-parchment-400">{authStore.getUser().username}</span>
 					<button
 						onclick={handleLogout}
@@ -141,11 +163,13 @@
 						Logout
 					</button>
 				{/if}
-				<button
-					onclick={() => (uploadOpen = true)}
-					class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600"
-					>Upload</button
-				>
+				{#if !authEnabled || authStore.isEditor()}
+					<button
+						onclick={() => (uploadOpen = true)}
+						class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600"
+						>Upload</button
+					>
+				{/if}
 			</header>
 
 			{#if missingTools.length > 0}

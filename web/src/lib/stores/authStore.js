@@ -1,5 +1,6 @@
 let _token = '';
 let _user = null;
+let _authEnabled = true;
 
 export function init() {
 	_token = localStorage.getItem('token') || '';
@@ -31,4 +32,46 @@ export function logout() {
 	_user = null;
 	localStorage.removeItem('token');
 	localStorage.removeItem('user');
+}
+export function getRole() {
+	return _user?.role ?? '';
+}
+export function isAdmin() {
+	return getRole() === 'admin';
+}
+export function isEditor() {
+	return getRole() === 'editor' || getRole() === 'admin';
+}
+export function authEnabled() {
+	return _authEnabled;
+}
+export function setAuthEnabled(v) {
+	_authEnabled = v;
+}
+export function roleBadgeClass(role) {
+	const colors = {
+		admin: 'bg-lapis-500/20 text-lapis-400',
+		editor: 'bg-gold-500/20 text-gold-400',
+		viewer: 'bg-clay-700/50 text-parchment-400'
+	};
+	return colors[role] || colors.viewer;
+}
+
+export async function refreshMe() {
+	try {
+		const res = await fetch('/api/v1/me', {
+			headers: { Authorization: `Bearer ${_token}` }
+		});
+		if (res.status === 401) {
+			logout();
+			return;
+		}
+		if (res.ok) {
+			const data = await res.json();
+			_user = data;
+			localStorage.setItem('user', JSON.stringify(data));
+		}
+	} catch {
+		// keep stale data on network error
+	}
 }
