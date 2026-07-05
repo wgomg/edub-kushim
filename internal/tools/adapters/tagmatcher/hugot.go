@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -104,10 +105,27 @@ func (h *Hugot) SetStore(s EmbeddingStore) {
 	h.store = s
 }
 
+var embeddingSpaceRE = regexp.MustCompile(` +`)
+
+// normalizeForEmbedding normalizes tag names before embedding.
+// Applied in AddToStore and Consolidate, not in Encode (which also handles document text).
+// Counterpart in internal/cache/bootstrap.go duplicates this logic — keep in sync.
+func normalizeForEmbedding(s string) string {
+	s = strings.ReplaceAll(s, "-", " ")
+	s = strings.ReplaceAll(s, "_", " ")
+	s = embeddingSpaceRE.ReplaceAllString(s, " ")
+	return strings.TrimSpace(s)
+}
+
 func (h *Hugot) AddToStore(ctx context.Context, names []string) error {
 	if h == nil {
 		return fmt.Errorf("tag matcher not initialized")
 	}
+	normalized := make([]string, len(names))
+	for i, n := range names {
+		normalized[i] = normalizeForEmbedding(n)
+	}
+	names = normalized
 	for i := 0; i < len(names); i += embedBatchSize {
 		end := min(i+embedBatchSize, len(names))
 		chunk := names[i:end]
@@ -214,6 +232,12 @@ func (h *Hugot) Consolidate(ctx context.Context, docId string, queries []string)
 	if len(entries) == 0 || h.consolidationSim == 0.0 {
 		return queries, nil
 	}
+
+	normalized := make([]string, len(queries))
+	for i, q := range queries {
+		normalized[i] = normalizeForEmbedding(q)
+	}
+	queries = normalized
 
 	out, err := h.pipeline.RunPipeline(ctx, queries)
 	if err != nil {

@@ -595,7 +595,7 @@ func defaultMinSimilarity(modelShortName string) float64 {
 func defaultConsolidationSimilarity(modelShortName string) float64 {
 	switch modelShortName {
 	case "bge-m3":
-		return 0.82 // 1024-dim, tight clusters
+		return 0.80 // 1024-dim; reduced from 0.82 due to SentencePiece tokenization variance
 	case "all-mpnet-base-v2":
 		return 0.75 // 768-dim
 	case "all-MiniLM-L6-v2":

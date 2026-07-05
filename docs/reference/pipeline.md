@@ -63,8 +63,9 @@
       2. Fetch doc types, people types from DB; all tags via `services.Tag.ListAll`
       3. Semantic tag matching: passes tag names to `Runner.MatchTags`. In `kushim`, embeddings are resolved via the local Hugot store (cache-miss encoded on the fly). In `edub`, the `MatcherClient` forwards requests over the Unix socket to the external matcher process. Falls back to all tags on failure.
       4. LLM content analysis (title, doc type, tags, people, language)
-      5. Post-LLM tag consolidation via `services.Tag.Consolidate` (delegates to `Embedder.Consolidate` over the matcher interface)
-      6. New tags created via a single batch call `services.Tag.Create(ctx, analysis.Tags)` — returns per-index results with `Created`/`Conflict`/`Invalid` statuses. The service delegates store management to the matcher via `AddToStore`.
+      5. **Tag normalization** — LLM-extracted tags are run through `NormalizeTags` (lowercase, hyphens/underscores→spaces, non-alpha stripped, whitespace collapsed, deduplicated) before entering the system
+      6. Post-LLM tag consolidation via `services.Tag.Consolidate` (delegates to `Embedder.Consolidate` over the matcher interface)
+      7. New tags created via a single batch call `services.Tag.Create(ctx, analysis.Tags)` — returns per-index results with `Created`/`Conflict`/`Invalid` statuses. The service delegates store management to the matcher via `AddToStore`.
       8. Update document metadata (title, doc_type, language)
       9. Manage document_tag junction (clear + add)
       10. Manage document_people junction (clear + add) — for each person:

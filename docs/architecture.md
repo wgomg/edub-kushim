@@ -186,9 +186,13 @@ succeeds — `activateChildEnrich` re-activates the discarded enrich task to
    JSON: title, type, tags, people (with types like author, sender), language.
    For non-Latin names (Korean, Arabic, Cyrillic, etc.), the LLM is prompted to
    provide a `name_romanized` field alongside the original name.
-4. **Post-LLM Tag Consolidation** — LLM output labels are re-matched against canonical
-   tag embeddings via `Consolidate` (delegated to the matcher interface), fixing casing,
-   hyphenation, and synonym mismatches.
+4. **Tag Normalization** — LLM-extracted tags are normalized to canonical space-separated
+   form via `NormalizeTags`: lowercased, hyphens/underscores→spaces, non-alpha stripped,
+   whitespace collapsed, deduplicated. This ensures the LLM's hyphenation instructions
+   or symbol handling don't produce OOD tokens in the embedding model.
+5. **Post-LLM Tag Consolidation** — Normalized tags are re-matched against canonical
+   tag embeddings via `Consolidate` (delegated to the matcher interface), fixing casing
+   and synonym mismatches that survive the normalization step.
 5. **New Tag Store Update** — any new tags created during enrichment are batch-created
    via `services.Tag.Create(ctx, analysis.Tags)`. The service delegates store management
    to the matcher via `AddToStore`, which encodes new names and adds them to the shared

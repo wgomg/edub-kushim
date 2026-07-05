@@ -43,6 +43,7 @@ type ContentAnalyzer interface {
 ### Functions
 
 - `BuildPrompt(text, docTypes, peopleTypes, tagSuggestions) string` — Builds system prompt with JSON output instructions including people types. Prompts the LLM to provide a `name_romanized` field for any name containing non-Latin characters (Korean, Arabic, Cyrillic, Hebrew, etc.).
+- `NormalizeTags(raw []string) []string` — Converts LLM-extracted tags to canonical space-separated form: lowercase, hyphens/underscores→spaces, strips non-alpha characters, collapses whitespace, deduplicates, rejects empty strings.
 - `buildTokenUsageStats(prompt, completion, total int) *json.RawMessage` — Creates token usage stats JSON
 
 ---
@@ -142,9 +143,9 @@ The composition root builds a single `*Hugot` (for the `kushim` CLI) or uses a `
 - **Fields**: `store EmbeddingStore` — shared reference to the tag embedding cache
 - **Methods**:
   - `Match(ctx, docId, input, candidateTags []string)` — Names-based matching: looks up each candidate in the store, encodes cache-miss tags on the fly, ranks by cosine similarity
-  - `Consolidate(ctx, docId, queries []string)` — Reads all entries from the store internally, encodes LLM output labels, re-matches against canonical tag embeddings
-  - `Encode(ctx, *docId, texts)` — Batch embedding with chunked encoding for long inputs
-  - `AddToStore(ctx, names)` — Encodes names in batches of 32 (`embedBatchSize`) and adds them to the store (moved from TagService)
+  - `Consolidate(ctx, docId, queries []string)` — Reads all entries from the store internally, normalizes query tags via `normalizeForEmbedding`, encodes them, re-matches against canonical tag embeddings
+  - `Encode(ctx, *docId, texts)` — Batch embedding with chunked encoding for long inputs. Does NOT normalize input — shared with document text matching where punctuation is meaningful.
+  - `AddToStore(ctx, names)` — Normalizes names via `normalizeForEmbedding`, encodes them in batches of 32 (`embedBatchSize`), and adds them to the store
   - `RemoveFromStore(ctx, names)` — Removes names from the store (moved from TagService)
   - `SetStore(s EmbeddingStore)` — Injects the shared store reference after construction
   - `Close()` — Idempotent (nil-safe, sets session to nil after destroy)

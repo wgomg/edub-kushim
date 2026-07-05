@@ -107,6 +107,8 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 		return nil, fmt.Errorf("failed to analyze content: %w", err)
 	}
 
+	analysis.Tags = contentanalyzer.NormalizeTags(analysis.Tags)
+
 	consolidateStart := time.Now()
 	consolidated, err := e.services.Tag.Consolidate(ctx, document.DocumentID, analysis.Tags)
 	if err != nil {
