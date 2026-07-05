@@ -129,8 +129,8 @@
 | `DELETE /api/v1/users/{id}/api-key`     | Revoke API key (204)                                        |
 | `PUT /api/v1/users/{id}/api-key`        | Rotate API key (overwrites, returns new key, 200)           |
 | `GET /api/v1/users/{id}/api-key`        | Get API key status (has_api_key, prefix, created_at)        |
-| `POST /api/v1/auth/login`              | Authenticate user, return JWT token + user profile (includes role) |
-| `POST /api/v1/auth/logout`             | No-op (client-side token discard)                           |
+| `POST /api/v1/auth/login`              | Authenticate user, return JWT token + user profile (includes role), set `edub_token` HttpOnly cookie |
+| `POST /api/v1/auth/logout`             | Clears `edub_token` cookie + client-side token discard      |
 | `GET /api/v1/me`                       | Get current user profile (includes role)                    |
 | `POST /api/v1/me/api-key`              | Generate own API key (self-service, 201)                    |
 | `DELETE /api/v1/me/api-key`            | Revoke own API key (self-service, 204)                      |

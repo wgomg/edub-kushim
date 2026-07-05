@@ -83,11 +83,29 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		User:  toUserResponse(user),
 	}
 
+	http.SetCookie(w, &http.Cookie{
+		Name:     "edub_token",
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   h.getConfig().App.Env != config.Development,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   86400,
+	})
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
 
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     "edub_token",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   h.getConfig().App.Env != config.Development,
+		MaxAge:   0,
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 

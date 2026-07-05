@@ -264,3 +264,72 @@ func TestAuthMiddleware_APIKeyInternalError(t *testing.T) {
 		t.Errorf("expected 500 for internal error, got %d", w.Code)
 	}
 }
+
+func TestAuthMiddleware_ProtectedPath_ValidCookie(t *testing.T) {
+	token, err := auth.GenerateToken(42, "alice", "viewer", testSecret)
+	if err != nil {
+		t.Fatalf("GenerateToken: %v", err)
+	}
+	jwtUser := &database.User{ID: 42, Username: "alice", Role: "viewer"}
+	middleware := AuthMiddleware(authHandler(), func() string { return testSecret }, func() bool { return true }, mockValidateAPIKey(nil, errors.New("should not be called")), mockGetUserByID(jwtUser, nil))
+	r := httptest.NewRequest("GET", "/api/v1/documents", nil)
+	r.AddCookie(&http.Cookie{Name: "edub_token", Value: token})
+	w := httptest.NewRecorder()
+	middleware.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var resp struct {
+		UserID     int64  `json:"user_id"`
+		Username   string `json:"username"`
+		AuthSource string `json:"auth_source"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.UserID != 42 {
+		t.Errorf("expected user_id 42, got %d", resp.UserID)
+	}
+	if resp.Username != "alice" {
+		t.Errorf("expected username 'alice', got %q", resp.Username)
+	}
+	if resp.AuthSource != "session" {
+		t.Errorf("expected auth_source 'session', got %q", resp.AuthSource)
+	}
+}
+
+func TestAuthMiddleware_ProtectedPath_InvalidCookie(t *testing.T) {
+	middleware := AuthMiddleware(authHandler(), func() string { return testSecret }, func() bool { return true }, mockValidateAPIKey(nil, errors.New("should not be called")), mockGetUserByID(nil, errors.New("should not be called")))
+	r := httptest.NewRequest("GET", "/api/v1/documents", nil)
+	r.AddCookie(&http.Cookie{Name: "edub_token", Value: "invalid.jwt.token"})
+	w := httptest.NewRecorder()
+	middleware.ServeHTTP(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", w.Code)
+	}
+}
+
+func TestAuthMiddleware_HeaderTakesPriorityOverCookie(t *testing.T) {
+	headerToken, _ := auth.GenerateToken(10, "header-user", "viewer", testSecret)
+	cookieToken, _ := auth.GenerateToken(20, "cookie-user", "viewer", testSecret)
+
+	headerUser := &database.User{ID: 10, Username: "header-user", Role: "viewer"}
+	// Only resolve ID 10; if cookie token (ID 20) were used, getUserByID would fail.
+	middleware := AuthMiddleware(authHandler(), func() string { return testSecret }, func() bool { return true },
+		mockValidateAPIKey(nil, errors.New("should not be called")),
+		mockGetUserByID(headerUser, nil))
+
+	r := httptest.NewRequest("GET", "/api/v1/documents", nil)
+	r.Header.Set("Authorization", "Bearer "+headerToken)
+	r.AddCookie(&http.Cookie{Name: "edub_token", Value: cookieToken})
+	w := httptest.NewRecorder()
+	middleware.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 (header used, not cookie), got %d", w.Code)
+	}
+	var resp struct {
+		UserID int64 `json:"user_id"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.UserID != 10 {
+		t.Errorf("expected user_id 10 from header token, got %d", resp.UserID)
+	}
+}

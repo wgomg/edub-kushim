@@ -1524,6 +1524,33 @@ func TestAuthLogin(t *testing.T) {
 		if resp.User["role"] != "viewer" {
 			t.Fatalf("expected role 'viewer', got %v", resp.User["role"])
 		}
+
+		cookies := w.Result().Cookies()
+		var edubCookie *http.Cookie
+		for _, c := range cookies {
+			if c.Name == "edub_token" {
+				edubCookie = c
+				break
+			}
+		}
+		if edubCookie == nil {
+			t.Fatal("expected edub_token cookie in response")
+		}
+		if edubCookie.Value == "" {
+			t.Fatal("expected non-empty cookie value")
+		}
+		if !edubCookie.HttpOnly {
+			t.Fatal("expected HttpOnly cookie")
+		}
+		if edubCookie.MaxAge != 86400 {
+			t.Fatalf("expected MaxAge 86400, got %d", edubCookie.MaxAge)
+		}
+		if edubCookie.SameSite != http.SameSiteLaxMode {
+			t.Fatalf("expected SameSite=Lax, got %v", edubCookie.SameSite)
+		}
+		if edubCookie.Path != "/" {
+			t.Fatalf("expected Path=/, got %q", edubCookie.Path)
+		}
 	})
 
 	t.Run("wrong password returns 401", func(t *testing.T) {
@@ -1598,6 +1625,30 @@ func TestAuthLogout(t *testing.T) {
 	w := rec()
 	h.Logout(w, req(t, "POST", "/api/v1/auth/logout", nil))
 	testutil.AssertEqual(t, w.Code, http.StatusNoContent, "status")
+
+	cookies := w.Result().Cookies()
+	var edubCookie *http.Cookie
+	for _, c := range cookies {
+		if c.Name == "edub_token" {
+			edubCookie = c
+			break
+		}
+	}
+	if edubCookie == nil {
+		t.Fatal("expected edub_token cookie to clear in response")
+	}
+	if edubCookie.Value != "" {
+		t.Fatalf("expected empty cookie value, got %q", edubCookie.Value)
+	}
+	if edubCookie.MaxAge != 0 {
+		t.Fatalf("expected MaxAge 0, got %d", edubCookie.MaxAge)
+	}
+	if !edubCookie.HttpOnly {
+		t.Fatal("expected HttpOnly on cleared cookie")
+	}
+	if edubCookie.Path != "/" {
+		t.Fatalf("expected Path=/, got %q", edubCookie.Path)
+	}
 }
 
 func TestAuthMeHandler(t *testing.T) {

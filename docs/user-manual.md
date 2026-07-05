@@ -1504,6 +1504,7 @@ server:
   max_download_size_mb: 500 # max total size in MB for batch download
   max_batch_delete: 50 # max documents in a single batch delete
   auth_enabled: false # when false, API endpoints bypass JWT auth
+  session_secret: '' # 64-char hex key for JWT signing; auto-generated if empty
 
 database:
   type: sqlite # currently only sqlite

@@ -35,6 +35,11 @@ func AuthMiddleware(
 		}
 
 		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" {
+			if cookie, err := r.Cookie("edub_token"); err == nil {
+				authHeader = "Bearer " + cookie.Value
+			}
+		}
 		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
