@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	anyascii "github.com/anyascii/go"
@@ -144,6 +146,8 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 		e.logger.Error(&logId, "update document metadata: %w", err)
 	}
 
+	e.ensureOCRLanguage(ctx, analysis.Language)
+
 	results, err := e.services.Tag.Create(ctx, analysis.Tags)
 	if err != nil {
 		e.logger.Error(&logId, "batch create tags: %v", err)
@@ -275,4 +279,36 @@ func canonicalPersonName(p contentanalyzer.PeopleResult) (canonical, native stri
 	// Fallback: transliterate non-Latin script to ASCII
 	romanized := anyascii.Transliterate(raw)
 	return romanized, raw
+}
+
+func (e *Enricher) ensureOCRLanguage(ctx context.Context, detectedLang string) {
+	lang := strings.ToLower(strings.TrimSpace(detectedLang))
+	if lang == "" || lang == "und" || len(lang) != 3 {
+		return
+	}
+
+	if slices.Contains(e.config.Consumer.OCR.Languages, lang) {
+		return
+	}
+
+	e.config.Consumer.OCR.Languages = append(e.config.Consumer.OCR.Languages, lang)
+
+	if err := config.SaveMap(e.config.App.ConfigDir, map[string]any{
+		"consumer.ocr.languages": e.config.Consumer.OCR.Languages,
+	}); err != nil {
+		e.logger.Error(nil, "auto-detect OCR language: failed to add %q to config: %v", lang, err)
+		return
+	}
+
+	e.logger.Info(nil, "auto-detected OCR language %q added to consumer.ocr.languages", lang)
+
+	if e.config.Consumer.OCR.Engine == config.OCR.Gosseract {
+		go func() {
+			if err := config.DownloadTessdataLanguage(context.Background(), e.config, lang); err != nil {
+				e.logger.Error(nil, "auto-detect OCR language: tessdata download for %q failed: %v", lang, err)
+			} else {
+				e.logger.Info(nil, "auto-detect OCR language: tessdata downloaded for %q", lang)
+			}
+		}()
+	}
 }
