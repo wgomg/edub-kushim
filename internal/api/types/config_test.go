@@ -69,3 +69,18 @@ func TestConfigResponseFrom_ReclaimMaxRetries(t *testing.T) {
 		t.Error("Enabled should be true")
 	}
 }
+
+func TestConfigResponseFrom_PromptTemplate(t *testing.T) {
+	cfg := config.DefaultConfig("/tmp/test")
+
+	resp := ConfigResponseFrom(cfg)
+	if resp.Enricher.ContentAnalyzer.PromptTemplate != "" {
+		t.Errorf("default PromptTemplate = %q, want empty", resp.Enricher.ContentAnalyzer.PromptTemplate)
+	}
+
+	cfg.Enricher.ContentAnalyzer.PromptTemplate = "custom {{.Text}} template"
+	resp = ConfigResponseFrom(cfg)
+	if resp.Enricher.ContentAnalyzer.PromptTemplate != "custom {{.Text}} template" {
+		t.Errorf("PromptTemplate = %q, want %q", resp.Enricher.ContentAnalyzer.PromptTemplate, "custom {{.Text}} template")
+	}
+}

@@ -363,6 +363,9 @@ func sanitizeConfigStrings(v any) any {
 		return utils.StripTags(m)
 	case map[string]any:
 		for k, val := range m {
+			if k == "prompt_template" {
+				continue
+			}
 			m[k] = sanitizeConfigStrings(val)
 		}
 	case []any:

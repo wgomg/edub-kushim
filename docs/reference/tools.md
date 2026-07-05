@@ -34,7 +34,7 @@ type ContentAnalyzer interface {
 
 ### Factory
 
-`NewContentAnalyzer(logger, cfg, llmCfg)` — Selects provider by `cfg.Command` using `config.ContentAnalyzer` constants (`OpenAI`, `Anthropic`, `DeepSeek`, `Ollama`). Default: OpenAI.
+`NewContentAnalyzer(logger, cfg, llmCfg, promptTemplate)` — Selects provider by `cfg.Command` using `config.ContentAnalyzer` constants (`OpenAI`, `Anthropic`, `DeepSeek`, `Ollama`). Default: OpenAI. `promptTemplate` is a custom Go `text/template` string; empty/missing means use the built-in default.
 
 ---
 
@@ -42,7 +42,7 @@ type ContentAnalyzer interface {
 
 ### Functions
 
-- `BuildPrompt(text, docTypes, peopleTypes, tagSuggestions) string` — Builds system prompt with JSON output instructions including people types. Prompts the LLM to provide a `name_romanized` field for any name containing non-Latin characters (Korean, Arabic, Cyrillic, Hebrew, etc.).
+- `BuildPrompt(text, docTypes, peopleTypes, tagSuggestions, customTemplate) string` — Builds system prompt with JSON output instructions including people types. Prompts the LLM to provide a `name_romanized` field for any name containing non-Latin characters (Korean, Arabic, Cyrillic, Hebrew, etc.). When `customTemplate` is non-empty (after trimming whitespace), it is used as a Go `text/template` with placeholders `{{.DocTypePrompt}}`, `{{.TagsPrompt}}`, `{{.PeoplePrompt}}`, `{{.Text}}`. On parse or execution error, falls back silently to the hardcoded default template. The rendered prompt is captured in `AnalysisResult.Prompt` for debugging.
 - `NormalizeTags(raw []string) []string` — Converts LLM-extracted tags to canonical space-separated form: lowercase, hyphens/underscores→spaces, strips non-alpha characters, collapses whitespace, deduplicates, rejects empty strings.
 - `buildTokenUsageStats(prompt, completion, total int) *json.RawMessage` — Creates token usage stats JSON
 

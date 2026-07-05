@@ -67,6 +67,7 @@ enricher:
   contentanalyzer:
     engine: llmopenai # llmopenai | llmanthropic | llmdeepseek | llmollama
     timeout: 120
+    # prompt_template: ""  # optional custom LLM prompt; see docs for placeholders
     llm:
       openai:
         base_url: 'https://api.openai.com/v1'

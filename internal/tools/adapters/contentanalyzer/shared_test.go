@@ -2,7 +2,10 @@ package contentanalyzer
 
 import (
 	"reflect"
+	"strings"
 	"testing"
+
+	"github.com/wgomg/edub-kushim/internal/database"
 )
 
 func TestNormalizeTags_Transforms(t *testing.T) {
@@ -30,6 +33,71 @@ func TestNormalizeTags_Transforms(t *testing.T) {
 				t.Errorf("NormalizeTags(%v) = %v, want %v", tt.raw, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestBuildPrompt_DefaultTemplate(t *testing.T) {
+	docTypes := []database.DocumentType{
+		{Name: "article", Description: "A written composition"},
+	}
+	peopleTypes := []database.PeopleType{
+		{Name: "author", Description: "Writer of the document"},
+	}
+	tagSuggestions := []string{"ai", "ml"}
+
+	result := BuildPrompt("sample text", docTypes, peopleTypes, tagSuggestions, "")
+
+	if !strings.Contains(result, "sample text") {
+		t.Error("expected output to contain the input text")
+	}
+	if !strings.Contains(result, "article") {
+		t.Error("expected output to contain document type name")
+	}
+	if !strings.Contains(result, "author") {
+		t.Error("expected output to contain people type name")
+	}
+	if !strings.Contains(result, "ai") {
+		t.Error("expected output to contain tag suggestion")
+	}
+	if !strings.Contains(result, "Analyze the excerpts") {
+		t.Error("expected output to start with default prompt header")
+	}
+}
+
+func TestBuildPrompt_CustomTemplate(t *testing.T) {
+	custom := "Custom prompt: {{.Text}} and {{.DocTypePrompt}}"
+	result := BuildPrompt("hello world", nil, nil, nil, custom)
+
+	expected := "Custom prompt: hello world and - Document type: choose one of the following:\n"
+	if result != expected {
+		t.Errorf("custom template output = %q, want %q", result, expected)
+	}
+}
+
+func TestBuildPrompt_MalformedTemplateFallsBack(t *testing.T) {
+	result := BuildPrompt("text", nil, nil, nil, "{{.Invalid")
+
+	if !strings.Contains(result, "text") {
+		t.Error("expected fallback to default template with input text")
+	}
+	if !strings.Contains(result, "Analyze the excerpts") {
+		t.Error("expected fallback to default template header")
+	}
+}
+
+func TestBuildPrompt_ExecutionErrorFallsBack(t *testing.T) {
+	result := BuildPrompt("text", nil, nil, nil, "{{.Nonexistent}}")
+
+	if !strings.Contains(result, "text") {
+		t.Error("expected fallback to default template with input text")
+	}
+}
+
+func TestBuildPrompt_WhitespaceCustomTemplateUsesDefault(t *testing.T) {
+	result := BuildPrompt("text", nil, nil, nil, "   \n  ")
+
+	if !strings.Contains(result, "Analyze the excerpts") {
+		t.Error("expected whitespace-only template to use default")
 	}
 }
 

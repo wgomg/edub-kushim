@@ -116,9 +116,10 @@ type TextReducerResponse struct {
 }
 
 type ContentAnalyzerResponse struct {
-	Engine  string               `json:"engine"`
-	Timeout int                  `json:"timeout"`
-	Llm     LlmProvidersResponse `json:"llm"`
+	Engine         string               `json:"engine"`
+	Timeout        int                  `json:"timeout"`
+	Llm            LlmProvidersResponse `json:"llm"`
+	PromptTemplate string               `json:"prompt_template,omitempty"`
 }
 
 type LlmProvidersResponse struct {
@@ -181,6 +182,7 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Enricher.TextReducer.TargetWords = cfg.Enricher.TextReducer.TargetWords
 	resp.Enricher.ContentAnalyzer.Engine = cfg.Enricher.ContentAnalyzer.Engine
 	resp.Enricher.ContentAnalyzer.Timeout = cfg.Enricher.ContentAnalyzer.Timeout
+	resp.Enricher.ContentAnalyzer.PromptTemplate = cfg.Enricher.ContentAnalyzer.PromptTemplate
 	resp.Enricher.ContentAnalyzer.Llm.OpenAI.BaseURL = cfg.Enricher.ContentAnalyzer.Llm.OpenAI.BaseURL
 	resp.Enricher.ContentAnalyzer.Llm.OpenAI.Model = cfg.Enricher.ContentAnalyzer.Llm.OpenAI.Model
 	resp.Enricher.ContentAnalyzer.Llm.OpenAI.Token = cfg.Enricher.ContentAnalyzer.Llm.OpenAI.Token

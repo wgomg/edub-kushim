@@ -14,9 +14,10 @@ import (
 )
 
 type LlmOllama struct {
-	logger *utils.Logger
-	config config.ToolConfig
-	llmCfg config.LlmToolConfig
+	logger         *utils.Logger
+	config         config.ToolConfig
+	llmCfg         config.LlmToolConfig
+	promptTemplate string
 }
 
 type ollamaMessage struct {
@@ -55,14 +56,14 @@ type ollamaResponse struct {
 	EvalCount       int                   `json:"eval_count,omitempty"`
 }
 
-func NewLlmOllama(logger *utils.Logger, cfg config.ToolConfig, llmCfg config.LlmToolConfig) (*LlmOllama, error) {
-	return &LlmOllama{logger: logger, config: cfg, llmCfg: llmCfg}, nil
+func NewLlmOllama(logger *utils.Logger, cfg config.ToolConfig, llmCfg config.LlmToolConfig, promptTemplate string) (*LlmOllama, error) {
+	return &LlmOllama{logger: logger, config: cfg, llmCfg: llmCfg, promptTemplate: promptTemplate}, nil
 }
 
 func (l *LlmOllama) Analyze(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*AnalysisResult, error) {
 	temp := 0.0
 
-	prompt := BuildPrompt(text, docTypes, peopleTypes, tagSuggestions)
+	prompt := BuildPrompt(text, docTypes, peopleTypes, tagSuggestions, l.promptTemplate)
 
 	reqBody := ollamaRequest{
 		Model: l.llmCfg.Model,

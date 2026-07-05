@@ -138,6 +138,7 @@ func (h *Hugot) AddToStore(ctx context.Context, names []string) error {
 		for j, name := range chunk {
 			if j < len(vecs) && vecs[j] != nil {
 				h.store.Add(name, vecs[j])
+				h.logger.Info(nil, "hugot: add to store `%s`", name)
 			}
 		}
 	}
@@ -150,6 +151,7 @@ func (h *Hugot) RemoveFromStore(ctx context.Context, names []string) error {
 	}
 	for _, name := range names {
 		h.store.Remove(name)
+		h.logger.Info(nil, "hugot: remove from store `%s`", name)
 	}
 	return nil
 }
@@ -216,9 +218,9 @@ func (h *Hugot) Match(ctx context.Context, docId, input string, candidateTags []
 		for i := range showN {
 			topScores[i] = fmt.Sprintf("%s(%.3f)", matches[i].tag, matches[i].similarity)
 		}
-		h.logger.Debug(&docId, "hugot: top-%d matches: %v", showN, topScores)
+		h.logger.Info(&docId, "hugot: top-%d matches: %v", showN, topScores)
 	} else {
-		h.logger.Debug(&docId, "hugot: no matches above min_sim=%.2f", h.minSimilarity)
+		h.logger.Info(&docId, "hugot: no matches above min_sim=%.2f", h.minSimilarity)
 	}
 
 	return result, nil
@@ -251,7 +253,7 @@ func (h *Hugot) Consolidate(ctx context.Context, docId string, queries []string)
 	for i, qEmb := range out.Embeddings {
 		matches := h.rankMatches(qEmb, entries, h.consolidationSim)
 		if len(matches) > 0 {
-			h.logger.Debug(&docId, "hugot: consolidate %q → %s (%.3f)", queries[i], matches[0].tag, matches[0].similarity)
+			h.logger.Info(&docId, "hugot: consolidate %q → %s (%.3f)", queries[i], matches[0].tag, matches[0].similarity)
 			result[i] = matches[0].tag
 		} else {
 			result[i] = queries[i]

@@ -14,9 +14,10 @@ import (
 )
 
 type LlmOpenAi struct {
-	logger *utils.Logger
-	config config.ToolConfig
-	llmCfg config.LlmToolConfig
+	logger         *utils.Logger
+	config         config.ToolConfig
+	llmCfg         config.LlmToolConfig
+	promptTemplate string
 }
 
 type ChatMessage struct {
@@ -68,8 +69,8 @@ type ChatResponse struct {
 	Usage   Usage    `json:"usage"`
 }
 
-func NewLlmOpenAi(logger *utils.Logger, cfg config.ToolConfig, llmCfg config.LlmToolConfig) (*LlmOpenAi, error) {
-	return &LlmOpenAi{logger: logger, config: cfg, llmCfg: llmCfg}, nil
+func NewLlmOpenAi(logger *utils.Logger, cfg config.ToolConfig, llmCfg config.LlmToolConfig, promptTemplate string) (*LlmOpenAi, error) {
+	return &LlmOpenAi{logger: logger, config: cfg, llmCfg: llmCfg, promptTemplate: promptTemplate}, nil
 }
 
 func (l *LlmOpenAi) Analyze(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*AnalysisResult, error) {
@@ -78,7 +79,7 @@ func (l *LlmOpenAi) Analyze(ctx context.Context, text string, docTypes []databas
 	prescPen := 0.0
 	temp := 0.0
 
-	prompt := BuildPrompt(text, docTypes, peopleTypes, tagSuggestions)
+	prompt := BuildPrompt(text, docTypes, peopleTypes, tagSuggestions, l.promptTemplate)
 
 	reqBody := LlmOpenAiRequest{
 		Messages: []ChatMessage{

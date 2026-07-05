@@ -149,6 +149,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			'enricher.textreducer.target_words': Number(cfg.enricher.textreducer.target_words),
 			'enricher.contentanalyzer.engine': cfg.enricher.contentanalyzer.engine,
 			'enricher.contentanalyzer.timeout': Number(cfg.enricher.contentanalyzer.timeout),
+			'enricher.contentanalyzer.prompt_template': cfg.enricher.contentanalyzer.prompt_template,
 			...(providerKey
 				? {
 						[`enricher.contentanalyzer.llm.${providerKey}.base_url`]:
@@ -887,6 +888,22 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
 						/>
 					</div>
+				</div>
+
+				<div class="mt-4">
+					<label for="content-analyzer-prompt-template" class="mb-1 block text-sm font-medium text-parchment-200">
+						Prompt template (advanced)
+					</label>
+					<p class="mb-2 text-xs text-parchment-500">
+						Leave empty for default. Available placeholders: {`{{.DocTypePrompt}}`}, {`{{.TagsPrompt}}`}, {`{{.PeoplePrompt}}`}, {`{{.Text}}`} (required)
+					</p>
+					<textarea
+						id="content-analyzer-prompt-template"
+						rows="8"
+						bind:value={cfg.enricher.contentanalyzer.prompt_template}
+						spellcheck="false"
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 font-mono focus:border-gold-500 focus:outline-none"
+					></textarea>
 				</div>
 
 				{#if providerKey}

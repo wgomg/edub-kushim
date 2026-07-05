@@ -112,9 +112,10 @@ type TextReducerConfig struct {
 }
 
 type ContentAnalyzerConfig struct {
-	Engine  string         `mapstructure:"engine" yaml:"engine" json:"engine"`
-	Timeout int            `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
-	Llm     LlmToolsConfig `mapstructure:"llm" yaml:"llm" json:"llm"`
+	Engine         string         `mapstructure:"engine" yaml:"engine" json:"engine"`
+	Timeout        int            `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
+	Llm            LlmToolsConfig `mapstructure:"llm" yaml:"llm" json:"llm"`
+	PromptTemplate string         `mapstructure:"prompt_template" yaml:"prompt_template" json:"prompt_template,omitempty"`
 }
 
 type EnricherConfig struct {
@@ -331,8 +332,9 @@ func DefaultConfig(configDir string) *Config {
 				TargetWords: 2000,
 			},
 			ContentAnalyzer: ContentAnalyzerConfig{
-				Engine:  ContentAnalyzer.OpenAI,
-				Timeout: 120,
+				Engine:         ContentAnalyzer.OpenAI,
+				Timeout:        120,
+				PromptTemplate: "",
 				Llm: LlmToolsConfig{
 					OpenAI: LlmToolConfig{
 						BaseURL: "https://api.openai.com/v1",

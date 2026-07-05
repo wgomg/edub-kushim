@@ -897,6 +897,7 @@ Two-phase API:
   "enricher.textreducer.target_words": 2000,
   "enricher.contentanalyzer.engine": "llmopenai",
   "enricher.contentanalyzer.timeout": 120,
+  "enricher.contentanalyzer.prompt_template": "",
   "enricher.contentanalyzer.llm.openai.base_url": "https://api.openai.com/v1",
   "enricher.contentanalyzer.llm.openai.model": "gpt-4o",
   "enricher.contentanalyzer.llm.openai.token": "",
@@ -1542,6 +1543,7 @@ enricher:
   contentanalyzer:
     engine: 'llmopenai' # llmopenai | llmanthropic | llmdeepseek | llmollama
     timeout: 120
+    # prompt_template: ''  # optional custom LLM prompt; see docs for available placeholders
     llm:
       openai:
         base_url: 'https://api.openai.com/v1'
@@ -1593,6 +1595,7 @@ enricher:
 | `enricher.textreducer`         | Text summarization before LLM (TextRank)                               |
 | `enricher.contentanalyzer`     | LLM provider for document classification (OpenAI, etc.)                |
 | `enricher.contentanalyzer.llm` | Per-provider config (base URL, model, token)                           |
+| `enricher.contentanalyzer.prompt_template` | Custom Go `text/template` for the LLM prompt; empty = built-in default |
 | `enricher.tagmatcher`          | Semantic tag matching via Hugot (embeddings)                           |
 | `enricher.tagmatcher.hugot`    | Hugot-specific settings (model, backend)                               |
 

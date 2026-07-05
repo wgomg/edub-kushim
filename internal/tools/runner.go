@@ -125,7 +125,7 @@ func NewRunner(logger *utils.Logger, cfg *config.Config, tools []string) *Runner
 				Command: cfg.Enricher.ContentAnalyzer.Engine,
 				Timeout: time.Duration(cfg.Enricher.ContentAnalyzer.Timeout) * time.Second,
 			}
-			r.contentAnalyzer, _ = contentanalyzer.NewContentAnalyzer(logger, toolCfg, &cfg.Enricher.ContentAnalyzer.Llm)
+			r.contentAnalyzer, _ = contentanalyzer.NewContentAnalyzer(logger, toolCfg, &cfg.Enricher.ContentAnalyzer.Llm, cfg.Enricher.ContentAnalyzer.PromptTemplate)
 		}
 	}
 	return r

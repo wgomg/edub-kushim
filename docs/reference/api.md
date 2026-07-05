@@ -277,7 +277,7 @@ See `AuthMiddleware` under `server.go` → Functions.
 - `OCRResponse` — `Engine string`, `Languages []string`, `DataDir string`, `Timeout int`
 - `EnricherConfigResponse` — `Workers int`, `TextReducer TextReducerResponse`, `ContentAnalyzer ContentAnalyzerResponse`, `TagMatcher TagMatcherResponse`
 - `TextReducerResponse` — `Engine string`, `Timeout int`, `TargetWords int`
-- `ContentAnalyzerResponse` — `Engine string`, `Timeout int`, `Llm LlmProvidersResponse`
+- `ContentAnalyzerResponse` — `Engine string`, `Timeout int`, `Llm LlmProvidersResponse`, `PromptTemplate string`
 - `LlmProvidersResponse` — `OpenAI LlmProviderResponse`, `Anthropic LlmProviderResponse`, `DeepSeek LlmProviderResponse`, `Ollama LlmProviderResponse`
 - `LlmProviderResponse` — `BaseURL string`, `Model string`, `Token string`
 - `TagMatcherResponse` — `Engine string`, `Timeout int`, `ReduceTargetWords int`, `ChunkSize int`, `Hugot HugotResponse`

@@ -14,9 +14,10 @@ import (
 )
 
 type LlmAnthropic struct {
-	logger *utils.Logger
-	config config.ToolConfig
-	llmCfg config.LlmToolConfig
+	logger         *utils.Logger
+	config         config.ToolConfig
+	llmCfg         config.LlmToolConfig
+	promptTemplate string
 }
 
 type anthropicMessage struct {
@@ -60,14 +61,14 @@ type anthropicResponse struct {
 	Usage        anthropicUsage          `json:"usage"`
 }
 
-func NewLlmAnthropic(logger *utils.Logger, cfg config.ToolConfig, llmCfg config.LlmToolConfig) (*LlmAnthropic, error) {
-	return &LlmAnthropic{logger: logger, config: cfg, llmCfg: llmCfg}, nil
+func NewLlmAnthropic(logger *utils.Logger, cfg config.ToolConfig, llmCfg config.LlmToolConfig, promptTemplate string) (*LlmAnthropic, error) {
+	return &LlmAnthropic{logger: logger, config: cfg, llmCfg: llmCfg, promptTemplate: promptTemplate}, nil
 }
 
 func (l *LlmAnthropic) Analyze(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*AnalysisResult, error) {
 	maxTokens := 0
 
-	prompt := BuildPrompt(text, docTypes, peopleTypes, tagSuggestions)
+	prompt := BuildPrompt(text, docTypes, peopleTypes, tagSuggestions, l.promptTemplate)
 
 	reqBody := anthropicRequest{
 		Model:     l.llmCfg.Model,

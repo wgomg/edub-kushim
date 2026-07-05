@@ -97,6 +97,7 @@
 			'enricher.textreducer.target_words': Number(cfg.enricher.textreducer.target_words),
 			'enricher.contentanalyzer.engine': cfg.enricher.contentanalyzer.engine,
 			'enricher.contentanalyzer.timeout': Number(cfg.enricher.contentanalyzer.timeout),
+			'enricher.contentanalyzer.prompt_template': cfg.enricher.contentanalyzer.prompt_template,
 			...(providerKey ? {
 				[`enricher.contentanalyzer.llm.${providerKey}.base_url`]: cfg.enricher.contentanalyzer.llm[providerKey].base_url,
 				[`enricher.contentanalyzer.llm.${providerKey}.model`]: cfg.enricher.contentanalyzer.llm[providerKey].model,
@@ -201,7 +202,7 @@
 {/if}
 
 {#if !cfg && step !== 1}
-	<div class="text-center text-sm text-parchment-500">Loading configuration...</div>
+	<div class="text-center text-sm text-parchment-500">Loading configuration…</div>
 {/if}
 
 {#if step === 1}
@@ -580,6 +581,22 @@
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
 						/>
 					</div>
+				</div>
+
+				<div class="mt-4">
+					<label for="content-analyzer-prompt-template" class="mb-1 block text-sm font-medium text-parchment-200">
+						Prompt template (advanced)
+					</label>
+					<p class="mb-2 text-xs text-parchment-500">
+						Leave empty for default. Available placeholders: {`{{.DocTypePrompt}}`}, {`{{.TagsPrompt}}`}, {`{{.PeoplePrompt}}`}, {`{{.Text}}`} (required)
+					</p>
+					<textarea
+						id="content-analyzer-prompt-template"
+						rows="8"
+						bind:value={cfg.enricher.contentanalyzer.prompt_template}
+						spellcheck="false"
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 font-mono focus:border-gold-500 focus:outline-none"
+					></textarea>
 				</div>
 
 				{#if providerKey}

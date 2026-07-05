@@ -1618,6 +1618,29 @@ func TestAuthLogin(t *testing.T) {
 	})
 }
 
+func TestSanitizeConfigStrings(t *testing.T) {
+	t.Run("prompt_template is preserved", func(t *testing.T) {
+		input := map[string]any{
+			"prompt_template": "Analyze <article> text",
+			"engine":         "test",
+		}
+		sanitizeConfigStrings(input)
+		if input["prompt_template"] != "Analyze <article> text" {
+			t.Errorf("prompt_template = %q, want %q", input["prompt_template"], "Analyze <article> text")
+		}
+	})
+
+	t.Run("other strings are sanitized", func(t *testing.T) {
+		input := map[string]any{
+			"engine": "test <b>value</b>",
+		}
+		sanitizeConfigStrings(input)
+		if input["engine"] != "test value" {
+			t.Errorf("engine = %q, want %q", input["engine"], "test value")
+		}
+	})
+}
+
 func TestAuthLogout(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	h := newAuthHandler(env)

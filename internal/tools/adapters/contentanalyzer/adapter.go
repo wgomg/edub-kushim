@@ -30,21 +30,21 @@ type AnalysisResult struct {
 	Prompt   string           `json:"prompt"`
 }
 
-func NewContentAnalyzer(logger *utils.Logger, cfg config.ToolConfig, llmCfg *config.LlmToolsConfig) (ContentAnalyzer, error) {
+func NewContentAnalyzer(logger *utils.Logger, cfg config.ToolConfig, llmCfg *config.LlmToolsConfig, promptTemplate string) (ContentAnalyzer, error) {
 	switch cfg.Command {
 	case config.ContentAnalyzer.OpenAI:
-		ca, err := NewLlmOpenAi(logger, cfg, llmCfg.OpenAI)
+		ca, err := NewLlmOpenAi(logger, cfg, llmCfg.OpenAI, promptTemplate)
 		return ca, err
 	case config.ContentAnalyzer.Anthropic:
-		ca, err := NewLlmAnthropic(logger, cfg, llmCfg.Anthropic)
+		ca, err := NewLlmAnthropic(logger, cfg, llmCfg.Anthropic, promptTemplate)
 		return ca, err
 	case config.ContentAnalyzer.DeepSeek:
-		ca, err := NewLlmDeepSeek(logger, cfg, llmCfg.DeepSeek)
+		ca, err := NewLlmDeepSeek(logger, cfg, llmCfg.DeepSeek, promptTemplate)
 		return ca, err
 	case config.ContentAnalyzer.Ollama:
-		ca, err := NewLlmOllama(logger, cfg, llmCfg.Ollama)
+		ca, err := NewLlmOllama(logger, cfg, llmCfg.Ollama, promptTemplate)
 		return ca, err
 	default:
-		return NewLlmOpenAi(logger, cfg, llmCfg.OpenAI)
+		return NewLlmOpenAi(logger, cfg, llmCfg.OpenAI, promptTemplate)
 	}
 }
