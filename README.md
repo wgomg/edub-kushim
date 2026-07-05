@@ -2,11 +2,11 @@
 
 A self-hosted document management system with automatic classification via LLMs.
 
-Two binaries: **kushim** (CLI) for batch document processing and **edub** (server) for the REST API and web UI.
+Two binaries: **kushim** (CLI/CGo — document processing, OCR, matcher server) and **edub** (REST API + web UI, pure Go, `CGO_ENABLED=0`).
 
 ## Quick Start
 
-### Docker Compose (recommended)
+### Docker Compose (recommended — no host toolchain required)
 
 ```bash
 git clone <repo-url> && cd edub-kushim
@@ -21,29 +21,86 @@ The first build compiles MuPDF, Tesseract, and other C libraries from source (~m
 ### Manual (for development)
 
 ```bash
-# Initial setup — creates config, downloads models, initializes DB
+# 1. One‑time setup — launches a web wizard at http://0.0.0.0:8420
 kushim setup
 
-# Add documents to your inbox directory, then:
-kushim consume
+# Or use terminal-based mode (headless / CI)
+kushim setup --cli --languages eng,spa
 
-# Start the API server + web UI
+# 2. Start the matcher RPC server (semantic tag matching, required for tag CRUD)
+kushim hugot &
+
+# 3. Start the queue daemon (background batch processing + inbox polling)
+kushim queue &
+
+# 4. Start the API server + web UI
 edub
 ```
 
-The `setup` command walks you through the required configuration (inbox path, storage path, LLM provider). After that, drop PDFs into your inbox and run `kushim consume` — documents are automatically processed, OCR'd if needed, and classified.
+The setup wizard walks you through configuration (OCR languages, LLM provider, storage paths, admin user). After that, drop PDFs into your inbox — the queue daemon picks them up automatically. Documents are processed, OCR'd if needed, and classified asynchronously.
+
+---
 
 ## How It Works
 
 ```
-Inbox → Extract text → OCR (if scanned) → Optimize PDF → Store → Enrich
-                                                                    │
-                                                    ┌───────────────┘
-                                                    ▼
-                                            TextRank → Tag matching → LLM → Consolidate
+                              ┌──────────────────┐
+                              │   edub (server)   │
+                              │  CGO_ENABLED=0    │
+                              │  REST API + WebUI │
+                              └────────┬─────────┘
+                                       │ enqueues tasks
+                                       ▼
+                              ┌──────────────────┐
+                              │    SQLite / FTS5   │
+                              │  (status='queued') │
+                              └────────┬─────────┘
+                                       │ polls & forks
+         ┌─────────────────────────────┤
+         ▼                             ▼
+┌──────────────────┐         ┌──────────────────┐
+│ kushim queue     │         │  kushim consume   │
+│ daemon           │ ──────▶ │  --batch <id>     │
+│ (forks workers)  │         │  (worker process) │
+└──────────────────┘         └────────┬─────────┘
+                                      │
+                          ┌───────────┴───────────┐
+                          │                       │
+                          ▼                       ▼
+              ┌──────────────────┐    ┌──────────────────┐
+              │  Consume Pipeline│    │  Enrich Pipeline  │
+              │                  │    │                   │
+              │ Inbox → Extract  │    │ TextRank → Tag    │
+              │ → OCR (fallback) │    │ matching → LLM    │
+              │ → Optimize →     │    │ → Consolidate     │
+              │ Store + FTS5     │    │ → People/Tags/Type│
+              └──────────────────┘    └────────┬──────────┘
+                                               │
+                                               ▼
+                                    ┌──────────────────┐
+                                    │ kushim hugot     │
+                                    │ Matcher RPC over │
+                                    │ Unix socket      │
+                                    │ (embeddings)     │
+                                    └──────────────────┘
 ```
 
-Documents are searchable immediately via FTS5; enrichment (classification, tagging, people extraction) happens asynchronously.
+Documents are searchable immediately via SQLite FTS5; enrichment (classification, tagging, people extraction) happens asynchronously.
+
+### Process Architecture
+
+The system runs four cooperating processes:
+
+| Process | Binary | CGo | Role |
+|---------|--------|-----|------|
+| `edub` | edub | No | REST API server, web UI, enqueues tasks |
+| `kushim queue` | kushim | Yes | Queue daemon — polls for queued batches, forks workers |
+| `kushim consume` (forked) | kushim | Yes | Document processing: extract → OCR → optimize → store |
+| `kushim hugot` | kushim | Yes | Matcher RPC server over Unix socket (Hugot embeddings) |
+
+The API server (`edub`) is a pure Go binary with no C dependencies. All CGo-heavy operations (OCR, PDF manipulation, embeddings) are isolated in `kushim` subprocesses. The matcher communicates via a Unix domain socket (`kushim-hugot.sock`). Long-running CGo calls (gosseract OCR, MuPDF `pdf_clean_file`) run in forked subprocesses so a crash in the C library affects only the child.
+
+---
 
 ## Documentation
 
@@ -52,22 +109,30 @@ Documents are searchable immediately via FTS5; enrichment (classification, taggi
 | Understand the design and pipeline       | [Architecture](docs/architecture.md)          |
 | See what's done and what's next          | [Roadmap](docs/roadmap.md)                    |
 | Find a specific package or function      | [Code Reference](docs/reference/overview.md)  |
+| Full CLI reference and API docs          | [User Manual](docs/user-manual.md)            |
 
 ## Key Features
 
 - **LLM-powered classification** — automatic tags, document type, title, and people extraction via OpenAI, Anthropic, DeepSeek, or Ollama
-- **Semantic tag matching** — Hugot embeddings with cosine similarity (Go or ONNX backend)
-- **OCR pipeline** — Tesseract + MuPDF for image-only PDFs, with searchable PDF output
-- **Full-text search** — SQLite FTS5 with sanitized query layer
-- **Async processing** — task queue with worker pools, batch tracking, progress polling
-- **Dual storage** — originals preserved alongside processed/OCR'd versions
-- **Web UI** — SvelteKit SPA (optional, served by the edub binary)
+- **Semantic tag matching** — Hugot embeddings with cosine similarity (Go or ONNX Runtime backend)
+- **OCR pipeline** — Tesseract + MuPDF for image-only PDFs, with searchable PDF output (text rendering mode 3)
+- **Full-text search** — SQLite FTS5 with `unicode61` tokenizer, BM25 ranking, snippet highlighting
+- **Structured search** — metadata filters (tags, people, document type, language, date range, file size) combined with full-text queries
+- **Async enrichment** — task queue with worker pools, batch tracking, progress polling; TextRank reduction before LLM
+- **Post-LLM consolidation** — normalized tags re-matched against canonical embeddings to fix casing and synonym mismatches
+- **User accounts & auth** — bcrypt passwords, JWT sessions, API keys, role-based access (admin/editor/viewer)
+- **Backup & restore** — `VACUUM INTO` database snapshots, timestamped `tar.gz` archives with config + storage
+- **Orphaned file management** — detect, quarantine, restore, and re-ingest orphaned files
+- **Dashboard** — activity timeline, batch overview, storage analytics, document type/language/tag distributions
+- **Web UI** — SvelteKit SPA with dashboard, structured search, document detail, settings, user management, tag/people/document-type administration, task monitoring, log viewer, orphaned file management
+- **Dual storage** — originals preserved alongside processed/OCR'd versions, date-based organization
+- **Docker Compose quick-start** — single command builds everything from source, no host-side toolchain required
 
 ## Development
 
 ### Prerequisites
 
-- Go 1.22+
+- Go 1.26
 - gcc, gcc-c++, make, autotools, git, curl
 - Node.js 24 (use [nvm](https://github.com/nvm-sh/nvm) — `.nvmrc` specifies the version, run `nvm use`)
 
@@ -80,8 +145,8 @@ make build-deps
 # 2. Build Go binaries (kushim + edub) with required build tags
 make build
 
-# 3. Build everything including the web UI (requires Node.js)
-make web-build && make build
+# 3. Build everything including both web UIs (requires Node.js)
+make web-build && make wizard-build && make build
 ```
 
 The `Makefile` also provides containerized builds (`make build-glibc`, `make build-musl`) and a combined deployment image (`make build-tools-image`).
@@ -89,23 +154,43 @@ The `Makefile` also provides containerized builds (`make build-glibc`, `make bui
 ### Test
 
 ```bash
-go test -tags "XLA,ORT" ./...
+# Runs all tests that don't require CGo (60+ tests, preferred)
+make test
+
+# Verbose output for development
+make test-verbose
 ```
+
+The manual equivalent (CGo-free packages only):
+
+```bash
+CGO_ENABLED=0 go test -tags "XLA,ORT" -count=1 ./internal/database/ \
+  ./internal/search/ ./internal/task/ ./internal/api/handlers/ \
+  ./internal/consumption/
+```
+
+**Note:** `go test -tags "XLA,ORT" ./...` will fail without the full C toolchain installed. Always use `make test` or the explicit package list above unless C deps are available.
 
 ### Web UI (hot-reload)
 
-When working on the SvelteKit frontend, use the dev server for live reloading instead of rebuilding the embedded static files each time:
+Two SvelteKit SPAs live in parallel:
+
+- **Main app** (`web/`) — dashboard, documents, settings, users, tags, people, logs, login
+- **Setup wizard** (`web-wizard/`) — five-step guided setup, embedded in the `kushim` binary
+
+For development with live reload:
 
 ```bash
-cd web
+cd web          # or cd web-wizard
 npm ci
-npm run dev     # starts at localhost:5173, proxies API to localhost:3000
+npm run dev     # hot-reload at localhost:5173, proxies API to localhost:3000
 ```
 
-For production, compile the UI and embed it in the Go binary:
+For production, build and embed in Go binary:
 
 ```bash
-make web-build  # builds to internal/static/build/
+make web-build     # builds to internal/static/build/
+make wizard-build  # builds to internal/wizard/static/
 ```
 
 ### Code generation
@@ -117,6 +202,12 @@ sqlc generate
 ```
 
 This regenerates the type-safe query methods under `internal/database/*.sql.go`.
+
+### Miscellaneous
+
+```bash
+make fix    # runs go fix -tags "XLA,ORT" ./...
+```
 
 ### Configuration reference
 
@@ -131,5 +222,6 @@ Building from source requires compiling four static libraries from source (autom
 - **Tesseract** (latest)
 - **MuPDF** 1.28.0
 - **libtokenizers** (for Hugot Go backend)
+- **ONNX Runtime** — auto-downloaded at runtime when using the ORT backend (default)
 
-See the [overview reference](docs/reference/overview.md) for the full dependency chain. Pre-built binaries are planned.
+See the [overview reference](docs/reference/overview.md) for the full dependency chain.
