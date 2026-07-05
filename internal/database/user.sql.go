@@ -25,15 +25,17 @@ const createUser = `-- name: CreateUser :execresult
 INSERT INTO user (
     username,
     password_hash,
+    role,
     api_key_hash,
     api_key_prefix,
     api_key_created_at
-) VALUES (?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?)
 `
 
 type CreateUserParams struct {
 	Username        string
 	PasswordHash    sql.NullString
+	Role            string
 	ApiKeyHash      sql.NullString
 	ApiKeyPrefix    sql.NullString
 	ApiKeyCreatedAt sql.NullTime
@@ -43,6 +45,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (sql.Res
 	return q.db.ExecContext(ctx, createUser,
 		arg.Username,
 		arg.PasswordHash,
+		arg.Role,
 		arg.ApiKeyHash,
 		arg.ApiKeyPrefix,
 		arg.ApiKeyCreatedAt,
@@ -59,7 +62,7 @@ func (q *Queries) DeleteUser(ctx context.Context, id int64) error {
 }
 
 const getUser = `-- name: GetUser :one
-SELECT id, username, password_hash, api_key_hash, created_at, api_key_prefix, api_key_created_at FROM user WHERE id = ?
+SELECT id, username, password_hash, api_key_hash, created_at, api_key_prefix, api_key_created_at, role FROM user WHERE id = ?
 `
 
 func (q *Queries) GetUser(ctx context.Context, id int64) (User, error) {
@@ -73,12 +76,13 @@ func (q *Queries) GetUser(ctx context.Context, id int64) (User, error) {
 		&i.CreatedAt,
 		&i.ApiKeyPrefix,
 		&i.ApiKeyCreatedAt,
+		&i.Role,
 	)
 	return i, err
 }
 
 const getUserByAPIKeyHash = `-- name: GetUserByAPIKeyHash :one
-SELECT id, username, password_hash, api_key_hash, created_at, api_key_prefix, api_key_created_at FROM user WHERE api_key_hash = ?
+SELECT id, username, password_hash, api_key_hash, created_at, api_key_prefix, api_key_created_at, role FROM user WHERE api_key_hash = ?
 `
 
 func (q *Queries) GetUserByAPIKeyHash(ctx context.Context, apiKeyHash sql.NullString) (User, error) {
@@ -92,12 +96,13 @@ func (q *Queries) GetUserByAPIKeyHash(ctx context.Context, apiKeyHash sql.NullSt
 		&i.CreatedAt,
 		&i.ApiKeyPrefix,
 		&i.ApiKeyCreatedAt,
+		&i.Role,
 	)
 	return i, err
 }
 
 const getUserByUsername = `-- name: GetUserByUsername :one
-SELECT id, username, password_hash, api_key_hash, created_at, api_key_prefix, api_key_created_at FROM user WHERE username = ?
+SELECT id, username, password_hash, api_key_hash, created_at, api_key_prefix, api_key_created_at, role FROM user WHERE username = ?
 `
 
 func (q *Queries) GetUserByUsername(ctx context.Context, username string) (User, error) {
@@ -111,12 +116,13 @@ func (q *Queries) GetUserByUsername(ctx context.Context, username string) (User,
 		&i.CreatedAt,
 		&i.ApiKeyPrefix,
 		&i.ApiKeyCreatedAt,
+		&i.Role,
 	)
 	return i, err
 }
 
 const listUsers = `-- name: ListUsers :many
-SELECT id, username, api_key_prefix, api_key_created_at, created_at
+SELECT id, username, role, api_key_prefix, api_key_created_at, created_at
 FROM user ORDER BY created_at DESC LIMIT ? OFFSET ?
 `
 
@@ -128,6 +134,7 @@ type ListUsersParams struct {
 type ListUsersRow struct {
 	ID              int64
 	Username        string
+	Role            string
 	ApiKeyPrefix    sql.NullString
 	ApiKeyCreatedAt sql.NullTime
 	CreatedAt       sql.NullTime
@@ -145,6 +152,7 @@ func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]ListUse
 		if err := rows.Scan(
 			&i.ID,
 			&i.Username,
+			&i.Role,
 			&i.ApiKeyPrefix,
 			&i.ApiKeyCreatedAt,
 			&i.CreatedAt,
@@ -242,5 +250,19 @@ type UpdateUserPasswordParams struct {
 
 func (q *Queries) UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error {
 	_, err := q.db.ExecContext(ctx, updateUserPassword, arg.PasswordHash, arg.ID)
+	return err
+}
+
+const updateUserRole = `-- name: UpdateUserRole :exec
+UPDATE user SET role = ? WHERE id = ?
+`
+
+type UpdateUserRoleParams struct {
+	Role string
+	ID   int64
+}
+
+func (q *Queries) UpdateUserRole(ctx context.Context, arg UpdateUserRoleParams) error {
+	_, err := q.db.ExecContext(ctx, updateUserRole, arg.Role, arg.ID)
 	return err
 }

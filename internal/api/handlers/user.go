@@ -42,6 +42,7 @@ func toUserResponse(user database.User) types.UserResponse {
 	return types.UserResponse{
 		ID:              user.ID,
 		Username:        user.Username,
+		Role:            user.Role,
 		CreatedAt:       created,
 		HasAPIKey:       hasKey,
 		APIKeyPrefix:    prefix,
@@ -67,6 +68,7 @@ func toUserResponseFromRow(row database.ListUsersRow) types.UserResponse {
 	return types.UserResponse{
 		ID:              row.ID,
 		Username:        row.Username,
+		Role:            row.Role,
 		CreatedAt:       created,
 		HasAPIKey:       prefix != nil,
 		APIKeyPrefix:    prefix,
@@ -149,7 +151,7 @@ func (h *UserHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.services.User.Create(ctx, req.Username, req.Password)
+	user, err := h.services.User.Create(ctx, req.Username, req.Password, req.Role)
 	if err != nil {
 		if errs.KindOf(err) == errs.KindConflict {
 			w.Header().Set("Content-Type", "application/json")
@@ -189,7 +191,7 @@ func (h *UserHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.services.User.Update(ctx, id, req.Username, req.Password)
+	user, err := h.services.User.Update(ctx, id, req.Username, req.Password, req.Role)
 	if err != nil {
 		if errs.KindOf(err) == errs.KindConflict {
 			w.Header().Set("Content-Type", "application/json")

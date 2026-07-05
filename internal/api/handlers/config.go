@@ -330,7 +330,7 @@ func (h *ConfigHandler) CreateAdminUser(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	user, err := h.services.User.Create(ctx, req.Username, req.Password)
+	user, err := h.services.User.Create(ctx, req.Username, req.Password, "admin")
 	if err != nil {
 		if errs.KindOf(err) == errs.KindConflict {
 			w.Header().Set("Content-Type", "application/json")
@@ -352,6 +352,7 @@ func (h *ConfigHandler) CreateAdminUser(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(types.UserResponse{
 		ID:        user.ID,
 		Username:  user.Username,
+		Role:      "admin",
 		CreatedAt: created,
 	})
 }

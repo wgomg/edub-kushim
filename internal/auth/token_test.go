@@ -24,7 +24,7 @@ func TestGenerateSessionSecret(t *testing.T) {
 
 func TestGenerateToken_ValidateRoundTrip(t *testing.T) {
 	secret := "test-secret-key"
-	claims, err := GenerateToken(42, "alice", secret)
+	claims, err := GenerateToken(42, "alice", "viewer", secret)
 	if err != nil {
 		t.Fatalf("GenerateToken: %v", err)
 	}
@@ -42,6 +42,9 @@ func TestGenerateToken_ValidateRoundTrip(t *testing.T) {
 	if got.Username != "alice" {
 		t.Errorf("Username: got %q, want %q", got.Username, "alice")
 	}
+	if got.Role != "viewer" {
+		t.Errorf("Role: got %q, want %q", got.Role, "viewer")
+	}
 	if got.IssuedAt == nil {
 		t.Error("expected iat to be set")
 	}
@@ -54,7 +57,7 @@ func TestGenerateToken_ValidateRoundTrip(t *testing.T) {
 }
 
 func TestValidateToken_WrongSecret(t *testing.T) {
-	token, _ := GenerateToken(1, "user", "correct-secret")
+	token, _ := GenerateToken(1, "user", "viewer", "correct-secret")
 	_, err := ValidateToken(token, "wrong-secret")
 	if err == nil {
 		t.Fatal("expected error for wrong secret")
@@ -66,6 +69,7 @@ func TestValidateToken_ExpiredToken(t *testing.T) {
 	claims := Claims{
 		UserID:   1,
 		Username: "user",
+		Role:     "viewer",
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(-1 * time.Hour)),
 			IssuedAt:  jwt.NewNumericDate(time.Now().Add(-2 * time.Hour)),
@@ -91,7 +95,7 @@ func TestValidateToken_Malformed(t *testing.T) {
 }
 
 func TestGenerateToken_Parts(t *testing.T) {
-	token, _ := GenerateToken(1, "u", "s")
+	token, _ := GenerateToken(1, "u", "viewer", "s")
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
 		t.Fatalf("expected 3 JWT parts, got %d", len(parts))

@@ -3,16 +3,19 @@ package types
 type CreateUserRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
+	Role     string `json:"role,omitempty"`
 }
 
 type UpdateUserRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password,omitempty"`
+	Role     string `json:"role,omitempty"`
 }
 
 type UserResponse struct {
 	ID              int64   `json:"id"`
 	Username        string  `json:"username"`
+	Role            string  `json:"role"`
 	CreatedAt       string  `json:"created_at"`
 	HasAPIKey       bool    `json:"has_api_key"`
 	APIKeyPrefix    *string `json:"api_key_prefix,omitempty"`

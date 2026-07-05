@@ -1117,6 +1117,7 @@ func TestUserCrud(t *testing.T) {
 		var resp types.UserResponse
 		json.NewDecoder(w.Body).Decode(&resp)
 		testutil.AssertEqual(t, resp.Username, "alice", "username")
+		testutil.AssertEqual(t, resp.Role, "viewer", "default role")
 		if resp.ID == 0 {
 			t.Fatal("expected non-zero user id")
 		}
@@ -1220,6 +1221,36 @@ func TestUserCrud(t *testing.T) {
 		var resp types.UserResponse
 		json.NewDecoder(w.Body).Decode(&resp)
 		testutil.AssertEqual(t, resp.Username, "alicia", "updated username")
+		testutil.AssertEqual(t, resp.Role, "viewer", "role unchanged")
+	})
+
+	t.Run("update user role", func(t *testing.T) {
+		body, _ := json.Marshal(types.UpdateUserRequest{
+			Username: "alicia",
+			Role:     "editor",
+		})
+		w := rec()
+		r := req(t, "PUT", "/api/v1/users/1", body)
+		r.SetPathValue("id", "1")
+		h.Update(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var resp types.UserResponse
+		json.NewDecoder(w.Body).Decode(&resp)
+		testutil.AssertEqual(t, resp.Username, "alicia", "username")
+		testutil.AssertEqual(t, resp.Role, "editor", "updated role")
+	})
+
+	t.Run("update with invalid role rejected", func(t *testing.T) {
+		body, _ := json.Marshal(types.UpdateUserRequest{
+			Username: "alicia",
+			Role:     "superadmin",
+		})
+		w := rec()
+		r := req(t, "PUT", "/api/v1/users/1", body)
+		r.SetPathValue("id", "1")
+		h.Update(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusBadRequest, "400 on invalid role")
 	})
 
 	t.Run("update non-existent user", func(t *testing.T) {
@@ -1301,6 +1332,7 @@ func TestConfigHandlerCreateAdminUser(t *testing.T) {
 		var resp types.UserResponse
 		json.NewDecoder(w.Body).Decode(&resp)
 		testutil.AssertEqual(t, resp.Username, "admin-wizard", "username")
+		testutil.AssertEqual(t, resp.Role, "admin", "role")
 		if resp.CreatedAt == "" {
 			t.Fatal("expected created_at to be set")
 		}
@@ -1462,7 +1494,7 @@ func TestAuthLogin(t *testing.T) {
 
 	// Ensure at least one user exists for login testing.
 	ctx := context.Background()
-	_, err := env.userSvc.Create(ctx, "logintest", "ValidPassword123!")
+	_, err := env.userSvc.Create(ctx, "logintest", "ValidPassword123!", "viewer")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1488,6 +1520,9 @@ func TestAuthLogin(t *testing.T) {
 		}
 		if resp.User["username"] != "logintest" {
 			t.Fatalf("expected username 'logintest', got %v", resp.User["username"])
+		}
+		if resp.User["role"] != "viewer" {
+			t.Fatalf("expected role 'viewer', got %v", resp.User["role"])
 		}
 	})
 
@@ -1565,6 +1600,43 @@ func TestAuthLogout(t *testing.T) {
 	testutil.AssertEqual(t, w.Code, http.StatusNoContent, "status")
 }
 
+func TestAuthMeHandler(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	h := newAuthHandler(env)
+
+	ctx := context.Background()
+	user, err := env.userSvc.Create(ctx, "meuser", "Password123!", "editor")
+	testutil.AssertNoError(t, err, "create user")
+
+	t.Run("returns current user profile", func(t *testing.T) {
+		r := req(t, "GET", "/api/v1/me", nil)
+		r = r.WithContext(context.WithValue(r.Context(), auth.UserIDKey, user.ID))
+		w := rec()
+		h.MeHandler(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var resp types.UserResponse
+		json.NewDecoder(w.Body).Decode(&resp)
+		testutil.AssertEqual(t, resp.Username, "meuser", "username")
+		testutil.AssertEqual(t, resp.Role, "editor", "role")
+	})
+
+	t.Run("missing user id returns 401", func(t *testing.T) {
+		r := req(t, "GET", "/api/v1/me", nil)
+		w := rec()
+		h.MeHandler(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusUnauthorized, "status")
+	})
+
+	t.Run("non-existent user returns 404", func(t *testing.T) {
+		r := req(t, "GET", "/api/v1/me", nil)
+		r = r.WithContext(context.WithValue(r.Context(), auth.UserIDKey, int64(9999)))
+		w := rec()
+		h.MeHandler(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusNotFound, "status")
+	})
+}
+
 func TestErrorHelpers(t *testing.T) {
 	env := newHandlerTestEnv(t)
 
@@ -1595,7 +1667,7 @@ func TestAPIKeyHandler(t *testing.T) {
 	h := NewAPIKeyHandler(env.userSvc, env.logger)
 
 	ctx := context.Background()
-	user, err := env.userSvc.Create(ctx, "keyuser", "Password123!")
+	user, err := env.userSvc.Create(ctx, "keyuser", "Password123!", "viewer")
 	testutil.AssertNoError(t, err, "create user")
 
 	t.Run("generate key", func(t *testing.T) {
@@ -1694,5 +1766,80 @@ func TestAPIKeyHandler(t *testing.T) {
 		r.SetPathValue("id", fmt.Sprintf("%d", user.ID))
 		h.GenerateKey(w, r)
 		testutil.AssertEqual(t, w.Code, http.StatusForbidden, "status")
+	})
+}
+
+func TestMeAPIKeyHandler(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	h := NewAPIKeyHandler(env.userSvc, env.logger)
+
+	ctx := context.Background()
+	user, err := env.userSvc.Create(ctx, "mekeyuser", "Password123!", "viewer")
+	testutil.AssertNoError(t, err, "create user")
+
+	t.Run("me generate key", func(t *testing.T) {
+		w := rec()
+		r := reqWithAuth(t, "POST", "/api/v1/me/api-key", nil, user.ID)
+		h.MeGenerateKey(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusCreated, "status")
+
+		var resp types.CreateAPIKeyResponse
+		json.NewDecoder(w.Body).Decode(&resp)
+		if !strings.HasPrefix(resp.APIKey, "ek_") {
+			t.Fatalf("expected api_key to start with ek_, got %q", resp.APIKey)
+		}
+	})
+
+	t.Run("me get key status", func(t *testing.T) {
+		w := rec()
+		r := reqWithAuth(t, "GET", "/api/v1/me/api-key", nil, user.ID)
+		h.MeGetKeyStatus(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var resp types.APIKeyStatusResponse
+		json.NewDecoder(w.Body).Decode(&resp)
+		if !resp.HasAPIKey {
+			t.Fatal("expected has_api_key to be true")
+		}
+	})
+
+	t.Run("me rotate key", func(t *testing.T) {
+		w := rec()
+		r := reqWithAuth(t, "PUT", "/api/v1/me/api-key", nil, user.ID)
+		h.MeRotateKey(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var resp types.CreateAPIKeyResponse
+		json.NewDecoder(w.Body).Decode(&resp)
+		if !strings.HasPrefix(resp.APIKey, "ek_") {
+			t.Fatalf("expected api_key to start with ek_, got %q", resp.APIKey)
+		}
+	})
+
+	t.Run("me revoke key", func(t *testing.T) {
+		w := rec()
+		r := reqWithAuth(t, "DELETE", "/api/v1/me/api-key", nil, user.ID)
+		h.MeRevokeKey(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusNoContent, "status")
+	})
+
+	t.Run("me get key status after revoke", func(t *testing.T) {
+		w := rec()
+		r := reqWithAuth(t, "GET", "/api/v1/me/api-key", nil, user.ID)
+		h.MeGetKeyStatus(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var resp types.APIKeyStatusResponse
+		json.NewDecoder(w.Body).Decode(&resp)
+		if resp.HasAPIKey {
+			t.Fatal("expected has_api_key to be false after revoke")
+		}
+	})
+
+	t.Run("me handlers unauthorized", func(t *testing.T) {
+		w := rec()
+		r := req(t, "POST", "/api/v1/me/api-key", nil)
+		h.MeGenerateKey(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusUnauthorized, "status")
 	})
 }

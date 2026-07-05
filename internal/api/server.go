@@ -113,7 +113,14 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 		}
 		return &u, nil
 	}
-	handler := chainMiddleware(logger, getSecret, getAuthEnabled, validateAPIKey, mux)
+	getUserByID := func(ctx context.Context, id int64) (*database.User, error) {
+		u, err := s.services.User.Get(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		return &u, nil
+	}
+	handler := chainMiddleware(logger, getSecret, getAuthEnabled, validateAPIKey, getUserByID, mux)
 
 	s.httpServer = &http.Server{
 		Addr:         addr,
@@ -170,76 +177,79 @@ func registerRoutes(
 	mux.HandleFunc("POST /api/v1/auth/logout", authHandler.Logout)
 
 	docHandler := handlers.NewDocumentHandler(client, logger, engine, services, getConfig)
-	mux.HandleFunc("GET /api/v1/documents", docHandler.ListDocuments)
-	mux.HandleFunc("GET /api/v1/documents/{id}", docHandler.GetDocument)
-	mux.HandleFunc("GET /api/v1/documents/{id}/file", docHandler.GetDocumentFile)
-	mux.HandleFunc("GET /api/v1/documents/search", docHandler.SearchDocuments)
-	mux.HandleFunc("POST /api/v1/documents/search", docHandler.SearchDocumentsStructured)
-	mux.HandleFunc("PUT /api/v1/documents/{id}", docHandler.UpdateDocument)
-	mux.HandleFunc("DELETE /api/v1/documents/{id}", docHandler.DeleteDocument)
-	mux.HandleFunc("POST /api/v1/documents/{id}/tags", docHandler.AddDocumentTag)
-	mux.HandleFunc("DELETE /api/v1/documents/{id}/tags", docHandler.RemoveDocumentTag)
-	mux.HandleFunc("POST /api/v1/documents/{id}/people", docHandler.AddDocumentPeople)
-	mux.HandleFunc("DELETE /api/v1/documents/{id}/people", docHandler.RemoveDocumentPeople)
-	mux.HandleFunc("POST /api/v1/documents/download", docHandler.DownloadDocuments)
-	mux.HandleFunc("POST /api/v1/documents/batch-delete", docHandler.BatchDeleteDocuments)
-	mux.HandleFunc("POST /api/v1/documents/batch-tags", docHandler.BatchAssignTags)
-	mux.HandleFunc("GET /api/v1/filter-languages", docHandler.FilterLanguages)
-	mux.HandleFunc("GET /api/v1/filter-mime-types", docHandler.FilterMimeTypes)
+	viewer := []auth.Role{auth.RoleViewer, auth.RoleEditor, auth.RoleAdmin}
+	editor := []auth.Role{auth.RoleEditor, auth.RoleAdmin}
+	admin := []auth.Role{auth.RoleAdmin}
+	mux.Handle("GET /api/v1/documents", RequireRole(viewer...)(http.HandlerFunc(docHandler.ListDocuments)))
+	mux.Handle("GET /api/v1/documents/{id}", RequireRole(viewer...)(http.HandlerFunc(docHandler.GetDocument)))
+	mux.Handle("GET /api/v1/documents/{id}/file", RequireRole(viewer...)(http.HandlerFunc(docHandler.GetDocumentFile)))
+	mux.Handle("GET /api/v1/documents/search", RequireRole(viewer...)(http.HandlerFunc(docHandler.SearchDocuments)))
+	mux.Handle("POST /api/v1/documents/search", RequireRole(viewer...)(http.HandlerFunc(docHandler.SearchDocumentsStructured)))
+	mux.Handle("PUT /api/v1/documents/{id}", RequireRole(editor...)(http.HandlerFunc(docHandler.UpdateDocument)))
+	mux.Handle("DELETE /api/v1/documents/{id}", RequireRole(editor...)(http.HandlerFunc(docHandler.DeleteDocument)))
+	mux.Handle("POST /api/v1/documents/{id}/tags", RequireRole(editor...)(http.HandlerFunc(docHandler.AddDocumentTag)))
+	mux.Handle("DELETE /api/v1/documents/{id}/tags", RequireRole(editor...)(http.HandlerFunc(docHandler.RemoveDocumentTag)))
+	mux.Handle("POST /api/v1/documents/{id}/people", RequireRole(editor...)(http.HandlerFunc(docHandler.AddDocumentPeople)))
+	mux.Handle("DELETE /api/v1/documents/{id}/people", RequireRole(editor...)(http.HandlerFunc(docHandler.RemoveDocumentPeople)))
+	mux.Handle("POST /api/v1/documents/download", RequireRole(viewer...)(http.HandlerFunc(docHandler.DownloadDocuments)))
+	mux.Handle("POST /api/v1/documents/batch-delete", RequireRole(editor...)(http.HandlerFunc(docHandler.BatchDeleteDocuments)))
+	mux.Handle("POST /api/v1/documents/batch-tags", RequireRole(editor...)(http.HandlerFunc(docHandler.BatchAssignTags)))
+	mux.Handle("GET /api/v1/filter-languages", RequireRole(viewer...)(http.HandlerFunc(docHandler.FilterLanguages)))
+	mux.Handle("GET /api/v1/filter-mime-types", RequireRole(viewer...)(http.HandlerFunc(docHandler.FilterMimeTypes)))
 
 	orphanedHandler := handlers.NewOrphanedHandler(services.Orphaned, logger)
-	mux.HandleFunc("GET /api/v1/orphaned", orphanedHandler.ListOrphaned)
-	mux.HandleFunc("POST /api/v1/orphaned/scan", orphanedHandler.ScanOrphaned)
-	mux.HandleFunc("DELETE /api/v1/orphaned/{id}", orphanedHandler.DeleteOrphaned)
-	mux.HandleFunc("POST /api/v1/orphaned/{id}/restore", orphanedHandler.RestoreOrphaned)
-	mux.HandleFunc("POST /api/v1/orphaned/{id}/move-to-inbox", orphanedHandler.MoveToInbox)
-	mux.HandleFunc("POST /api/v1/orphaned/delete-all", orphanedHandler.DeleteAllOrphaned)
-	mux.HandleFunc("POST /api/v1/orphaned/move-to-inbox-all", orphanedHandler.MoveAllToInbox)
+	mux.Handle("GET /api/v1/orphaned", RequireRole(editor...)(http.HandlerFunc(orphanedHandler.ListOrphaned)))
+	mux.Handle("POST /api/v1/orphaned/scan", RequireRole(editor...)(http.HandlerFunc(orphanedHandler.ScanOrphaned)))
+	mux.Handle("DELETE /api/v1/orphaned/{id}", RequireRole(editor...)(http.HandlerFunc(orphanedHandler.DeleteOrphaned)))
+	mux.Handle("POST /api/v1/orphaned/{id}/restore", RequireRole(editor...)(http.HandlerFunc(orphanedHandler.RestoreOrphaned)))
+	mux.Handle("POST /api/v1/orphaned/{id}/move-to-inbox", RequireRole(editor...)(http.HandlerFunc(orphanedHandler.MoveToInbox)))
+	mux.Handle("POST /api/v1/orphaned/delete-all", RequireRole(editor...)(http.HandlerFunc(orphanedHandler.DeleteAllOrphaned)))
+	mux.Handle("POST /api/v1/orphaned/move-to-inbox-all", RequireRole(editor...)(http.HandlerFunc(orphanedHandler.MoveAllToInbox)))
 
 	erroredHandler := handlers.NewErroredHandler(services.ErroredFiles, logger)
-	mux.HandleFunc("GET /api/v1/errored", erroredHandler.ListErrored)
-	mux.HandleFunc("GET /api/v1/errored/download", erroredHandler.DownloadErrored)
-	mux.HandleFunc("DELETE /api/v1/errored", erroredHandler.DeleteErrored)
-	mux.HandleFunc("POST /api/v1/errored/delete-all", erroredHandler.DeleteAllErrored)
+	mux.Handle("GET /api/v1/errored", RequireRole(editor...)(http.HandlerFunc(erroredHandler.ListErrored)))
+	mux.Handle("GET /api/v1/errored/download", RequireRole(editor...)(http.HandlerFunc(erroredHandler.DownloadErrored)))
+	mux.Handle("DELETE /api/v1/errored", RequireRole(editor...)(http.HandlerFunc(erroredHandler.DeleteErrored)))
+	mux.Handle("POST /api/v1/errored/delete-all", RequireRole(editor...)(http.HandlerFunc(erroredHandler.DeleteAllErrored)))
 
 	tagHandler := handlers.NewTagHandler(services, logger)
-	mux.HandleFunc("GET /api/v1/tags", tagHandler.List)
-	mux.HandleFunc("POST /api/v1/tags", tagHandler.Create)
-	mux.HandleFunc("PUT /api/v1/tags/{id}", tagHandler.Update)
-	mux.HandleFunc("DELETE /api/v1/tags/{id}", tagHandler.Delete)
+	mux.Handle("GET /api/v1/tags", RequireRole(viewer...)(http.HandlerFunc(tagHandler.List)))
+	mux.Handle("POST /api/v1/tags", RequireRole(editor...)(http.HandlerFunc(tagHandler.Create)))
+	mux.Handle("PUT /api/v1/tags/{id}", RequireRole(editor...)(http.HandlerFunc(tagHandler.Update)))
+	mux.Handle("DELETE /api/v1/tags/{id}", RequireRole(editor...)(http.HandlerFunc(tagHandler.Delete)))
 
 	peopleHandler := handlers.NewPeopleHandler(services, logger)
-	mux.HandleFunc("GET /api/v1/people", peopleHandler.List)
-	mux.HandleFunc("POST /api/v1/people", peopleHandler.Create)
-	mux.HandleFunc("PUT /api/v1/people/{id}", peopleHandler.Update)
-	mux.HandleFunc("DELETE /api/v1/people/{id}", peopleHandler.Delete)
-	mux.HandleFunc("GET /api/v1/people-types", peopleHandler.ListPeopleTypes)
-	mux.HandleFunc("POST /api/v1/people-types", peopleHandler.CreatePeopleType)
-	mux.HandleFunc("PUT /api/v1/people-types/{id}", peopleHandler.UpdatePeopleType)
-	mux.HandleFunc("DELETE /api/v1/people-types/{id}", peopleHandler.DeletePeopleType)
+	mux.Handle("GET /api/v1/people", RequireRole(viewer...)(http.HandlerFunc(peopleHandler.List)))
+	mux.Handle("POST /api/v1/people", RequireRole(editor...)(http.HandlerFunc(peopleHandler.Create)))
+	mux.Handle("PUT /api/v1/people/{id}", RequireRole(editor...)(http.HandlerFunc(peopleHandler.Update)))
+	mux.Handle("DELETE /api/v1/people/{id}", RequireRole(editor...)(http.HandlerFunc(peopleHandler.Delete)))
+	mux.Handle("GET /api/v1/people-types", RequireRole(viewer...)(http.HandlerFunc(peopleHandler.ListPeopleTypes)))
+	mux.Handle("POST /api/v1/people-types", RequireRole(editor...)(http.HandlerFunc(peopleHandler.CreatePeopleType)))
+	mux.Handle("PUT /api/v1/people-types/{id}", RequireRole(editor...)(http.HandlerFunc(peopleHandler.UpdatePeopleType)))
+	mux.Handle("DELETE /api/v1/people-types/{id}", RequireRole(editor...)(http.HandlerFunc(peopleHandler.DeletePeopleType)))
 
 	docTypeHandler := handlers.NewDocumentTypeHandler(services, logger)
-	mux.HandleFunc("GET /api/v1/document-types", docTypeHandler.List)
-	mux.HandleFunc("POST /api/v1/document-types", docTypeHandler.Create)
-	mux.HandleFunc("PUT /api/v1/document-types/{id}", docTypeHandler.Update)
-	mux.HandleFunc("DELETE /api/v1/document-types/{id}", docTypeHandler.Delete)
+	mux.Handle("GET /api/v1/document-types", RequireRole(viewer...)(http.HandlerFunc(docTypeHandler.List)))
+	mux.Handle("POST /api/v1/document-types", RequireRole(editor...)(http.HandlerFunc(docTypeHandler.Create)))
+	mux.Handle("PUT /api/v1/document-types/{id}", RequireRole(editor...)(http.HandlerFunc(docTypeHandler.Update)))
+	mux.Handle("DELETE /api/v1/document-types/{id}", RequireRole(editor...)(http.HandlerFunc(docTypeHandler.Delete)))
 
 	consumeHandler := handlers.NewConsumeHandler(getConfig, logger, workStore, client.Queries, services)
-	mux.HandleFunc("POST /api/v1/consume", consumeHandler.Consume)
-	mux.HandleFunc("POST /api/v1/consume/upload", consumeHandler.Upload)
+	mux.Handle("POST /api/v1/consume", RequireRole(editor...)(http.HandlerFunc(consumeHandler.Consume)))
+	mux.Handle("POST /api/v1/consume/upload", RequireRole(editor...)(http.HandlerFunc(consumeHandler.Upload)))
 
 	userHandler := handlers.NewUserHandler(services, logger)
-	mux.HandleFunc("GET /api/v1/users", userHandler.List)
-	mux.HandleFunc("GET /api/v1/users/{id}", userHandler.Get)
-	mux.HandleFunc("POST /api/v1/users", userHandler.Create)
-	mux.HandleFunc("PUT /api/v1/users/{id}", userHandler.Update)
-	mux.HandleFunc("DELETE /api/v1/users/{id}", userHandler.Delete)
+	mux.Handle("GET /api/v1/users", RequireRole(admin...)(http.HandlerFunc(userHandler.List)))
+	mux.Handle("GET /api/v1/users/{id}", RequireRole(admin...)(http.HandlerFunc(userHandler.Get)))
+	mux.Handle("POST /api/v1/users", RequireRole(admin...)(http.HandlerFunc(userHandler.Create)))
+	mux.Handle("PUT /api/v1/users/{id}", RequireRole(admin...)(http.HandlerFunc(userHandler.Update)))
+	mux.Handle("DELETE /api/v1/users/{id}", RequireRole(admin...)(http.HandlerFunc(userHandler.Delete)))
 
 	apiKeyHandler := handlers.NewAPIKeyHandler(services.User, logger)
-	mux.HandleFunc("POST /api/v1/users/{id}/api-key", apiKeyHandler.GenerateKey)
-	mux.HandleFunc("DELETE /api/v1/users/{id}/api-key", apiKeyHandler.RevokeKey)
-	mux.HandleFunc("PUT /api/v1/users/{id}/api-key", apiKeyHandler.RotateKey)
-	mux.HandleFunc("GET /api/v1/users/{id}/api-key", apiKeyHandler.GetKeyStatus)
+	mux.Handle("POST /api/v1/users/{id}/api-key", RequireRole(admin...)(http.HandlerFunc(apiKeyHandler.GenerateKey)))
+	mux.Handle("DELETE /api/v1/users/{id}/api-key", RequireRole(admin...)(http.HandlerFunc(apiKeyHandler.RevokeKey)))
+	mux.Handle("PUT /api/v1/users/{id}/api-key", RequireRole(admin...)(http.HandlerFunc(apiKeyHandler.RotateKey)))
+	mux.Handle("GET /api/v1/users/{id}/api-key", RequireRole(admin...)(http.HandlerFunc(apiKeyHandler.GetKeyStatus)))
 
 	configHandler := handlers.NewConfigHandler(getConfig, onConfigSet, client.Queries, logger, dispatcher, services)
 	mux.HandleFunc("GET /wizard/config", configHandler.GetConfig)
@@ -248,29 +258,36 @@ func registerRoutes(
 	mux.HandleFunc("POST /wizard/config/retry", configHandler.RetryFailedConfig)
 
 	taskHandler := handlers.NewTaskHandler(services, client.Queries, logger, getConfig)
-	mux.HandleFunc("GET /api/v1/tasks", taskHandler.ListTasks)
-	mux.HandleFunc("GET /api/v1/tasks/{id}", taskHandler.GetTask)
-	mux.HandleFunc("POST /api/v1/tasks/{id}/retry", taskHandler.RetryTask)
-	mux.HandleFunc("GET /api/v1/dashboard", taskHandler.GetDashboard)
-	mux.HandleFunc("GET /api/v1/batches", taskHandler.ListBatches)
-	mux.HandleFunc("GET /api/v1/batches/{id}", taskHandler.GetBatchSummary)
-	mux.HandleFunc("POST /api/v1/batches/{id}/retry", taskHandler.RetryBatch)
-	mux.HandleFunc("POST /api/v1/batches/{id}/resume", taskHandler.ResumeBatch)
-	mux.HandleFunc("POST /api/v1/batches/{id}/cancel", taskHandler.CancelBatch)
+	mux.Handle("GET /api/v1/tasks", RequireRole(viewer...)(http.HandlerFunc(taskHandler.ListTasks)))
+	mux.Handle("GET /api/v1/tasks/{id}", RequireRole(viewer...)(http.HandlerFunc(taskHandler.GetTask)))
+	mux.Handle("POST /api/v1/tasks/{id}/retry", RequireRole(editor...)(http.HandlerFunc(taskHandler.RetryTask)))
+	mux.Handle("GET /api/v1/dashboard", RequireRole(viewer...)(http.HandlerFunc(taskHandler.GetDashboard)))
+	mux.Handle("GET /api/v1/batches", RequireRole(viewer...)(http.HandlerFunc(taskHandler.ListBatches)))
+	mux.Handle("GET /api/v1/batches/{id}", RequireRole(viewer...)(http.HandlerFunc(taskHandler.GetBatchSummary)))
+	mux.Handle("POST /api/v1/batches/{id}/retry", RequireRole(editor...)(http.HandlerFunc(taskHandler.RetryBatch)))
+	mux.Handle("POST /api/v1/batches/{id}/resume", RequireRole(editor...)(http.HandlerFunc(taskHandler.ResumeBatch)))
+	mux.Handle("POST /api/v1/batches/{id}/cancel", RequireRole(editor...)(http.HandlerFunc(taskHandler.CancelBatch)))
 
 	savedSearchHandler := handlers.NewSavedSearchHandler(client.Queries, logger)
-	mux.HandleFunc("GET /api/v1/saved-searches", savedSearchHandler.List)
-	mux.HandleFunc("POST /api/v1/saved-searches", savedSearchHandler.Create)
-	mux.HandleFunc("DELETE /api/v1/saved-searches/{id}", savedSearchHandler.Delete)
+	mux.Handle("GET /api/v1/saved-searches", RequireRole(viewer...)(http.HandlerFunc(savedSearchHandler.List)))
+	mux.Handle("POST /api/v1/saved-searches", RequireRole(editor...)(http.HandlerFunc(savedSearchHandler.Create)))
+	mux.Handle("DELETE /api/v1/saved-searches/{id}", RequireRole(editor...)(http.HandlerFunc(savedSearchHandler.Delete)))
 
 	logsHandler := handlers.NewLogsHandler(getConfig, logger)
-	mux.HandleFunc("GET /api/v1/logs/{name}", logsHandler.ListLogs)
+	mux.Handle("GET /api/v1/logs/{name}", RequireRole(admin...)(http.HandlerFunc(logsHandler.ListLogs)))
+
+	// Self-service /me routes (authenticated user only, role-independent)
+	mux.Handle("GET /api/v1/me", RequireRole(viewer...)(http.HandlerFunc(authHandler.MeHandler)))
+	mux.Handle("POST /api/v1/me/api-key", RequireRole(viewer...)(http.HandlerFunc(apiKeyHandler.MeGenerateKey)))
+	mux.Handle("DELETE /api/v1/me/api-key", RequireRole(viewer...)(http.HandlerFunc(apiKeyHandler.MeRevokeKey)))
+	mux.Handle("PUT /api/v1/me/api-key", RequireRole(viewer...)(http.HandlerFunc(apiKeyHandler.MeRotateKey)))
+	mux.Handle("GET /api/v1/me/api-key", RequireRole(viewer...)(http.HandlerFunc(apiKeyHandler.MeGetKeyStatus)))
 
 	return mux
 }
 
-func chainMiddleware(logger *utils.Logger, getSecret func() string, getAuthEnabled func() bool, validateAPIKey func(ctx context.Context, rawKey string) (*database.User, error), h http.Handler) http.Handler {
-	return requestMiddleware(logger, AuthMiddleware(parambagMiddleware(h), getSecret, getAuthEnabled, validateAPIKey))
+func chainMiddleware(logger *utils.Logger, getSecret func() string, getAuthEnabled func() bool, validateAPIKey func(ctx context.Context, rawKey string) (*database.User, error), getUserByID func(ctx context.Context, id int64) (*database.User, error), h http.Handler) http.Handler {
+	return requestMiddleware(logger, AuthMiddleware(parambagMiddleware(h), getSecret, getAuthEnabled, validateAPIKey, getUserByID))
 }
 
 func requestMiddleware(logger *utils.Logger, next http.Handler) http.Handler {

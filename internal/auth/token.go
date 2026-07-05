@@ -17,10 +17,11 @@ func GenerateSessionSecret() (string, error) {
 	return hex.EncodeToString(buf), nil
 }
 
-func GenerateToken(userID int64, username string, secret string) (string, error) {
+func GenerateToken(userID int64, username, role, secret string) (string, error) {
 	claims := Claims{
 		UserID:   userID,
 		Username: username,
+		Role:     role,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),

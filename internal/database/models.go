@@ -135,4 +135,5 @@ type User struct {
 	CreatedAt       sql.NullTime
 	ApiKeyPrefix    sql.NullString
 	ApiKeyCreatedAt sql.NullTime
+	Role            string
 }

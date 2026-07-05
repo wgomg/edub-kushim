@@ -327,7 +327,7 @@ Flags:
 
 	client := database.NewClient(db)
 	userSvc := service.NewUser(client.Queries)
-	if _, err := userSvc.Create(context.Background(), adminUser, adminPassword); err != nil {
+	if _, err := userSvc.Create(context.Background(), adminUser, adminPassword, "admin"); err != nil {
 		if errs.KindOf(err) == errs.KindConflict {
 			return fmt.Errorf("admin user '%s' already exists", adminUser)
 		}

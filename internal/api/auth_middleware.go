@@ -16,6 +16,7 @@ func AuthMiddleware(
 	getSecret func() string,
 	getAuthEnabled func() bool,
 	validateAPIKey func(ctx context.Context, rawKey string) (*database.User, error),
+	getUserByID func(ctx context.Context, id int64) (*database.User, error),
 ) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !getAuthEnabled() {
@@ -59,6 +60,7 @@ func AuthMiddleware(
 
 			ctx := context.WithValue(r.Context(), auth.UserIDKey, user.ID)
 			ctx = context.WithValue(ctx, auth.UsernameKey, user.Username)
+			ctx = context.WithValue(ctx, auth.RoleKey, user.Role)
 			ctx = context.WithValue(ctx, auth.AuthSourceKey, "apikey")
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
@@ -72,8 +74,22 @@ func AuthMiddleware(
 			return
 		}
 
-		ctx := context.WithValue(r.Context(), auth.UserIDKey, claims.UserID)
-		ctx = context.WithValue(ctx, auth.UsernameKey, claims.Username)
+		user, err := getUserByID(r.Context(), claims.UserID)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			if errs.KindOf(err) == errs.KindNotFound {
+				w.WriteHeader(http.StatusUnauthorized)
+				json.NewEncoder(w).Encode(map[string]string{"error": "invalid or expired token"})
+			} else {
+				w.WriteHeader(http.StatusInternalServerError)
+				json.NewEncoder(w).Encode(map[string]string{"error": "internal server error"})
+			}
+			return
+		}
+
+		ctx := context.WithValue(r.Context(), auth.UserIDKey, user.ID)
+		ctx = context.WithValue(ctx, auth.UsernameKey, user.Username)
+		ctx = context.WithValue(ctx, auth.RoleKey, user.Role)
 		ctx = context.WithValue(ctx, auth.AuthSourceKey, "session")
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})

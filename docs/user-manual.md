@@ -1119,7 +1119,7 @@ If the worker process is no longer running:
 
 ### User CRUD
 
-Manage user accounts with bcrypt password hashing.
+Manage user accounts with bcrypt password hashing and role assignment.
 
 #### Create User
 
@@ -1129,14 +1129,16 @@ Content-Type: application/json
 
 {
   "username": "jdoe",
-  "password": "securepass123"
+  "password": "securepass123",
+  "role": "editor"
 }
 ```
 
-| Field      | Type     | Required | Description                        |
-| ---------- | -------- | -------- | ---------------------------------- |
-| `username` | `string` | yes      | Unique username                    |
-| `password` | `string` | yes      | Password, minimum 8 characters     |
+| Field      | Type     | Required | Description                                        |
+| ---------- | -------- | -------- | -------------------------------------------------- |
+| `username` | `string` | yes      | Unique username                                    |
+| `password` | `string` | yes      | Password, minimum 8 characters                     |
+| `role`     | `string` | no       | Role assignment: `"admin"`, `"editor"`, `"viewer"`. Defaults to `"viewer"` |
 
 Validation:
 
@@ -1153,11 +1155,24 @@ Response `201`:
 {
   "id": 1,
   "username": "jdoe",
+  "role": "editor",
   "created_at": "2026-06-26T12:00:00Z"
 }
 ```
 
-#### Get User
+#### Get Current User (Me)
+
+Returns the authenticated user's own profile. Self-service endpoint accessible to any authenticated user regardless of role.
+
+```
+GET /api/v1/me
+```
+
+Authorization: Bearer token or API key required.
+
+Response `200` — single `UserResponse` (excludes `password_hash` and `api_key_hash`). Returns `404` if user was deleted, `401` if unauthenticated.
+
+#### Get User (Admin)
 
 ```
 GET /api/v1/users/{id}
@@ -1181,7 +1196,7 @@ Response `200`:
 ```json
 {
   "users": [
-    { "id": 1, "username": "jdoe", "created_at": "2026-06-26T12:00:00Z" }
+    { "id": 1, "username": "jdoe", "role": "editor", "created_at": "2026-06-26T12:00:00Z" }
   ],
   "total": 1
 }
@@ -1195,7 +1210,8 @@ Content-Type: application/json
 
 {
   "username": "jdoe",
-  "password": "newpass456"
+  "password": "newpass456",
+  "role": "admin"
 }
 ```
 
@@ -1203,6 +1219,7 @@ Content-Type: application/json
 | ---------- | -------- | -------- | -------------------------------------- |
 | `username` | `string` | yes      | New username                           |
 | `password` | `string` | no       | New password (omit to keep current)    |
+| `role`     | `string` | no       | New role: `"admin"`, `"editor"`, `"viewer"` (omit to keep current) |
 
 Validation:
 
@@ -1210,6 +1227,7 @@ Validation:
 | ---------------------------- | ------------------------------------ |
 | Empty username               | `400` — `"Username is required"`     |
 | Password < 8 chars (if set) | `400` — `"Password must be at least 8 characters"` |
+| Invalid role (if set)       | `400` — validation error             |
 | Duplicate username           | `409` — `{"error":"username already exists"}` |
 | Non-existent user            | `404`                                |
 
@@ -1222,6 +1240,19 @@ DELETE /api/v1/users/{id}
 ```
 
 Response `204 No Content`. Returns `404` if not found.
+
+#### Self-service API Keys
+
+Self-service endpoints for the current user to manage their own API key. No admin privileges required — any authenticated user can manage their own key.
+
+```
+POST /api/v1/me/api-key     # Generate own key (201)
+DELETE /api/v1/me/api-key    # Revoke own key (204)
+PUT /api/v1/me/api-key       # Rotate own key (200)
+GET /api/v1/me/api-key       # Get own key status (200)
+```
+
+Authorization: Bearer token or API key required. Returns `401` if unauthenticated.
 
 ### Dashboard
 

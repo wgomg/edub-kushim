@@ -71,7 +71,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := auth.GenerateToken(user.ID, user.Username, h.getConfig().Srv.SessionSecret)
+	token, err := auth.GenerateToken(user.ID, user.Username, user.Role, h.getConfig().Srv.SessionSecret)
 	if err != nil {
 		h.logger.Error(nil, "generate token: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -89,6 +89,31 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *AuthHandler) MeHandler(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := ctx.Value("reqid").(string)
+
+	userID, _ := ctx.Value(auth.UserIDKey).(int64)
+	if userID == 0 {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	user, err := h.userService.Get(ctx, userID)
+	if err != nil {
+		if errs.KindOf(err) == errs.KindNotFound {
+			http.Error(w, "User not found", http.StatusNotFound)
+			return
+		}
+		reqIDStr := reqID
+		writeServiceError(w, h.logger, &reqIDStr, "get me", err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(toUserResponse(user))
 }
 
 

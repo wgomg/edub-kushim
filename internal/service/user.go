@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/auth"
@@ -47,9 +48,16 @@ func (s *User) Get(ctx context.Context, id int64) (database.User, error) {
 	return user, nil
 }
 
-func (s *User) Create(ctx context.Context, username, password string) (database.User, error) {
+func (s *User) Create(ctx context.Context, username, password, role string) (database.User, error) {
 	if err := ValidatePassword(password); err != nil {
 		return database.User{}, err
+	}
+
+	if role == "" {
+		role = string(auth.RoleViewer)
+	}
+	if !auth.ValidRole(role) {
+		return database.User{}, errs.EInvalid("create user", errors.New("invalid role"))
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -60,6 +68,7 @@ func (s *User) Create(ctx context.Context, username, password string) (database.
 	result, err := s.queries.CreateUser(ctx, database.CreateUserParams{
 		Username:        username,
 		PasswordHash:    sql.NullString{String: string(hash), Valid: true},
+		Role:            role,
 		ApiKeyHash:      sql.NullString{},
 		ApiKeyPrefix:    sql.NullString{},
 		ApiKeyCreatedAt: sql.NullTime{},
@@ -80,7 +89,7 @@ func (s *User) Create(ctx context.Context, username, password string) (database.
 	return user, nil
 }
 
-func (s *User) Update(ctx context.Context, id int64, username, password string) (database.User, error) {
+func (s *User) Update(ctx context.Context, id int64, username, password, role string) (database.User, error) {
 	user, err := s.queries.GetUser(ctx, id)
 	if err != nil {
 		return database.User{}, errs.FromDB(err, "update user")
@@ -105,6 +114,19 @@ func (s *User) Update(ctx context.Context, id int64, username, password string) 
 		ID:           id,
 	}); err != nil {
 		return database.User{}, errs.FromDB(err, "update user")
+	}
+
+	if role != "" && role != user.Role {
+		if !auth.ValidRole(role) {
+			return database.User{}, errs.EInvalid("update role", fmt.Errorf("invalid role: %s", role))
+		}
+		if err := s.queries.UpdateUserRole(ctx, database.UpdateUserRoleParams{
+			Role: role,
+			ID:   id,
+		}); err != nil {
+			return database.User{}, errs.FromDB(err, "update user role")
+		}
+		user.Role = role
 	}
 
 	user.Username = username
@@ -183,6 +205,19 @@ func (s *User) ValidateAPIKey(ctx context.Context, rawKey string) (database.User
 		return database.User{}, errs.FromDB(err, "validate api key")
 	}
 	return user, nil
+}
+
+func (s *User) UpdateRole(ctx context.Context, id int64, role string) error {
+	if !auth.ValidRole(role) {
+		return errs.EInvalid("update role", fmt.Errorf("invalid role: %s", role))
+	}
+	if err := s.queries.UpdateUserRole(ctx, database.UpdateUserRoleParams{
+		Role: role,
+		ID:   id,
+	}); err != nil {
+		return errs.FromDB(err, "update user role")
+	}
+	return nil
 }
 
 var currentTime = func() time.Time {

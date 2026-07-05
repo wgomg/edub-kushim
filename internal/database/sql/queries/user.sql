@@ -8,17 +8,18 @@ SELECT * FROM user WHERE username = ?;
 SELECT * FROM user WHERE api_key_hash = ?;
 
 -- name: ListUsers :many
-SELECT id, username, api_key_prefix, api_key_created_at, created_at
+SELECT id, username, role, api_key_prefix, api_key_created_at, created_at
 FROM user ORDER BY created_at DESC LIMIT ? OFFSET ?;
 
 -- name: CreateUser :execresult
 INSERT INTO user (
     username,
     password_hash,
+    role,
     api_key_hash,
     api_key_prefix,
     api_key_created_at
-) VALUES (?, ?, ?, ?, ?);
+) VALUES (?, ?, ?, ?, ?, ?);
 
 -- name: UpdateUser :exec
 UPDATE user SET
@@ -46,6 +47,9 @@ UPDATE user SET
     api_key_prefix = NULL,
     api_key_created_at = NULL
 WHERE id = ?;
+
+-- name: UpdateUserRole :exec
+UPDATE user SET role = ? WHERE id = ?;
 
 -- name: CountUsers :one
 SELECT COUNT(*) FROM user;
