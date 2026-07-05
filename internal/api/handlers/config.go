@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	itypes "github.com/wgomg/edub-kushim/internal"
@@ -13,6 +15,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/configtask"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/utils"
@@ -54,6 +57,7 @@ func (h *ConfigHandler) SetServices(client *database.Client, dispatcher *task.Di
 		h.queries = client.Queries
 		h.services = &itypes.CrudServices{
 			Batch: service.NewBatch(client, h.getConfig().Consumer.Reclaim.MaxRetries),
+			User:  service.NewUser(client.Queries),
 		}
 	}
 }
@@ -304,6 +308,52 @@ func (h *ConfigHandler) RetryFailedConfig(w http.ResponseWriter, r *http.Request
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]int{"retried": retried})
+}
+
+func (h *ConfigHandler) CreateAdminUser(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	if h.services == nil || h.services.User == nil {
+		http.Error(w, "service not initialized", http.StatusBadRequest)
+		return
+	}
+
+	var req types.CreateUserRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	req.Username = utils.StripTags(strings.TrimSpace(req.Username))
+	if req.Username == "" {
+		http.Error(w, "Username is required", http.StatusBadRequest)
+		return
+	}
+
+	user, err := h.services.User.Create(ctx, req.Username, req.Password)
+	if err != nil {
+		if errs.KindOf(err) == errs.KindConflict {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(map[string]string{"error": "username already exists"})
+			return
+		}
+		writeServiceError(w, h.logger, nil, "create admin user", err)
+		return
+	}
+
+	created := ""
+	if user.CreatedAt.Valid {
+		created = user.CreatedAt.Time.Format(time.RFC3339)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(types.UserResponse{
+		ID:        user.ID,
+		Username:  user.Username,
+		CreatedAt: created,
+	})
 }
 
 func sanitizeConfigStrings(v any) any {

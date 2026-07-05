@@ -96,7 +96,7 @@ Listens on a Unix socket (cleaned up on shutdown). Handles SIGTERM/SIGINT for gr
 
 - `RunSetup(args, logger) error` — Dispatches to either `runSetupWizard` (default) or `runSetupCLI` (when `--cli` flag is set).
 - `runSetupWizard(args, logger) error` — Starts a standalone HTTP wizard server on `0.0.0.0:8420` serving the embedded SvelteKit wizard SPA. The server bootstraps config on first PUT request.
-- `runSetupCLI(args, logger) error` — Accepts `--languages`, `--inbox-path`, `--storage-path`, `--database-path`, `--consumer-pdfoptimizer-fallback`, `--consumer-pdfoptimizer-engine`, `--consumer-ocr-engine`, `--reset-database`. Downloads Tesseract language data and Hugot model (`BAAI/bge-m3`). Creates config.yaml, directories, initializes database schema (or resets it with `--reset-database`).
+- `runSetupCLI(args, logger) error` — Accepts `--languages` through `--consumer-pdfoptimizer-fallback` (same as wizard), plus `--admin-user`, `--admin-password`, `--reset-database`. Generates and persists a session secret. Downloads Tesseract language data and Hugot model (`BAAI/bge-m3`). Creates config.yaml, directories, initializes database schema (or resets it with `--reset-database`). Prompts interactively for admin username/password when omitted. Creates the admin user via `service.User.Create()`.
 - `setupHandler(c, args) error` — Returns error telling the user to use `kushim setup` for the wizard or `kushim setup --cli --languages ...` for terminal setup
 
 ---

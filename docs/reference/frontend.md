@@ -108,21 +108,21 @@ binary at `internal/wizard/static/`.
 
 ## Purpose
 
-Provides a browser-based five-step setup flow when `kushim setup` is run (default).
+Provides a browser-based six-step setup flow when `kushim setup` is run (default).
 Replaces the terminal-only setup for users who prefer a GUI.
 
 ## Routes
 
 | Route | File             | Description                                                                 |
 | ----- | ---------------- | --------------------------------------------------------------------------- |
-| `/`   | `+page.svelte`   | Five-step wizard: config directory → consumer settings (server, OCR, text extractor, PDF optimizer) → enricher settings (LLM, tag matcher, text reducer) → progress → done |
+| `/`   | `+page.svelte`   | Six-step wizard: config directory → consumer settings (server, OCR, text extractor, PDF optimizer) → enricher settings (LLM, tag matcher, text reducer) → progress → admin user → done |
 
 The wizard layout uses the same design system as the main UI (clay/gold/lapis/
 parchment palette) via Tailwind CSS.
 
 ## API client
 
-**`src/lib/api.js`** — `configApi.get()`, `configApi.update(body)`, `configApi.status()` — communicates with `/wizard/config` endpoints proxied through the Vite dev server.
+**`src/lib/api.js`** — `configApi.get()`, `configApi.update(body)`, `configApi.status()`, `configApi.retryFailed()`, `configApi.createAdminUser(body)` — communicates with `/wizard/config` and `/wizard/admin-user` endpoints proxied through the Vite dev server.
 
 ## Build
 

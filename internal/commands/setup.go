@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bufio"
 	"context"
 	"database/sql"
 	"fmt"
@@ -11,8 +12,12 @@ import (
 	"strings"
 
 	"github.com/spf13/viper"
+	"golang.org/x/term"
+	"github.com/wgomg/edub-kushim/internal/auth"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/errs"
+	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/utils"
 	"github.com/wgomg/edub-kushim/internal/wizard"
 	_ "modernc.org/sqlite"
@@ -61,6 +66,7 @@ func runSetupWizard(args []string, logger *utils.Logger) error {
 func runSetupCLI(args []string, logger *utils.Logger) error {
 	var langs, inboxDir, storageDir, dbPath, optimizationFallback, ocrEngine, pdfEngine, textExtractorEngine string
 	var resetDb, cli bool
+	var adminUser, adminPassword string
 
 	p := NewFlagParser(args)
 	if err := p.Bool("--cli", &cli); err != nil {
@@ -93,6 +99,12 @@ func runSetupCLI(args []string, logger *utils.Logger) error {
 	if err := p.String("--consumer-textextractor-engine", &textExtractorEngine); err != nil {
 		return err
 	}
+	if err := p.String("--admin-user", &adminUser); err != nil {
+		return err
+	}
+	if err := p.String("--admin-password", &adminPassword); err != nil {
+		return err
+	}
 	if rest := p.Rest(); len(rest) > 0 {
 		return fmt.Errorf("unknown flag(s): %v", rest)
 	}
@@ -109,6 +121,8 @@ Flags:
   --consumer-textextractor-engine    mupdf | gopdf | pdftotext (default: mupdf)
   --consumer-pdfoptimizer-engine     mupdf | gs (default: mupdf)
   --consumer-pdfoptimizer-fallback   external PDF optimizer binary (ignored when engine is gs)
+  --admin-user                       admin username (prompted if omitted)
+  --admin-password                   admin password (prompted if omitted)
   --reset-database                   drop all tables and re-run schema + seeders`)
 	}
 
@@ -195,6 +209,12 @@ Flags:
 		v.Set("consumer.pdfoptimizer.fallback", optimizationFallback)
 	}
 
+	secret, err := auth.GenerateSessionSecret()
+	if err != nil {
+		return fmt.Errorf("generate session secret: %w", err)
+	}
+	v.Set("server.session_secret", secret)
+
 	if err := v.WriteConfigAs(configPath); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
@@ -265,6 +285,56 @@ Flags:
 			logger.Info(nil, "downloaded: %s", lang)
 		}
 	}
+
+	if adminUser == "" {
+		scanner := bufio.NewScanner(os.Stdin)
+		fmt.Print("Enter admin username: ")
+		scanner.Scan()
+		adminUser = strings.TrimSpace(scanner.Text())
+		if adminUser == "" {
+			return fmt.Errorf("admin username cannot be empty")
+		}
+		if err := scanner.Err(); err != nil {
+			return fmt.Errorf("read username: %w", err)
+		}
+	}
+
+	if adminPassword == "" {
+		fmt.Print("Enter admin password: ")
+		password, err := term.ReadPassword(int(os.Stdin.Fd()))
+		fmt.Println()
+		if err != nil {
+			return fmt.Errorf("read password: %w", err)
+		}
+		adminPassword = string(password)
+
+		fmt.Print("Confirm admin password: ")
+		confirm, err := term.ReadPassword(int(os.Stdin.Fd()))
+		fmt.Println()
+		if err != nil {
+			return fmt.Errorf("confirm password: %w", err)
+		}
+		if adminPassword != string(confirm) {
+			return fmt.Errorf("passwords do not match")
+		}
+	}
+
+	db, err = sql.Open("sqlite", dsn)
+	if err != nil {
+		return fmt.Errorf("open database: %w", err)
+	}
+	defer db.Close()
+
+	client := database.NewClient(db)
+	userSvc := service.NewUser(client.Queries)
+	if _, err := userSvc.Create(context.Background(), adminUser, adminPassword); err != nil {
+		if errs.KindOf(err) == errs.KindConflict {
+			return fmt.Errorf("admin user '%s' already exists", adminUser)
+		}
+		return fmt.Errorf("create admin user: %w", err)
+	}
+
+	logger.Info(nil, "admin user '%s' created", adminUser)
 
 	if cfg.Consumer.OCR.Engine == config.OCR.Gosseract {
 		logger.Info(nil, "setup complete — %d languages in %s", len(langList), tessdataDir)

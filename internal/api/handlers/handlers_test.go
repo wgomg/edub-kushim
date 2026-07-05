@@ -1281,6 +1281,63 @@ func newTestConfigHandler(cfg *config.Config, queries *database.Queries, logger 
 	return NewConfigHandler(getConfig, onConfigSet, queries, logger, dispatcher, nil)
 }
 
+func TestConfigHandlerCreateAdminUser(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	cfg := config.DefaultConfig("/tmp/test")
+	h := newTestConfigHandler(cfg, env.client.Queries, env.logger, nil)
+	h.SetServices(env.client, nil)
+
+	t.Run("create admin user", func(t *testing.T) {
+		body, _ := json.Marshal(types.CreateUserRequest{
+			Username: "admin-wizard", Password: "Password123!",
+		})
+		w := rec()
+		h.CreateAdminUser(w, req(t, "POST", "/wizard/admin-user", body))
+		testutil.AssertEqual(t, w.Code, http.StatusCreated, "status")
+
+		var resp types.UserResponse
+		json.NewDecoder(w.Body).Decode(&resp)
+		testutil.AssertEqual(t, resp.Username, "admin-wizard", "username")
+		if resp.CreatedAt == "" {
+			t.Fatal("expected created_at to be set")
+		}
+	})
+
+	t.Run("duplicate username returns conflict", func(t *testing.T) {
+		body, _ := json.Marshal(types.CreateUserRequest{
+			Username: "admin-wizard", Password: "Password123!",
+		})
+		w := rec()
+		h.CreateAdminUser(w, req(t, "POST", "/wizard/admin-user", body))
+		testutil.AssertEqual(t, w.Code, http.StatusConflict, "409 on duplicate")
+
+		var resp map[string]string
+		json.NewDecoder(w.Body).Decode(&resp)
+		if resp["error"] != "username already exists" {
+			t.Fatalf("expected 'username already exists', got %q", resp["error"])
+		}
+	})
+
+	t.Run("empty username rejected", func(t *testing.T) {
+		body, _ := json.Marshal(types.CreateUserRequest{
+			Username: "", Password: "Password123!",
+		})
+		w := rec()
+		h.CreateAdminUser(w, req(t, "POST", "/wizard/admin-user", body))
+		testutil.AssertEqual(t, w.Code, http.StatusBadRequest, "400 on empty username")
+	})
+
+	t.Run("nil services returns 400", func(t *testing.T) {
+		h2 := newTestConfigHandler(cfg, env.client.Queries, env.logger, nil)
+		body, _ := json.Marshal(types.CreateUserRequest{
+			Username: "test", Password: "Password123!",
+		})
+		w := rec()
+		h2.CreateAdminUser(w, req(t, "POST", "/wizard/admin-user", body))
+		testutil.AssertEqual(t, w.Code, http.StatusBadRequest, "400 when services nil")
+	})
+}
+
 func TestConfigHandlerGetConfig(t *testing.T) {
 	env := newHandlerTestEnv(t)
 

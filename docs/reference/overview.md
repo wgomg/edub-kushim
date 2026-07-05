@@ -223,7 +223,7 @@ web-wizard/               # SvelteKit SPA setup wizard (embedded in kushim binar
 │   │   └── api.js        # API client for /wizard/config endpoints
 │   └── routes/
 │       ├── +layout.svelte  # Wizard layout shell
-│       └── +page.svelte   # Four-step setup wizard flow
+│       └── +page.svelte   # Six-step setup wizard flow
 ├── package.json
 ├── svelte.config.js
 ├── vite.config.js

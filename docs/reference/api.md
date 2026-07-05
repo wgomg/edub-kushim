@@ -230,11 +230,12 @@ See `AuthMiddleware` under `server.go` → Functions.
   - **Fields**: `getConfig func() *config.Config`, `onConfigSet func(*config.Config)`, `queries *database.Queries`, `logger *utils.Logger`, `dispatcher *task.Dispatcher`, `OnBootstrap func(configDir string) (*config.Config, *database.Queries, *task.Dispatcher, error)`
   - **Methods**:
     - `NewConfigHandler(getConfig, onConfigSet, queries, logger, dispatcher) *ConfigHandler` — `getConfig` and `onConfigSet` are closures wrapping a shared `atomic.Pointer[config.Config]`. The handler never owns its own pointer; config flows via these closures, allowing the file watcher to atomically update the shared state without handler coordination.
-    - `SetServices(queries, dispatcher)` — Sets `queries` and `dispatcher` on an already-initialized handler. Used by the wizard's auto-resume path after `onConfigSet` stores the bootstrapped config. Replaces the old `SetBootstrap`.
+    - `SetServices(client, dispatcher)` — Sets `client.Queries`, creates CrudServices with `Batch` and `User` services, sets dispatcher on an already-initialized handler. Used by the wizard's auto-resume path after `onConfigSet` stores the bootstrapped config. Replaces the old `SetBootstrap`.
     - `GetConfig(w, r)` — `GET /wizard/config` — Returns user-configurable settings as `ConfigResponse` (app, server, consumer, enricher sections plus available_engines; app includes boolean `initialized`; enricher includes LLM provider tokens). Returns defaults from `DefaultConfig("")` when no config is loaded (wizard not yet bootstrapped), so the frontend always receives a complete config shape.
     - `PutConfig(w, r)` — `PUT /wizard/config` — Two-phase: if `config_dir` is present and no config exists, bootstraps config directory, DB, and skeleton YAML. Otherwise writes config via `SaveMap`, reloads, and enqueues config tasks for missing downloads (tessdata, hugot). Returns `200` or `201` with pending task count and a `missing_tools` array of hard-blocking tool-availability issues.
     - `ConfigStatus(w, r)` — `GET /wizard/config/status` — Returns `ConfigStatusResponse` with `configured` flag, `pending_tasks` count, `failed_tasks` (array of `{task_id, op, lang, error}`), `errors`, plus `tools` (full `[]ExternalTool` availability list) and `missing_tools` (hard-blocking subset).
     - `RetryFailedConfig(w, r)` — `POST /wizard/config/retry` — Retries all failed config tasks. Returns `200 {"retried": <n>}`.
+    - `CreateAdminUser(w, r)` — `POST /wizard/admin-user` — Creates initial admin user. Accepts `CreateUserRequest` JSON body, validates username (non-empty, stripped), calls `User.Create`. Returns `201` with `UserResponse` on success, `409` with `{"error":"username already exists"}` on duplicate, `400` on validation error.
 
 ---
 
@@ -456,6 +457,7 @@ mux.HandleFunc("GET /wizard/config", configHandler.GetConfig)
 mux.HandleFunc("PUT /wizard/config", configHandler.PutConfig)
 mux.HandleFunc("GET /wizard/config/status", configHandler.ConfigStatus)
 mux.HandleFunc("POST /wizard/config/retry", configHandler.RetryFailedConfig)
+mux.HandleFunc("POST /wizard/admin-user", configHandler.CreateAdminUser)
 
 mux.HandleFunc("GET /api/v1/tasks", taskHandler.ListTasks)
 mux.HandleFunc("GET /api/v1/tasks/{id}", taskHandler.GetTask)

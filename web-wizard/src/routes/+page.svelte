@@ -14,6 +14,11 @@
 	let failedTasks = $state([]);
 	let pollInterval;
 	let showToken = $state(false);
+	let adminUsername = $state('');
+	let adminPassword = $state('');
+	let adminConfirm = $state('');
+	let adminError = $state('');
+	let adminCreating = $state(false);
 
 	let providerKey = $derived(cfg?.enricher?.contentanalyzer?.engine?.replace(/^llm/, '') ?? null);
 
@@ -27,7 +32,7 @@
 					step = 4;
 					startPolling();
 				} else if (configured) {
-					step = 5;
+					step = 6;
 				} else {
 					step = 2;
 				}
@@ -157,6 +162,36 @@
 			i === index ? value : lang
 		);
 	}
+
+	async function createAdminUser(e) {
+		e.preventDefault();
+		adminError = '';
+		if (!adminUsername.trim()) {
+			adminError = 'Username is required';
+			return;
+		}
+		if (adminPassword.length < 12) {
+			adminError = 'Password must be at least 12 characters';
+			return;
+		}
+		if (!/[A-Z]/.test(adminPassword) || !/[a-z]/.test(adminPassword) || !/[0-9]/.test(adminPassword) || !/[^A-Za-z0-9]/.test(adminPassword)) {
+			adminError = 'Password must contain at least one uppercase letter, lowercase letter, digit, and special character';
+			return;
+		}
+		if (adminPassword !== adminConfirm) {
+			adminError = 'Passwords do not match';
+			return;
+		}
+		try {
+			adminCreating = true;
+			await configApi.createAdminUser({ username: adminUsername.trim(), password: adminPassword });
+			step = 6;
+		} catch (e) {
+			adminError = e.message;
+		} finally {
+			adminCreating = false;
+		}
+	}
 </script>
 
 {#if error}
@@ -198,7 +233,7 @@
 
 {#if step === 2 && cfg}
 	<div class="mb-4 text-center">
-		<p class="text-xs font-medium uppercase tracking-wide text-parchment-500">Step 2 of 5</p>
+		<p class="text-xs font-medium uppercase tracking-wide text-parchment-500">Step 2 of 6</p>
 		<h2 class="text-lg font-semibold text-parchment-200">Consumer settings</h2>
 	</div>
 
@@ -510,7 +545,7 @@
 
 {#if step === 3 && cfg}
 	<div class="mb-4 text-center">
-		<p class="text-xs font-medium uppercase tracking-wide text-parchment-500">Step 3 of 5</p>
+		<p class="text-xs font-medium uppercase tracking-wide text-parchment-500">Step 3 of 6</p>
 		<h2 class="text-lg font-semibold text-parchment-200">Enricher settings</h2>
 	</div>
 
@@ -746,7 +781,7 @@
 
 {#if step === 4}
 	<div class="space-y-4 text-center">
-		<p class="text-xs font-medium uppercase tracking-wide text-parchment-500">Step 4 of 5</p>
+		<p class="text-xs font-medium uppercase tracking-wide text-parchment-500">Step 4 of 6</p>
 		<h2 class="text-lg font-semibold text-parchment-200">Setting things up...</h2>
 		<p class="text-sm text-parchment-500">
 			Downloading required models and language files. This may take a few minutes.
@@ -778,6 +813,97 @@
 {/if}
 
 {#if step === 5}
+	<div class="mb-4 text-center">
+		<p class="text-xs font-medium uppercase tracking-wide text-parchment-500">Step 5 of 6</p>
+		<h2 class="text-lg font-semibold text-parchment-200">Create admin user</h2>
+	</div>
+
+	{#if adminError}
+		<div aria-live="polite" class="mb-4 rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500">
+			{adminError}
+		</div>
+	{/if}
+
+	<form onsubmit={createAdminUser} class="space-y-4">
+		<div>
+			<label for="admin-username" class="mb-1 block text-sm font-medium text-parchment-200">
+				Username
+			</label>
+			<input
+				id="admin-username"
+				name="admin-username"
+				type="text"
+				bind:value={adminUsername}
+				autocomplete="username"
+				required
+				class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus:outline-none"
+			/>
+		</div>
+		<div>
+			<label for="admin-password" class="mb-1 block text-sm font-medium text-parchment-200">
+				Password
+			</label>
+			<input
+				id="admin-password"
+				name="admin-password"
+				type="password"
+				bind:value={adminPassword}
+				autocomplete="new-password"
+				minlength="12"
+				required
+				class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus:outline-none"
+			/>
+			<p class="mt-1 text-xs text-parchment-500">
+				At least 12 characters with uppercase, lowercase, digit, and special character.
+			</p>
+		</div>
+		<div>
+			<label for="admin-confirm" class="mb-1 block text-sm font-medium text-parchment-200">
+				Confirm password
+			</label>
+			<input
+				id="admin-confirm"
+				name="admin-confirm"
+				type="password"
+				bind:value={adminConfirm}
+				autocomplete="new-password"
+				required
+				class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus:outline-none"
+			/>
+		</div>
+
+		<div class="flex gap-3">
+			<button
+				type="button"
+				onclick={() => (step = 4)}
+				class="flex-1 rounded-lg border border-clay-800 px-4 py-2 text-sm font-medium text-parchment-200 hover:bg-clay-800"
+			>
+				Back
+			</button>
+			<button
+				type="button"
+				onclick={() => (step = 6)}
+				class="flex-1 rounded-lg border border-clay-800 px-4 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
+			>
+				Skip for now
+			</button>
+			<button
+				type="submit"
+				disabled={adminCreating}
+				class="flex-1 rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600 disabled:cursor-not-allowed disabled:opacity-50"
+			>
+				{#if adminCreating}
+					<span class="inline-block h-4 w-4 animate-spin rounded-full border-2 border-clay-950 border-t-transparent align-text-bottom"></span>
+					Creating...
+				{:else}
+					Create
+				{/if}
+			</button>
+		</div>
+	</form>
+{/if}
+
+{#if step === 6}
 	<div class="space-y-4 text-center">
 		<h2 class="text-lg font-semibold text-parchment-200">Setup complete</h2>
 		<p class="text-sm text-parchment-500">

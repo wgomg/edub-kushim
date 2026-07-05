@@ -59,6 +59,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("PUT /wizard/config", configHandler.PutConfig)
 	mux.HandleFunc("GET /wizard/config/status", configHandler.ConfigStatus)
 	mux.HandleFunc("POST /wizard/config/retry", configHandler.RetryFailedConfig)
+	mux.HandleFunc("POST /wizard/admin-user", configHandler.CreateAdminUser)
 
 	registerStaticRoutes(mux)
 

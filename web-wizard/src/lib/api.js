@@ -20,5 +20,6 @@ export const configApi = {
 	get: () => request('GET', '/config'),
 	update: (body) => request('PUT', '/config', body),
 	status: () => request('GET', '/config/status'),
-	retryFailed: () => request('POST', '/config/retry')
+	retryFailed: () => request('POST', '/config/retry'),
+	createAdminUser: (body) => request('POST', '/admin-user', body)
 };

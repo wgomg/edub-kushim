@@ -65,12 +65,13 @@ database schema, download OCR language data from `tessdata_fast`, and
 download the Hugot embedding model (`BAAI/bge-m3`).
 
 By default, `kushim setup` launches a **web-based setup wizard** at
-`http://0.0.0.0:8420`. The wizard provides a four-step guided flow:
+`http://0.0.0.0:8420`. The wizard provides a five-step guided flow:
 
 1. **Config directory** — specify where configuration, database, and models are stored
 2. **Settings** — choose OCR engine, add languages, configure worker counts
 3. **Progress** — shows download progress for tessdata and Hugot model
-4. **Completion** — ready to run `edub` to start the server
+4. **Admin user** — optionally create an admin user account (username + password)
+5. **Completion** — ready to run `edub` to start the server
 
 Use `--cli` for terminal-based setup in headless or CI environments:
 
@@ -89,6 +90,8 @@ kushim setup --cli --languages eng,spa
 | `--consumer-textextractor-engine`  | `mupdf`                | Text extractor: `mupdf`, `gopdf`, or `pdftotext`            |
 | `--consumer-pdfoptimizer-engine`   | `mupdf`                | PDF optimizer: `mupdf` or `gs`                              |
 | `--consumer-pdfoptimizer-fallback` | —                      | Fallback PDF optimizer binary (ignored when engine is `gs`) |
+| `--admin-user`                     | —                      | Admin username (prompted if omitted)                        |
+| `--admin-password`                 | —                      | Admin password (prompted if omitted)                        |
 | `--reset-database`                 | `false`                | Drop all tables and re-run schema + seeders                 |
 
 The flags `--inbox-path`, `--storage-path`, and `--database-path` accept either
