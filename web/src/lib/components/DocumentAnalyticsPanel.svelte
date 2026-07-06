@@ -1,5 +1,7 @@
 <script>
 	import { goto } from '$app/navigation';
+	import { filterStore } from '$lib/stores/filterStore.js';
+	import { defaultFilter } from '$lib/stores/searchFilter.js';
 	import { formatNumber } from '$lib/utils/html.js';
 
 	let { analytics = null } = $props();
@@ -29,19 +31,43 @@
 
 <div class="space-y-6">
 	<div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
-		<a href="/documents?missing:lang" class="block rounded-lg border border-clay-800 bg-clay-900 p-4 cursor-pointer hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none">
+		<a
+			href="/documents"
+			class="block cursor-pointer rounded-lg border border-clay-800 bg-clay-900 p-4 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+			onclick={(e) => {
+				e.preventDefault();
+				filterStore.set({ ...defaultFilter, missingLanguage: true });
+				goto('/documents');
+			}}
+		>
 			<p class="text-sm text-parchment-500">Missing Language</p>
 			<p class="mt-1 text-lg font-semibold text-parchment-200">
 				{formatNumber(analytics?.missing_language_count ?? 0)}
 			</p>
 		</a>
-		<a href="/documents?missing:type" class="block rounded-lg border border-clay-800 bg-clay-900 p-4 cursor-pointer hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none">
+		<a
+			href="/documents"
+			class="block cursor-pointer rounded-lg border border-clay-800 bg-clay-900 p-4 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+			onclick={(e) => {
+				e.preventDefault();
+				filterStore.set({ ...defaultFilter, missingType: true });
+				goto('/documents');
+			}}
+		>
 			<p class="text-sm text-parchment-500">Missing Type</p>
 			<p class="mt-1 text-lg font-semibold text-parchment-200">
 				{formatNumber(analytics?.missing_type_count ?? 0)}
 			</p>
 		</a>
-		<a href="/documents?missing:tags" class="block rounded-lg border border-clay-800 bg-clay-900 p-4 cursor-pointer hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none">
+		<a
+			href="/documents"
+			class="block cursor-pointer rounded-lg border border-clay-800 bg-clay-900 p-4 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+			onclick={(e) => {
+				e.preventDefault();
+				filterStore.set({ ...defaultFilter, untagged: true });
+				goto('/documents');
+			}}
+		>
 			<p class="text-sm text-parchment-500">Untagged Documents</p>
 			<p class="mt-1 text-lg font-semibold text-parchment-200">
 				{formatNumber(analytics?.missing_tags_count ?? 0)}
@@ -64,10 +90,21 @@
 							</thead>
 							<tbody>
 								{#each analytics.tag_frequency as item, i}
-									<tr class="border-b border-clay-800/50 cursor-pointer hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-										tabindex="0" role="link"
-										onclick={() => goto(`/documents?tag:${encodeURIComponent(item.label)}`)}
-										onkeydown={(e) => { if (e.key === 'Enter') goto(`/documents?tag:${encodeURIComponent(item.label)}`); }}>
+									<tr
+										class="cursor-pointer border-b border-clay-800/50 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+										tabindex="0"
+										role="link"
+										onclick={() => {
+											filterStore.set({ ...defaultFilter, tags: [item.label] });
+											goto('/documents');
+										}}
+										onkeydown={(e) => {
+											if (e.key === 'Enter') {
+												filterStore.set({ ...defaultFilter, tags: [item.label] });
+												goto('/documents');
+											}
+										}}
+									>
 										<td class="py-2 pr-4 text-parchment-200">
 											<span
 												class="inline-block h-2.5 w-2.5 rounded-full"
@@ -102,7 +139,15 @@
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<div class="space-y-2">
 						{#each analytics.language_distribution as item, i}
-							<a href={`/documents?lang:${encodeURIComponent(item.label)}`} class="flex items-center gap-3 cursor-pointer hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none">
+							<a
+								href="/documents"
+								class="flex cursor-pointer items-center gap-3 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+								onclick={(e) => {
+									e.preventDefault();
+									filterStore.set({ ...defaultFilter, language: item.label });
+									goto('/documents');
+								}}
+							>
 								<div
 									class="h-4 w-4 shrink-0 rounded"
 									style="background-color: {chartColors[i % chartColors.length]}"
@@ -135,7 +180,15 @@
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<div class="space-y-2">
 						{#each analytics.document_type_distribution as item, i}
-							<a href={`/documents?type:${encodeURIComponent(item.label)}`} class="flex items-center gap-3 cursor-pointer hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none">
+							<a
+								href="/documents"
+								class="flex cursor-pointer items-center gap-3 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+								onclick={(e) => {
+									e.preventDefault();
+									filterStore.set({ ...defaultFilter, documentType: item.label });
+									goto('/documents');
+								}}
+							>
 								<div
 									class="h-4 w-4 shrink-0 rounded"
 									style="background-color: {chartColors[i % chartColors.length]}"

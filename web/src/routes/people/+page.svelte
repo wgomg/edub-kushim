@@ -1,5 +1,7 @@
 <script>
 	import { goto } from '$app/navigation';
+	import { filterStore } from '$lib/stores/filterStore.js';
+	import { defaultFilter } from '$lib/stores/searchFilter.js';
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
 	import { EDIT_ICON, DELETE_ICON, BTN_BASE } from '$lib/icons.js';
@@ -195,10 +197,27 @@
 							</tr>
 						{:else}
 							{#each people as p (p.id)}
-								<tr class="bg-clay-950 cursor-pointer hover:bg-clay-900 focus-visible:ring-2 focus-visible:ring-gold-500 focus:outline-none"
-									tabindex="0" role="link"
-									onclick={() => goto(`/documents?author:${encodeURIComponent(p.name)}`)}
-									onkeydown={(e) => { if (e.key === 'Enter') goto(`/documents?author:${encodeURIComponent(p.name)}`); }}>
+								<tr
+									class="cursor-pointer bg-clay-950 hover:bg-clay-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
+									tabindex="0"
+									role="link"
+									onclick={() => {
+										filterStore.set({
+											...defaultFilter,
+											people: [{ name: p.name, type: 'author' }]
+										});
+										goto('/documents');
+									}}
+									onkeydown={(e) => {
+										if (e.key === 'Enter') {
+											filterStore.set({
+												...defaultFilter,
+												people: [{ name: p.name, type: 'author' }]
+											});
+											goto('/documents');
+										}
+									}}
+								>
 									<td class="px-4 py-3 text-parchment-200">{p.name}</td>
 									<td class="px-4 py-3 text-parchment-400">{p.name_native || ''}</td>
 									<td class="px-4 py-3 text-parchment-400 tabular-nums">{p.document_count ?? 0}</td>

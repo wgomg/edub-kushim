@@ -1,5 +1,7 @@
 <script>
 	import { goto } from '$app/navigation';
+	import { filterStore } from '$lib/stores/filterStore.js';
+	import { defaultFilter } from '$lib/stores/searchFilter.js';
 	import DataTable from '$lib/components/DataTable.svelte';
 	import Modal from '$lib/components/Modal.svelte';
 	import { EDIT_ICON, DELETE_ICON, actionButton } from '$lib/icons.js';
@@ -45,7 +47,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 	];
 
 	function filterByTag(row) {
-		goto(`/documents?tag:${encodeURIComponent(row.name)}`);
+		filterStore.set({ ...defaultFilter, tags: [row.name] });
+		goto('/documents');
 	}
 
 	async function fetch({ limit, offset }) {
@@ -139,7 +142,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			bind:value={query}
 			oninput={() => refreshKey++}
 			placeholder="Filter tags…"
-			class="w-full max-w-xs rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus:outline-none"
+			class="w-full max-w-xs rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
 		/>
 	</div>
 
