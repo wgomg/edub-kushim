@@ -509,6 +509,242 @@ func TestAnalyticsQueries(t *testing.T) {
 	})
 }
 
+func TestStructuredSearchMissingFilters(t *testing.T) {
+	q, _ := NewTestQueries(t)
+	ctx := context.Background()
+
+	tag := SeedTagByName(t, q, "")
+
+	// Document with language='eng', type=article (ID=3), tagged
+	d1, err := q.db.ExecContext(ctx,
+		`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, mime_type, file_size, original_path, storage_path, page_count, word_count, char_count, language, document_type_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"msf-1", "regular.pdf", "mdf-1", "sf-1", "application/pdf", 1000,
+		"/tmp/regular.pdf", "/tmp/storage1.pdf", 1, 10, 50, "eng", 3,
+	)
+	assertNoError(t, err, "create regular doc")
+	regularID := getID(t, d1)
+	q.AddDocumentTag(ctx, AddDocumentTagParams{DocumentID: regularID, TagID: tag.ID})
+
+	// Document with language='und', type=article (ID=3), untagged
+	d2, err := q.db.ExecContext(ctx,
+		`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, mime_type, file_size, original_path, storage_path, page_count, word_count, char_count, language, document_type_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"msf-2", "und-doc.pdf", "mdf-2", "sf-2", "application/pdf", 2000,
+		"/tmp/und.pdf", "/tmp/storage2.pdf", 2, 20, 100, "und", 3,
+	)
+	assertNoError(t, err, "create und doc")
+	undID := getID(t, d2)
+	_ = undID
+
+	// Document with language='eng', type=undetermined (ID=1), untagged
+	d3, err := q.db.ExecContext(ctx,
+		`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, mime_type, file_size, original_path, storage_path, page_count, word_count, char_count, language, document_type_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"msf-3", "typed-doc.pdf", "mdf-3", "sf-3", "application/pdf", 3000,
+		"/tmp/typed.pdf", "/tmp/storage3.pdf", 3, 30, 150, "eng", 1,
+	)
+	assertNoError(t, err, "create typed doc")
+	typedID := getID(t, d3)
+	_ = typedID
+
+	// Document with language='', type=article, untagged (empty string language)
+	d4, err := q.db.ExecContext(ctx,
+		`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, mime_type, file_size, original_path, storage_path, page_count, word_count, char_count, language, document_type_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"msf-4", "empty-lang.pdf", "mdf-4", "sf-4", "application/pdf", 4000,
+		"/tmp/empty.pdf", "/tmp/storage4.pdf", 4, 40, 200, "", 3,
+	)
+	assertNoError(t, err, "create empty-lang doc")
+	emptyLangID := getID(t, d4)
+	_ = emptyLangID
+
+	// Document with language='eng', type=article, untagged
+	d5, err := q.db.ExecContext(ctx,
+		`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, mime_type, file_size, original_path, storage_path, page_count, word_count, char_count, language, document_type_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"msf-5", "untagged.pdf", "mdf-5", "sf-5", "application/pdf", 5000,
+		"/tmp/untagged.pdf", "/tmp/storage5.pdf", 5, 50, 250, "eng", 3,
+	)
+	assertNoError(t, err, "create untagged doc")
+	untaggedID := getID(t, d5)
+	_ = untaggedID
+
+	t.Run("MissingLanguage filters lang=und and lang=empty", func(t *testing.T) {
+		results, err := q.SearchDocumentsStructured(ctx, SearchFilter{
+			Limit:           100,
+			MissingLanguage: true,
+		})
+		assertNoError(t, err, "search missing language")
+		assertEqual(t, len(results), 2, "two docs with missing language")
+		ids := map[string]bool{}
+		for _, r := range results {
+			ids[r.DocumentID] = true
+		}
+		assertEqual(t, ids["msf-2"], true, "und doc found")
+		assertEqual(t, ids["msf-4"], true, "empty-lang doc found")
+	})
+
+	t.Run("MissingType filters document_type_id=1", func(t *testing.T) {
+		results, err := q.SearchDocumentsStructured(ctx, SearchFilter{
+			Limit:      100,
+			MissingType: true,
+		})
+		assertNoError(t, err, "search missing type")
+		assertEqual(t, len(results), 1, "one doc with missing type")
+		assertEqual(t, results[0].DocumentID, "msf-3", "typed doc found")
+	})
+
+	t.Run("Untagged filters docs without tags", func(t *testing.T) {
+		results, err := q.SearchDocumentsStructured(ctx, SearchFilter{
+			Limit:    100,
+			Untagged: true,
+		})
+		assertNoError(t, err, "search untagged")
+		assertEqual(t, len(results), 4, "four untagged docs")
+		ids := map[string]bool{}
+		for _, r := range results {
+			ids[r.DocumentID] = true
+		}
+		assertEqual(t, ids["msf-1"], false, "tagged doc excluded")
+		assertEqual(t, ids["msf-2"], true, "und doc included")
+		assertEqual(t, ids["msf-3"], true, "typed doc included")
+		assertEqual(t, ids["msf-4"], true, "empty-lang doc included")
+		assertEqual(t, ids["msf-5"], true, "untagged doc included")
+	})
+
+	t.Run("MissingLanguage+Untagged combined", func(t *testing.T) {
+		results, err := q.SearchDocumentsStructured(ctx, SearchFilter{
+			Limit:           100,
+			MissingLanguage: true,
+			Untagged:        true,
+		})
+		assertNoError(t, err, "search combined")
+		assertEqual(t, len(results), 2, "two docs match both")
+		ids := map[string]bool{}
+		for _, r := range results {
+			ids[r.DocumentID] = true
+		}
+		assertEqual(t, ids["msf-2"], true, "und+untagged doc")
+		assertEqual(t, ids["msf-4"], true, "empty-lang+untagged doc")
+	})
+
+	t.Run("Count matches SearchDocumentsStructured", func(t *testing.T) {
+		results, err := q.SearchDocumentsStructured(ctx, SearchFilter{
+			Limit:           100,
+			MissingLanguage: true,
+			Untagged:        true,
+		})
+		assertNoError(t, err, "search")
+		count, err := q.CountDocumentsStructured(ctx, SearchFilter{
+			Limit:           100,
+			MissingLanguage: true,
+			Untagged:        true,
+		})
+		assertNoError(t, err, "count")
+		assertEqual(t, count, int64(len(results)), "count matches search")
+	})
+
+	t.Run("Missing filters with other constraints", func(t *testing.T) {
+		results, err := q.SearchDocumentsStructured(ctx, SearchFilter{
+			Limit:           100,
+			MissingLanguage: true,
+			MimeType:        "text/plain",
+		})
+		assertNoError(t, err, "search missing lang + mime")
+		assertEqual(t, len(results), 0, "no text/plain docs with missing lang")
+	})
+}
+
+func TestWithDocumentCountQueries(t *testing.T) {
+	q, _ := NewTestQueries(t)
+	ctx := context.Background()
+
+	d1Res, err := q.CreateDocument(ctx, CreateDocumentParams{
+		DocumentID: "wdc-1", Title: "count-test-1.pdf",
+		Md5Checksum: "md5-wdc1", Sha512Checksum: "sha512-wdc1",
+		MimeType: "application/pdf", FileSize: 100,
+		OriginalPath: "/tmp/count1.pdf", StoragePath: "/tmp/sc1.pdf",
+		PageCount: 1, WordCount: 1, CharCount: 5, Language: "eng",
+	})
+	assertNoError(t, err, "create doc 1")
+	d1 := getID(t, d1Res)
+
+	d2Res, err := q.CreateDocument(ctx, CreateDocumentParams{
+		DocumentID: "wdc-2", Title: "count-test-2.pdf",
+		Md5Checksum: "md5-wdc2", Sha512Checksum: "sha512-wdc2",
+		MimeType: "application/pdf", FileSize: 200,
+		OriginalPath: "/tmp/count2.pdf", StoragePath: "/tmp/sc2.pdf",
+		PageCount: 2, WordCount: 2, CharCount: 10, Language: "eng",
+	})
+	assertNoError(t, err, "create doc 2")
+	d2 := getID(t, d2Res)
+
+	tag := SeedTagByName(t, q, "")
+	q.AddDocumentTag(ctx, AddDocumentTagParams{DocumentID: d1, TagID: tag.ID})
+	q.AddDocumentTag(ctx, AddDocumentTagParams{DocumentID: d2, TagID: tag.ID})
+
+	t.Run("ListTagsWithDocumentCount", func(t *testing.T) {
+		tags, err := q.ListTagsWithDocumentCount(ctx, ListTagsWithDocumentCountParams{Limit: 100, Offset: 0})
+		assertNoError(t, err, "list tags with count")
+		found := false
+		for _, tg := range tags {
+			if tg.ID == tag.ID {
+				assertEqual(t, tg.DocumentCount > int64(0), true, "tag has document count")
+				found = true
+			}
+		}
+		assertEqual(t, found, true, "tag found")
+	})
+
+	t.Run("SearchTagsByNameWithDocumentCount", func(t *testing.T) {
+		tags, err := q.SearchTagsByNameWithDocumentCount(ctx, SearchTagsByNameWithDocumentCountParams{
+			Name:   "%finance%", Limit: 10, Offset: 0,
+		})
+		assertNoError(t, err, "search tags with count")
+		for _, tg := range tags {
+			assertEqual(t, tg.DocumentCount >= int64(0), true, "count is non-negative")
+		}
+	})
+
+	t.Run("ListPeopleWithDocumentCount", func(t *testing.T) {
+		ppl, err := q.ListPeopleWithDocumentCount(ctx, ListPeopleWithDocumentCountParams{Limit: 100, Offset: 0})
+		assertNoError(t, err, "list people with count")
+		_ = ppl
+	})
+
+	t.Run("SearchPeopleByNameWithDocumentCount", func(t *testing.T) {
+		ppl, err := q.SearchPeopleByNameWithDocumentCount(ctx, SearchPeopleByNameWithDocumentCountParams{
+			Name: "%alice%", Limit: 10,
+		})
+		assertNoError(t, err, "search people with count")
+		_ = ppl
+	})
+
+	t.Run("ListDocumentTypesWithDocumentCount", func(t *testing.T) {
+		dts, err := q.ListDocumentTypesWithDocumentCount(ctx, ListDocumentTypesWithDocumentCountParams{Limit: 100, Offset: 0})
+		assertNoError(t, err, "list doc types with count")
+		assertEqual(t, len(dts) > 0, true, "has seeded types")
+	})
+
+	t.Run("SearchDocumentTypeByNameWithDocumentCount", func(t *testing.T) {
+		dts, err := q.SearchDocumentTypeByNameWithDocumentCount(ctx, SearchDocumentTypeByNameWithDocumentCountParams{
+			Name: "%article%", Limit: 10,
+		})
+		assertNoError(t, err, "search doc types with count")
+		assertEqual(t, len(dts) > 0, true, "found article type")
+	})
+
+	t.Run("ListAllDocumentTypesWithDocumentCount", func(t *testing.T) {
+		dts, err := q.ListAllDocumentTypesWithDocumentCount(ctx)
+		assertNoError(t, err, "list all doc types with count")
+		assertEqual(t, len(dts) > 0, true, "has seeded types")
+		for _, dt := range dts {
+			assertEqual(t, dt.DocumentCount >= int64(0), true, "count non-negative")
+		}
+	})
+}
+
 func TestTaskHealthQueries(t *testing.T) {
 	q, db := NewTestQueries(t)
 	defer db.Close()

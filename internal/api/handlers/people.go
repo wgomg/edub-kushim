@@ -36,7 +36,7 @@ func (h *PeopleHandler) List(w http.ResponseWriter, r *http.Request) {
 	offset := pb.GetInt64("offset", 0, 0, 100000)
 
 	if q != "" {
-		people, err := h.services.People.Search(ctx, q, limit)
+		people, err := h.services.People.SearchByNameWithDocumentCount(ctx, q, limit)
 		if err != nil {
 			writeServiceError(w, h.logger, &reqID, "list people", err)
 			return
@@ -47,14 +47,14 @@ func (h *PeopleHandler) List(w http.ResponseWriter, r *http.Request) {
 			if p.NameNative.Valid {
 				nameNative = p.NameNative.String
 			}
-			response[i] = types.PersonResponse{ID: p.ID, Name: p.Name, NameNative: nameNative}
+			response[i] = types.PersonResponse{ID: p.ID, Name: p.Name, NameNative: nameNative, DocumentCount: p.DocumentCount}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(response)
 		return
 	}
 
-	people, err := h.services.People.List(ctx, limit, offset)
+	people, err := h.services.People.ListWithDocumentCount(ctx, limit, offset)
 	if err != nil {
 		writeServiceError(w, h.logger, &reqID, "list people", err)
 		return
@@ -66,7 +66,7 @@ func (h *PeopleHandler) List(w http.ResponseWriter, r *http.Request) {
 		if p.NameNative.Valid {
 			nameNative = p.NameNative.String
 		}
-		response[i] = types.PersonResponse{ID: p.ID, Name: p.Name, NameNative: nameNative}
+		response[i] = types.PersonResponse{ID: p.ID, Name: p.Name, NameNative: nameNative, DocumentCount: p.DocumentCount}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

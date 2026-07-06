@@ -28,5 +28,27 @@ DELETE FROM document_type WHERE id = ?;
 -- name: ListAllDocumentTypes :many
 SELECT * FROM document_type ORDER BY created_at DESC;
 
+-- name: ListDocumentTypesWithDocumentCount :many
+SELECT dt.*, COUNT(d.id) AS document_count
+FROM document_type dt
+LEFT JOIN document d ON dt.id = d.document_type_id
+GROUP BY dt.id
+ORDER BY dt.created_at DESC LIMIT ? OFFSET ?;
+
+-- name: SearchDocumentTypeByNameWithDocumentCount :many
+SELECT dt.*, COUNT(d.id) AS document_count
+FROM document_type dt
+LEFT JOIN document d ON dt.id = d.document_type_id
+WHERE dt.name LIKE ?
+GROUP BY dt.id
+ORDER BY dt.name ASC LIMIT ?;
+
+-- name: ListAllDocumentTypesWithDocumentCount :many
+SELECT dt.*, COUNT(d.id) AS document_count
+FROM document_type dt
+LEFT JOIN document d ON dt.id = d.document_type_id
+GROUP BY dt.id
+ORDER BY dt.created_at DESC;
+
 -- name: ListAllDocumentTypesNames :many
 SELECT name FROM document_type ORDER BY created_at DESC;

@@ -124,8 +124,8 @@ See `AuthMiddleware` under `server.go` → Functions.
 
 ### Structs
 
-- `TagResponse` — `ID int64`, `Name string`
-- `PersonResponse` — `ID`, `Name`, `NameNative` (original non-Latin script, if any), `PersonTypeID`, `PersonTypeName`, `PersonTypeDescription`
+- `TagResponse` — `ID int64`, `Name string`, `DocumentCount int64`
+- `PersonResponse` — `ID`, `Name`, `NameNative` (original non-Latin script, if any), `PersonTypeID`, `PersonTypeName`, `PersonTypeDescription`, `DocumentCount int64`
 - `DocumentResponse`
   - **Fields**: `ID string` (UUID, JSON `"id"`), `Title`, `MD5Checksum`, `SHA512Checksum`, `MimeType`, `FileSize`, `PageCount`, `WordCount`, `CharCount`, `Language`, `DocumentTypeID *int64`, `DocumentTypeName *string`, `Tags []TagResponse`, `People []PersonResponse`, `CreatedAt`, `ModifiedAt`
 - `FTSDocumentResponse`
@@ -171,7 +171,7 @@ See `AuthMiddleware` under `server.go` → Functions.
   - **Fields**: `services *itypes.CrudServices`, `logger *utils.Logger`
   - **Methods**:
     - `NewTagHandler(services, logger) *TagHandler`
-    - `List(w, r)` — `GET /api/v1/tags?q=<prefix>&limit=50&offset=0` — With `q`: searches by prefix via `services.Tag.Search`. Without `q`: lists paginated via `services.Tag.List`. Returns bare JSON array of `{id,name}`.
+    - `List(w, r)` — `GET /api/v1/tags?q=<prefix>&limit=50&offset=0` — With `q`: searches by prefix via `services.Tag.SearchByNameWithDocumentCount`. Without `q`: lists paginated via `services.Tag.ListWithDocumentCount`. Returns `{results, total}` with `document_count` per tag.
     - `Create(w, r)` — `POST /api/v1/tags` — Accepts `{name}`. Calls `services.Tag.Create(ctx, []string{name})`. Maps status: `Created` → 201 with `{id,name}`, `Conflict` → 409 with existing `{id,name}`, `Invalid` → 400. Returns `503` with `{"error":"matcher unavailable — tag store is offline"}` when the external matcher process is unreachable.
     - `Update(w, r)` — `PUT /api/v1/tags/{id}` — Accepts `{name}`. Calls `services.Tag.Update(ctx, []UpdatePair{{ID: id, Name: name}})`. Maps status: `Updated`/`Noop` → 200 with `{id,name}`, `Conflict` → 409, `NotFound` → 404, `Invalid` → 400. Returns `503` when matcher is unreachable.
     - `Delete(w, r)` — `DELETE /api/v1/tags/{id}` — Calls `services.Tag.Delete(ctx, []int64{id})`. Maps status: `Deleted` → 204, `NotFound` → 404. Returns `503` when matcher is unreachable.
@@ -186,7 +186,7 @@ See `AuthMiddleware` under `server.go` → Functions.
   - **Fields**: `services *itypes.CrudServices`, `logger *utils.Logger`
   - **Methods**:
     - `NewPeopleHandler(services, logger) *PeopleHandler`
-    - `List(w, r)` — `GET /api/v1/people?q=<prefix>&limit=50&offset=0` — With `q`: searches by prefix. Without `q`: lists paginated. Returns `PersonResponse[]` (with `name_native` if present).
+    - `List(w, r)` — `GET /api/v1/people?q=<prefix>&limit=50&offset=0` — With `q`: searches by prefix via `SearchByNameWithDocumentCount`. Without `q`: lists paginated via `ListWithDocumentCount`. Returns `PersonResponse[]` with `document_count` per person.
     - `Create(w, r)` — `POST /api/v1/people` — Accepts `{name, name_native}`. `Created` → 201, `Conflict` → 409 with existing `{id,name,name_native}`, `Invalid` → 400.
     - `Update(w, r)` — `PUT /api/v1/people/{id}` — Accepts `{name, name_native}`. `Updated`/`Noop` → 200, `Conflict` → 409, `NotFound` → 404, `Invalid` → 400.
     - `Delete(w, r)` — `DELETE /api/v1/people/{id}` — `Deleted` → 204 (CASCADE removes `document_people` rows), `NotFound` → 404.
@@ -203,7 +203,7 @@ See `AuthMiddleware` under `server.go` → Functions.
   - **Fields**: `services *itypes.CrudServices`, `logger *utils.Logger`
   - **Methods**:
     - `NewDocumentTypeHandler(services, logger) *DocumentTypeHandler`
-    - `List(w, r)` — `GET /api/v1/document-types?q=<prefix>&limit=50&offset=0` — With `q`: searches by prefix. Without `q`: lists paginated.
+    - `List(w, r)` — `GET /api/v1/document-types?q=<prefix>&limit=50&offset=0` — With `q`: searches by prefix via `SearchByNameWithDocumentCount`. Without `q`: lists all via `ListAllWithDocumentCount`. Returns `DocumentTypeResponse[]` with `document_count` per type.
     - `Create(w, r)` — `POST /api/v1/document-types` — Accepts `{name, description}`. `Created` → 201, `Conflict` → 409, `Invalid` → 400.
     - `Update(w, r)` — `PUT /api/v1/document-types/{id}` — Accepts `{name, description}`. `Updated`/`Noop` → 200, `Conflict` → 409, `NotFound` → 404, `Invalid` → 400.
     - `Delete(w, r)` — `DELETE /api/v1/document-types/{id}` — `Deleted` → 204, `DeleteConflict` → 409 `{"error":"in use"}`, `NotFound` → 404.
@@ -392,7 +392,7 @@ See `AuthMiddleware` under `server.go` → Functions.
 
 - `CreateDocumentTypeRequest` — `Name string`, `Description string`
 - `UpdateDocumentTypeRequest` — `Name string`, `Description string`
-- `DocumentTypeResponse` — `ID int64`, `Name string`, `Description string`
+- `DocumentTypeResponse` — `ID int64`, `Name string`, `Description string`, `DocumentCount int64`
 
 ---
 

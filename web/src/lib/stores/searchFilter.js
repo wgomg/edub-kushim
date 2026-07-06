@@ -18,6 +18,9 @@ export const defaultFilter = Object.freeze({
 	dateCreated: { from: null, to: null },
 	dateModified: { from: null, to: null },
 	fileSize: { min: null, max: null },
+	missingLanguage: false,
+	missingType: false,
+	untagged: false,
 	sortBy: 'created_at',
 	sortOrder: 'desc',
 	limit: 25,
@@ -110,6 +113,9 @@ export function parseQueryString(str) {
 		dateCreated: { from: null, to: null },
 		dateModified: { from: null, to: null },
 		fileSize: { min: null, max: null },
+		missingLanguage: false,
+		missingType: false,
+		untagged: false,
 		sortBy: 'created_at',
 		sortOrder: 'desc',
 		limit: 25,
@@ -146,6 +152,11 @@ export function parseQueryString(str) {
 					else textParts.push(token.raw);
 					break;
 				}
+				case 'missing':
+					if (token.value === 'lang') filter.missingLanguage = true;
+					else if (token.value === 'type') filter.missingType = true;
+					else if (token.value === 'tags') filter.untagged = true;
+					break;
 				case 'size': {
 					const sz = parseSize(token.value);
 					if (sz) {
@@ -223,6 +234,10 @@ export function serializeFilter(filter) {
 	} else if (filter.dateModified?.to) {
 		parts.push(`modified:<${filter.dateModified.to}`);
 	}
+
+	if (filter.missingLanguage) parts.push('missing:lang');
+	if (filter.missingType) parts.push('missing:type');
+	if (filter.untagged) parts.push('missing:tags');
 
 	if (filter.fileSize?.min != null && filter.fileSize?.max != null) {
 		parts.push(`size:${formatSize(filter.fileSize.min)}..${formatSize(filter.fileSize.max)}`);

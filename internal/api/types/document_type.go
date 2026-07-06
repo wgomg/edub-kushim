@@ -11,7 +11,8 @@ type UpdateDocumentTypeRequest struct {
 }
 
 type DocumentTypeResponse struct {
-	ID          int64  `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
+	ID            int64  `json:"id"`
+	Name          string `json:"name"`
+	Description   string `json:"description"`
+	DocumentCount int64  `json:"document_count"`
 }

@@ -456,7 +456,7 @@ func TestTagCrud(t *testing.T) {
 	})
 
 	t.Run("list tags", func(t *testing.T) {
-		tags, err := env.tagSvc.List(ctx, 100, 0)
+		tags, err := env.tagSvc.ListWithDocumentCount(ctx, 100, 0)
 		testutil.AssertNoError(t, err, "list")
 		if len(tags) == 0 {
 			t.Fatal("expected tags")
@@ -464,7 +464,7 @@ func TestTagCrud(t *testing.T) {
 	})
 
 	t.Run("delete tag", func(t *testing.T) {
-		tags, _ := env.tagSvc.List(ctx, 100, 0)
+		tags, _ := env.tagSvc.ListWithDocumentCount(ctx, 100, 0)
 		if len(tags) > 0 {
 			r, err := env.tagSvc.Delete(ctx, []int64{tags[0].ID})
 			testutil.AssertNoError(t, err, "delete")
@@ -494,7 +494,7 @@ func TestPeopleCrud(t *testing.T) {
 	})
 
 	t.Run("search by prefix", func(t *testing.T) {
-		ppl, err := env.peopleSvc.Search(ctx, "Alice", 10)
+		ppl, err := env.peopleSvc.SearchByNameWithDocumentCount(ctx, "Alice", 10)
 		testutil.AssertNoError(t, err, "search")
 		if len(ppl) == 0 {
 			t.Fatal("expected at least 1 result")
@@ -518,7 +518,7 @@ func TestDocumentTypeCrud(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("seeded types exist", func(t *testing.T) {
-		types, err := env.docTypeSvc.List(ctx, 100, 0)
+		types, err := env.docTypeSvc.ListAllWithDocumentCount(ctx)
 		testutil.AssertNoError(t, err, "list")
 		if len(types) == 0 {
 			t.Fatal("expected seeded document types")

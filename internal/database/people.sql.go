@@ -135,6 +135,56 @@ func (q *Queries) ListPeople(ctx context.Context, arg ListPeopleParams) ([]Peopl
 	return items, nil
 }
 
+const listPeopleWithDocumentCount = `-- name: ListPeopleWithDocumentCount :many
+SELECT p.id, p.name, p.name_native, p.created_at, COUNT(dp.document_id) AS document_count
+FROM people p
+LEFT JOIN document_people dp ON p.id = dp.people_id
+GROUP BY p.id
+ORDER BY p.created_at DESC LIMIT ? OFFSET ?
+`
+
+type ListPeopleWithDocumentCountParams struct {
+	Limit  int64
+	Offset int64
+}
+
+type ListPeopleWithDocumentCountRow struct {
+	ID            int64
+	Name          string
+	NameNative    sql.NullString
+	CreatedAt     sql.NullTime
+	DocumentCount int64
+}
+
+func (q *Queries) ListPeopleWithDocumentCount(ctx context.Context, arg ListPeopleWithDocumentCountParams) ([]ListPeopleWithDocumentCountRow, error) {
+	rows, err := q.db.QueryContext(ctx, listPeopleWithDocumentCount, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPeopleWithDocumentCountRow
+	for rows.Next() {
+		var i ListPeopleWithDocumentCountRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.NameNative,
+			&i.CreatedAt,
+			&i.DocumentCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const searchPeopleByName = `-- name: SearchPeopleByName :many
 SELECT id, name, name_native, created_at FROM people WHERE name LIKE ? ORDER BY name ASC LIMIT ?
 `
@@ -158,6 +208,57 @@ func (q *Queries) SearchPeopleByName(ctx context.Context, arg SearchPeopleByName
 			&i.Name,
 			&i.NameNative,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const searchPeopleByNameWithDocumentCount = `-- name: SearchPeopleByNameWithDocumentCount :many
+SELECT p.id, p.name, p.name_native, p.created_at, COUNT(dp.document_id) AS document_count
+FROM people p
+LEFT JOIN document_people dp ON p.id = dp.people_id
+WHERE p.name LIKE ?
+GROUP BY p.id
+ORDER BY p.name ASC LIMIT ?
+`
+
+type SearchPeopleByNameWithDocumentCountParams struct {
+	Name  string
+	Limit int64
+}
+
+type SearchPeopleByNameWithDocumentCountRow struct {
+	ID            int64
+	Name          string
+	NameNative    sql.NullString
+	CreatedAt     sql.NullTime
+	DocumentCount int64
+}
+
+func (q *Queries) SearchPeopleByNameWithDocumentCount(ctx context.Context, arg SearchPeopleByNameWithDocumentCountParams) ([]SearchPeopleByNameWithDocumentCountRow, error) {
+	rows, err := q.db.QueryContext(ctx, searchPeopleByNameWithDocumentCount, arg.Name, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SearchPeopleByNameWithDocumentCountRow
+	for rows.Next() {
+		var i SearchPeopleByNameWithDocumentCountRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.NameNative,
+			&i.CreatedAt,
+			&i.DocumentCount,
 		); err != nil {
 			return nil, err
 		}

@@ -17,6 +17,54 @@ func setupSearchTest(t *testing.T) (*Engine, *database.Queries) {
 }
 
 
+func getID(t *testing.T, res sql.Result) int64 {
+	t.Helper()
+	if res == nil {
+		t.Fatal("expected non-nil sql.Result")
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("last insert id: %v", err)
+	}
+	return id
+}
+
+func insertSearchDocRaw(t *testing.T, q *database.Queries, docID, title, language string, docTypeID int64, tag string) int64 {
+	t.Helper()
+	res, err := q.CreateDocument(context.Background(), database.CreateDocumentParams{
+		DocumentID:     docID,
+		Title:          title,
+		Md5Checksum:    "md5-" + docID,
+		Sha512Checksum: "sha512-" + docID,
+		MimeType:       "application/pdf",
+		FileSize:       100,
+		OriginalPath:   "/tmp/" + title,
+		StoragePath:    "/tmp/storage/" + title,
+		TextContent:    sql.NullString{String: "content", Valid: true},
+		PageCount:      1,
+		WordCount:      1,
+		CharCount:      7,
+		Language:       language,
+	})
+	if err != nil {
+		t.Fatalf("create document: %v", err)
+	}
+	id := getID(t, res)
+
+	if docTypeID != 3 { // 3 is default article type from seed
+		err = q.UpdateDocumentEditable(context.Background(), database.UpdateDocumentEditableParams{
+			Title:          title,
+			DocumentTypeID: docTypeID,
+			Language:       language,
+			DocumentID:     docID,
+		})
+		if err != nil {
+			t.Fatalf("update document type: %v", err)
+		}
+	}
+	return id
+}
+
 func insertSearchDoc(t *testing.T, q *database.Queries, title, textContent string) {
 	t.Helper()
 
@@ -159,6 +207,98 @@ func TestStructuredSearch(t *testing.T) {
 		results2, _, err := engine.SearchStructured(ctx, Filter{Limit: 1, Offset: 1})
 		testutil.AssertNoError(t, err, "page 2")
 		testutil.AssertEqual(t, len(results2), 1, "page 2 count")
+	})
+
+	t.Run("MissingLanguage filter", func(t *testing.T) {
+		insertSearchDocRaw(t, q, "ss-und-1", "und-doc.pdf", "und", 1, "")
+		insertSearchDocRaw(t, q, "ss-empty-1", "empty-lang.pdf", "", 1, "")
+
+		results, total, err := engine.SearchStructured(ctx, Filter{
+			MissingLanguage: true, Limit: 100,
+		})
+		testutil.AssertNoError(t, err, "search missing language")
+		if total < 2 {
+			t.Fatalf("expected at least 2 missing language docs, got %d", total)
+		}
+		titles := map[string]bool{}
+		for _, r := range results {
+			titles[r.Title] = true
+		}
+		if !titles["und-doc.pdf"] {
+			t.Fatal("expected und-doc.pdf in results")
+		}
+		if !titles["empty-lang.pdf"] {
+			t.Fatal("expected empty-lang.pdf in results")
+		}
+	})
+
+	t.Run("MissingType filter", func(t *testing.T) {
+		insertSearchDocRaw(t, q, "ss-ut-1", "typed-doc.pdf", "eng", 1, "")
+
+		results, total, err := engine.SearchStructured(ctx, Filter{
+			MissingType: true, Limit: 100,
+		})
+		testutil.AssertNoError(t, err, "search missing type")
+		if total < 1 {
+			t.Fatalf("expected at least 1 missing type doc, got %d", total)
+		}
+		titles := map[string]bool{}
+		for _, r := range results {
+			titles[r.Title] = true
+		}
+		if !titles["typed-doc.pdf"] {
+			t.Fatal("expected typed-doc.pdf in results")
+		}
+	})
+
+	t.Run("Untagged filter", func(t *testing.T) {
+		insertSearchDocRaw(t, q, "ss-utg-1", "untagged.pdf", "eng", 3, "")
+		taggedID := insertSearchDocRaw(t, q, "ss-utg-2", "tagged.pdf", "eng", 3, "")
+
+		// Tag the tagged doc
+		res, err := q.CreateTag(ctx, "ss-test-tag")
+		testutil.AssertNoError(t, err, "create tag")
+		tagID := getID(t, res)
+
+		err = q.AddDocumentTag(ctx, database.AddDocumentTagParams{DocumentID: taggedID, TagID: tagID})
+		testutil.AssertNoError(t, err, "tag document")
+
+		results, total, err := engine.SearchStructured(ctx, Filter{
+			Untagged: true, Limit: 100,
+		})
+		testutil.AssertNoError(t, err, "search untagged")
+		if total < 2 {
+			t.Fatalf("expected at least 2 untagged docs, got %d", total)
+		}
+		titles := map[string]bool{}
+		for _, r := range results {
+			titles[r.Title] = true
+		}
+		if !titles["untagged.pdf"] {
+			t.Fatal("expected untagged.pdf in results")
+		}
+		if titles["tagged.pdf"] {
+			t.Fatal("tagged.pdf should be excluded")
+		}
+	})
+
+	t.Run("MissingLanguage+Untagged combined", func(t *testing.T) {
+		insertSearchDocRaw(t, q, "ss-combo-1", "both-missing.pdf", "und", 1, "")
+
+		results, total, err := engine.SearchStructured(ctx, Filter{
+			MissingLanguage: true, Untagged: true, Limit: 100,
+		})
+		testutil.AssertNoError(t, err, "search combined")
+		if total < 1 {
+			t.Fatalf("expected at least 1 combined match, got %d", total)
+		}
+		titles := map[string]bool{}
+		for _, r := range results {
+			titles[r.Title] = true
+		}
+		if !titles["both-missing.pdf"] {
+			t.Fatal("expected both-missing.pdf in results")
+		}
 	})
 }
 

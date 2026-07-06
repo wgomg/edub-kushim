@@ -131,6 +131,51 @@ func (q *Queries) ListAllDocumentTypesNames(ctx context.Context) ([]string, erro
 	return items, nil
 }
 
+const listAllDocumentTypesWithDocumentCount = `-- name: ListAllDocumentTypesWithDocumentCount :many
+SELECT dt.id, dt.name, dt.description, dt.created_at, COUNT(d.id) AS document_count
+FROM document_type dt
+LEFT JOIN document d ON dt.id = d.document_type_id
+GROUP BY dt.id
+ORDER BY dt.created_at DESC
+`
+
+type ListAllDocumentTypesWithDocumentCountRow struct {
+	ID            int64
+	Name          string
+	Description   string
+	CreatedAt     sql.NullTime
+	DocumentCount int64
+}
+
+func (q *Queries) ListAllDocumentTypesWithDocumentCount(ctx context.Context) ([]ListAllDocumentTypesWithDocumentCountRow, error) {
+	rows, err := q.db.QueryContext(ctx, listAllDocumentTypesWithDocumentCount)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAllDocumentTypesWithDocumentCountRow
+	for rows.Next() {
+		var i ListAllDocumentTypesWithDocumentCountRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Description,
+			&i.CreatedAt,
+			&i.DocumentCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDocumentTypes = `-- name: ListDocumentTypes :many
 SELECT id, name, description, created_at FROM document_type ORDER BY created_at DESC LIMIT ? OFFSET ?
 `
@@ -168,6 +213,56 @@ func (q *Queries) ListDocumentTypes(ctx context.Context, arg ListDocumentTypesPa
 	return items, nil
 }
 
+const listDocumentTypesWithDocumentCount = `-- name: ListDocumentTypesWithDocumentCount :many
+SELECT dt.id, dt.name, dt.description, dt.created_at, COUNT(d.id) AS document_count
+FROM document_type dt
+LEFT JOIN document d ON dt.id = d.document_type_id
+GROUP BY dt.id
+ORDER BY dt.created_at DESC LIMIT ? OFFSET ?
+`
+
+type ListDocumentTypesWithDocumentCountParams struct {
+	Limit  int64
+	Offset int64
+}
+
+type ListDocumentTypesWithDocumentCountRow struct {
+	ID            int64
+	Name          string
+	Description   string
+	CreatedAt     sql.NullTime
+	DocumentCount int64
+}
+
+func (q *Queries) ListDocumentTypesWithDocumentCount(ctx context.Context, arg ListDocumentTypesWithDocumentCountParams) ([]ListDocumentTypesWithDocumentCountRow, error) {
+	rows, err := q.db.QueryContext(ctx, listDocumentTypesWithDocumentCount, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListDocumentTypesWithDocumentCountRow
+	for rows.Next() {
+		var i ListDocumentTypesWithDocumentCountRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Description,
+			&i.CreatedAt,
+			&i.DocumentCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const searchDocumentTypeByName = `-- name: SearchDocumentTypeByName :many
 SELECT id, name, description, created_at FROM document_type WHERE name LIKE ? ORDER BY name ASC LIMIT ?
 `
@@ -191,6 +286,57 @@ func (q *Queries) SearchDocumentTypeByName(ctx context.Context, arg SearchDocume
 			&i.Name,
 			&i.Description,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const searchDocumentTypeByNameWithDocumentCount = `-- name: SearchDocumentTypeByNameWithDocumentCount :many
+SELECT dt.id, dt.name, dt.description, dt.created_at, COUNT(d.id) AS document_count
+FROM document_type dt
+LEFT JOIN document d ON dt.id = d.document_type_id
+WHERE dt.name LIKE ?
+GROUP BY dt.id
+ORDER BY dt.name ASC LIMIT ?
+`
+
+type SearchDocumentTypeByNameWithDocumentCountParams struct {
+	Name  string
+	Limit int64
+}
+
+type SearchDocumentTypeByNameWithDocumentCountRow struct {
+	ID            int64
+	Name          string
+	Description   string
+	CreatedAt     sql.NullTime
+	DocumentCount int64
+}
+
+func (q *Queries) SearchDocumentTypeByNameWithDocumentCount(ctx context.Context, arg SearchDocumentTypeByNameWithDocumentCountParams) ([]SearchDocumentTypeByNameWithDocumentCountRow, error) {
+	rows, err := q.db.QueryContext(ctx, searchDocumentTypeByNameWithDocumentCount, arg.Name, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SearchDocumentTypeByNameWithDocumentCountRow
+	for rows.Next() {
+		var i SearchDocumentTypeByNameWithDocumentCountRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Description,
+			&i.CreatedAt,
+			&i.DocumentCount,
 		); err != nil {
 			return nil, err
 		}

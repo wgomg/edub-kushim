@@ -21,8 +21,8 @@ CGO_ENABLED=0 go test -tags "XLA,ORT" ./internal/...
 
 | Package | Tests | What it covers |
 |---------|-------|---------------|
-| `internal/database` | 18 | sqlc-generated CRUD, task lifecycle, enrich waiting flow, batch ownership, FTS-adjacent operations, document/tag/people/document-type CRUD, saved searches, dashboard analytics queries (empty DB + mixed data) |
-| `internal/search` | 7 | FTS5 search with snippets, ranking, pagination; structured search with mime/language/date filters; query sanitization |
+| `internal/database` | 20 | sqlc-generated CRUD, task lifecycle, enrich waiting flow, batch ownership, FTS-adjacent operations, document/tag/people/document-type CRUD, saved searches, dashboard analytics queries (empty DB + mixed data), structured search missing filters (MissingLanguage/MissingType/Untagged), WithDocumentCount queries |
+| `internal/search` | 8 | FTS5 search with snippets, ranking, pagination; structured search with mime/language/date/missing filters; query sanitization |
 | `internal/task` | 14 | Store (create/get/claim/complete/fail), dedup key uniqueness, dispatcher enqueue with custom status/ID, runner (complete/fail/no-tasks), pool lifecycle |
 | `internal/api/handlers` | 44 | Document CRUD, tag/people/DocumentType CRUD, user CRUD (with role), task endpoints, saved searches, concurrent operations, dashboard activity + analytics + processing health, analytics error path, config handler get/status, batch delete limits, error helpers, auth login (valid/invalid/empty/claims/role), auth logout, API key generate/revoke/rotate/status/forbidden/invalid-id/not-found, MeHandler (valid/missing-id/not-found), self-service API key handlers (MeGenerateKey/MeRevokeKey/MeRotateKey/MeGetKeyStatus/unauthorized) |
 - `internal/auth` | 7 | Session secret generation, JWT generation/validation round-trip with role, wrong secret rejection, expired token rejection, malformed token rejection, token part structure, ValidRole cases |

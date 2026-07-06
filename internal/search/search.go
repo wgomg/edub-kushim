@@ -47,19 +47,22 @@ type FileSizeRange struct {
 }
 
 type Filter struct {
-	Query        string         `json:"query"`
-	Tags         []string       `json:"tags"`
-	People       []PersonFilter `json:"people"`
-	DocumentType string         `json:"document_type"`
-	Language     string         `json:"language"`
-	MimeType     string         `json:"mime_type"`
-	DateCreated  *DateRange     `json:"date_created"`
-	DateModified *DateRange     `json:"date_modified"`
-	FileSize     *FileSizeRange `json:"file_size"`
-	SortBy       string         `json:"sort_by"`
-	SortOrder    string         `json:"sort_order"`
-	Limit        int32          `json:"limit"`
-	Offset       int32          `json:"offset"`
+	Query           string         `json:"query"`
+	Tags            []string       `json:"tags"`
+	People          []PersonFilter `json:"people"`
+	DocumentType    string         `json:"document_type"`
+	Language        string         `json:"language"`
+	MimeType        string         `json:"mime_type"`
+	DateCreated     *DateRange     `json:"date_created"`
+	DateModified    *DateRange     `json:"date_modified"`
+	FileSize        *FileSizeRange `json:"file_size"`
+	SortBy          string         `json:"sort_by"`
+	SortOrder       string         `json:"sort_order"`
+	Limit           int32          `json:"limit"`
+	Offset          int32          `json:"offset"`
+	MissingLanguage bool           `json:"missing_language"`
+	MissingType     bool           `json:"missing_type"`
+	Untagged        bool           `json:"untagged"`
 }
 
 type Engine struct {
@@ -114,15 +117,18 @@ func (e *Engine) Search(ctx context.Context, query string, limit, offset int32) 
 
 func (e *Engine) SearchStructured(ctx context.Context, filter Filter) ([]Result, int64, error) {
 	dbFilter := database.SearchFilter{
-		Query:        sanitizeQuery(filter.Query),
-		Tags:         filter.Tags,
-		DocumentType: filter.DocumentType,
-		Language:     filter.Language,
-		MimeType:     filter.MimeType,
-		SortBy:       filter.SortBy,
-		SortOrder:    filter.SortOrder,
-		Limit:        filter.Limit,
-		Offset:       filter.Offset,
+		Query:           sanitizeQuery(filter.Query),
+		Tags:            filter.Tags,
+		DocumentType:    filter.DocumentType,
+		Language:        filter.Language,
+		MimeType:        filter.MimeType,
+		SortBy:          filter.SortBy,
+		SortOrder:       filter.SortOrder,
+		Limit:           filter.Limit,
+		Offset:          filter.Offset,
+		MissingLanguage: filter.MissingLanguage,
+		MissingType:     filter.MissingType,
+		Untagged:        filter.Untagged,
 	}
 
 	for _, p := range filter.People {

@@ -1,8 +1,9 @@
 package types
 
 type TagResponse struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
+	ID            int64  `json:"id"`
+	Name          string `json:"name"`
+	DocumentCount int64  `json:"document_count"`
 }
 
 type PersonResponse struct {
@@ -12,6 +13,7 @@ type PersonResponse struct {
 	PersonTypeID          int64  `json:"person_type_id"`
 	PersonTypeName        string `json:"person_type_name"`
 	PersonTypeDescription string `json:"person_type_description"`
+	DocumentCount         int64  `json:"document_count"`
 }
 
 type DocumentResponse struct {

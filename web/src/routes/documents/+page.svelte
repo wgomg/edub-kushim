@@ -119,7 +119,10 @@
 		mimeType: '',
 		dateCreated: { from: null, to: null },
 		dateModified: { from: null, to: null },
-		fileSize: { min: null, max: null }
+		fileSize: { min: null, max: null },
+		missingLanguage: false,
+		missingType: false,
+		untagged: false
 	});
 	let showFilters = $state(false);
 	let refreshKey = $state(0);
@@ -140,7 +143,10 @@
 			mimeType: f.mimeType,
 			dateCreated: f.dateCreated,
 			dateModified: f.dateModified,
-			fileSize: f.fileSize
+			fileSize: f.fileSize,
+			missingLanguage: f.missingLanguage,
+			missingType: f.missingType,
+			untagged: f.untagged
 		};
 		if (subscribed) refreshKey++;
 		subscribed = true;
@@ -157,7 +163,10 @@
 			people: filter.people,
 			document_type: filter.documentType || '',
 			language: filter.language || '',
-			mime_type: filter.mimeType || ''
+			mime_type: filter.mimeType || '',
+			missing_language: filter.missingLanguage || false,
+			missing_type: filter.missingType || false,
+			untagged: filter.untagged || false
 		};
 		const dc = filter.dateCreated;
 		if (dc.from || dc.to) {
@@ -269,31 +278,12 @@
 
 	function fetch({ sortBy, sortOrder, limit, offset }) {
 		const body = {
-			query: filter.query,
-			tags: filter.tags,
-			people: filter.people,
-			document_type: filter.documentType || '',
-			language: filter.language || '',
-			mime_type: filter.mimeType || '',
+			...buildFilterBody(),
 			sort_by: sortBy,
 			sort_order: sortOrder,
 			limit,
 			offset
 		};
-
-		const dc = filter.dateCreated;
-		if (dc.from || dc.to) {
-			body.date_created = { from: dc.from || null, to: dc.to || null };
-		}
-		const dm = filter.dateModified;
-		if (dm.from || dm.to) {
-			body.date_modified = { from: dm.from || null, to: dm.to || null };
-		}
-		const fs = filter.fileSize;
-		if (fs.min != null || fs.max != null) {
-			body.file_size = { min: fs.min, max: fs.max };
-		}
-
 		return api.documents.searchStructured(body);
 	}
 
@@ -336,7 +326,8 @@
 									type="text"
 									placeholder="Search tags…"
 									oninput={onTagSearchInput}
-									class="mb-2 w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus:outline-none"
+									class="mb-2 w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus:outline-none"
+									aria-label="Search tags"
 								/>
 								<div class="mb-2 max-h-40 overflow-y-auto">
 									{#each tagOptions as tag (tag.id)}
@@ -373,7 +364,7 @@
 													{tag.name}
 													<button
 														onclick={() => (batchTagIds = batchTagIds.filter((t) => t !== tid))}
-														class="text-parchment-500 hover:text-parchment-200">&times;</button
+														class="text-parchment-500 hover:text-parchment-200" aria-label="Remove tag">&times;</button
 													>
 												</span>
 											{/if}
@@ -471,7 +462,7 @@
 										<button
 											onclick={() => handleDelete(s.id)}
 											class="shrink-0 rounded p-0.5 text-parchment-500 opacity-0 group-hover:opacity-100 hover:text-red-400"
-											title="Delete">&times;</button
+											title="Delete" aria-label="Delete saved search">&times;</button
 										>
 									{/if}
 								</div>
@@ -497,9 +488,10 @@
 				>
 					<input
 						type="text"
+						id="save-search-name"
 						bind:value={saveName}
 						placeholder="e.g. Invoices from Q1"
-						class="mb-2 w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus:outline-none"
+						class="mb-2 w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus:outline-none"
 					/>
 					<div class="flex justify-end gap-2">
 						<button

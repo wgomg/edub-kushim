@@ -1,4 +1,5 @@
 <script>
+	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
 	import { EDIT_ICON, DELETE_ICON, BTN_BASE } from '$lib/icons.js';
@@ -183,19 +184,24 @@
 						<tr>
 							<th class="px-4 py-3 font-medium whitespace-nowrap">Name</th>
 							<th class="px-4 py-3 font-medium whitespace-nowrap">Native Name</th>
+							<th class="px-4 py-3 font-medium whitespace-nowrap">Documents</th>
 							<th class="w-[1%] px-4 py-3 font-medium whitespace-nowrap">Actions</th>
 						</tr>
 					</thead>
 					<tbody class="divide-y divide-clay-800">
 						{#if people.length === 0}
 							<tr class="bg-clay-950">
-								<td class="px-4 py-8 text-parchment-500" colspan="3">No people found.</td>
+								<td class="px-4 py-8 text-parchment-500" colspan="4">No people found.</td>
 							</tr>
 						{:else}
 							{#each people as p (p.id)}
-								<tr class="bg-clay-950">
+								<tr class="bg-clay-950 cursor-pointer hover:bg-clay-900 focus-visible:ring-2 focus-visible:ring-gold-500 focus:outline-none"
+									tabindex="0" role="link"
+									onclick={() => goto(`/documents?author:${encodeURIComponent(p.name)}`)}
+									onkeydown={(e) => { if (e.key === 'Enter') goto(`/documents?author:${encodeURIComponent(p.name)}`); }}>
 									<td class="px-4 py-3 text-parchment-200">{p.name}</td>
 									<td class="px-4 py-3 text-parchment-400">{p.name_native || ''}</td>
+									<td class="px-4 py-3 text-parchment-400 tabular-nums">{p.document_count ?? 0}</td>
 									<td class="px-4 py-3 whitespace-nowrap">
 										{#if !authStore.authEnabled() || authStore.isEditor()}
 											<div class="flex gap-2">

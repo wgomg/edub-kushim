@@ -33,29 +33,28 @@ func (h *DocumentTypeHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	q := pb.Get("q", "")
 	limit := pb.GetInt64("limit", 50, 1, 100)
-	offset := pb.GetInt64("offset", 0, 0, 100000)
 
 	var result []types.DocumentTypeResponse
 
 	if q != "" {
-		dts, err := h.services.DocumentType.Search(ctx, q, limit)
+		dts, err := h.services.DocumentType.SearchByNameWithDocumentCount(ctx, q, limit)
 		if err != nil {
 			writeServiceError(w, h.logger, &reqID, "list document types", err)
 			return
 		}
 		result = make([]types.DocumentTypeResponse, len(dts))
 		for i, dt := range dts {
-			result[i] = types.DocumentTypeResponse{ID: dt.ID, Name: dt.Name, Description: dt.Description}
+			result[i] = types.DocumentTypeResponse{ID: dt.ID, Name: dt.Name, Description: dt.Description, DocumentCount: dt.DocumentCount}
 		}
 	} else {
-		dts, err := h.services.DocumentType.List(ctx, limit, offset)
+		dts, err := h.services.DocumentType.ListAllWithDocumentCount(ctx)
 		if err != nil {
 			writeServiceError(w, h.logger, &reqID, "list document types", err)
 			return
 		}
 		result = make([]types.DocumentTypeResponse, len(dts))
 		for i, dt := range dts {
-			result[i] = types.DocumentTypeResponse{ID: dt.ID, Name: dt.Name, Description: dt.Description}
+			result[i] = types.DocumentTypeResponse{ID: dt.ID, Name: dt.Name, Description: dt.Description, DocumentCount: dt.DocumentCount}
 		}
 	}
 

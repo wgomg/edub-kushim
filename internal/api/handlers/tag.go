@@ -9,7 +9,6 @@ import (
 
 	itypes "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/api/types"
-	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/tagmatch"
 	"github.com/wgomg/edub-kushim/internal/utils"
@@ -53,29 +52,39 @@ func (h *TagHandler) List(w http.ResponseWriter, r *http.Request) {
 	limit := pb.GetInt64("limit", 50, 1, 100)
 	offset := pb.GetInt64("offset", 0, 0, 100000)
 
-	var result []database.Tag
 	var total int64
 	var err error
 
+	var responses []types.TagResponse
+
 	if q != "" {
-		result, err = h.services.Tag.Search(ctx, q, limit, offset)
+		result, searchErr := h.services.Tag.SearchByNameWithDocumentCount(ctx, q, limit, offset)
+		err = searchErr
 		if err == nil {
 			total, err = h.services.Tag.CountByName(ctx, q)
 		}
+		if err == nil {
+			responses = make([]types.TagResponse, len(result))
+			for i, t := range result {
+				responses[i] = types.TagResponse{ID: t.ID, Name: t.Name, DocumentCount: t.DocumentCount}
+			}
+		}
 	} else {
-		result, err = h.services.Tag.List(ctx, limit, offset)
+		result, listErr := h.services.Tag.ListWithDocumentCount(ctx, limit, offset)
+		err = listErr
 		if err == nil {
 			total, err = h.services.Tag.Count(ctx)
+		}
+		if err == nil {
+			responses = make([]types.TagResponse, len(result))
+			for i, t := range result {
+				responses[i] = types.TagResponse{ID: t.ID, Name: t.Name, DocumentCount: t.DocumentCount}
+			}
 		}
 	}
 	if err != nil {
 		writeServiceError(w, h.logger, &reqID, "list tags", err)
 		return
-	}
-
-	responses := make([]types.TagResponse, len(result))
-	for i, t := range result {
-		responses[i] = types.TagResponse{ID: t.ID, Name: t.Name}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

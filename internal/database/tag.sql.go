@@ -159,6 +159,54 @@ func (q *Queries) ListTags(ctx context.Context, arg ListTagsParams) ([]Tag, erro
 	return items, nil
 }
 
+const listTagsWithDocumentCount = `-- name: ListTagsWithDocumentCount :many
+SELECT t.id, t.name, t.created_at, COUNT(dt.document_id) AS document_count
+FROM tag t
+LEFT JOIN document_tag dt ON t.id = dt.tag_id
+GROUP BY t.id
+ORDER BY t.created_at DESC LIMIT ? OFFSET ?
+`
+
+type ListTagsWithDocumentCountParams struct {
+	Limit  int64
+	Offset int64
+}
+
+type ListTagsWithDocumentCountRow struct {
+	ID            int64
+	Name          string
+	CreatedAt     sql.NullTime
+	DocumentCount int64
+}
+
+func (q *Queries) ListTagsWithDocumentCount(ctx context.Context, arg ListTagsWithDocumentCountParams) ([]ListTagsWithDocumentCountRow, error) {
+	rows, err := q.db.QueryContext(ctx, listTagsWithDocumentCount, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTagsWithDocumentCountRow
+	for rows.Next() {
+		var i ListTagsWithDocumentCountRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.CreatedAt,
+			&i.DocumentCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const searchTagsByName = `-- name: SearchTagsByName :many
 SELECT id, name, created_at FROM tag WHERE name LIKE ? ORDER BY name ASC LIMIT ? OFFSET ?
 `
@@ -179,6 +227,56 @@ func (q *Queries) SearchTagsByName(ctx context.Context, arg SearchTagsByNamePara
 	for rows.Next() {
 		var i Tag
 		if err := rows.Scan(&i.ID, &i.Name, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const searchTagsByNameWithDocumentCount = `-- name: SearchTagsByNameWithDocumentCount :many
+SELECT t.id, t.name, t.created_at, COUNT(dt.document_id) AS document_count
+FROM tag t
+LEFT JOIN document_tag dt ON t.id = dt.tag_id
+WHERE t.name LIKE ?
+GROUP BY t.id
+ORDER BY t.name ASC LIMIT ? OFFSET ?
+`
+
+type SearchTagsByNameWithDocumentCountParams struct {
+	Name   string
+	Limit  int64
+	Offset int64
+}
+
+type SearchTagsByNameWithDocumentCountRow struct {
+	ID            int64
+	Name          string
+	CreatedAt     sql.NullTime
+	DocumentCount int64
+}
+
+func (q *Queries) SearchTagsByNameWithDocumentCount(ctx context.Context, arg SearchTagsByNameWithDocumentCountParams) ([]SearchTagsByNameWithDocumentCountRow, error) {
+	rows, err := q.db.QueryContext(ctx, searchTagsByNameWithDocumentCount, arg.Name, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SearchTagsByNameWithDocumentCountRow
+	for rows.Next() {
+		var i SearchTagsByNameWithDocumentCountRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.CreatedAt,
+			&i.DocumentCount,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

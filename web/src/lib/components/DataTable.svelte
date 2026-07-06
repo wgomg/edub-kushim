@@ -276,9 +276,12 @@
 					{#each data as row (row[keyField])}
 						<tr
 							class="bg-clay-950 transition-colors {onRowClick
-								? 'cursor-pointer hover:bg-clay-900'
+								? 'cursor-pointer hover:bg-clay-900 focus-visible:ring-2 focus-visible:ring-gold-500 focus:outline-none'
 								: ''}"
+							tabindex={onRowClick ? '0' : undefined}
+							role={onRowClick ? 'link' : undefined}
 							onclick={onRowClick ? () => onRowClick(row) : undefined}
+							onkeydown={onRowClick ? (e) => { if (e.key === 'Enter') onRowClick(row); } : undefined}
 						>
 							{#if selectable}
 								<td class="w-10 px-4 py-3">

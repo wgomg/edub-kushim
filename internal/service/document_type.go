@@ -45,29 +45,32 @@ func (s *DocumentType) GetByName(ctx context.Context, name string) (database.Doc
 	return dt, nil
 }
 
-func (s *DocumentType) List(ctx context.Context, limit, offset int64) ([]database.DocumentType, error) {
-	dts, err := s.queries.ListDocumentTypes(ctx, database.ListDocumentTypesParams{Limit: limit, Offset: offset})
+func (s *DocumentType) ListWithDocumentCount(ctx context.Context, limit, offset int64) ([]database.ListDocumentTypesWithDocumentCountRow, error) {
+	dts, err := s.queries.ListDocumentTypesWithDocumentCount(ctx, database.ListDocumentTypesWithDocumentCountParams{
+		Limit:  limit,
+		Offset: offset,
+	})
 	if err != nil {
-		return nil, errs.FromDB(err, "list document types")
+		return nil, errs.FromDB(err, "list document types with document count")
 	}
 	return dts, nil
 }
 
-func (s *DocumentType) ListAll(ctx context.Context) ([]database.DocumentType, error) {
-	dts, err := s.queries.ListAllDocumentTypes(ctx)
-	if err != nil {
-		return nil, errs.FromDB(err, "list all document types")
-	}
-	return dts, nil
-}
-
-func (s *DocumentType) Search(ctx context.Context, prefix string, limit int64) ([]database.DocumentType, error) {
-	dts, err := s.queries.SearchDocumentTypeByName(ctx, database.SearchDocumentTypeByNameParams{
+func (s *DocumentType) SearchByNameWithDocumentCount(ctx context.Context, prefix string, limit int64) ([]database.SearchDocumentTypeByNameWithDocumentCountRow, error) {
+	dts, err := s.queries.SearchDocumentTypeByNameWithDocumentCount(ctx, database.SearchDocumentTypeByNameWithDocumentCountParams{
 		Name:  prefix + "%",
 		Limit: limit,
 	})
 	if err != nil {
-		return nil, errs.FromDB(err, "search document types")
+		return nil, errs.FromDB(err, "search document types with document count")
+	}
+	return dts, nil
+}
+
+func (s *DocumentType) ListAllWithDocumentCount(ctx context.Context) ([]database.ListAllDocumentTypesWithDocumentCountRow, error) {
+	dts, err := s.queries.ListAllDocumentTypesWithDocumentCount(ctx)
+	if err != nil {
+		return nil, errs.FromDB(err, "list all document types with document count")
 	}
 	return dts, nil
 }

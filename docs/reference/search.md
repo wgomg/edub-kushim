@@ -44,19 +44,22 @@ JSON-serializable request body for structured search:
 
 ```go
 type Filter struct {
-    Query        string         `json:"query"`          // FTS5 query string
-    Tags         []string       `json:"tags"`           // Tag names to filter by (AND)
-    People       []PersonFilter `json:"people"`         // Person name + type pairs
-    DocumentType string         `json:"document_type"`  // Document type name
-    Language     string         `json:"language"`       // Language code (e.g. "eng")
-    MimeType     string         `json:"mime_type"`      // File MIME type
-    DateCreated  *DateRange     `json:"date_created"`   // Created date range
-    DateModified *DateRange     `json:"date_modified"`  // Modified date range
-    FileSize     *FileSizeRange `json:"file_size"`      // File size range in bytes
-    SortBy       string         `json:"sort_by"`        // Sort column
-    SortOrder    string         `json:"sort_order"`     // "asc" or "desc"
-    Limit        int32          `json:"limit"`          // Max results (default 50, max 100)
-    Offset       int32          `json:"offset"`         // Pagination offset
+    Query           string         `json:"query"`           // FTS5 query string
+    Tags            []string       `json:"tags"`            // Tag names to filter by (AND)
+    People          []PersonFilter `json:"people"`          // Person name + type pairs
+    DocumentType    string         `json:"document_type"`   // Document type name
+    Language        string         `json:"language"`        // Language code (e.g. "eng")
+    MimeType        string         `json:"mime_type"`       // File MIME type
+    DateCreated     *DateRange     `json:"date_created"`    // Created date range
+    DateModified    *DateRange     `json:"date_modified"`   // Modified date range
+    FileSize        *FileSizeRange `json:"file_size"`       // File size range in bytes
+    SortBy          string         `json:"sort_by"`         // Sort column
+    SortOrder       string         `json:"sort_order"`      // "asc" or "desc"
+    Limit           int32          `json:"limit"`           // Max results (default 50, max 100)
+    Offset          int32          `json:"offset"`          // Pagination offset
+    MissingLanguage bool           `json:"missing_language"` // Documents without detected language
+    MissingType     bool           `json:"missing_type"`     // Documents with undetermined type
+    Untagged        bool           `json:"untagged"`         // Documents without any tags
 }
 ```
 
@@ -144,6 +147,7 @@ A dynamic SQL query builder that composes `WHERE` clauses with proper parameteri
 | `subqueryIn(col, subquery, values)` | `AND d.col IN (SELECT ... WHERE IN (?...))` |
 | `rangeClause(col, min, max)`        | `AND d.col >= ?` / `AND d.col <= ?`         |
 | `dateRange(col, range)`             | Date range filter with optional from/to     |
+| `addMissingFilters(filter)`         | Adds filters for MissingLanguage, MissingType, Untagged |
 
 ### Functions
 
@@ -152,11 +156,12 @@ Builds a SELECT query dynamically:
 
 - If `filter.Query` is non-empty: joins `document_fts`, adds `MATCH ?`, `bm25()` for rank, `snippet()` for highlighting
 - Applies tag subquery (`document_tag JOIN tag`), people subqueries (`document_people JOIN people JOIN people_type`), document type subquery, language/MIME equality, date ranges, file size ranges
+- Applies missing filters (`MissingLanguage` → `d.language IN ('und','')`, `MissingType` → `d.document_type_id = 1`, `Untagged` → `NOT EXISTS` subquery on `document_tag`)
 - When query is present: ordered by `rank`; otherwise ordered by `sort_by`/`sort_order` (whitelisted: `title`, `mime_type`, `file_size`, `created_at`)
 - Uses `LIMIT ? OFFSET ?` for pagination
 
 #### `CountDocumentsStructured(ctx, filter) (int64, error)`
-Same filter logic but `SELECT COUNT(*)` for total count without ordering.
+Same filter logic but `SELECT COUNT(*)` for total count without ordering. Uses the shared `addMissingFilters` helper to avoid drift between search and count queries.
 
 ---
 
@@ -198,10 +203,10 @@ Same filter logic but `SELECT COUNT(*)` for total count without ordering.
 #### Autocomplete Responses
 ```json
 // GET /api/v1/tags?q=fin
-[{ "id": 1, "name": "finance" }, { "id": 2, "name": "financial" }]
+[{ "id": 1, "name": "finance", "document_count": 5 }, { "id": 2, "name": "financial", "document_count": 2 }]
 
 // GET /api/v1/document-types
-[{ "id": 1, "name": "invoice", "description": "Invoice document" }]
+[{ "id": 1, "name": "invoice", "description": "Invoice document", "document_count": 12 }]
 ```
 
 ---
@@ -224,6 +229,7 @@ Collapsible panel with structured filter controls:
 - **MIME Type**: Dropdown with common MIME types
 - **Date Created / Date Modified**: Dual date pickers (from/to)
 - **File Size**: Text inputs with unit parsing (B, KB, MB, GB)
+- **Missing Language / Missing Type / Untagged**: Checkboxes for documents lacking language, type, or tags
 - **Clear All**: Resets all filters to defaults
 
 ### `filterStore.js`
@@ -235,9 +241,9 @@ Svelte writable store for shared filter state:
 
 ### `searchFilter.js`
 Query string utility module:
-- `tokenizeQuery(str)` — Tokenizes `field:value` syntax into structured tokens
-- `parseQueryString(str)` — Converts raw query string to complete filter object
-- `serializeFilter(filter)` — Converts filter object back to query string
+- `tokenizeQuery(str)` — Tokenizes `field:value` syntax into structured tokens (including `missing:lang`, `missing:type`, `missing:tags`)
+- `parseQueryString(str)` — Converts raw query string to complete filter object (sets `missingLanguage`, `missingType`, `untagged` from `missing:` tokens)
+- `serializeFilter(filter)` — Converts filter object back to query string (appends `missing:lang`/`missing:type`/`missing:tags` when respective flags are set)
 - `parseSize(raw)` / `formatSize(bytes)` — Parse/format human-readable file sizes
 - `parseDateRange(raw)` — Parse date range from string (`from..to`, `>date`, `<date`)
 - `setPersonTypes(types)` / `getPersonTypes()` — Shared person type set for validation
@@ -264,6 +270,7 @@ Users can type structured queries directly into the search bar:
 | `created:` | `created:>2024-01-01` / `created:2024-01-01..2024-06-30` | Filter by creation date |
 | `modified:`| `modified:<2024-06-01`                 | Filter by modification date                |
 | `size:`    | `size:>1MB` / `size:1MB..10MB`         | Filter by file size                        |
+| `missing:` | `missing:lang` / `missing:type` / `missing:tags` | Filter by missing language, missing type, or untagged |
 
 Quoted values are supported for names with spaces: `author:"Jane Smith"`.
 

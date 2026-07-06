@@ -1,4 +1,5 @@
 <script>
+	import { goto } from '$app/navigation';
 	import DataTable from '$lib/components/DataTable.svelte';
 	import Modal from '$lib/components/Modal.svelte';
 	import { EDIT_ICON, DELETE_ICON, actionButton } from '$lib/icons.js';
@@ -23,6 +24,13 @@
 			width: '100%'
 		},
 		{
+			key: 'document_count',
+			label: 'Documents',
+			sortable: true,
+			cell: (v) => String(v ?? 0),
+			width: '100px'
+		},
+		{
 			key: 'actions',
 			label: 'Actions',
 			sortable: false,
@@ -35,6 +43,10 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			}
 		}
 	];
+
+	function filterByTag(row) {
+		goto(`/documents?tag:${encodeURIComponent(row.name)}`);
+	}
 
 	async function fetch({ limit, offset }) {
 		return await api.tags.list(query, limit, offset);
@@ -120,12 +132,14 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 	</div>
 
 	<div class="flex items-center gap-2">
+		<label for="tag-filter" class="sr-only">Filter tags</label>
 		<input
+			id="tag-filter"
 			type="text"
 			bind:value={query}
 			oninput={() => refreshKey++}
 			placeholder="Filter tags…"
-			class="w-full max-w-xs rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus:outline-none"
+			class="w-full max-w-xs rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus:outline-none"
 		/>
 	</div>
 
@@ -136,6 +150,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 		defaultPageSize={50}
 		pageSizes={[10, 25, 50, 100]}
 		{refreshKey}
+		onRowClick={filterByTag}
 	/>
 </div>
 

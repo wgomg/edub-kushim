@@ -7,19 +7,22 @@ import (
 )
 
 type SearchFilter struct {
-	Query        string
-	Tags         []string
-	People       []struct{ Name, Type string }
-	DocumentType string
-	Language     string
-	MimeType     string
-	DateCreated  *struct{ From, To *string }
-	DateModified *struct{ From, To *string }
-	FileSize     *struct{ Min, Max *int64 }
-	SortBy       string
-	SortOrder    string
-	Limit        int32
-	Offset       int32
+	Query           string
+	Tags            []string
+	People          []struct{ Name, Type string }
+	DocumentType    string
+	Language        string
+	MimeType        string
+	DateCreated     *struct{ From, To *string }
+	DateModified    *struct{ From, To *string }
+	FileSize        *struct{ Min, Max *int64 }
+	SortBy          string
+	SortOrder       string
+	Limit           int32
+	Offset          int32
+	MissingLanguage bool
+	MissingType     bool
+	Untagged        bool
 }
 
 type queryBuilder struct {
@@ -52,6 +55,18 @@ func (b *queryBuilder) subqueryIn(col, subquery string, values []string) {
 		args[i] = v
 	}
 	b.add(fmt.Sprintf("AND d.%s IN (%s)", col, fmt.Sprintf(subquery, strings.Join(placeholders, ","))), args...)
+}
+
+func (b *queryBuilder) addMissingFilters(filter SearchFilter) {
+	if filter.MissingLanguage {
+		b.add(`AND (d.language = 'und' OR d.language = '')`)
+	}
+	if filter.MissingType {
+		b.add(`AND d.document_type_id = 1`)
+	}
+	if filter.Untagged {
+		b.add(`AND NOT EXISTS (SELECT 1 FROM document_tag dt WHERE dt.document_id = d.id)`)
+	}
 }
 
 func (b *queryBuilder) rangeClause(col string, min, max *int64) {
@@ -122,6 +137,8 @@ func (q *Queries) SearchDocumentsStructured(ctx context.Context, filter SearchFi
 	if filter.FileSize != nil {
 		b.rangeClause("file_size", filter.FileSize.Min, filter.FileSize.Max)
 	}
+
+	b.addMissingFilters(filter)
 
 	if filter.Query != "" {
 		b.add(`ORDER BY rank`)
@@ -208,6 +225,8 @@ func (q *Queries) CountDocumentsStructured(ctx context.Context, filter SearchFil
 	if filter.FileSize != nil {
 		b.rangeClause("file_size", filter.FileSize.Min, filter.FileSize.Max)
 	}
+
+	b.addMissingFilters(filter)
 
 	query := strings.Join(b.clauses, " ")
 	var count int64

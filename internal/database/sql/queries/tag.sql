@@ -32,5 +32,20 @@ SELECT COUNT(*) FROM tag WHERE name LIKE ?;
 -- name: SearchTagsByName :many
 SELECT * FROM tag WHERE name LIKE ? ORDER BY name ASC LIMIT ? OFFSET ?;
 
+-- name: ListTagsWithDocumentCount :many
+SELECT t.*, COUNT(dt.document_id) AS document_count
+FROM tag t
+LEFT JOIN document_tag dt ON t.id = dt.tag_id
+GROUP BY t.id
+ORDER BY t.created_at DESC LIMIT ? OFFSET ?;
+
+-- name: SearchTagsByNameWithDocumentCount :many
+SELECT t.*, COUNT(dt.document_id) AS document_count
+FROM tag t
+LEFT JOIN document_tag dt ON t.id = dt.tag_id
+WHERE t.name LIKE ?
+GROUP BY t.id
+ORDER BY t.name ASC LIMIT ? OFFSET ?;
+
 -- name: DeleteTag :exec
 DELETE FROM tag WHERE id = ?;

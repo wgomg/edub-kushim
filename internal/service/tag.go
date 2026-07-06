@@ -50,17 +50,6 @@ func (s *Tag) GetByName(ctx context.Context, name string) (database.Tag, error) 
 	return tag, nil
 }
 
-func (s *Tag) List(ctx context.Context, limit, offset int64) ([]database.Tag, error) {
-	tags, err := s.queries.ListTags(ctx, database.ListTagsParams{
-		Limit:  limit,
-		Offset: offset,
-	})
-	if err != nil {
-		return nil, errs.FromDB(err, "list tags")
-	}
-	return tags, nil
-}
-
 func (s *Tag) Count(ctx context.Context) (int64, error) {
 	count, err := s.queries.CountTags(ctx)
 	if err != nil {
@@ -85,14 +74,25 @@ func (s *Tag) ListAll(ctx context.Context) ([]database.Tag, error) {
 	return tags, nil
 }
 
-func (s *Tag) Search(ctx context.Context, prefix string, limit, offset int64) ([]database.Tag, error) {
-	tags, err := s.queries.SearchTagsByName(ctx, database.SearchTagsByNameParams{
+func (s *Tag) ListWithDocumentCount(ctx context.Context, limit, offset int64) ([]database.ListTagsWithDocumentCountRow, error) {
+	tags, err := s.queries.ListTagsWithDocumentCount(ctx, database.ListTagsWithDocumentCountParams{
+		Limit:  limit,
+		Offset: offset,
+	})
+	if err != nil {
+		return nil, errs.FromDB(err, "list tags with document count")
+	}
+	return tags, nil
+}
+
+func (s *Tag) SearchByNameWithDocumentCount(ctx context.Context, prefix string, limit, offset int64) ([]database.SearchTagsByNameWithDocumentCountRow, error) {
+	tags, err := s.queries.SearchTagsByNameWithDocumentCount(ctx, database.SearchTagsByNameWithDocumentCountParams{
 		Name:   prefix + "%",
 		Limit:  limit,
 		Offset: offset,
 	})
 	if err != nil {
-		return nil, errs.FromDB(err, "search tags")
+		return nil, errs.FromDB(err, "search tags with document count")
 	}
 	return tags, nil
 }
