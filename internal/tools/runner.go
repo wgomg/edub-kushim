@@ -107,7 +107,7 @@ func NewRunner(logger *utils.Logger, cfg *config.Config, tools []string) *Runner
 				Command: cfg.Consumer.OCR.Engine,
 				Timeout: time.Duration(cfg.Consumer.OCR.Timeout) * time.Second,
 			}
-			r.ocr, _ = ocr.NewOCR(logger, toolCfg, cfg.Consumer.PdfOptimizer.Engine, cfg.Consumer.OCR.Languages, cfg.Consumer.OCR.DataDir)
+			r.ocr, _ = ocr.NewOCR(logger, toolCfg, cfg.Consumer.PdfOptimizer.Engine, cfg.Consumer.OCR.Languages, cfg.Consumer.OCR.DataDir, cfg.Consumer.OCR.OcrWorkers)
 		case "pdfoptimizer":
 			toolCfg := config.ToolConfig{
 				Command: cfg.Consumer.PdfOptimizer.Engine,

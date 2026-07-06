@@ -55,6 +55,7 @@ consumer:
     languages: [eng] # required — run 'kushim setup --languages eng,spa,...'
     # data_dir: '~/.config/edub-kushim/ocr/tessdata'
     timeout: 120
+    # ocr_workers: 0  # parallel OCR goroutines; 0 = auto (CPU count)
 
 enricher:
   workers: 1

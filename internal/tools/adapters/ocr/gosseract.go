@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 
 	"github.com/google/uuid"
 
@@ -21,15 +22,16 @@ import (
 // Gosseract implements OCR using Tesseract (gosseract) with MuPDF for page
 // rendering via the custom CGo wrapper (mupdf_wrapper.go).
 type Gosseract struct {
-	logger    *utils.Logger
-	config    config.ToolConfig
-	optimizer pdfoptimizer.PdfOptimizer
+	logger     *utils.Logger
+	config     config.ToolConfig
+	optimizer  pdfoptimizer.PdfOptimizer
+	ocrWorkers int
 
 	languages []string
 	dataDir   string
 }
 
-func NewGosseract(logger *utils.Logger, cfg config.ToolConfig, optimizerCmd string, languages []string, dataDir string) (*Gosseract, error) {
+func NewGosseract(logger *utils.Logger, cfg config.ToolConfig, optimizerCmd string, languages []string, dataDir string, ocrWorkers int) (*Gosseract, error) {
 	optCfg := config.ToolConfig{Command: optimizerCmd, Timeout: cfg.Timeout}
 	optimizer, err := pdfoptimizer.NewPdfOptimizer(logger, optCfg)
 	if err != nil {
@@ -40,7 +42,7 @@ func NewGosseract(logger *utils.Logger, cfg config.ToolConfig, optimizerCmd stri
 		languages = []string{"eng"}
 	}
 
-	return &Gosseract{logger: logger, config: cfg, optimizer: optimizer, languages: languages, dataDir: dataDir}, nil
+	return &Gosseract{logger: logger, config: cfg, optimizer: optimizer, languages: languages, dataDir: dataDir, ocrWorkers: ocrWorkers}, nil
 }
 
 func (o *Gosseract) Process(ctx context.Context, docId, path string) (*string, error) {
@@ -56,6 +58,7 @@ func (o *Gosseract) Process(ctx context.Context, docId, path string) (*string, e
 		"--output", outPath,
 		"--languages", langStr,
 		"--datadir", o.dataDir,
+		"--ocr-workers", strconv.Itoa(o.ocrWorkers),
 	)
 
 	stdout, err := cmd.StdoutPipe()
@@ -108,8 +111,8 @@ func (o *Gosseract) Name() string {
 }
 
 func init() {
-	newGosseract = func(logger *utils.Logger, cfg config.ToolConfig, optimizerCmd string, languages []string, dataDir string) (OCR, error) {
-		return NewGosseract(logger, cfg, optimizerCmd, languages, dataDir)
+	newGosseract = func(logger *utils.Logger, cfg config.ToolConfig, optimizerCmd string, languages []string, dataDir string, ocrWorkers int) (OCR, error) {
+		return NewGosseract(logger, cfg, optimizerCmd, languages, dataDir, ocrWorkers)
 	}
 }
 

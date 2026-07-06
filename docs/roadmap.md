@@ -41,6 +41,7 @@
 - Deferred cleanup of temporary files
 - Embedded Tesseract language data (`eng.traineddata`)
 - OCR subprocess isolation: gosseract adapter forks `kushim internal-ocr` to prevent heartbeat starvation during image-only PDF processing
+- **Parallel OCR acceleration**: channel-based worker pool (`ocr_workers` config, 0 = auto) parallelizes Tesseract calls across CPU cores; eliminated double MuPDF render via nearest-neighbor downscale (200→150 DPI); Tesseract tuning knobs (`load_system_dawg`, `load_freq_dawg`, `OEM_LSTM_ONLY`)
 - Custom MuPDF 1.27.2 CGo wrapper (document open/close, page rendering, text extraction, `pdf_clean_file`)
 
 ### Enrichment Pipeline

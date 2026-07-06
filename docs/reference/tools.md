@@ -213,7 +213,14 @@ type TextReducer interface {
 
 ### Function
 
-`RunStandalone(inputPath, outputPath, languages, dataDir)` — Self-contained OCR pipeline called by the `internal-ocr` subcommand. Renders pages, OCRs with Tesseract, assembles a searchable PDF. No context or logger — parent handles cancellation and logging. Same package-level helpers (`samplesToRGBA`, `encodePNG`, `encodeJPEG`) used by the in-process code.
+`RunStandalone(inputPath, outputPath, languages, dataDir, ocrWorkers)` — Self-contained OCR pipeline called by the `internal-ocr` subcommand. Renders pages at 200 DPI, downscales to 150 DPI via nearest-neighbor, OCRs with Tesseract, assembles a searchable PDF. When `numPages > 1`, parallelizes Tesseract calls across `ocrWorkers` goroutines (0 = auto, resolves to `runtime.NumCPU()`). No context or logger — parent handles cancellation and logging. Same package-level helpers (`downscaleRGB`, `samplesToRGBA`, `encodePNG`, `encodeJPEG`) used by the in-process code.
+
+<table>
+<thead><tr><th>CLI flag</th><th>Config key</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>--ocr-workers</code></td><td><code>consumer.ocr.ocr_workers</code></td><td>Parallel OCR goroutine count; 0 = auto (CPU count), max is capped at <code>min(workers, pages, CPU*2)</code></td></tr>
+</tbody>
+</table>
 
 ---
 

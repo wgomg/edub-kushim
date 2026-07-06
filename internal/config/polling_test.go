@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -147,6 +149,54 @@ func TestIsWithinActiveWindows_EmptyWindows(t *testing.T) {
 	}
 	if !IsWithinActiveWindows([]PollingWindow{}) {
 		t.Error("IsWithinActiveWindows([]) = false, want true")
+	}
+}
+
+func TestDefaultConfig_OcrWorkers(t *testing.T) {
+	configDir := t.TempDir()
+	cfg := DefaultConfig(configDir)
+
+	if cfg.Consumer.OCR.OcrWorkers != 0 {
+		t.Errorf("default OcrWorkers = %d, want 0", cfg.Consumer.OCR.OcrWorkers)
+	}
+
+	cfg.Consumer.OCR.OcrWorkers = 4
+	if err := finalizeConfig(cfg, configDir); err != nil {
+		t.Fatalf("finalizeConfig: %v", err)
+	}
+	if cfg.Consumer.OCR.OcrWorkers != 4 {
+		t.Errorf("OcrWorkers after finalize = %d, want 4", cfg.Consumer.OCR.OcrWorkers)
+	}
+}
+
+func TestReload_AppliesOcrWorkers(t *testing.T) {
+	configDir := t.TempDir()
+	writeMinimalConfig(t, configDir)
+
+	cfg := DefaultConfig(configDir)
+	if cfg.Consumer.OCR.OcrWorkers != 0 {
+		t.Fatalf("default OcrWorkers = %d, want 0", cfg.Consumer.OCR.OcrWorkers)
+	}
+
+	yaml := `consumer:
+  ocr:
+    languages:
+      - eng
+    ocr_workers: 8
+`
+	if err := os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte(yaml), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ok, err := Reload(configDir, cfg)
+	if err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if !ok {
+		t.Fatal("Reload returned false")
+	}
+	if cfg.Consumer.OCR.OcrWorkers != 8 {
+		t.Errorf("OcrWorkers after reload = %d, want 8", cfg.Consumer.OCR.OcrWorkers)
 	}
 }
 

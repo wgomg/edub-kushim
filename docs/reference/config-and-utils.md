@@ -10,7 +10,7 @@
 - `ConsumerConfig`: `SupportedFiles []string`, `Workers int`, `TextExtractor TextExtractorConfig`, `PdfOptimizer PdfOptimizerConfig`, `OCR OCRConfig`
   - `TextExtractorConfig`: `Engine string`, `Timeout int`
   - `PdfOptimizerConfig`: `Engine string`, `Fallback string`, `Timeout int`
-  - `OCRConfig`: `Engine string`, `Languages []string`, `DataDir string`, `Timeout int`
+  - `OCRConfig`: `Engine string`, `Languages []string`, `DataDir string`, `Timeout int`, `OcrWorkers int` (0 = auto, resolves to `runtime.NumCPU()` in the subprocess)
 - `EnricherConfig`: `Workers int`, `TextReducer TextReducerConfig`, `ContentAnalyzer ContentAnalyzerConfig`, `TagMatcher TagMatcherConfig`
   - `TextReducerConfig`: `Engine string`, `Timeout int`, `TargetWords int`
   - `ContentAnalyzerConfig`: `Engine string`, `Timeout int`, `Llm LlmToolsConfig`

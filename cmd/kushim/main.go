@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/wgomg/edub-kushim/internal/commands"
@@ -31,7 +32,7 @@ func main() {
 	}
 
 	if commandName == "internal-ocr" {
-		var inputPath, outputPath, languagesStr, dataDir string
+		var inputPath, outputPath, languagesStr, dataDir, ocrWorkersStr string
 		for i := 0; i < len(args); i++ {
 			switch args[i] {
 			case "--input":
@@ -54,6 +55,11 @@ func main() {
 					dataDir = args[i+1]
 					i++
 				}
+			case "--ocr-workers":
+				if i+1 < len(args) {
+					ocrWorkersStr = args[i+1]
+					i++
+				}
 			}
 		}
 		if inputPath == "" || outputPath == "" || languagesStr == "" || dataDir == "" {
@@ -61,7 +67,16 @@ func main() {
 			os.Exit(1)
 		}
 		languages := strings.Split(languagesStr, ",")
-		if err := ocr.RunStandalone(inputPath, outputPath, languages, dataDir); err != nil {
+		var ocrWorkers int
+		if ocrWorkersStr != "" {
+			var err error
+			ocrWorkers, err = strconv.Atoi(ocrWorkersStr)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "invalid --ocr-workers value %q: %v\n", ocrWorkersStr, err)
+				os.Exit(1)
+			}
+		}
+		if err := ocr.RunStandalone(inputPath, outputPath, languages, dataDir, ocrWorkers); err != nil {
 			fmt.Fprintf(os.Stderr, "ocr: %v\n", err)
 			os.Exit(1)
 		}

@@ -72,10 +72,11 @@ type PdfOptimizerConfig struct {
 }
 
 type OCRConfig struct {
-	Engine    string   `mapstructure:"engine" yaml:"engine" json:"engine"`
-	Languages []string `mapstructure:"languages" yaml:"languages" json:"languages"`
-	DataDir   string   `mapstructure:"data_dir" yaml:"data_dir" json:"data_dir"`
-	Timeout   int      `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
+	Engine     string   `mapstructure:"engine" yaml:"engine" json:"engine"`
+	Languages  []string `mapstructure:"languages" yaml:"languages" json:"languages"`
+	DataDir    string   `mapstructure:"data_dir" yaml:"data_dir" json:"data_dir"`
+	Timeout    int      `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
+	OcrWorkers int      `mapstructure:"ocr_workers" yaml:"ocr_workers" json:"ocr_workers"`
 }
 
 type PollingWindow struct {
@@ -304,12 +305,13 @@ func DefaultConfig(configDir string) *Config {
 				Engine:  PdfOptimizer.MuPDF,
 				Timeout: 120,
 			},
-			OCR: OCRConfig{
-				Engine:    OCR.Gosseract,
-				Languages: []string{"eng"},
-				DataDir:   filepath.Join(configDir, "ocr/tessdata"),
-				Timeout:   120,
-			},
+		OCR: OCRConfig{
+			Engine:     OCR.Gosseract,
+			Languages:  []string{"eng"},
+			DataDir:    filepath.Join(configDir, "ocr/tessdata"),
+			Timeout:    120,
+			OcrWorkers: 0,
+		},
 			Polling: PollingConfig{
 				Interval: 5,
 			},

@@ -17,17 +17,17 @@ type OCR interface {
 
 // newGosseract is overridden by gosseract.go via init() when CGo is
 // available. The default returns an error.
-var newGosseract = func(logger *utils.Logger, cfg config.ToolConfig, optimizerCmd string, languages []string, dataDir string) (OCR, error) {
+var newGosseract = func(logger *utils.Logger, cfg config.ToolConfig, optimizerCmd string, languages []string, dataDir string, ocrWorkers int) (OCR, error) {
 	return nil, fmt.Errorf("gosseract OCR requires CGo — rebuild with CGO_ENABLED=1 and install the Tesseract dev headers")
 }
 
-func NewOCR(logger *utils.Logger, cfg config.ToolConfig, pdfOptimizerCmd string, languages []string, dataDir string) (OCR, error) {
+func NewOCR(logger *utils.Logger, cfg config.ToolConfig, pdfOptimizerCmd string, languages []string, dataDir string, ocrWorkers int) (OCR, error) {
 	switch cfg.Command {
 	case config.OCR.OcrMyPdf:
 		return NewOcrMyPdf(logger, cfg, languages)
 	case config.OCR.Gosseract:
-		return newGosseract(logger, cfg, pdfOptimizerCmd, languages, dataDir)
+		return newGosseract(logger, cfg, pdfOptimizerCmd, languages, dataDir, ocrWorkers)
 	default:
-		return newGosseract(logger, cfg, pdfOptimizerCmd, languages, dataDir)
+		return newGosseract(logger, cfg, pdfOptimizerCmd, languages, dataDir, ocrWorkers)
 	}
 }
