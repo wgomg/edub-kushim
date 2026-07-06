@@ -326,7 +326,7 @@
 									type="text"
 									placeholder="Search tags…"
 									oninput={onTagSearchInput}
-									class="mb-2 w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus:outline-none"
+									class="mb-2 w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
 									aria-label="Search tags"
 								/>
 								<div class="mb-2 max-h-40 overflow-y-auto">
@@ -364,7 +364,8 @@
 													{tag.name}
 													<button
 														onclick={() => (batchTagIds = batchTagIds.filter((t) => t !== tid))}
-														class="text-parchment-500 hover:text-parchment-200" aria-label="Remove tag">&times;</button
+														class="text-parchment-500 hover:text-parchment-200"
+														aria-label="Remove tag">&times;</button
 													>
 												</span>
 											{/if}
@@ -462,7 +463,8 @@
 										<button
 											onclick={() => handleDelete(s.id)}
 											class="shrink-0 rounded p-0.5 text-parchment-500 opacity-0 group-hover:opacity-100 hover:text-red-400"
-											title="Delete" aria-label="Delete saved search">&times;</button
+											title="Delete"
+											aria-label="Delete saved search">&times;</button
 										>
 									{/if}
 								</div>
@@ -491,7 +493,7 @@
 						id="save-search-name"
 						bind:value={saveName}
 						placeholder="e.g. Invoices from Q1"
-						class="mb-2 w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus:outline-none"
+						class="mb-2 w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
 					/>
 					<div class="flex justify-end gap-2">
 						<button

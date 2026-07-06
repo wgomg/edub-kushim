@@ -189,20 +189,20 @@
 		<div>
 			<label for="fp-tags" class="mb-1 block text-xs font-medium text-parchment-400">Tags</label>
 			<div class="relative">
-					<input
-								id="fp-tags"
-								type="text"
-								bind:value={tagInput}
-								oninput={onTagInput}
-								onkeydown={(e) => {
-									if (e.key === 'Enter') {
-										e.preventDefault();
-										if (tagSuggestions.length > 0) addTag(tagSuggestions[0].name);
-										else if (tagInput.trim()) addTag(tagInput.trim());
-									}
-								}}
-								placeholder="Type to search…"
-								class="w-full rounded-md border border-clay-700 bg-clay-950 px-3 py-1.5 text-xs text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus:outline-none"
+				<input
+					id="fp-tags"
+					type="text"
+					bind:value={tagInput}
+					oninput={onTagInput}
+					onkeydown={(e) => {
+						if (e.key === 'Enter') {
+							e.preventDefault();
+							if (tagSuggestions.length > 0) addTag(tagSuggestions[0].name);
+							else if (tagInput.trim()) addTag(tagInput.trim());
+						}
+					}}
+					placeholder="Type to search…"
+					class="w-full rounded-md border border-clay-700 bg-clay-950 px-3 py-1.5 text-xs text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
 				/>
 				{#if tagSuggestions.length > 0}
 					<ul
@@ -231,7 +231,8 @@
 							{t}
 							<button
 								onclick={() => removeTag(t)}
-								class="text-parchment-400 hover:text-parchment-200" aria-label="Remove tag {t}">&times;</button
+								class="text-parchment-400 hover:text-parchment-200"
+								aria-label="Remove tag {t}">&times;</button
 							>
 						</span>
 					{/each}
@@ -269,7 +270,7 @@
 						}}
 						disabled={!personType}
 						placeholder={personType ? 'Name…' : 'Select type'}
-						class="w-full rounded-md border border-clay-700 bg-clay-950 px-3 py-1.5 text-xs text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus:outline-none disabled:opacity-50"
+						class="w-full rounded-md border border-clay-700 bg-clay-950 px-3 py-1.5 text-xs text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500 disabled:opacity-50"
 					/>
 					{#if personSuggestions.length > 0}
 						<ul
@@ -299,7 +300,8 @@
 							{p.type}:{p.name}
 							<button
 								onclick={() => removePerson(p.name, p.type)}
-								class="text-parchment-400 hover:text-parchment-200" aria-label="Remove {p.type}:{p.name}">&times;</button
+								class="text-parchment-400 hover:text-parchment-200"
+								aria-label="Remove {p.type}:{p.name}">&times;</button
 							>
 						</span>
 					{/each}
@@ -362,7 +364,9 @@
 
 		<!-- Date Created -->
 		<div>
-			<label for="fp-date-created-from" class="mb-1 block text-xs font-medium text-parchment-400">Date Created</label>
+			<label for="fp-date-created-from" class="mb-1 block text-xs font-medium text-parchment-400"
+				>Date Created</label
+			>
 			<div class="flex gap-1">
 				<input
 					id="fp-date-created-from"
@@ -372,7 +376,7 @@
 						emit({
 							dateCreated: { from: e.target.value || null, to: f.dateCreated.to }
 						})}
-					class="w-1/2 rounded-md border border-clay-700 bg-clay-950 px-2 py-1.5 text-xs text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus:outline-none"
+					class="w-1/2 rounded-md border border-clay-700 bg-clay-950 px-2 py-1.5 text-xs text-parchment-200 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
 					aria-label="From"
 				/>
 				<input
@@ -383,7 +387,7 @@
 						emit({
 							dateCreated: { from: f.dateCreated.from, to: e.target.value || null }
 						})}
-					class="w-1/2 rounded-md border border-clay-700 bg-clay-950 px-2 py-1.5 text-xs text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus:outline-none"
+					class="w-1/2 rounded-md border border-clay-700 bg-clay-950 px-2 py-1.5 text-xs text-parchment-200 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
 					aria-label="To"
 				/>
 			</div>
@@ -391,7 +395,9 @@
 
 		<!-- Date Modified -->
 		<div>
-			<label for="fp-date-modified-from" class="mb-1 block text-xs font-medium text-parchment-400">Date Modified</label>
+			<label for="fp-date-modified-from" class="mb-1 block text-xs font-medium text-parchment-400"
+				>Date Modified</label
+			>
 			<div class="flex gap-1">
 				<input
 					id="fp-date-modified-from"
@@ -401,7 +407,7 @@
 						emit({
 							dateModified: { from: e.target.value || null, to: f.dateModified.to }
 						})}
-					class="w-1/2 rounded-md border border-clay-700 bg-clay-950 px-2 py-1.5 text-xs text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus:outline-none"
+					class="w-1/2 rounded-md border border-clay-700 bg-clay-950 px-2 py-1.5 text-xs text-parchment-200 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
 					aria-label="From"
 				/>
 				<input
@@ -412,7 +418,7 @@
 						emit({
 							dateModified: { from: f.dateModified.from, to: e.target.value || null }
 						})}
-					class="w-1/2 rounded-md border border-clay-700 bg-clay-950 px-2 py-1.5 text-xs text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus:outline-none"
+					class="w-1/2 rounded-md border border-clay-700 bg-clay-950 px-2 py-1.5 text-xs text-parchment-200 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
 					aria-label="To"
 				/>
 			</div>
@@ -420,7 +426,9 @@
 
 		<!-- File Size -->
 		<div>
-			<label for="fp-file-min" class="mb-1 block text-xs font-medium text-parchment-400">File Size</label>
+			<label for="fp-file-min" class="mb-1 block text-xs font-medium text-parchment-400"
+				>File Size</label
+			>
 			<div class="flex gap-1">
 				<input
 					id="fp-file-min"
@@ -431,7 +439,7 @@
 					}}
 					onblur={commitFileMin}
 					placeholder="Min (e.g. 1MB)"
-					class="w-1/2 rounded-md border border-clay-700 bg-clay-950 px-2 py-1.5 text-xs text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus:outline-none"
+					class="w-1/2 rounded-md border border-clay-700 bg-clay-950 px-2 py-1.5 text-xs text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
 				/>
 				<input
 					id="fp-file-max"
@@ -442,7 +450,7 @@
 					}}
 					onblur={commitFileMax}
 					placeholder="Max (e.g. 10MB)"
-					class="w-1/2 rounded-md border border-clay-700 bg-clay-950 px-2 py-1.5 text-xs text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus:outline-none"
+					class="w-1/2 rounded-md border border-clay-700 bg-clay-950 px-2 py-1.5 text-xs text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
 				/>
 			</div>
 		</div>
@@ -450,19 +458,37 @@
 
 	<!-- Missing flags -->
 	<div class="mt-3 flex flex-wrap gap-3 border-t border-clay-800 pt-3">
-		<label class="flex cursor-pointer items-center gap-1.5 text-xs text-parchment-400 hover:text-parchment-200">
-			<input type="checkbox" class="accent-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus:outline-none" checked={missingLanguage}
-				onchange={() => emit({ missingLanguage: !missingLanguage })} />
+		<label
+			class="flex cursor-pointer items-center gap-1.5 text-xs text-parchment-400 hover:text-parchment-200"
+		>
+			<input
+				type="checkbox"
+				class="accent-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
+				checked={missingLanguage}
+				onchange={() => emit({ missingLanguage: !missingLanguage })}
+			/>
 			Missing Language
 		</label>
-		<label class="flex cursor-pointer items-center gap-1.5 text-xs text-parchment-400 hover:text-parchment-200">
-			<input type="checkbox" class="accent-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus:outline-none" checked={missingType}
-				onchange={() => emit({ missingType: !missingType })} />
+		<label
+			class="flex cursor-pointer items-center gap-1.5 text-xs text-parchment-400 hover:text-parchment-200"
+		>
+			<input
+				type="checkbox"
+				class="accent-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
+				checked={missingType}
+				onchange={() => emit({ missingType: !missingType })}
+			/>
 			Missing Type
 		</label>
-		<label class="flex cursor-pointer items-center gap-1.5 text-xs text-parchment-400 hover:text-parchment-200">
-			<input type="checkbox" class="accent-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus:outline-none" checked={untagged}
-				onchange={() => emit({ untagged: !untagged })} />
+		<label
+			class="flex cursor-pointer items-center gap-1.5 text-xs text-parchment-400 hover:text-parchment-200"
+		>
+			<input
+				type="checkbox"
+				class="accent-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
+				checked={untagged}
+				onchange={() => emit({ untagged: !untagged })}
+			/>
 			Untagged
 		</label>
 	</div>

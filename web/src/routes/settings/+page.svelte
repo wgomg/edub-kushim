@@ -131,6 +131,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			'consumer.ocr.languages': cfg.consumer.ocr.languages.filter(Boolean),
 			'consumer.ocr.data_dir': cfg.consumer.ocr.data_dir,
 			'consumer.ocr.timeout': Number(cfg.consumer.ocr.timeout),
+			'consumer.ocr.ocr_workers': Number(cfg.consumer.ocr.ocr_workers),
 			'consumer.workers': Number(cfg.consumer.workers),
 			'consumer.max_files_per_batch': Number(cfg.consumer.max_files_per_batch),
 			'consumer.polling.enabled': cfg.consumer.polling.enabled,
@@ -356,7 +357,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							id="server-host"
 							type="text"
 							bind:value={cfg.server.host}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						/>
 					</div>
 					<div>
@@ -369,7 +370,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							min="1"
 							max="65535"
 							bind:value={cfg.server.port}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						/>
 					</div>
 					<div>
@@ -381,7 +382,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							type="number"
 							min="1"
 							bind:value={cfg.server.max_upload_size}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						/>
 					</div>
 					<div>
@@ -394,7 +395,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							type="number"
 							min="1"
 							bind:value={cfg.server.max_download_files}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						/>
 					</div>
 					<div>
@@ -408,7 +409,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							type="number"
 							min="0"
 							bind:value={cfg.server.max_download_size_mb}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						/>
 					</div>
 				</div>
@@ -425,7 +426,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							id="consumption-dir"
 							type="text"
 							bind:value={cfg.storage.consumption_dir}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						/>
 					</div>
 					<div>
@@ -436,7 +437,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							id="storage-dir"
 							type="text"
 							bind:value={cfg.storage.storage_dir}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						/>
 					</div>
 					<div class="sm:col-span-2">
@@ -447,7 +448,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							id="db-path"
 							type="text"
 							bind:value={cfg.database.path}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						/>
 					</div>
 				</div>
@@ -463,7 +464,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<select
 							id="ocr-engine"
 							bind:value={cfg.consumer.ocr.engine}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						>
 							{#each cfg.available_engines.ocr as opt (opt.value)}
 								<option value={opt.value}>{opt.label}</option>
@@ -479,8 +480,21 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							type="number"
 							min="1"
 							bind:value={cfg.consumer.ocr.timeout}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						/>
+					</div>
+					<div>
+						<label for="ocr-workers" class="mb-1 block text-sm font-medium text-parchment-200"
+							>Workers</label
+						>
+						<input
+							id="ocr-workers"
+							type="number"
+							min="0"
+							bind:value={cfg.consumer.ocr.ocr_workers}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
+						/>
+						<p class="mt-1 text-xs text-parchment-500">0 = auto (CPU count)</p>
 					</div>
 				</div>
 
@@ -552,20 +566,23 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							id="ocr-data-dir"
 							type="text"
 							bind:value={cfg.consumer.ocr.data_dir}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						/>
 					</div>
 				</div>
 				<div class="mt-4">
-					<span class="mb-2 block text-sm font-medium text-parchment-200">Languages</span>
+					<label for="ocr-lang-0" class="mb-2 block text-sm font-medium text-parchment-200"
+						>Languages</label
+					>
 					{#each cfg.consumer.ocr.languages as lang, i (i)}
 						<div class="mb-2 flex gap-2">
 							<input
+								id="ocr-lang-{i}"
 								type="text"
 								value={lang}
 								oninput={(e) => updateLanguage(i, e.currentTarget.value)}
 								placeholder="eng"
-								class="flex-1 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus:outline-none"
+								class="flex-1 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:outline-none"
 							/>
 							{#if cfg.consumer.ocr.languages.length > 1}
 								<button
@@ -600,7 +617,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							type="number"
 							min="1"
 							bind:value={cfg.consumer.workers}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						/>
 					</div>
 					<div>
@@ -613,7 +630,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							type="number"
 							min="0"
 							bind:value={cfg.consumer.max_files_per_batch}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						/>
 					</div>
 				</div>
@@ -647,7 +664,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							type="number"
 							min="1"
 							bind:value={cfg.consumer.polling.interval}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						/>
 					</div>
 				</div>
@@ -666,7 +683,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 								placeholder="HH:MM"
 								minlength="5"
 								maxlength="5"
-								class="w-36 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+								class="w-36 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 							/>
 							<span class="text-parchment-400">to</span>
 							<input
@@ -677,7 +694,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 								placeholder="HH:MM"
 								minlength="5"
 								maxlength="5"
-								class="w-36 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+								class="w-36 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 							/>
 							<button
 								type="button"
@@ -745,7 +762,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<select
 							id="text-extractor-engine"
 							bind:value={cfg.consumer.textextractor.engine}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						>
 							{#each cfg.available_engines.text_extractor as opt (opt.value)}
 								<option value={opt.value}>{opt.label}</option>
@@ -762,7 +779,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							type="number"
 							min="1"
 							bind:value={cfg.consumer.textextractor.timeout}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						/>
 					</div>
 				</div>
@@ -791,7 +808,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<select
 							id="pdf-engine"
 							bind:value={cfg.consumer.pdfoptimizer.engine}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						>
 							{#each cfg.available_engines.pdf_optimizer as opt (opt.value)}
 								<option value={opt.value}>{opt.label}</option>
@@ -806,7 +823,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							id="pdf-fallback"
 							type="text"
 							bind:value={cfg.consumer.pdfoptimizer.fallback}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus:outline-none"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:outline-none"
 						/>
 					</div>
 				</div>
@@ -833,7 +850,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							type="number"
 							min="1"
 							bind:value={cfg.consumer.pdfoptimizer.timeout}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						/>
 					</div>
 				</div>
@@ -851,7 +868,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							type="number"
 							min="1"
 							bind:value={cfg.enricher.workers}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						/>
 					</div>
 				</div>
@@ -868,7 +885,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<select
 							id="content-analyzer-engine"
 							bind:value={cfg.enricher.contentanalyzer.engine}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						>
 							{#each cfg.available_engines.content_analyzer as opt (opt.value)}
 								<option value={opt.value}>{opt.label}</option>
@@ -885,24 +902,28 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							type="number"
 							min="1"
 							bind:value={cfg.enricher.contentanalyzer.timeout}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						/>
 					</div>
 				</div>
 
 				<div class="mt-4">
-					<label for="content-analyzer-prompt-template" class="mb-1 block text-sm font-medium text-parchment-200">
+					<label
+						for="content-analyzer-prompt-template"
+						class="mb-1 block text-sm font-medium text-parchment-200"
+					>
 						Prompt template (advanced)
 					</label>
 					<p class="mb-2 text-xs text-parchment-500">
-						Leave empty for default. Available placeholders: {`{{.DocTypePrompt}}`}, {`{{.TagsPrompt}}`}, {`{{.PeoplePrompt}}`}, {`{{.Text}}`} (required)
+						Leave empty for default. Available placeholders: {`{{.DocTypePrompt}}`}, {`{{.TagsPrompt}}`},
+						{`{{.PeoplePrompt}}`}, {`{{.Text}}`} (required)
 					</p>
 					<textarea
 						id="content-analyzer-prompt-template"
 						rows="8"
 						bind:value={cfg.enricher.contentanalyzer.prompt_template}
 						spellcheck="false"
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 font-mono focus:border-gold-500 focus:outline-none"
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 font-mono text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 					></textarea>
 				</div>
 
@@ -921,7 +942,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 									id="llm-{providerKey}-base-url"
 									type="text"
 									bind:value={cfg.enricher.contentanalyzer.llm[providerKey].base_url}
-									class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+									class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 								/>
 							</div>
 							<div class="sm:col-span-2">
@@ -933,7 +954,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 									id="llm-{providerKey}-model"
 									type="text"
 									bind:value={cfg.enricher.contentanalyzer.llm[providerKey].model}
-									class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+									class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 								/>
 							</div>
 							<div class="sm:col-span-2">
@@ -947,7 +968,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 										type={showToken ? 'text' : 'password'}
 										bind:value={cfg.enricher.contentanalyzer.llm[providerKey].token}
 										placeholder="sk-..."
-										class="flex-1 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus:outline-none"
+										class="flex-1 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:outline-none"
 									/>
 									<button
 										type="button"
@@ -976,7 +997,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							type="number"
 							min="1"
 							bind:value={cfg.enricher.tagmatcher.timeout}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						/>
 					</div>
 					<div>
@@ -989,7 +1010,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							type="number"
 							min="0"
 							bind:value={cfg.enricher.tagmatcher.reduce_target_words}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						/>
 					</div>
 					<div>
@@ -1002,7 +1023,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							type="number"
 							min="0"
 							bind:value={cfg.enricher.tagmatcher.chunk_size}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						/>
 					</div>
 					<div>
@@ -1014,7 +1035,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							id="tag-matcher-hugot-model"
 							type="text"
 							bind:value={cfg.enricher.tagmatcher.hugot.model}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						/>
 					</div>
 					<div>
@@ -1025,7 +1046,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<select
 							id="tag-matcher-hugot-backend"
 							bind:value={cfg.enricher.tagmatcher.hugot.backend}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						>
 							<option value="ort">ort</option>
 							<option value="GO">GO</option>
@@ -1045,7 +1066,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<select
 							id="text-reducer-engine"
 							bind:value={cfg.enricher.textreducer.engine}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						>
 							{#each cfg.available_engines.text_reducer as opt (opt.value)}
 								<option value={opt.value}>{opt.label}</option>
@@ -1062,7 +1083,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							type="number"
 							min="1"
 							bind:value={cfg.enricher.textreducer.timeout}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						/>
 					</div>
 					<div class="sm:col-span-2">
@@ -1075,7 +1096,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							type="number"
 							min="1"
 							bind:value={cfg.enricher.textreducer.target_words}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						/>
 					</div>
 				</div>
@@ -1105,7 +1126,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							min="1"
 							step="0.1"
 							bind:value={cfg.backup.interval}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						/>
 					</div>
 					<div>
@@ -1116,7 +1137,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							id="backup-time"
 							type="text"
 							bind:value={cfg.backup.time}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						/>
 					</div>
 					<div>
@@ -1128,7 +1149,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							type="number"
 							min="0"
 							bind:value={cfg.backup.keep}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						/>
 					</div>
 					<div class="sm:col-span-2">
@@ -1139,7 +1160,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							id="backup-path"
 							type="text"
 							bind:value={cfg.backup.path}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						/>
 					</div>
 				</div>
@@ -1155,7 +1176,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<select
 							id="log-level"
 							bind:value={cfg.app.log_level}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						>
 							<option value="silent">silent</option>
 							<option value="fatal">fatal</option>
@@ -1173,7 +1194,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							type="number"
 							min="0"
 							bind:value={cfg.app.logging.max_size}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						/>
 					</div>
 					<div>
@@ -1185,7 +1206,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							type="number"
 							min="0"
 							bind:value={cfg.app.logging.max_backups}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						/>
 					</div>
 					<div>
@@ -1197,7 +1218,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							type="number"
 							min="0"
 							bind:value={cfg.app.logging.max_age}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						/>
 					</div>
 					<div>
@@ -1230,7 +1251,14 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 		{/if}
 
 		{#if activeTab === 'Users'}
-			<div class="space-y-4" onclick={handleUserPageClick} onkeydown={() => {}} role="presentation">
+			<div
+				class="space-y-4"
+				onclick={handleUserPageClick}
+				onkeydown={(e) => {
+					if (e.key === 'Enter' || e.key === ' ') handleUserPageClick(e);
+				}}
+				role="presentation"
+			>
 				<div class="flex items-center justify-between">
 					<h2 class="text-lg font-semibold text-parchment-200">Users</h2>
 					<button
@@ -1272,7 +1300,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 								type="text"
 								bind:value={formUsername}
 								placeholder="Username"
-								class="w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus:outline-none"
+								class="w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus-visible:outline-none"
 							/>
 						</div>
 						<div>
@@ -1282,7 +1310,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							<select
 								id="user-role"
 								bind:value={formRole}
-								class="w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 focus:border-gold-500 focus:ring-0 focus:outline-none"
+								class="w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 focus:border-gold-500 focus:ring-0 focus-visible:outline-none"
 							>
 								<option value="viewer">Viewer</option>
 								<option value="editor">Editor</option>
@@ -1298,7 +1326,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 								type="password"
 								bind:value={formPassword}
 								placeholder={editingUser ? 'Leave blank to keep current' : 'Password'}
-								class="w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus:outline-none"
+								class="w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus-visible:outline-none"
 							/>
 						</div>
 						{#if userError}

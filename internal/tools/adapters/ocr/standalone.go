@@ -120,20 +120,20 @@ func RunStandalone(inputPath, outputPath string, languages []string, dataDir str
 		}
 	} else {
 		type pageJob struct {
-			index      int
-			ocrSamples []byte
-			ocrW, ocrH int
-			outW, outH int
+			index        int
+			ocrSamples   []byte
+			ocrW, ocrH   int
+			outW, outH   int
 			pageW, pageH float64
 		}
 
 		type pageResult struct {
-			index    int
-			boxes    []gosseract.BoundingBox
-			jpegData []byte
-			ocrW, ocrH int
+			index        int
+			boxes        []gosseract.BoundingBox
+			jpegData     []byte
+			ocrW, ocrH   int
 			pageW, pageH float64
-			err      error
+			err          error
 		}
 
 		numWorkers := ocrWorkers
@@ -147,9 +147,7 @@ func RunStandalone(inputPath, outputPath string, languages []string, dataDir str
 		var wg sync.WaitGroup
 
 		for range numWorkers {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				worker := gosseract.NewClient()
 				defer worker.Close()
 				worker.SetLanguage(LangString(languages))
@@ -197,7 +195,7 @@ func RunStandalone(inputPath, outputPath string, languages []string, dataDir str
 						pageH:    job.pageH,
 					}
 				}
-			}()
+			})
 		}
 
 		var phase1Err error
