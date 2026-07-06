@@ -96,10 +96,11 @@ type PdfOptimizerResponse struct {
 }
 
 type OCRResponse struct {
-	Engine    string   `json:"engine"`
-	Languages []string `json:"languages"`
-	DataDir   string   `json:"data_dir"`
-	Timeout   int      `json:"timeout"`
+	Engine     string   `json:"engine"`
+	Languages  []string `json:"languages"`
+	DataDir    string   `json:"data_dir"`
+	Timeout    int      `json:"timeout"`
+	OcrWorkers int      `json:"ocr_workers"`
 }
 
 type EnricherConfigResponse struct {
@@ -176,6 +177,7 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Consumer.OCR.Languages = cfg.Consumer.OCR.Languages
 	resp.Consumer.OCR.DataDir = cfg.Consumer.OCR.DataDir
 	resp.Consumer.OCR.Timeout = cfg.Consumer.OCR.Timeout
+	resp.Consumer.OCR.OcrWorkers = cfg.Consumer.OCR.OcrWorkers
 	resp.Enricher.Workers = cfg.Enricher.Workers
 	resp.Enricher.TextReducer.Engine = cfg.Enricher.TextReducer.Engine
 	resp.Enricher.TextReducer.Timeout = cfg.Enricher.TextReducer.Timeout
