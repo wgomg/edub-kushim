@@ -36,6 +36,7 @@
 			key: 'actions',
 			label: 'Actions',
 			sortable: false,
+			noUnderline: true,
 			cellClass: 'whitespace-nowrap',
 			cell: (_v, row) => {
 				if (!authStore.authEnabled() || !authStore.isEditor()) return '';
@@ -141,6 +142,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			type="text"
 			bind:value={query}
 			oninput={() => refreshKey++}
+			name="tag-filter"
 			placeholder="Filter tags…"
 			class="w-full max-w-xs rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
 		/>
@@ -173,10 +175,11 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 				<label for="tag-name" class="mb-1 block text-xs font-medium text-parchment-400">Name</label>
 				<input
 					id="tag-name"
+					name="tag-name"
 					type="text"
 					bind:value={formName}
-					placeholder="Tag name"
-					class="w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus:outline-none"
+					placeholder="Tag name…"
+					class="w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
 				/>
 			</div>
 			{#if error}

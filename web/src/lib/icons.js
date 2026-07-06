@@ -33,5 +33,5 @@ export function actionButton(svg, tooltip, extraClasses, dataAttrs) {
 				.join(' ')
 		: '';
 	const cls = `${BTN_BASE} ${extraClasses || ''}`.trim();
-	return `<button ${attrs} class="${cls}" title="${tooltip}">${svg}</button>`;
+	return `<button ${attrs} class="${cls}" title="${tooltip}" aria-label="${tooltip}">${svg}</button>`;
 }

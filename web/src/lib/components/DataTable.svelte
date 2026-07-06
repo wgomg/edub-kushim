@@ -9,6 +9,7 @@
 	 * @property {Function} [cell] - Custom cell formatter: (value, row) => string
 	 * @property {string} [headerClass] - Extra classes for <th>
 	 * @property {string} [cellClass] - Extra classes for <td>
+	 * @property {boolean} [noUnderline] - Skip underline decoration when onRowClick is set
 	 * @property {string} [width] - Column width.
 	 * @property {string} [maxWidth] - Max column width.
 	 * @property {string} [minWidth] - Min column width.
@@ -185,11 +186,12 @@
 				<label for="dt-page-size" class="text-parchment-400">Per page</label>
 				<select
 					id="dt-page-size"
+					name="dt-page-size"
 					value={pageSize}
 					onchange={changePageSize}
 					class="rounded-lg border border-clay-800 bg-clay-900 px-3 py-1.5 text-parchment-200"
 				>
-					{#each pageSizes as size}
+					{#each pageSizes as size (size)}
 						<option value={size}>{size} </option>
 					{/each}
 				</select>
@@ -214,13 +216,22 @@
 					{/if}
 					{#each columns as col, i (col.key)}
 						<th
-							class="px-4 py-3 font-medium whitespace-nowrap transition-colors select-none {col.sortable
-								? 'cursor-pointer hover:bg-clay-800 hover:text-parchment-200'
+							class="px-4 py-3 font-medium whitespace-nowrap transition-colors select-none focus:outline-none {col.sortable
+								? 'cursor-pointer hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-inset'
 								: ''} {col.headerClass || ''}"
 							style="width: {col.width ?? 'auto'}; {col.minWidth &&
 								`min-width: ${col.minWidth};`} {col.maxWidth && `max-width: ${col.maxWidth};`}"
 							scope="col"
+							tabindex={col.sortable ? '0' : undefined}
 							onclick={col.sortable ? () => toggleSort(col.key) : undefined}
+							onkeydown={col.sortable
+								? (e) => {
+										if (e.key === 'Enter' || e.key === ' ') {
+											e.preventDefault();
+											toggleSort(col.key);
+										}
+									}
+								: undefined}
 						>
 							{col.label}
 							{#if col.sortable && sortBy === col.key}
@@ -280,7 +291,12 @@
 								: ''}"
 							tabindex={onRowClick ? '0' : undefined}
 							role={onRowClick ? 'link' : undefined}
-							onclick={onRowClick ? () => onRowClick(row) : undefined}
+							onclick={onRowClick
+								? (e) => {
+										if (e.target.closest('button, a, input')) return;
+										onRowClick(row);
+									}
+								: undefined}
 							onkeydown={onRowClick
 								? (e) => {
 										if (e.key === 'Enter') onRowClick(row);
@@ -300,7 +316,8 @@
 							{/if}
 							{#each columns as col (col.key)}
 								<td
-									class="px-4 py-3 text-parchment-200 {col.cellClass || ''} {onRowClick
+									class="px-4 py-3 text-parchment-200 {col.cellClass || ''} {onRowClick &&
+									!col.noUnderline
 										? 'underline decoration-parchment-500/30 underline-offset-2'
 										: ''}"
 								>

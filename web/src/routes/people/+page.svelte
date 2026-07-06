@@ -10,7 +10,7 @@
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
 	import * as authStore from '$lib/stores/authStore.js';
 
-	let activeTab = $state('people');
+	let activeTab = $state(new URL(window.location.href).searchParams.get('tab') || 'people');
 
 	let people = $state([]);
 	let showPeopleModal = $state(false);
@@ -128,6 +128,13 @@
 		}
 	}
 
+	function switchTab(tab) {
+		activeTab = tab;
+		const url = new URL(window.location.href);
+		url.searchParams.set('tab', tab);
+		goto(url.pathname + url.search, { replaceState: true, keepFocus: true });
+	}
+
 	async function handleDeletePersonType(pt) {
 		const ok = await confirmStore.confirm({
 			title: 'Delete person type',
@@ -152,7 +159,7 @@
 			class="px-1 pb-2 text-sm font-medium transition-colors {activeTab === 'people'
 				? 'border-b-2 border-gold-500 text-parchment-200'
 				: 'text-parchment-500 hover:text-parchment-200'}"
-			onclick={() => (activeTab = 'people')}
+			onclick={() => switchTab('people')}
 		>
 			People
 		</button>
@@ -160,7 +167,7 @@
 			class="px-1 pb-2 text-sm font-medium transition-colors {activeTab === 'types'
 				? 'border-b-2 border-gold-500 text-parchment-200'
 				: 'text-parchment-500 hover:text-parchment-200'}"
-			onclick={() => (activeTab = 'types')}
+			onclick={() => switchTab('types')}
 		>
 			Person Types
 		</button>
@@ -184,10 +191,10 @@
 				<table class="w-full table-auto text-sm">
 					<thead class="sticky top-0 bg-clay-900 text-left text-parchment-400">
 						<tr>
-							<th class="px-4 py-3 font-medium whitespace-nowrap">Name</th>
-							<th class="px-4 py-3 font-medium whitespace-nowrap">Native Name</th>
-							<th class="px-4 py-3 font-medium whitespace-nowrap">Documents</th>
-							<th class="w-[1%] px-4 py-3 font-medium whitespace-nowrap">Actions</th>
+							<th scope="col" class="px-4 py-3 font-medium whitespace-nowrap">Name</th>
+							<th scope="col" class="px-4 py-3 font-medium whitespace-nowrap">Native Name</th>
+							<th scope="col" class="px-4 py-3 font-medium whitespace-nowrap">Documents</th>
+							<th scope="col" class="w-[1%] px-4 py-3 font-medium whitespace-nowrap">Actions</th>
 						</tr>
 					</thead>
 					<tbody class="divide-y divide-clay-800">
@@ -225,15 +232,23 @@
 										{#if !authStore.authEnabled() || authStore.isEditor()}
 											<div class="flex gap-2">
 												<button
-													onclick={() => openEditPerson(p)}
+													onclick={(e) => {
+														e.stopPropagation();
+														openEditPerson(p);
+													}}
 													title="Edit"
+													aria-label="Edit person"
 													class="{BTN_BASE} text-parchment-400 hover:text-gold-500"
 												>
 													{@html EDIT_ICON}
 												</button>
 												<button
-													onclick={() => handleDeletePerson(p)}
+													onclick={(e) => {
+														e.stopPropagation();
+														handleDeletePerson(p);
+													}}
 													title="Delete"
+													aria-label="Delete person"
 													class="{BTN_BASE} text-parchment-400 hover:text-terracotta-500"
 												>
 													{@html DELETE_ICON}
@@ -267,10 +282,11 @@
 						>
 						<input
 							id="person-name"
+							name="person-name"
 							type="text"
 							bind:value={personFormName}
-							placeholder="Person name"
-							class="w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus:outline-none"
+							placeholder="Person name…"
+							class="w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
 						/>
 					</div>
 					<div>
@@ -280,10 +296,11 @@
 						>
 						<input
 							id="person-native-name"
+							name="person-native-name"
 							type="text"
 							bind:value={personFormNameNative}
-							placeholder="Native name (optional)"
-							class="w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus:outline-none"
+							placeholder="Native name (optional)…"
+							class="w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
 						/>
 					</div>
 					{#if personError}
@@ -330,9 +347,9 @@
 				<table class="w-full table-auto text-sm">
 					<thead class="sticky top-0 bg-clay-900 text-left text-parchment-400">
 						<tr>
-							<th class="px-4 py-3 font-medium whitespace-nowrap">Name</th>
-							<th class="px-4 py-3 font-medium whitespace-nowrap">Description</th>
-							<th class="w-[1%] px-4 py-3 font-medium whitespace-nowrap">Actions</th>
+							<th scope="col" class="px-4 py-3 font-medium whitespace-nowrap">Name</th>
+							<th scope="col" class="px-4 py-3 font-medium whitespace-nowrap">Description</th>
+							<th scope="col" class="w-[1%] px-4 py-3 font-medium whitespace-nowrap">Actions</th>
 						</tr>
 					</thead>
 					<tbody class="divide-y divide-clay-800">
@@ -349,15 +366,23 @@
 										{#if !authStore.authEnabled() || authStore.isEditor()}
 											<div class="flex gap-2">
 												<button
-													onclick={() => openEditPersonType(pt)}
+													onclick={(e) => {
+														e.stopPropagation();
+														openEditPersonType(pt);
+													}}
 													title="Edit"
+													aria-label="Edit person type"
 													class="{BTN_BASE} text-parchment-400 hover:text-gold-500"
 												>
 													{@html EDIT_ICON}
 												</button>
 												<button
-													onclick={() => handleDeletePersonType(pt)}
+													onclick={(e) => {
+														e.stopPropagation();
+														handleDeletePersonType(pt);
+													}}
 													title="Delete"
+													aria-label="Delete person type"
 													class="{BTN_BASE} text-parchment-400 hover:text-terracotta-500"
 												>
 													{@html DELETE_ICON}
@@ -391,10 +416,11 @@
 						>
 						<input
 							id="pt-name"
+							name="pt-name"
 							type="text"
 							bind:value={personTypeFormName}
-							placeholder="Person type name"
-							class="w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus:outline-none"
+							placeholder="Person type name…"
+							class="w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
 						/>
 					</div>
 					<div>
@@ -403,10 +429,11 @@
 						>
 						<input
 							id="pt-description"
+							name="pt-description"
 							type="text"
 							bind:value={personTypeFormDescription}
-							placeholder="Description (optional)"
-							class="w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus:outline-none"
+							placeholder="Description (optional)…"
+							class="w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
 						/>
 					</div>
 					<div class="flex justify-end gap-2">
