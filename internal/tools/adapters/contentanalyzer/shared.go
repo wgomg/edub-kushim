@@ -70,18 +70,6 @@ func BuildPrompt(text string, docTypes []database.DocumentType, peopleTypes []da
 	peoplePrompt := peopleTypePrompt(peopleTypes)
 	tagsPrompt := tagsPrompt(tagSuggestions)
 
-	var docTypesNames []string
-	for _, dt := range docTypes {
-		docTypesNames = append(docTypesNames, dt.Name)
-	}
-
-	if len(docTypes) > 0 {
-		tagsPrompt += fmt.Sprintf(
-			" DO NOT use words from the following list as tags: '%s'",
-			strings.Join(docTypesNames, ","),
-		)
-	}
-
 	tmplStr := strings.TrimSpace(customTemplate)
 	if tmplStr == "" {
 		tmplStr = defaultPromptTemplate
@@ -164,7 +152,7 @@ func normalizeToTokens(s string) []string {
 	return strings.Fields(normalizeCore(s))
 }
 
-func FilterTags(tags []string, people []PeopleResult, title string) []string {
+func FilterTags(tags []string, people []PeopleResult, title string, docTypeNames []string) []string {
 	nameTokens := make(map[string]struct{})
 	for _, p := range people {
 		for _, tok := range normalizeToTokens(p.Name) {
@@ -172,6 +160,13 @@ func FilterTags(tags []string, people []PeopleResult, title string) []string {
 		}
 		for _, tok := range normalizeToTokens(p.NameRomanized) {
 			nameTokens[tok] = struct{}{}
+		}
+	}
+
+	docTypeTokens := make(map[string]struct{})
+	for _, name := range docTypeNames {
+		for _, tok := range normalizeToTokens(name) {
+			docTypeTokens[tok] = struct{}{}
 		}
 	}
 
@@ -195,6 +190,17 @@ func FilterTags(tags []string, people []PeopleResult, title string) []string {
 			}
 		}
 		if matchesName {
+			continue
+		}
+
+		matchesDocType := false
+		for _, tok := range tagTokens {
+			if _, ok := docTypeTokens[tok]; ok {
+				matchesDocType = true
+				break
+			}
+		}
+		if matchesDocType {
 			continue
 		}
 

@@ -127,11 +127,12 @@ func TestNormalizeTags_AccentFolding(t *testing.T) {
 
 func TestFilterTags(t *testing.T) {
 	tests := []struct {
-		name   string
-		tags   []string
-		people []PeopleResult
-		title  string
-		want   []string
+		name          string
+		tags          []string
+		people        []PeopleResult
+		title         string
+		docTypeNames  []string
+		want          []string
 	}{
 		{
 			name: "clean tags pass through",
@@ -189,6 +190,18 @@ func TestFilterTags(t *testing.T) {
 			want: []string{"physics"},
 		},
 		{
+			name:         "drops tag matching doc-type name token",
+			tags:         []string{"letter", "physics"},
+			docTypeNames: []string{"letter"},
+			want:         []string{"physics"},
+		},
+		{
+			name:         "keeps tag not matching doc-type name token",
+			tags:         []string{"physics", "mathematics"},
+			docTypeNames: []string{"letter"},
+			want:         []string{"physics", "mathematics"},
+		},
+		{
 			name:   "empty tags",
 			tags:   []string{},
 			people: []PeopleResult{{Name: "Turing"}},
@@ -198,10 +211,10 @@ func TestFilterTags(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := FilterTags(tt.tags, tt.people, tt.title)
+			got := FilterTags(tt.tags, tt.people, tt.title, tt.docTypeNames)
 			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("FilterTags(%v, %v, %q) = %v, want %v",
-					tt.tags, tt.people, tt.title, got, tt.want)
+				t.Errorf("FilterTags(%v, %v, %q, %v) = %v, want %v",
+					tt.tags, tt.people, tt.title, tt.docTypeNames, got, tt.want)
 			}
 		})
 	}
