@@ -62,6 +62,9 @@ func TestBuildPrompt_DefaultTemplate(t *testing.T) {
 	if !strings.Contains(result, "Analyze the excerpts") {
 		t.Error("expected output to start with default prompt header")
 	}
+	if !strings.Contains(result, "At most 8 thematic tags") {
+		t.Error("expected prompt to contain 'At most 8 thematic tags' from RequestedTags field")
+	}
 }
 
 func TestBuildPrompt_CustomTemplate(t *testing.T) {
@@ -98,6 +101,109 @@ func TestBuildPrompt_WhitespaceCustomTemplateUsesDefault(t *testing.T) {
 
 	if !strings.Contains(result, "Analyze the excerpts") {
 		t.Error("expected whitespace-only template to use default")
+	}
+}
+
+func TestNormalizeTags_AccentFolding(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  []string
+		want []string
+	}{
+		{"folds cafe", []string{"café"}, []string{"cafe"}},
+		{"folds muller", []string{"Müller"}, []string{"muller"}},
+		{"folds poincare", []string{"Poincaré"}, []string{"poincare"}},
+		{"dedup after fold", []string{"café", "cafe"}, []string{"cafe"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := NormalizeTags(tt.raw)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("NormalizeTags(%v) = %v, want %v", tt.raw, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFilterTags(t *testing.T) {
+	tests := []struct {
+		name   string
+		tags   []string
+		people []PeopleResult
+		title  string
+		want   []string
+	}{
+		{
+			name: "clean tags pass through",
+			tags: []string{"physics", "machine learning"},
+			want: []string{"physics", "machine learning"},
+		},
+		{
+			name: "drops tags exceeding three words",
+			tags: []string{"artificial intelligence and robotics", "physics"},
+			want: []string{"physics"},
+		},
+		{
+			name: "drops tag sharing token with person name",
+			tags: []string{"turing", "machine learning"},
+			people: []PeopleResult{
+				{Name: "Alan Turing"},
+			},
+			want: []string{"machine learning"},
+		},
+		{
+			name: "drops tag sharing token with romanized name",
+			tags: []string{"muller", "physics"},
+			people: []PeopleResult{
+				{Name: "Müller", NameRomanized: "muller"},
+			},
+			want: []string{"physics"},
+		},
+		{
+			name:  "drops tag that is subset of title tokens",
+			tags:  []string{"machine learning", "deep learning"},
+			title: "machine learning applications",
+			want:  []string{"deep learning"},
+		},
+		{
+			name:  "keeps tag with partial title overlap",
+			tags:  []string{"deep architecture", "neural networks"},
+			title: "deep learning applications",
+			want:  []string{"deep architecture", "neural networks"},
+		},
+		{
+			name:   "applies all rules together",
+			tags:   []string{"turing", "artificial intelligence and robots", "machine learning", "physics"},
+			people: []PeopleResult{{Name: "Alan Turing"}},
+			title:  "machine learning",
+			want:   []string{"physics"},
+		},
+		{
+			name: "caps at maxTags preserving order",
+			tags: []string{"alpha", "bravo", "charlie", "delta", "echo", "foxtrot"},
+			want: []string{"alpha", "bravo", "charlie", "delta", "echo"},
+		},
+		{
+			name: "nil people and empty title",
+			tags: []string{"physics"},
+			want: []string{"physics"},
+		},
+		{
+			name:   "empty tags",
+			tags:   []string{},
+			people: []PeopleResult{{Name: "Turing"}},
+			title:  "physics",
+			want:   []string{},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := FilterTags(tt.tags, tt.people, tt.title)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("FilterTags(%v, %v, %q) = %v, want %v",
+					tt.tags, tt.people, tt.title, got, tt.want)
+			}
+		})
 	}
 }
 

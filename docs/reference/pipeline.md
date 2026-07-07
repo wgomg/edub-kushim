@@ -62,14 +62,15 @@
       1. Dual text reduction: LLM-targeted and tag-matching-targeted (via `targetWordCount`)
       2. Fetch doc types, people types from DB; all tags via `services.Tag.ListAll`
       3. Semantic tag matching: passes tag names to `Runner.MatchTags`. In `kushim`, embeddings are resolved via the local Hugot store (cache-miss encoded on the fly). In `edub`, the `MatcherClient` forwards requests over the Unix socket to the external matcher process. Falls back to all tags on failure.
-      4. LLM content analysis (title, doc type, tags, people, language)
-      5. **Tag normalization** — LLM-extracted tags are run through `NormalizeTags` (lowercase, hyphens/underscores→spaces, non-alpha stripped, whitespace collapsed, deduplicated) before entering the system
-      6. Post-LLM tag consolidation via `services.Tag.Consolidate` (delegates to `Embedder.Consolidate` over the matcher interface)
-      7. New tags created via a single batch call `services.Tag.Create(ctx, analysis.Tags)` — returns per-index results with `Created`/`Conflict`/`Invalid` statuses. The service delegates store management to the matcher via `AddToStore`.
-      8. Update document metadata (title, doc_type, language)
-      9. Auto-detect OCR language: `ensureOCRLanguage` cross-checks LLM-detected language against configured OCR languages. If missing, appends to in-memory config list, persists to `config.yaml` via `config.SaveMap`, and downloads tessdata in a background goroutine when the OCR engine is gosseract.
-      10. Manage document_tag junction (clear + add)
-      11. Manage document_people junction (clear + add) — for each person:
+       4. LLM content analysis (title, doc type, tags, people, language)
+       5. **Tag normalization** — LLM-extracted tags are run through `NormalizeTags` (accent-folds accented characters to ASCII base letters, hyphens/underscores→spaces, strips non-alpha, collapses whitespace, deduplicates)
+       6. **Tag filtering** — `FilterTags` drops deterministic garbage tags: tags with >3 tokens, tags that share any token with a person's name, and tags whose token set is a subset of the title's token set. Caps survivors at `maxTags` (5).
+       7. Post-LLM tag consolidation via `services.Tag.Consolidate` (delegates to `Embedder.Consolidate` over the matcher interface)
+       8. New tags created via a single batch call `services.Tag.Create(ctx, analysis.Tags)` — returns per-index results with `Created`/`Conflict`/`Invalid` statuses. The service delegates store management to the matcher via `AddToStore`.
+       9. Update document metadata (title, doc_type, language)
+       10. Auto-detect OCR language: `ensureOCRLanguage` cross-checks LLM-detected language against configured OCR languages. If missing, appends to in-memory config list, persists to `config.yaml` via `config.SaveMap`, and downloads tessdata in a background goroutine when the OCR engine is gosseract.
+       11. Manage document_tag junction (clear + add)
+       12. Manage document_people junction (clear + add) — for each person:
           - Determines canonical name via `canonicalPersonName`: uses LLM's `name_romanized` if provided (for non-Latin names), falls back to AnyAscii transliteration
           - Normalizes the canonical name via `utils.NormalizeName` (NFKC, lowercase, punctuation/dash cleanup) for exact-match lookup
           - Creates new people with `name` (canonical) + `name_native` (original non-Latin script) when no match found

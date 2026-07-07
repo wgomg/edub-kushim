@@ -7,12 +7,23 @@ import (
 	"regexp"
 	"strings"
 	"text/template"
+	"unicode"
 
 	"github.com/wgomg/edub-kushim/internal/database"
+	"golang.org/x/text/runes"
+	"golang.org/x/text/transform"
+	"golang.org/x/text/unicode/norm"
 )
 
 var nonAlphaKeepSpaces = regexp.MustCompile(`[^a-z ]`)
 var multiSpaceRE = regexp.MustCompile(` +`)
+
+const (
+	maxTags          = 5
+	tagRequestBuffer = 3
+)
+
+const requestedTagCount = maxTags + tagRequestBuffer // 8
 
 const systemMessage = "You are a helpful assistant specialized in document analysis and metadata extraction"
 
@@ -39,7 +50,7 @@ func buildTokenUsageStats(prompt, completion, total int) *json.RawMessage {
 const defaultPromptTemplate = `Analyze the excerpts of a document provided below and extract the following data:
 - Document title: In excerpts language, truncate to 127 characters if longer
 {{.DocTypePrompt}}
-- Tags: At most five thematic tags describing the document's topics and domains. English only, lowercase. Prefer single words. Do not use words or concepts from the extracted title as tags. Tags should describe facets of the document that the title does not already capture. If a concept requires multiple words, separate them with spaces. At most 3 words per tag. For names containing symbols (e.g., C++, C#), use the conventional spelled-out form (e.g., c plus plus, c sharp). Tags must be conceptual categories — they describe subjects, fields, and disciplines, not specific individuals. Personal names (authors, historical figures, collaborators) are captured in the "people" field below and must NOT appear in tags. Good examples: "artificial intelligence", "physics", "renaissance", "machine learning", "20th century architecture". Bad examples: "einstein", "shakespeare", "ada lovelace", "turing". Use only widely-recognized, standard terminology. Do not coin novel compound terms or use highly specialized jargon that would be unfamiliar to a general educated audience. If an existing suggestion tag captures the concept adequately, prefer it over inventing a narrower label.{{.TagsPrompt}}
+- Tags: At most {{.RequestedTags}} thematic tags describing the document's topics and domains. English only, lowercase. Prefer single words. Do not use words or concepts from the extracted title as tags. Tags should describe facets of the document that the title does not already capture. If a concept requires multiple words, separate them with spaces. At most 3 words per tag. For names containing symbols (e.g., C++, C#), use the conventional spelled-out form (e.g., c plus plus, c sharp). Tags must be conceptual categories — they describe subjects, fields, and disciplines, not specific individuals. Personal names (authors, historical figures, collaborators) are captured in the "people" field below and must NOT appear in tags. Good examples: "artificial intelligence", "physics", "renaissance", "machine learning", "20th century architecture". Bad examples: "einstein", "shakespeare", "ada lovelace", "turing". Use only widely-recognized, standard terminology. Do not coin novel compound terms or use highly specialized jargon that would be unfamiliar to a general educated audience. If an existing suggestion tag captures the concept adequately, prefer it over inventing a narrower label.{{.TagsPrompt}}
 - People: People associated with the document. For each people, provide a name and a type from the list below. If the name contains non-Latin characters (e.g. Korean, Arabic, Cyrillic, Hebrew, etc.), also provide a name_romanized field with the romanized/Latin-script version of the name. Only include individuals who play a substantive role in the document's creation, execution, or primary subject matter — exclude incidental mentions. Note: names captured here must NOT be re-used as tags.
 {{.PeoplePrompt}}- Language: 3-letter ISO 639-2 code (e.g. 'eng','spa','jpn','fra','deu','zho','kor','ara','por','rus'). Detect the primary language even from noisy or mixed text. Only use 'und' as a last resort if the text is truly too short or ambiguous to determine.
 Before outputting, review your tags: if any tag matches a personal name (author, historical figure, individual), replace it with the relevant domain or topic. Then return ONLY a json string without any explanations, numbers, additional text, text formatting or text/code blocks, with keys: title, type, tags, people (array of objects with keys: name, name_romanized, type), language.
@@ -47,10 +58,11 @@ Before outputting, review your tags: if any tag matches a personal name (author,
 Document Excerpts: {{.Text}}`
 
 type promptData struct {
-	DocTypePrompt string
-	TagsPrompt    string
-	PeoplePrompt  string
-	Text          string
+	DocTypePrompt  string
+	TagsPrompt     string
+	PeoplePrompt   string
+	Text           string
+	RequestedTags  int
 }
 
 func BuildPrompt(text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string, customTemplate string) string {
@@ -85,6 +97,7 @@ func BuildPrompt(text string, docTypes []database.DocumentType, peopleTypes []da
 		TagsPrompt:    tagsPrompt,
 		PeoplePrompt:  peoplePrompt,
 		Text:          text,
+		RequestedTags: requestedTagCount,
 	}
 
 	var buf bytes.Buffer
@@ -122,15 +135,94 @@ func tagsPrompt(tags []string) string {
 	)
 }
 
+var accentFolder transform.Transformer = transform.Chain(
+	norm.NFD,
+	runes.Remove(runes.In(unicode.Mn)),
+	norm.NFC,
+)
+
+func foldAccents(s string) string {
+	out, _, err := transform.String(accentFolder, s)
+	if err != nil {
+		return s
+	}
+	return out
+}
+
+func normalizeCore(s string) string {
+	s = norm.NFKC.String(s)
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.ReplaceAll(s, "-", " ")
+	s = strings.ReplaceAll(s, "_", " ")
+	s = foldAccents(s)
+	s = nonAlphaKeepSpaces.ReplaceAllString(s, "")
+	s = multiSpaceRE.ReplaceAllString(s, " ")
+	return strings.TrimSpace(s)
+}
+
+func normalizeToTokens(s string) []string {
+	return strings.Fields(normalizeCore(s))
+}
+
+func FilterTags(tags []string, people []PeopleResult, title string) []string {
+	nameTokens := make(map[string]struct{})
+	for _, p := range people {
+		for _, tok := range normalizeToTokens(p.Name) {
+			nameTokens[tok] = struct{}{}
+		}
+		for _, tok := range normalizeToTokens(p.NameRomanized) {
+			nameTokens[tok] = struct{}{}
+		}
+	}
+
+	titleTokens := make(map[string]struct{})
+	for _, tok := range normalizeToTokens(title) {
+		titleTokens[tok] = struct{}{}
+	}
+
+	result := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		tagTokens := strings.Fields(tag)
+		if len(tagTokens) > 3 || len(tagTokens) == 0 {
+			continue
+		}
+
+		matchesName := false
+		for _, tok := range tagTokens {
+			if _, ok := nameTokens[tok]; ok {
+				matchesName = true
+				break
+			}
+		}
+		if matchesName {
+			continue
+		}
+
+		allInTitle := true
+		for _, tok := range tagTokens {
+			if _, ok := titleTokens[tok]; !ok {
+				allInTitle = false
+				break
+			}
+		}
+		if allInTitle {
+			continue
+		}
+
+		result = append(result, tag)
+	}
+
+	if len(result) > maxTags {
+		result = result[:maxTags]
+	}
+	return result
+}
+
 func NormalizeTags(raw []string) []string {
 	seen := make(map[string]bool, len(raw))
 	result := make([]string, 0, len(raw))
 	for _, t := range raw {
-		t = strings.TrimSpace(strings.ToLower(t))
-		t = strings.ReplaceAll(t, "-", " ")
-		t = strings.ReplaceAll(t, "_", " ")
-		t = nonAlphaKeepSpaces.ReplaceAllString(t, "")
-		t = multiSpaceRE.ReplaceAllString(t, " ")
+		t = normalizeCore(t)
 		if t == "" || seen[t] {
 			continue
 		}

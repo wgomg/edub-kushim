@@ -110,6 +110,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 	}
 
 	analysis.Tags = contentanalyzer.NormalizeTags(analysis.Tags)
+	analysis.Tags = contentanalyzer.FilterTags(analysis.Tags, analysis.People, analysis.Title)
 
 	consolidateStart := time.Now()
 	consolidated, err := e.services.Tag.Consolidate(ctx, document.DocumentID, analysis.Tags)

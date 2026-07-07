@@ -40,10 +40,17 @@ type ContentAnalyzer interface {
 
 ## `adapters/contentanalyzer/shared.go`
 
+### Constants
+
+- `maxTags` (5) — Final cap enforced by `FilterTags`; future config field.
+- `tagRequestBuffer` (3) — Extra tags requested to survive filtering.
+- `requestedTagCount` (8) — `maxTags + tagRequestBuffer`, injected into the prompt so the LLM emits headroom.
+
 ### Functions
 
-- `BuildPrompt(text, docTypes, peopleTypes, tagSuggestions, customTemplate) string` — Builds system prompt with JSON output instructions including people types. Prompts the LLM to provide a `name_romanized` field for any name containing non-Latin characters (Korean, Arabic, Cyrillic, Hebrew, etc.). When `customTemplate` is non-empty (after trimming whitespace), it is used as a Go `text/template` with placeholders `{{.DocTypePrompt}}`, `{{.TagsPrompt}}`, `{{.PeoplePrompt}}`, `{{.Text}}`. On parse or execution error, falls back silently to the hardcoded default template. The rendered prompt is captured in `AnalysisResult.Prompt` for debugging.
-- `NormalizeTags(raw []string) []string` — Converts LLM-extracted tags to canonical space-separated form: lowercase, hyphens/underscores→spaces, strips non-alpha characters, collapses whitespace, deduplicates, rejects empty strings.
+- `BuildPrompt(text, docTypes, peopleTypes, tagSuggestions, customTemplate) string` — Builds system prompt with JSON output instructions including people types. Prompts the LLM to provide a `name_romanized` field for any name containing non-Latin characters (Korean, Arabic, Cyrillic, Hebrew, etc.). When `customTemplate` is non-empty (after trimming whitespace), it is used as a Go `text/template` with placeholders `{{.DocTypePrompt}}`, `{{.TagsPrompt}}`, `{{.PeoplePrompt}}`, `{{.Text}}`, and `{{.RequestedTags}}`. On parse or execution error, falls back silently to the hardcoded default template. The rendered prompt is captured in `AnalysisResult.Prompt` for debugging.
+- `NormalizeTags(raw []string) []string` — Converts LLM-extracted tags to canonical space-separated form: folds accented characters to ASCII base letters (é→e, ü→u, ñ→n) via the shared `normalizeCore` pipeline, then deduplicates and rejects empty strings.
+- `FilterTags(tags, people, title) []string` — Post-normalization deterministic tag cleaner. Drops tags with more than 3 tokens, tags sharing any token with a person's name (both `Name` and `NameRomanized`), and tags whose token set is a subset of the document title's token set. Caps survivors at `maxTags` (5) in emit order. Operates after `NormalizeTags` and before `Consolidate`.
 - `buildTokenUsageStats(prompt, completion, total int) *json.RawMessage` — Creates token usage stats JSON
 
 ---
