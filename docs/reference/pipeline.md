@@ -72,8 +72,8 @@
        11. Manage document_tag junction (clear + add)
        12. Manage document_people junction (clear + add) — for each person:
           - Determines canonical name via `canonicalPersonName`: uses LLM's `name_romanized` if provided (for non-Latin names), falls back to AnyAscii transliteration
-          - Normalizes the canonical name via `utils.NormalizeName` (NFKC, lowercase, punctuation/dash cleanup) for exact-match lookup
-          - Creates new people with `name` (canonical) + `name_native` (original non-Latin script) when no match found
+          - Normalizes the canonical name via `utils.NormalizeForDB` (NFKC, lowercase, accent-folding, alpha-only) for normalized-name dedup lookup
+          - Creates new people with `name` (canonical) + `name_native` (original non-Latin script) + `normalized_name` (computed from canonical) when no match found
           - Updates `name_native` on existing people if currently empty
            - Unknown people types default to `"unknown"`
 

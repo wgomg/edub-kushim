@@ -171,7 +171,7 @@ per tool category, used by the frontend settings UI to populate select dropdowns
 
 ### Functions
 
-`CountWords`, `EstimateTokensFromWords`, `CleanUp` (removes special chars), `Truncate` (returns "Unknown" for whitespace-only), `CleanCodeBlock`, `ContainsNonLatin` (checks for CJK, Cyrillic, Arabic, Hebrew, Greek, Thai, Devanagari, Bengali, Hangul), `NormalizeName` (NFKC → lowercase → remove dots/commas/apostrophes/quotes → dash variants to space → whitespace collapse)
+`CountWords`, `EstimateTokensFromWords`, `CleanUp` (removes special chars), `Truncate` (returns "Unknown" for whitespace-only), `CleanCodeBlock`, `ContainsNonLatin` (checks for CJK, Cyrillic, Arabic, Hebrew, Greek, Thai, Devanagari, Bengali, Hangul), `NormalizeForDB` (NFKC → lowercase → dash/underscore to space → accent fold → strip non-`[a-z ]` → collapse whitespace)
 
 ---
 

@@ -189,14 +189,17 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 	}
 	peopleMap := make(map[string]int64, len(existingPeople))
 	for _, p := range existingPeople {
-		key := utils.NormalizeName(p.Name)
+		key := p.NormalizedName.String
+		if !p.NormalizedName.Valid || key == "" {
+			key = utils.NormalizeForDB(p.Name)
+		}
 		peopleMap[key] = p.ID
 	}
 	var peopleIDs []int64
 	for _, p := range analysis.People {
 		canonicalName, nameNative := canonicalPersonName(p)
 
-		normalized := utils.NormalizeName(canonicalName)
+		normalized := utils.NormalizeForDB(canonicalName)
 		id, ok := peopleMap[normalized]
 		if !ok {
 			var nameNativeArg sql.NullString
@@ -204,8 +207,9 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 				nameNativeArg = sql.NullString{String: nameNative, Valid: true}
 			}
 			result, err := e.queries.CreatePeople(ctx, database.CreatePeopleParams{
-				Name:       canonicalName,
-				NameNative: nameNativeArg,
+				Name:           canonicalName,
+				NameNative:     nameNativeArg,
+				NormalizedName: sql.NullString{String: normalized, Valid: true},
 			})
 			if err != nil {
 				e.logger.Error(&logId, "create people %q: %v", canonicalName, err)

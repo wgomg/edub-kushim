@@ -9,12 +9,12 @@ SELECT * FROM people ORDER BY created_at DESC LIMIT ? OFFSET ?;
 
 -- name: CreatePeople :execresult
 INSERT OR IGNORE INTO people (
-    name, name_native
-) VALUES (?, ?);
+    name, name_native, normalized_name
+) VALUES (?, ?, ?);
 
 -- name: UpdatePeople :exec
 UPDATE people SET
-    name = ?
+    name = ?, normalized_name = ?
 WHERE id = ?;
 
 -- name: UpdatePeopleNative :exec
@@ -29,7 +29,7 @@ SELECT * FROM people WHERE name = ?;
 SELECT * FROM people WHERE name LIKE ? ORDER BY name ASC LIMIT ?;
 
 -- name: UpdatePeopleFull :exec
-UPDATE people SET name = ?, name_native = ? WHERE id = ?;
+UPDATE people SET name = ?, name_native = ?, normalized_name = ? WHERE id = ?;
 
 -- name: ListPeopleWithDocumentCount :many
 SELECT p.*, COUNT(dp.document_id) AS document_count

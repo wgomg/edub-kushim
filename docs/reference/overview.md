@@ -128,7 +128,7 @@ internal/
 │   ├── logger.go          # Structured logging (file logging support, numeric level filtering)
 │   ├── metrics.go         # Memory metrics (HeapInUse, RSS, NumGC), HumanDuration, FormatMemDelta
 │   ├── parambag.go        # HTTP parameter parsing (query params, path values)
-│   └── text.go            # CountWords, EstimateTokensFromWords, CleanUp, Truncate, CleanCodeBlock, ContainsNonLatin, NormalizeName, StripTags, StripTagsPtr
+│   └── text.go            # CountWords, EstimateTokensFromWords, CleanUp, Truncate, CleanCodeBlock, ContainsNonLatin, NormalizeForDB, StripTags, StripTagsPtr
 ├── adapters/
 │   │   ├── mupdf_wrapper.go    # MuPDF CGo wrapper (6 C helpers + Go API)
 │   │   ├── contentanalyzer/    # LLM classification providers

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"unicode"
 
+	"golang.org/x/text/runes"
+	"golang.org/x/text/transform"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -69,44 +71,41 @@ func ContainsNonLatin(s string) bool {
 	return false
 }
 
-// NormalizeName normalizes a name for consistent matching.
-// Steps: NFKC normalization → lowercase → remove dots, commas, apostrophes,
-// quotes → replace dashes with space → collapse whitespace.
-func NormalizeName(name string) string {
-	name = norm.NFKC.String(name)
+var (
+	accentFolder transform.Transformer = transform.Chain(
+		norm.NFD,
+		runes.Remove(runes.In(unicode.Mn)),
+		norm.NFC,
+	)
 
-	name = strings.ToLower(name)
+	nonAlphaSpace = regexp.MustCompile(`[^a-z ]`)
+	multiSpace    = regexp.MustCompile(` +`)
+)
 
-	name = strings.NewReplacer(
-		".", "",
-		",", "",
-		"'", "",
-		"’", "",
-		"ʻ", "",
-		"\"", "",
-		"“", "",
-		"”", "",
-		"«", "",
-		"»", "",
-		":", "",
-		";", "",
-		"!", "",
-		"?", "",
-		"`", "",
-		"_", "",
-	).Replace(name)
+func NormalizeForDB(s string) string {
+	s = norm.NFKC.String(s)
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.ReplaceAll(s, "-", " ")
+	s = strings.ReplaceAll(s, "_", " ")
+	s = strings.ReplaceAll(s, "\u2013", " ") // en dash
+	s = strings.ReplaceAll(s, "\u2014", " ") // em dash
+	s = strings.ReplaceAll(s, "\u2010", " ") // hyphen
+	s = strings.ReplaceAll(s, "\u2011", " ") // non-breaking hyphen
+	s = strings.ReplaceAll(s, "\uFF0D", " ") // fullwidth hyphen-minus
 
-	name = strings.NewReplacer(
-		"-", " ",
-		"–", " ",
-		"—", " ",
-		"－", " ",
-		"‐", " ",
-		"‑", " ",
-	).Replace(name)
+	out, _, err := transform.String(accentFolder, s)
+	if err == nil {
+		s = out
+	}
 
-	name = strings.Join(strings.Fields(name), " ")
-	return strings.TrimSpace(name)
+	s = nonAlphaSpace.ReplaceAllString(s, "")
+	s = multiSpace.ReplaceAllString(s, " ")
+	s = strings.TrimSpace(s)
+
+	if s == "" {
+		return ""
+	}
+	return s
 }
 
 func StripTags(input string) string {

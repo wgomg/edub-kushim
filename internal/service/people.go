@@ -91,8 +91,14 @@ func (s *People) Create(ctx context.Context, inputs []CreatePersonInput) ([]Crea
 		return nil, errs.FromDB(err, "load existing people")
 	}
 	existingMap := make(map[string]database.People, len(existing))
+	normalizedMap := make(map[string]database.People, len(existing))
 	for _, p := range existing {
 		existingMap[p.Name] = p
+		nKey := p.NormalizedName.String
+		if !p.NormalizedName.Valid || nKey == "" {
+			nKey = utils.NormalizeForDB(p.Name)
+		}
+		normalizedMap[nKey] = p
 	}
 
 	for i, input := range inputs {
@@ -107,11 +113,18 @@ func (s *People) Create(ctx context.Context, inputs []CreatePersonInput) ([]Crea
 			continue
 		}
 
+		normName := utils.NormalizeForDB(name)
+		if existing, ok := normalizedMap[normName]; ok {
+			results[i] = CreateResult[database.People]{Entity: existing, Status: Conflict}
+			continue
+		}
+
 		nameNative := toNullString(input.NameNative)
 
 		res, err := s.queries.CreatePeople(ctx, database.CreatePeopleParams{
-			Name:       name,
-			NameNative: nameNative,
+			Name:           name,
+			NameNative:     nameNative,
+			NormalizedName: sql.NullString{String: normName, Valid: true},
 		})
 		if err != nil {
 			return nil, errs.FromDB(err, "create people "+name)
@@ -137,7 +150,7 @@ func (s *People) Create(ctx context.Context, inputs []CreatePersonInput) ([]Crea
 		}
 
 		results[i] = CreateResult[database.People]{
-			Entity: database.People{ID: id, Name: name, NameNative: nameNative},
+			Entity: database.People{ID: id, Name: name, NameNative: nameNative, NormalizedName: sql.NullString{String: normName, Valid: true}},
 			Status: Created,
 		}
 	}
@@ -154,9 +167,15 @@ func (s *People) Update(ctx context.Context, pairs []PeopleUpdatePair) ([]Update
 	}
 	peopleMap := make(map[int64]database.People, len(allPeople))
 	nameMap := make(map[string]database.People, len(allPeople))
+	normalizedNameMap := make(map[string]database.People, len(allPeople))
 	for _, p := range allPeople {
 		peopleMap[p.ID] = p
 		nameMap[p.Name] = p
+		nKey := p.NormalizedName.String
+		if !p.NormalizedName.Valid || nKey == "" {
+			nKey = utils.NormalizeForDB(p.Name)
+		}
+		normalizedNameMap[nKey] = p
 	}
 
 	for i, p := range pairs {
@@ -184,10 +203,17 @@ func (s *People) Update(ctx context.Context, pairs []PeopleUpdatePair) ([]Update
 			continue
 		}
 
+		normName := utils.NormalizeForDB(name)
+		if existing, ok := normalizedNameMap[normName]; ok && existing.ID != p.ID {
+			results[i] = UpdateResult[database.People]{Entity: existing, Status: UpdateConflict}
+			continue
+		}
+
 		if err := s.queries.UpdatePeopleFull(ctx, database.UpdatePeopleFullParams{
-			Name:       name,
-			NameNative: nameNative,
-			ID:         p.ID,
+			Name:           name,
+			NameNative:     nameNative,
+			NormalizedName: sql.NullString{String: normName, Valid: true},
+			ID:             p.ID,
 		}); err != nil {
 			if errs.IsConstraint(err) {
 				var existing database.People
@@ -201,7 +227,7 @@ func (s *People) Update(ctx context.Context, pairs []PeopleUpdatePair) ([]Update
 		}
 
 		results[i] = UpdateResult[database.People]{
-			Entity: database.People{ID: p.ID, Name: name, NameNative: nameNative},
+			Entity: database.People{ID: p.ID, Name: name, NameNative: nameNative, NormalizedName: sql.NullString{String: normName, Valid: true}},
 			Status: Updated,
 		}
 	}

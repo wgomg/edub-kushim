@@ -85,10 +85,11 @@ type OrphanedFile struct {
 }
 
 type People struct {
-	ID         int64
-	Name       string
-	NameNative sql.NullString
-	CreatedAt  sql.NullTime
+	ID             int64
+	Name           string
+	NameNative     sql.NullString
+	CreatedAt      sql.NullTime
+	NormalizedName sql.NullString
 }
 
 type PeopleType struct {
