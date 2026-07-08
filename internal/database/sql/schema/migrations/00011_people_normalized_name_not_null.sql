@@ -3,7 +3,8 @@
 -- +goose StatementBegin
 PRAGMA foreign_keys = OFF;
 
-CREATE TABLE IF NOT EXISTS people_new (
+DROP TABLE IF EXISTS people_new;
+CREATE TABLE people_new (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
     name_native TEXT,
@@ -26,7 +27,8 @@ PRAGMA foreign_keys = ON;
 -- +goose StatementBegin
 PRAGMA foreign_keys = OFF;
 
-CREATE TABLE IF NOT EXISTS people_old (
+DROP TABLE IF EXISTS people_old;
+CREATE TABLE people_old (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
     name_native TEXT,
