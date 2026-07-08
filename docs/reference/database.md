@@ -63,7 +63,7 @@ Migrations run automatically on startup (no manual CLI command needed):
 - `DocumentType` — `ID`, `Name`, `Description`, `CreatedAt`
 - `DocumentTag` — `DocumentID`, `TagID`
 - `DocumentPeople` — `DocumentID`, `PeopleID`, `PeopleTypeID`
-- `People` — `ID`, `Name`, `NameNative sql.NullString`, `NormalizedName sql.NullString`, `CreatedAt`
+- `People` — `ID`, `Name`, `NameNative sql.NullString`, `NormalizedName string`, `CreatedAt`
 - `PeopleType` — `ID`, `Name`, `Description`, `CreatedAt`
 - `User` — `ID`, `Username`, `PasswordHash sql.NullString`, `ApiKeyHash sql.NullString`, `ApiKeyPrefix sql.NullString`, `ApiKeyCreatedAt sql.NullTime`, `CreatedAt sql.NullTime`, `Role` — roles: `"admin"`, `"editor"`, `"viewer"` (default). Role is validated at the application layer (no CHECK constraint in SQLite ALTER TABLE).
 - `SavedSearch` — `ID`, `Name`, `FilterJson string`, `CreatedAt string`
@@ -112,7 +112,7 @@ Migrations run automatically on startup (no manual CLI command needed):
 
 ### People
 
-`CreatePeople` (`INSERT OR IGNORE` with `Name` + `NameNative` + `NormalizedName`), `GetPeople`, `GetPeopleByName`, `ListPeople`, `ListAllPeople`, `SearchPeopleByName` (prefix search with `LIKE ?` + `LIMIT`), `UpdatePeople` (name + normalized_name), `UpdatePeopleFull` (name + name_native + normalized_name), `UpdatePeopleNative` (fills `name_native` only if currently NULL), `DeletePeople`
+`CreatePeople` (`INSERT OR IGNORE` with `Name`, `NameNative`, `NormalizedName`), `GetPeople`, `GetPeopleByName`, `ListPeople`, `ListAllPeople`, `SearchPeopleByName` (prefix search with `LIKE ?` + `LIMIT`), `UpdatePeople` (name + normalized_name), `UpdatePeopleFull` (name + name_native + normalized_name), `UpdatePeopleNative` (fills `name_native` only if currently NULL), `DeletePeople`
 
 ### People type
 
@@ -220,7 +220,7 @@ The last 4 methods back the dashboard analytics panel. `LanguageDistribution` an
 - `task` — Async processing: `task_id` (UUID), `batch_id` (nullable), `task_type`, `payload` (JSON), `result` (JSON), `dedup_key` (nullable), `status`, timestamps, `error`
 - `tag` — Classification tags (seeded with 110+ Dewey Decimal tags)
 - `document_type` — Document type classification (seeded with types like `article`, `book`, `report`, `letter`, etc.)
-- `people` — People/entities associated with documents (`name` UNIQUE, `name_native` nullable for original non-Latin script, `normalized_name` nullable for accent-folded matcher key)
+- `people` — People/entities associated with documents (`name` UNIQUE, `name_native` nullable for original non-Latin script, `normalized_name` NOT NULL UNIQUE for accent-folded matcher key)
 - `people_type` — Roles for people (e.g., `author`, `editor`, `translator`, `subject`)
 - `user` — Authentication (username, password_hash, role, api_key_hash, api_key_prefix, api_key_created_at)
 - `batch` — Batch processing units: `id`, `source`, `created_at`, `status` (queued/processing/completed/failed/cancelled). The `status` column was added in migration `00005` to support queue-based processing.
@@ -270,6 +270,7 @@ A `goose_db_version` table (managed by goose) tracks applied migrations with col
 - `idx_document_md5`, `idx_document_sha512` (UNIQUE), `idx_document_created`
 - `idx_task_status`, `idx_task_type`, `idx_task_batch`, `idx_task_batch_status`
 - `idx_batch_status` — on `batch(status)`. Added in migration `00005` to support queue queries (`CountQueuedBatches`, `GetNextQueuedBatch`).
+- `idx_people_normalized_name` — UNIQUE index on `people(normalized_name)`. Added in migration `00011` alongside the NOT NULL constraint.
 - `idx_task_pending` — partial index on `task(created_at)` where `status = 'pending'`
 - `idx_task_dedup` — unique partial index on `task(task_type, dedup_key)` where
   status is `pending` or `processing` and `dedup_key IS NOT NULL`. Prevents duplicate

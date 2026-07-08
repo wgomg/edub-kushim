@@ -19,7 +19,7 @@ INSERT OR IGNORE INTO people (
 type CreatePeopleParams struct {
 	Name           string
 	NameNative     sql.NullString
-	NormalizedName sql.NullString
+	NormalizedName string
 }
 
 func (q *Queries) CreatePeople(ctx context.Context, arg CreatePeopleParams) (sql.Result, error) {
@@ -36,7 +36,7 @@ func (q *Queries) DeletePeople(ctx context.Context, id int64) error {
 }
 
 const getPeople = `-- name: GetPeople :one
-SELECT id, name, name_native, created_at, normalized_name FROM people WHERE id = ?
+SELECT id, name, name_native, normalized_name, created_at FROM people WHERE id = ?
 `
 
 func (q *Queries) GetPeople(ctx context.Context, id int64) (People, error) {
@@ -46,14 +46,14 @@ func (q *Queries) GetPeople(ctx context.Context, id int64) (People, error) {
 		&i.ID,
 		&i.Name,
 		&i.NameNative,
-		&i.CreatedAt,
 		&i.NormalizedName,
+		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const getPeopleByName = `-- name: GetPeopleByName :one
-SELECT id, name, name_native, created_at, normalized_name FROM people WHERE name = ?
+SELECT id, name, name_native, normalized_name, created_at FROM people WHERE name = ?
 `
 
 func (q *Queries) GetPeopleByName(ctx context.Context, name string) (People, error) {
@@ -63,14 +63,14 @@ func (q *Queries) GetPeopleByName(ctx context.Context, name string) (People, err
 		&i.ID,
 		&i.Name,
 		&i.NameNative,
-		&i.CreatedAt,
 		&i.NormalizedName,
+		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const listAllPeople = `-- name: ListAllPeople :many
-SELECT id, name, name_native, created_at, normalized_name FROM people ORDER BY created_at DESC
+SELECT id, name, name_native, normalized_name, created_at FROM people ORDER BY created_at DESC
 `
 
 func (q *Queries) ListAllPeople(ctx context.Context) ([]People, error) {
@@ -86,8 +86,8 @@ func (q *Queries) ListAllPeople(ctx context.Context) ([]People, error) {
 			&i.ID,
 			&i.Name,
 			&i.NameNative,
-			&i.CreatedAt,
 			&i.NormalizedName,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -103,7 +103,7 @@ func (q *Queries) ListAllPeople(ctx context.Context) ([]People, error) {
 }
 
 const listPeople = `-- name: ListPeople :many
-SELECT id, name, name_native, created_at, normalized_name FROM people ORDER BY created_at DESC LIMIT ? OFFSET ?
+SELECT id, name, name_native, normalized_name, created_at FROM people ORDER BY created_at DESC LIMIT ? OFFSET ?
 `
 
 type ListPeopleParams struct {
@@ -124,8 +124,8 @@ func (q *Queries) ListPeople(ctx context.Context, arg ListPeopleParams) ([]Peopl
 			&i.ID,
 			&i.Name,
 			&i.NameNative,
-			&i.CreatedAt,
 			&i.NormalizedName,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -141,7 +141,7 @@ func (q *Queries) ListPeople(ctx context.Context, arg ListPeopleParams) ([]Peopl
 }
 
 const listPeopleWithDocumentCount = `-- name: ListPeopleWithDocumentCount :many
-SELECT p.id, p.name, p.name_native, p.created_at, p.normalized_name, COUNT(dp.document_id) AS document_count
+SELECT p.id, p.name, p.name_native, p.normalized_name, p.created_at, COUNT(dp.document_id) AS document_count
 FROM people p
 LEFT JOIN document_people dp ON p.id = dp.people_id
 GROUP BY p.id
@@ -157,8 +157,8 @@ type ListPeopleWithDocumentCountRow struct {
 	ID             int64
 	Name           string
 	NameNative     sql.NullString
+	NormalizedName string
 	CreatedAt      sql.NullTime
-	NormalizedName sql.NullString
 	DocumentCount  int64
 }
 
@@ -175,8 +175,8 @@ func (q *Queries) ListPeopleWithDocumentCount(ctx context.Context, arg ListPeopl
 			&i.ID,
 			&i.Name,
 			&i.NameNative,
-			&i.CreatedAt,
 			&i.NormalizedName,
+			&i.CreatedAt,
 			&i.DocumentCount,
 		); err != nil {
 			return nil, err
@@ -193,7 +193,7 @@ func (q *Queries) ListPeopleWithDocumentCount(ctx context.Context, arg ListPeopl
 }
 
 const searchPeopleByName = `-- name: SearchPeopleByName :many
-SELECT id, name, name_native, created_at, normalized_name FROM people WHERE name LIKE ? ORDER BY name ASC LIMIT ?
+SELECT id, name, name_native, normalized_name, created_at FROM people WHERE name LIKE ? ORDER BY name ASC LIMIT ?
 `
 
 type SearchPeopleByNameParams struct {
@@ -214,8 +214,8 @@ func (q *Queries) SearchPeopleByName(ctx context.Context, arg SearchPeopleByName
 			&i.ID,
 			&i.Name,
 			&i.NameNative,
-			&i.CreatedAt,
 			&i.NormalizedName,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -231,7 +231,7 @@ func (q *Queries) SearchPeopleByName(ctx context.Context, arg SearchPeopleByName
 }
 
 const searchPeopleByNameWithDocumentCount = `-- name: SearchPeopleByNameWithDocumentCount :many
-SELECT p.id, p.name, p.name_native, p.created_at, p.normalized_name, COUNT(dp.document_id) AS document_count
+SELECT p.id, p.name, p.name_native, p.normalized_name, p.created_at, COUNT(dp.document_id) AS document_count
 FROM people p
 LEFT JOIN document_people dp ON p.id = dp.people_id
 WHERE p.name LIKE ?
@@ -248,8 +248,8 @@ type SearchPeopleByNameWithDocumentCountRow struct {
 	ID             int64
 	Name           string
 	NameNative     sql.NullString
+	NormalizedName string
 	CreatedAt      sql.NullTime
-	NormalizedName sql.NullString
 	DocumentCount  int64
 }
 
@@ -266,8 +266,8 @@ func (q *Queries) SearchPeopleByNameWithDocumentCount(ctx context.Context, arg S
 			&i.ID,
 			&i.Name,
 			&i.NameNative,
-			&i.CreatedAt,
 			&i.NormalizedName,
+			&i.CreatedAt,
 			&i.DocumentCount,
 		); err != nil {
 			return nil, err
@@ -291,7 +291,7 @@ WHERE id = ?
 
 type UpdatePeopleParams struct {
 	Name           string
-	NormalizedName sql.NullString
+	NormalizedName string
 	ID             int64
 }
 
@@ -307,7 +307,7 @@ UPDATE people SET name = ?, name_native = ?, normalized_name = ? WHERE id = ?
 type UpdatePeopleFullParams struct {
 	Name           string
 	NameNative     sql.NullString
-	NormalizedName sql.NullString
+	NormalizedName string
 	ID             int64
 }
 

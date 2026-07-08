@@ -28,7 +28,7 @@ func TestPeople_Create(t *testing.T) {
 		testutil.AssertEqual(t, len(results), 1, "one result")
 		testutil.AssertEqual(t, results[0].Status, Created, "created")
 		testutil.AssertEqual(t, results[0].Entity.Name, "Alice", "name")
-		testutil.AssertEqual(t, results[0].Entity.NormalizedName.String, "alice", "normalized name")
+		testutil.AssertEqual(t, results[0].Entity.NormalizedName, "alice", "normalized name")
 	})
 
 	t.Run("exact name conflict", func(t *testing.T) {
@@ -87,7 +87,7 @@ func TestPeople_Create(t *testing.T) {
 			{Name: "Émile"},
 		})
 		testutil.AssertNoError(t, err, "create")
-		testutil.AssertEqual(t, results[0].Entity.NormalizedName.String, "emile", "normalizedName in entity")
+		testutil.AssertEqual(t, results[0].Entity.NormalizedName, "emile", "normalizedName in entity")
 	})
 }
 
@@ -110,7 +110,7 @@ func TestPeople_Update(t *testing.T) {
 		testutil.AssertNoError(t, err, "update")
 		testutil.AssertEqual(t, updateResults[0].Status, Updated, "updated")
 		testutil.AssertEqual(t, updateResults[0].Entity.Name, "David Jr", "new name")
-		testutil.AssertEqual(t, updateResults[0].Entity.NormalizedName.String, "david jr", "new normalizedName")
+		testutil.AssertEqual(t, updateResults[0].Entity.NormalizedName, "david jr", "new normalizedName")
 	})
 
 	t.Run("noop when nothing changed", func(t *testing.T) {

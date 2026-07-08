@@ -35,7 +35,7 @@ func (q *Queries) ClearDocumentPeople(ctx context.Context, documentID int64) err
 }
 
 const getDocumentPeople = `-- name: GetDocumentPeople :many
-SELECT p.id, p.name, p.name_native, p.created_at, p.normalized_name, dp.people_type_id FROM people p
+SELECT p.id, p.name, p.name_native, p.normalized_name, p.created_at, dp.people_type_id FROM people p
 JOIN document_people dp ON p.id = dp.people_id
 WHERE dp.document_id = ?
 `
@@ -44,8 +44,8 @@ type GetDocumentPeopleRow struct {
 	ID             int64
 	Name           string
 	NameNative     sql.NullString
+	NormalizedName string
 	CreatedAt      sql.NullTime
-	NormalizedName sql.NullString
 	PeopleTypeID   int64
 }
 
@@ -62,8 +62,8 @@ func (q *Queries) GetDocumentPeople(ctx context.Context, documentID int64) ([]Ge
 			&i.ID,
 			&i.Name,
 			&i.NameNative,
-			&i.CreatedAt,
 			&i.NormalizedName,
+			&i.CreatedAt,
 			&i.PeopleTypeID,
 		); err != nil {
 			return nil, err

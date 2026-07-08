@@ -94,8 +94,8 @@ func (s *People) Create(ctx context.Context, inputs []CreatePersonInput) ([]Crea
 	normalizedMap := make(map[string]database.People, len(existing))
 	for _, p := range existing {
 		existingMap[p.Name] = p
-		nKey := p.NormalizedName.String
-		if !p.NormalizedName.Valid || nKey == "" {
+		nKey := p.NormalizedName
+		if nKey == "" {
 			nKey = utils.NormalizeForDB(p.Name)
 		}
 		normalizedMap[nKey] = p
@@ -124,7 +124,7 @@ func (s *People) Create(ctx context.Context, inputs []CreatePersonInput) ([]Crea
 		res, err := s.queries.CreatePeople(ctx, database.CreatePeopleParams{
 			Name:           name,
 			NameNative:     nameNative,
-			NormalizedName: sql.NullString{String: normName, Valid: true},
+			NormalizedName: normName,
 		})
 		if err != nil {
 			return nil, errs.FromDB(err, "create people "+name)
@@ -150,7 +150,7 @@ func (s *People) Create(ctx context.Context, inputs []CreatePersonInput) ([]Crea
 		}
 
 		results[i] = CreateResult[database.People]{
-			Entity: database.People{ID: id, Name: name, NameNative: nameNative, NormalizedName: sql.NullString{String: normName, Valid: true}},
+			Entity: database.People{ID: id, Name: name, NameNative: nameNative, NormalizedName: normName},
 			Status: Created,
 		}
 	}
@@ -171,8 +171,8 @@ func (s *People) Update(ctx context.Context, pairs []PeopleUpdatePair) ([]Update
 	for _, p := range allPeople {
 		peopleMap[p.ID] = p
 		nameMap[p.Name] = p
-		nKey := p.NormalizedName.String
-		if !p.NormalizedName.Valid || nKey == "" {
+		nKey := p.NormalizedName
+		if nKey == "" {
 			nKey = utils.NormalizeForDB(p.Name)
 		}
 		normalizedNameMap[nKey] = p
@@ -212,7 +212,7 @@ func (s *People) Update(ctx context.Context, pairs []PeopleUpdatePair) ([]Update
 		if err := s.queries.UpdatePeopleFull(ctx, database.UpdatePeopleFullParams{
 			Name:           name,
 			NameNative:     nameNative,
-			NormalizedName: sql.NullString{String: normName, Valid: true},
+			NormalizedName: normName,
 			ID:             p.ID,
 		}); err != nil {
 			if errs.IsConstraint(err) {
@@ -227,7 +227,7 @@ func (s *People) Update(ctx context.Context, pairs []PeopleUpdatePair) ([]Update
 		}
 
 		results[i] = UpdateResult[database.People]{
-			Entity: database.People{ID: p.ID, Name: name, NameNative: nameNative, NormalizedName: sql.NullString{String: normName, Valid: true}},
+			Entity: database.People{ID: p.ID, Name: name, NameNative: nameNative, NormalizedName: normName},
 			Status: Updated,
 		}
 	}

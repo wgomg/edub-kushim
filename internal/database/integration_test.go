@@ -130,9 +130,9 @@ func TestDocumentTypeCRUD(t *testing.T) {
 func TestPeopleCRUD(t *testing.T) {
 	q, _ := NewTestQueries(t)
 	ctx := context.Background()
-	res, _ := q.CreatePeople(ctx, CreatePeopleParams{Name: "Alice", NormalizedName: sql.NullString{String: "alice", Valid: true}})
+	res, _ := q.CreatePeople(ctx, CreatePeopleParams{Name: "Alice", NormalizedName: "alice"})
 	pID := getID(t, res)
-	assertNoError(t, q.UpdatePeopleFull(ctx, UpdatePeopleFullParams{Name: "Alice U", NormalizedName: sql.NullString{String: "alice u", Valid: true}, ID: pID}), "update")
+	assertNoError(t, q.UpdatePeopleFull(ctx, UpdatePeopleFullParams{Name: "Alice U", NormalizedName: "alice u", ID: pID}), "update")
 	assertNoError(t, q.DeletePeople(ctx, pID), "delete")
 }
 
@@ -194,7 +194,7 @@ func TestDocumentTagsPeople(t *testing.T) {
 	tags, _ := q.GetDocumentTags(ctx, dID)
 	assertEqual(t, len(tags), 1, "tag")
 
-	res, err := q.CreatePeople(ctx, CreatePeopleParams{Name: "Bob", NormalizedName: sql.NullString{String: "bob", Valid: true}})
+	res, err := q.CreatePeople(ctx, CreatePeopleParams{Name: "Bob", NormalizedName: "bob"})
 	assertNoError(t, err, "create people")
 	pID := getID(t, res)
 	ptRes, err := q.CreatePeopleType(ctx, CreatePeopleTypeParams{Name: "custom-author-type"})

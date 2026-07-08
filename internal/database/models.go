@@ -88,8 +88,8 @@ type People struct {
 	ID             int64
 	Name           string
 	NameNative     sql.NullString
+	NormalizedName string
 	CreatedAt      sql.NullTime
-	NormalizedName sql.NullString
 }
 
 type PeopleType struct {
