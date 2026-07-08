@@ -110,6 +110,12 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 	}
 
 	analysis.Tags = contentanalyzer.NormalizeTags(analysis.Tags)
+
+	for i, p := range analysis.People {
+		canonicalName, _ := canonicalPersonName(p)
+		analysis.People[i].NormalizedName = utils.NormalizeForDB(canonicalName)
+	}
+
 	docTypeNames := make([]string, 0, len(docTypes))
 	for _, dt := range docTypes {
 		docTypeNames = append(docTypeNames, dt.Name)

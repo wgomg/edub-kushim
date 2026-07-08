@@ -10,9 +10,10 @@ import (
 )
 
 type PeopleResult struct {
-	Name          string `json:"name"`
-	NameRomanized string `json:"name_romanized,omitempty"`
-	Type          string `json:"type"`
+	Name           string `json:"name"`
+	NameRomanized  string `json:"name_romanized,omitempty"`
+	Type           string `json:"type"`
+	NormalizedName string `json:"-"`
 }
 
 type ContentAnalyzer interface {

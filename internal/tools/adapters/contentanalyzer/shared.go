@@ -58,11 +58,11 @@ Return ONLY a json string without any explanations, numbers, additional text, te
 Document Excerpts: {{.Text}}`
 
 type promptData struct {
-	DocTypePrompt  string
-	TagsPrompt     string
-	PeoplePrompt   string
-	Text           string
-	RequestedTags  int
+	DocTypePrompt string
+	TagsPrompt    string
+	PeoplePrompt  string
+	Text          string
+	RequestedTags int
 }
 
 func BuildPrompt(text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string, customTemplate string) string {
@@ -155,10 +155,7 @@ func normalizeToTokens(s string) []string {
 func FilterTags(tags []string, people []PeopleResult, title string, docTypeNames []string) []string {
 	nameTokens := make(map[string]struct{})
 	for _, p := range people {
-		for _, tok := range normalizeToTokens(p.Name) {
-			nameTokens[tok] = struct{}{}
-		}
-		for _, tok := range normalizeToTokens(p.NameRomanized) {
+		for _, tok := range normalizeToTokens(p.NormalizedName) {
 			nameTokens[tok] = struct{}{}
 		}
 	}

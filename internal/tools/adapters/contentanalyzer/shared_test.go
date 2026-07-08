@@ -148,7 +148,7 @@ func TestFilterTags(t *testing.T) {
 			name: "drops tag sharing token with person name",
 			tags: []string{"turing", "machine learning"},
 			people: []PeopleResult{
-				{Name: "Alan Turing"},
+				{Name: "Alan Turing", NormalizedName: "alan turing"},
 			},
 			want: []string{"machine learning"},
 		},
@@ -156,7 +156,7 @@ func TestFilterTags(t *testing.T) {
 			name: "drops tag sharing token with romanized name",
 			tags: []string{"muller", "physics"},
 			people: []PeopleResult{
-				{Name: "Müller", NameRomanized: "muller"},
+				{Name: "Müller", NameRomanized: "muller", NormalizedName: "muller"},
 			},
 			want: []string{"physics"},
 		},
@@ -175,7 +175,7 @@ func TestFilterTags(t *testing.T) {
 		{
 			name:   "applies all rules together",
 			tags:   []string{"turing", "artificial intelligence and robots", "machine learning", "physics"},
-			people: []PeopleResult{{Name: "Alan Turing"}},
+			people: []PeopleResult{{Name: "Alan Turing", NormalizedName: "alan turing"}},
 			title:  "machine learning",
 			want:   []string{"physics"},
 		},
@@ -204,7 +204,7 @@ func TestFilterTags(t *testing.T) {
 		{
 			name:   "empty tags",
 			tags:   []string{},
-			people: []PeopleResult{{Name: "Turing"}},
+			people: []PeopleResult{{Name: "Turing", NormalizedName: "turing"}},
 			title:  "physics",
 			want:   []string{},
 		},
