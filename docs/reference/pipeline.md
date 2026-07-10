@@ -68,7 +68,7 @@
        7. Post-LLM tag consolidation via `services.Tag.Consolidate` (delegates to `Embedder.Consolidate` over the matcher interface)
        8. New tags created via a single batch call `services.Tag.Create(ctx, analysis.Tags)` — returns per-index results with `Created`/`Conflict`/`Invalid` statuses. The service delegates store management to the matcher via `AddToStore`.
        9. Update document metadata (title, doc_type, language)
-       10. Auto-detect OCR language: `ensureOCRLanguage` cross-checks LLM-detected language against configured OCR languages. If missing, appends to in-memory config list, persists to `config.yaml` via `config.SaveMap`, and downloads tessdata in a background goroutine when the OCR engine is gosseract.
+        10. Auto-detect OCR language: `ensureOCRLanguage` cross-checks LLM-detected language against configured OCR languages. If missing and the engine is gosseract, the tessdata download runs first (inside a background goroutine). The language is only appended to the in-memory config list and persisted to `config.yaml` on download success. A failed download leaves config untouched, so the next document detecting the same language retries the download naturally. A `sync.Mutex` protects the shared `Languages` slice against concurrent mutations from multiple enrich workers. For non-gosseract engines, the language is appended and persisted immediately (no tessdata needed).
        11. Manage document_tag junction (clear + add)
        12. Manage document_people junction (clear + add) — for each person:
           - Determines canonical name via `canonicalPersonName`: uses LLM's `name_romanized` if provided (for non-Latin names), falls back to AnyAscii transliteration

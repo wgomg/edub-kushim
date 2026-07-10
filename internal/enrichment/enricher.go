@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	anyascii "github.com/anyascii/go"
@@ -26,6 +27,7 @@ type Enricher struct {
 	queries  *database.Queries
 	runner   *tools.Runner
 	services *types.CrudServices
+	mu       sync.Mutex
 }
 
 func NewEnricher(cfg *config.Config, logger *utils.Logger, queries *database.Queries, services *types.CrudServices, matcher tagmatcher.Matcher) (*Enricher, error) {
@@ -338,24 +340,47 @@ func (e *Enricher) ensureOCRLanguage(ctx context.Context, detectedLang string) {
 		return
 	}
 
-	e.config.Consumer.OCR.Languages = append(e.config.Consumer.OCR.Languages, lang)
-
-	if err := config.SaveMap(e.config.App.ConfigDir, map[string]any{
-		"consumer.ocr.languages": e.config.Consumer.OCR.Languages,
-	}); err != nil {
-		e.logger.Error(nil, "auto-detect OCR language: failed to add %q to config: %v", lang, err)
+	// For non-gosseract engines, persist unconditionally (no tessdata needed).
+	if e.config.Consumer.OCR.Engine != config.OCR.Gosseract {
+		e.mu.Lock()
+		if slices.Contains(e.config.Consumer.OCR.Languages, lang) {
+			e.mu.Unlock()
+			return
+		}
+		e.config.Consumer.OCR.Languages = append(e.config.Consumer.OCR.Languages, lang)
+		if err := config.SaveMap(e.config.App.ConfigDir, map[string]any{
+			"consumer.ocr.languages": e.config.Consumer.OCR.Languages,
+		}); err != nil {
+			e.logger.Error(nil, "auto-detect OCR language: failed to add %q to config: %v", lang, err)
+			e.mu.Unlock()
+			return
+		}
+		e.mu.Unlock()
+		e.logger.Info(nil, "auto-detected OCR language %q added to consumer.ocr.languages", lang)
 		return
 	}
 
-	e.logger.Info(nil, "auto-detected OCR language %q added to consumer.ocr.languages", lang)
+	// Gosseract: download tessdata first, persist only on success.
+	go func() {
+		if err := config.DownloadTessdataLanguage(context.Background(), e.config, lang); err != nil {
+			e.logger.Error(nil, "auto-detect OCR language: tessdata download for %q failed: %v", lang, err)
+			return
+		}
 
-	if e.config.Consumer.OCR.Engine == config.OCR.Gosseract {
-		go func() {
-			if err := config.DownloadTessdataLanguage(context.Background(), e.config, lang); err != nil {
-				e.logger.Error(nil, "auto-detect OCR language: tessdata download for %q failed: %v", lang, err)
-			} else {
-				e.logger.Info(nil, "auto-detect OCR language: tessdata downloaded for %q", lang)
-			}
-		}()
-	}
+		e.mu.Lock()
+		if slices.Contains(e.config.Consumer.OCR.Languages, lang) {
+			e.mu.Unlock()
+			return
+		}
+		e.config.Consumer.OCR.Languages = append(e.config.Consumer.OCR.Languages, lang)
+		if err := config.SaveMap(e.config.App.ConfigDir, map[string]any{
+			"consumer.ocr.languages": e.config.Consumer.OCR.Languages,
+		}); err != nil {
+			e.logger.Error(nil, "auto-detect OCR language: failed to persist %q after download: %v", lang, err)
+			e.mu.Unlock()
+			return
+		}
+		e.mu.Unlock()
+		e.logger.Info(nil, "auto-detected OCR language %q added to consumer.ocr.languages", lang)
+	}()
 }
