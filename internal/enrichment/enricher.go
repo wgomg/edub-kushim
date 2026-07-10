@@ -126,6 +126,9 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 
 	for i, p := range analysis.People {
 		canonicalName, _ := canonicalPersonName(p)
+		if canonicalName == "" && p.NameRomanized != "" {
+			canonicalName = p.NameRomanized
+		}
 		analysis.People[i].NormalizedName = utils.NormalizeForDB(canonicalName)
 	}
 
@@ -229,6 +232,13 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 	var docPeople []docPerson
 	for _, p := range analysis.People {
 		canonicalName, nameNative := canonicalPersonName(p)
+		if canonicalName == "" && p.NameRomanized != "" {
+			canonicalName = p.NameRomanized
+			nameNative = ""
+		}
+		if canonicalName == "" {
+			continue
+		}
 
 		normalized := utils.NormalizeForDB(canonicalName)
 		id, ok := peopleMap[normalized]

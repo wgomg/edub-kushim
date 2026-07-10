@@ -223,8 +223,9 @@ When storing people from LLM results, the enricher:
    `"Itamar Ben-Gvir"` match `"Itamar Ben Gvir"` and `"O'Brien"` match `"Obrien"`.
 3. **Exact-match lookup** — looks up the normalized name against existing people;
    creates a new entry only when no match is found.
-4. **Stores native script** — when the original name contains non-Latin characters,
-   it is stored in the `name_native` column for display in the UI.
+4. **Stores native script** — only when the model independently determines a
+   person's genuine native form (e.g. a Japanese author in a Japanese document);
+   left empty for document-language renderings of foreign names.
 
 This pipeline is non-blocking: documents are stored and searchable immediately via
 FTS5, with enrichment arriving asynchronously.
