@@ -136,7 +136,16 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 	for _, dt := range docTypes {
 		docTypeNames = append(docTypeNames, dt.Name)
 	}
-	analysis.Tags = contentanalyzer.FilterTags(analysis.Tags, analysis.People, analysis.Title, docTypeNames)
+
+	existingPeople, err := e.queries.ListAllPeople(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list existing people: %w", err)
+	}
+	knownNormalized := make([]string, 0, len(existingPeople))
+	for _, p := range existingPeople {
+		knownNormalized = append(knownNormalized, normalizedPeopleKey(p))
+	}
+	analysis.Tags = contentanalyzer.FilterTags(analysis.Tags, analysis.People, knownNormalized, analysis.Title, docTypeNames)
 
 	consolidateStart := time.Now()
 	consolidated, err := e.services.Tag.Consolidate(ctx, document.DocumentID, analysis.Tags)
@@ -207,17 +216,9 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 		}
 	}
 
-	existingPeople, err := e.queries.ListAllPeople(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("list existing people: %w", err)
-	}
 	peopleMap := make(map[string]int64, len(existingPeople))
 	for _, p := range existingPeople {
-		key := p.NormalizedName
-		if key == "" {
-			key = utils.NormalizeForDB(p.Name)
-		}
-		peopleMap[key] = p.ID
+		peopleMap[normalizedPeopleKey(p)] = p.ID
 	}
 	peopleTypeMap := make(map[string]int64, len(peopleTypes))
 	for _, pt := range peopleTypes {
@@ -330,6 +331,14 @@ func targetWordCount(contentWC, targetWC int) int {
 		result = contentWC / -result
 	}
 	return max(2000, result)
+}
+
+func normalizedPeopleKey(p database.People) string {
+	key := p.NormalizedName
+	if key == "" {
+		key = utils.NormalizeForDB(p.Name)
+	}
+	return key
 }
 
 // canonicalPersonName returns the canonical (Latin-script) name and the

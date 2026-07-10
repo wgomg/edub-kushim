@@ -152,12 +152,25 @@ func normalizeToTokens(s string) []string {
 	return strings.Fields(normalizeCore(s))
 }
 
-func FilterTags(tags []string, people []PeopleResult, title string, docTypeNames []string) []string {
+func FilterTags(tags []string, people []PeopleResult, knownPeopleNormalized []string, title string, docTypeNames []string) []string {
 	nameTokens := make(map[string]struct{})
 	for _, p := range people {
 		for _, tok := range normalizeToTokens(p.NormalizedName) {
 			nameTokens[tok] = struct{}{}
 		}
+	}
+
+	var knownTokenSets []map[string]struct{}
+	for _, name := range knownPeopleNormalized {
+		tokens := normalizeToTokens(name)
+		if len(tokens) == 0 {
+			continue
+		}
+		set := make(map[string]struct{}, len(tokens))
+		for _, tok := range tokens {
+			set[tok] = struct{}{}
+		}
+		knownTokenSets = append(knownTokenSets, set)
 	}
 
 	docTypeTokens := make(map[string]struct{})
@@ -187,6 +200,26 @@ func FilterTags(tags []string, people []PeopleResult, title string, docTypeNames
 			}
 		}
 		if matchesName {
+			continue
+		}
+
+		matchesKnownPerson := false
+		if len(tagTokens) >= 2 {
+			for _, kset := range knownTokenSets {
+				allInKnown := true
+				for _, tok := range tagTokens {
+					if _, ok := kset[tok]; !ok {
+						allInKnown = false
+						break
+					}
+				}
+				if allInKnown {
+					matchesKnownPerson = true
+					break
+				}
+			}
+		}
+		if matchesKnownPerson {
 			continue
 		}
 

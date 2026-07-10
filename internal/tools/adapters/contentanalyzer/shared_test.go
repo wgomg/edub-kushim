@@ -127,21 +127,24 @@ func TestNormalizeTags_AccentFolding(t *testing.T) {
 
 func TestFilterTags(t *testing.T) {
 	tests := []struct {
-		name          string
-		tags          []string
-		people        []PeopleResult
-		title         string
-		docTypeNames  []string
-		want          []string
+		name                 string
+		tags                 []string
+		people               []PeopleResult
+		knownNormalized      []string
+		title                string
+		docTypeNames         []string
+		want                 []string
 	}{
 		{
 			name: "clean tags pass through",
 			tags: []string{"physics", "machine learning"},
+			knownNormalized: nil,
 			want: []string{"physics", "machine learning"},
 		},
 		{
 			name: "drops tags exceeding three words",
 			tags: []string{"artificial intelligence and robotics", "physics"},
+			knownNormalized: nil,
 			want: []string{"physics"},
 		},
 		{
@@ -150,6 +153,7 @@ func TestFilterTags(t *testing.T) {
 			people: []PeopleResult{
 				{Name: "Alan Turing", NormalizedName: "alan turing"},
 			},
+			knownNormalized: nil,
 			want: []string{"machine learning"},
 		},
 		{
@@ -158,17 +162,20 @@ func TestFilterTags(t *testing.T) {
 			people: []PeopleResult{
 				{Name: "Müller", NameRomanized: "muller", NormalizedName: "muller"},
 			},
+			knownNormalized: nil,
 			want: []string{"physics"},
 		},
 		{
 			name:  "drops tag that is subset of title tokens",
 			tags:  []string{"machine learning", "deep learning"},
+			knownNormalized: nil,
 			title: "machine learning applications",
 			want:  []string{"deep learning"},
 		},
 		{
 			name:  "keeps tag with partial title overlap",
 			tags:  []string{"deep architecture", "neural networks"},
+			knownNormalized: nil,
 			title: "deep learning applications",
 			want:  []string{"deep architecture", "neural networks"},
 		},
@@ -176,28 +183,33 @@ func TestFilterTags(t *testing.T) {
 			name:   "applies all rules together",
 			tags:   []string{"turing", "artificial intelligence and robots", "machine learning", "physics"},
 			people: []PeopleResult{{Name: "Alan Turing", NormalizedName: "alan turing"}},
+			knownNormalized: nil,
 			title:  "machine learning",
 			want:   []string{"physics"},
 		},
 		{
 			name: "caps at maxTags preserving order",
 			tags: []string{"alpha", "bravo", "charlie", "delta", "echo", "foxtrot"},
+			knownNormalized: nil,
 			want: []string{"alpha", "bravo", "charlie", "delta", "echo"},
 		},
 		{
 			name: "nil people and empty title",
 			tags: []string{"physics"},
+			knownNormalized: nil,
 			want: []string{"physics"},
 		},
 		{
 			name:         "drops tag matching doc-type name token",
 			tags:         []string{"letter", "physics"},
+			knownNormalized: nil,
 			docTypeNames: []string{"letter"},
 			want:         []string{"physics"},
 		},
 		{
 			name:         "keeps tag not matching doc-type name token",
 			tags:         []string{"physics", "mathematics"},
+			knownNormalized: nil,
 			docTypeNames: []string{"letter"},
 			want:         []string{"physics", "mathematics"},
 		},
@@ -205,16 +217,59 @@ func TestFilterTags(t *testing.T) {
 			name:   "empty tags",
 			tags:   []string{},
 			people: []PeopleResult{{Name: "Turing", NormalizedName: "turing"}},
+			knownNormalized: nil,
 			title:  "physics",
 			want:   []string{},
+		},
+		{
+			name:   "drops tag that equals a subset of a known person name",
+			tags:   []string{"john doe", "physics"},
+			knownNormalized: []string{"john doe smith"},
+			want:   []string{"physics"},
+		},
+		{
+			name:   "keeps single-word tag sharing token with longer known name",
+			tags:   []string{"young", "activism"},
+			knownNormalized: []string{"andrew young"},
+			want:   []string{"young", "activism"},
+		},
+		{
+			name:   "drops multi-word tag that exactly matches a known name",
+			tags:   []string{"rosa luxemburg", "marxism"},
+			knownNormalized: []string{"rosa luxemburg"},
+			want:   []string{"marxism"},
+		},
+		{
+			name:   "keeps tag with known people present that does not match",
+			tags:   []string{"algebra", "topology"},
+			knownNormalized: []string{"alan turing", "andrew young"},
+			want:   []string{"algebra", "topology"},
+		},
+		{
+			name:   "drops 3-word tag that is subset of a known name",
+			tags:   []string{"john doe smith", "physics"},
+			knownNormalized: []string{"john doe smith jones"},
+			want:   []string{"physics"},
+		},
+		{
+			name:   "keeps multi-word tag whose tokens are split across different known people",
+			tags:   []string{"john smith", "physics"},
+			knownNormalized: []string{"john doe", "smith jones"},
+			want:   []string{"john smith", "physics"},
+		},
+		{
+			name:   "skips empty-string entries in knownNormalized",
+			tags:   []string{"john doe", "physics"},
+			knownNormalized: []string{"", "john doe smith"},
+			want:   []string{"physics"},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := FilterTags(tt.tags, tt.people, tt.title, tt.docTypeNames)
+			got := FilterTags(tt.tags, tt.people, tt.knownNormalized, tt.title, tt.docTypeNames)
 			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("FilterTags(%v, %v, %q, %v) = %v, want %v",
-					tt.tags, tt.people, tt.title, tt.docTypeNames, got, tt.want)
+				t.Errorf("FilterTags(%v, %v, %v, %q, %v) = %v, want %v",
+					tt.tags, tt.people, tt.knownNormalized, tt.title, tt.docTypeNames, got, tt.want)
 			}
 		})
 	}
