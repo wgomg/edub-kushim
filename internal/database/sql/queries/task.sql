@@ -109,13 +109,13 @@ UPDATE task SET
     started_at = CURRENT_TIMESTAMP
 WHERE id = ? AND status = 'pending';
 
--- name: CompleteTask :exec
+-- name: CompleteTask :execrows
 UPDATE task SET
     status = 'completed',
     result = ?,
     completed_at = CURRENT_TIMESTAMP,
     attempts = 0
-WHERE id = ?;
+WHERE id = ? AND status = 'processing';
 
 -- name: FailTask :exec
 UPDATE task SET
@@ -205,3 +205,16 @@ SELECT COUNT(*) FROM task;
 
 -- name: CountTasksByStatus :many
 SELECT status, COUNT(*) as count FROM task GROUP BY status;
+
+-- name: QuarantineStaleProcessingTasks :execrows
+UPDATE task SET
+    status = 'failed',
+    error = 'Max retries exceeded (' || attempts || ')',
+    completed_at = CURRENT_TIMESTAMP
+WHERE status = 'processing' AND attempts >= ? AND started_at < ?;
+
+-- name: ResetStaleProcessingTasks :execrows
+UPDATE task SET
+    status = 'pending',
+    attempts = attempts + 1
+WHERE status = 'processing' AND attempts < ? AND started_at < ?;

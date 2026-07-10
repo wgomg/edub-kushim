@@ -122,6 +122,8 @@ func queueHandler(c *Container, args []string) error {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
+	var lastStaleTaskClaim time.Time
+
 	for {
 		select {
 		case <-ticker.C:
@@ -140,6 +142,13 @@ func queueHandler(c *Container, args []string) error {
 			if c.config.Consumer.Reclaim.Enabled {
 				if err := reclaimStaleBatches(ctx, c.config, client, batchSvc, c.logger); err != nil {
 					c.logger.Error(nil, "stale reclamation: %v", err)
+				}
+				minInterval := max(c.config.Consumer.Reclaim.StaleTaskAfter/10, 60)
+				if time.Since(lastStaleTaskClaim) > time.Duration(minInterval)*time.Second {
+					if err := reclaimStaleTasks(ctx, batchSvc, c.config, c.logger); err != nil {
+						c.logger.Error(nil, "stale task reclamation: %v", err)
+					}
+					lastStaleTaskClaim = time.Now()
 				}
 			}
 			if err := consumeNextQueuedBatch(ctx, client, batchSvc, maxConcurrent, c.logger); err != nil {
@@ -196,6 +205,17 @@ func reclaimStaleBatches(ctx context.Context, cfg *config.Config, client *databa
 		} else {
 			logger.Info(nil, "stale batch %s failed — all tasks quarantined", owner.BatchID)
 		}
+	}
+	return nil
+}
+
+func reclaimStaleTasks(ctx context.Context, batchSvc *service.Batch, cfg *config.Config, logger *utils.Logger) error {
+	count, err := batchSvc.ResetStaleProcessingTasks(ctx, cfg.Consumer.Reclaim.StaleTaskAfter)
+	if err != nil {
+		return fmt.Errorf("reset stale processing tasks: %w", err)
+	}
+	if count > 0 {
+		logger.Info(nil, "reclaimed %d stale processing tasks (age > %ds)", count, cfg.Consumer.Reclaim.StaleTaskAfter)
 	}
 	return nil
 }

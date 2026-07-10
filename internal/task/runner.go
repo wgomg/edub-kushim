@@ -3,7 +3,9 @@ package task
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -49,9 +51,48 @@ func (r *Runner) Next(ctx context.Context, taskType string) error {
 		return nil
 	}
 
-	if err := r.store.CompleteTask(ctx, task.ID, result); err != nil {
-		return fmt.Errorf("complete task %d: %w", task.ID, err)
+	if err := r.completeTaskWithRetry(ctx, task.ID, result); err != nil {
+		// The handler's real work already succeeded.  Marking failed makes the
+		// task visible and retryable rather than stuck in processing forever.
+		failMsg := fmt.Sprintf("complete task failed after retries: %v", err)
+		if failErr := r.store.FailTask(ctx, task.ID, failMsg); failErr != nil {
+			return fmt.Errorf("complete task %d (and fail fallback): %v / %w", task.ID, failErr, err)
+		}
+		r.logger.Error(nil, "task %s completed handler but CompleteTask failed after retries — task failed instead of stuck", task.TaskID)
+		return nil
 	}
 
 	return nil
+}
+
+// completeTaskWithRetry calls CompleteTask with bounded retries and backoff.
+// The failure class is transient write contention (SQLITE_BUSY), so a few
+// retries cover the common case without infinite looping.
+func (r *Runner) completeTaskWithRetry(ctx context.Context, id int64, result json.RawMessage) error {
+	const maxAttempts = 3
+	backoff := 50 * time.Millisecond
+
+	for attempt := 1; ; attempt++ {
+		rows, err := r.store.CompleteTask(ctx, id, result)
+		if err == nil && rows > 0 {
+			return nil
+		}
+		if err == nil {
+			// rows == 0: the task was already transitioned (e.g. by the
+			// stale-task sweep).  The handler's work is done; nothing more
+			// to record.
+			return nil
+		}
+
+		if attempt >= maxAttempts {
+			return err
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(backoff):
+			backoff *= 2
+		}
+	}
 }

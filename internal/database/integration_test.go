@@ -88,7 +88,8 @@ func TestTaskLifecycle(t *testing.T) {
 	task, _ = q.GetTask(ctx, id)
 	assertEqual(t, task.Status, "processing", "processing")
 	result := json.RawMessage(`{"ok":true}`)
-	assertNoError(t, q.CompleteTask(ctx, CompleteTaskParams{ID: id, Result: &result}), "complete")
+	_, err := q.CompleteTask(ctx, CompleteTaskParams{ID: id, Result: &result})
+	assertNoError(t, err, "complete")
 	task, _ = q.GetTask(ctx, id)
 	assertEqual(t, task.Status, "completed", "completed")
 }
@@ -225,7 +226,10 @@ func TestListActivityTimeline(t *testing.T) {
 	})
 	assertNoError(t, err, "create completed task")
 	id1 := getID(t, res)
-	assertNoError(t, q.CompleteTask(ctx, CompleteTaskParams{ID: id1, Result: nil}), "complete task")
+	_, err = q.ClaimTask(ctx, id1)
+	assertNoError(t, err, "claim task 1")
+	_, err = q.CompleteTask(ctx, CompleteTaskParams{ID: id1, Result: nil})
+	assertNoError(t, err, "complete task")
 
 	taskID2 := "act-task-failed"
 	res2, err := q.CreateTask(ctx, CreateTaskParams{
@@ -771,7 +775,10 @@ func TestTaskHealthQueries(t *testing.T) {
 		})
 		assertNoError(t, err, "create completed task")
 		id1 := getID(t, r1)
-		assertNoError(t, q.CompleteTask(ctx, CompleteTaskParams{ID: id1, Result: nil}), "complete")
+		_, err = q.ClaimTask(ctx, id1)
+		assertNoError(t, err, "claim")
+		_, err = q.CompleteTask(ctx, CompleteTaskParams{ID: id1, Result: nil})
+		assertNoError(t, err, "complete")
 
 		r2, err := q.CreateTask(ctx, CreateTaskParams{
 			TaskID: "th-failed", TaskType: "consume", Status: "pending",

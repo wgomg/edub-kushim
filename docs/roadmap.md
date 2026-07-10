@@ -84,6 +84,9 @@
 - Batch cancellation: cancels pending tasks, sends SIGTERM, marks in-flight as cancelled
 - Retry support for failed tasks
 - Dedup prevention via unique partial index on active tasks (`task_type`, `dedup_key`)
+- **Runner retry + FailTask fallback**: `CompleteTask` retried 3× with exponential backoff on transient errors (SQLITE_BUSY); all retries exhausted → task is `failed` rather than stuck in `processing`
+- **`CompleteTask` status guard**: `UPDATE ... WHERE id = ? AND status = 'processing'` prevents stale completions from racing with the reclaim sweep
+- **Age-based stale task sweep**: generic reclaim in the queue daemon resets `processing` tasks older than `consumer.reclaim.stale_task_after` (default 600s) to `pending`/`failed`, independent of batch ownership
 
 ### API Endpoints
 

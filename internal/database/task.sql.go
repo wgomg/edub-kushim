@@ -52,13 +52,13 @@ func (q *Queries) ClaimTask(ctx context.Context, id int64) (int64, error) {
 	return result.RowsAffected()
 }
 
-const completeTask = `-- name: CompleteTask :exec
+const completeTask = `-- name: CompleteTask :execrows
 UPDATE task SET
     status = 'completed',
     result = ?,
     completed_at = CURRENT_TIMESTAMP,
     attempts = 0
-WHERE id = ?
+WHERE id = ? AND status = 'processing'
 `
 
 type CompleteTaskParams struct {
@@ -66,9 +66,12 @@ type CompleteTaskParams struct {
 	ID     int64
 }
 
-func (q *Queries) CompleteTask(ctx context.Context, arg CompleteTaskParams) error {
-	_, err := q.db.ExecContext(ctx, completeTask, arg.Result, arg.ID)
-	return err
+func (q *Queries) CompleteTask(ctx context.Context, arg CompleteTaskParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, completeTask, arg.Result, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const countAllTasks = `-- name: CountAllTasks :one
@@ -1229,6 +1232,47 @@ func (q *Queries) ListTasksByType(ctx context.Context, arg ListTasksByTypeParams
 		return nil, err
 	}
 	return items, nil
+}
+
+const quarantineStaleProcessingTasks = `-- name: QuarantineStaleProcessingTasks :execrows
+UPDATE task SET
+    status = 'failed',
+    error = 'Max retries exceeded (' || attempts || ')',
+    completed_at = CURRENT_TIMESTAMP
+WHERE status = 'processing' AND attempts >= ? AND started_at < ?
+`
+
+type QuarantineStaleProcessingTasksParams struct {
+	Attempts  int64
+	StartedAt sql.NullTime
+}
+
+func (q *Queries) QuarantineStaleProcessingTasks(ctx context.Context, arg QuarantineStaleProcessingTasksParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, quarantineStaleProcessingTasks, arg.Attempts, arg.StartedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const resetStaleProcessingTasks = `-- name: ResetStaleProcessingTasks :execrows
+UPDATE task SET
+    status = 'pending',
+    attempts = attempts + 1
+WHERE status = 'processing' AND attempts < ? AND started_at < ?
+`
+
+type ResetStaleProcessingTasksParams struct {
+	Attempts  int64
+	StartedAt sql.NullTime
+}
+
+func (q *Queries) ResetStaleProcessingTasks(ctx context.Context, arg ResetStaleProcessingTasksParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, resetStaleProcessingTasks, arg.Attempts, arg.StartedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const retryFailedTasksByBatch = `-- name: RetryFailedTasksByBatch :execrows

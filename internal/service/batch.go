@@ -414,6 +414,39 @@ func (s *Batch) ResetProcessingTasksByBatch(ctx context.Context, batchID string)
 	return quarantined + reset, nil
 }
 
+func (s *Batch) ResetStaleProcessingTasks(ctx context.Context, staleAfterSeconds int64) (int64, error) {
+	tx, err := s.client.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, errs.FromDB(err, "begin transaction for reset stale processing tasks")
+	}
+	defer tx.Rollback()
+
+	cutoff := time.Now().Add(-time.Duration(staleAfterSeconds) * time.Second)
+	txQ := s.client.Queries.WithTx(tx)
+
+	quarantined, err := txQ.QuarantineStaleProcessingTasks(ctx, database.QuarantineStaleProcessingTasksParams{
+		Attempts:  s.maxRetries,
+		StartedAt: sql.NullTime{Time: cutoff, Valid: true},
+	})
+	if err != nil {
+		return 0, errs.FromDB(err, "quarantine stale processing tasks")
+	}
+
+	reset, err := txQ.ResetStaleProcessingTasks(ctx, database.ResetStaleProcessingTasksParams{
+		Attempts:  s.maxRetries,
+		StartedAt: sql.NullTime{Time: cutoff, Valid: true},
+	})
+	if err != nil {
+		return 0, errs.FromDB(err, "reset stale processing tasks")
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, errs.FromDB(err, "commit transaction for reset stale processing tasks")
+	}
+
+	return quarantined + reset, nil
+}
+
 func (s *Batch) batchOwnerState(ctx context.Context, batchID string) (task.OwnerState, int64, error) {
 	bo, err := s.queries.GetBatchOwner(ctx, batchID)
 	if err != nil {

@@ -670,7 +670,10 @@ func TestGetDashboardActivity(t *testing.T) {
 	})
 	testutil.AssertNoError(t, err, "create task 1")
 	task1ID, _ := res.LastInsertId()
-	testutil.AssertNoError(t, env.client.CompleteTask(ctx, database.CompleteTaskParams{ID: task1ID, Result: nil}), "complete task 1")
+	_, ctErr := env.client.ClaimTask(ctx, task1ID)
+	testutil.AssertNoError(t, ctErr, "claim task 1")
+	_, ctErr = env.client.CompleteTask(ctx, database.CompleteTaskParams{ID: task1ID, Result: nil})
+	testutil.AssertNoError(t, ctErr, "complete task 1")
 
 	res2, err := env.client.CreateTask(ctx, database.CreateTaskParams{
 		TaskID: "dash-act-task-2", TaskType: "consume", Status: "pending",
@@ -869,7 +872,10 @@ func TestGetDashboardProcessingHealth(t *testing.T) {
 	})
 	testutil.AssertNoError(t, err, "create completed task")
 	task1ID, _ := res.LastInsertId()
-	testutil.AssertNoError(t, env.client.CompleteTask(ctx, database.CompleteTaskParams{ID: task1ID, Result: nil}), "complete")
+	_, ctErr := env.client.ClaimTask(ctx, task1ID)
+	testutil.AssertNoError(t, ctErr, "claim")
+	_, ctErr = env.client.CompleteTask(ctx, database.CompleteTaskParams{ID: task1ID, Result: nil})
+	testutil.AssertNoError(t, ctErr, "complete")
 
 	res2, err := env.client.CreateTask(ctx, database.CreateTaskParams{
 		TaskID: "ph-failed", TaskType: "consume", Status: "pending",

@@ -117,7 +117,7 @@ func TestStoreClaimAndComplete(t *testing.T) {
 	testutil.AssertNoError(t, err, "claim")
 	testutil.AssertEqual(t, claimed.Status, "processing", "after claim")
 
-	err = store.CompleteTask(ctx, claimed.ID, json.RawMessage(`{"ok":true}`))
+	_, err = store.CompleteTask(ctx, claimed.ID, json.RawMessage(`{"ok":true}`))
 	testutil.AssertNoError(t, err, "complete")
 
 	task, _ := store.GetTask(ctx, claimed.ID)

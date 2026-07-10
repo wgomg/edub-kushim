@@ -89,7 +89,7 @@ func (s *Store) GetTaskByTaskID(ctx context.Context, taskID string) (database.Ta
 	return s.queries.GetTaskByTaskID(ctx, taskID)
 }
 
-func (s *Store) CompleteTask(ctx context.Context, id int64, result json.RawMessage) error {
+func (s *Store) CompleteTask(ctx context.Context, id int64, result json.RawMessage) (int64, error) {
 	return s.queries.CompleteTask(ctx, database.CompleteTaskParams{
 		ID:     id,
 		Result: &result,

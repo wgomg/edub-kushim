@@ -70,8 +70,9 @@ type PollingConfigResponse struct {
 }
 
 type ReclaimConfigResponse struct {
-	Enabled    bool `json:"enabled"`
-	MaxRetries int  `json:"max_retries"`
+	Enabled        bool  `json:"enabled"`
+	MaxRetries     int   `json:"max_retries"`
+	StaleTaskAfter int64 `json:"stale_task_after"`
 }
 
 type ConsumerConfigResponse struct {
@@ -168,6 +169,7 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	}
 	resp.Consumer.Reclaim.Enabled = cfg.Consumer.Reclaim.Enabled
 	resp.Consumer.Reclaim.MaxRetries = cfg.Consumer.Reclaim.MaxRetries
+	resp.Consumer.Reclaim.StaleTaskAfter = cfg.Consumer.Reclaim.StaleTaskAfter
 	resp.Consumer.TextExtractor.Engine = cfg.Consumer.TextExtractor.Engine
 	resp.Consumer.TextExtractor.Timeout = cfg.Consumer.TextExtractor.Timeout
 	resp.Consumer.PdfOptimizer.Engine = cfg.Consumer.PdfOptimizer.Engine

@@ -41,7 +41,7 @@
     - `ClaimNextPending(ctx, taskType) (database.Task, error)`
     - `GetTask(ctx, id) (database.Task, error)`
     - `GetTaskByTaskID(ctx, taskID) (database.Task, error)`
-    - `CompleteTask(ctx, id, result) error`
+    - `CompleteTask(ctx, id, result) (int64, error)` — returns rows affected; requires `status = 'processing'` (optimistic concurrency guard)
     - `FailTask(ctx, id, errMsg) error`
     - `SetPending(ctx, id, payload) error` — Wraps `SetEnrichTaskPending`; matches both `waiting` and `discarded` enrich tasks
     - `Discard(ctx, id, errMsg) error` — Wraps `DiscardEnrichTask`; only matches `waiting` enrich tasks (idempotent on already-discarded)
@@ -63,7 +63,8 @@
 - `Runner` — owns `Store` and `Registry`; implements `pool.Runner`
   - **Methods**:
     - `NewRunner(store, registry, logger) *Runner`
-    - `Next(ctx, taskType) error` — generic poll loop: claim next pending task, get handler, execute, complete/fail
+    - `Next(ctx, taskType) error` — generic poll loop: claim next pending task, get handler, execute, complete (with retry+FailTask fallback)
+    - `completeTaskWithRetry(ctx, id, result) error` — private: 3× exponential backoff on `CompleteTask`, handles `rows == 0` (task already transitioned by stale-task sweep)
 
 ## `dispatcher.go`
 
