@@ -62,12 +62,12 @@
       1. Dual text reduction: LLM-targeted and tag-matching-targeted (via `targetWordCount`)
       2. Fetch doc types, people types from DB; all tags via `services.Tag.ListAll`
       3. Semantic tag matching: passes tag names to `Runner.MatchTags`. In `kushim`, embeddings are resolved via the local Hugot store (cache-miss encoded on the fly). In `edub`, the `MatcherClient` forwards requests over the Unix socket to the external matcher process. Falls back to all tags on failure.
-       4. LLM content analysis (title, doc type, tags, people, language)
-       5. **Tag normalization** — LLM-extracted tags are run through `NormalizeTags` (accent-folds accented characters to ASCII base letters, hyphens/underscores→spaces, strips non-alpha, collapses whitespace, deduplicates)
+       4. LLM content analysis (title, doc type, tags, people, language). If the result is entirely empty (all fields blank/default), enrichment retries once; if still empty, the task is marked `failed` for visibility and manual retry.
+        5. **Tag normalization** — LLM-extracted tags are run through `NormalizeTags` (accent-folds accented characters to ASCII base letters, hyphens/underscores→spaces, strips non-alpha, collapses whitespace, deduplicates)
        6. **Tag filtering** — `FilterTags` drops deterministic garbage tags: tags with >3 tokens, tags that share any token with a person's name, and tags whose token set is a subset of the title's token set. Caps survivors at `maxTags` (5).
        7. Post-LLM tag consolidation via `services.Tag.Consolidate` (delegates to `Embedder.Consolidate` over the matcher interface)
        8. New tags created via a single batch call `services.Tag.Create(ctx, analysis.Tags)` — returns per-index results with `Created`/`Conflict`/`Invalid` statuses. The service delegates store management to the matcher via `AddToStore`.
-       9. Update document metadata (title, doc_type, language)
+        9. Update document metadata — title is first rune-capped at 127 characters via `Truncate` to enforce the server-side limit (independent of LLM prompt compliance), then persisted alongside doc_type and language
         10. Auto-detect OCR language: `ensureOCRLanguage` cross-checks LLM-detected language against configured OCR languages. If missing and the engine is gosseract, the tessdata download runs first (inside a background goroutine). The language is only appended to the in-memory config list and persisted to `config.yaml` on download success. A failed download leaves config untouched, so the next document detecting the same language retries the download naturally. A `sync.Mutex` protects the shared `Languages` slice against concurrent mutations from multiple enrich workers. For non-gosseract engines, the language is appended and persisted immediately (no tessdata needed).
        11. Manage document_tag junction (clear + add)
        12. Manage document_people junction (clear + add) — for each person:

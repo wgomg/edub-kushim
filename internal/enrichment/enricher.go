@@ -111,6 +111,17 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 		return nil, fmt.Errorf("failed to analyze content: %w", err)
 	}
 
+	if isEmptyAnalysis(analysis) {
+		e.logger.Info(&logId, "empty analysis result—retrying once")
+		analysis, err = e.runner.AnalyzeContent(ctx, llmContent.Text, docTypes, peopleTypes, tagSuggestions)
+		if err != nil {
+			return nil, fmt.Errorf("failed to analyze content on retry: %w", err)
+		}
+		if isEmptyAnalysis(analysis) {
+			return nil, fmt.Errorf("analysis returned empty result after retry")
+		}
+	}
+
 	analysis.Tags = contentanalyzer.NormalizeTags(analysis.Tags)
 
 	for i, p := range analysis.People {
@@ -140,6 +151,8 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 	e.logger.Debug(&logId, "prompt: %s", analysis.Prompt)
 	e.logger.Info(&logId, "analysis result: title=%q type=%q tags=%v people=%v lang=%q stats=%s",
 		analysis.Title, analysis.DocType, analysis.Tags, analysis.People, analysis.Language, statsStr)
+
+	analysis.Title = utils.Truncate(analysis.Title, 127)
 
 	docTypeMap := make(map[string]int64, len(docTypes))
 	for _, dt := range docTypes {
@@ -328,6 +341,10 @@ func canonicalPersonName(p contentanalyzer.PeopleResult) (canonical, native stri
 	// Fallback: transliterate non-Latin script to ASCII
 	romanized := anyascii.Transliterate(raw)
 	return romanized, raw
+}
+
+func isEmptyAnalysis(a *tools.ContentAnalysisResult) bool {
+	return a.Title == "" && a.DocType == "" && len(a.Tags) == 0 && len(a.People) == 0 && a.Language == ""
 }
 
 func (e *Enricher) ensureOCRLanguage(ctx context.Context, detectedLang string) {

@@ -60,6 +60,8 @@
 - Seeded document types (`sql/seed-document-types.sql`)
 - Seeded people types (`sql/seed-people-types.sql`)
 - Token usage stats and prompt logging
+- **Server-side title enforcement** — `analysis.Title` rune-capped at 127 via `utils.Truncate` before persistence, preventing degenerate LLM responses from filling the DB with multi-thousand-char titles
+- **Empty-analysis soft retry** — an entirely empty LLM analysis (blank title/type/language, empty tags/people) triggers one automatic retry; if still empty, the enrich task fails cleanly for visibility and manual retry instead of storing empty metadata
 
 ### Search & Retrieval
 

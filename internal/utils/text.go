@@ -34,11 +34,13 @@ func Truncate(s string, maxLength int) string {
 		return defaultString
 	}
 
-	if len(s) <= maxLength {
+	runes := []rune(s)
+	if len(runes) <= maxLength {
 		return s
 	}
 
-	trunc := (s)[:maxLength]
+	trunc := string(runes[:maxLength])
+	trunc = strings.TrimRight(trunc, " \t\n\r")
 	return trunc
 }
 
