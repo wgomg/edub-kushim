@@ -69,6 +69,23 @@ func (q *Queries) GetPeopleByName(ctx context.Context, name string) (People, err
 	return i, err
 }
 
+const getPeopleByNormalizedName = `-- name: GetPeopleByNormalizedName :one
+SELECT id, name, name_native, normalized_name, created_at FROM people WHERE normalized_name = ?
+`
+
+func (q *Queries) GetPeopleByNormalizedName(ctx context.Context, normalizedName string) (People, error) {
+	row := q.db.QueryRowContext(ctx, getPeopleByNormalizedName, normalizedName)
+	var i People
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.NameNative,
+		&i.NormalizedName,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const listAllPeople = `-- name: ListAllPeople :many
 SELECT id, name, name_native, normalized_name, created_at FROM people ORDER BY created_at DESC
 `

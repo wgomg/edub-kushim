@@ -201,7 +201,17 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 		}
 		peopleMap[key] = p.ID
 	}
-	var peopleIDs []int64
+	peopleTypeMap := make(map[string]int64, len(peopleTypes))
+	for _, pt := range peopleTypes {
+		peopleTypeMap[pt.Name] = pt.ID
+	}
+
+	type docPerson struct {
+		peopleID int64
+		typeID   int64
+	}
+
+	var docPeople []docPerson
 	for _, p := range analysis.People {
 		canonicalName, nameNative := canonicalPersonName(p)
 
@@ -222,7 +232,35 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 				continue
 			}
 			e.logger.Debug(&logId, "people created %s", canonicalName)
-			id, _ = result.LastInsertId()
+
+			rows, err := result.RowsAffected()
+			if err != nil {
+				e.logger.Error(&logId, "rows affected for %q: %v", canonicalName, err)
+				continue
+			}
+
+			if rows == 0 {
+				existing, err := e.queries.GetPeopleByNormalizedName(ctx, normalized)
+				if err != nil {
+					e.logger.Error(&logId, "get people by normalized name after conflict %q: %v", canonicalName, err)
+					continue
+				}
+				id = existing.ID
+				if nameNative != "" {
+					if err := e.queries.UpdatePeopleNative(ctx, database.UpdatePeopleNativeParams{
+						NameNative: sql.NullString{String: nameNative, Valid: true},
+						ID:         id,
+					}); err != nil {
+						e.logger.Debug(&logId, "update people native name %q: %v", nameNative, err)
+					}
+				}
+			} else {
+				id, err = result.LastInsertId()
+				if err != nil {
+					e.logger.Error(&logId, "last insert id for %q: %v", canonicalName, err)
+					continue
+				}
+			}
 			peopleMap[normalized] = id
 		} else if nameNative != "" {
 			if err := e.queries.UpdatePeopleNative(ctx, database.UpdatePeopleNativeParams{
@@ -232,29 +270,23 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 				e.logger.Debug(&logId, "update people native name %q: %v", nameNative, err)
 			}
 		}
-		peopleIDs = append(peopleIDs, id)
+
+		typeName := p.Type
+		if _, ok := peopleTypeMap[typeName]; !ok {
+			typeName = "unknown"
+		}
+		docPeople = append(docPeople, docPerson{peopleID: id, typeID: peopleTypeMap[typeName]})
 	}
 
 	if err := e.queries.ClearDocumentPeople(ctx, document.ID); err != nil {
 		return nil, fmt.Errorf("clear document people: %w", err)
 	}
 
-	peopleTypeMap := make(map[string]int64, len(peopleTypes))
-	for _, pt := range peopleTypes {
-		peopleTypeMap[pt.Name] = pt.ID
-	}
-	for i, p := range analysis.People {
-		if _, ok := peopleTypeMap[p.Type]; !ok {
-			analysis.People[i].Type = "unknown"
-		}
-	}
-	for i, peopleID := range peopleIDs {
-		typeName := analysis.People[i].Type
-		typeID := peopleTypeMap[typeName]
+	for _, dp := range docPeople {
 		if err := e.queries.AddDocumentPeople(ctx, database.AddDocumentPeopleParams{
 			DocumentID:   document.ID,
-			PeopleID:     peopleID,
-			PeopleTypeID: typeID,
+			PeopleID:     dp.peopleID,
+			PeopleTypeID: dp.typeID,
 		}); err != nil {
 			e.logger.Error(&logId, "add document people: %w", err)
 		}

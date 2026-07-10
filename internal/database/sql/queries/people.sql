@@ -25,6 +25,9 @@ WHERE id = ? AND name_native IS NULL;
 -- name: GetPeopleByName :one
 SELECT * FROM people WHERE name = ?;
 
+-- name: GetPeopleByNormalizedName :one
+SELECT * FROM people WHERE normalized_name = ?;
+
 -- name: SearchPeopleByName :many
 SELECT * FROM people WHERE name LIKE ? ORDER BY name ASC LIMIT ?;
 
