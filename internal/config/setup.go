@@ -78,6 +78,10 @@ func Bootstrap(configDir string) (*Config, error) {
 		db.Close()
 		return nil, fmt.Errorf("enable foreign keys: %w", err)
 	}
+	if _, err := db.Exec(fmt.Sprintf("PRAGMA busy_timeout = %d", database.BusyTimeoutMs)); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("set busy timeout: %w", err)
+	}
 	if err := database.InitializeSchema(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("init schema: %w", err)

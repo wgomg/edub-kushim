@@ -90,6 +90,9 @@ func (s *Server) bootstrap(configDir string) (*config.Config, *database.Client, 
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("open database: %w", err)
 	}
+	if _, err := db.Exec(fmt.Sprintf("PRAGMA busy_timeout = %d", database.BusyTimeoutMs)); err != nil {
+		return nil, nil, nil, fmt.Errorf("set busy timeout: %w", err)
+	}
 	s.db = db
 
 	client := database.NewClient(db)

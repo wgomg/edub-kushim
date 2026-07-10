@@ -90,6 +90,14 @@ func IsForeignKey(err error) bool {
 	return false
 }
 
+func IsBusy(err error) bool {
+	var sqliteErr *sqlite.Error
+	if errors.As(err, &sqliteErr) {
+		return sqliteErr.Code()&0xff == sqlite3.SQLITE_BUSY || sqliteErr.Code()&0xff == sqlite3.SQLITE_LOCKED
+	}
+	return false
+}
+
 func FromDB(err error, op string) error {
 	if err == nil {
 		return nil

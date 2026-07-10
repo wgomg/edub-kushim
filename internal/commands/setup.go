@@ -244,6 +244,10 @@ Flags:
 		db.Close()
 		return fmt.Errorf("enable foreign keys: %w", err)
 	}
+	if _, err := db.Exec(fmt.Sprintf("PRAGMA busy_timeout = %d", database.BusyTimeoutMs)); err != nil {
+		db.Close()
+		return fmt.Errorf("set busy timeout: %w", err)
+	}
 
 	if resetDb {
 		logger.Info(nil, "resetting database...")
@@ -324,6 +328,9 @@ Flags:
 		return fmt.Errorf("open database: %w", err)
 	}
 	defer db.Close()
+	if _, err := db.Exec(fmt.Sprintf("PRAGMA busy_timeout = %d", database.BusyTimeoutMs)); err != nil {
+		return fmt.Errorf("set busy timeout: %w", err)
+	}
 
 	client := database.NewClient(db)
 	userSvc := service.NewUser(client.Queries)

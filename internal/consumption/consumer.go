@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/pdfoptimizer"
@@ -389,17 +390,40 @@ func QuarantineFailedFiles(ctx context.Context, queries *database.Queries, stora
 		}
 
 		if p.OnCompleted != "" {
-			if _, err := queries.DiscardEnrichTaskByTaskID(ctx, database.DiscardEnrichTaskByTaskIDParams{
-				TaskID: p.OnCompleted,
-				Error:  sql.NullString{String: "parent task quarantined", Valid: true},
-			}); err != nil {
+			if err := discardEnrichTaskWithRetry(ctx, queries, p.OnCompleted); err != nil {
 				if firstErr == nil {
-					firstErr = fmt.Errorf("discard enrich task %s: %w", p.OnCompleted, err)
+					firstErr = err
 				}
 			}
 		}
 	}
 	return firstErr
+}
+
+func discardEnrichTaskWithRetry(ctx context.Context, queries *database.Queries, taskID string) error {
+	const maxAttempts = 3
+	backoff := 50 * time.Millisecond
+
+	for attempt := 1; ; attempt++ {
+		_, err := queries.DiscardEnrichTaskByTaskID(ctx, database.DiscardEnrichTaskByTaskIDParams{
+			TaskID: taskID,
+			Error:  sql.NullString{String: "parent task quarantined", Valid: true},
+		})
+		if err == nil {
+			return nil
+		}
+
+		if attempt >= maxAttempts || !errs.IsBusy(err) {
+			return fmt.Errorf("discard enrich task %s: %w", taskID, err)
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(backoff):
+			backoff *= 2
+		}
+	}
 }
 
 func (c *Consumer) isDuplicate(ctx context.Context, path string) (bool, error) {

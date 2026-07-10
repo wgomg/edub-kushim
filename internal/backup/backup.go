@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/version"
 	_ "modernc.org/sqlite"
 )
@@ -52,6 +53,13 @@ func Create(ctx context.Context, dbPath, backupDir, configPath, storageDir strin
 
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
+
+	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
+		return nil, fmt.Errorf("enable foreign keys: %w", err)
+	}
+	if _, err := db.Exec(fmt.Sprintf("PRAGMA busy_timeout = %d", database.BusyTimeoutMs)); err != nil {
+		return nil, fmt.Errorf("set busy timeout: %w", err)
+	}
 
 	if _, err := db.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
 		return nil, fmt.Errorf("wal checkpoint: %w", err)

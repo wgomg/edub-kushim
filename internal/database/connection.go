@@ -10,6 +10,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+const BusyTimeoutMs = 5000
+
 func NewSQLiteDB(path, name string) (*sql.DB, error) {
 	if err := os.MkdirAll(path, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create data directory: %w", err)
@@ -36,6 +38,10 @@ func NewSQLiteDB(path, name string) (*sql.DB, error) {
 
 	if _, err := db.Exec("PRAGMA synchronous = NORMAL"); err != nil {
 		log.Printf("Warning: failed to set synchronous mode: %v", err)
+	}
+
+	if _, err := db.Exec(fmt.Sprintf("PRAGMA busy_timeout = %d", BusyTimeoutMs)); err != nil {
+		log.Printf("Warning: failed to set busy timeout: %v", err)
 	}
 
 	if err := db.Ping(); err != nil {
