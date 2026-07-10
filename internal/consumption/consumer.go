@@ -125,9 +125,6 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 		return file, err
 	}
 
-	txCtx, txCancel := context.WithTimeout(ctx, 5*time.Second)
-	defer txCancel()
-
 	datePath := filepath.Join(
 		strconv.Itoa(file.Date.Year()),
 		fmt.Sprintf("%02d", file.Date.Month()),
@@ -149,79 +146,6 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 	)
 	file.StorageOriginalPath = &storeOriginalPath
 
-	tx, err := 	c.client.BeginTx(txCtx, nil)
-	if err != nil {
-		MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
-		return file, fmt.Errorf("failed to begin database transaction: %w", err)
-	}
-	defer func() {
-		if err != nil {
-			tx.Rollback()
-			if file.StorageProcessedPath != nil && strings.HasSuffix(*file.StorageProcessedPath, ".pdf") {
-				if removeErr := RemoveFile(*file.StorageProcessedPath); removeErr != nil {
-					c.logger.Error(&documentID, "failed to clean up processed storage file: %v", removeErr)
-				}
-			}
-			if file.StorageOriginalPath != nil && strings.HasSuffix(*file.StorageOriginalPath, ".pdf") {
-				if removeErr := RemoveFile(*file.StorageOriginalPath); removeErr != nil {
-					c.logger.Error(&documentID, "failed to clean up original storage file: %v", removeErr)
-				}
-			}
-		}
-
-		if file.OCRTmpPath != nil {
-			if err := CleanUp(*file.OCRTmpPath); err != nil {
-				c.logger.Debug(&documentID, "failed to clean up ocr temp file: %v", err)
-			}
-		}
-
-		if file.OptimizedPdfTmpPath != nil {
-			if err := CleanUp(*file.OptimizedPdfTmpPath); err != nil {
-				c.logger.Debug(&documentID, "failed to clean up optimized temp file: %v", err)
-			}
-		}
-	}()
-
-	// timestamp := time.Now().UnixNano()
-	// uniqueSeed := fmt.Sprintf("%s:%d", file.OriginalPath, timestamp)
-
-	// md5Hash := fmt.Sprintf("%x", md5.Sum([]byte(uniqueSeed)))
-	// sha512Hash := fmt.Sprintf("%x", sha512.Sum512([]byte(uniqueSeed)))
-
-	// file.MD5Checksum = md5Hash
-	// file.SHA512Checksum = sha512Hash
-
-	tq := c.client.WithTx(tx)
-	result, err := tq.CreateDocument(txCtx, database.CreateDocumentParams{
-		DocumentID:     documentID,
-		Title:          file.Name,
-		Md5Checksum:    file.MD5Checksum,
-		Sha512Checksum: file.SHA512Checksum,
-		MimeType:       file.MimeType,
-		FileSize:       file.FileSize,
-		OriginalPath:   "",
-		StoragePath:    *file.StorageProcessedPath,
-		TextContent:    file.Text,
-		PageCount:      int64(file.PageCount),
-		WordCount:      int64(len(strings.Fields(file.Text.String))),
-		CharCount:      int64(utf8.RuneCountInString(file.Text.String)),
-	})
-	if err != nil {
-		MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
-		return file, fmt.Errorf("failed to create document record: %w", err)
-	}
-
-	documentDbId, err := result.LastInsertId()
-	if err != nil {
-		MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
-		return file, fmt.Errorf("failed to get document ID: %w", err)
-	}
-
-	c.logger.Debug(&documentID, "Created document with ID: %d", documentDbId)
-
-	file.DocumentID = documentID
-	file.DocumentDbId = sql.NullInt64{Int64: documentDbId, Valid: true}
-
 	originalFileName := documentID + ".pdf"
 
 	fullOriginalPath := filepath.Join(
@@ -235,19 +159,6 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 		originalFileName,
 	)
 	file.StorageProcessedPath = &fullStoragePath
-
-	c.logger.Debug(&documentID, "Original path: %s", *file.StorageOriginalPath)
-	c.logger.Debug(&documentID, "Processed path: %s", *file.StorageProcessedPath)
-
-	err = tq.UpdateDocumentPaths(txCtx, database.UpdateDocumentPathsParams{
-		OriginalPath: *file.StorageOriginalPath,
-		StoragePath:  *file.StorageProcessedPath,
-		DocumentID:   documentID,
-	})
-	if err != nil {
-		MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
-		return file, fmt.Errorf("failed to update storage path: %w", err)
-	}
 
 	if file.OCRTmpPath != nil {
 		c.logger.Debug(
@@ -285,6 +196,9 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 		c.logger.Debug(&documentID,
 			"Moving optimized file from %s to %s", *file.OptimizedPdfTmpPath, *file.StorageProcessedPath)
 		if err := MoveFile(*file.OptimizedPdfTmpPath, *file.StorageProcessedPath); err != nil {
+			if removeErr := RemoveFile(*file.StorageOriginalPath); removeErr != nil {
+				c.logger.Error(&documentID, "failed to clean up original file post-move error: %v", removeErr)
+			}
 			MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 			return file, fmt.Errorf("failed to move optimized file: %w", err)
 		}
@@ -299,9 +213,95 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 		c.logger.Debug(&documentID,
 			"Copying original file from %s to %s", file.OriginalPath, *file.StorageOriginalPath)
 		if err := CopyFile(file.OriginalPath, *file.StorageOriginalPath); err != nil {
+			if removeErr := RemoveFile(*file.StorageProcessedPath); removeErr != nil {
+				c.logger.Error(&documentID, "failed to clean up processed file post-copy error: %v", removeErr)
+			}
 			MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 			return file, fmt.Errorf("failed to copy original file to originals storage: %w", err)
 		}
+	}
+
+	txCtx, txCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer txCancel()
+
+	tx, err := 	c.client.BeginTx(txCtx, nil)
+	if err != nil {
+		if removeErr := RemoveFile(*file.StorageProcessedPath); removeErr != nil {
+			c.logger.Error(&documentID, "failed to clean up processed file: %v", removeErr)
+		}
+		if removeErr := RemoveFile(*file.StorageOriginalPath); removeErr != nil {
+			c.logger.Error(&documentID, "failed to clean up original file: %v", removeErr)
+		}
+		MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
+		return file, fmt.Errorf("failed to begin database transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			tx.Rollback()
+			if file.StorageProcessedPath != nil && strings.HasSuffix(*file.StorageProcessedPath, ".pdf") {
+				if removeErr := RemoveFile(*file.StorageProcessedPath); removeErr != nil {
+					c.logger.Error(&documentID, "failed to clean up processed storage file: %v", removeErr)
+				}
+			}
+			if file.StorageOriginalPath != nil && strings.HasSuffix(*file.StorageOriginalPath, ".pdf") {
+				if removeErr := RemoveFile(*file.StorageOriginalPath); removeErr != nil {
+					c.logger.Error(&documentID, "failed to clean up original storage file: %v", removeErr)
+				}
+			}
+		}
+
+		if file.OCRTmpPath != nil {
+			if err := CleanUp(*file.OCRTmpPath); err != nil {
+				c.logger.Debug(&documentID, "failed to clean up ocr temp file: %v", err)
+			}
+		}
+
+		if file.OptimizedPdfTmpPath != nil {
+			if err := CleanUp(*file.OptimizedPdfTmpPath); err != nil {
+				c.logger.Debug(&documentID, "failed to clean up optimized temp file: %v", err)
+			}
+		}
+	}()
+
+	tq := c.client.WithTx(tx)
+	result, err := tq.CreateDocument(txCtx, database.CreateDocumentParams{
+		DocumentID:     documentID,
+		Title:          file.Name,
+		Md5Checksum:    file.MD5Checksum,
+		Sha512Checksum: file.SHA512Checksum,
+		MimeType:       file.MimeType,
+		FileSize:       file.FileSize,
+		OriginalPath:   "",
+		StoragePath:    *file.StorageProcessedPath,
+		TextContent:    file.Text,
+		PageCount:      int64(file.PageCount),
+		WordCount:      int64(len(strings.Fields(file.Text.String))),
+		CharCount:      int64(utf8.RuneCountInString(file.Text.String)),
+	})
+	if err != nil {
+		MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
+		return file, fmt.Errorf("failed to create document record: %w", err)
+	}
+
+	documentDbId, err := result.LastInsertId()
+	if err != nil {
+		MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
+		return file, fmt.Errorf("failed to get document ID: %w", err)
+	}
+
+	c.logger.Debug(&documentID, "Created document with ID: %d", documentDbId)
+
+	file.DocumentID = documentID
+	file.DocumentDbId = sql.NullInt64{Int64: documentDbId, Valid: true}
+
+	err = tq.UpdateDocumentPaths(txCtx, database.UpdateDocumentPathsParams{
+		OriginalPath: *file.StorageOriginalPath,
+		StoragePath:  *file.StorageProcessedPath,
+		DocumentID:   documentID,
+	})
+	if err != nil {
+		MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
+		return file, fmt.Errorf("failed to update storage path: %w", err)
 	}
 
 	c.logger.Debug(&documentID, "Committing transaction")
@@ -311,7 +311,14 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 		if removeErr := RemoveFile(*file.StorageProcessedPath); removeErr != nil {
 			c.logger.Error(
 				&documentID,
-				"Failed to rollback original file move after commit failure: %v",
+				"Failed to rollback processed file after commit failure: %v",
+				removeErr,
+			)
+		}
+		if removeErr := RemoveFile(*file.StorageOriginalPath); removeErr != nil {
+			c.logger.Error(
+				&documentID,
+				"Failed to rollback original file after commit failure: %v",
 				removeErr,
 			)
 		}

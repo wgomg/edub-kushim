@@ -140,20 +140,31 @@ OCRs from PNG, and builds a searchable PDF with `go‑pdf/fpdf` using
 
 Document record created via `CreateDocument` with a generated `document_id` UUID,
 auto-increment ID obtained from `LastInsertId()`, date‑based storage paths
-generated, paths updated via `UpdateDocumentPaths`. All wrapped in a database
-transaction with rollback on file‑operation failure. The UUID serves as the
-stable external identifier for the API, while the auto-increment ID is used
-for internal storage paths.
+generated, paths updated via `UpdateDocumentPaths`. The transaction is
+DB‑only (fast writes), bounded by a 5‑second context timeout.
 
-### 5. File Movement
+The UUID serves as the stable external identifier for the API, while the
+auto-increment ID is used for internal storage paths.
 
-Three‑way branch:
+### 5. File Movement (pre‑transaction)
+
+File I/O runs **before** the DB transaction to avoid timeouts on slow storage.
+If file I/O fails, any partially‑written storage files are cleaned up and the
+original is quarantined — no DB row is created. Three‑way branch:
 
 - **OCR case**: Move OCR temp file → processed storage, copy original → original storage.
 - **Optimized text case**: Copy original → original storage, move optimized file → processed storage.
 - **Unoptimized text case** (optimization failed or skipped): Copy original → both processed and original storage.
 
-### 6. FTS Indexing
+### 6. Transaction and Cleanup
+
+After files are in place, a short transaction creates the document record and
+updates storage paths. On transaction failure (statement error or commit
+failure), both storage files are removed and the original is quarantined. The
+deferred rollback also handles temporary file cleanup (OCR / optimized PDF
+temp files). On success, the inbox original is removed.
+
+### 7. FTS Indexing
 
 Automatic via SQLite triggers:
 
@@ -163,7 +174,7 @@ Automatic via SQLite triggers:
 
 Uses `unicode61` tokenizer for multi‑language support without language‑specific stemming.
 
-### 7. Async Enrichment (Post-Consume)
+### 8. Async Enrichment (Post-Consume)
 
 After a `consume` task completes, its handler activates the waiting `enrich`
 task by updating its payload with the document ID and setting its status to

@@ -1,5 +1,7 @@
 # AGENTS.md
 
+Deeper context lives in `docs/`: `architecture.md` (design, pipeline, process model), `roadmap.md` (implementation status), `user-manual.md` (CLI + API reference), and `reference/` (per-package code references — database, search, pipeline, task-system, tools, tests).
+
 ## Build
 
 - **Never omit build tags.** All `go build`, `go test`, and `go fix` require `-tags "XLA,ORT"`. Non-negotiable.
@@ -81,5 +83,5 @@ See `docs/reference/tests.md` for full testing reference.
 - The `gosseract` OCR adapter uses MuPDF to render at 200 DPI and builds searchable PDFs with text rendering mode 3 (`3 Tr`).
 - Hugot ORT backend downloads ONNX runtime on first use — needs internet. Go backend has no runtime deps.
 - ORT defaults disable CPU memory arena and pattern pre-allocation (RSS ~2.2–2.5 GB vs ~4–5 GB). Toggle via `DefaultConfig` if latency matters more.
-- Commit messages: Spanish, conventional commit format — see `.kilo/kilo.jsonc`.
+- Commit messages: Spanish, conventional commit format — see `~/.config/kilo/kilo.jsonc:commit_message`.
 - sqlc config is at `sqlc.yaml` (v2, sqlite engine).
