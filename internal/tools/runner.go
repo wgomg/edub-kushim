@@ -192,15 +192,21 @@ func (r *Runner) OptimizePdf(ctx context.Context, docId, path string) (*PdfOptim
 	if r.pdfOptimizer == nil {
 		return nil, fmt.Errorf("PDF optimizer not configured")
 	}
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(r.config.Consumer.PdfOptimizer.Timeout)*time.Second)
-	defer cancel()
+
+	timeout := time.Duration(r.config.Consumer.PdfOptimizer.Timeout) * time.Second
 
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return nil, fmt.Errorf("file does not exist: %s", path)
 	}
 
-	outputPath, err := runWithTimeout(ctx, func() (*string, error) {
-		return r.pdfOptimizer.Optimize(ctx, docId, path)
+	primaryCtx := ctx
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		primaryCtx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	outputPath, err := runWithTimeout(primaryCtx, func() (*string, error) {
+		return r.pdfOptimizer.Optimize(primaryCtx, docId, path)
 	})
 	if errors.Is(err, context.DeadlineExceeded) {
 		r.logger.Error(&docId, "pdf optimizer (%s) timed out after %ds — underlying call abandoned, may still be running",
@@ -221,8 +227,15 @@ func (r *Runner) OptimizePdf(ctx context.Context, docId, path string) (*PdfOptim
 			return nil, fmt.Errorf("%s: %w; fallback %s: %w",
 				r.config.Consumer.PdfOptimizer.Engine, err, r.config.Consumer.PdfOptimizer.Fallback, fbErr)
 		}
-		outputPath, err = runWithTimeout(ctx, func() (*string, error) {
-			return fbOptimizer.Optimize(ctx, docId, path)
+
+		fbCtx := ctx
+		if timeout > 0 {
+			var fbCancel context.CancelFunc
+			fbCtx, fbCancel = context.WithTimeout(ctx, timeout)
+			defer fbCancel()
+		}
+		outputPath, err = runWithTimeout(fbCtx, func() (*string, error) {
+			return fbOptimizer.Optimize(fbCtx, docId, path)
 		})
 		if errors.Is(err, context.DeadlineExceeded) {
 			r.logger.Error(&docId, "pdf optimizer fallback (%s) timed out after %ds — underlying call abandoned, may still be running",

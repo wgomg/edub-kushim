@@ -199,7 +199,9 @@ test-short:
 		./internal/search/ \
 		./internal/task/ \
 		./internal/api/handlers/ \
-		./internal/consumption/
+		./internal/consumption/ \
+		./internal/tools/ \
+		./internal/config/
 
 # Default test target (same as test-short for now).
 test: test-short
@@ -211,4 +213,6 @@ test-verbose:
 		./internal/search/ \
 		./internal/task/ \
 		./internal/api/handlers/ \
-		./internal/consumption/
+		./internal/consumption/ \
+		./internal/tools/ \
+		./internal/config/

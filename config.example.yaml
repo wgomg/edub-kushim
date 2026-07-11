@@ -47,8 +47,8 @@ consumer:
 
   pdfoptimizer:
     engine: 'mupdf'
+    timeout: 0      # 0 = disabled (no artificial deadline); >0 sets a per-attempt cap in seconds
     # fallback: 'gs'  # optional: fallback optimizer if primary fails
-    timeout: 120
 
   ocr:
     engine: 'gosseract'

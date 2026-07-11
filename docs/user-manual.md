@@ -890,7 +890,7 @@ Two-phase API:
   "consumer.textextractor.timeout": 120,
   "consumer.pdfoptimizer.engine": "mupdf",
   "consumer.pdfoptimizer.fallback": "",
-  "consumer.pdfoptimizer.timeout": 120,
+  "consumer.pdfoptimizer.timeout": 0,
   "enricher.workers": 2,
   "enricher.textreducer.engine": "textrank",
   "enricher.textreducer.timeout": 120,
@@ -1527,7 +1527,7 @@ consumer:
     timeout: 120
   pdfoptimizer:
     engine: 'mupdf' # mupdf | gs
-    timeout: 120
+    timeout: 0                  # 0 = disabled (no artificial deadline); >0 sets a per-attempt cap in seconds
     # fallback: 'gs'            # secondary optimizer when primary fails
   ocr:
     engine: 'gosseract' # gosseract | ocrmypdf

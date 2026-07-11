@@ -91,20 +91,20 @@ type PollingConfig struct {
 }
 
 type ReclaimConfig struct {
-	Enabled       bool  `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
-	MaxRetries    int   `mapstructure:"max_retries" yaml:"max_retries" json:"max_retries"`
+	Enabled        bool  `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
+	MaxRetries     int   `mapstructure:"max_retries" yaml:"max_retries" json:"max_retries"`
 	StaleTaskAfter int64 `mapstructure:"stale_task_after" yaml:"stale_task_after" json:"stale_task_after"`
 }
 
 type ConsumerConfig struct {
-	SupportedFiles  []string            `json:"supported_files"`
-	Workers         int                 `mapstructure:"workers" yaml:"workers" json:"workers"`
-	MaxFilesPerBatch int                `mapstructure:"max_files_per_batch" yaml:"max_files_per_batch" json:"max_files_per_batch"`
-	TextExtractor   TextExtractorConfig `mapstructure:"textextractor" yaml:"textextractor" json:"textextractor"`
-	PdfOptimizer    PdfOptimizerConfig  `mapstructure:"pdfoptimizer" yaml:"pdfoptimizer" json:"pdfoptimizer"`
-	OCR             OCRConfig           `mapstructure:"ocr" yaml:"ocr" json:"ocr"`
-	Polling         PollingConfig       `mapstructure:"polling" yaml:"polling" json:"polling"`
-	Reclaim         ReclaimConfig       `mapstructure:"reclaim" yaml:"reclaim" json:"reclaim"`
+	SupportedFiles   []string            `json:"supported_files"`
+	Workers          int                 `mapstructure:"workers" yaml:"workers" json:"workers"`
+	MaxFilesPerBatch int                 `mapstructure:"max_files_per_batch" yaml:"max_files_per_batch" json:"max_files_per_batch"`
+	TextExtractor    TextExtractorConfig `mapstructure:"textextractor" yaml:"textextractor" json:"textextractor"`
+	PdfOptimizer     PdfOptimizerConfig  `mapstructure:"pdfoptimizer" yaml:"pdfoptimizer" json:"pdfoptimizer"`
+	OCR              OCRConfig           `mapstructure:"ocr" yaml:"ocr" json:"ocr"`
+	Polling          PollingConfig       `mapstructure:"polling" yaml:"polling" json:"polling"`
+	Reclaim          ReclaimConfig       `mapstructure:"reclaim" yaml:"reclaim" json:"reclaim"`
 }
 
 type TextReducerConfig struct {
@@ -304,15 +304,15 @@ func DefaultConfig(configDir string) *Config {
 			},
 			PdfOptimizer: PdfOptimizerConfig{
 				Engine:  PdfOptimizer.MuPDF,
-				Timeout: 120,
+				Timeout: 0,
 			},
-		OCR: OCRConfig{
-			Engine:     OCR.Gosseract,
-			Languages:  []string{"eng"},
-			DataDir:    filepath.Join(configDir, "ocr/tessdata"),
-			Timeout:    120,
-			OcrWorkers: 0,
-		},
+			OCR: OCRConfig{
+				Engine:     OCR.Gosseract,
+				Languages:  []string{"eng"},
+				DataDir:    filepath.Join(configDir, "ocr/tessdata"),
+				Timeout:    120,
+				OcrWorkers: 0,
+			},
 			Polling: PollingConfig{
 				Interval: 5,
 			},
