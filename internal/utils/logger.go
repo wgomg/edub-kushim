@@ -1,11 +1,17 @@
 package utils
 
 import (
+	"context"
 	"fmt"
 	"io"
-	"log"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
+	"time"
+
+	slog "log/slog"
 
 	"gopkg.in/natefinch/lumberjack.v2"
 )
@@ -20,45 +26,136 @@ const (
 	LevelDebug  LogLevel = 7
 )
 
+const levelFatalSlog = slog.Level(12)
+
+func levelName(l slog.Level) string {
+	switch l {
+	case slog.LevelDebug:
+		return "DEBUG"
+	case slog.LevelInfo:
+		return "INFO"
+	case slog.LevelError:
+		return "ERROR"
+	case levelFatalSlog:
+		return "FATAL"
+	default:
+		return l.String()
+	}
+}
+
+func levelPriority(l slog.Level) int {
+	switch {
+	case l <= slog.LevelDebug:
+		return 7
+	case l <= slog.LevelInfo:
+		return 6
+	case l <= slog.LevelError:
+		return 3
+	default:
+		return 2
+	}
+}
+
+type consoleHandler struct {
+	level  *slog.LevelVar
+	writer io.Writer
+}
+
+func (h *consoleHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	return level >= h.level.Level()
+}
+
+func (h *consoleHandler) Handle(ctx context.Context, record slog.Record) error {
+	pri := levelPriority(record.Level)
+	name := levelName(record.Level)
+	var source string
+	if record.PC != 0 {
+		frames := runtime.CallersFrames([]uintptr{record.PC})
+		frame, _ := frames.Next()
+		source = fmt.Sprintf("%s:%d", filepath.Base(frame.File), frame.Line)
+	}
+	line := fmt.Sprintf("<%d>%-6s: %s %s: %s\n", pri, name,
+		record.Time.Format("2006/01/02 15:04:05"), source, record.Message)
+
+	w := h.writer
+	if w == nil {
+		if record.Level >= slog.LevelError {
+			w = os.Stderr
+		} else {
+			w = os.Stdout
+		}
+	}
+	_, err := w.Write([]byte(line))
+	return err
+}
+
+func (h *consoleHandler) WithAttrs(attrs []slog.Attr) slog.Handler { return h }
+
+func (h *consoleHandler) WithGroup(name string) slog.Handler { return h }
+
+type fileHandler struct {
+	writer io.Writer
+	mu     sync.Mutex
+}
+
+func (h *fileHandler) Enabled(ctx context.Context, level slog.Level) bool { return true }
+
+func (h *fileHandler) Handle(ctx context.Context, record slog.Record) error {
+	name := levelName(record.Level)
+	line := fmt.Sprintf("%s %-6s: %s\n",
+		record.Time.Format("2006/01/02 15:04:05"), name, record.Message)
+
+	h.mu.Lock()
+	_, err := h.writer.Write([]byte(line))
+	h.mu.Unlock()
+	return err
+}
+
+func (h *fileHandler) WithAttrs(attrs []slog.Attr) slog.Handler { return h }
+
+func (h *fileHandler) WithGroup(name string) slog.Handler { return h }
+
 type Logger struct {
-	level       LogLevel
-	infoLogger  *log.Logger
-	errorLogger *log.Logger
-	debugLogger *log.Logger
-	fatalLogger *log.Logger
-	fileLogger  *log.Logger
-	RawBodyLog  bool
+	level          LogLevel
+	consoleLevel   *slog.LevelVar
+	consoleHandler slog.Handler
+	fileHandler    slog.Handler
+	fileCloser     io.Closer
+	RawBodyLog     bool
 }
 
 func NewLogger(level string) *Logger {
 	logLevel := parseLogLevel(level)
+	consoleLevel := new(slog.LevelVar)
+	consoleLevel.Set(mapLogLevelToSlog(logLevel))
 
 	return &Logger{
-		level:       logLevel,
-		infoLogger:  log.New(os.Stdout, fmt.Sprintf("<%d>INFO  : ", LevelInfo), log.Ldate|log.Ltime|log.Lshortfile),
-		errorLogger: log.New(os.Stderr, fmt.Sprintf("<%d>ERROR : ", LevelError), log.Ldate|log.Ltime|log.Lshortfile),
-		debugLogger: log.New(os.Stdout, fmt.Sprintf("<%d>DEBUG : ", LevelDebug), log.Ldate|log.Ltime|log.Lshortfile),
-		fatalLogger: log.New(os.Stderr, fmt.Sprintf("<%d>FATAL : ", LevelFatal), log.Ldate|log.Ltime|log.Lshortfile),
+		level:          logLevel,
+		consoleLevel:   consoleLevel,
+		consoleHandler: &consoleHandler{level: consoleLevel},
 	}
 }
 
 func NewDiscardLogger() *Logger {
+	consoleLevel := new(slog.LevelVar)
+	consoleLevel.Set(slog.Level(13))
 	return &Logger{
-		level:       LevelInfo,
-		infoLogger:  log.New(io.Discard, "", 0),
-		errorLogger: log.New(io.Discard, "", 0),
-		debugLogger: log.New(io.Discard, "", 0),
-		fatalLogger: log.New(io.Discard, "", 0),
+		level:          LevelInfo,
+		consoleLevel:   consoleLevel,
+		consoleHandler: slog.DiscardHandler,
 	}
 }
 
 func NewLoggerWithWriter(w io.Writer) *Logger {
+	consoleLevel := new(slog.LevelVar)
+	consoleLevel.Set(slog.LevelDebug)
 	return &Logger{
-		level:       LevelInfo,
-		infoLogger:  log.New(w, fmt.Sprintf("<%d>INFO  : ", LevelInfo), log.Ldate|log.Ltime|log.Lshortfile),
-		errorLogger: log.New(w, fmt.Sprintf("<%d>ERROR : ", LevelError), log.Ldate|log.Ltime|log.Lshortfile),
-		debugLogger: log.New(w, fmt.Sprintf("<%d>DEBUG : ", LevelDebug), log.Ldate|log.Ltime|log.Lshortfile),
-		fatalLogger: log.New(w, fmt.Sprintf("<%d>FATAL : ", LevelFatal), log.Ldate|log.Ltime|log.Lshortfile),
+		level:        LevelInfo,
+		consoleLevel: consoleLevel,
+		consoleHandler: &consoleHandler{
+			level:  consoleLevel,
+			writer: w,
+		},
 	}
 }
 
@@ -72,8 +169,9 @@ type LogFileConfig struct {
 
 func (l *Logger) SetLogFile(cfg LogFileConfig) error {
 	var writer io.Writer
+	var closer io.Closer
 	if cfg.MaxSize > 0 {
-		writer = &lumberjack.Logger{
+		lj := &lumberjack.Logger{
 			Filename:   cfg.Path,
 			MaxSize:    cfg.MaxSize,
 			MaxBackups: cfg.MaxBackups,
@@ -81,14 +179,23 @@ func (l *Logger) SetLogFile(cfg LogFileConfig) error {
 			Compress:   cfg.Compress,
 			LocalTime:  true,
 		}
+		writer = lj
+		closer = lj
 	} else {
 		f, err := os.OpenFile(cfg.Path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			return fmt.Errorf("open log file %s: %w", cfg.Path, err)
 		}
 		writer = f
+		closer = f
 	}
-	l.fileLogger = log.New(writer, "", log.Ldate|log.Ltime)
+
+	if l.fileCloser != nil {
+		l.fileCloser.Close()
+	}
+
+	l.fileHandler = &fileHandler{writer: writer}
+	l.fileCloser = closer
 	return nil
 }
 
@@ -109,64 +216,96 @@ func parseLogLevel(level string) LogLevel {
 	}
 }
 
+func mapLogLevelToSlog(l LogLevel) slog.Level {
+	switch l {
+	case LevelDebug:
+		return slog.LevelDebug
+	case LevelInfo:
+		return slog.LevelInfo
+	case LevelError:
+		return slog.LevelError
+	case LevelFatal:
+		return levelFatalSlog
+	case LevelSilent:
+		return slog.Level(13)
+	default:
+		return slog.LevelInfo
+	}
+}
+
 func (l *Logger) SetLevel(level LogLevel) {
 	l.level = level
+	l.consoleLevel.Set(mapLogLevelToSlog(level))
 }
 
 func (l *Logger) Level() LogLevel {
 	return l.level
 }
 
-func (l *Logger) writeFile(prefix string, format string, v ...any) {
-	if l.fileLogger != nil {
-		l.fileLogger.Printf(prefix+format, v...)
+func (l *Logger) SlogLogger() *slog.Logger {
+	return slog.New(l.consoleHandler)
+}
+
+func (l *Logger) log(level slog.Level, pc uintptr, reqID *string, format string, v ...any) {
+	msg := format
+	if reqID != nil {
+		msg = fmt.Sprintf("REQID=%s ", *reqID) + msg
+	}
+	if len(v) > 0 {
+		msg = fmt.Sprintf(msg, v...)
+	}
+
+	record := slog.NewRecord(time.Now(), level, msg, pc)
+
+	if l.fileHandler != nil {
+		l.fileHandler.Handle(context.Background(), record)
+	}
+	if l.consoleHandler.Enabled(context.Background(), level) {
+		l.consoleHandler.Handle(context.Background(), record)
 	}
 }
 
 func (l *Logger) Info(reqID *string, format string, v ...any) {
-	msg := format
-	if reqID != nil {
-		msg = fmt.Sprintf("REQID=%s ", *reqID) + msg
+	var pc uintptr
+	pcs := [1]uintptr{}
+	if runtime.Callers(2, pcs[:]) > 0 {
+		pc = pcs[0]
 	}
-	l.writeFile("INFO  : ", msg, v...)
-
-	if LevelInfo > l.level {
-		return
-	}
-	l.infoLogger.Printf(msg, v...)
+	l.log(slog.LevelInfo, pc, reqID, format, v...)
 }
 
 func (l *Logger) Error(reqID *string, format string, v ...any) {
-	msg := format
-	if reqID != nil {
-		msg = fmt.Sprintf("REQID=%s ", *reqID) + msg
+	var pc uintptr
+	pcs := [1]uintptr{}
+	if runtime.Callers(2, pcs[:]) > 0 {
+		pc = pcs[0]
 	}
-	l.writeFile("ERROR : ", msg, v...)
-
-	if LevelError > l.level {
-		return
-	}
-	l.errorLogger.Printf(msg, v...)
+	l.log(slog.LevelError, pc, reqID, format, v...)
 }
 
 func (l *Logger) Debug(reqID *string, format string, v ...any) {
-	msg := format
-	if reqID != nil {
-		msg = fmt.Sprintf("REQID=%s ", *reqID) + msg
+	var pc uintptr
+	pcs := [1]uintptr{}
+	if runtime.Callers(2, pcs[:]) > 0 {
+		pc = pcs[0]
 	}
-	l.writeFile("DEBUG : ", msg, v...)
-
-	if LevelDebug > l.level {
-		return
-	}
-	l.debugLogger.Printf(msg, v...)
+	l.log(slog.LevelDebug, pc, reqID, format, v...)
 }
 
 func (l *Logger) Fatal(v ...any) {
-	l.writeFile("FATAL : ", fmt.Sprint(v...))
-	if LevelFatal > l.level {
-		os.Exit(1)
-		return
+	var pc uintptr
+	pcs := [1]uintptr{}
+	if runtime.Callers(2, pcs[:]) > 0 {
+		pc = pcs[0]
 	}
-	l.fatalLogger.Fatal(v...)
+	msg := fmt.Sprint(v...)
+	if l.fileHandler != nil {
+		record := slog.NewRecord(time.Now(), levelFatalSlog, msg, pc)
+		l.fileHandler.Handle(context.Background(), record)
+	}
+	if l.consoleHandler.Enabled(context.Background(), levelFatalSlog) {
+		record := slog.NewRecord(time.Now(), levelFatalSlog, msg, pc)
+		l.consoleHandler.Handle(context.Background(), record)
+	}
+	os.Exit(1)
 }

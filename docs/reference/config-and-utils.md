@@ -147,11 +147,13 @@ per tool category, used by the frontend settings UI to populate select dropdowns
 
 ### Struct
 
-`Logger` — `NewLogger(level string)`, `NewDiscardLogger()`, `NewLoggerWithWriter(w)`, `SetLevel(LogLevel)`, `Level()`, `Info(reqID *string, format, v...)`, `Error`, `Debug`, `Fatal`, `SetLogFile(LogFileConfig) error`
+`Logger` — `NewLogger(level string)`, `NewDiscardLogger()`, `NewLoggerWithWriter(w)`, `SetLevel(LogLevel)`, `Level()`, `Info(reqID *string, format, v...)`, `Error`, `Debug`, `Fatal`, `SetLogFile(LogFileConfig) error`, `SlogLogger() *slog.Logger`
 
 - Numeric log levels: `LevelSilent` (1), `LevelFatal` (2), `LevelError` (3), `LevelInfo` (6), `LevelDebug` (7)
 - File logging writes to file regardless of console level
 - `reqID` parameter for request-scoped logging
+- Implementation uses `log/slog` internally with two custom `slog.Handler` types: `consoleHandler` (routes info/debug to stdout, error/fatal to stderr with `<N>LEVEL : date file:line: msg` format) and `fileHandler` (always enabled, writes `date LEVEL : msg` format). `Fatal` calls `os.Exit(1)` directly.
+- `SlogLogger()` returns a `*slog.Logger` backed by the console handler, intended for `slog.SetDefault` wiring in entry points.
 
 ---
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -137,6 +138,7 @@ func main() {
 	}
 
 	logger := utils.NewLogger(cfg.App.LogLevel)
+	slog.SetDefault(logger.SlogLogger())
 	logFile := filepath.Join(*configDir, "logs", "kushim.log")
 	os.MkdirAll(filepath.Dir(logFile), 0755)
 	if err := logger.SetLogFile(utils.LogFileConfig{

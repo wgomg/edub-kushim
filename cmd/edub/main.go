@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -49,6 +50,7 @@ func startServer() {
 	}
 
 	logger := utils.NewLogger(cfg.App.LogLevel)
+	slog.SetDefault(logger.SlogLogger())
 	logFile := filepath.Join(*configDir, "logs", "edub.log")
 	os.MkdirAll(filepath.Dir(logFile), 0755)
 	if err := logger.SetLogFile(utils.LogFileConfig{
