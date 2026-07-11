@@ -272,12 +272,12 @@ func (r *Runner) ReduceContent(ctx context.Context, content string, chunkSize, t
 	}, nil
 }
 
-func (r *Runner) MatchTags(ctx context.Context, docId, input string, candidateTags []string) (*TagMatchResult, error) {
+func (r *Runner) MatchTags(ctx context.Context, docId, input string) (*TagMatchResult, error) {
 	if r.tagMatcher == nil {
 		return nil, fmt.Errorf("tag matcher not configured")
 	}
 	tags, err := runWithTimeout(ctx, func() ([]string, error) {
-		return r.tagMatcher.Match(ctx, docId, input, candidateTags)
+		return r.tagMatcher.Match(ctx, docId, input)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("tag matcher: %w", err)

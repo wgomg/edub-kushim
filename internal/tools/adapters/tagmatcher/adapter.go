@@ -3,7 +3,7 @@ package tagmatcher
 import "context"
 
 type Matcher interface {
-	Match(ctx context.Context, docId, input string, candidateTags []string) ([]string, error)
+	Match(ctx context.Context, docId, input string) ([]string, error)
 	Close()
 	Name() string
 }
@@ -18,7 +18,6 @@ type Embedder interface {
 }
 
 type EmbeddingStore interface {
-	Get(key string) ([]float32, bool)
 	Add(key string, embedding []float32)
 	Remove(key string)
 	Entries() map[string][]float32

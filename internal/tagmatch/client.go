@@ -66,18 +66,16 @@ func (c *MatcherClient) do(ctx context.Context, method, path string, req, resp a
 	return nil
 }
 
-func (c *MatcherClient) Match(ctx context.Context, docId, input string, candidateTags []string) ([]string, error) {
+func (c *MatcherClient) Match(ctx context.Context, docId, input string) ([]string, error) {
 	var resp struct {
 		Matches []string `json:"matches"`
 	}
 	req := struct {
-		DocID         string   `json:"doc_id"`
-		Input         string   `json:"input"`
-		CandidateTags []string `json:"candidate_tags"`
+		DocID string `json:"doc_id"`
+		Input string `json:"input"`
 	}{
-		DocID:         docId,
-		Input:         input,
-		CandidateTags: candidateTags,
+		DocID: docId,
+		Input: input,
 	}
 	if err := c.do(ctx, "POST", "/rpc/v1/match", req, &resp); err != nil {
 		return nil, err

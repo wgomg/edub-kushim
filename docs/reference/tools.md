@@ -10,7 +10,7 @@
 - **Functions**:
   - `NewRunner(logger, cfg, tools []string) *Runner` — Initializes only the listed tool adapters (e.g., `["textextractor","ocr","pdfoptimizer"]` for consumer). No longer creates a tagmatcher internally.
   - `NewRunnerWithMatcher(logger, cfg, tools, matcher tagmatcher.Matcher) *Runner` — Calls `NewRunner` then conditionally sets `r.tagMatcher` if `matcher != nil` and `"tagmatcher"` is in the tools list.
-- **Methods**: `ExtractText`, `OCR(ctx, docId, path)`, `OptimizePdf(ctx, docId, path)`, `ReduceContent`, `MatchTags(ctx, docId, input, candidateTags []string)`, `AnalyzeContent`
+- **Methods**: `ExtractText`, `OCR(ctx, docId, path)`, `OptimizePdf(ctx, docId, path)`, `ReduceContent`, `MatchTags(ctx, docId, input)`, `AnalyzeContent`
 - **Result types**: `TextExtractionResult`, `OCRResult`, `PdfOptimizationResult`, `TextReducerResult` (with Text, WordCount, CharCount, TargetWordCount), `TagMatchResult`, `ContentAnalysisResult` (with People)
 - **Helper**: `runWithTimeout[T](ctx, fn) (T, error)` — Generic goroutine wrapper with context cancellation
 
@@ -109,7 +109,7 @@ type ContentAnalyzer interface {
 
 ```go
 type Matcher interface {
-    Match(ctx, docId, input string, candidateTags []string) ([]string, error)
+    Match(ctx, docId, input string) ([]string, error)
     Close()
     Name() string
 }
@@ -124,7 +124,6 @@ type Embedder interface {
 }
 
 type EmbeddingStore interface {
-    Get(key string) ([]float32, bool)
     Add(key string, embedding []float32)
     Remove(key string)
     Entries() map[string][]float32
@@ -149,7 +148,7 @@ The composition root builds a single `*Hugot` (for the `kushim` CLI) or uses a `
 - **Config**: `TopN`, `MinSimilarity`, `ConsolidationSimilarity`, `ChunkSize` (auto-derived from model config), `ChunkOverlap` (10% of chunk size)
 - **Fields**: `store EmbeddingStore` — shared reference to the tag embedding cache
 - **Methods**:
-  - `Match(ctx, docId, input, candidateTags []string)` — Names-based matching: looks up each candidate in the store, encodes cache-miss tags on the fly, ranks by cosine similarity
+  - `Match(ctx, docId, input)` — Reads all entries from the store, encodes the input, ranks by cosine similarity, returns top-N matches
   - `Consolidate(ctx, docId, queries []string)` — Reads all entries from the store internally, normalizes query tags via `normalizeForEmbedding`, encodes them, re-matches against canonical tag embeddings
   - `Encode(ctx, *docId, texts)` — Batch embedding with chunked encoding for long inputs. Does NOT normalize input — shared with document text matching where punctuation is meaningful.
   - `AddToStore(ctx, names)` — Normalizes names via `normalizeForEmbedding`, encodes them in batches of 32 (`embedBatchSize`), and adds them to the store

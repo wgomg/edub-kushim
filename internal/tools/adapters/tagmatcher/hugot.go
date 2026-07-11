@@ -163,11 +163,12 @@ func (h *Hugot) Close() {
 	}
 }
 
-func (h *Hugot) Match(ctx context.Context, docId, input string, candidateTags []string) ([]string, error) {
+func (h *Hugot) Match(ctx context.Context, docId, input string) ([]string, error) {
 	if h == nil {
 		return nil, fmt.Errorf("tag matcher not initialized")
 	}
-	if len(candidateTags) == 0 || h.topN == 0 {
+	entries := h.store.Entries()
+	if len(entries) == 0 || h.topN == 0 {
 		return nil, nil
 	}
 
@@ -179,30 +180,6 @@ func (h *Hugot) Match(ctx context.Context, docId, input string, candidateTags []
 		return nil, nil
 	}
 	inputEmb := embeddings[0]
-
-	entries := make(map[string][]float32, len(candidateTags))
-	var missTags []string
-	missIdx := make(map[string]int)
-	for i, tag := range candidateTags {
-		if emb, ok := h.store.Get(tag); ok {
-			entries[tag] = emb
-		} else {
-			missTags = append(missTags, tag)
-			missIdx[tag] = i
-		}
-	}
-	if len(missTags) > 0 {
-		missVecs, err := h.Encode(ctx, &docId, missTags)
-		if err != nil {
-			h.logger.Debug(&docId, "hugot: encode cache-miss tags: %v", err)
-		} else {
-			for j, tag := range missTags {
-				if j < len(missVecs) && missVecs[j] != nil {
-					entries[tag] = missVecs[j]
-				}
-			}
-		}
-	}
 
 	matches := h.rankMatches(inputEmb, entries, h.minSimilarity)
 	topN := min(h.topN, len(matches))

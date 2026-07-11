@@ -40,13 +40,6 @@ func (s *EmbeddingStore) Remove(key string) {
 	delete(s.entries, key)
 }
 
-func (s *EmbeddingStore) Get(key string) ([]float32, bool) {
-	s.myu.RLock()
-	defer s.myu.RUnlock()
-	val, ok := s.entries[key]
-	return val, ok
-}
-
 func (s *EmbeddingStore) Add(key string, embedding []float32) {
 	s.myu.Lock()
 	defer s.myu.Unlock()

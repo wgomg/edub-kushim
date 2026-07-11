@@ -177,15 +177,14 @@ func handleMatch(h *tagmatcher.Hugot, log *utils.Logger) http.HandlerFunc {
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		var req struct {
-			DocID         string   `json:"doc_id"`
-			Input         string   `json:"input"`
-			CandidateTags []string `json:"candidate_tags"`
+			DocID string `json:"doc_id"`
+			Input string `json:"input"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			respondError(w, log, err, http.StatusBadRequest, "bad request")
 			return
 		}
-		matches, err := h.Match(r.Context(), req.DocID, req.Input, req.CandidateTags)
+		matches, err := h.Match(r.Context(), req.DocID, req.Input)
 		if err != nil {
 			respondError(w, log, err, http.StatusInternalServerError, "internal error")
 			return

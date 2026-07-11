@@ -97,9 +97,13 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 	}
 
 	matchTagsStart := time.Now()
-	matchedTags, err := e.runner.MatchTags(ctx, document.DocumentID, tagsContent.Text, tagsNames)
-	if err != nil {
-		e.logger.Error(&logId, "tag matching failed, using all tags: %v", err)
+	matchedTags, err := e.runner.MatchTags(ctx, document.DocumentID, tagsContent.Text)
+	if err != nil || len(matchedTags.Tags) == 0 {
+		if err != nil {
+			e.logger.Error(&logId, "tag matching failed, using all tags: %v", err)
+		} else {
+			e.logger.Debug(&logId, "tag matching returned no matches, using all tags")
+		}
 		tagSuggestions = tagsNames
 	} else {
 		tagSuggestions = matchedTags.Tags
