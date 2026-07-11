@@ -89,7 +89,21 @@ func consumeHandler(c *Container, args []string) error {
 
 	if batchIDParam != "" {
 		if len(missingTools) > 0 {
-			return fmt.Errorf("consume blocked: missing required external tools")
+			tasks, listErr := task.ListFiltered(ctx, client.Queries, task.TaskFilter{
+				BatchID: batchIDParam,
+			})
+			hasConsumeTasks := false
+			if listErr == nil {
+				for _, t := range tasks {
+					if t.TaskType == "consume" {
+						hasConsumeTasks = true
+						break
+					}
+				}
+			}
+			if hasConsumeTasks || listErr != nil {
+				return fmt.Errorf("consume blocked: missing required external tools")
+			}
 		}
 
 		ownerID := uuid.New().String()

@@ -19,6 +19,7 @@
 
 	let savingMeta = $state(false);
 	let deleting = $state(false);
+	let reenriching = $state(false);
 
 	let tagQuery = $state('');
 	let tagResults = $state([]);
@@ -79,6 +80,18 @@
 		} else {
 			deleting = false;
 			toastStore.error(`Failed to delete document: ${res.status} ${res.statusText}`);
+		}
+	}
+
+	async function handleReenrich() {
+		if (reenriching) return;
+		reenriching = true;
+		const data = await api.documents.reenrich(params.id);
+		reenriching = false;
+		if (data) {
+			toastStore.success('Re-enrichment queued');
+		} else {
+			toastStore.error('Failed to queue re-enrichment');
 		}
 	}
 
@@ -389,15 +402,24 @@
 					Download PDF
 				</a>
 
-				{#if !authStore.authEnabled() || authStore.isEditor()}
-					<button
-						onclick={handleDelete}
-						disabled={deleting}
-						class="w-full rounded-lg border border-terracotta-600 bg-terracotta-800 px-4 py-2 text-sm font-medium text-parchment-200 hover:bg-terracotta-700 disabled:opacity-50"
-					>
-						{deleting ? 'Deleting…' : 'Delete Document'}
-					</button>
-				{/if}
+	{#if !authStore.authEnabled() || authStore.isEditor()}
+	<button
+		type="button"
+		onclick={handleReenrich}
+		disabled={reenriching}
+		class="w-full rounded-lg border border-gold-600 bg-gold-800 px-4 py-2 text-sm font-medium text-parchment-200 hover:bg-gold-700 disabled:opacity-50"
+	>
+		{reenriching ? 'Queuing…' : 'Re-enrich'}
+	</button>
+	<button
+		type="button"
+		onclick={handleDelete}
+		disabled={deleting}
+		class="w-full rounded-lg border border-terracotta-600 bg-terracotta-800 px-4 py-2 text-sm font-medium text-parchment-200 hover:bg-terracotta-700 disabled:opacity-50"
+	>
+		{deleting ? 'Deleting…' : 'Delete Document'}
+	</button>
+{/if}
 			</div>
 		</div>
 	{/if}

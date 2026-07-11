@@ -661,6 +661,34 @@ func (h *DocumentHandler) UpdateDocument(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (h *DocumentHandler) ReEnrich(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := ctx.Value("reqid").(string)
+
+	documentID := r.PathValue("id")
+	if documentID == "" {
+		http.Error(w, "Document ID is required", http.StatusBadRequest)
+		return
+	}
+
+	batchID, err := h.services.ReEnrich.ReEnrich(ctx, documentID)
+	if err != nil {
+		writeServiceError(w, h.logger, &reqID, "re-enrich document", err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	json.NewEncoder(w).Encode(map[string]any{
+		"batch_id": batchID,
+		"_links": map[string]string{
+			"tasks": "/api/v1/tasks?batch=" + batchID,
+		},
+	})
+
+	h.logger.Info(&reqID, "re-enrich queued for document %s (batch %s)", documentID, batchID)
+}
+
 func (h *DocumentHandler) DeleteDocument(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)

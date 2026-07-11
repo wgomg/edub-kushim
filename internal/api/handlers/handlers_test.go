@@ -69,16 +69,20 @@ func newHandlerTestEnv(t *testing.T) *handlerTestEnv {
 	docTypeSvc := service.NewDocumentType(client.Queries, logger)
 	userSvc := service.NewUser(client.Queries)
 
+	batchSvc := service.NewBatch(client, 3)
+	workStore := task.NewStore(client.Queries)
+	reenrichSvc := service.NewReEnrich(client.Queries, workStore, batchSvc)
+
 	services := &itypes.CrudServices{
-		Batch:        service.NewBatch(client, 3),
+		Batch:        batchSvc,
 		Tag:          tagSvc,
 		People:       peopleSvc,
 		PeopleType:   peopleTypeSvc,
 		DocumentType: docTypeSvc,
 		User:         userSvc,
+		ReEnrich:     reenrichSvc,
 	}
 
-	workStore := task.NewStore(client.Queries)
 	registry := task.NewRegistry()
 	dispatcher := task.NewDispatcher(logger, workStore, registry)
 
@@ -1921,5 +1925,42 @@ func TestMeAPIKeyHandler(t *testing.T) {
 		r := req(t, "POST", "/api/v1/me/api-key", nil)
 		h.MeGenerateKey(w, r)
 		testutil.AssertEqual(t, w.Code, http.StatusUnauthorized, "status")
+	})
+}
+
+func TestDocumentReEnrich(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	h := newDocHandler(env)
+
+	dID := docUUID(t, env.client.Queries, "reenrich-test.pdf")
+
+	t.Run("success", func(t *testing.T) {
+		w := rec()
+		r := req(t, "POST", "/api/v1/documents/"+dID+"/reenrich", nil)
+		r.SetPathValue("id", dID)
+		h.ReEnrich(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusAccepted, "status")
+
+		var resp map[string]any
+		json.NewDecoder(w.Body).Decode(&resp)
+		if resp["batch_id"] == nil || resp["batch_id"] == "" {
+			t.Fatal("expected non-empty batch_id")
+		}
+		links, ok := resp["_links"].(map[string]any)
+		if !ok {
+			t.Fatal("expected _links object")
+		}
+		tasksLink := links["tasks"]
+		if tasksLink == nil || !strings.HasPrefix(tasksLink.(string), "/api/v1/tasks?batch=") {
+			t.Fatalf("expected tasks link prefix, got %v", tasksLink)
+		}
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		w := rec()
+		r := req(t, "POST", "/api/v1/documents/no-such-id/reenrich", nil)
+		r.SetPathValue("id", "no-such-id")
+		h.ReEnrich(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusNotFound, "not found")
 	})
 }

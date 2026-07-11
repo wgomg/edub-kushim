@@ -7,7 +7,7 @@
 - `Server`
   - **Fields**: `httpServer *http.Server`, `logger *utils.Logger`, `addr string`, `cfg atomic.Pointer[config.Config]`, `matcherClient *tagmatch.MatcherClient`, `services *types.CrudServices`, `pools struct { config *pool.Pool }`
   - **Methods**:
-    - `NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server` — Creates a `MatcherClient` connected to `kushim-hugot.sock` in the config dir, builds `CrudServices` with `Batch`, `Tag` (wired through `MatcherClient`), `People`, `PeopleType`, `DocumentType`, `User`, `Orphaned`, `ErroredFiles` services, creates dispatcher with only the `"config"` task type registered. Generates a random `SessionSecret` if none is configured (with a warning log). Registers routes and middleware chain (request → auth → parambag).
+    - `NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server` — Creates a `MatcherClient` connected to `kushim-hugot.sock` in the config dir, builds `CrudServices` with `Batch`, `Tag` (wired through `MatcherClient`), `People`, `PeopleType`, `DocumentType`, `User`, `Orphaned`, `ErroredFiles`, `ReEnrich` services, creates dispatcher with only the `"config"` task type registered. Generates a random `SessionSecret` if none is configured (with a warning log). Registers routes and middleware chain (request → auth → parambag).
     - `Start() error` — Probes matcher health (startup warning if unreachable), starts config pool, then HTTP server
     - `Shutdown(ctx context.Context) error` — Shuts down HTTP server, config pool, then `services.Close()`
     - `Addr() string`
@@ -43,7 +43,7 @@
 ### Struct
 
 - `DocumentHandler`
-  - **Fields**: `queries *database.Queries`, `logger *utils.Logger`, `engine *search.Engine`, `services *itypes.CrudServices`
+  - **Fields**: `client *database.Client`, `logger *utils.Logger`, `engine *search.Engine`, `services *itypes.CrudServices`, `getConfig func() *config.Config`
   - **Methods**:
     - `NewDocumentHandler(queries, logger, engine, services) *DocumentHandler`
     - `ListDocuments(w, r)` — Supports `sort_by` and `sort_order` query params; response includes tags (`TagResponse`), people (`PersonResponse`), content stats (`PageCount`, `WordCount`, `CharCount`), `Language`, `DocumentTypeID`
@@ -57,6 +57,7 @@
     - `RemoveDocumentTag(w, r)` — `DELETE /api/v1/documents/{id}/tags` — Accepts `{tag_id}`, validates document exists, calls `RemoveDocumentTag`. Returns `204 No Content`.
     - `AddDocumentPeople(w, r)` — `POST /api/v1/documents/{id}/people` — Accepts `{people_id, people_type_id}`, validates document, person, and people type exist, calls `AddDocumentPeople` (INSERT OR IGNORE). Returns `204 No Content`.
     - `RemoveDocumentPeople(w, r)` — `DELETE /api/v1/documents/{id}/people` — Accepts `{people_id, people_type_id}`, validates document exists, calls `RemoveDocumentPeople` (now filters by all three PK columns: document_id, people_id, people_type_id). Returns `204 No Content`.
+    - `ReEnrich(w, r)` — `POST /api/v1/documents/{id}/reenrich` — Validates document ID is non-empty, calls `services.ReEnrich.ReEnrich(ctx, documentID)`. Returns `202 Accepted` with `{batch_id, _links: {tasks: ...}}`. Maps document-not-found and dedup-conflict errors via `writeServiceError` (404 / 409).
 
 ---
 
@@ -362,7 +363,7 @@ See `AuthMiddleware` under `server.go` → Functions.
 
 ### Structs
 
-- `CrudServices` — `Batch *service.Batch`, `Tag *service.Tag`, `People *service.People`, `PeopleType *service.PeopleType`, `DocumentType *service.DocumentType`, `User *service.User`, `Orphaned *service.Orphaned`, `ErroredFiles *service.ErroredFiles`
+- `CrudServices` — `Batch *service.Batch`, `Tag *service.Tag`, `People *service.People`, `PeopleType *service.PeopleType`, `DocumentType *service.DocumentType`, `User *service.User`, `Orphaned *service.Orphaned`, `ErroredFiles *service.ErroredFiles`, `ReEnrich *service.ReEnrich`
   - `Close()` — Uses reflection to iterate struct fields; calls `Close()` on every field implementing `io.Closer`. Automatically picks up new services added as fields. `Orphaned` and `ErroredFiles` do not implement `io.Closer` and are skipped silently.
 
 ## `types/user.go`
@@ -465,6 +466,7 @@ mux.Handle("POST /api/v1/documents/{id}/tags", RequireRole(editor...)(...))
 mux.Handle("DELETE /api/v1/documents/{id}/tags", RequireRole(editor...)(...))
 mux.Handle("POST /api/v1/documents/{id}/people", RequireRole(editor...)(...))
 mux.Handle("DELETE /api/v1/documents/{id}/people", RequireRole(editor...)(...))
+mux.Handle("POST /api/v1/documents/{id}/reenrich", RequireRole(editor...)(...))
 mux.Handle("POST /api/v1/documents/batch-delete", RequireRole(editor...)(...))
 mux.Handle("POST /api/v1/documents/batch-tags", RequireRole(editor...)(...))
 mux.Handle("POST /api/v1/tags", RequireRole(editor...)(...))

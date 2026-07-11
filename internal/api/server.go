@@ -82,6 +82,8 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 	s.services.Orphaned = service.NewOrphaned(client.Queries, &cfg, logger, workStore, s.services.Batch)
 	s.services.Orphaned.ScanAndQuarantineAsync()
 
+	s.services.ReEnrich = service.NewReEnrich(client.Queries, workStore, s.services.Batch)
+
 	s.services.ErroredFiles = service.NewErroredFiles(&cfg, logger)
 
 	registry := task.NewRegistry()
@@ -187,6 +189,7 @@ func registerRoutes(
 	mux.Handle("POST /api/v1/documents/search", RequireRole(viewer...)(http.HandlerFunc(docHandler.SearchDocumentsStructured)))
 	mux.Handle("PUT /api/v1/documents/{id}", RequireRole(editor...)(http.HandlerFunc(docHandler.UpdateDocument)))
 	mux.Handle("DELETE /api/v1/documents/{id}", RequireRole(editor...)(http.HandlerFunc(docHandler.DeleteDocument)))
+	mux.Handle("POST /api/v1/documents/{id}/reenrich", RequireRole(editor...)(http.HandlerFunc(docHandler.ReEnrich)))
 	mux.Handle("POST /api/v1/documents/{id}/tags", RequireRole(editor...)(http.HandlerFunc(docHandler.AddDocumentTag)))
 	mux.Handle("DELETE /api/v1/documents/{id}/tags", RequireRole(editor...)(http.HandlerFunc(docHandler.RemoveDocumentTag)))
 	mux.Handle("POST /api/v1/documents/{id}/people", RequireRole(editor...)(http.HandlerFunc(docHandler.AddDocumentPeople)))

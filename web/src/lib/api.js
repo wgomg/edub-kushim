@@ -95,6 +95,8 @@ export const api = {
 
 		delete: (id) => request(`/api/v1/documents/${id}`, { method: 'DELETE' }),
 
+		reenrich: (id) => request(`/api/v1/documents/${id}/reenrich`, { method: 'POST' }),
+
 		tags: {
 			add: (id, tagId) =>
 				request(`/api/v1/documents/${id}/tags`, {

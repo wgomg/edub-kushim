@@ -146,6 +146,32 @@ No running process found for batch 550e8400-e29b-41d4-a716-446655440000
 5 pending tasks cancelled
 ```
 
+### `kushim enrich <document-id>`
+
+Run enrichment (LLM classification: title, document type, tags, people, language)
+on a single **already-consumed** document. Does not re-extract text or re-OCR —
+the document's existing text content from the database is re-classified.
+
+```
+kushim enrich 550e8400-e29b-41d4-a716-446655440000
+```
+
+Creates a queued batch with a single pending enrich task. The `kushim queue` daemon
+picks it up and processes it. Run `kushim queue` if the daemon is not running.
+
+Output:
+
+```
+Batch 660e8400-e29b-41d4-a716-446655440001 queued — run 'kushim queue' to process
+```
+
+| Condition | Message |
+| --------- | ------- |
+| Document not found | `Error: document <id> not found` |
+| Re-enrich already queued (dedup) | `Error: re-enrich already queued for document <id>` |
+
+Works on hosts without OCR/PDF tools because no consume tasks are created.
+
 ### Pre-flight Tool Check
 
 Before scanning the inbox or resuming a batch, `kushim consume` checks that all
@@ -926,6 +952,31 @@ The wizard and settings page poll this endpoint every 3 seconds to track downloa
 and refresh tool-status warnings.
 
 ---
+
+### Re-enrich Document
+
+Trigger enrichment (LLM classification) for a single already-consumed document.
+No re-extraction or re-OCR — the existing text content from the database is re-classified.
+
+```
+POST /api/v1/documents/{id}/reenrich
+```
+
+Response `202 Accepted`:
+
+```json
+{
+  "batch_id": "660e8400-e29b-41d4-a716-446655440001",
+  "_links": {
+    "tasks": "/api/v1/tasks?batch=660e8400-e29b-41d4-a716-446655440001"
+  }
+}
+```
+
+| Condition | Status |
+| --------- | ------ |
+| Document not found | `404` |
+| Re-enrich already queued (active task with same dedup key) | `409` |
 
 ### Consume
 

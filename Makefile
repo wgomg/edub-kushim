@@ -198,6 +198,7 @@ test-short:
 		./internal/database/ \
 		./internal/search/ \
 		./internal/task/ \
+		./internal/service/ \
 		./internal/api/handlers/ \
 		./internal/consumption/ \
 		./internal/tools/ \
@@ -212,6 +213,7 @@ test-verbose:
 		./internal/database/ \
 		./internal/search/ \
 		./internal/task/ \
+		./internal/service/ \
 		./internal/api/handlers/ \
 		./internal/consumption/ \
 		./internal/tools/ \

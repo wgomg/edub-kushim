@@ -50,6 +50,11 @@ var commandSets = map[string]map[string]Command{
 			Description: "Initialize config and download OCR language files (run once). Use --cli for terminal-based setup.",
 			Handler:     setupHandler,
 		},
+		"enrich": {
+			Name:        "enrich",
+			Description: "Re-run enrichment for a single document",
+			Handler:     enrichHandler,
+		},
 		"queue": {
 			Name:        "queue",
 			Description: "Start the batch queue daemon for background consumption",

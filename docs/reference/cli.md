@@ -4,7 +4,7 @@
 
 ### Globals
 
-`commandSets` map with `"cli"` key. CLI set contains: `version`, `consume`, `search`, `task`, `setup`, `hugot`, `storage`, `queue`.
+`commandSets` map with `"cli"` key. CLI set contains: `version`, `consume`, `enrich`, `search`, `task`, `setup`, `hugot`, `storage`, `queue`.
 
 > **Note**: The `edub` binary no longer uses `CommandRunner` from the commands package. It has its own standalone runner in `cmd/edub/runner.go` that only handles the `version` command (server mode is the default when no command matches).
 
@@ -76,6 +76,14 @@ Listens on a Unix socket (cleaned up on shutdown). Handles SIGTERM/SIGINT for gr
 
 - `FlagParser` — `args []string`, `pos int`, `used map[int]bool`, `rest []string`
   - **Methods**: `NewFlagParser(args)`, `Help(helpText) bool`, `String(flag, *dst) error`, `Int(flag, *dst, min, max) error`, `Bool(flag, *dst) error`, `Rest() []string`
+
+---
+
+## `enrich.go`
+
+### Functions
+
+- `enrichHandler(c, args) error` — Creates a queued batch with a single pending enrich task for a given document UUID. Validates the document exists, creates the batch (source `"reenrich"`, status `"queued"`), then creates an `"enrich"` task with dedup key `"enrich:doc:<uuid>"`. Returns the batch ID. Prints document-not-found and already-queued errors.
 
 ---
 
