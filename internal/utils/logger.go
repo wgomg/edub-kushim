@@ -22,6 +22,7 @@ const (
 	LevelSilent LogLevel = 1
 	LevelFatal  LogLevel = 2
 	LevelError  LogLevel = 3
+	LevelWarn   LogLevel = 4
 	LevelInfo   LogLevel = 6
 	LevelDebug  LogLevel = 7
 )
@@ -34,6 +35,8 @@ func levelName(l slog.Level) string {
 		return "DEBUG"
 	case slog.LevelInfo:
 		return "INFO"
+	case slog.LevelWarn:
+		return "WARN"
 	case slog.LevelError:
 		return "ERROR"
 	case levelFatalSlog:
@@ -49,6 +52,8 @@ func levelPriority(l slog.Level) int {
 		return 7
 	case l <= slog.LevelInfo:
 		return 6
+	case l <= slog.LevelWarn:
+		return 4
 	case l <= slog.LevelError:
 		return 3
 	default:
@@ -79,7 +84,7 @@ func (h *consoleHandler) Handle(ctx context.Context, record slog.Record) error {
 
 	w := h.writer
 	if w == nil {
-		if record.Level >= slog.LevelError {
+		if record.Level >= slog.LevelWarn {
 			w = os.Stderr
 		} else {
 			w = os.Stdout
@@ -207,6 +212,8 @@ func parseLogLevel(level string) LogLevel {
 		return LevelFatal
 	case "error":
 		return LevelError
+	case "warn", "warning":
+		return LevelWarn
 	case "info":
 		return LevelInfo
 	case "debug":
@@ -224,6 +231,8 @@ func mapLogLevelToSlog(l LogLevel) slog.Level {
 		return slog.LevelInfo
 	case LevelError:
 		return slog.LevelError
+	case LevelWarn:
+		return slog.LevelWarn
 	case LevelFatal:
 		return levelFatalSlog
 	case LevelSilent:
@@ -290,6 +299,15 @@ func (l *Logger) Debug(reqID *string, format string, v ...any) {
 		pc = pcs[0]
 	}
 	l.log(slog.LevelDebug, pc, reqID, format, v...)
+}
+
+func (l *Logger) Warn(reqID *string, format string, v ...any) {
+	var pc uintptr
+	pcs := [1]uintptr{}
+	if runtime.Callers(2, pcs[:]) > 0 {
+		pc = pcs[0]
+	}
+	l.log(slog.LevelWarn, pc, reqID, format, v...)
 }
 
 func (l *Logger) Fatal(v ...any) {

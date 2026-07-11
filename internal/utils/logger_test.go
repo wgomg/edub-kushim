@@ -17,11 +17,15 @@ func TestNewLogger_LevelParsing(t *testing.T) {
 	}{
 		{"debug", LevelDebug},
 		{"info", LevelInfo},
+		{"warn", LevelWarn},
+		{"warning", LevelWarn},
 		{"error", LevelError},
 		{"fatal", LevelFatal},
 		{"silent", LevelSilent},
 		{"DEBUG", LevelDebug},
-		{"Info", LevelInfo},
+		{"INFO", LevelInfo},
+		{"WARN", LevelWarn},
+		{"ERROR", LevelError},
 		{"unknown", LevelInfo},
 		{"", LevelInfo},
 	}
@@ -132,6 +136,34 @@ func TestDebug_LevelGating(t *testing.T) {
 	}
 }
 
+func TestWarn_LevelGating(t *testing.T) {
+	tests := []struct {
+		name    string
+		level   string
+		wantMsg bool
+	}{
+		{"warn at debug", "debug", true},
+		{"warn at info", "info", true},
+		{"warn at warn", "warn", true},
+		{"warn at error", "error", false},
+		{"warn at fatal", "fatal", false},
+		{"warn at silent", "silent", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			l := NewLoggerWithWriter(&buf)
+			l.SetLevel(parseLogLevel(tt.level))
+
+			l.Warn(nil, "hello warn")
+			got := strings.Contains(buf.String(), "hello warn")
+			if got != tt.wantMsg {
+				t.Errorf("Warn visible=%v, want %v (buffer: %q)", got, tt.wantMsg, buf.String())
+			}
+		})
+	}
+}
+
 func TestReqIDPrefix(t *testing.T) {
 	var buf bytes.Buffer
 	l := NewLoggerWithWriter(&buf)
@@ -183,6 +215,7 @@ func TestConsoleFormat_PriPrefix(t *testing.T) {
 	l.Info(nil, "msg")
 	l.Error(nil, "msg")
 	l.Debug(nil, "msg")
+	l.Warn(nil, "msg")
 
 	got := buf.String()
 	lines := strings.SplitSeq(strings.TrimSpace(got), "\n")
@@ -290,8 +323,9 @@ func TestFileHandler_CapturesAllLevels(t *testing.T) {
 	l.Info(nil, "info msg")
 	l.Debug(nil, "debug msg")
 	l.Error(nil, "error msg")
+	l.Warn(nil, "warn msg")
 
-	// Console should only have error.
+	// Console should only have error and warn.
 	if strings.Contains(consoleBuf.String(), "info msg") {
 		t.Error("info should be suppressed on console at error level")
 	}
@@ -299,13 +333,13 @@ func TestFileHandler_CapturesAllLevels(t *testing.T) {
 		t.Error("debug should be suppressed on console at error level")
 	}
 
-	// File should have all three.
+	// File should have all four.
 	data, err := os.ReadFile(logPath)
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
 	content := string(data)
-	for _, want := range []string{"info msg", "debug msg", "error msg"} {
+	for _, want := range []string{"info msg", "debug msg", "error msg", "warn msg"} {
 		if !strings.Contains(content, want) {
 			t.Errorf("file missing %q, got:\n%s", want, content)
 		}
@@ -352,6 +386,7 @@ func TestFileFormat_LevelPrefix(t *testing.T) {
 	l.Info(nil, "info-line")
 	l.Error(nil, "error-line")
 	l.Debug(nil, "debug-line")
+	l.Warn(nil, "warn-line")
 
 	data, err := os.ReadFile(logPath)
 	if err != nil {
@@ -369,8 +404,11 @@ func TestFileFormat_LevelPrefix(t *testing.T) {
 	if !strings.Contains(content, "DEBUG : debug-line") {
 		t.Errorf("expected DEBUG level prefix in file, got:\n%s", content)
 	}
+	if !strings.Contains(content, "WARN  : warn-line") {
+		t.Errorf("expected WARN level prefix in file, got:\n%s", content)
+	}
 	// No syslog pri prefix in file.
-	if strings.Contains(content, "<6>") || strings.Contains(content, "<3>") {
+	if strings.Contains(content, "<6>") || strings.Contains(content, "<3>") || strings.Contains(content, "<4>") {
 		t.Errorf("file output should not contain syslog pri prefix, got:\n%s", content)
 	}
 }
@@ -396,6 +434,7 @@ func TestLevelPriority(t *testing.T) {
 	}{
 		{slog.LevelDebug, 7},
 		{slog.LevelInfo, 6},
+		{slog.LevelWarn, 4},
 		{slog.LevelError, 3},
 		{levelFatalSlog, 2},
 		{slog.Level(13), 2},
@@ -415,6 +454,7 @@ func TestLevelName(t *testing.T) {
 	}{
 		{slog.LevelDebug, "DEBUG"},
 		{slog.LevelInfo, "INFO"},
+		{slog.LevelWarn, "WARN"},
 		{slog.LevelError, "ERROR"},
 		{levelFatalSlog, "FATAL"},
 	}

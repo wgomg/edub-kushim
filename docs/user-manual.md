@@ -1492,7 +1492,7 @@ is what `kushim setup` generates at `~/.config/edub-kushim/config.yaml`.
 ```yaml
 app:
   environment: development # development | production
-  log_level: info # silent | fatal | error | info | debug
+  log_level: info # silent | fatal | error | warn | info | debug
 
 server:
   host: 0.0.0.0

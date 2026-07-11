@@ -685,12 +685,12 @@ func (h *DocumentHandler) DeleteDocument(w http.ResponseWriter, r *http.Request)
 
 	if doc.OriginalPath != "" {
 		if err := os.Remove(doc.OriginalPath); err != nil {
-			h.logger.Error(&reqID, "Warning: failed to remove original file %s: %v", doc.OriginalPath, err)
+			h.logger.Warn(&reqID, "failed to remove original file %s: %v", doc.OriginalPath, err)
 		}
 	}
 	if doc.StoragePath != "" {
 		if err := os.Remove(doc.StoragePath); err != nil {
-			h.logger.Error(&reqID, "Warning: failed to remove storage file %s: %v", doc.StoragePath, err)
+			h.logger.Warn(&reqID, "failed to remove storage file %s: %v", doc.StoragePath, err)
 		}
 	}
 
@@ -824,12 +824,12 @@ func (h *DocumentHandler) BatchDeleteDocuments(w http.ResponseWriter, r *http.Re
 
 		if doc.OriginalPath != "" {
 			if err := os.Remove(doc.OriginalPath); err != nil {
-				h.logger.Error(&reqID, "Warning: failed to remove original file %s: %v", doc.OriginalPath, err)
+				h.logger.Warn(&reqID, "failed to remove original file %s: %v", doc.OriginalPath, err)
 			}
 		}
 		if doc.StoragePath != "" {
 			if err := os.Remove(doc.StoragePath); err != nil {
-				h.logger.Error(&reqID, "Warning: failed to remove storage file %s: %v", doc.StoragePath, err)
+				h.logger.Warn(&reqID, "failed to remove storage file %s: %v", doc.StoragePath, err)
 			}
 		}
 
