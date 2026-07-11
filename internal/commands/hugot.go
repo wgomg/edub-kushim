@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/cache"
+	"github.com/wgomg/edub-kushim/internal/tagmatch"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/tagmatcher"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -85,12 +86,14 @@ func serveHugotHandler(c *Container, args []string) error {
 	}
 	hugot.SetStore(embStore)
 
+	bodyCap := tagmatch.MaxMatchBodyBytes(c.config.Enricher.TagMatcher.ReduceTargetWords)
+
 	mux := http.NewServeMux()
-	mux.HandleFunc("/rpc/v1/encode", handleEncode(hugot, c.logger))
-	mux.HandleFunc("/rpc/v1/match", handleMatch(hugot, c.logger))
-	mux.HandleFunc("/rpc/v1/consolidate", handleConsolidate(hugot, c.logger))
-	mux.HandleFunc("/rpc/v1/add-to-store", handleAddToStore(hugot, c.logger))
-	mux.HandleFunc("/rpc/v1/remove-from-store", handleRemoveFromStore(hugot, c.logger))
+	mux.HandleFunc("/rpc/v1/encode", handleEncode(hugot, c.logger, bodyCap))
+	mux.HandleFunc("/rpc/v1/match", handleMatch(hugot, c.logger, bodyCap))
+	mux.HandleFunc("/rpc/v1/consolidate", handleConsolidate(hugot, c.logger, bodyCap))
+	mux.HandleFunc("/rpc/v1/add-to-store", handleAddToStore(hugot, c.logger, bodyCap))
+	mux.HandleFunc("/rpc/v1/remove-from-store", handleRemoveFromStore(hugot, c.logger, bodyCap))
 	mux.HandleFunc("/health", handleHealth)
 
 	listener, err := net.Listen("unix", socketPath)
@@ -145,13 +148,13 @@ func respondError(w http.ResponseWriter, log *utils.Logger, err error, status in
 	http.Error(w, msg, status)
 }
 
-func handleEncode(h *tagmatcher.Hugot, log *utils.Logger) http.HandlerFunc {
+func handleEncode(h *tagmatcher.Hugot, log *utils.Logger, maxBodyBytes int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		r.Body = http.MaxBytesReader(w, r.Body, int64(maxBodyBytes))
 		var req struct {
 			Texts []string `json:"texts"`
 		}
@@ -169,13 +172,13 @@ func handleEncode(h *tagmatcher.Hugot, log *utils.Logger) http.HandlerFunc {
 	}
 }
 
-func handleMatch(h *tagmatcher.Hugot, log *utils.Logger) http.HandlerFunc {
+func handleMatch(h *tagmatcher.Hugot, log *utils.Logger, maxBodyBytes int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		r.Body = http.MaxBytesReader(w, r.Body, int64(maxBodyBytes))
 		var req struct {
 			DocID string `json:"doc_id"`
 			Input string `json:"input"`
@@ -194,13 +197,13 @@ func handleMatch(h *tagmatcher.Hugot, log *utils.Logger) http.HandlerFunc {
 	}
 }
 
-func handleConsolidate(h *tagmatcher.Hugot, log *utils.Logger) http.HandlerFunc {
+func handleConsolidate(h *tagmatcher.Hugot, log *utils.Logger, maxBodyBytes int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		r.Body = http.MaxBytesReader(w, r.Body, int64(maxBodyBytes))
 		var req struct {
 			DocID   string   `json:"doc_id"`
 			Queries []string `json:"queries"`
@@ -219,13 +222,13 @@ func handleConsolidate(h *tagmatcher.Hugot, log *utils.Logger) http.HandlerFunc 
 	}
 }
 
-func handleAddToStore(h *tagmatcher.Hugot, log *utils.Logger) http.HandlerFunc {
+func handleAddToStore(h *tagmatcher.Hugot, log *utils.Logger, maxBodyBytes int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		r.Body = http.MaxBytesReader(w, r.Body, int64(maxBodyBytes))
 		var req struct {
 			Names []string `json:"names"`
 		}
@@ -242,13 +245,13 @@ func handleAddToStore(h *tagmatcher.Hugot, log *utils.Logger) http.HandlerFunc {
 	}
 }
 
-func handleRemoveFromStore(h *tagmatcher.Hugot, log *utils.Logger) http.HandlerFunc {
+func handleRemoveFromStore(h *tagmatcher.Hugot, log *utils.Logger, maxBodyBytes int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		r.Body = http.MaxBytesReader(w, r.Body, int64(maxBodyBytes))
 		var req struct {
 			Names []string `json:"names"`
 		}

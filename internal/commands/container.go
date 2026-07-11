@@ -95,7 +95,7 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 		return nil, err
 	}
 
-	matcherClient := tagmatch.NewMatcherClient(c.socketPath())
+	matcherClient := tagmatch.NewMatcherClient(c.socketPath(), tagmatch.MaxMatchBodyBytes(c.config.Enricher.TagMatcher.ReduceTargetWords))
 
 	tagSvc, err := service.NewTag(client.Queries, c.logger, matcherClient)
 	if err != nil {

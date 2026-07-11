@@ -155,7 +155,7 @@ and has no `DedupKey` (each backup task always runs).
 The `TagService` and `Enricher` receive the client instead of a direct Hugot reference:
 
 ```go
-matcherClient := tagmatch.NewMatcherClient(c.socketPath())
+matcherClient := tagmatch.NewMatcherClient(c.socketPath(), tagmatch.MaxMatchBodyBytes(cfg.Enricher.TagMatcher.ReduceTargetWords))
 tagSvc, err := service.NewTag(queries, logger, matcherClient)
 enricher, err := enrichment.NewEnricher(cfg, logger, db, services, matcherClient)
 registry.Register("config", configtask.NewConfigTaskHandler(logger))

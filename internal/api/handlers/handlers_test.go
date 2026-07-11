@@ -61,7 +61,7 @@ func newHandlerTestEnv(t *testing.T) *handlerTestEnv {
 	client := database.NewTestClient(t)
 	logger := testutil.NewTestLogger()
 	engine := search.NewEngine(logger, client.Queries)
-	matcherClient := tagmatch.NewMatcherClient("/nonexistent/matcher.sock")
+	matcherClient := tagmatch.NewMatcherClient("/nonexistent/matcher.sock", tagmatch.MaxMatchBodyBytes(4000))
 
 	tagSvc, _ := newMockTagService(client.Queries)
 	peopleSvc := service.NewPeople(client.Queries, logger)

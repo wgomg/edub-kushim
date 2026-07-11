@@ -8,15 +8,45 @@ import (
 	"net"
 	"net/http"
 	"time"
+	"unicode/utf8"
 )
 
 var ErrMatcherUnavailable = fmt.Errorf("matcher unavailable")
 
-type MatcherClient struct {
-	client *http.Client
+// - bytesPerWord is a generous per-word byte estimate (covers CJK ~3 bytes/char plus
+// low-whitespace degenerate text).
+// - envelopeMargin reserves space for the JSON envelope (doc_id, quotes, escaping)
+// so the client truncation target stays strictly below the server cap.
+// - minBodyBytes and maxBodyBytes clamp the derived cap so a misconfigured
+// reduce_target_words cannot produce a nonsensical limit.
+const (
+	bytesPerWord   = 24
+	envelopeMargin = 4096
+	minBodyBytes   = 256 * 1024
+	maxBodyBytes   = 4 * 1024 * 1024
+)
+
+func MaxMatchBodyBytes(reduceTargetWords int) int {
+	if reduceTargetWords <= 0 {
+		return maxBodyBytes
+	}
+	n := reduceTargetWords * bytesPerWord
+	switch {
+	case n < minBodyBytes:
+		return minBodyBytes
+	case n > maxBodyBytes:
+		return maxBodyBytes
+	default:
+		return n
+	}
 }
 
-func NewMatcherClient(socketPath string) *MatcherClient {
+type MatcherClient struct {
+	client            *http.Client
+	maxMatchBodyBytes int
+}
+
+func NewMatcherClient(socketPath string, maxMatchBodyBytes int) *MatcherClient {
 	return &MatcherClient{
 		client: &http.Client{
 			Transport: &http.Transport{
@@ -28,6 +58,7 @@ func NewMatcherClient(socketPath string) *MatcherClient {
 			},
 			Timeout: 120 * time.Second,
 		},
+		maxMatchBodyBytes: maxMatchBodyBytes,
 	}
 }
 
@@ -67,6 +98,10 @@ func (c *MatcherClient) do(ctx context.Context, method, path string, req, resp a
 }
 
 func (c *MatcherClient) Match(ctx context.Context, docId, input string) ([]string, error) {
+	target := c.maxMatchBodyBytes - envelopeMargin
+	if len(input) > target {
+		input = truncateUTF8(input, target)
+	}
 	var resp struct {
 		Matches []string `json:"matches"`
 	}
@@ -81,6 +116,21 @@ func (c *MatcherClient) Match(ctx context.Context, docId, input string) ([]strin
 		return nil, err
 	}
 	return resp.Matches, nil
+}
+
+func truncateUTF8(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	b := s[:maxBytes]
+	for len(b) > 0 {
+		r, size := utf8.DecodeLastRuneInString(b)
+		if r != utf8.RuneError || size != 1 {
+			break
+		}
+		b = b[:len(b)-size]
+	}
+	return b
 }
 
 func (c *MatcherClient) Close() {

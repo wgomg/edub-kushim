@@ -2,10 +2,10 @@
 
 ## Overview
 
-The project has **90+ integration and unit tests** across nine packages, all runnable
+The project has **90+ integration and unit tests** across ten packages, all runnable
 without CGo dependencies (no Tesseract, MuPDF, or Ghostscript required). The test
 suite validates database queries, task lifecycle, search, API handlers, auth,
-consumption pipeline, and API key service.
+consumption pipeline, tagmatch body cap derivation and UTF-8 truncation, and API key service.
 
 ### Quick Start
 
@@ -21,6 +21,7 @@ CGO_ENABLED=0 go test -tags "XLA,ORT" ./internal/...
 
 | Package | Tests | What it covers |
 |---------|-------|---------------|
+| `internal/tagmatch` | 3 | `MaxMatchBodyBytes` derivation with floor/ceiling clamping; `truncateUTF8` UTF-8-safe truncation with CJK and ASCII boundary tests; idempotency check |
 | `internal/database` | 20 | sqlc-generated CRUD, task lifecycle, enrich waiting flow, batch ownership, FTS-adjacent operations, document/tag/people/document-type CRUD, saved searches, dashboard analytics queries (empty DB + mixed data), structured search missing filters (MissingLanguage/MissingType/Untagged), WithDocumentCount queries |
 | `internal/search` | 8 | FTS5 search with snippets, ranking, pagination; structured search with mime/language/date/missing filters; query sanitization |
 | `internal/task` | 14 | Store (create/get/claim/complete/fail), dedup key uniqueness, dispatcher enqueue with custom status/ID, runner (complete/fail/no-tasks), pool lifecycle |
@@ -129,6 +130,7 @@ CGO_ENABLED=0 go test -tags "XLA,ORT" -v -run "TestTaskLifecycle" ./internal/dat
 CGO_ENABLED=0 go test -tags "XLA,ORT" -count=1 -timeout 60s \
     ./internal/database/ \
     ./internal/search/ \
+    ./internal/tagmatch/ \
     ./internal/task/ \
     ./internal/auth/ \
     ./internal/api/ \
