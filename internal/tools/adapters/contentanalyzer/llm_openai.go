@@ -15,10 +15,11 @@ import (
 )
 
 type LlmOpenAi struct {
-	logger         *utils.Logger
-	config         config.ToolConfig
-	llmCfg         config.LlmToolConfig
-	promptTemplate string
+	logger          *utils.Logger
+	config          config.ToolConfig
+	llmCfg          config.LlmToolConfig
+	promptTemplate  string
+	reasoningEffort string
 }
 
 type ChatMessage struct {
@@ -71,7 +72,13 @@ type ChatResponse struct {
 }
 
 func NewLlmOpenAi(logger *utils.Logger, cfg config.ToolConfig, llmCfg config.LlmToolConfig, promptTemplate string) (*LlmOpenAi, error) {
-	return &LlmOpenAi{logger: logger, config: cfg, llmCfg: llmCfg, promptTemplate: promptTemplate}, nil
+	return &LlmOpenAi{
+		logger:          logger,
+		config:          cfg,
+		llmCfg:          llmCfg,
+		promptTemplate:  promptTemplate,
+		reasoningEffort: "none",
+	}, nil
 }
 
 func (l *LlmOpenAi) Analyze(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*AnalysisResult, error) {
@@ -88,7 +95,7 @@ func (l *LlmOpenAi) Analyze(ctx context.Context, text string, docTypes []databas
 			{Role: "user", Content: prompt},
 		},
 		Model:            l.llmCfg.Model,
-		ReasoningEffort:  "low",
+		ReasoningEffort:  l.reasoningEffort,
 		FrequencyPenalty: freqPen,
 		MaxTokens:        maxTokens,
 		PresencePenalty:  prescPen,
