@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -104,7 +105,8 @@ func (l *LlmAnthropic) Analyze(ctx context.Context, text string, docTypes []data
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed content analyzer: %v", resp)
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("failed content analyzer: status %s: %s", resp.Status, string(body))
 	}
 
 	var anthResp anthropicResponse
