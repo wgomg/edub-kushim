@@ -101,12 +101,7 @@ func (h *ConfigHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
 		}
 
 		h.onConfigSet(cfg)
-		if client != nil {
-			h.queries = client.Queries
-		}
-		if dispatcher != nil {
-			h.dispatcher = dispatcher
-		}
+		h.SetServices(client, dispatcher)
 
 		writeJSON(w, http.StatusOK, map[string]string{"config_dir": configDir})
 		return
