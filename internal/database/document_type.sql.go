@@ -11,7 +11,7 @@ import (
 )
 
 const createDocumentType = `-- name: CreateDocumentType :execresult
-INSERT INTO document_type (name) VALUES (?)
+INSERT INTO document_type (name) VALUES ($1)
 `
 
 func (q *Queries) CreateDocumentType(ctx context.Context, name string) (sql.Result, error) {
@@ -19,7 +19,7 @@ func (q *Queries) CreateDocumentType(ctx context.Context, name string) (sql.Resu
 }
 
 const createDocumentTypeFull = `-- name: CreateDocumentTypeFull :execresult
-INSERT INTO document_type (name, description) VALUES (?, ?)
+INSERT INTO document_type (name, description) VALUES ($1, $2)
 `
 
 type CreateDocumentTypeFullParams struct {
@@ -32,7 +32,7 @@ func (q *Queries) CreateDocumentTypeFull(ctx context.Context, arg CreateDocument
 }
 
 const deleteDocumentType = `-- name: DeleteDocumentType :exec
-DELETE FROM document_type WHERE id = ?
+DELETE FROM document_type WHERE id = $1
 `
 
 func (q *Queries) DeleteDocumentType(ctx context.Context, id int64) error {
@@ -41,7 +41,7 @@ func (q *Queries) DeleteDocumentType(ctx context.Context, id int64) error {
 }
 
 const getDocumentType = `-- name: GetDocumentType :one
-SELECT id, name, description, created_at FROM document_type WHERE id = ?
+SELECT id, name, description, created_at FROM document_type WHERE id = $1
 `
 
 func (q *Queries) GetDocumentType(ctx context.Context, id int64) (DocumentType, error) {
@@ -57,7 +57,7 @@ func (q *Queries) GetDocumentType(ctx context.Context, id int64) (DocumentType, 
 }
 
 const getDocumentTypeByName = `-- name: GetDocumentTypeByName :one
-SELECT id, name, description, created_at FROM document_type WHERE name = ?
+SELECT id, name, description, created_at FROM document_type WHERE name = $1
 `
 
 func (q *Queries) GetDocumentTypeByName(ctx context.Context, name string) (DocumentType, error) {
@@ -177,12 +177,12 @@ func (q *Queries) ListAllDocumentTypesWithDocumentCount(ctx context.Context) ([]
 }
 
 const listDocumentTypes = `-- name: ListDocumentTypes :many
-SELECT id, name, description, created_at FROM document_type ORDER BY created_at DESC LIMIT ? OFFSET ?
+SELECT id, name, description, created_at FROM document_type ORDER BY created_at DESC LIMIT $1 OFFSET $2
 `
 
 type ListDocumentTypesParams struct {
-	Limit  int64
-	Offset int64
+	Limit  int32
+	Offset int32
 }
 
 func (q *Queries) ListDocumentTypes(ctx context.Context, arg ListDocumentTypesParams) ([]DocumentType, error) {
@@ -218,12 +218,12 @@ SELECT dt.id, dt.name, dt.description, dt.created_at, COUNT(d.id) AS document_co
 FROM document_type dt
 LEFT JOIN document d ON dt.id = d.document_type_id
 GROUP BY dt.id
-ORDER BY dt.created_at DESC LIMIT ? OFFSET ?
+ORDER BY dt.created_at DESC LIMIT $1 OFFSET $2
 `
 
 type ListDocumentTypesWithDocumentCountParams struct {
-	Limit  int64
-	Offset int64
+	Limit  int32
+	Offset int32
 }
 
 type ListDocumentTypesWithDocumentCountRow struct {
@@ -264,12 +264,12 @@ func (q *Queries) ListDocumentTypesWithDocumentCount(ctx context.Context, arg Li
 }
 
 const searchDocumentTypeByName = `-- name: SearchDocumentTypeByName :many
-SELECT id, name, description, created_at FROM document_type WHERE name LIKE ? ORDER BY name ASC LIMIT ?
+SELECT id, name, description, created_at FROM document_type WHERE name LIKE $1 ORDER BY name ASC LIMIT $2
 `
 
 type SearchDocumentTypeByNameParams struct {
 	Name  string
-	Limit int64
+	Limit int32
 }
 
 func (q *Queries) SearchDocumentTypeByName(ctx context.Context, arg SearchDocumentTypeByNameParams) ([]DocumentType, error) {
@@ -304,14 +304,14 @@ const searchDocumentTypeByNameWithDocumentCount = `-- name: SearchDocumentTypeBy
 SELECT dt.id, dt.name, dt.description, dt.created_at, COUNT(d.id) AS document_count
 FROM document_type dt
 LEFT JOIN document d ON dt.id = d.document_type_id
-WHERE dt.name LIKE ?
+WHERE dt.name LIKE $1
 GROUP BY dt.id
-ORDER BY dt.name ASC LIMIT ?
+ORDER BY dt.name ASC LIMIT $2
 `
 
 type SearchDocumentTypeByNameWithDocumentCountParams struct {
 	Name  string
-	Limit int64
+	Limit int32
 }
 
 type SearchDocumentTypeByNameWithDocumentCountRow struct {
@@ -352,7 +352,7 @@ func (q *Queries) SearchDocumentTypeByNameWithDocumentCount(ctx context.Context,
 }
 
 const updateDocumentType = `-- name: UpdateDocumentType :exec
-UPDATE document_type SET name = ? WHERE id = ?
+UPDATE document_type SET name = $1 WHERE id = $2
 `
 
 type UpdateDocumentTypeParams struct {
@@ -366,7 +366,7 @@ func (q *Queries) UpdateDocumentType(ctx context.Context, arg UpdateDocumentType
 }
 
 const updateDocumentTypeFull = `-- name: UpdateDocumentTypeFull :exec
-UPDATE document_type SET name = ?, description = ? WHERE id = ?
+UPDATE document_type SET name = $1, description = $2 WHERE id = $3
 `
 
 type UpdateDocumentTypeFullParams struct {

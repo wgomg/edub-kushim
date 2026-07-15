@@ -46,11 +46,11 @@ type BatchOverview struct {
 type Batch struct {
 	client     *database.Client
 	queries    *database.Queries
-	maxRetries int64
+	maxRetries int32
 }
 
 func NewBatch(client *database.Client, maxRetries int) *Batch {
-	return &Batch{client: client, queries: client.Queries, maxRetries: int64(maxRetries)}
+	return &Batch{client: client, queries: client.Queries, maxRetries: int32(maxRetries)}
 }
 
 func (s *Batch) GetSummary(ctx context.Context, batchID string) (*BatchSummary, error) {
@@ -136,7 +136,7 @@ func (s *Batch) ListSummaries(ctx context.Context, f task.BatchFilter) ([]BatchS
 	return summaries, nil
 }
 
-func (s *Batch) ListOverviews(ctx context.Context, limit, offset int64) ([]BatchOverview, error) {
+func (s *Batch) ListOverviews(ctx context.Context, limit, offset int32) ([]BatchOverview, error) {
 	rows, err := s.queries.ListBatchOverviews(ctx, database.ListBatchOverviewsParams{
 		Limit:  limit,
 		Offset: offset,

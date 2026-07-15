@@ -45,7 +45,7 @@ func (s *DocumentType) GetByName(ctx context.Context, name string) (database.Doc
 	return dt, nil
 }
 
-func (s *DocumentType) ListWithDocumentCount(ctx context.Context, limit, offset int64) ([]database.ListDocumentTypesWithDocumentCountRow, error) {
+func (s *DocumentType) ListWithDocumentCount(ctx context.Context, limit, offset int32) ([]database.ListDocumentTypesWithDocumentCountRow, error) {
 	dts, err := s.queries.ListDocumentTypesWithDocumentCount(ctx, database.ListDocumentTypesWithDocumentCountParams{
 		Limit:  limit,
 		Offset: offset,
@@ -56,7 +56,7 @@ func (s *DocumentType) ListWithDocumentCount(ctx context.Context, limit, offset 
 	return dts, nil
 }
 
-func (s *DocumentType) SearchByNameWithDocumentCount(ctx context.Context, prefix string, limit int64) ([]database.SearchDocumentTypeByNameWithDocumentCountRow, error) {
+func (s *DocumentType) SearchByNameWithDocumentCount(ctx context.Context, prefix string, limit int32) ([]database.SearchDocumentTypeByNameWithDocumentCountRow, error) {
 	dts, err := s.queries.SearchDocumentTypeByNameWithDocumentCount(ctx, database.SearchDocumentTypeByNameWithDocumentCountParams{
 		Name:  prefix + "%",
 		Limit: limit,

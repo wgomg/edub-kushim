@@ -37,7 +37,7 @@ func (h *DocumentTypeHandler) List(w http.ResponseWriter, r *http.Request) {
 	var result []types.DocumentTypeResponse
 
 	if q != "" {
-		dts, err := h.services.DocumentType.SearchByNameWithDocumentCount(ctx, q, limit)
+		dts, err := h.services.DocumentType.SearchByNameWithDocumentCount(ctx, q, int32(limit))
 		if err != nil {
 			writeServiceError(w, h.logger, &reqID, "list document types", err)
 			return

@@ -42,11 +42,11 @@ type Owner struct {
 	PID        int
 	Logger     *utils.Logger
 	client     *database.Client
-	maxRetries int64
+	maxRetries int32
 }
 
 func NewOwner(c *database.Client, ownerID string, pid int, logger *utils.Logger, maxRetries int) *Owner {
-	return &Owner{Queries: c.Queries, OwnerID: ownerID, PID: pid, Logger: logger, client: c, maxRetries: int64(maxRetries)}
+	return &Owner{Queries: c.Queries, OwnerID: ownerID, PID: pid, Logger: logger, client: c, maxRetries: int32(maxRetries)}
 }
 
 func (o *Owner) Acquire(ctx context.Context, batchID string, staleAfter time.Duration) error {

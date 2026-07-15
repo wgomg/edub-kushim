@@ -59,7 +59,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 	if err != nil {
 		e.logger.Error(&logId, "llm text reduction failed, using raw text: %w", err)
 	} else {
-		if document.WordCount > int64(llmContent.TargetWordCount) {
+		if int64(document.WordCount) > int64(llmContent.TargetWordCount) {
 			e.logger.Info(&logId, "long path selected for llm text reduction: document_length=(%d -> %d),  document_word_count=(%d -> %d), target_word_count=%d",
 				document.CharCount, llmContent.CharCount, document.WordCount, llmContent.WordCount, llmContent.TargetWordCount)
 		}
@@ -70,7 +70,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 	if err != nil {
 		e.logger.Error(&logId, "tag text reduction failed, using raw text: %w", err)
 	} else {
-		if document.WordCount > int64(tagsContent.TargetWordCount) {
+		if int64(document.WordCount) > int64(tagsContent.TargetWordCount) {
 			e.logger.Info(&logId, "long path selected for tag text reduction: document_length=(%d -> %d),  document_word_count=(%d -> %d), target_word_count=%d",
 				document.CharCount, tagsContent.CharCount, document.WordCount, tagsContent.WordCount, tagsContent.TargetWordCount)
 		}

@@ -11,9 +11,9 @@ import (
 )
 
 const createPeople = `-- name: CreatePeople :execresult
-INSERT OR IGNORE INTO people (
-    name, name_native, normalized_name
-) VALUES (?, ?, ?)
+INSERT INTO people (name, name_native, normalized_name)
+VALUES ($1, $2, $3)
+ON CONFLICT (name) DO NOTHING
 `
 
 type CreatePeopleParams struct {
@@ -27,7 +27,7 @@ func (q *Queries) CreatePeople(ctx context.Context, arg CreatePeopleParams) (sql
 }
 
 const deletePeople = `-- name: DeletePeople :exec
-DELETE FROM people WHERE id = ?
+DELETE FROM people WHERE id = $1
 `
 
 func (q *Queries) DeletePeople(ctx context.Context, id int64) error {
@@ -36,7 +36,7 @@ func (q *Queries) DeletePeople(ctx context.Context, id int64) error {
 }
 
 const getPeople = `-- name: GetPeople :one
-SELECT id, name, name_native, normalized_name, created_at FROM people WHERE id = ?
+SELECT id, name, name_native, normalized_name, created_at FROM people WHERE id = $1
 `
 
 func (q *Queries) GetPeople(ctx context.Context, id int64) (People, error) {
@@ -53,7 +53,7 @@ func (q *Queries) GetPeople(ctx context.Context, id int64) (People, error) {
 }
 
 const getPeopleByName = `-- name: GetPeopleByName :one
-SELECT id, name, name_native, normalized_name, created_at FROM people WHERE name = ?
+SELECT id, name, name_native, normalized_name, created_at FROM people WHERE name = $1
 `
 
 func (q *Queries) GetPeopleByName(ctx context.Context, name string) (People, error) {
@@ -70,7 +70,7 @@ func (q *Queries) GetPeopleByName(ctx context.Context, name string) (People, err
 }
 
 const getPeopleByNormalizedName = `-- name: GetPeopleByNormalizedName :one
-SELECT id, name, name_native, normalized_name, created_at FROM people WHERE normalized_name = ?
+SELECT id, name, name_native, normalized_name, created_at FROM people WHERE normalized_name = $1
 `
 
 func (q *Queries) GetPeopleByNormalizedName(ctx context.Context, normalizedName string) (People, error) {
@@ -120,12 +120,12 @@ func (q *Queries) ListAllPeople(ctx context.Context) ([]People, error) {
 }
 
 const listPeople = `-- name: ListPeople :many
-SELECT id, name, name_native, normalized_name, created_at FROM people ORDER BY created_at DESC LIMIT ? OFFSET ?
+SELECT id, name, name_native, normalized_name, created_at FROM people ORDER BY created_at DESC LIMIT $1 OFFSET $2
 `
 
 type ListPeopleParams struct {
-	Limit  int64
-	Offset int64
+	Limit  int32
+	Offset int32
 }
 
 func (q *Queries) ListPeople(ctx context.Context, arg ListPeopleParams) ([]People, error) {
@@ -162,12 +162,12 @@ SELECT p.id, p.name, p.name_native, p.normalized_name, p.created_at, COUNT(dp.do
 FROM people p
 LEFT JOIN document_people dp ON p.id = dp.people_id
 GROUP BY p.id
-ORDER BY p.created_at DESC LIMIT ? OFFSET ?
+ORDER BY p.created_at DESC LIMIT $1 OFFSET $2
 `
 
 type ListPeopleWithDocumentCountParams struct {
-	Limit  int64
-	Offset int64
+	Limit  int32
+	Offset int32
 }
 
 type ListPeopleWithDocumentCountRow struct {
@@ -210,12 +210,12 @@ func (q *Queries) ListPeopleWithDocumentCount(ctx context.Context, arg ListPeopl
 }
 
 const searchPeopleByName = `-- name: SearchPeopleByName :many
-SELECT id, name, name_native, normalized_name, created_at FROM people WHERE name LIKE ? ORDER BY name ASC LIMIT ?
+SELECT id, name, name_native, normalized_name, created_at FROM people WHERE name LIKE $1 ORDER BY name ASC LIMIT $2
 `
 
 type SearchPeopleByNameParams struct {
 	Name  string
-	Limit int64
+	Limit int32
 }
 
 func (q *Queries) SearchPeopleByName(ctx context.Context, arg SearchPeopleByNameParams) ([]People, error) {
@@ -251,14 +251,14 @@ const searchPeopleByNameWithDocumentCount = `-- name: SearchPeopleByNameWithDocu
 SELECT p.id, p.name, p.name_native, p.normalized_name, p.created_at, COUNT(dp.document_id) AS document_count
 FROM people p
 LEFT JOIN document_people dp ON p.id = dp.people_id
-WHERE p.name LIKE ?
+WHERE p.name LIKE $1
 GROUP BY p.id
-ORDER BY p.name ASC LIMIT ?
+ORDER BY p.name ASC LIMIT $2
 `
 
 type SearchPeopleByNameWithDocumentCountParams struct {
 	Name  string
-	Limit int64
+	Limit int32
 }
 
 type SearchPeopleByNameWithDocumentCountRow struct {
@@ -302,8 +302,8 @@ func (q *Queries) SearchPeopleByNameWithDocumentCount(ctx context.Context, arg S
 
 const updatePeople = `-- name: UpdatePeople :exec
 UPDATE people SET
-    name = ?, normalized_name = ?
-WHERE id = ?
+    name = $1, normalized_name = $2
+WHERE id = $3
 `
 
 type UpdatePeopleParams struct {
@@ -318,7 +318,7 @@ func (q *Queries) UpdatePeople(ctx context.Context, arg UpdatePeopleParams) erro
 }
 
 const updatePeopleFull = `-- name: UpdatePeopleFull :exec
-UPDATE people SET name = ?, name_native = ?, normalized_name = ? WHERE id = ?
+UPDATE people SET name = $1, name_native = $2, normalized_name = $3 WHERE id = $4
 `
 
 type UpdatePeopleFullParams struct {
@@ -340,8 +340,8 @@ func (q *Queries) UpdatePeopleFull(ctx context.Context, arg UpdatePeopleFullPara
 
 const updatePeopleNative = `-- name: UpdatePeopleNative :exec
 UPDATE people SET
-    name_native = ?
-WHERE id = ? AND name_native IS NULL
+    name_native = $1
+WHERE id = $2 AND name_native IS NULL
 `
 
 type UpdatePeopleNativeParams struct {

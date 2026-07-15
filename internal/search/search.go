@@ -18,9 +18,9 @@ type Result struct {
 	SHA512Checksum string
 	MimeType       string
 	FileSize       int64
-	PageCount      int64
-	WordCount      int64
-	CharCount      int64
+	PageCount      int32
+	WordCount      int32
+	CharCount      int32
 	Language       string
 	DocumentTypeID int64
 	CreatedAt      time.Time
@@ -98,9 +98,9 @@ func (e *Engine) Search(ctx context.Context, query string, limit, offset int32) 
 			SHA512Checksum: r.Sha512Checksum,
 			MimeType:       r.MimeType,
 			FileSize:       r.FileSize,
-			PageCount:      r.PageCount,
-			WordCount:      r.WordCount,
-			CharCount:      r.CharCount,
+			PageCount:      int32(r.PageCount),
+			WordCount:      int32(r.WordCount),
+			CharCount:      int32(r.CharCount),
 			Language:       r.Language,
 			DocumentTypeID: r.DocumentTypeID,
 			CreatedAt:      r.CreatedAt.Time,
@@ -165,9 +165,9 @@ func (e *Engine) SearchStructured(ctx context.Context, filter Filter) ([]Result,
 			SHA512Checksum: r.Sha512Checksum,
 			MimeType:       r.MimeType,
 			FileSize:       r.FileSize,
-			PageCount:      r.PageCount,
-			WordCount:      r.WordCount,
-			CharCount:      r.CharCount,
+			PageCount:      int32(r.PageCount),
+			WordCount:      int32(r.WordCount),
+			CharCount:      int32(r.CharCount),
 			Language:       r.Language,
 			DocumentTypeID: r.DocumentTypeID,
 			CreatedAt:      r.CreatedAt.Time,

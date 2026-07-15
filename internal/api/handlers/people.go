@@ -36,7 +36,7 @@ func (h *PeopleHandler) List(w http.ResponseWriter, r *http.Request) {
 	offset := pb.GetInt64("offset", 0, 0, 100000)
 
 	if q != "" {
-		people, err := h.services.People.SearchByNameWithDocumentCount(ctx, q, limit)
+		people, err := h.services.People.SearchByNameWithDocumentCount(ctx, q, int32(limit))
 		if err != nil {
 			writeServiceError(w, h.logger, &reqID, "list people", err)
 			return
@@ -54,7 +54,7 @@ func (h *PeopleHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	people, err := h.services.People.ListWithDocumentCount(ctx, limit, offset)
+	people, err := h.services.People.ListWithDocumentCount(ctx, int32(limit), int32(offset))
 	if err != nil {
 		writeServiceError(w, h.logger, &reqID, "list people", err)
 		return
@@ -231,7 +231,7 @@ func (h *PeopleHandler) ListPeopleTypes(w http.ResponseWriter, r *http.Request) 
 	var result []types.PeopleTypeResponse
 
 	if q != "" {
-		pts, err := h.services.PeopleType.Search(ctx, q, limit)
+		pts, err := h.services.PeopleType.Search(ctx, q, int32(limit))
 		if err != nil {
 			writeServiceError(w, h.logger, &reqID, "list people types", err)
 			return
@@ -241,7 +241,7 @@ func (h *PeopleHandler) ListPeopleTypes(w http.ResponseWriter, r *http.Request) 
 			result[i] = types.PeopleTypeResponse{ID: pt.ID, Name: pt.Name, Description: pt.Description}
 		}
 	} else {
-		pts, err := h.services.PeopleType.List(ctx, limit, offset)
+		pts, err := h.services.PeopleType.List(ctx, int32(limit), int32(offset))
 		if err != nil {
 			writeServiceError(w, h.logger, &reqID, "list people types", err)
 			return

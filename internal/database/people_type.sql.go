@@ -11,7 +11,7 @@ import (
 )
 
 const createPeopleType = `-- name: CreatePeopleType :execresult
-INSERT INTO people_type (name, description) VALUES (?, ?)
+INSERT INTO people_type (name, description) VALUES ($1, $2)
 `
 
 type CreatePeopleTypeParams struct {
@@ -24,7 +24,7 @@ func (q *Queries) CreatePeopleType(ctx context.Context, arg CreatePeopleTypePara
 }
 
 const deletePeopleType = `-- name: DeletePeopleType :exec
-DELETE FROM people_type WHERE id = ?
+DELETE FROM people_type WHERE id = $1
 `
 
 func (q *Queries) DeletePeopleType(ctx context.Context, id int64) error {
@@ -33,7 +33,7 @@ func (q *Queries) DeletePeopleType(ctx context.Context, id int64) error {
 }
 
 const getPeopleType = `-- name: GetPeopleType :one
-SELECT id, name, description, created_at FROM people_type WHERE id = ?
+SELECT id, name, description, created_at FROM people_type WHERE id = $1
 `
 
 func (q *Queries) GetPeopleType(ctx context.Context, id int64) (PeopleType, error) {
@@ -49,7 +49,7 @@ func (q *Queries) GetPeopleType(ctx context.Context, id int64) (PeopleType, erro
 }
 
 const getPeopleTypeByName = `-- name: GetPeopleTypeByName :one
-SELECT id, name, description, created_at FROM people_type WHERE name = ?
+SELECT id, name, description, created_at FROM people_type WHERE name = $1
 `
 
 func (q *Queries) GetPeopleTypeByName(ctx context.Context, name string) (PeopleType, error) {
@@ -124,12 +124,12 @@ func (q *Queries) ListAllPeopleTypesNames(ctx context.Context) ([]string, error)
 }
 
 const listPeopleTypes = `-- name: ListPeopleTypes :many
-SELECT id, name, description, created_at FROM people_type ORDER BY created_at DESC LIMIT ? OFFSET ?
+SELECT id, name, description, created_at FROM people_type ORDER BY created_at DESC LIMIT $1 OFFSET $2
 `
 
 type ListPeopleTypesParams struct {
-	Limit  int64
-	Offset int64
+	Limit  int32
+	Offset int32
 }
 
 func (q *Queries) ListPeopleTypes(ctx context.Context, arg ListPeopleTypesParams) ([]PeopleType, error) {
@@ -161,12 +161,12 @@ func (q *Queries) ListPeopleTypes(ctx context.Context, arg ListPeopleTypesParams
 }
 
 const searchPeopleTypeByName = `-- name: SearchPeopleTypeByName :many
-SELECT id, name, description, created_at FROM people_type WHERE name LIKE ? ORDER BY name ASC LIMIT ?
+SELECT id, name, description, created_at FROM people_type WHERE name LIKE $1 ORDER BY name ASC LIMIT $2
 `
 
 type SearchPeopleTypeByNameParams struct {
 	Name  string
-	Limit int64
+	Limit int32
 }
 
 func (q *Queries) SearchPeopleTypeByName(ctx context.Context, arg SearchPeopleTypeByNameParams) ([]PeopleType, error) {
@@ -198,7 +198,7 @@ func (q *Queries) SearchPeopleTypeByName(ctx context.Context, arg SearchPeopleTy
 }
 
 const updatePeopleType = `-- name: UpdatePeopleType :exec
-UPDATE people_type SET name = ?, description = ? WHERE id = ?
+UPDATE people_type SET name = $1, description = $2 WHERE id = $3
 `
 
 type UpdatePeopleTypeParams struct {

@@ -58,7 +58,7 @@ func (h *TagHandler) List(w http.ResponseWriter, r *http.Request) {
 	var responses []types.TagResponse
 
 	if q != "" {
-		result, searchErr := h.services.Tag.SearchByNameWithDocumentCount(ctx, q, limit, offset)
+		result, searchErr := h.services.Tag.SearchByNameWithDocumentCount(ctx, q, int32(limit), int32(offset))
 		err = searchErr
 		if err == nil {
 			total, err = h.services.Tag.CountByName(ctx, q)
@@ -70,7 +70,7 @@ func (h *TagHandler) List(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	} else {
-		result, listErr := h.services.Tag.ListWithDocumentCount(ctx, limit, offset)
+		result, listErr := h.services.Tag.ListWithDocumentCount(ctx, int32(limit), int32(offset))
 		err = listErr
 		if err == nil {
 			total, err = h.services.Tag.Count(ctx)

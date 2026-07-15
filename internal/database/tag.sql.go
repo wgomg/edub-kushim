@@ -22,7 +22,7 @@ func (q *Queries) CountTags(ctx context.Context) (int64, error) {
 }
 
 const countTagsByName = `-- name: CountTagsByName :one
-SELECT COUNT(*) FROM tag WHERE name LIKE ?
+SELECT COUNT(*) FROM tag WHERE name LIKE $1
 `
 
 func (q *Queries) CountTagsByName(ctx context.Context, name string) (int64, error) {
@@ -33,9 +33,9 @@ func (q *Queries) CountTagsByName(ctx context.Context, name string) (int64, erro
 }
 
 const createTag = `-- name: CreateTag :execresult
-INSERT OR IGNORE INTO tag (
-    name
-) VALUES (?)
+INSERT INTO tag (name)
+VALUES ($1)
+ON CONFLICT (name) DO NOTHING
 `
 
 func (q *Queries) CreateTag(ctx context.Context, name string) (sql.Result, error) {
@@ -43,7 +43,7 @@ func (q *Queries) CreateTag(ctx context.Context, name string) (sql.Result, error
 }
 
 const deleteTag = `-- name: DeleteTag :exec
-DELETE FROM tag WHERE id = ?
+DELETE FROM tag WHERE id = $1
 `
 
 func (q *Queries) DeleteTag(ctx context.Context, id int64) error {
@@ -52,7 +52,7 @@ func (q *Queries) DeleteTag(ctx context.Context, id int64) error {
 }
 
 const getTag = `-- name: GetTag :one
-SELECT id, name, created_at FROM tag WHERE id = ?
+SELECT id, name, created_at FROM tag WHERE id = $1
 `
 
 func (q *Queries) GetTag(ctx context.Context, id int64) (Tag, error) {
@@ -63,7 +63,7 @@ func (q *Queries) GetTag(ctx context.Context, id int64) (Tag, error) {
 }
 
 const getTagByName = `-- name: GetTagByName :one
-SELECT id, name, created_at FROM tag WHERE name = ?
+SELECT id, name, created_at FROM tag WHERE name = $1
 `
 
 func (q *Queries) GetTagByName(ctx context.Context, name string) (Tag, error) {
@@ -128,12 +128,12 @@ func (q *Queries) ListAllTagsNames(ctx context.Context) ([]string, error) {
 }
 
 const listTags = `-- name: ListTags :many
-SELECT id, name, created_at FROM tag ORDER BY created_at DESC LIMIT ? OFFSET ?
+SELECT id, name, created_at FROM tag ORDER BY created_at DESC LIMIT $1 OFFSET $2
 `
 
 type ListTagsParams struct {
-	Limit  int64
-	Offset int64
+	Limit  int32
+	Offset int32
 }
 
 func (q *Queries) ListTags(ctx context.Context, arg ListTagsParams) ([]Tag, error) {
@@ -164,12 +164,12 @@ SELECT t.id, t.name, t.created_at, COUNT(dt.document_id) AS document_count
 FROM tag t
 LEFT JOIN document_tag dt ON t.id = dt.tag_id
 GROUP BY t.id
-ORDER BY t.created_at DESC LIMIT ? OFFSET ?
+ORDER BY t.created_at DESC LIMIT $1 OFFSET $2
 `
 
 type ListTagsWithDocumentCountParams struct {
-	Limit  int64
-	Offset int64
+	Limit  int32
+	Offset int32
 }
 
 type ListTagsWithDocumentCountRow struct {
@@ -208,13 +208,13 @@ func (q *Queries) ListTagsWithDocumentCount(ctx context.Context, arg ListTagsWit
 }
 
 const searchTagsByName = `-- name: SearchTagsByName :many
-SELECT id, name, created_at FROM tag WHERE name LIKE ? ORDER BY name ASC LIMIT ? OFFSET ?
+SELECT id, name, created_at FROM tag WHERE name LIKE $1 ORDER BY name ASC LIMIT $2 OFFSET $3
 `
 
 type SearchTagsByNameParams struct {
 	Name   string
-	Limit  int64
-	Offset int64
+	Limit  int32
+	Offset int32
 }
 
 func (q *Queries) SearchTagsByName(ctx context.Context, arg SearchTagsByNameParams) ([]Tag, error) {
@@ -244,15 +244,15 @@ const searchTagsByNameWithDocumentCount = `-- name: SearchTagsByNameWithDocument
 SELECT t.id, t.name, t.created_at, COUNT(dt.document_id) AS document_count
 FROM tag t
 LEFT JOIN document_tag dt ON t.id = dt.tag_id
-WHERE t.name LIKE ?
+WHERE t.name LIKE $1
 GROUP BY t.id
-ORDER BY t.name ASC LIMIT ? OFFSET ?
+ORDER BY t.name ASC LIMIT $2 OFFSET $3
 `
 
 type SearchTagsByNameWithDocumentCountParams struct {
 	Name   string
-	Limit  int64
-	Offset int64
+	Limit  int32
+	Offset int32
 }
 
 type SearchTagsByNameWithDocumentCountRow struct {
@@ -292,8 +292,8 @@ func (q *Queries) SearchTagsByNameWithDocumentCount(ctx context.Context, arg Sea
 
 const updateTag = `-- name: UpdateTag :exec
 UPDATE tag SET
-    name = ?
-WHERE id = ?
+    name = $1
+WHERE id = $2
 `
 
 type UpdateTagParams struct {

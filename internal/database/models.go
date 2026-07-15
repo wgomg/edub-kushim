@@ -13,8 +13,8 @@ import (
 type Batch struct {
 	ID        string
 	Source    string
-	CreatedAt sql.NullTime
 	Status    string
+	CreatedAt sql.NullTime
 }
 
 type BatchOwner struct {
@@ -33,9 +33,9 @@ type Document struct {
 	Sha512Checksum string
 	MimeType       string
 	FileSize       int64
-	PageCount      int64
-	WordCount      int64
-	CharCount      int64
+	PageCount      int32
+	WordCount      int32
+	CharCount      int32
 	Language       string
 	CreatedAt      sql.NullTime
 	ModifiedAt     sql.NullTime
@@ -43,12 +43,6 @@ type Document struct {
 	OriginalPath   string
 	StoragePath    string
 	TextContent    sql.NullString
-}
-
-type DocumentFt struct {
-	Title      string
-	Content    string
-	DocumentID string
 }
 
 type DocumentPeople struct {
@@ -103,7 +97,7 @@ type SavedSearch struct {
 	ID         int64
 	Name       string
 	FilterJson string
-	CreatedAt  string
+	CreatedAt  time.Time
 }
 
 type Tag struct {
@@ -125,7 +119,7 @@ type Task struct {
 	StartedAt   sql.NullTime
 	CompletedAt sql.NullTime
 	Error       sql.NullString
-	Attempts    int64
+	Attempts    int32
 }
 
 type User struct {
@@ -133,8 +127,8 @@ type User struct {
 	Username        string
 	PasswordHash    sql.NullString
 	ApiKeyHash      sql.NullString
-	CreatedAt       sql.NullTime
 	ApiKeyPrefix    sql.NullString
 	ApiKeyCreatedAt sql.NullTime
 	Role            string
+	CreatedAt       sql.NullTime
 }

@@ -1,6 +1,6 @@
 version: '2'
 sql:
-  - engine: 'sqlite'
+  - engine: 'postgresql'
     schema: 'internal/database/sql/schema/migrations'
     queries: 'internal/database/sql/queries/'
     gen:
@@ -14,3 +14,5 @@ sql:
         overrides:
           - column: 'task.result'
             go_type: '*encoding/json.RawMessage'
+          - column: 'task.payload'
+            go_type: 'encoding/json.RawMessage'

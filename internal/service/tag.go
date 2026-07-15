@@ -74,7 +74,7 @@ func (s *Tag) ListAll(ctx context.Context) ([]database.Tag, error) {
 	return tags, nil
 }
 
-func (s *Tag) ListWithDocumentCount(ctx context.Context, limit, offset int64) ([]database.ListTagsWithDocumentCountRow, error) {
+func (s *Tag) ListWithDocumentCount(ctx context.Context, limit, offset int32) ([]database.ListTagsWithDocumentCountRow, error) {
 	tags, err := s.queries.ListTagsWithDocumentCount(ctx, database.ListTagsWithDocumentCountParams{
 		Limit:  limit,
 		Offset: offset,
@@ -85,7 +85,7 @@ func (s *Tag) ListWithDocumentCount(ctx context.Context, limit, offset int64) ([
 	return tags, nil
 }
 
-func (s *Tag) SearchByNameWithDocumentCount(ctx context.Context, prefix string, limit, offset int64) ([]database.SearchTagsByNameWithDocumentCountRow, error) {
+func (s *Tag) SearchByNameWithDocumentCount(ctx context.Context, prefix string, limit, offset int32) ([]database.SearchTagsByNameWithDocumentCountRow, error) {
 	tags, err := s.queries.SearchTagsByNameWithDocumentCount(ctx, database.SearchTagsByNameWithDocumentCountParams{
 		Name:   prefix + "%",
 		Limit:  limit,

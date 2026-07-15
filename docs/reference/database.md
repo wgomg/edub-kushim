@@ -7,6 +7,9 @@
 `NewSQLiteDB(cfg) (*sql.DB, error)`, `NewClient(db) *Client`
 
 - `NewSQLiteDB` sets `PRAGMA foreign_keys = ON`, `journal_mode = WAL`, `synchronous = NORMAL`, `busy_timeout = 5000`, max 1 connection
+
+> **Phase 1 complete**: SQL files, sqlc engine, and generated Go code are now PostgreSQL-ready.
+> Phase 2 replaces `NewSQLiteDB` with a PostgreSQL connection pool.
 - `NewClient` wraps a `*sql.DB` and an embedded `*Queries` (sqlc-generated). Exposes `BeginTx(ctx, opts)` and `DB()` for direct `*sql.DB` access. All query methods on `*Queries` are promoted to `*Client`.
 
 ---
@@ -15,7 +18,10 @@
 
 ### Functions
 
-`InitializeSchema(db) error` — Configures goose (`SetBaseFS`, `SetDialect`), runs pending migrations via `goose.Up()` from the embedded `sql/schema/migrations/` directory, then runs seeders: `tags`, `document-types`, `people-types`. On a fresh database, the baseline migration (`00001_baseline.sql`) creates all tables, indexes, triggers, and the FTS5 virtual table. On existing databases, only unapplied migrations are executed.
+`InitializeSchema(db) error` — Configures goose (`SetBaseFS`, `SetDialect`), runs pending migrations via `goose.Up()` from the embedded `sql/schema/migrations/` directory, then runs seeders: `tags`, `document-types`, `people-types`. On a fresh database, the baseline migration (`00001_baseline.sql`) creates all tables and indexes (PostgreSQL syntax). On existing databases, only unapplied migrations are executed.
+
+> **Note**: The migration files now use PostgreSQL DDL (`GENERATED ALWAYS AS IDENTITY`, `TIMESTAMPTZ`, `JSONB`).
+> The current runtime still uses SQLite — the goose dialect and connection will switch to PostgreSQL in Phase 2.
 
 `ResetDatabase(db) error` — Rolls back all migrations via `goose.Reset()` (down → up), then re-runs seeders. Used by `kushim setup --reset-database`.
 
@@ -27,6 +33,9 @@ Numbered SQL files in `internal/database/sql/schema/migrations/`. Each file uses
 - `-- +goose Down` — applied when rolling back
 - `-- +goose StatementBegin` / `-- +goose StatementEnd` — wraps multi-statement SQL (triggers, functions) so goose's semicolon-based parser doesn't split them prematurely
 
+> **Note**: The current baseline has no triggers or multi-statement blocks.
+> FTS5-related triggers were removed with the FTS5 virtual table (deferred to Phase 3).
+
 ### sqlc integration
 
 sqlc is configured in `sqlc.yaml` to read its schema from the same `migrations/` directory, not from a separate `schema.sql` file:
@@ -35,11 +44,15 @@ sqlc is configured in `sqlc.yaml` to read its schema from the same `migrations/`
 schema: 'internal/database/sql/schema/migrations'
 ```
 
-sqlc natively understands goose annotations — it recognises `-- +goose Up`/`-- +goose Down` boundaries and ignores down migrations when building its schema model. This ensures the generated Go code always matches the actual database schema without duplication.
+sqlc natively understands goose annotations — it recognises `-- +goose Up`/`-- +goose Down` boundaries and ignores down migrations when building its schema model.
+
+> **Phase 1 change**: `sqlc.yaml` engine changed from `sqlite` to `postgresql`.
+> Generated code now uses `$1, $2` PostgreSQL-style placeholders instead of `?`.
+> Types changed accordingly: `INTEGER` → `int32`, `BIGINT` → `int64`, `TIMESTAMPTZ` nullable → `sql.NullTime`, `TIMESTAMPTZ NOT NULL` → `time.Time`.
 
 When adding a new migration:
 
-1. Write `00005_description.sql` in `migrations/` with `-- +goose Up` / `-- +goose Down` sections
+1. Write `00002_description.sql` in `migrations/` with `-- +goose Up` / `-- +goose Down` sections (PostgreSQL syntax)
 2. Run `sqlc generate` — sqlc picks up the new file from the same directory
 3. No separate `schema.sql` update is needed
 
@@ -56,18 +69,17 @@ Migrations run automatically on startup (no manual CLI command needed):
 
 ### Key structs
 
-- `Document` — 17 fields: `ID`, `DocumentID` (UUID string), `Title`, `Md5Checksum`, `Sha512Checksum`, `MimeType`, `FileSize`, `PageCount`, `WordCount`, `CharCount`, `Language`, `CreatedAt`, `ModifiedAt`, `DocumentTypeID`, `OriginalPath`, `StoragePath`, `TextContent`
-- `DocumentFt` — `Title`, `Content`, `DocumentID`
-- `Task` — 12 fields: `ID`, `TaskID`, `TaskType`, `Status`, `BatchID sql.NullString`, `Payload json.RawMessage`, `Result *json.RawMessage`, `DedupKey sql.NullString`, `CreatedAt`, `StartedAt`, `CompletedAt`, `Error`
+- `Document` — 17 fields: `ID`, `DocumentID` (UUID string), `Title`, `Md5Checksum`, `Sha512Checksum`, `MimeType`, `FileSize`, `PageCount` (`int32`), `WordCount` (`int32`), `CharCount` (`int32`), `Language`, `CreatedAt`, `ModifiedAt`, `DocumentTypeID`, `OriginalPath`, `StoragePath`, `TextContent`
+- `Task` — 13 fields: `ID`, `TaskID`, `TaskType`, `Status`, `BatchID sql.NullString`, `Payload json.RawMessage`, `Result *json.RawMessage`, `DedupKey sql.NullString`, `CreatedAt`, `StartedAt`, `CompletedAt`, `Error`, `Attempts int32`
 - `Tag` — `ID`, `Name`, `CreatedAt`
 - `DocumentType` — `ID`, `Name`, `Description`, `CreatedAt`
 - `DocumentTag` — `DocumentID`, `TagID`
 - `DocumentPeople` — `DocumentID`, `PeopleID`, `PeopleTypeID`
 - `People` — `ID`, `Name`, `NameNative sql.NullString`, `NormalizedName string`, `CreatedAt`
 - `PeopleType` — `ID`, `Name`, `Description`, `CreatedAt`
-- `User` — `ID`, `Username`, `PasswordHash sql.NullString`, `ApiKeyHash sql.NullString`, `ApiKeyPrefix sql.NullString`, `ApiKeyCreatedAt sql.NullTime`, `CreatedAt sql.NullTime`, `Role` — roles: `"admin"`, `"editor"`, `"viewer"` (default). Role is validated at the application layer (no CHECK constraint in SQLite ALTER TABLE).
-- `SavedSearch` — `ID`, `Name`, `FilterJson string`, `CreatedAt string`
-- `Batch` — 4 fields: `ID`, `Source`, `CreatedAt sql.NullTime`, `Status` (queued/processing/completed/failed/cancelled)
+- `User` — `ID`, `Username`, `PasswordHash sql.NullString`, `ApiKeyHash sql.NullString`, `ApiKeyPrefix sql.NullString`, `ApiKeyCreatedAt sql.NullTime`, `Role` (`"admin"`, `"editor"`, `"viewer"`, default `'viewer'`), `CreatedAt sql.NullTime`
+- `SavedSearch` — `ID`, `Name`, `FilterJson string`, `CreatedAt time.Time`
+- `Batch` — `ID`, `Source`, `Status` (queued/processing/completed/failed/cancelled), `CreatedAt sql.NullTime`
 - `BatchOwner` — `BatchID`, `OwnerID`, `Pid`, `AcquiredAt`, `LastHeartbeat`
 - `OrphanedFile` — `ID`, `DocumentKey`, `DocumentKeyType` (uuid/dbid), `FilePath`, `OriginalPath`, `SourceDir` (originals/processed), `FileSize`, `MimeType`, `DetectedAt`, `Status` (pending/deleted/restored/reingested), `ActionAt`, `ActionType`
 
@@ -100,7 +112,7 @@ Migrations run automatically on startup (no manual CLI command needed):
 
 ### Tag
 
-`CreateTag` (`INSERT OR IGNORE`, `:execresult`), `GetTag`, `GetTagByName`, `ListTags`, `ListAllTags`, `ListAllTagsNames`, `SearchTagsByName` (prefix search with `LIKE ?` + `LIMIT`), `UpdateTag`, `DeleteTag`
+`CreateTag` (`INSERT ... ON CONFLICT (name) DO NOTHING`, `:execresult`), `GetTag`, `GetTagByName`, `ListTags`, `ListAllTags`, `ListAllTagsNames`, `SearchTagsByName` (prefix search with `LIKE $1` + `LIMIT $2`), `UpdateTag`, `DeleteTag`
 
 ### Document tag
 
@@ -108,11 +120,11 @@ Migrations run automatically on startup (no manual CLI command needed):
 
 ### Document type
 
-`CreateDocumentType` (name only), `CreateDocumentTypeFull` (name + description), `GetDocumentType`, `GetDocumentTypeByName`, `ListDocumentTypes`, `ListAllDocumentTypes`, `ListAllDocumentTypesNames`, `SearchDocumentTypeByName` (prefix search with `LIKE ?` + `LIMIT`), `UpdateDocumentType` (name only), `UpdateDocumentTypeFull` (name + description), `DeleteDocumentType`
+`CreateDocumentType` (name only — description defaults to `''`), `CreateDocumentTypeFull` (name + description), `GetDocumentType`, `GetDocumentTypeByName`, `ListDocumentTypes`, `ListAllDocumentTypes`, `ListAllDocumentTypesNames`, `SearchDocumentTypeByName` (prefix search with `LIKE $1` + `LIMIT $2`), `UpdateDocumentType` (name only), `UpdateDocumentTypeFull` (name + description), `DeleteDocumentType`
 
 ### People
 
-`CreatePeople` (`INSERT OR IGNORE` with `Name`, `NameNative`, `NormalizedName`), `GetPeople`, `GetPeopleByName`, `ListPeople`, `ListAllPeople`, `SearchPeopleByName` (prefix search with `LIKE ?` + `LIMIT`), `UpdatePeople` (name + normalized_name), `UpdatePeopleFull` (name + name_native + normalized_name), `UpdatePeopleNative` (fills `name_native` only if currently NULL), `DeletePeople`
+`CreatePeople` (`INSERT ... ON CONFLICT (name) DO NOTHING` with `Name`, `NameNative`, `NormalizedName`), `GetPeople`, `GetPeopleByName`, `ListPeople`, `ListAllPeople`, `SearchPeopleByName` (prefix search with `LIKE $1` + `LIMIT $2`), `UpdatePeople` (name + normalized_name), `UpdatePeopleFull` (name + name_native + normalized_name), `UpdatePeopleNative` (fills `name_native` only if currently NULL), `DeletePeople`
 
 ### People type
 
@@ -215,80 +227,52 @@ The last 4 methods back the dashboard analytics panel. `LanguageDistribution` an
 
 ## Core Tables
 
-- `document` — Main storage: `document_id` (UUID, UNIQUE), `md5_checksum`, `sha512_checksum` (UNIQUE), `page_count`, `word_count`, `char_count`, `language` (all int64/text defaults), `text_content`, file paths
-- `saved_search` — Saved search configurations: `id`, `name`, `filter_json` (JSON), `created_at`
-- `task` — Async processing: `task_id` (UUID), `batch_id` (nullable), `task_type`, `payload` (JSON), `result` (JSON), `dedup_key` (nullable), `status`, timestamps, `error`
+- `document` — Main storage: `document_id` (UUID, UNIQUE), `md5_checksum`, `sha512_checksum` (UNIQUE), `file_size` (`BIGINT`), `page_count` (`INTEGER`, Go: `int32`), `word_count` (`int32`), `char_count` (`int32`), `language`, `text_content`, file paths. Primary key: `id BIGINT GENERATED ALWAYS AS IDENTITY`.
+- `saved_search` — Saved search configurations: `id`, `name`, `filter_json` (JSON), `created_at TIMESTAMPTZ NOT NULL` (Go: `time.Time`)
+- `task` — Async processing: `task_id` (UUID), `batch_id` (nullable), `task_type`, `payload` (`JSONB`), `result` (`JSONB`), `dedup_key` (nullable), `status`, timestamps, `error`, `attempts int32`
 - `tag` — Classification tags (seeded with 110+ Dewey Decimal tags)
-- `document_type` — Document type classification (seeded with types like `article`, `book`, `report`, `letter`, etc.)
-- `people` — People/entities associated with documents (`name` UNIQUE, `name_native` nullable for original non-Latin script, `normalized_name` NOT NULL UNIQUE for accent-folded matcher key)
-- `people_type` — Roles for people (e.g., `author`, `editor`, `translator`, `subject`)
-- `user` — Authentication (username, password_hash, role, api_key_hash, api_key_prefix, api_key_created_at)
-- `batch` — Batch processing units: `id`, `source`, `created_at`, `status` (queued/processing/completed/failed/cancelled). The `status` column was added in migration `00005` to support queue-based processing.
-- `batch_owner` — Batch ownership: `batch_id`, `owner_id`, `pid`, `acquired_at`, `last_heartbeat`. Each processing batch is claimed by one owner (CLI or queue daemon) with a heartbeat.
-- `orphaned_file` — Detected orphaned files: `document_key`, `document_key_type` (uuid/dbid), `source_dir` (originals/processed), `file_path` (inside quarantined/orphaned/), `status` (pending/deleted/restored/reingested), `action_type`, `action_at`
+- `document_type` — Document type classification (seeded with types like `article`, `book`, `report`). `description` defaults to `''`.
+- `people` — People/entities (`name` UNIQUE, `name_native` nullable, `normalized_name` NOT NULL UNIQUE)
+- `people_type` — Roles for people
+- `user` — Authentication (username, password_hash, role default `'viewer'`, api_key_hash UNIQUE, api_key_prefix, api_key_created_at)
+- `batch` — Batch processing units: `id`, `source`, `status` (queued/processing/completed/failed/cancelled), `created_at`
+- `batch_owner` — Batch ownership: `batch_id` (PK, FK to batch), `owner_id`, `pid` (`BIGINT`), `acquired_at`, `last_heartbeat`
+- `orphaned_file` — Detected orphaned files: `document_key`, `document_key_type` (uuid/dbid), `source_dir` (originals/processed), `file_path`, `file_size` (`BIGINT`), `mime_type`, `detected_at`, `status` (pending/deleted/restored/reingested), `action_at`, `action_type`. CHECK constraints on `document_key_type`, `source_dir`, `status`, `action_type`.
 
 ## Junction Tables
 
-- `document_author` — (document_id, author_id) — legacy (see document_people)
-- `document_tag` — (document_id, tag_id)
-- `document_people` — (document_id, people_id, people_type_id) — replaces document_author
+- `document_tag` — (document_id, tag_id), PK(document_id, tag_id), FK ON DELETE CASCADE
+- `document_people` — (document_id, people_id, people_type_id), PK(document_id, people_id, people_type_id), FK ON DELETE CASCADE
 
-## FTS5 Virtual Table
 
-```sql
-CREATE VIRTUAL TABLE document_fts USING fts5(
-    title,
-    content,
-    document_id UNINDEXED,
-    tokenize = 'unicode61'
-);
-```
+## Key Indexes
 
-## Triggers
-
-- `document_ai` — INSERT: auto-adds to `document_fts`
-- `document_au` — UPDATE: syncs FTS index
-- `document_ad` — DELETE: removes from FTS index
+- `task`: `status`, `task_type`, `batch_id`, `(batch_id, status)`, partial `(created_at WHERE status = 'pending')`, partial unique `(task_type, dedup_key) WHERE status IN ('pending', 'processing') AND dedup_key IS NOT NULL`, partial `(task_type, created_at) WHERE status = 'pending'`
+- `document`: `md5_checksum`, `sha512_checksum`, `created_at`, `document_type_id`
+- `document_people`: `document_id`, `people_id`
+- `document_tag`: `document_id`, `tag_id`
+- `people`: `normalized_name` (UNIQUE)
+- `batch`: `status`
+- `batch_owner`: `owner_id`, `last_heartbeat`
+- `orphaned_file`: `status`, `detected_at`
 
 ## Schema Idempotency
 
-All `CREATE TABLE`, `CREATE INDEX`, and `CREATE TRIGGER` statements use `IF NOT EXISTS`
-to allow safe re-runs of the baseline migration. Junction table inserts (`document_tag`, `document_people`)
-use `INSERT OR IGNORE` instead of plain `INSERT` to avoid duplicate-key errors on
-re-enrichment.
+Junction table inserts (`document_tag`, `document_people`) use `INSERT ... ON CONFLICT ... DO NOTHING`
+instead of plain `INSERT` to avoid duplicate-key errors on re-enrichment.
 
-New schema changes after the baseline are written as numbered migration files with
-`IF NOT EXISTS` not strictly required (goose tracks which versions have been applied),
-but using it is still recommended for idempotent re-runs during development.
+The consolidated baseline (`00001_baseline.sql`) replaces all migrations `00002`–`00011`.
+New schema changes after the baseline are written as numbered migration files (starting at `00002`).
+Goose tracks which versions have been applied in the `goose_db_version` table.
+
+> **FTS5 removed**: The FTS5 virtual table (`document_fts`), triggers, and `IF NOT EXISTS`
+> modifiers have been removed from the baseline. FTS5 functionality is maintained through
+> the existing Go code (`fts5.go`, `structured_search.go`) which uses raw SQL strings.
+> PostgreSQL `tsvector`/`tsquery` full-text search will replace FTS5 in Phase 3.
 
 ## Migration Version Table
 
 A `goose_db_version` table (managed by goose) tracks applied migrations with columns: `version_id`, `is_applied`, `tstamp`. Created automatically on first `goose.Up()` call.
-
-## Key Indexes
-
-- `idx_document_md5`, `idx_document_sha512` (UNIQUE), `idx_document_created`
-- `idx_task_status`, `idx_task_type`, `idx_task_batch`, `idx_task_batch_status`
-- `idx_batch_status` — on `batch(status)`. Added in migration `00005` to support queue queries (`CountQueuedBatches`, `GetNextQueuedBatch`).
-- `idx_people_normalized_name` — UNIQUE index on `people(normalized_name)`. Added in migration `00011` alongside the NOT NULL constraint.
-- `idx_task_pending` — partial index on `task(created_at)` where `status = 'pending'`
-- `idx_task_dedup` — unique partial index on `task(task_type, dedup_key)` where
-  status is `pending` or `processing` and `dedup_key IS NOT NULL`. Prevents duplicate
-  active tasks for the same (type, key).
-- `idx_orphaned_status` — on `orphaned_file(status)`
-- `idx_orphaned_detected` — on `orphaned_file(detected_at)`
-
-## MySQL / MariaDB compatibility notes
-
-The dedup index uses a feature not available in MySQL/MariaDB (`WHERE` on
-`CREATE INDEX`). The equivalent when adding MySQL/MariaDB support:
-
-```sql
-ALTER TABLE task ADD COLUMN active_token VARCHAR(1) GENERATED ALWAYS AS
-  (CASE WHEN status IN ('pending', 'processing') THEN '1' END) VIRTUAL;
-
-CREATE UNIQUE INDEX idx_task_dedup ON task(task_type, dedup_key, active_token);
-```
 
 ---
 

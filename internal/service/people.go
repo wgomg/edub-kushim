@@ -54,7 +54,7 @@ func (s *People) ListAll(ctx context.Context) ([]database.People, error) {
 	return people, nil
 }
 
-func (s *People) ListWithDocumentCount(ctx context.Context, limit, offset int64) ([]database.ListPeopleWithDocumentCountRow, error) {
+func (s *People) ListWithDocumentCount(ctx context.Context, limit, offset int32) ([]database.ListPeopleWithDocumentCountRow, error) {
 	people, err := s.queries.ListPeopleWithDocumentCount(ctx, database.ListPeopleWithDocumentCountParams{
 		Limit:  limit,
 		Offset: offset,
@@ -65,7 +65,7 @@ func (s *People) ListWithDocumentCount(ctx context.Context, limit, offset int64)
 	return people, nil
 }
 
-func (s *People) SearchByNameWithDocumentCount(ctx context.Context, prefix string, limit int64) ([]database.SearchPeopleByNameWithDocumentCountRow, error) {
+func (s *People) SearchByNameWithDocumentCount(ctx context.Context, prefix string, limit int32) ([]database.SearchPeopleByNameWithDocumentCountRow, error) {
 	people, err := s.queries.SearchPeopleByNameWithDocumentCount(ctx, database.SearchPeopleByNameWithDocumentCountParams{
 		Name:  prefix + "%",
 		Limit: limit,

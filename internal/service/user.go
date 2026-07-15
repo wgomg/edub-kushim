@@ -21,7 +21,7 @@ func NewUser(queries *database.Queries) *User {
 	return &User{queries: queries}
 }
 
-func (s *User) List(ctx context.Context, limit, offset int64) ([]database.ListUsersRow, error) {
+func (s *User) List(ctx context.Context, limit, offset int32) ([]database.ListUsersRow, error) {
 	users, err := s.queries.ListUsers(ctx, database.ListUsersParams{
 		Limit:  limit,
 		Offset: offset,

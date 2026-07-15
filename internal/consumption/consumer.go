@@ -275,9 +275,9 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 		OriginalPath:   "",
 		StoragePath:    *file.StorageProcessedPath,
 		TextContent:    file.Text,
-		PageCount:      int64(file.PageCount),
-		WordCount:      int64(len(strings.Fields(file.Text.String))),
-		CharCount:      int64(utf8.RuneCountInString(file.Text.String)),
+		PageCount:      int32(file.PageCount),
+		WordCount:      int32(len(strings.Fields(file.Text.String))),
+		CharCount:      int32(utf8.RuneCountInString(file.Text.String)),
 	})
 	if err != nil {
 		MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)

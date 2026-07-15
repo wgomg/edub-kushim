@@ -11,7 +11,7 @@ import (
 )
 
 const createSavedSearch = `-- name: CreateSavedSearch :execresult
-INSERT INTO saved_search (name, filter_json) VALUES (?, ?)
+INSERT INTO saved_search (name, filter_json) VALUES ($1, $2)
 `
 
 type CreateSavedSearchParams struct {
@@ -24,7 +24,7 @@ func (q *Queries) CreateSavedSearch(ctx context.Context, arg CreateSavedSearchPa
 }
 
 const deleteSavedSearch = `-- name: DeleteSavedSearch :exec
-DELETE FROM saved_search WHERE id = ?
+DELETE FROM saved_search WHERE id = $1
 `
 
 func (q *Queries) DeleteSavedSearch(ctx context.Context, id int64) error {

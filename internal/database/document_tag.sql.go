@@ -11,7 +11,9 @@ import (
 )
 
 const addDocumentTag = `-- name: AddDocumentTag :exec
-INSERT OR IGNORE INTO document_tag (document_id, tag_id) VALUES (?, ?)
+INSERT INTO document_tag (document_id, tag_id)
+VALUES ($1, $2)
+ON CONFLICT (document_id, tag_id) DO NOTHING
 `
 
 type AddDocumentTagParams struct {
@@ -25,7 +27,7 @@ func (q *Queries) AddDocumentTag(ctx context.Context, arg AddDocumentTagParams) 
 }
 
 const clearDocumentTags = `-- name: ClearDocumentTags :exec
-DELETE FROM document_tag WHERE document_id = ?
+DELETE FROM document_tag WHERE document_id = $1
 `
 
 func (q *Queries) ClearDocumentTags(ctx context.Context, documentID int64) error {
@@ -36,7 +38,7 @@ func (q *Queries) ClearDocumentTags(ctx context.Context, documentID int64) error
 const getDocumentTags = `-- name: GetDocumentTags :many
 SELECT t.id, t.name, t.created_at FROM tag t
 JOIN document_tag dt ON t.id = dt.tag_id
-WHERE dt.document_id = ?
+WHERE dt.document_id = $1
 `
 
 func (q *Queries) GetDocumentTags(ctx context.Context, documentID int64) ([]Tag, error) {
@@ -67,7 +69,7 @@ SELECT d.id, d.title, d.md5_checksum, d.sha512_checksum, d.mime_type, d.file_siz
        d.created_at, d.modified_at, d.document_type_id, d.original_path, d.storage_path
 FROM document d
 JOIN document_tag dt ON d.id = dt.document_id
-WHERE dt.tag_id = ?
+WHERE dt.tag_id = $1
 `
 
 type GetTagDocumentsRow struct {
@@ -120,7 +122,7 @@ func (q *Queries) GetTagDocuments(ctx context.Context, tagID int64) ([]GetTagDoc
 }
 
 const removeDocumentTag = `-- name: RemoveDocumentTag :exec
-DELETE FROM document_tag WHERE document_id = ? AND tag_id = ?
+DELETE FROM document_tag WHERE document_id = $1 AND tag_id = $2
 `
 
 type RemoveDocumentTagParams struct {

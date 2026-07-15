@@ -10,6 +10,7 @@
 
 - HTTP server with middleware (request ID, parameter parsing via `ParamBag`)
 - Database layer with sqlc-generated type-safe queries (SQLite, WAL mode)
+- **Phase 1 — Schema & sqlc → PostgreSQL** ✓ SQL files rewritten for PostgreSQL syntax, sqlc engine changed to `postgresql`, generated Go code uses `$N` placeholders and correct PG types (`int32`, `time.Time`, `json.RawMessage`). Runtime still uses SQLite — connection layer switches in Phase 2.
 - Configuration system with YAML support, default values, and validation
 - Structured logging with request correlation, file logging, numeric level filtering
 - CLI framework with dependency injection container (lazy DB, cache, dispatcher, pools)

@@ -13,7 +13,7 @@ import (
 
 const cancelPendingTasksByBatch = `-- name: CancelPendingTasksByBatch :execrows
 UPDATE task SET status = 'cancelled', completed_at = CURRENT_TIMESTAMP
-WHERE batch_id = ? AND status = 'pending'
+WHERE batch_id = $1 AND status = 'pending'
 `
 
 func (q *Queries) CancelPendingTasksByBatch(ctx context.Context, batchID sql.NullString) (int64, error) {
@@ -26,7 +26,7 @@ func (q *Queries) CancelPendingTasksByBatch(ctx context.Context, batchID sql.Nul
 
 const cancelProcessingTasksByBatch = `-- name: CancelProcessingTasksByBatch :execrows
 UPDATE task SET status = 'cancelled', completed_at = CURRENT_TIMESTAMP
-WHERE batch_id = ? AND status = 'processing'
+WHERE batch_id = $1 AND status = 'processing'
 `
 
 func (q *Queries) CancelProcessingTasksByBatch(ctx context.Context, batchID sql.NullString) (int64, error) {
@@ -41,7 +41,7 @@ const claimTask = `-- name: ClaimTask :execrows
 UPDATE task SET
     status = 'processing',
     started_at = CURRENT_TIMESTAMP
-WHERE id = ? AND status = 'pending'
+WHERE id = $1 AND status = 'pending'
 `
 
 func (q *Queries) ClaimTask(ctx context.Context, id int64) (int64, error) {
@@ -55,10 +55,10 @@ func (q *Queries) ClaimTask(ctx context.Context, id int64) (int64, error) {
 const completeTask = `-- name: CompleteTask :execrows
 UPDATE task SET
     status = 'completed',
-    result = ?,
+    result = $1,
     completed_at = CURRENT_TIMESTAMP,
     attempts = 0
-WHERE id = ? AND status = 'processing'
+WHERE id = $2 AND status = 'processing'
 `
 
 type CompleteTaskParams struct {
@@ -97,7 +97,7 @@ func (q *Queries) CountDistinctBatches(ctx context.Context) (int64, error) {
 }
 
 const countTasksByBatchAndStatus = `-- name: CountTasksByBatchAndStatus :one
-SELECT COUNT(*) FROM task WHERE batch_id = ? AND status = ?
+SELECT COUNT(*) FROM task WHERE batch_id = $1 AND status = $2
 `
 
 type CountTasksByBatchAndStatusParams struct {
@@ -147,7 +147,7 @@ func (q *Queries) CountTasksByStatus(ctx context.Context) ([]CountTasksByStatusR
 const createTask = `-- name: CreateTask :execresult
 INSERT INTO task (
     task_id, task_type, status, batch_id, payload, dedup_key
-) VALUES (?, ?, ?, ?, ?, ?)
+) VALUES ($1, $2, $3, $4, $5, $6)
 `
 
 type CreateTaskParams struct {
@@ -171,7 +171,7 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (sql.Res
 }
 
 const deleteTask = `-- name: DeleteTask :exec
-DELETE FROM task WHERE id = ?
+DELETE FROM task WHERE id = $1
 `
 
 func (q *Queries) DeleteTask(ctx context.Context, id int64) error {
@@ -183,8 +183,8 @@ const discardEnrichTask = `-- name: DiscardEnrichTask :exec
 UPDATE task SET
     status = 'discarded',
     completed_at = CURRENT_TIMESTAMP,
-    error = ?
-WHERE id = ? AND status = 'waiting' AND task_type = 'enrich'
+    error = $1
+WHERE id = $2 AND status = 'waiting' AND task_type = 'enrich'
 `
 
 type DiscardEnrichTaskParams struct {
@@ -201,8 +201,8 @@ const discardEnrichTaskByTaskID = `-- name: DiscardEnrichTaskByTaskID :execrows
 UPDATE task SET
     status = 'discarded',
     completed_at = CURRENT_TIMESTAMP,
-    error = ?
-WHERE task_id = ? AND status = 'waiting' AND task_type = 'enrich'
+    error = $1
+WHERE task_id = $2 AND status = 'waiting' AND task_type = 'enrich'
 `
 
 type DiscardEnrichTaskByTaskIDParams struct {
@@ -222,8 +222,8 @@ const failTask = `-- name: FailTask :exec
 UPDATE task SET
     status = 'failed',
     completed_at = CURRENT_TIMESTAMP,
-    error = ?
-WHERE id = ?
+    error = $1
+WHERE id = $2
 `
 
 type FailTaskParams struct {
@@ -239,7 +239,7 @@ func (q *Queries) FailTask(ctx context.Context, arg FailTaskParams) error {
 const getConfigTaskByDedupKey = `-- name: GetConfigTaskByDedupKey :one
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error, attempts
-FROM task WHERE task_type = 'config' AND dedup_key = ?
+FROM task WHERE task_type = 'config' AND dedup_key = $1
 ORDER BY created_at DESC LIMIT 1
 `
 
@@ -277,7 +277,7 @@ func (q *Queries) GetNextPendingTask(ctx context.Context) (int64, error) {
 
 const getNextPendingTaskOfType = `-- name: GetNextPendingTaskOfType :one
 SELECT id FROM task
-WHERE status = 'pending' AND task_type = ?
+WHERE status = 'pending' AND task_type = $1
 ORDER BY created_at LIMIT 1
 `
 
@@ -289,7 +289,7 @@ func (q *Queries) GetNextPendingTaskOfType(ctx context.Context, taskType string)
 }
 
 const getTask = `-- name: GetTask :one
-SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key, created_at, started_at, completed_at, error, attempts FROM task WHERE id = ?
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key, created_at, started_at, completed_at, error, attempts FROM task WHERE id = $1
 `
 
 func (q *Queries) GetTask(ctx context.Context, id int64) (Task, error) {
@@ -314,7 +314,7 @@ func (q *Queries) GetTask(ctx context.Context, id int64) (Task, error) {
 }
 
 const getTaskByBatchID = `-- name: GetTaskByBatchID :many
-SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key, created_at, started_at, completed_at, error, attempts FROM task WHERE batch_id = ? ORDER BY created_at
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key, created_at, started_at, completed_at, error, attempts FROM task WHERE batch_id = $1 ORDER BY created_at
 `
 
 func (q *Queries) GetTaskByBatchID(ctx context.Context, batchID sql.NullString) ([]Task, error) {
@@ -355,7 +355,7 @@ func (q *Queries) GetTaskByBatchID(ctx context.Context, batchID sql.NullString) 
 }
 
 const getTaskByTaskID = `-- name: GetTaskByTaskID :one
-SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key, created_at, started_at, completed_at, error, attempts FROM task WHERE task_id = ?
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key, created_at, started_at, completed_at, error, attempts FROM task WHERE task_id = $1
 `
 
 func (q *Queries) GetTaskByTaskID(ctx context.Context, taskID string) (Task, error) {
@@ -425,7 +425,7 @@ func (q *Queries) ListAllTasks(ctx context.Context) ([]Task, error) {
 const listAllTasksByBatch = `-- name: ListAllTasksByBatch :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error, attempts
-FROM task WHERE batch_id = ? ORDER BY created_at DESC
+FROM task WHERE batch_id = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListAllTasksByBatch(ctx context.Context, batchID sql.NullString) ([]Task, error) {
@@ -468,7 +468,7 @@ func (q *Queries) ListAllTasksByBatch(ctx context.Context, batchID sql.NullStrin
 const listAllTasksByBatchAndStatus = `-- name: ListAllTasksByBatchAndStatus :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error, attempts
-FROM task WHERE batch_id = ? AND status = ? ORDER BY created_at DESC
+FROM task WHERE batch_id = $1 AND status = $2 ORDER BY created_at DESC
 `
 
 type ListAllTasksByBatchAndStatusParams struct {
@@ -516,7 +516,7 @@ func (q *Queries) ListAllTasksByBatchAndStatus(ctx context.Context, arg ListAllT
 const listAllTasksByBatchAndStatusAndType = `-- name: ListAllTasksByBatchAndStatusAndType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error, attempts
-FROM task WHERE batch_id = ? AND status = ? AND task_type = ? ORDER BY created_at DESC
+FROM task WHERE batch_id = $1 AND status = $2 AND task_type = $3 ORDER BY created_at DESC
 `
 
 type ListAllTasksByBatchAndStatusAndTypeParams struct {
@@ -565,7 +565,7 @@ func (q *Queries) ListAllTasksByBatchAndStatusAndType(ctx context.Context, arg L
 const listAllTasksByBatchAndType = `-- name: ListAllTasksByBatchAndType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error, attempts
-FROM task WHERE batch_id = ? AND task_type = ? ORDER BY created_at DESC
+FROM task WHERE batch_id = $1 AND task_type = $2 ORDER BY created_at DESC
 `
 
 type ListAllTasksByBatchAndTypeParams struct {
@@ -613,7 +613,7 @@ func (q *Queries) ListAllTasksByBatchAndType(ctx context.Context, arg ListAllTas
 const listAllTasksByStatus = `-- name: ListAllTasksByStatus :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error, attempts
-FROM task WHERE status = ? ORDER BY created_at DESC
+FROM task WHERE status = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListAllTasksByStatus(ctx context.Context, status string) ([]Task, error) {
@@ -656,7 +656,7 @@ func (q *Queries) ListAllTasksByStatus(ctx context.Context, status string) ([]Ta
 const listAllTasksByStatusAndType = `-- name: ListAllTasksByStatusAndType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error, attempts
-FROM task WHERE status = ? AND task_type = ? ORDER BY created_at DESC
+FROM task WHERE status = $1 AND task_type = $2 ORDER BY created_at DESC
 `
 
 type ListAllTasksByStatusAndTypeParams struct {
@@ -704,7 +704,7 @@ func (q *Queries) ListAllTasksByStatusAndType(ctx context.Context, arg ListAllTa
 const listAllTasksByType = `-- name: ListAllTasksByType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error, attempts
-FROM task WHERE task_type = ? ORDER BY created_at DESC
+FROM task WHERE task_type = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListAllTasksByType(ctx context.Context, taskType string) ([]Task, error) {
@@ -749,12 +749,12 @@ SELECT batch_id FROM task
 WHERE batch_id IS NOT NULL
 GROUP BY batch_id
 ORDER BY MAX(created_at) DESC
-LIMIT ? OFFSET ?
+LIMIT $1 OFFSET $2
 `
 
 type ListDistinctBatchIDsParams struct {
-	Limit  int64
-	Offset int64
+	Limit  int32
+	Offset int32
 }
 
 func (q *Queries) ListDistinctBatchIDs(ctx context.Context, arg ListDistinctBatchIDsParams) ([]sql.NullString, error) {
@@ -782,16 +782,16 @@ func (q *Queries) ListDistinctBatchIDs(ctx context.Context, arg ListDistinctBatc
 
 const listDistinctBatchIDsByStatus = `-- name: ListDistinctBatchIDsByStatus :many
 SELECT batch_id FROM task
-WHERE batch_id IS NOT NULL AND status = ?
+WHERE batch_id IS NOT NULL AND status = $1
 GROUP BY batch_id
 ORDER BY MAX(created_at) DESC
-LIMIT ? OFFSET ?
+LIMIT $2 OFFSET $3
 `
 
 type ListDistinctBatchIDsByStatusParams struct {
 	Status string
-	Limit  int64
-	Offset int64
+	Limit  int32
+	Offset int32
 }
 
 func (q *Queries) ListDistinctBatchIDsByStatus(ctx context.Context, arg ListDistinctBatchIDsByStatusParams) ([]sql.NullString, error) {
@@ -820,12 +820,12 @@ func (q *Queries) ListDistinctBatchIDsByStatus(ctx context.Context, arg ListDist
 const listTasks = `-- name: ListTasks :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error, attempts
-FROM task ORDER BY created_at DESC LIMIT ? OFFSET ?
+FROM task ORDER BY created_at DESC LIMIT $1 OFFSET $2
 `
 
 type ListTasksParams struct {
-	Limit  int64
-	Offset int64
+	Limit  int32
+	Offset int32
 }
 
 func (q *Queries) ListTasks(ctx context.Context, arg ListTasksParams) ([]Task, error) {
@@ -868,13 +868,13 @@ func (q *Queries) ListTasks(ctx context.Context, arg ListTasksParams) ([]Task, e
 const listTasksByBatch = `-- name: ListTasksByBatch :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error, attempts
-FROM task WHERE batch_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?
+FROM task WHERE batch_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3
 `
 
 type ListTasksByBatchParams struct {
 	BatchID sql.NullString
-	Limit   int64
-	Offset  int64
+	Limit   int32
+	Offset  int32
 }
 
 func (q *Queries) ListTasksByBatch(ctx context.Context, arg ListTasksByBatchParams) ([]Task, error) {
@@ -917,14 +917,14 @@ func (q *Queries) ListTasksByBatch(ctx context.Context, arg ListTasksByBatchPara
 const listTasksByBatchAndStatus = `-- name: ListTasksByBatchAndStatus :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error, attempts
-FROM task WHERE batch_id = ? AND status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?
+FROM task WHERE batch_id = $1 AND status = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4
 `
 
 type ListTasksByBatchAndStatusParams struct {
 	BatchID sql.NullString
 	Status  string
-	Limit   int64
-	Offset  int64
+	Limit   int32
+	Offset  int32
 }
 
 func (q *Queries) ListTasksByBatchAndStatus(ctx context.Context, arg ListTasksByBatchAndStatusParams) ([]Task, error) {
@@ -972,15 +972,15 @@ func (q *Queries) ListTasksByBatchAndStatus(ctx context.Context, arg ListTasksBy
 const listTasksByBatchAndStatusAndType = `-- name: ListTasksByBatchAndStatusAndType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error, attempts
-FROM task WHERE batch_id = ? AND status = ? AND task_type = ? ORDER BY created_at DESC LIMIT ? OFFSET ?
+FROM task WHERE batch_id = $1 AND status = $2 AND task_type = $3 ORDER BY created_at DESC LIMIT $4 OFFSET $5
 `
 
 type ListTasksByBatchAndStatusAndTypeParams struct {
 	BatchID  sql.NullString
 	Status   string
 	TaskType string
-	Limit    int64
-	Offset   int64
+	Limit    int32
+	Offset   int32
 }
 
 func (q *Queries) ListTasksByBatchAndStatusAndType(ctx context.Context, arg ListTasksByBatchAndStatusAndTypeParams) ([]Task, error) {
@@ -1029,14 +1029,14 @@ func (q *Queries) ListTasksByBatchAndStatusAndType(ctx context.Context, arg List
 const listTasksByBatchAndType = `-- name: ListTasksByBatchAndType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error, attempts
-FROM task WHERE batch_id = ? AND task_type = ? ORDER BY created_at DESC LIMIT ? OFFSET ?
+FROM task WHERE batch_id = $1 AND task_type = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4
 `
 
 type ListTasksByBatchAndTypeParams struct {
 	BatchID  sql.NullString
 	TaskType string
-	Limit    int64
-	Offset   int64
+	Limit    int32
+	Offset   int32
 }
 
 func (q *Queries) ListTasksByBatchAndType(ctx context.Context, arg ListTasksByBatchAndTypeParams) ([]Task, error) {
@@ -1084,13 +1084,13 @@ func (q *Queries) ListTasksByBatchAndType(ctx context.Context, arg ListTasksByBa
 const listTasksByStatus = `-- name: ListTasksByStatus :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error, attempts
-FROM task WHERE status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?
+FROM task WHERE status = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3
 `
 
 type ListTasksByStatusParams struct {
 	Status string
-	Limit  int64
-	Offset int64
+	Limit  int32
+	Offset int32
 }
 
 func (q *Queries) ListTasksByStatus(ctx context.Context, arg ListTasksByStatusParams) ([]Task, error) {
@@ -1133,14 +1133,14 @@ func (q *Queries) ListTasksByStatus(ctx context.Context, arg ListTasksByStatusPa
 const listTasksByStatusAndType = `-- name: ListTasksByStatusAndType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error, attempts
-FROM task WHERE status = ? AND task_type = ? ORDER BY created_at DESC LIMIT ? OFFSET ?
+FROM task WHERE status = $1 AND task_type = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4
 `
 
 type ListTasksByStatusAndTypeParams struct {
 	Status   string
 	TaskType string
-	Limit    int64
-	Offset   int64
+	Limit    int32
+	Offset   int32
 }
 
 func (q *Queries) ListTasksByStatusAndType(ctx context.Context, arg ListTasksByStatusAndTypeParams) ([]Task, error) {
@@ -1188,13 +1188,13 @@ func (q *Queries) ListTasksByStatusAndType(ctx context.Context, arg ListTasksByS
 const listTasksByType = `-- name: ListTasksByType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error, attempts
-FROM task WHERE task_type = ? ORDER BY created_at DESC LIMIT ? OFFSET ?
+FROM task WHERE task_type = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3
 `
 
 type ListTasksByTypeParams struct {
 	TaskType string
-	Limit    int64
-	Offset   int64
+	Limit    int32
+	Offset   int32
 }
 
 func (q *Queries) ListTasksByType(ctx context.Context, arg ListTasksByTypeParams) ([]Task, error) {
@@ -1239,11 +1239,11 @@ UPDATE task SET
     status = 'failed',
     error = 'Max retries exceeded (' || attempts || ')',
     completed_at = CURRENT_TIMESTAMP
-WHERE status = 'processing' AND attempts >= ? AND started_at < ?
+WHERE status = 'processing' AND attempts >= $1 AND started_at < $2
 `
 
 type QuarantineStaleProcessingTasksParams struct {
-	Attempts  int64
+	Attempts  int32
 	StartedAt sql.NullTime
 }
 
@@ -1259,11 +1259,11 @@ const resetStaleProcessingTasks = `-- name: ResetStaleProcessingTasks :execrows
 UPDATE task SET
     status = 'pending',
     attempts = attempts + 1
-WHERE status = 'processing' AND attempts < ? AND started_at < ?
+WHERE status = 'processing' AND attempts < $1 AND started_at < $2
 `
 
 type ResetStaleProcessingTasksParams struct {
-	Attempts  int64
+	Attempts  int32
 	StartedAt sql.NullTime
 }
 
@@ -1283,7 +1283,7 @@ UPDATE task SET
     started_at = NULL,
     completed_at = NULL,
     attempts = 0
-WHERE batch_id = ? AND status = 'failed'
+WHERE batch_id = $1 AND status = 'failed'
 `
 
 func (q *Queries) RetryFailedTasksByBatch(ctx context.Context, batchID sql.NullString) (int64, error) {
@@ -1302,7 +1302,7 @@ UPDATE task SET
     started_at = NULL,
     completed_at = NULL,
     attempts = 0
-WHERE id = ?
+WHERE id = $1
 `
 
 func (q *Queries) RetryTask(ctx context.Context, id int64) error {
@@ -1313,10 +1313,10 @@ func (q *Queries) RetryTask(ctx context.Context, id int64) error {
 const setEnrichTaskPending = `-- name: SetEnrichTaskPending :exec
 UPDATE task SET
     status = 'pending',
-    payload = ?,
+    payload = $1,
     error = NULL,
     completed_at = NULL
-WHERE id = ? AND status IN ('waiting', 'discarded') AND task_type = 'enrich'
+WHERE id = $2 AND status IN ('waiting', 'discarded') AND task_type = 'enrich'
 `
 
 type SetEnrichTaskPendingParams struct {

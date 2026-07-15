@@ -11,7 +11,7 @@ import (
 )
 
 const countUsers = `-- name: CountUsers :one
-SELECT COUNT(*) FROM user
+SELECT COUNT(*) FROM "user"
 `
 
 func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
@@ -22,14 +22,14 @@ func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
 }
 
 const createUser = `-- name: CreateUser :execresult
-INSERT INTO user (
+INSERT INTO "user" (
     username,
     password_hash,
     role,
     api_key_hash,
     api_key_prefix,
     api_key_created_at
-) VALUES (?, ?, ?, ?, ?, ?)
+) VALUES ($1, $2, $3, $4, $5, $6)
 `
 
 type CreateUserParams struct {
@@ -53,7 +53,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (sql.Res
 }
 
 const deleteUser = `-- name: DeleteUser :exec
-DELETE FROM user WHERE id = ?
+DELETE FROM "user" WHERE id = $1
 `
 
 func (q *Queries) DeleteUser(ctx context.Context, id int64) error {
@@ -62,7 +62,7 @@ func (q *Queries) DeleteUser(ctx context.Context, id int64) error {
 }
 
 const getUser = `-- name: GetUser :one
-SELECT id, username, password_hash, api_key_hash, created_at, api_key_prefix, api_key_created_at, role FROM user WHERE id = ?
+SELECT id, username, password_hash, api_key_hash, api_key_prefix, api_key_created_at, role, created_at FROM "user" WHERE id = $1
 `
 
 func (q *Queries) GetUser(ctx context.Context, id int64) (User, error) {
@@ -73,16 +73,16 @@ func (q *Queries) GetUser(ctx context.Context, id int64) (User, error) {
 		&i.Username,
 		&i.PasswordHash,
 		&i.ApiKeyHash,
-		&i.CreatedAt,
 		&i.ApiKeyPrefix,
 		&i.ApiKeyCreatedAt,
 		&i.Role,
+		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const getUserByAPIKeyHash = `-- name: GetUserByAPIKeyHash :one
-SELECT id, username, password_hash, api_key_hash, created_at, api_key_prefix, api_key_created_at, role FROM user WHERE api_key_hash = ?
+SELECT id, username, password_hash, api_key_hash, api_key_prefix, api_key_created_at, role, created_at FROM "user" WHERE api_key_hash = $1
 `
 
 func (q *Queries) GetUserByAPIKeyHash(ctx context.Context, apiKeyHash sql.NullString) (User, error) {
@@ -93,16 +93,16 @@ func (q *Queries) GetUserByAPIKeyHash(ctx context.Context, apiKeyHash sql.NullSt
 		&i.Username,
 		&i.PasswordHash,
 		&i.ApiKeyHash,
-		&i.CreatedAt,
 		&i.ApiKeyPrefix,
 		&i.ApiKeyCreatedAt,
 		&i.Role,
+		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const getUserByUsername = `-- name: GetUserByUsername :one
-SELECT id, username, password_hash, api_key_hash, created_at, api_key_prefix, api_key_created_at, role FROM user WHERE username = ?
+SELECT id, username, password_hash, api_key_hash, api_key_prefix, api_key_created_at, role, created_at FROM "user" WHERE username = $1
 `
 
 func (q *Queries) GetUserByUsername(ctx context.Context, username string) (User, error) {
@@ -113,22 +113,22 @@ func (q *Queries) GetUserByUsername(ctx context.Context, username string) (User,
 		&i.Username,
 		&i.PasswordHash,
 		&i.ApiKeyHash,
-		&i.CreatedAt,
 		&i.ApiKeyPrefix,
 		&i.ApiKeyCreatedAt,
 		&i.Role,
+		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const listUsers = `-- name: ListUsers :many
 SELECT id, username, role, api_key_prefix, api_key_created_at, created_at
-FROM user ORDER BY created_at DESC LIMIT ? OFFSET ?
+FROM "user" ORDER BY created_at DESC LIMIT $1 OFFSET $2
 `
 
 type ListUsersParams struct {
-	Limit  int64
-	Offset int64
+	Limit  int32
+	Offset int32
 }
 
 type ListUsersRow struct {
@@ -171,11 +171,11 @@ func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]ListUse
 }
 
 const revokeUserAPIKey = `-- name: RevokeUserAPIKey :execresult
-UPDATE user SET
+UPDATE "user" SET
     api_key_hash = NULL,
     api_key_prefix = NULL,
     api_key_created_at = NULL
-WHERE id = ?
+WHERE id = $1
 `
 
 func (q *Queries) RevokeUserAPIKey(ctx context.Context, id int64) (sql.Result, error) {
@@ -183,9 +183,9 @@ func (q *Queries) RevokeUserAPIKey(ctx context.Context, id int64) (sql.Result, e
 }
 
 const updateUser = `-- name: UpdateUser :exec
-UPDATE user SET
-    username = ?
-WHERE id = ?
+UPDATE "user" SET
+    username = $1
+WHERE id = $2
 `
 
 type UpdateUserParams struct {
@@ -199,11 +199,11 @@ func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) error {
 }
 
 const updateUserAPIKey = `-- name: UpdateUserAPIKey :execresult
-UPDATE user SET
-    api_key_hash = ?,
-    api_key_prefix = ?,
-    api_key_created_at = ?
-WHERE id = ?
+UPDATE "user" SET
+    api_key_hash = $1,
+    api_key_prefix = $2,
+    api_key_created_at = $3
+WHERE id = $4
 `
 
 type UpdateUserAPIKeyParams struct {
@@ -223,7 +223,7 @@ func (q *Queries) UpdateUserAPIKey(ctx context.Context, arg UpdateUserAPIKeyPara
 }
 
 const updateUserCredentials = `-- name: UpdateUserCredentials :exec
-UPDATE user SET username = ?, password_hash = ? WHERE id = ?
+UPDATE "user" SET username = $1, password_hash = $2 WHERE id = $3
 `
 
 type UpdateUserCredentialsParams struct {
@@ -238,9 +238,9 @@ func (q *Queries) UpdateUserCredentials(ctx context.Context, arg UpdateUserCrede
 }
 
 const updateUserPassword = `-- name: UpdateUserPassword :exec
-UPDATE user SET
-    password_hash = ?
-WHERE id = ?
+UPDATE "user" SET
+    password_hash = $1
+WHERE id = $2
 `
 
 type UpdateUserPasswordParams struct {
@@ -254,7 +254,7 @@ func (q *Queries) UpdateUserPassword(ctx context.Context, arg UpdateUserPassword
 }
 
 const updateUserRole = `-- name: UpdateUserRole :exec
-UPDATE user SET role = ? WHERE id = ?
+UPDATE "user" SET role = $1 WHERE id = $2
 `
 
 type UpdateUserRoleParams struct {

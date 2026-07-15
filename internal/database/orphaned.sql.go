@@ -12,7 +12,7 @@ import (
 
 const createOrphanedFile = `-- name: CreateOrphanedFile :execresult
 INSERT INTO orphaned_file (document_key, document_key_type, file_path, original_path, source_dir, file_size, mime_type)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 `
 
 type CreateOrphanedFileParams struct {
@@ -38,7 +38,7 @@ func (q *Queries) CreateOrphanedFile(ctx context.Context, arg CreateOrphanedFile
 }
 
 const getOrphanedFile = `-- name: GetOrphanedFile :one
-SELECT id, document_key, document_key_type, file_path, original_path, source_dir, file_size, mime_type, detected_at, status, action_at, action_type FROM orphaned_file WHERE id = ?
+SELECT id, document_key, document_key_type, file_path, original_path, source_dir, file_size, mime_type, detected_at, status, action_at, action_type FROM orphaned_file WHERE id = $1
 `
 
 func (q *Queries) GetOrphanedFile(ctx context.Context, id int64) (OrphanedFile, error) {
@@ -111,7 +111,7 @@ func (q *Queries) MarkAllOrphanedFilesDeleted(ctx context.Context) error {
 }
 
 const markOrphanedFileDeleted = `-- name: MarkOrphanedFileDeleted :exec
-UPDATE orphaned_file SET status = 'deleted', action_at = CURRENT_TIMESTAMP, action_type = 'delete' WHERE id = ?
+UPDATE orphaned_file SET status = 'deleted', action_at = CURRENT_TIMESTAMP, action_type = 'delete' WHERE id = $1
 `
 
 func (q *Queries) MarkOrphanedFileDeleted(ctx context.Context, id int64) error {
@@ -120,7 +120,7 @@ func (q *Queries) MarkOrphanedFileDeleted(ctx context.Context, id int64) error {
 }
 
 const markOrphanedFileReingested = `-- name: MarkOrphanedFileReingested :exec
-UPDATE orphaned_file SET status = 'reingested', action_at = CURRENT_TIMESTAMP, action_type = 'move_to_inbox' WHERE id = ?
+UPDATE orphaned_file SET status = 'reingested', action_at = CURRENT_TIMESTAMP, action_type = 'move_to_inbox' WHERE id = $1
 `
 
 func (q *Queries) MarkOrphanedFileReingested(ctx context.Context, id int64) error {
@@ -129,7 +129,7 @@ func (q *Queries) MarkOrphanedFileReingested(ctx context.Context, id int64) erro
 }
 
 const markOrphanedFileRestored = `-- name: MarkOrphanedFileRestored :exec
-UPDATE orphaned_file SET status = 'restored', action_at = CURRENT_TIMESTAMP, action_type = 'restore' WHERE id = ?
+UPDATE orphaned_file SET status = 'restored', action_at = CURRENT_TIMESTAMP, action_type = 'restore' WHERE id = $1
 `
 
 func (q *Queries) MarkOrphanedFileRestored(ctx context.Context, id int64) error {

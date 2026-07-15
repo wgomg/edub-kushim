@@ -85,8 +85,8 @@ func insertSearchDoc(t *testing.T, q *database.Queries, title, textContent strin
 		StoragePath:    "/tmp/storage/" + title,
 		TextContent:    sql.NullString{String: textContent, Valid: true},
 		PageCount:      1,
-		WordCount:      int64(len(textContent) / 5),
-		CharCount:      int64(len(textContent)),
+		WordCount:      int32(len(textContent) / 5),
+		CharCount:      int32(len(textContent)),
 		Language:       "eng",
 	})
 	if err != nil {

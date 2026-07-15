@@ -72,8 +72,8 @@ func taskListHandler(c *Container, args []string) error {
 		BatchID:  batchID,
 		Status:   statusFilter,
 		TaskType: taskTypeFilter,
-		Limit:    int64(limit),
-		Offset:   int64(offset),
+		Limit:    int32(limit),
+		Offset:   int32(offset),
 	})
 	if err != nil {
 		return fmt.Errorf("list tasks: %w", err)

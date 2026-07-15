@@ -11,8 +11,8 @@ import (
 
 type BatchFilter struct {
 	Status string
-	Limit  int64
-	Offset int64
+	Limit  int32
+	Offset int32
 }
 
 var ErrTaskNotFound = errors.New("task not found")
@@ -21,8 +21,8 @@ type TaskFilter struct {
 	BatchID  string
 	Status   string
 	TaskType string
-	Limit    int64
-	Offset   int64
+	Limit    int32
+	Offset   int32
 }
 
 func Get(ctx context.Context, queries *database.Queries, taskID string) (database.Task, error) {

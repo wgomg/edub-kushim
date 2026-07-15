@@ -601,7 +601,7 @@ func TestBatch_ResetProcessingTasksByBatch(t *testing.T) {
 		task, err := client.Queries.GetTask(ctx, taskID)
 		testutil.AssertNoError(t, err, "get task")
 		testutil.AssertEqual(t, task.Status, "pending", "task now pending")
-		testutil.AssertEqual(t, task.Attempts, int64(1), "attempts incremented to 1")
+		testutil.AssertEqual(t, task.Attempts, int32(1), "attempts incremented to 1")
 	})
 
 	t.Run("quarantines task at retry threshold", func(t *testing.T) {
@@ -661,7 +661,7 @@ func TestBatch_ResetProcessingTasksByBatch(t *testing.T) {
 
 		t1, _ := client.Queries.GetTask(ctx, id1)
 		testutil.AssertEqual(t, t1.Status, "pending", "task below threshold reset")
-		testutil.AssertEqual(t, t1.Attempts, int64(3), "attempts incremented")
+		testutil.AssertEqual(t, t1.Attempts, int32(3), "attempts incremented")
 
 		t2, _ := client.Queries.GetTask(ctx, id2)
 		testutil.AssertEqual(t, t2.Status, "failed", "task at threshold quarantined")

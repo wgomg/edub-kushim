@@ -45,7 +45,7 @@ func (s *PeopleType) GetByName(ctx context.Context, name string) (database.Peopl
 	return pt, nil
 }
 
-func (s *PeopleType) List(ctx context.Context, limit, offset int64) ([]database.PeopleType, error) {
+func (s *PeopleType) List(ctx context.Context, limit, offset int32) ([]database.PeopleType, error) {
 	pts, err := s.queries.ListPeopleTypes(ctx, database.ListPeopleTypesParams{Limit: limit, Offset: offset})
 	if err != nil {
 		return nil, errs.FromDB(err, "list people types")
@@ -61,7 +61,7 @@ func (s *PeopleType) ListAll(ctx context.Context) ([]database.PeopleType, error)
 	return pts, nil
 }
 
-func (s *PeopleType) Search(ctx context.Context, prefix string, limit int64) ([]database.PeopleType, error) {
+func (s *PeopleType) Search(ctx context.Context, prefix string, limit int32) ([]database.PeopleType, error) {
 	pts, err := s.queries.SearchPeopleTypeByName(ctx, database.SearchPeopleTypeByNameParams{
 		Name:  prefix + "%",
 		Limit: limit,

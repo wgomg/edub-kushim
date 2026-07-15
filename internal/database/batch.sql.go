@@ -14,7 +14,7 @@ import (
 
 const acquireBatchOwnerForce = `-- name: AcquireBatchOwnerForce :execrows
 INSERT INTO batch_owner (batch_id, owner_id, pid, acquired_at, last_heartbeat)
-VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+VALUES ($1, $2, $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(batch_id) DO UPDATE SET
   owner_id = excluded.owner_id,
   pid = excluded.pid,
@@ -56,7 +56,7 @@ func (q *Queries) CleanupCompletedBatches(ctx context.Context) (int64, error) {
 
 const countLiveBatches = `-- name: CountLiveBatches :one
 SELECT COUNT(*) FROM batch_owner
-WHERE last_heartbeat > datetime('now', '-15 seconds')
+WHERE last_heartbeat > CURRENT_TIMESTAMP - INTERVAL '15 seconds'
 `
 
 func (q *Queries) CountLiveBatches(ctx context.Context) (int64, error) {
@@ -78,7 +78,8 @@ func (q *Queries) CountQueuedBatches(ctx context.Context) (int64, error) {
 }
 
 const createBatch = `-- name: CreateBatch :execresult
-INSERT OR IGNORE INTO batch (id, source, status) VALUES (?, ?, ?)
+INSERT INTO batch (id, source, status) VALUES ($1, $2, $3)
+ON CONFLICT (id) DO NOTHING
 `
 
 type CreateBatchParams struct {
@@ -92,7 +93,7 @@ func (q *Queries) CreateBatch(ctx context.Context, arg CreateBatchParams) (sql.R
 }
 
 const deleteBatchOwnerByBatchID = `-- name: DeleteBatchOwnerByBatchID :execrows
-DELETE FROM batch_owner WHERE batch_id = ?
+DELETE FROM batch_owner WHERE batch_id = $1
 `
 
 func (q *Queries) DeleteBatchOwnerByBatchID(ctx context.Context, batchID string) (int64, error) {
@@ -104,7 +105,7 @@ func (q *Queries) DeleteBatchOwnerByBatchID(ctx context.Context, batchID string)
 }
 
 const getBatch = `-- name: GetBatch :one
-SELECT id, source, created_at, status FROM batch WHERE id = ?
+SELECT id, source, status, created_at FROM batch WHERE id = $1
 `
 
 func (q *Queries) GetBatch(ctx context.Context, id string) (Batch, error) {
@@ -113,14 +114,14 @@ func (q *Queries) GetBatch(ctx context.Context, id string) (Batch, error) {
 	err := row.Scan(
 		&i.ID,
 		&i.Source,
-		&i.CreatedAt,
 		&i.Status,
+		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const getBatchOwner = `-- name: GetBatchOwner :one
-SELECT batch_id, owner_id, pid, acquired_at, last_heartbeat FROM batch_owner WHERE batch_id = ?
+SELECT batch_id, owner_id, pid, acquired_at, last_heartbeat FROM batch_owner WHERE batch_id = $1
 `
 
 func (q *Queries) GetBatchOwner(ctx context.Context, batchID string) (BatchOwner, error) {
@@ -138,8 +139,8 @@ func (q *Queries) GetBatchOwner(ctx context.Context, batchID string) (BatchOwner
 
 const getNextPendingTaskOfTypeForOwner = `-- name: GetNextPendingTaskOfTypeForOwner :one
 SELECT id FROM task
-WHERE status = 'pending' AND task_type = ?
-  AND batch_id IN (SELECT batch_id FROM batch_owner WHERE owner_id = ?)
+WHERE status = 'pending' AND task_type = $1
+  AND batch_id IN (SELECT batch_id FROM batch_owner WHERE owner_id = $2)
 ORDER BY created_at LIMIT 1
 `
 
@@ -156,7 +157,7 @@ func (q *Queries) GetNextPendingTaskOfTypeForOwner(ctx context.Context, arg GetN
 }
 
 const getNextQueuedBatch = `-- name: GetNextQueuedBatch :one
-SELECT id, source, created_at, status FROM batch WHERE status = 'queued' ORDER BY created_at LIMIT 1
+SELECT id, source, status, created_at FROM batch WHERE status = 'queued' ORDER BY created_at LIMIT 1
 `
 
 func (q *Queries) GetNextQueuedBatch(ctx context.Context) (Batch, error) {
@@ -165,15 +166,15 @@ func (q *Queries) GetNextQueuedBatch(ctx context.Context) (Batch, error) {
 	err := row.Scan(
 		&i.ID,
 		&i.Source,
-		&i.CreatedAt,
 		&i.Status,
+		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const getQuarantinedConsumeTaskPayloads = `-- name: GetQuarantinedConsumeTaskPayloads :many
 SELECT task_id, payload FROM task
-WHERE batch_id = ? AND status = 'failed' AND error LIKE 'Max retries exceeded%'
+WHERE batch_id = $1 AND status = 'failed' AND error LIKE 'Max retries exceeded%'
 `
 
 type GetQuarantinedConsumeTaskPayloadsRow struct {
@@ -205,7 +206,7 @@ func (q *Queries) GetQuarantinedConsumeTaskPayloads(ctx context.Context, batchID
 }
 
 const heartbeatBatchOwner = `-- name: HeartbeatBatchOwner :execrows
-UPDATE batch_owner SET last_heartbeat = CURRENT_TIMESTAMP WHERE owner_id = ?
+UPDATE batch_owner SET last_heartbeat = CURRENT_TIMESTAMP WHERE owner_id = $1
 `
 
 func (q *Queries) HeartbeatBatchOwner(ctx context.Context, ownerID string) (int64, error) {
@@ -239,12 +240,12 @@ LEFT JOIN task t ON t.batch_id = b.id
 LEFT JOIN batch_owner bo ON bo.batch_id = b.id
 GROUP BY b.id
 ORDER BY b.created_at DESC
-LIMIT ? OFFSET ?
+LIMIT $1 OFFSET $2
 `
 
 type ListBatchOverviewsParams struct {
-	Limit  int64
-	Offset int64
+	Limit  int32
+	Offset int32
 }
 
 type ListBatchOverviewsRow struct {
@@ -308,7 +309,7 @@ func (q *Queries) ListBatchOverviews(ctx context.Context, arg ListBatchOverviews
 
 const listStaleBatchOwners = `-- name: ListStaleBatchOwners :many
 SELECT bo.batch_id, bo.owner_id, bo.pid FROM batch_owner bo
-WHERE bo.last_heartbeat < datetime('now', '-15 seconds')
+WHERE bo.last_heartbeat < CURRENT_TIMESTAMP - INTERVAL '15 seconds'
 AND EXISTS (SELECT 1 FROM task t
             WHERE t.batch_id = bo.batch_id
             AND t.status IN ('pending', 'processing', 'waiting'))
@@ -348,12 +349,12 @@ UPDATE task SET
     status = 'failed',
     error = 'Max retries exceeded (' || attempts || ')',
     completed_at = CURRENT_TIMESTAMP
-WHERE batch_id = ? AND status = 'processing' AND attempts >= ?
+WHERE batch_id = $1 AND status = 'processing' AND attempts >= $2
 `
 
 type QuarantineProcessingTasksByBatchParams struct {
 	BatchID  sql.NullString
-	Attempts int64
+	Attempts int32
 }
 
 func (q *Queries) QuarantineProcessingTasksByBatch(ctx context.Context, arg QuarantineProcessingTasksByBatchParams) (int64, error) {
@@ -365,7 +366,7 @@ func (q *Queries) QuarantineProcessingTasksByBatch(ctx context.Context, arg Quar
 }
 
 const releaseBatchOwner = `-- name: ReleaseBatchOwner :execrows
-DELETE FROM batch_owner WHERE batch_id = ? AND owner_id = ?
+DELETE FROM batch_owner WHERE batch_id = $1 AND owner_id = $2
 `
 
 type ReleaseBatchOwnerParams struct {
@@ -382,7 +383,7 @@ func (q *Queries) ReleaseBatchOwner(ctx context.Context, arg ReleaseBatchOwnerPa
 }
 
 const requeueBatch = `-- name: RequeueBatch :exec
-UPDATE batch SET status = 'queued' WHERE id = ?
+UPDATE batch SET status = 'queued' WHERE id = $1
 `
 
 func (q *Queries) RequeueBatch(ctx context.Context, id string) error {
@@ -394,12 +395,12 @@ const resetProcessingTasksByBatch = `-- name: ResetProcessingTasksByBatch :execr
 UPDATE task SET
     status = 'pending',
     attempts = attempts + 1
-WHERE batch_id = ? AND status = 'processing' AND attempts < ?
+WHERE batch_id = $1 AND status = 'processing' AND attempts < $2
 `
 
 type ResetProcessingTasksByBatchParams struct {
 	BatchID  sql.NullString
-	Attempts int64
+	Attempts int32
 }
 
 func (q *Queries) ResetProcessingTasksByBatch(ctx context.Context, arg ResetProcessingTasksByBatchParams) (int64, error) {
@@ -411,7 +412,7 @@ func (q *Queries) ResetProcessingTasksByBatch(ctx context.Context, arg ResetProc
 }
 
 const setBatchCancelled = `-- name: SetBatchCancelled :exec
-UPDATE batch SET status = 'cancelled' WHERE id = ?
+UPDATE batch SET status = 'cancelled' WHERE id = $1
 `
 
 func (q *Queries) SetBatchCancelled(ctx context.Context, id string) error {
@@ -420,7 +421,7 @@ func (q *Queries) SetBatchCancelled(ctx context.Context, id string) error {
 }
 
 const setBatchCompleted = `-- name: SetBatchCompleted :exec
-UPDATE batch SET status = 'completed' WHERE id = ?
+UPDATE batch SET status = 'completed' WHERE id = $1
 `
 
 func (q *Queries) SetBatchCompleted(ctx context.Context, id string) error {
@@ -429,7 +430,7 @@ func (q *Queries) SetBatchCompleted(ctx context.Context, id string) error {
 }
 
 const setBatchFailed = `-- name: SetBatchFailed :exec
-UPDATE batch SET status = 'failed' WHERE id = ?
+UPDATE batch SET status = 'failed' WHERE id = $1
 `
 
 func (q *Queries) SetBatchFailed(ctx context.Context, id string) error {
@@ -438,7 +439,7 @@ func (q *Queries) SetBatchFailed(ctx context.Context, id string) error {
 }
 
 const setBatchProcessing = `-- name: SetBatchProcessing :exec
-UPDATE batch SET status = 'processing' WHERE id = ?
+UPDATE batch SET status = 'processing' WHERE id = $1
 `
 
 func (q *Queries) SetBatchProcessing(ctx context.Context, id string) error {
@@ -449,7 +450,7 @@ func (q *Queries) SetBatchProcessing(ctx context.Context, id string) error {
 const tryInsertBatchOwner = `-- name: TryInsertBatchOwner :execrows
 
 INSERT INTO batch_owner (batch_id, owner_id, pid, acquired_at, last_heartbeat)
-VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+VALUES ($1, $2, $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(batch_id) DO NOTHING
 `
 
@@ -460,7 +461,6 @@ type TryInsertBatchOwnerParams struct {
 }
 
 // Two-step acquire: try INSERT first, then UPDATE with stale check.
-// The raw ON CONFLICT ... WHERE pattern has ? count issues with sqlc's parser.
 func (q *Queries) TryInsertBatchOwner(ctx context.Context, arg TryInsertBatchOwnerParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, tryInsertBatchOwner, arg.BatchID, arg.OwnerID, arg.Pid)
 	if err != nil {
@@ -471,11 +471,11 @@ func (q *Queries) TryInsertBatchOwner(ctx context.Context, arg TryInsertBatchOwn
 
 const updateBatchOwnerIfStale = `-- name: UpdateBatchOwnerIfStale :execrows
 UPDATE batch_owner SET
-  owner_id = ?,
-  pid = ?,
+  owner_id = $1,
+  pid = $2,
   acquired_at = CURRENT_TIMESTAMP,
   last_heartbeat = CURRENT_TIMESTAMP
-WHERE batch_id = ? AND (last_heartbeat < ? OR owner_id = ?)
+WHERE batch_id = $3 AND (last_heartbeat < $4 OR owner_id = $5)
 `
 
 type UpdateBatchOwnerIfStaleParams struct {

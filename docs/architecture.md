@@ -6,9 +6,10 @@
 - **Tool Agnostic**: Adapter pattern; OCR, text extraction, PDF optimization, content analysis,
   text reduction, and semantic tag matching all switchable between built‑in adapters and
   external tools/providers
-- **SQLite First**: Development-friendly with migration path to production databases
-  (sqlc-generated queries are portable; database-specific features like partial
-  indexes use compatible patterns — see MySQL/MariaDB notes in the code reference)
+- **PostgreSQL Target**: SQL and generated Go code target PostgreSQL. The current runtime
+still uses SQLite (Phase 1: schema + sqlc rewrite complete; Phase 2: connection layer replaces
+SQLite with PostgreSQL). SQL files, placeholders (`$1, $2`), and sqlc engine are all
+   PostgreSQL-native.
 - **Fallback Processing**: Text extraction → OCR → text extraction pattern
 - **Date-based Organization**: Temporal storage structure for scalability
 - **Transaction Safety**: Coordinated database and file operations with rollback
@@ -139,7 +140,7 @@ OCRs from PNG, and builds a searchable PDF with `go‑pdf/fpdf` using
 ### 4. Database Integration
 
 Document record created via `CreateDocument` with a generated `document_id` UUID,
-auto-increment ID obtained from `LastInsertId()`, date‑based storage paths
+auto-increment ID obtained from `LastInsertId()` (SQLite — currently works; PostgreSQL `GENERATED ALWAYS AS IDENTITY` does not populate `LastInsertId()`, deferred to Phase 2), date‑based storage paths
 generated, paths updated via `UpdateDocumentPaths`. The transaction is
 DB‑only (fast writes), bounded by a 5‑second context timeout.
 
@@ -166,13 +167,9 @@ temp files). On success, the inbox original is removed.
 
 ### 7. FTS Indexing
 
-Automatic via SQLite triggers:
-
-- `document_ai` — INSERT into `document_fts`
-- `document_au` — UPDATE FTS index
-- `document_ad` — DELETE from FTS index
-
-Uses `unicode61` tokenizer for multi‑language support without language‑specific stemming.
+> **Removed from schema in Phase 1** (FTS5 → tsvector migration deferred to Phase 3).
+> The FTS5-related Go code (`fts5.go`, `structured_search.go`) still works against test SQLite
+> databases but will be rewritten for PostgreSQL tsvector in Phase 3.
 
 ### 8. Async Enrichment (Post-Consume)
 
@@ -373,7 +370,7 @@ name collisions. Inbox files are always deleted after successful processing.
 
 ## Search & Retrieval
 
-The search system provides two tiers of document retrieval, both backed by SQLite FTS5 and a dynamic SQL query builder:
+The search system provides two tiers of document retrieval, backed by the FTS5 virtual table (schema-less until Phase 3 rewrites for tsvector) and a dynamic SQL query builder:
 
 ### Tier 1: Simple FTS5 Search (`GET /api/v1/documents/search?q=...`)
 
@@ -396,7 +393,9 @@ The structured search flows through three layers:
    - **Sorting**: Whitelisted column names (`title`, `mime_type`, `file_size`, `created_at`). When a FTS5 query is present, defaults to BM25 `rank` instead.
    - **Limit/Offset**: Standard `LIMIT ? OFFSET ?` pagination
 
-3. **FTS5 virtual table** (`internal/database/fts5.go`) — Uses `unicode61` tokenizer with no language-specific stemming for multilingual support. Index kept in sync via SQLite triggers (`document_ai`, `document_au`, `document_ad`).
+3. **FTS5 virtual table** (`internal/database/fts5.go`) — Uses `unicode61` tokenizer with no language-specific stemming for multilingual support. Index is kept in sync via SQLite triggers (removed from schema baseline; the Go code still uses FTS5 via raw SQL and works against test databases).
+
+   > **Phase 3**: Replaced by PostgreSQL `tsvector`/`tsquery` full-text search.
 
 ### Result Enrichment
 
@@ -438,7 +437,10 @@ The `field:value` syntax in the search bar supports:
 
 ### Why Not a Dedicated Search Engine?
 
-FTS5 is "good enough" for the expected document volume (thousands to low tens of thousands). It provides zero operational overhead, transactionally consistent indexing, and no external processes to manage. The `search.Engine` abstraction provides a clear upgrade path to Meilisearch, ZincSearch, or Elasticsearch should the need arise — the API contract and `Filter` struct remain unchanged.
+FTS5 was chosen for zero operational overhead and transactionally consistent indexing.
+The `search.Engine` abstraction provides a clear upgrade path to Meilisearch, ZincSearch,
+or Elasticsearch. The current plan migrates from FTS5 to PostgreSQL tsvector (Phase 3),
+keeping the search abstraction intact.
 
 ---
 

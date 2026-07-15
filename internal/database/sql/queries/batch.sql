@@ -1,28 +1,28 @@
 -- name: CreateBatch :execresult
-INSERT OR IGNORE INTO batch (id, source, status) VALUES (?, ?, ?);
+INSERT INTO batch (id, source, status) VALUES ($1, $2, $3)
+ON CONFLICT (id) DO NOTHING;
 
 -- name: GetBatchOwner :one
-SELECT batch_id, owner_id, pid, acquired_at, last_heartbeat FROM batch_owner WHERE batch_id = ?;
+SELECT batch_id, owner_id, pid, acquired_at, last_heartbeat FROM batch_owner WHERE batch_id = $1;
 
 -- Two-step acquire: try INSERT first, then UPDATE with stale check.
--- The raw ON CONFLICT ... WHERE pattern has ? count issues with sqlc's parser.
 
 -- name: TryInsertBatchOwner :execrows
 INSERT INTO batch_owner (batch_id, owner_id, pid, acquired_at, last_heartbeat)
-VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+VALUES ($1, $2, $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(batch_id) DO NOTHING;
 
 -- name: UpdateBatchOwnerIfStale :execrows
 UPDATE batch_owner SET
-  owner_id = ?,
-  pid = ?,
+  owner_id = $1,
+  pid = $2,
   acquired_at = CURRENT_TIMESTAMP,
   last_heartbeat = CURRENT_TIMESTAMP
-WHERE batch_id = ? AND (last_heartbeat < ? OR owner_id = ?);
+WHERE batch_id = $3 AND (last_heartbeat < $4 OR owner_id = $5);
 
 -- name: AcquireBatchOwnerForce :execrows
 INSERT INTO batch_owner (batch_id, owner_id, pid, acquired_at, last_heartbeat)
-VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+VALUES ($1, $2, $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(batch_id) DO UPDATE SET
   owner_id = excluded.owner_id,
   pid = excluded.pid,
@@ -30,26 +30,26 @@ ON CONFLICT(batch_id) DO UPDATE SET
   last_heartbeat = CURRENT_TIMESTAMP;
 
 -- name: HeartbeatBatchOwner :execrows
-UPDATE batch_owner SET last_heartbeat = CURRENT_TIMESTAMP WHERE owner_id = ?;
+UPDATE batch_owner SET last_heartbeat = CURRENT_TIMESTAMP WHERE owner_id = $1;
 
 -- name: ReleaseBatchOwner :execrows
-DELETE FROM batch_owner WHERE batch_id = ? AND owner_id = ?;
+DELETE FROM batch_owner WHERE batch_id = $1 AND owner_id = $2;
 
 -- name: DeleteBatchOwnerByBatchID :execrows
-DELETE FROM batch_owner WHERE batch_id = ?;
+DELETE FROM batch_owner WHERE batch_id = $1;
 
 -- name: QuarantineProcessingTasksByBatch :execrows
 UPDATE task SET
     status = 'failed',
     error = 'Max retries exceeded (' || attempts || ')',
     completed_at = CURRENT_TIMESTAMP
-WHERE batch_id = ? AND status = 'processing' AND attempts >= ?;
+WHERE batch_id = $1 AND status = 'processing' AND attempts >= $2;
 
 -- name: ResetProcessingTasksByBatch :execrows
 UPDATE task SET
     status = 'pending',
     attempts = attempts + 1
-WHERE batch_id = ? AND status = 'processing' AND attempts < ?;
+WHERE batch_id = $1 AND status = 'processing' AND attempts < $2;
 
 -- name: CleanupCompletedBatches :execrows
 DELETE FROM batch_owner WHERE batch_id IN (
@@ -62,12 +62,12 @@ DELETE FROM batch_owner WHERE batch_id IN (
 
 -- name: GetNextPendingTaskOfTypeForOwner :one
 SELECT id FROM task
-WHERE status = 'pending' AND task_type = ?
-  AND batch_id IN (SELECT batch_id FROM batch_owner WHERE owner_id = ?)
+WHERE status = 'pending' AND task_type = $1
+  AND batch_id IN (SELECT batch_id FROM batch_owner WHERE owner_id = $2)
 ORDER BY created_at LIMIT 1;
 
 -- name: GetBatch :one
-SELECT * FROM batch WHERE id = ?;
+SELECT * FROM batch WHERE id = $1;
 
 -- name: CountQueuedBatches :one
 SELECT COUNT(*) FROM batch WHERE status = 'queued';
@@ -76,34 +76,34 @@ SELECT COUNT(*) FROM batch WHERE status = 'queued';
 SELECT * FROM batch WHERE status = 'queued' ORDER BY created_at LIMIT 1;
 
 -- name: RequeueBatch :exec
-UPDATE batch SET status = 'queued' WHERE id = ?;
+UPDATE batch SET status = 'queued' WHERE id = $1;
 
 -- name: SetBatchProcessing :exec
-UPDATE batch SET status = 'processing' WHERE id = ?;
+UPDATE batch SET status = 'processing' WHERE id = $1;
 
 -- name: SetBatchCompleted :exec
-UPDATE batch SET status = 'completed' WHERE id = ?;
+UPDATE batch SET status = 'completed' WHERE id = $1;
 
 -- name: SetBatchFailed :exec
-UPDATE batch SET status = 'failed' WHERE id = ?;
+UPDATE batch SET status = 'failed' WHERE id = $1;
 
 -- name: SetBatchCancelled :exec
-UPDATE batch SET status = 'cancelled' WHERE id = ?;
+UPDATE batch SET status = 'cancelled' WHERE id = $1;
 
 -- name: CountLiveBatches :one
 SELECT COUNT(*) FROM batch_owner
-WHERE last_heartbeat > datetime('now', '-15 seconds');
+WHERE last_heartbeat > CURRENT_TIMESTAMP - INTERVAL '15 seconds';
 
 -- name: ListStaleBatchOwners :many
 SELECT bo.batch_id, bo.owner_id, bo.pid FROM batch_owner bo
-WHERE bo.last_heartbeat < datetime('now', '-15 seconds')
+WHERE bo.last_heartbeat < CURRENT_TIMESTAMP - INTERVAL '15 seconds'
 AND EXISTS (SELECT 1 FROM task t
             WHERE t.batch_id = bo.batch_id
             AND t.status IN ('pending', 'processing', 'waiting'));
 
 -- name: GetQuarantinedConsumeTaskPayloads :many
 SELECT task_id, payload FROM task
-WHERE batch_id = ? AND status = 'failed' AND error LIKE 'Max retries exceeded%';
+WHERE batch_id = $1 AND status = 'failed' AND error LIKE 'Max retries exceeded%';
 
 -- name: ListBatchOverviews :many
 SELECT
@@ -128,4 +128,4 @@ LEFT JOIN task t ON t.batch_id = b.id
 LEFT JOIN batch_owner bo ON bo.batch_id = b.id
 GROUP BY b.id
 ORDER BY b.created_at DESC
-LIMIT ? OFFSET ?;
+LIMIT $1 OFFSET $2;

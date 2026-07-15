@@ -1,4 +1,5 @@
-INSERT OR IGNORE INTO people_type (name, description) VALUES
+INSERT INTO people_type (name, description)
+VALUES
     ('author', 'Wrote or created the document'),
     ('sender', 'Dispatched or submitted the document'),
     ('recipient', 'Received or was the addressee of the document'),
@@ -13,4 +14,5 @@ INSERT OR IGNORE INTO people_type (name, description) VALUES
     ('beneficiary', 'Beneficiary, assignee, heir, or payee'),
     ('witness', 'Witnessed the signing or execution'),
     ('other', 'Relationship not covered by any other type'),
-    ('unknown', 'Relationship cannot be determined');
+    ('unknown', 'Relationship cannot be determined')
+ON CONFLICT (name) DO NOTHING;

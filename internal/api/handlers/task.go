@@ -54,8 +54,8 @@ func (h *TaskHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
 	tasks, err := task.ListFiltered(ctx, h.queries, task.TaskFilter{
 		BatchID: batchID,
 		Status:  statusFilter,
-		Limit:   limit,
-		Offset:  offset,
+		Limit:   int32(limit),
+		Offset:  int32(offset),
 	})
 
 	if err != nil {
@@ -160,8 +160,8 @@ func (h *TaskHandler) ListBatches(w http.ResponseWriter, r *http.Request) {
 
 	summaries, err := h.services.Batch.ListSummaries(ctx, task.BatchFilter{
 		Status: statusFilter,
-		Limit:  limit,
-		Offset: offset,
+		Limit:  int32(limit),
+		Offset: int32(offset),
 	})
 	if err != nil {
 		h.logger.Error(&reqID, "list batches: %v", err)

@@ -23,9 +23,9 @@ type DocumentResponse struct {
 	SHA512Checksum   string           `json:"sha512_checksum"`
 	MimeType         string           `json:"mime_type"`
 	FileSize         int64            `json:"file_size"`
-	PageCount        int64            `json:"page_count"`
-	WordCount        int64            `json:"word_count"`
-	CharCount        int64            `json:"char_count"`
+	PageCount        int32            `json:"page_count"`
+	WordCount        int32            `json:"word_count"`
+	CharCount        int32            `json:"char_count"`
 	Language         string           `json:"language"`
 	DocumentTypeID   *int64           `json:"document_type_id,omitempty"`
 	DocumentTypeName *string          `json:"document_type_name,omitempty"`
@@ -42,9 +42,9 @@ type FTSDocumentResponse struct {
 	SHA512Checksum   string           `json:"sha512_checksum"`
 	MimeType         string           `json:"mime_type"`
 	FileSize         int64            `json:"file_size"`
-	PageCount        int64            `json:"page_count"`
-	WordCount        int64            `json:"word_count"`
-	CharCount        int64            `json:"char_count"`
+	PageCount        int32            `json:"page_count"`
+	WordCount        int32            `json:"word_count"`
+	CharCount        int32            `json:"char_count"`
 	Language         string           `json:"language"`
 	DocumentTypeID   *int64           `json:"document_type_id,omitempty"`
 	DocumentTypeName *string          `json:"document_type_name,omitempty"`
