@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	sqlite "modernc.org/sqlite"
-	sqlite3 "modernc.org/sqlite/lib"
+	"github.com/jackc/pgerrcode"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type Kind int
@@ -75,25 +75,25 @@ func KindOf(err error) Kind {
 }
 
 func IsConstraint(err error) bool {
-	var sqliteErr *sqlite.Error
-	if errors.As(err, &sqliteErr) {
-		return sqliteErr.Code()&0xff == sqlite3.SQLITE_CONSTRAINT
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == pgerrcode.UniqueViolation
 	}
 	return false
 }
 
 func IsForeignKey(err error) bool {
-	var sqliteErr *sqlite.Error
-	if errors.As(err, &sqliteErr) {
-		return sqliteErr.Code() == sqlite3.SQLITE_CONSTRAINT_FOREIGNKEY
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == pgerrcode.ForeignKeyViolation
 	}
 	return false
 }
 
 func IsBusy(err error) bool {
-	var sqliteErr *sqlite.Error
-	if errors.As(err, &sqliteErr) {
-		return sqliteErr.Code()&0xff == sqlite3.SQLITE_BUSY || sqliteErr.Code()&0xff == sqlite3.SQLITE_LOCKED
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == pgerrcode.DeadlockDetected || pgErr.Code == pgerrcode.SerializationFailure
 	}
 	return false
 }

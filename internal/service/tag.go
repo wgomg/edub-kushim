@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"strings"
 
 	"github.com/wgomg/edub-kushim/internal/database"
@@ -123,28 +125,17 @@ func (s *Tag) Create(ctx context.Context, names []string) ([]CreateResult[databa
 			continue
 		}
 
-		res, err := s.queries.CreateTag(ctx, name)
+		id, err := s.queries.CreateTag(ctx, name)
 		if err != nil {
-			return nil, errs.FromDB(err, "create tag "+name)
-		}
-
-		rows, err := res.RowsAffected()
-		if err != nil {
-			return nil, errs.FromDB(err, "rows affected for "+name)
-		}
-
-		if rows == 0 {
-			existing, err := s.queries.GetTagByName(ctx, name)
-			if err != nil {
-				return nil, errs.FromDB(err, "get tag by name after conflict "+name)
+			if errors.Is(err, sql.ErrNoRows) {
+				existing, err := s.queries.GetTagByName(ctx, name)
+				if err != nil {
+					return nil, errs.FromDB(err, "get tag by name after conflict "+name)
+				}
+				results[i] = CreateResult[database.Tag]{Entity: existing, Status: Conflict}
+				continue
 			}
-			results[i] = CreateResult[database.Tag]{Entity: existing, Status: Conflict}
-			continue
-		}
-
-		id, err := res.LastInsertId()
-		if err != nil {
-			return nil, errs.FromDB(err, "last insert id for "+name)
+			return nil, errs.FromDB(err, "create tag "+name)
 		}
 
 		results[i] = CreateResult[database.Tag]{Entity: database.Tag{ID: id, Name: name}, Status: Created}

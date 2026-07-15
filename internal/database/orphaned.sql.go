@@ -7,12 +7,11 @@ package database
 
 import (
 	"context"
-	"database/sql"
 )
 
-const createOrphanedFile = `-- name: CreateOrphanedFile :execresult
+const createOrphanedFile = `-- name: CreateOrphanedFile :one
 INSERT INTO orphaned_file (document_key, document_key_type, file_path, original_path, source_dir, file_size, mime_type)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id
 `
 
 type CreateOrphanedFileParams struct {
@@ -25,8 +24,8 @@ type CreateOrphanedFileParams struct {
 	MimeType        string
 }
 
-func (q *Queries) CreateOrphanedFile(ctx context.Context, arg CreateOrphanedFileParams) (sql.Result, error) {
-	return q.db.ExecContext(ctx, createOrphanedFile,
+func (q *Queries) CreateOrphanedFile(ctx context.Context, arg CreateOrphanedFileParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, createOrphanedFile,
 		arg.DocumentKey,
 		arg.DocumentKeyType,
 		arg.FilePath,
@@ -35,6 +34,9 @@ func (q *Queries) CreateOrphanedFile(ctx context.Context, arg CreateOrphanedFile
 		arg.FileSize,
 		arg.MimeType,
 	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }
 
 const getOrphanedFile = `-- name: GetOrphanedFile :one

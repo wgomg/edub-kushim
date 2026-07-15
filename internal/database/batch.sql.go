@@ -77,7 +77,7 @@ func (q *Queries) CountQueuedBatches(ctx context.Context) (int64, error) {
 	return count, err
 }
 
-const createBatch = `-- name: CreateBatch :execresult
+const createBatch = `-- name: CreateBatch :exec
 INSERT INTO batch (id, source, status) VALUES ($1, $2, $3)
 ON CONFLICT (id) DO NOTHING
 `
@@ -88,8 +88,9 @@ type CreateBatchParams struct {
 	Status string
 }
 
-func (q *Queries) CreateBatch(ctx context.Context, arg CreateBatchParams) (sql.Result, error) {
-	return q.db.ExecContext(ctx, createBatch, arg.ID, arg.Source, arg.Status)
+func (q *Queries) CreateBatch(ctx context.Context, arg CreateBatchParams) error {
+	_, err := q.db.ExecContext(ctx, createBatch, arg.ID, arg.Source, arg.Status)
+	return err
 }
 
 const deleteBatchOwnerByBatchID = `-- name: DeleteBatchOwnerByBatchID :execrows

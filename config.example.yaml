@@ -20,8 +20,14 @@ server:
   auth_enabled: false # when false, API endpoints bypass JWT auth
 
 database:
-  type: sqlite
-  path: '~/.config/edub-kushim/data'
+  type: postgres
+  # dsn: "postgres://edub:edub@localhost:5432/edub?sslmode=disable"
+  host: localhost
+  port: 5432
+  user: edub
+  password: edub
+  database: edub
+  sslmode: disable
 
 storage:
   consumption_dir: '~/.config/edub-kushim/inbox'

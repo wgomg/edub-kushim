@@ -17,21 +17,9 @@ func setupSearchTest(t *testing.T) (*Engine, *database.Queries) {
 }
 
 
-func getID(t *testing.T, res sql.Result) int64 {
-	t.Helper()
-	if res == nil {
-		t.Fatal("expected non-nil sql.Result")
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		t.Fatalf("last insert id: %v", err)
-	}
-	return id
-}
-
 func insertSearchDocRaw(t *testing.T, q *database.Queries, docID, title, language string, docTypeID int64, tag string) int64 {
 	t.Helper()
-	res, err := q.CreateDocument(context.Background(), database.CreateDocumentParams{
+	id, err := q.CreateDocument(context.Background(), database.CreateDocumentParams{
 		DocumentID:     docID,
 		Title:          title,
 		Md5Checksum:    "md5-" + docID,
@@ -49,7 +37,6 @@ func insertSearchDocRaw(t *testing.T, q *database.Queries, docID, title, languag
 	if err != nil {
 		t.Fatalf("create document: %v", err)
 	}
-	id := getID(t, res)
 
 	if docTypeID != 3 { // 3 is default article type from seed
 		err = q.UpdateDocumentEditable(context.Background(), database.UpdateDocumentEditableParams{
@@ -74,7 +61,7 @@ func insertSearchDoc(t *testing.T, q *database.Queries, title, textContent strin
 	}
 
 	docID := testutil.FormatString("doc-%d", len(textContent))
-	res, err := q.CreateDocument(context.Background(), database.CreateDocumentParams{
+	id, err := q.CreateDocument(context.Background(), database.CreateDocumentParams{
 		DocumentID:     docID,
 		Title:          title,
 		Md5Checksum:    testutil.FormatString("md5-%d", len(textContent)),
@@ -91,10 +78,6 @@ func insertSearchDoc(t *testing.T, q *database.Queries, title, textContent strin
 	})
 	if err != nil {
 		t.Fatalf("create document: %v", err)
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		t.Fatalf("get last insert id: %v", err)
 	}
 
 	// Update FTS directly
@@ -256,9 +239,8 @@ func TestStructuredSearch(t *testing.T) {
 		taggedID := insertSearchDocRaw(t, q, "ss-utg-2", "tagged.pdf", "eng", 3, "")
 
 		// Tag the tagged doc
-		res, err := q.CreateTag(ctx, "ss-test-tag")
+		tagID, err := q.CreateTag(ctx, "ss-test-tag")
 		testutil.AssertNoError(t, err, "create tag")
-		tagID := getID(t, res)
 
 		err = q.AddDocumentTag(ctx, database.AddDocumentTagParams{DocumentID: taggedID, TagID: tagID})
 		testutil.AssertNoError(t, err, "tag document")

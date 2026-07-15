@@ -9,7 +9,9 @@ import (
 )
 
 func TestCreateAndGetDocument(t *testing.T) {
-	q, _ := NewTestQueries(t)
+	q, db := NewTestQueries(t)
+	defer db.Close()
+	resetDB(t, q)
 	ctx := context.Background()
 	_, docID := CreateTestDocument(t, q, "test.pdf")
 	doc, err := q.GetDocument(ctx, docID)
@@ -18,7 +20,9 @@ func TestCreateAndGetDocument(t *testing.T) {
 }
 
 func TestDuplicateChecks(t *testing.T) {
-	q, _ := NewTestQueries(t)
+	q, db := NewTestQueries(t)
+	defer db.Close()
+	resetDB(t, q)
 	ctx := context.Background()
 	md5 := "d41d8cd98f00b204e9800998ecf8427e"
 	n, _ := q.GetDocumentByMD5Checksum(ctx, md5)
@@ -29,7 +33,9 @@ func TestDuplicateChecks(t *testing.T) {
 }
 
 func TestUpdateDeleteDocument(t *testing.T) {
-	q, _ := NewTestQueries(t)
+	q, db := NewTestQueries(t)
+	defer db.Close()
+	resetDB(t, q)
 	ctx := context.Background()
 	_, docID := CreateTestDocument(t, q, "up.pdf")
 	err := q.UpdateDocumentEditable(ctx, UpdateDocumentEditableParams{Title: "renamed.pdf", DocumentTypeID: 1, Language: "spa", DocumentID: docID})
@@ -38,7 +44,9 @@ func TestUpdateDeleteDocument(t *testing.T) {
 }
 
 func TestListDocuments(t *testing.T) {
-	q, _ := NewTestQueries(t)
+	q, db := NewTestQueries(t)
+	defer db.Close()
+	resetDB(t, q)
 	ctx := context.Background()
 	insertDoc(t, q, "aa.pdf", "md5-a", "sha512-a")
 	insertDoc(t, q, "bbb.pdf", "md5-b", "sha512-b")
@@ -67,7 +75,9 @@ func TestTagSearch(t *testing.T) {
 }
 
 func TestDocumentTags(t *testing.T) {
-	q, _ := NewTestQueries(t)
+	q, db := NewTestQueries(t)
+	defer db.Close()
+	resetDB(t, q)
 	ctx := context.Background()
 	dID, _ := CreateTestDocument(t, q, "tags.pdf")
 	tag := SeedTagByName(t, q, "")
@@ -122,8 +132,7 @@ func TestDocumentTypeCRUD(t *testing.T) {
 	ctx := context.Background()
 	types, _ := q.ListAllDocumentTypes(ctx)
 	assertEqual(t, len(types) > 0, true, "seeded")
-	res, _ := q.CreateDocumentTypeFull(ctx, CreateDocumentTypeFullParams{Name: "custom", Description: "C"})
-	id := getID(t, res)
+	id, _ := q.CreateDocumentTypeFull(ctx, CreateDocumentTypeFullParams{Name: "custom", Description: "C"})
 	assertNoError(t, q.UpdateDocumentTypeFull(ctx, UpdateDocumentTypeFullParams{Name: "renamed", Description: "R", ID: id}), "update")
 	assertNoError(t, q.DeleteDocumentType(ctx, id), "delete")
 }
@@ -131,8 +140,7 @@ func TestDocumentTypeCRUD(t *testing.T) {
 func TestPeopleCRUD(t *testing.T) {
 	q, _ := NewTestQueries(t)
 	ctx := context.Background()
-	res, _ := q.CreatePeople(ctx, CreatePeopleParams{Name: "Alice", NormalizedName: "alice"})
-	pID := getID(t, res)
+	pID, _ := q.CreatePeople(ctx, CreatePeopleParams{Name: "Alice", NormalizedName: "alice"})
 	assertNoError(t, q.UpdatePeopleFull(ctx, UpdatePeopleFullParams{Name: "Alice U", NormalizedName: "alice u", ID: pID}), "update")
 	assertNoError(t, q.DeletePeople(ctx, pID), "delete")
 }
@@ -140,8 +148,7 @@ func TestPeopleCRUD(t *testing.T) {
 func TestPeopleTypeCRUD(t *testing.T) {
 	q, _ := NewTestQueries(t)
 	ctx := context.Background()
-	res, _ := q.CreatePeopleType(ctx, CreatePeopleTypeParams{Name: "reviewer"})
-	id := getID(t, res)
+	id, _ := q.CreatePeopleType(ctx, CreatePeopleTypeParams{Name: "reviewer"})
 	assertNoError(t, q.UpdatePeopleType(ctx, UpdatePeopleTypeParams{Name: "sr-reviewer", Description: "S", ID: id}), "update")
 	assertNoError(t, q.DeletePeopleType(ctx, id), "delete")
 }
@@ -159,7 +166,7 @@ func TestSavedSearchCRUD(t *testing.T) {
 func TestBatchOwnerOps(t *testing.T) {
 	q, _ := NewTestQueries(t)
 	ctx := context.Background()
-	_, err := q.CreateBatch(ctx, CreateBatchParams{ID: "bo-test", Source: "test", Status: "queued"})
+	err := q.CreateBatch(ctx, CreateBatchParams{ID: "bo-test", Source: "test", Status: "queued"})
 	assertNoError(t, err, "create batch")
 	_, err = q.TryInsertBatchOwner(ctx, TryInsertBatchOwnerParams{BatchID: "bo-test", OwnerID: "o1", Pid: 123})
 	assertNoError(t, err, "insert owner")
@@ -169,7 +176,7 @@ func TestBatchOwnerOps(t *testing.T) {
 func TestDeleteBatchOwnerByBatchID(t *testing.T) {
 	q, _ := NewTestQueries(t)
 	ctx := context.Background()
-	_, err := q.CreateBatch(ctx, CreateBatchParams{ID: "del-test", Source: "test", Status: "queued"})
+	err := q.CreateBatch(ctx, CreateBatchParams{ID: "del-test", Source: "test", Status: "queued"})
 	assertNoError(t, err, "create batch")
 	_, err = q.TryInsertBatchOwner(ctx, TryInsertBatchOwnerParams{BatchID: "del-test", OwnerID: "o1", Pid: 100})
 	assertNoError(t, err, "insert owner")
@@ -187,7 +194,9 @@ func TestDeleteBatchOwnerByBatchID(t *testing.T) {
 }
 
 func TestDocumentTagsPeople(t *testing.T) {
-	q, _ := NewTestQueries(t)
+	q, db := NewTestQueries(t)
+	defer db.Close()
+	resetDB(t, q)
 	ctx := context.Background()
 	dID, _ := CreateTestDocument(t, q, "tp.pdf")
 	tag := SeedTagByName(t, q, "")
@@ -195,19 +204,19 @@ func TestDocumentTagsPeople(t *testing.T) {
 	tags, _ := q.GetDocumentTags(ctx, dID)
 	assertEqual(t, len(tags), 1, "tag")
 
-	res, err := q.CreatePeople(ctx, CreatePeopleParams{Name: "Bob", NormalizedName: "bob"})
+	pID, err := q.CreatePeople(ctx, CreatePeopleParams{Name: "Bob", NormalizedName: "bob"})
 	assertNoError(t, err, "create people")
-	pID := getID(t, res)
-	ptRes, err := q.CreatePeopleType(ctx, CreatePeopleTypeParams{Name: "custom-author-type"})
+	ptID, err := q.CreatePeopleType(ctx, CreatePeopleTypeParams{Name: "custom-author-type"})
 	assertNoError(t, err, "create people type")
-	ptID := getID(t, ptRes)
 	q.AddDocumentPeople(ctx, AddDocumentPeopleParams{DocumentID: dID, PeopleID: pID, PeopleTypeID: ptID})
 	ppl, _ := q.GetDocumentPeopleWithType(ctx, dID)
 	assertEqual(t, len(ppl), 1, "person")
 }
 
 func TestListActivityTimeline(t *testing.T) {
-	q, _ := NewTestQueries(t)
+	q, db := NewTestQueries(t)
+	defer db.Close()
+	resetDB(t, q)
 	ctx := context.Background()
 
 	events, err := q.ListActivityTimeline(ctx)
@@ -216,28 +225,26 @@ func TestListActivityTimeline(t *testing.T) {
 
 	_, _ = CreateTestDocument(t, q, "activity-test.pdf")
 
-	_, err = q.CreateBatch(ctx, CreateBatchParams{ID: "act-batch-1", Source: "test-upload", Status: "queued"})
+	err = q.CreateBatch(ctx, CreateBatchParams{ID: "act-batch-1", Source: "test-upload", Status: "queued"})
 	assertNoError(t, err, "create batch")
 
 	taskID1 := "act-task-completed"
-	res, err := q.CreateTask(ctx, CreateTaskParams{
+	id1, err := q.CreateTask(ctx, CreateTaskParams{
 		TaskID: taskID1, TaskType: "consume", Status: "pending",
 		Payload: json.RawMessage(`{"file_name":"report.pdf","document_id":"doc-uuid-1"}`),
 	})
 	assertNoError(t, err, "create completed task")
-	id1 := getID(t, res)
 	_, err = q.ClaimTask(ctx, id1)
 	assertNoError(t, err, "claim task 1")
 	_, err = q.CompleteTask(ctx, CompleteTaskParams{ID: id1, Result: nil})
 	assertNoError(t, err, "complete task")
 
 	taskID2 := "act-task-failed"
-	res2, err := q.CreateTask(ctx, CreateTaskParams{
+	id2, err := q.CreateTask(ctx, CreateTaskParams{
 		TaskID: taskID2, TaskType: "consume", Status: "pending",
 		Payload: json.RawMessage(`{"file_path":"/tmp/uploads/invoice.pdf","document_id":"doc-uuid-2"}`),
 	})
 	assertNoError(t, err, "create failed task")
-	id2 := getID(t, res2)
 	assertNoError(t, q.FailTask(ctx, FailTaskParams{
 		ID: id2, Error: sql.NullString{String: "processing error", Valid: true},
 	}), "fail task")
@@ -308,28 +315,29 @@ func TestListActivityTimeline(t *testing.T) {
 }
 
 func TestGetQuarantinedConsumeTaskPayloads(t *testing.T) {
-	q, _ := NewTestQueries(t)
+	q, db := NewTestQueries(t)
+	defer db.Close()
+	resetDB(t, q)
 	ctx := context.Background()
 
-	_, err := q.CreateBatch(ctx, CreateBatchParams{ID: "gq-batch", Source: "test", Status: "processing"})
+	err := q.CreateBatch(ctx, CreateBatchParams{ID: "gq-batch", Source: "test", Status: "processing"})
 	assertNoError(t, err, "create batch")
 
-	res, err := q.CreateTask(ctx, CreateTaskParams{
-		TaskID:   "gq-quarantined",
+	id, err := q.CreateTask(ctx, CreateTaskParams{
+		TaskID:   "gq-task",
 		TaskType: "consume",
 		Status:   "pending",
 		Payload:  json.RawMessage(`{"file_path":"/tmp/test.pdf","on_completed":"enrich-1"}`),
 		BatchID:  sql.NullString{String: "gq-batch", Valid: true},
 	})
 	assertNoError(t, err, "create task")
-	id := getID(t, res)
 
 	assertNoError(t, q.FailTask(ctx, FailTaskParams{
 		ID:    id,
 		Error: sql.NullString{String: "Max retries exceeded (3)", Valid: true},
 	}), "fail task")
 
-	res2, err := q.CreateTask(ctx, CreateTaskParams{
+	id2, err := q.CreateTask(ctx, CreateTaskParams{
 		TaskID:   "gq-other-failed",
 		TaskType: "consume",
 		Status:   "pending",
@@ -337,7 +345,6 @@ func TestGetQuarantinedConsumeTaskPayloads(t *testing.T) {
 		BatchID:  sql.NullString{String: "gq-batch", Valid: true},
 	})
 	assertNoError(t, err, "create other task")
-	id2 := getID(t, res2)
 
 	assertNoError(t, q.FailTask(ctx, FailTaskParams{
 		ID:    id2,
@@ -347,7 +354,7 @@ func TestGetQuarantinedConsumeTaskPayloads(t *testing.T) {
 	rows, err := q.GetQuarantinedConsumeTaskPayloads(ctx, sql.NullString{String: "gq-batch", Valid: true})
 	assertNoError(t, err, "get quarantined")
 	assertEqual(t, len(rows), 1, "only quarantine-matched task")
-	assertEqual(t, rows[0].TaskID, "gq-quarantined", "task id")
+	assertEqual(t, rows[0].TaskID, "gq-task", "task id")
 }
 
 func TestDiscardEnrichTaskByTaskID(t *testing.T) {
@@ -382,7 +389,9 @@ func TestDiscardEnrichTaskByTaskID(t *testing.T) {
 }
 
 func TestListTasksByType(t *testing.T) {
-	q, _ := NewTestQueries(t)
+	q, db := NewTestQueries(t)
+	defer db.Close()
+	resetDB(t, q)
 	ctx := context.Background()
 	insertTask(t, q, "lt-1", "pending")
 	tasks, _ := q.ListTasksByType(ctx, ListTasksByTypeParams{TaskType: "consume", Limit: 10, Offset: 0})
@@ -390,7 +399,9 @@ func TestListTasksByType(t *testing.T) {
 }
 
 func TestAnalyticsQueries(t *testing.T) {
-	q, _ := NewTestQueries(t)
+	q, db := NewTestQueries(t)
+	defer db.Close()
+	resetDB(t, q)
 	ctx := context.Background()
 
 	t.Run("empty database", func(t *testing.T) {
@@ -416,28 +427,31 @@ func TestAnalyticsQueries(t *testing.T) {
 	t.Run("with mixed data", func(t *testing.T) {
 		d1, _ := CreateTestDocument(t, q, "eng-doc.pdf")
 
-		_, err := q.db.ExecContext(ctx,
+		var spaID int64
+		err := q.db.QueryRowContext(ctx,
 			`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, mime_type, file_size, original_path, storage_path, page_count, word_count, char_count, language, document_type_id)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
 			"analytics-d2", "spa-article.pdf", "m2", "s2", "text/plain", 500,
 			"/tmp/spa.pdf", "/tmp/spa-storage.pdf", 2, 10, 50, "spa", 3,
-		)
+		).Scan(&spaID)
 		assertNoError(t, err, "insert spa article doc")
 
-		_, err = q.db.ExecContext(ctx,
+		var fraID int64
+		err = q.db.QueryRowContext(ctx,
 			`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, mime_type, file_size, original_path, storage_path, page_count, word_count, char_count, language, document_type_id)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
 			"analytics-d3", "fra-book.pdf", "m3", "s3", "application/pdf", 800,
 			"/tmp/fra.pdf", "/tmp/fra-storage.pdf", 4, 20, 100, "fra", 4,
-		)
+		).Scan(&fraID)
 		assertNoError(t, err, "insert fra book doc")
 
-		_, err = q.db.ExecContext(ctx,
+		var undID int64
+		err = q.db.QueryRowContext(ctx,
 			`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, mime_type, file_size, original_path, storage_path, page_count, word_count, char_count, language)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`,
 			"analytics-d4", "und-doc.pdf", "m4", "s4", "text/html", 100,
 			"/tmp/und.pdf", "/tmp/und-storage.pdf", 1, 3, 15, "und",
-		)
+		).Scan(&undID)
 		assertNoError(t, err, "insert und doc")
 
 		financeTag, err := q.GetTagByName(ctx, "finance")
@@ -449,9 +463,8 @@ func TestAnalyticsQueries(t *testing.T) {
 		assertNoError(t, d2Row.Scan(&d2DBID), "get d2 db id")
 		assertNoError(t, q.AddDocumentTag(ctx, AddDocumentTagParams{DocumentID: d2DBID, TagID: financeTag.ID}), "tag d2 finance")
 
-		urgentRes, err := q.CreateTag(ctx, "urgent")
+		urgentID, err := q.CreateTag(ctx, "urgent")
 		assertNoError(t, err, "create urgent tag")
-		urgentID := getID(t, urgentRes)
 		assertNoError(t, q.AddDocumentTag(ctx, AddDocumentTagParams{DocumentID: d1, TagID: urgentID}), "tag d1 urgent")
 
 		_, err = q.CreateTag(ctx, "unused")
@@ -514,64 +527,66 @@ func TestAnalyticsQueries(t *testing.T) {
 }
 
 func TestStructuredSearchMissingFilters(t *testing.T) {
-	q, _ := NewTestQueries(t)
+	q, db := NewTestQueries(t)
+	defer db.Close()
+	resetDB(t, q)
 	ctx := context.Background()
 
 	tag := SeedTagByName(t, q, "")
 
 	// Document with language='eng', type=article (ID=3), tagged
-	d1, err := q.db.ExecContext(ctx,
+	var regularID int64
+	err := q.db.QueryRowContext(ctx,
 		`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, mime_type, file_size, original_path, storage_path, page_count, word_count, char_count, language, document_type_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
 		"msf-1", "regular.pdf", "mdf-1", "sf-1", "application/pdf", 1000,
 		"/tmp/regular.pdf", "/tmp/storage1.pdf", 1, 10, 50, "eng", 3,
-	)
+	).Scan(&regularID)
 	assertNoError(t, err, "create regular doc")
-	regularID := getID(t, d1)
 	q.AddDocumentTag(ctx, AddDocumentTagParams{DocumentID: regularID, TagID: tag.ID})
 
 	// Document with language='und', type=article (ID=3), untagged
-	d2, err := q.db.ExecContext(ctx,
+	var undID int64
+	err = q.db.QueryRowContext(ctx,
 		`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, mime_type, file_size, original_path, storage_path, page_count, word_count, char_count, language, document_type_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
 		"msf-2", "und-doc.pdf", "mdf-2", "sf-2", "application/pdf", 2000,
 		"/tmp/und.pdf", "/tmp/storage2.pdf", 2, 20, 100, "und", 3,
-	)
+	).Scan(&undID)
 	assertNoError(t, err, "create und doc")
-	undID := getID(t, d2)
 	_ = undID
 
 	// Document with language='eng', type=undetermined (ID=1), untagged
-	d3, err := q.db.ExecContext(ctx,
+	var typedID int64
+	err = q.db.QueryRowContext(ctx,
 		`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, mime_type, file_size, original_path, storage_path, page_count, word_count, char_count, language, document_type_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
 		"msf-3", "typed-doc.pdf", "mdf-3", "sf-3", "application/pdf", 3000,
 		"/tmp/typed.pdf", "/tmp/storage3.pdf", 3, 30, 150, "eng", 1,
-	)
+	).Scan(&typedID)
 	assertNoError(t, err, "create typed doc")
-	typedID := getID(t, d3)
 	_ = typedID
 
 	// Document with language='', type=article, untagged (empty string language)
-	d4, err := q.db.ExecContext(ctx,
+	var emptyLangID int64
+	err = q.db.QueryRowContext(ctx,
 		`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, mime_type, file_size, original_path, storage_path, page_count, word_count, char_count, language, document_type_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
 		"msf-4", "empty-lang.pdf", "mdf-4", "sf-4", "application/pdf", 4000,
 		"/tmp/empty.pdf", "/tmp/storage4.pdf", 4, 40, 200, "", 3,
-	)
+	).Scan(&emptyLangID)
 	assertNoError(t, err, "create empty-lang doc")
-	emptyLangID := getID(t, d4)
 	_ = emptyLangID
 
 	// Document with language='eng', type=article, untagged
-	d5, err := q.db.ExecContext(ctx,
+	var untaggedID int64
+	err = q.db.QueryRowContext(ctx,
 		`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, mime_type, file_size, original_path, storage_path, page_count, word_count, char_count, language, document_type_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
 		"msf-5", "untagged.pdf", "mdf-5", "sf-5", "application/pdf", 5000,
 		"/tmp/untagged.pdf", "/tmp/storage5.pdf", 5, 50, 250, "eng", 3,
-	)
+	).Scan(&untaggedID)
 	assertNoError(t, err, "create untagged doc")
-	untaggedID := getID(t, d5)
 	_ = untaggedID
 
 	t.Run("MissingLanguage filters lang=und and lang=empty", func(t *testing.T) {
@@ -661,10 +676,12 @@ func TestStructuredSearchMissingFilters(t *testing.T) {
 }
 
 func TestWithDocumentCountQueries(t *testing.T) {
-	q, _ := NewTestQueries(t)
+	q, db := NewTestQueries(t)
+	defer db.Close()
+	resetDB(t, q)
 	ctx := context.Background()
 
-	d1Res, err := q.CreateDocument(ctx, CreateDocumentParams{
+	d1, err := q.CreateDocument(ctx, CreateDocumentParams{
 		DocumentID: "wdc-1", Title: "count-test-1.pdf",
 		Md5Checksum: "md5-wdc1", Sha512Checksum: "sha512-wdc1",
 		MimeType: "application/pdf", FileSize: 100,
@@ -672,9 +689,8 @@ func TestWithDocumentCountQueries(t *testing.T) {
 		PageCount: 1, WordCount: 1, CharCount: 5, Language: "eng",
 	})
 	assertNoError(t, err, "create doc 1")
-	d1 := getID(t, d1Res)
 
-	d2Res, err := q.CreateDocument(ctx, CreateDocumentParams{
+	d2, err := q.CreateDocument(ctx, CreateDocumentParams{
 		DocumentID: "wdc-2", Title: "count-test-2.pdf",
 		Md5Checksum: "md5-wdc2", Sha512Checksum: "sha512-wdc2",
 		MimeType: "application/pdf", FileSize: 200,
@@ -682,7 +698,6 @@ func TestWithDocumentCountQueries(t *testing.T) {
 		PageCount: 2, WordCount: 2, CharCount: 10, Language: "eng",
 	})
 	assertNoError(t, err, "create doc 2")
-	d2 := getID(t, d2Res)
 
 	tag := SeedTagByName(t, q, "")
 	q.AddDocumentTag(ctx, AddDocumentTagParams{DocumentID: d1, TagID: tag.ID})
@@ -752,6 +767,7 @@ func TestWithDocumentCountQueries(t *testing.T) {
 func TestTaskHealthQueries(t *testing.T) {
 	q, db := NewTestQueries(t)
 	defer db.Close()
+	resetDB(t, q)
 	ctx := context.Background()
 
 	t.Run("empty database", func(t *testing.T) {
@@ -770,22 +786,20 @@ func TestTaskHealthQueries(t *testing.T) {
 	})
 
 	t.Run("with mixed tasks", func(t *testing.T) {
-		r1, err := q.CreateTask(ctx, CreateTaskParams{
-			TaskID: "th-completed", TaskType: "consume", Status: "pending",
-		})
-		assertNoError(t, err, "create completed task")
-		id1 := getID(t, r1)
+	id1, err := q.CreateTask(ctx, CreateTaskParams{
+		TaskID: "th-completed", TaskType: "consume", Status: "pending",
+	})
+	assertNoError(t, err, "create completed task")
 		_, err = q.ClaimTask(ctx, id1)
 		assertNoError(t, err, "claim")
 		_, err = q.CompleteTask(ctx, CompleteTaskParams{ID: id1, Result: nil})
 		assertNoError(t, err, "complete")
 
-		r2, err := q.CreateTask(ctx, CreateTaskParams{
-			TaskID: "th-failed", TaskType: "consume", Status: "pending",
-			BatchID: sql.NullString{String: "th-batch-1", Valid: true},
-		})
-		assertNoError(t, err, "create failed task")
-		id2 := getID(t, r2)
+	id2, err := q.CreateTask(ctx, CreateTaskParams{
+		TaskID: "th-failed", TaskType: "consume", Status: "pending",
+		BatchID: sql.NullString{String: "th-batch-1", Valid: true},
+	})
+	assertNoError(t, err, "create failed task")
 		assertNoError(t, q.FailTask(ctx, FailTaskParams{ID: id2, Error: sql.NullString{String: "x", Valid: true}}), "fail")
 
 		_, err = q.CreateTask(ctx, CreateTaskParams{
@@ -794,12 +808,11 @@ func TestTaskHealthQueries(t *testing.T) {
 		})
 		assertNoError(t, err, "create pending task")
 
-		r4, err := q.CreateTask(ctx, CreateTaskParams{
-			TaskID: "th-processing", TaskType: "consume", Status: "pending",
-			BatchID: sql.NullString{String: "th-batch-2", Valid: true},
-		})
-		assertNoError(t, err, "create processing task")
-		id4 := getID(t, r4)
+	id4, err := q.CreateTask(ctx, CreateTaskParams{
+		TaskID: "th-processing", TaskType: "consume", Status: "pending",
+		BatchID: sql.NullString{String: "th-batch-2", Valid: true},
+	})
+	assertNoError(t, err, "create processing task")
 		rows, err := q.ClaimTask(ctx, id4)
 		assertNoError(t, err, "claim processing task")
 		assertEqual(t, rows, int64(1), "claimed")
@@ -845,7 +858,7 @@ func insertDoc(t *testing.T, q *Queries, title, md5, sha512 string) (int64, stri
 	if len(types) > 0 {
 		dtID = types[0].ID
 	}
-	res, err := q.CreateDocument(context.Background(), CreateDocumentParams{
+	id, err := q.CreateDocument(context.Background(), CreateDocumentParams{
 		DocumentID: docID, Title: title,
 		Md5Checksum: md5, Sha512Checksum: sha512,
 		MimeType: "application/pdf", FileSize: 100,
@@ -854,34 +867,30 @@ func insertDoc(t *testing.T, q *Queries, title, md5, sha512 string) (int64, stri
 		PageCount:   1, WordCount: 1, CharCount: 7, Language: "eng",
 	})
 	assertNoError(t, err, "create doc")
-	id := getID(t, res)
 	_ = dtID
 	return id, docID
 }
 
 func insertEnrichTask(t *testing.T, q *Queries, taskID, status string) int64 {
 	t.Helper()
-	res, err := q.CreateTask(context.Background(), CreateTaskParams{
+	id, err := q.CreateTask(context.Background(), CreateTaskParams{
 		TaskID: taskID, TaskType: "enrich", Status: status, Payload: []byte(`{}`),
 	})
 	assertNoError(t, err, "insert enrich "+taskID)
-	return getID(t, res)
+	return id
 }
 
 func insertTask(t *testing.T, q *Queries, taskID, status string) int64 {
 	t.Helper()
-	res, err := q.CreateTask(context.Background(), CreateTaskParams{
+	id, err := q.CreateTask(context.Background(), CreateTaskParams{
 		TaskID: taskID, TaskType: "consume", Status: status, Payload: []byte(`{}`),
 	})
 	assertNoError(t, err, "insert "+taskID)
-	return getID(t, res)
+	return id
 }
 
-func getID(t *testing.T, res sql.Result) int64 {
+func getResID(t *testing.T, res sql.Result) int64 {
 	t.Helper()
-	if res == nil {
-		t.Fatal("expected non-nil sql.Result")
-	}
 	id, err := res.LastInsertId()
 	assertNoError(t, err, "last insert id")
 	return id
@@ -898,5 +907,34 @@ func assertNoError(t *testing.T, err error, msg string) {
 	t.Helper()
 	if err != nil {
 		t.Fatalf("%s: unexpected error: %v", msg, err)
+	}
+}
+
+func resetDB(t *testing.T, q *Queries) {
+	t.Helper()
+	ctx := context.Background()
+	tables := []string{
+		"orphaned_file", "batch_owner", "batch",
+		"document_tag", "document_people", "document",
+		"task", "saved_search", `"user"`,
+		"tag", "people", "people_type", "document_type",
+	}
+	for _, tbl := range tables {
+		if _, err := q.db.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s", tbl)); err != nil {
+			t.Fatalf("delete from %s: %v", tbl, err)
+		}
+	}
+	for _, tbl := range []string{"document_type", "people_type", "tag"} {
+		q.db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s ALTER COLUMN id RESTART WITH 1", tbl))
+	}
+	seeds := []string{"document-types", "people-types", "tags"}
+	for _, seed := range seeds {
+		data, err := schemaFS.ReadFile(fmt.Sprintf("sql/schema/seed-%s.sql", seed))
+		if err != nil {
+			t.Fatalf("read seed %s: %v", seed, err)
+		}
+		if _, err := q.db.ExecContext(ctx, string(data)); err != nil {
+			t.Fatalf("seed %s: %v", seed, err)
+		}
 	}
 }

@@ -220,7 +220,7 @@ func (s *Batch) Create(ctx context.Context, id, source, status string) error {
 	if id == "" {
 		return errs.EInvalid("create batch", sql.ErrNoRows)
 	}
-	_, err := s.queries.CreateBatch(ctx, database.CreateBatchParams{
+	err := s.queries.CreateBatch(ctx, database.CreateBatchParams{
 		ID:     id,
 		Source: source,
 		Status: status,

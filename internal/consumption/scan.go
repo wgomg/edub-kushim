@@ -118,7 +118,7 @@ func ScanAndEnqueue(ctx context.Context, cfg *config.Config, client *database.Cl
 
 	// Create the batch only after all tasks are committed. This prevents the
 	// consumer loop from picking up an incomplete or empty batch (race fix).
-	_, err = client.Queries.CreateBatch(ctx, database.CreateBatchParams{
+	err = client.Queries.CreateBatch(ctx, database.CreateBatchParams{
 		ID:     batchID,
 		Source: "polling",
 		Status: "queued",

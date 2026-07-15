@@ -8,6 +8,8 @@ require (
 	github.com/go-pdf/fpdf v0.9.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
+	github.com/jackc/pgerrcode v0.0.0-20250907135507-afb5586c32a6
+	github.com/jackc/pgx/v5 v5.10.0
 	github.com/knights-analytics/hugot v0.7.4
 	github.com/otiai10/gosseract/v2 v2.4.1
 	github.com/pressly/goose/v3 v3.27.1
@@ -34,6 +36,9 @@ require (
 	github.com/gomlx/go-xla v0.2.2 // indirect
 	github.com/gomlx/gomlx v0.27.3 // indirect
 	github.com/gomlx/onnx-gomlx v0.4.2 // indirect
+	github.com/jackc/pgpassfile v1.0.0 // indirect
+	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
+	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/knights-analytics/ortgenai v0.3.1 // indirect
 	github.com/mattn/go-isatty v0.0.21 // indirect
 	github.com/mfridman/interpolate v0.0.2 // indirect

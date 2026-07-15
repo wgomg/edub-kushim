@@ -7,11 +7,10 @@ package database
 
 import (
 	"context"
-	"database/sql"
 )
 
-const createSavedSearch = `-- name: CreateSavedSearch :execresult
-INSERT INTO saved_search (name, filter_json) VALUES ($1, $2)
+const createSavedSearch = `-- name: CreateSavedSearch :one
+INSERT INTO saved_search (name, filter_json) VALUES ($1, $2) RETURNING id
 `
 
 type CreateSavedSearchParams struct {
@@ -19,8 +18,11 @@ type CreateSavedSearchParams struct {
 	FilterJson string
 }
 
-func (q *Queries) CreateSavedSearch(ctx context.Context, arg CreateSavedSearchParams) (sql.Result, error) {
-	return q.db.ExecContext(ctx, createSavedSearch, arg.Name, arg.FilterJson)
+func (q *Queries) CreateSavedSearch(ctx context.Context, arg CreateSavedSearchParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, createSavedSearch, arg.Name, arg.FilterJson)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }
 
 const deleteSavedSearch = `-- name: DeleteSavedSearch :exec

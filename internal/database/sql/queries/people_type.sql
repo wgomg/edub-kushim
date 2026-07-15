@@ -10,8 +10,8 @@ SELECT * FROM people_type ORDER BY created_at DESC;
 -- name: ListAllPeopleTypesNames :many
 SELECT name FROM people_type ORDER BY created_at DESC;
 
--- name: CreatePeopleType :execresult
-INSERT INTO people_type (name, description) VALUES ($1, $2);
+-- name: CreatePeopleType :one
+INSERT INTO people_type (name, description) VALUES ($1, $2) RETURNING id;
 
 -- name: UpdatePeopleType :exec
 UPDATE people_type SET name = $1, description = $2 WHERE id = $3;

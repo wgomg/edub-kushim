@@ -232,7 +232,7 @@ func consumeHandler(c *Container, args []string) error {
 		return fmt.Errorf("failed to check queue: %w", err)
 	}
 
-	if _, err := client.CreateBatch(ctx, database.CreateBatchParams{
+	if err := client.CreateBatch(ctx, database.CreateBatchParams{
 		ID:     batchID,
 		Source: "cli",
 		Status: "queued",

@@ -60,8 +60,8 @@ Document Management System v0.1.0
 
 ### `kushim setup`
 
-Generate a config file, create required directories, initialize the SQLite
-database schema, download OCR language data from `tessdata_fast`, and
+Generate a config file, create required directories, initialize the PostgreSQL
+database schema (auto-creates the database if it doesn't exist), download OCR language
 download the Hugot embedding model (`BAAI/bge-m3`).
 
 By default, `kushim setup` launches a **web-based setup wizard** at
@@ -85,7 +85,7 @@ kushim setup --cli --languages eng,spa
 | `--languages`                      | — (required for CLI)   | Comma‑separated OCR language codes (e.g. `eng,spa,deu`)     |
 | `--inbox-path`                     | _config-dir_`/inbox`   | Consumption directory (scanned for files)                   |
 | `--storage-path`                   | _config-dir_`/storage` | Processed file storage root                                 |
-| `--database-path`                  | _config-dir_`/data`    | SQLite database directory                                   |
+| `--database-path`                  | _config-dir_`/data`    | Legacy SQLite path (unused with PostgreSQL)
 | `--consumer-ocr-engine`            | `gosseract`            | OCR engine: `gosseract` or `ocrmypdf`                       |
 | `--consumer-textextractor-engine`  | `mupdf`                | Text extractor: `mupdf`, `gopdf`, or `pdftotext`            |
 | `--consumer-pdfoptimizer-engine`   | `mupdf`                | PDF optimizer: `mupdf` or `gs`                              |
@@ -282,7 +282,7 @@ batch not found
 
 ### `kushim search`
 
-Full‑text search across indexed documents using SQLite FTS5.
+Full‑text search across indexed documents (currently FTS5, migrating to PostgreSQL tsvector in Phase 3).
 
 ```
 kushim search "budget report"
@@ -482,12 +482,14 @@ kushim backup --path /custom/backup/dir
 | `--path` | Config `backup.path` (or `<config_dir>/backups/`) | Override output directory |
 
 The backup creates a timestamped `tar.gz` archive containing:
-- `edub.db` — SQLite database snapshot via `VACUUM INTO` (compact, consistent)
+- `edub.db` — Database snapshot (SQLite: `VACUUM INTO`; PostgreSQL: `pg_dump`, Phase 4)
 - `config.yaml` — Configuration file at backup time
 - `storage/` — Full storage directory tree (originals, processed, errors)
 - `manifest.json` — Backup metadata (version, timestamp, sizes, config SHA256 hash)
 
-Retention is applied after the backup: if the number of archives exceeds `backup.keep`, the oldest are removed.
+> **Phase 2 note**: PostgreSQL backup and restore are not yet implemented
+> (scheduled for Phase 4). The `kushim backup` and `kushim restore` commands
+> return an error when `database.type: postgres`.
 
 ### `kushim restore`
 
@@ -685,7 +687,7 @@ not found) return `200` with a `failed` array:
 }
 ```
 
-In replace mode, the clear-and-add sequence runs inside a SQLite transaction per document,
+In replace mode, the clear-and-add sequence runs inside a database transaction per document,
 so a mid-operation failure rolls back all tag changes for that specific document.
 
 ### Update Document
@@ -1559,9 +1561,16 @@ server:
   session_secret: '' # 64-char hex key for JWT signing; auto-generated if empty
 
 database:
-  type: sqlite # currently only sqlite
-  path: '~/.config/edub-kushim/data'
-  name: edub.db # SQLite database file name
+  type: postgres # database engine
+  # Connection via discrete fields (recommended):
+  host: localhost
+  port: 5432
+  user: edub
+  password: edub
+  database: edub
+  sslmode: disable
+  # Or use a DSN string instead (overrides discrete fields):
+  # dsn: "postgres://edub:edub@localhost:5432/edub?sslmode=disable"
 
 storage:
   consumption_dir: '~/.config/edub-kushim/inbox'
@@ -1632,7 +1641,7 @@ enricher:
 | ------------------------------ | ---------------------------------------------------------------------- |
 | `app`                          | Environment mode and log verbosity                                     |
 | `server`                       | HTTP listen address, timeouts, max concurrent batches, download limits |
-| `database`                     | SQLite storage location and file name                                  |
+| `database`                     | PostgreSQL connection: host, port, user, password, database, sslmode, or DSN |
 | `storage`                      | Inbox and processed file directories                                   |
 | `consumer`                     | Pipeline: which tools to use, which files to accept                    |
 | `consumer.max_files_per_batch` | Max files per consume batch (default 10, 0 = unlimited)                |

@@ -21,11 +21,11 @@ func (q *Queries) CountAllDocuments(ctx context.Context) (int64, error) {
 	return count, err
 }
 
-const createDocument = `-- name: CreateDocument :execresult
+const createDocument = `-- name: CreateDocument :one
 INSERT INTO document (
     document_id, title, md5_checksum, sha512_checksum, mime_type, file_size, page_count, word_count,
     char_count, language, original_path, storage_path, text_content
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id
 `
 
 type CreateDocumentParams struct {
@@ -44,8 +44,8 @@ type CreateDocumentParams struct {
 	TextContent    sql.NullString
 }
 
-func (q *Queries) CreateDocument(ctx context.Context, arg CreateDocumentParams) (sql.Result, error) {
-	return q.db.ExecContext(ctx, createDocument,
+func (q *Queries) CreateDocument(ctx context.Context, arg CreateDocumentParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, createDocument,
 		arg.DocumentID,
 		arg.Title,
 		arg.Md5Checksum,
@@ -60,6 +60,9 @@ func (q *Queries) CreateDocument(ctx context.Context, arg CreateDocumentParams) 
 		arg.StoragePath,
 		arg.TextContent,
 	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }
 
 const deleteDocument = `-- name: DeleteDocument :exec

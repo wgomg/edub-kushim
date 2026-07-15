@@ -79,7 +79,7 @@ internal/
 │   ├── consumer.go        # Main consumer (extract → OCR → optimize → store), duplicate detection (MD5+SHA512)
 │   └── storage.go         # File operations, checksums, FileFromPath, MIME detection via mimetype lib
 ├── database/              # Database layer (sqlc-generated + manual)
-│   ├── connection.go      # DB connection (SQLite WAL mode, 1 max conn)
+│   ├── connection.go      # DB connection (PostgreSQL via pgx, 25 max conn)
 │   ├── schema.go          # InitializeSchema — goose migrations + seeders (tags, doc-types, people-types)
 │   ├── models.go          # Generated data models (Document now has PageCount, WordCount, CharCount, Language; added SavedSearch)
 │   ├── db.go              # Database interface (Queries, WithTx)

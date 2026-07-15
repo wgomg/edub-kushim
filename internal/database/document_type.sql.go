@@ -10,16 +10,19 @@ import (
 	"database/sql"
 )
 
-const createDocumentType = `-- name: CreateDocumentType :execresult
-INSERT INTO document_type (name) VALUES ($1)
+const createDocumentType = `-- name: CreateDocumentType :one
+INSERT INTO document_type (name) VALUES ($1) RETURNING id
 `
 
-func (q *Queries) CreateDocumentType(ctx context.Context, name string) (sql.Result, error) {
-	return q.db.ExecContext(ctx, createDocumentType, name)
+func (q *Queries) CreateDocumentType(ctx context.Context, name string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, createDocumentType, name)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }
 
-const createDocumentTypeFull = `-- name: CreateDocumentTypeFull :execresult
-INSERT INTO document_type (name, description) VALUES ($1, $2)
+const createDocumentTypeFull = `-- name: CreateDocumentTypeFull :one
+INSERT INTO document_type (name, description) VALUES ($1, $2) RETURNING id
 `
 
 type CreateDocumentTypeFullParams struct {
@@ -27,8 +30,11 @@ type CreateDocumentTypeFullParams struct {
 	Description string
 }
 
-func (q *Queries) CreateDocumentTypeFull(ctx context.Context, arg CreateDocumentTypeFullParams) (sql.Result, error) {
-	return q.db.ExecContext(ctx, createDocumentTypeFull, arg.Name, arg.Description)
+func (q *Queries) CreateDocumentTypeFull(ctx context.Context, arg CreateDocumentTypeFullParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, createDocumentTypeFull, arg.Name, arg.Description)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }
 
 const deleteDocumentType = `-- name: DeleteDocumentType :exec

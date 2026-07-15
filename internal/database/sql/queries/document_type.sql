@@ -4,8 +4,8 @@ SELECT * FROM document_type WHERE id = $1;
 -- name: ListDocumentTypes :many
 SELECT * FROM document_type ORDER BY created_at DESC LIMIT $1 OFFSET $2;
 
--- name: CreateDocumentType :execresult
-INSERT INTO document_type (name) VALUES ($1);
+-- name: CreateDocumentType :one
+INSERT INTO document_type (name) VALUES ($1) RETURNING id;
 
 -- name: UpdateDocumentType :exec
 UPDATE document_type SET name = $1 WHERE id = $2;
@@ -16,8 +16,8 @@ SELECT * FROM document_type WHERE name = $1;
 -- name: SearchDocumentTypeByName :many
 SELECT * FROM document_type WHERE name LIKE $1 ORDER BY name ASC LIMIT $2;
 
--- name: CreateDocumentTypeFull :execresult
-INSERT INTO document_type (name, description) VALUES ($1, $2);
+-- name: CreateDocumentTypeFull :one
+INSERT INTO document_type (name, description) VALUES ($1, $2) RETURNING id;
 
 -- name: UpdateDocumentTypeFull :exec
 UPDATE document_type SET name = $1, description = $2 WHERE id = $3;

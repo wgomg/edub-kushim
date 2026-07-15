@@ -98,10 +98,10 @@ FROM task WHERE task_type = $1 ORDER BY created_at DESC;
 -- name: CountTasksByBatchAndStatus :one
 SELECT COUNT(*) FROM task WHERE batch_id = $1 AND status = $2;
 
--- name: CreateTask :execresult
+-- name: CreateTask :one
 INSERT INTO task (
     task_id, task_type, status, batch_id, payload, dedup_key
-) VALUES ($1, $2, $3, $4, $5, $6);
+) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id;
 
 -- name: ClaimTask :execrows
 UPDATE task SET

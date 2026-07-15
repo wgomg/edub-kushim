@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -49,10 +50,41 @@ type ServerConfig struct {
 }
 
 type DatabaseConfig struct {
-	Type    string   `mapstructure:"type" yaml:"type" json:"type"`
-	Path    string   `mapstructure:"path" yaml:"path" json:"path"`
-	Name    string   `yaml:"name" json:"name"`
-	Seeders []string `yaml:"seeders" json:"seeders"`
+	Type     string `mapstructure:"type" yaml:"type" json:"type"`
+	Path     string `mapstructure:"path" yaml:"path,omitempty" json:"path"`
+	Name     string `yaml:"name,omitempty" json:"name"`
+	Host     string `yaml:"host,omitempty" json:"host"`
+	Port     int    `yaml:"port,omitempty" json:"port"`
+	User     string `yaml:"user,omitempty" json:"user"`
+	Password string `yaml:"password,omitempty" json:"password"`
+	Database string `yaml:"database,omitempty" json:"database"`
+	SSLMode  string `yaml:"sslmode,omitempty" json:"sslmode"`
+	DSN      string `yaml:"dsn,omitempty" json:"dsn"`
+	Seeders  []string `yaml:"seeders,omitempty" json:"seeders"`
+}
+
+func BuildPostgresDSN(cfg DatabaseConfig) string {
+	if cfg.DSN != "" {
+		return cfg.DSN
+	}
+	u := &url.URL{
+		Scheme: "postgres",
+		Host:   fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
+		Path:   cfg.Database,
+	}
+	if cfg.User != "" {
+		if cfg.Password != "" {
+			u.User = url.UserPassword(cfg.User, cfg.Password)
+		} else {
+			u.User = url.User(cfg.User)
+		}
+	}
+	q := u.Query()
+	if cfg.SSLMode != "" {
+		q.Set("sslmode", cfg.SSLMode)
+	}
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 type StorageConfig struct {
@@ -273,23 +305,26 @@ func DefaultConfig(configDir string) *Config {
 			ConfigDir: configDir,
 		},
 		Srv: ServerConfig{
-			Host:          "0.0.0.0",
-			Port:          3000,
-			ReadTimeout:   60 * time.Second,
-			WriteTimeout:  60 * time.Second,
-			IdleTimeout:   60 * time.Second,
-			MaxUploadSize: 100,
-			// TODO: needs to be fixed at 1 for sqlite for concurrency issues
-			MaxConcurrentBatches: 1,
+			Host:                 "0.0.0.0",
+			Port:                 3000,
+			ReadTimeout:          60 * time.Second,
+			WriteTimeout:         60 * time.Second,
+			IdleTimeout:          60 * time.Second,
+			MaxUploadSize:        100,
+			MaxConcurrentBatches: 4,
 			MaxDownloadFiles:     50,
 			MaxDownloadSizeMB:    500,
 			MaxBatchDelete:       50,
 			AuthEnabled:          true,
 		},
 		Db: DatabaseConfig{
-			Type: "sqlite",
-			Path: filepath.Join(configDir, "data"),
-			Name: "edub.db",
+			Type:     "postgres",
+			Host:     "localhost",
+			Port:     5432,
+			User:     "edub",
+			Password: "edub",
+			Database: "edub",
+			SSLMode:  "disable",
 		},
 		Storage: StorageConfig{
 			ConsumptionDir: filepath.Join(configDir, "inbox"),
@@ -450,14 +485,10 @@ func finalizeConfig(cfg *Config, configDir string) error {
 	cfg.Enricher.TagMatcher.ConsolidationSimilarity = defaultConsolidationSimilarity(modelShortName)
 	cfg.Enricher.TagMatcher.Hugot.BackendLibPath = filepath.Join(configDir, "tagmatcher", "hugot", "libs")
 
-	cfg.Db.Path = expandPath(cfg.Db.Path, homeDir)
 	cfg.Storage.ConsumptionDir = expandPath(cfg.Storage.ConsumptionDir, homeDir)
 	cfg.Storage.StorageDir = expandPath(cfg.Storage.StorageDir, homeDir)
 	cfg.Consumer.OCR.DataDir = expandPath(cfg.Consumer.OCR.DataDir, homeDir)
 
-	if err := requireAbsPath(cfg.Db.Path, "database.path"); err != nil {
-		return err
-	}
 	if err := requireAbsPath(cfg.Storage.ConsumptionDir, "storage.consumption_dir"); err != nil {
 		return err
 	}

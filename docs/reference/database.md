@@ -4,13 +4,12 @@
 
 ### Functions
 
-`NewSQLiteDB(cfg) (*sql.DB, error)`, `NewClient(db) *Client`
+`NewPostgresDB(dsn string) (*sql.DB, error)`, `NewClient(db) *Client`
 
-- `NewSQLiteDB` sets `PRAGMA foreign_keys = ON`, `journal_mode = WAL`, `synchronous = NORMAL`, `busy_timeout = 5000`, max 1 connection
-
-> **Phase 1 complete**: SQL files, sqlc engine, and generated Go code are now PostgreSQL-ready.
-> Phase 2 replaces `NewSQLiteDB` with a PostgreSQL connection pool.
+- `NewPostgresDB` opens a connection pool via `pgx/stdlib` (25 max open, 5 max idle, 5 min lifetime). Before opening the target database it calls `ensureDatabaseExists` which connects to the `postgres` bootstrap database, checks existence via `pg_database`, and auto-creates the target if missing.
 - `NewClient` wraps a `*sql.DB` and an embedded `*Queries` (sqlc-generated). Exposes `BeginTx(ctx, opts)` and `DB()` for direct `*sql.DB` access. All query methods on `*Queries` are promoted to `*Client`.
+
+> **Phase 2 complete**: `NewPostgresDB` replaces the old `NewSQLiteDB`. Connection pool settings are appropriate for PostgreSQL (25 concurrent connections vs SQLite's single-conn WAL).
 
 ---
 
@@ -18,10 +17,9 @@
 
 ### Functions
 
-`InitializeSchema(db) error` — Configures goose (`SetBaseFS`, `SetDialect`), runs pending migrations via `goose.Up()` from the embedded `sql/schema/migrations/` directory, then runs seeders: `tags`, `document-types`, `people-types`. On a fresh database, the baseline migration (`00001_baseline.sql`) creates all tables and indexes (PostgreSQL syntax). On existing databases, only unapplied migrations are executed.
+`InitializeSchema(db) error` — Configures goose (`SetBaseFS`, `SetDialect("postgres")`), runs pending migrations via `goose.Up()` from the embedded `sql/schema/migrations/` directory, then runs seeders: `tags`, `document-types`, `people-types`. On a fresh database, the baseline migration (`00001_baseline.sql`) creates all tables and indexes (PostgreSQL syntax). On existing databases, only unapplied migrations are executed.
 
-> **Note**: The migration files now use PostgreSQL DDL (`GENERATED ALWAYS AS IDENTITY`, `TIMESTAMPTZ`, `JSONB`).
-> The current runtime still uses SQLite — the goose dialect and connection will switch to PostgreSQL in Phase 2.
+> The baseline uses PostgreSQL DDL (`GENERATED ALWAYS AS IDENTITY`, `TIMESTAMPTZ`, `JSONB`). Connection and goose dialect are now PostgreSQL (Phase 2).
 
 `ResetDatabase(db) error` — Rolls back all migrations via `goose.Reset()` (down → up), then re-runs seeders. Used by `kushim setup --reset-database`.
 
@@ -60,7 +58,7 @@ When adding a new migration:
 
 Migrations run automatically on startup (no manual CLI command needed):
 
-- **Server** (`edub`) — called in `cmd/edub/main.go` after `NewSQLiteDB()`
+- **Server** (`edub`) — called in `cmd/edub/main.go` after `NewPostgresDB()`
 - **CLI commands** (`kushim consume`, `search`, `task`) — called in `internal/commands/container.go` `GetDB()` when the connection is first acquired
 
 ---

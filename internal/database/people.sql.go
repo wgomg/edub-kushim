@@ -10,10 +10,11 @@ import (
 	"database/sql"
 )
 
-const createPeople = `-- name: CreatePeople :execresult
+const createPeople = `-- name: CreatePeople :one
 INSERT INTO people (name, name_native, normalized_name)
 VALUES ($1, $2, $3)
 ON CONFLICT (name) DO NOTHING
+RETURNING id
 `
 
 type CreatePeopleParams struct {
@@ -22,8 +23,11 @@ type CreatePeopleParams struct {
 	NormalizedName string
 }
 
-func (q *Queries) CreatePeople(ctx context.Context, arg CreatePeopleParams) (sql.Result, error) {
-	return q.db.ExecContext(ctx, createPeople, arg.Name, arg.NameNative, arg.NormalizedName)
+func (q *Queries) CreatePeople(ctx context.Context, arg CreatePeopleParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, createPeople, arg.Name, arg.NameNative, arg.NormalizedName)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }
 
 const deletePeople = `-- name: DeletePeople :exec

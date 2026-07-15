@@ -1,4 +1,4 @@
--- name: CreateBatch :execresult
+-- name: CreateBatch :exec
 INSERT INTO batch (id, source, status) VALUES ($1, $2, $3)
 ON CONFLICT (id) DO NOTHING;
 

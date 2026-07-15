@@ -13,10 +13,11 @@ SELECT * FROM tag ORDER BY created_at DESC;
 -- name: ListAllTagsNames :many
 SELECT name FROM tag ORDER BY created_at DESC;
 
--- name: CreateTag :execresult
+-- name: CreateTag :one
 INSERT INTO tag (name)
 VALUES ($1)
-ON CONFLICT (name) DO NOTHING;
+ON CONFLICT (name) DO NOTHING
+RETURNING id;
 
 -- name: UpdateTag :exec
 UPDATE tag SET

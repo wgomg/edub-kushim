@@ -7,10 +7,11 @@ SELECT * FROM people ORDER BY created_at DESC;
 -- name: ListPeople :many
 SELECT * FROM people ORDER BY created_at DESC LIMIT $1 OFFSET $2;
 
--- name: CreatePeople :execresult
+-- name: CreatePeople :one
 INSERT INTO people (name, name_native, normalized_name)
 VALUES ($1, $2, $3)
-ON CONFLICT (name) DO NOTHING;
+ON CONFLICT (name) DO NOTHING
+RETURNING id;
 
 -- name: UpdatePeople :exec
 UPDATE people SET

@@ -65,7 +65,7 @@ func (s *User) Create(ctx context.Context, username, password, role string) (dat
 		return database.User{}, errs.EInternal("create user", err)
 	}
 
-	result, err := s.queries.CreateUser(ctx, database.CreateUserParams{
+	id, err := s.queries.CreateUser(ctx, database.CreateUserParams{
 		Username:        username,
 		PasswordHash:    sql.NullString{String: string(hash), Valid: true},
 		Role:            role,
@@ -75,11 +75,6 @@ func (s *User) Create(ctx context.Context, username, password, role string) (dat
 	})
 	if err != nil {
 		return database.User{}, errs.FromDB(err, "create user")
-	}
-
-	id, err := result.LastInsertId()
-	if err != nil {
-		return database.User{}, errs.FromDB(err, "last insert id")
 	}
 
 	user, err := s.queries.GetUser(ctx, id)
@@ -162,7 +157,7 @@ func (s *User) CreateAPIKey(ctx context.Context, userID int64) (rawKey string, e
 	}
 
 	now := sql.NullTime{Time: currentTime(), Valid: true}
-	result, err := s.queries.UpdateUserAPIKey(ctx, database.UpdateUserAPIKeyParams{
+	rows, err := s.queries.UpdateUserAPIKey(ctx, database.UpdateUserAPIKeyParams{
 		ApiKeyHash:      sql.NullString{String: hash, Valid: true},
 		ApiKeyPrefix:    sql.NullString{String: prefix, Valid: true},
 		ApiKeyCreatedAt: now,
@@ -172,7 +167,6 @@ func (s *User) CreateAPIKey(ctx context.Context, userID int64) (rawKey string, e
 		return "", errs.FromDB(err, "create api key")
 	}
 
-	rows, _ := result.RowsAffected()
 	if rows == 0 {
 		return "", errs.ENotFound("create api key", errors.New("user not found"))
 	}
@@ -181,12 +175,11 @@ func (s *User) CreateAPIKey(ctx context.Context, userID int64) (rawKey string, e
 }
 
 func (s *User) RevokeAPIKey(ctx context.Context, userID int64) error {
-	result, err := s.queries.RevokeUserAPIKey(ctx, userID)
+	rows, err := s.queries.RevokeUserAPIKey(ctx, userID)
 	if err != nil {
 		return errs.FromDB(err, "revoke api key")
 	}
 
-	rows, _ := result.RowsAffected()
 	if rows == 0 {
 		return errs.ENotFound("revoke api key", errors.New("user not found"))
 	}

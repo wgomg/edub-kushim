@@ -6,10 +6,7 @@
 - **Tool Agnostic**: Adapter pattern; OCR, text extraction, PDF optimization, content analysis,
   text reduction, and semantic tag matching all switchable between built‑in adapters and
   external tools/providers
-- **PostgreSQL Target**: SQL and generated Go code target PostgreSQL. The current runtime
-still uses SQLite (Phase 1: schema + sqlc rewrite complete; Phase 2: connection layer replaces
-SQLite with PostgreSQL). SQL files, placeholders (`$1, $2`), and sqlc engine are all
-   PostgreSQL-native.
+- **PostgreSQL Target**: SQL and generated Go code target PostgreSQL. Phase 1 (schema + sqlc rewrite) and Phase 2 (connection layer replaces SQLite with PostgreSQL) are complete. SQL files, placeholders (`$1, $2`), and sqlc engine are all PostgreSQL-native. The `kushim setup` wizard, `Bootstrap`, and `NewTestDB` all use `NewPostgresDB`.
 - **Fallback Processing**: Text extraction → OCR → text extraction pattern
 - **Date-based Organization**: Temporal storage structure for scalability
 - **Transaction Safety**: Coordinated database and file operations with rollback
@@ -69,11 +66,11 @@ The CGo binary that performs actual document processing:
   HTTP Request
        │
        ▼
-┌──────────────┐     enqueue tasks      ┌──────────────┐
-│    edub      │ ──────────────────────▶ │   SQLite DB  │
-│ (CGO_ENABLED │                         │  (status='   │
-│     =0)      │                         │   queued')   │
-└──────────────┘                         └──────┬───────┘
+┌──────────────┐     enqueue tasks      ┌──────────────────┐
+│    edub      │ ──────────────────────▶ │  PostgreSQL DB   │
+│ (CGO_ENABLED │                         │  (status='       │
+│     =0)      │                         │   queued')       │
+└──────────────┘                         └──────┬───────────┘
        │                                        │
        │                                        │ kushim queue
        │                                        │ picks up batch
@@ -140,7 +137,7 @@ OCRs from PNG, and builds a searchable PDF with `go‑pdf/fpdf` using
 ### 4. Database Integration
 
 Document record created via `CreateDocument` with a generated `document_id` UUID,
-auto-increment ID obtained from `LastInsertId()` (SQLite — currently works; PostgreSQL `GENERATED ALWAYS AS IDENTITY` does not populate `LastInsertId()`, deferred to Phase 2), date‑based storage paths
+auto-increment ID obtained from `RETURNING id` (the old `LastInsertId()` pattern was SQLite-specific and had no effect under pgx), date‑based storage paths
 generated, paths updated via `UpdateDocumentPaths`. The transaction is
 DB‑only (fast writes), bounded by a 5‑second context timeout.
 
@@ -168,8 +165,8 @@ temp files). On success, the inbox original is removed.
 ### 7. FTS Indexing
 
 > **Removed from schema in Phase 1** (FTS5 → tsvector migration deferred to Phase 3).
-> The FTS5-related Go code (`fts5.go`, `structured_search.go`) still works against test SQLite
-> databases but will be rewritten for PostgreSQL tsvector in Phase 3.
+> The FTS5-related Go code (`fts5.go`, `structured_search.go`) uses SQLite FTS5 syntax
+> which fails against PostgreSQL — queries must be rewritten for PostgreSQL tsvector in Phase 3.
 
 ### 8. Async Enrichment (Post-Consume)
 
@@ -257,7 +254,7 @@ five-step guided flow:
    later.
 
 The wizard server uses a stripped-down version of the full server stack: it bootstraps
-the config directory (via `config.Bootstrap`), initializes the SQLite schema, creates
+the config directory (via `config.Bootstrap`), initializes the PostgreSQL schema, creates
 a dispatcher with only the `"config"` task type registered, and runs a single-worker
 pool for background downloads. It serves the wizard UI directly via `//go:embed` on
 `internal/wizard/static/`.

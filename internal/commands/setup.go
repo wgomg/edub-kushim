@@ -3,7 +3,6 @@ package commands
 import (
 	"bufio"
 	"context"
-	"database/sql"
 	"fmt"
 	"os"
 	"os/exec"
@@ -20,7 +19,6 @@ import (
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/utils"
 	"github.com/wgomg/edub-kushim/internal/wizard"
-	_ "modernc.org/sqlite"
 )
 
 func RunSetup(args []string, logger *utils.Logger) error {
@@ -220,9 +218,6 @@ Flags:
 	}
 	logger.Info(nil, "created config: %s", configPath)
 
-	if err := os.MkdirAll(cfg.Db.Path, 0755); err != nil {
-		return fmt.Errorf("create data directory: %w", err)
-	}
 	if err := os.MkdirAll(cfg.Storage.ConsumptionDir, 0755); err != nil {
 		return fmt.Errorf("create inbox directory: %w", err)
 	}
@@ -235,18 +230,9 @@ Flags:
 		return fmt.Errorf("create tessdata directory: %w", err)
 	}
 
-	dsn := filepath.Join(cfg.Db.Path, cfg.Db.Name)
-	db, err := sql.Open("sqlite", dsn)
+	db, err := database.NewPostgresDB(config.BuildPostgresDSN(cfg.Db))
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
-	}
-	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
-		db.Close()
-		return fmt.Errorf("enable foreign keys: %w", err)
-	}
-	if _, err := db.Exec(fmt.Sprintf("PRAGMA busy_timeout = %d", database.BusyTimeoutMs)); err != nil {
-		db.Close()
-		return fmt.Errorf("set busy timeout: %w", err)
 	}
 
 	if resetDb {
@@ -263,7 +249,7 @@ Flags:
 		}
 	}
 	db.Close()
-	logger.Info(nil, "created database: %s", dsn)
+	logger.Info(nil, "created database")
 
 	cfg, err = config.Load(*configDir)
 	if err != nil {
@@ -323,14 +309,11 @@ Flags:
 		}
 	}
 
-	db, err = sql.Open("sqlite", dsn)
+	db, err = database.NewPostgresDB(config.BuildPostgresDSN(cfg.Db))
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
 	defer db.Close()
-	if _, err := db.Exec(fmt.Sprintf("PRAGMA busy_timeout = %d", database.BusyTimeoutMs)); err != nil {
-		return fmt.Errorf("set busy timeout: %w", err)
-	}
 
 	client := database.NewClient(db)
 	userSvc := service.NewUser(client.Queries)

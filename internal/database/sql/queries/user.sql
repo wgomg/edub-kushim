@@ -11,7 +11,7 @@ SELECT * FROM "user" WHERE api_key_hash = $1;
 SELECT id, username, role, api_key_prefix, api_key_created_at, created_at
 FROM "user" ORDER BY created_at DESC LIMIT $1 OFFSET $2;
 
--- name: CreateUser :execresult
+-- name: CreateUser :one
 INSERT INTO "user" (
     username,
     password_hash,
@@ -19,7 +19,7 @@ INSERT INTO "user" (
     api_key_hash,
     api_key_prefix,
     api_key_created_at
-) VALUES ($1, $2, $3, $4, $5, $6);
+) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id;
 
 -- name: UpdateUser :exec
 UPDATE "user" SET
@@ -34,14 +34,14 @@ WHERE id = $2;
 -- name: UpdateUserCredentials :exec
 UPDATE "user" SET username = $1, password_hash = $2 WHERE id = $3;
 
--- name: UpdateUserAPIKey :execresult
+-- name: UpdateUserAPIKey :execrows
 UPDATE "user" SET
     api_key_hash = $1,
     api_key_prefix = $2,
     api_key_created_at = $3
 WHERE id = $4;
 
--- name: RevokeUserAPIKey :execresult
+-- name: RevokeUserAPIKey :execrows
 UPDATE "user" SET
     api_key_hash = NULL,
     api_key_prefix = NULL,

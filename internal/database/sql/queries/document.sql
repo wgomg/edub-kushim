@@ -13,11 +13,11 @@ SELECT id, document_id, title, md5_checksum, sha512_checksum, mime_type, file_si
        char_count, language, created_at, modified_at, document_type_id, original_path, storage_path
 FROM document ORDER BY created_at DESC LIMIT $1 OFFSET $2;
 
--- name: CreateDocument :execresult
+-- name: CreateDocument :one
 INSERT INTO document (
     document_id, title, md5_checksum, sha512_checksum, mime_type, file_size, page_count, word_count,
     char_count, language, original_path, storage_path, text_content
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13);
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id;
 
 -- name: UpdateDocumentMetadata :exec
 UPDATE document SET

@@ -1,6 +1,6 @@
--- name: CreateOrphanedFile :execresult
+-- name: CreateOrphanedFile :one
 INSERT INTO orphaned_file (document_key, document_key_type, file_path, original_path, source_dir, file_size, mime_type)
-VALUES ($1, $2, $3, $4, $5, $6, $7);
+VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id;
 
 -- name: ListOrphanedFiles :many
 SELECT * FROM orphaned_file WHERE status = 'pending' ORDER BY detected_at DESC;

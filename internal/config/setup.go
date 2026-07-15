@@ -2,7 +2,6 @@ package config
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"os"
 	"os/exec"
@@ -14,7 +13,6 @@ import (
 	"github.com/wgomg/edub-kushim/internal/auth"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/utils"
-	_ "modernc.org/sqlite"
 )
 
 const (
@@ -39,9 +37,6 @@ func Bootstrap(configDir string) (*Config, error) {
 
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		return nil, fmt.Errorf("create config dir: %w", err)
-	}
-	if err := os.MkdirAll(cfg.Db.Path, 0755); err != nil {
-		return nil, fmt.Errorf("create data dir: %w", err)
 	}
 	if err := os.MkdirAll(cfg.Storage.ConsumptionDir, 0755); err != nil {
 		return nil, fmt.Errorf("create inbox dir: %w", err)
@@ -69,22 +64,9 @@ func Bootstrap(configDir string) (*Config, error) {
 		return nil, fmt.Errorf("write bootstrap config: %w", err)
 	}
 
-	dsn := filepath.Join(cfg.Db.Path, cfg.Db.Name)
-	db, err := sql.Open("sqlite", dsn)
+	db, err := database.NewPostgresDB(BuildPostgresDSN(cfg.Db))
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
-	}
-	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("enable foreign keys: %w", err)
-	}
-	if _, err := db.Exec(fmt.Sprintf("PRAGMA busy_timeout = %d", database.BusyTimeoutMs)); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("set busy timeout: %w", err)
-	}
-	if err := database.InitializeSchema(db); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("init schema: %w", err)
 	}
 	db.Close()
 

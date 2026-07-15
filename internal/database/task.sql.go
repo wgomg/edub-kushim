@@ -144,10 +144,10 @@ func (q *Queries) CountTasksByStatus(ctx context.Context) ([]CountTasksByStatusR
 	return items, nil
 }
 
-const createTask = `-- name: CreateTask :execresult
+const createTask = `-- name: CreateTask :one
 INSERT INTO task (
     task_id, task_type, status, batch_id, payload, dedup_key
-) VALUES ($1, $2, $3, $4, $5, $6)
+) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id
 `
 
 type CreateTaskParams struct {
@@ -159,8 +159,8 @@ type CreateTaskParams struct {
 	DedupKey sql.NullString
 }
 
-func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (sql.Result, error) {
-	return q.db.ExecContext(ctx, createTask,
+func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, createTask,
 		arg.TaskID,
 		arg.TaskType,
 		arg.Status,
@@ -168,6 +168,9 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (sql.Res
 		arg.Payload,
 		arg.DedupKey,
 	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }
 
 const deleteTask = `-- name: DeleteTask :exec

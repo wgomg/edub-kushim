@@ -14,6 +14,9 @@ import (
 )
 
 func backupHandler(c *Container, args []string) error {
+	if c.config.Db.Type == "postgres" {
+		return fmt.Errorf("Postgres backup is not yet implemented (coming in Phase 4)")
+	}
 	fp := NewFlagParser(args)
 	if fp.Help("Usage: kushim backup [--path <dir>]\n"+
 		"  Run a backup immediately.\n\n"+
@@ -71,6 +74,9 @@ func backupHandler(c *Container, args []string) error {
 }
 
 func restoreHandler(c *Container, args []string) error {
+	if c.config.Db.Type == "postgres" {
+		return fmt.Errorf("Postgres restore is not yet implemented (coming in Phase 4)")
+	}
 	fp := NewFlagParser(args)
 	if fp.Help("Usage: kushim restore <backup-file.tar.gz> [--force] [--dry-run]\n"+
 		"  Restore from a backup archive.\n\n"+

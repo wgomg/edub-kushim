@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strings"
 
 	"github.com/wgomg/edub-kushim/internal/database"
@@ -121,32 +122,21 @@ func (s *People) Create(ctx context.Context, inputs []CreatePersonInput) ([]Crea
 
 		nameNative := toNullString(input.NameNative)
 
-		res, err := s.queries.CreatePeople(ctx, database.CreatePeopleParams{
+		id, err := s.queries.CreatePeople(ctx, database.CreatePeopleParams{
 			Name:           name,
 			NameNative:     nameNative,
 			NormalizedName: normName,
 		})
 		if err != nil {
-			return nil, errs.FromDB(err, "create people "+name)
-		}
-
-		rows, err := res.RowsAffected()
-		if err != nil {
-			return nil, errs.FromDB(err, "rows affected for "+name)
-		}
-
-		if rows == 0 {
-			existing, err := s.queries.GetPeopleByName(ctx, name)
-			if err != nil {
-				return nil, errs.FromDB(err, "get people by name after conflict "+name)
+			if errors.Is(err, sql.ErrNoRows) {
+				existing, err := s.queries.GetPeopleByName(ctx, name)
+				if err != nil {
+					return nil, errs.FromDB(err, "get people by name after conflict "+name)
+				}
+				results[i] = CreateResult[database.People]{Entity: existing, Status: Conflict}
+				continue
 			}
-			results[i] = CreateResult[database.People]{Entity: existing, Status: Conflict}
-			continue
-		}
-
-		id, err := res.LastInsertId()
-		if err != nil {
-			return nil, errs.FromDB(err, "last insert id for "+name)
+			return nil, errs.FromDB(err, "create people "+name)
 		}
 
 		results[i] = CreateResult[database.People]{

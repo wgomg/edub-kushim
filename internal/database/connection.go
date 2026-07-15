@@ -4,50 +4,80 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
-	"os"
-	"path/filepath"
+	"net/url"
+	"strings"
+	"time"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 const BusyTimeoutMs = 5000
 
-func NewSQLiteDB(path, name string) (*sql.DB, error) {
-	if err := os.MkdirAll(path, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create data directory: %w", err)
+func NewPostgresDB(dsn string) (*sql.DB, error) {
+	if err := ensureDatabaseExists(dsn); err != nil {
+		return nil, fmt.Errorf("ensure database exists: %w", err)
 	}
 
-	dbPath := filepath.Join(path, name)
-
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open database: %w", err)
+		return nil, fmt.Errorf("open postgres: %w", err)
 	}
 
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	db.SetConnMaxLifetime(0)
-
-	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
-		return nil, fmt.Errorf("failed to enable foreign keys: %w", err)
-	}
-
-	if _, err := db.Exec("PRAGMA journal_mode = WAL"); err != nil {
-		log.Printf("Warning: failed to enable WAL mode: %v", err)
-	}
-
-	if _, err := db.Exec("PRAGMA synchronous = NORMAL"); err != nil {
-		log.Printf("Warning: failed to set synchronous mode: %v", err)
-	}
-
-	if _, err := db.Exec(fmt.Sprintf("PRAGMA busy_timeout = %d", BusyTimeoutMs)); err != nil {
-		log.Printf("Warning: failed to set busy timeout: %v", err)
-	}
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(5 * time.Minute)
 
 	if err := db.Ping(); err != nil {
-		return nil, fmt.Errorf("failed to ping database: %w", err)
+		db.Close()
+		return nil, fmt.Errorf("ping postgres: %w", err)
 	}
 
 	return db, nil
 }
 
+func ensureDatabaseExists(targetDSN string) error {
+	bootstrapDSN := replaceDBName(targetDSN, "postgres")
+	db, err := sql.Open("pgx", bootstrapDSN)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	targetDB := extractDBName(targetDSN)
+
+	var exists bool
+	err = db.QueryRow("SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)", targetDB).Scan(&exists)
+	if err != nil {
+		return fmt.Errorf("check database existence: %w", err)
+	}
+	if !exists {
+		log.Printf("database %q does not exist, creating...", targetDB)
+		_, err = db.Exec(fmt.Sprintf("CREATE DATABASE %s", quoteIdent(targetDB)))
+		if err != nil {
+			return fmt.Errorf("create database %q: %w", targetDB, err)
+		}
+	}
+	return nil
+}
+
+func quoteIdent(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
+}
+
+func extractDBName(dsn string) string {
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimPrefix(u.Path, "/")
+}
+
+func replaceDBName(dsn, newDB string) string {
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return dsn
+	}
+	u.Path = "/" + newDB
+	u.RawPath = ""
+	return u.String()
+}

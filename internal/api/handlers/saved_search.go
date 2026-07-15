@@ -45,19 +45,12 @@ func (h *SavedSearchHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.queries.CreateSavedSearch(ctx, database.CreateSavedSearchParams{
+	id, err := h.queries.CreateSavedSearch(ctx, database.CreateSavedSearchParams{
 		Name:       req.Name,
 		FilterJson: string(req.Filter),
 	})
 	if err != nil {
 		h.logger.Error(&reqID, "create saved search: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	id, err := result.LastInsertId()
-	if err != nil {
-		h.logger.Error(&reqID, "create saved search: get last insert id: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}

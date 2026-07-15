@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -252,44 +253,33 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 			if nameNative != "" {
 				nameNativeArg = sql.NullString{String: nameNative, Valid: true}
 			}
-			result, err := e.queries.CreatePeople(ctx, database.CreatePeopleParams{
+			id, err := e.queries.CreatePeople(ctx, database.CreatePeopleParams{
 				Name:           canonicalName,
 				NameNative:     nameNativeArg,
 				NormalizedName: normalized,
 			})
 			if err != nil {
-				e.logger.Error(&logId, "create people %q: %v", canonicalName, err)
-				continue
-			}
-			e.logger.Debug(&logId, "people created %s", canonicalName)
-
-			rows, err := result.RowsAffected()
-			if err != nil {
-				e.logger.Error(&logId, "rows affected for %q: %v", canonicalName, err)
-				continue
-			}
-
-			if rows == 0 {
-				existing, err := e.queries.GetPeopleByNormalizedName(ctx, normalized)
-				if err != nil {
-					e.logger.Error(&logId, "get people by normalized name after conflict %q: %v", canonicalName, err)
-					continue
-				}
-				id = existing.ID
-				if nameNative != "" {
-					if err := e.queries.UpdatePeopleNative(ctx, database.UpdatePeopleNativeParams{
-						NameNative: sql.NullString{String: nameNative, Valid: true},
-						ID:         id,
-					}); err != nil {
-						e.logger.Debug(&logId, "update people native name %q: %v", nameNative, err)
+				if errors.Is(err, sql.ErrNoRows) {
+					existing, err := e.queries.GetPeopleByNormalizedName(ctx, normalized)
+					if err != nil {
+						e.logger.Error(&logId, "get people by normalized name after conflict %q: %v", canonicalName, err)
+						continue
 					}
+					id = existing.ID
+					if nameNative != "" {
+						if err := e.queries.UpdatePeopleNative(ctx, database.UpdatePeopleNativeParams{
+							NameNative: sql.NullString{String: nameNative, Valid: true},
+							ID:         id,
+						}); err != nil {
+							e.logger.Debug(&logId, "update people native name %q: %v", nameNative, err)
+						}
+					}
+				} else {
+					e.logger.Error(&logId, "create people %q: %v", canonicalName, err)
+					continue
 				}
 			} else {
-				id, err = result.LastInsertId()
-				if err != nil {
-					e.logger.Error(&logId, "last insert id for %q: %v", canonicalName, err)
-					continue
-				}
+				e.logger.Debug(&logId, "people created %s", canonicalName)
 			}
 			peopleMap[normalized] = id
 		} else if nameNative != "" {

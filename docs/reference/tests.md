@@ -35,20 +35,29 @@ CGO_ENABLED=0 go test -tags "XLA,ORT" ./internal/...
 
 ## How Tests Work
 
-### In-Memory SQLite
+### PostgreSQL via TEST_DATABASE_URL
 
-Every test creates an isolated in-memory SQLite database (`:memory:`) with the full
-schema initialized via `database.InitializeSchema`. There is zero state sharing
-between tests. Each `*sql.DB` is created fresh per test via `database.NewTestDB(t)`:
+Every test creates a connection to a PostgreSQL database specified by the `TEST_DATABASE_URL`
+environment variable. The schema is initialized via `database.InitializeSchema` on each
+connection. Each test starts with a clean slate (all tables truncated, sequences reset,
+seed data re-inserted) via `resetDB`:
 
 ```go
-db := database.NewTestDB(t)
-queries := database.New(db)
+q, db := database.NewTestQueries(t)
+defer db.Close()
+resetDB(t, q)
 ```
 
-Key detail: `PRAGMA foreign_keys = ON` is set on every test DB, so foreign key
-constraints are enforced during testing just as they are in production. The DB
-also uses `SetMaxOpenConns(1)` to avoid SQLite locking issues.
+The `resetDB` helper deletes all rows from every table, resets identity sequences, and
+re-runs the seed SQL for `document_type`, `people_type`, and `tag`.
+
+Key detail: Foreign key constraints are enforced by PostgreSQL just as in production.
+The test pool uses `SetMaxOpenConns(5)` — no need for SQLite's single-conn limitation.
+
+> **Phase 2 change**: Tests previously used SQLite in-memory databases (`:memory:`), which
+> gave each test an isolated database automatically. With a shared PostgreSQL instance,
+> `resetDB` must be called at the start of each test that assumes clean state. Tests are
+> run sequentially (`-count=1`) to prevent concurrent writes to the shared test database.
 
 ### CGo-Free Runner Mock
 
@@ -160,7 +169,7 @@ The `internal/database` package also exports:
 
 | Function | Purpose |
 |----------|---------|
-| `NewTestDB(t)` | In-memory SQLite with schema initialized |
+| `NewTestDB(t)` | PostgreSQL via `TEST_DATABASE_URL`, schema initialized, auto-cleanup |
 | `NewTestQueries(t)` | Helper returning both `*Queries` and `*sql.DB` |
 | `CreateTestDocument(t, queries, title)` | Inserts a document, returns auto-ID and UUID |
 | `SeedTagByName(t, queries, name)` | Returns a seeded tag (by name or first) |

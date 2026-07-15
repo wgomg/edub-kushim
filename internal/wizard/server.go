@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
-	"path/filepath"
 	"sync/atomic"
 	"time"
 
@@ -16,7 +15,6 @@ import (
 	"github.com/wgomg/edub-kushim/internal/pool"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/utils"
-	_ "modernc.org/sqlite"
 )
 
 type Server struct {
@@ -85,13 +83,9 @@ func (s *Server) bootstrap(configDir string) (*config.Config, *database.Client, 
 		return nil, nil, nil, fmt.Errorf("bootstrap config: %w", err)
 	}
 
-	dsn := filepath.Join(cfg.Db.Path, cfg.Db.Name)
-	db, err := sql.Open("sqlite", dsn)
+	db, err := database.NewPostgresDB(config.BuildPostgresDSN(cfg.Db))
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("open database: %w", err)
-	}
-	if _, err := db.Exec(fmt.Sprintf("PRAGMA busy_timeout = %d", database.BusyTimeoutMs)); err != nil {
-		return nil, nil, nil, fmt.Errorf("set busy timeout: %w", err)
 	}
 	s.db = db
 

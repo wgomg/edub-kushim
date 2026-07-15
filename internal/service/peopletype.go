@@ -96,7 +96,7 @@ func (s *PeopleType) Create(ctx context.Context, inputs []CreatePeopleTypeInput)
 			continue
 		}
 
-		res, err := s.queries.CreatePeopleType(ctx, database.CreatePeopleTypeParams{
+		id, err := s.queries.CreatePeopleType(ctx, database.CreatePeopleTypeParams{
 			Name:        name,
 			Description: strings.TrimSpace(input.Description),
 		})
@@ -110,11 +110,6 @@ func (s *PeopleType) Create(ctx context.Context, inputs []CreatePeopleTypeInput)
 				continue
 			}
 			return nil, errs.FromDB(err, "create people type "+name)
-		}
-
-		id, err := res.LastInsertId()
-		if err != nil {
-			return nil, errs.FromDB(err, "last insert id for "+name)
 		}
 
 		results[i] = CreateResult[database.PeopleType]{

@@ -4,55 +4,51 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"time"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
-// TB is a minimal subset of testing.TB for use in test helpers.
 type TB interface {
 	Fatalf(format string, args ...any)
 	Helper()
 }
 
-// NewTestDB creates an in-memory SQLite database with the schema initialized.
-// The returned *sql.DB must be closed by the caller.
 func NewTestDB(t TB) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", ":memory:")
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Fatalf("TEST_DATABASE_URL not set — set it to a Postgres connection string")
+	}
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
-		t.Fatalf("failed to open in-memory database: %v", err)
+		t.Fatalf("failed to open test database: %v", err)
 	}
-	db.SetMaxOpenConns(1)
-
-	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
-		t.Fatalf("failed to enable foreign keys: %v", err)
+	db.SetMaxOpenConns(5)
+	if err := db.Ping(); err != nil {
+		db.Close()
+		t.Fatalf("failed to ping test database: %v", err)
 	}
-
 	if err := InitializeSchema(db); err != nil {
+		db.Close()
 		t.Fatalf("failed to initialize schema: %v", err)
 	}
-
 	return db
 }
 
-// NewTestQueries creates database.Queries from an in-memory test DB.
 func NewTestQueries(t TB) (*Queries, *sql.DB) {
 	t.Helper()
 	db := NewTestDB(t)
 	return New(db), db
 }
 
-// NewTestClient creates a Client from an in-memory test DB.
-// The caller must close the underlying DB with client.DB().Close().
 func NewTestClient(t TB) *Client {
 	t.Helper()
 	q, db := NewTestQueries(t)
 	return &Client{Queries: q, db: db}
 }
 
-// CreateTestDocument inserts a basic document into the database and returns
-// its auto-increment ID and UUID. Uses the first seeded document type.
 func CreateTestDocument(t TB, queries *Queries, title string) (int64, string) {
 	t.Helper()
 	ctx := context.Background()
@@ -66,7 +62,7 @@ func CreateTestDocument(t TB, queries *Queries, title string) (int64, string) {
 	}
 
 	docID := newTestUUID()
-	result, err := queries.CreateDocument(ctx, CreateDocumentParams{
+	id, err := queries.CreateDocument(ctx, CreateDocumentParams{
 		DocumentID:     docID,
 		Title:          title,
 		Md5Checksum:    "d41d8cd98f00b204e9800998ecf8427e",
@@ -84,14 +80,9 @@ func CreateTestDocument(t TB, queries *Queries, title string) (int64, string) {
 	if err != nil {
 		t.Fatalf("create document: %v", err)
 	}
-	id, err := result.LastInsertId()
-	if err != nil {
-		t.Fatalf("last insert id: %v", err)
-	}
 	return id, docID
 }
 
-// SeedTagByName returns a tag by name or the first tag if name is empty.
 func SeedTagByName(t TB, queries *Queries, name string) Tag {
 	t.Helper()
 	ctx := context.Background()
@@ -112,7 +103,6 @@ func SeedTagByName(t TB, queries *Queries, name string) Tag {
 	return tag
 }
 
-// newTestUUID generates a deterministic v4-like UUID for tests.
 func newTestUUID() string {
 	now := time.Now().UnixNano()
 	return fmt.Sprintf("%08x-%04x-4%03x-%04x-%012x",

@@ -13,7 +13,7 @@ var schemaFS embed.FS
 
 func InitializeSchema(db *sql.DB) error {
 	goose.SetBaseFS(schemaFS)
-	goose.SetDialect("sqlite3")
+	goose.SetDialect("postgres")
 
 	if err := goose.Up(db, "sql/schema/migrations", goose.WithAllowMissing()); err != nil {
 		return fmt.Errorf("run migrations: %w", err)
@@ -35,7 +35,7 @@ func InitializeSchema(db *sql.DB) error {
 
 func ResetDatabase(db *sql.DB) error {
 	goose.SetBaseFS(schemaFS)
-	goose.SetDialect("sqlite3")
+	goose.SetDialect("postgres")
 
 	if err := goose.Reset(db, "sql/schema/migrations", goose.WithAllowMissing()); err != nil {
 		return fmt.Errorf("reset migrations: %w", err)

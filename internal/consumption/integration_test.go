@@ -368,7 +368,7 @@ func TestQuarantineFailedFiles(t *testing.T) {
 		logger := utils.NewDiscardLogger()
 
 		batchID := uuid.New().String()
-		_, err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
+		err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
 			ID: batchID, Source: "test", Status: "processing",
 		})
 		testutil.AssertNoError(t, err, "create batch")
@@ -384,7 +384,7 @@ func TestQuarantineFailedFiles(t *testing.T) {
 			"on_completed": enrichTaskID,
 		})
 
-		res, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
+		taskID, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
 			TaskID:   uuid.New().String(),
 			TaskType: "consume",
 			Status:   "pending",
@@ -392,10 +392,9 @@ func TestQuarantineFailedFiles(t *testing.T) {
 			BatchID:  sql.NullString{String: batchID, Valid: true},
 		})
 		testutil.AssertNoError(t, err, "create consume task")
-		taskID, _ := res.LastInsertId()
 
 		_, err = client.DB().ExecContext(ctx,
-			"UPDATE task SET status = 'failed', error = 'Max retries exceeded (3)', completed_at = CURRENT_TIMESTAMP WHERE id = ?",
+			"UPDATE task SET status = 'failed', error = 'Max retries exceeded (3)', completed_at = CURRENT_TIMESTAMP WHERE id = $1",
 			taskID)
 		testutil.AssertNoError(t, err, "quarantine task")
 
@@ -434,7 +433,7 @@ func TestQuarantineFailedFiles(t *testing.T) {
 		logger := utils.NewDiscardLogger()
 
 		batchID := uuid.New().String()
-		_, err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
+		err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
 			ID: batchID, Source: "test", Status: "processing",
 		})
 		testutil.AssertNoError(t, err, "create batch")
@@ -465,7 +464,7 @@ func TestQuarantineFailedFiles(t *testing.T) {
 		logger := utils.NewDiscardLogger()
 
 		batchID := uuid.New().String()
-		_, err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
+		err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
 			ID: batchID, Source: "test", Status: "processing",
 		})
 		testutil.AssertNoError(t, err, "create batch")
@@ -475,7 +474,7 @@ func TestQuarantineFailedFiles(t *testing.T) {
 			"on_completed": enrichTaskID,
 		})
 
-		res, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
+		taskID, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
 			TaskID:   uuid.New().String(),
 			TaskType: "consume",
 			Status:   "pending",
@@ -483,10 +482,9 @@ func TestQuarantineFailedFiles(t *testing.T) {
 			BatchID:  sql.NullString{String: batchID, Valid: true},
 		})
 		testutil.AssertNoError(t, err, "create consume task")
-		taskID, _ := res.LastInsertId()
 
 		_, err = client.DB().ExecContext(ctx,
-			"UPDATE task SET status = 'failed', error = 'Max retries exceeded (3)', completed_at = CURRENT_TIMESTAMP WHERE id = ?",
+			"UPDATE task SET status = 'failed', error = 'Max retries exceeded (3)', completed_at = CURRENT_TIMESTAMP WHERE id = $1",
 			taskID)
 		testutil.AssertNoError(t, err, "quarantine task")
 

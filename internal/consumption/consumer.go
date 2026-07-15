@@ -265,7 +265,7 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 	}()
 
 	tq := c.client.WithTx(tx)
-	result, err := tq.CreateDocument(txCtx, database.CreateDocumentParams{
+	documentDbId, err := tq.CreateDocument(txCtx, database.CreateDocumentParams{
 		DocumentID:     documentID,
 		Title:          file.Name,
 		Md5Checksum:    file.MD5Checksum,
@@ -282,12 +282,6 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 	if err != nil {
 		MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 		return file, fmt.Errorf("failed to create document record: %w", err)
-	}
-
-	documentDbId, err := result.LastInsertId()
-	if err != nil {
-		MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
-		return file, fmt.Errorf("failed to get document ID: %w", err)
 	}
 
 	c.logger.Debug(&documentID, "Created document with ID: %d", documentDbId)

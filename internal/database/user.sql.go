@@ -21,7 +21,7 @@ func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
 	return count, err
 }
 
-const createUser = `-- name: CreateUser :execresult
+const createUser = `-- name: CreateUser :one
 INSERT INTO "user" (
     username,
     password_hash,
@@ -29,7 +29,7 @@ INSERT INTO "user" (
     api_key_hash,
     api_key_prefix,
     api_key_created_at
-) VALUES ($1, $2, $3, $4, $5, $6)
+) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id
 `
 
 type CreateUserParams struct {
@@ -41,8 +41,8 @@ type CreateUserParams struct {
 	ApiKeyCreatedAt sql.NullTime
 }
 
-func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (sql.Result, error) {
-	return q.db.ExecContext(ctx, createUser,
+func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, createUser,
 		arg.Username,
 		arg.PasswordHash,
 		arg.Role,
@@ -50,6 +50,9 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (sql.Res
 		arg.ApiKeyPrefix,
 		arg.ApiKeyCreatedAt,
 	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }
 
 const deleteUser = `-- name: DeleteUser :exec
@@ -170,7 +173,7 @@ func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]ListUse
 	return items, nil
 }
 
-const revokeUserAPIKey = `-- name: RevokeUserAPIKey :execresult
+const revokeUserAPIKey = `-- name: RevokeUserAPIKey :execrows
 UPDATE "user" SET
     api_key_hash = NULL,
     api_key_prefix = NULL,
@@ -178,8 +181,12 @@ UPDATE "user" SET
 WHERE id = $1
 `
 
-func (q *Queries) RevokeUserAPIKey(ctx context.Context, id int64) (sql.Result, error) {
-	return q.db.ExecContext(ctx, revokeUserAPIKey, id)
+func (q *Queries) RevokeUserAPIKey(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, revokeUserAPIKey, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const updateUser = `-- name: UpdateUser :exec
@@ -198,7 +205,7 @@ func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) error {
 	return err
 }
 
-const updateUserAPIKey = `-- name: UpdateUserAPIKey :execresult
+const updateUserAPIKey = `-- name: UpdateUserAPIKey :execrows
 UPDATE "user" SET
     api_key_hash = $1,
     api_key_prefix = $2,
@@ -213,13 +220,17 @@ type UpdateUserAPIKeyParams struct {
 	ID              int64
 }
 
-func (q *Queries) UpdateUserAPIKey(ctx context.Context, arg UpdateUserAPIKeyParams) (sql.Result, error) {
-	return q.db.ExecContext(ctx, updateUserAPIKey,
+func (q *Queries) UpdateUserAPIKey(ctx context.Context, arg UpdateUserAPIKeyParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateUserAPIKey,
 		arg.ApiKeyHash,
 		arg.ApiKeyPrefix,
 		arg.ApiKeyCreatedAt,
 		arg.ID,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const updateUserCredentials = `-- name: UpdateUserCredentials :exec

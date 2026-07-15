@@ -56,7 +56,8 @@ func NewContainerWithDB(cfg *config.Config, logger *utils.Logger, db *sql.DB) *C
 
 func (c *Container) GetDB() (*sql.DB, error) {
 	if c.db == nil {
-		db, err := database.NewSQLiteDB(c.config.Db.Path, c.config.Db.Name)
+		dsn := config.BuildPostgresDSN(c.config.Db)
+		db, err := database.NewPostgresDB(dsn)
 		if err != nil {
 			return nil, err
 		}

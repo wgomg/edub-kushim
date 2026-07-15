@@ -70,7 +70,7 @@ per tool category, used by the frontend settings UI to populate select dropdowns
 
 - `ConfigExists(configDir string) bool` — Returns true if `config.yaml` exists in the given directory.
 - `LoadOrBootstrap(configDir string) (*Config, error)` — Loads existing config if `ConfigExists`, otherwise calls `Bootstrap`. Prevents the wizard from overwriting saved settings on re-start.
-- `Bootstrap(configDir string) (*Config, error)` — Creates config directory, subdirectories (data, inbox, storage, tessdata), writes skeleton `config.yaml`, initializes SQLite schema, generates a random 32-byte `SessionSecret` and persists it alongside `auth_enabled: false` to `config.yaml` via `SaveMap`. Returns the default config (which has `AuthEnabled: true`).
+- `Bootstrap(configDir string) (*Config, error)` — Creates config directory, subdirectories (data, inbox, storage, tessdata), writes skeleton `config.yaml`, initializes PostgreSQL schema (auto-creates database if missing), generates a random 32-byte `SessionSecret` and persists it alongside `auth_enabled: false` to `config.yaml` via `SaveMap`. Returns the default config (which has `AuthEnabled: true`).
 - `SaveMap(configDir string, body map[string]any) error` — Writes arbitrary key-value map to `config.yaml` using viper. Keys use dot notation (e.g., `"consumer.ocr.languages"`).
 - `MissingTessdataLanguages(cfg *Config) []string` — Returns languages whose `.traineddata` files are missing from the tessdata directory. Only checks when OCR engine is `"gosseract"`.
 - `MissingHugotModel(cfg *Config) bool` — Returns true if the Hugot model directory does not exist.

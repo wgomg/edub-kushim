@@ -4,7 +4,7 @@
 
 The search system provides two tiers of document retrieval:
 
-1. **FTS5 Full-Text Search** (`GET /api/v1/documents/search`) — Fast keyword search using SQLite's FTS5 engine with BM25 ranking and snippet highlighting.
+1. **FTS5 Full-Text Search** (`GET /api/v1/documents/search`) — Keyword search using SQLite's FTS5 engine with BM25 ranking and snippet highlighting (migrating to PostgreSQL tsvector in Phase 3).
 2. **Structured Search** (`POST /api/v1/documents/search`) — Combines full-text search with metadata filters (tags, people, document type, language, MIME type, date ranges, file size) and returns total count for pagination.
 
 Both are backed by the `search.Engine` struct which wraps database queries with sanitization and result mapping.

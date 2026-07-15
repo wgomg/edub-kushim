@@ -32,14 +32,18 @@ func (q *Queries) CountTagsByName(ctx context.Context, name string) (int64, erro
 	return count, err
 }
 
-const createTag = `-- name: CreateTag :execresult
+const createTag = `-- name: CreateTag :one
 INSERT INTO tag (name)
 VALUES ($1)
 ON CONFLICT (name) DO NOTHING
+RETURNING id
 `
 
-func (q *Queries) CreateTag(ctx context.Context, name string) (sql.Result, error) {
-	return q.db.ExecContext(ctx, createTag, name)
+func (q *Queries) CreateTag(ctx context.Context, name string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, createTag, name)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }
 
 const deleteTag = `-- name: DeleteTag :exec

@@ -7,11 +7,10 @@ package database
 
 import (
 	"context"
-	"database/sql"
 )
 
-const createPeopleType = `-- name: CreatePeopleType :execresult
-INSERT INTO people_type (name, description) VALUES ($1, $2)
+const createPeopleType = `-- name: CreatePeopleType :one
+INSERT INTO people_type (name, description) VALUES ($1, $2) RETURNING id
 `
 
 type CreatePeopleTypeParams struct {
@@ -19,8 +18,11 @@ type CreatePeopleTypeParams struct {
 	Description string
 }
 
-func (q *Queries) CreatePeopleType(ctx context.Context, arg CreatePeopleTypeParams) (sql.Result, error) {
-	return q.db.ExecContext(ctx, createPeopleType, arg.Name, arg.Description)
+func (q *Queries) CreatePeopleType(ctx context.Context, arg CreatePeopleTypeParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, createPeopleType, arg.Name, arg.Description)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }
 
 const deletePeopleType = `-- name: DeletePeopleType :exec
