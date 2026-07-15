@@ -33,6 +33,12 @@ func (r *Runner) Next(ctx context.Context, taskType string) error {
 		return fmt.Errorf("claim next pending task: %w", err)
 	}
 
+	if task.Payload == nil {
+		_ = r.store.FailTask(ctx, task.ID, "task has nil payload")
+		r.logger.Error(nil, "task %s has nil payload", task.TaskID)
+		return nil
+	}
+
 	h, err := r.registry.Get(task.TaskType)
 	if err != nil {
 		_ = r.store.FailTask(ctx, task.ID, err.Error())
@@ -43,7 +49,7 @@ func (r *Runner) Next(ctx context.Context, taskType string) error {
 		ID:       task.ID,
 		TaskID:   task.TaskID,
 		TaskType: task.TaskType,
-		Payload:  task.Payload,
+		Payload:  *task.Payload,
 	})
 	if err != nil {
 		_ = r.store.FailTask(ctx, task.ID, err.Error())

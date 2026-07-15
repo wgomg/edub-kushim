@@ -155,7 +155,7 @@ type CreateTaskParams struct {
 	TaskType string
 	Status   string
 	BatchID  sql.NullString
-	Payload  json.RawMessage
+	Payload  *json.RawMessage
 	DedupKey sql.NullString
 }
 
@@ -1323,7 +1323,7 @@ WHERE id = $2 AND status IN ('waiting', 'discarded') AND task_type = 'enrich'
 `
 
 type SetEnrichTaskPendingParams struct {
-	Payload json.RawMessage
+	Payload *json.RawMessage
 	ID      int64
 }
 

@@ -68,7 +68,7 @@ Migrations run automatically on startup (no manual CLI command needed):
 ### Key structs
 
 - `Document` — 17 fields: `ID`, `DocumentID` (UUID string), `Title`, `Md5Checksum`, `Sha512Checksum`, `MimeType`, `FileSize`, `PageCount` (`int32`), `WordCount` (`int32`), `CharCount` (`int32`), `Language`, `CreatedAt`, `ModifiedAt`, `DocumentTypeID`, `OriginalPath`, `StoragePath`, `TextContent`
-- `Task` — 13 fields: `ID`, `TaskID`, `TaskType`, `Status`, `BatchID sql.NullString`, `Payload json.RawMessage`, `Result *json.RawMessage`, `DedupKey sql.NullString`, `CreatedAt`, `StartedAt`, `CompletedAt`, `Error`, `Attempts int32`
+- `Task` — 13 fields: `ID`, `TaskID`, `TaskType`, `Status`, `BatchID sql.NullString`, `Payload *json.RawMessage`, `Result *json.RawMessage`, `DedupKey sql.NullString`, `CreatedAt`, `StartedAt`, `CompletedAt`, `Error`, `Attempts int32`
 - `Tag` — `ID`, `Name`, `CreatedAt`
 - `DocumentType` — `ID`, `Name`, `Description`, `CreatedAt`
 - `DocumentTag` — `DocumentID`, `TagID`
@@ -177,18 +177,18 @@ Migrations run automatically on startup (no manual CLI command needed):
 A flexible SQL query builder that composes `WHERE` clauses dynamically:
 
 - `add(clause, args...)` — Appends raw clause with positional parameters
-- `eq(col, val)` — Adds `AND d.col = ?` if val is non-empty
-- `subqueryIn(col, subquery, values)` — Adds `AND d.col IN (SELECT ... WHERE t.name IN (?,?...))`
-- `rangeClause(col, min, max)` — Adds `AND d.col >= ?` / `AND d.col <= ?`
+- `eq(col, val)` — Adds `AND d.col = $N` if val is non-empty (`nextIndex()` tracks the `$N` counter)
+- `subqueryIn(col, subquery, values)` — Adds `AND d.col IN (SELECT ... WHERE t.name IN ($1,$2,...))`
+- `rangeClause(col, min, max)` — Adds `AND d.col >= $N` / `AND d.col <= $N`
 - `dateRange(col, range)` — Adds date range filters with optional from/to
 
 ### Functions
 
 - `SearchDocumentsStructured(ctx, filter) ([]FTSDocumentRow, error)` — Dynamically builds a SELECT query:
-  - If `query` is non-empty: joins `document_fts`, adds `MATCH ?`, `bm25()` rank, `snippet()` highlighting
+  - If `query` is non-empty: joins `document_fts`, adds `MATCH $N`, `bm25()` rank, `snippet()` highlighting
   - Applies tag subquery, people subqueries, document type subquery, language/MIME equality, date ranges, file size ranges
   - When FTS query present: ordered by `rank`; otherwise ordered by requested `sort_by`/`sort_order`
-  - Uses `LIMIT ? OFFSET ?` for pagination
+  - Uses `LIMIT $N OFFSET $N` for pagination
 - `CountDocumentsStructured(ctx, filter) (int64, error)` — Same filters but `SELECT COUNT(*)` for total count
 
 ---
@@ -211,8 +211,8 @@ These methods are written manually (no sqlc) and follow a consistent pattern:
 | `TagFrequency` | `SELECT t.name, COUNT(*) FROM document_tag dt JOIN tag t ON dt.tag_id = t.id GROUP BY t.id, t.name ORDER BY count DESC LIMIT 10` | `[]DistributionRow` |
 | `MissingCounts` | Single-row SELECT with 3 correlated subqueries: documents with `language = 'und' OR ''`, documents with `document_type_id = 1`, documents with no `document_tag` rows | `MissingCountsRow` |
 
-| `TaskSuccessRate` | `SELECT SUM(CASE status='completed'), SUM(CASE status='failed') FROM task WHERE completed_at >= datetime('now', '-7 days')` | `TaskSuccessRateRow` |
-| `AvgTaskDurationMs` | `SELECT AVG(julianday(completed_at) - julianday(started_at)) * 86400000 FROM task WHERE status='completed' AND started_at IS NOT NULL AND completed_at >= datetime('now', '-7 days')` | `AvgTaskDurationMsRow` |
+| `TaskSuccessRate` | `SELECT SUM(CASE status='completed'), SUM(CASE status='failed') FROM task WHERE completed_at >= CURRENT_TIMESTAMP - INTERVAL '7 days'` | `TaskSuccessRateRow` |
+| `AvgTaskDurationMs` | `SELECT AVG(EXTRACT(EPOCH FROM (completed_at - started_at)) * 1000) FROM task WHERE status='completed' AND started_at IS NOT NULL AND completed_at >= CURRENT_TIMESTAMP - INTERVAL '7 days'` | `AvgTaskDurationMsRow` |
 | `ActiveBatchIDs` | `SELECT DISTINCT batch_id FROM task WHERE batch_id IS NOT NULL AND status IN ('pending', 'processing')` | `[]string` |
 
 These three methods feed the dashboard processing health panel. `ActiveBatchIDs` identifies which batches still have work, then the handler checks each batch's owner state to determine orphaned count.

@@ -45,9 +45,9 @@ func (q *Queries) SearchDocumentsFTS(
 			snippet(document_fts, 1, '<b>', '</b>', '...', 64) as snippet
 		FROM document_fts
 		JOIN document d ON document_fts.document_id = d.id
-		WHERE document_fts MATCH ?
+		WHERE document_fts MATCH $1
 		ORDER BY rank
-		LIMIT ? OFFSET ?
+		LIMIT $2 OFFSET $3
 	`
 
 	rows, err := q.db.QueryContext(ctx, query, searchQuery, limit, offset)
@@ -110,9 +110,9 @@ func (q *Queries) SearchDocumentsFTSWithFilters(ctx context.Context, arg struct 
 			snippet(document_fts, 1, '<b>', '</b>', '...', 64) as snippet
 		FROM document_fts
 		JOIN document d ON document_fts.document_id = d.id
-		WHERE document_fts MATCH ? AND d.mime_type = ?
+		WHERE document_fts MATCH $1 AND d.mime_type = $2
 		ORDER BY rank
-		LIMIT ? OFFSET ?
+		LIMIT $3 OFFSET $4
 	`
 
 	rows, err := q.db.QueryContext(ctx, query, arg.SearchQuery, arg.MimeType, arg.Limit, arg.Offset)
@@ -161,7 +161,7 @@ func (q *Queries) SearchDocumentsFTSWithFilters(ctx context.Context, arg struct 
 
 // GetDocumentFTSContent retrieves the FTS content for a document
 func (q *Queries) GetDocumentFTSContent(ctx context.Context, documentID int64) (string, error) {
-	const query = `SELECT content FROM document_fts WHERE document_id = ?`
+	const query = `SELECT content FROM document_fts WHERE document_id = $1`
 
 	var content string
 	err := q.db.QueryRowContext(ctx, query, documentID).Scan(&content)
@@ -174,8 +174,8 @@ func (q *Queries) UpdateDocumentFTS(ctx context.Context, arg struct {
 	Title      string
 	Content    string
 }) error {
-	const deleteQuery = `DELETE FROM document_fts WHERE document_id = ?`
-	const insertQuery = `INSERT INTO document_fts(document_id, title, content) VALUES (?, ?, ?)`
+	const deleteQuery = `DELETE FROM document_fts WHERE document_id = $1`
+	const insertQuery = `INSERT INTO document_fts(document_id, title, content) VALUES ($1, $2, $3)`
 
 	if _, err := q.db.ExecContext(ctx, deleteQuery, arg.DocumentID); err != nil {
 		return err
@@ -186,7 +186,7 @@ func (q *Queries) UpdateDocumentFTS(ctx context.Context, arg struct {
 
 // DeleteDocumentFTS removes FTS data for a document
 func (q *Queries) DeleteDocumentFTS(ctx context.Context, documentID int64) error {
-	const query = `DELETE FROM document_fts WHERE document_id = ?`
+	const query = `DELETE FROM document_fts WHERE document_id = $1`
 
 	_, err := q.db.ExecContext(ctx, query, documentID)
 	return err

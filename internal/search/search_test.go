@@ -287,9 +287,9 @@ func TestStructuredSearch(t *testing.T) {
 func TestSanitizeQuery(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"", ""},
-		{"hello", `"hello"`},
-		{"hello world", `"hello world"`},
-		{`quo"te`, `"quo""te"`},
+		{"hello", "hello"},
+		{"hello world", "hello world"},
+		{`quo"te`, `quo"te`},
 	}
 	for _, c := range cases {
 		got := sanitizeQuery(c.in)

@@ -103,6 +103,32 @@ func SeedTagByName(t TB, queries *Queries, name string) Tag {
 	return tag
 }
 
+func ResetTestDatabase(db *sql.DB) {
+	ctx := context.Background()
+	tables := []string{
+		"orphaned_file", "batch_owner", "batch",
+		"document_tag", "document_people", "document",
+		"task", "saved_search", `"user"`,
+		"tag", "people", "people_type", "document_type",
+	}
+	for _, tbl := range tables {
+		db.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s", tbl))
+	}
+	for _, tbl := range []string{"document_type", "people_type", "tag"} {
+		db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s ALTER COLUMN id RESTART WITH 1", tbl))
+	}
+	seeds := []string{"document-types", "people-types", "tags"}
+	for _, seed := range seeds {
+		data, err := schemaFS.ReadFile(fmt.Sprintf("sql/schema/seed-%s.sql", seed))
+		if err != nil {
+			panic(fmt.Sprintf("read seed %s: %v", seed, err))
+		}
+		if _, err := db.ExecContext(ctx, string(data)); err != nil {
+			panic(fmt.Sprintf("seed %s: %v", seed, err))
+		}
+	}
+}
+
 func newTestUUID() string {
 	now := time.Now().UnixNano()
 	return fmt.Sprintf("%08x-%04x-4%03x-%04x-%012x",

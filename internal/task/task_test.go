@@ -68,7 +68,8 @@ func (e errSentinel) Error() string { return "mock failure" }
 
 func setupTaskTest(t *testing.T) (*Store, *Registry, *database.Queries) {
 	t.Helper()
-	q, _ := database.NewTestQueries(t)
+	q, db := database.NewTestQueries(t)
+	database.ResetTestDatabase(db)
 	store := NewStore(q)
 	registry := NewRegistry()
 	return store, registry, q
@@ -233,6 +234,35 @@ func TestRunnerNoTasks(t *testing.T) {
 
 	err := runner.Next(context.Background(), "test")
 	testutil.AssertNoError(t, err, "no tasks")
+}
+
+func TestRunnerNilPayload(t *testing.T) {
+	store, registry, q := setupTaskTest(t)
+	logger := testutil.NewTestLogger()
+	runner := NewRunner(store, registry, logger)
+	handler := newMockHandler()
+	registry.Register("consume", handler)
+
+	_, db := database.NewTestQueries(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	_, err := db.ExecContext(ctx,
+		"INSERT INTO task (task_id, task_type, status) VALUES ($1, 'consume', 'pending')",
+		"nil-payload-task",
+	)
+	testutil.AssertNoError(t, err, "insert nil-payload task")
+
+	err = runner.Next(ctx, "consume")
+	testutil.AssertNoError(t, err, "runner should not error on nil payload")
+	testutil.AssertEqual(t, handler.HandledCount(), 0, "handler should not be called")
+
+	task, err := q.GetTaskByTaskID(ctx, "nil-payload-task")
+	testutil.AssertNoError(t, err, "get task")
+	testutil.AssertEqual(t, task.Status, "failed", "task should be failed")
+	if task.Error.String != "task has nil payload" {
+		t.Fatalf("expected nil payload error, got %q", task.Error.String)
+	}
 }
 
 func TestDispatcher(t *testing.T) {

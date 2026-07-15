@@ -183,9 +183,5 @@ func (e *Engine) SearchStructured(ctx context.Context, filter Filter) ([]Result,
 }
 
 func sanitizeQuery(q string) string {
-	if q == "" {
-		return q
-	}
-	escaped := strings.ReplaceAll(q, `"`, `""`)
-	return `"` + escaped + `"`
+	return strings.TrimSpace(q)
 }

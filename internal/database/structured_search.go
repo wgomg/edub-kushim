@@ -30,6 +30,10 @@ type queryBuilder struct {
 	args    []any
 }
 
+func (b *queryBuilder) nextIndex() int {
+	return len(b.args) + 1
+}
+
 func (b *queryBuilder) add(clause string, args ...any) {
 	b.clauses = append(b.clauses, clause)
 	b.args = append(b.args, args...)
@@ -39,7 +43,7 @@ func (b *queryBuilder) eq(col, val string) {
 	if val == "" {
 		return
 	}
-	b.add(fmt.Sprintf("AND d.%s = ?", col), val)
+	b.add(fmt.Sprintf("AND d.%s = $%d", col, b.nextIndex()), val)
 }
 
 func (b *queryBuilder) subqueryIn(col, subquery string, values []string) {
@@ -48,7 +52,7 @@ func (b *queryBuilder) subqueryIn(col, subquery string, values []string) {
 	}
 	placeholders := make([]string, len(values))
 	for i := range values {
-		placeholders[i] = "?"
+		placeholders[i] = fmt.Sprintf("$%d", b.nextIndex()+i)
 	}
 	args := make([]any, len(values))
 	for i, v := range values {
@@ -71,10 +75,10 @@ func (b *queryBuilder) addMissingFilters(filter SearchFilter) {
 
 func (b *queryBuilder) rangeClause(col string, min, max *int64) {
 	if min != nil {
-		b.add(fmt.Sprintf("AND d.%s >= ?", col), *min)
+		b.add(fmt.Sprintf("AND d.%s >= $%d", col, b.nextIndex()), *min)
 	}
 	if max != nil {
-		b.add(fmt.Sprintf("AND d.%s <= ?", col), *max)
+		b.add(fmt.Sprintf("AND d.%s <= $%d", col, b.nextIndex()), *max)
 	}
 }
 
@@ -83,10 +87,10 @@ func (b *queryBuilder) dateRange(col string, r *struct{ From, To *string }) {
 		return
 	}
 	if r.From != nil {
-		b.add(fmt.Sprintf("AND d.%s >= ?", col), *r.From)
+		b.add(fmt.Sprintf("AND d.%s >= $%d", col, b.nextIndex()), *r.From)
 	}
 	if r.To != nil {
-		b.add(fmt.Sprintf("AND d.%s <= ?", col), *r.To)
+		b.add(fmt.Sprintf("AND d.%s <= $%d", col, b.nextIndex()), *r.To)
 	}
 }
 
@@ -99,12 +103,12 @@ func (q *Queries) SearchDocumentsStructured(ctx context.Context, filter SearchFi
 		d.original_path, d.storage_path, d.text_content`
 
 	if filter.Query != "" {
-		b.add(selectCols+`,
+		b.add(fmt.Sprintf(`%s,
 			bm25(document_fts) as rank,
 			snippet(document_fts, 1, '<b>', '</b>', '...', 64) as snippet
 			FROM document d
 			JOIN document_fts ON d.id = document_fts.document_id
-			WHERE document_fts MATCH ?`, filter.Query)
+			WHERE document_fts MATCH $%d`, selectCols, b.nextIndex()), filter.Query)
 	} else {
 		b.add(selectCols + `,
 			0.0 as rank,
@@ -120,14 +124,16 @@ func (q *Queries) SearchDocumentsStructured(ctx context.Context, filter SearchFi
 		filter.Tags)
 
 	for _, p := range filter.People {
-		b.add(`AND d.id IN (SELECT dp.document_id FROM document_people dp
+		nameIdx := b.nextIndex()
+		typeIdx := b.nextIndex() + 1
+		b.add(fmt.Sprintf(`AND d.id IN (SELECT dp.document_id FROM document_people dp
 			JOIN people pe ON dp.people_id = pe.id
 			JOIN people_type pt ON dp.people_type_id = pt.id
-			WHERE pe.name = ? AND pt.name = ?)`, p.Name, p.Type)
+			WHERE pe.name = $%d AND pt.name = $%d)`, nameIdx, typeIdx), p.Name, p.Type)
 	}
 
 	if filter.DocumentType != "" {
-		b.add(`AND d.document_type_id = (SELECT id FROM document_type WHERE name = ?)`, filter.DocumentType)
+		b.add(fmt.Sprintf(`AND d.document_type_id = (SELECT id FROM document_type WHERE name = $%d)`, b.nextIndex()), filter.DocumentType)
 	}
 
 	b.eq("language", filter.Language)
@@ -155,7 +161,7 @@ func (q *Queries) SearchDocumentsStructured(ctx context.Context, filter SearchFi
 		b.add(fmt.Sprintf("ORDER BY d.%s %s", sortCol, sortDir))
 	}
 
-	b.add("LIMIT ? OFFSET ?", filter.Limit, filter.Offset)
+	b.add(fmt.Sprintf("LIMIT $%d OFFSET $%d", b.nextIndex(), b.nextIndex()+1), filter.Limit, filter.Offset)
 
 	query := strings.Join(b.clauses, " ")
 
@@ -194,9 +200,9 @@ func (q *Queries) CountDocumentsStructured(ctx context.Context, filter SearchFil
 	b := &queryBuilder{}
 
 	if filter.Query != "" {
-		b.add(`SELECT COUNT(*) FROM document d
+		b.add(fmt.Sprintf(`SELECT COUNT(*) FROM document d
 			JOIN document_fts ON d.id = document_fts.document_id
-			WHERE document_fts MATCH ?`, filter.Query)
+			WHERE document_fts MATCH $%d`, b.nextIndex()), filter.Query)
 	} else {
 		b.add(`SELECT COUNT(*) FROM document d WHERE 1=1`)
 	}
@@ -208,14 +214,16 @@ func (q *Queries) CountDocumentsStructured(ctx context.Context, filter SearchFil
 		filter.Tags)
 
 	for _, p := range filter.People {
-		b.add(`AND d.id IN (SELECT dp.document_id FROM document_people dp
+		nameIdx := b.nextIndex()
+		typeIdx := b.nextIndex() + 1
+		b.add(fmt.Sprintf(`AND d.id IN (SELECT dp.document_id FROM document_people dp
 			JOIN people pe ON dp.people_id = pe.id
 			JOIN people_type pt ON dp.people_type_id = pt.id
-			WHERE pe.name = ? AND pt.name = ?)`, p.Name, p.Type)
+			WHERE pe.name = $%d AND pt.name = $%d)`, nameIdx, typeIdx), p.Name, p.Type)
 	}
 
 	if filter.DocumentType != "" {
-		b.add(`AND d.document_type_id = (SELECT id FROM document_type WHERE name = ?)`, filter.DocumentType)
+		b.add(fmt.Sprintf(`AND d.document_type_id = (SELECT id FROM document_type WHERE name = $%d)`, b.nextIndex()), filter.DocumentType)
 	}
 
 	b.eq("language", filter.Language)

@@ -111,21 +111,33 @@ SELECT
     b.source,
     b.created_at AS batch_created_at,
     b.status AS batch_status,
-    COUNT(t.id) AS total,
-    COALESCE(SUM(CASE WHEN t.status = 'waiting'   THEN 1 ELSE 0 END), 0) AS waiting,
-    COALESCE(SUM(CASE WHEN t.status = 'pending'   THEN 1 ELSE 0 END), 0) AS pending,
-    COALESCE(SUM(CASE WHEN t.status = 'processing' THEN 1 ELSE 0 END), 0) AS processing,
-    COALESCE(SUM(CASE WHEN t.status = 'completed' THEN 1 ELSE 0 END), 0) AS completed,
-    COALESCE(SUM(CASE WHEN t.status = 'failed'    THEN 1 ELSE 0 END), 0) AS failed,
-    COALESCE(SUM(CASE WHEN t.status = 'cancelled' THEN 1 ELSE 0 END), 0) AS cancelled,
-    COALESCE(SUM(CASE WHEN t.status = 'discarded' THEN 1 ELSE 0 END), 0) AS discarded,
-    MIN(t.started_at) AS first_started_at,
-    MAX(t.completed_at) AS last_completed_at,
+    COALESCE(sub.total, 0) AS total,
+    COALESCE(sub.waiting, 0) AS waiting,
+    COALESCE(sub.pending, 0) AS pending,
+    COALESCE(sub.processing, 0) AS processing,
+    COALESCE(sub.completed, 0) AS completed,
+    COALESCE(sub.failed, 0) AS failed,
+    COALESCE(sub.cancelled, 0) AS cancelled,
+    COALESCE(sub.discarded, 0) AS discarded,
+    sub.first_started_at AS first_started_at,
+    sub.last_completed_at AS last_completed_at,
     bo.last_heartbeat AS owner_last_heartbeat,
     bo.pid AS owner_pid
 FROM batch b
-LEFT JOIN task t ON t.batch_id = b.id
+LEFT JOIN LATERAL (
+    SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN t.status = 'waiting'   THEN 1 ELSE 0 END) AS waiting,
+        SUM(CASE WHEN t.status = 'pending'   THEN 1 ELSE 0 END) AS pending,
+        SUM(CASE WHEN t.status = 'processing' THEN 1 ELSE 0 END) AS processing,
+        SUM(CASE WHEN t.status = 'completed' THEN 1 ELSE 0 END) AS completed,
+        SUM(CASE WHEN t.status = 'failed'    THEN 1 ELSE 0 END) AS failed,
+        SUM(CASE WHEN t.status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled,
+        SUM(CASE WHEN t.status = 'discarded' THEN 1 ELSE 0 END) AS discarded,
+        MIN(t.started_at) AS first_started_at,
+        MAX(t.completed_at) AS last_completed_at
+    FROM task t WHERE t.batch_id = b.id
+) sub ON true
 LEFT JOIN batch_owner bo ON bo.batch_id = b.id
-GROUP BY b.id
 ORDER BY b.created_at DESC
 LIMIT $1 OFFSET $2;

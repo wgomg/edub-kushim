@@ -43,6 +43,7 @@ func (m *mockTaskCreator) Create(_ context.Context, id, source, status string) e
 func newTestOrphaned(t *testing.T) (*Orphaned, *config.Config, *database.Client, *mockTaskCreator, func()) {
 	t.Helper()
 	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
 	logger := testutil.NewTestLogger()
 
 	configDir := t.TempDir()

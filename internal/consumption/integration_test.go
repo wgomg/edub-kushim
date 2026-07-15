@@ -71,6 +71,7 @@ func setupConsumerTest(t *testing.T) (*Consumer, *config.Config, *database.Clien
 	cfg, cleanupCfg := testutil.NewTestConfig(t)
 
 	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
 	logger := utils.NewDiscardLogger()
 
 	runner := &integrationTestRunner{
@@ -384,11 +385,12 @@ func TestQuarantineFailedFiles(t *testing.T) {
 			"on_completed": enrichTaskID,
 		})
 
+		payloadPtr := json.RawMessage(payload)
 		taskID, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
 			TaskID:   uuid.New().String(),
 			TaskType: "consume",
 			Status:   "pending",
-			Payload:  payload,
+			Payload:  &payloadPtr,
 			BatchID:  sql.NullString{String: batchID, Valid: true},
 		})
 		testutil.AssertNoError(t, err, "create consume task")
@@ -398,11 +400,12 @@ func TestQuarantineFailedFiles(t *testing.T) {
 			taskID)
 		testutil.AssertNoError(t, err, "quarantine task")
 
+		enrichPayloadPtr := json.RawMessage(`{}`)
 		_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
 			TaskID:   enrichTaskID,
 			TaskType: "enrich",
 			Status:   "waiting",
-			Payload:  []byte(`{}`),
+			Payload:  &enrichPayloadPtr,
 			BatchID:  sql.NullString{String: batchID, Valid: true},
 		})
 		testutil.AssertNoError(t, err, "create enrich task")
@@ -438,11 +441,12 @@ func TestQuarantineFailedFiles(t *testing.T) {
 		})
 		testutil.AssertNoError(t, err, "create batch")
 
+		noPayload := json.RawMessage(`{}`)
 		_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
 			TaskID:   uuid.New().String(),
 			TaskType: "consume",
 			Status:   "pending",
-			Payload:  []byte(`{}`),
+			Payload:  &noPayload,
 			BatchID:  sql.NullString{String: batchID, Valid: true},
 		})
 		testutil.AssertNoError(t, err, "create task")
@@ -474,11 +478,12 @@ func TestQuarantineFailedFiles(t *testing.T) {
 			"on_completed": enrichTaskID,
 		})
 
+		payloadPtr := json.RawMessage(payload)
 		taskID, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
 			TaskID:   uuid.New().String(),
 			TaskType: "consume",
 			Status:   "pending",
-			Payload:  payload,
+			Payload:  &payloadPtr,
 			BatchID:  sql.NullString{String: batchID, Valid: true},
 		})
 		testutil.AssertNoError(t, err, "create consume task")
@@ -488,11 +493,12 @@ func TestQuarantineFailedFiles(t *testing.T) {
 			taskID)
 		testutil.AssertNoError(t, err, "quarantine task")
 
+		noPayload2 := json.RawMessage(`{}`)
 		_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
 			TaskID:   enrichTaskID,
 			TaskType: "enrich",
 			Status:   "waiting",
-			Payload:  []byte(`{}`),
+			Payload:  &noPayload2,
 			BatchID:  sql.NullString{String: batchID, Valid: true},
 		})
 		testutil.AssertNoError(t, err, "create enrich task")

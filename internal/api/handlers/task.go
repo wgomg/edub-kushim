@@ -622,7 +622,7 @@ func taskToResponse(t database.Task) types.TaskResponse {
 			FileName   string `json:"file_name"`
 			DocumentID string `json:"document_id"`
 		}
-		json.Unmarshal(t.Payload, &p)
+		json.Unmarshal(*t.Payload, &p)
 		if p.FilePath != "" {
 			fileName = filepath.Base(p.FilePath)
 		} else {
@@ -634,7 +634,7 @@ func taskToResponse(t database.Task) types.TaskResponse {
 				var enrichPayload struct {
 					WaitingFor string `json:"waiting_for"`
 				}
-				json.Unmarshal(t.Payload, &enrichPayload)
+				json.Unmarshal(*t.Payload, &enrichPayload)
 				payloadDocID = enrichPayload.WaitingFor
 			} else {
 				payloadDocID = p.DocumentID

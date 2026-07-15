@@ -88,11 +88,14 @@ func (h *ConsumeTaskHandler) activateChildEnrich(
 	if err != nil {
 		return fmt.Errorf("find waiting enrich task %s: %w", onCompleted, err)
 	}
+	if enrichTask.Payload == nil {
+		return fmt.Errorf("nil payload on enrich task %s", enrichTask.TaskID)
+	}
 
 	var enrichPayload struct {
 		WaitingFor string `json:"waiting_for"`
 	}
-	if err := json.Unmarshal(enrichTask.Payload, &enrichPayload); err != nil {
+	if err := json.Unmarshal(*enrichTask.Payload, &enrichPayload); err != nil {
 		return fmt.Errorf("parse enrich payload for %s: %w", enrichTask.TaskID, err)
 	}
 	if enrichPayload.WaitingFor != parent.TaskID {
@@ -101,7 +104,7 @@ func (h *ConsumeTaskHandler) activateChildEnrich(
 	}
 
 	var p map[string]any
-	if err := json.Unmarshal(enrichTask.Payload, &p); err != nil {
+	if err := json.Unmarshal(*enrichTask.Payload, &p); err != nil {
 		return fmt.Errorf("parse enrich payload for update %s: %w", enrichTask.TaskID, err)
 	}
 	p["document_id"] = documentID
@@ -123,11 +126,14 @@ func (h *ConsumeTaskHandler) deactivateChildEnrich(
 	if err != nil {
 		return fmt.Errorf("find waiting enrich task %s: %w", onCompleted, err)
 	}
+	if enrichTask.Payload == nil {
+		return fmt.Errorf("nil payload on enrich task %s", enrichTask.TaskID)
+	}
 
 	var enrichPayload struct {
 		WaitingFor string `json:"waiting_for"`
 	}
-	if err := json.Unmarshal(enrichTask.Payload, &enrichPayload); err != nil {
+	if err := json.Unmarshal(*enrichTask.Payload, &enrichPayload); err != nil {
 		return fmt.Errorf("parse enrich payload for %s: %w", enrichTask.TaskID, err)
 	}
 	if enrichPayload.WaitingFor != parent.TaskID {

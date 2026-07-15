@@ -35,7 +35,7 @@ func (q *Queries) ListDocumentsWithSort(ctx context.Context, arg ListDocumentsWi
 		`SELECT id, document_id, title, md5_checksum, sha512_checksum, mime_type, file_size,
                 page_count, word_count, char_count, language,
                 created_at, modified_at, document_type_id, original_path, storage_path
-         FROM document ORDER BY %s %s LIMIT ? OFFSET ?`,
+         FROM document ORDER BY %s %s LIMIT $1 OFFSET $2`,
 		col, dir,
 	)
 

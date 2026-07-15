@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 func newTestBatch(t *testing.T) (*Batch, *database.Client) {
 	t.Helper()
 	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
 	t.Cleanup(func() { client.DB().Close() })
 	return NewBatch(client, 3), client
 }
@@ -585,9 +587,10 @@ func TestBatch_ResetProcessingTasksByBatch(t *testing.T) {
 		})
 		testutil.AssertNoError(t, err, "create batch")
 
+		rstPayload := json.RawMessage(`{}`)
 		taskID, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
 			TaskID: "rst-t1", TaskType: "consume", Status: "processing",
-			Payload:  []byte("{}"),
+			Payload:  &rstPayload,
 			BatchID: sql.NullString{String: "rst-proc", Valid: true},
 		})
 		testutil.AssertNoError(t, err, "create processing task")
@@ -608,9 +611,10 @@ func TestBatch_ResetProcessingTasksByBatch(t *testing.T) {
 		})
 		testutil.AssertNoError(t, err, "create batch")
 
+		rstQPayload := json.RawMessage(`{}`)
 		taskID, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
 			TaskID: "rst-q1", TaskType: "consume", Status: "processing",
-			Payload:  []byte("{}"),
+			Payload:  &rstQPayload,
 			BatchID: sql.NullString{String: "rst-quar", Valid: true},
 		})
 		testutil.AssertNoError(t, err, "create processing task")
@@ -633,17 +637,19 @@ func TestBatch_ResetProcessingTasksByBatch(t *testing.T) {
 		})
 		testutil.AssertNoError(t, err, "create batch")
 
+		rstM1Payload := json.RawMessage(`{}`)
 		id1, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
 			TaskID: "rst-m1", TaskType: "consume", Status: "processing",
-			Payload:  []byte("{}"),
+			Payload:  &rstM1Payload,
 			BatchID: sql.NullString{String: "rst-mix", Valid: true},
 		})
 		testutil.AssertNoError(t, err, "create task 1")
 		client.DB().ExecContext(ctx, "UPDATE task SET attempts = 2 WHERE id = $1", id1)
 
+		rstM2Payload := json.RawMessage(`{}`)
 		id2, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
 			TaskID: "rst-m2", TaskType: "consume", Status: "processing",
-			Payload:  []byte("{}"),
+			Payload:  &rstM2Payload,
 			BatchID: sql.NullString{String: "rst-mix", Valid: true},
 		})
 		testutil.AssertNoError(t, err, "create task 2")

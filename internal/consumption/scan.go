@@ -77,12 +77,13 @@ func ScanAndEnqueue(ctx context.Context, cfg *config.Config, client *database.Cl
 			"on_completed": enrichTaskID,
 			"document_id":  documentID,
 		})
+		consumePayloadPtr := json.RawMessage(consumePayload)
 		_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
 			TaskID:   consumeTaskID,
 			TaskType: "consume",
 			Status:   "pending",
 			BatchID:  sql.NullString{String: batchID, Valid: true},
-			Payload:  consumePayload,
+			Payload:  &consumePayloadPtr,
 			DedupKey: sql.NullString{String: "consume:" + e.md5, Valid: true},
 		})
 		if err != nil {
@@ -96,12 +97,13 @@ func ScanAndEnqueue(ctx context.Context, cfg *config.Config, client *database.Cl
 			"file_index":  e.index,
 			"document_id": documentID,
 		})
+		enrichPayloadPtr := json.RawMessage(enrichPayload)
 		_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
 			TaskID:   enrichTaskID,
 			TaskType: "enrich",
 			Status:   "waiting",
 			BatchID:  sql.NullString{String: batchID, Valid: true},
-			Payload:  enrichPayload,
+			Payload:  &enrichPayloadPtr,
 			DedupKey: sql.NullString{Valid: false},
 		})
 		if err != nil {
@@ -140,7 +142,7 @@ func queryDuplicatesByMD5(ctx context.Context, client *database.Client, hashes [
 	placeholders := make([]string, len(hashes))
 	args := make([]any, len(hashes))
 	for i, h := range hashes {
-		placeholders[i] = "?"
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
 		args[i] = h
 	}
 

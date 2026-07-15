@@ -97,7 +97,7 @@
 
 ### Function
 
-- `sanitizeQuery(q string) string` — Wraps query in double quotes for FTS5 (escapes internal quotes)
+- `sanitizeQuery(q string) string` — Trims whitespace from query string. (FTS5 double-quote escaping removed; the FTS5 layer is being replaced by PostgreSQL tsvector in Phase 3.)
 
 ---
 

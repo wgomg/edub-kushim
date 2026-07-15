@@ -43,6 +43,7 @@ func (m *reenrichBatchCreator) Create(_ context.Context, id, source, status stri
 
 func TestReEnrich_Success(t *testing.T) {
 	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
 	defer client.DB().Close()
 	ctx := context.Background()
 
@@ -76,6 +77,7 @@ func TestReEnrich_Success(t *testing.T) {
 
 func TestReEnrich_DocumentNotFound(t *testing.T) {
 	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
 	defer client.DB().Close()
 	ctx := context.Background()
 
@@ -91,6 +93,7 @@ func TestReEnrich_DocumentNotFound(t *testing.T) {
 
 func TestReEnrich_TaskCreationFails(t *testing.T) {
 	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
 	defer client.DB().Close()
 	ctx := context.Background()
 

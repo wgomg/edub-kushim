@@ -117,8 +117,9 @@ func TestEnrichWaitingFlow(t *testing.T) {
 	q, _ := NewTestQueries(t)
 	ctx := context.Background()
 	id := insertEnrichTask(t, q, "ew-1", "waiting")
+	ewPayload := json.RawMessage(`{"document_id":"doc-1"}`)
 	assertNoError(t, q.SetEnrichTaskPending(ctx, SetEnrichTaskPendingParams{
-		ID: id, Payload: []byte(`{"document_id":"doc-1"}`),
+		ID: id, Payload: &ewPayload,
 	}), "set pending")
 	task, _ := q.GetTask(ctx, id)
 	assertEqual(t, task.Status, "pending", "pending")
@@ -229,9 +230,10 @@ func TestListActivityTimeline(t *testing.T) {
 	assertNoError(t, err, "create batch")
 
 	taskID1 := "act-task-completed"
+	p1 := json.RawMessage(`{"file_name":"report.pdf","document_id":"doc-uuid-1"}`)
 	id1, err := q.CreateTask(ctx, CreateTaskParams{
 		TaskID: taskID1, TaskType: "consume", Status: "pending",
-		Payload: json.RawMessage(`{"file_name":"report.pdf","document_id":"doc-uuid-1"}`),
+		Payload: &p1,
 	})
 	assertNoError(t, err, "create completed task")
 	_, err = q.ClaimTask(ctx, id1)
@@ -240,9 +242,10 @@ func TestListActivityTimeline(t *testing.T) {
 	assertNoError(t, err, "complete task")
 
 	taskID2 := "act-task-failed"
+	p2 := json.RawMessage(`{"file_path":"/tmp/uploads/invoice.pdf","document_id":"doc-uuid-2"}`)
 	id2, err := q.CreateTask(ctx, CreateTaskParams{
 		TaskID: taskID2, TaskType: "consume", Status: "pending",
-		Payload: json.RawMessage(`{"file_path":"/tmp/uploads/invoice.pdf","document_id":"doc-uuid-2"}`),
+		Payload: &p2,
 	})
 	assertNoError(t, err, "create failed task")
 	assertNoError(t, q.FailTask(ctx, FailTaskParams{
@@ -323,11 +326,12 @@ func TestGetQuarantinedConsumeTaskPayloads(t *testing.T) {
 	err := q.CreateBatch(ctx, CreateBatchParams{ID: "gq-batch", Source: "test", Status: "processing"})
 	assertNoError(t, err, "create batch")
 
+	gqPayload := json.RawMessage(`{"file_path":"/tmp/test.pdf","on_completed":"enrich-1"}`)
 	id, err := q.CreateTask(ctx, CreateTaskParams{
 		TaskID:   "gq-task",
 		TaskType: "consume",
 		Status:   "pending",
-		Payload:  json.RawMessage(`{"file_path":"/tmp/test.pdf","on_completed":"enrich-1"}`),
+		Payload:  &gqPayload,
 		BatchID:  sql.NullString{String: "gq-batch", Valid: true},
 	})
 	assertNoError(t, err, "create task")
@@ -337,11 +341,12 @@ func TestGetQuarantinedConsumeTaskPayloads(t *testing.T) {
 		Error: sql.NullString{String: "Max retries exceeded (3)", Valid: true},
 	}), "fail task")
 
+	gqPayload2 := json.RawMessage(`{}`)
 	id2, err := q.CreateTask(ctx, CreateTaskParams{
 		TaskID:   "gq-other-failed",
 		TaskType: "consume",
 		Status:   "pending",
-		Payload:  json.RawMessage(`{}`),
+		Payload:  &gqPayload2,
 		BatchID:  sql.NullString{String: "gq-batch", Valid: true},
 	})
 	assertNoError(t, err, "create other task")
@@ -361,11 +366,12 @@ func TestDiscardEnrichTaskByTaskID(t *testing.T) {
 	q, _ := NewTestQueries(t)
 	ctx := context.Background()
 
+	dePayload := json.RawMessage(`{}`)
 	_, err := q.CreateTask(ctx, CreateTaskParams{
 		TaskID:   "de-by-tid",
 		TaskType: "enrich",
 		Status:   "waiting",
-		Payload:  json.RawMessage(`{}`),
+		Payload:  &dePayload,
 	})
 	assertNoError(t, err, "create enrich task")
 
@@ -873,8 +879,9 @@ func insertDoc(t *testing.T, q *Queries, title, md5, sha512 string) (int64, stri
 
 func insertEnrichTask(t *testing.T, q *Queries, taskID, status string) int64 {
 	t.Helper()
+	p := json.RawMessage(`{}`)
 	id, err := q.CreateTask(context.Background(), CreateTaskParams{
-		TaskID: taskID, TaskType: "enrich", Status: status, Payload: []byte(`{}`),
+		TaskID: taskID, TaskType: "enrich", Status: status, Payload: &p,
 	})
 	assertNoError(t, err, "insert enrich "+taskID)
 	return id
@@ -882,8 +889,9 @@ func insertEnrichTask(t *testing.T, q *Queries, taskID, status string) int64 {
 
 func insertTask(t *testing.T, q *Queries, taskID, status string) int64 {
 	t.Helper()
+	p := json.RawMessage(`{}`)
 	id, err := q.CreateTask(context.Background(), CreateTaskParams{
-		TaskID: taskID, TaskType: "consume", Status: status, Payload: []byte(`{}`),
+		TaskID: taskID, TaskType: "consume", Status: status, Payload: &p,
 	})
 	assertNoError(t, err, "insert "+taskID)
 	return id

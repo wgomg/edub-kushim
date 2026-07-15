@@ -371,8 +371,11 @@ func QuarantineFailedFiles(ctx context.Context, queries *database.Queries, stora
 
 	var firstErr error
 	for _, row := range rows {
+		if row.Payload == nil {
+			continue
+		}
 		var p consumePayload
-		if err := json.Unmarshal(row.Payload, &p); err != nil {
+		if err := json.Unmarshal(*row.Payload, &p); err != nil {
 			if firstErr == nil {
 				firstErr = fmt.Errorf("unmarshal payload for task %s: %w", row.TaskID, err)
 			}

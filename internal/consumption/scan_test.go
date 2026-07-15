@@ -17,6 +17,7 @@ func setupScanTest(t *testing.T) (*config.Config, *database.Client, func()) {
 	t.Helper()
 	cfg, cleanupCfg := testutil.NewTestConfig(t)
 	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
 	cleanup := func() {
 		client.DB().Close()
 		cleanupCfg()

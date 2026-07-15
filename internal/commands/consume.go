@@ -470,7 +470,7 @@ func taskDisplayInfo(t database.Task) taskDisplay {
 		FileName  string `json:"file_name"`
 		FileIndex int    `json:"file_index"`
 	}
-	json.Unmarshal(t.Payload, &p)
+	json.Unmarshal(*t.Payload, &p)
 	info.index = p.FileIndex
 	if p.FilePath != "" {
 		info.fileName = filepath.Base(p.FilePath)

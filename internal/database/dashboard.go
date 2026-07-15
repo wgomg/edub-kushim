@@ -94,9 +94,9 @@ func (q *Queries) ListActivityTimeline(ctx context.Context) ([]ActivityEventRow,
 
 		SELECT CASE WHEN t.status = 'completed' THEN 'task_completed' ELSE 'task_failed' END,
 		       t.completed_at,
-		       COALESCE(json_extract(t.payload, '$.file_name'), ''),
-		       COALESCE(json_extract(t.payload, '$.file_path'), ''),
-		       COALESCE(json_extract(t.payload, '$.document_id'), ''),
+		       COALESCE(t.payload->>'file_name', ''),
+		       COALESCE(t.payload->>'file_path', ''),
+		       COALESCE(t.payload->>'document_id', ''),
 		       COALESCE(t.batch_id, ''),
 		       t.task_id
 		FROM task t
@@ -262,7 +262,7 @@ func (q *Queries) TaskSuccessRate(ctx context.Context) (TaskSuccessRateRow, erro
 			COALESCE(SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END), 0) AS completed,
 			COALESCE(SUM(CASE WHEN status = 'failed'    THEN 1 ELSE 0 END), 0) AS failed
 		FROM task
-		WHERE completed_at >= datetime('now', '-7 days')
+		WHERE completed_at >= CURRENT_TIMESTAMP - INTERVAL '7 days'
 	`).Scan(&r.Completed, &r.Failed)
 	return r, err
 }
@@ -271,13 +271,13 @@ func (q *Queries) AvgTaskDurationMs(ctx context.Context) (AvgTaskDurationMsRow, 
 	var r AvgTaskDurationMsRow
 	err := q.db.QueryRowContext(ctx, `
 		SELECT CAST(COALESCE(AVG(
-			(julianday(completed_at) - julianday(started_at)) * 86400000.0
+			EXTRACT(EPOCH FROM (completed_at - started_at)) * 1000
 		), 0.0) AS INTEGER) AS avg_duration_ms
 		FROM task
 		WHERE status = 'completed'
 		  AND started_at IS NOT NULL
 		  AND completed_at IS NOT NULL
-		  AND completed_at >= datetime('now', '-7 days')
+		  AND completed_at >= CURRENT_TIMESTAMP - INTERVAL '7 days'
 	`).Scan(&r.AvgDurationMs)
 	return r, err
 }

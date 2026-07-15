@@ -63,7 +63,7 @@
 - `Runner` — owns `Store` and `Registry`; implements `pool.Runner`
   - **Methods**:
     - `NewRunner(store, registry, logger) *Runner`
-    - `Next(ctx, taskType) error` — generic poll loop: claim next pending task, get handler, execute, complete (with retry+FailTask fallback)
+    - `Next(ctx, taskType) error` — generic poll loop: claim next pending task, check for nil payload (fail task if nil), get handler, execute, complete (with retry+FailTask fallback)
     - `completeTaskWithRetry(ctx, id, result) error` — private: 3× exponential backoff on `CompleteTask`, handles `rows == 0` (task already transitioned by stale-task sweep)
 
 ## `dispatcher.go`

@@ -13,6 +13,7 @@ import (
 func newTestUserService(t *testing.T) (*User, *database.Client) {
 	t.Helper()
 	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
 	t.Cleanup(func() { client.DB().Close() })
 	return NewUser(client.Queries), client
 }

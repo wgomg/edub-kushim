@@ -90,7 +90,7 @@ type FileSizeRange struct {
 ### Methods
 
 #### `Engine.Search(ctx, query string, limit, offset int32) ([]Result, error)`
-Simple FTS5 search. Wraps input in `sanitizeQuery()` phrase escaping, calls `database.SearchDocumentsFTS`. Returns results with BM25 rank and highlighted snippet.
+Simple FTS5 search. Calls `database.SearchDocumentsFTS`. Returns results with BM25 rank and highlighted snippet.
 
 #### `Engine.SearchStructured(ctx, filter Filter) ([]Result, total int64, error)`
 Structured search with metadata filters. First calls `database.CountDocumentsStructured()` for total count, then `database.SearchDocumentsStructured()` for paginated results. Translates the `Filter` struct into the database-layer `SearchFilter` struct.
@@ -98,7 +98,7 @@ Structured search with metadata filters. First calls `database.CountDocumentsStr
 ### Functions
 
 #### `sanitizeQuery(q string) string`
-Wraps the user query in double quotes for FTS5 phrase escaping. Allows `AND`, `OR`, `NOT` operators, `"phrase"` queries, and prefix wildcards like `budg*`. Returns empty string unchanged.
+Trims whitespace from the user query. Previously wrapped queries in FTS5 double-quote phrase escaping; the FTS5 layer is being replaced by PostgreSQL tsvector in Phase 3.
 
 ---
 
@@ -143,9 +143,9 @@ A dynamic SQL query builder that composes `WHERE` clauses with proper parameteri
 | Method                              | Purpose                                     |
 | ----------------------------------- | ------------------------------------------- |
 | `add(clause string, args ...any)`   | Append raw clause + positional args          |
-| `eq(col, val string)`               | `AND d.col = ?` (skipped if val empty)      |
-| `subqueryIn(col, subquery, values)` | `AND d.col IN (SELECT ... WHERE IN (?...))` |
-| `rangeClause(col, min, max)`        | `AND d.col >= ?` / `AND d.col <= ?`         |
+| `eq(col, val string)`               | `AND d.col = $N` (skipped if val empty)      |
+| `subqueryIn(col, subquery, values)` | `AND d.col IN (SELECT ... WHERE IN ($1,$2,...))` |
+| `rangeClause(col, min, max)`        | `AND d.col >= $N` / `AND d.col <= $N`       |
 | `dateRange(col, range)`             | Date range filter with optional from/to     |
 | `addMissingFilters(filter)`         | Adds filters for MissingLanguage, MissingType, Untagged |
 
@@ -154,11 +154,11 @@ A dynamic SQL query builder that composes `WHERE` clauses with proper parameteri
 #### `SearchDocumentsStructured(ctx, filter) ([]FTSDocumentRow, error)`
 Builds a SELECT query dynamically:
 
-- If `filter.Query` is non-empty: joins `document_fts`, adds `MATCH ?`, `bm25()` for rank, `snippet()` for highlighting
+- If `filter.Query` is non-empty: joins `document_fts`, adds `MATCH $N`, `bm25()` for rank, `snippet()` for highlighting
 - Applies tag subquery (`document_tag JOIN tag`), people subqueries (`document_people JOIN people JOIN people_type`), document type subquery, language/MIME equality, date ranges, file size ranges
 - Applies missing filters (`MissingLanguage` → `d.language IN ('und','')`, `MissingType` → `d.document_type_id = 1`, `Untagged` → `NOT EXISTS` subquery on `document_tag`)
 - When query is present: ordered by `rank`; otherwise ordered by `sort_by`/`sort_order` (whitelisted: `title`, `mime_type`, `file_size`, `created_at`)
-- Uses `LIMIT ? OFFSET ?` for pagination
+- Uses `LIMIT $N OFFSET $N` for pagination
 
 #### `CountDocumentsStructured(ctx, filter) (int64, error)`
 Same filter logic but `SELECT COUNT(*)` for total count without ordering. Uses the shared `addMissingFilters` helper to avoid drift between search and count queries.

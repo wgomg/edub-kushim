@@ -46,7 +46,7 @@ func (s *Store) CreateTask(
 		TaskType: taskType,
 		Status:   status,
 		BatchID:  sql.NullString{String: batchID, Valid: batchID != ""},
-		Payload:  payload,
+		Payload:  &payload,
 		DedupKey: dkey,
 	})
 	if err != nil {
@@ -106,7 +106,7 @@ func (s *Store) FailTask(ctx context.Context, id int64, errMsg string) error {
 func (s *Store) SetPending(ctx context.Context, id int64, payload json.RawMessage) error {
 	return s.queries.SetEnrichTaskPending(ctx, database.SetEnrichTaskPendingParams{
 		ID:      id,
-		Payload: payload,
+		Payload: &payload,
 	})
 }
 

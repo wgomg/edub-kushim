@@ -112,7 +112,7 @@ type Task struct {
 	TaskType    string
 	Status      string
 	BatchID     sql.NullString
-	Payload     json.RawMessage
+	Payload     *json.RawMessage
 	Result      *json.RawMessage
 	DedupKey    sql.NullString
 	CreatedAt   sql.NullTime

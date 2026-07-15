@@ -59,6 +59,7 @@ func newMockTagService(queries *database.Queries) (*service.Tag, *testutil.MockE
 func newHandlerTestEnv(t *testing.T) *handlerTestEnv {
 	t.Helper()
 	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
 	logger := testutil.NewTestLogger()
 	engine := search.NewEngine(logger, client.Queries)
 	matcherClient := tagmatch.NewMatcherClient("/nonexistent/matcher.sock", tagmatch.MaxMatchBodyBytes(4000))
@@ -543,9 +544,10 @@ func TestTaskEndpoints(t *testing.T) {
 	h := NewTaskHandler(env.services, env.client.Queries, env.logger, func() *config.Config { return nil })
 	ctx := context.Background()
 
+	e2ePayload := json.RawMessage(`{"file":"test.pdf"}`)
 	_, err := env.client.CreateTask(ctx, database.CreateTaskParams{
 		TaskID: "task-e2e-1", TaskType: "consume", Status: "completed",
-		Payload: []byte(`{"file":"test.pdf"}`),
+		Payload: &e2ePayload,
 	})
 	testutil.AssertNoError(t, err, "create task")
 
@@ -597,10 +599,11 @@ func TestTaskEndpoints(t *testing.T) {
 		err := env.client.CreateBatch(ctx, database.CreateBatchParams{ID: batchID, Source: "test", Status: "queued"})
 		testutil.AssertNoError(t, err, "create batch")
 
+		pendPayload := json.RawMessage(`{}`)
 		_, err = env.client.CreateTask(ctx, database.CreateTaskParams{
 			TaskID: "cancel-pend-1", TaskType: "consume", Status: "pending",
 			BatchID: sql.NullString{String: batchID, Valid: true},
-			Payload: []byte(`{}`),
+			Payload: &pendPayload,
 		})
 		testutil.AssertNoError(t, err, "create pending task")
 
@@ -623,10 +626,11 @@ func TestTaskEndpoints(t *testing.T) {
 		err := env.client.CreateBatch(ctx, database.CreateBatchParams{ID: batchID, Source: "test", Status: "queued"})
 		testutil.AssertNoError(t, err, "create batch")
 
+		deadPayload := json.RawMessage(`{}`)
 		_, err = env.client.CreateTask(ctx, database.CreateTaskParams{
 			TaskID: "cancel-dead-1", TaskType: "consume", Status: "pending",
 			BatchID: sql.NullString{String: batchID, Valid: true},
-			Payload: []byte(`{}`),
+			Payload: &deadPayload,
 		})
 		testutil.AssertNoError(t, err, "create pending task")
 
@@ -668,9 +672,10 @@ func TestGetDashboardActivity(t *testing.T) {
 	})
 	testutil.AssertNoError(t, err, "create batch")
 
+	dashActPayload := json.RawMessage(`{"file_name":"my-doc.pdf","document_id":"` + docUUID + `"}`)
 	task1ID, err := env.client.CreateTask(ctx, database.CreateTaskParams{
 		TaskID: "dash-act-task-1", TaskType: "consume", Status: "pending",
-		Payload: []byte(`{"file_name":"my-doc.pdf","document_id":"` + docUUID + `"}`),
+		Payload: &dashActPayload,
 	})
 	testutil.AssertNoError(t, err, "create task 1")
 	_, ctErr := env.client.ClaimTask(ctx, task1ID)
@@ -678,9 +683,10 @@ func TestGetDashboardActivity(t *testing.T) {
 	_, ctErr = env.client.CompleteTask(ctx, database.CompleteTaskParams{ID: task1ID, Result: nil})
 	testutil.AssertNoError(t, ctErr, "complete task 1")
 
+	dashAct2Payload := json.RawMessage(`{"file_path":"/tmp/uploads/invoice.pdf","document_id":"some-doc-uuid"}`)
 	task2ID, err := env.client.CreateTask(ctx, database.CreateTaskParams{
 		TaskID: "dash-act-task-2", TaskType: "consume", Status: "pending",
-		Payload: []byte(`{"file_path":"/tmp/uploads/invoice.pdf","document_id":"some-doc-uuid"}`),
+		Payload: &dashAct2Payload,
 	})
 	testutil.AssertNoError(t, err, "create task 2")
 	testutil.AssertNoError(t, env.client.FailTask(ctx, database.FailTaskParams{

@@ -15,4 +15,4 @@ sql:
           - column: 'task.result'
             go_type: '*encoding/json.RawMessage'
           - column: 'task.payload'
-            go_type: 'encoding/json.RawMessage'
+            go_type: '*encoding/json.RawMessage'

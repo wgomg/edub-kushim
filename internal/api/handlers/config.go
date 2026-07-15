@@ -250,7 +250,7 @@ func (h *ConfigHandler) ConfigStatus(w http.ResponseWriter, r *http.Request) {
 					Lang string `json:"lang"`
 				}
 				if t.Payload != nil {
-					json.Unmarshal(t.Payload, &p)
+					json.Unmarshal(*t.Payload, &p)
 				}
 				summary.Op = p.Op
 				summary.Lang = p.Lang
