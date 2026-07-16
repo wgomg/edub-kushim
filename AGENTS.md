@@ -45,7 +45,7 @@ sqlc generate
 ```
 
 Regenerates `internal/database/*.sql.go`. Skipping this causes type mismatches.
-Config: `sqlc.yaml` (v2, sqlite engine).
+Config: `sqlc.yaml` (v2, postgresql engine).
 
 ## Testing
 
@@ -84,4 +84,4 @@ See `docs/reference/tests.md` for full testing reference.
 - Hugot ORT backend downloads ONNX runtime on first use — needs internet. Go backend has no runtime deps.
 - ORT defaults disable CPU memory arena and pattern pre-allocation (RSS ~2.2–2.5 GB vs ~4–5 GB). Toggle via `DefaultConfig` if latency matters more.
 - Commit messages: Spanish, conventional commit format — see `~/.config/kilo/kilo.jsonc:commit_message`.
-- sqlc config is at `sqlc.yaml` (v2, sqlite engine).
+- sqlc config is at `sqlc.yaml` (v2, postgresql engine).

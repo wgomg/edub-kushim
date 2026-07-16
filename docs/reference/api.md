@@ -270,7 +270,7 @@ See `AuthMiddleware` under `server.go` → Functions.
 - `AppConfigResponse` — `Initialized bool` (true when config_dir has been bootstrapped)
 - `ServerConfigResponse` — `Host string`, `Port int`
 - `StorageConfigResponse` — `ConsumptionDir string` (inbox path), `StorageDir string` (processed document path)
-- `DatabaseConfigResponse` — `Path string` (legacy SQLite path; not used with PostgreSQL)
+- `DatabaseConfigResponse` — `Path string` (not used with PostgreSQL)
 - `ConfigResponse` — `App AppConfigResponse`, `Server ServerConfigResponse`, `Storage StorageConfigResponse`, `Database DatabaseConfigResponse`, `Consumer ConsumerConfigResponse`, `Enricher EnricherConfigResponse`, `AvailableEngines map[string][]EngineEntry`
 - `ConsumerConfigResponse` — `Workers int`, `TextExtractor TextExtractorResponse`, `PdfOptimizer PdfOptimizerResponse`, `OCR OCRResponse`
 - `TextExtractorResponse` — `Engine string`, `Timeout int`

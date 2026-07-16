@@ -52,12 +52,7 @@ The `resetDB` helper deletes all rows from every table, resets identity sequence
 re-runs the seed SQL for `document_type`, `people_type`, and `tag`.
 
 Key detail: Foreign key constraints are enforced by PostgreSQL just as in production.
-The test pool uses `SetMaxOpenConns(5)` — no need for SQLite's single-conn limitation.
-
-> **Phase 2 change**: Tests previously used SQLite in-memory databases (`:memory:`), which
-> gave each test an isolated database automatically. With a shared PostgreSQL instance,
-> `resetDB` must be called at the start of each test that assumes clean state. Tests are
-> run sequentially (`-count=1`) to prevent concurrent writes to the shared test database.
+The test pool uses `SetMaxOpenConns(5)`. Tests are run sequentially (`-count=1`) to prevent concurrent writes to the shared test database, and `resetDB` must be called at the start of each test that assumes clean state.
 
 ### CGo-Free Runner Mock
 

@@ -6,10 +6,8 @@
 
 `NewPostgresDB(dsn string) (*sql.DB, error)`, `NewClient(db) *Client`
 
-- `NewPostgresDB` opens a connection pool via `pgx/stdlib` (25 max open, 5 max idle, 5 min lifetime). Before opening the target database it calls `ensureDatabaseExists` which connects to the `postgres` bootstrap database, checks existence via `pg_database`, and auto-creates the target if missing.
+- `NewPostgresDB` opens a PostgreSQL connection pool via `pgx/stdlib` (25 max open, 5 max idle, 5 min lifetime). Before opening the target database it calls `ensureDatabaseExists` which connects to the `postgres` bootstrap database, checks existence via `pg_database`, and auto-creates the target if missing.
 - `NewClient` wraps a `*sql.DB` and an embedded `*Queries` (sqlc-generated). Exposes `BeginTx(ctx, opts)` and `DB()` for direct `*sql.DB` access. All query methods on `*Queries` are promoted to `*Client`.
-
-> **Phase 2 complete**: `NewPostgresDB` replaces the old `NewSQLiteDB`. Connection pool settings are appropriate for PostgreSQL (25 concurrent connections vs SQLite's single-conn WAL).
 
 ---
 
@@ -43,8 +41,7 @@ schema: 'internal/database/sql/schema/migrations'
 
 sqlc natively understands goose annotations — it recognises `-- +goose Up`/`-- +goose Down` boundaries and ignores down migrations when building its schema model.
 
-> **Phase 1 change**: `sqlc.yaml` engine changed from `sqlite` to `postgresql`.
-> Generated code now uses `$1, $2` PostgreSQL-style placeholders instead of `?`.
+> Generated code uses `$1, $2` PostgreSQL-style placeholders.
 > Types changed accordingly: `INTEGER` → `int32`, `BIGINT` → `int64`, `TIMESTAMPTZ` nullable → `sql.NullTime`, `TIMESTAMPTZ NOT NULL` → `time.Time`.
 
 When adding a new migration:

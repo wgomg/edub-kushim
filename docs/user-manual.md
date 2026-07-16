@@ -85,7 +85,7 @@ kushim setup --cli --languages eng,spa
 | `--languages`                      | — (required for CLI)   | Comma‑separated OCR language codes (e.g. `eng,spa,deu`)     |
 | `--inbox-path`                     | _config-dir_`/inbox`   | Consumption directory (scanned for files)                   |
 | `--storage-path`                   | _config-dir_`/storage` | Processed file storage root                                 |
-| `--database-path`                  | _config-dir_`/data`    | Legacy SQLite path (unused with PostgreSQL)
+| `--database-path`                  | _config-dir_`/data`    | Unused with PostgreSQL
 | `--consumer-ocr-engine`            | `gosseract`            | OCR engine: `gosseract` or `ocrmypdf`                       |
 | `--consumer-textextractor-engine`  | `mupdf`                | Text extractor: `mupdf`, `gopdf`, or `pdftotext`            |
 | `--consumer-pdfoptimizer-engine`   | `mupdf`                | PDF optimizer: `mupdf` or `gs`                              |
@@ -481,7 +481,7 @@ kushim backup --path /custom/backup/dir
 | `--path` | Config `backup.path` (or `<config_dir>/backups/`) | Override output directory |
 
 The backup creates a timestamped `tar.gz` archive containing:
-- `edub.db` — Database snapshot (SQLite: `VACUUM INTO`; PostgreSQL: `pg_dump`, Phase 4)
+- `edub.db` — Database snapshot via `pg_dump`
 - `config.yaml` — Configuration file at backup time
 - `storage/` — Full storage directory tree (originals, processed, errors)
 - `manifest.json` — Backup metadata (version, timestamp, sizes, config SHA256 hash)

@@ -6,7 +6,7 @@
 - **Tool Agnostic**: Adapter pattern; OCR, text extraction, PDF optimization, content analysis,
   text reduction, and semantic tag matching all switchable between built‑in adapters and
   external tools/providers
-- **PostgreSQL Target**: SQL and generated Go code target PostgreSQL. Phase 1 (schema + sqlc rewrite) and Phase 2 (connection layer replaces SQLite with PostgreSQL) are complete. SQL files, placeholders (`$1, $2`), and sqlc engine are all PostgreSQL-native. The `kushim setup` wizard, `Bootstrap`, and `NewTestDB` all use `NewPostgresDB`.
+- **PostgreSQL Target**: SQL and generated Go code target PostgreSQL. SQL files use `$1, $2` placeholders and PostgreSQL DDL (`GENERATED ALWAYS AS IDENTITY`, `JSONB`, `TIMESTAMPTZ`). sqlc engine is `postgresql`. The `kushim setup` wizard, `Bootstrap`, and `NewTestDB` all use `NewPostgresDB`.
 - **Fallback Processing**: Text extraction → OCR → text extraction pattern
 - **Date-based Organization**: Temporal storage structure for scalability
 - **Transaction Safety**: Coordinated database and file operations with rollback
@@ -137,7 +137,7 @@ OCRs from PNG, and builds a searchable PDF with `go‑pdf/fpdf` using
 ### 4. Database Integration
 
 Document record created via `CreateDocument` with a generated `document_id` UUID,
-auto-increment ID obtained from `RETURNING id` (the old `LastInsertId()` pattern was SQLite-specific and had no effect under pgx), date‑based storage paths
+auto-increment ID obtained from `RETURNING id`, date‑based storage paths
 generated, paths updated via `UpdateDocumentPaths`. The transaction is
 DB‑only (fast writes), bounded by a 5‑second context timeout.
 
