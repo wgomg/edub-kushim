@@ -18,9 +18,68 @@ Open http://localhost:3000, configure your LLM provider in `/settings`, and drop
 
 The first build compiles MuPDF, Tesseract, and other C libraries from source (~minutes); subsequent builds are cached by Docker.
 
+> **PostgreSQL**: The Docker Compose setup does not include a PostgreSQL container. You must provide one — see the [PostgreSQL](#postgresql) section below and make the config's `database.host` point to it (by mounting a custom config file into the container).
+
+### PostgreSQL
+
+edub-kushim requires PostgreSQL 16+. Run an instance using one of the following methods before starting the application.
+
+#### On the host (Ubuntu/Debian)
+
+```bash
+sudo apt install postgresql postgresql-client
+sudo systemctl start postgresql
+```
+
+The `kushim setup` wizard creates the database and user automatically — no manual `CREATE DATABASE` is needed.
+
+#### With Docker
+
+```bash
+docker run -d \
+  --name edub-postgres \
+  -e POSTGRES_USER=edub \
+  -e POSTGRES_PASSWORD=edub \
+  -p 5432:5432 \
+  postgres:17
+```
+
+#### With Podman
+
+```bash
+podman run -d \
+  --name edub-postgres \
+  -e POSTGRES_USER=edub \
+  -e POSTGRES_PASSWORD=edub \
+  -p 5432:5432 \
+  postgres:17
+```
+
+#### Connection data
+
+The `kushim setup` wizard and `edub` server expect these defaults (matching [config.example.yaml](config.example.yaml)):
+
+| Field    | Default value |
+|----------|---------------|
+| Host     | `localhost`   |
+| Port     | `5432`        |
+| User     | `edub`        |
+| Password | `edub`        |
+| Database | `edub`        |
+| SSL mode | `disable`     |
+
+The setup wizard auto-creates the database if it doesn't exist, so no manual `CREATE DATABASE` is needed as long as the user has creation privileges. To use a different database, adjust the `database:` section in `~/.config/edub-kushim/config.yaml` or use a DSN string:
+
+```yaml
+database:
+  dsn: "postgres://user:password@host:5432/dbname?sslmode=disable"
+```
+
 ### Manual (for development)
 
 ```bash
+# 0. Make sure PostgreSQL is running — see the PostgreSQL section above
+#
 # 1. One‑time setup — launches a web wizard at http://0.0.0.0:8420
 kushim setup
 
@@ -37,7 +96,7 @@ kushim queue &
 edub
 ```
 
-The setup wizard walks you through configuration (OCR languages, LLM provider, storage paths, admin user). After that, drop PDFs into your inbox — the queue daemon picks them up automatically. Documents are processed, OCR'd if needed, and classified asynchronously.
+The setup wizard walks you through configuration (OCR languages, LLM provider, storage paths, admin user). It connects to PostgreSQL using the settings from the config file and auto-creates the database if missing. After setup, drop PDFs into your inbox — the queue daemon picks them up automatically. Documents are processed, OCR'd if needed, and classified asynchronously.
 
 ---
 

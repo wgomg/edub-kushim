@@ -9,9 +9,7 @@
 ### Core Infrastructure
 
 - HTTP server with middleware (request ID, parameter parsing via `ParamBag`)
-- Database layer with sqlc-generated type-safe queries → now PostgreSQL (previously SQLite WAL mode)
-- **Phase 1 — Schema & sqlc → PostgreSQL** ✓ SQL files rewritten for PostgreSQL syntax, sqlc engine changed to `postgresql`, generated Go code uses `$N` placeholders and correct PG types (`int32`, `time.Time`, `json.RawMessage`)
-- **Phase 2 — Connection & runtime → PostgreSQL** ✓ `NewPostgresDB` replaces `NewSQLiteDB`. Connection pool (25 open/5 idle/5 min lifetime). Auto-create database with `ensureDatabaseExists`. Config extended with Postgres fields (host, port, user, password, database, sslmode, dsn). Goose dialect switched to `postgres`. Error handling uses `pgerrcode`/`pgconn.PgError`. Raw SQL migrations and tests updated to PostgreSQL syntax. `BusyTimeoutMs` retired. Tests read `TEST_DATABASE_URL`. Backup/restore guarded for Postgres (Phase 4). **Phase 2 fixups**: `Task.Payload` changed from `json.RawMessage` to `*json.RawMessage` (sqlc override) to match nullable JSONB schema; all hand-rolled SQL outside sqlc (`structured_search.go`, `document_sort.go`, `scan.go`) migrated from SQLite `?` to PostgreSQL `$N` placeholders; `ListBatchOverviews` rewritten with `LEFT JOIN LATERAL` to satisfy strict `GROUP BY`; dashboard SQLite functions (`json_extract`, `datetime`, `julianday`) replaced with PostgreSQL equivalents (`->>`, `CURRENT_TIMESTAMP - INTERVAL`, `EXTRACT(EPOCH)`); `sanitizeQuery` stripped of FTS5-specific double-quote wrapping; public `ResetTestDatabase` helper added for cross-package test isolation.
+- Database layer with sqlc-generated type-safe queries — PostgreSQL via pgx
 - Configuration system with YAML support, default values, and validation
 - Structured logging with request correlation, file logging, numeric level filtering
 - CLI framework with dependency injection container (lazy DB, cache, dispatcher, pools)
