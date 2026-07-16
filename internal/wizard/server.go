@@ -89,6 +89,10 @@ func (s *Server) bootstrap(configDir string) (*config.Config, *database.Client, 
 	}
 	s.db = db
 
+	if err := database.InitializeSchema(db); err != nil {
+		return nil, nil, nil, fmt.Errorf("initialize schema: %w", err)
+	}
+
 	client := database.NewClient(db)
 	store := task.NewStore(client.Queries)
 	registry := task.NewRegistry()
