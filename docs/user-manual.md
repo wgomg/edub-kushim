@@ -85,7 +85,6 @@ kushim setup --cli --languages eng,spa
 | `--languages`                      | — (required for CLI)   | Comma‑separated OCR language codes (e.g. `eng,spa,deu`)     |
 | `--inbox-path`                     | _config-dir_`/inbox`   | Consumption directory (scanned for files)                   |
 | `--storage-path`                   | _config-dir_`/storage` | Processed file storage root                                 |
-| `--database-path`                  | _config-dir_`/data`    | Unused with PostgreSQL
 | `--consumer-ocr-engine`            | `gosseract`            | OCR engine: `gosseract` or `ocrmypdf`                       |
 | `--consumer-textextractor-engine`  | `mupdf`                | Text extractor: `mupdf`, `gopdf`, or `pdftotext`            |
 | `--consumer-pdfoptimizer-engine`   | `mupdf`                | PDF optimizer: `mupdf` or `gs`                              |
@@ -94,7 +93,7 @@ kushim setup --cli --languages eng,spa
 | `--admin-password`                 | —                      | Admin password (prompted if omitted)                        |
 | `--reset-database`                 | `false`                | Drop all tables and re-run schema + seeders                 |
 
-The flags `--inbox-path`, `--storage-path`, and `--database-path` accept either
+The flags `--inbox-path` and `--storage-path` accept either
 absolute paths or paths starting with `~` (expanded to the home directory).
 
 ### `kushim consume`

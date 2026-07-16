@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 func newOrphanedHandler(t *testing.T) (*OrphanedHandler, *config.Config) {
 	t.Helper()
 	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
 	t.Cleanup(func() { client.DB().Close() })
 
 	logger := testutil.NewTestLogger()
@@ -117,15 +119,13 @@ func TestOrphanedHandler_DeleteOrphaned(t *testing.T) {
 	h.ListOrphaned(listW, req(t, "GET", "/api/v1/documents/orphaned", nil))
 	var files []map[string]any
 	json.NewDecoder(listW.Body).Decode(&files)
-	id := int64(files[0]["id"].(float64))
+	id := fmt.Sprintf("%.0f", files[0]["id"].(float64))
 
 	w := rec()
-	r := req(t, "DELETE", "/api/v1/documents/orphaned/file/1", nil)
-	r.SetPathValue("id", "1")
+	r := req(t, "DELETE", "/api/v1/documents/orphaned/file/"+id, nil)
+	r.SetPathValue("id", id)
 	h.DeleteOrphaned(w, r)
 	testutil.AssertEqual(t, w.Code, http.StatusNoContent, "status")
-
-	_ = id
 }
 
 func TestOrphanedHandler_DeleteOrphaned_InvalidID(t *testing.T) {
@@ -146,9 +146,15 @@ func TestOrphanedHandler_RestoreOrphaned(t *testing.T) {
 	scanCtx := req(t, "POST", "/api/v1/documents/orphaned/scan", nil)
 	h.ScanOrphaned(rec(), scanCtx)
 
+	listW := rec()
+	h.ListOrphaned(listW, req(t, "GET", "/api/v1/documents/orphaned", nil))
+	var files []map[string]any
+	json.NewDecoder(listW.Body).Decode(&files)
+	id := fmt.Sprintf("%.0f", files[0]["id"].(float64))
+
 	w := rec()
-	r := req(t, "POST", "/api/v1/documents/orphaned/1/restore", nil)
-	r.SetPathValue("id", "1")
+	r := req(t, "POST", "/api/v1/documents/orphaned/"+id+"/restore", nil)
+	r.SetPathValue("id", id)
 	h.RestoreOrphaned(w, r)
 	testutil.AssertEqual(t, w.Code, http.StatusAccepted, "status")
 }
@@ -171,9 +177,15 @@ func TestOrphanedHandler_MoveToInbox(t *testing.T) {
 	scanCtx := req(t, "POST", "/api/v1/documents/orphaned/scan", nil)
 	h.ScanOrphaned(rec(), scanCtx)
 
+	listW := rec()
+	h.ListOrphaned(listW, req(t, "GET", "/api/v1/documents/orphaned", nil))
+	var files []map[string]any
+	json.NewDecoder(listW.Body).Decode(&files)
+	id := fmt.Sprintf("%.0f", files[0]["id"].(float64))
+
 	w := rec()
-	r := req(t, "POST", "/api/v1/documents/orphaned/1/move-to-inbox", nil)
-	r.SetPathValue("id", "1")
+	r := req(t, "POST", "/api/v1/documents/orphaned/"+id+"/move-to-inbox", nil)
+	r.SetPathValue("id", id)
 	h.MoveToInbox(w, r)
 	testutil.AssertEqual(t, w.Code, http.StatusAccepted, "status")
 }

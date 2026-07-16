@@ -51,8 +51,6 @@ type ServerConfig struct {
 
 type DatabaseConfig struct {
 	Type     string `mapstructure:"type" yaml:"type" json:"type"`
-	Path     string `mapstructure:"path" yaml:"path,omitempty" json:"path"`
-	Name     string `yaml:"name,omitempty" json:"name"`
 	Host     string `yaml:"host,omitempty" json:"host"`
 	Port     int    `yaml:"port,omitempty" json:"port"`
 	User     string `yaml:"user,omitempty" json:"user"`

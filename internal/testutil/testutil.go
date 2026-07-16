@@ -38,8 +38,6 @@ func NewTestConfig(t interface{ Fatalf(format string, args ...any) }) (*config.C
 	cfg := config.DefaultConfig(configDir)
 	cfg.Storage.ConsumptionDir = inboxDir
 	cfg.Storage.StorageDir = storageDir
-	cfg.Db.Path = dataDir
-	cfg.Db.Name = "test.db"
 	cfg.Consumer.OCR.DataDir = ocrDataDir
 	cfg.Consumer.OCR.Languages = []string{"eng"}
 	cfg.Consumer.TextExtractor.Engine = config.TextExtractor.GoPdf

@@ -170,7 +170,11 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			'enricher.tagmatcher.hugot.backend': cfg.enricher.tagmatcher.hugot.backend,
 			'storage.consumption_dir': cfg.storage.consumption_dir,
 			'storage.storage_dir': cfg.storage.storage_dir,
-			'database.path': cfg.database.path,
+			'database.host': cfg.database.host,
+			'database.port': Number(cfg.database.port),
+			'database.user': cfg.database.user,
+			'database.database': cfg.database.database,
+			'database.sslmode': cfg.database.sslmode,
 			'backup.enabled': cfg.backup.enabled,
 			'backup.interval': Number(cfg.backup.interval),
 			'backup.time': cfg.backup.time,
@@ -440,14 +444,60 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						/>
 					</div>
-					<div class="sm:col-span-2">
-						<label for="db-path" class="mb-1 block text-sm font-medium text-parchment-200">
-							Database path
+					<div>
+						<label for="db-host" class="mb-1 block text-sm font-medium text-parchment-200">
+							Database host
 						</label>
 						<input
-							id="db-path"
+							id="db-host"
 							type="text"
-							bind:value={cfg.database.path}
+							bind:value={cfg.database.host}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
+						/>
+					</div>
+					<div>
+						<label for="db-port" class="mb-1 block text-sm font-medium text-parchment-200">
+							Database port
+						</label>
+						<input
+							id="db-port"
+							type="number"
+							min="1"
+							max="65535"
+							bind:value={cfg.database.port}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
+						/>
+					</div>
+					<div>
+						<label for="db-user" class="mb-1 block text-sm font-medium text-parchment-200">
+							Database user
+						</label>
+						<input
+							id="db-user"
+							type="text"
+							bind:value={cfg.database.user}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
+						/>
+					</div>
+					<div>
+						<label for="db-name" class="mb-1 block text-sm font-medium text-parchment-200">
+							Database name
+						</label>
+						<input
+							id="db-name"
+							type="text"
+							bind:value={cfg.database.database}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
+						/>
+					</div>
+					<div>
+						<label for="db-sslmode" class="mb-1 block text-sm font-medium text-parchment-200">
+							SSL mode
+						</label>
+						<input
+							id="db-sslmode"
+							type="text"
+							bind:value={cfg.database.sslmode}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						/>
 					</div>

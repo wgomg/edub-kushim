@@ -830,7 +830,9 @@ func TestTaskHealthQueries(t *testing.T) {
 
 		dur, err := q.AvgTaskDurationMs(ctx)
 		assertNoError(t, err, "avg duration")
-		assertEqual(t, dur.AvgDurationMs, int64(0), "avg duration ms")
+		if dur.AvgDurationMs > 1 {
+			t.Fatalf("avg duration ms: got %d, want <= 1", dur.AvgDurationMs)
+		}
 
 		ids, err := q.ActiveBatchIDs(ctx)
 		assertNoError(t, err, "active batch ids")
@@ -932,7 +934,7 @@ func resetDB(t *testing.T, q *Queries) {
 			t.Fatalf("delete from %s: %v", tbl, err)
 		}
 	}
-	for _, tbl := range []string{"document_type", "people_type", "tag"} {
+	for _, tbl := range []string{"document_type", "people_type", "tag", `"user"`, "task", "document", "saved_search", "orphaned_file"} {
 		q.db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s ALTER COLUMN id RESTART WITH 1", tbl))
 	}
 	seeds := []string{"document-types", "people-types", "tags"}

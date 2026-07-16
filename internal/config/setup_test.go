@@ -15,7 +15,8 @@ func TestSaveMap_MergesExistingConfig(t *testing.T) {
   consumption_dir: /custom/inbox
   storage_dir: /custom/storage
 database:
-  path: /custom/data
+  host: localhost
+  port: 5433
 consumer:
   polling:
     enabled: false
@@ -45,8 +46,11 @@ consumer:
 	if v.GetString("storage.storage_dir") != "/custom/storage" {
 		t.Errorf("storage.storage_dir = %q, want /custom/storage", v.GetString("storage.storage_dir"))
 	}
-	if v.GetString("database.path") != "/custom/data" {
-		t.Errorf("database.path = %q, want /custom/data", v.GetString("database.path"))
+	if v.GetString("database.host") != "localhost" {
+		t.Errorf("database.host = %q, want localhost", v.GetString("database.host"))
+	}
+	if v.GetInt("database.port") != 5433 {
+		t.Errorf("database.port = %d, want 5433", v.GetInt("database.port"))
 	}
 	if !v.GetBool("consumer.polling.enabled") {
 		t.Error("consumer.polling.enabled should be true after merge")

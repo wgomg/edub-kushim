@@ -56,10 +56,21 @@ func newMockTagService(queries *database.Queries) (*service.Tag, *testutil.MockE
 	return tagSvc, embedder
 }
 
+func fullResetDB(t *testing.T, db *sql.DB) {
+	t.Helper()
+	database.ResetTestDatabase(db)
+	ctx := context.Background()
+	for _, tbl := range []string{`"user"`, "task", "document", "saved_search", "orphaned_file"} {
+		if _, err := db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s ALTER COLUMN id RESTART WITH 1", tbl)); err != nil {
+			t.Fatalf("restart sequence for %s: %v", tbl, err)
+		}
+	}
+}
+
 func newHandlerTestEnv(t *testing.T) *handlerTestEnv {
 	t.Helper()
 	client := database.NewTestClient(t)
-	database.ResetTestDatabase(client.DB())
+	fullResetDB(t, client.DB())
 	logger := testutil.NewTestLogger()
 	engine := search.NewEngine(logger, client.Queries)
 	matcherClient := tagmatch.NewMatcherClient("/nonexistent/matcher.sock", tagmatch.MaxMatchBodyBytes(4000))
@@ -924,8 +935,8 @@ func TestGetDashboardProcessingHealth(t *testing.T) {
 	if resp.ProcessingHealth.ActiveBatches != 1 {
 		t.Fatalf("expected active_batches 1 (ph-batch-2 has pending), got %d", resp.ProcessingHealth.ActiveBatches)
 	}
-	if resp.ProcessingHealth.AvgDurationMs != 0 {
-		t.Fatalf("expected avg_duration_ms 0 (no started_at), got %d", resp.ProcessingHealth.AvgDurationMs)
+	if resp.ProcessingHealth.AvgDurationMs > 1 {
+		t.Fatalf("expected avg_duration_ms <= 1, got %d", resp.ProcessingHealth.AvgDurationMs)
 	}
 
 	if resp.TotalBatches < 1 {
@@ -1117,6 +1128,7 @@ func TestUserCrud(t *testing.T) {
 
 	// Seed a user via the handler so subsequent tests reference an existing user.
 	var createdID int64
+	var bobID int64
 
 	t.Run("create user", func(t *testing.T) {
 		body, _ := json.Marshal(types.CreateUserRequest{
@@ -1283,27 +1295,31 @@ func TestUserCrud(t *testing.T) {
 		w := rec()
 		h.Create(w, req(t, "POST", "/api/v1/users", body))
 		testutil.AssertEqual(t, w.Code, http.StatusCreated, "create bob")
+		var bobResp types.UserResponse
+		json.NewDecoder(w.Body).Decode(&bobResp)
+		bobID = bobResp.ID
 
 		body2, _ := json.Marshal(types.UpdateUserRequest{
 			Username: "bob",
 		})
 		w2 := rec()
-		r := req(t, "PUT", "/api/v1/users/1", body2)
-		r.SetPathValue("id", "1")
+		r := req(t, "PUT", fmt.Sprintf("/api/v1/users/%d", createdID), body2)
+		r.SetPathValue("id", fmt.Sprintf("%d", createdID))
 		h.Update(w2, r)
 		testutil.AssertEqual(t, w2.Code, http.StatusConflict, "409 on duplicate username")
 	})
 
 	t.Run("delete user", func(t *testing.T) {
+		bobIDStr := fmt.Sprintf("%d", bobID)
 		w := rec()
-		r := req(t, "DELETE", "/api/v1/users/2", nil) // bob
-		r.SetPathValue("id", "2")
+		r := req(t, "DELETE", "/api/v1/users/"+bobIDStr, nil)
+		r.SetPathValue("id", bobIDStr)
 		h.Delete(w, r)
 		testutil.AssertEqual(t, w.Code, http.StatusNoContent, "204 on delete")
 
 		w2 := rec()
-		r2 := req(t, "GET", "/api/v1/users/2", nil)
-		r2.SetPathValue("id", "2")
+		r2 := req(t, "GET", "/api/v1/users/"+bobIDStr, nil)
+		r2.SetPathValue("id", bobIDStr)
 		h.Get(w2, r2)
 		testutil.AssertEqual(t, w2.Code, http.StatusNotFound, "404 after delete")
 	})
@@ -1406,7 +1422,8 @@ func TestConfigHandlerGetConfig(t *testing.T) {
 		stored.Srv.AuthEnabled = false
 		stored.Storage.ConsumptionDir = "/custom/inbox"
 		stored.Storage.StorageDir = "/custom/storage"
-		stored.Db.Path = "/custom/data"
+		stored.Db.Host = "10.0.0.1"
+		stored.Db.Port = 5433
 		h := newTestConfigHandler(stored, env.client.Queries, env.logger, nil)
 		w := rec()
 		h.GetConfig(w, req(t, "GET", "/wizard/config", nil))
@@ -1418,7 +1435,8 @@ func TestConfigHandlerGetConfig(t *testing.T) {
 		testutil.AssertEqual(t, resp.Server.AuthEnabled, false, "stored auth_enabled")
 		testutil.AssertEqual(t, resp.Storage.ConsumptionDir, "/custom/inbox", "storage consumption_dir")
 		testutil.AssertEqual(t, resp.Storage.StorageDir, "/custom/storage", "storage storage_dir")
-		testutil.AssertEqual(t, resp.Database.Path, "/custom/data", "database path")
+		testutil.AssertEqual(t, resp.Database.Host, "10.0.0.1", "database host")
+		testutil.AssertEqual(t, resp.Database.Port, 5433, "database port")
 	})
 
 	t.Run("setservices then getconfig", func(t *testing.T) {

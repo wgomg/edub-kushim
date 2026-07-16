@@ -37,7 +37,11 @@ type StorageConfigResponse struct {
 }
 
 type DatabaseConfigResponse struct {
-	Path string `json:"path"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	User     string `json:"user"`
+	Database string `json:"database"`
+	SSLMode  string `json:"sslmode"`
 }
 
 type ConfigResponse struct {
@@ -206,7 +210,11 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Enricher.TagMatcher.Hugot.Backend = cfg.Enricher.TagMatcher.Hugot.Backend
 	resp.Storage.ConsumptionDir = cfg.Storage.ConsumptionDir
 	resp.Storage.StorageDir = cfg.Storage.StorageDir
-	resp.Database.Path = cfg.Db.Path
+	resp.Database.Host = cfg.Db.Host
+	resp.Database.Port = cfg.Db.Port
+	resp.Database.User = cfg.Db.User
+	resp.Database.Database = cfg.Db.Database
+	resp.Database.SSLMode = cfg.Db.SSLMode
 	resp.App.Initialized = cfg.App.ConfigDir != ""
 	resp.App.LogLevel = cfg.App.LogLevel
 	resp.App.Logging = LoggingConfigResponse{

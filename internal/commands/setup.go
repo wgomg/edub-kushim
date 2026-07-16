@@ -62,7 +62,7 @@ func runSetupWizard(args []string, logger *utils.Logger) error {
 }
 
 func runSetupCLI(args []string, logger *utils.Logger) error {
-	var langs, inboxDir, storageDir, dbPath, optimizationFallback, ocrEngine, pdfEngine, textExtractorEngine string
+	var langs, inboxDir, storageDir, optimizationFallback, ocrEngine, pdfEngine, textExtractorEngine string
 	var resetDb, cli bool
 	var adminUser, adminPassword string
 
@@ -80,9 +80,6 @@ func runSetupCLI(args []string, logger *utils.Logger) error {
 		return err
 	}
 	if err := p.String("--storage-path", &storageDir); err != nil {
-		return err
-	}
-	if err := p.String("--database-path", &dbPath); err != nil {
 		return err
 	}
 	if err := p.String("--consumer-pdfoptimizer-fallback", &optimizationFallback); err != nil {
@@ -114,7 +111,6 @@ Flags:
   --languagess                       ISO 639-3 codes (eng, spa, fra, ...)
   --inbox-path                       inbox directory (default: ~/.config/edub-kushim/inbox)
   --storage-path                     storage directory (default: ~/.config/edub-kushim/storage)
-  --database-path                    database path (default: ~/.config/edub-kushim/data)
   --consumer-ocr-engine              gosseract | ocrmypdf (default: gosseract)
   --consumer-textextractor-engine    mupdf | gopdf | pdftotext (default: mupdf)
   --consumer-pdfoptimizer-engine     mupdf | gs (default: mupdf)
@@ -163,9 +159,6 @@ Flags:
 	if storageDir != "" {
 		cfg.Storage.StorageDir = storageDir
 	}
-	if dbPath != "" {
-		cfg.Db.Path = dbPath
-	}
 
 	if pdfEngine == config.PdfOptimizer.GS {
 		optimizationFallback = ""
@@ -199,9 +192,6 @@ Flags:
 	}
 	if storageDir != "" {
 		v.Set("storage.storage_dir", storageDir)
-	}
-	if dbPath != "" {
-		v.Set("database.path", dbPath)
 	}
 	if optimizationFallback != "" {
 		v.Set("consumer.pdfoptimizer.fallback", optimizationFallback)

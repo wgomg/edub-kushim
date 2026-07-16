@@ -11,8 +11,6 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
-const BusyTimeoutMs = 5000
-
 func NewPostgresDB(dsn string) (*sql.DB, error) {
 	if err := ensureDatabaseExists(dsn); err != nil {
 		return nil, fmt.Errorf("ensure database exists: %w", err)

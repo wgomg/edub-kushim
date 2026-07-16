@@ -158,11 +158,10 @@ func restoreHandler(c *Container, args []string) error {
 	if err != nil {
 		return err
 	}
-	dbPath := filepath.Join(c.config.Db.Path, c.config.Db.Name)
 	configPath := filepath.Join(c.config.App.ConfigDir, "config.yaml")
 
 	fmt.Println("Replacing files...")
-	if err := backup.ReplaceFiles(tmpDir, db, dbPath, configPath, c.config.Storage.StorageDir); err != nil {
+	if err := backup.ReplaceFiles(tmpDir, db, configPath, c.config.Storage.StorageDir); err != nil {
 		return fmt.Errorf("replace files: %w", err)
 	}
 

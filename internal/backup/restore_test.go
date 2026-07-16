@@ -193,8 +193,7 @@ func TestReplaceFiles_SQLDump(t *testing.T) {
 		database.InitializeSchema(restoreDB)
 	})
 
-	restoreDBPath := filepath.Join(dir, "restored.db")
-	if err := ReplaceFiles(extractDir, restoreDB, restoreDBPath, configPath, filepath.Join(dir, "new_storage")); err != nil {
+	if err := ReplaceFiles(extractDir, restoreDB, configPath, filepath.Join(dir, "new_storage")); err != nil {
 		t.Fatalf("ReplaceFiles: %v", err)
 	}
 
@@ -207,7 +206,7 @@ func TestReplaceFiles_SQLDump(t *testing.T) {
 	}
 }
 
-func TestReplaceFiles_ConfigOnly(t *testing.T) {
+func TestReplaceFiles_UnknownFormat(t *testing.T) {
 	dir := t.TempDir()
 
 	configPath := filepath.Join(dir, "target.yaml")
@@ -220,13 +219,9 @@ func TestReplaceFiles_ConfigOnly(t *testing.T) {
 	manifestData := `{"version":1,"format":"sqlite-file","timestamp":"","app_version":"","db_size_bytes":0,"storage_files_count":0,"storage_size_bytes":0,"config_hash":""}`
 	testutil.CreateTestFile(t, filepath.Join(extractDir, "manifest.json"), manifestData)
 
-	if err := ReplaceFiles(extractDir, nil, "/nonexistent/db", configPath, t.TempDir()); err != nil {
-		t.Fatalf("ReplaceFiles (no db, sqlite format): %v", err)
-	}
-
-	data, _ := os.ReadFile(configPath)
-	if string(data) != "new: true\n" {
-		t.Errorf("config = %q, want %q", string(data), "new: true\n")
+	err := ReplaceFiles(extractDir, nil, configPath, t.TempDir())
+	if err == nil {
+		t.Fatal("ReplaceFiles: expected error for unknown format, got nil")
 	}
 }
 
