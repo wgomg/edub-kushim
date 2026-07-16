@@ -117,7 +117,7 @@ The API server (`edub`) is a pure Go binary with no C dependencies. All CGo-heav
 - **LLM-powered classification** — automatic tags, document type, title, and people extraction via OpenAI, Anthropic, DeepSeek, or Ollama
 - **Semantic tag matching** — Hugot embeddings with cosine similarity (Go or ONNX Runtime backend)
 - **OCR pipeline** — Tesseract + MuPDF for image-only PDFs, with searchable PDF output (text rendering mode 3)
-- **Full-text search** — PostgreSQL tsvector (Phase 3) replacing SQLite FTS5, with BM25 ranking, snippet highlighting; structured search with metadata filters
+- **Full-text search** — PostgreSQL tsvector with `ts_rank` ranking and `ts_headline` snippet highlighting; structured search with metadata filters
 - **Structured search** — metadata filters (tags, people, document type, language, date range, file size) combined with full-text queries
 - **Async enrichment** — task queue with worker pools, batch tracking, progress polling; TextRank reduction before LLM
 - **Post-LLM consolidation** — normalized tags re-matched against canonical embeddings to fix casing and synonym mismatches

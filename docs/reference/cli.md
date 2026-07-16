@@ -94,7 +94,7 @@ Listens on a Unix socket (cleaned up on shutdown). Handles SIGTERM/SIGINT for gr
 - `searchHandler(c, args) error` — Parses flags (`--limit`, `--offset`, `--rebuild-index`), runs search, formats results with ANSI highlighting
 - `highlightSnippet(s) string` — Replaces `<b>`/`</b>` with ANSI color codes
 - `formatSize(bytes) string` — Human-readable size
-- `rebuildIndex(c) error` — Calls `RebuildDocumentFTS`
+- `rebuildIndex(c) error` — Runs `REINDEX INDEX idx_document_tsv`
 
 ---
 

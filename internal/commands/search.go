@@ -14,7 +14,7 @@ func searchHandler(c *Container, args []string) error {
 		"  Full-text search across documents.\n\n" +
 		"  --limit N          max results (default 20, max 100)\n" +
 		"  --offset N         result offset (default 0)\n" +
-		"  --rebuild-index    rebuild FTS5 index from document table") {
+		"  --rebuild-index    reindex tsvector GIN index") {
 		return nil
 	}
 
@@ -110,10 +110,11 @@ func rebuildIndex(c *Container) error {
 	defer cancel()
 
 	start := time.Now()
-	if err := client.RebuildDocumentFTS(ctx); err != nil {
-		return fmt.Errorf("rebuild failed: %w", err)
+	_, err = client.DB().ExecContext(ctx, "REINDEX INDEX CONCURRENTLY idx_document_tsv")
+	if err != nil {
+		return fmt.Errorf("reindex failed: %w", err)
 	}
 
-	c.logger.Info(nil, "FTS index rebuilt in %s", time.Since(start).Round(time.Millisecond))
+	c.logger.Info(nil, "tsvector index rebuilt in %s", time.Since(start).Round(time.Millisecond))
 	return nil
 }

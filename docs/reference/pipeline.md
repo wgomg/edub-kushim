@@ -97,13 +97,13 @@
 
 ### Function
 
-- `sanitizeQuery(q string) string` — Trims whitespace from query string. (FTS5 double-quote escaping removed; the FTS5 layer is being replaced by PostgreSQL tsvector in Phase 3.)
+- `sanitizeQuery(q string) string` — Trims whitespace from query string before passing it to `plainto_tsquery`.
 
 ---
 
 ## See Also
 
 - [Tools](tools.md) — Adapter framework (TextReducer, OCR, TextExtractor, PdfOptimizer)
-- [Database](database.md) — FTS5 queries, document storage
+- [Database](database.md) — tsvector queries, document storage
 - [Config & Utils](config-and-utils.md) — Consumer and Enricher configuration
 - [Task System](task-system.md) — Task handlers that invoke consumer/enricher

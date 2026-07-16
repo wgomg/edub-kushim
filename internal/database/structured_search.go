@@ -2,9 +2,32 @@ package database
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 )
+
+type FTSDocumentRow struct {
+	ID             int64          `json:"id"`
+	DocumentID     string         `json:"document_id"`
+	Title          string         `json:"title"`
+	Md5Checksum    string         `json:"md5_checksum"`
+	Sha512Checksum string         `json:"sha512_checksum"`
+	MimeType       string         `json:"mime_type"`
+	FileSize       int64          `json:"file_size"`
+	PageCount      int64          `json:"page_count"`
+	WordCount      int64          `json:"word_count"`
+	CharCount      int64          `json:"char_count"`
+	Language       string         `json:"language"`
+	CreatedAt      sql.NullTime   `json:"created_at"`
+	ModifiedAt     sql.NullTime   `json:"modified_at"`
+	DocumentTypeID int64          `json:"document_type_id"`
+	OriginalPath   string         `json:"original_path"`
+	StoragePath    string         `json:"storage_path"`
+	TextContent    sql.NullString `json:"text_content"`
+	Rank           float64        `json:"rank"`
+	Snippet        string         `json:"snippet"`
+}
 
 type SearchFilter struct {
 	Query           string
@@ -103,12 +126,13 @@ func (q *Queries) SearchDocumentsStructured(ctx context.Context, filter SearchFi
 		d.original_path, d.storage_path, d.text_content`
 
 	if filter.Query != "" {
+		queryIdx := b.nextIndex()
 		b.add(fmt.Sprintf(`%s,
-			bm25(document_fts) as rank,
-			snippet(document_fts, 1, '<b>', '</b>', '...', 64) as snippet
+			ts_rank(d.text_search_vector, plainto_tsquery('simple', $%d)) as rank,
+			COALESCE(ts_headline('simple', d.text_content, plainto_tsquery('simple', $%d),
+				'StartSel=<b>, StopSel=</b>, MaxWords=64, MinWords=32'), '') as snippet
 			FROM document d
-			JOIN document_fts ON d.id = document_fts.document_id
-			WHERE document_fts MATCH $%d`, selectCols, b.nextIndex()), filter.Query)
+			WHERE d.text_search_vector @@ plainto_tsquery('simple', $%d)`, selectCols, queryIdx, queryIdx, queryIdx), filter.Query)
 	} else {
 		b.add(selectCols + `,
 			0.0 as rank,
@@ -201,8 +225,7 @@ func (q *Queries) CountDocumentsStructured(ctx context.Context, filter SearchFil
 
 	if filter.Query != "" {
 		b.add(fmt.Sprintf(`SELECT COUNT(*) FROM document d
-			JOIN document_fts ON d.id = document_fts.document_id
-			WHERE document_fts MATCH $%d`, b.nextIndex()), filter.Query)
+			WHERE d.text_search_vector @@ plainto_tsquery('simple', $%d)`, b.nextIndex()), filter.Query)
 	} else {
 		b.add(`SELECT COUNT(*) FROM document d WHERE 1=1`)
 	}

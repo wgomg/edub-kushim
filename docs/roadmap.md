@@ -11,7 +11,7 @@
 - HTTP server with middleware (request ID, parameter parsing via `ParamBag`)
 - Database layer with sqlc-generated type-safe queries → now PostgreSQL (previously SQLite WAL mode)
 - **Phase 1 — Schema & sqlc → PostgreSQL** ✓ SQL files rewritten for PostgreSQL syntax, sqlc engine changed to `postgresql`, generated Go code uses `$N` placeholders and correct PG types (`int32`, `time.Time`, `json.RawMessage`)
-- **Phase 2 — Connection & runtime → PostgreSQL** ✓ `NewPostgresDB` replaces `NewSQLiteDB`. Connection pool (25 open/5 idle/5 min lifetime). Auto-create database with `ensureDatabaseExists`. Config extended with Postgres fields (host, port, user, password, database, sslmode, dsn). Goose dialect switched to `postgres`. Error handling uses `pgerrcode`/`pgconn.PgError`. Raw SQL migrations and tests updated to PostgreSQL syntax. `BusyTimeoutMs` retired. Tests read `TEST_DATABASE_URL`. Backup/restore guarded for Postgres (Phase 4). **Phase 2 fixups**: `Task.Payload` changed from `json.RawMessage` to `*json.RawMessage` (sqlc override) to match nullable JSONB schema; all hand-rolled SQL outside sqlc (`fts5.go`, `structured_search.go`, `document_sort.go`, `scan.go`) migrated from SQLite `?` to PostgreSQL `$N` placeholders; `ListBatchOverviews` rewritten with `LEFT JOIN LATERAL` to satisfy strict `GROUP BY`; dashboard SQLite functions (`json_extract`, `datetime`, `julianday`) replaced with PostgreSQL equivalents (`->>`, `CURRENT_TIMESTAMP - INTERVAL`, `EXTRACT(EPOCH)`); `sanitizeQuery` stripped of FTS5-specific double-quote wrapping; public `ResetTestDatabase` helper added for cross-package test isolation.
+- **Phase 2 — Connection & runtime → PostgreSQL** ✓ `NewPostgresDB` replaces `NewSQLiteDB`. Connection pool (25 open/5 idle/5 min lifetime). Auto-create database with `ensureDatabaseExists`. Config extended with Postgres fields (host, port, user, password, database, sslmode, dsn). Goose dialect switched to `postgres`. Error handling uses `pgerrcode`/`pgconn.PgError`. Raw SQL migrations and tests updated to PostgreSQL syntax. `BusyTimeoutMs` retired. Tests read `TEST_DATABASE_URL`. Backup/restore guarded for Postgres (Phase 4). **Phase 2 fixups**: `Task.Payload` changed from `json.RawMessage` to `*json.RawMessage` (sqlc override) to match nullable JSONB schema; all hand-rolled SQL outside sqlc (`structured_search.go`, `document_sort.go`, `scan.go`) migrated from SQLite `?` to PostgreSQL `$N` placeholders; `ListBatchOverviews` rewritten with `LEFT JOIN LATERAL` to satisfy strict `GROUP BY`; dashboard SQLite functions (`json_extract`, `datetime`, `julianday`) replaced with PostgreSQL equivalents (`->>`, `CURRENT_TIMESTAMP - INTERVAL`, `EXTRACT(EPOCH)`); `sanitizeQuery` stripped of FTS5-specific double-quote wrapping; public `ResetTestDatabase` helper added for cross-package test isolation.
 - Configuration system with YAML support, default values, and validation
 - Structured logging with request correlation, file logging, numeric level filtering
 - CLI framework with dependency injection container (lazy DB, cache, dispatcher, pools)
@@ -67,12 +67,9 @@
 
 ### Search & Retrieval
 
-- SQLite FTS5 full-text search with `unicode61` tokenizer
-- Manual FTS5 query layer (`fts5.go`) — sqlc doesn't support FTS5 syntax
-- Query sanitization layer (`search.Engine`) — wraps user input as phrase literals
-- BM25 relevance ranking, snippet highlighting
-- Automatic FTS index sync via SQLite triggers (INSERT, UPDATE, DELETE)
-- `RebuildDocumentFTS` for disaster recovery
+- PostgreSQL tsvector full-text search via generated column + GIN index
+- `ts_rank` relevance ranking, `ts_headline` snippet highlighting
+- Automatic index sync via `GENERATED ALWAYS AS` — no manual update needed
 - **Structured search** (`POST /api/v1/documents/search`) — dynamic SQL query builder with filters for tags, people, document type, language, MIME type, date range, file size
 - **Search engine** (`internal/search/search.go`) — `Engine.SearchStructured()` returning results + total count
 - **Database query builder** (`internal/database/structured_search.go`) — dynamic `WHERE` clause composition with proper parameterization, batch tag/people fetching
@@ -100,7 +97,7 @@
 | `GET /api/v1/documents`                | List documents (sortable, paginated)                                                                 |
 | `GET /api/v1/documents/{id}`           | Get document with tags, people                                                                       |
 | `GET /api/v1/documents/{id}/file`      | Download PDF file                                                                                    |
-| `GET /api/v1/documents/search`         | FTS5 search with snippets                                                                            |
+| `GET /api/v1/documents/search`         | tsvector search with snippets                                                                        |
 | `POST /api/v1/documents/search`        | Structured search (tags, people, dates, size)                                                        |
 | `PUT /api/v1/documents/{id}`           | Update document metadata (title, type, language)                                                     |
 | `DELETE /api/v1/documents/{id}`        | Delete document + files                                                                              |
@@ -173,7 +170,7 @@
 | `kushim consume --force`      | Override stale PID lock                                |
 | `kushim consume cancel <id>`  | Cancel running batch                                   |
 | `kushim enrich <id>`          | Re-run enrichment for a single document                |
-| `kushim search`               | FTS5 search with ANSI highlighting                     |
+| `kushim search`               | tsvector search with ANSI highlighting                 |
 | `kushim task list`            | List tasks with filters                                |
 | `kushim task status <id>`     | Show task details                                      |
 | `kushim task retry <id>`      | Reset failed task to pending                           |
@@ -217,7 +214,7 @@
 ### Quality
 
 - ✓ Database integration tests (17 tests) — document/tag/people CRUD, task lifecycle, enrich flow, batch ownership, structured search, analytics queries, saved searches
-- ✓ Search engine tests (7 tests) — FTS5 search, structured search, pagination, query sanitization
+- ✓ Search engine tests (7 tests) — tsvector search, structured search, pagination, query sanitization
 - ✓ Task system tests (14 tests) — Store, dispatcher, runner, pool lifecycle, dedup key handling
 - ✓ API handler tests (65 tests) — health, document CRUD, tag/people CRUD, user CRUD, task endpoints, saved searches, concurrent operations, auth login/logout, token claims, errored file list/download/delete/delete-all, logs viewer (invalid name, file not found, success, lines clamping, large file tail, empty file), API key generate/revoke/rotate/status, ReEnrich handler (success + not found)
 - ✓ Auth package tests (7 tests) — session secret generation, JWT generation/validation, wrong secret, expired token, malformed token, ValidRole

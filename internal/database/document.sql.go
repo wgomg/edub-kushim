@@ -85,7 +85,8 @@ func (q *Queries) DeleteDocumentById(ctx context.Context, id int64) error {
 
 const getDocument = `-- name: GetDocument :one
 SELECT id, document_id, title, md5_checksum, sha512_checksum, mime_type, file_size, page_count, word_count,
-       char_count, language, created_at, modified_at, document_type_id, original_path, storage_path, text_content
+       char_count, language, created_at, modified_at, document_type_id, original_path, storage_path, text_content,
+       text_search_vector
 FROM document WHERE document_id = $1
 `
 
@@ -110,13 +111,15 @@ func (q *Queries) GetDocument(ctx context.Context, documentID string) (Document,
 		&i.OriginalPath,
 		&i.StoragePath,
 		&i.TextContent,
+		&i.TextSearchVector,
 	)
 	return i, err
 }
 
 const getDocumentById = `-- name: GetDocumentById :one
 SELECT id, document_id, title, md5_checksum, sha512_checksum, mime_type, file_size, page_count, word_count,
-       char_count, language, created_at, modified_at, document_type_id, original_path, storage_path, text_content
+       char_count, language, created_at, modified_at, document_type_id, original_path, storage_path, text_content,
+       text_search_vector
 FROM document WHERE id = $1
 `
 
@@ -141,6 +144,7 @@ func (q *Queries) GetDocumentById(ctx context.Context, id int64) (Document, erro
 		&i.OriginalPath,
 		&i.StoragePath,
 		&i.TextContent,
+		&i.TextSearchVector,
 	)
 	return i, err
 }

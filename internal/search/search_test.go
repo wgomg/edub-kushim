@@ -11,7 +11,8 @@ import (
 
 func setupSearchTest(t *testing.T) (*Engine, *database.Queries) {
 	t.Helper()
-	q, _ := database.NewTestQueries(t)
+	q, db := database.NewTestQueries(t)
+	database.ResetTestDatabase(db)
 	engine := NewEngine(testutil.NewTestLogger(), q)
 	return engine, q
 }
@@ -61,7 +62,7 @@ func insertSearchDoc(t *testing.T, q *database.Queries, title, textContent strin
 	}
 
 	docID := testutil.FormatString("doc-%d", len(textContent))
-	id, err := q.CreateDocument(context.Background(), database.CreateDocumentParams{
+	_, err = q.CreateDocument(context.Background(), database.CreateDocumentParams{
 		DocumentID:     docID,
 		Title:          title,
 		Md5Checksum:    testutil.FormatString("md5-%d", len(textContent)),
@@ -79,17 +80,6 @@ func insertSearchDoc(t *testing.T, q *database.Queries, title, textContent strin
 	if err != nil {
 		t.Fatalf("create document: %v", err)
 	}
-
-	// Update FTS directly
-	q.UpdateDocumentFTS(context.Background(), struct {
-		DocumentID int64
-		Title      string
-		Content    string
-	}{
-		DocumentID: id,
-		Title:      title,
-		Content:    textContent,
-	})
 }
 
 func TestSearchEngine(t *testing.T) {

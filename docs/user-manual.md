@@ -282,7 +282,7 @@ batch not found
 
 ### `kushim search`
 
-Full‑text search across indexed documents (currently FTS5, migrating to PostgreSQL tsvector in Phase 3).
+Full‑text search across indexed documents via PostgreSQL tsvector.
 
 ```
 kushim search "budget report"
@@ -294,10 +294,9 @@ kushim search --rebuild-index
 | ----------------- | ------- | ------------------------------------------ |
 | `--limit`         | `20`    | Max results (1–100)                        |
 | `--offset`        | `0`     | Result offset for pagination               |
-| `--rebuild-index` | `false` | Rebuild FTS5 index from the document table |
+| `--rebuild-index` | `false` | Reindex the tsvector GIN index (`idx_document_tsv`) |
 
-The query is wrapped in double-quotes for FTS5 phrase escaping (allowing
-AND/OR operators, `"phrase"`, and prefix wildcards like `budg*`).
+The query is passed to `plainto_tsquery('simple', ...)` which tokenizes the input and inserts `&` between tokens.
 Results show highlighted matches (ANSI bold/yellow).
 
 Output example:
@@ -782,7 +781,7 @@ GET /api/v1/documents/search?q=<query>&limit=50&offset=0
 
 | Query param | Default      | Description                                              |
 | ----------- | ------------ | -------------------------------------------------------- |
-| `q`         | — (required) | FTS5 query (supports AND, OR, NOT, `"phrase"`, prefix\*) |
+| `q`         | — (required) | tsquery plain text (tokenized with `plainto_tsquery`) |
 | `limit`     | `50`         | Max results (1–100)                                      |
 | `offset`    | `0`          | Pagination offset                                        |
 

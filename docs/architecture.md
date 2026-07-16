@@ -164,9 +164,11 @@ temp files). On success, the inbox original is removed.
 
 ### 7. FTS Indexing
 
-> **Removed from schema in Phase 1** (FTS5 → tsvector migration deferred to Phase 3).
-> The FTS5-related Go code (`fts5.go`, `structured_search.go`) uses SQLite FTS5 syntax
-> which fails against PostgreSQL — queries must be rewritten for PostgreSQL tsvector in Phase 3.
+The `document` table has a `text_search_vector` column of type `tsvector`,
+`GENERATED ALWAYS AS (to_tsvector('simple', coalesce(title, '') || ' ' || coalesce(text_content, ''))) STORED`,
+backed by a GIN index (`idx_document_tsv`). Queries use `plainto_tsquery('simple', ...)`
+for tokenization and `@@` for matching. Rank and snippet are produced by `ts_rank`
+and `ts_headline`.
 
 ### 8. Async Enrichment (Post-Consume)
 
@@ -222,7 +224,7 @@ When storing people from LLM results, the enricher:
    left empty for document-language renderings of foreign names.
 
 This pipeline is non-blocking: documents are stored and searchable immediately via
-FTS5, with enrichment arriving asynchronously.
+tsvector, with enrichment arriving asynchronously.
 
 ---
 
@@ -367,11 +369,11 @@ name collisions. Inbox files are always deleted after successful processing.
 
 ## Search & Retrieval
 
-The search system provides two tiers of document retrieval, backed by the FTS5 virtual table (schema-less until Phase 3 rewrites for tsvector) and a dynamic SQL query builder:
+The search system provides two tiers of document retrieval, backed by a PostgreSQL tsvector generated column and a dynamic SQL query builder:
 
-### Tier 1: Simple FTS5 Search (`GET /api/v1/documents/search?q=...`)
+### Tier 1: Simple tsvector Search (`GET /api/v1/documents/search?q=...`)
 
-Quick keyword search for users who just need to find documents by content. The query is sanitized via phrase wrapping and passed to the `document_fts` virtual table. Results are ranked by BM25 relevance and include highlighted `<b>` snippets. No metadata filtering — search terms match against `title` and `text_content` columns.
+Quick keyword search for users who just need to find documents by content. The query is sanitized and passed to `plainto_tsquery('simple', ...)` against the `text_search_vector` generated column. Results are ranked by `ts_rank` and include highlighted `<b>` snippets via `ts_headline`. No metadata filtering — search terms match against `title` and `text_content` columns.
 
 ### Tier 2: Structured Search (`POST /api/v1/documents/search`)
 
@@ -387,12 +389,10 @@ The structured search flows through three layers:
    - **Document type / language / MIME**: Simple `d.col = ?` equality (skipped when empty)
    - **Date ranges**: `d.col >= ? AND d.col <= ?` with optional from/to
    - **File size**: `d.file_size >= ? AND d.file_size <= ?`
-   - **Sorting**: Whitelisted column names (`title`, `mime_type`, `file_size`, `created_at`). When a FTS5 query is present, defaults to BM25 `rank` instead.
+   - **Sorting**: Whitelisted column names (`title`, `mime_type`, `file_size`, `created_at`). When a tsquery is present, defaults to `ts_rank` instead.
    - **Limit/Offset**: Standard `LIMIT ? OFFSET ?` pagination
 
-3. **FTS5 virtual table** (`internal/database/fts5.go`) — Uses `unicode61` tokenizer with no language-specific stemming for multilingual support. Index is kept in sync via SQLite triggers (removed from schema baseline; the Go code still uses FTS5 via raw SQL and works against test databases).
-
-   > **Phase 3**: Replaced by PostgreSQL `tsvector`/`tsquery` full-text search.
+3. **tsvector generated column** — The `document` table's `text_search_vector` column is `GENERATED ALWAYS AS (to_tsvector('simple', coalesce(title, '') || ' ' || coalesce(text_content, ''))) STORED`. Queries use `plainto_tsquery('simple', ...)` for tokenization and `@@` for matching, backed by a GIN index (`idx_document_tsv`).
 
 ### Result Enrichment
 
@@ -434,17 +434,16 @@ The `field:value` syntax in the search bar supports:
 
 ### Why Not a Dedicated Search Engine?
 
-FTS5 was chosen for zero operational overhead and transactionally consistent indexing.
-The `search.Engine` abstraction provides a clear upgrade path to Meilisearch, ZincSearch,
-or Elasticsearch. The current plan migrates from FTS5 to PostgreSQL tsvector (Phase 3),
-keeping the search abstraction intact.
+PostgreSQL tsvector provides zero-operational-overhead full-text search with transactionally
+consistent indexing (via `GENERATED ALWAYS AS`). The `search.Engine` abstraction provides a
+clear upgrade path to Meilisearch, ZincSearch, or Elasticsearch if needed.
 
 ---
 
 ## See Also
 
 - [Roadmap](roadmap.md) — Implementation status and priority queue
-- [Database Reference](reference/database.md) — Data models, schema, FTS5 setup, triggers, indexes
+- [Database Reference](reference/database.md) — Data models, schema, tsvector column, indexes
 - [Tools Reference](reference/tools.md) — Adapter interfaces for enrichment pipeline
 - [Pipeline Reference](reference/pipeline.md) — Consumption and enrichment engine details
 - [Task System Reference](reference/task-system.md) — Dispatcher and pool internals
@@ -474,7 +473,7 @@ keeping the search abstraction intact.
 
 ## Known Limitations
 
-- **FTS5**: No CJK word segmentation; text duplicated in `document` and `document_fts` tables
+- **tsvector `simple` config**: No CJK word segmentation. Upgrade to `'english'` or a custom config for stemming if needed.
 - **External dependencies**: `pdftotext`, `ghostscript`, and `ocrmypdf` required at runtime (only when using external-tool adapters; Go-native adapters have no runtime deps). The ocrmypdf adapter additionally requires `tesseract` and `unpaper` as companions, with `pngquant` recommended for image optimization. `curl` is required for any download (tessdata, Hugot model). Pre-flight checks at the consume entry point surface these requirements with actionable install hints.
 - **Build‑time**: Requires `gcc`, `gcc-c++`, `make`, `autotools` for Leptonica/Tesseract/MuPDF compilation. Additionally `libtokenizers.a` downloaded as a pre-built binary for Hugot. The web UI requires Node.js 24 (see `.nvmrc` — run `nvm use` to activate). Use `docker compose up` to avoid installing any host-side toolchain — the multi-stage Dockerfile handles all build dependencies inside a container.
 - **MuPDF / Tesseract CGo isolation**: Long-running CGo operations (OCR via gosseract, PDF cleanup via pdf_clean_file) are isolated into forked subprocesses (`kushim internal-ocr`, `kushim internal-mupdf-clean`) so that crashes or scheduler starvation in the C library affect only the child. The parent receives a normal Go error and can fall back or retry. Thin CGo calls like page counting remain in-process.

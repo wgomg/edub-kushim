@@ -26,23 +26,24 @@ type BatchOwner struct {
 }
 
 type Document struct {
-	ID             int64
-	DocumentID     string
-	Title          string
-	Md5Checksum    string
-	Sha512Checksum string
-	MimeType       string
-	FileSize       int64
-	PageCount      int32
-	WordCount      int32
-	CharCount      int32
-	Language       string
-	CreatedAt      sql.NullTime
-	ModifiedAt     sql.NullTime
-	DocumentTypeID int64
-	OriginalPath   string
-	StoragePath    string
-	TextContent    sql.NullString
+	ID               int64
+	DocumentID       string
+	Title            string
+	Md5Checksum      string
+	Sha512Checksum   string
+	MimeType         string
+	FileSize         int64
+	PageCount        int32
+	WordCount        int32
+	CharCount        int32
+	Language         string
+	CreatedAt        sql.NullTime
+	ModifiedAt       sql.NullTime
+	DocumentTypeID   int64
+	OriginalPath     string
+	StoragePath      string
+	TextContent      sql.NullString
+	TextSearchVector interface{}
 }
 
 type DocumentPeople struct {

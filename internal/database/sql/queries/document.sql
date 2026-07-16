@@ -1,11 +1,13 @@
 -- name: GetDocument :one
 SELECT id, document_id, title, md5_checksum, sha512_checksum, mime_type, file_size, page_count, word_count,
-       char_count, language, created_at, modified_at, document_type_id, original_path, storage_path, text_content
+       char_count, language, created_at, modified_at, document_type_id, original_path, storage_path, text_content,
+       text_search_vector
 FROM document WHERE document_id = $1;
 
 -- name: GetDocumentById :one
 SELECT id, document_id, title, md5_checksum, sha512_checksum, mime_type, file_size, page_count, word_count,
-       char_count, language, created_at, modified_at, document_type_id, original_path, storage_path, text_content
+       char_count, language, created_at, modified_at, document_type_id, original_path, storage_path, text_content,
+       text_search_vector
 FROM document WHERE id = $1;
 
 -- name: ListDocuments :many

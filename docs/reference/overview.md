@@ -95,7 +95,7 @@ internal/
 │   ├── task.sql.go        # Generated task queries (includes SetEnrichTaskPending, DiscardEnrichTask)
 │   ├── user.sql.go        # Generated user queries
 │   ├── saved_search.sql.go # Generated saved search queries (CreateSavedSearch, ListSavedSearches, DeleteSavedSearch)
-│   ├── fts5.go            # Manual FTS5 query implementation (SearchDocumentsFTS, etc.)
+│   ├── structured_search.go # Dynamic search query builder with tsvector support
 │   └── sql/               # Embedded SQL assets
 │       ├── schema/        # Seed SQL files (seed-tags.sql, seed-document-types.sql, seed-people-types.sql)
 │       │   └── migrations/ # goose versioned migrations (00001_baseline.sql, ...) — also read by sqlc
@@ -239,7 +239,7 @@ This system is a document management pipeline with three main stages:
 
 1. **Consumption** — Scans an inbox directory, extracts text (via MuPDF/gopdf/pdftotext), optionally OCRs (via Tesseract), optimizes PDFs, stores files with checksums
 2. **Enrichment** — Applies LLM-based classification (title, doc type, tags, people, language) plus semantic tag matching via embeddings
-3. **Search & API** — Full-text search via SQLite FTS5, REST API with SvelteKit SPA frontend
+3. **Search & API** — Full-text search via PostgreSQL tsvector, REST API with SvelteKit SPA frontend
 
 Processing is async via a task queue with batch tracking and a polling CLI mode.
 
@@ -257,7 +257,7 @@ The system uses two linked binaries with **worker forking**:
 - [CLI Commands](cli.md) — Command definitions, container, flags
 - [Pipeline](pipeline.md) — Consumption and enrichment engines
 - [Task System](task-system.md) — Pool, dispatcher, CRUD, task handlers
-- [Database](database.md) — Schema, queries, FTS5
+- [Database](database.md) — Schema, queries, tsvector
 - [Search](search.md) — Search engine, structured search, autocomplete
 - [Tools](tools.md) — Adapter framework for all processing tools
 - [Config & Utils](config-and-utils.md) — Configuration, cache, logging, utilities

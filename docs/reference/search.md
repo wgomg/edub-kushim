@@ -4,7 +4,7 @@
 
 The search system provides two tiers of document retrieval:
 
-1. **FTS5 Full-Text Search** (`GET /api/v1/documents/search`) — Keyword search using SQLite's FTS5 engine with BM25 ranking and snippet highlighting (migrating to PostgreSQL tsvector in Phase 3).
+1. **Full-Text Search** (`GET /api/v1/documents/search`) — Keyword search using PostgreSQL tsvector with `ts_rank` ranking and `ts_headline` snippet highlighting.
 2. **Structured Search** (`POST /api/v1/documents/search`) — Combines full-text search with metadata filters (tags, people, document type, language, MIME type, date ranges, file size) and returns total count for pagination.
 
 Both are backed by the `search.Engine` struct which wraps database queries with sanitization and result mapping.
@@ -37,14 +37,14 @@ Maps database rows to API-friendly fields:
 | `OriginalPath`    | `string`  | Path to original file         |
 | `StoragePath`     | `string`  | Path to processed file        |
 | `Snippet`         | `string`  | Highlighted FTS snippet       |
-| `Rank`            | `float64` | BM25 relevance score          |
+| `Rank`            | `float64` | ts_rank relevance score        |
 
 #### `Filter`
 JSON-serializable request body for structured search:
 
 ```go
 type Filter struct {
-    Query           string         `json:"query"`           // FTS5 query string
+    Query           string         `json:"query"`           // tsquery plain text
     Tags            []string       `json:"tags"`            // Tag names to filter by (AND)
     People          []PersonFilter `json:"people"`          // Person name + type pairs
     DocumentType    string         `json:"document_type"`   // Document type name
@@ -90,7 +90,7 @@ type FileSizeRange struct {
 ### Methods
 
 #### `Engine.Search(ctx, query string, limit, offset int32) ([]Result, error)`
-Simple FTS5 search. Calls `database.SearchDocumentsFTS`. Returns results with BM25 rank and highlighted snippet.
+Simple tsvector search. Calls `database.SearchDocumentsStructured` with a minimal `SearchFilter`. Returns results with `ts_rank` and `ts_headline` snippet.
 
 #### `Engine.SearchStructured(ctx, filter Filter) ([]Result, total int64, error)`
 Structured search with metadata filters. First calls `database.CountDocumentsStructured()` for total count, then `database.SearchDocumentsStructured()` for paginated results. Translates the `Filter` struct into the database-layer `SearchFilter` struct.
@@ -98,33 +98,22 @@ Structured search with metadata filters. First calls `database.CountDocumentsStr
 ### Functions
 
 #### `sanitizeQuery(q string) string`
-Trims whitespace from the user query. Previously wrapped queries in FTS5 double-quote phrase escaping; the FTS5 layer is being replaced by PostgreSQL tsvector in Phase 3.
+Trims whitespace from the user query before passing it to `plainto_tsquery`.
 
 ---
 
-## `internal/database/fts5.go`
+## `internal/database/structured_search.go` — `FTSDocumentRow`
 
 ### Struct
 
-`FTSDocumentRow` — Maps FTS5 query results with these additional computed fields:
+`FTSDocumentRow` — Maps tsvector query results with these additional computed fields:
 
 | Field     | Type      | Description                              |
 | --------- | --------- | ---------------------------------------- |
-| `Rank`    | `float64` | BM25 relevance score from FTS5           |
-| `Snippet` | `string`  | Highlighted text with `<b>` tags         |
+| `Rank`    | `float64` | `ts_rank` relevance from tsvector        |
+| `Snippet` | `string`  | `ts_headline` highlighted text           |
 
-### Functions
-
-| Function                        | Description                                  |
-| ------------------------------- | -------------------------------------------- |
-| `SearchDocumentsFTS`            | FTS5 search with query, limit, offset        |
-| `SearchDocumentsFTSWithFilters` | FTS5 search with optional status filter      |
-| `GetDocumentFTSContent`         | Get raw FTS5 content for a document          |
-| `UpdateDocumentFTS`             | Update FTS5 index for a document             |
-| `DeleteDocumentFTS`             | Remove document from FTS5 index              |
-| `RebuildDocumentFTS`            | Rebuild FTS5 index from document table       |
-
-FTS5 virtual table uses `unicode61` tokenizer. Index is synced via SQLite triggers on `document` table (`INSERT`, `UPDATE`, `DELETE`).
+The tsvector column is `GENERATED ALWAYS AS (to_tsvector('simple', coalesce(title, '') || ' ' || coalesce(text_content, ''))) STORED` on the `document` table, backed by a GIN index (`idx_document_tsv`). Queries use `plainto_tsquery('simple', ...)` for tokenization and `@@` for matching.
 
 ---
 
@@ -154,7 +143,7 @@ A dynamic SQL query builder that composes `WHERE` clauses with proper parameteri
 #### `SearchDocumentsStructured(ctx, filter) ([]FTSDocumentRow, error)`
 Builds a SELECT query dynamically:
 
-- If `filter.Query` is non-empty: joins `document_fts`, adds `MATCH $N`, `bm25()` for rank, `snippet()` for highlighting
+- If `filter.Query` is non-empty: adds `WHERE d.text_search_vector @@ plainto_tsquery('simple', $N)`, `ts_rank()` for rank, `ts_headline()` for highlighting
 - Applies tag subquery (`document_tag JOIN tag`), people subqueries (`document_people JOIN people JOIN people_type`), document type subquery, language/MIME equality, date ranges, file size ranges
 - Applies missing filters (`MissingLanguage` → `d.language IN ('und','')`, `MissingType` → `d.document_type_id = 1`, `Untagged` → `NOT EXISTS` subquery on `document_tag`)
 - When query is present: ordered by `rank`; otherwise ordered by `sort_by`/`sort_order` (whitelisted: `title`, `mime_type`, `file_size`, `created_at`)
@@ -169,7 +158,7 @@ Same filter logic but `SELECT COUNT(*)` for total count without ordering. Uses t
 
 | Endpoint                         | Method | Description                                                  |
 | -------------------------------- | ------ | ------------------------------------------------------------ |
-| `/api/v1/documents/search`       | GET    | FTS5 full-text search with BM25 ranking and snippet          |
+| `/api/v1/documents/search`       | GET    | tsvector full-text search with ts_rank and ts_headline       |
 | `/api/v1/documents/search`       | POST   | Structured search with metadata filters, returns total count |
 | `/api/v1/tags?q=`                | GET    | Autocomplete tag names (prefix search, LIKE + LIMIT)         |
 | `/api/v1/people?q=`              | GET    | Autocomplete people names (prefix search, LIKE + LIMIT)      |
@@ -279,5 +268,5 @@ Quoted values are supported for names with spaces: `author:"Jane Smith"`.
 ## See Also
 
 - [API](api.md) — Document and task response types
-- [Database](database.md) — FTS5 schema, triggers, indexes
+- [Database](database.md) — tsvector column, indexes, schema
 - [Frontend](frontend.md) — SvelteKit UI implementation

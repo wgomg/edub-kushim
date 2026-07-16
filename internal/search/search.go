@@ -83,9 +83,13 @@ func (e *Engine) Search(ctx context.Context, query string, limit, offset int32) 
 		return nil, nil
 	}
 
-	rows, err := e.queries.SearchDocumentsFTS(ctx, query, limit, offset)
+	rows, err := e.queries.SearchDocumentsStructured(ctx, database.SearchFilter{
+		Query:  query,
+		Limit:  limit,
+		Offset: offset,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("fts5 search: %w", err)
+		return nil, fmt.Errorf("tsvector search: %w", err)
 	}
 
 	results := make([]Result, len(rows))

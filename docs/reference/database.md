@@ -32,7 +32,6 @@ Numbered SQL files in `internal/database/sql/schema/migrations/`. Each file uses
 - `-- +goose StatementBegin` / `-- +goose StatementEnd` — wraps multi-statement SQL (triggers, functions) so goose's semicolon-based parser doesn't split them prematurely
 
 > **Note**: The current baseline has no triggers or multi-statement blocks.
-> FTS5-related triggers were removed with the FTS5 virtual table (deferred to Phase 3).
 
 ### sqlc integration
 
@@ -154,15 +153,24 @@ Migrations run automatically on startup (no manual CLI command needed):
 
 ---
 
-## `fts5.go`
+## `Document` — tsvector generated column
 
-### Struct
+The `document` table has a `text_search_vector` column of type `tsvector` that is
+`GENERATED ALWAYS AS (to_tsvector('simple', coalesce(title, '') || ' ' || coalesce(text_content, ''))) STORED`.
+This means:
 
-`FTSDocumentRow` — `ID`, `DocumentID` (UUID string), `Title`, `Md5Checksum`, `Sha512Checksum`, `MimeType`, `FileSize`, `PageCount`, `WordCount`, `CharCount`, `Language`, `CreatedAt`, `ModifiedAt`, `DocumentTypeID`, `OriginalPath`, `StoragePath`, `TextContent`, `Rank`, `Snippet`
+- PostgreSQL automatically populates the column when `title` or `text_content` changes
+- No application-level write coordination is needed
+- Queries use `@@` operator with `plainto_tsquery('simple', $1)` for matching
+- The `'simple'` config provides exact-match semantics (no stemming)
 
-### Functions
+The column is backed by a GIN index:
 
-`SearchDocumentsFTS`, `SearchDocumentsFTSWithFilters`, `GetDocumentFTSContent`, `UpdateDocumentFTS`, `DeleteDocumentFTS`, `RebuildDocumentFTS`
+```sql
+CREATE INDEX idx_document_tsv ON document USING GIN (text_search_vector);
+```
+
+`FTSDocumentRow` (in `structured_search.go`) maps query results with `Rank` (`float64`, from `ts_rank`) and `Snippet` (`string`, from `ts_headline`).
 
 ---
 
@@ -185,9 +193,9 @@ A flexible SQL query builder that composes `WHERE` clauses dynamically:
 ### Functions
 
 - `SearchDocumentsStructured(ctx, filter) ([]FTSDocumentRow, error)` — Dynamically builds a SELECT query:
-  - If `query` is non-empty: joins `document_fts`, adds `MATCH $N`, `bm25()` rank, `snippet()` highlighting
+  - If `query` is non-empty: adds `WHERE d.text_search_vector @@ plainto_tsquery('simple', $N)`, `ts_rank()` rank, `ts_headline()` snippet
   - Applies tag subquery, people subqueries, document type subquery, language/MIME equality, date ranges, file size ranges
-  - When FTS query present: ordered by `rank`; otherwise ordered by requested `sort_by`/`sort_order`
+  - When tsquery present: ordered by `rank`; otherwise ordered by requested `sort_by`/`sort_order`
   - Uses `LIMIT $N OFFSET $N` for pagination
 - `CountDocumentsStructured(ctx, filter) (int64, error)` — Same filters but `SELECT COUNT(*)` for total count
 
@@ -246,7 +254,7 @@ The last 4 methods back the dashboard analytics panel. `LanguageDistribution` an
 ## Key Indexes
 
 - `task`: `status`, `task_type`, `batch_id`, `(batch_id, status)`, partial `(created_at WHERE status = 'pending')`, partial unique `(task_type, dedup_key) WHERE status IN ('pending', 'processing') AND dedup_key IS NOT NULL`, partial `(task_type, created_at) WHERE status = 'pending'`
-- `document`: `md5_checksum`, `sha512_checksum`, `created_at`, `document_type_id`
+- `document`: `md5_checksum`, `sha512_checksum`, `created_at`, `document_type_id`, GIN `text_search_vector` (`idx_document_tsv`)
 - `document_people`: `document_id`, `people_id`
 - `document_tag`: `document_id`, `tag_id`
 - `people`: `normalized_name` (UNIQUE)
@@ -262,11 +270,6 @@ instead of plain `INSERT` to avoid duplicate-key errors on re-enrichment.
 The consolidated baseline (`00001_baseline.sql`) replaces all migrations `00002`–`00011`.
 New schema changes after the baseline are written as numbered migration files (starting at `00002`).
 Goose tracks which versions have been applied in the `goose_db_version` table.
-
-> **FTS5 removed**: The FTS5 virtual table (`document_fts`), triggers, and `IF NOT EXISTS`
-> modifiers have been removed from the baseline. FTS5 functionality is maintained through
-> the existing Go code (`fts5.go`, `structured_search.go`) which uses raw SQL strings.
-> PostgreSQL `tsvector`/`tsquery` full-text search will replace FTS5 in Phase 3.
 
 ## Migration Version Table
 
