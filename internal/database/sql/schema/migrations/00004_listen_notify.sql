@@ -1,4 +1,5 @@
 -- +goose Up
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION notify_batch_queued()
 RETURNS trigger AS $$
 BEGIN
@@ -8,6 +9,7 @@ BEGIN
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+-- +goose StatementEnd
 
 CREATE TRIGGER batch_queued_notify
 AFTER INSERT OR UPDATE ON batch
