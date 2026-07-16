@@ -937,7 +937,7 @@ func resetDB(t *testing.T, q *Queries) {
 	}
 	seeds := []string{"document-types", "people-types", "tags"}
 	for _, seed := range seeds {
-		data, err := schemaFS.ReadFile(fmt.Sprintf("sql/schema/seed-%s.sql", seed))
+		data, err := SchemaFS.ReadFile(fmt.Sprintf("sql/schema/seed-%s.sql", seed))
 		if err != nil {
 			t.Fatalf("read seed %s: %v", seed, err)
 		}

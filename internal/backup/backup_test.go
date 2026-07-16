@@ -3,22 +3,21 @@ package backup
 import (
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 )
 
 func TestCreate_FullBackup(t *testing.T) {
-	dir := t.TempDir()
+	db := database.NewTestDB(t)
+	t.Cleanup(func() { database.ResetTestDatabase(db) })
 
-	dbPath := filepath.Join(dir, "test.db")
-	db := openTestDB(t, dbPath)
-	db.Close()
+	dir := t.TempDir()
 
 	configPath := filepath.Join(dir, "config.yaml")
 	testutil.CreateTestFile(t, configPath, "test: true\n")
@@ -30,7 +29,7 @@ func TestCreate_FullBackup(t *testing.T) {
 	backupDir := filepath.Join(dir, "backups")
 	os.MkdirAll(backupDir, 0755)
 
-	result, err := Create(context.Background(), dbPath, backupDir, configPath, filepath.Join(dir, "storage"))
+	result, err := Create(context.Background(), db, database.SchemaFS, backupDir, configPath, filepath.Join(dir, "storage"))
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -53,6 +52,9 @@ func TestCreate_FullBackup(t *testing.T) {
 	if result.Manifest.Version != 1 {
 		t.Errorf("manifest.Version = %d, want 1", result.Manifest.Version)
 	}
+	if result.Manifest.Format != "sql-dump" {
+		t.Errorf("manifest.Format = %q, want \"sql-dump\"", result.Manifest.Format)
+	}
 	if !strings.HasPrefix(result.Manifest.ConfigHash, "sha256:") {
 		t.Errorf("manifest.ConfigHash = %q, want sha256: prefix", result.Manifest.ConfigHash)
 	}
@@ -69,18 +71,17 @@ func TestCreate_MissingDB(t *testing.T) {
 	backupDir := filepath.Join(dir, "backups")
 	os.MkdirAll(backupDir, 0755)
 
-	_, err := Create(context.Background(), "/nonexistent/db", backupDir, configPath, filepath.Join(dir, "storage"))
+	_, err := Create(context.Background(), nil, database.SchemaFS, backupDir, configPath, filepath.Join(dir, "storage"))
 	if err == nil {
-		t.Fatal("Create() expected error for missing DB")
+		t.Fatal("Create() expected error for nil db")
 	}
 }
 
 func TestCreate_MissingStorageDir(t *testing.T) {
-	dir := t.TempDir()
+	db := database.NewTestDB(t)
+	t.Cleanup(func() { database.ResetTestDatabase(db) })
 
-	dbPath := filepath.Join(dir, "test.db")
-	db := openTestDB(t, dbPath)
-	db.Close()
+	dir := t.TempDir()
 
 	configPath := filepath.Join(dir, "config.yaml")
 	testutil.CreateTestFile(t, configPath, "test: true\n")
@@ -88,7 +89,7 @@ func TestCreate_MissingStorageDir(t *testing.T) {
 	backupDir := filepath.Join(dir, "backups")
 	os.MkdirAll(backupDir, 0755)
 
-	result, err := Create(context.Background(), dbPath, backupDir, configPath, "/nonexistent/storage")
+	result, err := Create(context.Background(), db, database.SchemaFS, backupDir, configPath, "/nonexistent/storage")
 	if err != nil {
 		t.Fatalf("Create() with missing storage: %v", err)
 	}
@@ -98,11 +99,10 @@ func TestCreate_MissingStorageDir(t *testing.T) {
 }
 
 func TestCreate_NoStorageFiles(t *testing.T) {
-	dir := t.TempDir()
+	db := database.NewTestDB(t)
+	t.Cleanup(func() { database.ResetTestDatabase(db) })
 
-	dbPath := filepath.Join(dir, "test.db")
-	db := openTestDB(t, dbPath)
-	db.Close()
+	dir := t.TempDir()
 
 	configPath := filepath.Join(dir, "config.yaml")
 	testutil.CreateTestFile(t, configPath, "test: true\n")
@@ -113,12 +113,71 @@ func TestCreate_NoStorageFiles(t *testing.T) {
 	backupDir := filepath.Join(dir, "backups")
 	os.MkdirAll(backupDir, 0755)
 
-	result, err := Create(context.Background(), dbPath, backupDir, configPath, storageDir)
+	result, err := Create(context.Background(), db, database.SchemaFS, backupDir, configPath, storageDir)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	if result.FilesCount != 0 {
 		t.Errorf("FilesCount = %d, want 0 for empty storage", result.FilesCount)
+	}
+}
+
+func TestCreate_SQLDumpContent(t *testing.T) {
+	db := database.NewTestDB(t)
+	t.Cleanup(func() { database.ResetTestDatabase(db) })
+
+	dir := t.TempDir()
+
+	configPath := filepath.Join(dir, "config.yaml")
+	testutil.CreateTestFile(t, configPath, "test: true\n")
+
+	storageDir := filepath.Join(dir, "storage")
+	os.MkdirAll(storageDir, 0755)
+
+	backupDir := filepath.Join(dir, "backups")
+	os.MkdirAll(backupDir, 0755)
+
+	result, err := Create(context.Background(), db, database.SchemaFS, backupDir, configPath, storageDir)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	extractDir := filepath.Join(dir, "extract")
+	if err := ExtractArchive(result.Path, extractDir); err != nil {
+		t.Fatalf("ExtractArchive: %v", err)
+	}
+
+	sqlData, err := os.ReadFile(filepath.Join(extractDir, "edub.sql"))
+	if err != nil {
+		t.Fatalf("read edub.sql: %v", err)
+	}
+	sqlContent := string(sqlData)
+
+	if !strings.Contains(sqlContent, "BEGIN;") {
+		t.Error("SQL dump missing BEGIN")
+	}
+	if !strings.Contains(sqlContent, "SET session_replication_role = 'replica'") {
+		t.Error("SQL dump missing session_replication_role")
+	}
+	if !strings.Contains(sqlContent, "SET session_replication_role = 'origin'") {
+		t.Error("SQL dump missing session_replication_role restore")
+	}
+	if !strings.Contains(sqlContent, "COMMIT;") {
+		t.Error("SQL dump missing COMMIT")
+	}
+	if !strings.Contains(sqlContent, "CREATE TABLE document_type") {
+		t.Error("SQL dump missing schema preamble")
+	}
+	if !strings.Contains(sqlContent, `INSERT INTO "document_type"`) {
+		t.Error("SQL dump missing INSERT for document_type")
+	}
+	for line := range strings.SplitSeq(sqlContent, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), `INSERT INTO "document_type"`) {
+			if strings.Contains(line, "text_search_vector") {
+				t.Error("INSERT INTO document_type includes generated column text_search_vector")
+			}
+			break
+		}
 	}
 }
 
@@ -203,17 +262,4 @@ func TestFileHash(t *testing.T) {
 	if got != want {
 		t.Errorf("hash = %s, want %s", got, want)
 	}
-}
-
-func openTestDB(t *testing.T, path string) *sql.DB {
-	t.Helper()
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
-	}
-	if _, err := db.Exec("CREATE TABLE IF NOT EXISTS test (id INTEGER PRIMARY KEY)"); err != nil {
-		db.Close()
-		t.Fatalf("CREATE TABLE: %v", err)
-	}
-	return db
 }

@@ -122,7 +122,7 @@ The API server (`edub`) is a pure Go binary with no C dependencies. All CGo-heav
 - **Async enrichment** — task queue with worker pools, batch tracking, progress polling; TextRank reduction before LLM
 - **Post-LLM consolidation** — normalized tags re-matched against canonical embeddings to fix casing and synonym mismatches
 - **User accounts & auth** — bcrypt passwords, JWT sessions, API keys, role-based access (admin/editor/viewer)
-- **Backup & restore** — `VACUUM INTO` database snapshots, timestamped `tar.gz` archives with config + storage
+- **Backup & restore** — App-level PostgreSQL SQL dump (schema + data in a transaction), timestamped `tar.gz` archives with config + storage
 - **Orphaned file management** — detect, quarantine, restore, and re-ingest orphaned files
 - **Dashboard** — activity timeline, batch overview, storage analytics, document type/language/tag distributions
 - **Web UI** — SvelteKit SPA with dashboard, structured search, document detail, settings, user management, tag/people/document-type administration, task monitoring, log viewer, orphaned file management

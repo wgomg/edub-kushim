@@ -159,7 +159,7 @@ matcherClient := tagmatch.NewMatcherClient(c.socketPath(), tagmatch.MaxMatchBody
 tagSvc, err := service.NewTag(queries, logger, matcherClient)
 enricher, err := enrichment.NewEnricher(cfg, logger, db, services, matcherClient)
 registry.Register("config", configtask.NewConfigTaskHandler(logger))
-registry.Register("backup", taskhandlers.NewBackupTaskHandler(cfg, logger, &backupMu))
+registry.Register("backup", taskhandlers.NewBackupTaskHandler(db, cfg, logger, &backupMu))
 ```
 
 The config pool is started alongside consume/enrich pools when a CLI command runs.

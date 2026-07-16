@@ -3,6 +3,8 @@ package backup
 import (
 	"archive/tar"
 	"compress/gzip"
+	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -117,7 +119,49 @@ func ExtractArchive(archivePath, destDir string) error {
 	return nil
 }
 
-func ReplaceFiles(extractDir, dbPath, configPath, storageDir string) error {
+func ReplaceFiles(extractDir string, db *sql.DB, dbPath, configPath, storageDir string) error {
+	manifestData, err := os.ReadFile(filepath.Join(extractDir, "manifest.json"))
+	if err != nil {
+		return fmt.Errorf("read manifest: %w", err)
+	}
+	var manifest Manifest
+	if err := json.Unmarshal(manifestData, &manifest); err != nil {
+		return fmt.Errorf("unmarshal manifest: %w", err)
+	}
+
+	if manifest.Format == "sql-dump" {
+		if db == nil {
+			return fmt.Errorf("database connection required for sql-dump restore")
+		}
+		sqlPath := filepath.Join(extractDir, "edub.sql")
+		data, err := os.ReadFile(sqlPath)
+		if err != nil {
+			return fmt.Errorf("read sql dump: %w", err)
+		}
+		if _, err := db.ExecContext(context.Background(), string(data)); err != nil {
+			return fmt.Errorf("execute sql dump: %w", err)
+		}
+	} else {
+		extractDB := filepath.Join(extractDir, "edub.db")
+		if _, err := os.Stat(extractDB); err == nil {
+			tmpDB, err := os.CreateTemp(filepath.Dir(dbPath), "db-swap-*.db")
+			if err != nil {
+				return fmt.Errorf("create temp db: %w", err)
+			}
+			tmpDBPath := tmpDB.Name()
+			tmpDB.Close()
+			defer os.Remove(tmpDBPath)
+
+			if err := copyFile(extractDB, tmpDBPath); err != nil {
+				return fmt.Errorf("copy db to temp: %w", err)
+			}
+
+			if err := os.Rename(tmpDBPath, dbPath); err != nil {
+				return fmt.Errorf("rename db into place: %w", err)
+			}
+		}
+	}
+
 	extractStorage := filepath.Join(extractDir, "storage")
 	if _, err := os.Stat(extractStorage); err == nil {
 		if err := os.MkdirAll(filepath.Dir(storageDir), 0755); err != nil {
@@ -152,25 +196,6 @@ func ReplaceFiles(extractDir, dbPath, configPath, storageDir string) error {
 	if _, err := os.Stat(extractConfig); err == nil {
 		if err := copyFile(extractConfig, configPath); err != nil {
 			return fmt.Errorf("replace config: %w", err)
-		}
-	}
-
-	extractDB := filepath.Join(extractDir, "edub.db")
-	if _, err := os.Stat(extractDB); err == nil {
-		tmpDB, err := os.CreateTemp(filepath.Dir(dbPath), "db-swap-*.db")
-		if err != nil {
-			return fmt.Errorf("create temp db: %w", err)
-		}
-		tmpDBPath := tmpDB.Name()
-		tmpDB.Close()
-		defer os.Remove(tmpDBPath)
-
-		if err := copyFile(extractDB, tmpDBPath); err != nil {
-			return fmt.Errorf("copy db to temp: %w", err)
-		}
-
-		if err := os.Rename(tmpDBPath, dbPath); err != nil {
-			return fmt.Errorf("rename db into place: %w", err)
 		}
 	}
 

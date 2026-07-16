@@ -9,10 +9,10 @@ import (
 )
 
 //go:embed sql/schema
-var schemaFS embed.FS
+var SchemaFS embed.FS
 
 func InitializeSchema(db *sql.DB) error {
-	goose.SetBaseFS(schemaFS)
+	goose.SetBaseFS(SchemaFS)
 	goose.SetDialect("postgres")
 
 	if err := goose.Up(db, "sql/schema/migrations", goose.WithAllowMissing()); err != nil {
@@ -21,7 +21,7 @@ func InitializeSchema(db *sql.DB) error {
 
 	seeders := []string{"tags", "document-types", "people-types"}
 	for _, seed := range seeders {
-		seeder, err := schemaFS.ReadFile(fmt.Sprintf("sql/schema/seed-%s.sql", seed))
+		seeder, err := SchemaFS.ReadFile(fmt.Sprintf("sql/schema/seed-%s.sql", seed))
 		if err != nil {
 			return fmt.Errorf("read embedded %s: %w", seed, err)
 		}
@@ -34,7 +34,7 @@ func InitializeSchema(db *sql.DB) error {
 }
 
 func ResetDatabase(db *sql.DB) error {
-	goose.SetBaseFS(schemaFS)
+	goose.SetBaseFS(SchemaFS)
 	goose.SetDialect("postgres")
 
 	if err := goose.Reset(db, "sql/schema/migrations", goose.WithAllowMissing()); err != nil {

@@ -481,14 +481,10 @@ kushim backup --path /custom/backup/dir
 | `--path` | Config `backup.path` (or `<config_dir>/backups/`) | Override output directory |
 
 The backup creates a timestamped `tar.gz` archive containing:
-- `edub.db` — Database snapshot via `pg_dump`
+- `edub.sql` — Self-contained SQL dump (schema + data, wrapped in a transaction)
 - `config.yaml` — Configuration file at backup time
 - `storage/` — Full storage directory tree (originals, processed, errors)
-- `manifest.json` — Backup metadata (version, timestamp, sizes, config SHA256 hash)
-
-> **Phase 2 note**: PostgreSQL backup and restore are not yet implemented
-> (scheduled for Phase 4). The `kushim backup` and `kushim restore` commands
-> return an error when `database.type: postgres`.
+- `manifest.json` — Backup metadata (version, `"sql-dump"` format, timestamp, sizes, config SHA256 hash)
 
 ### `kushim restore`
 
@@ -511,8 +507,9 @@ The restore process:
 2. Checks that the queue daemon is not running (refuses unless `--force`)
 3. Prompts for confirmation (skipped with `--force`)
 4. Extracts the archive to a temporary directory
-5. Replaces storage (via atomic rename-swap), config, and database (last)
-6. Prints restart instructions
+5. Executes the SQL dump against the database (schema drop + recreate + data insert)
+6. Replaces storage (via atomic rename-swap) and configuration file
+7. Prints restart instructions
 
 ---
 

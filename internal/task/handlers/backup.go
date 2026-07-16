@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -9,18 +10,21 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/backup"
 	"github.com/wgomg/edub-kushim/internal/config"
+	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type BackupTaskHandler struct {
+	db       *sql.DB
 	config   *config.Config
 	logger   *utils.Logger
 	backupMu *sync.RWMutex
 }
 
-func NewBackupTaskHandler(cfg *config.Config, logger *utils.Logger, backupMu *sync.RWMutex) *BackupTaskHandler {
+func NewBackupTaskHandler(db *sql.DB, cfg *config.Config, logger *utils.Logger, backupMu *sync.RWMutex) *BackupTaskHandler {
 	return &BackupTaskHandler{
+		db:       db,
 		config:   cfg,
 		logger:   logger,
 		backupMu: backupMu,
@@ -35,10 +39,9 @@ func (h *BackupTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMe
 
 	h.logger.Info(nil, "starting scheduled backup")
 
-	dbPath := filepath.Join(h.config.Db.Path, h.config.Db.Name)
 	configPath := filepath.Join(h.config.App.ConfigDir, "config.yaml")
 
-	result, err := backup.Create(ctx, dbPath, h.config.Backup.Path, configPath, h.config.Storage.StorageDir)
+	result, err := backup.Create(ctx, h.db, database.SchemaFS, h.config.Backup.Path, configPath, h.config.Storage.StorageDir)
 	if err != nil {
 		return nil, fmt.Errorf("backup failed: %w", err)
 	}

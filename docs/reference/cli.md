@@ -170,8 +170,8 @@ The daemon also starts a **backup pool** (1 worker, 60s poll interval) when `bac
 
 ### Functions
 
-- `backupHandler(c, args) error` — `kushim backup [--path <dir>]` — Runs a synchronous backup: acquires `backupMu.TryLock()`, creates a `tar.gz` archive of the DB (via `VACUUM INTO`), config file, and storage directory, prints the result, applies retention cleanup.
-- `restoreHandler(c, args) error` — `kushim restore <backup-file.tar.gz> [--force] [--dry-run]` — Validates the archive, checks the running daemon's PID file, prompts for confirmation (unless `--force`), extracts to a temp dir, and replaces DB, config, and storage via atomic rename-swap.
+- `backupHandler(c, args) error` — `kushim backup [--path <dir>]` — Runs a synchronous backup: acquires `backupMu.TryLock()`, creates a `tar.gz` archive of the DB (via app-level SQL dump), config file, and storage directory, prints the result, applies retention cleanup.
+- `restoreHandler(c, args) error` — `kushim restore <backup-file.tar.gz> [--force] [--dry-run]` — Validates the archive, checks the running daemon's PID file, prompts for confirmation (unless `--force`), extracts to a temp dir, executes the SQL dump against the database, then replaces storage and config.
 
 ---
 

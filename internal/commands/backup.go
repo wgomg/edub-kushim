@@ -11,12 +11,10 @@ import (
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/backup"
+	"github.com/wgomg/edub-kushim/internal/database"
 )
 
 func backupHandler(c *Container, args []string) error {
-	if c.config.Db.Type == "postgres" {
-		return fmt.Errorf("Postgres backup is not yet implemented (coming in Phase 4)")
-	}
 	fp := NewFlagParser(args)
 	if fp.Help("Usage: kushim backup [--path <dir>]\n"+
 		"  Run a backup immediately.\n\n"+
@@ -40,7 +38,10 @@ func backupHandler(c *Container, args []string) error {
 		backupDir = overridePath
 	}
 
-	dbPath := filepath.Join(c.config.Db.Path, c.config.Db.Name)
+	db, err := c.GetDB()
+	if err != nil {
+		return err
+	}
 	configPath := filepath.Join(c.config.App.ConfigDir, "config.yaml")
 
 	if err := os.MkdirAll(backupDir, 0755); err != nil {
@@ -51,7 +52,7 @@ func backupHandler(c *Container, args []string) error {
 	defer cancel()
 
 	fmt.Println("Creating backup...")
-	result, err := backup.Create(ctx, dbPath, backupDir, configPath, c.config.Storage.StorageDir)
+	result, err := backup.Create(ctx, db, database.SchemaFS, backupDir, configPath, c.config.Storage.StorageDir)
 	if err != nil {
 		return fmt.Errorf("backup failed: %w", err)
 	}
@@ -74,9 +75,6 @@ func backupHandler(c *Container, args []string) error {
 }
 
 func restoreHandler(c *Container, args []string) error {
-	if c.config.Db.Type == "postgres" {
-		return fmt.Errorf("Postgres restore is not yet implemented (coming in Phase 4)")
-	}
 	fp := NewFlagParser(args)
 	if fp.Help("Usage: kushim restore <backup-file.tar.gz> [--force] [--dry-run]\n"+
 		"  Restore from a backup archive.\n\n"+
@@ -156,11 +154,15 @@ func restoreHandler(c *Container, args []string) error {
 		return fmt.Errorf("extract archive: %w", err)
 	}
 
+	db, err := c.GetDB()
+	if err != nil {
+		return err
+	}
 	dbPath := filepath.Join(c.config.Db.Path, c.config.Db.Name)
 	configPath := filepath.Join(c.config.App.ConfigDir, "config.yaml")
 
 	fmt.Println("Replacing files...")
-	if err := backup.ReplaceFiles(tmpDir, dbPath, configPath, c.config.Storage.StorageDir); err != nil {
+	if err := backup.ReplaceFiles(tmpDir, db, dbPath, configPath, c.config.Storage.StorageDir); err != nil {
 		return fmt.Errorf("replace files: %w", err)
 	}
 

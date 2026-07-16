@@ -65,11 +65,11 @@ internal/
 │   └── handlers/
 │       ├── consume.go     # ConsumeTaskHandler (uses FileFromPath)
 │       ├── enrich.go      # EnrichTaskHandler (fetches document, calls Enricher.Enrich)
-│       └── backup.go      # BackupTaskHandler (VACUUM INTO, tar.gz, retention)
+│       └── backup.go      # BackupTaskHandler (SQL dump, tar.gz, retention)
 ├── search/                # Full-text search engine
 │   └── search.go          # Engine, Result (with Language, DocumentTypeID, checksums), Filter (structured search), sanitizeQuery, SearchStructured (returns results + total count)
 ├── backup/                # Backup & restore
-│   ├── backup.go          # Create backup (VACUUM INTO, tar.gz, manifest, retention)
+│   ├── backup.go          # Create backup (SQL dump, tar.gz, manifest, retention)
 │   ├── restore.go         # Validate, extract, and replace files from backup archive
 │   └── scheduler.go       # Backup scheduling (NextRunTime, ShouldSchedule, state persistence)
 ├── config/                # Configuration parsing

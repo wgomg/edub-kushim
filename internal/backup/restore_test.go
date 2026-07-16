@@ -8,15 +8,15 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 )
 
 func TestValidateArchive_Valid(t *testing.T) {
-	dir := t.TempDir()
+	db := database.NewTestDB(t)
+	t.Cleanup(func() { database.ResetTestDatabase(db) })
 
-	dbPath := filepath.Join(dir, "test.db")
-	db := openTestDB(t, dbPath)
-	db.Close()
+	dir := t.TempDir()
 
 	configPath := filepath.Join(dir, "config.yaml")
 	testutil.CreateTestFile(t, configPath, "test: true\n")
@@ -27,7 +27,7 @@ func TestValidateArchive_Valid(t *testing.T) {
 	backupDir := filepath.Join(dir, "backups")
 	os.MkdirAll(backupDir, 0755)
 
-	result, err := Create(context.Background(), dbPath, backupDir, configPath, storageDir)
+	result, err := Create(context.Background(), db, database.SchemaFS, backupDir, configPath, storageDir)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -38,6 +38,9 @@ func TestValidateArchive_Valid(t *testing.T) {
 	}
 	if manifest.Version != 1 {
 		t.Errorf("Version = %d, want 1", manifest.Version)
+	}
+	if manifest.Format != "sql-dump" {
+		t.Errorf("Format = %q, want \"sql-dump\"", manifest.Format)
 	}
 	if manifest.AppVersion == "" {
 		t.Error("AppVersion is empty")
@@ -80,11 +83,10 @@ func TestValidateArchive_MissingFile(t *testing.T) {
 }
 
 func TestExtractArchive_Valid(t *testing.T) {
-	dir := t.TempDir()
+	db := database.NewTestDB(t)
+	t.Cleanup(func() { database.ResetTestDatabase(db) })
 
-	dbPath := filepath.Join(dir, "test.db")
-	db := openTestDB(t, dbPath)
-	db.Close()
+	dir := t.TempDir()
 
 	configPath := filepath.Join(dir, "config.yaml")
 	testutil.CreateTestFile(t, configPath, "test: true\n")
@@ -97,7 +99,7 @@ func TestExtractArchive_Valid(t *testing.T) {
 	backupDir := filepath.Join(dir, "backups")
 	os.MkdirAll(backupDir, 0755)
 
-	result, err := Create(context.Background(), dbPath, backupDir, configPath, storageDir)
+	result, err := Create(context.Background(), db, database.SchemaFS, backupDir, configPath, storageDir)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -107,7 +109,7 @@ func TestExtractArchive_Valid(t *testing.T) {
 		t.Fatalf("ExtractArchive: %v", err)
 	}
 
-	for _, want := range []string{"edub.db", "config.yaml", "manifest.json"} {
+	for _, want := range []string{"edub.sql", "config.yaml", "manifest.json"} {
 		if _, err := os.Stat(filepath.Join(destDir, want)); err != nil {
 			t.Errorf("%s not extracted: %v", want, err)
 		}
@@ -158,42 +160,73 @@ func TestExtractArchive_SymlinkSkipped(t *testing.T) {
 	}
 }
 
-func TestReplaceFiles_DBConfigStorage(t *testing.T) {
+func TestReplaceFiles_SQLDump(t *testing.T) {
+	db := database.NewTestDB(t)
+	t.Cleanup(func() { database.ResetTestDatabase(db) })
+
 	dir := t.TempDir()
 
-	// Set up target paths
-	dbPath := filepath.Join(dir, "target.db")
-	configPath := filepath.Join(dir, "target.yaml")
-	storageDir := filepath.Join(dir, "target_storage")
+	configPath := filepath.Join(dir, "config.yaml")
+	testutil.CreateTestFile(t, configPath, "test: true\n")
 
-	db := openTestDB(t, dbPath)
-	db.Close()
-	testutil.CreateTestFile(t, configPath, "old: true\n")
+	storageDir := filepath.Join(dir, "storage")
 	os.MkdirAll(storageDir, 0755)
 	testutil.CreateTestFile(t, filepath.Join(storageDir, "old.txt"), "old content")
 
-	// Set up extract dir with new content
+	backupDir := filepath.Join(dir, "backups")
+	os.MkdirAll(backupDir, 0755)
+
+	result, err := Create(context.Background(), db, database.SchemaFS, backupDir, configPath, storageDir)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	extractDir := filepath.Join(dir, "extract")
+	if err := ExtractArchive(result.Path, extractDir); err != nil {
+		t.Fatalf("ExtractArchive: %v", err)
+	}
+
+	restoreDB := database.NewTestDB(t)
+	t.Cleanup(func() {
+		restoreDB.Exec("DROP SCHEMA IF EXISTS public CASCADE")
+		restoreDB.Exec("CREATE SCHEMA public")
+		database.InitializeSchema(restoreDB)
+	})
+
+	restoreDBPath := filepath.Join(dir, "restored.db")
+	if err := ReplaceFiles(extractDir, restoreDB, restoreDBPath, configPath, filepath.Join(dir, "new_storage")); err != nil {
+		t.Fatalf("ReplaceFiles: %v", err)
+	}
+
+	var count int
+	if err := restoreDB.QueryRow("SELECT COUNT(*) FROM document_type").Scan(&count); err != nil {
+		t.Fatalf("query restored db: %v", err)
+	}
+	if count == 0 {
+		t.Error("no rows found in document_type after restore")
+	}
+}
+
+func TestReplaceFiles_ConfigOnly(t *testing.T) {
+	dir := t.TempDir()
+
+	configPath := filepath.Join(dir, "target.yaml")
+	testutil.CreateTestFile(t, configPath, "old: true\n")
+
 	extractDir := filepath.Join(dir, "extract")
 	os.MkdirAll(extractDir, 0755)
-
-	db2 := openTestDB(t, filepath.Join(extractDir, "edub.db"))
-	db2.Close()
 	testutil.CreateTestFile(t, filepath.Join(extractDir, "config.yaml"), "new: true\n")
-	os.MkdirAll(filepath.Join(extractDir, "storage"), 0755)
-	testutil.CreateTestFile(t, filepath.Join(extractDir, "storage", "new.txt"), "new content")
 
-	if err := ReplaceFiles(extractDir, dbPath, configPath, storageDir); err != nil {
-		t.Fatalf("ReplaceFiles: %v", err)
+	manifestData := `{"version":1,"format":"sqlite-file","timestamp":"","app_version":"","db_size_bytes":0,"storage_files_count":0,"storage_size_bytes":0,"config_hash":""}`
+	testutil.CreateTestFile(t, filepath.Join(extractDir, "manifest.json"), manifestData)
+
+	if err := ReplaceFiles(extractDir, nil, "/nonexistent/db", configPath, t.TempDir()); err != nil {
+		t.Fatalf("ReplaceFiles (no db, sqlite format): %v", err)
 	}
 
 	data, _ := os.ReadFile(configPath)
 	if string(data) != "new: true\n" {
 		t.Errorf("config = %q, want %q", string(data), "new: true\n")
-	}
-
-	storageData, _ := os.ReadFile(filepath.Join(storageDir, "new.txt"))
-	if string(storageData) != "new content" {
-		t.Errorf("storage = %q, want %q", string(storageData), "new content")
 	}
 }
 
