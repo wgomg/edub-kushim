@@ -39,8 +39,21 @@ CGO_ENABLED=0 go test -tags "XLA,ORT" ./internal/...
 
 Every test creates a connection to a PostgreSQL database specified by the `TEST_DATABASE_URL`
 environment variable. The schema is initialized via `database.InitializeSchema` on each
-connection. Each test starts with a clean slate (all tables truncated, sequences reset,
-seed data re-inserted) via `resetDB`:
+connection.
+
+**Per-package isolation**: Each test package gets its own dedicated database
+(`edub_test_<package_dir>`, e.g. `edub_test_database`, `edub_test_task`). The database
+name is derived automatically from the calling test file's package directory via
+`runtime.Caller`. This allows packages to run in parallel without cross-contamination
+from concurrent `ResetTestDatabase` calls.
+
+**Auto-cleanup**: Each call to `NewTestDB` registers a `t.Cleanup` handler that closes
+the connection and releases a reference. When the last reference to a test database
+is released, the database is dropped via `DROP DATABASE ... WITH (FORCE)` (PostgreSQL
+13+), which terminates any lingering connections before dropping.
+
+Within a test that needs a clean slate regardless of isolation, each call starts with
+truncated tables, reset sequences, and re-inserted seed data via `ResetTestDatabase`:
 
 ```go
 q, db := database.NewTestQueries(t)
@@ -51,8 +64,8 @@ resetDB(t, q)
 The `resetDB` helper deletes all rows from every table, resets identity sequences, and
 re-runs the seed SQL for `document_type`, `people_type`, and `tag`.
 
-Key detail: Foreign key constraints are enforced by PostgreSQL just as in production.
-The test pool uses `SetMaxOpenConns(5)`. Tests are run sequentially (`-count=1`) to prevent concurrent writes to the shared test database, and `resetDB` must be called at the start of each test that assumes clean state.
+Foreign key constraints are enforced by PostgreSQL just as in production.
+The connection pool uses `SetMaxOpenConns(25)`.
 
 ### CGo-Free Runner Mock
 
@@ -164,7 +177,7 @@ The `internal/database` package also exports:
 
 | Function | Purpose |
 |----------|---------|
-| `NewTestDB(t)` | PostgreSQL via `TEST_DATABASE_URL`, schema initialized, auto-cleanup |
+| `NewTestDB(t)` | PostgreSQL via `TEST_DATABASE_URL` — per-package isolated database (`edub_test_<pkg>`), schema initialized, `t.Cleanup` closes connection + drops database on last reference |
 | `NewTestQueries(t)` | Helper returning both `*Queries` and `*sql.DB` |
 | `CreateTestDocument(t, queries, title)` | Inserts a document, returns auto-ID and UUID |
 | `SeedTagByName(t, queries, name)` | Returns a seeded tag (by name or first) |

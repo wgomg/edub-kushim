@@ -49,7 +49,27 @@ Config: `sqlc.yaml` (v2, postgresql engine).
 
 ## Testing
 
-**Most tests don't need CGo.** Run them with:
+**Most tests don't need CGo but require a PostgreSQL 16+ database.** Run one via Podman (preferred) or Docker:
+
+```bash
+# Podman (preferred)
+podman run -d --name edub-test-pg \
+  -e POSTGRES_USER=edub -e POSTGRES_PASSWORD=edub \
+  -p 5432:5432 postgres:17
+
+# Docker
+docker run -d --name edub-test-pg \
+  -e POSTGRES_USER=edub -e POSTGRES_PASSWORD=edub \
+  -p 5432:5432 postgres:17
+```
+
+Set `TEST_DATABASE_URL` (omit to see which packages need it):
+
+```bash
+export TEST_DATABASE_URL="postgres://edub:edub@localhost:5432/edub?sslmode=disable"
+```
+
+Run tests with:
 
 ```bash
 make test          # 60+ tests across 5 packages, CGO_ENABLED=0
@@ -59,8 +79,11 @@ make test-verbose  # same with -v
 Manual equivalent:
 
 ```bash
-CGO_ENABLED=0 go test -tags "XLA,ORT" -count=1 ./internal/database/ ./internal/search/ ./internal/task/ ./internal/api/handlers/ ./internal/consumption/
+CGO_ENABLED=0 TEST_DATABASE_URL="postgres://edub:edub@localhost:5432/edub?sslmode=disable" \
+  go test -tags "XLA,ORT" -count=1 ./internal/database/ ./internal/search/ ./internal/task/ ./internal/api/handlers/ ./internal/consumption/
 ```
+
+**Isolation**: Each test package gets its own database (`edub_test_<pkg_dir>`) via `runtime.Caller`. Databases are auto-dropped with `DROP ... WITH (FORCE)` when the last reference is released, so no manual cleanup is needed.
 
 Covered: database queries, task lifecycle, search engine, API handlers, consumption pipeline
 (with mock runner). Not covered: CLI commands, real OCR/PDF adapters.

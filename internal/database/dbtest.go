@@ -5,6 +5,9 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
+	"sync"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -13,28 +16,85 @@ import (
 type TB interface {
 	Fatalf(format string, args ...any)
 	Helper()
+	Cleanup(func())
 }
+
+var (
+	testDBRefCounts   = make(map[string]int)
+	testDBRefCountsMu sync.Mutex
+)
 
 func NewTestDB(t TB) *sql.DB {
 	t.Helper()
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
+	baseDSN := os.Getenv("TEST_DATABASE_URL")
+	if baseDSN == "" {
 		t.Fatalf("TEST_DATABASE_URL not set — set it to a Postgres connection string")
 	}
-	db, err := sql.Open("pgx", dsn)
+	dir := testPackageDir()
+	dbName := "edub_test_" + dir
+	release := acquireTestDB(baseDSN, dbName)
+
+	testDSN := replaceDBName(baseDSN, dbName)
+	db, err := NewPostgresDB(testDSN)
 	if err != nil {
+		release()
 		t.Fatalf("failed to open test database: %v", err)
-	}
-	db.SetMaxOpenConns(5)
-	if err := db.Ping(); err != nil {
-		db.Close()
-		t.Fatalf("failed to ping test database: %v", err)
 	}
 	if err := InitializeSchema(db); err != nil {
 		db.Close()
+		release()
 		t.Fatalf("failed to initialize schema: %v", err)
 	}
+
+	t.Cleanup(func() {
+		db.Close()
+		release()
+	})
 	return db
+}
+
+// acquireTestDB registers a reference to the named test database and returns
+// a release function. When the last reference is released, the database is
+// dropped using DROP DATABASE ... WITH (FORCE) to terminate any lingering
+// connections.
+func acquireTestDB(baseDSN, dbName string) (release func()) {
+	testDBRefCountsMu.Lock()
+	testDBRefCounts[dbName]++
+	testDBRefCountsMu.Unlock()
+
+	return func() {
+		testDBRefCountsMu.Lock()
+		testDBRefCounts[dbName]--
+		if testDBRefCounts[dbName] <= 0 {
+			delete(testDBRefCounts, dbName)
+			dropTestDatabase(baseDSN, dbName)
+		}
+		testDBRefCountsMu.Unlock()
+	}
+}
+
+func dropTestDatabase(baseDSN, dbName string) {
+	adminDSN := replaceDBName(baseDSN, "postgres")
+	adminDB, err := sql.Open("pgx", adminDSN)
+	if err != nil {
+		return
+	}
+	defer adminDB.Close()
+	adminDB.ExecContext(context.Background(),
+		fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", quoteIdent(dbName)))
+}
+
+func testPackageDir() string {
+	for i := 1; i < 32; i++ {
+		_, file, _, ok := runtime.Caller(i)
+		if !ok {
+			break
+		}
+		if filepath.Base(file) != "dbtest.go" {
+			return filepath.Base(filepath.Dir(file))
+		}
+	}
+	return "unknown"
 }
 
 func NewTestQueries(t TB) (*Queries, *sql.DB) {
