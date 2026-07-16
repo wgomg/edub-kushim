@@ -119,14 +119,39 @@ func queueHandler(c *Container, args []string) error {
 
 	go runPollingLoop(ctx, c, client, batchSvc, maxConcurrent)
 
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
+	notifyCh := make(chan struct{}, 4)
+	go listenForBatchNotifications(ctx, config.BuildPostgresDSN(c.config.Db), notifyCh, c.logger)
+
+	safetyInterval := 30 * time.Second
+	safetyTimer := time.NewTimer(safetyInterval)
+	defer safetyTimer.Stop()
+
+	hkTicker := time.NewTicker(5 * time.Second)
+	defer hkTicker.Stop()
 
 	var lastStaleTaskClaim time.Time
 
 	for {
 		select {
-		case <-ticker.C:
+		case <-notifyCh:
+			if err := consumeNextQueuedBatch(ctx, client, batchSvc, maxConcurrent, c.logger); err != nil {
+				c.logger.Error(nil, "queue consumption: %v", err)
+			}
+			if !safetyTimer.Stop() {
+				select {
+				case <-safetyTimer.C:
+				default:
+				}
+			}
+			safetyTimer.Reset(safetyInterval)
+
+		case <-safetyTimer.C:
+			if err := consumeNextQueuedBatch(ctx, client, batchSvc, maxConcurrent, c.logger); err != nil {
+				c.logger.Error(nil, "queue consumption: %v", err)
+			}
+			safetyTimer.Reset(safetyInterval)
+
+		case <-hkTicker.C:
 			if !c.backupMu.TryRLock() {
 				c.logger.Debug(nil, "skipping tick — backup in progress")
 				continue
@@ -151,9 +176,7 @@ func queueHandler(c *Container, args []string) error {
 					lastStaleTaskClaim = time.Now()
 				}
 			}
-			if err := consumeNextQueuedBatch(ctx, client, batchSvc, maxConcurrent, c.logger); err != nil {
-				c.logger.Error(nil, "queue consumption: %v", err)
-			}
+
 		case <-ctx.Done():
 			c.logger.Info(nil, "queue daemon stopped")
 			return nil
