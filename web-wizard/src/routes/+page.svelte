@@ -32,7 +32,7 @@
 					step = 4;
 					startPolling();
 				} else if (configured) {
-					step = 6;
+					step = 5;
 				} else {
 					step = 2;
 				}
@@ -192,7 +192,11 @@
 			await configApi.createAdminUser({ username: adminUsername.trim(), password: adminPassword });
 			step = 6;
 		} catch (e) {
-			adminError = e.message;
+			if (e.message.includes('username already exists')) {
+				step = 6;
+			} else {
+				adminError = e.message;
+			}
 		} finally {
 			adminCreating = false;
 		}
