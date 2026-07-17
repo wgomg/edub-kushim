@@ -210,9 +210,9 @@
 
 ### Quality
 
-- ✓ Database integration tests (17 tests) — document/tag/people CRUD, task lifecycle, enrich flow, batch ownership, structured search, analytics queries, saved searches
+- ✓ Database integration tests (29 tests) — document/tag/people CRUD, task lifecycle, enrich flow, batch ownership, structured search, analytics queries, saved searches, backup lock lifecycle, gated task claiming
 - ✓ Search engine tests (7 tests) — tsvector search, structured search, pagination, query sanitization
-- ✓ Task system tests (14 tests) — Store, dispatcher, runner, pool lifecycle, dedup key handling
+- ✓ Task system tests (18 tests) — Store, dispatcher, runner, pool lifecycle, dedup key handling, gated task claiming
 - ✓ API handler tests (65 tests) — health, document CRUD, tag/people CRUD, user CRUD, task endpoints, saved searches, concurrent operations, auth login/logout, token claims, errored file list/download/delete/delete-all, logs viewer (invalid name, file not found, success, lines clamping, large file tail, empty file), API key generate/revoke/rotate/status, ReEnrich handler (success + not found)
 - ✓ Auth package tests (7 tests) — session secret generation, JWT generation/validation, wrong secret, expired token, malformed token, ValidRole
 - ✓ Auth middleware tests (12 tests) — public path bypass, missing/invalid/valid token, wrong secret, missing bearer prefix, empty header, disabled flag passes all paths, valid API key, invalid API key, wrong prefix falls through, auth disabled bypasses, internal error returns 500

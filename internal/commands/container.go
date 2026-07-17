@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
-	"sync"
 	"time"
 
 	types "github.com/wgomg/edub-kushim/internal"
@@ -33,7 +32,6 @@ type Container struct {
 	runner     *task.Runner
 	store      *task.Store
 	services   *types.CrudServices
-	backupMu   sync.RWMutex
 	pools      struct {
 		consume *pool.Pool
 		enrich  *pool.Pool
@@ -128,7 +126,7 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 	registry.Register("consume", taskhandlers.NewConsumeTaskHandler(consumer, store, c.logger))
 	registry.Register("enrich", taskhandlers.NewEnrichTaskHandler(enricher, client.Queries, c.logger))
 	registry.Register("config", configtask.NewConfigTaskHandler(c.logger))
-	registry.Register("backup", taskhandlers.NewBackupTaskHandler(c.db, c.config, c.logger, &c.backupMu))
+	registry.Register("backup", taskhandlers.NewBackupTaskHandler(c.db, client.Queries, c.config, c.logger))
 
 	c.dispatcher = task.NewDispatcher(c.logger, store, registry)
 	c.runner = task.NewRunner(store, registry, c.logger)

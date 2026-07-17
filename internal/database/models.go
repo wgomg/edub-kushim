@@ -10,6 +10,12 @@ import (
 	"time"
 )
 
+type BackupLock struct {
+	ID        int32
+	Running   bool
+	StartedAt sql.NullTime
+}
+
 type Batch struct {
 	ID        string
 	Source    string

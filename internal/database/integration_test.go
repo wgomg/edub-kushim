@@ -850,6 +850,147 @@ func TestTaskHealthQueries(t *testing.T) {
 	})
 }
 
+func TestBackupLockLifecycle(t *testing.T) {
+	q, db := NewTestQueries(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	t.Run("initially unlocked", func(t *testing.T) {
+		locked, err := q.IsBackupLocked(ctx)
+		assertNoError(t, err, "is backup locked")
+		assertEqual(t, locked, int32(0), "not locked initially")
+	})
+
+	t.Run("acquire and verify locked", func(t *testing.T) {
+		rows, err := q.AcquireBackupLock(ctx)
+		assertNoError(t, err, "acquire")
+		assertEqual(t, rows, int64(1), "one row affected")
+
+		locked, err := q.IsBackupLocked(ctx)
+		assertNoError(t, err, "check locked")
+		assertEqual(t, locked, int32(1), "locked after acquire")
+	})
+
+	t.Run("release and verify unlocked", func(t *testing.T) {
+		rows, err := q.ReleaseBackupLock(ctx)
+		assertNoError(t, err, "release")
+		assertEqual(t, rows, int64(1), "one row released")
+
+		locked, err := q.IsBackupLocked(ctx)
+		assertNoError(t, err, "check unlocked")
+		assertEqual(t, locked, int32(0), "unlocked after release")
+	})
+
+	// Cleanup in case test fails mid-way
+	q.ReleaseBackupLock(ctx)
+}
+
+func TestAcquireBackupLockConflict(t *testing.T) {
+	q, db := NewTestQueries(t)
+	defer db.Close()
+	ctx := context.Background()
+	defer q.ReleaseBackupLock(ctx)
+
+	rows, err := q.AcquireBackupLock(ctx)
+	assertNoError(t, err, "first acquire")
+	assertEqual(t, rows, int64(1), "first acquire succeeds")
+
+	rows, err = q.AcquireBackupLock(ctx)
+	assertNoError(t, err, "second acquire")
+	assertEqual(t, rows, int64(0), "second acquire returns 0 when already held")
+}
+
+func TestCountProcessingTasks(t *testing.T) {
+	q, db := NewTestQueries(t)
+	defer db.Close()
+	resetDB(t, q)
+	ctx := context.Background()
+
+	t.Run("empty", func(t *testing.T) {
+		count, err := q.CountProcessingTasks(ctx)
+		assertNoError(t, err, "count")
+		assertEqual(t, count, int64(0), "zero processing tasks")
+	})
+
+	t.Run("counts only consume and enrich", func(t *testing.T) {
+		id1, _ := q.CreateTask(ctx, CreateTaskParams{TaskID: "cpt-1", TaskType: "consume", Status: "pending"})
+		q.ClaimTask(ctx, id1)
+
+		id2, _ := q.CreateTask(ctx, CreateTaskParams{TaskID: "cpt-2", TaskType: "enrich", Status: "pending"})
+		q.ClaimTask(ctx, id2)
+
+		// config task in processing should NOT be counted
+		id3, _ := q.CreateTask(ctx, CreateTaskParams{TaskID: "cpt-3", TaskType: "config", Status: "pending"})
+		q.ClaimTask(ctx, id3)
+
+		count, err := q.CountProcessingTasks(ctx)
+		assertNoError(t, err, "count with tasks")
+		assertEqual(t, count, int64(2), "only consume + enrich")
+	})
+
+	// Cleanup
+	q.ReleaseBackupLock(ctx)
+}
+
+func TestGatedQueriesBlockDuringBackup(t *testing.T) {
+	q, db := NewTestQueries(t)
+	defer db.Close()
+	resetDB(t, q)
+	ctx := context.Background()
+	defer q.ReleaseBackupLock(ctx)
+
+	// Create a pending consume task
+	payload := json.RawMessage(`{"file":"test.pdf"}`)
+	id, err := q.CreateTask(ctx, CreateTaskParams{
+		TaskID: "gate-1", TaskType: "consume", Status: "pending", Payload: &payload,
+	})
+	assertNoError(t, err, "create task")
+	_ = id
+
+	t.Run("ungated returns task when unlocked", func(t *testing.T) {
+		taskID, err := q.GetNextPendingTaskOfType(ctx, "consume")
+		assertNoError(t, err, "ungated claim")
+		assertEqual(t, taskID > 0, true, "got a task id")
+	})
+
+	t.Run("gated returns task when unlocked", func(t *testing.T) {
+		taskID, err := q.GetNextPendingTaskOfTypeWithGate(ctx, "consume")
+		assertNoError(t, err, "gated claim unlocked")
+		assertEqual(t, taskID > 0, true, "got a task id")
+	})
+
+	// Lock backup
+	_, err = q.AcquireBackupLock(ctx)
+	assertNoError(t, err, "acquire lock")
+
+	t.Run("gated returns ErrNoRows when locked", func(t *testing.T) {
+		_, err := q.GetNextPendingTaskOfTypeWithGate(ctx, "consume")
+		assertEqual(t, err, sql.ErrNoRows, "gated claim blocked during backup")
+	})
+
+	t.Run("ungated still returns task when locked", func(t *testing.T) {
+		taskID, err := q.GetNextPendingTaskOfType(ctx, "consume")
+		assertNoError(t, err, "ungated claim still works")
+		assertEqual(t, taskID > 0, true, "got a task id")
+	})
+
+	t.Run("gated with owner also blocked when locked", func(t *testing.T) {
+		batchID := "gate-batch"
+		q.CreateBatch(ctx, CreateBatchParams{ID: batchID, Source: "test", Status: "queued"})
+		q.TryInsertBatchOwner(ctx, TryInsertBatchOwnerParams{BatchID: batchID, OwnerID: "gate-owner", Pid: 999})
+
+		q.CreateTask(ctx, CreateTaskParams{
+			TaskID: "gate-owner-task", TaskType: "consume", Status: "pending",
+			BatchID: sql.NullString{String: batchID, Valid: true},
+		})
+
+		_, err := q.GetNextPendingTaskOfTypeForOwnerWithGate(ctx, GetNextPendingTaskOfTypeForOwnerWithGateParams{
+			TaskType: "consume", OwnerID: "gate-owner",
+		})
+		assertEqual(t, err, sql.ErrNoRows, "gated owner claim blocked during backup")
+	})
+}
+
 // --- helpers ---
 
 func insertDoc(t *testing.T, q *Queries, title, md5, sha512 string) (int64, string) {

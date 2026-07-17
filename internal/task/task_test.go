@@ -311,6 +311,47 @@ func TestDispatcherCustomID(t *testing.T) {
 	testutil.AssertEqual(t, taskID, "my-id", "custom id")
 }
 
+func TestClaimNextPendingGating(t *testing.T) {
+	store, _, q := setupTaskTest(t)
+	ctx := context.Background()
+
+	_, err := store.CreateTask(ctx, "consume", "", json.RawMessage(`{"file":"test.pdf"}`), "", "", "")
+	testutil.AssertNoError(t, err, "create consume task")
+
+	t.Run("consume claimable when backup unlocked", func(t *testing.T) {
+		claimed, err := store.ClaimNextPending(ctx, "consume")
+		testutil.AssertNoError(t, err, "claim consume")
+		testutil.AssertEqual(t, claimed.Status, "processing", "claimed")
+	})
+
+	// Create another consume task and lock backup
+	_, err = store.CreateTask(ctx, "consume", "", json.RawMessage(`{"file":"test2.pdf"}`), "", "", "")
+	testutil.AssertNoError(t, err, "create second consume task")
+
+	_, err = q.AcquireBackupLock(ctx)
+	testutil.AssertNoError(t, err, "acquire backup lock")
+	defer q.ReleaseBackupLock(ctx)
+
+	t.Run("consume blocked when backup locked", func(t *testing.T) {
+		_, err := store.ClaimNextPending(ctx, "consume")
+		testutil.AssertError(t, err, "consume claim should fail during backup")
+	})
+
+	t.Run("enrich blocked when backup locked", func(t *testing.T) {
+		_, err := store.ClaimNextPending(ctx, "enrich")
+		testutil.AssertError(t, err, "enrich claim should fail during backup")
+	})
+
+	t.Run("config not blocked when backup locked", func(t *testing.T) {
+		_, err := store.CreateTask(ctx, "config", "", json.RawMessage(`{"op":"test"}`), "", "", "")
+		testutil.AssertNoError(t, err, "create config task")
+
+		claimed, err := store.ClaimNextPending(ctx, "config")
+		testutil.AssertNoError(t, err, "config claim should work during backup")
+		testutil.AssertEqual(t, claimed.Status, "processing", "config claimed")
+	})
+}
+
 func TestPoolLifecycle(t *testing.T) {
 	store, registry, _ := setupTaskTest(t)
 	runner := NewRunner(store, registry, testutil.NewTestLogger())

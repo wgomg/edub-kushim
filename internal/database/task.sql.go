@@ -96,6 +96,17 @@ func (q *Queries) CountDistinctBatches(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const countProcessingTasks = `-- name: CountProcessingTasks :one
+SELECT COUNT(*) FROM task WHERE status = 'processing' AND task_type IN ('consume', 'enrich')
+`
+
+func (q *Queries) CountProcessingTasks(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countProcessingTasks)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countTasksByBatchAndStatus = `-- name: CountTasksByBatchAndStatus :one
 SELECT COUNT(*) FROM task WHERE batch_id = $1 AND status = $2
 `
@@ -286,6 +297,20 @@ ORDER BY created_at LIMIT 1
 
 func (q *Queries) GetNextPendingTaskOfType(ctx context.Context, taskType string) (int64, error) {
 	row := q.db.QueryRowContext(ctx, getNextPendingTaskOfType, taskType)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
+const getNextPendingTaskOfTypeWithGate = `-- name: GetNextPendingTaskOfTypeWithGate :one
+SELECT id FROM task
+WHERE status = 'pending' AND task_type = $1
+  AND NOT is_backup_running()
+ORDER BY created_at LIMIT 1
+`
+
+func (q *Queries) GetNextPendingTaskOfTypeWithGate(ctx context.Context, taskType string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getNextPendingTaskOfTypeWithGate, taskType)
 	var id int64
 	err := row.Scan(&id)
 	return id, err

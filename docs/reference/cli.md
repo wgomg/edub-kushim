@@ -164,7 +164,7 @@ kushim storage orphans move-to-inbox-all
 - `pollingTick(ctx, c, client, batchSvc, maxConcurrent, missingTools)` — Single polling iteration: capacity check, missing tools check, then delegates to `consumption.ScanAndEnqueue` to scan inbox, deduplicate, and create a `queued` batch with consume+enrich task pairs.
 - `maybeScheduleBackup(ctx, c) error` — Reads backup state from `backup-state.json`, checks if the next scheduled backup is due via `backup.ShouldSchedule`. If so, enqueues a `"backup"` task via the dispatcher and writes the next scheduled time to state.
 
-The daemon also starts a **backup pool** (1 worker, 60s poll interval) when `backup.enabled` is `true`. The pool executes scheduled backup tasks via `BackupTaskHandler`. The main ticker and polling loop both acquire `backupMu.TryRLock()` to skip all operations while a backup is running.
+The daemon also starts a **backup pool** (1 worker, 60s poll interval) when `backup.enabled` is `true`. The pool executes scheduled backup tasks via `BackupTaskHandler`. The ticker and polling loop check the DB-backed `backup_lock` table via `IsBackupLocked` — backup scheduling and polling are skipped while a backup is in progress, while stale reclamation continues to run unconditionally.
 
 ---
 
@@ -172,8 +172,8 @@ The daemon also starts a **backup pool** (1 worker, 60s poll interval) when `bac
 
 ### Functions
 
-- `backupHandler(c, args) error` — `kushim backup [--path <dir>]` — Runs a synchronous backup: acquires `backupMu.TryLock()`, creates a `tar.gz` archive of the DB (via app-level SQL dump), config file, and storage directory, prints the result, applies retention cleanup.
-- `restoreHandler(c, args) error` — `kushim restore <backup-file.tar.gz> [--force] [--dry-run]` — Validates the archive, checks the running daemon's PID file, prompts for confirmation (unless `--force`), extracts to a temp dir, executes the SQL dump against the database, then replaces storage and config.
+- `backupHandler(c, args) error` — `kushim backup [--path <dir>]` — Runs a synchronous backup: checks preconditions (`IsBackupLocked`, `CountProcessingTasks`, polling status), acquires `AcquireBackupLock`, creates a `tar.gz` archive of the DB (via app-level SQL dump), config file, and storage directory, prints the result, applies retention cleanup, releases the lock.
+- `restoreHandler(c, args) error` — `kushim restore <backup-file.tar.gz> [--force] [--dry-run]` — Validates the archive, checks preconditions, acquires `AcquireBackupLock`, checks the running daemon's PID file, prompts for confirmation (unless `--force`), extracts to a temp dir, executes the SQL dump against the database, then replaces storage and config, releases the lock.
 
 ---
 

@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
-	"sync"
+	"time"
 
 	"github.com/wgomg/edub-kushim/internal/backup"
 	"github.com/wgomg/edub-kushim/internal/config"
@@ -16,26 +16,38 @@ import (
 )
 
 type BackupTaskHandler struct {
-	db       *sql.DB
-	config   *config.Config
-	logger   *utils.Logger
-	backupMu *sync.RWMutex
+	db      *sql.DB
+	queries *database.Queries
+	config  *config.Config
+	logger  *utils.Logger
 }
 
-func NewBackupTaskHandler(db *sql.DB, cfg *config.Config, logger *utils.Logger, backupMu *sync.RWMutex) *BackupTaskHandler {
+func NewBackupTaskHandler(db *sql.DB, queries *database.Queries, cfg *config.Config, logger *utils.Logger) *BackupTaskHandler {
 	return &BackupTaskHandler{
-		db:       db,
-		config:   cfg,
-		logger:   logger,
-		backupMu: backupMu,
+		db:      db,
+		queries: queries,
+		config:  cfg,
+		logger:  logger,
 	}
 }
 
 func (h *BackupTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMessage, error) {
-	if !h.backupMu.TryLock() {
-		return nil, fmt.Errorf("backup already in progress")
+	rowsAffected, err := h.queries.AcquireBackupLock(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("acquire backup lock: %w", err)
 	}
-	defer h.backupMu.Unlock()
+	if rowsAffected == 0 {
+		return nil, fmt.Errorf("backup lock held — skipping")
+	}
+	defer func() {
+		if _, relErr := h.queries.ReleaseBackupLock(context.Background()); relErr != nil {
+			h.logger.Error(nil, "release backup lock: %v", relErr)
+		}
+	}()
+
+	if err := h.waitForDrain(ctx); err != nil {
+		return nil, err
+	}
 
 	h.logger.Info(nil, "starting scheduled backup")
 
@@ -58,4 +70,27 @@ func (h *BackupTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMe
 	}
 
 	return raw, nil
+}
+
+func (h *BackupTaskHandler) waitForDrain(ctx context.Context) error {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		count, err := h.queries.CountProcessingTasks(ctx)
+		if err != nil {
+			return fmt.Errorf("count processing tasks: %w", err)
+		}
+		if count == 0 {
+			return nil
+		}
+
+		h.logger.Info(nil, "backup: waiting for %d in-flight task(s) to drain", count)
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }

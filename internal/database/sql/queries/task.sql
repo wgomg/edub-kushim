@@ -15,6 +15,12 @@ SELECT id FROM task
 WHERE status = 'pending' AND task_type = $1
 ORDER BY created_at LIMIT 1;
 
+-- name: GetNextPendingTaskOfTypeWithGate :one
+SELECT id FROM task
+WHERE status = 'pending' AND task_type = $1
+  AND NOT is_backup_running()
+ORDER BY created_at LIMIT 1;
+
 -- name: ListTasks :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error, attempts
@@ -94,6 +100,9 @@ FROM task WHERE task_type = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3;
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error, attempts
 FROM task WHERE task_type = $1 ORDER BY created_at DESC;
+
+-- name: CountProcessingTasks :one
+SELECT COUNT(*) FROM task WHERE status = 'processing' AND task_type IN ('consume', 'enrich');
 
 -- name: CountTasksByBatchAndStatus :one
 SELECT COUNT(*) FROM task WHERE batch_id = $1 AND status = $2;

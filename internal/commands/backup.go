@@ -14,6 +14,35 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 )
 
+func checkBackupPreconditions(c *Container, operation string) (*database.Client, error) {
+	client, err := c.GetClient()
+	if err != nil {
+		return nil, fmt.Errorf("database: %w", err)
+	}
+
+	locked, err := client.Queries.IsBackupLocked(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("check backup state: %w", err)
+	}
+	if locked > 0 {
+		return nil, fmt.Errorf("a scheduled backup is in progress — wait for it to finish")
+	}
+
+	count, err := client.Queries.CountProcessingTasks(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("check processing tasks: %w", err)
+	}
+	if count > 0 {
+		return nil, fmt.Errorf("%d task(s) in progress — stop all processing before running manual %s", count, operation)
+	}
+
+	if c.config.Consumer.Polling.Enabled {
+		return nil, fmt.Errorf("polling is enabled — disable it before running manual %s", operation)
+	}
+
+	return client, nil
+}
+
 func backupHandler(c *Container, args []string) error {
 	fp := NewFlagParser(args)
 	if fp.Help("Usage: kushim backup [--path <dir>]\n"+
@@ -28,10 +57,19 @@ func backupHandler(c *Container, args []string) error {
 		return fmt.Errorf("unknown arguments: %v", rest)
 	}
 
-	if !c.backupMu.TryLock() {
-		return fmt.Errorf("backup already in progress")
+	client, err := checkBackupPreconditions(c, "backup")
+	if err != nil {
+		return err
 	}
-	defer c.backupMu.Unlock()
+
+	rowsAffected, err := client.Queries.AcquireBackupLock(context.Background())
+	if err != nil {
+		return fmt.Errorf("acquire backup lock: %w", err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("backup lock held by another process — wait for it to finish")
+	}
+	defer client.Queries.ReleaseBackupLock(context.Background())
 
 	backupDir := c.config.Backup.Path
 	if overridePath != "" {
@@ -116,10 +154,19 @@ func restoreHandler(c *Container, args []string) error {
 		return nil
 	}
 
-	if !c.backupMu.TryLock() {
-		return fmt.Errorf("another backup or restore is in progress")
+	client, err := checkBackupPreconditions(c, "restore")
+	if err != nil {
+		return err
 	}
-	defer c.backupMu.Unlock()
+
+	rowsAffected, err := client.Queries.AcquireBackupLock(context.Background())
+	if err != nil {
+		return fmt.Errorf("acquire backup lock: %w", err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("backup lock held by another process — wait for it to finish")
+	}
+	defer client.Queries.ReleaseBackupLock(context.Background())
 
 	pidFile := filepath.Join(c.config.App.ConfigDir, "kushim-queue.pid")
 	if data, err := os.ReadFile(pidFile); err == nil {

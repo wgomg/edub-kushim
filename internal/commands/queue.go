@@ -152,15 +152,14 @@ func queueHandler(c *Container, args []string) error {
 			safetyTimer.Reset(safetyInterval)
 
 		case <-hkTicker.C:
-			if !c.backupMu.TryRLock() {
-				c.logger.Debug(nil, "skipping tick — backup in progress")
-				continue
-			}
-			c.backupMu.RUnlock()
-
 			if c.config.Backup.Enabled {
-				if err := maybeScheduleBackup(ctx, c); err != nil {
-					c.logger.Error(nil, "backup scheduling: %v", err)
+				locked, lockErr := client.Queries.IsBackupLocked(ctx)
+				if lockErr != nil {
+					c.logger.Error(nil, "backup lock check: %v", lockErr)
+				} else if locked == 0 {
+					if err := maybeScheduleBackup(ctx, c); err != nil {
+						c.logger.Error(nil, "backup scheduling: %v", err)
+					}
 				}
 			}
 
@@ -317,19 +316,15 @@ func runPollingLoop(ctx context.Context, c *Container, client *database.Client, 
 		cfg := c.config.Consumer.Polling
 		interval := max(time.Duration(cfg.Interval)*time.Minute, time.Minute)
 
-		if !c.backupMu.TryRLock() {
-			c.logger.Debug(nil, "polling: skipped — backup in progress")
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(interval):
-			}
-			continue
-		}
-		c.backupMu.RUnlock()
-
 		if cfg.Enabled && config.IsWithinActiveWindows(cfg.Windows) {
-			pollingTick(ctx, c, client, batchSvc, maxConcurrent, missingTools)
+			locked, lockErr := client.Queries.IsBackupLocked(ctx)
+			if lockErr != nil {
+				c.logger.Error(nil, "polling: backup lock check: %v", lockErr)
+			} else if locked > 0 {
+				c.logger.Debug(nil, "polling: skipped — backup in progress")
+			} else {
+				pollingTick(ctx, c, client, batchSvc, maxConcurrent, missingTools)
+			}
 		} else if cfg.Enabled {
 			c.logger.Debug(nil, "polling: disabled — outside active windows")
 		} else {

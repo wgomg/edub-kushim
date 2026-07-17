@@ -66,6 +66,13 @@ WHERE status = 'pending' AND task_type = $1
   AND batch_id IN (SELECT batch_id FROM batch_owner WHERE owner_id = $2)
 ORDER BY created_at LIMIT 1;
 
+-- name: GetNextPendingTaskOfTypeForOwnerWithGate :one
+SELECT id FROM task
+WHERE status = 'pending' AND task_type = $1
+  AND batch_id IN (SELECT batch_id FROM batch_owner WHERE owner_id = $2)
+  AND NOT is_backup_running()
+ORDER BY created_at LIMIT 1;
+
 -- name: GetBatch :one
 SELECT * FROM batch WHERE id = $1;
 

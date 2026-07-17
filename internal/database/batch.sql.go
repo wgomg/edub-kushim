@@ -157,6 +157,26 @@ func (q *Queries) GetNextPendingTaskOfTypeForOwner(ctx context.Context, arg GetN
 	return id, err
 }
 
+const getNextPendingTaskOfTypeForOwnerWithGate = `-- name: GetNextPendingTaskOfTypeForOwnerWithGate :one
+SELECT id FROM task
+WHERE status = 'pending' AND task_type = $1
+  AND batch_id IN (SELECT batch_id FROM batch_owner WHERE owner_id = $2)
+  AND NOT is_backup_running()
+ORDER BY created_at LIMIT 1
+`
+
+type GetNextPendingTaskOfTypeForOwnerWithGateParams struct {
+	TaskType string
+	OwnerID  string
+}
+
+func (q *Queries) GetNextPendingTaskOfTypeForOwnerWithGate(ctx context.Context, arg GetNextPendingTaskOfTypeForOwnerWithGateParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getNextPendingTaskOfTypeForOwnerWithGate, arg.TaskType, arg.OwnerID)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
 const getNextQueuedBatch = `-- name: GetNextQueuedBatch :one
 SELECT id, source, status, created_at FROM batch WHERE status = 'queued' ORDER BY created_at LIMIT 1
 `
