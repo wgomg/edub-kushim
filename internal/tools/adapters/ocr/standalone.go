@@ -19,6 +19,8 @@ import (
 )
 
 func RunStandalone(inputPath, outputPath string, languages []string, dataDir string, ocrWorkers int) error {
+	suppressLeptonicaStderr()
+
 	mupdfCtx, err := adapters.NewMuContext()
 	if err != nil {
 		return fmt.Errorf("mupdf context: %w", err)

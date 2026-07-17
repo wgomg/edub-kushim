@@ -209,17 +209,35 @@ type TextReducer interface {
 
 ---
 
+## `adapters/ocr/tesseract_link.go`
+
+### CGo preamble
+
+Links Tesseract, Leptonica, and libpng statically. Includes the Leptonica include path in `#cgo CFLAGS` and exposes a Go function `suppressLeptonicaStderr()` that registers a no-op stderr handler via `leptSetStderrHandler()`. All Leptonica `lept_stderr()` calls in the process are silently dropped. Genuine errors still propagate through Tesseract's C API return codes, which Go handles via `GetBoundingBoxes()` and `SetImageFromBytes()`.
+
 ## `adapters/ocr/gosseract.go`
 
 ### Struct
 
 `Gosseract` — Tesseract + MuPDF CGo adapter. The `Process()` method forks `kushim internal-ocr` as a subprocess to run the OCR pipeline (MuPDF render at 200 DPI → Tesseract recognition → fpdf searchable PDF assembly with text rendering mode 3). The parent waits on `exec.CommandContext` which yields the Go scheduler via `entersyscall`, preventing CGo heartbeat starvation. Optimization runs in the parent after the child exits.
 
+### Error handling
+
+When the subprocess exits with a non-zero code, the adapter checks three conditions before treating the failure as fatal:
+
+1. The error is an `exec.ExitError` (process ran but exited abnormally — covers exit code 2 from worker goroutine panics)
+2. The output file exists on disk (the PDF was fully written before the exit)
+3. The captured stderr contains known non-fatal Leptonica patterns (`pixReadMemTiff: function not present`, `font pixa not made`, `bmfCreate`)
+
+If all three hold, the error is logged as a warning and processing continues — the output PDF is passed to the optimizer. Otherwise, the output is removed and the error is returned as before. This recovers files that would otherwise be quarantined due to exit code 2 from harmless Leptonica TIFF warnings during bitmap font creation (Tesseract's `api->Init()` calls `pixReadMem` with embedded TIFF font data, which fails through the `--without-libtiff` stub).
+
 ## `adapters/ocr/standalone.go`
 
 ### Function
 
 `RunStandalone(inputPath, outputPath, languages, dataDir, ocrWorkers)` — Self-contained OCR pipeline called by the `internal-ocr` subcommand. Renders pages at 200 DPI, downscales to 150 DPI via nearest-neighbor, OCRs with Tesseract, assembles a searchable PDF. When `numPages > 1`, parallelizes Tesseract calls across `ocrWorkers` goroutines (0 = auto, resolves to `runtime.NumCPU()`). No context or logger — parent handles cancellation and logging. Same package-level helpers (`downscaleRGB`, `samplesToRGBA`, `encodePNG`, `encodeJPEG`) used by the in-process code.
+
+Calls `suppressLeptonicaStderr()` at the top of the function to suppress Leptonica diagnostic output (TIFF warnings from bitmap font creation) before any Tesseract or Leptonica operations run. The handler is set once per subprocess lifetime and is global to the process — harmless since the subprocess exits after a single OCR task.
 
 <table>
 <thead><tr><th>CLI flag</th><th>Config key</th><th>Description</th></tr></thead>

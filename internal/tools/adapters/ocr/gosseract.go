@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -82,8 +83,14 @@ func (o *Gosseract) Process(ctx context.Context, docId, path string) (*string, e
 	}()
 
 	if err := cmd.Wait(); err != nil {
-		os.Remove(outPath)
-		return nil, fmt.Errorf("gosseract OCR: %w (stderr: %s)", err, stderr.String())
+		_, isExit := err.(*exec.ExitError)
+		_, outExists := os.Stat(outPath)
+		if isExit && outExists == nil && isNonFatalStderr(stderr.String()) {
+			o.logger.Warn(&docId, "OCR subprocess had non-fatal errors: %v (stderr: %s)", err, stderr.String())
+		} else {
+			os.Remove(outPath)
+			return nil, fmt.Errorf("gosseract OCR: %w (stderr: %s)", err, stderr.String())
+		}
 	}
 
 	if _, err := os.Stat(outPath); os.IsNotExist(err) {
@@ -108,6 +115,21 @@ func (o *Gosseract) CanHandle(mimeType string) bool {
 
 func (o *Gosseract) Name() string {
 	return config.OCR.Gosseract
+}
+
+func isNonFatalStderr(stderr string) bool {
+	patterns := []string{
+		"pixReadMemTiff: function not present",
+		"font pixa not made",
+		"bmfCreate",
+	}
+	lower := strings.ToLower(stderr)
+	for _, p := range patterns {
+		if strings.Contains(lower, strings.ToLower(p)) {
+			return true
+		}
+	}
+	return false
 }
 
 func init() {
