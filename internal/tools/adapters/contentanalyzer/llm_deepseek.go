@@ -26,6 +26,11 @@ type deepSeekMessage struct {
 	Content string `json:"content"`
 }
 
+type deepSeekPassContext struct {
+	SystemMessage string `json:"system_message"`
+	UserPrompt    string `json:"user_prompt"`
+}
+
 type deepSeekThinkingConfig struct {
 	Type string `json:"type"`
 }
@@ -138,7 +143,107 @@ func (l *LlmDeepSeek) Analyze(ctx context.Context, text string, docTypes []datab
 	)
 	analysisResult.Prompt = prompt
 
+	passCtxObj := deepSeekPassContext{SystemMessage: systemMessage, UserPrompt: prompt}
+	ctxJSON, _ := json.Marshal(passCtxObj)
+	rm := json.RawMessage(ctxJSON)
+	analysisResult.PassContext = &rm
+
 	return &analysisResult, nil
+}
+
+func (l *LlmDeepSeek) AnalyzeDocType(ctx context.Context, prevResult *AnalysisResult, headTailText string, docTypes []database.DocumentType) (string, error) {
+	if prevResult.PassContext == nil {
+		return "", fmt.Errorf("pass context is nil")
+	}
+
+	var passCtx deepSeekPassContext
+	if err := json.Unmarshal(*prevResult.PassContext, &passCtx); err != nil {
+		return "", fmt.Errorf("unmarshal pass context: %w", err)
+	}
+
+	assistantJSON, _ := json.Marshal(struct {
+		Title    string         `json:"title"`
+		Type     string         `json:"type"`
+		Tags     []string       `json:"tags"`
+		People   []PeopleResult `json:"people"`
+		Language string         `json:"language"`
+	}{
+		Title:    prevResult.Title,
+		Type:     prevResult.DocType,
+		Tags:     prevResult.Tags,
+		People:   prevResult.People,
+		Language: prevResult.Language,
+	})
+
+	docTypePrompt := BuildDocTypePrompt(headTailText, docTypes)
+
+	reqBody := deepSeekRequest{
+		Messages: []deepSeekMessage{
+			{Role: "system", Content: passCtx.SystemMessage},
+			{Role: "user", Content: passCtx.UserPrompt},
+			{Role: "assistant", Content: string(assistantJSON)},
+			{Role: "user", Content: docTypePrompt},
+		},
+		Model:          l.llmCfg.Model,
+		MaxTokens:      256,
+		Thinking:       &deepSeekThinkingConfig{Type: "disabled"},
+		ResponseFormat: &ResponseFormat{Type: "json_object"},
+		Stream:         false,
+		Temperature:    0,
+		TopP:           1,
+	}
+
+	jsonBody, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal request body: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", l.llmCfg.BaseURL+"/chat/completions", bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", l.llmCfg.Token))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("doc type refinement: status %s: %s", resp.Status, string(body))
+	}
+
+	var dsResp deepSeekResponse
+	if err := json.NewDecoder(resp.Body).Decode(&dsResp); err != nil {
+		return "", fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	if len(dsResp.Choices) == 0 || dsResp.Choices[0].Message.Content == "" {
+		return "", fmt.Errorf("empty response from LLM")
+	}
+
+	responseContent := strings.TrimSpace(dsResp.Choices[0].Message.Content)
+	responseContent = utils.CleanCodeBlock(responseContent)
+
+	var result struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal([]byte(responseContent), &result); err != nil {
+		return "", fmt.Errorf("LLM returned invalid JSON: %w\nraw: %s", err, responseContent)
+	}
+	if result.Type == "" {
+		var full AnalysisResult
+		if err := json.Unmarshal([]byte(responseContent), &full); err == nil {
+			return full.DocType, nil
+		}
+	}
+	return result.Type, nil
 }
 
 func (l *LlmDeepSeek) Name() string {

@@ -143,11 +143,18 @@ type TextReducerConfig struct {
 	TargetWords int    `mapstructure:"target_words" yaml:"target_words" json:"target_words"`
 }
 
+type DocTypeRefinementConfig struct {
+	Enabled   bool `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
+	HeadWords int  `mapstructure:"head_words" yaml:"head_words" json:"head_words"`
+	TailWords int  `mapstructure:"tail_words" yaml:"tail_words" json:"tail_words"`
+}
+
 type ContentAnalyzerConfig struct {
-	Engine         string         `mapstructure:"engine" yaml:"engine" json:"engine"`
-	Timeout        int            `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
-	Llm            LlmToolsConfig `mapstructure:"llm" yaml:"llm" json:"llm"`
-	PromptTemplate string         `mapstructure:"prompt_template" yaml:"prompt_template" json:"prompt_template,omitempty"`
+	Engine            string                   `mapstructure:"engine" yaml:"engine" json:"engine"`
+	Timeout           int                      `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
+	Llm               LlmToolsConfig           `mapstructure:"llm" yaml:"llm" json:"llm"`
+	PromptTemplate    string                   `mapstructure:"prompt_template" yaml:"prompt_template" json:"prompt_template,omitempty"`
+	DocTypeRefinement DocTypeRefinementConfig  `mapstructure:"doc_type_refinement" yaml:"doc_type_refinement" json:"doc_type_refinement"`
 }
 
 type EnricherConfig struct {
@@ -373,6 +380,11 @@ func DefaultConfig(configDir string) *Config {
 				Engine:         ContentAnalyzer.OpenAI,
 				Timeout:        120,
 				PromptTemplate: "",
+				DocTypeRefinement: DocTypeRefinementConfig{
+					Enabled:   true,
+					HeadWords: 600,
+					TailWords: 400,
+				},
 				Llm: LlmToolsConfig{
 					OpenAI: LlmToolConfig{
 						BaseURL: "https://api.openai.com/v1",

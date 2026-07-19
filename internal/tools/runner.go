@@ -60,13 +60,14 @@ type TagMatchResult struct {
 }
 
 type ContentAnalysisResult struct {
-	Title    string                         `json:"title"`
-	DocType  string                         `json:"type"`
-	Tags     []string                       `json:"tags"`
-	People   []contentanalyzer.PeopleResult `json:"people"`
-	Language string                         `json:"language"`
-	Stats    *json.RawMessage               `json:"stats"`
-	Prompt   string                         `json:"prompt"`
+	Title       string                         `json:"title"`
+	DocType     string                         `json:"type"`
+	Tags        []string                       `json:"tags"`
+	People      []contentanalyzer.PeopleResult `json:"people"`
+	Language    string                         `json:"language"`
+	Stats       *json.RawMessage               `json:"stats"`
+	Prompt      string                         `json:"prompt"`
+	PassContext *json.RawMessage               `json:"-"`
 }
 
 // runWithTimeout runs fn in a goroutine and returns its result,
@@ -310,12 +311,34 @@ func (r *Runner) AnalyzeContent(ctx context.Context, text string, docTypes []dat
 	}
 
 	return &ContentAnalysisResult{
-		Title:    result.Title,
-		DocType:  result.DocType,
-		Tags:     result.Tags,
-		People:   result.People,
-		Language: result.Language,
-		Stats:    result.Stats,
-		Prompt:   result.Prompt,
+		Title:       result.Title,
+		DocType:     result.DocType,
+		Tags:        result.Tags,
+		People:      result.People,
+		Language:    result.Language,
+		Stats:       result.Stats,
+		Prompt:      result.Prompt,
+		PassContext: result.PassContext,
 	}, nil
+}
+
+func (r *Runner) AnalyzeDocType(ctx context.Context, prevResult *ContentAnalysisResult, headTailText string, docTypes []database.DocumentType) (string, error) {
+	if r.contentAnalyzer == nil {
+		return "", fmt.Errorf("content analyzer not configured")
+	}
+	prev := &contentanalyzer.AnalysisResult{
+		PassContext: prevResult.PassContext,
+		Title:       prevResult.Title,
+		DocType:     prevResult.DocType,
+		Tags:        prevResult.Tags,
+		People:      prevResult.People,
+		Language:    prevResult.Language,
+	}
+	result, err := runWithTimeout(ctx, func() (string, error) {
+		return r.contentAnalyzer.AnalyzeDocType(ctx, prev, headTailText, docTypes)
+	})
+	if err != nil {
+		return "", fmt.Errorf("doc type refinement: %w", err)
+	}
+	return result, nil
 }

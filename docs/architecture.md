@@ -188,11 +188,21 @@ succeeds — `activateChildEnrich` re-activates the discarded enrich task to
    and the local embedding store. In the `edub` API server, the `MatcherClient` forwards
    the request over a Unix socket to the external matcher process. Falls back to all tags
    on failure.
-3. **LLM Classification** — the reduced content, along with available document types
-   and tag suggestions, is sent to the configured LLM provider. Returns structured
-   JSON: title, type, tags, people (with types like author, sender), language.
-   For non-Latin names (Korean, Arabic, Cyrillic, etc.), the LLM is prompted to
-   provide a `name_romanized` field alongside the original name.
+ 3. **LLM Classification (first pass)** — the reduced content, along with available document types
+    and tag suggestions, is sent to the configured LLM provider. Returns structured
+    JSON: title, type, tags, people (with types like author, sender), language.
+    For non-Latin names (Korean, Arabic, Cyrillic, etc.), the LLM is prompted to
+    provide a `name_romanized` field alongside the original name.
+    If the response is entirely empty, one automatic retry is performed.
+
+ 3a. **Document Type Refinement (second pass, optional)** — if TextRank actually reduced the
+    document content (i.e. `document.WordCount > target_word_count`), a second LLM call
+    re-evaluates only the document type using head+tail of the raw full text. The full
+    conversation history (system + user prompt + first-pass assistant response) is sent
+    so providers with prompt caching (OpenAI, Anthropic, DeepSeek) re-use the shared
+    prefix. The head+tail is extracted via `ExtractHeadTailWords` (default 600 head, 400
+    tail words) separated by a `[...]` marker. On error the first-pass type is preserved.
+    Configured via `enricher.contentanalyzer.doc_type_refinement` (enabled by default).
 4. **Tag Normalization** — LLM-extracted tags are normalized to canonical space-separated
    form via `NormalizeTags`: lowercased, hyphens/underscores→spaces, non-alpha stripped,
    whitespace collapsed, deduplicated. This ensures the LLM's hyphenation instructions

@@ -75,6 +75,10 @@ enricher:
     engine: llmopenai # llmopenai | llmanthropic | llmdeepseek | llmollama
     timeout: 120
     # prompt_template: ""  # optional custom LLM prompt; see docs for placeholders
+    # doc_type_refinement:
+    #   enabled: true
+    #   head_words: 600
+    #   tail_words: 400
     llm:
       openai:
         base_url: 'https://api.openai.com/v1'

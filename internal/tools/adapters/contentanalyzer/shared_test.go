@@ -125,6 +125,116 @@ func TestNormalizeTags_AccentFolding(t *testing.T) {
 	}
 }
 
+func TestExtractHeadTailWords(t *testing.T) {
+	tests := []struct {
+		name      string
+		content   string
+		headWords int
+		tailWords int
+		wantHead  string
+		wantTail  string
+		wantSep   bool
+	}{
+		{
+			name:      "enough words for head and tail",
+			content:   "a b c d e f g h i j",
+			headWords: 3,
+			tailWords: 2,
+			wantHead:  "a b c",
+			wantTail:  "i j",
+			wantSep:   true,
+		},
+		{
+			name:      "content shorter than head+tail",
+			content:   "a b c",
+			headWords: 5,
+			tailWords: 5,
+			wantHead:  "a b c",
+			wantTail:  "",
+			wantSep:   false,
+		},
+		{
+			name:      "empty content",
+			content:   "",
+			headWords: 10,
+			tailWords: 10,
+			wantHead:  "",
+			wantTail:  "",
+			wantSep:   false,
+		},
+		{
+			name:      "zero tail words",
+			content:   "a b c d e",
+			headWords: 3,
+			tailWords: 0,
+			wantHead:  "a b c",
+			wantTail:  "",
+			wantSep:   false,
+		},
+		{
+			name:      "exact head coverage",
+			content:   "a b c",
+			headWords: 3,
+			tailWords: 2,
+			wantHead:  "a b c",
+			wantTail:  "",
+			wantSep:   false,
+		},
+		{
+			name:      "head covers all, tail overlaps",
+			content:   "a b c d",
+			headWords: 4,
+			tailWords: 3,
+			wantHead:  "a b c d",
+			wantTail:  "",
+			wantSep:   false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ExtractHeadTailWords(tt.content, tt.headWords, tt.tailWords)
+			if !strings.Contains(got, tt.wantHead) {
+				t.Errorf("expected head %q in output %q", tt.wantHead, got)
+			}
+			if tt.wantSep {
+				if !strings.Contains(got, "[...]") {
+					t.Error("expected separator in output")
+				}
+			} else {
+				if strings.Contains(got, "[...]") {
+					t.Error("unexpected separator in output")
+				}
+			}
+			if tt.wantTail != "" && !strings.Contains(got, tt.wantTail) {
+				t.Errorf("expected tail %q in output %q", tt.wantTail, got)
+			}
+		})
+	}
+}
+
+func TestBuildDocTypePrompt(t *testing.T) {
+	docTypes := []database.DocumentType{
+		{Name: "article", Description: "Scholarly article"},
+		{Name: "invoice", Description: "Commercial invoice"},
+	}
+	headTail := "first line\n\n[...]\n\nlast line"
+
+	prompt := BuildDocTypePrompt(headTail, docTypes)
+
+	if !strings.Contains(prompt, "article") {
+		t.Error("expected prompt to contain document type name")
+	}
+	if !strings.Contains(prompt, "invoice") {
+		t.Error("expected prompt to contain second document type name")
+	}
+	if !strings.Contains(prompt, headTail) {
+		t.Error("expected prompt to contain head+tail text")
+	}
+	if !strings.Contains(prompt, "re-evaluate") {
+		t.Error("expected prompt to contain re-evaluation instruction")
+	}
+}
+
 func TestFilterTags(t *testing.T) {
 	tests := []struct {
 		name                 string

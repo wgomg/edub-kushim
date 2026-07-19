@@ -18,17 +18,19 @@ type PeopleResult struct {
 
 type ContentAnalyzer interface {
 	Analyze(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*AnalysisResult, error)
+	AnalyzeDocType(ctx context.Context, prevResult *AnalysisResult, headTailText string, docTypes []database.DocumentType) (string, error)
 	Name() string
 }
 
 type AnalysisResult struct {
-	Title    string           `json:"title"`
-	DocType  string           `json:"type"`
-	Tags     []string         `json:"tags"`
-	People   []PeopleResult   `json:"people"`
-	Language string           `json:"language"`
-	Stats    *json.RawMessage `json:"stats"`
-	Prompt   string           `json:"prompt"`
+	Title       string           `json:"title"`
+	DocType     string           `json:"type"`
+	Tags        []string         `json:"tags"`
+	People      []PeopleResult   `json:"people"`
+	Language    string           `json:"language"`
+	Stats       *json.RawMessage `json:"stats"`
+	Prompt      string           `json:"prompt"`
+	PassContext *json.RawMessage `json:"-"`
 }
 
 func NewContentAnalyzer(logger *utils.Logger, cfg config.ToolConfig, llmCfg *config.LlmToolsConfig, promptTemplate string) (ContentAnalyzer, error) {

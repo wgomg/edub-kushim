@@ -127,6 +127,25 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 		}
 	}
 
+	refinementCfg := e.config.Enricher.ContentAnalyzer.DocTypeRefinement
+	if refinementCfg.Enabled && llmContent.TargetWordCount > 0 &&
+		int64(document.WordCount) > int64(llmContent.TargetWordCount) {
+		headTailText := contentanalyzer.ExtractHeadTailWords(
+			document.TextContent.String,
+			refinementCfg.HeadWords,
+			refinementCfg.TailWords,
+		)
+		refinedType, err := e.runner.AnalyzeDocType(ctx, analysis, headTailText, docTypes)
+		if err != nil {
+			e.logger.Error(&logId, "doc type refinement failed, keeping first pass result: %v", err)
+		} else {
+			e.logger.Info(&logId, "doc type refined: %q → %q", analysis.DocType, refinedType)
+			if refinedType != "" {
+				analysis.DocType = refinedType
+			}
+		}
+	}
+
 	analysis.Tags = contentanalyzer.NormalizeTags(analysis.Tags)
 
 	for i, p := range analysis.People {

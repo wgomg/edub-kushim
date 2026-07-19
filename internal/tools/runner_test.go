@@ -168,3 +168,15 @@ func TestOptimizePdf_NilOptimizer(t *testing.T) {
 		t.Fatal("expected error when optimizer is nil")
 	}
 }
+
+func TestAnalyzeDocType_NilContentAnalyzer(t *testing.T) {
+	r := &Runner{
+		logger: utils.NewDiscardLogger(),
+		config: &config.Config{},
+	}
+
+	_, err := r.AnalyzeDocType(context.Background(), nil, "head tail text", nil)
+	if err == nil {
+		t.Fatal("expected error when content analyzer is nil")
+	}
+}

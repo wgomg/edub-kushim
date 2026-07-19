@@ -152,6 +152,32 @@ func normalizeToTokens(s string) []string {
 	return strings.Fields(normalizeCore(s))
 }
 
+func ExtractHeadTailWords(content string, headWords, tailWords int) string {
+	words := strings.Fields(content)
+	total := len(words)
+	head := min(headWords, total)
+	tail := min(tailWords, total-head)
+	var sb strings.Builder
+	sb.WriteString(strings.Join(words[:head], " "))
+	if tail > 0 {
+		sb.WriteString("\n\n[...]\n\n")
+		sb.WriteString(strings.Join(words[total-tail:], " "))
+	}
+	return sb.String()
+}
+
+func BuildDocTypePrompt(headTailText string, docTypes []database.DocumentType) string {
+	var typesList strings.Builder
+	for _, dt := range docTypes {
+		fmt.Fprintf(&typesList, "  - %s (%s)\n", dt.Name, dt.Description)
+	}
+	return fmt.Sprintf(
+		"Now re-evaluate the document type using the opening and closing sections of the full document below. Choose one type from:\n%s\nReturn ONLY a json string with key: type, without any additional text or formatting.\n\nDocument head and tail sections:\n\n%s",
+		typesList.String(),
+		headTailText,
+	)
+}
+
 func FilterTags(tags []string, people []PeopleResult, knownPeopleNormalized []string, title string, docTypeNames []string) []string {
 	nameTokens := make(map[string]struct{})
 	for _, p := range people {
