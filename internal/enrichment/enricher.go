@@ -272,7 +272,8 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 			if nameNative != "" {
 				nameNativeArg = sql.NullString{String: nameNative, Valid: true}
 			}
-			id, err := e.queries.CreatePeople(ctx, database.CreatePeopleParams{
+			var err error
+			id, err = e.queries.CreatePeople(ctx, database.CreatePeopleParams{
 				Name:           canonicalName,
 				NameNative:     nameNativeArg,
 				NormalizedName: normalized,
