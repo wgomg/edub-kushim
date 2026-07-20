@@ -31,6 +31,9 @@ func (h *EnrichTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMe
 
 	document, err := h.queries.GetDocument(ctx, p.DocumentID)
 	if err != nil {
+		if p.DocumentID != "" {
+			return nil, &task.Error{ReqID: p.DocumentID, Err: fmt.Errorf("document %s not found", p.DocumentID)}
+		}
 		return nil, fmt.Errorf("document %s not found", p.DocumentID)
 	}
 

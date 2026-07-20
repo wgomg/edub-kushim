@@ -34,11 +34,17 @@ func (h *ConsumeTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawM
 		return nil, fmt.Errorf("unmarshal payload: %w", err)
 	}
 	if p.FilePath == "" {
+		if p.DocumentID != "" {
+			return nil, &task.Error{ReqID: p.DocumentID, Err: fmt.Errorf("task %s has no file_path in payload", t.TaskID)}
+		}
 		return nil, fmt.Errorf("task %s has no file_path in payload", t.TaskID)
 	}
 
 	file, err := consumption.FileFromPath(p.FilePath)
 	if err != nil {
+		if p.DocumentID != "" {
+			return nil, &task.Error{ReqID: p.DocumentID, Err: fmt.Errorf("build file from path: %w", err)}
+		}
 		return nil, fmt.Errorf("build file from path: %w", err)
 	}
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -35,7 +36,12 @@ func (r *Runner) Next(ctx context.Context, taskType string) error {
 
 	if task.Payload == nil {
 		_ = r.store.FailTask(ctx, task.ID, "task has nil payload")
-		r.logger.Error(nil, "task %s has nil payload", task.TaskID)
+		var tErr *Error
+		reqID := (*string)(nil)
+		if errors.As(err, &tErr) {
+			reqID = &tErr.ReqID
+		}
+		r.logger.Error(reqID, "task %s has nil payload", task.TaskID)
 		return nil
 	}
 
@@ -53,7 +59,12 @@ func (r *Runner) Next(ctx context.Context, taskType string) error {
 	})
 	if err != nil {
 		_ = r.store.FailTask(ctx, task.ID, err.Error())
-		r.logger.Error(nil, "task %s failed: %v", task.TaskID, err)
+		var tErr *Error
+		reqID := (*string)(nil)
+		if errors.As(err, &tErr) {
+			reqID = &tErr.ReqID
+		}
+		r.logger.Error(reqID, "task %s failed: %v", task.TaskID, err)
 		return nil
 	}
 
@@ -64,7 +75,12 @@ func (r *Runner) Next(ctx context.Context, taskType string) error {
 		if failErr := r.store.FailTask(ctx, task.ID, failMsg); failErr != nil {
 			return fmt.Errorf("complete task %d (and fail fallback): %v / %w", task.ID, failErr, err)
 		}
-		r.logger.Error(nil, "task %s completed handler but CompleteTask failed after retries — task failed instead of stuck", task.TaskID)
+		var tErr *Error
+		reqID := (*string)(nil)
+		if errors.As(err, &tErr) {
+			reqID = &tErr.ReqID
+		}
+		r.logger.Error(reqID, "task %s completed handler but CompleteTask failed after retries — task failed instead of stuck", task.TaskID)
 		return nil
 	}
 

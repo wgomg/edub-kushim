@@ -227,6 +227,46 @@ func TestRunnerFailsTask(t *testing.T) {
 	_ = handler
 }
 
+// wrappedFailHandler returns *task.Error when failing, exercising the
+// errors.As extraction path in Runner.Next.
+type wrappedFailHandler struct {
+	mockHandler
+}
+
+func (h *wrappedFailHandler) Handle(ctx context.Context, t Task) (json.RawMessage, error) {
+	h.mu.Lock()
+	h.handled++
+	h.lastTask = t
+	fail := h.fail
+	h.mu.Unlock()
+
+	if fail {
+		return nil, &Error{ReqID: "req-from-handler", Err: errMockFail}
+	}
+	return h.result, nil
+}
+
+func TestRunnerExtractsReqIDFromWrappedError(t *testing.T) {
+	store, registry, _ := setupTaskTest(t)
+	runner := NewRunner(store, registry, testutil.NewTestLogger())
+
+	handler := &wrappedFailHandler{}
+	handler.fail = true
+	registry.Register("wrapped", handler)
+
+	ctx := context.Background()
+	_, err := store.CreateTask(ctx, "wrapped", "", json.RawMessage(`{}`), "", "", "")
+	testutil.AssertNoError(t, err, "create")
+
+	err = runner.Next(ctx, "wrapped")
+	testutil.AssertNoError(t, err, "run (error swallowed)")
+	testutil.AssertEqual(t, handler.HandledCount(), 1, "called")
+
+	// Failed task should not be claimable again
+	_, err = store.ClaimNextPending(ctx, "wrapped")
+	testutil.AssertError(t, err, "failed task should not be claimable")
+}
+
 func TestRunnerNoTasks(t *testing.T) {
 	store, registry, _ := setupTaskTest(t)
 	runner := NewRunner(store, registry, testutil.NewTestLogger())

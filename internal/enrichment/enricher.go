@@ -17,6 +17,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/tools"
+	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/contentanalyzer"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/tagmatcher"
 	"github.com/wgomg/edub-kushim/internal/utils"
@@ -79,15 +80,15 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 
 	docTypes, err := e.queries.ListAllDocumentTypes(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve document types: %w", err)
+		return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to retrieve document types: %w", err)}
 	}
 	peopleTypes, err := e.queries.ListAllPeopleTypes(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve people types: %w", err)
+		return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to retrieve people types: %w", err)}
 	}
 	allTags, err := e.services.Tag.ListAll(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve tags: %w", err)
+		return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to retrieve tags: %w", err)}
 	}
 
 	var tagSuggestions []string
@@ -113,17 +114,17 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 
 	analysis, err := e.runner.AnalyzeContent(ctx, llmContent.Text, docTypes, peopleTypes, tagSuggestions)
 	if err != nil {
-		return nil, fmt.Errorf("failed to analyze content: %w", err)
+		return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to analyze content: %w", err)}
 	}
 
 	if isEmptyAnalysis(analysis) {
 		e.logger.Info(&logId, "empty analysis result—retrying once")
 		analysis, err = e.runner.AnalyzeContent(ctx, llmContent.Text, docTypes, peopleTypes, tagSuggestions)
 		if err != nil {
-			return nil, fmt.Errorf("failed to analyze content on retry: %w", err)
+			return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to analyze content on retry: %w", err)}
 		}
 		if isEmptyAnalysis(analysis) {
-			return nil, fmt.Errorf("analysis returned empty result after retry")
+			return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("analysis returned empty result after retry")}
 		}
 	}
 
@@ -163,7 +164,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 
 	existingPeople, err := e.queries.ListAllPeople(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("list existing people: %w", err)
+		return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("list existing people: %w", err)}
 	}
 	knownNormalized := make([]string, 0, len(existingPeople))
 	for _, p := range existingPeople {
@@ -229,7 +230,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 	}
 
 	if err := e.queries.ClearDocumentTags(ctx, document.ID); err != nil {
-		return nil, fmt.Errorf("clear document tags: %w", err)
+		return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("clear document tags: %w", err)}
 	}
 	for _, tagID := range tagIDs {
 		if err := e.queries.AddDocumentTag(ctx, database.AddDocumentTagParams{
@@ -319,7 +320,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 	}
 
 	if err := e.queries.ClearDocumentPeople(ctx, document.ID); err != nil {
-		return nil, fmt.Errorf("clear document people: %w", err)
+		return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("clear document people: %w", err)}
 	}
 
 	for _, dp := range docPeople {

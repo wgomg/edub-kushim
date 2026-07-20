@@ -20,6 +20,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
+	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/pdfoptimizer"
@@ -112,18 +113,18 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 	duplicated, err := c.isDuplicate(ctx, file.OriginalPath)
 	if err != nil {
 		MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
-		return file, fmt.Errorf("failed to check for duplicate: %v", err)
+		return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("failed to check for duplicate: %v", err)}
 	}
 
 	if duplicated {
 		MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "duplicate", c.logger, &documentID)
-		return file, fmt.Errorf("file is a duplicate, skipping")
+		return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("file is a duplicate, skipping")}
 	}
 
 	file, err = c.extractText(ctx, file, documentID)
 	if err != nil {
 		MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
-		return file, err
+		return file, &task.Error{ReqID: documentID, Err: err}
 	}
 
 	datePath := filepath.Join(
@@ -170,7 +171,7 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 		)
 		if err := MoveFile(*file.OCRTmpPath, *file.StorageProcessedPath); err != nil {
 			MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
-			return file, fmt.Errorf("failed to move OCR processed file: %w", err)
+			return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("failed to move OCR processed file: %w", err)}
 		}
 		c.logger.Debug(
 			&documentID,
@@ -184,14 +185,14 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 				c.logger.Error(&documentID, "failed to clean up OCR file: %v", removeErr)
 			}
 			MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
-			return file, fmt.Errorf("failed to move original file: %w", err)
+			return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("failed to move original file: %w", err)}
 		}
 	} else if file.OptimizedPdfTmpPath != nil {
 		c.logger.Debug(&documentID,
 			"Copying original file from %s to %s", file.OriginalPath, *file.StorageOriginalPath)
 		if err := CopyFile(file.OriginalPath, *file.StorageOriginalPath); err != nil {
 			MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
-			return file, fmt.Errorf("failed to copy original file: %w", err)
+			return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("failed to copy original file: %w", err)}
 		}
 
 		c.logger.Debug(&documentID,
@@ -201,7 +202,7 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 				c.logger.Error(&documentID, "failed to clean up original file post-move error: %v", removeErr)
 			}
 			MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
-			return file, fmt.Errorf("failed to move optimized file: %w", err)
+			return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("failed to move optimized file: %w", err)}
 		}
 	} else {
 		// optimization failed or was skipped — use original for both.
@@ -209,7 +210,7 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 			"Copying original file from %s to %s (no optimized version)", file.OriginalPath, *file.StorageProcessedPath)
 		if err := CopyFile(file.OriginalPath, *file.StorageProcessedPath); err != nil {
 			MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
-			return file, fmt.Errorf("failed to copy original file to processed storage: %w", err)
+			return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("failed to copy original file to processed storage: %w", err)}
 		}
 		c.logger.Debug(&documentID,
 			"Copying original file from %s to %s", file.OriginalPath, *file.StorageOriginalPath)
@@ -218,14 +219,14 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 				c.logger.Error(&documentID, "failed to clean up processed file post-copy error: %v", removeErr)
 			}
 			MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
-			return file, fmt.Errorf("failed to copy original file to originals storage: %w", err)
+			return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("failed to copy original file to originals storage: %w", err)}
 		}
 	}
 
 	txCtx, txCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer txCancel()
 
-	tx, err := 	c.client.BeginTx(txCtx, nil)
+		tx, err := 	c.client.BeginTx(txCtx, nil)
 	if err != nil {
 		if removeErr := RemoveFile(*file.StorageProcessedPath); removeErr != nil {
 			c.logger.Error(&documentID, "failed to clean up processed file: %v", removeErr)
@@ -234,7 +235,7 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 			c.logger.Error(&documentID, "failed to clean up original file: %v", removeErr)
 		}
 		MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
-		return file, fmt.Errorf("failed to begin database transaction: %w", err)
+		return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("failed to begin database transaction: %w", err)}
 	}
 	defer func() {
 		if err != nil {
@@ -281,7 +282,7 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 	})
 	if err != nil {
 		MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
-		return file, fmt.Errorf("failed to create document record: %w", err)
+		return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("failed to create document record: %w", err)}
 	}
 
 	c.logger.Debug(&documentID, "Created document with ID: %d", documentDbId)
@@ -296,7 +297,7 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 	})
 	if err != nil {
 		MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
-		return file, fmt.Errorf("failed to update storage path: %w", err)
+		return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("failed to update storage path: %w", err)}
 	}
 
 	c.logger.Debug(&documentID, "Committing transaction")
@@ -318,7 +319,7 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 			)
 		}
 		MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
-		return file, fmt.Errorf("failed to commit transaction: %w", err)
+		return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("failed to commit transaction: %w", err)}
 	} else {
 		if removeErr := RemoveFile(file.OriginalPath); removeErr != nil {
 			c.logger.Error(
@@ -483,7 +484,7 @@ func (c *Consumer) extractText(ctx context.Context, file File, documentID string
 	memAfterExtract := utils.ReadMemSnapshot()
 	c.logger.Debug(&documentID, "extractText: %s", utils.FormatMemDelta(memBefore, memAfterExtract))
 	if err != nil {
-		return file, fmt.Errorf("text extraction failed: %w", err)
+		return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("text extraction failed: %w", err)}
 	}
 
 	const minTextDensityRatio = 0.001
@@ -510,14 +511,14 @@ func (c *Consumer) extractText(ctx context.Context, file File, documentID string
 	c.logger.Debug(&documentID, "OCR: %s (RSS now %s)", utils.FormatMemDelta(memAfterExtract, memAfterOCR), utils.FormatBytes(memAfterOCR.RSS))
 	if err != nil {
 		c.logger.Error(&documentID, "OCR failed for %s: %v", file.Name, err)
-		return file, err
+		return file, &task.Error{ReqID: documentID, Err: err}
 	}
 
 	extractResult, err = c.runner.ExtractText(ctx, *ocrResult.TmpPath)
 	memAfterFinal := utils.ReadMemSnapshot()
 	c.logger.Debug(&documentID, "extractText (post-OCR): %s", utils.FormatMemDelta(memAfterOCR, memAfterFinal))
 	if err != nil {
-		return file, fmt.Errorf("text extraction failed for ocrd file: %w", err)
+		return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("text extraction failed for ocrd file: %w", err)}
 	}
 
 	if extractResult.Text != nil && *extractResult.Text != "" {

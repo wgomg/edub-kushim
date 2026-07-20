@@ -60,6 +60,7 @@ internal/
 │   ├── batch.go           # Batch ownership — Owner.Acquire, Release, Heartbeat, BatchOwnerState
 │   ├── crud.go            # Task CRUD (Get, ListFiltered, Retry, CountBatchStatuses, ListBatchSummaries)
 │   ├── dispatcher.go      # Task dispatcher (Enqueue with custom taskID/status)
+│   ├── errors.go          # Error wrapper carrying ReqID for log correlation
 │   ├── handler.go         # Handler + Dedupable interfaces
 │   ├── heartbeat.go       # Heartbeat goroutine — periodic Owner.Heartbeat every 5s
 │   └── handlers/

@@ -24,6 +24,19 @@
 
 - `Task` — domain struct with `ID int64`, `TaskID string`, `TaskType string`, `Payload json.RawMessage`
 
+## `errors.go`
+
+### Types
+
+- `Error` — error wrapper carrying a `ReqID` string alongside the wrapped `Err error`. Implemented at the package level for one-directional import safety (neither `enrichment` nor `consumption` import `task`).
+  - **Methods**:
+    - `Error() string` — delegates to the wrapped error's message
+    - `Unwrap() error` — returns the inner error, enabling `errors.Is`/`errors.As` traversal
+
+### Usage
+
+The `Runner.Next` method uses `errors.As(err, &tErr)` to extract `ReqID` from handler errors before logging. Layers that have a document ID in scope (consumer, enricher, handlers) wrap fatal returns with `&task.Error{ReqID: documentID, Err: ...}`. Unmarshal failures and other errors without a document ID are left unwrapped — `Next` falls back to nil reqID, producing the same log output as before.
+
 ## `handler.go`
 
 ### Interfaces
@@ -63,7 +76,7 @@
 - `Runner` — owns `Store` and `Registry`; implements `pool.Runner`
   - **Methods**:
     - `NewRunner(store, registry, logger) *Runner`
-    - `Next(ctx, taskType) error` — generic poll loop: claim next pending task, check for nil payload (fail task if nil), get handler, execute, complete (with retry+FailTask fallback)
+    - `Next(ctx, taskType) error` — generic poll loop: claim next pending task, check for nil payload (fail task if nil), get handler, execute, complete (with retry+FailTask fallback); extracts `ReqID` from handler errors via `errors.As` and passes it to the logger for document-level correlation (`REQID=<doc-id> task <uuid> failed: ...`)
     - `completeTaskWithRetry(ctx, id, result) error` — private: 3× exponential backoff on `CompleteTask`, handles `rows == 0` (task already transitioned by stale-task sweep)
 
 ## `dispatcher.go`
