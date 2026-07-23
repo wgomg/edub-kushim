@@ -2,23 +2,26 @@
 
 ## Structs
 
-- `Config` — `App AppConfig`, `Srv ServerConfig`, `Db DatabaseConfig`, `Storage StorageConfig`, `Consumer ConsumerConfig`, `Enricher EnricherConfig`
-- `AppConfig`: `Env Environment`, `LogLevel string`, `ConfigDir string`
-- `ServerConfig`: `Host`, `Port`, `ReadTimeout`, `WriteTimeout`, `IdleTimeout`, `MaxUploadSize`, `MaxConcurrentBatches`, `AuthEnabled` (when false, auth middleware passes all requests through; default `true` for existing installs, `false` for fresh bootsrap), `SessionSecret` (64-char hex JWT signing key; auto-generated during setup, fallback in-memory generation at server start)
-- `DatabaseConfig`: `Type`, `Path`, `Name`, `Seeders []string`
+- `Config` — `App AppConfig`, `Srv ServerConfig`, `Db DatabaseConfig`, `Storage StorageConfig`, `Consumer ConsumerConfig`, `Enricher EnricherConfig`, `Backup BackupConfig`
+- `AppConfig`: `Env Environment`, `LogLevel string`, `Logging LoggingConfig`, `ConfigDir string`
+  - `LoggingConfig`: `MaxSize int`, `MaxBackups int`, `MaxAge int`, `Compress bool`
+- `ServerConfig`: `Host`, `Port`, `ReadTimeout`, `WriteTimeout`, `IdleTimeout`, `MaxUploadSize` (MB), `MaxConcurrentBatches` (default 4), `AuthEnabled` (when false, auth middleware passes all requests through; default `true` for existing installs, `false` for fresh bootstrap), `SessionSecret` (64-char hex JWT signing key; auto-generated during setup, fallback in-memory generation at server start), `MaxDownloadFiles`, `MaxDownloadSizeMB`, `MaxBatchDelete`
+- `DatabaseConfig`: `Type`, `Host`, `Port`, `User`, `Password`, `Database`, `SSLMode`, `DSN`, `Seeders []string`
 - `StorageConfig`: `ConsumptionDir`, `StorageDir`
-- `ConsumerConfig`: `SupportedFiles []string`, `Workers int`, `TextExtractor TextExtractorConfig`, `PdfOptimizer PdfOptimizerConfig`, `OCR OCRConfig`
+- `ConsumerConfig`: `SupportedFiles []string`, `Workers int`, `MaxFilesPerBatch int`, `TextExtractor TextExtractorConfig`, `PdfOptimizer PdfOptimizerConfig`, `OCR OCRConfig`, `Polling PollingConfig`, `Reclaim ReclaimConfig`
+  - `PollingConfig`: `Enabled bool`, `Interval int` (minutes), `Windows []PollingWindow` (optional time-range restrictions with `Start`/`End` in HH:MM format)
+  - `ReclaimConfig`: `Enabled bool`, `MaxRetries int` (default 3), `StaleTaskAfter int64` (default 600s)
   - `TextExtractorConfig`: `Engine string`, `Timeout int`
   - `PdfOptimizerConfig`: `Engine string`, `Fallback string`, `Timeout int`
   - `OCRConfig`: `Engine string`, `Languages []string`, `DataDir string`, `Timeout int`, `OcrWorkers int` (0 = auto, resolves to `runtime.NumCPU()` in the subprocess)
 - `EnricherConfig`: `Workers int`, `TextReducer TextReducerConfig`, `ContentAnalyzer ContentAnalyzerConfig`, `TagMatcher TagMatcherConfig`
   - `TextReducerConfig`: `Engine string`, `Timeout int`, `TargetWords int`
-   - `ContentAnalyzerConfig`: `Enabled bool`, `Timeout int`, `Llm LlmConfig`, `PromptTemplate string`, `DocTypeRefinement DocTypeRefinementConfig`
-     - `LlmConfig`: `Adapter string`, `Provider string`, `Model string`, `Token string`, `Endpoint string`, `Reasoning bool`, `ReasoningEffort string`, `Temperature float64`, `Custom *CustomLlmConfig`
-     - `CustomLlmConfig`: `URL string`, `RequestBody string`, `ResponsePath string`
-     - `DocTypeRefinementConfig`: `Enabled bool`, `HeadWords int`, `TailWords int`
-  - `TagMatcherConfig`: `Engine`, `Timeout`, `ReduceTargetWords`, `ChunkSize`, `Hugot HugotConfig`, `TopN`, `MinSimilarity`, `ConsolidationSimilarity`
+  - `ContentAnalyzerConfig`: `Enabled bool` (default `false`), `Timeout int`, `Llm LlmConfig`, `PromptTemplate string`, `DocTypeRefinement DocTypeRefinementConfig`
+      - `LlmConfig`: `Adapter string`, `Provider string`, `Model string`, `Token string`, `Reasoning bool` (yaml:"-", set via model catalog), `ReasoningEffort string` (yaml:"-", set via model catalog), `Temperature float64`
+      - `DocTypeRefinementConfig`: `Enabled bool`, `HeadWords int`, `TailWords int`
+  - `TagMatcherConfig`: `Timeout`, `ReduceTargetWords`, `ChunkSize`, `Hugot HugotConfig`, `TopN`, `MinSimilarity`, `ConsolidationSimilarity`
     - `HugotConfig`: `Model`, `Backend` (`"GO"` or `"ort"`), `ModelPath`, `BackendLibPath`; internal-only (no yaml/json tags): `CpuMemArena bool` (default `false`), `MemPattern bool` (default `false`)
+- `BackupConfig`: `Enabled bool`, `Interval float64` (days), `Time string` (HH:MM), `Path string`, `Keep int`
 - `ToolConfig`: `Command string`, `Timeout time.Duration`
 
 ## Constants
@@ -44,7 +47,6 @@ instead of string literals:
 | `PdfOptimizer`    | `MuPDF` (`"mupdf"`), `GS` (`"gs"`)                                                                               |
 | `TextExtractor`    | `MuPDF` (`"mupdf"`), `GoPdf` (`"gopdf"`), `PdfToText` (`"pdftotext"`)                                            |
 | `TextReducer`      | `TextRank` (`"textrank"`)                                                                     |
-| `TagMatcher`       | `Hugot` (`"hugot"`)                                                                           |
 
 ## AvailableEngines
 
@@ -57,7 +59,6 @@ per tool category, used by the frontend settings UI to populate select dropdowns
 | `pdf_optimizer`      | mupdf, gs                                         |
 | `text_extractor`     | mupdf, gopdf, pdftotext                           |
 | `text_reducer`       | textrank                                          |
-| `tag_matcher`        | hugot                                             |
 
 `EngineEntry` has `Value string` and `Label string` fields for UI display.
 
@@ -119,7 +120,7 @@ per tool category, used by the frontend settings UI to populate select dropdowns
 
 ## `version.go`
 
-`const Version = "0.1.0"`
+`var Version = "2.3.0"`
 
 ---
 

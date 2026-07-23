@@ -59,7 +59,8 @@ The CGo binary that performs actual document processing:
 - `kushim queue` — starts the batch queue daemon for background consumption and inbox polling (replaces the former `PollingScheduler`)
 - `kushim hugot` — starts the matcher RPC server
 - `kushim setup` — setup wizard
-- `kushim model-catalog refresh` — download latest model catalog JSON from GitHub
+- `kushim backup` — create a backup of database, config, and storage files
+- `kushim restore` — restore from a backup archive
 
 ### Communication Flow
 
@@ -339,8 +340,6 @@ exported package-level vars in `internal/config/config.go`:
 | `PdfOptimizer`    | `MuPDF` (`"mupdf"`), `GS` (`"gs"`)                                                                               |
 | `TextExtractor`   | `MuPDF` (`"mupdf"`), `GoPdf` (`"gopdf"`), `PdfToText` (`"pdftotext"`)                                            |
 | `TextReducer`     | `TextRank` (`"textrank"`)                                                                                        |
-| `TagMatcher`      | `Hugot` (`"hugot"`)                                                                                              |
-
 The content analyzer no longer uses engine constants — it selects an adapter via `llm.adapter`
 (`openai-compatible`, `anthropic`, `custom`) resolved dynamically from the
 capability registry.
@@ -482,7 +481,7 @@ clear upgrade path to Meilisearch, ZincSearch, or Elasticsearch if needed.
 | External matcher process          | Hugot embedding model runs as a separate process (`kushim hugot`) over a Unix socket. The API server (`edub`) is pure Go with no CGo dependencies.                                                                                                                                                                                 |
 | Forked processing workers         | The `kushim queue` daemon forks `kushim consume --batch` as child processes. Clean process isolation, no in-process heartbeat/ownership management needed. `edub` only enqueues tasks — it never forks directly.                                                                                                                                             |
 | `CGO_ENABLED=0` for `edub`        | `edub` is compiled without CGo, making it a lightweight, statically linked binary. No runtime dependency on C libraries. `kushim` retains all CGo for Tesseract/Leptonica/MuPDF/Hugot.                                                                                                                                             |
-| Queue-driven batch processing     | Both API consume endpoints create batches with `status='queued'` and return immediately. The `kushim queue` daemon polls for queued batches, enforces its own concurrency limit (`server.max_concurrent_batches`), and forks workers. No in-process semaphore needed in `edub`.                                                     |
+| Queue-driven batch processing     | Both API consume endpoints create batches with `status='queued'` and return immediately. The `kushim queue` daemon polls for queued batches (via Postgres LISTEN/NOTIFY), enforces its own concurrency limit (`server.max_concurrent_batches`, default 4), and forks workers. No in-process semaphore needed in `edub`.                                                     |
 | CGo-heavy adapters run in subprocesses | Long-running CGo calls starve the Go scheduler's goroutine preemption (heartbeat goroutines never fire inside Tesseract/MuPDF calls). Following the `internal-mupdf-clean` and `kushim hugot` precedents, any adapter wrapping a substantial third-party native library — one that can run for more than a second or two, or that may have its own internal threading or crash surface — gets its own subcommand and is forked as a child process via `exec.CommandContext`. Thin, fast, well-understood CGo calls (page counts, plain text extraction) stay in-process. |
 
 ---

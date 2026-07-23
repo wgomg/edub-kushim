@@ -264,9 +264,11 @@ The last 4 methods back the dashboard analytics panel. `LanguageDistribution` an
 Junction table inserts (`document_tag`, `document_people`) use `INSERT ... ON CONFLICT ... DO NOTHING`
 instead of plain `INSERT` to avoid duplicate-key errors on re-enrichment.
 
-The consolidated baseline (`00001_baseline.sql`) replaces all migrations `00002`–`00011`.
-New schema changes after the baseline are written as numbered migration files (starting at `00002`).
-Goose tracks which versions have been applied in the `goose_db_version` table.
+The consolidated baseline (`00001_baseline.sql`) creates the initial schema. New schema changes
+after the baseline are written as numbered migration files (starting at `00002`). Current
+migrations: `00001_baseline.sql`, `00002_tsvector.sql`, `00003_tsvector_index.sql`,
+`00004_listen_notify.sql`, `00005_backup_lock.sql`. Goose tracks which versions have been
+applied in the `goose_db_version` table.
 
 ## Migration Version Table
 

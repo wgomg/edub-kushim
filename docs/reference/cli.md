@@ -4,7 +4,7 @@
 
 ### Globals
 
-`commandSets` map with `"cli"` key. CLI set contains: `version`, `consume`, `enrich`, `search`, `task`, `setup`, `hugot`, `storage`, `queue`.
+`commandSets` map with `"cli"` key (CLI commands) and `"server"` key (edub commands: `version`). CLI set contains: `version`, `consume`, `search`, `hugot`, `task`, `user`, `setup`, `enrich`, `queue`, `storage`, `backup`, `restore`.
 
 > **Note**: The `edub` binary no longer uses `CommandRunner` from the commands package. It has its own standalone runner in `cmd/edub/runner.go` that only handles the `version` command (server mode is the default when no command matches).
 
@@ -55,7 +55,7 @@
 
 ### Function
 
-- `serveMatchingHandler(c, args) error` — Starts the matcher RPC server over a Unix domain socket. Accepts optional `--socket <path>` flag (default `<config_dir>/kushim-hugot.sock`). Creates a Hugot embedding session, builds the tag cache from the database, exposes HTTP endpoints:
+- `serveHugotHandler(c, args) error` — Starts the matcher RPC server over a Unix domain socket. Accepts optional `--socket <path>` flag (default `<config_dir>/kushim-hugot.sock`). Creates a Hugot embedding session, builds the tag cache from the database, exposes HTTP endpoints:
 
 | Endpoint                         | Method | Description                                                                |
 | -------------------------------- | ------ | -------------------------------------------------------------------------- |

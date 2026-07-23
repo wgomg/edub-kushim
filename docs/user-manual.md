@@ -55,7 +55,7 @@ Print the application version.
 
 ```
 kushim version
-Document Management System v0.1.0
+Document Management System v2.3.0
 ```
 
 ### `kushim setup`
@@ -465,19 +465,7 @@ If the matcher is not running, tag CRUD operations return `503 Service Unavailab
 
 ---
 
-### `kushim model-catalog refresh`
 
-Download the latest model catalog JSON from GitHub. Overwrites the local `model_catalog.json` file and rebuilds the in-memory registry. Requires internet access. The server can continue running with the stale catalog until the refresh completes.
-
-```
-kushim model-catalog refresh
-```
-
-| Condition | Output |
-| --------- | ------ |
-| Success | `Model catalog refreshed: 42 providers, 156 models` |
-| No internet | `Error: failed to download model catalog: ...` |
-| File write error | `Error: failed to write model catalog: ...` |
 
 ### `kushim backup`
 
@@ -543,7 +531,7 @@ Response `200`:
 ```json
 {
   "status": "healthy",
-  "version": "0.1.0",
+  "version": "2.3.0",
   "time": "2024-03-19T10:30:00Z"
 }
 ````
@@ -904,10 +892,29 @@ Response `200`:
   },
   "providers": {
     "openai": [
-      { "id": "gpt-4o", "display_name": "GPT-4o", "max_input_tokens": 128000, "supports_reasoning": false }
+      {
+        "id": "gpt-4o",
+        "capabilities": {
+          "supports_reasoning": false,
+          "max_input_tokens": 128000,
+          "max_output_tokens": 16384,
+          "supports_temperature": true,
+          "supports_response_schema": true
+        }
+      }
     ],
     "deepseek": [
-      { "id": "deepseek-v4-flash", "display_name": "DeepSeek V4 Flash", "max_input_tokens": 1000000, "max_output_tokens": 8192, "supports_reasoning": true, "reasoning_efforts": ["high", "max"] }
+      {
+        "id": "deepseek-v4-flash",
+        "capabilities": {
+          "supports_reasoning": true,
+          "reasoning_efforts": ["high", "max"],
+          "max_input_tokens": 1000000,
+          "max_output_tokens": 8192,
+          "supports_temperature": true,
+          "supports_response_schema": true
+        }
+      }
     ]
   }
 }
@@ -1019,6 +1026,39 @@ Response `202 Accepted`:
 | --------- | ------ |
 | Document not found | `404` |
 | Re-enrich already queued (active task with same dedup key) | `409` |
+
+### Filter Languages / MIME Types
+
+Returns the distinct languages and MIME types available in the document corpus, for use in structured search filter dropdowns.
+
+```
+GET /api/v1/filter-languages
+GET /api/v1/filter-mime-types
+```
+
+Response `200` — array of strings:
+
+```json
+["eng", "spa", "deu"]
+```
+
+### Batch Retry
+
+Reset all failed tasks in a batch to pending.
+
+```
+POST /api/v1/batches/{batchID}/retry
+```
+
+Response `200`:
+
+```json
+{
+  "retried": 3
+}
+```
+
+Idempotent — returns 0 retried when no failed tasks remain.
 
 ### Consume
 
@@ -1586,14 +1626,20 @@ is what `kushim setup` generates at `~/.config/edub-kushim/config.yaml`.
 app:
   environment: development # development | production
   log_level: info # silent | fatal | error | warn | info | debug
+  logging:
+    max_size: 100       # MB per file before rotation
+    max_backups: 7      # rotated files to keep
+    max_age: 30         # days before deleting old backups
+    compress: true      # gzip rotated files
 
 server:
   host: 0.0.0.0
   port: 3000
-  read_timeout: 60s # Go duration string (e.g. 60s, 30s)
+  read_timeout: 60s
   write_timeout: 60s
   idle_timeout: 60s
-  max_concurrent_batches: 2 # max concurrent worker processes (enforced by the queue daemon)
+  max_concurrent_batches: 4 # max concurrent worker processes (enforced by the queue daemon)
+  max_upload_size: 100 # max multipart upload size in MB
   max_download_files: 50 # max files in a single batch download
   max_download_size_mb: 500 # max total size in MB for batch download
   max_batch_delete: 50 # max documents in a single batch delete
@@ -1619,9 +1665,17 @@ storage:
 consumer:
   workers: 1 # concurrent file processing workers
   max_files_per_batch: 10 # max files per consume batch (0 = unlimited)
+  supported_files: ['.pdf'] # file extensions to process
   polling:
     enabled: false # auto-consume on a schedule
     interval: 5 # polling interval in minutes
+    # windows:               # optional: restrict polling to specific time ranges
+    #   - start: "02:00"
+    #     end: "06:00"
+  reclaim:
+    enabled: true # auto-resume batches interrupted by crashes or errors
+    max_retries: 3 # max consecutive reclamation retries before quarantining
+    stale_task_after: 600 # seconds after which a processing task is considered stale
   textextractor:
     engine: 'mupdf' # mupdf | gopdf | pdftotext
     timeout: 120
@@ -1633,6 +1687,7 @@ consumer:
     engine: 'gosseract' # gosseract | ocrmypdf
     languages: [eng] # required — set via kushim setup --languages
     timeout: 120
+    # ocr_workers: 0  # parallel OCR goroutines; 0 = auto (CPU count)
 
 enricher:
   workers: 1 # concurrent enrichment workers
@@ -1641,7 +1696,7 @@ enricher:
     timeout: 120
     target_words: 2000 # optional: reduce text before LLM
   contentanalyzer:
-    enabled: true
+    enabled: false # disabled by default — enable after configuring LLM
     timeout: 120
     # prompt_template: ''  # optional custom LLM prompt; see docs for available placeholders
     # doc_type_refinement:
@@ -1653,9 +1708,6 @@ enricher:
       provider: 'openai'           # auto-populated from model catalog
       model: 'gpt-4o'              # auto-populated from model catalog
       # token: 'sk-...'
-      # endpoint: ''               # optional override of default provider URL
-      # reasoning: false
-      # reasoning_effort: ''
       # temperature: 0.0
   tagmatcher:
     timeout: 120
@@ -1664,6 +1716,12 @@ enricher:
     hugot:
       model: 'BAAI/bge-m3'
       backend: 'ort' # ort (ONNX Runtime) | GO
+
+backup:
+  # enabled: true
+  # interval: 1    # days between backups
+  # time: "02:00"  # preferred time of day (HH:MM)
+  # keep: 7        # max backups to retain (0 = unlimited)
 ```
 
 > **ORT memory**: When using the `ort` backend, ORT's CPU memory arena and memory-pattern
@@ -1749,7 +1807,7 @@ subsequent consume requests receive `429 Too Many Requests`.
 ```bash
 # Check version
 edub version
-# Document Management System v0.1.0
+# Document Management System v2.3.0
 
 # Start server (default when no command is given)
 edub
@@ -1768,7 +1826,7 @@ A single-page form for all user-configurable settings:
 
 - **Server**: host, port, max upload/download sizes, max download files
 - **OCR**: engine selector, timeout, data directory, languages list (add/remove)
-- **Consumer**: workers, delete-original toggle
+- **Consumer**: workers
 - **Text extractor**: engine, timeout
 - **PDF optimizer**: engine, fallback, timeout
 - **Enricher**: workers

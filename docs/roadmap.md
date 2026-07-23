@@ -150,6 +150,10 @@
 | `GET /api/v1/batches/{id}`             | Get single batch summary                                                                                                                                                                        |
 | `POST /api/v1/batches/{id}/resume`     | Resume batch (enqueues for queue daemon)                                                                                                                                                        |
 | `POST /api/v1/batches/{id}/cancel`     | Cancel batch (SIGTERM worker, mark tasks cancelled)                                                                                                                                             |
+| `POST /api/v1/batches/{id}/retry`      | Retry all failed tasks in a batch (reset to pending)                                                                                                                                            |
+| `POST /api/v1/documents/download`      | Download multiple documents as a ZIP archive                                                                                                                                                    |
+| `GET /api/v1/filter-languages`          | List available languages for structured search filter dropdown                                                                                                                                  |
+| `GET /api/v1/filter-mime-types`         | List available MIME types for structured search filter dropdown                                                                                                                                 |
 | `GET /api/v1/dashboard`                | Dashboard data: recent batches + activity timeline + document analytics (language/type/tag distributions, missing counts) + storage panel (totals, MIME breakdown, storage trend, pages, words) |
 | `GET /api/v1/errored`                  | List errored files from disk (`errors/` and `errors/duplicated/`)                                                                                                                               |
 | `GET /api/v1/errored/download`         | Download single errored file (with path traversal guard)                                                                                                                                        |
@@ -176,7 +180,6 @@
 | `kushim user create`          | Create a user with role assignment via CLI             |
 | `kushim version`              | Print version                                          |
 | `kushim hugot`                | Start matcher RPC server over Unix socket              |
-| `kushim model-catalog refresh` | Download latest model catalog JSON from GitHub         |
 | `kushim backup`               | Create a backup of database, config, and storage files |
 | `kushim restore`              | Restore from a backup archive                          |
 | `edub`                        | Start API server                                       |
@@ -214,15 +217,15 @@
 ### Quality
 
 - ✓ Database integration tests (29 tests) — document/tag/people CRUD, task lifecycle, enrich flow, batch ownership, structured search, analytics queries, saved searches, backup lock lifecycle, gated task claiming
-- ✓ Search engine tests (7 tests) — tsvector search, structured search, pagination, query sanitization
-- ✓ Task system tests (18 tests) — Store, dispatcher, runner, pool lifecycle, dedup key handling, gated task claiming
-- ✓ API handler tests (65 tests) — health, document CRUD, tag/people CRUD, user CRUD, task endpoints, saved searches, concurrent operations, auth login/logout, token claims, errored file list/download/delete/delete-all, logs viewer (invalid name, file not found, success, lines clamping, large file tail, empty file), API key generate/revoke/rotate/status, ReEnrich handler (success + not found)
+- ✓ Search engine tests (4 tests) — tsvector search, structured search, pagination, query sanitization
+- ✓ Task system tests (25 tests) — Store, dispatcher, runner, pool lifecycle, dedup key handling, gated task claiming
+- ✓ API handler tests (60 tests) — health, document CRUD, tag/people CRUD, user CRUD, task endpoints, saved searches, concurrent operations, auth login/logout, token claims, errored file list/download/delete/delete-all, logs viewer (invalid name, file not found, success, lines clamping, large file tail, empty file), API key generate/revoke/rotate/status, ReEnrich handler (success + not found)
 - ✓ Auth package tests (7 tests) — session secret generation, JWT generation/validation, wrong secret, expired token, malformed token, ValidRole
-- ✓ Auth middleware tests (12 tests) — public path bypass, missing/invalid/valid token, wrong secret, missing bearer prefix, empty header, disabled flag passes all paths, valid API key, invalid API key, wrong prefix falls through, auth disabled bypasses, internal error returns 500
-- ✓ Consumption pipeline tests (11 tests) — full consume flow with mock runner, file I/O, duplicate detection, error paths
+- ✓ Auth middleware + permission tests (24 tests) — public path bypass, missing/invalid/valid token, wrong secret, missing bearer prefix, empty header, disabled flag passes all paths, valid API key, invalid API key, wrong prefix falls through, auth disabled bypasses, internal error returns 500, RequireRole admin/editor/viewer (allows+forbids), missing role, invalid role
+- ✓ Service layer tests (62 tests) — Batch create/get/owner-state/pending/active/cancel/queue, orphaned scan/delete/restore, errored files list/download/delete/delete-all, user API key create/revoke/rotate/validate, user Create with role, UpdateRole, Update with role change
+- ✓ Tagmatch tests (3 tests) — MaxMatchBodyBytes derivation, UTF-8 truncation, idempotency
+- ✓ Consumption pipeline tests (20 tests) — full consume flow with mock runner, file I/O, duplicate detection, error paths, orphaned file management
 - ✓ `internal/testutil` package — assertion helpers, PDF fixtures, mock embedder
-- ✓ `ErroredFiles` service tests (11 tests) — list from both dirs, path resolution and traversal blocking, delete and delete-all with empty/missing dirs
-- ✓ `ErroredHandler` handler tests (8 tests) — list empty/with-data, download missing params, delete success/not-found/missing-params, delete-all
 - ✓ `Makefile` test targets (`make test`, `make test-verbose`)
 - ✗ No tests for CLI commands (kushim consume, search, task, setup)
 

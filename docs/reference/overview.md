@@ -39,7 +39,11 @@ internal/
 │   ├── serve_matching.go  # Matcher RPC server over Unix socket (encode, match, consolidate, store ops)
 │   ├── storage.go         # Storage commands: `kushim storage orphans` (list, scan, delete, restore, move-to-inbox)
 │   ├── setup.go           # Setup command — launches web wizard by default, --cli for terminal mode
-│   └── task.go            # Task commands (list, status, retry)
+│   ├── task.go            # Task commands (list, status, retry)
+│   ├── user.go            # User commands (create)
+│   ├── enrich.go          # Enrich single document command
+│   ├── queue.go           # Queue daemon for background batch consumption (Postgres LISTEN/NOTIFY)
+│   └── backup.go          # Backup and restore commands
 ├── configtask/            # Config task handler
 │   └── configtask.go      # ConfigTaskHandler — downloads tessdata/Hugot model in background ("config" task type)
 ├── enrichment/            # Enrichment engine (LLM pipeline)
@@ -75,7 +79,8 @@ internal/
 │   └── scheduler.go       # Backup scheduling (NextRunTime, ShouldSchedule, state persistence)
 ├── config/                # Configuration parsing
 │   ├── config.go          # Configuration structs and loading (ConsolidationSimilarity, default thresholds, engine identifier constants, AvailableEngines map)
-│   └── setup.go           # Bootstrap config, SaveMap, tessdata/Hugot model download helpers
+│   ├── setup.go           # Bootstrap config, SaveMap, tessdata/Hugot model download helpers
+│   └── watcher.go         # File-based config watcher (hot-reload on disk change)
 ├── consumption/           # Document processing engine
 │   ├── consumer.go        # Main consumer (extract → OCR → optimize → store), duplicate detection (MD5+SHA512)
 │   └── storage.go         # File operations, checksums, FileFromPath, MIME detection via mimetype lib
@@ -122,7 +127,7 @@ internal/
 ├── tagmatch/              # Tag matcher RPC client
 │   └── client.go          # MatcherClient — HTTP client over Unix socket to external matcher process (flattened from rpc/)
 ├── version/               # Application version
-│   └── version.go         # const Version = "0.1.0"
+│   └── version.go         # var Version = "2.3.0"
 ├── wizard/                # Setup wizard HTTP server
 │   ├── server.go          # Standalone HTTP server on :8420, serves wizard SPA + config API
 │   └── fs.go              # Embedded SvelteKit wizard build (static/ via //go:embed)

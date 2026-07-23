@@ -5,11 +5,11 @@
 ### Struct
 
 - `Server`
-  - **Fields**: `httpServer *http.Server`, `logger *utils.Logger`, `addr string`, `cfg atomic.Pointer[config.Config]`, `matcherClient *tagmatch.MatcherClient`, `services *types.CrudServices`, `pools struct { config *pool.Pool }`
+  - **Fields**: `httpServer *http.Server`, `logger *utils.Logger`, `addr string`, `cfg atomic.Pointer[config.Config]`, `matcherClient *tagmatch.MatcherClient`, `services *types.CrudServices`, `configWatcher *config.Watcher`, `pools struct { config *pool.Pool }`
   - **Methods**:
     - `NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server` — Creates a `MatcherClient` connected to `kushim-hugot.sock` in the config dir, builds `CrudServices` with `Batch`, `Tag` (wired through `MatcherClient`), `People`, `PeopleType`, `DocumentType`, `User`, `Orphaned`, `ErroredFiles`, `ReEnrich` services, creates dispatcher with only the `"config"` task type registered. Generates a random `SessionSecret` if none is configured (with a warning log). Registers routes and middleware chain (request → auth → parambag).
-    - `Start() error` — Probes matcher health (startup warning if unreachable), starts config pool, then HTTP server
-    - `Shutdown(ctx context.Context) error` — Shuts down HTTP server, config pool, then `services.Close()`
+    - `Start() error` — Probes matcher health (startup warning if unreachable), starts config pool, starts config file watcher (5s interval), then HTTP server
+    - `Shutdown(ctx context.Context) error` — Stops config watcher, shuts down HTTP server, config pool, then `services.Close()`
     - `Addr() string`
 
 ### Functions
@@ -58,6 +58,11 @@
     - `AddDocumentPeople(w, r)` — `POST /api/v1/documents/{id}/people` — Accepts `{people_id, people_type_id}`, validates document, person, and people type exist, calls `AddDocumentPeople` (INSERT OR IGNORE). Returns `204 No Content`.
     - `RemoveDocumentPeople(w, r)` — `DELETE /api/v1/documents/{id}/people` — Accepts `{people_id, people_type_id}`, validates document exists, calls `RemoveDocumentPeople` (now filters by all three PK columns: document_id, people_id, people_type_id). Returns `204 No Content`.
     - `ReEnrich(w, r)` — `POST /api/v1/documents/{id}/reenrich` — Validates document ID is non-empty, calls `services.ReEnrich.ReEnrich(ctx, documentID)`. Returns `202 Accepted` with `{batch_id, _links: {tasks: ...}}`. Maps document-not-found and dedup-conflict errors via `writeServiceError` (404 / 409).
+    - `DownloadDocuments(w, r)` — `POST /api/v1/documents/download` — Accepts `{document_ids: [...]}` JSON (or form-encoded). Streams a ZIP archive with each document's processed file. Validates count against `max_download_files` and total size against `max_download_size_mb`. Returns `200` with `Content-Type: application/zip`, `400` with validation errors.
+    - `BatchDeleteDocuments(w, r)` — `POST /api/v1/documents/batch-delete` — Accepts `{document_ids: [...]}` JSON. Deletes each document independently; returns partial failure info. Count validated against `max_batch_delete`.
+    - `BatchAssignTags(w, r)` — `POST /api/v1/documents/batch-tags` — Accepts `{document_ids, tag_ids, mode}`. Supports `add` (append) and `replace` (transactional clear+add) modes. Validates all tag IDs exist before modifying any document.
+    - `FilterLanguages(w, r)` — `GET /api/v1/filter-languages` — Returns distinct language codes from the document corpus as a JSON string array.
+    - `FilterMimeTypes(w, r)` — `GET /api/v1/filter-mime-types` — Returns distinct MIME types from the document corpus as a JSON string array.
 
 ---
 
@@ -95,7 +100,7 @@ See `AuthMiddleware` under `server.go` → Functions.
 
 ### Function
 
-- `HealthHandler(w, r, logger)` — Writes `{"status":"healthy","version":"0.1.0","time":"..."}`
+- `HealthHandler(w, r, logger)` — Writes `{"status":"healthy","version":"2.3.0","time":"..."}`
 
 ---
 
@@ -278,9 +283,10 @@ See `AuthMiddleware` under `server.go` → Functions.
 - `OCRResponse` — `Engine string`, `Languages []string`, `DataDir string`, `Timeout int`
 - `EnricherConfigResponse` — `Workers int`, `TextReducer TextReducerResponse`, `ContentAnalyzer ContentAnalyzerResponse`, `TagMatcher TagMatcherResponse`
 - `TextReducerResponse` — `Engine string`, `Timeout int`, `TargetWords int`
-- `ContentAnalyzerResponse` — `Enabled bool`, `Timeout int`, `Llm LlmConfigResponse`, `PromptTemplate string`, `DocTypeRefinement *DocTypeRefinementResponse`
-- `LlmConfigResponse` — `Adapter string`, `Provider string`, `Model string`, `Token string`, `Endpoint string`, `Reasoning bool`, `ReasoningEffort string`, `Temperature float64`, `Custom *CustomLlmConfigResponse`
-- `CustomLlmConfigResponse` — `URL string`, `RequestBody string`, `ResponsePath string`
+- `ContentAnalyzerResponse` — `Enabled bool`, `Timeout int`, `Llm LlmConfigResponse`, `PromptTemplate string`
+- `LlmConfigResponse` — `Adapter string`, `Provider string`, `Model string`, `Token string`, `Reasoning bool`, `ReasoningEffort string`, `Temperature float64`
+- `LlmModelEntry` — `ID string`, `Capabilities` (SupportsReasoning, ReasoningEfforts, MaxInputTokens, MaxOutputTokens, SupportsTemperature, SupportsResponseSchema)
+- `LlmModelsResponse` — `Adapters map[string][]string`, `Providers map[string][]LlmModelEntry`
 - `DocTypeRefinementResponse` — `Enabled bool`, `HeadWords int`, `TailWords int`
 - `TagMatcherResponse` — `Engine string`, `Timeout int`, `ReduceTargetWords int`, `ChunkSize int`, `Hugot HugotResponse`
 - `HugotResponse` — `Model string`, `Backend string`
@@ -473,6 +479,8 @@ mux.Handle("DELETE /api/v1/documents/{id}/people", RequireRole(editor...)(...))
 mux.Handle("POST /api/v1/documents/{id}/reenrich", RequireRole(editor...)(...))
 mux.Handle("POST /api/v1/documents/batch-delete", RequireRole(editor...)(...))
 mux.Handle("POST /api/v1/documents/batch-tags", RequireRole(editor...)(...))
+mux.Handle("GET /api/v1/filter-languages", RequireRole(viewer...)(...))
+mux.Handle("GET /api/v1/filter-mime-types", RequireRole(viewer...)(...))
 mux.Handle("POST /api/v1/tags", RequireRole(editor...)(...))
 mux.Handle("PUT /api/v1/tags/{id}", RequireRole(editor...)(...))
 mux.Handle("DELETE /api/v1/tags/{id}", RequireRole(editor...)(...))
@@ -488,9 +496,9 @@ mux.Handle("DELETE /api/v1/document-types/{id}", RequireRole(editor...)(...))
 mux.Handle("POST /api/v1/consume", RequireRole(editor...)(...))
 mux.Handle("POST /api/v1/consume/upload", RequireRole(editor...)(...))
 mux.Handle("POST /api/v1/tasks/{id}/retry", RequireRole(editor...)(...))
-mux.Handle("POST /api/v1/batches/{id}/retry", RequireRole(editor...)(...))
 mux.Handle("POST /api/v1/batches/{id}/resume", RequireRole(editor...)(...))
 mux.Handle("POST /api/v1/batches/{id}/cancel", RequireRole(editor...)(...))
+mux.Handle("POST /api/v1/batches/{id}/retry", RequireRole(editor...)(...))
 mux.Handle("GET /api/v1/orphaned", RequireRole(editor...)(...))
 mux.Handle("POST /api/v1/orphaned/scan", RequireRole(editor...)(...))
 mux.Handle("DELETE /api/v1/orphaned/{id}", RequireRole(editor...)(...))

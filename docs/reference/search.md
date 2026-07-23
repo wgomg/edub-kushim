@@ -27,11 +27,11 @@ Maps database rows to API-friendly fields:
 | `SHA512Checksum`  | `string`  | SHA512 hash                   |
 | `MimeType`        | `string`  | File MIME type                |
 | `FileSize`        | `int64`   | File size in bytes            |
-| `PageCount`       | `int64`   | Number of pages               |
-| `WordCount`       | `int64`   | Word count                    |
-| `CharCount`       | `int64`   | Character count               |
+| `PageCount`       | `int32`   | Number of pages               |
+| `WordCount`       | `int32`   | Word count                    |
+| `CharCount`       | `int32`   | Character count               |
 | `Language`        | `string`  | Detected language code        |
-| `DocumentTypeID`  | `*int64`  | FK to document_type           |
+| `DocumentTypeID`  | `int64`   | FK to document_type           |
 | `CreatedAt`       | `time.Time` | Document creation timestamp   |
 | `ModifiedAt`      | `time.Time` | Last modification timestamp   |
 | `OriginalPath`    | `string`  | Path to original file         |

@@ -216,16 +216,11 @@ type Registry struct { ... }
 
 ### Provider→Adapter mapping
 
-Built-in mapping routes providers to the correct adapter:
-- `openai`, `deepseek`, `mistral`, `groq`, `together_ai`, `fireworks_ai`, `openrouter`, `azure` → `openai-compatible`
-- `anthropic`, `bedrock` → `anthropic`
-- Everything else → `custom`
+The mapping is data-driven: each entry in `model_catalog.json` has an `adapter` field (`"openai-compatible"`, `"anthropic"`, or `"custom"`). The `ProviderAdapter(provider)` method returns the adapter from the catalog, falling back to `"custom"` for unknown providers.
 
-### Runtime refresh
+### Loading
 
-- Web UI settings page has "Refresh model catalog" button
-- CLI: `kushim model-catalog refresh` command
-- A stale local copy works offline
+The catalog is loaded at startup from `<configDir>/model_catalog.json`, falling back to the embedded copy (`internal/llm/model_catalog.json`, compiled via `//go:embed`) when the file doesn't exist. There is no runtime refresh mechanism — updating the catalog requires replacing the file and restarting, or rebuilding the binary for embedded updates.
 
 ---
 
