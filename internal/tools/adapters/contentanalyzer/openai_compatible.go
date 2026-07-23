@@ -171,6 +171,9 @@ func (l *LlmOpenAiCompatible) doRequest(ctx context.Context, reqBody map[string]
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
+		if tokErr := parseTokenLimitError(body); tokErr != nil {
+			return nil, tokErr
+		}
 		return nil, fmt.Errorf("API error: status %s: %s", resp.Status, string(body))
 	}
 
@@ -185,7 +188,11 @@ func (l *LlmOpenAiCompatible) doRequest(ctx context.Context, reqBody map[string]
 func (l *LlmOpenAiCompatible) Analyze(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*AnalysisResult, error) {
 	prompt := BuildPrompt(text, docTypes, peopleTypes, tagSuggestions, l.promptTemplate)
 
-	reqBody := l.buildRequestBody(systemMessage, prompt, "", l.llmCfg.Temperature)
+	if err := checkContentTooLarge(l.caps, SystemMessage+"\n"+prompt); err != nil {
+		return nil, err
+	}
+
+	reqBody := l.buildRequestBody(SystemMessage, prompt, "", l.llmCfg.Temperature)
 
 	chatResp, err := l.doRequest(ctx, reqBody)
 	if err != nil {
@@ -211,7 +218,7 @@ func (l *LlmOpenAiCompatible) Analyze(ctx context.Context, text string, docTypes
 	)
 	analysisResult.Prompt = prompt
 
-	passCtxObj := openaiPassContext{SystemMessage: systemMessage, UserPrompt: prompt}
+	passCtxObj := openaiPassContext{SystemMessage: SystemMessage, UserPrompt: prompt}
 	ctxJSON, _ := json.Marshal(passCtxObj)
 	rm := json.RawMessage(ctxJSON)
 	analysisResult.PassContext = &rm
@@ -244,6 +251,10 @@ func (l *LlmOpenAiCompatible) AnalyzeDocType(ctx context.Context, prevResult *An
 	})
 
 	docTypePrompt := BuildDocTypePrompt(headTailText, docTypes)
+
+	if err := checkContentTooLarge(l.caps, passCtx.SystemMessage+"\n"+passCtx.UserPrompt+"\n"+string(assistantJSON)+"\n"+docTypePrompt); err != nil {
+		return "", err
+	}
 
 	messages := l.buildRequestMessages(passCtx.SystemMessage, passCtx.UserPrompt, string(assistantJSON))
 	messages = append(messages, openaiChatMessage{Role: "user", Content: docTypePrompt})

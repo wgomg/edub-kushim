@@ -43,7 +43,7 @@ internal/
 ├── configtask/            # Config task handler
 │   └── configtask.go      # ConfigTaskHandler — downloads tessdata/Hugot model in background ("config" task type)
 ├── enrichment/            # Enrichment engine (LLM pipeline)
-│   └── enricher.go        # Enricher: dual text reduction → tag matching → LLM → consolidation → people/tag/doc type with romanization + normalization
+│   └── enricher.go        # Enricher: dual text reduction → tag matching → token budget pre-check + retry loop → LLM → consolidation → people/tag/doc type with romanization + normalization
 ├── service/               # Merged domain service package (replaces people/tags/documenttypes)
 │   ├── status.go          # Shared CRUD enums (CreateStatus, UpdateStatus, DeleteStatus)
 │   ├── result.go          # Generic result types (CreateResult[T], UpdateResult[T], DeleteResult)
@@ -132,12 +132,12 @@ internal/
 │   ├── logger.go          # Structured logging (file logging support, numeric level filtering)
 │   ├── metrics.go         # Memory metrics (HeapInUse, RSS, NumGC), HumanDuration, FormatMemDelta
 │   ├── parambag.go        # HTTP parameter parsing (query params, path values)
-│   └── text.go            # CountWords, EstimateTokensFromWords, CleanUp, Truncate, CleanCodeBlock, ContainsNonLatin, NormalizeForDB, StripTags, StripTagsPtr
+│   └── text.go            # CountWords, EstimateTokensFromWords, EstimateTokens, CleanUp, Truncate, CleanCodeBlock, ContainsNonLatin, NormalizeForDB, StripTags, StripTagsPtr
 ├── adapters/
 │   │   ├── mupdf_wrapper.go    # MuPDF CGo wrapper (6 C helpers + Go API)
 │   │   ├── contentanalyzer/    # LLM classification adapters (capability-based)
 │   │   │   ├── adapter.go               # ContentAnalyzer interface + factory (adapter-based dispatch)
-│   │   │   ├── shared.go                # BuildPrompt, system message, prompt asks for name_romanized on non-Latin names
+│   │   │   ├── shared.go                # BuildPrompt, SystemMessage, ContentTooLargeError, TokenLimitError, checkContentTooLarge, parseTokenLimitError, FilterTags, NormalizeTags
 │   │   │   ├── llm_openai_compatible.go # OpenAI-compatible API (absorbs former OpenAI, DeepSeek, Mistral, etc.)
 │   │   │   ├── llm_anthropic.go         # Anthropic Messages API with capability flags
 │   │   │   └── llm_custom.go            # Generic HTTP adapter with Go templates
@@ -241,7 +241,7 @@ web-wizard/               # SvelteKit SPA setup wizard (embedded in kushim binar
 This system is a document management pipeline with three main stages:
 
 1. **Consumption** — Scans an inbox directory, extracts text (via MuPDF/gopdf/pdftotext), optionally OCRs (via Tesseract), optimizes PDFs, stores files with checksums
-2. **Enrichment** — Applies LLM-based classification (title, doc type, tags, people, language) plus semantic tag matching via embeddings
+2. **Enrichment** — Applies LLM-based classification (title, doc type, tags, people, language) with pre-request token budget check and proportional re-reduction retry, plus semantic tag matching via embeddings
 3. **Search & API** — Full-text search via PostgreSQL tsvector, REST API with SvelteKit SPA frontend
 
 Processing is async via a task queue with batch tracking and a polling CLI mode.

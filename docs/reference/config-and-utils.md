@@ -172,7 +172,7 @@ per tool category, used by the frontend settings UI to populate select dropdowns
 
 ### Functions
 
-`CountWords`, `EstimateTokensFromWords`, `CleanUp` (removes special chars), `Truncate` (rune-aware; returns "Unknown" for whitespace-only, trims trailing whitespace after truncation), `CleanCodeBlock`, `ContainsNonLatin` (checks for CJK, Cyrillic, Arabic, Hebrew, Greek, Thai, Devanagari, Bengali, Hangul), `NormalizeForDB` (NFKC → lowercase → dash/underscore to space → accent fold → strip non-`[a-z ]` → collapse whitespace)
+`CountWords`, `EstimateTokensFromWords`, `EstimateTokens` (character-based token estimator for LLM budget checks — single pass counting CJK vs Latin runes, uses blended formula `cjk*1.5 + non_cjk/4` when CJK ratio > 10%, otherwise `total/4`), `CleanUp` (removes special chars), `Truncate` (rune-aware; returns "Unknown" for whitespace-only, trims trailing whitespace after truncation), `CleanCodeBlock`, `ContainsNonLatin` (checks for CJK, Cyrillic, Arabic, Hebrew, Greek, Thai, Devanagari, Bengali, Hangul), `NormalizeForDB` (NFKC → lowercase → dash/underscore to space → accent fold → strip non-`[a-z ]` → collapse whitespace)
 
 ---
 

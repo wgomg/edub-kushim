@@ -67,10 +67,7 @@ const (
 )
 
 func thinkingBudget(maxTokens int) int {
-	budget := maxTokens / 2
-	if budget > maxThinkingBudgetTokens {
-		budget = maxThinkingBudgetTokens
-	}
+	budget := min(maxTokens/2, maxThinkingBudgetTokens)
 	if budget < minThinkingBudgetTokens {
 		return 0
 	}
@@ -119,8 +116,6 @@ func (l *LlmAnthropic) baseURL() string {
 	return l.reg.ProviderDefaultURL(l.llmCfg.Provider)
 }
 
-
-
 func (l *LlmAnthropic) defaultMaxTokens() int {
 	if l.caps != nil && l.caps.MaxOutputTokens > 0 {
 		return l.caps.MaxOutputTokens
@@ -167,13 +162,17 @@ func (l *LlmAnthropic) applyTemperature(reqBody *anthropicRequest, temp float64)
 func (l *LlmAnthropic) Analyze(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*AnalysisResult, error) {
 	prompt := BuildPrompt(text, docTypes, peopleTypes, tagSuggestions, l.promptTemplate)
 
+	if err := checkContentTooLarge(l.caps, SystemMessage+"\n"+prompt); err != nil {
+		return nil, err
+	}
+
 	reqBody := anthropicRequest{
 		Model:     l.llmCfg.Model,
 		MaxTokens: l.defaultMaxTokens(),
 		Messages: []anthropicMessage{
 			{Role: "user", Content: prompt},
 		},
-		System:       systemMessage,
+		System:       SystemMessage,
 		Stream:       false,
 		CacheControl: &cacheControlEphemeral{Type: "ephemeral"},
 	}
@@ -205,6 +204,9 @@ func (l *LlmAnthropic) Analyze(ctx context.Context, text string, docTypes []data
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
+		if tokErr := parseTokenLimitError(body); tokErr != nil {
+			return nil, tokErr
+		}
 		return nil, fmt.Errorf("API error: status %s: %s", resp.Status, string(body))
 	}
 
@@ -243,7 +245,7 @@ func (l *LlmAnthropic) Analyze(ctx context.Context, text string, docTypes []data
 	)
 	analysisResult.Prompt = prompt
 
-	passCtxObj := anthropicPassContext{System: systemMessage, UserPrompt: prompt}
+	passCtxObj := anthropicPassContext{System: SystemMessage, UserPrompt: prompt}
 	ctxJSON, _ := json.Marshal(passCtxObj)
 	rm := json.RawMessage(ctxJSON)
 	analysisResult.PassContext = &rm
@@ -276,6 +278,10 @@ func (l *LlmAnthropic) AnalyzeDocType(ctx context.Context, prevResult *AnalysisR
 	})
 
 	docTypePrompt := BuildDocTypePrompt(headTailText, docTypes)
+
+	if err := checkContentTooLarge(l.caps, passCtx.System+"\n"+passCtx.UserPrompt+"\n"+string(assistantJSON)+"\n"+docTypePrompt); err != nil {
+		return "", err
+	}
 
 	reqBody := anthropicRequest{
 		Model:     l.llmCfg.Model,
@@ -317,6 +323,9 @@ func (l *LlmAnthropic) AnalyzeDocType(ctx context.Context, prevResult *AnalysisR
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
+		if tokErr := parseTokenLimitError(body); tokErr != nil {
+			return "", tokErr
+		}
 		return "", fmt.Errorf("doc type refinement: status %s: %s", resp.Status, string(body))
 	}
 

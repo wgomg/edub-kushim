@@ -22,6 +22,26 @@ func EstimateTokensFromWords(wordCount int) int {
 	return int(math.Round(float64(wordCount) * 1.3))
 }
 
+func EstimateTokens(text string) int {
+	var total, cjk int
+	for _, r := range text {
+		total++
+		if unicode.Is(unicode.Han, r) ||
+			unicode.Is(unicode.Hiragana, r) ||
+			unicode.Is(unicode.Katakana, r) ||
+			unicode.Is(unicode.Hangul, r) {
+			cjk++
+		}
+	}
+	if total == 0 {
+		return 0
+	}
+	if float64(cjk)/float64(total) > 0.10 {
+		return int(math.Ceil(float64(cjk)*1.5 + float64(total-cjk)/4.0))
+	}
+	return int(math.Ceil(float64(total) / 4.0))
+}
+
 func CleanUp(text string) string {
 	re := regexp.MustCompile(`[$€£¥¢%&*+=<>^|~@#\\_\[\]{}]`)
 	return re.ReplaceAllString(text, "")

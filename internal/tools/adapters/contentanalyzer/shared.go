@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"text/template"
 	"unicode"
 
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/llm"
+	"github.com/wgomg/edub-kushim/internal/utils"
 	"golang.org/x/text/runes"
 	"golang.org/x/text/transform"
 	"golang.org/x/text/unicode/norm"
@@ -25,7 +28,54 @@ const (
 
 const requestedTagCount = maxTags + tagRequestBuffer // 8
 
-const systemMessage = "You are a helpful assistant specialized in document analysis and metadata extraction"
+const SystemMessage = "You are a helpful assistant specialized in document analysis and metadata extraction"
+
+type ContentTooLargeError struct {
+	EstimatedTokens int
+	MaxInputTokens  int
+}
+
+func (e *ContentTooLargeError) Error() string {
+	return fmt.Sprintf("estimated %d tokens exceeds model limit of %d", e.EstimatedTokens, e.MaxInputTokens)
+}
+
+type TokenLimitError struct {
+	MaxTokens       int
+	RequestedTokens int
+	RawBody         string
+}
+
+func (e *TokenLimitError) Error() string {
+	return fmt.Sprintf("token limit: requested %d tokens, model max is %d", e.RequestedTokens, e.MaxTokens)
+}
+
+var tokenLimitRE = regexp.MustCompile(
+	`maximum context length is (\d+) tokens.*?you requested (?:about )?(\d+) tokens`,
+)
+
+func checkContentTooLarge(caps *llm.ModelCapability, fullPrompt string) error {
+	if caps == nil || caps.MaxInputTokens <= 0 {
+		return nil
+	}
+	estimated := utils.EstimateTokens(fullPrompt)
+	if estimated > caps.MaxInputTokens {
+		return &ContentTooLargeError{EstimatedTokens: estimated, MaxInputTokens: caps.MaxInputTokens}
+	}
+	return nil
+}
+
+func parseTokenLimitError(body []byte) error {
+	matches := tokenLimitRE.FindSubmatch(body)
+	if matches == nil {
+		return nil
+	}
+	max, _ := strconv.Atoi(string(matches[1]))
+	req, _ := strconv.Atoi(string(matches[2]))
+	if max == 0 || req == 0 {
+		return nil
+	}
+	return &TokenLimitError{MaxTokens: max, RequestedTokens: req, RawBody: string(body)}
+}
 
 type tokenUsage struct {
 	PromptTokens     int `json:"prompt_tokens"`

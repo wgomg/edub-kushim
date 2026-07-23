@@ -16,11 +16,16 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/service"
-	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/task"
+	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/contentanalyzer"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/tagmatcher"
 	"github.com/wgomg/edub-kushim/internal/utils"
+)
+
+const (
+	tokenBudgetRatio = 0.9
+	minTargetWords   = 100
 )
 
 type Enricher struct {
@@ -112,9 +117,46 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 		e.logger.Debug(&logId, "tag matching: %d tags (%s)", len(tagSuggestions), time.Since(matchTagsStart))
 	}
 
-	analysis, err := e.runner.AnalyzeContent(ctx, llmContent.Text, docTypes, peopleTypes, tagSuggestions)
-	if err != nil {
-		return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to analyze content: %w", err)}
+	var analysis *tools.ContentAnalysisResult
+	for i := range 2 {
+		analysis, err = e.runner.AnalyzeContent(ctx, llmContent.Text, docTypes, peopleTypes, tagSuggestions)
+		if err == nil {
+			break
+		}
+
+		var ctle *contentanalyzer.ContentTooLargeError
+		var tokErr *contentanalyzer.TokenLimitError
+
+		var maxTokens, actualTokens int
+		switch {
+		case errors.As(err, &ctle):
+			maxTokens = ctle.MaxInputTokens
+			actualTokens = ctle.EstimatedTokens
+		case errors.As(err, &tokErr):
+			maxTokens = tokErr.MaxTokens
+			actualTokens = tokErr.RequestedTokens
+		default:
+			return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to analyze content: %w", err)}
+		}
+
+		if actualTokens <= 0 {
+			return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to analyze content: %w", err)}
+		}
+
+		ratio := float64(maxTokens) / float64(actualTokens) * tokenBudgetRatio
+		newTarget := int(float64(llmContent.TargetWordCount) * ratio)
+		if i == 1 || newTarget < minTargetWords {
+			return nil, &task.Error{
+				ReqID: logId,
+				Err: fmt.Errorf("document too large for model %s/%s: %d tokens exceeds budget (max_input_tokens=%d)",
+					e.config.Enricher.ContentAnalyzer.Llm.Provider, e.config.Enricher.ContentAnalyzer.Llm.Model, actualTokens, maxTokens),
+			}
+		}
+		reduced, rerr := e.runner.ReduceContent(ctx, document.TextContent.String, chunkSize, newTarget)
+		if rerr != nil {
+			return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to reduce content: %w", rerr)}
+		}
+		llmContent = reduced
 	}
 
 	if isEmptyAnalysis(analysis) {

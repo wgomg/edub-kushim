@@ -58,23 +58,25 @@
 - `Enricher` — `config`, `logger`, `db`, `runner`, `services *types.CrudServices`
   - **Methods**:
     - `NewEnricher(cfg, logger, db, services, matcher tagmatcher.Matcher) (*Enricher, error)` — Creates runner via `NewRunnerWithMatcher` with textreducer, contentanalyzer, tagmatcher tools; matcher is either a direct `*Hugot` (in `kushim` CLI) or a `*tagmatch.MatcherClient` (in `edub` API server) — both satisfy the same `tagmatcher.Matcher` interface.
-    - `Enrich(ctx, document) (*json.RawMessage, error)` — Full pipeline:
-      1. Dual text reduction: LLM-targeted and tag-matching-targeted (via `targetWordCount`)
-      2. Fetch doc types, people types from DB; all tags via `services.Tag.ListAll`
-      3. Semantic tag matching: passes tag names to `Runner.MatchTags`. In `kushim`, embeddings are resolved via the local Hugot store (cache-miss encoded on the fly). In `edub`, the `MatcherClient` forwards requests over the Unix socket to the external matcher process. Falls back to all tags on failure.
-       4. LLM content analysis (title, doc type, tags, people, language). If the result is entirely empty (all fields blank/default), enrichment retries once; if still empty, the task is marked `failed` for visibility and manual retry.
-        5. **Tag normalization** — LLM-extracted tags are run through `NormalizeTags` (accent-folds accented characters to ASCII base letters, hyphens/underscores→spaces, strips non-alpha, collapses whitespace, deduplicates)
-        6. **Tag filtering** — `FilterTags` drops deterministic garbage tags: tags with >3 tokens, tags that share any token with a person's name (from the current document), multi-word tags (≥2 tokens) whose tokens form a strict subset of any known person in the full `people` table, and tags whose token set is a subset of the title's token set. Caps survivors at `maxTags` (5).
-       7. Post-LLM tag consolidation via `services.Tag.Consolidate` (delegates to `Embedder.Consolidate` over the matcher interface)
-       8. New tags created via a single batch call `services.Tag.Create(ctx, analysis.Tags)` — returns per-index results with `Created`/`Conflict`/`Invalid` statuses. The service delegates store management to the matcher via `AddToStore`.
-        9. Update document metadata — title is first rune-capped at 127 characters via `Truncate` to enforce the server-side limit (independent of LLM prompt compliance), then persisted alongside doc_type and language
-        10. Auto-detect OCR language: `ensureOCRLanguage` cross-checks LLM-detected language against configured OCR languages. If missing and the engine is gosseract, the tessdata download runs first (inside a background goroutine). The language is only appended to the in-memory config list and persisted to `config.yaml` on download success. A failed download leaves config untouched, so the next document detecting the same language retries the download naturally. A `sync.Mutex` protects the shared `Languages` slice against concurrent mutations from multiple enrich workers. For non-gosseract engines, the language is appended and persisted immediately (no tessdata needed).
-       11. Manage document_tag junction (clear + add)
-       12. Manage document_people junction (clear + add) — for each person:
-          - Determines canonical name via `canonicalPersonName`: uses LLM's `name_romanized` if provided (for non-Latin names), falls back to AnyAscii transliteration
-          - Normalizes the canonical name via `utils.NormalizeForDB` (NFKC, lowercase, accent-folding, alpha-only) for normalized-name dedup lookup
-          - Creates new people with `name` (canonical) + `name_native` (original non-Latin script) + `normalized_name` (computed from canonical) when no match found
-          - Updates `name_native` on existing people if currently empty
+     - `Enrich(ctx, document) (*json.RawMessage, error)` — Full pipeline:
+       1. Dual text reduction: LLM-targeted and tag-matching-targeted (via `targetWordCount`)
+       2. Fetch doc types, people types from DB; all tags via `services.Tag.ListAll`
+       3. Semantic tag matching: passes tag names to `Runner.MatchTags`. In `kushim`, embeddings are resolved via the local Hugot store (cache-miss encoded on the fly). In `edub`, the `MatcherClient` forwards requests over the Unix socket to the external matcher process. Falls back to all tags on failure.
+       4. **Token budget pre-check**: The content analyzer's `Analyze()` method builds the full prompt, calls `utils.EstimateTokens` (character-based heuristic with CJK detection), and if the estimate exceeds `caps.MaxInputTokens`, returns a `ContentTooLargeError`. No HTTP call is made. The enricher catches this error in a retry loop (up to 2 iterations), computes a proportional word-target reduction (`maxTokens / actualTokens * 0.9`), re-runs TextRank from the original document text, and retries. If the document still can't be reduced below `minTargetWords` (100), the task fails with a clear "document too large for model X/Y" error.
+       5. LLM content analysis (title, doc type, tags, people, language). If the analysis returns entirely empty (all fields blank/default), enrichment retries once; if still empty, the task is marked `failed` for visibility and manual retry.
+       6. **Response-time token limit fallback**: If the provider rejects the request with a context-length error (OpenAI/DeepSeek format), `doRequest()` returns a `TokenLimitError` via `parseTokenLimitError()`. The enricher's retry loop catches this and applies the same proportional re-reduction + retry logic. For providers whose error format doesn't match the regex, the error propagates as a generic API failure.
+       7. **Tag normalization** — LLM-extracted tags are run through `NormalizeTags` (accent-folds accented characters to ASCII base letters, hyphens/underscores→spaces, strips non-alpha, collapses whitespace, deduplicates)
+       8. **Tag filtering** — `FilterTags` drops deterministic garbage tags: tags with >3 tokens, tags that share any token with a person's name (from the current document), multi-word tags (≥2 tokens) whose tokens form a strict subset of any known person in the full `people` table, and tags whose token set is a subset of the title's token set. Caps survivors at `maxTags` (5).
+       9. Post-LLM tag consolidation via `services.Tag.Consolidate` (delegates to `Embedder.Consolidate` over the matcher interface)
+       10. New tags created via a single batch call `services.Tag.Create(ctx, analysis.Tags)` — returns per-index results with `Created`/`Conflict`/`Invalid` statuses. The service delegates store management to the matcher via `AddToStore`.
+        11. Update document metadata — title is first rune-capped at 127 characters via `Truncate` to enforce the server-side limit (independent of LLM prompt compliance), then persisted alongside doc_type and language
+        12. Auto-detect OCR language: `ensureOCRLanguage` cross-checks LLM-detected language against configured OCR languages. If missing and the engine is gosseract, the tessdata download runs first (inside a background goroutine). The language is only appended to the in-memory config list and persisted to `config.yaml` on download success. A failed download leaves config untouched, so the next document detecting the same language retries the download naturally. A `sync.Mutex` protects the shared `Languages` slice against concurrent mutations from multiple enrich workers. For non-gosseract engines, the language is appended and persisted immediately (no tessdata needed).
+        13. Manage document_tag junction (clear + add)
+        14. Manage document_people junction (clear + add) — for each person:
+           - Determines canonical name via `canonicalPersonName`: uses LLM's `name_romanized` if provided (for non-Latin names), falls back to AnyAscii transliteration
+           - Normalizes the canonical name via `utils.NormalizeForDB` (NFKC, lowercase, accent-folding, alpha-only) for normalized-name dedup lookup
+           - Creates new people with `name` (canonical) + `name_native` (original non-Latin script) + `normalized_name` (computed from canonical) when no match found
+           - Updates `name_native` on existing people if currently empty
            - Unknown people types default to `"unknown"`
 
 ### Helpers

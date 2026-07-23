@@ -1,11 +1,13 @@
 package contentanalyzer
 
 import (
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/llm"
 )
 
 func TestNormalizeTags_Transforms(t *testing.T) {
@@ -404,6 +406,79 @@ func TestNormalizeTags_DeduplicatesAndDropsEmpty(t *testing.T) {
 			got := NormalizeTags(tt.raw)
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("NormalizeTags(%v) = %v, want %v", tt.raw, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCheckContentTooLarge(t *testing.T) {
+	tests := []struct {
+		name    string
+		caps    *llm.ModelCapability
+		prompt  string
+		wantNil bool
+	}{
+		{"nil caps", nil, "hello world", true},
+		{"zero max input tokens", &llm.ModelCapability{MaxInputTokens: 0}, "hello world", true},
+		{"negative max input tokens", &llm.ModelCapability{MaxInputTokens: -1}, "hello world", true},
+		{"prompt within limit", &llm.ModelCapability{MaxInputTokens: 1000000}, "short prompt", true},
+		{"prompt exceeds limit", &llm.ModelCapability{MaxInputTokens: 5}, "this is a much longer prompt that exceeds the limit", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := checkContentTooLarge(tt.caps, tt.prompt)
+			if tt.wantNil && err != nil {
+				t.Errorf("checkContentTooLarge() = %v, want nil", err)
+			}
+			if !tt.wantNil && err == nil {
+				t.Error("checkContentTooLarge() = nil, want error")
+			}
+			if !tt.wantNil {
+				var ctle *ContentTooLargeError
+				if !errors.As(err, &ctle) {
+					t.Errorf("expected ContentTooLargeError, got %T", err)
+				}
+			}
+		})
+	}
+}
+
+func TestParseTokenLimitError(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    []byte
+		wantNil bool
+		wantMax int
+		wantReq int
+	}{
+		{"no match", []byte("something went wrong"), true, 0, 0},
+		{"empty body", nil, true, 0, 0},
+		{"valid openai format", []byte("maximum context length is 200000 tokens but you requested 250000 tokens"), false, 200000, 250000},
+		{"valid with about prefix", []byte("maximum context length is 100000 tokens but you requested about 150000 tokens"), false, 100000, 150000},
+		{"zero max tokens", []byte("maximum context length is 0 tokens but you requested 100 tokens"), true, 0, 0},
+		{"zero requested tokens", []byte("maximum context length is 100 tokens but you requested 0 tokens"), true, 0, 0},
+		{"partial match only first number", []byte("maximum context length is 100 tokens but no request info"), true, 0, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := parseTokenLimitError(tt.body)
+			if tt.wantNil && err != nil {
+				t.Errorf("parseTokenLimitError() = %v, want nil", err)
+			}
+			if !tt.wantNil && err == nil {
+				t.Error("parseTokenLimitError() = nil, want error")
+			}
+			if !tt.wantNil {
+				var tle *TokenLimitError
+				if !errors.As(err, &tle) {
+					t.Fatalf("expected TokenLimitError, got %T", err)
+				}
+				if tle.MaxTokens != tt.wantMax {
+					t.Errorf("MaxTokens = %d, want %d", tle.MaxTokens, tt.wantMax)
+				}
+				if tle.RequestedTokens != tt.wantReq {
+					t.Errorf("RequestedTokens = %d, want %d", tle.RequestedTokens, tt.wantReq)
+				}
 			}
 		})
 	}

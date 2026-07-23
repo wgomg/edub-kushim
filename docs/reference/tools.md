@@ -10,7 +10,7 @@
 - **Functions**:
   - `NewRunner(logger, cfg, tools []string) *Runner` — Initializes only the listed tool adapters (e.g., `["textextractor","ocr","pdfoptimizer"]` for consumer). Loads the LLM model catalog from `<configDir>/model_catalog.json` via `llm.NewRegistry`. No longer creates a tagmatcher internally. Content analyzer is created via the new adapter-based factory: `contentanalyzer.NewContentAnalyzer(logger, cfg.ToolConfig, &cfg.Enricher.ContentAnalyzer.Llm, cfg.Enricher.ContentAnalyzer.PromptTemplate, reg)`.
   - `NewRunnerWithMatcher(logger, cfg, tools, matcher tagmatcher.Matcher) *Runner` — Calls `NewRunner` then conditionally sets `r.tagMatcher` if `matcher != nil` and `"tagmatcher"` is in the tools list.
-- **Methods**: `ExtractText`, `OCR(ctx, docId, path)`, `OptimizePdf(ctx, docId, path)`, `ReduceContent`, `MatchTags(ctx, docId, input)`, `AnalyzeContent`
+- **Methods**: `ExtractText`, `OCR(ctx, docId, path)`, `OptimizePdf(ctx, docId, path)`, `ReduceContent`, `MatchTags(ctx, docId, input)`, `AnalyzeContent`, `AnalyzeDocType`
 - **Result types**: `TextExtractionResult`, `OCRResult`, `PdfOptimizationResult`, `TextReducerResult` (with Text, WordCount, CharCount, TargetWordCount), `TagMatchResult`, `ContentAnalysisResult` (with People)
 - **Helper**: `runWithTimeout[T](ctx, fn) (T, error)` — Generic goroutine wrapper with context cancellation
 
@@ -23,6 +23,7 @@
 ```go
 type ContentAnalyzer interface {
     Analyze(ctx, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*AnalysisResult, error)
+    AnalyzeDocType(ctx, prevResult, headTailText, docTypes) (string, error)
     Name() string
 }
 ```
@@ -42,16 +43,28 @@ type ContentAnalyzer interface {
 
 ### Constants
 
+- `SystemMessage` (exported) — `"You are a helpful assistant specialized in document analysis and metadata extraction"`, used by both adapter implementations.
 - `maxTags` (5) — Final cap enforced by `FilterTags`; future config field.
 - `tagRequestBuffer` (3) — Extra tags requested to survive filtering.
 - `requestedTagCount` (8) — `maxTags + tagRequestBuffer`, injected into the prompt so the LLM emits headroom.
 
+### Types
+
+- `ContentTooLargeError` — Returned by `checkContentTooLarge` when estimated tokens exceed the model's `MaxInputTokens`. Fields: `EstimatedTokens`, `MaxInputTokens`.
+- `TokenLimitError` — Returned by `parseTokenLimitError` when the provider error body matches the context-length exceeded regex. Fields: `MaxTokens`, `RequestedTokens`, `RawBody`.
+
 ### Functions
 
+- `checkContentTooLarge(caps *llm.ModelCapability, fullPrompt string) error` — Estimates tokens via `utils.EstimateTokens` and returns a `ContentTooLargeError` if the estimate exceeds `caps.MaxInputTokens`. Returns nil if `caps` is nil or `MaxInputTokens ≤ 0`.
+- `parseTokenLimitError(body []byte) error` — Matches provider error bodies against the regex `maximum context length is (\d+) tokens.*?you requested (?:about )?(\d+) tokens` and returns a `TokenLimitError` with the parsed counts. Returns nil on no match or zero values. Covers OpenAI, DeepSeek, and compatible providers; for Anthropic (different error format) it returns nil and the error propagates as generic API failure.
 - `BuildPrompt(text, docTypes, peopleTypes, tagSuggestions, customTemplate) string` — Builds system prompt with JSON output instructions including people types. Prompts the LLM to provide a `name_romanized` field for any name containing non-Latin characters (Korean, Arabic, Cyrillic, Hebrew, etc.). When `customTemplate` is non-empty (after trimming whitespace), it is used as a Go `text/template` with placeholders `{{.DocTypePrompt}}`, `{{.TagsPrompt}}`, `{{.PeoplePrompt}}`, `{{.Text}}`, and `{{.RequestedTags}}`. On parse or execution error, falls back silently to the hardcoded default template. The rendered prompt is captured in `AnalysisResult.Prompt` for debugging.
 - `NormalizeTags(raw []string) []string` — Converts LLM-extracted tags to canonical space-separated form: folds accented characters to ASCII base letters (é→e, ü→u, ñ→n) via the shared `normalizeCore` pipeline, then deduplicates and rejects empty strings.
 - `FilterTags(tags, people, knownPeopleNormalized, title, docTypeNames) []string` — Post-normalization deterministic tag cleaner. Drops tags with more than 3 tokens, tags sharing any token with a person's `NormalizedName` (pre-populated by the enricher via `canonicalPersonName` + `NormalizeForDB`), multi-word tags (≥2 tokens) whose full token set is a strict subset of a known person's normalized name (from the full `people` table, passed via `knownPeopleNormalized`), tags matching a doc-type name token, and tags whose token set is a subset of the document title's token set. Caps survivors at `maxTags` (5) in emit order. Operates after `NormalizeTags` and before `Consolidate`.
 - `buildTokenUsageStats(prompt, completion, total int) *json.RawMessage` — Creates token usage stats JSON
+
+### Adapter integration
+
+Both `Analyze()` and `AnalyzeDocType()` call `checkContentTooLarge` with their constructed prompt before making any HTTP request. If it returns an error, the adapter returns the `ContentTooLargeError` directly — no API call is made, saving time and credits. Both adapter `doRequest()` methods (OpenAI's shared `doRequest`, Anthropic's inline HTTP in both `Analyze` and `AnalyzeDocType`) also call `parseTokenLimitError` on non-200 responses, catching provider-side context-length errors at response time.
 
 ---
 
