@@ -13,9 +13,10 @@
   - `OCRConfig`: `Engine string`, `Languages []string`, `DataDir string`, `Timeout int`, `OcrWorkers int` (0 = auto, resolves to `runtime.NumCPU()` in the subprocess)
 - `EnricherConfig`: `Workers int`, `TextReducer TextReducerConfig`, `ContentAnalyzer ContentAnalyzerConfig`, `TagMatcher TagMatcherConfig`
   - `TextReducerConfig`: `Engine string`, `Timeout int`, `TargetWords int`
-  - `ContentAnalyzerConfig`: `Engine string`, `Timeout int`, `Llm LlmToolsConfig`
-    - `LlmToolsConfig`: `OpenAI LlmToolConfig`, `Anthropic LlmToolConfig`, `DeepSeek LlmToolConfig`, `Ollama LlmToolConfig`
-    - `LlmToolConfig`: `BaseURL string`, `Model string`, `Token string`
+   - `ContentAnalyzerConfig`: `Enabled bool`, `Timeout int`, `Llm LlmConfig`, `PromptTemplate string`, `DocTypeRefinement DocTypeRefinementConfig`
+     - `LlmConfig`: `Adapter string`, `Provider string`, `Model string`, `Token string`, `Endpoint string`, `Reasoning bool`, `ReasoningEffort string`, `Temperature float64`, `Custom *CustomLlmConfig`
+     - `CustomLlmConfig`: `URL string`, `RequestBody string`, `ResponsePath string`
+     - `DocTypeRefinementConfig`: `Enabled bool`, `HeadWords int`, `TailWords int`
   - `TagMatcherConfig`: `Engine`, `Timeout`, `ReduceTargetWords`, `ChunkSize`, `Hugot HugotConfig`, `TopN`, `MinSimilarity`, `ConsolidationSimilarity`
     - `HugotConfig`: `Model`, `Backend` (`"GO"` or `"ort"`), `ModelPath`, `BackendLibPath`; internal-only (no yaml/json tags): `CpuMemArena bool` (default `false`), `MemPattern bool` (default `false`)
 - `ToolConfig`: `Command string`, `Timeout time.Duration`
@@ -26,7 +27,7 @@
 
 ## Functions
 
-- `DefaultConfig(configDir string) *Config` — Full defaults (BAAI/bge-m3, ort backend, gosseract OCR, textrank reducer, llmopenai analyzer, 100 MB max upload, 2 max concurrent batches, etc.)
+- `DefaultConfig(configDir string) *Config` — Full defaults (BAAI/bge-m3, ort backend, gosseract OCR, textrank reducer, openai-compatible analyzer with gpt-4o, 100 MB max upload, 2 max concurrent batches, etc.)
 - `Load(configDir string) (*Config, error)` — Loads YAML over defaults, validates OCR languages required, expands paths, creates dirs
 - `defaultMinSimilarity(modelShortName string) float64` — Per-model thresholds (bge-m3: 0.40)
 - `defaultConsolidationSimilarity(modelShortName string) float64` — Tag-to-tag thresholds (bge-m3: 0.82)
@@ -39,10 +40,9 @@ instead of string literals:
 
 | Group              | Constants                                                                                     |
 | ------------------ | --------------------------------------------------------------------------------------------- |
-| `ContentAnalyzer`  | `OpenAI` (`"llmopenai"`), `Anthropic` (`"llmanthropic"`), `DeepSeek` (`"llmdeepseek"`), `Ollama` (`"llmollama"`) |
-| `OCR`              | `Gosseract` (`"gosseract"`), `OcrMyPdf` (`"ocrmypdf"`)                                       |
-| `PdfOptimizer`     | `MuPDF` (`"mupdf"`), `GS` (`"gs"`)                                                           |
-| `TextExtractor`    | `MuPDF` (`"mupdf"`), `GoPdf` (`"gopdf"`), `PdfToText` (`"pdftotext"`)                        |
+| `OCR`              | `Gosseract` (`"gosseract"`), `OcrMyPdf` (`"ocrmypdf"`)                                                           |
+| `PdfOptimizer`    | `MuPDF` (`"mupdf"`), `GS` (`"gs"`)                                                                               |
+| `TextExtractor`    | `MuPDF` (`"mupdf"`), `GoPdf` (`"gopdf"`), `PdfToText` (`"pdftotext"`)                                            |
 | `TextReducer`      | `TextRank` (`"textrank"`)                                                                     |
 | `TagMatcher`       | `Hugot` (`"hugot"`)                                                                           |
 
@@ -53,7 +53,6 @@ per tool category, used by the frontend settings UI to populate select dropdowns
 
 | Key                  | Entries                                           |
 | -------------------- | ------------------------------------------------- |
-| `content_analyzer`   | openai, anthropic, deepseek, ollama               |
 | `ocr`                | gosseract, ocrmypdf                               |
 | `pdf_optimizer`      | mupdf, gs                                         |
 | `text_extractor`     | mupdf, gopdf, pdftotext                           |
@@ -194,5 +193,5 @@ per tool category, used by the frontend settings UI to populate select dropdowns
 - [API](api.md) — Uses ParamBag middleware, ConfigHandler for `/wizard/config` endpoints
 - [CLI](cli.md) — Uses ConfigDir, Logger, FlagParser, config setup functions
 - [Pipeline](pipeline.md) — Uses Config structs for Consumer/Enricher settings
-- [Tools](tools.md) — Uses Config for tool adapter selection
+- [Tools](tools.md) — Uses Config for tool adapter selection, capability registry (`internal/llm/`)
 - [Task System](task-system.md) — ConfigTaskHandler processes config-related async tasks

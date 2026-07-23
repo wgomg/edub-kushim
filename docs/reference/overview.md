@@ -116,6 +116,9 @@ internal/
 │   └── orphaned.go        # Walk originals/processed, quarantine, remove, copy to inbox
 ├── static/                # Embedded web UI (main app)
 │   └── fs.go              # Embedded SvelteKit build (build/ directory via //go:embed)
+├── llm/                   # LLM capability registry
+│   ├── model_catalog.json # Manually curated model catalog (committed to repo)
+│   └── registry.go        # Registry: loads catalog, Lookup, Adapters, ProvidersForAdapter, ModelsForProvider
 ├── tagmatch/              # Tag matcher RPC client
 │   └── client.go          # MatcherClient — HTTP client over Unix socket to external matcher process (flattened from rpc/)
 ├── version/               # Application version
@@ -132,13 +135,12 @@ internal/
 │   └── text.go            # CountWords, EstimateTokensFromWords, CleanUp, Truncate, CleanCodeBlock, ContainsNonLatin, NormalizeForDB, StripTags, StripTagsPtr
 ├── adapters/
 │   │   ├── mupdf_wrapper.go    # MuPDF CGo wrapper (6 C helpers + Go API)
-│   │   ├── contentanalyzer/    # LLM classification providers
-│   │   │   ├── adapter.go          # ContentAnalyzer interface + factory (NewContentAnalyzer); PeopleResult with NameRomanized
-│   │   │   ├── shared.go           # BuildPrompt, system message, prompt asks for name_romanized on non-Latin names
-│   │   │   ├── llm_openai.go       # OpenAI-compatible API (OpenAI, OpenRouter)
-│   │   │   ├── llm_anthropic.go    # Anthropic Messages API
-│   │   │   ├── llm_deepseek.go     # DeepSeek Chat API
-│   │   │   └── llm_ollama.go       # Local Ollama API
+│   │   ├── contentanalyzer/    # LLM classification adapters (capability-based)
+│   │   │   ├── adapter.go               # ContentAnalyzer interface + factory (adapter-based dispatch)
+│   │   │   ├── shared.go                # BuildPrompt, system message, prompt asks for name_romanized on non-Latin names
+│   │   │   ├── llm_openai_compatible.go # OpenAI-compatible API (absorbs former OpenAI, DeepSeek, Mistral, etc.)
+│   │   │   ├── llm_anthropic.go         # Anthropic Messages API with capability flags
+│   │   │   └── llm_custom.go            # Generic HTTP adapter with Go templates
 │   │   ├── ocr/
 │   │   │   ├── adapter.go      # OCR interface and factory
 │   │   │   ├── gosseract.go    # gosseract OCR with subprocess fork

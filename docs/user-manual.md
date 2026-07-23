@@ -465,6 +465,20 @@ If the matcher is not running, tag CRUD operations return `503 Service Unavailab
 
 ---
 
+### `kushim model-catalog refresh`
+
+Download the latest model catalog JSON from GitHub. Overwrites the local `model_catalog.json` file and rebuilds the in-memory registry. Requires internet access. The server can continue running with the stale catalog until the refresh completes.
+
+```
+kushim model-catalog refresh
+```
+
+| Condition | Output |
+| --------- | ------ |
+| Success | `Model catalog refreshed: 42 providers, 156 models` |
+| No internet | `Error: failed to download model catalog: ...` |
+| File write error | `Error: failed to write model catalog: ...` |
+
 ### `kushim backup`
 
 Create a backup of the database, configuration, and storage files.
@@ -872,6 +886,33 @@ DELETE /api/v1/saved-searches/{id}
 
 Response `204 No Content`.
 
+### LLM Model Discovery
+
+Returns the available adapters, providers, and models from the model catalog. Used by the settings UI to populate cascading selectors.
+
+```
+GET /api/v1/llm/models
+```
+
+Response `200`:
+
+```json
+{
+  "adapters": {
+    "openai-compatible": ["openai", "deepseek", "mistral", "groq"],
+    "anthropic": ["anthropic"]
+  },
+  "providers": {
+    "openai": [
+      { "id": "gpt-4o", "display_name": "GPT-4o", "max_input_tokens": 128000, "supports_reasoning": false }
+    ],
+    "deepseek": [
+      { "id": "deepseek-v4-flash", "display_name": "DeepSeek V4 Flash", "max_input_tokens": 1000000, "max_output_tokens": 8192, "supports_reasoning": true, "reasoning_efforts": ["high", "max"] }
+    ]
+  }
+}
+```
+
 ### Configuration (Wizard API)
 
 Read and update the configuration via the API. These endpoints are used by
@@ -918,15 +959,16 @@ Two-phase API:
   "enricher.textreducer.engine": "textrank",
   "enricher.textreducer.timeout": 120,
   "enricher.textreducer.target_words": 2000,
-  "enricher.contentanalyzer.engine": "llmopenai",
+  "enricher.contentanalyzer.enabled": true,
   "enricher.contentanalyzer.timeout": 120,
   "enricher.contentanalyzer.prompt_template": "",
   "enricher.contentanalyzer.doc_type_refinement.enabled": true,
   "enricher.contentanalyzer.doc_type_refinement.head_words": 600,
   "enricher.contentanalyzer.doc_type_refinement.tail_words": 400,
-  "enricher.contentanalyzer.llm.openai.base_url": "https://api.openai.com/v1",
-  "enricher.contentanalyzer.llm.openai.model": "gpt-4o",
-  "enricher.contentanalyzer.llm.openai.token": "",
+  "enricher.contentanalyzer.llm.adapter": "openai-compatible",
+  "enricher.contentanalyzer.llm.provider": "openai",
+  "enricher.contentanalyzer.llm.model": "gpt-4o",
+  "enricher.contentanalyzer.llm.token": "",
   "enricher.tagmatcher.timeout": 120,
   "enricher.tagmatcher.reduce_target_words": 4000,
   "enricher.tagmatcher.chunk_size": 0,
@@ -1599,7 +1641,7 @@ enricher:
     timeout: 120
     target_words: 2000 # optional: reduce text before LLM
   contentanalyzer:
-    engine: 'llmopenai' # llmopenai | llmanthropic | llmdeepseek | llmollama
+    enabled: true
     timeout: 120
     # prompt_template: ''  # optional custom LLM prompt; see docs for available placeholders
     # doc_type_refinement:
@@ -1607,21 +1649,14 @@ enricher:
     #   head_words: 600
     #   tail_words: 400
     llm:
-      openai:
-        base_url: 'https://api.openai.com/v1'
-        model: 'gpt-4o'
-        # token: 'sk-...'
-      anthropic:
-        base_url: 'https://api.anthropic.com/v1'
-        model: 'claude-sonnet-4-5'
-        # token: 'sk-ant-...'
-      deepseek:
-        base_url: 'https://api.deepseek.com'
-        model: 'deepseek-v4-flash'
-        # token: 'sk-...'
-      ollama:
-        base_url: 'http://localhost:11434'
-        model: 'llama3.2'
+      adapter: 'openai-compatible' # openai-compatible | anthropic | custom
+      provider: 'openai'           # auto-populated from model catalog
+      model: 'gpt-4o'              # auto-populated from model catalog
+      # token: 'sk-...'
+      # endpoint: ''               # optional override of default provider URL
+      # reasoning: false
+      # reasoning_effort: ''
+      # temperature: 0.0
   tagmatcher:
     timeout: 120
     reduce_target_words: 4000 # text reduction before tag matching
@@ -1655,8 +1690,8 @@ enricher:
 | `consumer.workers`             | Concurrent file processing workers (default 1)                         |
 | `enricher`                     | Async classification pipeline                                          |
 | `enricher.textreducer`         | Text summarization before LLM (TextRank)                               |
-| `enricher.contentanalyzer`     | LLM provider for document classification (OpenAI, etc.)                |
-| `enricher.contentanalyzer.llm` | Per-provider config (base URL, model, token)                           |
+| `enricher.contentanalyzer`     | LLM-based document classification (adapter/provider/model)                         |
+| `enricher.contentanalyzer.llm` | Adapter/provider/model config (flat structure with capability flags)                |
 | `enricher.contentanalyzer.prompt_template` | Custom Go `text/template` for the LLM prompt; empty = built-in default |
 | `enricher.contentanalyzer.doc_type_refinement` | Second-pass doc type refinement with head+tail of raw text (enabled, head_words, tail_words) |
 | `enricher.tagmatcher`          | Semantic tag matching via Hugot (embeddings)                           |
@@ -1737,8 +1772,11 @@ A single-page form for all user-configurable settings:
 - **Text extractor**: engine, timeout
 - **PDF optimizer**: engine, fallback, timeout
 - **Enricher**: workers
-- **Content analyzer (LLM)**: engine, timeout, and provider-specific Base URL,
-  model, token (with show/hide toggle)
+- **Content analyzer (LLM)**: enabled toggle, adapter (openai-compatible/anthropic/custom),
+  provider (filtered by adapter), model (filtered by provider, loaded from model catalog),
+  token (hidden for Ollama), temperature, reasoning toggle (shown when model supports it),
+  reasoning effort (shown when reasoning enabled), endpoint override (collapsed advanced section),
+  custom adapter fields (URL, request body template, response path)
 - **Tag matcher**: engine, timeout, reduce target words, chunk size, Hugot model,
   Hugot backend (ort/GO)
 - **Text reducer**: engine, timeout, target words

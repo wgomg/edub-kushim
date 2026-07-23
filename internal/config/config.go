@@ -31,7 +31,7 @@ type AppConfig struct {
 	Env       Environment   `mapstructure:"environment" yaml:"environment" json:"environment"`
 	LogLevel  string        `mapstructure:"log_level" yaml:"log_level" json:"log_level"`
 	Logging   LoggingConfig `mapstructure:"logging" yaml:"logging" json:"logging"`
-	ConfigDir string        `json:"config_dir"`
+	ConfigDir string        `yaml:"-" json:"config_dir"`
 }
 
 type ServerConfig struct {
@@ -150,11 +150,11 @@ type DocTypeRefinementConfig struct {
 }
 
 type ContentAnalyzerConfig struct {
-	Engine            string                   `mapstructure:"engine" yaml:"engine" json:"engine"`
-	Timeout           int                      `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
-	Llm               LlmToolsConfig           `mapstructure:"llm" yaml:"llm" json:"llm"`
-	PromptTemplate    string                   `mapstructure:"prompt_template" yaml:"prompt_template" json:"prompt_template,omitempty"`
-	DocTypeRefinement DocTypeRefinementConfig  `mapstructure:"doc_type_refinement" yaml:"doc_type_refinement" json:"doc_type_refinement"`
+	Enabled           bool                    `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
+	Timeout           int                     `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
+	Llm               LlmConfig               `mapstructure:"llm" yaml:"llm" json:"llm"`
+	PromptTemplate    string                  `mapstructure:"prompt_template" yaml:"prompt_template" json:"prompt_template,omitempty"`
+	DocTypeRefinement DocTypeRefinementConfig `mapstructure:"doc_type_refinement" yaml:"doc_type_refinement" json:"doc_type_refinement"`
 }
 
 type EnricherConfig struct {
@@ -164,26 +164,23 @@ type EnricherConfig struct {
 	TagMatcher      TagMatcherConfig      `mapstructure:"tagmatcher" yaml:"tagmatcher" json:"tagmatcher"`
 }
 
-type LlmToolConfig struct {
-	BaseURL string `mapstructure:"base_url" yaml:"base_url" json:"base_url"`
-	Model   string `mapstructure:"model" yaml:"model" json:"model"`
-	Token   string `mapstructure:"token" yaml:"token" json:"token"`
-}
-
-type LlmToolsConfig struct {
-	OpenAI    LlmToolConfig `mapstructure:"openai" yaml:"openai" json:"openai"`
-	Anthropic LlmToolConfig `mapstructure:"anthropic" yaml:"anthropic" json:"anthropic"`
-	DeepSeek  LlmToolConfig `mapstructure:"deepseek" yaml:"deepseek" json:"deepseek"`
-	Ollama    LlmToolConfig `mapstructure:"ollama" yaml:"ollama" json:"ollama"`
+type LlmConfig struct {
+	Adapter         string `mapstructure:"adapter" yaml:"adapter" json:"adapter"`
+	Provider        string `mapstructure:"provider" yaml:"provider" json:"provider"`
+	Model           string `mapstructure:"model" yaml:"model" json:"model"`
+	Token           string `mapstructure:"token" yaml:"token" json:"token,omitempty"`
+	Reasoning       bool   `yaml:"-"`
+	ReasoningEffort string `yaml:"-"`
+	Temperature     float64 `mapstructure:"temperature" yaml:"temperature" json:"temperature"`
 }
 
 type HugotConfig struct {
 	Model          string `mapstructure:"model" yaml:"model" json:"model"`
 	Backend        string `mapstructure:"backend" yaml:"backend" json:"backend"`
-	ModelPath      string `json:"model_path"`
-	BackendLibPath string `json:"backend_lib_path"`
-	CpuMemArena    bool
-	MemPattern     bool
+	ModelPath      string `yaml:"-" json:"model_path"`
+	BackendLibPath string `yaml:"-" json:"backend_lib_path"`
+	CpuMemArena    bool   `yaml:"-"`
+	MemPattern     bool   `yaml:"-"`
 }
 
 type TagMatcherConfig struct {
@@ -191,9 +188,9 @@ type TagMatcherConfig struct {
 	ReduceTargetWords       int         `mapstructure:"reduce_target_words" yaml:"reduce_target_words" json:"reduce_target_words"`
 	ChunkSize               int         `mapstructure:"chunk_size" yaml:"chunk_size" json:"chunk_size"`
 	Hugot                   HugotConfig `mapstructure:"hugot" yaml:"hugot" json:"hugot"`
-	TopN                    int         `json:"top_n"`
-	MinSimilarity           float64     `json:"min_similarity"`
-	ConsolidationSimilarity float64     `json:"consolidation_similarity"`
+	TopN                    int         `yaml:"-" json:"top_n"`
+	MinSimilarity           float64     `yaml:"-" json:"min_similarity"`
+	ConsolidationSimilarity float64     `yaml:"-" json:"consolidation_similarity"`
 }
 
 type ToolConfig struct {
@@ -221,18 +218,6 @@ type Config struct {
 
 // engine identifiers grouped by tool category.
 var (
-	ContentAnalyzer = struct {
-		OpenAI    string
-		Anthropic string
-		DeepSeek  string
-		Ollama    string
-	}{
-		OpenAI:    "llmopenai",
-		Anthropic: "llmanthropic",
-		DeepSeek:  "llmdeepseek",
-		Ollama:    "llmollama",
-	}
-
 	OCR = struct {
 		Gosseract string
 		OcrMyPdf  string
@@ -272,12 +257,6 @@ type EngineEntry struct {
 }
 
 var AvailableEngines = map[string][]EngineEntry{
-	"content_analyzer": {
-		{Value: ContentAnalyzer.OpenAI, Label: "OpenAI"},
-		{Value: ContentAnalyzer.Anthropic, Label: "Anthropic"},
-		{Value: ContentAnalyzer.DeepSeek, Label: "DeepSeek"},
-		{Value: ContentAnalyzer.Ollama, Label: "Ollama"},
-	},
 	"ocr": {
 		{Value: OCR.Gosseract, Label: "gosseract"},
 		{Value: OCR.OcrMyPdf, Label: "ocrmypdf"},
@@ -376,34 +355,16 @@ func DefaultConfig(configDir string) *Config {
 				Timeout:     120,
 				TargetWords: 2000,
 			},
-			ContentAnalyzer: ContentAnalyzerConfig{
-				Engine:         ContentAnalyzer.OpenAI,
-				Timeout:        120,
-				PromptTemplate: "",
-				DocTypeRefinement: DocTypeRefinementConfig{
-					Enabled:   true,
-					HeadWords: 600,
-					TailWords: 400,
-				},
-				Llm: LlmToolsConfig{
-					OpenAI: LlmToolConfig{
-						BaseURL: "https://api.openai.com/v1",
-						Model:   "gpt-4o",
-					},
-					Anthropic: LlmToolConfig{
-						BaseURL: "https://api.anthropic.com/v1",
-						Model:   "claude-sonnet-4-5",
-					},
-					DeepSeek: LlmToolConfig{
-						BaseURL: "https://api.deepseek.com",
-						Model:   "deepseek-v4-flash",
-					},
-					Ollama: LlmToolConfig{
-						BaseURL: "http://localhost:11434",
-						Model:   "llama3.2",
-					},
-				},
+		ContentAnalyzer: ContentAnalyzerConfig{
+			Enabled:        false,
+			Timeout:        120,
+			PromptTemplate: "",
+			DocTypeRefinement: DocTypeRefinementConfig{
+				Enabled:   true,
+				HeadWords: 600,
+				TailWords: 400,
 			},
+		},
 			TagMatcher: TagMatcherConfig{
 				Timeout:           120,
 				ReduceTargetWords: 4000,
@@ -467,6 +428,18 @@ func Reload(configDir string, cfg *Config) (bool, error) {
 }
 
 func finalizeConfig(cfg *Config, configDir string) error {
+	if cfg.Enricher.ContentAnalyzer.Enabled {
+		llmCfg := &cfg.Enricher.ContentAnalyzer.Llm
+		if llmCfg.Adapter == "" {
+			return fmt.Errorf("enricher.contentanalyzer.llm.adapter is required when content analyzer is enabled")
+		}
+		if llmCfg.Provider == "" {
+			return fmt.Errorf("enricher.contentanalyzer.llm.provider is required when content analyzer is enabled")
+		}
+		if llmCfg.Model == "" {
+			return fmt.Errorf("enricher.contentanalyzer.llm.model is required when content analyzer is enabled")
+		}
+	}
 	if len(cfg.Consumer.OCR.Languages) == 0 {
 		return fmt.Errorf("consumer.ocr.languages is required — run 'kushim setup --languages eng,spa,...' first")
 	}

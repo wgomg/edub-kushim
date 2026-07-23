@@ -28,7 +28,10 @@
 	let userError = $state('');
 	let refreshKey = $state(0);
 
-	let providerKey = $derived(cfg?.enricher?.contentanalyzer?.engine?.replace(/^llm/, '') ?? null);
+	let llmModels = $state({ adapters: {}, providers: {} });
+
+	let selectedAdapterProviders = $derived(llmModels.adapters[cfg?.enricher?.contentanalyzer?.llm?.adapter] ?? []);
+	let selectedProviderModels = $derived(llmModels.providers[cfg?.enricher?.contentanalyzer?.llm?.provider] ?? []);
 
 	const userColumns = [
 		{
@@ -76,6 +79,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			cfg = loaded;
 			checkStatus();
 		}
+		llmModels = await api.config.llmModels();
 	});
 
 	async function checkStatus() {
@@ -148,19 +152,14 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			'enricher.textreducer.engine': cfg.enricher.textreducer.engine,
 			'enricher.textreducer.timeout': Number(cfg.enricher.textreducer.timeout),
 			'enricher.textreducer.target_words': Number(cfg.enricher.textreducer.target_words),
-			'enricher.contentanalyzer.engine': cfg.enricher.contentanalyzer.engine,
+			'enricher.contentanalyzer.enabled': cfg.enricher.contentanalyzer.enabled,
 			'enricher.contentanalyzer.timeout': Number(cfg.enricher.contentanalyzer.timeout),
 			'enricher.contentanalyzer.prompt_template': cfg.enricher.contentanalyzer.prompt_template,
-			...(providerKey
-				? {
-						[`enricher.contentanalyzer.llm.${providerKey}.base_url`]:
-							cfg.enricher.contentanalyzer.llm[providerKey].base_url,
-						[`enricher.contentanalyzer.llm.${providerKey}.model`]:
-							cfg.enricher.contentanalyzer.llm[providerKey].model,
-						[`enricher.contentanalyzer.llm.${providerKey}.token`]:
-							cfg.enricher.contentanalyzer.llm[providerKey].token
-					}
-				: {}),
+			'enricher.contentanalyzer.llm.adapter': cfg.enricher.contentanalyzer.llm.adapter,
+			'enricher.contentanalyzer.llm.provider': cfg.enricher.contentanalyzer.llm.provider,
+			'enricher.contentanalyzer.llm.model': cfg.enricher.contentanalyzer.llm.model,
+			'enricher.contentanalyzer.llm.token': cfg.enricher.contentanalyzer.llm.token,
+			'enricher.contentanalyzer.llm.temperature': Number(cfg.enricher.contentanalyzer.llm.temperature),
 			'enricher.tagmatcher.timeout': Number(cfg.enricher.tagmatcher.timeout),
 			'enricher.tagmatcher.reduce_target_words': Number(
 				cfg.enricher.tagmatcher.reduce_target_words
@@ -925,33 +924,97 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			</section>
 
 			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
-				<h2 class="mb-4 text-lg font-semibold text-parchment-200">Content analyzer (LLM)</h2>
+				<div class="mb-4 flex items-center justify-between">
+					<h2 class="text-lg font-semibold text-parchment-200">Content analyzer (LLM)</h2>
+					<label class="relative inline-flex cursor-pointer items-center">
+						<input type="checkbox" bind:checked={cfg.enricher.contentanalyzer.enabled} class="peer sr-only" />
+						<div class="h-6 w-11 rounded-full border border-clay-700 bg-clay-800 after:absolute after:left-0.5 after:top-0.5 after:h-5 after:w-5 after:rounded-full after:bg-parchment-400 after:transition-all peer-checked:border-gold-500 peer-checked:bg-gold-600 peer-checked:after:translate-x-full peer-checked:after:bg-white"></div>
+						<span class="ml-2 text-sm text-parchment-300">Enabled</span>
+					</label>
+				</div>
+				{#if cfg.enricher.contentanalyzer.enabled}
 				<div class="grid gap-4 sm:grid-cols-2">
 					<div>
-						<label
-							for="content-analyzer-engine"
-							class="mb-1 block text-sm font-medium text-parchment-200">Engine</label
-						>
+						<label for="llm-adapter" class="mb-1 block text-sm font-medium text-parchment-200">
+							Adapter
+						</label>
 						<select
-							id="content-analyzer-engine"
-							bind:value={cfg.enricher.contentanalyzer.engine}
+							id="llm-adapter"
+							bind:value={cfg.enricher.contentanalyzer.llm.adapter}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						>
-							{#each cfg.available_engines.content_analyzer as opt (opt.value)}
-								<option value={opt.value}>{opt.label}</option>
+							{#each Object.keys(llmModels.adapters) as adapter (adapter)}
+								<option value={adapter}>{adapter}</option>
 							{/each}
 						</select>
 					</div>
+
 					<div>
-						<label
-							for="content-analyzer-timeout"
-							class="mb-1 block text-sm font-medium text-parchment-200">Timeout (s)</label
+						<label for="llm-provider" class="mb-1 block text-sm font-medium text-parchment-200">
+							Provider
+						</label>
+						<select
+							id="llm-provider"
+							bind:value={cfg.enricher.contentanalyzer.llm.provider}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						>
+							{#each selectedAdapterProviders as provider (provider)}
+								<option value={provider}>{provider}</option>
+							{/each}
+						</select>
+					</div>
+
+					<div>
+						<label for="llm-model" class="mb-1 block text-sm font-medium text-parchment-200">
+							Model
+						</label>
+						<select
+							id="llm-model"
+							bind:value={cfg.enricher.contentanalyzer.llm.model}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
+						>
+							{#each selectedProviderModels as m (m.id)}
+								<option value={m.id}>{m.id}</option>
+							{/each}
+						</select>
+					</div>
+
+					<div>
+						<label for="llm-token" class="mb-1 block text-sm font-medium text-parchment-200">
+							Token
+						</label>
+						<div class="flex gap-2">
+							<input
+								id="llm-token"
+								type={showToken ? 'text' : 'password'}
+								bind:value={cfg.enricher.contentanalyzer.llm.token}
+								placeholder="sk-..."
+								autocomplete="off"
+								class="flex-1 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:outline-none"
+							/>
+							<button
+								type="button"
+								onclick={() => (showToken = !showToken)}
+								class="rounded-lg border border-clay-800 px-3 text-sm text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
+							>
+								{showToken ? 'Hide' : 'Show'}
+							</button>
+						</div>
+					</div>
+				</div>
+
+				<div class="mt-4 grid gap-4 sm:grid-cols-2">
+					<div>
+						<label for="llm-temperature" class="mb-1 block text-sm font-medium text-parchment-200">
+							Temperature
+						</label>
 						<input
-							id="content-analyzer-timeout"
+							id="llm-temperature"
 							type="number"
-							min="1"
-							bind:value={cfg.enricher.contentanalyzer.timeout}
+							min="0"
+							max="2"
+							step="0.1"
+							bind:value={cfg.enricher.contentanalyzer.llm.temperature}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						/>
 					</div>
@@ -976,62 +1039,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 font-mono text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 					></textarea>
 				</div>
-
-				{#if providerKey}
-					<div class="mt-4 rounded-lg border border-clay-800 bg-clay-950 p-4">
-						<h3 class="mb-3 text-sm font-semibold text-parchment-200 capitalize">
-							{providerKey} provider
-						</h3>
-						<div class="grid gap-4 sm:grid-cols-2">
-							<div class="sm:col-span-2">
-								<label
-									for="llm-{providerKey}-base-url"
-									class="mb-1 block text-sm font-medium text-parchment-200">Base URL</label
-								>
-								<input
-									id="llm-{providerKey}-base-url"
-									type="text"
-									bind:value={cfg.enricher.contentanalyzer.llm[providerKey].base_url}
-									class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
-								/>
-							</div>
-							<div class="sm:col-span-2">
-								<label
-									for="llm-{providerKey}-model"
-									class="mb-1 block text-sm font-medium text-parchment-200">Model</label
-								>
-								<input
-									id="llm-{providerKey}-model"
-									type="text"
-									bind:value={cfg.enricher.contentanalyzer.llm[providerKey].model}
-									class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
-								/>
-							</div>
-							<div class="sm:col-span-2">
-								<label
-									for="llm-{providerKey}-token"
-									class="mb-1 block text-sm font-medium text-parchment-200">Token</label
-								>
-								<div class="flex gap-2">
-									<input
-										id="llm-{providerKey}-token"
-										type={showToken ? 'text' : 'password'}
-										bind:value={cfg.enricher.contentanalyzer.llm[providerKey].token}
-										placeholder="sk-..."
-										class="flex-1 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:outline-none"
-									/>
-									<button
-										type="button"
-										onclick={() => (showToken = !showToken)}
-										class="rounded-lg border border-clay-800 px-3 text-sm text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
-									>
-										{showToken ? 'Hide' : 'Show'}
-									</button>
-								</div>
-							</div>
-						</div>
-					</div>
-				{/if}
+			{/if}
 			</section>
 
 			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
@@ -1187,6 +1195,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							id="backup-time"
 							type="text"
 							bind:value={cfg.backup.time}
+							pattern="([01][0-9]|2[0-3]):[0-5][0-9]"
+							placeholder="HH:MM"
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						/>
 					</div>

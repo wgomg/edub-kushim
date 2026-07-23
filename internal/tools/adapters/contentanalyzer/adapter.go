@@ -3,9 +3,11 @@ package contentanalyzer
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/llm"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -33,21 +35,16 @@ type AnalysisResult struct {
 	PassContext *json.RawMessage `json:"-"`
 }
 
-func NewContentAnalyzer(logger *utils.Logger, cfg config.ToolConfig, llmCfg *config.LlmToolsConfig, promptTemplate string) (ContentAnalyzer, error) {
-	switch cfg.Command {
-	case config.ContentAnalyzer.OpenAI:
-		ca, err := NewLlmOpenAi(logger, cfg, llmCfg.OpenAI, promptTemplate)
-		return ca, err
-	case config.ContentAnalyzer.Anthropic:
-		ca, err := NewLlmAnthropic(logger, cfg, llmCfg.Anthropic, promptTemplate)
-		return ca, err
-	case config.ContentAnalyzer.DeepSeek:
-		ca, err := NewLlmDeepSeek(logger, cfg, llmCfg.DeepSeek, promptTemplate)
-		return ca, err
-	case config.ContentAnalyzer.Ollama:
-		ca, err := NewLlmOllama(logger, cfg, llmCfg.Ollama, promptTemplate)
-		return ca, err
+func NewContentAnalyzer(logger *utils.Logger, cfg config.ToolConfig, llmCfg *config.LlmConfig, promptTemplate string, reg *llm.Registry) (ContentAnalyzer, error) {
+	if reg == nil {
+		return nil, fmt.Errorf("registry is required for %q adapter", llmCfg.Adapter)
+	}
+	caps := reg.Lookup(llmCfg.Provider, llmCfg.Model)
+
+	switch llmCfg.Adapter {
+	case "anthropic":
+		return NewLlmAnthropic(logger, cfg, llmCfg, caps, promptTemplate, reg)
 	default:
-		return NewLlmOpenAi(logger, cfg, llmCfg.OpenAI, promptTemplate)
+		return NewLlmOpenAiCompatible(logger, cfg, llmCfg, caps, promptTemplate, reg)
 	}
 }

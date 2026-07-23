@@ -1,0 +1,72 @@
+[
+  {
+    "provider": "deepseek",
+    "adapter": "openai-compatible",
+    "model_id": "deepseek-v4-flash",
+    "display_name": "DeepSeek V4 Flash",
+    "official_url": "https://api.deepseek.com/v1",
+    "max_input_tokens": 1000000,
+    "max_output_tokens": 8192,
+    "reasoning": true,
+    "reasoning_efforts": ["high", "max"],
+    "supports_structured_output": true,
+    "supports_temperature": true,
+    "supports_prompt_caching": false
+  },
+  {
+    "provider": "deepseek",
+    "adapter": "openai-compatible",
+    "model_id": "deepseek-v4-pro",
+    "display_name": "DeepSeek V4 Pro",
+    "official_url": "https://api.deepseek.com/v1",
+    "max_input_tokens": 1000000,
+    "max_output_tokens": 8192,
+    "reasoning": true,
+    "reasoning_efforts": ["high", "max"],
+    "supports_structured_output": true,
+    "supports_temperature": true,
+    "supports_prompt_caching": false
+  },
+  {
+    "provider": "mistral",
+    "adapter": "openai-compatible",
+    "model_id": "mistral-small-latest",
+    "display_name": "Mistral Small",
+    "official_url": "https://api.mistral.ai/v1",
+    "max_input_tokens": 128000,
+    "max_output_tokens": 16384,
+    "reasoning": true,
+    "reasoning_efforts": ["none", "high"],
+    "supports_structured_output": true,
+    "supports_temperature": true,
+    "supports_prompt_caching": false
+  },
+  {
+    "provider": "anthropic",
+    "adapter": "anthropic",
+    "model_id": "claude-sonnet-5",
+    "display_name": "Claude Sonnet 5",
+    "official_url": "https://api.anthropic.com/v1",
+    "max_input_tokens": 200000,
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "reasoning_efforts": ["low", "medium", "high", "xhigh", "max"],
+    "supports_structured_output": true,
+    "supports_temperature": true,
+    "supports_prompt_caching": true
+  },
+  {
+    "provider": "anthropic",
+    "adapter": "anthropic",
+    "model_id": "claude-haiku-4-5",
+    "display_name": "Claude Haiku 4.5",
+    "official_url": "https://api.anthropic.com/v1",
+    "max_input_tokens": 200000,
+    "max_output_tokens": 64000,
+    "reasoning": true,
+    "reasoning_efforts": [],
+    "supports_structured_output": true,
+    "supports_temperature": true,
+    "supports_prompt_caching": true
+  }
+]

@@ -8,7 +8,7 @@
 
 - **Fields**: `logger`, `config`, `textExtractor`, `ocr`, `pdfOptimizer`, `tagMatcher tagmatcher.Matcher`, `contentAnalyzer`, `textReducer`
 - **Functions**:
-  - `NewRunner(logger, cfg, tools []string) *Runner` — Initializes only the listed tool adapters (e.g., `["textextractor","ocr","pdfoptimizer"]` for consumer). No longer creates a tagmatcher internally.
+  - `NewRunner(logger, cfg, tools []string) *Runner` — Initializes only the listed tool adapters (e.g., `["textextractor","ocr","pdfoptimizer"]` for consumer). Loads the LLM model catalog from `<configDir>/model_catalog.json` via `llm.NewRegistry`. No longer creates a tagmatcher internally. Content analyzer is created via the new adapter-based factory: `contentanalyzer.NewContentAnalyzer(logger, cfg.ToolConfig, &cfg.Enricher.ContentAnalyzer.Llm, cfg.Enricher.ContentAnalyzer.PromptTemplate, reg)`.
   - `NewRunnerWithMatcher(logger, cfg, tools, matcher tagmatcher.Matcher) *Runner` — Calls `NewRunner` then conditionally sets `r.tagMatcher` if `matcher != nil` and `"tagmatcher"` is in the tools list.
 - **Methods**: `ExtractText`, `OCR(ctx, docId, path)`, `OptimizePdf(ctx, docId, path)`, `ReduceContent`, `MatchTags(ctx, docId, input)`, `AnalyzeContent`
 - **Result types**: `TextExtractionResult`, `OCRResult`, `PdfOptimizationResult`, `TextReducerResult` (with Text, WordCount, CharCount, TargetWordCount), `TagMatchResult`, `ContentAnalysisResult` (with People)
@@ -34,7 +34,7 @@ type ContentAnalyzer interface {
 
 ### Factory
 
-`NewContentAnalyzer(logger, cfg, llmCfg, promptTemplate)` — Selects provider by `cfg.Command` using `config.ContentAnalyzer` constants (`OpenAI`, `Anthropic`, `DeepSeek`, `Ollama`). Default: OpenAI. `promptTemplate` is a custom Go `text/template` string; empty/missing means use the built-in default.
+`NewContentAnalyzer(logger, cfg, llmCfg, promptTemplate, registry)` — Selects adapter by `llmCfg.Adapter` using a capability registry. The adapter is chosen from the `llmCfg.Adapter` field (`openai-compatible`, `anthropic`, `custom`). Capabilities are looked up from the `registry` via `registry.Lookup(llmCfg.Provider, llmCfg.Model)` and passed to each adapter for dynamic request building (stripping unsupported parameters). `promptTemplate` is a custom Go `text/template` string; empty/missing means use the built-in default.
 
 ---
 
@@ -55,14 +55,19 @@ type ContentAnalyzer interface {
 
 ---
 
-## `adapters/contentanalyzer/llm_openai.go`
+## `adapters/contentanalyzer/llm_openai_compatible.go`
 
 ### Struct
 
-`LlmOpenAi` — OpenAI `/chat/completions` API
+`LlmOpenAiCompatible` — OpenAI-compatible `/chat/completions` API (absorbs former OpenAI, DeepSeek, Mistral, Groq, etc.)
 
-- Messages: system + user with `json_object` response format
+- Messages: system + user with `json_object` response format when `caps.SupportsResponseSchema`
 - Headers: `Authorization: Bearer {token}`
+- Dynamic request building based on `*ModelCapability`:
+  - Strips `reasoning_effort` if `!caps.SupportsReasoning`
+  - Strips `temperature` if `!caps.SupportsSamplingParams`
+  - Uses `response_format: {type: "json_object"}` only when `caps.SupportsResponseSchema`
+- Default provider URL used unless `llmCfg.Endpoint` override is set
 - Token usage from `usage` field
 
 ---
@@ -75,31 +80,12 @@ type ContentAnalyzer interface {
 
 - System message via `system` field, user message via `messages`
 - Headers: `x-api-key`, `anthropic-version: 2023-06-01`
+- Dynamic request building based on `*ModelCapability`:
+  - `llmCfg.Reasoning == true` → sets `thinking: {type: "enabled"}` (or `adaptive` if `caps.AdaptiveThinking`)
+  - `llmCfg.Reasoning == false` → sets `thinking: {type: "disabled"}`
+  - Uses `output_config` for structured output when `caps.SupportsOutputConfig`
+  - `max_tokens` set to `min(256, caps.MaxOutputTokens)` for no-generation calls, else `caps.MaxOutputTokens`
 - Token usage from `usage.input_tokens` + `usage.output_tokens`
-
----
-
-## `adapters/contentanalyzer/llm_deepseek.go`
-
-### Struct
-
-`LlmDeepSeek` — DeepSeek `/chat/completions` API (OpenAI-compatible)
-
-- Messages: system + user with `json_object` response format, thinking disabled
-- Headers: `Authorization: Bearer {token}`
-- Token usage from `usage` field
-
----
-
-## `adapters/contentanalyzer/llm_ollama.go`
-
-### Struct
-
-`LlmOllama` — Local Ollama `/api/chat` API
-
-- Messages: system + user with `json` format field
-- No auth headers needed; `KeepAlive: 5m`
-- Token usage from `prompt_eval_count` + `eval_count`
 
 ---
 
@@ -157,6 +143,76 @@ The composition root builds a single `*Hugot` (for the `kushim` CLI) or uses a `
   - `Close()` — Idempotent (nil-safe, sets session to nil after destroy)
 - **Nil-receiver guards**: `Match`, `Consolidate`, `Encode` all return an error if `h == nil`, preventing typed-nil interface panics
 - **Helpers**: `meanPool`, `rankMatches`, `cosineSimilarity`, `tokenize`, `encodeChunked`, `readMaxPositionEmbeddings`, `downloadLib`, `getBackendSession`
+
+---
+
+---
+
+## `adapters/contentanalyzer/llm_custom.go`
+
+### Struct
+
+`LlmCustom` — Generic HTTP adapter using Go `text/template` for request body
+
+- Uses `llmCfg.Custom.RequestBody` as a Go `text/template`
+- Template variables: `{{.Model}}`, `{{.SystemPrompt}}`, `{{.UserPrompt}}`, `{{.Temperature}}`, `{{.ReasoningEffort}}`, `{{.MaxTokens}}`
+- Executes HTTP POST to `llmCfg.Custom.URL` (or `llmCfg.Endpoint` if set)
+- Extracts response using `llmCfg.Custom.ResponsePath` (dot-notation: `choices.0.message.content`)
+- Falls back to raw response body if path is empty
+
+---
+
+## `internal/llm/` package (Capability Registry)
+
+### Data source
+
+A manually maintained `model_catalog.json` file committed to the repository at `internal/llm/model_catalog.json`. Downloaded at runtime on user request (no embedding).
+
+### Key types
+
+```go
+type ModelCapability struct {
+    MaxInputTokens          int
+    MaxOutputTokens         int
+    SupportsReasoning       bool
+    SupportsFunctionCalling bool
+    SupportsResponseSchema  bool
+    SupportsSamplingParams  bool
+    SupportsPromptCaching   bool
+    SupportsVision          bool
+    SupportsPDFInput        bool
+    SupportsOutputConfig    bool
+    ReasoningEffortLevels   []string
+    AdaptiveThinking        bool
+    InputCostPerToken       float64
+    OutputCostPerToken      float64
+}
+
+type Registry struct { ... }
+```
+
+### Registry API
+
+| Method | Description |
+|--------|-------------|
+| `NewRegistry(path)` | Loads JSON catalog from disk, builds index |
+| `Lookup(provider, model)` | Returns `*ModelCapability` for a given provider+model |
+| `Adapters()` | Returns `["openai-compatible", "anthropic", "custom"]` |
+| `ProvidersForAdapter(adapter)` | Returns provider keys for a given adapter |
+| `ModelsForProvider(provider)` | Returns model entries with capabilities |
+
+### Provider→Adapter mapping
+
+Built-in mapping routes providers to the correct adapter:
+- `openai`, `deepseek`, `mistral`, `groq`, `together_ai`, `fireworks_ai`, `openrouter`, `azure` → `openai-compatible`
+- `anthropic`, `bedrock` → `anthropic`
+- Everything else → `custom`
+
+### Runtime refresh
+
+- Web UI settings page has "Refresh model catalog" button
+- CLI: `kushim model-catalog refresh` command
+- A stale local copy works offline
 
 ---
 
@@ -293,3 +349,4 @@ MuPDF 1.28.0 CGo wrapper. 6 C helpers: document open/close, page rendering, text
 
 - [Pipeline](pipeline.md) — Consumer and Enricher that use the Runner
 - [Config & Utils](config-and-utils.md) — Tool configuration (engines, timeouts, models)
+- `internal/llm/` — LLM capability registry (model catalog, adapter/provider/model discovery)

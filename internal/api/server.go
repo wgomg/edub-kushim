@@ -16,6 +16,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/configtask"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/llm"
 	"github.com/wgomg/edub-kushim/internal/pool"
 	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/service"
@@ -169,6 +170,16 @@ func registerRoutes(
 ) *http.ServeMux {
 	mux := http.NewServeMux()
 	engine := search.NewEngine(logger, client.Queries)
+
+	cfg := getConfig()
+	llmRegistry, err := llm.NewRegistry(filepath.Join(cfg.App.ConfigDir, "model_catalog.json"))
+	if err != nil {
+		logger.Error(nil, "load model catalog: %v", err)
+	}
+	if llmRegistry != nil {
+		llmHandler := handlers.NewLlmHandler(llmRegistry)
+		mux.Handle("GET /api/v1/llm/models", RequireRole([]auth.Role{auth.RoleViewer, auth.RoleEditor, auth.RoleAdmin}...)(http.HandlerFunc(llmHandler.ListModels)))
+	}
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		handlers.HealthHandler(w, r, logger)

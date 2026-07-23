@@ -13,14 +13,11 @@
 	let toolStatus = $state([]);
 	let failedTasks = $state([]);
 	let pollInterval;
-	let showToken = $state(false);
 	let adminUsername = $state('');
 	let adminPassword = $state('');
 	let adminConfirm = $state('');
 	let adminError = $state('');
 	let adminCreating = $state(false);
-
-	let providerKey = $derived(cfg?.enricher?.contentanalyzer?.engine?.replace(/^llm/, '') ?? null);
 
 	onMount(async () => {
 		try {
@@ -95,14 +92,6 @@
 			'enricher.textreducer.engine': cfg.enricher.textreducer.engine,
 			'enricher.textreducer.timeout': Number(cfg.enricher.textreducer.timeout),
 			'enricher.textreducer.target_words': Number(cfg.enricher.textreducer.target_words),
-			'enricher.contentanalyzer.engine': cfg.enricher.contentanalyzer.engine,
-			'enricher.contentanalyzer.timeout': Number(cfg.enricher.contentanalyzer.timeout),
-			'enricher.contentanalyzer.prompt_template': cfg.enricher.contentanalyzer.prompt_template,
-			...(providerKey ? {
-				[`enricher.contentanalyzer.llm.${providerKey}.base_url`]: cfg.enricher.contentanalyzer.llm[providerKey].base_url,
-				[`enricher.contentanalyzer.llm.${providerKey}.model`]: cfg.enricher.contentanalyzer.llm[providerKey].model,
-				[`enricher.contentanalyzer.llm.${providerKey}.token`]: cfg.enricher.contentanalyzer.llm[providerKey].token,
-			} : {}),
 			'enricher.tagmatcher.timeout': Number(cfg.enricher.tagmatcher.timeout),
 			'enricher.tagmatcher.reduce_target_words': Number(cfg.enricher.tagmatcher.reduce_target_words),
 			'enricher.tagmatcher.chunk_size': Number(cfg.enricher.tagmatcher.chunk_size),
@@ -225,7 +214,7 @@
 				bind:value={configDir}
 				placeholder="/home/user/.config/edub-kushim"
 				required
-				class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus:outline-none"
+				class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:outline-none"
 			/>
 			<p class="mt-1 text-xs text-parchment-500">
 				Where config.yaml, database, and downloaded models will be stored.
@@ -269,7 +258,7 @@
 					min="1"
 					max="65535"
 					bind:value={cfg.server.port}
-					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 				/>
 			</div>
 		</section>
@@ -282,49 +271,49 @@
 						Consumption directory (inbox)
 					</label>
 					<input id="consumption-dir" type="text" bind:value={cfg.storage.consumption_dir}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none" />
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none" />
 				</div>
 				<div>
 					<label for="storage-dir" class="mb-1 block text-sm font-medium text-parchment-200">
 						Storage directory
 					</label>
 					<input id="storage-dir" type="text" bind:value={cfg.storage.storage_dir}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none" />
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none" />
 				</div>
 				<div>
 					<label for="db-host" class="mb-1 block text-sm font-medium text-parchment-200">
 						Database host
 					</label>
 					<input id="db-host" type="text" bind:value={cfg.database.host}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none" />
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none" />
 				</div>
 				<div>
 					<label for="db-port" class="mb-1 block text-sm font-medium text-parchment-200">
 						Database port
 					</label>
 					<input id="db-port" type="number" min="1" max="65535" bind:value={cfg.database.port}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none" />
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none" />
 				</div>
 				<div>
 					<label for="db-user" class="mb-1 block text-sm font-medium text-parchment-200">
 						Database user
 					</label>
 					<input id="db-user" type="text" bind:value={cfg.database.user}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none" />
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none" />
 				</div>
 				<div>
 					<label for="db-name" class="mb-1 block text-sm font-medium text-parchment-200">
 						Database name
 					</label>
 					<input id="db-name" type="text" bind:value={cfg.database.database}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none" />
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none" />
 				</div>
 				<div>
 					<label for="db-sslmode" class="mb-1 block text-sm font-medium text-parchment-200">
 						SSL mode
 					</label>
 					<input id="db-sslmode" type="text" bind:value={cfg.database.sslmode}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none" />
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none" />
 				</div>
 			</div>
 		</section>
@@ -339,7 +328,7 @@
 					<select
 						id="ocr-engine"
 						bind:value={cfg.consumer.ocr.engine}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 					>
 						{#each cfg.available_engines.ocr as opt (opt.value)}
 							<option value={opt.value}>{opt.label}</option>
@@ -400,7 +389,7 @@
 						type="number"
 						min="1"
 						bind:value={cfg.consumer.ocr.timeout}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 					/>
 				</div>
 				<div>
@@ -413,7 +402,7 @@
 								oninput={(e) => updateLanguage(i, e.currentTarget.value)}
 								placeholder="eng"
 								required
-								class="flex-1 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus:outline-none"
+								class="flex-1 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:outline-none"
 							/>
 							{#if cfg.consumer.ocr.languages.length > 1}
 								<button
@@ -447,7 +436,7 @@
 					<select
 						id="text-extractor-engine"
 						bind:value={cfg.consumer.textextractor.engine}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 					>
 						{#each cfg.available_engines.text_extractor as opt (opt.value)}
 							<option value={opt.value}>{opt.label}</option>
@@ -463,7 +452,7 @@
 						type="number"
 						min="1"
 						bind:value={cfg.consumer.textextractor.timeout}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 					/>
 				</div>
 			</div>
@@ -488,7 +477,7 @@
 					<select
 						id="pdf-optimizer-engine"
 						bind:value={cfg.consumer.pdfoptimizer.engine}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 					>
 						{#each cfg.available_engines.pdf_optimizer as opt (opt.value)}
 							<option value={opt.value}>{opt.label}</option>
@@ -504,7 +493,7 @@
 						type="text"
 						bind:value={cfg.consumer.pdfoptimizer.fallback}
 						placeholder="gs"
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus:outline-none"
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:outline-none"
 					/>
 				</div>
 			</div>
@@ -527,7 +516,7 @@
 						type="number"
 						min="1"
 						bind:value={cfg.consumer.pdfoptimizer.timeout}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 					/>
 				</div>
 			</div>
@@ -545,7 +534,7 @@
 						type="number"
 						min="1"
 						bind:value={cfg.consumer.workers}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 					/>
 				</div>
 				<div class="flex items-center gap-2">
@@ -588,107 +577,6 @@
 
 	<form onsubmit={submitSettings} class="space-y-5">
 		<section class="rounded-xl border border-clay-800 bg-clay-950/50 p-4">
-			<h3 class="mb-3 text-sm font-semibold text-parchment-200">Content analyzer (LLM)</h3>
-			<div class="space-y-3">
-				<div class="grid gap-3 sm:grid-cols-2">
-					<div>
-						<label for="content-analyzer-engine" class="mb-1 block text-sm font-medium text-parchment-200">
-							Engine
-						</label>
-						<select
-							id="content-analyzer-engine"
-							bind:value={cfg.enricher.contentanalyzer.engine}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
-						>
-							{#each cfg.available_engines.content_analyzer as opt (opt.value)}
-								<option value={opt.value}>{opt.label}</option>
-							{/each}
-						</select>
-					</div>
-					<div>
-						<label for="content-analyzer-timeout" class="mb-1 block text-sm font-medium text-parchment-200">
-							Timeout (s)
-						</label>
-						<input
-							id="content-analyzer-timeout"
-							type="number"
-							min="1"
-							bind:value={cfg.enricher.contentanalyzer.timeout}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
-						/>
-					</div>
-				</div>
-
-				<div class="mt-4">
-					<label for="content-analyzer-prompt-template" class="mb-1 block text-sm font-medium text-parchment-200">
-						Prompt template (advanced)
-					</label>
-					<p class="mb-2 text-xs text-parchment-500">
-						Leave empty for default. Available placeholders: {`{{.DocTypePrompt}}`}, {`{{.TagsPrompt}}`}, {`{{.PeoplePrompt}}`}, {`{{.Text}}`} (required)
-					</p>
-					<textarea
-						id="content-analyzer-prompt-template"
-						rows="8"
-						bind:value={cfg.enricher.contentanalyzer.prompt_template}
-						spellcheck="false"
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 font-mono focus:border-gold-500 focus:outline-none"
-					></textarea>
-				</div>
-
-				{#if providerKey}
-					<div class="rounded-lg border border-clay-800 bg-clay-900 p-3">
-						<h4 class="mb-2 text-sm font-medium capitalize text-parchment-200">{providerKey} provider</h4>
-						<div class="space-y-3">
-							<div>
-								<label for="llm-{providerKey}-base-url" class="mb-1 block text-sm font-medium text-parchment-200">
-									Base URL
-								</label>
-								<input
-									id="llm-{providerKey}-base-url"
-									type="text"
-									bind:value={cfg.enricher.contentanalyzer.llm[providerKey].base_url}
-									class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
-								/>
-							</div>
-							<div>
-								<label for="llm-{providerKey}-model" class="mb-1 block text-sm font-medium text-parchment-200">
-									Model
-								</label>
-								<input
-									id="llm-{providerKey}-model"
-									type="text"
-									bind:value={cfg.enricher.contentanalyzer.llm[providerKey].model}
-									class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
-								/>
-							</div>
-							<div>
-								<label for="llm-{providerKey}-token" class="mb-1 block text-sm font-medium text-parchment-200">
-									Token
-								</label>
-								<div class="flex gap-2">
-									<input
-										id="llm-{providerKey}-token"
-										type={showToken ? 'text' : 'password'}
-										bind:value={cfg.enricher.contentanalyzer.llm[providerKey].token}
-										placeholder="sk-..."
-										class="flex-1 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus:outline-none"
-									/>
-									<button
-										type="button"
-										onclick={() => (showToken = !showToken)}
-										class="rounded-lg border border-clay-800 px-3 text-sm text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
-									>
-										{showToken ? 'Hide' : 'Show'}
-									</button>
-								</div>
-							</div>
-						</div>
-					</div>
-				{/if}
-			</div>
-		</section>
-
-		<section class="rounded-xl border border-clay-800 bg-clay-950/50 p-4">
 			<h3 class="mb-3 text-sm font-semibold text-parchment-200">Tag matcher</h3>
 			<div class="grid gap-3 sm:grid-cols-2">
 				<div>
@@ -700,7 +588,7 @@
 						type="number"
 						min="1"
 						bind:value={cfg.enricher.tagmatcher.timeout}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 					/>
 				</div>
 				<div>
@@ -712,7 +600,7 @@
 						type="number"
 						min="0"
 						bind:value={cfg.enricher.tagmatcher.reduce_target_words}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 					/>
 				</div>
 				<div>
@@ -724,7 +612,7 @@
 						type="number"
 						min="0"
 						bind:value={cfg.enricher.tagmatcher.chunk_size}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 					/>
 				</div>
 				<div>
@@ -735,7 +623,7 @@
 						id="tag-matcher-hugot-model"
 						type="text"
 						bind:value={cfg.enricher.tagmatcher.hugot.model}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 					/>
 				</div>
 				<div>
@@ -745,7 +633,7 @@
 					<select
 						id="tag-matcher-hugot-backend"
 						bind:value={cfg.enricher.tagmatcher.hugot.backend}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 					>
 						<option value="ort">ort</option>
 						<option value="GO">GO</option>
@@ -764,7 +652,7 @@
 					<select
 						id="text-reducer-engine"
 						bind:value={cfg.enricher.textreducer.engine}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 					>
 						{#each cfg.available_engines.text_reducer as opt (opt.value)}
 							<option value={opt.value}>{opt.label}</option>
@@ -780,7 +668,7 @@
 						type="number"
 						min="1"
 						bind:value={cfg.enricher.textreducer.timeout}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 					/>
 				</div>
 				<div class="sm:col-span-2">
@@ -792,7 +680,7 @@
 						type="number"
 						min="1"
 						bind:value={cfg.enricher.textreducer.target_words}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 					/>
 				</div>
 			</div>
@@ -809,7 +697,7 @@
 					type="number"
 					min="1"
 					bind:value={cfg.enricher.workers}
-					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none"
+					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 				/>
 			</div>
 		</section>
@@ -835,11 +723,11 @@
 {#if step === 4}
 	<div class="space-y-4 text-center">
 		<p class="text-xs font-medium uppercase tracking-wide text-parchment-500">Step 4 of 6</p>
-		<h2 class="text-lg font-semibold text-parchment-200">Setting things up...</h2>
+		<h2 class="text-lg font-semibold text-parchment-200">Setting things up…</h2>
 		<p class="text-sm text-parchment-500">
 			Downloading required models and language files. This may take a few minutes.
 		</p>
-		<div class="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-clay-800 border-t-gold-500"></div>
+		<div class="mx-auto h-8 w-8 animate-spin motion-reduce:animate-none rounded-full border-2 border-clay-800 border-t-gold-500"></div>
 		<p class="text-sm text-parchment-400">{pendingTasks} task(s) remaining</p>
 
 		{#if failedTasks.length > 0}
@@ -889,7 +777,7 @@
 				bind:value={adminUsername}
 				autocomplete="username"
 				required
-				class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus:outline-none"
+				class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 			/>
 		</div>
 		<div>
@@ -904,7 +792,7 @@
 				autocomplete="new-password"
 				minlength="12"
 				required
-				class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus:outline-none"
+				class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 			/>
 			<p class="mt-1 text-xs text-parchment-500">
 				At least 12 characters with uppercase, lowercase, digit, and special character.
@@ -921,7 +809,7 @@
 				bind:value={adminConfirm}
 				autocomplete="new-password"
 				required
-				class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus:outline-none"
+				class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 			/>
 		</div>
 
@@ -946,8 +834,8 @@
 				class="flex-1 rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600 disabled:cursor-not-allowed disabled:opacity-50"
 			>
 				{#if adminCreating}
-					<span class="inline-block h-4 w-4 animate-spin rounded-full border-2 border-clay-950 border-t-transparent align-text-bottom"></span>
-					Creating...
+					<span class="inline-block h-4 w-4 animate-spin motion-reduce:animate-none rounded-full border-2 border-clay-950 border-t-transparent align-text-bottom"></span>
+					Creating…
 				{:else}
 					Create
 				{/if}

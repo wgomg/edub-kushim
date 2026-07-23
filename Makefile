@@ -195,14 +195,10 @@ fix:
 
 test-short:
 	CGO_ENABLED=0 go test -tags "XLA,ORT" -count=1 -timeout 60s \
-		./internal/database/ \
-		./internal/search/ \
-		./internal/task/ \
-		./internal/service/ \
-		./internal/api/handlers/ \
-		./internal/consumption/ \
+		./internal/llm/ \
+		./internal/config/ \
+		./internal/api/types/ \
 		./internal/tools/ \
-		./internal/config/
 
 # Default test target (same as test-short for now).
 test: test-short
@@ -210,11 +206,18 @@ test: test-short
 # Verbose output, useful during development.
 test-verbose:
 	CGO_ENABLED=0 go test -tags "XLA,ORT" -count=1 -v -timeout 60s \
+		./internal/llm/ \
+		./internal/config/ \
+		./internal/api/types/ \
+		./internal/tools/ \
+
+# Database-dependent tests (requires PostgreSQL 16+).
+.PHONY: test-db
+test-db:
+	CGO_ENABLED=0 go test -tags "XLA,ORT" -count=1 -timeout 120s \
 		./internal/database/ \
 		./internal/search/ \
 		./internal/task/ \
 		./internal/service/ \
 		./internal/api/handlers/ \
-		./internal/consumption/ \
-		./internal/tools/ \
-		./internal/config/
+		./internal/consumption/

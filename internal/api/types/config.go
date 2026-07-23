@@ -122,23 +122,20 @@ type TextReducerResponse struct {
 }
 
 type ContentAnalyzerResponse struct {
-	Engine         string               `json:"engine"`
-	Timeout        int                  `json:"timeout"`
-	Llm            LlmProvidersResponse `json:"llm"`
-	PromptTemplate string               `json:"prompt_template,omitempty"`
+	Enabled        bool              `json:"enabled"`
+	Timeout        int               `json:"timeout"`
+	Llm            LlmConfigResponse `json:"llm"`
+	PromptTemplate string            `json:"prompt_template,omitempty"`
 }
 
-type LlmProvidersResponse struct {
-	OpenAI    LlmProviderResponse `json:"openai"`
-	Anthropic LlmProviderResponse `json:"anthropic"`
-	DeepSeek  LlmProviderResponse `json:"deepseek"`
-	Ollama    LlmProviderResponse `json:"ollama"`
-}
-
-type LlmProviderResponse struct {
-	BaseURL string `json:"base_url"`
-	Model   string `json:"model"`
-	Token   string `json:"token"`
+type LlmConfigResponse struct {
+	Adapter         string  `json:"adapter"`
+	Provider        string  `json:"provider"`
+	Model           string  `json:"model"`
+	Token           string  `json:"token,omitempty"`
+	Reasoning       bool    `json:"reasoning"`
+	ReasoningEffort string  `json:"reasoning_effort,omitempty"`
+	Temperature     float64 `json:"temperature"`
 }
 
 type TagMatcherResponse struct {
@@ -159,6 +156,23 @@ type BackupConfigResponse struct {
 	Time     string  `json:"time"`
 	Path     string  `json:"path"`
 	Keep     int     `json:"keep"`
+}
+
+type LlmModelsResponse struct {
+	Adapters  map[string][]string        `json:"adapters"`
+	Providers map[string][]LlmModelEntry `json:"providers"`
+}
+
+type LlmModelEntry struct {
+	ID           string `json:"id"`
+	Capabilities struct {
+		SupportsReasoning    bool     `json:"supports_reasoning"`
+		ReasoningEfforts     []string `json:"reasoning_efforts,omitempty"`
+		MaxInputTokens       int      `json:"max_input_tokens"`
+		MaxOutputTokens      int      `json:"max_output_tokens"`
+		SupportsTemperature     bool     `json:"supports_temperature"`
+		SupportsResponseSchema bool   `json:"supports_response_schema"`
+	} `json:"capabilities"`
 }
 
 func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
@@ -188,21 +202,16 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Enricher.TextReducer.Engine = cfg.Enricher.TextReducer.Engine
 	resp.Enricher.TextReducer.Timeout = cfg.Enricher.TextReducer.Timeout
 	resp.Enricher.TextReducer.TargetWords = cfg.Enricher.TextReducer.TargetWords
-	resp.Enricher.ContentAnalyzer.Engine = cfg.Enricher.ContentAnalyzer.Engine
+	resp.Enricher.ContentAnalyzer.Enabled = cfg.Enricher.ContentAnalyzer.Enabled
 	resp.Enricher.ContentAnalyzer.Timeout = cfg.Enricher.ContentAnalyzer.Timeout
 	resp.Enricher.ContentAnalyzer.PromptTemplate = cfg.Enricher.ContentAnalyzer.PromptTemplate
-	resp.Enricher.ContentAnalyzer.Llm.OpenAI.BaseURL = cfg.Enricher.ContentAnalyzer.Llm.OpenAI.BaseURL
-	resp.Enricher.ContentAnalyzer.Llm.OpenAI.Model = cfg.Enricher.ContentAnalyzer.Llm.OpenAI.Model
-	resp.Enricher.ContentAnalyzer.Llm.OpenAI.Token = cfg.Enricher.ContentAnalyzer.Llm.OpenAI.Token
-	resp.Enricher.ContentAnalyzer.Llm.Anthropic.BaseURL = cfg.Enricher.ContentAnalyzer.Llm.Anthropic.BaseURL
-	resp.Enricher.ContentAnalyzer.Llm.Anthropic.Model = cfg.Enricher.ContentAnalyzer.Llm.Anthropic.Model
-	resp.Enricher.ContentAnalyzer.Llm.Anthropic.Token = cfg.Enricher.ContentAnalyzer.Llm.Anthropic.Token
-	resp.Enricher.ContentAnalyzer.Llm.DeepSeek.BaseURL = cfg.Enricher.ContentAnalyzer.Llm.DeepSeek.BaseURL
-	resp.Enricher.ContentAnalyzer.Llm.DeepSeek.Model = cfg.Enricher.ContentAnalyzer.Llm.DeepSeek.Model
-	resp.Enricher.ContentAnalyzer.Llm.DeepSeek.Token = cfg.Enricher.ContentAnalyzer.Llm.DeepSeek.Token
-	resp.Enricher.ContentAnalyzer.Llm.Ollama.BaseURL = cfg.Enricher.ContentAnalyzer.Llm.Ollama.BaseURL
-	resp.Enricher.ContentAnalyzer.Llm.Ollama.Model = cfg.Enricher.ContentAnalyzer.Llm.Ollama.Model
-	resp.Enricher.ContentAnalyzer.Llm.Ollama.Token = cfg.Enricher.ContentAnalyzer.Llm.Ollama.Token
+	resp.Enricher.ContentAnalyzer.Llm.Adapter = cfg.Enricher.ContentAnalyzer.Llm.Adapter
+	resp.Enricher.ContentAnalyzer.Llm.Provider = cfg.Enricher.ContentAnalyzer.Llm.Provider
+	resp.Enricher.ContentAnalyzer.Llm.Model = cfg.Enricher.ContentAnalyzer.Llm.Model
+	resp.Enricher.ContentAnalyzer.Llm.Token = cfg.Enricher.ContentAnalyzer.Llm.Token
+	resp.Enricher.ContentAnalyzer.Llm.Reasoning = cfg.Enricher.ContentAnalyzer.Llm.Reasoning
+	resp.Enricher.ContentAnalyzer.Llm.ReasoningEffort = cfg.Enricher.ContentAnalyzer.Llm.ReasoningEffort
+	resp.Enricher.ContentAnalyzer.Llm.Temperature = cfg.Enricher.ContentAnalyzer.Llm.Temperature
 	resp.Enricher.TagMatcher.Timeout = cfg.Enricher.TagMatcher.Timeout
 	resp.Enricher.TagMatcher.ReduceTargetWords = cfg.Enricher.TagMatcher.ReduceTargetWords
 	resp.Enricher.TagMatcher.ChunkSize = cfg.Enricher.TagMatcher.ChunkSize

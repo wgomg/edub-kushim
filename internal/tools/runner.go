@@ -8,11 +8,13 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"path/filepath"
 	"time"
 	"unicode/utf8"
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/llm"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/contentanalyzer"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/ocr"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/pdfoptimizer"
@@ -95,6 +97,12 @@ func runWithTimeout[T any](ctx context.Context, fn func() (T, error)) (T, error)
 
 func NewRunner(logger *utils.Logger, cfg *config.Config, tools []string) *Runner {
 	r := &Runner{logger: logger, config: cfg}
+
+	reg, err := llm.NewRegistry(filepath.Join(cfg.App.ConfigDir, "model_catalog.json"))
+	if err != nil {
+		logger.Error(nil, "load model catalog: %v", err)
+	}
+
 	for _, name := range tools {
 		switch name {
 		case "textextractor":
@@ -122,11 +130,11 @@ func NewRunner(logger *utils.Logger, cfg *config.Config, tools []string) *Runner
 			}
 			r.textReducer, _ = textreducer.NewTextReducer(logger, toolCfg)
 		case "contentanalyzer":
-			toolCfg := config.ToolConfig{
-				Command: cfg.Enricher.ContentAnalyzer.Engine,
-				Timeout: time.Duration(cfg.Enricher.ContentAnalyzer.Timeout) * time.Second,
+			ca, caErr := contentanalyzer.NewContentAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.Enricher.ContentAnalyzer.Timeout) * time.Second}, &cfg.Enricher.ContentAnalyzer.Llm, cfg.Enricher.ContentAnalyzer.PromptTemplate, reg)
+			if caErr != nil {
+				logger.Error(nil, "create content analyzer: %v", caErr)
 			}
-			r.contentAnalyzer, _ = contentanalyzer.NewContentAnalyzer(logger, toolCfg, &cfg.Enricher.ContentAnalyzer.Llm, cfg.Enricher.ContentAnalyzer.PromptTemplate)
+			r.contentAnalyzer = ca
 		}
 	}
 	return r

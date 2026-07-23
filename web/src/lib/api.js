@@ -347,7 +347,8 @@ export const api = {
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(body)
 			}),
-		status: () => request('/wizard/config/status')
+		status: () => request('/wizard/config/status'),
+		llmModels: () => request('/api/v1/llm/models').then((data) => data ?? { adapters: {}, providers: {} })
 	},
 
 	auth: {

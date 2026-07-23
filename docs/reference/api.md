@@ -278,9 +278,10 @@ See `AuthMiddleware` under `server.go` → Functions.
 - `OCRResponse` — `Engine string`, `Languages []string`, `DataDir string`, `Timeout int`
 - `EnricherConfigResponse` — `Workers int`, `TextReducer TextReducerResponse`, `ContentAnalyzer ContentAnalyzerResponse`, `TagMatcher TagMatcherResponse`
 - `TextReducerResponse` — `Engine string`, `Timeout int`, `TargetWords int`
-- `ContentAnalyzerResponse` — `Engine string`, `Timeout int`, `Llm LlmProvidersResponse`, `PromptTemplate string`
-- `LlmProvidersResponse` — `OpenAI LlmProviderResponse`, `Anthropic LlmProviderResponse`, `DeepSeek LlmProviderResponse`, `Ollama LlmProviderResponse`
-- `LlmProviderResponse` — `BaseURL string`, `Model string`, `Token string`
+- `ContentAnalyzerResponse` — `Enabled bool`, `Timeout int`, `Llm LlmConfigResponse`, `PromptTemplate string`, `DocTypeRefinement *DocTypeRefinementResponse`
+- `LlmConfigResponse` — `Adapter string`, `Provider string`, `Model string`, `Token string`, `Endpoint string`, `Reasoning bool`, `ReasoningEffort string`, `Temperature float64`, `Custom *CustomLlmConfigResponse`
+- `CustomLlmConfigResponse` — `URL string`, `RequestBody string`, `ResponsePath string`
+- `DocTypeRefinementResponse` — `Enabled bool`, `HeadWords int`, `TailWords int`
 - `TagMatcherResponse` — `Engine string`, `Timeout int`, `ReduceTargetWords int`, `ChunkSize int`, `Hugot HugotResponse`
 - `HugotResponse` — `Model string`, `Backend string`
 - `FailedTaskSummary` — `TaskID string`, `Op string`, `Lang string` (omitempty), `Error string`
@@ -288,7 +289,7 @@ See `AuthMiddleware` under `server.go` → Functions.
 
 ### Functions
 
-- `ConfigResponseFrom(cfg *config.Config) ConfigResponse` — Maps internal config to the API response, excluding internal/computed fields (model paths, similarity thresholds, etc.). Includes LLM provider tokens, server host/port, and produces the `initialized` boolean in the `app` section.
+- `ConfigResponseFrom(cfg *config.Config) ConfigResponse` — Maps internal config to the API response, excluding internal/computed fields (model paths, similarity thresholds, etc.). Includes LLM adapter/provider/model config (flat structure), server host/port, and produces the `initialized` boolean in the `app` section.
 
 ---
 
@@ -429,6 +430,9 @@ mux.HandleFunc("GET /wizard/config", configHandler.GetConfig)
 mux.HandleFunc("PUT /wizard/config", configHandler.PutConfig)
 mux.HandleFunc("GET /wizard/config/status", configHandler.ConfigStatus)
 mux.HandleFunc("POST /wizard/config/retry", configHandler.RetryFailedConfig)
+
+// LLM model discovery (viewer + public):
+mux.HandleFunc("GET /api/v1/llm/models", llmHandler.ListModels)  // viewer role
 
 // viewer (read-only):
 viewer := []auth.Role{auth.RoleViewer, auth.RoleEditor, auth.RoleAdmin}

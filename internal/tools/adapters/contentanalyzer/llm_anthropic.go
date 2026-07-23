@@ -11,14 +11,18 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/llm"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type LlmAnthropic struct {
 	logger         *utils.Logger
 	config         config.ToolConfig
-	llmCfg         config.LlmToolConfig
+	llmCfg         *config.LlmConfig
+	caps           *llm.ModelCapability
 	promptTemplate string
+	client         *http.Client
+	reg            *llm.Registry
 }
 
 type anthropicMessage struct {
@@ -27,7 +31,12 @@ type anthropicMessage struct {
 }
 
 type anthropicThinkingConfig struct {
-	Type string `json:"type"`
+	Type         string `json:"type"`
+	BudgetTokens int    `json:"budget_tokens,omitempty"`
+}
+
+type anthropicOutputConfig struct {
+	Effort string `json:"effort,omitempty"`
 }
 
 type cacheControlEphemeral struct {
@@ -40,10 +49,32 @@ type anthropicRequest struct {
 	Messages     []anthropicMessage       `json:"messages"`
 	System       string                   `json:"system,omitempty"`
 	Thinking     *anthropicThinkingConfig `json:"thinking,omitempty"`
+	OutputConfig *anthropicOutputConfig   `json:"output_config,omitempty"`
 	StopSeq      any                      `json:"stop_sequences,omitempty"`
 	Stream       bool                     `json:"stream,omitempty"`
+	Temperature  *float64                 `json:"temperature,omitempty"`
 	TopK         int                      `json:"top_k,omitempty"`
 	CacheControl *cacheControlEphemeral   `json:"cache_control,omitempty"`
+}
+
+var anthropicManualThinkingModels = map[string]bool{
+	"claude-opus-4-5": true,
+}
+
+const (
+	minThinkingBudgetTokens = 1024
+	maxThinkingBudgetTokens = 32000
+)
+
+func thinkingBudget(maxTokens int) int {
+	budget := maxTokens / 2
+	if budget > maxThinkingBudgetTokens {
+		budget = maxThinkingBudgetTokens
+	}
+	if budget < minThinkingBudgetTokens {
+		return 0
+	}
+	return budget
 }
 
 type anthropicContentBlock struct {
@@ -67,8 +98,16 @@ type anthropicResponse struct {
 	Usage        anthropicUsage          `json:"usage"`
 }
 
-func NewLlmAnthropic(logger *utils.Logger, cfg config.ToolConfig, llmCfg config.LlmToolConfig, promptTemplate string) (*LlmAnthropic, error) {
-	return &LlmAnthropic{logger: logger, config: cfg, llmCfg: llmCfg, promptTemplate: promptTemplate}, nil
+func NewLlmAnthropic(logger *utils.Logger, cfg config.ToolConfig, llmCfg *config.LlmConfig, caps *llm.ModelCapability, promptTemplate string, reg *llm.Registry) (*LlmAnthropic, error) {
+	return &LlmAnthropic{
+		logger:         logger,
+		config:         cfg,
+		llmCfg:         llmCfg,
+		caps:           caps,
+		promptTemplate: promptTemplate,
+		client:         &http.Client{},
+		reg:            reg,
+	}, nil
 }
 
 type anthropicPassContext struct {
@@ -76,53 +115,102 @@ type anthropicPassContext struct {
 	UserPrompt string `json:"user_prompt"`
 }
 
-func (l *LlmAnthropic) Analyze(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*AnalysisResult, error) {
-	maxTokens := 0
+func (l *LlmAnthropic) baseURL() string {
+	return l.reg.ProviderDefaultURL(l.llmCfg.Provider)
+}
 
+
+
+func (l *LlmAnthropic) defaultMaxTokens() int {
+	if l.caps != nil && l.caps.MaxOutputTokens > 0 {
+		return l.caps.MaxOutputTokens
+	}
+	return 4096
+}
+
+func (l *LlmAnthropic) applyReasoning(reqBody *anthropicRequest, maxTokens int) {
+	reasoningOn := l.llmCfg.Reasoning && l.caps != nil && l.caps.SupportsReasoning
+	if !reasoningOn {
+		reqBody.Thinking = &anthropicThinkingConfig{Type: "disabled"}
+		return
+	}
+
+	if len(l.caps.ReasoningEffortLevels) == 0 {
+		if budget := thinkingBudget(maxTokens); budget > 0 {
+			reqBody.Thinking = &anthropicThinkingConfig{Type: "enabled", BudgetTokens: budget}
+		}
+		return
+	}
+
+	effort := l.llmCfg.ReasoningEffort
+	if effort == "" {
+		effort = "high"
+	}
+	reqBody.OutputConfig = &anthropicOutputConfig{Effort: effort}
+
+	if anthropicManualThinkingModels[l.llmCfg.Model] {
+		if budget := thinkingBudget(maxTokens); budget > 0 {
+			reqBody.Thinking = &anthropicThinkingConfig{Type: "enabled", BudgetTokens: budget}
+		}
+		return
+	}
+
+	reqBody.Thinking = &anthropicThinkingConfig{Type: "adaptive"}
+}
+
+func (l *LlmAnthropic) applyTemperature(reqBody *anthropicRequest, temp float64) {
+	if l.caps != nil && l.caps.SupportsTemperature {
+		reqBody.Temperature = &temp
+	}
+}
+
+func (l *LlmAnthropic) Analyze(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*AnalysisResult, error) {
 	prompt := BuildPrompt(text, docTypes, peopleTypes, tagSuggestions, l.promptTemplate)
 
 	reqBody := anthropicRequest{
 		Model:     l.llmCfg.Model,
-		MaxTokens: maxTokens,
+		MaxTokens: l.defaultMaxTokens(),
 		Messages: []anthropicMessage{
 			{Role: "user", Content: prompt},
 		},
 		System:       systemMessage,
-		Thinking:     &anthropicThinkingConfig{Type: "disabled"},
 		Stream:       false,
 		CacheControl: &cacheControlEphemeral{Type: "ephemeral"},
 	}
+	l.applyReasoning(&reqBody, reqBody.MaxTokens)
+	l.applyTemperature(&reqBody, l.llmCfg.Temperature)
 
 	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request body: %w", err)
+		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", l.llmCfg.BaseURL+"/messages", bytes.NewBuffer(jsonBody))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", l.baseURL()+"/messages", bytes.NewBuffer(jsonBody))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("create request: %w", err)
 	}
 
-	req.Header.Set("x-api-key", l.llmCfg.Token)
-	req.Header.Set("anthropic-version", "2023-06-01")
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
+	if l.llmCfg.Token != "" {
+		httpReq.Header.Set("x-api-key", l.llmCfg.Token)
+	}
+	httpReq.Header.Set("anthropic-version", "2023-06-01")
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "application/json")
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := l.client.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
+		return nil, fmt.Errorf("send request: %w", err)
 	}
 	defer resp.Body.Close()
 
+	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("failed content analyzer: status %s: %s", resp.Status, string(body))
+		return nil, fmt.Errorf("API error: status %s: %s", resp.Status, string(body))
 	}
 
 	var anthResp anthropicResponse
-	if err := json.NewDecoder(resp.Body).Decode(&anthResp); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
+	if err := json.Unmarshal(body, &anthResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
 	}
 
 	if len(anthResp.Content) == 0 {
@@ -198,41 +286,43 @@ func (l *LlmAnthropic) AnalyzeDocType(ctx context.Context, prevResult *AnalysisR
 			{Role: "user", Content: docTypePrompt},
 		},
 		System:       passCtx.System,
-		Thinking:     &anthropicThinkingConfig{Type: "disabled"},
 		Stream:       false,
 		CacheControl: &cacheControlEphemeral{Type: "ephemeral"},
 	}
+	l.applyReasoning(&reqBody, reqBody.MaxTokens)
+	l.applyTemperature(&reqBody, 0)
 
 	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal request body: %w", err)
+		return "", fmt.Errorf("marshal request: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", l.llmCfg.BaseURL+"/messages", bytes.NewBuffer(jsonBody))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", l.baseURL()+"/messages", bytes.NewBuffer(jsonBody))
 	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
+		return "", fmt.Errorf("create request: %w", err)
 	}
 
-	req.Header.Set("x-api-key", l.llmCfg.Token)
-	req.Header.Set("anthropic-version", "2023-06-01")
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
+	if l.llmCfg.Token != "" {
+		httpReq.Header.Set("x-api-key", l.llmCfg.Token)
+	}
+	httpReq.Header.Set("anthropic-version", "2023-06-01")
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "application/json")
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := l.client.Do(httpReq)
 	if err != nil {
-		return "", fmt.Errorf("failed to send request: %w", err)
+		return "", fmt.Errorf("send request: %w", err)
 	}
 	defer resp.Body.Close()
 
+	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
 		return "", fmt.Errorf("doc type refinement: status %s: %s", resp.Status, string(body))
 	}
 
 	var anthResp anthropicResponse
-	if err := json.NewDecoder(resp.Body).Decode(&anthResp); err != nil {
-		return "", fmt.Errorf("failed to decode response: %w", err)
+	if err := json.Unmarshal(body, &anthResp); err != nil {
+		return "", fmt.Errorf("decode response: %w", err)
 	}
 
 	if len(anthResp.Content) == 0 {
@@ -269,5 +359,5 @@ func (l *LlmAnthropic) AnalyzeDocType(ctx context.Context, prevResult *AnalysisR
 }
 
 func (l *LlmAnthropic) Name() string {
-	return config.ContentAnalyzer.Anthropic
+	return "anthropic"
 }

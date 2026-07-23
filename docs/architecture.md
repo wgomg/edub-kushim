@@ -59,6 +59,7 @@ The CGo binary that performs actual document processing:
 - `kushim queue` — starts the batch queue daemon for background consumption and inbox polling (replaces the former `PollingScheduler`)
 - `kushim hugot` — starts the matcher RPC server
 - `kushim setup` — setup wizard
+- `kushim model-catalog refresh` — download latest model catalog JSON from GitHub
 
 ### Communication Flow
 
@@ -189,11 +190,14 @@ succeeds — `activateChildEnrich` re-activates the discarded enrich task to
    the request over a Unix socket to the external matcher process. Falls back to all tags
    on failure.
  3. **LLM Classification (first pass)** — the reduced content, along with available document types
-    and tag suggestions, is sent to the configured LLM provider. Returns structured
-    JSON: title, type, tags, people (with types like author, sender), language.
-    For non-Latin names (Korean, Arabic, Cyrillic, etc.), the LLM is prompted to
-    provide a `name_romanized` field alongside the original name.
-    If the response is entirely empty, one automatic retry is performed.
+     and tag suggestions, is sent to the configured LLM adapter. The adapter is selected by
+     `llm.adapter` (`openai-compatible`, `anthropic`, or `custom`) and the request body
+     is built dynamically from the model's capability flags (reasoning, structured output,
+     temperature, etc.) looked up from the model catalog registry. Returns structured JSON:
+     title, type, tags, people (with types like author, sender), language.
+     For non-Latin names (Korean, Arabic, Cyrillic, etc.), the LLM is prompted to
+     provide a `name_romanized` field alongside the original name.
+     If the response is entirely empty, one automatic retry is performed.
 
  3a. **Document Type Refinement (second pass, optional)** — if TextRank actually reduced the
     document content (i.e. `document.WordCount > target_word_count`), a second LLM call
@@ -254,8 +258,7 @@ five-step guided flow:
    **Inline warnings** show when a selected external tool (`ocrmypdf`, `gs`, `pdftotext`) is not found
    in `PATH`, along with companion status (tesseract, unpaper, pngquant for ocrmypdf) and tesseract
    language-pack guidance.
-3. **Enricher settings** — content analyzer engine/timeout + LLM provider config (Base URL, model, token
-   with show/hide); tag matcher engine/timeout, reduce-target-words, chunk size, Hugot model/backend;
+3. **Enricher settings** — tag matcher engine/timeout, reduce-target-words, chunk size, Hugot model/backend;
    text reducer engine/timeout/target-words; enricher workers
 4. **Progress** — background tasks download tessdata language files and the Hugot ONNX model;
    the UI polls `GET /wizard/config/status` every 3 seconds
@@ -284,7 +287,7 @@ The main web UI (`web/`) includes a **Settings** page at `/settings` backed by t
 fields: server host/port, max upload/download sizes, max download files; OCR engine, timeout, data directory, languages;
 consumer workers, max files per batch; polling scheduler on/off toggle and interval; text extractor engine/timeout;
 PDF optimizer engine/fallback/timeout;
-enricher workers; content analyzer engine/timeout + LLM provider Base URL, model, token;
+enricher workers; content analyzer enabled toggle + adapter/provider/model cascading selectors (loaded from model catalog) + token + temperature + reasoning;
 tag matcher engine/timeout, reduce-target-words, chunk size, Hugot model/backend;
 text reducer engine/timeout/target-words;
 backup enabled/disabled, interval, preferred time, keep count, output path.
@@ -327,17 +330,20 @@ download work to the worker pool, with retry support via the task system.
 
 ### Engine Identifiers
 
-Engine names (e.g. `"mupdf"`, `"gosseract"`, `"llmopenai"`) are now defined as
+Engine names (e.g. `"mupdf"`, `"gosseract"`) are now defined as
 exported package-level vars in `internal/config/config.go`:
 
 | Group             | Constants                                                                                                        |
 | ----------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `ContentAnalyzer` | `OpenAI` (`"llmopenai"`), `Anthropic` (`"llmanthropic"`), `DeepSeek` (`"llmdeepseek"`), `Ollama` (`"llmollama"`) |
 | `OCR`             | `Gosseract` (`"gosseract"`), `OcrMyPdf` (`"ocrmypdf"`)                                                           |
 | `PdfOptimizer`    | `MuPDF` (`"mupdf"`), `GS` (`"gs"`)                                                                               |
 | `TextExtractor`   | `MuPDF` (`"mupdf"`), `GoPdf` (`"gopdf"`), `PdfToText` (`"pdftotext"`)                                            |
 | `TextReducer`     | `TextRank` (`"textrank"`)                                                                                        |
 | `TagMatcher`      | `Hugot` (`"hugot"`)                                                                                              |
+
+The content analyzer no longer uses engine constants — it selects an adapter via `llm.adapter`
+(`openai-compatible`, `anthropic`, `custom`) resolved dynamically from the
+capability registry.
 
 A corresponding `AvailableEngines` map provides structured engine listings for the frontend
 UI (engine selector dropdowns). All adapter factories (`NewOCR`, `NewTextExtractor`, etc.)
