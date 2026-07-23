@@ -474,6 +474,45 @@ If the matcher is not running, tag CRUD operations return `503 Service Unavailab
 
 
 
+### `kushim config`
+
+View and edit configuration values from the terminal. Git-style positional interface: no arguments dumps the full config, one argument reads a key, two arguments write a key-value pair.
+
+```
+kushim config
+kushim config server.port
+kushim config server.port 8080
+kushim config --unset backup.path
+kushim config --validate
+kushim config --path
+```
+
+| Mode | Example | Description |
+| ---- | ------- | ----------- |
+| `dump all` | `kushim config` | Print full config as YAML to stdout |
+| `get` | `kushim config server.port` | Print a single key's value. Scalars print raw, arrays/maps as YAML |
+| `set` | `kushim config server.port 8080` | Set a key to a value. Type auto-detected: `true`/`false` → bool, integers → int, floats → float64, comma-separated → `[]string`, otherwise string |
+| `--unset` | `kushim config --unset backup.path` | Remove a key — reverts to its default value on next `config.Load` |
+| `--validate` | `kushim config --validate` | Load and validate the config file, reporting any errors |
+| `--path` | `kushim config --path` | Print the absolute path to the config file |
+| `--help` | `kushim config --help` | Print usage help |
+
+Keys use dot notation (snake_case), matching the YAML key names:
+
+```
+kushim config server.port               → 3000
+kushim config server.port 8080          → sets server.port to 8080
+kushim config consumer.ocr.languages    → - eng\n- spa
+kushim config consumer.ocr.languages eng,spa,deu  → sets to [eng spa deu]
+kushim config --unset backup.path       → removes backup.path (reverts to default)
+```
+
+Atomic write safety: `set` and `--unset` write to a temporary directory, run `config.Load` for full validation (including business rules such as non-empty OCR languages and valid backup intervals), then atomically rename into place. An invalid value leaves the config file unchanged.
+
+Exit codes: `0` on success, `1` on any error (missing key, invalid value, validation failure).
+
+---
+
 ### `kushim backup`
 
 Create a backup of the database, configuration, and storage files.

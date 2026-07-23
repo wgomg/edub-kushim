@@ -181,6 +181,7 @@
 | `kushim version`              | Print version                                          |
 | `kushim hugot`                | Start matcher RPC server over Unix socket              |
 | `kushim backup`               | Create a backup of database, config, and storage files |
+| `kushim config`               | View and edit config values in the terminal            |
 | `kushim restore`              | Restore from a backup archive                          |
 | `edub`                        | Start API server                                       |
 | `edub version`                | Print server version                                   |
@@ -235,6 +236,7 @@
 - ✓ `internal/testutil` package — assertion helpers, PDF fixtures, mock embedder
 - ✓ `Makefile` test targets (`make test` — 12 packages, `make test-db` — 6 packages, `make test-verbose`)
 - ✗ No tests for CLI commands (kushim consume, search, task, setup)
+- ✓ CLI config tests (config_test.go — parseValue, deleteNestedKey, configHandler integration) — requires CGo toolchain
 
 ### Build & Deployment
 

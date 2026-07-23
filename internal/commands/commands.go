@@ -70,6 +70,11 @@ var commandSets = map[string]map[string]Command{
 			Description: "Create a backup of database, config, and storage files",
 			Handler:     backupHandler,
 		},
+		"config": {
+			Name:        "config",
+			Description: "View and edit config values",
+			Handler:     configHandler,
+		},
 		"restore": {
 			Name:        "restore",
 			Description: "Restore from a backup archive",

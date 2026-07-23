@@ -4,7 +4,7 @@
 
 ### Globals
 
-`commandSets` map with `"cli"` key (CLI commands) and `"server"` key (edub commands: `version`). CLI set contains: `version`, `consume`, `search`, `hugot`, `task`, `user`, `setup`, `enrich`, `queue`, `storage`, `backup`, `restore`.
+`commandSets` map with `"cli"` key (CLI commands) and `"server"` key (edub commands: `version`). CLI set contains: `version`, `consume`, `search`, `hugot`, `task`, `user`, `setup`, `enrich`, `queue`, `storage`, `backup`, `config`, `restore`.
 
 > **Note**: The `edub` binary no longer uses `CommandRunner` from the commands package. It has its own standalone runner in `cmd/edub/runner.go` that only handles the `version` command (server mode is the default when no command matches).
 
@@ -165,6 +165,23 @@ kushim storage orphans move-to-inbox-all
 - `maybeScheduleBackup(ctx, c) error` — Reads backup state from `backup-state.json`, checks if the next scheduled backup is due via `backup.ShouldSchedule`. If so, enqueues a `"backup"` task via the dispatcher and writes the next scheduled time to state.
 
 The daemon also starts a **backup pool** (1 worker, 60s poll interval) when `backup.enabled` is `true`. The pool executes scheduled backup tasks via `BackupTaskHandler`. The ticker and polling loop check the DB-backed `backup_lock` table via `IsBackupLocked` — backup scheduling and polling are skipped while a backup is in progress, while stale reclamation continues to run unconditionally.
+
+---
+
+## `config.go`
+
+### Functions
+
+- `configHandler(c, args) error` — Entry point for `kushim config`. Parses `--unset`, `--validate`, `--path`, `--help` flags, then dispatches on positional arg count: 0 → `dumpAllConfig`, 1 → `getConfigValue`, 2+ → `setConfigValue`.
+- `validateConfig(configDir) error` — Calls `config.Load` and prints `config.yaml is valid` on success.
+- `dumpAllConfig(configDir) error` — Reads `config.yaml` from disk and prints it to stdout as raw YAML.
+- `getConfigValue(configDir, key) error` — Reads a single dot-notation key via Viper and prints its value. Scalars print raw, arrays/maps print as YAML.
+- `setConfigValue(configDir, key, rawValue) error` — Parses the value via `parseValue`, calls `atomicSetConfig`, prints `key = value` confirmation.
+- `unsetConfigValue(configDir, key) error` — Reads YAML into a map, deletes the nested key via `deleteNestedKey`, writes back through the atomic validation pipeline.
+- `deleteNestedKey(m map[string]any, key string) bool` — Recursively walks a nested map using dot-notation segments and deletes the leaf. Returns `false` if the key path does not exist.
+- `atomicSetConfig(configDir, body map[string]any) error` — Viper read-modify-write with atomic safety: writes to a temp directory, runs `config.Load(tmpDir)` for full validation (including `finalizeConfig` business rules), then renames the file into place.
+- `parseValue(raw string) any` — Auto-detects value type: `true`/`false` → `bool`, parseable integer → `int`, parseable float → `float64`, contains comma → `[]string` (trimmed), otherwise `string`.
+- `printValue(val any)` — Prints a value matching CLI output specs: scalars raw, arrays/maps via `yaml.Marshal`.
 
 ---
 
