@@ -63,6 +63,11 @@ func (r *Runner) Next(ctx context.Context, taskType string) error {
 		reqID := (*string)(nil)
 		if errors.As(err, &tErr) {
 			reqID = &tErr.ReqID
+			if tErr.PauseBatch && task.BatchID.Valid {
+				if pauseErr := r.store.PauseBatch(ctx, task.BatchID.String); pauseErr != nil {
+					r.logger.Error(&tErr.ReqID, "failed to pause batch %s after credit error: %v", task.BatchID.String, pauseErr)
+				}
+			}
 		}
 		r.logger.Error(reqID, "task %s failed: %v", task.TaskID, err)
 		return nil

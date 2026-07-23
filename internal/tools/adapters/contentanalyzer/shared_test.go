@@ -443,6 +443,63 @@ func TestCheckContentTooLarge(t *testing.T) {
 	}
 }
 
+func TestParseInsufficientCreditsError(t *testing.T) {
+	tests := []struct {
+		name       string
+		body       []byte
+		statusCode int
+		provider   string
+		wantNil    bool
+		wantStatus int
+		wantProv   string
+	}{
+		{"402 any provider", []byte("Payment Required"), 402, "openai", false, 402, "openai"},
+		{"429 any provider", []byte("rate limited"), 429, "anthropic", false, 429, "anthropic"},
+		{"400 qwen arrearage", []byte(`{"error":{"code":"Arrearage"}}`), 400, "qwen", false, 400, "qwen"},
+		{"400 qwen arrearage case-insensitive", []byte(`{"error":"Arrearage"}`), 400, "qwen", false, 400, "qwen"},
+		{"400 non-qwen ignores arrearage", []byte(`{"error":"Arrearage"}`), 400, "openai", true, 0, ""},
+		{"400 qwen no arrearage", []byte(`{"error":"bad request"}`), 400, "qwen", true, 0, ""},
+		{"401 unauthorized", []byte("Unauthorized"), 401, "openai", true, 0, ""},
+		{"500 server error", []byte("Internal Server Error"), 500, "openai", true, 0, ""},
+		{"200 ok", []byte(`{"choices":[]}`), 200, "openai", true, 0, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := parseInsufficientCreditsError(tt.body, tt.statusCode, tt.provider)
+			if tt.wantNil {
+				if err != nil {
+					t.Errorf("parseInsufficientCreditsError() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("parseInsufficientCreditsError() = nil, want error")
+			}
+			var credErr *InsufficientCreditsError
+			if !errors.As(err, &credErr) {
+				t.Fatalf("expected InsufficientCreditsError, got %T: %v", err, err)
+			}
+			if credErr.HTTPStatus != tt.wantStatus {
+				t.Errorf("HTTPStatus = %d, want %d", credErr.HTTPStatus, tt.wantStatus)
+			}
+			if credErr.Provider != tt.wantProv {
+				t.Errorf("Provider = %q, want %q", credErr.Provider, tt.wantProv)
+			}
+			if credErr.RawBody != string(tt.body) {
+				t.Errorf("RawBody = %q, want %q", credErr.RawBody, string(tt.body))
+			}
+		})
+	}
+}
+
+func TestInsufficientCreditsError_Message(t *testing.T) {
+	err := &InsufficientCreditsError{Provider: "openai", HTTPStatus: 402}
+	want := "insufficient credits (openai, HTTP 402): the provider account has run out of credits or has billing issues"
+	if err.Error() != want {
+		t.Errorf("Error() = %q, want %q", err.Error(), want)
+	}
+}
+
 func TestParseTokenLimitError(t *testing.T) {
 	tests := []struct {
 		name    string

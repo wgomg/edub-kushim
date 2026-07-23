@@ -124,6 +124,10 @@ func (s *Store) SetPending(ctx context.Context, id int64, payload json.RawMessag
 	})
 }
 
+func (s *Store) PauseBatch(ctx context.Context, batchID string) error {
+	return s.queries.SetBatchPaused(ctx, batchID)
+}
+
 func (s *Store) Discard(ctx context.Context, id int64, errMsg string) error {
 	return s.queries.DiscardEnrichTask(ctx, database.DiscardEnrichTaskParams{
 		ID:    id,

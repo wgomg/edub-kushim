@@ -49,6 +49,29 @@ func (e *TokenLimitError) Error() string {
 	return fmt.Sprintf("token limit: requested %d tokens, model max is %d", e.RequestedTokens, e.MaxTokens)
 }
 
+type InsufficientCreditsError struct {
+	Provider   string
+	HTTPStatus int
+	RawBody    string // retained for debugging; not surfaced in Error()
+}
+
+func (e *InsufficientCreditsError) Error() string {
+	return fmt.Sprintf("insufficient credits (%s, HTTP %d): the provider account has run out of credits or has billing issues", e.Provider, e.HTTPStatus)
+}
+
+func parseInsufficientCreditsError(body []byte, statusCode int, provider string) error {
+	if statusCode == 402 {
+		return &InsufficientCreditsError{Provider: provider, HTTPStatus: statusCode, RawBody: string(body)}
+	}
+	if statusCode == 429 {
+		return &InsufficientCreditsError{Provider: provider, HTTPStatus: statusCode, RawBody: string(body)}
+	}
+	if provider == "qwen" && statusCode == 400 && strings.Contains(strings.ToLower(string(body)), "arrearage") {
+		return &InsufficientCreditsError{Provider: provider, HTTPStatus: statusCode, RawBody: string(body)}
+	}
+	return nil
+}
+
 var tokenLimitRE = regexp.MustCompile(
 	`maximum context length is (\d+) tokens.*?you requested (?:about )?(\d+) tokens`,
 )

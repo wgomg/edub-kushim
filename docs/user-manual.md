@@ -267,6 +267,13 @@ Resuming batch 550e8400-e29b-41d4-a716-446655440000 (2 pending)...
 Summary: 3 files, 6 tasks — all successful
 ```
 
+If the batch is paused due to an LLM provider credit/balance error:
+
+```
+Batch 550e8400-e29b-41d4-a716-446655440000 is paused due to an LLM provider credit/balance error.
+Resolve the billing issue, then re-queue the batch and run this command again.
+```
+
 If the batch is already finished:
 
 ```
@@ -1698,6 +1705,7 @@ enricher:
   contentanalyzer:
     enabled: false # disabled by default — enable after configuring LLM
     timeout: 120
+    # pause_on_credit_error: true  # pause batch on LLM provider credit/balance errors
     # prompt_template: ''  # optional custom LLM prompt; see docs for available placeholders
     # doc_type_refinement:
     #   enabled: true
@@ -1751,6 +1759,7 @@ backup:
 | `enricher.contentanalyzer`     | LLM-based document classification (adapter/provider/model)                         |
 | `enricher.contentanalyzer.llm` | Adapter/provider/model config (flat structure with capability flags)                |
 | `enricher.contentanalyzer.prompt_template` | Custom Go `text/template` for the LLM prompt; empty = built-in default |
+| `enricher.contentanalyzer.pause_on_credit_error` | Pause the batch when the LLM provider returns a credit/balance error (default `true`) |
 | `enricher.contentanalyzer.doc_type_refinement` | Second-pass doc type refinement with head+tail of raw text (enabled, head_words, tail_words) |
 | `enricher.tagmatcher`          | Semantic tag matching via Hugot (embeddings)                           |
 | `enricher.tagmatcher.hugot`    | Hugot-specific settings (model, backend)                               |
@@ -1781,6 +1790,17 @@ ensures enrichment never runs before the document is fully ingested.
 | `failed`     | Finished with an error (retryable via `kushim task retry`)    |
 | `cancelled`  | Cancelled via `kushim consume cancel`                         |
 | `discarded`  | Enrich task orphaned because its parent consume task failed. Re-activated to `pending` when the parent is retried and succeeds. |
+
+### Batch statuses
+
+| Status       | Description                                                   |
+| ------------ | ------------------------------------------------------------- |
+| `queued`     | Batch created, waiting for a worker to pick it up        |
+| `processing` | Batch currently being processed by a worker                   |
+| `completed`  | All tasks finished successfully                               |
+| `failed`     | One or more tasks failed                                       |
+| `paused`     | Batch paused due to an LLM provider credit/balance error. Resolve billing and re-queue. |
+| `cancelled`  | Batch cancelled via `kushim consume cancel`                    |
 
 ---
 

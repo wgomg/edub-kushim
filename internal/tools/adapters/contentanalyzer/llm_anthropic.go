@@ -207,6 +207,9 @@ func (l *LlmAnthropic) Analyze(ctx context.Context, text string, docTypes []data
 		if tokErr := parseTokenLimitError(body); tokErr != nil {
 			return nil, tokErr
 		}
+		if credErr := parseInsufficientCreditsError(body, resp.StatusCode, "anthropic"); credErr != nil {
+			return nil, credErr
+		}
 		return nil, fmt.Errorf("API error: status %s: %s", resp.Status, string(body))
 	}
 
@@ -325,6 +328,9 @@ func (l *LlmAnthropic) AnalyzeDocType(ctx context.Context, prevResult *AnalysisR
 	if resp.StatusCode != http.StatusOK {
 		if tokErr := parseTokenLimitError(body); tokErr != nil {
 			return "", tokErr
+		}
+		if credErr := parseInsufficientCreditsError(body, resp.StatusCode, "anthropic"); credErr != nil {
+			return "", credErr
 		}
 		return "", fmt.Errorf("doc type refinement: status %s: %s", resp.Status, string(body))
 	}

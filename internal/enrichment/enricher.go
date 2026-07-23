@@ -126,6 +126,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 
 		var ctle *contentanalyzer.ContentTooLargeError
 		var tokErr *contentanalyzer.TokenLimitError
+		var credErr *contentanalyzer.InsufficientCreditsError
 
 		var maxTokens, actualTokens int
 		switch {
@@ -135,6 +136,13 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 		case errors.As(err, &tokErr):
 			maxTokens = tokErr.MaxTokens
 			actualTokens = tokErr.RequestedTokens
+		case errors.As(err, &credErr):
+			pauseBatch := e.config.Enricher.ContentAnalyzer.PauseOnCreditError
+			return nil, &task.Error{
+				ReqID:      logId,
+				Err:        fmt.Errorf("LLM credit exhausted (%s): %w", e.config.Enricher.ContentAnalyzer.Llm.Provider, credErr),
+				PauseBatch: pauseBatch,
+			}
 		default:
 			return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to analyze content: %w", err)}
 		}

@@ -155,6 +155,7 @@ type ContentAnalyzerConfig struct {
 	Llm               LlmConfig               `mapstructure:"llm" yaml:"llm" json:"llm"`
 	PromptTemplate    string                  `mapstructure:"prompt_template" yaml:"prompt_template" json:"prompt_template,omitempty"`
 	DocTypeRefinement DocTypeRefinementConfig `mapstructure:"doc_type_refinement" yaml:"doc_type_refinement" json:"doc_type_refinement"`
+	PauseOnCreditError bool                   `mapstructure:"pause_on_credit_error" yaml:"pause_on_credit_error" json:"pause_on_credit_error"`
 }
 
 type EnricherConfig struct {
@@ -356,9 +357,10 @@ func DefaultConfig(configDir string) *Config {
 				TargetWords: 2000,
 			},
 		ContentAnalyzer: ContentAnalyzerConfig{
-			Enabled:        false,
-			Timeout:        120,
-			PromptTemplate: "",
+			Enabled:             false,
+			Timeout:             120,
+			PromptTemplate:      "",
+			PauseOnCreditError:  true,
 			DocTypeRefinement: DocTypeRefinementConfig{
 				Enabled:   true,
 				HeadWords: 600,

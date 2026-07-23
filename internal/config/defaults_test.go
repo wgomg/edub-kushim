@@ -18,3 +18,10 @@ func TestDefaultConfig_TextExtractorAndOCRTimeoutsUnchanged(t *testing.T) {
 		t.Errorf("OCR.Timeout = %d, want 120", cfg.Consumer.OCR.Timeout)
 	}
 }
+
+func TestDefaultConfig_PauseOnCreditError(t *testing.T) {
+	cfg := DefaultConfig(t.TempDir())
+	if !cfg.Enricher.ContentAnalyzer.PauseOnCreditError {
+		t.Error("PauseOnCreditError should default to true")
+	}
+}

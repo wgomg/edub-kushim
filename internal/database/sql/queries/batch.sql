@@ -94,6 +94,9 @@ UPDATE batch SET status = 'completed' WHERE id = $1;
 -- name: SetBatchFailed :exec
 UPDATE batch SET status = 'failed' WHERE id = $1;
 
+-- name: SetBatchPaused :exec
+UPDATE batch SET status = 'paused' WHERE id = $1;
+
 -- name: SetBatchCancelled :exec
 UPDATE batch SET status = 'cancelled' WHERE id = $1;
 

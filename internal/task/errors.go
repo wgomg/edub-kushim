@@ -1,8 +1,9 @@
 package task
 
 type Error struct {
-	ReqID string
-	Err   error
+	ReqID      string
+	Err        error
+	PauseBatch bool
 }
 
 func (e *Error) Error() string { return e.Err.Error() }

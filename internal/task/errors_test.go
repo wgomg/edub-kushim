@@ -69,3 +69,22 @@ func TestErrorAsEmptyReqID(t *testing.T) {
 		t.Fatalf("ReqID: got %q, want empty", tErr.ReqID)
 	}
 }
+
+func TestErrorPauseBatch(t *testing.T) {
+	e := &Error{ReqID: "doc-1", Err: fmt.Errorf("credit error"), PauseBatch: true}
+
+	var tErr *Error
+	if !errors.As(e, &tErr) {
+		t.Fatal("errors.As should extract *Error with PauseBatch")
+	}
+	if !tErr.PauseBatch {
+		t.Fatal("PauseBatch should be true")
+	}
+}
+
+func TestErrorPauseBatchDefaultFalse(t *testing.T) {
+	e := &Error{ReqID: "doc-1", Err: fmt.Errorf("some error")}
+	if e.PauseBatch {
+		t.Fatal("PauseBatch should default to false")
+	}
+}

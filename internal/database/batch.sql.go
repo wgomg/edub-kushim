@@ -471,6 +471,15 @@ func (q *Queries) SetBatchFailed(ctx context.Context, id string) error {
 	return err
 }
 
+const setBatchPaused = `-- name: SetBatchPaused :exec
+UPDATE batch SET status = 'paused' WHERE id = $1
+`
+
+func (q *Queries) SetBatchPaused(ctx context.Context, id string) error {
+	_, err := q.db.ExecContext(ctx, setBatchPaused, id)
+	return err
+}
+
 const setBatchProcessing = `-- name: SetBatchProcessing :exec
 UPDATE batch SET status = 'processing' WHERE id = $1
 `

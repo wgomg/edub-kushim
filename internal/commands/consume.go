@@ -106,6 +106,13 @@ func consumeHandler(c *Container, args []string) error {
 			}
 		}
 
+		batch, batchErr := client.Queries.GetBatch(ctx, batchIDParam)
+		if batchErr == nil && batch.Status == "paused" {
+			fmt.Printf("Batch %s is paused due to an LLM provider credit/balance error.\n", batchIDParam)
+			fmt.Printf("Resolve the billing issue, then re-queue the batch and run this command again.\n")
+			return nil
+		}
+
 		ownerID := uuid.New().String()
 		pid := os.Getpid()
 		owner := task.NewOwner(client, ownerID, pid, c.logger, c.config.Consumer.Reclaim.MaxRetries)
@@ -524,6 +531,17 @@ func pollBatch(ctx context.Context, queries *database.Queries, cp, ep *pool.Pool
 			ep.Stop(stopCtx)
 			return ctx.Err()
 		}
+
+		batch, err := queries.GetBatch(ctx, batchID)
+		if err == nil && batch.Status == "paused" {
+			fmt.Printf("\nBatch paused: LLM provider credit/balance error detected. Resolve billing and re-queue the batch.\n")
+			stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer stopCancel()
+			cp.Stop(stopCtx)
+			ep.Stop(stopCtx)
+			return nil
+		}
+
 		tasks, err := task.ListFiltered(ctx, queries, task.TaskFilter{
 			BatchID: batchID,
 		})

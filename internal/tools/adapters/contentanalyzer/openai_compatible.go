@@ -174,6 +174,9 @@ func (l *LlmOpenAiCompatible) doRequest(ctx context.Context, reqBody map[string]
 		if tokErr := parseTokenLimitError(body); tokErr != nil {
 			return nil, tokErr
 		}
+		if credErr := parseInsufficientCreditsError(body, resp.StatusCode, l.llmCfg.Provider); credErr != nil {
+			return nil, credErr
+		}
 		return nil, fmt.Errorf("API error: status %s: %s", resp.Status, string(body))
 	}
 
