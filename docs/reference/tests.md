@@ -2,11 +2,19 @@
 
 ## Overview
 
-The project has **230+ integration and unit tests** across nine packages, all runnable
-without CGo dependencies (no Tesseract, MuPDF, or Ghostscript required). The test
-suite validates database queries, task lifecycle, search, API handlers, auth,
-consumption pipeline, service layer (batch, orphaned, errored files, users, API keys),
-tagmatch body cap derivation and UTF-8 truncation, and API key service.
+The project has **60+ test packages and 370+ unit/integration tests**, with a two-tier
+run strategy:
+
+- **`make test`** (12 packages, no database required) — LLM registry, config, API types,
+  tools runner, utils (text normalization, logging), tagmatch, storage walk, auth tokens,
+  auth middleware + permissions, content analyzer (prompt building, tag filtering, token
+  estimation), error classification (`errs`), and worker pool lifecycle.
+- **`make test-db`** (6 additional packages, requires PostgreSQL) — database CRUD queries,
+  search engine, task system (store/dispatcher/runner/pool), service layer (batch,
+  orphaned, errored files, users, enrichment, API keys), API handlers, and consumption
+  pipeline.
+
+All tests run with `CGO_ENABLED=0` (no Tesseract, MuPDF, or Ghostscript required).
 
 ### Quick Start
 
@@ -22,15 +30,25 @@ CGO_ENABLED=0 go test -tags "XLA,ORT" ./internal/...
 
 | Package | Tests | What it covers |
 |---------|-------|---------------|
+| `internal/llm` | 27 | Registry creation (fixture + embedded fallback), model lookup for known/missing providers and models, adapter/provider/model listing, default URL derivation, catalog reload, concurrent access safety |
+| `internal/config` | 34 | Default config values, ParseHHMM, polling window validation (valid + invalid), IsWithinActiveWindows, OCR workers, finalizeConfig (reclaim max retries), Reload (success/missing/invalid YAML/missing OCR/change application/key reset), SaveMap (merge/no file/invalid file), watcher (fire on change/missing file/invalid YAML) |
+| `internal/api/types` | 4 | ConfigResponseFrom: logging defaults/custom, reclaim max retries, prompt template |
+| `internal/tools` | 6 | OptimizePdf (no timeout/with timeout/file not found/cancellation/nil optimizer), AnalyzeDocType (nil analyzer) |
+| `internal/utils` | 7 | Truncate (ASCII, CJK, mixed, trim), EstimateTokens (ASCII/CJK/mixed), NormalizeForDB (accent folding, punctuation, spaces), NewLogger level parsing, SetLevel gating (Info/Error/Debug/Warn), REQID prefix formatting, file logging (append/invalid path/levels/source exclusion/level prefix), SlogLogger bridge, LevelPriority/LevelName |
 | `internal/tagmatch` | 3 | `MaxMatchBodyBytes` derivation with floor/ceiling clamping; `truncateUTF8` UTF-8-safe truncation with CJK and ASCII boundary tests; idempotency check |
-| `internal/database` | 29 | sqlc-generated CRUD, task lifecycle, enrich waiting flow, batch ownership, FTS-adjacent operations, document/tag/people/document-type CRUD, saved searches, dashboard analytics queries (empty DB + mixed data), structured search missing filters (MissingLanguage/MissingType/Untagged), WithDocumentCount queries, backup lock lifecycle, gated task claiming |
-| `internal/search` | 4 | tsvector search with snippets, ranking, pagination; structured search with mime/language/date/missing filters; query sanitization |
-| `internal/task` | 25 | Store (create/get/claim/complete/fail), dedup key uniqueness, dispatcher enqueue with custom status/ID, runner (complete/fail/no-tasks), pool lifecycle |
-| `internal/service` | 62 | Batch create/get/owner-state/pending/active/cancel/queue, orphaned scan/delete/restore/move-to-inbox, errored files list/download/delete/delete-all, user API key create/revoke/rotate/validate, user Create with role defaults/explicit/invalid, UpdateRole (valid/invalid), Update with role change |
-| `internal/api/handlers` | 60 | Document CRUD, tag/people/DocumentType CRUD, user CRUD (with role), task endpoints, saved searches, concurrent operations, dashboard activity + analytics + processing health, analytics error path, config handler get/status, batch delete limits, error helpers, auth login (valid/invalid/empty/claims/role), auth logout, API key generate/revoke/rotate/status/forbidden/invalid-id/not-found, MeHandler (valid/missing-id/not-found), self-service API key handlers (MeGenerateKey/MeRevokeKey/MeRotateKey/MeGetKeyStatus/unauthorized) |
+| `internal/storage` | 7 | DetectFileType (uuid/dbid/random), WalkStorageDir (finds PDFs/skips non-PDF/recent/unknown key types/missing dirs), QuarantineFile, RemoveOrphanedFile, CopyToConsumptionDir |
 | `internal/auth` | 7 | Session secret generation, JWT generation/validation round-trip with role, wrong secret rejection, expired token rejection, malformed token rejection, token part structure, ValidRole cases |
-| `internal/api` | 24 | Auth middleware: public path bypass, no-token 401, invalid token 401, wrong secret 401, valid token passes with context injection (includes role), missing bearer prefix, empty authorization header, disabled bypasses all paths, valid API key 200 (includes role), invalid API key 401, wrong prefix falls through to JWT, auth-disabled bypasses API key check, internal error returns 500. Permission middleware: RequireRole for admin/editor/viewer (allows+forbids), missing role, invalid role |
+| `internal/api` | 24 | Auth middleware: public path bypass, no-token 401, invalid token 401, wrong secret 401, valid token passes with context injection (includes role), missing bearer prefix, empty authorization header, disabled bypasses all paths, valid API key 200 (includes role), invalid API key 401, wrong prefix falls through to JWT, auth-disabled bypasses API key check, internal error returns 500, valid cookie, invalid cookie, header takes priority over cookie. Permission middleware: RequireRole for admin/editor/viewer (allows+forbids), missing role, invalid role |
+| `internal/tools/adapters/contentanalyzer` | 13 | NormalizeTags (transforms, accent folding, dedup/drop), BuildPrompt (default/custom/malformed/execution error/whitespace), BuildDocTypePrompt, ExtractHeadTailWords, FilterTags (18 cases: person token overlap, title overlap, doc-type match, known name subset, >3-word cap, maxTags cap, combined rules), checkContentTooLarge (nil caps/zero/negative/within limit/exceeds), parseTokenLimitError (no match/empty/valid OpenAI/zero tokens/partial match) |
+| `internal/errs` | 7 | Error constructors preserve kind/op/cause, Error() string formatting, Unwrap(), KindOf through plain/wrapped/nil errors, FromDB (nil→nil, ErrNoRows→NotFound, unique violation→Conflict, other→Internal), PgError predicates (unique/foreign key/deadlock/serialization/plain/wrapped) |
+| `internal/pool` | 3 | StartStop (workers call runner, stop terminates), ContextCancellation (cancel stops pool), DoubleStop (sync.Once no panic) |
+| `internal/database` | 29 | sqlc-generated CRUD, task lifecycle, enrich waiting flow, batch ownership, FTS-adjacent operations, document/tag/people/document-type CRUD, saved searches, dashboard analytics queries (empty DB + mixed data), structured search missing filters (MissingLanguage/MissingType/Untagged), WithDocumentCount queries, backup lock lifecycle, gated task claiming |
+| `internal/search` | 8 | tsvector search with snippets, ranking, pagination; structured search with mime/language/date/missing filters; query sanitization; engine construction |
+| `internal/task` | 25 | Store (create/get/claim/complete/fail), dedup key uniqueness, dispatcher enqueue with custom status/ID, runner (complete/fail/no-tasks), nil payload handling, backup lock gating for consume/enrich/config, pool lifecycle |
+| `internal/service` | 74 | Batch create/get/owner-state/pending/active/cancel/queue, orphaned scan/delete/restore/move-to-inbox, errored files list/download/delete/delete-all, user API key create/revoke/rotate/validate, user Create with role defaults/explicit/invalid, UpdateRole (valid/invalid), Update with role change, password validation (12+ rules) |
+| `internal/api/handlers` | 60 | Document CRUD, tag/people/DocumentType CRUD, user CRUD (with role), task endpoints, saved searches, concurrent operations, dashboard activity + analytics + processing health, analytics error path, config handler get/status, batch delete limits, error helpers, auth login (valid/invalid/empty/claims/role), auth logout, API key generate/revoke/rotate/status/forbidden/invalid-id/not-found, MeHandler (valid/missing-id/not-found), self-service API key handlers (MeGenerateKey/MeRevokeKey/MeRotateKey/MeGetKeyStatus/unauthorized), orphaned handler (list/scan/delete/restore/move-to-inbox/delete-all/move-all), errored handler (list/download/delete/delete-all), logs handler (invalid name/file not found/success/line clamping/large file tail/empty file) |
 | `internal/consumption` | 20 | Full consumer pipeline via mock runner (file discovery, DB transaction, file movement, duplicate detection), file I/O helpers (get, move, copy, remove, clean up), checksum calculation, orphaned file management |
+| `internal/backup` | 12 | Create (full backup/missing DB/missing storage/no files/SQL dump content), ApplyRetention (delete oldest/keep all/keep 0), ValidateArchive (valid/invalid gzip/missing manifest/missing file), ExtractArchive (valid/path traversal/symlink skip), ReplaceFiles (SQL dump/unknown format), CopyDir |
 
 ---
 
@@ -127,7 +145,7 @@ from `crypto/x509` root cert loading in the Go standard library.
 ### Makefile targets
 
 ```bash
-make test          # CGO_ENABLED=0, all 5 packages, 60s timeout
+make test          # CGO_ENABLED=0, 12 packages, 60s timeout (no DB needed)
 make test-verbose  # same with -v output
 ```
 
@@ -135,29 +153,38 @@ The Makefile explicitly sets `CGO_ENABLED=0` for test targets, overriding the
 `export CGO_ENABLED := 1` used for build targets. This ensures tests run in
 any environment regardless of C library availability.
 
+**12 packages run without a database:** `llm`, `config`, `api/types`, `tools`,
+`utils`, `tagmatch`, `storage`, `auth`, `api`, `tools/adapters/contentanalyzer`,
+`errs`, `pool`.
+
+### Database-dependent tests (`make test-db`)
+
+Packages requiring PostgreSQL 16+:
+
+```bash
+make test-db
+# Equivalent:
+CGO_ENABLED=0 go test -tags "XLA,ORT" -count=1 -timeout 120s \
+    ./internal/database/ \
+    ./internal/search/ \
+    ./internal/task/ \
+    ./internal/service/ \
+    ./internal/api/handlers/ \
+    ./internal/consumption/ \
+    ./internal/backup/
+```
+
 ### Manual
 
 ```bash
-# Single package
+# Single package (without DB)
+CGO_ENABLED=0 go test -tags "XLA,ORT" -v ./internal/errs/
+
+# Single package (with DB, requires TEST_DATABASE_URL)
 CGO_ENABLED=0 go test -tags "XLA,ORT" -v ./internal/database/
 
 # Specific test
 CGO_ENABLED=0 go test -tags "XLA,ORT" -v -run "TestTaskLifecycle" ./internal/database/
-
-# All non-CGo packages
-CGO_ENABLED=0 go test -tags "XLA,ORT" -count=1 -timeout 60s \
-    ./internal/database/ \
-    ./internal/search/ \
-    ./internal/tagmatch/ \
-    ./internal/task/ \
-    ./internal/auth/ \
-    ./internal/service/ \
-    ./internal/api/ \
-    ./internal/api/handlers/ \
-    ./internal/consumption/
-
-# Full suite (fails if C dependencies are missing)
-CGO_ENABLED=1 go test -tags "XLA,ORT" ./internal/...
 ```
 
 ### Test Helpers

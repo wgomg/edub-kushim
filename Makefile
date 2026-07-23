@@ -199,6 +199,14 @@ test-short:
 		./internal/config/ \
 		./internal/api/types/ \
 		./internal/tools/ \
+		./internal/utils/ \
+		./internal/tagmatch/ \
+		./internal/storage/ \
+		./internal/auth/ \
+		./internal/api/ \
+		./internal/tools/adapters/contentanalyzer/ \
+		./internal/errs/ \
+		./internal/pool/ \
 
 # Default test target (same as test-short for now).
 test: test-short
@@ -210,6 +218,14 @@ test-verbose:
 		./internal/config/ \
 		./internal/api/types/ \
 		./internal/tools/ \
+		./internal/utils/ \
+		./internal/tagmatch/ \
+		./internal/storage/ \
+		./internal/auth/ \
+		./internal/api/ \
+		./internal/tools/adapters/contentanalyzer/ \
+		./internal/errs/ \
+		./internal/pool/ \
 
 # Database-dependent tests (requires PostgreSQL 16+).
 .PHONY: test-db

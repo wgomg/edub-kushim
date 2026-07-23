@@ -214,22 +214,17 @@ The `Makefile` also provides containerized builds (`make build-glibc`, `make bui
 ### Test
 
 ```bash
-# Runs all tests that don't require CGo (60+ tests, preferred)
+# Runs all tests that don't require CGo or PostgreSQL (156 test functions, preferred)
 make test
 
 # Verbose output for development
 make test-verbose
+
+# Database-dependent tests (requires PostgreSQL 16+ via TEST_DATABASE_URL)
+make test-db
 ```
 
-The manual equivalent (CGo-free packages only):
-
-```bash
-CGO_ENABLED=0 go test -tags "XLA,ORT" -count=1 ./internal/database/ \
-  ./internal/search/ ./internal/task/ ./internal/api/handlers/ \
-  ./internal/consumption/
-```
-
-**Note:** `go test -tags "XLA,ORT" ./...` will fail without the full C toolchain installed. Always use `make test` or the explicit package list above unless C deps are available.
+**Note:** `go test -tags "XLA,ORT" ./...` will fail without the full C toolchain installed. Always use `make test` or `make test-db` unless C deps are available.
 
 ### Web UI (hot-reload)
 
