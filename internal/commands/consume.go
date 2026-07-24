@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -26,6 +27,8 @@ import (
 const (
 	heartbeatInterval = 5 * time.Second
 )
+
+var ErrBatchPaused = errors.New("batch paused due to LLM credit/balance error")
 
 func watchSignals(ctx context.Context, cancel context.CancelFunc) {
 	sigCh := make(chan os.Signal, 1)
@@ -158,11 +161,13 @@ func consumeHandler(c *Container, args []string) error {
 		hb.Start(ctx)
 
 		err = pollBatch(ctx, client.Queries, p, ep, c.logger, batchIDParam)
-		batchSvc := service.NewBatch(client, c.config.Consumer.Reclaim.MaxRetries)
 		if err == nil {
+			batchSvc := service.NewBatch(client, c.config.Consumer.Reclaim.MaxRetries)
 			if setErr := setBatchTerminalStatus(ctx, client.Queries, batchSvc, batchIDParam); setErr != nil {
 				c.logger.Error(nil, "set batch terminal status %s: %v", batchIDParam, setErr)
 			}
+		} else if errors.Is(err, ErrBatchPaused) {
+			err = nil
 		}
 
 		triggerOrphanScan(c)
@@ -286,6 +291,8 @@ func consumeHandler(c *Container, args []string) error {
 		if setErr := setBatchTerminalStatus(ctx, client.Queries, batchSvc, batchID); setErr != nil {
 			c.logger.Error(nil, "set batch terminal status %s: %v", batchID, setErr)
 		}
+	} else if errors.Is(err, ErrBatchPaused) {
+		err = nil
 	}
 
 	triggerOrphanScan(c)
@@ -539,7 +546,7 @@ func pollBatch(ctx context.Context, queries *database.Queries, cp, ep *pool.Pool
 			defer stopCancel()
 			cp.Stop(stopCtx)
 			ep.Stop(stopCtx)
-			return nil
+			return ErrBatchPaused
 		}
 
 		tasks, err := task.ListFiltered(ctx, queries, task.TaskFilter{
@@ -607,6 +614,15 @@ func pollBatch(ctx context.Context, queries *database.Queries, cp, ep *pool.Pool
 }
 
 func setBatchTerminalStatus(ctx context.Context, queries *database.Queries, batchSvc *service.Batch, batchID string) error {
+	batch, err := queries.GetBatch(ctx, batchID)
+	if err != nil {
+		return fmt.Errorf("get batch: %w", err)
+	}
+	switch batch.Status {
+	case "completed", "failed", "cancelled", "paused":
+		return nil
+	}
+
 	tasks, err := task.ListFiltered(ctx, queries, task.TaskFilter{BatchID: batchID})
 	if err != nil {
 		return fmt.Errorf("list tasks: %w", err)

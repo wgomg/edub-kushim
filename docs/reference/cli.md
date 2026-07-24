@@ -24,11 +24,16 @@
 
 ## `consume.go`
 
+### Globals
+
+- `ErrBatchPaused` — Sentinel error returned by `pollBatch` when the runner has paused the batch mid-flight due to an LLM provider credit/balance error. The caller suppresses it (`err = nil`) so paused is not treated as a failure.
+
 ### Functions
 
-- `consumeHandler(c, args) error` — Enqueues files in paired (consume + enrich) tasks; direct-fallback if queue empty, `--batch <id>` for batch resume, `--force` to override a stale lease when resuming a batch. Subcommand `cancel <batch-id>` cancels a running batch.
+- `consumeHandler(c, args) error` — Enqueues files in paired (consume + enrich) tasks; direct-fallback if queue empty, `--batch <id>` for batch resume, `--force` to override a stale lease when resuming a batch. Subcommand `cancel <batch-id>` cancels a running batch. After `pollBatch` returns, if the batch completed normally it calls `setBatchTerminalStatus`; if the batch was paused (`ErrBatchPaused`) it suppresses the error so the caller returns cleanly.
 - `consumeCancelHandler(c, args) error` — Cancels pending + processing tasks via DB, reads batch owner PID from batch_owner table, sends SIGTERM.
-- `pollBatch(ctx, queries, cp, ep, logger, batchID) error` — Streams per-file progress to stdout; stops when no pending/processing tasks remain.
+- `pollBatch(ctx, queries, cp, ep, logger, batchID) error` — Streams per-file progress to stdout; returns `nil` when all tasks finish, `ErrBatchPaused` when the runner pauses the batch, or `ctx.Err()` on cancellation.
+- `setBatchTerminalStatus(ctx, queries, batchSvc, batchID) error` — Computes a terminal status (`completed` or `failed`) from task outcomes. Has a defense-in-depth guard: if the batch is already in a terminal state (`completed`, `failed`, `cancelled`, `paused`), it returns `nil` without modifying the batch.
 - `taskDisplayInfo(t) taskDisplay` — Extracts index, filename, task type from payload.
 - `totalFiles(tasks) int` — Counts total files from max file_index in payloads.
 
