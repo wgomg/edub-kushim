@@ -18,6 +18,7 @@
 	let adminConfirm = $state('');
 	let adminError = $state('');
 	let adminCreating = $state(false);
+	let saving = $state(false);
 
 	onMount(async () => {
 		try {
@@ -54,6 +55,7 @@
 
 	async function submitSettings(e) {
 		e.preventDefault();
+		saving = true;
 		error = '';
 		try {
 			const body = buildConfigBody();
@@ -72,6 +74,8 @@
 			}
 		} catch (e) {
 			error = e.message;
+		} finally {
+			saving = false;
 		}
 	}
 
@@ -82,7 +86,6 @@
 			'consumer.ocr.languages': cfg.consumer.ocr.languages.filter(Boolean),
 			'consumer.ocr.timeout': Number(cfg.consumer.ocr.timeout),
 			'consumer.workers': Number(cfg.consumer.workers),
-			'consumer.delete_original': cfg.consumer.delete_original,
 			'consumer.pdfoptimizer.engine': cfg.consumer.pdfoptimizer.engine,
 			'consumer.pdfoptimizer.fallback': cfg.consumer.pdfoptimizer.fallback,
 			'consumer.pdfoptimizer.timeout': Number(cfg.consumer.pdfoptimizer.timeout),
@@ -193,7 +196,7 @@
 </script>
 
 {#if error}
-	<div class="mb-4 rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500">
+	<div aria-live="polite" class="mb-4 rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500">
 		{error}
 	</div>
 {/if}
@@ -280,6 +283,12 @@
 					<input id="storage-dir" type="text" bind:value={cfg.storage.storage_dir}
 						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none" />
 				</div>
+			</div>
+		</section>
+
+		<section class="rounded-xl border border-clay-800 bg-clay-950/50 p-4">
+			<h3 class="mb-3 text-sm font-semibold text-parchment-200">Database</h3>
+			<div class="space-y-3">
 				<div>
 					<label for="db-host" class="mb-1 block text-sm font-medium text-parchment-200">
 						Database host
@@ -312,8 +321,18 @@
 					<label for="db-sslmode" class="mb-1 block text-sm font-medium text-parchment-200">
 						SSL mode
 					</label>
-					<input id="db-sslmode" type="text" bind:value={cfg.database.sslmode}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none" />
+					<select
+						id="db-sslmode"
+						bind:value={cfg.database.sslmode}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
+					>
+						<option value="disable">disable</option>
+						<option value="allow">allow</option>
+						<option value="prefer">prefer</option>
+						<option value="require">require</option>
+						<option value="verify-ca">verify-ca</option>
+						<option value="verify-full">verify-full</option>
+					</select>
 				</div>
 			</div>
 		</section>
@@ -514,7 +533,7 @@
 					<input
 						id="pdf-optimizer-timeout"
 						type="number"
-						min="1"
+						min="0"
 						bind:value={cfg.consumer.pdfoptimizer.timeout}
 						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 					/>
@@ -537,17 +556,7 @@
 						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 					/>
 				</div>
-				<div class="flex items-center gap-2">
-					<input
-						id="delete-original"
-						type="checkbox"
-						bind:checked={cfg.consumer.delete_original}
-						class="rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
-					/>
-					<label for="delete-original" class="text-sm text-parchment-200">
-						Delete original files after processing
-					</label>
-				</div>
+
 			</div>
 		</section>
 
@@ -712,7 +721,8 @@
 			</button>
 			<button
 				type="submit"
-				class="flex-1 rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600"
+				disabled={saving}
+				class="flex-1 rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600 disabled:cursor-not-allowed disabled:opacity-50"
 			>
 				Save and continue
 			</button>

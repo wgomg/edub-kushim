@@ -56,10 +56,13 @@ type ConfigResponse struct {
 }
 
 type ServerConfigResponse struct {
-	Host          string `json:"host"`
-	Port          int    `json:"port"`
-	MaxUploadSize int64  `json:"max_upload_size"`
-	AuthEnabled   bool   `json:"auth_enabled"`
+	Host                 string `json:"host"`
+	Port                 int    `json:"port"`
+	MaxUploadSize        int64  `json:"max_upload_size"`
+	MaxDownloadFiles     int    `json:"max_download_files"`
+	MaxDownloadSizeMB    int64  `json:"max_download_size_mb"`
+	MaxConcurrentBatches int    `json:"max_concurrent_batches"`
+	AuthEnabled          bool   `json:"auth_enabled"`
 }
 
 type PollingWindowResponse struct {
@@ -236,6 +239,9 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Server.Port = cfg.Srv.Port
 	resp.Server.MaxUploadSize = cfg.Srv.MaxUploadSize
 	resp.Server.AuthEnabled = cfg.Srv.AuthEnabled
+	resp.Server.MaxDownloadFiles = cfg.Srv.MaxDownloadFiles
+	resp.Server.MaxDownloadSizeMB = cfg.Srv.MaxDownloadSizeMB
+	resp.Server.MaxConcurrentBatches = cfg.Srv.MaxConcurrentBatches
 	resp.Backup.Enabled = cfg.Backup.Enabled
 	resp.Backup.Interval = cfg.Backup.Interval
 	resp.Backup.Time = cfg.Backup.Time

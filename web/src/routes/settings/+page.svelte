@@ -30,8 +30,12 @@
 
 	let llmModels = $state({ adapters: {}, providers: {} });
 
-	let selectedAdapterProviders = $derived(llmModels.adapters[cfg?.enricher?.contentanalyzer?.llm?.adapter] ?? []);
-	let selectedProviderModels = $derived(llmModels.providers[cfg?.enricher?.contentanalyzer?.llm?.provider] ?? []);
+	let selectedAdapterProviders = $derived(
+		llmModels.adapters[cfg?.enricher?.contentanalyzer?.llm?.adapter] ?? []
+	);
+	let selectedProviderModels = $derived(
+		llmModels.providers[cfg?.enricher?.contentanalyzer?.llm?.provider] ?? []
+	);
 
 	const userColumns = [
 		{
@@ -131,6 +135,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			'server.max_upload_size': Number(cfg.server.max_upload_size),
 			'server.max_download_files': Number(cfg.server.max_download_files),
 			'server.max_download_size_mb': Number(cfg.server.max_download_size_mb),
+			'server.max_concurrent_batches': Number(cfg.server.max_concurrent_batches),
 			'consumer.ocr.engine': cfg.consumer.ocr.engine,
 			'consumer.ocr.languages': cfg.consumer.ocr.languages.filter(Boolean),
 			'consumer.ocr.data_dir': cfg.consumer.ocr.data_dir,
@@ -159,7 +164,9 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			'enricher.contentanalyzer.llm.provider': cfg.enricher.contentanalyzer.llm.provider,
 			'enricher.contentanalyzer.llm.model': cfg.enricher.contentanalyzer.llm.model,
 			'enricher.contentanalyzer.llm.token': cfg.enricher.contentanalyzer.llm.token,
-			'enricher.contentanalyzer.llm.temperature': Number(cfg.enricher.contentanalyzer.llm.temperature),
+			'enricher.contentanalyzer.llm.temperature': Number(
+				cfg.enricher.contentanalyzer.llm.temperature
+			),
 			'enricher.tagmatcher.timeout': Number(cfg.enricher.tagmatcher.timeout),
 			'enricher.tagmatcher.reduce_target_words': Number(
 				cfg.enricher.tagmatcher.reduce_target_words
@@ -305,7 +312,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			{#if pendingTasks > 0}
 				<div class="flex items-center gap-2 text-sm text-gold-500">
 					<div
-						class="h-4 w-4 animate-spin rounded-full border-2 border-clay-800 border-t-gold-500"
+						class="h-4 w-4 animate-spin rounded-full border-2 border-clay-800 border-t-gold-500 motion-reduce:animate-none"
 					></div>
 					{pendingTasks} task(s) pending
 				</div>
@@ -415,11 +422,25 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						/>
 					</div>
+					<div>
+						<label
+							for="max-concurrent-batches"
+							class="mb-1 block text-sm font-medium text-parchment-200"
+							>Max concurrent batches</label
+						>
+						<input
+							id="max-concurrent-batches"
+							type="number"
+							min="1"
+							bind:value={cfg.server.max_concurrent_batches}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
+						/>
+					</div>
 				</div>
 			</section>
 
 			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
-				<h2 class="mb-4 text-lg font-semibold text-parchment-200">Storage & Database</h2>
+				<h2 class="mb-4 text-lg font-semibold text-parchment-200">Storage</h2>
 				<div class="grid gap-4 sm:grid-cols-2">
 					<div>
 						<label for="consumption-dir" class="mb-1 block text-sm font-medium text-parchment-200">
@@ -443,6 +464,12 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						/>
 					</div>
+				</div>
+			</section>
+
+			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+				<h2 class="mb-4 text-lg font-semibold text-parchment-200">Database</h2>
+				<div class="grid gap-4 sm:grid-cols-2">
 					<div>
 						<label for="db-host" class="mb-1 block text-sm font-medium text-parchment-200">
 							Database host
@@ -493,12 +520,18 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<label for="db-sslmode" class="mb-1 block text-sm font-medium text-parchment-200">
 							SSL mode
 						</label>
-						<input
+						<select
 							id="db-sslmode"
-							type="text"
 							bind:value={cfg.database.sslmode}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
-						/>
+						>
+							<option value="disable">disable</option>
+							<option value="allow">allow</option>
+							<option value="prefer">prefer</option>
+							<option value="require">require</option>
+							<option value="verify-ca">verify-ca</option>
+							<option value="verify-full">verify-full</option>
+						</select>
 					</div>
 				</div>
 			</section>
@@ -897,7 +930,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<input
 							id="pdf-timeout"
 							type="number"
-							min="1"
+							min="0"
 							bind:value={cfg.consumer.pdfoptimizer.timeout}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						/>
@@ -927,119 +960,128 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 				<div class="mb-4 flex items-center justify-between">
 					<h2 class="text-lg font-semibold text-parchment-200">Content analyzer (LLM)</h2>
 					<label class="relative inline-flex cursor-pointer items-center">
-						<input type="checkbox" bind:checked={cfg.enricher.contentanalyzer.enabled} class="peer sr-only" />
-						<div class="h-6 w-11 rounded-full border border-clay-700 bg-clay-800 after:absolute after:left-0.5 after:top-0.5 after:h-5 after:w-5 after:rounded-full after:bg-parchment-400 after:transition-all peer-checked:border-gold-500 peer-checked:bg-gold-600 peer-checked:after:translate-x-full peer-checked:after:bg-white"></div>
+						<input
+							type="checkbox"
+							bind:checked={cfg.enricher.contentanalyzer.enabled}
+							class="peer sr-only"
+						/>
+						<div
+							class="h-6 w-11 rounded-full border border-clay-700 bg-clay-800 peer-checked:border-gold-500 peer-checked:bg-gold-600 after:absolute after:top-0.5 after:left-0.5 after:h-5 after:w-5 after:rounded-full after:bg-parchment-400 after:transition-transform peer-checked:after:translate-x-full peer-checked:after:bg-white"
+						></div>
 						<span class="ml-2 text-sm text-parchment-300">Enabled</span>
 					</label>
 				</div>
 				{#if cfg.enricher.contentanalyzer.enabled}
-				<div class="grid gap-4 sm:grid-cols-2">
-					<div>
-						<label for="llm-adapter" class="mb-1 block text-sm font-medium text-parchment-200">
-							Adapter
-						</label>
-						<select
-							id="llm-adapter"
-							bind:value={cfg.enricher.contentanalyzer.llm.adapter}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
-						>
-							{#each Object.keys(llmModels.adapters) as adapter (adapter)}
-								<option value={adapter}>{adapter}</option>
-							{/each}
-						</select>
-					</div>
-
-					<div>
-						<label for="llm-provider" class="mb-1 block text-sm font-medium text-parchment-200">
-							Provider
-						</label>
-						<select
-							id="llm-provider"
-							bind:value={cfg.enricher.contentanalyzer.llm.provider}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
-						>
-							{#each selectedAdapterProviders as provider (provider)}
-								<option value={provider}>{provider}</option>
-							{/each}
-						</select>
-					</div>
-
-					<div>
-						<label for="llm-model" class="mb-1 block text-sm font-medium text-parchment-200">
-							Model
-						</label>
-						<select
-							id="llm-model"
-							bind:value={cfg.enricher.contentanalyzer.llm.model}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
-						>
-							{#each selectedProviderModels as m (m.id)}
-								<option value={m.id}>{m.id}</option>
-							{/each}
-						</select>
-					</div>
-
-					<div>
-						<label for="llm-token" class="mb-1 block text-sm font-medium text-parchment-200">
-							Token
-						</label>
-						<div class="flex gap-2">
-							<input
-								id="llm-token"
-								type={showToken ? 'text' : 'password'}
-								bind:value={cfg.enricher.contentanalyzer.llm.token}
-								placeholder="sk-..."
-								autocomplete="off"
-								class="flex-1 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:outline-none"
-							/>
-							<button
-								type="button"
-								onclick={() => (showToken = !showToken)}
-								class="rounded-lg border border-clay-800 px-3 text-sm text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
+					<div class="grid gap-4 sm:grid-cols-2">
+						<div>
+							<label for="llm-adapter" class="mb-1 block text-sm font-medium text-parchment-200">
+								Adapter
+							</label>
+							<select
+								id="llm-adapter"
+								bind:value={cfg.enricher.contentanalyzer.llm.adapter}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 							>
-								{showToken ? 'Hide' : 'Show'}
-							</button>
+								{#each Object.keys(llmModels.adapters) as adapter (adapter)}
+									<option value={adapter}>{adapter}</option>
+								{/each}
+							</select>
+						</div>
+
+						<div>
+							<label for="llm-provider" class="mb-1 block text-sm font-medium text-parchment-200">
+								Provider
+							</label>
+							<select
+								id="llm-provider"
+								bind:value={cfg.enricher.contentanalyzer.llm.provider}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
+							>
+								{#each selectedAdapterProviders as provider (provider)}
+									<option value={provider}>{provider}</option>
+								{/each}
+							</select>
+						</div>
+
+						<div>
+							<label for="llm-model" class="mb-1 block text-sm font-medium text-parchment-200">
+								Model
+							</label>
+							<select
+								id="llm-model"
+								bind:value={cfg.enricher.contentanalyzer.llm.model}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
+							>
+								{#each selectedProviderModels as m (m.id)}
+									<option value={m.id}>{m.id}</option>
+								{/each}
+							</select>
+						</div>
+
+						<div>
+							<label for="llm-token" class="mb-1 block text-sm font-medium text-parchment-200">
+								Token
+							</label>
+							<div class="flex gap-2">
+								<input
+									id="llm-token"
+									type={showToken ? 'text' : 'password'}
+									bind:value={cfg.enricher.contentanalyzer.llm.token}
+									placeholder="sk-…"
+									autocomplete="off"
+									class="flex-1 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:outline-none"
+								/>
+								<button
+									type="button"
+									onclick={() => (showToken = !showToken)}
+									class="rounded-lg border border-clay-800 px-3 text-sm text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
+								>
+									{showToken ? 'Hide' : 'Show'}
+								</button>
+							</div>
 						</div>
 					</div>
-				</div>
 
-				<div class="mt-4 grid gap-4 sm:grid-cols-2">
-					<div>
-						<label for="llm-temperature" class="mb-1 block text-sm font-medium text-parchment-200">
-							Temperature
-						</label>
-						<input
-							id="llm-temperature"
-							type="number"
-							min="0"
-							max="2"
-							step="0.1"
-							bind:value={cfg.enricher.contentanalyzer.llm.temperature}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
-						/>
+					<div class="mt-4 grid gap-4 sm:grid-cols-2">
+						<div>
+							<label
+								for="llm-temperature"
+								class="mb-1 block text-sm font-medium text-parchment-200"
+							>
+								Temperature
+							</label>
+							<input
+								id="llm-temperature"
+								type="number"
+								min="0"
+								max="2"
+								step="0.1"
+								bind:value={cfg.enricher.contentanalyzer.llm.temperature}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
+							/>
+						</div>
 					</div>
-				</div>
 
-				<div class="mt-4">
-					<label
-						for="content-analyzer-prompt-template"
-						class="mb-1 block text-sm font-medium text-parchment-200"
-					>
-						Prompt template (advanced)
-					</label>
-					<p class="mb-2 text-xs text-parchment-500">
-						Leave empty for default. Available placeholders: {`{{.DocTypePrompt}}`}, {`{{.TagsPrompt}}`},
-						{`{{.PeoplePrompt}}`}, {`{{.Text}}`} (required)
-					</p>
-					<textarea
-						id="content-analyzer-prompt-template"
-						rows="8"
-						bind:value={cfg.enricher.contentanalyzer.prompt_template}
-						spellcheck="false"
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 font-mono text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
-					></textarea>
-				</div>
-			{/if}
+					<div class="mt-4">
+						<label
+							for="content-analyzer-prompt-template"
+							class="mb-1 block text-sm font-medium text-parchment-200"
+						>
+							Prompt template (advanced)
+						</label>
+						<p class="mb-2 text-xs text-parchment-500">
+							Leave empty for default. Available placeholders: {`{{.DocTypePrompt}}`}, {`{{.TagsPrompt}}`},
+							{`{{.PeoplePrompt}}`}, {`{{.Text}}`} (required)
+						</p>
+						<textarea
+							id="content-analyzer-prompt-template"
+							rows="8"
+							bind:value={cfg.enricher.contentanalyzer.prompt_template}
+							spellcheck="false"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 font-mono text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
+						></textarea>
+					</div>
+				{/if}
 			</section>
 
 			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
@@ -1241,6 +1283,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							<option value="silent">silent</option>
 							<option value="fatal">fatal</option>
 							<option value="error">error</option>
+							<option value="warn">warn</option>
 							<option value="info">info</option>
 							<option value="debug">debug</option>
 						</select>
