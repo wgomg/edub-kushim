@@ -55,6 +55,22 @@ func (s *People) ListAll(ctx context.Context) ([]database.People, error) {
 	return people, nil
 }
 
+func (s *People) Count(ctx context.Context) (int64, error) {
+	count, err := s.queries.CountPeople(ctx)
+	if err != nil {
+		return 0, errs.FromDB(err, "count people")
+	}
+	return count, nil
+}
+
+func (s *People) CountByName(ctx context.Context, prefix string) (int64, error) {
+	count, err := s.queries.CountPeopleByName(ctx, prefix+"%")
+	if err != nil {
+		return 0, errs.FromDB(err, "count people by name")
+	}
+	return count, nil
+}
+
 func (s *People) ListWithDocumentCount(ctx context.Context, limit, offset int32) ([]database.ListPeopleWithDocumentCountRow, error) {
 	people, err := s.queries.ListPeopleWithDocumentCount(ctx, database.ListPeopleWithDocumentCountParams{
 		Limit:  limit,
@@ -66,10 +82,11 @@ func (s *People) ListWithDocumentCount(ctx context.Context, limit, offset int32)
 	return people, nil
 }
 
-func (s *People) SearchByNameWithDocumentCount(ctx context.Context, prefix string, limit int32) ([]database.SearchPeopleByNameWithDocumentCountRow, error) {
+func (s *People) SearchByNameWithDocumentCount(ctx context.Context, prefix string, limit, offset int32) ([]database.SearchPeopleByNameWithDocumentCountRow, error) {
 	people, err := s.queries.SearchPeopleByNameWithDocumentCount(ctx, database.SearchPeopleByNameWithDocumentCountParams{
-		Name:  prefix + "%",
-		Limit: limit,
+		Name:   prefix + "%",
+		Limit:  limit,
+		Offset: offset,
 	})
 	if err != nil {
 		return nil, errs.FromDB(err, "search people with document count")

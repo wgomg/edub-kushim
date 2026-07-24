@@ -185,6 +185,49 @@ func TestPeople_Delete(t *testing.T) {
 	})
 }
 
+func TestPeople_Count(t *testing.T) {
+	svc, _ := newTestPeople(t)
+	ctx := context.Background()
+
+	results, _ := svc.Create(ctx, []CreatePersonInput{
+		{Name: "CountTest"},
+	})
+	testutil.AssertEqual(t, results[0].Status, Created, "created")
+
+	count, err := svc.Count(ctx)
+	testutil.AssertNoError(t, err, "count")
+	if count < 1 {
+		t.Fatalf("expected count >= 1, got %d", count)
+	}
+}
+
+func TestPeople_CountByName(t *testing.T) {
+	svc, _ := newTestPeople(t)
+	ctx := context.Background()
+
+	svc.Create(ctx, []CreatePersonInput{
+		{Name: "UniqueAlpha1"},
+		{Name: "UniqueAlpha2"},
+		{Name: "UniqueBeta"},
+	})
+
+	countAll, err := svc.CountByName(ctx, "Unique")
+	testutil.AssertNoError(t, err, "count all")
+	if countAll < 3 {
+		t.Fatalf("expected count >= 3, got %d", countAll)
+	}
+
+	countAlpha, err := svc.CountByName(ctx, "UniqueAlpha")
+	testutil.AssertNoError(t, err, "count alpha")
+	if countAlpha != 2 {
+		t.Fatalf("expected count 2, got %d", countAlpha)
+	}
+
+	countNone, err := svc.CountByName(ctx, "Nonexistent")
+	testutil.AssertNoError(t, err, "count nonexistent")
+	testutil.AssertEqual(t, countNone, int64(0), "zero for nonexistent")
+}
+
 func TestNormalizeForDB_roundtrip(t *testing.T) {
 	name := "María-José O'Brien"
 	normalized := utils.NormalizeForDB(name)

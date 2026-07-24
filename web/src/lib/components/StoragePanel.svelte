@@ -198,7 +198,6 @@
 						width="100%"
 						viewBox="0 0 {svgWidth} {svgHeight}"
 						class="overflow-visible"
-						style="max-width: {svgWidth}px"
 					>
 						<defs>
 							<linearGradient id="areaGrad" x1="0" x2="0" y1="0" y2="1">

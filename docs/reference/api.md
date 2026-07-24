@@ -192,7 +192,7 @@ See `AuthMiddleware` under `server.go` → Functions.
   - **Fields**: `services *itypes.CrudServices`, `logger *utils.Logger`
   - **Methods**:
     - `NewPeopleHandler(services, logger) *PeopleHandler`
-    - `List(w, r)` — `GET /api/v1/people?q=<prefix>&limit=50&offset=0` — With `q`: searches by prefix via `SearchByNameWithDocumentCount`. Without `q`: lists paginated via `ListWithDocumentCount`. Returns `PersonResponse[]` with `document_count` per person.
+    - `List(w, r)` — `GET /api/v1/people?q=<prefix>&limit=50&offset=0` — With `q`: searches by prefix via `SearchByNameWithDocumentCount`. Without `q`: lists paginated via `ListWithDocumentCount`. Returns `PersonListResponse` envelope (`{results: PersonResponse[], total: int64}`) with `document_count` per person.
     - `Create(w, r)` — `POST /api/v1/people` — Accepts `{name, name_native}`. `Created` → 201, `Conflict` → 409 with existing `{id,name,name_native}`, `Invalid` → 400.
     - `Update(w, r)` — `PUT /api/v1/people/{id}` — Accepts `{name, name_native}`. `Updated`/`Noop` → 200, `Conflict` → 409, `NotFound` → 404, `Invalid` → 400.
     - `Delete(w, r)` — `DELETE /api/v1/people/{id}` — `Deleted` → 204 (CASCADE removes `document_people` rows), `NotFound` → 404.
@@ -390,6 +390,8 @@ See `AuthMiddleware` under `server.go` → Functions.
 
 - `CreatePersonRequest` — `Name string`, `NameNative string`
 - `UpdatePersonRequest` — `Name string`, `NameNative string`
+- `PersonResponse` — `ID int64`, `Name string`, `NameNative string`, `PersonTypeID int64`, `PersonTypeName string`, `PersonTypeDescription string`, `DocumentCount int64`
+- `PersonListResponse` — `Results []PersonResponse`, `Total int64`
 - `CreatePeopleTypeRequest` — `Name string`, `Description string`
 - `UpdatePeopleTypeRequest` — `Name string`, `Description string`
 - `PeopleTypeResponse` — `ID int64`, `Name string`, `Description string`

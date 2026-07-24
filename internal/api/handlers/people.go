@@ -35,42 +35,51 @@ func (h *PeopleHandler) List(w http.ResponseWriter, r *http.Request) {
 	limit := pb.GetInt64("limit", 50, 1, 100)
 	offset := pb.GetInt64("offset", 0, 0, 100000)
 
-	if q != "" {
-		people, err := h.services.People.SearchByNameWithDocumentCount(ctx, q, int32(limit))
-		if err != nil {
-			writeServiceError(w, h.logger, &reqID, "list people", err)
-			return
-		}
-		response := make([]types.PersonResponse, len(people))
-		for i, p := range people {
-			nameNative := ""
-			if p.NameNative.Valid {
-				nameNative = p.NameNative.String
-			}
-			response[i] = types.PersonResponse{ID: p.ID, Name: p.Name, NameNative: nameNative, DocumentCount: p.DocumentCount}
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
-		return
-	}
+	var total int64
+	var err error
 
-	people, err := h.services.People.ListWithDocumentCount(ctx, int32(limit), int32(offset))
+	var responses []types.PersonResponse
+
+	if q != "" {
+		people, searchErr := h.services.People.SearchByNameWithDocumentCount(ctx, q, int32(limit), int32(offset))
+		err = searchErr
+		if err == nil {
+			total, err = h.services.People.CountByName(ctx, q)
+		}
+		if err == nil {
+			responses = make([]types.PersonResponse, len(people))
+			for i, p := range people {
+				nameNative := ""
+				if p.NameNative.Valid {
+					nameNative = p.NameNative.String
+				}
+				responses[i] = types.PersonResponse{ID: p.ID, Name: p.Name, NameNative: nameNative, DocumentCount: p.DocumentCount}
+			}
+		}
+	} else {
+		people, listErr := h.services.People.ListWithDocumentCount(ctx, int32(limit), int32(offset))
+		err = listErr
+		if err == nil {
+			total, err = h.services.People.Count(ctx)
+		}
+		if err == nil {
+			responses = make([]types.PersonResponse, len(people))
+			for i, p := range people {
+				nameNative := ""
+				if p.NameNative.Valid {
+					nameNative = p.NameNative.String
+				}
+				responses[i] = types.PersonResponse{ID: p.ID, Name: p.Name, NameNative: nameNative, DocumentCount: p.DocumentCount}
+			}
+		}
+	}
 	if err != nil {
 		writeServiceError(w, h.logger, &reqID, "list people", err)
 		return
 	}
 
-	response := make([]types.PersonResponse, len(people))
-	for i, p := range people {
-		nameNative := ""
-		if p.NameNative.Valid {
-			nameNative = p.NameNative.String
-		}
-		response[i] = types.PersonResponse{ID: p.ID, Name: p.Name, NameNative: nameNative, DocumentCount: p.DocumentCount}
-	}
-
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	json.NewEncoder(w).Encode(types.PersonListResponse{Results: responses, Total: total})
 }
 
 func (h *PeopleHandler) Create(w http.ResponseWriter, r *http.Request) {

@@ -10,6 +10,28 @@ import (
 	"database/sql"
 )
 
+const countPeople = `-- name: CountPeople :one
+SELECT COUNT(*) FROM people
+`
+
+func (q *Queries) CountPeople(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countPeople)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countPeopleByName = `-- name: CountPeopleByName :one
+SELECT COUNT(*) FROM people WHERE name LIKE $1
+`
+
+func (q *Queries) CountPeopleByName(ctx context.Context, name string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countPeopleByName, name)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createPeople = `-- name: CreatePeople :one
 INSERT INTO people (name, name_native, normalized_name)
 VALUES ($1, $2, $3)
@@ -257,12 +279,13 @@ FROM people p
 LEFT JOIN document_people dp ON p.id = dp.people_id
 WHERE p.name LIKE $1
 GROUP BY p.id
-ORDER BY p.name ASC LIMIT $2
+ORDER BY p.name ASC LIMIT $2 OFFSET $3
 `
 
 type SearchPeopleByNameWithDocumentCountParams struct {
-	Name  string
-	Limit int32
+	Name   string
+	Limit  int32
+	Offset int32
 }
 
 type SearchPeopleByNameWithDocumentCountRow struct {
@@ -275,7 +298,7 @@ type SearchPeopleByNameWithDocumentCountRow struct {
 }
 
 func (q *Queries) SearchPeopleByNameWithDocumentCount(ctx context.Context, arg SearchPeopleByNameWithDocumentCountParams) ([]SearchPeopleByNameWithDocumentCountRow, error) {
-	rows, err := q.db.QueryContext(ctx, searchPeopleByNameWithDocumentCount, arg.Name, arg.Limit)
+	rows, err := q.db.QueryContext(ctx, searchPeopleByNameWithDocumentCount, arg.Name, arg.Limit, arg.Offset)
 	if err != nil {
 		return nil, err
 	}

@@ -234,7 +234,7 @@ export const api = {
 			if (q) params.set('q', q);
 			params.set('limit', String(limit));
 			params.set('offset', String(offset));
-			return request(`/api/v1/people?${params.toString()}`).then((data) => data ?? []);
+			return request(`/api/v1/people?${params.toString()}`);
 		},
 		create: (body) =>
 			requestRaw('/api/v1/people', {

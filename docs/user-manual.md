@@ -899,7 +899,7 @@ GET /api/v1/people-types
 GET /api/v1/document-types
 ```
 
-Response `200` — array of `{ id, name }` (people-types and document-types add `description`).
+Response `200` — `PersonListResponse` envelope: `{ "results": [{ "id": 1, "name": "…", "document_count": N }], "total": N }` (people-types and document-types add `description`).
 
 ### Saved Searches
 

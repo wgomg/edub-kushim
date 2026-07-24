@@ -159,7 +159,7 @@ type MissingCountsRow struct {
 
 func (q *Queries) LanguageDistribution(ctx context.Context) ([]DistributionRow, error) {
 	rows, err := q.db.QueryContext(ctx,
-		`SELECT language, COUNT(*) as count FROM document WHERE language != 'und' AND language != '' GROUP BY language ORDER BY count DESC`,
+		`SELECT language, COUNT(*) as count FROM document WHERE language != 'und' AND language != '' GROUP BY language ORDER BY count DESC LIMIT 10`,
 	)
 	if err != nil {
 		return nil, err

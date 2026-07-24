@@ -84,7 +84,7 @@
 	});
 
 	async function load() {
-		if (data.length === 0) loading = true;
+		loading = true;
 		error = '';
 		selectedKeys = new Set();
 		try {
@@ -208,6 +208,7 @@
 						<th class="w-10 px-4 py-3 font-medium whitespace-nowrap select-none" scope="col">
 							<input
 								type="checkbox"
+								aria-label="Select all"
 								checked={data.length > 0 && data.every((row) => selectedKeys.has(row[keyField]))}
 								onchange={toggleAll}
 								class="h-4 w-4 cursor-pointer accent-gold-500"
@@ -244,16 +245,14 @@
 				</tr>
 			</thead>
 			<tbody class="divide-y divide-clay-800">
-				{#if loading && data.length === 0}
+				{#if loading}
 					<tr class="bg-clay-950">
 						{#if selectable}
-							<td class="w-10 px-4 py-8"></td>
+							<td class="w-10 px-4 py-3"></td>
 						{/if}
 						{#each columns as col (col.key)}
-							<td class="px-4 py-8 text-parchment-500">
-								{#if col.key === columns[0].key}
-									Loading…
-								{/if}
+							<td class="px-4 py-3">
+								<div class="h-4 w-3/4 animate-pulse rounded bg-clay-800 min-h-[1rem] motion-reduce:animate-none"></div>
 							</td>
 						{/each}
 					</tr>

@@ -510,7 +510,7 @@ func TestPeopleCrud(t *testing.T) {
 	})
 
 	t.Run("search by prefix", func(t *testing.T) {
-		ppl, err := env.peopleSvc.SearchByNameWithDocumentCount(ctx, "Alice", 10)
+		ppl, err := env.peopleSvc.SearchByNameWithDocumentCount(ctx, "Alice", 10, 0)
 		testutil.AssertNoError(t, err, "search")
 		if len(ppl) == 0 {
 			t.Fatal("expected at least 1 result")

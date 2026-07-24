@@ -42,13 +42,19 @@ LEFT JOIN document_people dp ON p.id = dp.people_id
 GROUP BY p.id
 ORDER BY p.created_at DESC LIMIT $1 OFFSET $2;
 
+-- name: CountPeople :one
+SELECT COUNT(*) FROM people;
+
+-- name: CountPeopleByName :one
+SELECT COUNT(*) FROM people WHERE name LIKE $1;
+
 -- name: SearchPeopleByNameWithDocumentCount :many
 SELECT p.*, COUNT(dp.document_id) AS document_count
 FROM people p
 LEFT JOIN document_people dp ON p.id = dp.people_id
 WHERE p.name LIKE $1
 GROUP BY p.id
-ORDER BY p.name ASC LIMIT $2;
+ORDER BY p.name ASC LIMIT $2 OFFSET $3;
 
 -- name: DeletePeople :exec
 DELETE FROM people WHERE id = $1;

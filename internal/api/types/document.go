@@ -1,5 +1,10 @@
 package types
 
+type PersonListResponse struct {
+	Results []PersonResponse `json:"results"`
+	Total   int64            `json:"total"`
+}
+
 type TagResponse struct {
 	ID            int64  `json:"id"`
 	Name          string `json:"name"`

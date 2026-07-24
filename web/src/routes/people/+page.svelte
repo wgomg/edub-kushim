@@ -4,7 +4,9 @@
 	import { defaultFilter } from '$lib/stores/searchFilter.js';
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
-	import { EDIT_ICON, DELETE_ICON, BTN_BASE } from '$lib/icons.js';
+	import { EDIT_ICON, DELETE_ICON, BTN_BASE, actionButton } from '$lib/icons.js';
+	import { escapeHtml } from '$lib/utils/html.js';
+	import DataTable from '$lib/components/DataTable.svelte';
 	import Modal from '$lib/components/Modal.svelte';
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
@@ -12,7 +14,6 @@
 
 	let activeTab = $state(new URL(window.location.href).searchParams.get('tab') || 'people');
 
-	let people = $state([]);
 	let showPeopleModal = $state(false);
 	let editingPerson = $state(null);
 	let personFormName = $state('');
@@ -26,14 +27,47 @@
 	let personTypeFormDescription = $state('');
 	let personTypeError = $state('');
 
+	let query = $state('');
+	let refreshKey = $state(0);
+
+	const columns = [
+		{ key: 'name', label: 'Name', sortable: true, width: '100%' },
+		{ key: 'name_native', label: 'Native Name', sortable: false },
+		{
+			key: 'document_count',
+			label: 'Documents',
+			sortable: true,
+			cell: (v) => String(v ?? 0),
+			width: '100px'
+		},
+		{
+			key: 'actions',
+			label: 'Actions',
+			sortable: false,
+			noUnderline: true,
+			cellClass: 'whitespace-nowrap',
+			cell: (_v, row) => {
+				if (!authStore.authEnabled() || !authStore.isEditor()) return '';
+				const safeName = escapeHtml(row.name);
+				const safeNative = escapeHtml(row.name_native || '');
+				return `${actionButton(EDIT_ICON, 'Edit', 'text-parchment-400 hover:text-gold-500', { 'data-edit-person': row.id, 'data-person-name': safeName, 'data-person-native': safeNative })}
+${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-500', { 'data-delete-person': row.id, 'data-person-name': safeName })}`;
+			}
+		}
+	];
+
+	function filterByPerson(row) {
+		filterStore.set({ ...defaultFilter, people: [{ name: row.name, type: 'author' }] });
+		goto('/documents');
+	}
+
+	async function fetch({ limit, offset }) {
+		return await api.people.list(query, limit, offset);
+	}
+
 	onMount(() => {
-		loadPeople();
 		loadPersonTypes();
 	});
-
-	async function loadPeople() {
-		people = await api.people.list();
-	}
 
 	async function loadPersonTypes() {
 		personTypes = await api.peopleTypes.list();
@@ -71,7 +105,7 @@
 		}
 		if (result.ok) {
 			showPeopleModal = false;
-			await loadPeople();
+			refreshKey++;
 		} else {
 			toastStore.error('Failed to save person');
 		}
@@ -85,7 +119,25 @@
 		});
 		if (!ok) return;
 		await api.people.delete(p.id);
-		await loadPeople();
+		refreshKey++;
+	}
+
+	function handlePageClick(e) {
+		const editBtn = e.target.closest('[data-edit-person]');
+		if (editBtn) {
+			const id = parseInt(editBtn.getAttribute('data-edit-person'));
+			const name = editBtn.getAttribute('data-person-name');
+			const nameNative = editBtn.getAttribute('data-person-native') || '';
+			openEditPerson({ id, name, name_native: nameNative });
+			return;
+		}
+		const deleteBtn = e.target.closest('[data-delete-person]');
+		if (deleteBtn) {
+			const id = parseInt(deleteBtn.getAttribute('data-delete-person'));
+			const name = deleteBtn.getAttribute('data-person-name');
+			handleDeletePerson({ id, name });
+			return;
+		}
 	}
 
 	function openNewPersonType() {
@@ -187,80 +239,29 @@
 				{/if}
 			</div>
 
-			<div class="overflow-x-auto rounded-lg border border-clay-800">
-				<table class="w-full table-auto text-sm">
-					<thead class="sticky top-0 bg-clay-900 text-left text-parchment-400">
-						<tr>
-							<th scope="col" class="px-4 py-3 font-medium whitespace-nowrap">Name</th>
-							<th scope="col" class="px-4 py-3 font-medium whitespace-nowrap">Native Name</th>
-							<th scope="col" class="px-4 py-3 font-medium whitespace-nowrap">Documents</th>
-							<th scope="col" class="w-[1%] px-4 py-3 font-medium whitespace-nowrap">Actions</th>
-						</tr>
-					</thead>
-					<tbody class="divide-y divide-clay-800">
-						{#if people.length === 0}
-							<tr class="bg-clay-950">
-								<td class="px-4 py-8 text-parchment-500" colspan="4">No people found.</td>
-							</tr>
-						{:else}
-							{#each people as p (p.id)}
-								<tr
-									class="cursor-pointer bg-clay-950 hover:bg-clay-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
-									tabindex="0"
-									role="link"
-									onclick={() => {
-										filterStore.set({
-											...defaultFilter,
-											people: [{ name: p.name, type: 'author' }]
-										});
-										goto('/documents');
-									}}
-									onkeydown={(e) => {
-										if (e.key === 'Enter') {
-											filterStore.set({
-												...defaultFilter,
-												people: [{ name: p.name, type: 'author' }]
-											});
-											goto('/documents');
-										}
-									}}
-								>
-									<td class="px-4 py-3 text-parchment-200">{p.name}</td>
-									<td class="px-4 py-3 text-parchment-400">{p.name_native || ''}</td>
-									<td class="px-4 py-3 text-parchment-400 tabular-nums">{p.document_count ?? 0}</td>
-									<td class="px-4 py-3 whitespace-nowrap">
-										{#if !authStore.authEnabled() || authStore.isEditor()}
-											<div class="flex gap-2">
-												<button
-													onclick={(e) => {
-														e.stopPropagation();
-														openEditPerson(p);
-													}}
-													title="Edit"
-													aria-label="Edit person"
-													class="{BTN_BASE} text-parchment-400 hover:text-gold-500"
-												>
-													{@html EDIT_ICON}
-												</button>
-												<button
-													onclick={(e) => {
-														e.stopPropagation();
-														handleDeletePerson(p);
-													}}
-													title="Delete"
-													aria-label="Delete person"
-													class="{BTN_BASE} text-parchment-400 hover:text-terracotta-500"
-												>
-													{@html DELETE_ICON}
-												</button>
-											</div>
-										{/if}
-									</td>
-								</tr>
-							{/each}
-						{/if}
-					</tbody>
-				</table>
+			<div class="flex items-center gap-2">
+				<label for="people-filter" class="sr-only">Filter people</label>
+				<input
+					id="people-filter"
+					type="text"
+					bind:value={query}
+					oninput={() => refreshKey++}
+					name="people-filter"
+					placeholder="Filter people…"
+					class="w-full max-w-xs rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
+				/>
+			</div>
+
+			<div onclick={handlePageClick} onkeydown={() => {}} role="presentation">
+				<DataTable
+					{columns}
+					{fetch}
+					title=""
+					defaultPageSize={50}
+					pageSizes={[10, 25, 50, 100]}
+					{refreshKey}
+					onRowClick={filterByPerson}
+				/>
 			</div>
 		</div>
 

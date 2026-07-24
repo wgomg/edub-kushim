@@ -532,6 +532,29 @@ func TestAnalyticsQueries(t *testing.T) {
 	})
 }
 
+func TestLanguageDistributionLimit(t *testing.T) {
+	q, db := NewTestQueries(t)
+	defer db.Close()
+	resetDB(t, q)
+	ctx := context.Background()
+
+	for i := range 12 {
+		lang := fmt.Sprintf("l%02d", i)
+		_, err := q.db.ExecContext(ctx,
+			`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, mime_type, file_size, original_path, storage_path, page_count, word_count, char_count, language)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+			fmt.Sprintf("langlim-%d", i), fmt.Sprintf("doc%d.pdf", i), fmt.Sprintf("md5-%d", i), fmt.Sprintf("sha-%d", i),
+			"application/pdf", 100, fmt.Sprintf("/tmp/o%d.pdf", i), fmt.Sprintf("/tmp/s%d.pdf", i),
+			1, 5, 25, lang,
+		)
+		assertNoError(t, err, "insert doc with language")
+	}
+
+	langs, err := q.LanguageDistribution(ctx)
+	assertNoError(t, err, "language distribution")
+	assertEqual(t, len(langs), 10, "limited to 10 languages")
+}
+
 func TestStructuredSearchMissingFilters(t *testing.T) {
 	q, db := NewTestQueries(t)
 	defer db.Close()
@@ -612,7 +635,7 @@ func TestStructuredSearchMissingFilters(t *testing.T) {
 
 	t.Run("MissingType filters document_type_id=1", func(t *testing.T) {
 		results, err := q.SearchDocumentsStructured(ctx, SearchFilter{
-			Limit:      100,
+			Limit:       100,
 			MissingType: true,
 		})
 		assertNoError(t, err, "search missing type")
@@ -724,7 +747,7 @@ func TestWithDocumentCountQueries(t *testing.T) {
 
 	t.Run("SearchTagsByNameWithDocumentCount", func(t *testing.T) {
 		tags, err := q.SearchTagsByNameWithDocumentCount(ctx, SearchTagsByNameWithDocumentCountParams{
-			Name:   "%finance%", Limit: 10, Offset: 0,
+			Name: "%finance%", Limit: 10, Offset: 0,
 		})
 		assertNoError(t, err, "search tags with count")
 		for _, tg := range tags {
@@ -740,7 +763,7 @@ func TestWithDocumentCountQueries(t *testing.T) {
 
 	t.Run("SearchPeopleByNameWithDocumentCount", func(t *testing.T) {
 		ppl, err := q.SearchPeopleByNameWithDocumentCount(ctx, SearchPeopleByNameWithDocumentCountParams{
-			Name: "%alice%", Limit: 10,
+			Name: "%alice%", Limit: 10, Offset: 0,
 		})
 		assertNoError(t, err, "search people with count")
 		_ = ppl
@@ -768,6 +791,18 @@ func TestWithDocumentCountQueries(t *testing.T) {
 			assertEqual(t, dt.DocumentCount >= int64(0), true, "count non-negative")
 		}
 	})
+
+	t.Run("CountPeople", func(t *testing.T) {
+		count, err := q.CountPeople(ctx)
+		assertNoError(t, err, "count people")
+		assertEqual(t, count > int64(0), true, "has seeded people")
+	})
+
+	t.Run("CountPeopleByName", func(t *testing.T) {
+		count, err := q.CountPeopleByName(ctx, "%alice%")
+		assertNoError(t, err, "count people by name")
+		assertEqual(t, count >= int64(0), true, "count is non-negative")
+	})
 }
 
 func TestTaskHealthQueries(t *testing.T) {
@@ -792,20 +827,20 @@ func TestTaskHealthQueries(t *testing.T) {
 	})
 
 	t.Run("with mixed tasks", func(t *testing.T) {
-	id1, err := q.CreateTask(ctx, CreateTaskParams{
-		TaskID: "th-completed", TaskType: "consume", Status: "pending",
-	})
-	assertNoError(t, err, "create completed task")
+		id1, err := q.CreateTask(ctx, CreateTaskParams{
+			TaskID: "th-completed", TaskType: "consume", Status: "pending",
+		})
+		assertNoError(t, err, "create completed task")
 		_, err = q.ClaimTask(ctx, id1)
 		assertNoError(t, err, "claim")
 		_, err = q.CompleteTask(ctx, CompleteTaskParams{ID: id1, Result: nil})
 		assertNoError(t, err, "complete")
 
-	id2, err := q.CreateTask(ctx, CreateTaskParams{
-		TaskID: "th-failed", TaskType: "consume", Status: "pending",
-		BatchID: sql.NullString{String: "th-batch-1", Valid: true},
-	})
-	assertNoError(t, err, "create failed task")
+		id2, err := q.CreateTask(ctx, CreateTaskParams{
+			TaskID: "th-failed", TaskType: "consume", Status: "pending",
+			BatchID: sql.NullString{String: "th-batch-1", Valid: true},
+		})
+		assertNoError(t, err, "create failed task")
 		assertNoError(t, q.FailTask(ctx, FailTaskParams{ID: id2, Error: sql.NullString{String: "x", Valid: true}}), "fail")
 
 		_, err = q.CreateTask(ctx, CreateTaskParams{
@@ -814,11 +849,11 @@ func TestTaskHealthQueries(t *testing.T) {
 		})
 		assertNoError(t, err, "create pending task")
 
-	id4, err := q.CreateTask(ctx, CreateTaskParams{
-		TaskID: "th-processing", TaskType: "consume", Status: "pending",
-		BatchID: sql.NullString{String: "th-batch-2", Valid: true},
-	})
-	assertNoError(t, err, "create processing task")
+		id4, err := q.CreateTask(ctx, CreateTaskParams{
+			TaskID: "th-processing", TaskType: "consume", Status: "pending",
+			BatchID: sql.NullString{String: "th-batch-2", Valid: true},
+		})
+		assertNoError(t, err, "create processing task")
 		rows, err := q.ClaimTask(ctx, id4)
 		assertNoError(t, err, "claim processing task")
 		assertEqual(t, rows, int64(1), "claimed")
