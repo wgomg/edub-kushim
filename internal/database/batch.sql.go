@@ -66,6 +66,17 @@ func (q *Queries) CountLiveBatches(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const countPausedBatches = `-- name: CountPausedBatches :one
+SELECT COUNT(*) FROM batch WHERE status = 'paused'
+`
+
+func (q *Queries) CountPausedBatches(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countPausedBatches)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countQueuedBatches = `-- name: CountQueuedBatches :one
 SELECT COUNT(*) FROM batch WHERE status = 'queued'
 `
@@ -330,6 +341,33 @@ func (q *Queries) ListBatchOverviews(ctx context.Context, arg ListBatchOverviews
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPausedBatches = `-- name: ListPausedBatches :many
+SELECT id FROM batch WHERE status = 'paused' ORDER BY created_at
+`
+
+func (q *Queries) ListPausedBatches(ctx context.Context) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listPausedBatches)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

@@ -188,6 +188,18 @@ func consumeHandler(c *Container, args []string) error {
 		return fmt.Errorf("consume blocked: missing required external tools")
 	}
 
+	pausedIDs, err := client.Queries.ListPausedBatches(ctx)
+	if err != nil {
+		return fmt.Errorf("check paused batches: %w", err)
+	}
+	if len(pausedIDs) > 0 {
+		return fmt.Errorf(
+			"%d paused batch(es) exist due to LLM credit/balance errors: %s\n"+
+				"Resolve the billing issue, then resume or cancel each paused batch before creating new ones.",
+			len(pausedIDs), strings.Join(pausedIDs, ", "),
+		)
+	}
+
 	files, err := consumption.GetFiles(
 		c.config.Storage.ConsumptionDir,
 		c.config.Consumer.SupportedFiles,

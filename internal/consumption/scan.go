@@ -15,6 +15,15 @@ import (
 )
 
 func ScanAndEnqueue(ctx context.Context, cfg *config.Config, client *database.Client, logger *utils.Logger) (batchID string, enqueued int, err error) {
+	pausedCount, err := client.Queries.CountPausedBatches(ctx)
+	if err != nil {
+		return "", 0, fmt.Errorf("count paused batches: %w", err)
+	}
+	if pausedCount > 0 {
+		logger.Info(nil, "scan: skipped — %d paused batch(es) exist; resolve credit issue first", pausedCount)
+		return "", 0, nil
+	}
+
 	paths, err := utils.ListFilePaths(
 		cfg.Storage.ConsumptionDir,
 		cfg.Consumer.SupportedFiles,

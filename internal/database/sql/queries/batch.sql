@@ -151,3 +151,9 @@ LEFT JOIN LATERAL (
 LEFT JOIN batch_owner bo ON bo.batch_id = b.id
 ORDER BY b.created_at DESC
 LIMIT $1 OFFSET $2;
+
+-- name: CountPausedBatches :one
+SELECT COUNT(*) FROM batch WHERE status = 'paused';
+
+-- name: ListPausedBatches :many
+SELECT id FROM batch WHERE status = 'paused' ORDER BY created_at;

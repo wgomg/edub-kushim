@@ -186,6 +186,22 @@ If any required tool is missing, the command prints a block of install hints
 and exits with a non-zero status. Optional companions (`pngquant`) and
 tesseract language packs are shown as advisory notes but do not block.
 
+### Paused Batch Guard
+
+If one or more batches are paused due to LLM provider credit/balance errors,
+`kushim consume` (without `--batch`) refuses with a hard error listing the
+paused batch IDs:
+
+```
+Error: 2 paused batch(es) exist due to LLM credit/balance errors: 550e8400-e29b-41d4-a716-446655440000, 660e8400-e29b-41d4-a716-446655440001
+Resolve the billing issue, then resume or cancel each paused batch before creating new ones.
+```
+
+The polling daemon (`kushim queue`) also skips inbox scanning ticks when
+paused batches exist — it logs a line and waits for the next interval.
+Resolving the billing issue and resuming or cancelling all paused batches
+lifts the guard automatically.
+
 Example output with ocrmypdf + tesseract + unpaper missing:
 
 ```

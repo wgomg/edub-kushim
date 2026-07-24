@@ -821,6 +821,56 @@ func TestBatch_CountLiveBatches(t *testing.T) {
 	})
 }
 
+func TestBatch_CountPausedBatches(t *testing.T) {
+	svc, client := newTestBatch(t)
+	ctx := context.Background()
+
+	t.Run("returns zero when no paused batches", func(t *testing.T) {
+		count, err := svc.CountPausedBatches(ctx)
+		testutil.AssertNoError(t, err, "count paused")
+		testutil.AssertEqual(t, count, int64(0), "no paused batches")
+	})
+
+	t.Run("counts only paused batches", func(t *testing.T) {
+		err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{ID: "cp-1", Source: "test", Status: "paused"})
+		testutil.AssertNoError(t, err, "create paused")
+		err = client.Queries.CreateBatch(ctx, database.CreateBatchParams{ID: "cp-2", Source: "test", Status: "paused"})
+		testutil.AssertNoError(t, err, "create paused 2")
+		err = client.Queries.CreateBatch(ctx, database.CreateBatchParams{ID: "cp-q", Source: "test", Status: "queued"})
+		testutil.AssertNoError(t, err, "create queued")
+
+		count, err := svc.CountPausedBatches(ctx)
+		testutil.AssertNoError(t, err, "count paused")
+		testutil.AssertEqual(t, count, int64(2), "two paused")
+	})
+}
+
+func TestBatch_ListPausedBatches(t *testing.T) {
+	svc, client := newTestBatch(t)
+	ctx := context.Background()
+
+	t.Run("returns empty when no paused batches", func(t *testing.T) {
+		ids, err := svc.ListPausedBatches(ctx)
+		testutil.AssertNoError(t, err, "list paused")
+		testutil.AssertEqual(t, len(ids), 0, "no paused batches")
+	})
+
+	t.Run("returns paused batch ids ordered by created_at", func(t *testing.T) {
+		err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{ID: "lp-a", Source: "test", Status: "paused"})
+		testutil.AssertNoError(t, err, "create paused a")
+		err = client.Queries.CreateBatch(ctx, database.CreateBatchParams{ID: "lp-q", Source: "test", Status: "queued"})
+		testutil.AssertNoError(t, err, "create queued")
+		err = client.Queries.CreateBatch(ctx, database.CreateBatchParams{ID: "lp-b", Source: "test", Status: "paused"})
+		testutil.AssertNoError(t, err, "create paused b")
+
+		ids, err := svc.ListPausedBatches(ctx)
+		testutil.AssertNoError(t, err, "list paused")
+		testutil.AssertEqual(t, len(ids), 2, "two paused")
+		testutil.AssertEqual(t, ids[0], "lp-a", "first paused id")
+		testutil.AssertEqual(t, ids[1], "lp-b", "second paused id")
+	})
+}
+
 func TestBatch_GetNextQueuedBatch(t *testing.T) {
 	svc, client := newTestBatch(t)
 	ctx := context.Background()

@@ -307,6 +307,22 @@ func (s *Batch) IsLockedByLiveOwner(ctx context.Context, batchID string) (bool, 
 	return state == task.OwnerLive, nil
 }
 
+func (s *Batch) CountPausedBatches(ctx context.Context) (int64, error) {
+	count, err := s.queries.CountPausedBatches(ctx)
+	if err != nil {
+		return 0, errs.FromDB(err, "count paused batches")
+	}
+	return count, nil
+}
+
+func (s *Batch) ListPausedBatches(ctx context.Context) ([]string, error) {
+	ids, err := s.queries.ListPausedBatches(ctx)
+	if err != nil {
+		return nil, errs.FromDB(err, "list paused batches")
+	}
+	return ids, nil
+}
+
 func (s *Batch) CountQueuedBatches(ctx context.Context) (int64, error) {
 	count, err := s.queries.CountQueuedBatches(ctx)
 	if err != nil {

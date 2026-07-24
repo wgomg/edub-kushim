@@ -991,6 +991,53 @@ func TestGatedQueriesBlockDuringBackup(t *testing.T) {
 	})
 }
 
+func TestCountPausedBatches(t *testing.T) {
+	q, db := NewTestQueries(t)
+	defer db.Close()
+	resetDB(t, q)
+	ctx := context.Background()
+
+	count, err := q.CountPausedBatches(ctx)
+	assertNoError(t, err, "count paused (empty)")
+	assertEqual(t, count, int64(0), "no paused batches initially")
+
+	// paused batch
+	assertNoError(t, q.CreateBatch(ctx, CreateBatchParams{ID: "paused-1", Source: "test", Status: "paused"}), "create paused")
+	// non-paused batches
+	assertNoError(t, q.CreateBatch(ctx, CreateBatchParams{ID: "queued-1", Source: "test", Status: "queued"}), "create queued")
+	assertNoError(t, q.CreateBatch(ctx, CreateBatchParams{ID: "completed-1", Source: "test", Status: "completed"}), "create completed")
+
+	count, err = q.CountPausedBatches(ctx)
+	assertNoError(t, err, "count paused")
+	assertEqual(t, count, int64(1), "one paused batch")
+
+	assertNoError(t, q.CreateBatch(ctx, CreateBatchParams{ID: "paused-2", Source: "test", Status: "paused"}), "create paused 2")
+	count, err = q.CountPausedBatches(ctx)
+	assertNoError(t, err, "count paused after second")
+	assertEqual(t, count, int64(2), "two paused batches")
+}
+
+func TestListPausedBatches(t *testing.T) {
+	q, db := NewTestQueries(t)
+	defer db.Close()
+	resetDB(t, q)
+	ctx := context.Background()
+
+	ids, err := q.ListPausedBatches(ctx)
+	assertNoError(t, err, "list paused (empty)")
+	assertEqual(t, len(ids), 0, "no paused batches initially")
+
+	assertNoError(t, q.CreateBatch(ctx, CreateBatchParams{ID: "paused-a", Source: "test", Status: "paused"}), "create paused a")
+	assertNoError(t, q.CreateBatch(ctx, CreateBatchParams{ID: "queued-x", Source: "test", Status: "queued"}), "create queued")
+	assertNoError(t, q.CreateBatch(ctx, CreateBatchParams{ID: "paused-b", Source: "test", Status: "paused"}), "create paused b")
+
+	ids, err = q.ListPausedBatches(ctx)
+	assertNoError(t, err, "list paused")
+	assertEqual(t, len(ids), 2, "two paused batches")
+	assertEqual(t, ids[0], "paused-a", "first paused (ordered by created_at)")
+	assertEqual(t, ids[1], "paused-b", "second paused")
+}
+
 // --- helpers ---
 
 func insertDoc(t *testing.T, q *Queries, title, md5, sha512 string) (int64, string) {

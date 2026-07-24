@@ -236,6 +236,35 @@ func TestScanAndEnqueue_MultipleFiles(t *testing.T) {
 	}
 }
 
+func TestScanAndEnqueue_PausedBatchesSkip(t *testing.T) {
+	cfg, client, cleanup := setupScanTest(t)
+	defer cleanup()
+
+	// Create a paused batch to trigger the guard.
+	err := client.Queries.CreateBatch(context.Background(), database.CreateBatchParams{
+		ID: "paused-guard-test", Source: "test", Status: "paused",
+	})
+	if err != nil {
+		t.Fatalf("CreateBatch: %v", err)
+	}
+
+	// Add files that would normally be enqueued.
+	pdfPath := filepath.Join(cfg.Storage.ConsumptionDir, "should-not-be-processed.pdf")
+	testutil.CreateTestPDF(t, pdfPath, "content that should not be scanned")
+
+	logger := utils.NewDiscardLogger()
+	batchID, count, err := ScanAndEnqueue(context.Background(), cfg, client, logger)
+	if err != nil {
+		t.Fatalf("ScanAndEnqueue: %v", err)
+	}
+	if batchID != "" {
+		t.Errorf("batchID = %q, want empty (paused batches block scan)", batchID)
+	}
+	if count != 0 {
+		t.Errorf("count = %d, want 0 (no files should be enqueued)", count)
+	}
+}
+
 func TestQueryDuplicatesByMD5_Empty(t *testing.T) {
 	_, client, cleanup := setupScanTest(t)
 	defer cleanup()
