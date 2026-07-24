@@ -256,7 +256,7 @@ func (l *LlmAnthropic) Analyze(ctx context.Context, text string, docTypes []data
 	return &analysisResult, nil
 }
 
-func (l *LlmAnthropic) AnalyzeDocType(ctx context.Context, prevResult *AnalysisResult, headTailText string, docTypes []database.DocumentType) (string, error) {
+func (l *LlmAnthropic) AnalyzeDocType(ctx context.Context, prevResult *AnalysisResult, headTailText string, docTypes []database.DocumentType, metadata DocMetadata) (string, error) {
 	if prevResult.PassContext == nil {
 		return "", fmt.Errorf("pass context is nil")
 	}
@@ -280,7 +280,7 @@ func (l *LlmAnthropic) AnalyzeDocType(ctx context.Context, prevResult *AnalysisR
 		Language: prevResult.Language,
 	})
 
-	docTypePrompt := BuildDocTypePrompt(headTailText, docTypes)
+	docTypePrompt := BuildDocTypePrompt(headTailText, docTypes, metadata)
 
 	if err := checkContentTooLarge(l.caps, passCtx.System+"\n"+passCtx.UserPrompt+"\n"+string(assistantJSON)+"\n"+docTypePrompt); err != nil {
 		return "", err

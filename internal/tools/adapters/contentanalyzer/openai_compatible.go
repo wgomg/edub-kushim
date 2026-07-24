@@ -229,7 +229,7 @@ func (l *LlmOpenAiCompatible) Analyze(ctx context.Context, text string, docTypes
 	return &analysisResult, nil
 }
 
-func (l *LlmOpenAiCompatible) AnalyzeDocType(ctx context.Context, prevResult *AnalysisResult, headTailText string, docTypes []database.DocumentType) (string, error) {
+func (l *LlmOpenAiCompatible) AnalyzeDocType(ctx context.Context, prevResult *AnalysisResult, headTailText string, docTypes []database.DocumentType, metadata DocMetadata) (string, error) {
 	if prevResult.PassContext == nil {
 		return "", fmt.Errorf("pass context is nil")
 	}
@@ -253,7 +253,7 @@ func (l *LlmOpenAiCompatible) AnalyzeDocType(ctx context.Context, prevResult *An
 		Language: prevResult.Language,
 	})
 
-	docTypePrompt := BuildDocTypePrompt(headTailText, docTypes)
+	docTypePrompt := BuildDocTypePrompt(headTailText, docTypes, metadata)
 
 	if err := checkContentTooLarge(l.caps, passCtx.SystemMessage+"\n"+passCtx.UserPrompt+"\n"+string(assistantJSON)+"\n"+docTypePrompt); err != nil {
 		return "", err

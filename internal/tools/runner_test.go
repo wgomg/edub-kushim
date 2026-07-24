@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/wgomg/edub-kushim/internal/config"
+	"github.com/wgomg/edub-kushim/internal/tools/adapters/contentanalyzer"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -175,7 +176,7 @@ func TestAnalyzeDocType_NilContentAnalyzer(t *testing.T) {
 		config: &config.Config{},
 	}
 
-	_, err := r.AnalyzeDocType(context.Background(), nil, "head tail text", nil)
+	_, err := r.AnalyzeDocType(context.Background(), nil, "head tail text", nil, contentanalyzer.DocMetadata{})
 	if err == nil {
 		t.Fatal("expected error when content analyzer is nil")
 	}

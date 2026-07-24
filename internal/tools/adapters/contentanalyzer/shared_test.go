@@ -221,19 +221,102 @@ func TestBuildDocTypePrompt(t *testing.T) {
 	}
 	headTail := "first line\n\n[...]\n\nlast line"
 
-	prompt := BuildDocTypePrompt(headTail, docTypes)
+	t.Run("with metadata", func(t *testing.T) {
+		metadata := DocMetadata{WordCount: 15234, PageCount: 42, MimeType: "application/pdf"}
+		prompt := BuildDocTypePrompt(headTail, docTypes, metadata)
 
-	if !strings.Contains(prompt, "article") {
-		t.Error("expected prompt to contain document type name")
+		if !strings.Contains(prompt, "article") {
+			t.Error("expected prompt to contain document type name")
+		}
+		if !strings.Contains(prompt, "invoice") {
+			t.Error("expected prompt to contain second document type name")
+		}
+		if !strings.Contains(prompt, headTail) {
+			t.Error("expected prompt to contain head+tail text")
+		}
+		if !strings.Contains(prompt, "re-evaluate") {
+			t.Error("expected prompt to contain re-evaluation instruction")
+		}
+		if !strings.Contains(prompt, "Document context:") {
+			t.Error("expected prompt to contain Document context when metadata is present")
+		}
+		if !strings.Contains(prompt, "15234 total words") {
+			t.Error("expected prompt to contain word count metadata")
+		}
+		if !strings.Contains(prompt, "42 pages") {
+			t.Error("expected prompt to contain page count metadata")
+		}
+		if !strings.Contains(prompt, "application/pdf") {
+			t.Error("expected prompt to contain mime type metadata")
+		}
+	})
+
+	t.Run("without metadata", func(t *testing.T) {
+		metadata := DocMetadata{}
+		prompt := BuildDocTypePrompt(headTail, docTypes, metadata)
+
+		if !strings.Contains(prompt, "article") {
+			t.Error("expected prompt to contain document type name")
+		}
+		if !strings.Contains(prompt, "invoice") {
+			t.Error("expected prompt to contain second document type name")
+		}
+		if !strings.Contains(prompt, headTail) {
+			t.Error("expected prompt to contain head+tail text")
+		}
+		if !strings.Contains(prompt, "re-evaluate") {
+			t.Error("expected prompt to contain re-evaluation instruction")
+		}
+		if strings.Contains(prompt, "Document context:") {
+			t.Error("expected no Document context when metadata is zero-valued")
+		}
+	})
+}
+
+func TestDocMetadata_Format(t *testing.T) {
+	tests := []struct {
+		name     string
+		metadata DocMetadata
+		want     string
+	}{
+		{
+			name:     "all fields populated",
+			metadata: DocMetadata{WordCount: 15234, PageCount: 42, MimeType: "application/pdf"},
+			want:     "15234 total words, 42 pages, application/pdf",
+		},
+		{
+			name:     "only word count",
+			metadata: DocMetadata{WordCount: 3200},
+			want:     "3200 total words",
+		},
+		{
+			name:     "only page count",
+			metadata: DocMetadata{PageCount: 5},
+			want:     "5 pages",
+		},
+		{
+			name:     "only mime type",
+			metadata: DocMetadata{MimeType: "text/plain"},
+			want:     "text/plain",
+		},
+		{
+			name:     "all zero",
+			metadata: DocMetadata{},
+			want:     "",
+		},
+		{
+			name:     "word count and mime type",
+			metadata: DocMetadata{WordCount: 1000, MimeType: "application/pdf"},
+			want:     "1000 total words, application/pdf",
+		},
 	}
-	if !strings.Contains(prompt, "invoice") {
-		t.Error("expected prompt to contain second document type name")
-	}
-	if !strings.Contains(prompt, headTail) {
-		t.Error("expected prompt to contain head+tail text")
-	}
-	if !strings.Contains(prompt, "re-evaluate") {
-		t.Error("expected prompt to contain re-evaluation instruction")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.metadata.Format()
+			if got != tt.want {
+				t.Errorf("DocMetadata.Format() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

@@ -186,7 +186,12 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 			refinementCfg.HeadWords,
 			refinementCfg.TailWords,
 		)
-		refinedType, err := e.runner.AnalyzeDocType(ctx, analysis, headTailText, docTypes)
+		metadata := contentanalyzer.DocMetadata{
+			WordCount: document.WordCount,
+			PageCount: document.PageCount,
+			MimeType:  document.MimeType,
+		}
+		refinedType, err := e.runner.AnalyzeDocType(ctx, analysis, headTailText, docTypes, metadata)
 		if err != nil {
 			e.logger.Error(&logId, "doc type refinement failed, keeping first pass result: %v", err)
 		} else {

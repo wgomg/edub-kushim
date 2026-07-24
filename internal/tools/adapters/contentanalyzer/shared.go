@@ -239,13 +239,42 @@ func ExtractHeadTailWords(content string, headWords, tailWords int) string {
 	return sb.String()
 }
 
-func BuildDocTypePrompt(headTailText string, docTypes []database.DocumentType) string {
+type DocMetadata struct {
+	WordCount int32
+	PageCount int32
+	MimeType  string
+}
+
+func (m DocMetadata) Format() string {
+	var parts []string
+	if m.WordCount > 0 {
+		parts = append(parts, fmt.Sprintf("%d total words", m.WordCount))
+	}
+	if m.PageCount > 0 {
+		parts = append(parts, fmt.Sprintf("%d pages", m.PageCount))
+	}
+	if m.MimeType != "" {
+		parts = append(parts, m.MimeType)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, ", ")
+}
+
+func BuildDocTypePrompt(headTailText string, docTypes []database.DocumentType, metadata DocMetadata) string {
 	var typesList strings.Builder
 	for _, dt := range docTypes {
 		fmt.Fprintf(&typesList, "  - %s (%s)\n", dt.Name, dt.Description)
 	}
+	metaStr := metadata.Format()
+	prompt := "Now re-evaluate the document type using the opening and closing sections of the full document below."
+	if metaStr != "" {
+		prompt += " Document context: " + metaStr + "."
+	}
 	return fmt.Sprintf(
-		"Now re-evaluate the document type using the opening and closing sections of the full document below. Choose one type from:\n%s\nReturn ONLY a json string with key: type, without any additional text or formatting.\n\nDocument head and tail sections:\n\n%s",
+		"%s Choose one type from:\n%s\nReturn ONLY a json string with key: type, without any additional text or formatting.\n\nDocument head and tail sections:\n\n%s",
+		prompt,
 		typesList.String(),
 		headTailText,
 	)

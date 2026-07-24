@@ -330,7 +330,7 @@ func (r *Runner) AnalyzeContent(ctx context.Context, text string, docTypes []dat
 	}, nil
 }
 
-func (r *Runner) AnalyzeDocType(ctx context.Context, prevResult *ContentAnalysisResult, headTailText string, docTypes []database.DocumentType) (string, error) {
+func (r *Runner) AnalyzeDocType(ctx context.Context, prevResult *ContentAnalysisResult, headTailText string, docTypes []database.DocumentType, metadata contentanalyzer.DocMetadata) (string, error) {
 	if r.contentAnalyzer == nil {
 		return "", fmt.Errorf("content analyzer not configured")
 	}
@@ -343,7 +343,7 @@ func (r *Runner) AnalyzeDocType(ctx context.Context, prevResult *ContentAnalysis
 		Language:    prevResult.Language,
 	}
 	result, err := runWithTimeout(ctx, func() (string, error) {
-		return r.contentAnalyzer.AnalyzeDocType(ctx, prev, headTailText, docTypes)
+		return r.contentAnalyzer.AnalyzeDocType(ctx, prev, headTailText, docTypes, metadata)
 	})
 	if err != nil {
 		return "", fmt.Errorf("doc type refinement: %w", err)

@@ -23,7 +23,7 @@
 ```go
 type ContentAnalyzer interface {
     Analyze(ctx, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*AnalysisResult, error)
-    AnalyzeDocType(ctx, prevResult, headTailText, docTypes) (string, error)
+    AnalyzeDocType(ctx, prevResult, headTailText, docTypes, metadata DocMetadata) (string, error)
     Name() string
 }
 ```
@@ -31,6 +31,7 @@ type ContentAnalyzer interface {
 ### Structs
 
 - `AnalysisResult` — `Title`, `DocType`, `Tags`, `People []PeopleResult`, `Language`, `Stats *json.RawMessage`, `Prompt`
+- `DocMetadata` — `WordCount int32`, `PageCount int32`, `MimeType string`. Returned by `Format()` as a human-readable string (e.g. `"15234 total words, 42 pages, application/pdf"`). Returns empty string when all fields are zero/empty.
 - `PeopleResult` — `Name`, `NameRomanized` (optional, for non-Latin names), `Type`, `NormalizedName` (pre-populated by enricher via `canonicalPersonName` + `NormalizeForDB`, used by `FilterTags`, excluded from JSON serialization via `json:"-"`)
 
 ### Factory
