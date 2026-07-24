@@ -489,7 +489,7 @@ kushim config --path
 
 | Mode | Example | Description |
 | ---- | ------- | ----------- |
-| `dump all` | `kushim config` | Print full config as YAML to stdout |
+| `dump all` | `kushim config` | List all config keys and values as `key = value` lines (like `git config --list`) |
 | `get` | `kushim config server.port` | Print a single key's value. Scalars print raw, arrays/maps as YAML |
 | `set` | `kushim config server.port 8080` | Set a key to a value. Type auto-detected: `true`/`false` → bool, integers → int, floats → float64, comma-separated → `[]string`, otherwise string |
 | `--unset` | `kushim config --unset backup.path` | Remove a key — reverts to its default value on next `config.Load` |
@@ -502,7 +502,7 @@ Keys use dot notation (snake_case), matching the YAML key names:
 ```
 kushim config server.port               → 3000
 kushim config server.port 8080          → sets server.port to 8080
-kushim config consumer.ocr.languages    → - eng\n- spa
+kushim config consumer.ocr.languages    → eng, spa
 kushim config consumer.ocr.languages eng,spa,deu  → sets to [eng spa deu]
 kushim config --unset backup.path       → removes backup.path (reverts to default)
 ```

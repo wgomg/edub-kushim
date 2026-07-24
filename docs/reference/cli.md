@@ -174,7 +174,7 @@ The daemon also starts a **backup pool** (1 worker, 60s poll interval) when `bac
 
 - `configHandler(c, args) error` — Entry point for `kushim config`. Parses `--unset`, `--validate`, `--path`, `--help` flags, then dispatches on positional arg count: 0 → `dumpAllConfig`, 1 → `getConfigValue`, 2+ → `setConfigValue`.
 - `validateConfig(configDir) error` — Calls `config.Load` and prints `config.yaml is valid` on success.
-- `dumpAllConfig(configDir) error` — Reads `config.yaml` from disk and prints it to stdout as raw YAML.
+- `dumpAllConfig(configDir) error` — Reads config via Viper and prints all keys as `key = value` lines (``git config --list`` style). Scalars print raw, arrays join with `, `.
 - `getConfigValue(configDir, key) error` — Reads a single dot-notation key via Viper and prints its value. Scalars print raw, arrays/maps print as YAML.
 - `setConfigValue(configDir, key, rawValue) error` — Parses the value via `parseValue`, calls `atomicSetConfig`, prints `key = value` confirmation.
 - `unsetConfigValue(configDir, key) error` — Reads YAML into a map, deletes the nested key via `deleteNestedKey`, writes back through the atomic validation pipeline.

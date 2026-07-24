@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -79,11 +80,40 @@ func validateConfig(configDir string) error {
 }
 
 func dumpAllConfig(configDir string) error {
-	data, err := os.ReadFile(filepath.Join(configDir, "config.yaml"))
-	if err != nil {
+	v := viper.New()
+	v.SetConfigType("yaml")
+	configPath := filepath.Join(configDir, "config.yaml")
+
+	if _, err := os.Stat(configPath); err != nil {
+		return fmt.Errorf("config not found: %s", configPath)
+	}
+
+	v.SetConfigFile(configPath)
+	if err := v.ReadInConfig(); err != nil {
 		return fmt.Errorf("read config: %w", err)
 	}
-	fmt.Print(string(data))
+
+	keys := v.AllKeys()
+	sort.Strings(keys)
+	for _, key := range keys {
+		val := v.Get(key)
+		if val == nil {
+			continue
+		}
+		switch vv := val.(type) {
+		case string, bool, int, int64, float64:
+			fmt.Printf("%s = %v\n", key, vv)
+		case []any:
+			parts := make([]string, len(vv))
+			for i, item := range vv {
+				parts[i] = fmt.Sprintf("%v", item)
+			}
+			fmt.Printf("%s = %s\n", key, strings.Join(parts, ", "))
+		case []string:
+			fmt.Printf("%s = %s\n", key, strings.Join(vv, ", "))
+		}
+	}
+
 	return nil
 }
 
