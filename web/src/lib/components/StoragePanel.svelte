@@ -34,11 +34,24 @@
 		storageTrend.length > 0 ? Math.max(...storageTrend.map((t) => t.cumulative_bytes)) : 1
 	);
 
-	const svgWidth = 600;
+	let chartEl = $state(null);
+	let containerWidth = $state(600);
+
+	$effect(() => {
+		const el = chartEl;
+		if (!el) return;
+		const ro = new ResizeObserver(([entry]) => {
+			containerWidth = Math.round(entry.contentRect.width);
+		});
+		ro.observe(el);
+		return () => ro.disconnect();
+	});
+
+	const svgWidth = $derived(Math.max(containerWidth, 300));
 	const svgHeight = 200;
 	const padding = { top: 10, right: 10, bottom: 30, left: 60 };
-	const chartW = svgWidth - padding.left - padding.right;
-	const chartH = svgHeight - padding.top - padding.bottom;
+	const chartW = $derived(svgWidth - padding.left - padding.right);
+	const chartH = $derived(svgHeight - padding.top - padding.bottom);
 
 	function trendPath(points) {
 		if (points.length === 0) return '';
@@ -92,11 +105,13 @@
 		return ticks;
 	});
 
+	const fmtDate = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' });
+
 	const xLabels = $derived(() => {
 		if (storageTrend.length === 0) return [];
 		const skip = storageTrend.length > 30 ? Math.ceil(storageTrend.length / 10) : 1;
 		return storageTrend.map((p, i) => ({
-			date: p.date,
+			date: fmtDate.format(new Date(p.date)),
 			show: i % skip === 0 || i === storageTrend.length - 1,
 			x: padding.left + (i / Math.max(storageTrend.length - 1, 1)) * chartW
 		}));
@@ -193,7 +208,7 @@
 		{#if storageTrend.length > 0}
 			<section>
 				<h3 class="mb-3 text-base font-semibold text-parchment-200">Cumulative Storage Trend</h3>
-				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
+				<div bind:this={chartEl} class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<svg
 						width="100%"
 						viewBox="0 0 {svgWidth} {svgHeight}"
