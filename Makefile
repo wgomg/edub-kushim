@@ -24,12 +24,12 @@ LDFLAGS      := -s -w -X github.com/wgomg/edub-kushim/internal/version.Commit=$(
 .PHONY: build build-deps web-build clean run consume build-musl-image build-musl build-mupdf-force compose-up compose-down
 
 web-build:
-	. "$(NVM_DIR)/nvm.sh" && nvm use && cd web && npm ci && npm run build
+	. "$(NVM_DIR)/nvm.sh" && nvm use && cd web && npm ci && npm audit fix || true && npm run build
 	rm -rf internal/static/build
 	cp -r web/build internal/static/build
 
 wizard-build:
-	. "$(NVM_DIR)/nvm.sh" && nvm use && cd web-wizard && npm ci && npm run build
+	. "$(NVM_DIR)/nvm.sh" && nvm use && cd web-wizard && npm ci && npm audit fix || true && npm run build
 	rm -rf internal/wizard/static
 	cp -r web-wizard/build internal/wizard/static
 
