@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/wgomg/edub-kushim/internal/config"
@@ -25,6 +26,10 @@ func NewPDFToText(logger *utils.Logger, cfg config.ToolConfig) (*PDFToText, erro
 }
 
 func (p *PDFToText) Extract(ctx context.Context, path string) (*string, error) {
+	if !filepath.IsAbs(path) {
+		return nil, fmt.Errorf("%s: input path must be absolute, got %q", p.Name(), path)
+	}
+
 	cmd := exec.CommandContext(ctx, p.config.Command, "-raw", "-nopgbrk", "-enc", "UTF-8", path, "-")
 
 	var stdout, stderr bytes.Buffer

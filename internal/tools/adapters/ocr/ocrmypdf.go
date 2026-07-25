@@ -33,6 +33,10 @@ func NewOcrMyPdf(logger *utils.Logger, cfg config.ToolConfig, languages []string
 }
 
 func (o *OcrMyPdf) Process(ctx context.Context, docId, path string) (*string, error) {
+	if !filepath.IsAbs(path) {
+		return nil, fmt.Errorf("%s: input path must be absolute, got %q", o.Name(), path)
+	}
+
 	tmpDir := os.TempDir()
 	ogName := filepath.Base(path)
 	outputName := fmt.Sprintf(
