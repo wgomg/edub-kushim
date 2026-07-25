@@ -19,10 +19,13 @@ func AuthMiddleware(
 	getUserByID func(ctx context.Context, id int64) (*database.User, error),
 ) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !getAuthEnabled() {
-			next.ServeHTTP(w, r)
-			return
-		}
+	if !getAuthEnabled() {
+		ctx := context.WithValue(r.Context(), auth.RoleKey, string(auth.RoleAdmin))
+		ctx = context.WithValue(ctx, auth.UserIDKey, int64(1))
+		ctx = context.WithValue(ctx, auth.UsernameKey, "admin")
+		next.ServeHTTP(w, r.WithContext(ctx))
+		return
+	}
 
 		path := r.URL.Path
 

@@ -188,6 +188,15 @@ func TestAuthMiddleware_Disabled_PassesAllRequests(t *testing.T) {
 		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 			t.Errorf("path %s: failed to decode response: %v", path, err)
 		}
+		if resp.Role != "admin" {
+			t.Errorf("path %s: expected role 'admin', got %q", path, resp.Role)
+		}
+		if resp.UserID != 1 {
+			t.Errorf("path %s: expected user_id 1, got %d", path, resp.UserID)
+		}
+		if resp.Username != "admin" {
+			t.Errorf("path %s: expected username 'admin', got %q", path, resp.Username)
+		}
 	}
 }
 
@@ -251,6 +260,21 @@ func TestAuthMiddleware_APIKeyAuthDisabled_Bypasses(t *testing.T) {
 	middleware.ServeHTTP(w, r)
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", w.Code)
+	}
+	var resp struct {
+		UserID   int64  `json:"user_id"`
+		Username string `json:"username"`
+		Role     string `json:"role"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Role != "admin" {
+		t.Errorf("expected role 'admin', got %q", resp.Role)
+	}
+	if resp.UserID != 1 {
+		t.Errorf("expected user_id 1, got %d", resp.UserID)
+	}
+	if resp.Username != "admin" {
+		t.Errorf("expected username 'admin', got %q", resp.Username)
 	}
 }
 
