@@ -1847,6 +1847,195 @@ backup:
 
 ---
 
+## Configuration Timeout Guidelines
+
+Each configurable timeout is a deadline for a specific processing stage. Setting
+it too low causes tasks to fail with `context deadline exceeded` errors. Setting
+it too high delays error detection and can mask hangs.
+
+A timeout of `0` disables the artificial deadline — the stage runs without a
+timeout. This is useful during troubleshooting but not recommended for
+production, since a hung subprocess or unresponsive LLM provider can consume a
+worker indefinitely.
+
+### Server timeouts
+
+`server.read_timeout`, `server.write_timeout`, `server.idle_timeout` (default: 60s)
+
+These control the HTTP server connection lifecycle and protect against slow
+clients, not against processing duration.
+
+| Field | What it guards | Becomes premature below |
+|---|---|---|
+| `read_timeout` | Time to receive the full request (headers + body) | **5s** — a 100 MB multipart upload at moderate bandwidth needs at least 30s |
+| `write_timeout` | Time to send the full response | **5s** — large JSON responses (search results, batch listings) can take several seconds |
+| `idle_timeout` | Time a keep-alive connection stays idle | **1s** — keep-alive becomes useless, causing connection churn |
+
+The default 60s is fine for most deployments. Lower `read_timeout` if you
+control client upload speeds and want tighter slow-loris protection.
+
+### Pipeline stage timeouts
+
+All pipeline timeouts accept `0` to disable the timeout. Production
+deployments should always set a positive value to prevent stuck tasks.
+
+---
+
+#### `consumer.textextractor.timeout` (default: 120s)
+
+| Default | Minimum practical | Premature failure below |
+|---|---|---|
+| 120s | 5s | 5s |
+
+The MuPDF engine extracts text from native PDFs in milliseconds. If you
+switch to `pdftotext`, large or complex PDFs may need more time. For scanned
+PDFs (which have no embedded text), this stage is nearly instant because it
+returns empty text and hands off to OCR — the timeout that matters is the
+OCR one.
+
+- Set based on the **largest text-bearing document** in your workload.
+- `pdftotext` on a 100 MB text-heavy PDF with complex tables can take 30–60s.
+
+---
+
+#### `consumer.ocr.timeout` (default: 120s)
+
+| Default | Minimum practical | Premature failure below |
+|---|---|---|
+| 120s | 10s | 10s |
+
+OCR is the most time-sensitive stage. The gosseract engine renders each page
+at 200 DPI via MuPDF and runs Tesseract per page. Total time is proportional
+to:
+
+- **Number of pages** — linear scaling (a 20-page document takes ~20× a
+  1-page document at same complexity).
+- **Page complexity** — dense text, tables, mixed scripts, and small font
+  sizes increase Tesseract time.
+- **Languages enabled** — each additional language adds lookup time.
+- **CPU cores** — controlled by `ocr_workers`. More workers reduce wall-clock
+  time for multi-page documents but increase per-page overhead.
+
+A single typical page with one language completes in 3–10s on modern hardware.
+At the default 120s, the cap is roughly 12–40 pages depending on complexity.
+If your documents regularly exceed that, raise the timeout proportionally.
+
+- Monitor task durations in the dashboard or task list. Set timeout to at
+  least **2× the observed maximum** for your typical documents.
+- Values below 10s will time out even single-page documents.
+
+---
+
+#### `consumer.pdfoptimizer.timeout` (default: 0 — disabled)
+
+| Default | Minimum practical | Premature failure below |
+|---|---|---|
+| 0 (disabled) | 5s | 5s |
+
+PDF optimization recompresses and downsamples images. It defaults to disabled
+because it is CPU-intensive and primarily benefits storage size, not
+functional accuracy.
+
+When enabling it:
+
+- A single-page image PDF takes 5–15s.
+- Multi-page documents scale linearly with page count and image density.
+- The timeout caps **each attempt** — if a fallback optimizer is configured
+  and the primary times out, the fallback gets the same timeout budget.
+
+---
+
+#### `enricher.textreducer.timeout` (default: 120s)
+
+| Default | Minimum practical | Premature failure below |
+|---|---|---|
+| 120s | 10s | 10s |
+
+The text reducer runs before LLM analysis using the local **TextRank** engine
+(CPU-only, no network). It splits text into sentence-sized chunks, computes
+TF-IDF scores, builds a similarity graph, and runs weighted PageRank. Runtime
+depends on the number of sentences in the document (roughly proportional to
+pages):
+
+- A typical **5–15 page** document completes in **milliseconds to ~1s**.
+- A large **200–300 page** document produces thousands of sentence-chunks, and
+  the PageRank adjacency matrix scales as O(chunks²) — expect **1–5 seconds**.
+
+The default 120s is generous. You can safely lower it to 30s and still handle
+typical 200–300 page documents. For workloads that never exceed a few dozen
+pages, 10s is sufficient.
+
+---
+
+#### `enricher.contentanalyzer.timeout` (default: 120s)
+
+| Default | Minimum practical | Premature failure below |
+|---|---|---|
+| 120s | 10s | 10s |
+
+LLM-based document classification. Total time depends on:
+
+- **Provider latency** — network round-trip + provider queueing + token
+  generation. Cloud providers typically respond in 5–30s for a moderate
+  prompt; self-hosted models may take longer.
+- **Input size** — text is pre-reduced by the text reducer, but the prompt
+  still includes full metadata and tag context.
+- **Doc type refinement** — when enabled, the analyzer makes two sequential
+  LLM calls instead of one. The timeout covers both calls.
+
+The default 120s accommodates two-pass refinement plus provider variability.
+If you disable refinement (`doc_type_refinement.enabled: false`), 60s is
+often sufficient.
+
+- Values below 10s will time out even a single fast LLM response under normal
+  network conditions.
+
+---
+
+#### `enricher.tagmatcher.timeout` (default: 120s)
+
+| Default | Minimum practical | Premature failure below |
+|---|---|---|
+| 120s | 10s | 10s |
+
+Semantic tag matching via the Hugot embedding model over a Unix domain socket.
+Total time depends on:
+
+- **Tag store size** — each tag in the store requires a similarity computation
+  against the document embedding. A 10k-tag store takes ~31s on first cache
+  build; subsequent matches on the same model load are faster.
+- **Text length** — controlled by `reduce_target_words` (default 4000 words).      
+  Longer text increases encoding time.
+- **Model size** — larger models (`BAAI/bge-m3` is ~1.3 GB) take longer per
+  inference.
+
+| Tag store size | Typical match time |
+|---|---|
+| 1k | 3–10s |
+| 10k | 10–60s |
+| 100k+ | 120–300s |
+
+- Raise the timeout if you have a large tag store (100k+) or observe
+  `context deadline exceeded` errors on tag match tasks.
+- Values below 10s will time out even modest tag stores.
+
+---
+
+### General tuning approach
+
+1. **Start with defaults** and run your typical workload.
+2. **Check for `context deadline exceeded` errors** in failed tasks.
+3. **Identify which stage timed out** — the error includes the component name
+   (e.g., `ocr: context deadline exceeded`).
+4. **Check task duration** via `kushim task list --batch <id>` or the
+   dashboard. Compare completed task durations to the timeout.
+5. **Raise the timeout for that stage** to at least 2× the observed maximum
+   duration, or lower it if the observations show it is excessively generous.
+
+A well-tuned set of timeouts catches genuine hangs without being so tight
+that normal variation causes spurious failures. No single number fits every
+workload — the defaults are conservative starting points.
+
 ## Task Lifecycle
 
 Each file produces two linked tasks:
