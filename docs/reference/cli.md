@@ -184,7 +184,7 @@ The daemon also starts a **backup pool** (1 worker, 60s poll interval) when `bac
 - `setConfigValue(configDir, key, rawValue) error` — Parses the value via `parseValue`, calls `atomicSetConfig`, prints `key = value` confirmation.
 - `unsetConfigValue(configDir, key) error` — Reads YAML into a map, deletes the nested key via `deleteNestedKey`, writes back through the atomic validation pipeline.
 - `deleteNestedKey(m map[string]any, key string) bool` — Recursively walks a nested map using dot-notation segments and deletes the leaf. Returns `false` if the key path does not exist.
-- `atomicSetConfig(configDir, body map[string]any) error` — Viper read-modify-write with atomic safety: writes to a temp directory, runs `config.Load(tmpDir)` for full validation (including `finalizeConfig` business rules), then renames the file into place.
+- `atomicSetConfig(configDir, body map[string]any) error` — Viper read-modify-write with atomic safety: writes to a temp directory, runs `config.Load(tmpDir)` for full validation (including `finalizeConfig` business rules), then renames the file into place. Writes config with `0600` permissions (owner read/write only).
 - `parseValue(raw string) any` — Auto-detects value type: `true`/`false` → `bool`, parseable integer → `int`, parseable float → `float64`, contains comma → `[]string` (trimmed), otherwise `string`.
 - `printValue(val any)` — Prints a value matching CLI output specs: scalars raw, arrays/maps via `yaml.Marshal`.
 

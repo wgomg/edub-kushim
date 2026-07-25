@@ -168,6 +168,7 @@ Flags:
 
 	v := viper.New()
 	v.SetConfigType("yaml")
+	v.SetConfigPermissions(0600)
 	configPath := filepath.Join(*configDir, "config.yaml")
 
 	if _, err := os.Stat(configPath); err == nil {
@@ -205,6 +206,9 @@ Flags:
 
 	if err := v.WriteConfigAs(configPath); err != nil {
 		return fmt.Errorf("write config: %w", err)
+	}
+	if err := os.Chmod(configPath, 0600); err != nil {
+		return fmt.Errorf("chmod config: %w", err)
 	}
 	logger.Info(nil, "created config: %s", configPath)
 

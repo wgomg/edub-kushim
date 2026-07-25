@@ -213,6 +213,7 @@ func deleteNestedKey(m map[string]any, key string) bool {
 func atomicSetConfig(configDir string, body map[string]any) error {
 	v := viper.New()
 	v.SetConfigType("yaml")
+	v.SetConfigPermissions(0600)
 	configPath := filepath.Join(configDir, "config.yaml")
 
 	if _, err := os.Stat(configPath); err == nil {

@@ -81,6 +81,43 @@ func TestSaveMap_NoExistingFile(t *testing.T) {
 	}
 }
 
+func TestSaveMap_NewFileIsNotWorldReadable(t *testing.T) {
+	configDir := t.TempDir()
+
+	if err := SaveMap(configDir, map[string]any{"server.auth_enabled": true}); err != nil {
+		t.Fatalf("SaveMap: %v", err)
+	}
+
+	info, err := os.Stat(filepath.Join(configDir, "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0600 {
+		t.Errorf("config.yaml mode = %o, want 0600", perm)
+	}
+}
+
+func TestSaveMap_ExistingWorldReadableFileSelfHeals(t *testing.T) {
+	configDir := t.TempDir()
+	configPath := filepath.Join(configDir, "config.yaml")
+
+	if err := os.WriteFile(configPath, []byte("server:\n  auth_enabled: false\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SaveMap(configDir, map[string]any{"server.auth_enabled": true}); err != nil {
+		t.Fatalf("SaveMap: %v", err)
+	}
+
+	info, err := os.Stat(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0600 {
+		t.Errorf("config.yaml mode after save = %o, want 0600 (should self-heal from 0644)", perm)
+	}
+}
+
 func TestSaveMap_InvalidExistingFile(t *testing.T) {
 	configDir := t.TempDir()
 
