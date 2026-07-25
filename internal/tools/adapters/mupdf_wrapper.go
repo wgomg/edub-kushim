@@ -97,6 +97,15 @@ static int mupdf_extract_page_text(fz_context *ctx, fz_document *doc,
 	return 0;
 }
 
+// maximum pixels (width * height) for a single rendered page. Guards against
+// malicious/malformed PDFs declaring an extreme page size, which combined
+// with a fixed rendering DPI would otherwise drive fz_new_pixmap_with_bbox to
+// attempt an unbounded allocation (memory-exhaustion DoS) — page dimensions
+// come straight from untrusted document input and aren't bounded upstream.
+// 100 MP allows generous large-format pages (e.g. a ~40x60in poster at 200
+// DPI) while keeping a single RGB buffer under ~300 MB.
+#define MUPDF_MAX_RENDER_PIXELS (100000000LL)
+
 // mupdf_render_page renders a page to an RGB pixmap at the given DPI.
 // Returns 0 on success, non-zero on error. Caller must fz_drop_pixmap the result.
 static int mupdf_render_page(fz_context *ctx, fz_document *doc,
@@ -117,6 +126,13 @@ static int mupdf_render_page(fz_context *ctx, fz_document *doc,
 		fz_rect bounds = fz_bound_page(ctx, page);
 		ctm = fz_scale(dpi / 72.0f, dpi / 72.0f);
 		fz_irect bbox = fz_round_rect(fz_transform_rect(bounds, ctm));
+
+		long long rw = (long long)bbox.x1 - (long long)bbox.x0;
+		long long rh = (long long)bbox.y1 - (long long)bbox.y0;
+		if (rw <= 0 || rh <= 0 || rw * rh > MUPDF_MAX_RENDER_PIXELS) {
+			fz_throw(ctx, FZ_ERROR_GENERIC, "page dimensions exceed render limit");
+		}
+
 		pixmap = fz_new_pixmap_with_bbox(ctx, fz_device_rgb(ctx), bbox, NULL, 0);
 		fz_clear_pixmap_with_value(ctx, pixmap, 0xFF);
 		dev = fz_new_draw_device(ctx, ctm, pixmap);
