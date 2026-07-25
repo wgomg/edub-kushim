@@ -4,8 +4,11 @@ package tagmatcher
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -473,6 +476,11 @@ func getBackendSession(tmCfg config.TagMatcherConfig, logger *utils.Logger) (*hu
 	}
 }
 
+// SHA256 of onnxruntime-linux-x64-1.26.0.tgz, taken from the GitHub release
+// API's asset digest and independently confirmed by hashing the downloaded
+// file. Must be updated together with the version pinned in the URL below.
+const onnxRuntimeTgzSHA256 = "1254da24fb389cf39dc0ff3451ab48301740ffbfcbaf646849df92f80ee92c57"
+
 func downloadLib(dest, soPath string, logger *utils.Logger) error {
 	if _, err := os.Stat(soPath); err == nil {
 		return nil
@@ -493,6 +501,10 @@ func downloadLib(dest, soPath string, logger *utils.Logger) error {
 		return err
 	}
 
+	if err := verifySHA256(tgzPath, onnxRuntimeTgzSHA256); err != nil {
+		return fmt.Errorf("verify onnxruntime download: %w", err)
+	}
+
 	if err := exec.Command("tar", "xzf", tgzPath, "-C", dest,
 		"--strip-components=2",
 		"onnxruntime-linux-x64-1.26.0/lib/libonnxruntime.so.1.26.0",
@@ -501,4 +513,23 @@ func downloadLib(dest, soPath string, logger *utils.Logger) error {
 	}
 
 	return os.Rename(filepath.Join(dest, "libonnxruntime.so.1.26.0"), soPath)
+}
+
+func verifySHA256(path, want string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return err
+	}
+
+	got := hex.EncodeToString(h.Sum(nil))
+	if got != want {
+		return fmt.Errorf("sha256 mismatch: got %s, want %s", got, want)
+	}
+	return nil
 }
