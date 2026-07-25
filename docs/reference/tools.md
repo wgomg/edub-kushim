@@ -352,6 +352,18 @@ Calls `suppressLeptonicaStderr()` at the top of the function to suppress Leptoni
 
 MuPDF 1.28.0 CGo wrapper. 6 C helpers: document open/close, page rendering, text extraction, `pdf_clean_file`.
 
+### Render limit guard (`MUPDF_MAX_RENDER_PIXELS`)
+
+A compile-time constant (`100,000,000` pixels) caps the total pixel area of any
+single rendered page. The render pipeline rejects pages whose `width × height`
+(at the configured DPI) exceeds this limit **before** calling
+`fz_new_pixmap_with_bbox`, preventing an unbounded allocation that would
+otherwise let a malicious or malformed PDF with an extreme MediaBox exhaust
+process memory. Page dimensions come directly from untrusted document input and
+are not bounded upstream. The 100 MP ceiling allows generous large-format pages
+(e.g. a ~40×60 in poster at 200 DPI) while keeping a single RGB buffer under
+~300 MB.
+
 ---
 
 ## See Also

@@ -504,6 +504,13 @@ clear upgrade path to Meilisearch, ZincSearch, or Elasticsearch if needed.
   fails, the configured fallback engine is invoked, or the original file is used as the
   processed copy if no fallback is set. Configure via `pdfoptimizer.fallback: 'gs'` to
   use Ghostscript as the alternative.
+
+  Additionally, the **page render pipeline** has a hard cap of 100 MP
+  (`MUPDF_MAX_RENDER_PIXELS`) on the pixel area of any single rendered page.
+  This runs before pixmap allocation, preventing a malicious or malformed PDF
+  with an extreme MediaBox from causing an unbounded memory allocation (memory-
+  exhaustion DoS). The ceiling allows large-format posters (~40×60 in at
+  200 DPI) while keeping the RGB buffer under ~300 MB.
 - **Hugot ORT backend**: ONNX Runtime downloaded at runtime on first use — requires internet access. The Go backend has no runtime deps. ORT's CPU memory arena and memory pattern pre-allocation are disabled by default (`HugotConfig.CpuMemArena=false`, `MemPattern=false`) to cap idle RSS at ~2.2–2.5 GB rather than retaining peak-inference buffers (~4–5 GB). This adds ~10–20% per-inference latency from buffer re-allocation, which is dwarfed by text extraction, OCR, and LLM API latency in the enrichment pipeline. Toggle to `true` in `DefaultConfig` to restore ORT defaults if performance is unacceptable.
 - **Role enforcement**: All API routes are gated by `RequireRole` middleware. The auth middleware reads the user's role from the database (for both JWT and API key paths) and injects it into request context. Three roles exist: `admin` (user management, logs), `editor` (all mutations, batch operations, consume), and `viewer` (read-only access). Self-service `/me` endpoints are accessible to any authenticated user. The `auth_enabled: false` config bypasses all middleware, making roles irrelevant.
 - **Matcher as external process**: The tag matcher runs as a separate process (`kushim hugot`). If it's not running, tag CRUD operations return `503 Service Unavailable`, and enrichment falls back to LLM-only tags (no semantic tag matching). The matcher must be started before `edub` for full functionality.
