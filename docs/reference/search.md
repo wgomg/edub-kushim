@@ -36,7 +36,7 @@ Maps database rows to API-friendly fields:
 | `ModifiedAt`      | `time.Time` | Last modification timestamp   |
 | `OriginalPath`    | `string`  | Path to original file         |
 | `StoragePath`     | `string`  | Path to processed file        |
-| `Snippet`         | `string`  | Highlighted FTS snippet       |
+| `Snippet`         | `string`  | Highlighted FTS snippet (HTML-escaped, `<b>` highlighting preserved) |
 | `Rank`            | `float64` | ts_rank relevance score        |
 
 #### `Filter`
@@ -100,6 +100,10 @@ Structured search with metadata filters. First calls `database.CountDocumentsStr
 #### `sanitizeQuery(q string) string`
 Trims whitespace from the user query before passing it to `plainto_tsquery`.
 
+### Response Sanitization
+
+Before returning search results to the client, the `Snippet` field is passed through `sanitizeSnippetHTML` which HTML-escapes all characters except `<b>` and `</b>` tags. This preserves the bold highlighting produced by PostgreSQL `ts_headline` while preventing XSS injection via document content that contains raw HTML or script tags.
+
 ---
 
 ## `internal/database/structured_search.go` — `FTSDocumentRow`
@@ -111,7 +115,7 @@ Trims whitespace from the user query before passing it to `plainto_tsquery`.
 | Field     | Type      | Description                              |
 | --------- | --------- | ---------------------------------------- |
 | `Rank`    | `float64` | `ts_rank` relevance from tsvector        |
-| `Snippet` | `string`  | `ts_headline` highlighted text           |
+| `Snippet` | `string`  | `ts_headline` highlighted text (HTML-escaped, `<b>` preserving) |
 
 The tsvector column is `GENERATED ALWAYS AS (to_tsvector('simple', coalesce(title, '') || ' ' || coalesce(text_content, ''))) STORED` on the `document` table, backed by a GIN index (`idx_document_tsv`). Queries use `plainto_tsquery('simple', ...)` for tokenization and `@@` for matching.
 

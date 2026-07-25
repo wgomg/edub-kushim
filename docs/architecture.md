@@ -394,7 +394,7 @@ The search system provides two tiers of document retrieval, backed by a PostgreS
 
 ### Tier 1: Simple tsvector Search (`GET /api/v1/documents/search?q=...`)
 
-Quick keyword search for users who just need to find documents by content. The query is sanitized and passed to `plainto_tsquery('simple', ...)` against the `text_search_vector` generated column. Results are ranked by `ts_rank` and include highlighted `<b>` snippets via `ts_headline`. No metadata filtering — search terms match against `title` and `text_content` columns.
+Quick keyword search for users who just need to find documents by content. The query is sanitized and passed to `plainto_tsquery('simple', ...)` against the `text_search_vector` generated column. Results are ranked by `ts_rank` and include highlighted `<b>` snippets via `ts_headline`. Before returning, the snippet is HTML-escaped via `sanitizeSnippetHTML` which preserves `<b>`/`</b>` highlighting while escaping all other HTML to prevent XSS. No metadata filtering — search terms match against `title` and `text_content` columns.
 
 ### Tier 2: Structured Search (`POST /api/v1/documents/search`)
 

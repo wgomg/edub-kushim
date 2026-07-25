@@ -49,8 +49,8 @@
     - `ListDocuments(w, r)` — Supports `sort_by` and `sort_order` query params; response includes tags (`TagResponse`), people (`PersonResponse`), content stats (`PageCount`, `WordCount`, `CharCount`), `Language`, `DocumentTypeID`
     - `GetDocument(w, r)` — Returns full document with tags (`TagResponse`), people (`PersonResponse`), doc type name
     - `GetDocumentFile(w, r)` — Serves raw PDF via `http.ServeFile`; rejects non-PDF content
-    - `SearchDocuments(w, r)` — `GET /api/v1/documents/search` — Returns `FTSDocumentResponse` array with enhanced fields
-    - `SearchDocumentsStructured(w, r)` — `POST /api/v1/documents/search` — Accepts `search.Filter` JSON body, calls `engine.SearchStructured(ctx, filter)`, returns `SearchResponse` with `results` array and `total` count. Enriches each result with tags and people from DB to avoid N+1.
+    - `SearchDocuments(w, r)` — `GET /api/v1/documents/search` — Returns `FTSDocumentResponse` array with enhanced fields. The `Snippet` field is HTML-escaped through `sanitizeSnippetHTML` which allows only `<b>`/`</b>` highlighting tags through to prevent XSS.
+    - `SearchDocumentsStructured(w, r)` — `POST /api/v1/documents/search` — Accepts `search.Filter` JSON body, calls `engine.SearchStructured(ctx, filter)`, returns `SearchResponse` with `results` array and `total` count. Enriches each result with tags and people from DB to avoid N+1. The `Snippet` field is sanitized identically to `SearchDocuments`.
     - `UpdateDocument(w, r)` — `PUT /api/v1/documents/{id}` — Accepts `DocumentUpdateRequest` JSON (title, document_type_id, language, text_content). Validates title non-empty, document type exists (via `GetDocumentType`), defaults language to `"und"` when empty. Preserves existing `text_content` when nil. Returns `204 No Content`.
     - `DeleteDocument(w, r)` — `DELETE /api/v1/documents/{id}` — Fetches document to get file paths, calls `DeleteDocument` (single DELETE with cascade + FTS trigger), then best-effort `os.Remove` on original and storage paths. Returns `204 No Content`. Triggers async orphan scan post-deletion.
     - `AddDocumentTag(w, r)` — `POST /api/v1/documents/{id}/tags` — Accepts `{tag_id}`, validates document and tag exist via `services.Tag.Get` (maps `KindNotFound` → 404 via `writeServiceError`), calls `AddDocumentTag` (INSERT OR IGNORE). Returns `204 No Content`.
@@ -135,7 +135,7 @@ See `AuthMiddleware` under `server.go` → Functions.
 - `DocumentResponse`
   - **Fields**: `ID string` (UUID, JSON `"id"`), `Title`, `MD5Checksum`, `SHA512Checksum`, `MimeType`, `FileSize`, `PageCount`, `WordCount`, `CharCount`, `Language`, `DocumentTypeID *int64`, `DocumentTypeName *string`, `Tags []TagResponse`, `People []PersonResponse`, `CreatedAt`, `ModifiedAt`
 - `FTSDocumentResponse`
-  - **Fields**: `ID string` (UUID, replaces the old int64 `id`), `Title`, `MD5Checksum`, `SHA512Checksum`, `MimeType`, `FileSize`, `PageCount`, `WordCount`, `CharCount`, `Language`, `DocumentTypeID *int64`, `DocumentTypeName *string`, `Tags []TagResponse`, `People []PersonResponse`, `Rank float64`, `Snippet string`, `TextContent string`
+  - **Fields**: `ID string` (UUID, replaces the old int64 `id`), `Title`, `MD5Checksum`, `SHA512Checksum`, `MimeType`, `FileSize`, `PageCount`, `WordCount`, `CharCount`, `Language`, `DocumentTypeID *int64`, `DocumentTypeName *string`, `Tags []TagResponse`, `People []PersonResponse`, `Rank float64`, `Snippet string` (HTML-escaped, `<b>` highlighting preserved), `TextContent string`
 
 ### Request Structs (`types/document.go`)
 

@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"database/sql"
 	"encoding/json"
+	"html"
 	"io"
 	"net/http"
 	"os"
@@ -18,6 +19,15 @@ import (
 	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
+
+func sanitizeSnippetHTML(raw string) string {
+	marked := strings.ReplaceAll(raw, "<b>", "\x01")
+	marked = strings.ReplaceAll(marked, "</b>", "\x02")
+	escaped := html.EscapeString(marked)
+	escaped = strings.ReplaceAll(escaped, "\x01", "<b>")
+	escaped = strings.ReplaceAll(escaped, "\x02", "</b>")
+	return escaped
+}
 
 type DocumentHandler struct {
 	client    *database.Client
@@ -291,7 +301,7 @@ func (h *DocumentHandler) SearchDocuments(w http.ResponseWriter, r *http.Request
 			CreatedAt:      r.CreatedAt.Format("2006-01-02T15:04:05Z"),
 			ModifiedAt:     r.ModifiedAt.Format("2006-01-02T15:04:05Z"),
 			Rank:           r.Rank,
-			Snippet:        r.Snippet,
+			Snippet:        sanitizeSnippetHTML(r.Snippet),
 			TextContent:    "",
 		}
 	}
@@ -373,7 +383,7 @@ func (h *DocumentHandler) SearchDocumentsStructured(w http.ResponseWriter, r *ht
 			CreatedAt:      r.CreatedAt.Format("2006-01-02T15:04:05Z"),
 			ModifiedAt:     r.ModifiedAt.Format("2006-01-02T15:04:05Z"),
 			Rank:           r.Rank,
-			Snippet:        r.Snippet,
+			Snippet:        sanitizeSnippetHTML(r.Snippet),
 			TextContent:    "",
 		}
 	}

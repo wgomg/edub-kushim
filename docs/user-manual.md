@@ -847,6 +847,8 @@ GET /api/v1/documents/search?q=<query>&limit=50&offset=0
 
 Response `200` — array of `FTSDocumentResponse` (adds `rank`, `snippet`, `text_content`).
 
+> **Security note**: The `snippet` field is HTML-escaped before returning. Only `<b>`/`</b>` highlighting tags from `ts_headline` are preserved; all other HTML is escaped to prevent XSS.
+
 ### Structured Search
 
 Searches documents with combined full-text and metadata filters.
@@ -1665,6 +1667,8 @@ Same as DocumentResponse with these extra fields:
 ```
 
 `text_content` is reserved for future use and currently returns an empty string.
+
+> **Security note**: The `snippet` field is HTML-escaped. Only `<b>`/`</b>` highlighting tags from `ts_headline` are preserved; all other HTML in the document text is escaped to prevent XSS injection.
 
 #### TaskResponse
 
