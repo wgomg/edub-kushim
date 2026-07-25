@@ -103,7 +103,17 @@ func (h *ConfigHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
 		h.onConfigSet(cfg)
 		h.SetServices(client, dispatcher)
 
-		writeJSON(w, http.StatusOK, map[string]string{"config_dir": configDir})
+		svcPath, svcErr := config.GenerateServiceFiles(configDir)
+		if svcErr != nil {
+			h.logger.Warn(nil, "failed to generate service files: %v", svcErr)
+		}
+		resp := map[string]any{
+			"config_dir": configDir,
+		}
+		if svcPath != "" {
+			resp["service_files_path"] = svcPath
+		}
+		writeJSON(w, http.StatusOK, resp)
 		return
 	}
 
@@ -129,28 +139,44 @@ func (h *ConfigHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.onConfigSet(cfg)
+	svcPath, svcErr := config.GenerateServiceFiles(configDir)
+	if svcErr != nil {
+		h.logger.Warn(nil, "failed to generate service files: %v", svcErr)
+	}
 	missing := config.MissingExternalToolErrors(cfg)
 
 	if h.dispatcher == nil {
-		writeJSON(w, http.StatusOK, map[string]any{
+		resp := map[string]any{
 			"configured":    true,
 			"missing_tools": missing,
-		})
+		}
+		if svcPath != "" {
+			resp["service_files_path"] = svcPath
+		}
+		writeJSON(w, http.StatusOK, resp)
 		return
 	}
 
 	enqueued := h.enqueueConfigTasks(ctx, cfg)
 
 	if enqueued > 0 {
-		writeJSON(w, http.StatusCreated, map[string]any{
+		resp := map[string]any{
 			"pending_tasks": enqueued,
 			"missing_tools": missing,
-		})
+		}
+		if svcPath != "" {
+			resp["service_files_path"] = svcPath
+		}
+		writeJSON(w, http.StatusCreated, resp)
 	} else {
-		writeJSON(w, http.StatusOK, map[string]any{
+		resp := map[string]any{
 			"configured":    true,
 			"missing_tools": missing,
-		})
+		}
+		if svcPath != "" {
+			resp["service_files_path"] = svcPath
+		}
+		writeJSON(w, http.StatusOK, resp)
 	}
 }
 

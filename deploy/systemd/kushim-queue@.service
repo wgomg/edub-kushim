@@ -1,21 +1,22 @@
 [Unit]
-Description=Kushim Hugot Tag Matcher Server
+Description=Kushim Batch Queue Daemon for %i
 Documentation=https://github.com/wgomg/edub-kushim
-After=network.target
+PartOf=edub-kushim@%i.target
+After=network.target kushim-hugot@%i.service
+Wants=kushim-hugot@%i.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/kushim hugot
+User=%i
+Group=%i
+Environment=HOME=/home/%i
+ExecStart=/usr/local/bin/kushim queue
 ExecStop=/bin/kill -s TERM $MAINPID
 Restart=on-failure
 RestartSec=5
-
-# Security
 NoNewPrivileges=yes
 ProtectSystem=full
 PrivateTmp=yes
-
-# Log to journal; application writes its own per-process log under <configDir>/logs/
 StandardOutput=journal
 StandardError=journal
 

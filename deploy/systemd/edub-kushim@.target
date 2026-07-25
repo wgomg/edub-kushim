@@ -1,0 +1,8 @@
+[Unit]
+Description=Edub Kushim Document Management System for %i
+Documentation=https://github.com/wgomg/edub-kushim
+Wants=kushim-hugot@%i.service kushim-queue@%i.service edub@%i.service
+After=kushim-hugot@%i.service kushim-queue@%i.service edub@%i.service
+
+[Install]
+WantedBy=multi-user.target

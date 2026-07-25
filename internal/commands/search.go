@@ -64,7 +64,7 @@ func searchHandler(c *Container, args []string) error {
 	c.logger.Info(nil, "%d results for: %s", len(results), query)
 
 	for _, r := range results {
-		fmt.Printf("\n─── #%d ─────────────────────────────────────────────\n", r.DocumentID)
+		fmt.Printf("\n─── #%s ─────────────────────────────────────────────\n", r.DocumentID)
 		fmt.Printf("  %s\n", r.Title)
 		snippet := r.Snippet
 		if snippet == "" {

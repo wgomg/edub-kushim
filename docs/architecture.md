@@ -19,7 +19,13 @@ See [Roadmap](roadmap.md) for the implementation status and upcoming priorities.
 
 ## Process Architecture
 
-The system runs four cooperating processes:
+The system runs four cooperating processes. All three long-running services
+(`kushim hugot`, `kushim queue`, `edub`) are grouped under an
+`edub-kushim.target` systemd target via `PartOf=`, allowing a single
+`systemctl enable --now edub-kushim.target` to manage all of them. The hugot
+service uses `Type=notify` + `NotifyAccess=main` and sends `READY=1` via
+sd_notify after the model is loaded, tag cache is built, and the Unix socket
+is listening, so `After=` dependents actually gate on readiness.
 
 ### 1. Queue Daemon (`kushim queue`)
 

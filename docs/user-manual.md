@@ -1958,19 +1958,38 @@ and is embedded into the `kushim` binary via `//go:embed` on
 
 ## Systemd Service Files
 
-Example systemd unit files are provided at `deploy/systemd/`:
+The `kushim setup` command (both CLI and wizard) generates concrete,
+pre-filled service files to `<configDir>/systemd/`. Template/reference files
+are also provided at `deploy/systemd/` as `@.service` templates for server
+deployments where the admin wants explicit control.
 
 | File | Process |
 |------|---------|
-| `kushim-hugot.service` | Matcher server (`kushim hugot`) |
+| `kushim-hugot.service` | Matcher server (`kushim hugot`) — `Type=notify` |
 | `kushim-queue.service` | Batch queue daemon (`kushim queue`) |
 | `edub.service` | API server (`edub`) |
+| `edub-kushim.target` | Groups all three services via `PartOf=` |
 
-The `edub` service declares `Wants=kushim-hugot.service` (not `Requires=`) —
-the API starts even if the matcher is down; tag CRUD returns 503 until the
-matcher is reachable.
+All three services are grouped under an `edub-kushim.target` unit via
+`PartOf=`. This means one command manages all of them:
+`sudo systemctl enable --now edub-kushim.target`.
 
-### Quick Setup
+The `kushim hugot` service uses `Type=notify` + `NotifyAccess=main` — it
+calls `sd_notify(READY=1)` after the model is loaded, tag cache is built,
+and the Unix socket is listening. Dependents (`edub`, `kushim-queue`) use
+`After=kushim-hugot.service` and `Wants=kushim-hugot.service` so they wait
+for actual readiness, not just process start. `Wants=` is used (not
+`Requires=`) because the architecture is designed to degrade gracefully
+without the matcher — tag CRUD returns 503 until the matcher is reachable.
+
+The queue service also waits for the matcher (`After=kushim-hugot`) because
+it forks workers that immediately call matcher RPC. Waiting avoids the
+connection-refused race on first boot.
+
+### Quick Setup — Generated Files (Recommended)
+
+`kushim setup` writes concrete files to `<configDir>/systemd/`. No template
+variables, no manual editing:
 
 ```bash
 # 1. Create a dedicated system user
@@ -1983,33 +2002,66 @@ sudo cp dev/bin/edub   /usr/local/bin/
 # 3. Initialize config as the dedicated user
 sudo -u edub kushim setup --cli --languages eng,spa,...
 
-# 4. Copy and enable services
-sudo cp deploy/systemd/*.service /etc/systemd/system/
+# 4. Install and start all services (single command)
+sudo cp /var/lib/edub-kushim/.config/edub-kushim/systemd/* /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now kushim-hugot.service
-sudo systemctl enable --now kushim-queue.service
-sudo systemctl enable --now edub.service
+sudo systemctl enable --now edub-kushim.target
 ```
+
+Alternatively, copy the path printed at the end of `kushim setup` for the
+`sudo cp` command.
+
+### Quick Setup — Template Files (Server Deployments)
+
+For server deployments where you want explicit control, use the `@.service`
+template files from `deploy/systemd/`:
+
+```bash
+sudo useradd -r -m -d /var/lib/edub-kushim -s /usr/sbin/nologin edub
+sudo cp dev/bin/kushim /usr/local/bin/
+sudo cp dev/bin/edub   /usr/local/bin/
+sudo -u edub kushim setup --cli --languages eng,spa,...
+
+# Copy and enable template services — %i is the system user
+sudo cp deploy/systemd/*.service deploy/systemd/*.target /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now edub-kushim@edub.target
+```
+
+The `%i` specifier expands to the instance name (e.g., `edub`), which sets
+`User=`, `Group=`, `Environment=HOME=/home/<user>`, and the socket path.
+Non-standard home directories (e.g., `/var/lib/edub-kushim`) require a
+drop-in override for `Environment=HOME`.
+
+### Timeout Considerations
+
+The hugot service has `TimeoutStartSec=120` because loading the embedding
+model and building the tag cache can take significant time:
+- Model load: ~10s
+- Tag cache build: ~31s for 10k tags (batch size 32, ~100ms per ONNX
+  inference batch)
+- Total: ~41s for 10k tags
+
+For deployments with 100k+ tags, raise the timeout via a drop-in:
+```ini
+[Service]
+TimeoutStartSec=600
+```
+
+### Generated vs Template Files
+
+| Aspect | Generated (`kushim setup`) | Template (`deploy/systemd/`) |
+|--------|---------------------------|------------------------------|
+| User/Group | Current user | `%i` specifier |
+| Binary paths | Resolved from `os.Executable()` | Hardcoded `/usr/local/bin/` |
+| Home directory | Resolved from `os.UserHomeDir()` | Assumes `/home/%i` |
+| Socket path | Explicit `--socket` with full path | `/home/%i/.config/edub-kushim/...` |
 
 ### Customizing User and Permissions
 
-The example files do not hardcode a user — they run as whatever user systemd
-defaults to (typically `root` if installed system-wide). To run under a
-dedicated user, add these directives to each `.service` file:
-
-```ini
-[Service]
-User=edub
-Group=edub
-Environment=HOME=/var/lib/edub-kushim
-StateDirectory=edub-kushim
-```
-
-| Directive | Purpose |
-|-----------|---------|
-| `User=` / `Group=` | Runs the process under a non-root system account |
-| `Environment=HOME=/var/lib/edub-kushim` | Sets `$HOME` so `utils.ConfigDir()` resolves to `/var/lib/edub-kushim/.config/edub-kushim` (see [Architecture: Config Directory](architecture.md#config-directory)) |
-| `StateDirectory=edub-kushim` | systemd creates `/var/lib/edub-kushim` with correct ownership before the service starts |
+The generated files from `kushim setup` use the user that ran setup. The
+template files use `%i` to specify the user at install time. Both sets run
+under a non-root system account when configured correctly.
 
 If the application's writable paths (config, database, storage, inbox, logs)
 are under the user's home directory, `ProtectSystem=full` is safe — it only
@@ -2049,19 +2101,23 @@ configurable. See the `app.logging` section in `config.yaml`.
 ### Service Dependencies and Order
 
 ```
-network.target
-      |
-      +-- kushim-hugot.service  (After=network.target)
-      |
-      +-- kushim-queue.service  (After=network.target)
-      |
-edub.service          (After=kushim-hugot.service, Wants=kushim-hugot.service)
+                     edub-kushim.target
+                     Wants & After
+                    /        |        \
+                   ▼         ▼         ▼
+        kushim-hugot   kushim-queue      edub
+        (Type=notify)  (After=hugot,   (After=hugot,
+                        Wants=hugot)    Wants=hugot)
+              |
+              +-- network.target (After=network.target)
 ```
 
-`kushim-queue.service` has no dependency on the matcher — it only reads
-the database; the queue daemon forks consumer children for processing.
+`kushim-queue.service` and `edub.service` both declare `Wants=` (not
+`Requires=`) on the matcher — they start even if the matcher is down, and
+the API handles the unavailable matcher gracefully with a 503 status on tag
+CRUD endpoints. The queue daemon only reads the database under default
+config (`backup.enabled=false`); it forks consumer children that talk to the
+matcher, so waiting via `After=` avoids the connection-refused race.
 
-The matcher should be fully started before the API server. The example files
-use a soft dependency (`Wants=`) so `edub` doesn't fail to start if the
-matcher hasn't been initialized. The API handles the unavailable matcher
-gracefully with a 503 status on tag CRUD endpoints.
+The edub-kushim.target groups all three with `PartOf=`, making stop/restart
+transitive:

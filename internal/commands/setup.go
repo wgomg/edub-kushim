@@ -316,6 +316,17 @@ Flags:
 
 	logger.Info(nil, "admin user '%s' created", adminUser)
 
+	svcPath, err := config.GenerateServiceFiles(cfg.App.ConfigDir)
+	if err != nil {
+		logger.Warn(nil, "Failed to generate systemd service files: %v", err)
+	} else {
+		fmt.Printf("\nService files written to: %s\n\n", svcPath)
+		fmt.Println("To install and start as system services:")
+		fmt.Printf("  sudo cp %s/* /etc/systemd/system/\n", svcPath)
+		fmt.Println("  sudo systemctl daemon-reload")
+		fmt.Println("  sudo systemctl enable --now edub-kushim.target")
+	}
+
 	if cfg.Consumer.OCR.Engine == config.OCR.Gosseract {
 		logger.Info(nil, "setup complete — %d languages in %s", len(langList), tessdataDir)
 	} else {

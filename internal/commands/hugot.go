@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -105,6 +106,8 @@ func serveHugotHandler(c *Container, args []string) error {
 		return fmt.Errorf("listen unix %s: %w", socketPath, err)
 	}
 
+	notifyReady(c.logger)
+
 	server := &http.Server{
 		Handler:      mux,
 		ReadTimeout:  30 * time.Second,
@@ -141,6 +144,26 @@ func serveHugotHandler(c *Container, args []string) error {
 	os.Remove(socketPath)
 
 	return serveError
+}
+
+func notifyReady(log *utils.Logger) {
+	socketPath := os.Getenv("NOTIFY_SOCKET")
+	if socketPath == "" {
+		return
+	}
+	if strings.HasPrefix(socketPath, "@") {
+		socketPath = "\x00" + socketPath[1:]
+	}
+	addr := &net.UnixAddr{Name: socketPath, Net: "unixgram"}
+	conn, err := net.DialUnix("unixgram", nil, addr)
+	if err != nil {
+		log.Warn(nil, "sd_notify connect: %v", err)
+		return
+	}
+	defer conn.Close()
+	if _, err := conn.Write([]byte("READY=1\n")); err != nil {
+		log.Warn(nil, "sd_notify write: %v", err)
+	}
 }
 
 func respondError(w http.ResponseWriter, log *utils.Logger, err error, status int, msg string) {
