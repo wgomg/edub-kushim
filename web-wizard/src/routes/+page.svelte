@@ -73,7 +73,7 @@
 				serviceFilesPath = res.service_files_path;
 			}
 			if (res && 'missing_tools' in res) {
-				missingTools = res.missing_tools;
+				missingTools = res.missing_tools ?? [];
 			}
 			if (res && 'pending_tasks' in res && res.pending_tasks > 0) {
 				pendingTasks = res.pending_tasks;
