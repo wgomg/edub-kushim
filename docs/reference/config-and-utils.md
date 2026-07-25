@@ -11,15 +11,15 @@
 - `ConsumerConfig`: `SupportedFiles []string`, `Workers int`, `MaxFilesPerBatch int`, `TextExtractor TextExtractorConfig`, `PdfOptimizer PdfOptimizerConfig`, `OCR OCRConfig`, `Polling PollingConfig`, `Reclaim ReclaimConfig`
   - `PollingConfig`: `Enabled bool`, `Interval int` (minutes), `Windows []PollingWindow` (optional time-range restrictions with `Start`/`End` in HH:MM format)
   - `ReclaimConfig`: `Enabled bool`, `MaxRetries int` (default 3), `StaleTaskAfter int64` (default 600s)
-  - `TextExtractorConfig`: `Engine string`, `Timeout int`
-  - `PdfOptimizerConfig`: `Engine string`, `Fallback string`, `Timeout int`
-  - `OCRConfig`: `Engine string`, `Languages []string`, `DataDir string`, `Timeout int`, `OcrWorkers int` (0 = auto, resolves to `runtime.NumCPU()` in the subprocess)
+   - `TextExtractorConfig`: `Engine string`, `Timeout int` (0 = disabled, no artificial deadline)
+   - `PdfOptimizerConfig`: `Engine string`, `Fallback string`, `Timeout int` (0 = disabled)
+   - `OCRConfig`: `Engine string`, `Languages []string`, `DataDir string`, `Timeout int` (0 = disabled), `OcrWorkers int` (0 = auto, resolves to `runtime.NumCPU()` in the subprocess)
 - `EnricherConfig`: `Workers int`, `TextReducer TextReducerConfig`, `ContentAnalyzer ContentAnalyzerConfig`, `TagMatcher TagMatcherConfig`
-  - `TextReducerConfig`: `Engine string`, `Timeout int`, `TargetWords int`
+   - `TextReducerConfig`: `Engine string`, `Timeout int` (0 = disabled), `TargetWords int`
   - `ContentAnalyzerConfig`: `Enabled bool` (default `false`), `Timeout int`, `Llm LlmConfig`, `PromptTemplate string`, `DocTypeRefinement DocTypeRefinementConfig`
       - `LlmConfig`: `Adapter string`, `Provider string`, `Model string`, `Token string`, `Reasoning bool` (yaml:"-", set via model catalog), `ReasoningEffort string` (yaml:"-", set via model catalog), `Temperature float64`
       - `DocTypeRefinementConfig`: `Enabled bool`, `HeadWords int`, `TailWords int`
-  - `TagMatcherConfig`: `Timeout`, `ReduceTargetWords`, `ChunkSize`, `Hugot HugotConfig`, `TopN`, `MinSimilarity`, `ConsolidationSimilarity`
+   - `TagMatcherConfig`: `Timeout` (0 = disabled), `ReduceTargetWords`, `ChunkSize`, `Hugot HugotConfig`, `TopN`, `MinSimilarity`, `ConsolidationSimilarity`
     - `HugotConfig`: `Model`, `Backend` (`"GO"` or `"ort"`), `ModelPath`, `BackendLibPath`; internal-only (no yaml/json tags): `CpuMemArena bool` (default `false`), `MemPattern bool` (default `false`)
 - `BackupConfig`: `Enabled bool`, `Interval float64` (days), `Time string` (HH:MM), `Path string`, `Keep int`
 - `ToolConfig`: `Command string`, `Timeout time.Duration`

@@ -233,7 +233,7 @@
 				placeholder="/home/user/.config/edub-kushim"
 				autocomplete="off"
 				required
-				class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:outline-none"
+				class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 			/>
 			<p class="mt-1 text-xs text-parchment-500">
 				Where config.yaml, database, and downloaded models will be stored.
@@ -279,7 +279,7 @@
 				max="65535"
 				bind:value={cfg.server.port}
 				autocomplete="off"
-				class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
+				class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 			/>
 			</div>
 		</section>
@@ -292,14 +292,14 @@
 						Consumption directory (inbox)
 					</label>
 				<input id="consumption-dir" name="consumption-dir" type="text" autocomplete="off" bind:value={cfg.storage.consumption_dir}
-					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none" />
+					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none" />
 				</div>
 				<div>
 					<label for="storage-dir" class="mb-1 block text-sm font-medium text-parchment-200">
 						Storage directory
 					</label>
 				<input id="storage-dir" name="storage-dir" type="text" autocomplete="off" bind:value={cfg.storage.storage_dir}
-					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none" />
+					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none" />
 				</div>
 			</div>
 		</section>
@@ -312,28 +312,28 @@
 						Database host
 					</label>
 				<input id="db-host" name="db-host" type="text" autocomplete="off" bind:value={cfg.database.host}
-					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none" />
+					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none" />
 				</div>
 				<div>
 					<label for="db-port" class="mb-1 block text-sm font-medium text-parchment-200">
 						Database port
 					</label>
 				<input id="db-port" name="db-port" type="number" min="1" max="65535" autocomplete="off" bind:value={cfg.database.port}
-					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none" />
+					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none" />
 				</div>
 				<div>
 					<label for="db-user" class="mb-1 block text-sm font-medium text-parchment-200">
 						Database user
 					</label>
 				<input id="db-user" name="db-user" type="text" autocomplete="off" bind:value={cfg.database.user}
-					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none" />
+					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none" />
 				</div>
 				<div>
 					<label for="db-name" class="mb-1 block text-sm font-medium text-parchment-200">
 						Database name
 					</label>
 				<input id="db-name" name="db-name" type="text" autocomplete="off" bind:value={cfg.database.database}
-					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none" />
+					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none" />
 				</div>
 				<div>
 					<label for="db-sslmode" class="mb-1 block text-sm font-medium text-parchment-200">
@@ -342,7 +342,7 @@
 					<select
 						id="db-sslmode"
 						bind:value={cfg.database.sslmode}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 					>
 						<option value="disable">disable</option>
 						<option value="allow">allow</option>
@@ -365,7 +365,7 @@
 					<select
 						id="ocr-engine"
 						bind:value={cfg.consumer.ocr.engine}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 					>
 						{#each cfg.available_engines.ocr as opt (opt.value)}
 							<option value={opt.value}>{opt.label}</option>
@@ -424,10 +424,10 @@
 				<input
 					id="ocr-timeout"
 					type="number"
-					min="1"
+					min="0"
 					autocomplete="off"
 					bind:value={cfg.consumer.ocr.timeout}
-					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
+					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 				/>
 				</div>
 				<div>
@@ -442,7 +442,7 @@
 					autocomplete="off"
 					name="ocr-language-{i}"
 					required
-					class="flex-1 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:outline-none"
+					class="flex-1 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 				/>
 							{#if cfg.consumer.ocr.languages.length > 1}
 								<button
@@ -476,7 +476,7 @@
 					<select
 						id="text-extractor-engine"
 						bind:value={cfg.consumer.textextractor.engine}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 					>
 						{#each cfg.available_engines.text_extractor as opt (opt.value)}
 							<option value={opt.value}>{opt.label}</option>
@@ -490,10 +490,10 @@
 				<input
 					id="text-extractor-timeout"
 					type="number"
-					min="1"
+					min="0"
 					autocomplete="off"
 					bind:value={cfg.consumer.textextractor.timeout}
-					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
+					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 				/>
 				</div>
 			</div>
@@ -518,7 +518,7 @@
 					<select
 						id="pdf-optimizer-engine"
 						bind:value={cfg.consumer.pdfoptimizer.engine}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 					>
 						{#each cfg.available_engines.pdf_optimizer as opt (opt.value)}
 							<option value={opt.value}>{opt.label}</option>
@@ -535,7 +535,7 @@
 					autocomplete="off"
 					bind:value={cfg.consumer.pdfoptimizer.fallback}
 					placeholder="gs"
-					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:outline-none"
+					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 				/>
 				</div>
 			</div>
@@ -559,7 +559,7 @@
 					min="0"
 					autocomplete="off"
 					bind:value={cfg.consumer.pdfoptimizer.timeout}
-					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
+					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 				/>
 				</div>
 			</div>
@@ -578,7 +578,7 @@
 					min="1"
 					autocomplete="off"
 					bind:value={cfg.consumer.workers}
-					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
+					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 				/>
 				</div>
 
@@ -620,10 +620,10 @@
 				<input
 					id="tag-matcher-timeout"
 					type="number"
-					min="1"
+					min="0"
 					autocomplete="off"
 					bind:value={cfg.enricher.tagmatcher.timeout}
-					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
+					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 				/>
 				</div>
 				<div>
@@ -636,7 +636,7 @@
 					min="0"
 					autocomplete="off"
 					bind:value={cfg.enricher.tagmatcher.reduce_target_words}
-					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
+					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 				/>
 				</div>
 				<div>
@@ -649,7 +649,7 @@
 					min="0"
 					autocomplete="off"
 					bind:value={cfg.enricher.tagmatcher.chunk_size}
-					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
+					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 				/>
 				</div>
 				<div>
@@ -661,7 +661,7 @@
 				type="text"
 				autocomplete="off"
 				bind:value={cfg.enricher.tagmatcher.hugot.model}
-				class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
+				class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 			/>
 				</div>
 				<div>
@@ -671,7 +671,7 @@
 					<select
 						id="tag-matcher-hugot-backend"
 						bind:value={cfg.enricher.tagmatcher.hugot.backend}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 					>
 						<option value="ort">ort</option>
 						<option value="GO">GO</option>
@@ -690,7 +690,7 @@
 					<select
 						id="text-reducer-engine"
 						bind:value={cfg.enricher.textreducer.engine}
-						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 					>
 						{#each cfg.available_engines.text_reducer as opt (opt.value)}
 							<option value={opt.value}>{opt.label}</option>
@@ -704,10 +704,10 @@
 				<input
 					id="text-reducer-timeout"
 					type="number"
-					min="1"
+					min="0"
 					autocomplete="off"
 					bind:value={cfg.enricher.textreducer.timeout}
-					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
+					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 				/>
 				</div>
 				<div class="sm:col-span-2">
@@ -720,7 +720,7 @@
 				min="1"
 				autocomplete="off"
 				bind:value={cfg.enricher.textreducer.target_words}
-				class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
+				class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 			/>
 				</div>
 			</div>
@@ -738,7 +738,7 @@
 				min="1"
 				autocomplete="off"
 				bind:value={cfg.enricher.workers}
-				class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
+				class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 			/>
 			</div>
 		</section>

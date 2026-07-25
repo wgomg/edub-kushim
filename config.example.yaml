@@ -53,7 +53,7 @@ consumer:
 
   textextractor:
     engine: 'mupdf' # mupdf | gopdf | pdftotext
-    timeout: 120
+    timeout: 120     # 0 = disabled (no artificial deadline)
 
   pdfoptimizer:
     engine: 'mupdf'
@@ -64,7 +64,7 @@ consumer:
     engine: 'gosseract'
     languages: [eng] # required — run 'kushim setup --languages eng,spa,...'
     # data_dir: '~/.config/edub-kushim/ocr/tessdata'
-    timeout: 120
+    timeout: 120    # 0 = disabled (no artificial deadline)
     # ocr_workers: 0  # parallel OCR goroutines; 0 = auto (CPU count)
 
 enricher:
@@ -72,7 +72,7 @@ enricher:
 
   textreducer:
     engine: 'textrank'
-    timeout: 120
+    timeout: 120    # 0 = disabled (no artificial deadline)
     target_words: 2000
 
   contentanalyzer:
@@ -91,7 +91,7 @@ enricher:
       # temperature: 0.0
 
   tagmatcher:
-    timeout: 120
+    timeout: 120    # 0 = disabled (no artificial deadline)
     reduce_target_words: 4000
     chunk_size: 0 # 0 = use model's max_position_embeddings
     hugot:

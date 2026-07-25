@@ -152,8 +152,12 @@ func (r *Runner) ExtractText(ctx context.Context, path string) (*TextExtractionR
 	if r.textExtractor == nil {
 		return nil, fmt.Errorf("text extractor not configured")
 	}
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(r.config.Consumer.TextExtractor.Timeout)*time.Second)
-	defer cancel()
+	timeout := time.Duration(r.config.Consumer.TextExtractor.Timeout) * time.Second
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
 
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return nil, fmt.Errorf("file does not exist: %s", path)
@@ -175,8 +179,12 @@ func (r *Runner) OCR(ctx context.Context, docId, path string) (*OCRResult, error
 	if r.ocr == nil {
 		return nil, fmt.Errorf("OCR not configured")
 	}
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(r.config.Consumer.OCR.Timeout)*time.Second)
-	defer cancel()
+	timeout := time.Duration(r.config.Consumer.OCR.Timeout) * time.Second
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
 
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return nil, fmt.Errorf("file does not exist: %s", path)
@@ -280,6 +288,12 @@ func (r *Runner) ReduceContent(ctx context.Context, content string, chunkSize, t
 	if r.textReducer == nil {
 		return result, fmt.Errorf("text reducer not configured")
 	}
+	timeout := time.Duration(r.config.Enricher.TextReducer.Timeout) * time.Second
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
 	reducedContent, err := runWithTimeout(ctx, func() (*string, error) {
 		return r.textReducer.Reduce(ctx, content, chunkSize, targetWordCount)
 	})
@@ -297,6 +311,12 @@ func (r *Runner) ReduceContent(ctx context.Context, content string, chunkSize, t
 func (r *Runner) MatchTags(ctx context.Context, docId, input string) (*TagMatchResult, error) {
 	if r.tagMatcher == nil {
 		return nil, fmt.Errorf("tag matcher not configured")
+	}
+	timeout := time.Duration(r.config.Enricher.TagMatcher.Timeout) * time.Second
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
 	}
 	tags, err := runWithTimeout(ctx, func() ([]string, error) {
 		return r.tagMatcher.Match(ctx, docId, input)

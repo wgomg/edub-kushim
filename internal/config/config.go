@@ -459,6 +459,19 @@ func finalizeConfig(cfg *Config, configDir string) error {
 		return fmt.Errorf("server.max_batch_delete must be >= 1")
 	}
 
+	if cfg.Consumer.TextExtractor.Timeout < 0 {
+		return fmt.Errorf("consumer.textextractor.timeout must be >= 0")
+	}
+	if cfg.Consumer.OCR.Timeout < 0 {
+		return fmt.Errorf("consumer.ocr.timeout must be >= 0")
+	}
+	if cfg.Enricher.TextReducer.Timeout < 0 {
+		return fmt.Errorf("enricher.textreducer.timeout must be >= 0")
+	}
+	if cfg.Enricher.TagMatcher.Timeout < 0 {
+		return fmt.Errorf("enricher.tagmatcher.timeout must be >= 0")
+	}
+
 	if cfg.Enricher.ContentAnalyzer.DocTypeRefinement.HeadWords < 0 {
 		return fmt.Errorf("enricher.contentanalyzer.doc_type_refinement.head_words must be >= 0")
 	}

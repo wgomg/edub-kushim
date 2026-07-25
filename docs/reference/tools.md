@@ -13,6 +13,7 @@
 - **Methods**: `ExtractText`, `OCR(ctx, docId, path)`, `OptimizePdf(ctx, docId, path)`, `ReduceContent`, `MatchTags(ctx, docId, input)`, `AnalyzeContent`, `AnalyzeDocType`
 - **Result types**: `TextExtractionResult`, `OCRResult`, `PdfOptimizationResult`, `TextReducerResult` (with Text, WordCount, CharCount, TargetWordCount), `TagMatchResult`, `ContentAnalysisResult` (with People)
 - **Helper**: `runWithTimeout[T](ctx, fn) (T, error)` — Generic goroutine wrapper with context cancellation
+- **Timeout behavior**: `ExtractText`, `OCR`, `ReduceContent`, and `MatchTags` each read their component's configured `Timeout` and only wrap the context with `context.WithTimeout` when the value is > 0. A timeout of 0 means no artificial deadline — parent context cancellation still propagates via `runWithTimeout`. The same guarded pattern is used by `OptimizePdf`. Config validation rejects negative timeout values at load time.
 
 ---
 

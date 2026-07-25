@@ -207,6 +207,7 @@
 - **Fix blank max download fields** (#73): exposed `server.max_download_files` and `server.max_download_size_mb` in the API `ConfigResponse` so the settings page inputs are pre-filled
 - **PostgreSQL SSL mode dropdown** (#74): replaced free-text SSL mode input with a `<select>` dropdown in both wizard and settings (disable/allow/prefer/require/verify-ca/verify-full)
 - **Separate database section from storage** (#75): split combined "Storage & Database" section into dedicated "Storage" and "Database" sections in both UIs
+- **Timeout=0 for TextExtractor, OCR, TextReducer, TagMatcher** (#76): extended the `min="0"` timeout pattern to all four remaining consumer/enricher timeout inputs so users can disable per-component deadlines. TextReducer and TagMatcher now actually enforce their config timeout (was dead code). Config validation rejects negative values.
 
 #### Web UI — Page Status
 
