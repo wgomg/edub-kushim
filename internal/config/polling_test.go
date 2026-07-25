@@ -247,3 +247,123 @@ func TestFinalizeConfig_ReclaimMaxRetries(t *testing.T) {
 		}
 	})
 }
+
+func TestFinalizeConfig_StaleTaskAfterMinimum(t *testing.T) {
+	configDir := t.TempDir()
+
+	t.Run("rejects stale_task_after below 60 when reclaim enabled", func(t *testing.T) {
+		cfg := DefaultConfig(configDir)
+		cfg.Consumer.Reclaim.Enabled = true
+		cfg.Consumer.Reclaim.MaxRetries = 3
+		cfg.Consumer.Reclaim.StaleTaskAfter = 30
+
+		err := finalizeConfig(cfg, configDir)
+		if err == nil {
+			t.Fatal("expected error for StaleTaskAfter=30 with reclaim enabled")
+		}
+	})
+
+	t.Run("rejects stale_task_after zero when reclaim enabled", func(t *testing.T) {
+		cfg := DefaultConfig(configDir)
+		cfg.Consumer.Reclaim.Enabled = true
+		cfg.Consumer.Reclaim.MaxRetries = 3
+		cfg.Consumer.Reclaim.StaleTaskAfter = 0
+
+		err := finalizeConfig(cfg, configDir)
+		if err == nil {
+			t.Fatal("expected error for StaleTaskAfter=0 with reclaim enabled")
+		}
+	})
+
+	t.Run("allows stale_task_after 60 when reclaim enabled", func(t *testing.T) {
+		cfg := DefaultConfig(configDir)
+		cfg.Consumer.Reclaim.Enabled = true
+		cfg.Consumer.Reclaim.MaxRetries = 3
+		cfg.Consumer.Reclaim.StaleTaskAfter = 60
+
+		err := finalizeConfig(cfg, configDir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("allows low stale_task_after when reclaim disabled", func(t *testing.T) {
+		cfg := DefaultConfig(configDir)
+		cfg.Consumer.Reclaim.Enabled = false
+		cfg.Consumer.Reclaim.StaleTaskAfter = 5
+
+		err := finalizeConfig(cfg, configDir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+}
+
+func TestFinalizeConfig_MaxBatchDeleteMinimum(t *testing.T) {
+	configDir := t.TempDir()
+
+	t.Run("rejects zero max_batch_delete", func(t *testing.T) {
+		cfg := DefaultConfig(configDir)
+		cfg.Srv.MaxBatchDelete = 0
+
+		err := finalizeConfig(cfg, configDir)
+		if err == nil {
+			t.Fatal("expected error for MaxBatchDelete=0")
+		}
+	})
+
+	t.Run("rejects negative max_batch_delete", func(t *testing.T) {
+		cfg := DefaultConfig(configDir)
+		cfg.Srv.MaxBatchDelete = -1
+
+		err := finalizeConfig(cfg, configDir)
+		if err == nil {
+			t.Fatal("expected error for MaxBatchDelete=-1")
+		}
+	})
+
+	t.Run("accepts max_batch_delete of 1", func(t *testing.T) {
+		cfg := DefaultConfig(configDir)
+		cfg.Srv.MaxBatchDelete = 1
+
+		err := finalizeConfig(cfg, configDir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+}
+
+func TestFinalizeConfig_DocTypeRefinementNonNegative(t *testing.T) {
+	configDir := t.TempDir()
+
+	t.Run("rejects negative head_words", func(t *testing.T) {
+		cfg := DefaultConfig(configDir)
+		cfg.Enricher.ContentAnalyzer.DocTypeRefinement.HeadWords = -1
+
+		err := finalizeConfig(cfg, configDir)
+		if err == nil {
+			t.Fatal("expected error for HeadWords=-1")
+		}
+	})
+
+	t.Run("rejects negative tail_words", func(t *testing.T) {
+		cfg := DefaultConfig(configDir)
+		cfg.Enricher.ContentAnalyzer.DocTypeRefinement.TailWords = -1
+
+		err := finalizeConfig(cfg, configDir)
+		if err == nil {
+			t.Fatal("expected error for TailWords=-1")
+		}
+	})
+
+	t.Run("accepts zero head_words and tail_words", func(t *testing.T) {
+		cfg := DefaultConfig(configDir)
+		cfg.Enricher.ContentAnalyzer.DocTypeRefinement.HeadWords = 0
+		cfg.Enricher.ContentAnalyzer.DocTypeRefinement.TailWords = 0
+
+		err := finalizeConfig(cfg, configDir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+}

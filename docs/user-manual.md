@@ -1016,10 +1016,13 @@ Two-phase API:
 ```json
 {
   "server.port": 3000,
+  "server.max_batch_delete": 50,
+  "server.auth_enabled": true,
   "consumer.ocr.engine": "gosseract",
   "consumer.ocr.languages": ["eng", "spa"],
   "consumer.ocr.timeout": 120,
   "consumer.workers": 2,
+  "consumer.reclaim.stale_task_after": 600,
   "consumer.textextractor.engine": "mupdf",
   "consumer.textextractor.timeout": 120,
   "consumer.pdfoptimizer.engine": "mupdf",
@@ -1032,6 +1035,7 @@ Two-phase API:
   "enricher.contentanalyzer.enabled": true,
   "enricher.contentanalyzer.timeout": 120,
   "enricher.contentanalyzer.prompt_template": "",
+  "enricher.contentanalyzer.pause_on_credit_error": true,
   "enricher.contentanalyzer.doc_type_refinement.enabled": true,
   "enricher.contentanalyzer.doc_type_refinement.head_words": 600,
   "enricher.contentanalyzer.doc_type_refinement.tail_words": 400,
@@ -1900,17 +1904,22 @@ The main web UI includes a **Settings** page at `/settings` with two tabs:
 
 A single-page form for all user-configurable settings:
 
-- **Server**: host, port, max upload/download sizes, max download files
+- **Server**: host, port, max upload/download sizes, max download files,
+  max concurrent batches, max batch delete, authentication enabled toggle
 - **OCR**: engine selector, timeout, data directory, languages list (add/remove)
 - **Consumer**: workers
+- **Polling**: enabled toggle, interval, active windows (start/end pairs, add/remove)
+- **Reclaim**: auto-resume toggle, max retries, stale task after (seconds)
 - **Text extractor**: engine, timeout
 - **PDF optimizer**: engine, fallback, timeout
 - **Enricher**: workers
-- **Content analyzer (LLM)**: enabled toggle, adapter (openai-compatible/anthropic/custom),
+- **Content analyzer (LLM)**: enabled toggle, timeout, adapter (openai-compatible/anthropic/custom),
   provider (filtered by adapter), model (filtered by provider, loaded from model catalog),
-  token (hidden for Ollama), temperature, reasoning toggle (shown when model supports it),
+  token (hidden for Ollama), temperature, pause on credit error toggle,
+  reasoning toggle (shown when model supports it),
   reasoning effort (shown when reasoning enabled), endpoint override (collapsed advanced section),
-  custom adapter fields (URL, request body template, response path)
+  custom adapter fields (URL, request body template, response path),
+  doc type refinement (enabled, head words, tail words)
 - **Tag matcher**: engine, timeout, reduce target words, chunk size, Hugot model,
   Hugot backend (ort/GO)
 - **Text reducer**: engine, timeout, target words

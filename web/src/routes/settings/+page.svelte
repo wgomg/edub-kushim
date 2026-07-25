@@ -136,6 +136,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			'server.max_download_files': Number(cfg.server.max_download_files),
 			'server.max_download_size_mb': Number(cfg.server.max_download_size_mb),
 			'server.max_concurrent_batches': Number(cfg.server.max_concurrent_batches),
+			'server.max_batch_delete': Number(cfg.server.max_batch_delete),
+			'server.auth_enabled': cfg.server.auth_enabled,
 			'consumer.ocr.engine': cfg.consumer.ocr.engine,
 			'consumer.ocr.languages': cfg.consumer.ocr.languages.filter(Boolean),
 			'consumer.ocr.data_dir': cfg.consumer.ocr.data_dir,
@@ -148,6 +150,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			'consumer.polling.windows': cfg.consumer.polling.windows ?? [],
 			'consumer.reclaim.enabled': cfg.consumer.reclaim.enabled,
 			'consumer.reclaim.max_retries': Number(cfg.consumer.reclaim.max_retries),
+			'consumer.reclaim.stale_task_after': Number(cfg.consumer.reclaim.stale_task_after),
 			'consumer.pdfoptimizer.engine': cfg.consumer.pdfoptimizer.engine,
 			'consumer.pdfoptimizer.fallback': cfg.consumer.pdfoptimizer.fallback,
 			'consumer.pdfoptimizer.timeout': Number(cfg.consumer.pdfoptimizer.timeout),
@@ -160,6 +163,10 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			'enricher.contentanalyzer.enabled': cfg.enricher.contentanalyzer.enabled,
 			'enricher.contentanalyzer.timeout': Number(cfg.enricher.contentanalyzer.timeout),
 			'enricher.contentanalyzer.prompt_template': cfg.enricher.contentanalyzer.prompt_template,
+			'enricher.contentanalyzer.pause_on_credit_error': cfg.enricher.contentanalyzer.pause_on_credit_error,
+			'enricher.contentanalyzer.doc_type_refinement.enabled': cfg.enricher.contentanalyzer.doc_type_refinement.enabled,
+			'enricher.contentanalyzer.doc_type_refinement.head_words': Number(cfg.enricher.contentanalyzer.doc_type_refinement.head_words),
+			'enricher.contentanalyzer.doc_type_refinement.tail_words': Number(cfg.enricher.contentanalyzer.doc_type_refinement.tail_words),
 			'enricher.contentanalyzer.llm.adapter': cfg.enricher.contentanalyzer.llm.adapter,
 			'enricher.contentanalyzer.llm.provider': cfg.enricher.contentanalyzer.llm.provider,
 			'enricher.contentanalyzer.llm.model': cfg.enricher.contentanalyzer.llm.model,
@@ -435,6 +442,34 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							bind:value={cfg.server.max_concurrent_batches}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						/>
+					</div>
+					<div>
+						<label for="server-max-batch-delete" class="mb-1 block text-sm font-medium text-parchment-200"
+							>Max batch delete</label
+						>
+						<input
+							id="server-max-batch-delete"
+							type="number"
+							min="1"
+							bind:value={cfg.server.max_batch_delete}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
+						/>
+					</div>
+				</div>
+				<div class="mt-4">
+					<label for="server-auth-enabled" class="mb-1 block text-sm font-medium text-parchment-200"
+						>Authentication enabled</label
+					>
+					<div class="flex items-center gap-2">
+						<input
+							id="server-auth-enabled"
+							type="checkbox"
+							bind:checked={cfg.server.auth_enabled}
+							class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
+						/>
+						<span class="text-sm text-parchment-400">
+							{cfg.server.auth_enabled ? 'Enabled' : 'Disabled'}
+						</span>
 					</div>
 				</div>
 			</section>
@@ -830,6 +865,19 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							bind:value={cfg.consumer.reclaim.max_retries}
 						/>
 					</div>
+					<div>
+						<label
+							for="reclaim-stale-task-after"
+							class="mb-1 block text-sm font-medium text-parchment-200">Stale task after (s)</label
+						>
+						<input
+							id="reclaim-stale-task-after"
+							type="number"
+							min="60"
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
+							bind:value={cfg.consumer.reclaim.stale_task_after}
+						/>
+					</div>
 				</div>
 			</section>
 
@@ -1060,6 +1108,40 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 							/>
 						</div>
+						<div>
+							<label
+								for="content-analyzer-timeout"
+								class="mb-1 block text-sm font-medium text-parchment-200"
+							>
+								Timeout (s)
+							</label>
+							<input
+								id="content-analyzer-timeout"
+								type="number"
+								min="1"
+								bind:value={cfg.enricher.contentanalyzer.timeout}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+						<div>
+							<label
+								for="content-analyzer-pause-credit"
+								class="mb-1 block text-sm font-medium text-parchment-200"
+							>
+								Pause on credit error
+							</label>
+							<div class="mt-2 flex items-center gap-2">
+								<input
+									id="content-analyzer-pause-credit"
+									type="checkbox"
+									bind:checked={cfg.enricher.contentanalyzer.pause_on_credit_error}
+									class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
+								/>
+								<span class="text-sm text-parchment-400">
+									{cfg.enricher.contentanalyzer.pause_on_credit_error ? 'Enabled' : 'Disabled'}
+								</span>
+							</div>
+						</div>
 					</div>
 
 					<div class="mt-4">
@@ -1080,6 +1162,55 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							spellcheck="false"
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 font-mono text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
 						></textarea>
+					</div>
+
+					<div class="mt-6 rounded-lg border border-clay-800 bg-clay-950 p-4">
+						<h3 class="mb-3 text-sm font-semibold text-parchment-200">Doc type refinement</h3>
+						<div class="grid gap-4 sm:grid-cols-3">
+							<div>
+								<label
+									for="doc-type-refinement-enabled"
+									class="mb-1 block text-sm font-medium text-parchment-200">Enabled</label
+								>
+								<div class="mt-2 flex items-center gap-2">
+									<input
+										id="doc-type-refinement-enabled"
+										type="checkbox"
+										bind:checked={cfg.enricher.contentanalyzer.doc_type_refinement.enabled}
+										class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
+									/>
+									<span class="text-sm text-parchment-400">
+										{cfg.enricher.contentanalyzer.doc_type_refinement.enabled ? 'Active' : 'Inactive'}
+									</span>
+								</div>
+							</div>
+							<div>
+								<label
+									for="doc-type-refinement-head-words"
+									class="mb-1 block text-sm font-medium text-parchment-200">Head words</label
+								>
+								<input
+									id="doc-type-refinement-head-words"
+									type="number"
+									min="0"
+									bind:value={cfg.enricher.contentanalyzer.doc_type_refinement.head_words}
+									class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
+								/>
+							</div>
+							<div>
+								<label
+									for="doc-type-refinement-tail-words"
+									class="mb-1 block text-sm font-medium text-parchment-200">Tail words</label
+								>
+								<input
+									id="doc-type-refinement-tail-words"
+									type="number"
+									min="0"
+									bind:value={cfg.enricher.contentanalyzer.doc_type_refinement.tail_words}
+									class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:outline-none"
+								/>
+							</div>
+						</div>
 					</div>
 				{/if}
 			</section>

@@ -191,6 +191,33 @@ func TestExtractHeadTailWords(t *testing.T) {
 			wantTail:  "",
 			wantSep:   false,
 		},
+		{
+			name:      "negative head_words treated as zero",
+			content:   "a b c d e",
+			headWords: -5,
+			tailWords: 2,
+			wantHead:  "",
+			wantTail:  "d e",
+			wantSep:   true,
+		},
+		{
+			name:      "negative tail_words treated as zero",
+			content:   "a b c d e",
+			headWords: 3,
+			tailWords: -2,
+			wantHead:  "a b c",
+			wantTail:  "",
+			wantSep:   false,
+		},
+		{
+			name:      "both negative produces head-only empty output",
+			content:   "a b c d e",
+			headWords: -1,
+			tailWords: -1,
+			wantHead:  "",
+			wantTail:  "",
+			wantSep:   false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

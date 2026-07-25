@@ -84,3 +84,63 @@ func TestConfigResponseFrom_PromptTemplate(t *testing.T) {
 		t.Errorf("PromptTemplate = %q, want %q", resp.Enricher.ContentAnalyzer.PromptTemplate, "custom {{.Text}} template")
 	}
 }
+
+func TestConfigResponseFrom_MaxBatchDelete(t *testing.T) {
+	cfg := config.DefaultConfig("/tmp/test")
+	resp := ConfigResponseFrom(cfg)
+
+	if resp.Server.MaxBatchDelete != 50 {
+		t.Errorf("default MaxBatchDelete = %d, want 50", resp.Server.MaxBatchDelete)
+	}
+
+	cfg.Srv.MaxBatchDelete = 100
+	resp = ConfigResponseFrom(cfg)
+	if resp.Server.MaxBatchDelete != 100 {
+		t.Errorf("MaxBatchDelete = %d, want 100", resp.Server.MaxBatchDelete)
+	}
+}
+
+func TestConfigResponseFrom_DocTypeRefinement(t *testing.T) {
+	cfg := config.DefaultConfig("/tmp/test")
+	resp := ConfigResponseFrom(cfg)
+
+	if !resp.Enricher.ContentAnalyzer.DocTypeRefinement.Enabled {
+		t.Error("default DocTypeRefinement.Enabled should be true")
+	}
+	if resp.Enricher.ContentAnalyzer.DocTypeRefinement.HeadWords != 600 {
+		t.Errorf("default HeadWords = %d, want 600", resp.Enricher.ContentAnalyzer.DocTypeRefinement.HeadWords)
+	}
+	if resp.Enricher.ContentAnalyzer.DocTypeRefinement.TailWords != 400 {
+		t.Errorf("default TailWords = %d, want 400", resp.Enricher.ContentAnalyzer.DocTypeRefinement.TailWords)
+	}
+
+	cfg.Enricher.ContentAnalyzer.DocTypeRefinement.Enabled = false
+	cfg.Enricher.ContentAnalyzer.DocTypeRefinement.HeadWords = 300
+	cfg.Enricher.ContentAnalyzer.DocTypeRefinement.TailWords = 200
+	resp = ConfigResponseFrom(cfg)
+
+	if resp.Enricher.ContentAnalyzer.DocTypeRefinement.Enabled {
+		t.Error("DocTypeRefinement.Enabled should be false")
+	}
+	if resp.Enricher.ContentAnalyzer.DocTypeRefinement.HeadWords != 300 {
+		t.Errorf("HeadWords = %d, want 300", resp.Enricher.ContentAnalyzer.DocTypeRefinement.HeadWords)
+	}
+	if resp.Enricher.ContentAnalyzer.DocTypeRefinement.TailWords != 200 {
+		t.Errorf("TailWords = %d, want 200", resp.Enricher.ContentAnalyzer.DocTypeRefinement.TailWords)
+	}
+}
+
+func TestConfigResponseFrom_PauseOnCreditError(t *testing.T) {
+	cfg := config.DefaultConfig("/tmp/test")
+	resp := ConfigResponseFrom(cfg)
+
+	if !resp.Enricher.ContentAnalyzer.PauseOnCreditError {
+		t.Error("default PauseOnCreditError should be true")
+	}
+
+	cfg.Enricher.ContentAnalyzer.PauseOnCreditError = false
+	resp = ConfigResponseFrom(cfg)
+	if resp.Enricher.ContentAnalyzer.PauseOnCreditError {
+		t.Error("PauseOnCreditError should be false after setting")
+	}
+}

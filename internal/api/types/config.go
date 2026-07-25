@@ -62,6 +62,7 @@ type ServerConfigResponse struct {
 	MaxDownloadFiles     int    `json:"max_download_files"`
 	MaxDownloadSizeMB    int64  `json:"max_download_size_mb"`
 	MaxConcurrentBatches int    `json:"max_concurrent_batches"`
+	MaxBatchDelete       int    `json:"max_batch_delete"`
 	AuthEnabled          bool   `json:"auth_enabled"`
 }
 
@@ -124,11 +125,19 @@ type TextReducerResponse struct {
 	TargetWords int    `json:"target_words"`
 }
 
+type DocTypeRefinementResponse struct {
+	Enabled   bool `json:"enabled"`
+	HeadWords int  `json:"head_words"`
+	TailWords int  `json:"tail_words"`
+}
+
 type ContentAnalyzerResponse struct {
-	Enabled        bool              `json:"enabled"`
-	Timeout        int               `json:"timeout"`
-	Llm            LlmConfigResponse `json:"llm"`
-	PromptTemplate string            `json:"prompt_template,omitempty"`
+	Enabled            bool                     `json:"enabled"`
+	Timeout            int                      `json:"timeout"`
+	Llm                LlmConfigResponse        `json:"llm"`
+	PromptTemplate     string                   `json:"prompt_template,omitempty"`
+	DocTypeRefinement  DocTypeRefinementResponse `json:"doc_type_refinement"`
+	PauseOnCreditError bool                     `json:"pause_on_credit_error"`
 }
 
 type LlmConfigResponse struct {
@@ -208,6 +217,12 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Enricher.ContentAnalyzer.Enabled = cfg.Enricher.ContentAnalyzer.Enabled
 	resp.Enricher.ContentAnalyzer.Timeout = cfg.Enricher.ContentAnalyzer.Timeout
 	resp.Enricher.ContentAnalyzer.PromptTemplate = cfg.Enricher.ContentAnalyzer.PromptTemplate
+	resp.Enricher.ContentAnalyzer.PauseOnCreditError = cfg.Enricher.ContentAnalyzer.PauseOnCreditError
+	resp.Enricher.ContentAnalyzer.DocTypeRefinement = DocTypeRefinementResponse{
+		Enabled:   cfg.Enricher.ContentAnalyzer.DocTypeRefinement.Enabled,
+		HeadWords: cfg.Enricher.ContentAnalyzer.DocTypeRefinement.HeadWords,
+		TailWords: cfg.Enricher.ContentAnalyzer.DocTypeRefinement.TailWords,
+	}
 	resp.Enricher.ContentAnalyzer.Llm.Adapter = cfg.Enricher.ContentAnalyzer.Llm.Adapter
 	resp.Enricher.ContentAnalyzer.Llm.Provider = cfg.Enricher.ContentAnalyzer.Llm.Provider
 	resp.Enricher.ContentAnalyzer.Llm.Model = cfg.Enricher.ContentAnalyzer.Llm.Model
@@ -242,6 +257,7 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Server.MaxDownloadFiles = cfg.Srv.MaxDownloadFiles
 	resp.Server.MaxDownloadSizeMB = cfg.Srv.MaxDownloadSizeMB
 	resp.Server.MaxConcurrentBatches = cfg.Srv.MaxConcurrentBatches
+	resp.Server.MaxBatchDelete = cfg.Srv.MaxBatchDelete
 	resp.Backup.Enabled = cfg.Backup.Enabled
 	resp.Backup.Interval = cfg.Backup.Interval
 	resp.Backup.Time = cfg.Backup.Time

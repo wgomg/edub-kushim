@@ -450,9 +450,20 @@ func finalizeConfig(cfg *Config, configDir string) error {
 		if cfg.Consumer.Reclaim.MaxRetries <= 0 {
 			return fmt.Errorf("consumer.reclaim.max_retries must be > 0 when reclaim is enabled")
 		}
-		if cfg.Consumer.Reclaim.StaleTaskAfter <= 0 {
-			return fmt.Errorf("consumer.reclaim.stale_task_after must be > 0 when reclaim is enabled")
+		if cfg.Consumer.Reclaim.StaleTaskAfter < 60 {
+			return fmt.Errorf("consumer.reclaim.stale_task_after must be >= 60 when reclaim is enabled")
 		}
+	}
+
+	if cfg.Srv.MaxBatchDelete < 1 {
+		return fmt.Errorf("server.max_batch_delete must be >= 1")
+	}
+
+	if cfg.Enricher.ContentAnalyzer.DocTypeRefinement.HeadWords < 0 {
+		return fmt.Errorf("enricher.contentanalyzer.doc_type_refinement.head_words must be >= 0")
+	}
+	if cfg.Enricher.ContentAnalyzer.DocTypeRefinement.TailWords < 0 {
+		return fmt.Errorf("enricher.contentanalyzer.doc_type_refinement.tail_words must be >= 0")
 	}
 
 	homeDir, err := os.UserHomeDir()

@@ -228,8 +228,8 @@ func normalizeToTokens(s string) []string {
 func ExtractHeadTailWords(content string, headWords, tailWords int) string {
 	words := strings.Fields(content)
 	total := len(words)
-	head := min(headWords, total)
-	tail := min(tailWords, total-head)
+	head := min(max(headWords, 0), total)
+	tail := min(max(tailWords, 0), total-head)
 	var sb strings.Builder
 	sb.WriteString(strings.Join(words[:head], " "))
 	if tail > 0 {
