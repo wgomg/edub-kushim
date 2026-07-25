@@ -17,8 +17,8 @@
 - `probeMatcher()` — Calls `matcherClient.Health()` with 2s timeout. Logs warning and continues if matcher is unreachable; tag CRUD returns `503` and enrich falls back to LLM-only tags.
 - `registerRoutes(logger, client, dispatcher, getConfig, onConfigSet, services, workStore) *http.ServeMux` — Creates and returns a `*http.ServeMux` with all API routes registered; internally creates the `search.Engine` from `client`. Uses Go 1.22+ pattern routing (`"GET /api/v1/documents/{id}"`). Auth routes (`POST /api/v1/auth/login`, `POST /api/v1/auth/logout`) are registered before all other routes so they are public (bypassed by `AuthMiddleware`). Orphaned file routes (`/api/v1/orphaned/...`) are registered via `OrphanedHandler` after the document routes. Errored file routes (`/api/v1/errored/...`) are registered via `ErroredHandler` after the orphaned block.
 - `registerStaticRoutes(mux *http.ServeMux)` — Registers `"GET /{path...}"` handler; tries to serve the requested file from the embedded FS, falls back to `index.html` for client-side SPA routes if the file doesn't exist
-- `chainMiddleware(logger *utils.Logger, getSecret func() string, getAuthEnabled func() bool, validateAPIKey func(ctx context.Context, rawKey string) (*database.User, error), getUserByID func(ctx context.Context, id int64) (*database.User, error), h http.Handler) http.Handler` — Composes request + auth + parambag middleware. The auth middleware skips public paths (`/health`, `/wizard/*`, `/api/v1/auth/*`, non-API paths) and validates Bearer tokens (from `Authorization` header or `edub_token` cookie) on all other API routes. Tokens with `ek_` prefix are validated via `validateAPIKey` closure (hashes + DB lookup); other tokens are validated as JWT via `auth.ValidateToken`.
-- `AuthMiddleware(next http.Handler, getSecret func() string, getAuthEnabled func() bool, validateAPIKey func(ctx context.Context, rawKey string) (*database.User, error), getUserByID func(ctx context.Context, id int64) (*database.User, error)) http.Handler` — Extracts `Authorization: Bearer <token>` header. If the header is absent, falls back to the `edub_token` cookie. If token starts with `ek_`, validates via `validateAPIKey` (hashes key, DB lookup) and injects `userID`, `username`, `role` (from DB), and `authSource="apikey"` into context. Otherwise, validates JWT via `auth.ValidateToken`, then re-fetches the user from DB via `getUserByID` to get the current `role` (not trusting the JWT claim for role). Injects `userID`, `username`, `role`, and `authSource="session"`. Returns 401 JSON for missing/invalid/expired tokens or deleted users, 500 JSON for internal errors. Bypasses auth for public paths.
+- `chainMiddleware(logger *utils.Logger, getSecret func() string, getAuthEnabled func() bool, validateAPIKey func(ctx context.Context, rawKey string) (*database.User, error), getUserByID func(ctx context.Context, id int64) (*database.User, error), h http.Handler) http.Handler` — Composes request + auth + parambag middleware. The auth middleware skips public paths (`/health`, `GET /wizard/bootstrap`, `/api/v1/auth/*`, non-API paths) and validates Bearer tokens (from `Authorization` header or `edub_token` cookie) on all other routes. Previously all `/wizard/*` paths were public; now only `GET /wizard/bootstrap` is public — the rest require authentication (admin role via `RequireRole`). Tokens with `ek_` prefix are validated via `validateAPIKey` closure (hashes + DB lookup); other tokens are validated as JWT via `auth.ValidateToken`.
+- `AuthMiddleware(next http.Handler, getSecret func() string, getAuthEnabled func() bool, validateAPIKey func(ctx context.Context, rawKey string) (*database.User, error), getUserByID func(ctx context.Context, id int64) (*database.User, error)) http.Handler` — Extracts `Authorization: Bearer <token>` header. If the header is absent, falls back to the `edub_token` cookie. If token starts with `ek_`, validates via `validateAPIKey` (hashes key, DB lookup) and injects `userID`, `username`, `role` (from DB), and `authSource="apikey"` into context. Otherwise, validates JWT via `auth.ValidateToken`, then re-fetches the user from DB via `getUserByID` to get the current `role` (not trusting the JWT claim for role). Injects `userID`, `username`, `role`, and `authSource="session"`. Returns 401 JSON for missing/invalid/expired tokens or deleted users, 500 JSON for internal errors. Bypasses auth for public paths (`/health`, `GET /wizard/bootstrap`, `/api/v1/auth/*`, non-API paths). Previously all `/wizard/*` paths were public; now only `GET /wizard/bootstrap` bypasses auth.
 - `RequireRole(allowed ...auth.Role) func(http.Handler) http.Handler` — **(`permission.go`)** Middleware factory that returns a handler requiring the request context to contain one of the allowed roles via `auth.RoleKey`. Returns 403 JSON `{"error":"forbidden"}` if role is missing or not in the allowed set. Used to wrap every API route in `registerRoutes`.
 - `requestMiddleware(logger *utils.Logger, next http.Handler) http.Handler` — Adds reqid to context, logs requests
 - `parambagMiddleware(next http.Handler) http.Handler` — Injects ParamBag into request context
@@ -260,10 +260,11 @@ See `AuthMiddleware` under `server.go` → Functions.
   - **Methods**:
     - `NewConfigHandler(getConfig, onConfigSet, queries, logger, dispatcher) *ConfigHandler` — `getConfig` and `onConfigSet` are closures wrapping a shared `atomic.Pointer[config.Config]`. The handler never owns its own pointer; config flows via these closures, allowing the file watcher to atomically update the shared state without handler coordination.
     - `SetServices(client, dispatcher)` — Sets `client.Queries`, creates CrudServices with `Batch` and `User` services, sets dispatcher on an already-initialized handler. Used by the wizard's auto-resume path after `onConfigSet` stores the bootstrapped config. Replaces the old `SetBootstrap`.
-    - `GetConfig(w, r)` — `GET /wizard/config` — Returns user-configurable settings as `ConfigResponse` (app, server, consumer, enricher sections plus available_engines; app includes boolean `initialized`; enricher includes LLM provider tokens). Returns defaults from `DefaultConfig("")` when no config is loaded (wizard not yet bootstrapped), so the frontend always receives a complete config shape.
-    - `PutConfig(w, r)` — `PUT /wizard/config` — Two-phase: if `config_dir` is present and no config exists, bootstraps config directory, DB, and skeleton YAML. Otherwise writes config via `SaveMap`, reloads, and enqueues config tasks for missing downloads (tessdata, hugot). Returns `200` or `201` with pending task count and a `missing_tools` array of hard-blocking tool-availability issues.
-    - `ConfigStatus(w, r)` — `GET /wizard/config/status` — Returns `ConfigStatusResponse` with `configured` flag, `pending_tasks` count, `failed_tasks` (array of `{task_id, op, lang, error}`), `errors`, plus `tools` (full `[]ExternalTool` availability list) and `missing_tools` (hard-blocking subset).
-    - `RetryFailedConfig(w, r)` — `POST /wizard/config/retry` — Retries all failed config tasks. Returns `200 {"retried": <n>}`.
+    - `Bootstrap(w, r)` — `GET /wizard/bootstrap` — Public endpoint (no auth required). Returns only non-sensitive fields: `auth_enabled` (bool) and `missing_tools` (array of `ExternalTool`). The SPA calls this before rendering the login screen to determine whether auth is enabled and whether any external tools are missing. This is the only `/wizard/*` route left reachable without authentication — all other wizard routes are admin-protected.
+    - `GetConfig(w, r)` — `GET /wizard/config` — Returns user-configurable settings as `ConfigResponse` (app, server, consumer, enricher sections plus available_engines; app includes boolean `initialized`; enricher includes LLM provider tokens). Returns defaults from `DefaultConfig("")` when no config is loaded (wizard not yet bootstrapped), so the frontend always receives a complete config shape. Requires admin role.
+    - `PutConfig(w, r)` — `PUT /wizard/config` — Two-phase: if `config_dir` is present and no config exists, bootstraps config directory, DB, and skeleton YAML. Otherwise writes config via `SaveMap`, reloads, and enqueues config tasks for missing downloads (tessdata, hugot). Returns `200` or `201` with pending task count and a `missing_tools` array of hard-blocking tool-availability issues. Requires admin role.
+    - `ConfigStatus(w, r)` — `GET /wizard/config/status` — Returns `ConfigStatusResponse` with `configured` flag, `pending_tasks` count, `failed_tasks` (array of `{task_id, op, lang, error}`), `errors`, plus `tools` (full `[]ExternalTool` availability list) and `missing_tools` (hard-blocking subset). Requires admin role.
+    - `RetryFailedConfig(w, r)` — `POST /wizard/config/retry` — Retries all failed config tasks. Returns `200 {"retried": <n>}`. Requires admin role.
     - `CreateAdminUser(w, r)` — `POST /wizard/admin-user` — Creates initial admin user. Accepts `CreateUserRequest` JSON body, validates username (non-empty, stripped), calls `User.Create`. Returns `201` with `UserResponse` on success, `409` with `{"error":"username already exists"}` on duplicate, `400` on validation error.
 
 ---
@@ -291,6 +292,7 @@ See `AuthMiddleware` under `server.go` → Functions.
 - `TagMatcherResponse` — `Engine string`, `Timeout int`, `ReduceTargetWords int`, `ChunkSize int`, `Hugot HugotResponse`
 - `HugotResponse` — `Model string`, `Backend string`
 - `FailedTaskSummary` — `TaskID string`, `Op string`, `Lang string` (omitempty), `Error string`
+- `BootstrapResponse` — `AuthEnabled bool`, `MissingTools []config.ExternalTool` — Returned by `GET /wizard/bootstrap`. Contains only non-sensitive fields so the SPA can render the login screen without exposing LLM tokens or DB connection details.
 - `ConfigStatusResponse` — `Configured bool`, `PendingTasks int`, `FailedTasks []FailedTaskSummary` (omitempty), `Errors []string`, `Tools []config.ExternalTool` (full availability list), `MissingTools []config.ExternalTool` (hard-blocking subset)
 
 ### Functions
@@ -434,10 +436,7 @@ All registered routes, with their role requirements:
 mux.HandleFunc("GET /health", ...)
 mux.HandleFunc("POST /api/v1/auth/login", authHandler.Login)
 mux.HandleFunc("POST /api/v1/auth/logout", authHandler.Logout)
-mux.HandleFunc("GET /wizard/config", configHandler.GetConfig)
-mux.HandleFunc("PUT /wizard/config", configHandler.PutConfig)
-mux.HandleFunc("GET /wizard/config/status", configHandler.ConfigStatus)
-mux.HandleFunc("POST /wizard/config/retry", configHandler.RetryFailedConfig)
+mux.HandleFunc("GET /wizard/bootstrap", configHandler.Bootstrap)  // only non-sensitive fields
 
 // LLM model discovery (viewer + public):
 mux.HandleFunc("GET /api/v1/llm/models", llmHandler.ListModels)  // viewer role
@@ -515,7 +514,7 @@ mux.Handle("POST /api/v1/errored/delete-all", RequireRole(editor...)(...))
 mux.Handle("POST /api/v1/saved-searches", RequireRole(editor...)(...))
 mux.Handle("DELETE /api/v1/saved-searches/{id}", RequireRole(editor...)(...))
 
-// admin (all editor + user management + logs):
+// admin (all editor + user management + wizard config + logs):
 admin := []auth.Role{auth.RoleAdmin}
 mux.Handle("GET /api/v1/users", RequireRole(admin...)(...))
 mux.Handle("GET /api/v1/users/{id}", RequireRole(admin...)(...))
@@ -527,6 +526,12 @@ mux.Handle("DELETE /api/v1/users/{id}/api-key", RequireRole(admin...)(...))
 mux.Handle("PUT /api/v1/users/{id}/api-key", RequireRole(admin...)(...))
 mux.Handle("GET /api/v1/users/{id}/api-key", RequireRole(admin...)(...))
 mux.Handle("GET /api/v1/logs/{name}", RequireRole(admin...)(...))
+
+// Wizard config (admin only — previously public, now protected):
+mux.Handle("GET /wizard/config", RequireRole(admin...)(configHandler.GetConfig))
+mux.Handle("PUT /wizard/config", RequireRole(admin...)(configHandler.PutConfig))
+mux.Handle("GET /wizard/config/status", RequireRole(admin...)(configHandler.ConfigStatus))
+mux.Handle("POST /wizard/config/retry", RequireRole(admin...)(configHandler.RetryFailedConfig))
 ```
 
 ---

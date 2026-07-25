@@ -62,6 +62,27 @@ func (h *ConfigHandler) SetServices(client *database.Client, dispatcher *task.Di
 	}
 }
 
+// Bootstrap is the only /wizard/* route left reachable without authentication.
+// It exists because the SPA needs to know whether auth is enabled (and which
+// tools are missing) before it can decide whether to show the login screen —
+// so it must expose only non-sensitive fields. Anything else (LLM tokens, DB
+// connection details, full status) belongs behind GetConfig/ConfigStatus.
+func (h *ConfigHandler) Bootstrap(w http.ResponseWriter, r *http.Request) {
+	cfg := h.getConfig()
+	if cfg == nil {
+		cfg = config.DefaultConfig("")
+	}
+
+	resp := types.BootstrapResponse{
+		AuthEnabled:  cfg.Srv.AuthEnabled,
+		MissingTools: config.MissingExternalToolErrors(cfg),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(resp)
+}
+
 func (h *ConfigHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	cfg := h.getConfig()
 	if cfg == nil {

@@ -988,6 +988,23 @@ Read and update the configuration via the API. These endpoints are used by
 both the web wizard and the in-app settings page.
 
 ```
+GET /wizard/bootstrap
+```
+
+Public endpoint (no authentication required). Returns only non-sensitive fields
+needed by the SPA to decide whether to show the login screen:
+
+```json
+{
+  "auth_enabled": true,
+  "missing_tools": []
+}
+```
+
+The `missing_tools` array lists hard-blocking tool-availability issues
+(missing engines, required companions, or the curl prerequisite).
+
+```
 GET /wizard/config
 ```
 
@@ -996,7 +1013,7 @@ Returns the current configuration as a `ConfigResponse` JSON object with `app`
 max_download_size_mb, max_concurrent_batches, auth_enabled), `consumer`, and `enricher` sections
 (including LLM provider tokens) plus `available_engines` for UI dropdowns. Returns
 defaults from `DefaultConfig("")` when no config has been bootstrapped yet,
-so the response always has a complete shape.
+so the response always has a complete shape. **Authentication required (admin role).**
 
 ```
 PUT /wizard/config
@@ -1065,7 +1082,7 @@ The `tools` array contains the full availability status for every relevant exter
 (engine binaries, curl prerequisite, ocrmypdf companions, tesseract language-pack hints).
 `missing_tools` is the hard-blocking subset (missing engines, required companions, curl).
 The wizard and settings page poll this endpoint every 3 seconds to track download progress
-and refresh tool-status warnings.
+and refresh tool-status warnings. **Authentication required (admin role).**
 
 ---
 

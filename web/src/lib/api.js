@@ -341,6 +341,7 @@ export const api = {
 	},
 
 	config: {
+		bootstrap: () => request('/wizard/bootstrap'),
 		get: () => request('/wizard/config'),
 		update: (body) =>
 			request('/wizard/config', {

@@ -39,11 +39,9 @@
 	});
 
 	onMount(async () => {
-		const [status, cfg] = await Promise.all([api.config.status(), api.config.get()]);
-		if (status) {
-			missingTools = status.missing_tools ?? [];
-		}
-		authEnabled = cfg?.server?.auth_enabled ?? true;
+		const bootstrap = await api.config.bootstrap();
+		missingTools = bootstrap?.missing_tools ?? [];
+		authEnabled = bootstrap?.auth_enabled ?? true;
 		authStore.setAuthEnabled(authEnabled);
 		configLoaded = true;
 		if (authStore.isAuthenticated()) {

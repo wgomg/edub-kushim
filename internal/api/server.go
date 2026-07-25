@@ -266,10 +266,11 @@ func registerRoutes(
 	mux.Handle("GET /api/v1/users/{id}/api-key", RequireRole(admin...)(http.HandlerFunc(apiKeyHandler.GetKeyStatus)))
 
 	configHandler := handlers.NewConfigHandler(getConfig, onConfigSet, client.Queries, logger, dispatcher, services)
-	mux.HandleFunc("GET /wizard/config", configHandler.GetConfig)
-	mux.HandleFunc("PUT /wizard/config", configHandler.PutConfig)
-	mux.HandleFunc("GET /wizard/config/status", configHandler.ConfigStatus)
-	mux.HandleFunc("POST /wizard/config/retry", configHandler.RetryFailedConfig)
+	mux.HandleFunc("GET /wizard/bootstrap", configHandler.Bootstrap)
+	mux.Handle("GET /wizard/config", RequireRole(admin...)(http.HandlerFunc(configHandler.GetConfig)))
+	mux.Handle("PUT /wizard/config", RequireRole(admin...)(http.HandlerFunc(configHandler.PutConfig)))
+	mux.Handle("GET /wizard/config/status", RequireRole(admin...)(http.HandlerFunc(configHandler.ConfigStatus)))
+	mux.Handle("POST /wizard/config/retry", RequireRole(admin...)(http.HandlerFunc(configHandler.RetryFailedConfig)))
 
 	taskHandler := handlers.NewTaskHandler(services, client.Queries, logger, getConfig)
 	mux.Handle("GET /api/v1/tasks", RequireRole(viewer...)(http.HandlerFunc(taskHandler.ListTasks)))

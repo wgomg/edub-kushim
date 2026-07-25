@@ -53,8 +53,7 @@ func TestAuthMiddleware_PublicPaths_BypassAuth(t *testing.T) {
 	middleware := AuthMiddleware(authHandler(), func() string { return testSecret }, func() bool { return true }, mockValidateAPIKey(nil, errors.New("should not be called")), mockGetUserByID(nil, errors.New("should not be called")))
 	publicPaths := []string{
 		"/health",
-		"/wizard/config",
-		"/wizard/config/status",
+		"/wizard/bootstrap",
 		"/api/v1/auth/login",
 		"/api/v1/auth/logout",
 		"/",
@@ -68,6 +67,34 @@ func TestAuthMiddleware_PublicPaths_BypassAuth(t *testing.T) {
 		middleware.ServeHTTP(w, r)
 		if w.Code != http.StatusOK {
 			t.Errorf("path %s: expected 200 for public path, got %d", path, w.Code)
+		}
+	}
+}
+
+func TestAuthMiddleware_WizardBootstrapPublic_RestOfWizardProtected(t *testing.T) {
+	middleware := AuthMiddleware(authHandler(), func() string { return testSecret }, func() bool { return true }, mockValidateAPIKey(nil, errors.New("should not be called")), mockGetUserByID(nil, errors.New("should not be called")))
+
+	r := httptest.NewRequest("GET", "/wizard/bootstrap", nil)
+	w := httptest.NewRecorder()
+	middleware.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Errorf("GET /wizard/bootstrap: expected 200 (public), got %d", w.Code)
+	}
+
+	for _, tc := range []struct {
+		method string
+		path   string
+	}{
+		{"GET", "/wizard/config"},
+		{"GET", "/wizard/config/status"},
+		{"PUT", "/wizard/config"},
+		{"POST", "/wizard/config/retry"},
+	} {
+		r := httptest.NewRequest(tc.method, tc.path, nil)
+		w := httptest.NewRecorder()
+		middleware.ServeHTTP(w, r)
+		if w.Code != http.StatusUnauthorized {
+			t.Errorf("%s %s: expected 401 without a token, got %d", tc.method, tc.path, w.Code)
 		}
 	}
 }

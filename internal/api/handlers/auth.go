@@ -104,6 +104,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   h.getConfig().App.Env != config.Development,
+		SameSite: http.SameSiteLaxMode,
 		MaxAge:   0,
 	})
 	w.WriteHeader(http.StatusNoContent)

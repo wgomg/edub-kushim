@@ -35,7 +35,7 @@ func GenerateToken(userID int64, username, role, secret string) (string, error) 
 func ValidateToken(tokenString string, secret string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (any, error) {
 		return []byte(secret), nil
-	})
+	}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Name}))
 	if err != nil {
 		return nil, err
 	}
@@ -43,10 +43,6 @@ func ValidateToken(tokenString string, secret string) (*Claims, error) {
 	claims, ok := token.Claims.(*Claims)
 	if !ok || !token.Valid {
 		return nil, jwt.ErrSignatureInvalid
-	}
-
-	if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-		return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 	}
 
 	return claims, nil

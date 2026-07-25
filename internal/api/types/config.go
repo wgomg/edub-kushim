@@ -9,6 +9,11 @@ type FailedTaskSummary struct {
 	Error  string `json:"error"`
 }
 
+type BootstrapResponse struct {
+	AuthEnabled  bool                  `json:"auth_enabled"`
+	MissingTools []config.ExternalTool `json:"missing_tools"`
+}
+
 type ConfigStatusResponse struct {
 	Configured   bool                  `json:"configured"`
 	PendingTasks int                   `json:"pending_tasks"`

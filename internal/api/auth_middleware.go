@@ -28,11 +28,12 @@ func AuthMiddleware(
 	}
 
 		path := r.URL.Path
+		isWizardPath := strings.HasPrefix(path, "/wizard/")
 
 		if path == "/health" ||
-			strings.HasPrefix(path, "/wizard/") ||
+			(path == "/wizard/bootstrap" && r.Method == http.MethodGet) ||
 			strings.HasPrefix(path, "/api/v1/auth/") ||
-			!strings.HasPrefix(path, "/api/") {
+			(!strings.HasPrefix(path, "/api/") && !isWizardPath) {
 			next.ServeHTTP(w, r)
 			return
 		}

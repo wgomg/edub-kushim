@@ -191,7 +191,7 @@ per tool category, used by the frontend settings UI to populate select dropdowns
 
 ## See Also
 
-- [API](api.md) — Uses ParamBag middleware, ConfigHandler for `/wizard/config` endpoints
+- [API](api.md) — Uses ParamBag middleware, ConfigHandler for `/wizard/bootstrap` (public) and `/wizard/config` (admin-protected) endpoints
 - [CLI](cli.md) — Uses ConfigDir, Logger, FlagParser, config setup functions
 - [Pipeline](pipeline.md) — Uses Config structs for Consumer/Enricher settings
 - [Tools](tools.md) — Uses Config for tool adapter selection, capability registry (`internal/llm/`)
