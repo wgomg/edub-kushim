@@ -67,9 +67,9 @@ make fix               # go fix -tags "XLA,ORT" ./...
 
 `make build-deps` compiles four static libraries from source:
 
-1. **libpng** (`1.6.43`) — Downloaded from SourceForge. Minimal configure: `--disable-shared --enable-static`.
-2. **Leptonica** — Cloned from GitHub. Built against local libpng. Disables TIFF, WebP, OpenJPEG, GIF, JPEG and programs.
-3. **Tesseract** — Cloned from GitHub. Statically linked against local Leptonica and libpng. Disables curl, libarchive, OpenMP, legacy API, and graphics.
+1. **libpng** (`1.6.58`) — Downloaded from SourceForge. SHA-256 verification before extraction. Minimal configure: `--disable-shared --enable-static`.
+2. **Leptonica** (commit `10bdea2`) — Cloned from GitHub, pinned to a specific commit. Built against local libpng. Disables TIFF, WebP, OpenJPEG, GIF, JPEG and programs.
+3. **Tesseract** (`5.5.3`) — Cloned from GitHub, pinned to a specific tag (`--branch 5.5.3 --depth 1`). Statically linked against local Leptonica and libpng. Disables curl, libarchive, OpenMP, legacy API, and graphics.
 4. **MuPDF** (`1.28.0`) — Cloned from GitHub (with submodules). Configured with `HAVE_X11=no HAVE_GLUT=no shared=no`.
 
 Additional C dependency for Hugot Go backend:

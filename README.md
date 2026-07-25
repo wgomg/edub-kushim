@@ -272,9 +272,9 @@ A commented example config with all supported keys is available at [`config.exam
 
 Building from source requires compiling four static libraries from source (automated via `make build-deps`):
 
-- **libpng** 1.6.43
-- **Leptonica** (latest)
-- **Tesseract** (latest)
+- **libpng** 1.6.58 (with SHA-256 verification)
+- **Leptonica** (pinned commit)
+- **Tesseract** 5.5.3
 - **MuPDF** 1.28.0
 - **libtokenizers** (for Hugot Go backend)
 - **ONNX Runtime** — auto-downloaded at runtime when using the ORT backend (default)

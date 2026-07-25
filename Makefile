@@ -7,7 +7,10 @@ TESS_LIB      := $(BUILD_DIR)/tesseract/local/lib64
 LEP_LIB       := $(BUILD_DIR)/leptonica/local/lib64
 MUPDF_DIR     := $(BUILD_DIR)/mupdf
 MUPDF_LIB     := $(MUPDF_DIR)/local/lib
-LIBNG_VER     := 1.6.43
+LIBNG_VER     := 1.6.58
+LIBNG_SHA256  := 8c9b05b675ca7301a458df2c2e46f26e1d41ff36b8863f8c33530bc58c2e6225
+TESS_TAG      := 5.5.3
+LEP_COMMIT    := 10bdea2f19240ffe8c931701b0b7340f41c6b256
 MUPDF_VER     := 1.28.0
 TOKENIZERS_DIR := $(BUILD_DIR)/tokenizers
 KNOWN_NVM_DIRS := $(HOME)/.nvm $(HOME)/.config/nvm
@@ -106,8 +109,11 @@ build-libpng:
 	@if [ ! -d $(BUILD_DIR)/libpng ]; then \
 		echo "Downloading libpng $(LIBNG_VER)..."; \
 		mkdir -p $(BUILD_DIR); \
-		curl -Ls https://download.sourceforge.net/libpng/libpng-$(LIBNG_VER).tar.gz | \
-			tar xz -C $(BUILD_DIR); \
+		curl -Ls -o $(BUILD_DIR)/libpng-$(LIBNG_VER).tar.gz \
+			https://download.sourceforge.net/libpng/libpng-$(LIBNG_VER).tar.gz; \
+		echo "$(LIBNG_SHA256)  $(BUILD_DIR)/libpng-$(LIBNG_VER).tar.gz" | sha256sum -c - || exit 1; \
+		tar xzf $(BUILD_DIR)/libpng-$(LIBNG_VER).tar.gz -C $(BUILD_DIR); \
+		rm $(BUILD_DIR)/libpng-$(LIBNG_VER).tar.gz; \
 		mv $(BUILD_DIR)/libpng-$(LIBNG_VER) $(BUILD_DIR)/libpng; \
 	fi
 	cd $(BUILD_DIR)/libpng && rm -rf local/ .libs/ libpng16.la && \
@@ -119,6 +125,7 @@ build-leptonica:
 	@if [ ! -d $(BUILD_DIR)/leptonica ]; then \
 		echo "Cloning leptonica..."; \
 		git clone https://github.com/DanBloomberg/leptonica.git $(BUILD_DIR)/leptonica; \
+		cd $(BUILD_DIR)/leptonica && git checkout $(LEP_COMMIT); \
 	fi
 	cd $(BUILD_DIR)/leptonica && rm -rf local/ && ./autogen.sh && \
 		CPPFLAGS="-I$(BUILD_DIR)/libpng/local/include" \
@@ -131,8 +138,8 @@ build-leptonica:
 
 build-tesseract:
 	@if [ ! -d $(BUILD_DIR)/tesseract ]; then \
-		echo "Cloning tesseract..."; \
-		git clone https://github.com/tesseract-ocr/tesseract.git $(BUILD_DIR)/tesseract; \
+		echo "Cloning tesseract $(TESS_TAG)..."; \
+		git clone --depth 1 --branch $(TESS_TAG) https://github.com/tesseract-ocr/tesseract.git $(BUILD_DIR)/tesseract; \
 	fi
 	cd $(BUILD_DIR)/tesseract && rm -rf local/ && make clean 2>/dev/null; ./autogen.sh && \
 		CPPFLAGS="-I$(BUILD_DIR)/libpng/local/include" \
