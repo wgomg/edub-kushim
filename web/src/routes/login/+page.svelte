@@ -22,8 +22,10 @@
 				authStore.login(res.data.token, res.data.user);
 				goto('/');
 			} else if (res.status === 401) {
+				authStore.logout();
 				error = 'Invalid username or password. Please check your credentials and try again.';
 			} else {
+				authStore.logout();
 				error = 'Login failed. Please try again.';
 			}
 		} catch {

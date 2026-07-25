@@ -58,6 +58,7 @@
 			danger: true
 		});
 		if (!ok) return;
+		api.auth.logout();
 		authStore.logout();
 		goto('/login');
 	}

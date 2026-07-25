@@ -7,6 +7,7 @@ let _redirecting = false;
 async function handleUnauthorized() {
 	if (_redirecting) return;
 	_redirecting = true;
+	fetch('/api/v1/auth/logout', { method: 'POST' });
 	authLogout();
 	try {
 		await goto(resolve('/login'));
@@ -357,7 +358,8 @@ export const api = {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ username, password })
-			})
+			}),
+		logout: () => fetch('/api/v1/auth/logout', { method: 'POST' })
 	},
 
 	me: {
