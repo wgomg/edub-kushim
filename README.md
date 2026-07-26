@@ -1,6 +1,6 @@
 # edub-kushim
 
-A self-hosted document management system with automatic classification via LLMs.
+A self-hosted document management system with unattended bulk classification — every document in a batch is classified automatically, tags are normalized and consolidated against the existing vocabulary, and stuck processing tasks are detected and retried without manual intervention.
 
 Two binaries: **kushim** (CLI/CGo — document processing, OCR, matcher server) and **edub** (REST API + web UI, pure Go, `CGO_ENABLED=0`).
 
@@ -102,47 +102,36 @@ The setup wizard walks you through configuration (OCR languages, LLM provider, s
 
 ## How It Works
 
-```
-                              ┌──────────────────┐
-                              │   edub (server)   │
-                              │  CGO_ENABLED=0    │
-                              │  REST API + WebUI │
-                              └────────┬─────────┘
-                                       │ enqueues tasks
-                                       ▼
-                              ┌──────────────────┐
-                               ┌──────────────────┐
-                               │   PostgreSQL DB   │
-                               │  (status='queued') │
-                              └────────┬─────────┘
-                                       │ polls & forks
-         ┌─────────────────────────────┤
-         ▼                             ▼
-┌──────────────────┐         ┌──────────────────┐
-│ kushim queue     │         │  kushim consume   │
-│ daemon           │ ──────▶ │  --batch <id>     │
-│ (forks workers)  │         │  (worker process) │
-└──────────────────┘         └────────┬─────────┘
-                                      │
-                          ┌───────────┴───────────┐
-                          │                       │
-                          ▼                       ▼
-              ┌──────────────────┐    ┌──────────────────┐
-              │  Consume Pipeline│    │  Enrich Pipeline  │
-              │                  │    │                   │
-              │ Inbox → Extract  │    │ TextRank → Tag    │
-              │ → OCR (fallback) │    │ matching → LLM    │
-               │ → Optimize →     │    │ → Consolidate     │
-               │ Store + Search   │    │ → People/Tags/Type│
-              └──────────────────┘    └────────┬──────────┘
-                                               │
-                                               ▼
-                                    ┌──────────────────┐
-                                    │ kushim hugot     │
-                                    │ Matcher RPC over │
-                                    │ Unix socket      │
-                                    │ (embeddings)     │
-                                    └──────────────────┘
+```mermaid
+flowchart TB
+    HTTP[HTTP Request]
+
+    subgraph Edub["edub (CGO_ENABLED=0)\nREST API + Web UI"]
+        API["enqueues tasks\n(creates queued batches)"]
+    end
+
+    subgraph PG["PostgreSQL"]
+        DB[("batches\nstatus='queued'")]
+    end
+
+    subgraph Queue["kushim queue daemon"]
+        Q["polls & forks workers"]
+    end
+
+    subgraph Worker["kushim consume --batch\n(forked worker)"]
+        CP["Extract → OCR → Optimize → Store"]
+        EP["TextRank → Tag match →\nLLM → Consolidate"]
+    end
+
+    subgraph Hugot["kushim hugot"]
+        H["Matcher RPC\n(Unix socket embeddings)"]
+    end
+
+    HTTP --> API
+    API --> DB
+    DB -->|"NOTIFY"| Q
+    Q -->|"fork"| Worker
+    EP -.->|"encode/match/consolidate"| H
 ```
 
 Documents are searchable immediately via PostgreSQL full-text search (tsvector, Phase 3) or structured search; enrichment (classification, tagging, people extraction) happens asynchronously.
@@ -173,7 +162,7 @@ The API server (`edub`) is a pure Go binary with no C dependencies. All CGo-heav
 
 ## Key Features
 
-- **LLM-powered classification** — automatic tags, document type, title, and people extraction via OpenAI, Anthropic, DeepSeek, or Ollama
+- **Unattended bulk classification with auto-recovery** — every document is classified without manual intervention (tags, type, title, people); labels are normalized and consolidated against the existing vocabulary, and stuck processing tasks are reclaimed automatically. LLM providers: OpenAI, Anthropic, DeepSeek, Ollama
 - **Semantic tag matching** — Hugot embeddings with cosine similarity (Go or ONNX Runtime backend)
 - **OCR pipeline** — Tesseract + MuPDF for image-only PDFs, with searchable PDF output (text rendering mode 3)
 - **Full-text search** — PostgreSQL tsvector with `ts_rank` ranking and `ts_headline` snippet highlighting; structured search with metadata filters

@@ -4,8 +4,9 @@
 
 - **Headless First**: API-driven with CLI interface; web UI as optional layer
 - **Tool Agnostic**: Adapter pattern; OCR, text extraction, PDF optimization, content analysis,
-  text reduction, and semantic tag matching all switchable between built‑in adapters and
-  external tools/providers
+  and text reduction are all switchable between built‑in adapters and external tools/providers.
+  Semantic tag matching uses the same adapter interface with a single concrete
+  implementation (Hugot) — pluggable tag matcher adapters are on the roadmap.
 - **PostgreSQL Target**: SQL and generated Go code target PostgreSQL. SQL files use `$1, $2` placeholders and PostgreSQL DDL (`GENERATED ALWAYS AS IDENTITY`, `JSONB`, `TIMESTAMPTZ`). sqlc engine is `postgresql`. The `kushim setup` wizard, `Bootstrap`, and `NewTestDB` all use `NewPostgresDB`.
 - **Fallback Processing**: Text extraction → OCR → text extraction pattern
 - **Date-based Organization**: Temporal storage structure for scalability
@@ -70,40 +71,35 @@ The CGo binary that performs actual document processing:
 
 ### Communication Flow
 
-```
-  HTTP Request
-       │
-       ▼
-┌──────────────┐     enqueue tasks      ┌──────────────────┐
-│    edub      │ ──────────────────────▶ │  PostgreSQL DB   │
-│ (CGO_ENABLED │                         │  (status='       │
-│     =0)      │                         │   queued')       │
-└──────────────┘                         └──────┬───────────┘
-       │                                        │
-       │                                        │ kushim queue
-       │                                        │ picks up batch
-       ▼                                        ▼
-┌──────────────┐                     ┌──────────────┐
-│   kushim     │ ◀───── polls ────── │  task queue  │
-│ (CGo binary) │   ┌──────────────── │              │
-│              │   │  kushim queue   └──────────────┘
-│  Matcher RPC │   │  daemon forks
-└──────────────┘   └────────────────▶┐
-       │                             │
-       ▼                             │
-┌──────────────┐                     │
-│   Hugot /    │                     │
-│  Embeddings  │◀────────────────────┘
-└──────────────┘
-│              │
-│  Matcher RPC │◀──── Unix socket ───┐
-└──────────────┘                     │
-       │                            │
-       ▼                            │
-┌──────────────┐                    │
-│   Hugot /    │                    │
-│  Embeddings  │◀───────────────────┘
-└──────────────┘
+```mermaid
+flowchart TB
+    subgraph Edub["edub (CGO_ENABLED=0)\nREST API + Web UI"]
+        API["enqueues tasks\n(CREATE batch status='queued')"]
+    end
+
+    subgraph PG["PostgreSQL"]
+        DB[("batches\nLISTEN / NOTIFY")]
+    end
+
+    subgraph Queue["kushim queue daemon"]
+        Q["LISTEN batch_queued\nsafety timer (30s)\nhousekeeping (5s)"]
+    end
+
+    subgraph Worker["kushim consume --batch\n(forked subprocess)"]
+        CP["Consume: Extract → OCR → Optimize → Store"]
+        EP["Enrich: TextRank → Tag matching →\nLLM → Consolidate"]
+    end
+
+    subgraph Hugot["kushim hugot\n(matcher RPC server)"]
+        H["Unix socket\nencode / match / consolidate"]
+    end
+
+    HTTP[HTTP Request] --> API
+    API -->|"pg_notify"| DB
+    DB -->|"trigger →\nnotification"| Q
+    Q -->|"forks"| Worker
+    CP -->|"activates\nchild enrich"| EP
+    EP -.->|"semantic tag\nmatching"| H
 ```
 
 The matcher is optional — if it's not running, `edub` logs a warning and tag CRUD returns 503. The `kushim` CLI (used for document processing) can start its own matcher when run directly (via the consume command which has direct Hugot access), or communicate with the external matcher via the same RPC interface.
@@ -488,7 +484,7 @@ clear upgrade path to Meilisearch, ZincSearch, or Elasticsearch if needed.
 | Forked processing workers         | The `kushim queue` daemon forks `kushim consume --batch` as child processes. Clean process isolation, no in-process heartbeat/ownership management needed. `edub` only enqueues tasks — it never forks directly.                                                                                                                                             |
 | `CGO_ENABLED=0` for `edub`        | `edub` is compiled without CGo, making it a lightweight, statically linked binary. No runtime dependency on C libraries. `kushim` retains all CGo for Tesseract/Leptonica/MuPDF/Hugot.                                                                                                                                             |
 | Queue-driven batch processing     | Both API consume endpoints create batches with `status='queued'` and return immediately. The `kushim queue` daemon polls for queued batches (via Postgres LISTEN/NOTIFY), enforces its own concurrency limit (`server.max_concurrent_batches`, default 4), and forks workers. No in-process semaphore needed in `edub`.                                                     |
-| CGo-heavy adapters run in subprocesses | Long-running CGo calls starve the Go scheduler's goroutine preemption (heartbeat goroutines never fire inside Tesseract/MuPDF calls). Following the `internal-mupdf-clean` and `kushim hugot` precedents, any adapter wrapping a substantial third-party native library — one that can run for more than a second or two, or that may have its own internal threading or crash surface — gets its own subcommand and is forked as a child process via `exec.CommandContext`. Thin, fast, well-understood CGo calls (page counts, plain text extraction) stay in-process. |
+| CGo-heavy adapters run in subprocesses | Heartbeat goroutines were observed not firing during long-running Tesseract/MuPDF calls (the root cause may be OS thread exhaustion rather than scheduler preemption — Go has had asynchronous preemption since 1.14). Regardless of mechanism, crash containment and the `CGO_ENABLED=0` boundary independently justify the subprocess approach. Following the `internal-mupdf-clean` and `kushim hugot` precedents, any adapter wrapping a substantial third-party native library — one that can run for more than a second or two, or that may have its own internal threading or crash surface — gets its own subcommand and is forked as a child process via `exec.CommandContext`. Thin, fast, well-understood CGo calls (page counts, plain text extraction) stay in-process. |
 
 ---
 
