@@ -19,7 +19,7 @@ type StorageTrendDailyRow struct {
 
 func (q *Queries) MimeTypeBreakdown(ctx context.Context) ([]MimeTypeBreakdownRow, error) {
 	rows, err := q.db.QueryContext(ctx,
-		`SELECT mime_type, COUNT(*) as count, CAST(COALESCE(SUM(file_size), 0) AS INTEGER) AS total_bytes FROM document GROUP BY mime_type ORDER BY total_bytes DESC`,
+		`SELECT mime_type, COUNT(*) as count, CAST(COALESCE(SUM(file_size), 0) AS BIGINT) AS total_bytes FROM document GROUP BY mime_type ORDER BY total_bytes DESC`,
 	)
 	if err != nil {
 		return nil, err
@@ -45,7 +45,7 @@ func (q *Queries) MimeTypeBreakdown(ctx context.Context) ([]MimeTypeBreakdownRow
 
 func (q *Queries) StorageTrendDaily(ctx context.Context) ([]StorageTrendDailyRow, error) {
 	rows, err := q.db.QueryContext(ctx,
-		`SELECT date(created_at) as day, COUNT(*) as count, CAST(COALESCE(SUM(file_size), 0) AS INTEGER) AS daily_bytes FROM document GROUP BY day ORDER BY day`,
+		`SELECT date(created_at) as day, COUNT(*) as count, CAST(COALESCE(SUM(file_size), 0) AS BIGINT) AS daily_bytes FROM document GROUP BY day ORDER BY day`,
 	)
 	if err != nil {
 		return nil, err
@@ -367,9 +367,9 @@ func (q *Queries) DocumentAggregates(ctx context.Context) (DocumentAggregatesRow
 	var r DocumentAggregatesRow
 	err := q.db.QueryRowContext(ctx,
 		`SELECT COUNT(*),
-			CAST(COALESCE(SUM(file_size), 0) AS INTEGER),
-			CAST(COALESCE(SUM(page_count), 0) AS INTEGER),
-			CAST(COALESCE(SUM(word_count), 0) AS INTEGER)
+			CAST(COALESCE(SUM(file_size), 0) AS BIGINT),
+			CAST(COALESCE(SUM(page_count), 0) AS BIGINT),
+			CAST(COALESCE(SUM(word_count), 0) AS BIGINT)
 		FROM document`,
 	).Scan(&r.TotalFiles, &r.TotalBytes, &r.TotalPages, &r.TotalWords)
 	return r, err
