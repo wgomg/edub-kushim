@@ -174,6 +174,30 @@ CGO_ENABLED=0 go test -tags "XLA,ORT" -count=1 -timeout 120s \
     ./internal/backup/
 ```
 
+### CGo-dependent tests (`make test-cgo`)
+
+These 10 tests require `CGO_ENABLED=1` to compile because their source files
+are tagged `//go:build cgo`. Most use only pure-Go code; only the MuPDF tests
+exercise actual CGo function calls.
+
+Requires the C toolchain and built C libraries (Tesseract, Leptonica, MuPDF,
+libtokenizers) on the host. Run inside the builder containers to avoid
+installing C deps locally:
+
+```bash
+make test-cgo          # host, uses Makefile's CGO_ENABLED=1 export
+make test-cgo-glibc    # podman: kushim-glibc-builder
+make test-cgo-musl     # podman: kushim-musl-builder
+```
+
+**3 packages, 10 tests:**
+
+| Package | Tests | CGo at runtime? |
+|---------|-------|-----------------|
+| `internal/tools/adapters` | 2 | Yes — MuPDF page render |
+| `internal/tools/adapters/ocr` | 6 | No (pure Go, build-tag gated) |
+| `internal/tools/adapters/tagmatcher` | 2 | No (pure Go, build-tag gated) |
+
 ### Manual
 
 ```bash

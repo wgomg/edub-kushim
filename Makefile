@@ -244,3 +244,35 @@ test-db:
 		./internal/service/ \
 		./internal/api/handlers/ \
 		./internal/consumption/
+
+# CGo-dependent tests (requires C toolchain + built C libraries on host,
+# or run via test-cgo-glibc / test-cgo-musl in the container images).
+.PHONY: test-cgo test-cgo-glibc test-cgo-musl
+
+test-cgo:
+	go test -tags "XLA,ORT" -count=1 -timeout 120s \
+		./internal/tools/adapters \
+		./internal/tools/adapters/ocr \
+		./internal/tools/adapters/tagmatcher
+
+test-cgo-glibc:
+	podman run --rm \
+		-v $(CURDIR):/workspace:Z \
+		-v $(HOME)/go/pkg/mod:/go/pkg/mod:Z \
+		-w /workspace \
+		--network host \
+		-e GOMODCACHE=/go/pkg/mod \
+		-e CGO_ENABLED=1 \
+		kushim-glibc-builder \
+		make test-cgo
+
+test-cgo-musl:
+	podman run --rm \
+		-v $(CURDIR):/workspace:Z \
+		-v $(HOME)/go/pkg/mod:/go/pkg/mod:Z \
+		-w /workspace \
+		--network host \
+		-e GOMODCACHE=/go/pkg/mod \
+		-e CGO_ENABLED=1 \
+		kushim-musl-builder \
+		make test-cgo
