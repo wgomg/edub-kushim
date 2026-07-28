@@ -72,6 +72,30 @@ func (p *Pool) workerLoop(id int) {
 	defer p.wg.Done()
 	logPrefix := fmt.Sprintf("[%s worker %d]", p.taskType, id)
 
+	for {
+		err := p.runWorker(id, logPrefix)
+		if err == nil {
+			return
+		}
+		p.logger.Error(nil, "%s restarting after error: %v", logPrefix, err)
+		select {
+		case <-p.stopCh:
+			return
+		case <-p.ctx.Done():
+			return
+		case <-time.After(p.interval):
+		}
+	}
+}
+
+func (p *Pool) runWorker(id int, logPrefix string) (rerr error) {
+	defer func() {
+		if r := recover(); r != nil {
+			p.logger.Error(nil, "%s panic recovered: %v", logPrefix, r)
+			rerr = fmt.Errorf("worker panic: %v", r)
+		}
+	}()
+
 	memTicker := time.NewTicker(5 * time.Minute)
 	defer memTicker.Stop()
 
@@ -79,9 +103,9 @@ func (p *Pool) workerLoop(id int) {
 		select {
 		case <-p.stopCh:
 			p.logger.Info(nil, "%s stopping", logPrefix)
-			return
+			return nil
 		case <-p.ctx.Done():
-			return
+			return nil
 		case <-memTicker.C:
 			mem := utils.ReadMemFull()
 			p.logger.Debug(nil, "%s periodic memory: %s", logPrefix, utils.FormatMemFull(mem))

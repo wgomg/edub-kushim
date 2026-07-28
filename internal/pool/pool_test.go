@@ -67,3 +67,45 @@ func TestPool_DoubleStop(t *testing.T) {
 	p.Stop(stopCtx)
 	p.Stop(stopCtx)
 }
+
+type panicRunner struct {
+	calls   atomic.Int32
+	panicOn int32
+}
+
+func (r *panicRunner) Next(_ context.Context, _ string) error {
+	n := r.calls.Add(1)
+	if n == r.panicOn {
+		panic("test panic")
+	}
+	return nil
+}
+
+func TestPool_PanicRecovery_Restart(t *testing.T) {
+	runner := &panicRunner{panicOn: 1}
+	p := New(utils.NewDiscardLogger(), runner, 1, 10*time.Millisecond, "test")
+
+	p.Start(t.Context())
+
+	time.Sleep(100 * time.Millisecond)
+
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer stopCancel()
+	p.Stop(stopCtx)
+
+	if n := runner.calls.Load(); n < 2 {
+		t.Errorf("expected runner to be called at least twice (panic + retry), got %d", n)
+	}
+}
+
+func TestPool_PanicRecovery_StopDuringRestart(t *testing.T) {
+	runner := &panicRunner{panicOn: 1}
+	p := New(utils.NewDiscardLogger(), runner, 1, 1*time.Second, "test")
+
+	p.Start(t.Context())
+	time.Sleep(30 * time.Millisecond)
+
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer stopCancel()
+	p.Stop(stopCtx)
+}

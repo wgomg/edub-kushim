@@ -20,6 +20,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/consumption"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/pool"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -104,18 +105,8 @@ func queueHandler(c *Container, args []string) error {
 
 	c.logger.Info(nil, "queue daemon started (max %d concurrent batches)", maxConcurrent)
 
-	if c.config.Backup.Enabled {
-		backupPool, err := c.GetPool("backup")
-		if err != nil {
-			return fmt.Errorf("get backup pool: %w", err)
-		}
-		backupPool.Start(ctx)
-		defer func() {
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			backupPool.Stop(shutdownCtx)
-		}()
-	}
+	var backupPool *pool.Pool
+	var backupPoolStarted bool
 
 	go runPollingLoop(ctx, c, client, batchSvc, maxConcurrent)
 
@@ -153,6 +144,17 @@ func queueHandler(c *Container, args []string) error {
 
 		case <-hkTicker.C:
 			if c.config.Backup.Enabled {
+				if !backupPoolStarted {
+					var poolErr error
+					backupPool, poolErr = c.GetPool("backup")
+					if poolErr != nil {
+						c.logger.Error(nil, "backup pool: %v", poolErr)
+					} else {
+						backupPool.Start(ctx)
+						backupPoolStarted = true
+						c.logger.Info(nil, "backup pool started (delayed)")
+					}
+				}
 				locked, lockErr := client.Queries.IsBackupLocked(ctx)
 				if lockErr != nil {
 					c.logger.Error(nil, "backup lock check: %v", lockErr)
@@ -178,6 +180,11 @@ func queueHandler(c *Container, args []string) error {
 
 		case <-ctx.Done():
 			c.logger.Info(nil, "queue daemon stopped")
+			if backupPool != nil && backupPoolStarted {
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				backupPool.Stop(shutdownCtx)
+				cancel()
+			}
 			return nil
 		}
 	}

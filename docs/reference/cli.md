@@ -169,7 +169,7 @@ kushim storage orphans move-to-inbox-all
 - `pollingTick(ctx, c, client, batchSvc, maxConcurrent, missingTools)` — Single polling iteration: capacity check, missing tools check, then delegates to `consumption.ScanAndEnqueue` to scan inbox, deduplicate, and create a `queued` batch with consume+enrich task pairs.
 - `maybeScheduleBackup(ctx, c) error` — Reads backup state from `backup-state.json`, checks if the next scheduled backup is due via `backup.ShouldSchedule`. If so, enqueues a `"backup"` task via the dispatcher and writes the next scheduled time to state.
 
-The daemon also starts a **backup pool** (1 worker, 60s poll interval) when `backup.enabled` is `true`. The pool executes scheduled backup tasks via `BackupTaskHandler`. The ticker and polling loop check the DB-backed `backup_lock` table via `IsBackupLocked` — backup scheduling and polling are skipped while a backup is in progress, while stale reclamation continues to run unconditionally.
+The daemon also starts a **backup pool** (1 worker, 60s poll interval) when `backup.enabled` becomes `true` (checked lazily on each housekeeping tick, so enabling backup at runtime via config reload creates the pool without a restart). The pool executes scheduled backup tasks via `BackupTaskHandler`. The ticker and polling loop check the DB-backed `backup_lock` table via `IsBackupLocked` — backup scheduling and polling are skipped while a backup is in progress, while stale reclamation continues to run unconditionally.
 
 ---
 

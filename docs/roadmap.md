@@ -243,7 +243,7 @@
 - ✓ Utils tests (22 tests) — Truncate (ASCII/CJK/mixed), EstimateTokens, NormalizeForDB (accent folding/punctuation/spaces), logger level parsing/gating/formatting/file output/SlogLogger bridge
 - ✓ Content analyzer tests (15 tests) — NormalizeTags, BuildPrompt, FilterTags (18 cases), checkContentTooLarge, parseTokenLimitError, parseInsufficientCreditsError (9 cases)
 - ✓ Error classification tests (7 tests) — constructors (ENotFound/EConflict/EInvalid/EInternal), Error string, Unwrap/KindOf, FromDB mapping (nil/ErrNoRows/unique/other), PgError predicates
-- ✓ Pool lifecycle tests (3 tests) — StartStop, ContextCancellation, DoubleStop
+- ✓ Pool lifecycle tests (5 tests) — StartStop, ContextCancellation, DoubleStop, PanicRecovery_Restart (worker survives panic and restarts), PanicRecovery_StopDuringRestart (clean shutdown during restart delay)
 - ✓ `internal/testutil` package — assertion helpers, PDF fixtures, mock embedder
 - ✓ `Makefile` test targets (`make test` — 12 packages, `make test-db` — 6 packages, `make test-verbose`)
 - ✗ No tests for CLI commands (kushim consume, search, task, setup)
