@@ -113,7 +113,7 @@
 			<input
 				type="file"
 				multiple
-				accept=".pdf"
+				accept=".pdf,.docx,.odt,.png,.jpg,.jpeg,.tiff,.tif"
 				onchange={handleFileSelect}
 				bind:this={fileInput}
 				class="hidden"
@@ -133,7 +133,8 @@
 							<span class="truncate">{file.name}</span>
 							<button
 								onclick={() => removeFile(i)}
-								class="ml-2 shrink-0 text-parchment-500 hover:text-parchment-200">&times;</button
+								class="ml-2 shrink-0 text-parchment-500 hover:text-parchment-200"
+								aria-label="Remove file">&times;</button
 							>
 						</li>
 					{/each}
@@ -158,7 +159,7 @@
 				onclick={handleUpload}
 				disabled={files.length === 0 || uploading}
 				class="w-full rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600 disabled:opacity-50"
-				>{uploading ? 'Uploading...' : 'Upload'}</button
+				>{uploading ? 'Uploading…' : 'Upload'}</button
 			>
 		</div>
 	{/if}

@@ -5,6 +5,7 @@
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
 	import * as authStore from '$lib/stores/authStore.js';
+	import OfficePreview from '$lib/components/OfficePreview.svelte';
 
 	let { params } = $props();
 
@@ -27,6 +28,14 @@
 	let peopleQuery = $state('');
 	let peopleResults = $state([]);
 	let selectedPeopleTypeId = $state(1);
+
+	function downloadLabel(mimeType) {
+		if (mimeType === 'application/pdf') return 'Download PDF';
+		if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+			return 'Download DOCX';
+		if (mimeType === 'application/vnd.oasis.opendocument.text') return 'Download ODT';
+		return 'Download file';
+	}
 
 	onMount(async () => {
 		const [data, types, pTypes] = await Promise.all([
@@ -169,6 +178,10 @@
 							title={doc.title}
 						></iframe>
 					</div>
+				{:else if doc.mime_type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || doc.mime_type === 'application/vnd.oasis.opendocument.text'}
+					<div class="mt-4">
+						<OfficePreview docId={doc.id} mimeType={doc.mime_type} />
+					</div>
 				{:else}
 					<p class="mt-4 text-parchment-500">Preview not available for this file type.</p>
 				{/if}
@@ -187,7 +200,7 @@
 									id="edit-title"
 									type="text"
 									bind:value={editTitle}
-									class="mt-0.5 w-full rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus:outline-none"
+									class="mt-0.5 w-full rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
 								/>
 							</div>
 							<div>
@@ -195,7 +208,7 @@
 								<select
 									id="edit-doctype"
 									bind:value={editDocumentTypeId}
-									class="mt-0.5 w-full rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-sm text-parchment-200 focus:border-gold-500 focus:ring-0 focus:outline-none"
+									class="mt-0.5 w-full rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
 								>
 									{#each documentTypes as dt}
 										<option value={dt.id}>{dt.name}</option>
@@ -209,7 +222,7 @@
 									type="text"
 									bind:value={editLanguage}
 									placeholder="und"
-									class="mt-0.5 w-full rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus:outline-none"
+									class="mt-0.5 w-full rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
 								/>
 							</div>
 							<button
@@ -235,7 +248,8 @@
 									{#if !authStore.authEnabled() || authStore.isEditor()}
 										<button
 											onclick={() => removeTag(tag.id)}
-											class="text-parchment-400 hover:text-terracotta-400">&times;</button
+											class="text-parchment-400 hover:text-terracotta-400"
+											aria-label="Remove tag">&times;</button
 										>
 									{/if}
 								</span>
@@ -251,7 +265,7 @@
 								bind:value={tagQuery}
 								oninput={() => searchTags(tagQuery)}
 								placeholder="Search tags…"
-								class="w-full rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus:outline-none"
+								class="w-full rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
 							/>
 							{#if tagResults.length > 0}
 								<div
@@ -291,7 +305,8 @@
 									{#if !authStore.authEnabled() || authStore.isEditor()}
 										<button
 											onclick={() => removePerson(person.id, person.person_type_id)}
-											class="shrink-0 text-parchment-500 hover:text-terracotta-400">&times;</button
+											class="shrink-0 text-parchment-500 hover:text-terracotta-400"
+											aria-label="Remove person">&times;</button
 										>
 									{/if}
 								</div>
@@ -307,7 +322,7 @@
 								bind:value={peopleQuery}
 								oninput={() => searchPeople(peopleQuery)}
 								placeholder="Search people…"
-								class="w-full rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:ring-0 focus:outline-none"
+								class="w-full rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
 							/>
 							{#if peopleResults.length > 0}
 								<div
@@ -326,7 +341,7 @@
 							<div class="mt-2 flex gap-2">
 								<select
 									bind:value={selectedPeopleTypeId}
-									class="flex-1 rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-xs text-parchment-200 focus:border-gold-500 focus:ring-0 focus:outline-none"
+									class="flex-1 rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-xs text-parchment-200 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
 								>
 									{#each peopleTypes as pt}
 										<option value={pt.id}>{pt.name}</option>
@@ -353,7 +368,11 @@
 				</div>
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-xs font-medium tracking-wider text-parchment-500 uppercase">File Size</p>
-					<p class="mt-1 text-parchment-200">{(doc.file_size / 1024).toFixed(0)} KB</p>
+					<p class="mt-1 text-parchment-200">
+						{new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(
+							doc.file_size / 1024
+						)} KB
+					</p>
 				</div>
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-xs font-medium tracking-wider text-parchment-500 uppercase">
@@ -399,27 +418,27 @@
 					href={`/api/v1/documents/${doc.id}/file?download=true`}
 					class="block w-full rounded-lg bg-gold-600 px-4 py-2 text-center text-sm font-medium text-clay-950 hover:bg-gold-500"
 				>
-					Download PDF
+					{downloadLabel(doc.mime_type)}
 				</a>
 
-	{#if !authStore.authEnabled() || authStore.isEditor()}
-	<button
-		type="button"
-		onclick={handleReenrich}
-		disabled={reenriching}
-		class="w-full rounded-lg border border-gold-600 bg-gold-800 px-4 py-2 text-sm font-medium text-parchment-200 hover:bg-gold-700 disabled:opacity-50"
-	>
-		{reenriching ? 'Queuing…' : 'Re-enrich'}
-	</button>
-	<button
-		type="button"
-		onclick={handleDelete}
-		disabled={deleting}
-		class="w-full rounded-lg border border-terracotta-600 bg-terracotta-800 px-4 py-2 text-sm font-medium text-parchment-200 hover:bg-terracotta-700 disabled:opacity-50"
-	>
-		{deleting ? 'Deleting…' : 'Delete Document'}
-	</button>
-{/if}
+				{#if !authStore.authEnabled() || authStore.isEditor()}
+					<button
+						type="button"
+						onclick={handleReenrich}
+						disabled={reenriching}
+						class="w-full rounded-lg border border-gold-600 bg-gold-800 px-4 py-2 text-sm font-medium text-parchment-200 hover:bg-gold-700 disabled:opacity-50"
+					>
+						{reenriching ? 'Queuing…' : 'Re-enrich'}
+					</button>
+					<button
+						type="button"
+						onclick={handleDelete}
+						disabled={deleting}
+						class="w-full rounded-lg border border-terracotta-600 bg-terracotta-800 px-4 py-2 text-sm font-medium text-parchment-200 hover:bg-terracotta-700 disabled:opacity-50"
+					>
+						{deleting ? 'Deleting…' : 'Delete Document'}
+					</button>
+				{/if}
 			</div>
 		</div>
 	{/if}
