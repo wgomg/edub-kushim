@@ -301,7 +301,11 @@ If all three hold, the error is logged as a warning and processing continues —
 
 ### Function
 
-`RunStandalone(inputPath, outputPath, languages, dataDir, ocrWorkers)` — Self-contained OCR pipeline called by the `internal-ocr` subcommand. Renders pages at 200 DPI, downscales to 150 DPI via nearest-neighbor, OCRs with Tesseract, assembles a searchable PDF. When `numPages > 1`, parallelizes Tesseract calls across `ocrWorkers` goroutines (0 = auto, resolves to `runtime.NumCPU()`). No context or logger — parent handles cancellation and logging. Same package-level helpers (`downscaleRGB`, `samplesToRGBA`, `encodePNG`, `encodeJPEG`) used by the in-process code.
+`RunStandalone(inputPath, outputPath, languages, dataDir, ocrWorkers)` — Self-contained OCR pipeline called by the `internal-ocr` subcommand. Detects input file type via `mimetype.DetectFile` at the top of the function:
+- **PDF** (`application/pdf`): Opens via MuPDF, renders pages at 200 DPI, downscales to 150 DPI via nearest-neighbor, OCRs with Tesseract, assembles a searchable PDF.
+- **Image** (`image/*`): Decodes with Go standard library (`image.Decode` for PNG/JPEG, `golang.org/x/image/tiff` for TIFF), alpha-composites on white, same OCR pipeline as PDF. Rejects images larger than 50MP. Single-page only (multi-page TIFF reads first frame).
+
+When `numPages > 1`, parallelizes Tesseract calls across `ocrWorkers` goroutines (0 = auto, resolves to `runtime.NumCPU()`). No context or logger — parent handles cancellation and logging. Shared helpers (`downscaleRGB`, `samplesToRGBA`, `encodePNG`, `encodeJPEG`, `computePage`, `addPDFPage`, `newOCRClient`, `imageToRGB`) used across PDF and image paths.
 
 Calls `suppressLeptonicaStderr()` at the top of the function to suppress Leptonica diagnostic output (TIFF warnings from bitmap font creation) before any Tesseract or Leptonica operations run. The handler is set once per subprocess lifetime and is global to the process — harmless since the subprocess exits after a single OCR task.
 

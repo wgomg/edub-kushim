@@ -3,6 +3,8 @@
 package ocr
 
 import (
+	"image"
+	"image/color"
 	"testing"
 )
 
@@ -66,5 +68,50 @@ func TestDownscaleRGB_Identity(t *testing.T) {
 		if out[i] != in[i] {
 			t.Errorf("byte %d: got %d, want %d", i, out[i], in[i])
 		}
+	}
+}
+
+func TestImageToRGB_Opaque(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	for y := range 2 {
+		for x := range 2 {
+			img.Set(x, y, color.NRGBA{R: 255, G: 0, B: 0, A: 255})
+		}
+	}
+
+	samples := imageToRGB(img)
+
+	if len(samples) != 2*2*3 {
+		t.Fatalf("expected %d bytes, got %d", 2*2*3, len(samples))
+	}
+
+	for i := range 4 {
+		r, g, b := samples[i*3], samples[i*3+1], samples[i*3+2]
+		if r != 255 || g != 0 || b != 0 {
+			t.Errorf("pixel %d: got [%d %d %d], want [255 0 0]", i, r, g, b)
+		}
+	}
+}
+
+func TestImageToRGB_Transparent(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 1, 1))
+	img.Set(0, 0, color.NRGBA{R: 0, G: 0, B: 0, A: 0})
+
+	samples := imageToRGB(img)
+
+	if samples[0] != 255 || samples[1] != 255 || samples[2] != 255 {
+		t.Errorf("transparent pixel should be white, got [%d %d %d]", samples[0], samples[1], samples[2])
+	}
+}
+
+func TestImageToRGB_SemiTransparent(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 1, 1))
+	img.Set(0, 0, color.NRGBA{R: 255, G: 0, B: 0, A: 128})
+
+	samples := imageToRGB(img)
+
+	// Semi-transparent red (50% alpha) on white background: pink (255, 127, 127)
+	if samples[0] != 255 || samples[1] != 127 || samples[2] != 127 {
+		t.Errorf("semi-transparent red on white: got [%d %d %d], want [255 127 127]", samples[0], samples[1], samples[2])
 	}
 }

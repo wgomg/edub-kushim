@@ -1753,7 +1753,7 @@ storage:
 consumer:
   workers: 1 # concurrent file processing workers
   max_files_per_batch: 10 # max files per consume batch (0 = unlimited)
-  supported_files: ['.pdf'] # file extensions to process
+  supported_files: ['.pdf', '.png', '.jpg', '.jpeg', '.tiff', '.tif'] # file extensions to process
   polling:
     enabled: false # auto-consume on a schedule
     interval: 5 # polling interval in minutes

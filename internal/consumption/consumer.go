@@ -148,7 +148,12 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 	)
 	file.StorageOriginalPath = &storeOriginalPath
 
-	originalFileName := documentID + ".pdf"
+	processedFileName := documentID + ".pdf"
+	origExt := filepath.Ext(file.OriginalPath)
+	if origExt == "" {
+		origExt = ".pdf"
+	}
+	originalFileName := documentID + origExt
 
 	fullOriginalPath := filepath.Join(
 		*file.StorageOriginalPath,
@@ -158,7 +163,7 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 
 	fullStoragePath := filepath.Join(
 		*file.StorageProcessedPath,
-		originalFileName,
+		processedFileName,
 	)
 	file.StorageProcessedPath = &fullStoragePath
 
@@ -240,16 +245,16 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 	defer func() {
 		if err != nil {
 			tx.Rollback()
-			if file.StorageProcessedPath != nil && strings.HasSuffix(*file.StorageProcessedPath, ".pdf") {
-				if removeErr := RemoveFile(*file.StorageProcessedPath); removeErr != nil {
-					c.logger.Error(&documentID, "failed to clean up processed storage file: %v", removeErr)
-				}
+		if file.StorageProcessedPath != nil {
+			if removeErr := RemoveFile(*file.StorageProcessedPath); removeErr != nil {
+				c.logger.Error(&documentID, "failed to clean up processed storage file: %v", removeErr)
 			}
-			if file.StorageOriginalPath != nil && strings.HasSuffix(*file.StorageOriginalPath, ".pdf") {
-				if removeErr := RemoveFile(*file.StorageOriginalPath); removeErr != nil {
-					c.logger.Error(&documentID, "failed to clean up original storage file: %v", removeErr)
-				}
+		}
+		if file.StorageOriginalPath != nil {
+			if removeErr := RemoveFile(*file.StorageOriginalPath); removeErr != nil {
+				c.logger.Error(&documentID, "failed to clean up original storage file: %v", removeErr)
 			}
+		}
 		}
 
 		if file.OCRTmpPath != nil {
@@ -480,6 +485,12 @@ func (c *Consumer) extractText(ctx context.Context, file File, documentID string
 		file.PageCount = countPages(file.OriginalPath)
 	}
 
+	if strings.HasPrefix(file.MimeType, "image/") {
+		c.logger.Info(&documentID, "image file %s, proceeding directly to OCR", file.Name)
+		file.PageCount = 1
+		return c.ocrAndReextract(ctx, file, documentID, memBefore, memBefore)
+	}
+
 	extractResult, err := c.runner.ExtractText(ctx, file.OriginalPath)
 	memAfterExtract := utils.ReadMemSnapshot()
 	c.logger.Debug(&documentID, "extractText: %s", utils.FormatMemDelta(memBefore, memAfterExtract))
@@ -505,16 +516,19 @@ func (c *Consumer) extractText(ctx context.Context, file File, documentID string
 	}
 
 	c.logger.Info(&documentID, "no text extracted from %s, OCR needed", file.Name)
+	return c.ocrAndReextract(ctx, file, documentID, memAfterExtract, memBefore)
+}
 
+func (c *Consumer) ocrAndReextract(ctx context.Context, file File, documentID string, memBeforeOCR, memBeforeAll utils.MemSnapshot) (File, error) {
 	ocrResult, err := c.runner.OCR(ctx, documentID, file.OriginalPath)
 	memAfterOCR := utils.ReadMemSnapshot()
-	c.logger.Debug(&documentID, "OCR: %s (RSS now %s)", utils.FormatMemDelta(memAfterExtract, memAfterOCR), utils.FormatBytes(memAfterOCR.RSS))
+	c.logger.Debug(&documentID, "OCR: %s (RSS now %s)", utils.FormatMemDelta(memBeforeOCR, memAfterOCR), utils.FormatBytes(memAfterOCR.RSS))
 	if err != nil {
 		c.logger.Error(&documentID, "OCR failed for %s: %v", file.Name, err)
 		return file, &task.Error{ReqID: documentID, Err: err}
 	}
 
-	extractResult, err = c.runner.ExtractText(ctx, *ocrResult.TmpPath)
+	extractResult, err := c.runner.ExtractText(ctx, *ocrResult.TmpPath)
 	memAfterFinal := utils.ReadMemSnapshot()
 	c.logger.Debug(&documentID, "extractText (post-OCR): %s", utils.FormatMemDelta(memAfterOCR, memAfterFinal))
 	if err != nil {
@@ -530,7 +544,7 @@ func (c *Consumer) extractText(ctx context.Context, file File, documentID string
 
 	c.logger.Debug(&documentID, "extractText complete: RSS %s (total delta: %s)",
 		utils.FormatBytes(memAfterFinal.RSS),
-		utils.FormatMemDelta(memBefore, memAfterFinal))
+		utils.FormatMemDelta(memBeforeAll, memAfterFinal))
 
 	return file, nil
 }

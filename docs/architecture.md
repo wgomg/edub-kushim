@@ -127,16 +127,21 @@ is found above a minimum density ratio (`minTextDensityRatio = 0.001`), the
 PDF is optimized (MuPDF or Ghostscript) and stored. If optimization fails,
 the original file is used as the processed copy — ingestion continues.
 
-**Fallback** (default: `gosseract`): OCRs image‑only pages via Tesseract + MuPDF
-and produces a searchable PDF. Text is re-extracted from the OCR'd PDF.
+**Fallback** (default: `gosseract`): OCRs pages via Tesseract and produces a
+searchable PDF. Text is re-extracted from the OCR'd PDF. For image‑only PDF
+pages, MuPDF renders at 200 DPI before OCR; for standalone image files (PNG,
+JPEG, TIFF), the image is decoded directly with Go's standard library, alpha‑
+composited on white, and sent to the same OCR pipeline.
 
 The external‑tool adapters (`pdftotext` for text extraction, `ocrmypdf` for OCR,
 Ghostscript for PDF optimization) are available as alternatives. Configure via
 `consumer.textextractor`, `consumer.ocr`, and `consumer.pdfoptimizer`.
 
-When active, the gosseract adapter renders each page at 200 DPI via MuPDF,
-OCRs from PNG, and builds a searchable PDF with `go‑pdf/fpdf` using
-**text rendering mode 3** (`3 Tr`) for invisible‑but‑selectable text.
+When active, the gosseract adapter processes each page at 200 DPI — source
+material comes from a MuPDF render (image‑only PDF pages) or from a direct
+Go `image.Decode` (standalone PNG, JPEG, TIFF) — encodes to PNG, OCRs with
+Tesseract, and builds a searchable PDF with `go‑pdf/fpdf` using **text
+rendering mode 3** (`3 Tr`) for invisible‑but‑selectable text.
 
 ### 4. Database Integration
 

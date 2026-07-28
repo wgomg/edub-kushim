@@ -4,6 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"path/filepath"
 	"strings"
@@ -250,6 +253,68 @@ func TestConsumerFileFromPath(t *testing.T) {
 	testutil.AssertEqual(t, file.Name, filepath.Base(path), "name")
 	testutil.AssertEqual(t, file.MimeType, "application/pdf", "mime")
 	testutil.AssertEqual(t, file.FileSize > 0, true, "size > 0")
+}
+
+func TestConsumerProcessImageFile(t *testing.T) {
+	consumer, cfg, client, cleanup := setupConsumerTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	img := image.NewRGBA(image.Rect(0, 0, 100, 100))
+	for y := range 100 {
+		for x := range 100 {
+			img.Set(x, y, color.RGBA{R: 255, G: 0, B: 0, A: 255})
+		}
+	}
+	pngPath := filepath.Join(cfg.Storage.ConsumptionDir, "test-image.png")
+	f, err := os.Create(pngPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(f, img); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	f.Close()
+
+	file, err := FileFromPath(pngPath)
+	testutil.AssertNoError(t, err, "file from path")
+	testutil.AssertEqual(t, file.MimeType, "image/png", "mime type")
+
+	docID := uuid.New().String()
+	processed, err := consumer.Process(ctx, file, docID)
+	testutil.AssertNoError(t, err, "process image")
+
+	t.Run("document record created", func(t *testing.T) {
+		doc, err := client.GetDocument(ctx, docID)
+		testutil.AssertNoError(t, err, "get document")
+		testutil.AssertEqual(t, doc.MimeType, "image/png", "mime type")
+	})
+
+	t.Run("original stored with real extension", func(t *testing.T) {
+		if processed.StorageOriginalPath == nil {
+			t.Fatal("expected original path")
+		}
+		if !strings.HasSuffix(*processed.StorageOriginalPath, ".png") {
+			t.Errorf("original should have .png extension, got: %s", *processed.StorageOriginalPath)
+		}
+	})
+
+	t.Run("processed stored as pdf", func(t *testing.T) {
+		if processed.StorageProcessedPath == nil {
+			t.Fatal("expected processed path")
+		}
+		if !strings.HasSuffix(*processed.StorageProcessedPath, ".pdf") {
+			t.Errorf("processed should have .pdf extension, got: %s", *processed.StorageProcessedPath)
+		}
+	})
+
+	t.Run("page count is 1", func(t *testing.T) {
+		doc, err := client.GetDocument(ctx, docID)
+		testutil.AssertNoError(t, err, "get document")
+		testutil.AssertEqual(t, int(doc.PageCount), 1, "page count")
+	})
 }
 
 func TestMoveFailedFile(t *testing.T) {

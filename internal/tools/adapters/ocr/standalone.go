@@ -10,16 +10,41 @@ import (
 	"image/png"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 
 	"github.com/go-pdf/fpdf"
+	"github.com/gabriel-vasile/mimetype"
 	gosseract "github.com/otiai10/gosseract/v2"
+	_ "golang.org/x/image/tiff"
 
 	"github.com/wgomg/edub-kushim/internal/tools/adapters"
 )
 
+const (
+	ocrDPI    = 200
+	outputDPI = 150
+)
+
+type ocrPageResult struct {
+	boxes    []gosseract.BoundingBox
+	jpegData []byte
+	w, h     int
+	pageW    float64
+	pageH    float64
+}
+
 func RunStandalone(inputPath, outputPath string, languages []string, dataDir string, ocrWorkers int) error {
 	suppressLeptonicaStderr()
+
+	mtype, err := mimetype.DetectFile(inputPath)
+	if err != nil {
+		return fmt.Errorf("detect file type: %w", err)
+	}
+
+	if strings.HasPrefix(mtype.String(), "image/") {
+		return runStandaloneImage(inputPath, outputPath, languages)
+	}
 
 	mupdfCtx, err := adapters.NewMuContext()
 	if err != nil {
@@ -44,98 +69,33 @@ func RunStandalone(inputPath, outputPath string, languages []string, dataDir str
 
 	fmt.Fprintf(os.Stdout, "starting OCR on %d pages\n", numPages)
 
-	const ocrDPI = 200
-	const outputDPI = 150
-
 	if numPages <= 1 {
-		client := gosseract.NewClient()
+		client := newOCRClient(languages)
 		defer client.Close()
-		client.SetLanguage(LangString(languages))
-		client.SetPageSegMode(gosseract.PSM_SINGLE_BLOCK)
-		client.DisableOutput()
-		client.SetVariable("load_system_dawg", "false")
-		client.SetVariable("load_freq_dawg", "false")
-		client.SetVariable("tessedit_ocr_engine_mode", "1")
 
 		for i := range numPages {
 			ocrW, ocrH, ocrSamples, ocrPixmap, err := doc.RenderPage(mupdfCtx, i, ocrDPI)
 			if err != nil {
 				return fmt.Errorf("page %d: render error: %w", i, err)
 			}
-
-			lowW := ocrW * outputDPI / ocrDPI
-			lowH := ocrH * outputDPI / ocrDPI
-
-			lowSamples := downscaleRGB(ocrSamples, ocrW, ocrH, lowW, lowH)
-			lowImg := samplesToRGBA(lowSamples, lowW, lowH)
-
-			ocrImg := samplesToRGBA(ocrSamples, ocrW, ocrH)
+			res, err := computePage(ocrSamples, ocrW, ocrH, client)
 			adapters.FreePixmap(mupdfCtx, ocrPixmap)
-
-			pngData, err := encodePNG(ocrImg)
-			ocrImg = nil
 			if err != nil {
-				return fmt.Errorf("page %d: PNG encode error: %w", i, err)
+				return fmt.Errorf("page %d: %w", i, err)
 			}
-
-			client.SetImageFromBytes(pngData)
-			boxes, err := client.GetBoundingBoxes(gosseract.RIL_WORD)
-			pngData = nil
-			if err != nil {
-				return fmt.Errorf("page %d: OCR error: %w", i, err)
-			}
-
-			pageW := float64(lowW) * 72.0 / outputDPI
-			pageH := float64(lowH) * 72.0 / outputDPI
-
-			pdf.AddPageFormat("P", fpdf.SizeType{Wd: pageW, Ht: pageH})
-
-			jpegData, err := encodeJPEG(lowImg, 60)
-			lowImg = nil
-			if err != nil {
-				return fmt.Errorf("page %d: JPEG encode error: %w", i, err)
-			}
-			imgName := fmt.Sprintf("kushim-page-%d", i)
-			pdf.RegisterImageReader(imgName, "jpg", bytes.NewReader(jpegData))
-			pdf.Image(imgName, 0, 0, pageW, pageH, false, "", 0, "")
-			jpegData = nil
-
-			scaleX := pageW / float64(ocrW)
-			scaleY := pageH / float64(ocrH)
-
-			pdf.SetTextRenderingMode(3)
-			for _, box := range boxes {
-				width := float64(box.Box.Dx()) * scaleX
-				height := float64(box.Box.Dy()) * scaleY
-				if width < 1 || height < 1 {
-					continue
-				}
-				fontSize := height * 0.8
-				if fontSize < 2 {
-					fontSize = 2
-				}
-				left := float64(box.Box.Min.X) * scaleX
-				top := float64(box.Box.Max.Y) * scaleY
-				pdf.SetFont("KushimText", "", fontSize)
-				pdf.Text(left, top, box.Word)
-			}
+			addPDFPage(pdf, res, i)
 		}
 	} else {
 		type pageJob struct {
-			index        int
-			ocrSamples   []byte
-			ocrW, ocrH   int
-			outW, outH   int
-			pageW, pageH float64
+			index      int
+			ocrSamples []byte
+			ocrW, ocrH int
 		}
 
 		type pageResult struct {
-			index        int
-			boxes        []gosseract.BoundingBox
-			jpegData     []byte
-			ocrW, ocrH   int
-			pageW, pageH float64
-			err          error
+			index int
+			res   ocrPageResult
+			err   error
 		}
 
 		numWorkers := ocrWorkers
@@ -150,52 +110,16 @@ func RunStandalone(inputPath, outputPath string, languages []string, dataDir str
 
 		for range numWorkers {
 			wg.Go(func() {
-				worker := gosseract.NewClient()
+				worker := newOCRClient(languages)
 				defer worker.Close()
-				worker.SetLanguage(LangString(languages))
-				worker.SetPageSegMode(gosseract.PSM_SINGLE_BLOCK)
-				worker.DisableOutput()
-				worker.SetVariable("load_system_dawg", "false")
-				worker.SetVariable("load_freq_dawg", "false")
-				worker.SetVariable("tessedit_ocr_engine_mode", "1")
 
 				for job := range jobs {
-					lowSamples := downscaleRGB(job.ocrSamples, job.ocrW, job.ocrH, job.outW, job.outH)
-					lowImg := samplesToRGBA(lowSamples, job.outW, job.outH)
-
-					ocrImg := samplesToRGBA(job.ocrSamples, job.ocrW, job.ocrH)
-
-					pngData, err := encodePNG(ocrImg)
-					ocrImg = nil
+					res, err := computePage(job.ocrSamples, job.ocrW, job.ocrH, worker)
 					if err != nil {
-						results <- pageResult{index: job.index, err: fmt.Errorf("page %d: PNG encode error: %w", job.index, err)}
+						results <- pageResult{index: job.index, err: fmt.Errorf("page %d: %w", job.index, err)}
 						continue
 					}
-
-					worker.SetImageFromBytes(pngData)
-					boxes, err := worker.GetBoundingBoxes(gosseract.RIL_WORD)
-					pngData = nil
-					if err != nil {
-						results <- pageResult{index: job.index, err: fmt.Errorf("page %d: OCR error: %w", job.index, err)}
-						continue
-					}
-
-					jpegData, err := encodeJPEG(lowImg, 60)
-					lowImg = nil
-					if err != nil {
-						results <- pageResult{index: job.index, err: fmt.Errorf("page %d: JPEG encode error: %w", job.index, err)}
-						continue
-					}
-
-					results <- pageResult{
-						index:    job.index,
-						boxes:    boxes,
-						jpegData: jpegData,
-						ocrW:     job.ocrW,
-						ocrH:     job.ocrH,
-						pageW:    job.pageW,
-						pageH:    job.pageH,
-					}
+					results <- pageResult{index: job.index, res: res}
 				}
 			})
 		}
@@ -210,18 +134,11 @@ func RunStandalone(inputPath, outputPath string, languages []string, dataDir str
 				phase1Err = fmt.Errorf("page %d: render error: %w", i, err)
 				break
 			}
-			lowW := ocrW * outputDPI / ocrDPI
-			lowH := ocrH * outputDPI / ocrDPI
-
 			jobs <- pageJob{
 				index:      i,
 				ocrSamples: ocrSamples,
 				ocrW:       ocrW,
 				ocrH:       ocrH,
-				outW:       lowW,
-				outH:       lowH,
-				pageW:      float64(lowW) * 72.0 / outputDPI,
-				pageH:      float64(lowH) * 72.0 / outputDPI,
 			}
 			adapters.FreePixmap(mupdfCtx, ocrPixmap)
 		}
@@ -248,32 +165,7 @@ func RunStandalone(inputPath, outputPath string, languages []string, dataDir str
 		}
 
 		for i := range numPages {
-			r := resultsByIndex[i]
-			pdf.AddPageFormat("P", fpdf.SizeType{Wd: r.pageW, Ht: r.pageH})
-
-			imgName := fmt.Sprintf("kushim-page-%d", i)
-			pdf.RegisterImageReader(imgName, "jpg", bytes.NewReader(r.jpegData))
-			pdf.Image(imgName, 0, 0, r.pageW, r.pageH, false, "", 0, "")
-
-			scaleX := r.pageW / float64(r.ocrW)
-			scaleY := r.pageH / float64(r.ocrH)
-
-			pdf.SetTextRenderingMode(3)
-			for _, box := range r.boxes {
-				width := float64(box.Box.Dx()) * scaleX
-				height := float64(box.Box.Dy()) * scaleY
-				if width < 1 || height < 1 {
-					continue
-				}
-				fontSize := height * 0.8
-				if fontSize < 2 {
-					fontSize = 2
-				}
-				left := float64(box.Box.Min.X) * scaleX
-				top := float64(box.Box.Max.Y) * scaleY
-				pdf.SetFont("KushimText", "", fontSize)
-				pdf.Text(left, top, box.Word)
-			}
+			addPDFPage(pdf, resultsByIndex[i].res, i)
 		}
 	}
 
@@ -281,6 +173,129 @@ func RunStandalone(inputPath, outputPath string, languages []string, dataDir str
 		return fmt.Errorf("save output PDF: %w", err)
 	}
 	return nil
+}
+
+func runStandaloneImage(inputPath, outputPath string, languages []string) error {
+	f, err := os.Open(inputPath)
+	if err != nil {
+		return fmt.Errorf("open image: %w", err)
+	}
+	img, _, err := image.Decode(f)
+	f.Close()
+	if err != nil {
+		return fmt.Errorf("decode image: %w", err)
+	}
+
+	bounds := img.Bounds()
+	w := bounds.Dx()
+	h := bounds.Dy()
+
+	if w == 0 || h == 0 {
+		return fmt.Errorf("image has zero dimensions")
+	}
+
+	const maxPixels = 50_000_000
+	if int64(w)*int64(h) > maxPixels {
+		return fmt.Errorf("image dimensions %dx%d (%d pixels) exceed maximum %d", w, h, w*h, maxPixels)
+	}
+
+	samples := imageToRGB(img)
+
+	client := newOCRClient(languages)
+	defer client.Close()
+
+	res, err := computePage(samples, w, h, client)
+	if err != nil {
+		return fmt.Errorf("image OCR: %w", err)
+	}
+
+	pdf := fpdf.New("P", "pt", "", "")
+	pdf.SetAutoPageBreak(false, 0)
+	pdf.AddUTF8FontFromBytes("KushimText", "", kushimFontData)
+	addPDFPage(pdf, res, 0)
+
+	if err := pdf.OutputFileAndClose(outputPath); err != nil {
+		return fmt.Errorf("save output PDF: %w", err)
+	}
+	return nil
+}
+
+func newOCRClient(languages []string) *gosseract.Client {
+	client := gosseract.NewClient()
+	client.SetLanguage(LangString(languages))
+	client.SetPageSegMode(gosseract.PSM_SINGLE_BLOCK)
+	client.DisableOutput()
+	client.SetVariable("load_system_dawg", "false")
+	client.SetVariable("load_freq_dawg", "false")
+	client.SetVariable("tessedit_ocr_engine_mode", "1")
+	return client
+}
+
+func computePage(samples []byte, w, h int, client *gosseract.Client) (ocrPageResult, error) {
+	outW := w * outputDPI / ocrDPI
+	outH := h * outputDPI / ocrDPI
+
+	lowSamples := downscaleRGB(samples, w, h, outW, outH)
+	lowImg := samplesToRGBA(lowSamples, outW, outH)
+	ocrImg := samplesToRGBA(samples, w, h)
+
+	pngData, err := encodePNG(ocrImg)
+	ocrImg = nil
+	if err != nil {
+		return ocrPageResult{}, fmt.Errorf("PNG encode error: %w", err)
+	}
+
+	client.SetImageFromBytes(pngData)
+	boxes, err := client.GetBoundingBoxes(gosseract.RIL_WORD)
+	pngData = nil
+	if err != nil {
+		return ocrPageResult{}, fmt.Errorf("OCR error: %w", err)
+	}
+
+	jpegData, err := encodeJPEG(lowImg, 60)
+	lowImg = nil
+	if err != nil {
+		return ocrPageResult{}, fmt.Errorf("JPEG encode error: %w", err)
+	}
+
+	pageW := float64(outW) * 72.0 / outputDPI
+	pageH := float64(outH) * 72.0 / outputDPI
+
+	return ocrPageResult{
+		boxes:    boxes,
+		jpegData: jpegData,
+		w:        w,
+		h:        h,
+		pageW:    pageW,
+		pageH:    pageH,
+	}, nil
+}
+
+func addPDFPage(pdf *fpdf.Fpdf, res ocrPageResult, idx int) {
+	imgName := fmt.Sprintf("kushim-page-%d", idx)
+	pdf.AddPageFormat("P", fpdf.SizeType{Wd: res.pageW, Ht: res.pageH})
+	pdf.RegisterImageReader(imgName, "jpg", bytes.NewReader(res.jpegData))
+	pdf.Image(imgName, 0, 0, res.pageW, res.pageH, false, "", 0, "")
+
+	scaleX := res.pageW / float64(res.w)
+	scaleY := res.pageH / float64(res.h)
+
+	pdf.SetTextRenderingMode(3)
+	for _, box := range res.boxes {
+		width := float64(box.Box.Dx()) * scaleX
+		height := float64(box.Box.Dy()) * scaleY
+		if width < 1 || height < 1 {
+			continue
+		}
+		fontSize := height * 0.8
+		if fontSize < 2 {
+			fontSize = 2
+		}
+		left := float64(box.Box.Min.X) * scaleX
+		top := float64(box.Box.Max.Y) * scaleY
+		pdf.SetFont("KushimText", "", fontSize)
+		pdf.Text(left, top, box.Word)
+	}
 }
 
 func downscaleRGB(in []byte, inW, inH int, outW, outH int) []byte {
@@ -330,4 +345,21 @@ func encodeJPEG(img image.Image, quality int) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+func imageToRGB(img image.Image) []byte {
+	bounds := img.Bounds()
+	w := bounds.Dx()
+	h := bounds.Dy()
+	samples := make([]byte, w*h*3)
+	for y := range h {
+		for x := range w {
+			r, g, b, a := img.At(x+bounds.Min.X, y+bounds.Min.Y).RGBA()
+			i := (y*w + x) * 3
+			samples[i] = uint8((r + 65535 - a) >> 8)
+			samples[i+1] = uint8((g + 65535 - a) >> 8)
+			samples[i+2] = uint8((b + 65535 - a) >> 8)
+		}
+	}
+	return samples
 }
