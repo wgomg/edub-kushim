@@ -239,10 +239,14 @@ var (
 		MuPDF     string
 		GoPdf     string
 		PdfToText string
+		Docx      string
+		Odt       string
 	}{
 		MuPDF:     "mupdf",
 		GoPdf:     "gopdf",
 		PdfToText: "pdftotext",
+		Docx:      "docx",
+		Odt:       "odt",
 	}
 
 	TextReducer = struct {
@@ -316,7 +320,7 @@ func DefaultConfig(configDir string) *Config {
 			StorageDir:     filepath.Join(configDir, "storage"),
 		},
 		Consumer: ConsumerConfig{
-			SupportedFiles:   []string{".pdf"},
+			SupportedFiles:   []string{".pdf", ".docx", ".odt"},
 			Workers:          1,
 			MaxFilesPerBatch: 10,
 			TextExtractor: TextExtractorConfig{

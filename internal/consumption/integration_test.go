@@ -31,7 +31,7 @@ type integrationTestRunner struct {
 	optimizeErr     error
 }
 
-func (r *integrationTestRunner) ExtractText(ctx context.Context, path string) (*tools.TextExtractionResult, error) {
+func (r *integrationTestRunner) ExtractText(ctx context.Context, path string, _ string) (*tools.TextExtractionResult, error) {
 	if r.extractTextErr != nil {
 		return nil, r.extractTextErr
 	}
@@ -578,6 +578,114 @@ func TestQuarantineFailedFiles(t *testing.T) {
 		errorDir := filepath.Join(storageDir, "errors")
 		if _, err := os.Stat(errorDir); !os.IsNotExist(err) {
 			t.Fatal("errors dir should not exist when no file_path")
+		}
+	})
+}
+
+func TestConsumerProcessDocxFile(t *testing.T) {
+	consumer, cfg, client, cleanup := setupConsumerTest(t)
+	defer cleanup()
+
+	docxPath := filepath.Join(cfg.Storage.ConsumptionDir, "test-document.docx")
+	testutil.CreateMinimalDocx(t, docxPath, "Hello from DOCX")
+
+	file, err := FileFromPath(docxPath)
+	testutil.AssertNoError(t, err, "file from path")
+	testutil.AssertEqual(t, file.MimeType, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "mime type")
+
+	docID := uuid.New().String()
+	processed, err := consumer.Process(context.Background(), file, docID)
+	testutil.AssertNoError(t, err, "process docx")
+
+	t.Run("document record created", func(t *testing.T) {
+		doc, err := client.GetDocument(context.Background(), docID)
+		testutil.AssertNoError(t, err, "get document")
+		testutil.AssertEqual(t, doc.MimeType, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "mime type")
+	})
+
+	t.Run("original stored with docx extension", func(t *testing.T) {
+		if processed.StorageOriginalPath == nil {
+			t.Fatal("expected original path")
+		}
+		if !strings.HasSuffix(*processed.StorageOriginalPath, ".docx") {
+			t.Errorf("original should have .docx extension, got: %s", *processed.StorageOriginalPath)
+		}
+	})
+
+	t.Run("processed stored with docx extension", func(t *testing.T) {
+		if processed.StorageProcessedPath == nil {
+			t.Fatal("expected processed path")
+		}
+		if !strings.HasSuffix(*processed.StorageProcessedPath, ".docx") {
+			t.Errorf("processed should have .docx extension, got: %s", *processed.StorageProcessedPath)
+		}
+	})
+
+	t.Run("text content present", func(t *testing.T) {
+		doc, _ := client.GetDocument(context.Background(), docID)
+		if !doc.TextContent.Valid || doc.TextContent.String == "" {
+			t.Fatal("expected text content")
+		}
+	})
+
+	t.Run("page count is 0", func(t *testing.T) {
+		doc, _ := client.GetDocument(context.Background(), docID)
+		if doc.PageCount != 0 {
+			t.Errorf("expected page count 0, got %d", doc.PageCount)
+		}
+	})
+}
+
+func TestConsumerProcessOdtFile(t *testing.T) {
+	consumer, cfg, client, cleanup := setupConsumerTest(t)
+	defer cleanup()
+
+	odtPath := filepath.Join(cfg.Storage.ConsumptionDir, "test-document.odt")
+	testutil.CreateMinimalOdt(t, odtPath, "Hello from ODT")
+
+	file, err := FileFromPath(odtPath)
+	testutil.AssertNoError(t, err, "file from path")
+	testutil.AssertEqual(t, file.MimeType, "application/vnd.oasis.opendocument.text", "mime type")
+
+	docID := uuid.New().String()
+	processed, err := consumer.Process(context.Background(), file, docID)
+	testutil.AssertNoError(t, err, "process odt")
+
+	t.Run("document record created", func(t *testing.T) {
+		doc, err := client.GetDocument(context.Background(), docID)
+		testutil.AssertNoError(t, err, "get document")
+		testutil.AssertEqual(t, doc.MimeType, "application/vnd.oasis.opendocument.text", "mime type")
+	})
+
+	t.Run("original stored with odt extension", func(t *testing.T) {
+		if processed.StorageOriginalPath == nil {
+			t.Fatal("expected original path")
+		}
+		if !strings.HasSuffix(*processed.StorageOriginalPath, ".odt") {
+			t.Errorf("original should have .odt extension, got: %s", *processed.StorageOriginalPath)
+		}
+	})
+
+	t.Run("processed stored with odt extension", func(t *testing.T) {
+		if processed.StorageProcessedPath == nil {
+			t.Fatal("expected processed path")
+		}
+		if !strings.HasSuffix(*processed.StorageProcessedPath, ".odt") {
+			t.Errorf("processed should have .odt extension, got: %s", *processed.StorageProcessedPath)
+		}
+	})
+
+	t.Run("text content present", func(t *testing.T) {
+		doc, _ := client.GetDocument(context.Background(), docID)
+		if !doc.TextContent.Valid || doc.TextContent.String == "" {
+			t.Fatal("expected text content")
+		}
+	})
+
+	t.Run("page count is 0", func(t *testing.T) {
+		doc, _ := client.GetDocument(context.Background(), docID)
+		if doc.PageCount != 0 {
+			t.Errorf("expected page count 0, got %d", doc.PageCount)
 		}
 	})
 }

@@ -582,6 +582,10 @@ func extFromMimeType(mimeType string) string {
 		return ".jpg"
 	case "image/png":
 		return ".png"
+	case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+		return ".docx"
+	case "application/vnd.oasis.opendocument.text":
+		return ".odt"
 	default:
 		return ".pdf"
 	}

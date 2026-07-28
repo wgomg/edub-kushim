@@ -19,7 +19,7 @@ func NewMuPDF(logger *utils.Logger, cfg config.ToolConfig) (*MuPDF, error) {
 	return &MuPDF{logger: logger, config: cfg}, nil
 }
 
-func (m *MuPDF) Extract(ctx context.Context, path string) (*string, error) {
+func (m *MuPDF) Extract(ctx context.Context, path string, _ string) (*string, error) {
 	mupdfCtx, err := adapters.NewMuContext()
 	if err != nil {
 		return nil, fmt.Errorf("mupdf: %w", err)

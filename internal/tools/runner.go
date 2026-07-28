@@ -148,7 +148,7 @@ func NewRunnerWithMatcher(logger *utils.Logger, cfg *config.Config, tools []stri
 	return r
 }
 
-func (r *Runner) ExtractText(ctx context.Context, path string) (*TextExtractionResult, error) {
+func (r *Runner) ExtractText(ctx context.Context, path string, mimeType string) (*TextExtractionResult, error) {
 	if r.textExtractor == nil {
 		return nil, fmt.Errorf("text extractor not configured")
 	}
@@ -164,7 +164,7 @@ func (r *Runner) ExtractText(ctx context.Context, path string) (*TextExtractionR
 	}
 
 	text, err := runWithTimeout(ctx, func() (*string, error) {
-		return r.textExtractor.Extract(ctx, path)
+		return r.textExtractor.Extract(ctx, path, mimeType)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("text extractor: %w", err)

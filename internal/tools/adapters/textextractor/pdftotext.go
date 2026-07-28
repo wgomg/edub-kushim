@@ -25,7 +25,7 @@ func NewPDFToText(logger *utils.Logger, cfg config.ToolConfig) (*PDFToText, erro
 	return &PDFToText{logger: logger, config: cfg}, nil
 }
 
-func (p *PDFToText) Extract(ctx context.Context, path string) (*string, error) {
+func (p *PDFToText) Extract(ctx context.Context, path string, _ string) (*string, error) {
 	if !filepath.IsAbs(path) {
 		return nil, fmt.Errorf("%s: input path must be absolute, got %q", p.Name(), path)
 	}

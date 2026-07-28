@@ -38,7 +38,7 @@ storage:
 consumer:
   workers: 1
   max_files_per_batch: 10
-  supported_files: ['.pdf', '.png', '.jpg', '.jpeg', '.tiff', '.tif']
+  supported_files: ['.pdf', '.png', '.jpg', '.jpeg', '.tiff', '.tif', '.docx', '.odt']
   polling:
     enabled: false
     interval: 5  # minutes

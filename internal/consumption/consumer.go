@@ -36,7 +36,7 @@ const (
 // Consumer.Process depends on. *tools.Runner satisfies it automatically.
 // This extraction exists solely to allow mock implementations in tests.
 type runner interface {
-	ExtractText(ctx context.Context, path string) (*tools.TextExtractionResult, error)
+	ExtractText(ctx context.Context, path string, mimeType string) (*tools.TextExtractionResult, error)
 	OCR(ctx context.Context, docId, path string) (*tools.OCRResult, error)
 	OptimizePdf(ctx context.Context, docId, path string) (*tools.PdfOptimizationResult, error)
 }
@@ -148,11 +148,17 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 	)
 	file.StorageOriginalPath = &storeOriginalPath
 
-	processedFileName := documentID + ".pdf"
+	processedExt := ".pdf"
 	origExt := filepath.Ext(file.OriginalPath)
 	if origExt == "" {
 		origExt = ".pdf"
 	}
+	if file.OCRTmpPath == nil && file.OptimizedPdfTmpPath == nil {
+		if file.MimeType != "application/pdf" && !strings.HasPrefix(file.MimeType, "image/") {
+			processedExt = origExt
+		}
+	}
+	processedFileName := documentID + processedExt
 	originalFileName := documentID + origExt
 
 	fullOriginalPath := filepath.Join(
@@ -491,7 +497,7 @@ func (c *Consumer) extractText(ctx context.Context, file File, documentID string
 		return c.ocrAndReextract(ctx, file, documentID, memBefore, memBefore)
 	}
 
-	extractResult, err := c.runner.ExtractText(ctx, file.OriginalPath)
+	extractResult, err := c.runner.ExtractText(ctx, file.OriginalPath, file.MimeType)
 	memAfterExtract := utils.ReadMemSnapshot()
 	c.logger.Debug(&documentID, "extractText: %s", utils.FormatMemDelta(memBefore, memAfterExtract))
 	if err != nil {
@@ -502,16 +508,23 @@ func (c *Consumer) extractText(ctx context.Context, file File, documentID string
 	if extractResult.Text != nil && *extractResult.Text != "" && float64(len(*extractResult.Text))/float64(file.FileSize) >= minTextDensityRatio {
 		file.Text = sql.NullString{String: *extractResult.Text, Valid: true}
 
-		c.logger.Debug(&documentID, "optimizePdf: entering for %s", file.OriginalPath)
-		optimizationResult, err := c.runner.OptimizePdf(ctx, documentID, file.OriginalPath)
-		memAfterOpt := utils.ReadMemSnapshot()
-		c.logger.Debug(&documentID, "optimizePdf: %s", utils.FormatMemDelta(memAfterExtract, memAfterOpt))
-		if err != nil {
-			c.logger.Info(&documentID, "optimization failed for %s, using original: %v", file.Name, err)
-		} else {
-			file.OptimizedPdfTmpPath = optimizationResult.TmpPath
+		if file.MimeType == "application/pdf" {
+			c.logger.Debug(&documentID, "optimizePdf: entering for %s", file.OriginalPath)
+			optimizationResult, err := c.runner.OptimizePdf(ctx, documentID, file.OriginalPath)
+			memAfterOpt := utils.ReadMemSnapshot()
+			c.logger.Debug(&documentID, "optimizePdf: %s", utils.FormatMemDelta(memAfterExtract, memAfterOpt))
+			if err != nil {
+				c.logger.Info(&documentID, "optimization failed for %s, using original: %v", file.Name, err)
+			} else {
+				file.OptimizedPdfTmpPath = optimizationResult.TmpPath
+			}
 		}
 
+		return file, nil
+	}
+
+	if extractResult.Text != nil && *extractResult.Text != "" && file.MimeType != "application/pdf" {
+		file.Text = sql.NullString{String: *extractResult.Text, Valid: true}
 		return file, nil
 	}
 
@@ -528,7 +541,7 @@ func (c *Consumer) ocrAndReextract(ctx context.Context, file File, documentID st
 		return file, &task.Error{ReqID: documentID, Err: err}
 	}
 
-	extractResult, err := c.runner.ExtractText(ctx, *ocrResult.TmpPath)
+	extractResult, err := c.runner.ExtractText(ctx, *ocrResult.TmpPath, "application/pdf")
 	memAfterFinal := utils.ReadMemSnapshot()
 	c.logger.Debug(&documentID, "extractText (post-OCR): %s", utils.FormatMemDelta(memAfterOCR, memAfterFinal))
 	if err != nil {

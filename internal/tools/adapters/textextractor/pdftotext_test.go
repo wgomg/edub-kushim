@@ -20,7 +20,7 @@ func TestPDFToText_Extract_RejectsRelativePath(t *testing.T) {
 		t.Fatalf("NewPDFToText: %v", err)
 	}
 
-	_, err = p.Extract(context.Background(), "relative/-file.pdf")
+	_, err = p.Extract(context.Background(), "relative/-file.pdf", "application/pdf")
 	if err == nil {
 		t.Fatal("expected error for relative input path, got nil")
 	}

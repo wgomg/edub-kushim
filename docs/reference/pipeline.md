@@ -10,11 +10,11 @@
      - `NewConsumer(cfg, logger, db) (*Consumer, error)` — Validates `PdfOptimizer.Fallback` at startup
      - `NewConsumerWithRunner(cfg, logger, db, runner) (*Consumer, error)` — DI variant
      - `Process(ctx, file File, documentID string) (File, error)` — Extract → OCR fallback → optimize → store (creates document with PageCount, WordCount, CharCount). For image MIME types (`image/*`), skips text extraction entirely and routes directly to OCR.
-     - `extractText(ctx, file File, documentID string) (File, error)` — For PDFs: uses `minTextDensityRatio` (0.001) to decide OCR vs text. For images (`image/*`): sets `PageCount=1`, calls OCR immediately without attempting text extraction.
+      - `extractText(ctx, file File, documentID string) (File, error)` — For PDFs: uses `minTextDensityRatio` (0.001) to decide OCR vs text. For images (`image/*`): sets `PageCount=1`, calls OCR immediately without attempting text extraction. For DOCX/ODT: extracts text via `CompositeExtractor` (MIME-dispatched to the DOCX or ODT adapter), skips PDF optimization, and stores the processed file with its original extension (`.docx`/`.odt`) since no OCR or optimization occurs.
      - `isDuplicate(ctx, path) (bool, error)` — MD5 → SHA512 two-step duplicate check
 
 - `File`
-  - **Fields**: `Name`, `OriginalPath`, `OCRTmpPath *string`, `OptimizedPdfTmpPath *string`, `StorageProcessedPath *string`, `StorageOriginalPath *string`, `DocumentID string` (UUID), `DocumentDbId sql.NullInt64` (DB auto-increment ID), `MD5Checksum`, `SHA512Checksum`, `Text sql.NullString`, `MimeType`, `Date time.Time`, `FileSize int64`, `PageCount int`. Processed output is always stored as `.pdf`; originals preserve their real extension (e.g. `documentID.png`).
+  - **Fields**: `Name`, `OriginalPath`, `OCRTmpPath *string`, `OptimizedPdfTmpPath *string`, `StorageProcessedPath *string`, `StorageOriginalPath *string`, `DocumentID string` (UUID), `DocumentDbId sql.NullInt64` (DB auto-increment ID), `MD5Checksum`, `SHA512Checksum`, `Text sql.NullString`, `MimeType`, `Date time.Time`, `FileSize int64`, `PageCount int`. PDFs and OCR'd images are stored as `.pdf`; native-format files (DOCX, ODT) that didn't need OCR or optimization preserve their original extension (e.g. `documentID.docx`). Originals always preserve their real extension (e.g. `documentID.png`).
 
 ### Functions
 

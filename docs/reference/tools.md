@@ -333,6 +333,9 @@ Calls `suppressLeptonicaStderr()` at the top of the function to suppress Leptoni
 - `MuPDF` (default, CGo) — Page-by-page extraction
 - `Gopdf` (pure Go, no CGo)
 - `Pdftotext` (external tool)
+- `Docx` — Pure Go DOCX text extraction via `archive/zip` + `encoding/xml` parsing of `word/document.xml`. Always active as part of the CompositeExtractor.
+- `Odt` — Pure Go ODT text extraction via `archive/zip` + `encoding/xml` parsing of `content.xml`. Always active as part of the CompositeExtractor.
+- `CompositeExtractor` — Wraps the configured PDF extractor + Docx + Odt, dispatches by MIME type via `CanHandle`. Created automatically by `NewTextExtractor`; no config changes needed.
 
 ---
 
