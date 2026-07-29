@@ -17,6 +17,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/search"
+	"github.com/wgomg/edub-kushim/internal/mime"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -417,9 +418,7 @@ func (h *DocumentHandler) GetDocumentFile(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if doc.MimeType != "application/pdf" &&
-		doc.MimeType != "application/vnd.openxmlformats-officedocument.wordprocessingml.document" &&
-		doc.MimeType != "application/vnd.oasis.opendocument.text" {
+	if !mime.IsViewable(doc.MimeType) {
 		http.Error(w, "File type not supported for viewing", http.StatusUnsupportedMediaType)
 		return
 	}
@@ -521,7 +520,7 @@ func (h *DocumentHandler) DownloadDocuments(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Type", mime.ZIP)
 	w.Header().Set("Content-Disposition", `attachment; filename="documents.zip"`)
 
 	zw := zip.NewWriter(w)
@@ -537,7 +536,7 @@ func (h *DocumentHandler) DownloadDocuments(w http.ResponseWriter, r *http.Reque
 			continue
 		}
 
-		ext := extFromMimeType(doc.MimeType)
+		ext := mime.ExtensionFromMimeType(doc.MimeType)
 		name := sanitizeFilename(doc.Title) + "_" + doc.DocumentID[:8] + ext
 		fw, err := zw.Create(name)
 		if err != nil {
@@ -576,21 +575,9 @@ func sanitizeFilename(title string) string {
 	return strings.NewReplacer("\r\n", "", "\n", "", "\"", "", "/", "_", "\\", "_", "\x00", "").Replace(title)
 }
 
-func extFromMimeType(mimeType string) string {
-	switch mimeType {
-	case "image/tiff":
-		return ".tiff"
-	case "image/jpeg":
-		return ".jpg"
-	case "image/png":
-		return ".png"
-	case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-		return ".docx"
-	case "application/vnd.oasis.opendocument.text":
-		return ".odt"
-	default:
-		return ".pdf"
-	}
+func (h *DocumentHandler) SupportedMimeTypes(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(mime.Supported)
 }
 
 func uniqueStrings(s []string) []string {

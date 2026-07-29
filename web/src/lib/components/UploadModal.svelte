@@ -1,4 +1,5 @@
 <script>
+	import { onMount } from 'svelte';
 	import Modal from './Modal.svelte';
 	import { api } from '$lib/api.js';
 	import { goto } from '$app/navigation';
@@ -11,6 +12,17 @@
 	let error = $state(null);
 
 	let fileInput = $state(null);
+	let acceptExtensions = $state('.pdf,.docx,.odt,.png,.jpg,.jpeg,.tiff,.tif');
+
+	onMount(async () => {
+		const types = await api.supportedMimeTypes();
+		if (types && types.length > 0) {
+			const exts = types.map((t) => t.extension);
+			if (exts.includes('.jpg')) exts.push('.jpeg');
+			if (exts.includes('.tiff')) exts.push('.tif');
+			acceptExtensions = [...new Set(exts)].join(',');
+		}
+	});
 
 	function reset() {
 		files = [];
@@ -113,7 +125,7 @@
 			<input
 				type="file"
 				multiple
-				accept=".pdf,.docx,.odt,.png,.jpg,.jpeg,.tiff,.tif"
+				accept={acceptExtensions}
 				onchange={handleFileSelect}
 				bind:this={fileInput}
 				class="hidden"

@@ -10,6 +10,8 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/utils"
+
+	_mime "github.com/wgomg/edub-kushim/internal/mime"
 )
 
 type PDFToText struct {
@@ -47,7 +49,7 @@ func (p *PDFToText) Extract(ctx context.Context, path string, _ string) (*string
 }
 
 func (p *PDFToText) CanHandle(mimeType string) bool {
-	return mimeType == "application/pdf"
+	return _mime.IsPDF(mimeType)
 }
 
 func (p *PDFToText) Name() string {

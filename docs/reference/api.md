@@ -63,6 +63,7 @@
     - `BatchAssignTags(w, r)` — `POST /api/v1/documents/batch-tags` — Accepts `{document_ids, tag_ids, mode}`. Supports `add` (append) and `replace` (transactional clear+add) modes. Validates all tag IDs exist before modifying any document.
     - `FilterLanguages(w, r)` — `GET /api/v1/filter-languages` — Returns distinct language codes from the document corpus as a JSON string array.
     - `FilterMimeTypes(w, r)` — `GET /api/v1/filter-mime-types` — Returns distinct MIME types from the document corpus as a JSON string array.
+    - `SupportedMimeTypes(w, r)` — `GET /api/v1/supported-mime-types` — Returns the compiled-in supported MIME types as a JSON array of `MimeInfo` objects (mime_type, extension, label, viewable, viewer, office_format).
 
 ---
 

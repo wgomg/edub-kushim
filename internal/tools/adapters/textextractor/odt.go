@@ -11,6 +11,8 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/utils"
+
+	_mime "github.com/wgomg/edub-kushim/internal/mime"
 )
 
 type Odt struct {
@@ -22,7 +24,7 @@ func NewOdt(logger *utils.Logger) *Odt {
 }
 
 func (o *Odt) CanHandle(mimeType string) bool {
-	return mimeType == "application/vnd.oasis.opendocument.text"
+	return mimeType == _mime.ODT
 }
 
 func (o *Odt) Name() string {

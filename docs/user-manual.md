@@ -1128,6 +1128,36 @@ Response `200` — array of strings:
 ["eng", "spa", "deu"]
 ```
 
+### Supported MIME Types
+
+Returns the configured/constant set of supported MIME types with metadata, used by the frontend to build dynamic file input accept attributes, download labels, and preview routing. This endpoint returns the compile-time configuration, not what happens to be in the database.
+
+```
+GET /api/v1/supported-mime-types
+```
+
+Response `200` — array of objects:
+
+```json
+[
+  {"mime_type": "application/pdf", "extension": ".pdf", "label": "PDF",  "viewable": true,  "viewer": "iframe", "office_format": ""},
+  {"mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "extension": ".docx", "label": "DOCX", "viewable": true,  "viewer": "office", "office_format": "docx"},
+  {"mime_type": "application/vnd.oasis.opendocument.text", "extension": ".odt", "label": "ODT", "viewable": true,  "viewer": "office", "office_format": "odt"},
+  {"mime_type": "image/tiff", "extension": ".tiff", "label": "TIFF", "viewable": false, "viewer": "", "office_format": ""},
+  {"mime_type": "image/jpeg", "extension": ".jpg", "label": "JPEG", "viewable": false, "viewer": "", "office_format": ""},
+  {"mime_type": "image/png",  "extension": ".png", "label": "PNG",  "viewable": false, "viewer": "", "office_format": ""}
+]
+```
+
+| Field          | Type     | Description                                      |
+| -------------- | -------- | ------------------------------------------------ |
+| `mime_type`    | `string` | The MIME type string                             |
+| `extension`    | `string` | Canonical file extension (e.g. `.jpg`, `.tiff`)  |
+| `label`        | `string` | Short format name for display (e.g. "PDF")       |
+| `viewable`     | `bool`   | Whether the type supports inline preview          |
+| `viewer`       | `string` | Viewer engine: `"iframe"`, `"office"`, or `""`    |
+| `office_format`| `string` | Format identifier for officeparser, or `""`       |
+
 ### Batch Retry
 
 Reset all failed tasks in a batch to pending.

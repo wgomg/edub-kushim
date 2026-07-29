@@ -165,7 +165,7 @@
 										</div>
 										<div class="mt-1 h-2 w-full rounded-full bg-clay-800">
 											<div
-												class="h-2 rounded-full transition-all"
+												class="h-2 rounded-full transition-[width]"
 												style="width: {(item.total_bytes / maxTypeBytes()) *
 													100}%; background-color: {chartColors[i % chartColors.length]}"
 											></div>
@@ -209,11 +209,7 @@
 			<section>
 				<h3 class="mb-3 text-base font-semibold text-parchment-200">Cumulative Storage Trend</h3>
 				<div bind:this={chartEl} class="rounded-lg border border-clay-800 bg-clay-900 p-4">
-					<svg
-						width="100%"
-						viewBox="0 0 {svgWidth} {svgHeight}"
-						class="overflow-visible"
-					>
+					<svg width="100%" viewBox="0 0 {svgWidth} {svgHeight}" class="overflow-visible">
 						<defs>
 							<linearGradient id="areaGrad" x1="0" x2="0" y1="0" y2="1">
 								<stop offset="0%" stop-color="#c9953a" stop-opacity="0.3" />

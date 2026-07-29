@@ -7,6 +7,8 @@ import (
 	"github.com/razvandimescu/gopdf/pdf"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/utils"
+
+	_mime "github.com/wgomg/edub-kushim/internal/mime"
 )
 
 // Gopdf extracts text from PDFs using the razvandimescu/gopdf library (pure Go).
@@ -40,7 +42,7 @@ func (f *Gopdf) Extract(ctx context.Context, path string, _ string) (*string, er
 }
 
 func (f *Gopdf) CanHandle(mimeType string) bool {
-	return mimeType == "application/pdf"
+	return _mime.IsPDF(mimeType)
 }
 
 func (f *Gopdf) Name() string {

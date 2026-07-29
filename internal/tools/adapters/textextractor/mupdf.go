@@ -8,6 +8,8 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters"
 	"github.com/wgomg/edub-kushim/internal/utils"
+
+	_mime "github.com/wgomg/edub-kushim/internal/mime"
 )
 
 type MuPDF struct {
@@ -52,7 +54,7 @@ func (m *MuPDF) Extract(ctx context.Context, path string, _ string) (*string, er
 }
 
 func (m *MuPDF) CanHandle(mimeType string) bool {
-	return mimeType == "application/pdf"
+	return _mime.IsPDF(mimeType)
 }
 
 func (m *MuPDF) Name() string {

@@ -11,6 +11,8 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/utils"
+
+	_mime "github.com/wgomg/edub-kushim/internal/mime"
 )
 
 type Docx struct {
@@ -22,7 +24,7 @@ func NewDocx(logger *utils.Logger) *Docx {
 }
 
 func (d *Docx) CanHandle(mimeType string) bool {
-	return mimeType == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	return mimeType == _mime.DOCX
 }
 
 func (d *Docx) Name() string {

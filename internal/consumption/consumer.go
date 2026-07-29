@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	mime "github.com/wgomg/edub-kushim/internal/mime"
 	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/tools"
@@ -154,7 +155,7 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 		origExt = ".pdf"
 	}
 	if file.OCRTmpPath == nil && file.OptimizedPdfTmpPath == nil {
-		if file.MimeType != "application/pdf" && !strings.HasPrefix(file.MimeType, "image/") {
+		if !mime.IsPDF(file.MimeType) && !mime.IsImage(file.MimeType) {
 			processedExt = origExt
 		}
 	}
@@ -487,11 +488,11 @@ func calculateSHA512(path string) (string, error) {
 func (c *Consumer) extractText(ctx context.Context, file File, documentID string) (File, error) {
 	memBefore := utils.ReadMemSnapshot()
 
-	if file.MimeType == "application/pdf" {
+	if mime.IsPDF(file.MimeType) {
 		file.PageCount = countPages(file.OriginalPath)
 	}
 
-	if strings.HasPrefix(file.MimeType, "image/") {
+	if mime.IsImage(file.MimeType) {
 		c.logger.Info(&documentID, "image file %s, proceeding directly to OCR", file.Name)
 		file.PageCount = 1
 		return c.ocrAndReextract(ctx, file, documentID, memBefore, memBefore)
@@ -508,7 +509,7 @@ func (c *Consumer) extractText(ctx context.Context, file File, documentID string
 	if extractResult.Text != nil && *extractResult.Text != "" && float64(len(*extractResult.Text))/float64(file.FileSize) >= minTextDensityRatio {
 		file.Text = sql.NullString{String: *extractResult.Text, Valid: true}
 
-		if file.MimeType == "application/pdf" {
+		if mime.IsPDF(file.MimeType) {
 			c.logger.Debug(&documentID, "optimizePdf: entering for %s", file.OriginalPath)
 			optimizationResult, err := c.runner.OptimizePdf(ctx, documentID, file.OriginalPath)
 			memAfterOpt := utils.ReadMemSnapshot()
@@ -523,7 +524,7 @@ func (c *Consumer) extractText(ctx context.Context, file File, documentID string
 		return file, nil
 	}
 
-	if extractResult.Text != nil && *extractResult.Text != "" && file.MimeType != "application/pdf" {
+	if extractResult.Text != nil && *extractResult.Text != "" && !mime.IsPDF(file.MimeType) {
 		file.Text = sql.NullString{String: *extractResult.Text, Valid: true}
 		return file, nil
 	}
@@ -541,7 +542,7 @@ func (c *Consumer) ocrAndReextract(ctx context.Context, file File, documentID st
 		return file, &task.Error{ReqID: documentID, Err: err}
 	}
 
-	extractResult, err := c.runner.ExtractText(ctx, *ocrResult.TmpPath, "application/pdf")
+	extractResult, err := c.runner.ExtractText(ctx, *ocrResult.TmpPath, mime.PDF)
 	memAfterFinal := utils.ReadMemSnapshot()
 	c.logger.Debug(&documentID, "extractText (post-OCR): %s", utils.FormatMemDelta(memAfterOCR, memAfterFinal))
 	if err != nil {

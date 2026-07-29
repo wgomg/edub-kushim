@@ -18,6 +18,8 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/pdfoptimizer"
 	"github.com/wgomg/edub-kushim/internal/utils"
+
+	_mime "github.com/wgomg/edub-kushim/internal/mime"
 )
 
 // Gosseract implements OCR using Tesseract (gosseract) with MuPDF for page
@@ -110,7 +112,7 @@ func (o *Gosseract) Process(ctx context.Context, docId, path string) (*string, e
 }
 
 func (o *Gosseract) CanHandle(mimeType string) bool {
-	return mimeType == "application/pdf"
+	return _mime.IsPDF(mimeType)
 }
 
 func (o *Gosseract) Name() string {

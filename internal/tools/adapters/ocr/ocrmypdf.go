@@ -12,6 +12,8 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/utils"
+
+	_mime "github.com/wgomg/edub-kushim/internal/mime"
 )
 
 type OcrMyPdf struct {
@@ -97,7 +99,7 @@ func (o *OcrMyPdf) Process(ctx context.Context, docId, path string) (*string, er
 }
 
 func (o *OcrMyPdf) CanHandle(mimeType string) bool {
-	return mimeType == "application/pdf"
+	return _mime.IsPDF(mimeType)
 }
 
 func (o *OcrMyPdf) Name() string {

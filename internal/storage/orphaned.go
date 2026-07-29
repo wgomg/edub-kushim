@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	_mime "github.com/wgomg/edub-kushim/internal/mime"
 )
 
 var uuidRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
@@ -92,7 +94,7 @@ func walkDir(root, sourceDir string, infos chan<- OrphanedFileInfo) error {
 			rel = d.Name()
 		}
 
-		mimeType := "application/pdf"
+		mimeType := _mime.PDF
 
 		infos <- OrphanedFileInfo{
 			DocumentKey:     stem,

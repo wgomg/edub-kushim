@@ -1,16 +1,11 @@
 <script>
 	import { onMount } from 'svelte';
 
-	let { docId, mimeType } = $props();
+	let { docId, mimeType, officeFormat } = $props();
 
 	let state = $state('loading');
 	let htmlContent = $state('');
 	let errorMessage = $state('');
-
-	const MIME_MAP = {
-		'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
-		'application/vnd.oasis.opendocument.text': 'odt'
-	};
 
 	onMount(async () => {
 		try {
@@ -29,7 +24,7 @@
 			}
 
 			const buffer = await resp.arrayBuffer();
-			const fileType = MIME_MAP[mimeType];
+			const fileType = officeFormat;
 			if (!fileType) {
 				errorMessage = `Unsupported MIME type: ${mimeType}`;
 				state = 'error';

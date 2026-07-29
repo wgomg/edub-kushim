@@ -62,6 +62,15 @@ async function requestRaw(path, opts = {}) {
 export const api = {
 	filterLanguages: () => request('/api/v1/filter-languages').then((data) => data ?? []),
 	filterMimeTypes: () => request('/api/v1/filter-mime-types').then((data) => data ?? []),
+	_supportedMimeTypesCache: null,
+	supportedMimeTypes: () => {
+		if (api._supportedMimeTypesCache) return Promise.resolve(api._supportedMimeTypesCache);
+		return request('/api/v1/supported-mime-types').then((data) => {
+			const result = data ?? [];
+			api._supportedMimeTypesCache = result;
+			return result;
+		});
+	},
 	dashboard: () => request('/api/v1/dashboard'),
 
 	health: () =>
@@ -350,7 +359,8 @@ export const api = {
 				body: JSON.stringify(body)
 			}),
 		status: () => request('/wizard/config/status'),
-		llmModels: () => request('/api/v1/llm/models').then((data) => data ?? { adapters: {}, providers: {} })
+		llmModels: () =>
+			request('/api/v1/llm/models').then((data) => data ?? { adapters: {}, providers: {} })
 	},
 
 	auth: {

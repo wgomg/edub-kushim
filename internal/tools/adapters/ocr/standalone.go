@@ -10,12 +10,12 @@ import (
 	"image/png"
 	"os"
 	"runtime"
-	"strings"
 	"sync"
 
-	"github.com/go-pdf/fpdf"
 	"github.com/gabriel-vasile/mimetype"
+	"github.com/go-pdf/fpdf"
 	gosseract "github.com/otiai10/gosseract/v2"
+	_mime "github.com/wgomg/edub-kushim/internal/mime"
 	_ "golang.org/x/image/tiff"
 
 	"github.com/wgomg/edub-kushim/internal/tools/adapters"
@@ -42,7 +42,7 @@ func RunStandalone(inputPath, outputPath string, languages []string, dataDir str
 		return fmt.Errorf("detect file type: %w", err)
 	}
 
-	if strings.HasPrefix(mtype.String(), "image/") {
+	if _mime.IsImage(mtype.String()) {
 		return runStandaloneImage(inputPath, outputPath, languages)
 	}
 

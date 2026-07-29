@@ -163,10 +163,16 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			'enricher.contentanalyzer.enabled': cfg.enricher.contentanalyzer.enabled,
 			'enricher.contentanalyzer.timeout': Number(cfg.enricher.contentanalyzer.timeout),
 			'enricher.contentanalyzer.prompt_template': cfg.enricher.contentanalyzer.prompt_template,
-			'enricher.contentanalyzer.pause_on_credit_error': cfg.enricher.contentanalyzer.pause_on_credit_error,
-			'enricher.contentanalyzer.doc_type_refinement.enabled': cfg.enricher.contentanalyzer.doc_type_refinement.enabled,
-			'enricher.contentanalyzer.doc_type_refinement.head_words': Number(cfg.enricher.contentanalyzer.doc_type_refinement.head_words),
-			'enricher.contentanalyzer.doc_type_refinement.tail_words': Number(cfg.enricher.contentanalyzer.doc_type_refinement.tail_words),
+			'enricher.contentanalyzer.pause_on_credit_error':
+				cfg.enricher.contentanalyzer.pause_on_credit_error,
+			'enricher.contentanalyzer.doc_type_refinement.enabled':
+				cfg.enricher.contentanalyzer.doc_type_refinement.enabled,
+			'enricher.contentanalyzer.doc_type_refinement.head_words': Number(
+				cfg.enricher.contentanalyzer.doc_type_refinement.head_words
+			),
+			'enricher.contentanalyzer.doc_type_refinement.tail_words': Number(
+				cfg.enricher.contentanalyzer.doc_type_refinement.tail_words
+			),
 			'enricher.contentanalyzer.llm.adapter': cfg.enricher.contentanalyzer.llm.adapter,
 			'enricher.contentanalyzer.llm.provider': cfg.enricher.contentanalyzer.llm.provider,
 			'enricher.contentanalyzer.llm.model': cfg.enricher.contentanalyzer.llm.model,
@@ -444,8 +450,9 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						/>
 					</div>
 					<div>
-						<label for="server-max-batch-delete" class="mb-1 block text-sm font-medium text-parchment-200"
-							>Max batch delete</label
+						<label
+							for="server-max-batch-delete"
+							class="mb-1 block text-sm font-medium text-parchment-200">Max batch delete</label
 						>
 						<input
 							id="server-max-batch-delete"
@@ -1180,7 +1187,9 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 										class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
 									/>
 									<span class="text-sm text-parchment-400">
-										{cfg.enricher.contentanalyzer.doc_type_refinement.enabled ? 'Active' : 'Inactive'}
+										{cfg.enricher.contentanalyzer.doc_type_refinement.enabled
+											? 'Active'
+											: 'Inactive'}
 									</span>
 								</div>
 							</div>
@@ -1485,10 +1494,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 		{/if}
 
 		{#if activeTab === 'Users'}
-			<div
-				class="space-y-4"
-				onclick={handleUserPageClick}
-			>
+			<div class="space-y-4" onclick={handleUserPageClick}>
 				<div class="flex items-center justify-between">
 					<h2 class="text-lg font-semibold text-parchment-200">Users</h2>
 					<button
@@ -1530,17 +1536,17 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 								type="text"
 								bind:value={formUsername}
 								placeholder="Username"
-							class="w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						/>
-					</div>
-					<div>
-						<label for="user-role" class="mb-1 block text-xs font-medium text-parchment-400"
-							>Role</label
-						>
-						<select
-							id="user-role"
-							bind:value={formRole}
-							class="w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+								class="w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+						<div>
+							<label for="user-role" class="mb-1 block text-xs font-medium text-parchment-400"
+								>Role</label
+							>
+							<select
+								id="user-role"
+								bind:value={formRole}
+								class="w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 							>
 								<option value="viewer">Viewer</option>
 								<option value="editor">Editor</option>

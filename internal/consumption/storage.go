@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/gabriel-vasile/mimetype"
+
+	_mime "github.com/wgomg/edub-kushim/internal/mime"
 )
 
 func GetFiles(src string, exts []string, maxFiles int) ([]File, error) {
@@ -32,10 +34,7 @@ func GetFiles(src string, exts []string, maxFiles int) ([]File, error) {
 		return files, nil
 	}
 
-	supportedFiles := make(map[string]bool)
-	for _, ext := range exts {
-		supportedFiles[strings.ToLower((ext))] = true
-	}
+	supportedFiles := _mime.BuildExtensionSet(exts)
 
 	type entryWithInfo struct {
 		path  string

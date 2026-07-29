@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"mime"
 	"os"
+
+	_mime "github.com/wgomg/edub-kushim/internal/mime"
 	"path/filepath"
 	"strings"
 	"time"
@@ -66,7 +68,7 @@ func (s *ErroredFiles) List(_ context.Context) ([]ErroredFileInfo, error) {
 
 			mimeType := mime.TypeByExtension(filepath.Ext(entry.Name()))
 			if mimeType == "" {
-				mimeType = "application/octet-stream"
+				mimeType = _mime.OctetStream
 			}
 
 			files = append(files, ErroredFileInfo{

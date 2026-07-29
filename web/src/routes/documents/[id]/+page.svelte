@@ -13,6 +13,8 @@
 
 	let documentTypes = $state([]);
 	let peopleTypes = $state([]);
+	let mimeInfos = $state([]);
+	let mimeInfo = $derived(mimeInfos.find((m) => m.mime_type === doc?.mime_type));
 
 	let editTitle = $state('');
 	let editDocumentTypeId = $state(1);
@@ -30,18 +32,16 @@
 	let selectedPeopleTypeId = $state(1);
 
 	function downloadLabel(mimeType) {
-		if (mimeType === 'application/pdf') return 'Download PDF';
-		if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
-			return 'Download DOCX';
-		if (mimeType === 'application/vnd.oasis.opendocument.text') return 'Download ODT';
-		return 'Download file';
+		const info = mimeInfos.find((m) => m.mime_type === mimeType);
+		return info ? `Download ${info.label}` : 'Download file';
 	}
 
 	onMount(async () => {
-		const [data, types, pTypes] = await Promise.all([
+		const [data, types, pTypes, mimeData] = await Promise.all([
 			api.documents.get(params.id),
 			api.autocomplete.documentTypes(),
-			api.autocomplete.peopleTypes()
+			api.autocomplete.peopleTypes(),
+			api.supportedMimeTypes()
 		]);
 		if (!data) {
 			toastStore.error('Failed to load document');
@@ -50,6 +50,7 @@
 		doc = data;
 		documentTypes = types;
 		peopleTypes = pTypes;
+		mimeInfos = mimeData ?? [];
 		editTitle = doc.title;
 		editDocumentTypeId = doc.document_type_id ?? 1;
 		editLanguage = doc.language ?? '';
@@ -170,7 +171,7 @@
 			<div class="min-w-0 flex-1">
 				<h1 class="text-2xl font-semibold text-parchment-200">{doc.title}</h1>
 
-				{#if doc.mime_type === 'application/pdf'}
+				{#if mimeInfo?.viewer === 'iframe'}
 					<div class="mt-4 overflow-hidden rounded-lg border border-clay-800">
 						<iframe
 							src={`/api/v1/documents/${doc.id}/file`}
@@ -178,9 +179,13 @@
 							title={doc.title}
 						></iframe>
 					</div>
-				{:else if doc.mime_type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || doc.mime_type === 'application/vnd.oasis.opendocument.text'}
+				{:else if mimeInfo?.viewer === 'office'}
 					<div class="mt-4">
-						<OfficePreview docId={doc.id} mimeType={doc.mime_type} />
+						<OfficePreview
+							docId={doc.id}
+							mimeType={doc.mime_type}
+							officeFormat={mimeInfo.office_format}
+						/>
 					</div>
 				{:else}
 					<p class="mt-4 text-parchment-500">Preview not available for this file type.</p>
