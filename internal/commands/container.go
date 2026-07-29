@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	types "github.com/wgomg/edub-kushim/internal"
@@ -23,7 +24,7 @@ import (
 )
 
 type Container struct {
-	config     *config.Config
+	cfg        atomic.Pointer[config.Config]
 	logger     *utils.Logger
 	db         *sql.DB
 	client     *database.Client
@@ -45,16 +46,17 @@ func NewContainer(cfg *config.Config, logger *utils.Logger) *Container {
 }
 
 func NewContainerWithDB(cfg *config.Config, logger *utils.Logger, db *sql.DB) *Container {
-	return &Container{
-		config: cfg,
+	c := &Container{
 		logger: logger,
 		db:     db,
 	}
+	c.cfg.Store(cfg)
+	return c
 }
 
 func (c *Container) GetDB() (*sql.DB, error) {
 	if c.db == nil {
-		dsn := config.BuildPostgresDSN(c.config.Db)
+		dsn := config.BuildPostgresDSN(c.cfg.Load().Db)
 		db, err := database.NewPostgresDB(dsn)
 		if err != nil {
 			return nil, err
@@ -81,7 +83,7 @@ func (c *Container) GetClient() (*database.Client, error) {
 }
 
 func (c *Container) socketPath() string {
-	return filepath.Join(c.config.App.ConfigDir, "kushim-hugot.sock")
+	return filepath.Join(c.cfg.Load().App.ConfigDir, "kushim-hugot.sock")
 }
 
 func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
@@ -94,7 +96,7 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 		return nil, err
 	}
 
-	matcherClient := tagmatch.NewMatcherClient(c.socketPath(), tagmatch.MaxMatchBodyBytes(c.config.Enricher.TagMatcher.ReduceTargetWords))
+	matcherClient := tagmatch.NewMatcherClient(c.socketPath(), tagmatch.MaxMatchBodyBytes(c.cfg.Load().Enricher.TagMatcher.ReduceTargetWords))
 
 	tagSvc, err := service.NewTag(client.Queries, c.logger, matcherClient)
 	if err != nil {
@@ -112,12 +114,12 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 	store := task.NewStore(client.Queries)
 	c.store = store
 
-	consumer, err := consumption.NewConsumer(c.config, c.logger, client)
+	consumer, err := consumption.NewConsumer(c.cfg.Load(), c.logger, client)
 	if err != nil {
 		return nil, err
 	}
 
-	enricher, err := enrichment.NewEnricher(c.config, c.logger, client.Queries, c.services, matcherClient)
+	enricher, err := enrichment.NewEnricher(c.cfg.Load(), c.logger, client.Queries, c.services, matcherClient)
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +128,7 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 	registry.Register("consume", taskhandlers.NewConsumeTaskHandler(consumer, store, c.logger))
 	registry.Register("enrich", taskhandlers.NewEnrichTaskHandler(enricher, client.Queries, c.logger))
 	registry.Register("config", configtask.NewConfigTaskHandler(c.logger))
-	registry.Register("backup", taskhandlers.NewBackupTaskHandler(c.db, client.Queries, c.config, c.logger))
+	registry.Register("backup", taskhandlers.NewBackupTaskHandler(c.db, client.Queries, func() *config.Config { return c.cfg.Load() }, c.logger))
 
 	c.dispatcher = task.NewDispatcher(c.logger, store, registry)
 	c.runner = task.NewRunner(store, registry, c.logger)
@@ -173,10 +175,10 @@ func (c *Container) GetPool(taskType string) (*pool.Pool, error) {
 		var interval time.Duration
 		switch taskType {
 		case "consume":
-			workers = max(c.config.Consumer.Workers, 1)
+			workers = max(c.cfg.Load().Consumer.Workers, 1)
 			interval = 2 * time.Second
 		case "enrich":
-			workers = max(c.config.Enricher.Workers, 1)
+			workers = max(c.cfg.Load().Enricher.Workers, 1)
 			interval = 5 * time.Second
 		case "config":
 			workers = 1

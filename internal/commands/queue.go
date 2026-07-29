@@ -37,16 +37,16 @@ func queueHandler(c *Container, args []string) error {
 		return fmt.Errorf("unknown flag(s): %v", rest)
 	}
 
-	pidFile := filepath.Join(c.config.App.ConfigDir, "kushim-queue.pid")
-	logFile := filepath.Join(c.config.App.ConfigDir, "logs", "queue.log")
+	pidFile := filepath.Join(c.cfg.Load().App.ConfigDir, "kushim-queue.pid")
+	logFile := filepath.Join(c.cfg.Load().App.ConfigDir, "logs", "queue.log")
 
 	os.MkdirAll(filepath.Dir(logFile), 0755)
 	if err := c.logger.SetLogFile(utils.LogFileConfig{
 		Path:       logFile,
-		MaxSize:    c.config.App.Logging.MaxSize,
-		MaxBackups: c.config.App.Logging.MaxBackups,
-		MaxAge:     c.config.App.Logging.MaxAge,
-		Compress:   c.config.App.Logging.Compress,
+		MaxSize:    c.cfg.Load().App.Logging.MaxSize,
+		MaxBackups: c.cfg.Load().App.Logging.MaxBackups,
+		MaxAge:     c.cfg.Load().App.Logging.MaxAge,
+		Compress:   c.cfg.Load().App.Logging.Compress,
 	}); err != nil {
 		c.logger.Error(nil, "failed to open queue log file: %v", err)
 	}
@@ -97,8 +97,8 @@ func queueHandler(c *Container, args []string) error {
 		return fmt.Errorf("database: %w", err)
 	}
 
-	batchSvc := service.NewBatch(client, c.config.Consumer.Reclaim.MaxRetries)
-	maxConcurrent := c.config.Srv.MaxConcurrentBatches
+	batchSvc := service.NewBatch(client, c.cfg.Load().Consumer.Reclaim.MaxRetries)
+	maxConcurrent := c.cfg.Load().Srv.MaxConcurrentBatches
 	if maxConcurrent < 1 {
 		maxConcurrent = 2
 	}
@@ -111,7 +111,7 @@ func queueHandler(c *Container, args []string) error {
 	go runPollingLoop(ctx, c, client, batchSvc, maxConcurrent)
 
 	notifyCh := make(chan struct{}, 4)
-	go listenForBatchNotifications(ctx, config.BuildPostgresDSN(c.config.Db), notifyCh, c.logger)
+	go listenForBatchNotifications(ctx, config.BuildPostgresDSN(c.cfg.Load().Db), notifyCh, c.logger)
 
 	safetyInterval := 30 * time.Second
 	safetyTimer := time.NewTimer(safetyInterval)
@@ -143,7 +143,14 @@ func queueHandler(c *Container, args []string) error {
 			safetyTimer.Reset(safetyInterval)
 
 		case <-hkTicker.C:
-			if c.config.Backup.Enabled {
+			if newCfg, err := config.Load(c.cfg.Load().App.ConfigDir); err != nil {
+				c.logger.Error(nil, "config reload: %v", err)
+			} else {
+				c.cfg.Store(newCfg)
+			}
+			cfg := c.cfg.Load()
+
+			if cfg.Backup.Enabled {
 				if !backupPoolStarted {
 					var poolErr error
 					backupPool, poolErr = c.GetPool("backup")
@@ -159,19 +166,26 @@ func queueHandler(c *Container, args []string) error {
 				if lockErr != nil {
 					c.logger.Error(nil, "backup lock check: %v", lockErr)
 				} else if locked == 0 {
-					if err := maybeScheduleBackup(ctx, c, client); err != nil {
+					if err := maybeScheduleBackup(ctx, c, client, cfg); err != nil {
 						c.logger.Error(nil, "backup scheduling: %v", err)
 					}
 				}
+			} else if backupPoolStarted {
+				stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				backupPool.Stop(stopCtx)
+				cancel()
+				backupPool = nil
+				backupPoolStarted = false
+				c.logger.Info(nil, "backup pool stopped (backup disabled)")
 			}
 
-			if c.config.Consumer.Reclaim.Enabled {
-				if err := reclaimStaleBatches(ctx, c.config, client, batchSvc, c.logger); err != nil {
+			if cfg.Consumer.Reclaim.Enabled {
+				if err := reclaimStaleBatches(ctx, cfg, client, batchSvc, c.logger); err != nil {
 					c.logger.Error(nil, "stale reclamation: %v", err)
 				}
-				minInterval := max(c.config.Consumer.Reclaim.StaleTaskAfter/10, 60)
+				minInterval := max(cfg.Consumer.Reclaim.StaleTaskAfter/10, 60)
 				if time.Since(lastStaleTaskClaim) > time.Duration(minInterval)*time.Second {
-					if err := reclaimStaleTasks(ctx, batchSvc, c.config, c.logger); err != nil {
+					if err := reclaimStaleTasks(ctx, batchSvc, cfg, c.logger); err != nil {
 						c.logger.Error(nil, "stale task reclamation: %v", err)
 					}
 					lastStaleTaskClaim = time.Now()
@@ -303,27 +317,19 @@ func consumeNextQueuedBatch(ctx context.Context, client *database.Client, batchS
 
 func runPollingLoop(ctx context.Context, c *Container, client *database.Client, batchSvc *service.Batch, maxConcurrent int) {
 	var missingTools []config.ExternalTool
-	var lastReloaded bool
+	var lastCfg *config.Config
 
 	for {
-		// Re-read config from disk so that polling enabled/interval/windows changes
-		// take effect without requiring a daemon restart.
-		reloaded, rErr := config.Reload(c.config.App.ConfigDir, c.config)
-		if rErr != nil {
-			c.logger.Error(nil, "polling: reload config: %v", rErr)
+		cfgPtr := c.cfg.Load()
+		if cfgPtr != lastCfg {
+			missingTools = config.MissingExternalToolErrors(cfgPtr)
+			lastCfg = cfgPtr
 		}
 
-		// Only recompute missing tools when config was reloaded (tool landscape
-		// is deterministic at runtime and doesn't change without a config update).
-		if reloaded || !lastReloaded {
-			missingTools = config.MissingExternalToolErrors(c.config)
-		}
-		lastReloaded = reloaded
+		pollingCfg := cfgPtr.Consumer.Polling
+		interval := max(time.Duration(pollingCfg.Interval)*time.Minute, time.Minute)
 
-		cfg := c.config.Consumer.Polling
-		interval := max(time.Duration(cfg.Interval)*time.Minute, time.Minute)
-
-		if cfg.Enabled && config.IsWithinActiveWindows(cfg.Windows) {
+		if pollingCfg.Enabled && config.IsWithinActiveWindows(pollingCfg.Windows) {
 			locked, lockErr := client.Queries.IsBackupLocked(ctx)
 			if lockErr != nil {
 				c.logger.Error(nil, "polling: backup lock check: %v", lockErr)
@@ -332,7 +338,7 @@ func runPollingLoop(ctx context.Context, c *Container, client *database.Client, 
 			} else {
 				pollingTick(ctx, c, client, batchSvc, maxConcurrent, missingTools)
 			}
-		} else if cfg.Enabled {
+		} else if pollingCfg.Enabled {
 			c.logger.Debug(nil, "polling: disabled — outside active windows")
 		} else {
 			c.logger.Debug(nil, "polling: disabled")
@@ -371,7 +377,7 @@ func pollingTick(ctx context.Context, c *Container, client *database.Client, bat
 		return
 	}
 
-	batchID, enqueued, err := consumption.ScanAndEnqueue(ctx, c.config, client, c.logger)
+	batchID, enqueued, err := consumption.ScanAndEnqueue(ctx, c.cfg.Load(), client, c.logger)
 	if err != nil {
 		c.logger.Error(nil, "polling: scan and enqueue: %v", err)
 		return
@@ -388,12 +394,12 @@ func pollingTick(ctx context.Context, c *Container, client *database.Client, bat
 	c.logger.Info(nil, "polling: batch %s created with %d files", batchID, enqueued)
 }
 
-func maybeScheduleBackup(ctx context.Context, c *Container, client *database.Client) error {
-	if !c.config.Backup.Enabled {
+func maybeScheduleBackup(ctx context.Context, c *Container, client *database.Client, cfg *config.Config) error {
+	if !cfg.Backup.Enabled {
 		return nil
 	}
 
-	due, err := backup.IsBackupDue(ctx, client.Queries, c.config.Backup)
+	due, err := backup.IsBackupDue(ctx, client.Queries, cfg.Backup)
 	if err != nil {
 		return fmt.Errorf("check backup due: %w", err)
 	}

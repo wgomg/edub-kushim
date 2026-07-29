@@ -22,7 +22,7 @@ import (
 )
 
 func serveHugotHandler(c *Container, args []string) error {
-	socketPath := filepath.Join(c.config.App.ConfigDir, "kushim-hugot.sock")
+	socketPath := filepath.Join(c.cfg.Load().App.ConfigDir, "kushim-hugot.sock")
 
 	fp := NewFlagParser(args)
 	if fp.Help("Usage: kushim hugot [--bg] [--socket <path>]") {
@@ -39,21 +39,21 @@ func serveHugotHandler(c *Container, args []string) error {
 		return fmt.Errorf("unknown flag(s): %v", rest)
 	}
 
-	logFile := filepath.Join(c.config.App.ConfigDir, "logs", "hugot.log")
+	logFile := filepath.Join(c.cfg.Load().App.ConfigDir, "logs", "hugot.log")
 	os.MkdirAll(filepath.Dir(logFile), 0755)
 	if err := c.logger.SetLogFile(utils.LogFileConfig{
 		Path:       logFile,
-		MaxSize:    c.config.App.Logging.MaxSize,
-		MaxBackups: c.config.App.Logging.MaxBackups,
-		MaxAge:     c.config.App.Logging.MaxAge,
-		Compress:   c.config.App.Logging.Compress,
+		MaxSize:    c.cfg.Load().App.Logging.MaxSize,
+		MaxBackups: c.cfg.Load().App.Logging.MaxBackups,
+		MaxAge:     c.cfg.Load().App.Logging.MaxAge,
+		Compress:   c.cfg.Load().App.Logging.Compress,
 	}); err != nil {
 		c.logger.Error(nil, "failed to open hugot log file: %v", err)
 	}
 
 	if bgFlag {
 		bgArgs := []string{"hugot"}
-		if socketPath != filepath.Join(c.config.App.ConfigDir, "kushim-hugot.sock") {
+		if socketPath != filepath.Join(c.cfg.Load().App.ConfigDir, "kushim-hugot.sock") {
 			bgArgs = append(bgArgs, "--socket", socketPath)
 		}
 		cmd := exec.Command(os.Args[0], bgArgs...)
@@ -75,7 +75,7 @@ func serveHugotHandler(c *Container, args []string) error {
 		return fmt.Errorf("database: %w", err)
 	}
 
-	hugot, err := tagmatcher.NewHugot(c.logger, c.config.Enricher.TagMatcher, "tagmatcher")
+	hugot, err := tagmatcher.NewHugot(c.logger, c.cfg.Load().Enricher.TagMatcher, "tagmatcher")
 	if err != nil {
 		return fmt.Errorf("tagmatcher: %w", err)
 	}
@@ -87,7 +87,7 @@ func serveHugotHandler(c *Container, args []string) error {
 	}
 	hugot.SetStore(embStore)
 
-	bodyCap := tagmatch.MaxMatchBodyBytes(c.config.Enricher.TagMatcher.ReduceTargetWords)
+	bodyCap := tagmatch.MaxMatchBodyBytes(c.cfg.Load().Enricher.TagMatcher.ReduceTargetWords)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/rpc/v1/encode", handleEncode(hugot, c.logger, bodyCap))

@@ -38,7 +38,7 @@ func configHandler(c *Container, args []string) error {
 	fp.Bool("--path", &showPath)
 
 	rest := fp.Rest()
-	configDir := c.config.App.ConfigDir
+	configDir := c.cfg.Load().App.ConfigDir
 
 	if showPath {
 		fmt.Println(filepath.Join(configDir, "config.yaml"))

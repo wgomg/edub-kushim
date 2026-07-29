@@ -169,15 +169,8 @@ func TestDefaultConfig_OcrWorkers(t *testing.T) {
 	}
 }
 
-func TestReload_AppliesOcrWorkers(t *testing.T) {
+func TestLoad_AppliesOcrWorkers(t *testing.T) {
 	configDir := t.TempDir()
-	writeMinimalConfig(t, configDir)
-
-	cfg := DefaultConfig(configDir)
-	if cfg.Consumer.OCR.OcrWorkers != 0 {
-		t.Fatalf("default OcrWorkers = %d, want 0", cfg.Consumer.OCR.OcrWorkers)
-	}
-
 	yaml := `consumer:
   ocr:
     languages:
@@ -188,15 +181,12 @@ func TestReload_AppliesOcrWorkers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ok, err := Reload(configDir, cfg)
+	cfg, err := Load(configDir)
 	if err != nil {
-		t.Fatalf("Reload: %v", err)
-	}
-	if !ok {
-		t.Fatal("Reload returned false")
+		t.Fatalf("Load: %v", err)
 	}
 	if cfg.Consumer.OCR.OcrWorkers != 8 {
-		t.Errorf("OcrWorkers after reload = %d, want 8", cfg.Consumer.OCR.OcrWorkers)
+		t.Errorf("OcrWorkers after load = %d, want 8", cfg.Consumer.OCR.OcrWorkers)
 	}
 }
 

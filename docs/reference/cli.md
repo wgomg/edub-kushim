@@ -43,7 +43,7 @@
 
 ### Struct
 
-- `Container` — `config`, `logger`, `db`, `engine`, `cache`, `dispatcher`, `pools struct { consume *pool.Pool; enrich *pool.Pool; config *pool.Pool }`
+- `Container` — `cfg` (atomic.Pointer), `logger`, `db`, `engine`, `cache`, `dispatcher`, `pools struct { consume *pool.Pool; enrich *pool.Pool; config *pool.Pool; backup *pool.Pool }`
   - **Methods**:
     - `NewContainer(cfg, logger)` — No DB
     - `NewContainerWithDB(cfg, logger, db)` — With provided DB
@@ -165,11 +165,11 @@ kushim storage orphans move-to-inbox-all
 - `reclaimStaleBatches(ctx, batchSvc, logger) error` — Iterates stale batch owners, signals SIGTERM to the owner PID (if alive), quarantines tasks at or above `consumer.reclaim.max_retries` to `failed`, resets remaining processing→pending with incremented attempt counter, re-queues, deletes owner. Only called when `consumer.reclaim.enabled` is `true`.
 - `reclaimStaleTasks(ctx, batchSvc, cfg, logger) error` — Age-based sweep for individual tasks stuck in `processing` beyond `consumer.reclaim.stale_task_after`. Delegates to `service.Batch.ResetStaleProcessingTasks` which quarantines (attempts ≥ maxRetries → `failed`) and resets (attempts < maxRetries → `pending` + increment) in a single transaction. Logs the count of reclaimed tasks.
 - `consumeNextQueuedBatch(ctx, client, batchSvc, maxConcurrent, logger) error` — Picks and dispatches the next queued batch.
-- `runPollingLoop(ctx, c, client, batchSvc, maxConcurrent)` — Goroutine that runs on its own dynamic ticker (configured by `consumer.polling.interval`, minimum 1 minute). Re-reads config from disk on each iteration via `config.Reload` for live config updates. Checks capacity (`CountQueuedBatches + CountLiveBatches < MaxConcurrentBatches`) and missing external tools before calling `consumption.ScanAndEnqueue`. Replaces the former `PollingScheduler` in `edub`.
+- `runPollingLoop(ctx, c, client, batchSvc, maxConcurrent)` — Goroutine that runs on its own dynamic ticker (configured by `consumer.polling.interval`, minimum 1 minute). Reads config from `c.cfg.Load()` (atomically loaded by the queue daemon's 5-second housekeeping ticker, so config changes propagate from disk within ~5 seconds without a restart). Checks capacity (`CountQueuedBatches + CountLiveBatches < MaxConcurrentBatches`) and missing external tools (recomputed only when the config pointer changes) before calling `consumption.ScanAndEnqueue`. Replaces the former `PollingScheduler` in `edub`.
 - `pollingTick(ctx, c, client, batchSvc, maxConcurrent, missingTools)` — Single polling iteration: capacity check, missing tools check, then delegates to `consumption.ScanAndEnqueue` to scan inbox, deduplicate, and create a `queued` batch with consume+enrich task pairs.
 - `maybeScheduleBackup(ctx, c, client) error` — Calls `backup.IsBackupDue` (DB-driven: cooldown check, active task check, schedule derivation from last completed backup). If due, enqueues a `"backup"` task via the dispatcher. No longer uses `backup-state.json`.
 
-The daemon also starts a **backup pool** (1 worker, 60s poll interval) when `backup.enabled` becomes `true` (checked lazily on each housekeeping tick, so enabling backup at runtime via config reload creates the pool without a restart). The pool executes scheduled backup tasks via `BackupTaskHandler`. The ticker and polling loop check the DB-backed `backup_lock` table via `IsBackupLocked` — backup scheduling and polling are skipped while a backup is in progress, while stale reclamation continues to run unconditionally.
+The daemon also starts a **backup pool** (1 worker, 60s poll interval) when `backup.enabled` becomes `true` (checked lazily on each housekeeping tick, so enabling backup at runtime via config reload creates the pool without a restart). When backup is disabled at runtime via config reload, the pool is stopped and cleaned up on the same 5s ticker. The pool executes scheduled backup tasks via `BackupTaskHandler` (which reads config via a getter closure, always using the latest config snapshot at execution time). The ticker and polling loop check the DB-backed `backup_lock` table via `IsBackupLocked` — backup scheduling and polling are skipped while a backup is in progress, while stale reclamation continues to run unconditionally.
 
 ---
 

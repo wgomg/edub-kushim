@@ -18,18 +18,18 @@ import (
 var _ task.Dedupable = (*BackupTaskHandler)(nil)
 
 type BackupTaskHandler struct {
-	db      *sql.DB
-	queries *database.Queries
-	config  *config.Config
-	logger  *utils.Logger
+	db        *sql.DB
+	queries   *database.Queries
+	getConfig func() *config.Config
+	logger    *utils.Logger
 }
 
-func NewBackupTaskHandler(db *sql.DB, queries *database.Queries, cfg *config.Config, logger *utils.Logger) *BackupTaskHandler {
+func NewBackupTaskHandler(db *sql.DB, queries *database.Queries, getConfig func() *config.Config, logger *utils.Logger) *BackupTaskHandler {
 	return &BackupTaskHandler{
-		db:      db,
-		queries: queries,
-		config:  cfg,
-		logger:  logger,
+		db:        db,
+		queries:   queries,
+		getConfig: getConfig,
+		logger:    logger,
 	}
 }
 
@@ -57,14 +57,15 @@ func (h *BackupTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMe
 
 	h.logger.Info(nil, "starting scheduled backup")
 
-	configPath := filepath.Join(h.config.App.ConfigDir, "config.yaml")
+	cfg := h.getConfig()
+	configPath := filepath.Join(cfg.App.ConfigDir, "config.yaml")
 
-	result, err := backup.Create(ctx, h.db, database.SchemaFS, h.config.Backup.Path, configPath, h.config.Storage.StorageDir)
+	result, err := backup.Create(ctx, h.db, database.SchemaFS, cfg.Backup.Path, configPath, cfg.Storage.StorageDir)
 	if err != nil {
 		return nil, fmt.Errorf("backup failed: %w", err)
 	}
 
-	if err := backup.ApplyRetention(h.config.Backup.Path, h.config.Backup.Keep); err != nil {
+	if err := backup.ApplyRetention(cfg.Backup.Path, cfg.Backup.Keep); err != nil {
 		h.logger.Error(nil, "retention cleanup: %v", err)
 	}
 

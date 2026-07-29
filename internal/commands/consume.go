@@ -84,7 +84,7 @@ func consumeHandler(c *Container, args []string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	allTools := config.MissingExternalTools(c.config)
+	allTools := config.MissingExternalTools(c.cfg.Load())
 	missingTools := config.FilterToolErrors(allTools)
 	if len(missingTools) > 0 {
 		printToolBlock(missingTools)
@@ -118,7 +118,7 @@ func consumeHandler(c *Container, args []string) error {
 
 		ownerID := uuid.New().String()
 		pid := os.Getpid()
-		owner := task.NewOwner(client, ownerID, pid, c.logger, c.config.Consumer.Reclaim.MaxRetries)
+		owner := task.NewOwner(client, ownerID, pid, c.logger, c.cfg.Load().Consumer.Reclaim.MaxRetries)
 		c.logger.Info(nil, "consume: acquiring batch %s (PID=%d, ownerID=%s)", batchIDParam, pid, ownerID)
 
 		if err := owner.Acquire(ctx, batchIDParam, task.StaleAfter); err == task.ErrBatchLocked {
@@ -142,7 +142,7 @@ func consumeHandler(c *Container, args []string) error {
 		if reset > 0 {
 			fmt.Printf("  reset %d orphaned processing tasks\n", reset)
 		}
-		if err := consumption.QuarantineFailedFiles(ctx, client.Queries, c.config.Storage.StorageDir, c.logger, batchIDParam); err != nil {
+		if err := consumption.QuarantineFailedFiles(ctx, client.Queries, c.cfg.Load().Storage.StorageDir, c.logger, batchIDParam); err != nil {
 			c.logger.Error(nil, "quarantine files for batch %s: %v", batchIDParam, err)
 		}
 
@@ -162,7 +162,7 @@ func consumeHandler(c *Container, args []string) error {
 
 		err = pollBatch(ctx, client.Queries, p, ep, c.logger, batchIDParam)
 		if err == nil {
-			batchSvc := service.NewBatch(client, c.config.Consumer.Reclaim.MaxRetries)
+			batchSvc := service.NewBatch(client, c.cfg.Load().Consumer.Reclaim.MaxRetries)
 			if setErr := setBatchTerminalStatus(ctx, client.Queries, batchSvc, batchIDParam); setErr != nil {
 				c.logger.Error(nil, "set batch terminal status %s: %v", batchIDParam, setErr)
 			}
@@ -182,7 +182,7 @@ func consumeHandler(c *Container, args []string) error {
 		return err
 	}
 
-	printOcrmypdfAdvisory(c.config, allTools)
+	printOcrmypdfAdvisory(c.cfg.Load(), allTools)
 
 	if len(missingTools) > 0 {
 		return fmt.Errorf("consume blocked: missing required external tools")
@@ -201,9 +201,9 @@ func consumeHandler(c *Container, args []string) error {
 	}
 
 	files, err := consumption.GetFiles(
-		c.config.Storage.ConsumptionDir,
-		c.config.Consumer.SupportedFiles,
-		c.config.Consumer.MaxFilesPerBatch,
+		c.cfg.Load().Storage.ConsumptionDir,
+		c.cfg.Load().Consumer.SupportedFiles,
+		c.cfg.Load().Consumer.MaxFilesPerBatch,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to scan inbox: %w", err)
@@ -249,7 +249,7 @@ func consumeHandler(c *Container, args []string) error {
 		return nil
 	}
 
-	batchSvc := service.NewBatch(client, c.config.Consumer.Reclaim.MaxRetries)
+	batchSvc := service.NewBatch(client, c.cfg.Load().Consumer.Reclaim.MaxRetries)
 
 	countBefore, err := batchSvc.CountQueuedBatches(ctx)
 	if err != nil {
@@ -283,7 +283,7 @@ func consumeHandler(c *Container, args []string) error {
 	}
 
 	ownerID := uuid.New().String()
-	owner := task.NewOwner(client, ownerID, os.Getpid(), c.logger, c.config.Consumer.Reclaim.MaxRetries)
+	owner := task.NewOwner(client, ownerID, os.Getpid(), c.logger, c.cfg.Load().Consumer.Reclaim.MaxRetries)
 
 	if err := owner.Acquire(ctx, batchID, task.StaleAfter); err != nil {
 		return fmt.Errorf("acquire batch %s: %w", batchID, err)
@@ -661,8 +661,8 @@ func triggerOrphanScan(c *Container) {
 		return
 	}
 	store := task.NewStore(client.Queries)
-	batchSvc := service.NewBatch(client, c.config.Consumer.Reclaim.MaxRetries)
-	svc := service.NewOrphaned(client.Queries, c.config, c.logger, store, batchSvc)
+	batchSvc := service.NewBatch(client, c.cfg.Load().Consumer.Reclaim.MaxRetries)
+	svc := service.NewOrphaned(client.Queries, c.cfg.Load(), c.logger, store, batchSvc)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	count, err := svc.ScanAndQuarantine(ctx)

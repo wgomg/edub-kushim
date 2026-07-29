@@ -31,7 +31,7 @@ CGO_ENABLED=0 go test -tags "XLA,ORT" ./internal/...
 | Package | Tests | What it covers |
 |---------|-------|---------------|
 | `internal/llm` | 27 | Registry creation (fixture + embedded fallback), model lookup for known/missing providers and models, adapter/provider/model listing, default URL derivation, catalog reload, concurrent access safety |
-| `internal/config` | 34 | Default config values, ParseHHMM, polling window validation (valid + invalid), IsWithinActiveWindows, OCR workers, finalizeConfig (reclaim max retries), Reload (success/missing/invalid YAML/missing OCR/change application/key reset), SaveMap (merge/no file/invalid file), watcher (fire on change/missing file/invalid YAML) |
+| `internal/config` | 27 | Default config values, ParseHHMM, polling window validation (valid + invalid), IsWithinActiveWindows, OCR workers, finalizeConfig (reclaim max retries), Load (applies OcrWorkers), SaveMap (merge/no file/invalid file), watcher (fire on change/missing file/invalid YAML) |
 | `internal/api/types` | 4 | ConfigResponseFrom: logging defaults/custom, reclaim max retries, prompt template |
 | `internal/tools` | 6 | OptimizePdf (no timeout/with timeout/file not found/cancellation/nil optimizer), AnalyzeDocType (nil analyzer) |
 | `internal/utils` | 7 | Truncate (ASCII, CJK, mixed, trim), EstimateTokens (ASCII/CJK/mixed), NormalizeForDB (accent folding, punctuation, spaces), NewLogger level parsing, SetLevel gating (Info/Error/Debug/Warn), REQID prefix formatting, file logging (append/invalid path/levels/source exclusion/level prefix), SlogLogger bridge, LevelPriority/LevelName |

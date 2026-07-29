@@ -29,7 +29,7 @@ func enrichHandler(c *Container, args []string) error {
 	}
 
 	store := task.NewStore(client.Queries)
-	batchSvc := service.NewBatch(client, c.config.Consumer.Reclaim.MaxRetries)
+	batchSvc := service.NewBatch(client, c.cfg.Load().Consumer.Reclaim.MaxRetries)
 	svc := service.NewReEnrich(client.Queries, store, batchSvc)
 
 	batchID, err := svc.ReEnrich(context.Background(), documentID)

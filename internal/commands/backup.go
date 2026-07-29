@@ -36,7 +36,7 @@ func checkBackupPreconditions(c *Container, operation string) (*database.Client,
 		return nil, fmt.Errorf("%d task(s) in progress — stop all processing before running manual %s", count, operation)
 	}
 
-	if c.config.Consumer.Polling.Enabled {
+	if c.cfg.Load().Consumer.Polling.Enabled {
 		return nil, fmt.Errorf("polling is enabled — disable it before running manual %s", operation)
 	}
 
@@ -71,7 +71,7 @@ func backupHandler(c *Container, args []string) error {
 	}
 	defer client.Queries.ReleaseBackupLock(context.Background())
 
-	backupDir := c.config.Backup.Path
+	backupDir := c.cfg.Load().Backup.Path
 	if overridePath != "" {
 		backupDir = overridePath
 	}
@@ -80,7 +80,7 @@ func backupHandler(c *Container, args []string) error {
 	if err != nil {
 		return err
 	}
-	configPath := filepath.Join(c.config.App.ConfigDir, "config.yaml")
+	configPath := filepath.Join(c.cfg.Load().App.ConfigDir, "config.yaml")
 
 	if err := os.MkdirAll(backupDir, 0755); err != nil {
 		return fmt.Errorf("create backup dir: %w", err)
@@ -90,7 +90,7 @@ func backupHandler(c *Container, args []string) error {
 	defer cancel()
 
 	fmt.Println("Creating backup...")
-	result, err := backup.Create(ctx, db, database.SchemaFS, backupDir, configPath, c.config.Storage.StorageDir)
+	result, err := backup.Create(ctx, db, database.SchemaFS, backupDir, configPath, c.cfg.Load().Storage.StorageDir)
 	if err != nil {
 		return fmt.Errorf("backup failed: %w", err)
 	}
@@ -103,8 +103,8 @@ func backupHandler(c *Container, args []string) error {
 		fmt.Printf("  Backup time: %s\n", result.Manifest.Timestamp)
 	}
 
-	if overridePath == "" && c.config.Backup.Keep > 0 {
-		if err := backup.ApplyRetention(c.config.Backup.Path, c.config.Backup.Keep); err != nil {
+	if overridePath == "" && c.cfg.Load().Backup.Keep > 0 {
+		if err := backup.ApplyRetention(c.cfg.Load().Backup.Path, c.cfg.Load().Backup.Keep); err != nil {
 			fmt.Printf("Warning: retention cleanup failed: %v\n", err)
 		}
 	}
@@ -168,7 +168,7 @@ func restoreHandler(c *Container, args []string) error {
 	}
 	defer client.Queries.ReleaseBackupLock(context.Background())
 
-	pidFile := filepath.Join(c.config.App.ConfigDir, "kushim-queue.pid")
+	pidFile := filepath.Join(c.cfg.Load().App.ConfigDir, "kushim-queue.pid")
 	if data, err := os.ReadFile(pidFile); err == nil {
 		pid, parseErr := strconv.Atoi(strings.TrimSpace(string(data)))
 		if parseErr == nil && syscall.Kill(pid, 0) == nil {
@@ -205,10 +205,10 @@ func restoreHandler(c *Container, args []string) error {
 	if err != nil {
 		return err
 	}
-	configPath := filepath.Join(c.config.App.ConfigDir, "config.yaml")
+	configPath := filepath.Join(c.cfg.Load().App.ConfigDir, "config.yaml")
 
 	fmt.Println("Replacing files...")
-	if err := backup.ReplaceFiles(tmpDir, db, configPath, c.config.Storage.StorageDir); err != nil {
+	if err := backup.ReplaceFiles(tmpDir, db, configPath, c.cfg.Load().Storage.StorageDir); err != nil {
 		return fmt.Errorf("replace files: %w", err)
 	}
 
