@@ -15,6 +15,8 @@ import (
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
+var _ task.Dedupable = (*BackupTaskHandler)(nil)
+
 type BackupTaskHandler struct {
 	db      *sql.DB
 	queries *database.Queries
@@ -29,6 +31,10 @@ func NewBackupTaskHandler(db *sql.DB, queries *database.Queries, cfg *config.Con
 		config:  cfg,
 		logger:  logger,
 	}
+}
+
+func (h *BackupTaskHandler) DedupKey(payload json.RawMessage) string {
+	return fmt.Sprintf("backup:%s", time.Now().UTC().Format("2006-01-02"))
 }
 
 func (h *BackupTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMessage, error) {

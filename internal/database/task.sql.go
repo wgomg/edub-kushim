@@ -74,6 +74,18 @@ func (q *Queries) CompleteTask(ctx context.Context, arg CompleteTaskParams) (int
 	return result.RowsAffected()
 }
 
+const countActiveBackupTasks = `-- name: CountActiveBackupTasks :one
+SELECT COUNT(*) FROM task
+WHERE task_type = 'backup' AND status IN ('pending', 'processing')
+`
+
+func (q *Queries) CountActiveBackupTasks(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countActiveBackupTasks)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countAllTasks = `-- name: CountAllTasks :one
 SELECT COUNT(*) FROM task
 `
@@ -102,6 +114,18 @@ SELECT COUNT(*) FROM task WHERE status = 'processing' AND task_type IN ('consume
 
 func (q *Queries) CountProcessingTasks(ctx context.Context) (int64, error) {
 	row := q.db.QueryRowContext(ctx, countProcessingTasks)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countRecentBackupTasks = `-- name: CountRecentBackupTasks :one
+SELECT COUNT(*) FROM task
+WHERE task_type = 'backup' AND created_at > NOW() - ($1 || ' minutes')::INTERVAL
+`
+
+func (q *Queries) CountRecentBackupTasks(ctx context.Context, dollar_1 sql.NullString) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countRecentBackupTasks, dollar_1)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -276,6 +300,20 @@ func (q *Queries) GetConfigTaskByDedupKey(ctx context.Context, dedupKey sql.Null
 		&i.Attempts,
 	)
 	return i, err
+}
+
+const getLastCompletedBackup = `-- name: GetLastCompletedBackup :one
+SELECT completed_at FROM task
+WHERE task_type = 'backup' AND status = 'completed'
+ORDER BY completed_at DESC
+LIMIT 1
+`
+
+func (q *Queries) GetLastCompletedBackup(ctx context.Context) (sql.NullTime, error) {
+	row := q.db.QueryRowContext(ctx, getLastCompletedBackup)
+	var completed_at sql.NullTime
+	err := row.Scan(&completed_at)
+	return completed_at, err
 }
 
 const getNextPendingTask = `-- name: GetNextPendingTask :one

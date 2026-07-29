@@ -256,7 +256,7 @@ func writeIdentityRestore(ctx context.Context, tx *sql.Tx, tableName string, w i
 func getTableNames(ctx context.Context, tx *sql.Tx) ([]string, error) {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT tablename FROM pg_catalog.pg_tables
-		WHERE schemaname = 'public' AND tablename != 'goose_db_version'
+		WHERE schemaname = 'public' AND tablename NOT IN ('goose_db_version', 'backup_lock')
 		ORDER BY tablename
 	`)
 	if err != nil {

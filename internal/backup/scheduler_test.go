@@ -1,111 +1,69 @@
 package backup
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 )
 
-func TestShouldSchedule_EmptyState(t *testing.T) {
-	state := &BackupState{}
-	if !ShouldSchedule(state, 1, "02:00") {
-		t.Error("ShouldSchedule() = false for empty state, want true")
+func TestNextBackupTime_DailySameDay(t *testing.T) {
+	after := time.Date(2026, 7, 28, 0, 57, 7, 0, time.UTC)
+	result := NextBackupTime(after, 1, "01:30")
+	expected := time.Date(2026, 7, 29, 1, 30, 0, 0, time.UTC)
+	if !result.Equal(expected) {
+		t.Errorf("NextBackupTime = %v, want %v", result, expected)
 	}
 }
 
-func TestShouldSchedule_PastTime(t *testing.T) {
-	state := &BackupState{
-		NextScheduled: time.Now().Add(-1 * time.Hour).Format(time.RFC3339),
-	}
-	if !ShouldSchedule(state, 1, "02:00") {
-		t.Error("ShouldSchedule() = false for past time, want true")
-	}
-}
-
-func TestShouldSchedule_FutureTime(t *testing.T) {
-	state := &BackupState{
-		NextScheduled: time.Now().Add(1 * time.Hour).Format(time.RFC3339),
-	}
-	if ShouldSchedule(state, 1, "02:00") {
-		t.Error("ShouldSchedule() = true for future time, want false")
+func TestNextBackupTime_DailyAfterPreferred(t *testing.T) {
+	after := time.Date(2026, 7, 28, 1, 30, 35, 0, time.UTC)
+	result := NextBackupTime(after, 1, "01:30")
+	expected := time.Date(2026, 7, 29, 1, 30, 0, 0, time.UTC)
+	if !result.Equal(expected) {
+		t.Errorf("NextBackupTime = %v, want %v (no skipped day)", result, expected)
 	}
 }
 
-func TestShouldSchedule_InvalidFormat(t *testing.T) {
-	state := &BackupState{
-		NextScheduled: "not-a-valid-time",
-	}
-	if !ShouldSchedule(state, 1, "02:00") {
-		t.Error("ShouldSchedule() = false for invalid format, want true")
-	}
-}
-
-func TestNextRunTime_FutureToday(t *testing.T) {
-	now := time.Now()
-	hour := min(now.Hour()+2, 23)
-
-	result := NextRunTime(1, time.Date(now.Year(), now.Month(), now.Day(), hour, 0, 0, 0, now.Location()).Format("15:04"))
-
-	if result.Before(now) {
-		t.Errorf("NextRunTime() = %v, want >= %v", result, now)
-	}
-	if result.Hour() != hour || result.Minute() != 0 {
-		t.Errorf("NextRunTime() = %v, want hour=%d minute=0", result, hour)
+func TestNextBackupTime_MultiDay(t *testing.T) {
+	after := time.Date(2026, 7, 27, 1, 30, 0, 0, time.UTC)
+	result := NextBackupTime(after, 2, "02:00")
+	expected := time.Date(2026, 7, 29, 2, 0, 0, 0, time.UTC)
+	if !result.Equal(expected) {
+		t.Errorf("NextBackupTime = %v, want %v", result, expected)
 	}
 }
 
-func TestNextRunTime_PastToday(t *testing.T) {
-	now := time.Now()
-	hour := max(now.Hour()-2, 0)
-
-	result := NextRunTime(1, time.Date(now.Year(), now.Month(), now.Day(), hour, 0, 0, 0, now.Location()).Format("15:04"))
-
-	if result.Before(now) {
-		t.Errorf("NextRunTime() = %v, want >= %v (should be tomorrow or later)", result, now)
+func TestNextBackupTime_SubDaily(t *testing.T) {
+	after := time.Date(2026, 7, 28, 6, 0, 0, 0, time.UTC)
+	result := NextBackupTime(after, 0.5, "08:00")
+	expected := time.Date(2026, 7, 28, 8, 0, 0, 0, time.UTC)
+	if !result.Equal(expected) {
+		t.Errorf("NextBackupTime = %v, want %v", result, expected)
 	}
 }
 
-func TestNextRunTime_DefaultFallback(t *testing.T) {
-	result := NextRunTime(1, "")
-	if result.Before(time.Now()) {
-		t.Errorf("NextRunTime() = %v, want >= now", result)
+func TestNextBackupTime_SubDailyWraps(t *testing.T) {
+	after := time.Date(2026, 7, 28, 22, 0, 0, 0, time.UTC)
+	result := NextBackupTime(after, 0.5, "08:00")
+	expected := time.Date(2026, 7, 29, 8, 0, 0, 0, time.UTC)
+	if !result.Equal(expected) {
+		t.Errorf("NextBackupTime = %v, want %v", result, expected)
 	}
 }
 
-func TestReadWriteState_RoundTrip(t *testing.T) {
-	dir := t.TempDir()
-
-	state := &BackupState{NextScheduled: "2026-07-01T02:00:00Z"}
-	if err := WriteState(dir, state); err != nil {
-		t.Fatalf("WriteState: %v", err)
-	}
-
-	got, err := ReadState(dir)
-	if err != nil {
-		t.Fatalf("ReadState: %v", err)
-	}
-	if got.NextScheduled != state.NextScheduled {
-		t.Errorf("NextScheduled = %q, want %q", got.NextScheduled, state.NextScheduled)
+func TestNextBackupTime_ZeroIntervalClampsToOne(t *testing.T) {
+	after := time.Date(2026, 7, 28, 10, 0, 0, 0, time.UTC)
+	result := NextBackupTime(after, 0, "02:00")
+	expected := time.Date(2026, 7, 29, 2, 0, 0, 0, time.UTC)
+	if !result.Equal(expected) {
+		t.Errorf("NextBackupTime(0) = %v, want %v (should clamp to 1 day)", result, expected)
 	}
 }
 
-func TestReadState_Missing(t *testing.T) {
-	got, err := ReadState(t.TempDir())
-	if err != nil {
-		t.Fatalf("ReadState on missing file: %v", err)
-	}
-	if got.NextScheduled != "" {
-		t.Errorf("NextScheduled = %q, want empty", got.NextScheduled)
-	}
-}
-
-func TestReadState_InvalidJSON(t *testing.T) {
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "backup-state.json"), []byte("{bad"), 0600)
-
-	_, err := ReadState(dir)
-	if err == nil {
-		t.Fatal("ReadState() expected error for invalid JSON")
+func TestNextBackupTime_EmptyPreferredTimeDefaultsTo0200(t *testing.T) {
+	after := time.Date(2026, 7, 28, 0, 0, 0, 0, time.UTC)
+	result := NextBackupTime(after, 1, "")
+	expected := time.Date(2026, 7, 29, 2, 0, 0, 0, time.UTC)
+	if !result.Equal(expected) {
+		t.Errorf("NextBackupTime(\"\") = %v, want %v (default 02:00)", result, expected)
 	}
 }

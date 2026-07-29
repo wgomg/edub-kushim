@@ -227,3 +227,17 @@ UPDATE task SET
     status = 'pending',
     attempts = attempts + 1
 WHERE status = 'processing' AND attempts < $1 AND started_at < $2;
+
+-- name: CountRecentBackupTasks :one
+SELECT COUNT(*) FROM task
+WHERE task_type = 'backup' AND created_at > NOW() - ($1 || ' minutes')::INTERVAL;
+
+-- name: CountActiveBackupTasks :one
+SELECT COUNT(*) FROM task
+WHERE task_type = 'backup' AND status IN ('pending', 'processing');
+
+-- name: GetLastCompletedBackup :one
+SELECT completed_at FROM task
+WHERE task_type = 'backup' AND status = 'completed'
+ORDER BY completed_at DESC
+LIMIT 1;

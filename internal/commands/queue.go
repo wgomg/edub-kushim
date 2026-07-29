@@ -159,7 +159,7 @@ func queueHandler(c *Container, args []string) error {
 				if lockErr != nil {
 					c.logger.Error(nil, "backup lock check: %v", lockErr)
 				} else if locked == 0 {
-					if err := maybeScheduleBackup(ctx, c); err != nil {
+					if err := maybeScheduleBackup(ctx, c, client); err != nil {
 						c.logger.Error(nil, "backup scheduling: %v", err)
 					}
 				}
@@ -388,17 +388,16 @@ func pollingTick(ctx context.Context, c *Container, client *database.Client, bat
 	c.logger.Info(nil, "polling: batch %s created with %d files", batchID, enqueued)
 }
 
-func maybeScheduleBackup(ctx context.Context, c *Container) error {
+func maybeScheduleBackup(ctx context.Context, c *Container, client *database.Client) error {
 	if !c.config.Backup.Enabled {
 		return nil
 	}
 
-	state, err := backup.ReadState(c.config.App.ConfigDir)
+	due, err := backup.IsBackupDue(ctx, client.Queries, c.config.Backup)
 	if err != nil {
-		return fmt.Errorf("read backup state: %w", err)
+		return fmt.Errorf("check backup due: %w", err)
 	}
-
-	if !backup.ShouldSchedule(state, c.config.Backup.Interval, c.config.Backup.Time) {
+	if !due {
 		return nil
 	}
 
@@ -413,12 +412,6 @@ func maybeScheduleBackup(ctx context.Context, c *Container) error {
 		return fmt.Errorf("enqueue backup task: %w", err)
 	}
 
-	nextRun := backup.NextRunTime(c.config.Backup.Interval, c.config.Backup.Time)
-	state.NextScheduled = nextRun.Format(time.RFC3339)
-	if err := backup.WriteState(c.config.App.ConfigDir, state); err != nil {
-		return fmt.Errorf("write backup state: %w", err)
-	}
-
-	c.logger.Info(nil, "backup task %s scheduled (next run: %s)", taskID, state.NextScheduled)
+	c.logger.Info(nil, "backup task %s scheduled", taskID)
 	return nil
 }

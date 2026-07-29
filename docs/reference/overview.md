@@ -76,7 +76,7 @@ internal/
 ├── backup/                # Backup & restore
 │   ├── backup.go          # Create backup (SQL dump, tar.gz, manifest, retention)
 │   ├── restore.go         # Validate, extract, and replace files from backup archive
-│   └── scheduler.go       # Backup scheduling (NextRunTime, ShouldSchedule, state persistence)
+│   └── scheduler.go       # Backup scheduling (NextBackupTime, IsBackupDue, DB-driven schedule derivation)
 ├── config/                # Configuration parsing
 │   ├── config.go          # Configuration structs and loading (ConsolidationSimilarity, default thresholds, engine identifier constants, AvailableEngines map)
 │   ├── setup.go           # Bootstrap config, SaveMap, tessdata/Hugot model download helpers
