@@ -270,6 +270,13 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 		}
 	}
 
+	function handleUserKeyDown(e) {
+		if (e.key === 'Enter' || e.key === ' ') {
+			e.preventDefault();
+			handleUserPageClick(e);
+		}
+	}
+
 	async function saveUser() {
 		userError = '';
 		const username = formUsername.trim();
@@ -1494,7 +1501,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 		{/if}
 
 		{#if activeTab === 'Users'}
-			<div class="space-y-4" onclick={handleUserPageClick}>
+			<div class="space-y-4" onclick={handleUserPageClick} onkeydown={handleUserKeyDown} role="presentation">
 				<div class="flex items-center justify-between">
 					<h2 class="text-lg font-semibold text-parchment-200">Users</h2>
 					<button
