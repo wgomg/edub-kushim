@@ -417,7 +417,9 @@ func (h *DocumentHandler) GetDocumentFile(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if doc.MimeType != "application/pdf" {
+	if doc.MimeType != "application/pdf" &&
+		doc.MimeType != "application/vnd.openxmlformats-officedocument.wordprocessingml.document" &&
+		doc.MimeType != "application/vnd.oasis.opendocument.text" {
 		http.Error(w, "File type not supported for viewing", http.StatusUnsupportedMediaType)
 		return
 	}
