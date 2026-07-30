@@ -126,15 +126,22 @@ type ReclaimConfig struct {
 	StaleTaskAfter int64 `mapstructure:"stale_task_after" yaml:"stale_task_after" json:"stale_task_after"`
 }
 
+type DocxOdtConverterConfig struct {
+	Enabled bool   `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
+	Binary  string `mapstructure:"binary" yaml:"binary" json:"binary"`
+	Timeout int    `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
+}
+
 type ConsumerConfig struct {
-	SupportedFiles   []string            `json:"supported_files"`
-	Workers          int                 `mapstructure:"workers" yaml:"workers" json:"workers"`
-	MaxFilesPerBatch int                 `mapstructure:"max_files_per_batch" yaml:"max_files_per_batch" json:"max_files_per_batch"`
-	TextExtractor    TextExtractorConfig `mapstructure:"textextractor" yaml:"textextractor" json:"textextractor"`
-	PdfOptimizer     PdfOptimizerConfig  `mapstructure:"pdfoptimizer" yaml:"pdfoptimizer" json:"pdfoptimizer"`
-	OCR              OCRConfig           `mapstructure:"ocr" yaml:"ocr" json:"ocr"`
-	Polling          PollingConfig       `mapstructure:"polling" yaml:"polling" json:"polling"`
-	Reclaim          ReclaimConfig       `mapstructure:"reclaim" yaml:"reclaim" json:"reclaim"`
+	SupportedFiles   []string              `json:"supported_files"`
+	Workers          int                   `mapstructure:"workers" yaml:"workers" json:"workers"`
+	MaxFilesPerBatch int                   `mapstructure:"max_files_per_batch" yaml:"max_files_per_batch" json:"max_files_per_batch"`
+	Converter        DocxOdtConverterConfig `mapstructure:"converter" yaml:"converter" json:"converter"`
+	TextExtractor    TextExtractorConfig   `mapstructure:"textextractor" yaml:"textextractor" json:"textextractor"`
+	PdfOptimizer     PdfOptimizerConfig    `mapstructure:"pdfoptimizer" yaml:"pdfoptimizer" json:"pdfoptimizer"`
+	OCR              OCRConfig             `mapstructure:"ocr" yaml:"ocr" json:"ocr"`
+	Polling          PollingConfig         `mapstructure:"polling" yaml:"polling" json:"polling"`
+	Reclaim          ReclaimConfig         `mapstructure:"reclaim" yaml:"reclaim" json:"reclaim"`
 }
 
 type TextReducerConfig struct {
@@ -254,6 +261,12 @@ var (
 	}{
 		TextRank: "textrank",
 	}
+
+	Converter = struct {
+		LibreOffice string
+	}{
+		LibreOffice: "libreoffice",
+	}
 )
 
 type EngineEntry struct {
@@ -320,9 +333,14 @@ func DefaultConfig(configDir string) *Config {
 			StorageDir:     filepath.Join(configDir, "storage"),
 		},
 		Consumer: ConsumerConfig{
-			SupportedFiles:   []string{".pdf", ".docx", ".odt"},
+			SupportedFiles:   []string{".pdf"},
 			Workers:          1,
 			MaxFilesPerBatch: 10,
+			Converter: DocxOdtConverterConfig{
+				Enabled: false,
+				Binary:  "libreoffice",
+				Timeout: 300,
+			},
 			TextExtractor: TextExtractorConfig{
 				Engine:  TextExtractor.MuPDF,
 				Timeout: 120,

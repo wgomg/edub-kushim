@@ -46,6 +46,9 @@ func NewTestConfig(t interface{ Fatalf(format string, args ...any) }) (*config.C
 	cfg.Consumer.PdfOptimizer.Timeout = 30
 	cfg.Consumer.OCR.Engine = config.OCR.Gosseract
 	cfg.Consumer.OCR.Timeout = 30
+	cfg.Consumer.Converter.Enabled = true
+	cfg.Consumer.Converter.Binary = ""
+	cfg.Consumer.Converter.Timeout = 30
 	cfg.App.LogLevel = "silent"
 	cfg.Enricher.Workers = 0
 	cfg.Consumer.Workers = 0

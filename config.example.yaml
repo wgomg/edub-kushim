@@ -51,6 +51,11 @@ consumer:
     max_retries: 3
     stale_task_after: 600  # seconds
 
+  converter:
+    enabled: false
+    binary: 'libreoffice'  # command name (on PATH) or full path like '/opt/libreoffice/bin/soffice'
+    timeout: 300
+
   textextractor:
     engine: 'mupdf' # mupdf | gopdf | pdftotext
     timeout: 120     # 0 = disabled (no artificial deadline)

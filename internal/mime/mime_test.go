@@ -43,6 +43,25 @@ func TestIsImage(t *testing.T) {
 	}
 }
 
+func TestIsOfficeDoc(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{DOCX, true},
+		{ODT, true},
+		{PDF, false},
+		{PNG, false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		got := IsOfficeDoc(tt.input)
+		if got != tt.want {
+			t.Errorf("IsOfficeDoc(%q) = %v, want %v", tt.input, got, tt.want)
+		}
+	}
+}
+
 func TestIsViewable(t *testing.T) {
 	tests := []struct {
 		input string

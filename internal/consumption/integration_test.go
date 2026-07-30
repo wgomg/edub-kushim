@@ -29,6 +29,7 @@ type integrationTestRunner struct {
 	ocrErr          error
 	optimizeTmpPath string
 	optimizeErr     error
+	convertErr      error
 }
 
 func (r *integrationTestRunner) ExtractText(ctx context.Context, path string, _ string) (*tools.TextExtractionResult, error) {
@@ -66,6 +67,15 @@ func (r *integrationTestRunner) OptimizePdf(ctx context.Context, docId, path str
 		p = tmp
 	}
 	return &tools.PdfOptimizationResult{Success: true, TmpPath: &p}, nil
+}
+
+func (r *integrationTestRunner) ConvertToPdf(ctx context.Context, path string, mimeType string) (*string, error) {
+	if r.convertErr != nil {
+		return nil, r.convertErr
+	}
+	tmp := filepath.Join(os.TempDir(), "conv-"+uuid.New().String()+".pdf")
+	os.WriteFile(tmp, testutil.MinimalTextPDF("converted from "+filepath.Base(path)), 0644)
+	return &tmp, nil
 }
 
 func setupConsumerTest(t *testing.T) (*Consumer, *config.Config, *database.Client, func()) {
@@ -600,7 +610,7 @@ func TestConsumerProcessDocxFile(t *testing.T) {
 	t.Run("document record created", func(t *testing.T) {
 		doc, err := client.GetDocument(context.Background(), docID)
 		testutil.AssertNoError(t, err, "get document")
-		testutil.AssertEqual(t, doc.MimeType, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "mime type")
+		testutil.AssertEqual(t, doc.MimeType, "application/pdf", "mime type")
 	})
 
 	t.Run("original stored with docx extension", func(t *testing.T) {
@@ -612,12 +622,12 @@ func TestConsumerProcessDocxFile(t *testing.T) {
 		}
 	})
 
-	t.Run("processed stored with docx extension", func(t *testing.T) {
+	t.Run("processed stored as pdf", func(t *testing.T) {
 		if processed.StorageProcessedPath == nil {
 			t.Fatal("expected processed path")
 		}
-		if !strings.HasSuffix(*processed.StorageProcessedPath, ".docx") {
-			t.Errorf("processed should have .docx extension, got: %s", *processed.StorageProcessedPath)
+		if !strings.HasSuffix(*processed.StorageProcessedPath, ".pdf") {
+			t.Errorf("processed should have .pdf extension, got: %s", *processed.StorageProcessedPath)
 		}
 	})
 
@@ -654,7 +664,7 @@ func TestConsumerProcessOdtFile(t *testing.T) {
 	t.Run("document record created", func(t *testing.T) {
 		doc, err := client.GetDocument(context.Background(), docID)
 		testutil.AssertNoError(t, err, "get document")
-		testutil.AssertEqual(t, doc.MimeType, "application/vnd.oasis.opendocument.text", "mime type")
+		testutil.AssertEqual(t, doc.MimeType, "application/pdf", "mime type")
 	})
 
 	t.Run("original stored with odt extension", func(t *testing.T) {
@@ -666,12 +676,12 @@ func TestConsumerProcessOdtFile(t *testing.T) {
 		}
 	})
 
-	t.Run("processed stored with odt extension", func(t *testing.T) {
+	t.Run("processed stored as pdf", func(t *testing.T) {
 		if processed.StorageProcessedPath == nil {
 			t.Fatal("expected processed path")
 		}
-		if !strings.HasSuffix(*processed.StorageProcessedPath, ".odt") {
-			t.Errorf("processed should have .odt extension, got: %s", *processed.StorageProcessedPath)
+		if !strings.HasSuffix(*processed.StorageProcessedPath, ".pdf") {
+			t.Errorf("processed should have .pdf extension, got: %s", *processed.StorageProcessedPath)
 		}
 	})
 
@@ -688,6 +698,76 @@ func TestConsumerProcessOdtFile(t *testing.T) {
 			t.Errorf("expected page count 0, got %d", doc.PageCount)
 		}
 	})
+}
+
+func TestNewConsumerConverterBinaryNotFound(t *testing.T) {
+	cfg, cleanup := testutil.NewTestConfig(t)
+	defer cleanup()
+	cfg.Consumer.Converter.Enabled = true
+	cfg.Consumer.Converter.Binary = "nonexistent-binary"
+
+	_, err := NewConsumer(cfg, utils.NewDiscardLogger(), nil)
+	testutil.AssertError(t, err, "should fail when converter binary not found")
+}
+
+func TestConsumerProcessDocxFileDisabledConverter(t *testing.T) {
+	consumer, cfg, client, cleanup := setupConsumerTest(t)
+	defer cleanup()
+
+	consumer.config.Consumer.Converter.Enabled = false
+
+	docxPath := filepath.Join(cfg.Storage.ConsumptionDir, "disabled-converter.docx")
+	testutil.CreateMinimalDocx(t, docxPath, "Hello from DOCX")
+
+	file, err := FileFromPath(docxPath)
+	testutil.AssertNoError(t, err, "file from path")
+
+	docID := uuid.New().String()
+	processed, err := consumer.Process(context.Background(), file, docID)
+	testutil.AssertNoError(t, err, "process docx with converter disabled")
+
+	t.Run("document record created with original mime", func(t *testing.T) {
+		doc, err := client.GetDocument(context.Background(), docID)
+		testutil.AssertNoError(t, err, "get document")
+		testutil.AssertEqual(t, doc.MimeType, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "mime type")
+	})
+
+	t.Run("processed stored with docx extension", func(t *testing.T) {
+		if processed.StorageProcessedPath == nil {
+			t.Fatal("expected processed path")
+		}
+		if !strings.HasSuffix(*processed.StorageProcessedPath, ".docx") {
+			t.Errorf("processed should have .docx extension, got: %s", *processed.StorageProcessedPath)
+		}
+	})
+
+	t.Run("text content present", func(t *testing.T) {
+		doc, _ := client.GetDocument(context.Background(), docID)
+		if !doc.TextContent.Valid || doc.TextContent.String == "" {
+			t.Fatal("expected text content from direct DOCX extraction")
+		}
+	})
+}
+
+func TestConsumerConvertToPdfFailure(t *testing.T) {
+	consumer, cfg, _, cleanup := setupConsumerTest(t)
+	defer cleanup()
+
+	consumer.runner = &integrationTestRunner{
+		extractText: "text",
+		convertErr:  errSentinel{},
+	}
+
+	docxPath := filepath.Join(cfg.Storage.ConsumptionDir, "fail-convert.docx")
+	testutil.CreateMinimalDocx(t, docxPath, "Hello")
+
+	file, _ := FileFromPath(docxPath)
+	_, err := consumer.Process(context.Background(), file, uuid.New().String())
+	testutil.AssertError(t, err, "conversion error should fail")
+
+	if _, err := os.Stat(docxPath); !os.IsNotExist(err) {
+		t.Fatal("original should have been moved to error directory after failure")
+	}
 }
 
 // --- helpers ---

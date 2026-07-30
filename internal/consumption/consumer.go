@@ -24,6 +24,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters"
+	"github.com/wgomg/edub-kushim/internal/tools/adapters/converter"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/pdfoptimizer"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -40,6 +41,7 @@ type runner interface {
 	ExtractText(ctx context.Context, path string, mimeType string) (*tools.TextExtractionResult, error)
 	OCR(ctx context.Context, docId, path string) (*tools.OCRResult, error)
 	OptimizePdf(ctx context.Context, docId, path string) (*tools.PdfOptimizationResult, error)
+	ConvertToPdf(ctx context.Context, path string, mimeType string) (*string, error)
 }
 
 var _ runner = (*tools.Runner)(nil)
@@ -56,6 +58,7 @@ type File struct {
 	OriginalPath         string
 	OCRTmpPath           *string
 	OptimizedPdfTmpPath  *string
+	ConvertedPdfTmpPath  *string
 	StorageProcessedPath *string
 	StorageOriginalPath  *string
 	DocumentID           string
@@ -81,11 +84,23 @@ func NewConsumer(cfg *config.Config, logger *utils.Logger, client *database.Clie
 				cfg.Consumer.PdfOptimizer.Fallback, err)
 		}
 	}
+	if cfg.Consumer.Converter.Enabled {
+		if _, err := converter.NewDocumentConverter(
+			logger,
+			config.ToolConfig{
+				Command: cfg.Consumer.Converter.Binary,
+				Timeout: time.Duration(cfg.Consumer.Converter.Timeout) * time.Second,
+			},
+			cfg.Consumer.Converter.Binary,
+		); err != nil {
+			return nil, fmt.Errorf("converter binary %q not available: %w — install libreoffice (see install hints) or set consumer.converter.binary", cfg.Consumer.Converter.Binary, err)
+		}
+	}
 	return &Consumer{
 		config: cfg,
 		logger: logger,
 		client: client,
-		runner: tools.NewRunner(logger, cfg, []string{"textextractor", "ocr", "pdfoptimizer"}),
+		runner: tools.NewRunner(logger, cfg, []string{"converter", "textextractor", "ocr", "pdfoptimizer"}),
 	}, nil
 }
 
@@ -122,6 +137,12 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 		return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("file is a duplicate, skipping")}
 	}
 
+	file, err = c.convertToPdf(ctx, file, documentID)
+	if err != nil {
+		MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
+		return file, &task.Error{ReqID: documentID, Err: err}
+	}
+
 	file, err = c.extractText(ctx, file, documentID)
 	if err != nil {
 		MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
@@ -154,7 +175,9 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 	if origExt == "" {
 		origExt = ".pdf"
 	}
-	if file.OCRTmpPath == nil && file.OptimizedPdfTmpPath == nil {
+	if file.ConvertedPdfTmpPath != nil {
+		processedExt = ".pdf"
+	} else if file.OCRTmpPath == nil && file.OptimizedPdfTmpPath == nil {
 		if !mime.IsPDF(file.MimeType) && !mime.IsImage(file.MimeType) {
 			processedExt = origExt
 		}
@@ -216,6 +239,23 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 			MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 			return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("failed to move optimized file: %w", err)}
 		}
+	} else if file.ConvertedPdfTmpPath != nil {
+		c.logger.Debug(&documentID,
+			"Copying original file from %s to %s", file.OriginalPath, *file.StorageOriginalPath)
+		if err := CopyFile(file.OriginalPath, *file.StorageOriginalPath); err != nil {
+			MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
+			return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("failed to copy original file: %w", err)}
+		}
+
+		c.logger.Debug(&documentID,
+			"Moving converted file from %s to %s", *file.ConvertedPdfTmpPath, *file.StorageProcessedPath)
+		if err := MoveFile(*file.ConvertedPdfTmpPath, *file.StorageProcessedPath); err != nil {
+			if removeErr := RemoveFile(*file.StorageOriginalPath); removeErr != nil {
+				c.logger.Error(&documentID, "failed to clean up original file post-move error: %v", removeErr)
+			}
+			MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
+			return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("failed to move converted file: %w", err)}
+		}
 	} else {
 		// optimization failed or was skipped — use original for both.
 		c.logger.Debug(&documentID,
@@ -273,6 +313,12 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 		if file.OptimizedPdfTmpPath != nil {
 			if err := CleanUp(*file.OptimizedPdfTmpPath); err != nil {
 				c.logger.Debug(&documentID, "failed to clean up optimized temp file: %v", err)
+			}
+		}
+
+		if file.ConvertedPdfTmpPath != nil {
+			if err := CleanUp(*file.ConvertedPdfTmpPath); err != nil {
+				c.logger.Debug(&documentID, "failed to clean up converted temp file: %v", err)
 			}
 		}
 	}()
@@ -485,11 +531,36 @@ func calculateSHA512(path string) (string, error) {
 	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
+func (c *Consumer) convertToPdf(ctx context.Context, file File, documentID string) (File, error) {
+	if !c.config.Consumer.Converter.Enabled {
+		return file, nil
+	}
+	if !mime.IsOfficeDoc(file.MimeType) {
+		return file, nil
+	}
+
+	convertedPath, err := c.runner.ConvertToPdf(ctx, file.OriginalPath, file.MimeType)
+	if err != nil {
+		return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("document conversion failed: %w", err)}
+	}
+
+	c.logger.Debug(&documentID, "converted %s to PDF at %s", file.Name, *convertedPath)
+	file.ConvertedPdfTmpPath = convertedPath
+	file.MimeType = mime.PDF
+
+	return file, nil
+}
+
 func (c *Consumer) extractText(ctx context.Context, file File, documentID string) (File, error) {
 	memBefore := utils.ReadMemSnapshot()
 
+	extractPath := file.OriginalPath
+	if file.ConvertedPdfTmpPath != nil {
+		extractPath = *file.ConvertedPdfTmpPath
+	}
+
 	if mime.IsPDF(file.MimeType) {
-		file.PageCount = countPages(file.OriginalPath)
+		file.PageCount = countPages(extractPath)
 	}
 
 	if mime.IsImage(file.MimeType) {
@@ -498,7 +569,7 @@ func (c *Consumer) extractText(ctx context.Context, file File, documentID string
 		return c.ocrAndReextract(ctx, file, documentID, memBefore, memBefore)
 	}
 
-	extractResult, err := c.runner.ExtractText(ctx, file.OriginalPath, file.MimeType)
+	extractResult, err := c.runner.ExtractText(ctx, extractPath, file.MimeType)
 	memAfterExtract := utils.ReadMemSnapshot()
 	c.logger.Debug(&documentID, "extractText: %s", utils.FormatMemDelta(memBefore, memAfterExtract))
 	if err != nil {
@@ -506,12 +577,16 @@ func (c *Consumer) extractText(ctx context.Context, file File, documentID string
 	}
 
 	const minTextDensityRatio = 0.001
-	if extractResult.Text != nil && *extractResult.Text != "" && float64(len(*extractResult.Text))/float64(file.FileSize) >= minTextDensityRatio {
+	extractFileSize := file.FileSize
+	if info, err := os.Stat(extractPath); err == nil {
+		extractFileSize = info.Size()
+	}
+	if extractResult.Text != nil && *extractResult.Text != "" && float64(len(*extractResult.Text))/float64(extractFileSize) >= minTextDensityRatio {
 		file.Text = sql.NullString{String: *extractResult.Text, Valid: true}
 
 		if mime.IsPDF(file.MimeType) {
-			c.logger.Debug(&documentID, "optimizePdf: entering for %s", file.OriginalPath)
-			optimizationResult, err := c.runner.OptimizePdf(ctx, documentID, file.OriginalPath)
+			c.logger.Debug(&documentID, "optimizePdf: entering for %s", extractPath)
+			optimizationResult, err := c.runner.OptimizePdf(ctx, documentID, extractPath)
 			memAfterOpt := utils.ReadMemSnapshot()
 			c.logger.Debug(&documentID, "optimizePdf: %s", utils.FormatMemDelta(memAfterExtract, memAfterOpt))
 			if err != nil {
@@ -534,7 +609,11 @@ func (c *Consumer) extractText(ctx context.Context, file File, documentID string
 }
 
 func (c *Consumer) ocrAndReextract(ctx context.Context, file File, documentID string, memBeforeOCR, memBeforeAll utils.MemSnapshot) (File, error) {
-	ocrResult, err := c.runner.OCR(ctx, documentID, file.OriginalPath)
+	ocrInputPath := file.OriginalPath
+	if file.ConvertedPdfTmpPath != nil {
+		ocrInputPath = *file.ConvertedPdfTmpPath
+	}
+	ocrResult, err := c.runner.OCR(ctx, documentID, ocrInputPath)
 	memAfterOCR := utils.ReadMemSnapshot()
 	c.logger.Debug(&documentID, "OCR: %s (RSS now %s)", utils.FormatMemDelta(memBeforeOCR, memAfterOCR), utils.FormatBytes(memAfterOCR.RSS))
 	if err != nil {

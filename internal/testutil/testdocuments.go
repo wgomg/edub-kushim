@@ -60,7 +60,10 @@ func CreateMinimalOdt(t interface{ Fatalf(format string, args ...any) }, path, c
 
 	zw := zip.NewWriter(f)
 
-	mime, err := zw.Create("mimetype")
+	mime, err := zw.CreateHeader(&zip.FileHeader{
+		Name:   "mimetype",
+		Method: zip.Store,
+	})
 	if err != nil {
 		t.Fatalf("failed to create mimetype: %v", err)
 	}

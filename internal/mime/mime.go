@@ -57,6 +57,10 @@ func IsImage(mimeType string) bool {
 	return strings.HasPrefix(mimeType, ImagePrefix)
 }
 
+func IsOfficeDoc(mimeType string) bool {
+	return mimeType == DOCX || mimeType == ODT
+}
+
 func IsViewable(mimeType string) bool {
 	return viewableSet[mimeType]
 }

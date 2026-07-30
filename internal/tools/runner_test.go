@@ -9,6 +9,7 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/contentanalyzer"
+	"github.com/wgomg/edub-kushim/internal/tools/adapters/converter"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -179,5 +180,109 @@ func TestAnalyzeDocType_NilContentAnalyzer(t *testing.T) {
 	_, err := r.AnalyzeDocType(context.Background(), nil, "head tail text", nil, contentanalyzer.DocMetadata{})
 	if err == nil {
 		t.Fatal("expected error when content analyzer is nil")
+	}
+}
+
+// mockDocumentConverter satisfies converter.DocumentConverter for testing.
+type mockDocumentConverter struct {
+	convertFn func(ctx context.Context, path string, mimeType string) (*string, error)
+}
+
+func (m *mockDocumentConverter) Convert(ctx context.Context, path string, mimeType string) (*string, error) {
+	if m.convertFn != nil {
+		return m.convertFn(ctx, path, mimeType)
+	}
+	out := path + ".converted.pdf"
+	return &out, nil
+}
+
+func (m *mockDocumentConverter) CanHandle(mimeType string) bool { return true }
+func (m *mockDocumentConverter) Name() string                   { return "mock" }
+
+// Compile-time assertion that mockDocumentConverter satisfies the interface.
+var _ converter.DocumentConverter = (*mockDocumentConverter)(nil)
+
+func TestConvertToPdf_NilConverter(t *testing.T) {
+	r := &Runner{
+		logger: utils.NewDiscardLogger(),
+		config: &config.Config{
+			Consumer: config.ConsumerConfig{
+				Converter: config.DocxOdtConverterConfig{Timeout: 0},
+			},
+		},
+	}
+
+	_, err := r.ConvertToPdf(context.Background(), newTestPDF(t), "application/docx")
+	if err == nil {
+		t.Fatal("expected error when converter is nil")
+	}
+}
+
+func TestConvertToPdf_FileNotFound(t *testing.T) {
+	r := &Runner{
+		logger: utils.NewDiscardLogger(),
+		config: &config.Config{
+			Consumer: config.ConsumerConfig{
+				Converter: config.DocxOdtConverterConfig{Timeout: 0},
+			},
+		},
+	}
+
+	_, err := r.ConvertToPdf(context.Background(), "/tmp/nonexistent-test-file.pdf", "application/docx")
+	if err == nil {
+		t.Fatal("expected error for missing file")
+	}
+}
+
+func TestConvertToPdf_WithConverter(t *testing.T) {
+	mock := &mockDocumentConverter{}
+	r := &Runner{
+		logger: utils.NewDiscardLogger(),
+		config: &config.Config{
+			Consumer: config.ConsumerConfig{
+				Converter: config.DocxOdtConverterConfig{Timeout: 0},
+			},
+		},
+		documentConverter: mock,
+	}
+
+	result, err := r.ConvertToPdf(context.Background(), newTestPDF(t), "application/docx")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected result")
+	}
+}
+
+func TestConvertToPdf_WithTimeout_ContextHasDeadline(t *testing.T) {
+	var receivedCtx context.Context
+	mock := &mockDocumentConverter{
+		convertFn: func(ctx context.Context, path string, mimeType string) (*string, error) {
+			receivedCtx = ctx
+			out := path + ".converted.pdf"
+			return &out, nil
+		},
+	}
+
+	r := &Runner{
+		logger: utils.NewDiscardLogger(),
+		config: &config.Config{
+			Consumer: config.ConsumerConfig{
+				Converter: config.DocxOdtConverterConfig{Timeout: 120},
+			},
+		},
+		documentConverter: mock,
+	}
+
+	result, err := r.ConvertToPdf(context.Background(), newTestPDF(t), "application/docx")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected result")
+	}
+	if _, ok := receivedCtx.Deadline(); !ok {
+		t.Error("context should have a deadline when timeout>0")
 	}
 }

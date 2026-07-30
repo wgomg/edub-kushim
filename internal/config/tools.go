@@ -62,6 +62,13 @@ var engineInstallHints = map[string]map[string]string{
 		"Alpine":        "sudo apk add curl",
 		"macOS":         "brew install curl",
 	},
+	"libreoffice": {
+		"Debian/Ubuntu": "sudo apt install libreoffice-writer-nogui",
+		"Arch":          "sudo pacman -S libreoffice-fresh",
+		"Fedora":        "sudo dnf install libreoffice-writer",
+		"Alpine":        "sudo apk add libreoffice",
+		"macOS":         "brew install --cask libreoffice",
+	},
 }
 
 var companionInstallHints = map[string]map[string]string{
@@ -225,6 +232,17 @@ func MissingExternalTools(cfg *Config) []ExternalTool {
 	}
 	if cfg.Consumer.TextExtractor.Engine == TextExtractor.PdfToText {
 		checkEngine(TextExtractor.PdfToText, "textextractor", TextExtractor.PdfToText)
+	}
+
+	if cfg.Consumer.Converter.Enabled {
+		_, err := exec.LookPath(cfg.Consumer.Converter.Binary)
+		tools = append(tools, ExternalTool{
+			Engine:       "libreoffice",
+			Category:     "converter",
+			Command:      cfg.Consumer.Converter.Binary,
+			Available:    err == nil,
+			InstallHints: engineInstallHints["libreoffice"],
+		})
 	}
 
 	if cfg.Consumer.PdfOptimizer.Fallback != "" &&

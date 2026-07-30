@@ -86,7 +86,7 @@ flowchart TB
     end
 
     subgraph Worker["kushim consume --batch\n(forked subprocess)"]
-        CP["Consume: Extract → OCR → Optimize → Store"]
+        CP["Consume: Convert → Extract → OCR → Optimize → Store"]
         EP["Enrich: TextRank → Tag matching →\nLLM → Consolidate"]
     end
 
@@ -161,6 +161,7 @@ original is quarantined — no DB row is created. Three‑way branch:
 
 - **OCR case**: Move OCR temp file → processed storage, copy original → original storage.
 - **Optimized text case**: Copy original → original storage, move optimized file → processed storage.
+- **Converted case** (DOCX/ODT → PDF): Copy original → original storage, move converted PDF → processed storage.
 - **Unoptimized text case** (optimization failed or skipped): Copy original → both processed and original storage.
 
 ### 6. Transaction and Cleanup

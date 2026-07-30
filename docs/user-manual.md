@@ -1794,6 +1794,10 @@ consumer:
     enabled: true # auto-resume batches interrupted by crashes or errors
     max_retries: 3 # max consecutive reclamation retries before quarantining
     stale_task_after: 600 # seconds after which a processing task is considered stale
+  converter:
+    enabled: false     # enable LibreOffice headless DOCX/ODT → PDF conversion
+    binary: 'libreoffice' # command name (on PATH) or full path like '/opt/libreoffice/bin/soffice'
+    timeout: 300       # per-document conversion timeout
   textextractor:
     engine: 'mupdf' # mupdf | gopdf | pdftotext
     timeout: 120
@@ -1861,6 +1865,7 @@ backup:
 | `consumer.max_files_per_batch` | Max files per consume batch (default 10, 0 = unlimited)                |
 | `consumer.polling`             | Auto-consume scheduler settings (enabled, interval)                    |
 | `consumer.reclaim`             | Auto-resume of interrupted batches (enabled, max_retries 3, stale_task_after 600s) |
+| `consumer.converter`           | Optional DOCX/ODT → PDF conversion via LibreOffice headless (enabled, binary, timeout) |
 | `consumer.textextractor`       | Text extraction engine (mupdf, gopdf, pdftotext)                       |
 | `consumer.pdfoptimizer`        | PDF optimizer (mupdf, gs) + optional fallback                          |
 | `consumer.ocr`                 | OCR engine (gosseract, ocrmypdf) + language data                       |
@@ -1972,6 +1977,25 @@ When enabling it:
 - Multi-page documents scale linearly with page count and image density.
 - The timeout caps **each attempt** — if a fallback optimizer is configured
   and the primary times out, the fallback gets the same timeout budget.
+
+---
+
+#### `consumer.converter.timeout` (default: 300s)
+
+| Default | Minimum practical | Premature failure below |
+|---|---|---|
+| 300s | 30s | 10s |
+
+LibreOffice headless conversion loads the entire document (fonts, layout
+engine, renderer) and writes a PDF. For a simple text DOCX this takes 2–5s.
+For a 100-page document with embedded images, complex tables, and uncommon
+fonts, it can take 60–120s. The default 300s accounts for the heaviest
+documents.
+
+- Only applies when `consumer.converter.enabled` is `true`.
+- Set based on the **largest office document** in your workload.
+- If you see `context deadline exceeded` errors from the pipeline, raise this
+  timeout before lowering any other stage timeout.
 
 ---
 

@@ -16,6 +16,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/llm"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/contentanalyzer"
+	"github.com/wgomg/edub-kushim/internal/tools/adapters/converter"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/ocr"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/pdfoptimizer"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/tagmatcher"
@@ -25,14 +26,15 @@ import (
 )
 
 type Runner struct {
-	logger          *utils.Logger
-	config          *config.Config
-	textExtractor   textextractor.TextExtractor
-	ocr             ocr.OCR
-	pdfOptimizer    pdfoptimizer.PdfOptimizer
-	tagMatcher      tagmatcher.Matcher
-	contentAnalyzer contentanalyzer.ContentAnalyzer
-	textReducer     textreducer.TextReducer
+	logger           *utils.Logger
+	config           *config.Config
+	textExtractor    textextractor.TextExtractor
+	ocr              ocr.OCR
+	pdfOptimizer     pdfoptimizer.PdfOptimizer
+	documentConverter converter.DocumentConverter
+	tagMatcher       tagmatcher.Matcher
+	contentAnalyzer  contentanalyzer.ContentAnalyzer
+	textReducer      textreducer.TextReducer
 }
 
 type TextExtractionResult struct {
@@ -123,6 +125,17 @@ func NewRunner(logger *utils.Logger, cfg *config.Config, tools []string) *Runner
 				Timeout: time.Duration(cfg.Consumer.PdfOptimizer.Timeout) * time.Second,
 			}
 			r.pdfOptimizer, _ = pdfoptimizer.NewPdfOptimizer(logger, toolCfg)
+		case "converter":
+			if cfg.Consumer.Converter.Enabled {
+				r.documentConverter, _ = converter.NewDocumentConverter(
+					logger,
+					config.ToolConfig{
+						Command: cfg.Consumer.Converter.Binary,
+						Timeout: time.Duration(cfg.Consumer.Converter.Timeout) * time.Second,
+					},
+					cfg.Consumer.Converter.Binary,
+				)
+			}
 		case "textreducer":
 			toolCfg := config.ToolConfig{
 				Command: cfg.Enricher.TextReducer.Engine,
@@ -203,6 +216,31 @@ func (r *Runner) OCR(ctx context.Context, docId, path string) (*OCRResult, error
 	}
 
 	return &result, nil
+}
+
+func (r *Runner) ConvertToPdf(ctx context.Context, path string, mimeType string) (*string, error) {
+	if r.documentConverter == nil {
+		return nil, fmt.Errorf("document converter not configured")
+	}
+	timeout := time.Duration(r.config.Consumer.Converter.Timeout) * time.Second
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil, fmt.Errorf("file does not exist: %s", path)
+	}
+
+	outputPath, err := runWithTimeout(ctx, func() (*string, error) {
+		return r.documentConverter.Convert(ctx, path, mimeType)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("document converter: %w", err)
+	}
+
+	return outputPath, nil
 }
 
 func (r *Runner) OptimizePdf(ctx context.Context, docId, path string) (*PdfOptimizationResult, error) {
