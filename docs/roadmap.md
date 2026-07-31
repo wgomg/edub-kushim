@@ -43,7 +43,7 @@
 - Embedded Tesseract language data (`eng.traineddata`)
 - OCR subprocess isolation: gosseract adapter forks `kushim internal-ocr` to prevent heartbeat starvation during image-only PDF processing
 - **Parallel OCR acceleration**: channel-based worker pool (`ocr_workers` config, 0 = auto) parallelizes Tesseract calls across CPU cores; eliminated double MuPDF render via nearest-neighbor downscale (200→150 DPI); Tesseract tuning knobs (`load_system_dawg`, `load_freq_dawg`, `OEM_LSTM_ONLY`)
-- Custom MuPDF 1.27.2 CGo wrapper (document open/close, page rendering, text extraction, `pdf_clean_file`)
+- Custom MuPDF 1.28.0 CGo wrapper (document open/close, page rendering, text extraction, `pdf_clean_file`)
 - **Raster image ingestion (PNG, JPEG, TIFF)** — Pure Go image decoding (`image.Decode` + `golang.org/x/image/tiff`) with alpha-on-white compositing, routed through the same gosseract OCR subprocess. 50MP dimension limit. Originals preserved with their real extension (`documentID.png`), processed output always `.pdf`.
 - **Word-processor ingestion (DOCX, ODT)** — Pure Go text extraction via `archive/zip` + `encoding/xml` parsing of `word/document.xml` (DOCX) or `content.xml` (ODT). CompositeExtractor wraps PDF + DOCX + ODT extractors dispatching by MIME type. Non-PDF files skip PDF optimization and preserve their original extension (`.docx`/`.odt`) when no OCR or optimization occurs. PageCount=0 for native-format documents.
 - **DOCX/ODT to PDF conversion** — Optional LibreOffice headless conversion for DOCX and ODT files during ingestion. When `consumer.converter.enabled` is true, office documents are converted to PDF before text extraction, enabling PDF preview, PDF page counting, and PDF optimization. The original is preserved alongside the converted PDF. Disabled by default (opt-in). Adapter in `internal/tools/adapters/converter/`, config at `consumer.converter.{enabled,binary,timeout}`.
@@ -88,8 +88,8 @@
 - Batch cancellation: cancels pending tasks, sends SIGTERM, marks in-flight as cancelled
 - Retry support for failed tasks
 - Dedup prevention via unique partial index on active tasks (`task_type`, `dedup_key`)
-- **Runner retry + FailTask fallback**: `CompleteTask` retried 3× with exponential backoff on transient errors (SQLITE_BUSY); all retries exhausted → task is `failed` rather than stuck in `processing`
-- **`CompleteTask` status guard**: `UPDATE ... WHERE id = ? AND status = 'processing'` prevents stale completions from racing with the reclaim sweep
+- **Runner retry + FailTask fallback**: `CompleteTask` retried 3× with exponential backoff on transient errors; all retries exhausted → task is `failed` rather than stuck in `processing`
+- **`CompleteTask` status guard**: `UPDATE ... WHERE id = $1 AND status = 'processing'` prevents stale completions from racing with the reclaim sweep
 - **Age-based stale task sweep**: generic reclaim in the queue daemon resets `processing` tasks older than `consumer.reclaim.stale_task_after` (default 600s) to `pending`/`failed`, independent of batch ownership
 
 ### API Endpoints

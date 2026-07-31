@@ -2,7 +2,7 @@
 
 ## Overview
 
-The project has **60+ test packages and 370+ unit/integration tests**, with a two-tier
+The project has **20+ test packages and 370+ unit/integration tests**, with a two-tier
 run strategy:
 
 - **`make test`** (12 packages, no database required) — LLM registry, config, API types,
@@ -171,8 +171,15 @@ CGO_ENABLED=0 go test -tags "XLA,ORT" -count=1 -timeout 120s \
     ./internal/task/ \
     ./internal/service/ \
     ./internal/api/handlers/ \
-    ./internal/consumption/ \
-    ./internal/backup/
+    ./internal/consumption/
+```
+
+The `internal/backup` tests also require PostgreSQL (via `database.NewTestDB`);
+they are not part of any Makefile target and can be run manually with the same
+`TEST_DATABASE_URL` environment:
+
+```bash
+CGO_ENABLED=0 go test -tags "XLA,ORT" -count=1 ./internal/backup/
 ```
 
 ### CGo-dependent tests (`make test-cgo`)

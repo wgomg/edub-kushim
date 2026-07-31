@@ -5,7 +5,7 @@
 The search system provides two tiers of document retrieval:
 
 1. **Full-Text Search** (`GET /api/v1/documents/search`) — Keyword search using PostgreSQL tsvector with `ts_rank` ranking and `ts_headline` snippet highlighting.
-2. **Structured Search** (`POST /api/v1/documents/search`) — Combines full-text search with metadata filters (tags, people, document type, language, MIME type, date ranges, file size) and returns total count for pagination.
+2. **Structured Search** (`POST /api/v1/documents/search`) — Combines full-text search with metadata filters (tags, people, document type, language, date ranges, file size) and returns total count for pagination.
 
 Both are backed by the `search.Engine` struct which wraps database queries with sanitization and result mapping.
 
@@ -21,7 +21,7 @@ Maps database rows to API-friendly fields:
 | Field             | Type      | Source                        |
 | ----------------- | --------- | ----------------------------- |
 | `ID`              | `int64`   | `FTSDocumentRow.ID`           |
-| `DocumentID`      | `string`  | UUID from `fts5` query        |
+| `DocumentID`      | `string`  | UUID from the tsvector query  |
 | `Title`           | `string`  | Document title                |
 | `MD5Checksum`     | `string`  | MD5 hash                      |
 | `SHA512Checksum`  | `string`  | SHA512 hash                   |
@@ -177,7 +177,7 @@ Same filter logic but `SELECT COUNT(*)` for total count without ordering. Uses t
 {
   "results": [
     {
-      "document_id": "uuid",
+      "id": "uuid",
       "title": "report.pdf",
       "rank": 0.4213,
       "snippet": "The <b>budget</b> forecast...",
@@ -217,7 +217,6 @@ Collapsible panel with structured filter controls:
 - **People**: Two-stage selector (person type dropdown + name autocomplete)
 - **Document Type**: Dropdown populated from API
 - **Language**: Dropdown with common language codes
-- **MIME Type**: Dropdown with common MIME types
 - **Date Created / Date Modified**: Dual date pickers (from/to)
 - **File Size**: Text inputs with unit parsing (B, KB, MB, GB)
 - **Missing Language / Missing Type / Untagged**: Checkboxes for documents lacking language, type, or tags
@@ -257,13 +256,14 @@ Users can type structured queries directly into the search bar:
 | `author:`  | `author:"John Doe"`                    | Filter by person (type: author)            |
 | `sender:`  | `sender:acme`                          | Filter by person (type: sender)            |
 | `lang:`    | `lang:eng`                             | Filter by language code                    |
-| `mime:`    | `mime:application/pdf`                 | Filter by MIME type                        |
 | `created:` | `created:>2024-01-01` / `created:2024-01-01..2024-06-30` | Filter by creation date |
 | `modified:`| `modified:<2024-06-01`                 | Filter by modification date                |
 | `size:`    | `size:>1MB` / `size:1MB..10MB`         | Filter by file size                        |
 | `missing:` | `missing:lang` / `missing:type` / `missing:tags` | Filter by missing language, missing type, or untagged |
 
-Quoted values are supported for names with spaces: `author:"Jane Smith"`.
+Quoted values are supported for names with spaces: `author:"Jane Smith"`. Any
+`field:` prefix matching a known person type (e.g. `signatory:`, `recipient:`,
+`client:`) filters by person with that type.
 
 ---
 

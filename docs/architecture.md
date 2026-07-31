@@ -30,7 +30,7 @@ is listening, so `After=` dependents actually gate on readiness.
 
 ### 1. Queue Daemon (`kushim queue`)
 
-A long-lived daemon that manages batch processing and inbox polling. Batch consumption is driven by Postgres `LISTEN`/`NOTIFY` (via a dedicated pgxpool connection), with a 30-second safety timer as fallback. Housekeeping tasks (stale reclamation, backup scheduling) run on a separate 5-second ticker. The concurrent loops are: (a) **notification-driven consumption** — when any batch transitions to `status='queued'`, a Postgres trigger (`notify_batch_queued`) sends a `pg_notify` to the `batch_queued` channel; a dedicated `LISTEN` goroutine forwards the signal over a buffered channel, the daemon picks up the batch immediately (milliseconds) and forks a worker. (b) **safety timer** — a 30-second fallback poll in case a notification is dropped (connection blip, reconnection), guaranteeing no batch is stuck longer than 30s. (c) **stale batch reclamation** — reclaims stale batch owners (>15s heartbeat with active tasks) by signaling SIGTERM to the owner PID (if alive), quarantining tasks at or above `consumer.reclaim.max_retries` (default 3) to `failed`, resetting remaining processing→pending with an incremented attempt counter, calling `QuarantineFailedFiles` to move quarantined inbox files to `storage/errors/` and discard orphaned enrich tasks, then checking `HasPendingWork`. If the batch has remaining pending/processing/waiting tasks it is re-queued; otherwise (all tasks quarantined) it is set to `failed`. The stale owner row is then deleted (gated by `consumer.reclaim.enabled`, default `true`). (d) **stale task reclamation** — an age-based sweep that resets individual `processing` tasks back to `pending` (or `failed` if at max retries) when their `started_at` timestamp exceeds `consumer.reclaim.stale_task_after` (default 600s). This is the safety net for tasks that the runner's retry+FailTask fallback could not complete. The sweep runs at most once per `max(60s, stale_task_after/10)` to avoid unnecessary write-lock pressure. (e) **inbox polling** — periodically scans the consumption directory, deduplicates by MD5, creates `queued` batches, and lets the consumer loop pick them up. When `backup.enabled` is `true`, a **backup pool** (1 worker, 60s interval) picks up scheduled backup tasks. The main ticker and polling loop both use `backupMu.TryRLock()` to skip all operations while a backup is running, preventing concurrent data access. Re-reads config from disk on each poll tick so `consumer.polling` changes take effect without restart. Replaces the former `PollingScheduler`. Uses a PID file for single-instance enforcement and logs to `<config_dir>/logs/queue.log`. Can be daemonized via `--bg`.
+A long-lived daemon that manages batch processing and inbox polling. Batch consumption is driven by Postgres `LISTEN`/`NOTIFY` (via a dedicated pgxpool connection), with a 30-second safety timer as fallback. Housekeeping tasks (stale reclamation, backup scheduling) run on a separate 5-second ticker. The concurrent loops are: (a) **notification-driven consumption** — when any batch transitions to `status='queued'`, a Postgres trigger (`notify_batch_queued`) sends a `pg_notify` to the `batch_queued` channel; a dedicated `LISTEN` goroutine forwards the signal over a buffered channel, the daemon picks up the batch immediately (milliseconds) and forks a worker. (b) **safety timer** — a 30-second fallback poll in case a notification is dropped (connection blip, reconnection), guaranteeing no batch is stuck longer than 30s. (c) **stale batch reclamation** — reclaims stale batch owners (>15s heartbeat with active tasks) by signaling SIGTERM to the owner PID (if alive), quarantining tasks at or above `consumer.reclaim.max_retries` (default 3) to `failed`, resetting remaining processing→pending with an incremented attempt counter, calling `QuarantineFailedFiles` to move quarantined inbox files to `storage/errors/` and discard orphaned enrich tasks, then checking `HasPendingWork`. If the batch has remaining pending/processing/waiting tasks it is re-queued; otherwise (all tasks quarantined) it is set to `failed`. The stale owner row is then deleted (gated by `consumer.reclaim.enabled`, default `true`). (d) **stale task reclamation** — an age-based sweep that resets individual `processing` tasks back to `pending` (or `failed` if at max retries) when their `started_at` timestamp exceeds `consumer.reclaim.stale_task_after` (default 600s). This is the safety net for tasks that the runner's retry+FailTask fallback could not complete. The sweep runs at most once per `max(60s, stale_task_after/10)` to avoid unnecessary write-lock pressure. (e) **inbox polling** — periodically scans the consumption directory, deduplicates by MD5, creates `queued` batches, and lets the consumer loop pick them up. When `backup.enabled` is `true`, a **backup pool** (1 worker, 60s interval) picks up scheduled backup tasks. The main ticker and polling loop both use `backupMu.TryRLock()` to skip all operations while a backup is running, preventing concurrent data access. Re-reads config from disk on each poll tick so `consumer.polling` changes take effect without restart. Uses a PID file for single-instance enforcement and logs to `<config_dir>/logs/queue.log`. Can be daemonized via `--bg`.
 
 ### 2. Matcher Server (`kushim hugot`)
 
@@ -63,7 +63,7 @@ The CGo binary that performs actual document processing:
 
 - `kushim consume` — scans inbox, enqueues tasks, direct-fallback if queue empty
 - `kushim consume --batch <id>` — resumes a previously enqueued batch (used by `kushim queue` and `edub`'s API resume handler)
-- `kushim queue` — starts the batch queue daemon for background consumption and inbox polling (replaces the former `PollingScheduler`)
+- `kushim queue` — starts the batch queue daemon for background consumption and inbox polling
 - `kushim hugot` — starts the matcher RPC server
 - `kushim setup` — setup wizard
 - `kushim backup` — create a backup of database, config, and storage files
@@ -200,7 +200,7 @@ succeeds — `activateChildEnrich` re-activates the discarded enrich task to
    on failure.
  3. **LLM Classification (first pass)** — the reduced content, along with available document types
      and tag suggestions, is sent to the configured LLM adapter. The adapter is selected by
-     `llm.adapter` (`openai-compatible`, `anthropic`, or `custom`) and the request body
+     `llm.adapter` (`openai-compatible` or `anthropic`) and the request body
      is built dynamically from the model's capability flags (reasoning, structured output,
      temperature, etc.) looked up from the model catalog registry. Returns structured JSON:
      title, type, tags, people (with types like author, sender), language.
@@ -259,7 +259,7 @@ The project provides two setup modes:
 
 When `kushim setup` is invoked without the `--cli` flag, a standalone HTTP server starts
 on `0.0.0.0:8420` serving an embedded SvelteKit SPA (`web-wizard/`). The wizard is a
-five-step guided flow:
+six-step guided flow:
 
 1. **Config directory** — user specifies where `config.yaml`, database, and models are stored
 2. **Consumer settings** — OCR engine, languages, timeout; text extractor engine/timeout; PDF optimizer
@@ -271,7 +271,8 @@ five-step guided flow:
    text reducer engine/timeout/target-words; enricher workers
 4. **Progress** — background tasks download tessdata language files and the Hugot ONNX model;
    the UI polls `GET /wizard/config/status` every 3 seconds
-5. **Completion** — all downloads are finished; the server is ready to run.
+5. **Admin user** — optionally create an admin user account (username + password)
+6. **Completion** — all downloads are finished; the server is ready to run.
    If any required external tools are missing, a notice lists what to install
    (engine binaries, required companions like tesseract/unpaper, and the curl
    prerequisite). The wizard does not block completion — tools can be installed
@@ -348,8 +349,8 @@ exported package-level vars in `internal/config/config.go`:
 | `PdfOptimizer`    | `MuPDF` (`"mupdf"`), `GS` (`"gs"`)                                                                               |
 | `TextExtractor`   | `MuPDF` (`"mupdf"`), `GoPdf` (`"gopdf"`), `PdfToText` (`"pdftotext"`)                                            |
 | `TextReducer`     | `TextRank` (`"textrank"`)                                                                                        |
-The content analyzer no longer uses engine constants — it selects an adapter via `llm.adapter`
-(`openai-compatible`, `anthropic`, `custom`) resolved dynamically from the
+The content analyzer does not use engine constants — it selects an adapter via `llm.adapter`
+(`openai-compatible`, `anthropic`) resolved dynamically from the
 capability registry.
 
 A corresponding `AvailableEngines` map provides structured engine listings for the frontend
@@ -489,7 +490,7 @@ clear upgrade path to Meilisearch, ZincSearch, or Elasticsearch if needed.
 | External matcher process          | Hugot embedding model runs as a separate process (`kushim hugot`) over a Unix socket. The API server (`edub`) is pure Go with no CGo dependencies.                                                                                                                                                                                 |
 | Forked processing workers         | The `kushim queue` daemon forks `kushim consume --batch` as child processes. Clean process isolation, no in-process heartbeat/ownership management needed. `edub` only enqueues tasks — it never forks directly.                                                                                                                                             |
 | `CGO_ENABLED=0` for `edub`        | `edub` is compiled without CGo, making it a lightweight, statically linked binary. No runtime dependency on C libraries. `kushim` retains all CGo for Tesseract/Leptonica/MuPDF/Hugot.                                                                                                                                             |
-| Queue-driven batch processing     | Both API consume endpoints create batches with `status='queued'` and return immediately. The `kushim queue` daemon polls for queued batches (via Postgres LISTEN/NOTIFY), enforces its own concurrency limit (`server.max_concurrent_batches`, default 4), and forks workers. No in-process semaphore needed in `edub`.                                                     |
+| Queue-driven batch processing     | Both API consume endpoints create batches with `status='queued'` and return immediately. The `kushim queue` daemon consumes queued batches (via Postgres LISTEN/NOTIFY with a 30s safety timer), enforces its own concurrency limit (`server.max_concurrent_batches`, default 4), and forks workers. No in-process semaphore needed in `edub`.                                                     |
 | CGo-heavy adapters run in subprocesses | Heartbeat goroutines were observed not firing during long-running Tesseract/MuPDF calls (the root cause may be OS thread exhaustion rather than scheduler preemption — Go has had asynchronous preemption since 1.14). Regardless of mechanism, crash containment and the `CGO_ENABLED=0` boundary independently justify the subprocess approach. Following the `internal-mupdf-clean` and `kushim hugot` precedents, any adapter wrapping a substantial third-party native library — one that can run for more than a second or two, or that may have its own internal threading or crash surface — gets its own subcommand and is forked as a child process via `exec.CommandContext`. Thin, fast, well-understood CGo calls (page counts, plain text extraction) stay in-process. |
 
 ---
@@ -516,4 +517,4 @@ clear upgrade path to Meilisearch, ZincSearch, or Elasticsearch if needed.
 - **Hugot ORT backend**: ONNX Runtime downloaded at runtime on first use — requires internet access. The Go backend has no runtime deps. ORT's CPU memory arena and memory pattern pre-allocation are disabled by default (`HugotConfig.CpuMemArena=false`, `MemPattern=false`) to cap idle RSS at ~2.2–2.5 GB rather than retaining peak-inference buffers (~4–5 GB). This adds ~10–20% per-inference latency from buffer re-allocation, which is dwarfed by text extraction, OCR, and LLM API latency in the enrichment pipeline. Toggle to `true` in `DefaultConfig` to restore ORT defaults if performance is unacceptable.
 - **Role enforcement**: All API routes are gated by `RequireRole` middleware. The auth middleware reads the user's role from the database (for both JWT and API key paths) and injects it into request context. Three roles exist: `admin` (user management, logs), `editor` (all mutations, batch operations, consume), and `viewer` (read-only access). Self-service `/me` endpoints are accessible to any authenticated user. The `auth_enabled: false` config bypasses all middleware, making roles irrelevant.
 - **Matcher as external process**: The tag matcher runs as a separate process (`kushim hugot`). If it's not running, tag CRUD operations return `503 Service Unavailable`, and enrichment falls back to LLM-only tags (no semantic tag matching). The matcher must be started before `edub` for full functionality.
-- **Queue daemon forks kushim**: The `kushim queue` daemon finds the `kushim` binary in PATH or as a sibling of the `edub` binary. If `kushim` is not found, batch processing fails. The API consume endpoints no longer fork directly — they create `queued` batches for the daemon to pick up.
+- **Queue daemon forks kushim**: The `kushim queue` daemon forks workers by re-executing its own binary (`os.Args[0]`), so `kushim` must be on PATH or invoked with a resolvable path. If the re-exec fails, batches remain queued and are not processed. The API consume endpoints do not fork directly — they create `queued` batches for the daemon to pick up.

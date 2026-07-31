@@ -5,10 +5,10 @@
 ### Structs
 
 - `Consumer`
-  - **Fields**: `config *config.Config`, `logger *utils.Logger`, `db *sql.DB`, `runner *tools.Runner`
+  - **Fields**: `config *config.Config`, `logger *utils.Logger`, `client *database.Client`, `runner runner` (interface, satisfied by `*tools.Runner`)
    - **Methods**:
-     - `NewConsumer(cfg, logger, db) (*Consumer, error)` — Validates `PdfOptimizer.Fallback` at startup
-     - `NewConsumerWithRunner(cfg, logger, db, runner) (*Consumer, error)` — DI variant
+     - `NewConsumer(cfg, logger, client) (*Consumer, error)` — Validates `PdfOptimizer.Fallback` at startup
+     - `NewConsumerWithRunner(cfg, logger, client, runner) (*Consumer, error)` — DI variant
       - `Process(ctx, file File, documentID string) (File, error)` — Convert → Extract → OCR fallback → optimize → store (creates document with PageCount, WordCount, CharCount). For image MIME types (`image/*`), skips text extraction entirely and routes directly to OCR.
        - `convertToPdf(ctx, file File, documentID string) (File, error)` — When `consumer.converter.enabled` and the file MIME is DOCX/ODT, runs LibreOffice headless to produce a PDF. Sets `file.ConvertedPdfTmpPath`. Pipeline re-routes text extraction, page counting, and optimization to the converted PDF. The original office document is preserved in storage.
        - `extractText(ctx, file File, documentID string) (File, error)` — For PDFs: uses `minTextDensityRatio` (0.001) to decide OCR vs text. For images (`image/*`): sets `PageCount=1`, calls OCR immediately without attempting text extraction. For DOCX/ODT with the converter disabled: extracts text via `CompositeExtractor` (MIME-dispatched to the DOCX or ODT adapter), skips PDF optimization, and stores the processed file with its original extension (`.docx`/`.odt`) since no OCR or optimization occurs.
@@ -37,7 +37,7 @@
 
 - `FileFromPath` builds a `File` from a single path with checksums, MIME detection, file info
 
-> **Note**: The file-scanning functionality was consolidated into `utils.ListFilePaths` (`internal/utils/files.go`) for use by the consume handler, replacing the former `internal/fileresolver/` package.
+> **Note**: File scanning for the consume handler lives in `utils.ListFilePaths` (`internal/utils/files.go`).
 
 ---
 
@@ -56,9 +56,9 @@
 
 ### Struct
 
-- `Enricher` — `config`, `logger`, `db`, `runner`, `services *types.CrudServices`
+- `Enricher` — `config`, `logger`, `queries *database.Queries`, `runner`, `services *types.CrudServices`
   - **Methods**:
-    - `NewEnricher(cfg, logger, db, services, matcher tagmatcher.Matcher) (*Enricher, error)` — Creates runner via `NewRunnerWithMatcher` with textreducer, contentanalyzer, tagmatcher tools; matcher is either a direct `*Hugot` (in `kushim` CLI) or a `*tagmatch.MatcherClient` (in `edub` API server) — both satisfy the same `tagmatcher.Matcher` interface.
+    - `NewEnricher(cfg, logger, queries, services, matcher tagmatcher.Matcher) (*Enricher, error)` — Creates runner via `NewRunnerWithMatcher` with textreducer, contentanalyzer, tagmatcher tools; matcher is either a direct `*Hugot` (in `kushim` CLI) or a `*tagmatch.MatcherClient` (in `edub` API server) — both satisfy the same `tagmatcher.Matcher` interface.
      - `Enrich(ctx, document) (*json.RawMessage, error)` — Full pipeline:
        1. Dual text reduction: LLM-targeted and tag-matching-targeted (via `targetWordCount`)
        2. Fetch doc types, people types from DB; all tags via `services.Tag.ListAll`
@@ -96,7 +96,7 @@
   - **Methods**: `NewEngine(logger, queries) *Engine`, `Search(ctx, query, limit, offset) ([]Result, error)`
 
 - `Result`
-  - **Fields**: `DocumentID`, `Title`, `MD5Checksum`, `SHA512Checksum`, `FileSize`, `Language`, `DocumentTypeID`, `CreatedAt`, `ModifiedAt`, `OriginalPath`, `StoragePath`, `Snippet`, `Rank`
+  - **Fields**: `ID int64`, `DocumentID`, `Title`, `MD5Checksum`, `SHA512Checksum`, `FileSize`, `PageCount`, `WordCount`, `CharCount`, `Language`, `DocumentTypeID`, `CreatedAt`, `ModifiedAt`, `OriginalPath`, `StoragePath`, `Snippet`, `Rank`
 
 ### Function
 

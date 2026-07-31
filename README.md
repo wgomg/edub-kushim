@@ -16,7 +16,7 @@ git clone <repo-url> && cd edub-kushim
 docker compose up
 ```
 
-Open http://localhost:3000, configure your LLM provider in `/settings`, and drop PDFs into `./inbox/`.
+Open http://localhost:3001, configure your LLM provider in `/settings`, and drop PDFs into `./inbox/`.
 
 The first build compiles MuPDF, Tesseract, and other C libraries from source (~minutes); subsequent builds are cached by Docker.
 
@@ -120,7 +120,7 @@ flowchart TB
     end
 
     subgraph Queue["kushim queue daemon"]
-        Q["polls & forks workers"]
+        Q["LISTEN/NOTIFY + forks workers"]
     end
 
     subgraph Worker["kushim consume --batch\n(forked worker)"]
@@ -139,7 +139,7 @@ flowchart TB
     EP -.->|"encode/match/consolidate"| H
 ```
 
-Documents are searchable immediately via PostgreSQL full-text search (tsvector, Phase 3) or structured search; enrichment (classification, tagging, people extraction) happens asynchronously.
+Documents are searchable immediately via PostgreSQL full-text search (tsvector) or structured search; enrichment (classification, tagging, people extraction) happens asynchronously.
 
 ### Process Architecture
 
@@ -148,7 +148,7 @@ The system runs four cooperating processes:
 | Process | Binary | CGo | Role |
 |---------|--------|-----|------|
 | `edub` | edub | No | REST API server, web UI, enqueues tasks |
-| `kushim queue` | kushim | Yes | Queue daemon — polls for queued batches, forks workers |
+| `kushim queue` | kushim | Yes | Queue daemon — consumes queued batches (Postgres LISTEN/NOTIFY + 30s safety timer), forks workers |
 | `kushim consume` (forked) | kushim | Yes | Document processing: extract → OCR → optimize → store |
 | `kushim hugot` | kushim | Yes | Matcher RPC server over Unix socket (Hugot embeddings) |
 
@@ -230,7 +230,7 @@ make test-cgo-musl     # podman: kushim-musl-builder
 Two SvelteKit SPAs live in parallel:
 
 - **Main app** (`web/`) — dashboard, documents, settings, users, tags, people, logs, login
-- **Setup wizard** (`web-wizard/`) — five-step guided setup, embedded in the `kushim` binary
+- **Setup wizard** (`web-wizard/`) — six-step guided setup, embedded in the `kushim` binary
 
 For development with live reload:
 

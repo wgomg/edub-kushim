@@ -17,7 +17,7 @@
 
 `InitializeSchema(db) error` — Configures goose (`SetBaseFS`, `SetDialect("postgres")`), runs pending migrations via `goose.Up()` from the embedded `sql/schema/migrations/` directory, then runs seeders: `tags`, `document-types`, `people-types`. On a fresh database, the baseline migration (`00001_baseline.sql`) creates all tables and indexes (PostgreSQL syntax). On existing databases, only unapplied migrations are executed.
 
-> The baseline uses PostgreSQL DDL (`GENERATED ALWAYS AS IDENTITY`, `TIMESTAMPTZ`, `JSONB`). Connection and goose dialect are now PostgreSQL (Phase 2).
+> The baseline uses PostgreSQL DDL (`GENERATED ALWAYS AS IDENTITY`, `TIMESTAMPTZ`, `JSONB`). Connection and goose dialect are PostgreSQL.
 
 `ResetDatabase(db) error` — Rolls back all migrations via `goose.Reset()` (down → up), then re-runs seeders. Used by `kushim setup --reset-database`.
 
@@ -267,8 +267,9 @@ instead of plain `INSERT` to avoid duplicate-key errors on re-enrichment.
 The consolidated baseline (`00001_baseline.sql`) creates the initial schema. New schema changes
 after the baseline are written as numbered migration files (starting at `00002`). Current
 migrations: `00001_baseline.sql`, `00002_tsvector.sql`, `00003_tsvector_index.sql`,
-`00004_listen_notify.sql`, `00005_backup_lock.sql`. Goose tracks which versions have been
-applied in the `goose_db_version` table.
+`00004_listen_notify.sql`, `00005_backup_lock.sql`, `00006_rename_mime_type.sql`
+(`document.mime_type` / `orphaned_file.mime_type` → `original_type`). Goose tracks which
+versions have been applied in the `goose_db_version` table.
 
 ## Migration Version Table
 

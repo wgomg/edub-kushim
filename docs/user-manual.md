@@ -20,7 +20,7 @@ git clone <repo-url> && cd edub-kushim
 docker compose up
 ```
 
-Open http://localhost:3000, configure your LLM provider in `/settings`, and drop PDFs into `./inbox/`. The first build compiles everything from source (~minutes); subsequent builds are cached.
+Open http://localhost:3001, configure your LLM provider in `/settings`, and drop PDFs into `./inbox/`. The first build compiles everything from source (~minutes); subsequent builds are cached.
 
 Two modes:
 
@@ -60,23 +60,24 @@ Print the application version.
 
 ```
 kushim version
-Document Management System v2.3.0
+Document Management System v2.7.0
 ```
 
 ### `kushim setup`
 
 Generate a config file, create required directories, initialize the PostgreSQL
 database schema (auto-creates the database if it doesn't exist), download OCR language
-download the Hugot embedding model (`BAAI/bge-m3`).
+data, and download the Hugot embedding model (`BAAI/bge-m3`).
 
 By default, `kushim setup` launches a **web-based setup wizard** at
-`http://0.0.0.0:8420`. The wizard provides a five-step guided flow:
+`http://0.0.0.0:8420`. The wizard provides a six-step guided flow:
 
 1. **Config directory** — specify where configuration, database, and models are stored
-2. **Settings** — choose OCR engine, add languages, configure worker counts, select supported file types, enable the DOCX/ODT converter
-3. **Progress** — shows download progress for tessdata and Hugot model
-4. **Admin user** — optionally create an admin user account (username + password)
-5. **Completion** — ready to run `edub` to start the server
+2. **Consumer settings** — choose OCR engine, add languages, configure worker counts, select supported file types, enable the DOCX/ODT converter
+3. **Enricher settings** — LLM provider/model, tag matcher, text reducer
+4. **Progress** — shows download progress for tessdata and Hugot model
+5. **Admin user** — optionally create an admin user account (username + password)
+6. **Completion** — ready to run `edub` to start the server
 
 Use `--cli` for terminal-based setup in headless or CI environments:
 
@@ -279,10 +280,9 @@ or restarting a background batch.
 kushim consume --batch 550e8400-e29b-41d4-a716-446655440000
 ```
 
-Output on resume:
+Output on resume (progress lines are printed only for tasks that change state):
 
 ```
-Resuming batch 550e8400-e29b-41d4-a716-446655440000 (2 pending)...
   [2/3] consume  invoice.pdf ... done
   [3/3] consume  contract.pdf ... done
 
@@ -296,16 +296,12 @@ Batch 550e8400-e29b-41d4-a716-446655440000 is paused due to an LLM provider cred
 Resolve the billing issue, then re-queue the batch and run this command again.
 ```
 
-If the batch is already finished:
+If the batch is already finished, the command re-acquires it, finds no
+pending work, and prints the summary with zero progress lines. If the batch
+is being processed by another process, the command refuses:
 
 ```
-batch already finished
-```
-
-If the batch does not exist:
-
-```
-batch not found
+batch 550e8400-e29b-41d4-a716-446655440000 is being processed by PID 12345 (use --force to override)
 ```
 
 ### `kushim search`
@@ -357,11 +353,11 @@ kushim task list --status pending --limit 50
 Output:
 
 ```
-TASK ID                              STATUS       BATCH        FILE
+TASK ID                              TYPE     STATUS       BATCH        FILE
 --------------------------------------------------------------------------------
-660e8400-e29b-41d4-a716-446655440001 completed    550e8400-e2… report.pdf
-770e8400-e29b-41d4-a716-446655440002 completed    550e8400-e2… invoice.pdf
-880e8400-e29b-41d4-a716-446655440003 failed       550e8400-e2… contract.pdf
+660e8400-e29b-41d4-a716-446655440001 consume  completed    550e8400-e2… report.pdf
+770e8400-e29b-41d4-a716-446655440002 enrich   completed    550e8400-e2… invoice.pdf
+880e8400-e29b-41d4-a716-446655440003 consume  failed       550e8400-e2… contract.pdf
 ```
 
 ### `kushim task status`
@@ -376,35 +372,29 @@ Output:
 
 ```
 Task ID:    660e8400-e29b-41d4-a716-446655440001
+Type:       consume
 Batch ID:   550e8400-e29b-41d4-a716-446655440000
 Status:     completed
 File:       report.pdf
 Created:    2024-03-19T10:30:00Z
 Started:    2024-03-19T10:30:05Z
 Completed:  2024-03-19T10:30:12Z
-Document: 550e8400-e29b-41d4-a716-446655440000
+Document ID: 550e8400-e29b-41d4-a716-446655440000
 ```
-
 Note: `Error:` only appears when the task has failed.
-
-```
 
 ### `kushim task retry`
 
 Reset a failed task's status to `pending` so a worker retries it.
 
 ```
-
 kushim task retry 880e8400-e29b-41d4-a716-446655440003
-
 ```
 
 Output:
 
 ```
-
 Task "880e8400-e29b-41d4-a716-446655440003" retried — status reset to pending
-
 ```
 
 Only failed tasks can be retried. The task is picked up on the next
@@ -421,7 +411,6 @@ no authentication required (CLI-only).
 kushim user create --username admin --password secret123 --role admin
 kushim user create --username bob --password "my$ecureP@ss1" --role editor
 ```
-
 Flags:
 
 | Flag         | Required | Default | Description                                                   |
@@ -467,15 +456,14 @@ hosts the Hugot embedding model and provides semantic tag matching,
 encoding, and consolidation services to both the API server and CLI workers.
 
 ```
-
 kushim hugot
 kushim hugot --socket /path/to/custom/matcher.sock
-
 ```
 
 | Flag       | Default                                        | Description                     |
 | ---------- | ---------------------------------------------- | ------------------------------- |
 | `--socket` | `<config_dir>/kushim-hugot.sock`             | Unix socket path for RPC        |
+| `--bg`     | `false`                                        | Run in the background (re-executes without `--bg`) |
 
 The server listens on the Unix socket and exposes the following RPC
 endpoints:
@@ -599,7 +587,7 @@ Response `200`:
 ```json
 {
   "status": "healthy",
-  "version": "2.3.0",
+  "version": "2.7.0",
   "time": "2024-03-19T10:30:00Z"
 }
 ````
@@ -633,8 +621,7 @@ Response `200` — single [DocumentResponse](#documentresponse).
 GET /api/v1/documents/{id}/file
 ```
 
-Returns the raw PDF file bytes for preview. Response `200` with `Content-Disposition: inline`.
-Returns `415 Unsupported Media Type` for non-PDF documents.
+Returns the raw processed file bytes for preview. Response `200` with `Content-Disposition: inline`.
 
 | Query param | Default | Description                                                                                                    |
 | ----------- | ------- | -------------------------------------------------------------------------------------------------------------- |
@@ -885,7 +872,7 @@ Response `200` — `SearchResponse`:
 {
   "results": [
     {
-      "document_id": "550e8400-e29b-41d4-a716-446655440000",
+      "id": "550e8400-e29b-41d4-a716-446655440000",
       "title": "report.pdf",
       "rank": 0.4213,
       "snippet": "The <b>budget</b> forecast...",
@@ -956,18 +943,18 @@ Response `200`:
 ```json
 {
   "adapters": {
-    "openai-compatible": ["openai", "deepseek", "mistral", "groq"],
-    "anthropic": ["anthropic"]
+    "anthropic": ["anthropic"],
+    "openai-compatible": ["deepseek", "mistral", "openai", "qwen", "zhipu"]
   },
   "providers": {
     "openai": [
       {
-        "id": "gpt-4o",
+        "id": "gpt-5.4-nano",
         "capabilities": {
-          "supports_reasoning": false,
-          "max_input_tokens": 128000,
-          "max_output_tokens": 16384,
-          "supports_temperature": true,
+          "supports_reasoning": true,
+          "max_input_tokens": 400000,
+          "max_output_tokens": 128000,
+          "supports_temperature": false,
           "supports_response_schema": true
         }
       }
@@ -979,7 +966,7 @@ Response `200`:
           "supports_reasoning": true,
           "reasoning_efforts": ["high", "max"],
           "max_input_tokens": 1000000,
-          "max_output_tokens": 8192,
+          "max_output_tokens": 384000,
           "supports_temperature": true,
           "supports_response_schema": true
         }
@@ -1251,7 +1238,7 @@ Response `202` (files accepted):
 {
   "batch_id": "550e8400-e29b-41d4-a716-446655440000",
   "accepted": 3,
-  "rejected": [{ "name": "notes.docx", "reason": "unsupported type: .docx" }],
+  "rejected": [{ "name": "notes.txt", "reason": "unsupported type: .txt" }],
   "_links": {
     "tasks": "/api/v1/tasks?batch=550e8400-e29b-41d4-a716-446655440000"
   }
@@ -1304,15 +1291,19 @@ Response `200`:
     "processing": 1,
     "completed": 1,
     "failed": 1,
-    "cancelled": 0
+    "cancelled": 0,
+    "discarded": 0,
+    "orphaned": false
   },
   "tasks": [
     {
       "task_id": "660e8400-e29b-41d4-a716-446655440001",
       "batch_id": "550e8400-e29b-41d4-a716-446655440000",
+      "task_type": "consume",
       "file_name": "report.pdf",
+      "payload_doc_id": "",
       "status": "completed",
-      "document_id": "550e8400-e29b-41d4-a716-446655440000",
+      "document_id": 42,
       "error": null,
       "created_at": "2024-03-19T10:30:00Z",
       "started_at": "2024-03-19T10:30:05Z",
@@ -1357,7 +1348,9 @@ Response `200`:
       "processing": 1,
       "completed": 1,
       "failed": 1,
-      "cancelled": 0
+      "cancelled": 0,
+      "discarded": 0,
+      "orphaned": false
     }
   ]
 }
@@ -1380,7 +1373,9 @@ Response `200`:
   "processing": 1,
   "completed": 1,
   "failed": 1,
-  "cancelled": 0
+  "cancelled": 0,
+  "discarded": 0,
+  "orphaned": false
 }
 ```
 
@@ -1438,7 +1433,7 @@ Content-Type: application/json
 | Field      | Type     | Required | Description                                        |
 | ---------- | -------- | -------- | -------------------------------------------------- |
 | `username` | `string` | yes      | Unique username                                    |
-| `password` | `string` | yes      | Password, minimum 8 characters                     |
+| `password` | `string` | yes      | Password, minimum 12 characters, must contain at least one uppercase letter, lowercase letter, digit, and special character |
 | `role`     | `string` | no       | Role assignment: `"admin"`, `"editor"`, `"viewer"`. Defaults to `"viewer"` |
 
 Validation:
@@ -1446,8 +1441,9 @@ Validation:
 | Condition                    | Response                             |
 | ---------------------------- | ------------------------------------ |
 | Empty username               | `400` — `"Username is required"`     |
-| Empty password               | `400` — `"Password is required"`     |
-| Password < 8 characters      | `400` — `"Password must be at least 8 characters"` |
+| Empty password               | `400` — `"password is required"`     |
+| Password < 12 characters     | `400` — `"password must be at least 12 characters"` |
+| Password lacks uppercase, lowercase, digit, or special character | `400` — `"password must contain at least one uppercase letter, lowercase letter, digit, and special character"` |
 | Duplicate username           | `409` — `{"error":"username already exists"}` |
 
 Response `201`:
@@ -1527,7 +1523,8 @@ Validation:
 | Condition                    | Response                             |
 | ---------------------------- | ------------------------------------ |
 | Empty username               | `400` — `"Username is required"`     |
-| Password < 8 chars (if set) | `400` — `"Password must be at least 8 characters"` |
+| Password < 12 chars (if set) | `400` — `"password must be at least 12 characters"` |
+| Password lacks uppercase, lowercase, digit, or special character (if set) | `400` — `"password must contain at least one uppercase letter, lowercase letter, digit, and special character"` |
 | Invalid role (if set)       | `400` — validation error             |
 | Duplicate username           | `409` — `{"error":"username already exists"}` |
 | Non-existent user            | `404`                                |
@@ -1640,7 +1637,7 @@ Response `200`:
 
 ```json
 {
-  "document_id": "550e8400-e29b-41d4-a716-446655440000",
+  "id": "550e8400-e29b-41d4-a716-446655440000",
   "title": "document.pdf",
   "md5_checksum": "d41d8cd98f00b204e9800998ecf8427e",
   "sha512_checksum": "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e",
@@ -1658,7 +1655,7 @@ additional fields are populated:
 
 ```json
 {
-  "document_id": "550e8400-e29b-41d4-a716-446655440000",
+  "id": "550e8400-e29b-41d4-a716-446655440000",
   "title": "document.pdf",
   "md5_checksum": "d41d8cd98f00b204e9800998ecf8427e",
   "sha512_checksum": "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e",
@@ -1707,15 +1704,20 @@ Same as DocumentResponse with these extra fields:
 {
   "task_id": "660e8400-e29b-41d4-a716-446655440001",
   "batch_id": "550e8400-e29b-41d4-a716-446655440000",
+  "task_type": "consume",
   "file_name": "report.pdf",
+  "payload_doc_id": "550e8400-e29b-41d4-a716-446655440000",
   "status": "completed",
-  "document_id": "550e8400-e29b-41d4-a716-446655440000",
+  "document_id": 42,
   "error": null,
   "created_at": "2024-03-19T10:30:00Z",
   "started_at": "2024-03-19T10:30:05Z",
   "completed_at": "2024-03-19T10:30:12Z"
 }
 ```
+
+`document_id` is the numeric database row ID; `payload_doc_id` carries the
+document UUID when the task payload references one.
 
 #### BatchSummaryResponse
 
@@ -1729,9 +1731,12 @@ Same as DocumentResponse with these extra fields:
   "completed": 1,
   "failed": 1,
   "cancelled": 0,
-  "discarded": 0
+  "discarded": 0,
+  "orphaned": false
 }
 ```
+
+`owner_state` (`"none"`, `"live"`, `"stale"`) is included when set.
 
 ---
 
@@ -1739,7 +1744,9 @@ Same as DocumentResponse with these extra fields:
 
 A commented example config with all supported keys and defaults is available at
 [`config.example.yaml`](../config.example.yaml) in the project root. The file below
-is what `kushim setup` generates at `~/.config/edub-kushim/config.yaml`.
+mirrors that reference and is what `kushim setup` generates at
+`~/.config/edub-kushim/config.yaml` (the generated file only contains the keys
+the setup flow writes; everything else falls back to defaults).
 
 ```yaml
 app:
@@ -1784,7 +1791,7 @@ storage:
 consumer:
   workers: 1 # concurrent file processing workers
   max_files_per_batch: 10 # max files per consume batch (0 = unlimited)
-  supported_files: ['.pdf', '.png', '.jpg', '.jpeg', '.tiff', '.tif'] # file extensions to process
+  supported_files: ['.pdf', '.png', '.jpg', '.jpeg', '.tiff', '.tif', '.docx', '.odt'] # file extensions to process
   polling:
     enabled: false # auto-consume on a schedule
     interval: 5 # polling interval in minutes
@@ -1828,7 +1835,7 @@ enricher:
     #   head_words: 600
     #   tail_words: 400
     llm:
-      adapter: 'openai-compatible' # openai-compatible | anthropic | custom
+      adapter: 'openai-compatible' # openai-compatible | anthropic
       provider: 'openai'           # auto-populated from model catalog
       model: 'gpt-4o'              # auto-populated from model catalog
       # token: 'sk-...'
@@ -2145,21 +2152,24 @@ Hugot model). Logs are written to stdout. Graceful shutdown on SIGINT/SIGTERM.
 When `POST /api/v1/consume` or `POST /api/v1/consume/upload` is called, the
 server enqueues tasks in the database with `status='queued'`; the `kushim queue` daemon picks up the batch and **forks** `kushim consume --batch <id>`
 
-The maximum number of concurrent workers is controlled by
-`server.max_concurrent_batches` (default 2). If the limit is reached,
-subsequent consume requests receive `429 Too Many Requests`.
+The maximum number of concurrent worker processes is controlled by
+`server.max_concurrent_batches` (default 4). The `kushim queue` daemon enforces
+the limit — additional queued batches wait until a worker slot frees up.
 
 ```bash
 # Check version
 edub version
-# Document Management System v2.3.0
+# Document Management System v2.7.0
 
 # Start server (default when no command is given)
 edub
 ```
 
-The `kushim` binary must be available in PATH or as a sibling of the `edub`
-binary. If it is not found, consume requests will fail with a 500 error.
+The `kushim` binary must be runnable from PATH (or the queue daemon must be
+started with a resolvable `os.Args[0]`, e.g. a full path) because the daemon
+re-execs its own binary to fork workers. If `kushim queue` cannot re-exec,
+batches stay queued and are never processed — the API consume endpoints still
+accept and enqueue files.
 
 ## Settings Page
 
@@ -2178,12 +2188,11 @@ A single-page form for all user-configurable settings:
 - **Text extractor**: engine, timeout
 - **PDF optimizer**: engine, fallback, timeout
 - **Enricher**: workers
-- **Content analyzer (LLM)**: enabled toggle, timeout, adapter (openai-compatible/anthropic/custom),
+- **Content analyzer (LLM)**: enabled toggle, timeout, adapter (openai-compatible/anthropic),
   provider (filtered by adapter), model (filtered by provider, loaded from model catalog),
-  token (hidden for Ollama), temperature, pause on credit error toggle,
+  token, temperature, pause on credit error toggle,
   reasoning toggle (shown when model supports it),
-  reasoning effort (shown when reasoning enabled), endpoint override (collapsed advanced section),
-  custom adapter fields (URL, request body template, response path),
+  reasoning effort (shown when reasoning enabled),
   doc type refinement (enabled, head words, tail words)
 - **Tag matcher**: engine, timeout, reduce target words, chunk size, Hugot model,
   Hugot backend (ort/GO)
@@ -2211,7 +2220,7 @@ required tools are not installed, with a link to the settings page.
 The Users tab provides user account management:
 
 - **DataTable** listing all users with Username, Created At, and Actions (edit, delete) columns
-- **Create User** button opens a modal with Username (required) and Password (required, min 8 characters) fields
+- **Create User** button opens a modal with Username (required) and Password (required; the server enforces a 12-character minimum plus uppercase/lowercase/digit/special-character rules)
 - **Edit** button opens a modal with Username pre-filled and Password optional (placeholder: "Leave blank to keep current")
 - **Delete** opens a confirmation dialog; on confirm the user is permanently removed
 - Pagination controls with configurable page sizes (10/25/50/100)

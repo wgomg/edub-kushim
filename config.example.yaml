@@ -89,7 +89,7 @@ enricher:
     #   head_words: 600
     #   tail_words: 400
     llm:
-      adapter: 'openai-compatible' # openai-compatible | anthropic | custom
+      adapter: 'openai-compatible' # openai-compatible | anthropic
       provider: 'openai'           # auto-populated from model catalog
       model: 'gpt-4o'              # auto-populated from model catalog
       # token: ''

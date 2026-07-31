@@ -37,7 +37,7 @@ type ContentAnalyzer interface {
 
 ### Factory
 
-`NewContentAnalyzer(logger, cfg, llmCfg, promptTemplate, registry)` — Selects adapter by `llmCfg.Adapter` using a capability registry. The adapter is chosen from the `llmCfg.Adapter` field (`openai-compatible`, `anthropic`, `custom`). Capabilities are looked up from the `registry` via `registry.Lookup(llmCfg.Provider, llmCfg.Model)` and passed to each adapter for dynamic request building (stripping unsupported parameters). `promptTemplate` is a custom Go `text/template` string; empty/missing means use the built-in default.
+`NewContentAnalyzer(logger, cfg, llmCfg, promptTemplate, registry)` — Selects adapter by `llmCfg.Adapter` using a capability registry. The adapter is chosen from the `llmCfg.Adapter` field: `anthropic` dispatches to `NewLlmAnthropic`, anything else to the `openai-compatible` adapter (`NewLlmOpenAiCompatible`). Capabilities are looked up from the `registry` via `registry.Lookup(llmCfg.Provider, llmCfg.Model)` and passed to each adapter for dynamic request building (stripping unsupported parameters). `promptTemplate` is a custom Go `text/template` string; empty/missing means use the built-in default.
 
 ---
 
@@ -70,7 +70,7 @@ Both `Analyze()` and `AnalyzeDocType()` call `checkContentTooLarge` with their c
 
 ---
 
-## `adapters/contentanalyzer/llm_openai_compatible.go`
+## `adapters/contentanalyzer/openai_compatible.go`
 
 ### Struct
 
@@ -82,7 +82,7 @@ Both `Analyze()` and `AnalyzeDocType()` call `checkContentTooLarge` with their c
   - Strips `reasoning_effort` if `!caps.SupportsReasoning`
   - Strips `temperature` if `!caps.SupportsSamplingParams`
   - Uses `response_format: {type: "json_object"}` only when `caps.SupportsResponseSchema`
-- Default provider URL used unless `llmCfg.Endpoint` override is set
+- Default provider URL from the registry's `ProviderDefaultURL(provider)`
 - Token usage from `usage` field
 
 ---
@@ -96,10 +96,10 @@ Both `Analyze()` and `AnalyzeDocType()` call `checkContentTooLarge` with their c
 - System message via `system` field, user message via `messages`
 - Headers: `x-api-key`, `anthropic-version: 2023-06-01`
 - Dynamic request building based on `*ModelCapability`:
-  - `llmCfg.Reasoning == true` → sets `thinking: {type: "enabled"}` (or `adaptive` if `caps.AdaptiveThinking`)
   - `llmCfg.Reasoning == false` → sets `thinking: {type: "disabled"}`
-  - Uses `output_config` for structured output when `caps.SupportsOutputConfig`
-  - `max_tokens` set to `min(256, caps.MaxOutputTokens)` for no-generation calls, else `caps.MaxOutputTokens`
+  - Reasoning enabled without model effort levels → `thinking: {type: "enabled"}` with a computed token budget
+  - Reasoning enabled with effort levels → `output_config: {effort: ...}`; `thinking: {type: "adaptive"}` unless the model is in `anthropicManualThinkingModels`, which gets explicit `thinking: {type: "enabled"}` with budget
+  - `max_tokens` fixed at `256` for the no-generation doc-type refinement pass, else `caps.MaxOutputTokens` (fallback 4096 when unset)
 - Token usage from `usage.input_tokens` + `usage.output_tokens`
 
 ---
@@ -143,8 +143,8 @@ The composition root builds a single `*Hugot` (for the `kushim` CLI) or uses a `
 
 `Hugot` — Hugot session with `FeatureExtractionPipeline`
 
-- **Backend**: `"GO"` (default, pure Go with `libtokenizers.a`) or `"ort"` (ONNX Runtime, auto-downloads `libonnxruntime.so`)
-- **Chunked encoding**: Documents exceeding `max_position_embeddings` are split into overlapping token chunks, mean-pooled
+- **Backend**: `"ort"` (default — ONNX Runtime, auto-downloads `libonnxruntime.so`) or `"go"` (pure Go with `libtokenizers.a`)
+- **Chunked encoding**: Texts exceeding the effective chunk size (configured `chunk_size`, or the model's `max_position_embeddings` minus a 12-token safety margin when unset) are split into overlapping token chunks, mean-pooled
 - **Ranking**: Cosine similarity on L2-normalized embeddings (dot product); separate `minSimilarity` (doc→tag) and `consolidationSim` (tag→tag consolidation)
 - **Config**: `TopN`, `MinSimilarity`, `ConsolidationSimilarity`, `ChunkSize` (auto-derived from model config), `ChunkOverlap` (10% of chunk size)
 - **Fields**: `store EmbeddingStore` — shared reference to the tag embedding cache
@@ -163,25 +163,16 @@ The composition root builds a single `*Hugot` (for the `kushim` CLI) or uses a `
 
 ---
 
-## `adapters/contentanalyzer/llm_custom.go`
-
-### Struct
-
-`LlmCustom` — Generic HTTP adapter using Go `text/template` for request body
-
-- Uses `llmCfg.Custom.RequestBody` as a Go `text/template`
-- Template variables: `{{.Model}}`, `{{.SystemPrompt}}`, `{{.UserPrompt}}`, `{{.Temperature}}`, `{{.ReasoningEffort}}`, `{{.MaxTokens}}`
-- Executes HTTP POST to `llmCfg.Custom.URL` (or `llmCfg.Endpoint` if set)
-- Extracts response using `llmCfg.Custom.ResponsePath` (dot-notation: `choices.0.message.content`)
-- Falls back to raw response body if path is empty
-
----
-
 ## `internal/llm/` package (Capability Registry)
 
 ### Data source
 
-A manually maintained `model_catalog.json` file committed to the repository at `internal/llm/model_catalog.json`. Downloaded at runtime on user request (no embedding).
+A manually maintained `model_catalog.json` file committed to the repository at
+`internal/llm/model_catalog.json` and embedded via `//go:embed`. At startup the
+registry tries to load `<configDir>/model_catalog.json` first (so deployments can
+override the catalog without rebuilding); if that file is absent it falls back to
+the embedded copy. There is no runtime refresh mechanism — updating the catalog
+requires replacing the file and restarting, or rebuilding the binary.
 
 ### Key types
 
@@ -210,15 +201,15 @@ type Registry struct { ... }
 
 | Method | Description |
 |--------|-------------|
-| `NewRegistry(path)` | Loads JSON catalog from disk, builds index |
+| `NewRegistry(path)` | Loads JSON catalog from disk (falls back to embedded copy), builds index |
 | `Lookup(provider, model)` | Returns `*ModelCapability` for a given provider+model |
-| `Adapters()` | Returns `["openai-compatible", "anthropic", "custom"]` |
+| `Adapters()` | Returns adapter names present in the catalog (currently `["anthropic", "openai-compatible"]`) |
 | `ProvidersForAdapter(adapter)` | Returns provider keys for a given adapter |
 | `ModelsForProvider(provider)` | Returns model entries with capabilities |
 
 ### Provider→Adapter mapping
 
-The mapping is data-driven: each entry in `model_catalog.json` has an `adapter` field (`"openai-compatible"`, `"anthropic"`, or `"custom"`). The `ProviderAdapter(provider)` method returns the adapter from the catalog, falling back to `"custom"` for unknown providers.
+The mapping is data-driven: each entry in `model_catalog.json` has an `adapter` field (`"openai-compatible"`, `"anthropic"`, or `"custom"`). The `ProviderAdapter(provider)` method returns the adapter from the catalog, falling back to `"custom"` for unknown providers. The `"custom"` adapter itself is not listed by `Adapters()` unless a catalog entry uses it.
 
 ### Loading
 

@@ -21,11 +21,13 @@ Deeper context lives in `docs/`: `architecture.md` (design, pipeline, process mo
 ## Process architecture
 
 ```
-edub (CGO_ENABLED=0)── forks: kushim consume --batch <id> (per-batch processing)
-                    └── Unix socket RPC: kushim hugot      (tag matcher)
+edub (CGO_ENABLED=0)── enqueues batches (status='queued')
+                    └── Unix socket RPC: kushim hugot (tag matcher)
+
+kushim queue ── forks: kushim consume --batch <id> (per-batch processing)
 ```
 
-- `edub` forks `kushim consume --batch <id>` as a child process when `POST /api/v1/consume` is called. `kushim` must be on PATH or sibling of `edub`.
+- `edub` enqueues consume/enrich tasks with `status='queued'` when `POST /api/v1/consume` is called; the `kushim queue` daemon picks the batch up (Postgres LISTEN/NOTIFY + 30s safety timer) and forks `kushim consume --batch <id>` as a child process. `kushim` must be on PATH or sibling of `edub`.
 - The matcher (`kushim hugot`) must be running before `edub` starts. Tag CRUD returns 503 otherwise.
 - Socket: `<config-dir>/kushim-hugot.sock`.
 
@@ -72,15 +74,17 @@ export TEST_DATABASE_URL="postgres://edub:edub@localhost:5432/edub?sslmode=disab
 Run tests with:
 
 ```bash
-make test          # 60+ tests across 5 packages, CGO_ENABLED=0
+make test          # 12 packages, no database needed, CGO_ENABLED=0
 make test-verbose  # same with -v
+make test-db       # 6 additional packages, requires PostgreSQL via TEST_DATABASE_URL
 ```
 
 Manual equivalent:
 
 ```bash
 CGO_ENABLED=0 TEST_DATABASE_URL="postgres://edub:edub@localhost:5432/edub?sslmode=disable" \
-  go test -tags "XLA,ORT" -count=1 ./internal/database/ ./internal/search/ ./internal/task/ ./internal/api/handlers/ ./internal/consumption/
+  go test -tags "XLA,ORT" -count=1 ./internal/database/ ./internal/search/ ./internal/task/ \
+  ./internal/service/ ./internal/api/handlers/ ./internal/consumption/
 ```
 
 **Isolation**: Each test package gets its own database (`edub_test_<pkg_dir>`) via `runtime.Caller`. Databases are auto-dropped with `DROP ... WITH (FORCE)` when the last reference is released, so no manual cleanup is needed.

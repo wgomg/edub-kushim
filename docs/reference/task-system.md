@@ -168,13 +168,17 @@ The `TagService` and `Enricher` receive the client instead of a direct Hugot ref
 
 ```go
 matcherClient := tagmatch.NewMatcherClient(c.socketPath(), tagmatch.MaxMatchBodyBytes(cfg.Enricher.TagMatcher.ReduceTargetWords))
-tagSvc, err := service.NewTag(queries, logger, matcherClient)
-enricher, err := enrichment.NewEnricher(cfg, logger, db, services, matcherClient)
-registry.Register("config", configtask.NewConfigTaskHandler(logger))
-registry.Register("backup", taskhandlers.NewBackupTaskHandler(db, client.Queries, cfg, logger))
+tagSvc, err := service.NewTag(client.Queries, c.logger, matcherClient)
+enricher, err := enrichment.NewEnricher(cfg, c.logger, client.Queries, services, matcherClient)
+registry.Register("consume", taskhandlers.NewConsumeTaskHandler(consumer, store, c.logger))
+registry.Register("enrich", taskhandlers.NewEnrichTaskHandler(enricher, client.Queries, c.logger))
+registry.Register("config", configtask.NewConfigTaskHandler(c.logger))
+registry.Register("backup", taskhandlers.NewBackupTaskHandler(c.db, client.Queries, func() *config.Config { return c.cfg.Load() }, c.logger))
 ```
 
-The config pool is started alongside consume/enrich pools when a CLI command runs.
+The `BackupTaskHandler` receives a config getter closure so it always uses the
+latest config snapshot at execution time. The config pool is started alongside
+consume/enrich pools when a CLI command runs.
 
 ### Server (`edub`)
 

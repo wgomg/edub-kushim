@@ -30,7 +30,7 @@
 
 ## Functions
 
-- `DefaultConfig(configDir string) *Config` — Full defaults (BAAI/bge-m3, ort backend, gosseract OCR, textrank reducer, openai-compatible analyzer with gpt-4o, 100 MB max upload, 2 max concurrent batches, etc.)
+- `DefaultConfig(configDir string) *Config` — Full defaults (BAAI/bge-m3, ort backend, gosseract OCR, textrank reducer, openai-compatible analyzer with gpt-4o, 100 MB max upload, 4 max concurrent batches, etc.)
 - `Load(configDir string) (*Config, error)` — Loads YAML over defaults, validates OCR languages required, expands paths, creates dirs
 - `defaultMinSimilarity(modelShortName string) float64` — Per-model thresholds (bge-m3: 0.40)
 - `defaultConsolidationSimilarity(modelShortName string) float64` — Tag-to-tag thresholds (bge-m3: 0.82)
@@ -120,7 +120,7 @@ per tool category, used by the frontend settings UI to populate select dropdowns
 
 ## `version.go`
 
-`var Version = "2.3.0"`
+`var Version = "2.7.0"`
 
 ---
 
@@ -149,7 +149,7 @@ per tool category, used by the frontend settings UI to populate select dropdowns
 
 `Logger` — `NewLogger(level string)`, `NewDiscardLogger()`, `NewLoggerWithWriter(w)`, `SetLevel(LogLevel)`, `Level()`, `Info(reqID *string, format, v...)`, `Error`, `Debug`, `Fatal`, `SetLogFile(LogFileConfig) error`, `SlogLogger() *slog.Logger`
 
-- Numeric log levels: `LevelSilent` (1), `LevelFatal` (2), `LevelError` (3), `LevelInfo` (6), `LevelDebug` (7)
+- Numeric log levels: `LevelSilent` (1), `LevelFatal` (2), `LevelError` (3), `LevelWarn` (4), `LevelInfo` (6), `LevelDebug` (7)
 - File logging writes to file regardless of console level
 - `reqID` parameter for request-scoped logging
 - Implementation uses `log/slog` internally with two custom `slog.Handler` types: `consoleHandler` (routes info/debug to stdout, error/fatal to stderr with `<N>LEVEL : date file:line: msg` format) and `fileHandler` (always enabled, writes `date LEVEL : msg` format). `Fatal` calls `os.Exit(1)` directly.
