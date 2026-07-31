@@ -18,7 +18,10 @@ Open http://localhost:3000, configure your LLM provider in `/settings`, and drop
 
 The first build compiles MuPDF, Tesseract, and other C libraries from source (~minutes); subsequent builds are cached by Docker.
 
-> **PostgreSQL**: The Docker Compose setup does not include a PostgreSQL container. You must provide one — see the [PostgreSQL](#postgresql) section below and make the config's `database.host` point to it (by mounting a custom config file into the container).
+Two modes:
+
+- **External database (default)** — `docker compose up`. You provide PostgreSQL yourself — see the [PostgreSQL](#postgresql) section below and make the config's `database.host` point to it (by mounting a custom config file into the container).
+- **Bundled PostgreSQL (quickstart)** — `docker compose -f docker-compose.yml -f docker-compose.quickstart.yml up --build` (or `make compose-quickstart`). Starts a PostgreSQL 17 container (data persisted in the `edub-db-data` volume, not exposed on the host), waits for it to become healthy, and on first boot auto-creates the database, runs migrations, and provisions an `admin`/`admin` account. Requires Docker Compose v2. These credentials and DB passwords are quickstart defaults — change them for anything beyond local evaluation.
 
 ### PostgreSQL
 

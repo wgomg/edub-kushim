@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/spf13/viper"
-	"golang.org/x/term"
 	"github.com/wgomg/edub-kushim/internal/auth"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
@@ -19,6 +18,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/utils"
 	"github.com/wgomg/edub-kushim/internal/wizard"
+	"golang.org/x/term"
 )
 
 func RunSetup(args []string, logger *utils.Logger) error {
@@ -62,7 +62,7 @@ func runSetupWizard(args []string, logger *utils.Logger) error {
 }
 
 func runSetupCLI(args []string, logger *utils.Logger) error {
-	var langs, inboxDir, storageDir, optimizationFallback, ocrEngine, pdfEngine, textExtractorEngine string
+	var langs, inboxDir, storageDir, optimizationFallback, ocrEngine, pdfEngine, textExtractorEngine, dbDsn string
 	var resetDb, cli bool
 	var adminUser, adminPassword string
 
@@ -100,6 +100,9 @@ func runSetupCLI(args []string, logger *utils.Logger) error {
 	if err := p.String("--admin-password", &adminPassword); err != nil {
 		return err
 	}
+	if err := p.String("--db-dsn", &dbDsn); err != nil {
+		return err
+	}
 	if rest := p.Rest(); len(rest) > 0 {
 		return fmt.Errorf("unknown flag(s): %v", rest)
 	}
@@ -117,6 +120,7 @@ Flags:
   --consumer-pdfoptimizer-fallback   external PDF optimizer binary (ignored when engine is gs)
   --admin-user                       admin username (prompted if omitted)
   --admin-password                   admin password (prompted if omitted)
+  --db-dsn                           PostgreSQL DSN (default: localhost:5432)
   --reset-database                   drop all tables and re-run schema + seeders`)
 	}
 
@@ -203,6 +207,11 @@ Flags:
 		return fmt.Errorf("generate session secret: %w", err)
 	}
 	v.Set("server.session_secret", secret)
+
+	if dbDsn != "" {
+		cfg.Db.DSN = dbDsn
+		v.Set("database.dsn", dbDsn)
+	}
 
 	if err := v.WriteConfigAs(configPath); err != nil {
 		return fmt.Errorf("write config: %w", err)

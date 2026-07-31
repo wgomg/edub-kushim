@@ -22,6 +22,11 @@ docker compose up
 
 Open http://localhost:3000, configure your LLM provider in `/settings`, and drop PDFs into `./inbox/`. The first build compiles everything from source (~minutes); subsequent builds are cached.
 
+Two modes:
+
+- **External database (default)** — `docker compose up` runs the `edub` container only; you provide PostgreSQL yourself and point the config's `database.host` at it.
+- **Bundled PostgreSQL (quickstart)** — `docker compose -f docker-compose.yml -f docker-compose.quickstart.yml up --build` (or `make compose-quickstart`) also starts a PostgreSQL 17 container. The `edub` service waits for the DB health check, and on first boot the entrypoint runs `kushim setup --cli` with `--db-dsn postgres://edub:edub@db:5432/edub?sslmode=disable --admin-user admin --admin-password admin`, so database, migrations, seeders, and the admin account are created automatically. Data persists in the `edub-db-data` volume; the DB is not exposed on the host. Requires Docker Compose v2. Quickstart credentials are defaults — change them beyond local evaluation.
+
 ### Manual
 
 ```bash
@@ -91,6 +96,7 @@ kushim setup --cli --languages eng,spa
 | `--consumer-pdfoptimizer-fallback` | —                      | Fallback PDF optimizer binary (ignored when engine is `gs`) |
 | `--admin-user`                     | —                      | Admin username (prompted if omitted)                        |
 | `--admin-password`                 | —                      | Admin password (prompted if omitted)                        |
+| `--db-dsn`                         | —                      | PostgreSQL DSN, e.g. `postgres://user:pass@host:5432/db?sslmode=disable`. When set, overrides the individual `database.*` fields and is persisted to config as `database.dsn` |
 | `--reset-database`                 | `false`                | Drop all tables and re-run schema + seeders                 |
 
 The flags `--inbox-path` and `--storage-path` accept either

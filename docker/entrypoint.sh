@@ -82,6 +82,18 @@ if [ ! -f "$HOME/.config/edub-kushim/config.yaml" ]; then
 
   args=(setup --cli --languages "$OCR_LANGUAGES")
 
+  if [ -n "${DB_DSN:-}" ]; then
+    args+=(--db-dsn "$DB_DSN")
+  fi
+
+  if [ -n "${ADMIN_USER:-}" ]; then
+    args+=(--admin-user "$ADMIN_USER")
+  fi
+
+  if [ -n "${ADMIN_PASSWORD:-}" ]; then
+    args+=(--admin-password "$ADMIN_PASSWORD")
+  fi
+
   if [ -n "${OCR_ENGINE:-}" ]; then
     args+=(--consumer-ocr-engine "$OCR_ENGINE")
   fi

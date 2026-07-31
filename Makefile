@@ -24,7 +24,7 @@ BUILD_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown"
 BUILD_DATE   := $(shell date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "unknown")
 LDFLAGS      := -s -w -X github.com/wgomg/edub-kushim/internal/version.Commit=$(BUILD_COMMIT) -X github.com/wgomg/edub-kushim/internal/version.Date=$(BUILD_DATE)
 
-.PHONY: build build-deps web-build clean run consume build-musl-image build-musl build-mupdf-force compose-up compose-down
+.PHONY: build build-deps web-build clean run consume build-musl-image build-musl build-mupdf-force compose-up compose-down compose-quickstart compose-quickstart-down
 
 web-build:
 	. "$(NVM_DIR)/nvm.sh" && nvm use && cd web && npm ci && npm audit fix || true && npm run build
@@ -191,6 +191,12 @@ compose-up:
 
 compose-down:
 	docker compose down
+
+compose-quickstart:
+	docker compose -f docker-compose.yml -f docker-compose.quickstart.yml up --build
+
+compose-quickstart-down:
+	docker compose -f docker-compose.yml -f docker-compose.quickstart.yml down
 
 fix:
 	go fix -tags "XLA,ORT" ./...

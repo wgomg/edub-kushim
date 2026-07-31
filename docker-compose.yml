@@ -11,10 +11,15 @@ services:
       OCR_LANGUAGES: 'eng,spa,jpn,kor,deu'
 
       # Optional: switch to external tools by uncommenting.
-      OCR_ENGINE: 'ocrmypdf' # gosseract (default) | ocrmypdf
-      PDF_OPTIMIZER_ENGINE: 'gs' # mupdf (default) | gs
-      TEXT_EXTRACTOR_ENGINE: 'pdftotext' # mupdf (default) | gopdf | pdftotext
+      # OCR_ENGINE: 'ocrmypdf' # gosseract (default) | ocrmypdf
+      # PDF_OPTIMIZER_ENGINE: 'gs' # mupdf (default) | gs
+      # TEXT_EXTRACTOR_ENGINE: 'pdftotext' # mupdf (default) | gopdf | pdftotext
       # INBOX_PATH: "/data/inbox"       # only if you bind-mount inbox elsewhere
+
+      # Bundled PostgreSQL: uncomment when using docker-compose.quickstart.yml.
+      # DB_DSN: 'postgres://edub:edub@db:5432/edub?sslmode=disable'
+      # ADMIN_USER: 'admin'
+      # ADMIN_PASSWORD: 'admin'
     restart: unless-stopped
 
 volumes:
