@@ -409,10 +409,10 @@ The structured search flows through three layers:
 2. **`queryBuilder`** (`internal/database/structured_search.go`) — Dynamic SQL composition helper that builds `WHERE` clauses with proper positional parameterization (prevents SQL injection). Key patterns:
    - **Tags**: Subquery via `document_tag JOIN tag WHERE tag.name IN (?,?,...)`
    - **People**: Two subqueries — one for person name, one for person type — joined on `document_people`
-   - **Document type / language / MIME**: Simple `d.col = ?` equality (skipped when empty)
+   - **Document type / language**: Simple `d.col = ?` equality (skipped when empty)
    - **Date ranges**: `d.col >= ? AND d.col <= ?` with optional from/to
    - **File size**: `d.file_size >= ? AND d.file_size <= ?`
-   - **Sorting**: Whitelisted column names (`title`, `mime_type`, `file_size`, `created_at`). When a tsquery is present, defaults to `ts_rank` instead.
+   - **Sorting**: Whitelisted column names (`title`, `file_size`, `created_at`). When a tsquery is present, defaults to `ts_rank` instead.
    - **Limit/Offset**: Standard `LIMIT ? OFFSET ?` pagination
 
 3. **tsvector generated column** — The `document` table's `text_search_vector` column is `GENERATED ALWAYS AS (to_tsvector('simple', coalesce(title, '') || ' ' || coalesce(text_content, ''))) STORED`. Queries use `plainto_tsquery('simple', ...)` for tokenization and `@@` for matching, backed by a GIN index (`idx_document_tsv`).

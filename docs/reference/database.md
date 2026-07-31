@@ -63,7 +63,7 @@ Migrations run automatically on startup (no manual CLI command needed):
 
 ### Key structs
 
-- `Document` — 17 fields: `ID`, `DocumentID` (UUID string), `Title`, `Md5Checksum`, `Sha512Checksum`, `MimeType`, `FileSize`, `PageCount` (`int32`), `WordCount` (`int32`), `CharCount` (`int32`), `Language`, `CreatedAt`, `ModifiedAt`, `DocumentTypeID`, `OriginalPath`, `StoragePath`, `TextContent`
+- `Document` — 17 fields: `ID`, `DocumentID` (UUID string), `Title`, `Md5Checksum`, `Sha512Checksum`, `OriginalType`, `FileSize`, `PageCount` (`int32`), `WordCount` (`int32`), `CharCount` (`int32`), `Language`, `CreatedAt`, `ModifiedAt`, `DocumentTypeID`, `OriginalPath`, `StoragePath`, `TextContent`
 - `Task` — 13 fields: `ID`, `TaskID`, `TaskType`, `Status`, `BatchID sql.NullString`, `Payload *json.RawMessage`, `Result *json.RawMessage`, `DedupKey sql.NullString`, `CreatedAt`, `StartedAt`, `CompletedAt`, `Error`, `Attempts int32`
 - `Tag` — `ID`, `Name`, `CreatedAt`
 - `DocumentType` — `ID`, `Name`, `Description`, `CreatedAt`
@@ -75,7 +75,7 @@ Migrations run automatically on startup (no manual CLI command needed):
 - `SavedSearch` — `ID`, `Name`, `FilterJson string`, `CreatedAt time.Time`
 - `Batch` — `ID`, `Source`, `Status` (queued/processing/completed/failed/cancelled), `CreatedAt sql.NullTime`
 - `BatchOwner` — `BatchID`, `OwnerID`, `Pid`, `AcquiredAt`, `LastHeartbeat`
-- `OrphanedFile` — `ID`, `DocumentKey`, `DocumentKeyType` (uuid/dbid), `FilePath`, `OriginalPath`, `SourceDir` (originals/processed), `FileSize`, `MimeType`, `DetectedAt`, `Status` (pending/deleted/restored/reingested), `ActionAt`, `ActionType`
+- `OrphanedFile` — `ID`, `DocumentKey`, `DocumentKeyType` (uuid/dbid), `FilePath`, `OriginalPath`, `SourceDir` (originals/processed), `FileSize`, `OriginalType`, `DetectedAt`, `Status` (pending/deleted/restored/reingested), `ActionAt`, `ActionType`
 
 ---
 
@@ -94,7 +94,7 @@ Migrations run automatically on startup (no manual CLI command needed):
 
 ### Function
 
-`ListDocumentsWithSort(ctx, params)` — Dynamic ORDER BY with whitelisted columns (`title`, `mime_type`, `file_size`, `created_at`); now selects `document_id` (UUID) in addition to the numeric `id`
+`ListDocumentsWithSort(ctx, params)` — Dynamic ORDER BY with whitelisted columns (`title`, `file_size`, `created_at`); now selects `document_id` (UUID) in addition to the numeric `id`
 
 ---
 
@@ -175,7 +175,7 @@ CREATE INDEX idx_document_tsv ON document USING GIN (text_search_vector);
 
 ### Struct
 
-`SearchFilter` — `Query`, `Tags []string`, `People []struct{ Name, Type string }`, `DocumentType`, `Language`, `MimeType`, `DateCreated *struct{ From, To *string }`, `DateModified *struct{ From, To *string }`, `FileSize *struct{ Min, Max *int64 }`, `SortBy`, `SortOrder`, `Limit`, `Offset`
+`SearchFilter` — `Query`, `Tags []string`, `People []struct{ Name, Type string }`, `DocumentType`, `Language`, `DateCreated *struct{ From, To *string }`, `DateModified *struct{ From, To *string }`, `FileSize *struct{ Min, Max *int64 }`, `SortBy`, `SortOrder`, `Limit`, `Offset`
 
 ### Internal: `queryBuilder`
 
@@ -191,7 +191,7 @@ A flexible SQL query builder that composes `WHERE` clauses dynamically:
 
 - `SearchDocumentsStructured(ctx, filter) ([]FTSDocumentRow, error)` — Dynamically builds a SELECT query:
   - If `query` is non-empty: adds `WHERE d.text_search_vector @@ plainto_tsquery('simple', $N)`, `ts_rank()` rank, `ts_headline()` snippet
-  - Applies tag subquery, people subqueries, document type subquery, language/MIME equality, date ranges, file size ranges
+  - Applies tag subquery, people subqueries, document type subquery, language equality, date ranges, file size ranges
   - When tsquery present: ordered by `rank`; otherwise ordered by requested `sort_by`/`sort_order`
   - Uses `LIMIT $N OFFSET $N` for pagination
 - `CountDocumentsStructured(ctx, filter) (int64, error)` — Same filters but `SELECT COUNT(*)` for total count
@@ -207,7 +207,7 @@ These methods are written manually (no sqlc) and follow a consistent pattern:
 
 | Method | SQL | Returns |
 |--------|-----|---------|
-| `MimeTypeBreakdown` | `SELECT mime_type, COUNT(*), SUM(file_size) FROM document GROUP BY mime_type ORDER BY total_bytes DESC` | `[]MimeTypeBreakdownRow` |
+| `OriginalTypeBreakdown` | `SELECT original_type, COUNT(*), SUM(file_size) FROM document GROUP BY original_type ORDER BY total_bytes DESC` | `[]OriginalTypeBreakdownRow` |
 | `StorageTrendDaily` | `SELECT date(created_at), COUNT(*), SUM(file_size) FROM document GROUP BY day ORDER BY day` | `[]StorageTrendDailyRow` |
 | `ListActivityTimeline` | `UNION ALL` of document/task/batch events, ordered by time DESC, limit 30 | `[]ActivityEventRow` |
 | `DocumentAggregates` | `SELECT COUNT(*), SUM(file_size), SUM(page_count), SUM(word_count) FROM document` | `DocumentAggregatesRow` |
@@ -240,7 +240,7 @@ The last 4 methods back the dashboard analytics panel. `LanguageDistribution` an
 - `user` — Authentication (username, password_hash, role default `'viewer'`, api_key_hash UNIQUE, api_key_prefix, api_key_created_at)
 - `batch` — Batch processing units: `id`, `source`, `status` (queued/processing/completed/failed/cancelled), `created_at`
 - `batch_owner` — Batch ownership: `batch_id` (PK, FK to batch), `owner_id`, `pid` (`BIGINT`), `acquired_at`, `last_heartbeat`
-- `orphaned_file` — Detected orphaned files: `document_key`, `document_key_type` (uuid/dbid), `source_dir` (originals/processed), `file_path`, `file_size` (`BIGINT`), `mime_type`, `detected_at`, `status` (pending/deleted/restored/reingested), `action_at`, `action_type`. CHECK constraints on `document_key_type`, `source_dir`, `status`, `action_type`.
+- `orphaned_file` — Detected orphaned files: `document_key`, `document_key_type` (uuid/dbid), `source_dir` (originals/processed), `file_path`, `file_size` (`BIGINT`), `original_type`, `detected_at`, `status` (pending/deleted/restored/reingested), `action_at`, `action_type`. CHECK constraints on `document_key_type`, `source_dir`, `status`, `action_type`.
 
 ## Junction Tables
 

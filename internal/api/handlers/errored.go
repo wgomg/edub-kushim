@@ -21,11 +21,11 @@ func NewErroredHandler(svc *service.ErroredFiles, logger *utils.Logger) *Errored
 
 func mapErroredFile(f service.ErroredFileInfo) map[string]any {
 	return map[string]any{
-		"name":        f.Name,
-		"subdir":      f.Subdir,
-		"size":        f.Size,
-		"mime_type":   f.MimeType,
-		"modified_at": f.ModifiedAt,
+		"name":          f.Name,
+		"subdir":        f.Subdir,
+		"size":          f.Size,
+		"original_type": f.OriginalType,
+		"modified_at":   f.ModifiedAt,
 	}
 }
 

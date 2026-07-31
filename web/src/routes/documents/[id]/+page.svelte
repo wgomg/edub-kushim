@@ -5,16 +5,12 @@
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
 	import * as authStore from '$lib/stores/authStore.js';
-	import OfficePreview from '$lib/components/OfficePreview.svelte';
-
 	let { params } = $props();
 
 	let doc = $state();
 
 	let documentTypes = $state([]);
 	let peopleTypes = $state([]);
-	let mimeInfos = $state([]);
-	let mimeInfo = $derived(mimeInfos.find((m) => m.mime_type === doc?.mime_type));
 
 	let editTitle = $state('');
 	let editDocumentTypeId = $state(1);
@@ -31,17 +27,15 @@
 	let peopleResults = $state([]);
 	let selectedPeopleTypeId = $state(1);
 
-	function downloadLabel(mimeType) {
-		const info = mimeInfos.find((m) => m.mime_type === mimeType);
-		return info ? `Download ${info.label}` : 'Download file';
+	function downloadLabel() {
+		return 'Download PDF';
 	}
 
 	onMount(async () => {
-		const [data, types, pTypes, mimeData] = await Promise.all([
+		const [data, types, pTypes] = await Promise.all([
 			api.documents.get(params.id),
 			api.autocomplete.documentTypes(),
-			api.autocomplete.peopleTypes(),
-			api.supportedMimeTypes()
+			api.autocomplete.peopleTypes()
 		]);
 		if (!data) {
 			toastStore.error('Failed to load document');
@@ -50,7 +44,6 @@
 		doc = data;
 		documentTypes = types;
 		peopleTypes = pTypes;
-		mimeInfos = mimeData ?? [];
 		editTitle = doc.title;
 		editDocumentTypeId = doc.document_type_id ?? 1;
 		editLanguage = doc.language ?? '';
@@ -171,25 +164,13 @@
 			<div class="min-w-0 flex-1">
 				<h1 class="text-2xl font-semibold text-parchment-200">{doc.title}</h1>
 
-				{#if mimeInfo?.viewer === 'iframe'}
-					<div class="mt-4 overflow-hidden rounded-lg border border-clay-800">
-						<iframe
-							src={`/api/v1/documents/${doc.id}/file`}
-							class="h-[75vh] w-full"
-							title={doc.title}
-						></iframe>
-					</div>
-				{:else if mimeInfo?.viewer === 'office'}
-					<div class="mt-4">
-						<OfficePreview
-							docId={doc.id}
-							mimeType={doc.mime_type}
-							officeFormat={mimeInfo.office_format}
-						/>
-					</div>
-				{:else}
-					<p class="mt-4 text-parchment-500">Preview not available for this file type.</p>
-				{/if}
+				<div class="mt-4 overflow-hidden rounded-lg border border-clay-800">
+					<iframe
+						src={`/api/v1/documents/${doc.id}/file`}
+						class="h-[75vh] w-full"
+						title={doc.title}
+					></iframe>
+				</div>
 			</div>
 
 			<div class="w-80 shrink-0 space-y-4">
@@ -368,8 +349,8 @@
 				</div>
 
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
-					<p class="text-xs font-medium tracking-wider text-parchment-500 uppercase">MIME Type</p>
-					<p class="mt-1 text-parchment-200">{doc.mime_type}</p>
+					<p class="text-xs font-medium tracking-wider text-parchment-500 uppercase">Original Type</p>
+					<p class="mt-1 text-parchment-200">{doc.original_type}</p>
 				</div>
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-xs font-medium tracking-wider text-parchment-500 uppercase">File Size</p>
@@ -423,7 +404,7 @@
 					href={`/api/v1/documents/${doc.id}/file?download=true`}
 					class="block w-full rounded-lg bg-gold-600 px-4 py-2 text-center text-sm font-medium text-clay-950 hover:bg-gold-500"
 				>
-					{downloadLabel(doc.mime_type)}
+					{downloadLabel()}
 				</a>
 
 				{#if !authStore.authEnabled() || authStore.isEditor()}

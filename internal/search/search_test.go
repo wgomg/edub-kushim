@@ -25,7 +25,7 @@ func insertSearchDocRaw(t *testing.T, q *database.Queries, docID, title, languag
 		Title:          title,
 		Md5Checksum:    "md5-" + docID,
 		Sha512Checksum: "sha512-" + docID,
-		MimeType:       "application/pdf",
+		OriginalType:   "application/pdf",
 		FileSize:       100,
 		OriginalPath:   "/tmp/" + title,
 		StoragePath:    "/tmp/storage/" + title,
@@ -67,7 +67,7 @@ func insertSearchDoc(t *testing.T, q *database.Queries, title, textContent strin
 		Title:          title,
 		Md5Checksum:    testutil.FormatString("md5-%d", len(textContent)),
 		Sha512Checksum: testutil.FormatString("sha512-%d", len(textContent)),
-		MimeType:       "application/pdf",
+		OriginalType:   "application/pdf",
 		FileSize:       int64(len(textContent)),
 		OriginalPath:   "/tmp/" + title,
 		StoragePath:    "/tmp/storage/" + title,
@@ -152,15 +152,6 @@ func TestStructuredSearch(t *testing.T) {
 		if total > 0 && len(results) > 0 {
 			testutil.AssertEqual(t, results[0].Title, "finance.pdf", "expected finance.pdf first")
 		}
-	})
-
-	t.Run("mime_type filter", func(t *testing.T) {
-		results, total, err := engine.SearchStructured(ctx, Filter{
-			MimeType: "application/pdf", Limit: 10,
-		})
-		testutil.AssertNoError(t, err, "mime filter")
-		testutil.AssertEqual(t, total, int64(2), "two pdfs")
-		_ = results
 	})
 
 	t.Run("language filter", func(t *testing.T) {

@@ -62,27 +62,6 @@ func TestIsOfficeDoc(t *testing.T) {
 	}
 }
 
-func TestIsViewable(t *testing.T) {
-	tests := []struct {
-		input string
-		want  bool
-	}{
-		{PDF, true},
-		{DOCX, true},
-		{ODT, true},
-		{TIFF, false},
-		{JPEG, false},
-		{PNG, false},
-		{"unknown/type", false},
-	}
-	for _, tt := range tests {
-		got := IsViewable(tt.input)
-		if got != tt.want {
-			t.Errorf("IsViewable(%q) = %v, want %v", tt.input, got, tt.want)
-		}
-	}
-}
-
 func TestExtensionFromMimeType(t *testing.T) {
 	tests := []struct {
 		input string
@@ -176,7 +155,6 @@ func TestSupportedSlice(t *testing.T) {
 		t.Fatalf("Supported has %d entries, want 6", len(Supported))
 	}
 
-	viewableCount := 0
 	for _, m := range Supported {
 		if m.MimeType == "" {
 			t.Error("empty MimeType in Supported")
@@ -187,14 +165,5 @@ func TestSupportedSlice(t *testing.T) {
 		if m.Label == "" {
 			t.Errorf("empty Label for %s", m.MimeType)
 		}
-		if m.Viewable {
-			viewableCount++
-			if m.Viewer == "" {
-				t.Errorf("empty Viewer for viewable type %s", m.MimeType)
-			}
-		}
-	}
-	if viewableCount != 3 {
-		t.Errorf("viewable count = %d, want 3", viewableCount)
 	}
 }

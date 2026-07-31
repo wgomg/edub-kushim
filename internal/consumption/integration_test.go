@@ -123,7 +123,7 @@ func TestConsumerProcessHappyPath(t *testing.T) {
 		doc, err := client.GetDocument(ctx, docID)
 		testutil.AssertNoError(t, err, "get document")
 		testutil.AssertEqual(t, doc.Title, "test-document.pdf", "title")
-		testutil.AssertEqual(t, doc.MimeType, "application/pdf", "mime type")
+		testutil.AssertEqual(t, doc.OriginalType, "application/pdf", "original type")
 		testutil.AssertEqual(t, doc.Md5Checksum, file.MD5Checksum, "md5 matches")
 	})
 
@@ -290,7 +290,7 @@ func TestConsumerProcessImageFile(t *testing.T) {
 
 	file, err := FileFromPath(pngPath)
 	testutil.AssertNoError(t, err, "file from path")
-	testutil.AssertEqual(t, file.MimeType, "image/png", "mime type")
+	testutil.AssertEqual(t, file.MimeType, "image/png", "original type")
 
 	docID := uuid.New().String()
 	processed, err := consumer.Process(ctx, file, docID)
@@ -299,7 +299,7 @@ func TestConsumerProcessImageFile(t *testing.T) {
 	t.Run("document record created", func(t *testing.T) {
 		doc, err := client.GetDocument(ctx, docID)
 		testutil.AssertNoError(t, err, "get document")
-		testutil.AssertEqual(t, doc.MimeType, "image/png", "mime type")
+		testutil.AssertEqual(t, doc.OriginalType, "image/png", "original type")
 	})
 
 	t.Run("original stored with real extension", func(t *testing.T) {
@@ -601,7 +601,7 @@ func TestConsumerProcessDocxFile(t *testing.T) {
 
 	file, err := FileFromPath(docxPath)
 	testutil.AssertNoError(t, err, "file from path")
-	testutil.AssertEqual(t, file.MimeType, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "mime type")
+	testutil.AssertEqual(t, file.MimeType, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "original type")
 
 	docID := uuid.New().String()
 	processed, err := consumer.Process(context.Background(), file, docID)
@@ -610,7 +610,7 @@ func TestConsumerProcessDocxFile(t *testing.T) {
 	t.Run("document record created", func(t *testing.T) {
 		doc, err := client.GetDocument(context.Background(), docID)
 		testutil.AssertNoError(t, err, "get document")
-		testutil.AssertEqual(t, doc.MimeType, "application/pdf", "mime type")
+		testutil.AssertEqual(t, doc.OriginalType, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "original type")
 	})
 
 	t.Run("original stored with docx extension", func(t *testing.T) {
@@ -655,7 +655,7 @@ func TestConsumerProcessOdtFile(t *testing.T) {
 
 	file, err := FileFromPath(odtPath)
 	testutil.AssertNoError(t, err, "file from path")
-	testutil.AssertEqual(t, file.MimeType, "application/vnd.oasis.opendocument.text", "mime type")
+	testutil.AssertEqual(t, file.MimeType, "application/vnd.oasis.opendocument.text", "original type")
 
 	docID := uuid.New().String()
 	processed, err := consumer.Process(context.Background(), file, docID)
@@ -664,7 +664,7 @@ func TestConsumerProcessOdtFile(t *testing.T) {
 	t.Run("document record created", func(t *testing.T) {
 		doc, err := client.GetDocument(context.Background(), docID)
 		testutil.AssertNoError(t, err, "get document")
-		testutil.AssertEqual(t, doc.MimeType, "application/pdf", "mime type")
+		testutil.AssertEqual(t, doc.OriginalType, "application/vnd.oasis.opendocument.text", "original type")
 	})
 
 	t.Run("original stored with odt extension", func(t *testing.T) {
@@ -726,10 +726,10 @@ func TestConsumerProcessDocxFileDisabledConverter(t *testing.T) {
 	processed, err := consumer.Process(context.Background(), file, docID)
 	testutil.AssertNoError(t, err, "process docx with converter disabled")
 
-	t.Run("document record created with original mime", func(t *testing.T) {
+	t.Run("document record created with original type", func(t *testing.T) {
 		doc, err := client.GetDocument(context.Background(), docID)
 		testutil.AssertNoError(t, err, "get document")
-		testutil.AssertEqual(t, doc.MimeType, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "mime type")
+		testutil.AssertEqual(t, doc.OriginalType, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "original type")
 	})
 
 	t.Run("processed stored with docx extension", func(t *testing.T) {

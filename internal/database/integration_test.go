@@ -435,7 +435,7 @@ func TestAnalyticsQueries(t *testing.T) {
 
 		var spaID int64
 		err := q.db.QueryRowContext(ctx,
-			`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, mime_type, file_size, original_path, storage_path, page_count, word_count, char_count, language, document_type_id)
+			`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, original_type, file_size, original_path, storage_path, page_count, word_count, char_count, language, document_type_id)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
 			"analytics-d2", "spa-article.pdf", "m2", "s2", "text/plain", 500,
 			"/tmp/spa.pdf", "/tmp/spa-storage.pdf", 2, 10, 50, "spa", 3,
@@ -444,7 +444,7 @@ func TestAnalyticsQueries(t *testing.T) {
 
 		var fraID int64
 		err = q.db.QueryRowContext(ctx,
-			`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, mime_type, file_size, original_path, storage_path, page_count, word_count, char_count, language, document_type_id)
+			`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, original_type, file_size, original_path, storage_path, page_count, word_count, char_count, language, document_type_id)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
 			"analytics-d3", "fra-book.pdf", "m3", "s3", "application/pdf", 800,
 			"/tmp/fra.pdf", "/tmp/fra-storage.pdf", 4, 20, 100, "fra", 4,
@@ -453,7 +453,7 @@ func TestAnalyticsQueries(t *testing.T) {
 
 		var undID int64
 		err = q.db.QueryRowContext(ctx,
-			`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, mime_type, file_size, original_path, storage_path, page_count, word_count, char_count, language)
+			`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, original_type, file_size, original_path, storage_path, page_count, word_count, char_count, language)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`,
 			"analytics-d4", "und-doc.pdf", "m4", "s4", "text/html", 100,
 			"/tmp/und.pdf", "/tmp/und-storage.pdf", 1, 3, 15, "und",
@@ -541,7 +541,7 @@ func TestLanguageDistributionLimit(t *testing.T) {
 	for i := range 12 {
 		lang := fmt.Sprintf("l%02d", i)
 		_, err := q.db.ExecContext(ctx,
-			`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, mime_type, file_size, original_path, storage_path, page_count, word_count, char_count, language)
+			`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, original_type, file_size, original_path, storage_path, page_count, word_count, char_count, language)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 			fmt.Sprintf("langlim-%d", i), fmt.Sprintf("doc%d.pdf", i), fmt.Sprintf("md5-%d", i), fmt.Sprintf("sha-%d", i),
 			"application/pdf", 100, fmt.Sprintf("/tmp/o%d.pdf", i), fmt.Sprintf("/tmp/s%d.pdf", i),
@@ -566,7 +566,7 @@ func TestStructuredSearchMissingFilters(t *testing.T) {
 	// Document with language='eng', type=article (ID=3), tagged
 	var regularID int64
 	err := q.db.QueryRowContext(ctx,
-		`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, mime_type, file_size, original_path, storage_path, page_count, word_count, char_count, language, document_type_id)
+		`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, original_type, file_size, original_path, storage_path, page_count, word_count, char_count, language, document_type_id)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
 		"msf-1", "regular.pdf", "mdf-1", "sf-1", "application/pdf", 1000,
 		"/tmp/regular.pdf", "/tmp/storage1.pdf", 1, 10, 50, "eng", 3,
@@ -577,7 +577,7 @@ func TestStructuredSearchMissingFilters(t *testing.T) {
 	// Document with language='und', type=article (ID=3), untagged
 	var undID int64
 	err = q.db.QueryRowContext(ctx,
-		`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, mime_type, file_size, original_path, storage_path, page_count, word_count, char_count, language, document_type_id)
+		`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, original_type, file_size, original_path, storage_path, page_count, word_count, char_count, language, document_type_id)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
 		"msf-2", "und-doc.pdf", "mdf-2", "sf-2", "application/pdf", 2000,
 		"/tmp/und.pdf", "/tmp/storage2.pdf", 2, 20, 100, "und", 3,
@@ -588,7 +588,7 @@ func TestStructuredSearchMissingFilters(t *testing.T) {
 	// Document with language='eng', type=undetermined (ID=1), untagged
 	var typedID int64
 	err = q.db.QueryRowContext(ctx,
-		`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, mime_type, file_size, original_path, storage_path, page_count, word_count, char_count, language, document_type_id)
+		`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, original_type, file_size, original_path, storage_path, page_count, word_count, char_count, language, document_type_id)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
 		"msf-3", "typed-doc.pdf", "mdf-3", "sf-3", "application/pdf", 3000,
 		"/tmp/typed.pdf", "/tmp/storage3.pdf", 3, 30, 150, "eng", 1,
@@ -599,7 +599,7 @@ func TestStructuredSearchMissingFilters(t *testing.T) {
 	// Document with language='', type=article, untagged (empty string language)
 	var emptyLangID int64
 	err = q.db.QueryRowContext(ctx,
-		`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, mime_type, file_size, original_path, storage_path, page_count, word_count, char_count, language, document_type_id)
+		`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, original_type, file_size, original_path, storage_path, page_count, word_count, char_count, language, document_type_id)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
 		"msf-4", "empty-lang.pdf", "mdf-4", "sf-4", "application/pdf", 4000,
 		"/tmp/empty.pdf", "/tmp/storage4.pdf", 4, 40, 200, "", 3,
@@ -610,7 +610,7 @@ func TestStructuredSearchMissingFilters(t *testing.T) {
 	// Document with language='eng', type=article, untagged
 	var untaggedID int64
 	err = q.db.QueryRowContext(ctx,
-		`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, mime_type, file_size, original_path, storage_path, page_count, word_count, char_count, language, document_type_id)
+		`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, original_type, file_size, original_path, storage_path, page_count, word_count, char_count, language, document_type_id)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
 		"msf-5", "untagged.pdf", "mdf-5", "sf-5", "application/pdf", 5000,
 		"/tmp/untagged.pdf", "/tmp/storage5.pdf", 5, 50, 250, "eng", 3,
@@ -693,15 +693,6 @@ func TestStructuredSearchMissingFilters(t *testing.T) {
 		assertEqual(t, count, int64(len(results)), "count matches search")
 	})
 
-	t.Run("Missing filters with other constraints", func(t *testing.T) {
-		results, err := q.SearchDocumentsStructured(ctx, SearchFilter{
-			Limit:           100,
-			MissingLanguage: true,
-			MimeType:        "text/plain",
-		})
-		assertNoError(t, err, "search missing lang + mime")
-		assertEqual(t, len(results), 0, "no text/plain docs with missing lang")
-	})
 }
 
 func TestWithDocumentCountQueries(t *testing.T) {
@@ -713,7 +704,7 @@ func TestWithDocumentCountQueries(t *testing.T) {
 	d1, err := q.CreateDocument(ctx, CreateDocumentParams{
 		DocumentID: "wdc-1", Title: "count-test-1.pdf",
 		Md5Checksum: "md5-wdc1", Sha512Checksum: "sha512-wdc1",
-		MimeType: "application/pdf", FileSize: 100,
+		OriginalType: "application/pdf", FileSize: 100,
 		OriginalPath: "/tmp/count1.pdf", StoragePath: "/tmp/sc1.pdf",
 		PageCount: 1, WordCount: 1, CharCount: 5, Language: "eng",
 	})
@@ -722,7 +713,7 @@ func TestWithDocumentCountQueries(t *testing.T) {
 	d2, err := q.CreateDocument(ctx, CreateDocumentParams{
 		DocumentID: "wdc-2", Title: "count-test-2.pdf",
 		Md5Checksum: "md5-wdc2", Sha512Checksum: "sha512-wdc2",
-		MimeType: "application/pdf", FileSize: 200,
+		OriginalType: "application/pdf", FileSize: 200,
 		OriginalPath: "/tmp/count2.pdf", StoragePath: "/tmp/sc2.pdf",
 		PageCount: 2, WordCount: 2, CharCount: 10, Language: "eng",
 	})
@@ -1092,7 +1083,7 @@ func insertDoc(t *testing.T, q *Queries, title, md5, sha512 string) (int64, stri
 	id, err := q.CreateDocument(context.Background(), CreateDocumentParams{
 		DocumentID: docID, Title: title,
 		Md5Checksum: md5, Sha512Checksum: sha512,
-		MimeType: "application/pdf", FileSize: 100,
+		OriginalType: "application/pdf", FileSize: 100,
 		OriginalPath: "/tmp/" + title, StoragePath: "/tmp/storage/" + title,
 		TextContent: sql.NullString{String: "content", Valid: true},
 		PageCount:   1, WordCount: 1, CharCount: 7, Language: "eng",

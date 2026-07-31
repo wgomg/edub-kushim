@@ -26,7 +26,7 @@ type DocumentResponse struct {
 	Title            string           `json:"title"`
 	MD5Checksum      string           `json:"md5_checksum"`
 	SHA512Checksum   string           `json:"sha512_checksum"`
-	MimeType         string           `json:"mime_type"`
+	OriginalType     string           `json:"original_type"`
 	FileSize         int64            `json:"file_size"`
 	PageCount        int32            `json:"page_count"`
 	WordCount        int32            `json:"word_count"`
@@ -45,7 +45,6 @@ type FTSDocumentResponse struct {
 	Title            string           `json:"title"`
 	MD5Checksum      string           `json:"md5_checksum"`
 	SHA512Checksum   string           `json:"sha512_checksum"`
-	MimeType         string           `json:"mime_type"`
 	FileSize         int64            `json:"file_size"`
 	PageCount        int32            `json:"page_count"`
 	WordCount        int32            `json:"word_count"`

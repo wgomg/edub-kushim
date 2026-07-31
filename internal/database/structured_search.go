@@ -13,7 +13,6 @@ type FTSDocumentRow struct {
 	Title          string         `json:"title"`
 	Md5Checksum    string         `json:"md5_checksum"`
 	Sha512Checksum string         `json:"sha512_checksum"`
-	MimeType       string         `json:"mime_type"`
 	FileSize       int64          `json:"file_size"`
 	PageCount      int64          `json:"page_count"`
 	WordCount      int64          `json:"word_count"`
@@ -35,7 +34,6 @@ type SearchFilter struct {
 	People          []struct{ Name, Type string }
 	DocumentType    string
 	Language        string
-	MimeType        string
 	DateCreated     *struct{ From, To *string }
 	DateModified    *struct{ From, To *string }
 	FileSize        *struct{ Min, Max *int64 }
@@ -121,7 +119,7 @@ func (q *Queries) SearchDocumentsStructured(ctx context.Context, filter SearchFi
 	b := &queryBuilder{}
 
 	selectCols := `SELECT d.id, d.document_id, d.title, d.md5_checksum, d.sha512_checksum,
-		d.mime_type, d.file_size, d.page_count, d.word_count, d.char_count,
+		d.file_size, d.page_count, d.word_count, d.char_count,
 		d.language, d.created_at, d.modified_at, d.document_type_id,
 		d.original_path, d.storage_path, d.text_content`
 
@@ -161,7 +159,6 @@ func (q *Queries) SearchDocumentsStructured(ctx context.Context, filter SearchFi
 	}
 
 	b.eq("language", filter.Language)
-	b.eq("mime_type", filter.MimeType)
 	b.dateRange("created_at", filter.DateCreated)
 	b.dateRange("modified_at", filter.DateModified)
 	if filter.FileSize != nil {
@@ -176,7 +173,7 @@ func (q *Queries) SearchDocumentsStructured(ctx context.Context, filter SearchFi
 		sortCol := "created_at"
 		sortDir := "DESC"
 		switch filter.SortBy {
-		case "title", "mime_type", "file_size", "created_at":
+		case "title", "file_size", "created_at":
 			sortCol = filter.SortBy
 		}
 		if strings.EqualFold(filter.SortOrder, "asc") {
@@ -200,7 +197,7 @@ func (q *Queries) SearchDocumentsStructured(ctx context.Context, filter SearchFi
 		var i FTSDocumentRow
 		if err := rows.Scan(
 			&i.ID, &i.DocumentID, &i.Title,
-			&i.Md5Checksum, &i.Sha512Checksum, &i.MimeType,
+			&i.Md5Checksum, &i.Sha512Checksum,
 			&i.FileSize, &i.PageCount, &i.WordCount, &i.CharCount,
 			&i.Language, &i.CreatedAt, &i.ModifiedAt,
 			&i.DocumentTypeID, &i.OriginalPath, &i.StoragePath,
@@ -250,7 +247,6 @@ func (q *Queries) CountDocumentsStructured(ctx context.Context, filter SearchFil
 	}
 
 	b.eq("language", filter.Language)
-	b.eq("mime_type", filter.MimeType)
 	b.dateRange("created_at", filter.DateCreated)
 	b.dateRange("modified_at", filter.DateModified)
 	if filter.FileSize != nil {

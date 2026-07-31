@@ -10,7 +10,7 @@
      - `NewConsumer(cfg, logger, db) (*Consumer, error)` — Validates `PdfOptimizer.Fallback` at startup
      - `NewConsumerWithRunner(cfg, logger, db, runner) (*Consumer, error)` — DI variant
       - `Process(ctx, file File, documentID string) (File, error)` — Convert → Extract → OCR fallback → optimize → store (creates document with PageCount, WordCount, CharCount). For image MIME types (`image/*`), skips text extraction entirely and routes directly to OCR.
-       - `convertToPdf(ctx, file File, documentID string) (File, error)` — When `consumer.converter.enabled` and the file MIME is DOCX/ODT, runs LibreOffice headless to produce a PDF. Sets `file.ConvertedPdfTmpPath` and updates `file.MimeType` to `application/pdf`. Pipeline re-routes text extraction, page counting, and optimization to the converted PDF. The original office document is preserved in storage.
+       - `convertToPdf(ctx, file File, documentID string) (File, error)` — When `consumer.converter.enabled` and the file MIME is DOCX/ODT, runs LibreOffice headless to produce a PDF. Sets `file.ConvertedPdfTmpPath`. Pipeline re-routes text extraction, page counting, and optimization to the converted PDF. The original office document is preserved in storage.
        - `extractText(ctx, file File, documentID string) (File, error)` — For PDFs: uses `minTextDensityRatio` (0.001) to decide OCR vs text. For images (`image/*`): sets `PageCount=1`, calls OCR immediately without attempting text extraction. For DOCX/ODT with the converter disabled: extracts text via `CompositeExtractor` (MIME-dispatched to the DOCX or ODT adapter), skips PDF optimization, and stores the processed file with its original extension (`.docx`/`.odt`) since no OCR or optimization occurs.
      - `isDuplicate(ctx, path) (bool, error)` — MD5 → SHA512 two-step duplicate check
 
@@ -96,7 +96,7 @@
   - **Methods**: `NewEngine(logger, queries) *Engine`, `Search(ctx, query, limit, offset) ([]Result, error)`
 
 - `Result`
-  - **Fields**: `DocumentID`, `Title`, `MD5Checksum`, `SHA512Checksum`, `MimeType`, `FileSize`, `Language`, `DocumentTypeID`, `CreatedAt`, `ModifiedAt`, `OriginalPath`, `StoragePath`, `Snippet`, `Rank`
+  - **Fields**: `DocumentID`, `Title`, `MD5Checksum`, `SHA512Checksum`, `FileSize`, `Language`, `DocumentTypeID`, `CreatedAt`, `ModifiedAt`, `OriginalPath`, `StoragePath`, `Snippet`, `Rank`
 
 ### Function
 

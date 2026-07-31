@@ -608,7 +608,7 @@ GET /api/v1/documents?limit=50&offset=0&sort_by=created_at&sort_order=desc
 | ------------ | ------------ | ------------------------------------------------------------ |
 | `limit`      | `50`         | Max documents (1–100)                                        |
 | `offset`     | `0`          | Pagination offset                                            |
-| `sort_by`    | `created_at` | Sort column: `title`, `mime_type`, `file_size`, `created_at` |
+| `sort_by`    | `created_at` | Sort column: `title`, `file_size`, `created_at` |
 | `sort_order` | `desc`       | Sort direction: `asc` or `desc`                              |
 
 Response `200` — array of [DocumentResponse](#documentresponse).
@@ -863,7 +863,6 @@ Content-Type: application/json
   "people": [{ "name": "John Doe", "type": "author" }],
   "document_type": "invoice",
   "language": "eng",
-  "mime_type": "application/pdf",
   "date_created": { "from": "2024-01-01", "to": "2024-12-31" },
   "date_modified": { "from": null, "to": "2024-06-01" },
   "file_size": { "min": 0, "max": 10485760 },
@@ -1113,13 +1112,12 @@ Response `202 Accepted`:
 | Document not found | `404` |
 | Re-enrich already queued (active task with same dedup key) | `409` |
 
-### Filter Languages / MIME Types
+### Filter Languages
 
-Returns the distinct languages and MIME types available in the document corpus, for use in structured search filter dropdowns.
+Returns the distinct languages available in the document corpus, for use in structured search filter dropdowns.
 
 ```
 GET /api/v1/filter-languages
-GET /api/v1/filter-mime-types
 ```
 
 Response `200` — array of strings:
@@ -1130,7 +1128,7 @@ Response `200` — array of strings:
 
 ### Supported MIME Types
 
-Returns the configured/constant set of supported MIME types with metadata, used by the frontend to build dynamic file input accept attributes, download labels, and preview routing. This endpoint returns the compile-time configuration, not what happens to be in the database.
+Returns the configured/constant set of supported MIME types with metadata, used by the frontend to build dynamic file input accept attributes. This endpoint returns the compile-time configuration, not what happens to be in the database.
 
 ```
 GET /api/v1/supported-mime-types
@@ -1140,23 +1138,20 @@ Response `200` — array of objects:
 
 ```json
 [
-  {"mime_type": "application/pdf", "extension": ".pdf", "label": "PDF",  "viewable": true,  "viewer": "iframe", "office_format": ""},
-  {"mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "extension": ".docx", "label": "DOCX", "viewable": true,  "viewer": "office", "office_format": "docx"},
-  {"mime_type": "application/vnd.oasis.opendocument.text", "extension": ".odt", "label": "ODT", "viewable": true,  "viewer": "office", "office_format": "odt"},
-  {"mime_type": "image/tiff", "extension": ".tiff", "label": "TIFF", "viewable": false, "viewer": "", "office_format": ""},
-  {"mime_type": "image/jpeg", "extension": ".jpg", "label": "JPEG", "viewable": false, "viewer": "", "office_format": ""},
-  {"mime_type": "image/png",  "extension": ".png", "label": "PNG",  "viewable": false, "viewer": "", "office_format": ""}
+  {"mime_type": "application/pdf", "extension": ".pdf", "label": "PDF"},
+  {"mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "extension": ".docx", "label": "DOCX"},
+  {"mime_type": "application/vnd.oasis.opendocument.text", "extension": ".odt", "label": "ODT"},
+  {"mime_type": "image/tiff", "extension": ".tiff", "label": "TIFF"},
+  {"mime_type": "image/jpeg", "extension": ".jpg", "label": "JPEG"},
+  {"mime_type": "image/png",  "extension": ".png", "label": "PNG"}
 ]
 ```
 
-| Field          | Type     | Description                                      |
-| -------------- | -------- | ------------------------------------------------ |
-| `mime_type`    | `string` | The MIME type string                             |
-| `extension`    | `string` | Canonical file extension (e.g. `.jpg`, `.tiff`)  |
-| `label`        | `string` | Short format name for display (e.g. "PDF")       |
-| `viewable`     | `bool`   | Whether the type supports inline preview          |
-| `viewer`       | `string` | Viewer engine: `"iframe"`, `"office"`, or `""`    |
-| `office_format`| `string` | Format identifier for officeparser, or `""`       |
+| Field       | Type     | Description                                     |
+| ----------- | -------- | ----------------------------------------------- |
+| `mime_type` | `string` | The MIME type string                            |
+| `extension` | `string` | Canonical file extension (e.g. `.jpg`, `.tiff`) |
+| `label`     | `string` | Short format name for display (e.g. "PDF")      |
 
 ### Batch Retry
 
@@ -1643,7 +1638,7 @@ Response `200`:
   "title": "document.pdf",
   "md5_checksum": "d41d8cd98f00b204e9800998ecf8427e",
   "sha512_checksum": "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e",
-  "mime_type": "application/pdf",
+  "original_type": "application/pdf",
   "file_size": 102400,
   "language": "eng",
   "document_type_id": 1,
@@ -1661,7 +1656,7 @@ additional fields are populated:
   "title": "document.pdf",
   "md5_checksum": "d41d8cd98f00b204e9800998ecf8427e",
   "sha512_checksum": "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e",
-  "mime_type": "application/pdf",
+  "original_type": "application/pdf",
   "file_size": 102400,
   "language": "eng",
   "document_type_id": 1,

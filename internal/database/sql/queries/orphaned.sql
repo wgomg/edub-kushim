@@ -1,5 +1,5 @@
 -- name: CreateOrphanedFile :one
-INSERT INTO orphaned_file (document_key, document_key_type, file_path, original_path, source_dir, file_size, mime_type)
+INSERT INTO orphaned_file (document_key, document_key_type, file_path, original_path, source_dir, file_size, original_type)
 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id;
 
 -- name: ListOrphanedFiles :many

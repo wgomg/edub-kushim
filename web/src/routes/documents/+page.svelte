@@ -116,7 +116,6 @@
 		people: [],
 		documentType: '',
 		language: '',
-		mimeType: '',
 		dateCreated: { from: null, to: null },
 		dateModified: { from: null, to: null },
 		fileSize: { min: null, max: null },
@@ -140,7 +139,6 @@
 			people: f.people,
 			documentType: f.documentType,
 			language: f.language,
-			mimeType: f.mimeType,
 			dateCreated: f.dateCreated,
 			dateModified: f.dateModified,
 			fileSize: f.fileSize,
@@ -163,7 +161,6 @@
 			people: filter.people,
 			document_type: filter.documentType || '',
 			language: filter.language || '',
-			mime_type: filter.mimeType || '',
 			missing_language: filter.missingLanguage || false,
 			missing_type: filter.missingType || false,
 			untagged: filter.untagged || false
@@ -414,7 +411,6 @@
 				people={filter.people}
 				documentType={filter.documentType}
 				language={filter.language}
-				mimeType={filter.mimeType}
 				dateCreated={filter.dateCreated}
 				dateModified={filter.dateModified}
 				fileSize={filter.fileSize}

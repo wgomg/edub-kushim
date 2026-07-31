@@ -189,7 +189,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 		metadata := contentanalyzer.DocMetadata{
 			WordCount: document.WordCount,
 			PageCount: document.PageCount,
-			MimeType:  document.MimeType,
+			MimeType:  document.OriginalType,
 		}
 		refinedType, err := e.runner.AnalyzeDocType(ctx, analysis, headTailText, docTypes, metadata)
 		if err != nil {

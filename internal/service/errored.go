@@ -21,11 +21,11 @@ const (
 )
 
 type ErroredFileInfo struct {
-	Name       string
-	Subdir     string
-	Size       int64
-	MimeType   string
-	ModifiedAt time.Time
+	Name         string
+	Subdir       string
+	Size         int64
+	OriginalType string
+	ModifiedAt   time.Time
 }
 
 type ErroredFiles struct {
@@ -72,11 +72,11 @@ func (s *ErroredFiles) List(_ context.Context) ([]ErroredFileInfo, error) {
 			}
 
 			files = append(files, ErroredFileInfo{
-				Name:       entry.Name(),
-				Subdir:     subdir,
-				Size:       info.Size(),
-				MimeType:   mimeType,
-				ModifiedAt: info.ModTime(),
+				Name:         entry.Name(),
+				Subdir:       subdir,
+				Size:         info.Size(),
+				OriginalType: mimeType,
+				ModifiedAt:   info.ModTime(),
 			})
 		}
 	}

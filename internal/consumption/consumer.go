@@ -329,7 +329,7 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 		Title:          file.Name,
 		Md5Checksum:    file.MD5Checksum,
 		Sha512Checksum: file.SHA512Checksum,
-		MimeType:       file.MimeType,
+		OriginalType:   file.MimeType,
 		FileSize:       file.FileSize,
 		OriginalPath:   "",
 		StoragePath:    *file.StorageProcessedPath,
@@ -546,7 +546,6 @@ func (c *Consumer) convertToPdf(ctx context.Context, file File, documentID strin
 
 	c.logger.Debug(&documentID, "converted %s to PDF at %s", file.Name, *convertedPath)
 	file.ConvertedPdfTmpPath = convertedPath
-	file.MimeType = mime.PDF
 
 	return file, nil
 }
@@ -555,11 +554,13 @@ func (c *Consumer) extractText(ctx context.Context, file File, documentID string
 	memBefore := utils.ReadMemSnapshot()
 
 	extractPath := file.OriginalPath
+	extractMimeType := file.MimeType
 	if file.ConvertedPdfTmpPath != nil {
 		extractPath = *file.ConvertedPdfTmpPath
+		extractMimeType = mime.PDF
 	}
 
-	if mime.IsPDF(file.MimeType) {
+	if mime.IsPDF(extractMimeType) {
 		file.PageCount = countPages(extractPath)
 	}
 
@@ -569,7 +570,7 @@ func (c *Consumer) extractText(ctx context.Context, file File, documentID string
 		return c.ocrAndReextract(ctx, file, documentID, memBefore, memBefore)
 	}
 
-	extractResult, err := c.runner.ExtractText(ctx, extractPath, file.MimeType)
+	extractResult, err := c.runner.ExtractText(ctx, extractPath, extractMimeType)
 	memAfterExtract := utils.ReadMemSnapshot()
 	c.logger.Debug(&documentID, "extractText: %s", utils.FormatMemDelta(memBefore, memAfterExtract))
 	if err != nil {
@@ -584,7 +585,7 @@ func (c *Consumer) extractText(ctx context.Context, file File, documentID string
 	if extractResult.Text != nil && *extractResult.Text != "" && float64(len(*extractResult.Text))/float64(extractFileSize) >= minTextDensityRatio {
 		file.Text = sql.NullString{String: *extractResult.Text, Valid: true}
 
-		if mime.IsPDF(file.MimeType) {
+		if mime.IsPDF(extractMimeType) {
 			c.logger.Debug(&documentID, "optimizePdf: entering for %s", extractPath)
 			optimizationResult, err := c.runner.OptimizePdf(ctx, documentID, extractPath)
 			memAfterOpt := utils.ReadMemSnapshot()
@@ -599,7 +600,7 @@ func (c *Consumer) extractText(ctx context.Context, file File, documentID string
 		return file, nil
 	}
 
-	if extractResult.Text != nil && *extractResult.Text != "" && !mime.IsPDF(file.MimeType) {
+	if extractResult.Text != nil && *extractResult.Text != "" && !mime.IsPDF(extractMimeType) {
 		file.Text = sql.NullString{String: *extractResult.Text, Valid: true}
 		return file, nil
 	}

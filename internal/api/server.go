@@ -209,7 +209,6 @@ func registerRoutes(
 	mux.Handle("POST /api/v1/documents/batch-delete", RequireRole(editor...)(http.HandlerFunc(docHandler.BatchDeleteDocuments)))
 	mux.Handle("POST /api/v1/documents/batch-tags", RequireRole(editor...)(http.HandlerFunc(docHandler.BatchAssignTags)))
 	mux.Handle("GET /api/v1/filter-languages", RequireRole(viewer...)(http.HandlerFunc(docHandler.FilterLanguages)))
-	mux.Handle("GET /api/v1/filter-mime-types", RequireRole(viewer...)(http.HandlerFunc(docHandler.FilterMimeTypes)))
 	mux.Handle("GET /api/v1/supported-mime-types", RequireRole(viewer...)(http.HandlerFunc(docHandler.SupportedMimeTypes)))
 
 	orphanedHandler := handlers.NewOrphanedHandler(services.Orphaned, logger)

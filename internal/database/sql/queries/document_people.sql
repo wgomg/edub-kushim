@@ -12,7 +12,7 @@ JOIN people_type pt ON dp.people_type_id = pt.id
 WHERE dp.document_id = $1;
 
 -- name: GetPeopleDocuments :many
-SELECT d.id, d.title, d.md5_checksum, d.sha512_checksum, d.mime_type, d.file_size,
+SELECT d.id, d.title, d.md5_checksum, d.sha512_checksum, d.original_type, d.file_size,
        d.created_at, d.modified_at, d.document_type_id, d.original_path, d.storage_path
 FROM document d
 JOIN document_people dp ON d.id = dp.document_id

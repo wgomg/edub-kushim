@@ -4,14 +4,12 @@
 	import { getPersonTypes, formatSize } from '$lib/stores/searchFilter.js';
 
 	let languages = $state([]);
-	let mimeTypes = $state([]);
 
 	let f = $state({
 		tags: [],
 		people: [],
 		documentType: '',
 		language: '',
-		mimeType: '',
 		dateCreated: { from: null, to: null },
 		dateModified: { from: null, to: null },
 		fileSize: { min: null, max: null }
@@ -27,7 +25,6 @@
 			people: s.people,
 			documentType: s.documentType,
 			language: s.language,
-			mimeType: s.mimeType,
 			dateCreated: s.dateCreated,
 			dateModified: s.dateModified,
 			fileSize: s.fileSize
@@ -58,10 +55,6 @@
 
 	$effect(() => {
 		api.filterLanguages().then((d) => (languages = d));
-	});
-
-	$effect(() => {
-		api.filterMimeTypes().then((d) => (mimeTypes = d));
 	});
 
 	function onTagInput() {
@@ -118,7 +111,6 @@
 			people: [],
 			documentType: '',
 			language: '',
-			mimeType: '',
 			dateCreated: { from: null, to: null },
 			dateModified: { from: null, to: null },
 			fileSize: { min: null, max: null },
@@ -340,24 +332,6 @@
 				<option value="">Any</option>
 				{#each languages as code}
 					<option value={code}>{code}</option>
-				{/each}
-			</select>
-		</div>
-
-		<!-- MIME Type -->
-		<div>
-			<label for="fp-mime" class="mb-1 block text-xs font-medium text-parchment-400"
-				>MIME Type</label
-			>
-			<select
-				id="fp-mime"
-				bind:value={f.mimeType}
-				onchange={(e) => emit({ mimeType: e.target.value })}
-				class="w-full rounded-md border border-clay-700 bg-clay-950 px-3 py-1.5 text-xs text-parchment-200 focus:border-gold-500 focus:outline-none"
-			>
-				<option value="">Any</option>
-				{#each mimeTypes as mt}
-					<option value={mt}>{mt}</option>
 				{/each}
 			</select>
 		</div>

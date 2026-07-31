@@ -2,7 +2,7 @@
 	import { formatSize, formatNumber } from '$lib/utils/html.js';
 
 	let {
-		mimeTypeBreakdown = [],
+		originalTypeBreakdown = [],
 		storageTrend = [],
 		avgFileSizeBytes = 0,
 		totalPages = 0,
@@ -12,7 +12,7 @@
 	const chartColors = ['#c9953a', '#3b5e8a', '#b84a3a', '#9a8c78', '#b07d2e', '#2e4a6e', '#5a3a2a'];
 
 	const topTypes = $derived(() => {
-		const sorted = [...mimeTypeBreakdown].sort((a, b) => b.total_bytes - a.total_bytes);
+		const sorted = [...originalTypeBreakdown].sort((a, b) => b.total_bytes - a.total_bytes);
 		if (sorted.length <= 7) return sorted;
 		const top = sorted.slice(0, 7);
 		const other = sorted.slice(7).reduce(
@@ -21,7 +21,7 @@
 				acc.total_bytes += item.total_bytes;
 				return acc;
 			},
-			{ mime_type: 'other', count: 0, total_bytes: 0 }
+			{ original_type: 'other', count: 0, total_bytes: 0 }
 		);
 		return [...top, other];
 	});
@@ -125,7 +125,7 @@
 </script>
 
 <div class="space-y-6">
-	{#if mimeTypeBreakdown.length === 0 && storageTrend.length === 0}
+	{#if originalTypeBreakdown.length === 0 && storageTrend.length === 0}
 		<div class="rounded-lg border border-clay-800 bg-clay-900 p-6 text-center text-parchment-500">
 			No documents yet
 		</div>
@@ -147,7 +147,7 @@
 
 		{#if topTypes().length > 0}
 			<section>
-				<h3 class="mb-3 text-base font-semibold text-parchment-200">MIME Type Breakdown</h3>
+				<h3 class="mb-3 text-base font-semibold text-parchment-200">Original Type Breakdown</h3>
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
 						<div class="space-y-2">
@@ -159,7 +159,7 @@
 									></div>
 									<div class="flex-1">
 										<div class="flex justify-between text-sm">
-											<span class="truncate text-parchment-200">{shortMime(item.mime_type)}</span>
+											<span class="truncate text-parchment-200">{shortMime(item.original_type)}</span>
 											<span class="shrink-0 text-parchment-500">{formatSize(item.total_bytes)}</span
 											>
 										</div>
@@ -191,7 +191,7 @@
 													class="inline-block h-2.5 w-2.5 rounded-full"
 													style="background-color: {chartColors[i % chartColors.length]}"
 												></span>
-												<span class="ml-2">{item.mime_type}</span>
+												<span class="ml-2">{item.original_type}</span>
 											</td>
 											<td class="py-2 pr-4 text-parchment-400">{formatNumber(item.count)}</td>
 											<td class="py-2 text-parchment-400">{formatSize(item.total_bytes)}</td>

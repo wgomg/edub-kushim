@@ -770,7 +770,7 @@ func TestGetDashboardActivity(t *testing.T) {
 	ctx2 := context.Background()
 
 	_, err = env.client.DB().ExecContext(ctx2,
-		`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, mime_type, file_size, original_path, storage_path, page_count, word_count, char_count, language, document_type_id, created_at)
+		`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, original_type, file_size, original_path, storage_path, page_count, word_count, char_count, language, document_type_id, created_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())`,
 		"analytics-doc-spa", "spanish.pdf", "a1", "b1", "text/plain", 512,
 		"/tmp/spa.pdf", "/tmp/storage/spa.pdf", 2, 10, 50, "spa", 3,
@@ -778,7 +778,7 @@ func TestGetDashboardActivity(t *testing.T) {
 	testutil.AssertNoError(t, err, "create spa doc")
 
 	_, err = env.client.DB().ExecContext(ctx2,
-		`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, mime_type, file_size, original_path, storage_path, page_count, word_count, char_count, language, created_at)
+		`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, original_type, file_size, original_path, storage_path, page_count, word_count, char_count, language, created_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())`,
 		"analytics-doc-und", "und.pdf", "c2", "d2", "application/pdf", 256,
 		"/tmp/und.pdf", "/tmp/storage/und.pdf", 1, 3, 15, "und",
@@ -954,8 +954,8 @@ func TestGetDashboardProcessingHealth(t *testing.T) {
 	if resp.Failed < 1 {
 		t.Fatalf("expected failed >= 1, got %d", resp.Failed)
 	}
-	if len(resp.MimeTypeBreakdown) == 0 {
-		t.Fatal("expected non-empty mime_type_breakdown")
+	if len(resp.OriginalTypeBreakdown) == 0 {
+		t.Fatal("expected non-empty original_type_breakdown")
 	}
 	if len(resp.StorageTrend) == 0 {
 		t.Fatal("expected non-empty storage_trend")
@@ -1023,7 +1023,7 @@ func TestConcurrentDocumentOps(t *testing.T) {
 				DocumentID: docID, Title: title,
 				Md5Checksum:    fmt.Sprintf("md5-c-%d", idx),
 				Sha512Checksum: fmt.Sprintf("sha512-c-%d", idx),
-				MimeType:       "application/pdf", FileSize: 100,
+				OriginalType:   "application/pdf", FileSize: 100,
 				OriginalPath: "/tmp/" + title, StoragePath: "/tmp/storage/" + title,
 				TextContent: sql.NullString{String: "content", Valid: true},
 				PageCount:   1, WordCount: 1, CharCount: 7, Language: "eng",
@@ -1094,7 +1094,7 @@ func TestEnqueueBatchFilesDedup(t *testing.T) {
 			Title:          "existing-doc.pdf",
 			Md5Checksum:    md5hash,
 			Sha512Checksum: "fake-sha512",
-			MimeType:       "application/pdf",
+			OriginalType:   "application/pdf",
 			FileSize:       100,
 			OriginalPath:   "/tmp/orig.pdf",
 			StoragePath:    "/tmp/storage.pdf",

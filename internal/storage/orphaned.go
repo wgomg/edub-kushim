@@ -23,7 +23,7 @@ type OrphanedFileInfo struct {
 	OriginalPath    string
 	SourceDir       string
 	FileSize        int64
-	MimeType        string
+	OriginalType    string
 }
 
 func DetectFileType(stem string) (keyType string) {
@@ -94,7 +94,7 @@ func walkDir(root, sourceDir string, infos chan<- OrphanedFileInfo) error {
 			rel = d.Name()
 		}
 
-		mimeType := _mime.PDF
+		originalType := _mime.PDF
 
 		infos <- OrphanedFileInfo{
 			DocumentKey:     stem,
@@ -103,7 +103,7 @@ func walkDir(root, sourceDir string, infos chan<- OrphanedFileInfo) error {
 			OriginalPath:    filepath.Join(sourceDir, rel),
 			SourceDir:       sourceDir,
 			FileSize:        info.Size(),
-			MimeType:        mimeType,
+			OriginalType:    originalType,
 		}
 
 		return nil

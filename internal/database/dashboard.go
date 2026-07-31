@@ -5,10 +5,10 @@ import (
 	"fmt"
 )
 
-type MimeTypeBreakdownRow struct {
-	MimeType   string
-	Count      int64
-	TotalBytes int64
+type OriginalTypeBreakdownRow struct {
+	OriginalType string
+	Count        int64
+	TotalBytes   int64
 }
 
 type StorageTrendDailyRow struct {
@@ -17,20 +17,20 @@ type StorageTrendDailyRow struct {
 	DailyBytes int64
 }
 
-func (q *Queries) MimeTypeBreakdown(ctx context.Context) ([]MimeTypeBreakdownRow, error) {
+func (q *Queries) OriginalTypeBreakdown(ctx context.Context) ([]OriginalTypeBreakdownRow, error) {
 	rows, err := q.db.QueryContext(ctx,
-		`SELECT mime_type, COUNT(*) as count, CAST(COALESCE(SUM(file_size), 0) AS BIGINT) AS total_bytes FROM document GROUP BY mime_type ORDER BY total_bytes DESC`,
+		`SELECT original_type, COUNT(*) as count, CAST(COALESCE(SUM(file_size), 0) AS BIGINT) AS total_bytes FROM document GROUP BY original_type ORDER BY total_bytes DESC`,
 	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var items []MimeTypeBreakdownRow
+	var items []OriginalTypeBreakdownRow
 	for rows.Next() {
-		var i MimeTypeBreakdownRow
-		if err := rows.Scan(&i.MimeType, &i.Count, &i.TotalBytes); err != nil {
-			return nil, fmt.Errorf("scan mime type breakdown: %w", err)
+		var i OriginalTypeBreakdownRow
+		if err := rows.Scan(&i.OriginalType, &i.Count, &i.TotalBytes); err != nil {
+			return nil, fmt.Errorf("scan original type breakdown: %w", err)
 		}
 		items = append(items, i)
 	}
@@ -325,32 +325,6 @@ func (q *Queries) DistinctLanguages(ctx context.Context) ([]string, error) {
 		var s string
 		if err := rows.Scan(&s); err != nil {
 			return nil, fmt.Errorf("scan distinct language: %w", err)
-		}
-		items = append(items, s)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-func (q *Queries) DistinctMimeTypes(ctx context.Context) ([]string, error) {
-	rows, err := q.db.QueryContext(ctx,
-		`SELECT DISTINCT mime_type FROM document ORDER BY mime_type`,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var items []string
-	for rows.Next() {
-		var s string
-		if err := rows.Scan(&s); err != nil {
-			return nil, fmt.Errorf("scan distinct mime type: %w", err)
 		}
 		items = append(items, s)
 	}

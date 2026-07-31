@@ -132,7 +132,7 @@ func (q *Queries) GetDocumentPeopleWithType(ctx context.Context, documentID int6
 }
 
 const getPeopleDocuments = `-- name: GetPeopleDocuments :many
-SELECT d.id, d.title, d.md5_checksum, d.sha512_checksum, d.mime_type, d.file_size,
+SELECT d.id, d.title, d.md5_checksum, d.sha512_checksum, d.original_type, d.file_size,
        d.created_at, d.modified_at, d.document_type_id, d.original_path, d.storage_path
 FROM document d
 JOIN document_people dp ON d.id = dp.document_id
@@ -144,7 +144,7 @@ type GetPeopleDocumentsRow struct {
 	Title          string
 	Md5Checksum    string
 	Sha512Checksum string
-	MimeType       string
+	OriginalType   string
 	FileSize       int64
 	CreatedAt      sql.NullTime
 	ModifiedAt     sql.NullTime
@@ -167,7 +167,7 @@ func (q *Queries) GetPeopleDocuments(ctx context.Context, peopleID int64) ([]Get
 			&i.Title,
 			&i.Md5Checksum,
 			&i.Sha512Checksum,
-			&i.MimeType,
+			&i.OriginalType,
 			&i.FileSize,
 			&i.CreatedAt,
 			&i.ModifiedAt,

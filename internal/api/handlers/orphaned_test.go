@@ -245,7 +245,7 @@ func TestMapOrphanedFile(t *testing.T) {
 		OriginalPath:    "originals/550e8400-e29b-41d4-a716-446655440000.pdf",
 		SourceDir:       "originals",
 		FileSize:        1024,
-		MimeType:        "application/pdf",
+		OriginalType:    "application/pdf",
 		Status:          "pending",
 	}
 
@@ -254,7 +254,7 @@ func TestMapOrphanedFile(t *testing.T) {
 	testutil.AssertEqual(t, m["document_key"], "550e8400-e29b-41d4-a716-446655440000", "key")
 	testutil.AssertEqual(t, m["source_dir"], "originals", "source dir")
 	testutil.AssertEqual(t, m["file_size"], int64(1024), "file size")
-	testutil.AssertEqual(t, m["mime_type"], "application/pdf", "mime type")
+	testutil.AssertEqual(t, m["original_type"], "application/pdf", "original type")
 	testutil.AssertEqual(t, m["status"], "pending", "status")
 
 	_, hasDetected := m["detected_at"]

@@ -16,8 +16,8 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
-	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/mime"
+	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -111,7 +111,7 @@ func (h *DocumentHandler) ListDocuments(w http.ResponseWriter, r *http.Request) 
 			Title:          doc.Title,
 			MD5Checksum:    doc.Md5Checksum,
 			SHA512Checksum: doc.Sha512Checksum,
-			MimeType:       doc.MimeType,
+			OriginalType:   doc.OriginalType,
 			FileSize:       doc.FileSize,
 			PageCount:      doc.PageCount,
 			WordCount:      doc.WordCount,
@@ -193,7 +193,7 @@ func (h *DocumentHandler) GetDocument(w http.ResponseWriter, r *http.Request) {
 		Title:            doc.Title,
 		MD5Checksum:      doc.Md5Checksum,
 		SHA512Checksum:   doc.Sha512Checksum,
-		MimeType:         doc.MimeType,
+		OriginalType:     doc.OriginalType,
 		FileSize:         doc.FileSize,
 		PageCount:        doc.PageCount,
 		WordCount:        doc.WordCount,
@@ -236,26 +236,6 @@ func (h *DocumentHandler) FilterLanguages(w http.ResponseWriter, r *http.Request
 	}
 }
 
-func (h *DocumentHandler) FilterMimeTypes(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
-	h.logger.Debug(&reqID, "Filter MIME types requested")
-
-	mimeTypes, err := h.client.DistinctMimeTypes(ctx)
-	if err != nil {
-		h.logger.Error(&reqID, "Failed to get distinct MIME types: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-
-	if err := json.NewEncoder(w).Encode(mimeTypes); err != nil {
-		h.logger.Error(&reqID, "Failed to encode MIME types: %v", err)
-	}
-}
-
 func (h *DocumentHandler) SearchDocuments(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -292,7 +272,6 @@ func (h *DocumentHandler) SearchDocuments(w http.ResponseWriter, r *http.Request
 			Title:          r.Title,
 			MD5Checksum:    r.MD5Checksum,
 			SHA512Checksum: r.SHA512Checksum,
-			MimeType:       r.MimeType,
 			FileSize:       r.FileSize,
 			PageCount:      r.PageCount,
 			WordCount:      r.WordCount,
@@ -372,7 +351,6 @@ func (h *DocumentHandler) SearchDocumentsStructured(w http.ResponseWriter, r *ht
 			Title:          r.Title,
 			MD5Checksum:    r.MD5Checksum,
 			SHA512Checksum: r.SHA512Checksum,
-			MimeType:       r.MimeType,
 			FileSize:       r.FileSize,
 			PageCount:      r.PageCount,
 			WordCount:      r.WordCount,
@@ -415,11 +393,6 @@ func (h *DocumentHandler) GetDocumentFile(w http.ResponseWriter, r *http.Request
 	doc, err := h.client.GetDocument(ctx, documentId)
 	if err != nil {
 		writeServiceError(w, h.logger, &reqID, "get document", errs.FromDB(err, "get document"))
-		return
-	}
-
-	if !mime.IsViewable(doc.MimeType) {
-		http.Error(w, "File type not supported for viewing", http.StatusUnsupportedMediaType)
 		return
 	}
 
@@ -536,7 +509,7 @@ func (h *DocumentHandler) DownloadDocuments(w http.ResponseWriter, r *http.Reque
 			continue
 		}
 
-		ext := mime.ExtensionFromMimeType(doc.MimeType)
+		ext := ".pdf"
 		name := sanitizeFilename(doc.Title) + "_" + doc.DocumentID[:8] + ext
 		fw, err := zw.Create(name)
 		if err != nil {
@@ -934,7 +907,7 @@ func (h *DocumentHandler) BatchAssignTags(w http.ResponseWriter, r *http.Request
 		failed := false
 
 		if req.Mode == "replace" {
-			tx, err := 	h.client.BeginTx(ctx, nil)
+			tx, err := h.client.BeginTx(ctx, nil)
 			if err != nil {
 				h.logger.Error(&reqID, "batch tag: begin tx for doc %s: %v", id, err)
 				result.Failed = append(result.Failed, types.BatchTagError{ID: id, Error: "internal error"})

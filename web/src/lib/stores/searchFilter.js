@@ -14,7 +14,6 @@ export const defaultFilter = Object.freeze({
 	people: [],
 	documentType: '',
 	language: '',
-	mimeType: '',
 	dateCreated: { from: null, to: null },
 	dateModified: { from: null, to: null },
 	fileSize: { min: null, max: null },
@@ -48,7 +47,7 @@ export function formatSize(bytes) {
 
 /**
  * Tokenizes a raw query string into structured tokens.
- * Supports field:value syntax (tag:, author:, type:, lang:, mime:)
+ * Supports field:value syntax (tag:, author:, type:, lang:)
  * and plain free-text words.
  */
 export function tokenizeQuery(str) {
@@ -109,7 +108,6 @@ export function parseQueryString(str) {
 		people: [],
 		documentType: '',
 		language: '',
-		mimeType: '',
 		dateCreated: { from: null, to: null },
 		dateModified: { from: null, to: null },
 		fileSize: { min: null, max: null },
@@ -136,9 +134,6 @@ export function parseQueryString(str) {
 					break;
 				case 'lang':
 					filter.language = token.value;
-					break;
-				case 'mime':
-					filter.mimeType = token.value;
 					break;
 				case 'created': {
 					const dr = parseDateRange(token.value);
@@ -213,10 +208,6 @@ export function serializeFilter(filter) {
 
 	if (filter.language) {
 		parts.push(`lang:${filter.language}`);
-	}
-
-	if (filter.mimeType) {
-		parts.push(`mime:${filter.mimeType}`);
 	}
 
 	if (filter.dateCreated?.from && filter.dateCreated?.to) {

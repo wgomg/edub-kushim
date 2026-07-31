@@ -10,7 +10,7 @@ import (
 )
 
 const createOrphanedFile = `-- name: CreateOrphanedFile :one
-INSERT INTO orphaned_file (document_key, document_key_type, file_path, original_path, source_dir, file_size, mime_type)
+INSERT INTO orphaned_file (document_key, document_key_type, file_path, original_path, source_dir, file_size, original_type)
 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id
 `
 
@@ -21,7 +21,7 @@ type CreateOrphanedFileParams struct {
 	OriginalPath    string
 	SourceDir       string
 	FileSize        int64
-	MimeType        string
+	OriginalType    string
 }
 
 func (q *Queries) CreateOrphanedFile(ctx context.Context, arg CreateOrphanedFileParams) (int64, error) {
@@ -32,7 +32,7 @@ func (q *Queries) CreateOrphanedFile(ctx context.Context, arg CreateOrphanedFile
 		arg.OriginalPath,
 		arg.SourceDir,
 		arg.FileSize,
-		arg.MimeType,
+		arg.OriginalType,
 	)
 	var id int64
 	err := row.Scan(&id)
@@ -40,7 +40,7 @@ func (q *Queries) CreateOrphanedFile(ctx context.Context, arg CreateOrphanedFile
 }
 
 const getOrphanedFile = `-- name: GetOrphanedFile :one
-SELECT id, document_key, document_key_type, file_path, original_path, source_dir, file_size, mime_type, detected_at, status, action_at, action_type FROM orphaned_file WHERE id = $1
+SELECT id, document_key, document_key_type, file_path, original_path, source_dir, file_size, original_type, detected_at, status, action_at, action_type FROM orphaned_file WHERE id = $1
 `
 
 func (q *Queries) GetOrphanedFile(ctx context.Context, id int64) (OrphanedFile, error) {
@@ -54,7 +54,7 @@ func (q *Queries) GetOrphanedFile(ctx context.Context, id int64) (OrphanedFile, 
 		&i.OriginalPath,
 		&i.SourceDir,
 		&i.FileSize,
-		&i.MimeType,
+		&i.OriginalType,
 		&i.DetectedAt,
 		&i.Status,
 		&i.ActionAt,
@@ -64,7 +64,7 @@ func (q *Queries) GetOrphanedFile(ctx context.Context, id int64) (OrphanedFile, 
 }
 
 const listOrphanedFiles = `-- name: ListOrphanedFiles :many
-SELECT id, document_key, document_key_type, file_path, original_path, source_dir, file_size, mime_type, detected_at, status, action_at, action_type FROM orphaned_file WHERE status = 'pending' ORDER BY detected_at DESC
+SELECT id, document_key, document_key_type, file_path, original_path, source_dir, file_size, original_type, detected_at, status, action_at, action_type FROM orphaned_file WHERE status = 'pending' ORDER BY detected_at DESC
 `
 
 func (q *Queries) ListOrphanedFiles(ctx context.Context) ([]OrphanedFile, error) {
@@ -84,7 +84,7 @@ func (q *Queries) ListOrphanedFiles(ctx context.Context) ([]OrphanedFile, error)
 			&i.OriginalPath,
 			&i.SourceDir,
 			&i.FileSize,
-			&i.MimeType,
+			&i.OriginalType,
 			&i.DetectedAt,
 			&i.Status,
 			&i.ActionAt,

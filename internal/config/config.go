@@ -133,7 +133,7 @@ type DocxOdtConverterConfig struct {
 }
 
 type ConsumerConfig struct {
-	SupportedFiles   []string              `json:"supported_files"`
+	SupportedFiles   []string              `mapstructure:"supported_files" yaml:"supported_files" json:"supported_files"`
 	Workers          int                   `mapstructure:"workers" yaml:"workers" json:"workers"`
 	MaxFilesPerBatch int                   `mapstructure:"max_files_per_batch" yaml:"max_files_per_batch" json:"max_files_per_batch"`
 	Converter        DocxOdtConverterConfig `mapstructure:"converter" yaml:"converter" json:"converter"`

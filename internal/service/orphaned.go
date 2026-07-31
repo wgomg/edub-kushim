@@ -114,7 +114,7 @@ func (s *Orphaned) quarantineFile(ctx context.Context, storageDir string, info s
 		OriginalPath:    info.OriginalPath,
 		SourceDir:       info.SourceDir,
 		FileSize:        info.FileSize,
-		MimeType:        info.MimeType,
+		OriginalType:    info.OriginalType,
 	})
 	if err != nil {
 		storage.RemoveOrphanedFile(newPath)

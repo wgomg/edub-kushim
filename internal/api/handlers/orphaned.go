@@ -29,7 +29,7 @@ func mapOrphanedFile(f database.OrphanedFile) map[string]any {
 		"original_path":     f.OriginalPath,
 		"source_dir":        f.SourceDir,
 		"file_size":         f.FileSize,
-		"mime_type":         f.MimeType,
+		"original_type":     f.OriginalType,
 		"status":            f.Status,
 	}
 	if f.DetectedAt.Valid {

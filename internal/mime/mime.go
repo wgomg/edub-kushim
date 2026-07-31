@@ -16,37 +16,18 @@ const (
 const ImagePrefix = "image/"
 
 type MimeInfo struct {
-	MimeType     string `json:"mime_type"`
-	Extension    string `json:"extension"`
-	Label        string `json:"label"`
-	Viewable     bool   `json:"viewable"`
-	Viewer       string `json:"viewer"`
-	OfficeFormat string `json:"office_format"`
+	MimeType  string `json:"mime_type"`
+	Extension string `json:"extension"`
+	Label     string `json:"label"`
 }
 
 var Supported = []MimeInfo{
-	{MimeType: PDF, Extension: ".pdf", Label: "PDF", Viewable: true, Viewer: "iframe"},
-	{MimeType: DOCX, Extension: ".docx", Label: "DOCX", Viewable: true, Viewer: "office", OfficeFormat: "docx"},
-	{MimeType: ODT, Extension: ".odt", Label: "ODT", Viewable: true, Viewer: "office", OfficeFormat: "odt"},
+	{MimeType: PDF, Extension: ".pdf", Label: "PDF"},
+	{MimeType: DOCX, Extension: ".docx", Label: "DOCX"},
+	{MimeType: ODT, Extension: ".odt", Label: "ODT"},
 	{MimeType: TIFF, Extension: ".tiff", Label: "TIFF"},
 	{MimeType: JPEG, Extension: ".jpg", Label: "JPEG"},
 	{MimeType: PNG, Extension: ".png", Label: "PNG"},
-}
-
-var (
-	viewableExtMap map[string]string
-	viewableSet    map[string]bool
-)
-
-func init() {
-	viewableExtMap = make(map[string]string, len(Supported))
-	viewableSet = make(map[string]bool, len(Supported))
-	for _, m := range Supported {
-		viewableExtMap[m.MimeType] = m.Extension
-		if m.Viewable {
-			viewableSet[m.MimeType] = true
-		}
-	}
 }
 
 func IsPDF(mimeType string) bool {
@@ -61,13 +42,11 @@ func IsOfficeDoc(mimeType string) bool {
 	return mimeType == DOCX || mimeType == ODT
 }
 
-func IsViewable(mimeType string) bool {
-	return viewableSet[mimeType]
-}
-
 func ExtensionFromMimeType(mimeType string) string {
-	if ext, ok := viewableExtMap[mimeType]; ok {
-		return ext
+	for _, m := range Supported {
+		if m.MimeType == mimeType {
+			return m.Extension
+		}
 	}
 	return ".pdf"
 }
@@ -99,5 +78,3 @@ func BuildExtensionSet(exts []string) map[string]bool {
 	}
 	return supported
 }
-
-

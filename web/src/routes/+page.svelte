@@ -165,7 +165,7 @@
 		<section>
 			<h2 class="mb-3 text-lg font-semibold text-parchment-200">Storage</h2>
 			<StoragePanel
-				mimeTypeBreakdown={dashboard.mime_type_breakdown ?? []}
+				originalTypeBreakdown={dashboard.original_type_breakdown ?? []}
 				storageTrend={dashboard.storage_trend ?? []}
 				avgFileSizeBytes={dashboard.avg_file_size_bytes ?? 0}
 				totalPages={dashboard.total_pages ?? 0}
@@ -187,7 +187,7 @@
 							>
 								<p class="truncate text-sm text-parchment-200">{doc.title || 'Untitled'}</p>
 								<p class="text-xs text-parchment-500">
-									{doc.mime_type} — {formatSize(doc.file_size)}
+									{doc.original_type} — {formatSize(doc.file_size)}
 								</p>
 							</a>
 						{/each}

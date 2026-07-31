@@ -318,9 +318,9 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	mimeBreakdown, mimeErr := h.queries.MimeTypeBreakdown(ctx)
-	if mimeErr != nil {
-		h.logger.Error(&reqID, "mime type breakdown: %v", mimeErr)
+	typeBreakdown, typeErr := h.queries.OriginalTypeBreakdown(ctx)
+	if typeErr != nil {
+		h.logger.Error(&reqID, "original type breakdown: %v", typeErr)
 	}
 
 	trendRows, trendErr := h.queries.StorageTrendDaily(ctx)
@@ -333,14 +333,14 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 		avgFileSize = totalBytes / totalFiles
 	}
 
-	mimeStats := make([]types.MimeTypeStat, 0)
-	if mimeErr == nil {
-		mimeStats = make([]types.MimeTypeStat, 0, len(mimeBreakdown))
-		for _, m := range mimeBreakdown {
-			mimeStats = append(mimeStats, types.MimeTypeStat{
-				MimeType:   m.MimeType,
-				Count:      m.Count,
-				TotalBytes: m.TotalBytes,
+	typeStats := make([]types.OriginalTypeStat, 0)
+	if typeErr == nil {
+		typeStats = make([]types.OriginalTypeStat, 0, len(typeBreakdown))
+		for _, m := range typeBreakdown {
+			typeStats = append(typeStats, types.OriginalTypeStat{
+				OriginalType: m.OriginalType,
+				Count:        m.Count,
+				TotalBytes:   m.TotalBytes,
 			})
 		}
 	}
@@ -362,25 +362,25 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(types.DashboardResponse{
-		RecentBatches:     items,
-		Activity:          activity,
-		Analytics:         analytics,
-		ProcessingHealth:  processingHealth,
-		TotalBatches:      totalBatches,
-		TotalFiles:        totalFiles,
-		Waiting:           perStatus["waiting"],
-		Pending:           perStatus["pending"],
-		Processing:        perStatus["processing"],
-		Completed:         perStatus["completed"],
-		Failed:            perStatus["failed"],
-		Cancelled:         perStatus["cancelled"],
-		Discarded:         perStatus["discarded"],
-		TotalSizeGB:       float64(totalBytes) / (1024 * 1024 * 1024),
-		MimeTypeBreakdown: mimeStats,
-		StorageTrend:      trendPoints,
-		AvgFileSizeBytes:  avgFileSize,
-		TotalPages:        totalPages,
-		TotalWords:        totalWords,
+		RecentBatches:        items,
+		Activity:             activity,
+		Analytics:            analytics,
+		ProcessingHealth:     processingHealth,
+		TotalBatches:         totalBatches,
+		TotalFiles:           totalFiles,
+		Waiting:              perStatus["waiting"],
+		Pending:              perStatus["pending"],
+		Processing:           perStatus["processing"],
+		Completed:            perStatus["completed"],
+		Failed:               perStatus["failed"],
+		Cancelled:            perStatus["cancelled"],
+		Discarded:            perStatus["discarded"],
+		TotalSizeGB:          float64(totalBytes) / (1024 * 1024 * 1024),
+		OriginalTypeBreakdown: typeStats,
+		StorageTrend:         trendPoints,
+		AvgFileSizeBytes:     avgFileSize,
+		TotalPages:           totalPages,
+		TotalWords:           totalWords,
 	})
 }
 

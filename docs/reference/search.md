@@ -25,7 +25,6 @@ Maps database rows to API-friendly fields:
 | `Title`           | `string`  | Document title                |
 | `MD5Checksum`     | `string`  | MD5 hash                      |
 | `SHA512Checksum`  | `string`  | SHA512 hash                   |
-| `MimeType`        | `string`  | File MIME type                |
 | `FileSize`        | `int64`   | File size in bytes            |
 | `PageCount`       | `int32`   | Number of pages               |
 | `WordCount`       | `int32`   | Word count                    |
@@ -49,7 +48,6 @@ type Filter struct {
     People          []PersonFilter `json:"people"`          // Person name + type pairs
     DocumentType    string         `json:"document_type"`   // Document type name
     Language        string         `json:"language"`        // Language code (e.g. "eng")
-    MimeType        string         `json:"mime_type"`       // File MIME type
     DateCreated     *DateRange     `json:"date_created"`    // Created date range
     DateModified    *DateRange     `json:"date_modified"`   // Modified date range
     FileSize        *FileSizeRange `json:"file_size"`       // File size range in bytes
@@ -148,9 +146,9 @@ A dynamic SQL query builder that composes `WHERE` clauses with proper parameteri
 Builds a SELECT query dynamically:
 
 - If `filter.Query` is non-empty: adds `WHERE d.text_search_vector @@ plainto_tsquery('simple', $N)`, `ts_rank()` for rank, `ts_headline()` for highlighting
-- Applies tag subquery (`document_tag JOIN tag`), people subqueries (`document_people JOIN people JOIN people_type`), document type subquery, language/MIME equality, date ranges, file size ranges
+- Applies tag subquery (`document_tag JOIN tag`), people subqueries (`document_people JOIN people JOIN people_type`), document type subquery, language equality, date ranges, file size ranges
 - Applies missing filters (`MissingLanguage` → `d.language IN ('und','')`, `MissingType` → `d.document_type_id = 1`, `Untagged` → `NOT EXISTS` subquery on `document_tag`)
-- When query is present: ordered by `rank`; otherwise ordered by `sort_by`/`sort_order` (whitelisted: `title`, `mime_type`, `file_size`, `created_at`)
+- When query is present: ordered by `rank`; otherwise ordered by `sort_by`/`sort_order` (whitelisted: `title`, `file_size`, `created_at`)
 - Uses `LIMIT $N OFFSET $N` for pagination
 
 #### `CountDocumentsStructured(ctx, filter) (int64, error)`

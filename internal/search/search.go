@@ -16,7 +16,6 @@ type Result struct {
 	Title          string
 	MD5Checksum    string
 	SHA512Checksum string
-	MimeType       string
 	FileSize       int64
 	PageCount      int32
 	WordCount      int32
@@ -52,7 +51,6 @@ type Filter struct {
 	People          []PersonFilter `json:"people"`
 	DocumentType    string         `json:"document_type"`
 	Language        string         `json:"language"`
-	MimeType        string         `json:"mime_type"`
 	DateCreated     *DateRange     `json:"date_created"`
 	DateModified    *DateRange     `json:"date_modified"`
 	FileSize        *FileSizeRange `json:"file_size"`
@@ -100,7 +98,6 @@ func (e *Engine) Search(ctx context.Context, query string, limit, offset int32) 
 			Title:          r.Title,
 			MD5Checksum:    r.Md5Checksum,
 			SHA512Checksum: r.Sha512Checksum,
-			MimeType:       r.MimeType,
 			FileSize:       r.FileSize,
 			PageCount:      int32(r.PageCount),
 			WordCount:      int32(r.WordCount),
@@ -125,7 +122,6 @@ func (e *Engine) SearchStructured(ctx context.Context, filter Filter) ([]Result,
 		Tags:            filter.Tags,
 		DocumentType:    filter.DocumentType,
 		Language:        filter.Language,
-		MimeType:        filter.MimeType,
 		SortBy:          filter.SortBy,
 		SortOrder:       filter.SortOrder,
 		Limit:           filter.Limit,
@@ -167,7 +163,6 @@ func (e *Engine) SearchStructured(ctx context.Context, filter Filter) ([]Result,
 			Title:          r.Title,
 			MD5Checksum:    r.Md5Checksum,
 			SHA512Checksum: r.Sha512Checksum,
-			MimeType:       r.MimeType,
 			FileSize:       r.FileSize,
 			PageCount:      int32(r.PageCount),
 			WordCount:      int32(r.WordCount),

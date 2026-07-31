@@ -13,7 +13,6 @@
 		people = [],
 		documentType = '',
 		language = '',
-		mimeType = '',
 		dateCreated = { from: null, to: null },
 		dateModified = { from: null, to: null },
 		fileSize = { min: null, max: null },
@@ -35,7 +34,6 @@
 			people,
 			documentType,
 			language,
-			mimeType,
 			dateCreated,
 			dateModified,
 			fileSize,
@@ -72,7 +70,7 @@
 			return data.map((p) => ({ label: `${field}: ${p.name}`, value: p.name, type: field }));
 		}
 
-		if (field && ['lang', 'mime', 'created', 'modified', 'size'].includes(field)) {
+		if (field && ['lang', 'created', 'modified', 'size'].includes(field)) {
 			return [];
 		}
 
@@ -145,8 +143,6 @@
 				emit({ documentType: fp.value });
 			} else if (fp.field === 'lang') {
 				emit({ language: fp.value });
-			} else if (fp.field === 'mime') {
-				emit({ mimeType: fp.value });
 			} else if (fp.field === 'created') {
 				const dr = parseDateRange(fp.value);
 				if (dr) emit({ dateCreated: dr });
@@ -202,8 +198,6 @@
 				emit({ people: people.slice(0, -1) });
 			} else if (documentType) {
 				emit({ documentType: '' });
-			} else if (mimeType) {
-				emit({ mimeType: '' });
 			} else if (language) {
 				emit({ language: '' });
 			} else if (dateCreated.from || dateCreated.to) {
@@ -232,10 +226,6 @@
 
 	function clearLanguage() {
 		emit({ language: '' });
-	}
-
-	function clearMimeType() {
-		emit({ mimeType: '' });
 	}
 
 	function clearDateCreated() {
@@ -315,17 +305,6 @@
 			</span>
 		{/if}
 
-		{#if mimeType}
-			<span
-				class="inline-flex items-center gap-1 rounded-full bg-emerald-700 px-2.5 py-0.5 text-xs text-parchment-200"
-			>
-				mime:{mimeType}
-				<button onclick={clearMimeType} class="text-parchment-400 hover:text-parchment-200"
-					>&times;</button
-				>
-			</span>
-		{/if}
-
 		{#if dateCreated.from || dateCreated.to}
 			<span
 				class="inline-flex items-center gap-1 rounded-full bg-amber-700 px-2.5 py-0.5 text-xs text-parchment-200"
@@ -384,7 +363,6 @@
 			people.length === 0 &&
 			!documentType &&
 			!language &&
-			!mimeType &&
 			!dateCreated.from &&
 			!dateCreated.to &&
 			!dateModified.from &&

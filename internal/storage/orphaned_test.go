@@ -68,7 +68,7 @@ func TestWalkStorageDir_FindsPDFs(t *testing.T) {
 	r1 := byKey[uuid1]
 	testutil.AssertEqual(t, r1.DocumentKeyType, "uuid", "key type 1")
 	testutil.AssertEqual(t, r1.SourceDir, "originals", "source dir 1")
-	testutil.AssertEqual(t, r1.MimeType, "application/pdf", "mime type 1")
+	testutil.AssertEqual(t, r1.OriginalType, "application/pdf", "original type 1")
 
 	r2 := byKey[uuid2]
 	testutil.AssertEqual(t, r2.DocumentKeyType, "uuid", "key type 2")
@@ -154,7 +154,7 @@ func TestQuarantineFile(t *testing.T) {
 		OriginalPath:    "originals/" + uuid + ".pdf",
 		SourceDir:       "originals",
 		FileSize:        100,
-		MimeType:        "application/pdf",
+		OriginalType:        "application/pdf",
 	}
 
 	newPath, err := QuarantineFile(storageDir, info)

@@ -37,7 +37,7 @@ type Document struct {
 	Title            string
 	Md5Checksum      string
 	Sha512Checksum   string
-	MimeType         string
+	OriginalType     string
 	FileSize         int64
 	PageCount        int32
 	WordCount        int32
@@ -78,7 +78,7 @@ type OrphanedFile struct {
 	OriginalPath    string
 	SourceDir       string
 	FileSize        int64
-	MimeType        string
+	OriginalType    string
 	DetectedAt      sql.NullTime
 	Status          string
 	ActionAt        sql.NullTime

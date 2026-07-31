@@ -44,10 +44,10 @@ type ListTasksResponse struct {
 	Tasks   []TaskResponse        `json:"tasks"`
 }
 
-type MimeTypeStat struct {
-	MimeType   string `json:"mime_type"`
-	Count      int64  `json:"count"`
-	TotalBytes int64  `json:"total_bytes"`
+type OriginalTypeStat struct {
+	OriginalType string `json:"original_type"`
+	Count        int64  `json:"count"`
+	TotalBytes   int64  `json:"total_bytes"`
 }
 
 type StorageTrendPoint struct {
@@ -112,7 +112,7 @@ type DashboardResponse struct {
 	Cancelled        int64                `json:"cancelled"`
 	Discarded        int64                `json:"discarded"`
 	TotalSizeGB      float64              `json:"total_size_gb"`
-	MimeTypeBreakdown []MimeTypeStat      `json:"mime_type_breakdown"`
+	OriginalTypeBreakdown []OriginalTypeStat `json:"original_type_breakdown"`
 	StorageTrend      []StorageTrendPoint `json:"storage_trend"`
 	AvgFileSizeBytes  int64               `json:"avg_file_size_bytes"`
 	TotalPages        int64               `json:"total_pages"`

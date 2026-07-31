@@ -62,8 +62,7 @@
     - `BatchDeleteDocuments(w, r)` — `POST /api/v1/documents/batch-delete` — Accepts `{document_ids: [...]}` JSON. Deletes each document independently; returns partial failure info. Count validated against `max_batch_delete`.
     - `BatchAssignTags(w, r)` — `POST /api/v1/documents/batch-tags` — Accepts `{document_ids, tag_ids, mode}`. Supports `add` (append) and `replace` (transactional clear+add) modes. Validates all tag IDs exist before modifying any document.
     - `FilterLanguages(w, r)` — `GET /api/v1/filter-languages` — Returns distinct language codes from the document corpus as a JSON string array.
-    - `FilterMimeTypes(w, r)` — `GET /api/v1/filter-mime-types` — Returns distinct MIME types from the document corpus as a JSON string array.
-    - `SupportedMimeTypes(w, r)` — `GET /api/v1/supported-mime-types` — Returns the compiled-in supported MIME types as a JSON array of `MimeInfo` objects (mime_type, extension, label, viewable, viewer, office_format).
+    - `SupportedMimeTypes(w, r)` — `GET /api/v1/supported-mime-types` — Returns the compiled-in supported MIME types as a JSON array of `MimeInfo` objects (mime_type, extension, label).
 
 ---
 
@@ -121,7 +120,7 @@ See `AuthMiddleware` under `server.go` → Functions.
     - `RetryBatch(w, r)` — `POST /api/v1/batches/{id}/retry` — Resets all failed tasks in a batch to pending. Returns `200 {"retried": <n>}`. Idempotent (0 retried is valid success).
     - `ResumeBatch(w, r)` — `POST /api/v1/batches/{id}/resume` (formerly `AdoptBatch`). Checks batch ownership via `BatchOwnerState` (returns 409 if locked by a live owner), then resets `processing`→`pending` tasks and sets batch status to `queued`. The queue daemon picks it up. Returns `202 {"resumed": true}`.
     - `CancelBatch(w, r)` — `POST /api/v1/batches/{id}/cancel` — Cancels pending tasks, sends `SIGTERM` to the batch owner process if alive, and releases the batch owner. Returns `200` with `cancelled_pending`, `cancelled_processing`, and `signal_sent` booleans.
-    - `GetDashboard(w, r)` — Returns `recent_batches` (top 20) + `activity` (top 30 chronological events from documents, tasks, batches) + `analytics` (language/document-type/tag distributions, missing counts) + `processing_health` (task success rate, avg duration, active/orphaned batches, missing tools count) + storage panel fields (`total_batches`, `total_files`, per-status counts, `total_size_gb`, `mime_type_breakdown`, `storage_trend`, `avg_file_size_bytes`, `total_pages`, `total_words`). Activity includes: `event_type`, `title`, `timestamp`, `link`. Processing health queries use a 7-day window and reuses `config.MissingExternalToolErrors` to detect missing tools at request time.
+    - `GetDashboard(w, r)` — Returns `recent_batches` (top 20) + `activity` (top 30 chronological events from documents, tasks, batches) + `analytics` (language/document-type/tag distributions, missing counts) + `processing_health` (task success rate, avg duration, active/orphaned batches, missing tools count) + storage panel fields (`total_batches`, `total_files`, per-status counts, `total_size_gb`, `original_type_breakdown`, `storage_trend`, `avg_file_size_bytes`, `total_pages`, `total_words`). Activity includes: `event_type`, `title`, `timestamp`, `link`. Processing health queries use a 7-day window and reuses `config.MissingExternalToolErrors` to detect missing tools at request time.
 
     - **Helpers**: `buildBatchSummary(ctx, queries, batchID) BatchSummaryResponse`, `buildDocumentAnalytics(ctx, reqID) *DocumentAnalytics`, `buildProcessingHealth(ctx, reqID) *ProcessingHealth`, `taskToResponse(t) TaskResponse`
 
@@ -134,9 +133,9 @@ See `AuthMiddleware` under `server.go` → Functions.
 - `TagResponse` — `ID int64`, `Name string`, `DocumentCount int64`
 - `PersonResponse` — `ID`, `Name`, `NameNative` (original non-Latin script, if any), `PersonTypeID`, `PersonTypeName`, `PersonTypeDescription`, `DocumentCount int64`
 - `DocumentResponse`
-  - **Fields**: `ID string` (UUID, JSON `"id"`), `Title`, `MD5Checksum`, `SHA512Checksum`, `MimeType`, `FileSize`, `PageCount`, `WordCount`, `CharCount`, `Language`, `DocumentTypeID *int64`, `DocumentTypeName *string`, `Tags []TagResponse`, `People []PersonResponse`, `CreatedAt`, `ModifiedAt`
+  - **Fields**: `ID string` (UUID, JSON `"id"`), `Title`, `MD5Checksum`, `SHA512Checksum`, `OriginalType`, `FileSize`, `PageCount`, `WordCount`, `CharCount`, `Language`, `DocumentTypeID *int64`, `DocumentTypeName *string`, `Tags []TagResponse`, `People []PersonResponse`, `CreatedAt`, `ModifiedAt`
 - `FTSDocumentResponse`
-  - **Fields**: `ID string` (UUID, replaces the old int64 `id`), `Title`, `MD5Checksum`, `SHA512Checksum`, `MimeType`, `FileSize`, `PageCount`, `WordCount`, `CharCount`, `Language`, `DocumentTypeID *int64`, `DocumentTypeName *string`, `Tags []TagResponse`, `People []PersonResponse`, `Rank float64`, `Snippet string` (HTML-escaped, `<b>` highlighting preserved), `TextContent string`
+  - **Fields**: `ID string` (UUID, replaces the old int64 `id`), `Title`, `MD5Checksum`, `SHA512Checksum`, `FileSize`, `PageCount`, `WordCount`, `CharCount`, `Language`, `DocumentTypeID *int64`, `DocumentTypeName *string`, `Tags []TagResponse`, `People []PersonResponse`, `Rank float64`, `Snippet string` (HTML-escaped, `<b>` highlighting preserved), `TextContent string`
 
 ### Request Structs (`types/document.go`)
 
@@ -158,13 +157,13 @@ See `AuthMiddleware` under `server.go` → Functions.
 - `BatchCounts` — `Total`, `Waiting`, `Pending`, `Processing`, `Completed`, `Failed`, `Cancelled`, `Discarded`
 - `ListBatchesResponse` — `Batches []BatchSummaryResponse`
 - `ListTasksResponse` — `BatchID`, `Summary *BatchSummaryResponse`, `Tasks []TaskResponse`
-- `MimeTypeStat` — `MimeType`, `Count`, `TotalBytes`
+- `OriginalTypeStat` — `OriginalType`, `Count`, `TotalBytes`
 - `StorageTrendPoint` — `Date`, `DailyCount`, `DailyBytes`, `CumulativeBytes`
 - `ActivityEvent` — `EventType`, `Title`, `Timestamp`, `Link`
 - `DistributionItem` — `Label string`, `Count int64`
 - `DocumentAnalytics` — `LanguageDistribution []DistributionItem`, `DocumentTypeDistribution []DistributionItem`, `TagFrequency []DistributionItem`, `MissingLanguageCount int64`, `MissingTypeCount int64`, `MissingTagsCount int64`
 - `ProcessingHealth` — `SuccessRate float64`, `CompletedLast7d int64`, `FailedLast7d int64`, `AvgDurationMs int64`, `ActiveBatches int64`, `OrphanedBatches int64`, `MissingTools int64`
-- `DashboardResponse` — `RecentBatches []BatchOverviewItem`, `Activity []ActivityEvent`, `Analytics *DocumentAnalytics`, `ProcessingHealth *ProcessingHealth`, `TotalBatches`, `TotalFiles`, `Waiting`, `Pending`, `Processing`, `Completed`, `Failed`, `Cancelled`, `Discarded`, `TotalSizeGB`, `MimeTypeBreakdown []MimeTypeStat`, `StorageTrend []StorageTrendPoint`, `AvgFileSizeBytes`, `TotalPages`, `TotalWords`
+- `DashboardResponse` — `RecentBatches []BatchOverviewItem`, `Activity []ActivityEvent`, `Analytics *DocumentAnalytics`, `ProcessingHealth *ProcessingHealth`, `TotalBatches`, `TotalFiles`, `Waiting`, `Pending`, `Processing`, `Completed`, `Failed`, `Cancelled`, `Discarded`, `TotalSizeGB`, `OriginalTypeBreakdown []OriginalTypeStat`, `StorageTrend []StorageTrendPoint`, `AvgFileSizeBytes`, `TotalPages`, `TotalWords`
 
 ---
 
@@ -328,7 +327,7 @@ See `AuthMiddleware` under `server.go` → Functions.
   - **Fields**: `svc *service.ErroredFiles`, `logger *utils.Logger`
   - **Methods**:
     - `NewErroredHandler(svc, logger) *ErroredHandler`
-    - `ListErrored(w, r)` — `GET /api/v1/errored` — Lists all errored files from `<storageDir>/errors/` and `<storageDir>/errors/duplicated/` as JSON array with `name`, `subdir`, `size`, `mime_type`, `modified_at`. Returns `200`.
+    - `ListErrored(w, r)` — `GET /api/v1/errored` — Lists all errored files from `<storageDir>/errors/` and `<storageDir>/errors/duplicated/` as JSON array with `name`, `subdir`, `size`, `original_type`, `modified_at`. Returns `200`.
     - `DownloadErrored(w, r)` — `GET /api/v1/errored/download?subdir=...&file=...` — Serves an errored file as attachment. Validates path via `GetPath` to prevent traversal. Returns `200` with file, `400` on missing params, `404` if file not found.
     - `DeleteErrored(w, r)` — `DELETE /api/v1/errored?subdir=...&file=...` — Deletes a single errored file from disk. Returns `204`. Returns `400` on missing params.
     - `DeleteAllErrored(w, r)` — `POST /api/v1/errored/delete-all` — Deletes all errored files from both dirs. Returns `200 {"deleted": <n>}`.
@@ -451,7 +450,6 @@ mux.Handle("GET /api/v1/documents/search", RequireRole(viewer...)(...))
 mux.Handle("POST /api/v1/documents/search", RequireRole(viewer...)(...))
 mux.Handle("POST /api/v1/documents/download", RequireRole(viewer...)(...))
 mux.Handle("GET /api/v1/filter-languages", RequireRole(viewer...)(...))
-mux.Handle("GET /api/v1/filter-mime-types", RequireRole(viewer...)(...))
 mux.Handle("GET /api/v1/tags", RequireRole(viewer...)(...))
 mux.Handle("GET /api/v1/people", RequireRole(viewer...)(...))
 mux.Handle("GET /api/v1/people-types", RequireRole(viewer...)(...))
@@ -482,7 +480,6 @@ mux.Handle("POST /api/v1/documents/{id}/reenrich", RequireRole(editor...)(...))
 mux.Handle("POST /api/v1/documents/batch-delete", RequireRole(editor...)(...))
 mux.Handle("POST /api/v1/documents/batch-tags", RequireRole(editor...)(...))
 mux.Handle("GET /api/v1/filter-languages", RequireRole(viewer...)(...))
-mux.Handle("GET /api/v1/filter-mime-types", RequireRole(viewer...)(...))
 mux.Handle("POST /api/v1/tags", RequireRole(editor...)(...))
 mux.Handle("PUT /api/v1/tags/{id}", RequireRole(editor...)(...))
 mux.Handle("DELETE /api/v1/tags/{id}", RequireRole(editor...)(...))
