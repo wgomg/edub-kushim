@@ -150,6 +150,33 @@ func TestSupportedConstants(t *testing.T) {
 	}
 }
 
+func TestExtensionsFor(t *testing.T) {
+	tests := []struct {
+		mimeType string
+		want     []string
+	}{
+		{PDF, []string{".pdf"}},
+		{DOCX, []string{".docx"}},
+		{ODT, []string{".odt"}},
+		{PNG, []string{".png"}},
+		{TIFF, []string{".tiff", ".tif"}},
+		{JPEG, []string{".jpg", ".jpeg"}},
+		{"unknown/type", nil},
+	}
+	for _, tt := range tests {
+		got := ExtensionsFor(tt.mimeType)
+		if len(got) != len(tt.want) {
+			t.Errorf("ExtensionsFor(%q) returned %d extensions, want %d", tt.mimeType, len(got), len(tt.want))
+			continue
+		}
+		for i := range got {
+			if got[i] != tt.want[i] {
+				t.Errorf("ExtensionsFor(%q)[%d] = %q, want %q", tt.mimeType, i, got[i], tt.want[i])
+			}
+		}
+	}
+}
+
 func TestSupportedSlice(t *testing.T) {
 	if len(Supported) != 6 {
 		t.Fatalf("Supported has %d entries, want 6", len(Supported))

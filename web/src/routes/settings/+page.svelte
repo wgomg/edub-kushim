@@ -30,6 +30,18 @@
 
 	let llmModels = $state({ adapters: {}, providers: {} });
 
+	let mimeTypeOptions = $state([]);
+
+	function syncMimeCheckboxes() {
+		const types = cfg?.available_file_types;
+		const exts = cfg?.consumer?.supported_files ?? [];
+		if (!types) return;
+		mimeTypeOptions = types.map((ft) => ({
+			...ft,
+			checked: ft.required || ft.extensions.some((e) => exts.includes(e))
+		}));
+	}
+
 	let selectedAdapterProviders = $derived(
 		llmModels.adapters[cfg?.enricher?.contentanalyzer?.llm?.adapter] ?? []
 	);
@@ -81,6 +93,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 		const loaded = await api.config.get();
 		if (loaded) {
 			cfg = loaded;
+			syncMimeCheckboxes();
 			checkStatus();
 		}
 		llmModels = await api.config.llmModels();
@@ -145,6 +158,13 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			'consumer.ocr.ocr_workers': Number(cfg.consumer.ocr.ocr_workers),
 			'consumer.workers': Number(cfg.consumer.workers),
 			'consumer.max_files_per_batch': Number(cfg.consumer.max_files_per_batch),
+			'consumer.supported_files':
+				mimeTypeOptions.length > 0
+					? mimeTypeOptions.filter((o) => o.checked).flatMap((o) => o.extensions)
+					: (cfg.consumer.supported_files ?? []),
+			'consumer.converter.enabled': cfg.consumer.converter.enabled,
+			'consumer.converter.binary': cfg.consumer.converter.binary,
+			'consumer.converter.timeout': Number(cfg.consumer.converter.timeout),
 			'consumer.polling.enabled': cfg.consumer.polling.enabled,
 			'consumer.polling.interval': Number(cfg.consumer.polling.interval),
 			'consumer.polling.windows': cfg.consumer.polling.windows ?? [],
@@ -222,7 +242,10 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 				missingTools = res.missing_tools;
 			}
 			const loaded = await api.config.get();
-			if (loaded) cfg = loaded;
+			if (loaded) {
+				cfg = loaded;
+				syncMimeCheckboxes();
+			}
 		} catch (e) {
 			toastStore.error(e.message);
 		} finally {
@@ -763,6 +786,70 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							bind:value={cfg.consumer.max_files_per_batch}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 						/>
+					</div>
+				</div>
+
+				<div class="mt-4">
+					<h3 class="mb-2 text-sm font-medium text-parchment-200">Supported file types</h3>
+					<div class="flex flex-wrap gap-3">
+						{#each mimeTypeOptions as opt (opt.mime_type)}
+							<label class="flex items-center gap-1.5 text-sm text-parchment-300">
+								<input
+									type="checkbox"
+									bind:checked={opt.checked}
+									disabled={opt.required}
+									class="rounded border-clay-800 bg-clay-950 accent-gold-500 disabled:opacity-50"
+								/>
+								{opt.label}
+							</label>
+						{/each}
+					</div>
+				</div>
+
+				<div class="mt-4 border-t border-clay-800 pt-4">
+					<h3 class="mb-2 text-sm font-medium text-parchment-200">DOCX/ODT Converter</h3>
+					<p class="mb-3 text-xs text-parchment-400">
+						Converts DOCX and ODT files to PDF via LibreOffice before text extraction.
+					</p>
+					<div class="grid gap-4 sm:grid-cols-3">
+						<div class="flex items-center gap-2">
+							<input
+								id="converter-enabled"
+								type="checkbox"
+								bind:checked={cfg.consumer.converter.enabled}
+								class="rounded border-clay-800 bg-clay-950 accent-gold-500"
+							/>
+							<label for="converter-enabled" class="text-sm font-medium text-parchment-200"
+								>Enabled</label
+							>
+						</div>
+						<div>
+							<label
+								for="converter-binary"
+								class="mb-1 block text-sm font-medium text-parchment-200">Binary path</label
+							>
+							<input
+								id="converter-binary"
+								type="text"
+								bind:value={cfg.consumer.converter.binary}
+								autocomplete="off"
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+						<div>
+							<label
+								for="converter-timeout"
+								class="mb-1 block text-sm font-medium text-parchment-200">Timeout (s)</label
+							>
+							<input
+								id="converter-timeout"
+								type="number"
+								min="1"
+								bind:value={cfg.consumer.converter.timeout}
+								autocomplete="off"
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
 					</div>
 				</div>
 			</section>
@@ -1501,7 +1588,12 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 		{/if}
 
 		{#if activeTab === 'Users'}
-			<div class="space-y-4" onclick={handleUserPageClick} onkeydown={handleUserKeyDown} role="presentation">
+			<div
+				class="space-y-4"
+				onclick={handleUserPageClick}
+				onkeydown={handleUserKeyDown}
+				role="presentation"
+			>
 				<div class="flex items-center justify-between">
 					<h2 class="text-lg font-semibold text-parchment-200">Users</h2>
 					<button

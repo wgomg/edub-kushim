@@ -24,10 +24,23 @@
 	let saving = $state(false);
 	let serviceFilesPath = $state('');
 
+	let mimeTypeOptions = $state([]);
+
+	function syncMimeCheckboxes() {
+		const types = cfg?.available_file_types;
+		const exts = cfg?.consumer?.supported_files ?? [];
+		if (!types) return;
+		mimeTypeOptions = types.map((ft) => ({
+			...ft,
+			checked: ft.required || ft.extensions.some((e) => exts.includes(e))
+		}));
+	}
+
 	onMount(async () => {
 		try {
 			const loaded = await configApi.get();
 			cfg = loaded;
+			syncMimeCheckboxes();
 			if (cfg.app.initialized) {
 				await checkStatus();
 				if (pendingTasks > 0) {
@@ -53,7 +66,10 @@
 				serviceFilesPath = res.service_files_path;
 			}
 			const loaded = await configApi.get();
-			if (loaded) cfg = loaded;
+			if (loaded) {
+				cfg = loaded;
+				syncMimeCheckboxes();
+			}
 			step = 2;
 		} catch (e) {
 			error = e.message;
@@ -68,7 +84,10 @@
 			const body = buildConfigBody();
 			const res = await configApi.update(body);
 			const loaded = await configApi.get();
-			if (loaded) cfg = loaded;
+			if (loaded) {
+				cfg = loaded;
+				syncMimeCheckboxes();
+			}
 			if (res && res.service_files_path) {
 				serviceFilesPath = res.service_files_path;
 			}
@@ -101,6 +120,12 @@
 			'consumer.pdfoptimizer.timeout': Number(cfg.consumer.pdfoptimizer.timeout),
 			'consumer.textextractor.engine': cfg.consumer.textextractor.engine,
 			'consumer.textextractor.timeout': Number(cfg.consumer.textextractor.timeout),
+			...(mimeTypeOptions.length > 0
+				? { 'consumer.supported_files': mimeTypeOptions.filter((o) => o.checked).flatMap((o) => o.extensions) }
+				: {}),
+			'consumer.converter.enabled': cfg.consumer.converter.enabled,
+			'consumer.converter.binary': cfg.consumer.converter.binary,
+			'consumer.converter.timeout': Number(cfg.consumer.converter.timeout),
 			'enricher.workers': Number(cfg.enricher.workers),
 			'enricher.textreducer.engine': cfg.enricher.textreducer.engine,
 			'enricher.textreducer.timeout': Number(cfg.enricher.textreducer.timeout),
@@ -582,6 +607,73 @@
 				/>
 				</div>
 
+			</div>
+		</section>
+
+		<section class="rounded-xl border border-clay-800 bg-clay-950/50 p-4">
+			<h3 class="mb-3 text-sm font-semibold text-parchment-200 text-balance">Supported file types</h3>
+			<div class="flex flex-wrap gap-3">
+				{#each mimeTypeOptions as opt (opt.mime_type)}
+					<label class="flex items-center gap-1.5 text-sm text-parchment-300">
+						<input
+							type="checkbox"
+							bind:checked={opt.checked}
+							disabled={opt.required}
+							class="rounded border-clay-800 bg-clay-950 accent-gold-500 disabled:opacity-50"
+						/>
+						{opt.label}
+					</label>
+				{/each}
+			</div>
+		</section>
+
+		<section class="rounded-xl border border-clay-800 bg-clay-950/50 p-4">
+			<h3 class="mb-1 text-sm font-semibold text-parchment-200 text-balance">DOCX/ODT Converter</h3>
+			<p class="mb-3 text-xs text-parchment-400">
+				Converts DOCX and ODT to PDF via LibreOffice. Requires
+				<code class="text-xs text-parchment-300">libreoffice</code> installed on the system.
+			</p>
+			<div class="space-y-3">
+				<div class="flex items-center gap-2">
+					<input
+						id="converter-enabled"
+						type="checkbox"
+						bind:checked={cfg.consumer.converter.enabled}
+						class="rounded border-clay-800 bg-clay-950 accent-gold-500"
+					/>
+					<label for="converter-enabled" class="text-sm font-medium text-parchment-200"
+						>Enable conversion</label
+					>
+				</div>
+				<div>
+					<label for="converter-binary" class="mb-1 block text-sm font-medium text-parchment-200">
+						LibreOffice binary
+					</label>
+					<input
+						id="converter-binary"
+						type="text"
+						bind:value={cfg.consumer.converter.binary}
+						autocomplete="off"
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+					/>
+					<p class="mt-1 text-xs text-parchment-400">
+						Command name on PATH or full path like
+						<code class="text-parchment-300">/opt/libreoffice/bin/soffice</code>
+					</p>
+				</div>
+				<div>
+					<label for="converter-timeout" class="mb-1 block text-sm font-medium text-parchment-200">
+						Timeout (seconds)
+					</label>
+					<input
+						id="converter-timeout"
+						type="number"
+						min="1"
+						bind:value={cfg.consumer.converter.timeout}
+						autocomplete="off"
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+					/>
+				</div>
 			</div>
 		</section>
 

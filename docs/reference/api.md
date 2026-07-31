@@ -261,7 +261,7 @@ See `AuthMiddleware` under `server.go` → Functions.
     - `NewConfigHandler(getConfig, onConfigSet, queries, logger, dispatcher) *ConfigHandler` — `getConfig` and `onConfigSet` are closures wrapping a shared `atomic.Pointer[config.Config]`. The handler never owns its own pointer; config flows via these closures, allowing the file watcher to atomically update the shared state without handler coordination.
     - `SetServices(client, dispatcher)` — Sets `client.Queries`, creates CrudServices with `Batch` and `User` services, sets dispatcher on an already-initialized handler. Used by the wizard's auto-resume path after `onConfigSet` stores the bootstrapped config. Replaces the old `SetBootstrap`.
     - `Bootstrap(w, r)` — `GET /wizard/bootstrap` — Public endpoint (no auth required). Returns only non-sensitive fields: `auth_enabled` (bool) and `missing_tools` (array of `ExternalTool`). The SPA calls this before rendering the login screen to determine whether auth is enabled and whether any external tools are missing. This is the only `/wizard/*` route left reachable without authentication — all other wizard routes are admin-protected.
-    - `GetConfig(w, r)` — `GET /wizard/config` — Returns user-configurable settings as `ConfigResponse` (app, server, consumer, enricher sections plus available_engines; app includes boolean `initialized`; enricher includes LLM provider tokens). Returns defaults from `DefaultConfig("")` when no config is loaded (wizard not yet bootstrapped), so the frontend always receives a complete config shape. Requires admin role.
+    - `GetConfig(w, r)` — `GET /wizard/config` — Returns user-configurable settings as `ConfigResponse` (app, server, consumer, enricher sections plus `available_engines` and `available_file_types`; app includes boolean `initialized`; enricher includes LLM provider tokens). Returns defaults from `DefaultConfig("")` when no config is loaded (wizard not yet bootstrapped), so the frontend always receives a complete config shape. Requires admin role.
     - `PutConfig(w, r)` — `PUT /wizard/config` — Two-phase: if `config_dir` is present and no config exists, bootstraps config directory, DB, and skeleton YAML. Otherwise writes config via `SaveMap`, reloads, and enqueues config tasks for missing downloads (tessdata, hugot). Returns `200` or `201` with pending task count and a `missing_tools` array of hard-blocking tool-availability issues. Requires admin role.
     - `ConfigStatus(w, r)` — `GET /wizard/config/status` — Returns `ConfigStatusResponse` with `configured` flag, `pending_tasks` count, `failed_tasks` (array of `{task_id, op, lang, error}`), `errors`, plus `tools` (full `[]ExternalTool` availability list) and `missing_tools` (hard-blocking subset). Requires admin role.
     - `RetryFailedConfig(w, r)` — `POST /wizard/config/retry` — Retries all failed config tasks. Returns `200 {"retried": <n>}`. Requires admin role.
@@ -277,8 +277,10 @@ See `AuthMiddleware` under `server.go` → Functions.
 - `ServerConfigResponse` — `Host string`, `Port int`
 - `StorageConfigResponse` — `ConsumptionDir string` (inbox path), `StorageDir string` (processed document path)
 - `DatabaseConfigResponse` — `Path string` (not used with PostgreSQL)
-- `ConfigResponse` — `App AppConfigResponse`, `Server ServerConfigResponse`, `Storage StorageConfigResponse`, `Database DatabaseConfigResponse`, `Consumer ConsumerConfigResponse`, `Enricher EnricherConfigResponse`, `AvailableEngines map[string][]EngineEntry`
-- `ConsumerConfigResponse` — `Workers int`, `TextExtractor TextExtractorResponse`, `PdfOptimizer PdfOptimizerResponse`, `OCR OCRResponse`
+- `ConfigResponse` — `App AppConfigResponse`, `Server ServerConfigResponse`, `Storage StorageConfigResponse`, `Database DatabaseConfigResponse`, `Consumer ConsumerConfigResponse`, `Enricher EnricherConfigResponse`, `Backup BackupConfigResponse`, `AvailableEngines map[string][]EngineEntry`, `AvailableFileTypes []AvailableFileType`
+- `AvailableFileType` — `MimeType string`, `Label string`, `Extensions []string` (canonical + aliases, e.g. TIFF → `.tiff`, `.tif`), `Required bool` (PDF only) — drives the supported-file-types checkboxes in both UIs
+- `ConsumerConfigResponse` — `SupportedFiles []string`, `Workers int`, `MaxFilesPerBatch int`, `Converter DocxOdtConverterResponse`, `TextExtractor TextExtractorResponse`, `PdfOptimizer PdfOptimizerResponse`, `OCR OCRResponse`, `Polling PollingConfigResponse`, `Reclaim ReclaimConfigResponse`
+- `DocxOdtConverterResponse` — `Enabled bool`, `Binary string`, `Timeout int`
 - `TextExtractorResponse` — `Engine string`, `Timeout int`
 - `PdfOptimizerResponse` — `Engine string`, `Fallback string`, `Timeout int`
 - `OCRResponse` — `Engine string`, `Languages []string`, `DataDir string`, `Timeout int`
@@ -297,7 +299,7 @@ See `AuthMiddleware` under `server.go` → Functions.
 
 ### Functions
 
-- `ConfigResponseFrom(cfg *config.Config) ConfigResponse` — Maps internal config to the API response, excluding internal/computed fields (model paths, similarity thresholds, etc.). Includes LLM adapter/provider/model config (flat structure), server host/port, and produces the `initialized` boolean in the `app` section.
+- `ConfigResponseFrom(cfg *config.Config) ConfigResponse` — Maps internal config to the API response, excluding internal/computed fields (model paths, similarity thresholds, etc.). Includes LLM adapter/provider/model config (flat structure), server host/port, `consumer.supported_files` + `consumer.converter`, and produces the `initialized` boolean in the `app` section plus the `available_file_types` list (derived from `internal/mime` via `mime.ExtensionsFor`).
 
 ---
 

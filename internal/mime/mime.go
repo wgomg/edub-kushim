@@ -1,5 +1,7 @@
 package mime
 
+import "slices"
+
 import "strings"
 
 const (
@@ -30,6 +32,23 @@ var Supported = []MimeInfo{
 	{MimeType: PNG, Extension: ".png", Label: "PNG"},
 }
 
+// extensionAliases holds accepted alternative extensions per MIME type; content
+// detection can return either form (e.g. .jpeg vs .jpg), so filters must
+// accept both.
+var extensionAliases = map[string][]string{
+	TIFF: {".tif"},
+	JPEG: {".jpeg"},
+}
+
+func ExtensionsFor(mimeType string) []string {
+	for _, m := range Supported {
+		if m.MimeType == mimeType {
+			return append([]string{m.Extension}, extensionAliases[mimeType]...)
+		}
+	}
+	return nil
+}
+
 func IsPDF(mimeType string) bool {
 	return mimeType == PDF
 }
@@ -53,22 +72,15 @@ func ExtensionFromMimeType(mimeType string) string {
 
 func MimeTypeFromExtension(ext string) string {
 	ext = strings.ToLower(ext)
-	switch ext {
-	case ".pdf":
-		return PDF
-	case ".docx":
-		return DOCX
-	case ".odt":
-		return ODT
-	case ".tiff", ".tif":
-		return TIFF
-	case ".jpg", ".jpeg":
-		return JPEG
-	case ".png":
-		return PNG
-	default:
-		return OctetStream
+	for _, m := range Supported {
+		if m.Extension == ext {
+			return m.MimeType
+		}
+		if slices.Contains(extensionAliases[m.MimeType], ext) {
+			return m.MimeType
+		}
 	}
+	return OctetStream
 }
 
 func BuildExtensionSet(exts []string) map[string]bool {

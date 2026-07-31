@@ -294,7 +294,7 @@ environments or CI.
 The main web UI (`web/`) includes a **Settings** page at `/settings` backed by the same
 `/wizard/config` API endpoints. It provides a single-page form covering all configurable
 fields: server host/port, max upload/download sizes, max download files; OCR engine, timeout, data directory, languages;
-consumer workers, max files per batch; polling scheduler on/off toggle and interval; text extractor engine/timeout;
+consumer workers, max files per batch, supported file types (checkbox list with PDF locked on), DOCX/ODT converter (enabled, binary, timeout); polling scheduler on/off toggle and interval; text extractor engine/timeout;
 PDF optimizer engine/fallback/timeout;
 enricher workers; content analyzer enabled toggle + adapter/provider/model cascading selectors (loaded from model catalog) + token + temperature + reasoning;
 tag matcher engine/timeout, reduce-target-words, chunk size, Hugot model/backend;

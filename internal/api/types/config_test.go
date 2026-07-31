@@ -144,3 +144,62 @@ func TestConfigResponseFrom_PauseOnCreditError(t *testing.T) {
 		t.Error("PauseOnCreditError should be false after setting")
 	}
 }
+
+func TestConfigResponseFrom_ConsumerFields(t *testing.T) {
+	cfg := config.DefaultConfig("/tmp/test")
+	cfg.Consumer.SupportedFiles = []string{".pdf", ".tiff"}
+	cfg.Consumer.Converter.Enabled = true
+	cfg.Consumer.Converter.Binary = "/usr/bin/soffice"
+	cfg.Consumer.Converter.Timeout = 120
+
+	resp := ConfigResponseFrom(cfg)
+
+	if len(resp.Consumer.SupportedFiles) != 2 || resp.Consumer.SupportedFiles[0] != ".pdf" || resp.Consumer.SupportedFiles[1] != ".tiff" {
+		t.Errorf("SupportedFiles = %v, want [.pdf .tiff]", resp.Consumer.SupportedFiles)
+	}
+	if !resp.Consumer.Converter.Enabled {
+		t.Error("Converter.Enabled should be true")
+	}
+	if resp.Consumer.Converter.Binary != "/usr/bin/soffice" {
+		t.Errorf("Converter.Binary = %q", resp.Consumer.Converter.Binary)
+	}
+	if resp.Consumer.Converter.Timeout != 120 {
+		t.Errorf("Converter.Timeout = %d, want 120", resp.Consumer.Converter.Timeout)
+	}
+}
+
+func TestConfigResponseFrom_AvailableFileTypes(t *testing.T) {
+	cfg := config.DefaultConfig("/tmp/test")
+	resp := ConfigResponseFrom(cfg)
+
+	if len(resp.AvailableFileTypes) != 6 {
+		t.Fatalf("AvailableFileTypes has %d entries, want 6", len(resp.AvailableFileTypes))
+	}
+
+	pdf := resp.AvailableFileTypes[0]
+	if pdf.MimeType != "application/pdf" {
+		t.Errorf("PDF MimeType = %q", pdf.MimeType)
+	}
+	if !pdf.Required {
+		t.Error("PDF should be required")
+	}
+	if len(pdf.Extensions) != 1 || pdf.Extensions[0] != ".pdf" {
+		t.Errorf("PDF Extensions = %v", pdf.Extensions)
+	}
+
+	tiff := resp.AvailableFileTypes[3]
+	if tiff.MimeType != "image/tiff" {
+		t.Errorf("TIFF MimeType = %q", tiff.MimeType)
+	}
+	if tiff.Required {
+		t.Error("TIFF should not be required")
+	}
+	if len(tiff.Extensions) != 2 || tiff.Extensions[0] != ".tiff" || tiff.Extensions[1] != ".tif" {
+		t.Errorf("TIFF Extensions = %v, want [.tiff .tif]", tiff.Extensions)
+	}
+
+	jpeg := resp.AvailableFileTypes[4]
+	if len(jpeg.Extensions) != 2 || jpeg.Extensions[0] != ".jpg" || jpeg.Extensions[1] != ".jpeg" {
+		t.Errorf("JPEG Extensions = %v, want [.jpg .jpeg]", jpeg.Extensions)
+	}
+}

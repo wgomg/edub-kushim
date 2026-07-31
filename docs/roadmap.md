@@ -212,6 +212,7 @@
 - **PostgreSQL SSL mode dropdown** (#74): replaced free-text SSL mode input with a `<select>` dropdown in both wizard and settings (disable/allow/prefer/require/verify-ca/verify-full)
 - **Separate database section from storage** (#75): split combined "Storage & Database" section into dedicated "Storage" and "Database" sections in both UIs
 - **Timeout=0 for TextExtractor, OCR, TextReducer, TagMatcher** (#76): extended the `min="0"` timeout pattern to all four remaining consumer/enricher timeout inputs so users can disable per-component deadlines. TextReducer and TagMatcher now actually enforce their config timeout (was dead code). Config validation rejects negative values.
+- **Converter + supported file types in wizard & settings UI** — exposed `consumer.supported_files`, `consumer.converter.*`, and a new `available_file_types` list (PDF marked required) in the API `ConfigResponse`. Both the setup wizard (step 2) and the settings page Consumer section now render file-type checkboxes (PDF locked on) and LibreOffice DOCX/ODT converter controls (enabled, binary, timeout). Extension aliases (`.jpeg`, `.tif`) centralized in `internal/mime` via `ExtensionsFor()`.
 
 #### Web UI — Page Status
 

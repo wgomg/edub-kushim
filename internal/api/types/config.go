@@ -1,6 +1,9 @@
 package types
 
-import "github.com/wgomg/edub-kushim/internal/config"
+import (
+	"github.com/wgomg/edub-kushim/internal/config"
+	"github.com/wgomg/edub-kushim/internal/mime"
+)
 
 type FailedTaskSummary struct {
 	TaskID string `json:"task_id"`
@@ -31,8 +34,8 @@ type LoggingConfigResponse struct {
 }
 
 type AppConfigResponse struct {
-	Initialized bool                `json:"initialized"`
-	LogLevel    string              `json:"log_level"`
+	Initialized bool                  `json:"initialized"`
+	LogLevel    string                `json:"log_level"`
 	Logging     LoggingConfigResponse `json:"logging"`
 }
 
@@ -50,14 +53,22 @@ type DatabaseConfigResponse struct {
 }
 
 type ConfigResponse struct {
-	App              AppConfigResponse               `json:"app"`
-	Server           ServerConfigResponse            `json:"server"`
-	Storage          StorageConfigResponse           `json:"storage"`
-	Database         DatabaseConfigResponse          `json:"database"`
-	Consumer         ConsumerConfigResponse          `json:"consumer"`
-	Enricher         EnricherConfigResponse          `json:"enricher"`
-	Backup           BackupConfigResponse            `json:"backup"`
-	AvailableEngines map[string][]config.EngineEntry `json:"available_engines"`
+	App                AppConfigResponse               `json:"app"`
+	Server             ServerConfigResponse            `json:"server"`
+	Storage            StorageConfigResponse           `json:"storage"`
+	Database           DatabaseConfigResponse          `json:"database"`
+	Consumer           ConsumerConfigResponse          `json:"consumer"`
+	Enricher           EnricherConfigResponse          `json:"enricher"`
+	Backup             BackupConfigResponse            `json:"backup"`
+	AvailableEngines   map[string][]config.EngineEntry `json:"available_engines"`
+	AvailableFileTypes []AvailableFileType             `json:"available_file_types"`
+}
+
+type AvailableFileType struct {
+	MimeType   string   `json:"mime_type"`
+	Label      string   `json:"label"`
+	Extensions []string `json:"extensions"`
+	Required   bool     `json:"required"`
 }
 
 type ServerConfigResponse struct {
@@ -77,8 +88,8 @@ type PollingWindowResponse struct {
 }
 
 type PollingConfigResponse struct {
-	Enabled  bool                  `json:"enabled"`
-	Interval int                   `json:"interval"`
+	Enabled  bool                    `json:"enabled"`
+	Interval int                     `json:"interval"`
 	Windows  []PollingWindowResponse `json:"windows"`
 }
 
@@ -89,13 +100,21 @@ type ReclaimConfigResponse struct {
 }
 
 type ConsumerConfigResponse struct {
-	Workers          int                   `json:"workers"`
-	MaxFilesPerBatch int                   `json:"max_files_per_batch"`
-	TextExtractor    TextExtractorResponse `json:"textextractor"`
-	PdfOptimizer     PdfOptimizerResponse  `json:"pdfoptimizer"`
-	OCR              OCRResponse           `json:"ocr"`
-	Polling          PollingConfigResponse `json:"polling"`
-	Reclaim          ReclaimConfigResponse `json:"reclaim"`
+	SupportedFiles   []string                 `json:"supported_files"`
+	Workers          int                      `json:"workers"`
+	MaxFilesPerBatch int                      `json:"max_files_per_batch"`
+	Converter        DocxOdtConverterResponse `json:"converter"`
+	TextExtractor    TextExtractorResponse    `json:"textextractor"`
+	PdfOptimizer     PdfOptimizerResponse     `json:"pdfoptimizer"`
+	OCR              OCRResponse              `json:"ocr"`
+	Polling          PollingConfigResponse    `json:"polling"`
+	Reclaim          ReclaimConfigResponse    `json:"reclaim"`
+}
+
+type DocxOdtConverterResponse struct {
+	Enabled bool   `json:"enabled"`
+	Binary  string `json:"binary"`
+	Timeout int    `json:"timeout"`
 }
 
 type TextExtractorResponse struct {
@@ -137,12 +156,12 @@ type DocTypeRefinementResponse struct {
 }
 
 type ContentAnalyzerResponse struct {
-	Enabled            bool                     `json:"enabled"`
-	Timeout            int                      `json:"timeout"`
-	Llm                LlmConfigResponse        `json:"llm"`
-	PromptTemplate     string                   `json:"prompt_template,omitempty"`
+	Enabled            bool                      `json:"enabled"`
+	Timeout            int                       `json:"timeout"`
+	Llm                LlmConfigResponse         `json:"llm"`
+	PromptTemplate     string                    `json:"prompt_template,omitempty"`
 	DocTypeRefinement  DocTypeRefinementResponse `json:"doc_type_refinement"`
-	PauseOnCreditError bool                     `json:"pause_on_credit_error"`
+	PauseOnCreditError bool                      `json:"pause_on_credit_error"`
 }
 
 type LlmConfigResponse struct {
@@ -183,12 +202,12 @@ type LlmModelsResponse struct {
 type LlmModelEntry struct {
 	ID           string `json:"id"`
 	Capabilities struct {
-		SupportsReasoning    bool     `json:"supports_reasoning"`
-		ReasoningEfforts     []string `json:"reasoning_efforts,omitempty"`
-		MaxInputTokens       int      `json:"max_input_tokens"`
-		MaxOutputTokens      int      `json:"max_output_tokens"`
-		SupportsTemperature     bool     `json:"supports_temperature"`
-		SupportsResponseSchema bool   `json:"supports_response_schema"`
+		SupportsReasoning      bool     `json:"supports_reasoning"`
+		ReasoningEfforts       []string `json:"reasoning_efforts,omitempty"`
+		MaxInputTokens         int      `json:"max_input_tokens"`
+		MaxOutputTokens        int      `json:"max_output_tokens"`
+		SupportsTemperature    bool     `json:"supports_temperature"`
+		SupportsResponseSchema bool     `json:"supports_response_schema"`
 	} `json:"capabilities"`
 }
 
@@ -196,6 +215,10 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	var resp ConfigResponse
 	resp.Consumer.Workers = cfg.Consumer.Workers
 	resp.Consumer.MaxFilesPerBatch = cfg.Consumer.MaxFilesPerBatch
+	resp.Consumer.SupportedFiles = cfg.Consumer.SupportedFiles
+	resp.Consumer.Converter.Enabled = cfg.Consumer.Converter.Enabled
+	resp.Consumer.Converter.Binary = cfg.Consumer.Converter.Binary
+	resp.Consumer.Converter.Timeout = cfg.Consumer.Converter.Timeout
 	resp.Consumer.Polling.Enabled = cfg.Consumer.Polling.Enabled
 	resp.Consumer.Polling.Interval = cfg.Consumer.Polling.Interval
 	resp.Consumer.Polling.Windows = make([]PollingWindowResponse, len(cfg.Consumer.Polling.Windows))
@@ -269,5 +292,20 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Backup.Path = cfg.Backup.Path
 	resp.Backup.Keep = cfg.Backup.Keep
 	resp.AvailableEngines = config.AvailableEngines
+	resp.AvailableFileTypes = buildAvailableFileTypes()
 	return resp
+}
+
+func buildAvailableFileTypes() []AvailableFileType {
+	required := map[string]bool{mime.PDF: true}
+	types := make([]AvailableFileType, 0, len(mime.Supported))
+	for _, mi := range mime.Supported {
+		types = append(types, AvailableFileType{
+			MimeType:   mi.MimeType,
+			Label:      mi.Label,
+			Extensions: mime.ExtensionsFor(mi.MimeType),
+			Required:   required[mi.MimeType],
+		})
+	}
+	return types
 }

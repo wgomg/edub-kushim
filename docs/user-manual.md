@@ -68,7 +68,7 @@ By default, `kushim setup` launches a **web-based setup wizard** at
 `http://0.0.0.0:8420`. The wizard provides a five-step guided flow:
 
 1. **Config directory** — specify where configuration, database, and models are stored
-2. **Settings** — choose OCR engine, add languages, configure worker counts
+2. **Settings** — choose OCR engine, add languages, configure worker counts, select supported file types, enable the DOCX/ODT converter
 3. **Progress** — shows download progress for tessdata and Hugot model
 4. **Admin user** — optionally create an admin user account (username + password)
 5. **Completion** — ready to run `edub` to start the server
@@ -2166,7 +2166,7 @@ A single-page form for all user-configurable settings:
 - **Server**: host, port, max upload/download sizes, max download files,
   max concurrent batches, max batch delete, authentication enabled toggle
 - **OCR**: engine selector, timeout, data directory, languages list (add/remove)
-- **Consumer**: workers
+- **Consumer**: workers, max files per batch, supported file types (checkbox list, PDF always on), DOCX/ODT converter (enabled toggle, binary path, timeout)
 - **Polling**: enabled toggle, interval, active windows (start/end pairs, add/remove)
 - **Reclaim**: auto-resume toggle, max retries, stale task after (seconds)
 - **Text extractor**: engine, timeout

@@ -116,7 +116,7 @@ Replaces the terminal-only setup for users who prefer a GUI.
 
 | Route | File             | Description                                                                 |
 | ----- | ---------------- | --------------------------------------------------------------------------- |
-| `/`   | `+page.svelte`   | Six-step wizard: config directory → consumer settings (server, OCR, text extractor, PDF optimizer) → enricher settings (LLM, tag matcher, text reducer) → progress → admin user → done |
+| `/`   | `+page.svelte`   | Six-step wizard: config directory → consumer settings (server, storage, database, OCR, text extractor, PDF optimizer, supported file types, DOCX/ODT converter) → enricher settings (LLM, tag matcher, text reducer) → progress → admin user → done |
 
 The wizard layout uses the same design system as the main UI (clay/gold/lapis/
 parchment palette) via Tailwind CSS.
