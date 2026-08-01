@@ -27,6 +27,23 @@ Two modes:
 - **External database (default)** — `docker compose up` runs the `edub` container only; you provide PostgreSQL yourself and point the config's `database.host` at it.
 - **Bundled PostgreSQL (quickstart)** — `docker compose -f docker-compose.yml -f docker-compose.quickstart.yml up --build` (or `make compose-quickstart`) also starts a PostgreSQL 17 container. The `edub` service waits for the DB health check, and on first boot the entrypoint runs `kushim setup --cli` with `--db-dsn postgres://edub:edub@db:5432/edub?sslmode=disable --admin-user admin --admin-password admin`, so database, migrations, seeders, and the admin account are created automatically. Data persists in the `edub-db-data` volume; the DB is not exposed on the host. Requires Docker Compose v2. Quickstart credentials are defaults — change them beyond local evaluation.
 
+### Pre-built binaries (Linux amd64/arm64)
+
+Download the latest release from [GitHub Releases](https://github.com/wgomg/edub-kushim/releases) — no host toolchain required:
+
+```bash
+curl -LO https://github.com/wgomg/edub-kushim/releases/latest/download/kushim_linux_amd64.tar.gz
+curl -LO https://github.com/wgomg/edub-kushim/releases/latest/download/edub_linux_amd64.tar.gz
+curl -LO https://github.com/wgomg/edub-kushim/releases/latest/download/checksums.txt
+sha256sum -c checksums.txt
+tar xzf kushim_linux_amd64.tar.gz
+tar xzf edub_linux_amd64.tar.gz
+sudo mv kushim_linux_amd64 /usr/local/bin/kushim
+sudo mv edub_linux_amd64 /usr/local/bin/edub
+```
+
+Use the `_arm64` tarballs on ARM64 hosts. Binaries are built on Ubuntu 24.04 runners against glibc — for other environments, build from source (see `docs/reference/frontend.md`).
+
 ### Manual
 
 ```bash
@@ -60,7 +77,7 @@ Print the application version.
 
 ```
 kushim version
-Document Management System v2.7.0
+Document Management System v2.8.0
 ```
 
 ### `kushim setup`
@@ -587,7 +604,7 @@ Response `200`:
 ```json
 {
   "status": "healthy",
-  "version": "2.7.0",
+  "version": "2.8.0",
   "time": "2024-03-19T10:30:00Z"
 }
 ````
@@ -2159,7 +2176,7 @@ the limit — additional queued batches wait until a worker slot frees up.
 ```bash
 # Check version
 edub version
-# Document Management System v2.7.0
+# Document Management System v2.8.0
 
 # Start server (default when no command is given)
 edub

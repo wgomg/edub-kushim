@@ -104,6 +104,25 @@ See `docs/reference/tests.md` for full testing reference.
 - Svelte 5 with runes enabled everywhere. Tailwind CSS v4 via `@tailwindcss/vite`.
 - Lint: `npm run lint` · Format: `npm run format`.
 
+## Releases
+
+`.github/workflows/release.yml` builds both binaries per arch (amd64 + arm64) and publishes a GitHub Release.
+
+How to release:
+1. Bump `internal/version/version.go` with a `chore(version): incrementa versión a X.Y.Z` commit.
+2. `git tag vX.Y.Z && git push origin vX.Y.Z` — the workflow publishes the release automatically: 4 tarballs (`kushim_linux_{amd64,arm64}`, `edub_linux_{amd64,arm64}`) + combined `checksums.txt`.
+
+Manual runs (`workflow_dispatch` — only triggers from `master`):
+- `publish: false` → build only, no release.
+- `publish: true` + `tag_name` → draft release at that tag (the tag is auto-created at HEAD if missing).
+
+Gotchas when touching this workflow:
+- `download-tokenizers` pins per-arch sha256 in the Makefile; if upstream `latest/` moves, update `TOKENIZERS_SHA256_*`.
+- C-deps cache key = `hashFiles('Makefile')` + arch; the cache only saves when the job succeeds.
+- `upload-artifact` v4+ stores paths relative to their least common ancestor — the explicit staging step in the build job must stay.
+- The `inputs` context keeps booleans typed: compare `inputs.publish == true`, not `== 'true'`.
+- After editing the workflow, run `actionlint .github/workflows/release.yml` (and `act -l` if available).
+
 ## Constraints
 
 - `kushim consume` blocks if external tools are missing (`ocrmypdf` needs tesseract+unpaper; `pdftotext` needs poppler-utils).

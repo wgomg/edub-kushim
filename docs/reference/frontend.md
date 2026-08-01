@@ -76,7 +76,7 @@ make fix               # go fix -tags "XLA,ORT" ./...
 
 Additional C dependency for Hugot Go backend:
 
-5. **libtokenizers** — Pre-built binary from `github.com/daulet/tokenizers/releases/latest` (`download-tokenizers` target). For musl builds, compiled from source via Cargo (`build-tokenizers`).
+5. **libtokenizers** — Pre-built binary from `github.com/daulet/tokenizers/releases/latest`, arch selected via `TOKENIZERS_ARCH` (`?= amd64`, set `arm64` for ARM runners). The tarball is SHA-256 verified against `TOKENIZERS_SHA256_{amd64,arm64}` before extraction — an upstream release that changes the asset fails the build until the Makefile hashes are updated. For musl builds, compiled from source via Cargo (`build-tokenizers`).
 
 The built libraries are placed under `build/{libpng,leptonica,tesseract,mupdf,tokenizers}/local/`.
 
@@ -99,6 +99,16 @@ Linker flags are embedded in source files:
 
 - `internal/tools/adapters/ocr/tesseract_link.go` — Static linking for Tesseract + Leptonica + libpng + platform libraries (`lstdc++`, `lm`, `lpthread`, `ldl`, `lz`)
 - `internal/tools/adapters/mupdf_wrapper.go` — Static linking for MuPDF + platform libraries and `lfreetype`, `ljbig2dec`, `lmujs`, `lopenjp2`, `lz`, `lcrypto`
+
+## GitHub Actions release
+
+`.github/workflows/release.yml` publishes pre-built binaries for Linux amd64/arm64:
+the `web` job builds both SPAs into an artifact, the per-arch `build` jobs compile
+the C deps (cached under `build/`, keyed by Makefile hash + arch) and run
+`make build-deps TOKENIZERS_ARCH=<arch> && make build` with version-injected
+`LDFLAGS`, and the `release` job uploads 4 tarballs + a combined `checksums.txt`
+to GitHub Releases (published on `v*` tag push, draft on `workflow_dispatch`).
+See `AGENTS.md` → Releases for the full process and gotchas.
 
 ---
 

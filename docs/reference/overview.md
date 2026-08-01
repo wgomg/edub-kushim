@@ -156,7 +156,7 @@ internal/
 ├── errs/                  # Error classification (kind, wrapping, FromDB/PgError mapping)
 ├── mime/                  # MIME type predicates, extension mapping, supported-types constants
 ├── version/               # Application version
-│   └── version.go         # var Version = "2.7.0"
+│   └── version.go         # var Version = "2.8.0"
 ├── wizard/                # Setup wizard HTTP server
 │   ├── server.go          # Standalone HTTP server on :8420, serves wizard SPA + config API
 │   └── fs.go              # Embedded SvelteKit wizard build (static/ via //go:embed)

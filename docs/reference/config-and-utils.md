@@ -120,7 +120,7 @@ per tool category, used by the frontend settings UI to populate select dropdowns
 
 ## `version.go`
 
-`var Version = "2.7.0"`
+`var Version = "2.8.0"`
 
 ---
 

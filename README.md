@@ -25,6 +25,23 @@ Two modes:
 - **External database (default)** — `docker compose up`. You provide PostgreSQL yourself — see the [PostgreSQL](#postgresql) section below and make the config's `database.host` point to it (by mounting a custom config file into the container).
 - **Bundled PostgreSQL (quickstart)** — `docker compose -f docker-compose.yml -f docker-compose.quickstart.yml up --build` (or `make compose-quickstart`). Starts a PostgreSQL 17 container (data persisted in the `edub-db-data` volume, not exposed on the host), waits for it to become healthy, and on first boot auto-creates the database, runs migrations, and provisions an `admin`/`admin` account. Requires Docker Compose v2. These credentials and DB passwords are quickstart defaults — change them for anything beyond local evaluation.
 
+### Pre-built binaries (Linux amd64/arm64)
+
+Release tarballs are published on [GitHub Releases](https://github.com/wgomg/edub-kushim/releases) — no host toolchain required:
+
+```bash
+curl -LO https://github.com/wgomg/edub-kushim/releases/latest/download/kushim_linux_amd64.tar.gz
+curl -LO https://github.com/wgomg/edub-kushim/releases/latest/download/edub_linux_amd64.tar.gz
+curl -LO https://github.com/wgomg/edub-kushim/releases/latest/download/checksums.txt
+sha256sum -c checksums.txt
+tar xzf kushim_linux_amd64.tar.gz
+tar xzf edub_linux_amd64.tar.gz
+sudo mv kushim_linux_amd64 /usr/local/bin/kushim
+sudo mv edub_linux_amd64 /usr/local/bin/edub
+```
+
+Use the `_arm64` tarballs on ARM64 hosts. The binaries are built on Ubuntu 24.04 runners against glibc — on other distributions or musl targets, build from source (see [Build](#build)).
+
 ### PostgreSQL
 
 edub-kushim requires PostgreSQL 16+. Run an instance using one of the following methods before starting the application.
