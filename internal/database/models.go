@@ -50,6 +50,7 @@ type Document struct {
 	StoragePath      string
 	TextContent      sql.NullString
 	TextSearchVector interface{}
+	DeletedAt        sql.NullTime
 }
 
 type DocumentPeople struct {

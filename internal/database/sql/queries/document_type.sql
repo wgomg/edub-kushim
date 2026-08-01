@@ -31,14 +31,14 @@ SELECT * FROM document_type ORDER BY created_at DESC;
 -- name: ListDocumentTypesWithDocumentCount :many
 SELECT dt.*, COUNT(d.id) AS document_count
 FROM document_type dt
-LEFT JOIN document d ON dt.id = d.document_type_id
+LEFT JOIN document d ON dt.id = d.document_type_id AND d.deleted_at IS NULL
 GROUP BY dt.id
 ORDER BY dt.created_at DESC LIMIT $1 OFFSET $2;
 
 -- name: SearchDocumentTypeByNameWithDocumentCount :many
 SELECT dt.*, COUNT(d.id) AS document_count
 FROM document_type dt
-LEFT JOIN document d ON dt.id = d.document_type_id
+LEFT JOIN document d ON dt.id = d.document_type_id AND d.deleted_at IS NULL
 WHERE dt.name LIKE $1
 GROUP BY dt.id
 ORDER BY dt.name ASC LIMIT $2;
@@ -46,7 +46,7 @@ ORDER BY dt.name ASC LIMIT $2;
 -- name: ListAllDocumentTypesWithDocumentCount :many
 SELECT dt.*, COUNT(d.id) AS document_count
 FROM document_type dt
-LEFT JOIN document d ON dt.id = d.document_type_id
+LEFT JOIN document d ON dt.id = d.document_type_id AND d.deleted_at IS NULL
 GROUP BY dt.id
 ORDER BY dt.created_at DESC;
 

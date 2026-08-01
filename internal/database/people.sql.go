@@ -187,6 +187,7 @@ const listPeopleWithDocumentCount = `-- name: ListPeopleWithDocumentCount :many
 SELECT p.id, p.name, p.name_native, p.normalized_name, p.created_at, COUNT(dp.document_id) AS document_count
 FROM people p
 LEFT JOIN document_people dp ON p.id = dp.people_id
+LEFT JOIN document d ON dp.document_id = d.id AND d.deleted_at IS NULL
 GROUP BY p.id
 ORDER BY p.created_at DESC LIMIT $1 OFFSET $2
 `
@@ -277,6 +278,7 @@ const searchPeopleByNameWithDocumentCount = `-- name: SearchPeopleByNameWithDocu
 SELECT p.id, p.name, p.name_native, p.normalized_name, p.created_at, COUNT(dp.document_id) AS document_count
 FROM people p
 LEFT JOIN document_people dp ON p.id = dp.people_id
+LEFT JOIN document d ON dp.document_id = d.id AND d.deleted_at IS NULL
 WHERE p.name LIKE $1
 GROUP BY p.id
 ORDER BY p.name ASC LIMIT $2 OFFSET $3

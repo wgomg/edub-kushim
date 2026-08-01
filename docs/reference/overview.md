@@ -16,6 +16,7 @@ internal/
 │   │   ├── tag.go         # Tag CRUD handlers (list, create, update, delete)
 │   │   ├── task.go        # Task API handlers (list, get, batch summary, global summary with waiting status)
 │   │   ├── orphaned.go     # Orphaned file management handlers (list, scan, delete, restore, move-to-inbox)
+│   │   ├── trash.go        # Trash/soft-delete handlers (list, get, restore, permanent delete, batch, purge)
 │   │   ├── errored.go      # Errored file management handlers (list, download, delete, delete-all)
 │   │   ├── auth.go         # Login/logout/me handlers (JWT + HttpOnly cookie)
 │   │   ├── api_key.go      # API key handlers (admin per-user + self-service /me)
@@ -67,6 +68,7 @@ internal/
 │   ├── document_type.go   # DocumentType service (NewDocumentType, batch CRUD)
 │   ├── batch.go           # Batch service (NewBatch, GetSummary, ListSummaries, ListOverviews, Create, BeginCancel/CompleteCancel, CountOrphaned, RetryFailed, HasPendingWork, IsLockedByLiveOwner)
 │   ├── orphaned.go        # Orphaned file service (scan, list, delete, restore, move-to-inbox)
+│   ├── trash.go           # Trash service (soft delete, restore, permanent delete, purge + hourly background purge)
 │   ├── errored.go        # Errored file service (list on disk, get path, delete, delete-all)
 │   ├── enrich.go          # Re-enrich single document service (dedup via active task check)
 │   ├── password.go        # Password validation rules (12+ chars, complexity)
@@ -141,7 +143,8 @@ internal/
 │           ├── user.sql
 │           └── orphaned.sql
 ├── storage/              # Filesystem operations for orphaned file management
-│   └── orphaned.go        # Walk originals/processed, quarantine, remove, copy to inbox
+│   ├── orphaned.go        # Walk originals/processed, quarantine, remove, copy to inbox
+│   └── trash.go           # Move files to/from trash dir, remove trash dirs (soft-delete file operations)
 ├── static/                # Embedded web UI (main app)
 │   └── fs.go              # Embedded SvelteKit build (build/ directory via //go:embed)
 ├── llm/                   # LLM capability registry

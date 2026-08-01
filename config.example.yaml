@@ -34,6 +34,8 @@ database:
 storage:
   consumption_dir: '~/.config/edub-kushim/inbox'
   storage_dir: '~/.config/edub-kushim/storage'
+  trash:
+    retention_days: 30  # days before soft-deleted documents are permanently purged
 
 consumer:
   workers: 1

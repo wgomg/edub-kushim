@@ -40,7 +40,11 @@ func TestUpdateDeleteDocument(t *testing.T) {
 	_, docID := CreateTestDocument(t, q, "up.pdf")
 	err := q.UpdateDocumentEditable(ctx, UpdateDocumentEditableParams{Title: "renamed.pdf", DocumentTypeID: 1, Language: "spa", DocumentID: docID})
 	assertNoError(t, err, "update")
-	assertNoError(t, q.DeleteDocument(ctx, docID), "delete")
+	assertNoError(t, q.SoftDeleteDocument(ctx, SoftDeleteDocumentParams{
+		DocumentID: docID, OriginalPath: "/tmp/orig.pdf", StoragePath: "/tmp/storage.pdf",
+	}), "soft delete")
+	_, err = q.GetDocument(ctx, docID)
+	assertEqual(t, err, sql.ErrNoRows, "doc gone after soft delete")
 }
 
 func TestListDocuments(t *testing.T) {

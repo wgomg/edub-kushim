@@ -679,7 +679,7 @@ Config limits (see [Configuration Reference](#configuration-reference)):
 
 ### Batch Delete Documents
 
-Deletes multiple documents in a single request. Returns partial failure information
+Soft-deletes multiple documents in a single request. Returns partial failure information
 when some documents cannot be deleted.
 
 ```
@@ -708,8 +708,9 @@ Response `200` with partial failure support:
 ```
 
 When no documents could be deleted (all failed), the response is `400`. Each document is
-processed independently — the database record is deleted first, then files are best-effort
-removed from disk. File removal failures are logged but do not fail the operation.
+processed independently — files are moved to the trash directory and the row is marked
+deleted (see [Trash / Soft Delete](#trash--soft-delete)). Returns `404` (via the `failed`
+array) for documents that do not exist or are already in the trash.
 
 ### Batch Assign Tags
 
@@ -787,7 +788,114 @@ Response `204 No Content`. Returns `404` if document or document type is not fou
 DELETE /api/v1/documents/{id}
 ```
 
-Response `204 No Content`. Deletes the database record (junction tables via cascade, FTS index via trigger), then best-effort removes the original and storage files from disk. File removal failures are logged but do not affect the response. Returns `404` if document is not found.
+Response `204 No Content`. Soft-deletes the document: its original and processed files are
+moved to the trash directory (`<storage_dir>/trash/<document_id>/`) and the row is marked
+with `deleted_at` instead of being removed. The document disappears from lists, search,
+and dashboard counts but can be restored from the trash (see
+[Trash / Soft Delete](#trash--soft-delete)). Returns `404` if the document is not found or
+already in the trash.
+
+### Trash / Soft Delete
+
+Soft-deleted documents are moved to the trash and can be restored or permanently deleted.
+Trashed documents are excluded from all queries (lists, search, dashboard, counts) and from
+checksum-based duplicate detection, so re-ingesting a deleted file creates a new document.
+
+#### List Trash
+
+```
+GET /api/v1/trash?limit=50&offset=0
+```
+
+Returns paginated trashed documents ordered by `deleted_at` descending:
+
+```json
+{
+  "documents": [
+    {
+      "id": 1,
+      "document_id": "uuid",
+      "title": "Invoice.pdf",
+      "original_type": "application/pdf",
+      "file_size": 1024,
+      "page_count": 2,
+      "language": "eng",
+      "deleted_at": "2026-08-01T00:00:00Z",
+      "created_at": "2026-07-01T00:00:00Z"
+    }
+  ],
+  "total": 1,
+  "limit": 50,
+  "offset": 0
+}
+```
+
+#### Get Trash Document
+
+```
+GET /api/v1/trash/{id}
+```
+
+Returns full metadata for a single trashed document (including checksums, page/word/char
+counts, language, document type, timestamps). Returns `404` if the document is not in the
+trash.
+
+#### Restore Document
+
+```
+POST /api/v1/trash/{id}/restore
+```
+
+Moves the files back to the main storage directories and clears `deleted_at`. Response
+`204 No Content`. Returns `404` if the document is not in the trash. Missing files are
+skipped (partial restore) rather than failing the operation.
+
+#### Permanently Delete Document
+
+```
+DELETE /api/v1/trash/{id}
+```
+
+Removes the database row (junction tables cascade) and the document's trash directory.
+Response `204 No Content`. Returns `404` if the document is not in the trash.
+
+#### Batch Permanent Delete
+
+```
+POST /api/v1/trash/batch-delete
+Content-Type: application/json
+
+{
+  "document_ids": ["uuid1", "uuid2"]
+}
+```
+
+Same validation and response shape as batch delete (`deleted`/`failed`); documents not in
+the trash are reported as failed.
+
+#### Batch Restore
+
+```
+POST /api/v1/trash/batch-restore
+Content-Type: application/json
+
+{
+  "document_ids": ["uuid1", "uuid2"]
+}
+```
+
+Restores multiple trashed documents. Response `200` with `{"restored": N, "failed": [...]}`;
+`400` when no document could be restored.
+
+#### Purge Expired
+
+```
+POST /api/v1/trash/purge
+```
+
+Permanently deletes all trashed documents whose `deleted_at` is older than
+`storage.trash.retention_days` (default 30 days). Response `200` with `{"purged": N}`. The
+same purge also runs automatically in the background every hour.
 
 ### Add Document Tag
 
@@ -1804,6 +1912,8 @@ database:
 storage:
   consumption_dir: '~/.config/edub-kushim/inbox'
   storage_dir: '~/.config/edub-kushim/storage'
+  trash:
+    retention_days: 30 # days before soft-deleted documents are permanently purged
 
 consumer:
   workers: 1 # concurrent file processing workers
@@ -1886,6 +1996,7 @@ backup:
 | `server`                       | HTTP listen address, timeouts, max concurrent batches, download limits |
 | `database`                     | PostgreSQL connection: host, port, user, password, database, sslmode, or DSN |
 | `storage`                      | Inbox and processed file directories                                   |
+| `storage.trash`                | Trash retention: `retention_days` (default 30) before soft-deleted documents are permanently purged |
 | `consumer`                     | Pipeline: which tools to use, which files to accept                    |
 | `consumer.max_files_per_batch` | Max files per consume batch (default 10, 0 = unlimited)                |
 | `consumer.polling`             | Auto-consume scheduler settings (enabled, interval)                    |
@@ -2214,6 +2325,9 @@ A single-page form for all user-configurable settings:
 - **Tag matcher**: engine, timeout, reduce target words, chunk size, Hugot model,
   Hugot backend (ort/GO)
 - **Text reducer**: engine, timeout, target words
+- **Storage**: consumption directory, storage directory
+- **Trash**: retention period in days (`storage.trash.retention_days`, default 30)
+- **Database**: host, port, user, password, database name, SSL mode
 
 Changes are saved via the `/wizard/config` API and trigger background
 downloads for any missing tessdata or Hugot model files. A spinner and

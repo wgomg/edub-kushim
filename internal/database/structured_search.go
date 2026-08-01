@@ -130,13 +130,13 @@ func (q *Queries) SearchDocumentsStructured(ctx context.Context, filter SearchFi
 			COALESCE(ts_headline('simple', d.text_content, plainto_tsquery('simple', $%d),
 				'StartSel=<b>, StopSel=</b>, MaxWords=64, MinWords=32'), '') as snippet
 			FROM document d
-			WHERE d.text_search_vector @@ plainto_tsquery('simple', $%d)`, selectCols, queryIdx, queryIdx, queryIdx), filter.Query)
+			WHERE d.text_search_vector @@ plainto_tsquery('simple', $%d) AND d.deleted_at IS NULL`, selectCols, queryIdx, queryIdx, queryIdx), filter.Query)
 	} else {
 		b.add(selectCols + `,
 			0.0 as rank,
 			'' as snippet
 			FROM document d
-			WHERE 1=1`)
+			WHERE 1=1 AND d.deleted_at IS NULL`)
 	}
 
 	b.subqueryIn("id",
@@ -222,9 +222,9 @@ func (q *Queries) CountDocumentsStructured(ctx context.Context, filter SearchFil
 
 	if filter.Query != "" {
 		b.add(fmt.Sprintf(`SELECT COUNT(*) FROM document d
-			WHERE d.text_search_vector @@ plainto_tsquery('simple', $%d)`, b.nextIndex()), filter.Query)
+			WHERE d.text_search_vector @@ plainto_tsquery('simple', $%d) AND d.deleted_at IS NULL`, b.nextIndex()), filter.Query)
 	} else {
-		b.add(`SELECT COUNT(*) FROM document d WHERE 1=1`)
+		b.add(`SELECT COUNT(*) FROM document d WHERE 1=1 AND d.deleted_at IS NULL`)
 	}
 
 	b.subqueryIn("id",

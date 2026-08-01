@@ -11,11 +11,22 @@ import (
 )
 
 const countAllDocuments = `-- name: CountAllDocuments :one
-SELECT COUNT(*) FROM document
+SELECT COUNT(*) FROM document WHERE deleted_at IS NULL
 `
 
 func (q *Queries) CountAllDocuments(ctx context.Context) (int64, error) {
 	row := q.db.QueryRowContext(ctx, countAllDocuments)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countTrashDocuments = `-- name: CountTrashDocuments :one
+SELECT COUNT(*) FROM document WHERE deleted_at IS NOT NULL
+`
+
+func (q *Queries) CountTrashDocuments(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countTrashDocuments)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -65,34 +76,37 @@ func (q *Queries) CreateDocument(ctx context.Context, arg CreateDocumentParams) 
 	return id, err
 }
 
-const deleteDocument = `-- name: DeleteDocument :exec
-DELETE FROM document WHERE document_id = $1
-`
-
-func (q *Queries) DeleteDocument(ctx context.Context, documentID string) error {
-	_, err := q.db.ExecContext(ctx, deleteDocument, documentID)
-	return err
-}
-
-const deleteDocumentById = `-- name: DeleteDocumentById :exec
-DELETE FROM document WHERE id = $1
-`
-
-func (q *Queries) DeleteDocumentById(ctx context.Context, id int64) error {
-	_, err := q.db.ExecContext(ctx, deleteDocumentById, id)
-	return err
-}
-
 const getDocument = `-- name: GetDocument :one
 SELECT id, document_id, title, md5_checksum, sha512_checksum, original_type, file_size, page_count, word_count,
        char_count, language, created_at, modified_at, document_type_id, original_path, storage_path, text_content,
        text_search_vector
-FROM document WHERE document_id = $1
+FROM document WHERE document_id = $1 AND deleted_at IS NULL
 `
 
-func (q *Queries) GetDocument(ctx context.Context, documentID string) (Document, error) {
+type GetDocumentRow struct {
+	ID               int64
+	DocumentID       string
+	Title            string
+	Md5Checksum      string
+	Sha512Checksum   string
+	OriginalType     string
+	FileSize         int64
+	PageCount        int32
+	WordCount        int32
+	CharCount        int32
+	Language         string
+	CreatedAt        sql.NullTime
+	ModifiedAt       sql.NullTime
+	DocumentTypeID   int64
+	OriginalPath     string
+	StoragePath      string
+	TextContent      sql.NullString
+	TextSearchVector interface{}
+}
+
+func (q *Queries) GetDocument(ctx context.Context, documentID string) (GetDocumentRow, error) {
 	row := q.db.QueryRowContext(ctx, getDocument, documentID)
-	var i Document
+	var i GetDocumentRow
 	err := row.Scan(
 		&i.ID,
 		&i.DocumentID,
@@ -120,12 +134,33 @@ const getDocumentById = `-- name: GetDocumentById :one
 SELECT id, document_id, title, md5_checksum, sha512_checksum, original_type, file_size, page_count, word_count,
        char_count, language, created_at, modified_at, document_type_id, original_path, storage_path, text_content,
        text_search_vector
-FROM document WHERE id = $1
+FROM document WHERE id = $1 AND deleted_at IS NULL
 `
 
-func (q *Queries) GetDocumentById(ctx context.Context, id int64) (Document, error) {
+type GetDocumentByIdRow struct {
+	ID               int64
+	DocumentID       string
+	Title            string
+	Md5Checksum      string
+	Sha512Checksum   string
+	OriginalType     string
+	FileSize         int64
+	PageCount        int32
+	WordCount        int32
+	CharCount        int32
+	Language         string
+	CreatedAt        sql.NullTime
+	ModifiedAt       sql.NullTime
+	DocumentTypeID   int64
+	OriginalPath     string
+	StoragePath      string
+	TextContent      sql.NullString
+	TextSearchVector interface{}
+}
+
+func (q *Queries) GetDocumentById(ctx context.Context, id int64) (GetDocumentByIdRow, error) {
 	row := q.db.QueryRowContext(ctx, getDocumentById, id)
-	var i Document
+	var i GetDocumentByIdRow
 	err := row.Scan(
 		&i.ID,
 		&i.DocumentID,
@@ -152,7 +187,7 @@ func (q *Queries) GetDocumentById(ctx context.Context, id int64) (Document, erro
 const getDocumentByMD5Checksum = `-- name: GetDocumentByMD5Checksum :many
 SELECT id, document_id, title, md5_checksum, sha512_checksum, original_type, file_size, page_count, word_count,
        char_count, language, created_at, modified_at, document_type_id, original_path, storage_path
-FROM document WHERE md5_checksum = $1
+FROM document WHERE md5_checksum = $1 AND deleted_at IS NULL
 `
 
 type GetDocumentByMD5ChecksumRow struct {
@@ -217,7 +252,7 @@ func (q *Queries) GetDocumentByMD5Checksum(ctx context.Context, md5Checksum stri
 const getDocumentBySHA512Checksum = `-- name: GetDocumentBySHA512Checksum :one
 SELECT id, document_id, title, md5_checksum, sha512_checksum, original_type, file_size, page_count, word_count,
        char_count, language, created_at, modified_at, document_type_id, original_path, storage_path
-FROM document WHERE sha512_checksum = $1
+FROM document WHERE sha512_checksum = $1 AND deleted_at IS NULL
 `
 
 type GetDocumentBySHA512ChecksumRow struct {
@@ -268,7 +303,7 @@ SELECT d.id, d.document_id, d.title, d.md5_checksum, d.sha512_checksum, d.origin
        d.page_count, d.word_count, d.char_count, d.language, d.created_at, d.modified_at, d.document_type_id, d.original_path, d.storage_path, d.text_content, dt.name as document_type_name
 FROM document d
 LEFT JOIN document_type dt ON d.document_type_id = dt.id
-WHERE d.document_id = $1
+WHERE d.document_id = $1 AND d.deleted_at IS NULL
 `
 
 type GetDocumentWithDetailsRow struct {
@@ -323,7 +358,7 @@ SELECT d.id, d.document_id, d.title, d.md5_checksum, d.sha512_checksum, d.origin
        d.page_count, d.word_count, d.char_count, d.language, d.created_at, d.modified_at, d.document_type_id, d.original_path, d.storage_path, d.text_content, dt.name as document_type_name
 FROM document d
 LEFT JOIN document_type dt ON d.document_type_id = dt.id
-WHERE d.id = $1
+WHERE d.id = $1 AND d.deleted_at IS NULL
 `
 
 type GetDocumentWithDetailsByIdRow struct {
@@ -378,7 +413,7 @@ SELECT d.id, d.document_id, d.title, d.md5_checksum, d.sha512_checksum, d.origin
        d.page_count, d.word_count, d.char_count, d.language, d.created_at, d.modified_at, d.document_type_id, d.original_path, d.storage_path, d.text_content, dt.name as document_type_name
 FROM document d
 LEFT JOIN document_type dt ON d.document_type_id = dt.id
-WHERE d.document_id = $1
+WHERE d.document_id = $1 AND d.deleted_at IS NULL
 `
 
 type GetDocumentWithTextRow struct {
@@ -433,7 +468,7 @@ SELECT d.id, d.document_id, d.title, d.md5_checksum, d.sha512_checksum, d.origin
        d.page_count, d.word_count, d.char_count, d.language, d.created_at, d.modified_at, d.document_type_id, d.original_path, d.storage_path, d.text_content, dt.name as document_type_name
 FROM document d
 LEFT JOIN document_type dt ON d.document_type_id = dt.id
-WHERE d.id = $1
+WHERE d.id = $1 AND d.deleted_at IS NULL
 `
 
 type GetDocumentWithTextByIdRow struct {
@@ -483,10 +518,66 @@ func (q *Queries) GetDocumentWithTextById(ctx context.Context, id int64) (GetDoc
 	return i, err
 }
 
+const getTrashDocument = `-- name: GetTrashDocument :one
+SELECT id, document_id, title, md5_checksum, sha512_checksum, original_type, file_size, page_count, word_count,
+       char_count, language, created_at, modified_at, deleted_at, document_type_id, original_path, storage_path,
+       text_content, text_search_vector
+FROM document WHERE document_id = $1 AND deleted_at IS NOT NULL
+`
+
+type GetTrashDocumentRow struct {
+	ID               int64
+	DocumentID       string
+	Title            string
+	Md5Checksum      string
+	Sha512Checksum   string
+	OriginalType     string
+	FileSize         int64
+	PageCount        int32
+	WordCount        int32
+	CharCount        int32
+	Language         string
+	CreatedAt        sql.NullTime
+	ModifiedAt       sql.NullTime
+	DeletedAt        sql.NullTime
+	DocumentTypeID   int64
+	OriginalPath     string
+	StoragePath      string
+	TextContent      sql.NullString
+	TextSearchVector interface{}
+}
+
+func (q *Queries) GetTrashDocument(ctx context.Context, documentID string) (GetTrashDocumentRow, error) {
+	row := q.db.QueryRowContext(ctx, getTrashDocument, documentID)
+	var i GetTrashDocumentRow
+	err := row.Scan(
+		&i.ID,
+		&i.DocumentID,
+		&i.Title,
+		&i.Md5Checksum,
+		&i.Sha512Checksum,
+		&i.OriginalType,
+		&i.FileSize,
+		&i.PageCount,
+		&i.WordCount,
+		&i.CharCount,
+		&i.Language,
+		&i.CreatedAt,
+		&i.ModifiedAt,
+		&i.DeletedAt,
+		&i.DocumentTypeID,
+		&i.OriginalPath,
+		&i.StoragePath,
+		&i.TextContent,
+		&i.TextSearchVector,
+	)
+	return i, err
+}
+
 const listDocuments = `-- name: ListDocuments :many
 SELECT id, document_id, title, md5_checksum, sha512_checksum, original_type, file_size, page_count, word_count,
        char_count, language, created_at, modified_at, document_type_id, original_path, storage_path
-FROM document ORDER BY created_at DESC LIMIT $1 OFFSET $2
+FROM document WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT $1 OFFSET $2
 `
 
 type ListDocumentsParams struct {
@@ -553,11 +644,124 @@ func (q *Queries) ListDocuments(ctx context.Context, arg ListDocumentsParams) ([
 	return items, nil
 }
 
+const listTrashDocuments = `-- name: ListTrashDocuments :many
+SELECT id, document_id, title, md5_checksum, sha512_checksum, original_type, file_size, page_count, word_count,
+       char_count, language, created_at, modified_at, deleted_at, document_type_id, original_path, storage_path
+FROM document WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT $1 OFFSET $2
+`
+
+type ListTrashDocumentsParams struct {
+	Limit  int32
+	Offset int32
+}
+
+type ListTrashDocumentsRow struct {
+	ID             int64
+	DocumentID     string
+	Title          string
+	Md5Checksum    string
+	Sha512Checksum string
+	OriginalType   string
+	FileSize       int64
+	PageCount      int32
+	WordCount      int32
+	CharCount      int32
+	Language       string
+	CreatedAt      sql.NullTime
+	ModifiedAt     sql.NullTime
+	DeletedAt      sql.NullTime
+	DocumentTypeID int64
+	OriginalPath   string
+	StoragePath    string
+}
+
+func (q *Queries) ListTrashDocuments(ctx context.Context, arg ListTrashDocumentsParams) ([]ListTrashDocumentsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listTrashDocuments, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTrashDocumentsRow
+	for rows.Next() {
+		var i ListTrashDocumentsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.DocumentID,
+			&i.Title,
+			&i.Md5Checksum,
+			&i.Sha512Checksum,
+			&i.OriginalType,
+			&i.FileSize,
+			&i.PageCount,
+			&i.WordCount,
+			&i.CharCount,
+			&i.Language,
+			&i.CreatedAt,
+			&i.ModifiedAt,
+			&i.DeletedAt,
+			&i.DocumentTypeID,
+			&i.OriginalPath,
+			&i.StoragePath,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const permanentlyDeleteDocument = `-- name: PermanentlyDeleteDocument :exec
+DELETE FROM document WHERE document_id = $1 AND deleted_at IS NOT NULL
+`
+
+func (q *Queries) PermanentlyDeleteDocument(ctx context.Context, documentID string) error {
+	_, err := q.db.ExecContext(ctx, permanentlyDeleteDocument, documentID)
+	return err
+}
+
+const purgeExpiredDocuments = `-- name: PurgeExpiredDocuments :execrows
+DELETE FROM document WHERE deleted_at < CURRENT_TIMESTAMP - ($1::text || ' days')::INTERVAL
+`
+
+func (q *Queries) PurgeExpiredDocuments(ctx context.Context, dollar_1 string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, purgeExpiredDocuments, dollar_1)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const restoreDocument = `-- name: RestoreDocument :exec
+UPDATE document SET
+    deleted_at = NULL,
+    original_path = $2,
+    storage_path = $3,
+    modified_at = CURRENT_TIMESTAMP
+WHERE document_id = $1 AND deleted_at IS NOT NULL
+`
+
+type RestoreDocumentParams struct {
+	DocumentID   string
+	OriginalPath string
+	StoragePath  string
+}
+
+func (q *Queries) RestoreDocument(ctx context.Context, arg RestoreDocumentParams) error {
+	_, err := q.db.ExecContext(ctx, restoreDocument, arg.DocumentID, arg.OriginalPath, arg.StoragePath)
+	return err
+}
+
 const searchDocumentsByTitle = `-- name: SearchDocumentsByTitle :many
 SELECT id, document_id, title, md5_checksum, sha512_checksum, original_type, file_size, page_count, word_count,
        char_count, language, created_at, modified_at, document_type_id, original_path, storage_path
 FROM document
-WHERE title LIKE $1
+WHERE title LIKE $1 AND deleted_at IS NULL
 ORDER BY created_at DESC
 LIMIT $2 OFFSET $3
 `
@@ -627,8 +831,28 @@ func (q *Queries) SearchDocumentsByTitle(ctx context.Context, arg SearchDocument
 	return items, nil
 }
 
+const softDeleteDocument = `-- name: SoftDeleteDocument :exec
+UPDATE document SET
+    deleted_at = CURRENT_TIMESTAMP,
+    original_path = $2,
+    storage_path = $3,
+    modified_at = CURRENT_TIMESTAMP
+WHERE document_id = $1 AND deleted_at IS NULL
+`
+
+type SoftDeleteDocumentParams struct {
+	DocumentID   string
+	OriginalPath string
+	StoragePath  string
+}
+
+func (q *Queries) SoftDeleteDocument(ctx context.Context, arg SoftDeleteDocumentParams) error {
+	_, err := q.db.ExecContext(ctx, softDeleteDocument, arg.DocumentID, arg.OriginalPath, arg.StoragePath)
+	return err
+}
+
 const sumDocumentFileSizes = `-- name: SumDocumentFileSizes :one
-SELECT CAST(COALESCE(SUM(file_size), 0) AS BIGINT) AS total_bytes FROM document
+SELECT CAST(COALESCE(SUM(file_size), 0) AS BIGINT) AS total_bytes FROM document WHERE deleted_at IS NULL
 `
 
 func (q *Queries) SumDocumentFileSizes(ctx context.Context) (int64, error) {

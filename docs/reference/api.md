@@ -52,17 +52,35 @@
     - `SearchDocuments(w, r)` — `GET /api/v1/documents/search` — Returns `FTSDocumentResponse` array with enhanced fields. The `Snippet` field is HTML-escaped through `sanitizeSnippetHTML` which allows only `<b>`/`</b>` highlighting tags through to prevent XSS.
     - `SearchDocumentsStructured(w, r)` — `POST /api/v1/documents/search` — Accepts `search.Filter` JSON body, calls `engine.SearchStructured(ctx, filter)`, returns `SearchResponse` with `results` array and `total` count. Enriches each result with tags and people from DB to avoid N+1. The `Snippet` field is sanitized identically to `SearchDocuments`.
     - `UpdateDocument(w, r)` — `PUT /api/v1/documents/{id}` — Accepts `DocumentUpdateRequest` JSON (title, document_type_id, language, text_content). Validates title non-empty, document type exists (via `GetDocumentType`), defaults language to `"und"` when empty. Preserves existing `text_content` when nil. Returns `204 No Content`.
-    - `DeleteDocument(w, r)` — `DELETE /api/v1/documents/{id}` — Fetches document to get file paths, calls `DeleteDocument` (single DELETE with cascade + FTS trigger), then best-effort `os.Remove` on original and storage paths. Returns `204 No Content`. Triggers async orphan scan post-deletion.
+    - `DeleteDocument(w, r)` — `DELETE /api/v1/documents/{id}` — Soft-deletes the document: calls `services.Trash.SoftDelete`, which moves files to `<storage>/trash/<document_id>/` (missing files tolerated) and sets `deleted_at`. Returns `204 No Content`; `404` when the document is missing or already in the trash. File-move failures return 500 and leave the document active.
     - `AddDocumentTag(w, r)` — `POST /api/v1/documents/{id}/tags` — Accepts `{tag_id}`, validates document and tag exist via `services.Tag.Get` (maps `KindNotFound` → 404 via `writeServiceError`), calls `AddDocumentTag` (INSERT OR IGNORE). Returns `204 No Content`.
     - `RemoveDocumentTag(w, r)` — `DELETE /api/v1/documents/{id}/tags` — Accepts `{tag_id}`, validates document exists, calls `RemoveDocumentTag`. Returns `204 No Content`.
     - `AddDocumentPeople(w, r)` — `POST /api/v1/documents/{id}/people` — Accepts `{people_id, people_type_id}`, validates document, person, and people type exist, calls `AddDocumentPeople` (INSERT OR IGNORE). Returns `204 No Content`.
     - `RemoveDocumentPeople(w, r)` — `DELETE /api/v1/documents/{id}/people` — Accepts `{people_id, people_type_id}`, validates document exists, calls `RemoveDocumentPeople` (now filters by all three PK columns: document_id, people_id, people_type_id). Returns `204 No Content`.
     - `ReEnrich(w, r)` — `POST /api/v1/documents/{id}/reenrich` — Validates document ID is non-empty, calls `services.ReEnrich.ReEnrich(ctx, documentID)`. Returns `202 Accepted` with `{batch_id, _links: {tasks: ...}}`. Maps document-not-found and dedup-conflict errors via `writeServiceError` (404 / 409).
     - `DownloadDocuments(w, r)` — `POST /api/v1/documents/download` — Accepts `{document_ids: [...]}` JSON (or form-encoded). Streams a ZIP archive with each document's processed file. Validates count against `max_download_files` and total size against `max_download_size_mb`. Returns `200` with `Content-Type: application/zip`, `400` with validation errors.
-    - `BatchDeleteDocuments(w, r)` — `POST /api/v1/documents/batch-delete` — Accepts `{document_ids: [...]}` JSON. Deletes each document independently; returns partial failure info. Count validated against `max_batch_delete`.
+    - `BatchDeleteDocuments(w, r)` — `POST /api/v1/documents/batch-delete` — Accepts `{document_ids: [...]}` JSON. Soft-deletes each document independently via `services.Trash.SoftDelete`; returns partial failure info (`deleted`/`failed`, `404` for missing/already-trashed IDs). Count validated against `max_batch_delete`.
     - `BatchAssignTags(w, r)` — `POST /api/v1/documents/batch-tags` — Accepts `{document_ids, tag_ids, mode}`. Supports `add` (append) and `replace` (transactional clear+add) modes. Validates all tag IDs exist before modifying any document.
     - `FilterLanguages(w, r)` — `GET /api/v1/filter-languages` — Returns distinct language codes from the document corpus as a JSON string array.
     - `SupportedMimeTypes(w, r)` — `GET /api/v1/supported-mime-types` — Returns the compiled-in supported MIME types as a JSON array of `MimeInfo` objects (mime_type, extension, label).
+
+---
+
+## `handlers/trash.go`
+
+### Struct
+
+- `TrashHandler`
+  - **Fields**: `logger *utils.Logger`, `trashSvc *service.TrashService`, `getConfig func() *config.Config`
+  - **Methods**:
+    - `NewTrashHandler(logger, trashSvc, getConfig) *TrashHandler`
+    - `ListTrash(w, r)` — `GET /api/v1/trash` — Paginated trashed documents (`limit` default 50 max 100, `offset`), ordered by `deleted_at` DESC. Returns `TrashListResponse` with `documents`, `total` (via `CountTrash`), `limit`, `offset`.
+    - `GetTrashDocument(w, r)` — `GET /api/v1/trash/{id}` — Full metadata for one trashed document (checksums, counts, language, type, timestamps — no filesystem paths). `404` if not in trash.
+    - `RestoreDocument(w, r)` — `POST /api/v1/trash/{id}/restore` — Moves files back to `<storage>/originals|processed/` and clears `deleted_at`. `204`; `404` if not in trash; missing files are skipped (partial restore).
+    - `PermanentlyDeleteDocument(w, r)` — `DELETE /api/v1/trash/{id}` — Deletes the DB row (junction tables cascade) first, then removes the document's trash dir best-effort. `204`; `404` if not in trash.
+    - `PurgeExpired(w, r)` — `POST /api/v1/trash/purge` — Deletes all trashed rows older than `storage.trash.retention_days`, then sweeps orphaned trash dirs. Returns `{"purged": N}`.
+    - `BatchPermanentlyDelete(w, r)` — `POST /api/v1/trash/batch-delete` — Per-ID `PermanentlyDelete` with `deleted`/`failed` result; count validated against `max_batch_delete`.
+    - `BatchRestore(w, r)` — `POST /api/v1/trash/batch-restore` — Per-ID `RestoreDocument` with `restored`/`failed` result; count validated against `max_batch_delete`.
 
 ---
 
@@ -513,6 +531,15 @@ mux.Handle("DELETE /api/v1/errored", RequireRole(editor...)(...))
 mux.Handle("POST /api/v1/errored/delete-all", RequireRole(editor...)(...))
 mux.Handle("POST /api/v1/saved-searches", RequireRole(editor...)(...))
 mux.Handle("DELETE /api/v1/saved-searches/{id}", RequireRole(editor...)(...))
+
+// Trash (viewer reads, editor mutations):
+mux.Handle("GET /api/v1/trash", RequireRole(viewer...)(...))
+mux.Handle("GET /api/v1/trash/{id}", RequireRole(viewer...)(...))
+mux.Handle("POST /api/v1/trash/{id}/restore", RequireRole(editor...)(...))
+mux.Handle("DELETE /api/v1/trash/{id}", RequireRole(editor...)(...))
+mux.Handle("POST /api/v1/trash/batch-delete", RequireRole(editor...)(...))
+mux.Handle("POST /api/v1/trash/batch-restore", RequireRole(editor...)(...))
+mux.Handle("POST /api/v1/trash/purge", RequireRole(editor...)(...))
 
 // admin (all editor + user management + wizard config + logs):
 admin := []auth.Role{auth.RoleAdmin}

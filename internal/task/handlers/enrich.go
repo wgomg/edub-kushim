@@ -37,7 +37,7 @@ func (h *EnrichTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMe
 		return nil, fmt.Errorf("document %s not found", p.DocumentID)
 	}
 
-	result, err := h.enricher.Enrich(ctx, document)
+	result, err := h.enricher.Enrich(ctx, document.ToDocument())
 	{
 		mem := utils.ReadMemFull()
 		h.logger.Debug(&p.DocumentID, "post-enrich memory: %s", utils.FormatMemFull(mem))

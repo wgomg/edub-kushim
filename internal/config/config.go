@@ -85,9 +85,14 @@ func BuildPostgresDSN(cfg DatabaseConfig) string {
 	return u.String()
 }
 
+type TrashConfig struct {
+	RetentionDays int `mapstructure:"retention_days" yaml:"retention_days" json:"retention_days"`
+}
+
 type StorageConfig struct {
-	ConsumptionDir string `mapstructure:"consumption_dir" yaml:"consumption_dir" json:"consumption_dir"`
-	StorageDir     string `mapstructure:"storage_dir" yaml:"storage_dir" json:"storage_dir"`
+	ConsumptionDir string      `mapstructure:"consumption_dir" yaml:"consumption_dir" json:"consumption_dir"`
+	StorageDir     string      `mapstructure:"storage_dir" yaml:"storage_dir" json:"storage_dir"`
+	Trash          TrashConfig `mapstructure:"trash" yaml:"trash" json:"trash"`
 }
 
 type TextExtractorConfig struct {
@@ -331,6 +336,9 @@ func DefaultConfig(configDir string) *Config {
 		Storage: StorageConfig{
 			ConsumptionDir: filepath.Join(configDir, "inbox"),
 			StorageDir:     filepath.Join(configDir, "storage"),
+			Trash: TrashConfig{
+				RetentionDays: 30,
+			},
 		},
 		Consumer: ConsumerConfig{
 			SupportedFiles:   []string{".pdf"},
@@ -453,6 +461,10 @@ func finalizeConfig(cfg *Config, configDir string) error {
 
 	if cfg.Srv.MaxBatchDelete < 1 {
 		return fmt.Errorf("server.max_batch_delete must be >= 1")
+	}
+
+	if cfg.Storage.Trash.RetentionDays < 1 {
+		return fmt.Errorf("storage.trash.retention_days must be >= 1")
 	}
 
 	if cfg.Consumer.TextExtractor.Timeout < 0 {

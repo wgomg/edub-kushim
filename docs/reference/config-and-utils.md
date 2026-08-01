@@ -7,7 +7,8 @@
   - `LoggingConfig`: `MaxSize int`, `MaxBackups int`, `MaxAge int`, `Compress bool`
 - `ServerConfig`: `Host`, `Port`, `ReadTimeout`, `WriteTimeout`, `IdleTimeout`, `MaxUploadSize` (MB), `MaxConcurrentBatches` (default 4), `AuthEnabled` (when false, auth middleware passes all requests through; default `true` for existing installs, `false` for fresh bootstrap), `SessionSecret` (64-char hex JWT signing key; auto-generated during setup, fallback in-memory generation at server start), `MaxDownloadFiles`, `MaxDownloadSizeMB`, `MaxBatchDelete`
 - `DatabaseConfig`: `Type`, `Host`, `Port`, `User`, `Password`, `Database`, `SSLMode`, `DSN`, `Seeders []string`
-- `StorageConfig`: `ConsumptionDir`, `StorageDir`
+- `StorageConfig`: `ConsumptionDir`, `StorageDir`, `Trash TrashConfig`
+- `TrashConfig`: `RetentionDays` (default 30)
 - `ConsumerConfig`: `SupportedFiles []string`, `Workers int`, `MaxFilesPerBatch int`, `TextExtractor TextExtractorConfig`, `PdfOptimizer PdfOptimizerConfig`, `OCR OCRConfig`, `Polling PollingConfig`, `Reclaim ReclaimConfig`
   - `PollingConfig`: `Enabled bool`, `Interval int` (minutes), `Windows []PollingWindow` (optional time-range restrictions with `Start`/`End` in HH:MM format)
   - `ReclaimConfig`: `Enabled bool`, `MaxRetries int` (default 3), `StaleTaskAfter int64` (default 600s)

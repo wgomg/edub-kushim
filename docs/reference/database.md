@@ -63,7 +63,7 @@ Migrations run automatically on startup (no manual CLI command needed):
 
 ### Key structs
 
-- `Document` — 17 fields: `ID`, `DocumentID` (UUID string), `Title`, `Md5Checksum`, `Sha512Checksum`, `OriginalType`, `FileSize`, `PageCount` (`int32`), `WordCount` (`int32`), `CharCount` (`int32`), `Language`, `CreatedAt`, `ModifiedAt`, `DocumentTypeID`, `OriginalPath`, `StoragePath`, `TextContent`
+- `Document` — 18 fields: `ID`, `DocumentID` (UUID string), `Title`, `Md5Checksum`, `Sha512Checksum`, `OriginalType`, `FileSize`, `PageCount` (`int32`), `WordCount` (`int32`), `CharCount` (`int32`), `Language`, `CreatedAt`, `ModifiedAt`, `DocumentTypeID`, `OriginalPath`, `StoragePath`, `TextContent`, `DeletedAt sql.NullTime`
 - `Task` — 13 fields: `ID`, `TaskID`, `TaskType`, `Status`, `BatchID sql.NullString`, `Payload *json.RawMessage`, `Result *json.RawMessage`, `DedupKey sql.NullString`, `CreatedAt`, `StartedAt`, `CompletedAt`, `Error`, `Attempts int32`
 - `Tag` — `ID`, `Name`, `CreatedAt`
 - `DocumentType` — `ID`, `Name`, `Description`, `CreatedAt`
@@ -102,7 +102,9 @@ Migrations run automatically on startup (no manual CLI command needed):
 
 ### Document
 
-`CreateDocument` (with `DocumentID` UUID, WordCount, CharCount, Language, PageCount), `GetDocument` (by `document_id`), `GetDocumentById`, `ListDocuments`, `UpdateDocumentPaths` (by `document_id`), `UpdateDocumentPathsById`, `UpdateDocumentMetadata` (by `document_id`), `UpdateDocumentMetadataById`, `GetDocumentByMD5Checksum`, `GetDocumentBySHA512Checksum`, `GetDocumentWithDetails` (by `document_id`), `GetDocumentWithDetailsById`, `GetDocumentWithText` (by `document_id`), `GetDocumentWithTextById`, `SearchDocumentsByTitle`, `SumDocumentFileSizes`, `DeleteDocument` (by `document_id`), `DeleteDocumentById`
+`CreateDocument` (with `DocumentID` UUID, WordCount, CharCount, Language, PageCount), `GetDocument` (by `document_id`), `GetDocumentById`, `ListDocuments`, `UpdateDocumentPaths` (by `document_id`), `UpdateDocumentPathsById`, `UpdateDocumentMetadata` (by `document_id`), `UpdateDocumentMetadataById`, `GetDocumentByMD5Checksum`, `GetDocumentBySHA512Checksum`, `GetDocumentWithDetails` (by `document_id`), `GetDocumentWithDetailsById`, `GetDocumentWithText` (by `document_id`), `GetDocumentWithTextById`, `SearchDocumentsByTitle`, `SumDocumentFileSizes`, `SoftDeleteDocument` (by `document_id`), `GetTrashDocument` (by `document_id`), `ListTrashDocuments`, `CountTrashDocuments`, `RestoreDocument` (by `document_id`), `PermanentlyDeleteDocument` (by `document_id`), `PurgeExpiredDocuments` (`:execrows`, `$1::text || ' days'` interval)
+
+> All read queries filter `deleted_at IS NULL`; trash queries filter `deleted_at IS NOT NULL`. `SoftDeleteDocument`/`RestoreDocument`/`PermanentlyDeleteDocument` guard on `deleted_at IS NULL`/`IS NOT NULL` so they are no-ops on rows in the wrong state.
 
 ### Tag
 
@@ -230,7 +232,7 @@ The last 4 methods back the dashboard analytics panel. `LanguageDistribution` an
 
 ## Core Tables
 
-- `document` — Main storage: `document_id` (UUID, UNIQUE), `md5_checksum`, `sha512_checksum` (UNIQUE), `file_size` (`BIGINT`), `page_count` (`INTEGER`, Go: `int32`), `word_count` (`int32`), `char_count` (`int32`), `language`, `text_content`, file paths. Primary key: `id BIGINT GENERATED ALWAYS AS IDENTITY`.
+- `document` — Main storage: `document_id` (UUID, UNIQUE), `md5_checksum`, `sha512_checksum` (UNIQUE), `file_size` (`BIGINT`), `page_count` (`INTEGER`, Go: `int32`), `word_count` (`int32`), `char_count` (`int32`), `language`, `text_content`, file paths, `deleted_at` (`TIMESTAMPTZ`, nullable — soft-delete marker, NULL = active). Primary key: `id BIGINT GENERATED ALWAYS AS IDENTITY`.
 - `saved_search` — Saved search configurations: `id`, `name`, `filter_json` (JSON), `created_at TIMESTAMPTZ NOT NULL` (Go: `time.Time`)
 - `task` — Async processing: `task_id` (UUID), `batch_id` (nullable), `task_type`, `payload` (`JSONB`), `result` (`JSONB`), `dedup_key` (nullable), `status`, timestamps, `error`, `attempts int32`
 - `tag` — Classification tags (seeded with 110+ Dewey Decimal tags)
@@ -251,7 +253,7 @@ The last 4 methods back the dashboard analytics panel. `LanguageDistribution` an
 ## Key Indexes
 
 - `task`: `status`, `task_type`, `batch_id`, `(batch_id, status)`, partial `(created_at WHERE status = 'pending')`, partial unique `(task_type, dedup_key) WHERE status IN ('pending', 'processing') AND dedup_key IS NOT NULL`, partial `(task_type, created_at) WHERE status = 'pending'`
-- `document`: `md5_checksum`, `sha512_checksum`, `created_at`, `document_type_id`, GIN `text_search_vector` (`idx_document_tsv`)
+- `document`: `md5_checksum`, `sha512_checksum`, `created_at`, `document_type_id`, GIN `text_search_vector` (`idx_document_tsv`), partial `idx_document_deleted_at` (`deleted_at WHERE deleted_at IS NOT NULL`)
 - `document_people`: `document_id`, `people_id`
 - `document_tag`: `document_id`, `tag_id`
 - `people`: `normalized_name` (UNIQUE)
@@ -268,8 +270,9 @@ The consolidated baseline (`00001_baseline.sql`) creates the initial schema. New
 after the baseline are written as numbered migration files (starting at `00002`). Current
 migrations: `00001_baseline.sql`, `00002_tsvector.sql`, `00003_tsvector_index.sql`,
 `00004_listen_notify.sql`, `00005_backup_lock.sql`, `00006_rename_mime_type.sql`
-(`document.mime_type` / `orphaned_file.mime_type` → `original_type`). Goose tracks which
-versions have been applied in the `goose_db_version` table.
+(`document.mime_type` / `orphaned_file.mime_type` → `original_type`), `00007_trash_soft_delete.sql`
+(adds nullable `document.deleted_at` + partial index `idx_document_deleted_at`). Goose tracks
+which versions have been applied in the `goose_db_version` table.
 
 ## Migration Version Table
 

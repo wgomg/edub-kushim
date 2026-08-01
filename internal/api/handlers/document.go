@@ -452,7 +452,7 @@ func (h *DocumentHandler) DownloadDocuments(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	var docs []database.Document
+	var docs []database.GetDocumentRow
 	var invalidIDs []string
 	var totalSize int64
 
@@ -675,27 +675,9 @@ func (h *DocumentHandler) DeleteDocument(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	doc, err := h.client.GetDocument(ctx, documentID)
-	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "get document", errs.FromDB(err, "get document"))
+	if err := h.services.Trash.SoftDelete(ctx, documentID); err != nil {
+		writeServiceError(w, h.logger, &reqID, "delete document", err)
 		return
-	}
-
-	err = h.client.DeleteDocument(ctx, documentID)
-	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "delete document", errs.FromDB(err, "delete document"))
-		return
-	}
-
-	if doc.OriginalPath != "" {
-		if err := os.Remove(doc.OriginalPath); err != nil {
-			h.logger.Warn(&reqID, "failed to remove original file %s: %v", doc.OriginalPath, err)
-		}
-	}
-	if doc.StoragePath != "" {
-		if err := os.Remove(doc.StoragePath); err != nil {
-			h.logger.Warn(&reqID, "failed to remove storage file %s: %v", doc.StoragePath, err)
-		}
 	}
 
 	w.WriteHeader(http.StatusNoContent)
@@ -809,32 +791,14 @@ func (h *DocumentHandler) BatchDeleteDocuments(w http.ResponseWriter, r *http.Re
 	result := types.BatchDeleteResult{}
 
 	for _, id := range ids {
-		doc, err := h.client.GetDocument(ctx, id)
-		if err != nil {
-			if errs.KindOf(errs.FromDB(err, "get document")) == errs.KindNotFound {
+		if err := h.services.Trash.SoftDelete(ctx, id); err != nil {
+			if errs.KindOf(err) == errs.KindNotFound {
 				result.Failed = append(result.Failed, types.BatchDeleteError{ID: id, Error: "not found"})
 			} else {
-				h.logger.Error(&reqID, "batch delete: get document %s: %v", id, err)
-				result.Failed = append(result.Failed, types.BatchDeleteError{ID: id, Error: "internal error"})
+				h.logger.Error(&reqID, "batch delete: soft delete document %s: %v", id, err)
+				result.Failed = append(result.Failed, types.BatchDeleteError{ID: id, Error: "delete failed"})
 			}
 			continue
-		}
-
-		if err := h.client.DeleteDocument(ctx, id); err != nil {
-			h.logger.Error(&reqID, "batch delete: delete document %s: %v", id, err)
-			result.Failed = append(result.Failed, types.BatchDeleteError{ID: id, Error: "delete failed"})
-			continue
-		}
-
-		if doc.OriginalPath != "" {
-			if err := os.Remove(doc.OriginalPath); err != nil {
-				h.logger.Warn(&reqID, "failed to remove original file %s: %v", doc.OriginalPath, err)
-			}
-		}
-		if doc.StoragePath != "" {
-			if err := os.Remove(doc.StoragePath); err != nil {
-				h.logger.Warn(&reqID, "failed to remove storage file %s: %v", doc.StoragePath, err)
-			}
 		}
 
 		result.Deleted++

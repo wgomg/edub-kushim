@@ -40,8 +40,13 @@ type AppConfigResponse struct {
 }
 
 type StorageConfigResponse struct {
-	ConsumptionDir string `json:"consumption_dir"`
-	StorageDir     string `json:"storage_dir"`
+	ConsumptionDir string              `json:"consumption_dir"`
+	StorageDir     string              `json:"storage_dir"`
+	Trash          TrashConfigResponse `json:"trash"`
+}
+
+type TrashConfigResponse struct {
+	RetentionDays int `json:"retention_days"`
 }
 
 type DatabaseConfigResponse struct {
@@ -265,6 +270,7 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Enricher.TagMatcher.Hugot.Backend = cfg.Enricher.TagMatcher.Hugot.Backend
 	resp.Storage.ConsumptionDir = cfg.Storage.ConsumptionDir
 	resp.Storage.StorageDir = cfg.Storage.StorageDir
+	resp.Storage.Trash.RetentionDays = cfg.Storage.Trash.RetentionDays
 	resp.Database.Host = cfg.Db.Host
 	resp.Database.Port = cfg.Db.Port
 	resp.Database.User = cfg.Db.User

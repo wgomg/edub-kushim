@@ -8,7 +8,7 @@ SELECT d.id, d.title, d.md5_checksum, d.sha512_checksum, d.original_type, d.file
        d.created_at, d.modified_at, d.document_type_id, d.original_path, d.storage_path
 FROM document d
 JOIN document_tag dt ON d.id = dt.document_id
-WHERE dt.tag_id = $1;
+WHERE dt.tag_id = $1 AND d.deleted_at IS NULL;
 
 -- name: AddDocumentTag :exec
 INSERT INTO document_tag (document_id, tag_id)

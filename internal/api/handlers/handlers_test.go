@@ -85,6 +85,9 @@ func newHandlerTestEnv(t *testing.T) *handlerTestEnv {
 	workStore := task.NewStore(client.Queries)
 	reenrichSvc := service.NewReEnrich(client.Queries, workStore, batchSvc)
 
+	trashCfg := config.DefaultConfig("/tmp/test")
+	trashSvc := service.NewTrashService(client, trashCfg, logger)
+
 	services := &itypes.CrudServices{
 		Batch:        batchSvc,
 		Tag:          tagSvc,
@@ -93,6 +96,7 @@ func newHandlerTestEnv(t *testing.T) *handlerTestEnv {
 		DocumentType: docTypeSvc,
 		User:         userSvc,
 		ReEnrich:     reenrichSvc,
+		Trash:        trashSvc,
 	}
 
 	registry := task.NewRegistry()

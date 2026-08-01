@@ -83,6 +83,9 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 	s.services.Orphaned = service.NewOrphaned(client.Queries, &cfg, logger, workStore, s.services.Batch)
 	s.services.Orphaned.ScanAndQuarantineAsync()
 
+	s.services.Trash = service.NewTrashService(client, &cfg, logger)
+	s.services.Trash.StartBackgroundPurge()
+
 	s.services.ReEnrich = service.NewReEnrich(client.Queries, workStore, s.services.Batch)
 
 	s.services.ErroredFiles = service.NewErroredFiles(&cfg, logger)
@@ -219,6 +222,15 @@ func registerRoutes(
 	mux.Handle("POST /api/v1/orphaned/{id}/move-to-inbox", RequireRole(editor...)(http.HandlerFunc(orphanedHandler.MoveToInbox)))
 	mux.Handle("POST /api/v1/orphaned/delete-all", RequireRole(editor...)(http.HandlerFunc(orphanedHandler.DeleteAllOrphaned)))
 	mux.Handle("POST /api/v1/orphaned/move-to-inbox-all", RequireRole(editor...)(http.HandlerFunc(orphanedHandler.MoveAllToInbox)))
+
+	trashHandler := handlers.NewTrashHandler(logger, services.Trash, getConfig)
+	mux.Handle("GET /api/v1/trash", RequireRole(viewer...)(http.HandlerFunc(trashHandler.ListTrash)))
+	mux.Handle("GET /api/v1/trash/{id}", RequireRole(viewer...)(http.HandlerFunc(trashHandler.GetTrashDocument)))
+	mux.Handle("POST /api/v1/trash/{id}/restore", RequireRole(editor...)(http.HandlerFunc(trashHandler.RestoreDocument)))
+	mux.Handle("DELETE /api/v1/trash/{id}", RequireRole(editor...)(http.HandlerFunc(trashHandler.PermanentlyDeleteDocument)))
+	mux.Handle("POST /api/v1/trash/batch-delete", RequireRole(editor...)(http.HandlerFunc(trashHandler.BatchPermanentlyDelete)))
+	mux.Handle("POST /api/v1/trash/batch-restore", RequireRole(editor...)(http.HandlerFunc(trashHandler.BatchRestore)))
+	mux.Handle("POST /api/v1/trash/purge", RequireRole(editor...)(http.HandlerFunc(trashHandler.PurgeExpired)))
 
 	erroredHandler := handlers.NewErroredHandler(services.ErroredFiles, logger)
 	mux.Handle("GET /api/v1/errored", RequireRole(editor...)(http.HandlerFunc(erroredHandler.ListErrored)))

@@ -1,5 +1,7 @@
 package types
 
+import "time"
+
 type PersonListResponse struct {
 	Results []PersonResponse `json:"results"`
 	Total   int64            `json:"total"`
@@ -123,4 +125,28 @@ type BatchTagError struct {
 type BatchTagResult struct {
 	Assigned int             `json:"assigned"`
 	Failed   []BatchTagError `json:"failed,omitempty"`
+}
+
+type TrashListResponse struct {
+	Documents []TrashDocumentResponse `json:"documents"`
+	Total     int64                    `json:"total"`
+	Limit     int32                    `json:"limit"`
+	Offset    int32                    `json:"offset"`
+}
+
+type TrashDocumentResponse struct {
+	ID           int64     `json:"id"`
+	DocumentID   string    `json:"document_id"`
+	Title        string    `json:"title"`
+	OriginalType string    `json:"original_type"`
+	FileSize     int64     `json:"file_size"`
+	PageCount    int32     `json:"page_count"`
+	Language     string    `json:"language"`
+	DeletedAt    time.Time `json:"deleted_at"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+type TrashRestoreResponse struct {
+	Restored int                `json:"restored"`
+	Failed   []BatchDeleteError `json:"failed,omitempty"`
 }

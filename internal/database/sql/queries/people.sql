@@ -39,6 +39,7 @@ UPDATE people SET name = $1, name_native = $2, normalized_name = $3 WHERE id = $
 SELECT p.*, COUNT(dp.document_id) AS document_count
 FROM people p
 LEFT JOIN document_people dp ON p.id = dp.people_id
+LEFT JOIN document d ON dp.document_id = d.id AND d.deleted_at IS NULL
 GROUP BY p.id
 ORDER BY p.created_at DESC LIMIT $1 OFFSET $2;
 
@@ -52,6 +53,7 @@ SELECT COUNT(*) FROM people WHERE name LIKE $1;
 SELECT p.*, COUNT(dp.document_id) AS document_count
 FROM people p
 LEFT JOIN document_people dp ON p.id = dp.people_id
+LEFT JOIN document d ON dp.document_id = d.id AND d.deleted_at IS NULL
 WHERE p.name LIKE $1
 GROUP BY p.id
 ORDER BY p.name ASC LIMIT $2 OFFSET $3;

@@ -140,7 +140,7 @@ func (q *Queries) ListAllDocumentTypesNames(ctx context.Context) ([]string, erro
 const listAllDocumentTypesWithDocumentCount = `-- name: ListAllDocumentTypesWithDocumentCount :many
 SELECT dt.id, dt.name, dt.description, dt.created_at, COUNT(d.id) AS document_count
 FROM document_type dt
-LEFT JOIN document d ON dt.id = d.document_type_id
+LEFT JOIN document d ON dt.id = d.document_type_id AND d.deleted_at IS NULL
 GROUP BY dt.id
 ORDER BY dt.created_at DESC
 `
@@ -222,7 +222,7 @@ func (q *Queries) ListDocumentTypes(ctx context.Context, arg ListDocumentTypesPa
 const listDocumentTypesWithDocumentCount = `-- name: ListDocumentTypesWithDocumentCount :many
 SELECT dt.id, dt.name, dt.description, dt.created_at, COUNT(d.id) AS document_count
 FROM document_type dt
-LEFT JOIN document d ON dt.id = d.document_type_id
+LEFT JOIN document d ON dt.id = d.document_type_id AND d.deleted_at IS NULL
 GROUP BY dt.id
 ORDER BY dt.created_at DESC LIMIT $1 OFFSET $2
 `
@@ -309,7 +309,7 @@ func (q *Queries) SearchDocumentTypeByName(ctx context.Context, arg SearchDocume
 const searchDocumentTypeByNameWithDocumentCount = `-- name: SearchDocumentTypeByNameWithDocumentCount :many
 SELECT dt.id, dt.name, dt.description, dt.created_at, COUNT(d.id) AS document_count
 FROM document_type dt
-LEFT JOIN document d ON dt.id = d.document_type_id
+LEFT JOIN document d ON dt.id = d.document_type_id AND d.deleted_at IS NULL
 WHERE dt.name LIKE $1
 GROUP BY dt.id
 ORDER BY dt.name ASC LIMIT $2

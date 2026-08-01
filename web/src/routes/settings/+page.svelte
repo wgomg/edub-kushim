@@ -32,6 +32,27 @@
 
 	let mimeTypeOptions = $state([]);
 
+	let originalCfg = '';
+	let originalMimeOptions = '';
+
+	function snapshotState() {
+		originalCfg = JSON.stringify(cfg);
+		originalMimeOptions = JSON.stringify(mimeTypeOptions);
+	}
+
+	function isConfigDirty() {
+		if (!cfg) return false;
+		return (
+			JSON.stringify(cfg) !== originalCfg || JSON.stringify(mimeTypeOptions) !== originalMimeOptions
+		);
+	}
+
+	function handleBeforeUnload(e) {
+		if (!isConfigDirty()) return;
+		e.preventDefault();
+		e.returnValue = '';
+	}
+
 	function syncMimeCheckboxes() {
 		const types = cfg?.available_file_types;
 		const exts = cfg?.consumer?.supported_files ?? [];
@@ -95,8 +116,11 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			cfg = loaded;
 			syncMimeCheckboxes();
 			checkStatus();
+			snapshotState();
 		}
 		llmModels = await api.config.llmModels();
+		window.addEventListener('beforeunload', handleBeforeUnload);
+		return () => window.removeEventListener('beforeunload', handleBeforeUnload);
 	});
 
 	async function checkStatus() {
@@ -209,6 +233,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			'enricher.tagmatcher.hugot.backend': cfg.enricher.tagmatcher.hugot.backend,
 			'storage.consumption_dir': cfg.storage.consumption_dir,
 			'storage.storage_dir': cfg.storage.storage_dir,
+			'storage.trash.retention_days': Number(cfg.storage.trash.retention_days),
 			'database.host': cfg.database.host,
 			'database.port': Number(cfg.database.port),
 			'database.user': cfg.database.user,
@@ -245,6 +270,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			if (loaded) {
 				cfg = loaded;
 				syncMimeCheckboxes();
+				snapshotState();
 			}
 		} catch (e) {
 			toastStore.error(e.message);
@@ -289,14 +315,6 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			const id = parseInt(deleteBtn.getAttribute('data-delete-user'));
 			const name = deleteBtn.getAttribute('data-user-name');
 			handleDeleteUser(id, name);
-			return;
-		}
-	}
-
-	function handleUserKeyDown(e) {
-		if (e.key === 'Enter' || e.key === ' ') {
-			e.preventDefault();
-			handleUserPageClick(e);
 		}
 	}
 
@@ -366,7 +384,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			<button
 				type="button"
 				onclick={() => (activeTab = 'Configuration')}
-				class="rounded-t-lg px-4 py-2 text-sm font-medium transition-colors {activeTab ===
+				class="rounded-t-lg px-4 py-2 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none {activeTab ===
 				'Configuration'
 					? 'border-b-2 border-gold-500 text-gold-500'
 					: 'text-parchment-400 hover:text-parchment-200'}"
@@ -376,7 +394,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			<button
 				type="button"
 				onclick={() => (activeTab = 'Users')}
-				class="rounded-t-lg px-4 py-2 text-sm font-medium transition-colors {activeTab === 'Users'
+				class="rounded-t-lg px-4 py-2 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none {activeTab ===
+				'Users'
 					? 'border-b-2 border-gold-500 text-gold-500'
 					: 'text-parchment-400 hover:text-parchment-200'}"
 			>
@@ -420,6 +439,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<input
 							id="server-port"
 							type="number"
+							inputmode="numeric"
 							min="1"
 							max="65535"
 							bind:value={cfg.server.port}
@@ -433,6 +453,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<input
 							id="server-max-upload"
 							type="number"
+							inputmode="numeric"
 							min="1"
 							bind:value={cfg.server.max_upload_size}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -446,6 +467,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<input
 							id="server-max-download-files"
 							type="number"
+							inputmode="numeric"
 							min="1"
 							bind:value={cfg.server.max_download_files}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -460,6 +482,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<input
 							id="server-max-download-size"
 							type="number"
+							inputmode="numeric"
 							min="0"
 							bind:value={cfg.server.max_download_size_mb}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -474,6 +497,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<input
 							id="max-concurrent-batches"
 							type="number"
+							inputmode="numeric"
 							min="1"
 							bind:value={cfg.server.max_concurrent_batches}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -487,6 +511,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<input
 							id="server-max-batch-delete"
 							type="number"
+							inputmode="numeric"
 							min="1"
 							bind:value={cfg.server.max_batch_delete}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -540,6 +565,31 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			</section>
 
 			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+				<h2 class="mb-4 text-lg font-semibold text-parchment-200">Trash (Soft Delete)</h2>
+				<div class="grid gap-4 sm:grid-cols-2">
+					<div>
+						<label
+							for="trash-retention-days"
+							class="mb-1 block text-sm font-medium text-parchment-200"
+						>
+							Retention period (days)
+						</label>
+						<input
+							id="trash-retention-days"
+							type="number"
+							inputmode="numeric"
+							min="1"
+							bind:value={cfg.storage.trash.retention_days}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+						/>
+						<p class="mt-1 text-xs text-parchment-500">
+							Soft-deleted documents are permanently purged after this many days.
+						</p>
+					</div>
+				</div>
+			</section>
+
+			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
 				<h2 class="mb-4 text-lg font-semibold text-parchment-200">Database</h2>
 				<div class="grid gap-4 sm:grid-cols-2">
 					<div>
@@ -560,6 +610,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<input
 							id="db-port"
 							type="number"
+							inputmode="numeric"
 							min="1"
 							max="65535"
 							bind:value={cfg.database.port}
@@ -632,6 +683,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<input
 							id="ocr-timeout"
 							type="number"
+							inputmode="numeric"
 							min="0"
 							bind:value={cfg.consumer.ocr.timeout}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -644,6 +696,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<input
 							id="ocr-workers"
 							type="number"
+							inputmode="numeric"
 							min="0"
 							bind:value={cfg.consumer.ocr.ocr_workers}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -742,7 +795,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 								<button
 									type="button"
 									onclick={() => removeLanguage(i)}
-									class="rounded-lg border border-clay-800 px-3 text-sm text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
+									class="rounded-lg border border-clay-800 px-3 text-sm text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 								>
 									Remove
 								</button>
@@ -752,7 +805,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 					<button
 						type="button"
 						onclick={addLanguage}
-						class="text-sm text-gold-500 hover:text-gold-600"
+						class="text-sm text-gold-500 hover:text-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 					>
 						+ Add language
 					</button>
@@ -769,6 +822,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<input
 							id="consumer-workers"
 							type="number"
+							inputmode="numeric"
 							min="1"
 							bind:value={cfg.consumer.workers}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -782,6 +836,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<input
 							id="consumer-max-files-per-batch"
 							type="number"
+							inputmode="numeric"
 							min="0"
 							bind:value={cfg.consumer.max_files_per_batch}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -844,6 +899,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							<input
 								id="converter-timeout"
 								type="number"
+								inputmode="numeric"
 								min="1"
 								bind:value={cfg.consumer.converter.timeout}
 								autocomplete="off"
@@ -880,6 +936,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<input
 							id="polling-interval"
 							type="number"
+							inputmode="numeric"
 							min="1"
 							bind:value={cfg.consumer.polling.interval}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -917,7 +974,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							<button
 								type="button"
 								onclick={() => removeWindow(i)}
-								class="rounded-lg border border-clay-800 px-3 text-sm text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
+								class="rounded-lg border border-clay-800 px-3 text-sm text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 							>
 								Remove
 							</button>
@@ -926,7 +983,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 					<button
 						type="button"
 						onclick={addWindow}
-						class="text-sm text-gold-500 hover:text-gold-600"
+						class="text-sm text-gold-500 hover:text-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 					>
 						+ Add window
 					</button>
@@ -960,6 +1017,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<input
 							id="reclaim-max-retries"
 							type="number"
+							inputmode="numeric"
 							min="1"
 							max="10"
 							class="w-24 rounded-lg border border-clay-700 bg-clay-950 px-3 py-2 text-parchment-200 focus:border-gold-500 focus-visible:ring-1 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -974,6 +1032,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<input
 							id="reclaim-stale-task-after"
 							type="number"
+							inputmode="numeric"
 							min="60"
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 							bind:value={cfg.consumer.reclaim.stale_task_after}
@@ -1008,6 +1067,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<input
 							id="text-extractor-timeout"
 							type="number"
+							inputmode="numeric"
 							min="0"
 							bind:value={cfg.consumer.textextractor.timeout}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -1079,6 +1139,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<input
 							id="pdf-timeout"
 							type="number"
+							inputmode="numeric"
 							min="0"
 							bind:value={cfg.consumer.pdfoptimizer.timeout}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -1097,6 +1158,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<input
 							id="enricher-workers"
 							type="number"
+							inputmode="numeric"
 							min="1"
 							bind:value={cfg.enricher.workers}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -1183,7 +1245,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 								<button
 									type="button"
 									onclick={() => (showToken = !showToken)}
-									class="rounded-lg border border-clay-800 px-3 text-sm text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
+									class="rounded-lg border border-clay-800 px-3 text-sm text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 								>
 									{showToken ? 'Hide' : 'Show'}
 								</button>
@@ -1202,6 +1264,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							<input
 								id="llm-temperature"
 								type="number"
+								inputmode="numeric"
 								min="0"
 								max="2"
 								step="0.1"
@@ -1219,6 +1282,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							<input
 								id="content-analyzer-timeout"
 								type="number"
+								inputmode="numeric"
 								min="1"
 								bind:value={cfg.enricher.contentanalyzer.timeout}
 								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -1295,6 +1359,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 								<input
 									id="doc-type-refinement-head-words"
 									type="number"
+									inputmode="numeric"
 									min="0"
 									bind:value={cfg.enricher.contentanalyzer.doc_type_refinement.head_words}
 									class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -1308,6 +1373,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 								<input
 									id="doc-type-refinement-tail-words"
 									type="number"
+									inputmode="numeric"
 									min="0"
 									bind:value={cfg.enricher.contentanalyzer.doc_type_refinement.tail_words}
 									class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -1329,6 +1395,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<input
 							id="tag-matcher-timeout"
 							type="number"
+							inputmode="numeric"
 							min="0"
 							bind:value={cfg.enricher.tagmatcher.timeout}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -1342,6 +1409,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<input
 							id="tag-matcher-reduce-target"
 							type="number"
+							inputmode="numeric"
 							min="0"
 							bind:value={cfg.enricher.tagmatcher.reduce_target_words}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -1355,6 +1423,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<input
 							id="tag-matcher-chunk-size"
 							type="number"
+							inputmode="numeric"
 							min="0"
 							bind:value={cfg.enricher.tagmatcher.chunk_size}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -1415,6 +1484,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<input
 							id="text-reducer-timeout"
 							type="number"
+							inputmode="numeric"
 							min="0"
 							bind:value={cfg.enricher.textreducer.timeout}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -1428,6 +1498,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<input
 							id="text-reducer-target-words"
 							type="number"
+							inputmode="numeric"
 							min="1"
 							bind:value={cfg.enricher.textreducer.target_words}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -1457,6 +1528,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<input
 							id="backup-interval"
 							type="number"
+							inputmode="numeric"
 							min="1"
 							step="0.1"
 							bind:value={cfg.backup.interval}
@@ -1483,6 +1555,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<input
 							id="backup-keep"
 							type="number"
+							inputmode="numeric"
 							min="0"
 							bind:value={cfg.backup.keep}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -1529,6 +1602,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<input
 							id="log-max-size"
 							type="number"
+							inputmode="numeric"
 							min="0"
 							bind:value={cfg.app.logging.max_size}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -1541,6 +1615,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<input
 							id="log-max-backups"
 							type="number"
+							inputmode="numeric"
 							min="0"
 							bind:value={cfg.app.logging.max_backups}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -1553,6 +1628,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<input
 							id="log-max-age"
 							type="number"
+							inputmode="numeric"
 							min="0"
 							bind:value={cfg.app.logging.max_age}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -1581,24 +1657,19 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 				type="button"
 				onclick={save}
 				disabled={saving}
-				class="w-full rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600 disabled:opacity-50"
+				class="w-full rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-50"
 			>
 				{saving ? 'Saving…' : 'Save settings'}
 			</button>
 		{/if}
 
 		{#if activeTab === 'Users'}
-			<div
-				class="space-y-4"
-				onclick={handleUserPageClick}
-				onkeydown={handleUserKeyDown}
-				role="presentation"
-			>
+			<div class="space-y-4" onclick={handleUserPageClick}>
 				<div class="flex items-center justify-between">
 					<h2 class="text-lg font-semibold text-parchment-200">Users</h2>
 					<button
 						onclick={openNewUser}
-						class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600"
+						class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 					>
 						Create User
 					</button>
@@ -1671,14 +1742,14 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							<button
 								type="button"
 								onclick={() => (showUserModal = false)}
-								class="rounded-md px-3 py-1.5 text-xs font-medium text-parchment-400 hover:bg-clay-800"
+								class="rounded-md px-3 py-1.5 text-xs font-medium text-parchment-400 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 							>
 								Cancel
 							</button>
 							<button
 								type="submit"
 								disabled={!formUsername.trim()}
-								class="rounded-md bg-gold-500 px-3 py-1.5 text-xs font-medium text-clay-950 hover:bg-gold-600 disabled:opacity-50"
+								class="rounded-md bg-gold-500 px-3 py-1.5 text-xs font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-50"
 							>
 								{editingUser ? 'Save' : 'Create'}
 							</button>
