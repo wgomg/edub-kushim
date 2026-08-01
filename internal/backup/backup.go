@@ -362,17 +362,19 @@ func dumpTableData(ctx context.Context, tx *sql.Tx, tableName string, w io.Write
 	if err != nil {
 		return fmt.Errorf("query columns: %w", err)
 	}
+	defer colRows.Close()
 
 	var cols []string
 	for colRows.Next() {
 		var col string
 		if err := colRows.Scan(&col); err != nil {
-			colRows.Close()
 			return fmt.Errorf("scan column: %w", err)
 		}
 		cols = append(cols, col)
 	}
-	colRows.Close()
+	if err := colRows.Err(); err != nil {
+		return fmt.Errorf("columns iteration: %w", err)
+	}
 
 	if len(cols) == 0 {
 		return nil
