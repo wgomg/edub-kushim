@@ -99,8 +99,14 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: web-assets
-          path: .
-          merge-multiple: true
+          path: web-assets
+
+      - name: Stage web assets
+        run: |
+          rm -rf internal/static/build internal/wizard/static
+          mkdir -p internal/static internal/wizard
+          cp -r web-assets/static/build internal/static/build
+          cp -r web-assets/wizard/static internal/wizard/static
 
       - name: Compute LDFLAGS
         id: ldflags
