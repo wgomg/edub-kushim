@@ -4,8 +4,12 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/wgomg/edub-kushim/internal/database"
@@ -204,6 +208,231 @@ func TestReplaceFiles_SQLDump(t *testing.T) {
 	if count == 0 {
 		t.Error("no rows found in document_type after restore")
 	}
+}
+
+func TestReplaceFiles_PathRewrite(t *testing.T) {
+	dir := t.TempDir()
+	oldStorage := filepath.Join(dir, "old_storage")
+	newStorage := filepath.Join(dir, "new_storage")
+
+	extractDir, configPath := createRewriteTestBackup(t, fmt.Sprintf("storage:\n  storage_dir: %q\n", oldStorage), oldStorage)
+
+	restoreDB := newRestoreDB(t)
+	if err := ReplaceFiles(extractDir, restoreDB, configPath, newStorage); err != nil {
+		t.Fatalf("ReplaceFiles: %v", err)
+	}
+
+	var storagePath, originalPath string
+	if err := restoreDB.QueryRow(`SELECT storage_path, original_path FROM document WHERE document_id = 'rewrite-test-doc'`).Scan(&storagePath, &originalPath); err != nil {
+		t.Fatalf("query document: %v", err)
+	}
+	if !strings.HasPrefix(storagePath, newStorage) {
+		t.Errorf("document storage_path = %q, want prefix %q", storagePath, newStorage)
+	}
+	if !strings.HasPrefix(originalPath, newStorage) {
+		t.Errorf("document original_path = %q, want prefix %q", originalPath, newStorage)
+	}
+
+	var filePath, orphanOriginalPath string
+	if err := restoreDB.QueryRow(`SELECT file_path, original_path FROM orphaned_file WHERE document_key = 'rewrite-test-uuid'`).Scan(&filePath, &orphanOriginalPath); err != nil {
+		t.Fatalf("query orphaned_file: %v", err)
+	}
+	if !strings.HasPrefix(filePath, newStorage) {
+		t.Errorf("orphaned file_path = %q, want prefix %q", filePath, newStorage)
+	}
+	if orphanOriginalPath != "processed/2026/07/15/14/uuid.pdf" {
+		t.Errorf("orphaned original_path = %q, want relative path untouched", orphanOriginalPath)
+	}
+}
+
+func TestReplaceFiles_PathRewrite_SameDirNoOp(t *testing.T) {
+	dir := t.TempDir()
+	oldStorage := filepath.Join(dir, "old_storage")
+
+	extractDir, configPath := createRewriteTestBackup(t, fmt.Sprintf("storage:\n  storage_dir: %q\n", oldStorage), oldStorage)
+
+	restoreDB := newRestoreDB(t)
+	if err := ReplaceFiles(extractDir, restoreDB, configPath, oldStorage); err != nil {
+		t.Fatalf("ReplaceFiles: %v", err)
+	}
+
+	var storagePath string
+	if err := restoreDB.QueryRow(`SELECT storage_path FROM document WHERE document_id = 'rewrite-test-doc'`).Scan(&storagePath); err != nil {
+		t.Fatalf("query document: %v", err)
+	}
+	if !strings.HasPrefix(storagePath, oldStorage) {
+		t.Errorf("storage_path = %q, want unchanged prefix %q", storagePath, oldStorage)
+	}
+}
+
+func TestReplaceFiles_PathRewrite_ManifestFallback(t *testing.T) {
+	dir := t.TempDir()
+	oldStorage := filepath.Join(dir, "storage")
+	newStorage := filepath.Join(dir, "new_storage")
+
+	extractDir, configPath := createRewriteTestBackup(t, fmt.Sprintf("storage:\n  storage_dir: %s\n", oldStorage), oldStorage)
+
+	manifestPath := filepath.Join(extractDir, "manifest.json")
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("unmarshal manifest: %v", err)
+	}
+	delete(m, "storage_dir")
+	out, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+	if err := os.WriteFile(manifestPath, out, 0644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	restoreDB := newRestoreDB(t)
+	if err := ReplaceFiles(extractDir, restoreDB, configPath, newStorage); err != nil {
+		t.Fatalf("ReplaceFiles: %v", err)
+	}
+
+	var storagePath string
+	if err := restoreDB.QueryRow(`SELECT storage_path FROM document WHERE document_id = 'rewrite-test-doc'`).Scan(&storagePath); err != nil {
+		t.Fatalf("query document: %v", err)
+	}
+	if !strings.HasPrefix(storagePath, newStorage) {
+		t.Errorf("storage_path = %q, want prefix %q", storagePath, newStorage)
+	}
+}
+
+func TestReplaceFiles_PathRewrite_TildeRejected(t *testing.T) {
+	dir := t.TempDir()
+	oldStorage := filepath.Join(dir, "storage")
+	newStorage := filepath.Join(dir, "new_storage")
+
+	extractDir, configPath := createRewriteTestBackup(t, fmt.Sprintf("storage:\n  storage_dir: %s\n", oldStorage), oldStorage)
+
+	manifestPath := filepath.Join(extractDir, "manifest.json")
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("unmarshal manifest: %v", err)
+	}
+	delete(m, "storage_dir")
+	out, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+	if err := os.WriteFile(manifestPath, out, 0644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	// Rewrite config.yaml in the archive to use ~
+	testutil.CreateTestFile(t, filepath.Join(extractDir, "config.yaml"), "storage:\n  storage_dir: ~/storage\n")
+
+	restoreDB := newRestoreDB(t)
+	if err := ReplaceFiles(extractDir, restoreDB, configPath, newStorage); err != nil {
+		t.Fatalf("ReplaceFiles: %v", err)
+	}
+
+	// Paths should be unchanged — ~ expansion is rejected for host-dependent safety
+	var storagePath string
+	if err := restoreDB.QueryRow(`SELECT storage_path FROM document WHERE document_id = 'rewrite-test-doc'`).Scan(&storagePath); err != nil {
+		t.Fatalf("query document: %v", err)
+	}
+	if !strings.HasPrefix(storagePath, oldStorage) {
+		t.Errorf("storage_path = %q, want unchanged prefix %q (rewrite should have been skipped)", storagePath, oldStorage)
+	}
+}
+
+func TestReplaceFiles_ConfigSavedAsRestored(t *testing.T) {
+	dir := t.TempDir()
+	oldStorage := filepath.Join(dir, "old_storage")
+	newStorage := filepath.Join(dir, "new_storage")
+
+	extractDir, configPath := createRewriteTestBackup(t, fmt.Sprintf("storage:\n  storage_dir: %q\n", oldStorage), oldStorage)
+
+	editedConfig := "storage:\n  storage_dir: /edited/storage\n"
+	testutil.CreateTestFile(t, configPath, editedConfig)
+
+	restoreDB := newRestoreDB(t)
+	if err := ReplaceFiles(extractDir, restoreDB, configPath, newStorage); err != nil {
+		t.Fatalf("ReplaceFiles: %v", err)
+	}
+
+	current, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read current config: %v", err)
+	}
+	if string(current) != editedConfig {
+		t.Errorf("current config was modified: %q, want %q", string(current), editedConfig)
+	}
+
+	restored, err := os.ReadFile(configPath + ".restored")
+	if err != nil {
+		t.Fatalf("read restored config: %v", err)
+	}
+	if !strings.Contains(string(restored), oldStorage) {
+		t.Errorf("restored config missing archived storage dir: %q", string(restored))
+	}
+}
+
+func createRewriteTestBackup(t *testing.T, configContent, oldStorage string) (extractDir, configPath string) {
+	t.Helper()
+	db := database.NewTestDB(t)
+	t.Cleanup(func() { database.ResetTestDatabase(db) })
+
+	dir := t.TempDir()
+	configPath = filepath.Join(dir, "config.yaml")
+	testutil.CreateTestFile(t, configPath, configContent)
+
+	os.MkdirAll(oldStorage, 0755)
+	insertRewriteTestRows(t, db, oldStorage)
+
+	backupDir := filepath.Join(dir, "backups")
+	os.MkdirAll(backupDir, 0755)
+
+	result, err := Create(context.Background(), db, database.SchemaFS, backupDir, configPath, oldStorage)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	extractDir = filepath.Join(dir, "extract")
+	if err := ExtractArchive(result.Path, extractDir); err != nil {
+		t.Fatalf("ExtractArchive: %v", err)
+	}
+	return extractDir, configPath
+}
+
+func insertRewriteTestRows(t *testing.T, db *sql.DB, base string) {
+	t.Helper()
+	if _, err := db.Exec(`
+		INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, original_type, file_size, original_path, storage_path)
+		VALUES ('rewrite-test-doc', 'rewrite test', 'd41d8cd98f00b204e9800998ecf8427e',
+		        'cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e',
+		        'application/pdf', 10, $1, $2)`,
+		filepath.Join(base, "originals", "doc.pdf"), filepath.Join(base, "processed", "doc.pdf")); err != nil {
+		t.Fatalf("insert document: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO orphaned_file (document_key, document_key_type, file_path, original_path, source_dir, file_size)
+		VALUES ('rewrite-test-uuid', 'uuid', $1, 'processed/2026/07/15/14/uuid.pdf', 'processed', 10)`,
+		filepath.Join(base, "quarantine", "orphan.pdf")); err != nil {
+		t.Fatalf("insert orphaned_file: %v", err)
+	}
+}
+
+func newRestoreDB(t *testing.T) *sql.DB {
+	t.Helper()
+	db := database.NewTestDB(t)
+	t.Cleanup(func() {
+		db.Exec("DROP SCHEMA IF EXISTS public CASCADE")
+		db.Exec("CREATE SCHEMA public")
+		database.InitializeSchema(db)
+	})
+	return db
 }
 
 func TestReplaceFiles_UnknownFormat(t *testing.T) {

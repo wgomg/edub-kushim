@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 func ValidateArchive(path string) (*Manifest, error) {
@@ -144,6 +146,26 @@ func ReplaceFiles(extractDir string, db *sql.DB, configPath, storageDir string) 
 		return fmt.Errorf("execute sql dump: %w", err)
 	}
 
+	oldDir := manifest.StorageDir
+	if oldDir == "" {
+		archivedDir, err := storageDirFromArchivedConfig(filepath.Join(extractDir, "config.yaml"))
+		if err != nil {
+			fmt.Printf("Warning: cannot determine archived storage dir (%v) — skipping database path rewrite\n", err)
+		} else {
+			oldDir = archivedDir
+		}
+	}
+
+	if oldDir != "" {
+		oldDir = filepath.Clean(oldDir)
+		storageDir = filepath.Clean(storageDir)
+	}
+	if oldDir != "" && oldDir != storageDir {
+		if err := rewriteStoragePaths(context.Background(), db, oldDir, storageDir); err != nil {
+			return fmt.Errorf("rewrite storage paths: %w", err)
+		}
+	}
+
 	extractStorage := filepath.Join(extractDir, "storage")
 	if _, err := os.Stat(extractStorage); err == nil {
 		if err := os.MkdirAll(filepath.Dir(storageDir), 0755); err != nil {
@@ -176,12 +198,71 @@ func ReplaceFiles(extractDir string, db *sql.DB, configPath, storageDir string) 
 
 	extractConfig := filepath.Join(extractDir, "config.yaml")
 	if _, err := os.Stat(extractConfig); err == nil {
-		if err := copyFile(extractConfig, configPath); err != nil {
-			return fmt.Errorf("replace config: %w", err)
+		restoredConfig := configPath + ".restored"
+		if err := copyFile(extractConfig, restoredConfig); err != nil {
+			return fmt.Errorf("save restored config: %w", err)
 		}
+		fmt.Printf("Restored config saved as %s\n", restoredConfig)
 	}
 
 	return nil
+}
+
+// Runs after the SQL dump commits so only restored rows are rewritten.
+func rewriteStoragePaths(ctx context.Context, db *sql.DB, oldDir, newDir string) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin path rewrite: %w", err)
+	}
+	defer tx.Rollback()
+
+	pattern := escapeLike(oldDir) + "/%"
+	statements := []string{
+		`UPDATE document SET storage_path = REPLACE(storage_path, $2, $3)
+		 WHERE storage_path LIKE $1 OR storage_path = $2`,
+		`UPDATE document SET original_path = REPLACE(original_path, $2, $3)
+		 WHERE original_path LIKE $1 OR original_path = $2`,
+		`UPDATE orphaned_file SET file_path = REPLACE(file_path, $2, $3)
+		 WHERE file_path LIKE $1 OR file_path = $2`,
+	}
+	for _, q := range statements {
+		if _, err := tx.ExecContext(ctx, q, pattern, oldDir, newDir); err != nil {
+			return fmt.Errorf("execute path rewrite: %w", err)
+		}
+	}
+
+	return tx.Commit()
+}
+
+// escapeLike neutralizes LIKE wildcards so the pattern only matches paths
+// that actually start with oldDir, not lookalikes (e.g. /data/storage-2).
+func escapeLike(s string) string {
+	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return r.Replace(s)
+}
+
+// Old backups predate the manifest StorageDir field, so the archived config
+// is the only record of where storage lived.
+func storageDirFromArchivedConfig(configPath string) (string, error) {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return "", fmt.Errorf("read archived config: %w", err)
+	}
+	var cfg struct {
+		Storage struct {
+			StorageDir string `yaml:"storage_dir"`
+		} `yaml:"storage"`
+	}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return "", fmt.Errorf("parse archived config: %w", err)
+	}
+	if cfg.Storage.StorageDir == "" {
+		return "", fmt.Errorf("archived config has no storage.storage_dir")
+	}
+	if strings.HasPrefix(cfg.Storage.StorageDir, "~") {
+		return "", fmt.Errorf("archived storage_dir uses ~ which is host-dependent; set manifest.storage_dir or update manually")
+	}
+	return cfg.Storage.StorageDir, nil
 }
 
 func copyDir(src, dst string) error {

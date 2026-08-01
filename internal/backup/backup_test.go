@@ -58,6 +58,9 @@ func TestCreate_FullBackup(t *testing.T) {
 	if !strings.HasPrefix(result.Manifest.ConfigHash, "sha256:") {
 		t.Errorf("manifest.ConfigHash = %q, want sha256: prefix", result.Manifest.ConfigHash)
 	}
+	if result.Manifest.StorageDir != filepath.Join(dir, "storage") {
+		t.Errorf("manifest.StorageDir = %q, want %q", result.Manifest.StorageDir, filepath.Join(dir, "storage"))
+	}
 	if _, err := os.Stat(result.Path); err != nil {
 		t.Errorf("archive file missing: %v", err)
 	}

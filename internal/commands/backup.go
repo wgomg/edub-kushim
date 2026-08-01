@@ -180,7 +180,8 @@ func restoreHandler(c *Container, args []string) error {
 	}
 
 	if !force {
-		fmt.Println("\nWARNING: Restore will replace the current database, configuration, and storage files.")
+		fmt.Println("\nWARNING: Restore will replace the current database and storage files.")
+		fmt.Println("The archived configuration is preserved, not applied.")
 		fmt.Print("Are you sure? (type 'yes' to confirm): ")
 		var confirmation string
 		fmt.Scanln(&confirmation)
@@ -213,6 +214,7 @@ func restoreHandler(c *Container, args []string) error {
 	}
 
 	fmt.Println("Restore completed successfully.")
+	fmt.Printf("Restored config saved as %s — the archived storage_dir may not match rewritten paths; update before applying.\n", configPath+".restored")
 	fmt.Println("Restart the services to pick up the restored data.")
 
 	return nil

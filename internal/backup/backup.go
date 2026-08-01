@@ -30,6 +30,7 @@ type Manifest struct {
 	StorageFilesCount int64  `json:"storage_files_count"`
 	StorageSizeBytes  int64  `json:"storage_size_bytes"`
 	ConfigHash        string `json:"config_hash"`
+	StorageDir        string `json:"storage_dir,omitempty"`
 }
 
 type BackupResult struct {
@@ -92,6 +93,7 @@ func Create(ctx context.Context, db *sql.DB, schemaFS embed.FS, backupDir, confi
 		StorageFilesCount: storageFilesCount,
 		StorageSizeBytes:  storageSizeBytes,
 		ConfigHash:        fmt.Sprintf("sha256:%x", configHash),
+		StorageDir:        storageDir,
 	}
 
 	manifestData, err := json.MarshalIndent(manifest, "", "  ")

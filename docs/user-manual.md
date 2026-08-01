@@ -558,11 +558,11 @@ The backup creates a timestamped `tar.gz` archive containing:
 - `edub.sql` — Self-contained SQL dump (schema + data, wrapped in a transaction)
 - `config.yaml` — Configuration file at backup time
 - `storage/` — Full storage directory tree (originals, processed, errors)
-- `manifest.json` — Backup metadata (version, `"sql-dump"` format, timestamp, sizes, config SHA256 hash)
+- `manifest.json` — Backup metadata (version, `"sql-dump"` format, timestamp, sizes, config SHA256 hash, storage directory)
 
 ### `kushim restore`
 
-Restore database, configuration, and storage from a backup archive.
+Restore database and storage from a backup archive. The archived configuration is preserved as `config.yaml.restored`, not applied.
 
 ```
 kushim restore /path/to/edub-backup-2026-06-30T02-00-00.tar.gz
@@ -582,8 +582,10 @@ The restore process:
 3. Prompts for confirmation (skipped with `--force`)
 4. Extracts the archive to a temporary directory
 5. Executes the SQL dump against the database (schema drop + recreate + data insert)
-6. Replaces storage (via atomic rename-swap) and configuration file
-7. Prints restart instructions
+6. Rewrites database storage paths from the archived storage directory (manifest `storage_dir`, or `storage.storage_dir` from the archived config for old backups) to the current one — `document.storage_path`, `document.original_path`, and `orphaned_file.file_path`; skipped when the directories match or the archived dir can't be determined (`~`-relative archived paths are skipped with a warning)
+7. Replaces storage (via atomic rename-swap)
+8. Saves the archived config as `config.yaml.restored` — the current configuration stays intact (update `storage.storage_dir` in it to match the rewritten paths before applying)
+9. Prints restart instructions
 
 ---
 
