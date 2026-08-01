@@ -1,0 +1,163 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Create a draft GitHub Release with the artifacts (true), or build only (false)"
+        required: false
+        default: false
+        type: boolean
+      tag_name:
+        description: "Tag name for the draft release (e.g. v2.8.0); also used as the version string"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  web:
+    name: Build web assets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            web-wizard/package-lock.json
+
+      - name: Build web SPA
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build wizard SPA
+        working-directory: web-wizard
+        run: |
+          npm ci
+          npm run build
+
+      - name: Stage static assets
+        run: |
+          rm -rf internal/static/build
+          cp -r web/build internal/static/build
+          rm -rf internal/wizard/static
+          cp -r web-wizard/build internal/wizard/static
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-assets
+          path: |
+            internal/static/build
+            internal/wizard/static
+          if-no-files-found: error
+
+  build:
+    name: Build binaries (${{ matrix.arch }})
+    needs: web
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/cache@v4
+        with:
+          path: build
+          key: kushim-deps-${{ matrix.arch }}-${{ hashFiles('Makefile') }}
+
+      - name: Install C dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc g++ make autoconf automake libtool pkg-config \
+            zlib1g-dev libfreetype-dev libharfbuzz-dev libjpeg-dev libopenjp2-7-dev \
+            unzip git curl ca-certificates
+
+      - name: Build C dependencies
+        run: make build-deps TOKENIZERS_ARCH=${{ matrix.arch }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-assets
+          path: .
+          merge-multiple: true
+
+      - name: Compute LDFLAGS
+        id: ldflags
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="${{ inputs.tag_name }}"
+            VERSION="${VERSION#v}"
+          fi
+          COMMIT="$(git rev-parse --short HEAD)"
+          DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "ldflags=-s -w -X github.com/wgomg/edub-kushim/internal/version.Version=${VERSION} -X github.com/wgomg/edub-kushim/internal/version.Commit=${COMMIT} -X github.com/wgomg/edub-kushim/internal/version.Date=${DATE}" >> "$GITHUB_OUTPUT"
+
+      - name: Build binaries
+        run: |
+          mkdir -p dist
+          make build \
+            LDFLAGS="${{ steps.ldflags.outputs.ldflags }}" \
+            BINARY=dist/kushim_linux_${{ matrix.arch }} \
+            EDUB_BINARY=dist/edub_linux_${{ matrix.arch }}
+
+      - name: Package binaries
+        run: |
+          tar czf dist/kushim_linux_${{ matrix.arch }}.tar.gz -C dist kushim_linux_${{ matrix.arch }}
+          tar czf dist/edub_linux_${{ matrix.arch }}.tar.gz -C dist edub_linux_${{ matrix.arch }}
+          (cd dist && sha256sum kushim_linux_${{ matrix.arch }}.tar.gz edub_linux_${{ matrix.arch }}.tar.gz > checksums_${{ matrix.arch }}.txt)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.arch }}
+          path: |
+            dist/*.tar.gz
+            dist/checksums_${{ matrix.arch }}.txt
+          if-no-files-found: error
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish == 'true')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: binaries-*
+          path: dist
+          merge-multiple: true
+
+      - name: Combine checksums
+        run: |
+          (cd dist && sha256sum *.tar.gz > checksums.txt && rm -f checksums_amd64.txt checksums_arm64.txt)
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.event_name == 'push' && github.ref_name || inputs.tag_name }}
+          draft: ${{ github.event_name == 'workflow_dispatch' }}
+          target_commitish: ${{ github.sha }}
+          files: dist/*

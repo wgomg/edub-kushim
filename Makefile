@@ -13,6 +13,9 @@ TESS_TAG      := 5.5.3
 LEP_COMMIT    := 10bdea2f19240ffe8c931701b0b7340f41c6b256
 MUPDF_VER     := 1.28.0
 TOKENIZERS_DIR := $(BUILD_DIR)/tokenizers
+TOKENIZERS_ARCH ?= amd64
+TOKENIZERS_SHA256_amd64 := 72556cdca798dd4ea7cdaba308e5f0d68a8cb93b67c96edf485b7a0edd7b07f4
+TOKENIZERS_SHA256_arm64 := e96545ad05930c26f51f63d932ee6d3bbd32bbed149e102c5290d587a2293067
 KNOWN_NVM_DIRS := $(HOME)/.nvm $(HOME)/.config/nvm
 NVM_DIR       := $(firstword $(wildcard $(KNOWN_NVM_DIRS)))
 
@@ -167,10 +170,11 @@ build-mupdf:
 
 download-tokenizers:
 	@if [ ! -f $(TOKENIZERS_DIR)/libtokenizers.a ]; then \
-		echo "Downloading libtokenizers.a..."; \
+		echo "Downloading libtokenizers.a ($(TOKENIZERS_ARCH))..."; \
 		mkdir -p $(TOKENIZERS_DIR); \
-		curl -sL https://github.com/daulet/tokenizers/releases/latest/download/libtokenizers.linux-amd64.tar.gz \
+		curl -sL https://github.com/daulet/tokenizers/releases/latest/download/libtokenizers.linux-$(TOKENIZERS_ARCH).tar.gz \
 			-o $(TOKENIZERS_DIR)/libtokenizers.tar.gz; \
+		echo "$(TOKENIZERS_SHA256_$(TOKENIZERS_ARCH))  $(TOKENIZERS_DIR)/libtokenizers.tar.gz" | sha256sum -c - || exit 1; \
 		tar xzf $(TOKENIZERS_DIR)/libtokenizers.tar.gz -C $(TOKENIZERS_DIR); \
 		rm $(TOKENIZERS_DIR)/libtokenizers.tar.gz; \
 		echo "Downloaded libtokenizers.a to $(TOKENIZERS_DIR)"; \
