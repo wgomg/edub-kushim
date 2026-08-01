@@ -24,9 +24,9 @@ jobs:
     name: Build web assets
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -53,7 +53,7 @@ jobs:
           rm -rf internal/wizard/static
           cp -r web-wizard/build internal/wizard/static
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: web-assets
           path: |
@@ -74,13 +74,13 @@ jobs:
           - arch: arm64
             runner: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: build
           key: kushim-deps-${{ matrix.arch }}-${{ hashFiles('Makefile') }}
@@ -96,7 +96,7 @@ jobs:
       - name: Build C dependencies
         run: make build-deps TOKENIZERS_ARCH=${{ matrix.arch }}
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: web-assets
           path: web-assets
@@ -136,7 +136,7 @@ jobs:
           tar czf dist/edub_linux_${{ matrix.arch }}.tar.gz -C dist edub_linux_${{ matrix.arch }}
           (cd dist && sha256sum kushim_linux_${{ matrix.arch }}.tar.gz edub_linux_${{ matrix.arch }}.tar.gz > checksums_${{ matrix.arch }}.txt)
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: binaries-${{ matrix.arch }}
           path: |
@@ -150,7 +150,7 @@ jobs:
     if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish == 'true')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: binaries-*
           path: dist
