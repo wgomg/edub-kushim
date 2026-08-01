@@ -77,7 +77,7 @@ Print the application version.
 
 ```
 kushim version
-Document Management System v2.8.0
+Document Management System v2.9.0
 ```
 
 ### `kushim setup`
@@ -497,6 +497,9 @@ endpoints:
 The matcher must be started before `edub` for full functionality.
 If the matcher is not running, tag CRUD operations return `503 Service Unavailable`.
 
+See the [Tag Matcher guide](tag-matcher.md) for configuration, memory, and CPU
+tuning (`chunk_size` is the main memory lever and defaults to a safe 4096 tokens).
+
 ---
 
 
@@ -606,7 +609,7 @@ Response `200`:
 ```json
 {
   "status": "healthy",
-  "version": "2.8.0",
+  "version": "2.9.0",
   "time": "2024-03-19T10:30:00Z"
 }
 ````
@@ -1183,7 +1186,7 @@ Two-phase API:
   "enricher.contentanalyzer.llm.token": "",
   "enricher.tagmatcher.timeout": 120,
   "enricher.tagmatcher.reduce_target_words": 4000,
-  "enricher.tagmatcher.chunk_size": 0,
+  "enricher.tagmatcher.chunk_size": 4096,
   "enricher.tagmatcher.hugot.model": "BAAI/bge-m3",
   "enricher.tagmatcher.hugot.backend": "ort"
 }
@@ -1972,7 +1975,7 @@ enricher:
   tagmatcher:
     timeout: 120
     reduce_target_words: 4000 # text reduction before tag matching
-    chunk_size: 0 # 0 = use model's max_position_embeddings
+    chunk_size: 4096 # max tokens per inference chunk; 0 = model max (8180 for bge-m3) — see docs/tag-matcher.md
     hugot:
       model: 'BAAI/bge-m3'
       backend: 'ort' # ort (ONNX Runtime) | GO
@@ -1984,11 +1987,14 @@ backup:
   # keep: 7        # max backups to retain (0 = unlimited)
 ```
 
-> **ORT memory**: When using the `ort` backend, ORT's CPU memory arena and memory-pattern
-> pre-allocation are disabled by default (internal `CpuMemArena: false`, `MemPattern: false`).
-> This keeps idle RSS at ~2.2–2.5 GB instead of ~4–5 GB. These are internal fields not
-> present in `config.yaml` — toggle via `DefaultConfig` if latency is preferred over
-> memory usage.
+> **Matcher memory**: The tag matcher is the largest single memory consumer in
+> the stack. With the default `chunk_size: 4096`, BGE-M3 idles at ~2.2–2.5 GB
+> and peaks at ~4–6 GB per request; `chunk_size: 0` (full context, 8180
+> tokens) can exceed 10 GB per request and OOM small hosts. ORT's CPU memory
+> arena and memory-pattern pre-allocation are also disabled by default
+> (internal `CpuMemArena: false`, `MemPattern: false`) to cap idle RSS instead
+> of retaining ~4–5 GB of peak-inference buffers. See the
+> [Tag Matcher guide](tag-matcher.md) for full memory/CPU tuning.
 
 ### Key sections
 
@@ -2015,7 +2021,7 @@ backup:
 | `enricher.contentanalyzer.prompt_template` | Custom Go `text/template` for the LLM prompt; empty = built-in default |
 | `enricher.contentanalyzer.pause_on_credit_error` | Pause the batch when the LLM provider returns a credit/balance error (default `true`) |
 | `enricher.contentanalyzer.doc_type_refinement` | Second-pass doc type refinement with head+tail of raw text (enabled, head_words, tail_words) |
-| `enricher.tagmatcher`          | Semantic tag matching via Hugot (embeddings)                           |
+| `enricher.tagmatcher`          | Semantic tag matching via Hugot (embeddings) — see [Tag Matcher guide](tag-matcher.md) for memory/CPU tuning |
 | `enricher.tagmatcher.hugot`    | Hugot-specific settings (model, backend)                               |
 
 ---
@@ -2289,7 +2295,7 @@ the limit — additional queued batches wait until a worker slot frees up.
 ```bash
 # Check version
 edub version
-# Document Management System v2.8.0
+# Document Management System v2.9.0
 
 # Start server (default when no command is given)
 edub
@@ -2463,6 +2469,22 @@ For deployments with 100k+ tags, raise the timeout via a drop-in:
 [Service]
 TimeoutStartSec=600
 ```
+
+### Memory Limits
+
+The matcher holds the embedding model in RAM (~2.2–2.5 GB idle with BGE-M3 and
+the default `chunk_size: 4096`). To guarantee that a misconfigured matcher
+can only kill itself — never the whole host — add a drop-in for the
+`kushim-hugot` service with hard memory caps:
+
+```ini
+[Service]
+MemoryHigh=6G   # throttle under pressure before the hard cap
+MemoryMax=8G    # hard cap: systemd OOM-kills only the matcher
+```
+
+Adjust the values to your `chunk_size` (see the
+[Tag Matcher guide](tag-matcher.md) for per-configuration peaks).
 
 ### Generated vs Template Files
 

@@ -118,7 +118,7 @@ See `AuthMiddleware` under `server.go` → Functions.
 
 ### Function
 
-- `HealthHandler(w, r, logger)` — Writes `{"status":"healthy","version":"2.8.0","time":"..."}`
+- `HealthHandler(w, r, logger)` — Writes `{"status":"healthy","version":"2.9.0","time":"..."}`
 
 ---
 

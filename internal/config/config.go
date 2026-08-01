@@ -400,7 +400,12 @@ func DefaultConfig(configDir string) *Config {
 			TagMatcher: TagMatcherConfig{
 				Timeout:           120,
 				ReduceTargetWords: 4000,
-				ChunkSize:         0,
+				// 4096 tokens keeps per-request inference memory bounded
+				// (~2.2–2.5 GB idle, ~4–6 GB peak with BGE-M3). The model's
+				// full context (0 = max_position_embeddings, 8180 tokens for
+				// BGE-M3) scales attention memory roughly quadratically and
+				// can OOM small hosts. See docs/tag-matcher.md.
+				ChunkSize: 4096,
 				Hugot: HugotConfig{
 					Model:       "BAAI/bge-m3",
 					Backend:     "ort",

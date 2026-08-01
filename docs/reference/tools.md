@@ -144,9 +144,9 @@ The composition root builds a single `*Hugot` (for the `kushim` CLI) or uses a `
 `Hugot` — Hugot session with `FeatureExtractionPipeline`
 
 - **Backend**: `"ort"` (default — ONNX Runtime, auto-downloads `libonnxruntime.so`) or `"go"` (pure Go with `libtokenizers.a`)
-- **Chunked encoding**: Texts exceeding the effective chunk size (configured `chunk_size`, or the model's `max_position_embeddings` minus a 12-token safety margin when unset) are split into overlapping token chunks, mean-pooled
+- **Chunked encoding**: Texts exceeding the effective chunk size (configured `chunk_size`, default `4096`; `0` = the model's `max_position_embeddings` minus a 12-token safety margin, 8180 for BGE-M3) are split into overlapping token chunks, mean-pooled. The default bounds per-request memory — see [Tag Matcher guide](../tag-matcher.md)
 - **Ranking**: Cosine similarity on L2-normalized embeddings (dot product); separate `minSimilarity` (doc→tag) and `consolidationSim` (tag→tag consolidation)
-- **Config**: `TopN`, `MinSimilarity`, `ConsolidationSimilarity`, `ChunkSize` (auto-derived from model config), `ChunkOverlap` (10% of chunk size)
+- **Config**: `TopN`, `MinSimilarity`, `ConsolidationSimilarity`, `ChunkSize` (default 4096; `0` = model max, clamped to `max_position_embeddings` − 12), `ChunkOverlap` (10% of chunk size)
 - **Fields**: `store EmbeddingStore` — shared reference to the tag embedding cache
 - **Methods**:
   - `Match(ctx, docId, input)` — Reads all entries from the store, encodes the input, ranks by cosine similarity, returns top-N matches
@@ -367,6 +367,7 @@ are not bounded upstream. The 100 MP ceiling allows generous large-format page
 
 ## See Also
 
+- [Tag Matcher Guide](../tag-matcher.md) — Matcher config, memory, and CPU tuning
 - [Pipeline](pipeline.md) — Consumer and Enricher that use the Runner
 - [Config & Utils](config-and-utils.md) — Tool configuration (engines, timeouts, models)
 - `internal/llm/` — LLM capability registry (model catalog, adapter/provider/model discovery)

@@ -388,5 +388,6 @@ Low-priority items worth revisiting when nothing more impactful demands attentio
 ## See Also
 
 - [Architecture & Design](architecture.md) — Core design principles and pipeline narrative
+- [Tag Matcher Guide](tag-matcher.md) — Matcher config, memory, and CPU tuning
 - [Code Reference](reference/overview.md) — Detailed implementation reference per package
 - [Testing Reference](reference/tests.md) — Test infrastructure, patterns, and how to run

@@ -20,7 +20,7 @@
   - `ContentAnalyzerConfig`: `Enabled bool` (default `false`), `Timeout int`, `Llm LlmConfig`, `PromptTemplate string`, `DocTypeRefinement DocTypeRefinementConfig`
       - `LlmConfig`: `Adapter string`, `Provider string`, `Model string`, `Token string`, `Reasoning bool` (yaml:"-", set via model catalog), `ReasoningEffort string` (yaml:"-", set via model catalog), `Temperature float64`
       - `DocTypeRefinementConfig`: `Enabled bool`, `HeadWords int`, `TailWords int`
-   - `TagMatcherConfig`: `Timeout` (0 = disabled), `ReduceTargetWords`, `ChunkSize`, `Hugot HugotConfig`, `TopN`, `MinSimilarity`, `ConsolidationSimilarity`
+   - `TagMatcherConfig`: `Timeout` (0 = disabled), `ReduceTargetWords`, `ChunkSize` (default 4096 tokens to bound matcher memory; 0 = model's `max_position_embeddings` minus 12), `Hugot HugotConfig`, `TopN`, `MinSimilarity`, `ConsolidationSimilarity`
     - `HugotConfig`: `Model`, `Backend` (`"GO"` or `"ort"`), `ModelPath`, `BackendLibPath`; internal-only (no yaml/json tags): `CpuMemArena bool` (default `false`), `MemPattern bool` (default `false`)
 - `BackupConfig`: `Enabled bool`, `Interval float64` (days), `Time string` (HH:MM), `Path string`, `Keep int`
 - `ToolConfig`: `Command string`, `Timeout time.Duration`
@@ -31,7 +31,7 @@
 
 ## Functions
 
-- `DefaultConfig(configDir string) *Config` — Full defaults (BAAI/bge-m3, ort backend, gosseract OCR, textrank reducer, openai-compatible analyzer with gpt-4o, 100 MB max upload, 4 max concurrent batches, etc.)
+- `DefaultConfig(configDir string) *Config` — Full defaults (BAAI/bge-m3, ort backend, tagmatcher `chunk_size` 4096, gosseract OCR, textrank reducer, openai-compatible analyzer with gpt-4o, 100 MB max upload, 4 max concurrent batches, etc.)
 - `Load(configDir string) (*Config, error)` — Loads YAML over defaults, validates OCR languages required, expands paths, creates dirs
 - `defaultMinSimilarity(modelShortName string) float64` — Per-model thresholds (bge-m3: 0.40)
 - `defaultConsolidationSimilarity(modelShortName string) float64` — Tag-to-tag thresholds (bge-m3: 0.82)
@@ -121,7 +121,7 @@ per tool category, used by the frontend settings UI to populate select dropdowns
 
 ## `version.go`
 
-`var Version = "2.8.0"`
+`var Version = "2.9.0"`
 
 ---
 
@@ -192,6 +192,7 @@ per tool category, used by the frontend settings UI to populate select dropdowns
 
 ## See Also
 
+- [Tag Matcher Guide](../tag-matcher.md) — Matcher config, memory, and CPU tuning (`chunk_size`)
 - [API](api.md) — Uses ParamBag middleware, ConfigHandler for `/wizard/bootstrap` (public) and `/wizard/config` (admin-protected) endpoints
 - [CLI](cli.md) — Uses ConfigDir, Logger, FlagParser, config setup functions
 - [Pipeline](pipeline.md) — Uses Config structs for Consumer/Enricher settings

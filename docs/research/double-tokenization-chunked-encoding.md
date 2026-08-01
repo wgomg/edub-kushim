@@ -2,7 +2,7 @@
 
 ## Context
 
-The Hugot-based tag matcher (`internal/tools/adapters/tagmatcher/hugot.go`) encodes document text as embeddings via the `Encode()` method. For texts whose token count exceeds the effective chunk size (`chunk_size` config, or the model's `max_position_embeddings` minus a 12-token safety margin when unset — 8180 tokens for BGE-M3), it delegates to `encodeChunked()`, which splits the tokens into overlapping windows, encodes each window, and mean-pools the results.
+The Hugot-based tag matcher (`internal/tools/adapters/tagmatcher/hugot.go`) encodes document text as embeddings via the `Encode()` method. For texts whose token count exceeds the effective chunk size (`chunk_size` config, default 4096; explicit `0` = the model's `max_position_embeddings` minus a 12-token safety margin — 8180 tokens for BGE-M3), it delegates to `encodeChunked()`, which splits the tokens into overlapping windows, encodes each window, and mean-pools the results.
 
 ## The Waste
 
@@ -63,7 +63,7 @@ Upstream a method on `FeatureExtractionPipeline` (or on the underlying `backends
 
 ### Option 3 — Skip chunking for common cases (quick mitigation)
 
-If `chunk_size` is set to a generous value (e.g., 4096) and most reduced texts fit in 1-2 chunks, the double-tokenization cost is low enough that it can be ignored. This is the current state: the default derives a large chunk size from the model config, and the timeout covers the remainder.
+If `chunk_size` is set to a generous value (e.g., 4096) and most reduced texts fit in 1-2 chunks, the double-tokenization cost is low enough that it can be ignored. This is the current state: the default chunk size of 4096 tokens is deliberate (it bounds matcher memory — see [Tag Matcher guide](../tag-matcher.md)), and the timeout covers the remainder.
 
 ## Code References
 
