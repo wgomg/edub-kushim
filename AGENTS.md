@@ -106,10 +106,10 @@ See `docs/reference/tests.md` for full testing reference.
 
 ## Development workflow
 
-- Work happens on `dev`; changes reach `master` only via squash-merged PRs (linear history, CI required). Never push directly to `master` for normal work — it only passes through the intentional admin bypass.
+- Work happens on `dev`; changes reach `master` only via PRs merged with merge commits (git-flow style — `dev`'s commits become part of `master`'s history, so the resync converges). Never push directly to `master` for normal work — it only passes through the intentional admin bypass.
 - CI (`.github/workflows/ci.yml`) runs `make test` + `make test-db` (postgres:17 service container) plus both SPA builds on every push to `dev`/`master` and every PR to `master`. The ruleset requires the `test` and `web` checks to pass on PRs.
 - Commits are signed (SSH, `commit.gpgsign true`). The ruleset requires verified signatures; the signing key must stay registered as a Signing Key on GitHub.
-- Releases: bump the version on `master` via `/bump` (it commits on `dev`, opens a PR `dev → master`, and squash-merges), tag `vX.Y.Z` from master, push the tag; `workflow_dispatch` only from master.
+- Releases: bump the version on `master` via `/bump` (it commits on `dev`, opens a PR `dev → master`, and merges it), tag `vX.Y.Z` from master, push the tag; `workflow_dispatch` only from master.
 - Version bumps never land on `dev`; after each release, resync: `git checkout dev && git merge master && git push origin dev`.
 - Never `gh pr merge --delete-branch`; `dev` is long-lived.
 
