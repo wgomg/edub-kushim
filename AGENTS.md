@@ -97,7 +97,7 @@ See `docs/reference/tests.md` for full testing reference.
 
 ## Web UI (SvelteKit)
 
-- Two SPAs: `web/` (main → `internal/static/build/`) and `web-wizard/` (setup wizard → `internal/wizard/static/`)
+- Two SPAs: `web/` (main → `internal/static/build/`) and `web-wizard/` (setup wizard → `internal/wizard/static/`). The build dirs are gitignored but embedded via `//go:embed`; CI stages them with `make stage-web` (local builds) / `make stage-web-artifact` (downloaded CI artifact).
 - Node.js 24 — `.nvmrc` specifies. Run `nvm use` first.
 - Dev server: `cd web && npm ci && npm run dev` (proxies `/api` to `localhost:3000`)
 - Both use `@sveltejs/adapter-static` with `fallback: 'index.html'`

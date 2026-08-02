@@ -24,6 +24,15 @@ make test-verbose  # same with verbose output
 CGO_ENABLED=0 go test -tags "XLA,ORT" ./internal/...
 ```
 
+### Continuous Integration
+
+`.github/workflows/ci.yml` runs both tiers on every push to `dev`/`master` and every PR to `master`:
+
+- `web` job: builds both SPAs (`npm ci && npm run build` in `web/` and `web-wizard/`), stages them with `make stage-web`, and uploads them as the `web-assets` artifact. Staging is required because `internal/static/build` and `internal/wizard/static` are gitignored but embedded via `//go:embed` — a fresh checkout has no assets to compile against.
+- `test` job (depends on `web`): downloads `web-assets`, stages it with `make stage-web-artifact`, then runs `make test` and `make test-db` against a postgres:17 service container (`TEST_DATABASE_URL` pointing at `localhost:5432`).
+
+The `global` ruleset requires the `test` and `web` checks to pass before a PR to `master` can merge.
+
 ---
 
 ## Package Layout
