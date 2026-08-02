@@ -27,7 +27,7 @@ BUILD_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown"
 BUILD_DATE   := $(shell date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "unknown")
 LDFLAGS      := -s -w -X github.com/wgomg/edub-kushim/internal/version.Commit=$(BUILD_COMMIT) -X github.com/wgomg/edub-kushim/internal/version.Date=$(BUILD_DATE)
 
-.PHONY: build build-deps web-build clean run consume build-musl-image build-musl build-mupdf-force compose-up compose-down compose-quickstart compose-quickstart-down
+.PHONY: build build-deps web-build stage-web stage-web-artifact clean run consume build-musl-image build-musl build-mupdf-force compose-up compose-down compose-quickstart compose-quickstart-down
 
 web-build:
 	. "$(NVM_DIR)/nvm.sh" && nvm use && cd web && npm ci && npm audit fix || true && npm run build
@@ -38,6 +38,23 @@ wizard-build:
 	. "$(NVM_DIR)/nvm.sh" && nvm use && cd web-wizard && npm ci && npm audit fix || true && npm run build
 	rm -rf internal/wizard/static
 	cp -r web-wizard/build internal/wizard/static
+
+# The SPA builds live in gitignored dirs that Go embeds via //go:embed,
+# so they must be staged before any go build/test. Used by CI after npm builds.
+stage-web:
+	rm -rf internal/static/build internal/wizard/static
+	mkdir -p internal/static internal/wizard
+	cp -r web/build internal/static/build
+	cp -r web-wizard/build internal/wizard/static
+
+# Same as stage-web, but from the uploaded web-assets artifact (layout:
+# <dir>/static/build, <dir>/wizard/static), e.g. actions/download-artifact.
+WEB_ASSETS_DIR ?= web-assets
+stage-web-artifact:
+	rm -rf internal/static/build internal/wizard/static
+	mkdir -p internal/static internal/wizard
+	cp -r $(WEB_ASSETS_DIR)/static/build internal/static/build
+	cp -r $(WEB_ASSETS_DIR)/wizard/static internal/wizard/static
 
 build:
 	go build -tags "XLA,ORT" -ldflags="$(LDFLAGS)" -o $(BINARY) ./cmd/kushim/main.go

@@ -47,11 +47,7 @@ jobs:
           npm run build
 
       - name: Stage static assets
-        run: |
-          rm -rf internal/static/build
-          cp -r web/build internal/static/build
-          rm -rf internal/wizard/static
-          cp -r web-wizard/build internal/wizard/static
+        run: make stage-web
 
       - uses: actions/upload-artifact@v7
         with:
@@ -102,11 +98,7 @@ jobs:
           path: web-assets
 
       - name: Stage web assets
-        run: |
-          rm -rf internal/static/build internal/wizard/static
-          mkdir -p internal/static internal/wizard
-          cp -r web-assets/static/build internal/static/build
-          cp -r web-assets/wizard/static internal/wizard/static
+        run: make stage-web-artifact
 
       - name: Compute LDFLAGS
         id: ldflags
