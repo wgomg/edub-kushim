@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [dev, master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            web-wizard/package-lock.json
+      - name: Build main SPA
+        working-directory: web
+        run: npm ci && npm run build
+      - name: Build wizard SPA
+        working-directory: web-wizard
+        run: npm ci && npm run build
+      - name: Stage static assets
+        run: |
+          rm -rf internal/static/build internal/wizard/static
+          mkdir -p internal/static internal/wizard
+          cp -r web/build internal/static/build
+          cp -r web-wizard/build internal/wizard/static
+      - uses: actions/upload-artifact@v7
+        with:
+          name: web-assets
+          path: |
+            internal/static/build
+            internal/wizard/static
+          if-no-files-found: error
+
+  test:
+    needs: web
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: edub
+          POSTGRES_PASSWORD: edub
+          POSTGRES_DB: edub
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U edub"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: actions/download-artifact@v8
+        with:
+          name: web-assets
+          path: web-assets
+      - name: Stage web assets
+        run: |
+          rm -rf internal/static/build internal/wizard/static
+          mkdir -p internal/static internal/wizard
+          cp -r web-assets/static/build internal/static/build
+          cp -r web-assets/wizard/static internal/wizard/static
+      - name: Run tests (no database)
+        run: make test
+      - name: Run tests (PostgreSQL)
+        env:
+          TEST_DATABASE_URL: postgres://edub:edub@localhost:5432/edub?sslmode=disable
+        run: make test-db
