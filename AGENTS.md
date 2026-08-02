@@ -104,12 +104,21 @@ See `docs/reference/tests.md` for full testing reference.
 - Svelte 5 with runes enabled everywhere. Tailwind CSS v4 via `@tailwindcss/vite`.
 - Lint: `npm run lint` · Format: `npm run format`.
 
+## Development workflow
+
+- Work happens on `dev`; changes reach `master` only via squash-merged PRs (linear history, CI required). Never push directly to `master` for normal work — it only passes through the intentional admin bypass.
+- CI (`.github/workflows/ci.yml`) runs `make test` + `make test-db` (postgres:17 service container) plus both SPA builds on every push to `dev`/`master` and every PR to `master`. The ruleset requires the `test` and `web` checks to pass on PRs.
+- Commits are signed (SSH, `commit.gpgsign true`). The ruleset requires verified signatures; the signing key must stay registered as a Signing Key on GitHub.
+- Releases: bump the version on `master` via `/bump` (it commits on `dev`, opens a PR `dev → master`, and squash-merges), tag `vX.Y.Z` from master, push the tag; `workflow_dispatch` only from master.
+- Version bumps never land on `dev`; after each release, resync: `git checkout dev && git merge master && git push origin dev`.
+- Never `gh pr merge --delete-branch`; `dev` is long-lived.
+
 ## Releases
 
 `.github/workflows/release.yml` builds both binaries per arch (amd64 + arm64) and publishes a GitHub Release.
 
 How to release:
-1. Bump `internal/version/version.go` with a `chore(version): incrementa versión a X.Y.Z` commit.
+1. Run `/bump` — it commits the version bump on `dev` and merges to `master` via a PR (`dev → master`).
 2. `git tag vX.Y.Z && git push origin vX.Y.Z` — the workflow publishes the release automatically: 4 tarballs (`kushim_linux_{amd64,arm64}`, `edub_linux_{amd64,arm64}`) + combined `checksums.txt`.
 
 Manual runs (`workflow_dispatch` — only triggers from `master`):
