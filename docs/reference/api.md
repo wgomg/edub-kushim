@@ -14,7 +14,7 @@
 
 ### Functions
 
-- `probeMatcher()` — Calls `matcherClient.Health()` with 2s timeout. Logs warning and continues if matcher is unreachable; tag CRUD returns `503` and enrich falls back to LLM-only tags.
+- `probeMatcher()` — Calls `matcherClient.Health()` with 2s timeout. Logs warning and continues if matcher is unreachable; tag CRUD is unaffected (embedding-store errors are logged and swallowed) and enrich falls back to LLM-only tags.
 - `registerRoutes(logger, client, dispatcher, getConfig, onConfigSet, services, workStore) *http.ServeMux` — Creates and returns a `*http.ServeMux` with all API routes registered; internally creates the `search.Engine` from `client`. Uses Go 1.22+ pattern routing (`"GET /api/v1/documents/{id}"`). Auth routes (`POST /api/v1/auth/login`, `POST /api/v1/auth/logout`) are registered before all other routes so they are public (bypassed by `AuthMiddleware`). Orphaned file routes (`/api/v1/orphaned/...`) are registered via `OrphanedHandler` after the document routes. Errored file routes (`/api/v1/errored/...`) are registered via `ErroredHandler` after the orphaned block.
 - `registerStaticRoutes(mux *http.ServeMux)` — Registers `"GET /{path...}"` handler; tries to serve the requested file from the embedded FS, falls back to `index.html` for client-side SPA routes if the file doesn't exist
 - `chainMiddleware(logger *utils.Logger, getSecret func() string, getAuthEnabled func() bool, validateAPIKey func(ctx context.Context, rawKey string) (*database.User, error), getUserByID func(ctx context.Context, id int64) (*database.User, error), h http.Handler) http.Handler` — Composes request + auth + parambag middleware. The auth middleware skips public paths (`/health`, `GET /wizard/bootstrap`, `/api/v1/auth/*`, non-API paths) and validates Bearer tokens (from `Authorization` header or `edub_token` cookie) on all other routes. Only `GET /wizard/bootstrap` is public among `/wizard/*` paths — the rest require authentication (admin role via `RequireRole`). Tokens with `ek_` prefix are validated via `validateAPIKey` closure (hashes + DB lookup); other tokens are validated as JWT via `auth.ValidateToken`.
@@ -196,9 +196,9 @@ See `AuthMiddleware` under `server.go` → Functions.
   - **Methods**:
     - `NewTagHandler(services, logger) *TagHandler`
     - `List(w, r)` — `GET /api/v1/tags?q=<prefix>&limit=50&offset=0` — With `q`: searches by prefix via `services.Tag.SearchByNameWithDocumentCount`. Without `q`: lists paginated via `services.Tag.ListWithDocumentCount`. Returns `{results, total}` with `document_count` per tag.
-    - `Create(w, r)` — `POST /api/v1/tags` — Accepts `{name}`. Calls `services.Tag.Create(ctx, []string{name})`. Maps status: `Created` → 201 with `{id,name}`, `Conflict` → 409 with existing `{id,name}`, `Invalid` → 400. Returns `503` with `{"error":"matcher unavailable — tag store is offline"}` when the external matcher process is unreachable.
-    - `Update(w, r)` — `PUT /api/v1/tags/{id}` — Accepts `{name}`. Calls `services.Tag.Update(ctx, []UpdatePair{{ID: id, Name: name}})`. Maps status: `Updated`/`Noop` → 200 with `{id,name}`, `Conflict` → 409, `NotFound` → 404, `Invalid` → 400. Returns `503` when matcher is unreachable.
-    - `Delete(w, r)` — `DELETE /api/v1/tags/{id}` — Calls `services.Tag.Delete(ctx, []int64{id})`. Maps status: `Deleted` → 204, `NotFound` → 404. Returns `503` when matcher is unreachable.
+    - `Create(w, r)` — `POST /api/v1/tags` — Accepts `{name}`. Calls `services.Tag.Create(ctx, []string{name})`. Maps status: `Created` → 201 with `{id,name}`, `Conflict` → 409 with existing `{id,name}`, `Invalid` → 400.
+    - `Update(w, r)` — `PUT /api/v1/tags/{id}` — Accepts `{name}`. Calls `services.Tag.Update(ctx, []UpdatePair{{ID: id, Name: name}})`. Maps status: `Updated`/`Noop` → 200 with `{id,name}`, `Conflict` → 409, `NotFound` → 404, `Invalid` → 400.
+    - `Delete(w, r)` — `DELETE /api/v1/tags/{id}` — Calls `services.Tag.Delete(ctx, []int64{id})`. Maps status: `Deleted` → 204, `NotFound` → 404.
 
 ---
 

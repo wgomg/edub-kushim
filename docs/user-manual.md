@@ -495,7 +495,7 @@ endpoints:
 | `GET /health`                   | GET    | Health check                                 |
 
 The matcher must be started before `edub` for full functionality.
-If the matcher is not running, tag CRUD operations return `503 Service Unavailable`.
+If the matcher is not running, tag CRUD operations still succeed — only the tag embedding cache is not updated (errors are logged) and enrichment falls back to LLM-only tags.
 
 See the [Tag Matcher guide](tag-matcher.md) for configuration, memory, and CPU
 tuning (`chunk_size` is the main memory lever and defaults to a safe 4096 tokens).
@@ -2402,7 +2402,7 @@ and the Unix socket is listening. Dependents (`edub`, `kushim-queue`) use
 `After=kushim-hugot.service` and `Wants=kushim-hugot.service` so they wait
 for actual readiness, not just process start. `Wants=` is used (not
 `Requires=`) because the architecture is designed to degrade gracefully
-without the matcher — tag CRUD returns 503 until the matcher is reachable.
+without the matcher — tag CRUD still succeeds and only the embedding cache is skipped until the matcher is reachable.
 
 The queue service also waits for the matcher (`After=kushim-hugot`) because
 it forks workers that immediately call matcher RPC. Waiting avoids the
@@ -2552,8 +2552,9 @@ configurable. See the `app.logging` section in `config.yaml`.
 
 `kushim-queue.service` and `edub.service` both declare `Wants=` (not
 `Requires=`) on the matcher — they start even if the matcher is down, and
-the API handles the unavailable matcher gracefully with a 503 status on tag
-CRUD endpoints. The queue daemon only reads the database under default
+the API degrades gracefully: tag CRUD still succeeds, with the tag embedding
+cache skipped (errors logged) until the matcher comes back. The queue daemon
+only reads the database under default
 config (`backup.enabled=false`); it forks consumer children that talk to the
 matcher, so waiting via `After=` avoids the connection-refused race.
 

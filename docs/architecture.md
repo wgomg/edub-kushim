@@ -54,7 +54,7 @@ Pure Go binary (`CGO_ENABLED=0`) that handles HTTP requests. It:
 - Enqueues consume/enrich tasks when `POST /api/v1/consume` is called, creating batches with `status='queued'`
 - The `kushim queue` daemon picks up queued batches and forks `kushim consume --batch <id>` for processing
 - Runs a config pool for background download tasks (tessdata, Hugot model)
-- Probes the matcher socket on startup; tag CRUD returns 503 if matcher is unreachable
+- Probes the matcher socket on startup (logs a warning if unreachable); tag CRUD is not blocked — embedding-store sync errors are logged and swallowed
 - Does not manage inbox polling — the queue daemon (`kushim queue`) handles scanning as a goroutine loop
 
 ### 4. CLI / Worker (`kushim`)
@@ -102,7 +102,7 @@ flowchart TB
     EP -.->|"semantic tag\nmatching"| H
 ```
 
-The matcher is optional — if it's not running, `edub` logs a warning and tag CRUD returns 503. The `kushim` CLI (used for document processing) can start its own matcher when run directly (via the consume command which has direct Hugot access), or communicate with the external matcher via the same RPC interface.
+The matcher is optional — if it's not running, `edub` logs a warning and the tag embedding cache is not updated (errors are logged and swallowed), but tag CRUD itself still succeeds. The `kushim` CLI (used for document processing) can start its own matcher when run directly (via the consume command which has direct Hugot access), or communicate with the external matcher via the same RPC interface.
 
 ---
 
@@ -523,5 +523,5 @@ clear upgrade path to Meilisearch, ZincSearch, or Elasticsearch if needed.
 - **Hugot ORT backend**: ONNX Runtime downloaded at runtime on first use — requires internet access. The Go backend has no runtime deps. ORT's CPU memory arena and memory pattern pre-allocation are disabled by default (`HugotConfig.CpuMemArena=false`, `MemPattern=false`) to cap idle RSS at ~2.2–2.5 GB rather than retaining peak-inference buffers (~4–5 GB). This adds ~10–20% per-inference latency from buffer re-allocation, which is dwarfed by text extraction, OCR, and LLM API latency in the enrichment pipeline. Toggle to `true` in `DefaultConfig` to restore ORT defaults if performance is unacceptable.
 - **Matcher memory safety**: `enricher.tagmatcher.chunk_size` defaults to `4096` tokens (not full context) to bound per-request inference memory (~4–6 GB peak with BGE-M3). `0` opts into the model's full context (8180 tokens for BGE-M3), which scales attention memory roughly quadratically and can exceed 10 GB per request — an OOM risk on small hosts. See [Tag Matcher guide](tag-matcher.md).
 - **Role enforcement**: All API routes are gated by `RequireRole` middleware. The auth middleware reads the user's role from the database (for both JWT and API key paths) and injects it into request context. Three roles exist: `admin` (user management, logs), `editor` (all mutations, batch operations, consume), and `viewer` (read-only access). Self-service `/me` endpoints are accessible to any authenticated user. The `auth_enabled: false` config bypasses all middleware, making roles irrelevant.
-- **Matcher as external process**: The tag matcher runs as a separate process (`kushim hugot`). If it's not running, tag CRUD operations return `503 Service Unavailable`, and enrichment falls back to LLM-only tags (no semantic tag matching). The matcher must be started before `edub` for full functionality.
+- **Matcher as external process**: The tag matcher runs as a separate process (`kushim hugot`). If it's not running, tag CRUD operations still succeed — embedding-store sync failures are logged and swallowed — and enrichment falls back to LLM-only tags (no semantic tag matching). The matcher must be started before `edub` for full functionality.
 - **Queue daemon forks kushim**: The `kushim queue` daemon forks workers by re-executing its own binary (`os.Args[0]`), so `kushim` must be on PATH or invoked with a resolvable path. If the re-exec fails, batches remain queued and are not processed. The API consume endpoints do not fork directly — they create `queued` batches for the daemon to pick up.

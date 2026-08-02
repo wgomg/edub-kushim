@@ -169,9 +169,9 @@ start for both backends and requires internet access at that point.
 ### Start order and degradation
 
 `kushim hugot` must be running before `edub` starts for full functionality.
-If it is unreachable, tag CRUD returns `503 Service Unavailable` and
-enrichment falls back to LLM-only tags — the pipeline degrades, it does not
-fail.
+If it is unreachable, tag CRUD still succeeds (embedding-store sync is
+skipped with a logged error) and enrichment falls back to LLM-only tags —
+the pipeline degrades, it does not fail.
 
 ### Memory capping (systemd)
 

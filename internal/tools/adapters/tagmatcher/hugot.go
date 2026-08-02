@@ -111,7 +111,7 @@ func (h *Hugot) SetStore(s EmbeddingStore) {
 var embeddingSpaceRE = regexp.MustCompile(` +`)
 
 // normalizeForEmbedding normalizes tag names before embedding.
-// Applied in AddToStore and Consolidate, not in Encode (which also handles document text).
+// Applied in AddToStore, RemoveFromStore, and Consolidate, not in Encode (which also handles document text).
 // Counterpart in internal/cache/bootstrap.go duplicates this logic — keep in sync.
 func normalizeForEmbedding(s string) string {
 	s = strings.ReplaceAll(s, "-", " ")
@@ -152,6 +152,11 @@ func (h *Hugot) RemoveFromStore(ctx context.Context, names []string) error {
 	if h == nil {
 		return fmt.Errorf("tag matcher not initialized")
 	}
+	normalized := make([]string, len(names))
+	for i, n := range names {
+		normalized[i] = normalizeForEmbedding(n)
+	}
+	names = normalized
 	for _, name := range names {
 		h.store.Remove(name)
 		h.logger.Info(nil, "hugot: remove from store `%s`", name)

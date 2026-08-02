@@ -108,7 +108,7 @@ kushim setup
 # Or use terminal-based mode (headless / CI)
 kushim setup --cli --languages eng,spa
 
-# 2. Start the matcher RPC server (semantic tag matching, required for tag CRUD)
+# 2. Start the matcher RPC server (semantic tag matching + tag embedding cache)
 kushim hugot &
 
 # 3. Start the queue daemon (background batch processing + inbox polling)
