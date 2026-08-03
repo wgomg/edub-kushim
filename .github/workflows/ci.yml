@@ -18,12 +18,12 @@ jobs:
           cache-dependency-path: |
             web/package-lock.json
             web-wizard/package-lock.json
-      - name: Build main SPA
+      - name: Lint and build main SPA
         working-directory: web
-        run: npm ci && npm run build
-      - name: Build wizard SPA
+        run: npm ci && npm run lint && npm run build
+      - name: Lint and build wizard SPA
         working-directory: web-wizard
-        run: npm ci && npm run build
+        run: npm ci && npm run lint && npm run build
       - name: Stage static assets
         run: make stage-web
       - uses: actions/upload-artifact@v7
