@@ -201,7 +201,7 @@ New to the codebase? The guides in [`docs/developer-guide/`](docs/developer-guid
 
 ## Key Features
 
-- **Unattended bulk classification with auto-recovery** — every document is classified without manual intervention (tags, type, title, people); labels are normalized and consolidated against the existing vocabulary, and stuck processing tasks are reclaimed automatically. LLM providers: OpenAI, Anthropic, DeepSeek, Ollama
+- **Unattended bulk classification with auto-recovery** — every document is classified without manual intervention (tags, type, title, people); labels are normalized and consolidated against the existing vocabulary, and stuck processing tasks are reclaimed automatically. LLM providers: OpenAI, Anthropic, DeepSeek, Mistral, Qwen, Zhipu
 - **Semantic tag matching** — Hugot embeddings with cosine similarity (Go or ONNX Runtime backend)
 - **OCR pipeline** — Tesseract + MuPDF for image-only PDFs, with searchable PDF output (text rendering mode 3)
 - **Full-text search** — PostgreSQL tsvector with `ts_rank` ranking and `ts_headline` snippet highlighting; structured search with metadata filters

@@ -53,7 +53,7 @@
 ### Enrichment Pipeline
 
 - Async enrichment pipeline: consume → enqueue enrich → text reduction → tag matching → LLM classification → tag consolidation
-- LLM providers: OpenAI, Anthropic, DeepSeek, Ollama (via `ContentAnalyzer` interface)
+- LLM providers: OpenAI, Anthropic, DeepSeek, Mistral, Qwen, Zhipu (via `ContentAnalyzer` interface)
 - Text reduction via TextRank extractive summarization (TF-IDF, weighted PageRank, diversity penalty)
 - Semantic tag matching via Hugot (Go or ONNX backend), cosine similarity, chunked encoding
 - Dual text reduction: separate `target_words` for LLM and `reduce_target_words` for tag matching
