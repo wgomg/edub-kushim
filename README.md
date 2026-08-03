@@ -181,6 +181,23 @@ The API server (`edub`) is a pure Go binary with no C dependencies. All CGo-heav
 | See what's done and what's next          | [Roadmap](docs/roadmap.md)                    |
 | Find a specific package or function      | [Code Reference](docs/reference/overview.md)  |
 | Full CLI reference and API docs          | [User Manual](docs/user-manual.md)            |
+| Learn how the codebase uses a language or subsystem | [Developer Guides](#developer-guides)  |
+
+### Developer Guides
+
+New to the codebase? The guides in [`docs/developer-guide/`](docs/developer-guide/) take you from "knows programming" to "can work on this codebase" — each walks through a language or subsystem with real, line-referenced examples from the source.
+
+| Guide | What it covers |
+|---|---|
+| [golang.md](docs/developer-guide/golang.md) | Go language features as used in this codebase — onboarding for devs new to Go |
+| [frontend.md](docs/developer-guide/frontend.md) | SvelteKit/Svelte 5 (runes) as used in `web/` and `web-wizard/` |
+| [postgresql.md](docs/developer-guide/postgresql.md) | PostgreSQL features as used in the schema and queries |
+| [semantic-matching.md](docs/developer-guide/semantic-matching.md) | Hugot embeddings, tag matching, consolidation, the matcher daemon |
+| [algorithms.md](docs/developer-guide/algorithms.md) | TextRank summarization, text normalization, token estimation |
+| [cgo.md](docs/developer-guide/cgo.md) | cgo and the C wrapper layer (MuPDF, Tesseract) |
+| [ocr-pipeline.md](docs/developer-guide/ocr-pipeline.md) | OCR engines, searchable-PDF generation |
+| [task-system.md](docs/developer-guide/task-system.md) | Task lifecycle, batch ownership, queue semantics |
+| [llm.md](docs/developer-guide/llm.md) | LLM integration, prompts, model catalog, the enricher |
 
 ## Key Features
 
@@ -201,6 +218,8 @@ The API server (`edub`) is a pure Go binary with no C dependencies. All CGo-heav
 - **Docker Compose quick-start** — single command builds everything from source, no host-side toolchain required
 
 ## Development
+
+New here? Read the [Developer Guides](docs/developer-guide/) first — start with [golang.md](docs/developer-guide/golang.md) for the language, then open a topic guide ([task-system.md](docs/developer-guide/task-system.md), [ocr-pipeline.md](docs/developer-guide/ocr-pipeline.md), ...) as you touch that area.
 
 ### Prerequisites
 

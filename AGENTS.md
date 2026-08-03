@@ -1,6 +1,19 @@
 # AGENTS.md
 
-Deeper context lives in `docs/`: `architecture.md` (design, pipeline, process model), `roadmap.md` (implementation status), `user-manual.md` (CLI + API reference), and `reference/` (per-package code references — database, search, pipeline, task-system, tools, tests).
+Deeper context lives in `docs/`:
+
+- `architecture.md` (design, pipeline, process model), `roadmap.md` (implementation status), `user-manual.md` (CLI + API reference)
+- Developer guides (language/feature onboarding, in `docs/developer-guide/`):
+  - `golang.md` — Go language features as used in this codebase
+  - `frontend.md` — SvelteKit/Svelte 5 features as used in `web/` and `web-wizard/`
+  - `postgresql.md` — PostgreSQL features as used in the schema and queries
+  - `semantic-matching.md` — Hugot embedding model, tag matching, consolidation, the matcher daemon
+  - `algorithms.md` — TextRank summarization, text normalization, token estimation
+  - `cgo.md` — cgo and the C wrapper layer (MuPDF, Tesseract)
+  - `ocr-pipeline.md` — OCR engines, searchable-PDF generation
+  - `task-system.md` — task lifecycle, batch ownership, queue semantics
+  - `llm.md` — LLM integration, prompts, model catalog, the enricher
+- `reference/` (per-package code references — database, search, pipeline, task-system, tools, tests)
 
 ## Build
 
