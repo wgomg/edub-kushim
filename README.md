@@ -194,9 +194,9 @@ The API server (`edub`) is a pure Go binary with no C dependencies. All CGo-heav
 - **User accounts & auth** — bcrypt passwords, JWT sessions, API keys, role-based access (admin/editor/viewer)
 - **Backup & restore** — App-level PostgreSQL SQL dump (schema + data in a transaction), timestamped `tar.gz` archives with config + storage
 - **Orphaned file management** — detect, quarantine, restore, and re-ingest orphaned files
-- **Trash / soft delete** — deleting a document moves it to a trash directory with a retention period; restore or permanently delete from the trash API, with an hourly auto-purge
+- **Trash / soft delete** — deleting a document moves it to a trash directory with a retention period; restore or permanently delete from the trash API or the web UI Trash page, with an hourly auto-purge
 - **Dashboard** — activity timeline, batch overview, storage analytics, document type/language/tag distributions
-- **Web UI** — SvelteKit SPA with dashboard, structured search, document detail, settings, user management, tag/people/document-type administration, task monitoring, log viewer, orphaned file management
+- **Web UI** — SvelteKit SPA with dashboard, structured search, document detail, settings, user management, tag/people/document-type administration, task monitoring, log viewer, orphaned file management, trash management
 - **Dual storage** — originals preserved alongside processed/OCR'd versions, date-based organization
 - **Docker Compose quick-start** — single command builds everything from source, no host-side toolchain required
 
