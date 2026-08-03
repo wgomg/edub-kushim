@@ -466,7 +466,7 @@ for i := range 2 {
 
 ## 11. Configuration knobs
 
-Under `enricher` (`internal/config/config.go:152-188`):
+Under `enricher` (`internal/config/config.go:164-195`):
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -481,10 +481,11 @@ Under `enricher` (`internal/config/config.go:152-188`):
 | `contentanalyzer.llm.adapter` | — | `anthropic` or anything → openai-compatible |
 | `contentanalyzer.llm.provider` / `model` / `token` | — | endpoint + model + auth (token omitted from YAML on read) |
 | `contentanalyzer.llm.temperature` | — | catalog-gated |
+| `contentanalyzer.llm.request_delay` | `1` (s) | seconds to sleep after each LLM request; `0` = off, max `60` |
 | `tagmatcher.reduce_target_words` | `4000` | matcher reduction target |
 | `tagmatcher.hugot.*` | — | model/backend (§9 of the semantic-matching guide) |
 
-Validation (`finalizeConfig`, `config.go:442-453`): when content analysis is
+Validation (`finalizeConfig`, `config.go:447-460`): when content analysis is
 enabled, `adapter`, `provider`, and `model` are all **required** — three
 separate errors, so setup can't silently half-configure. `Reasoning` /
 `ReasoningEffort` are programmatic-only (`yaml:"-"`), set through the API.

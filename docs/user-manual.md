@@ -1184,6 +1184,7 @@ Two-phase API:
   "enricher.contentanalyzer.llm.provider": "openai",
   "enricher.contentanalyzer.llm.model": "gpt-4o",
   "enricher.contentanalyzer.llm.token": "",
+  "enricher.contentanalyzer.llm.request_delay": 1,
   "enricher.tagmatcher.timeout": 120,
   "enricher.tagmatcher.reduce_target_words": 4000,
   "enricher.tagmatcher.chunk_size": 4096,
@@ -1972,6 +1973,7 @@ enricher:
       model: 'gpt-4o'              # auto-populated from model catalog
       # token: 'sk-...'
       # temperature: 0.0
+      # request_delay: 1  # seconds to sleep after each LLM request (0 = off)
   tagmatcher:
     timeout: 120
     reduce_target_words: 4000 # text reduction before tag matching
@@ -2020,6 +2022,7 @@ backup:
 | `enricher.contentanalyzer.llm` | Adapter/provider/model config (flat structure with capability flags)                |
 | `enricher.contentanalyzer.prompt_template` | Custom Go `text/template` for the LLM prompt; empty = built-in default |
 | `enricher.contentanalyzer.pause_on_credit_error` | Pause the batch when the LLM provider returns a credit/balance error (default `true`) |
+| `enricher.contentanalyzer.llm.request_delay` | Seconds to sleep after each LLM request (default `1`; `0` = off, max `60`) — for rate-limited providers |
 | `enricher.contentanalyzer.doc_type_refinement` | Second-pass doc type refinement with head+tail of raw text (enabled, head_words, tail_words) |
 | `enricher.tagmatcher`          | Semantic tag matching via Hugot (embeddings) — see [Tag Matcher guide](tag-matcher.md) for memory/CPU tuning |
 | `enricher.tagmatcher.hugot`    | Hugot-specific settings (model, backend)                               |
@@ -2185,6 +2188,10 @@ The default 120s accommodates two-pass refinement plus provider variability.
 If you disable refinement (`doc_type_refinement.enabled: false`), 60s is
 often sufficient.
 
+The configured `llm.request_delay` also counts against this per-pass budget
+(the sleep runs after each request inside the same deadline), so keep it well
+below the timeout.
+
 - Values below 10s will time out even a single fast LLM response under normal
   network conditions.
 
@@ -2327,6 +2334,7 @@ A single-page form for all user-configurable settings:
 - **Content analyzer (LLM)**: enabled toggle, timeout, adapter (openai-compatible/anthropic),
   provider (filtered by adapter), model (filtered by provider, loaded from model catalog),
   token, temperature, pause on credit error toggle,
+  request delay (seconds to sleep after each LLM request; 0 = off, max 60),
   reasoning toggle (shown when model supports it),
   reasoning effort (shown when reasoning enabled),
   doc type refinement (enabled, head words, tail words)

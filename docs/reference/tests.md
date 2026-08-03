@@ -14,14 +14,20 @@ run strategy:
   orphaned, errored files, users, enrichment, API keys), API handlers, and consumption
   pipeline.
 
-All tests run with `CGO_ENABLED=0` (no Tesseract, MuPDF, or Ghostscript required).
+All non-CGo tiers run with `CGO_ENABLED=0` (no Tesseract, MuPDF, or
+Ghostscript required); `make test-cgo` runs with `CGO_ENABLED=1` and needs
+`make build-deps` first. Every invocation goes through the Makefile, which
+exports the `-tags "XLA,ORT"` tags and the CGo environment — bare `go test`
+is not supported.
 
 ### Quick Start
 
 ```bash
 make test          # runs all non-CGo tests
 make test-verbose  # same with verbose output
-CGO_ENABLED=0 go test -tags "XLA,ORT" ./internal/...
+make test-db       # database-dependent tests (requires TEST_DATABASE_URL)
+make test-cgo      # CGo-gated adapter tests (requires make build-deps first)
+make test-one PKG=./internal/errs/   # single package; add RUN=Name to filter
 ```
 
 ### Continuous Integration
@@ -169,27 +175,15 @@ any environment regardless of C library availability.
 
 ### Database-dependent tests (`make test-db`)
 
-Packages requiring PostgreSQL 16+:
+Packages requiring PostgreSQL 16+ (via `TEST_DATABASE_URL`):
 
 ```bash
 make test-db
-# Equivalent:
-CGO_ENABLED=0 go test -tags "XLA,ORT" -count=1 -timeout 120s \
-    ./internal/database/ \
-    ./internal/search/ \
-    ./internal/task/ \
-    ./internal/service/ \
-    ./internal/api/handlers/ \
-    ./internal/consumption/
 ```
 
 The `internal/backup` tests also require PostgreSQL (via `database.NewTestDB`);
-they are not part of any Makefile target and can be run manually with the same
-`TEST_DATABASE_URL` environment:
-
-```bash
-CGO_ENABLED=0 go test -tags "XLA,ORT" -count=1 ./internal/backup/
-```
+they run through `make test-backup` with the same `TEST_DATABASE_URL`
+environment.
 
 ### CGo-dependent tests (`make test-cgo`)
 
@@ -215,17 +209,17 @@ make test-cgo-musl     # podman: kushim-musl-builder
 | `internal/tools/adapters/ocr` | 6 | No (pure Go, build-tag gated) |
 | `internal/tools/adapters/tagmatcher` | 2 | No (pure Go, build-tag gated) |
 
-### Manual
+### Single package
 
 ```bash
-# Single package (without DB)
-CGO_ENABLED=0 go test -tags "XLA,ORT" -v ./internal/errs/
-
-# Single package (with DB, requires TEST_DATABASE_URL)
-CGO_ENABLED=0 go test -tags "XLA,ORT" -v ./internal/database/
+# Without DB (CGO_ENABLED=0)
+make test-one PKG=./internal/errs/
 
 # Specific test
-CGO_ENABLED=0 go test -tags "XLA,ORT" -v -run "TestTaskLifecycle" ./internal/database/
+make test-one PKG=./internal/database/ RUN=TestTaskLifecycle
+
+# CGo-gated package (requires make build-deps first)
+make test-cgo
 ```
 
 ### Test Helpers

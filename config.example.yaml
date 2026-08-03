@@ -96,6 +96,7 @@ enricher:
       model: 'gpt-4o'              # auto-populated from model catalog
       # token: ''
       # temperature: 0.0
+      # request_delay: 1  # seconds to sleep after each LLM request (0 = off)
 
   tagmatcher:
     timeout: 120    # 0 = disabled (no artificial deadline)

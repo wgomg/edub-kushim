@@ -17,7 +17,9 @@ Deeper context lives in `docs/`:
 
 ## Build
 
-- **Never omit build tags.** All `go build`, `go test`, and `go fix` require `-tags "XLA,ORT"`. Non-negotiable.
+- **Never run bare `go build`/`go test`/`go fix`.** All builds and tests go through the
+  Makefile, which always sets the `-tags "XLA,ORT"` tags and the CGo environment
+  (`CGO_CPPFLAGS`, `CGO_LDFLAGS`, `PKG_CONFIG_PATH`). Non-negotiable.
 - Build C deps first: `make build-deps`
 - Build both binaries: `make build` → `dev/bin/kushim` + `dev/bin/edub`
 - When the embedded SPA is needed: `make web-build && make build` (order matters — web-build must run first)
@@ -90,14 +92,9 @@ Run tests with:
 make test          # 12 packages, no database needed, CGO_ENABLED=0
 make test-verbose  # same with -v
 make test-db       # 6 additional packages, requires PostgreSQL via TEST_DATABASE_URL
-```
-
-Manual equivalent:
-
-```bash
-CGO_ENABLED=0 TEST_DATABASE_URL="postgres://edub:edub@localhost:5432/edub?sslmode=disable" \
-  go test -tags "XLA,ORT" -count=1 ./internal/database/ ./internal/search/ ./internal/task/ \
-  ./internal/service/ ./internal/api/handlers/ ./internal/consumption/
+make test-backup   # backup package, requires PostgreSQL via TEST_DATABASE_URL
+make test-cgo      # CGo-gated adapter tests (requires make build-deps first)
+make test-one PKG=./internal/errs/   # single package; add RUN=Name to filter
 ```
 
 **Isolation**: Each test package gets its own database (`edub_test_<pkg_dir>`) via `runtime.Caller`. Databases are auto-dropped with `DROP ... WITH (FORCE)` when the last reference is released, so no manual cleanup is needed.
@@ -105,8 +102,9 @@ CGO_ENABLED=0 TEST_DATABASE_URL="postgres://edub:edub@localhost:5432/edub?sslmod
 Covered: database queries, task lifecycle, search engine, API handlers, consumption pipeline
 (with mock runner). Not covered: CLI commands, real OCR/PDF adapters.
 
-The old `go test -tags "XLA,ORT" ./...` will fail without the full C toolchain installed.
-See `docs/reference/tests.md` for full testing reference.
+There is no supported bare `go test` invocation: the Makefile exports the CGo
+environment and `-tags "XLA,ORT"` that bare invocations miss. See
+`docs/reference/tests.md` for the full testing reference.
 
 ## Web UI (SvelteKit)
 

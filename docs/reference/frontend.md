@@ -89,9 +89,9 @@ The built libraries are placed under `build/{libpng,leptonica,tesseract,mupdf,to
 
 ## Build tags
 
-```bash
-go build -tags "XLA,ORT"  # Enables Hugot ONNX/XLA support
-```
+All builds set `-tags "XLA,ORT"` (enables Hugot ONNX/XLA support) through the
+Makefile: `make build-deps` compiles the C libraries first, then `make build`.
+Bare `go build` invocations are not supported.
 
 ## CGo linking
 

@@ -1,10 +1,12 @@
 package contentanalyzer
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/llm"
@@ -648,5 +650,34 @@ func TestParseTokenLimitError(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSleepAfterRequest_Disabled(t *testing.T) {
+	for _, delay := range []float64{0, -1} {
+		start := time.Now()
+		sleepAfterRequest(context.Background(), delay)
+		if elapsed := time.Since(start); elapsed >= 100*time.Millisecond {
+			t.Errorf("sleepAfterRequest(%v) slept %v, want immediate return", delay, elapsed)
+		}
+	}
+}
+
+func TestSleepAfterRequest_Sleeps(t *testing.T) {
+	start := time.Now()
+	sleepAfterRequest(context.Background(), 0.1)
+	if elapsed := time.Since(start); elapsed < 100*time.Millisecond {
+		t.Errorf("sleepAfterRequest(0.1) returned after %v, want >= 100ms", elapsed)
+	}
+}
+
+func TestSleepAfterRequest_CancelledContextAbortsEarly(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	start := time.Now()
+	sleepAfterRequest(ctx, 1)
+	if elapsed := time.Since(start); elapsed >= 500*time.Millisecond {
+		t.Errorf("sleepAfterRequest slept %v after cancellation, want early abort", elapsed)
 	}
 }

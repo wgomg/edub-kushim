@@ -260,7 +260,10 @@ make test-cgo-glibc    # podman: kushim-glibc-builder
 make test-cgo-musl     # podman: kushim-musl-builder
 ```
 
-**Note:** `go test -tags "XLA,ORT" ./...` will fail without the full C toolchain installed. Always use `make test`, `make test-db`, or `make test-cgo` / container variants unless C deps are available.
+**Note:** bare `go test` is not supported — the Makefile targets set the `-tags "XLA,ORT"`
+ tags and the CGo environment that bare invocations miss. Always use `make test`,
+ `make test-verbose`, `make test-db`, `make test-backup`, `make test-cgo` (host,
+ requires `make build-deps` first), or the container variants.
 
 ### Web UI (hot-reload)
 

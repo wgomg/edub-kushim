@@ -357,3 +357,32 @@ func TestFinalizeConfig_DocTypeRefinementNonNegative(t *testing.T) {
 		}
 	})
 }
+
+func TestFinalizeConfig_RequestDelayBounds(t *testing.T) {
+	tests := []struct {
+		name    string
+		delay   float64
+		wantErr bool
+	}{
+		{"negative rejected", -1, true},
+		{"zero allowed (disabled)", 0, false},
+		{"default allowed", 1, false},
+		{"max allowed", 60, false},
+		{"over max rejected", 61, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			configDir := t.TempDir()
+			cfg := DefaultConfig(configDir)
+			cfg.Enricher.ContentAnalyzer.Llm.RequestDelay = tt.delay
+
+			err := finalizeConfig(cfg, configDir)
+			if tt.wantErr && err == nil {
+				t.Errorf("expected error for request_delay=%v", tt.delay)
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("unexpected error for request_delay=%v: %v", tt.delay, err)
+			}
+		})
+	}
+}

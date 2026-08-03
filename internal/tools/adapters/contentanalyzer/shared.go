@@ -2,12 +2,14 @@ package contentanalyzer
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
 	"text/template"
+	"time"
 	"unicode"
 
 	"github.com/wgomg/edub-kushim/internal/database"
@@ -29,6 +31,18 @@ const (
 const requestedTagCount = maxTags + tagRequestBuffer // 8
 
 const SystemMessage = "You are a helpful assistant specialized in document analysis and metadata extraction"
+
+// sleepAfterRequest paces requests toward rate-limited providers. Aborts early
+// when the batch context is cancelled.
+func sleepAfterRequest(ctx context.Context, delaySeconds float64) {
+	if delaySeconds <= 0 {
+		return
+	}
+	select {
+	case <-time.After(time.Duration(delaySeconds * float64(time.Second))):
+	case <-ctx.Done():
+	}
+}
 
 type ContentTooLargeError struct {
 	EstimatedTokens int

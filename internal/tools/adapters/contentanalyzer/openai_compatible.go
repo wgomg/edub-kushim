@@ -164,6 +164,7 @@ func (l *LlmOpenAiCompatible) doRequest(ctx context.Context, reqBody map[string]
 	httpReq.Header.Set("Accept", "application/json")
 
 	resp, err := l.client.Do(httpReq)
+	defer sleepAfterRequest(ctx, l.llmCfg.RequestDelay)
 	if err != nil {
 		return nil, fmt.Errorf("send request: %w", err)
 	}

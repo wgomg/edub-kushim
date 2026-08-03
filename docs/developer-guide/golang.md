@@ -93,8 +93,9 @@ Two binaries, same module:
   with `CGO_ENABLED=1` (Tesseract, Leptonica, MuPDF, Hugot linked statically).
 - **`edub`** — REST API + web UI. Built with `CGO_ENABLED=0`. Pure Go.
 
-Always build with `-tags "XLA,ORT"` (consumed by the Hugot/ORT dependency chain),
-e.g. `go build -tags "XLA,ORT" ./...`. See `AGENTS.md` for the full build story.
+Always build through the Makefile — it sets `-tags "XLA,ORT"` (consumed by
+ the Hugot/ORT dependency chain) and the CGo environment, e.g. `make build`
+ after `make build-deps`. See `AGENTS.md` for the full build story.
 
 ---
 
@@ -1907,7 +1908,8 @@ project sticks to `any`.
 - **`defer ticker.Stop()`** and the drain-before-`Reset` dance for `time.Timer`.
 - **Guard shared state with `sync` primitives or channels** — never globals.
 - **Regenerate after SQL edits**: `sqlc generate`; never hand-edit `*.sql.go`.
-- **`gofmt`/`go vet` before committing**; build with `-tags "XLA,ORT"`.
+- **`gofmt`/`go vet` before committing**; build through the Makefile
+  (`make build`), which sets `-tags "XLA,ORT"` and the CGo environment.
 
 ### Gotchas that bit people before
 

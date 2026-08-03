@@ -50,9 +50,10 @@ Files involved:
 | `internal/tools/adapters/ocr/gosseract.go`, `standalone.go`, `tagmatcher/hugot.go` | `//go:build cgo` | consumers of the wrappers |
 | `build/` | — | vendored C sources, compiled by `make build-deps` |
 
-The build rule is absolute: any `go build`/`go test` needs
-`-tags "XLA,ORT"` (from the Hugot dependency chain), and C deps must exist
-first (`make build-deps`). See `AGENTS.md`.
+The build rule is absolute: all `go build`/`go test` invocations go through
+the Makefile, which always sets `-tags "XLA,ORT"` (from the Hugot dependency
+chain) and the CGo environment; C deps must exist first (`make build-deps`).
+Bare `go` commands are not supported. See `AGENTS.md`.
 
 ---
 

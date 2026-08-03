@@ -26,6 +26,13 @@ func TestDefaultConfig_PauseOnCreditError(t *testing.T) {
 	}
 }
 
+func TestDefaultConfig_RequestDelay(t *testing.T) {
+	cfg := DefaultConfig(t.TempDir())
+	if cfg.Enricher.ContentAnalyzer.Llm.RequestDelay != 1 {
+		t.Errorf("RequestDelay = %v, want 1", cfg.Enricher.ContentAnalyzer.Llm.RequestDelay)
+	}
+}
+
 func TestDefaultConfig_ConverterDefaults(t *testing.T) {
 	cfg := DefaultConfig(t.TempDir())
 	if cfg.Consumer.Converter.Enabled {

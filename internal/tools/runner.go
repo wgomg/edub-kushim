@@ -369,6 +369,12 @@ func (r *Runner) AnalyzeContent(ctx context.Context, text string, docTypes []dat
 	if r.contentAnalyzer == nil {
 		return nil, fmt.Errorf("content analyzer not configured")
 	}
+	timeout := time.Duration(r.config.Enricher.ContentAnalyzer.Timeout) * time.Second
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
 	result, err := runWithTimeout(ctx, func() (*contentanalyzer.AnalysisResult, error) {
 		return r.contentAnalyzer.Analyze(ctx, text, docTypes, peopleTypes, tagSuggestions)
 	})
@@ -391,6 +397,12 @@ func (r *Runner) AnalyzeContent(ctx context.Context, text string, docTypes []dat
 func (r *Runner) AnalyzeDocType(ctx context.Context, prevResult *ContentAnalysisResult, headTailText string, docTypes []database.DocumentType, metadata contentanalyzer.DocMetadata) (string, error) {
 	if r.contentAnalyzer == nil {
 		return "", fmt.Errorf("content analyzer not configured")
+	}
+	timeout := time.Duration(r.config.Enricher.ContentAnalyzer.Timeout) * time.Second
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
 	}
 	prev := &contentanalyzer.AnalysisResult{
 		PassContext: prevResult.PassContext,

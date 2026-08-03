@@ -185,7 +185,12 @@ type LlmConfig struct {
 	Reasoning       bool   `yaml:"-"`
 	ReasoningEffort string `yaml:"-"`
 	Temperature     float64 `mapstructure:"temperature" yaml:"temperature" json:"temperature"`
+	RequestDelay    float64 `mapstructure:"request_delay" yaml:"request_delay" json:"request_delay"`
 }
+
+// maxRequestDelaySeconds caps llm.request_delay so a misconfiguration can't
+// stall an enricher worker well beyond the content-analyzer timeout budget.
+const maxRequestDelaySeconds = 60
 
 type HugotConfig struct {
 	Model          string `mapstructure:"model" yaml:"model" json:"model"`
@@ -391,6 +396,9 @@ func DefaultConfig(configDir string) *Config {
 			Timeout:             120,
 			PromptTemplate:      "",
 			PauseOnCreditError:  true,
+			Llm: LlmConfig{
+				RequestDelay: 1,
+			},
 			DocTypeRefinement: DocTypeRefinementConfig{
 				Enabled:   true,
 				HeadWords: 600,
@@ -490,6 +498,9 @@ func finalizeConfig(cfg *Config, configDir string) error {
 	}
 	if cfg.Enricher.ContentAnalyzer.DocTypeRefinement.TailWords < 0 {
 		return fmt.Errorf("enricher.contentanalyzer.doc_type_refinement.tail_words must be >= 0")
+	}
+	if cfg.Enricher.ContentAnalyzer.Llm.RequestDelay < 0 || cfg.Enricher.ContentAnalyzer.Llm.RequestDelay > maxRequestDelaySeconds {
+		return fmt.Errorf("enricher.contentanalyzer.llm.request_delay must be between 0 and %d", maxRequestDelaySeconds)
 	}
 
 	homeDir, err := os.UserHomeDir()

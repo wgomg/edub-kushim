@@ -149,6 +149,10 @@ func (h *ConfigHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if err := config.ValidateSave(configDir, body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	if err := config.SaveMap(configDir, body); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
