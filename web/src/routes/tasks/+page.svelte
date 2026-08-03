@@ -1,10 +1,12 @@
 <script>
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { RETRY_ICON, RESUME_ICON, CANCEL_ICON, actionButton } from '$lib/icons.js';
 	import { escapeHtml } from '$lib/utils/html.js';
 	import { api } from '$lib/api';
 	import DataTable from '$lib/components/DataTable.svelte';
+	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
 	import * as authStore from '$lib/stores/authStore.js';
 
 	let taskRefreshKey = $state(0);
@@ -243,11 +245,11 @@
 	}
 
 	function viewBatch(row) {
-		goto(`/tasks?batch=${row.batch_id}`);
+		goto(resolve(`/tasks?batch=${row.batch_id}`));
 	}
 
 	function viewTask(row) {
-		goto(`/tasks/${row.task_id}`);
+		goto(resolve(`/tasks/${row.task_id}`));
 	}
 
 	function handlePageClick(e) {
@@ -282,9 +284,18 @@
 		if (cancelBtn) {
 			e.stopPropagation();
 			const batchId = cancelBtn.getAttribute('data-cancel-batch');
-			api.batches.cancel(batchId).then(() => {
-				batchRefreshKey++;
-			});
+			confirmStore
+				.confirm({
+					title: 'Cancel batch',
+					message: `Cancel batch ${batchId}? Queued tasks will be cancelled and running tasks stopped.`,
+					danger: true
+				})
+				.then((ok) => {
+					if (!ok) return;
+					api.batches.cancel(batchId).then(() => {
+						batchRefreshKey++;
+					});
+				});
 			return;
 		}
 	}
@@ -295,7 +306,7 @@
 {#if currentBatch}
 	<div class="space-y-4">
 		<a
-			href="/tasks"
+			href={resolve(`/tasks`)}
 			class="inline-flex items-center gap-1 text-sm text-parchment-500 hover:text-parchment-200"
 		>
 			&larr; Back to batches
@@ -308,6 +319,7 @@
 			title={'Batch: ' + currentBatch}
 			keyField="task_id"
 			refreshKey={taskRefreshKey}
+			urlSync="tasks"
 		/>
 	</div>
 {:else}
@@ -318,5 +330,6 @@
 		title="Batches"
 		keyField="batch_id"
 		refreshKey={batchRefreshKey}
+		urlSync="batches"
 	/>
 {/if}

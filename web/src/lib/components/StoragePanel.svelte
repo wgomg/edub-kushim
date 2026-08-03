@@ -105,7 +105,7 @@
 		return ticks;
 	});
 
-	const fmtDate = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' });
+	const fmtDate = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
 
 	const xLabels = $derived(() => {
 		if (storageTrend.length === 0) return [];
@@ -147,25 +147,29 @@
 
 		{#if topTypes().length > 0}
 			<section>
-				<h3 class="mb-3 text-base font-semibold text-parchment-200">Original Type Breakdown</h3>
+				<h3 class="mb-3 text-base font-semibold text-balance text-parchment-200">
+					Original Type Breakdown
+				</h3>
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
 						<div class="space-y-2">
-							{#each topTypes() as item, i}
+							{#each topTypes() as item, i (i)}
 								<div class="flex items-center gap-3">
 									<div
 										class="h-4 w-4 shrink-0 rounded"
 										style="background-color: {chartColors[i % chartColors.length]}"
 									></div>
-									<div class="flex-1">
+									<div class="min-w-0 flex-1">
 										<div class="flex justify-between text-sm">
-											<span class="truncate text-parchment-200">{shortMime(item.original_type)}</span>
+											<span class="truncate text-parchment-200"
+												>{shortMime(item.original_type)}</span
+											>
 											<span class="shrink-0 text-parchment-500">{formatSize(item.total_bytes)}</span
 											>
 										</div>
 										<div class="mt-1 h-2 w-full rounded-full bg-clay-800">
 											<div
-												class="h-2 rounded-full transition-[width]"
+												class="h-2 rounded-full transition-[width] motion-reduce:transition-none"
 												style="width: {(item.total_bytes / maxTypeBytes()) *
 													100}%; background-color: {chartColors[i % chartColors.length]}"
 											></div>
@@ -178,13 +182,13 @@
 							<table class="w-full text-sm">
 								<thead>
 									<tr class="border-b border-clay-800 text-left text-parchment-500">
-										<th class="pr-4 pb-2 font-medium">Type</th>
-										<th class="pr-4 pb-2 font-medium">Count</th>
-										<th class="pb-2 font-medium">Size</th>
+										<th class="pr-4 pb-2 font-medium" scope="col">Type</th>
+										<th class="pr-4 pb-2 font-medium" scope="col">Count</th>
+										<th class="pb-2 font-medium" scope="col">Size</th>
 									</tr>
 								</thead>
 								<tbody>
-									{#each topTypes() as item, i}
+									{#each topTypes() as item, i (i)}
 										<tr class="border-b border-clay-800/50">
 											<td class="py-2 pr-4 text-parchment-200">
 												<span
@@ -193,8 +197,12 @@
 												></span>
 												<span class="ml-2">{item.original_type}</span>
 											</td>
-											<td class="py-2 pr-4 text-parchment-400">{formatNumber(item.count)}</td>
-											<td class="py-2 text-parchment-400">{formatSize(item.total_bytes)}</td>
+											<td class="py-2 pr-4 text-parchment-400 tabular-nums"
+												>{formatNumber(item.count)}</td
+											>
+											<td class="py-2 text-parchment-400 tabular-nums"
+												>{formatSize(item.total_bytes)}</td
+											>
 										</tr>
 									{/each}
 								</tbody>
@@ -207,9 +215,17 @@
 
 		{#if storageTrend.length > 0}
 			<section>
-				<h3 class="mb-3 text-base font-semibold text-parchment-200">Cumulative Storage Trend</h3>
+				<h3 class="mb-3 text-base font-semibold text-balance text-parchment-200">
+					Cumulative Storage Trend
+				</h3>
 				<div bind:this={chartEl} class="rounded-lg border border-clay-800 bg-clay-900 p-4">
-					<svg width="100%" viewBox="0 0 {svgWidth} {svgHeight}" class="overflow-visible">
+					<svg
+						width="100%"
+						viewBox="0 0 {svgWidth} {svgHeight}"
+						class="overflow-visible"
+						role="img"
+						aria-label="Cumulative storage trend"
+					>
 						<defs>
 							<linearGradient id="areaGrad" x1="0" x2="0" y1="0" y2="1">
 								<stop offset="0%" stop-color="#c9953a" stop-opacity="0.3" />
@@ -217,7 +233,7 @@
 							</linearGradient>
 						</defs>
 
-						{#each yTicks() as tick}
+						{#each yTicks() as tick (tick)}
 							<line
 								x1={padding.left}
 								y1={padding.top + chartH - (tick / trendMax()) * chartH}
@@ -241,7 +257,7 @@
 
 						<path d={trendLine(storageTrend)} fill="none" stroke="#c9953a" stroke-width="2" />
 
-						{#each xLabels() as label}
+						{#each xLabels() as label (label.x + label.date)}
 							{#if label.show}
 								<text
 									x={label.x}

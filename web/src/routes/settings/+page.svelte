@@ -18,7 +18,14 @@
 	let pollInterval;
 	let showToken = $state(false);
 
-	let activeTab = $state('Configuration');
+	let activeTab = $state(new URL(window.location.href).searchParams.get('tab') || 'Configuration');
+
+	function switchTab(tab) {
+		activeTab = tab;
+		const url = new URL(window.location.href);
+		url.searchParams.set('tab', tab);
+		history.replaceState(null, '', url.pathname + url.search);
+	}
 
 	let showUserModal = $state(false);
 	let editingUser = $state(null);
@@ -26,6 +33,7 @@
 	let formPassword = $state('');
 	let formRole = $state('viewer');
 	let userError = $state('');
+	let savingUser = $state(false);
 	let refreshKey = $state(0);
 
 	let llmModels = $state({ adapters: {}, providers: {} });
@@ -327,6 +335,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 		}
 		const password = formPassword.trim();
 
+		savingUser = true;
 		let result;
 		if (editingUser) {
 			const body = { username, role: formRole };
@@ -334,11 +343,13 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			result = await api.users.update(editingUser.id, body);
 		} else {
 			if (!password) {
+				savingUser = false;
 				userError = 'Password is required';
 				return;
 			}
 			result = await api.users.create({ username, password, role: formRole });
 		}
+		savingUser = false;
 
 		if (result.ok) {
 			showUserModal = false;
@@ -369,7 +380,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 {:else}
 	<div class="mx-auto max-w-3xl space-y-6">
 		<div class="flex items-center justify-between">
-			<h1 class="text-2xl font-bold text-parchment-200">Settings</h1>
+			<h1 class="text-2xl font-bold text-balance text-parchment-200">Settings</h1>
 			{#if pendingTasks > 0}
 				<div class="flex items-center gap-2 text-sm text-gold-500">
 					<div
@@ -380,10 +391,12 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			{/if}
 		</div>
 
-		<div class="flex gap-1 border-b border-clay-800">
+		<div class="flex gap-1 border-b border-clay-800" role="tablist">
 			<button
 				type="button"
-				onclick={() => (activeTab = 'Configuration')}
+				role="tab"
+				aria-selected={activeTab === 'Configuration'}
+				onclick={() => switchTab('Configuration')}
 				class="rounded-t-lg px-4 py-2 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none {activeTab ===
 				'Configuration'
 					? 'border-b-2 border-gold-500 text-gold-500'
@@ -393,7 +406,9 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			</button>
 			<button
 				type="button"
-				onclick={() => (activeTab = 'Users')}
+				role="tab"
+				aria-selected={activeTab === 'Users'}
+				onclick={() => switchTab('Users')}
 				class="rounded-t-lg px-4 py-2 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none {activeTab ===
 				'Users'
 					? 'border-b-2 border-gold-500 text-gold-500'
@@ -412,7 +427,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 					<p class="mt-1 text-parchment-400">
 						Model and language file downloads will fail without curl.
 					</p>
-					{#each Object.entries(hintsForEngine('curl')) as [system, cmd]}
+					{#each Object.entries(hintsForEngine('curl')) as [system, cmd], i (i)}
 						<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
 					{/each}
 				</div>
@@ -427,6 +442,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						>
 						<input
 							id="server-host"
+							name="server-host"
+							autocomplete="off"
 							type="text"
 							bind:value={cfg.server.host}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -438,6 +455,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						>
 						<input
 							id="server-port"
+							name="server-port"
+							autocomplete="off"
 							type="number"
 							inputmode="numeric"
 							min="1"
@@ -452,6 +471,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						>
 						<input
 							id="server-max-upload"
+							name="server-max-upload"
+							autocomplete="off"
 							type="number"
 							inputmode="numeric"
 							min="1"
@@ -466,6 +487,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						>
 						<input
 							id="server-max-download-files"
+							name="server-max-download-files"
+							autocomplete="off"
 							type="number"
 							inputmode="numeric"
 							min="1"
@@ -481,6 +504,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						>
 						<input
 							id="server-max-download-size"
+							name="server-max-download-size"
+							autocomplete="off"
 							type="number"
 							inputmode="numeric"
 							min="0"
@@ -496,6 +521,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						>
 						<input
 							id="max-concurrent-batches"
+							name="max-concurrent-batches"
+							autocomplete="off"
 							type="number"
 							inputmode="numeric"
 							min="1"
@@ -510,6 +537,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						>
 						<input
 							id="server-max-batch-delete"
+							name="server-max-batch-delete"
+							autocomplete="off"
 							type="number"
 							inputmode="numeric"
 							min="1"
@@ -525,6 +554,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 					<div class="flex items-center gap-2">
 						<input
 							id="server-auth-enabled"
+							name="server-auth-enabled"
+							autocomplete="off"
 							type="checkbox"
 							bind:checked={cfg.server.auth_enabled}
 							class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
@@ -545,6 +576,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						</label>
 						<input
 							id="consumption-dir"
+							name="consumption-dir"
+							autocomplete="off"
 							type="text"
 							bind:value={cfg.storage.consumption_dir}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -556,6 +589,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						</label>
 						<input
 							id="storage-dir"
+							name="storage-dir"
+							autocomplete="off"
 							type="text"
 							bind:value={cfg.storage.storage_dir}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -576,6 +611,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						</label>
 						<input
 							id="trash-retention-days"
+							name="trash-retention-days"
+							autocomplete="off"
 							type="number"
 							inputmode="numeric"
 							min="1"
@@ -598,6 +635,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						</label>
 						<input
 							id="db-host"
+							name="db-host"
+							autocomplete="off"
 							type="text"
 							bind:value={cfg.database.host}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -609,6 +648,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						</label>
 						<input
 							id="db-port"
+							name="db-port"
+							autocomplete="off"
 							type="number"
 							inputmode="numeric"
 							min="1"
@@ -623,6 +664,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						</label>
 						<input
 							id="db-user"
+							name="db-user"
+							autocomplete="off"
 							type="text"
 							bind:value={cfg.database.user}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -634,6 +677,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						</label>
 						<input
 							id="db-name"
+							name="db-name"
+							autocomplete="off"
 							type="text"
 							bind:value={cfg.database.database}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -682,6 +727,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						>
 						<input
 							id="ocr-timeout"
+							name="ocr-timeout"
+							autocomplete="off"
 							type="number"
 							inputmode="numeric"
 							min="0"
@@ -695,6 +742,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						>
 						<input
 							id="ocr-workers"
+							name="ocr-workers"
+							autocomplete="off"
 							type="number"
 							inputmode="numeric"
 							min="0"
@@ -713,7 +762,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<p class="mt-1 text-parchment-400">
 							Documents won't process until it is available. Install it, e.g.:
 						</p>
-						{#each Object.entries(hintsForEngine(cfg.consumer.ocr.engine)) as [system, cmd]}
+						{#each Object.entries(hintsForEngine(cfg.consumer.ocr.engine)) as [system, cmd], i (i)}
 							<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
 						{/each}
 					</div>
@@ -728,21 +777,21 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							<p class="mt-1 text-parchment-300">
 								Install the packs for your configured languages ({ocrTool.languages.join(', ')}):
 							</p>
-							{#each Object.entries(ocrTool.lang_hints[0].install_hints) as [system, cmd]}
+							{#each Object.entries(ocrTool.lang_hints[0].install_hints) as [system, cmd], i (i)}
 								<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
 							{/each}
 						</div>
 					{/if}
 					{#if ocrTool?.companions?.length}
 						<div class="mt-4 space-y-2 text-sm">
-							{#each ocrTool.companions as c}
+							{#each ocrTool.companions as c (c.command)}
 								{#if !c.available && c.required}
 									<div
 										class="rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-terracotta-500"
 									>
 										<p class="font-medium">"{c.command}" not installed (required)</p>
 										<p class="mt-1 text-parchment-400">{c.purpose}</p>
-										{#each Object.entries(c.install_hints) as [system, cmd]}
+										{#each Object.entries(c.install_hints) as [system, cmd], i (i)}
 											<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
 										{/each}
 									</div>
@@ -754,7 +803,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 											"{c.command}" not installed (optional)
 										</p>
 										<p class="mt-1">{c.purpose}. ocrmypdf will skip this feature without it.</p>
-										{#each Object.entries(c.install_hints) as [system, cmd]}
+										{#each Object.entries(c.install_hints) as [system, cmd], i (i)}
 											<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
 										{/each}
 									</div>
@@ -771,6 +820,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						>
 						<input
 							id="ocr-data-dir"
+							name="ocr-data-dir"
+							autocomplete="off"
 							type="text"
 							bind:value={cfg.consumer.ocr.data_dir}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -785,6 +836,9 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<div class="mb-2 flex gap-2">
 							<input
 								id="ocr-lang-{i}"
+								name="ocr-lang-{i}"
+								autocomplete="off"
+								spellcheck="false"
 								type="text"
 								value={lang}
 								oninput={(e) => updateLanguage(i, e.currentTarget.value)}
@@ -821,6 +875,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						>
 						<input
 							id="consumer-workers"
+							name="consumer-workers"
+							autocomplete="off"
 							type="number"
 							inputmode="numeric"
 							min="1"
@@ -835,6 +891,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						>
 						<input
 							id="consumer-max-files-per-batch"
+							name="consumer-max-files-per-batch"
+							autocomplete="off"
 							type="number"
 							inputmode="numeric"
 							min="0"
@@ -870,6 +928,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<div class="flex items-center gap-2">
 							<input
 								id="converter-enabled"
+								name="converter-enabled"
+								autocomplete="off"
 								type="checkbox"
 								bind:checked={cfg.consumer.converter.enabled}
 								class="rounded border-clay-800 bg-clay-950 accent-gold-500"
@@ -920,6 +980,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<div class="flex items-center gap-2">
 							<input
 								id="polling-enabled"
+								name="polling-enabled"
+								autocomplete="off"
 								type="checkbox"
 								bind:checked={cfg.consumer.polling.enabled}
 								class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
@@ -935,6 +997,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						>
 						<input
 							id="polling-interval"
+							name="polling-interval"
+							autocomplete="off"
 							type="number"
 							inputmode="numeric"
 							min="1"
@@ -1000,6 +1064,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<div class="flex items-center gap-2">
 							<input
 								id="reclaim-enabled"
+								name="reclaim-enabled"
+								autocomplete="off"
 								type="checkbox"
 								bind:checked={cfg.consumer.reclaim.enabled}
 								class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
@@ -1016,6 +1082,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						>
 						<input
 							id="reclaim-max-retries"
+							name="reclaim-max-retries"
+							autocomplete="off"
 							type="number"
 							inputmode="numeric"
 							min="1"
@@ -1031,6 +1099,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						>
 						<input
 							id="reclaim-stale-task-after"
+							name="reclaim-stale-task-after"
+							autocomplete="off"
 							type="number"
 							inputmode="numeric"
 							min="60"
@@ -1066,6 +1136,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						>
 						<input
 							id="text-extractor-timeout"
+							name="text-extractor-timeout"
+							autocomplete="off"
 							type="number"
 							inputmode="numeric"
 							min="0"
@@ -1082,7 +1154,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<p class="mt-1 text-parchment-400">
 							Documents won't process until it is available. Install it, e.g.:
 						</p>
-						{#each Object.entries(hintsForEngine(cfg.consumer.textextractor.engine)) as [system, cmd]}
+						{#each Object.entries(hintsForEngine(cfg.consumer.textextractor.engine)) as [system, cmd], i (i)}
 							<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
 						{/each}
 					</div>
@@ -1112,6 +1184,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						>
 						<input
 							id="pdf-fallback"
+							name="pdf-fallback"
+							autocomplete="off"
 							type="text"
 							bind:value={cfg.consumer.pdfoptimizer.fallback}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -1126,7 +1200,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<p class="mt-1 text-parchment-400">
 							Documents won't process until it is available. Install it, e.g.:
 						</p>
-						{#each Object.entries(hintsForEngine(cfg.consumer.pdfoptimizer.engine)) as [system, cmd]}
+						{#each Object.entries(hintsForEngine(cfg.consumer.pdfoptimizer.engine)) as [system, cmd], i (i)}
 							<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
 						{/each}
 					</div>
@@ -1138,6 +1212,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						>
 						<input
 							id="pdf-timeout"
+							name="pdf-timeout"
+							autocomplete="off"
 							type="number"
 							inputmode="numeric"
 							min="0"
@@ -1157,6 +1233,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						>
 						<input
 							id="enricher-workers"
+							name="enricher-workers"
+							autocomplete="off"
 							type="number"
 							inputmode="numeric"
 							min="1"
@@ -1177,7 +1255,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							class="peer sr-only"
 						/>
 						<div
-							class="h-6 w-11 rounded-full border border-clay-700 bg-clay-800 peer-checked:border-gold-500 peer-checked:bg-gold-600 after:absolute after:top-0.5 after:left-0.5 after:h-5 after:w-5 after:rounded-full after:bg-parchment-400 after:transition-transform peer-checked:after:translate-x-full peer-checked:after:bg-white"
+							class="h-6 w-11 rounded-full border border-clay-700 bg-clay-800 peer-checked:border-gold-500 peer-checked:bg-gold-600 peer-focus-visible:ring-2 peer-focus-visible:ring-gold-500 peer-focus-visible:ring-offset-2 after:absolute after:top-0.5 after:left-0.5 after:h-5 after:w-5 after:rounded-full after:bg-parchment-400 after:transition-transform peer-checked:after:translate-x-full peer-checked:after:bg-white"
 						></div>
 						<span class="ml-2 text-sm text-parchment-300">Enabled</span>
 					</label>
@@ -1263,6 +1341,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							</label>
 							<input
 								id="llm-temperature"
+								name="llm-temperature"
+								autocomplete="off"
 								type="number"
 								inputmode="numeric"
 								min="0"
@@ -1281,6 +1361,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							</label>
 							<input
 								id="content-analyzer-timeout"
+								name="content-analyzer-timeout"
+								autocomplete="off"
 								type="number"
 								inputmode="numeric"
 								min="1"
@@ -1298,6 +1380,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							<div class="mt-2 flex items-center gap-2">
 								<input
 									id="content-analyzer-pause-credit"
+									name="content-analyzer-pause-credit"
+									autocomplete="off"
 									type="checkbox"
 									bind:checked={cfg.enricher.contentanalyzer.pause_on_credit_error}
 									class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
@@ -1340,6 +1424,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 								<div class="mt-2 flex items-center gap-2">
 									<input
 										id="doc-type-refinement-enabled"
+										name="doc-type-refinement-enabled"
+										autocomplete="off"
 										type="checkbox"
 										bind:checked={cfg.enricher.contentanalyzer.doc_type_refinement.enabled}
 										class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
@@ -1358,6 +1444,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 								>
 								<input
 									id="doc-type-refinement-head-words"
+									name="doc-type-refinement-head-words"
+									autocomplete="off"
 									type="number"
 									inputmode="numeric"
 									min="0"
@@ -1372,6 +1460,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 								>
 								<input
 									id="doc-type-refinement-tail-words"
+									name="doc-type-refinement-tail-words"
+									autocomplete="off"
 									type="number"
 									inputmode="numeric"
 									min="0"
@@ -1394,6 +1484,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						>
 						<input
 							id="tag-matcher-timeout"
+							name="tag-matcher-timeout"
+							autocomplete="off"
 							type="number"
 							inputmode="numeric"
 							min="0"
@@ -1408,6 +1500,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						>
 						<input
 							id="tag-matcher-reduce-target"
+							name="tag-matcher-reduce-target"
+							autocomplete="off"
 							type="number"
 							inputmode="numeric"
 							min="0"
@@ -1422,6 +1516,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						>
 						<input
 							id="tag-matcher-chunk-size"
+							name="tag-matcher-chunk-size"
+							autocomplete="off"
 							type="number"
 							inputmode="numeric"
 							min="0"
@@ -1436,6 +1532,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						>
 						<input
 							id="tag-matcher-hugot-model"
+							name="tag-matcher-hugot-model"
+							autocomplete="off"
 							type="text"
 							bind:value={cfg.enricher.tagmatcher.hugot.model}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -1483,6 +1581,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						>
 						<input
 							id="text-reducer-timeout"
+							name="text-reducer-timeout"
+							autocomplete="off"
 							type="number"
 							inputmode="numeric"
 							min="0"
@@ -1497,6 +1597,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						>
 						<input
 							id="text-reducer-target-words"
+							name="text-reducer-target-words"
+							autocomplete="off"
 							type="number"
 							inputmode="numeric"
 							min="1"
@@ -1516,6 +1618,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						</label>
 						<input
 							id="backup-enabled"
+							name="backup-enabled"
+							autocomplete="off"
 							type="checkbox"
 							bind:checked={cfg.backup.enabled}
 							class="mt-2 h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
@@ -1527,6 +1631,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						</label>
 						<input
 							id="backup-interval"
+							name="backup-interval"
+							autocomplete="off"
 							type="number"
 							inputmode="numeric"
 							min="1"
@@ -1541,6 +1647,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						</label>
 						<input
 							id="backup-time"
+							name="backup-time"
+							autocomplete="off"
 							type="text"
 							bind:value={cfg.backup.time}
 							pattern="([01][0-9]|2[0-3]):[0-5][0-9]"
@@ -1554,6 +1662,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						</label>
 						<input
 							id="backup-keep"
+							name="backup-keep"
+							autocomplete="off"
 							type="number"
 							inputmode="numeric"
 							min="0"
@@ -1567,6 +1677,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						</label>
 						<input
 							id="backup-path"
+							name="backup-path"
+							autocomplete="off"
 							type="text"
 							bind:value={cfg.backup.path}
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -1601,6 +1713,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						>
 						<input
 							id="log-max-size"
+							name="log-max-size"
+							autocomplete="off"
 							type="number"
 							inputmode="numeric"
 							min="0"
@@ -1614,6 +1728,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						>
 						<input
 							id="log-max-backups"
+							name="log-max-backups"
+							autocomplete="off"
 							type="number"
 							inputmode="numeric"
 							min="0"
@@ -1627,6 +1743,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						>
 						<input
 							id="log-max-age"
+							name="log-max-age"
+							autocomplete="off"
 							type="number"
 							inputmode="numeric"
 							min="0"
@@ -1641,6 +1759,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<div class="mt-2 flex items-center gap-2">
 							<input
 								id="log-compress"
+								name="log-compress"
+								autocomplete="off"
 								type="checkbox"
 								bind:checked={cfg.app.logging.compress}
 								class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
@@ -1664,7 +1784,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 		{/if}
 
 		{#if activeTab === 'Users'}
-			<div class="space-y-4" onclick={handleUserPageClick}>
+			<div class="space-y-4">
 				<div class="flex items-center justify-between">
 					<h2 class="text-lg font-semibold text-parchment-200">Users</h2>
 					<button
@@ -1682,6 +1802,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 					defaultPageSize={25}
 					pageSizes={[10, 25, 50, 100]}
 					{refreshKey}
+					onActionClick={handleUserPageClick}
+					urlSync="users"
 				/>
 			</div>
 
@@ -1703,6 +1825,9 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							>
 							<input
 								id="user-username"
+								name="user-username"
+								autocomplete="off"
+								spellcheck="false"
 								type="text"
 								bind:value={formUsername}
 								placeholder="Username"
@@ -1729,6 +1854,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							>
 							<input
 								id="user-password"
+								name="user-password"
+								autocomplete="new-password"
 								type="password"
 								bind:value={formPassword}
 								placeholder={editingUser ? 'Leave blank to keep current' : 'Password'}
@@ -1736,7 +1863,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							/>
 						</div>
 						{#if userError}
-							<p class="text-sm text-terracotta-500">{userError}</p>
+							<p class="text-sm text-terracotta-500" aria-live="polite">{userError}</p>
 						{/if}
 						<div class="flex justify-end gap-2">
 							<button
@@ -1748,10 +1875,10 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							</button>
 							<button
 								type="submit"
-								disabled={!formUsername.trim()}
+								disabled={savingUser}
 								class="rounded-md bg-gold-500 px-3 py-1.5 text-xs font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-50"
 							>
-								{editingUser ? 'Save' : 'Create'}
+								{savingUser ? 'Saving…' : editingUser ? 'Save' : 'Create'}
 							</button>
 						</div>
 					</div>

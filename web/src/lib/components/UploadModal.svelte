@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import Modal from './Modal.svelte';
 	import { api } from '$lib/api.js';
-	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 
 	let { open, onClose } = $props();
 
@@ -81,7 +81,7 @@
 				>
 					<p class="font-medium">Rejected files:</p>
 					<ul class="mt-1 list-inside list-disc">
-						{#each result.rejected as r}
+						{#each result.rejected as r (r.name)}
 							<li>{r.name} — {r.reason}</li>
 						{/each}
 					</ul>
@@ -89,7 +89,7 @@
 			{/if}
 			<div class="flex gap-2">
 				<a
-					href="/tasks?batch={result.batch_id}"
+					href={resolve(`/tasks?batch=${result.batch_id}`)}
 					class="inline-block rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600"
 					>View tasks</a
 				>
@@ -109,7 +109,7 @@
 			</div>
 			{#if error.includes('missing tool')}
 				<a
-					href="/settings"
+					href={resolve(`/settings`)}
 					class="inline-block rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600"
 					>Review settings</a
 				>
@@ -146,7 +146,7 @@
 							<button
 								onclick={() => removeFile(i)}
 								class="ml-2 shrink-0 text-parchment-500 hover:text-parchment-200"
-								aria-label="Remove file">&times;</button
+								aria-label={`Remove file ${file.name}`}>&times;</button
 							>
 						</li>
 					{/each}

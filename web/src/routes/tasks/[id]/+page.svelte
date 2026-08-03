@@ -1,5 +1,6 @@
 <script>
 	import { onMount } from 'svelte';
+	import { resolve } from '$app/paths';
 	import { api } from '$lib/api';
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
 
@@ -47,7 +48,7 @@
 
 <div class="space-y-6">
 	<a
-		href={task ? `/tasks?batch=${task.batch_id}` : '/tasks'}
+		href={resolve(task ? `/tasks?batch=${task.batch_id}` : '/tasks')}
 		class="inline-flex items-center gap-1 text-sm text-parchment-500 hover:text-parchment-200"
 	>
 		&larr; Back to batch
@@ -59,7 +60,7 @@
 		<div class="rounded-lg border border-clay-800 bg-clay-900 p-6 text-center">
 			<p class="text-parchment-500">Task not found</p>
 			<a
-				href="/tasks"
+				href={resolve(`/tasks`)}
 				class="mt-2 inline-flex items-center gap-1 text-sm text-parchment-500 hover:text-parchment-200"
 			>
 				&larr; Back to batches
@@ -67,7 +68,7 @@
 		</div>
 	{:else}
 		<div class="flex items-center gap-3">
-			<h1 class="text-2xl font-semibold text-parchment-200">
+			<h1 class="text-2xl font-semibold text-balance text-parchment-200">
 				Task <span class="font-mono text-sm text-parchment-400">{task.task_id}</span>
 			</h1>
 			<span
@@ -89,7 +90,7 @@
 				<p class="text-xs font-medium tracking-wider text-parchment-500 uppercase">Batch ID</p>
 				<p class="mt-1">
 					<a
-						href="/tasks?batch={task.batch_id}"
+						href={resolve(`/tasks?batch=${task.batch_id}`)}
 						class="font-mono text-sm text-lapis-400 hover:text-lapis-300"
 					>
 						{task.batch_id}
@@ -99,7 +100,7 @@
 
 			<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 				<p class="text-xs font-medium tracking-wider text-parchment-500 uppercase">File Name</p>
-				<p class="mt-1 text-parchment-200">{task.file_name ?? '—'}</p>
+				<p class="mt-1 break-words text-parchment-200">{task.file_name ?? '—'}</p>
 			</div>
 
 			{#if task.document_id}
@@ -107,7 +108,7 @@
 					<p class="text-xs font-medium tracking-wider text-parchment-500 uppercase">Document ID</p>
 					<p class="mt-1">
 						<a
-							href="/documents/{task.document_id}"
+							href={resolve(`/documents/${task.document_id}`)}
 							class="font-mono text-sm text-lapis-400 hover:text-lapis-300"
 						>
 							{task.document_id}
@@ -146,7 +147,7 @@
 			<button
 				onclick={handleRetry}
 				disabled={retrying}
-				class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600 disabled:opacity-50"
+				class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-950 focus-visible:outline-none disabled:opacity-50"
 			>
 				{retrying ? 'Retrying…' : 'Retry Task'}
 			</button>

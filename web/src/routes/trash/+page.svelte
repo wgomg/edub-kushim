@@ -204,7 +204,7 @@ ${actionButton(DELETE_ICON, 'Delete permanently', 'text-parchment-400 hover:text
 {#if authStore.authEnabled() && !authStore.isEditor()}
 	<p class="text-parchment-500">You do not have permission to view this page.</p>
 {:else}
-	<div class="space-y-4" onclick={handlePageClick} onkeydown={() => {}} role="presentation">
+	<div class="space-y-4">
 		<div class="flex items-center gap-3">
 			{#if selectedRows.length > 0}
 				<button
@@ -240,6 +240,8 @@ ${actionButton(DELETE_ICON, 'Delete permanently', 'text-parchment-400 hover:text
 			onselectionchange={(rows) => (selectedRows = rows)}
 			defaultSortBy="deleted_at"
 			defaultSortOrder="desc"
+			onActionClick={handlePageClick}
+			urlSync="trash"
 		/>
 	</div>
 {/if}

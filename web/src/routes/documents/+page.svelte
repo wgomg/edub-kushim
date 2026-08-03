@@ -1,13 +1,15 @@
 <script>
-	import { goto } from '$app/navigation';
+	import { goto, replaceState } from '$app/navigation';
+	import { page } from '$app/state';
+	import { resolve } from '$app/paths';
 	import { api } from '$lib/api';
 	import DataTable from '$lib/components/DataTable.svelte';
 	import SearchBar from '$lib/components/SearchBar.svelte';
 	import FilterPanel from '$lib/components/FilterPanel.svelte';
 	import { filterStore } from '$lib/stores/filterStore.js';
-	import { setPersonTypes } from '$lib/stores/searchFilter.js';
+	import { setPersonTypes, serializeFilter } from '$lib/stores/searchFilter.js';
 	import { onMount } from 'svelte';
-	import { escapeHtml } from '$lib/utils/html.js';
+	import { escapeHtml, formatSize } from '$lib/utils/html.js';
 	import { DOWNLOAD_ICON } from '$lib/icons.js';
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
@@ -87,7 +89,7 @@
 				key: 'file_size',
 				label: 'Size',
 				sortable: true,
-				cell: (v) => `${(v / 1024).toFixed(0)} KB`,
+				cell: (v) => formatSize(v),
 				minWidth: '100px'
 			},
 			{
@@ -103,7 +105,7 @@
 				sortable: false,
 				width: '50px',
 				cell: (_, row) =>
-					`<a href="/api/v1/documents/${row.id}/file?download=true" class="inline-flex items-center justify-center rounded-md p-1.5 text-parchment-500 hover:text-gold-500 hover:bg-clay-800 transition-colors" title="Download PDF">${DOWNLOAD_ICON}</a>`
+					`<a href="/api/v1/documents/${row.id}/file?download=true" class="inline-flex items-center justify-center rounded-md p-1.5 text-parchment-500 hover:text-gold-500 hover:bg-clay-800 transition-colors" title="Download PDF" aria-label="Download PDF">${DOWNLOAD_ICON}</a>`
 			}
 		);
 
@@ -146,7 +148,16 @@
 			missingType: f.missingType,
 			untagged: f.untagged
 		};
-		if (subscribed) refreshKey++;
+		if (subscribed) {
+			refreshKey++;
+			const q = serializeFilter(f);
+			// transient helper for replaceState; SvelteURLSearchParams not needed here
+			// eslint-disable-next-line svelte/prefer-svelte-reactivity
+			const sp = new URLSearchParams(page.url.searchParams);
+			if (q) sp.set('q', q);
+			else sp.delete('q');
+			replaceState(resolve(`${page.url.pathname}?${sp.toString()}`));
+		}
 		subscribed = true;
 	});
 
@@ -271,6 +282,11 @@
 	onMount(() => {
 		api.autocomplete.peopleTypes().then(setPersonTypes);
 		refreshSavedSearches();
+		const q = page.url.searchParams.get('q');
+		if (q) {
+			filterStore.fromQueryString(q);
+			refreshKey++;
+		}
 	});
 
 	function fetch({ sortBy, sortOrder, limit, offset }) {
@@ -285,7 +301,7 @@
 	}
 
 	function view(row) {
-		goto(`/documents/${row.id}`);
+		goto(resolve(`/documents/${row.id}`));
 	}
 </script>
 
@@ -294,14 +310,14 @@
 		{#if selectedDocs.length > 0}
 			<button
 				onclick={() => api.documents.downloadBatch(selectedDocs.map((r) => r.id))}
-				class="shrink-0 rounded-lg bg-gold-600 px-3 py-2 text-sm font-medium text-clay-950 hover:bg-gold-500"
+				class="shrink-0 rounded-lg bg-gold-600 px-3 py-2 text-sm font-medium text-clay-950 hover:bg-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 			>
 				Download selected ({selectedDocs.length})
 			</button>
 			{#if !authStore.authEnabled() || authStore.isEditor()}
 				<button
 					onclick={handleBatchDelete}
-					class="shrink-0 rounded-lg bg-terracotta-700 px-3 py-2 text-sm font-medium text-parchment-200 hover:bg-terracotta-600"
+					class="shrink-0 rounded-lg bg-terracotta-700 px-3 py-2 text-sm font-medium text-parchment-200 hover:bg-terracotta-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 				>
 					Delete selected ({selectedDocs.length})
 				</button>
@@ -310,7 +326,7 @@
 				<div class="relative shrink-0">
 					<button
 						onclick={() => (showTagPicker = !showTagPicker)}
-						class="rounded-lg border border-clay-800 px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
+						class="rounded-lg border border-clay-800 px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 					>
 						{batchTagIds.length > 0 ? `Tags (${batchTagIds.length})` : 'Assign tags'}
 					</button>
@@ -352,7 +368,7 @@
 								</div>
 								{#if batchTagIds.length > 0}
 									<div class="mb-2 flex flex-wrap gap-1">
-										{#each batchTagIds as tid}
+										{#each batchTagIds as tid (tid)}
 											{@const tag = tagOptions.find((t) => t.id === tid)}
 											{#if tag}
 												<span
@@ -372,7 +388,8 @@
 								<div class="mb-3 flex gap-2">
 									<button
 										onclick={() => (batchTagMode = 'add')}
-										class={`flex-1 rounded-md px-2 py-1 text-xs font-medium ${
+										aria-pressed={batchTagMode === 'add'}
+										class={`flex-1 rounded-md px-2 py-1 text-xs font-medium focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none ${
 											batchTagMode === 'add'
 												? 'bg-gold-600 text-clay-950'
 												: 'border border-clay-800 text-parchment-400 hover:bg-clay-800'
@@ -382,7 +399,8 @@
 									</button>
 									<button
 										onclick={() => (batchTagMode = 'replace')}
-										class={`flex-1 rounded-md px-2 py-1 text-xs font-medium ${
+										aria-pressed={batchTagMode === 'replace'}
+										class={`flex-1 rounded-md px-2 py-1 text-xs font-medium focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none ${
 											batchTagMode === 'replace'
 												? 'bg-gold-600 text-clay-950'
 												: 'border border-clay-800 text-parchment-400 hover:bg-clay-800'
@@ -419,7 +437,7 @@
 		</div>
 		<button
 			onclick={() => (showFilters = !showFilters)}
-			class="rounded-lg border border-clay-800 px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
+			class="rounded-lg border border-clay-800 px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 		>
 			{showFilters ? 'Hide Filters' : 'Filters'}
 		</button>
@@ -427,7 +445,7 @@
 			<button
 				onclick={openSaveInput}
 				disabled={saving}
-				class="rounded-lg border border-clay-800 px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 disabled:opacity-50"
+				class="rounded-lg border border-clay-800 px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-50"
 			>
 				{saving ? 'Saving…' : 'Save'}
 			</button>
@@ -435,7 +453,7 @@
 		<div class="relative">
 			<button
 				onclick={() => (showSaved = !showSaved)}
-				class="rounded-lg border border-clay-800 px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
+				class="rounded-lg border border-clay-800 px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 			>
 				Saved
 			</button>
@@ -458,7 +476,7 @@
 									{#if !authStore.authEnabled() || authStore.isEditor()}
 										<button
 											onclick={() => handleDelete(s.id)}
-											class="shrink-0 rounded p-0.5 text-parchment-500 opacity-0 group-hover:opacity-100 hover:text-red-400"
+											class="shrink-0 rounded p-0.5 text-parchment-500 opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 hover:text-red-400 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 											title="Delete"
 											aria-label="Delete saved search">&times;</button
 										>
@@ -477,7 +495,9 @@
 			<div
 				class="absolute top-0 right-0 w-80 rounded-lg border border-clay-800 bg-clay-950 p-4 shadow-xl"
 			>
-				<p class="mb-2 text-xs font-medium text-parchment-400">Name this search</p>
+				<label for="save-search-name" class="mb-2 block text-xs font-medium text-parchment-400"
+					>Name this search</label
+				>
 				<form
 					onsubmit={(e) => {
 						e.preventDefault();
@@ -487,22 +507,24 @@
 					<input
 						type="text"
 						id="save-search-name"
+						name="save-search-name"
+						autocomplete="off"
+						spellcheck="false"
 						bind:value={saveName}
-						placeholder="e.g. Invoices from Q1"
+						placeholder="e.g. Invoices from Q1…"
 						class="mb-2 w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
 					/>
 					<div class="flex justify-end gap-2">
 						<button
 							type="button"
 							onclick={() => (showNameInput = false)}
-							class="rounded-md px-3 py-1 text-xs font-medium text-parchment-400 hover:bg-clay-800"
+							class="rounded-md px-3 py-1 text-xs font-medium text-parchment-400 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 						>
 							Cancel
 						</button>
 						<button
 							type="submit"
-							disabled={!saveName.trim()}
-							class="rounded-md bg-gold-600 px-3 py-1 text-xs font-medium text-clay-950 hover:bg-gold-500 disabled:opacity-50"
+							class="rounded-md bg-gold-600 px-3 py-1 text-xs font-medium text-clay-950 hover:bg-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-50"
 						>
 							Save
 						</button>
@@ -526,5 +548,6 @@
 		onselectionchange={(rows) => (selectedDocs = rows)}
 		defaultSortBy="created_at"
 		defaultSortOrder="desc"
+		urlSync="dt"
 	/>
 </div>

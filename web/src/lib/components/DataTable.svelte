@@ -1,5 +1,8 @@
 <script>
 	import { onMount, untrack } from 'svelte';
+	import { page } from '$app/state';
+	import { replaceState } from '$app/navigation';
+	import { resolve } from '$app/paths';
 
 	/**
 	 * @typedef {Object} Column
@@ -26,7 +29,9 @@
 	 * defaultSortOrder?: 'asc' | 'desc',
 	 * title?: string,
 	 * selectable?: boolean,
-	 * onselectionchange?: (selectedRows: any[]) => void
+	 * onselectionchange?: (selectedRows: any[]) => void,
+	 * onActionClick?: (e: Event, row: any) => void,
+	 * urlSync?: string
 	 * }}
 	 * */
 	let {
@@ -41,7 +46,9 @@
 		selectable = false,
 		onselectionchange = null,
 		defaultSortBy = '',
-		defaultSortOrder = 'desc'
+		defaultSortOrder = 'desc',
+		onActionClick = null,
+		urlSync = ''
 	} = $props();
 
 	let selectedKeys = $state(new Set());
@@ -66,15 +73,45 @@
 				columns[0];
 			if (target) sortBy = target.key;
 			if (defaultSortOrder === 'asc') sortOrder = 'asc';
+			if (urlSync) {
+				const sp = page.url.searchParams;
+				const size = parseInt(sp.get(`${urlSync}_size`) || '');
+				const idx = parseInt(sp.get(`${urlSync}_page`) || '');
+				const sort = sp.get(`${urlSync}_sort`);
+				const order = sp.get(`${urlSync}_order`);
+				if (pageSizes.includes(size)) pageSize = size;
+				if (Number.isInteger(idx) && idx >= 0) pageIndex = idx;
+				if (sort && columns.some((c) => c.key === sort)) sortBy = sort;
+				if (order === 'asc' || order === 'desc') sortOrder = order;
+			}
 			initialized = true;
 		}
 	});
+
+	function syncUrl() {
+		if (!urlSync) return;
+		// transient helper for replaceState; SvelteURLSearchParams not needed here
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity
+		const sp = new URLSearchParams(page.url.searchParams);
+		const params = [
+			[`${urlSync}_size`, String(pageSize)],
+			[`${urlSync}_page`, String(pageIndex)],
+			[`${urlSync}_sort`, sortBy],
+			[`${urlSync}_order`, sortOrder]
+		];
+		for (const [key, value] of params) {
+			if (value) sp.set(key, value);
+			else sp.delete(key);
+		}
+		replaceState(resolve(`${page.url.pathname}?${sp.toString()}`));
+	}
 
 	$effect(() => {
 		if (refreshKey) {
 			untrack(() => {
 				pageIndex = 0;
 				load();
+				syncUrl();
 			});
 		}
 	});
@@ -114,6 +151,8 @@
 	}
 
 	function toggleRow(key) {
+		// sets are rebuilt on change, not mutated in place
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity
 		const next = new Set(selectedKeys);
 		if (next.has(key)) {
 			next.delete(key);
@@ -126,6 +165,8 @@
 
 	function toggleAll() {
 		const allSelected = data.every((row) => selectedKeys.has(row[keyField]));
+		// sets are rebuilt on change, not mutated in place
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity
 		const next = new Set(selectedKeys);
 		for (const row of data) {
 			if (allSelected) {
@@ -151,18 +192,21 @@
 		}
 		pageIndex = 0;
 		load();
+		syncUrl();
 	}
 
 	function changePageSize(e) {
 		pageSize = parseInt(e.target.value);
 		pageIndex = 0;
 		load();
+		syncUrl();
 	}
 
 	function prevPage() {
 		if (pageIndex > 0) {
 			pageIndex--;
 			load();
+			syncUrl();
 		}
 	}
 
@@ -170,6 +214,7 @@
 		if (data.length >= pageSize) {
 			pageIndex++;
 			load();
+			syncUrl();
 		}
 	}
 </script>
@@ -177,7 +222,7 @@
 <div class="space-y-4">
 	<div class="flex items-center justify-between">
 		{#if title}
-			<h1 class="text-2xl font-semibold text-parchment-200">{title}</h1>
+			<h2 class="text-2xl font-semibold text-parchment-200">{title}</h2>
 		{:else}
 			<span></span>
 		{/if}
@@ -215,7 +260,7 @@
 							/>
 						</th>
 					{/if}
-					{#each columns as col, i (col.key)}
+					{#each columns as col (col.key)}
 						<th
 							class="px-4 py-3 font-medium whitespace-nowrap transition-colors select-none focus:outline-none {col.sortable
 								? 'cursor-pointer hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-inset'
@@ -244,7 +289,7 @@
 					{/each}
 				</tr>
 			</thead>
-			<tbody class="divide-y divide-clay-800">
+			<tbody class="divide-y divide-clay-800" aria-live="polite">
 				{#if loading}
 					<tr class="bg-clay-950">
 						<td
@@ -309,15 +354,23 @@
 								: ''}"
 							tabindex={onRowClick ? '0' : undefined}
 							role={onRowClick ? 'link' : undefined}
-							onclick={onRowClick
+							onclick={onRowClick || onActionClick
 								? (e) => {
-										if (e.target.closest('button, a, input')) return;
-										onRowClick(row);
+										if (e.target.closest('a, input')) return;
+										const btn = e.target.closest('button');
+										if (btn) {
+											if (onActionClick) onActionClick(e, row);
+											return;
+										}
+										if (onRowClick) onRowClick(row);
 									}
 								: undefined}
 							onkeydown={onRowClick
 								? (e) => {
-										if (e.key === 'Enter') onRowClick(row);
+										if (e.key === 'Enter' || e.key === ' ') {
+											e.preventDefault();
+											onRowClick(row);
+										}
 									}
 								: undefined}
 						>
@@ -325,6 +378,7 @@
 								<td class="w-10 px-4 py-3">
 									<input
 										type="checkbox"
+										aria-label={`Select row ${row[keyField]}`}
 										checked={selectedKeys.has(row[keyField])}
 										onchange={() => toggleRow(row[keyField])}
 										class="h-4 w-4 cursor-pointer accent-gold-500"
@@ -340,6 +394,8 @@
 										: ''}"
 								>
 									{#if col.cell}
+										<!-- cells are built by callers with escapeHtml; raw insertion is required -->
+										<!-- eslint-disable-next-line svelte/no-at-html-tags -->
 										{@html col.cell(row[col.key], row)}
 									{:else}
 										{row[col.key]}

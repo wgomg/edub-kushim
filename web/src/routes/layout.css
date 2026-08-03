@@ -70,4 +70,8 @@
 	main {
 		scrollbar-gutter: stable;
 	}
+	body {
+		touch-action: manipulation;
+		-webkit-tap-highlight-color: transparent;
+	}
 }

@@ -35,7 +35,7 @@
 			!authStore.isAuthenticated() &&
 			$page.url.pathname !== '/login'
 		) {
-			goto('/login');
+			goto(resolve('/login'));
 		}
 	});
 
@@ -59,7 +59,7 @@
 		if (!ok) return;
 		api.auth.logout();
 		authStore.logout();
-		goto('/login');
+		goto(resolve('/login'));
 	}
 </script>
 
@@ -82,18 +82,18 @@
 			</div>
 			<nav class="flex-1 space-y-1 px-3 py-4">
 				<a
-					href="/"
+					href={resolve(`/`)}
 					class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-900 focus-visible:outline-none"
 					>Dashboard</a
 				>
 				<a
-					href="/documents"
+					href={resolve(`/documents`)}
 					class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-900 focus-visible:outline-none"
 					>Documents</a
 				>
 				{#if !authEnabled || authStore.isEditor()}
 					<a
-						href="/documents/orphaned"
+						href={resolve(`/documents/orphaned`)}
 						class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-900 focus-visible:outline-none"
 						>Orphaned &amp; Errored</a
 					>
@@ -104,42 +104,42 @@
 					>
 				{/if}
 				<a
-					href="/tasks"
+					href={resolve(`/tasks`)}
 					class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-900 focus-visible:outline-none"
 					>Tasks</a
 				>
 				<a
-					href="/tags"
+					href={resolve(`/tags`)}
 					class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-900 focus-visible:outline-none"
 					>Tags</a
 				>
 				<a
-					href="/people"
+					href={resolve(`/people`)}
 					class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-900 focus-visible:outline-none"
 					>People</a
 				>
 				<a
-					href="/document-types"
+					href={resolve(`/document-types`)}
 					class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-900 focus-visible:outline-none"
 					>Document Types</a
 				>
 				{#if !authEnabled || authStore.isAdmin()}
 					<a
-						href="/logs"
+						href={resolve(`/logs`)}
 						class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-900 focus-visible:outline-none"
 						>Logs</a
 					>
 				{/if}
 				{#if !authEnabled || authStore.isAdmin()}
 					<a
-						href="/settings"
+						href={resolve(`/settings`)}
 						class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-900 focus-visible:outline-none"
 						>Settings</a
 					>
 				{/if}
 				{#if authStore.isAuthenticated() && authEnabled}
 					<a
-						href="/profile"
+						href={resolve(`/profile`)}
 						class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-900 focus-visible:outline-none"
 						>Profile</a
 					>
@@ -156,14 +156,16 @@
 				<div class="flex-1"></div>
 				{#if authStore.isAuthenticated()}
 					{#if authEnabled}
-						<a href="/profile" class="text-sm text-parchment-500 hover:text-parchment-200"
+						<a
+							href={resolve(`/profile`)}
+							class="text-sm text-parchment-500 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 							>Profile</a
 						>
 					{/if}
 					<span class="text-sm text-parchment-400">{authStore.getUser().username}</span>
 					<button
 						onclick={handleLogout}
-						class="text-sm text-parchment-400 hover:text-terracotta-500"
+						class="text-sm text-parchment-400 hover:text-terracotta-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 					>
 						Logout
 					</button>
@@ -171,7 +173,7 @@
 				{#if !authEnabled || authStore.isEditor()}
 					<button
 						onclick={() => (uploadOpen = true)}
-						class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600"
+						class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-900 focus-visible:outline-none"
 						>Upload</button
 					>
 				{/if}
@@ -180,9 +182,15 @@
 			{#if missingTools.length > 0}
 				<div
 					class="shrink-0 border-b border-gold-500/30 bg-gold-500/10 px-6 py-2 text-sm text-gold-500"
+					role="status"
+					aria-live="polite"
 				>
 					⚠️ {missingCount} required tool(s) not installed — document consumption is paused.
-					<a href="/settings" class="underline">Review Settings</a>
+					<a
+						href={resolve(`/settings`)}
+						class="underline hover:text-gold-400 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+						>Review Settings</a
+					>
 				</div>
 			{/if}
 

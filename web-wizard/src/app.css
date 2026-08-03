@@ -2,22 +2,29 @@
 @plugin '@tailwindcss/forms';
 
 @theme {
-  --color-clay-950: #1a1512;
-  --color-clay-900: #2a221d;
-  --color-clay-800: #3a322a;
-  --color-gold-500: #c9953a;
-  --color-gold-600: #b07d2e;
-  --color-lapis-600: #3b5e8a;
-  --color-lapis-700: #2e4a6e;
-  --color-parchment-200: #e8dcc8;
-  --color-parchment-400: #c4b69e;
-  --color-parchment-500: #9a8c78;
-  --color-terracotta-500: #b84a3a;
-  --color-terracotta-600: #9a3a2e;
+	--color-clay-950: #1a1512;
+	--color-clay-900: #2a221d;
+	--color-clay-800: #3a322a;
+	--color-gold-500: #c9953a;
+	--color-gold-600: #b07d2e;
+	--color-lapis-600: #3b5e8a;
+	--color-lapis-700: #2e4a6e;
+	--color-parchment-200: #e8dcc8;
+	--color-parchment-400: #c4b69e;
+	--color-parchment-500: #9a8c78;
+	--color-terracotta-500: #b84a3a;
+	--color-terracotta-600: #9a3a2e;
 }
 
 @layer base {
-  main {
-    scrollbar-gutter: stable;
-  }
+	:root {
+		color-scheme: dark;
+	}
+	main {
+		scrollbar-gutter: stable;
+	}
+	body {
+		touch-action: manipulation;
+		-webkit-tap-highlight-color: transparent;
+	}
 }

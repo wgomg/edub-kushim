@@ -1,5 +1,6 @@
 <script>
 	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { filterStore } from '$lib/stores/filterStore.js';
 	import { defaultFilter } from '$lib/stores/searchFilter.js';
 	import { onMount } from 'svelte';
@@ -27,8 +28,10 @@
 	let personTypeFormDescription = $state('');
 	let personTypeError = $state('');
 
-	let query = $state('');
+	let query = $state(new URL(window.location.href).searchParams.get('q') || '');
 	let refreshKey = $state(0);
+	let savingPerson = $state(false);
+	let savingPersonType = $state(false);
 
 	const columns = [
 		{ key: 'name', label: 'Name', sortable: true, width: '100%' },
@@ -58,7 +61,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 
 	function filterByPerson(row) {
 		filterStore.set({ ...defaultFilter, people: [{ name: row.name, type: 'author' }] });
-		goto('/documents');
+		goto(resolve('/documents'));
 	}
 
 	async function fetch({ limit, offset }) {
@@ -96,6 +99,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			personError = 'Name is required';
 			return;
 		}
+		savingPerson = true;
 		const body = { name, name_native: personFormNameNative.trim() || '' };
 		let result;
 		if (editingPerson) {
@@ -103,6 +107,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 		} else {
 			result = await api.people.create(body);
 		}
+		savingPerson = false;
 		if (result.ok) {
 			showPeopleModal = false;
 			refreshKey++;
@@ -163,6 +168,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			personTypeError = 'Name is required';
 			return;
 		}
+		savingPersonType = true;
 		const body = { name, description: personTypeFormDescription.trim() || '' };
 		let result;
 		if (editingPersonType) {
@@ -170,6 +176,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 		} else {
 			result = await api.peopleTypes.create(body);
 		}
+		savingPersonType = false;
 		if (result.ok) {
 			showPersonTypesModal = false;
 			await loadPersonTypes();
@@ -184,7 +191,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 		activeTab = tab;
 		const url = new URL(window.location.href);
 		url.searchParams.set('tab', tab);
-		goto(url.pathname + url.search, { replaceState: true, keepFocus: true });
+		goto(resolve(url.pathname + url.search), { replaceState: true, keepFocus: true });
 	}
 
 	async function handleDeletePersonType(pt) {
@@ -206,9 +213,12 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 </script>
 
 <div class="space-y-4">
-	<div class="flex items-center gap-4 border-b border-clay-800">
+	<div class="flex items-center gap-4 border-b border-clay-800" role="tablist">
 		<button
-			class="px-1 pb-2 text-sm font-medium transition-colors {activeTab === 'people'
+			role="tab"
+			aria-selected={activeTab === 'people'}
+			class="px-1 pb-2 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none {activeTab ===
+			'people'
 				? 'border-b-2 border-gold-500 text-parchment-200'
 				: 'text-parchment-500 hover:text-parchment-200'}"
 			onclick={() => switchTab('people')}
@@ -216,7 +226,10 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			People
 		</button>
 		<button
-			class="px-1 pb-2 text-sm font-medium transition-colors {activeTab === 'types'
+			role="tab"
+			aria-selected={activeTab === 'types'}
+			class="px-1 pb-2 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none {activeTab ===
+			'types'
 				? 'border-b-2 border-gold-500 text-parchment-200'
 				: 'text-parchment-500 hover:text-parchment-200'}"
 			onclick={() => switchTab('types')}
@@ -228,11 +241,11 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 	{#if activeTab === 'people'}
 		<div class="space-y-4">
 			<div class="flex items-center justify-between">
-				<h2 class="text-xl font-semibold text-parchment-200">People</h2>
+				<h2 class="text-xl font-semibold text-balance text-parchment-200">People</h2>
 				{#if !authStore.authEnabled() || authStore.isEditor()}
 					<button
 						onclick={openNewPerson}
-						class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600"
+						class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 					>
 						New Person
 					</button>
@@ -245,24 +258,31 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 					id="people-filter"
 					type="text"
 					bind:value={query}
-					oninput={() => refreshKey++}
+					oninput={() => {
+						refreshKey++;
+						const url = new URL(window.location.href);
+						if (query) url.searchParams.set('q', query);
+						else url.searchParams.delete('q');
+						goto(resolve(url.pathname + url.search), { replaceState: true, keepFocus: true });
+					}}
 					name="people-filter"
+					autocomplete="off"
 					placeholder="Filter people…"
 					class="w-full max-w-xs rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
 				/>
 			</div>
 
-			<div onclick={handlePageClick} onkeydown={() => {}} role="presentation">
-				<DataTable
-					{columns}
-					{fetch}
-					title=""
-					defaultPageSize={50}
-					pageSizes={[10, 25, 50, 100]}
-					{refreshKey}
-					onRowClick={filterByPerson}
-				/>
-			</div>
+			<DataTable
+				{columns}
+				{fetch}
+				title=""
+				defaultPageSize={50}
+				pageSizes={[10, 25, 50, 100]}
+				{refreshKey}
+				onRowClick={filterByPerson}
+				onActionClick={handlePageClick}
+				urlSync="people"
+			/>
 		</div>
 
 		<Modal
@@ -305,7 +325,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						/>
 					</div>
 					{#if personError}
-						<p class="text-sm text-terracotta-500">{personError}</p>
+						<p class="text-sm text-terracotta-500" aria-live="polite">{personError}</p>
 					{/if}
 					<div class="flex justify-end gap-2">
 						<button
@@ -317,10 +337,10 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						</button>
 						<button
 							type="submit"
-							disabled={!personFormName.trim()}
+							disabled={savingPerson}
 							class="rounded-md bg-gold-500 px-3 py-1.5 text-xs font-medium text-clay-950 hover:bg-gold-600 disabled:opacity-50"
 						>
-							{editingPerson ? 'Save' : 'Create'}
+							{savingPerson ? 'Saving…' : editingPerson ? 'Save' : 'Create'}
 						</button>
 					</div>
 				</div>
@@ -329,11 +349,11 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 	{:else}
 		<div class="space-y-4">
 			<div class="flex items-center justify-between">
-				<h2 class="text-xl font-semibold text-parchment-200">Person Types</h2>
+				<h2 class="text-xl font-semibold text-balance text-parchment-200">Person Types</h2>
 				{#if !authStore.authEnabled() || authStore.isEditor()}
 					<button
 						onclick={openNewPersonType}
-						class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600"
+						class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 					>
 						New Person Type
 					</button>
@@ -341,7 +361,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			</div>
 
 			{#if personTypeError}
-				<p class="text-sm text-terracotta-500">{personTypeError}</p>
+				<p class="text-sm text-terracotta-500" aria-live="polite">{personTypeError}</p>
 			{/if}
 
 			<div class="overflow-x-auto rounded-lg border border-clay-800">
@@ -373,8 +393,10 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 													}}
 													title="Edit"
 													aria-label="Edit person type"
-													class="{BTN_BASE} text-parchment-400 hover:text-gold-500"
+													class="{BTN_BASE} text-parchment-400 hover:text-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 												>
+													<!-- icons are static trusted markup -->
+													<!-- eslint-disable-next-line svelte/no-at-html-tags -->
 													{@html EDIT_ICON}
 												</button>
 												<button
@@ -384,8 +406,10 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 													}}
 													title="Delete"
 													aria-label="Delete person type"
-													class="{BTN_BASE} text-parchment-400 hover:text-terracotta-500"
+													class="{BTN_BASE} text-parchment-400 hover:text-terracotta-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 												>
+													<!-- icons are static trusted markup -->
+													<!-- eslint-disable-next-line svelte/no-at-html-tags -->
 													{@html DELETE_ICON}
 												</button>
 											</div>
@@ -447,10 +471,10 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						</button>
 						<button
 							type="submit"
-							disabled={!personTypeFormName.trim()}
+							disabled={savingPersonType}
 							class="rounded-md bg-gold-500 px-3 py-1.5 text-xs font-medium text-clay-950 hover:bg-gold-600 disabled:opacity-50"
 						>
-							{editingPersonType ? 'Save' : 'Create'}
+							{savingPersonType ? 'Saving…' : editingPersonType ? 'Save' : 'Create'}
 						</button>
 					</div>
 				</div>

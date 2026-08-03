@@ -5,7 +5,9 @@
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import * as authStore from '$lib/stores/authStore.js';
+	import { formatSize } from '$lib/utils/html.js';
 
 	let activeTab = $state($page.url.searchParams.get('tab') || 'orphaned');
 
@@ -23,7 +25,7 @@
 
 	function switchTab(tab) {
 		activeTab = tab;
-		goto(`/documents/orphaned?tab=${tab}`, { replaceState: true, keepFocus: true });
+		goto(resolve(`/documents/orphaned?tab=${tab}`), { replaceState: true, keepFocus: true });
 	}
 
 	async function loadFiles() {
@@ -159,12 +161,6 @@
 		}
 	}
 
-	function formatSize(bytes) {
-		if (bytes < 1024) return `${bytes} B`;
-		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-		return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-	}
-
 	function formatTime(t) {
 		if (!t) return '—';
 		return new Date(t).toLocaleString();
@@ -175,8 +171,10 @@
 	<p class="text-parchment-500">You do not have permission to view this page.</p>
 {:else}
 	<div class="space-y-4">
-		<div class="flex items-center gap-4 border-b border-clay-800">
+		<div class="flex items-center gap-4 border-b border-clay-800" role="tablist">
 			<button
+				role="tab"
+				aria-selected={activeTab === 'orphaned'}
 				class="px-1 pb-2 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-950 {activeTab ===
 				'orphaned'
 					? 'border-b-2 border-gold-500 text-parchment-200'
@@ -186,6 +184,8 @@
 				Orphaned
 			</button>
 			<button
+				role="tab"
+				aria-selected={activeTab === 'errored'}
 				class="px-1 pb-2 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-950 {activeTab ===
 				'errored'
 					? 'border-b-2 border-gold-500 text-parchment-200'
@@ -204,7 +204,7 @@
 						<button
 							onclick={scan}
 							disabled={scanning}
-							class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600 disabled:opacity-50"
+							class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-950 disabled:opacity-50"
 						>
 							{scanning ? 'Scanning…' : 'Scan Now'}
 						</button>
@@ -215,13 +215,13 @@
 					<div class="flex gap-2">
 						<button
 							onclick={handleDeleteAll}
-							class="rounded-lg bg-terracotta-700 px-3 py-1.5 text-xs font-medium text-parchment-200 hover:bg-terracotta-600"
+							class="rounded-lg bg-terracotta-700 px-3 py-1.5 text-xs font-medium text-parchment-200 hover:bg-terracotta-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-950"
 						>
 							Delete All
 						</button>
 						<button
 							onclick={handleMoveAllToInbox}
-							class="rounded-lg border border-clay-800 px-3 py-1.5 text-xs font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
+							class="rounded-lg border border-clay-800 px-3 py-1.5 text-xs font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-950"
 						>
 							Move All to Inbox
 						</button>
@@ -274,21 +274,21 @@
 											<div class="flex gap-1">
 												<button
 													onclick={() => handleDelete(f.id)}
-													class="rounded-md px-2 py-1 text-xs font-medium text-terracotta-400 hover:bg-terracotta-900/50 hover:text-terracotta-300"
+													class="rounded-md px-2 py-1 text-xs font-medium text-terracotta-400 hover:bg-terracotta-900/50 hover:text-terracotta-300 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-950"
 												>
 													Delete
 												</button>
 												{#if f.document_key_type === 'uuid'}
 													<button
 														onclick={() => handleRestore(f.id)}
-														class="rounded-md px-2 py-1 text-xs font-medium text-emerald-400 hover:bg-emerald-900/50 hover:text-emerald-300"
+														class="rounded-md px-2 py-1 text-xs font-medium text-emerald-400 hover:bg-emerald-900/50 hover:text-emerald-300 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-950"
 													>
 														Restore
 													</button>
 												{/if}
 												<button
 													onclick={() => handleMoveToInbox(f.id)}
-													class="rounded-md px-2 py-1 text-xs font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200"
+													class="rounded-md px-2 py-1 text-xs font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-950"
 												>
 													Move to Inbox
 												</button>
