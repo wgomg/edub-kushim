@@ -127,9 +127,10 @@ func TestEnrichWaitingFlow(t *testing.T) {
 	}), "set pending")
 	task, _ := q.GetTask(ctx, id)
 	assertEqual(t, task.Status, "pending", "pending")
-	assertNoError(t, q.DiscardEnrichTask(ctx, DiscardEnrichTaskParams{
+	_, err := q.DiscardEnrichTask(ctx, DiscardEnrichTaskParams{
 		ID: id, Error: sql.NullString{String: "parent failed", Valid: true},
-	}), "discard")
+	})
+	assertNoError(t, err, "discard")
 }
 
 func TestDocumentTypeCRUD(t *testing.T) {
@@ -396,6 +397,164 @@ func TestDiscardEnrichTaskByTaskID(t *testing.T) {
 	})
 	assertNoError(t, err, "discard again (idempotent)")
 	assertEqual(t, n, int64(0), "no rows on second call")
+}
+
+func TestSetEnrichTaskWaiting(t *testing.T) {
+	q, _ := NewTestQueries(t)
+	ctx := context.Background()
+
+	// happy path: discarded enrich is restored to waiting, error cleared
+	id := insertEnrichTask(t, q, "sew-1", "waiting")
+	_, err := q.DiscardEnrichTask(ctx, DiscardEnrichTaskParams{
+		ID: id, Error: sql.NullString{String: "parent failed", Valid: true},
+	})
+	assertNoError(t, err, "discard")
+	task, _ := q.GetTask(ctx, id)
+	assertEqual(t, task.Status, "discarded", "discarded")
+	assertEqual(t, task.Error.String, "parent failed", "error recorded")
+
+	n, err := q.SetEnrichTaskWaiting(ctx, "sew-1")
+	assertNoError(t, err, "restore")
+	assertEqual(t, n, int64(1), "one row restored")
+	task, _ = q.GetTask(ctx, id)
+	assertEqual(t, task.Status, "waiting", "waiting after restore")
+	if task.Error.Valid {
+		t.Fatal("error should be cleared after restore")
+	}
+	if task.CompletedAt.Valid {
+		t.Fatal("completed_at should be cleared after restore")
+	}
+
+	// error path: only 'discarded' enriches match — a waiting one is a no-op
+	n, err = q.SetEnrichTaskWaiting(ctx, "sew-1")
+	assertNoError(t, err, "restore again")
+	assertEqual(t, n, int64(0), "waiting enrich not restored again")
+
+	// re-failure after restore: the 'waiting' guard is satisfied again
+	_, err = q.DiscardEnrichTask(ctx, DiscardEnrichTaskParams{
+		ID: id, Error: sql.NullString{String: "parent failed again", Valid: true},
+	})
+	assertNoError(t, err, "re-discard after restore")
+	task, _ = q.GetTask(ctx, id)
+	assertEqual(t, task.Status, "discarded", "discarded again")
+}
+
+func TestRestoreDiscardedEnrichTasks(t *testing.T) {
+	q, _ := NewTestQueries(t)
+	ctx := context.Background()
+
+	insertEnrichTask(t, q, "rde-e1", "discarded")
+	consumePayload := json.RawMessage(`{"on_completed":"rde-e1"}`)
+	_, err := q.CreateTask(ctx, CreateTaskParams{
+		TaskID: "rde-c1", TaskType: "consume", Status: "pending", Payload: &consumePayload,
+	})
+	assertNoError(t, err, "create pending consume")
+
+	n, err := q.RestoreDiscardedEnrichTasks(ctx)
+	assertNoError(t, err, "global restore")
+	assertEqual(t, n, int64(1), "one enrich restored")
+	task, _ := q.GetTaskByTaskID(ctx, "rde-e1")
+	assertEqual(t, task.Status, "waiting", "enrich restored to waiting")
+
+	t.Run("skips enrich whose consume is not pending", func(t *testing.T) {
+		q, _ := NewTestQueries(t)
+		ctx := context.Background()
+
+		insertEnrichTask(t, q, "rde-e2", "discarded")
+		consumePayload := json.RawMessage(`{"on_completed":"rde-e2"}`)
+		_, err := q.CreateTask(ctx, CreateTaskParams{
+			TaskID: "rde-c2", TaskType: "consume", Status: "failed", Payload: &consumePayload,
+		})
+		assertNoError(t, err, "create failed consume")
+
+		n, err := q.RestoreDiscardedEnrichTasks(ctx)
+		assertNoError(t, err, "global restore")
+		assertEqual(t, n, int64(0), "no enrich restored")
+		task, _ := q.GetTaskByTaskID(ctx, "rde-e2")
+		assertEqual(t, task.Status, "discarded", "enrich stays discarded")
+	})
+
+	t.Run("batch variant is scoped to the batch", func(t *testing.T) {
+		q, _ := NewTestQueries(t)
+		ctx := context.Background()
+
+		insertEnrichTask(t, q, "rde-e3", "discarded")
+		inBatchPayload := json.RawMessage(`{"on_completed":"rde-e3"}`)
+		_, err := q.CreateTask(ctx, CreateTaskParams{
+			TaskID: "rde-c3", TaskType: "consume", Status: "pending",
+			Payload: &inBatchPayload, BatchID: sql.NullString{String: "b1", Valid: true},
+		})
+		assertNoError(t, err, "create pending consume in b1")
+
+		insertEnrichTask(t, q, "rde-e4", "discarded")
+		outBatchPayload := json.RawMessage(`{"on_completed":"rde-e4"}`)
+		_, err = q.CreateTask(ctx, CreateTaskParams{
+			TaskID: "rde-c4", TaskType: "consume", Status: "pending",
+			Payload: &outBatchPayload, BatchID: sql.NullString{String: "b2", Valid: true},
+		})
+		assertNoError(t, err, "create pending consume in b2")
+
+		n, err := q.RestoreDiscardedEnrichTasksByBatch(ctx, sql.NullString{String: "b1", Valid: true})
+		assertNoError(t, err, "batch restore")
+		assertEqual(t, n, int64(1), "only b1 enrich restored")
+		task, _ := q.GetTaskByTaskID(ctx, "rde-e3")
+		assertEqual(t, task.Status, "waiting", "b1 enrich restored")
+		task, _ = q.GetTaskByTaskID(ctx, "rde-e4")
+		assertEqual(t, task.Status, "discarded", "b2 enrich untouched")
+	})
+}
+
+func TestDiscardWaitingEnrichesOfFailedConsumes(t *testing.T) {
+	q, db := NewTestQueries(t)
+	ctx := context.Background()
+
+	// happy path: failed consume discards its waiting enrich, copying the parent error
+	insertEnrichTask(t, q, "swe-e1", "waiting")
+	failedPayload := json.RawMessage(`{"on_completed":"swe-e1"}`)
+	_, err := q.CreateTask(ctx, CreateTaskParams{
+		TaskID: "swe-c1", TaskType: "consume", Status: "failed",
+		Payload: &failedPayload, BatchID: sql.NullString{String: "b1", Valid: true},
+	})
+	assertNoError(t, err, "create failed consume")
+	_, err = db.ExecContext(ctx, "UPDATE task SET error = 'Max retries exceeded (3)' WHERE task_id = 'swe-c1'")
+	assertNoError(t, err, "set parent error")
+
+	// no false positive: pending consume keeps its waiting enrich
+	insertEnrichTask(t, q, "swe-e2", "waiting")
+	pendingPayload := json.RawMessage(`{"on_completed":"swe-e2"}`)
+	_, err = q.CreateTask(ctx, CreateTaskParams{
+		TaskID: "swe-c2", TaskType: "consume", Status: "pending",
+		Payload: &pendingPayload, BatchID: sql.NullString{String: "b1", Valid: true},
+	})
+	assertNoError(t, err, "create pending consume")
+
+	n, err := q.DiscardWaitingEnrichesOfFailedConsumes(ctx, sql.NullString{String: "b1", Valid: true})
+	assertNoError(t, err, "batch sweep")
+	assertEqual(t, n, int64(1), "one enrich discarded")
+	task, _ := q.GetTaskByTaskID(ctx, "swe-e1")
+	assertEqual(t, task.Status, "discarded", "enrich of failed consume discarded")
+	assertEqual(t, task.Error.String, "Max retries exceeded (3)", "parent error copied")
+	task, _ = q.GetTaskByTaskID(ctx, "swe-e2")
+	assertEqual(t, task.Status, "waiting", "enrich of pending consume untouched")
+
+	t.Run("global variant discards across batches", func(t *testing.T) {
+		q, _ := NewTestQueries(t)
+		ctx := context.Background()
+
+		insertEnrichTask(t, q, "swe-e3", "waiting")
+		globalPayload := json.RawMessage(`{"on_completed":"swe-e3"}`)
+		_, err := q.CreateTask(ctx, CreateTaskParams{
+			TaskID: "swe-c3", TaskType: "consume", Status: "failed",
+			Payload: &globalPayload, BatchID: sql.NullString{String: "b9", Valid: true},
+		})
+		assertNoError(t, err, "create failed consume")
+
+		n, err := q.DiscardWaitingEnrichesOfFailedConsumesGlobal(ctx)
+		assertNoError(t, err, "global sweep")
+		assertEqual(t, n, int64(1), "one enrich discarded")
+		task, _ := q.GetTaskByTaskID(ctx, "swe-e3")
+		assertEqual(t, task.Status, "discarded", "enrich discarded by global sweep")
+	})
 }
 
 func TestListTasksByType(t *testing.T) {

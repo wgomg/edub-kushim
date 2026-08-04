@@ -167,12 +167,57 @@ UPDATE task SET
     completed_at = NULL
 WHERE id = $2 AND status IN ('waiting', 'discarded') AND task_type = 'enrich';
 
--- name: DiscardEnrichTask :exec
+-- name: DiscardEnrichTask :execrows
 UPDATE task SET
     status = 'discarded',
     completed_at = CURRENT_TIMESTAMP,
     error = $1
 WHERE id = $2 AND status = 'waiting' AND task_type = 'enrich';
+
+-- name: SetEnrichTaskWaiting :execrows
+UPDATE task SET
+    status = 'waiting',
+    error = NULL,
+    completed_at = NULL
+WHERE task_id = $1 AND status = 'discarded' AND task_type = 'enrich';
+
+-- name: RestoreDiscardedEnrichTasks :execrows
+UPDATE task AS e
+SET status = 'waiting', error = NULL, completed_at = NULL
+FROM task AS c
+WHERE e.task_type = 'enrich' AND e.status = 'discarded'
+  AND c.task_type = 'consume' AND c.status = 'pending'
+  AND e.task_id = c.payload->>'on_completed';
+
+-- name: RestoreDiscardedEnrichTasksByBatch :execrows
+UPDATE task AS e
+SET status = 'waiting', error = NULL, completed_at = NULL
+FROM task AS c
+WHERE e.task_type = 'enrich' AND e.status = 'discarded'
+  AND c.task_type = 'consume' AND c.status = 'pending'
+  AND c.batch_id = $1
+  AND e.task_id = c.payload->>'on_completed';
+
+-- name: DiscardWaitingEnrichesOfFailedConsumes :execrows
+UPDATE task AS e
+SET status = 'discarded',
+    completed_at = CURRENT_TIMESTAMP,
+    error = COALESCE(c.error, 'parent consume task failed')
+FROM task AS c
+WHERE e.task_type = 'enrich' AND e.status = 'waiting'
+  AND c.task_type = 'consume' AND c.status = 'failed'
+  AND c.batch_id = $1
+  AND e.task_id = c.payload->>'on_completed';
+
+-- name: DiscardWaitingEnrichesOfFailedConsumesGlobal :execrows
+UPDATE task AS e
+SET status = 'discarded',
+    completed_at = CURRENT_TIMESTAMP,
+    error = COALESCE(c.error, 'parent consume task failed')
+FROM task AS c
+WHERE e.task_type = 'enrich' AND e.status = 'waiting'
+  AND c.task_type = 'consume' AND c.status = 'failed'
+  AND e.task_id = c.payload->>'on_completed';
 
 -- name: DiscardEnrichTaskByTaskID :execrows
 UPDATE task SET

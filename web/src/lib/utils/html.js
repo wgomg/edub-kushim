@@ -10,10 +10,11 @@ export function escapeHtml(str) {
 
 export function formatSize(bytes) {
 	if (bytes == null) return '0 B';
-	if (bytes < 1024) return bytes + ' B';
-	if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-	if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-	return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
+	const nf = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 });
+	if (bytes < 1024) return nf.format(bytes) + '\u00A0B';
+	if (bytes < 1024 * 1024) return nf.format(bytes / 1024) + '\u00A0KB';
+	if (bytes < 1024 * 1024 * 1024) return nf.format(bytes / (1024 * 1024)) + '\u00A0MB';
+	return nf.format(bytes / (1024 * 1024 * 1024)) + '\u00A0GB';
 }
 
 export function formatNumber(n) {
@@ -28,8 +29,8 @@ export function formatDuration(ms) {
 	const m = Math.floor((totalSec % 3600) / 60);
 	const s = totalSec % 60;
 	const parts = [];
-	if (h > 0) parts.push(h + 'h');
-	if (m > 0) parts.push(m + 'm');
-	if (s > 0 || parts.length === 0) parts.push(s + 's');
+	if (h > 0) parts.push(h + '\u00A0h');
+	if (m > 0) parts.push(m + '\u00A0m');
+	if (s > 0 || parts.length === 0) parts.push(s + '\u00A0s');
 	return parts.join(' ');
 }

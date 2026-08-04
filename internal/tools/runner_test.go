@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/wgomg/edub-kushim/internal/config"
+	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/contentanalyzer"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/converter"
 	"github.com/wgomg/edub-kushim/internal/utils"
@@ -95,6 +96,96 @@ func TestOptimizePdf_WithTimeout_ContextHasDeadline(t *testing.T) {
 	}
 	if result == nil || !result.Success {
 		t.Fatal("expected success")
+	}
+	if _, ok := receivedCtx.Deadline(); !ok {
+		t.Error("context should have a deadline when timeout>0")
+	}
+}
+
+// mockContentAnalyzer records the context for each analysis call.
+type mockContentAnalyzer struct {
+	analyzeFn        func(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*contentanalyzer.AnalysisResult, error)
+	analyzeDocTypeFn func(ctx context.Context, prevResult *contentanalyzer.AnalysisResult, headTailText string, docTypes []database.DocumentType, metadata contentanalyzer.DocMetadata) (string, error)
+}
+
+func (m *mockContentAnalyzer) Analyze(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*contentanalyzer.AnalysisResult, error) {
+	if m.analyzeFn != nil {
+		return m.analyzeFn(ctx, text, docTypes, peopleTypes, tagSuggestions)
+	}
+	return &contentanalyzer.AnalysisResult{}, nil
+}
+
+func (m *mockContentAnalyzer) AnalyzeDocType(ctx context.Context, prevResult *contentanalyzer.AnalysisResult, headTailText string, docTypes []database.DocumentType, metadata contentanalyzer.DocMetadata) (string, error) {
+	if m.analyzeDocTypeFn != nil {
+		return m.analyzeDocTypeFn(ctx, prevResult, headTailText, docTypes, metadata)
+	}
+	return "document", nil
+}
+
+func (m *mockContentAnalyzer) Name() string { return "mock" }
+
+func TestAnalyzeContent_TimeoutAppliesDeadline(t *testing.T) {
+	tests := []struct {
+		name         string
+		timeout      int
+		wantDeadline bool
+	}{
+		{"timeout zero disables deadline", 0, false},
+		{"timeout applies deadline", 120, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var receivedCtx context.Context
+			mock := &mockContentAnalyzer{
+				analyzeFn: func(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*contentanalyzer.AnalysisResult, error) {
+					receivedCtx = ctx
+					return &contentanalyzer.AnalysisResult{}, nil
+				},
+			}
+
+			r := &Runner{
+				logger: utils.NewDiscardLogger(),
+				config: &config.Config{
+					Enricher: config.EnricherConfig{
+						ContentAnalyzer: config.ContentAnalyzerConfig{Timeout: tt.timeout},
+					},
+				},
+				contentAnalyzer: mock,
+			}
+
+			_, err := r.AnalyzeContent(context.Background(), "text", nil, nil, nil)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if _, ok := receivedCtx.Deadline(); ok != tt.wantDeadline {
+				t.Errorf("deadline present = %v, want %v", ok, tt.wantDeadline)
+			}
+		})
+	}
+}
+
+func TestAnalyzeDocType_TimeoutAppliesDeadline(t *testing.T) {
+	var receivedCtx context.Context
+	mock := &mockContentAnalyzer{
+		analyzeDocTypeFn: func(ctx context.Context, prevResult *contentanalyzer.AnalysisResult, headTailText string, docTypes []database.DocumentType, metadata contentanalyzer.DocMetadata) (string, error) {
+			receivedCtx = ctx
+			return "document", nil
+		},
+	}
+
+	r := &Runner{
+		logger: utils.NewDiscardLogger(),
+		config: &config.Config{
+			Enricher: config.EnricherConfig{
+				ContentAnalyzer: config.ContentAnalyzerConfig{Timeout: 120},
+			},
+		},
+		contentAnalyzer: mock,
+	}
+
+	_, err := r.AnalyzeDocType(context.Background(), &ContentAnalysisResult{}, "head tail", nil, contentanalyzer.DocMetadata{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 	if _, ok := receivedCtx.Deadline(); !ok {
 		t.Error("context should have a deadline when timeout>0")

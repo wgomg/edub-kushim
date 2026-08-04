@@ -8,32 +8,31 @@
 		role="presentation"
 		class="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
 		onclick={() => confirmStore.resolve(false)}
-		onkeydown={(e) => {
-			if (e.key === 'Escape') confirmStore.resolve(false);
-		}}
 	>
 		<div
 			role="dialog"
 			aria-modal="true"
+			aria-label={p.title}
 			tabindex="-1"
 			class="mx-4 w-full max-w-sm rounded-lg border border-clay-800 bg-clay-950 p-6 shadow-xl"
 			onclick={(e) => e.stopPropagation()}
 			onkeydown={(e) => {
-				if (e.key === 'Escape') e.stopPropagation();
+				if (e.key === 'Escape') confirmStore.resolve(false);
 			}}
+			style="overscroll-behavior: contain"
 		>
 			<h2 class="mb-2 text-lg font-semibold text-parchment-200">{p.title}</h2>
 			<p class="text-sm text-parchment-200">{p.message}</p>
 			<div class="mt-4 flex justify-end gap-2">
 				<button
 					onclick={() => confirmStore.resolve(false)}
-					class="rounded-md px-3 py-1.5 text-xs font-medium text-parchment-400 hover:bg-clay-800"
+					class="rounded-md px-3 py-1.5 text-xs font-medium text-parchment-400 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 				>
 					Cancel
 				</button>
 				<button
 					onclick={() => confirmStore.resolve(true)}
-					class="rounded-md px-3 py-1.5 text-xs font-medium text-parchment-200 {p.danger
+					class="rounded-md px-3 py-1.5 text-xs font-medium text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none {p.danger
 						? 'bg-terracotta-700 hover:bg-terracotta-600'
 						: 'bg-gold-500 hover:bg-gold-600'}"
 				>

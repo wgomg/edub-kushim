@@ -20,7 +20,6 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	mime "github.com/wgomg/edub-kushim/internal/mime"
-	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters"
@@ -418,8 +417,7 @@ func MoveFailedFile(storageDir, originalPath, errType string, logger *utils.Logg
 }
 
 type consumePayload struct {
-	FilePath    string `json:"file_path"`
-	OnCompleted string `json:"on_completed"`
+	FilePath string `json:"file_path"`
 }
 
 func QuarantineFailedFiles(ctx context.Context, queries *database.Queries, storageDir string, logger *utils.Logger, batchID string) error {
@@ -444,42 +442,16 @@ func QuarantineFailedFiles(ctx context.Context, queries *database.Queries, stora
 		if p.FilePath != "" {
 			MoveFailedFile(storageDir, p.FilePath, "", logger, nil)
 		}
+	}
 
-		if p.OnCompleted != "" {
-			if err := discardEnrichTaskWithRetry(ctx, queries, p.OnCompleted); err != nil {
-				if firstErr == nil {
-					firstErr = err
-				}
-			}
+	// Sweep discards every enrich still waiting for a failed consume in the
+	// batch, covering quarantined tasks and legacy stuck data alike.
+	if _, err := queries.DiscardWaitingEnrichesOfFailedConsumes(ctx, sql.NullString{String: batchID, Valid: true}); err != nil {
+		if firstErr == nil {
+			firstErr = fmt.Errorf("discard waiting enriches of failed consumes: %w", err)
 		}
 	}
 	return firstErr
-}
-
-func discardEnrichTaskWithRetry(ctx context.Context, queries *database.Queries, taskID string) error {
-	const maxAttempts = 3
-	backoff := 50 * time.Millisecond
-
-	for attempt := 1; ; attempt++ {
-		_, err := queries.DiscardEnrichTaskByTaskID(ctx, database.DiscardEnrichTaskByTaskIDParams{
-			TaskID: taskID,
-			Error:  sql.NullString{String: "parent task quarantined", Valid: true},
-		})
-		if err == nil {
-			return nil
-		}
-
-		if attempt >= maxAttempts || !errs.IsBusy(err) {
-			return fmt.Errorf("discard enrich task %s: %w", taskID, err)
-		}
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(backoff):
-			backoff *= 2
-		}
-	}
 }
 
 func (c *Consumer) isDuplicate(ctx context.Context, path string) (bool, error) {

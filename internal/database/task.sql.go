@@ -217,7 +217,7 @@ func (q *Queries) DeleteTask(ctx context.Context, id int64) error {
 	return err
 }
 
-const discardEnrichTask = `-- name: DiscardEnrichTask :exec
+const discardEnrichTask = `-- name: DiscardEnrichTask :execrows
 UPDATE task SET
     status = 'discarded',
     completed_at = CURRENT_TIMESTAMP,
@@ -230,9 +230,12 @@ type DiscardEnrichTaskParams struct {
 	ID    int64
 }
 
-func (q *Queries) DiscardEnrichTask(ctx context.Context, arg DiscardEnrichTaskParams) error {
-	_, err := q.db.ExecContext(ctx, discardEnrichTask, arg.Error, arg.ID)
-	return err
+func (q *Queries) DiscardEnrichTask(ctx context.Context, arg DiscardEnrichTaskParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, discardEnrichTask, arg.Error, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const discardEnrichTaskByTaskID = `-- name: DiscardEnrichTaskByTaskID :execrows
@@ -250,6 +253,45 @@ type DiscardEnrichTaskByTaskIDParams struct {
 
 func (q *Queries) DiscardEnrichTaskByTaskID(ctx context.Context, arg DiscardEnrichTaskByTaskIDParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, discardEnrichTaskByTaskID, arg.Error, arg.TaskID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const discardWaitingEnrichesOfFailedConsumes = `-- name: DiscardWaitingEnrichesOfFailedConsumes :execrows
+UPDATE task AS e
+SET status = 'discarded',
+    completed_at = CURRENT_TIMESTAMP,
+    error = COALESCE(c.error, 'parent consume task failed')
+FROM task AS c
+WHERE e.task_type = 'enrich' AND e.status = 'waiting'
+  AND c.task_type = 'consume' AND c.status = 'failed'
+  AND c.batch_id = $1
+  AND e.task_id = c.payload->>'on_completed'
+`
+
+func (q *Queries) DiscardWaitingEnrichesOfFailedConsumes(ctx context.Context, batchID sql.NullString) (int64, error) {
+	result, err := q.db.ExecContext(ctx, discardWaitingEnrichesOfFailedConsumes, batchID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const discardWaitingEnrichesOfFailedConsumesGlobal = `-- name: DiscardWaitingEnrichesOfFailedConsumesGlobal :execrows
+UPDATE task AS e
+SET status = 'discarded',
+    completed_at = CURRENT_TIMESTAMP,
+    error = COALESCE(c.error, 'parent consume task failed')
+FROM task AS c
+WHERE e.task_type = 'enrich' AND e.status = 'waiting'
+  AND c.task_type = 'consume' AND c.status = 'failed'
+  AND e.task_id = c.payload->>'on_completed'
+`
+
+func (q *Queries) DiscardWaitingEnrichesOfFailedConsumesGlobal(ctx context.Context) (int64, error) {
+	result, err := q.db.ExecContext(ctx, discardWaitingEnrichesOfFailedConsumesGlobal)
 	if err != nil {
 		return 0, err
 	}
@@ -1341,6 +1383,41 @@ func (q *Queries) ResetStaleProcessingTasks(ctx context.Context, arg ResetStaleP
 	return result.RowsAffected()
 }
 
+const restoreDiscardedEnrichTasks = `-- name: RestoreDiscardedEnrichTasks :execrows
+UPDATE task AS e
+SET status = 'waiting', error = NULL, completed_at = NULL
+FROM task AS c
+WHERE e.task_type = 'enrich' AND e.status = 'discarded'
+  AND c.task_type = 'consume' AND c.status = 'pending'
+  AND e.task_id = c.payload->>'on_completed'
+`
+
+func (q *Queries) RestoreDiscardedEnrichTasks(ctx context.Context) (int64, error) {
+	result, err := q.db.ExecContext(ctx, restoreDiscardedEnrichTasks)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const restoreDiscardedEnrichTasksByBatch = `-- name: RestoreDiscardedEnrichTasksByBatch :execrows
+UPDATE task AS e
+SET status = 'waiting', error = NULL, completed_at = NULL
+FROM task AS c
+WHERE e.task_type = 'enrich' AND e.status = 'discarded'
+  AND c.task_type = 'consume' AND c.status = 'pending'
+  AND c.batch_id = $1
+  AND e.task_id = c.payload->>'on_completed'
+`
+
+func (q *Queries) RestoreDiscardedEnrichTasksByBatch(ctx context.Context, batchID sql.NullString) (int64, error) {
+	result, err := q.db.ExecContext(ctx, restoreDiscardedEnrichTasksByBatch, batchID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const retryFailedTasksByBatch = `-- name: RetryFailedTasksByBatch :execrows
 UPDATE task SET
     status = 'pending',
@@ -1393,4 +1470,20 @@ type SetEnrichTaskPendingParams struct {
 func (q *Queries) SetEnrichTaskPending(ctx context.Context, arg SetEnrichTaskPendingParams) error {
 	_, err := q.db.ExecContext(ctx, setEnrichTaskPending, arg.Payload, arg.ID)
 	return err
+}
+
+const setEnrichTaskWaiting = `-- name: SetEnrichTaskWaiting :execrows
+UPDATE task SET
+    status = 'waiting',
+    error = NULL,
+    completed_at = NULL
+WHERE task_id = $1 AND status = 'discarded' AND task_type = 'enrich'
+`
+
+func (q *Queries) SetEnrichTaskWaiting(ctx context.Context, taskID string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setEnrichTaskWaiting, taskID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }

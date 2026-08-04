@@ -177,6 +177,7 @@ type LlmConfigResponse struct {
 	Reasoning       bool    `json:"reasoning"`
 	ReasoningEffort string  `json:"reasoning_effort,omitempty"`
 	Temperature     float64 `json:"temperature"`
+	RequestDelay    float64 `json:"request_delay"`
 }
 
 type TagMatcherResponse struct {
@@ -263,6 +264,7 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Enricher.ContentAnalyzer.Llm.Reasoning = cfg.Enricher.ContentAnalyzer.Llm.Reasoning
 	resp.Enricher.ContentAnalyzer.Llm.ReasoningEffort = cfg.Enricher.ContentAnalyzer.Llm.ReasoningEffort
 	resp.Enricher.ContentAnalyzer.Llm.Temperature = cfg.Enricher.ContentAnalyzer.Llm.Temperature
+	resp.Enricher.ContentAnalyzer.Llm.RequestDelay = cfg.Enricher.ContentAnalyzer.Llm.RequestDelay
 	resp.Enricher.TagMatcher.Timeout = cfg.Enricher.TagMatcher.Timeout
 	resp.Enricher.TagMatcher.ReduceTargetWords = cfg.Enricher.TagMatcher.ReduceTargetWords
 	resp.Enricher.TagMatcher.ChunkSize = cfg.Enricher.TagMatcher.ChunkSize

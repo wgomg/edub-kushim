@@ -25,7 +25,6 @@
 	let suggestions = $state([]);
 	let selectedIndex = $state(-1);
 	let debounceTimer = $state(null);
-	let pendingField = $state(null);
 
 	function emit(partial) {
 		onSearch({
@@ -95,11 +94,9 @@
 
 	function onInput() {
 		const text = inputValue;
-		pendingField = null;
 
 		const fieldPrefix = getFieldPrefix(text);
 		if (fieldPrefix) {
-			pendingField = fieldPrefix.field;
 			debouncedFetch(fieldPrefix.value, fieldPrefix.field);
 		} else if (text.length >= 2) {
 			debouncedFetch(text, null);
@@ -120,7 +117,6 @@
 
 	function selectSuggestion(s) {
 		inputValue = '';
-		pendingField = null;
 		if (s.type === 'tag') {
 			emit({ tags: [...tags, s.value] });
 		} else if (s.type === 'documentType') {
@@ -261,23 +257,29 @@
 	<div
 		class="flex min-h-[42px] flex-wrap items-center gap-1.5 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus-within:border-gold-600"
 	>
-		{#each tags as tag, i}
+		{#each tags as tag, i (i)}
 			<span
 				class="inline-flex items-center gap-1 rounded-full bg-lapis-700 px-2.5 py-0.5 text-xs text-parchment-200"
 			>
 				tag:{tag}
-				<button onclick={() => removeTag(i)} class="text-parchment-400 hover:text-parchment-200"
+				<button
+					onclick={() => removeTag(i)}
+					aria-label={`Remove tag ${tag}`}
+					class="text-parchment-400 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 					>&times;</button
 				>
 			</span>
 		{/each}
 
-		{#each people as p, i}
+		{#each people as p, i (i)}
 			<span
 				class="inline-flex items-center gap-1 rounded-full bg-lapis-700 px-2.5 py-0.5 text-xs text-parchment-200"
 			>
 				{p.type}:{p.name}
-				<button onclick={() => removePerson(i)} class="text-parchment-400 hover:text-parchment-200"
+				<button
+					onclick={() => removePerson(i)}
+					aria-label={`Remove ${p.type} ${p.name}`}
+					class="text-parchment-400 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 					>&times;</button
 				>
 			</span>
@@ -288,7 +290,10 @@
 				class="inline-flex items-center gap-1 rounded-full bg-lapis-700 px-2.5 py-0.5 text-xs text-parchment-200"
 			>
 				type:{documentType}
-				<button onclick={clearDocumentType} class="text-parchment-400 hover:text-parchment-200"
+				<button
+					onclick={clearDocumentType}
+					aria-label={`Remove document type ${documentType}`}
+					class="text-parchment-400 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 					>&times;</button
 				>
 			</span>
@@ -299,7 +304,10 @@
 				class="inline-flex items-center gap-1 rounded-full bg-emerald-700 px-2.5 py-0.5 text-xs text-parchment-200"
 			>
 				lang:{language}
-				<button onclick={clearLanguage} class="text-parchment-400 hover:text-parchment-200"
+				<button
+					onclick={clearLanguage}
+					aria-label={`Remove language ${language}`}
+					class="text-parchment-400 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 					>&times;</button
 				>
 			</span>
@@ -310,7 +318,10 @@
 				class="inline-flex items-center gap-1 rounded-full bg-amber-700 px-2.5 py-0.5 text-xs text-parchment-200"
 			>
 				created:{dateChipLabel(dateCreated)}
-				<button onclick={clearDateCreated} class="text-parchment-400 hover:text-parchment-200"
+				<button
+					onclick={clearDateCreated}
+					aria-label="Remove created date filter"
+					class="text-parchment-400 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 					>&times;</button
 				>
 			</span>
@@ -321,7 +332,10 @@
 				class="inline-flex items-center gap-1 rounded-full bg-amber-700 px-2.5 py-0.5 text-xs text-parchment-200"
 			>
 				modified:{dateChipLabel(dateModified)}
-				<button onclick={clearDateModified} class="text-parchment-400 hover:text-parchment-200"
+				<button
+					onclick={clearDateModified}
+					aria-label="Remove modified date filter"
+					class="text-parchment-400 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 					>&times;</button
 				>
 			</span>
@@ -332,7 +346,10 @@
 				class="inline-flex items-center gap-1 rounded-full bg-purple-700 px-2.5 py-0.5 text-xs text-parchment-200"
 			>
 				size:{sizeChipLabel(fileSize)}
-				<button onclick={clearFileSize} class="text-parchment-400 hover:text-parchment-200"
+				<button
+					onclick={clearFileSize}
+					aria-label="Remove file size filter"
+					class="text-parchment-400 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 					>&times;</button
 				>
 			</span>
@@ -343,13 +360,18 @@
 				class="inline-flex items-center gap-1 rounded-full bg-clay-700 px-2.5 py-0.5 text-xs text-parchment-200"
 			>
 				{query}
-				<button onclick={clearQuery} class="text-parchment-400 hover:text-parchment-200"
+				<button
+					onclick={clearQuery}
+					aria-label="Remove text filter"
+					class="text-parchment-400 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 					>&times;</button
 				>
 			</span>
 		{/if}
 
 		<input
+			id="searchbar-input"
+			name="searchbar-input"
 			bind:this={inputEl}
 			bind:value={inputValue}
 			oninput={onInput}
@@ -359,6 +381,14 @@
 					showDropdown = false;
 				}, 200)}
 			type="text"
+			role="combobox"
+			aria-label="Search documents"
+			aria-expanded={showDropdown}
+			aria-controls="searchbar-listbox"
+			aria-autocomplete="list"
+			aria-activedescendant={selectedIndex >= 0 ? `searchbar-option-${selectedIndex}` : undefined}
+			autocomplete="off"
+			spellcheck="false"
 			placeholder={tags.length === 0 &&
 			people.length === 0 &&
 			!documentType &&
@@ -370,7 +400,7 @@
 			fileSize.min == null &&
 			fileSize.max == null &&
 			!query
-				? 'Search documents...'
+				? 'Search documents…'
 				: ''}
 			class="min-w-[120px] flex-1 border-0 bg-transparent p-0 text-parchment-200 placeholder-parchment-500 outline-none focus:ring-0"
 		/>
@@ -378,11 +408,14 @@
 
 	{#if showDropdown}
 		<ul
+			id="searchbar-listbox"
+			aria-labelledby="searchbar-input"
 			class="absolute top-full right-0 left-0 z-50 mt-1 max-h-60 overflow-y-auto rounded-lg border border-clay-800 bg-clay-900 shadow-lg"
 			role="listbox"
 		>
-			{#each suggestions as s, i}
+			{#each suggestions as s, i (i)}
 				<li
+					id={`searchbar-option-${i}`}
 					role="option"
 					aria-selected={i === selectedIndex}
 					class="cursor-pointer px-3 py-2 text-sm text-parchment-200 hover:bg-clay-800 {i ===

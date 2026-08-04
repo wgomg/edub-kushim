@@ -1,6 +1,7 @@
 <script>
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { api } from '$lib/api';
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
@@ -27,9 +28,27 @@
 	let peopleResults = $state([]);
 	let selectedPeopleTypeId = $state(1);
 
+	let dirty = $derived(
+		doc &&
+			(editTitle !== doc.title ||
+				editLanguage !== (doc.language ?? '') ||
+				editDocumentTypeId !== (doc.document_type_id ?? 1))
+	);
+
 	function downloadLabel() {
 		return 'Download PDF';
 	}
+
+	onMount(async () => {
+		const onBeforeUnload = (e) => {
+			if (dirty) {
+				e.preventDefault();
+				e.returnValue = '';
+			}
+		};
+		window.addEventListener('beforeunload', onBeforeUnload);
+		return () => window.removeEventListener('beforeunload', onBeforeUnload);
+	});
 
 	onMount(async () => {
 		const [data, types, pTypes] = await Promise.all([
@@ -79,7 +98,7 @@
 		deleting = true;
 		const res = await fetch(`/api/v1/documents/${params.id}`, { method: 'DELETE' });
 		if (res.ok) {
-			goto('/documents');
+			goto(resolve('/documents'));
 		} else {
 			deleting = false;
 			toastStore.error(`Failed to delete document: ${res.status} ${res.statusText}`);
@@ -151,7 +170,7 @@
 
 <div class="space-y-6">
 	<a
-		href="/documents"
+		href={resolve('/documents')}
 		class="inline-flex items-center gap-1 text-sm text-parchment-500 hover:text-parchment-200"
 	>
 		&larr; Back to documents
@@ -162,11 +181,11 @@
 	{:else}
 		<div class="flex items-start gap-6">
 			<div class="min-w-0 flex-1">
-				<h1 class="text-2xl font-semibold text-parchment-200">{doc.title}</h1>
+				<h1 class="text-2xl font-semibold break-words text-parchment-200">{doc.title}</h1>
 
 				<div class="mt-4 overflow-hidden rounded-lg border border-clay-800">
 					<iframe
-						src={`/api/v1/documents/${doc.id}/file`}
+						src={resolve(`/api/v1/documents/${doc.id}/file`)}
 						class="h-[75vh] w-full"
 						title={doc.title}
 					></iframe>
@@ -196,7 +215,7 @@
 									bind:value={editDocumentTypeId}
 									class="mt-0.5 w-full rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
 								>
-									{#each documentTypes as dt}
+									{#each documentTypes as dt (dt.id)}
 										<option value={dt.id}>{dt.name}</option>
 									{/each}
 								</select>
@@ -214,7 +233,7 @@
 							<button
 								onclick={saveMetadata}
 								disabled={savingMeta}
-								class="w-full rounded-md bg-gold-600 px-3 py-1.5 text-xs font-medium text-clay-950 hover:bg-gold-500 disabled:opacity-50"
+								class="w-full rounded-md bg-gold-600 px-3 py-1.5 text-xs font-medium text-clay-950 hover:bg-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-50"
 							>
 								{savingMeta ? 'Saving…' : 'Save'}
 							</button>
@@ -235,7 +254,7 @@
 										<button
 											onclick={() => removeTag(tag.id)}
 											class="text-parchment-400 hover:text-terracotta-400"
-											aria-label="Remove tag">&times;</button
+											aria-label={`Remove tag ${tag.name}`}>&times;</button
 										>
 									{/if}
 								</span>
@@ -248,6 +267,8 @@
 						<div class="relative mt-2">
 							<input
 								type="text"
+								aria-label="Search tags"
+								autocomplete="off"
 								bind:value={tagQuery}
 								oninput={() => searchTags(tagQuery)}
 								placeholder="Search tags…"
@@ -257,7 +278,7 @@
 								<div
 									class="absolute top-full right-0 left-0 z-10 mt-1 max-h-40 overflow-y-auto rounded-md border border-clay-700 bg-clay-950 shadow-lg"
 								>
-									{#each tagResults as tag, i}
+									{#each tagResults as tag, i (i)}
 										<button
 											onclick={() => selectTag(tag)}
 											class="w-full px-2 py-1 text-left text-sm text-parchment-200 hover:bg-clay-800"
@@ -305,6 +326,8 @@
 						<div class="relative mt-2">
 							<input
 								type="text"
+								aria-label="Search people"
+								autocomplete="off"
 								bind:value={peopleQuery}
 								oninput={() => searchPeople(peopleQuery)}
 								placeholder="Search people…"
@@ -314,7 +337,7 @@
 								<div
 									class="absolute top-full right-0 left-0 z-10 mt-1 max-h-40 overflow-y-auto rounded-md border border-clay-700 bg-clay-950 shadow-lg"
 								>
-									{#each peopleResults as person, i}
+									{#each peopleResults as person, i (i)}
 										<button
 											onclick={() => selectPerson(person)}
 											class="w-full px-2 py-1 text-left text-sm text-parchment-200 hover:bg-clay-800"
@@ -326,10 +349,11 @@
 							{/if}
 							<div class="mt-2 flex gap-2">
 								<select
+									aria-label="Person type"
 									bind:value={selectedPeopleTypeId}
 									class="flex-1 rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-xs text-parchment-200 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
 								>
-									{#each peopleTypes as pt}
+									{#each peopleTypes as pt (pt.id)}
 										<option value={pt.id}>{pt.name}</option>
 									{/each}
 								</select>
@@ -349,15 +373,17 @@
 				</div>
 
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
-					<p class="text-xs font-medium tracking-wider text-parchment-500 uppercase">Original Type</p>
+					<p class="text-xs font-medium tracking-wider text-parchment-500 uppercase">
+						Original Type
+					</p>
 					<p class="mt-1 text-parchment-200">{doc.original_type}</p>
 				</div>
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-xs font-medium tracking-wider text-parchment-500 uppercase">File Size</p>
 					<p class="mt-1 text-parchment-200">
-						{new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(
+						{new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(
 							doc.file_size / 1024
-						)} KB
+						)}\u00A0KB
 					</p>
 				</div>
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
@@ -367,15 +393,15 @@
 					<div class="mt-2 space-y-1 text-sm">
 						<div class="flex justify-between">
 							<span class="text-parchment-500">Pages</span>
-							<span class="text-parchment-200">{doc.page_count ?? '—'}</span>
+							<span class="text-parchment-200 tabular-nums">{doc.page_count ?? '—'}</span>
 						</div>
 						<div class="flex justify-between">
 							<span class="text-parchment-500">Words</span>
-							<span class="text-parchment-200">{doc.word_count ?? '—'}</span>
+							<span class="text-parchment-200 tabular-nums">{doc.word_count ?? '—'}</span>
 						</div>
 						<div class="flex justify-between">
 							<span class="text-parchment-500">Characters</span>
-							<span class="text-parchment-200">{doc.char_count ?? '—'}</span>
+							<span class="text-parchment-200 tabular-nums">{doc.char_count ?? '—'}</span>
 						</div>
 					</div>
 				</div>
@@ -401,8 +427,8 @@
 				</div>
 
 				<a
-					href={`/api/v1/documents/${doc.id}/file?download=true`}
-					class="block w-full rounded-lg bg-gold-600 px-4 py-2 text-center text-sm font-medium text-clay-950 hover:bg-gold-500"
+					href={resolve(`/api/v1/documents/${doc.id}/file?download=true`)}
+					class="block w-full rounded-lg bg-gold-600 px-4 py-2 text-center text-sm font-medium text-clay-950 hover:bg-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 				>
 					{downloadLabel()}
 				</a>
@@ -412,7 +438,7 @@
 						type="button"
 						onclick={handleReenrich}
 						disabled={reenriching}
-						class="w-full rounded-lg border border-gold-600 bg-gold-800 px-4 py-2 text-sm font-medium text-parchment-200 hover:bg-gold-700 disabled:opacity-50"
+						class="w-full rounded-lg border border-gold-600 bg-gold-800 px-4 py-2 text-sm font-medium text-parchment-200 hover:bg-gold-700 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-50"
 					>
 						{reenriching ? 'Queuing…' : 'Re-enrich'}
 					</button>
@@ -420,7 +446,7 @@
 						type="button"
 						onclick={handleDelete}
 						disabled={deleting}
-						class="w-full rounded-lg border border-terracotta-600 bg-terracotta-800 px-4 py-2 text-sm font-medium text-parchment-200 hover:bg-terracotta-700 disabled:opacity-50"
+						class="w-full rounded-lg border border-terracotta-600 bg-terracotta-800 px-4 py-2 text-sm font-medium text-parchment-200 hover:bg-terracotta-700 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-50"
 					>
 						{deleting ? 'Deleting…' : 'Delete Document'}
 					</button>

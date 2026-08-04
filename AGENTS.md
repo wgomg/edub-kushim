@@ -1,10 +1,25 @@
 # AGENTS.md
 
-Deeper context lives in `docs/`: `architecture.md` (design, pipeline, process model), `roadmap.md` (implementation status), `user-manual.md` (CLI + API reference), and `reference/` (per-package code references — database, search, pipeline, task-system, tools, tests).
+Deeper context lives in `docs/`:
+
+- `architecture.md` (design, pipeline, process model), `roadmap.md` (implementation status), `user-manual.md` (CLI + API reference)
+- Developer guides (language/feature onboarding, in `docs/developer-guide/`):
+  - `golang.md` — Go language features as used in this codebase
+  - `frontend.md` — SvelteKit/Svelte 5 features as used in `web/` and `web-wizard/`
+  - `postgresql.md` — PostgreSQL features as used in the schema and queries
+  - `semantic-matching.md` — Hugot embedding model, tag matching, consolidation, the matcher daemon
+  - `algorithms.md` — TextRank summarization, text normalization, token estimation
+  - `cgo.md` — cgo and the C wrapper layer (MuPDF, Tesseract)
+  - `ocr-pipeline.md` — OCR engines, searchable-PDF generation
+  - `task-system.md` — task lifecycle, batch ownership, queue semantics
+  - `llm.md` — LLM integration, prompts, model catalog, the enricher
+- `reference/` (per-package code references — database, search, pipeline, task-system, tools, tests)
 
 ## Build
 
-- **Never omit build tags.** All `go build`, `go test`, and `go fix` require `-tags "XLA,ORT"`. Non-negotiable.
+- **Never run bare `go build`/`go test`/`go fix`.** All builds and tests go through the
+  Makefile, which always sets the `-tags "XLA,ORT"` tags and the CGo environment
+  (`CGO_CPPFLAGS`, `CGO_LDFLAGS`, `PKG_CONFIG_PATH`). Non-negotiable.
 - Build C deps first: `make build-deps`
 - Build both binaries: `make build` → `dev/bin/kushim` + `dev/bin/edub`
 - When the embedded SPA is needed: `make web-build && make build` (order matters — web-build must run first)
@@ -77,14 +92,9 @@ Run tests with:
 make test          # 12 packages, no database needed, CGO_ENABLED=0
 make test-verbose  # same with -v
 make test-db       # 6 additional packages, requires PostgreSQL via TEST_DATABASE_URL
-```
-
-Manual equivalent:
-
-```bash
-CGO_ENABLED=0 TEST_DATABASE_URL="postgres://edub:edub@localhost:5432/edub?sslmode=disable" \
-  go test -tags "XLA,ORT" -count=1 ./internal/database/ ./internal/search/ ./internal/task/ \
-  ./internal/service/ ./internal/api/handlers/ ./internal/consumption/
+make test-backup   # backup package, requires PostgreSQL via TEST_DATABASE_URL
+make test-cgo      # CGo-gated adapter tests (requires make build-deps first)
+make test-one PKG=./internal/errs/   # single package; add RUN=Name to filter
 ```
 
 **Isolation**: Each test package gets its own database (`edub_test_<pkg_dir>`) via `runtime.Caller`. Databases are auto-dropped with `DROP ... WITH (FORCE)` when the last reference is released, so no manual cleanup is needed.
@@ -92,8 +102,9 @@ CGO_ENABLED=0 TEST_DATABASE_URL="postgres://edub:edub@localhost:5432/edub?sslmod
 Covered: database queries, task lifecycle, search engine, API handlers, consumption pipeline
 (with mock runner). Not covered: CLI commands, real OCR/PDF adapters.
 
-The old `go test -tags "XLA,ORT" ./...` will fail without the full C toolchain installed.
-See `docs/reference/tests.md` for full testing reference.
+There is no supported bare `go test` invocation: the Makefile exports the CGo
+environment and `-tags "XLA,ORT"` that bare invocations miss. See
+`docs/reference/tests.md` for the full testing reference.
 
 ## Web UI (SvelteKit)
 
@@ -110,7 +121,7 @@ See `docs/reference/tests.md` for full testing reference.
 - CI (`.github/workflows/ci.yml`) runs `make test` + `make test-db` (postgres:17 service container) plus both SPA builds on every push to `dev`/`master` and every PR to `master`. The ruleset requires the `test` and `web` checks to pass on PRs.
 - Commits are signed (SSH, `commit.gpgsign true`). The ruleset requires verified signatures; the signing key must stay registered as a Signing Key on GitHub.
 - Releases: bump the version on `master` via `/bump` (it commits on `dev`, opens a PR `dev → master`, and merges it), tag `vX.Y.Z` from master, push the tag; `workflow_dispatch` only from master.
-- Version bumps never land on `dev`; after each release, resync: `git checkout dev && git merge master && git push origin dev`.
+- Version bumps never land on `dev`. After a PR merge, local refs don't need to move — GitHub merges server-side; if you want local `master` to match, `git fetch origin && git branch -f master origin/master`. Merge `origin/master` into `dev` only when master has commits dev doesn't (`git rev-list --count master..origin/master` non-zero, e.g. after direct bypass pushes) — in the normal PR-only flow there is nothing to do.
 - Never `gh pr merge --delete-branch`; `dev` is long-lived.
 
 ## Releases

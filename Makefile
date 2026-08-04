@@ -272,6 +272,20 @@ test-db:
 		./internal/api/handlers/ \
 		./internal/consumption/
 
+# Backup tests also require PostgreSQL via TEST_DATABASE_URL.
+.PHONY: test-backup
+
+test-backup:
+	CGO_ENABLED=0 go test -tags "XLA,ORT" -count=1 -timeout 120s ./internal/backup/
+
+# Single-package run for development. Filter with RUN, e.g.:
+#   make test-one PKG=./internal/errs/ RUN=TestSleepAfterRequest
+# CGo-gated packages need make test-cgo instead (CGO_ENABLED=0 here).
+.PHONY: test-one
+
+test-one:
+	CGO_ENABLED=0 go test -tags "XLA,ORT" -count=1 -timeout 60s -v -run "$(RUN)" $(PKG)
+
 # CGo-dependent tests (requires C toolchain + built C libraries on host,
 # or run via test-cgo-glibc / test-cgo-musl in the container images).
 .PHONY: test-cgo test-cgo-glibc test-cgo-musl

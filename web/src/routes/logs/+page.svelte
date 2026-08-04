@@ -2,6 +2,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { api } from '$lib/api';
 
 	const tabs = [
@@ -39,13 +40,15 @@
 
 	$effect(() => {
 		const search = $page.url.search;
+		// transient helper for replaceState; SvelteURLSearchParams not needed here
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity
 		const params = new URLSearchParams(search);
 		params.set('tab', activeTab);
 		params.set('lines', String(lines));
 		const qs = params.toString();
 		const current = $page.url.search;
 		if ('?' + qs !== current && current !== qs) {
-			goto(`/logs?${qs}`, { replaceState: true, noScroll: true });
+			goto(resolve(`/logs?${qs}`), { replaceState: true, noScroll: true });
 		}
 	});
 
@@ -121,6 +124,8 @@
 	});
 
 	function toggleExpand(idx) {
+		// set is rebuilt on change, not mutated in place
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity
 		const next = new Set(expandedLines);
 		if (next.has(idx)) next.delete(idx);
 		else next.add(idx);
@@ -185,7 +190,8 @@
 			</div>
 			<button
 				onclick={toggleAutoRefresh}
-				class="rounded-md px-3 py-1.5 text-xs font-medium transition-colors {autoRefresh
+				aria-pressed={autoRefresh}
+				class="rounded-md px-3 py-1.5 text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none {autoRefresh
 					? 'bg-gold-500 text-clay-950 hover:bg-gold-600'
 					: 'bg-clay-800 text-parchment-400 hover:bg-clay-700'}"
 			>
@@ -194,11 +200,14 @@
 		</div>
 	</div>
 
-	<div class="flex gap-1 border-b border-clay-800">
-		{#each tabs as tab}
+	<div class="flex gap-1 border-b border-clay-800" role="tablist">
+		{#each tabs as tab (tab.id)}
 			<button
+				role="tab"
+				aria-selected={activeTab === tab.id}
 				onclick={() => handleTabClick(tab.id)}
-				class="rounded-t-md px-4 py-2 text-sm font-medium transition-colors {activeTab === tab.id
+				class="rounded-t-md px-4 py-2 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none {activeTab ===
+				tab.id
 					? 'bg-clay-800 text-parchment-200'
 					: 'text-parchment-500 hover:bg-clay-900 hover:text-parchment-300'}"
 			>
@@ -217,7 +226,7 @@
 				<p class="text-parchment-500">{error}</p>
 				<button
 					onclick={fetchLogs}
-					class="rounded-md bg-clay-800 px-4 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-700"
+					class="rounded-md bg-clay-800 px-4 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-700 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 				>
 					Retry
 				</button>
@@ -233,11 +242,14 @@
 					onscroll={handleScroll}
 					class="h-full overflow-y-auto rounded-lg border border-clay-800 bg-clay-950 p-4 font-mono text-sm leading-relaxed"
 				>
-					{#each logs as line, idx}
+					{#each logs as line, idx (idx)}
 						{@const parsed = parseLine(line)}
 						{@const expanded = expandedLines.has(idx)}
 						{@const display = expanded ? { text: line, truncated: false } : displayText(line)}
-						<div class="break-all whitespace-pre-wrap {lineClass(parsed.level)}">
+						<div
+							class="break-all whitespace-pre-wrap {lineClass(parsed.level)}"
+							style="content-visibility: auto; contain-intrinsic-size: auto 21px"
+						>
 							{#if display.truncated}
 								{display.text}
 							{:else if parsed.timestamp}

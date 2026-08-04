@@ -1,7 +1,7 @@
 <script>
 	import { goto } from '$app/navigation';
-	import { filterStore } from '$lib/stores/filterStore.js';
-	import { defaultFilter } from '$lib/stores/searchFilter.js';
+	import { resolve } from '$app/paths';
+	import { defaultFilter, serializeFilter } from '$lib/stores/searchFilter.js';
 	import { formatNumber } from '$lib/utils/html.js';
 
 	let { analytics = null } = $props();
@@ -27,17 +27,21 @@
 		if (!lang || lang === 'und') return 'Undetermined';
 		return lang.toUpperCase();
 	}
+
+	function goToFilter(partial) {
+		const q = serializeFilter({ ...defaultFilter, ...partial });
+		goto(resolve(`/documents?q=${encodeURIComponent(q)}`));
+	}
 </script>
 
 <div class="space-y-6">
 	<div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
 		<a
-			href="/documents"
+			href={resolve(`/documents`)}
 			class="block cursor-pointer rounded-lg border border-clay-800 bg-clay-900 p-4 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 			onclick={(e) => {
 				e.preventDefault();
-				filterStore.set({ ...defaultFilter, missingLanguage: true });
-				goto('/documents');
+				goToFilter({ missingLanguage: true });
 			}}
 		>
 			<p class="text-sm text-parchment-500">Missing Language</p>
@@ -46,12 +50,11 @@
 			</p>
 		</a>
 		<a
-			href="/documents"
+			href={resolve(`/documents`)}
 			class="block cursor-pointer rounded-lg border border-clay-800 bg-clay-900 p-4 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 			onclick={(e) => {
 				e.preventDefault();
-				filterStore.set({ ...defaultFilter, missingType: true });
-				goto('/documents');
+				goToFilter({ missingType: true });
 			}}
 		>
 			<p class="text-sm text-parchment-500">Missing Type</p>
@@ -60,12 +63,11 @@
 			</p>
 		</a>
 		<a
-			href="/documents"
+			href={resolve(`/documents`)}
 			class="block cursor-pointer rounded-lg border border-clay-800 bg-clay-900 p-4 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 			onclick={(e) => {
 				e.preventDefault();
-				filterStore.set({ ...defaultFilter, untagged: true });
-				goto('/documents');
+				goToFilter({ untagged: true });
 			}}
 		>
 			<p class="text-sm text-parchment-500">Untagged Documents</p>
@@ -78,51 +80,46 @@
 	<div class="flex flex-col gap-4 sm:flex-row">
 		{#if analytics?.tag_frequency?.length}
 			<section class="min-w-0 flex-1">
-				<h3 class="mb-3 text-base font-semibold text-parchment-200">Top Tags</h3>
+				<h3 class="mb-3 text-base font-semibold text-balance text-parchment-200">Top Tags</h3>
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<div class="overflow-x-auto">
 						<table class="w-full text-sm">
 							<thead>
 								<tr class="border-b border-clay-800 text-left text-parchment-500">
-									<th class="pr-4 pb-2 font-medium">Tag</th>
-									<th class="pb-2 font-medium">Documents</th>
+									<th class="pr-4 pb-2 font-medium" scope="col">Tag</th>
+									<th class="pb-2 font-medium" scope="col">Documents</th>
 								</tr>
 							</thead>
 							<tbody>
-								{#each analytics.tag_frequency as item, i}
-									<tr
-										class="cursor-pointer border-b border-clay-800/50 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-										tabindex="0"
-										role="link"
-										onclick={() => {
-											filterStore.set({ ...defaultFilter, tags: [item.label] });
-											goto('/documents');
-										}}
-										onkeydown={(e) => {
-											if (e.key === 'Enter') {
-												filterStore.set({ ...defaultFilter, tags: [item.label] });
-												goto('/documents');
-											}
-										}}
-									>
-										<td class="py-2 pr-4 text-parchment-200">
-											<span
-												class="inline-block h-2.5 w-2.5 rounded-full"
-												style="background-color: {chartColors[i % chartColors.length]}"
-											></span>
-											<span class="ml-2">{item.label}</span>
-										</td>
-										<td class="py-2 text-parchment-400">
-											<div class="flex items-center gap-2">
-												<div class="h-2 w-24 overflow-hidden rounded-full bg-clay-800 sm:w-32">
-													<div
-														class="h-2 rounded-full transition-[width,background-color]"
-														style="width: {(item.count / maxTagCount()) *
-															100}%; background-color: {chartColors[i % chartColors.length]}"
-													></div>
-												</div>
-												<span class="tabular-nums">{formatNumber(item.count)}</span>
-											</div>
+								{#each analytics.tag_frequency as item, i (i)}
+									<tr class="border-b border-clay-800/50 hover:bg-clay-800">
+										<td class="p-0" colspan="2">
+											<a
+												href={resolve(`/documents`)}
+												class="flex w-full items-center gap-2 px-4 py-2 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+												onclick={(e) => {
+													e.preventDefault();
+													goToFilter({ tags: [item.label] });
+												}}
+											>
+												<span
+													class="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+													style="background-color: {chartColors[i % chartColors.length]}"
+												></span>
+												<span class="truncate text-parchment-200">{item.label}</span>
+												<span class="min-w-0 flex-1">
+													<span class="block h-2 w-full overflow-hidden rounded-full bg-clay-800">
+														<span
+															class="block h-2 rounded-full transition-[width,background-color]"
+															style="width: {(item.count / maxTagCount()) *
+																100}%; background-color: {chartColors[i % chartColors.length]}"
+														></span>
+													</span>
+												</span>
+												<span class="shrink-0 text-parchment-400 tabular-nums"
+													>{formatNumber(item.count)}</span
+												>
+											</a>
 										</td>
 									</tr>
 								{/each}
@@ -135,24 +132,25 @@
 
 		{#if analytics?.language_distribution?.length}
 			<section class="min-w-0 flex-1">
-				<h3 class="mb-3 text-base font-semibold text-parchment-200">Language Distribution</h3>
+				<h3 class="mb-3 text-base font-semibold text-balance text-parchment-200">
+					Language Distribution
+				</h3>
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<div class="space-y-2">
-						{#each analytics.language_distribution as item, i}
+						{#each analytics.language_distribution as item, i (i)}
 							<a
-								href="/documents"
+								href={resolve(`/documents`)}
 								class="flex cursor-pointer items-center gap-3 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 								onclick={(e) => {
 									e.preventDefault();
-									filterStore.set({ ...defaultFilter, language: item.label });
-									goto('/documents');
+									goToFilter({ language: item.label });
 								}}
 							>
 								<div
 									class="h-4 w-4 shrink-0 rounded"
 									style="background-color: {chartColors[i % chartColors.length]}"
 								></div>
-								<div class="flex-1">
+								<div class="min-w-0 flex-1">
 									<div class="flex justify-between text-sm">
 										<span class="truncate text-parchment-200">{langLabel(item.label)}</span>
 										<span class="shrink-0 text-parchment-500 tabular-nums"
@@ -176,24 +174,25 @@
 
 		{#if analytics?.document_type_distribution?.length}
 			<section class="min-w-0 flex-1">
-				<h3 class="mb-3 text-base font-semibold text-parchment-200">Document Type Distribution</h3>
+				<h3 class="mb-3 text-base font-semibold text-balance text-parchment-200">
+					Document Type Distribution
+				</h3>
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<div class="space-y-2">
-						{#each analytics.document_type_distribution as item, i}
+						{#each analytics.document_type_distribution as item, i (i)}
 							<a
-								href="/documents"
+								href={resolve(`/documents`)}
 								class="flex cursor-pointer items-center gap-3 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 								onclick={(e) => {
 									e.preventDefault();
-									filterStore.set({ ...defaultFilter, documentType: item.label });
-									goto('/documents');
+									goToFilter({ documentType: item.label });
 								}}
 							>
 								<div
 									class="h-4 w-4 shrink-0 rounded"
 									style="background-color: {chartColors[i % chartColors.length]}"
 								></div>
-								<div class="flex-1">
+								<div class="min-w-0 flex-1">
 									<div class="flex justify-between text-sm">
 										<span class="truncate text-parchment-200">{item.label}</span>
 										<span class="shrink-0 text-parchment-500 tabular-nums"

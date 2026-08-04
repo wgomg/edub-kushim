@@ -1,5 +1,6 @@
 <script>
 	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { filterStore } from '$lib/stores/filterStore.js';
 	import { defaultFilter } from '$lib/stores/searchFilter.js';
 	import DataTable from '$lib/components/DataTable.svelte';
@@ -15,8 +16,9 @@
 	let editingTag = $state(null);
 	let formName = $state('');
 	let error = $state('');
-	let query = $state('');
+	let query = $state(new URL(window.location.href).searchParams.get('q') || '');
 	let refreshKey = $state(0);
+	let savingTag = $state(false);
 
 	const columns = [
 		{
@@ -49,7 +51,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 
 	function filterByTag(row) {
 		filterStore.set({ ...defaultFilter, tags: [row.name] });
-		goto('/documents');
+		goto(resolve('/documents'));
 	}
 
 	async function fetch({ limit, offset }) {
@@ -77,12 +79,14 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			error = 'Tag name is required';
 			return;
 		}
+		savingTag = true;
 		let result;
 		if (editingTag) {
 			result = await api.tags.update(editingTag.id, name);
 		} else {
 			result = await api.tags.create(name);
 		}
+		savingTag = false;
 		if (result.ok) {
 			showModal = false;
 			refreshKey++;
@@ -122,13 +126,13 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 	}
 </script>
 
-<div class="space-y-4" onclick={handlePageClick} onkeydown={() => {}} role="presentation">
+<div class="space-y-4">
 	<div class="flex items-center justify-between">
-		<h1 class="text-2xl font-semibold text-parchment-200">Tags</h1>
+		<h1 class="text-2xl font-semibold text-balance text-parchment-200">Tags</h1>
 		{#if !authStore.authEnabled() || authStore.isEditor()}
 			<button
 				onclick={openNew}
-				class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600"
+				class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 			>
 				New Tag
 			</button>
@@ -141,8 +145,15 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			id="tag-filter"
 			type="text"
 			bind:value={query}
-			oninput={() => refreshKey++}
+			oninput={() => {
+				refreshKey++;
+				const url = new URL(window.location.href);
+				if (query) url.searchParams.set('q', query);
+				else url.searchParams.delete('q');
+				goto(resolve(url.pathname + url.search), { replaceState: true, keepFocus: true });
+			}}
 			name="tag-filter"
+			autocomplete="off"
 			placeholder="Filter tags…"
 			class="w-full max-w-xs rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
 		/>
@@ -156,6 +167,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 		pageSizes={[10, 25, 50, 100]}
 		{refreshKey}
 		onRowClick={filterByTag}
+		onActionClick={handlePageClick}
+		urlSync="tags"
 	/>
 </div>
 
@@ -183,7 +196,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 				/>
 			</div>
 			{#if error}
-				<p class="text-sm text-terracotta-500">{error}</p>
+				<p class="text-sm text-terracotta-500" aria-live="polite">{error}</p>
 			{/if}
 			<div class="flex justify-end gap-2">
 				<button
@@ -195,10 +208,10 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 				</button>
 				<button
 					type="submit"
-					disabled={!formName.trim()}
+					disabled={savingTag}
 					class="rounded-md bg-gold-500 px-3 py-1.5 text-xs font-medium text-clay-950 hover:bg-gold-600 disabled:opacity-50"
 				>
-					{editingTag ? 'Save' : 'Create'}
+					{savingTag ? 'Saving…' : editingTag ? 'Save' : 'Create'}
 				</button>
 			</div>
 		</div>

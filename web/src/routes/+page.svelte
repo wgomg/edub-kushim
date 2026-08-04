@@ -1,5 +1,6 @@
 <script>
 	import { onMount, onDestroy } from 'svelte';
+	import { resolve } from '$app/paths';
 	import { api } from '$lib/api';
 	import { formatSize } from '$lib/utils/html.js';
 	import StoragePanel from '$lib/components/StoragePanel.svelte';
@@ -66,7 +67,8 @@
 		<h1 class="text-2xl font-semibold text-parchment-200">Dashboard</h1>
 		<button
 			onclick={() => (autoRefresh = !autoRefresh)}
-			class="rounded-md px-3 py-1.5 text-xs font-medium transition-colors {autoRefresh
+			aria-pressed={autoRefresh}
+			class="rounded-md px-3 py-1.5 text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none {autoRefresh
 				? 'bg-gold-500 text-clay-950 hover:bg-gold-600'
 				: 'bg-clay-800 text-parchment-400 hover:bg-clay-700'}"
 		>
@@ -94,7 +96,7 @@
 		<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 			<p class="text-sm text-parchment-500">Total Size</p>
 			<p class="mt-1 text-lg font-semibold text-parchment-200">
-				{dashboard ? dashboard.total_size_gb.toFixed(2) + ' GB' : '…'}
+				{dashboard ? formatSize(Math.round(dashboard.total_size_gb * 1073741824)) : '…'}
 			</p>
 		</div>
 	</div>
@@ -105,31 +107,43 @@
 			<div class="grid grid-cols-2 gap-4 sm:grid-cols-7">
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-sm text-parchment-500">Waiting</p>
-					<p class="mt-1 text-lg font-semibold text-amber-400">{dashboard.waiting}</p>
+					<p class="mt-1 text-lg font-semibold text-amber-400 tabular-nums">{dashboard.waiting}</p>
 				</div>
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-sm text-parchment-500">Pending</p>
-					<p class="mt-1 text-lg font-semibold text-parchment-400">{dashboard.pending}</p>
+					<p class="mt-1 text-lg font-semibold text-parchment-400 tabular-nums">
+						{dashboard.pending}
+					</p>
 				</div>
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-sm text-parchment-500">Processing</p>
-					<p class="mt-1 text-lg font-semibold text-lapis-600">{dashboard.processing}</p>
+					<p class="mt-1 text-lg font-semibold text-lapis-600 tabular-nums">
+						{dashboard.processing}
+					</p>
 				</div>
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-sm text-parchment-500">Completed</p>
-					<p class="mt-1 text-lg font-semibold text-emerald-500">{dashboard.completed}</p>
+					<p class="mt-1 text-lg font-semibold text-emerald-500 tabular-nums">
+						{dashboard.completed}
+					</p>
 				</div>
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-sm text-parchment-500">Failed</p>
-					<p class="mt-1 text-lg font-semibold text-terracotta-500">{dashboard.failed}</p>
+					<p class="mt-1 text-lg font-semibold text-terracotta-500 tabular-nums">
+						{dashboard.failed}
+					</p>
 				</div>
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-sm text-parchment-500">Cancelled</p>
-					<p class="mt-1 text-lg font-semibold text-parchment-500">{dashboard.cancelled}</p>
+					<p class="mt-1 text-lg font-semibold text-parchment-500 tabular-nums">
+						{dashboard.cancelled}
+					</p>
 				</div>
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-sm text-parchment-500">Discarded</p>
-					<p class="mt-1 text-lg font-semibold text-terracotta-400">{dashboard.discarded}</p>
+					<p class="mt-1 text-lg font-semibold text-terracotta-400 tabular-nums">
+						{dashboard.discarded}
+					</p>
 				</div>
 			</div>
 		</section>
@@ -178,11 +192,11 @@
 		<section>
 			<h2 class="mb-3 text-lg font-semibold text-parchment-200">Recent Documents</h2>
 			<div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
-				{#each docColumns as col}
-					<div class="space-y-2">
-						{#each col as doc}
+				{#each docColumns as col, i (i)}
+					<div class="min-w-0 space-y-2">
+						{#each col as doc (doc.id)}
 							<a
-								href="/documents/{doc.id}"
+								href={resolve(`/documents/${doc.id}`)}
 								class="block rounded-lg border border-clay-800 bg-clay-900 p-3 transition-colors hover:bg-clay-800"
 							>
 								<p class="truncate text-sm text-parchment-200">{doc.title || 'Untitled'}</p>

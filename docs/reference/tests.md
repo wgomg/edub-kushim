@@ -2,7 +2,7 @@
 
 ## Overview
 
-The project has **20+ test packages and 370+ unit/integration tests**, with a two-tier
+The project has **20+ test packages and 375+ unit/integration tests**, with a two-tier
 run strategy:
 
 - **`make test`** (12 packages, no database required) — LLM registry, config, API types,
@@ -14,14 +14,20 @@ run strategy:
   orphaned, errored files, users, enrichment, API keys), API handlers, and consumption
   pipeline.
 
-All tests run with `CGO_ENABLED=0` (no Tesseract, MuPDF, or Ghostscript required).
+All non-CGo tiers run with `CGO_ENABLED=0` (no Tesseract, MuPDF, or
+Ghostscript required); `make test-cgo` runs with `CGO_ENABLED=1` and needs
+`make build-deps` first. Every invocation goes through the Makefile, which
+exports the `-tags "XLA,ORT"` tags and the CGo environment — bare `go test`
+is not supported.
 
 ### Quick Start
 
 ```bash
 make test          # runs all non-CGo tests
 make test-verbose  # same with verbose output
-CGO_ENABLED=0 go test -tags "XLA,ORT" ./internal/...
+make test-db       # database-dependent tests (requires TEST_DATABASE_URL)
+make test-cgo      # CGo-gated adapter tests (requires make build-deps first)
+make test-one PKG=./internal/errs/   # single package; add RUN=Name to filter
 ```
 
 ### Continuous Integration
@@ -52,10 +58,10 @@ The `global` ruleset requires the `test` and `web` checks to pass before a PR to
 | `internal/tools/adapters/contentanalyzer` | 14 | NormalizeTags (transforms, accent folding, dedup/drop), BuildPrompt (default/custom/malformed/execution error/whitespace), BuildDocTypePrompt (with/without metadata), ExtractHeadTailWords, FilterTags (18 cases: person token overlap, title overlap, doc-type match, known name subset, >3-word cap, maxTags cap, combined rules), DocMetadata.Format (all fields/partial/zero-valued), checkContentTooLarge (nil caps/zero/negative/within limit/exceeds), parseTokenLimitError (no match/empty/valid OpenAI/zero tokens/partial match) |
 | `internal/errs` | 7 | Error constructors preserve kind/op/cause, Error() string formatting, Unwrap(), KindOf through plain/wrapped/nil errors, FromDB (nil→nil, ErrNoRows→NotFound, unique violation→Conflict, other→Internal), PgError predicates (unique/foreign key/deadlock/serialization/plain/wrapped) |
 | `internal/pool` | 5 | StartStop (workers call runner, stop terminates), ContextCancellation (cancel stops pool), DoubleStop (sync.Once no panic), PanicRecovery_Restart (worker survives panic and restarts), PanicRecovery_StopDuringRestart (clean shutdown during restart delay) |
-| `internal/database` | 29 | sqlc-generated CRUD, task lifecycle, enrich waiting flow, batch ownership, FTS-adjacent operations, document/tag/people/document-type CRUD, saved searches, dashboard analytics queries (empty DB + mixed data), structured search missing filters (MissingLanguage/MissingType/Untagged), WithDocumentCount queries, backup lock lifecycle, gated task claiming, soft delete (TestUpdateDeleteDocument now asserts soft-delete semantics) |
+| `internal/database` | 32 | sqlc-generated CRUD, task lifecycle, enrich waiting flow, enrich discard/restore/sweep queries (SetEnrichTaskWaiting, RestoreDiscardedEnrichTasks, DiscardWaitingEnrichesOfFailedConsumes), batch ownership, FTS-adjacent operations, document/tag/people/document-type CRUD, saved searches, dashboard analytics queries (empty DB + mixed data), structured search missing filters (MissingLanguage/MissingType/Untagged), WithDocumentCount queries, backup lock lifecycle, gated task claiming, soft delete (TestUpdateDeleteDocument now asserts soft-delete semantics) |
 | `internal/search` | 8 | tsvector search with snippets, ranking, pagination; structured search with mime/language/date/missing filters; query sanitization; engine construction |
-| `internal/task` | 25 | Store (create/get/claim/complete/fail), dedup key uniqueness, dispatcher enqueue with custom status/ID, runner (complete/fail/no-tasks), nil payload handling, backup lock gating for consume/enrich/config, pool lifecycle |
-| `internal/service` | 74 | Batch create/get/owner-state/pending/active/cancel/queue, orphaned scan/delete/restore/move-to-inbox, errored files list/download/delete/delete-all, user API key create/revoke/rotate/validate, user Create with role defaults/explicit/invalid, UpdateRole (valid/invalid), Update with role change, password validation (12+ rules) |
+| `internal/task` | 27 | Store (create/get/claim/complete/fail), dedup key uniqueness, dispatcher enqueue with custom status/ID, runner (complete/fail/no-tasks), nil payload handling, backup lock gating for consume/enrich/config, pool lifecycle, Retry (restores discarded enrich of a retried consume), consume-handler early-exit discards (external `task_test` package exercising `handlers.ConsumeTaskHandler` against a DB-backed store) |
+| `internal/service` | 76 | Batch create/get/owner-state/pending/active/cancel/queue, RetryFailed (restores discarded enriches, batch-scoped), ResetStaleProcessingTasks (restore + global sweep), ResetProcessingTasksByBatch restore, orphaned scan/delete/restore/move-to-inbox, errored files list/download/delete/delete-all, user API key create/revoke/rotate/validate, user Create with role defaults/explicit/invalid, UpdateRole (valid/invalid), Update with role change, password validation (12+ rules) |
 | `internal/api/handlers` | 60 | Document CRUD, tag/people/DocumentType CRUD, user CRUD (with role), task endpoints, saved searches, concurrent operations, dashboard activity + analytics + processing health, analytics error path, config handler get/status, batch delete limits, error helpers, auth login (valid/invalid/empty/claims/role), auth logout, API key generate/revoke/rotate/status/forbidden/invalid-id/not-found, MeHandler (valid/missing-id/not-found), self-service API key handlers (MeGenerateKey/MeRevokeKey/MeRotateKey/MeGetKeyStatus/unauthorized), orphaned handler (list/scan/delete/restore/move-to-inbox/delete-all/move-all), errored handler (list/download/delete/delete-all), logs handler (invalid name/file not found/success/line clamping/large file tail/empty file) |
 | `internal/consumption` | 20 | Full consumer pipeline via mock runner (file discovery, DB transaction, file movement, duplicate detection), file I/O helpers (get, move, copy, remove, clean up), checksum calculation, orphaned file management |
 | `internal/backup` | 12 | Create (full backup/missing DB/missing storage/no files/SQL dump content), ApplyRetention (delete oldest/keep all/keep 0), ValidateArchive (valid/invalid gzip/missing manifest/missing file), ExtractArchive (valid/path traversal/symlink skip), ReplaceFiles (SQL dump/unknown format), CopyDir |
@@ -169,27 +175,15 @@ any environment regardless of C library availability.
 
 ### Database-dependent tests (`make test-db`)
 
-Packages requiring PostgreSQL 16+:
+Packages requiring PostgreSQL 16+ (via `TEST_DATABASE_URL`):
 
 ```bash
 make test-db
-# Equivalent:
-CGO_ENABLED=0 go test -tags "XLA,ORT" -count=1 -timeout 120s \
-    ./internal/database/ \
-    ./internal/search/ \
-    ./internal/task/ \
-    ./internal/service/ \
-    ./internal/api/handlers/ \
-    ./internal/consumption/
 ```
 
 The `internal/backup` tests also require PostgreSQL (via `database.NewTestDB`);
-they are not part of any Makefile target and can be run manually with the same
-`TEST_DATABASE_URL` environment:
-
-```bash
-CGO_ENABLED=0 go test -tags "XLA,ORT" -count=1 ./internal/backup/
-```
+they run through `make test-backup` with the same `TEST_DATABASE_URL`
+environment.
 
 ### CGo-dependent tests (`make test-cgo`)
 
@@ -215,17 +209,17 @@ make test-cgo-musl     # podman: kushim-musl-builder
 | `internal/tools/adapters/ocr` | 6 | No (pure Go, build-tag gated) |
 | `internal/tools/adapters/tagmatcher` | 2 | No (pure Go, build-tag gated) |
 
-### Manual
+### Single package
 
 ```bash
-# Single package (without DB)
-CGO_ENABLED=0 go test -tags "XLA,ORT" -v ./internal/errs/
-
-# Single package (with DB, requires TEST_DATABASE_URL)
-CGO_ENABLED=0 go test -tags "XLA,ORT" -v ./internal/database/
+# Without DB (CGO_ENABLED=0)
+make test-one PKG=./internal/errs/
 
 # Specific test
-CGO_ENABLED=0 go test -tags "XLA,ORT" -v -run "TestTaskLifecycle" ./internal/database/
+make test-one PKG=./internal/database/ RUN=TestTaskLifecycle
+
+# CGo-gated package (requires make build-deps first)
+make test-cgo
 ```
 
 ### Test Helpers

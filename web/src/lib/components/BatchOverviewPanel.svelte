@@ -1,7 +1,13 @@
 <script>
+	import { onMount } from 'svelte';
+	import { resolve } from '$app/paths';
 	import { formatDuration } from '$lib/utils/html.js';
 
 	let { recentBatches = [] } = $props();
+
+	// locale-dependent date formatting differs server/client; render only after mount
+	let mounted = $state(false);
+	onMount(() => (mounted = true));
 
 	function truncateId(id) {
 		if (!id) return '';
@@ -47,38 +53,42 @@
 			<table class="w-full text-sm">
 				<thead>
 					<tr class="border-b border-clay-800 text-left text-parchment-500">
-						<th class="px-4 py-3 font-medium">Batch ID</th>
-						<th class="px-4 py-3 font-medium">Source</th>
-						<th class="px-4 py-3 font-medium">Created</th>
-						<th class="px-4 py-3 font-medium">Status</th>
-						<th class="px-4 py-3 font-medium">Duration</th>
-						<th class="px-4 py-3 font-medium">Owner</th>
+						<th class="px-4 py-3 font-medium" scope="col">Batch ID</th>
+						<th class="px-4 py-3 font-medium" scope="col">Source</th>
+						<th class="px-4 py-3 font-medium" scope="col">Created</th>
+						<th class="px-4 py-3 font-medium" scope="col">Status</th>
+						<th class="px-4 py-3 font-medium" scope="col">Duration</th>
+						<th class="px-4 py-3 font-medium" scope="col">Owner</th>
 					</tr>
 				</thead>
 				<tbody>
-					{#each recentBatches as batch}
+					{#each recentBatches as batch (batch.batch_id)}
 						<tr class="border-b border-clay-800/50 hover:bg-clay-800/50">
 							<td class="px-4 py-3">
 								<a
-									href="/tasks?batch={batch.batch_id}"
+									href={resolve(`/tasks?batch=${batch.batch_id}`)}
 									class="font-mono text-xs text-gold-500 hover:text-gold-600"
 								>
 									{truncateId(batch.batch_id)}
 								</a>
 							</td>
 							<td class="px-4 py-3 text-parchment-400">{batch.source}</td>
-							<td class="px-4 py-3 text-parchment-400">{formatDate(batch.created_at)}</td>
+							<td class="px-4 py-3 text-parchment-400"
+								>{mounted ? formatDate(batch.created_at) : ''}</td
+							>
 							<td class="px-4 py-3">
 								<div class="flex h-4 w-28 overflow-hidden rounded-full bg-clay-800 sm:w-36">
-									{#each statusBarStyle(batch) as seg}
+									{#each statusBarStyle(batch) as seg, i (i)}
 										<div
-											class="{seg.class} h-full transition-[width]"
+											class="{seg.class} h-full transition-[width] motion-reduce:transition-none"
 											style="width: {seg.width}%"
 										></div>
 									{/each}
 								</div>
 							</td>
-							<td class="px-4 py-3 text-parchment-400">{formatDuration(batch.duration_ms)}</td>
+							<td class="px-4 py-3 text-parchment-400 tabular-nums"
+								>{formatDuration(batch.duration_ms)}</td
+							>
 							<td class="px-4 py-3">
 								{#if batch.orphaned}
 									<span

@@ -1,6 +1,7 @@
 <script>
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { api } from '$lib/api';
 	import * as authStore from '$lib/stores/authStore.js';
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
@@ -18,7 +19,7 @@
 
 	onMount(async () => {
 		if (!authStore.isAuthenticated()) {
-			goto('/');
+			goto(resolve('/'));
 			return;
 		}
 		await load();
@@ -99,10 +100,18 @@
 {#if loading}
 	<p class="text-parchment-500">Loading…</p>
 {:else if !profile}
-	<p class="text-parchment-500">Failed to load profile.</p>
+	<div class="mx-auto max-w-lg">
+		<p class="text-parchment-500">Failed to load profile.</p>
+		<button
+			onclick={load}
+			class="mt-4 rounded-md bg-clay-800 px-4 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-700 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+		>
+			Retry
+		</button>
+	</div>
 {:else}
 	<div class="mx-auto max-w-lg space-y-6">
-		<h1 class="text-2xl font-bold text-parchment-200">Profile</h1>
+		<h1 class="text-2xl font-bold text-balance text-parchment-200">Profile</h1>
 
 		<div class="rounded-xl border border-clay-800 bg-clay-900 p-5">
 			<h2 class="mb-4 text-lg font-semibold text-parchment-200">Account</h2>
@@ -146,11 +155,12 @@
 							<p class="mb-2 font-mono text-sm break-all text-parchment-200">{rawKey}</p>
 							<button
 								onclick={copyKey}
-								class="rounded-md bg-gold-600 px-3 py-1 text-xs font-medium text-clay-950 hover:bg-gold-500"
+								aria-live="polite"
+								class="rounded-md bg-gold-600 px-3 py-1 text-xs font-medium text-clay-950 hover:bg-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 							>
 								{copied ? 'Copied!' : 'Copy to Clipboard'}
 							</button>
-							<p class="mt-2 text-xs text-terracotta-500">
+							<p class="mt-2 text-xs text-terracotta-500" aria-live="polite">
 								Save this key — it will not be shown again
 							</p>
 						</div>

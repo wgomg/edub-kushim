@@ -3,10 +3,12 @@ package task
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type BatchFilter struct {
@@ -122,7 +124,7 @@ func ListFiltered(ctx context.Context, queries *database.Queries, f TaskFilter) 
 	}
 }
 
-func Retry(ctx context.Context, queries *database.Queries, taskID string) error {
+func Retry(ctx context.Context, queries *database.Queries, logger *utils.Logger, taskID string) error {
 	task, err := queries.GetTaskByTaskID(ctx, taskID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -133,7 +135,26 @@ func Retry(ctx context.Context, queries *database.Queries, taskID string) error 
 	if task.Status != "failed" {
 		return fmt.Errorf("task %q is %s, not failed", taskID, task.Status)
 	}
-	return queries.RetryTask(ctx, task.ID)
+	if err := queries.RetryTask(ctx, task.ID); err != nil {
+		return err
+	}
+
+	if task.TaskType == "consume" && task.Payload != nil {
+		if onCompleted := consumeOnCompleted(*task.Payload); onCompleted != "" {
+			if _, err := queries.SetEnrichTaskWaiting(ctx, onCompleted); err != nil {
+				logger.Error(nil, "restore enrich task %s after retry of consume %s failed: %v (will be recovered by activation or sweep)", onCompleted, taskID, err)
+			}
+		}
+	}
+	return nil
+}
+
+func consumeOnCompleted(payload json.RawMessage) string {
+	var p struct {
+		OnCompleted string `json:"on_completed"`
+	}
+	json.Unmarshal(payload, &p)
+	return p.OnCompleted
 }
 
 

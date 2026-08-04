@@ -149,6 +149,10 @@ func (h *ConfigHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if err := config.ValidateSave(configDir, body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	if err := config.SaveMap(configDir, body); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -341,7 +345,7 @@ func (h *ConfigHandler) RetryFailedConfig(w http.ResponseWriter, r *http.Request
 
 	retried := 0
 	for _, t := range failedTasks {
-		if err := task.Retry(ctx, h.queries, t.TaskID); err != nil {
+		if err := task.Retry(ctx, h.queries, h.logger, t.TaskID); err != nil {
 			h.logger.Error(nil, "retry config task %s: %v", t.TaskID, err)
 			continue
 		}

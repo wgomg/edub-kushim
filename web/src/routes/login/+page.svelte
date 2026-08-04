@@ -1,5 +1,6 @@
 <script>
 	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { api } from '$lib/api.js';
 	import * as authStore from '$lib/stores/authStore.js';
 
@@ -20,7 +21,7 @@
 			const res = await api.auth.login(username.trim(), password);
 			if (res.ok && res.data && res.data.token) {
 				authStore.login(res.data.token, res.data.user);
-				goto('/');
+				goto(resolve('/'));
 			} else if (res.status === 401) {
 				authStore.logout();
 				error = 'Invalid username or password. Please check your credentials and try again.';
@@ -52,6 +53,7 @@
 				>
 				<input
 					id="login-username"
+					name="username"
 					type="text"
 					bind:value={username}
 					placeholder="Username"
@@ -66,6 +68,7 @@
 				>
 				<input
 					id="login-password"
+					name="password"
 					type="password"
 					bind:value={password}
 					placeholder="Password"

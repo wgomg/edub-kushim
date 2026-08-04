@@ -1,4 +1,5 @@
 <script>
+	import { resolve } from '$app/paths';
 	import { formatDuration } from '$lib/utils/html.js';
 
 	let { health = null } = $props();
@@ -29,7 +30,10 @@
 			<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 				<p class="text-sm text-parchment-500">Success Rate (7d)</p>
 				<p class="mt-1 text-lg font-semibold {successRateClass(health.success_rate)}">
-					{(health.success_rate * 100).toFixed(1)}%
+					{new Intl.NumberFormat(undefined, {
+						style: 'percent',
+						maximumFractionDigits: 1
+					}).format(health.success_rate)}
 				</p>
 			</div>
 			<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
@@ -40,7 +44,10 @@
 			</div>
 			<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 				<p class="text-sm text-parchment-500">Active Batches</p>
-				<a href="/tasks" class="mt-1 block text-lg font-semibold text-gold-500 hover:text-gold-600">
+				<a
+					href={resolve(`/tasks`)}
+					class="mt-1 block text-lg font-semibold text-gold-500 hover:text-gold-600"
+				>
 					{health.active_batches}
 				</a>
 			</div>
@@ -53,7 +60,7 @@
 			<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 				<p class="text-sm text-parchment-500">Missing Tools</p>
 				<a
-					href="/settings"
+					href={resolve(`/settings`)}
 					class="mt-1 block text-lg font-semibold {missingToolsClass(
 						health.missing_tools
 					)} hover:underline"

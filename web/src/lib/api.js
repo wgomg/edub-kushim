@@ -396,6 +396,35 @@ export const api = {
 		moveAllToInbox: () => requestRaw('/api/v1/orphaned/move-to-inbox-all', { method: 'POST' })
 	},
 
+	trash: {
+		list: (limit = 50, offset = 0) =>
+			request(`/api/v1/trash?limit=${limit}&offset=${offset}`).then((data) => ({
+				results: data?.documents ?? [],
+				total: data?.total ?? 0
+			})),
+
+		restore: (documentId) => requestRaw(`/api/v1/trash/${documentId}/restore`, { method: 'POST' }),
+
+		permanentDelete: (documentId) =>
+			requestRaw(`/api/v1/trash/${documentId}`, { method: 'DELETE' }),
+
+		batchRestore: (ids) =>
+			requestRaw('/api/v1/trash/batch-restore', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ document_ids: ids })
+			}),
+
+		batchPermanentDelete: (ids) =>
+			requestRaw('/api/v1/trash/batch-delete', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ document_ids: ids })
+			}),
+
+		purge: () => requestRaw('/api/v1/trash/purge', { method: 'POST' })
+	},
+
 	errored: {
 		list: () => request('/api/v1/errored').then((data) => data ?? []),
 

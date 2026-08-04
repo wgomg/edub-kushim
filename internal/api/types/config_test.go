@@ -145,6 +145,21 @@ func TestConfigResponseFrom_PauseOnCreditError(t *testing.T) {
 	}
 }
 
+func TestConfigResponseFrom_RequestDelay(t *testing.T) {
+	cfg := config.DefaultConfig("/tmp/test")
+	resp := ConfigResponseFrom(cfg)
+
+	if resp.Enricher.ContentAnalyzer.Llm.RequestDelay != 1 {
+		t.Errorf("default RequestDelay = %v, want 1", resp.Enricher.ContentAnalyzer.Llm.RequestDelay)
+	}
+
+	cfg.Enricher.ContentAnalyzer.Llm.RequestDelay = 2.5
+	resp = ConfigResponseFrom(cfg)
+	if resp.Enricher.ContentAnalyzer.Llm.RequestDelay != 2.5 {
+		t.Errorf("RequestDelay = %v, want 2.5", resp.Enricher.ContentAnalyzer.Llm.RequestDelay)
+	}
+}
+
 func TestConfigResponseFrom_ConsumerFields(t *testing.T) {
 	cfg := config.DefaultConfig("/tmp/test")
 	cfg.Consumer.SupportedFiles = []string{".pdf", ".tiff"}

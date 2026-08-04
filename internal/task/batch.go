@@ -142,6 +142,10 @@ func (o *Owner) ResetProcessingByBatch(ctx context.Context, batchID string) (int
 		return 0, fmt.Errorf("reset processing tasks by batch: %w", err)
 	}
 
+	if _, err := txQ.RestoreDiscardedEnrichTasksByBatch(ctx, bid); err != nil {
+		return 0, fmt.Errorf("restore discarded enrich tasks by batch: %w", err)
+	}
+
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("commit transaction for reset processing tasks by batch: %w", err)
 	}

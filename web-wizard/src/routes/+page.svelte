@@ -3,7 +3,7 @@
 	import { configApi } from '$lib/api.js';
 	import { hintsForEngine } from '$lib/tools.js';
 
-	let step = $state(1);
+	let step = $state(parseInt(new URL(window.location.href).searchParams.get('step') || '1') || 1);
 	let configDir = $state('');
 	let cfg = $state(null);
 	let pendingTasks = $state(0);
@@ -22,9 +22,16 @@
 	let confirmError = $state('');
 	let adminCreating = $state(false);
 	let saving = $state(false);
+	let submittingDir = $state(false);
 	let serviceFilesPath = $state('');
 
 	let mimeTypeOptions = $state([]);
+
+	$effect(() => {
+		const url = new URL(window.location.href);
+		url.searchParams.set('step', String(step));
+		history.replaceState(null, '', url.pathname + url.search);
+	});
 
 	function syncMimeCheckboxes() {
 		const types = cfg?.available_file_types;
@@ -60,6 +67,7 @@
 	async function submitConfigDir(e) {
 		e.preventDefault();
 		error = '';
+		submittingDir = true;
 		try {
 			const res = await configApi.update({ config_dir: configDir });
 			if (res && res.service_files_path) {
@@ -73,6 +81,8 @@
 			step = 2;
 		} catch (e) {
 			error = e.message;
+		} finally {
+			submittingDir = false;
 		}
 	}
 
@@ -121,7 +131,11 @@
 			'consumer.textextractor.engine': cfg.consumer.textextractor.engine,
 			'consumer.textextractor.timeout': Number(cfg.consumer.textextractor.timeout),
 			...(mimeTypeOptions.length > 0
-				? { 'consumer.supported_files': mimeTypeOptions.filter((o) => o.checked).flatMap((o) => o.extensions) }
+				? {
+						'consumer.supported_files': mimeTypeOptions
+							.filter((o) => o.checked)
+							.flatMap((o) => o.extensions)
+					}
 				: {}),
 			'consumer.converter.enabled': cfg.consumer.converter.enabled,
 			'consumer.converter.binary': cfg.consumer.converter.binary,
@@ -131,7 +145,9 @@
 			'enricher.textreducer.timeout': Number(cfg.enricher.textreducer.timeout),
 			'enricher.textreducer.target_words': Number(cfg.enricher.textreducer.target_words),
 			'enricher.tagmatcher.timeout': Number(cfg.enricher.tagmatcher.timeout),
-			'enricher.tagmatcher.reduce_target_words': Number(cfg.enricher.tagmatcher.reduce_target_words),
+			'enricher.tagmatcher.reduce_target_words': Number(
+				cfg.enricher.tagmatcher.reduce_target_words
+			),
 			'enricher.tagmatcher.chunk_size': Number(cfg.enricher.tagmatcher.chunk_size),
 			'enricher.tagmatcher.hugot.model': cfg.enricher.tagmatcher.hugot.model,
 			'enricher.tagmatcher.hugot.backend': cfg.enricher.tagmatcher.hugot.backend,
@@ -186,6 +202,8 @@
 	}
 
 	function removeLanguage(index) {
+		const lang = cfg.consumer.ocr.languages[index];
+		if (lang && lang.trim() && !window.confirm(`Remove language "${lang}"?`)) return;
 		cfg.consumer.ocr.languages = cfg.consumer.ocr.languages.filter((_, i) => i !== index);
 	}
 
@@ -210,8 +228,14 @@
 			passwordError = 'Password must be at least 12 characters';
 			hasError = true;
 		}
-		if (!/[A-Z]/.test(adminPassword) || !/[a-z]/.test(adminPassword) || !/[0-9]/.test(adminPassword) || !/[^A-Za-z0-9]/.test(adminPassword)) {
-			passwordError = 'Password must contain at least one uppercase letter, lowercase letter, digit, and special character';
+		if (
+			!/[A-Z]/.test(adminPassword) ||
+			!/[a-z]/.test(adminPassword) ||
+			!/[0-9]/.test(adminPassword) ||
+			!/[^A-Za-z0-9]/.test(adminPassword)
+		) {
+			passwordError =
+				'Password must contain at least one uppercase letter, lowercase letter, digit, and special character';
 			hasError = true;
 		}
 		if (adminPassword !== adminConfirm) {
@@ -236,7 +260,10 @@
 </script>
 
 {#if error}
-	<div aria-live="polite" class="mb-4 rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500">
+	<div
+		aria-live="polite"
+		class="mb-4 rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500"
+	>
 		{error}
 	</div>
 {/if}
@@ -246,7 +273,7 @@
 {/if}
 
 {#if step === 1}
-	<form onsubmit={submitConfigDir} class="space-y-4 touch-manipulation">
+	<form onsubmit={submitConfigDir} class="touch-manipulation space-y-4">
 		<div>
 			<label for="config-dir" class="mb-1 block text-sm font-medium text-parchment-200">
 				Configuration directory
@@ -255,7 +282,7 @@
 				id="config-dir"
 				type="text"
 				bind:value={configDir}
-				placeholder="/home/user/.config/edub-kushim"
+				placeholder="/home/user/.config/edub-kushim…"
 				autocomplete="off"
 				required
 				class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -263,102 +290,154 @@
 			<p class="mt-1 text-xs text-parchment-500">
 				Where config.yaml, database, and downloaded models will be stored.
 			</p>
+			{#if error}
+				<p class="mt-1 text-xs text-terracotta-500">{error}</p>
+			{/if}
 		</div>
 		<button
 			type="submit"
-			class="w-full rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600"
+			disabled={submittingDir}
+			class="w-full rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600 disabled:cursor-not-allowed disabled:opacity-50"
 		>
-			Continue
+			{submittingDir ? 'Continuing…' : 'Continue'}
 		</button>
 	</form>
 {/if}
 
 {#if step === 2 && cfg}
 	<div class="mb-4 text-center">
-		<p class="text-xs font-medium uppercase tracking-wide text-parchment-500">Step 2 of 6</p>
-		<h2 class="text-lg font-semibold text-parchment-200 text-balance">Consumer Settings</h2>
+		<p class="text-xs font-medium tracking-wide text-parchment-500 uppercase">Step 2 of 6</p>
+		<h2 class="text-lg font-semibold text-balance text-parchment-200">Consumer Settings</h2>
 	</div>
 
-	{#if missingTools?.find(t => t.engine === 'curl')}
-		<div class="mb-4 rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500">
-			<p class="font-medium">"curl" not installed (required for downloads)</p>
-			<p class="mt-1 text-parchment-400">Model and language file downloads will fail without curl.</p>
-			{#each Object.entries(hintsForEngine('curl')) as [system, cmd]}
-				<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
+	{#if missingTools?.find((t) => t.engine === 'curl')}
+		<div
+			class="mb-4 rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500"
+		>
+			<p class="font-medium">&ldquo;curl&rdquo; not installed (required for downloads)</p>
+			<p class="mt-1 text-parchment-400">
+				Model and language file downloads will fail without curl.
+			</p>
+			{#each Object.entries(hintsForEngine('curl')) as [system, cmd], i (i)}
+				<pre class="text-parchment-300 mt-1 text-xs">{system}: {cmd}</pre>
 			{/each}
 		</div>
 	{/if}
 
-	<form onsubmit={(e) => { e.preventDefault(); step = 3; }} class="space-y-5 touch-manipulation">
+	<form
+		onsubmit={(e) => {
+			e.preventDefault();
+			step = 3;
+		}}
+		class="touch-manipulation space-y-5"
+	>
 		<section class="rounded-xl border border-clay-800 bg-clay-950/50 p-4">
-			<h3 class="mb-3 text-sm font-semibold text-parchment-200 text-balance">Server</h3>
+			<h3 class="mb-3 text-sm font-semibold text-balance text-parchment-200">Server</h3>
 			<div>
-			<label for="server-port" class="mb-1 block text-sm font-medium text-parchment-200">
-				edub server port
-			</label>
-			<input
-				id="server-port"
-				name="server-port"
-				type="number"
-				min="1"
-				max="65535"
-				bind:value={cfg.server.port}
-				autocomplete="off"
-				class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-			/>
+				<label for="server-port" class="mb-1 block text-sm font-medium text-parchment-200">
+					edub server port
+				</label>
+				<input
+					id="server-port"
+					name="server-port"
+					type="number"
+					min="1"
+					max="65535"
+					bind:value={cfg.server.port}
+					autocomplete="off"
+					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+				/>
 			</div>
 		</section>
 
 		<section class="rounded-xl border border-clay-800 bg-clay-950/50 p-4">
-			<h3 class="mb-3 text-sm font-semibold text-parchment-200 text-balance">Storage</h3>
+			<h3 class="mb-3 text-sm font-semibold text-balance text-parchment-200">Storage</h3>
 			<div class="space-y-3">
 				<div>
 					<label for="consumption-dir" class="mb-1 block text-sm font-medium text-parchment-200">
 						Consumption directory (inbox)
 					</label>
-				<input id="consumption-dir" name="consumption-dir" type="text" autocomplete="off" bind:value={cfg.storage.consumption_dir}
-					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none" />
+					<input
+						id="consumption-dir"
+						name="consumption-dir"
+						type="text"
+						autocomplete="off"
+						bind:value={cfg.storage.consumption_dir}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+					/>
 				</div>
 				<div>
 					<label for="storage-dir" class="mb-1 block text-sm font-medium text-parchment-200">
 						Storage directory
 					</label>
-				<input id="storage-dir" name="storage-dir" type="text" autocomplete="off" bind:value={cfg.storage.storage_dir}
-					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none" />
+					<input
+						id="storage-dir"
+						name="storage-dir"
+						type="text"
+						autocomplete="off"
+						bind:value={cfg.storage.storage_dir}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+					/>
 				</div>
 			</div>
 		</section>
 
 		<section class="rounded-xl border border-clay-800 bg-clay-950/50 p-4">
-			<h3 class="mb-3 text-sm font-semibold text-parchment-200 text-balance">Database</h3>
+			<h3 class="mb-3 text-sm font-semibold text-balance text-parchment-200">Database</h3>
 			<div class="space-y-3">
 				<div>
 					<label for="db-host" class="mb-1 block text-sm font-medium text-parchment-200">
 						Database host
 					</label>
-				<input id="db-host" name="db-host" type="text" autocomplete="off" bind:value={cfg.database.host}
-					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none" />
+					<input
+						id="db-host"
+						name="db-host"
+						type="text"
+						autocomplete="off"
+						bind:value={cfg.database.host}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+					/>
 				</div>
 				<div>
 					<label for="db-port" class="mb-1 block text-sm font-medium text-parchment-200">
 						Database port
 					</label>
-				<input id="db-port" name="db-port" type="number" min="1" max="65535" autocomplete="off" bind:value={cfg.database.port}
-					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none" />
+					<input
+						id="db-port"
+						name="db-port"
+						type="number"
+						min="1"
+						max="65535"
+						autocomplete="off"
+						bind:value={cfg.database.port}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+					/>
 				</div>
 				<div>
 					<label for="db-user" class="mb-1 block text-sm font-medium text-parchment-200">
 						Database user
 					</label>
-				<input id="db-user" name="db-user" type="text" autocomplete="off" bind:value={cfg.database.user}
-					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none" />
+					<input
+						id="db-user"
+						name="db-user"
+						type="text"
+						autocomplete="off"
+						bind:value={cfg.database.user}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+					/>
 				</div>
 				<div>
 					<label for="db-name" class="mb-1 block text-sm font-medium text-parchment-200">
 						Database name
 					</label>
-				<input id="db-name" name="db-name" type="text" autocomplete="off" bind:value={cfg.database.database}
-					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none" />
+					<input
+						id="db-name"
+						name="db-name"
+						type="text"
+						autocomplete="off"
+						bind:value={cfg.database.database}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+					/>
 				</div>
 				<div>
 					<label for="db-sslmode" class="mb-1 block text-sm font-medium text-parchment-200">
@@ -381,7 +460,7 @@
 		</section>
 
 		<section class="rounded-xl border border-clay-800 bg-clay-950/50 p-4">
-			<h3 class="mb-3 text-sm font-semibold text-parchment-200 text-balance">OCR</h3>
+			<h3 class="mb-3 text-sm font-semibold text-balance text-parchment-200">OCR</h3>
 			<div class="space-y-3">
 				<div>
 					<label for="ocr-engine" class="mb-1 block text-sm font-medium text-parchment-200">
@@ -396,44 +475,57 @@
 							<option value={opt.value}>{opt.label}</option>
 						{/each}
 					</select>
-					{#if toolStatus?.find(t => t.category === 'ocr' && !t.available)}
-						<div class="mt-2 rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500">
-							<p class="font-medium">"{cfg.consumer.ocr.engine}" is not installed</p>
-							<p class="mt-1 text-parchment-400">Documents won't process until it is available. Install it, e.g.:</p>
-							{#each Object.entries(hintsForEngine(cfg.consumer.ocr.engine)) as [system, cmd]}
-								<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
+					{#if toolStatus?.find((t) => t.category === 'ocr' && !t.available)}
+						<div
+							class="mt-2 rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500"
+						>
+							<p class="font-medium">&ldquo;{cfg.consumer.ocr.engine}&rdquo; is not installed</p>
+							<p class="mt-1 text-parchment-400">
+								Documents won't process until it is available. Install it, e.g.:
+							</p>
+							{#each Object.entries(hintsForEngine(cfg.consumer.ocr.engine)) as [system, cmd], i (i)}
+								<pre class="text-parchment-300 mt-1 text-xs">{system}: {cmd}</pre>
 							{/each}
 						</div>
 					{/if}
 					{#if cfg.consumer.ocr.engine === 'ocrmypdf'}
-						{@const ocrTool = toolStatus?.find(t => t.engine === 'ocrmypdf')}
+						{@const ocrTool = toolStatus?.find((t) => t.engine === 'ocrmypdf')}
 						{#if ocrTool?.lang_hints?.length}
-							<div class="mt-2 rounded-lg border border-lapis-500/30 bg-lapis-500/10 p-3 text-sm text-parchment-200">
+							<div
+								class="border-lapis-500/30 bg-lapis-500/10 mt-2 rounded-lg border p-3 text-sm text-parchment-200"
+							>
 								<p class="font-medium">Tesseract language packs required</p>
-								<p class="mt-1 text-parchment-300">Install the packs for your configured languages
-									({ocrTool.languages.join(', ')}):</p>
-								{#each Object.entries(ocrTool.lang_hints[0].install_hints) as [system, cmd]}
-									<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
+								<p class="text-parchment-300 mt-1">
+									Install the packs for your configured languages ({ocrTool.languages.join(', ')}):
+								</p>
+								{#each Object.entries(ocrTool.lang_hints[0].install_hints) as [system, cmd], i (i)}
+									<pre class="text-parchment-300 mt-1 text-xs">{system}: {cmd}</pre>
 								{/each}
 							</div>
 						{/if}
 						{#if ocrTool?.companions?.length}
 							<div class="mt-2 space-y-2 text-sm">
-								{#each ocrTool.companions as c}
+								{#each ocrTool.companions as c (c.command)}
 									{#if !c.available && c.required}
-										<div class="rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-terracotta-500">
-											<p class="font-medium">"{c.command}" not installed (required)</p>
+										<div
+											class="rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-terracotta-500"
+										>
+											<p class="font-medium">&ldquo;{c.command}&rdquo; not installed (required)</p>
 											<p class="mt-1 text-parchment-400">{c.purpose}</p>
-											{#each Object.entries(c.install_hints) as [system, cmd]}
-												<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
+											{#each Object.entries(c.install_hints) as [system, cmd], i (i)}
+												<pre class="text-parchment-300 mt-1 text-xs">{system}: {cmd}</pre>
 											{/each}
 										</div>
 									{:else if !c.available}
-										<div class="rounded-lg border border-lapis-500/30 bg-lapis-500/10 p-3 text-parchment-300">
-											<p class="font-medium text-parchment-200">"{c.command}" not installed (optional)</p>
+										<div
+											class="border-lapis-500/30 bg-lapis-500/10 text-parchment-300 rounded-lg border p-3"
+										>
+											<p class="font-medium text-parchment-200">
+												&ldquo;{c.command}&rdquo; not installed (optional)
+											</p>
 											<p class="mt-1">{c.purpose}. ocrmypdf will skip this feature without it.</p>
-											{#each Object.entries(c.install_hints) as [system, cmd]}
-												<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
+											{#each Object.entries(c.install_hints) as [system, cmd], i (i)}
+												<pre class="text-parchment-300 mt-1 text-xs">{system}: {cmd}</pre>
 											{/each}
 										</div>
 									{/if}
@@ -446,29 +538,35 @@
 					<label for="ocr-timeout" class="mb-1 block text-sm font-medium text-parchment-200">
 						Timeout (s)
 					</label>
-				<input
-					id="ocr-timeout"
-					type="number"
-					min="0"
-					autocomplete="off"
-					bind:value={cfg.consumer.ocr.timeout}
-					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-				/>
+					<input
+						id="ocr-timeout"
+						name="ocr-timeout"
+						type="number"
+						min="0"
+						autocomplete="off"
+						bind:value={cfg.consumer.ocr.timeout}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+					/>
 				</div>
 				<div>
-					<span class="mb-2 block text-sm font-medium text-parchment-200">Languages</span>
+					<span class="mb-2 block text-sm font-medium text-parchment-200" id="ocr-languages-label"
+						>Languages</span
+					>
 					{#each cfg.consumer.ocr.languages as lang, i (i)}
 						<div class="mb-2 flex gap-2">
-				<input
-					type="text"
-					value={lang}
-					oninput={(e) => updateLanguage(i, e.currentTarget.value)}
-					placeholder="eng"
-					autocomplete="off"
-					name="ocr-language-{i}"
-					required
-					class="flex-1 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-				/>
+							<input
+								id="ocr-language-{i}"
+								type="text"
+								aria-labelledby="ocr-languages-label"
+								value={lang}
+								oninput={(e) => updateLanguage(i, e.currentTarget.value)}
+								placeholder="eng…"
+								autocomplete="off"
+								name="ocr-language-{i}"
+								spellcheck="false"
+								required
+								class="flex-1 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
 							{#if cfg.consumer.ocr.languages.length > 1}
 								<button
 									type="button"
@@ -492,10 +590,13 @@
 		</section>
 
 		<section class="rounded-xl border border-clay-800 bg-clay-950/50 p-4">
-			<h3 class="mb-3 text-sm font-semibold text-parchment-200 text-balance">Text Extractor</h3>
+			<h3 class="mb-3 text-sm font-semibold text-balance text-parchment-200">Text Extractor</h3>
 			<div class="grid gap-3 sm:grid-cols-2">
 				<div>
-					<label for="text-extractor-engine" class="mb-1 block text-sm font-medium text-parchment-200">
+					<label
+						for="text-extractor-engine"
+						class="mb-1 block text-sm font-medium text-parchment-200"
+					>
 						Engine
 					</label>
 					<select
@@ -509,35 +610,48 @@
 					</select>
 				</div>
 				<div>
-					<label for="text-extractor-timeout" class="mb-1 block text-sm font-medium text-parchment-200">
+					<label
+						for="text-extractor-timeout"
+						class="mb-1 block text-sm font-medium text-parchment-200"
+					>
 						Timeout (s)
 					</label>
-				<input
-					id="text-extractor-timeout"
-					type="number"
-					min="0"
-					autocomplete="off"
-					bind:value={cfg.consumer.textextractor.timeout}
-					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-				/>
+					<input
+						id="text-extractor-timeout"
+						name="text-extractor-timeout"
+						type="number"
+						min="0"
+						autocomplete="off"
+						bind:value={cfg.consumer.textextractor.timeout}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+					/>
 				</div>
 			</div>
-			{#if toolStatus?.find(t => t.category === 'textextractor' && !t.available)}
-				<div class="mt-3 rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500">
-					<p class="font-medium">"{cfg.consumer.textextractor.engine}" is not installed</p>
-					<p class="mt-1 text-parchment-400">Documents won't process until it is available. Install it, e.g.:</p>
-					{#each Object.entries(hintsForEngine(cfg.consumer.textextractor.engine)) as [system, cmd]}
-						<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
+			{#if toolStatus?.find((t) => t.category === 'textextractor' && !t.available)}
+				<div
+					class="mt-3 rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500"
+				>
+					<p class="font-medium">
+						&ldquo;{cfg.consumer.textextractor.engine}&rdquo; is not installed
+					</p>
+					<p class="mt-1 text-parchment-400">
+						Documents won't process until it is available. Install it, e.g.:
+					</p>
+					{#each Object.entries(hintsForEngine(cfg.consumer.textextractor.engine)) as [system, cmd], i (i)}
+						<pre class="text-parchment-300 mt-1 text-xs">{system}: {cmd}</pre>
 					{/each}
 				</div>
 			{/if}
 		</section>
 
 		<section class="rounded-xl border border-clay-800 bg-clay-950/50 p-4">
-			<h3 class="mb-3 text-sm font-semibold text-parchment-200 text-balance">PDF Optimizer</h3>
+			<h3 class="mb-3 text-sm font-semibold text-balance text-parchment-200">PDF Optimizer</h3>
 			<div class="grid gap-3 sm:grid-cols-2">
 				<div>
-					<label for="pdf-optimizer-engine" class="mb-1 block text-sm font-medium text-parchment-200">
+					<label
+						for="pdf-optimizer-engine"
+						class="mb-1 block text-sm font-medium text-parchment-200"
+					>
 						Engine
 					</label>
 					<select
@@ -551,70 +665,86 @@
 					</select>
 				</div>
 				<div>
-					<label for="pdf-optimizer-fallback" class="mb-1 block text-sm font-medium text-parchment-200">
+					<label
+						for="pdf-optimizer-fallback"
+						class="mb-1 block text-sm font-medium text-parchment-200"
+					>
 						Fallback (optional)
 					</label>
-				<input
-					id="pdf-optimizer-fallback"
-					type="text"
-					autocomplete="off"
-					bind:value={cfg.consumer.pdfoptimizer.fallback}
-					placeholder="gs"
-					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-				/>
+					<input
+						id="pdf-optimizer-fallback"
+						name="pdf-optimizer-fallback"
+						type="text"
+						autocomplete="off"
+						bind:value={cfg.consumer.pdfoptimizer.fallback}
+						placeholder="gs…"
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+					/>
 				</div>
 			</div>
-			{#if toolStatus?.find(t => t.category === 'pdfoptimizer' && !t.available)}
-				<div class="mt-3 rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500">
-					<p class="font-medium">"{cfg.consumer.pdfoptimizer.engine}" is not installed</p>
-					<p class="mt-1 text-parchment-400">Documents won't process until it is available. Install it, e.g.:</p>
-					{#each Object.entries(hintsForEngine(cfg.consumer.pdfoptimizer.engine)) as [system, cmd]}
-						<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
+			{#if toolStatus?.find((t) => t.category === 'pdfoptimizer' && !t.available)}
+				<div
+					class="mt-3 rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500"
+				>
+					<p class="font-medium">
+						&ldquo;{cfg.consumer.pdfoptimizer.engine}&rdquo; is not installed
+					</p>
+					<p class="mt-1 text-parchment-400">
+						Documents won't process until it is available. Install it, e.g.:
+					</p>
+					{#each Object.entries(hintsForEngine(cfg.consumer.pdfoptimizer.engine)) as [system, cmd], i (i)}
+						<pre class="text-parchment-300 mt-1 text-xs">{system}: {cmd}</pre>
 					{/each}
 				</div>
 			{/if}
 			<div class="mt-3 grid gap-3 sm:grid-cols-2">
 				<div class="sm:col-span-2">
-					<label for="pdf-optimizer-timeout" class="mb-1 block text-sm font-medium text-parchment-200">
+					<label
+						for="pdf-optimizer-timeout"
+						class="mb-1 block text-sm font-medium text-parchment-200"
+					>
 						Timeout (s)
 					</label>
-				<input
-					id="pdf-optimizer-timeout"
-					type="number"
-					min="0"
-					autocomplete="off"
-					bind:value={cfg.consumer.pdfoptimizer.timeout}
-					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-				/>
+					<input
+						id="pdf-optimizer-timeout"
+						name="pdf-optimizer-timeout"
+						type="number"
+						min="0"
+						autocomplete="off"
+						bind:value={cfg.consumer.pdfoptimizer.timeout}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+					/>
 				</div>
 			</div>
 		</section>
 
 		<section class="rounded-xl border border-clay-800 bg-clay-950/50 p-4">
-			<h3 class="mb-3 text-sm font-semibold text-parchment-200 text-balance">General</h3>
+			<h3 class="mb-3 text-sm font-semibold text-balance text-parchment-200">General</h3>
 			<div class="grid gap-3 sm:grid-cols-2">
 				<div>
 					<label for="consumer-workers" class="mb-1 block text-sm font-medium text-parchment-200">
 						Workers
 					</label>
-				<input
-					id="consumer-workers"
-					type="number"
-					min="1"
-					autocomplete="off"
-					bind:value={cfg.consumer.workers}
-					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-				/>
+					<input
+						id="consumer-workers"
+						name="consumer-workers"
+						type="number"
+						min="1"
+						autocomplete="off"
+						bind:value={cfg.consumer.workers}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+					/>
 				</div>
-
 			</div>
 		</section>
 
 		<section class="rounded-xl border border-clay-800 bg-clay-950/50 p-4">
-			<h3 class="mb-3 text-sm font-semibold text-parchment-200 text-balance">Supported file types</h3>
+			<h3 class="mb-3 text-sm font-semibold text-balance text-parchment-200">
+				Supported file types
+			</h3>
 			<div class="flex flex-wrap gap-3">
 				{#each mimeTypeOptions as opt (opt.mime_type)}
-					<label class="flex items-center gap-1.5 text-sm text-parchment-300">
+					<label class="text-parchment-300 flex items-center gap-1.5 text-sm">
 						<input
 							type="checkbox"
 							bind:checked={opt.checked}
@@ -628,15 +758,17 @@
 		</section>
 
 		<section class="rounded-xl border border-clay-800 bg-clay-950/50 p-4">
-			<h3 class="mb-1 text-sm font-semibold text-parchment-200 text-balance">DOCX/ODT Converter</h3>
+			<h3 class="mb-1 text-sm font-semibold text-balance text-parchment-200">DOCX/ODT Converter</h3>
 			<p class="mb-3 text-xs text-parchment-400">
 				Converts DOCX and ODT to PDF via LibreOffice. Requires
-				<code class="text-xs text-parchment-300">libreoffice</code> installed on the system.
+				<code class="text-parchment-300 text-xs" translate="no">libreoffice</code> installed on the system.
 			</p>
 			<div class="space-y-3">
 				<div class="flex items-center gap-2">
 					<input
 						id="converter-enabled"
+						name="converter-enabled"
+						autocomplete="off"
 						type="checkbox"
 						bind:checked={cfg.consumer.converter.enabled}
 						class="rounded border-clay-800 bg-clay-950 accent-gold-500"
@@ -651,6 +783,7 @@
 					</label>
 					<input
 						id="converter-binary"
+						name="converter-binary"
 						type="text"
 						bind:value={cfg.consumer.converter.binary}
 						autocomplete="off"
@@ -658,7 +791,7 @@
 					/>
 					<p class="mt-1 text-xs text-parchment-400">
 						Command name on PATH or full path like
-						<code class="text-parchment-300">/opt/libreoffice/bin/soffice</code>
+						<code class="text-parchment-300" translate="no">/opt/libreoffice/bin/soffice</code>
 					</p>
 				</div>
 				<div>
@@ -667,6 +800,7 @@
 					</label>
 					<input
 						id="converter-timeout"
+						name="converter-timeout"
 						type="number"
 						min="1"
 						bind:value={cfg.consumer.converter.timeout}
@@ -677,7 +811,7 @@
 			</div>
 		</section>
 
-		<div class="flex gap-3 min-w-0">
+		<div class="flex min-w-0 gap-3">
 			<button
 				type="button"
 				onclick={() => (step = 1)}
@@ -697,67 +831,87 @@
 
 {#if step === 3 && cfg}
 	<div class="mb-4 text-center">
-		<p class="text-xs font-medium uppercase tracking-wide text-parchment-500">Step 3 of 6</p>
-		<h2 class="text-lg font-semibold text-parchment-200 text-balance">Enricher Settings</h2>
+		<p class="text-xs font-medium tracking-wide text-parchment-500 uppercase">Step 3 of 6</p>
+		<h2 class="text-lg font-semibold text-balance text-parchment-200">Enricher Settings</h2>
 	</div>
 
-	<form onsubmit={submitSettings} class="space-y-5 touch-manipulation">
+	<form onsubmit={submitSettings} class="touch-manipulation space-y-5">
 		<section class="rounded-xl border border-clay-800 bg-clay-950/50 p-4">
-			<h3 class="mb-3 text-sm font-semibold text-parchment-200 text-balance">Tag Matcher</h3>
+			<h3 class="mb-3 text-sm font-semibold text-balance text-parchment-200">Tag Matcher</h3>
 			<div class="grid gap-3 sm:grid-cols-2">
 				<div>
-					<label for="tag-matcher-timeout" class="mb-1 block text-sm font-medium text-parchment-200">
+					<label
+						for="tag-matcher-timeout"
+						class="mb-1 block text-sm font-medium text-parchment-200"
+					>
 						Timeout (s)
 					</label>
-				<input
-					id="tag-matcher-timeout"
-					type="number"
-					min="0"
-					autocomplete="off"
-					bind:value={cfg.enricher.tagmatcher.timeout}
-					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-				/>
+					<input
+						id="tag-matcher-timeout"
+						name="tag-matcher-timeout"
+						type="number"
+						min="0"
+						autocomplete="off"
+						bind:value={cfg.enricher.tagmatcher.timeout}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+					/>
 				</div>
 				<div>
-					<label for="tag-matcher-reduce-target" class="mb-1 block text-sm font-medium text-parchment-200">
+					<label
+						for="tag-matcher-reduce-target"
+						class="mb-1 block text-sm font-medium text-parchment-200"
+					>
 						Reduce target words
 					</label>
-				<input
-					id="tag-matcher-reduce-target"
-					type="number"
-					min="0"
-					autocomplete="off"
-					bind:value={cfg.enricher.tagmatcher.reduce_target_words}
-					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-				/>
+					<input
+						id="tag-matcher-reduce-target"
+						name="tag-matcher-reduce-target"
+						type="number"
+						min="0"
+						autocomplete="off"
+						bind:value={cfg.enricher.tagmatcher.reduce_target_words}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+					/>
 				</div>
 				<div>
-					<label for="tag-matcher-chunk-size" class="mb-1 block text-sm font-medium text-parchment-200">
+					<label
+						for="tag-matcher-chunk-size"
+						class="mb-1 block text-sm font-medium text-parchment-200"
+					>
 						Chunk size
 					</label>
-				<input
-					id="tag-matcher-chunk-size"
-					type="number"
-					min="0"
-					autocomplete="off"
-					bind:value={cfg.enricher.tagmatcher.chunk_size}
-					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-				/>
+					<input
+						id="tag-matcher-chunk-size"
+						name="tag-matcher-chunk-size"
+						type="number"
+						min="0"
+						autocomplete="off"
+						bind:value={cfg.enricher.tagmatcher.chunk_size}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+					/>
 				</div>
 				<div>
-		<label for="tag-matcher-hugot-model" class="mb-1 block text-sm font-medium text-parchment-200" translate="no">
-				Hugot model
-			</label>
-			<input
-				id="tag-matcher-hugot-model"
-				type="text"
-				autocomplete="off"
-				bind:value={cfg.enricher.tagmatcher.hugot.model}
-				class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-			/>
+					<label
+						for="tag-matcher-hugot-model"
+						class="mb-1 block text-sm font-medium text-parchment-200"
+						translate="no"
+					>
+						Hugot model
+					</label>
+					<input
+						id="tag-matcher-hugot-model"
+						name="tag-matcher-hugot-model"
+						type="text"
+						autocomplete="off"
+						bind:value={cfg.enricher.tagmatcher.hugot.model}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+					/>
 				</div>
 				<div>
-					<label for="tag-matcher-hugot-backend" class="mb-1 block text-sm font-medium text-parchment-200">
+					<label
+						for="tag-matcher-hugot-backend"
+						class="mb-1 block text-sm font-medium text-parchment-200"
+					>
 						Hugot backend
 					</label>
 					<select
@@ -773,10 +927,13 @@
 		</section>
 
 		<section class="rounded-xl border border-clay-800 bg-clay-950/50 p-4">
-			<h3 class="mb-3 text-sm font-semibold text-parchment-200 text-balance">Text Reducer</h3>
+			<h3 class="mb-3 text-sm font-semibold text-balance text-parchment-200">Text Reducer</h3>
 			<div class="grid gap-3 sm:grid-cols-2">
 				<div>
-					<label for="text-reducer-engine" class="mb-1 block text-sm font-medium text-parchment-200">
+					<label
+						for="text-reducer-engine"
+						class="mb-1 block text-sm font-medium text-parchment-200"
+					>
 						Engine
 					</label>
 					<select
@@ -790,52 +947,61 @@
 					</select>
 				</div>
 				<div>
-					<label for="text-reducer-timeout" class="mb-1 block text-sm font-medium text-parchment-200">
+					<label
+						for="text-reducer-timeout"
+						class="mb-1 block text-sm font-medium text-parchment-200"
+					>
 						Timeout (s)
 					</label>
-				<input
-					id="text-reducer-timeout"
-					type="number"
-					min="0"
-					autocomplete="off"
-					bind:value={cfg.enricher.textreducer.timeout}
-					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-				/>
+					<input
+						id="text-reducer-timeout"
+						name="text-reducer-timeout"
+						type="number"
+						min="0"
+						autocomplete="off"
+						bind:value={cfg.enricher.textreducer.timeout}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+					/>
 				</div>
 				<div class="sm:col-span-2">
-					<label for="text-reducer-target-words" class="mb-1 block text-sm font-medium text-parchment-200">
+					<label
+						for="text-reducer-target-words"
+						class="mb-1 block text-sm font-medium text-parchment-200"
+					>
 						Target words
 					</label>
-			<input
-				id="text-reducer-target-words"
-				type="number"
-				min="1"
-				autocomplete="off"
-				bind:value={cfg.enricher.textreducer.target_words}
-				class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-			/>
+					<input
+						id="text-reducer-target-words"
+						name="text-reducer-target-words"
+						type="number"
+						min="1"
+						autocomplete="off"
+						bind:value={cfg.enricher.textreducer.target_words}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+					/>
 				</div>
 			</div>
 		</section>
 
 		<section class="rounded-xl border border-clay-800 bg-clay-950/50 p-4">
-			<h3 class="mb-3 text-sm font-semibold text-parchment-200 text-balance">General</h3>
+			<h3 class="mb-3 text-sm font-semibold text-balance text-parchment-200">General</h3>
 			<div>
 				<label for="enricher-workers" class="mb-1 block text-sm font-medium text-parchment-200">
 					Workers
 				</label>
-			<input
-				id="enricher-workers"
-				type="number"
-				min="1"
-				autocomplete="off"
-				bind:value={cfg.enricher.workers}
-				class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-			/>
+				<input
+					id="enricher-workers"
+					name="enricher-workers"
+					type="number"
+					min="1"
+					autocomplete="off"
+					bind:value={cfg.enricher.workers}
+					class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+				/>
 			</div>
 		</section>
 
-		<div class="flex gap-3 min-w-0">
+		<div class="flex min-w-0 gap-3">
 			<button
 				type="button"
 				onclick={() => (step = 2)}
@@ -848,7 +1014,14 @@
 				disabled={saving}
 				class="flex-1 rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600 disabled:cursor-not-allowed disabled:opacity-50"
 			>
-				Save and continue
+				{#if saving}
+					<span
+						class="mr-2 inline-block h-4 w-4 animate-spin rounded-full border-2 border-clay-950 border-t-transparent align-text-bottom motion-reduce:animate-none"
+					></span>
+					Saving…
+				{:else}
+					Save and Continue
+				{/if}
 			</button>
 		</div>
 	</form>
@@ -856,21 +1029,32 @@
 
 {#if step === 4}
 	<div class="space-y-4 text-center">
-		<p class="text-xs font-medium uppercase tracking-wide text-parchment-500">Step 4 of 6</p>
-		<h2 class="text-lg font-semibold text-parchment-200">Setting things up…</h2>
+		<p class="text-xs font-medium tracking-wide text-parchment-500 uppercase">Step 4 of 6</p>
+		<h2 class="text-lg font-semibold text-parchment-200">Setting Things Up…</h2>
 		<p class="text-sm text-parchment-500">
 			Downloading required models and language files. This may take a few minutes.
 		</p>
-		<div class="mx-auto h-8 w-8 animate-spin motion-reduce:animate-none rounded-full border-2 border-clay-800 border-t-gold-500"></div>
-		<p class="text-sm text-parchment-400">{pendingTasks} {pendingTasks === 1 ? 'task' : 'tasks'} remaining</p>
+		<div
+			class="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-clay-800 border-t-gold-500 motion-reduce:animate-none"
+		></div>
+		<p class="text-sm text-parchment-400" aria-live="polite">
+			{pendingTasks}
+			{pendingTasks === 1 ? 'task' : 'tasks'} remaining
+		</p>
 
 		{#if failedTasks.length > 0}
-			<div class="rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-4 text-left text-sm">
+			<div
+				class="rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-4 text-left text-sm"
+				aria-live="polite"
+			>
 				<p class="mb-2 font-medium text-terracotta-500">Some downloads failed</p>
 				<ul class="space-y-2">
-					{#each failedTasks as ft}
+					{#each failedTasks as ft (ft.op + ft.lang)}
 						<li class="text-parchment-300">
-							<span class="font-medium text-parchment-200">{ft.op}{#if ft.lang} ({ft.lang}){/if}</span>
+							<span class="font-medium text-parchment-200"
+								>{ft.op}{#if ft.lang}
+									({ft.lang}){/if}</span
+							>
 							: {ft.error}
 						</li>
 					{/each}
@@ -889,17 +1073,20 @@
 
 {#if step === 5}
 	<div class="mb-4 text-center">
-		<p class="text-xs font-medium uppercase tracking-wide text-parchment-500">Step 5 of 6</p>
-		<h2 class="text-lg font-semibold text-parchment-200">Create admin user</h2>
+		<p class="text-xs font-medium tracking-wide text-parchment-500 uppercase">Step 5 of 6</p>
+		<h2 class="text-lg font-semibold text-parchment-200">Create Admin User</h2>
 	</div>
 
 	{#if adminError}
-		<div aria-live="polite" class="mb-4 rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500">
+		<div
+			aria-live="polite"
+			class="mb-4 rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500"
+		>
 			{adminError}
 		</div>
 	{/if}
 
-	<form onsubmit={createAdminUser} class="space-y-4 touch-manipulation">
+	<form onsubmit={createAdminUser} class="touch-manipulation space-y-4">
 		<div>
 			<label for="admin-username" class="mb-1 block text-sm font-medium text-parchment-200">
 				Username
@@ -961,7 +1148,7 @@
 			{/if}
 		</div>
 
-		<div class="flex gap-3 min-w-0">
+		<div class="flex min-w-0 gap-3">
 			<button
 				type="button"
 				onclick={() => (step = 4)}
@@ -982,7 +1169,9 @@
 				class="flex-1 rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600 disabled:cursor-not-allowed disabled:opacity-50"
 			>
 				{#if adminCreating}
-					<span class="inline-block h-4 w-4 animate-spin motion-reduce:animate-none rounded-full border-2 border-clay-950 border-t-transparent align-text-bottom"></span>
+					<span
+						class="inline-block h-4 w-4 animate-spin rounded-full border-2 border-clay-950 border-t-transparent align-text-bottom motion-reduce:animate-none"
+					></span>
 					Creating…
 				{:else}
 					Create
@@ -999,65 +1188,76 @@
 		{#if serviceFilesPath}
 			<div class="rounded-lg border border-clay-800 bg-clay-950/50 p-4 text-left text-sm">
 				<p class="mb-3 font-medium text-parchment-200">Install and start as system services:</p>
-				<pre class="mb-2 rounded bg-clay-950 px-3 py-2 text-xs text-parchment-300 overflow-x-auto wrap-break-word">
+				<pre
+					class="text-parchment-300 mb-2 overflow-x-auto rounded bg-clay-950 px-3 py-2 text-xs break-words">
 sudo cp {serviceFilesPath}/* /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now edub-kushim.target</pre>
 				<p class="text-xs text-parchment-500">
-					This starts all three services (matcher, queue daemon, API server)
-					and ensures they restart after reboot.
+					This starts all three services (matcher, queue daemon, API server) and ensures they
+					restart after reboot.
 				</p>
 			</div>
 
 			<div class="rounded-lg border border-clay-800 bg-clay-950/50 p-4 text-left text-sm">
 				<p class="mb-1 font-medium text-parchment-200">Check status:</p>
-				<pre class="rounded bg-clay-950 px-3 py-2 text-xs text-parchment-300">
+				<pre class="text-parchment-300 rounded bg-clay-950 px-3 py-2 text-xs">
 sudo systemctl status edub-kushim.target</pre>
 			</div>
 		{:else}
 			<p class="text-sm text-parchment-500">
-				Run <code class="rounded bg-clay-800 px-1 py-0.5 text-parchment-200">edub</code>
+				Run <code class="rounded bg-clay-800 px-1 py-0.5 text-parchment-200" translate="no"
+					>edub</code
+				>
 				to start the server.
 			</p>
 		{/if}
 
 		{#if missingTools.length > 0}
-			<div class="rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-4 text-left text-sm text-terracotta-500">
-				<p class="font-medium text-parchment-200">Setup complete — but the following tools are not installed and must be
-				installed before you can consume documents:</p>
+			<div
+				class="rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-4 text-left text-sm text-terracotta-500"
+			>
+				<p class="font-medium text-parchment-200">
+					Setup complete — but the following tools are not installed and must be installed before
+					you can consume documents:
+				</p>
 				<ul class="mt-2 list-inside list-disc space-y-2">
-					{#each missingTools as t}
+					{#each missingTools as t (t.engine)}
 						{#if t.engine === 'curl'}
 							<li>curl (required for downloads)</li>
 						{:else}
 							<li>{t.engine} ({t.category} engine)</li>
 						{/if}
-						{#each Object.entries(hintsForEngine(t.engine)) as [system, cmd]}
-							<li class="ml-4 list-none text-xs text-parchment-300">{system}: {cmd}</li>
+						{#each Object.entries(hintsForEngine(t.engine)) as [system, cmd], i (i)}
+							<li class="text-parchment-300 ml-4 list-none text-xs">{system}: {cmd}</li>
 						{/each}
 						{#if t.companions}
-							{#each t.companions as c}
-							{#if c.required && !c.available}
-								<li class="ml-2">{c.command} (required companion — {c.purpose})</li>
-								{#each Object.entries(c.install_hints) as [system, cmd]}
-									<li class="ml-6 list-none text-xs text-parchment-300">{system}: {cmd}</li>
-								{/each}
-							{/if}
+							{#each t.companions as c (c.command)}
+								{#if c.required && !c.available}
+									<li class="ml-2">{c.command} (required companion — {c.purpose})</li>
+									{#each Object.entries(c.install_hints) as [system, cmd], i (i)}
+										<li class="text-parchment-300 ml-6 list-none text-xs">{system}: {cmd}</li>
+									{/each}
+								{/if}
 							{/each}
 						{/if}
 					{/each}
-					</ul>
+				</ul>
 			</div>
 		{/if}
 
 		{#if cfg?.consumer?.ocr?.engine === 'ocrmypdf'}
-			{@const ocrTool = toolStatus?.find(t => t.engine === 'ocrmypdf')}
+			{@const ocrTool = toolStatus?.find((t) => t.engine === 'ocrmypdf')}
 			{#if ocrTool?.lang_hints?.length}
-				<div class="rounded-lg border border-lapis-500/30 bg-lapis-500/10 p-4 text-left text-sm text-parchment-200">
+				<div
+					class="border-lapis-500/30 bg-lapis-500/10 rounded-lg border p-4 text-left text-sm text-parchment-200"
+				>
 					<p class="font-medium">Reminder: ocrmypdf needs the tesseract language packs</p>
-					<p class="mt-1 text-parchment-300">Install the packs for your configured languages ({ocrTool.languages.join(', ')}):</p>
-					{#each Object.entries(ocrTool.lang_hints[0].install_hints) as [system, cmd]}
-						<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
+					<p class="text-parchment-300 mt-1">
+						Install the packs for your configured languages ({ocrTool.languages.join(', ')}):
+					</p>
+					{#each Object.entries(ocrTool.lang_hints[0].install_hints) as [system, cmd], i (i)}
+						<pre class="text-parchment-300 mt-1 text-xs">{system}: {cmd}</pre>
 					{/each}
 				</div>
 			{/if}

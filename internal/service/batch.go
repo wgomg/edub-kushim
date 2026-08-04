@@ -209,10 +209,28 @@ func (s *Batch) CountOrphaned(ctx context.Context) (int64, error) {
 }
 
 func (s *Batch) RetryFailed(ctx context.Context, batchID string) (int64, error) {
-	count, err := s.queries.RetryFailedTasksByBatch(ctx, sql.NullString{String: batchID, Valid: true})
+	tx, err := s.client.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, errs.FromDB(err, "begin transaction for retry failed batch "+batchID)
+	}
+	defer tx.Rollback()
+
+	bid := sql.NullString{String: batchID, Valid: true}
+	txQ := s.client.Queries.WithTx(tx)
+
+	count, err := txQ.RetryFailedTasksByBatch(ctx, bid)
 	if err != nil {
 		return 0, errs.FromDB(err, "retry failed batch "+batchID)
 	}
+
+	if _, err := txQ.RestoreDiscardedEnrichTasksByBatch(ctx, bid); err != nil {
+		return 0, errs.FromDB(err, "restore discarded enrich tasks for batch "+batchID)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, errs.FromDB(err, "commit transaction for retry failed batch "+batchID)
+	}
+
 	return count, nil
 }
 
@@ -423,6 +441,10 @@ func (s *Batch) ResetProcessingTasksByBatch(ctx context.Context, batchID string)
 		return 0, errs.FromDB(err, "reset processing tasks "+batchID)
 	}
 
+	if _, err := txQ.RestoreDiscardedEnrichTasksByBatch(ctx, bid); err != nil {
+		return 0, errs.FromDB(err, "restore discarded enrich tasks "+batchID)
+	}
+
 	if err := tx.Commit(); err != nil {
 		return 0, errs.FromDB(err, "commit transaction for reset "+batchID)
 	}
@@ -454,6 +476,16 @@ func (s *Batch) ResetStaleProcessingTasks(ctx context.Context, staleAfterSeconds
 	})
 	if err != nil {
 		return 0, errs.FromDB(err, "reset stale processing tasks")
+	}
+
+	if _, err := txQ.RestoreDiscardedEnrichTasks(ctx); err != nil {
+		return 0, errs.FromDB(err, "restore discarded enrich tasks")
+	}
+
+	// Quarantined stale consumes have no batch-level recovery point (the
+	// batch owner may still be live), so sweep their waiting enriches here.
+	if _, err := txQ.DiscardWaitingEnrichesOfFailedConsumesGlobal(ctx); err != nil {
+		return 0, errs.FromDB(err, "discard waiting enriches of failed consumes")
 	}
 
 	if err := tx.Commit(); err != nil {

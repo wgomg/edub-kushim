@@ -181,10 +181,27 @@ The API server (`edub`) is a pure Go binary with no C dependencies. All CGo-heav
 | See what's done and what's next          | [Roadmap](docs/roadmap.md)                    |
 | Find a specific package or function      | [Code Reference](docs/reference/overview.md)  |
 | Full CLI reference and API docs          | [User Manual](docs/user-manual.md)            |
+| Learn how the codebase uses a language or subsystem | [Developer Guides](#developer-guides)  |
+
+### Developer Guides
+
+New to the codebase? The guides in [`docs/developer-guide/`](docs/developer-guide/) take you from "knows programming" to "can work on this codebase" — each walks through a language or subsystem with real, line-referenced examples from the source.
+
+| Guide | What it covers |
+|---|---|
+| [golang.md](docs/developer-guide/golang.md) | Go language features as used in this codebase — onboarding for devs new to Go |
+| [frontend.md](docs/developer-guide/frontend.md) | SvelteKit/Svelte 5 (runes) as used in `web/` and `web-wizard/` |
+| [postgresql.md](docs/developer-guide/postgresql.md) | PostgreSQL features as used in the schema and queries |
+| [semantic-matching.md](docs/developer-guide/semantic-matching.md) | Hugot embeddings, tag matching, consolidation, the matcher daemon |
+| [algorithms.md](docs/developer-guide/algorithms.md) | TextRank summarization, text normalization, token estimation |
+| [cgo.md](docs/developer-guide/cgo.md) | cgo and the C wrapper layer (MuPDF, Tesseract) |
+| [ocr-pipeline.md](docs/developer-guide/ocr-pipeline.md) | OCR engines, searchable-PDF generation |
+| [task-system.md](docs/developer-guide/task-system.md) | Task lifecycle, batch ownership, queue semantics |
+| [llm.md](docs/developer-guide/llm.md) | LLM integration, prompts, model catalog, the enricher |
 
 ## Key Features
 
-- **Unattended bulk classification with auto-recovery** — every document is classified without manual intervention (tags, type, title, people); labels are normalized and consolidated against the existing vocabulary, and stuck processing tasks are reclaimed automatically. LLM providers: OpenAI, Anthropic, DeepSeek, Ollama
+- **Unattended bulk classification with auto-recovery** — every document is classified without manual intervention (tags, type, title, people); labels are normalized and consolidated against the existing vocabulary, and stuck processing tasks are reclaimed automatically. LLM providers: OpenAI, Anthropic, DeepSeek, Mistral, Qwen, Zhipu
 - **Semantic tag matching** — Hugot embeddings with cosine similarity (Go or ONNX Runtime backend)
 - **OCR pipeline** — Tesseract + MuPDF for image-only PDFs, with searchable PDF output (text rendering mode 3)
 - **Full-text search** — PostgreSQL tsvector with `ts_rank` ranking and `ts_headline` snippet highlighting; structured search with metadata filters
@@ -194,13 +211,15 @@ The API server (`edub`) is a pure Go binary with no C dependencies. All CGo-heav
 - **User accounts & auth** — bcrypt passwords, JWT sessions, API keys, role-based access (admin/editor/viewer)
 - **Backup & restore** — App-level PostgreSQL SQL dump (schema + data in a transaction), timestamped `tar.gz` archives with config + storage
 - **Orphaned file management** — detect, quarantine, restore, and re-ingest orphaned files
-- **Trash / soft delete** — deleting a document moves it to a trash directory with a retention period; restore or permanently delete from the trash API, with an hourly auto-purge
+- **Trash / soft delete** — deleting a document moves it to a trash directory with a retention period; restore or permanently delete from the trash API or the web UI Trash page, with an hourly auto-purge
 - **Dashboard** — activity timeline, batch overview, storage analytics, document type/language/tag distributions
-- **Web UI** — SvelteKit SPA with dashboard, structured search, document detail, settings, user management, tag/people/document-type administration, task monitoring, log viewer, orphaned file management
+- **Web UI** — SvelteKit SPA with dashboard, structured search, document detail, settings, user management, tag/people/document-type administration, task monitoring, log viewer, orphaned file management, trash management
 - **Dual storage** — originals preserved alongside processed/OCR'd versions, date-based organization
 - **Docker Compose quick-start** — single command builds everything from source, no host-side toolchain required
 
 ## Development
+
+New here? Read the [Developer Guides](docs/developer-guide/) first — start with [golang.md](docs/developer-guide/golang.md) for the language, then open a topic guide ([task-system.md](docs/developer-guide/task-system.md), [ocr-pipeline.md](docs/developer-guide/ocr-pipeline.md), ...) as you touch that area.
 
 ### Prerequisites
 
@@ -241,7 +260,10 @@ make test-cgo-glibc    # podman: kushim-glibc-builder
 make test-cgo-musl     # podman: kushim-musl-builder
 ```
 
-**Note:** `go test -tags "XLA,ORT" ./...` will fail without the full C toolchain installed. Always use `make test`, `make test-db`, or `make test-cgo` / container variants unless C deps are available.
+**Note:** bare `go test` is not supported — the Makefile targets set the `-tags "XLA,ORT"`
+ tags and the CGo environment that bare invocations miss. Always use `make test`,
+ `make test-verbose`, `make test-db`, `make test-backup`, `make test-cgo` (host,
+ requires `make build-deps` first), or the container variants.
 
 ### Web UI (hot-reload)
 

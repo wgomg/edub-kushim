@@ -18,7 +18,29 @@
 	let pollInterval;
 	let showToken = $state(false);
 
-	let activeTab = $state('Configuration');
+	let activeTab = $state(new URL(window.location.href).searchParams.get('tab') || 'Configuration');
+
+	function switchTab(tab) {
+		activeTab = tab;
+		const url = new URL(window.location.href);
+		url.searchParams.set('tab', tab);
+		history.replaceState(null, '', url.pathname + url.search);
+	}
+
+	const TABS = ['Configuration', 'Users'];
+
+	function handleTabKeydown(e) {
+		const idx = TABS.indexOf(activeTab);
+		let next = -1;
+		if (e.key === 'ArrowRight') next = (idx + 1) % TABS.length;
+		else if (e.key === 'ArrowLeft') next = (idx - 1 + TABS.length) % TABS.length;
+		else if (e.key === 'Home') next = 0;
+		else if (e.key === 'End') next = TABS.length - 1;
+		if (next >= 0) {
+			e.preventDefault();
+			switchTab(TABS[next]);
+		}
+	}
 
 	let showUserModal = $state(false);
 	let editingUser = $state(null);
@@ -26,6 +48,7 @@
 	let formPassword = $state('');
 	let formRole = $state('viewer');
 	let userError = $state('');
+	let savingUser = $state(false);
 	let refreshKey = $state(0);
 
 	let llmModels = $state({ adapters: {}, providers: {} });
@@ -224,6 +247,9 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			'enricher.contentanalyzer.llm.temperature': Number(
 				cfg.enricher.contentanalyzer.llm.temperature
 			),
+			'enricher.contentanalyzer.llm.request_delay': Number(
+				cfg.enricher.contentanalyzer.llm.request_delay
+			),
 			'enricher.tagmatcher.timeout': Number(cfg.enricher.tagmatcher.timeout),
 			'enricher.tagmatcher.reduce_target_words': Number(
 				cfg.enricher.tagmatcher.reduce_target_words
@@ -327,6 +353,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 		}
 		const password = formPassword.trim();
 
+		savingUser = true;
 		let result;
 		if (editingUser) {
 			const body = { username, role: formRole };
@@ -334,11 +361,13 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			result = await api.users.update(editingUser.id, body);
 		} else {
 			if (!password) {
+				savingUser = false;
 				userError = 'Password is required';
 				return;
 			}
 			result = await api.users.create({ username, password, role: formRole });
 		}
+		savingUser = false;
 
 		if (result.ok) {
 			showUserModal = false;
@@ -369,10 +398,11 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 {:else}
 	<div class="mx-auto max-w-3xl space-y-6">
 		<div class="flex items-center justify-between">
-			<h1 class="text-2xl font-bold text-parchment-200">Settings</h1>
+			<h1 class="text-2xl font-bold text-balance text-parchment-200">Settings</h1>
 			{#if pendingTasks > 0}
-				<div class="flex items-center gap-2 text-sm text-gold-500">
+				<div class="flex items-center gap-2 text-sm text-gold-500" aria-live="polite">
 					<div
+						aria-hidden="true"
 						class="h-4 w-4 animate-spin rounded-full border-2 border-clay-800 border-t-gold-500 motion-reduce:animate-none"
 					></div>
 					{pendingTasks} task(s) pending
@@ -380,10 +410,16 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			{/if}
 		</div>
 
-		<div class="flex gap-1 border-b border-clay-800">
+		<div class="flex gap-1 border-b border-clay-800" role="tablist" aria-label="Settings sections">
 			<button
 				type="button"
-				onclick={() => (activeTab = 'Configuration')}
+				role="tab"
+				id="tab-configuration"
+				aria-selected={activeTab === 'Configuration'}
+				aria-controls="panel-configuration"
+				tabindex={activeTab === 'Configuration' ? 0 : -1}
+				onclick={() => switchTab('Configuration')}
+				onkeydown={handleTabKeydown}
 				class="rounded-t-lg px-4 py-2 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none {activeTab ===
 				'Configuration'
 					? 'border-b-2 border-gold-500 text-gold-500'
@@ -393,7 +429,13 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			</button>
 			<button
 				type="button"
-				onclick={() => (activeTab = 'Users')}
+				role="tab"
+				id="tab-users"
+				aria-selected={activeTab === 'Users'}
+				aria-controls="panel-users"
+				tabindex={activeTab === 'Users' ? 0 : -1}
+				onclick={() => switchTab('Users')}
+				onkeydown={handleTabKeydown}
 				class="rounded-t-lg px-4 py-2 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none {activeTab ===
 				'Users'
 					? 'border-b-2 border-gold-500 text-gold-500'
@@ -404,1359 +446,1529 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 		</div>
 
 		{#if activeTab === 'Configuration'}
-			{#if missingTools?.find((t) => t.engine === 'curl')}
-				<div
-					class="rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500"
-				>
-					<p class="font-medium">"curl" not installed (required for downloads)</p>
-					<p class="mt-1 text-parchment-400">
-						Model and language file downloads will fail without curl.
-					</p>
-					{#each Object.entries(hintsForEngine('curl')) as [system, cmd]}
-						<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
-					{/each}
-				</div>
-			{/if}
-
-			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
-				<h2 class="mb-4 text-lg font-semibold text-parchment-200">Server</h2>
-				<div class="grid gap-4 sm:grid-cols-2">
-					<div>
-						<label for="server-host" class="mb-1 block text-sm font-medium text-parchment-200"
-							>Host</label
-						>
-						<input
-							id="server-host"
-							type="text"
-							bind:value={cfg.server.host}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						/>
-					</div>
-					<div>
-						<label for="server-port" class="mb-1 block text-sm font-medium text-parchment-200"
-							>Port</label
-						>
-						<input
-							id="server-port"
-							type="number"
-							inputmode="numeric"
-							min="1"
-							max="65535"
-							bind:value={cfg.server.port}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						/>
-					</div>
-					<div>
-						<label for="server-max-upload" class="mb-1 block text-sm font-medium text-parchment-200"
-							>Max upload size (MB)</label
-						>
-						<input
-							id="server-max-upload"
-							type="number"
-							inputmode="numeric"
-							min="1"
-							bind:value={cfg.server.max_upload_size}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						/>
-					</div>
-					<div>
-						<label
-							for="server-max-download-files"
-							class="mb-1 block text-sm font-medium text-parchment-200">Max download files</label
-						>
-						<input
-							id="server-max-download-files"
-							type="number"
-							inputmode="numeric"
-							min="1"
-							bind:value={cfg.server.max_download_files}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						/>
-					</div>
-					<div>
-						<label
-							for="server-max-download-size"
-							class="mb-1 block text-sm font-medium text-parchment-200"
-							>Max download size (MB)</label
-						>
-						<input
-							id="server-max-download-size"
-							type="number"
-							inputmode="numeric"
-							min="0"
-							bind:value={cfg.server.max_download_size_mb}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						/>
-					</div>
-					<div>
-						<label
-							for="max-concurrent-batches"
-							class="mb-1 block text-sm font-medium text-parchment-200"
-							>Max concurrent batches</label
-						>
-						<input
-							id="max-concurrent-batches"
-							type="number"
-							inputmode="numeric"
-							min="1"
-							bind:value={cfg.server.max_concurrent_batches}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						/>
-					</div>
-					<div>
-						<label
-							for="server-max-batch-delete"
-							class="mb-1 block text-sm font-medium text-parchment-200">Max batch delete</label
-						>
-						<input
-							id="server-max-batch-delete"
-							type="number"
-							inputmode="numeric"
-							min="1"
-							bind:value={cfg.server.max_batch_delete}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						/>
-					</div>
-				</div>
-				<div class="mt-4">
-					<label for="server-auth-enabled" class="mb-1 block text-sm font-medium text-parchment-200"
-						>Authentication enabled</label
-					>
-					<div class="flex items-center gap-2">
-						<input
-							id="server-auth-enabled"
-							type="checkbox"
-							bind:checked={cfg.server.auth_enabled}
-							class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
-						/>
-						<span class="text-sm text-parchment-400">
-							{cfg.server.auth_enabled ? 'Enabled' : 'Disabled'}
-						</span>
-					</div>
-				</div>
-			</section>
-
-			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
-				<h2 class="mb-4 text-lg font-semibold text-parchment-200">Storage</h2>
-				<div class="grid gap-4 sm:grid-cols-2">
-					<div>
-						<label for="consumption-dir" class="mb-1 block text-sm font-medium text-parchment-200">
-							Consumption directory (inbox)
-						</label>
-						<input
-							id="consumption-dir"
-							type="text"
-							bind:value={cfg.storage.consumption_dir}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						/>
-					</div>
-					<div>
-						<label for="storage-dir" class="mb-1 block text-sm font-medium text-parchment-200">
-							Storage directory
-						</label>
-						<input
-							id="storage-dir"
-							type="text"
-							bind:value={cfg.storage.storage_dir}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						/>
-					</div>
-				</div>
-			</section>
-
-			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
-				<h2 class="mb-4 text-lg font-semibold text-parchment-200">Trash (Soft Delete)</h2>
-				<div class="grid gap-4 sm:grid-cols-2">
-					<div>
-						<label
-							for="trash-retention-days"
-							class="mb-1 block text-sm font-medium text-parchment-200"
-						>
-							Retention period (days)
-						</label>
-						<input
-							id="trash-retention-days"
-							type="number"
-							inputmode="numeric"
-							min="1"
-							bind:value={cfg.storage.trash.retention_days}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						/>
-						<p class="mt-1 text-xs text-parchment-500">
-							Soft-deleted documents are permanently purged after this many days.
-						</p>
-					</div>
-				</div>
-			</section>
-
-			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
-				<h2 class="mb-4 text-lg font-semibold text-parchment-200">Database</h2>
-				<div class="grid gap-4 sm:grid-cols-2">
-					<div>
-						<label for="db-host" class="mb-1 block text-sm font-medium text-parchment-200">
-							Database host
-						</label>
-						<input
-							id="db-host"
-							type="text"
-							bind:value={cfg.database.host}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						/>
-					</div>
-					<div>
-						<label for="db-port" class="mb-1 block text-sm font-medium text-parchment-200">
-							Database port
-						</label>
-						<input
-							id="db-port"
-							type="number"
-							inputmode="numeric"
-							min="1"
-							max="65535"
-							bind:value={cfg.database.port}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						/>
-					</div>
-					<div>
-						<label for="db-user" class="mb-1 block text-sm font-medium text-parchment-200">
-							Database user
-						</label>
-						<input
-							id="db-user"
-							type="text"
-							bind:value={cfg.database.user}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						/>
-					</div>
-					<div>
-						<label for="db-name" class="mb-1 block text-sm font-medium text-parchment-200">
-							Database name
-						</label>
-						<input
-							id="db-name"
-							type="text"
-							bind:value={cfg.database.database}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						/>
-					</div>
-					<div>
-						<label for="db-sslmode" class="mb-1 block text-sm font-medium text-parchment-200">
-							SSL mode
-						</label>
-						<select
-							id="db-sslmode"
-							bind:value={cfg.database.sslmode}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						>
-							<option value="disable">disable</option>
-							<option value="allow">allow</option>
-							<option value="prefer">prefer</option>
-							<option value="require">require</option>
-							<option value="verify-ca">verify-ca</option>
-							<option value="verify-full">verify-full</option>
-						</select>
-					</div>
-				</div>
-			</section>
-
-			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
-				<h2 class="mb-4 text-lg font-semibold text-parchment-200">OCR</h2>
-				<div class="grid gap-4 sm:grid-cols-2">
-					<div>
-						<label for="ocr-engine" class="mb-1 block text-sm font-medium text-parchment-200"
-							>Engine</label
-						>
-						<select
-							id="ocr-engine"
-							bind:value={cfg.consumer.ocr.engine}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						>
-							{#each cfg.available_engines.ocr as opt (opt.value)}
-								<option value={opt.value}>{opt.label}</option>
-							{/each}
-						</select>
-					</div>
-					<div>
-						<label for="ocr-timeout" class="mb-1 block text-sm font-medium text-parchment-200"
-							>Timeout (s)</label
-						>
-						<input
-							id="ocr-timeout"
-							type="number"
-							inputmode="numeric"
-							min="0"
-							bind:value={cfg.consumer.ocr.timeout}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						/>
-					</div>
-					<div>
-						<label for="ocr-workers" class="mb-1 block text-sm font-medium text-parchment-200"
-							>Workers</label
-						>
-						<input
-							id="ocr-workers"
-							type="number"
-							inputmode="numeric"
-							min="0"
-							bind:value={cfg.consumer.ocr.ocr_workers}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						/>
-						<p class="mt-1 text-xs text-parchment-500">0 = auto (CPU count)</p>
-					</div>
-				</div>
-
-				{#if toolStatus?.find((t) => t.category === 'ocr' && !t.available)}
+			<div role="tabpanel" id="panel-configuration" aria-labelledby="tab-configuration">
+				{#if missingTools?.find((t) => t.engine === 'curl')}
 					<div
-						class="mt-4 rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500"
+						class="rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500"
 					>
-						<p class="font-medium">"{cfg.consumer.ocr.engine}" is not installed</p>
+						<p class="font-medium">“curl” not installed (required for downloads)</p>
 						<p class="mt-1 text-parchment-400">
-							Documents won't process until it is available. Install it, e.g.:
+							Model and language file downloads will fail without curl.
 						</p>
-						{#each Object.entries(hintsForEngine(cfg.consumer.ocr.engine)) as [system, cmd]}
-							<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
+						{#each Object.entries(hintsForEngine('curl')) as [system, cmd], i (i)}
+							<pre class="mt-1 overflow-x-auto text-xs text-parchment-300">{system}: {cmd}</pre>
 						{/each}
 					</div>
 				{/if}
-				{#if cfg.consumer.ocr.engine === 'ocrmypdf'}
-					{@const ocrTool = toolStatus?.find((t) => t.engine === 'ocrmypdf')}
-					{#if ocrTool?.lang_hints?.length}
-						<div
-							class="mt-4 rounded-lg border border-lapis-500/30 bg-lapis-500/10 p-3 text-sm text-parchment-200"
+
+				<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+					<h2 class="mb-4 text-lg font-semibold text-parchment-200">Server</h2>
+					<div class="grid gap-4 sm:grid-cols-2">
+						<div>
+							<label for="server-host" class="mb-1 block text-sm font-medium text-parchment-200"
+								>Host</label
+							>
+							<input
+								id="server-host"
+								name="server-host"
+								autocomplete="off"
+								type="text"
+								bind:value={cfg.server.host}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+						<div>
+							<label for="server-port" class="mb-1 block text-sm font-medium text-parchment-200"
+								>Port</label
+							>
+							<input
+								id="server-port"
+								name="server-port"
+								autocomplete="off"
+								type="number"
+								inputmode="numeric"
+								min="1"
+								max="65535"
+								bind:value={cfg.server.port}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+						<div>
+							<label
+								for="server-max-upload"
+								class="mb-1 block text-sm font-medium text-parchment-200"
+								>Max upload size (MB)</label
+							>
+							<input
+								id="server-max-upload"
+								name="server-max-upload"
+								autocomplete="off"
+								type="number"
+								inputmode="numeric"
+								min="1"
+								bind:value={cfg.server.max_upload_size}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+						<div>
+							<label
+								for="server-max-download-files"
+								class="mb-1 block text-sm font-medium text-parchment-200">Max download files</label
+							>
+							<input
+								id="server-max-download-files"
+								name="server-max-download-files"
+								autocomplete="off"
+								type="number"
+								inputmode="numeric"
+								min="1"
+								bind:value={cfg.server.max_download_files}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+						<div>
+							<label
+								for="server-max-download-size"
+								class="mb-1 block text-sm font-medium text-parchment-200"
+								>Max download size (MB)</label
+							>
+							<input
+								id="server-max-download-size"
+								name="server-max-download-size"
+								autocomplete="off"
+								type="number"
+								inputmode="numeric"
+								min="0"
+								bind:value={cfg.server.max_download_size_mb}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+						<div>
+							<label
+								for="max-concurrent-batches"
+								class="mb-1 block text-sm font-medium text-parchment-200"
+								>Max concurrent batches</label
+							>
+							<input
+								id="max-concurrent-batches"
+								name="max-concurrent-batches"
+								autocomplete="off"
+								type="number"
+								inputmode="numeric"
+								min="1"
+								bind:value={cfg.server.max_concurrent_batches}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+						<div>
+							<label
+								for="server-max-batch-delete"
+								class="mb-1 block text-sm font-medium text-parchment-200">Max batch delete</label
+							>
+							<input
+								id="server-max-batch-delete"
+								name="server-max-batch-delete"
+								autocomplete="off"
+								type="number"
+								inputmode="numeric"
+								min="1"
+								bind:value={cfg.server.max_batch_delete}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+					</div>
+					<div class="mt-4">
+						<label
+							for="server-auth-enabled"
+							class="mb-1 block text-sm font-medium text-parchment-200"
+							>Authentication enabled</label
 						>
-							<p class="font-medium">Tesseract language packs required</p>
-							<p class="mt-1 text-parchment-300">
-								Install the packs for your configured languages ({ocrTool.languages.join(', ')}):
+						<div class="flex items-center gap-2">
+							<input
+								id="server-auth-enabled"
+								name="server-auth-enabled"
+								autocomplete="off"
+								type="checkbox"
+								bind:checked={cfg.server.auth_enabled}
+								class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
+							/>
+							<span class="text-sm text-parchment-400">
+								{cfg.server.auth_enabled ? 'Enabled' : 'Disabled'}
+							</span>
+						</div>
+					</div>
+				</section>
+
+				<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+					<h2 class="mb-4 text-lg font-semibold text-parchment-200">Storage</h2>
+					<div class="grid gap-4 sm:grid-cols-2">
+						<div>
+							<label
+								for="consumption-dir"
+								class="mb-1 block text-sm font-medium text-parchment-200"
+							>
+								Consumption directory (inbox)
+							</label>
+							<input
+								id="consumption-dir"
+								name="consumption-dir"
+								autocomplete="off"
+								type="text"
+								bind:value={cfg.storage.consumption_dir}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+						<div>
+							<label for="storage-dir" class="mb-1 block text-sm font-medium text-parchment-200">
+								Storage directory
+							</label>
+							<input
+								id="storage-dir"
+								name="storage-dir"
+								autocomplete="off"
+								type="text"
+								bind:value={cfg.storage.storage_dir}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+					</div>
+				</section>
+
+				<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+					<h2 class="mb-4 text-lg font-semibold text-parchment-200">Trash (Soft Delete)</h2>
+					<div class="grid gap-4 sm:grid-cols-2">
+						<div>
+							<label
+								for="trash-retention-days"
+								class="mb-1 block text-sm font-medium text-parchment-200"
+							>
+								Retention period (days)
+							</label>
+							<input
+								id="trash-retention-days"
+								name="trash-retention-days"
+								autocomplete="off"
+								type="number"
+								inputmode="numeric"
+								min="1"
+								bind:value={cfg.storage.trash.retention_days}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+							<p class="mt-1 text-xs text-parchment-500">
+								Soft-deleted documents are permanently purged after this many days.
 							</p>
-							{#each Object.entries(ocrTool.lang_hints[0].install_hints) as [system, cmd]}
+						</div>
+					</div>
+				</section>
+
+				<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+					<h2 class="mb-4 text-lg font-semibold text-parchment-200">Database</h2>
+					<div class="grid gap-4 sm:grid-cols-2">
+						<div>
+							<label for="db-host" class="mb-1 block text-sm font-medium text-parchment-200">
+								Database host
+							</label>
+							<input
+								id="db-host"
+								name="db-host"
+								autocomplete="off"
+								type="text"
+								bind:value={cfg.database.host}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+						<div>
+							<label for="db-port" class="mb-1 block text-sm font-medium text-parchment-200">
+								Database port
+							</label>
+							<input
+								id="db-port"
+								name="db-port"
+								autocomplete="off"
+								type="number"
+								inputmode="numeric"
+								min="1"
+								max="65535"
+								bind:value={cfg.database.port}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+						<div>
+							<label for="db-user" class="mb-1 block text-sm font-medium text-parchment-200">
+								Database user
+							</label>
+							<input
+								id="db-user"
+								name="db-user"
+								autocomplete="off"
+								type="text"
+								bind:value={cfg.database.user}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+						<div>
+							<label for="db-name" class="mb-1 block text-sm font-medium text-parchment-200">
+								Database name
+							</label>
+							<input
+								id="db-name"
+								name="db-name"
+								autocomplete="off"
+								type="text"
+								bind:value={cfg.database.database}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+						<div>
+							<label for="db-sslmode" class="mb-1 block text-sm font-medium text-parchment-200">
+								SSL mode
+							</label>
+							<select
+								id="db-sslmode"
+								name="db-sslmode"
+								bind:value={cfg.database.sslmode}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							>
+								<option value="disable">disable</option>
+								<option value="allow">allow</option>
+								<option value="prefer">prefer</option>
+								<option value="require">require</option>
+								<option value="verify-ca">verify-ca</option>
+								<option value="verify-full">verify-full</option>
+							</select>
+						</div>
+					</div>
+				</section>
+
+				<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+					<h2 class="mb-4 text-lg font-semibold text-parchment-200">OCR</h2>
+					<div class="grid gap-4 sm:grid-cols-2">
+						<div>
+							<label for="ocr-engine" class="mb-1 block text-sm font-medium text-parchment-200"
+								>Engine</label
+							>
+							<select
+								id="ocr-engine"
+								name="ocr-engine"
+								bind:value={cfg.consumer.ocr.engine}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							>
+								{#each cfg.available_engines.ocr as opt (opt.value)}
+									<option value={opt.value}>{opt.label}</option>
+								{/each}
+							</select>
+						</div>
+						<div>
+							<label for="ocr-timeout" class="mb-1 block text-sm font-medium text-parchment-200"
+								>Timeout (s)</label
+							>
+							<input
+								id="ocr-timeout"
+								name="ocr-timeout"
+								autocomplete="off"
+								type="number"
+								inputmode="numeric"
+								min="0"
+								bind:value={cfg.consumer.ocr.timeout}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+						<div>
+							<label for="ocr-workers" class="mb-1 block text-sm font-medium text-parchment-200"
+								>Workers</label
+							>
+							<input
+								id="ocr-workers"
+								name="ocr-workers"
+								autocomplete="off"
+								type="number"
+								inputmode="numeric"
+								min="0"
+								bind:value={cfg.consumer.ocr.ocr_workers}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+							<p class="mt-1 text-xs text-parchment-500">0 = auto (CPU count)</p>
+						</div>
+					</div>
+
+					{#if toolStatus?.find((t) => t.category === 'ocr' && !t.available)}
+						<div
+							class="mt-4 rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500"
+						>
+							<p class="font-medium">“{cfg.consumer.ocr.engine}” is not installed</p>
+							<p class="mt-1 text-parchment-400">
+								Documents won't process until it is available. Install it, e.g.:
+							</p>
+							{#each Object.entries(hintsForEngine(cfg.consumer.ocr.engine)) as [system, cmd], i (i)}
 								<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
 							{/each}
 						</div>
 					{/if}
-					{#if ocrTool?.companions?.length}
-						<div class="mt-4 space-y-2 text-sm">
-							{#each ocrTool.companions as c}
-								{#if !c.available && c.required}
-									<div
-										class="rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-terracotta-500"
-									>
-										<p class="font-medium">"{c.command}" not installed (required)</p>
-										<p class="mt-1 text-parchment-400">{c.purpose}</p>
-										{#each Object.entries(c.install_hints) as [system, cmd]}
-											<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
-										{/each}
-									</div>
-								{:else if !c.available}
-									<div
-										class="rounded-lg border border-lapis-500/30 bg-lapis-500/10 p-3 text-parchment-300"
-									>
-										<p class="font-medium text-parchment-200">
-											"{c.command}" not installed (optional)
-										</p>
-										<p class="mt-1">{c.purpose}. ocrmypdf will skip this feature without it.</p>
-										{#each Object.entries(c.install_hints) as [system, cmd]}
-											<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
-										{/each}
-									</div>
-								{/if}
-							{/each}
-						</div>
+					{#if cfg.consumer.ocr.engine === 'ocrmypdf'}
+						{@const ocrTool = toolStatus?.find((t) => t.engine === 'ocrmypdf')}
+						{#if ocrTool?.lang_hints?.length}
+							<div
+								class="mt-4 rounded-lg border border-lapis-500/30 bg-lapis-500/10 p-3 text-sm text-parchment-200"
+							>
+								<p class="font-medium">Tesseract language packs required</p>
+								<p class="mt-1 text-parchment-300">
+									Install the packs for your configured languages ({ocrTool.languages.join(', ')}):
+								</p>
+								{#each Object.entries(ocrTool.lang_hints[0].install_hints) as [system, cmd], i (i)}
+									<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
+								{/each}
+							</div>
+						{/if}
+						{#if ocrTool?.companions?.length}
+							<div class="mt-4 space-y-2 text-sm">
+								{#each ocrTool.companions as c (c.command)}
+									{#if !c.available && c.required}
+										<div
+											class="rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-terracotta-500"
+										>
+											<p class="font-medium">“{c.command}” not installed (required)</p>
+											<p class="mt-1 text-parchment-400">{c.purpose}</p>
+											{#each Object.entries(c.install_hints) as [system, cmd], i (i)}
+												<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
+											{/each}
+										</div>
+									{:else if !c.available}
+										<div
+											class="rounded-lg border border-lapis-500/30 bg-lapis-500/10 p-3 text-parchment-300"
+										>
+											<p class="font-medium text-parchment-200">
+												“{c.command}” not installed (optional)
+											</p>
+											<p class="mt-1">{c.purpose}. ocrmypdf will skip this feature without it.</p>
+											{#each Object.entries(c.install_hints) as [system, cmd], i (i)}
+												<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
+											{/each}
+										</div>
+									{/if}
+								{/each}
+							</div>
+						{/if}
 					{/if}
-				{/if}
 
-				<div class="mt-4 grid gap-4 sm:grid-cols-2">
-					<div class="sm:col-span-2">
-						<label for="ocr-data-dir" class="mb-1 block text-sm font-medium text-parchment-200"
-							>Data directory</label
-						>
-						<input
-							id="ocr-data-dir"
-							type="text"
-							bind:value={cfg.consumer.ocr.data_dir}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						/>
-					</div>
-				</div>
-				<div class="mt-4">
-					<label for="ocr-lang-0" class="mb-2 block text-sm font-medium text-parchment-200"
-						>Languages</label
-					>
-					{#each cfg.consumer.ocr.languages as lang, i (i)}
-						<div class="mb-2 flex gap-2">
-							<input
-								id="ocr-lang-{i}"
-								type="text"
-								value={lang}
-								oninput={(e) => updateLanguage(i, e.currentTarget.value)}
-								placeholder="eng"
-								class="flex-1 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-							/>
-							{#if cfg.consumer.ocr.languages.length > 1}
-								<button
-									type="button"
-									onclick={() => removeLanguage(i)}
-									class="rounded-lg border border-clay-800 px-3 text-sm text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-								>
-									Remove
-								</button>
-							{/if}
-						</div>
-					{/each}
-					<button
-						type="button"
-						onclick={addLanguage}
-						class="text-sm text-gold-500 hover:text-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-					>
-						+ Add language
-					</button>
-				</div>
-			</section>
-
-			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
-				<h2 class="mb-4 text-lg font-semibold text-parchment-200">Consumer</h2>
-				<div class="grid gap-4 sm:grid-cols-2">
-					<div>
-						<label for="consumer-workers" class="mb-1 block text-sm font-medium text-parchment-200"
-							>Workers</label
-						>
-						<input
-							id="consumer-workers"
-							type="number"
-							inputmode="numeric"
-							min="1"
-							bind:value={cfg.consumer.workers}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						/>
-					</div>
-					<div>
-						<label
-							for="consumer-max-files-per-batch"
-							class="mb-1 block text-sm font-medium text-parchment-200">Max files per batch</label
-						>
-						<input
-							id="consumer-max-files-per-batch"
-							type="number"
-							inputmode="numeric"
-							min="0"
-							bind:value={cfg.consumer.max_files_per_batch}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						/>
-					</div>
-				</div>
-
-				<div class="mt-4">
-					<h3 class="mb-2 text-sm font-medium text-parchment-200">Supported file types</h3>
-					<div class="flex flex-wrap gap-3">
-						{#each mimeTypeOptions as opt (opt.mime_type)}
-							<label class="flex items-center gap-1.5 text-sm text-parchment-300">
-								<input
-									type="checkbox"
-									bind:checked={opt.checked}
-									disabled={opt.required}
-									class="rounded border-clay-800 bg-clay-950 accent-gold-500 disabled:opacity-50"
-								/>
-								{opt.label}
-							</label>
-						{/each}
-					</div>
-				</div>
-
-				<div class="mt-4 border-t border-clay-800 pt-4">
-					<h3 class="mb-2 text-sm font-medium text-parchment-200">DOCX/ODT Converter</h3>
-					<p class="mb-3 text-xs text-parchment-400">
-						Converts DOCX and ODT files to PDF via LibreOffice before text extraction.
-					</p>
-					<div class="grid gap-4 sm:grid-cols-3">
-						<div class="flex items-center gap-2">
-							<input
-								id="converter-enabled"
-								type="checkbox"
-								bind:checked={cfg.consumer.converter.enabled}
-								class="rounded border-clay-800 bg-clay-950 accent-gold-500"
-							/>
-							<label for="converter-enabled" class="text-sm font-medium text-parchment-200"
-								>Enabled</label
-							>
-						</div>
-						<div>
-							<label
-								for="converter-binary"
-								class="mb-1 block text-sm font-medium text-parchment-200">Binary path</label
+					<div class="mt-4 grid gap-4 sm:grid-cols-2">
+						<div class="sm:col-span-2">
+							<label for="ocr-data-dir" class="mb-1 block text-sm font-medium text-parchment-200"
+								>Data directory</label
 							>
 							<input
-								id="converter-binary"
-								type="text"
-								bind:value={cfg.consumer.converter.binary}
+								id="ocr-data-dir"
+								name="ocr-data-dir"
 								autocomplete="off"
+								type="text"
+								bind:value={cfg.consumer.ocr.data_dir}
 								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 							/>
 						</div>
+					</div>
+					<div class="mt-4">
+						<label for="ocr-lang-0" class="mb-2 block text-sm font-medium text-parchment-200"
+							>Languages</label
+						>
+						{#each cfg.consumer.ocr.languages as lang, i (i)}
+							<div class="mb-2 flex gap-2">
+								<input
+									id="ocr-lang-{i}"
+									name="ocr-lang-{i}"
+									autocomplete="off"
+									spellcheck="false"
+									type="text"
+									value={lang}
+									oninput={(e) => updateLanguage(i, e.currentTarget.value)}
+									placeholder="eng"
+									class="flex-1 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+								/>
+								{#if cfg.consumer.ocr.languages.length > 1}
+									<button
+										type="button"
+										onclick={() => removeLanguage(i)}
+										class="rounded-lg border border-clay-800 px-3 text-sm text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+									>
+										Remove
+									</button>
+								{/if}
+							</div>
+						{/each}
+						<button
+							type="button"
+							onclick={addLanguage}
+							class="text-sm text-gold-500 hover:text-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+						>
+							+ Add language
+						</button>
+					</div>
+				</section>
+
+				<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+					<h2 class="mb-4 text-lg font-semibold text-parchment-200">Consumer</h2>
+					<div class="grid gap-4 sm:grid-cols-2">
 						<div>
 							<label
-								for="converter-timeout"
-								class="mb-1 block text-sm font-medium text-parchment-200">Timeout (s)</label
+								for="consumer-workers"
+								class="mb-1 block text-sm font-medium text-parchment-200">Workers</label
 							>
 							<input
-								id="converter-timeout"
+								id="consumer-workers"
+								name="consumer-workers"
+								autocomplete="off"
 								type="number"
 								inputmode="numeric"
 								min="1"
-								bind:value={cfg.consumer.converter.timeout}
-								autocomplete="off"
+								bind:value={cfg.consumer.workers}
 								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 							/>
 						</div>
-					</div>
-				</div>
-			</section>
-
-			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
-				<h2 class="mb-4 text-lg font-semibold text-parchment-200">Polling</h2>
-				<div class="grid gap-4 sm:grid-cols-2">
-					<div>
-						<label for="polling-enabled" class="mb-1 block text-sm font-medium text-parchment-200"
-							>Enabled</label
-						>
-						<div class="flex items-center gap-2">
-							<input
-								id="polling-enabled"
-								type="checkbox"
-								bind:checked={cfg.consumer.polling.enabled}
-								class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
-							/>
-							<span class="text-sm text-parchment-400">
-								{cfg.consumer.polling.enabled ? 'Active' : 'Inactive'}
-							</span>
-						</div>
-					</div>
-					<div>
-						<label for="polling-interval" class="mb-1 block text-sm font-medium text-parchment-200"
-							>Interval (minutes)</label
-						>
-						<input
-							id="polling-interval"
-							type="number"
-							inputmode="numeric"
-							min="1"
-							bind:value={cfg.consumer.polling.interval}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						/>
-					</div>
-				</div>
-
-				<div class="mt-4">
-					<span class="mb-2 block text-sm font-medium text-parchment-200"
-						>Active windows (optional)</span
-					>
-					{#each cfg.consumer.polling.windows as w, i (i)}
-						<div class="mb-2 flex items-center gap-2">
-							<input
-								type="text"
-								bind:value={w.start}
-								aria-label="Start time"
-								pattern="([01][0-9]|2[0-3]):[0-5][0-9]"
-								placeholder="HH:MM"
-								minlength="5"
-								maxlength="5"
-								class="w-36 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-							/>
-							<span class="text-parchment-400">to</span>
-							<input
-								type="text"
-								bind:value={w.end}
-								aria-label="End time"
-								pattern="([01][0-9]|2[0-3]):[0-5][0-9]|24:00"
-								placeholder="HH:MM"
-								minlength="5"
-								maxlength="5"
-								class="w-36 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-							/>
-							<button
-								type="button"
-								onclick={() => removeWindow(i)}
-								class="rounded-lg border border-clay-800 px-3 text-sm text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-							>
-								Remove
-							</button>
-						</div>
-					{/each}
-					<button
-						type="button"
-						onclick={addWindow}
-						class="text-sm text-gold-500 hover:text-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-					>
-						+ Add window
-					</button>
-				</div>
-			</section>
-
-			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
-				<h2 class="mb-4 text-lg font-semibold text-parchment-200">Reclaim</h2>
-				<div class="grid gap-4 sm:grid-cols-2">
-					<div>
-						<label for="reclaim-enabled" class="mb-1 block text-sm font-medium text-parchment-200"
-							>Auto-resume interrupted batches</label
-						>
-						<div class="flex items-center gap-2">
-							<input
-								id="reclaim-enabled"
-								type="checkbox"
-								bind:checked={cfg.consumer.reclaim.enabled}
-								class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
-							/>
-							<span class="text-sm text-parchment-400">
-								{cfg.consumer.reclaim.enabled ? 'Active' : 'Inactive'}
-							</span>
-						</div>
-					</div>
-					<div>
-						<label
-							for="reclaim-max-retries"
-							class="mb-1 block text-sm font-medium text-parchment-200">Max retries per task</label
-						>
-						<input
-							id="reclaim-max-retries"
-							type="number"
-							inputmode="numeric"
-							min="1"
-							max="10"
-							class="w-24 rounded-lg border border-clay-700 bg-clay-950 px-3 py-2 text-parchment-200 focus:border-gold-500 focus-visible:ring-1 focus-visible:ring-gold-500 focus-visible:outline-none"
-							bind:value={cfg.consumer.reclaim.max_retries}
-						/>
-					</div>
-					<div>
-						<label
-							for="reclaim-stale-task-after"
-							class="mb-1 block text-sm font-medium text-parchment-200">Stale task after (s)</label
-						>
-						<input
-							id="reclaim-stale-task-after"
-							type="number"
-							inputmode="numeric"
-							min="60"
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-							bind:value={cfg.consumer.reclaim.stale_task_after}
-						/>
-					</div>
-				</div>
-			</section>
-
-			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
-				<h2 class="mb-4 text-lg font-semibold text-parchment-200">Text extractor</h2>
-				<div class="grid gap-4 sm:grid-cols-2">
-					<div>
-						<label
-							for="text-extractor-engine"
-							class="mb-1 block text-sm font-medium text-parchment-200">Engine</label
-						>
-						<select
-							id="text-extractor-engine"
-							bind:value={cfg.consumer.textextractor.engine}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						>
-							{#each cfg.available_engines.text_extractor as opt (opt.value)}
-								<option value={opt.value}>{opt.label}</option>
-							{/each}
-						</select>
-					</div>
-					<div>
-						<label
-							for="text-extractor-timeout"
-							class="mb-1 block text-sm font-medium text-parchment-200">Timeout (s)</label
-						>
-						<input
-							id="text-extractor-timeout"
-							type="number"
-							inputmode="numeric"
-							min="0"
-							bind:value={cfg.consumer.textextractor.timeout}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						/>
-					</div>
-				</div>
-				{#if toolStatus?.find((t) => t.category === 'textextractor' && !t.available)}
-					<div
-						class="mt-4 rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500"
-					>
-						<p class="font-medium">"{cfg.consumer.textextractor.engine}" is not installed</p>
-						<p class="mt-1 text-parchment-400">
-							Documents won't process until it is available. Install it, e.g.:
-						</p>
-						{#each Object.entries(hintsForEngine(cfg.consumer.textextractor.engine)) as [system, cmd]}
-							<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
-						{/each}
-					</div>
-				{/if}
-			</section>
-
-			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
-				<h2 class="mb-4 text-lg font-semibold text-parchment-200">PDF optimizer</h2>
-				<div class="grid gap-4 sm:grid-cols-2">
-					<div>
-						<label for="pdf-engine" class="mb-1 block text-sm font-medium text-parchment-200"
-							>Engine</label
-						>
-						<select
-							id="pdf-engine"
-							bind:value={cfg.consumer.pdfoptimizer.engine}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						>
-							{#each cfg.available_engines.pdf_optimizer as opt (opt.value)}
-								<option value={opt.value}>{opt.label}</option>
-							{/each}
-						</select>
-					</div>
-					<div>
-						<label for="pdf-fallback" class="mb-1 block text-sm font-medium text-parchment-200"
-							>Fallback (optional)</label
-						>
-						<input
-							id="pdf-fallback"
-							type="text"
-							bind:value={cfg.consumer.pdfoptimizer.fallback}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						/>
-					</div>
-				</div>
-				{#if toolStatus?.find((t) => t.category === 'pdfoptimizer' && !t.available)}
-					<div
-						class="mt-4 rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500"
-					>
-						<p class="font-medium">"{cfg.consumer.pdfoptimizer.engine}" is not installed</p>
-						<p class="mt-1 text-parchment-400">
-							Documents won't process until it is available. Install it, e.g.:
-						</p>
-						{#each Object.entries(hintsForEngine(cfg.consumer.pdfoptimizer.engine)) as [system, cmd]}
-							<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
-						{/each}
-					</div>
-				{/if}
-				<div class="mt-4 grid gap-4 sm:grid-cols-2">
-					<div class="sm:col-span-2">
-						<label for="pdf-timeout" class="mb-1 block text-sm font-medium text-parchment-200"
-							>Timeout (s)</label
-						>
-						<input
-							id="pdf-timeout"
-							type="number"
-							inputmode="numeric"
-							min="0"
-							bind:value={cfg.consumer.pdfoptimizer.timeout}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						/>
-					</div>
-				</div>
-			</section>
-
-			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
-				<h2 class="mb-4 text-lg font-semibold text-parchment-200">Enricher</h2>
-				<div class="grid gap-4 sm:grid-cols-2">
-					<div>
-						<label for="enricher-workers" class="mb-1 block text-sm font-medium text-parchment-200"
-							>Workers</label
-						>
-						<input
-							id="enricher-workers"
-							type="number"
-							inputmode="numeric"
-							min="1"
-							bind:value={cfg.enricher.workers}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						/>
-					</div>
-				</div>
-			</section>
-
-			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
-				<div class="mb-4 flex items-center justify-between">
-					<h2 class="text-lg font-semibold text-parchment-200">Content analyzer (LLM)</h2>
-					<label class="relative inline-flex cursor-pointer items-center">
-						<input
-							type="checkbox"
-							bind:checked={cfg.enricher.contentanalyzer.enabled}
-							class="peer sr-only"
-						/>
-						<div
-							class="h-6 w-11 rounded-full border border-clay-700 bg-clay-800 peer-checked:border-gold-500 peer-checked:bg-gold-600 after:absolute after:top-0.5 after:left-0.5 after:h-5 after:w-5 after:rounded-full after:bg-parchment-400 after:transition-transform peer-checked:after:translate-x-full peer-checked:after:bg-white"
-						></div>
-						<span class="ml-2 text-sm text-parchment-300">Enabled</span>
-					</label>
-				</div>
-				{#if cfg.enricher.contentanalyzer.enabled}
-					<div class="grid gap-4 sm:grid-cols-2">
-						<div>
-							<label for="llm-adapter" class="mb-1 block text-sm font-medium text-parchment-200">
-								Adapter
-							</label>
-							<select
-								id="llm-adapter"
-								bind:value={cfg.enricher.contentanalyzer.llm.adapter}
-								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-							>
-								{#each Object.keys(llmModels.adapters) as adapter (adapter)}
-									<option value={adapter}>{adapter}</option>
-								{/each}
-							</select>
-						</div>
-
-						<div>
-							<label for="llm-provider" class="mb-1 block text-sm font-medium text-parchment-200">
-								Provider
-							</label>
-							<select
-								id="llm-provider"
-								bind:value={cfg.enricher.contentanalyzer.llm.provider}
-								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-							>
-								{#each selectedAdapterProviders as provider (provider)}
-									<option value={provider}>{provider}</option>
-								{/each}
-							</select>
-						</div>
-
-						<div>
-							<label for="llm-model" class="mb-1 block text-sm font-medium text-parchment-200">
-								Model
-							</label>
-							<select
-								id="llm-model"
-								bind:value={cfg.enricher.contentanalyzer.llm.model}
-								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-							>
-								{#each selectedProviderModels as m (m.id)}
-									<option value={m.id}>{m.id}</option>
-								{/each}
-							</select>
-						</div>
-
-						<div>
-							<label for="llm-token" class="mb-1 block text-sm font-medium text-parchment-200">
-								Token
-							</label>
-							<div class="flex gap-2">
-								<input
-									id="llm-token"
-									type={showToken ? 'text' : 'password'}
-									bind:value={cfg.enricher.contentanalyzer.llm.token}
-									placeholder="sk-…"
-									autocomplete="off"
-									class="flex-1 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-								/>
-								<button
-									type="button"
-									onclick={() => (showToken = !showToken)}
-									class="rounded-lg border border-clay-800 px-3 text-sm text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-								>
-									{showToken ? 'Hide' : 'Show'}
-								</button>
-							</div>
-						</div>
-					</div>
-
-					<div class="mt-4 grid gap-4 sm:grid-cols-2">
 						<div>
 							<label
-								for="llm-temperature"
-								class="mb-1 block text-sm font-medium text-parchment-200"
+								for="consumer-max-files-per-batch"
+								class="mb-1 block text-sm font-medium text-parchment-200">Max files per batch</label
 							>
-								Temperature
-							</label>
 							<input
-								id="llm-temperature"
+								id="consumer-max-files-per-batch"
+								name="consumer-max-files-per-batch"
+								autocomplete="off"
 								type="number"
 								inputmode="numeric"
 								min="0"
-								max="2"
-								step="0.1"
-								bind:value={cfg.enricher.contentanalyzer.llm.temperature}
+								bind:value={cfg.consumer.max_files_per_batch}
 								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 							/>
-						</div>
-						<div>
-							<label
-								for="content-analyzer-timeout"
-								class="mb-1 block text-sm font-medium text-parchment-200"
-							>
-								Timeout (s)
-							</label>
-							<input
-								id="content-analyzer-timeout"
-								type="number"
-								inputmode="numeric"
-								min="1"
-								bind:value={cfg.enricher.contentanalyzer.timeout}
-								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-							/>
-						</div>
-						<div>
-							<label
-								for="content-analyzer-pause-credit"
-								class="mb-1 block text-sm font-medium text-parchment-200"
-							>
-								Pause on credit error
-							</label>
-							<div class="mt-2 flex items-center gap-2">
-								<input
-									id="content-analyzer-pause-credit"
-									type="checkbox"
-									bind:checked={cfg.enricher.contentanalyzer.pause_on_credit_error}
-									class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
-								/>
-								<span class="text-sm text-parchment-400">
-									{cfg.enricher.contentanalyzer.pause_on_credit_error ? 'Enabled' : 'Disabled'}
-								</span>
-							</div>
 						</div>
 					</div>
 
 					<div class="mt-4">
-						<label
-							for="content-analyzer-prompt-template"
-							class="mb-1 block text-sm font-medium text-parchment-200"
-						>
-							Prompt template (advanced)
-						</label>
-						<p class="mb-2 text-xs text-parchment-500">
-							Leave empty for default. Available placeholders: {`{{.DocTypePrompt}}`}, {`{{.TagsPrompt}}`},
-							{`{{.PeoplePrompt}}`}, {`{{.Text}}`} (required)
-						</p>
-						<textarea
-							id="content-analyzer-prompt-template"
-							rows="8"
-							bind:value={cfg.enricher.contentanalyzer.prompt_template}
-							spellcheck="false"
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 font-mono text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						></textarea>
+						<h3 class="mb-2 text-sm font-medium text-parchment-200">Supported file types</h3>
+						<div class="flex flex-wrap gap-3">
+							{#each mimeTypeOptions as opt (opt.mime_type)}
+								<label class="flex items-center gap-1.5 text-sm text-parchment-300">
+									<input
+										type="checkbox"
+										bind:checked={opt.checked}
+										disabled={opt.required}
+										class="rounded border-clay-800 bg-clay-950 accent-gold-500 disabled:opacity-50"
+									/>
+									{opt.label}
+								</label>
+							{/each}
+						</div>
 					</div>
 
-					<div class="mt-6 rounded-lg border border-clay-800 bg-clay-950 p-4">
-						<h3 class="mb-3 text-sm font-semibold text-parchment-200">Doc type refinement</h3>
+					<div class="mt-4 border-t border-clay-800 pt-4">
+						<h3 class="mb-2 text-sm font-medium text-parchment-200">DOCX/ODT Converter</h3>
+						<p class="mb-3 text-xs text-parchment-400">
+							Converts DOCX and ODT files to PDF via LibreOffice before text extraction.
+						</p>
 						<div class="grid gap-4 sm:grid-cols-3">
+							<div class="flex items-center gap-2">
+								<input
+									id="converter-enabled"
+									name="converter-enabled"
+									autocomplete="off"
+									type="checkbox"
+									bind:checked={cfg.consumer.converter.enabled}
+									class="rounded border-clay-800 bg-clay-950 accent-gold-500"
+								/>
+								<label for="converter-enabled" class="text-sm font-medium text-parchment-200"
+									>Enabled</label
+								>
+							</div>
 							<div>
 								<label
-									for="doc-type-refinement-enabled"
-									class="mb-1 block text-sm font-medium text-parchment-200">Enabled</label
+									for="converter-binary"
+									class="mb-1 block text-sm font-medium text-parchment-200">Binary path</label
 								>
+								<input
+									id="converter-binary"
+									name="converter-binary"
+									type="text"
+									bind:value={cfg.consumer.converter.binary}
+									autocomplete="off"
+									class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+								/>
+							</div>
+							<div>
+								<label
+									for="converter-timeout"
+									class="mb-1 block text-sm font-medium text-parchment-200">Timeout (s)</label
+								>
+								<input
+									id="converter-timeout"
+									name="converter-timeout"
+									type="number"
+									inputmode="numeric"
+									min="1"
+									bind:value={cfg.consumer.converter.timeout}
+									autocomplete="off"
+									class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+								/>
+							</div>
+						</div>
+					</div>
+				</section>
+
+				<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+					<h2 class="mb-4 text-lg font-semibold text-parchment-200">Polling</h2>
+					<div class="grid gap-4 sm:grid-cols-2">
+						<div>
+							<label for="polling-enabled" class="mb-1 block text-sm font-medium text-parchment-200"
+								>Enabled</label
+							>
+							<div class="flex items-center gap-2">
+								<input
+									id="polling-enabled"
+									name="polling-enabled"
+									autocomplete="off"
+									type="checkbox"
+									bind:checked={cfg.consumer.polling.enabled}
+									class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
+								/>
+								<span class="text-sm text-parchment-400">
+									{cfg.consumer.polling.enabled ? 'Active' : 'Inactive'}
+								</span>
+							</div>
+						</div>
+						<div>
+							<label
+								for="polling-interval"
+								class="mb-1 block text-sm font-medium text-parchment-200">Interval (minutes)</label
+							>
+							<input
+								id="polling-interval"
+								name="polling-interval"
+								autocomplete="off"
+								type="number"
+								inputmode="numeric"
+								min="1"
+								bind:value={cfg.consumer.polling.interval}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+					</div>
+
+					<div class="mt-4">
+						<span class="mb-2 block text-sm font-medium text-parchment-200"
+							>Active windows (optional)</span
+						>
+						{#each cfg.consumer.polling.windows as w, i (i)}
+							<div class="mb-2 flex items-center gap-2">
+								<input
+									type="text"
+									name="polling-window-start-{i}"
+									bind:value={w.start}
+									aria-label="Start time"
+									pattern="([01][0-9]|2[0-3]):[0-5][0-9]"
+									placeholder="HH:MM"
+									minlength="5"
+									maxlength="5"
+									class="w-36 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+								/>
+								<span class="text-parchment-400">to</span>
+								<input
+									type="text"
+									name="polling-window-end-{i}"
+									bind:value={w.end}
+									aria-label="End time"
+									pattern="([01][0-9]|2[0-3]):[0-5][0-9]|24:00"
+									placeholder="HH:MM"
+									minlength="5"
+									maxlength="5"
+									class="w-36 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+								/>
+								<button
+									type="button"
+									onclick={() => removeWindow(i)}
+									class="rounded-lg border border-clay-800 px-3 text-sm text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+								>
+									Remove
+								</button>
+							</div>
+						{/each}
+						<button
+							type="button"
+							onclick={addWindow}
+							class="text-sm text-gold-500 hover:text-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+						>
+							+ Add window
+						</button>
+					</div>
+				</section>
+
+				<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+					<h2 class="mb-4 text-lg font-semibold text-parchment-200">Reclaim</h2>
+					<div class="grid gap-4 sm:grid-cols-2">
+						<div>
+							<label for="reclaim-enabled" class="mb-1 block text-sm font-medium text-parchment-200"
+								>Auto-resume interrupted batches</label
+							>
+							<div class="flex items-center gap-2">
+								<input
+									id="reclaim-enabled"
+									name="reclaim-enabled"
+									autocomplete="off"
+									type="checkbox"
+									bind:checked={cfg.consumer.reclaim.enabled}
+									class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
+								/>
+								<span class="text-sm text-parchment-400">
+									{cfg.consumer.reclaim.enabled ? 'Active' : 'Inactive'}
+								</span>
+							</div>
+						</div>
+						<div>
+							<label
+								for="reclaim-max-retries"
+								class="mb-1 block text-sm font-medium text-parchment-200"
+								>Max retries per task</label
+							>
+							<input
+								id="reclaim-max-retries"
+								name="reclaim-max-retries"
+								autocomplete="off"
+								type="number"
+								inputmode="numeric"
+								min="1"
+								max="10"
+								class="w-24 rounded-lg border border-clay-700 bg-clay-950 px-3 py-2 text-parchment-200 focus:border-gold-500 focus-visible:ring-1 focus-visible:ring-gold-500 focus-visible:outline-none"
+								bind:value={cfg.consumer.reclaim.max_retries}
+							/>
+						</div>
+						<div>
+							<label
+								for="reclaim-stale-task-after"
+								class="mb-1 block text-sm font-medium text-parchment-200"
+								>Stale task after (s)</label
+							>
+							<input
+								id="reclaim-stale-task-after"
+								name="reclaim-stale-task-after"
+								autocomplete="off"
+								type="number"
+								inputmode="numeric"
+								min="60"
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+								bind:value={cfg.consumer.reclaim.stale_task_after}
+							/>
+						</div>
+					</div>
+				</section>
+
+				<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+					<h2 class="mb-4 text-lg font-semibold text-parchment-200">Text extractor</h2>
+					<div class="grid gap-4 sm:grid-cols-2">
+						<div>
+							<label
+								for="text-extractor-engine"
+								class="mb-1 block text-sm font-medium text-parchment-200">Engine</label
+							>
+							<select
+								id="text-extractor-engine"
+								name="text-extractor-engine"
+								bind:value={cfg.consumer.textextractor.engine}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							>
+								{#each cfg.available_engines.text_extractor as opt (opt.value)}
+									<option value={opt.value}>{opt.label}</option>
+								{/each}
+							</select>
+						</div>
+						<div>
+							<label
+								for="text-extractor-timeout"
+								class="mb-1 block text-sm font-medium text-parchment-200">Timeout (s)</label
+							>
+							<input
+								id="text-extractor-timeout"
+								name="text-extractor-timeout"
+								autocomplete="off"
+								type="number"
+								inputmode="numeric"
+								min="0"
+								bind:value={cfg.consumer.textextractor.timeout}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+					</div>
+					{#if toolStatus?.find((t) => t.category === 'textextractor' && !t.available)}
+						<div
+							class="mt-4 rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500"
+						>
+							<p class="font-medium">“{cfg.consumer.textextractor.engine}” is not installed</p>
+							<p class="mt-1 text-parchment-400">
+								Documents won't process until it is available. Install it, e.g.:
+							</p>
+							{#each Object.entries(hintsForEngine(cfg.consumer.textextractor.engine)) as [system, cmd], i (i)}
+								<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
+							{/each}
+						</div>
+					{/if}
+				</section>
+
+				<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+					<h2 class="mb-4 text-lg font-semibold text-parchment-200">PDF optimizer</h2>
+					<div class="grid gap-4 sm:grid-cols-2">
+						<div>
+							<label for="pdf-engine" class="mb-1 block text-sm font-medium text-parchment-200"
+								>Engine</label
+							>
+							<select
+								id="pdf-engine"
+								name="pdf-engine"
+								bind:value={cfg.consumer.pdfoptimizer.engine}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							>
+								{#each cfg.available_engines.pdf_optimizer as opt (opt.value)}
+									<option value={opt.value}>{opt.label}</option>
+								{/each}
+							</select>
+						</div>
+						<div>
+							<label for="pdf-fallback" class="mb-1 block text-sm font-medium text-parchment-200"
+								>Fallback (optional)</label
+							>
+							<input
+								id="pdf-fallback"
+								name="pdf-fallback"
+								autocomplete="off"
+								type="text"
+								bind:value={cfg.consumer.pdfoptimizer.fallback}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+					</div>
+					{#if toolStatus?.find((t) => t.category === 'pdfoptimizer' && !t.available)}
+						<div
+							class="mt-4 rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500"
+						>
+							<p class="font-medium">“{cfg.consumer.pdfoptimizer.engine}” is not installed</p>
+							<p class="mt-1 text-parchment-400">
+								Documents won't process until it is available. Install it, e.g.:
+							</p>
+							{#each Object.entries(hintsForEngine(cfg.consumer.pdfoptimizer.engine)) as [system, cmd], i (i)}
+								<pre class="mt-1 text-xs text-parchment-300">{system}: {cmd}</pre>
+							{/each}
+						</div>
+					{/if}
+					<div class="mt-4 grid gap-4 sm:grid-cols-2">
+						<div class="sm:col-span-2">
+							<label for="pdf-timeout" class="mb-1 block text-sm font-medium text-parchment-200"
+								>Timeout (s)</label
+							>
+							<input
+								id="pdf-timeout"
+								name="pdf-timeout"
+								autocomplete="off"
+								type="number"
+								inputmode="numeric"
+								min="0"
+								bind:value={cfg.consumer.pdfoptimizer.timeout}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+					</div>
+				</section>
+
+				<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+					<h2 class="mb-4 text-lg font-semibold text-parchment-200">Enricher</h2>
+					<div class="grid gap-4 sm:grid-cols-2">
+						<div>
+							<label
+								for="enricher-workers"
+								class="mb-1 block text-sm font-medium text-parchment-200">Workers</label
+							>
+							<input
+								id="enricher-workers"
+								name="enricher-workers"
+								autocomplete="off"
+								type="number"
+								inputmode="numeric"
+								min="1"
+								bind:value={cfg.enricher.workers}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+					</div>
+				</section>
+
+				<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+					<div class="mb-4 flex items-center justify-between">
+						<h2 class="text-lg font-semibold text-parchment-200">Content analyzer (LLM)</h2>
+						<label class="relative inline-flex cursor-pointer items-center">
+							<input
+								type="checkbox"
+								bind:checked={cfg.enricher.contentanalyzer.enabled}
+								class="peer sr-only"
+							/>
+							<div
+								class="h-6 w-11 rounded-full border border-clay-700 bg-clay-800 peer-checked:border-gold-500 peer-checked:bg-gold-600 peer-focus-visible:ring-2 peer-focus-visible:ring-gold-500 peer-focus-visible:ring-offset-2 after:absolute after:top-0.5 after:left-0.5 after:h-5 after:w-5 after:rounded-full after:bg-parchment-400 after:transition-transform peer-checked:after:translate-x-full peer-checked:after:bg-white"
+							></div>
+							<span class="ml-2 text-sm text-parchment-300">Enabled</span>
+						</label>
+					</div>
+					{#if cfg.enricher.contentanalyzer.enabled}
+						<div class="grid gap-4 sm:grid-cols-2">
+							<div>
+								<label for="llm-adapter" class="mb-1 block text-sm font-medium text-parchment-200">
+									Adapter
+								</label>
+								<select
+									id="llm-adapter"
+									name="llm-adapter"
+									bind:value={cfg.enricher.contentanalyzer.llm.adapter}
+									class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+								>
+									{#each Object.keys(llmModels.adapters) as adapter (adapter)}
+										<option value={adapter}>{adapter}</option>
+									{/each}
+								</select>
+							</div>
+
+							<div>
+								<label for="llm-provider" class="mb-1 block text-sm font-medium text-parchment-200">
+									Provider
+								</label>
+								<select
+									id="llm-provider"
+									name="llm-provider"
+									bind:value={cfg.enricher.contentanalyzer.llm.provider}
+									class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+								>
+									{#each selectedAdapterProviders as provider (provider)}
+										<option value={provider}>{provider}</option>
+									{/each}
+								</select>
+							</div>
+
+							<div>
+								<label for="llm-model" class="mb-1 block text-sm font-medium text-parchment-200">
+									Model
+								</label>
+								<select
+									id="llm-model"
+									name="llm-model"
+									bind:value={cfg.enricher.contentanalyzer.llm.model}
+									class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+								>
+									{#each selectedProviderModels as m (m.id)}
+										<option value={m.id}>{m.id}</option>
+									{/each}
+								</select>
+							</div>
+
+							<div>
+								<label for="llm-token" class="mb-1 block text-sm font-medium text-parchment-200">
+									Token
+								</label>
+								<div class="flex gap-2">
+									<input
+										id="llm-token"
+										type={showToken ? 'text' : 'password'}
+										bind:value={cfg.enricher.contentanalyzer.llm.token}
+										placeholder="sk-…"
+										autocomplete="off"
+										class="flex-1 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+									/>
+									<button
+										type="button"
+										onclick={() => (showToken = !showToken)}
+										class="rounded-lg border border-clay-800 px-3 text-sm text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+									>
+										{showToken ? 'Hide' : 'Show'}
+									</button>
+								</div>
+							</div>
+						</div>
+
+						<div class="mt-4 grid gap-4 sm:grid-cols-2">
+							<div>
+								<label
+									for="llm-temperature"
+									class="mb-1 block text-sm font-medium text-parchment-200"
+								>
+									Temperature
+								</label>
+								<input
+									id="llm-temperature"
+									name="llm-temperature"
+									autocomplete="off"
+									type="number"
+									inputmode="numeric"
+									min="0"
+									max="2"
+									step="0.1"
+									bind:value={cfg.enricher.contentanalyzer.llm.temperature}
+									class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+								/>
+							</div>
+							<div>
+								<label
+									for="content-analyzer-timeout"
+									class="mb-1 block text-sm font-medium text-parchment-200"
+								>
+									Timeout (s)
+								</label>
+								<input
+									id="content-analyzer-timeout"
+									name="content-analyzer-timeout"
+									autocomplete="off"
+									type="number"
+									inputmode="numeric"
+									min="1"
+									bind:value={cfg.enricher.contentanalyzer.timeout}
+									class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+								/>
+							</div>
+							<div>
+								<label
+									for="content-analyzer-pause-credit"
+									class="mb-1 block text-sm font-medium text-parchment-200"
+								>
+									Pause on credit error
+								</label>
 								<div class="mt-2 flex items-center gap-2">
 									<input
-										id="doc-type-refinement-enabled"
+										id="content-analyzer-pause-credit"
+										name="content-analyzer-pause-credit"
+										autocomplete="off"
 										type="checkbox"
-										bind:checked={cfg.enricher.contentanalyzer.doc_type_refinement.enabled}
+										bind:checked={cfg.enricher.contentanalyzer.pause_on_credit_error}
 										class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
 									/>
 									<span class="text-sm text-parchment-400">
-										{cfg.enricher.contentanalyzer.doc_type_refinement.enabled
-											? 'Active'
-											: 'Inactive'}
+										{cfg.enricher.contentanalyzer.pause_on_credit_error ? 'Enabled' : 'Disabled'}
 									</span>
 								</div>
 							</div>
 							<div>
 								<label
-									for="doc-type-refinement-head-words"
-									class="mb-1 block text-sm font-medium text-parchment-200">Head words</label
+									for="llm-request-delay"
+									class="mb-1 block text-sm font-medium text-parchment-200"
 								>
+									Request delay (s)
+								</label>
 								<input
-									id="doc-type-refinement-head-words"
+									id="llm-request-delay"
+									name="llm-request-delay"
+									autocomplete="off"
 									type="number"
 									inputmode="numeric"
 									min="0"
-									bind:value={cfg.enricher.contentanalyzer.doc_type_refinement.head_words}
+									max="60"
+									step="0.1"
+									bind:value={cfg.enricher.contentanalyzer.llm.request_delay}
 									class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 								/>
-							</div>
-							<div>
-								<label
-									for="doc-type-refinement-tail-words"
-									class="mb-1 block text-sm font-medium text-parchment-200">Tail words</label
-								>
-								<input
-									id="doc-type-refinement-tail-words"
-									type="number"
-									inputmode="numeric"
-									min="0"
-									bind:value={cfg.enricher.contentanalyzer.doc_type_refinement.tail_words}
-									class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-								/>
+								<p class="mt-1 text-xs text-parchment-500">
+									Seconds to sleep after each LLM request; 0 = off, max 60. Use for rate-limited
+									providers.
+								</p>
 							</div>
 						</div>
-					</div>
-				{/if}
-			</section>
 
-			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
-				<h2 class="mb-4 text-lg font-semibold text-parchment-200">Tag matcher</h2>
-				<div class="grid gap-4 sm:grid-cols-2">
-					<div>
-						<label
-							for="tag-matcher-timeout"
-							class="mb-1 block text-sm font-medium text-parchment-200">Timeout (s)</label
-						>
-						<input
-							id="tag-matcher-timeout"
-							type="number"
-							inputmode="numeric"
-							min="0"
-							bind:value={cfg.enricher.tagmatcher.timeout}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						/>
-					</div>
-					<div>
-						<label
-							for="tag-matcher-reduce-target"
-							class="mb-1 block text-sm font-medium text-parchment-200">Reduce target words</label
-						>
-						<input
-							id="tag-matcher-reduce-target"
-							type="number"
-							inputmode="numeric"
-							min="0"
-							bind:value={cfg.enricher.tagmatcher.reduce_target_words}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						/>
-					</div>
-					<div>
-						<label
-							for="tag-matcher-chunk-size"
-							class="mb-1 block text-sm font-medium text-parchment-200">Chunk size</label
-						>
-						<input
-							id="tag-matcher-chunk-size"
-							type="number"
-							inputmode="numeric"
-							min="0"
-							bind:value={cfg.enricher.tagmatcher.chunk_size}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						/>
-					</div>
-					<div>
-						<label
-							for="tag-matcher-hugot-model"
-							class="mb-1 block text-sm font-medium text-parchment-200">Hugot model</label
-						>
-						<input
-							id="tag-matcher-hugot-model"
-							type="text"
-							bind:value={cfg.enricher.tagmatcher.hugot.model}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						/>
-					</div>
-					<div>
-						<label
-							for="tag-matcher-hugot-backend"
-							class="mb-1 block text-sm font-medium text-parchment-200">Hugot backend</label
-						>
-						<select
-							id="tag-matcher-hugot-backend"
-							bind:value={cfg.enricher.tagmatcher.hugot.backend}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						>
-							<option value="ort">ort</option>
-							<option value="GO">GO</option>
-						</select>
-					</div>
-				</div>
-			</section>
-
-			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
-				<h2 class="mb-4 text-lg font-semibold text-parchment-200">Text reducer</h2>
-				<div class="grid gap-4 sm:grid-cols-2">
-					<div>
-						<label
-							for="text-reducer-engine"
-							class="mb-1 block text-sm font-medium text-parchment-200">Engine</label
-						>
-						<select
-							id="text-reducer-engine"
-							bind:value={cfg.enricher.textreducer.engine}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						>
-							{#each cfg.available_engines.text_reducer as opt (opt.value)}
-								<option value={opt.value}>{opt.label}</option>
-							{/each}
-						</select>
-					</div>
-					<div>
-						<label
-							for="text-reducer-timeout"
-							class="mb-1 block text-sm font-medium text-parchment-200">Timeout (s)</label
-						>
-						<input
-							id="text-reducer-timeout"
-							type="number"
-							inputmode="numeric"
-							min="0"
-							bind:value={cfg.enricher.textreducer.timeout}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						/>
-					</div>
-					<div class="sm:col-span-2">
-						<label
-							for="text-reducer-target-words"
-							class="mb-1 block text-sm font-medium text-parchment-200">Target words</label
-						>
-						<input
-							id="text-reducer-target-words"
-							type="number"
-							inputmode="numeric"
-							min="1"
-							bind:value={cfg.enricher.textreducer.target_words}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						/>
-					</div>
-				</div>
-			</section>
-
-			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
-				<h2 class="mb-4 text-lg font-semibold text-parchment-200">Backup</h2>
-				<div class="grid gap-4 sm:grid-cols-2">
-					<div>
-						<label for="backup-enabled" class="mb-1 block text-sm font-medium text-parchment-200">
-							Enabled
-						</label>
-						<input
-							id="backup-enabled"
-							type="checkbox"
-							bind:checked={cfg.backup.enabled}
-							class="mt-2 h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
-						/>
-					</div>
-					<div>
-						<label for="backup-interval" class="mb-1 block text-sm font-medium text-parchment-200">
-							Interval (days)
-						</label>
-						<input
-							id="backup-interval"
-							type="number"
-							inputmode="numeric"
-							min="1"
-							step="0.1"
-							bind:value={cfg.backup.interval}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						/>
-					</div>
-					<div>
-						<label for="backup-time" class="mb-1 block text-sm font-medium text-parchment-200">
-							Preferred time (HH:MM)
-						</label>
-						<input
-							id="backup-time"
-							type="text"
-							bind:value={cfg.backup.time}
-							pattern="([01][0-9]|2[0-3]):[0-5][0-9]"
-							placeholder="HH:MM"
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						/>
-					</div>
-					<div>
-						<label for="backup-keep" class="mb-1 block text-sm font-medium text-parchment-200">
-							Keep (0 = unlimited)
-						</label>
-						<input
-							id="backup-keep"
-							type="number"
-							inputmode="numeric"
-							min="0"
-							bind:value={cfg.backup.keep}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						/>
-					</div>
-					<div class="sm:col-span-2">
-						<label for="backup-path" class="mb-1 block text-sm font-medium text-parchment-200">
-							Output directory
-						</label>
-						<input
-							id="backup-path"
-							type="text"
-							bind:value={cfg.backup.path}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						/>
-					</div>
-				</div>
-			</section>
-
-			<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
-				<h2 class="mb-4 text-lg font-semibold text-parchment-200">Logging</h2>
-				<div class="grid gap-4 sm:grid-cols-2">
-					<div>
-						<label for="log-level" class="mb-1 block text-sm font-medium text-parchment-200"
-							>Log level</label
-						>
-						<select
-							id="log-level"
-							bind:value={cfg.app.log_level}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						>
-							<option value="silent">silent</option>
-							<option value="fatal">fatal</option>
-							<option value="error">error</option>
-							<option value="warn">warn</option>
-							<option value="info">info</option>
-							<option value="debug">debug</option>
-						</select>
-					</div>
-					<div>
-						<label for="log-max-size" class="mb-1 block text-sm font-medium text-parchment-200"
-							>Max size per file (MB, 0 = no rotation)</label
-						>
-						<input
-							id="log-max-size"
-							type="number"
-							inputmode="numeric"
-							min="0"
-							bind:value={cfg.app.logging.max_size}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						/>
-					</div>
-					<div>
-						<label for="log-max-backups" class="mb-1 block text-sm font-medium text-parchment-200"
-							>Max backups to keep</label
-						>
-						<input
-							id="log-max-backups"
-							type="number"
-							inputmode="numeric"
-							min="0"
-							bind:value={cfg.app.logging.max_backups}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						/>
-					</div>
-					<div>
-						<label for="log-max-age" class="mb-1 block text-sm font-medium text-parchment-200"
-							>Max age (days, 0 = no limit)</label
-						>
-						<input
-							id="log-max-age"
-							type="number"
-							inputmode="numeric"
-							min="0"
-							bind:value={cfg.app.logging.max_age}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						/>
-					</div>
-					<div>
-						<label for="log-compress" class="mb-1 block text-sm font-medium text-parchment-200"
-							>Compress rotated logs</label
-						>
-						<div class="mt-2 flex items-center gap-2">
-							<input
-								id="log-compress"
-								type="checkbox"
-								bind:checked={cfg.app.logging.compress}
-								class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
-							/>
-							<span class="text-sm text-parchment-400">
-								{cfg.app.logging.compress ? 'Enabled' : 'Disabled'}
-							</span>
+						<div class="mt-4">
+							<label
+								for="content-analyzer-prompt-template"
+								class="mb-1 block text-sm font-medium text-parchment-200"
+							>
+								Prompt template (advanced)
+							</label>
+							<p class="mb-2 text-xs text-parchment-500">
+								Leave empty for default. Available placeholders: {`{{.DocTypePrompt}}`}, {`{{.TagsPrompt}}`},
+								{`{{.PeoplePrompt}}`}, {`{{.Text}}`} (required)
+							</p>
+							<textarea
+								id="content-analyzer-prompt-template"
+								rows="8"
+								bind:value={cfg.enricher.contentanalyzer.prompt_template}
+								spellcheck="false"
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 font-mono text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							></textarea>
 						</div>
-					</div>
-				</div>
-			</section>
 
-			<button
-				type="button"
-				onclick={save}
-				disabled={saving}
-				class="w-full rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-50"
-			>
-				{saving ? 'Saving…' : 'Save settings'}
-			</button>
-		{/if}
+						<div class="mt-6 rounded-lg border border-clay-800 bg-clay-950 p-4">
+							<h3 class="mb-3 text-sm font-semibold text-parchment-200">Doc type refinement</h3>
+							<div class="grid gap-4 sm:grid-cols-3">
+								<div>
+									<label
+										for="doc-type-refinement-enabled"
+										class="mb-1 block text-sm font-medium text-parchment-200">Enabled</label
+									>
+									<div class="mt-2 flex items-center gap-2">
+										<input
+											id="doc-type-refinement-enabled"
+											name="doc-type-refinement-enabled"
+											autocomplete="off"
+											type="checkbox"
+											bind:checked={cfg.enricher.contentanalyzer.doc_type_refinement.enabled}
+											class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
+										/>
+										<span class="text-sm text-parchment-400">
+											{cfg.enricher.contentanalyzer.doc_type_refinement.enabled
+												? 'Active'
+												: 'Inactive'}
+										</span>
+									</div>
+								</div>
+								<div>
+									<label
+										for="doc-type-refinement-head-words"
+										class="mb-1 block text-sm font-medium text-parchment-200">Head words</label
+									>
+									<input
+										id="doc-type-refinement-head-words"
+										name="doc-type-refinement-head-words"
+										autocomplete="off"
+										type="number"
+										inputmode="numeric"
+										min="0"
+										bind:value={cfg.enricher.contentanalyzer.doc_type_refinement.head_words}
+										class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+									/>
+								</div>
+								<div>
+									<label
+										for="doc-type-refinement-tail-words"
+										class="mb-1 block text-sm font-medium text-parchment-200">Tail words</label
+									>
+									<input
+										id="doc-type-refinement-tail-words"
+										name="doc-type-refinement-tail-words"
+										autocomplete="off"
+										type="number"
+										inputmode="numeric"
+										min="0"
+										bind:value={cfg.enricher.contentanalyzer.doc_type_refinement.tail_words}
+										class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+									/>
+								</div>
+							</div>
+						</div>
+					{/if}
+				</section>
 
-		{#if activeTab === 'Users'}
-			<div class="space-y-4" onclick={handleUserPageClick}>
-				<div class="flex items-center justify-between">
-					<h2 class="text-lg font-semibold text-parchment-200">Users</h2>
-					<button
-						onclick={openNewUser}
-						class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-					>
-						Create User
-					</button>
-				</div>
-
-				<DataTable
-					columns={userColumns}
-					fetch={fetchUsers}
-					title=""
-					defaultPageSize={25}
-					pageSizes={[10, 25, 50, 100]}
-					{refreshKey}
-				/>
-			</div>
-
-			<Modal
-				open={showUserModal}
-				title={editingUser ? 'Edit User' : 'Create User'}
-				onClose={() => (showUserModal = false)}
-			>
-				<form
-					onsubmit={(e) => {
-						e.preventDefault();
-						saveUser();
-					}}
-				>
-					<div class="space-y-4">
+				<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+					<h2 class="mb-4 text-lg font-semibold text-parchment-200">Tag matcher</h2>
+					<div class="grid gap-4 sm:grid-cols-2">
 						<div>
-							<label for="user-username" class="mb-1 block text-xs font-medium text-parchment-400"
-								>Username</label
+							<label
+								for="tag-matcher-timeout"
+								class="mb-1 block text-sm font-medium text-parchment-200">Timeout (s)</label
 							>
 							<input
-								id="user-username"
-								type="text"
-								bind:value={formUsername}
-								placeholder="Username"
-								class="w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+								id="tag-matcher-timeout"
+								name="tag-matcher-timeout"
+								autocomplete="off"
+								type="number"
+								inputmode="numeric"
+								min="0"
+								bind:value={cfg.enricher.tagmatcher.timeout}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 							/>
 						</div>
 						<div>
-							<label for="user-role" class="mb-1 block text-xs font-medium text-parchment-400"
-								>Role</label
+							<label
+								for="tag-matcher-reduce-target"
+								class="mb-1 block text-sm font-medium text-parchment-200">Reduce target words</label
+							>
+							<input
+								id="tag-matcher-reduce-target"
+								name="tag-matcher-reduce-target"
+								autocomplete="off"
+								type="number"
+								inputmode="numeric"
+								min="0"
+								bind:value={cfg.enricher.tagmatcher.reduce_target_words}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+						<div>
+							<label
+								for="tag-matcher-chunk-size"
+								class="mb-1 block text-sm font-medium text-parchment-200">Chunk size</label
+							>
+							<input
+								id="tag-matcher-chunk-size"
+								name="tag-matcher-chunk-size"
+								autocomplete="off"
+								type="number"
+								inputmode="numeric"
+								min="0"
+								bind:value={cfg.enricher.tagmatcher.chunk_size}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+						<div>
+							<label
+								for="tag-matcher-hugot-model"
+								class="mb-1 block text-sm font-medium text-parchment-200">Hugot model</label
+							>
+							<input
+								id="tag-matcher-hugot-model"
+								name="tag-matcher-hugot-model"
+								autocomplete="off"
+								type="text"
+								bind:value={cfg.enricher.tagmatcher.hugot.model}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+						<div>
+							<label
+								for="tag-matcher-hugot-backend"
+								class="mb-1 block text-sm font-medium text-parchment-200">Hugot backend</label
 							>
 							<select
-								id="user-role"
-								bind:value={formRole}
-								class="w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+								id="tag-matcher-hugot-backend"
+								name="tag-matcher-hugot-backend"
+								bind:value={cfg.enricher.tagmatcher.hugot.backend}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 							>
-								<option value="viewer">Viewer</option>
-								<option value="editor">Editor</option>
-								<option value="admin">Admin</option>
+								<option value="ort">ort</option>
+								<option value="GO">GO</option>
+							</select>
+						</div>
+					</div>
+				</section>
+
+				<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+					<h2 class="mb-4 text-lg font-semibold text-parchment-200">Text reducer</h2>
+					<div class="grid gap-4 sm:grid-cols-2">
+						<div>
+							<label
+								for="text-reducer-engine"
+								class="mb-1 block text-sm font-medium text-parchment-200">Engine</label
+							>
+							<select
+								id="text-reducer-engine"
+								name="text-reducer-engine"
+								bind:value={cfg.enricher.textreducer.engine}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							>
+								{#each cfg.available_engines.text_reducer as opt (opt.value)}
+									<option value={opt.value}>{opt.label}</option>
+								{/each}
 							</select>
 						</div>
 						<div>
-							<label for="user-password" class="mb-1 block text-xs font-medium text-parchment-400"
-								>Password</label
+							<label
+								for="text-reducer-timeout"
+								class="mb-1 block text-sm font-medium text-parchment-200">Timeout (s)</label
 							>
 							<input
-								id="user-password"
-								type="password"
-								bind:value={formPassword}
-								placeholder={editingUser ? 'Leave blank to keep current' : 'Password'}
-								class="w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+								id="text-reducer-timeout"
+								name="text-reducer-timeout"
+								autocomplete="off"
+								type="number"
+								inputmode="numeric"
+								min="0"
+								bind:value={cfg.enricher.textreducer.timeout}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 							/>
 						</div>
-						{#if userError}
-							<p class="text-sm text-terracotta-500">{userError}</p>
-						{/if}
-						<div class="flex justify-end gap-2">
-							<button
-								type="button"
-								onclick={() => (showUserModal = false)}
-								class="rounded-md px-3 py-1.5 text-xs font-medium text-parchment-400 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+						<div class="sm:col-span-2">
+							<label
+								for="text-reducer-target-words"
+								class="mb-1 block text-sm font-medium text-parchment-200">Target words</label
 							>
-								Cancel
-							</button>
-							<button
-								type="submit"
-								disabled={!formUsername.trim()}
-								class="rounded-md bg-gold-500 px-3 py-1.5 text-xs font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-50"
-							>
-								{editingUser ? 'Save' : 'Create'}
-							</button>
+							<input
+								id="text-reducer-target-words"
+								name="text-reducer-target-words"
+								autocomplete="off"
+								type="number"
+								inputmode="numeric"
+								min="1"
+								bind:value={cfg.enricher.textreducer.target_words}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
 						</div>
 					</div>
-				</form>
-			</Modal>
+				</section>
+
+				<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+					<h2 class="mb-4 text-lg font-semibold text-parchment-200">Backup</h2>
+					<div class="grid gap-4 sm:grid-cols-2">
+						<div>
+							<label for="backup-enabled" class="mb-1 block text-sm font-medium text-parchment-200">
+								Enabled
+							</label>
+							<input
+								id="backup-enabled"
+								name="backup-enabled"
+								autocomplete="off"
+								type="checkbox"
+								bind:checked={cfg.backup.enabled}
+								class="mt-2 h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
+							/>
+						</div>
+						<div>
+							<label
+								for="backup-interval"
+								class="mb-1 block text-sm font-medium text-parchment-200"
+							>
+								Interval (days)
+							</label>
+							<input
+								id="backup-interval"
+								name="backup-interval"
+								autocomplete="off"
+								type="number"
+								inputmode="numeric"
+								min="1"
+								step="0.1"
+								bind:value={cfg.backup.interval}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+						<div>
+							<label for="backup-time" class="mb-1 block text-sm font-medium text-parchment-200">
+								Preferred time (HH:MM)
+							</label>
+							<input
+								id="backup-time"
+								name="backup-time"
+								autocomplete="off"
+								type="text"
+								bind:value={cfg.backup.time}
+								pattern="([01][0-9]|2[0-3]):[0-5][0-9]"
+								placeholder="HH:MM"
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+						<div>
+							<label for="backup-keep" class="mb-1 block text-sm font-medium text-parchment-200">
+								Keep (0 = unlimited)
+							</label>
+							<input
+								id="backup-keep"
+								name="backup-keep"
+								autocomplete="off"
+								type="number"
+								inputmode="numeric"
+								min="0"
+								bind:value={cfg.backup.keep}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+						<div class="sm:col-span-2">
+							<label for="backup-path" class="mb-1 block text-sm font-medium text-parchment-200">
+								Output directory
+							</label>
+							<input
+								id="backup-path"
+								name="backup-path"
+								autocomplete="off"
+								type="text"
+								bind:value={cfg.backup.path}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+					</div>
+				</section>
+
+				<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+					<h2 class="mb-4 text-lg font-semibold text-parchment-200">Logging</h2>
+					<div class="grid gap-4 sm:grid-cols-2">
+						<div>
+							<label for="log-level" class="mb-1 block text-sm font-medium text-parchment-200"
+								>Log level</label
+							>
+							<select
+								id="log-level"
+								name="log-level"
+								bind:value={cfg.app.log_level}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							>
+								<option value="silent">silent</option>
+								<option value="fatal">fatal</option>
+								<option value="error">error</option>
+								<option value="warn">warn</option>
+								<option value="info">info</option>
+								<option value="debug">debug</option>
+							</select>
+						</div>
+						<div>
+							<label for="log-max-size" class="mb-1 block text-sm font-medium text-parchment-200"
+								>Max size per file (MB, 0 = no rotation)</label
+							>
+							<input
+								id="log-max-size"
+								name="log-max-size"
+								autocomplete="off"
+								type="number"
+								inputmode="numeric"
+								min="0"
+								bind:value={cfg.app.logging.max_size}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+						<div>
+							<label for="log-max-backups" class="mb-1 block text-sm font-medium text-parchment-200"
+								>Max backups to keep</label
+							>
+							<input
+								id="log-max-backups"
+								name="log-max-backups"
+								autocomplete="off"
+								type="number"
+								inputmode="numeric"
+								min="0"
+								bind:value={cfg.app.logging.max_backups}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+						<div>
+							<label for="log-max-age" class="mb-1 block text-sm font-medium text-parchment-200"
+								>Max age (days, 0 = no limit)</label
+							>
+							<input
+								id="log-max-age"
+								name="log-max-age"
+								autocomplete="off"
+								type="number"
+								inputmode="numeric"
+								min="0"
+								bind:value={cfg.app.logging.max_age}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+						<div>
+							<label for="log-compress" class="mb-1 block text-sm font-medium text-parchment-200"
+								>Compress rotated logs</label
+							>
+							<div class="mt-2 flex items-center gap-2">
+								<input
+									id="log-compress"
+									name="log-compress"
+									autocomplete="off"
+									type="checkbox"
+									bind:checked={cfg.app.logging.compress}
+									class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
+								/>
+								<span class="text-sm text-parchment-400">
+									{cfg.app.logging.compress ? 'Enabled' : 'Disabled'}
+								</span>
+							</div>
+						</div>
+					</div>
+				</section>
+
+				<button
+					type="button"
+					onclick={save}
+					disabled={saving}
+					class="w-full rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-50"
+				>
+					{saving ? 'Saving…' : 'Save settings'}
+				</button>
+			</div>
+		{/if}
+
+		{#if activeTab === 'Users'}
+			<div role="tabpanel" id="panel-users" aria-labelledby="tab-users">
+				<div class="space-y-4">
+					<div class="flex items-center justify-between">
+						<h2 class="text-lg font-semibold text-parchment-200">Users</h2>
+						<button
+							onclick={openNewUser}
+							class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+						>
+							Create User
+						</button>
+					</div>
+
+					<DataTable
+						columns={userColumns}
+						fetch={fetchUsers}
+						title=""
+						defaultPageSize={25}
+						pageSizes={[10, 25, 50, 100]}
+						{refreshKey}
+						onActionClick={handleUserPageClick}
+						urlSync="users"
+					/>
+				</div>
+
+				<Modal
+					open={showUserModal}
+					title={editingUser ? 'Edit User' : 'Create User'}
+					onClose={() => (showUserModal = false)}
+				>
+					<form
+						onsubmit={(e) => {
+							e.preventDefault();
+							saveUser();
+						}}
+					>
+						<div class="space-y-4">
+							<div>
+								<label for="user-username" class="mb-1 block text-xs font-medium text-parchment-400"
+									>Username</label
+								>
+								<input
+									id="user-username"
+									name="user-username"
+									autocomplete="off"
+									spellcheck="false"
+									type="text"
+									bind:value={formUsername}
+									placeholder="Username"
+									class="w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+								/>
+							</div>
+							<div>
+								<label for="user-role" class="mb-1 block text-xs font-medium text-parchment-400"
+									>Role</label
+								>
+								<select
+									id="user-role"
+									name="user-role"
+									bind:value={formRole}
+									class="w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+								>
+									<option value="viewer">Viewer</option>
+									<option value="editor">Editor</option>
+									<option value="admin">Admin</option>
+								</select>
+							</div>
+							<div>
+								<label for="user-password" class="mb-1 block text-xs font-medium text-parchment-400"
+									>Password</label
+								>
+								<input
+									id="user-password"
+									name="user-password"
+									autocomplete="new-password"
+									type="password"
+									bind:value={formPassword}
+									placeholder={editingUser ? 'Leave blank to keep current' : 'Password'}
+									class="w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+								/>
+							</div>
+							{#if userError}
+								<p class="text-sm text-terracotta-500" aria-live="polite">{userError}</p>
+							{/if}
+							<div class="flex justify-end gap-2">
+								<button
+									type="button"
+									onclick={() => (showUserModal = false)}
+									class="rounded-md px-3 py-1.5 text-xs font-medium text-parchment-400 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+								>
+									Cancel
+								</button>
+								<button
+									type="submit"
+									disabled={savingUser}
+									class="rounded-md bg-gold-500 px-3 py-1.5 text-xs font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-50"
+								>
+									{savingUser ? 'Saving…' : editingUser ? 'Save' : 'Create'}
+								</button>
+							</div>
+						</div>
+					</form>
+				</Modal>
+			</div>
 		{/if}
 	</div>
 {/if}

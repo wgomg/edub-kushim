@@ -197,6 +197,7 @@ func (l *LlmAnthropic) Analyze(ctx context.Context, text string, docTypes []data
 	httpReq.Header.Set("Accept", "application/json")
 
 	resp, err := l.client.Do(httpReq)
+	defer sleepAfterRequest(ctx, l.llmCfg.RequestDelay)
 	if err != nil {
 		return nil, fmt.Errorf("send request: %w", err)
 	}
@@ -319,6 +320,7 @@ func (l *LlmAnthropic) AnalyzeDocType(ctx context.Context, prevResult *AnalysisR
 	httpReq.Header.Set("Accept", "application/json")
 
 	resp, err := l.client.Do(httpReq)
+	defer sleepAfterRequest(ctx, l.llmCfg.RequestDelay)
 	if err != nil {
 		return "", fmt.Errorf("send request: %w", err)
 	}

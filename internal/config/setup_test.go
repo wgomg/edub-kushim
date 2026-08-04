@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spf13/viper"
@@ -128,5 +129,51 @@ func TestSaveMap_InvalidExistingFile(t *testing.T) {
 	err := SaveMap(configDir, map[string]any{"key": "value"})
 	if err == nil {
 		t.Fatal("expected error for invalid YAML")
+	}
+}
+
+func seededConfigBody(configDir string) map[string]any {
+	return map[string]any{
+		"consumer.ocr.languages":                     []string{"eng"},
+		"storage.consumption_dir":                    filepath.Join(configDir, "inbox"),
+		"storage.storage_dir":                        filepath.Join(configDir, "storage"),
+		"consumer.ocr.data_dir":                      filepath.Join(configDir, "tessdata"),
+		"enricher.contentanalyzer.llm.request_delay": float64(2),
+		"server.max_batch_delete":                    5,
+	}
+}
+
+func TestValidateSave_AcceptsValidBody(t *testing.T) {
+	configDir := t.TempDir()
+	if err := SaveMap(configDir, seededConfigBody(configDir)); err != nil {
+		t.Fatalf("seed SaveMap: %v", err)
+	}
+
+	body := map[string]any{"enricher.contentanalyzer.llm.request_delay": float64(2.5)}
+	if err := ValidateSave(configDir, body); err != nil {
+		t.Fatalf("ValidateSave: %v", err)
+	}
+}
+
+func TestValidateSave_RejectsInvalidValueWithoutPersisting(t *testing.T) {
+	configDir := t.TempDir()
+	if err := SaveMap(configDir, seededConfigBody(configDir)); err != nil {
+		t.Fatalf("seed SaveMap: %v", err)
+	}
+
+	err := ValidateSave(configDir, map[string]any{"enricher.contentanalyzer.llm.request_delay": float64(-1)})
+	if err == nil {
+		t.Fatal("expected error for negative request_delay")
+	}
+	if !strings.Contains(err.Error(), "request_delay") {
+		t.Errorf("error %q does not mention request_delay", err)
+	}
+
+	cfg, err := Load(configDir)
+	if err != nil {
+		t.Fatalf("Load after rejected save: %v", err)
+	}
+	if got := cfg.Enricher.ContentAnalyzer.Llm.RequestDelay; got != 2 {
+		t.Errorf("on-disk request_delay = %v, want 2 (rejected save must not persist)", got)
 	}
 }

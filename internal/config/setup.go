@@ -96,6 +96,38 @@ func SaveMap(configDir string, body map[string]any) error {
 	return os.Chmod(configPath, 0600)
 }
 
+// ValidateSave runs the merged config (on-disk config + body) through
+// finalizeConfig without persisting anything, so the settings handler can
+// reject invalid values before they reach disk. Mirrors SaveMap's viper merge
+// and Load's validation.
+func ValidateSave(configDir string, body map[string]any) error {
+	v := viper.New()
+	v.SetConfigType("yaml")
+	configPath := filepath.Join(configDir, "config.yaml")
+
+	if _, err := os.Stat(configPath); err == nil {
+		v.SetConfigFile(configPath)
+		if err := v.ReadInConfig(); err != nil {
+			return fmt.Errorf("read existing config: %w", err)
+		}
+	}
+
+	for key, val := range body {
+		v.Set(key, val)
+	}
+
+	tmpDir, err := os.MkdirTemp("", "edub-config-validate-")
+	if err != nil {
+		return fmt.Errorf("create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+	if err := v.WriteConfigAs(filepath.Join(tmpDir, "config.yaml")); err != nil {
+		return fmt.Errorf("write temp config: %w", err)
+	}
+	_, err = Load(tmpDir)
+	return err
+}
+
 func MissingTessdataLanguages(cfg *Config) []string {
 	if cfg.Consumer.OCR.Engine != OCR.Gosseract {
 		return nil
