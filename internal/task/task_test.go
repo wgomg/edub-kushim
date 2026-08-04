@@ -191,6 +191,40 @@ func TestRegistryDedupKey(t *testing.T) {
 	testutil.AssertEqual(t, key, "", "no key")
 }
 
+func TestRetry(t *testing.T) {
+	store, _, _ := setupTaskTest(t)
+	ctx := context.Background()
+	logger := testutil.NewTestLogger()
+
+	// happy path: retrying a failed consume restores its discarded enrich to waiting
+	_, err := store.CreateTask(ctx, "enrich", "", json.RawMessage(`{}`), "retry-e1", "discarded", "")
+	testutil.AssertNoError(t, err, "create discarded enrich")
+	_, err = store.CreateTask(ctx, "consume", "", json.RawMessage(`{"on_completed":"retry-e1"}`), "retry-c1", "failed", "")
+	testutil.AssertNoError(t, err, "create failed consume")
+
+	err = Retry(ctx, store.queries, logger, "retry-c1")
+	testutil.AssertNoError(t, err, "retry")
+	consume, _ := store.GetTaskByTaskID(ctx, "retry-c1")
+	testutil.AssertEqual(t, consume.Status, "pending", "consume pending after retry")
+	enrich, _ := store.GetTaskByTaskID(ctx, "retry-e1")
+	testutil.AssertEqual(t, enrich.Status, "waiting", "enrich restored to waiting")
+
+	// error path: only failed tasks can be retried
+	err = Retry(ctx, store.queries, logger, "retry-c1")
+	testutil.AssertError(t, err, "pending task cannot be retried")
+
+	// error path: consume without on_completed retries without touching anything
+	_, err = store.CreateTask(ctx, "enrich", "", json.RawMessage(`{}`), "retry-e2", "discarded", "")
+	testutil.AssertNoError(t, err, "create second discarded enrich")
+	_, err = store.CreateTask(ctx, "consume", "", json.RawMessage(`{"file_path":"/tmp/x.pdf"}`), "retry-c2", "failed", "")
+	testutil.AssertNoError(t, err, "create failed consume without on_completed")
+
+	err = Retry(ctx, store.queries, logger, "retry-c2")
+	testutil.AssertNoError(t, err, "retry without on_completed")
+	enrich, _ = store.GetTaskByTaskID(ctx, "retry-e2")
+	testutil.AssertEqual(t, enrich.Status, "discarded", "unlinked enrich untouched")
+}
+
 func TestRunnerCompletesTask(t *testing.T) {
 	store, registry, _ := setupTaskTest(t)
 	runner := NewRunner(store, registry, testutil.NewTestLogger())

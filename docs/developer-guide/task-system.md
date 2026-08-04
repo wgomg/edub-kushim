@@ -93,12 +93,16 @@ pending --claim--> processing --error--> failed
    | (retry/reset)      +--stale sweep--+--> pending (attempts+1) or failed (quarantine)
 waiting --activate--> pending
 waiting --parent failed--> discarded
+discarded --consume retried/reset--> waiting
 pending/processing --cancel--> cancelled
 ```
 
 `waiting` is the special one: a child enrich task parked until its parent
 consume task completes (§8). `discarded` is "never ran, never will" — it
-doesn't count as a failure.
+doesn't count as a failure. The `discarded → waiting` restore exists so a
+retried consume (manual retry or automatic crash-reset) re-arms its enrich
+and the `status = 'waiting'` guard on the discard query keeps working on
+subsequent failures.
 
 ---
 
@@ -437,13 +441,45 @@ WHERE id = $2 AND status IN ('waiting', 'discarded') AND task_type = 'enrich';
 
 The `IN ('waiting', 'discarded')` guard means a discarded child can also be
 re-armed. On consume failure, the child is **discarded**
-(`deactivateChildEnrich`, `handlers/consume.go:145-150`) — marked
+(`deactivateChildEnrich`, `handlers/consume.go:120-153`) — marked
 `discarded` with the parent's error, so the enrich never runs against a
 document that doesn't exist, and it doesn't count as a failed task.
 
 The waiting→discarded transition is guarded (`status = 'waiting'`), so the
 parent's failure can't clobber a child that some other path already
-activated.
+activated. A discard that matches 0 rows (child already discarded or
+activated) is a benign no-op logged at info level.
+
+**Every consume failure path discards the child**, not just failures inside
+`Process` — the handler wraps all error returns in `withDiscardAttempt`
+(`handlers/consume.go:158-166`), covering the early exits too: payload
+unmarshal failure (with a best-effort lenient re-parse of `on_completed` via
+`recoverOnCompleted`), an empty `file_path`, and `FileFromPath` failures
+(the realistic crash-retry case: the inbox file was already moved). If the
+discard itself fails (lookup error, nil payload, `waiting_for` mismatch, DB
+error), the failure is appended to the returned task error
+(`"; additionally failed to discard enrich task <id>: ..."`) so it lands in
+the task's `error` field and is visible in the UI/API.
+
+On retry or reset, the child is restored **discarded → waiting**:
+
+```sql
+-- name: SetEnrichTaskWaiting :execrows
+UPDATE task SET
+    status = 'waiting',
+    error = NULL,
+    completed_at = NULL
+WHERE task_id = $1 AND status = 'discarded' AND task_type = 'enrich';
+```
+
+The restore is targeted by `task_id` (the consume payload's `on_completed`),
+so it cannot race a claim. It runs after the individual task retry
+(`crud.go:127-150`), and as join-based `UPDATE ... FROM` statements inside
+the same transaction as the batch retry / batch resets
+(`RestoreDiscardedEnrichTasks` / `RestoreDiscardedEnrichTasksByBatch`,
+§10-11). The invariant this upholds: an enrich is never left `discarded`
+while its consume is `pending` again, and it is never `waiting` while its
+consume is terminal-`failed` (that half is enforced by the sweeps, §10).
 
 ---
 
@@ -519,9 +555,23 @@ burning budget.
 
 Failed consume tasks get their files moved to the quarantine dir via
 `GetQuarantinedConsumeTaskPayloads` + `QuarantineFailedFiles`
-(`consumption/consumer.go:425-457`), which also discards the waiting child
-enrich task with the same bounded retry pattern
-(`discardEnrichTaskWithRetry`, `consumer.go:459-474`).
+(`consumption/consumer.go:423-448`). The same function then runs one
+batch-scoped sweep (`DiscardWaitingEnrichesOfFailedConsumes`) that discards
+**every** still-`waiting` enrich whose consume in the batch is `failed`,
+copying the parent's error text — broader than the old per-task discard,
+which only handled `'Max retries exceeded'` tasks. The sweep runs
+unconditionally (even with zero quarantined rows), so it also catches legacy
+stuck data. The global stale-task sweep (`ResetStaleProcessingTasks`,
+`service/batch.go:455-496`) runs a global variant of the same sweep, since
+its quarantined consumes have no batch-level recovery point.
+
+Both sweeps also **restore**: the reset half (consume back to `pending`)
+pairs with `RestoreDiscardedEnrichTasks` (global) or
+`RestoreDiscardedEnrichTasksByBatch` (per-batch) inside the same
+transaction — a discarded enrich whose consume is `pending` again flips back
+to `waiting`. Quarantined consumes (`failed`) are naturally excluded by the
+`status = 'pending'` filter, and their enriches are discarded by the sweep
+instead.
 
 ---
 
@@ -529,9 +579,14 @@ enrich task with the same bounded retry pattern
 
 - **`kushim task retry <id>` / `POST /api/v1/tasks/{id}/retry`** — resets one
   task to `pending` (clears result/error/attempts); guarded to `failed` tasks
-  only (`crud.go:125-137`; 409 otherwise).
-- **`POST /api/v1/batches/{id}/retry`** — `RetryFailedTasksByBatch`: flips
-  all failed tasks of a batch back to `pending` (batch status unchanged).
+  only (`crud.go:127-150`; 409 otherwise). For consume tasks with an
+  `on_completed` payload field, the paired `discarded` enrich is restored to
+  `waiting` via `SetEnrichTaskWaiting`; if that restore fails it is logged
+  and the retry still succeeds (activation accepts `discarded` anyway).
+- **`POST /api/v1/batches/{id}/retry`** — `RetryFailed`
+  (`service/batch.go:211-235`): now transactional — `RetryFailedTasksByBatch`
+  then `RestoreDiscardedEnrichTasksByBatch` commit together, so the restore
+  can't race task claiming.
 - **`POST /api/v1/batches/{id}/resume`** (`api/handlers/task.go:495-547`) —
   the full recovery: refuses if the batch is settled (no pending work) or
   locked by a live owner (409), then `ResetProcessingTasksByBatch` +
@@ -539,6 +594,13 @@ enrich task with the same bounded retry pattern
   up and re-forks.
 - **Re-enrich** (`service/enrich.go:26-50`) — a fresh `queued` batch with one
   `pending` enrich task; the dedup index rejects duplicates.
+
+The reset paths also restore: `ResetProcessingTasksByBatch`
+(`service/batch.go:418-453`), `Owner.ResetProcessingByBatch`
+(`internal/task/batch.go:119-154`), and the global
+`ResetStaleProcessingTasks` each run their scoped restore inside the same
+transaction as the reset, so a `discarded` enrich is re-armed exactly when
+its consume returns to `pending`.
 
 The wizard also auto-resumes config setup on boot
 (`internal/wizard/server.go:43-53`).
@@ -616,8 +678,21 @@ WHERE id = 1 AND (NOT running OR started_at <= NOW() - INTERVAL '30 minutes');
   the channel blocking, or a full channel stalls the daemon.
 - **`waiting` tasks are invisible to normal claims** (they're not `pending`)
   and must be activated or discarded — an orphaned `waiting` row means the
-  parent's completion handler didn't run; the stale sweeps do not touch
-  `waiting`, so it stays until batch cleanup.
+  parent's completion handler didn't run. The reclaim sweeps only ever
+  *discard* waiting enriches of terminal-failed consumes; they never
+  activate them.
+- **The enrich invariant is enforced at recovery points, not continuously**:
+  "enrich is never `waiting` while its consume is terminal-`failed`" holds
+  because the handler discards on every failure path, and the sweeps
+  (`QuarantineFailedFiles`, `ResetStaleProcessingTasks`) mop up anything the
+  handler missed (crashes, legacy data). A consume that reached `failed`
+  without a sweep running in between can briefly show a `waiting` enrich —
+  the next recovery point closes it.
+- **The individual-retry restore is log-only on failure** — if
+  `SetEnrichTaskWaiting` fails after a `task retry`, the retry still succeeds
+  and the enrich stays `discarded`; it is re-armed later by activation
+  (`SetEnrichTaskPending` accepts `discarded`) or by the next batch
+  recovery-point restore.
 - **Paused batches refuse to run** (`consume.go:112-117`) and pause is sticky
   — resume is an explicit API/CLI action after the billing issue is fixed.
 - **`CountLiveBatches` counts heartbeats, not processes** — a batch whose

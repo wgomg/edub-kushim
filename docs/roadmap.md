@@ -85,7 +85,7 @@
 ### Task System
 
 - Generic `task.Dispatcher` + `pool.Pool` with `task.Handler` / `Dedupable` interfaces
-- Task lifecycle: `waiting` → `pending` → `processing` → `completed` / `failed` / `cancelled` / `discarded`
+- Task lifecycle: `waiting` → `pending` → `processing` → `completed` / `failed` / `cancelled` / `discarded`, plus `discarded` → `waiting` on consume retry/reset
 - Linked task pairs: enrich tasks start `waiting` until their consume task completes
 - Batch cancellation: cancels pending tasks, sends SIGTERM, marks in-flight as cancelled
 - Retry support for failed tasks
@@ -93,6 +93,7 @@
 - **Runner retry + FailTask fallback**: `CompleteTask` retried 3× with exponential backoff on transient errors; all retries exhausted → task is `failed` rather than stuck in `processing`
 - **`CompleteTask` status guard**: `UPDATE ... WHERE id = $1 AND status = 'processing'` prevents stale completions from racing with the reclaim sweep
 - **Age-based stale task sweep**: generic reclaim in the queue daemon resets `processing` tasks older than `consumer.reclaim.stale_task_after` (default 600s) to `pending`/`failed`, independent of batch ownership
+- **Enforce enrich-task discard + restore on retry**: every consume failure path (early exits included) now discards the paired `waiting` enrich task, with discard failures surfaced in the task's `error` field. Retrying/resetting a failed consume restores its `discarded` enrich to `waiting` (`SetEnrichTaskWaiting` targeted restore; transactional join-based restores in `RetryFailed` and all reset paths). Recovery sweeps (`QuarantineFailedFiles` batch-scoped + global variant in `ResetStaleProcessingTasks`) discard any enrich still `waiting` next to a terminal-failed consume, enforcing "enrich is never waiting while its consume is failed"
 
 ### API Endpoints
 
@@ -243,13 +244,13 @@
 
 ### Quality
 
-- ✓ Database integration tests (32+ tests) — document/tag/people CRUD, task lifecycle, enrich flow, batch ownership, paused batch counting/listing, structured search, analytics queries (including language distribution LIMIT 10), saved searches, backup lock lifecycle, gated task claiming, people count queries
+- ✓ Database integration tests (35+ tests) — document/tag/people CRUD, task lifecycle (incl. enrich discard/restore/sweep queries), enrich waiting flow, batch ownership, paused batch counting/listing, structured search, analytics queries (including language distribution LIMIT 10), saved searches, backup lock lifecycle, gated task claiming, people count queries
 - ✓ Search engine tests (8 tests) — tsvector search, structured search (language/missing filters), pagination, query sanitization
-- ✓ Task system tests (28 tests) — Store, dispatcher, runner, nil payload handling, backup lock gating, pool lifecycle, dedup key handling, gated task claiming
+- ✓ Task system tests (30 tests) — Store, dispatcher, runner, nil payload handling, backup lock gating, pool lifecycle, dedup key handling, gated task claiming, `Retry` restore, consume-handler early-exit discards
 - ✓ API handler tests (60+ tests) — health, document CRUD, tag/people CRUD, user CRUD, task endpoints, saved searches, concurrent operations, auth login/logout, token claims, errored file list/download/delete/delete-all, logs viewer (invalid name, file not found, success, lines clamping, large file tail, empty file), API key generate/revoke/rotate/status, ReEnrich handler (success + not found), orphaned handler (list/scan/delete/restore/move-to-inbox/delete-all), errored handler (list/download/delete/delete-all)
 - ✓ Auth package tests (7 tests) — session secret generation, JWT generation/validation, wrong secret, expired token, malformed token, ValidRole
 - ✓ Auth middleware + permission tests (24 tests) — public path bypass, missing/invalid/valid token, wrong secret, missing bearer prefix, empty header, disabled flag passes all paths, valid API key, invalid API key, wrong prefix falls through, auth disabled bypasses, internal error returns 500, valid/invalid cookie, header-priority, RequireRole admin/editor/viewer (allows+forbids), missing role, invalid role
-- ✓ Service layer tests (78+ tests) — Batch create/get/owner-state/pending/active/cancel/queue/paused, orphaned scan/delete/restore, errored files list/download/delete/delete-all, user API key create/revoke/rotate/validate, user Create with role, UpdateRole, Update with role change, password validation (12+ rules), people count/by-name queries
+- ✓ Service layer tests (80+ tests) — Batch create/get/owner-state/pending/active/cancel/queue/paused, retry-failed restore, reset/stale-task restore + sweep, orphaned scan/delete/restore, errored files list/download/delete/delete-all, user API key create/revoke/rotate/validate, user Create with role, UpdateRole, Update with role change, password validation (12+ rules), people count/by-name queries
 - ✓ Tagmatch tests (3 tests) — MaxMatchBodyBytes derivation, UTF-8 truncation, idempotency
 - ✓ Storage tests (7 tests) — DetectFileType, WalkStorageDir (finds PDFs, skips non-PDF/recent/unknown key types/missing dirs), QuarantineFile, RemoveOrphanedFile, CopyToConsumptionDir
 - ✓ Consumption pipeline tests (21 tests) — full consume flow with mock runner, file I/O, duplicate detection, error paths, orphaned file management, paused-batch scan guard

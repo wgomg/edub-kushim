@@ -128,7 +128,7 @@ func (s *Store) PauseBatch(ctx context.Context, batchID string) error {
 	return s.queries.SetBatchPaused(ctx, batchID)
 }
 
-func (s *Store) Discard(ctx context.Context, id int64, errMsg string) error {
+func (s *Store) Discard(ctx context.Context, id int64, errMsg string) (int64, error) {
 	return s.queries.DiscardEnrichTask(ctx, database.DiscardEnrichTaskParams{
 		ID:    id,
 		Error: sql.NullString{String: errMsg, Valid: true},

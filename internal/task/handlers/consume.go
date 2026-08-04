@@ -31,21 +31,21 @@ func (h *ConsumeTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawM
 		OnCompleted string `json:"on_completed"`
 	}
 	if err := json.Unmarshal(t.Payload, &p); err != nil {
-		return nil, fmt.Errorf("unmarshal payload: %w", err)
+		return nil, h.withDiscardAttempt(ctx, t, h.recoverOnCompleted(t.Payload), fmt.Errorf("unmarshal payload: %w", err))
 	}
 	if p.FilePath == "" {
 		if p.DocumentID != "" {
-			return nil, &task.Error{ReqID: p.DocumentID, Err: fmt.Errorf("task %s has no file_path in payload", t.TaskID)}
+			return nil, h.withDiscardAttempt(ctx, t, p.OnCompleted, &task.Error{ReqID: p.DocumentID, Err: fmt.Errorf("task %s has no file_path in payload", t.TaskID)})
 		}
-		return nil, fmt.Errorf("task %s has no file_path in payload", t.TaskID)
+		return nil, h.withDiscardAttempt(ctx, t, p.OnCompleted, fmt.Errorf("task %s has no file_path in payload", t.TaskID))
 	}
 
 	file, err := consumption.FileFromPath(p.FilePath)
 	if err != nil {
 		if p.DocumentID != "" {
-			return nil, &task.Error{ReqID: p.DocumentID, Err: fmt.Errorf("build file from path: %w", err)}
+			return nil, h.withDiscardAttempt(ctx, t, p.OnCompleted, &task.Error{ReqID: p.DocumentID, Err: fmt.Errorf("build file from path: %w", err)})
 		}
-		return nil, fmt.Errorf("build file from path: %w", err)
+		return nil, h.withDiscardAttempt(ctx, t, p.OnCompleted, fmt.Errorf("build file from path: %w", err))
 	}
 
 	file, err = h.consumer.Process(ctx, file, p.DocumentID)
@@ -54,12 +54,7 @@ func (h *ConsumeTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawM
 		h.logger.Debug(&p.DocumentID, "post-consume memory: %s", utils.FormatMemFull(mem))
 	}
 	if err != nil {
-		if p.OnCompleted != "" {
-			if discardErr := h.deactivateChildEnrich(ctx, t, p.OnCompleted, err); discardErr != nil {
-				h.logger.Error(&p.DocumentID, "failed to discard enrich task for consume %s: %v", t.TaskID, discardErr)
-			}
-		}
-		return nil, err
+		return nil, h.withDiscardAttempt(ctx, t, p.OnCompleted, err)
 	}
 
 	result := struct {
@@ -147,7 +142,37 @@ func (h *ConsumeTaskHandler) deactivateChildEnrich(
 			enrichTask.TaskID, enrichPayload.WaitingFor, parent.TaskID)
 	}
 
-	return h.store.Discard(ctx, enrichTask.ID, parentErr.Error())
+	rows, err := h.store.Discard(ctx, enrichTask.ID, parentErr.Error())
+	if err != nil {
+		return fmt.Errorf("discard enrich task %s: %w", enrichTask.TaskID, err)
+	}
+	if rows == 0 {
+		h.logger.Info(nil, "enrich task %s already discarded or activated (consume %s failed)", enrichTask.TaskID, parent.TaskID)
+	}
+	return nil
+}
+
+// withDiscardAttempt attempts to discard the consume task's paired enrich task
+// on failure; if the discard itself fails, the failure is appended to the
+// returned error so it lands in the task's error field.
+func (h *ConsumeTaskHandler) withDiscardAttempt(ctx context.Context, t task.Task, onCompleted string, err error) error {
+	if onCompleted == "" {
+		return err
+	}
+	if discardErr := h.deactivateChildEnrich(ctx, t, onCompleted, err); discardErr != nil {
+		return fmt.Errorf("%w; additionally failed to discard enrich task %s: %v", err, onCompleted, discardErr)
+	}
+	return err
+}
+
+// recoverOnCompleted best-effort extracts on_completed from a payload that
+// failed strict unmarshalling, so the paired enrich can still be discarded.
+func (h *ConsumeTaskHandler) recoverOnCompleted(payload json.RawMessage) string {
+	var p struct {
+		OnCompleted string `json:"on_completed"`
+	}
+	json.Unmarshal(payload, &p)
+	return p.OnCompleted
 }
 
 func (h *ConsumeTaskHandler) DedupKey(payload json.RawMessage) string {

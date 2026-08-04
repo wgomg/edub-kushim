@@ -667,6 +667,52 @@ func TestBatch_ResetProcessingTasksByBatch(t *testing.T) {
 		testutil.AssertEqual(t, t2.Status, "failed", "task at threshold quarantined")
 	})
 
+	t.Run("restores discarded enrich of reset consume, leaves quarantined pair waiting", func(t *testing.T) {
+		err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
+			ID: "rst-enrich", Source: "test", Status: "processing",
+		})
+		testutil.AssertNoError(t, err, "create batch")
+
+		// below threshold: reset restores the discarded enrich
+		rstEnrichPayload := json.RawMessage(`{}`)
+		_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
+			TaskID: "rst-enrich-e1", TaskType: "enrich", Status: "discarded", Payload: &rstEnrichPayload,
+			BatchID: sql.NullString{String: "rst-enrich", Valid: true},
+		})
+		testutil.AssertNoError(t, err, "create discarded enrich")
+		rstC1Payload := json.RawMessage(`{"on_completed":"rst-enrich-e1"}`)
+		_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
+			TaskID: "rst-enrich-c1", TaskType: "consume", Status: "processing", Payload: &rstC1Payload,
+			BatchID: sql.NullString{String: "rst-enrich", Valid: true},
+		})
+		testutil.AssertNoError(t, err, "create processing consume")
+
+		// at threshold: quarantined consume is 'failed', excluded from the
+		// restore — its waiting enrich stays waiting for the caller's sweep
+		rstEnrich2Payload := json.RawMessage(`{}`)
+		_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
+			TaskID: "rst-enrich-e2", TaskType: "enrich", Status: "waiting", Payload: &rstEnrich2Payload,
+			BatchID: sql.NullString{String: "rst-enrich", Valid: true},
+		})
+		testutil.AssertNoError(t, err, "create waiting enrich")
+		rstC2Payload := json.RawMessage(`{"on_completed":"rst-enrich-e2"}`)
+		quarID, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
+			TaskID: "rst-enrich-c2", TaskType: "consume", Status: "processing", Payload: &rstC2Payload,
+			BatchID: sql.NullString{String: "rst-enrich", Valid: true},
+		})
+		testutil.AssertNoError(t, err, "create processing consume")
+		client.DB().ExecContext(ctx, "UPDATE task SET attempts = 3 WHERE id = $1", quarID)
+
+		n, err := svc.ResetProcessingTasksByBatch(ctx, "rst-enrich")
+		testutil.AssertNoError(t, err, "reset")
+		testutil.AssertEqual(t, n, int64(2), "one reset + one quarantined")
+
+		enrich1, _ := client.Queries.GetTaskByTaskID(ctx, "rst-enrich-e1")
+		testutil.AssertEqual(t, enrich1.Status, "waiting", "enrich of reset consume restored")
+		enrich2, _ := client.Queries.GetTaskByTaskID(ctx, "rst-enrich-e2")
+		testutil.AssertEqual(t, enrich2.Status, "waiting", "enrich of quarantined consume untouched by restore")
+	})
+
 	t.Run("returns zero when no processing tasks", func(t *testing.T) {
 		err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
 			ID: "rst-none", Source: "test", Status: "queued",
@@ -676,6 +722,112 @@ func TestBatch_ResetProcessingTasksByBatch(t *testing.T) {
 		n, err := svc.ResetProcessingTasksByBatch(ctx, "rst-none")
 		testutil.AssertNoError(t, err, "reset empty")
 		testutil.AssertEqual(t, n, int64(0), "zero reset")
+	})
+}
+
+func TestBatch_RetryFailed(t *testing.T) {
+	svc, client := newTestBatch(t)
+	ctx := context.Background()
+
+	err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
+		ID: "rtyf-batch", Source: "test", Status: "failed",
+	})
+	testutil.AssertNoError(t, err, "create batch")
+
+	// happy path: retried consume restores its discarded enrich to waiting
+	enrichPayload := json.RawMessage(`{}`)
+	_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
+		TaskID: "rtyf-e1", TaskType: "enrich", Status: "discarded", Payload: &enrichPayload,
+		BatchID: sql.NullString{String: "rtyf-batch", Valid: true},
+	})
+	testutil.AssertNoError(t, err, "create discarded enrich")
+	consumePayload := json.RawMessage(`{"on_completed":"rtyf-e1"}`)
+	_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
+		TaskID: "rtyf-c1", TaskType: "consume", Status: "failed", Payload: &consumePayload,
+		BatchID: sql.NullString{String: "rtyf-batch", Valid: true},
+	})
+	testutil.AssertNoError(t, err, "create failed consume")
+
+	// restore is scoped to the retried batch
+	otherEnrichPayload := json.RawMessage(`{}`)
+	_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
+		TaskID: "rtyf-e2", TaskType: "enrich", Status: "discarded", Payload: &otherEnrichPayload,
+		BatchID: sql.NullString{String: "other-batch", Valid: true},
+	})
+	testutil.AssertNoError(t, err, "create discarded enrich in other batch")
+	otherConsumePayload := json.RawMessage(`{"on_completed":"rtyf-e2"}`)
+	_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
+		TaskID: "rtyf-c2", TaskType: "consume", Status: "failed", Payload: &otherConsumePayload,
+		BatchID: sql.NullString{String: "other-batch", Valid: true},
+	})
+	testutil.AssertNoError(t, err, "create failed consume in other batch")
+
+	n, err := svc.RetryFailed(ctx, "rtyf-batch")
+	testutil.AssertNoError(t, err, "retry failed")
+	testutil.AssertEqual(t, n, int64(1), "one task retried")
+
+	consume, err := client.Queries.GetTaskByTaskID(ctx, "rtyf-c1")
+	testutil.AssertNoError(t, err, "get retried consume")
+	testutil.AssertEqual(t, consume.Status, "pending", "consume pending after retry")
+	enrich, err := client.Queries.GetTaskByTaskID(ctx, "rtyf-e1")
+	testutil.AssertNoError(t, err, "get enrich")
+	testutil.AssertEqual(t, enrich.Status, "waiting", "enrich restored to waiting")
+
+	enrich2, err := client.Queries.GetTaskByTaskID(ctx, "rtyf-e2")
+	testutil.AssertNoError(t, err, "get other enrich")
+	testutil.AssertEqual(t, enrich2.Status, "discarded", "enrich in other batch untouched")
+}
+
+func TestBatch_ResetStaleProcessingTasks(t *testing.T) {
+	svc, client := newTestBatch(t)
+	ctx := context.Background()
+	staleSeconds := int64(60)
+
+	t.Run("resets stale processing task and restores its discarded enrich", func(t *testing.T) {
+		enrichPayload := json.RawMessage(`{}`)
+		_, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
+			TaskID: "rsts-e1", TaskType: "enrich", Status: "discarded", Payload: &enrichPayload,
+		})
+		testutil.AssertNoError(t, err, "create discarded enrich")
+		consumePayload := json.RawMessage(`{"on_completed":"rsts-e1"}`)
+		taskID, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
+			TaskID: "rsts-c1", TaskType: "consume", Status: "processing", Payload: &consumePayload,
+		})
+		testutil.AssertNoError(t, err, "create processing consume")
+		client.DB().ExecContext(ctx, "UPDATE task SET attempts = 1, started_at = NOW() - INTERVAL '10 minutes' WHERE id = $1", taskID)
+
+		n, err := svc.ResetStaleProcessingTasks(ctx, staleSeconds)
+		testutil.AssertNoError(t, err, "reset stale")
+		testutil.AssertEqual(t, n, int64(1), "one task reset")
+
+		consume, _ := client.Queries.GetTask(ctx, taskID)
+		testutil.AssertEqual(t, consume.Status, "pending", "consume pending after reset")
+		enrich, _ := client.Queries.GetTaskByTaskID(ctx, "rsts-e1")
+		testutil.AssertEqual(t, enrich.Status, "waiting", "enrich restored to waiting")
+	})
+
+	t.Run("quarantined stale consume's waiting enrich is swept to discarded", func(t *testing.T) {
+		enrichPayload := json.RawMessage(`{}`)
+		_, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
+			TaskID: "rsts-e2", TaskType: "enrich", Status: "waiting", Payload: &enrichPayload,
+		})
+		testutil.AssertNoError(t, err, "create waiting enrich")
+		consumePayload := json.RawMessage(`{"on_completed":"rsts-e2"}`)
+		taskID, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
+			TaskID: "rsts-c2", TaskType: "consume", Status: "processing", Payload: &consumePayload,
+		})
+		testutil.AssertNoError(t, err, "create processing consume")
+		client.DB().ExecContext(ctx, "UPDATE task SET attempts = 3, started_at = NOW() - INTERVAL '10 minutes' WHERE id = $1", taskID)
+
+		n, err := svc.ResetStaleProcessingTasks(ctx, staleSeconds)
+		testutil.AssertNoError(t, err, "reset stale")
+		testutil.AssertEqual(t, n, int64(1), "one task quarantined")
+
+		consume, _ := client.Queries.GetTask(ctx, taskID)
+		testutil.AssertEqual(t, consume.Status, "failed", "consume quarantined")
+		testutil.AssertEqual(t, consume.Error.String, "Max retries exceeded (3)", "quarantine error")
+		enrich, _ := client.Queries.GetTaskByTaskID(ctx, "rsts-e2")
+		testutil.AssertEqual(t, enrich.Status, "discarded", "waiting enrich swept to discarded")
 	})
 }
 

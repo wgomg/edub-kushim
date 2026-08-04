@@ -57,7 +57,7 @@ The `Runner.Next` method uses `errors.As(err, &tErr)` to extract `ReqID` from ha
     - `CompleteTask(ctx, id, result) (int64, error)` — returns rows affected; requires `status = 'processing'` (optimistic concurrency guard)
     - `FailTask(ctx, id, errMsg) error`
     - `SetPending(ctx, id, payload) error` — Wraps `SetEnrichTaskPending`; matches both `waiting` and `discarded` enrich tasks
-    - `Discard(ctx, id, errMsg) error` — Wraps `DiscardEnrichTask`; only matches `waiting` enrich tasks (idempotent on already-discarded)
+    - `Discard(ctx, id, errMsg) (int64, error)` — Wraps `DiscardEnrichTask`; returns rows affected; only matches `waiting` enrich tasks (0 rows = already discarded or activated, benign no-op)
 
 ## `registry.go`
 
@@ -102,7 +102,7 @@ The `Runner.Next` method uses `errors.As(err, &tErr)` to extract `ReqID` from ha
 
 - `Get(ctx, queries, taskID) (database.Task, error)` — By UUID task_id
 - `ListFiltered(ctx, queries, filter) ([]database.Task, error)` — By batch/status/type/pagination; handles all combinations of filters via sqlc-generated queries (`ListTasks`, `ListTasksByStatus`, `ListTasksByBatch`, `ListTasksByBatchAndStatus`, `ListTasksByType`, `ListTasksByBatchAndType`, `ListTasksByStatusAndType`, `ListTasksByBatchAndStatusAndType` and their `All` variants)
-- `Retry(ctx, queries, taskID) error` — Failed tasks only
+- `Retry(ctx, queries, logger, taskID) error` — Failed tasks only (409 otherwise). For consume tasks whose payload carries `on_completed`, also restores the paired `discarded` enrich to `waiting` via `SetEnrichTaskWaiting`; a failed restore is logged at error level and the retry still succeeds (activation accepts `discarded`).
 - `RetryBatchFailed(ctx, queries, batchID string) (int64, error)` — Resets all failed tasks in a batch to pending; returns count of retried tasks. Uses `RetryFailedTasksByBatch` sqlc query with `WHERE batch_id = ? AND status = 'failed'`.
 - `CountBatchStatuses(ctx, queries, batchID) BatchCounts` — Counts per status including `waiting` and `discarded`
 - `ListBatchSummaries(ctx, queries, filter) ([]BatchCounts, error)` — Lists batch summaries with filtering; uses `ListDistinctBatchIDs` or `ListDistinctBatchIDsByStatus`
@@ -111,9 +111,13 @@ The `Runner.Next` method uses `errors.As(err, &tErr)` to extract `ReqID` from ha
 
 ### SQL queries added
 
-- `RetryFailedTasksByBatch :execrows` — `UPDATE ... WHERE batch_id = ? AND status = 'failed'` — Resets failed batch tasks to pending with `attempts = 0` (batched retry).
+- `RetryFailedTasksByBatch :execrows` — `UPDATE ... WHERE batch_id = ? AND status = 'failed'` — Resets failed batch tasks to pending with `attempts = 0` (batched retry). `Batch.RetryFailed` runs it transactionally alongside `RestoreDiscardedEnrichTasksByBatch`.
 - `GetConfigTaskByDedupKey :one` — Returns the most recent config task matching `dedup_key`. Used by `ConfigHandler.enqueueConfigTasks` to detect duplicate or failed config tasks before inserting.
-- `DiscardEnrichTaskByTaskID :execrows` — `UPDATE ... WHERE task_id = ? AND status = 'waiting' AND task_type = 'enrich'` — Discards an enrich task by UUID `task_id` (not the internal integer `id`). Used by `QuarantineFailedFiles` to discard orphaned enrich tasks during stale batch reclamation. The existing `DiscardEnrichTask` operates by internal `id`; this variant is needed because the consume task payload's `on_completed` field contains the UUID.
+- `DiscardEnrichTask :execrows` — `UPDATE ... WHERE id = ? AND status = 'waiting' AND task_type = 'enrich'` — Discards an enrich task by internal `id`; returns rows affected so callers can distinguish a real discard from a no-op. Wrapped by `Store.Discard`.
+- `DiscardEnrichTaskByTaskID :execrows` — `UPDATE ... WHERE task_id = ? AND status = 'waiting' AND task_type = 'enrich'` — Discards an enrich task by UUID `task_id`. Kept for the test suite (`TestDiscardEnrichTaskByTaskID`); production discard paths now use `Store.Discard` (handler) and the sweep queries (recovery points).
+- `SetEnrichTaskWaiting :execrows` — `UPDATE ... SET status='waiting', error=NULL, completed_at=NULL WHERE task_id = ? AND status = 'discarded' AND task_type = 'enrich'` — Restores a discarded enrich when its consume is retried/reset. Targeted by UUID `task_id` (the consume payload's `on_completed`), race-free.
+- `RestoreDiscardedEnrichTasks :execrows` / `RestoreDiscardedEnrichTasksByBatch :execrows` — join-based restore (`UPDATE ... FROM task AS c WHERE e.status='discarded' AND c.status='pending' AND e.task_id = c.payload->>'on_completed'`, batch variant scoped by `c.batch_id`): re-arms every discarded enrich whose consume is pending again. Run inside the same transaction as the retry/reset.
+- `DiscardWaitingEnrichesOfFailedConsumes :execrows` / `DiscardWaitingEnrichesOfFailedConsumesGlobal :execrows` — join-based sweep: discards every waiting enrich whose consume is `failed` (batch-scoped or global), copying the parent's error text (`COALESCE(c.error, 'parent consume task failed')`). Enforces "enrich is never waiting while its consume is terminal-failed" at recovery points. Batch variant runs unconditionally in `QuarantineFailedFiles`; the global variant runs inside `Batch.ResetStaleProcessingTasks`.
 
 ---
 
@@ -124,9 +128,11 @@ The `Runner.Next` method uses `errors.As(err, &tErr)` to extract `ReqID` from ha
 - `ConsumeTaskHandler` — `consumer *consumption.Consumer`, `store *task.Store`, `logger *utils.Logger`
   - **Methods**:
     - `NewConsumeTaskHandler(consumer, store, logger) *ConsumeTaskHandler`
-    - `Handle(ctx, t) (json.RawMessage, error)` — Unmarshals payload (`file_path`, `document_id` UUID, `on_completed` enrich task ID), calls `FileFromPath` + `consumer.Process`. On success, if `on_completed` is set and a document was created, activates the linked enrich task via `Store.SetPending`. On failure, if `on_completed` is set, discards the linked enrich task via `Store.Discard`.
+    - `Handle(ctx, t) (json.RawMessage, error)` — Unmarshals payload (`file_path`, `document_id` UUID, `on_completed` enrich task ID), calls `FileFromPath` + `consumer.Process`. On success, if `on_completed` is set and a document was created, activates the linked enrich task via `Store.SetPending`. On **any** failure (payload unmarshal, empty `file_path`, `FileFromPath`, or `Process`), discards the linked enrich task via `withDiscardAttempt` — if the discard itself fails, the error is appended (`"; additionally failed to discard enrich task <id>: ..."`) so it lands in the task's `error` field.
     - `activateChildEnrich(ctx, parent, onCompleted, documentID)` — Looks up the enrich task by UUID, validates `waiting_for` matches the parent, updates its payload with the document ID, and sets it to `pending`. Works on both `waiting` and `discarded` enrich tasks so a retried consume can reactivate a previously-discarded enrich.
-    - `deactivateChildEnrich(ctx, parent, onCompleted, parentErr)` — Looks up the enrich task by UUID, validates `waiting_for` matches the parent, and sets it to `discarded` with the parent error. Only matches `waiting` enrich tasks (idempotent if already discarded).
+    - `deactivateChildEnrich(ctx, parent, onCompleted, parentErr)` — Looks up the enrich task by UUID, validates `waiting_for` matches the parent, and sets it to `discarded` with the parent error via `Store.Discard`. Only matches `waiting` enrich tasks; 0 rows affected is a benign no-op logged at info level.
+    - `withDiscardAttempt(ctx, t, onCompleted, err)` — private: attempts the enrich discard for a failing consume and merges a discard failure into the returned error.
+    - `recoverOnCompleted(payload)` — private: lenient re-parse of `on_completed` from a payload that failed strict unmarshalling, so the paired enrich can still be discarded.
     - `DedupKey(payload) string` — Returns file path from payload
 
 ## `handlers/enrich.go`

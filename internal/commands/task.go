@@ -210,7 +210,7 @@ func taskRetryHandler(c *Container, args []string) error {
 		return fmt.Errorf("database: %w", err)
 	}
 
-	if err := task.Retry(context.Background(), client.Queries, args[0]); err != nil {
+	if err := task.Retry(context.Background(), client.Queries, c.logger, args[0]); err != nil {
 		return err
 	}
 

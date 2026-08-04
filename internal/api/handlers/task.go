@@ -114,7 +114,7 @@ func (h *TaskHandler) RetryTask(w http.ResponseWriter, r *http.Request) {
 
 	taskID := r.PathValue("id")
 
-	if err := task.Retry(ctx, h.queries, taskID); err != nil {
+	if err := task.Retry(ctx, h.queries, h.logger, taskID); err != nil {
 		if errors.Is(err, task.ErrTaskNotFound) {
 			http.Error(w, "Task not found", http.StatusNotFound)
 			return
