@@ -121,7 +121,7 @@ environment and `-tags "XLA,ORT"` that bare invocations miss. See
 - CI (`.github/workflows/ci.yml`) runs `make test` + `make test-db` (postgres:17 service container) plus both SPA builds on every push to `dev`/`master` and every PR to `master`. The ruleset requires the `test` and `web` checks to pass on PRs.
 - Commits are signed (SSH, `commit.gpgsign true`). The ruleset requires verified signatures; the signing key must stay registered as a Signing Key on GitHub.
 - Releases: bump the version on `master` via `/bump` (it commits on `dev`, opens a PR `dev → master`, and merges it), tag `vX.Y.Z` from master, push the tag; `workflow_dispatch` only from master.
-- Version bumps never land on `dev`; after each release, resync: `git checkout dev && git merge master && git push origin dev`.
+- Version bumps never land on `dev`. After a PR merge, local refs don't need to move — GitHub merges server-side; if you want local `master` to match, `git fetch origin && git branch -f master origin/master`. Merge `origin/master` into `dev` only when master has commits dev doesn't (`git rev-list --count master..origin/master` non-zero, e.g. after direct bypass pushes) — in the normal PR-only flow there is nothing to do.
 - Never `gh pr merge --delete-branch`; `dev` is long-lived.
 
 ## Releases
