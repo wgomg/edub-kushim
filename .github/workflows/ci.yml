@@ -38,7 +38,7 @@ jobs:
     needs: web
     runs-on: ubuntu-latest
     services:
-      postgres:
+      postgres: &postgres
         image: postgres:17
         env:
           POSTGRES_USER: edub
@@ -68,3 +68,39 @@ jobs:
         env:
           TEST_DATABASE_URL: postgres://edub:edub@localhost:5432/edub?sslmode=disable
         run: make test-db
+
+  test-cgo:
+    needs: web
+    runs-on: ubuntu-latest
+    services:
+      postgres: *postgres
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: actions/cache@v6
+        with:
+          path: build
+          key: kushim-test-deps-amd64-${{ hashFiles('Makefile') }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: web-assets
+          path: web-assets
+      - name: Stage web assets
+        run: make stage-web-artifact
+      - name: Install C dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc g++ make autoconf automake libtool pkg-config \
+            zlib1g-dev libfreetype-dev libharfbuzz-dev libjpeg-dev libopenjp2-7-dev \
+            unzip git curl ca-certificates
+      - name: Build C dependencies
+        run: make build-deps TOKENIZERS_ARCH=amd64
+      - name: Run CGo tests (no database)
+        run: make test-cgo
+      - name: Run CGo tests (PostgreSQL)
+        env:
+          TEST_DATABASE_URL: postgres://edub:edub@localhost:5432/edub?sslmode=disable
+        run: make test-cgo-db

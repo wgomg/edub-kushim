@@ -282,7 +282,11 @@ func TestConfigHandler_SetInvalid(t *testing.T) {
 
 func TestConfigHandler_Unset(t *testing.T) {
 	c, configDir := newTestContainer(t)
-	err := configHandler(c, []string{"--unset", "server.port"})
+	err := configHandler(c, []string{"server.port", "9999"})
+	if err != nil {
+		t.Fatalf("configHandler set: %v", err)
+	}
+	err = configHandler(c, []string{"--unset", "server.port"})
 	if err != nil {
 		t.Fatalf("configHandler --unset: %v", err)
 	}

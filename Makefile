@@ -278,6 +278,12 @@ test-db:
 test-backup:
 	CGO_ENABLED=0 go test -tags "XLA,ORT" -count=1 -timeout 120s ./internal/backup/
 
+# Consumption with CGo + DB — the full CGo+DB run (requires make build-deps + TEST_DATABASE_URL).
+.PHONY: test-cgo-db
+
+test-cgo-db:
+	CGO_ENABLED=1 go test -tags "XLA,ORT" -count=1 -timeout 120s ./internal/consumption/
+
 # Single-package run for development. Filter with RUN, e.g.:
 #   make test-one PKG=./internal/errs/ RUN=TestSleepAfterRequest
 # CGo-gated packages need make test-cgo instead (CGO_ENABLED=0 here).
@@ -294,7 +300,8 @@ test-cgo:
 	go test -tags "XLA,ORT" -count=1 -timeout 120s \
 		./internal/tools/adapters \
 		./internal/tools/adapters/ocr \
-		./internal/tools/adapters/tagmatcher
+		./internal/tools/adapters/tagmatcher \
+		./internal/commands/
 
 test-cgo-glibc:
 	podman run --rm \

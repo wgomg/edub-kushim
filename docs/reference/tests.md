@@ -15,10 +15,10 @@ run strategy:
   pipeline.
 
 All non-CGo tiers run with `CGO_ENABLED=0` (no Tesseract, MuPDF, or
-Ghostscript required); `make test-cgo` runs with `CGO_ENABLED=1` and needs
-`make build-deps` first. Every invocation goes through the Makefile, which
-exports the `-tags "XLA,ORT"` tags and the CGo environment — bare `go test`
-is not supported.
+Ghostscript required); `make test-cgo` and `make test-cgo-db` run with
+`CGO_ENABLED=1` and need `make build-deps` first. Every invocation goes through
+the Makefile, which exports the `-tags "XLA,ORT"` tags and the CGo environment
+— bare `go test` is not supported.
 
 ### Quick Start
 
@@ -26,7 +26,8 @@ is not supported.
 make test          # runs all non-CGo tests
 make test-verbose  # same with verbose output
 make test-db       # database-dependent tests (requires TEST_DATABASE_URL)
-make test-cgo      # CGo-gated adapter tests (requires make build-deps first)
+make test-cgo      # CGo-gated tests (requires make build-deps first)
+make test-cgo-db   # consumption with CGo + DB (requires make build-deps + TEST_DATABASE_URL)
 make test-one PKG=./internal/errs/   # single package; add RUN=Name to filter
 ```
 
@@ -36,6 +37,7 @@ make test-one PKG=./internal/errs/   # single package; add RUN=Name to filter
 
 - `web` job: builds both SPAs (`npm ci && npm run build` in `web/` and `web-wizard/`), stages them with `make stage-web`, and uploads them as the `web-assets` artifact. Staging is required because `internal/static/build` and `internal/wizard/static` are gitignored but embedded via `//go:embed` — a fresh checkout has no assets to compile against.
 - `test` job (depends on `web`): downloads `web-assets`, stages it with `make stage-web-artifact`, then runs `make test` and `make test-db` against a postgres:17 service container (`TEST_DATABASE_URL` pointing at `localhost:5432`).
+- `test-cgo` job (depends on `web`): installs the C build prerequisites, builds the C libraries with `make build-deps TOKENIZERS_ARCH=amd64` (cached under `build/` keyed by `hashFiles('Makefile')`), then runs `make test-cgo` and `make test-cgo-db` against the same postgres:17 service container. This surfaces the CGo-only packages (`internal/commands`, consumption under CGo) on every push/PR.
 
 The `global` ruleset requires the `test` and `web` checks to pass before a PR to `master` can merge.
 
@@ -64,6 +66,7 @@ The `global` ruleset requires the `test` and `web` checks to pass before a PR to
 | `internal/service` | 76 | Batch create/get/owner-state/pending/active/cancel/queue, RetryFailed (restores discarded enriches, batch-scoped), ResetStaleProcessingTasks (restore + global sweep), ResetProcessingTasksByBatch restore, orphaned scan/delete/restore/move-to-inbox, errored files list/download/delete/delete-all, user API key create/revoke/rotate/validate, user Create with role defaults/explicit/invalid, UpdateRole (valid/invalid), Update with role change, password validation (12+ rules) |
 | `internal/api/handlers` | 60 | Document CRUD, tag/people/DocumentType CRUD, user CRUD (with role), task endpoints, saved searches, concurrent operations, dashboard activity + analytics + processing health, analytics error path, config handler get/status, batch delete limits, error helpers, auth login (valid/invalid/empty/claims/role), auth logout, API key generate/revoke/rotate/status/forbidden/invalid-id/not-found, MeHandler (valid/missing-id/not-found), self-service API key handlers (MeGenerateKey/MeRevokeKey/MeRotateKey/MeGetKeyStatus/unauthorized), orphaned handler (list/scan/delete/restore/move-to-inbox/delete-all/move-all), errored handler (list/download/delete/delete-all), logs handler (invalid name/file not found/success/line clamping/large file tail/empty file) |
 | `internal/consumption` | 20 | Full consumer pipeline via mock runner (file discovery, DB transaction, file movement, duplicate detection), file I/O helpers (get, move, copy, remove, clean up), checksum calculation, orphaned file management |
+| `internal/commands` | 16 | Config handler (help/path/validate valid+invalid/get/missing key/set/invalid set/unset/missing key/unset without key/dump/unknown args), parseValue, deleteNestedKey, highlight snippet ANSI markers. CGo-gated package: compiles only under `CGO_ENABLED=1` (runs via `make test-cgo`) |
 | `internal/backup` | 12 | Create (full backup/missing DB/missing storage/no files/SQL dump content), ApplyRetention (delete oldest/keep all/keep 0), ValidateArchive (valid/invalid gzip/missing manifest/missing file), ExtractArchive (valid/path traversal/symlink skip), ReplaceFiles (SQL dump/unknown format), CopyDir |
 
 ---
@@ -187,9 +190,10 @@ environment.
 
 ### CGo-dependent tests (`make test-cgo`)
 
-These 10 tests require `CGO_ENABLED=1` to compile because their source files
-are tagged `//go:build cgo`. Most use only pure-Go code; only the MuPDF tests
-exercise actual CGo function calls.
+These 26 tests require `CGO_ENABLED=1` to compile because their source files
+are tagged `//go:build cgo` (or, for `internal/commands`, the package imports
+the cgo-gated tagmatcher adapter). Most use only pure-Go code; only the MuPDF
+tests and the command handlers exercise actual CGo function calls.
 
 Requires the C toolchain and built C libraries (Tesseract, Leptonica, MuPDF,
 libtokenizers) on the host. Run inside the builder containers to avoid
@@ -201,13 +205,33 @@ make test-cgo-glibc    # podman: kushim-glibc-builder
 make test-cgo-musl     # podman: kushim-musl-builder
 ```
 
-**3 packages, 10 tests:**
+**4 packages, 26 tests:**
 
 | Package | Tests | CGo at runtime? |
 |---------|-------|-----------------|
 | `internal/tools/adapters` | 2 | Yes — MuPDF page render |
 | `internal/tools/adapters/ocr` | 6 | No (pure Go, build-tag gated) |
 | `internal/tools/adapters/tagmatcher` | 2 | No (pure Go, build-tag gated) |
+| `internal/commands` | 16 | No (pure Go tests; package links the cgo adapters transitively) |
+
+`internal/commands` is not part of `make test`: the package only compiles with
+CGo (`hugot.go` imports the `//go:build cgo`-gated tagmatcher adapter), and
+kushim — the only binary importing it — is always built with CGo.
+
+### Full CGo+DB run (`make test-cgo-db`)
+
+Runs the consumption pipeline tests with `CGO_ENABLED=1` against PostgreSQL —
+the same suite as `make test-db` but with the package linked under CGo (the
+cgo-gated adapters resolve at compile time, MuPDF is available). Page-count
+assertions remain mode-independent: `setupConsumerTest` stubs `pageCounter` to
+return 1 unconditionally, so the assertions are deterministic whether MuPDF
+is reachable or not. The tier's value is exercising the full CGo+DB
+pipeline (link paths, transactions, future code paths that touch
+`countPages`) — not asserting on `countPages` output:
+
+```bash
+make test-cgo-db   # requires make build-deps first + TEST_DATABASE_URL
+```
 
 ### Single package
 
@@ -270,11 +294,13 @@ The `testutil` package avoids importing any `database`-adjacent types to minimiz
 the cycle surface. `NewMockTagService` was moved from `testutil` into the handler
 test file for this reason.
 
-### No CGo in tests
+### No CGo in non-CGo tiers
 
-All tests run with `CGO_ENABLED=0`. The CGo-dependent code paths (gosseract OCR,
-MuPDF text extraction/optimization) are tested via mocks at the `runner` interface
-level and via build-constrained stubs at the adapter level.
+The `make test`/`make test-db` tiers run with `CGO_ENABLED=0`. The CGo-dependent
+code paths (gosseract OCR, MuPDF text extraction/optimization) are tested via
+mocks at the `runner` interface level and via build-constrained stubs at the
+adapter level; the CGo packages themselves run under `make test-cgo` /
+`make test-cgo-db` (see above).
 
 ---
 

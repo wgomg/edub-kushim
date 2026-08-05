@@ -46,10 +46,11 @@ type runner interface {
 var _ runner = (*tools.Runner)(nil)
 
 type Consumer struct {
-	config *config.Config
-	logger *utils.Logger
-	client *database.Client
-	runner runner
+	config      *config.Config
+	logger      *utils.Logger
+	client      *database.Client
+	runner      runner
+	pageCounter func(path string) int
 }
 
 type File struct {
@@ -96,19 +97,21 @@ func NewConsumer(cfg *config.Config, logger *utils.Logger, client *database.Clie
 		}
 	}
 	return &Consumer{
-		config: cfg,
-		logger: logger,
-		client: client,
-		runner: tools.NewRunner(logger, cfg, []string{"converter", "textextractor", "ocr", "pdfoptimizer"}),
+		config:      cfg,
+		logger:      logger,
+		client:      client,
+		runner:      tools.NewRunner(logger, cfg, []string{"converter", "textextractor", "ocr", "pdfoptimizer"}),
+		pageCounter: countPages,
 	}, nil
 }
 
 func NewConsumerWithRunner(cfg *config.Config, logger *utils.Logger, client *database.Client, runner runner) (*Consumer, error) {
 	return &Consumer{
-		config: cfg,
-		logger: logger,
-		client: client,
-		runner: runner,
+		config:      cfg,
+		logger:      logger,
+		client:      client,
+		runner:      runner,
+		pageCounter: countPages,
 	}, nil
 }
 
@@ -533,7 +536,7 @@ func (c *Consumer) extractText(ctx context.Context, file File, documentID string
 	}
 
 	if mime.IsPDF(extractMimeType) {
-		file.PageCount = countPages(extractPath)
+		file.PageCount = c.pageCounter(extractPath)
 	}
 
 	if mime.IsImage(file.MimeType) {

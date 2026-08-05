@@ -94,6 +94,10 @@ func setupConsumerTest(t *testing.T) (*Consumer, *config.Config, *database.Clien
 	consumer, err := NewConsumerWithRunner(cfg, logger, client, runner)
 	testutil.AssertNoError(t, err, "create consumer")
 
+	// The mock ConvertToPdf writes a valid 1-page PDF; stub the counter so
+	// page counts don't depend on MuPDF availability in the test environment.
+	consumer.pageCounter = func(string) int { return 1 }
+
 	cleanup := func() {
 		cleanupCfg()
 	}
@@ -638,10 +642,10 @@ func TestConsumerProcessDocxFile(t *testing.T) {
 		}
 	})
 
-	t.Run("page count is 0", func(t *testing.T) {
+	t.Run("page count is 1", func(t *testing.T) {
 		doc, _ := client.GetDocument(context.Background(), docID)
-		if doc.PageCount != 0 {
-			t.Errorf("expected page count 0, got %d", doc.PageCount)
+		if doc.PageCount != 1 {
+			t.Errorf("expected page count 1, got %d", doc.PageCount)
 		}
 	})
 }
@@ -692,10 +696,10 @@ func TestConsumerProcessOdtFile(t *testing.T) {
 		}
 	})
 
-	t.Run("page count is 0", func(t *testing.T) {
+	t.Run("page count is 1", func(t *testing.T) {
 		doc, _ := client.GetDocument(context.Background(), docID)
-		if doc.PageCount != 0 {
-			t.Errorf("expected page count 0, got %d", doc.PageCount)
+		if doc.PageCount != 1 {
+			t.Errorf("expected page count 1, got %d", doc.PageCount)
 		}
 	})
 }

@@ -438,6 +438,10 @@ toolchain installed:
 - `internal/tools/adapters/ocr/gosseract_test.go`, `downscale_test.go` —
   OCR + image pipeline tests.
 - `internal/tools/adapters/tagmatcher/hugot_test.go` — model tests.
+- `internal/commands` — no `//go:build cgo` tag of its own, but the package
+  only compiles with CGo because `hugot.go` imports the cgo-gated tagmatcher
+  adapter. It is tested under `make test-cgo`, where it links natively; its
+  tests themselves are pure Go (config handler, snippet highlighting).
 
 `make test` runs `CGO_ENABLED=0` and therefore skips all of these
 automatically. There is no mockable seam for `import "C"` — if you need to

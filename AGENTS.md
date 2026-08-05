@@ -93,14 +93,19 @@ make test          # 12 packages, no database needed, CGO_ENABLED=0
 make test-verbose  # same with -v
 make test-db       # 6 additional packages, requires PostgreSQL via TEST_DATABASE_URL
 make test-backup   # backup package, requires PostgreSQL via TEST_DATABASE_URL
-make test-cgo      # CGo-gated adapter tests (requires make build-deps first)
+make test-cgo      # CGo-gated tests incl. internal/commands (requires make build-deps first)
+make test-cgo-db   # consumption with CGo + DB (requires make build-deps + TEST_DATABASE_URL)
 make test-one PKG=./internal/errs/   # single package; add RUN=Name to filter
 ```
 
 **Isolation**: Each test package gets its own database (`edub_test_<pkg_dir>`) via `runtime.Caller`. Databases are auto-dropped with `DROP ... WITH (FORCE)` when the last reference is released, so no manual cleanup is needed.
 
 Covered: database queries, task lifecycle, search engine, API handlers, consumption pipeline
-(with mock runner). Not covered: CLI commands, real OCR/PDF adapters.
+(with mock runner), CLI commands (via `make test-cgo`). Not covered: real OCR/PDF adapters.
+
+CI runs a dedicated `test-cgo` job (`.github/workflows/ci.yml`) that builds the C
+deps (cached under `build/`) and runs `make test-cgo` + `make test-cgo-db` against
+a postgres:17 service container.
 
 There is no supported bare `go test` invocation: the Makefile exports the CGo
 environment and `-tags "XLA,ORT"` that bare invocations miss. See

@@ -258,12 +258,15 @@ make test-db
 make test-cgo
 make test-cgo-glibc    # podman: kushim-glibc-builder
 make test-cgo-musl     # podman: kushim-musl-builder
+
+# Consumption with CGo + DB (requires make build-deps + TEST_DATABASE_URL)
+make test-cgo-db
 ```
 
 **Note:** bare `go test` is not supported — the Makefile targets set the `-tags "XLA,ORT"`
  tags and the CGo environment that bare invocations miss. Always use `make test`,
  `make test-verbose`, `make test-db`, `make test-backup`, `make test-cgo` (host,
- requires `make build-deps` first), or the container variants.
+ requires `make build-deps` first), `make test-cgo-db`, or the container variants.
 
 ### Web UI (hot-reload)
 
