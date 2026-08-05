@@ -115,21 +115,12 @@ environment and `-tags "XLA,ORT"` that bare invocations miss. See
 - Svelte 5 with runes enabled everywhere. Tailwind CSS v4 via `@tailwindcss/vite`.
 - Lint: `npm run lint` · Format: `npm run format`.
 
-## Development workflow
-
-- Work happens on `dev`; changes reach `master` only via PRs merged with merge commits (git-flow style — `dev`'s commits become part of `master`'s history, so the resync converges). Never push directly to `master` for normal work — it only passes through the intentional admin bypass.
-- CI (`.github/workflows/ci.yml`) runs `make test` + `make test-db` (postgres:17 service container) plus both SPA builds on every push to `dev`/`master` and every PR to `master`. The ruleset requires the `test` and `web` checks to pass on PRs.
-- Commits are signed (SSH, `commit.gpgsign true`). The ruleset requires verified signatures; the signing key must stay registered as a Signing Key on GitHub.
-- Releases: bump the version on `master` via `/bump` (it commits on `dev`, opens a PR `dev → master`, and merges it), tag `vX.Y.Z` from master, push the tag; `workflow_dispatch` only from master.
-- Version bumps never land on `dev`. After a PR merge, local refs don't need to move — GitHub merges server-side; if you want local `master` to match, `git fetch origin && git branch -f master origin/master`. Merge `origin/master` into `dev` only when master has commits dev doesn't (`git rev-list --count master..origin/master` non-zero, e.g. after direct bypass pushes) — in the normal PR-only flow there is nothing to do.
-- Never `gh pr merge --delete-branch`; `dev` is long-lived.
-
 ## Releases
 
 `.github/workflows/release.yml` builds both binaries per arch (amd64 + arm64) and publishes a GitHub Release.
 
 How to release:
-1. Run `/bump` — it commits the version bump on `dev` and merges to `master` via a PR (`dev → master`).
+1. Commit the version bump on `dev` (update `internal/version/version.go`, signed commit `chore(version): incrementa versión a X.Y.Z`), then merge into `master` locally: `git checkout master && git merge --ff-only dev && git push origin master`.
 2. `git tag vX.Y.Z && git push origin vX.Y.Z` — the workflow publishes the release automatically: 4 tarballs (`kushim_linux_{amd64,arm64}`, `edub_linux_{amd64,arm64}`) + combined `checksums.txt`.
 
 Manual runs (`workflow_dispatch` — only triggers from `master`):
