@@ -51,7 +51,7 @@ func (h *BackupTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMe
 		}
 	}()
 
-	if err := h.waitForDrain(ctx); err != nil {
+	if err := database.WaitForTaskDrain(ctx, h.queries, h.logger, "backup"); err != nil {
 		return nil, err
 	}
 
@@ -77,27 +77,4 @@ func (h *BackupTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMe
 	}
 
 	return raw, nil
-}
-
-func (h *BackupTaskHandler) waitForDrain(ctx context.Context) error {
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		count, err := h.queries.CountProcessingTasks(ctx)
-		if err != nil {
-			return fmt.Errorf("count processing tasks: %w", err)
-		}
-		if count == 0 {
-			return nil
-		}
-
-		h.logger.Info(nil, "backup: waiting for %d in-flight task(s) to drain", count)
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-		}
-	}
 }

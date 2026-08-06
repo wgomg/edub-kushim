@@ -56,6 +56,21 @@ Migrations run automatically on startup (no manual CLI command needed):
 
 - **Server** (`edub`) — called in `cmd/edub/main.go` after `NewPostgresDB()`
 - **CLI commands** (`kushim consume`, `search`, `task`) — called in `internal/commands/container.go` `GetDB()` when the connection is first acquired
+- **Reconnect** (`kushim queue`) — `Container.reconnectClient()` re-runs `InitializeSchema` as a no-op safety net after a DB config change
+
+---
+
+## `dump.go` / `migrate.go`
+
+The SQL dump/restore machinery lives in `internal/database/` (shared by `kushim backup`, `kushim restore`, and the `migrate-db` config task):
+
+- `DumpSchemaAndData(ctx, db, schemaFS, w)` — Writes a complete SQL dump to `w`: a single `BEGIN...COMMIT` transaction that recreates the schema from the embedded migrations (preamble drops the public schema), recreates the `goose_db_version` table from the live schema (introspection-based DDL) and carries its rows across the dump so a restored database can be reconnected without goose re-applying migrations, then batch-inserts all table data (excluding `goose_db_version` and `backup_lock` — the latter is recreated by its own migration).
+- `SQLDumpToFile(ctx, db, schemaFS, destPath)` — Gzipped variant (the gzip footer is flushed before the file is closed); used for the pre-migration safety snapshot.
+- `ExecuteDumpFile(ctx, db, dumpPath)` — Runs the dump's statements one at a time via a quote-aware splitter (single-quote literals, `''` escapes, dollar-quoted strings, comments) so memory stays bounded regardless of dump size; the dump's own transaction keeps execution atomic.
+- `ValidateMigrationDestination(ctx, db)` — Refuses the destructive restore when the destination holds tables without edub migration history (goose version table present with rows), so a mistyped/reused database name is never silently wiped.
+- `RewriteStoragePaths(ctx, db, oldDir, newDir)` — Rewrites `document.storage_path`/`original_path` and `orphaned_file.file_path` from `oldDir` to `newDir` in a single transaction (LIKE-escaped prefix match); used by restore and the `migrate-db` task.
+- `WaitForTaskDrain(ctx, queries, logger, what)` — Polls `CountProcessingTasks` (5s ticker) until no consume/enrich task is processing; the caller must hold the backup lock, which blocks new claims, so it converges. Shared by `BackupTaskHandler` and the `migrate-db` handler.
+- `WithConnectTimeout(dsn, seconds)` — Appends `connect_timeout` to a DSN so connecting to an unreachable host fails within the given seconds (used by the migration's destination connect).
 
 ---
 

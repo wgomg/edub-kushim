@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -153,6 +155,30 @@ func (h *ConfigHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+
+	if newDB, err := dbParamsFromBody(body, h.getConfig().Db); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	} else if config.DatabaseConnectionChanged(h.getConfig().Db, newDB) {
+		if h.dispatcher == nil {
+			http.Error(w, "database not ready — retry after setup completes", http.StatusServiceUnavailable)
+			return
+		}
+		immediate := make(map[string]any)
+		for k, v := range body {
+			if strings.HasPrefix(k, "database.") || strings.HasPrefix(k, "storage.") {
+				continue
+			}
+			immediate[k] = v
+		}
+		if err := config.SaveMap(configDir, immediate); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		h.enqueueDBMigration(ctx, w, body, newDB)
+		return
+	}
+
 	if err := config.SaveMap(configDir, body); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -257,6 +283,130 @@ func (h *ConfigHandler) handleConfigTask(ctx context.Context, batchId, dedupKey 
 		return false
 	}
 	return true
+}
+
+func dbParamsFromBody(body map[string]any, current config.DatabaseConfig) (config.DatabaseConfig, error) {
+	db := config.DatabaseConfig{
+		Host:     asString(body["database.host"]),
+		User:     asString(body["database.user"]),
+		Password: asString(body["database.password"]),
+		Database: asString(body["database.database"]),
+		SSLMode:  asString(body["database.sslmode"]),
+	}
+	if db.Host == "" {
+		db.Host = current.Host
+	}
+	if db.User == "" {
+		db.User = current.User
+	}
+	if db.Password == "" {
+		db.Password = current.Password
+	}
+	if db.Database == "" {
+		db.Database = current.Database
+	}
+	if db.SSLMode == "" {
+		db.SSLMode = current.SSLMode
+	}
+
+	switch v := body["database.port"].(type) {
+	case nil:
+		db.Port = current.Port
+	case string:
+		port, err := strconv.Atoi(v)
+		if err != nil {
+			return db, fmt.Errorf("database.port must be an integer, got %q", v)
+		}
+		db.Port = port
+	case float64:
+		db.Port = int(v)
+	default:
+		return db, fmt.Errorf("database.port must be an integer")
+	}
+	if db.Port == 0 {
+		db.Port = current.Port
+	}
+
+	if current.DSN != "" &&
+		db.Host == current.Host && db.Port == current.Port && db.User == current.User &&
+		db.Password == current.Password && db.Database == current.Database && db.SSLMode == current.SSLMode {
+		db.DSN = current.DSN
+	}
+
+	if db.Host == "" {
+		return db, fmt.Errorf("database.host is required")
+	}
+	if db.Database == "" {
+		return db, fmt.Errorf("database.database is required")
+	}
+	if db.Port < 1 || db.Port > 65535 {
+		return db, fmt.Errorf("database.port must be between 1 and 65535")
+	}
+	switch db.SSLMode {
+	case "", "disable", "allow", "prefer", "require", "verify-ca", "verify-full":
+	default:
+		return db, fmt.Errorf("database.sslmode must be one of: disable, allow, prefer, require, verify-ca, verify-full")
+	}
+	return db, nil
+}
+
+func asString(v any) string {
+	s, _ := v.(string)
+	return s
+}
+
+func (h *ConfigHandler) enqueueDBMigration(ctx context.Context, w http.ResponseWriter, body map[string]any, newDB config.DatabaseConfig) {
+	existing, err := h.queries.GetConfigTaskByDedupKey(ctx, sql.NullString{String: configtask.DedupKeyMigrateDB, Valid: true})
+	switch {
+	case err == nil && existing.Status == "processing":
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "database migration already in progress"})
+		return
+	case err == nil:
+		deleted, delErr := h.queries.DeleteConfigTaskByDedupKey(ctx, sql.NullString{String: configtask.DedupKeyMigrateDB, Valid: true})
+		if delErr != nil {
+			h.logger.Error(nil, "delete stale migration task: %v", delErr)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to queue database migration"})
+			return
+		}
+		if deleted == 0 && existing.Status == "pending" {
+			writeJSON(w, http.StatusConflict, map[string]any{"error": "database migration already in progress"})
+			return
+		}
+	case !errors.Is(err, sql.ErrNoRows):
+		h.logger.Error(nil, "lookup migration task: %v", err)
+	}
+
+	cfg := h.getConfig()
+	payload := configtask.MigrateDBPayload{
+		Op:                "migrate-db",
+		ConfigDir:         cfg.App.ConfigDir,
+		Host:              newDB.Host,
+		Port:              strconv.Itoa(newDB.Port),
+		User:              newDB.User,
+		Password:          newDB.Password,
+		Database:          newDB.Database,
+		SSLMode:           newDB.SSLMode,
+		OldStorageDir:     cfg.Storage.StorageDir,
+		NewStorageDir:     asString(body["storage.storage_dir"]),
+		OldConsumptionDir: cfg.Storage.ConsumptionDir,
+		NewConsumptionDir: asString(body["storage.consumption_dir"]),
+	}
+	payloadJSON, _ := json.Marshal(payload)
+
+	batchID := uuid.New().String()
+	h.services.Batch.Create(ctx, batchID, configSource, "queued")
+
+	if _, err := h.dispatcher.Enqueue(ctx, configtask.TaskTypeConfig, batchID, payloadJSON, ""); err != nil {
+		h.logger.Error(nil, "enqueue migration task: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to enqueue database migration"})
+		return
+	}
+
+	h.logger.Info(nil, "database migration queued: %s -> %s@%s:%d/%s", cfg.Db.Database, newDB.User, newDB.Host, newDB.Port, newDB.Database)
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"pending_tasks": 1,
+		"message":       "database migration queued — settings apply once the data copy completes",
+	})
 }
 
 func (h *ConfigHandler) ConfigStatus(w http.ResponseWriter, r *http.Request) {

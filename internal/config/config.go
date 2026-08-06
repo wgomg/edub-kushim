@@ -50,15 +50,44 @@ type ServerConfig struct {
 }
 
 type DatabaseConfig struct {
-	Type     string `mapstructure:"type" yaml:"type" json:"type"`
-	Host     string `yaml:"host,omitempty" json:"host"`
-	Port     int    `yaml:"port,omitempty" json:"port"`
-	User     string `yaml:"user,omitempty" json:"user"`
-	Password string `yaml:"password,omitempty" json:"password"`
-	Database string `yaml:"database,omitempty" json:"database"`
-	SSLMode  string `yaml:"sslmode,omitempty" json:"sslmode"`
-	DSN      string `yaml:"dsn,omitempty" json:"dsn"`
+	Type     string   `mapstructure:"type" yaml:"type" json:"type"`
+	Host     string   `yaml:"host,omitempty" json:"host"`
+	Port     int      `yaml:"port,omitempty" json:"port"`
+	User     string   `yaml:"user,omitempty" json:"user"`
+	Password string   `yaml:"password,omitempty" json:"password"`
+	Database string   `yaml:"database,omitempty" json:"database"`
+	SSLMode  string   `yaml:"sslmode,omitempty" json:"sslmode"`
+	DSN      string   `yaml:"dsn,omitempty" json:"dsn"`
 	Seeders  []string `yaml:"seeders,omitempty" json:"seeders"`
+}
+
+func DatabaseConnectionChanged(old, new DatabaseConfig) bool {
+	return effectiveConnection(old) != effectiveConnection(new)
+}
+
+func effectiveConnection(cfg DatabaseConfig) string {
+	host, port, user, password, database, sslmode := cfg.Host, cfg.Port, cfg.User, cfg.Password, cfg.Database, cfg.SSLMode
+	if cfg.DSN != "" {
+		u, err := url.Parse(cfg.DSN)
+		if err != nil {
+			return "dsn:" + cfg.DSN
+		}
+		host = u.Hostname()
+		if p := u.Port(); p != "" {
+			if n, err := strconv.Atoi(p); err == nil {
+				port = n
+			}
+		}
+		if u.User != nil {
+			user = u.User.Username()
+			if pw, ok := u.User.Password(); ok {
+				password = pw
+			}
+		}
+		database = strings.TrimPrefix(u.Path, "/")
+		sslmode = u.Query().Get("sslmode")
+	}
+	return fmt.Sprintf("%s:%d:%s:%s:%s:%s", host, port, user, password, database, sslmode)
 }
 
 func BuildPostgresDSN(cfg DatabaseConfig) string {
@@ -138,15 +167,15 @@ type DocxOdtConverterConfig struct {
 }
 
 type ConsumerConfig struct {
-	SupportedFiles   []string              `mapstructure:"supported_files" yaml:"supported_files" json:"supported_files"`
-	Workers          int                   `mapstructure:"workers" yaml:"workers" json:"workers"`
-	MaxFilesPerBatch int                   `mapstructure:"max_files_per_batch" yaml:"max_files_per_batch" json:"max_files_per_batch"`
+	SupportedFiles   []string               `mapstructure:"supported_files" yaml:"supported_files" json:"supported_files"`
+	Workers          int                    `mapstructure:"workers" yaml:"workers" json:"workers"`
+	MaxFilesPerBatch int                    `mapstructure:"max_files_per_batch" yaml:"max_files_per_batch" json:"max_files_per_batch"`
 	Converter        DocxOdtConverterConfig `mapstructure:"converter" yaml:"converter" json:"converter"`
-	TextExtractor    TextExtractorConfig   `mapstructure:"textextractor" yaml:"textextractor" json:"textextractor"`
-	PdfOptimizer     PdfOptimizerConfig    `mapstructure:"pdfoptimizer" yaml:"pdfoptimizer" json:"pdfoptimizer"`
-	OCR              OCRConfig             `mapstructure:"ocr" yaml:"ocr" json:"ocr"`
-	Polling          PollingConfig         `mapstructure:"polling" yaml:"polling" json:"polling"`
-	Reclaim          ReclaimConfig         `mapstructure:"reclaim" yaml:"reclaim" json:"reclaim"`
+	TextExtractor    TextExtractorConfig    `mapstructure:"textextractor" yaml:"textextractor" json:"textextractor"`
+	PdfOptimizer     PdfOptimizerConfig     `mapstructure:"pdfoptimizer" yaml:"pdfoptimizer" json:"pdfoptimizer"`
+	OCR              OCRConfig              `mapstructure:"ocr" yaml:"ocr" json:"ocr"`
+	Polling          PollingConfig          `mapstructure:"polling" yaml:"polling" json:"polling"`
+	Reclaim          ReclaimConfig          `mapstructure:"reclaim" yaml:"reclaim" json:"reclaim"`
 }
 
 type TextReducerConfig struct {
@@ -162,12 +191,12 @@ type DocTypeRefinementConfig struct {
 }
 
 type ContentAnalyzerConfig struct {
-	Enabled           bool                    `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
-	Timeout           int                     `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
-	Llm               LlmConfig               `mapstructure:"llm" yaml:"llm" json:"llm"`
-	PromptTemplate    string                  `mapstructure:"prompt_template" yaml:"prompt_template" json:"prompt_template,omitempty"`
-	DocTypeRefinement DocTypeRefinementConfig `mapstructure:"doc_type_refinement" yaml:"doc_type_refinement" json:"doc_type_refinement"`
-	PauseOnCreditError bool                   `mapstructure:"pause_on_credit_error" yaml:"pause_on_credit_error" json:"pause_on_credit_error"`
+	Enabled            bool                    `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
+	Timeout            int                     `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
+	Llm                LlmConfig               `mapstructure:"llm" yaml:"llm" json:"llm"`
+	PromptTemplate     string                  `mapstructure:"prompt_template" yaml:"prompt_template" json:"prompt_template,omitempty"`
+	DocTypeRefinement  DocTypeRefinementConfig `mapstructure:"doc_type_refinement" yaml:"doc_type_refinement" json:"doc_type_refinement"`
+	PauseOnCreditError bool                    `mapstructure:"pause_on_credit_error" yaml:"pause_on_credit_error" json:"pause_on_credit_error"`
 }
 
 type EnricherConfig struct {
@@ -178,12 +207,12 @@ type EnricherConfig struct {
 }
 
 type LlmConfig struct {
-	Adapter         string `mapstructure:"adapter" yaml:"adapter" json:"adapter"`
-	Provider        string `mapstructure:"provider" yaml:"provider" json:"provider"`
-	Model           string `mapstructure:"model" yaml:"model" json:"model"`
-	Token           string `mapstructure:"token" yaml:"token" json:"token,omitempty"`
-	Reasoning       bool   `yaml:"-"`
-	ReasoningEffort string `yaml:"-"`
+	Adapter         string  `mapstructure:"adapter" yaml:"adapter" json:"adapter"`
+	Provider        string  `mapstructure:"provider" yaml:"provider" json:"provider"`
+	Model           string  `mapstructure:"model" yaml:"model" json:"model"`
+	Token           string  `mapstructure:"token" yaml:"token" json:"token,omitempty"`
+	Reasoning       bool    `yaml:"-"`
+	ReasoningEffort string  `yaml:"-"`
 	Temperature     float64 `mapstructure:"temperature" yaml:"temperature" json:"temperature"`
 	RequestDelay    float64 `mapstructure:"request_delay" yaml:"request_delay" json:"request_delay"`
 }
@@ -391,20 +420,20 @@ func DefaultConfig(configDir string) *Config {
 				Timeout:     120,
 				TargetWords: 2000,
 			},
-		ContentAnalyzer: ContentAnalyzerConfig{
-			Enabled:             false,
-			Timeout:             120,
-			PromptTemplate:      "",
-			PauseOnCreditError:  true,
-			Llm: LlmConfig{
-				RequestDelay: 1,
+			ContentAnalyzer: ContentAnalyzerConfig{
+				Enabled:            false,
+				Timeout:            120,
+				PromptTemplate:     "",
+				PauseOnCreditError: true,
+				Llm: LlmConfig{
+					RequestDelay: 1,
+				},
+				DocTypeRefinement: DocTypeRefinementConfig{
+					Enabled:   true,
+					HeadWords: 600,
+					TailWords: 400,
+				},
 			},
-			DocTypeRefinement: DocTypeRefinementConfig{
-				Enabled:   true,
-				HeadWords: 600,
-				TailWords: 400,
-			},
-		},
 			TagMatcher: TagMatcherConfig{
 				Timeout:           120,
 				ReduceTargetWords: 4000,

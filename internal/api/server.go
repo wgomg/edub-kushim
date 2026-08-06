@@ -34,6 +34,8 @@ type Server struct {
 	matcherClient *tagmatch.MatcherClient
 	services      *types.CrudServices
 	configWatcher *config.Watcher
+	db            *sql.DB
+	client        *database.Client
 	pools         struct {
 		config *pool.Pool
 	}
@@ -51,8 +53,6 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 		logger.Info(nil, "WARNING: server.session_secret is empty — generated temporary in-memory secret (sessions lost on restart)")
 	}
 
-	client := database.NewClient(db)
-
 	matcherClient := tagmatch.NewMatcherClient(filepath.Join(cfg.App.ConfigDir, "kushim-hugot.sock"), tagmatch.MaxMatchBodyBytes(cfg.Enricher.TagMatcher.ReduceTargetWords))
 
 	initial := new(config.Config)
@@ -60,43 +60,50 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 	s := &Server{
 		logger:        logger,
 		addr:          addr,
-		services:      &types.CrudServices{},
 		matcherClient: matcherClient,
+		db:            db,
+		client:        database.NewClient(db),
 	}
 	s.cfg.Store(initial)
 
-	tagSvc, err := service.NewTag(client.Queries, logger, matcherClient)
-	if err != nil {
-		logger.Fatal("tag service: ", err)
-	}
-	s.services.Tag = tagSvc
+	s.rebuild(s.client)
 
-	s.services.Batch = service.NewBatch(client, cfg.Consumer.Reclaim.MaxRetries)
-	s.services.People = service.NewPeople(client.Queries, logger)
-	s.services.PeopleType = service.NewPeopleType(client.Queries, logger)
-	s.services.DocumentType = service.NewDocumentType(client.Queries, logger)
-	s.services.User = service.NewUser(client.Queries)
+	return s
+}
+
+func (s *Server) rebuild(client *database.Client) {
+	cfg := s.cfg.Load()
+
+	tagSvc, err := service.NewTag(client.Queries, s.logger, s.matcherClient)
+	if err != nil {
+		s.logger.Fatal("tag service: ", err)
+	}
+	services := &types.CrudServices{Tag: tagSvc}
+	services.Batch = service.NewBatch(client, cfg.Consumer.Reclaim.MaxRetries)
+	services.People = service.NewPeople(client.Queries, s.logger)
+	services.PeopleType = service.NewPeopleType(client.Queries, s.logger)
+	services.DocumentType = service.NewDocumentType(client.Queries, s.logger)
+	services.User = service.NewUser(client.Queries)
 
 	workStore := task.NewStore(client.Queries)
 	configStore := task.NewStore(client.Queries)
 
-	s.services.Orphaned = service.NewOrphaned(client.Queries, &cfg, logger, workStore, s.services.Batch)
-	s.services.Orphaned.ScanAndQuarantineAsync()
+	services.Orphaned = service.NewOrphaned(client.Queries, cfg, s.logger, workStore, services.Batch)
+	services.Orphaned.ScanAndQuarantineAsync()
 
-	s.services.Trash = service.NewTrashService(client, &cfg, logger)
-	s.services.Trash.StartBackgroundPurge()
+	services.Trash = service.NewTrashService(client, cfg, s.logger)
+	services.Trash.StartBackgroundPurge()
 
-	s.services.ReEnrich = service.NewReEnrich(client.Queries, workStore, s.services.Batch)
-
-	s.services.ErroredFiles = service.NewErroredFiles(&cfg, logger)
+	services.ReEnrich = service.NewReEnrich(client.Queries, workStore, services.Batch)
+	services.ErroredFiles = service.NewErroredFiles(cfg, s.logger)
 
 	registry := task.NewRegistry()
-	registry.Register("config", configtask.NewConfigTaskHandler(logger))
+	registry.Register("config", configtask.NewConfigTaskHandler(s.logger))
 
-	dispatcher := task.NewDispatcher(logger, workStore, registry)
-	configRunner := task.NewRunner(configStore, registry, logger)
+	dispatcher := task.NewDispatcher(s.logger, workStore, registry)
+	configRunner := task.NewRunner(configStore, registry, s.logger)
 
-	s.pools.config = pool.New(logger, configRunner, 1, 5*time.Second, "config")
+	s.pools.config = pool.New(s.logger, configRunner, 1, 5*time.Second, "config")
 
 	onConfigSet := func(cfg *config.Config) {
 		if cfg.Srv.SessionSecret == "" {
@@ -107,36 +114,55 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 
 	getConfigFn := func() *config.Config { return s.cfg.Load() }
 
-	mux := registerRoutes(logger, client, dispatcher, getConfigFn, onConfigSet, s.services, workStore)
+	mux := registerRoutes(s.logger, client, dispatcher, getConfigFn, onConfigSet, services, workStore)
 	registerStaticRoutes(mux)
+
+	s.services = services
+	s.client = client
 
 	getSecret := func() string { return s.cfg.Load().Srv.SessionSecret }
 	getAuthEnabled := func() bool { return s.cfg.Load().Srv.AuthEnabled }
 	validateAPIKey := func(ctx context.Context, rawKey string) (*database.User, error) {
-		u, err := s.services.User.ValidateAPIKey(ctx, rawKey)
+		u, err := services.User.ValidateAPIKey(ctx, rawKey)
 		if err != nil {
 			return nil, err
 		}
 		return &u, nil
 	}
 	getUserByID := func(ctx context.Context, id int64) (*database.User, error) {
-		u, err := s.services.User.Get(ctx, id)
+		u, err := services.User.Get(ctx, id)
 		if err != nil {
 			return nil, err
 		}
 		return &u, nil
 	}
-	handler := chainMiddleware(logger, getSecret, getAuthEnabled, validateAPIKey, getUserByID, mux)
+	handler := chainMiddleware(s.logger, getSecret, getAuthEnabled, validateAPIKey, getUserByID, mux)
 
-	s.httpServer = &http.Server{
-		Addr:         addr,
-		Handler:      handler,
-		ReadTimeout:  cfg.Srv.ReadTimeout,
-		WriteTimeout: cfg.Srv.WriteTimeout,
-		IdleTimeout:  cfg.Srv.IdleTimeout,
+	if s.httpServer == nil {
+		s.httpServer = &http.Server{
+			Addr:         s.addr,
+			Handler:      handler,
+			ReadTimeout:  cfg.Srv.ReadTimeout,
+			WriteTimeout: cfg.Srv.WriteTimeout,
+			IdleTimeout:  cfg.Srv.IdleTimeout,
+		}
+	} else {
+		s.httpServer.Handler = handler
+	}
+}
+
+func (s *Server) reconnectDB(newDB *sql.DB) {
+	if s.pools.config != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		s.pools.config.Stop(ctx)
+		cancel()
+	}
+	if s.services != nil {
+		s.services.Close()
 	}
 
-	return s
+	s.rebuild(database.NewClient(newDB))
+	s.pools.config.Start(context.Background())
 }
 
 func registerStaticRoutes(mux *http.ServeMux) {
@@ -347,12 +373,7 @@ func (s *Server) Start() error {
 	s.configWatcher = config.NewWatcher(
 		s.cfg.Load().App.ConfigDir,
 		5*time.Second,
-		func(cfg *config.Config) {
-			if cfg.Srv.SessionSecret == "" {
-				cfg.Srv.SessionSecret = s.cfg.Load().Srv.SessionSecret
-			}
-			s.cfg.Store(cfg)
-		},
+		s.onConfigReload,
 		s.logger,
 	)
 	s.configWatcher.Start()
@@ -360,6 +381,34 @@ func (s *Server) Start() error {
 
 	s.logger.Info(nil, "Starting HTTP server on %s", s.addr)
 	return s.httpServer.ListenAndServe()
+}
+
+func (s *Server) onConfigReload(cfg *config.Config) {
+	if cfg.Srv.SessionSecret == "" {
+		cfg.Srv.SessionSecret = s.cfg.Load().Srv.SessionSecret
+	}
+
+	oldCfg := s.cfg.Load()
+	s.cfg.Store(cfg)
+
+	if !config.DatabaseConnectionChanged(oldCfg.Db, cfg.Db) {
+		return
+	}
+
+	s.logger.Info(nil, "DB config changed, reconnecting...")
+	newDB, err := database.NewPostgresDB(config.BuildPostgresDSN(cfg.Db))
+	if err != nil {
+		s.logger.Error(nil, "failed to connect to new DB: %v — keeping previous configuration", err)
+		s.cfg.Store(oldCfg)
+		return
+	}
+
+	s.reconnectDB(newDB)
+	if oldDB := s.db; oldDB != nil {
+		oldDB.Close()
+	}
+	s.db = newDB
+	s.logger.Info(nil, "reconnected to new database")
 }
 
 func (s *Server) probeMatcher() {

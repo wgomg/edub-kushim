@@ -13,6 +13,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/wgomg/edub-kushim/internal/database"
 )
 
 func ValidateArchive(path string) (*Manifest, error) {
@@ -138,11 +140,7 @@ func ReplaceFiles(extractDir string, db *sql.DB, configPath, storageDir string) 
 		return fmt.Errorf("database connection required for sql-dump restore")
 	}
 	sqlPath := filepath.Join(extractDir, "edub.sql")
-	data, err := os.ReadFile(sqlPath)
-	if err != nil {
-		return fmt.Errorf("read sql dump: %w", err)
-	}
-	if _, err := db.ExecContext(context.Background(), string(data)); err != nil {
+	if err := database.ExecuteDumpFile(context.Background(), db, sqlPath); err != nil {
 		return fmt.Errorf("execute sql dump: %w", err)
 	}
 
@@ -208,37 +206,11 @@ func ReplaceFiles(extractDir string, db *sql.DB, configPath, storageDir string) 
 	return nil
 }
 
-// Runs after the SQL dump commits so only restored rows are rewritten.
 func rewriteStoragePaths(ctx context.Context, db *sql.DB, oldDir, newDir string) error {
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin path rewrite: %w", err)
+	if err := database.RewriteStoragePaths(ctx, db, oldDir, newDir); err != nil {
+		return fmt.Errorf("rewrite storage paths: %w", err)
 	}
-	defer tx.Rollback()
-
-	pattern := escapeLike(oldDir) + "/%"
-	statements := []string{
-		`UPDATE document SET storage_path = REPLACE(storage_path, $2, $3)
-		 WHERE storage_path LIKE $1 OR storage_path = $2`,
-		`UPDATE document SET original_path = REPLACE(original_path, $2, $3)
-		 WHERE original_path LIKE $1 OR original_path = $2`,
-		`UPDATE orphaned_file SET file_path = REPLACE(file_path, $2, $3)
-		 WHERE file_path LIKE $1 OR file_path = $2`,
-	}
-	for _, q := range statements {
-		if _, err := tx.ExecContext(ctx, q, pattern, oldDir, newDir); err != nil {
-			return fmt.Errorf("execute path rewrite: %w", err)
-		}
-	}
-
-	return tx.Commit()
-}
-
-// escapeLike neutralizes LIKE wildcards so the pattern only matches paths
-// that actually start with oldDir, not lookalikes (e.g. /data/storage-2).
-func escapeLike(s string) string {
-	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
-	return r.Replace(s)
+	return nil
 }
 
 // Old backups predate the manifest StorageDir field, so the archived config

@@ -208,6 +208,20 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (int64, 
 	return id, err
 }
 
+const deleteConfigTaskByDedupKey = `-- name: DeleteConfigTaskByDedupKey :execrows
+DELETE FROM task
+WHERE task_type = 'config' AND dedup_key = $1
+  AND status IN ('pending', 'failed')
+`
+
+func (q *Queries) DeleteConfigTaskByDedupKey(ctx context.Context, dedupKey sql.NullString) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteConfigTaskByDedupKey, dedupKey)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const deleteTask = `-- name: DeleteTask :exec
 DELETE FROM task WHERE id = $1
 `

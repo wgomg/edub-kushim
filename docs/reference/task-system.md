@@ -112,7 +112,8 @@ The `Runner.Next` method uses `errors.As(err, &tErr)` to extract `ReqID` from ha
 ### SQL queries added
 
 - `RetryFailedTasksByBatch :execrows` — `UPDATE ... WHERE batch_id = ? AND status = 'failed'` — Resets failed batch tasks to pending with `attempts = 0` (batched retry). `Batch.RetryFailed` runs it transactionally alongside `RestoreDiscardedEnrichTasksByBatch`.
-- `GetConfigTaskByDedupKey :one` — Returns the most recent config task matching `dedup_key`. Used by `ConfigHandler.enqueueConfigTasks` to detect duplicate or failed config tasks before inserting.
+- `GetConfigTaskByDedupKey :one` — Returns the most recent config task matching `dedup_key`. Used by `ConfigHandler.enqueueConfigTasks` and `enqueueDBMigration` to detect duplicate or failed config tasks before inserting.
+- `DeleteConfigTaskByDedupKey :execrows` — `DELETE FROM task WHERE task_type = 'config' AND dedup_key = ? AND status IN ('pending','failed')` — Atomic, status-guarded supersede of a stale config task (used by `enqueueDBMigration` so a task claimed between read and delete survives and wins).
 - `DiscardEnrichTask :execrows` — `UPDATE ... WHERE id = ? AND status = 'waiting' AND task_type = 'enrich'` — Discards an enrich task by internal `id`; returns rows affected so callers can distinguish a real discard from a no-op. Wrapped by `Store.Discard`.
 - `DiscardEnrichTaskByTaskID :execrows` — `UPDATE ... WHERE task_id = ? AND status = 'waiting' AND task_type = 'enrich'` — Discards an enrich task by UUID `task_id`. Kept for the test suite (`TestDiscardEnrichTaskByTaskID`); production discard paths now use `Store.Discard` (handler) and the sweep queries (recovery points).
 - `SetEnrichTaskWaiting :execrows` — `UPDATE ... SET status='waiting', error=NULL, completed_at=NULL WHERE task_id = ? AND status = 'discarded' AND task_type = 'enrich'` — Restores a discarded enrich when its consume is retried/reset. Targeted by UUID `task_id` (the consume payload's `on_completed`), race-free.
@@ -152,14 +153,20 @@ The `ConfigTaskHandler` lives in its own package (`internal/configtask/`) to kee
 ### Constants
 
 - `TaskTypeConfig = "config"` — Task type string for config-related async work
+- `DedupKeyMigrateDB = "config:migrate-db"` — Dedup key for the `migrate-db` op (at most one migration task pending/processing/failed)
+
+### Structs
+
+- `MigrateDBPayload` — `op`, `config_dir`, destination connection fields (`host`, `port`, `user`, `password`, `database`, `sslmode`), and old/new storage dirs (`old_storage_dir`, `new_storage_dir`, `old_consumption_dir`, `new_consumption_dir`). Carried by the `migrate-db` task so the handler can open both databases directly and persist the new values only after the copy succeeds.
 
 ### Struct
 
 - `ConfigTaskHandler` — `logger *utils.Logger`
   - **Methods**:
     - `NewConfigTaskHandler(logger) *ConfigTaskHandler`
-    - `Handle(ctx, t) (json.RawMessage, error)` — Unmarshals `{"config_dir":"...", "op":"tessdata|hugot", "lang":"..."}`, loads config from disk, dispatches to `config.DownloadTessdataLanguage` or `config.DownloadHugotModel`
-    - `DedupKey(payload) string` — Returns `"config:tessdata:<lang>"` for tessdata ops, `"config:hugot"` for hugot ops. Used by the idempotent enqueue path in `ConfigHandler.enqueueConfigTasks` to avoid duplicate pending/processing config tasks.
+    - `Handle(ctx, t) (json.RawMessage, error)` — Unmarshals `{"config_dir":"...", "op":"tessdata|hugot|migrate-db", ...}`, loads config from disk, dispatches to `config.DownloadTessdataLanguage`, `config.DownloadHugotModel`, or `handleMigrateDB`
+    - `handleMigrateDB(ctx, t)` — Acquires the backup lock on the current DB, waits for in-flight tasks to drain (`database.WaitForTaskDrain`), takes a best-effort gzipped pre-migration snapshot into `backup.path` (keeps the latest 5), dumps the current DB to a temp file (`database.DumpSchemaAndData`), connects to the destination (10s connect timeout), then: skips the copy when the destination already holds data (`document`/`task` row counts), refuses databases with tables but no goose history (`database.ValidateMigrationDestination`), restores the dump statement-by-statement (`database.ExecuteDumpFile`, atomic via the dump's own BEGIN/COMMIT), rewrites storage paths if the storage dir moved (`database.RewriteStoragePaths`), and finally persists the new connection settings via `config.SaveMap` (also clearing `database.dsn` so the new fields win)
+    - `DedupKey(payload) string` — Returns `"config:tessdata:<lang>"` for tessdata ops, `"config:hugot"` for hugot ops, `"config:migrate-db"` for migrate-db ops. Used by the idempotent enqueue path in `ConfigHandler.enqueueConfigTasks` to avoid duplicate pending/processing config tasks.
 
 ---
 

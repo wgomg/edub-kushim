@@ -159,6 +159,11 @@ UPDATE task SET
     attempts = 0
 WHERE id = $1;
 
+-- name: DeleteConfigTaskByDedupKey :execrows
+DELETE FROM task
+WHERE task_type = 'config' AND dedup_key = $1
+  AND status IN ('pending', 'failed');
+
 -- name: SetEnrichTaskPending :exec
 UPDATE task SET
     status = 'pending',

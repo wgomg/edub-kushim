@@ -5,11 +5,23 @@ import (
 	"fmt"
 	"log"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
+
+func WithConnectTimeout(dsn string, seconds int) string {
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return dsn
+	}
+	q := u.Query()
+	q.Set("connect_timeout", strconv.Itoa(seconds))
+	u.RawQuery = q.Encode()
+	return u.String()
+}
 
 func NewPostgresDB(dsn string) (*sql.DB, error) {
 	if err := ensureDatabaseExists(dsn); err != nil {

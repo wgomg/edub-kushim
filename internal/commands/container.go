@@ -82,6 +82,37 @@ func (c *Container) GetClient() (*database.Client, error) {
 	return c.client, nil
 }
 
+func (c *Container) InvalidateDB() {
+	if c.db != nil {
+		c.db.Close()
+		c.db = nil
+	}
+	c.client = nil
+	c.dispatcher = nil
+	c.runner = nil
+	c.engine = nil
+	c.store = nil
+	c.services = nil
+	c.pools.consume = nil
+	c.pools.enrich = nil
+	c.pools.config = nil
+	c.pools.backup = nil
+}
+
+func (c *Container) reconnectClient() (*database.Client, error) {
+	newDB, err := database.NewPostgresDB(config.BuildPostgresDSN(c.cfg.Load().Db))
+	if err != nil {
+		return nil, err
+	}
+	if err := database.InitializeSchema(newDB); err != nil {
+		newDB.Close()
+		return nil, err
+	}
+	c.InvalidateDB()
+	c.db = newDB
+	return c.GetClient()
+}
+
 func (c *Container) socketPath() string {
 	return filepath.Join(c.cfg.Load().App.ConfigDir, "kushim-hugot.sock")
 }

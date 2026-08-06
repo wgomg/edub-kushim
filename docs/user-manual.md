@@ -1146,13 +1146,14 @@ Content-Type: application/json
 { "config_dir": "/home/user/.config/edub-kushim" }
 ```
 
-Two-phase API:
+Three-phase API:
 
 - **Bootstrap phase** — send `{ "config_dir": "..." }` to create directories,
   write skeleton config, and initialize the database. Returns `200` with
   `{ ... }`.
 - **Update phase** — send settings key-value pairs (dot notation) to update
-  the config and trigger background downloads:
+  the config and trigger background downloads (see "Database connection
+  changes" below for the third phase):
 
 ```json
 {
@@ -1197,6 +1198,18 @@ Returns `201` with `{ "pending_tasks": 3, "missing_tools": [...] }` when downloa
 or `200` with `{ "configured": true, "missing_tools": [...] }` when all dependencies are already
 present. The `missing_tools` array lists any hard-blocking tool-availability issues
 (missing engine binaries, required companions, or the curl prerequisite).
+
+**Database connection changes.** When the request body changes any `database.*` setting
+(`host`, `port`, `user`, `password`, `database`, `sslmode`), the update is **deferred**:
+the settings are not written to `config.yaml` yet. The API returns `202` with
+`{ "pending_tasks": 1 }` and enqueues a `migrate-db` background task that copies the
+current database into the new one (schema + data + storage-path rewrite when the storage
+dir changed), then persists the new connection settings once the copy succeeds. Both
+`edub` and `kushim queue` detect the change and reconnect automatically. Non-database
+settings from the same request apply immediately; `storage.*` changes apply together with
+the migration. While a migration is running, further DB changes answer `409`. A failed
+migration is retried automatically on the next save (or via `POST /wizard/config/retry`)
+and is idempotent — the copy is skipped when the destination already holds data.
 
 ```
 GET /wizard/config/status

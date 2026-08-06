@@ -108,10 +108,20 @@ func queueHandler(c *Container, args []string) error {
 	var backupPool *pool.Pool
 	var backupPoolStarted bool
 
-	go runPollingLoop(ctx, c, client, batchSvc, maxConcurrent)
+	go runPollingLoop(ctx, c, func() *database.Client { return client }, func() *service.Batch { return batchSvc }, maxConcurrent)
 
+	var notifyCancel context.CancelFunc
+	stopNotify := func() {
+		if notifyCancel != nil {
+			notifyCancel()
+		}
+	}
+	defer stopNotify()
+
+	notifyCtx, cancel := context.WithCancel(ctx)
+	notifyCancel = cancel
 	notifyCh := make(chan struct{}, 4)
-	go listenForBatchNotifications(ctx, config.BuildPostgresDSN(c.cfg.Load().Db), notifyCh, c.logger)
+	go listenForBatchNotifications(notifyCtx, config.BuildPostgresDSN(c.cfg.Load().Db), notifyCh, c.logger)
 
 	safetyInterval := 30 * time.Second
 	safetyTimer := time.NewTimer(safetyInterval)
@@ -146,7 +156,33 @@ func queueHandler(c *Container, args []string) error {
 			if newCfg, err := config.Load(c.cfg.Load().App.ConfigDir); err != nil {
 				c.logger.Error(nil, "config reload: %v", err)
 			} else {
+				oldCfg := c.cfg.Load()
 				c.cfg.Store(newCfg)
+				if config.DatabaseConnectionChanged(oldCfg.Db, newCfg.Db) {
+					c.logger.Info(nil, "DB config changed, reconnecting...")
+
+					newClient, err := c.reconnectClient()
+					if err != nil {
+						c.logger.Error(nil, "failed to reconnect to new DB: %v — keeping previous configuration", err)
+						c.cfg.Store(oldCfg)
+					} else {
+						if backupPoolStarted {
+							stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+							backupPool.Stop(stopCtx)
+							cancel()
+							backupPool = nil
+							backupPoolStarted = false
+						}
+						client = newClient
+						batchSvc = service.NewBatch(client, c.cfg.Load().Consumer.Reclaim.MaxRetries)
+
+						stopNotify()
+						notifyCtx, cancel := context.WithCancel(ctx)
+						notifyCancel = cancel
+						notifyCh = make(chan struct{}, 4)
+						go listenForBatchNotifications(notifyCtx, config.BuildPostgresDSN(c.cfg.Load().Db), notifyCh, c.logger)
+					}
+				}
 			}
 			cfg := c.cfg.Load()
 
@@ -315,7 +351,7 @@ func consumeNextQueuedBatch(ctx context.Context, client *database.Client, batchS
 	return nil
 }
 
-func runPollingLoop(ctx context.Context, c *Container, client *database.Client, batchSvc *service.Batch, maxConcurrent int) {
+func runPollingLoop(ctx context.Context, c *Container, getClient func() *database.Client, getBatchSvc func() *service.Batch, maxConcurrent int) {
 	var missingTools []config.ExternalTool
 	var lastCfg *config.Config
 
@@ -325,6 +361,10 @@ func runPollingLoop(ctx context.Context, c *Container, client *database.Client, 
 			missingTools = config.MissingExternalToolErrors(cfgPtr)
 			lastCfg = cfgPtr
 		}
+
+		// Without this, the polling loop keeps polling the old database after a reconnection.
+		client := getClient()
+		batchSvc := getBatchSvc()
 
 		pollingCfg := cfgPtr.Consumer.Polling
 		interval := max(time.Duration(pollingCfg.Interval)*time.Minute, time.Minute)

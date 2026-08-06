@@ -56,7 +56,7 @@ internal/
 │   ├── config.go          # `kushim config` command (dump/get/set/unset/validate/path)
 │   └── backup.go          # Backup and restore commands
 ├── configtask/            # Config task handler
-│   └── configtask.go      # ConfigTaskHandler — downloads tessdata/Hugot model in background ("config" task type)
+│   └── configtask.go      # ConfigTaskHandler — downloads tessdata/Hugot model in background; migrate-db op copies the database when connection settings change ("config" task type)
 ├── enrichment/            # Enrichment engine (LLM pipeline)
 │   └── enricher.go        # Enricher: dual text reduction → tag matching → token budget pre-check + retry loop → LLM → consolidation → people/tag/doc type with romanization + normalization
 ├── service/               # Merged domain service package (replaces people/tags/documenttypes)
@@ -107,9 +107,11 @@ internal/
 │   ├── scan.go            # ScanAndEnqueue — shared inbox scan → dedup → batch creation
 │   └── storage.go         # File operations, checksums, FileFromPath, MIME detection via mimetype lib
 ├── database/              # Database layer (sqlc-generated + manual)
-│   ├── connection.go      # DB connection (PostgreSQL via pgx, 25 max conn, auto-create database)
+│   ├── connection.go      # DB connection (PostgreSQL via pgx, 25 max conn, auto-create database, WithConnectTimeout)
 │   ├── client.go          # Client wrapper — embeds *Queries, exposes BeginTx/DB()
 │   ├── schema.go          # InitializeSchema — goose migrations + seeders (tags, doc-types, people-types)
+│   ├── dump.go            # SQL dump/restore: DumpSchemaAndData, SQLDumpToFile, ExecuteDumpFile (statement-splitter), goose version preservation
+│   ├── migrate.go         # RewriteStoragePaths, ValidateMigrationDestination, WaitForTaskDrain (shared with backup handler)
 │   ├── models.go          # Generated data models (Document now has PageCount, WordCount, CharCount, Language; added SavedSearch)
 │   ├── db.go              # Database interface (Queries, WithTx)
 │   ├── document_sort.go   # ListDocumentsWithSort (whitelisted sort columns)
