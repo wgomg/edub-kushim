@@ -22,7 +22,7 @@
 	}
 </script>
 
-<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
+<div class="space-y-6">
 	{#if !health}
 		<div class="text-center text-parchment-500">No processing data available</div>
 	{:else}

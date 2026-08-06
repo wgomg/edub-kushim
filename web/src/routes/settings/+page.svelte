@@ -461,7 +461,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 					</div>
 				{/if}
 
-				<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+				<section class="mb-3 rounded-xl border border-clay-800 bg-clay-900 p-5">
 					<h2 class="mb-4 text-lg font-semibold text-parchment-200">Server</h2>
 					<div class="grid gap-4 sm:grid-cols-2">
 						<div>
@@ -599,7 +599,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 					</div>
 				</section>
 
-				<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+				<section class="mb-3 rounded-xl border border-clay-800 bg-clay-900 p-5">
 					<h2 class="mb-4 text-lg font-semibold text-parchment-200">Storage</h2>
 					<div class="grid gap-4 sm:grid-cols-2">
 						<div>
@@ -634,7 +634,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 					</div>
 				</section>
 
-				<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+				<section class="mb-3 rounded-xl border border-clay-800 bg-clay-900 p-5">
 					<h2 class="mb-4 text-lg font-semibold text-parchment-200">Trash (Soft Delete)</h2>
 					<div class="grid gap-4 sm:grid-cols-2">
 						<div>
@@ -661,7 +661,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 					</div>
 				</section>
 
-				<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+				<section class="mb-3 rounded-xl border border-clay-800 bg-clay-900 p-5">
 					<h2 class="mb-4 text-lg font-semibold text-parchment-200">Database</h2>
 					<div class="grid gap-4 sm:grid-cols-2">
 						<div>
@@ -740,7 +740,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 					</div>
 				</section>
 
-				<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+				<section class="mb-3 rounded-xl border border-clay-800 bg-clay-900 p-5">
 					<h2 class="mb-4 text-lg font-semibold text-parchment-200">OCR</h2>
 					<div class="grid gap-4 sm:grid-cols-2">
 						<div>
@@ -866,11 +866,11 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						</div>
 					</div>
 					<div class="mt-4">
-						<label for="ocr-lang-0" class="mb-2 block text-sm font-medium text-parchment-200"
+						<label for="ocr-lang-0" class="mb-3 block text-sm font-medium text-parchment-200"
 							>Languages</label
 						>
 						{#each cfg.consumer.ocr.languages as lang, i (i)}
-							<div class="mb-2 flex gap-2">
+							<div class="mb-3 flex gap-2">
 								<input
 									id="ocr-lang-{i}"
 									name="ocr-lang-{i}"
@@ -903,7 +903,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 					</div>
 				</section>
 
-				<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+				<section class="mb-3 rounded-xl border border-clay-800 bg-clay-900 p-5">
 					<h2 class="mb-4 text-lg font-semibold text-parchment-200">Consumer</h2>
 					<div class="grid gap-4 sm:grid-cols-2">
 						<div>
@@ -941,7 +941,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 					</div>
 
 					<div class="mt-4">
-						<h3 class="mb-2 text-sm font-medium text-parchment-200">Supported file types</h3>
+						<h3 class="mb-3 text-sm font-medium text-parchment-200">Supported file types</h3>
 						<div class="flex flex-wrap gap-3">
 							{#each mimeTypeOptions as opt (opt.mime_type)}
 								<label class="flex items-center gap-1.5 text-sm text-parchment-300">
@@ -958,7 +958,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 					</div>
 
 					<div class="mt-4 border-t border-clay-800 pt-4">
-						<h3 class="mb-2 text-sm font-medium text-parchment-200">DOCX/ODT Converter</h3>
+						<h3 class="mb-3 text-sm font-medium text-parchment-200">DOCX/ODT Converter</h3>
 						<p class="mb-3 text-xs text-parchment-400">
 							Converts DOCX and ODT files to PDF via LibreOffice before text extraction.
 						</p>
@@ -1010,7 +1010,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 					</div>
 				</section>
 
-				<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+				<section class="mb-3 rounded-xl border border-clay-800 bg-clay-900 p-5">
 					<h2 class="mb-4 text-lg font-semibold text-parchment-200">Polling</h2>
 					<div class="grid gap-4 sm:grid-cols-2">
 						<div>
@@ -1050,11 +1050,11 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 					</div>
 
 					<div class="mt-4">
-						<span class="mb-2 block text-sm font-medium text-parchment-200"
+						<span class="mb-3 block text-sm font-medium text-parchment-200"
 							>Active windows (optional)</span
 						>
 						{#each cfg.consumer.polling.windows as w, i (i)}
-							<div class="mb-2 flex items-center gap-2">
+							<div class="mb-3 flex items-center gap-2">
 								<input
 									type="text"
 									name="polling-window-start-{i}"
@@ -1097,7 +1097,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 					</div>
 				</section>
 
-				<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+				<section class="mb-3 rounded-xl border border-clay-800 bg-clay-900 p-5">
 					<h2 class="mb-4 text-lg font-semibold text-parchment-200">Reclaim</h2>
 					<div class="grid gap-4 sm:grid-cols-2">
 						<div>
@@ -1156,7 +1156,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 					</div>
 				</section>
 
-				<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+				<section class="mb-3 rounded-xl border border-clay-800 bg-clay-900 p-5">
 					<h2 class="mb-4 text-lg font-semibold text-parchment-200">Text extractor</h2>
 					<div class="grid gap-4 sm:grid-cols-2">
 						<div>
@@ -1207,7 +1207,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 					{/if}
 				</section>
 
-				<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+				<section class="mb-3 rounded-xl border border-clay-800 bg-clay-900 p-5">
 					<h2 class="mb-4 text-lg font-semibold text-parchment-200">PDF optimizer</h2>
 					<div class="grid gap-4 sm:grid-cols-2">
 						<div>
@@ -1271,7 +1271,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 					</div>
 				</section>
 
-				<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+				<section class="mb-3 rounded-xl border border-clay-800 bg-clay-900 p-5">
 					<h2 class="mb-4 text-lg font-semibold text-parchment-200">Enricher</h2>
 					<div class="grid gap-4 sm:grid-cols-2">
 						<div>
@@ -1293,7 +1293,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 					</div>
 				</section>
 
-				<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+				<section class="mb-3 rounded-xl border border-clay-800 bg-clay-900 p-5">
 					<div class="mb-4 flex items-center justify-between">
 						<h2 class="text-lg font-semibold text-parchment-200">Content analyzer (LLM)</h2>
 						<label class="relative inline-flex cursor-pointer items-center">
@@ -1475,7 +1475,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							>
 								Prompt template (advanced)
 							</label>
-							<p class="mb-2 text-xs text-parchment-500">
+							<p class="mb-3 text-xs text-parchment-500">
 								Leave empty for default. Available placeholders: {`{{.DocTypePrompt}}`}, {`{{.TagsPrompt}}`},
 								{`{{.PeoplePrompt}}`}, {`{{.Text}}`} (required)
 							</p>
@@ -1549,7 +1549,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 					{/if}
 				</section>
 
-				<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+				<section class="mb-3 rounded-xl border border-clay-800 bg-clay-900 p-5">
 					<h2 class="mb-4 text-lg font-semibold text-parchment-200">Tag matcher</h2>
 					<div class="grid gap-4 sm:grid-cols-2">
 						<div>
@@ -1632,7 +1632,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 					</div>
 				</section>
 
-				<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+				<section class="mb-3 rounded-xl border border-clay-800 bg-clay-900 p-5">
 					<h2 class="mb-4 text-lg font-semibold text-parchment-200">Text reducer</h2>
 					<div class="grid gap-4 sm:grid-cols-2">
 						<div>
@@ -1686,7 +1686,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 					</div>
 				</section>
 
-				<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+				<section class="mb-3 rounded-xl border border-clay-800 bg-clay-900 p-5">
 					<h2 class="mb-4 text-lg font-semibold text-parchment-200">Backup</h2>
 					<div class="grid gap-4 sm:grid-cols-2">
 						<div>
@@ -1767,7 +1767,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 					</div>
 				</section>
 
-				<section class="rounded-xl border border-clay-800 bg-clay-900 p-5">
+				<section class="mb-3 rounded-xl border border-clay-800 bg-clay-900 p-5">
 					<h2 class="mb-4 text-lg font-semibold text-parchment-200">Logging</h2>
 					<div class="grid gap-4 sm:grid-cols-2">
 						<div>

@@ -1,5 +1,4 @@
 <script>
-	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { defaultFilter, serializeFilter } from '$lib/stores/searchFilter.js';
 	import { formatNumber } from '$lib/utils/html.js';
@@ -28,21 +27,17 @@
 		return lang.toUpperCase();
 	}
 
-	function goToFilter(partial) {
+	function filterUrl(partial) {
 		const q = serializeFilter({ ...defaultFilter, ...partial });
-		goto(resolve(`/documents?q=${encodeURIComponent(q)}`));
+		return `/documents?q=${encodeURIComponent(q)}`;
 	}
 </script>
 
 <div class="space-y-6">
 	<div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
 		<a
-			href={resolve(`/documents`)}
+			href={resolve(filterUrl({ missingLanguage: true }))}
 			class="block cursor-pointer rounded-lg border border-clay-800 bg-clay-900 p-4 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-			onclick={(e) => {
-				e.preventDefault();
-				goToFilter({ missingLanguage: true });
-			}}
 		>
 			<p class="text-sm text-parchment-500">Missing Language</p>
 			<p class="mt-1 text-lg font-semibold text-parchment-200">
@@ -50,12 +45,8 @@
 			</p>
 		</a>
 		<a
-			href={resolve(`/documents`)}
+			href={resolve(filterUrl({ missingType: true }))}
 			class="block cursor-pointer rounded-lg border border-clay-800 bg-clay-900 p-4 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-			onclick={(e) => {
-				e.preventDefault();
-				goToFilter({ missingType: true });
-			}}
 		>
 			<p class="text-sm text-parchment-500">Missing Type</p>
 			<p class="mt-1 text-lg font-semibold text-parchment-200">
@@ -63,12 +54,8 @@
 			</p>
 		</a>
 		<a
-			href={resolve(`/documents`)}
+			href={resolve(filterUrl({ untagged: true }))}
 			class="block cursor-pointer rounded-lg border border-clay-800 bg-clay-900 p-4 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-			onclick={(e) => {
-				e.preventDefault();
-				goToFilter({ untagged: true });
-			}}
 		>
 			<p class="text-sm text-parchment-500">Untagged Documents</p>
 			<p class="mt-1 text-lg font-semibold text-parchment-200">
@@ -82,49 +69,34 @@
 			<section class="min-w-0 flex-1">
 				<h3 class="mb-3 text-base font-semibold text-balance text-parchment-200">Top Tags</h3>
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
-					<div class="overflow-x-auto">
-						<table class="w-full text-sm">
-							<thead>
-								<tr class="border-b border-clay-800 text-left text-parchment-500">
-									<th class="pr-4 pb-2 font-medium" scope="col">Tag</th>
-									<th class="pb-2 font-medium" scope="col">Documents</th>
-								</tr>
-							</thead>
-							<tbody>
-								{#each analytics.tag_frequency as item, i (i)}
-									<tr class="border-b border-clay-800/50 hover:bg-clay-800">
-										<td class="p-0" colspan="2">
-											<a
-												href={resolve(`/documents`)}
-												class="flex w-full items-center gap-2 px-4 py-2 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-												onclick={(e) => {
-													e.preventDefault();
-													goToFilter({ tags: [item.label] });
-												}}
-											>
-												<span
-													class="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
-													style="background-color: {chartColors[i % chartColors.length]}"
-												></span>
-												<span class="truncate text-parchment-200">{item.label}</span>
-												<span class="min-w-0 flex-1">
-													<span class="block h-2 w-full overflow-hidden rounded-full bg-clay-800">
-														<span
-															class="block h-2 rounded-full transition-[width,background-color]"
-															style="width: {(item.count / maxTagCount()) *
-																100}%; background-color: {chartColors[i % chartColors.length]}"
-														></span>
-													</span>
-												</span>
-												<span class="shrink-0 text-parchment-400 tabular-nums"
-													>{formatNumber(item.count)}</span
-												>
-											</a>
-										</td>
-									</tr>
-								{/each}
-							</tbody>
-						</table>
+					<div class="space-y-2">
+						{#each analytics.tag_frequency as item, i (i)}
+							<a
+								href={resolve(filterUrl({ tags: [item.label] }))}
+								class="flex cursor-pointer items-center gap-3 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							>
+								<div
+									class="h-4 w-4 shrink-0 rounded"
+									style="background-color: {chartColors[i % chartColors.length]}"
+									aria-hidden="true"
+								></div>
+								<div class="min-w-0 flex-1">
+									<div class="flex justify-between text-sm">
+										<span class="truncate text-parchment-200">{item.label}</span>
+										<span class="shrink-0 text-parchment-500 tabular-nums"
+											>{formatNumber(item.count)}</span
+										>
+									</div>
+									<div class="mt-1 h-2 w-full overflow-hidden rounded-full bg-clay-800">
+										<div
+											class="h-2 w-full origin-left rounded-full motion-safe:transition-transform"
+											style="transform: scaleX({(item.count / maxTagCount()) *
+												100}%); background-color: {chartColors[i % chartColors.length]}"
+										></div>
+									</div>
+								</div>
+							</a>
+						{/each}
 					</div>
 				</div>
 			</section>
@@ -139,16 +111,13 @@
 					<div class="space-y-2">
 						{#each analytics.language_distribution as item, i (i)}
 							<a
-								href={resolve(`/documents`)}
+								href={resolve(filterUrl({ language: item.label }))}
 								class="flex cursor-pointer items-center gap-3 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-								onclick={(e) => {
-									e.preventDefault();
-									goToFilter({ language: item.label });
-								}}
 							>
 								<div
 									class="h-4 w-4 shrink-0 rounded"
 									style="background-color: {chartColors[i % chartColors.length]}"
+									aria-hidden="true"
 								></div>
 								<div class="min-w-0 flex-1">
 									<div class="flex justify-between text-sm">
@@ -157,11 +126,11 @@
 											>{formatNumber(item.count)}</span
 										>
 									</div>
-									<div class="mt-1 h-2 w-full rounded-full bg-clay-800">
+									<div class="mt-1 h-2 w-full overflow-hidden rounded-full bg-clay-800">
 										<div
-											class="h-2 rounded-full transition-[width,background-color]"
-											style="width: {(item.count / maxLangCount()) *
-												100}%; background-color: {chartColors[i % chartColors.length]}"
+											class="h-2 w-full origin-left rounded-full motion-safe:transition-transform"
+											style="transform: scaleX({(item.count / maxLangCount()) *
+												100}%); background-color: {chartColors[i % chartColors.length]}"
 										></div>
 									</div>
 								</div>
@@ -181,16 +150,13 @@
 					<div class="space-y-2">
 						{#each analytics.document_type_distribution as item, i (i)}
 							<a
-								href={resolve(`/documents`)}
+								href={resolve(filterUrl({ documentType: item.label }))}
 								class="flex cursor-pointer items-center gap-3 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-								onclick={(e) => {
-									e.preventDefault();
-									goToFilter({ documentType: item.label });
-								}}
 							>
 								<div
 									class="h-4 w-4 shrink-0 rounded"
 									style="background-color: {chartColors[i % chartColors.length]}"
+									aria-hidden="true"
 								></div>
 								<div class="min-w-0 flex-1">
 									<div class="flex justify-between text-sm">
@@ -199,11 +165,11 @@
 											>{formatNumber(item.count)}</span
 										>
 									</div>
-									<div class="mt-1 h-2 w-full rounded-full bg-clay-800">
+									<div class="mt-1 h-2 w-full overflow-hidden rounded-full bg-clay-800">
 										<div
-											class="h-2 rounded-full transition-[width,background-color]"
-											style="width: {(item.count / maxDocTypeCount()) *
-												100}%; background-color: {chartColors[i % chartColors.length]}"
+											class="h-2 w-full origin-left rounded-full motion-safe:transition-transform"
+											style="transform: scaleX({(item.count / maxDocTypeCount()) *
+												100}%); background-color: {chartColors[i % chartColors.length]}"
 										></div>
 									</div>
 								</div>
