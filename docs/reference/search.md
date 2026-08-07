@@ -233,7 +233,7 @@ Svelte writable store for shared filter state:
 Query string utility module:
 - `tokenizeQuery(str)` — Tokenizes `field:value` syntax into structured tokens (including `missing:lang`, `missing:type`, `missing:tags`)
 - `parseQueryString(str)` — Converts raw query string to complete filter object (sets `missingLanguage`, `missingType`, `untagged` from `missing:` tokens)
-- `serializeFilter(filter)` — Converts filter object back to query string (appends `missing:lang`/`missing:type`/`missing:tags` when respective flags are set)
+- `serializeFilter(filter)` — Converts filter object back to query string (appends `missing:lang`/`missing:type`/`missing:tags` when respective flags are set; always wraps `tag`/`type`/`lang`/person-name values in double quotes so multi-word values survive the URL round-trip)
 - `parseSize(raw)` / `formatSize(bytes)` — Parse/format human-readable file sizes
 - `parseDateRange(raw)` — Parse date range from string (`from..to`, `>date`, `<date`)
 - `setPersonTypes(types)` / `getPersonTypes()` — Shared person type set for validation

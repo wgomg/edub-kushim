@@ -7,6 +7,7 @@
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
 	import * as authStore from '$lib/stores/authStore.js';
+	import { defaultFilter, serializeFilter } from '$lib/stores/searchFilter.js';
 
 	let documentTypes = $state([]);
 	let showModal = $state(false);
@@ -14,6 +15,7 @@
 	let formName = $state('');
 	let formDescription = $state('');
 	let error = $state('');
+	let saving = $state(false);
 
 	onMount(() => load());
 
@@ -46,10 +48,15 @@
 		}
 		const body = { name, description: formDescription.trim() || '' };
 		let result;
-		if (editing) {
-			result = await api.documentTypes.update(editing.id, body);
-		} else {
-			result = await api.documentTypes.create(body);
+		saving = true;
+		try {
+			if (editing) {
+				result = await api.documentTypes.update(editing.id, body);
+			} else {
+				result = await api.documentTypes.create(body);
+			}
+		} finally {
+			saving = false;
 		}
 		if (result.ok) {
 			showModal = false;
@@ -113,10 +120,15 @@
 					</tr>
 				{:else}
 					{#each documentTypes as dt (dt.id)}
-						<tr class="bg-clay-950 transition-colors hover:bg-clay-900">
+						<tr
+							class="bg-clay-950 transition-colors hover:bg-clay-900 motion-reduce:transition-none"
+						>
 							<td class="px-4 py-3 text-parchment-200">
+								<!-- keep serializeFilter + encodeURIComponent as-is: the q round-trip depends on quoted multi-word type names surviving the URL unmodified -->
 								<a
-									href={resolve(`/documents?q=${encodeURIComponent('type:' + dt.name)}`)}
+									href={resolve(
+										`/documents?q=${encodeURIComponent(serializeFilter({ ...defaultFilter, documentType: dt.name }))}`
+									)}
 									class="block focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 									>{dt.name}</a
 								>
@@ -201,9 +213,10 @@
 				</button>
 				<button
 					type="submit"
-					class="rounded-md bg-gold-500 px-3 py-1.5 text-xs font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+					disabled={saving}
+					class="rounded-md bg-gold-500 px-3 py-1.5 text-xs font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-50"
 				>
-					{editing ? 'Save' : 'Create'}
+					{saving ? 'Saving…' : editing ? 'Save' : 'Create'}
 				</button>
 			</div>
 		</div>

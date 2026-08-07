@@ -133,6 +133,11 @@
 	let showNameInput = $state(false);
 	let saveName = $state('');
 
+	const initialQ = page.url.searchParams.get('q');
+	if (initialQ) {
+		filterStore.fromQueryString(initialQ);
+	}
+
 	let subscribed = false;
 	filterStore.subscribe((f) => {
 		filter = {
@@ -282,11 +287,6 @@
 	onMount(() => {
 		api.autocomplete.peopleTypes().then(setPersonTypes);
 		refreshSavedSearches();
-		const q = page.url.searchParams.get('q');
-		if (q) {
-			filterStore.fromQueryString(q);
-			refreshKey++;
-		}
 	});
 
 	function fetch({ sortBy, sortOrder, limit, offset }) {
@@ -524,9 +524,10 @@
 						</button>
 						<button
 							type="submit"
+							disabled={saving}
 							class="rounded-md bg-gold-600 px-3 py-1 text-xs font-medium text-clay-950 hover:bg-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-50"
 						>
-							Save
+							{saving ? 'Saving…' : 'Save'}
 						</button>
 					</div>
 				</form>

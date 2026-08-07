@@ -41,7 +41,7 @@ Located in `web/`, built via `npm ci && npm run build`, output copied to `intern
 - **`src/lib/components/ProcessingHealthPanel.svelte`** — Dashboard processing health panel: task success rate, avg duration, active/orphaned batch counts, missing-tools count
 - **`src/lib/components/UploadModal.svelte`** — Upload progress modal for `POST /api/v1/consume/upload`
 - **`src/lib/utils/html.js`** — Shared HTML/formatting utilities: `escapeHtml(str)`, `formatSize(bytes)` (B/KB/MB/GB with null guard), `formatNumber(n)` (comma-separated via `toLocaleString`)
-- **`src/lib/stores/searchFilter.js`** — Query string utilities: `tokenizeQuery()` (tokenizes `field:value` syntax including `missing:`), `parseQueryString()` (converts string to filter object with `missingLanguage`/`missingType`/`untagged`), `serializeFilter()` (converts filter object to string with `missing:lang`/`missing:type`/`missing:tags`), `parseSize()`/`formatSize()` (file size parsing/formatting with KB/MB/GB), `parseDateRange()` (date range from string), `setPersonTypes()`/`getPersonTypes()` (person type set management)
+- **`src/lib/stores/searchFilter.js`** — Query string utilities: `tokenizeQuery()` (tokenizes `field:value` syntax including `missing:`), `parseQueryString()` (converts string to filter object with `missingLanguage`/`missingType`/`untagged`), `serializeFilter()` (converts filter object to string with `missing:lang`/`missing:type`/`missing:tags`; field values always wrapped in double quotes), `parseSize()`/`formatSize()` (file size parsing/formatting with KB/MB/GB), `parseDateRange()` (date range from string), `setPersonTypes()`/`getPersonTypes()` (person type set management)
 
 ---
 

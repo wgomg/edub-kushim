@@ -543,7 +543,7 @@ export const queryString = derived(filterStore, ($f) => serializeFilter($f));
 ```
 
 Components subscribe imperatively and copy values into local `$state`
-(`documents/+page.svelte:136-162`), with a guard so the store's immediate
+(`documents/+page.svelte:141-167`), with a guard so the store's immediate
 initial emission doesn't touch the URL:
 
 ```js
@@ -557,6 +557,14 @@ filterStore.subscribe((f) => {
 	subscribed = true;
 });
 ```
+
+The URL filter is applied *before* subscribing: `fromQueryString(q)` runs in
+the script body (`documents/+page.svelte:136-139`), not in `onMount`. Child
+`onMount`s fire before the parent's, so applying it in `onMount` let
+`DataTable` start its first load with the stale store from the previous
+visit, then trigger a second load after the URL was parsed (two racing
+`POST /api/v1/documents/search` requests). In the script body the store is
+correct before any child instantiates.
 
 The frozen `defaultFilter` schema lives in `lib/stores/searchFilter.js:11`
 (`Object.freeze({ ... })` — stores copy it, never mutate it).
@@ -815,11 +823,14 @@ infinite ping-pong.
 ### 2. `replaceState` from `$app/navigation` — documents page
 
 The filter store subscription writes `?q=` with the serialized filter
-(`documents/+page.svelte:136-162`; `replaceState(resolve(...))` — see §7 for
-the full pattern). The `?q=` value is a mini-language (`tag:x`, `type:y`,
-`created:from..to`, `missing:lang`, `size:>10mb`) parsed/serialized by the
-pure functions in `lib/stores/searchFilter.js` — `parseQueryString` /
-`serializeFilter` — so the URL is the source of truth for the filter.
+(`documents/+page.svelte:141-167`; `replaceState(resolve(...))` — see §7 for
+the full pattern). The `?q=` value is a mini-language (`tag:"x"`,
+`type:"scientific paper"`, `created:from..to`, `missing:lang`, `size:>10mb`)
+parsed/serialized by the pure functions in `lib/stores/searchFilter.js` —
+`parseQueryString` / `serializeFilter` — so the URL is the source of truth
+for the filter. `serializeFilter` always wraps field values in double quotes
+(the tokenizer strips them); unconditional quoting keeps multi-word tags,
+types, languages, and person names intact through the URL round-trip.
 
 ### 3. Plain `history.replaceState` — settings tabs, wizard step
 

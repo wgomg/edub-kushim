@@ -180,6 +180,10 @@ export function parseQueryString(str) {
 	return filter;
 }
 
+function qval(v) {
+	return `"${v}"`;
+}
+
 /**
  * Serializes a filter object back into a query string.
  */
@@ -191,23 +195,19 @@ export function serializeFilter(filter) {
 	}
 
 	for (const tag of filter.tags) {
-		parts.push(`tag:${tag}`);
+		parts.push(`tag:${qval(tag)}`);
 	}
 
 	for (const p of filter.people) {
-		if (p.name.includes(' ')) {
-			parts.push(`${p.type}:"${p.name}"`);
-		} else {
-			parts.push(`${p.type}:${p.name}`);
-		}
+		parts.push(`${p.type}:${qval(p.name)}`);
 	}
 
 	if (filter.documentType) {
-		parts.push(`type:${filter.documentType}`);
+		parts.push(`type:${qval(filter.documentType)}`);
 	}
 
 	if (filter.language) {
-		parts.push(`lang:${filter.language}`);
+		parts.push(`lang:${qval(filter.language)}`);
 	}
 
 	if (filter.dateCreated?.from && filter.dateCreated?.to) {
