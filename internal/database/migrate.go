@@ -77,6 +77,24 @@ func RewriteStoragePaths(ctx context.Context, db *sql.DB, oldDir, newDir string)
 	return tx.Commit()
 }
 
+func RewriteTaskPayloadPaths(ctx context.Context, db *sql.DB, oldConsumptionDir, newConsumptionDir string) error {
+	pattern := escapeLike(oldConsumptionDir) + "/%"
+	_, err := db.ExecContext(ctx, `
+		UPDATE task
+		SET payload = jsonb_set(
+			payload,
+			'{file_path}',
+			to_jsonb($2 || substring(payload->>'file_path' from char_length($3) + 1))
+		)
+		WHERE task_type = 'consume'
+		  AND payload->>'file_path' LIKE $1
+	`, pattern, newConsumptionDir, oldConsumptionDir)
+	if err != nil {
+		return fmt.Errorf("rewrite task payload paths: %w", err)
+	}
+	return nil
+}
+
 // escapeLike neutralizes LIKE wildcards so the pattern only matches paths
 // that actually start with oldDir, not lookalikes (e.g. /data/storage-2).
 func escapeLike(s string) string {

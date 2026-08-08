@@ -512,7 +512,7 @@ Key formats in use:
 | consume | `consume:<md5>` (scan/restore paths) or the file path (direct CLI) | `scan.go:90-97`, `service/orphaned.go:183` |
 | enrich | `enrich:doc:<document_id>` | `handlers/enrich.go:52-61`, `service/enrich.go:44` |
 | backup | `backup:<UTC date>` | `handlers/backup.go:36-38` |
-| config | `config:tessdata:<lang>` / `config:hugot` / `config:migrate-db` | `configtask/configtask.go` |
+| config | `config:tessdata:<lang>` / `config:hugot` / `config:migrate-db` / `config:migrate-storage` | `configtask/configtask.go` |
 
 The waiting (child) enrich tasks store **no dedup key** — dedup only kicks in
 once activated, when the payload gains `document_id`. A duplicate insert
@@ -629,8 +629,8 @@ WHERE id = 1 AND (NOT running OR started_at <= NOW() - INTERVAL '30 minutes');
   lock for its whole run (release via `defer`), then **drains** in-flight
   work (`database.WaitForTaskDrain`, `internal/database/migrate.go`: 5s ticker on
   `CountProcessingTasks` until zero) before snapshotting, then applies
-  retention. The `migrate-db` config task uses the same drain helper before
-  copying the database.
+  retention. The `migrate-db` and `migrate-storage` config tasks use the same drain helper
+  before copying the database or moving storage files.
 - Scheduling: the queue daemon's ticker enqueues a `backup` task when
   `IsBackupDue` and the lock is free; the `backup:<date>` dedup key prevents
   same-day duplicates.

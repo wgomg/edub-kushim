@@ -53,8 +53,8 @@ Pure Go binary (`CGO_ENABLED=0`) that handles HTTP requests. It:
 
 - Enqueues consume/enrich tasks when `POST /api/v1/consume` is called, creating batches with `status='queued'`
 - The `kushim queue` daemon picks up queued batches and forks `kushim consume --batch <id>` for processing
-- Runs a config pool for background download tasks (tessdata, Hugot model) and `migrate-db` tasks
-- Watches `config.yaml` (5s poll): when the database connection settings changed on disk — after a `migrate-db` task persists them — it reconnects the whole server (services, task stores, config pool, route handlers) to the new database; on connect failure it keeps the previous configuration
+- Runs a config pool for background download tasks (tessdata, Hugot model) and the `migrate-db` / `migrate-storage` tasks
+- Watches `config.yaml` (5s poll): when the database connection settings changed on disk — after a `migrate-db` task persists them — it reconnects the whole server (services, task stores, config pool, route handlers) to the new database; on connect failure it keeps the previous configuration. Storage directory changes (persisted by a `migrate-storage` task) are picked up the same way — the inbox scan and storage layout then use the new paths.
 - Probes the matcher socket on startup (logs a warning if unreachable); tag CRUD is not blocked — embedding-store sync errors are logged and swallowed
 - Does not manage inbox polling — the queue daemon (`kushim queue`) handles scanning as a goroutine loop
 

@@ -154,19 +154,22 @@ The `ConfigTaskHandler` lives in its own package (`internal/configtask/`) to kee
 
 - `TaskTypeConfig = "config"` — Task type string for config-related async work
 - `DedupKeyMigrateDB = "config:migrate-db"` — Dedup key for the `migrate-db` op (at most one migration task pending/processing/failed)
+- `DedupKeyMigrateStorage = "config:migrate-storage"` — Dedup key for the `migrate-storage` op (at most one storage migration task pending/processing/failed)
 
 ### Structs
 
-- `MigrateDBPayload` — `op`, `config_dir`, destination connection fields (`host`, `port`, `user`, `password`, `database`, `sslmode`), and old/new storage dirs (`old_storage_dir`, `new_storage_dir`, `old_consumption_dir`, `new_consumption_dir`). Carried by the `migrate-db` task so the handler can open both databases directly and persist the new values only after the copy succeeds.
+- `MigrateDBPayload` — `op`, `config_dir`, destination connection fields (`host`, `port`, `user`, `password`, `database`, `sslmode`). Carried by the `migrate-db` task so the handler can open both databases directly and persist the new values only after the copy succeeds. No storage fields — storage relocation belongs to the `migrate-storage` task.
+- `MigrateStoragePayload` — `op`, `config_dir`, old/new storage dirs (`old_storage_dir`, `new_storage_dir`, `old_consumption_dir`, `new_consumption_dir`). Carried by the `migrate-storage` task; the move strategy (`copy`/`move`) is read from `storage.migration_mode` in the on-disk config at task runtime.
 
 ### Struct
 
 - `ConfigTaskHandler` — `logger *utils.Logger`
   - **Methods**:
     - `NewConfigTaskHandler(logger) *ConfigTaskHandler`
-    - `Handle(ctx, t) (json.RawMessage, error)` — Unmarshals `{"config_dir":"...", "op":"tessdata|hugot|migrate-db", ...}`, loads config from disk, dispatches to `config.DownloadTessdataLanguage`, `config.DownloadHugotModel`, or `handleMigrateDB`
-    - `handleMigrateDB(ctx, t)` — Acquires the backup lock on the current DB, waits for in-flight tasks to drain (`database.WaitForTaskDrain`), takes a best-effort gzipped pre-migration snapshot into `backup.path` (keeps the latest 5), dumps the current DB to a temp file (`database.DumpSchemaAndData`), connects to the destination (10s connect timeout), then: skips the copy when the destination already holds data (`document`/`task` row counts), refuses databases with tables but no goose history (`database.ValidateMigrationDestination`), restores the dump statement-by-statement (`database.ExecuteDumpFile`, atomic via the dump's own BEGIN/COMMIT), rewrites storage paths if the storage dir moved (`database.RewriteStoragePaths`), and finally persists the new connection settings via `config.SaveMap` (also clearing `database.dsn` so the new fields win)
-    - `DedupKey(payload) string` — Returns `"config:tessdata:<lang>"` for tessdata ops, `"config:hugot"` for hugot ops, `"config:migrate-db"` for migrate-db ops. Used by the idempotent enqueue path in `ConfigHandler.enqueueConfigTasks` to avoid duplicate pending/processing config tasks.
+    - `Handle(ctx, t) (json.RawMessage, error)` — Unmarshals `{"config_dir":"...", "op":"tessdata|hugot|migrate-db|migrate-storage", ...}`, loads config from disk, dispatches to `config.DownloadTessdataLanguage`, `config.DownloadHugotModel`, `handleMigrateDB`, or `handleMigrateStorage`
+    - `handleMigrateDB(ctx, t)` — Acquires the backup lock on the current DB, waits for in-flight tasks to drain (`database.WaitForTaskDrain`), takes a best-effort gzipped pre-migration snapshot into `backup.path` (keeps the latest 5), dumps the current DB to a temp file (`database.DumpSchemaAndData`), connects to the destination (10s connect timeout), then: skips the copy when the destination already holds data (`document`/`task` row counts), refuses databases with tables but no goose history (`database.ValidateMigrationDestination`), restores the dump statement-by-statement (`database.ExecuteDumpFile`, atomic via the dump's own BEGIN/COMMIT), and finally persists the new connection settings via `config.SaveMap` (also clearing `database.dsn` so the new fields win). Storage paths are not touched — that is the `migrate-storage` task's job.
+    - `handleMigrateStorage(ctx, t)` — Loads config from disk (so it connects to the database the current config points at — after a preceding `migrate-db` task, the new database). Acquires the backup lock, drains in-flight tasks, and for each changed directory: rewrites pending consume-task payload paths (`database.RewriteTaskPayloadPaths`, before any file move), moves the storage subdirs (`processed/`, `originals/`, `errors/`, `orphaned/`, `trash/`) and inbox files per `storage.migration_mode` (`copy`: copy-then-delete; `move`: `os.Rename` per entry with copy fallback), rewrites `document.storage_path`/`original_path` and `orphaned_file.file_path` (`database.RewriteStoragePaths`, only when `storage_dir` changed), and persists the new dirs via `config.SaveMap` only after the moves succeed
+    - `DedupKey(payload) string` — Returns `"config:tessdata:<lang>"` for tessdata ops, `"config:hugot"` for hugot ops, `"config:migrate-db"` for migrate-db ops, `"config:migrate-storage"` for migrate-storage ops. Used by the idempotent enqueue path in `ConfigHandler.enqueueConfigTasks` to avoid duplicate pending/processing config tasks.
 
 ---
 

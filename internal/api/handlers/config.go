@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -156,79 +158,124 @@ func (h *ConfigHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if newDB, err := dbParamsFromBody(body, h.getConfig().Db); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	} else if config.DatabaseConnectionChanged(h.getConfig().Db, newDB) {
-		if h.dispatcher == nil {
-			http.Error(w, "database not ready — retry after setup completes", http.StatusServiceUnavailable)
-			return
-		}
-		immediate := make(map[string]any)
-		for k, v := range body {
-			if strings.HasPrefix(k, "database.") || strings.HasPrefix(k, "storage.") {
-				continue
-			}
-			immediate[k] = v
-		}
-		if err := config.SaveMap(configDir, immediate); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		h.enqueueDBMigration(ctx, w, body, newDB)
-		return
-	}
-
-	if err := config.SaveMap(configDir, body); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	cfg, err := config.Load(configDir)
+	newDB, err := dbParamsFromBody(body, h.getConfig().Db)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	h.onConfigSet(cfg)
-	svcPath, svcErr := config.GenerateServiceFiles(configDir)
-	if svcErr != nil {
-		h.logger.Warn(nil, "failed to generate service files: %v", svcErr)
-	}
-	missing := config.MissingExternalToolErrors(cfg)
 
-	if h.dispatcher == nil {
-		resp := map[string]any{
-			"configured":    true,
-			"missing_tools": missing,
+	cfg := h.getConfig()
+	newStorageDir := storageDirFromBody(body, "storage.storage_dir", cfg.Storage.StorageDir)
+	newConsumptionDir := storageDirFromBody(body, "storage.consumption_dir", cfg.Storage.ConsumptionDir)
+	dbChanged := config.DatabaseConnectionChanged(cfg.Db, newDB)
+	storageChanged := dirChanged(newStorageDir, cfg.Storage.StorageDir) ||
+		dirChanged(newConsumptionDir, cfg.Storage.ConsumptionDir)
+
+	if !dbChanged && !storageChanged {
+		if err := config.SaveMap(configDir, body); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
-		if svcPath != "" {
-			resp["service_files_path"] = svcPath
+
+		cfg, err := config.Load(configDir)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
 		}
-		writeJSON(w, http.StatusOK, resp)
+		h.onConfigSet(cfg)
+		svcPath, svcErr := config.GenerateServiceFiles(configDir)
+		if svcErr != nil {
+			h.logger.Warn(nil, "failed to generate service files: %v", svcErr)
+		}
+		missing := config.MissingExternalToolErrors(cfg)
+
+		if h.dispatcher == nil {
+			resp := map[string]any{
+				"configured":    true,
+				"missing_tools": missing,
+			}
+			if svcPath != "" {
+				resp["service_files_path"] = svcPath
+			}
+			writeJSON(w, http.StatusOK, resp)
+			return
+		}
+
+		enqueued := h.enqueueConfigTasks(ctx, cfg)
+
+		if enqueued > 0 {
+			resp := map[string]any{
+				"pending_tasks": enqueued,
+				"missing_tools": missing,
+			}
+			if svcPath != "" {
+				resp["service_files_path"] = svcPath
+			}
+			writeJSON(w, http.StatusCreated, resp)
+		} else {
+			resp := map[string]any{
+				"configured":    true,
+				"missing_tools": missing,
+			}
+			if svcPath != "" {
+				resp["service_files_path"] = svcPath
+			}
+			writeJSON(w, http.StatusOK, resp)
+		}
 		return
 	}
 
-	enqueued := h.enqueueConfigTasks(ctx, cfg)
-
-	if enqueued > 0 {
-		resp := map[string]any{
-			"pending_tasks": enqueued,
-			"missing_tools": missing,
-		}
-		if svcPath != "" {
-			resp["service_files_path"] = svcPath
-		}
-		writeJSON(w, http.StatusCreated, resp)
-	} else {
-		resp := map[string]any{
-			"configured":    true,
-			"missing_tools": missing,
-		}
-		if svcPath != "" {
-			resp["service_files_path"] = svcPath
-		}
-		writeJSON(w, http.StatusOK, resp)
+	if h.dispatcher == nil {
+		http.Error(w, "database not ready — retry after setup completes", http.StatusServiceUnavailable)
+		return
 	}
+
+	if dirChanged(newStorageDir, cfg.Storage.StorageDir) {
+		if err := probeWritableDir(newStorageDir, "storage.storage_dir"); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	if dirChanged(newConsumptionDir, cfg.Storage.ConsumptionDir) {
+		if err := probeWritableDir(newConsumptionDir, "storage.consumption_dir"); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
+	immediate := make(map[string]any, len(body))
+	for k, v := range body {
+		if strings.HasPrefix(k, "database.") {
+			continue
+		}
+		if k == "storage.storage_dir" || k == "storage.consumption_dir" {
+			continue
+		}
+		immediate[k] = v
+	}
+	if err := config.SaveMap(configDir, immediate); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	pending := 0
+	if dbChanged {
+		if !h.enqueueDBMigration(ctx, w, newDB) {
+			return
+		}
+		pending++
+	}
+	if storageChanged {
+		if !h.enqueueStorageMigration(ctx, w, body) {
+			return
+		}
+		pending++
+	}
+
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"pending_tasks": pending,
+		"message":       "migration(s) queued — settings apply once the migration completes",
+	})
 }
 
 func (h *ConfigHandler) enqueueConfigTasks(ctx context.Context, cfg *config.Config) int {
@@ -355,41 +402,73 @@ func asString(v any) string {
 	return s
 }
 
-func (h *ConfigHandler) enqueueDBMigration(ctx context.Context, w http.ResponseWriter, body map[string]any, newDB config.DatabaseConfig) {
-	existing, err := h.queries.GetConfigTaskByDedupKey(ctx, sql.NullString{String: configtask.DedupKeyMigrateDB, Valid: true})
+// storageDirFromBody returns the body value for a storage dir key, expanded
+// like config.Load would, falling back to the current value when absent.
+func storageDirFromBody(body map[string]any, key, current string) string {
+	v, ok := body[key].(string)
+	if !ok || v == "" {
+		return current
+	}
+	if len(v) > 0 && v[0] == '~' {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, v[1:])
+		}
+	}
+	return v
+}
+
+func dirChanged(newDir, oldDir string) bool {
+	return filepath.Clean(newDir) != filepath.Clean(oldDir)
+}
+
+func probeWritableDir(dir, key string) error {
+	probe, err := os.CreateTemp(dir, ".edub-write-test-*")
+	if err != nil {
+		return fmt.Errorf("%s (%s) is not writable: %w", key, dir, err)
+	}
+	probe.Close()
+	os.Remove(probe.Name())
+	return nil
+}
+
+func (h *ConfigHandler) tryAcquireConfigTaskSlot(ctx context.Context, w http.ResponseWriter, dedupKey, label string) bool {
+	existing, err := h.queries.GetConfigTaskByDedupKey(ctx, sql.NullString{String: dedupKey, Valid: true})
 	switch {
 	case err == nil && existing.Status == "processing":
-		writeJSON(w, http.StatusConflict, map[string]any{"error": "database migration already in progress"})
-		return
+		writeJSON(w, http.StatusConflict, map[string]any{"error": label + " already in progress"})
+		return false
 	case err == nil:
-		deleted, delErr := h.queries.DeleteConfigTaskByDedupKey(ctx, sql.NullString{String: configtask.DedupKeyMigrateDB, Valid: true})
+		deleted, delErr := h.queries.DeleteConfigTaskByDedupKey(ctx, sql.NullString{String: dedupKey, Valid: true})
 		if delErr != nil {
-			h.logger.Error(nil, "delete stale migration task: %v", delErr)
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to queue database migration"})
-			return
+			h.logger.Error(nil, "delete stale %s task: %v", label, delErr)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to queue " + label})
+			return false
 		}
 		if deleted == 0 && existing.Status == "pending" {
-			writeJSON(w, http.StatusConflict, map[string]any{"error": "database migration already in progress"})
-			return
+			writeJSON(w, http.StatusConflict, map[string]any{"error": label + " already in progress"})
+			return false
 		}
 	case !errors.Is(err, sql.ErrNoRows):
-		h.logger.Error(nil, "lookup migration task: %v", err)
+		h.logger.Error(nil, "lookup %s task: %v", label, err)
+	}
+	return true
+}
+
+func (h *ConfigHandler) enqueueDBMigration(ctx context.Context, w http.ResponseWriter, newDB config.DatabaseConfig) bool {
+	if !h.tryAcquireConfigTaskSlot(ctx, w, configtask.DedupKeyMigrateDB, "database migration") {
+		return false
 	}
 
 	cfg := h.getConfig()
 	payload := configtask.MigrateDBPayload{
-		Op:                "migrate-db",
-		ConfigDir:         cfg.App.ConfigDir,
-		Host:              newDB.Host,
-		Port:              strconv.Itoa(newDB.Port),
-		User:              newDB.User,
-		Password:          newDB.Password,
-		Database:          newDB.Database,
-		SSLMode:           newDB.SSLMode,
-		OldStorageDir:     cfg.Storage.StorageDir,
-		NewStorageDir:     asString(body["storage.storage_dir"]),
-		OldConsumptionDir: cfg.Storage.ConsumptionDir,
-		NewConsumptionDir: asString(body["storage.consumption_dir"]),
+		Op:        "migrate-db",
+		ConfigDir: cfg.App.ConfigDir,
+		Host:      newDB.Host,
+		Port:      strconv.Itoa(newDB.Port),
+		User:      newDB.User,
+		Password:  newDB.Password,
+		Database:  newDB.Database,
+		SSLMode:   newDB.SSLMode,
 	}
 	payloadJSON, _ := json.Marshal(payload)
 
@@ -399,14 +478,40 @@ func (h *ConfigHandler) enqueueDBMigration(ctx context.Context, w http.ResponseW
 	if _, err := h.dispatcher.Enqueue(ctx, configtask.TaskTypeConfig, batchID, payloadJSON, ""); err != nil {
 		h.logger.Error(nil, "enqueue migration task: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to enqueue database migration"})
-		return
+		return false
 	}
 
 	h.logger.Info(nil, "database migration queued: %s -> %s@%s:%d/%s", cfg.Db.Database, newDB.User, newDB.Host, newDB.Port, newDB.Database)
-	writeJSON(w, http.StatusAccepted, map[string]any{
-		"pending_tasks": 1,
-		"message":       "database migration queued — settings apply once the data copy completes",
-	})
+	return true
+}
+
+func (h *ConfigHandler) enqueueStorageMigration(ctx context.Context, w http.ResponseWriter, body map[string]any) bool {
+	if !h.tryAcquireConfigTaskSlot(ctx, w, configtask.DedupKeyMigrateStorage, "storage migration") {
+		return false
+	}
+
+	cfg := h.getConfig()
+	payload := configtask.MigrateStoragePayload{
+		Op:                "migrate-storage",
+		ConfigDir:         cfg.App.ConfigDir,
+		OldStorageDir:     cfg.Storage.StorageDir,
+		NewStorageDir:     storageDirFromBody(body, "storage.storage_dir", cfg.Storage.StorageDir),
+		OldConsumptionDir: cfg.Storage.ConsumptionDir,
+		NewConsumptionDir: storageDirFromBody(body, "storage.consumption_dir", cfg.Storage.ConsumptionDir),
+	}
+	payloadJSON, _ := json.Marshal(payload)
+
+	batchID := uuid.New().String()
+	h.services.Batch.Create(ctx, batchID, configSource, "queued")
+
+	if _, err := h.dispatcher.Enqueue(ctx, configtask.TaskTypeConfig, batchID, payloadJSON, ""); err != nil {
+		h.logger.Error(nil, "enqueue storage migration task: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to enqueue storage migration"})
+		return false
+	}
+
+	h.logger.Info(nil, "storage migration queued: %s -> %s", cfg.Storage.StorageDir, payload.NewStorageDir)
+	return true
 }
 
 func (h *ConfigHandler) ConfigStatus(w http.ResponseWriter, r *http.Request) {

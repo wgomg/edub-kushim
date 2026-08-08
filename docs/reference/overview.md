@@ -56,7 +56,7 @@ internal/
 │   ├── config.go          # `kushim config` command (dump/get/set/unset/validate/path)
 │   └── backup.go          # Backup and restore commands
 ├── configtask/            # Config task handler
-│   └── configtask.go      # ConfigTaskHandler — downloads tessdata/Hugot model in background; migrate-db op copies the database when connection settings change ("config" task type)
+│   └── configtask.go      # ConfigTaskHandler — downloads tessdata/Hugot model in background; migrate-db op copies the database when connection settings change, migrate-storage op relocates files when storage dirs change ("config" task type)
 ├── enrichment/            # Enrichment engine (LLM pipeline)
 │   └── enricher.go        # Enricher: dual text reduction → tag matching → token budget pre-check + retry loop → LLM → consolidation → people/tag/doc type with romanization + normalization
 ├── service/               # Merged domain service package (replaces people/tags/documenttypes)

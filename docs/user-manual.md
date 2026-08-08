@@ -1202,14 +1202,26 @@ present. The `missing_tools` array lists any hard-blocking tool-availability iss
 **Database connection changes.** When the request body changes any `database.*` setting
 (`host`, `port`, `user`, `password`, `database`, `sslmode`), the update is **deferred**:
 the settings are not written to `config.yaml` yet. The API returns `202` with
-`{ "pending_tasks": 1 }` and enqueues a `migrate-db` background task that copies the
-current database into the new one (schema + data + storage-path rewrite when the storage
-dir changed), then persists the new connection settings once the copy succeeds. Both
+`{ "pending_tasks": 1, "message": "migration(s) queued — settings apply once the migration completes" }`
+and enqueues a `migrate-db` background task that copies the current database into the new
+one (schema + data), then persists the new connection settings once the copy succeeds. Both
 `edub` and `kushim queue` detect the change and reconnect automatically. Non-database
-settings from the same request apply immediately; `storage.*` changes apply together with
-the migration. While a migration is running, further DB changes answer `409`. A failed
-migration is retried automatically on the next save (or via `POST /wizard/config/retry`)
-and is idempotent — the copy is skipped when the destination already holds data.
+settings from the same request apply immediately. While a migration is running, further DB
+changes answer `409`. A failed migration is retried automatically on the next save (or via
+`POST /wizard/config/retry`) and is idempotent — the copy is skipped when the destination
+already holds data.
+
+**Storage directory changes.** Changing `storage.storage_dir` or `storage.consumption_dir`
+is also deferred: the API returns `202` and enqueues a `migrate-storage` background task
+that moves existing files to the new locations (storage subdirs `processed/`, `originals/`,
+`errors/`, `orphaned/`, `trash/`, plus inbox files), rewrites `document.storage_path`/
+`original_path`, `orphaned_file.file_path`, and the `file_path` of pending consume tasks,
+and only then persists the new directories to `config.yaml`. The move strategy is controlled
+by `storage.migration_mode`: `copy` (copy then delete — safe, needs extra disk space;
+default) or `move` (rename — faster, falls back to copy across filesystems). When both the
+database and storage directories change in the same request, `migrate-db` runs first and
+`migrate-storage` second, so the storage task operates on the new database. Storage-dir
+changes answer `409` while a storage migration is in flight.
 
 ```
 GET /wizard/config/status
@@ -1931,6 +1943,7 @@ database:
 storage:
   consumption_dir: '~/.config/edub-kushim/inbox'
   storage_dir: '~/.config/edub-kushim/storage'
+  migration_mode: 'copy' # how files relocate when storage/consumption dirs change: 'copy' (safe) or 'move' (fast)
   trash:
     retention_days: 30 # days before soft-deleted documents are permanently purged
 

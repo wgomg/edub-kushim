@@ -18,7 +18,11 @@
 	let pollInterval;
 	let showToken = $state(false);
 
-	let activeTab = $state(new URL(window.location.href).searchParams.get('tab') || 'Configuration');
+	let activeTab = $state(
+		typeof window !== 'undefined'
+			? new URL(window.location.href).searchParams.get('tab') || 'Configuration'
+			: 'Configuration'
+	);
 
 	function switchTab(tab) {
 		activeTab = tab;
@@ -143,7 +147,10 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 		}
 		llmModels = await api.config.llmModels();
 		window.addEventListener('beforeunload', handleBeforeUnload);
-		return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+		return () => {
+			window.removeEventListener('beforeunload', handleBeforeUnload);
+			if (pollInterval) clearInterval(pollInterval);
+		};
 	});
 
 	async function checkStatus() {
@@ -259,6 +266,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			'enricher.tagmatcher.hugot.backend': cfg.enricher.tagmatcher.hugot.backend,
 			'storage.consumption_dir': cfg.storage.consumption_dir,
 			'storage.storage_dir': cfg.storage.storage_dir,
+			'storage.migration_mode': cfg.storage.migration_mode,
 			'storage.trash.retention_days': Number(cfg.storage.trash.retention_days),
 			'database.host': cfg.database.host,
 			'database.port': Number(cfg.database.port),
@@ -284,7 +292,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			const res = await api.config.update(bodyFromConfig());
 			if (res && 'pending_tasks' in res && res.pending_tasks > 0) {
 				pendingTasks = res.pending_tasks;
-				toastStore.success('Settings saved. Downloads in progress…');
+				toastStore.success(res.message || 'Settings saved. Downloads in progress…');
 				startPolling();
 			} else {
 				toastStore.success('Settings saved.');
@@ -592,6 +600,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 								bind:checked={cfg.server.auth_enabled}
 								class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
 							/>
+							<!-- Status text deliberately outside the label hit target: making it
+								clickable would toggle the control. -->
 							<span class="text-sm text-parchment-400">
 								{cfg.server.auth_enabled ? 'Enabled' : 'Disabled'}
 							</span>
@@ -631,6 +641,30 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 							/>
 						</div>
+					</div>
+					<div class="mt-4">
+						<label for="migration-mode" class="mb-1 block text-sm font-medium text-parchment-200"
+							>Migration mode</label
+						>
+						<select
+							id="migration-mode"
+							name="migration-mode"
+							bind:value={cfg.storage.migration_mode}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+						>
+							<option value="copy">Copy, then delete — safer, needs extra disk space</option>
+							<option value="move">Move directly — faster, risk of data loss if interrupted</option>
+						</select>
+						{#if cfg.storage.migration_mode === 'move'}
+							<p class="mt-1 text-xs text-terracotta-500">
+								Files are renamed into place. If the process dies mid-migration, files can be left
+								behind in the old location. Copy mode is recommended.
+							</p>
+						{:else}
+							<p class="mt-1 text-xs text-parchment-500">
+								Used when the storage or consumption directory changes.
+							</p>
+						{/if}
 					</div>
 				</section>
 
@@ -1026,6 +1060,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 									bind:checked={cfg.consumer.polling.enabled}
 									class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
 								/>
+								<!-- Runtime process states read Active/Inactive; configuration toggles use
+									Enabled/Disabled — intentional, don't standardize. -->
 								<span class="text-sm text-parchment-400">
 									{cfg.consumer.polling.enabled ? 'Active' : 'Inactive'}
 								</span>
@@ -1050,9 +1086,14 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 					</div>
 
 					<div class="mt-4">
+						<!-- Not a heading/legend on purpose: it labels a repeatable input group, and a
+							heading would add an unrequested entry to the accessibility outline. -->
 						<span class="mb-3 block text-sm font-medium text-parchment-200"
 							>Active windows (optional)</span
 						>
+						<!-- Deliberately text + pattern, not type="time": the end-of-day sentinel
+							24:00 can't be entered in a native time input, and a picker would change
+							the interaction for existing users. -->
 						{#each cfg.consumer.polling.windows as w, i (i)}
 							<div class="mb-3 flex items-center gap-2">
 								<input
@@ -1061,7 +1102,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 									bind:value={w.start}
 									aria-label="Start time"
 									pattern="([01][0-9]|2[0-3]):[0-5][0-9]"
-									placeholder="HH:MM"
+									placeholder="HH:MM…"
 									minlength="5"
 									maxlength="5"
 									class="w-36 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -1073,7 +1114,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 									bind:value={w.end}
 									aria-label="End time"
 									pattern="([01][0-9]|2[0-3]):[0-5][0-9]|24:00"
-									placeholder="HH:MM"
+									placeholder="HH:MM…"
 									minlength="5"
 									maxlength="5"
 									class="w-36 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -1725,6 +1766,9 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							<label for="backup-time" class="mb-1 block text-sm font-medium text-parchment-200">
 								Preferred time (HH:MM)
 							</label>
+							<!-- Kept as text + pattern to match the polling-window fields and the
+								backend's parseHHMM validation; a native time picker would change
+								the interaction. -->
 							<input
 								id="backup-time"
 								name="backup-time"
@@ -1732,7 +1776,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 								type="text"
 								bind:value={cfg.backup.time}
 								pattern="([01][0-9]|2[0-3]):[0-5][0-9]"
-								placeholder="HH:MM"
+								placeholder="HH:MM…"
 								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 							/>
 						</div>

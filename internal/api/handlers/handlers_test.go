@@ -21,6 +21,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/auth"
 	"github.com/wgomg/edub-kushim/internal/config"
+	"github.com/wgomg/edub-kushim/internal/configtask"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/service"
@@ -100,6 +101,7 @@ func newHandlerTestEnv(t *testing.T) *handlerTestEnv {
 	}
 
 	registry := task.NewRegistry()
+	registry.Register("config", configtask.NewConfigTaskHandler(logger))
 	dispatcher := task.NewDispatcher(logger, workStore, registry)
 
 	return &handlerTestEnv{
@@ -1544,7 +1546,7 @@ func TestAuthLogin(t *testing.T) {
 		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
 
 		var resp struct {
-			Token string                     `json:"token"`
+			Token string         `json:"token"`
 			User  map[string]any `json:"user"`
 		}
 		json.NewDecoder(w.Body).Decode(&resp)
@@ -1658,7 +1660,7 @@ func TestSanitizeConfigStrings(t *testing.T) {
 	t.Run("prompt_template is preserved", func(t *testing.T) {
 		input := map[string]any{
 			"prompt_template": "Analyze <article> text",
-			"engine":         "test",
+			"engine":          "test",
 		}
 		sanitizeConfigStrings(input)
 		if input["prompt_template"] != "Analyze <article> text" {
@@ -1988,5 +1990,151 @@ func TestDocumentReEnrich(t *testing.T) {
 		r.SetPathValue("id", "no-such-id")
 		h.ReEnrich(w, r)
 		testutil.AssertEqual(t, w.Code, http.StatusNotFound, "not found")
+	})
+}
+
+func TestPutConfig(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	ctx := context.Background()
+
+	setup := func(t *testing.T) (*ConfigHandler, string) {
+		t.Helper()
+		configDir := t.TempDir()
+		oldStorage := filepath.Join(configDir, "storage")
+		oldInbox := filepath.Join(configDir, "inbox")
+		if err := os.MkdirAll(oldStorage, 0755); err != nil {
+			t.Fatalf("create old storage: %v", err)
+		}
+		if err := os.MkdirAll(oldInbox, 0755); err != nil {
+			t.Fatalf("create old inbox: %v", err)
+		}
+		if err := config.SaveMap(configDir, map[string]any{
+			"database.host":           "localhost",
+			"database.port":           5432,
+			"database.user":           "edub",
+			"database.password":       "edub",
+			"database.database":       "edub",
+			"database.sslmode":        "disable",
+			"storage.storage_dir":     oldStorage,
+			"storage.consumption_dir": oldInbox,
+			"storage.migration_mode":  "copy",
+		}); err != nil {
+			t.Fatalf("seed config: %v", err)
+		}
+		cfg, err := config.Load(configDir)
+		if err != nil {
+			t.Fatalf("load config: %v", err)
+		}
+		var setCfg atomic.Value
+		setCfg.Store(cfg)
+		return NewConfigHandler(
+			func() *config.Config { return setCfg.Load().(*config.Config) },
+			func(c *config.Config) { setCfg.Store(c) },
+			env.client.Queries,
+			env.logger,
+			env.dispatcher,
+			env.services,
+		), configDir
+	}
+
+	countTasks := func(t *testing.T, dedupKey string) int64 {
+		t.Helper()
+		var count int64
+		if err := env.client.DB().QueryRowContext(ctx,
+			"SELECT COUNT(*) FROM task WHERE task_type = 'config' AND dedup_key = $1",
+			dedupKey,
+		).Scan(&count); err != nil {
+			t.Fatalf("count tasks: %v", err)
+		}
+		return count
+	}
+
+	t.Run("storage change enqueues migrate-storage and returns 202", func(t *testing.T) {
+		fullResetDB(t, env.client.DB())
+		h, configDir := setup(t)
+		newStorage := filepath.Join(t.TempDir(), "moved-storage")
+
+		body, _ := json.Marshal(map[string]any{
+			"storage.storage_dir": newStorage,
+		})
+		w := rec()
+		r := req(t, "PUT", "/api/v1/config", body)
+		h.PutConfig(w, r)
+
+		testutil.AssertEqual(t, w.Code, http.StatusAccepted, "status")
+		var resp map[string]any
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if got, want := resp["pending_tasks"], float64(1); got != want {
+			t.Errorf("pending_tasks = %v, want %v", got, want)
+		}
+
+		if got := countTasks(t, configtask.DedupKeyMigrateStorage); got != 1 {
+			t.Errorf("migrate-storage task count = %d, want 1", got)
+		}
+
+		// Deferred keys must NOT be persisted yet; immediate keys (migration_mode) must be.
+		reloaded, err := config.Load(configDir)
+		if err != nil {
+			t.Fatalf("reload config: %v", err)
+		}
+		if reloaded.Storage.StorageDir == newStorage {
+			t.Error("storage_dir was persisted before the migration task completed")
+		}
+		if reloaded.Storage.MigrationMode != "copy" {
+			t.Errorf("migration_mode = %q, want %q (immediate-save regression)", reloaded.Storage.MigrationMode, "copy")
+		}
+	})
+
+	t.Run("non-migration change persists immediately and does not enqueue a migration task", func(t *testing.T) {
+		fullResetDB(t, env.client.DB())
+		h, configDir := setup(t)
+
+		body, _ := json.Marshal(map[string]any{
+			"app.log_level": "debug",
+		})
+		w := rec()
+		r := req(t, "PUT", "/api/v1/config", body)
+		h.PutConfig(w, r)
+
+		if w.Code < 200 || w.Code >= 300 {
+			t.Fatalf("status = %d, want 2xx", w.Code)
+		}
+
+		reloaded, err := config.Load(configDir)
+		if err != nil {
+			t.Fatalf("reload config: %v", err)
+		}
+		if reloaded.App.LogLevel != "debug" {
+			t.Errorf("log_level = %q, want %q", reloaded.App.LogLevel, "debug")
+		}
+		if countTasks(t, configtask.DedupKeyMigrateStorage) != 0 {
+			t.Error("a migrate-storage task was enqueued for a non-migration change")
+		}
+	})
+
+	t.Run("storage PUT while a migration is processing returns 409", func(t *testing.T) {
+		fullResetDB(t, env.client.DB())
+		h, _ := setup(t)
+		newStorage := filepath.Join(t.TempDir(), "moved-storage")
+		body, _ := json.Marshal(map[string]any{
+			"storage.storage_dir": newStorage,
+		})
+
+		// Seed a migrate-storage task that's already in 'processing' so the
+		// PUT must be rejected with 409.
+		seeded := `{"op":"migrate-storage","config_dir":"` + strings.ReplaceAll(t.TempDir(), `"`, `\"`) + `","old_storage_dir":"` + strings.ReplaceAll(t.TempDir(), `"`, `\"`) + `","new_storage_dir":"` + strings.ReplaceAll(newStorage, `"`, `\"`) + `","old_consumption_dir":"","new_consumption_dir":""}`
+		if _, err := env.client.DB().ExecContext(ctx, `
+			INSERT INTO task (task_id, task_type, status, dedup_key, payload, started_at)
+			VALUES ('seeded-processing', 'config', 'processing', $1, $2::jsonb, CURRENT_TIMESTAMP)
+		`, configtask.DedupKeyMigrateStorage, seeded); err != nil {
+			t.Fatalf("seed processing task: %v", err)
+		}
+
+		w := rec()
+		r := req(t, "PUT", "/api/v1/config", body)
+		h.PutConfig(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusConflict, "status")
 	})
 }
