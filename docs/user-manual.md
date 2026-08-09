@@ -592,6 +592,43 @@ The restore process:
 
 ---
 
+### `kushim migrate`
+
+Run the database or storage migration logic from the CLI, without going through the config task queue. Both subcommands refuse to start while another migration or backup holds the backup lock, wait for in-flight tasks to drain, and persist the new settings to `config.yaml` only after the operation succeeds.
+
+```
+kushim migrate database --host <h> --port <p> --user <u> --password <p> --database <db> [--sslmode <mode>]
+kushim migrate storage --storage-dir <new> [--consumption-dir <new>]
+```
+
+#### `kushim migrate database`
+
+Copies the current database to a new PostgreSQL server and points `config.yaml` at it, running the same steps as the `migrate-db` config task: pre-migration safety snapshot (config `backup.path`, retention-capped), SQL dump (schema + data, `goose_db_version` preserved), destination validation (refuses databases with tables but no edub migration history; skips restore when the destination already holds data), and a deferred `config.yaml` update.
+
+| Flag         | Description                                                        |
+| ------------ | ------------------------------------------------------------------ |
+| `--host`     | Destination host (required)                                        |
+| `--port`     | Destination port (required)                                        |
+| `--user`     | Destination user (required)                                        |
+| `--password` | Destination password (required, or set `KUSHIM_DB_PASSWORD`)       |
+| `--database` | Destination database name (required)                               |
+| `--sslmode`  | Destination SSL mode (default: `disable`)                          |
+
+A password passed on the command line is visible in process listings and shell history; prefer setting `KUSHIM_DB_PASSWORD` and omitting `--password`.
+
+#### `kushim migrate storage`
+
+Relocates the storage and consumption directories to new paths: rewrites pending consume-task payloads and the database paths (`document.storage_path`, `document.original_path`, `orphaned_file.file_path`), moves the storage subdirs and inbox files per `storage.migration_mode` (`copy` — copy-then-delete, default — or `move` — rename with cross-filesystem copy fallback), and persists the new dirs to `config.yaml`. At least one of `--storage-dir` or `--consumption-dir` must be provided.
+
+| Flag                 | Description                                      |
+| -------------------- | ------------------------------------------------ |
+| `--storage-dir`      | New storage directory                            |
+| `--consumption-dir`  | New consumption (inbox) directory                |
+
+Paths that resolve under a system location (`/proc`, `/sys`, `/dev`, `/boot`) are rejected. If neither directory actually changes, the command reports a no-op and exits successfully. Run `kushim migrate database` before `kushim migrate storage` — the storage migration reads the updated config (including the new database connection) from disk.
+
+---
+
 ## API Reference
 
 The API server listens on `0.0.0.0:3000` by default (configurable in YAML).

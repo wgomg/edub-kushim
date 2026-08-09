@@ -80,6 +80,11 @@ var commandSets = map[string]map[string]Command{
 			Description: "Restore from a backup archive",
 			Handler:     restoreHandler,
 		},
+		"migrate": {
+			Name:        "migrate",
+			Description: "Migrate database or storage to new locations",
+			Handler:     migrateHandler,
+		},
 	},
 	"server": {
 		"version": {

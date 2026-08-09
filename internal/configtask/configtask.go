@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,6 +18,15 @@ import (
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
+
+var ErrNoOp = errors.New("migration is a no-op")
+
+func DirChanged(oldDir, newDir string) bool {
+	if oldDir == "" || newDir == "" {
+		return false
+	}
+	return filepath.Clean(oldDir) != filepath.Clean(newDir)
+}
 
 const (
 	TaskTypeConfig = "config"
@@ -125,15 +135,21 @@ func (h *ConfigTaskHandler) handleMigrateDB(ctx context.Context, t task.Task) (j
 	if err := json.Unmarshal(t.Payload, &p); err != nil {
 		return nil, fmt.Errorf("unmarshal migrate-db payload: %w", err)
 	}
+	if err := MigrateDatabase(ctx, h.logger, p); err != nil {
+		return nil, err
+	}
+	return json.Marshal(map[string]string{"status": "migrated"})
+}
 
+func MigrateDatabase(ctx context.Context, logger *utils.Logger, p MigrateDBPayload) error {
 	cfg, err := config.Load(p.ConfigDir)
 	if err != nil {
-		return nil, fmt.Errorf("load config from %s: %w", p.ConfigDir, err)
+		return fmt.Errorf("load config from %s: %w", p.ConfigDir, err)
 	}
 
 	oldDB, err := database.NewPostgresDB(config.BuildPostgresDSN(cfg.Db))
 	if err != nil {
-		return nil, fmt.Errorf("connect to current database: %w", err)
+		return fmt.Errorf("connect to current database: %w", err)
 	}
 	defer oldDB.Close()
 
@@ -141,43 +157,43 @@ func (h *ConfigTaskHandler) handleMigrateDB(ctx context.Context, t task.Task) (j
 
 	rows, err := oldClient.Queries.AcquireBackupLock(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("acquire backup lock: %w", err)
+		return fmt.Errorf("acquire backup lock: %w", err)
 	}
 	if rows == 0 {
-		return nil, fmt.Errorf("backup lock held by another process — migration cannot start")
+		return fmt.Errorf("backup lock held by another process — migration cannot start")
 	}
 	defer func() {
 		if _, relErr := oldClient.Queries.ReleaseBackupLock(context.Background()); relErr != nil {
-			h.logger.Error(nil, "release backup lock after migration: %v", relErr)
+			logger.Error(nil, "release backup lock after migration: %v", relErr)
 		}
 	}()
 
-	if err := database.WaitForTaskDrain(ctx, oldClient.Queries, h.logger, "migrate-db"); err != nil {
-		return nil, err
+	if err := database.WaitForTaskDrain(ctx, oldClient.Queries, logger, "migrate-db"); err != nil {
+		return err
 	}
 
-	h.logger.Info(nil, "migrate-db: copying database to %s@%s:%s/%s", p.User, p.Host, p.Port, p.Database)
+	logger.Info(nil, "migrate-db: copying database to %s@%s:%s/%s", p.User, p.Host, p.Port, p.Database)
 
-	h.safetySnapshot(ctx, oldDB, cfg)
+	safetySnapshot(ctx, oldDB, cfg, logger)
 
 	tmpDump, err := os.CreateTemp("", "edub-migrate-*.sql")
 	if err != nil {
-		return nil, fmt.Errorf("create temp dump file: %w", err)
+		return fmt.Errorf("create temp dump file: %w", err)
 	}
 	tmpPath := tmpDump.Name()
 	defer os.Remove(tmpPath)
 
 	if err := database.DumpSchemaAndData(ctx, oldDB, database.SchemaFS, tmpDump); err != nil {
 		tmpDump.Close()
-		return nil, fmt.Errorf("dump current database: %w", err)
+		return fmt.Errorf("dump current database: %w", err)
 	}
 	if err := tmpDump.Close(); err != nil {
-		return nil, fmt.Errorf("close temp dump file: %w", err)
+		return fmt.Errorf("close temp dump file: %w", err)
 	}
 
 	port, err := strconv.Atoi(p.Port)
 	if err != nil {
-		return nil, fmt.Errorf("invalid destination port %q: %w", p.Port, err)
+		return fmt.Errorf("invalid destination port %q: %w", p.Port, err)
 	}
 
 	newDSN := config.BuildPostgresDSN(config.DatabaseConfig{
@@ -191,12 +207,12 @@ func (h *ConfigTaskHandler) handleMigrateDB(ctx context.Context, t task.Task) (j
 	})
 	newDB, err := database.NewPostgresDB(database.WithConnectTimeout(newDSN, 10))
 	if err != nil {
-		return nil, fmt.Errorf("connect to destination database: %w", err)
+		return fmt.Errorf("connect to destination database: %w", err)
 	}
 	defer newDB.Close()
 
-	if err := h.restoreData(ctx, newDB, tmpPath); err != nil {
-		return nil, err
+	if err := restoreData(ctx, newDB, tmpPath, logger); err != nil {
+		return err
 	}
 
 	body := map[string]any{
@@ -211,11 +227,11 @@ func (h *ConfigTaskHandler) handleMigrateDB(ctx context.Context, t task.Task) (j
 		"database.dsn": "",
 	}
 	if err := config.SaveMap(p.ConfigDir, body); err != nil {
-		return nil, fmt.Errorf("persist new config: %w", err)
+		return fmt.Errorf("persist new config: %w", err)
 	}
 
-	h.logger.Info(nil, "migrate-db: database %q is live and config.yaml updated", p.Database)
-	return json.Marshal(map[string]string{"status": "migrated"})
+	logger.Info(nil, "migrate-db: database %q is live and config.yaml updated", p.Database)
+	return nil
 }
 
 func (h *ConfigTaskHandler) handleMigrateStorage(ctx context.Context, t task.Task) (json.RawMessage, error) {
@@ -223,25 +239,34 @@ func (h *ConfigTaskHandler) handleMigrateStorage(ctx context.Context, t task.Tas
 	if err := json.Unmarshal(t.Payload, &p); err != nil {
 		return nil, fmt.Errorf("unmarshal migrate-storage payload: %w", err)
 	}
-
-	storageChanged := p.OldStorageDir != "" && p.NewStorageDir != "" &&
-		filepath.Clean(p.OldStorageDir) != filepath.Clean(p.NewStorageDir)
-	consumptionChanged := p.OldConsumptionDir != "" && p.NewConsumptionDir != "" &&
-		filepath.Clean(p.OldConsumptionDir) != filepath.Clean(p.NewConsumptionDir)
-	if !storageChanged && !consumptionChanged {
+	err := MigrateStorage(ctx, h.logger, p)
+	switch {
+	case err == nil:
+		return json.Marshal(map[string]string{"status": "migrated"})
+	case errors.Is(err, ErrNoOp):
 		return json.Marshal(map[string]string{"status": "no-op"})
+	default:
+		return nil, err
+	}
+}
+
+func MigrateStorage(ctx context.Context, logger *utils.Logger, p MigrateStoragePayload) error {
+	storageChanged := DirChanged(p.OldStorageDir, p.NewStorageDir)
+	consumptionChanged := DirChanged(p.OldConsumptionDir, p.NewConsumptionDir)
+	if !storageChanged && !consumptionChanged {
+		return ErrNoOp
 	}
 
 	cfg, err := config.Load(p.ConfigDir)
 	if err != nil {
-		return nil, fmt.Errorf("load config from %s: %w", p.ConfigDir, err)
+		return fmt.Errorf("load config from %s: %w", p.ConfigDir, err)
 	}
 
 	// Config may have been updated by a preceding migrate-db task, so the
 	// database connection is read from disk rather than from the payload.
 	db, err := database.NewPostgresDB(config.BuildPostgresDSN(cfg.Db))
 	if err != nil {
-		return nil, fmt.Errorf("connect to database: %w", err)
+		return fmt.Errorf("connect to database: %w", err)
 	}
 	defer db.Close()
 
@@ -249,19 +274,19 @@ func (h *ConfigTaskHandler) handleMigrateStorage(ctx context.Context, t task.Tas
 
 	rows, err := client.Queries.AcquireBackupLock(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("acquire backup lock: %w", err)
+		return fmt.Errorf("acquire backup lock: %w", err)
 	}
 	if rows == 0 {
-		return nil, fmt.Errorf("backup lock held by another process — migration cannot start")
+		return fmt.Errorf("backup lock held by another process — migration cannot start")
 	}
 	defer func() {
 		if _, relErr := client.Queries.ReleaseBackupLock(context.Background()); relErr != nil {
-			h.logger.Error(nil, "release backup lock after storage migration: %v", relErr)
+			logger.Error(nil, "release backup lock after storage migration: %v", relErr)
 		}
 	}()
 
-	if err := database.WaitForTaskDrain(ctx, client.Queries, h.logger, "migrate-storage"); err != nil {
-		return nil, err
+	if err := database.WaitForTaskDrain(ctx, client.Queries, logger, "migrate-storage"); err != nil {
+		return err
 	}
 
 	mode := strings.ToLower(cfg.Storage.MigrationMode)
@@ -273,25 +298,25 @@ func (h *ConfigTaskHandler) handleMigrateStorage(ctx context.Context, t task.Tas
 	// queued work references the new inbox paths.
 	if consumptionChanged {
 		if err := database.RewriteTaskPayloadPaths(ctx, db, p.OldConsumptionDir, p.NewConsumptionDir); err != nil {
-			return nil, err
+			return err
 		}
 	}
 
 	if storageChanged {
-		if err := h.moveDirEntries(ctx, p.OldStorageDir, p.NewStorageDir, mode, true); err != nil {
-			return nil, err
+		if err := moveDirEntries(ctx, p.OldStorageDir, p.NewStorageDir, mode, true, logger); err != nil {
+			return err
 		}
 	}
 
 	if consumptionChanged {
-		if err := h.moveDirEntries(ctx, p.OldConsumptionDir, p.NewConsumptionDir, mode, false); err != nil {
-			return nil, err
+		if err := moveDirEntries(ctx, p.OldConsumptionDir, p.NewConsumptionDir, mode, false, logger); err != nil {
+			return err
 		}
 	}
 
 	if storageChanged {
 		if err := database.RewriteStoragePaths(ctx, db, p.OldStorageDir, p.NewStorageDir); err != nil {
-			return nil, fmt.Errorf("rewrite storage paths: %w", err)
+			return fmt.Errorf("rewrite storage paths: %w", err)
 		}
 	}
 
@@ -303,14 +328,14 @@ func (h *ConfigTaskHandler) handleMigrateStorage(ctx context.Context, t task.Tas
 		body["storage.consumption_dir"] = p.NewConsumptionDir
 	}
 	if err := config.SaveMap(p.ConfigDir, body); err != nil {
-		return nil, fmt.Errorf("persist new config: %w", err)
+		return fmt.Errorf("persist new config: %w", err)
 	}
 
-	h.logger.Info(nil, "migrate-storage: files relocated and config.yaml updated")
-	return json.Marshal(map[string]string{"status": "migrated"})
+	logger.Info(nil, "migrate-storage: files relocated and config.yaml updated")
+	return nil
 }
 
-func (h *ConfigTaskHandler) moveDirEntries(ctx context.Context, oldDir, newDir, mode string, dirsOnly bool) error {
+func moveDirEntries(ctx context.Context, oldDir, newDir, mode string, dirsOnly bool, logger *utils.Logger) error {
 	entries, err := os.ReadDir(oldDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -329,20 +354,20 @@ func (h *ConfigTaskHandler) moveDirEntries(ctx context.Context, oldDir, newDir, 
 		}
 		src := filepath.Join(oldDir, e.Name())
 		dst := filepath.Join(newDir, e.Name())
-		if err := h.movePath(src, dst, mode); err != nil {
+		if err := movePath(src, dst, mode, logger); err != nil {
 			return fmt.Errorf("relocate %s: %w", e.Name(), err)
 		}
 	}
 	return nil
 }
 
-func (h *ConfigTaskHandler) movePath(src, dst, mode string) error {
+func movePath(src, dst, mode string, logger *utils.Logger) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
 		return fmt.Errorf("create destination parent: %w", err)
 	}
 	if mode == "move" {
 		if err := os.Rename(src, dst); err != nil {
-			h.logger.Warn(nil, "os.Rename %s -> %s failed: %v (falling back to copy)", src, dst, err)
+			logger.Warn(nil, "os.Rename %s -> %s failed: %v (falling back to copy)", src, dst, err)
 		} else {
 			return nil
 		}
@@ -356,23 +381,23 @@ func (h *ConfigTaskHandler) movePath(src, dst, mode string) error {
 	return nil
 }
 
-func (h *ConfigTaskHandler) safetySnapshot(ctx context.Context, oldDB *sql.DB, cfg *config.Config) {
+func safetySnapshot(ctx context.Context, oldDB *sql.DB, cfg *config.Config, logger *utils.Logger) {
 	if cfg.Backup.Path == "" {
-		h.logger.Warn(nil, "backup path not configured, skipping pre-migration safety snapshot")
+		logger.Warn(nil, "backup path not configured, skipping pre-migration safety snapshot")
 		return
 	}
-	h.pruneSafetySnapshots(cfg.Backup.Path)
+	pruneSafetySnapshots(cfg.Backup.Path, logger)
 	backupPath := filepath.Join(cfg.Backup.Path, fmt.Sprintf("pre-migration-%s.sql.gz", time.Now().UTC().Format("2006-01-02T15-04-05")))
 	if err := database.SQLDumpToFile(ctx, oldDB, database.SchemaFS, backupPath); err != nil {
-		h.logger.Error(nil, "pre-migration safety snapshot failed: %v (continuing)", err)
+		logger.Error(nil, "pre-migration safety snapshot failed: %v (continuing)", err)
 		return
 	}
-	h.logger.Info(nil, "pre-migration safety snapshot saved to %s", backupPath)
+	logger.Info(nil, "pre-migration safety snapshot saved to %s", backupPath)
 }
 
 const maxSafetySnapshots = 5
 
-func (h *ConfigTaskHandler) pruneSafetySnapshots(dir string) {
+func pruneSafetySnapshots(dir string, logger *utils.Logger) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
@@ -390,14 +415,14 @@ func (h *ConfigTaskHandler) pruneSafetySnapshots(dir string) {
 	slices.Sort(snaps)
 	for _, p := range snaps[:len(snaps)-maxSafetySnapshots] {
 		if err := os.Remove(p); err != nil {
-			h.logger.Error(nil, "remove old safety snapshot %s: %v", p, err)
+			logger.Error(nil, "remove old safety snapshot %s: %v", p, err)
 		}
 	}
 }
 
-func (h *ConfigTaskHandler) restoreData(ctx context.Context, newDB *sql.DB, dumpPath string) error {
-	if h.destinationHasData(ctx, newDB) {
-		h.logger.Info(nil, "migrate-db: destination database already has data, skipping data migration")
+func restoreData(ctx context.Context, newDB *sql.DB, dumpPath string, logger *utils.Logger) error {
+	if destinationHasData(ctx, newDB) {
+		logger.Info(nil, "migrate-db: destination database already has data, skipping data migration")
 		return nil
 	}
 	if err := database.ValidateMigrationDestination(ctx, newDB); err != nil {
@@ -406,7 +431,7 @@ func (h *ConfigTaskHandler) restoreData(ctx context.Context, newDB *sql.DB, dump
 	return database.ExecuteDumpFile(ctx, newDB, dumpPath)
 }
 
-func (h *ConfigTaskHandler) destinationHasData(ctx context.Context, db *sql.DB) bool {
+func destinationHasData(ctx context.Context, db *sql.DB) bool {
 	var count int64
 	err := db.QueryRowContext(ctx, "SELECT (SELECT COUNT(*) FROM document) + (SELECT COUNT(*) FROM task)").Scan(&count)
 	return err == nil && count > 0

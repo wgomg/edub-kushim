@@ -4,9 +4,7 @@ docs/dev
 
 # editor directories and files
 .vscode/
-.continue/
 .kilo/
-.claude/
 
 # configuration files (except example)
 config.yaml
