@@ -550,18 +550,28 @@ Create a backup of the database, configuration, and storage files.
 ```
 kushim backup
 kushim backup --path /custom/backup/dir
+kushim backup --mode database
+kushim backup --mode documents --path /mnt/nas/documents
 
 ```
 
 | Flag     | Default                              | Description                               |
 | -------- | ------------------------------------ | ----------------------------------------- |
 | `--path` | Config `backup.path` (or `<config_dir>/backups/`) | Override output directory |
+| `--mode` | `full` | What to include: `full` (database + documents), `database` (DB dump only), or `documents` (storage only) |
 
-The backup creates a timestamped `tar.gz` archive containing:
-- `edub.sql` — Self-contained SQL dump (schema + data, wrapped in a transaction)
-- `config.yaml` — Configuration file at backup time
-- `storage/` — Full storage directory tree (originals, processed, errors)
-- `manifest.json` — Backup metadata (version, `"sql-dump"` format, timestamp, sizes, config SHA256 hash, storage directory)
+The backup creates a timestamped `tar.gz` archive whose contents depend on the
+mode (the manifest records the mode; `config.yaml` is always included):
+
+- `full` — `edub.sql`, `config.yaml`, `storage/`, `manifest.json`
+- `database` — `edub.sql`, `config.yaml`, `manifest.json`
+- `documents` — `config.yaml`, `storage/`, `manifest.json`
+
+Archive names are prefixed with the mode: `edub-backup-full-<timestamp>.tar.gz`,
+`edub-backup-database-<timestamp>.tar.gz`, `edub-backup-documents-<timestamp>.tar.gz`.
+
+Manual backups never apply retention — only scheduled backups prune old
+archives, using the schedule's `keep` for that mode.
 
 ### `kushim restore`
 
@@ -584,11 +594,14 @@ The restore process:
 2. Checks that the queue daemon is not running (refuses unless `--force`)
 3. Prompts for confirmation (skipped with `--force`)
 4. Extracts the archive to a temporary directory
-5. Executes the SQL dump against the database (schema drop + recreate + data insert)
-6. Rewrites database storage paths from the archived storage directory (manifest `storage_dir`, or `storage.storage_dir` from the archived config for old backups) to the current one — `document.storage_path`, `document.original_path`, and `orphaned_file.file_path`; skipped when the directories match or the archived dir can't be determined (`~`-relative archived paths are skipped with a warning)
-7. Replaces storage (via atomic rename-swap)
+5. Executes the SQL dump against the database (schema drop + recreate + data insert) — skipped for `documents`-mode archives
+6. Rewrites database storage paths from the archived storage directory (manifest `storage_dir`, or `storage.storage_dir` from the archived config for old backups) to the current one — `document.storage_path`, `document.original_path`, and `orphaned_file.file_path`; skipped when the directories match or the archived dir can't be determined (`~`-relative archived paths are skipped with a warning). Also skipped for `documents`-mode archives (no DB was restored; ensure `storage.storage_dir` matches or update the DB manually)
+7. Replaces storage (via atomic rename-swap) — skipped for `database`-mode archives
 8. Saves the archived config as `config.yaml.restored` — the current configuration stays intact (update `storage.storage_dir` in it to match the rewritten paths before applying)
 9. Prints restart instructions
+
+Archives created before backup modes existed have no `mode` in the manifest and
+restore as `full`.
 
 ---
 
@@ -2047,9 +2060,21 @@ enricher:
 
 backup:
   # enabled: true
-  # interval: 1    # days between backups
-  # time: "02:00"  # preferred time of day (HH:MM)
-  # keep: 7        # max backups to retain (0 = unlimited)
+  # path: /var/backups                  # fallback directory (also used by manual CLI)
+  # schedules:                          # each mode can appear at most once
+  #   - mode: full                      # full: edub.sql + storage + config
+  #     interval: 7                     # days between backups
+  #     time: "03:00"                   # preferred time of day (HH:MM)
+  #     keep: 4                         # max archives to retain per mode (0 = unlimited)
+  #   - mode: database                  # database: edub.sql + config only
+  #     interval: 1
+  #     time: "02:00"
+  #     keep: 30
+  #   - mode: documents                 # documents: storage + config only
+  #     interval: 3
+  #     time: "02:30"
+  #     keep: 10
+  #     path: /mnt/nas/documents        # optional per-schedule override
 ```
 
 > **Matcher memory**: The tag matcher is the largest single memory consumer in
@@ -2070,6 +2095,7 @@ backup:
 | `database`                     | PostgreSQL connection: host, port, user, password, database, sslmode, or DSN |
 | `storage`                      | Inbox and processed file directories                                   |
 | `storage.trash`                | Trash retention: `retention_days` (default 30) before soft-deleted documents are permanently purged |
+| `backup`                       | Scheduled backups: `enabled`, fallback `path`, and a `schedules` list — one entry per mode (`full`/`database`/`documents`) with its own `interval`, `time`, `keep`, and optional `path`. Deprecated flat `interval`/`time`/`keep` fields are auto-converted to a single `full` schedule. `backup.enabled: true` without any schedule (and without flat fields) is a config error — add at least one entry to `schedules` |
 | `consumer`                     | Pipeline: which tools to use, which files to accept                    |
 | `consumer.max_files_per_batch` | Max files per consume batch (default 10, 0 = unlimited)                |
 | `consumer.polling`             | Auto-consume scheduler settings (enabled, interval)                    |

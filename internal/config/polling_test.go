@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -384,5 +385,107 @@ func TestFinalizeConfig_RequestDelayBounds(t *testing.T) {
 				t.Errorf("unexpected error for request_delay=%v: %v", tt.delay, err)
 			}
 		})
+	}
+}
+
+func TestFinalizeConfig_BackupValidation(t *testing.T) {
+	t.Run("flat fields auto-convert to a single full schedule", func(t *testing.T) {
+		configDir := t.TempDir()
+		cfg := DefaultConfig(configDir)
+		cfg.Backup.Enabled = true
+		cfg.Backup.Interval = 3
+		cfg.Backup.Time = "04:00"
+		cfg.Backup.Keep = 5
+
+		if err := finalizeConfig(cfg, configDir); err != nil {
+			t.Fatalf("finalizeConfig: %v", err)
+		}
+		if got := len(cfg.Backup.Schedules); got != 1 {
+			t.Fatalf("Schedules len = %d, want 1", got)
+		}
+		s := cfg.Backup.Schedules[0]
+		if s.Mode != "full" || s.Interval != 3 || s.Time != "04:00" || s.Keep != 5 {
+			t.Errorf("auto-converted schedule = %+v, want full/3/04:00/5", s)
+		}
+	})
+
+	t.Run("flat + schedules rejected", func(t *testing.T) {
+		configDir := t.TempDir()
+		cfg := DefaultConfig(configDir)
+		cfg.Backup.Enabled = true
+		cfg.Backup.Interval = 1
+		cfg.Backup.Schedules = []BackupSchedule{{Mode: "full", Interval: 1, Time: "02:00", Keep: 1}}
+
+		err := finalizeConfig(cfg, configDir)
+		if err == nil || !strings.Contains(err.Error(), "remove deprecated flat") {
+			t.Errorf("expected flat+schedules conflict error, got %v", err)
+		}
+	})
+
+	t.Run("enabled with no schedule and no flat fields is rejected", func(t *testing.T) {
+		configDir := t.TempDir()
+		cfg := DefaultConfig(configDir)
+		cfg.Backup.Enabled = true
+
+		err := finalizeConfig(cfg, configDir)
+		if err == nil || !strings.Contains(err.Error(), "at least one backup schedule") {
+			t.Errorf("expected at-least-one-schedule error, got %v", err)
+		}
+	})
+
+	t.Run("invalid mode in schedule rejected", func(t *testing.T) {
+		configDir := t.TempDir()
+		cfg := DefaultConfig(configDir)
+		cfg.Backup.Enabled = true
+		cfg.Backup.Schedules = []BackupSchedule{{Mode: "bogus", Interval: 1, Time: "02:00", Keep: 1}}
+
+		err := finalizeConfig(cfg, configDir)
+		if err == nil || !strings.Contains(err.Error(), "mode must be one of") {
+			t.Errorf("expected invalid-mode error, got %v", err)
+		}
+	})
+
+	t.Run("duplicate modes rejected", func(t *testing.T) {
+		configDir := t.TempDir()
+		cfg := DefaultConfig(configDir)
+		cfg.Backup.Enabled = true
+		cfg.Backup.Schedules = []BackupSchedule{
+			{Mode: "full", Interval: 1, Time: "02:00", Keep: 1},
+			{Mode: "full", Interval: 2, Time: "03:00", Keep: 2},
+		}
+
+		err := finalizeConfig(cfg, configDir)
+		if err == nil || !strings.Contains(err.Error(), "duplicate mode") {
+			t.Errorf("expected duplicate-mode error, got %v", err)
+		}
+	})
+}
+
+func TestLoad_BackupFlatAutoConverts(t *testing.T) {
+	configDir := t.TempDir()
+	yaml := `consumer:
+  ocr:
+    languages:
+      - eng
+backup:
+  enabled: true
+  interval: 2
+  time: "05:00"
+  keep: 3
+`
+	if err := os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte(yaml), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(configDir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := len(cfg.Backup.Schedules); got != 1 {
+		t.Fatalf("Schedules len = %d, want 1", got)
+	}
+	s := cfg.Backup.Schedules[0]
+	if s.Mode != "full" || s.Interval != 2 || s.Time != "05:00" || s.Keep != 3 {
+		t.Errorf("auto-converted schedule = %+v, want full/2/05:00/3", s)
 	}
 }

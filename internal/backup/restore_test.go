@@ -31,7 +31,7 @@ func TestValidateArchive_Valid(t *testing.T) {
 	backupDir := filepath.Join(dir, "backups")
 	os.MkdirAll(backupDir, 0755)
 
-	result, err := Create(context.Background(), db, database.SchemaFS, backupDir, configPath, storageDir)
+	result, err := Create(context.Background(), db, database.SchemaFS, BackupModeFull, backupDir, configPath, storageDir)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestExtractArchive_Valid(t *testing.T) {
 	backupDir := filepath.Join(dir, "backups")
 	os.MkdirAll(backupDir, 0755)
 
-	result, err := Create(context.Background(), db, database.SchemaFS, backupDir, configPath, storageDir)
+	result, err := Create(context.Background(), db, database.SchemaFS, BackupModeFull, backupDir, configPath, storageDir)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestReplaceFiles_SQLDump(t *testing.T) {
 	backupDir := filepath.Join(dir, "backups")
 	os.MkdirAll(backupDir, 0755)
 
-	result, err := Create(context.Background(), db, database.SchemaFS, backupDir, configPath, storageDir)
+	result, err := Create(context.Background(), db, database.SchemaFS, BackupModeFull, backupDir, configPath, storageDir)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -394,7 +394,7 @@ func createRewriteTestBackup(t *testing.T, configContent, oldStorage string) (ex
 	backupDir := filepath.Join(dir, "backups")
 	os.MkdirAll(backupDir, 0755)
 
-	result, err := Create(context.Background(), db, database.SchemaFS, backupDir, configPath, oldStorage)
+	result, err := Create(context.Background(), db, database.SchemaFS, BackupModeFull, backupDir, configPath, oldStorage)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -475,4 +475,142 @@ func TestCopyDir(t *testing.T) {
 	if string(data) != "beta" {
 		t.Errorf("sub/b.txt = %q, want %q", string(data), "beta")
 	}
+}
+
+// createModeBackup makes a full backup with Create, then patches manifest.Mode
+// to the requested value and re-writes it to the extract directory.
+func createModeBackup(t *testing.T, mode BackupMode) (string, string) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	testutil.CreateTestFile(t, configPath, "test: true\n")
+	storageDir := filepath.Join(dir, "storage")
+	os.MkdirAll(storageDir, 0755)
+	testutil.CreateTestFile(t, filepath.Join(storageDir, "doc.pdf"), "fake pdf")
+	backupDir := filepath.Join(dir, "backups")
+	os.MkdirAll(backupDir, 0755)
+
+	db := database.NewTestDB(t)
+	t.Cleanup(func() { database.ResetTestDatabase(db) })
+
+	result, err := Create(context.Background(), db, database.SchemaFS, BackupModeFull, backupDir, configPath, storageDir)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	extract := filepath.Join(dir, "extract")
+	if err := ExtractArchive(result.Path, extract); err != nil {
+		t.Fatalf("ExtractArchive: %v", err)
+	}
+
+	manifestPath := filepath.Join(extract, "manifest.json")
+	data, _ := os.ReadFile(manifestPath)
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("unmarshal manifest: %v", err)
+	}
+	m["mode"] = string(mode)
+	out, _ := json.Marshal(m)
+	if err := os.WriteFile(manifestPath, out, 0644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	return extract, configPath
+}
+
+func TestReplaceFiles_DocumentsMode_SkipsSQL(t *testing.T) {
+	dir := t.TempDir()
+	db := database.NewTestDB(t)
+	t.Cleanup(func() { database.ResetTestDatabase(db) })
+
+	if _, err := db.Exec(`
+		INSERT INTO document_type (name) VALUES ('documents-mode-marker')`); err != nil {
+		t.Fatalf("seed document_type: %v", err)
+	}
+	originalID := readDocumentTypeID(t, db, "documents-mode-marker")
+
+	extract, _ := createModeBackup(t, BackupModeDocuments)
+
+	// documents-mode restore must not execute the SQL dump. If it does,
+	// the document_type row gets dropped and recreated with a new id.
+	if err := ReplaceFiles(extract, db, filepath.Join(dir, "config.yaml"), filepath.Join(dir, "new_storage")); err != nil {
+		t.Fatalf("ReplaceFiles: %v", err)
+	}
+
+	persistedID := readDocumentTypeID(t, db, "documents-mode-marker")
+	if persistedID != originalID {
+		t.Errorf("documents-mode restore mutated the DB: id changed from %d to %d", originalID, persistedID)
+	}
+}
+
+func TestReplaceFiles_DatabaseMode_StorageUntouched(t *testing.T) {
+	dir := t.TempDir()
+	storageDir := filepath.Join(dir, "storage")
+	os.MkdirAll(storageDir, 0755)
+	testutil.CreateTestFile(t, filepath.Join(storageDir, "untouched.txt"), "do not touch")
+
+	extract, configPath := createModeBackup(t, BackupModeDatabase)
+	newStorage := filepath.Join(dir, "new_storage")
+
+	db := newRestoreDB(t)
+	if err := ReplaceFiles(extract, db, configPath, newStorage); err != nil {
+		t.Fatalf("ReplaceFiles: %v", err)
+	}
+
+	if _, err := os.Stat(newStorage); err == nil {
+		t.Error("database-mode restore created new_storage (must skip storage swap)")
+	}
+	original, err := os.ReadFile(filepath.Join(storageDir, "untouched.txt"))
+	if err != nil {
+		t.Fatalf("read original storage: %v", err)
+	}
+	if string(original) != "do not touch" {
+		t.Errorf("original storage modified: %q", string(original))
+	}
+}
+
+func TestReplaceFiles_LegacyManifestNoMode_TreatedAsFull(t *testing.T) {
+	dir := t.TempDir()
+	db := database.NewTestDB(t)
+	t.Cleanup(func() { database.ResetTestDatabase(db) })
+
+	extract, _ := createModeBackup(t, BackupModeFull)
+	manifestPath := filepath.Join(extract, "manifest.json")
+	data, _ := os.ReadFile(manifestPath)
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("unmarshal manifest: %v", err)
+	}
+	delete(m, "mode")
+	out, _ := json.Marshal(m)
+	if err := os.WriteFile(manifestPath, out, 0644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM document_type").Scan(&count); err != nil {
+		t.Fatalf("count document_type: %v", err)
+	}
+	if count == 0 {
+		t.Fatal("preseed no rows in document_type")
+	}
+
+	if err := ReplaceFiles(extract, db, filepath.Join(dir, "config.yaml"), filepath.Join(dir, "storage")); err != nil {
+		t.Fatalf("ReplaceFiles: %v", err)
+	}
+
+	var afterCount int
+	if err := db.QueryRow("SELECT COUNT(*) FROM document_type").Scan(&afterCount); err != nil {
+		t.Fatalf("count after: %v", err)
+	}
+	if afterCount != count {
+		t.Errorf("document_type count = %d, want %d (legacy restore as full must re-execute SQL)", afterCount, count)
+	}
+}
+
+func readDocumentTypeID(t *testing.T, db *sql.DB, name string) int64 {
+	t.Helper()
+	var id int64
+	if err := db.QueryRow(`SELECT id FROM document_type WHERE name = $1`, name).Scan(&id); err != nil {
+		t.Fatalf("query document_type id: %v", err)
+	}
+	return id
 }

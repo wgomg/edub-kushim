@@ -112,6 +112,18 @@ enricher:
 
 backup:
   # enabled: true
-  # interval: 1    # days between backups
-  # time: "02:00"  # preferred time of day (HH:MM)
-  # keep: 7        # max backups to retain (0 = unlimited)
+  # path: /var/backups                  # fallback directory (also used by manual CLI)
+  # schedules:                          # each mode can appear at most once
+  #   - mode: full                      # full: edub.sql + storage + config
+  #     interval: 7                     # days between backups
+  #     time: "03:00"                   # preferred time of day (HH:MM)
+  #     keep: 4                         # max archives to retain per mode (0 = unlimited)
+  #   - mode: database                  # database: edub.sql + config only
+  #     interval: 1
+  #     time: "02:00"
+  #     keep: 30
+  #   - mode: documents                 # documents: storage + config only
+  #     interval: 3
+  #     time: "02:30"
+  #     keep: 10
+  #     path: /mnt/nas/documents        # optional per-schedule override

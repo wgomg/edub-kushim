@@ -22,7 +22,7 @@
       - `DocTypeRefinementConfig`: `Enabled bool`, `HeadWords int`, `TailWords int`
    - `TagMatcherConfig`: `Timeout` (0 = disabled), `ReduceTargetWords`, `ChunkSize` (default 4096 tokens to bound matcher memory; 0 = model's `max_position_embeddings` minus 12), `Hugot HugotConfig`, `TopN`, `MinSimilarity`, `ConsolidationSimilarity`
     - `HugotConfig`: `Model`, `Backend` (`"GO"` or `"ort"`), `ModelPath`, `BackendLibPath`; internal-only (no yaml/json tags): `CpuMemArena bool` (default `false`), `MemPattern bool` (default `false`)
-- `BackupConfig`: `Enabled bool`, `Interval float64` (days), `Time string` (HH:MM), `Path string`, `Keep int`
+- `BackupConfig`: `Enabled bool`, `Path string` (fallback output dir), `Schedules []BackupSchedule` (mode/interval/time/path/keep). Deprecated flat `Interval`/`Time`/`Keep` fields are kept for auto-conversion into a single `full` schedule by `finalizeConfig`.
 - `ToolConfig`: `Command string`, `Timeout time.Duration`
 
 ## Constants

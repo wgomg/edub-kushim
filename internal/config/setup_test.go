@@ -177,3 +177,70 @@ func TestValidateSave_RejectsInvalidValueWithoutPersisting(t *testing.T) {
 		t.Errorf("on-disk request_delay = %v, want 2 (rejected save must not persist)", got)
 	}
 }
+
+func TestSaveMap_BackupSchedulesClearDeprecatedFlatFields(t *testing.T) {
+	configDir := t.TempDir()
+	if err := SaveMap(configDir, seededConfigBody(configDir)); err != nil {
+		t.Fatalf("seed SaveMap: %v", err)
+	}
+
+	// Simulate a user upgrading from a version that wrote the deprecated
+	// flat fields by writing them directly to the on-disk config.
+	if err := SaveMap(configDir, map[string]any{
+		"backup.interval": 1.0,
+		"backup.time":     "02:00",
+		"backup.keep":     7,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Now the SPA sends schedules. SaveMap must clear the flat fields
+	// or finalizeConfig will reject the merged config on the next load.
+	if err := SaveMap(configDir, map[string]any{
+		"backup.schedules": []map[string]any{
+			{"mode": "full", "interval": 1.0, "time": "02:00", "keep": 1},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Load(configDir); err != nil {
+		t.Errorf("Load after schedules save: %v (flat fields were not cleared)", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(configDir, "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	// The deprecated keys must be present but zeroed.
+	if !strings.Contains(text, "interval: 0") {
+		t.Errorf("backup.interval not zeroed; file:\n%s", text)
+	}
+	if !strings.Contains(text, "keep: 0") {
+		t.Errorf("backup.keep not zeroed; file:\n%s", text)
+	}
+}
+
+func TestValidateSave_BackupSchedulesClearDeprecatedFlatFields(t *testing.T) {
+	configDir := t.TempDir()
+	if err := SaveMap(configDir, seededConfigBody(configDir)); err != nil {
+		t.Fatalf("seed SaveMap: %v", err)
+	}
+	if err := SaveMap(configDir, map[string]any{
+		"backup.interval": 1.0,
+		"backup.time":     "02:00",
+		"backup.keep":     7,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	err := ValidateSave(configDir, map[string]any{
+		"backup.schedules": []map[string]any{
+			{"mode": "full", "interval": 1.0, "time": "02:00", "keep": 1},
+		},
+	})
+	if err != nil {
+		t.Errorf("ValidateSave rejected flat+schedules merged config: %v (flat fields should have been cleared in the validation copy)", err)
+	}
+}

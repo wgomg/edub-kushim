@@ -439,25 +439,39 @@ func maybeScheduleBackup(ctx context.Context, c *Container, client *database.Cli
 		return nil
 	}
 
-	due, err := backup.IsBackupDue(ctx, client.Queries, cfg.Backup)
+	active, err := client.Queries.CountActiveBackupTasks(ctx)
 	if err != nil {
-		return fmt.Errorf("check backup due: %w", err)
+		return fmt.Errorf("check active backup tasks: %w", err)
 	}
-	if !due {
+	if active > 0 {
 		return nil
 	}
 
-	dispatcher, err := c.GetDispatcher()
-	if err != nil {
-		return fmt.Errorf("get dispatcher: %w", err)
-	}
+	for _, schedule := range cfg.Backup.Schedules {
+		due, err := backup.IsBackupDue(ctx, client.Queries, schedule)
+		if err != nil {
+			return fmt.Errorf("check backup due (%s): %w", schedule.Mode, err)
+		}
+		if !due {
+			continue
+		}
 
-	taskID := uuid.New().String()
-	payload, _ := json.Marshal(map[string]any{})
-	if _, err := dispatcher.Enqueue(ctx, "backup", "", payload, taskID); err != nil {
-		return fmt.Errorf("enqueue backup task: %w", err)
-	}
+		dispatcher, err := c.GetDispatcher()
+		if err != nil {
+			return fmt.Errorf("get dispatcher: %w", err)
+		}
 
-	c.logger.Info(nil, "backup task %s scheduled", taskID)
+		payload, _ := json.Marshal(map[string]any{
+			"mode": schedule.Mode,
+			"path": schedule.Path,
+			"keep": schedule.Keep,
+		})
+		taskID := uuid.New().String()
+		if _, err := dispatcher.Enqueue(ctx, "backup", "", payload, taskID); err != nil {
+			return fmt.Errorf("enqueue backup task (%s): %w", schedule.Mode, err)
+		}
+
+		c.logger.Info(nil, "backup task %s scheduled (mode=%s)", taskID, schedule.Mode)
+	}
 	return nil
 }

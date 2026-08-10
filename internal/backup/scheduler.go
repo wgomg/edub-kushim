@@ -41,8 +41,11 @@ func NextBackupTime(after time.Time, intervalDays float64, preferredTime string)
 	return candidate
 }
 
-func IsBackupDue(ctx context.Context, queries *database.Queries, cfg config.BackupConfig) (bool, error) {
-	recent, err := queries.CountRecentBackupTasks(ctx, sql.NullString{String: "5", Valid: true})
+func IsBackupDue(ctx context.Context, queries *database.Queries, schedule config.BackupSchedule) (bool, error) {
+	recent, err := queries.CountRecentBackupTasksByMode(ctx, database.CountRecentBackupTasksByModeParams{
+		Column1: sql.NullString{String: "5", Valid: true},
+		Column2: sql.NullString{String: schedule.Mode, Valid: true},
+	})
 	if err != nil {
 		return false, err
 	}
@@ -50,15 +53,7 @@ func IsBackupDue(ctx context.Context, queries *database.Queries, cfg config.Back
 		return false, nil
 	}
 
-	active, err := queries.CountActiveBackupTasks(ctx)
-	if err != nil {
-		return false, err
-	}
-	if active > 0 {
-		return false, nil
-	}
-
-	completedAt, err := queries.GetLastCompletedBackup(ctx)
+	completedAt, err := queries.GetLastCompletedBackupByMode(ctx, sql.NullString{String: schedule.Mode, Valid: true})
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return true, nil
@@ -70,6 +65,6 @@ func IsBackupDue(ctx context.Context, queries *database.Queries, cfg config.Back
 		return true, nil
 	}
 
-	next := NextBackupTime(completedAt.Time, cfg.Interval, cfg.Time)
+	next := NextBackupTime(completedAt.Time, schedule.Interval, schedule.Time)
 	return !time.Now().Before(next), nil
 }

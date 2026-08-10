@@ -195,6 +195,17 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 		cfg.consumer.polling.windows = cfg.consumer.polling.windows.filter((_, i) => i !== index);
 	}
 
+	function addSchedule() {
+		if (!cfg.backup.schedules) cfg.backup.schedules = [];
+		cfg.backup.schedules = [
+			...cfg.backup.schedules,
+			{ mode: 'full', interval: 1, time: '02:00', keep: 7, path: '' }
+		];
+	}
+	function removeSchedule(index) {
+		cfg.backup.schedules = cfg.backup.schedules.filter((_, i) => i !== index);
+	}
+
 	function bodyFromConfig() {
 		return {
 			'server.host': cfg.server.host,
@@ -274,10 +285,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			'database.database': cfg.database.database,
 			'database.sslmode': cfg.database.sslmode,
 			'backup.enabled': cfg.backup.enabled,
-			'backup.interval': Number(cfg.backup.interval),
-			'backup.time': cfg.backup.time,
 			'backup.path': cfg.backup.path,
-			'backup.keep': Number(cfg.backup.keep),
+			'backup.schedules': cfg.backup.schedules ?? [],
 			'app.log_level': cfg.app.log_level,
 			'app.logging.max_size': Number(cfg.app.logging.max_size),
 			'app.logging.max_backups': Number(cfg.app.logging.max_backups),
@@ -1744,60 +1753,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 							/>
 						</div>
 						<div>
-							<label
-								for="backup-interval"
-								class="mb-1 block text-sm font-medium text-parchment-200"
-							>
-								Interval (days)
-							</label>
-							<input
-								id="backup-interval"
-								name="backup-interval"
-								autocomplete="off"
-								type="number"
-								inputmode="numeric"
-								min="1"
-								step="0.1"
-								bind:value={cfg.backup.interval}
-								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-							/>
-						</div>
-						<div>
-							<label for="backup-time" class="mb-1 block text-sm font-medium text-parchment-200">
-								Preferred time (HH:MM)
-							</label>
-							<!-- Kept as text + pattern to match the polling-window fields and the
-								backend's parseHHMM validation; a native time picker would change
-								the interaction. -->
-							<input
-								id="backup-time"
-								name="backup-time"
-								autocomplete="off"
-								type="text"
-								bind:value={cfg.backup.time}
-								pattern="([01][0-9]|2[0-3]):[0-5][0-9]"
-								placeholder="HH:MM…"
-								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-							/>
-						</div>
-						<div>
-							<label for="backup-keep" class="mb-1 block text-sm font-medium text-parchment-200">
-								Keep (0 = unlimited)
-							</label>
-							<input
-								id="backup-keep"
-								name="backup-keep"
-								autocomplete="off"
-								type="number"
-								inputmode="numeric"
-								min="0"
-								bind:value={cfg.backup.keep}
-								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-							/>
-						</div>
-						<div class="sm:col-span-2">
 							<label for="backup-path" class="mb-1 block text-sm font-medium text-parchment-200">
-								Output directory
+								Fallback output directory
 							</label>
 							<input
 								id="backup-path"
@@ -1808,6 +1765,117 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 							/>
 						</div>
+					</div>
+
+					<div class="mt-4">
+						<span class="mb-3 block text-sm font-medium text-parchment-200">Schedules</span>
+						{#each cfg.backup.schedules as s, i (i)}
+							<div class="mb-3 rounded-lg border border-clay-800 bg-clay-950 p-3">
+								<div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+									<div>
+										<label
+											for="backup-schedule-{i}-mode"
+											class="mb-1 block text-xs font-medium text-parchment-200">Mode</label
+										>
+										<select
+											id="backup-schedule-{i}-mode"
+											name="backup-schedule-{i}-mode"
+											autocomplete="off"
+											bind:value={s.mode}
+											class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+										>
+											<option value="full">Full (database + documents)</option>
+											<option value="database">Database only</option>
+											<option value="documents">Documents only</option>
+										</select>
+									</div>
+									<div>
+										<label
+											for="backup-schedule-{i}-interval"
+											class="mb-1 block text-xs font-medium text-parchment-200"
+											>Interval (days)</label
+										>
+										<input
+											id="backup-schedule-{i}-interval"
+											name="backup-schedule-{i}-interval"
+											autocomplete="off"
+											type="number"
+											inputmode="numeric"
+											min="0.1"
+											step="0.1"
+											bind:value={s.interval}
+											class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+										/>
+									</div>
+									<div>
+										<label
+											for="backup-schedule-{i}-time"
+											class="mb-1 block text-xs font-medium text-parchment-200"
+											>Preferred time (HH:MM)</label
+										>
+										<!-- Kept as text + pattern to match the backend's parseHHMM
+											validation; a native time picker would change the interaction. -->
+										<input
+											id="backup-schedule-{i}-time"
+											name="backup-schedule-{i}-time"
+											autocomplete="off"
+											type="text"
+											bind:value={s.time}
+											pattern="([01][0-9]|2[0-3]):[0-5][0-9]"
+											placeholder="HH:MM…"
+											class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+										/>
+									</div>
+									<div>
+										<label
+											for="backup-schedule-{i}-keep"
+											class="mb-1 block text-xs font-medium text-parchment-200"
+											>Keep (0 = unlimited)</label
+										>
+										<input
+											id="backup-schedule-{i}-keep"
+											name="backup-schedule-{i}-keep"
+											autocomplete="off"
+											type="number"
+											inputmode="numeric"
+											min="0"
+											bind:value={s.keep}
+											class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+										/>
+									</div>
+									<div class="sm:col-span-2 lg:col-span-2">
+										<label
+											for="backup-schedule-{i}-path"
+											class="mb-1 block text-xs font-medium text-parchment-200"
+											>Output directory (optional)</label
+										>
+										<input
+											id="backup-schedule-{i}-path"
+											name="backup-schedule-{i}-path"
+											autocomplete="off"
+											type="text"
+											bind:value={s.path}
+											placeholder="Fallback directory…"
+											class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+										/>
+									</div>
+								</div>
+								<button
+									type="button"
+									onclick={() => removeSchedule(i)}
+									class="mt-3 rounded-lg border border-clay-800 px-3 py-1 text-sm text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+								>
+									Remove
+								</button>
+							</div>
+						{/each}
+						<button
+							type="button"
+							onclick={addSchedule}
+							class="text-sm text-gold-500 hover:text-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+						>
+							+ Add schedule
+						</button>
 					</div>
 				</section>
 

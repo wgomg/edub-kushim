@@ -647,7 +647,7 @@ WHERE id = 1 AND (NOT running OR started_at <= NOW() - INTERVAL '30 minutes');
 | `consumer.reclaim.enabled` | `true` | stale sweeps on/off |
 | `consumer.reclaim.max_retries` | `3` | the attempts budget |
 | `consumer.reclaim.stale_task_after` | `600` (s) | processing-staleness cutoff (≥ 60) |
-| `backup.enabled` / `backup.interval` | — | backup scheduling |
+| `backup.enabled` / `backup.schedules` | — | backup scheduling (per-mode: full/database/documents, each with interval/time/path/keep) |
 | `polling.interval` (min) | — | inbox scan cadence (floor 1 min) |
 | `polling.active_windows` | — | only scan within these windows |
 

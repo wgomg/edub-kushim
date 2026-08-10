@@ -119,13 +119,19 @@ func (q *Queries) CountProcessingTasks(ctx context.Context) (int64, error) {
 	return count, err
 }
 
-const countRecentBackupTasks = `-- name: CountRecentBackupTasks :one
+const countRecentBackupTasksByMode = `-- name: CountRecentBackupTasksByMode :one
 SELECT COUNT(*) FROM task
 WHERE task_type = 'backup' AND created_at > NOW() - ($1 || ' minutes')::INTERVAL
+  AND dedup_key LIKE 'backup:' || $2 || ':%'
 `
 
-func (q *Queries) CountRecentBackupTasks(ctx context.Context, dollar_1 sql.NullString) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countRecentBackupTasks, dollar_1)
+type CountRecentBackupTasksByModeParams struct {
+	Column1 sql.NullString
+	Column2 sql.NullString
+}
+
+func (q *Queries) CountRecentBackupTasksByMode(ctx context.Context, arg CountRecentBackupTasksByModeParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countRecentBackupTasksByMode, arg.Column1, arg.Column2)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -358,15 +364,16 @@ func (q *Queries) GetConfigTaskByDedupKey(ctx context.Context, dedupKey sql.Null
 	return i, err
 }
 
-const getLastCompletedBackup = `-- name: GetLastCompletedBackup :one
+const getLastCompletedBackupByMode = `-- name: GetLastCompletedBackupByMode :one
 SELECT completed_at FROM task
 WHERE task_type = 'backup' AND status = 'completed'
+  AND dedup_key LIKE 'backup:' || $1 || ':%'
 ORDER BY completed_at DESC
 LIMIT 1
 `
 
-func (q *Queries) GetLastCompletedBackup(ctx context.Context) (sql.NullTime, error) {
-	row := q.db.QueryRowContext(ctx, getLastCompletedBackup)
+func (q *Queries) GetLastCompletedBackupByMode(ctx context.Context, dollar_1 sql.NullString) (sql.NullTime, error) {
+	row := q.db.QueryRowContext(ctx, getLastCompletedBackupByMode, dollar_1)
 	var completed_at sql.NullTime
 	err := row.Scan(&completed_at)
 	return completed_at, err

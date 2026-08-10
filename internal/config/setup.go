@@ -89,11 +89,20 @@ func SaveMap(configDir string, body map[string]any) error {
 	for key, val := range body {
 		v.Set(key, val)
 	}
+	clearDeprecatedBackupFlatFields(v, body)
 	if err := v.WriteConfigAs(configPath); err != nil {
 		return err
 	}
 
 	return os.Chmod(configPath, 0600)
+}
+
+func clearDeprecatedBackupFlatFields(v *viper.Viper, body map[string]any) {
+	if _, hasSchedules := body["backup.schedules"]; hasSchedules {
+		v.Set("backup.interval", float64(0))
+		v.Set("backup.time", "")
+		v.Set("backup.keep", 0)
+	}
 }
 
 // ValidateSave runs the merged config (on-disk config + body) through
@@ -115,6 +124,7 @@ func ValidateSave(configDir string, body map[string]any) error {
 	for key, val := range body {
 		v.Set(key, val)
 	}
+	clearDeprecatedBackupFlatFields(v, body)
 
 	tmpDir, err := os.MkdirTemp("", "edub-config-validate-")
 	if err != nil {

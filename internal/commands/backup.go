@@ -45,16 +45,27 @@ func checkBackupPreconditions(c *Container, operation string) (*database.Client,
 
 func backupHandler(c *Container, args []string) error {
 	fp := NewFlagParser(args)
-	if fp.Help("Usage: kushim backup [--path <dir>]\n"+
-		"  Run a backup immediately.\n\n"+
-		"  --path    Override output directory (default: config backup.path)") {
+	if fp.Help("Usage: kushim backup [--path <dir>] [--mode <full|database|documents>]\n" +
+		"  Run a backup immediately.\n\n" +
+		"  --path    Override output directory (default: config backup.path)\n" +
+		"  --mode    What to include: full (DB + documents), database, documents (default: full)") {
 		return nil
 	}
 
 	var overridePath string
+	var mode string
 	fp.String("--path", &overridePath)
+	fp.String("--mode", &mode)
 	if rest := fp.Rest(); len(rest) > 0 {
 		return fmt.Errorf("unknown arguments: %v", rest)
+	}
+
+	backupMode := backup.BackupMode(mode)
+	if backupMode == "" {
+		backupMode = backup.BackupModeFull
+	}
+	if !backupMode.Valid() {
+		return fmt.Errorf("invalid --mode %q — must be one of: full, database, documents", mode)
 	}
 
 	client, err := checkBackupPreconditions(c, "backup")
@@ -89,13 +100,14 @@ func backupHandler(c *Container, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
-	fmt.Println("Creating backup...")
-	result, err := backup.Create(ctx, db, database.SchemaFS, backupDir, configPath, c.cfg.Load().Storage.StorageDir)
+	fmt.Printf("Creating %s backup...\n", backupMode)
+	result, err := backup.Create(ctx, db, database.SchemaFS, backupMode, backupDir, configPath, c.cfg.Load().Storage.StorageDir)
 	if err != nil {
 		return fmt.Errorf("backup failed: %w", err)
 	}
 
 	fmt.Printf("Backup created: %s\n", result.Path)
+	fmt.Printf("  Mode: %s\n", backupMode)
 	fmt.Printf("  Archive size: %d bytes\n", result.SizeBytes)
 	fmt.Printf("  Database size: %d bytes\n", result.DbSizeBytes)
 	fmt.Printf("  Storage files: %d\n", result.FilesCount)
@@ -103,20 +115,14 @@ func backupHandler(c *Container, args []string) error {
 		fmt.Printf("  Backup time: %s\n", result.Manifest.Timestamp)
 	}
 
-	if overridePath == "" && c.cfg.Load().Backup.Keep > 0 {
-		if err := backup.ApplyRetention(c.cfg.Load().Backup.Path, c.cfg.Load().Backup.Keep); err != nil {
-			fmt.Printf("Warning: retention cleanup failed: %v\n", err)
-		}
-	}
-
 	return nil
 }
 
 func restoreHandler(c *Container, args []string) error {
 	fp := NewFlagParser(args)
-	if fp.Help("Usage: kushim restore <backup-file.tar.gz> [--force] [--dry-run]\n"+
-		"  Restore from a backup archive.\n\n"+
-		"  --force     Skip confirmation prompt\n"+
+	if fp.Help("Usage: kushim restore <backup-file.tar.gz> [--force] [--dry-run]\n" +
+		"  Restore from a backup archive.\n\n" +
+		"  --force     Skip confirmation prompt\n" +
 		"  --dry-run   Validate backup without restoring") {
 		return nil
 	}
@@ -143,6 +149,11 @@ func restoreHandler(c *Container, args []string) error {
 
 	fmt.Println("Backup manifest:")
 	fmt.Printf("  Version: %d\n", manifest.Version)
+	mode := manifest.Mode
+	if mode == "" {
+		mode = backup.BackupModeFull
+	}
+	fmt.Printf("  Mode: %s\n", mode)
 	fmt.Printf("  Timestamp: %s\n", manifest.Timestamp)
 	fmt.Printf("  App version: %s\n", manifest.AppVersion)
 	fmt.Printf("  Database size: %d bytes\n", manifest.DbSizeBytes)

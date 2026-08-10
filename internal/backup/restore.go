@@ -136,62 +136,73 @@ func ReplaceFiles(extractDir string, db *sql.DB, configPath, storageDir string) 
 	if manifest.Format != "sql-dump" {
 		return fmt.Errorf("unknown backup format %q", manifest.Format)
 	}
-	if db == nil {
-		return fmt.Errorf("database connection required for sql-dump restore")
-	}
-	sqlPath := filepath.Join(extractDir, "edub.sql")
-	if err := database.ExecuteDumpFile(context.Background(), db, sqlPath); err != nil {
-		return fmt.Errorf("execute sql dump: %w", err)
+	mode := manifest.Mode
+	if mode == "" {
+		mode = BackupModeFull
 	}
 
-	oldDir := manifest.StorageDir
-	if oldDir == "" {
-		archivedDir, err := storageDirFromArchivedConfig(filepath.Join(extractDir, "config.yaml"))
-		if err != nil {
-			fmt.Printf("Warning: cannot determine archived storage dir (%v) — skipping database path rewrite\n", err)
-		} else {
-			oldDir = archivedDir
+	if mode != BackupModeDocuments {
+		if db == nil {
+			return fmt.Errorf("database connection required for sql-dump restore")
+		}
+		sqlPath := filepath.Join(extractDir, "edub.sql")
+		if err := database.ExecuteDumpFile(context.Background(), db, sqlPath); err != nil {
+			return fmt.Errorf("execute sql dump: %w", err)
 		}
 	}
 
-	if oldDir != "" {
-		oldDir = filepath.Clean(oldDir)
-		storageDir = filepath.Clean(storageDir)
-	}
-	if oldDir != "" && oldDir != storageDir {
-		if err := rewriteStoragePaths(context.Background(), db, oldDir, storageDir); err != nil {
-			return fmt.Errorf("rewrite storage paths: %w", err)
+	if mode != BackupModeDocuments {
+		oldDir := manifest.StorageDir
+		if oldDir == "" {
+			archivedDir, err := storageDirFromArchivedConfig(filepath.Join(extractDir, "config.yaml"))
+			if err != nil {
+				fmt.Printf("Warning: cannot determine archived storage dir (%v) — skipping database path rewrite\n", err)
+			} else {
+				oldDir = archivedDir
+			}
+		}
+
+		if oldDir != "" {
+			oldDir = filepath.Clean(oldDir)
+			storageDir = filepath.Clean(storageDir)
+		}
+		if oldDir != "" && oldDir != storageDir {
+			if err := rewriteStoragePaths(context.Background(), db, oldDir, storageDir); err != nil {
+				return fmt.Errorf("rewrite storage paths: %w", err)
+			}
 		}
 	}
 
-	extractStorage := filepath.Join(extractDir, "storage")
-	if _, err := os.Stat(extractStorage); err == nil {
-		if err := os.MkdirAll(filepath.Dir(storageDir), 0755); err != nil {
-			return fmt.Errorf("create storage parent: %w", err)
-		}
-		tmpStorage, err := os.MkdirTemp(filepath.Dir(storageDir), "storage-swap-*")
-		if err != nil {
-			return fmt.Errorf("create temp storage dir: %w", err)
-		}
-		defer os.RemoveAll(tmpStorage)
+	if mode != BackupModeDatabase {
+		extractStorage := filepath.Join(extractDir, "storage")
+		if _, err := os.Stat(extractStorage); err == nil {
+			if err := os.MkdirAll(filepath.Dir(storageDir), 0755); err != nil {
+				return fmt.Errorf("create storage parent: %w", err)
+			}
+			tmpStorage, err := os.MkdirTemp(filepath.Dir(storageDir), "storage-swap-*")
+			if err != nil {
+				return fmt.Errorf("create temp storage dir: %w", err)
+			}
+			defer os.RemoveAll(tmpStorage)
 
-		if err := copyDir(extractStorage, tmpStorage); err != nil {
-			return fmt.Errorf("copy storage to temp: %w", err)
+			if err := copyDir(extractStorage, tmpStorage); err != nil {
+				return fmt.Errorf("copy storage to temp: %w", err)
+			}
+
+			oldBackup := storageDir + ".old"
+			os.RemoveAll(oldBackup)
+
+			if err := os.Rename(storageDir, oldBackup); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("rename old storage: %w", err)
+			}
+
+			if err := os.Rename(tmpStorage, storageDir); err != nil {
+				os.Rename(oldBackup, storageDir)
+				return fmt.Errorf("rename new storage: %w", err)
+			}
+
+			os.RemoveAll(oldBackup)
 		}
-
-		oldBackup := storageDir + ".old"
-		os.RemoveAll(oldBackup)
-
-		if err := os.Rename(storageDir, oldBackup); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("rename old storage: %w", err)
-		}
-
-		if err := os.Rename(tmpStorage, storageDir); err != nil {
-			os.Rename(oldBackup, storageDir)
-			return fmt.Errorf("rename new storage: %w", err)
-		}
-
-		os.RemoveAll(oldBackup)
 	}
 
 	extractConfig := filepath.Join(extractDir, "config.yaml")

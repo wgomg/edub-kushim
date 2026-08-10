@@ -67,8 +67,8 @@ The CGo binary that performs actual document processing:
 - `kushim queue` — starts the batch queue daemon for background consumption and inbox polling
 - `kushim hugot` — starts the matcher RPC server
 - `kushim setup` — setup wizard
-- `kushim backup` — create a backup of database, config, and storage files
-- `kushim restore` — restore from a backup archive
+- `kushim backup` — create a backup of database, config, and storage files (`--mode full|database|documents`)
+- `kushim restore` — restore from a backup archive (mode-aware: `documents` archives skip the SQL dump, `database` archives skip the storage swap)
 
 ### Communication Flow
 
@@ -301,7 +301,7 @@ PDF optimizer engine/fallback/timeout;
 enricher workers; content analyzer enabled toggle + adapter/provider/model cascading selectors (loaded from model catalog) + token + temperature + reasoning;
 tag matcher engine/timeout, reduce-target-words, chunk size, Hugot model/backend;
 text reducer engine/timeout/target-words;
-backup enabled/disabled, interval, preferred time, keep count, output path.
+backup enabled/disabled, fallback output path, per-mode schedule list (mode, interval, preferred time, keep count, optional per-schedule output path).
 Changes trigger background downloads for any
 missing tessdata or Hugot model files. **Inline tool-status warnings** appear beneath
 each engine selector when the selected external tool is missing, and a persistent

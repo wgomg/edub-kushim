@@ -193,12 +193,18 @@ type HugotResponse struct {
 	Backend string `json:"backend"`
 }
 
-type BackupConfigResponse struct {
-	Enabled  bool    `json:"enabled"`
+type BackupScheduleResponse struct {
+	Mode     string  `json:"mode"`
 	Interval float64 `json:"interval"`
 	Time     string  `json:"time"`
-	Path     string  `json:"path"`
 	Keep     int     `json:"keep"`
+	Path     string  `json:"path"`
+}
+
+type BackupConfigResponse struct {
+	Enabled   bool                     `json:"enabled"`
+	Path      string                   `json:"path"`
+	Schedules []BackupScheduleResponse `json:"schedules"`
 }
 
 type LlmModelsResponse struct {
@@ -297,10 +303,17 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Server.MaxConcurrentBatches = cfg.Srv.MaxConcurrentBatches
 	resp.Server.MaxBatchDelete = cfg.Srv.MaxBatchDelete
 	resp.Backup.Enabled = cfg.Backup.Enabled
-	resp.Backup.Interval = cfg.Backup.Interval
-	resp.Backup.Time = cfg.Backup.Time
 	resp.Backup.Path = cfg.Backup.Path
-	resp.Backup.Keep = cfg.Backup.Keep
+	resp.Backup.Schedules = make([]BackupScheduleResponse, len(cfg.Backup.Schedules))
+	for i, s := range cfg.Backup.Schedules {
+		resp.Backup.Schedules[i] = BackupScheduleResponse{
+			Mode:     s.Mode,
+			Interval: s.Interval,
+			Time:     s.Time,
+			Keep:     s.Keep,
+			Path:     s.Path,
+		}
+	}
 	resp.AvailableEngines = config.AvailableEngines
 	resp.AvailableFileTypes = buildAvailableFileTypes()
 	return resp

@@ -246,11 +246,29 @@ type ToolConfig struct {
 	Timeout time.Duration `yaml:"timeout" json:"timeout"`
 }
 
-type BackupConfig struct {
-	Enabled  bool    `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
+type BackupSchedule struct {
+	Mode     string  `mapstructure:"mode" yaml:"mode" json:"mode"`
 	Interval float64 `mapstructure:"interval" yaml:"interval" json:"interval"`
 	Time     string  `mapstructure:"time" yaml:"time" json:"time"`
 	Path     string  `mapstructure:"path" yaml:"path" json:"path"`
+	Keep     int     `mapstructure:"keep" yaml:"keep" json:"keep"`
+}
+
+var ValidBackupModes = map[string]struct{}{
+	"full":      {},
+	"database":  {},
+	"documents": {},
+}
+
+type BackupConfig struct {
+	Enabled   bool             `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
+	Path      string           `mapstructure:"path" yaml:"path" json:"path"`
+	Schedules []BackupSchedule `mapstructure:"schedules" yaml:"schedules" json:"schedules"`
+
+	// Deprecated flat fields, kept so finalizeConfig can auto-convert
+	// legacy configs into a single full schedule.
+	Interval float64 `mapstructure:"interval" yaml:"interval" json:"interval"`
+	Time     string  `mapstructure:"time" yaml:"time" json:"time"`
 	Keep     int     `mapstructure:"keep" yaml:"keep" json:"keep"`
 }
 
@@ -410,10 +428,7 @@ func DefaultConfig(configDir string) *Config {
 			},
 		},
 		Backup: BackupConfig{
-			Enabled:  false,
-			Interval: 1,
-			Time:     "02:00",
-			Keep:     7,
+			Enabled: false,
 		},
 		Enricher: EnricherConfig{
 			Workers: 1,
@@ -571,11 +586,20 @@ func finalizeConfig(cfg *Config, configDir string) error {
 	}
 
 	if cfg.Backup.Enabled {
-		if cfg.Backup.Interval <= 0 {
-			return fmt.Errorf("backup.interval must be > 0")
-		}
-		if _, err := parseHHMM(cfg.Backup.Time, false); err != nil {
-			return fmt.Errorf("backup.time: %w", err)
+		switch {
+		case len(cfg.Backup.Schedules) > 0 && (cfg.Backup.Interval > 0 || cfg.Backup.Time != "" || cfg.Backup.Keep > 0):
+			return fmt.Errorf("remove deprecated flat backup fields (interval, time, keep) when using backup.schedules")
+		case len(cfg.Backup.Schedules) > 0:
+		case cfg.Backup.Interval > 0:
+			cfg.Backup.Schedules = []BackupSchedule{{
+				Mode:     "full",
+				Interval: cfg.Backup.Interval,
+				Time:     cfg.Backup.Time,
+				Path:     cfg.Backup.Path,
+				Keep:     cfg.Backup.Keep,
+			}}
+		default:
+			return fmt.Errorf("at least one backup schedule is required when backup.enabled is true")
 		}
 		if cfg.Backup.Path == "" {
 			cfg.Backup.Path = filepath.Join(configDir, "backups")
@@ -583,6 +607,33 @@ func finalizeConfig(cfg *Config, configDir string) error {
 		cfg.Backup.Path = expandPath(cfg.Backup.Path, homeDir)
 		if err := os.MkdirAll(cfg.Backup.Path, 0755); err != nil {
 			return fmt.Errorf("failed to create backup directory: %w", err)
+		}
+		seen := make(map[string]bool, len(cfg.Backup.Schedules))
+		for i := range cfg.Backup.Schedules {
+			s := &cfg.Backup.Schedules[i]
+			if _, ok := ValidBackupModes[s.Mode]; !ok {
+				return fmt.Errorf("backup.schedules[%d].mode must be one of full, database, documents, got %q", i, s.Mode)
+			}
+			if seen[s.Mode] {
+				return fmt.Errorf("backup.schedules: duplicate mode %q — each mode can appear at most once", s.Mode)
+			}
+			seen[s.Mode] = true
+			if s.Interval <= 0 {
+				return fmt.Errorf("backup.schedules[%d].interval must be > 0", i)
+			}
+			if s.Time == "" {
+				s.Time = "02:00"
+			}
+			if _, err := parseHHMM(s.Time, false); err != nil {
+				return fmt.Errorf("backup.schedules[%d].time: %w", i, err)
+			}
+			if s.Path == "" {
+				s.Path = cfg.Backup.Path
+			}
+			s.Path = expandPath(s.Path, homeDir)
+			if err := os.MkdirAll(s.Path, 0755); err != nil {
+				return fmt.Errorf("failed to create backup directory for schedule %q: %w", s.Mode, err)
+			}
 		}
 	}
 
