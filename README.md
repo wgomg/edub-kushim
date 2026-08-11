@@ -207,6 +207,7 @@ New to the codebase? The guides in [`docs/developer-guide/`](docs/developer-guid
 - **Full-text search** — PostgreSQL tsvector with `ts_rank` ranking and `ts_headline` snippet highlighting; structured search with metadata filters
 - **Structured search** — metadata filters (tags, people, document type, language, date range, file size) combined with full-text queries
 - **Async enrichment** — task queue with worker pools, batch tracking, progress polling; TextRank reduction before LLM
+- **Fallback LLM provider** — optional second provider/model tried automatically when the primary fails with a provider error (network, credits, rate limit, malformed response); disabled by default
 - **Post-LLM consolidation** — normalized tags re-matched against canonical embeddings to fix casing and synonym mismatches
 - **User accounts & auth** — bcrypt passwords, JWT sessions, API keys, role-based access (admin/editor/viewer)
 - **Backup & restore** — App-level PostgreSQL SQL dump (schema + data in a transaction), timestamped `tar.gz` archives with config + storage; per-mode backups (`full`/`database`/`documents`) with independent schedules, retention, and mode-aware restore

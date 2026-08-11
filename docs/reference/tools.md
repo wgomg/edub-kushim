@@ -6,13 +6,13 @@
 
 `Runner`
 
-- **Fields**: `logger`, `config`, `textExtractor`, `ocr`, `pdfOptimizer`, `tagMatcher tagmatcher.Matcher`, `contentAnalyzer`, `textReducer`
+- **Fields**: `logger`, `config`, `textExtractor`, `ocr`, `pdfOptimizer`, `tagMatcher tagmatcher.Matcher`, `contentAnalyzer`, `fallbackAnalyzer` (nil unless `enricher.contentanalyzer.fallback.enabled`), `textReducer`
 - **Functions**:
-  - `NewRunner(logger, cfg, tools []string) *Runner` — Initializes only the listed tool adapters (e.g., `["textextractor","ocr","pdfoptimizer"]` for consumer). Loads the LLM model catalog from `<configDir>/model_catalog.json` via `llm.NewRegistry`. No longer creates a tagmatcher internally. Content analyzer is created via the new adapter-based factory: `contentanalyzer.NewContentAnalyzer(logger, cfg.ToolConfig, &cfg.Enricher.ContentAnalyzer.Llm, cfg.Enricher.ContentAnalyzer.PromptTemplate, reg)`.
+  - `NewRunner(logger, cfg, tools []string) *Runner` — Initializes only the listed tool adapters (e.g., `["textextractor","ocr","pdfoptimizer"]` for consumer). Loads the LLM model catalog from `<configDir>/model_catalog.json` via `llm.NewRegistry`. No longer creates a tagmatcher internally. Content analyzer is created via the new adapter-based factory: `contentanalyzer.NewContentAnalyzer(logger, cfg.ToolConfig, &cfg.Enricher.ContentAnalyzer.Llm, cfg.Enricher.ContentAnalyzer.PromptTemplate, reg)`. When `cfg.Enricher.ContentAnalyzer.Fallback` is non-nil and enabled, a second analyzer is built from the fallback's `Llm` block with the same factory and stored in `fallbackAnalyzer`.
   - `NewRunnerWithMatcher(logger, cfg, tools, matcher tagmatcher.Matcher) *Runner` — Calls `NewRunner` then conditionally sets `r.tagMatcher` if `matcher != nil` and `"tagmatcher"` is in the tools list.
-- **Methods**: `ExtractText`, `OCR(ctx, docId, path)`, `OptimizePdf(ctx, docId, path)`, `ReduceContent`, `MatchTags(ctx, docId, input)`, `AnalyzeContent`, `AnalyzeDocType`
+- **Methods**: `ExtractText`, `OCR(ctx, docId, path)`, `OptimizePdf(ctx, docId, path)`, `ReduceContent`, `MatchTags(ctx, docId, input)`, `AnalyzeContent`, `AnalyzeDocType` — the two analyzer methods retry through `fallbackAnalyzer` when the primary error passes `isProviderError` (provider-attributable failure and a fallback is configured); request-side and lifecycle errors never retry.
 - **Result types**: `TextExtractionResult`, `OCRResult`, `PdfOptimizationResult`, `TextReducerResult` (with Text, WordCount, CharCount, TargetWordCount), `TagMatchResult`, `ContentAnalysisResult` (with People)
-- **Helper**: `runWithTimeout[T](ctx, fn) (T, error)` — Generic goroutine wrapper with context cancellation
+- **Helper**: `runWithTimeout[T](ctx, fn) (T, error)` — Generic goroutine wrapper with context cancellation. `isProviderError(err) bool` — true for provider-attributable failures (network, HTTP status, credits); false for `ContentTooLargeError`, `TokenLimitError`, `context.Canceled`, `context.DeadlineExceeded`.
 - **Timeout behavior**: `ExtractText`, `OCR`, `ReduceContent`, and `MatchTags` each read their component's configured `Timeout` and only wrap the context with `context.WithTimeout` when the value is > 0. A timeout of 0 means no artificial deadline — parent context cancellation still propagates via `runWithTimeout`. The same guarded pattern is used by `OptimizePdf`. Config validation rejects negative timeout values at load time.
 
 ---

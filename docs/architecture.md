@@ -208,6 +208,10 @@ succeeds — `activateChildEnrich` re-activates the discarded enrich task to
      For non-Latin names (Korean, Arabic, Cyrillic, etc.), the LLM is prompted to
      provide a `name_romanized` field alongside the original name.
      If the response is entirely empty, one automatic retry is performed.
+     When a fallback LLM is configured (`enricher.contentanalyzer.fallback.enabled`), a
+     provider-attributable failure (API down/unreachable, credit/rate-limit, malformed
+     response, provider-side timeout) retries the same request through the second analyzer;
+     request-side failures (token budget, cancellation, timeout) never trigger it.
 
  3a. **Document Type Refinement (second pass, optional)** — if TextRank actually reduced the
     document content (i.e. `document.WordCount > target_word_count`), a second LLM call

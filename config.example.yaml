@@ -98,6 +98,15 @@ enricher:
       # token: ''
       # temperature: 0.0
       # request_delay: 1  # seconds to sleep after each LLM request (0 = off)
+    # fallback:                 # optional second LLM tried on provider errors
+    #   enabled: false
+    #   llm:
+    #     adapter: 'openai-compatible'
+    #     provider: 'deepseek'
+    #     model: 'deepseek-chat'
+    #     token: ''
+    #     temperature: 0.0
+    #     request_delay: 1
 
   tagmatcher:
     timeout: 120    # 0 = disabled (no artificial deadline)

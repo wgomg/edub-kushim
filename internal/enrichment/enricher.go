@@ -140,7 +140,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 			pauseBatch := e.config.Enricher.ContentAnalyzer.PauseOnCreditError
 			return nil, &task.Error{
 				ReqID:      logId,
-				Err:        fmt.Errorf("LLM credit exhausted (%s): %w", e.config.Enricher.ContentAnalyzer.Llm.Provider, credErr),
+				Err:        fmt.Errorf("LLM credit exhausted (%s): %w", credErr.Provider, credErr),
 				PauseBatch: pauseBatch,
 			}
 		default:

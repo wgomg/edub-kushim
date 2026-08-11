@@ -165,9 +165,15 @@ type ContentAnalyzerResponse struct {
 	Enabled            bool                      `json:"enabled"`
 	Timeout            int                       `json:"timeout"`
 	Llm                LlmConfigResponse         `json:"llm"`
+	Fallback           *FallbackConfigResponse   `json:"fallback,omitempty"`
 	PromptTemplate     string                    `json:"prompt_template,omitempty"`
 	DocTypeRefinement  DocTypeRefinementResponse `json:"doc_type_refinement"`
 	PauseOnCreditError bool                      `json:"pause_on_credit_error"`
+}
+
+type FallbackConfigResponse struct {
+	Enabled bool              `json:"enabled"`
+	Llm     LlmConfigResponse `json:"llm"`
 }
 
 type LlmConfigResponse struct {
@@ -272,6 +278,21 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Enricher.ContentAnalyzer.Llm.ReasoningEffort = cfg.Enricher.ContentAnalyzer.Llm.ReasoningEffort
 	resp.Enricher.ContentAnalyzer.Llm.Temperature = cfg.Enricher.ContentAnalyzer.Llm.Temperature
 	resp.Enricher.ContentAnalyzer.Llm.RequestDelay = cfg.Enricher.ContentAnalyzer.Llm.RequestDelay
+	if fb := cfg.Enricher.ContentAnalyzer.Fallback; fb != nil {
+		resp.Enricher.ContentAnalyzer.Fallback = &FallbackConfigResponse{
+			Enabled: fb.Enabled,
+			Llm: LlmConfigResponse{
+				Adapter:         fb.Llm.Adapter,
+				Provider:        fb.Llm.Provider,
+				Model:           fb.Llm.Model,
+				Token:           fb.Llm.Token,
+				Reasoning:       fb.Llm.Reasoning,
+				ReasoningEffort: fb.Llm.ReasoningEffort,
+				Temperature:     fb.Llm.Temperature,
+				RequestDelay:    fb.Llm.RequestDelay,
+			},
+		}
+	}
 	resp.Enricher.TagMatcher.Timeout = cfg.Enricher.TagMatcher.Timeout
 	resp.Enricher.TagMatcher.ReduceTargetWords = cfg.Enricher.TagMatcher.ReduceTargetWords
 	resp.Enricher.TagMatcher.ChunkSize = cfg.Enricher.TagMatcher.ChunkSize

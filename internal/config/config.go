@@ -195,9 +195,15 @@ type ContentAnalyzerConfig struct {
 	Enabled            bool                    `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
 	Timeout            int                     `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
 	Llm                LlmConfig               `mapstructure:"llm" yaml:"llm" json:"llm"`
+	Fallback           *FallbackConfig         `mapstructure:"fallback" yaml:"fallback" json:"fallback,omitempty"`
 	PromptTemplate     string                  `mapstructure:"prompt_template" yaml:"prompt_template" json:"prompt_template,omitempty"`
 	DocTypeRefinement  DocTypeRefinementConfig `mapstructure:"doc_type_refinement" yaml:"doc_type_refinement" json:"doc_type_refinement"`
 	PauseOnCreditError bool                    `mapstructure:"pause_on_credit_error" yaml:"pause_on_credit_error" json:"pause_on_credit_error"`
+}
+
+type FallbackConfig struct {
+	Enabled bool      `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
+	Llm     LlmConfig `mapstructure:"llm" yaml:"llm" json:"llm"`
 }
 
 type EnricherConfig struct {
@@ -547,6 +553,22 @@ func finalizeConfig(cfg *Config, configDir string) error {
 	}
 	if cfg.Enricher.ContentAnalyzer.Llm.RequestDelay < 0 || cfg.Enricher.ContentAnalyzer.Llm.RequestDelay > maxRequestDelaySeconds {
 		return fmt.Errorf("enricher.contentanalyzer.llm.request_delay must be between 0 and %d", maxRequestDelaySeconds)
+	}
+
+	if fb := cfg.Enricher.ContentAnalyzer.Fallback; fb != nil && fb.Enabled {
+		llmCfg := &fb.Llm
+		if llmCfg.Adapter == "" {
+			return fmt.Errorf("enricher.contentanalyzer.fallback.llm.adapter is required when the fallback is enabled")
+		}
+		if llmCfg.Provider == "" {
+			return fmt.Errorf("enricher.contentanalyzer.fallback.llm.provider is required when the fallback is enabled")
+		}
+		if llmCfg.Model == "" {
+			return fmt.Errorf("enricher.contentanalyzer.fallback.llm.model is required when the fallback is enabled")
+		}
+		if llmCfg.RequestDelay < 0 || llmCfg.RequestDelay > maxRequestDelaySeconds {
+			return fmt.Errorf("enricher.contentanalyzer.fallback.llm.request_delay must be between 0 and %d", maxRequestDelaySeconds)
+		}
 	}
 
 	homeDir, err := os.UserHomeDir()

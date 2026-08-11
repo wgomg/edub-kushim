@@ -338,6 +338,18 @@ enricher decides what to do (§10). Timeout enforcement comes from
 `runWithTimeout` at the runner level (`internal/tools/runner.go:77-98`); the
 adapters' `http.Client` deliberately has no timeout of its own.
 
+**Provider fallback** — when `enricher.contentanalyzer.fallback` is configured
+(`enabled: true`), the Runner builds a second `ContentAnalyzer` from the
+fallback `llm` block (same factory, same prompt template). `AnalyzeContent`
+and `AnalyzeDocType` classify each primary error with `isProviderError`
+(`runner.go:376-384`): anything that is *not* a request-side or lifecycle
+failure — i.e. not `ContentTooLargeError`, `TokenLimitError`,
+`context.Canceled`, or `context.DeadlineExceeded` — triggers one fallback
+retry of the same request. The fallback runs under the same context/deadline
+as the primary; its own `request_delay` applies after its request. If the
+fallback fails too, its error (e.g. an `InsufficientCreditsError` naming the
+fallback provider) is what the enricher sees.
+
 ---
 
 ## 8. Token estimation
@@ -420,11 +432,15 @@ for i := range 2 {
 ```
 
    - Too-large → **shrink the reduced text by the token ratio × 0.9 and
-     retry once**; a second failure (or below `minTargetWords` = 100) errors
-     with `"document too large for model %s/%s: %d tokens exceeds budget
-     (max_input_tokens=%d)"` (`enricher.go:156-162`).
+      retry once**; a second failure (or below `minTargetWords` = 100) errors
+      with `"document too large for model %s/%s: %d tokens exceeds budget
+      (max_input_tokens=%d)"` (`enricher.go:156-162`).
    - Credit error → the typed `task.Error` with `PauseBatch` — the task
-     runner pauses the whole batch (§12 of the task-system guide).
+      runner pauses the whole batch (§12 of the task-system guide). With a
+      fallback configured, the batch pauses only when **both** primary and
+      fallback failed with a credit error (the runner retries through the
+      fallback first, §7); the reported provider in the error is the actual
+      failing one (`credErr.Provider`, which may be the fallback).
 6. **Empty-result retry** (`enricher.go:170-179`): if the analysis came back
    with every field empty (`isEmptyAnalysis`, `enricher.go:435-437`), one
    more `AnalyzeContent`; still empty → error.
@@ -482,6 +498,8 @@ Under `enricher` (`internal/config/config.go:164-195`):
 | `contentanalyzer.llm.provider` / `model` / `token` | — | endpoint + model + auth (token omitted from YAML on read) |
 | `contentanalyzer.llm.temperature` | — | catalog-gated |
 | `contentanalyzer.llm.request_delay` | `1` (s) | seconds to sleep after each LLM request; `0` = off, max `60` |
+| `contentanalyzer.fallback.enabled` | `false` | build a second analyzer and retry provider errors through it |
+| `contentanalyzer.fallback.llm.adapter` / `provider` / `model` / `token` | — | same shape as the primary `llm` block; required (with `request_delay` 0–60) only when the fallback is enabled |
 | `tagmatcher.reduce_target_words` | `4000` | matcher reduction target |
 | `tagmatcher.hugot.*` | — | model/backend (§9 of the semantic-matching guide) |
 
@@ -525,7 +543,9 @@ separate errors, so setup can't silently half-configure. `Reasoning` /
 - **Batch pausing is contagious by design** — one credit error pauses the
   whole batch (`PauseOnCreditError`), and paused batches refuse to run until
   explicitly resumed. Toggling it off makes credit errors fail per-task
-  instead.
+  instead. With a fallback configured, a primary credit error alone does not
+  pause the batch — the fallback is tried first, and only a fallback credit
+  error (or a primary credit error with no fallback) pauses it.
 - **`tokenBudgetRatio = 0.9` is a safety margin** — the shrink target is
   90% of the budget ratio, absorbing token-estimate error. Tightening it
   invites a second too-large failure.

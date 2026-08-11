@@ -160,6 +160,70 @@ func TestConfigResponseFrom_RequestDelay(t *testing.T) {
 	}
 }
 
+func TestConfigResponseFrom_Fallback(t *testing.T) {
+	t.Run("omits fallback when nil", func(t *testing.T) {
+		cfg := config.DefaultConfig("/tmp/test")
+		cfg.Enricher.ContentAnalyzer.Fallback = nil
+
+		resp := ConfigResponseFrom(cfg)
+
+		if resp.Enricher.ContentAnalyzer.Fallback != nil {
+			t.Errorf("Fallback = %+v, want nil", resp.Enricher.ContentAnalyzer.Fallback)
+		}
+	})
+
+	t.Run("maps enabled fallback with all llm fields", func(t *testing.T) {
+		cfg := config.DefaultConfig("/tmp/test")
+		cfg.Enricher.ContentAnalyzer.Fallback = &config.FallbackConfig{
+			Enabled: true,
+			Llm: config.LlmConfig{
+				Adapter:         "openai-compatible",
+				Provider:        "deepseek",
+				Model:           "deepseek-chat",
+				Token:           "sk-fb-123",
+				Temperature:     0.7,
+				RequestDelay:    2,
+				Reasoning:       true,
+				ReasoningEffort: "high",
+			},
+		}
+
+		resp := ConfigResponseFrom(cfg)
+
+		if resp.Enricher.ContentAnalyzer.Fallback == nil {
+			t.Fatal("Fallback = nil, want populated")
+		}
+		fb := resp.Enricher.ContentAnalyzer.Fallback
+		if !fb.Enabled {
+			t.Error("Enabled should be true")
+		}
+		if fb.Llm.Adapter != "openai-compatible" {
+			t.Errorf("Llm.Adapter = %q", fb.Llm.Adapter)
+		}
+		if fb.Llm.Provider != "deepseek" {
+			t.Errorf("Llm.Provider = %q", fb.Llm.Provider)
+		}
+		if fb.Llm.Model != "deepseek-chat" {
+			t.Errorf("Llm.Model = %q", fb.Llm.Model)
+		}
+		if fb.Llm.Token != "sk-fb-123" {
+			t.Errorf("Llm.Token = %q", fb.Llm.Token)
+		}
+		if fb.Llm.Temperature != 0.7 {
+			t.Errorf("Llm.Temperature = %v", fb.Llm.Temperature)
+		}
+		if fb.Llm.RequestDelay != 2 {
+			t.Errorf("Llm.RequestDelay = %v", fb.Llm.RequestDelay)
+		}
+		if !fb.Llm.Reasoning {
+			t.Error("Llm.Reasoning should be true")
+		}
+		if fb.Llm.ReasoningEffort != "high" {
+			t.Errorf("Llm.ReasoningEffort = %q", fb.Llm.ReasoningEffort)
+		}
+	})
+}
+
 func TestConfigResponseFrom_ConsumerFields(t *testing.T) {
 	cfg := config.DefaultConfig("/tmp/test")
 	cfg.Consumer.SupportedFiles = []string{".pdf", ".tiff"}

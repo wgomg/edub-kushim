@@ -17,6 +17,7 @@
 	let toolStatus = $state([]);
 	let pollInterval;
 	let showToken = $state(false);
+	let showFallbackToken = $state(false);
 
 	let activeTab = $state(
 		typeof window !== 'undefined'
@@ -96,6 +97,12 @@
 	let selectedProviderModels = $derived(
 		llmModels.providers[cfg?.enricher?.contentanalyzer?.llm?.provider] ?? []
 	);
+	let fallbackAdapterProviders = $derived(
+		llmModels.adapters[cfg?.enricher?.contentanalyzer?.fallback?.llm?.adapter] ?? []
+	);
+	let fallbackProviderModels = $derived(
+		llmModels.providers[cfg?.enricher?.contentanalyzer?.fallback?.llm?.provider] ?? []
+	);
 
 	const userColumns = [
 		{
@@ -137,10 +144,21 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 		}
 	];
 
+	function ensureFallbackBlock() {
+		if (!cfg) return;
+		const ca = cfg.enricher.contentanalyzer;
+		if (ca.fallback) return;
+		ca.fallback = {
+			enabled: false,
+			llm: { adapter: '', provider: '', model: '', token: '', temperature: 0, request_delay: 0 }
+		};
+	}
+
 	onMount(async () => {
 		const loaded = await api.config.get();
 		if (loaded) {
 			cfg = loaded;
+			ensureFallbackBlock();
 			syncMimeCheckboxes();
 			checkStatus();
 			snapshotState();
@@ -268,6 +286,22 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			'enricher.contentanalyzer.llm.request_delay': Number(
 				cfg.enricher.contentanalyzer.llm.request_delay
 			),
+			'enricher.contentanalyzer.fallback.enabled':
+				cfg.enricher.contentanalyzer.fallback?.enabled ?? false,
+			'enricher.contentanalyzer.fallback.llm.adapter':
+				cfg.enricher.contentanalyzer.fallback?.llm?.adapter ?? '',
+			'enricher.contentanalyzer.fallback.llm.provider':
+				cfg.enricher.contentanalyzer.fallback?.llm?.provider ?? '',
+			'enricher.contentanalyzer.fallback.llm.model':
+				cfg.enricher.contentanalyzer.fallback?.llm?.model ?? '',
+			'enricher.contentanalyzer.fallback.llm.token':
+				cfg.enricher.contentanalyzer.fallback?.llm?.token ?? '',
+			'enricher.contentanalyzer.fallback.llm.temperature': Number(
+				cfg.enricher.contentanalyzer.fallback?.llm?.temperature ?? 0
+			),
+			'enricher.contentanalyzer.fallback.llm.request_delay': Number(
+				cfg.enricher.contentanalyzer.fallback?.llm?.request_delay ?? 0
+			),
 			'enricher.tagmatcher.timeout': Number(cfg.enricher.tagmatcher.timeout),
 			'enricher.tagmatcher.reduce_target_words': Number(
 				cfg.enricher.tagmatcher.reduce_target_words
@@ -312,6 +346,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			const loaded = await api.config.get();
 			if (loaded) {
 				cfg = loaded;
+				ensureFallbackBlock();
 				syncMimeCheckboxes();
 				snapshotState();
 			}
@@ -1349,6 +1384,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						<label class="relative inline-flex cursor-pointer items-center">
 							<input
 								type="checkbox"
+								aria-label="Enable content analyzer"
 								bind:checked={cfg.enricher.contentanalyzer.enabled}
 								class="peer sr-only"
 							/>
@@ -1595,6 +1631,155 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 									/>
 								</div>
 							</div>
+						</div>
+
+						<div class="mt-6 rounded-lg border border-clay-800 bg-clay-950 p-4">
+							<div class="mb-3 flex items-center justify-between">
+								<h3 class="text-sm font-semibold text-parchment-200">Fallback LLM</h3>
+								<label class="relative inline-flex cursor-pointer items-center">
+									<input
+										type="checkbox"
+										aria-label="Enable fallback LLM"
+										bind:checked={cfg.enricher.contentanalyzer.fallback.enabled}
+										class="peer sr-only"
+									/>
+									<div
+										class="h-6 w-11 rounded-full border border-clay-700 bg-clay-800 peer-checked:border-gold-500 peer-checked:bg-gold-600 peer-focus-visible:ring-2 peer-focus-visible:ring-gold-500 peer-focus-visible:ring-offset-2 after:absolute after:top-0.5 after:left-0.5 after:h-5 after:w-5 after:rounded-full after:bg-parchment-400 after:transition-transform peer-checked:after:translate-x-full peer-checked:after:bg-white"
+									></div>
+									<span class="ml-2 text-sm text-parchment-300">Enabled</span>
+								</label>
+							</div>
+							{#if cfg.enricher.contentanalyzer.fallback.enabled}
+								<div class="grid gap-4 sm:grid-cols-3">
+									<div>
+										<label
+											for="llm-fallback-adapter"
+											class="mb-1 block text-sm font-medium text-parchment-200"
+										>
+											Adapter
+										</label>
+										<select
+											id="llm-fallback-adapter"
+											name="llm-fallback-adapter"
+											bind:value={cfg.enricher.contentanalyzer.fallback.llm.adapter}
+											class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+										>
+											{#each Object.keys(llmModels.adapters) as adapter (adapter)}
+												<option value={adapter}>{adapter}</option>
+											{/each}
+										</select>
+									</div>
+
+									<div>
+										<label
+											for="llm-fallback-provider"
+											class="mb-1 block text-sm font-medium text-parchment-200"
+										>
+											Provider
+										</label>
+										<select
+											id="llm-fallback-provider"
+											name="llm-fallback-provider"
+											bind:value={cfg.enricher.contentanalyzer.fallback.llm.provider}
+											class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+										>
+											{#each fallbackAdapterProviders as provider (provider)}
+												<option value={provider}>{provider}</option>
+											{/each}
+										</select>
+									</div>
+
+									<div>
+										<label
+											for="llm-fallback-model"
+											class="mb-1 block text-sm font-medium text-parchment-200"
+										>
+											Model
+										</label>
+										<select
+											id="llm-fallback-model"
+											name="llm-fallback-model"
+											bind:value={cfg.enricher.contentanalyzer.fallback.llm.model}
+											class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+										>
+											{#each fallbackProviderModels as m (m.id)}
+												<option value={m.id}>{m.id}</option>
+											{/each}
+										</select>
+									</div>
+								</div>
+
+								<div class="mt-4 grid gap-4 sm:grid-cols-3">
+									<div>
+										<label
+											for="llm-fallback-token"
+											class="mb-1 block text-sm font-medium text-parchment-200"
+										>
+											Token
+										</label>
+										<div class="flex gap-2">
+											<input
+												id="llm-fallback-token"
+												type={showFallbackToken ? 'text' : 'password'}
+												bind:value={cfg.enricher.contentanalyzer.fallback.llm.token}
+												placeholder="sk-…"
+												autocomplete="off"
+												class="flex-1 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+											/>
+											<button
+												type="button"
+												onclick={() => (showFallbackToken = !showFallbackToken)}
+												class="rounded-lg border border-clay-800 px-3 text-sm text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+											>
+												{showFallbackToken ? 'Hide' : 'Show'}
+											</button>
+										</div>
+									</div>
+									<div>
+										<label
+											for="llm-fallback-temperature"
+											class="mb-1 block text-sm font-medium text-parchment-200"
+										>
+											Temperature
+										</label>
+										<input
+											id="llm-fallback-temperature"
+											name="llm-fallback-temperature"
+											autocomplete="off"
+											type="number"
+											inputmode="numeric"
+											min="0"
+											max="2"
+											step="0.1"
+											bind:value={cfg.enricher.contentanalyzer.fallback.llm.temperature}
+											class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+										/>
+									</div>
+									<div>
+										<label
+											for="llm-fallback-request-delay"
+											class="mb-1 block text-sm font-medium text-parchment-200"
+										>
+											Request delay (s)
+										</label>
+										<input
+											id="llm-fallback-request-delay"
+											name="llm-fallback-request-delay"
+											autocomplete="off"
+											type="number"
+											inputmode="numeric"
+											min="0"
+											max="60"
+											step="0.1"
+											bind:value={cfg.enricher.contentanalyzer.fallback.llm.request_delay}
+											class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+										/>
+										<p class="mt-1 text-xs text-parchment-500">
+											Seconds to sleep after each fallback request; 0 = off, max 60.
+										</p>
+									</div>
+								</div>
+							{/if}
 						</div>
 					{/if}
 				</section>

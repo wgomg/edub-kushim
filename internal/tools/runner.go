@@ -34,6 +34,7 @@ type Runner struct {
 	documentConverter converter.DocumentConverter
 	tagMatcher       tagmatcher.Matcher
 	contentAnalyzer  contentanalyzer.ContentAnalyzer
+	fallbackAnalyzer contentanalyzer.ContentAnalyzer
 	textReducer      textreducer.TextReducer
 }
 
@@ -148,6 +149,13 @@ func NewRunner(logger *utils.Logger, cfg *config.Config, tools []string) *Runner
 				logger.Error(nil, "create content analyzer: %v", caErr)
 			}
 			r.contentAnalyzer = ca
+			if fb := cfg.Enricher.ContentAnalyzer.Fallback; fb != nil && fb.Enabled {
+				fbCa, fbErr := contentanalyzer.NewContentAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.Enricher.ContentAnalyzer.Timeout) * time.Second}, &fb.Llm, cfg.Enricher.ContentAnalyzer.PromptTemplate, reg)
+				if fbErr != nil {
+					logger.Error(nil, "create fallback content analyzer: %v", fbErr)
+				}
+				r.fallbackAnalyzer = fbCa
+			}
 		}
 	}
 	return r
@@ -365,6 +373,15 @@ func (r *Runner) MatchTags(ctx context.Context, docId, input string) (*TagMatchR
 	return &TagMatchResult{Tags: tags}, nil
 }
 
+func isProviderError(err error) bool {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var ctle *contentanalyzer.ContentTooLargeError
+	var tokErr *contentanalyzer.TokenLimitError
+	return !errors.As(err, &ctle) && !errors.As(err, &tokErr)
+}
+
 func (r *Runner) AnalyzeContent(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*ContentAnalysisResult, error) {
 	if r.contentAnalyzer == nil {
 		return nil, fmt.Errorf("content analyzer not configured")
@@ -378,6 +395,18 @@ func (r *Runner) AnalyzeContent(ctx context.Context, text string, docTypes []dat
 	result, err := runWithTimeout(ctx, func() (*contentanalyzer.AnalysisResult, error) {
 		return r.contentAnalyzer.Analyze(ctx, text, docTypes, peopleTypes, tagSuggestions)
 	})
+	if err != nil && isProviderError(err) && r.fallbackAnalyzer != nil {
+		fbProvider, fbModel := "?", "?"
+		if fb := r.config.Enricher.ContentAnalyzer.Fallback; fb != nil {
+			fbProvider, fbModel = fb.Llm.Provider, fb.Llm.Model
+		}
+		r.logger.Info(nil, "primary analyzer (%s/%s) failed: %v — trying fallback (%s/%s)",
+			r.config.Enricher.ContentAnalyzer.Llm.Provider, r.config.Enricher.ContentAnalyzer.Llm.Model,
+			err, fbProvider, fbModel)
+		result, err = runWithTimeout(ctx, func() (*contentanalyzer.AnalysisResult, error) {
+			return r.fallbackAnalyzer.Analyze(ctx, text, docTypes, peopleTypes, tagSuggestions)
+		})
+	}
 	if err != nil {
 		return nil, fmt.Errorf("content analyzer: %w", err)
 	}
@@ -415,6 +444,18 @@ func (r *Runner) AnalyzeDocType(ctx context.Context, prevResult *ContentAnalysis
 	result, err := runWithTimeout(ctx, func() (string, error) {
 		return r.contentAnalyzer.AnalyzeDocType(ctx, prev, headTailText, docTypes, metadata)
 	})
+	if err != nil && isProviderError(err) && r.fallbackAnalyzer != nil {
+		fbProvider, fbModel := "?", "?"
+		if fb := r.config.Enricher.ContentAnalyzer.Fallback; fb != nil {
+			fbProvider, fbModel = fb.Llm.Provider, fb.Llm.Model
+		}
+		r.logger.Info(nil, "primary analyzer (%s/%s) failed doc-type refinement: %v — trying fallback (%s/%s)",
+			r.config.Enricher.ContentAnalyzer.Llm.Provider, r.config.Enricher.ContentAnalyzer.Llm.Model,
+			err, fbProvider, fbModel)
+		result, err = runWithTimeout(ctx, func() (string, error) {
+			return r.fallbackAnalyzer.AnalyzeDocType(ctx, prev, headTailText, docTypes, metadata)
+		})
+	}
 	if err != nil {
 		return "", fmt.Errorf("doc type refinement: %w", err)
 	}
