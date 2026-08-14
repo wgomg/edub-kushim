@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { api } from '$lib/api';
+	import { formatSize } from '$lib/utils/html.js';
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
 	import * as authStore from '$lib/stores/authStore.js';
@@ -205,6 +206,7 @@
 									id="edit-title"
 									type="text"
 									bind:value={editTitle}
+									autocomplete="off"
 									class="mt-0.5 w-full rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
 								/>
 							</div>
@@ -227,6 +229,7 @@
 									type="text"
 									bind:value={editLanguage}
 									placeholder="und"
+									autocomplete="off"
 									class="mt-0.5 w-full rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
 								/>
 							</div>
@@ -281,7 +284,7 @@
 									{#each tagResults as tag, i (i)}
 										<button
 											onclick={() => selectTag(tag)}
-											class="w-full px-2 py-1 text-left text-sm text-parchment-200 hover:bg-clay-800"
+											class="w-full px-2 py-1 text-left text-sm text-parchment-200 hover:bg-clay-800 focus-visible:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 										>
 											{tag.name}
 										</button>
@@ -340,7 +343,7 @@
 									{#each peopleResults as person, i (i)}
 										<button
 											onclick={() => selectPerson(person)}
-											class="w-full px-2 py-1 text-left text-sm text-parchment-200 hover:bg-clay-800"
+											class="w-full px-2 py-1 text-left text-sm text-parchment-200 hover:bg-clay-800 focus-visible:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 										>
 											{person.name}
 										</button>
@@ -380,11 +383,7 @@
 				</div>
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-xs font-medium tracking-wider text-parchment-500 uppercase">File Size</p>
-					<p class="mt-1 text-parchment-200">
-						{new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(
-							doc.file_size / 1024
-						)}\u00A0KB
-					</p>
+					<p class="mt-1 text-parchment-200">{formatSize(doc.file_size)}</p>
 				</div>
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-xs font-medium tracking-wider text-parchment-500 uppercase">
