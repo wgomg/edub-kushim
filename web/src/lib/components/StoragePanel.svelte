@@ -34,6 +34,10 @@
 		storageTrend.length > 0 ? Math.max(...storageTrend.map((t) => t.cumulative_bytes)) : 1
 	);
 
+	const dailyMax = $derived(() =>
+		storageTrend.length > 0 ? Math.max(...storageTrend.map((t) => t.daily_bytes)) : 1
+	);
+
 	let chartEl = $state(null);
 	let containerWidth = $state(600);
 
@@ -47,10 +51,25 @@
 		return () => ro.disconnect();
 	});
 
+	let dailyChartEl = $state(null);
+	let dailyContainerWidth = $state(600);
+
+	$effect(() => {
+		const el = dailyChartEl;
+		if (!el) return;
+		const ro = new ResizeObserver(([entry]) => {
+			dailyContainerWidth = Math.round(entry.contentRect.width);
+		});
+		ro.observe(el);
+		return () => ro.disconnect();
+	});
+
 	const svgWidth = $derived(Math.max(containerWidth, 300));
+	const dailySvgWidth = $derived(Math.max(dailyContainerWidth, 300));
 	const svgHeight = 200;
 	const padding = { top: 10, right: 10, bottom: 30, left: 60 };
 	const chartW = $derived(svgWidth - padding.left - padding.right);
+	const dailyChartW = $derived(dailySvgWidth - padding.left - padding.right);
 	const chartH = $derived(svgHeight - padding.top - padding.bottom);
 
 	function trendPath(points) {
@@ -105,17 +124,65 @@
 		return ticks;
 	});
 
+	const dailyYTicks = $derived(() => {
+		const max = dailyMax();
+		if (max === 0) return [0];
+		const niceMax = Math.ceil(max / (1024 * 1024)) * 1024 * 1024;
+		const step = niceMax / 4;
+		const ticks = [];
+		for (let i = 0; i <= 4; i++) {
+			ticks.push(Math.round(i * step));
+		}
+		return ticks;
+	});
+
+	function dailyBars(points) {
+		if (points.length === 0) return [];
+
+		if (points.length === 1) {
+			const halfWidth = 12;
+			const x = padding.left;
+			const y = padding.top + chartH - (points[0].daily_bytes / dailyMax()) * chartH;
+			return [
+				{
+					x: x - halfWidth,
+					y,
+					width: halfWidth * 2,
+					height: padding.top + chartH - y,
+					title: `${formatSize(points[0].daily_bytes)}\u00A0·\u00A0${points[0].daily_count}\u00A0docs`
+				}
+			];
+		}
+
+		const slotWidth = dailyChartW / points.length;
+		const barWidth = slotWidth * 0.8;
+		return points.map((p, i) => {
+			const x = padding.left + i * slotWidth + (slotWidth - barWidth) / 2;
+			const y = padding.top + chartH - (p.daily_bytes / dailyMax()) * chartH;
+			return {
+				x,
+				y,
+				width: barWidth,
+				height: padding.top + chartH - y,
+				title: `${formatSize(p.daily_bytes)}\u00A0·\u00A0${p.daily_count}\u00A0docs`
+			};
+		});
+	}
+
 	const fmtDate = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
 
-	const xLabels = $derived(() => {
+	const xLabelPositions = (width) => {
 		if (storageTrend.length === 0) return [];
 		const skip = storageTrend.length > 30 ? Math.ceil(storageTrend.length / 10) : 1;
 		return storageTrend.map((p, i) => ({
 			date: fmtDate.format(new Date(p.date)),
 			show: i % skip === 0 || i === storageTrend.length - 1,
-			x: padding.left + (i / Math.max(storageTrend.length - 1, 1)) * chartW
+			x: padding.left + (i / Math.max(storageTrend.length - 1, 1)) * width
 		}));
-	});
+	};
+
+	const xLabels = $derived(() => xLabelPositions(chartW));
+	const dailyXLabels = $derived(() => xLabelPositions(dailyChartW));
 
 	function shortMime(mime) {
 		if (mime === 'other') return 'other';
@@ -214,65 +281,130 @@
 		{/if}
 
 		{#if storageTrend.length > 0}
-			<section>
-				<h3 class="mb-3 text-base font-semibold text-balance text-parchment-200">
-					Cumulative Storage Trend
-				</h3>
-				<div bind:this={chartEl} class="rounded-lg border border-clay-800 bg-clay-900 p-4">
-					<svg
-						width="100%"
-						viewBox="0 0 {svgWidth} {svgHeight}"
-						class="overflow-visible"
-						role="img"
-						aria-label="Cumulative storage trend"
-					>
-						<defs>
-							<linearGradient id="areaGrad" x1="0" x2="0" y1="0" y2="1">
-								<stop offset="0%" stop-color="#c9953a" stop-opacity="0.3" />
-								<stop offset="100%" stop-color="#c9953a" stop-opacity="0.02" />
-							</linearGradient>
-						</defs>
+			<div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
+				<section>
+					<h3 class="mb-3 text-base font-semibold text-balance text-parchment-200">
+						Cumulative Storage Trend
+					</h3>
+					<div bind:this={chartEl} class="rounded-lg border border-clay-800 bg-clay-900 p-4">
+						<svg
+							width="100%"
+							viewBox="0 0 {svgWidth} {svgHeight}"
+							class="overflow-visible"
+							role="img"
+							aria-label="Cumulative storage trend"
+						>
+							<defs>
+								<linearGradient id="areaGrad" x1="0" x2="0" y1="0" y2="1">
+									<stop offset="0%" stop-color="#c9953a" stop-opacity="0.3" />
+									<stop offset="100%" stop-color="#c9953a" stop-opacity="0.02" />
+								</linearGradient>
+							</defs>
 
-						{#each yTicks() as tick (tick)}
-							<line
-								x1={padding.left}
-								y1={padding.top + chartH - (tick / trendMax()) * chartH}
-								x2={padding.left + chartW}
-								y2={padding.top + chartH - (tick / trendMax()) * chartH}
-								stroke="#3a322a"
-								stroke-width="1"
-							/>
-							<text
-								x={padding.left - 6}
-								y={padding.top + chartH - (tick / trendMax()) * chartH + 4}
-								text-anchor="end"
-								class="fill-parchment-500"
-								font-size="11"
-							>
-								{formatSize(tick)}
-							</text>
-						{/each}
-
-						<path d={trendPath(storageTrend)} fill="url(#areaGrad)" />
-
-						<path d={trendLine(storageTrend)} fill="none" stroke="#c9953a" stroke-width="2" />
-
-						{#each xLabels() as label (label.x + label.date)}
-							{#if label.show}
+							{#each yTicks() as tick (tick)}
+								<line
+									x1={padding.left}
+									y1={padding.top + chartH - (tick / trendMax()) * chartH}
+									x2={padding.left + chartW}
+									y2={padding.top + chartH - (tick / trendMax()) * chartH}
+									stroke="#3a322a"
+									stroke-width="1"
+								/>
 								<text
-									x={label.x}
-									y={svgHeight - 6}
-									text-anchor="middle"
+									x={padding.left - 6}
+									y={padding.top + chartH - (tick / trendMax()) * chartH + 4}
+									text-anchor="end"
 									class="fill-parchment-500"
-									font-size="10"
+									font-size="11"
 								>
-									{label.date}
+									{formatSize(tick)}
 								</text>
-							{/if}
-						{/each}
-					</svg>
-				</div>
-			</section>
+							{/each}
+
+							<path d={trendPath(storageTrend)} fill="url(#areaGrad)" />
+
+							<path d={trendLine(storageTrend)} fill="none" stroke="#c9953a" stroke-width="2" />
+
+							{#each xLabels() as label (label.x + label.date)}
+								{#if label.show}
+									<text
+										x={label.x}
+										y={svgHeight - 6}
+										text-anchor="middle"
+										class="fill-parchment-500"
+										font-size="10"
+									>
+										{label.date}
+									</text>
+								{/if}
+							{/each}
+						</svg>
+					</div>
+				</section>
+
+				<section>
+					<h3 class="mb-3 text-base font-semibold text-balance text-parchment-200">
+						Daily Storage Increase
+					</h3>
+					<div bind:this={dailyChartEl} class="rounded-lg border border-clay-800 bg-clay-900 p-4">
+						<svg
+							width="100%"
+							viewBox="0 0 {dailySvgWidth} {svgHeight}"
+							class="overflow-visible"
+							role="img"
+							aria-label="Daily storage increase"
+						>
+							{#each dailyYTicks() as tick (tick)}
+								<line
+									x1={padding.left}
+									y1={padding.top + chartH - (tick / dailyMax()) * chartH}
+									x2={padding.left + dailyChartW}
+									y2={padding.top + chartH - (tick / dailyMax()) * chartH}
+									stroke="#3a322a"
+									stroke-width="1"
+								/>
+								<text
+									x={padding.left - 6}
+									y={padding.top + chartH - (tick / dailyMax()) * chartH + 4}
+									text-anchor="end"
+									class="fill-parchment-500"
+									font-size="11"
+								>
+									{formatSize(tick)}
+								</text>
+							{/each}
+
+							{#each dailyBars(storageTrend) as bar (bar.x)}
+								<rect
+									x={bar.x}
+									y={bar.y}
+									width={bar.width}
+									height={bar.height}
+									fill="#3b5e8a"
+									role="img"
+									aria-label={bar.title}
+								>
+									<title>{bar.title}</title>
+								</rect>
+							{/each}
+
+							{#each dailyXLabels() as label (label.x + label.date)}
+								{#if label.show}
+									<text
+										x={label.x}
+										y={svgHeight - 6}
+										text-anchor="middle"
+										class="fill-parchment-500"
+										font-size="10"
+									>
+										{label.date}
+									</text>
+								{/if}
+							{/each}
+						</svg>
+					</div>
+				</section>
+			</div>
 		{/if}
 	{/if}
 </div>
