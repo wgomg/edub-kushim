@@ -196,10 +196,12 @@ func TestRetry(t *testing.T) {
 	ctx := context.Background()
 	logger := testutil.NewTestLogger()
 
-	// happy path: retrying a failed consume restores its discarded enrich to waiting
+	// happy path: retrying a failed consume restores its discarded enrich and thumbnail to waiting
 	_, err := store.CreateTask(ctx, "enrich", "", json.RawMessage(`{}`), "retry-e1", "discarded", "")
 	testutil.AssertNoError(t, err, "create discarded enrich")
-	_, err = store.CreateTask(ctx, "consume", "", json.RawMessage(`{"on_completed":"retry-e1"}`), "retry-c1", "failed", "")
+	_, err = store.CreateTask(ctx, "thumbnail", "", json.RawMessage(`{}`), "retry-t1", "discarded", "")
+	testutil.AssertNoError(t, err, "create discarded thumbnail")
+	_, err = store.CreateTask(ctx, "consume", "", json.RawMessage(`{"on_completed":"retry-e1","on_completed_thumbnail":"retry-t1"}`), "retry-c1", "failed", "")
 	testutil.AssertNoError(t, err, "create failed consume")
 
 	err = Retry(ctx, store.queries, logger, "retry-c1")
@@ -208,6 +210,8 @@ func TestRetry(t *testing.T) {
 	testutil.AssertEqual(t, consume.Status, "pending", "consume pending after retry")
 	enrich, _ := store.GetTaskByTaskID(ctx, "retry-e1")
 	testutil.AssertEqual(t, enrich.Status, "waiting", "enrich restored to waiting")
+	thumbnail, _ := store.GetTaskByTaskID(ctx, "retry-t1")
+	testutil.AssertEqual(t, thumbnail.Status, "waiting", "thumbnail restored to waiting")
 
 	// error path: only failed tasks can be retried
 	err = Retry(ctx, store.queries, logger, "retry-c1")

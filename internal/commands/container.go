@@ -20,6 +20,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/tagmatch"
 	"github.com/wgomg/edub-kushim/internal/task"
 	taskhandlers "github.com/wgomg/edub-kushim/internal/task/handlers"
+	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -34,10 +35,11 @@ type Container struct {
 	store      *task.Store
 	services   *types.CrudServices
 	pools      struct {
-		consume *pool.Pool
-		enrich  *pool.Pool
-		config  *pool.Pool
-		backup  *pool.Pool
+		consume   *pool.Pool
+		enrich    *pool.Pool
+		thumbnail *pool.Pool
+		config    *pool.Pool
+		backup    *pool.Pool
 	}
 }
 
@@ -95,6 +97,7 @@ func (c *Container) InvalidateDB() {
 	c.services = nil
 	c.pools.consume = nil
 	c.pools.enrich = nil
+	c.pools.thumbnail = nil
 	c.pools.config = nil
 	c.pools.backup = nil
 }
@@ -158,6 +161,7 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 	registry := task.NewRegistry()
 	registry.Register("consume", taskhandlers.NewConsumeTaskHandler(consumer, store, c.logger))
 	registry.Register("enrich", taskhandlers.NewEnrichTaskHandler(enricher, client.Queries, c.logger))
+	registry.Register("thumbnail", taskhandlers.NewThumbnailTaskHandler(tools.NewRunner(c.logger, c.cfg.Load(), []string{"thumbnail"}), client.Queries, c.logger, func() *config.Config { return c.cfg.Load() }))
 	registry.Register("config", configtask.NewConfigTaskHandler(c.logger))
 	registry.Register("backup", taskhandlers.NewBackupTaskHandler(c.db, client.Queries, func() *config.Config { return c.cfg.Load() }, c.logger))
 
@@ -189,6 +193,8 @@ func (c *Container) GetPool(taskType string) (*pool.Pool, error) {
 		pp = &c.pools.consume
 	case "enrich":
 		pp = &c.pools.enrich
+	case "thumbnail":
+		pp = &c.pools.thumbnail
 	case "config":
 		pp = &c.pools.config
 	case "backup":
@@ -211,6 +217,9 @@ func (c *Container) GetPool(taskType string) (*pool.Pool, error) {
 		case "enrich":
 			workers = max(c.cfg.Load().Enricher.Workers, 1)
 			interval = 5 * time.Second
+		case "thumbnail":
+			workers = max(c.cfg.Load().Consumer.Thumbnail.Workers, 1)
+			interval = 2 * time.Second
 		case "config":
 			workers = 1
 			interval = 5 * time.Second
@@ -245,6 +254,11 @@ func (c *Container) Close() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		c.pools.enrich.Stop(ctx)
+	}
+	if c.pools.thumbnail != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		c.pools.thumbnail.Stop(ctx)
 	}
 	if c.pools.config != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

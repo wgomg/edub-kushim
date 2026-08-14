@@ -4,11 +4,13 @@
 	import { resolve } from '$app/paths';
 	import { api } from '$lib/api';
 	import DataTable from '$lib/components/DataTable.svelte';
+	import DocumentGrid from '$lib/components/DocumentGrid.svelte';
 	import SearchBar from '$lib/components/SearchBar.svelte';
 	import FilterPanel from '$lib/components/FilterPanel.svelte';
 	import { filterStore } from '$lib/stores/filterStore.js';
 	import { setPersonTypes, serializeFilter } from '$lib/stores/searchFilter.js';
 	import { onMount } from 'svelte';
+	import { SvelteURLSearchParams } from 'svelte/reactivity';
 	import { escapeHtml, formatSize } from '$lib/utils/html.js';
 	import { DOWNLOAD_ICON } from '$lib/icons.js';
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
@@ -133,6 +135,18 @@
 	let showNameInput = $state(false);
 	let saveName = $state('');
 
+	let viewMode = $state(
+		typeof localStorage !== 'undefined' && localStorage.getItem('edub:documents:view') === 'grid'
+			? 'grid'
+			: 'table'
+	);
+
+	$effect(() => {
+		if (typeof localStorage !== 'undefined') {
+			localStorage.setItem('edub:documents:view', viewMode);
+		}
+	});
+
 	const initialQ = page.url.searchParams.get('q');
 	if (initialQ) {
 		filterStore.fromQueryString(initialQ);
@@ -156,9 +170,7 @@
 		if (subscribed) {
 			refreshKey++;
 			const q = serializeFilter(f);
-			// transient helper for replaceState; SvelteURLSearchParams not needed here
-			// eslint-disable-next-line svelte/prefer-svelte-reactivity
-			const sp = new URLSearchParams(page.url.searchParams);
+			const sp = new SvelteURLSearchParams(page.url.searchParams);
 			if (q) sp.set('q', q);
 			else sp.delete('q');
 			replaceState(resolve(`${page.url.pathname}?${sp.toString()}`));
@@ -337,6 +349,7 @@
 							<div class="p-3">
 								<input
 									type="text"
+									name="tag-search"
 									placeholder="Search tags…"
 									oninput={onTagSearchInput}
 									class="mb-2 w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
@@ -434,6 +447,32 @@
 				fileSize={filter.fileSize}
 				onSearch={handleSearch}
 			/>
+		</div>
+		<div
+			class="flex shrink-0 rounded-lg border border-clay-800 p-0.5"
+			role="group"
+			aria-label="View mode"
+		>
+			<button
+				onclick={() => (viewMode = 'table')}
+				aria-pressed={viewMode === 'table'}
+				class="rounded-md px-3 py-1.5 text-sm font-medium focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none {viewMode ===
+				'table'
+					? 'bg-gold-600 text-clay-950'
+					: 'text-parchment-400 hover:text-parchment-200'}"
+			>
+				Table
+			</button>
+			<button
+				onclick={() => (viewMode = 'grid')}
+				aria-pressed={viewMode === 'grid'}
+				class="rounded-md px-3 py-1.5 text-sm font-medium focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none {viewMode ===
+				'grid'
+					? 'bg-gold-600 text-clay-950'
+					: 'text-parchment-400 hover:text-parchment-200'}"
+			>
+				Grid
+			</button>
 		</div>
 		<button
 			onclick={() => (showFilters = !showFilters)}
@@ -539,16 +578,30 @@
 		<FilterPanel />
 	{/if}
 
-	<DataTable
-		{columns}
-		{fetch}
-		onRowClick={view}
-		title="Documents"
-		{refreshKey}
-		selectable={true}
-		onselectionchange={(rows) => (selectedDocs = rows)}
-		defaultSortBy="created_at"
-		defaultSortOrder="desc"
-		urlSync="dt"
-	/>
+	{#if viewMode === 'grid'}
+		<DocumentGrid
+			{fetch}
+			onRowClick={view}
+			title="Documents"
+			{refreshKey}
+			selectable={true}
+			onselectionchange={(rows) => (selectedDocs = rows)}
+			defaultSortBy="created_at"
+			defaultSortOrder="desc"
+			urlSync="dt"
+		/>
+	{:else}
+		<DataTable
+			{columns}
+			{fetch}
+			onRowClick={view}
+			title="Documents"
+			{refreshKey}
+			selectable={true}
+			onselectionchange={(rows) => (selectedDocs = rows)}
+			defaultSortBy="created_at"
+			defaultSortOrder="desc"
+			urlSync="dt"
+		/>
+	{/if}
 </div>

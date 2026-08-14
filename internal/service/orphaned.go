@@ -172,13 +172,18 @@ func (s *Orphaned) Restore(ctx context.Context, id int64) error {
 	batchID := uuid.New().String()
 	consumeTaskID := uuid.New().String()
 	enrichTaskID := uuid.New().String()
+	thumbnailTaskID := uuid.New().String()
 
-	consumePayload, _ := json.Marshal(map[string]any{
+	consumePayloadMap := map[string]any{
 		"file_path":    destPath,
 		"file_index":   1,
 		"on_completed": enrichTaskID,
 		"document_id":  row.DocumentKey,
-	})
+	}
+	if s.cfg.Consumer.Thumbnail.Enabled {
+		consumePayloadMap["on_completed_thumbnail"] = thumbnailTaskID
+	}
+	consumePayload, _ := json.Marshal(consumePayloadMap)
 
 	_, err = s.taskCreator.CreateTask(ctx, "consume", batchID, consumePayload, consumeTaskID, "pending", "consume:"+md5)
 	if err != nil {
@@ -197,6 +202,19 @@ func (s *Orphaned) Restore(ctx context.Context, id int64) error {
 	if err != nil {
 		storage.RemoveOrphanedFile(destPath)
 		return fmt.Errorf("create enrich task: %w", err)
+	}
+
+	if s.cfg.Consumer.Thumbnail.Enabled {
+		thumbnailPayload, _ := json.Marshal(map[string]any{
+			"waiting_for": consumeTaskID,
+			"file_name":   filepath.Base(destPath),
+			"file_index":  1,
+		})
+		_, err = s.taskCreator.CreateTask(ctx, "thumbnail", batchID, thumbnailPayload, thumbnailTaskID, "waiting", "")
+		if err != nil {
+			storage.RemoveOrphanedFile(destPath)
+			return fmt.Errorf("create thumbnail task: %w", err)
+		}
 	}
 
 	if err := s.batchCreator.Create(ctx, batchID, "orphaned-restore", "queued"); err != nil {

@@ -26,6 +26,7 @@ type Result struct {
 	ModifiedAt     time.Time
 	OriginalPath   string
 	StoragePath    string
+	HasThumbnail   bool
 	Snippet        string
 	Rank           float64
 }
@@ -108,6 +109,7 @@ func (e *Engine) Search(ctx context.Context, query string, limit, offset int32) 
 			ModifiedAt:     r.ModifiedAt.Time,
 			OriginalPath:   r.OriginalPath,
 			StoragePath:    r.StoragePath,
+			HasThumbnail:   r.HasThumbnail,
 			Snippet:        r.Snippet,
 			Rank:           r.Rank,
 		}
@@ -173,6 +175,7 @@ func (e *Engine) SearchStructured(ctx context.Context, filter Filter) ([]Result,
 			ModifiedAt:     r.ModifiedAt.Time,
 			OriginalPath:   r.OriginalPath,
 			StoragePath:    r.StoragePath,
+			HasThumbnail:   r.HasThumbnail,
 			Snippet:        r.Snippet,
 			Rank:           r.Rank,
 		}

@@ -69,6 +69,13 @@ var engineInstallHints = map[string]map[string]string{
 		"Alpine":        "sudo apk add libreoffice",
 		"macOS":         "brew install --cask libreoffice",
 	},
+	"imagemagick": {
+		"Debian/Ubuntu": "sudo apt install imagemagick",
+		"Arch":          "sudo pacman -S imagemagick",
+		"Fedora":        "sudo dnf install imagemagick",
+		"Alpine":        "sudo apk add imagemagick",
+		"macOS":         "brew install imagemagick",
+	},
 }
 
 var companionInstallHints = map[string]map[string]string{
@@ -232,6 +239,9 @@ func MissingExternalTools(cfg *Config) []ExternalTool {
 	}
 	if cfg.Consumer.TextExtractor.Engine == TextExtractor.PdfToText {
 		checkEngine(TextExtractor.PdfToText, "textextractor", TextExtractor.PdfToText)
+	}
+	if cfg.Consumer.Thumbnail.Engine == Thumbnail.Imagemagick {
+		checkEngine(Thumbnail.Imagemagick, "thumbnail", Thumbnail.Imagemagick)
 	}
 
 	if cfg.Consumer.Converter.Enabled {

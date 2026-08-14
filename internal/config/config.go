@@ -144,6 +144,16 @@ type OCRConfig struct {
 	OcrWorkers int      `mapstructure:"ocr_workers" yaml:"ocr_workers" json:"ocr_workers"`
 }
 
+type ThumbnailConfig struct {
+	Enabled  bool   `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
+	Engine   string `mapstructure:"engine" yaml:"engine" json:"engine"`
+	DPI      int    `mapstructure:"dpi" yaml:"dpi" json:"dpi"`
+	MaxWidth int    `mapstructure:"max_width" yaml:"max_width" json:"max_width"`
+	Quality  int    `mapstructure:"quality" yaml:"quality" json:"quality"`
+	Timeout  int    `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
+	Workers  int    `mapstructure:"workers" yaml:"workers" json:"workers"`
+}
+
 type PollingWindow struct {
 	Start string `mapstructure:"start" yaml:"start" json:"start"`
 	End   string `mapstructure:"end" yaml:"end" json:"end"`
@@ -175,6 +185,7 @@ type ConsumerConfig struct {
 	TextExtractor    TextExtractorConfig    `mapstructure:"textextractor" yaml:"textextractor" json:"textextractor"`
 	PdfOptimizer     PdfOptimizerConfig     `mapstructure:"pdfoptimizer" yaml:"pdfoptimizer" json:"pdfoptimizer"`
 	OCR              OCRConfig              `mapstructure:"ocr" yaml:"ocr" json:"ocr"`
+	Thumbnail        ThumbnailConfig        `mapstructure:"thumbnail" yaml:"thumbnail" json:"thumbnail"`
 	Polling          PollingConfig          `mapstructure:"polling" yaml:"polling" json:"polling"`
 	Reclaim          ReclaimConfig          `mapstructure:"reclaim" yaml:"reclaim" json:"reclaim"`
 }
@@ -331,6 +342,14 @@ var (
 	}{
 		LibreOffice: "libreoffice",
 	}
+
+	Thumbnail = struct {
+		MuPDF       string
+		Imagemagick string
+	}{
+		MuPDF:       "mupdf",
+		Imagemagick: "imagemagick",
+	}
 )
 
 type EngineEntry struct {
@@ -354,6 +373,9 @@ var AvailableEngines = map[string][]EngineEntry{
 	},
 	"text_reducer": {
 		{Value: TextReducer.TextRank, Label: "textrank"},
+	},
+	"thumbnail": {
+		{Value: Thumbnail.MuPDF, Label: "mupdf"},
 	},
 }
 
@@ -423,6 +445,15 @@ func DefaultConfig(configDir string) *Config {
 				DataDir:    filepath.Join(configDir, "ocr/tessdata"),
 				Timeout:    120,
 				OcrWorkers: 0,
+			},
+			Thumbnail: ThumbnailConfig{
+				Enabled:  true,
+				Engine:   Thumbnail.MuPDF,
+				DPI:      72,
+				MaxWidth: 400,
+				Quality:  80,
+				Timeout:  30,
+				Workers:  1,
 			},
 			Polling: PollingConfig{
 				Interval: 5,
@@ -537,6 +568,18 @@ func finalizeConfig(cfg *Config, configDir string) error {
 	}
 	if cfg.Consumer.OCR.Timeout < 0 {
 		return fmt.Errorf("consumer.ocr.timeout must be >= 0")
+	}
+	if cfg.Consumer.Thumbnail.Timeout < 0 {
+		return fmt.Errorf("consumer.thumbnail.timeout must be >= 0")
+	}
+	if cfg.Consumer.Thumbnail.MaxWidth < 1 {
+		return fmt.Errorf("consumer.thumbnail.max_width must be >= 1")
+	}
+	if cfg.Consumer.Thumbnail.DPI < 1 {
+		return fmt.Errorf("consumer.thumbnail.dpi must be >= 1")
+	}
+	if cfg.Consumer.Thumbnail.Quality < 1 || cfg.Consumer.Thumbnail.Quality > 100 {
+		return fmt.Errorf("consumer.thumbnail.quality must be between 1 and 100")
 	}
 	if cfg.Enricher.TextReducer.Timeout < 0 {
 		return fmt.Errorf("enricher.textreducer.timeout must be >= 0")

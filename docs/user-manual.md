@@ -699,6 +699,17 @@ Returns the raw processed file bytes for preview. Response `200` with `Content-D
 | ----------- | ------- | -------------------------------------------------------------------------------------------------------------- |
 | `download`  | `false` | When `true`, sets `Content-Disposition: attachment` to force a file download dialog instead of inline preview. |
 
+### Get Document Thumbnail
+
+```
+GET /api/v1/documents/{id}/thumbnail
+```
+
+Returns the document's generated thumbnail (first page of the PDF, or the
+source image) as a JPEG cropped to a fixed 3:4 aspect ratio, with
+`Cache-Control: public, max-age=86400`. Response `404` when the document has
+no thumbnail (`has_thumbnail: false`, or the file is missing).
+
 ### Download Documents (Batch)
 
 Downloads multiple documents as a ZIP archive.
@@ -1858,6 +1869,7 @@ Response `200`:
   "file_size": 102400,
   "language": "eng",
   "document_type_id": 1,
+  "has_thumbnail": true,
   "created_at": "2024-03-19T10:30:00Z",
   "modified_at": "2024-03-19T10:30:00Z"
 }
@@ -1877,6 +1889,7 @@ additional fields are populated:
   "language": "eng",
   "document_type_id": 1,
   "document_type_name": "invoice",
+  "has_thumbnail": true,
   "tags": [
     { "id": 1, "name": "finance" },
     { "id": 2, "name": "quarterly" }
@@ -2034,6 +2047,14 @@ consumer:
     languages: [eng] # required — set via kushim setup --languages
     timeout: 120
     # ocr_workers: 0  # parallel OCR goroutines; 0 = auto (CPU count)
+  thumbnail:
+    enabled: true  # generate per-document thumbnails (grid view)
+    engine: 'mupdf' # mupdf (only implemented engine)
+    dpi: 72
+    max_width: 400  # output width; height = max_width * 4/3 (fixed 3:4 crop)
+    quality: 80     # JPEG quality, 1-100
+    timeout: 30     # per-document subprocess cap; 0 = disabled
+    workers: 1      # concurrent thumbnail worker goroutines
 
 enricher:
   workers: 1 # concurrent enrichment workers

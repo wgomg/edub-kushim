@@ -177,7 +177,7 @@ The `ConfigTaskHandler` lives in its own package (`internal/configtask/`) to kee
 
 ### CLI (`kushim`)
 
-The `Container` registers all four task types (`"consume"`, `"enrich"`, `"config"`, `"backup"`)
+The `Container` registers all five task types (`"consume"`, `"enrich"`, `"thumbnail"`, `"config"`, `"backup"`)
 and creates a `MatcherClient` connected to the Unix socket at `<config_dir>/kushim-hugot.sock`.
 The `"backup"` type is handled by `BackupTaskHandler` which acquires the DB-backed backup lock via `AcquireBackupLock`, waits for in-flight tasks to drain, runs the backup, and releases the lock. It implements `DedupKey` returning `backup:<mode>:<date>` (mode parsed from the task payload, default `full`).
 The `TagService` and `Enricher` receive the client instead of a direct Hugot reference:

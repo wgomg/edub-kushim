@@ -120,4 +120,26 @@ func TestConsumeHandlerDiscardsEnrichOnFailure(t *testing.T) {
 		enrich, _ := store.GetTaskByTaskID(ctx, enrichID)
 		testutil.AssertEqual(t, enrich.Status, "waiting", "waiting_for mismatch blocks the discard")
 	})
+
+	t.Run("thumbnail sibling is discarded on unmarshal failure", func(t *testing.T) {
+		consumeID, enrichID := insertConsumeEnrichPair(t, store, "", "")
+		thumbnailID := uuid.New().String()
+		thumbnailPayload, _ := json.Marshal(map[string]any{"waiting_for": consumeID})
+		_, err := store.CreateTask(ctx, "thumbnail", "", thumbnailPayload, thumbnailID, "waiting", "")
+		testutil.AssertNoError(t, err, "create thumbnail task")
+
+		// strict unmarshal fails: file_path is an object, not a string
+		payload := json.RawMessage(fmt.Sprintf(
+			`{"file_path":{"bad":true},"on_completed":%q,"on_completed_thumbnail":%q}`,
+			enrichID, thumbnailID,
+		))
+		_, err = handler.Handle(ctx, consumeTaskFor(t, store, consumeID, payload))
+		if err == nil {
+			t.Fatalf("expected unmarshal error, got nil")
+		}
+
+		thumbnail, err := store.GetTaskByTaskID(ctx, thumbnailID)
+		testutil.AssertNoError(t, err, "get thumbnail task")
+		testutil.AssertEqual(t, thumbnail.Status, "discarded", "thumbnail discarded")
+	})
 }

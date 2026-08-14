@@ -18,6 +18,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/mime"
 	"github.com/wgomg/edub-kushim/internal/search"
+	"github.com/wgomg/edub-kushim/internal/storage"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -120,6 +121,7 @@ func (h *DocumentHandler) ListDocuments(w http.ResponseWriter, r *http.Request) 
 			Tags:           tagResponses,
 			People:         personResponses,
 			DocumentTypeID: &docTypeID,
+			HasThumbnail:   doc.HasThumbnail,
 			CreatedAt:      doc.CreatedAt.Time.Format("2006-01-02T15:04:05Z"),
 			ModifiedAt:     doc.ModifiedAt.Time.Format("2006-01-02T15:04:05Z"),
 		}
@@ -203,6 +205,7 @@ func (h *DocumentHandler) GetDocument(w http.ResponseWriter, r *http.Request) {
 		DocumentTypeName: docTypeName,
 		Tags:             tagResponses,
 		People:           personResponses,
+		HasThumbnail:     doc.HasThumbnail,
 		CreatedAt:        doc.CreatedAt.Time.Format("2006-01-02T15:04:05Z"),
 		ModifiedAt:       doc.ModifiedAt.Time.Format("2006-01-02T15:04:05Z"),
 	}
@@ -278,6 +281,7 @@ func (h *DocumentHandler) SearchDocuments(w http.ResponseWriter, r *http.Request
 			CharCount:      r.CharCount,
 			Language:       r.Language,
 			DocumentTypeID: &docTypeID,
+			HasThumbnail:   r.HasThumbnail,
 			CreatedAt:      r.CreatedAt.Format("2006-01-02T15:04:05Z"),
 			ModifiedAt:     r.ModifiedAt.Format("2006-01-02T15:04:05Z"),
 			Rank:           r.Rank,
@@ -359,6 +363,7 @@ func (h *DocumentHandler) SearchDocumentsStructured(w http.ResponseWriter, r *ht
 			DocumentTypeID: &docTypeID,
 			Tags:           tagResponses,
 			People:         personResponses,
+			HasThumbnail:   r.HasThumbnail,
 			CreatedAt:      r.CreatedAt.Format("2006-01-02T15:04:05Z"),
 			ModifiedAt:     r.ModifiedAt.Format("2006-01-02T15:04:05Z"),
 			Rank:           r.Rank,
@@ -403,6 +408,38 @@ func (h *DocumentHandler) GetDocumentFile(w http.ResponseWriter, r *http.Request
 	}
 	w.Header().Set("Content-Disposition", disposition+`; filename="`+safeTitle+`"`)
 	http.ServeFile(w, r, doc.StoragePath)
+}
+
+func (h *DocumentHandler) GetDocumentThumbnail(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := ctx.Value("reqid").(string)
+
+	documentId := r.PathValue("id")
+	if documentId == "" {
+		http.Error(w, "Document ID is required", http.StatusBadRequest)
+		return
+	}
+
+	meta, err := h.client.GetDocumentThumbnailMeta(ctx, documentId)
+	if err != nil {
+		writeServiceError(w, h.logger, &reqID, "get document", errs.FromDB(err, "get document"))
+		return
+	}
+
+	if !meta.HasThumbnail {
+		http.Error(w, "thumbnail not found", http.StatusNotFound)
+		return
+	}
+
+	thumbPath := storage.ThumbnailPath(h.getConfig().Storage.StorageDir, meta.CreatedAt.Time, meta.DocumentID)
+	if _, err := os.Stat(thumbPath); err != nil {
+		http.Error(w, "thumbnail not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	http.ServeFile(w, r, thumbPath)
 }
 
 func (h *DocumentHandler) DownloadDocuments(w http.ResponseWriter, r *http.Request) {

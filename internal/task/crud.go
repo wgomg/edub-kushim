@@ -145,6 +145,11 @@ func Retry(ctx context.Context, queries *database.Queries, logger *utils.Logger,
 				logger.Error(nil, "restore enrich task %s after retry of consume %s failed: %v (will be recovered by activation or sweep)", onCompleted, taskID, err)
 			}
 		}
+		if onCompletedThumbnail := consumeOnCompletedThumbnail(*task.Payload); onCompletedThumbnail != "" {
+			if _, err := queries.SetEnrichTaskWaiting(ctx, onCompletedThumbnail); err != nil {
+				logger.Error(nil, "restore thumbnail task %s after retry of consume %s failed: %v (will be recovered by activation or sweep)", onCompletedThumbnail, taskID, err)
+			}
+		}
 	}
 	return nil
 }
@@ -155,6 +160,14 @@ func consumeOnCompleted(payload json.RawMessage) string {
 	}
 	json.Unmarshal(payload, &p)
 	return p.OnCompleted
+}
+
+func consumeOnCompletedThumbnail(payload json.RawMessage) string {
+	var p struct {
+		OnCompletedThumbnail string `json:"on_completed_thumbnail"`
+	}
+	json.Unmarshal(payload, &p)
+	return p.OnCompletedThumbnail
 }
 
 

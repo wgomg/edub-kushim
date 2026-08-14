@@ -53,8 +53,8 @@ The cast of characters:
 | queue daemon | `internal/commands/queue.go` | orchestrates batches |
 | consume command | `internal/commands/consume.go` | runs one batch |
 
-The four task types (`internal/commands/container.go:127-134`): `consume`,
-`enrich`, `config`, `backup`.
+The five task types (`internal/commands/container.go:127-134`): `consume`,
+`enrich`, `thumbnail`, `config`, `backup`.
 
 ---
 
@@ -97,12 +97,12 @@ discarded --consume retried/reset--> waiting
 pending/processing --cancel--> cancelled
 ```
 
-`waiting` is the special one: a child enrich task parked until its parent
-consume task completes (§8). `discarded` is "never ran, never will" — it
-doesn't count as a failure. The `discarded → waiting` restore exists so a
+`waiting` is the special one: a child enrich or thumbnail task parked until
+its parent consume task completes (§8). `discarded` is "never ran, never will"
+— it doesn't count as a failure. The `discarded → waiting` restore exists so a
 retried consume (manual retry or automatic crash-reset) re-arms its enrich
-and the `status = 'waiting'` guard on the discard query keeps working on
-subsequent failures.
+and thumbnail children and the `status = 'waiting'` guard on the discard
+query keeps working on subsequent failures.
 
 ---
 

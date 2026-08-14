@@ -73,22 +73,24 @@ func TestScanAndEnqueue_CreatesBatchAndTasks(t *testing.T) {
 		t.Errorf("batch.Status = %q, want queued", batch.Status)
 	}
 
-	// Verify tasks created (consume + enrich pair)
+	// Verify tasks created (consume + enrich + thumbnail)
 	tasks, err := client.GetTaskByBatchID(context.Background(), sql.NullString{String: batchID, Valid: true})
 	if err != nil {
 		t.Fatalf("GetTaskByBatchID: %v", err)
 	}
-	if len(tasks) != 2 {
-		t.Fatalf("task count = %d, want 2 (consume + enrich)", len(tasks))
+	if len(tasks) != 3 {
+		t.Fatalf("task count = %d, want 3 (consume + enrich + thumbnail)", len(tasks))
 	}
 
-	var consumeTask, enrichTask database.Task
+	var consumeTask, enrichTask, thumbnailTask database.Task
 	for _, task := range tasks {
 		switch task.TaskType {
 		case "consume":
 			consumeTask = task
 		case "enrich":
 			enrichTask = task
+		case "thumbnail":
+			thumbnailTask = task
 		}
 	}
 
@@ -107,6 +109,13 @@ func TestScanAndEnqueue_CreatesBatchAndTasks(t *testing.T) {
 	}
 	if enrichTask.Status != "waiting" {
 		t.Errorf("enrich task status = %q, want waiting", enrichTask.Status)
+	}
+
+	if thumbnailTask.ID == 0 {
+		t.Fatal("thumbnail task not found")
+	}
+	if thumbnailTask.Status != "waiting" {
+		t.Errorf("thumbnail task status = %q, want waiting", thumbnailTask.Status)
 	}
 }
 
@@ -230,9 +239,9 @@ func TestScanAndEnqueue_MultipleFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetTaskByBatchID: %v", err)
 	}
-	// 3 files × 2 tasks each (consume + enrich) = 6
-	if len(tasks) != 6 {
-		t.Errorf("task count = %d, want 6", len(tasks))
+	// 3 files × 3 tasks each (consume + enrich + thumbnail) = 9
+	if len(tasks) != 9 {
+		t.Errorf("task count = %d, want 9", len(tasks))
 	}
 }
 

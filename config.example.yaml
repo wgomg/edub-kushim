@@ -75,6 +75,15 @@ consumer:
     timeout: 120    # 0 = disabled (no artificial deadline)
     # ocr_workers: 0  # parallel OCR goroutines; 0 = auto (CPU count)
 
+  thumbnail:
+    enabled: true
+    engine: 'mupdf' # mupdf
+    dpi: 72
+    max_width: 400
+    quality: 80
+    timeout: 30     # 0 = disabled (no artificial deadline)
+    workers: 1
+
 enricher:
   workers: 1
 

@@ -51,7 +51,7 @@ This process requires CGo (Tesseract/Hugot libraries) and should be started befo
 
 Pure Go binary (`CGO_ENABLED=0`) that handles HTTP requests. It:
 
-- Enqueues consume/enrich tasks when `POST /api/v1/consume` is called, creating batches with `status='queued'`
+- Enqueues consume/enrich/thumbnail tasks when `POST /api/v1/consume` is called, creating batches with `status='queued'`
 - The `kushim queue` daemon picks up queued batches and forks `kushim consume --batch <id>` for processing
 - Runs a config pool for background download tasks (tessdata, Hugot model) and the `migrate-db` / `migrate-storage` tasks
 - Watches `config.yaml` (5s poll): when the database connection settings changed on disk — after a `migrate-db` task persists them — it reconnects the whole server (services, task stores, config pool, route handlers) to the new database; on connect failure it keeps the previous configuration. Storage directory changes (persisted by a `migrate-storage` task) are picked up the same way — the inbox scan and storage layout then use the new paths.
@@ -89,6 +89,7 @@ flowchart TB
     subgraph Worker["kushim consume --batch\n(forked subprocess)"]
         CP["Consume: Convert → Extract → OCR → Optimize → Store"]
         EP["Enrich: TextRank → Tag matching →\nLLM → Consolidate"]
+        TP["Thumbnail: MuPDF render →\n3:4 cover JPEG"]
     end
 
     subgraph Hugot["kushim hugot\n(matcher RPC server)"]
@@ -100,6 +101,7 @@ flowchart TB
     DB -->|"trigger →\nnotification"| Q
     Q -->|"forks"| Worker
     CP -->|"activates\nchild enrich"| EP
+    CP -->|"activates\nchild thumbnail"| TP
     EP -.->|"semantic tag\nmatching"| H
 ```
 
@@ -137,6 +139,10 @@ composited on white, and sent to the same OCR pipeline.
 The external‑tool adapters (`pdftotext` for text extraction, `ocrmypdf` for OCR,
 Ghostscript for PDF optimization) are available as alternatives. Configure via
 `consumer.textextractor`, `consumer.ocr`, and `consumer.pdfoptimizer`.
+Thumbnails use the `consumer.thumbnail` section (`engine: 'mupdf'`, the only
+implemented engine) with `dpi`, `max_width`, `quality`, `timeout`, and
+`workers`; disabling `consumer.thumbnail.enabled` skips thumbnail-task
+creation entirely at batch-enqueue time.
 
 When active, the gosseract adapter processes each page at 200 DPI — source
 material comes from a MuPDF render (image‑only PDF pages) or from a direct
@@ -190,7 +196,18 @@ discards the waiting enrich task by setting it to `discarded` with the
 parent error message (via `Store.Discard`). **On retry** — when the failed
 consume is retried (via `kushim task retry` or the API) and subsequently
 succeeds — `activateChildEnrich` re-activates the discarded enrich task to
-`pending`, clearing the previous error and completion timestamp. The enrichment pipeline:
+`pending`, clearing the previous error and completion timestamp.
+
+Each consume also spawns a parallel `thumbnail` child task (created at
+batch-enqueue time when `consumer.thumbnail.enabled`, linked via the consume
+payload's `on_completed_thumbnail`). It follows the same lifecycle: activated
+to `pending` (payload gains `document_id` + `storage_path`) after a successful
+consume, discarded when the consume fails, and restored to `waiting` on retry.
+A failed activation fails the consume task itself so the pair can be retried
+together. The thumbnail handler renders the first PDF page (or the source
+image) at 72 DPI in a subprocess, writes a fixed 3:4 cover-cropped JPEG under
+`storage/thumbnails/<date>/<uuid>.jpg`, and sets `document.has_thumbnail`.
+The enrichment pipeline:
 
 1. **Text Reduction** (optional, configurable threshold) — if the document exceeds
    `enricher.textreducer.target_words`, TextRank extracts the most salient content.

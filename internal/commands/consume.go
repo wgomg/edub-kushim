@@ -151,6 +151,11 @@ func consumeHandler(c *Container, args []string) error {
 			return fmt.Errorf("failed to get enrich pool: %w", err)
 		}
 
+		tp, err := c.GetPool("thumbnail")
+		if err != nil {
+			return fmt.Errorf("failed to get thumbnail pool: %w", err)
+		}
+
 		if err := c.SetRunnerOwnerID(ownerID); err != nil {
 			return fmt.Errorf("set runner owner: %w", err)
 		}
@@ -160,7 +165,7 @@ func consumeHandler(c *Container, args []string) error {
 		hb := task.NewHeartbeat(owner, heartbeatInterval, c.logger)
 		hb.Start(ctx)
 
-		err = pollBatch(ctx, client.Queries, p, ep, c.logger, batchIDParam)
+		err = pollBatch(ctx, client.Queries, p, ep, tp, c.logger, batchIDParam)
 		if err == nil {
 			batchSvc := service.NewBatch(client, c.cfg.Load().Consumer.Reclaim.MaxRetries)
 			if setErr := setBatchTerminalStatus(ctx, client.Queries, batchSvc, batchIDParam); setErr != nil {
@@ -216,17 +221,23 @@ func consumeHandler(c *Container, args []string) error {
 
 	batchID := uuid.New().String()
 	enqueued := 0
+	thumbnailsEnabled := c.cfg.Load().Consumer.Thumbnail.Enabled
 	for i, f := range files {
 		consumeTaskID := uuid.New().String()
 		enrichTaskID := uuid.New().String()
+		thumbnailTaskID := uuid.New().String()
 		documentID := uuid.New().String()
 
-		consumePayload, _ := json.Marshal(map[string]any{
+		consumePayloadMap := map[string]any{
 			"file_path":    f.OriginalPath,
 			"file_index":   i + 1,
 			"on_completed": enrichTaskID,
 			"document_id":  documentID,
-		})
+		}
+		if thumbnailsEnabled {
+			consumePayloadMap["on_completed_thumbnail"] = thumbnailTaskID
+		}
+		consumePayload, _ := json.Marshal(consumePayloadMap)
 		_, err := c.dispatcher.Enqueue(ctx, "consume", batchID, consumePayload, consumeTaskID)
 		if err != nil {
 			c.logger.Error(&documentID, "enqueue %s: %v", f.OriginalPath, err)
@@ -241,6 +252,17 @@ func consumeHandler(c *Container, args []string) error {
 		})
 		if _, err := c.dispatcher.Enqueue(ctx, "enrich", batchID, enrichPayload, enrichTaskID, "waiting"); err != nil {
 			c.logger.Error(&documentID, "create enrich task for %s: %v", f.OriginalPath, err)
+		}
+
+		if thumbnailsEnabled {
+			thumbnailPayload, _ := json.Marshal(map[string]any{
+				"waiting_for": consumeTaskID,
+				"file_name":   filepath.Base(f.OriginalPath),
+				"file_index":  i + 1,
+			})
+			if _, err := c.dispatcher.Enqueue(ctx, "thumbnail", batchID, thumbnailPayload, thumbnailTaskID, "waiting"); err != nil {
+				c.logger.Error(&documentID, "create thumbnail task for %s: %v", f.OriginalPath, err)
+			}
 		}
 	}
 
@@ -282,6 +304,11 @@ func consumeHandler(c *Container, args []string) error {
 		return fmt.Errorf("failed to get enrich pool: %w", err)
 	}
 
+	tp, err := c.GetPool("thumbnail")
+	if err != nil {
+		return fmt.Errorf("failed to get thumbnail pool: %w", err)
+	}
+
 	ownerID := uuid.New().String()
 	owner := task.NewOwner(client, ownerID, os.Getpid(), c.logger, c.cfg.Load().Consumer.Reclaim.MaxRetries)
 
@@ -298,7 +325,7 @@ func consumeHandler(c *Container, args []string) error {
 	hb := task.NewHeartbeat(owner, heartbeatInterval, c.logger)
 	hb.Start(ctx)
 
-	err = pollBatch(ctx, client.Queries, p, ep, c.logger, batchID)
+	err = pollBatch(ctx, client.Queries, p, ep, tp, c.logger, batchID)
 	if err == nil {
 		if setErr := setBatchTerminalStatus(ctx, client.Queries, batchSvc, batchID); setErr != nil {
 			c.logger.Error(nil, "set batch terminal status %s: %v", batchID, setErr)
@@ -529,10 +556,11 @@ func totalFiles(tasks []database.Task) int {
 	return n
 }
 
-func pollBatch(ctx context.Context, queries *database.Queries, cp, ep *pool.Pool, logger *utils.Logger, batchID string) error {
+func pollBatch(ctx context.Context, queries *database.Queries, cp, ep, tp *pool.Pool, logger *utils.Logger, batchID string) error {
 	logger.SetLevel(utils.LevelSilent)
 	cp.Start(ctx)
 	ep.Start(ctx)
+	tp.Start(ctx)
 
 	previous := make(map[string]string)
 
@@ -548,6 +576,7 @@ func pollBatch(ctx context.Context, queries *database.Queries, cp, ep *pool.Pool
 			defer stopCancel()
 			cp.Stop(stopCtx)
 			ep.Stop(stopCtx)
+			tp.Stop(stopCtx)
 			return ctx.Err()
 		}
 
@@ -558,6 +587,7 @@ func pollBatch(ctx context.Context, queries *database.Queries, cp, ep *pool.Pool
 			defer stopCancel()
 			cp.Stop(stopCtx)
 			ep.Stop(stopCtx)
+			tp.Stop(stopCtx)
 			return ErrBatchPaused
 		}
 
@@ -620,6 +650,7 @@ func pollBatch(ctx context.Context, queries *database.Queries, cp, ep *pool.Pool
 			defer cancel()
 			cp.Stop(stopCtx)
 			ep.Stop(stopCtx)
+			tp.Stop(stopCtx)
 			return nil
 		}
 	}

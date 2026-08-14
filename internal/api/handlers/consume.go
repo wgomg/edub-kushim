@@ -39,6 +39,7 @@ func NewConsumeHandler(getConfig func() *config.Config, logger *utils.Logger, wo
 }
 
 func (h *ConsumeHandler) enqueueBatchFiles(ctx context.Context, batchID string, paths []string, reqID string) (enqueued int) {
+	thumbnailsEnabled := h.getConfig().Consumer.Thumbnail.Enabled
 	for i, path := range paths {
 		md5hash, md5Err := utils.CalculateMD5(path)
 		if md5Err != nil {
@@ -54,14 +55,19 @@ func (h *ConsumeHandler) enqueueBatchFiles(ctx context.Context, batchID string, 
 
 		consumeTaskID := uuid.New().String()
 		enrichTaskID := uuid.New().String()
+		thumbnailTaskID := uuid.New().String()
 		documentID := uuid.New().String()
 
-		consumePayload, _ := json.Marshal(map[string]any{
+		consumePayloadMap := map[string]any{
 			"file_path":    path,
 			"file_index":   i + 1,
 			"on_completed": enrichTaskID,
 			"document_id":  documentID,
-		})
+		}
+		if thumbnailsEnabled {
+			consumePayloadMap["on_completed_thumbnail"] = thumbnailTaskID
+		}
+		consumePayload, _ := json.Marshal(consumePayloadMap)
 		_, err := h.workStore.CreateTask(ctx, "consume", batchID, consumePayload, consumeTaskID, "pending", "consume:"+md5hash)
 		if err != nil {
 			h.logger.Error(&reqID, "enqueue %s: %v", path, err)
@@ -77,6 +83,17 @@ func (h *ConsumeHandler) enqueueBatchFiles(ctx context.Context, batchID string, 
 		if _, err := h.workStore.CreateTask(ctx, "enrich", batchID, enrichPayload, enrichTaskID, "waiting", ""); err != nil {
 			h.logger.Error(&reqID, "create enrich task for %s: %v", path, err)
 			continue
+		}
+
+		if thumbnailsEnabled {
+			thumbnailPayload, _ := json.Marshal(map[string]any{
+				"waiting_for": consumeTaskID,
+				"file_name":   filepath.Base(path),
+				"file_index":  i + 1,
+			})
+			if _, err := h.workStore.CreateTask(ctx, "thumbnail", batchID, thumbnailPayload, thumbnailTaskID, "waiting", ""); err != nil {
+				h.logger.Error(&reqID, "create thumbnail task for %s: %v", path, err)
+			}
 		}
 		enqueued++
 	}

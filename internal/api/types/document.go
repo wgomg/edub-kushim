@@ -38,6 +38,7 @@ type DocumentResponse struct {
 	DocumentTypeName *string          `json:"document_type_name,omitempty"`
 	Tags             []TagResponse    `json:"tags,omitempty"`
 	People           []PersonResponse `json:"people,omitempty"`
+	HasThumbnail     bool             `json:"has_thumbnail"`
 	CreatedAt        string           `json:"created_at"`
 	ModifiedAt       string           `json:"modified_at"`
 }
@@ -56,6 +57,7 @@ type FTSDocumentResponse struct {
 	DocumentTypeName *string          `json:"document_type_name,omitempty"`
 	Tags             []TagResponse    `json:"tags,omitempty"`
 	People           []PersonResponse `json:"people,omitempty"`
+	HasThumbnail     bool             `json:"has_thumbnail"`
 	CreatedAt        string           `json:"created_at"`
 	ModifiedAt       string           `json:"modified_at"`
 	Rank             float64          `json:"rank"`

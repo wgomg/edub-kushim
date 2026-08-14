@@ -102,7 +102,7 @@ SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
 FROM task WHERE task_type = $1 ORDER BY created_at DESC;
 
 -- name: CountProcessingTasks :one
-SELECT COUNT(*) FROM task WHERE status = 'processing' AND task_type IN ('consume', 'enrich');
+SELECT COUNT(*) FROM task WHERE status = 'processing' AND task_type IN ('consume', 'enrich', 'thumbnail');
 
 -- name: CountTasksByBatchAndStatus :one
 SELECT COUNT(*) FROM task WHERE batch_id = $1 AND status = $2;
@@ -170,38 +170,38 @@ UPDATE task SET
     payload = $1,
     error = NULL,
     completed_at = NULL
-WHERE id = $2 AND status IN ('waiting', 'discarded') AND task_type = 'enrich';
+WHERE id = $2 AND status IN ('waiting', 'discarded') AND task_type IN ('enrich', 'thumbnail');
 
 -- name: DiscardEnrichTask :execrows
 UPDATE task SET
     status = 'discarded',
     completed_at = CURRENT_TIMESTAMP,
     error = $1
-WHERE id = $2 AND status = 'waiting' AND task_type = 'enrich';
+WHERE id = $2 AND status = 'waiting' AND task_type IN ('enrich', 'thumbnail');
 
 -- name: SetEnrichTaskWaiting :execrows
 UPDATE task SET
     status = 'waiting',
     error = NULL,
     completed_at = NULL
-WHERE task_id = $1 AND status = 'discarded' AND task_type = 'enrich';
+WHERE task_id = $1 AND status = 'discarded' AND task_type IN ('enrich', 'thumbnail');
 
 -- name: RestoreDiscardedEnrichTasks :execrows
 UPDATE task AS e
 SET status = 'waiting', error = NULL, completed_at = NULL
 FROM task AS c
-WHERE e.task_type = 'enrich' AND e.status = 'discarded'
+WHERE e.task_type IN ('enrich', 'thumbnail') AND e.status = 'discarded'
   AND c.task_type = 'consume' AND c.status = 'pending'
-  AND e.task_id = c.payload->>'on_completed';
+  AND (e.task_id = c.payload->>'on_completed' OR e.task_id = c.payload->>'on_completed_thumbnail');
 
 -- name: RestoreDiscardedEnrichTasksByBatch :execrows
 UPDATE task AS e
 SET status = 'waiting', error = NULL, completed_at = NULL
 FROM task AS c
-WHERE e.task_type = 'enrich' AND e.status = 'discarded'
+WHERE e.task_type IN ('enrich', 'thumbnail') AND e.status = 'discarded'
   AND c.task_type = 'consume' AND c.status = 'pending'
   AND c.batch_id = $1
-  AND e.task_id = c.payload->>'on_completed';
+  AND (e.task_id = c.payload->>'on_completed' OR e.task_id = c.payload->>'on_completed_thumbnail');
 
 -- name: DiscardWaitingEnrichesOfFailedConsumes :execrows
 UPDATE task AS e
@@ -209,10 +209,10 @@ SET status = 'discarded',
     completed_at = CURRENT_TIMESTAMP,
     error = COALESCE(c.error, 'parent consume task failed')
 FROM task AS c
-WHERE e.task_type = 'enrich' AND e.status = 'waiting'
+WHERE e.task_type IN ('enrich', 'thumbnail') AND e.status = 'waiting'
   AND c.task_type = 'consume' AND c.status = 'failed'
   AND c.batch_id = $1
-  AND e.task_id = c.payload->>'on_completed';
+  AND (e.task_id = c.payload->>'on_completed' OR e.task_id = c.payload->>'on_completed_thumbnail');
 
 -- name: DiscardWaitingEnrichesOfFailedConsumesGlobal :execrows
 UPDATE task AS e
@@ -220,16 +220,16 @@ SET status = 'discarded',
     completed_at = CURRENT_TIMESTAMP,
     error = COALESCE(c.error, 'parent consume task failed')
 FROM task AS c
-WHERE e.task_type = 'enrich' AND e.status = 'waiting'
+WHERE e.task_type IN ('enrich', 'thumbnail') AND e.status = 'waiting'
   AND c.task_type = 'consume' AND c.status = 'failed'
-  AND e.task_id = c.payload->>'on_completed';
+  AND (e.task_id = c.payload->>'on_completed' OR e.task_id = c.payload->>'on_completed_thumbnail');
 
 -- name: DiscardEnrichTaskByTaskID :execrows
 UPDATE task SET
     status = 'discarded',
     completed_at = CURRENT_TIMESTAMP,
     error = $1
-WHERE task_id = $2 AND status = 'waiting' AND task_type = 'enrich';
+WHERE task_id = $2 AND status = 'waiting' AND task_type IN ('enrich', 'thumbnail');
 
 -- name: DeleteTask :exec
 DELETE FROM task WHERE id = $1;

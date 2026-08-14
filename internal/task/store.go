@@ -59,7 +59,7 @@ func (s *Store) ClaimNextPending(ctx context.Context, taskType string) (database
 	var id int64
 	var err error
 
-	gated := taskType == "consume" || taskType == "enrich"
+	gated := taskType == "consume" || taskType == "enrich" || taskType == "thumbnail"
 
 	if s.ownerID != "" {
 		if gated {

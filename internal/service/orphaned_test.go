@@ -186,7 +186,7 @@ func TestOrphaned_Restore_UUIDOnly(t *testing.T) {
 	md5, err := utils.CalculateMD5(destPath)
 	testutil.AssertNoError(t, err, "compute md5")
 
-	testutil.AssertEqual(t, len(mock.calls), 3, "should have 3 mock calls (consume + enrich + batch)")
+	testutil.AssertEqual(t, len(mock.calls), 4, "should have 4 mock calls (consume + enrich + thumbnail + batch)")
 
 	consumeCall := mock.calls[0]
 	testutil.AssertEqual(t, consumeCall.TaskType, "consume", "call 1 type")
@@ -208,7 +208,17 @@ func TestOrphaned_Restore_UUIDOnly(t *testing.T) {
 	testutil.AssertEqual(t, consumePayload["document_id"], uuid, "consume document_id")
 	testutil.AssertEqual(t, enrichPayload["document_id"], uuid, "enrich document_id")
 
-	batchCall := mock.calls[2]
+	thumbnailCall := mock.calls[2]
+	testutil.AssertEqual(t, thumbnailCall.TaskType, "thumbnail", "call 3 type")
+	testutil.AssertEqual(t, thumbnailCall.Status, "waiting", "thumbnail status")
+	testutil.AssertEqual(t, thumbnailCall.BatchID, consumeCall.BatchID, "thumbnail should share batch id with consume")
+
+	var thumbnailPayload map[string]any
+	json.Unmarshal(thumbnailCall.Payload, &thumbnailPayload)
+	testutil.AssertEqual(t, thumbnailPayload["waiting_for"], consumeCall.TaskID, "thumbnail waiting_for references consume task")
+	testutil.AssertEqual(t, consumePayload["on_completed_thumbnail"], thumbnailCall.TaskID, "consume on_completed_thumbnail references thumbnail task")
+
+	batchCall := mock.calls[3]
 	testutil.AssertEqual(t, batchCall.Source, "orphaned-restore", "batch source")
 	testutil.AssertEqual(t, batchCall.Status, "queued", "batch status")
 	testutil.AssertEqual(t, batchCall.BatchID, consumeCall.BatchID, "batch id matches tasks")

@@ -22,6 +22,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/tagmatcher"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/textextractor"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/textreducer"
+	"github.com/wgomg/edub-kushim/internal/tools/adapters/thumbnail"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -31,6 +32,7 @@ type Runner struct {
 	textExtractor    textextractor.TextExtractor
 	ocr              ocr.OCR
 	pdfOptimizer     pdfoptimizer.PdfOptimizer
+	thumbnailer      thumbnail.Thumbnailer
 	documentConverter converter.DocumentConverter
 	tagMatcher       tagmatcher.Matcher
 	contentAnalyzer  contentanalyzer.ContentAnalyzer
@@ -51,6 +53,12 @@ type OCRResult struct {
 type PdfOptimizationResult struct {
 	Success bool
 	TmpPath *string
+}
+
+type ThumbnailResult struct {
+	Success bool
+	Width   int
+	Height  int
 }
 
 type TextReducerResult struct {
@@ -126,6 +134,12 @@ func NewRunner(logger *utils.Logger, cfg *config.Config, tools []string) *Runner
 				Timeout: time.Duration(cfg.Consumer.PdfOptimizer.Timeout) * time.Second,
 			}
 			r.pdfOptimizer, _ = pdfoptimizer.NewPdfOptimizer(logger, toolCfg)
+		case "thumbnail":
+			toolCfg := config.ToolConfig{
+				Command: cfg.Consumer.Thumbnail.Engine,
+				Timeout: time.Duration(cfg.Consumer.Thumbnail.Timeout) * time.Second,
+			}
+			r.thumbnailer, _ = thumbnail.NewThumbnailer(logger, toolCfg, cfg.Consumer.Thumbnail.DPI, cfg.Consumer.Thumbnail.MaxWidth, cfg.Consumer.Thumbnail.Quality)
 		case "converter":
 			if cfg.Consumer.Converter.Enabled {
 				r.documentConverter, _ = converter.NewDocumentConverter(
@@ -313,6 +327,42 @@ func (r *Runner) OptimizePdf(ctx context.Context, docId, path string) (*PdfOptim
 	return &PdfOptimizationResult{
 		Success: true,
 		TmpPath: outputPath,
+	}, nil
+}
+
+func (r *Runner) GenerateThumbnail(ctx context.Context, docId, path, outputPath string) (*ThumbnailResult, error) {
+	if r.thumbnailer == nil {
+		return nil, fmt.Errorf("thumbnailer not configured")
+	}
+
+	timeout := time.Duration(r.config.Consumer.Thumbnail.Timeout) * time.Second
+
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil, fmt.Errorf("file does not exist: %s", path)
+	}
+
+	primaryCtx := ctx
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		primaryCtx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	type thumbDims struct {
+		width, height int
+	}
+	dims, err := runWithTimeout(primaryCtx, func() (thumbDims, error) {
+		w, h, err := r.thumbnailer.Generate(primaryCtx, docId, path, outputPath)
+		return thumbDims{w, h}, err
+	})
+	if err != nil {
+		os.Remove(outputPath)
+		return nil, fmt.Errorf("thumbnail: %w", err)
+	}
+
+	return &ThumbnailResult{
+		Success: true,
+		Width:   dims.width,
+		Height:  dims.height,
 	}, nil
 }
 

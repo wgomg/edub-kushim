@@ -12,6 +12,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/ocr"
+	"github.com/wgomg/edub-kushim/internal/tools/adapters/thumbnail"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -79,6 +80,49 @@ func main() {
 		}
 		if err := ocr.RunStandalone(inputPath, outputPath, languages, dataDir, ocrWorkers); err != nil {
 			fmt.Fprintf(os.Stderr, "ocr: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	if commandName == "internal-thumbnail" {
+		var inputPath, outputPath string
+		dpi, maxWidth, quality := 72, 400, 80
+		for i := 0; i < len(args); i++ {
+			switch args[i] {
+			case "--input":
+				if i+1 < len(args) {
+					inputPath = args[i+1]
+					i++
+				}
+			case "--output":
+				if i+1 < len(args) {
+					outputPath = args[i+1]
+					i++
+				}
+			case "--dpi":
+				if i+1 < len(args) {
+					dpi, _ = strconv.Atoi(args[i+1])
+					i++
+				}
+			case "--max-width":
+				if i+1 < len(args) {
+					maxWidth, _ = strconv.Atoi(args[i+1])
+					i++
+				}
+			case "--quality":
+				if i+1 < len(args) {
+					quality, _ = strconv.Atoi(args[i+1])
+					i++
+				}
+			}
+		}
+		if inputPath == "" || outputPath == "" {
+			fmt.Fprintf(os.Stderr, "usage: kushim internal-thumbnail --input <file> --output <file> [--dpi <dpi>] [--max-width <px>] [--quality <1-100>]\n")
+			os.Exit(1)
+		}
+		if err := thumbnail.RunStandalone(inputPath, outputPath, dpi, maxWidth, quality); err != nil {
+			fmt.Fprintf(os.Stderr, "thumbnail: %v\n", err)
 			os.Exit(1)
 		}
 		return

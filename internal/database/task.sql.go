@@ -109,7 +109,7 @@ func (q *Queries) CountDistinctBatches(ctx context.Context) (int64, error) {
 }
 
 const countProcessingTasks = `-- name: CountProcessingTasks :one
-SELECT COUNT(*) FROM task WHERE status = 'processing' AND task_type IN ('consume', 'enrich')
+SELECT COUNT(*) FROM task WHERE status = 'processing' AND task_type IN ('consume', 'enrich', 'thumbnail')
 `
 
 func (q *Queries) CountProcessingTasks(ctx context.Context) (int64, error) {
@@ -242,7 +242,7 @@ UPDATE task SET
     status = 'discarded',
     completed_at = CURRENT_TIMESTAMP,
     error = $1
-WHERE id = $2 AND status = 'waiting' AND task_type = 'enrich'
+WHERE id = $2 AND status = 'waiting' AND task_type IN ('enrich', 'thumbnail')
 `
 
 type DiscardEnrichTaskParams struct {
@@ -263,7 +263,7 @@ UPDATE task SET
     status = 'discarded',
     completed_at = CURRENT_TIMESTAMP,
     error = $1
-WHERE task_id = $2 AND status = 'waiting' AND task_type = 'enrich'
+WHERE task_id = $2 AND status = 'waiting' AND task_type IN ('enrich', 'thumbnail')
 `
 
 type DiscardEnrichTaskByTaskIDParams struct {
@@ -285,10 +285,10 @@ SET status = 'discarded',
     completed_at = CURRENT_TIMESTAMP,
     error = COALESCE(c.error, 'parent consume task failed')
 FROM task AS c
-WHERE e.task_type = 'enrich' AND e.status = 'waiting'
+WHERE e.task_type IN ('enrich', 'thumbnail') AND e.status = 'waiting'
   AND c.task_type = 'consume' AND c.status = 'failed'
   AND c.batch_id = $1
-  AND e.task_id = c.payload->>'on_completed'
+  AND (e.task_id = c.payload->>'on_completed' OR e.task_id = c.payload->>'on_completed_thumbnail')
 `
 
 func (q *Queries) DiscardWaitingEnrichesOfFailedConsumes(ctx context.Context, batchID sql.NullString) (int64, error) {
@@ -305,9 +305,9 @@ SET status = 'discarded',
     completed_at = CURRENT_TIMESTAMP,
     error = COALESCE(c.error, 'parent consume task failed')
 FROM task AS c
-WHERE e.task_type = 'enrich' AND e.status = 'waiting'
+WHERE e.task_type IN ('enrich', 'thumbnail') AND e.status = 'waiting'
   AND c.task_type = 'consume' AND c.status = 'failed'
-  AND e.task_id = c.payload->>'on_completed'
+  AND (e.task_id = c.payload->>'on_completed' OR e.task_id = c.payload->>'on_completed_thumbnail')
 `
 
 func (q *Queries) DiscardWaitingEnrichesOfFailedConsumesGlobal(ctx context.Context) (int64, error) {
@@ -1408,9 +1408,9 @@ const restoreDiscardedEnrichTasks = `-- name: RestoreDiscardedEnrichTasks :execr
 UPDATE task AS e
 SET status = 'waiting', error = NULL, completed_at = NULL
 FROM task AS c
-WHERE e.task_type = 'enrich' AND e.status = 'discarded'
+WHERE e.task_type IN ('enrich', 'thumbnail') AND e.status = 'discarded'
   AND c.task_type = 'consume' AND c.status = 'pending'
-  AND e.task_id = c.payload->>'on_completed'
+  AND (e.task_id = c.payload->>'on_completed' OR e.task_id = c.payload->>'on_completed_thumbnail')
 `
 
 func (q *Queries) RestoreDiscardedEnrichTasks(ctx context.Context) (int64, error) {
@@ -1425,10 +1425,10 @@ const restoreDiscardedEnrichTasksByBatch = `-- name: RestoreDiscardedEnrichTasks
 UPDATE task AS e
 SET status = 'waiting', error = NULL, completed_at = NULL
 FROM task AS c
-WHERE e.task_type = 'enrich' AND e.status = 'discarded'
+WHERE e.task_type IN ('enrich', 'thumbnail') AND e.status = 'discarded'
   AND c.task_type = 'consume' AND c.status = 'pending'
   AND c.batch_id = $1
-  AND e.task_id = c.payload->>'on_completed'
+  AND (e.task_id = c.payload->>'on_completed' OR e.task_id = c.payload->>'on_completed_thumbnail')
 `
 
 func (q *Queries) RestoreDiscardedEnrichTasksByBatch(ctx context.Context, batchID sql.NullString) (int64, error) {
@@ -1480,7 +1480,7 @@ UPDATE task SET
     payload = $1,
     error = NULL,
     completed_at = NULL
-WHERE id = $2 AND status IN ('waiting', 'discarded') AND task_type = 'enrich'
+WHERE id = $2 AND status IN ('waiting', 'discarded') AND task_type IN ('enrich', 'thumbnail')
 `
 
 type SetEnrichTaskPendingParams struct {
@@ -1498,7 +1498,7 @@ UPDATE task SET
     status = 'waiting',
     error = NULL,
     completed_at = NULL
-WHERE task_id = $1 AND status = 'discarded' AND task_type = 'enrich'
+WHERE task_id = $1 AND status = 'discarded' AND task_type IN ('enrich', 'thumbnail')
 `
 
 func (q *Queries) SetEnrichTaskWaiting(ctx context.Context, taskID string) (int64, error) {

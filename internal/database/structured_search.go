@@ -23,6 +23,7 @@ type FTSDocumentRow struct {
 	DocumentTypeID int64          `json:"document_type_id"`
 	OriginalPath   string         `json:"original_path"`
 	StoragePath    string         `json:"storage_path"`
+	HasThumbnail   bool           `json:"has_thumbnail"`
 	TextContent    sql.NullString `json:"text_content"`
 	Rank           float64        `json:"rank"`
 	Snippet        string         `json:"snippet"`
@@ -121,7 +122,7 @@ func (q *Queries) SearchDocumentsStructured(ctx context.Context, filter SearchFi
 	selectCols := `SELECT d.id, d.document_id, d.title, d.md5_checksum, d.sha512_checksum,
 		d.file_size, d.page_count, d.word_count, d.char_count,
 		d.language, d.created_at, d.modified_at, d.document_type_id,
-		d.original_path, d.storage_path, d.text_content`
+		d.original_path, d.storage_path, d.has_thumbnail, d.text_content`
 
 	if filter.Query != "" {
 		queryIdx := b.nextIndex()
@@ -201,7 +202,7 @@ func (q *Queries) SearchDocumentsStructured(ctx context.Context, filter SearchFi
 			&i.FileSize, &i.PageCount, &i.WordCount, &i.CharCount,
 			&i.Language, &i.CreatedAt, &i.ModifiedAt,
 			&i.DocumentTypeID, &i.OriginalPath, &i.StoragePath,
-			&i.TextContent, &i.Rank, &i.Snippet,
+			&i.HasThumbnail, &i.TextContent, &i.Rank, &i.Snippet,
 		); err != nil {
 			return nil, fmt.Errorf("scan structured search row: %w", err)
 		}

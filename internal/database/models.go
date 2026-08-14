@@ -51,6 +51,7 @@ type Document struct {
 	TextContent      sql.NullString
 	TextSearchVector interface{}
 	DeletedAt        sql.NullTime
+	HasThumbnail     bool
 }
 
 type DocumentPeople struct {

@@ -78,14 +78,19 @@ func ScanAndEnqueue(ctx context.Context, cfg *config.Config, client *database.Cl
 
 		consumeTaskID := uuid.New().String()
 		enrichTaskID := uuid.New().String()
+		thumbnailTaskID := uuid.New().String()
 		documentID := uuid.New().String()
 
-		consumePayload, _ := json.Marshal(map[string]any{
+		consumePayloadMap := map[string]any{
 			"file_path":    e.path,
 			"file_index":   e.index,
 			"on_completed": enrichTaskID,
 			"document_id":  documentID,
-		})
+		}
+		if cfg.Consumer.Thumbnail.Enabled {
+			consumePayloadMap["on_completed_thumbnail"] = thumbnailTaskID
+		}
+		consumePayload, _ := json.Marshal(consumePayloadMap)
 		consumePayloadPtr := json.RawMessage(consumePayload)
 		_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
 			TaskID:   consumeTaskID,
@@ -118,6 +123,26 @@ func ScanAndEnqueue(ctx context.Context, cfg *config.Config, client *database.Cl
 		if err != nil {
 			logger.Error(nil, "scan: create enrich task for %s: %v", e.path, err)
 			continue
+		}
+
+		if cfg.Consumer.Thumbnail.Enabled {
+			thumbnailPayload, _ := json.Marshal(map[string]any{
+				"waiting_for": consumeTaskID,
+				"file_name":   filepath.Base(e.path),
+				"file_index":  e.index,
+			})
+			thumbnailPayloadPtr := json.RawMessage(thumbnailPayload)
+			_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
+				TaskID:   thumbnailTaskID,
+				TaskType: "thumbnail",
+				Status:   "waiting",
+				BatchID:  sql.NullString{String: batchID, Valid: true},
+				Payload:  &thumbnailPayloadPtr,
+				DedupKey: sql.NullString{Valid: false},
+			})
+			if err != nil {
+				logger.Error(nil, "scan: create thumbnail task for %s: %v", e.path, err)
+			}
 		}
 		enqueued++
 	}

@@ -33,7 +33,7 @@ func (q *Queries) ListDocumentsWithSort(ctx context.Context, arg ListDocumentsWi
 	query := fmt.Sprintf(
 		`SELECT id, document_id, title, md5_checksum, sha512_checksum, original_type, file_size,
                  page_count, word_count, char_count, language,
-                 created_at, modified_at, document_type_id, original_path, storage_path
+                 created_at, modified_at, document_type_id, original_path, storage_path, has_thumbnail
          FROM document WHERE deleted_at IS NULL ORDER BY %s %s LIMIT $1 OFFSET $2`,
 		col, dir,
 	)
@@ -64,6 +64,7 @@ func (q *Queries) ListDocumentsWithSort(ctx context.Context, arg ListDocumentsWi
 			&i.DocumentTypeID,
 			&i.OriginalPath,
 			&i.StoragePath,
+			&i.HasThumbnail,
 		); err != nil {
 			return nil, err
 		}

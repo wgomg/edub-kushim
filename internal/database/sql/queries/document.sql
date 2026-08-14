@@ -1,18 +1,22 @@
 -- name: GetDocument :one
 SELECT id, document_id, title, md5_checksum, sha512_checksum, original_type, file_size, page_count, word_count,
        char_count, language, created_at, modified_at, document_type_id, original_path, storage_path, text_content,
-       text_search_vector
+       text_search_vector, has_thumbnail
+FROM document WHERE document_id = $1 AND deleted_at IS NULL;
+
+-- name: GetDocumentThumbnailMeta :one
+SELECT document_id, created_at, has_thumbnail
 FROM document WHERE document_id = $1 AND deleted_at IS NULL;
 
 -- name: GetDocumentById :one
 SELECT id, document_id, title, md5_checksum, sha512_checksum, original_type, file_size, page_count, word_count,
        char_count, language, created_at, modified_at, document_type_id, original_path, storage_path, text_content,
-       text_search_vector
+       text_search_vector, has_thumbnail
 FROM document WHERE id = $1 AND deleted_at IS NULL;
 
 -- name: ListDocuments :many
 SELECT id, document_id, title, md5_checksum, sha512_checksum, original_type, file_size, page_count, word_count,
-       char_count, language, created_at, modified_at, document_type_id, original_path, storage_path
+       char_count, language, created_at, modified_at, document_type_id, original_path, storage_path, has_thumbnail
 FROM document WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT $1 OFFSET $2;
 
 -- name: CreateDocument :one
@@ -60,6 +64,12 @@ UPDATE document SET
     modified_at = CURRENT_TIMESTAMP
 WHERE id = $3;
 
+-- name: SetDocumentHasThumbnail :exec
+UPDATE document SET
+    has_thumbnail = TRUE,
+    modified_at = CURRENT_TIMESTAMP
+WHERE document_id = $1 AND deleted_at IS NULL;
+
 -- name: SoftDeleteDocument :exec
 UPDATE document SET
     deleted_at = CURRENT_TIMESTAMP,
@@ -70,7 +80,7 @@ WHERE document_id = $1 AND deleted_at IS NULL;
 
 -- name: GetDocumentWithDetails :one
 SELECT d.id, d.document_id, d.title, d.md5_checksum, d.sha512_checksum, d.original_type, d.file_size,
-       d.page_count, d.word_count, d.char_count, d.language, d.created_at, d.modified_at, d.document_type_id, d.original_path, d.storage_path, d.text_content, dt.name as document_type_name
+       d.page_count, d.word_count, d.char_count, d.language, d.created_at, d.modified_at, d.document_type_id, d.original_path, d.storage_path, d.text_content, d.has_thumbnail, dt.name as document_type_name
 FROM document d
 LEFT JOIN document_type dt ON d.document_type_id = dt.id
 WHERE d.document_id = $1 AND d.deleted_at IS NULL;

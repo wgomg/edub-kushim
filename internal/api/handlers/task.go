@@ -629,7 +629,7 @@ func taskToResponse(t database.Task) types.TaskResponse {
 			fileName = p.FileName
 		}
 
-		if t.TaskType == "enrich" {
+		if t.TaskType == "enrich" || t.TaskType == "thumbnail" {
 			if t.Status == "discarded" {
 				var enrichPayload struct {
 					WaitingFor string `json:"waiting_for"`
