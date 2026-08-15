@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/wgomg/edub-kushim/internal/config"
+	"github.com/wgomg/edub-kushim/internal/consumption"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/storage"
 	"github.com/wgomg/edub-kushim/internal/task"
@@ -53,11 +54,7 @@ func (h *ThumbnailTaskHandler) Handle(ctx context.Context, t task.Task) (json.Ra
 	}
 
 	thumbPath := storage.ThumbnailPath(h.getCfg().Storage.StorageDir, document.CreatedAt.Time, p.DocumentID)
-	if err := os.MkdirAll(filepath.Dir(thumbPath), 0755); err != nil {
-		os.Remove(tmpPath)
-		return nil, &task.Error{ReqID: p.DocumentID, Err: fmt.Errorf("create thumbnail dir: %w", err)}
-	}
-	if err := os.Rename(tmpPath, thumbPath); err != nil {
+	if err := consumption.MoveFile(tmpPath, thumbPath); err != nil {
 		os.Remove(tmpPath)
 		return nil, &task.Error{ReqID: p.DocumentID, Err: fmt.Errorf("move thumbnail into storage: %w", err)}
 	}
@@ -75,4 +72,3 @@ func (h *ThumbnailTaskHandler) Handle(ctx context.Context, t task.Task) (json.Ra
 	})
 	return raw, nil
 }
-
