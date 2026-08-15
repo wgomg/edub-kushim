@@ -193,7 +193,7 @@ CREATE INDEX idx_document_tsv ON document USING GIN (text_search_vector);
 
 ### Struct
 
-`SearchFilter` — `Query`, `Tags []string`, `People []struct{ Name, Type string }`, `DocumentType`, `Language`, `DateCreated *struct{ From, To *string }`, `DateModified *struct{ From, To *string }`, `FileSize *struct{ Min, Max *int64 }`, `SortBy`, `SortOrder`, `Limit`, `Offset`
+`SearchFilter` — `Query`, `Tags []string`, `People []struct{ Name, Type string }`, `DocumentType`, `Language`, `DateCreated *struct{ From, To *string }`, `DateModified *struct{ From, To *string }`, `FileSize *struct{ Min, Max *int64 }`, `SortBy`, `SortOrder`, `Limit`, `Offset`. `PersonAnyType` (`"person"`) is a reserved people-filter type that matches across all relationship types by omitting the `people_type` clause.
 
 ### Internal: `queryBuilder`
 

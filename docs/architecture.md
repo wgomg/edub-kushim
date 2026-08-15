@@ -479,6 +479,7 @@ The `field:value` syntax in the search bar supports:
 | ---------- | -------------------------------- | ---------------------------- |
 | `tag:`     | `tag:finance`                    | Tag subquery filter          |
 | `author:`  | `author:"Jane Smith"`            | People subquery, type=author |
+| `person:`  | `person:"Jane Smith"`            | People subquery, any type (reserved sentinel, skips `people_type`) |
 | `type:`    | `type:invoice`                   | Document type equality       |
 | `lang:`    | `lang:eng`                       | Language equality            |
 | `size:`    | `size:>1MB`                      | File size range              |

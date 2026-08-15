@@ -270,7 +270,11 @@
 		tagSearchQuery = e.target.value;
 		clearTimeout(tagSearchTimer);
 		tagSearchTimer = setTimeout(async () => {
-			tagOptions = await api.autocomplete.tags(tagSearchQuery, 20);
+			try {
+				tagOptions = await api.autocomplete.tags(tagSearchQuery, 20);
+			} catch {
+				tagOptions = [];
+			}
 		}, 200);
 	}
 
@@ -297,7 +301,10 @@
 	}
 
 	onMount(() => {
-		api.autocomplete.peopleTypes().then(setPersonTypes);
+		api.autocomplete
+			.peopleTypes()
+			.then(setPersonTypes)
+			.catch(() => {});
 		refreshSavedSearches();
 	});
 

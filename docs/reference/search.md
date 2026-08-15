@@ -65,8 +65,12 @@ type Filter struct {
 ```go
 type PersonFilter struct {
     Name string `json:"name"`  // Person name
-    Type string `json:"type"`  // Person type (e.g. "author", "sender")
+    Type string `json:"type"`  // Person type (e.g. "author", "sender"); reserved "person" = any type
 }
+```
+The reserved type `"person"` matches the person across all their relationship
+types and skips the `people_type` join; any other type keeps the typed
+name+type clause.
 ```
 
 #### `DateRange`
@@ -146,7 +150,7 @@ A dynamic SQL query builder that composes `WHERE` clauses with proper parameteri
 Builds a SELECT query dynamically:
 
 - If `filter.Query` is non-empty: adds `WHERE d.text_search_vector @@ plainto_tsquery('simple', $N)`, `ts_rank()` for rank, `ts_headline()` for highlighting
-- Applies tag subquery (`document_tag JOIN tag`), people subqueries (`document_people JOIN people JOIN people_type`), document type subquery, language equality, date ranges, file size ranges
+- Applies tag subquery (`document_tag JOIN tag`), people subqueries (`document_people JOIN people JOIN people_type`, or `document_people JOIN people` name-only when `type == "person"`), document type subquery, language equality, date ranges, file size ranges
 - Applies missing filters (`MissingLanguage` → `d.language IN ('und','')`, `MissingType` → `d.document_type_id = 1`, `Untagged` → `NOT EXISTS` subquery on `document_tag`)
 - When query is present: ordered by `rank`; otherwise ordered by `sort_by`/`sort_order` (whitelisted: `title`, `file_size`, `created_at`)
 - Uses `LIMIT $N OFFSET $N` for pagination
@@ -209,7 +213,7 @@ Rich search input component with:
 - **Chip display**: Active filters shown as colored pills (tag:name, type:name, lang:code, created:date, etc.)
 - **Autocomplete suggestions**: Fetches from `/api/v1/tags`, `/api/v1/people`, `/api/v1/document-types` with debounce
 - **Keyboard navigation**: Arrow keys to navigate suggestions, Enter to select, Backspace to remove last chip, Escape to close dropdown
-- **`field:value` syntax**: `tag:finance`, `author:John`, `type:invoice`, `lang:eng`, `created:>2024-01-01`, `size:>1MB`, etc.
+- **`field:value` syntax**: `tag:finance`, `author:John`, `person:John`, `type:invoice`, `lang:eng`, `created:>2024-01-01`, `size:>1MB`, etc.
 
 ### `FilterPanel.svelte`
 Collapsible panel with structured filter controls:
@@ -254,6 +258,7 @@ Users can type structured queries directly into the search bar:
 | `tag:`     | `tag:finance`                          | Filter by tag name                         |
 | `type:`    | `type:invoice`                         | Filter by document type                    |
 | `author:`  | `author:"John Doe"`                    | Filter by person (type: author)            |
+| `person:`  | `person:"John Doe"`                    | Filter by person across all relationship types (reserved any-type) |
 | `sender:`  | `sender:acme`                          | Filter by person (type: sender)            |
 | `lang:`    | `lang:eng`                             | Filter by language code                    |
 | `created:` | `created:>2024-01-01` / `created:2024-01-01..2024-06-30` | Filter by creation date |
@@ -263,7 +268,9 @@ Users can type structured queries directly into the search bar:
 
 Quoted values are supported for names with spaces: `author:"Jane Smith"`. Any
 `field:` prefix matching a known person type (e.g. `signatory:`, `recipient:`,
-`client:`) filters by person with that type.
+`client:`) filters by person with that type. The prefix `person:` is reserved
+and filters by person across all relationship types; a people type named
+`person` cannot be created.
 
 ---
 

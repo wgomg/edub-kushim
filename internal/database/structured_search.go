@@ -7,6 +7,10 @@ import (
 	"strings"
 )
 
+// PersonAnyType is a reserved people-filter type that matches a person across
+// all their document relationship types, omitting the people_type clause.
+const PersonAnyType = "person"
+
 type FTSDocumentRow struct {
 	ID             int64          `json:"id"`
 	DocumentID     string         `json:"document_id"`
@@ -148,6 +152,12 @@ func (q *Queries) SearchDocumentsStructured(ctx context.Context, filter SearchFi
 
 	for _, p := range filter.People {
 		nameIdx := b.nextIndex()
+		if p.Type == PersonAnyType {
+			b.add(fmt.Sprintf(`AND d.id IN (SELECT dp.document_id FROM document_people dp
+				JOIN people pe ON dp.people_id = pe.id
+				WHERE pe.name = $%d)`, nameIdx), p.Name)
+			continue
+		}
 		typeIdx := b.nextIndex() + 1
 		b.add(fmt.Sprintf(`AND d.id IN (SELECT dp.document_id FROM document_people dp
 			JOIN people pe ON dp.people_id = pe.id
@@ -236,6 +246,12 @@ func (q *Queries) CountDocumentsStructured(ctx context.Context, filter SearchFil
 
 	for _, p := range filter.People {
 		nameIdx := b.nextIndex()
+		if p.Type == PersonAnyType {
+			b.add(fmt.Sprintf(`AND d.id IN (SELECT dp.document_id FROM document_people dp
+				JOIN people pe ON dp.people_id = pe.id
+				WHERE pe.name = $%d)`, nameIdx), p.Name)
+			continue
+		}
 		typeIdx := b.nextIndex() + 1
 		b.add(fmt.Sprintf(`AND d.id IN (SELECT dp.document_id FROM document_people dp
 			JOIN people pe ON dp.people_id = pe.id

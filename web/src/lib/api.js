@@ -59,6 +59,20 @@ async function requestRaw(path, opts = {}) {
 	}
 }
 
+async function requestStrict(path, opts = {}) {
+	const res = await fetch(path, withAuth(opts));
+	if (res.status === 401) {
+		handleUnauthorized();
+		throw new Error('Unauthorized');
+	}
+	if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+	if (res.status === 204 || res.headers.get('content-length') === '0') return null;
+	return await res.json();
+}
+
+const asList = (data) =>
+	Array.isArray(data) ? data : Array.isArray(data?.results) ? data.results : [];
+
 export const api = {
 	filterLanguages: () => request('/api/v1/filter-languages').then((data) => data ?? []),
 	_supportedMimeTypesCache: null,
@@ -198,18 +212,14 @@ export const api = {
 
 	autocomplete: {
 		tags: (q, limit = 20) =>
-			request(`/api/v1/tags?q=${encodeURIComponent(q)}&limit=${limit}`).then(
-				(data) => (data && data.results) ?? []
-			),
+			requestStrict(`/api/v1/tags?q=${encodeURIComponent(q)}&limit=${limit}`).then(asList),
 
 		people: (q, limit = 20) =>
-			request(`/api/v1/people?q=${encodeURIComponent(q)}&limit=${limit}`).then(
-				(data) => (data && data.results) ?? []
-			),
+			requestStrict(`/api/v1/people?q=${encodeURIComponent(q)}&limit=${limit}`).then(asList),
 
-		peopleTypes: () => request('/api/v1/people-types').then((data) => data ?? []),
+		peopleTypes: () => requestStrict('/api/v1/people-types').then(asList),
 
-		documentTypes: () => request('/api/v1/document-types').then((data) => data ?? [])
+		documentTypes: () => requestStrict('/api/v1/document-types').then(asList)
 	},
 
 	tags: {

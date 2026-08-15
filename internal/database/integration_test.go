@@ -858,6 +858,124 @@ func TestStructuredSearchMissingFilters(t *testing.T) {
 
 }
 
+func TestStructuredSearchPeopleFilter(t *testing.T) {
+	q, db := NewTestQueries(t)
+	defer db.Close()
+	resetDB(t, q)
+	ctx := context.Background()
+
+	mariaID, err := q.CreatePeople(ctx, CreatePeopleParams{Name: "Maria", NormalizedName: "maria"})
+	assertNoError(t, err, "create Maria")
+	juanID, err := q.CreatePeople(ctx, CreatePeopleParams{Name: "Juan", NormalizedName: "juan"})
+	assertNoError(t, err, "create Juan")
+
+	authorTypeID, err := q.CreatePeopleType(ctx, CreatePeopleTypeParams{Name: "test-author"})
+	assertNoError(t, err, "create author type")
+	recipientTypeID, err := q.CreatePeopleType(ctx, CreatePeopleTypeParams{Name: "test-recipient"})
+	assertNoError(t, err, "create recipient type")
+
+	createDoc := func(id, title string) int64 {
+		t.Helper()
+		docID, err := q.CreateDocument(ctx, CreateDocumentParams{
+			DocumentID: id, Title: title,
+			Md5Checksum: "md5-" + id, Sha512Checksum: "sha512-" + id,
+			OriginalType: "application/pdf", FileSize: 1000,
+			OriginalPath: "/tmp/" + id + ".pdf", StoragePath: "/tmp/" + id + "-s.pdf",
+			TextContent: sql.NullString{String: title, Valid: true},
+			PageCount: 1, WordCount: 1, CharCount: 5, Language: "eng",
+		})
+		assertNoError(t, err, "create "+id)
+		return docID
+	}
+
+	const (
+		docAUUID = "pf-a"
+		docBUUID = "pf-b"
+		docCUUID = "pf-c"
+		docDUUID = "pf-d"
+	)
+	docAID := createDoc(docAUUID, "maria-author.pdf")
+	docBID := createDoc(docBUUID, "maria-recipient.pdf")
+	docCID := createDoc(docCUUID, "juan-author.pdf")
+	createDoc(docDUUID, "no-people.pdf")
+
+	assertNoError(t, q.AddDocumentPeople(ctx, AddDocumentPeopleParams{
+		DocumentID: docAID, PeopleID: mariaID, PeopleTypeID: authorTypeID,
+	}), "add Maria as author")
+	assertNoError(t, q.AddDocumentPeople(ctx, AddDocumentPeopleParams{
+		DocumentID: docBID, PeopleID: mariaID, PeopleTypeID: recipientTypeID,
+	}), "add Maria as recipient")
+	assertNoError(t, q.AddDocumentPeople(ctx, AddDocumentPeopleParams{
+		DocumentID: docCID, PeopleID: juanID, PeopleTypeID: authorTypeID,
+	}), "add Juan as author")
+
+	docIDs := func(results []FTSDocumentRow) map[string]bool {
+		m := map[string]bool{}
+		for _, r := range results {
+			m[r.DocumentID] = true
+		}
+		return m
+	}
+	peopleMaria := func(types ...string) []struct{ Name, Type string } {
+		out := make([]struct{ Name, Type string }, len(types))
+		for i, ty := range types {
+			out[i] = struct{ Name, Type string }{Name: "Maria", Type: ty}
+		}
+		return out
+	}
+
+	t.Run("Typed author filter scopes to the author relationship only", func(t *testing.T) {
+		results, err := q.SearchDocumentsStructured(ctx, SearchFilter{
+			Limit:  100,
+			People: peopleMaria("test-author"),
+		})
+		assertNoError(t, err, "typed search")
+		assertEqual(t, len(results), 1, "exactly one doc")
+		ids := docIDs(results)
+		assertEqual(t, ids[docAUUID], true, "Maria/author doc matched")
+		assertEqual(t, ids[docBUUID], false, "Maria/recipient doc excluded")
+		assertEqual(t, ids[docCUUID], false, "other person excluded")
+		assertEqual(t, ids[docDUUID], false, "people-less doc excluded")
+	})
+
+	t.Run("PersonAnyType matches Maria across every relationship type", func(t *testing.T) {
+		results, err := q.SearchDocumentsStructured(ctx, SearchFilter{
+			Limit:  100,
+			People: peopleMaria(PersonAnyType),
+		})
+		assertNoError(t, err, "any-type search")
+		ids := docIDs(results)
+		assertEqual(t, len(results), 2, "two docs across both relationships")
+		assertEqual(t, ids[docAUUID], true, "Maria/author doc matched")
+		assertEqual(t, ids[docBUUID], true, "Maria/recipient doc matched")
+		assertEqual(t, ids[docCUUID], false, "different person excluded")
+		assertEqual(t, ids[docDUUID], false, "people-less doc excluded")
+	})
+
+	t.Run("PersonAnyType returns no results for an unknown person", func(t *testing.T) {
+		results, err := q.SearchDocumentsStructured(ctx, SearchFilter{
+			Limit:  100,
+			People: []struct{ Name, Type string }{{Name: "Nobody", Type: PersonAnyType}},
+		})
+		assertNoError(t, err, "any-type miss")
+		assertEqual(t, len(results), 0, "no docs matched")
+	})
+
+	t.Run("Count matches Search for PersonAnyType", func(t *testing.T) {
+		searchR, err := q.SearchDocumentsStructured(ctx, SearchFilter{
+			Limit:  100,
+			People: peopleMaria(PersonAnyType),
+		})
+		assertNoError(t, err, "search")
+		count, err := q.CountDocumentsStructured(ctx, SearchFilter{
+			Limit:  100,
+			People: peopleMaria(PersonAnyType),
+		})
+		assertNoError(t, err, "count")
+		assertEqual(t, count, int64(len(searchR)), "count equals search length")
+	})
+}
+
 func TestWithDocumentCountQueries(t *testing.T) {
 	q, db := NewTestQueries(t)
 	defer db.Close()

@@ -2,6 +2,7 @@
 	import { api } from '$lib/api';
 	import { filterStore } from '$lib/stores/filterStore.js';
 	import { getPersonTypes, formatSize } from '$lib/stores/searchFilter.js';
+	import { toastStore } from '$lib/stores/toastStore.svelte.js';
 
 	let languages = $state([]);
 
@@ -52,7 +53,10 @@
 	let fileMaxRaw = $state('');
 
 	$effect(() => {
-		api.autocomplete.documentTypes().then((d) => (documentTypes = d));
+		api.autocomplete
+			.documentTypes()
+			.then((d) => (documentTypes = d))
+			.catch(() => {});
 	});
 
 	$effect(() => {
@@ -68,7 +72,12 @@
 			return;
 		}
 		tagDebounce = setTimeout(async () => {
-			tagSuggestions = await api.autocomplete.tags(q, 10);
+			try {
+				tagSuggestions = await api.autocomplete.tags(q, 10);
+			} catch {
+				tagSuggestions = [];
+				toastStore.error('Could not load suggestions');
+			}
 		}, 200);
 	}
 
@@ -109,7 +118,12 @@
 			return;
 		}
 		personDebounce = setTimeout(async () => {
-			personSuggestions = await api.autocomplete.people(q, 10);
+			try {
+				personSuggestions = await api.autocomplete.people(q, 10);
+			} catch {
+				personSuggestions = [];
+				toastStore.error('Could not load suggestions');
+			}
 		}, 200);
 	}
 

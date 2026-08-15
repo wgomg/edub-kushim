@@ -1,3 +1,5 @@
+export const PERSON_ANY_TYPE = 'person';
+
 let _personTypes = new Set();
 
 export function setPersonTypes(types) {
@@ -134,6 +136,9 @@ export function parseQueryString(str) {
 					break;
 				case 'lang':
 					filter.language = token.value;
+					break;
+				case PERSON_ANY_TYPE:
+					filter.people.push({ name: token.value, type: PERSON_ANY_TYPE });
 					break;
 				case 'created': {
 					const dr = parseDateRange(token.value);

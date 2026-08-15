@@ -2,12 +2,14 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 
 	itypes "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/api/types"
+	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -280,6 +282,10 @@ func (h *PeopleHandler) CreatePeopleType(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "People type name is required", http.StatusBadRequest)
 		return
 	}
+	if strings.EqualFold(req.Name, database.PersonAnyType) {
+		http.Error(w, fmt.Sprintf("People type name %q is reserved", database.PersonAnyType), http.StatusBadRequest)
+		return
+	}
 
 	req.Description = utils.StripTags(req.Description)
 
@@ -331,6 +337,10 @@ func (h *PeopleHandler) UpdatePeopleType(w http.ResponseWriter, r *http.Request)
 	req.Name = utils.StripTags(strings.TrimSpace(req.Name))
 	if req.Name == "" {
 		http.Error(w, "People type name is required", http.StatusBadRequest)
+		return
+	}
+	if strings.EqualFold(req.Name, database.PersonAnyType) {
+		http.Error(w, fmt.Sprintf("People type name %q is reserved", database.PersonAnyType), http.StatusBadRequest)
 		return
 	}
 

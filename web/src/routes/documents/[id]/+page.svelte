@@ -52,11 +52,14 @@
 	});
 
 	onMount(async () => {
-		const [data, types, pTypes] = await Promise.all([
+		const [docRes, typesRes, pTypesRes] = await Promise.allSettled([
 			api.documents.get(params.id),
 			api.autocomplete.documentTypes(),
 			api.autocomplete.peopleTypes()
 		]);
+		const data = docRes.status === 'fulfilled' ? docRes.value : null;
+		const types = typesRes.status === 'fulfilled' ? typesRes.value : [];
+		const pTypes = pTypesRes.status === 'fulfilled' ? pTypesRes.value : [];
 		if (!data) {
 			toastStore.error('Failed to load document');
 			return;
@@ -124,7 +127,11 @@
 			tagResults = [];
 			return;
 		}
-		tagResults = await api.autocomplete.tags(q);
+		try {
+			tagResults = await api.autocomplete.tags(q);
+		} catch {
+			tagResults = [];
+		}
 	}
 
 	function selectTag(tag) {
@@ -149,7 +156,11 @@
 			peopleResults = [];
 			return;
 		}
-		peopleResults = await api.autocomplete.people(q);
+		try {
+			peopleResults = await api.autocomplete.people(q);
+		} catch {
+			peopleResults = [];
+		}
 	}
 
 	function selectPerson(person) {

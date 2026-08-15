@@ -1057,6 +1057,12 @@ Content-Type: application/json
 }
 ```
 
+`people[].type` is a person relationship type such as `author` or `sender`. The
+reserved value `"person"` matches the person across **all** their relationship
+types (e.g. a person linked to one document as author and to another as
+recipient matches once). Because `person` is reserved, creating or renaming a
+people type to `person` is rejected with `400`.
+
 Response `200` — `SearchResponse`:
 
 ```json

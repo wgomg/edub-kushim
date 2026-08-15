@@ -535,6 +535,35 @@ func TestPeopleTypeSeeded(t *testing.T) {
 	}
 }
 
+func TestPeopleTypeReservedName(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	h := NewPeopleHandler(env.services, env.logger)
+
+	rejected := func(name, errMsg string) {
+		t.Helper()
+		w := rec()
+		body, _ := json.Marshal(types.CreatePeopleTypeRequest{Name: name})
+		h.CreatePeopleType(w, req(t, "POST", "/api/v1/people-types", body))
+		testutil.AssertEqual(t, w.Code, http.StatusBadRequest, errMsg)
+	}
+
+	for _, reserved := range []string{"person", "Person", "PERSON"} {
+		rejected(reserved, "create rejected for "+reserved)
+	}
+
+	w := rec()
+	body, _ := json.Marshal(types.CreatePeopleTypeRequest{Name: "test-custom-type"})
+	h.CreatePeopleType(w, req(t, "POST", "/api/v1/people-types", body))
+	testutil.AssertEqual(t, w.Code, http.StatusCreated, "non-reserved name accepted")
+
+	w = rec()
+	updateBody, _ := json.Marshal(types.UpdatePeopleTypeRequest{Name: "person"})
+	r := req(t, "PUT", "/api/v1/people-types/1", updateBody)
+	r.SetPathValue("id", "1")
+	h.UpdatePeopleType(w, r)
+	testutil.AssertEqual(t, w.Code, http.StatusBadRequest, "update rejected for reserved name")
+}
+
 func TestDocumentTypeCrud(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()

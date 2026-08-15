@@ -1,7 +1,9 @@
 <script>
 	import { api } from '$lib/api';
+	import { toastStore } from '$lib/stores/toastStore.svelte.js';
 	import {
 		getPersonTypes,
+		PERSON_ANY_TYPE,
 		formatSize,
 		parseDateRange,
 		parseSize
@@ -64,6 +66,15 @@
 				.map((dt) => ({ label: dt.name, value: dt.name, type: 'documentType' }));
 		}
 
+		if (field === PERSON_ANY_TYPE) {
+			const data = await api.autocomplete.people(prefix, 10);
+			return data.map((p) => ({
+				label: `person: ${p.name}`,
+				value: p.name,
+				type: PERSON_ANY_TYPE
+			}));
+		}
+
 		if (field && isPersonField(field)) {
 			const data = await api.autocomplete.people(prefix, 10);
 			return data.map((p) => ({ label: `${field}: ${p.name}`, value: p.name, type: field }));
@@ -84,7 +95,11 @@
 		const results = [];
 		for (const t of tagsData) results.push({ label: `tag: ${t.name}`, value: t.name, type: 'tag' });
 		for (const p of peopleData)
-			results.push({ label: `author: ${p.name}`, value: p.name, type: 'author' });
+			results.push({
+				label: `person: ${p.name}`,
+				value: p.name,
+				type: PERSON_ANY_TYPE
+			});
 		for (const dt of typesData) {
 			if (dt.name.includes(prefix))
 				results.push({ label: `type: ${dt.name}`, value: dt.name, type: 'documentType' });
@@ -109,9 +124,16 @@
 	function debouncedFetch(prefix, field) {
 		if (debounceTimer) clearTimeout(debounceTimer);
 		debounceTimer = setTimeout(async () => {
-			suggestions = await fetchSuggestions(prefix, field);
-			showDropdown = suggestions.length > 0;
-			selectedIndex = -1;
+			try {
+				suggestions = await fetchSuggestions(prefix, field);
+				showDropdown = suggestions.length > 0;
+				selectedIndex = -1;
+			} catch {
+				suggestions = [];
+				showDropdown = false;
+				selectedIndex = -1;
+				toastStore.error('Could not load suggestions');
+			}
 		}, 250);
 	}
 
@@ -155,6 +177,8 @@
 					if (sz.op === '<') fs.min = null;
 					emit({ fileSize: fs });
 				}
+			} else if (fp.field === PERSON_ANY_TYPE) {
+				emit({ people: [...people, { name: fp.value, type: PERSON_ANY_TYPE }] });
 			} else if (isPersonField(fp.field)) {
 				emit({ people: [...people, { name: fp.value, type: fp.field }] });
 			}
