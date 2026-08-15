@@ -204,7 +204,7 @@ export const api = {
 
 		people: (q, limit = 20) =>
 			request(`/api/v1/people?q=${encodeURIComponent(q)}&limit=${limit}`).then(
-				(data) => data ?? []
+				(data) => (data && data.results) ?? []
 			),
 
 		peopleTypes: () => request('/api/v1/people-types').then((data) => data ?? []),
