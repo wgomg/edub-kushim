@@ -402,10 +402,13 @@ storage/
 │   ├── duplicated/               # Duplicate files
 │   │   └── <uuid>-report.pdf
 │   └── <uuid>-corrupt.pdf
+├── thumbnails/                   # First-page JPEG previews
+│   └── 2024/03/19/15/<uuid>.jpg
 ├── trash/                        # Soft-deleted documents (restorable)
 │   └── <document_id>/            # Mirrors originals/processed layout
 │       ├── originals/<uuid>.pdf
-│       └── processed/<uuid>.pdf
+│       ├── processed/<uuid>.pdf
+│       └── thumbnails/<uuid>.jpg
 └── processed/                    # Processed files (OCR'd or optimized)
     └── 2024/03/19/15/<uuid>.pdf
 ```
@@ -414,8 +417,10 @@ Date‑based (`year/month/day/hour/documentID.ext`) under `processed/` avoids "t
 at scale. Dual storage preserves originals alongside processed versions. Files that fail processing
 are moved to `errors/` (or `errors/duplicated/` for exact duplicates) with a UUID prefix to prevent
 name collisions. Inbox files are always deleted after successful processing. Deleting a document moves
-its files to `trash/<document_id>/` (soft delete — restorable via the trash API); an hourly purge
-permanently removes trashed documents older than `storage.trash.retention_days` (default 30).
+its files (original, processed, and thumbnail when present) to `trash/<document_id>/` (soft delete —
+restorable via the trash API); an hourly purge permanently removes trashed documents older than
+`storage.trash.retention_days` (default 30) and sweeps orphaned thumbnails in `storage/thumbnails/`
+whose document row no longer exists.
 
 ---
 

@@ -6,22 +6,15 @@ import (
 	"path/filepath"
 )
 
-// TrashDir returns the root directory that holds soft-deleted document files.
 func TrashDir(storageDir string) string {
 	return filepath.Join(storageDir, "trash")
 }
 
-// DocumentTrashDir returns the per-document trash directory. Mirrors the
-// originals/processed layout of the main storage dir so basenames survive
-// soft-delete and restore can reconstruct the original paths.
 func DocumentTrashDir(storageDir, documentID string) string {
 	return filepath.Join(TrashDir(storageDir), documentID)
 }
 
-// MoveToTrash moves a document's original and processed files under
-// <trash>/<document_id>/. Missing source files are skipped so a soft-delete
-// still succeeds when a file was manually removed. Returns the new paths.
-func MoveToTrash(storageDir, documentID, originalPath, storagePath string) (newOriginal, newStorage string, err error) {
+func MoveToTrash(storageDir, documentID, originalPath, storagePath, thumbnailPath string) (newOriginal, newStorage string, err error) {
 	docTrash := DocumentTrashDir(storageDir, documentID)
 	originalsDir := filepath.Join(docTrash, "originals")
 	processedDir := filepath.Join(docTrash, "processed")
@@ -43,13 +36,20 @@ func MoveToTrash(storageDir, documentID, originalPath, storagePath string) (newO
 		return "", "", err
 	}
 
+	if thumbnailPath != "" {
+		thumbDir := filepath.Join(docTrash, "thumbnails")
+		if err := os.MkdirAll(thumbDir, 0755); err != nil {
+			return "", "", fmt.Errorf("create trash thumbnails dir: %w", err)
+		}
+		if err := moveFileIfExists(thumbnailPath, filepath.Join(thumbDir, filepath.Base(thumbnailPath))); err != nil {
+			return "", "", err
+		}
+	}
+
 	return newOriginal, newStorage, nil
 }
 
-// RestoreFromTrash moves a document's files back to the main storage dir,
-// reconstructing the original paths from the basenames. Returns the restored
-// paths.
-func RestoreFromTrash(storageDir, documentID, trashOriginalPath, trashStoragePath string) (newOriginal, newStorage string, err error) {
+func RestoreFromTrash(storageDir, documentID, trashOriginalPath, trashStoragePath, thumbnailPath string) (newOriginal, newStorage string, err error) {
 	newOriginal = filepath.Join(storageDir, "originals", filepath.Base(trashOriginalPath))
 	newStorage = filepath.Join(storageDir, "processed", filepath.Base(trashStoragePath))
 
@@ -71,11 +71,24 @@ func RestoreFromTrash(storageDir, documentID, trashOriginalPath, trashStoragePat
 		return "", "", fmt.Errorf("stat storage file: %w", statErr)
 	}
 
+	if thumbnailPath != "" {
+		trashThumb := filepath.Join(DocumentTrashDir(storageDir, documentID), "thumbnails", filepath.Base(thumbnailPath))
+		if _, statErr := os.Stat(trashThumb); statErr == nil {
+			if mkdirErr := os.MkdirAll(filepath.Dir(thumbnailPath), 0755); mkdirErr != nil {
+				return "", "", fmt.Errorf("create thumbnail dir: %w", mkdirErr)
+			}
+			if renameErr := os.Rename(trashThumb, thumbnailPath); renameErr != nil {
+				return "", "", fmt.Errorf("restore thumbnail file: %w", renameErr)
+			}
+		} else if !os.IsNotExist(statErr) {
+			return "", "", fmt.Errorf("stat thumbnail file: %w", statErr)
+		}
+	}
+
 	removeEmptyTrashDirs(storageDir, documentID)
 	return newOriginal, newStorage, nil
 }
 
-// RemoveFromTrash permanently removes a document's trash directory.
 func RemoveFromTrash(storageDir, documentID string) error {
 	if err := os.RemoveAll(DocumentTrashDir(storageDir, documentID)); err != nil {
 		return fmt.Errorf("remove trash dir: %w", err)
@@ -98,7 +111,7 @@ func moveFileIfExists(src, dst string) error {
 
 func removeEmptyTrashDirs(storageDir, documentID string) {
 	docTrash := DocumentTrashDir(storageDir, documentID)
-	// best-effort: subdirs are only empty when the document had no files there
+	os.Remove(filepath.Join(docTrash, "thumbnails"))
 	os.Remove(filepath.Join(docTrash, "originals"))
 	os.Remove(filepath.Join(docTrash, "processed"))
 	os.Remove(docTrash)

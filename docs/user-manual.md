@@ -854,10 +854,10 @@ Response `204 No Content`. Returns `404` if document or document type is not fou
 DELETE /api/v1/documents/{id}
 ```
 
-Response `204 No Content`. Soft-deletes the document: its original and processed files are
-moved to the trash directory (`<storage_dir>/trash/<document_id>/`) and the row is marked
-with `deleted_at` instead of being removed. The document disappears from lists, search,
-and dashboard counts but can be restored from the trash (see
+Response `204 No Content`. Soft-deletes the document: its original, processed, and thumbnail
+files (when present) are moved to the trash directory (`<storage_dir>/trash/<document_id>/`)
+and the row is marked with `deleted_at` instead of being removed. The document disappears
+from lists, search, and dashboard counts but can be restored from the trash (see
 [Trash / Soft Delete](#trash--soft-delete)). Returns `404` if the document is not found or
 already in the trash.
 
@@ -912,7 +912,8 @@ trash.
 POST /api/v1/trash/{id}/restore
 ```
 
-Moves the files back to the main storage directories and clears `deleted_at`. Response
+Moves the files back to the main storage directories (the thumbnail, when present, returns
+to its date-based path under `storage/thumbnails/`) and clears `deleted_at`. Response
 `204 No Content`. Returns `404` if the document is not in the trash. Missing files are
 skipped (partial restore) rather than failing the operation.
 
@@ -922,8 +923,10 @@ skipped (partial restore) rather than failing the operation.
 DELETE /api/v1/trash/{id}
 ```
 
-Removes the database row (junction tables cascade) and the document's trash directory.
-Response `204 No Content`. Returns `404` if the document is not in the trash.
+Removes the database row (junction tables cascade), the document's trash directory, and any
+thumbnail file left in `storage/thumbnails/` (documents trashed before thumbnails were
+moved to trash keep their thumbnail there). Response `204 No Content`. Returns `404` if
+the document is not in the trash.
 
 #### Batch Permanent Delete
 
@@ -961,7 +964,9 @@ POST /api/v1/trash/purge
 
 Permanently deletes all trashed documents whose `deleted_at` is older than
 `storage.trash.retention_days` (default 30 days). Response `200` with `{"purged": N}`. The
-same purge also runs automatically in the background every hour.
+same purge also runs automatically in the background every hour; when it deletes rows, it
+also sweeps orphaned thumbnails in `storage/thumbnails/` whose document row no longer
+exists.
 
 ### Add Document Tag
 

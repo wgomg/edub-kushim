@@ -3,9 +3,11 @@ package service
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/config"
@@ -16,8 +18,8 @@ import (
 )
 
 const (
-	trashPurgeInterval   = 1 * time.Hour
-	trashGracePeriod     = 5 * time.Minute
+	trashPurgeInterval = 1 * time.Hour
+	trashGracePeriod   = 5 * time.Minute
 )
 
 type TrashService struct {
@@ -57,7 +59,12 @@ func (s *TrashService) SoftDelete(ctx context.Context, documentID string) error 
 		return errs.FromDB(err, "get document")
 	}
 
-	newOriginal, newStorage, err := storage.MoveToTrash(s.cfg.Storage.StorageDir, documentID, doc.OriginalPath, doc.StoragePath)
+	var thumbnailPath string
+	if doc.HasThumbnail && doc.CreatedAt.Valid {
+		thumbnailPath = storage.ThumbnailPath(s.cfg.Storage.StorageDir, doc.CreatedAt.Time, documentID)
+	}
+
+	newOriginal, newStorage, err := storage.MoveToTrash(s.cfg.Storage.StorageDir, documentID, doc.OriginalPath, doc.StoragePath, thumbnailPath)
 	if err != nil {
 		return errs.EInternal("soft delete", err)
 	}
@@ -68,7 +75,7 @@ func (s *TrashService) SoftDelete(ctx context.Context, documentID string) error 
 		StoragePath:  newStorage,
 	}); err != nil {
 		// Rollback: move files back so the document remains fully functional.
-		storage.RestoreFromTrash(s.cfg.Storage.StorageDir, documentID, newOriginal, newStorage) //nolint:errcheck
+		storage.RestoreFromTrash(s.cfg.Storage.StorageDir, documentID, newOriginal, newStorage, thumbnailPath)
 		return errs.FromDB(err, "soft delete document")
 	}
 
@@ -83,7 +90,12 @@ func (s *TrashService) RestoreDocument(ctx context.Context, documentID string) e
 		return err
 	}
 
-	newOriginal, newStorage, err := storage.RestoreFromTrash(s.cfg.Storage.StorageDir, documentID, doc.OriginalPath, doc.StoragePath)
+	var thumbnailPath string
+	if doc.CreatedAt.Valid {
+		thumbnailPath = storage.ThumbnailPath(s.cfg.Storage.StorageDir, doc.CreatedAt.Time, documentID)
+	}
+
+	newOriginal, newStorage, err := storage.RestoreFromTrash(s.cfg.Storage.StorageDir, documentID, doc.OriginalPath, doc.StoragePath, thumbnailPath)
 	if err != nil {
 		return errs.EInternal("restore from trash", err)
 	}
@@ -103,7 +115,7 @@ func (s *TrashService) RestoreDocument(ctx context.Context, documentID string) e
 // (cascading to junction tables), then trash files. If file removal fails,
 // the hourly orphan cleanup handles leftovers.
 func (s *TrashService) PermanentlyDelete(ctx context.Context, documentID string) error {
-	_, err := s.GetTrashDocument(ctx, documentID)
+	doc, err := s.GetTrashDocument(ctx, documentID)
 	if err != nil {
 		return err
 	}
@@ -114,6 +126,13 @@ func (s *TrashService) PermanentlyDelete(ctx context.Context, documentID string)
 
 	// Best-effort file cleanup — orphan sweep handles leftovers on failure.
 	storage.RemoveFromTrash(s.cfg.Storage.StorageDir, documentID) //nolint:errcheck
+
+	if doc.CreatedAt.Valid {
+		thumbnailPath := storage.ThumbnailPath(s.cfg.Storage.StorageDir, doc.CreatedAt.Time, documentID)
+		if err := os.Remove(thumbnailPath); err != nil && !os.IsNotExist(err) {
+			s.logger.Warn(nil, "permanently delete: remove thumbnail %s: %v", thumbnailPath, err)
+		}
+	}
 
 	return nil
 }
@@ -129,6 +148,7 @@ func (s *TrashService) PurgeExpired(ctx context.Context) (int64, error) {
 
 	if deleted > 0 {
 		s.cleanupOrphanedTrashDirs(ctx)
+		s.cleanupOrphanedThumbnails(ctx)
 	}
 
 	return deleted, nil
@@ -192,6 +212,113 @@ func (s *TrashService) activeTrashDocumentIDs(ctx context.Context) (map[string]s
 		ids[id] = struct{}{}
 	}
 	return ids, rows.Err()
+}
+
+func (s *TrashService) cleanupOrphanedThumbnails(ctx context.Context) {
+	thumbRoot := filepath.Join(s.cfg.Storage.StorageDir, "thumbnails")
+	if _, err := os.Stat(thumbRoot); err != nil {
+		if !os.IsNotExist(err) {
+			s.logger.Warn(nil, "thumbnail purge: stat thumbnails dir: %v", err)
+		}
+		return
+	}
+
+	var docIDs []string
+	err := filepath.WalkDir(thumbRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			s.logger.Warn(nil, "thumbnail purge: walk %s: %v", path, err)
+			return nil
+		}
+		if d.IsDir() || filepath.Ext(d.Name()) != ".jpg" {
+			return nil
+		}
+		docIDs = append(docIDs, strings.TrimSuffix(d.Name(), ".jpg"))
+		return nil
+	})
+	if err != nil {
+		s.logger.Warn(nil, "thumbnail purge: walk thumbnails dir: %v", err)
+		return
+	}
+	if len(docIDs) == 0 {
+		return
+	}
+
+	existingIDs, err := s.documentIDsExist(ctx, docIDs)
+	if err != nil {
+		s.logger.Warn(nil, "thumbnail purge: query document ids: %v", err)
+		return
+	}
+
+	err = filepath.WalkDir(thumbRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			s.logger.Warn(nil, "thumbnail purge: walk %s: %v", path, err)
+			return nil
+		}
+		if ctx.Err() != nil {
+			return filepath.SkipAll
+		}
+		if d.IsDir() || filepath.Ext(d.Name()) != ".jpg" {
+			return nil
+		}
+		docID := strings.TrimSuffix(d.Name(), ".jpg")
+		if _, ok := existingIDs[docID]; ok {
+			return nil
+		}
+		if err := os.Remove(path); err != nil {
+			s.logger.Warn(nil, "thumbnail purge: remove %s: %v", path, err)
+			return nil
+		}
+		removeEmptyThumbnailDirs(filepath.Dir(path))
+		return nil
+	})
+	if err != nil {
+		s.logger.Warn(nil, "thumbnail purge: walk thumbnails dir: %v", err)
+	}
+}
+
+func (s *TrashService) documentIDsExist(ctx context.Context, docIDs []string) (map[string]struct{}, error) {
+	ids := make(map[string]struct{}, len(docIDs))
+
+	for i := 0; i < len(docIDs); i += docIDBatchSize {
+		end := min(i+docIDBatchSize, len(docIDs))
+		batch := docIDs[i:end]
+
+		query := "SELECT document_id FROM document WHERE document_id IN (?" + strings.Repeat(",?", len(batch)-1) + ")"
+		args := make([]any, len(batch))
+		for j, id := range batch {
+			args[j] = id
+		}
+
+		rows, err := s.client.DB().QueryContext(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("query document ids batch %d: %w", i, err)
+		}
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("scan document id: %w", err)
+			}
+			ids[id] = struct{}{}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("iterate document ids: %w", err)
+		}
+		rows.Close()
+	}
+	return ids, nil
+}
+
+const docIDBatchSize = 1000
+
+func removeEmptyThumbnailDirs(dirPath string) {
+	for range 4 {
+		if os.Remove(dirPath) != nil {
+			return
+		}
+		dirPath = filepath.Dir(dirPath)
+	}
 }
 
 func isRecentlyModified(dirPath string, within time.Duration) bool {
