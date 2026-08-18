@@ -297,7 +297,8 @@ See `AuthMiddleware` under `server.go` → Functions.
 - `DatabaseConfigResponse` — `Path string` (not used with PostgreSQL)
 - `ConfigResponse` — `App AppConfigResponse`, `Server ServerConfigResponse`, `Storage StorageConfigResponse`, `Database DatabaseConfigResponse`, `Consumer ConsumerConfigResponse`, `Enricher EnricherConfigResponse`, `Backup BackupConfigResponse`, `AvailableEngines map[string][]EngineEntry`, `AvailableFileTypes []AvailableFileType`
 - `AvailableFileType` — `MimeType string`, `Label string`, `Extensions []string` (canonical + aliases, e.g. TIFF → `.tiff`, `.tif`), `Required bool` (PDF only) — drives the supported-file-types checkboxes in both UIs
-- `ConsumerConfigResponse` — `SupportedFiles []string`, `Workers int`, `MaxFilesPerBatch int`, `Converter DocxOdtConverterResponse`, `TextExtractor TextExtractorResponse`, `PdfOptimizer PdfOptimizerResponse`, `OCR OCRResponse`, `Polling PollingConfigResponse`, `Reclaim ReclaimConfigResponse`
+- `ConsumerConfigResponse` — `SupportedFiles []string`, `Workers int`, `MaxFilesPerBatch int`, `Converter DocxOdtConverterResponse`, `TextExtractor TextExtractorResponse`, `PdfOptimizer PdfOptimizerResponse`, `OCR OCRResponse`, `Thumbnail ThumbnailConfigResponse`, `Polling PollingConfigResponse`, `Reclaim ReclaimConfigResponse`
+- `ThumbnailConfigResponse` — `Enabled bool`, `Engine string`, `DPI int`, `MaxWidth int`, `Quality int`, `Timeout int`, `Workers int`
 - `DocxOdtConverterResponse` — `Enabled bool`, `Binary string`, `Timeout int`
 - `TextExtractorResponse` — `Engine string`, `Timeout int`
 - `PdfOptimizerResponse` — `Engine string`, `Fallback string`, `Timeout int`

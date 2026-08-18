@@ -113,6 +113,7 @@ type ConsumerConfigResponse struct {
 	TextExtractor    TextExtractorResponse    `json:"textextractor"`
 	PdfOptimizer     PdfOptimizerResponse     `json:"pdfoptimizer"`
 	OCR              OCRResponse              `json:"ocr"`
+	Thumbnail        ThumbnailConfigResponse  `json:"thumbnail"`
 	Polling          PollingConfigResponse    `json:"polling"`
 	Reclaim          ReclaimConfigResponse    `json:"reclaim"`
 }
@@ -140,6 +141,16 @@ type OCRResponse struct {
 	DataDir    string   `json:"data_dir"`
 	Timeout    int      `json:"timeout"`
 	OcrWorkers int      `json:"ocr_workers"`
+}
+
+type ThumbnailConfigResponse struct {
+	Enabled  bool   `json:"enabled"`
+	Engine   string `json:"engine"`
+	DPI      int    `json:"dpi"`
+	MaxWidth int    `json:"max_width"`
+	Quality  int    `json:"quality"`
+	Timeout  int    `json:"timeout"`
+	Workers  int    `json:"workers"`
 }
 
 type EnricherConfigResponse struct {
@@ -257,6 +268,13 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Consumer.OCR.DataDir = cfg.Consumer.OCR.DataDir
 	resp.Consumer.OCR.Timeout = cfg.Consumer.OCR.Timeout
 	resp.Consumer.OCR.OcrWorkers = cfg.Consumer.OCR.OcrWorkers
+	resp.Consumer.Thumbnail.Enabled = cfg.Consumer.Thumbnail.Enabled
+	resp.Consumer.Thumbnail.Engine = cfg.Consumer.Thumbnail.Engine
+	resp.Consumer.Thumbnail.DPI = cfg.Consumer.Thumbnail.DPI
+	resp.Consumer.Thumbnail.MaxWidth = cfg.Consumer.Thumbnail.MaxWidth
+	resp.Consumer.Thumbnail.Quality = cfg.Consumer.Thumbnail.Quality
+	resp.Consumer.Thumbnail.Timeout = cfg.Consumer.Thumbnail.Timeout
+	resp.Consumer.Thumbnail.Workers = cfg.Consumer.Thumbnail.Workers
 	resp.Enricher.Workers = cfg.Enricher.Workers
 	resp.Enricher.TextReducer.Engine = cfg.Enricher.TextReducer.Engine
 	resp.Enricher.TextReducer.Timeout = cfg.Enricher.TextReducer.Timeout

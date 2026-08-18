@@ -154,11 +154,27 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 		};
 	}
 
+	function ensureThumbnailBlock() {
+		if (!cfg) return;
+		if (!cfg.consumer) cfg.consumer = {};
+		if (cfg.consumer.thumbnail) return;
+		cfg.consumer.thumbnail = {
+			enabled: true,
+			engine: 'mupdf',
+			dpi: 72,
+			max_width: 400,
+			quality: 80,
+			timeout: 30,
+			workers: 1
+		};
+	}
+
 	onMount(async () => {
 		const loaded = await api.config.get();
 		if (loaded) {
 			cfg = loaded;
 			ensureFallbackBlock();
+			ensureThumbnailBlock();
 			syncMimeCheckboxes();
 			checkStatus();
 			snapshotState();
@@ -254,6 +270,13 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			'consumer.reclaim.enabled': cfg.consumer.reclaim.enabled,
 			'consumer.reclaim.max_retries': Number(cfg.consumer.reclaim.max_retries),
 			'consumer.reclaim.stale_task_after': Number(cfg.consumer.reclaim.stale_task_after),
+			'consumer.thumbnail.enabled': cfg.consumer.thumbnail.enabled,
+			'consumer.thumbnail.engine': cfg.consumer.thumbnail.engine,
+			'consumer.thumbnail.dpi': Number(cfg.consumer.thumbnail.dpi),
+			'consumer.thumbnail.max_width': Number(cfg.consumer.thumbnail.max_width),
+			'consumer.thumbnail.quality': Number(cfg.consumer.thumbnail.quality),
+			'consumer.thumbnail.timeout': Number(cfg.consumer.thumbnail.timeout),
+			'consumer.thumbnail.workers': Number(cfg.consumer.thumbnail.workers),
 			'consumer.pdfoptimizer.engine': cfg.consumer.pdfoptimizer.engine,
 			'consumer.pdfoptimizer.fallback': cfg.consumer.pdfoptimizer.fallback,
 			'consumer.pdfoptimizer.timeout': Number(cfg.consumer.pdfoptimizer.timeout),
@@ -347,6 +370,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			if (loaded) {
 				cfg = loaded;
 				ensureFallbackBlock();
+				ensureThumbnailBlock();
 				syncMimeCheckboxes();
 				snapshotState();
 			}
@@ -642,7 +666,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 								autocomplete="off"
 								type="checkbox"
 								bind:checked={cfg.server.auth_enabled}
-								class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
+								class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus-visible:ring-gold-500"
 							/>
 							<!-- Status text deliberately outside the label hit target: making it
 								clickable would toggle the control. -->
@@ -1089,6 +1113,123 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 				</section>
 
 				<section class="mb-3 rounded-xl border border-clay-800 bg-clay-900 p-5">
+					<h2 class="mb-4 text-lg font-semibold text-parchment-200">Thumbnails</h2>
+					<div class="grid gap-4 sm:grid-cols-2">
+						<div>
+							<label for="thumb-enabled" class="mb-1 block text-sm font-medium text-parchment-200"
+								>Generate thumbnails</label
+							>
+							<div class="flex items-center gap-2">
+								<input
+									id="thumb-enabled"
+									name="thumb-enabled"
+									autocomplete="off"
+									type="checkbox"
+									bind:checked={cfg.consumer.thumbnail.enabled}
+									class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus-visible:ring-gold-500"
+								/>
+								<span class="text-sm text-parchment-400">
+									{cfg.consumer.thumbnail.enabled ? 'Active' : 'Inactive'}
+								</span>
+							</div>
+						</div>
+						<div>
+							<label for="thumb-engine" class="mb-1 block text-sm font-medium text-parchment-200"
+								>Engine</label
+							>
+							<select
+								id="thumb-engine"
+								name="thumb-engine"
+								bind:value={cfg.consumer.thumbnail.engine}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							>
+								{#each cfg.available_engines.thumbnail as opt (opt.value)}
+									<option value={opt.value}>{opt.label}</option>
+								{/each}
+							</select>
+						</div>
+						<div>
+							<label for="thumb-dpi" class="mb-1 block text-sm font-medium text-parchment-200"
+								>DPI</label
+							>
+							<input
+								id="thumb-dpi"
+								name="thumb-dpi"
+								autocomplete="off"
+								type="number"
+								inputmode="numeric"
+								min="1"
+								bind:value={cfg.consumer.thumbnail.dpi}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+						<div>
+							<label for="thumb-max-width" class="mb-1 block text-sm font-medium text-parchment-200"
+								>Max width (px)</label
+							>
+							<input
+								id="thumb-max-width"
+								name="thumb-max-width"
+								autocomplete="off"
+								type="number"
+								inputmode="numeric"
+								min="1"
+								bind:value={cfg.consumer.thumbnail.max_width}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+						<div>
+							<label for="thumb-quality" class="mb-1 block text-sm font-medium text-parchment-200"
+								>Quality</label
+							>
+							<input
+								id="thumb-quality"
+								name="thumb-quality"
+								autocomplete="off"
+								type="number"
+								inputmode="numeric"
+								min="1"
+								max="100"
+								bind:value={cfg.consumer.thumbnail.quality}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+						<div>
+							<label for="thumb-timeout" class="mb-1 block text-sm font-medium text-parchment-200"
+								>Timeout (s)</label
+							>
+							<input
+								id="thumb-timeout"
+								name="thumb-timeout"
+								autocomplete="off"
+								type="number"
+								inputmode="numeric"
+								min="0"
+								bind:value={cfg.consumer.thumbnail.timeout}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+							<p class="mt-1 text-xs text-parchment-500">0 = disabled (no deadline)</p>
+						</div>
+						<div>
+							<label for="thumb-workers" class="mb-1 block text-sm font-medium text-parchment-200"
+								>Workers</label
+							>
+							<input
+								id="thumb-workers"
+								name="thumb-workers"
+								autocomplete="off"
+								type="number"
+								inputmode="numeric"
+								min="1"
+								bind:value={cfg.consumer.thumbnail.workers}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+							<p class="mt-1 text-xs text-parchment-500">1 = single worker</p>
+						</div>
+					</div>
+				</section>
+
+				<section class="mb-3 rounded-xl border border-clay-800 bg-clay-900 p-5">
 					<h2 class="mb-4 text-lg font-semibold text-parchment-200">Polling</h2>
 					<div class="grid gap-4 sm:grid-cols-2">
 						<div>
@@ -1102,7 +1243,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 									autocomplete="off"
 									type="checkbox"
 									bind:checked={cfg.consumer.polling.enabled}
-									class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
+									class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus-visible:ring-gold-500"
 								/>
 								<!-- Runtime process states read Active/Inactive; configuration toggles use
 									Enabled/Disabled — intentional, don't standardize. -->
@@ -1196,7 +1337,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 									autocomplete="off"
 									type="checkbox"
 									bind:checked={cfg.consumer.reclaim.enabled}
-									class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
+									class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus-visible:ring-gold-500"
 								/>
 								<span class="text-sm text-parchment-400">
 									{cfg.consumer.reclaim.enabled ? 'Active' : 'Inactive'}
@@ -1521,7 +1662,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 										autocomplete="off"
 										type="checkbox"
 										bind:checked={cfg.enricher.contentanalyzer.pause_on_credit_error}
-										class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
+										class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus-visible:ring-gold-500"
 									/>
 									<span class="text-sm text-parchment-400">
 										{cfg.enricher.contentanalyzer.pause_on_credit_error ? 'Enabled' : 'Disabled'}
@@ -1589,7 +1730,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 											autocomplete="off"
 											type="checkbox"
 											bind:checked={cfg.enricher.contentanalyzer.doc_type_refinement.enabled}
-											class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
+											class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus-visible:ring-gold-500"
 										/>
 										<span class="text-sm text-parchment-400">
 											{cfg.enricher.contentanalyzer.doc_type_refinement.enabled
@@ -1934,7 +2075,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 								autocomplete="off"
 								type="checkbox"
 								bind:checked={cfg.backup.enabled}
-								class="mt-2 h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
+								class="mt-2 h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus-visible:ring-gold-500"
 							/>
 						</div>
 						<div>
@@ -2141,7 +2282,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 									autocomplete="off"
 									type="checkbox"
 									bind:checked={cfg.app.logging.compress}
-									class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus:ring-gold-500"
+									class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus-visible:ring-gold-500"
 								/>
 								<span class="text-sm text-parchment-400">
 									{cfg.app.logging.compress ? 'Enabled' : 'Disabled'}

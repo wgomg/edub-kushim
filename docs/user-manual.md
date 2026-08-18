@@ -2492,6 +2492,7 @@ A single-page form for all user-configurable settings:
   max concurrent batches, max batch delete, authentication enabled toggle
 - **OCR**: engine selector, timeout, data directory, languages list (add/remove)
 - **Consumer**: workers, max files per batch, supported file types (checkbox list, PDF always on), DOCX/ODT converter (enabled toggle, binary path, timeout)
+- **Thumbnails**: enabled toggle, engine (mupdf), DPI, max width (px), quality (1–100), timeout (seconds; 0 = disabled), workers (1 = single worker)
 - **Polling**: enabled toggle, interval, active windows (start/end pairs, add/remove)
 - **Reclaim**: auto-resume toggle, max retries, stale task after (seconds)
 - **Text extractor**: engine, timeout
