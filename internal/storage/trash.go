@@ -7,7 +7,7 @@ import (
 )
 
 func TrashDir(storageDir string) string {
-	return filepath.Join(storageDir, "trash")
+	return filepath.Join(storageDir, DirTrash)
 }
 
 func DocumentTrashDir(storageDir, documentID string) string {
@@ -16,8 +16,8 @@ func DocumentTrashDir(storageDir, documentID string) string {
 
 func MoveToTrash(storageDir, documentID, originalPath, storagePath, thumbnailPath string) (newOriginal, newStorage string, err error) {
 	docTrash := DocumentTrashDir(storageDir, documentID)
-	originalsDir := filepath.Join(docTrash, "originals")
-	processedDir := filepath.Join(docTrash, "processed")
+	originalsDir := filepath.Join(docTrash, DirOriginal)
+	processedDir := filepath.Join(docTrash, DirProcessed)
 
 	if err := os.MkdirAll(originalsDir, 0755); err != nil {
 		return "", "", fmt.Errorf("create trash originals dir: %w", err)
@@ -37,7 +37,7 @@ func MoveToTrash(storageDir, documentID, originalPath, storagePath, thumbnailPat
 	}
 
 	if thumbnailPath != "" {
-		thumbDir := filepath.Join(docTrash, "thumbnails")
+		thumbDir := filepath.Join(docTrash, DirThumbnails)
 		if err := os.MkdirAll(thumbDir, 0755); err != nil {
 			return "", "", fmt.Errorf("create trash thumbnails dir: %w", err)
 		}
@@ -50,8 +50,8 @@ func MoveToTrash(storageDir, documentID, originalPath, storagePath, thumbnailPat
 }
 
 func RestoreFromTrash(storageDir, documentID, trashOriginalPath, trashStoragePath, thumbnailPath string) (newOriginal, newStorage string, err error) {
-	newOriginal = filepath.Join(storageDir, "originals", filepath.Base(trashOriginalPath))
-	newStorage = filepath.Join(storageDir, "processed", filepath.Base(trashStoragePath))
+	newOriginal = filepath.Join(storageDir, DirOriginal, filepath.Base(trashOriginalPath))
+	newStorage = filepath.Join(storageDir, DirProcessed, filepath.Base(trashStoragePath))
 
 	// Skip missing files — partial restore is better than failing entirely,
 	// matching MoveToTrash's tolerance for absent source files.
@@ -72,7 +72,7 @@ func RestoreFromTrash(storageDir, documentID, trashOriginalPath, trashStoragePat
 	}
 
 	if thumbnailPath != "" {
-		trashThumb := filepath.Join(DocumentTrashDir(storageDir, documentID), "thumbnails", filepath.Base(thumbnailPath))
+		trashThumb := filepath.Join(DocumentTrashDir(storageDir, documentID), DirThumbnails, filepath.Base(thumbnailPath))
 		if _, statErr := os.Stat(trashThumb); statErr == nil {
 			if mkdirErr := os.MkdirAll(filepath.Dir(thumbnailPath), 0755); mkdirErr != nil {
 				return "", "", fmt.Errorf("create thumbnail dir: %w", mkdirErr)
@@ -111,8 +111,8 @@ func moveFileIfExists(src, dst string) error {
 
 func removeEmptyTrashDirs(storageDir, documentID string) {
 	docTrash := DocumentTrashDir(storageDir, documentID)
-	os.Remove(filepath.Join(docTrash, "thumbnails"))
-	os.Remove(filepath.Join(docTrash, "originals"))
-	os.Remove(filepath.Join(docTrash, "processed"))
+	os.Remove(filepath.Join(docTrash, DirThumbnails))
+	os.Remove(filepath.Join(docTrash, DirOriginal))
+	os.Remove(filepath.Join(docTrash, DirProcessed))
 	os.Remove(docTrash)
 }

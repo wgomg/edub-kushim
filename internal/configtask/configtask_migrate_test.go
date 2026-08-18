@@ -313,8 +313,9 @@ func TestMigrateStorageTask(t *testing.T) {
 			}
 
 			storageFiles := map[string]string{
-				filepath.Join("processed", "2026", "07", "15", "14"): "doc1.pdf",
-				filepath.Join("originals", "2026", "07", "15", "14"): "doc1.pdf",
+				filepath.Join("processed", "2026", "07", "15", "14"):  "doc1.pdf",
+				filepath.Join("originals", "2026", "07", "15", "14"):  "doc1.pdf",
+				filepath.Join("thumbnails", "2026", "07", "15", "14"): "doc1.jpg",
 				"errors":                               "fail1.pdf",
 				filepath.Join("errors", "duplicated"):  "dup1.pdf",
 				filepath.Join("orphaned", "processed"): "orphan1.pdf",

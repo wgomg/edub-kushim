@@ -20,17 +20,13 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	mime "github.com/wgomg/edub-kushim/internal/mime"
+	"github.com/wgomg/edub-kushim/internal/storage"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/converter"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/pdfoptimizer"
 	"github.com/wgomg/edub-kushim/internal/utils"
-)
-
-const (
-	errorDirName     = "errors"
-	errorDirNameDupes = "duplicated"
 )
 
 // runner is an interface covering the subset of *tools.Runner methods that
@@ -160,14 +156,14 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 
 	storePath := filepath.Join(
 		c.config.Storage.StorageDir,
-		"processed",
+		storage.DirProcessed,
 		datePath,
 	)
 	file.StorageProcessedPath = &storePath
 
 	storeOriginalPath := filepath.Join(
 		c.config.Storage.StorageDir,
-		"originals",
+		storage.DirOriginal,
 		datePath,
 	)
 	file.StorageOriginalPath = &storeOriginalPath
@@ -400,9 +396,9 @@ func MoveFailedFile(storageDir, originalPath, errType string, logger *utils.Logg
 
 	var destDir string
 	if errType == "duplicate" {
-		destDir = filepath.Join(storageDir, errorDirName, errorDirNameDupes)
+		destDir = filepath.Join(storageDir, storage.DirErrors, storage.DirErrorsDuplicates)
 	} else {
-		destDir = filepath.Join(storageDir, errorDirName)
+		destDir = filepath.Join(storageDir, storage.DirErrors)
 	}
 
 	if err := os.MkdirAll(destDir, 0755); err != nil {

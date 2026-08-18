@@ -12,12 +12,8 @@ import (
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/config"
+	"github.com/wgomg/edub-kushim/internal/storage"
 	"github.com/wgomg/edub-kushim/internal/utils"
-)
-
-const (
-	erroredSubdir      = "errors"
-	erroredSubdirDupes = "duplicated"
 )
 
 type ErroredFileInfo struct {
@@ -39,13 +35,13 @@ func NewErroredFiles(cfg *config.Config, logger *utils.Logger) *ErroredFiles {
 
 func (s *ErroredFiles) List(_ context.Context) ([]ErroredFileInfo, error) {
 	storageDir := s.cfg.Storage.StorageDir
-	subdirs := []string{erroredSubdir, erroredSubdirDupes}
+	subdirs := []string{storage.DirErrors, storage.DirErrorsDuplicates}
 
 	var files []ErroredFileInfo
 	for _, subdir := range subdirs {
-		dir := filepath.Join(storageDir, erroredSubdir, subdir)
-		if subdir == erroredSubdir {
-			dir = filepath.Join(storageDir, erroredSubdir)
+		dir := filepath.Join(storageDir, storage.DirErrors, subdir)
+		if subdir == storage.DirErrors {
+			dir = filepath.Join(storageDir, storage.DirErrors)
 		}
 
 		entries, err := os.ReadDir(dir)
@@ -89,12 +85,12 @@ func (s *ErroredFiles) GetPath(subdir, filename string) (string, error) {
 	if strings.Contains(clean, "..") {
 		return "", fmt.Errorf("invalid filename")
 	}
-	if subdir != erroredSubdir && subdir != erroredSubdirDupes {
+	if subdir != storage.DirErrors && subdir != storage.DirErrorsDuplicates {
 		return "", fmt.Errorf("invalid subdir")
 	}
 	var resolved string
-	if subdir == erroredSubdirDupes {
-		resolved = filepath.Join(s.cfg.Storage.StorageDir, erroredSubdir, subdir, clean)
+	if subdir == storage.DirErrorsDuplicates {
+		resolved = filepath.Join(s.cfg.Storage.StorageDir, storage.DirErrors, subdir, clean)
 	} else {
 		resolved = filepath.Join(s.cfg.Storage.StorageDir, subdir, clean)
 	}
@@ -102,7 +98,7 @@ func (s *ErroredFiles) GetPath(subdir, filename string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve path: %w", err)
 	}
-	expectedPrefix := filepath.Join(s.cfg.Storage.StorageDir, erroredSubdir)
+	expectedPrefix := filepath.Join(s.cfg.Storage.StorageDir, storage.DirErrors)
 	absPrefix, err := filepath.Abs(expectedPrefix)
 	if err != nil {
 		return "", fmt.Errorf("resolve prefix: %w", err)
@@ -126,13 +122,13 @@ func (s *ErroredFiles) Delete(subdir, filename string) error {
 
 func (s *ErroredFiles) DeleteAll(_ context.Context) (int, error) {
 	storageDir := s.cfg.Storage.StorageDir
-	subdirs := []string{erroredSubdir, erroredSubdirDupes}
+	subdirs := []string{storage.DirErrors, storage.DirErrorsDuplicates}
 
 	count := 0
 	for _, subdir := range subdirs {
-		dir := filepath.Join(storageDir, erroredSubdir, subdir)
-		if subdir == erroredSubdir {
-			dir = filepath.Join(storageDir, erroredSubdir)
+		dir := filepath.Join(storageDir, storage.DirErrors, subdir)
+		if subdir == storage.DirErrors {
+			dir = filepath.Join(storageDir, storage.DirErrors)
 		}
 
 		entries, err := os.ReadDir(dir)

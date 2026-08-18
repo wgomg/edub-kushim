@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/storage"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/utils"
@@ -191,7 +192,7 @@ func TestConsumerDuplicateDetection(t *testing.T) {
 	if _, err := os.Stat(pdfPath2); !os.IsNotExist(err) {
 		t.Fatal("duplicate original should have been moved to error directory")
 	}
-	dupesDir := filepath.Join(cfg.Storage.StorageDir, errorDirName, errorDirNameDupes)
+	dupesDir := filepath.Join(cfg.Storage.StorageDir, storage.DirErrors, storage.DirErrorsDuplicates)
 	entries, _ := os.ReadDir(dupesDir)
 	if len(entries) == 0 {
 		t.Fatal("expected at least one file in duplicate error directory")
@@ -227,7 +228,7 @@ func TestConsumerTextExtractionFailure(t *testing.T) {
 	if _, err := os.Stat(pdfPath); !os.IsNotExist(err) {
 		t.Fatal("original should have been moved to error directory after failure")
 	}
-	errorDir := filepath.Join(cfg.Storage.StorageDir, errorDirName)
+	errorDir := filepath.Join(cfg.Storage.StorageDir, storage.DirErrors)
 	entries, _ := os.ReadDir(errorDir)
 	if len(entries) == 0 {
 		t.Fatal("expected at least one file in error directory")

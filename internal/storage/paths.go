@@ -14,5 +14,5 @@ func ThumbnailPath(storageDir string, createdAt time.Time, docID string) string 
 		fmt.Sprintf("%02d", createdAt.Day()),
 		fmt.Sprintf("%02d", createdAt.Hour()),
 	)
-	return filepath.Join(storageDir, "thumbnails", datePath, docID+".jpg")
+	return filepath.Join(storageDir, DirThumbnails, datePath, docID+".jpg")
 }

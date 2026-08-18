@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/wgomg/edub-kushim/internal/config"
+	"github.com/wgomg/edub-kushim/internal/storage"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -70,8 +71,8 @@ func TestErroredFiles_List_WithFiles(t *testing.T) {
 	}
 	testutil.AssertEqual(t, names["err1.pdf"], true, "found err1.pdf")
 	testutil.AssertEqual(t, names["dup1.pdf"], true, "found dup1.pdf")
-	testutil.AssertEqual(t, subdirs[erroredSubdir], true, "has errors subdir")
-	testutil.AssertEqual(t, subdirs[erroredSubdirDupes], true, "has duplicated subdir")
+	testutil.AssertEqual(t, subdirs[storage.DirErrors], true, "has errors subdir")
+	testutil.AssertEqual(t, subdirs[storage.DirErrorsDuplicates], true, "has duplicated subdir")
 }
 
 func TestErroredFiles_List_SkipsDirectories(t *testing.T) {
@@ -96,12 +97,12 @@ func TestErroredFiles_GetPath_Valid(t *testing.T) {
 	createErroredFile(t, errorsDir, "err.pdf")
 	createErroredFile(t, dupesDir, "dup.pdf")
 
-	path, err := svc.GetPath(erroredSubdir, "err.pdf")
+	path, err := svc.GetPath(storage.DirErrors, "err.pdf")
 	testutil.AssertNoError(t, err, "get errors path")
 	testutil.AssertEqual(t, filepath.Base(path), "err.pdf", "filename in path")
 	testutil.AssertEqual(t, filepath.Dir(path), errorsDir, "dir is errors")
 
-	path, err = svc.GetPath(erroredSubdirDupes, "dup.pdf")
+	path, err = svc.GetPath(storage.DirErrorsDuplicates, "dup.pdf")
 	testutil.AssertNoError(t, err, "get duplicated path")
 	testutil.AssertEqual(t, filepath.Base(path), "dup.pdf", "filename in dupes path")
 	testutil.AssertEqual(t, filepath.Dir(path), dupesDir, "dir is errors/duplicated")
@@ -110,10 +111,10 @@ func TestErroredFiles_GetPath_Valid(t *testing.T) {
 func TestErroredFiles_GetPath_TraversalBlocked(t *testing.T) {
 	svc, _ := newTestErroredFiles(t)
 
-	_, err := svc.GetPath(erroredSubdir, "../etc/passwd")
+	_, err := svc.GetPath(storage.DirErrors, "../etc/passwd")
 	testutil.AssertError(t, err, "reject traversal with ..")
 
-	_, err = svc.GetPath(erroredSubdir, "sub/../../etc/passwd")
+	_, err = svc.GetPath(storage.DirErrors, "sub/../../etc/passwd")
 	testutil.AssertError(t, err, "reject nested traversal")
 }
 
@@ -131,7 +132,7 @@ func TestErroredFiles_Delete(t *testing.T) {
 	errorsDir := filepath.Join(cfg.Storage.StorageDir, "errors")
 	createErroredFile(t, errorsDir, "to-delete.pdf")
 
-	err := svc.Delete(erroredSubdir, "to-delete.pdf")
+	err := svc.Delete(storage.DirErrors, "to-delete.pdf")
 	testutil.AssertNoError(t, err, "delete")
 
 	files, _ := svc.List(ctx)
@@ -141,7 +142,7 @@ func TestErroredFiles_Delete(t *testing.T) {
 func TestErroredFiles_Delete_NotFound(t *testing.T) {
 	svc, _ := newTestErroredFiles(t)
 
-	err := svc.Delete(erroredSubdir, "nonexistent.pdf")
+	err := svc.Delete(storage.DirErrors, "nonexistent.pdf")
 	testutil.AssertError(t, err, "delete nonexistent")
 }
 

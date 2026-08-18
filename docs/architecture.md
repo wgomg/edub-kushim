@@ -402,6 +402,9 @@ storage/
 │   ├── duplicated/               # Duplicate files
 │   │   └── <uuid>-report.pdf
 │   └── <uuid>-corrupt.pdf
+├── orphaned/                     # Quarantined orphan files
+│   ├── originals/<uuid>.pdf
+│   └── processed/<uuid>.pdf
 ├── thumbnails/                   # First-page JPEG previews
 │   └── 2024/03/19/15/<uuid>.jpg
 ├── trash/                        # Soft-deleted documents (restorable)

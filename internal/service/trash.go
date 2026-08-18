@@ -215,7 +215,7 @@ func (s *TrashService) activeTrashDocumentIDs(ctx context.Context) (map[string]s
 }
 
 func (s *TrashService) cleanupOrphanedThumbnails(ctx context.Context) {
-	thumbRoot := filepath.Join(s.cfg.Storage.StorageDir, "thumbnails")
+	thumbRoot := filepath.Join(s.cfg.Storage.StorageDir, storage.DirThumbnails)
 	if _, err := os.Stat(thumbRoot); err != nil {
 		if !os.IsNotExist(err) {
 			s.logger.Warn(nil, "thumbnail purge: stat thumbnails dir: %v", err)

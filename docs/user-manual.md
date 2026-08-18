@@ -567,6 +567,10 @@ mode (the manifest records the mode; `config.yaml` is always included):
 - `database` — `edub.sql`, `config.yaml`, `manifest.json`
 - `documents` — `config.yaml`, `storage/`, `manifest.json`
 
+`storage/` is archived whole, so it includes every subdir — `originals/`,
+`processed/`, `errors/` (with `duplicated/`), `thumbnails/`, `trash/`, and
+`orphaned/`.
+
 Archive names are prefixed with the mode: `edub-backup-full-<timestamp>.tar.gz`,
 `edub-backup-database-<timestamp>.tar.gz`, `edub-backup-documents-<timestamp>.tar.gz`.
 
@@ -1293,7 +1297,7 @@ already holds data.
 **Storage directory changes.** Changing `storage.storage_dir` or `storage.consumption_dir`
 is also deferred: the API returns `202` and enqueues a `migrate-storage` background task
 that moves existing files to the new locations (storage subdirs `processed/`, `originals/`,
-`errors/`, `orphaned/`, `trash/`, plus inbox files), rewrites `document.storage_path`/
+`errors/`, `orphaned/`, `trash/`, `thumbnails/`, plus inbox files), rewrites `document.storage_path`/
 `original_path`, `orphaned_file.file_path`, and the `file_path` of pending consume tasks,
 and only then persists the new directories to `config.yaml`. The move strategy is controlled
 by `storage.migration_mode`: `copy` (copy then delete — safe, needs extra disk space;

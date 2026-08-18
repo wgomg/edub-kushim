@@ -477,6 +477,39 @@ func TestCopyDir(t *testing.T) {
 	}
 }
 
+func TestReplaceFiles_ThumbnailsRestored(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	testutil.CreateTestFile(t, configPath, "test: true\n")
+
+	storageDir := filepath.Join(dir, "storage")
+	thumbRel := filepath.Join("thumbnails", "2026", "07", "15", "14", "doc1.jpg")
+	os.MkdirAll(filepath.Join(storageDir, "thumbnails", "2026", "07", "15", "14"), 0755)
+	testutil.CreateTestFile(t, filepath.Join(storageDir, thumbRel), "fake jpg")
+
+	backupDir := filepath.Join(dir, "backups")
+	os.MkdirAll(backupDir, 0755)
+
+	result, err := Create(context.Background(), nil, database.SchemaFS, BackupModeDocuments, backupDir, configPath, storageDir)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	extractDir := filepath.Join(dir, "extract")
+	if err := ExtractArchive(result.Path, extractDir); err != nil {
+		t.Fatalf("ExtractArchive: %v", err)
+	}
+
+	newStorage := filepath.Join(dir, "new_storage")
+	if err := ReplaceFiles(extractDir, nil, configPath, newStorage); err != nil {
+		t.Fatalf("ReplaceFiles: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(newStorage, thumbRel)); err != nil {
+		t.Errorf("thumbnail %s missing after restore: %v", thumbRel, err)
+	}
+}
+
 // createModeBackup makes a full backup with Create, then patches manifest.Mode
 // to the requested value and re-writes it to the extract directory.
 func createModeBackup(t *testing.T, mode BackupMode) (string, string) {

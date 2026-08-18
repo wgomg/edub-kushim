@@ -3,6 +3,7 @@ package backup
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -315,6 +316,46 @@ func TestCreate_DocumentsMode_ExcludesDatabase(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(extractDir, "storage", "doc.pdf")); err != nil {
 		t.Errorf("storage/doc.pdf missing in documents archive: %v", err)
+	}
+}
+
+func TestCreate_ThumbnailsIncluded(t *testing.T) {
+	thumbRel := filepath.Join("thumbnails", "2026", "07", "15", "14", "doc1.jpg")
+
+	for _, mode := range []BackupMode{BackupModeFull, BackupModeDocuments} {
+		t.Run(string(mode), func(t *testing.T) {
+			dir := t.TempDir()
+			configPath := filepath.Join(dir, "config.yaml")
+			testutil.CreateTestFile(t, configPath, "test: true\n")
+
+			storageDir := filepath.Join(dir, "storage")
+			os.MkdirAll(filepath.Join(storageDir, "originals"), 0755)
+			testutil.CreateTestFile(t, filepath.Join(storageDir, "originals", "doc.pdf"), "fake pdf")
+			os.MkdirAll(filepath.Join(storageDir, "thumbnails", "2026", "07", "15", "14"), 0755)
+			testutil.CreateTestFile(t, filepath.Join(storageDir, thumbRel), "fake jpg")
+
+			backupDir := filepath.Join(dir, "backups")
+			os.MkdirAll(backupDir, 0755)
+
+			var db *sql.DB
+			if mode == BackupModeFull {
+				db = database.NewTestDB(t)
+				t.Cleanup(func() { database.ResetTestDatabase(db) })
+			}
+
+			result, err := Create(context.Background(), db, database.SchemaFS, mode, backupDir, configPath, storageDir)
+			if err != nil {
+				t.Fatalf("Create(%s): %v", mode, err)
+			}
+
+			extractDir := filepath.Join(dir, "extract")
+			if err := ExtractArchive(result.Path, extractDir); err != nil {
+				t.Fatalf("ExtractArchive: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(extractDir, "storage", thumbRel)); err != nil {
+				t.Errorf("storage/%s missing in %s archive: %v", thumbRel, mode, err)
+			}
+		})
 	}
 }
 

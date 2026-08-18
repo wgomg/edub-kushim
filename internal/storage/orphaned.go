@@ -45,7 +45,7 @@ func WalkStorageDir(storageDir string) (<-chan OrphanedFileInfo, <-chan error) {
 		defer close(infos)
 		defer close(errs)
 
-		subdirs := []string{"originals", "processed"}
+		subdirs := []string{DirOriginal, DirProcessed}
 		for _, sub := range subdirs {
 			root := filepath.Join(storageDir, sub)
 			if err := walkDir(root, sub, infos); err != nil {
@@ -111,7 +111,7 @@ func walkDir(root, sourceDir string, infos chan<- OrphanedFileInfo) error {
 }
 
 func QuarantineFile(storageDir string, info OrphanedFileInfo) (string, error) {
-	quarantineDir := filepath.Join(storageDir, "orphaned")
+	quarantineDir := filepath.Join(storageDir, DirOrphaned)
 	if err := os.MkdirAll(quarantineDir, 0755); err != nil {
 		return "", fmt.Errorf("create orphaned dir: %w", err)
 	}
