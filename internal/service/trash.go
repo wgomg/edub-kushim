@@ -18,8 +18,9 @@ import (
 )
 
 const (
-	trashPurgeInterval = 1 * time.Hour
-	trashGracePeriod   = 5 * time.Minute
+	trashPurgeInterval   = 1 * time.Hour
+	trashGracePeriod     = 5 * time.Minute
+	thumbnailGracePeriod = 30 * time.Second
 )
 
 type TrashService struct {
@@ -50,9 +51,6 @@ func (s *TrashService) CountTrash(ctx context.Context) (int64, error) {
 	return s.client.CountTrashDocuments(ctx)
 }
 
-// SoftDelete moves a document's files to the trash directory and marks the row
-// deleted. Files are moved before the DB update; if the update fails, files
-// are rolled back to their original locations so no data is stranded.
 func (s *TrashService) SoftDelete(ctx context.Context, documentID string) error {
 	doc, err := s.client.GetDocument(ctx, documentID)
 	if err != nil {
@@ -74,7 +72,6 @@ func (s *TrashService) SoftDelete(ctx context.Context, documentID string) error 
 		OriginalPath: newOriginal,
 		StoragePath:  newStorage,
 	}); err != nil {
-		// Rollback: move files back so the document remains fully functional.
 		storage.RestoreFromTrash(s.cfg.Storage.StorageDir, documentID, newOriginal, newStorage, thumbnailPath)
 		return errs.FromDB(err, "soft delete document")
 	}
@@ -82,8 +79,6 @@ func (s *TrashService) SoftDelete(ctx context.Context, documentID string) error 
 	return nil
 }
 
-// RestoreDocument moves a document's files back from the trash and clears its
-// deleted_at marker.
 func (s *TrashService) RestoreDocument(ctx context.Context, documentID string) error {
 	doc, err := s.GetTrashDocument(ctx, documentID)
 	if err != nil {
@@ -111,9 +106,6 @@ func (s *TrashService) RestoreDocument(ctx context.Context, documentID string) e
 	return nil
 }
 
-// PermanentlyDelete removes a document from the trash: the DB row first
-// (cascading to junction tables), then trash files. If file removal fails,
-// the hourly orphan cleanup handles leftovers.
 func (s *TrashService) PermanentlyDelete(ctx context.Context, documentID string) error {
 	doc, err := s.GetTrashDocument(ctx, documentID)
 	if err != nil {
@@ -124,8 +116,7 @@ func (s *TrashService) PermanentlyDelete(ctx context.Context, documentID string)
 		return errs.FromDB(err, "permanently delete document")
 	}
 
-	// Best-effort file cleanup — orphan sweep handles leftovers on failure.
-	storage.RemoveFromTrash(s.cfg.Storage.StorageDir, documentID) //nolint:errcheck
+	storage.RemoveFromTrash(s.cfg.Storage.StorageDir, documentID)
 
 	if doc.CreatedAt.Valid {
 		thumbnailPath := storage.ThumbnailPath(s.cfg.Storage.StorageDir, doc.CreatedAt.Time, documentID)
@@ -137,9 +128,6 @@ func (s *TrashService) PermanentlyDelete(ctx context.Context, documentID string)
 	return nil
 }
 
-// PurgeExpired deletes rows past their retention period, then removes trash
-// dirs whose document no longer has a database row. The two phases are
-// decoupled so a document restored between them keeps its files.
 func (s *TrashService) PurgeExpired(ctx context.Context) (int64, error) {
 	deleted, err := s.client.PurgeExpiredDocuments(ctx, strconv.Itoa(s.cfg.Storage.Trash.RetentionDays))
 	if err != nil {
@@ -148,16 +136,16 @@ func (s *TrashService) PurgeExpired(ctx context.Context) (int64, error) {
 
 	if deleted > 0 {
 		s.cleanupOrphanedTrashDirs(ctx)
-		s.cleanupOrphanedThumbnails(ctx)
+	}
+
+	paths, _ := s.CleanupOrphanedThumbnails(ctx, false)
+	if len(paths) > 0 {
+		s.logger.Info(nil, "trash purge: %d orphaned thumbnails removed", len(paths))
 	}
 
 	return deleted, nil
 }
 
-// cleanupOrphanedTrashDirs removes trash directories whose document_id has no
-// matching database row. Fetches active IDs in a single query (not per-entry)
-// and skips directories whose files were recently modified to avoid racing
-// with in-flight soft-deletes.
 func (s *TrashService) cleanupOrphanedTrashDirs(ctx context.Context) {
 	trashRoot := storage.TrashDir(s.cfg.Storage.StorageDir)
 	entries, err := os.ReadDir(trashRoot)
@@ -214,17 +202,17 @@ func (s *TrashService) activeTrashDocumentIDs(ctx context.Context) (map[string]s
 	return ids, rows.Err()
 }
 
-func (s *TrashService) cleanupOrphanedThumbnails(ctx context.Context) {
+func (s *TrashService) CleanupOrphanedThumbnails(ctx context.Context, dryRun bool) (removedPaths []string, err error) {
 	thumbRoot := filepath.Join(s.cfg.Storage.StorageDir, storage.DirThumbnails)
 	if _, err := os.Stat(thumbRoot); err != nil {
 		if !os.IsNotExist(err) {
 			s.logger.Warn(nil, "thumbnail purge: stat thumbnails dir: %v", err)
 		}
-		return
+		return nil, nil
 	}
 
 	var docIDs []string
-	err := filepath.WalkDir(thumbRoot, func(path string, d fs.DirEntry, err error) error {
+	err = filepath.WalkDir(thumbRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			s.logger.Warn(nil, "thumbnail purge: walk %s: %v", path, err)
 			return nil
@@ -237,16 +225,16 @@ func (s *TrashService) cleanupOrphanedThumbnails(ctx context.Context) {
 	})
 	if err != nil {
 		s.logger.Warn(nil, "thumbnail purge: walk thumbnails dir: %v", err)
-		return
+		return nil, nil
 	}
 	if len(docIDs) == 0 {
-		return
+		return nil, nil
 	}
 
 	existingIDs, err := s.documentIDsExist(ctx, docIDs)
 	if err != nil {
 		s.logger.Warn(nil, "thumbnail purge: query document ids: %v", err)
-		return
+		return nil, nil
 	}
 
 	err = filepath.WalkDir(thumbRoot, func(path string, d fs.DirEntry, err error) error {
@@ -260,8 +248,20 @@ func (s *TrashService) cleanupOrphanedThumbnails(ctx context.Context) {
 		if d.IsDir() || filepath.Ext(d.Name()) != ".jpg" {
 			return nil
 		}
+		info, err := d.Info()
+		if err != nil {
+			s.logger.Warn(nil, "thumbnail purge: stat %s: %v", path, err)
+			return nil
+		}
+		if time.Since(info.ModTime()) < thumbnailGracePeriod {
+			return nil
+		}
 		docID := strings.TrimSuffix(d.Name(), ".jpg")
 		if _, ok := existingIDs[docID]; ok {
+			return nil
+		}
+		removedPaths = append(removedPaths, path)
+		if dryRun {
 			return nil
 		}
 		if err := os.Remove(path); err != nil {
@@ -274,6 +274,7 @@ func (s *TrashService) cleanupOrphanedThumbnails(ctx context.Context) {
 	if err != nil {
 		s.logger.Warn(nil, "thumbnail purge: walk thumbnails dir: %v", err)
 	}
+	return removedPaths, nil
 }
 
 func (s *TrashService) documentIDsExist(ctx context.Context, docIDs []string) (map[string]struct{}, error) {
@@ -283,7 +284,11 @@ func (s *TrashService) documentIDsExist(ctx context.Context, docIDs []string) (m
 		end := min(i+docIDBatchSize, len(docIDs))
 		batch := docIDs[i:end]
 
-		query := "SELECT document_id FROM document WHERE document_id IN (?" + strings.Repeat(",?", len(batch)-1) + ")"
+		placeholders := make([]string, len(batch))
+		for j := range batch {
+			placeholders[j] = fmt.Sprintf("$%d", j+1)
+		}
+		query := "SELECT document_id FROM document WHERE document_id IN (" + strings.Join(placeholders, ",") + ")"
 		args := make([]any, len(batch))
 		for j, id := range batch {
 			args[j] = id

@@ -18,6 +18,7 @@ func storageHandler(c *Container, args []string) error {
 		fmt.Println("Usage: kushim storage <subcommand> [arguments]")
 		fmt.Println("\nSubcommands:")
 		fmt.Println("  orphans ...              Manage orphaned files")
+		fmt.Println("  thumbnails ...           Clean up orphaned thumbnails")
 		fmt.Println("\nUse 'kushim storage <subcommand> --help' for subcommand-specific help.")
 		return nil
 	}
@@ -25,9 +26,58 @@ func storageHandler(c *Container, args []string) error {
 	switch args[0] {
 	case "orphans":
 		return orphansHandler(c, args[1:])
+	case "thumbnails":
+		return thumbnailsHandler(c, args[1:])
 	default:
 		return fmt.Errorf("unknown storage subcommand: %s", args[0])
 	}
+}
+
+func thumbnailsHandler(c *Container, args []string) error {
+	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
+		fmt.Println("Usage: kushim storage thumbnails <action>")
+		fmt.Println("\nActions:")
+		fmt.Println("  cleanup [--dry-run]    Detect and remove orphaned thumbnails")
+		return nil
+	}
+
+	if args[0] != "cleanup" {
+		return fmt.Errorf("unknown thumbnails action: %s", args[0])
+	}
+
+	fp := NewFlagParser(args[1:])
+	if fp.Help("Usage: kushim storage thumbnails cleanup [--dry-run]\n  Detect and remove thumbnail files whose document no longer exists.\n  --dry-run   List orphaned thumbnails without deleting.") {
+		return nil
+	}
+
+	var dryRun bool
+	fp.Bool("--dry-run", &dryRun)
+
+	client, err := c.GetClient()
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+
+	svc := service.NewTrashService(client, c.cfg.Load(), c.logger)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	paths, err := svc.CleanupOrphanedThumbnails(ctx, dryRun)
+	if err != nil {
+		return fmt.Errorf("cleanup orphaned thumbnails: %w", err)
+	}
+
+	for _, p := range paths {
+		fmt.Println(p)
+	}
+
+	if dryRun {
+		fmt.Printf("Found %d orphaned thumbnail(s) (dry-run, nothing removed).\n", len(paths))
+	} else {
+		fmt.Printf("Done. %d orphaned thumbnail(s) removed.\n", len(paths))
+	}
+	return nil
 }
 
 func orphansHandler(c *Container, args []string) error {

@@ -644,6 +644,24 @@ Relocates the storage and consumption directories to new paths: rewrites pending
 
 Paths that resolve under a system location (`/proc`, `/sys`, `/dev`, `/boot`) are rejected. If neither directory actually changes, the command reports a no-op and exits successfully. Run `kushim migrate database` before `kushim migrate storage` — the storage migration reads the updated config (including the new database connection) from disk.
 
+### `kushim storage`
+
+Storage maintenance subcommands.
+
+```
+kushim storage thumbnails cleanup [--dry-run]
+```
+
+#### `kushim storage thumbnails cleanup`
+
+Detects and removes thumbnail files in `storage/thumbnails/` whose document no longer exists in the database (permanently deleted or never created), then prunes the emptied date directories. Files modified within the last 30 seconds are skipped to avoid racing an in-flight thumbnail task.
+
+| Flag         | Description                                              |
+| ------------ | -------------------------------------------------------- |
+| `--dry-run`  | List orphaned thumbnails without removing anything       |
+
+The same sweep also runs automatically on every hourly trash purge, regardless of whether any expired documents were deleted.
+
 ---
 
 ## API Reference
@@ -968,9 +986,9 @@ POST /api/v1/trash/purge
 
 Permanently deletes all trashed documents whose `deleted_at` is older than
 `storage.trash.retention_days` (default 30 days). Response `200` with `{"purged": N}`. The
-same purge also runs automatically in the background every hour; when it deletes rows, it
-also sweeps orphaned thumbnails in `storage/thumbnails/` whose document row no longer
-exists.
+same purge also runs automatically in the background every hour; each cycle also sweeps
+orphaned thumbnails in `storage/thumbnails/` whose document row no longer exists, whether
+or not any rows were deleted.
 
 ### Add Document Tag
 
