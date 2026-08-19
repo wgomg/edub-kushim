@@ -17,7 +17,7 @@
    - `OCRConfig`: `Engine string`, `Languages []string`, `DataDir string`, `Timeout int` (0 = disabled), `OcrWorkers int` (0 = auto, resolves to `runtime.NumCPU()` in the subprocess)
 - `EnricherConfig`: `Workers int`, `TextReducer TextReducerConfig`, `ContentAnalyzer ContentAnalyzerConfig`, `TagMatcher TagMatcherConfig`
    - `TextReducerConfig`: `Engine string`, `Timeout int` (0 = disabled), `TargetWords int`
-  - `ContentAnalyzerConfig`: `Enabled bool` (default `false`), `Timeout int`, `Llm LlmConfig`, `Fallback *FallbackConfig` (nil = absent/disabled), `PromptTemplate string`, `DocTypeRefinement DocTypeRefinementConfig`
+  - `ContentAnalyzerConfig`: `Enabled bool` (default `false`), `Timeout int`, `Llm LlmConfig`, `Fallbacks []FallbackConfig` (empty = absent/disabled), `PromptTemplate string`, `DocTypeRefinement DocTypeRefinementConfig`
       - `LlmConfig`: `Adapter string`, `Provider string`, `Model string`, `Token string`, `Reasoning bool` (yaml:"-", set via model catalog), `ReasoningEffort string` (yaml:"-", set via model catalog), `Temperature float64`
       - `FallbackConfig`: `Enabled bool`, `Llm LlmConfig` — same shape as the primary `llm` block; validated only when `Enabled` (adapter/provider/model required, `RequestDelay` 0–60)
       - `DocTypeRefinementConfig`: `Enabled bool`, `HeadWords int`, `TailWords int`

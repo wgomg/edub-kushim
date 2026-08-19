@@ -161,39 +161,41 @@ func TestConfigResponseFrom_RequestDelay(t *testing.T) {
 }
 
 func TestConfigResponseFrom_Fallback(t *testing.T) {
-	t.Run("omits fallback when nil", func(t *testing.T) {
+	t.Run("omits fallbacks when empty", func(t *testing.T) {
 		cfg := config.DefaultConfig("/tmp/test")
-		cfg.Enricher.ContentAnalyzer.Fallback = nil
+		cfg.Enricher.ContentAnalyzer.Fallbacks = nil
 
 		resp := ConfigResponseFrom(cfg)
 
-		if resp.Enricher.ContentAnalyzer.Fallback != nil {
-			t.Errorf("Fallback = %+v, want nil", resp.Enricher.ContentAnalyzer.Fallback)
+		if len(resp.Enricher.ContentAnalyzer.Fallbacks) != 0 {
+			t.Errorf("Fallbacks = %+v, want empty", resp.Enricher.ContentAnalyzer.Fallbacks)
 		}
 	})
 
 	t.Run("maps enabled fallback with all llm fields", func(t *testing.T) {
 		cfg := config.DefaultConfig("/tmp/test")
-		cfg.Enricher.ContentAnalyzer.Fallback = &config.FallbackConfig{
-			Enabled: true,
-			Llm: config.LlmConfig{
-				Adapter:         "openai-compatible",
-				Provider:        "deepseek",
-				Model:           "deepseek-chat",
-				Token:           "sk-fb-123",
-				Temperature:     0.7,
-				RequestDelay:    2,
-				Reasoning:       true,
-				ReasoningEffort: "high",
+		cfg.Enricher.ContentAnalyzer.Fallbacks = []config.FallbackConfig{
+			{
+				Enabled: true,
+				Llm: config.LlmConfig{
+					Adapter:         "openai-compatible",
+					Provider:        "deepseek",
+					Model:           "deepseek-chat",
+					Token:           "sk-fb-123",
+					Temperature:     0.7,
+					RequestDelay:    2,
+					Reasoning:       true,
+					ReasoningEffort: "high",
+				},
 			},
 		}
 
 		resp := ConfigResponseFrom(cfg)
 
-		if resp.Enricher.ContentAnalyzer.Fallback == nil {
-			t.Fatal("Fallback = nil, want populated")
+		if len(resp.Enricher.ContentAnalyzer.Fallbacks) != 1 {
+			t.Fatalf("Fallbacks len = %d, want 1", len(resp.Enricher.ContentAnalyzer.Fallbacks))
 		}
-		fb := resp.Enricher.ContentAnalyzer.Fallback
+		fb := &resp.Enricher.ContentAnalyzer.Fallbacks[0]
 		if !fb.Enabled {
 			t.Error("Enabled should be true")
 		}

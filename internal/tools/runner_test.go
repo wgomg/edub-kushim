@@ -407,23 +407,29 @@ func TestIsProviderError(t *testing.T) {
 }
 
 func runnerWithFallback(primary, fallback contentanalyzer.ContentAnalyzer) *Runner {
-	return &Runner{
+	r := &Runner{
 		logger: utils.NewDiscardLogger(),
 		config: &config.Config{
 			Enricher: config.EnricherConfig{
 				ContentAnalyzer: config.ContentAnalyzerConfig{
 					Timeout: 0,
 					Llm:     config.LlmConfig{Provider: "primary", Model: "p1"},
-					Fallback: &config.FallbackConfig{
-						Enabled: true,
-						Llm:     config.LlmConfig{Provider: "fallback", Model: "f1"},
+					Fallbacks: []config.FallbackConfig{
+						{
+							Enabled: true,
+							Llm:     config.LlmConfig{Provider: "fallback", Model: "f1"},
+						},
 					},
 				},
 			},
 		},
-		contentAnalyzer:  primary,
-		fallbackAnalyzer: fallback,
+		contentAnalyzer: primary,
 	}
+	if fallback != nil {
+		r.fallbackAnalyzers = []contentanalyzer.ContentAnalyzer{fallback}
+		r.fallbackMeta = []fallbackMeta{{Provider: "fallback", Model: "f1"}}
+	}
+	return r
 }
 
 func TestAnalyzeContent_FallbackOnProviderError(t *testing.T) {
@@ -589,5 +595,99 @@ func TestAnalyzeDocType_FallbackOnProviderError(t *testing.T) {
 	}
 	if got != "from fallback" {
 		t.Errorf("expected result from fallback analyzer, got %q", got)
+	}
+}
+
+func TestAnalyzeContent_FallbackChainWalksToSuccess(t *testing.T) {
+	primary := &mockContentAnalyzer{
+		analyzeFn: func(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*contentanalyzer.AnalysisResult, error) {
+			return nil, errors.New("primary timeout")
+		},
+	}
+	fb0 := &mockContentAnalyzer{
+		analyzeFn: func(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*contentanalyzer.AnalysisResult, error) {
+			return nil, errors.New("fb0 timeout")
+		},
+	}
+	fb1 := &mockContentAnalyzer{
+		analyzeFn: func(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*contentanalyzer.AnalysisResult, error) {
+			return &contentanalyzer.AnalysisResult{Title: "from fb1"}, nil
+		},
+	}
+
+	r := &Runner{
+		logger: utils.NewDiscardLogger(),
+		config: &config.Config{
+			Enricher: config.EnricherConfig{
+				ContentAnalyzer: config.ContentAnalyzerConfig{
+					Timeout: 0,
+					Llm:     config.LlmConfig{Provider: "primary", Model: "p1"},
+					Fallbacks: []config.FallbackConfig{
+						{Enabled: true, Llm: config.LlmConfig{Provider: "fb0", Model: "f0"}},
+						{Enabled: true, Llm: config.LlmConfig{Provider: "fb1", Model: "f1"}},
+					},
+				},
+			},
+		},
+		contentAnalyzer:   primary,
+		fallbackAnalyzers: []contentanalyzer.ContentAnalyzer{fb0, fb1},
+		fallbackMeta:      []fallbackMeta{{Provider: "fb0", Model: "f0"}, {Provider: "fb1", Model: "f1"}},
+	}
+
+	result, err := r.AnalyzeContent(context.Background(), "text", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Title != "from fb1" {
+		t.Errorf("expected result from fb1, got %q", result.Title)
+	}
+}
+
+func TestAnalyzeContent_FallbackChainPropagatesLastFailure(t *testing.T) {
+	primary := &mockContentAnalyzer{
+		analyzeFn: func(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*contentanalyzer.AnalysisResult, error) {
+			return nil, errors.New("primary timeout")
+		},
+	}
+	fb0 := &mockContentAnalyzer{
+		analyzeFn: func(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*contentanalyzer.AnalysisResult, error) {
+			return nil, errors.New("fb0 timeout")
+		},
+	}
+	fb1 := &mockContentAnalyzer{
+		analyzeFn: func(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*contentanalyzer.AnalysisResult, error) {
+			return nil, &contentanalyzer.InsufficientCreditsError{Provider: "fb1", HTTPStatus: 402}
+		},
+	}
+
+	r := &Runner{
+		logger: utils.NewDiscardLogger(),
+		config: &config.Config{
+			Enricher: config.EnricherConfig{
+				ContentAnalyzer: config.ContentAnalyzerConfig{
+					Timeout: 0,
+					Llm:     config.LlmConfig{Provider: "primary", Model: "p1"},
+					Fallbacks: []config.FallbackConfig{
+						{Enabled: true, Llm: config.LlmConfig{Provider: "fb0", Model: "f0"}},
+						{Enabled: true, Llm: config.LlmConfig{Provider: "fb1", Model: "f1"}},
+					},
+				},
+			},
+		},
+		contentAnalyzer:   primary,
+		fallbackAnalyzers: []contentanalyzer.ContentAnalyzer{fb0, fb1},
+		fallbackMeta:      []fallbackMeta{{Provider: "fb0", Model: "f0"}, {Provider: "fb1", Model: "f1"}},
+	}
+
+	_, err := r.AnalyzeContent(context.Background(), "text", nil, nil, nil)
+	if err == nil {
+		t.Fatal("expected error when all fallbacks fail")
+	}
+	var credErr *contentanalyzer.InsufficientCreditsError
+	if !errors.As(err, &credErr) {
+		t.Fatalf("expected last fallback's InsufficientCreditsError, got %v", err)
+	}
+	if credErr.Provider != "fb1" {
+		t.Errorf("expected provider %q in error, got %q", "fb1", credErr.Provider)
 	}
 }

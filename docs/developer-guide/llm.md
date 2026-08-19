@@ -335,20 +335,23 @@ var tokenLimitRE = regexp.MustCompile(
 Both adapters return these typed errors; **there is no retry/backoff inside
 the adapters** — each call is a single HTTP request, and the
 enricher decides what to do (§10). Timeout enforcement comes from
-`runWithTimeout` at the runner level (`internal/tools/runner.go:77-98`); the
+`runWithTimeout` at the runner level (`internal/tools/runner.go:96-113`); the
 adapters' `http.Client` deliberately has no timeout of its own.
 
-**Provider fallback** — when `enricher.contentanalyzer.fallback` is configured
-(`enabled: true`), the Runner builds a second `ContentAnalyzer` from the
-fallback `llm` block (same factory, same prompt template). `AnalyzeContent`
-and `AnalyzeDocType` classify each primary error with `isProviderError`
-(`runner.go:376-384`): anything that is *not* a request-side or lifecycle
-failure — i.e. not `ContentTooLargeError`, `TokenLimitError`,
-`context.Canceled`, or `context.DeadlineExceeded` — triggers one fallback
-retry of the same request. The fallback runs under the same context/deadline
-as the primary; its own `request_delay` applies after its request. If the
-fallback fails too, its error (e.g. an `InsufficientCreditsError` naming the
-fallback provider) is what the enricher sees.
+**Provider fallback** — when `enricher.contentanalyzer.fallbacks` is configured
+(a list of `{enabled, llm}` blocks), the Runner builds one `ContentAnalyzer`
+per **enabled** entry (same factory, same prompt template) and keeps them in
+list order. `AnalyzeContent` and `AnalyzeDocType` classify each primary error
+with `isProviderError` (`runner.go:438-445`): anything that is *not* a
+request-side or lifecycle failure — i.e. not `ContentTooLargeError`,
+`TokenLimitError`, `context.Canceled`, or `context.DeadlineExceeded` — walks
+the fallback chain in order, retrying the same request through each enabled
+fallback until one succeeds. Each fallback runs under the same
+context/deadline as the primary; its own `request_delay` applies after its
+request. If every fallback fails too, the **last** error (e.g. an
+`InsufficientCreditsError` naming the last failing provider) is what the
+enricher sees — so the batch pauses on credit errors only when the primary
+**and all** enabled fallbacks end in a credit error.
 
 ---
 
@@ -498,8 +501,7 @@ Under `enricher` (`internal/config/config.go:164-195`):
 | `contentanalyzer.llm.provider` / `model` / `token` | — | endpoint + model + auth (token omitted from YAML on read) |
 | `contentanalyzer.llm.temperature` | — | catalog-gated |
 | `contentanalyzer.llm.request_delay` | `1` (s) | seconds to sleep after each LLM request; `0` = off, max `60` |
-| `contentanalyzer.fallback.enabled` | `false` | build a second analyzer and retry provider errors through it |
-| `contentanalyzer.fallback.llm.adapter` / `provider` / `model` / `token` | — | same shape as the primary `llm` block; required (with `request_delay` 0–60) only when the fallback is enabled |
+| `contentanalyzer.fallbacks` | `[]` | ordered list of `{enabled, llm.*}` fallbacks tried on provider errors; each enabled entry requires adapter/provider/model (with `request_delay` 0–60) |
 | `tagmatcher.reduce_target_words` | `4000` | matcher reduction target |
 | `tagmatcher.hugot.*` | — | model/backend (§9 of the semantic-matching guide) |
 

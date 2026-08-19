@@ -1280,13 +1280,19 @@ Three-phase API:
   "enricher.contentanalyzer.llm.model": "gpt-4o",
   "enricher.contentanalyzer.llm.token": "",
   "enricher.contentanalyzer.llm.request_delay": 1,
-  "enricher.contentanalyzer.fallback.enabled": false,
-  "enricher.contentanalyzer.fallback.llm.adapter": "openai-compatible",
-  "enricher.contentanalyzer.fallback.llm.provider": "deepseek",
-  "enricher.contentanalyzer.fallback.llm.model": "deepseek-chat",
-  "enricher.contentanalyzer.fallback.llm.token": "",
-  "enricher.contentanalyzer.fallback.llm.temperature": 0,
-  "enricher.contentanalyzer.fallback.llm.request_delay": 0,
+  "enricher.contentanalyzer.fallbacks": [
+    {
+      "enabled": false,
+      "llm": {
+        "adapter": "openai-compatible",
+        "provider": "deepseek",
+        "model": "deepseek-chat",
+        "token": "",
+        "temperature": 0,
+        "request_delay": 0
+      }
+    }
+  ],
   "enricher.tagmatcher.timeout": 120,
   "enricher.tagmatcher.reduce_target_words": 4000,
   "enricher.tagmatcher.chunk_size": 4096,
@@ -2182,7 +2188,7 @@ backup:
 | `enricher.contentanalyzer.prompt_template` | Custom Go `text/template` for the LLM prompt; empty = built-in default |
 | `enricher.contentanalyzer.pause_on_credit_error` | Pause the batch when the LLM provider returns a credit/balance error (default `true`) |
 | `enricher.contentanalyzer.llm.request_delay` | Seconds to sleep after each LLM request (default `1`; `0` = off, max `60`) — for rate-limited providers |
-| `enricher.contentanalyzer.fallback` | Optional second LLM config (same shape as `llm`) tried when the primary fails with a provider error — API down/unreachable, credit/rate-limit, malformed response, provider-side timeout. Disabled by default; validated (adapter/provider/model required, request_delay 0–60) only when `enabled: true` |
+| `enricher.contentanalyzer.fallbacks` | Ordered list of fallback LLM configs (each `{enabled, llm}` with the same shape as `llm`), tried in order when the primary fails with a provider error — API down/unreachable, credit/rate-limit, malformed response, provider-side timeout. Disabled by default; validated (adapter/provider/model required, request_delay 0–60) only for each `enabled: true` entry |
 | `enricher.contentanalyzer.doc_type_refinement` | Second-pass doc type refinement with head+tail of raw text (enabled, head_words, tail_words) |
 | `enricher.tagmatcher`          | Semantic tag matching via Hugot (embeddings) — see [Tag Matcher guide](tag-matcher.md) for memory/CPU tuning |
 | `enricher.tagmatcher.hugot`    | Hugot-specific settings (model, backend)                               |

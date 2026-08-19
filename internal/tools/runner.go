@@ -6,9 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
-	"path/filepath"
 	"time"
 	"unicode/utf8"
 
@@ -27,17 +27,23 @@ import (
 )
 
 type Runner struct {
-	logger           *utils.Logger
-	config           *config.Config
-	textExtractor    textextractor.TextExtractor
-	ocr              ocr.OCR
-	pdfOptimizer     pdfoptimizer.PdfOptimizer
-	thumbnailer      thumbnail.Thumbnailer
+	logger            *utils.Logger
+	config            *config.Config
+	textExtractor     textextractor.TextExtractor
+	ocr               ocr.OCR
+	pdfOptimizer      pdfoptimizer.PdfOptimizer
+	thumbnailer       thumbnail.Thumbnailer
 	documentConverter converter.DocumentConverter
-	tagMatcher       tagmatcher.Matcher
-	contentAnalyzer  contentanalyzer.ContentAnalyzer
-	fallbackAnalyzer contentanalyzer.ContentAnalyzer
-	textReducer      textreducer.TextReducer
+	tagMatcher        tagmatcher.Matcher
+	contentAnalyzer   contentanalyzer.ContentAnalyzer
+	fallbackAnalyzers []contentanalyzer.ContentAnalyzer
+	fallbackMeta      []fallbackMeta
+	textReducer       textreducer.TextReducer
+}
+
+type fallbackMeta struct {
+	Provider string
+	Model    string
 }
 
 type TextExtractionResult struct {
@@ -163,12 +169,18 @@ func NewRunner(logger *utils.Logger, cfg *config.Config, tools []string) *Runner
 				logger.Error(nil, "create content analyzer: %v", caErr)
 			}
 			r.contentAnalyzer = ca
-			if fb := cfg.Enricher.ContentAnalyzer.Fallback; fb != nil && fb.Enabled {
+			for i := range cfg.Enricher.ContentAnalyzer.Fallbacks {
+				fb := &cfg.Enricher.ContentAnalyzer.Fallbacks[i]
+				if !fb.Enabled {
+					continue
+				}
 				fbCa, fbErr := contentanalyzer.NewContentAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.Enricher.ContentAnalyzer.Timeout) * time.Second}, &fb.Llm, cfg.Enricher.ContentAnalyzer.PromptTemplate, reg)
 				if fbErr != nil {
 					logger.Error(nil, "create fallback content analyzer: %v", fbErr)
+					continue
 				}
-				r.fallbackAnalyzer = fbCa
+				r.fallbackAnalyzers = append(r.fallbackAnalyzers, fbCa)
+				r.fallbackMeta = append(r.fallbackMeta, fallbackMeta{Provider: fb.Llm.Provider, Model: fb.Llm.Model})
 			}
 		}
 	}
@@ -445,17 +457,30 @@ func (r *Runner) AnalyzeContent(ctx context.Context, text string, docTypes []dat
 	result, err := runWithTimeout(ctx, func() (*contentanalyzer.AnalysisResult, error) {
 		return r.contentAnalyzer.Analyze(ctx, text, docTypes, peopleTypes, tagSuggestions)
 	})
-	if err != nil && isProviderError(err) && r.fallbackAnalyzer != nil {
-		fbProvider, fbModel := "?", "?"
-		if fb := r.config.Enricher.ContentAnalyzer.Fallback; fb != nil {
-			fbProvider, fbModel = fb.Llm.Provider, fb.Llm.Model
+	if err != nil && isProviderError(err) {
+		var reqID *string
+		if v, ok := ctx.Value("reqid").(string); ok && v != "" {
+			reqID = &v
 		}
-		r.logger.Info(nil, "primary analyzer (%s/%s) failed: %v — trying fallback (%s/%s)",
-			r.config.Enricher.ContentAnalyzer.Llm.Provider, r.config.Enricher.ContentAnalyzer.Llm.Model,
-			err, fbProvider, fbModel)
-		result, err = runWithTimeout(ctx, func() (*contentanalyzer.AnalysisResult, error) {
-			return r.fallbackAnalyzer.Analyze(ctx, text, docTypes, peopleTypes, tagSuggestions)
-		})
+		r.logger.Warn(reqID, "primary analyzer (%s/%s) failed: %v",
+			r.config.Enricher.ContentAnalyzer.Llm.Provider, r.config.Enricher.ContentAnalyzer.Llm.Model, err)
+		for i, fb := range r.fallbackAnalyzers {
+			fbProvider, fbModel := "?", "?"
+			if i < len(r.fallbackMeta) {
+				fbProvider, fbModel = r.fallbackMeta[i].Provider, r.fallbackMeta[i].Model
+			}
+			r.logger.Info(reqID, "trying fallback analyzer (%s/%s)", fbProvider, fbModel)
+			result, err = runWithTimeout(ctx, func() (*contentanalyzer.AnalysisResult, error) {
+				return fb.Analyze(ctx, text, docTypes, peopleTypes, tagSuggestions)
+			})
+			if err == nil {
+				break
+			}
+			r.logger.Warn(reqID, "fallback analyzer (%s/%s) failed: %v", fbProvider, fbModel, err)
+			if !isProviderError(err) {
+				break
+			}
+		}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("content analyzer: %w", err)
@@ -494,17 +519,30 @@ func (r *Runner) AnalyzeDocType(ctx context.Context, prevResult *ContentAnalysis
 	result, err := runWithTimeout(ctx, func() (string, error) {
 		return r.contentAnalyzer.AnalyzeDocType(ctx, prev, headTailText, docTypes, metadata)
 	})
-	if err != nil && isProviderError(err) && r.fallbackAnalyzer != nil {
-		fbProvider, fbModel := "?", "?"
-		if fb := r.config.Enricher.ContentAnalyzer.Fallback; fb != nil {
-			fbProvider, fbModel = fb.Llm.Provider, fb.Llm.Model
+	if err != nil && isProviderError(err) {
+		var reqID *string
+		if v, ok := ctx.Value("reqid").(string); ok && v != "" {
+			reqID = &v
 		}
-		r.logger.Info(nil, "primary analyzer (%s/%s) failed doc-type refinement: %v — trying fallback (%s/%s)",
-			r.config.Enricher.ContentAnalyzer.Llm.Provider, r.config.Enricher.ContentAnalyzer.Llm.Model,
-			err, fbProvider, fbModel)
-		result, err = runWithTimeout(ctx, func() (string, error) {
-			return r.fallbackAnalyzer.AnalyzeDocType(ctx, prev, headTailText, docTypes, metadata)
-		})
+		r.logger.Warn(reqID, "primary analyzer (%s/%s) failed doc-type refinement: %v",
+			r.config.Enricher.ContentAnalyzer.Llm.Provider, r.config.Enricher.ContentAnalyzer.Llm.Model, err)
+		for i, fb := range r.fallbackAnalyzers {
+			fbProvider, fbModel := "?", "?"
+			if i < len(r.fallbackMeta) {
+				fbProvider, fbModel = r.fallbackMeta[i].Provider, r.fallbackMeta[i].Model
+			}
+			r.logger.Info(reqID, "trying fallback analyzer (%s/%s)", fbProvider, fbModel)
+			result, err = runWithTimeout(ctx, func() (string, error) {
+				return fb.AnalyzeDocType(ctx, prev, headTailText, docTypes, metadata)
+			})
+			if err == nil {
+				break
+			}
+			r.logger.Warn(reqID, "fallback analyzer (%s/%s) failed: %v", fbProvider, fbModel, err)
+			if !isProviderError(err) {
+				break
+			}
+		}
 	}
 	if err != nil {
 		return "", fmt.Errorf("doc type refinement: %w", err)

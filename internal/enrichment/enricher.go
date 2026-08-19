@@ -50,6 +50,7 @@ func NewEnricher(cfg *config.Config, logger *utils.Logger, queries *database.Que
 
 func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*json.RawMessage, error) {
 	logId := document.DocumentID
+	ctx = context.WithValue(ctx, "reqid", logId)
 
 	start := time.Now()
 	e.logger.Info(&logId, "starting enrichment for file %s", document.StoragePath)

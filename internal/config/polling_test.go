@@ -391,85 +391,89 @@ func TestFinalizeConfig_RequestDelayBounds(t *testing.T) {
 func TestFinalizeConfig_FallbackValidation(t *testing.T) {
 	configDir := t.TempDir()
 
-	validFB := func() *FallbackConfig {
-		return &FallbackConfig{
-			Enabled: true,
-			Llm: LlmConfig{
-				Adapter:      "openai-compatible",
-				Provider:     "deepseek",
-				Model:        "deepseek-chat",
-				RequestDelay: 1,
+	validFB := func() []FallbackConfig {
+		return []FallbackConfig{
+			{
+				Enabled: true,
+				Llm: LlmConfig{
+					Adapter:      "openai-compatible",
+					Provider:     "deepseek",
+					Model:        "deepseek-chat",
+					RequestDelay: 1,
+				},
 			},
 		}
 	}
 
 	t.Run("rejects enabled fallback missing adapter", func(t *testing.T) {
 		cfg := DefaultConfig(configDir)
-		cfg.Enricher.ContentAnalyzer.Fallback = validFB()
-		cfg.Enricher.ContentAnalyzer.Fallback.Llm.Adapter = ""
+		cfg.Enricher.ContentAnalyzer.Fallbacks = validFB()
+		cfg.Enricher.ContentAnalyzer.Fallbacks[0].Llm.Adapter = ""
 
 		err := finalizeConfig(cfg, configDir)
-		if err == nil || !strings.Contains(err.Error(), "fallback.llm.adapter is required") {
+		if err == nil || !strings.Contains(err.Error(), "fallbacks[0].llm.adapter is required") {
 			t.Errorf("expected missing-adapter error, got %v", err)
 		}
 	})
 
 	t.Run("rejects enabled fallback missing provider", func(t *testing.T) {
 		cfg := DefaultConfig(configDir)
-		cfg.Enricher.ContentAnalyzer.Fallback = validFB()
-		cfg.Enricher.ContentAnalyzer.Fallback.Llm.Provider = ""
+		cfg.Enricher.ContentAnalyzer.Fallbacks = validFB()
+		cfg.Enricher.ContentAnalyzer.Fallbacks[0].Llm.Provider = ""
 
 		err := finalizeConfig(cfg, configDir)
-		if err == nil || !strings.Contains(err.Error(), "fallback.llm.provider is required") {
+		if err == nil || !strings.Contains(err.Error(), "fallbacks[0].llm.provider is required") {
 			t.Errorf("expected missing-provider error, got %v", err)
 		}
 	})
 
 	t.Run("rejects enabled fallback missing model", func(t *testing.T) {
 		cfg := DefaultConfig(configDir)
-		cfg.Enricher.ContentAnalyzer.Fallback = validFB()
-		cfg.Enricher.ContentAnalyzer.Fallback.Llm.Model = ""
+		cfg.Enricher.ContentAnalyzer.Fallbacks = validFB()
+		cfg.Enricher.ContentAnalyzer.Fallbacks[0].Llm.Model = ""
 
 		err := finalizeConfig(cfg, configDir)
-		if err == nil || !strings.Contains(err.Error(), "fallback.llm.model is required") {
+		if err == nil || !strings.Contains(err.Error(), "fallbacks[0].llm.model is required") {
 			t.Errorf("expected missing-model error, got %v", err)
 		}
 	})
 
 	t.Run("rejects enabled fallback with negative request_delay", func(t *testing.T) {
 		cfg := DefaultConfig(configDir)
-		cfg.Enricher.ContentAnalyzer.Fallback = validFB()
-		cfg.Enricher.ContentAnalyzer.Fallback.Llm.RequestDelay = -1
+		cfg.Enricher.ContentAnalyzer.Fallbacks = validFB()
+		cfg.Enricher.ContentAnalyzer.Fallbacks[0].Llm.RequestDelay = -1
 
 		err := finalizeConfig(cfg, configDir)
-		if err == nil || !strings.Contains(err.Error(), "fallback.llm.request_delay must be between") {
+		if err == nil || !strings.Contains(err.Error(), "fallbacks[0].llm.request_delay must be between") {
 			t.Errorf("expected request_delay bounds error, got %v", err)
 		}
 	})
 
 	t.Run("accepts fully-specified enabled fallback", func(t *testing.T) {
 		cfg := DefaultConfig(configDir)
-		cfg.Enricher.ContentAnalyzer.Fallback = validFB()
+		cfg.Enricher.ContentAnalyzer.Fallbacks = validFB()
 
 		if err := finalizeConfig(cfg, configDir); err != nil {
 			t.Errorf("unexpected error for valid fallback: %v", err)
 		}
 	})
 
-	t.Run("skips validation when fallback is nil", func(t *testing.T) {
+	t.Run("skips validation when fallbacks is empty", func(t *testing.T) {
 		cfg := DefaultConfig(configDir)
-		cfg.Enricher.ContentAnalyzer.Fallback = nil
+		cfg.Enricher.ContentAnalyzer.Fallbacks = nil
 
 		if err := finalizeConfig(cfg, configDir); err != nil {
-			t.Errorf("unexpected error when fallback is nil: %v", err)
+			t.Errorf("unexpected error when fallbacks is empty: %v", err)
 		}
 	})
 
 	t.Run("skips validation when fallback is disabled", func(t *testing.T) {
 		cfg := DefaultConfig(configDir)
-		cfg.Enricher.ContentAnalyzer.Fallback = &FallbackConfig{
-			Enabled: false,
-			Llm:     LlmConfig{}, // intentionally empty
+		cfg.Enricher.ContentAnalyzer.Fallbacks = []FallbackConfig{
+			{
+				Enabled: false,
+				Llm:     LlmConfig{}, // intentionally empty
+			},
 		}
 
 		if err := finalizeConfig(cfg, configDir); err != nil {

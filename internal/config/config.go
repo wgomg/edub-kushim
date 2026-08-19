@@ -206,7 +206,7 @@ type ContentAnalyzerConfig struct {
 	Enabled            bool                    `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
 	Timeout            int                     `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
 	Llm                LlmConfig               `mapstructure:"llm" yaml:"llm" json:"llm"`
-	Fallback           *FallbackConfig         `mapstructure:"fallback" yaml:"fallback" json:"fallback,omitempty"`
+	Fallbacks          []FallbackConfig        `mapstructure:"fallbacks" yaml:"fallbacks" json:"fallbacks,omitempty"`
 	PromptTemplate     string                  `mapstructure:"prompt_template" yaml:"prompt_template" json:"prompt_template,omitempty"`
 	DocTypeRefinement  DocTypeRefinementConfig `mapstructure:"doc_type_refinement" yaml:"doc_type_refinement" json:"doc_type_refinement"`
 	PauseOnCreditError bool                    `mapstructure:"pause_on_credit_error" yaml:"pause_on_credit_error" json:"pause_on_credit_error"`
@@ -598,19 +598,23 @@ func finalizeConfig(cfg *Config, configDir string) error {
 		return fmt.Errorf("enricher.contentanalyzer.llm.request_delay must be between 0 and %d", maxRequestDelaySeconds)
 	}
 
-	if fb := cfg.Enricher.ContentAnalyzer.Fallback; fb != nil && fb.Enabled {
+	for i := range cfg.Enricher.ContentAnalyzer.Fallbacks {
+		fb := &cfg.Enricher.ContentAnalyzer.Fallbacks[i]
+		if !fb.Enabled {
+			continue
+		}
 		llmCfg := &fb.Llm
 		if llmCfg.Adapter == "" {
-			return fmt.Errorf("enricher.contentanalyzer.fallback.llm.adapter is required when the fallback is enabled")
+			return fmt.Errorf("enricher.contentanalyzer.fallbacks[%d].llm.adapter is required when the fallback is enabled", i)
 		}
 		if llmCfg.Provider == "" {
-			return fmt.Errorf("enricher.contentanalyzer.fallback.llm.provider is required when the fallback is enabled")
+			return fmt.Errorf("enricher.contentanalyzer.fallbacks[%d].llm.provider is required when the fallback is enabled", i)
 		}
 		if llmCfg.Model == "" {
-			return fmt.Errorf("enricher.contentanalyzer.fallback.llm.model is required when the fallback is enabled")
+			return fmt.Errorf("enricher.contentanalyzer.fallbacks[%d].llm.model is required when the fallback is enabled", i)
 		}
 		if llmCfg.RequestDelay < 0 || llmCfg.RequestDelay > maxRequestDelaySeconds {
-			return fmt.Errorf("enricher.contentanalyzer.fallback.llm.request_delay must be between 0 and %d", maxRequestDelaySeconds)
+			return fmt.Errorf("enricher.contentanalyzer.fallbacks[%d].llm.request_delay must be between 0 and %d", i, maxRequestDelaySeconds)
 		}
 	}
 
