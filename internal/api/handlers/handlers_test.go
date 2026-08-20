@@ -1848,6 +1848,28 @@ func TestAPIKeyHandler(t *testing.T) {
 		}
 	})
 
+	t.Run("get key status wire format", func(t *testing.T) {
+		w := rec()
+		r := reqWithAuth(t, "GET", "/api/v1/users/1/api-key", nil, user.ID)
+		r.SetPathValue("id", fmt.Sprintf("%d", user.ID))
+		h.GetKeyStatus(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var body map[string]json.RawMessage
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if _, ok := body["has_api_key"]; !ok {
+			t.Fatal(`expected wire key "has_api_key"`)
+		}
+		if _, ok := body["has_key"]; ok {
+			t.Fatal(`unexpected wire key "has_key"`)
+		}
+		if _, ok := body["api_key_prefix"]; !ok {
+			t.Fatal(`expected wire key "api_key_prefix"`)
+		}
+	})
+
 	t.Run("rotate key", func(t *testing.T) {
 		w := rec()
 		r := reqWithAuth(t, "PUT", "/api/v1/users/1/api-key", nil, user.ID)
@@ -1941,6 +1963,27 @@ func TestMeAPIKeyHandler(t *testing.T) {
 		json.NewDecoder(w.Body).Decode(&resp)
 		if !resp.HasAPIKey {
 			t.Fatal("expected has_api_key to be true")
+		}
+	})
+
+	t.Run("me get key status wire format", func(t *testing.T) {
+		w := rec()
+		r := reqWithAuth(t, "GET", "/api/v1/me/api-key", nil, user.ID)
+		h.MeGetKeyStatus(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var body map[string]json.RawMessage
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if _, ok := body["has_api_key"]; !ok {
+			t.Fatal(`expected wire key "has_api_key"`)
+		}
+		if _, ok := body["has_key"]; ok {
+			t.Fatal(`unexpected wire key "has_key"`)
+		}
+		if _, ok := body["api_key_prefix"]; !ok {
+			t.Fatal(`expected wire key "api_key_prefix"`)
 		}
 	})
 

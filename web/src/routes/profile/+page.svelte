@@ -137,9 +137,9 @@
 				<div>
 					<span class="text-xs font-medium text-parchment-500">API Key</span>
 					<p class="text-parchment-200">
-						{keyStatus?.has_key ? 'Has key' : 'No key'}
-						{#if keyStatus?.prefix}
-							<span class="text-parchment-400">({keyStatus.prefix}…)</span>
+						{keyStatus?.has_api_key ? 'Has key' : 'No key'}
+						{#if keyStatus?.api_key_prefix}
+							<span class="text-parchment-400">({keyStatus.api_key_prefix}…)</span>
 						{/if}
 					</p>
 				</div>
@@ -149,7 +149,7 @@
 		<div class="rounded-xl border border-clay-800 bg-clay-900 p-5">
 			<h2 class="mb-4 text-lg font-semibold text-parchment-200">API Key</h2>
 			<div class="space-y-3">
-				{#if keyStatus?.has_key}
+				{#if keyStatus?.has_api_key}
 					{#if showRawKey && rawKey}
 						<div class="rounded-md border border-clay-700 bg-clay-950 p-3">
 							<p class="mb-2 font-mono text-sm break-all text-parchment-200">{rawKey}</p>
