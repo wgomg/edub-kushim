@@ -157,3 +157,28 @@ DELETE FROM document WHERE document_id = $1 AND deleted_at IS NOT NULL;
 
 -- name: PurgeExpiredDocuments :execrows
 DELETE FROM document WHERE deleted_at < CURRENT_TIMESTAMP - ($1::text || ' days')::INTERVAL;
+
+-- name: ListDocumentsWithoutThumbnails :many
+SELECT id, document_id, storage_path
+FROM document
+WHERE has_thumbnail = FALSE AND deleted_at IS NULL AND id > $1
+ORDER BY id
+LIMIT $2;
+
+-- name: ListDocumentsWithoutThumbnailsByBatch :many
+SELECT d.document_id, d.storage_path
+FROM document d
+JOIN task t ON t.payload->>'document_id' = d.document_id
+WHERE t.batch_id = $1
+  AND t.task_type = 'consume'
+  AND t.status = 'completed'
+  AND d.has_thumbnail = FALSE
+  AND d.deleted_at IS NULL
+ORDER BY d.id;
+
+-- name: GetDocumentWithoutThumbnail :one
+SELECT document_id, storage_path
+FROM document
+WHERE document_id = $1
+  AND has_thumbnail = FALSE
+  AND deleted_at IS NULL;

@@ -55,6 +55,11 @@ var commandSets = map[string]map[string]Command{
 			Description: "Re-run enrichment for a single document",
 			Handler:     enrichHandler,
 		},
+		"thumbnails": {
+			Name:        "thumbnails",
+			Description: "Backfill missing thumbnails",
+			Handler:     backfillThumbnailsHandler,
+		},
 		"queue": {
 			Name:        "queue",
 			Description: "Start the batch queue daemon for background consumption",

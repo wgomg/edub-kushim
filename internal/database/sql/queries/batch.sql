@@ -157,3 +157,13 @@ SELECT COUNT(*) FROM batch WHERE status = 'paused';
 
 -- name: ListPausedBatches :many
 SELECT id FROM batch WHERE status = 'paused' ORDER BY created_at;
+
+-- name: CountActiveThumbnailBackfillBatches :one
+SELECT COUNT(*) FROM batch
+WHERE source = 'thumbbackfill' AND status IN ('queued', 'processing');
+
+-- name: GetLastThumbnailBackfillBatchCreatedAt :one
+SELECT created_at FROM batch
+WHERE source = 'thumbbackfill'
+ORDER BY created_at DESC
+LIMIT 1;

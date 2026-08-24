@@ -144,13 +144,15 @@ type OCRResponse struct {
 }
 
 type ThumbnailConfigResponse struct {
-	Enabled  bool   `json:"enabled"`
-	Engine   string `json:"engine"`
-	DPI      int    `json:"dpi"`
-	MaxWidth int    `json:"max_width"`
-	Quality  int    `json:"quality"`
-	Timeout  int    `json:"timeout"`
-	Workers  int    `json:"workers"`
+	Enabled          bool    `json:"enabled"`
+	Engine           string  `json:"engine"`
+	DPI              int     `json:"dpi"`
+	MaxWidth         int     `json:"max_width"`
+	Quality          int     `json:"quality"`
+	Timeout          int     `json:"timeout"`
+	Workers          int     `json:"workers"`
+	BackfillInterval float64 `json:"backfill_interval"`
+	BackfillTime     string  `json:"backfill_time"`
 }
 
 type EnricherConfigResponse struct {
@@ -275,6 +277,8 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Consumer.Thumbnail.Quality = cfg.Consumer.Thumbnail.Quality
 	resp.Consumer.Thumbnail.Timeout = cfg.Consumer.Thumbnail.Timeout
 	resp.Consumer.Thumbnail.Workers = cfg.Consumer.Thumbnail.Workers
+	resp.Consumer.Thumbnail.BackfillInterval = cfg.Consumer.Thumbnail.BackfillInterval
+	resp.Consumer.Thumbnail.BackfillTime = cfg.Consumer.Thumbnail.BackfillTime
 	resp.Enricher.Workers = cfg.Enricher.Workers
 	resp.Enricher.TextReducer.Engine = cfg.Enricher.TextReducer.Engine
 	resp.Enricher.TextReducer.Timeout = cfg.Enricher.TextReducer.Timeout

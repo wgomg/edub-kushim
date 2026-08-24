@@ -205,7 +205,7 @@ New to the codebase? The guides in [`docs/developer-guide/`](docs/developer-guid
 - **Semantic tag matching** — Hugot embeddings with cosine similarity (Go or ONNX Runtime backend)
 - **OCR pipeline** — Tesseract + MuPDF for image-only PDFs, with searchable PDF output (text rendering mode 3)
 - **Full-text search** — PostgreSQL tsvector with `ts_rank` ranking and `ts_headline` snippet highlighting; structured search with metadata filters
-- **Document thumbnails & grid view** — first-page JPEG thumbnails generated per document (MuPDF, subprocess-isolated), served via the API; tile/grid view on the documents page with lazy-loaded images and a persisted view preference
+- **Document thumbnails & grid view** — first-page JPEG thumbnails generated per document (MuPDF, subprocess-isolated), served via the API; tile/grid view on the documents page with lazy-loaded images and a persisted view preference; scheduled backfill (interval + preferred time of day) generates thumbnails for documents missing one
 - **Structured search** — metadata filters (tags, people, document type, language, date range, file size) combined with full-text queries
 - **Async enrichment** — task queue with worker pools, batch tracking, progress polling; TextRank reduction before LLM
 - **Fallback LLM provider** — optional second provider/model tried automatically when the primary fails with a provider error (network, credits, rate limit, malformed response); disabled by default

@@ -583,3 +583,35 @@ backup:
 		t.Errorf("auto-converted schedule = %+v, want full/2/05:00/3", s)
 	}
 }
+
+func TestFinalizeConfig_ThumbnailBackfillValidation(t *testing.T) {
+	tests := []struct {
+		name     string
+		interval float64
+		time     string
+		wantErr  bool
+	}{
+		{"negative interval rejected", -0.5, "02:00", true},
+		{"zero interval disables time check", 0, "not-a-time", false},
+		{"valid interval and time", 1, "03:30", false},
+		{"sub-daily interval valid", 0.5, "14:00", false},
+		{"empty time defaults to valid", 1, "", false},
+		{"invalid time rejected", 1, "25:99", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			configDir := t.TempDir()
+			cfg := DefaultConfig(configDir)
+			cfg.Consumer.Thumbnail.BackfillInterval = tt.interval
+			cfg.Consumer.Thumbnail.BackfillTime = tt.time
+
+			err := finalizeConfig(cfg, configDir)
+			if tt.wantErr && err == nil {
+				t.Errorf("expected error for interval=%v time=%q", tt.interval, tt.time)
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("unexpected error for interval=%v time=%q: %v", tt.interval, tt.time, err)
+			}
+		})
+	}
+}

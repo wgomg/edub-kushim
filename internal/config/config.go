@@ -145,13 +145,15 @@ type OCRConfig struct {
 }
 
 type ThumbnailConfig struct {
-	Enabled  bool   `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
-	Engine   string `mapstructure:"engine" yaml:"engine" json:"engine"`
-	DPI      int    `mapstructure:"dpi" yaml:"dpi" json:"dpi"`
-	MaxWidth int    `mapstructure:"max_width" yaml:"max_width" json:"max_width"`
-	Quality  int    `mapstructure:"quality" yaml:"quality" json:"quality"`
-	Timeout  int    `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
-	Workers  int    `mapstructure:"workers" yaml:"workers" json:"workers"`
+	Enabled          bool    `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
+	Engine           string  `mapstructure:"engine" yaml:"engine" json:"engine"`
+	DPI              int     `mapstructure:"dpi" yaml:"dpi" json:"dpi"`
+	MaxWidth         int     `mapstructure:"max_width" yaml:"max_width" json:"max_width"`
+	Quality          int     `mapstructure:"quality" yaml:"quality" json:"quality"`
+	Timeout          int     `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
+	Workers          int     `mapstructure:"workers" yaml:"workers" json:"workers"`
+	BackfillInterval float64 `mapstructure:"backfill_interval" yaml:"backfill_interval" json:"backfill_interval"`
+	BackfillTime     string  `mapstructure:"backfill_time" yaml:"backfill_time" json:"backfill_time"`
 }
 
 type PollingWindow struct {
@@ -447,13 +449,15 @@ func DefaultConfig(configDir string) *Config {
 				OcrWorkers: 0,
 			},
 			Thumbnail: ThumbnailConfig{
-				Enabled:  true,
-				Engine:   Thumbnail.MuPDF,
-				DPI:      72,
-				MaxWidth: 400,
-				Quality:  80,
-				Timeout:  30,
-				Workers:  1,
+				Enabled:          true,
+				Engine:           Thumbnail.MuPDF,
+				DPI:              72,
+				MaxWidth:         400,
+				Quality:          80,
+				Timeout:          30,
+				Workers:          1,
+				BackfillInterval: 0,
+				BackfillTime:     "02:00",
 			},
 			Polling: PollingConfig{
 				Interval: 5,
@@ -580,6 +584,18 @@ func finalizeConfig(cfg *Config, configDir string) error {
 	}
 	if cfg.Consumer.Thumbnail.Quality < 1 || cfg.Consumer.Thumbnail.Quality > 100 {
 		return fmt.Errorf("consumer.thumbnail.quality must be between 1 and 100")
+	}
+	if cfg.Consumer.Thumbnail.BackfillInterval < 0 {
+		return fmt.Errorf("consumer.thumbnail.backfill_interval must be >= 0")
+	}
+	if cfg.Consumer.Thumbnail.BackfillInterval > 0 {
+		t := cfg.Consumer.Thumbnail.BackfillTime
+		if t == "" {
+			t = "02:00"
+		}
+		if _, err := parseHHMM(t, false); err != nil {
+			return fmt.Errorf("consumer.thumbnail.backfill_time: %w", err)
+		}
 	}
 	if cfg.Enricher.TextReducer.Timeout < 0 {
 		return fmt.Errorf("enricher.textreducer.timeout must be >= 0")

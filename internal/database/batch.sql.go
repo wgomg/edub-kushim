@@ -54,6 +54,18 @@ func (q *Queries) CleanupCompletedBatches(ctx context.Context) (int64, error) {
 	return result.RowsAffected()
 }
 
+const countActiveThumbnailBackfillBatches = `-- name: CountActiveThumbnailBackfillBatches :one
+SELECT COUNT(*) FROM batch
+WHERE source = 'thumbbackfill' AND status IN ('queued', 'processing')
+`
+
+func (q *Queries) CountActiveThumbnailBackfillBatches(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countActiveThumbnailBackfillBatches)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countLiveBatches = `-- name: CountLiveBatches :one
 SELECT COUNT(*) FROM batch_owner
 WHERE last_heartbeat > CURRENT_TIMESTAMP - INTERVAL '15 seconds'
@@ -147,6 +159,20 @@ func (q *Queries) GetBatchOwner(ctx context.Context, batchID string) (BatchOwner
 		&i.LastHeartbeat,
 	)
 	return i, err
+}
+
+const getLastThumbnailBackfillBatchCreatedAt = `-- name: GetLastThumbnailBackfillBatchCreatedAt :one
+SELECT created_at FROM batch
+WHERE source = 'thumbbackfill'
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+func (q *Queries) GetLastThumbnailBackfillBatchCreatedAt(ctx context.Context) (sql.NullTime, error) {
+	row := q.db.QueryRowContext(ctx, getLastThumbnailBackfillBatchCreatedAt)
+	var created_at sql.NullTime
+	err := row.Scan(&created_at)
+	return created_at, err
 }
 
 const getNextPendingTaskOfTypeForOwner = `-- name: GetNextPendingTaskOfTypeForOwner :one

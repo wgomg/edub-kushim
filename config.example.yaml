@@ -83,6 +83,8 @@ consumer:
     quality: 80
     timeout: 30     # 0 = disabled (no artificial deadline)
     workers: 1
+    backfill_interval: 0  # days between automatic backfill runs (0 = disabled)
+    backfill_time: "02:00"  # preferred time of day (HH:MM)
 
 enricher:
   workers: 1

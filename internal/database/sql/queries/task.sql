@@ -234,6 +234,9 @@ WHERE task_id = $2 AND status = 'waiting' AND task_type IN ('enrich', 'thumbnail
 -- name: DeleteTask :exec
 DELETE FROM task WHERE id = $1;
 
+-- name: DeleteTasksByBatch :execrows
+DELETE FROM task WHERE batch_id = $1;
+
 -- name: CancelPendingTasksByBatch :execrows
 UPDATE task SET status = 'cancelled', completed_at = CURRENT_TIMESTAMP
 WHERE batch_id = $1 AND status = 'pending';

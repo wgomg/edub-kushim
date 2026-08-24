@@ -131,6 +131,7 @@ func queueHandler(c *Container, args []string) error {
 	defer hkTicker.Stop()
 
 	var lastStaleTaskClaim time.Time
+	var lastThumbnailBackfill time.Time
 
 	for {
 		select {
@@ -213,6 +214,12 @@ func queueHandler(c *Container, args []string) error {
 				backupPool = nil
 				backupPoolStarted = false
 				c.logger.Info(nil, "backup pool stopped (backup disabled)")
+			}
+
+			if cfg.Consumer.Thumbnail.Enabled && cfg.Consumer.Thumbnail.BackfillInterval > 0 {
+				if err := maybeScheduleThumbnailBackfill(ctx, c, client, cfg, &lastThumbnailBackfill); err != nil {
+					c.logger.Error(nil, "thumbnail backfill scheduling: %v", err)
+				}
 			}
 
 			if cfg.Consumer.Reclaim.Enabled {
@@ -474,4 +481,69 @@ func maybeScheduleBackup(ctx context.Context, c *Container, client *database.Cli
 		c.logger.Info(nil, "backup task %s scheduled (mode=%s)", taskID, schedule.Mode)
 	}
 	return nil
+}
+
+func maybeScheduleThumbnailBackfill(ctx context.Context, c *Container, client *database.Client, cfg *config.Config, lastRun *time.Time) error {
+	if !cfg.Consumer.Thumbnail.Enabled || cfg.Consumer.Thumbnail.BackfillInterval <= 0 {
+		return nil
+	}
+
+	if lastRun.IsZero() {
+		lastBatch, err := client.Queries.GetLastThumbnailBackfillBatchCreatedAt(ctx)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("get last thumbnail backfill batch: %w", err)
+		}
+		if err == nil {
+			*lastRun = lastBatch.Time
+		}
+	}
+	// Anchor a fresh schedule to the preferred time so the first run honors off-hours.
+	if lastRun.IsZero() {
+		*lastRun = previousTimeOfDay(time.Now(), cfg.Consumer.Thumbnail.BackfillTime)
+	}
+
+	next := backup.NextBackupTime(*lastRun, cfg.Consumer.Thumbnail.BackfillInterval, cfg.Consumer.Thumbnail.BackfillTime)
+	if time.Now().Before(next) {
+		return nil
+	}
+
+	active, err := client.Queries.CountActiveThumbnailBackfillBatches(ctx)
+	if err != nil {
+		return fmt.Errorf("check active thumbnail backfill batches: %w", err)
+	}
+	if active > 0 {
+		return nil
+	}
+
+	cmd := exec.Command(os.Args[0], "thumbnails", "--all")
+	cmd.Stdin = nil
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	if err := cmd.Start(); err != nil {
+		c.logger.Error(nil, "fork kushim thumbnails --all: %v", err)
+		return nil
+	}
+	go func() { cmd.Wait() }()
+
+	// Advance only after a successful fork so a failed start retries next tick.
+	*lastRun = time.Now()
+	c.logger.Info(nil, "forked kushim thumbnails --all (PID %d)", cmd.Process.Pid)
+	return nil
+}
+
+func previousTimeOfDay(now time.Time, hhmm string) time.Time {
+	pref := "02:00"
+	if hhmm != "" {
+		pref = hhmm
+	}
+	prefTime, err := time.Parse("15:04", pref)
+	if err != nil {
+		prefTime, _ = time.Parse("15:04", "02:00")
+	}
+	loc := now.Location()
+	candidate := time.Date(now.Year(), now.Month(), now.Day(), prefTime.Hour(), prefTime.Minute(), 0, 0, loc)
+	if candidate.After(now) {
+		candidate = candidate.AddDate(0, 0, -1)
+	}
+	return candidate
 }

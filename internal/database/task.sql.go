@@ -237,6 +237,18 @@ func (q *Queries) DeleteTask(ctx context.Context, id int64) error {
 	return err
 }
 
+const deleteTasksByBatch = `-- name: DeleteTasksByBatch :execrows
+DELETE FROM task WHERE batch_id = $1
+`
+
+func (q *Queries) DeleteTasksByBatch(ctx context.Context, batchID sql.NullString) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteTasksByBatch, batchID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const discardEnrichTask = `-- name: DiscardEnrichTask :execrows
 UPDATE task SET
     status = 'discarded',

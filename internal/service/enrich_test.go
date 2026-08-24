@@ -10,12 +10,12 @@ import (
 	"github.com/wgomg/edub-kushim/internal/testutil"
 )
 
-type reenrichTaskCreator struct {
+type recordingTaskCreator struct {
 	calls    []mockTaskCall
 	createFn func(taskType, batchID string, payload json.RawMessage, taskID, status, dedupKey string) (string, error)
 }
 
-func (m *reenrichTaskCreator) CreateTask(_ context.Context, taskType, batchID string, payload json.RawMessage, taskID, status, dedupKey string) (string, error) {
+func (m *recordingTaskCreator) CreateTask(_ context.Context, taskType, batchID string, payload json.RawMessage, taskID, status, dedupKey string) (string, error) {
 	if m.createFn != nil {
 		return m.createFn(taskType, batchID, payload, taskID, status, dedupKey)
 	}
@@ -26,12 +26,12 @@ func (m *reenrichTaskCreator) CreateTask(_ context.Context, taskType, batchID st
 	return taskID, nil
 }
 
-type reenrichBatchCreator struct {
+type recordingBatchCreator struct {
 	calls    []mockTaskCall
 	createFn func(id, source, status string) error
 }
 
-func (m *reenrichBatchCreator) Create(_ context.Context, id, source, status string) error {
+func (m *recordingBatchCreator) Create(_ context.Context, id, source, status string) error {
 	if m.createFn != nil {
 		return m.createFn(id, source, status)
 	}
@@ -49,8 +49,8 @@ func TestReEnrich_Success(t *testing.T) {
 
 	_, docUUID := database.CreateTestDocument(t, client.Queries, "re-test.pdf")
 
-	taskMock := &reenrichTaskCreator{}
-	batchMock := &reenrichBatchCreator{}
+	taskMock := &recordingTaskCreator{}
+	batchMock := &recordingBatchCreator{}
 	svc := NewReEnrich(client.Queries, taskMock, batchMock)
 
 	batchID, err := svc.ReEnrich(ctx, docUUID)
@@ -81,8 +81,8 @@ func TestReEnrich_DocumentNotFound(t *testing.T) {
 	defer client.DB().Close()
 	ctx := context.Background()
 
-	taskMock := &reenrichTaskCreator{}
-	batchMock := &reenrichBatchCreator{}
+	taskMock := &recordingTaskCreator{}
+	batchMock := &recordingBatchCreator{}
 	svc := NewReEnrich(client.Queries, taskMock, batchMock)
 
 	_, err := svc.ReEnrich(ctx, "nonexistent-uuid")
@@ -99,12 +99,12 @@ func TestReEnrich_TaskCreationFails(t *testing.T) {
 
 	_, docUUID := database.CreateTestDocument(t, client.Queries, "fail-task.pdf")
 
-	taskMock := &reenrichTaskCreator{
+	taskMock := &recordingTaskCreator{
 		createFn: func(_, _ string, _ json.RawMessage, _, _, _ string) (string, error) {
 			return "", fmt.Errorf("create task: unique constraint")
 		},
 	}
-	batchMock := &reenrichBatchCreator{}
+	batchMock := &recordingBatchCreator{}
 	svc := NewReEnrich(client.Queries, taskMock, batchMock)
 
 	_, err := svc.ReEnrich(ctx, docUUID)

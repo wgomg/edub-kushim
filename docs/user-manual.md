@@ -195,6 +195,59 @@ Batch 660e8400-e29b-41d4-a716-446655440001 queued — run 'kushim queue' to proc
 
 Works on hosts without OCR/PDF tools because no consume tasks are created.
 
+### `kushim thumbnails <mode>`
+
+Backfill thumbnails for documents that don't have one yet (`has_thumbnail = FALSE`).
+Enqueues `pending` thumbnail tasks into a new `queued` batch — nothing is
+processed inline; run `kushim queue` (or leave the daemon running) to generate
+the thumbnails.
+
+```
+kushim thumbnails --all
+kushim thumbnails --batch 550e8400-e29b-41d4-a716-446655440000
+kushim thumbnails --document 550e8400-e29b-41d4-a716-446655440000
+```
+
+Exactly one mode is required:
+
+| Mode | Scope |
+| ---- | ----- |
+| `--all` | Every document missing a thumbnail (paginated, 500 per page) |
+| `--batch <id>` | Documents whose completed `consume` task is in the given batch |
+| `--document <id>` | A single document |
+
+`--force` proceeds even when `consumer.thumbnail.enabled` is `false`.
+
+Output:
+
+```
+Batch 660e8400-e29b-41d4-a716-446655440001 queued with 12 thumbnail task(s) — run 'kushim queue' to process
+```
+
+| Condition | Message |
+| --------- | ------- |
+| Nothing to do (`--all` / `--batch`) | `No documents missing thumbnails.` / `No documents missing thumbnails in that batch.` |
+| All candidates already pending (dedup) | `N document(s) already have a pending thumbnail task.` |
+| Document not found (`--document`) | `Error: document <id> not found` |
+| Document already has a thumbnail or a task is queued (`--document`) | `Error: document <id> already has a thumbnail or a task is already queued` |
+| Thumbnails disabled in config | `Error: thumbnails are disabled in config (consumer.thumbnail.enabled); use --force to override` |
+
+Documents whose thumbnail task is already `pending` are skipped — the dedup key
+`thumbnail:doc:<uuid>` (unique partial index) prevents duplicate queued tasks.
+Failed tasks fall outside the index, so a re-run re-enqueues them.
+
+#### Scheduled backfill
+
+`consumer.thumbnail.backfill_interval` (days, `0` = disabled) and
+`consumer.thumbnail.backfill_time` (`HH:MM`, default `"02:00"`) enable an
+automatic `--all` sweep: the `kushim queue` daemon forks
+`kushim thumbnails --all` when the schedule is due and no backfill batch is
+already queued or processing. The last run is derived from the most recent
+`thumbbackfill` batch, so daemon restarts do not reset the schedule; the first
+run waits for the preferred time of day. Sub-daily intervals (e.g. `0.5` =
+every 12 hours) are supported. Both fields are exposed in the settings UI
+(Thumbnails section).
+
 ### Pre-flight Tool Check
 
 Before scanning the inbox or resuming a batch, `kushim consume` checks that all

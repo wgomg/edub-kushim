@@ -191,7 +191,9 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			max_width: 400,
 			quality: 80,
 			timeout: 30,
-			workers: 1
+			workers: 1,
+			backfill_interval: 0,
+			backfill_time: '02:00'
 		};
 	}
 
@@ -303,6 +305,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			'consumer.thumbnail.quality': Number(cfg.consumer.thumbnail.quality),
 			'consumer.thumbnail.timeout': Number(cfg.consumer.thumbnail.timeout),
 			'consumer.thumbnail.workers': Number(cfg.consumer.thumbnail.workers),
+			'consumer.thumbnail.backfill_interval': Number(cfg.consumer.thumbnail.backfill_interval),
+			'consumer.thumbnail.backfill_time': cfg.consumer.thumbnail.backfill_time,
 			'consumer.pdfoptimizer.engine': cfg.consumer.pdfoptimizer.engine,
 			'consumer.pdfoptimizer.fallback': cfg.consumer.pdfoptimizer.fallback,
 			'consumer.pdfoptimizer.timeout': Number(cfg.consumer.pdfoptimizer.timeout),
@@ -1236,6 +1240,47 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 							/>
 							<p class="mt-1 text-xs text-parchment-500">1 = single worker</p>
+						</div>
+						<div>
+							<label
+								for="thumb-backfill-interval"
+								class="mb-1 block text-sm font-medium text-parchment-200"
+								>Backfill interval (days)</label
+							>
+							<input
+								id="thumb-backfill-interval"
+								name="thumb-backfill-interval"
+								autocomplete="off"
+								type="number"
+								inputmode="decimal"
+								step="0.1"
+								min="0"
+								bind:value={cfg.consumer.thumbnail.backfill_interval}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+							<p class="mt-1 text-xs text-parchment-500">
+								0 = disabled. Automatically enqueue thumbnail tasks for documents missing one.
+							</p>
+						</div>
+						<div>
+							<label
+								for="thumb-backfill-time"
+								class="mb-1 block text-sm font-medium text-parchment-200"
+								>Backfill preferred time</label
+							>
+							<input
+								id="thumb-backfill-time"
+								name="thumb-backfill-time"
+								autocomplete="off"
+								type="text"
+								placeholder="02:00"
+								pattern="([01][0-9]|2[0-3]):[0-5][0-9]"
+								bind:value={cfg.consumer.thumbnail.backfill_time}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+							<p class="mt-1 text-xs text-parchment-500">
+								HH:MM, 24-hour. Ignored for sub-daily intervals.
+							</p>
 						</div>
 					</div>
 				</section>

@@ -542,6 +542,26 @@ func (q *Queries) GetDocumentWithTextById(ctx context.Context, id int64) (GetDoc
 	return i, err
 }
 
+const getDocumentWithoutThumbnail = `-- name: GetDocumentWithoutThumbnail :one
+SELECT document_id, storage_path
+FROM document
+WHERE document_id = $1
+  AND has_thumbnail = FALSE
+  AND deleted_at IS NULL
+`
+
+type GetDocumentWithoutThumbnailRow struct {
+	DocumentID  string
+	StoragePath string
+}
+
+func (q *Queries) GetDocumentWithoutThumbnail(ctx context.Context, documentID string) (GetDocumentWithoutThumbnailRow, error) {
+	row := q.db.QueryRowContext(ctx, getDocumentWithoutThumbnail, documentID)
+	var i GetDocumentWithoutThumbnailRow
+	err := row.Scan(&i.DocumentID, &i.StoragePath)
+	return i, err
+}
+
 const getTrashDocument = `-- name: GetTrashDocument :one
 SELECT id, document_id, title, md5_checksum, sha512_checksum, original_type, file_size, page_count, word_count,
        char_count, language, created_at, modified_at, deleted_at, document_type_id, original_path, storage_path,
@@ -657,6 +677,88 @@ func (q *Queries) ListDocuments(ctx context.Context, arg ListDocumentsParams) ([
 			&i.StoragePath,
 			&i.HasThumbnail,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDocumentsWithoutThumbnails = `-- name: ListDocumentsWithoutThumbnails :many
+SELECT id, document_id, storage_path
+FROM document
+WHERE has_thumbnail = FALSE AND deleted_at IS NULL AND id > $1
+ORDER BY id
+LIMIT $2
+`
+
+type ListDocumentsWithoutThumbnailsParams struct {
+	ID    int64
+	Limit int32
+}
+
+type ListDocumentsWithoutThumbnailsRow struct {
+	ID          int64
+	DocumentID  string
+	StoragePath string
+}
+
+func (q *Queries) ListDocumentsWithoutThumbnails(ctx context.Context, arg ListDocumentsWithoutThumbnailsParams) ([]ListDocumentsWithoutThumbnailsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listDocumentsWithoutThumbnails, arg.ID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListDocumentsWithoutThumbnailsRow
+	for rows.Next() {
+		var i ListDocumentsWithoutThumbnailsRow
+		if err := rows.Scan(&i.ID, &i.DocumentID, &i.StoragePath); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDocumentsWithoutThumbnailsByBatch = `-- name: ListDocumentsWithoutThumbnailsByBatch :many
+SELECT d.document_id, d.storage_path
+FROM document d
+JOIN task t ON t.payload->>'document_id' = d.document_id
+WHERE t.batch_id = $1
+  AND t.task_type = 'consume'
+  AND t.status = 'completed'
+  AND d.has_thumbnail = FALSE
+  AND d.deleted_at IS NULL
+ORDER BY d.id
+`
+
+type ListDocumentsWithoutThumbnailsByBatchRow struct {
+	DocumentID  string
+	StoragePath string
+}
+
+func (q *Queries) ListDocumentsWithoutThumbnailsByBatch(ctx context.Context, batchID sql.NullString) ([]ListDocumentsWithoutThumbnailsByBatchRow, error) {
+	rows, err := q.db.QueryContext(ctx, listDocumentsWithoutThumbnailsByBatch, batchID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListDocumentsWithoutThumbnailsByBatchRow
+	for rows.Next() {
+		var i ListDocumentsWithoutThumbnailsByBatchRow
+		if err := rows.Scan(&i.DocumentID, &i.StoragePath); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
