@@ -5,9 +5,8 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
-	"golang.org/x/text/runes"
-	"golang.org/x/text/transform"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -94,15 +93,23 @@ func ContainsNonLatin(s string) bool {
 }
 
 var (
-	accentFolder transform.Transformer = transform.Chain(
-		norm.NFD,
-		runes.Remove(runes.In(unicode.Mn)),
-		norm.NFC,
-	)
-
 	nonAlphaSpace = regexp.MustCompile(`[^a-z ]`)
 	multiSpace    = regexp.MustCompile(` +`)
 )
+
+// FoldAccents decomposes, drops combining marks (Mn), and recomposes.
+// Stateless per-call: the previous shared transform.Chain singleton
+// (golang.org/x/text/transform) raced under concurrent use.
+func FoldAccents(s string) string {
+	decomp := norm.NFD.String(s)
+	out := make([]rune, 0, utf8.RuneCountInString(decomp))
+	for _, r := range decomp {
+		if !unicode.Is(unicode.Mn, r) {
+			out = append(out, r)
+		}
+	}
+	return norm.NFC.String(string(out))
+}
 
 func NormalizeForDB(s string) string {
 	s = norm.NFKC.String(s)
@@ -115,10 +122,7 @@ func NormalizeForDB(s string) string {
 	s = strings.ReplaceAll(s, "\u2011", " ") // non-breaking hyphen
 	s = strings.ReplaceAll(s, "\uFF0D", " ") // fullwidth hyphen-minus
 
-	out, _, err := transform.String(accentFolder, s)
-	if err == nil {
-		s = out
-	}
+	s = FoldAccents(s)
 
 	s = nonAlphaSpace.ReplaceAllString(s, "")
 	s = multiSpace.ReplaceAllString(s, " ")

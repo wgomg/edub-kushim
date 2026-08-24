@@ -1,6 +1,9 @@
 package utils
 
-import "testing"
+import (
+	"sync"
+	"testing"
+)
 
 func TestTruncate(t *testing.T) {
 	tests := []struct {
@@ -97,4 +100,32 @@ func TestNormalizeForDB(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Regression guard for the shared-transform.Chain data race: NormalizeForDB
+// is called from concurrent enrich workers and HTTP handlers, and a shared
+// stateful chain panicked with "slice bounds out of range" under overlap.
+// Run with -race; each goroutine also pins exact output so corruption (not
+// just a panic) fails the test.
+func TestNormalizeForDB_Concurrent(t *testing.T) {
+	inputs := []string{"José García", "Müller", "Ñoño", "François", "maria-jose"}
+	wants := []string{"jose garcia", "muller", "nono", "francois", "maria jose"}
+
+	const goroutines = 8
+	const iterations = 1000
+
+	var wg sync.WaitGroup
+	for range goroutines {
+		wg.Go(func() {
+			for range iterations {
+				for j, in := range inputs {
+					if got := NormalizeForDB(in); got != wants[j] {
+						t.Errorf("NormalizeForDB(%q) = %q, want %q", in, got, wants[j])
+						return
+					}
+				}
+			}
+		})
+	}
+	wg.Wait()
 }

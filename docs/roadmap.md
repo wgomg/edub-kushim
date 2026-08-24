@@ -259,8 +259,8 @@
 - ✓ Consumption pipeline tests (21 tests) — full consume flow with mock runner, file I/O, duplicate detection, error paths, orphaned file management, paused-batch scan guard
 - ✓ LLM registry tests (27 tests) — fixture/embedded catalog, model lookup, adapter/provider listing, default URL, concurrent access
 - ✓ Config tests — defaults, ParseHHMM, polling windows, Load (OcrWorkers), SaveMap, watcher lifecycle
-- ✓ Utils tests (22 tests) — Truncate (ASCII/CJK/mixed), EstimateTokens, NormalizeForDB (accent folding/punctuation/spaces), logger level parsing/gating/formatting/file output/SlogLogger bridge
-- ✓ Content analyzer tests (15 tests) — NormalizeTags, BuildPrompt, FilterTags (18 cases), checkContentTooLarge, parseTokenLimitError, parseInsufficientCreditsError (9 cases)
+- ✓ Utils tests (23 tests) — Truncate (ASCII/CJK/mixed), EstimateTokens, NormalizeForDB (accent folding/punctuation/spaces), NormalizeForDB_Concurrent (8-goroutine `-race` regression guard for the shared-`transform.Chain` data race), logger level parsing/gating/formatting/file output/SlogLogger bridge
+- ✓ Content analyzer tests (16 tests) — NormalizeTags, BuildPrompt, FilterTags (18 cases), checkContentTooLarge, parseTokenLimitError, parseInsufficientCreditsError (9 cases), NormalizeCore_Concurrent (8-goroutine `-race` regression guard for the shared-`transform.Chain` data race)
 - ✓ Error classification tests (7 tests) — constructors (ENotFound/EConflict/EInvalid/EInternal), Error string, Unwrap/KindOf, FromDB mapping (nil/ErrNoRows/unique/other), PgError predicates
 - ✓ Pool lifecycle tests (5 tests) — StartStop, ContextCancellation, DoubleStop, PanicRecovery_Restart (worker survives panic and restarts), PanicRecovery_StopDuringRestart (clean shutdown during restart delay)
 - ✓ `internal/testutil` package — assertion helpers, PDF fixtures, mock embedder

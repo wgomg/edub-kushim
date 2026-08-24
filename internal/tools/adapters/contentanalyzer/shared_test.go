@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -127,6 +128,34 @@ func TestNormalizeTags_AccentFolding(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Regression guard for the shared-transform.Chain data race: normalizeCore
+// is reached from enrich workers via NormalizeTags/FilterTags, and a shared
+// stateful chain panicked with "slice bounds out of range" under overlap.
+// Run with -race; each goroutine also pins exact output so corruption (not
+// just a panic) fails the test.
+func TestNormalizeCore_Concurrent(t *testing.T) {
+	inputs := []string{"José García", "Müller", "Poincaré", "Post-Left-Anarchism"}
+	wants := []string{"jose garcia", "muller", "poincare", "post left anarchism"}
+
+	const goroutines = 8
+	const iterations = 1000
+
+	var wg sync.WaitGroup
+	for range goroutines {
+		wg.Go(func() {
+			for range iterations {
+				for j, in := range inputs {
+					if got := normalizeCore(in); got != wants[j] {
+						t.Errorf("normalizeCore(%q) = %q, want %q", in, got, wants[j])
+						return
+					}
+				}
+			}
+		})
+	}
+	wg.Wait()
 }
 
 func TestExtractHeadTailWords(t *testing.T) {
@@ -351,25 +380,25 @@ func TestDocMetadata_Format(t *testing.T) {
 
 func TestFilterTags(t *testing.T) {
 	tests := []struct {
-		name                 string
-		tags                 []string
-		people               []PeopleResult
-		knownNormalized      []string
-		title                string
-		docTypeNames         []string
-		want                 []string
+		name            string
+		tags            []string
+		people          []PeopleResult
+		knownNormalized []string
+		title           string
+		docTypeNames    []string
+		want            []string
 	}{
 		{
-			name: "clean tags pass through",
-			tags: []string{"physics", "machine learning"},
+			name:            "clean tags pass through",
+			tags:            []string{"physics", "machine learning"},
 			knownNormalized: nil,
-			want: []string{"physics", "machine learning"},
+			want:            []string{"physics", "machine learning"},
 		},
 		{
-			name: "drops tags exceeding three words",
-			tags: []string{"artificial intelligence and robotics", "physics"},
+			name:            "drops tags exceeding three words",
+			tags:            []string{"artificial intelligence and robotics", "physics"},
 			knownNormalized: nil,
-			want: []string{"physics"},
+			want:            []string{"physics"},
 		},
 		{
 			name: "drops tag sharing token with person name",
@@ -378,7 +407,7 @@ func TestFilterTags(t *testing.T) {
 				{Name: "Alan Turing", NormalizedName: "alan turing"},
 			},
 			knownNormalized: nil,
-			want: []string{"machine learning"},
+			want:            []string{"machine learning"},
 		},
 		{
 			name: "drops tag sharing token with romanized name",
@@ -387,105 +416,105 @@ func TestFilterTags(t *testing.T) {
 				{Name: "Müller", NameRomanized: "muller", NormalizedName: "muller"},
 			},
 			knownNormalized: nil,
-			want: []string{"physics"},
+			want:            []string{"physics"},
 		},
 		{
-			name:  "drops tag that is subset of title tokens",
-			tags:  []string{"machine learning", "deep learning"},
+			name:            "drops tag that is subset of title tokens",
+			tags:            []string{"machine learning", "deep learning"},
 			knownNormalized: nil,
-			title: "machine learning applications",
-			want:  []string{"deep learning"},
+			title:           "machine learning applications",
+			want:            []string{"deep learning"},
 		},
 		{
-			name:  "keeps tag with partial title overlap",
-			tags:  []string{"deep architecture", "neural networks"},
+			name:            "keeps tag with partial title overlap",
+			tags:            []string{"deep architecture", "neural networks"},
 			knownNormalized: nil,
-			title: "deep learning applications",
-			want:  []string{"deep architecture", "neural networks"},
+			title:           "deep learning applications",
+			want:            []string{"deep architecture", "neural networks"},
 		},
 		{
-			name:   "applies all rules together",
-			tags:   []string{"turing", "artificial intelligence and robots", "machine learning", "physics"},
-			people: []PeopleResult{{Name: "Alan Turing", NormalizedName: "alan turing"}},
+			name:            "applies all rules together",
+			tags:            []string{"turing", "artificial intelligence and robots", "machine learning", "physics"},
+			people:          []PeopleResult{{Name: "Alan Turing", NormalizedName: "alan turing"}},
 			knownNormalized: nil,
-			title:  "machine learning",
-			want:   []string{"physics"},
+			title:           "machine learning",
+			want:            []string{"physics"},
 		},
 		{
-			name: "caps at maxTags preserving order",
-			tags: []string{"alpha", "bravo", "charlie", "delta", "echo", "foxtrot"},
+			name:            "caps at maxTags preserving order",
+			tags:            []string{"alpha", "bravo", "charlie", "delta", "echo", "foxtrot"},
 			knownNormalized: nil,
-			want: []string{"alpha", "bravo", "charlie", "delta", "echo"},
+			want:            []string{"alpha", "bravo", "charlie", "delta", "echo"},
 		},
 		{
-			name: "nil people and empty title",
-			tags: []string{"physics"},
+			name:            "nil people and empty title",
+			tags:            []string{"physics"},
 			knownNormalized: nil,
-			want: []string{"physics"},
+			want:            []string{"physics"},
 		},
 		{
-			name:         "drops tag matching doc-type name token",
-			tags:         []string{"letter", "physics"},
+			name:            "drops tag matching doc-type name token",
+			tags:            []string{"letter", "physics"},
 			knownNormalized: nil,
-			docTypeNames: []string{"letter"},
-			want:         []string{"physics"},
+			docTypeNames:    []string{"letter"},
+			want:            []string{"physics"},
 		},
 		{
-			name:         "keeps tag not matching doc-type name token",
-			tags:         []string{"physics", "mathematics"},
+			name:            "keeps tag not matching doc-type name token",
+			tags:            []string{"physics", "mathematics"},
 			knownNormalized: nil,
-			docTypeNames: []string{"letter"},
-			want:         []string{"physics", "mathematics"},
+			docTypeNames:    []string{"letter"},
+			want:            []string{"physics", "mathematics"},
 		},
 		{
-			name:   "empty tags",
-			tags:   []string{},
-			people: []PeopleResult{{Name: "Turing", NormalizedName: "turing"}},
+			name:            "empty tags",
+			tags:            []string{},
+			people:          []PeopleResult{{Name: "Turing", NormalizedName: "turing"}},
 			knownNormalized: nil,
-			title:  "physics",
-			want:   []string{},
+			title:           "physics",
+			want:            []string{},
 		},
 		{
-			name:   "drops tag that equals a subset of a known person name",
-			tags:   []string{"john doe", "physics"},
+			name:            "drops tag that equals a subset of a known person name",
+			tags:            []string{"john doe", "physics"},
 			knownNormalized: []string{"john doe smith"},
-			want:   []string{"physics"},
+			want:            []string{"physics"},
 		},
 		{
-			name:   "keeps single-word tag sharing token with longer known name",
-			tags:   []string{"young", "activism"},
+			name:            "keeps single-word tag sharing token with longer known name",
+			tags:            []string{"young", "activism"},
 			knownNormalized: []string{"andrew young"},
-			want:   []string{"young", "activism"},
+			want:            []string{"young", "activism"},
 		},
 		{
-			name:   "drops multi-word tag that exactly matches a known name",
-			tags:   []string{"rosa luxemburg", "marxism"},
+			name:            "drops multi-word tag that exactly matches a known name",
+			tags:            []string{"rosa luxemburg", "marxism"},
 			knownNormalized: []string{"rosa luxemburg"},
-			want:   []string{"marxism"},
+			want:            []string{"marxism"},
 		},
 		{
-			name:   "keeps tag with known people present that does not match",
-			tags:   []string{"algebra", "topology"},
+			name:            "keeps tag with known people present that does not match",
+			tags:            []string{"algebra", "topology"},
 			knownNormalized: []string{"alan turing", "andrew young"},
-			want:   []string{"algebra", "topology"},
+			want:            []string{"algebra", "topology"},
 		},
 		{
-			name:   "drops 3-word tag that is subset of a known name",
-			tags:   []string{"john doe smith", "physics"},
+			name:            "drops 3-word tag that is subset of a known name",
+			tags:            []string{"john doe smith", "physics"},
 			knownNormalized: []string{"john doe smith jones"},
-			want:   []string{"physics"},
+			want:            []string{"physics"},
 		},
 		{
-			name:   "keeps multi-word tag whose tokens are split across different known people",
-			tags:   []string{"john smith", "physics"},
+			name:            "keeps multi-word tag whose tokens are split across different known people",
+			tags:            []string{"john smith", "physics"},
 			knownNormalized: []string{"john doe", "smith jones"},
-			want:   []string{"john smith", "physics"},
+			want:            []string{"john smith", "physics"},
 		},
 		{
-			name:   "skips empty-string entries in knownNormalized",
-			tags:   []string{"john doe", "physics"},
+			name:            "skips empty-string entries in knownNormalized",
+			tags:            []string{"john doe", "physics"},
 			knownNormalized: []string{"", "john doe smith"},
-			want:   []string{"physics"},
+			want:            []string{"physics"},
 		},
 	}
 	for _, tt := range tests {

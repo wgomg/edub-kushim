@@ -10,13 +10,10 @@ import (
 	"strings"
 	"text/template"
 	"time"
-	"unicode"
 
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/llm"
 	"github.com/wgomg/edub-kushim/internal/utils"
-	"golang.org/x/text/runes"
-	"golang.org/x/text/transform"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -210,26 +207,12 @@ func tagsPrompt(tags []string) string {
 	)
 }
 
-var accentFolder transform.Transformer = transform.Chain(
-	norm.NFD,
-	runes.Remove(runes.In(unicode.Mn)),
-	norm.NFC,
-)
-
-func foldAccents(s string) string {
-	out, _, err := transform.String(accentFolder, s)
-	if err != nil {
-		return s
-	}
-	return out
-}
-
 func normalizeCore(s string) string {
 	s = norm.NFKC.String(s)
 	s = strings.ToLower(strings.TrimSpace(s))
 	s = strings.ReplaceAll(s, "-", " ")
 	s = strings.ReplaceAll(s, "_", " ")
-	s = foldAccents(s)
+	s = utils.FoldAccents(s)
 	s = nonAlphaKeepSpaces.ReplaceAllString(s, "")
 	s = multiSpaceRE.ReplaceAllString(s, " ")
 	return strings.TrimSpace(s)

@@ -399,20 +399,29 @@ case/accent/format-insensitive (`text.go:107-131`). The pipeline:
 NFKC → lowercase → trim → hyphen/underscore/dash-family → space → **accent
 folding** → strip non-`[a-z ]` → collapse spaces.
 
-Accent folding is a composed `x/text` transformer (`text.go:96-101`):
+Accent folding is a stateless per-call fold (`text.go:96-106`):
 
 ```go
-var (
-	accentFolder transform.Transformer = transform.Chain(
-		norm.NFD,                          // decompose é -> e + combining acute
-		runes.Remove(runes.In(unicode.Mn)), // drop combining marks (Mn = nonspacing)
-		norm.NFC,                          // recompose
-	)
-)
+// FoldAccents decomposes, drops combining marks (Mn), and recomposes.
+// Stateless per-call: transform.Chain is not safe for concurrent use.
+func FoldAccents(s string) string {
+	decomp := norm.NFD.String(s)
+	rs := []rune(decomp)
+	out := make([]rune, 0, len(rs))
+	for _, r := range rs {
+		if !unicode.Is(unicode.Mn, r) {
+			out = append(out, r)
+		}
+	}
+	return norm.NFC.String(string(out))
+}
 ```
 
 This is the standard Unicode trick: decompose, remove the combining-class
-marks, recompose — "José" and "Jose" normalize identically.
+marks, recompose — "José" and "Jose" normalize identically. The fold is built
+from per-call `norm.Form.String` primitives rather than a shared
+`transform.Chain` because `transform.Chain` carries cross-call state and is
+not safe for concurrent use — this is the canonical pattern to copy.
 
 ### `Truncate` — rune-safe, with a sentinel
 
