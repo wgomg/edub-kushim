@@ -25,7 +25,7 @@ func NewRunner(store *Store, registry *Registry, logger *utils.Logger) *Runner {
 	}
 }
 
-func (r *Runner) Next(ctx context.Context, taskType string) error {
+func (r *Runner) Next(ctx context.Context, taskType string) (err error) {
 	task, err := r.store.ClaimNextPending(ctx, taskType)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -33,6 +33,19 @@ func (r *Runner) Next(ctx context.Context, taskType string) error {
 		}
 		return fmt.Errorf("claim next pending task: %w", err)
 	}
+
+	defer func() {
+		if rcv := recover(); rcv != nil {
+			failCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			reqID := task.TaskID
+			if failErr := r.store.FailTask(failCtx, task.ID, fmt.Sprintf("panic: %v", rcv)); failErr != nil {
+				r.logger.Error(&reqID, "task %s panicked and fail-write failed: %v (stale sweep will reclaim)", task.TaskID, failErr)
+			}
+			r.logger.Error(&reqID, "task %s panicked and was failed: %v", task.TaskID, rcv)
+			err = fmt.Errorf("task %s panic: %v", task.TaskID, rcv)
+		}
+	}()
 
 	if task.Payload == nil {
 		_ = r.store.FailTask(ctx, task.ID, "task has nil payload")

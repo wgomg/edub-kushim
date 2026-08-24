@@ -284,6 +284,18 @@ func (h *wrappedFailHandler) Handle(ctx context.Context, t Task) (json.RawMessag
 	return h.result, nil
 }
 
+// panickingHandler panics from Handle, exercising the per-task recover in Runner.Next.
+type panickingHandler struct {
+	mockHandler
+}
+
+func (h *panickingHandler) Handle(ctx context.Context, t Task) (json.RawMessage, error) {
+	h.mu.Lock()
+	h.handled++
+	h.mu.Unlock()
+	panic("boom")
+}
+
 func TestRunnerExtractsReqIDFromWrappedError(t *testing.T) {
 	store, registry, _ := setupTaskTest(t)
 	runner := NewRunner(store, registry, testutil.NewTestLogger())
@@ -302,6 +314,31 @@ func TestRunnerExtractsReqIDFromWrappedError(t *testing.T) {
 
 	// Failed task should not be claimable again
 	_, err = store.ClaimNextPending(ctx, "wrapped")
+	testutil.AssertError(t, err, "failed task should not be claimable")
+}
+
+func TestRunnerFailsTaskOnPanic(t *testing.T) {
+	store, registry, _ := setupTaskTest(t)
+	runner := NewRunner(store, registry, testutil.NewTestLogger())
+
+	handler := &panickingHandler{}
+	registry.Register("panicking", handler)
+
+	ctx := context.Background()
+	taskID, err := store.CreateTask(ctx, "panicking", "", json.RawMessage(`{}`), "", "", "")
+	testutil.AssertNoError(t, err, "create")
+
+	err = runner.Next(ctx, "panicking")
+	testutil.AssertError(t, err, "panic should surface as error")
+
+	task, err := store.GetTaskByTaskID(ctx, taskID)
+	testutil.AssertNoError(t, err, "get task")
+	testutil.AssertEqual(t, handler.HandledCount(), 1, "handler called")
+	testutil.AssertEqual(t, task.Status, "failed", "task failed on panic")
+	testutil.AssertEqual(t, task.Error.String, "panic: boom", "panic text recorded")
+
+	// The failed task must not be stranded claimable in 'processing'
+	_, err = store.ClaimNextPending(ctx, "panicking")
 	testutil.AssertError(t, err, "failed task should not be claimable")
 }
 

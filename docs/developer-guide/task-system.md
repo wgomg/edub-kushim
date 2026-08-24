@@ -573,6 +573,20 @@ to `waiting`. Quarantined consumes (`failed`) are naturally excluded by the
 `status = 'pending'` filter, and their enriches are discarded by the sweep
 instead.
 
+### Per-task panic recovery
+
+Panics inside `Runner.Next` after the claim succeeds are caught by a deferred
+`recover()` (`runner.go:37-48`): the task is failed immediately via `FailTask`
+with `panic: <text>` recorded in `task.error` — the real panic text, not the
+sweep's generic `'Max retries exceeded'` — and the REQID is logged. The error
+is returned to the pool, which logs it and keeps the worker running; a plain
+error return never restarts the worker (only an uncaught panic in `runWorker`
+does). The fail-write uses a detached `context.Background()` with a 10s
+timeout so it lands even when the panic coincides with shutdown. The sweeps
+above remain the backstop for hard crashes (kill -9, OOM) where no Go-level
+recover can run: the recover handles panics promptly with attribution, the
+sweeps handle process death after the cutoff.
+
 ---
 
 ## 11. Retry and resume
