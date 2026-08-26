@@ -746,8 +746,8 @@ func TestGetDashboardRunningTasks(t *testing.T) {
 	if first.Status != "processing" {
 		t.Fatalf("expected processing task first, got %q", first.Status)
 	}
-	if first.Label != "my-doc.pdf" {
-		t.Fatalf("expected label 'my-doc.pdf', got %q", first.Label)
+	if first.Label != "Consume: my-doc.pdf" {
+		t.Fatalf("expected label 'Consume: my-doc.pdf', got %q", first.Label)
 	}
 	if first.StartedAt == nil {
 		t.Fatal("expected started_at on processing task")

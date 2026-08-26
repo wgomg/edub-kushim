@@ -646,9 +646,14 @@ func taskToResponse(t database.Task) types.TaskResponse {
 		}
 	}
 
-	label := fileName
-	if label == "" {
-		label = taskLabel(t.TaskType, t.DedupKey)
+	label := taskLabel(t.TaskType, t.DedupKey)
+	if fileName != "" {
+		switch t.TaskType {
+		case "consume", "enrich", "thumbnail":
+			label += ": " + fileName
+		default:
+			label = fileName
+		}
 	}
 
 	return types.TaskResponse{

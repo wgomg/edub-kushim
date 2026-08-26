@@ -1909,7 +1909,7 @@ Response `200`:
       "status": "processing",
       "document_id": null,
       "error": null,
-      "label": "report.pdf",
+      "label": "Consume: report.pdf",
       "created_at": "2026-06-25T10:30:00Z",
       "started_at": "2026-06-25T10:30:05Z",
       "completed_at": null
@@ -1960,7 +1960,7 @@ Tasks in `pending`/`processing`/`waiting` (all task types), capped at 25, ordere
 | `task_type`   | `string` | `consume`, `enrich`, `thumbnail`, `config`, or `backup`                                                                |
 | `file_name`   | `string` | File name from the payload, if any                                                                                     |
 | `status`      | `string` | `pending`, `processing`, or `waiting`                                                                                  |
-| `label`       | `string` | Human-readable title: file name when present, else derived from task type + dedup key (e.g. `"Backup (full)"`, `"Database migration"`, `"Download tessdata (eng)"`) |
+| `label`       | `string` | Human-readable title: `TaskType: file name` for consume/enrich/thumbnail (e.g. `"Consume: report.pdf"`), else derived from task type + dedup key (e.g. `"Backup (full)"`, `"Database migration"`, `"Download tessdata (eng)"`) |
 | `created_at`  | `string` | RFC 3339 timestamp                                                                                                     |
 | `started_at`  | `string` | RFC 3339 timestamp, `null` while queued                                                                                |
 
@@ -2053,11 +2053,13 @@ Same as DocumentResponse with these extra fields:
 ```
 
 `document_id` is the numeric database row ID; `payload_doc_id` carries the
-document UUID when the task payload references one. `label` is the file name
-when the payload carries one, otherwise derived from the task type and dedup
-key (e.g. `"Backup (full)"`, `"Database migration"`, `"Download tessdata (eng)"`,
-`"Download Hugot model"`); for other task types it falls back to the task type
-name (`"Consume"`, `"Enrich"`, `"Thumbnail"`).
+document UUID when the task payload references one. `label` is
+`TaskType: file name` for consume/enrich/thumbnail tasks with a payload file
+(e.g. `"Consume: report.pdf"`), the file name alone for other task types,
+otherwise derived from the task type and dedup key (e.g. `"Backup (full)"`,
+`"Database migration"`, `"Download tessdata (eng)"`, `"Download Hugot model"`);
+for other task types it falls back to the task type name (`"Consume"`, `"Enrich"`,
+`"Thumbnail"`).
 
 #### BatchSummaryResponse
 
