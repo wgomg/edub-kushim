@@ -428,8 +428,9 @@ DELETE FROM batch_owner WHERE batch_id IN (
 
 ## 11. `UNION ALL` with literal rows
 
-The activity timeline (`dashboard.go:83-120`) merges three event sources into
-one feed by `UNION ALL`-ing selects with **literal constant columns**:
+Merging heterogeneous sources into one feed: each `UNION ALL` branch selects
+the same column shape, with **literal constant columns** filling in fields a
+source doesn't have — the SQL-level equivalent of a discriminated union:
 
 ```sql
 SELECT 'document_uploaded' AS event_type,
@@ -482,19 +483,16 @@ The pipeline writes task-specific payloads (consume: file path + document id;
 enrich: document id + LLM options) into the same table — JSONB is PostgreSQL's
 validated, binary-stored, indexable JSON. What the SQL uses it for:
 
-**Extraction with `->>`** (get a field as text; the activity timeline,
-`dashboard.go:98-100`):
+**Extraction with `->>`** (get a field as text; e.g. `RestoreDiscardedEnrichTasks`, `task.sql:206`):
 
 ```sql
-COALESCE(t.payload->>'file_name', ''),
-COALESCE(t.payload->>'file_path', ''),
-COALESCE(t.payload->>'document_id', '')
+AND (e.task_id = c.payload->>'on_completed' OR e.task_id = c.payload->>'on_completed_thumbnail');
 ```
 
-`->>` returns text (NULL if missing — hence the `COALESCE`); `->` returns JSON.
+`->>` returns text (NULL if missing); `->` returns JSON.
 The Go side declares these columns as `*json.RawMessage` via the sqlc
 override in `sqlc.yaml`, so handlers pass payloads through untouched and only
-the dashboard's SQL reads inside them.
+the SQL reads inside them.
 
 JSONB is *not* used for search — text lives in `text_content` (full-text
 indexed) — which keeps payloads for machine data only.

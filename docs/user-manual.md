@@ -1585,12 +1585,13 @@ GET /api/v1/tasks
 GET /api/v1/tasks?batch=<batch_id>
 GET /api/v1/tasks?batch=<batch_id>&status=pending&limit=20&offset=0
 GET /api/v1/tasks?status=failed
+GET /api/v1/tasks?status=active
 ```
 
 | Query param | Default | Description                                                                                 |
 | ----------- | ------- | ------------------------------------------------------------------------------------------- |
 | `batch`     | all     | Filter by batch UUID                                                                        |
-| `status`    | all     | Filter: `waiting`, `pending`, `processing`, `completed`, `failed`, `cancelled`, `discarded` |
+| `status`    | all     | Filter: `waiting`, `pending`, `processing`, `completed`, `failed`, `cancelled`, `discarded`. Special value `active` = `pending` + `processing` + `waiting`, ordered processing-first (longest-running first), then oldest-queued |
 | `limit`     | `20`    | Max results (1–100)                                                                         |
 | `offset`    | `0`     | Pagination offset                                                                           |
 
@@ -1874,7 +1875,7 @@ Authorization: Bearer token or API key required. Returns `401` if unauthenticate
 GET /api/v1/dashboard
 ```
 
-Returns the 30 most recent activity events across documents, tasks, and batches, plus the 20 most recent batches with per-batch task status summaries, owner state, orphan detection, and duration (when settled).
+Returns up to 25 active tasks (`pending`/`processing`/`waiting`, processing-first), plus the 20 most recent batches with per-batch task status summaries, owner state, orphan detection, and duration (when settled).
 
 Response `200`:
 
@@ -1898,24 +1899,34 @@ Response `200`:
       "duration_ms": 42000
     }
   ],
-  "activity": [
+  "running_tasks": [
     {
-      "event_type": "document_uploaded",
-      "title": "report.pdf",
-      "timestamp": "2026-06-25T10:30:00Z",
-      "link": "/documents/550e8400-e29b-41d4-a716-446655440000"
+      "task_id": "660e8400-e29b-41d4-a716-446655440001",
+      "batch_id": "550e8400-e29b-41d4-a716-446655440000",
+      "task_type": "consume",
+      "file_name": "report.pdf",
+      "payload_doc_id": "",
+      "status": "processing",
+      "document_id": null,
+      "error": null,
+      "label": "report.pdf",
+      "created_at": "2026-06-25T10:30:00Z",
+      "started_at": "2026-06-25T10:30:05Z",
+      "completed_at": null
     },
     {
-      "event_type": "task_completed",
-      "title": "report.pdf",
-      "timestamp": "2026-06-25T10:29:00Z",
-      "link": "/tasks/task-uuid"
-    },
-    {
-      "event_type": "batch_created",
-      "title": "web",
-      "timestamp": "2026-06-25T10:28:00Z",
-      "link": "/tasks?batch=batch-uuid"
+      "task_id": "660e8400-e29b-41d4-a716-446655440002",
+      "batch_id": "",
+      "task_type": "config",
+      "file_name": "",
+      "payload_doc_id": "",
+      "status": "pending",
+      "document_id": null,
+      "error": null,
+      "label": "Database migration",
+      "created_at": "2026-06-25T10:28:00Z",
+      "started_at": null,
+      "completed_at": null
     }
   ]
 }
@@ -1938,14 +1949,20 @@ Response `200`:
 | `orphaned`     | `bool`    | True when owner is not live but tasks remain pending or processing                   |
 | `duration_ms`  | `int`     | Batch duration in milliseconds. Present only when the batch is fully settled.        |
 
-#### Activity Event (`activity[]`)
+#### Active Task (`running_tasks[]`)
 
-| Field        | Type     | Description                                                              |
-| ------------ | -------- | ------------------------------------------------------------------------ |
-| `event_type` | `string` | One of: `"document_uploaded"`, `"task_completed"`, `"task_failed"`, `"batch_created"` |
-| `title`      | `string` | Document title, file name, file path basename, batch source, or task ID fallback |
-| `timestamp`  | `string` | RFC 3339 timestamp                                                       |
-| `link`       | `string` | Navigable link: `/documents/{id}`, `/tasks/{id}`, `/tasks?batch={id}`   |
+Tasks in `pending`/`processing`/`waiting` (all task types), capped at 25, ordered processing-first then oldest-queued.
+
+| Field         | Type     | Description                                                                                                            |
+| ------------- | -------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `task_id`     | `string` | Task UUID                                                                                                              |
+| `batch_id`    | `string` | Batch UUID (empty for `backup`/`config` tasks)                                                                         |
+| `task_type`   | `string` | `consume`, `enrich`, `thumbnail`, `config`, or `backup`                                                                |
+| `file_name`   | `string` | File name from the payload, if any                                                                                     |
+| `status`      | `string` | `pending`, `processing`, or `waiting`                                                                                  |
+| `label`       | `string` | Human-readable title: file name when present, else derived from task type + dedup key (e.g. `"Backup (full)"`, `"Database migration"`, `"Download tessdata (eng)"`) |
+| `created_at`  | `string` | RFC 3339 timestamp                                                                                                     |
+| `started_at`  | `string` | RFC 3339 timestamp, `null` while queued                                                                                |
 
 ### Response Types
 
@@ -2028,6 +2045,7 @@ Same as DocumentResponse with these extra fields:
   "status": "completed",
   "document_id": 42,
   "error": null,
+  "label": "report.pdf",
   "created_at": "2024-03-19T10:30:00Z",
   "started_at": "2024-03-19T10:30:05Z",
   "completed_at": "2024-03-19T10:30:12Z"
@@ -2035,7 +2053,11 @@ Same as DocumentResponse with these extra fields:
 ```
 
 `document_id` is the numeric database row ID; `payload_doc_id` carries the
-document UUID when the task payload references one.
+document UUID when the task payload references one. `label` is the file name
+when the payload carries one, otherwise derived from the task type and dedup
+key (e.g. `"Backup (full)"`, `"Database migration"`, `"Download tessdata (eng)"`,
+`"Download Hugot model"`); for other task types it falls back to the task type
+name (`"Consume"`, `"Enrich"`, `"Thumbnail"`).
 
 #### BatchSummaryResponse
 

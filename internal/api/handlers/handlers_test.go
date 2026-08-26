@@ -706,38 +706,28 @@ func TestTaskEndpoints(t *testing.T) {
 	})
 }
 
-func TestGetDashboardActivity(t *testing.T) {
+func TestGetDashboardRunningTasks(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	h := NewTaskHandler(env.services, env.client.Queries, env.logger, func() *config.Config { return nil })
 	ctx := context.Background()
 
 	docDBID, docUUID := database.CreateTestDocument(t, env.client.Queries, "dash-act-doc.pdf")
 
-	err := env.client.CreateBatch(ctx, database.CreateBatchParams{
-		ID: "dash-act-batch", Source: "manual-upload", Status: "queued",
-	})
-	testutil.AssertNoError(t, err, "create batch")
-
-	dashActPayload := json.RawMessage(`{"file_name":"my-doc.pdf","document_id":"` + docUUID + `"}`)
+	activePayload := json.RawMessage(`{"file_name":"my-doc.pdf","document_id":"` + docUUID + `"}`)
 	task1ID, err := env.client.CreateTask(ctx, database.CreateTaskParams{
 		TaskID: "dash-act-task-1", TaskType: "consume", Status: "pending",
-		Payload: &dashActPayload,
+		Payload: &activePayload,
 	})
 	testutil.AssertNoError(t, err, "create task 1")
 	_, ctErr := env.client.ClaimTask(ctx, task1ID)
 	testutil.AssertNoError(t, ctErr, "claim task 1")
-	_, ctErr = env.client.CompleteTask(ctx, database.CompleteTaskParams{ID: task1ID, Result: nil})
-	testutil.AssertNoError(t, ctErr, "complete task 1")
 
-	dashAct2Payload := json.RawMessage(`{"file_path":"/tmp/uploads/invoice.pdf","document_id":"some-doc-uuid"}`)
-	task2ID, err := env.client.CreateTask(ctx, database.CreateTaskParams{
+	pendingPayload := json.RawMessage(`{"file_path":"/tmp/uploads/invoice.pdf","document_id":"some-doc-uuid"}`)
+	_, err = env.client.CreateTask(ctx, database.CreateTaskParams{
 		TaskID: "dash-act-task-2", TaskType: "consume", Status: "pending",
-		Payload: &dashAct2Payload,
+		Payload: &pendingPayload,
 	})
 	testutil.AssertNoError(t, err, "create task 2")
-	testutil.AssertNoError(t, env.client.FailTask(ctx, database.FailTaskParams{
-		ID: task2ID, Error: sql.NullString{String: "err", Valid: true},
-	}), "fail task 2")
 
 	w := rec()
 	h.GetDashboard(w, req(t, "GET", "/api/v1/dashboard", nil))
@@ -748,58 +738,33 @@ func TestGetDashboardActivity(t *testing.T) {
 		t.Fatalf("decode dashboard: %v", err)
 	}
 
-	if resp.Activity == nil {
-		t.Fatal("expected activity field in dashboard response")
-	}
-	if len(resp.Activity) < 4 {
-		t.Fatalf("expected at least 4 activity events, got %d", len(resp.Activity))
+	if len(resp.RunningTasks) < 2 {
+		t.Fatalf("expected at least 2 running tasks, got %d", len(resp.RunningTasks))
 	}
 
-	typeCounts := map[string]int{}
-	for _, e := range resp.Activity {
-		typeCounts[e.EventType]++
+	first := resp.RunningTasks[0]
+	if first.Status != "processing" {
+		t.Fatalf("expected processing task first, got %q", first.Status)
 	}
-	for _, et := range []string{"document_uploaded", "batch_created", "task_completed"} {
-		if typeCounts[et] == 0 {
-			t.Fatalf("expected at least one %q event", et)
-		}
+	if first.Label != "my-doc.pdf" {
+		t.Fatalf("expected label 'my-doc.pdf', got %q", first.Label)
 	}
-
-	for _, e := range resp.Activity {
-		switch e.EventType {
-		case "document_uploaded":
-			if !strings.HasPrefix(e.Link, "/documents/") {
-				t.Fatalf("document_uploaded link should start with /documents/, got %q", e.Link)
-			}
-		case "task_completed", "task_failed":
-			if !strings.HasPrefix(e.Link, "/tasks/") {
-				t.Fatalf("%s link should start with /tasks/, got %q", e.EventType, e.Link)
-			}
-		case "batch_created":
-			if !strings.HasPrefix(e.Link, "/tasks?batch=") {
-				t.Fatalf("batch_created link should start with /tasks?batch=, got %q", e.Link)
-			}
-		}
+	if first.StartedAt == nil {
+		t.Fatal("expected started_at on processing task")
+	}
+	if _, parseErr := time.Parse(time.RFC3339, *first.StartedAt); parseErr != nil {
+		t.Fatalf("processing task has non-RFC3339 started_at %q: %v", *first.StartedAt, parseErr)
 	}
 
-	var foundTitleFallback bool
-	for _, e := range resp.Activity {
-		if e.EventType == "task_failed" && e.Title == "invoice.pdf" {
-			foundTitleFallback = true
+	var foundPending bool
+	for _, tsk := range resp.RunningTasks {
+		if tsk.Status == "pending" {
+			foundPending = true
 			break
 		}
 	}
-	if !foundTitleFallback {
-		t.Fatal("expected task_failed event with title 'invoice.pdf' from file_path fallback")
-	}
-
-	for _, e := range resp.Activity {
-		if e.Timestamp == "" {
-			t.Fatalf("event %s (%s) has empty timestamp", e.EventType, e.Title)
-		}
-		if _, parseErr := time.Parse(time.RFC3339, e.Timestamp); parseErr != nil {
-			t.Fatalf("event %s has non-RFC3339 timestamp %q: %v", e.EventType, e.Timestamp, parseErr)
-		}
+	if !foundPending {
+		t.Fatal("expected a pending task in running tasks")
 	}
 
 	ctx2 := context.Background()

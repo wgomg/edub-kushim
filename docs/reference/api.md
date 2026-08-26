@@ -130,7 +130,7 @@ See `AuthMiddleware` under `server.go` → Functions.
   - **Fields**: `queries *database.Queries`, `logger *utils.Logger`, `getConfig func() *config.Config`
   - **Methods**:
     - `NewTaskHandler(queries, logger, getConfig) *TaskHandler`
-    - `ListTasks(w, r)` — Filters by `batch`, `status`, `limit`, `offset`; includes batch summary when `batch` is set
+    - `ListTasks(w, r)` — Filters by `batch`, `status`, `limit`, `offset`; includes batch summary when `batch` is set. `status=active` is a special value returning `pending`+`processing`+`waiting` (processing-first) via `ListActiveTasks`
     - `GetTask(w, r)` — Single task by UUID
     - `RetryTask(w, r)` — `POST /api/v1/tasks/{id}/retry` — Resets a failed task to pending. Returns `204 No Content`. Returns 404 if task not found, 409 if task is not failed.
     - `ListBatches(w, r)` — Lists all batch summaries with filtering (`status`, `limit`, `offset`)
@@ -138,9 +138,9 @@ See `AuthMiddleware` under `server.go` → Functions.
     - `RetryBatch(w, r)` — `POST /api/v1/batches/{id}/retry` — Resets all failed tasks in a batch to pending. Returns `200 {"retried": <n>}`. Idempotent (0 retried is valid success).
     - `ResumeBatch(w, r)` — `POST /api/v1/batches/{id}/resume`. Checks batch ownership via `BatchOwnerState` (returns 409 if locked by a live owner), then resets `processing`→`pending` tasks and sets batch status to `queued`. The queue daemon picks it up. Returns `202 {"resumed": true}`.
     - `CancelBatch(w, r)` — `POST /api/v1/batches/{id}/cancel` — Cancels pending tasks, sends `SIGTERM` to the batch owner process if alive, and releases the batch owner. Returns `200` with `cancelled_pending`, `cancelled_processing`, and `signal_sent` booleans.
-    - `GetDashboard(w, r)` — Returns `recent_batches` (top 20) + `activity` (top 30 chronological events from documents, tasks, batches) + `analytics` (language/document-type/tag distributions, missing counts) + `processing_health` (task success rate, avg duration, active/orphaned batches, missing tools count) + storage panel fields (`total_batches`, `total_files`, per-status counts, `total_size_gb`, `original_type_breakdown`, `storage_trend`, `avg_file_size_bytes`, `total_pages`, `total_words`). Activity includes: `event_type`, `title`, `timestamp`, `link`. Processing health queries use a 7-day window and reuses `config.MissingExternalToolErrors` to detect missing tools at request time.
+    - `GetDashboard(w, r)` — Returns `recent_batches` (top 20) + `running_tasks` (top 25 active tasks: `pending`/`processing`/`waiting`, processing-first, via `ListActiveTasks`) + `analytics` (language/document-type/tag distributions, missing counts) + `processing_health` (task success rate, avg duration, active/orphaned batches, missing tools count) + storage panel fields (`total_batches`, `total_files`, per-status counts, `total_size_gb`, `original_type_breakdown`, `storage_trend`, `avg_file_size_bytes`, `total_pages`, `total_words`). Active tasks carry a derived `label` (file name or task-type/dedup-key based). Processing health queries use a 7-day window and reuses `config.MissingExternalToolErrors` to detect missing tools at request time.
 
-    - **Helpers**: `buildBatchSummary(ctx, queries, batchID) BatchSummaryResponse`, `buildDocumentAnalytics(ctx, reqID) *DocumentAnalytics`, `buildProcessingHealth(ctx, reqID) *ProcessingHealth`, `taskToResponse(t) TaskResponse`
+    - **Helpers**: `buildBatchSummary(ctx, queries, batchID) BatchSummaryResponse`, `buildDocumentAnalytics(ctx, reqID) *DocumentAnalytics`, `buildProcessingHealth(ctx, reqID) *ProcessingHealth`, `taskLabel(taskType, dedupKey) string`, `taskToResponse(t) TaskResponse`
 
 ---
 
@@ -169,7 +169,7 @@ See `AuthMiddleware` under `server.go` → Functions.
 
 ### Structs
 
-- `TaskResponse` — `TaskID`, `BatchID`, `TaskType`, `FileName`, `PayloadDocID`, `Status`, `DocumentID *int64`, `Error *string`, `CreatedAt`, `StartedAt *string`, `CompletedAt *string`
+- `TaskResponse` — `TaskID`, `BatchID`, `TaskType`, `FileName`, `PayloadDocID`, `Status`, `DocumentID *int64`, `Error *string`, `Label` (file name or task-type/dedup-key derived), `CreatedAt`, `StartedAt *string`, `CompletedAt *string`
 - `BatchSummaryResponse` — `BatchID`, `Status` (queued/processing/completed/failed/cancelled), `Total`, `Waiting`, `Pending`, `Processing`, `Completed`, `Failed`, `Cancelled`, `Discarded`
 - `BatchOverviewItem` — `BatchID`, `Status`, `Source`, `CreatedAt`, `Total`, `Waiting`, `Pending`, `Processing`, `Completed`, `Failed`, `Cancelled`, `Discarded`, `OwnerState`, `Orphaned`, `DurationMs *int64`
 - `BatchCounts` — `Total`, `Waiting`, `Pending`, `Processing`, `Completed`, `Failed`, `Cancelled`, `Discarded`
@@ -177,11 +177,10 @@ See `AuthMiddleware` under `server.go` → Functions.
 - `ListTasksResponse` — `BatchID`, `Summary *BatchSummaryResponse`, `Tasks []TaskResponse`
 - `OriginalTypeStat` — `OriginalType`, `Count`, `TotalBytes`
 - `StorageTrendPoint` — `Date`, `DailyCount`, `DailyBytes`, `CumulativeBytes`
-- `ActivityEvent` — `EventType`, `Title`, `Timestamp`, `Link`
 - `DistributionItem` — `Label string`, `Count int64`
 - `DocumentAnalytics` — `LanguageDistribution []DistributionItem`, `DocumentTypeDistribution []DistributionItem`, `TagFrequency []DistributionItem`, `MissingLanguageCount int64`, `MissingTypeCount int64`, `MissingTagsCount int64`
 - `ProcessingHealth` — `SuccessRate float64`, `CompletedLast7d int64`, `FailedLast7d int64`, `AvgDurationMs int64`, `ActiveBatches int64`, `OrphanedBatches int64`, `MissingTools int64`
-- `DashboardResponse` — `RecentBatches []BatchOverviewItem`, `Activity []ActivityEvent`, `Analytics *DocumentAnalytics`, `ProcessingHealth *ProcessingHealth`, `TotalBatches`, `TotalFiles`, `Waiting`, `Pending`, `Processing`, `Completed`, `Failed`, `Cancelled`, `Discarded`, `TotalSizeGB`, `OriginalTypeBreakdown []OriginalTypeStat`, `StorageTrend []StorageTrendPoint`, `AvgFileSizeBytes`, `TotalPages`, `TotalWords`
+- `DashboardResponse` — `RecentBatches []BatchOverviewItem`, `RunningTasks []TaskResponse`, `Analytics *DocumentAnalytics`, `ProcessingHealth *ProcessingHealth`, `TotalBatches`, `TotalFiles`, `Waiting`, `Pending`, `Processing`, `Completed`, `Failed`, `Cancelled`, `Discarded`, `TotalSizeGB`, `OriginalTypeBreakdown []OriginalTypeStat`, `StorageTrend []StorageTrendPoint`, `AvgFileSizeBytes`, `TotalPages`, `TotalWords`
 
 ---
 

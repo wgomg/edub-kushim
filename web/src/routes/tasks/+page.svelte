@@ -4,6 +4,7 @@
 	import { resolve } from '$app/paths';
 	import { RETRY_ICON, RESUME_ICON, CANCEL_ICON, actionButton } from '$lib/icons.js';
 	import { escapeHtml } from '$lib/utils/html.js';
+	import { statusChipClasses } from '$lib/utils/statusChip.js';
 	import { api } from '$lib/api';
 	import DataTable from '$lib/components/DataTable.svelte';
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
@@ -18,16 +19,7 @@
 	}
 
 	function statusBadge(status) {
-		const colors = {
-			waiting: 'bg-amber-600/20 text-amber-400',
-			pending: 'bg-parchment-500/20 text-parchment-400',
-			processing: 'bg-lapis-600/20 text-lapis-600',
-			completed: 'bg-emerald-600/20 text-emerald-500',
-			failed: 'bg-terracotta-600/20 text-terracotta-500',
-			cancelled: 'bg-parchment-500/10 text-parchment-500',
-			discarded: 'bg-terracotta-600/10 text-terracotta-400'
-		};
-		const cls = colors[status] ?? 'bg-parchment-500/10 text-parchment-500';
+		const cls = statusChipClasses(status);
 		return `<span class="inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ${cls}">${status}</span>`;
 	}
 
@@ -230,9 +222,11 @@
 	];
 
 	let currentBatch = $state('');
+	let currentStatus = $state('');
 
 	page.subscribe(($p) => {
 		currentBatch = $p.url.searchParams.get('batch') || '';
+		currentStatus = $p.url.searchParams.get('status') || '';
 	});
 
 	async function fetchBatches({ limit, offset }) {
@@ -240,7 +234,7 @@
 	}
 
 	async function fetchTasks({ limit, offset }) {
-		const result = await api.tasks.list(currentBatch, '', limit, offset);
+		const result = await api.tasks.list(currentBatch, currentStatus, limit, offset);
 		return result?.tasks ?? [];
 	}
 
@@ -303,7 +297,7 @@
 
 <svelte:window onclick={handlePageClick} />
 
-{#if currentBatch}
+{#if currentBatch || currentStatus}
 	<div class="space-y-4">
 		<a
 			href={resolve(`/tasks`)}
@@ -316,7 +310,11 @@
 			columns={taskColumns}
 			fetch={fetchTasks}
 			onRowClick={viewTask}
-			title={'Batch: ' + currentBatch}
+			title={currentStatus === 'active'
+				? 'Active Tasks'
+				: currentBatch
+					? 'Batch: ' + currentBatch
+					: 'Tasks (' + currentStatus + ')'}
 			keyField="task_id"
 			refreshKey={taskRefreshKey}
 			urlSync="tasks"

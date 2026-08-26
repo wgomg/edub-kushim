@@ -101,6 +101,17 @@ SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error, attempts
 FROM task WHERE task_type = $1 ORDER BY created_at DESC;
 
+-- name: ListActiveTasks :many
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
+       created_at, started_at, completed_at, error, attempts
+FROM task
+WHERE status IN ('pending', 'processing', 'waiting')
+ORDER BY
+  CASE status WHEN 'processing' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END,
+  started_at ASC NULLS LAST,
+  created_at ASC
+LIMIT $1 OFFSET $2;
+
 -- name: CountProcessingTasks :one
 SELECT COUNT(*) FROM task WHERE status = 'processing' AND task_type IN ('consume', 'enrich', 'thumbnail');
 

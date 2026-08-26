@@ -34,3 +34,17 @@ export function formatDuration(ms) {
 	if (s > 0 || parts.length === 0) parts.push(s + '\u00A0s');
 	return parts.join(' ');
 }
+
+export function formatRelative(dateStr) {
+	if (!dateStr) return '—';
+	const t = new Date(dateStr).getTime();
+	if (Number.isNaN(t)) return '—';
+	const sec = Math.floor((Date.now() - t) / 1000);
+	if (sec < 0) return '—';
+	if (sec < 60) return sec + 's';
+	const min = Math.floor(sec / 60);
+	if (min < 60) return min + 'm';
+	const h = Math.floor(min / 60);
+	if (h < 24) return h + 'h';
+	return Math.floor(h / 24) + 'd';
+}

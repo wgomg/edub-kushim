@@ -246,7 +246,7 @@ web/                      # SvelteKit SPA frontend (main UI)
 │   │       ├── UploadModal.svelte # Upload progress modal
 │   │       ├── StoragePanel.svelte # Dashboard storage panel
 │   │       ├── BatchOverviewPanel.svelte # Dashboard batch overview panel
-│   │       ├── ActivityTimeline.svelte   # Dashboard activity feed
+│   │       ├── ActiveTasksStrip.svelte # Dashboard active tasks strip (pending/processing/waiting cards)
 │   │       ├── DocumentAnalyticsPanel.svelte # Dashboard analytics panel
 │   │       └── ProcessingHealthPanel.svelte # Dashboard processing health panel
 │   └── routes/

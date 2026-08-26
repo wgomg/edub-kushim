@@ -5,7 +5,7 @@
 	import { formatSize } from '$lib/utils/html.js';
 	import StoragePanel from '$lib/components/StoragePanel.svelte';
 	import BatchOverviewPanel from '$lib/components/BatchOverviewPanel.svelte';
-	import ActivityTimeline from '$lib/components/ActivityTimeline.svelte';
+	import ActiveTasksStrip from '$lib/components/ActiveTasksStrip.svelte';
 	import DocumentAnalyticsPanel from '$lib/components/DocumentAnalyticsPanel.svelte';
 	import ProcessingHealthPanel from '$lib/components/ProcessingHealthPanel.svelte';
 
@@ -60,6 +60,9 @@
 	}
 
 	let docColumns = $derived(chunk(recentDocs, 5));
+	let activeTotal = $derived(
+		(dashboard?.processing ?? 0) + (dashboard?.pending ?? 0) + (dashboard?.waiting ?? 0)
+	);
 </script>
 
 <div class="space-y-6">
@@ -150,14 +153,11 @@
 	{/if}
 
 	{#if dashboard}
+		<ActiveTasksStrip tasks={dashboard?.running_tasks ?? []} total={activeTotal} />
+
 		<section>
 			<h2 class="mb-3 text-lg font-semibold text-parchment-200">Recent Batches</h2>
 			<BatchOverviewPanel recentBatches={dashboard.recent_batches ?? []} />
-		</section>
-
-		<section>
-			<h2 class="mb-3 text-lg font-semibold text-parchment-200">Recent Activity</h2>
-			<ActivityTimeline activity={dashboard.activity ?? []} />
 		</section>
 
 		{#if dashboard.analytics}

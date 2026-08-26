@@ -40,6 +40,10 @@ func Get(ctx context.Context, queries *database.Queries, taskID string) (databas
 
 func ListFiltered(ctx context.Context, queries *database.Queries, f TaskFilter) ([]database.Task, error) {
 	switch {
+	case f.Status == "active" && f.BatchID == "" && f.TaskType == "":
+		return queries.ListActiveTasks(ctx, database.ListActiveTasksParams{
+			Limit: f.Limit, Offset: f.Offset,
+		})
 	case f.BatchID != "" && f.Status != "" && f.TaskType != "" && f.Limit > 0:
 		return queries.ListTasksByBatchAndStatusAndType(ctx, database.ListTasksByBatchAndStatusAndTypeParams{
 			BatchID:  sql.NullString{String: f.BatchID, Valid: true},

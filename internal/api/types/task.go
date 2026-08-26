@@ -9,6 +9,7 @@ type TaskResponse struct {
 	Status       string  `json:"status"`
 	DocumentID   *int64  `json:"document_id"`
 	Error        *string `json:"error"`
+	Label        string  `json:"label"`
 	CreatedAt    string  `json:"created_at"`
 	StartedAt    *string `json:"started_at"`
 	CompletedAt  *string `json:"completed_at"`
@@ -66,13 +67,6 @@ type BatchOverviewItem struct {
 	DurationMs *int64 `json:"duration_ms,omitempty"`
 }
 
-type ActivityEvent struct {
-	EventType string `json:"event_type"`
-	Title     string `json:"title"`
-	Timestamp string `json:"timestamp"`
-	Link      string `json:"link"`
-}
-
 type DistributionItem struct {
 	Label string `json:"label"`
 	Count int64  `json:"count"`
@@ -99,7 +93,7 @@ type ProcessingHealth struct {
 
 type DashboardResponse struct {
 	RecentBatches    []BatchOverviewItem  `json:"recent_batches"`
-	Activity         []ActivityEvent      `json:"activity"`
+	RunningTasks     []TaskResponse       `json:"running_tasks"`
 	Analytics        *DocumentAnalytics   `json:"analytics,omitempty"`
 	ProcessingHealth *ProcessingHealth    `json:"processing_health,omitempty"`
 	TotalBatches     int64                `json:"total_batches"`

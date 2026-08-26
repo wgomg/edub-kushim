@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -237,48 +238,14 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	activityRows, err := h.queries.ListActivityTimeline(ctx)
+	activeRows, err := h.queries.ListActiveTasks(ctx,
+		database.ListActiveTasksParams{Limit: 25, Offset: 0})
 	if err != nil {
-		h.logger.Error(&reqID, "list activity timeline: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
+		h.logger.Error(&reqID, "list active tasks: %v", err)
 	}
-
-	activity := make([]types.ActivityEvent, 0, len(activityRows))
-	for _, row := range activityRows {
-		title := strings.TrimSpace(row.Title)
-		if title == "" && row.PayloadFilePath != "" {
-			title = filepath.Base(strings.TrimSpace(row.PayloadFilePath))
-		}
-		if title == "" {
-			title = row.TaskID
-		}
-
-		var link string
-		switch row.EventType {
-		case "document_uploaded":
-			link = "/documents/" + row.RefID
-		case "task_completed", "task_failed":
-			link = "/tasks/" + row.TaskID
-		case "batch_created":
-			link = "/tasks?batch=" + row.BatchID
-		}
-
-		var timestamp string
-		if t, err := time.Parse("2006-01-02T15:04:05Z", row.EventTime); err == nil {
-			timestamp = t.Format(time.RFC3339)
-		} else if t, err := time.Parse("2006-01-02 15:04:05", row.EventTime); err == nil {
-			timestamp = t.Format(time.RFC3339)
-		} else {
-			timestamp = row.EventTime
-		}
-
-		activity = append(activity, types.ActivityEvent{
-			EventType: row.EventType,
-			Title:     title,
-			Timestamp: timestamp,
-			Link:      link,
-		})
+	runningTasks := make([]types.TaskResponse, 0, len(activeRows))
+	for _, t := range activeRows {
+		runningTasks = append(runningTasks, taskToResponse(t))
 	}
 
 	analytics := h.buildDocumentAnalytics(ctx, &reqID)
@@ -362,25 +329,25 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(types.DashboardResponse{
-		RecentBatches:        items,
-		Activity:             activity,
-		Analytics:            analytics,
-		ProcessingHealth:     processingHealth,
-		TotalBatches:         totalBatches,
-		TotalFiles:           totalFiles,
-		Waiting:              perStatus["waiting"],
-		Pending:              perStatus["pending"],
-		Processing:           perStatus["processing"],
-		Completed:            perStatus["completed"],
-		Failed:               perStatus["failed"],
-		Cancelled:            perStatus["cancelled"],
-		Discarded:            perStatus["discarded"],
-		TotalSizeGB:          float64(totalBytes) / (1024 * 1024 * 1024),
+		RecentBatches:         items,
+		RunningTasks:          runningTasks,
+		Analytics:             analytics,
+		ProcessingHealth:      processingHealth,
+		TotalBatches:          totalBatches,
+		TotalFiles:            totalFiles,
+		Waiting:               perStatus["waiting"],
+		Pending:               perStatus["pending"],
+		Processing:            perStatus["processing"],
+		Completed:             perStatus["completed"],
+		Failed:                perStatus["failed"],
+		Cancelled:             perStatus["cancelled"],
+		Discarded:             perStatus["discarded"],
+		TotalSizeGB:           float64(totalBytes) / (1024 * 1024 * 1024),
 		OriginalTypeBreakdown: typeStats,
-		StorageTrend:         trendPoints,
-		AvgFileSizeBytes:     avgFileSize,
-		TotalPages:           totalPages,
-		TotalWords:           totalWords,
+		StorageTrend:          trendPoints,
+		AvgFileSizeBytes:      avgFileSize,
+		TotalPages:            totalPages,
+		TotalWords:            totalWords,
 	})
 }
 
@@ -585,6 +552,41 @@ func (h *TaskHandler) CancelBatch(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Keep in sync with configtask.DedupKey(): drift here silently degrades
+// config/backup labels to the bare task type.
+func taskLabel(taskType string, dedupKey sql.NullString) string {
+	key := dedupKey.String
+	switch {
+	case strings.HasPrefix(key, "backup:"):
+		mode := strings.TrimPrefix(key, "backup:")
+		if i := strings.IndexByte(mode, ':'); i >= 0 {
+			mode = mode[:i]
+		}
+		if mode == "" {
+			return "Backup"
+		}
+		return "Backup (" + mode + ")"
+	case key == "config:migrate-db":
+		return "Database migration"
+	case key == "config:migrate-storage":
+		return "Storage migration"
+	case strings.HasPrefix(key, "config:tessdata:"):
+		return "Download tessdata (" + strings.TrimPrefix(key, "config:tessdata:") + ")"
+	case key == "config:hugot":
+		return "Download Hugot model"
+	}
+	switch taskType {
+	case "consume":
+		return "Consume"
+	case "enrich":
+		return "Enrich"
+	case "thumbnail":
+		return "Thumbnail"
+	default:
+		return taskType
+	}
+}
+
 func taskToResponse(t database.Task) types.TaskResponse {
 	var docID *int64
 	if t.Result != nil {
@@ -644,6 +646,11 @@ func taskToResponse(t database.Task) types.TaskResponse {
 		}
 	}
 
+	label := fileName
+	if label == "" {
+		label = taskLabel(t.TaskType, t.DedupKey)
+	}
+
 	return types.TaskResponse{
 		TaskID:       t.TaskID,
 		BatchID:      t.BatchID.String,
@@ -653,6 +660,7 @@ func taskToResponse(t database.Task) types.TaskResponse {
 		Status:       t.Status,
 		DocumentID:   docID,
 		Error:        errStr,
+		Label:        label,
 		CreatedAt:    t.CreatedAt.Time.Format(time.RFC3339),
 		StartedAt:    started,
 		CompletedAt:  completed,
