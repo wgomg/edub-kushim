@@ -435,6 +435,25 @@ func (r *Runner) MatchTags(ctx context.Context, docId, input string) (*TagMatchR
 	return &TagMatchResult{Tags: tags}, nil
 }
 
+func (r *Runner) ConsolidateTags(ctx context.Context, docId string, queries []string) ([]string, error) {
+	if r.tagMatcher == nil {
+		return nil, fmt.Errorf("tag matcher not configured")
+	}
+	timeout := time.Duration(r.config.Enricher.TagMatcher.Timeout) * time.Second
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	tags, err := runWithTimeout(ctx, func() ([]string, error) {
+		return r.tagMatcher.Consolidate(ctx, docId, queries)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("tag consolidation: %w", err)
+	}
+	return tags, nil
+}
+
 func isProviderError(err error) bool {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false

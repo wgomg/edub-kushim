@@ -378,8 +378,9 @@ is implemented by `cache.EmbeddingStore` and by the test double
 model once and serves RPC over a Unix socket (`<config-dir>/kushim-hugot.sock`).
 
 - **Startup**: removes a stale socket, builds the tag cache
-  (`cache.BuildTagCache`), opens the listener, serves HTTP with generous
-  timeouts (`ReadTimeout: 30s`, `WriteTimeout: 120s`, `IdleTimeout: 30s`).
+  (`cache.BuildTagCache`), opens the listener, serves HTTP with a 30s
+  read/idle timeout and a `WriteTimeout` mirrored from
+  `enricher.tagmatcher.timeout` (0 = no deadline), read once at startup.
 - **`--bg`** re-execs itself detached with stdio nulled (same pattern as
   `kushim queue --bg`).
 - **Duplicate detection**: `net.Listen("unix", ...)` fails with `EADDRINUSE`
@@ -391,9 +392,11 @@ model once and serves RPC over a Unix socket (`<config-dir>/kushim-hugot.sock`).
 - **Shutdown**: SIGTERM/SIGINT → `server.Shutdown(ctx)` with a 5s budget →
   `os.Remove(socketPath)`.
 
-The HTTP endpoints are body-size-capped RPC handlers (`bodyCap`), and the
-client always has a 120s timeout since encoding large documents can take a
-while.
+The HTTP endpoints are body-size-capped RPC handlers (`bodyCap`). The client
+imposes no client-level timeout of its own — the caller's context deadline
+(`enricher.tagmatcher.timeout`, applied by `Runner.MatchTags` and
+`Runner.ConsolidateTags`) is the sole bound, since encoding large documents
+can take a while.
 
 ---
 

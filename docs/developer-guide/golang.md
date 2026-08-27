@@ -1175,9 +1175,11 @@ client: &http.Client{
 		MaxIdleConns:    1,
 		IdleConnTimeout: 120 * time.Second,
 	},
-	Timeout: 120 * time.Second,
 },
 ```
+
+The client sets no `Timeout` of its own — the request context deadline
+(`enricher.tagmatcher.timeout`, applied by the runner) is the sole bound.
 
 All RPC calls funnel through one `do()` helper that wraps failures in
 `ErrMatcherUnavailable` — which is what makes tag endpoints return 503 when the

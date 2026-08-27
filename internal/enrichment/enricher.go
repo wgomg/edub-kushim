@@ -229,7 +229,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 	analysis.Tags = contentanalyzer.FilterTags(analysis.Tags, analysis.People, knownNormalized, analysis.Title, docTypeNames)
 
 	consolidateStart := time.Now()
-	consolidated, err := e.services.Tag.Consolidate(ctx, document.DocumentID, analysis.Tags)
+	consolidated, err := e.runner.ConsolidateTags(ctx, document.DocumentID, analysis.Tags)
 	if err != nil {
 		e.logger.Error(&logId, "post-LLM consolidation failed: %v", err)
 	} else {

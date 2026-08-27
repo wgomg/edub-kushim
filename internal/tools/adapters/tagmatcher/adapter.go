@@ -4,6 +4,7 @@ import "context"
 
 type Matcher interface {
 	Match(ctx context.Context, docId, input string) ([]string, error)
+	Consolidate(ctx context.Context, docId string, queries []string) ([]string, error)
 	Close()
 	Name() string
 }

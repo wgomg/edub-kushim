@@ -38,7 +38,7 @@ enricher:
 
 | Key | Default | Meaning |
 | --- | ------- | ------- |
-| `timeout` | `120` | Deadline for matcher RPC calls (encode/match/consolidate) in seconds. `0` disables the deadline — not recommended for production. |
+| `timeout` | `120` | Deadline for matcher RPC calls (match/consolidate) in seconds, applied as a context deadline on the client and mirrored into the matcher server's `WriteTimeout` at startup. `0` disables the deadline — not recommended for production. |
 | `reduce_target_words` | `4000` | Word target for TextRank reduction applied *before* tag matching. Also drives the RPC request body cap (`reduce_target_words × 24` bytes, clamped to 256 KiB–4 MiB), bounding how much text can reach the matcher. |
 | `chunk_size` | `4096` | Maximum number of tokens per inference window. See [below](#chunk_size--the-memory-lever). |
 | `hugot.model` | `BAAI/bge-m3` | Model identifier. Downloaded on first start to `<config_dir>/tagmatcher/hugot/models/<model>` (requires internet). |

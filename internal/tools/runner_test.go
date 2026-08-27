@@ -6,12 +6,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
+	"time"
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/contentanalyzer"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/converter"
+	"github.com/wgomg/edub-kushim/internal/tools/adapters/tagmatcher"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -689,5 +692,113 @@ func TestAnalyzeContent_FallbackChainPropagatesLastFailure(t *testing.T) {
 	}
 	if credErr.Provider != "fb1" {
 		t.Errorf("expected provider %q in error, got %q", "fb1", credErr.Provider)
+	}
+}
+
+// mockTagMatcher satisfies tagmatcher.Matcher for testing.
+type mockTagMatcher struct {
+	consolidateFn func(ctx context.Context, docId string, queries []string) ([]string, error)
+}
+
+func (m *mockTagMatcher) Match(ctx context.Context, docId, input string) ([]string, error) {
+	return nil, nil
+}
+
+func (m *mockTagMatcher) Consolidate(ctx context.Context, docId string, queries []string) ([]string, error) {
+	if m.consolidateFn != nil {
+		return m.consolidateFn(ctx, docId, queries)
+	}
+	return queries, nil
+}
+
+func (m *mockTagMatcher) Close()       {}
+func (m *mockTagMatcher) Name() string { return "mock" }
+
+// Compile-time assertion that mockTagMatcher satisfies the interface.
+var _ tagmatcher.Matcher = (*mockTagMatcher)(nil)
+
+func TestConsolidateTags_TimeoutAppliesDeadline(t *testing.T) {
+	tests := []struct {
+		name         string
+		timeout      int
+		wantDeadline bool
+	}{
+		{"timeout zero disables deadline", 0, false},
+		{"timeout applies deadline", 120, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var receivedCtx context.Context
+			mock := &mockTagMatcher{
+				consolidateFn: func(ctx context.Context, docId string, queries []string) ([]string, error) {
+					receivedCtx = ctx
+					return queries, nil
+				},
+			}
+			r := &Runner{
+				logger: utils.NewDiscardLogger(),
+				config: &config.Config{
+					Enricher: config.EnricherConfig{
+						TagMatcher: config.TagMatcherConfig{Timeout: tt.timeout},
+					},
+				},
+				tagMatcher: mock,
+			}
+
+			queries := []string{"alpha", "beta"}
+			tags, err := r.ConsolidateTags(context.Background(), "doc-1", queries)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !slices.Equal(tags, queries) {
+				t.Errorf("ConsolidateTags returned %v, want %v", tags, queries)
+			}
+			if _, ok := receivedCtx.Deadline(); ok != tt.wantDeadline {
+				t.Errorf("context deadline presence = %v, want %v", ok, tt.wantDeadline)
+			}
+		})
+	}
+}
+
+func TestConsolidateTags_HungMatcher_ReturnsDeadlineExceeded(t *testing.T) {
+	mock := &mockTagMatcher{
+		consolidateFn: func(ctx context.Context, docId string, queries []string) ([]string, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	}
+	r := &Runner{
+		logger: utils.NewDiscardLogger(),
+		config: &config.Config{
+			Enricher: config.EnricherConfig{
+				TagMatcher: config.TagMatcherConfig{Timeout: 1},
+			},
+		},
+		tagMatcher: mock,
+	}
+
+	start := time.Now()
+	_, err := r.ConsolidateTags(context.Background(), "doc-1", []string{"alpha"})
+	if err == nil {
+		t.Fatal("expected error when matcher never returns")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("expected context.DeadlineExceeded, got %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("ConsolidateTags took %v, want bounded by the 1s timeout", elapsed)
+	}
+}
+
+func TestConsolidateTags_NilMatcher(t *testing.T) {
+	r := &Runner{
+		logger: utils.NewDiscardLogger(),
+		config: &config.Config{},
+	}
+
+	_, err := r.ConsolidateTags(context.Background(), "doc-1", nil)
+	if err == nil {
+		t.Fatal("expected error when matcher is nil")
 	}
 }

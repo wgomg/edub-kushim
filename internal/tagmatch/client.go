@@ -56,7 +56,6 @@ func NewMatcherClient(socketPath string, maxMatchBodyBytes int) *MatcherClient {
 				MaxIdleConns:    1,
 				IdleConnTimeout: 120 * time.Second,
 			},
-			Timeout: 120 * time.Second,
 		},
 		maxMatchBodyBytes: maxMatchBodyBytes,
 	}

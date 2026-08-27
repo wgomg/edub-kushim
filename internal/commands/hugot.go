@@ -108,10 +108,11 @@ func serveHugotHandler(c *Container, args []string) error {
 
 	notifyReady(c.logger)
 
+	writeTimeout := time.Duration(c.cfg.Load().Enricher.TagMatcher.Timeout) * time.Second
 	server := &http.Server{
 		Handler:      mux,
 		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 120 * time.Second,
+		WriteTimeout: writeTimeout, // 0 = no deadline
 		IdleTimeout:  30 * time.Second,
 	}
 

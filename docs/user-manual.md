@@ -2472,6 +2472,9 @@ Total time depends on:
 - Raise the timeout if you have a large tag store (100k+) or observe
   `context deadline exceeded` errors on tag match tasks.
 - Values below 10s will time out even modest tag stores.
+- The matcher server mirrors this value into its `WriteTimeout` at startup —
+  after changing it, restart `kushim hugot` for the server side to take
+  effect.
 
 ---
 
