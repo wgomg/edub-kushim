@@ -222,6 +222,15 @@ compose-quickstart-down:
 fix:
 	go fix -tags "XLA,ORT" ./...
 
+.PHONY: vuln
+vuln:
+	CGO_ENABLED=0 govulncheck -tags "XLA,ORT" \
+		$(shell go list ./... | grep -v -E '/(cmd/kushim|internal/commands)$$|/node_modules/')
+
+.PHONY: vuln-cgo
+vuln-cgo:
+	govulncheck -tags "XLA,ORT" ./...
+
 # ── Testing ──────────────────────────────────────────────────────────
 # test-short runs all tests that don't require CGo (Tesseract, MuPDF).
 # These are safe for any environment and cover ~95% of the codebase.

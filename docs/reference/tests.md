@@ -29,6 +29,8 @@ make test-db       # database-dependent tests (requires TEST_DATABASE_URL)
 make test-cgo      # CGo-gated tests (requires make build-deps first)
 make test-cgo-db   # consumption with CGo + DB (requires make build-deps + TEST_DATABASE_URL)
 make test-one PKG=./internal/errs/   # single package; add RUN=Name to filter
+make vuln          # govulncheck over the Go vuln DB (CGO_ENABLED=0)
+make vuln-cgo      # CGo-enabled variant, full call graph (requires make build-deps first)
 ```
 
 ### Continuous Integration
@@ -38,6 +40,7 @@ make test-one PKG=./internal/errs/   # single package; add RUN=Name to filter
 - `web` job: builds both SPAs (`npm ci && npm run build` in `web/` and `web-wizard/`), stages them with `make stage-web`, and uploads them as the `web-assets` artifact. Staging is required because `internal/static/build` and `internal/wizard/static` are gitignored but embedded via `//go:embed` — a fresh checkout has no assets to compile against.
 - `test` job (depends on `web`): downloads `web-assets`, stages it with `make stage-web-artifact`, then runs `make test` and `make test-db` against a postgres:17 service container (`TEST_DATABASE_URL` pointing at `localhost:5432`).
 - `test-cgo` job (depends on `web`): installs the C build prerequisites, builds the C libraries with `make build-deps TOKENIZERS_ARCH=amd64` (cached under `build/` keyed by `hashFiles('Makefile')`), then runs `make test-cgo` and `make test-cgo-db` against the same postgres:17 service container. This surfaces the CGo-only packages (`internal/commands`, consumption under CGo) on every push/PR.
+- `vulncheck` job (depends on `web`): stages the `web-assets` artifact, installs govulncheck (pinned `@v1.7.0`), and runs `make vuln`. Like `make test`, it runs with `CGO_ENABLED=0`, so the CGo-gated packages (`cmd/kushim`, `internal/commands`) are excluded from the CI scan; `make vuln-cgo` covers them locally.
 
 The `global` ruleset requires the `test` and `web` checks to pass before a PR to `master` can merge.
 
@@ -245,6 +248,23 @@ make test-one PKG=./internal/database/ RUN=TestTaskLifecycle
 # CGo-gated package (requires make build-deps first)
 make test-cgo
 ```
+
+### Vulnerability scanning (`make vuln` / `make vuln-cgo`)
+
+`make vuln` runs govulncheck against the Go vuln DB with `CGO_ENABLED=0`, so no
+C toolchain is needed. It scans every package except `cmd/kushim` and
+`internal/commands` — those reference CGo-gated symbols and cannot load without
+CGo, the same split that separates `make test` from `make test-cgo`.
+`make vuln-cgo` is the CGo-enabled variant (full call graph incl. the
+gosseract/hugot adapters) and requires `make build-deps` first:
+
+```bash
+make vuln          # CGO_ENABLED=0, all loadable packages
+make vuln-cgo      # full call graph, requires make build-deps first
+```
+
+govulncheck exits non-zero on reachable findings, which fails the CI
+`vulncheck` job. Fix findings via `go get <module>@<fixed>` + `go mod tidy`.
 
 ### Test Helpers
 

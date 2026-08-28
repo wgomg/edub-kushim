@@ -263,6 +263,10 @@ make test-cgo-musl     # podman: kushim-musl-builder
 
 # Consumption with CGo + DB (requires make build-deps + TEST_DATABASE_URL)
 make test-cgo-db
+
+# Vulnerability scan (govulncheck over the Go vuln DB)
+make vuln          # CGO_ENABLED=0, no C toolchain needed
+make vuln-cgo      # full call graph incl. gosseract/hugot adapters (requires make build-deps first)
 ```
 
 **Note:** bare `go test` is not supported — the Makefile targets set the `-tags "XLA,ORT"`

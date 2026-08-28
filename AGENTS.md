@@ -96,7 +96,11 @@ make test-backup   # backup package, requires PostgreSQL via TEST_DATABASE_URL
 make test-cgo      # CGo-gated tests incl. internal/commands (requires make build-deps first)
 make test-cgo-db   # consumption with CGo + DB (requires make build-deps + TEST_DATABASE_URL)
 make test-one PKG=./internal/errs/   # single package; add RUN=Name to filter
+make vuln         # govulncheck over the Go vuln DB (CGO_ENABLED=0)
+make vuln-cgo     # CGo-enabled variant, full call graph (requires make build-deps first)
 ```
+
+CI runs `make vuln` in the `vulncheck` job (`.github/workflows/ci.yml`).
 
 **Isolation**: Each test package gets its own database (`edub_test_<pkg_dir>`) via `runtime.Caller`. Databases are auto-dropped with `DROP ... WITH (FORCE)` when the last reference is released, so no manual cleanup is needed.
 

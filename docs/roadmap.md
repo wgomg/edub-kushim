@@ -272,6 +272,7 @@
 - ✗ No tests for CLI commands (kushim consume, search, task, setup)
 - ✓ CLI config tests (config_test.go — parseValue, deleteNestedKey, configHandler integration) — requires CGo toolchain
 - ✓ CLI migrate tests (migrate_test.go + configtask_migrate_nodb_test.go — DirChanged, ErrNoOp no-op contract, unsafe-path rejection, storage no-op) — no DB required
+- ✓ Vulnerability scanning — `make vuln` (govulncheck, `CGO_ENABLED=0`, all loadable packages) + `make vuln-cgo` (full call graph incl. gosseract/hugot adapters, requires `make build-deps`); CI `vulncheck` job runs `make vuln` on every push/PR with govulncheck pinned to v1.7.0. First scan fixed a reachable GO-2026-6222 (x/image VP8L decoding) via `golang.org/x/image` v0.43.0→v0.45.0
 
 ### Build & Deployment
 
