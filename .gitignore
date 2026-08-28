@@ -15,3 +15,6 @@ coverage.out
 
 internal/static/build/*
 internal/wizard/static/*
+
+# local-only agent instruction addendum (loaded via .kilo/kilo.jsonc, never committed)
+AGENTS.local.md
