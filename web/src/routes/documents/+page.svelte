@@ -26,6 +26,38 @@
 	let showTagPicker = $state(false);
 	let tagSearchTimer;
 
+	let showTypePicker = $state(false);
+	let batchDocTypeId = $state(null);
+	let documentTypeOptions = $state([]);
+
+	let tagPickerEl = $state(null);
+	let typePickerEl = $state(null);
+	let savedEl = $state(null);
+
+	const dateFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
+
+	$effect(() => {
+		if (!showTagPicker && !showTypePicker && !showSaved) return;
+		const onKey = (e) => {
+			if (e.key === 'Escape') {
+				showTagPicker = false;
+				showTypePicker = false;
+				showSaved = false;
+			}
+		};
+		const onClick = (e) => {
+			if (tagPickerEl && !tagPickerEl.contains(e.target)) showTagPicker = false;
+			if (typePickerEl && !typePickerEl.contains(e.target)) showTypePicker = false;
+			if (savedEl && !savedEl.contains(e.target)) showSaved = false;
+		};
+		document.addEventListener('keydown', onKey);
+		document.addEventListener('click', onClick);
+		return () => {
+			document.removeEventListener('keydown', onKey);
+			document.removeEventListener('click', onClick);
+		};
+	});
+
 	let columns = $derived.by(() => {
 		const cols = [
 			{
@@ -98,7 +130,7 @@
 				key: 'created_at',
 				label: 'Created',
 				sortable: true,
-				cell: (v) => new Date(v).toLocaleDateString(),
+				cell: (v) => dateFormatter.format(new Date(v)),
 				minWidth: '150px'
 			},
 			{
@@ -300,11 +332,36 @@
 		refreshKey++;
 	}
 
+	async function handleBatchSetType() {
+		if (!batchDocTypeId) return;
+		const res = await api.documents.batchSetDocumentType(
+			selectedDocs.map((r) => r.id),
+			batchDocTypeId
+		);
+		if (!res.ok) {
+			toastStore.error(res.data?.error || 'Batch type assignment failed');
+			return;
+		}
+		if (res.data?.failed?.length > 0) {
+			const failed = res.data.failed;
+			toastStore.warning(
+				`Set type on ${res.data.updated} of ${selectedDocs.length} documents. ${failed.length} failed.`
+			);
+		}
+		batchDocTypeId = null;
+		showTypePicker = false;
+		refreshKey++;
+	}
+
 	onMount(() => {
 		api.autocomplete
 			.peopleTypes()
 			.then(setPersonTypes)
 			.catch(() => {});
+		api.autocomplete
+			.documentTypes()
+			.then((types) => (documentTypeOptions = types))
+			.catch(() => toastStore.error('Failed to load document types'));
 		refreshSavedSearches();
 	});
 
@@ -342,7 +399,7 @@
 				</button>
 			{/if}
 			{#if !authStore.authEnabled() || authStore.isEditor()}
-				<div class="relative shrink-0">
+				<div class="relative shrink-0" bind:this={tagPickerEl}>
 					<button
 						onclick={() => (showTagPicker = !showTagPicker)}
 						class="rounded-lg border border-clay-800 px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -398,7 +455,7 @@
 													<button
 														onclick={() => (batchTagIds = batchTagIds.filter((t) => t !== tid))}
 														class="text-parchment-500 hover:text-parchment-200"
-														aria-label="Remove tag">&times;</button
+														aria-label={`Remove tag ${tag.name}`}>&times;</button
 													>
 												</span>
 											{/if}
@@ -435,6 +492,41 @@
 									class="w-full rounded-md bg-gold-600 px-3 py-1.5 text-xs font-medium text-clay-950 hover:bg-gold-500 disabled:opacity-50"
 								>
 									Assign
+								</button>
+							</div>
+						</div>
+					{/if}
+				</div>
+			{/if}
+			{#if !authStore.authEnabled() || authStore.isEditor()}
+				<div class="relative shrink-0" bind:this={typePickerEl}>
+					<button
+						onclick={() => (showTypePicker = !showTypePicker)}
+						class="rounded-lg border border-clay-800 px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+					>
+						Set type
+					</button>
+					{#if showTypePicker}
+						<div
+							class="absolute top-full left-0 z-30 mt-1 w-64 rounded-lg border border-clay-800 bg-clay-950 shadow-xl"
+						>
+							<div class="p-3">
+								<select
+									bind:value={batchDocTypeId}
+									aria-label="Document type"
+									class="mb-2 w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
+								>
+									<option value={null} disabled>Choose type…</option>
+									{#each documentTypeOptions as t (t.id)}
+										<option value={t.id}>{t.name}</option>
+									{/each}
+								</select>
+								<button
+									onclick={handleBatchSetType}
+									disabled={!batchDocTypeId}
+									class="w-full rounded-md bg-gold-600 px-3 py-1.5 text-xs font-medium text-clay-950 hover:bg-gold-500 disabled:opacity-50"
+								>
+									Apply
 								</button>
 							</div>
 						</div>
@@ -496,7 +588,7 @@
 				{saving ? 'Saving…' : 'Save'}
 			</button>
 		{/if}
-		<div class="relative">
+		<div class="relative" bind:this={savedEl}>
 			<button
 				onclick={() => (showSaved = !showSaved)}
 				class="rounded-lg border border-clay-800 px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -555,7 +647,6 @@
 						id="save-search-name"
 						name="save-search-name"
 						autocomplete="off"
-						spellcheck="false"
 						bind:value={saveName}
 						placeholder="e.g. Invoices from Q1…"
 						class="mb-2 w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"

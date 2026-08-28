@@ -129,6 +129,21 @@ type BatchTagResult struct {
 	Failed   []BatchTagError `json:"failed,omitempty"`
 }
 
+type BatchDocumentTypeRequest struct {
+	DocumentIDs    []string `json:"document_ids"`
+	DocumentTypeID int64    `json:"document_type_id"`
+}
+
+type BatchDocumentTypeError struct {
+	ID    string `json:"id"`
+	Error string `json:"error"`
+}
+
+type BatchDocumentTypeResult struct {
+	Updated int                      `json:"updated"`
+	Failed  []BatchDocumentTypeError `json:"failed,omitempty"`
+}
+
 type TrashListResponse struct {
 	Documents []TrashDocumentResponse `json:"documents"`
 	Total     int64                    `json:"total"`

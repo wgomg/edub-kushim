@@ -61,6 +61,7 @@
     - `DownloadDocuments(w, r)` — `POST /api/v1/documents/download` — Accepts `{document_ids: [...]}` JSON (or form-encoded). Streams a ZIP archive with each document's processed file. Validates count against `max_download_files` and total size against `max_download_size_mb`. Returns `200` with `Content-Type: application/zip`, `400` with validation errors.
     - `BatchDeleteDocuments(w, r)` — `POST /api/v1/documents/batch-delete` — Accepts `{document_ids: [...]}` JSON. Soft-deletes each document independently via `services.Trash.SoftDelete`; returns partial failure info (`deleted`/`failed`, `404` for missing/already-trashed IDs). Count validated against `max_batch_delete`.
     - `BatchAssignTags(w, r)` — `POST /api/v1/documents/batch-tags` — Accepts `{document_ids, tag_ids, mode}`. Supports `add` (append) and `replace` (transactional clear+add) modes. Validates all tag IDs exist before modifying any document.
+    - `BatchSetDocumentType(w, r)` — `POST /api/v1/documents/batch-type` — Accepts `{document_ids, document_type_id}`. Single atomic `UPDATE ... WHERE document_id = ANY($2::text[]) AND deleted_at IS NULL` via `SetDocumentsDocumentType` (one round trip, `modified_at` bumped). Validates the type exists before touching documents (404 when missing); non-existent/soft-deleted IDs reported in `failed[]` as `"not found"`; 400 only when nothing was updated. Count validated against `max_batch_delete`.
     - `FilterLanguages(w, r)` — `GET /api/v1/filter-languages` — Returns distinct language codes from the document corpus as a JSON string array.
     - `SupportedMimeTypes(w, r)` — `GET /api/v1/supported-mime-types` — Returns the compiled-in supported MIME types as a JSON array of `MimeInfo` objects (mime_type, extension, label).
 
@@ -501,6 +502,7 @@ mux.Handle("DELETE /api/v1/documents/{id}/people", RequireRole(editor...)(...))
 mux.Handle("POST /api/v1/documents/{id}/reenrich", RequireRole(editor...)(...))
 mux.Handle("POST /api/v1/documents/batch-delete", RequireRole(editor...)(...))
 mux.Handle("POST /api/v1/documents/batch-tags", RequireRole(editor...)(...))
+mux.Handle("POST /api/v1/documents/batch-type", RequireRole(editor...)(...))
 mux.Handle("POST /api/v1/tags", RequireRole(editor...)(...))
 mux.Handle("PUT /api/v1/tags/{id}", RequireRole(editor...)(...))
 mux.Handle("DELETE /api/v1/tags/{id}", RequireRole(editor...)(...))

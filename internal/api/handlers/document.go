@@ -974,6 +974,81 @@ func (h *DocumentHandler) BatchAssignTags(w http.ResponseWriter, r *http.Request
 	json.NewEncoder(w).Encode(result)
 }
 
+func (h *DocumentHandler) BatchSetDocumentType(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := ctx.Value("reqid").(string)
+
+	var req types.BatchDocumentTypeRequest
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	ids := uniqueStrings(req.DocumentIDs)
+	cfg := h.getConfig()
+
+	if len(ids) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "document_ids is required"})
+		return
+	}
+
+	if req.DocumentTypeID < 1 {
+		http.Error(w, "Invalid document type", http.StatusBadRequest)
+		return
+	}
+
+	if len(ids) > cfg.Srv.MaxBatchDelete {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "too many documents, max: " + strconv.Itoa(cfg.Srv.MaxBatchDelete),
+		})
+		return
+	}
+
+	docType, err := h.client.GetDocumentType(ctx, req.DocumentTypeID)
+	if err != nil {
+		writeServiceError(w, h.logger, &reqID, "get document type", errs.FromDB(err, "get document type"))
+		return
+	}
+	if docType.ID == 0 {
+		http.Error(w, "Document type not found", http.StatusNotFound)
+		return
+	}
+
+	updatedIDs, err := h.client.SetDocumentsDocumentType(ctx, database.SetDocumentsDocumentTypeParams{
+		DocumentTypeID: req.DocumentTypeID,
+		Column2:        ids,
+	})
+	if err != nil {
+		writeServiceError(w, h.logger, &reqID, "set document type", errs.FromDB(err, "set document type"))
+		return
+	}
+
+	result := types.BatchDocumentTypeResult{Updated: len(updatedIDs)}
+	updated := make(map[string]struct{}, len(updatedIDs))
+	for _, id := range updatedIDs {
+		updated[id] = struct{}{}
+	}
+	for _, id := range ids {
+		if _, ok := updated[id]; !ok {
+			result.Failed = append(result.Failed, types.BatchDocumentTypeError{ID: id, Error: "not found"})
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if result.Updated == 0 && len(result.Failed) > 0 {
+		w.WriteHeader(http.StatusBadRequest)
+	} else {
+		w.WriteHeader(http.StatusOK)
+	}
+	json.NewEncoder(w).Encode(result)
+}
+
 func (h *DocumentHandler) AddDocumentPeople(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)

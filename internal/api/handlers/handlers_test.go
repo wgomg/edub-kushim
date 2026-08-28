@@ -1496,6 +1496,144 @@ func TestBatchDeleteDocumentsMaxLimit(t *testing.T) {
 	}
 }
 
+// seedDocType inserts a custom document type and returns its assigned id.
+// Seeded data only contains `undetermined` (id=1) so every test needs its own
+// non-1 type to verify the handler actually changes `document_type_id`.
+func seedDocType(t *testing.T, env *handlerTestEnv, name string) int64 {
+	t.Helper()
+	var id int64
+	err := env.client.DB().QueryRowContext(
+		context.Background(),
+		`INSERT INTO document_type (name, description) VALUES ($1, '') RETURNING id`,
+		name,
+	).Scan(&id)
+	testutil.AssertNoError(t, err, "seed doc type")
+	return id
+}
+
+// createDocWith varied checksums avoids the sha512 UNIQUE collision built into
+// `database.CreateTestDocument` (it always uses the same hardcoded pair).
+func createDocWith(t *testing.T, env *handlerTestEnv, idSuffix, title string) string {
+	t.Helper()
+	docID := idSuffix + "-" + uuid.NewString()
+	_, err := env.client.CreateDocument(context.Background(), database.CreateDocumentParams{
+		DocumentID:     docID,
+		Title:          title,
+		Md5Checksum:    "m-" + idSuffix,
+		Sha512Checksum: "s-" + idSuffix,
+		OriginalType:   "application/pdf",
+		FileSize:       1024,
+		OriginalPath:   "/tmp/orig.pdf",
+		StoragePath:    "/tmp/storage.pdf",
+		TextContent:    sql.NullString{String: "test", Valid: true},
+		PageCount:      1,
+		WordCount:      1,
+		CharCount:      4,
+		Language:       "eng",
+	})
+	testutil.AssertNoError(t, err, "create doc "+idSuffix)
+	return docID
+}
+
+func TestBatchSetDocumentType(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("happy path updates both docs and bumps modified_at", func(t *testing.T) {
+		env := newHandlerTestEnv(t)
+		h := newDocHandler(env)
+		dID1 := docUUID(t, env.client.Queries, "type-a.pdf")
+		dID2 := createDocWith(t, env, "b", "type-b.pdf")
+		newType := seedDocType(t, env, "invoice")
+
+		before, err := env.client.GetDocument(ctx, dID1)
+		testutil.AssertNoError(t, err, "get before")
+
+		body, _ := json.Marshal(types.BatchDocumentTypeRequest{
+			DocumentIDs:    []string{dID1, dID2},
+			DocumentTypeID: newType,
+		})
+		w := rec()
+		h.BatchSetDocumentType(w, req(t, "POST", "/api/v1/documents/batch-type", body))
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var resp types.BatchDocumentTypeResult
+		json.NewDecoder(w.Body).Decode(&resp)
+		testutil.AssertEqual(t, resp.Updated, 2, "updated count")
+		testutil.AssertEqual(t, len(resp.Failed), 0, "no failures")
+
+		doc1, _ := env.client.GetDocument(ctx, dID1)
+		doc2, _ := env.client.GetDocument(ctx, dID2)
+		testutil.AssertEqual(t, doc1.DocumentTypeID, newType, "doc1 type")
+		testutil.AssertEqual(t, doc2.DocumentTypeID, newType, "doc2 type")
+		bumped := !doc1.ModifiedAt.Time.Before(before.ModifiedAt.Time)
+		testutil.AssertEqual(t, bumped, true, "modified_at not before")
+	})
+
+	t.Run("soft-deleted doc is reported not found, not silently modified", func(t *testing.T) {
+		env := newHandlerTestEnv(t)
+		h := newDocHandler(env)
+		dAlive := docUUID(t, env.client.Queries, "alive.pdf")
+		dGone := createDocWith(t, env, "g", "gone.pdf")
+		newType := seedDocType(t, env, "receipt")
+
+		err := env.client.SoftDeleteDocument(ctx, database.SoftDeleteDocumentParams{
+			DocumentID:  dGone,
+			OriginalPath: "/tmp/orig.pdf",
+			StoragePath:  "/tmp/storage.pdf",
+		})
+		testutil.AssertNoError(t, err, "soft delete")
+
+		body, _ := json.Marshal(types.BatchDocumentTypeRequest{
+			DocumentIDs:    []string{dAlive, dGone},
+			DocumentTypeID: newType,
+		})
+		w := rec()
+		h.BatchSetDocumentType(w, req(t, "POST", "/api/v1/documents/batch-type", body))
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "partial success stays 200")
+
+		var resp types.BatchDocumentTypeResult
+		json.NewDecoder(w.Body).Decode(&resp)
+		testutil.AssertEqual(t, resp.Updated, 1, "only alive doc updated")
+		testutil.AssertEqual(t, len(resp.Failed), 1, "soft-deleted reported")
+		testutil.AssertEqual(t, resp.Failed[0].ID, dGone, "failed id")
+		testutil.AssertEqual(t, resp.Failed[0].Error, "not found", "failed error")
+
+		alive, _ := env.client.GetDocument(ctx, dAlive)
+		testutil.AssertEqual(t, alive.DocumentTypeID, newType, "alive doc type changed")
+	})
+
+	t.Run("invalid type id rejected before any doc is modified", func(t *testing.T) {
+		env := newHandlerTestEnv(t)
+		h := newDocHandler(env)
+		dID := docUUID(t, env.client.Queries, "guarded.pdf")
+		const originalType = int64(1) // seeded undetermined, left untouched on rejection
+
+		cases := []struct {
+			name     string
+			typeID   int64
+			wantCode int
+		}{
+			{"type id 0", 0, http.StatusBadRequest},
+			{"type id -1", -1, http.StatusBadRequest},
+			{"non-existent type id", 999_999, http.StatusNotFound},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				body, _ := json.Marshal(types.BatchDocumentTypeRequest{
+					DocumentIDs:    []string{dID},
+					DocumentTypeID: tc.typeID,
+				})
+				w := rec()
+				h.BatchSetDocumentType(w, req(t, "POST", "/api/v1/documents/batch-type", body))
+				testutil.AssertEqual(t, w.Code, tc.wantCode, "status")
+
+				doc, _ := env.client.GetDocument(ctx, dID)
+				testutil.AssertEqual(t, doc.DocumentTypeID, originalType, "doc not modified")
+			})
+		}
+	})
+}
+
 func TestProcessingHealthMissingTools(t *testing.T) {
 	env := newHandlerTestEnv(t)
 

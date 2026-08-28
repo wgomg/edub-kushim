@@ -182,3 +182,11 @@ FROM document
 WHERE document_id = $1
   AND has_thumbnail = FALSE
   AND deleted_at IS NULL;
+
+-- name: SetDocumentsDocumentType :many
+UPDATE document SET
+    document_type_id = $1,
+    modified_at = CURRENT_TIMESTAMP
+WHERE document_id = ANY($2::text[])
+  AND deleted_at IS NULL
+RETURNING document_id;

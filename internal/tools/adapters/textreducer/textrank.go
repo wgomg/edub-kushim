@@ -218,8 +218,7 @@ func buildChunk(id int, words []string, overlapWords int, tokenRe *regexp.Regexp
 }
 
 func lastSentenceWords(words []string) []string {
-	for i := len(words) - 1; i >= 0; i-- {
-		w := words[i]
+	for i, w := range slices.Backward(words) {
 		if strings.HasSuffix(w, ".") || strings.HasSuffix(w, "!") || strings.HasSuffix(w, "?") {
 			return words[i:]
 		}

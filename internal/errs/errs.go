@@ -67,32 +67,28 @@ func KindOf(err error) Kind {
 	if err == nil {
 		return KindInternal
 	}
-	var e *Error
-	if errors.As(err, &e) {
+	if e, ok := errors.AsType[*Error](err); ok {
 		return e.Kind
 	}
 	return KindInternal
 }
 
 func IsConstraint(err error) bool {
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
+	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
 		return pgErr.Code == pgerrcode.UniqueViolation
 	}
 	return false
 }
 
 func IsForeignKey(err error) bool {
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
+	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
 		return pgErr.Code == pgerrcode.ForeignKeyViolation
 	}
 	return false
 }
 
 func IsBusy(err error) bool {
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
+	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
 		return pgErr.Code == pgerrcode.DeadlockDetected || pgErr.Code == pgerrcode.SerializationFailure
 	}
 	return false

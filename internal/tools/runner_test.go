@@ -479,8 +479,7 @@ func TestAnalyzeContent_NoFallbackOnContentTooLarge(t *testing.T) {
 	if fallbackCalled {
 		t.Error("fallback must not be called for ContentTooLargeError")
 	}
-	var ctle *contentanalyzer.ContentTooLargeError
-	if !errors.As(err, &ctle) {
+	if _, ok := errors.AsType[*contentanalyzer.ContentTooLargeError](err); !ok {
 		t.Errorf("expected ContentTooLargeError through wrap, got %v", err)
 	}
 }

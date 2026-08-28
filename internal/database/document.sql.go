@@ -8,6 +8,8 @@ package database
 import (
 	"context"
 	"database/sql"
+
+	"github.com/lib/pq"
 )
 
 const countAllDocuments = `-- name: CountAllDocuments :one
@@ -969,6 +971,43 @@ WHERE document_id = $1 AND deleted_at IS NULL
 func (q *Queries) SetDocumentHasThumbnail(ctx context.Context, documentID string) error {
 	_, err := q.db.ExecContext(ctx, setDocumentHasThumbnail, documentID)
 	return err
+}
+
+const setDocumentsDocumentType = `-- name: SetDocumentsDocumentType :many
+UPDATE document SET
+    document_type_id = $1,
+    modified_at = CURRENT_TIMESTAMP
+WHERE document_id = ANY($2::text[])
+  AND deleted_at IS NULL
+RETURNING document_id
+`
+
+type SetDocumentsDocumentTypeParams struct {
+	DocumentTypeID int64
+	Column2        []string
+}
+
+func (q *Queries) SetDocumentsDocumentType(ctx context.Context, arg SetDocumentsDocumentTypeParams) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, setDocumentsDocumentType, arg.DocumentTypeID, pq.Array(arg.Column2))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var document_id string
+		if err := rows.Scan(&document_id); err != nil {
+			return nil, err
+		}
+		items = append(items, document_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const softDeleteDocument = `-- name: SoftDeleteDocument :exec

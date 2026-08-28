@@ -149,6 +149,13 @@ export const api = {
 				body: JSON.stringify({ document_ids: ids, tag_ids: tagIds, mode })
 			}),
 
+		batchSetDocumentType: (ids, documentTypeId) =>
+			requestRaw('/api/v1/documents/batch-type', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ document_ids: ids, document_type_id: documentTypeId })
+			}),
+
 		downloadBatch: (ids) => {
 			const form = document.createElement('form');
 			form.method = 'POST';

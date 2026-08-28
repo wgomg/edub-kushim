@@ -238,6 +238,7 @@ func registerRoutes(
 	mux.Handle("POST /api/v1/documents/download", RequireRole(viewer...)(http.HandlerFunc(docHandler.DownloadDocuments)))
 	mux.Handle("POST /api/v1/documents/batch-delete", RequireRole(editor...)(http.HandlerFunc(docHandler.BatchDeleteDocuments)))
 	mux.Handle("POST /api/v1/documents/batch-tags", RequireRole(editor...)(http.HandlerFunc(docHandler.BatchAssignTags)))
+	mux.Handle("POST /api/v1/documents/batch-type", RequireRole(editor...)(http.HandlerFunc(docHandler.BatchSetDocumentType)))
 	mux.Handle("GET /api/v1/filter-languages", RequireRole(viewer...)(http.HandlerFunc(docHandler.FilterLanguages)))
 	mux.Handle("GET /api/v1/supported-mime-types", RequireRole(viewer...)(http.HandlerFunc(docHandler.SupportedMimeTypes)))
 

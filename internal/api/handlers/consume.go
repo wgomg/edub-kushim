@@ -227,8 +227,7 @@ func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		if err != nil {
-			var maxBytesErr *http.MaxBytesError
-			if errors.As(err, &maxBytesErr) {
+			if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusRequestEntityTooLarge)
 				json.NewEncoder(w).Encode(map[string]any{
@@ -262,8 +261,7 @@ func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		part.Close()
 
 		if copyErr != nil {
-			var maxBytesErr *http.MaxBytesError
-			if errors.As(copyErr, &maxBytesErr) {
+			if _, ok := errors.AsType[*http.MaxBytesError](copyErr); ok {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusRequestEntityTooLarge)
 				json.NewEncoder(w).Encode(map[string]any{

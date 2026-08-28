@@ -52,8 +52,7 @@ func TestErrorAsThroughWrappedError(t *testing.T) {
 func TestErrorAsReturnsFalseForBareError(t *testing.T) {
 	err := fmt.Errorf("plain error")
 
-	var tErr *Error
-	if errors.As(err, &tErr) {
+	if _, ok := errors.AsType[*Error](err); ok {
 		t.Fatal("errors.As should not match plain error")
 	}
 }

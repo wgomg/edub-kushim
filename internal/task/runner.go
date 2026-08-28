@@ -49,9 +49,8 @@ func (r *Runner) Next(ctx context.Context, taskType string) (err error) {
 
 	if task.Payload == nil {
 		_ = r.store.FailTask(ctx, task.ID, "task has nil payload")
-		var tErr *Error
 		reqID := (*string)(nil)
-		if errors.As(err, &tErr) {
+		if tErr, ok := errors.AsType[*Error](err); ok {
 			reqID = &tErr.ReqID
 		}
 		r.logger.Error(reqID, "task %s has nil payload", task.TaskID)
@@ -72,9 +71,8 @@ func (r *Runner) Next(ctx context.Context, taskType string) (err error) {
 	})
 	if err != nil {
 		_ = r.store.FailTask(ctx, task.ID, err.Error())
-		var tErr *Error
 		reqID := (*string)(nil)
-		if errors.As(err, &tErr) {
+		if tErr, ok := errors.AsType[*Error](err); ok {
 			reqID = &tErr.ReqID
 			if tErr.PauseBatch && task.BatchID.Valid {
 				if pauseErr := r.store.PauseBatch(ctx, task.BatchID.String); pauseErr != nil {
@@ -93,9 +91,8 @@ func (r *Runner) Next(ctx context.Context, taskType string) (err error) {
 		if failErr := r.store.FailTask(ctx, task.ID, failMsg); failErr != nil {
 			return fmt.Errorf("complete task %d (and fail fallback): %v / %w", task.ID, failErr, err)
 		}
-		var tErr *Error
 		reqID := (*string)(nil)
-		if errors.As(err, &tErr) {
+		if tErr, ok := errors.AsType[*Error](err); ok {
 			reqID = &tErr.ReqID
 		}
 		r.logger.Error(reqID, "task %s completed handler but CompleteTask failed after retries — task failed instead of stuck", task.TaskID)

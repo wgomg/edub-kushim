@@ -901,6 +901,49 @@ not found) return `200` with a `failed` array:
 In replace mode, the clear-and-add sequence runs inside a database transaction per document,
 so a mid-operation failure rolls back all tag changes for that specific document.
 
+### Batch Set Document Type
+
+Sets the document type of multiple documents in a single request. The type is applied to all
+documents in one atomic `UPDATE` (single round trip).
+
+```
+POST /api/v1/documents/batch-type
+Content-Type: application/json
+
+{
+  "document_ids": ["uuid1", "uuid2"],
+  "document_type_id": 2
+}
+```
+
+| Field              | Type       | Required | Description                          |
+| ------------------ | ---------- | -------- | ------------------------------------ |
+| `document_ids`     | `string[]` | yes      | UUIDs of documents to update         |
+| `document_type_id` | `int`      | yes      | Document type ID to assign           |
+
+Validation:
+
+| Condition                        | Response                                                       |
+| -------------------------------- | -------------------------------------------------------------- |
+| Empty `document_ids`             | `400` — `"document_ids is required"`                           |
+| `document_type_id` < 1           | `400` — `"Invalid document type"`                              |
+| Count exceeds `max_batch_delete` | `400` — `"too many documents, max: <N>"`                       |
+| Non-existent type ID             | `404` — returned immediately, no documents are modified        |
+
+The type is validated before any document is modified. If it does not exist, the entire
+request is rejected and no documents are changed. Partial failures (e.g., a document not
+found) return `200` with a `failed` array:
+
+```json
+{
+  "updated": 1,
+  "failed": [{ "id": "uuid2", "error": "not found" }]
+}
+```
+
+When no documents could be updated (all failed), the response is `400`. Setting the type
+back to `undetermined` (id 1) is allowed.
+
 ### Update Document
 
 ```

@@ -575,8 +575,7 @@ func TestCheckContentTooLarge(t *testing.T) {
 				t.Error("checkContentTooLarge() = nil, want error")
 			}
 			if !tt.wantNil {
-				var ctle *ContentTooLargeError
-				if !errors.As(err, &ctle) {
+				if _, ok := errors.AsType[*ContentTooLargeError](err); !ok {
 					t.Errorf("expected ContentTooLargeError, got %T", err)
 				}
 			}
