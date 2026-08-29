@@ -1104,7 +1104,9 @@ classes consistently with the project's generated class set.
 "test:e2e": "playwright test"
 ```
 
-Node 24 is required (`.npmrc` has `engine-strict=true`); `nvm use` first.
+Node 24 is required (`.npmrc` has `engine-strict=true`); run `nvm use` (`.nvmrc`)
+before any npm/npx command — never the shell's default Node, which rewrites
+`package-lock.json` with its own version-dependent format.
 
 ### Vite (`web/vite.config.js`)
 
@@ -1304,7 +1306,8 @@ main language isn't JS):
   writes, and read it with `$page.url.searchParams` / `page.url.searchParams`.
 - **`gofmt`-equivalent: `npm run format`** (Prettier sorts Tailwind classes
   too) and `npm run lint`.
-- **`nvm use` first** — `engine-strict=true` refuses other Node versions.
+- **`nvm use` before any npm command** — `engine-strict=true` refuses other Node
+  versions, and the shell's default Node rewrites `package-lock.json`.
 
 ### Gotchas that bit people before
 

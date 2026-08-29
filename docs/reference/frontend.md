@@ -2,7 +2,7 @@
 
 ## Structure
 
-Located in `web/`, built via `npm ci && npm run build`, output copied to `internal/static/build/` by `make web-build` for static embedding (via `//go:embed`).
+Located in `web/`, built via `nvm use && npm ci && npm run build`, output copied to `internal/static/build/` by `make web-build` for static embedding (via `//go:embed`).
 
 ## Routes
 

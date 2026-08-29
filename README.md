@@ -227,7 +227,7 @@ New here? Read the [Developer Guides](docs/developer-guide/) first — start wit
 
 - Go 1.26
 - gcc, gcc-c++, make, autotools, git, curl
-- Node.js 24 (use [nvm](https://github.com/nvm-sh/nvm) — `.nvmrc` specifies the version, run `nvm use`)
+- Node.js 24 (use [nvm](https://github.com/nvm-sh/nvm) — `.nvmrc` specifies the version; run `nvm use` before any npm command, never the shell's default Node)
 
 ### Build
 
@@ -292,6 +292,7 @@ For development with live reload:
 
 ```bash
 cd web          # or cd web-wizard
+nvm use         # activate the .nvmrc Node version before any npm command
 npm ci
 npm run dev     # hot-reload at localhost:5173, proxies API to localhost:3000
 ```
