@@ -94,6 +94,8 @@ make test-backup   # backup package, requires PostgreSQL via TEST_DATABASE_URL
 make test-cgo      # CGo-gated tests incl. internal/commands (requires make build-deps first)
 make test-cgo-db   # consumption with CGo + DB (requires make build-deps + TEST_DATABASE_URL)
 make test-one PKG=./internal/errs/   # single package; add RUN=Name to filter
+make test-web      # web/ unit + component tests (vitest, no database)
+make test-web-e2e  # web/ E2E smokes with mocked API (requires `npx playwright install chromium` first)
 make vuln         # govulncheck over the Go vuln DB (CGO_ENABLED=0); CI runs it in the vulncheck job
 make vuln-cgo     # CGo-enabled variant, full call graph (requires make build-deps first)
 ```

@@ -2,8 +2,8 @@
 
 ## Overview
 
-The project has **20+ test packages and 375+ unit/integration tests**, with a two-tier
-run strategy:
+The project has **20+ test packages and 375+ unit/integration tests**, with a three-tier
+run strategy (Go backend + web UI):
 
 - **`make test`** (12 packages, no database required) — LLM registry, config, API types,
   tools runner, utils (text normalization, logging), tagmatch, storage walk, auth tokens,
@@ -13,6 +13,15 @@ run strategy:
   search engine, task system (store/dispatcher/runner/pool), service layer (batch,
   orphaned, errored files, users, enrichment, API keys), API handlers, and consumption
   pipeline.
+- **`make test-web`** (vitest, no database) — 63 unit + component tests across 10 files
+  in `web/`: pure logic (`searchFilter`, `html` utils), stores (`filterStore`,
+  `authStore`, `toastStore`, `confirmStore`), the `api` client (fetch stubbing, auth
+  header, 401 handling), and the logic-dense components (`DataTable`, `FilterPanel`,
+  `UploadModal`). Component tests run under jsdom with `@testing-library/svelte`.
+- **`make test-web-e2e`** (Playwright, no backend) — 4 smoke specs in `web/e2e/`
+  (login, documents list + detail, upload) driven against the static SPA build with a
+  mocked API (`page.route` intercepts `/api|/wizard|/health`); no `edub`/PostgreSQL
+  needed. Requires `npx playwright install chromium` once.
 
 All non-CGo tiers run with `CGO_ENABLED=0` (no Tesseract, MuPDF, or
 Ghostscript required); `make test-cgo` and `make test-cgo-db` run with
@@ -29,15 +38,17 @@ make test-db       # database-dependent tests (requires TEST_DATABASE_URL)
 make test-cgo      # CGo-gated tests (requires make build-deps first)
 make test-cgo-db   # consumption with CGo + DB (requires make build-deps + TEST_DATABASE_URL)
 make test-one PKG=./internal/errs/   # single package; add RUN=Name to filter
+make test-web      # web/ vitest unit + component tests (no database)
+make test-web-e2e  # web/ Playwright smokes with mocked API (requires npx playwright install chromium first)
 make vuln          # govulncheck over the Go vuln DB (CGO_ENABLED=0)
 make vuln-cgo      # CGo-enabled variant, full call graph (requires make build-deps first)
 ```
 
 ### Continuous Integration
 
-`.github/workflows/ci.yml` runs both tiers on every push to `dev`/`master` and every PR to `master`:
+`.github/workflows/ci.yml` runs the Go tiers and the web tests on every push to `dev`/`master` and every PR to `master`:
 
-- `web` job: builds both SPAs (`npm ci && npm run build` in `web/` and `web-wizard/`), stages them with `make stage-web`, and uploads them as the `web-assets` artifact. Staging is required because `internal/static/build` and `internal/wizard/static` are gitignored but embedded via `//go:embed` — a fresh checkout has no assets to compile against.
+- `web` job: lints, runs `npm run test` (vitest), and builds the main SPA (`npm ci && npm run lint && npm run test && npm run build` in `web/`), then runs the E2E smokes (`npx playwright install --with-deps chromium && npm run test:e2e` — the E2E `webServer` builds the SPA itself and serves it with an SPA fallback). Then builds the wizard SPA, stages both with `make stage-web`, and uploads them as the `web-assets` artifact. Staging is required because `internal/static/build` and `internal/wizard/static` are gitignored but embedded via `//go:embed` — a fresh checkout has no assets to compile against.
 - `test` job (depends on `web`): downloads `web-assets`, stages it with `make stage-web-artifact`, then runs `make test` and `make test-db` against a postgres:17 service container (`TEST_DATABASE_URL` pointing at `localhost:5432`).
 - `test-cgo` job (depends on `web`): installs the C build prerequisites, builds the C libraries with `make build-deps TOKENIZERS_ARCH=amd64` (cached under `build/` keyed by `hashFiles('Makefile')`), then runs `make test-cgo` and `make test-cgo-db` against the same postgres:17 service container. This surfaces the CGo-only packages (`internal/commands`, consumption under CGo) on every push/PR.
 - `vulncheck` job (depends on `web`): stages the `web-assets` artifact, installs govulncheck (pinned `@v1.7.0`), and runs `make vuln`. Like `make test`, it runs with `CGO_ENABLED=0`, so the CGo-gated packages (`cmd/kushim`, `internal/commands`) are excluded from the CI scan; `make vuln-cgo` covers them locally.
@@ -169,6 +180,8 @@ from `crypto/x509` root cert loading in the Go standard library.
 ```bash
 make test          # CGO_ENABLED=0, 12 packages, 60s timeout (no DB needed)
 make test-verbose  # same with -v output
+make test-web      # web/ vitest unit + component tests (no database)
+make test-web-e2e  # web/ Playwright smokes with mocked API (requires npx playwright install chromium)
 ```
 
 The Makefile explicitly sets `CGO_ENABLED=0` for test targets, overriding the
@@ -248,6 +261,46 @@ make test-one PKG=./internal/database/ RUN=TestTaskLifecycle
 # CGo-gated package (requires make build-deps first)
 make test-cgo
 ```
+
+### Web UI tests (`make test-web` / `make test-web-e2e`)
+
+**`make test-web`** runs Vitest over two projects defined in `web/vite.config.js`
+(`test.projects`, both `extends: true` so they inherit the `sveltekit()` plugin —
+which resolves `$app/*` modules — and the `child_process`/`url` stub aliases):
+
+- `unit` (node env) — pure logic and runes stores: `searchFilter.js` (tokenizer,
+  query-string parser, size/date parsing, serialize round-trip), `utils/html.js`
+  (escaping, size/duration/relative formatting), `filterStore.js`, `toastStore.svelte.js`,
+  `confirmStore.svelte.js`.
+- `components` (jsdom + `svelteTesting()` from `@testing-library/svelte/vite` for
+  auto-cleanup) — `authStore.js` and `api.js` (both touch `localStorage` at import
+  time, so they need the DOM), plus the component tests: `DataTable.svelte` (rows,
+  sort refetch, empty/error states), `FilterPanel.svelte` (filter-store wiring,
+  tag autocomplete, failure toast), `UploadModal.svelte` (upload success/error paths).
+
+Test files are co-located next to their sources as `*.test.js` (mirroring Go's
+`_test.go` convention) and import `describe/it/expect/vi` explicitly — no globals,
+so `eslint.config.js` needed no changes. Mocking conventions:
+
+- `$app/*` modules are mocked with `vi.mock` where a unit imports them (`$app/navigation`
+  `goto`, `$app/paths` `resolve`, `$app/state` `page`).
+- `$lib/api` is mocked with `vi.hoisted` factories in component tests (`FilterPanel`,
+  `UploadModal`) so no network calls escape.
+- `api.test.js` stubs the global `fetch` (`vi.stubGlobal`) and asserts the Bearer
+  header, 401 → logout + redirect, null propagation, `requestRaw` shape, and the
+  `supportedMimeTypes` cache.
+
+**`make test-web-e2e`** runs Playwright against the static SPA build
+(`web/playwright.config.js`): the `webServer` runs `npm run build` and then serves
+`build/` via `web/scripts/serve-static.mjs` — a tiny zero-dependency static server
+that falls back to `index.html` for unknown routes, mirroring adapter-static's
+`fallback` behavior in production (SvelteKit's own `vite preview` cannot be used:
+it runs the SSR server, and `authStore.js`'s import-time `localStorage` access 500s
+every route). The three specs (`e2e/login.spec.js`, `documents.spec.js`,
+`upload.spec.js`) share `e2e/helpers.js`, which seeds `localStorage` auth via
+`addInitScript` and installs `page.route` mocks for `/api|/wizard|/health` returning
+minimal realistic payloads matching `web/src/lib/api.js` expectations. First run
+requires `npx playwright install chromium` (CI uses `--with-deps`).
 
 ### Vulnerability scanning (`make vuln` / `make vuln-cgo`)
 

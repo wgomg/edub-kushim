@@ -18,9 +18,12 @@ jobs:
           cache-dependency-path: |
             web/package-lock.json
             web-wizard/package-lock.json
-      - name: Lint and build main SPA
+      - name: Lint, test and build main SPA
         working-directory: web
-        run: npm ci && npm run lint && npm run build
+        run: npm ci && npm run lint && npm run test && npm run build
+      - name: Run main SPA E2E tests (mocked API)
+        working-directory: web
+        run: npx playwright install --with-deps chromium && npm run test:e2e
       - name: Lint and build wizard SPA
         working-directory: web-wizard
         run: npm ci && npm run lint && npm run build

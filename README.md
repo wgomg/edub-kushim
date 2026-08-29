@@ -264,6 +264,12 @@ make test-cgo-musl     # podman: kushim-musl-builder
 # Consumption with CGo + DB (requires make build-deps + TEST_DATABASE_URL)
 make test-cgo-db
 
+# Web UI tests (vitest unit + component tests, no database)
+make test-web
+
+# Web UI E2E smokes with mocked API (requires npx playwright install chromium first)
+make test-web-e2e
+
 # Vulnerability scan (govulncheck over the Go vuln DB)
 make vuln          # CGO_ENABLED=0, no C toolchain needed
 make vuln-cgo      # full call graph incl. gosseract/hugot adapters (requires make build-deps first)
@@ -272,7 +278,8 @@ make vuln-cgo      # full call graph incl. gosseract/hugot adapters (requires ma
 **Note:** bare `go test` is not supported — the Makefile targets set the `-tags "XLA,ORT"`
  tags and the CGo environment that bare invocations miss. Always use `make test`,
  `make test-verbose`, `make test-db`, `make test-backup`, `make test-cgo` (host,
- requires `make build-deps` first), `make test-cgo-db`, or the container variants.
+ requires `make build-deps` first), `make test-cgo-db`, `make test-web`,
+ `make test-web-e2e`, or the container variants.
 
 ### Web UI (hot-reload)
 

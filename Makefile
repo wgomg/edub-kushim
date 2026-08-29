@@ -301,6 +301,17 @@ test-cgo-db:
 test-one:
 	CGO_ENABLED=0 go test -tags "XLA,ORT" -count=1 -timeout 60s -v -run "$(RUN)" $(PKG)
 
+# Web UI tests (vitest, unit + components) — no database or CGo needed.
+.PHONY: test-web
+test-web:
+	cd web && npm run test
+
+# Web UI E2E smokes against the static build with a mocked API.
+# Requires `npx playwright install chromium` once (see AGENTS.md).
+.PHONY: test-web-e2e
+test-web-e2e:
+	cd web && npm run test:e2e
+
 # CGo-dependent tests (requires C toolchain + built C libraries on host,
 # or run via test-cgo-glibc / test-cgo-musl in the container images).
 .PHONY: test-cgo test-cgo-glibc test-cgo-musl

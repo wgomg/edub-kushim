@@ -1098,7 +1098,10 @@ classes consistently with the project's generated class set.
 "preview": "vite preview",
 "prepare": "svelte-kit sync || echo ''",
 "lint": "prettier --check . && eslint .",
-"format": "prettier --write ."
+"format": "prettier --write .",
+"test": "vitest run",
+"test:watch": "vitest",
+"test:e2e": "playwright test"
 ```
 
 Node 24 is required (`.npmrc` has `engine-strict=true`); `nvm use` first.
@@ -1123,6 +1126,31 @@ conflicting rules), `.gitignore` honored via `includeIgnoreFile`, browser+node
 globals, and the Svelte parser gets the project config. Prettier: tabs, single
 quotes, no trailing commas, 100 cols, with the svelte and tailwind plugins
 (`.prettierrc`).
+
+### Testing
+
+Vitest + `@testing-library/svelte` + Playwright, wired through the Makefile
+(`make test-web`, `make test-web-e2e`). Full details in
+[docs/reference/tests.md](../reference/tests.md).
+
+- **Two vitest projects** in `web/vite.config.js` (`test.projects`, both
+  `extends: true` so they inherit the `sveltekit()` plugin — which resolves
+  `$app/*` — and the stub aliases): `unit` (node env) for pure logic + runes
+  stores, `components` (jsdom + `svelteTesting()` from
+  `@testing-library/svelte/vite` for auto-cleanup) for anything touching
+  `localStorage` (`authStore.js`, `api.js`) and for component tests.
+- **Co-located `*.test.js` files** (mirrors Go's `_test.go`), explicit
+  `import { describe, it, expect, vi } from 'vitest'` — no globals, so the
+  eslint config is untouched.
+- **Mocking conventions**: `$app/navigation`/`$app/paths`/`$app/state` via
+  `vi.mock`; `$lib/api` via `vi.hoisted` factories in component tests; global
+  `fetch` via `vi.stubGlobal` in `api.test.js`.
+- **E2E** (`web/e2e/`): Playwright drives the static build served by
+  `scripts/serve-static.mjs` (SPA fallback to `index.html` — `vite preview`
+  can't be used because it runs the SSR server, which 500s on
+  `authStore.js`'s import-time `localStorage` access). `e2e/helpers.js`
+  seeds auth into `localStorage` and mocks `/api|/wizard|/health` with
+  `page.route`. Requires `npx playwright install chromium` once.
 
 ### How the pieces meet the backend
 
