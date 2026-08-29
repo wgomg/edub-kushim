@@ -152,7 +152,7 @@ Builds a SELECT query dynamically:
 - If `filter.Query` is non-empty: adds `WHERE d.text_search_vector @@ plainto_tsquery('simple', $N)`, `ts_rank()` for rank, `ts_headline()` for highlighting
 - Applies tag subquery (`document_tag JOIN tag`), people subqueries (`document_people JOIN people JOIN people_type`, or `document_people JOIN people` name-only when `type == "person"`), document type subquery, language equality, date ranges, file size ranges
 - Applies missing filters (`MissingLanguage` → `d.language IN ('und','')`, `MissingType` → `d.document_type_id = 1`, `Untagged` → `NOT EXISTS` subquery on `document_tag`)
-- When query is present: ordered by `rank`; otherwise ordered by `sort_by`/`sort_order` (whitelisted: `title`, `file_size`, `created_at`)
+- When query is present: ordered by `rank`; otherwise ordered by `sort_by`/`sort_order` (whitelisted: `title`, `file_size`, `created_at`, `page_count`)
 - Uses `LIMIT $N OFFSET $N` for pagination
 
 #### `CountDocumentsStructured(ctx, filter) (int64, error)`

@@ -89,12 +89,17 @@
 				sortable: false,
 				cell: (v) => {
 					if (!v || v.length === 0) return '<span class="text-parchment-500 italic">—</span>';
-					return v
+					const shown = v.slice(0, 3);
+					const pills = shown
 						.map(
 							(t) =>
 								`<span class="inline-block rounded-full bg-clay-800 px-2 py-0.5 text-xs text-parchment-300">${escapeHtml(t.name)}</span>`
 						)
 						.join(' ');
+					const extra = v.length - shown.length;
+					return extra > 0
+						? `${pills} <span class="inline-block rounded-full bg-clay-800 px-2 py-0.5 text-xs text-parchment-400">(+${extra})</span>`
+						: pills;
 				},
 				minWidth: '200px'
 			},
@@ -111,13 +116,25 @@
 						grouped[type].push(escapeHtml(p.name));
 					}
 					return Object.entries(grouped)
-						.map(
-							([type, names]) =>
-								`<span class="text-parchment-400 text-xs">${escapeHtml(type)}:</span> <span class="text-parchment-200">${names.join(', ')}</span>`
-						)
+						.map(([type, names]) => {
+							const shown = names.slice(0, 3);
+							const extra = names.length - shown.length;
+							const badge =
+								extra > 0 ? ` <span class="text-parchment-400 text-xs">(+${extra})</span>` : '';
+							return `<span class="text-parchment-400 text-xs">${escapeHtml(type)}:</span> <span class="text-parchment-200">${shown.join(', ')}</span>${badge}`;
+						})
 						.join('<br>');
 				},
 				minWidth: '250px'
+			},
+			{
+				key: 'page_count',
+				label: 'Pages',
+				sortable: true,
+				cell: (v) =>
+					v != null && v > 0 ? String(v) : '<span class="text-parchment-500 italic">—</span>',
+				cellClass: 'tabular-nums',
+				minWidth: '70px'
 			},
 			{
 				key: 'file_size',
@@ -408,12 +425,13 @@
 					</button>
 					{#if showTagPicker}
 						<div
-							class="absolute top-full left-0 z-30 mt-1 w-72 rounded-lg border border-clay-800 bg-clay-950 shadow-xl"
+							class="absolute top-full left-0 z-30 mt-1 w-72 overscroll-contain rounded-lg border border-clay-800 bg-clay-950 shadow-xl"
 						>
 							<div class="p-3">
 								<input
 									type="text"
 									name="tag-search"
+									autocomplete="off"
 									placeholder="Search tags…"
 									oninput={onTagSearchInput}
 									class="mb-2 w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
@@ -454,7 +472,7 @@
 													{tag.name}
 													<button
 														onclick={() => (batchTagIds = batchTagIds.filter((t) => t !== tid))}
-														class="text-parchment-500 hover:text-parchment-200"
+														class="rounded text-parchment-500 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 														aria-label={`Remove tag ${tag.name}`}>&times;</button
 													>
 												</span>
@@ -508,7 +526,7 @@
 					</button>
 					{#if showTypePicker}
 						<div
-							class="absolute top-full left-0 z-30 mt-1 w-64 rounded-lg border border-clay-800 bg-clay-950 shadow-xl"
+							class="absolute top-full left-0 z-30 mt-1 w-64 overscroll-contain rounded-lg border border-clay-800 bg-clay-950 shadow-xl"
 						>
 							<div class="p-3">
 								<select
@@ -534,7 +552,7 @@
 				</div>
 			{/if}
 		{/if}
-		<div class="relative flex-1">
+		<div class="relative min-w-0 flex-1">
 			<SearchBar
 				query={filter.query}
 				tags={filter.tags}
@@ -597,7 +615,7 @@
 			</button>
 			{#if showSaved}
 				<div
-					class="absolute top-full right-0 z-30 mt-1 w-72 rounded-lg border border-clay-800 bg-clay-950 shadow-xl"
+					class="absolute top-full right-0 z-30 mt-1 w-72 overscroll-contain rounded-lg border border-clay-800 bg-clay-950 shadow-xl"
 				>
 					<div class="max-h-64 overflow-y-auto p-2">
 						{#if savedSearches.length === 0}
@@ -647,6 +665,7 @@
 						id="save-search-name"
 						name="save-search-name"
 						autocomplete="off"
+						spellcheck={false}
 						bind:value={saveName}
 						placeholder="e.g. Invoices from Q1…"
 						class="mb-2 w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"

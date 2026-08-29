@@ -755,6 +755,56 @@ func TestStructuredSearchMissingFilters(t *testing.T) {
 
 }
 
+func TestStructuredSearchSortByPageCount(t *testing.T) {
+	q, db := NewTestQueries(t)
+	defer db.Close()
+	resetDB(t, q)
+	ctx := context.Background()
+
+	createDoc := func(uuid string, pages int32) {
+		t.Helper()
+		_, err := q.CreateDocument(ctx, CreateDocumentParams{
+			DocumentID: uuid, Title: uuid + ".pdf",
+			Md5Checksum: "md5-" + uuid, Sha512Checksum: "sha512-" + uuid,
+			OriginalType: "application/pdf", FileSize: 100,
+			OriginalPath: "/tmp/" + uuid + ".pdf", StoragePath: "/tmp/s-" + uuid + ".pdf",
+			PageCount: pages, WordCount: 1, CharCount: 5, Language: "eng",
+		})
+		assertNoError(t, err, "create "+uuid)
+	}
+
+	createDoc("pc-1", 3)
+	createDoc("pc-2", 1)
+	createDoc("pc-3", 7)
+
+	t.Run("asc returns smallest page count first", func(t *testing.T) {
+		results, err := q.SearchDocumentsStructured(ctx, SearchFilter{
+			Limit: 10, SortBy: "page_count", SortOrder: "asc",
+		})
+		assertNoError(t, err, "search asc")
+		assertEqual(t, len(results), 3, "three results")
+		assertEqual(t, results[0].PageCount, int64(1), "first is smallest")
+		assertEqual(t, results[2].PageCount, int64(7), "last is largest")
+	})
+
+	t.Run("desc returns largest page count first", func(t *testing.T) {
+		results, err := q.SearchDocumentsStructured(ctx, SearchFilter{
+			Limit: 10, SortBy: "page_count", SortOrder: "desc",
+		})
+		assertNoError(t, err, "search desc")
+		assertEqual(t, results[0].PageCount, int64(7), "first is largest")
+		assertEqual(t, results[2].PageCount, int64(1), "last is smallest")
+	})
+
+	t.Run("unknown sort key falls back to default ordering", func(t *testing.T) {
+		results, err := q.SearchDocumentsStructured(ctx, SearchFilter{
+			Limit: 10, SortBy: "not_a_column", SortOrder: "desc",
+		})
+		assertNoError(t, err, "search unknown key")
+		assertEqual(t, len(results), 3, "three results despite unknown key")
+	})
+}
+
 func TestStructuredSearchPeopleFilter(t *testing.T) {
 	q, db := NewTestQueries(t)
 	defer db.Close()

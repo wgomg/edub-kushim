@@ -184,7 +184,7 @@ func (q *Queries) SearchDocumentsStructured(ctx context.Context, filter SearchFi
 		sortCol := "created_at"
 		sortDir := "DESC"
 		switch filter.SortBy {
-		case "title", "file_size", "created_at":
+		case "title", "file_size", "created_at", "page_count":
 			sortCol = filter.SortBy
 		}
 		if strings.EqualFold(filter.SortOrder, "asc") {
