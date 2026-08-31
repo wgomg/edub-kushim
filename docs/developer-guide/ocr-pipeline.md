@@ -109,6 +109,7 @@ cmd := exec.CommandContext(ctx, os.Args[0], "internal-ocr",
 	"--datadir", o.dataDir,
 	"--ocr-workers", strconv.Itoa(o.ocrWorkers),
 )
+cmd.Env = append(os.Environ(), "OMP_THREAD_LIMIT=1")
 ```
 
 `os.Args[0]` is the running `kushim` binary; `cmd/kushim/main.go`

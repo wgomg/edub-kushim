@@ -14,7 +14,7 @@
   - `ReclaimConfig`: `Enabled bool`, `MaxRetries int` (default 3), `StaleTaskAfter int64` (default 600s)
    - `TextExtractorConfig`: `Engine string`, `Timeout int` (0 = disabled, no artificial deadline)
    - `PdfOptimizerConfig`: `Engine string`, `Fallback string`, `Timeout int` (0 = disabled)
-   - `OCRConfig`: `Engine string`, `Languages []string`, `DataDir string`, `Timeout int` (0 = disabled), `OcrWorkers int` (0 = auto, resolves to `runtime.NumCPU()` in the subprocess)
+   - `OCRConfig`: `Engine string`, `Languages []string`, `DataDir string`, `Timeout int` (0 = disabled), `OcrWorkers int` (0 = auto, resolved by the parent runner to `max(1, NumCPU / (max_concurrent_batches × consumer.workers))`)
 - `EnricherConfig`: `Workers int`, `TextReducer TextReducerConfig`, `ContentAnalyzer ContentAnalyzerConfig`, `TagMatcher TagMatcherConfig`
    - `TextReducerConfig`: `Engine string`, `Timeout int` (0 = disabled), `TargetWords int`
   - `ContentAnalyzerConfig`: `Enabled bool` (default `false`), `Timeout int`, `Llm LlmConfig`, `Fallbacks []FallbackConfig` (empty = absent/disabled), `PromptTemplate string`, `DocTypeRefinement DocTypeRefinementConfig`

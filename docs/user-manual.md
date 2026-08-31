@@ -2205,7 +2205,7 @@ consumer:
     engine: 'gosseract' # gosseract | ocrmypdf
     languages: [eng] # required — set via kushim setup --languages
     timeout: 120
-    # ocr_workers: 0  # parallel OCR goroutines; 0 = auto (CPU count)
+    # ocr_workers: 0  # parallel OCR goroutines per document; 0 = auto (CPU count / (max_concurrent_batches × consumer.workers))
   thumbnail:
     enabled: true  # generate per-document thumbnails (grid view)
     engine: 'mupdf' # mupdf (only implemented engine)
@@ -2381,8 +2381,7 @@ to:
 - **Page complexity** — dense text, tables, mixed scripts, and small font
   sizes increase Tesseract time.
 - **Languages enabled** — each additional language adds lookup time.
-- **CPU cores** — controlled by `ocr_workers`. More workers reduce wall-clock
-  time for multi-page documents but increase per-page overhead.
+- **CPU cores** — the machine-wide budget is `ocr_workers ≈ cores / (max_concurrent_batches × consumer.workers)`; each concurrent batch runs its own `internal-ocr` child with that many page workers. A small pool (2–4) is usually sufficient because the MuPDF render loop is a sequential producer (sub-second render vs 3–10s OCR per page).
 
 A single typical page with one language completes in 3–10s on modern hardware.
 At the default 120s, the cap is roughly 12–40 pages depending on complexity.

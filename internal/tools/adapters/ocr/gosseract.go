@@ -72,6 +72,9 @@ func (o *Gosseract) Process(ctx context.Context, docId, path string) (*string, e
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
+	// Parallelism comes from the page-worker pool, not intra-Tesseract OpenMP threads
+	cmd.Env = append(os.Environ(), "OMP_THREAD_LIMIT=1")
+
 	if err := cmd.Start(); err != nil {
 		os.Remove(outPath)
 		return nil, fmt.Errorf("start OCR subprocess: %w", err)

@@ -303,7 +303,7 @@ Calls `suppressLeptonicaStderr()` at the top of the function to suppress Leptoni
 <table>
 <thead><tr><th>CLI flag</th><th>Config key</th><th>Description</th></tr></thead>
 <tbody>
-<tr><td><code>--ocr-workers</code></td><td><code>consumer.ocr.ocr_workers</code></td><td>Parallel OCR goroutine count; 0 = auto (CPU count), max is capped at <code>min(workers, pages, CPU*2)</code></td></tr>
+<tr><td><code>--ocr-workers</code></td><td><code>consumer.ocr.ocr_workers</code></td><td>Parallel OCR goroutine count; 0 = auto, resolved in the parent to <code>max(1, NumCPU / (max_concurrent_batches × consumer.workers))</code>, max is capped at <code>min(workers, pages, CPU*2)</code>; the child runs with <code>OMP_THREAD_LIMIT=1</code> so Tesseract adds no extra threads</td></tr>
 </tbody>
 </table>
 
