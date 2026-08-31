@@ -1,10 +1,10 @@
 # Developer Guide — The SvelteKit of edub-kushim
 
-This guide explains the JavaScript/Svelte/SvelteKit features used across the two
-frontends — `web/` (the main UI) and `web-wizard/` (the setup wizard) — and how
-they are used *here*, with real snippets and file references. It is aimed at
-developers who know how to program but are new to Svelte (or Svelte 5's runes
-model) and need to get productive in this repository fast.
+This guide explains how the two frontends — `web/` (the main UI) and
+`web-wizard/` (the setup wizard) — use Svelte 5, SvelteKit, and Tailwind, with
+real snippets and file references. It is aimed at developers familiar with the
+language and framework, new to this codebase, who need to get productive fast —
+it does not teach Svelte or JavaScript.
 
 It complements the other docs:
 
@@ -15,7 +15,7 @@ It complements the other docs:
 | `postgresql.md` | The PostgreSQL features behind the schema and queries |
 | `semantic-matching.md`, `algorithms.md`, `cgo.md`, `ocr-pipeline.md`, `task-system.md`, `llm.md` | Topic deep dives (embeddings, TextRank, C wrappers, OCR, task semantics, LLM integration) |
 | `user-manual.md` | How the product behaves for end users |
-| **`frontend.md` (this)** | *How Svelte/SvelteKit/JS itself is used here* |
+| **`frontend.md` (this)** | *How Svelte/SvelteKit are used here* |
 
 Everything here describes code that exists today. If a snippet looks wrong,
 trust the code, not the doc.
@@ -25,11 +25,11 @@ trust the code, not the doc.
 ## Table of contents
 
 1. [Codebase map](#1-codebase-map)
-2. [Orientation in ten ideas](#2-orientation-in-ten-ideas)
+2. [Orientation](#2-orientation)
 3. [SvelteKit project structure](#3-sveltekit-project-structure)
-4. [Svelte 5 reactivity: the runes](#4-svelte-5-reactivity-the-runes)
-5. [Components: props, children, events](#5-components-props-children-events)
-6. [Template syntax](#6-template-syntax)
+4. [Svelte 5 reactivity: codebase patterns](#4-svelte-5-reactivity-codebase-patterns)
+5. [Components: conventions](#5-components-conventions)
+6. [Template syntax: conventions](#6-template-syntax-conventions)
 7. [Stores: three eras](#7-stores-three-eras)
 8. [The API layer](#8-the-api-layer)
 9. [Data fetching in pages](#9-data-fetching-in-pages)
@@ -40,9 +40,8 @@ trust the code, not the doc.
 14. [The design system: Tailwind v4](#14-the-design-system-tailwind-v4)
 15. [Build and tooling](#15-build-and-tooling)
 16. [The setup wizard](#16-the-setup-wizard)
-17. [JavaScript language features in use](#17-javascript-language-features-in-use)
-18. [Feature → file quick reference](#18-feature--file-quick-reference)
-19. [Idioms checklist and gotchas](#19-idioms-checklist-and-gotchas)
+17. [Feature → file quick reference](#17-feature--file-quick-reference)
+18. [Idioms checklist and gotchas](#18-idioms-checklist-and-gotchas)
 
 ---
 
@@ -99,103 +98,77 @@ the SPA output is missing — CI stages it with `make stage-web`).
 
 ---
 
-## 2. Orientation in ten ideas
+## 2. Orientation
 
-1. **A `.svelte` file is a component.** One file = script + markup (+ optional
-   styles). Svelte compiles it at build time; there is no virtual DOM.
-2. **Reactivity is language-level, not library-level.** In Svelte 5 the compiler
-   understands `$state`, `$derived`, `$props`, `$effect` — you write plain
-   JavaScript and the compiler instruments it. No hooks, no dependency arrays.
-3. **Runes are the only style used here.** No legacy Svelte 4 syntax exists in
-   this codebase: no `$:` labels, no `on:` directives, no `<slot>`. Grep
-   confirms zero. If you know Svelte 4, translate: `let x = 0` + `$:` →
-   `let x = $state(0)` + `$derived`; `on:click` → `onclick` prop; `<slot>` →
-   `{@render children()}`.
-4. **This is SPA mode.** Every route serves `index.html`; routing happens
+The stances that shape every page:
+
+1. **Runes are the only style used here.** No legacy Svelte 4 syntax exists in
+   this codebase: no `$:` labels, no `on:` directives, no `<slot>`. If you
+   know Svelte 4, translate: `let x = 0` + `$:` → `let x = $state(0)` +
+   `$derived`; `on:click` → `onclick` prop; `<slot>` → `{@render children()}`.
+2. **This is SPA mode.** Every route serves `index.html`; routing happens
    client-side with `goto()` / `<a href>` and the `$page` store. There are no
    `+page.js` load functions anywhere — pages fetch their own data in
    `onMount` (§9).
-5. **It's plain JavaScript, not TypeScript.** The Svelte and JS files are
-   `.js`/`.svelte`, no type annotations, JSDoc for the few public contracts
-   (e.g. `DataTable.svelte:15`). Readability comes from discipline: one
-   `$props()` destructure per component, small pure helpers in `lib/`.
-6. **Stores come in three flavors that coexist** (§7): plain modules
+3. **It's plain JavaScript, not TypeScript.** `.js`/`.svelte` files, JSDoc for
+   the few public contracts (e.g. `DataTable.svelte:15`). Readability comes
+   from discipline: one `$props()` destructure per component, small pure
+   helpers in `lib/`.
+4. **Stores come in three flavors that coexist** (§7): plain modules
    (`authStore.js` — no reactivity), classic Svelte 4 `writable()` stores
    (`filterStore.js`), and modern module-level `$state` stores
    (`confirmStore.svelte.js`, `toastStore.svelte.js`).
-7. **All styling is Tailwind v4, CSS-first.** There is no `tailwind.config.js`;
+5. **All styling is Tailwind v4, CSS-first.** There is no `tailwind.config.js`;
    the palette is declared with `@theme` in CSS (§14). No scoped `<style>`
    blocks, no transitions — motion is Tailwind classes.
-8. **The API layer centralizes everything** (`lib/api.js`): auth headers,
+6. **The API layer centralizes everything** (`lib/api.js`): auth headers,
    JSON parsing, 401 handling, and the codebase-wide convention that a failed
    request yields `null` (§8).
-9. **Two-way binding is `bind:`** — `bind:value` for inputs, `bind:this` for
-   element references (which are `$state` variables here), `bind:checked` for
-   checkboxes. Callbacks flow down as props; events flow up as `on*` props
-   (§5–§6).
-10. **State that must survive reloads lives in the URL.** Search filters,
-    tabs, pagination, the wizard step — all mirrored into the query string with
-    `replaceState`-style updates (§10).
+7. **State that must survive reloads lives in the URL.** Search filters,
+   tabs, pagination, the wizard step — all mirrored into the query string with
+   `replaceState`-style updates (§10).
 
 ---
 
 ## 3. SvelteKit project structure
 
-SvelteKit is file-based routing. In `web/src/routes/`:
+Conventions on top of the standard file-based routing:
 
-- `+page.svelte` = a page (one per route directory).
-- `+layout.svelte` = a wrapper around all nested pages (there is exactly one
-  layout, at the root; the wizard has one too).
-- `[id]/+page.svelte` = a dynamic route; the param arrives as a **prop** in
-  Svelte 5 (`web/src/routes/documents/[id]/+page.svelte:9`):
+- Dynamic-route params arrive as a **prop** in Svelte 5
+  (`web/src/routes/documents/[id]/+page.svelte:9`):
 
 ```js
 let { params } = $props();
 ```
 
-  and is used directly: `api.documents.get(params.id)` (`:55`).
-
-- `src/app.html` is the HTML shell; `%sveltekit.head%` and `%sveltekit.body%`
-  are where SvelteKit injects markup (`web/src/app.html:8,12`). Per-page head
-  additions use `<svelte:head>` (`+layout.svelte:66` sets the favicon).
-- The `$lib` alias (`src/lib`) is the import path for shared code:
-  `import { api } from '$lib/api'`.
-- Other `$` aliases come from SvelteKit itself:
-  - `$app/navigation` — `goto`, `replaceState` (client-side navigation).
-  - `$app/paths` — `resolve()` — **every** internal link/href goes through
-    `resolve('/documents')` so links respect the app base path (19 uses).
-  - `$app/stores` — `page` as an auto-subscribed store, read as `$page`.
-  - `$app/state` — `page` in runes form, read as a plain object (`page.url`).
-
-Both `$page` (store) and `page` (state) forms are used — see §10.
+  and are used directly: `api.documents.get(params.id)` (`:55`).
+- **No load functions anywhere** (`+page.js`) — pages fetch in `onMount` (§9).
+  This is a deliberate SPA-mode decision, not an oversight.
+- **Every internal link/href goes through `resolve('/documents')`**
+  (`$app/paths`) so links respect the app base path (19 uses).
+- `$app/navigation` (`goto`, `replaceState`) handles client-side navigation;
+  `page` is consumed both as an auto-subscribed store (`$page`) and in runes
+  form (`page.url`) — see §10.
+- Per-page head additions use `<svelte:head>` (`+layout.svelte:66` sets the
+  favicon).
 
 ---
 
-## 4. Svelte 5 reactivity: the runes
+## 4. Svelte 5 reactivity: codebase patterns
 
-Runes are compiler-recognized functions. The four that matter here.
+The runes (`$state`, `$derived`, `$props`, `$effect`) are the whole reactivity
+model; the Svelte 5 docs cover their mechanics. What follows are the patterns
+this codebase actually relies on.
 
-### `$state` — reactive variables
+**"Not yet loaded" state**: `let health = $state();` — no argument, so the
+initial value is `undefined` (`+page.svelte:12`).
 
-Declared like `let x = $state(0)`; assigning to `x` re-renders dependents.
-Component state in this codebase is *all* `$state` (`+layout.svelte:16-19`):
+**DOM references are `$state` too** (with `bind:this`, §6): `let fileInput =
+$state(null)` (`UploadModal.svelte:14`), `let scrollContainer = $state(null)`
+(`logs/+page.svelte:22`).
 
-```js
-let missingTools = $state([]);
-let uploadOpen = $state(false);
-let authEnabled = $state(true);
-let configLoaded = $state(false);
-```
-
-Notable usage patterns:
-
-- **"Not yet loaded" state**: `let health = $state();` — no argument, so the
-  initial value is `undefined` (`+page.svelte:12`).
-- **DOM references are `$state` too** (with `bind:this`, §6): `let fileInput =
-  $state(null)` (`UploadModal.svelte:14`), `let scrollContainer =
-  $state(null)` (`logs/+page.svelte:22`).
-- **Sets are state, but rebuilt, not mutated** (`DataTable.svelte:54`,
-  `logs/+page.svelte:23`):
+**Sets are state, but rebuilt, not mutated** (`DataTable.svelte:54`,
+`logs/+page.svelte:23`):
 
 ```js
 const next = new Set(selectedKeys);   // copy
@@ -204,89 +177,22 @@ else next.add(key);
 selectedKeys = next;                  // reassign
 ```
 
-  (Mutating a `Set` in place isn't tracked; assigning a new one is.)
-- **Whole objects** in one `$state` (the filter form, `FilterPanel.svelte:8`).
-  Deep reactivity means `f.tags.push(t)` *does* trigger updates — the object is
-  proxied recursively. `toastStore` exploits this with `_toasts.push(...)`
-  directly (§7).
+(Mutating a `Set` in place isn't tracked; assigning a new one is.)
 
-### `$derived` — computed values
+**Whole objects in one `$state`** are deeply reactive — the object is proxied
+recursively, so `f.tags.push(t)` *does* trigger updates. `toastStore` exploits
+this with `_toasts.push(...)` directly (§7).
 
-Plain form (an expression):
+**`$derived` forms**: plain expression (`let toasts = $derived(toastStore.toasts)`,
+`Toast.svelte:4`), function form called in the template (`topTypes()`,
+`StoragePanel.svelte:14,154`), and `$derived.by` for statement-heavy
+derivations — the 70-line column builder of the documents page
+(`documents/+page.svelte:27`). A `$derived` is read-only: compute from state,
+never assign to it.
 
-```js
-let toasts = $derived(toastStore.toasts);                      // Toast.svelte:4
-let docColumns = $derived(chunk(recentDocs, 5));               // +page.svelte:62
-```
-
-Function form (when a block body is needed) — note it's **called** in the
-template: `topTypes()` (`StoragePanel.svelte:14,154`):
-
-```js
-const topTypes = $derived(() => {
-	const sorted = [...originalTypeBreakdown].sort(...);
-	// ...
-	return [...top, other];
-});
-```
-
-Block form `$derived.by(() => {...})` for statement-heavy derivations — the
-70-line column builder of the documents page (`documents/+page.svelte:27`):
-
-```js
-let columns = $derived.by(() => {
-	const cols = [...];
-	if (filter.query) { ... }
-	return cols;
-});
-```
-
-A `$derived` is read-only: compute from state, never assign to it.
-
-### `$props()` — component inputs
-
-One destructure at the top of every component (`Modal.svelte:2`):
-
-```js
-let { open, title, onClose, children } = $props();
-```
-
-Defaults make props optional (`SearchBar.svelte:11-20`, `DataTable.svelte:37-52`):
-
-```js
-let {
-	query = '',
-	onSearch = () => {},
-	fileSize = { min: null, max: null }
-} = $props();
-```
-
-There is no `$bindable` in this codebase — child→parent communication is done
-with callback props (`onSearch`, `onClose`, `onRowClick`) instead.
-
-### `$effect` — side effects that follow state
-
-The body re-runs whenever its dependencies change; the returned function is
-the cleanup. Three idioms dominate:
-
-**1. Timers with cleanup** — auto-refresh interval (`+page.svelte:37-49`, same
-shape in `logs/+page.svelte:93-104`):
-
-```js
-$effect(() => {
-	if (refreshInterval) clearInterval(refreshInterval);
-	refreshInterval = null;
-	if (autoRefresh) {
-		refreshInterval = setInterval(() => fetchDashboard(), 10000);
-	}
-	return () => {
-		if (refreshInterval) clearInterval(refreshInterval);
-	};
-});
-```
-
-**2. DOM wiring** — ResizeObserver tied to an element ref
-(`StoragePanel.svelte:40-47`):
+**`$effect` cleanup** — the returned function runs on re-run and teardown;
+used for auto-refresh intervals (`+page.svelte:37-49`) and ResizeObserver
+wiring (`StoragePanel.svelte:40-47`):
 
 ```js
 $effect(() => {
@@ -300,13 +206,9 @@ $effect(() => {
 });
 ```
 
-**3. Redirects and guards** — the layout's auth redirect (§12).
-
-Two refinements worth knowing:
-
-- **`untrack`** breaks the dependency graph so a write inside the effect
-  doesn't retrigger it. DataTable reacts to `refreshKey` changes but must not
-  re-run because `load()` writes state (`DataTable.svelte:151-162`):
+**`untrack`** breaks the dependency graph so a write inside the effect doesn't
+retrigger it. DataTable reacts to `refreshKey` changes but must not re-run
+because `load()` writes state (`DataTable.svelte:151-162`):
 
 ```js
 $effect(() => {
@@ -320,21 +222,18 @@ $effect(() => {
 });
 ```
 
-  (`untrack` is imported from `'svelte'`, `DataTable.svelte:1`.)
-- **One-time init** is done with a guard flag (`if (!initialized) {
-  initialized = true; ... }`, `DataTable.svelte:109-116`) rather than
-  `$effect.pre`.
+**One-time init** is a guard flag (`if (!initialized) { initialized = true;
+... }`, `DataTable.svelte:109-116`) rather than `$effect.pre`.
 
 Not used anywhere here: `$state.raw`, `$inspect`, `$host`, `$effect.pre`,
 named `{@snippet}` declarations.
 
 ---
 
-## 5. Components: props, children, events
+## 5. Components: conventions
 
-### A complete component: `Modal.svelte` (35 lines, in full)
-
-This is the canonical shape of a presentational component here:
+The canonical shape is a *controlled* presentational component — `Modal.svelte`
+is the reference:
 
 ```svelte
 <script>
@@ -342,148 +241,53 @@ This is the canonical shape of a presentational component here:
 </script>
 
 {#if open}
-	<div
-		role="presentation"
-		class="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
-		onclick={onClose}
-	>
-		<div
-			class="mx-4 w-full max-w-md rounded-lg border border-clay-800 bg-clay-950 p-6 shadow-xl"
-			onclick={(e) => e.stopPropagation()}
-			onkeydown={(e) => {
-				if (e.key === 'Escape') onClose();
-			}}
-			role="dialog"
-			aria-modal="true"
-			aria-label={title}
-			tabindex="-1"
-		>
-			<div class="mb-4 flex items-center justify-between">
-				<h2 class="text-lg font-semibold text-parchment-200">{title}</h2>
-				<button onclick={onClose} aria-label="Close dialog" class="...">&times;</button>
-			</div>
+	<div role="presentation" class="fixed inset-0 ..." onclick={onClose}>
+		<div role="dialog" aria-modal="true" aria-label={title} ...>
 			{@render children()}
 		</div>
 	</div>
 {/if}
 ```
 
-Things to notice:
+Conventions to keep:
 
-- **Props**: `open`, `title`, `onClose` — the component is *controlled*; the
-  parent decides visibility and closing. No `bind:this`, no imperative API.
-- **`children`**: in Svelte 5 the content between a component's tags arrives as
-  a `children` prop — a *snippet* — and is rendered with `{@render children()}`
-  (`Modal.svelte:32`). This replaces `<slot>`.
-- **Events are props**: `onclick={onClose}` and inline arrows with `e`
-  (`e.stopPropagation()` so clicks inside the dialog don't hit the backdrop).
-- **Keyboard**: manual `e.key === 'Escape'` check — Svelte 5 removed event
+- **Props**: one `$props()` destructure at the top, with defaults for optional
+  props (`SearchBar.svelte:11-20`, `DataTable.svelte:37-52`). The component is
+  *controlled*: the parent decides visibility and closing. No `bind:this`, no
+  imperative API.
+- **`children`** is a snippet rendered with `{@render children()}` — this
+  replaces `<slot>`.
+- **Events are props**: `onclick={onClose}`, callbacks flow up (`onSearch`,
+  `onClose`, `onRowClick`). There is **no `$bindable`** in this codebase.
+- **Keyboard**: manual `e.key === 'Escape'` checks — Svelte 5 removed event
   modifiers, so there is no `onkeydown|escape`.
-
-### Consuming `Modal`
-
-The provider side is plain markup between the tags
-(`settings/+page.svelte:1810`, `document-types/+page.svelte:161`):
-
-```svelte
-<Modal
-	open={showUserModal}
-	title={editingUser ? 'Edit User' : 'Create User'}
-	onClose={() => (showUserModal = false)}
->
-	<form onsubmit={(e) => { e.preventDefault(); saveUser(); }}>
-		<!-- form fields -->
-	</form>
-</Modal>
-```
-
-The layout renders the page content the same way
-(`+layout.svelte:199`): `{@render children()}`.
-
-### Callback props everywhere
-
-- `SearchBar` emits `onSearch(partial)` (`SearchBar.svelte:33-43`).
-- `DataTable` emits `onselectionchange(rows)` and `onActionClick(e, row)`.
-- Function props may have defaults: `onSearch = () => {}`.
 
 There are **no** class-style components, no `export let` props, no slots, no
 `<script module>` blocks anywhere.
 
 ---
 
-## 6. Template syntax
+## 6. Template syntax: conventions
 
-Svelte templates are HTML plus `{...}` expressions and block tags.
-
-### Blocks
-
-- **`{#if}` / `{:else if}` / `{:else}`** — the universal loading gate
-  (`tasks/[id]/+page.svelte:27`):
-
-```svelte
-{#if loading}
-	...
-{:else if !task}
-	...
-{:else}
-	...
-{/if}
-```
-
-- **`{#each ... as ... (key)}`** — always with a key expression for identity
-  (`Toast.svelte:17`):
-
-```svelte
-{#each toasts as toast (toast.id)}
-```
-
-  With index destructuring for tuple-ish data (`settings/+page.svelte:765`):
-
-```svelte
-{#each Object.entries(hintsForEngine(...)) as [system, cmd], i (i)}
-```
-
-- **`{@const}`** — bind a local inside the template (`ConfirmDialog.svelte:6`):
-
-```svelte
-{@const p = confirmStore.pending}
-```
-
-- **`{@html ...}`** — raw HTML insertion. Used in exactly two places and both
+- **`{@html ...}`** — raw HTML insertion, used in exactly two places and both
   are controlled: DataTable cell renderers (`DataTable.svelte:283-287`) and
-  static icon markup. The contract is documented at the call site —
-  *callers must `escapeHtml` user data first* (§13).
-- **`<svelte:head>`** — per-page head tags (`+layout.svelte:66`).
-- **`<svelte:window>`** — document-level event listener
-  (`tasks/+page.svelte:304`): `<svelte:window onclick={handlePageClick} />` for
-  delegated clicks on `data-*` action buttons.
-
-### Binding
-
-- `bind:value` — form inputs (≈45 sites). Works deep into `$state` objects:
-  `bind:value={cfg.server.host}` (`settings/+page.svelte:448`) and inside
-  `{#each}` loops (`bind:value={w.start}`, `settings/+page.svelte:1019`).
-- `bind:checked` — checkboxes/toggles (`settings/+page.svelte:560`).
-- `bind:this` — element references, stored in `$state`:
-  `bind:this={fileInput}` (`UploadModal.svelte:130`) — then
-  `fileInput?.click()` opens the hidden file picker; `bind:this={chartEl}`
-  (`StoragePanel.svelte:221`) feeds the ResizeObserver.
-- **Uncontrolled inputs** with `oninput` when the value must pass through a
+  static icon markup. The contract is documented at the call site — *callers
+  must `escapeHtml` user data first* (§13).
+- **`<svelte:window>`** — document-level event listener for delegated clicks
+  on `data-*` action buttons (`tasks/+page.svelte:304`).
+- **`bind:` inventory**: `bind:value` for inputs (≈45 sites; works deep into
+  `$state` objects: `bind:value={cfg.server.host}`, `settings/+page.svelte:448`,
+  and inside `{#each}` loops), `bind:checked` for checkboxes
+  (`settings/+page.svelte:560`), `bind:this` for element refs stored in
+  `$state` (§4).
+- **Uncontrolled inputs with `oninput`** when the value must pass through a
   function: `oninput={(e) => updateLanguage(i, e.currentTarget.value)}`
-  (`settings/+page.svelte:844`). And a deliberate hybrid in FilterPanel:
+  (`settings/+page.svelte:844`). A deliberate hybrid in FilterPanel:
   `bind:value={f.documentType}` for display plus `onchange` to push to the
   store (`FilterPanel.svelte:373`).
-
-### Conditional classes
-
-There is no `class:` directive — classes are computed inline:
-
-```svelte
-class="rounded-md px-2 py-1 text-xs ... ${batchTagMode === 'add' ? 'bg-gold-600 text-clay-950' : 'border border-clay-800 ...'}"
-```
-
-(`documents/+page.svelte:264`) — or with a variant map
-(`Toast.svelte:18-21`): `{variantClasses[toast.variant] || variantClasses.info}`.
+- **No `class:` directive** — classes are computed inline with ternaries
+  (`documents/+page.svelte:264`) or a variant map (`Toast.svelte:18-21`:
+  `{variantClasses[toast.variant] || variantClasses.info}`).
 
 ---
 
@@ -766,25 +570,13 @@ mutations (`refreshDoc()`, `documents/[id]/+page.svelte:74-78`).
 
 ### Loading / error / empty states
 
-The canonical three-state chain (`logs/+page.svelte:218-237`) — note that once
-data exists, refresh errors don't blank the UI:
-
-```svelte
-{#if loading && logs.length === 0}
-	<p>Loading…</p>
-{:else if error && logs.length === 0}
-	<p>{error}</p>
-	<button onclick={fetchLogs}>Retry</button>
-{:else if logs.length === 0}
-	<p>No log entries yet</p>
-{:else}
-	...lines...
-{/if}
-```
+The canonical three-state chain (`logs/+page.svelte:218-237`) gates on
+`loading && logs.length === 0` / `error && logs.length === 0` /
+`logs.length === 0` — so once data exists, refresh errors don't blank the UI.
 
 ---
 
-## 10. URL state anything
+## 10. URL state sync
 
 State that should survive reload/share/back-button lives in the query string.
 Three writing styles exist; all read via `$page.url.searchParams` (store form)
@@ -834,18 +626,9 @@ types, languages, and person names intact through the URL round-trip.
 
 ### 3. Plain `history.replaceState` — settings tabs, wizard step
 
-When no SvelteKit navigation is needed (`settings/+page.svelte:23-28`):
-
-```js
-function switchTab(tab) {
-	activeTab = tab;
-	const url = new URL(window.location.href);
-	url.searchParams.set('tab', tab);
-	history.replaceState(null, '', url.pathname + url.search);
-}
-```
-
-The wizard mirrors its step the same way (`web-wizard/+page.svelte:30-34`).
+When no SvelteKit navigation is needed, `switchTab` writes the param directly
+(`settings/+page.svelte:23-28`); the wizard mirrors its step the same way
+(`web-wizard/+page.svelte:30-34`).
 
 Also in play: `page.subscribe(($p) => ...)` for reacting to URL changes
 (`tasks/+page.svelte:234-236` reads `?batch=`), and DataTable's own
@@ -856,42 +639,21 @@ itself (`DataTable.svelte:130-149`).
 
 ## 11. Forms
 
-### Submit handlers
+Submit handlers call `e.preventDefault()` first; the login flow
+(`login/+page.svelte:12-34`) shows the shape: validate → set `loading` → call
+API → branch on result → `goto` in a `finally` that clears `loading`. Two
+dirty-tracking styles exist:
 
-`<form onsubmit={handleSubmit}>` with `e.preventDefault()` as the first line —
-no framework. The login flow (`login/+page.svelte:12-34`) shows the shape:
-validate → set `loading` → call API → branch on result → `goto` in a `finally`
-that clears `loading`.
-
-### Dirty tracking + `beforeunload`
-
-Settings compares JSON snapshots (`settings/+page.svelte:43-62`):
-
-```js
-function snapshotState() {
-	originalCfg = JSON.stringify(cfg);
-	originalMimeOptions = JSON.stringify(mimeTypeOptions);
-}
-
-function isConfigDirty() {
-	if (!cfg) return false;
-	return (
-		JSON.stringify(cfg) !== originalCfg ||
-		JSON.stringify(mimeTypeOptions) !== originalMimeOptions
-	);
-}
-```
-
-registered in `onMount` with proper cleanup
-(`settings/+page.svelte:130-131`):
+**JSON snapshots + `beforeunload`** (`settings/+page.svelte:43-62`) — compare
+`JSON.stringify(cfg)` against an original captured at load, registered in
+`onMount` with proper cleanup (`:130-131`):
 
 ```js
 window.addEventListener('beforeunload', handleBeforeUnload);
 return () => window.removeEventListener('beforeunload', handleBeforeUnload);
 ```
 
-The document detail page does the same with a **`$derived`** dirty flag instead
-(`documents/[id]/+page.svelte:31-36`):
+**A `$derived` dirty flag** (`documents/[id]/+page.svelte:31-36`):
 
 ```js
 let dirty = $derived(
@@ -902,9 +664,7 @@ let dirty = $derived(
 );
 ```
 
-### Validation
-
-Manual per-field `$state` error strings (wizard admin form,
+Validation is manual per-field `$state` error strings (wizard admin form,
 `web-wizard/+page.svelte:222-245`), supplemented by HTML constraints
 (`minlength`, `pattern` — `settings/+page.svelte:1021-1024`). Inline list
 editing uses immutable array replacement (`settings/+page.svelte:154-174`).
@@ -1034,13 +794,11 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 
 ## 14. The design system: Tailwind v4
 
-Tailwind v4 is **CSS-first**: no `tailwind.config.js`. The entry is
-`web/src/routes/layout.css`, imported by the layout (`+layout.svelte:2`):
+The entry is `web/src/routes/layout.css`, imported by the layout
+(`+layout.svelte:2`): `@import 'tailwindcss'`, the forms plugin, and the
+palette declared with `@theme`:
 
 ```css
-@import 'tailwindcss';
-@plugin '@tailwindcss/forms';
-
 @theme {
 	--color-clay-950: #1a1512;
 	--color-clay-900: #2a221d;
@@ -1050,21 +808,9 @@ Tailwind v4 is **CSS-first**: no `tailwind.config.js`. The entry is
 	--color-terracotta-500: #b84a3a;
 	/* full 11-shade scales for clay, gold, lapis, parchment, terracotta */
 }
-
-@layer base {
-	:root {
-		color-scheme: dark;
-	}
-	body {
-		touch-action: manipulation;
-		-webkit-tap-highlight-color: transparent;
-	}
-}
 ```
 
-Each `--color-*` token becomes a utility automatically: `bg-clay-950`,
-`text-gold-500`, `border-clay-800`, with opacity modifiers like
-`bg-lapis-500/20`. The semantic roles:
+Semantic roles:
 
 | Token family | Role |
 |---|---|
@@ -1090,23 +836,9 @@ classes consistently with the project's generated class set.
 
 ## 15. Build and tooling
 
-### Scripts (`web/package.json:6-13`)
-
-```json
-"dev": "vite dev",
-"build": "vite build",
-"preview": "vite preview",
-"prepare": "svelte-kit sync || echo ''",
-"lint": "prettier --check . && eslint .",
-"format": "prettier --write .",
-"test": "vitest run",
-"test:watch": "vitest",
-"test:e2e": "playwright test"
-```
-
-Node 24 is required (`.npmrc` has `engine-strict=true`); run `nvm use` (`.nvmrc`)
-before any npm/npx command — never the shell's default Node, which rewrites
-`package-lock.json` with its own version-dependent format.
+**Node 24 is required** (`.npmrc` has `engine-strict=true`); run `nvm use`
+(`.nvmrc`) before any npm/npx command — never the shell's default Node, which
+rewrites `package-lock.json` with its own version-dependent format.
 
 ### Vite (`web/vite.config.js`)
 
@@ -1223,44 +955,7 @@ dotted-map pattern (`settings/+page.svelte:176-261`).
 
 ---
 
-## 17. JavaScript language features in use
-
-A quick tour of the JS features you'll meet constantly (aimed at people whose
-main language isn't JS):
-
-- **ES modules**: `import ... from '...'` / `export` — the only module system
-  (`"type": "module"` in package.json). The `$lib`, `$app/*` aliases are
-  SvelteKit conveniences on top.
-- **Destructuring**: `let { open, title, onClose, children } = $props()`;
-  array destructuring with rest: `[health, recentDocs, dashboard] =
-  await Promise.all([...])`; parameter destructuring:
-  `function push({ variant = 'info', message })`.
-- **Default values** in destructuring and function params: `onSearch = () => {}`.
-- **Optional chaining** `?.` and **nullish coalescing** `??`:
-  `getRole() { return _user?.role ?? ''; }`, `cfg?.available_file_types`,
-  `data ?? []` — used everywhere instead of `&&`/`||` for defaults.
-- **Template literals**: backtick strings with `${}` interpolation — URLs,
-  query strings, HTML cells: `` resolve(`/documents/${row.id}`) ``.
-- **Arrow functions**: `(f) => ({ ...f, ...partial })` — object shorthand
-  `{ title, message, danger, resolve }` is `{ title: title, ... }`.
-- **Promises / async-await**: every page does `await api.xxx()`; `Promise.all`
-  for parallelism; `new Promise((resolve) => ...)` in confirmStore.
-- **Sets**: `new Set()` for selection state, rebuilt immutably (§4).
-- **Spread**: `{ ...f, ...partial }` (object merge), `[...originalTypeBreakdown]`
-  (copy), `{ ...opts, headers }`.
-- **Array methods** do the heavy lifting: `map`, `filter`, `find`, `some`,
-  `reduce`, `flatMap`, `sort((a, b) => ...)`, `slice`, `includes`.
-- **`Object.freeze`** for shared constants (`defaultFilter`), `Object.entries`
-  for map-like iteration in templates.
-- **`localStorage`** for session persistence (`authStore`), `URLSearchParams`
-  for query-string work, `AbortController` for request cancellation, `fetch`
-  for all HTTP.
-- **JSDoc** for public contracts (`@type`, `@typedef`) — the project's
-  type-documentation of choice.
-
----
-
-## 18. Feature → file quick reference
+## 17. Feature → file quick reference
 
 | I want to see... | Go to |
 |---|---|
@@ -1286,7 +981,7 @@ main language isn't JS):
 
 ---
 
-## 19. Idioms checklist and gotchas
+## 18. Idioms checklist and gotchas
 
 ### Do
 

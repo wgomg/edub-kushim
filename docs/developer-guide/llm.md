@@ -358,12 +358,9 @@ enricher sees — so the batch pauses on credit errors only when the primary
 ## 8. Token estimation
 
 `utils.EstimateTokens` (`internal/utils/text.go:25-43`) approximates token
-counts without a tokenizer: ~4 chars/token for Latin text; CJK-heavy text
-(>10% Han/Hiragana/Katakana/Hangul) counts CJK chars at 1.5 tokens each and
-others at 0.25. It feeds the pre-flight `checkContentTooLarge` and the
-enricher's shrink-and-retry loop (§10). `EstimateTokensFromWords` (words ×
-1.3) is the word-count variant. Both are estimates — the enricher's retry
-loop absorbs the error; see `algorithms.md` §12.
+counts without a tokenizer; it feeds the pre-flight `checkContentTooLarge` and
+the enricher's shrink-and-retry loop (§10). Full mechanics and accuracy
+caveats: `algorithms.md` §12.
 
 ---
 

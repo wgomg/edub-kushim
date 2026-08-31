@@ -121,9 +121,8 @@ func splitSentences(text string) []string {
 }
 ```
 
-Note `endOfPunct := loc[0] + 1`: the regex match starts *at* the `.!?`
-character, so `+1` includes the punctuation itself in the sentence and skips
-the following whitespace.
+(`endOfPunct := loc[0] + 1` keeps the punctuation attached to its sentence —
+which `lastSentenceWords` relies on later.)
 
 `createChunks` (`textrank.go:151-188`) then packs sentences into chunks of at
 most `chunkSize` words, **carrying the last sentence over** as overlap so a
@@ -167,11 +166,10 @@ for token, localFreq := range chunk.TokenFrequencies {
 chunk.TFScore = totalWeight
 ```
 
-- `tf` = fraction of the chunk's tokens that are this token.
-- `idf` = log((N+1)/(df+1)) — the +1 smoothing keeps it defined for tokens in
-  every chunk and down-weights *stopword-like* tokens that appear everywhere.
-- Document frequency counts a token **once per chunk** (`seen` map,
-  `textrank.go:266-270`).
+The `+1` smoothing keeps `idf` defined for tokens in every chunk and
+down-weights *stopword-like* tokens that appear everywhere. Document
+frequency counts a token **once per chunk** (`seen` map,
+`textrank.go:266-270`).
 
 Scores are then normalized to sum to 1 across chunks
 (`NormalizedTFScore`, `textrank.go:296-299`) so the three score components
@@ -208,56 +206,12 @@ for i := range chunksLength {
 
 `weightedPageRank` (`textrank.go:353-408`) is the iteration, run with
 **damping 0.85, max 100 iterations, tolerance 1e-4**
-(`textrank.go:412`):
-
-```go
-scores := make([]float64, N)
-for i := range scores {
-	scores[i] = 1.0 / float64(N)         // uniform initialization
-}
-
-// precompute outgoing weight sums for each node
-outgoingSums := make([]float64, N)
-for i := range N {
-	sum := 0.0
-	for j := range N {
-		sum += graph.Adjacency[i][j]
-	}
-	outgoingSums[i] = sum
-}
-
-for range maxIterations {
-	newScores := make([]float64, N)
-	totalChange := 0.0
-	randomComponent := (1.0 - damping) / float64(N)
-
-	for i := range N {
-		linkComponent := 0.0
-		for j := range N {
-			if i == j {
-				continue
-			}
-			weight := graph.Adjacency[j][i]
-			if weight > 0 && outgoingSums[j] > 0 {
-				linkComponent += scores[j] * (weight / outgoingSums[j])
-			}
-		}
-		newScores[i] = randomComponent + (damping * linkComponent)
-		totalChange += math.Abs(newScores[i] - scores[i])
-	}
-
-	if totalChange < tolerance {
-		break
-	}
-	scores = newScores
-}
-```
-
-This is weighted PageRank: the link term from node `j` to node `i` is
-`score[j] · (edge[j][i] / sum of j's outgoing edges)` — a node's importance
-flows to its neighbors *proportionally to edge weight*. The random jump
-(`(1-damping)/N`) keeps the chain ergodic. Convergence is checked on total
-absolute change.
+(`textrank.go:412`): scores start uniform (`1/N`), outgoing weight sums are
+precomputed, and each iteration recomputes
+`newScores[i] = (1−damping)/N + damping · Σ_j score[j] · (edge[j][i] / outgoingSums[j])`
+— a node's importance flows to its neighbors *proportionally to edge weight*.
+The random jump (`(1-damping)/N`) keeps the chain ergodic. Convergence is
+checked on total absolute change.
 
 `calculateGraphScores` (`textrank.go:410-430`) normalizes the PageRank
 scores to sum 1 (guarding `sumScores > 0`).

@@ -81,21 +81,13 @@ pipeline, err := hugot.NewPipeline(session, hugot.FeatureExtractionConfig{
   The model is downloaded separately (by the setup flow / `kushim setup`),
   not by the matcher itself.
 - `WithNormalization()` L2-normalizes every embedding. That is why cosine
-  similarity collapses to a plain dot product (`hugot.go:418-430`):
+  similarity collapses to a plain dot product — `cosineSimilarity`
+  (`hugot.go:418-430`) is just the sum of element-wise products, with a
+  length guard:
 
 ```go
 // Since both vectors are L2-normalized (enforced by pipeline.WithNormalization()),
 // this is equivalent to a simple dot product.
-func cosineSimilarity(a, b []float32) float64 {
-	if len(a) != len(b) {
-		return 0
-	}
-	var dot float64
-	for i := range a {
-		dot += float64(a[i]) * float64(b[i])
-	}
-	return dot
-}
 ```
 
 ### Backend session: ORT vs Go
@@ -148,13 +140,9 @@ type EmbeddingStore struct {
 ```
 
 - It embeds `storeBase` (`internal/cache/cache.go:16`), which owns the
-  `sync.RWMutex` (`myu`) and the `Attr/Attrs` map (used for metadata like
-  `dim`, `model`, `normalized`).
-- Reads (`Keys`, `Len`, `Entries`) take `RLock`; writes (`Add`, `Remove`)
-  take `Lock`.
-- **`Entries()` returns a deep copy** — both the map and every vector
-  (`embedding_store.go:49-58`). Callers like `Match` iterate the copy
-  lock-free; the cost is a copy per call, which is fine at tag-store scale.
+  `sync.RWMutex` and the `Attr`/`Attrs` metadata map (`dim`, `model`,
+  `normalized`); reads take `RLock`, writes take `Lock` — the deep-copy
+  `Entries()` discipline is covered in `golang.md` §10.
 - A named-store registry (`cache.Cache`, `cache.go:37`) maps names
   (`"tags"`) to stores with a second RWMutex.
 

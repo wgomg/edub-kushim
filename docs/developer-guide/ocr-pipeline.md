@@ -70,7 +70,7 @@ type OCR interface {
 
 `Process` returns the path of the produced searchable PDF (`*string`; nil on
 failure). The factory (`adapter.go:24-33`) switches on the configured engine,
-with `newGosseract` as the cgo-gated hook (§8 of the cgo guide):
+with `newGosseract` as the cgo-gated hook (§7 of the cgo guide):
 
 ```go
 func NewOCR(logger *utils.Logger, cfg config.ToolConfig, pdfOptimizerCmd string, languages []string, dataDir string, ocrWorkers int) (OCR, error) {
@@ -162,7 +162,7 @@ adapters.FreePixmap(mupdfCtx, ocrPixmap)   // samples are copied; pixmap must be
   PDF* — smaller files, still readable.
 - The render is bounded by `MUPDF_MAX_RENDER_PIXELS` (100 MP) in the C
   wrapper (`mupdf_wrapper.go:107`) — a malicious page size can't exhaust
-  memory (see `cgo.md` §9).
+  memory (see `cgo.md` §8).
 - The pixmap is freed **immediately after** the samples are copied — the
   samples are Go-owned, the pixmap C-owned (`standalone.go:82`).
 

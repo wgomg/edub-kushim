@@ -1,11 +1,9 @@
 # Developer Guide — The PostgreSQL of edub-kushim
 
-This guide explains the PostgreSQL features used across the edub-kushim
-database layer — especially the ones you don't meet in everyday CRUD SQL — and
-how they are used *here*, with real snippets and file references. It is aimed at
-developers who know SQL basics but are new to PostgreSQL's more specialized
-features (full-text search, partial indexes, generated columns, LISTEN/NOTIFY,
-LATERAL joins, upserts, identity columns).
+This guide explains how the database layer uses PostgreSQL — the design
+decisions and the less common features, with real snippets and file
+references. It is aimed at developers familiar with SQL and PostgreSQL, new to
+this codebase; it does not explain SQL or PostgreSQL features themselves.
 
 It complements the other docs:
 
@@ -28,27 +26,23 @@ operations in `connection.go` / `dbtest.go`.
 ## Table of contents
 
 1. [Orientation](#1-orientation)
-2. [Identity columns: `GENERATED ALWAYS AS IDENTITY`](#2-identity-columns-generated-always-as-identity)
+2. [Keys: identity vs TEXT primary keys](#2-keys-identity-vs-text-primary-keys)
 3. [Partial indexes](#3-partial-indexes)
 4. [Generated columns and full-text search](#4-generated-columns-and-full-text-search)
-5. [Full-text search queries: `@@`, `ts_rank`, `ts_headline`](#5-full-text-search-queries--ts_rank-ts_headline)
+5. [Full-text search queries](#5-full-text-search-queries)
 6. [Upserts: `ON CONFLICT` and `excluded`](#6-upserts-on-conflict-and-excluded)
-7. [`RETURNING`](#7-returning)
-8. [The optimistic claim pattern](#8-the-optimistic-claim-pattern)
-9. [`LATERAL` joins and conditional aggregation](#9-lateral-joins-and-conditional-aggregation)
-10. [Subqueries: scalar, `IN`, `EXISTS`](#10-subqueries-scalar-in-exists)
-11. [`UNION ALL` with literal rows](#11-union-all-with-literal-rows)
-12. [JSONB: documents-in-a-column](#12-jsonb-documents-in-a-column)
-13. [SQL functions as gates](#13-sql-functions-as-gates)
-14. [LISTEN/NOTIFY: the database as message bus](#14-listennotify-the-database-as-message-bus)
-15. [Time arithmetic and dynamic intervals](#15-time-arithmetic-and-dynamic-intervals)
-16. [Type casts](#16-type-casts)
-17. [Migrations with goose](#17-migrations-with-goose)
-18. [Admin operations from application code](#18-admin-operations-from-application-code)
-19. [Aggregation idioms](#19-aggregation-idioms)
-20. [Notably absent features (and why)](#20-notably-absent-features-and-why)
-21. [Feature → file quick reference](#21-feature--file-quick-reference)
-22. [Gotchas](#22-gotchas)
+7. [The optimistic claim pattern](#7-the-optimistic-claim-pattern)
+8. [`LATERAL` joins and conditional aggregation](#8-lateral-joins-and-conditional-aggregation)
+9. [`UNION ALL` with literal rows](#9-union-all-with-literal-rows)
+10. [JSONB: documents-in-a-column](#10-jsonb-documents-in-a-column)
+11. [SQL functions as gates](#11-sql-functions-as-gates)
+12. [LISTEN/NOTIFY: the database as message bus](#12-listennotify-the-database-as-message-bus)
+13. [Time arithmetic and dynamic intervals](#13-time-arithmetic-and-dynamic-intervals)
+14. [Migrations with goose](#14-migrations-with-goose)
+15. [Admin operations from application code](#15-admin-operations-from-application-code)
+16. [Notably absent features (and why)](#16-notably-absent-features-and-why)
+17. [Feature → file quick reference](#17-feature--file-quick-reference)
+18. [Gotchas](#18-gotchas)
 
 ---
 
@@ -70,40 +64,30 @@ operations in `connection.go` / `dbtest.go`.
 
 ---
 
-## 2. Identity columns: `GENERATED ALWAYS AS IDENTITY`
+## 2. Keys: identity vs TEXT primary keys
 
-Every surrogate key in the schema is an identity column, not a `SERIAL`
+Every surrogate key in the schema is an identity column
 (`internal/database/sql/schema/migrations/00001_baseline.sql:3`):
 
 ```sql
 id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
 ```
 
-Why this matters:
-
-- `SERIAL` is a legacy shim that silently creates a sequence named
-  `tablename_colname_seq`; identity is the SQL-standard way and stores the
-  sequence *inside* the column definition.
-- `GENERATED ALWAYS` means an explicit value in an `INSERT` is rejected unless
-  you also write `OVERRIDING SYSTEM VALUE` — the application can't accidentally
-  stomp on the sequence. (The test harness deliberately uses
-  `ALTER TABLE ... ALTER COLUMN id RESTART WITH 1`, see §18.)
-- Contrast with `batch.id TEXT PRIMARY KEY` (`00001_baseline.sql:101`) —
-  business keys that come from outside (Go-generated UUIDs) are plain `TEXT`
-  primary keys. Rule of thumb in this schema: **database-invented IDs are
-  identity, externally-invented IDs are TEXT PKs.**
+Business keys that come from outside (Go-generated UUIDs) are plain `TEXT`
+primary keys instead (`batch.id`, `00001_baseline.sql:101`). Rule of thumb in
+this schema: **database-invented IDs are identity, externally-invented IDs
+are TEXT PKs.**
 
 Also note `id int PRIMARY KEY DEFAULT 1 CHECK (id = 1)` in the `backup_lock`
 table (`00005_backup_lock.sql:3`) — the **single-row table** pattern: a `CHECK`
 that only ever allows the row with `id = 1` turns the table into a
-single-row document usable as a lock/flag store.
+single-row document usable as a lock/flag store (§11).
 
 ---
 
 ## 3. Partial indexes
 
-PostgreSQL indexes can carry a `WHERE` clause — the index only contains rows
-matching the predicate. This is the codebase's favorite trick, used three ways.
+The codebase's favorite trick, used three ways.
 
 ### 1. Indexing only the rows queries actually touch
 
@@ -141,18 +125,15 @@ Uniqueness applies **only while the task is still live**. Once a task
 completes or fails, the row drops out of the index and the same `dedup_key`
 becomes insertable again — so "re-run this document" creates a new task while
 "queue this document twice right now" collapses to one. Dedup is enforced by
-the database, not by application logic.
-
-**Rule**: a partial index only helps queries whose `WHERE` clause *implies*
-the index's predicate. sqlc's dedup checks (`GetConfigTaskByDedupKey`, the
-`DedupKey` interface in the task system) all carry the same status filters.
+the database, not by application logic; the task-system side is in
+`task-system.md` §9.
 
 ---
 
 ## 4. Generated columns and full-text search
 
-`00002_tsvector.sql` shows a **stored generated column** — a column whose value
-is computed by the database on every write, then physically stored:
+`00002_tsvector.sql` adds a **stored generated column** that keeps the search
+vector in sync automatically — the app never writes it:
 
 ```sql
 ALTER TABLE document ADD COLUMN text_search_vector tsvector
@@ -161,22 +142,13 @@ ALTER TABLE document ADD COLUMN text_search_vector tsvector
   ) STORED;
 ```
 
-- `tsvector` is the full-text search type: a lexeme vector of
-  (word → positions) pairs. `to_tsvector(config, text)` parses and normalizes
-  text into one.
-- `'simple'` is the text-search configuration: **no stemming, no stopwords** —
-  deliberately chosen because documents arrive in many languages (the pipeline
-  detects the language per document), and language-specific dictionaries would
-  mangle everything else.
-- `coalesce(title, '') || ' ' || coalesce(text_content, '')` — full-text search
-  is fed the concatenation of title + body.
-- `STORED` (vs `VIRTUAL`) makes the value materialized on disk, which is what
-  allows it to be indexed.
-
-The vector stays in sync automatically — the app never writes it. If the
-formula changes, a new migration must rewrite the column
-(`ALTER TABLE ... ADD COLUMN ... GENERATED ALWAYS AS ...` in a fresh migration
-recomputes existing rows).
+- **`'simple'` is deliberate**: no stemming, no stopwords — documents arrive
+  in many languages (the pipeline detects the language per document), and
+  language-specific dictionaries would mangle everything else.
+- Full-text search is fed the concatenation of title + body.
+- If the formula changes, a new migration must rewrite the column
+  (`ALTER TABLE ... ADD COLUMN ... GENERATED ALWAYS AS ...` in a fresh
+  migration recomputes existing rows).
 
 The index comes separately, in its own migration
 (`00003_tsvector_index.sql`):
@@ -187,15 +159,14 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_document_tsv
   ON document USING GIN (text_search_vector);
 ```
 
-- **GIN** (Generalized Inverted Index) is the index type for `tsvector`,
-  `jsonb`, and arrays — inverted-index semantics, exactly what FTS needs.
-- `CONCURRENTLY` builds it without locking the table against writes — but it
-  **cannot run inside a transaction**, hence the `-- +goose NO TRANSACTION`
-  marker (goose otherwise wraps each migration in one).
+`CONCURRENTLY` builds the GIN index without locking the table against writes —
+but it **cannot run inside a transaction**, hence the
+`-- +goose NO TRANSACTION` marker (goose otherwise wraps each migration in
+one).
 
 ---
 
-## 5. Full-text search queries: `@@`, `ts_rank`, `ts_headline`
+## 5. Full-text search queries
 
 The dynamic search (`internal/database/structured_search.go:126-133`) is where
 the FTS features come together:
@@ -208,23 +179,13 @@ FROM document d
 WHERE d.text_search_vector @@ plainto_tsquery('simple', $1) AND d.deleted_at IS NULL
 ```
 
-Three pieces worth knowing:
-
-1. **`@@`** — the match operator: `tsvector @@ tsquery`. It's what the GIN
-   index serves. The *left* side is the stored vector, the *right* side is the
-   query built per request.
-2. **`plainto_tsquery('simple', $1)`** — takes plain user text ("the quick
-   brown") and produces a `tsquery` (ANDed lexemes). It applies the same
-   `'simple'` normalization as the column, which is essential: `@@` only
-   matches if both sides used the *same* config. (The alternative
-   `to_tsquery` expects operators in the input and would break on user text;
-   `websearch_to_tsquery` is the middle ground.) All three `$1` references
-   reuse one parameter.
-3. **`ts_rank(...)`** — relevance scoring for `ORDER BY rank`
-   (`structured_search.go:171`); **`ts_headline(config, text, query, options)`**
-   — extracts the best matching sentences and wraps matches in `<b>` tags via
-   `StartSel`/`StopSel`, producing the snippet the UI shows. `COALESCE(..., '')`
-   guards against NULL `text_content`.
+- `plainto_tsquery` (not `to_tsquery`, which expects operators in the input
+  and would break on user text) applies the same `'simple'` config as the
+  column — `@@` only matches if both sides used the *same* config. All three
+  `$1` references reuse one parameter.
+- `ts_rank` drives `ORDER BY rank` (`structured_search.go:171`);
+  `ts_headline` produces the snippet the UI shows; `COALESCE(..., '')` guards
+  against NULL `text_content`.
 
 The generated column guarantees `text_search_vector` is never out of sync with
 the text, so the query can be pure and index-friendly.
@@ -245,9 +206,9 @@ ON CONFLICT (name) DO NOTHING
 RETURNING id;
 ```
 
-Note `RETURNING id` still fires on the *conflict* path too — but returns no
-rows. That's how the Go layer detects "already existed" (`RowsAffected`/row
-scan semantics via sqlc's `:one`).
+`RETURNING id` still fires on the *conflict* path — but returns no rows, which
+surfaces as `sql.ErrNoRows` on the Go side. That's the documented way to
+detect "already existed" on a `:one` upsert.
 
 **Do update** — the batch-owner takeover (`batch.sql:24-31`):
 
@@ -261,16 +222,9 @@ ON CONFLICT(batch_id) DO UPDATE SET
   last_heartbeat = CURRENT_TIMESTAMP;
 ```
 
-`excluded` is the pseudo-table of the row that *would have been* inserted —
-the idiomatic way to reference the incoming values inside `DO UPDATE`. The
-multi-column composite key `(document_id, people_id, people_type_id)`
+The multi-column composite key `(document_id, people_id, people_type_id)`
 (`document_people.sql:24`) shows `ON CONFLICT` on composite keys works the
 same way.
-
-**Prerequisite**: `ON CONFLICT` only works against a unique index/constraint
-matching the conflict target — which is why every target column is `UNIQUE`
-or part of a PK. `DO NOTHING` without a target list (the seeds) just means
-"any unique violation is fine, skip".
 
 The seeds are the canonical idempotency pattern: `INSERT ... VALUES (…),
 (…), … ON CONFLICT (name) DO NOTHING` — 100+ tags, 9 document types, 15
@@ -279,25 +233,10 @@ people types — safe to run on every boot (they are, via
 
 ---
 
-## 7. `RETURNING`
+## 7. The optimistic claim pattern
 
-Every insert ends with `RETURNING id` (e.g. `document.sql:22`,
-`task.sql:113`, `orphaned.sql:3`). This is the single round-trip "insert and
-get the generated identity back" — no separate `SELECT`. sqlc maps it to
-`(int64, error)`. With `:one` queries, no rows back (conflict path) is
-reported as `sql.ErrNoRows` on the Go side — the documented way to detect a
-no-op upsert.
-
-`RETURNING` works with all DML, not just INSERT — handy in `DELETE ... RETURNING`
-for audit trails (not used here, but legal).
-
----
-
-## 8. The optimistic claim pattern
-
-How do multiple worker processes claim tasks without double-processing? Not
-with locks — with a **guarded UPDATE**, which is atomic at the row level
-(`task.sql:99-104`):
+Multiple worker processes claim tasks without locks, with a **guarded UPDATE**
+that is atomic at the row level (`task.sql:99-104`):
 
 ```sql
 -- name: ClaimTask :execrows
@@ -308,24 +247,18 @@ WHERE id = $1 AND status = 'pending';
 ```
 
 The `WHERE ... AND status = 'pending'` is the lock: exactly one of N racing
-workers can flip `pending → processing` for a given row; the others affect 0
-rows. The Go side checks `RowsAffected` (that's what sqlc's `:execrows`
-annotation is for) and treats 0 as "someone else took it".
+workers flips `pending → processing`; the others affect 0 rows, and the Go
+side checks `RowsAffected` (that's what sqlc's `:execrows` annotation is for)
+and treats 0 as "someone else took it". The same rows-affected discipline
+drives the backup lock (§11).
 
-The same pattern drives **batch ownership**: the queue daemon pre-inserts a
-placeholder owner row, then the child worker takes over with a two-step
-acquire — `TryInsertBatchOwner` (`INSERT ... ON CONFLICT DO NOTHING`) followed
-by `UpdateBatchOwnerIfStale` (guarded UPDATE), and `AcquireBatchOwnerForce`
-(the `excluded` upsert from §6) for forced takeover. Heartbeats keep the lease
-alive (`HeartbeatBatchOwner` updates `last_heartbeat`); any process that stops
-heartbeating for 15 seconds becomes a stale owner (`ListStaleBatchOwners`
-uses `last_heartbeat < CURRENT_TIMESTAMP - INTERVAL '15 seconds'`) and gets
-reclaimed. Compare this to `SELECT ... FOR UPDATE SKIP LOCKED` — see §20 for
-why the codebase chose the UPDATE-guard instead.
+The full concurrency story — batch ownership, heartbeats, stale sweeps, and
+why `SELECT ... FOR UPDATE SKIP LOCKED` was not used — is in
+`task-system.md` §3–§5 and §10.
 
 ---
 
-## 9. `LATERAL` joins and conditional aggregation
+## 8. `LATERAL` joins and conditional aggregation
 
 The batch overview query (`batch.sql:137-166`) is the most advanced statement
 in the codebase. It computes per-batch task statistics with a `LATERAL`
@@ -360,77 +293,22 @@ LEFT JOIN batch_owner bo ON bo.batch_id = b.id
 ORDER BY b.created_at DESC
 ```
 
-Three features in one query:
+Two idioms worth copying:
 
-1. **`LATERAL`** — lets a subquery in `FROM` reference columns of preceding
-   tables (`t.batch_id = b.id`). It runs *per batch row*, like a correlated
-   subquery, but can return multiple rows/aggregates. This is the standard
-   "per-parent summary" tool.
-2. **`LEFT JOIN ... ON true`** — the `ON true` is the idiom for "always join,
-   even if the lateral produced nothing" — batches with zero tasks still
-   appear with `COALESCE(sub.total, 0)`.
-3. **Conditional aggregation** — `SUM(CASE WHEN t.status = 'completed' THEN 1
-   ELSE 0 END)` is the classic "count rows matching a condition inside a
-   GROUP BY-less aggregate" pattern (a histogram in one pass over the batch's
-   tasks). Newer PostgreSQL has a `FILTER (WHERE ...)` clause for the same
-   job — see §20.
+- **`LEFT JOIN LATERAL ... ON true`** — the `ON true` means "always join, even
+  if the lateral produced nothing" — batches with zero tasks still appear with
+  `COALESCE(sub.total, 0)`.
+- **Conditional aggregation** — `SUM(CASE WHEN t.status = 'completed' THEN 1
+  ELSE 0 END)` builds a per-batch status histogram in one pass. (The newer
+  `FILTER (WHERE ...)` would do the same — see §16 for why it isn't used.)
 
 ---
 
-## 10. Subqueries: scalar, `IN`, `EXISTS`
+## 9. `UNION ALL` with literal rows
 
-The codebase uses all three subquery flavors:
-
-**Scalar subqueries in the SELECT list** — three independent counts in one
-round trip (`dashboard.go:242-245`):
-
-```sql
-SELECT
-    (SELECT COUNT(*) FROM document WHERE (language = 'und' OR language = '') AND deleted_at IS NULL) AS missing_language,
-    (SELECT COUNT(*) FROM document WHERE document_type_id = 1 AND deleted_at IS NULL) AS missing_type,
-    (SELECT COUNT(*) FROM document d WHERE d.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM document_tag dt WHERE dt.document_id = d.id)) AS missing_tags
-```
-
-**`IN (subquery)`** — the structured search's tag filter
-(`structured_search.go:142-146`):
-
-```sql
-AND d.id IN (
-    SELECT dt.document_id FROM document_tag dt
-    JOIN tag t ON dt.tag_id = t.id
-    WHERE t.name IN ($1, $2, ...)
-)
-```
-
-**`NOT EXISTS` (correlated)** — "documents with no tags":
-
-```sql
-AND NOT EXISTS (SELECT 1 FROM document_tag dt WHERE dt.document_id = d.id)
-```
-
-`EXISTS`/`NOT EXISTS` is preferred over `NOT IN (subquery)` here — correct
-`NULL` semantics and early-exit evaluation. The batch cleanup shows the
-correlated form in a `DELETE` (`batch.sql:71-80`):
-
-```sql
-DELETE FROM batch_owner WHERE batch_id IN (
-  SELECT b.batch_id FROM batch_owner b
-  WHERE NOT EXISTS (
-    SELECT 1 FROM task t WHERE t.batch_id = b.batch_id
-      AND t.status IN ('pending', 'processing', 'waiting')
-  )
-);
-```
-
-(Note the `b` alias inside the subquery to disambiguate the outer table.)
-
----
-
-## 11. `UNION ALL` with literal rows
-
-Merging heterogeneous sources into one feed: each `UNION ALL` branch selects
-the same column shape, with **literal constant columns** filling in fields a
-source doesn't have — the SQL-level equivalent of a discriminated union:
+The activity timeline merges heterogeneous sources into one feed: each branch
+selects the same column shape, with **literal constant columns** filling in
+fields a source doesn't have (`dashboard.go:83-120`):
 
 ```sql
 SELECT 'document_uploaded' AS event_type,
@@ -459,19 +337,16 @@ ORDER BY event_time DESC
 LIMIT 30
 ```
 
-- Each branch defines the same column shape; literals (`'document_uploaded'`,
-  `''`) fill in columns a source doesn't have — the SQL-level equivalent of a
-  discriminated union. The `CASE WHEN` in the second branch derives the event
-  type from data.
+- The `CASE WHEN` in the second branch derives the event type from data.
 - `UNION ALL` (not `UNION`) keeps duplicates — events are never deduplicated
   away.
 - The trailing `ORDER BY ... LIMIT 30` applies to the *whole* union.
 
 ---
 
-## 12. JSONB: documents-in-a-column
+## 10. JSONB: documents-in-a-column
 
-The `task` table stores arbitrary per-task data in a JSONB column
+The `task` table stores arbitrary per-task data in JSONB columns
 (`00001_baseline.sql:46-47`):
 
 ```sql
@@ -480,26 +355,18 @@ result JSONB,
 ```
 
 The pipeline writes task-specific payloads (consume: file path + document id;
-enrich: document id + LLM options) into the same table — JSONB is PostgreSQL's
-validated, binary-stored, indexable JSON. What the SQL uses it for:
-
-**Extraction with `->>`** (get a field as text; e.g. `RestoreDiscardedEnrichTasks`, `task.sql:206`):
-
-```sql
-AND (e.task_id = c.payload->>'on_completed' OR e.task_id = c.payload->>'on_completed_thumbnail');
-```
-
-`->>` returns text (NULL if missing); `->` returns JSON.
-The Go side declares these columns as `*json.RawMessage` via the sqlc
-override in `sqlc.yaml`, so handlers pass payloads through untouched and only
-the SQL reads inside them.
+enrich: document id + LLM options) into the same table. What the SQL uses it
+for: extraction with `->>` (text; NULL if missing) inside queries like
+`RestoreDiscardedEnrichTasks` (`task.sql:206`). The Go side declares these
+columns as `*json.RawMessage` via the sqlc override in `sqlc.yaml`, so
+handlers pass payloads through untouched and only the SQL reads inside them.
 
 JSONB is *not* used for search — text lives in `text_content` (full-text
 indexed) — which keeps payloads for machine data only.
 
 ---
 
-## 13. SQL functions as gates
+## 11. SQL functions as gates
 
 Plain SQL functions (not triggers) are used to centralize business conditions
 so they can be reused across queries.
@@ -536,11 +403,11 @@ WHERE id = 1 AND (NOT running OR started_at <= NOW() - INTERVAL '30 minutes');
 ```
 
 Zero rows affected = the lock was already held — same `:execrows` discipline
-as the task claim (§8).
+as the task claim (§7).
 
 ---
 
-## 14. LISTEN/NOTIFY: the database as message bus
+## 12. LISTEN/NOTIFY: the database as message bus
 
 The queue daemon doesn't poll Postgres blindly — it is woken up by the
 database. Schema side (`00004_listen_notify.sql`, a PL/pgSQL trigger):
@@ -561,13 +428,6 @@ AFTER INSERT OR UPDATE ON batch
 FOR EACH ROW EXECUTE FUNCTION notify_batch_queued();
 ```
 
-- **`pg_notify(channel, payload)`** posts a notification; `PERFORM` is the
-  PL/pgSQL way to call a function whose result you discard.
-- **`AFTER INSERT OR UPDATE ... FOR EACH ROW EXECUTE FUNCTION`** — the modern
-  trigger syntax (the old `EXECUTE PROCEDURE` is deprecated). The trigger
-  fires for both new batches and requeues (`NEW.status = 'queued'` covers the
-  UPDATE path).
-
 Client side (`internal/commands/notify.go`) — a **dedicated single-connection
 pool** (LISTEN state is per-connection, so it must never be shared):
 
@@ -580,31 +440,16 @@ conn.Exec(ctx, "LISTEN batch_queued")
 _, err := conn.Conn().WaitForNotification(ctx)
 ```
 
-`WaitForNotification` blocks until a notification arrives (or the context
-cancels); the daemon then re-checks the database. Notifications are a *hint*,
-not the source of truth — the Go side drops them when busy (non-blocking send
-on a buffered channel, `notify.go:68-71`) and a 30-second safety timer in the
-daemon re-polls regardless. If the listener dies, the loop reconnects with
-backoff (`LISTEN` again after `Acquire`).
-
-Caveats baked into the design: notifications are not delivered to
-transactions, are lost when no listener is connected, and there is no
-guaranteed ordering — hence "hint, not contract".
+The daemon then re-checks the database. Notifications are a *hint*, not the
+source of truth — the Go side drops them when busy (non-blocking send on a
+buffered channel, `notify.go:68-71`) and a 30-second safety timer in the
+daemon re-polls regardless; the listener reconnects with backoff if it dies.
+The daemon-side semantics (wake-up loop, timer reset, housekeeping) are in
+`task-system.md` §6.
 
 ---
 
-## 15. Time arithmetic and dynamic intervals
-
-**Static intervals** — the staleness probes:
-
-```sql
-WHERE last_heartbeat < CURRENT_TIMESTAMP - INTERVAL '15 seconds'
-WHERE completed_at >= CURRENT_TIMESTAMP - INTERVAL '7 days'
-WHERE started_at > NOW() - INTERVAL '30 minutes'
-```
-
-`CURRENT_TIMESTAMP` and `NOW()` are the same transaction timestamp; both are
-`timestamptz`, so comparisons across timezones just work.
+## 13. Time arithmetic and dynamic intervals
 
 **Parameterized intervals** — when the interval duration comes from config,
 the codebase builds it with a cast of a concatenated string (`task.sql:233`):
@@ -629,34 +474,13 @@ CAST(COALESCE(AVG(
 ), 0.0) AS INTEGER) AS avg_duration_ms
 ```
 
-`EXTRACT(EPOCH FROM interval)` converts an interval to seconds (fractional);
-timestamps subtract to an interval directly. This is the standard "elapsed
-time" idiom.
+Static staleness probes (`INTERVAL '15 seconds'`, `INTERVAL '7 days'`,
+`INTERVAL '30 minutes'`) appear throughout the claim/lease/backup queries
+(§7, §11).
 
 ---
 
-## 16. Type casts
-
-Casts appear in three flavors, all with the same meaning:
-
-```sql
-CAST(COALESCE(SUM(file_size), 0) AS BIGINT) AS total_bytes   -- document.sql:119
-($1::text || ' days')::INTERVAL                              -- document.sql:149
-```
-
-- `CAST(x AS t)` — standard SQL.
-- `x::t` — PostgreSQL's shorthand.
-- `'literal'::t` — cast a literal; `$1::text` — cast a parameter.
-
-Why they're needed: `SUM(bigint)` can overflow to `numeric`, and
-`COALESCE(SUM(...), 0)` infers `numeric`; without the `AS BIGINT` cast the Go
-scanner would receive a `numeric` string instead of an `int64`. `$1::text` is
-needed because `||` between an unknown-typed parameter and a string literal
-can be ambiguous.
-
----
-
-## 17. Migrations with goose
+## 14. Migrations with goose
 
 Each migration is a file with `-- +goose Up` / `-- +goose Down` blocks
 (annotations in SQL comments). The project uses the less common annotations
@@ -682,14 +506,11 @@ the function body contains `;`s that must not split the statement).
 
 Migration hygiene in this repo: **never edit an applied migration** — add a
 new numbered file (00007 renamed columns with `ALTER TABLE ... RENAME COLUMN`
-instead of editing 00001; 00002 and 00003 split the generated column from its
-index so the CONCURRENTLY build can run standalone). Every `Up` has a `Down`
-that drops what was created, and `ALTER TABLE ... ADD COLUMN IF EXISTS`-style
-guards appear where reruns are plausible.
+instead of editing 00001). Every `Up` has a `Down` that drops what was created.
 
 ---
 
-## 18. Admin operations from application code
+## 15. Admin operations from application code
 
 The app talks to the `postgres` system catalog and runs DDL at boot and in
 tests — features you rarely see in application SQL.
@@ -728,36 +549,14 @@ of fiddling with `setval()` on a separate sequence.
 
 ---
 
-## 19. Aggregation idioms
-
-The recurring aggregate shapes, all in `dashboard.go` and the count queries:
-
-- **`COUNT(*)` with `GROUP BY`** — histograms: `SELECT status, COUNT(*) FROM task GROUP BY status`
-  (task.sql:203), `GROUP BY original_type ORDER BY total_bytes DESC`.
-- **`GROUP BY` on a column alias**: `GROUP BY day` where `day` is
-  `date(created_at)` (`dashboard.go:48`) — Postgres allows grouping by
-  output-column aliases, keeping the query readable.
-- **`COUNT(DISTINCT x)`**: `COUNT(DISTINCT batch_id)` (task.sql:199).
-- **`GROUP BY ... ORDER BY aggregate`**: `GROUP BY batch_id ORDER BY
-  MAX(created_at) DESC` (task.sql:174) — "most recently active first".
-- **`COUNT(*) ... LEFT JOIN ... ON ... AND`** — counting with a join-time
-  predicate so the count only includes live documents
-  (`document_type.sql:35-38`): `LEFT JOIN document d ON dt.id =
-  d.document_type_id AND d.deleted_at IS NULL` then `COUNT(d.id)` — rows with
-  no live document contribute 0, not 1.
-- **`COALESCE(SUM(x), 0)`** everywhere — aggregates on empty sets return
-  NULL, and the app's `int64` fields can't hold NULL.
-
----
-
-## 20. Notably absent features (and why)
+## 16. Notably absent features (and why)
 
 Knowing what *isn't* here is as instructive as what is:
 
 | Feature | Why it's absent |
 |---|---|
-| `SELECT ... FOR UPDATE SKIP LOCKED` | The task claim uses an atomic guarded UPDATE (`WHERE status='pending'` + `RowsAffected`) instead — one statement, no row lock held, no explicit unlock, works identically across retries. See §8. |
-| `pg_advisory_lock` | Backup mutual exclusion uses a **single-row table lock** (§13) instead — visible/queryable state, staleness rule in a SQL function, and no session-lifetime ownership to leak. |
+| `SELECT ... FOR UPDATE SKIP LOCKED` | The task claim uses an atomic guarded UPDATE (`WHERE status='pending'` + `RowsAffected`) instead — one statement, no row lock held, no explicit unlock, works identically across retries. See §7. |
+| `pg_advisory_lock` | Backup mutual exclusion uses a **single-row table lock** (§11) instead — visible/queryable state, staleness rule in a SQL function, and no session-lifetime ownership to leak. |
 | `pg_trgm` / `ILIKE` / `LIKE`-with-`%`-prefix | Name search is `LIKE $1` with the caller appending `%` (prefix match only) — an index-friendly pattern. Fuzzy/substring search would need trigram indexes, which aren't needed. |
 | `FILTER (WHERE ...)` | The codebase predates it or simply prefers portability: `SUM(CASE WHEN ... THEN 1 ELSE 0 END)` is the classic form that works everywhere. |
 | `gen_random_uuid()` | UUIDs are generated in Go (`google/uuid`) and passed in as TEXT PKs — keeps the DB layer free of pgcrypto and the IDs available before the insert. |
@@ -770,7 +569,7 @@ Knowing what *isn't* here is as instructive as what is:
 
 ---
 
-## 21. Feature → file quick reference
+## 17. Feature → file quick reference
 
 | Feature | Where |
 |---|---|
@@ -795,7 +594,7 @@ Knowing what *isn't* here is as instructive as what is:
 
 ---
 
-## 22. Gotchas
+## 18. Gotchas
 
 - **`ON CONFLICT` requires a matching unique index.** `DO NOTHING` without a
   target works on any unique violation; `ON CONFLICT (cols)` fails at runtime

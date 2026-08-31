@@ -9,7 +9,7 @@ breaking things" guide.
 Audience: developers who need to work in `mupdf_wrapper.go`,
 `tesseract_link.go`, or any file gated by `//go:build cgo`. Companion:
 `ocr-pipeline.md` (what the wrappers are used for) and
-`golang.md` §18 (build tags overview).
+`golang.md` §16 (build tags overview).
 
 ---
 
@@ -17,16 +17,15 @@ Audience: developers who need to work in `mupdf_wrapper.go`,
 
 1. [Orientation](#1-orientation)
 2. [The `#cgo` preamble](#2-the-cgo-preamble)
-3. [`import "C"` mechanics](#3-import-c-mechanics)
-4. [The C helper layer pattern](#4-the-c-helper-layer-pattern)
-5. [Memory management across the boundary](#5-memory-management-across-the-boundary)
-6. [Go types wrapping C pointers](#6-go-types-wrapping-c-pointers)
-7. [The `!cgo` stub twin](#7-the-cgo-stub-twin)
-8. [The `init()` factory swap](#8-the-init-factory-swap)
-9. [Defense in depth: limits and stderr suppression](#9-defense-in-depth-limits-and-stderr-suppression)
-10. [Build integration](#10-build-integration)
-11. [Testing cgo code](#11-testing-cgo-code)
-12. [Gotchas](#12-gotchas)
+3. [The C helper layer pattern](#3-the-c-helper-layer-pattern)
+4. [Memory management across the boundary](#4-memory-management-across-the-boundary)
+5. [Go types wrapping C pointers](#5-go-types-wrapping-c-pointers)
+6. [The `!cgo` stub twin](#6-the-cgo-stub-twin)
+7. [The `init()` factory swap](#7-the-init-factory-swap)
+8. [Defense in depth: limits and stderr suppression](#8-defense-in-depth-limits-and-stderr-suppression)
+9. [Build integration](#9-build-integration)
+10. [Testing cgo code](#10-testing-cgo-code)
+11. [Gotchas](#11-gotchas)
 
 ---
 
@@ -81,19 +80,18 @@ package adapters
 import "C"
 ```
 
-Three things to understand:
+Two things matter about the preamble:
 
-1. **`#cgo` directives inside the comment** configure the compiler/linker.
-   `CFLAGS` adds include paths; `LDFLAGS` adds library paths and libraries.
-2. **`${SRCDIR}`** expands to the directory of the `.go` file at build time —
-   that's how the wrapper reaches `build/mupdf/local/lib` from
-   `internal/tools/adapters/`. This is why `make build-deps` must run first:
-   the paths point at artifacts that don't exist yet otherwise.
-3. **The rest of the comment is ordinary C** — headers plus (crucially)
-   helper functions defined here, which become callable from Go as
-   `C.mupdf_new_context(...)` etc. Defining helpers in the preamble is the
-   standard cgo pattern for wrapping APIs that use error callbacks or
-   multiple outputs.
+- **`#cgo` directives** configure the compiler/linker. `${SRCDIR}` expands to
+  the directory of the `.go` file at build time — that's how the wrapper
+  reaches `build/mupdf/local/lib` from `internal/tools/adapters/`. This is why
+  `make build-deps` must run first: the paths point at artifacts that don't
+  exist yet otherwise.
+- **The rest of the comment is ordinary C** — headers plus (crucially) helper
+  functions defined here, which become callable from Go as
+  `C.mupdf_new_context(...)` etc. Defining helpers in the preamble is the
+  standard cgo pattern for wrapping APIs that use error callbacks or
+  multiple outputs.
 
 The Tesseract link file shows the static-link dance
 (`ocr/tesseract_link.go:6-7`):
@@ -110,38 +108,7 @@ dragged in statically too.
 
 ---
 
-## 3. `import "C"` mechanics
-
-When cgo sees `import "C"`:
-
-- The preamble is compiled into a hidden C object and linked into the Go
-  binary (no separate shared library).
-- Every C symbol becomes available as `C.<name>`; every C type as
-  `C.<type>` (`C.fz_context`, `C.pdf_clean_options`, ...).
-- C integer types get Go conversions via `int(C.int(...))` / `C.int(...)`;
-  pointers appear as opaque `*C.<type>`.
-- The import must be in its own group — `import "C"` cannot share a
-  parenthesized block with regular imports (`mupdf_wrapper.go:173` is a
-  standalone line).
-- **The preamble is compiled with the `go` command's C compiler** (gcc/clang)
-  — a syntax error inside the comment surfaces as a cgo error at build time.
-
-Go code can call the helper functions directly:
-
-```go
-var ctx *C.fz_context
-if C.mupdf_new_context(&ctx) != 0 {
-	return nil, fmt.Errorf("mupdf: failed to create context")
-}
-```
-
-Note passing `&ctx` — a Go pointer to a C pointer — which cgo translates
-correctly for out-parameters (this is a C-allocated buffer, so it falls
-outside the "Go pointers in C" restriction, see §12).
-
----
-
-## 4. The C helper layer pattern
+## 3. The C helper layer pattern
 
 Raw MuPDF calls are wrapped in static C functions that do three jobs:
 **translate errors to a return code**, **centralize cleanup**, and **hide
@@ -202,7 +169,7 @@ The pattern, consistently applied:
 
 ---
 
-## 5. Memory management across the boundary
+## 4. Memory management across the boundary
 
 C memory and Go memory are separate heaps. The rules the wrapper follows:
 
@@ -221,7 +188,10 @@ func (c *MuContext) OpenMuDocument(path string) (*MuDocument, error) {
 ```
 
 `C.CString` allocates a NUL-terminated C copy — it **must** be freed, always
-via `defer` immediately after allocation.
+via `defer` immediately after allocation. Passing `&ctx`-style Go pointers to
+C pointers as out-parameters is fine: cgo treats them as transient, and the
+buffer is C-allocated, so it falls outside the "Go pointers in C" restriction
+(see gotchas).
 
 **Output data: `C.GoBytes` copies out, then the C object is dropped**
 
@@ -278,7 +248,7 @@ explicitly documents who does.**
 
 ---
 
-## 6. Go types wrapping C pointers
+## 5. Go types wrapping C pointers
 
 The Go API hides `*C.fz_context` behind typed structs
 (`mupdf_wrapper.go:180-188`):
@@ -303,11 +273,11 @@ type MuDocument struct {
   `int(C.fz_count_pages(ctx.p, d.p))`, `C.float(dpi)` — Go and C `int` are
   not interchangeable.
 - `RenderPage` returns five values (width, height, samples, pixmap, err) —
-  an unusual signature that exists *because* of the ownership split in §5.
+  an unusual signature that exists *because* of the ownership split in §4.
 
 ---
 
-## 7. The `!cgo` stub twin
+## 6. The `!cgo` stub twin
 
 For every build without cgo, `mupdf_nocgo.go` (tag `//go:build !cgo`) provides
 the **same API with relaxed signatures**:
@@ -331,7 +301,7 @@ without the stub breaks `CGO_ENABLED=0` builds.
 
 ---
 
-## 8. The `init()` factory swap
+## 7. The `init()` factory swap
 
 The OCR factory needs to compile in both worlds. The default is a failing
 function (`internal/tools/adapters/ocr/adapter.go:18-22`):
@@ -360,7 +330,7 @@ message only if the cgo implementation was never linked in.
 
 ---
 
-## 9. Defense in depth: limits and stderr suppression
+## 8. Defense in depth: limits and stderr suppression
 
 The C layer carries safety rails that Go code can't easily enforce:
 
@@ -404,22 +374,15 @@ tolerance list).
 
 ---
 
-## 10. Build integration
+## 9. Build integration
 
 `make build-deps` compiles the C trees (`build/mupdf`, `build/tesseract`,
 `build/leptonica`, `build/libpng`) into `local/` prefix dirs — exactly where
-the `${SRCDIR}`-relative `-L`/`-I` flags point. Key facts:
-
-- The Makefile builds both binaries with the right CGO settings
-  (`CGO_ENABLED=1` for kushim, `CGO_ENABLED=0` for edub) and always with
-  `-tags "XLA,ORT"`.
-- **Cache key** for CI's C-deps cache is `hashFiles('Makefile')` + arch —
-  touching the Makefile invalidates the cache (see `AGENTS.md` release
-  gotchas).
-- Containerized builds (`make build-glibc`, `build-musl`) exist because the
-  C toolchains are heavy; musl needs a builder image.
-- The `-tags "XLA,ORT"` requirement is unrelated to these files — it comes
-  from the Hugot/ONNX dependency chain.
+the `${SRCDIR}`-relative `-L`/`-I` flags point. The Makefile owns the CGO
+split (`CGO_ENABLED=1` for kushim, `CGO_ENABLED=0` for edub) and the
+`-tags "XLA,ORT"` requirement; both are documented in `AGENTS.md`. Note the
+XLA/ORT tags are unrelated to these files — they come from the Hugot/ONNX
+dependency chain.
 
 If you add a new C dependency: build it into `build/<name>/local`, add the
 `-L`/`-I` flags in the preamble, and make sure `make build-deps` produces
@@ -427,7 +390,7 @@ the artifacts.
 
 ---
 
-## 11. Testing cgo code
+## 10. Testing cgo code
 
 Tests that touch the wrappers carry `//go:build cgo` and only run with the
 toolchain installed:
@@ -450,7 +413,7 @@ exercise the C logic through the public Go API.
 
 ---
 
-## 12. Gotchas
+## 11. Gotchas
 
 - **The `//go:build` line must be followed by a blank line** before
   `package`; a missing blank line makes the tag part of the package comment

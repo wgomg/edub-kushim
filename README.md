@@ -185,11 +185,11 @@ The API server (`edub`) is a pure Go binary with no C dependencies. All CGo-heav
 
 ### Developer Guides
 
-New to the codebase? The guides in [`docs/developer-guide/`](docs/developer-guide/) take you from "knows programming" to "can work on this codebase" — each walks through a language or subsystem with real, line-referenced examples from the source.
+New to the codebase? The guides in [`docs/developer-guide/`](docs/developer-guide/) explain how each language or subsystem is used here — idioms, conventions, and design decisions, with real, line-referenced examples from the source.
 
 | Guide | What it covers |
 |---|---|
-| [golang.md](docs/developer-guide/golang.md) | Go language features as used in this codebase — onboarding for devs new to Go |
+| [golang.md](docs/developer-guide/golang.md) | How the codebase uses Go — idioms, patterns, and conventions |
 | [frontend.md](docs/developer-guide/frontend.md) | SvelteKit/Svelte 5 (runes) as used in `web/` and `web-wizard/` |
 | [postgresql.md](docs/developer-guide/postgresql.md) | PostgreSQL features as used in the schema and queries |
 | [semantic-matching.md](docs/developer-guide/semantic-matching.md) | Hugot embeddings, tag matching, consolidation, the matcher daemon |
