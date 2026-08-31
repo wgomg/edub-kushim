@@ -271,6 +271,11 @@ func computePage(samples []byte, w, h int, client *gosseract.Client) (ocrPageRes
 	}, nil
 }
 
+type fontMetrics struct {
+	ascent  float64
+	descent float64
+}
+
 func addPDFPage(pdf *fpdf.Fpdf, res ocrPageResult, idx int) {
 	imgName := fmt.Sprintf("kushim-page-%d", idx)
 	pdf.AddPageFormat("P", fpdf.SizeType{Wd: res.pageW, Ht: res.pageH})
@@ -280,6 +285,9 @@ func addPDFPage(pdf *fpdf.Fpdf, res ocrPageResult, idx int) {
 	scaleX := res.pageW / float64(res.w)
 	scaleY := res.pageH / float64(res.h)
 
+	desc := pdf.GetFontDesc("KushimText", "")
+	metrics := fontMetrics{ascent: float64(desc.Ascent), descent: float64(desc.Descent)}
+
 	pdf.SetTextRenderingMode(3)
 	for _, box := range res.boxes {
 		width := float64(box.Box.Dx()) * scaleX
@@ -287,15 +295,43 @@ func addPDFPage(pdf *fpdf.Fpdf, res ocrPageResult, idx int) {
 		if width < 1 || height < 1 {
 			continue
 		}
-		fontSize := height * 0.8
+		left := float64(box.Box.Min.X) * scaleX
+		fontSize, baseline := wordPlacement(height, float64(box.Box.Max.Y)*scaleY, metrics)
+		pdf.SetFont("KushimText", "", fontSize)
+		if natural := pdf.GetStringWidth(box.Word); natural > 0 {
+			if scalePct := stretchScale(width, natural); scalePct > 0 {
+				pdf.TransformBegin()
+				pdf.TransformScaleX(scalePct, left, baseline)
+				pdf.Text(left, baseline, box.Word)
+				pdf.TransformEnd()
+				continue
+			}
+		}
+		pdf.Text(left, baseline, box.Word)
+	}
+}
+
+func wordPlacement(height, bottom float64, m fontMetrics) (fontSize, baseline float64) {
+	if m.ascent-m.descent <= 0 {
+		fontSize = height * 0.8
 		if fontSize < 2 {
 			fontSize = 2
 		}
-		left := float64(box.Box.Min.X) * scaleX
-		top := float64(box.Box.Max.Y) * scaleY
-		pdf.SetFont("KushimText", "", fontSize)
-		pdf.Text(left, top, box.Word)
+		return fontSize, bottom + height*0.2
 	}
+	fontSize = height * 1000 / (m.ascent - m.descent)
+	if fontSize < 2 {
+		fontSize = 2
+	}
+	return fontSize, bottom - m.descent/1000*fontSize
+}
+
+func stretchScale(boxWidth, naturalWidth float64) float64 {
+	scalePct := 100 * boxWidth / naturalWidth
+	if scalePct < 25 || scalePct > 400 {
+		return 0
+	}
+	return scalePct
 }
 
 func downscaleRGB(in []byte, inW, inH int, outW, outH int) []byte {

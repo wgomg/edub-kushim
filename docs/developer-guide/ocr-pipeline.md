@@ -265,7 +265,7 @@ the LSTM engine.
 
 ## 7. Searchable PDF assembly
 
-`addPDFPage` (`standalone.go:274-299`) builds the output with go-pdf/fpdf:
+`addPDFPage` (`standalone.go:279-317`) builds the output with go-pdf/fpdf:
 
 ```go
 pdf.AddPageFormat("P", fpdf.SizeType{Wd: res.pageW, Ht: res.pageH})  // points
@@ -275,6 +275,9 @@ pdf.Image(imgName, 0, 0, res.pageW, res.pageH, false, "", 0, "")
 scaleX := res.pageW / float64(res.w)
 scaleY := res.pageH / float64(res.h)
 
+desc := pdf.GetFontDesc("KushimText", "")  // Ascent/Descent in 1/1000 em
+metrics := fontMetrics{ascent: float64(desc.Ascent), descent: float64(desc.Descent)}
+
 pdf.SetTextRenderingMode(3)          // invisible text!
 for _, box := range res.boxes {
 	width := float64(box.Box.Dx()) * scaleX
@@ -282,14 +285,19 @@ for _, box := range res.boxes {
 	if width < 1 || height < 1 {
 		continue
 	}
-	fontSize := height * 0.8
-	if fontSize < 2 {
-		fontSize = 2
-	}
 	left := float64(box.Box.Min.X) * scaleX
-	top := float64(box.Box.Max.Y) * scaleY
+	fontSize, baseline := wordPlacement(height, float64(box.Box.Max.Y)*scaleY, metrics)
 	pdf.SetFont("KushimText", "", fontSize)
-	pdf.Text(left, top, box.Word)
+	if natural := pdf.GetStringWidth(box.Word); natural > 0 {
+		if scalePct := stretchScale(width, natural); scalePct > 0 {
+			pdf.TransformBegin()
+			pdf.TransformScaleX(scalePct, left, baseline)
+			pdf.Text(left, baseline, box.Word)
+			pdf.TransformEnd()
+			continue
+		}
+	}
+	pdf.Text(left, baseline, box.Word)
 }
 ```
 
@@ -301,12 +309,18 @@ The pieces:
   fill nor stroke": the text is **invisible** but present in the content
   stream, which is what makes the PDF searchable/selectable (this is the
   `3 Tr` mode mentioned in `AGENTS.md`).
-- **Word position mapping**: each OCR box's pixel rect is scaled from OCR
-  resolution to page points (`scaleX/scaleY`); `top` uses `Max.Y` because
-  PDF text draws from the baseline.
-- **Font size proportional to box height** (`fontSize := height * 0.8`,
-  floored at 2 pt) so the invisible glyphs match the visible text width —
-  too-small text breaks copy-paste ordering.
+- **Metrics-driven placement** (`wordPlacement`): each OCR box's pixel rect is
+  scaled from OCR resolution to page points (`scaleX/scaleY`); the font size
+  is `height * 1000 / (Ascent - Descent)` so the glyph extent fills the box
+  height, and the baseline sits one descender depth below the box bottom
+  (`Max.Y + (-Descent/1000) * fontSize`) — `pdf.Text` draws from the
+  baseline. If the font reports zero metrics, fall back to `height * 0.8`
+  with a `height * 0.2` baseline offset.
+- **Horizontal stretch to the box width** (`stretchScale`): the word's natural
+  width (`pdf.GetStringWidth`) rarely matches the OCR box, so each word is
+  scaled with `TransformScaleX` (a CTM `q`/`Q` block centered on the box's
+  left edge/baseline) to fill the box. The factor is clamped to 25%–400%;
+  out-of-range words keep their natural width.
 - The font is the **embedded `kushim_font.ttf`** (Liberation Sans, SIL OFL
   1.1, `font_embed.go:9-13`), registered from bytes
   (`pdf.AddUTF8FontFromBytes("KushimText", "", kushimFontData)`,
@@ -511,10 +525,12 @@ and `consumer.ocr.languages` is required before consumption runs.
   image is 150 DPI. Changing `outputDPI` changes file size and page-point
   math; changing `ocrDPI` changes recognition quality. Keep the two
   constants apart.
-- **`pdf.SetTextRenderingMode(3)` before every word** — fpdf resets the
-  rendering mode on font changes; the loop sets it once per page, which works
-  because the font is set per word *before* `pdf.Text` — keep the ordering
-  (`SetTextRenderingMode` → `SetFont` → `Text`).
+- **`pdf.SetTextRenderingMode(3)` once per page, not per word** — fpdf only
+  emits `Tr` from `SetTextRenderingMode` itself; `SetFont`, `Text` and the
+  `q`/`Q` transform blocks never reset it, so the mode set before the word
+  loop persists for the whole page. No re-emit is needed inside the
+  `TransformBegin`/`TransformEnd` blocks (`q`/`Q` save and restore the
+  graphics state anyway).
 - **JPEG quality 60 for the visible image** is a size/quality tradeoff; the
   invisible layer is what matters for search, so the image can be aggressive.
 - **Temporary files** (`ocr_<uuid>.pdf` in `os.TempDir()`) are removed on
