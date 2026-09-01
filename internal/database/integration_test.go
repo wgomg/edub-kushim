@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -829,7 +831,7 @@ func TestStructuredSearchPeopleFilter(t *testing.T) {
 			OriginalType: "application/pdf", FileSize: 1000,
 			OriginalPath: "/tmp/" + id + ".pdf", StoragePath: "/tmp/" + id + "-s.pdf",
 			TextContent: sql.NullString{String: title, Valid: true},
-			PageCount: 1, WordCount: 1, CharCount: 5, Language: "eng",
+			PageCount:   1, WordCount: 1, CharCount: 5, Language: "eng",
 		})
 		assertNoError(t, err, "create "+id)
 		return docID
@@ -1390,5 +1392,69 @@ func resetDB(t *testing.T, q *Queries) {
 		if _, err := q.db.ExecContext(ctx, string(data)); err != nil {
 			t.Fatalf("seed %s: %v", seed, err)
 		}
+	}
+}
+
+func TestBackfillProcessedSizes_SentinelContract(t *testing.T) {
+	q, db := NewTestQueries(t)
+	defer db.Close()
+	resetDB(t, q)
+	ctx := context.Background()
+
+	dir := t.TempDir()
+	realPath := filepath.Join(dir, "real.pdf")
+	if err := os.WriteFile(realPath, make([]byte, 12345), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	missingPath := filepath.Join(dir, "missing.pdf") // never created
+
+	insert := func(id string, storagePath string) {
+		_, err := q.db.ExecContext(ctx,
+			`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, original_type, file_size, processed_size, original_path, storage_path, page_count, word_count, char_count, language, document_type_id)
+			 VALUES ($1, $2, $3, $4, 'application/pdf', 100, 0, '/tmp/o.pdf', $5, 1, 1, 5, 'eng', 1)`,
+			id, id+".pdf", "md5-"+id, "sha512-"+id, storagePath)
+		if err != nil {
+			t.Fatalf("insert %s: %v", id, err)
+		}
+	}
+	insert("bf-real", realPath)
+	insert("bf-missing", missingPath)
+
+	if err := BackfillProcessedSizes(ctx, db); err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+
+	var real, missing int64
+	if err := q.db.QueryRowContext(ctx, `SELECT processed_size FROM document WHERE document_id = 'bf-real'`).Scan(&real); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.db.QueryRowContext(ctx, `SELECT processed_size FROM document WHERE document_id = 'bf-missing'`).Scan(&missing); err != nil {
+		t.Fatal(err)
+	}
+	if real != 12345 {
+		t.Fatalf("real file processed_size = %d, want 12345", real)
+	}
+	if missing != -1 {
+		t.Fatalf("missing file processed_size = %d, want -1 sentinel", missing)
+	}
+
+	// Second run must not re-stat the sentinelised row.
+	if err := BackfillProcessedSizes(ctx, db); err != nil {
+		t.Fatalf("backfill second run: %v", err)
+	}
+	if err := q.db.QueryRowContext(ctx, `SELECT processed_size FROM document WHERE document_id = 'bf-missing'`).Scan(&missing); err != nil {
+		t.Fatal(err)
+	}
+	if missing != -1 {
+		t.Fatalf("sentinelised row changed on re-run: %d", missing)
+	}
+
+	// Aggregate must exclude the -1 sentinel (the GREATEST guard).
+	agg, err := q.DocumentAggregates(ctx)
+	if err != nil {
+		t.Fatalf("DocumentAggregates: %v", err)
+	}
+	if agg.ProcessedBytes != 12345 {
+		t.Fatalf("DocumentAggregates.ProcessedBytes = %d, want 12345 (-1 excluded)", agg.ProcessedBytes)
 	}
 }

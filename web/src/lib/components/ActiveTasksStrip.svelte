@@ -3,21 +3,21 @@
 	import { formatRelative } from '$lib/utils/html.js';
 	import { statusChipClasses } from '$lib/utils/statusChip.js';
 
-	let { tasks = [], total = 0 } = $props();
+	let { tasks = [], count = 0 } = $props();
 </script>
 
 <section>
 	<div class="mb-3 flex items-center justify-between">
 		<h2 class="text-lg font-semibold text-parchment-200">
-			Active Tasks{#if total > 0}
-				({total}){/if}
+			Active Tasks{#if count > 0}
+				({count}){/if}
 		</h2>
-		{#if total > tasks.length}
+		{#if count > tasks.length}
 			<a
 				href={resolve('/tasks?status=active')}
 				class="text-sm text-gold-500 transition-colors hover:text-gold-400 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 			>
-				View all {total} →
+				View all {count} →
 			</a>
 		{/if}
 	</div>

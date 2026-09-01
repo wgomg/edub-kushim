@@ -29,10 +29,10 @@ type BatchCounts struct {
 }
 
 type BatchSummaryResponse struct {
-	BatchID  string `json:"batch_id"`
-	Status   string `json:"status"`
+	BatchID string `json:"batch_id"`
+	Status  string `json:"status"`
 	BatchCounts
-	OwnerPID int64  `json:"owner_pid,omitempty"`
+	OwnerPID int64 `json:"owner_pid,omitempty"`
 }
 
 type ListBatchesResponse struct {
@@ -59,10 +59,10 @@ type StorageTrendPoint struct {
 }
 
 type BatchOverviewItem struct {
-	BatchID    string `json:"batch_id"`
-	Status     string `json:"status"`
-	Source     string `json:"source"`
-	CreatedAt  string `json:"created_at"`
+	BatchID   string `json:"batch_id"`
+	Status    string `json:"status"`
+	Source    string `json:"source"`
+	CreatedAt string `json:"created_at"`
 	BatchCounts
 	DurationMs *int64 `json:"duration_ms,omitempty"`
 }
@@ -91,24 +91,31 @@ type ProcessingHealth struct {
 	MissingTools    int64   `json:"missing_tools"`
 }
 
+type RunningTasksResponse struct {
+	Count int64          `json:"count"`
+	Tasks []TaskResponse `json:"tasks"`
+}
+
 type DashboardResponse struct {
-	RecentBatches    []BatchOverviewItem  `json:"recent_batches"`
-	RunningTasks     []TaskResponse       `json:"running_tasks"`
-	Analytics        *DocumentAnalytics   `json:"analytics,omitempty"`
-	ProcessingHealth *ProcessingHealth    `json:"processing_health,omitempty"`
-	TotalBatches     int64                `json:"total_batches"`
-	TotalFiles       int64                `json:"total_files"`
-	Waiting          int64                `json:"waiting"`
-	Pending          int64                `json:"pending"`
-	Processing       int64                `json:"processing"`
-	Completed        int64                `json:"completed"`
-	Failed           int64                `json:"failed"`
-	Cancelled        int64                `json:"cancelled"`
-	Discarded        int64                `json:"discarded"`
-	TotalSizeGB      float64              `json:"total_size_gb"`
-	OriginalTypeBreakdown []OriginalTypeStat `json:"original_type_breakdown"`
-	StorageTrend      []StorageTrendPoint `json:"storage_trend"`
-	AvgFileSizeBytes  int64               `json:"avg_file_size_bytes"`
-	TotalPages        int64               `json:"total_pages"`
-	TotalWords        int64               `json:"total_words"`
+	RecentBatches         []BatchOverviewItem  `json:"recent_batches"`
+	RunningTasks          RunningTasksResponse `json:"running_tasks"`
+	Analytics             *DocumentAnalytics   `json:"analytics,omitempty"`
+	ProcessingHealth      *ProcessingHealth    `json:"processing_health,omitempty"`
+	TotalBatches          int64                `json:"total_batches"`
+	TotalFiles            int64                `json:"total_files"`
+	InboxFiles            int64                `json:"inbox_files"`
+	Waiting               int64                `json:"waiting"`
+	Pending               int64                `json:"pending"`
+	Processing            int64                `json:"processing"`
+	Completed             int64                `json:"completed"`
+	Failed                int64                `json:"failed"`
+	Cancelled             int64                `json:"cancelled"`
+	Discarded             int64                `json:"discarded"`
+	OriginalsSizeBytes    int64                `json:"originals_size_bytes"`
+	ProcessedSizeBytes    int64                `json:"processed_size_bytes"`
+	OriginalTypeBreakdown []OriginalTypeStat   `json:"original_type_breakdown"`
+	StorageTrend          []StorageTrendPoint  `json:"storage_trend"`
+	AvgFileSizeBytes      int64                `json:"avg_file_size_bytes"`
+	TotalPages            int64                `json:"total_pages"`
+	TotalWords            int64                `json:"total_words"`
 }

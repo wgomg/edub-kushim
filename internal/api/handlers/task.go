@@ -264,12 +264,13 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	agg, aggErr := h.queries.DocumentAggregates(ctx)
-	var totalFiles, totalBytes, totalPages, totalWords int64
+	var totalFiles, totalBytes, processedBytes, totalPages, totalWords int64
 	if aggErr != nil {
 		h.logger.Error(&reqID, "document aggregates: %v", aggErr)
 	} else {
 		totalFiles = agg.TotalFiles
 		totalBytes = agg.TotalBytes
+		processedBytes = agg.ProcessedBytes
 		totalPages = agg.TotalPages
 		totalWords = agg.TotalWords
 	}
@@ -282,6 +283,18 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	if statusErr == nil {
 		for _, r := range statusRows {
 			perStatus[r.Status] = r.Count
+		}
+	}
+
+	activeCount := perStatus["waiting"] + perStatus["pending"] + perStatus["processing"]
+
+	inboxFiles := int64(0)
+	if cfg := h.getConfig(); cfg != nil {
+		n, inboxErr := utils.CountFilePaths(cfg.Storage.ConsumptionDir, cfg.Consumer.SupportedFiles)
+		if inboxErr != nil {
+			h.logger.Error(&reqID, "count inbox files: %v", inboxErr)
+		} else {
+			inboxFiles = int64(n)
 		}
 	}
 
@@ -329,12 +342,16 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(types.DashboardResponse{
-		RecentBatches:         items,
-		RunningTasks:          runningTasks,
+		RecentBatches: items,
+		RunningTasks: types.RunningTasksResponse{
+			Count: activeCount,
+			Tasks: runningTasks,
+		},
 		Analytics:             analytics,
 		ProcessingHealth:      processingHealth,
 		TotalBatches:          totalBatches,
 		TotalFiles:            totalFiles,
+		InboxFiles:            inboxFiles,
 		Waiting:               perStatus["waiting"],
 		Pending:               perStatus["pending"],
 		Processing:            perStatus["processing"],
@@ -342,7 +359,8 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 		Failed:                perStatus["failed"],
 		Cancelled:             perStatus["cancelled"],
 		Discarded:             perStatus["discarded"],
-		TotalSizeGB:           float64(totalBytes) / (1024 * 1024 * 1024),
+		OriginalsSizeBytes:    totalBytes,
+		ProcessedSizeBytes:    processedBytes,
 		OriginalTypeBreakdown: typeStats,
 		StorageTrend:          trendPoints,
 		AvgFileSizeBytes:      avgFileSize,

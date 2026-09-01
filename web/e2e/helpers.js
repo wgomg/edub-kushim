@@ -26,7 +26,9 @@ export const DOCUMENTS = [
 const DASHBOARD = {
 	total_files: 2,
 	total_batches: 1,
-	total_size_gb: 0.001,
+	inbox_files: 3,
+	originals_size_bytes: 1050624,
+	processed_size_bytes: 1048576,
 	waiting: 0,
 	pending: 0,
 	processing: 0,
@@ -34,7 +36,7 @@ const DASHBOARD = {
 	failed: 0,
 	cancelled: 0,
 	discarded: 0,
-	running_tasks: [],
+	running_tasks: { count: 0, tasks: [] },
 	recent_batches: [],
 	analytics: null,
 	processing_health: null,
@@ -70,12 +72,10 @@ export async function mockApi(page, overrides = {}) {
 		'/api/v1/consume/upload': (route) =>
 			json(route, { accepted: 1, batch_id: 'batch-1', rejected: [] }, 202),
 		'/wizard/bootstrap': (route) => json(route, { auth_enabled: true, missing_tools: [] }),
-		'/health': (route) =>
-			json(route, { status: 'ok', version: 'test', time: '2026-01-01T00:00:00Z' }),
 		...overrides
 	};
 
-	await page.route(/\/api\/|\/wizard\/|\/health/, (route) => {
+	await page.route(/\/api\/|\/wizard\//, (route) => {
 		const path = new URL(route.request().url()).pathname;
 		const handler = handlers[path];
 		if (handler) return handler(route);

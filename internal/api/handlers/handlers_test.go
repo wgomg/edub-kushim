@@ -738,11 +738,14 @@ func TestGetDashboardRunningTasks(t *testing.T) {
 		t.Fatalf("decode dashboard: %v", err)
 	}
 
-	if len(resp.RunningTasks) < 2 {
-		t.Fatalf("expected at least 2 running tasks, got %d", len(resp.RunningTasks))
+	if len(resp.RunningTasks.Tasks) < 2 {
+		t.Fatalf("expected at least 2 running tasks, got %d", len(resp.RunningTasks.Tasks))
+	}
+	if resp.RunningTasks.Count < 2 {
+		t.Fatalf("expected running_tasks.count >= 2, got %d", resp.RunningTasks.Count)
 	}
 
-	first := resp.RunningTasks[0]
+	first := resp.RunningTasks.Tasks[0]
 	if first.Status != "processing" {
 		t.Fatalf("expected processing task first, got %q", first.Status)
 	}
@@ -757,7 +760,7 @@ func TestGetDashboardRunningTasks(t *testing.T) {
 	}
 
 	var foundPending bool
-	for _, tsk := range resp.RunningTasks {
+	for _, tsk := range resp.RunningTasks.Tasks {
 		if tsk.Status == "pending" {
 			foundPending = true
 			break
@@ -947,8 +950,8 @@ func TestGetDashboardProcessingHealth(t *testing.T) {
 	if resp.TotalFiles < 1 {
 		t.Fatalf("expected total_files >= 1, got %d", resp.TotalFiles)
 	}
-	if resp.TotalSizeGB <= 0 {
-		t.Fatalf("expected total_size_gb > 0, got %f", resp.TotalSizeGB)
+	if resp.OriginalsSizeBytes <= 0 {
+		t.Fatalf("expected originals_size_bytes > 0, got %d", resp.OriginalsSizeBytes)
 	}
 	if resp.Completed < 1 {
 		t.Fatalf("expected completed >= 1, got %d", resp.Completed)
@@ -1577,7 +1580,7 @@ func TestBatchSetDocumentType(t *testing.T) {
 		newType := seedDocType(t, env, "receipt")
 
 		err := env.client.SoftDeleteDocument(ctx, database.SoftDeleteDocumentParams{
-			DocumentID:  dGone,
+			DocumentID:   dGone,
 			OriginalPath: "/tmp/orig.pdf",
 			StoragePath:  "/tmp/storage.pdf",
 		})

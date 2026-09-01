@@ -1942,36 +1942,42 @@ Response `200`:
       "duration_ms": 42000
     }
   ],
-  "running_tasks": [
-    {
-      "task_id": "660e8400-e29b-41d4-a716-446655440001",
-      "batch_id": "550e8400-e29b-41d4-a716-446655440000",
-      "task_type": "consume",
-      "file_name": "report.pdf",
-      "payload_doc_id": "",
-      "status": "processing",
-      "document_id": null,
-      "error": null,
-      "label": "Consume: report.pdf",
-      "created_at": "2026-06-25T10:30:00Z",
-      "started_at": "2026-06-25T10:30:05Z",
-      "completed_at": null
-    },
-    {
-      "task_id": "660e8400-e29b-41d4-a716-446655440002",
-      "batch_id": "",
-      "task_type": "config",
-      "file_name": "",
-      "payload_doc_id": "",
-      "status": "pending",
-      "document_id": null,
-      "error": null,
-      "label": "Database migration",
-      "created_at": "2026-06-25T10:28:00Z",
-      "started_at": null,
-      "completed_at": null
-    }
-  ]
+  "inbox_files": 3,
+  "originals_size_bytes": 10485760,
+  "processed_size_bytes": 8388608,
+  "running_tasks": {
+    "count": 2,
+    "tasks": [
+      {
+        "task_id": "660e8400-e29b-41d4-a716-446655440001",
+        "batch_id": "550e8400-e29b-41d4-a716-446655440000",
+        "task_type": "consume",
+        "file_name": "report.pdf",
+        "payload_doc_id": "",
+        "status": "processing",
+        "document_id": null,
+        "error": null,
+        "label": "Consume: report.pdf",
+        "created_at": "2026-06-25T10:30:00Z",
+        "started_at": "2026-06-25T10:30:05Z",
+        "completed_at": null
+      },
+      {
+        "task_id": "660e8400-e29b-41d4-a716-446655440002",
+        "batch_id": "",
+        "task_type": "config",
+        "file_name": "",
+        "payload_doc_id": "",
+        "status": "pending",
+        "document_id": null,
+        "error": null,
+        "label": "Database migration",
+        "created_at": "2026-06-25T10:28:00Z",
+        "started_at": null,
+        "completed_at": null
+      }
+    ]
+  }
 }
 ```
 
@@ -1992,20 +1998,22 @@ Response `200`:
 | `orphaned`     | `bool`    | True when owner is not live but tasks remain pending or processing                   |
 | `duration_ms`  | `int`     | Batch duration in milliseconds. Present only when the batch is fully settled.        |
 
-#### Active Task (`running_tasks[]`)
+#### Active Task (`running_tasks`)
 
-Tasks in `pending`/`processing`/`waiting` (all task types), capped at 25, ordered processing-first then oldest-queued.
+Object with `count` (total active tasks across all task types, uncapped) and `tasks` (the active task list, capped at 25, ordered processing-first then oldest-queued).
 
 | Field         | Type     | Description                                                                                                            |
 | ------------- | -------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `task_id`     | `string` | Task UUID                                                                                                              |
-| `batch_id`    | `string` | Batch UUID (empty for `backup`/`config` tasks)                                                                         |
-| `task_type`   | `string` | `consume`, `enrich`, `thumbnail`, `config`, or `backup`                                                                |
-| `file_name`   | `string` | File name from the payload, if any                                                                                     |
-| `status`      | `string` | `pending`, `processing`, or `waiting`                                                                                  |
-| `label`       | `string` | Human-readable title: `TaskType: file name` for consume/enrich/thumbnail (e.g. `"Consume: report.pdf"`), else derived from task type + dedup key (e.g. `"Backup (full)"`, `"Database migration"`, `"Download tessdata (eng)"`) |
-| `created_at`  | `string` | RFC 3339 timestamp                                                                                                     |
-| `started_at`  | `string` | RFC 3339 timestamp, `null` while queued                                                                                |
+| `count`       | `int`    | Total number of active tasks (uncapped)                                                                                |
+| `tasks`       | `array`  | Active tasks, capped at 25, ordered processing-first then oldest-queued                                                |
+| `tasks[].task_id` | `string` | Task UUID                                                                                                          |
+| `tasks[].batch_id` | `string` | Batch UUID (empty for `backup`/`config` tasks)                                                                     |
+| `tasks[].task_type` | `string` | `consume`, `enrich`, `thumbnail`, `config`, or `backup`                                                            |
+| `tasks[].file_name` | `string` | File name from the payload, if any                                                                                 |
+| `tasks[].status` | `string` | `pending`, `processing`, or `waiting`                                                                              |
+| `tasks[].label` | `string` | Human-readable title: `TaskType: file name` for consume/enrich/thumbnail (e.g. `"Consume: report.pdf"`), else derived from task type + dedup key (e.g. `"Backup (full)"`, `"Database migration"`, `"Download tessdata (eng)"`) |
+| `tasks[].created_at` | `string` | RFC 3339 timestamp                                                                                                |
+| `tasks[].started_at` | `string` | RFC 3339 timestamp, `null` while queued                                                                           |
 
 ### Response Types
 

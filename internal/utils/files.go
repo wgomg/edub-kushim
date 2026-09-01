@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -57,7 +58,12 @@ func ListFilePaths(src string, exts []string, maxFiles int) ([]string, error) {
 	var timedEntries []entryWithTime
 
 	for _, entry := range entries {
-		if entry.IsDir() {
+		ok, err := isSupportedEntry(src, entry, supportedFiles)
+		if err != nil {
+			fmt.Printf("Warning: Failed to detect MIME type for %s: %v\n", entry.Name(), err)
+			continue
+		}
+		if !ok {
 			continue
 		}
 
@@ -86,17 +92,6 @@ func ListFilePaths(src string, exts []string, maxFiles int) ([]string, error) {
 	})
 
 	for _, te := range timedEntries {
-		mtype, err := mimetype.DetectFile(te.path)
-		if err != nil {
-			fmt.Printf("Warning: Failed to detect MIME type for %s: %v\n", filepath.Base(te.path), err)
-			continue
-		}
-
-		fileExt := strings.ToLower(mtype.Extension())
-		if !supportedFiles[fileExt] {
-			continue
-		}
-
 		paths = append(paths, te.path)
 
 		if maxFiles > 0 && len(paths) >= maxFiles {
@@ -106,4 +101,38 @@ func ListFilePaths(src string, exts []string, maxFiles int) ([]string, error) {
 	}
 
 	return paths, nil
+}
+
+func isSupportedEntry(src string, entry fs.DirEntry, supportedFiles map[string]bool) (bool, error) {
+	if !entry.Type().IsRegular() {
+		return false, nil
+	}
+	mtype, err := mimetype.DetectFile(filepath.Join(src, entry.Name()))
+	if err != nil {
+		return false, err
+	}
+	return supportedFiles[strings.ToLower(mtype.Extension())], nil
+}
+
+func CountFilePaths(src string, exts []string) (int, error) {
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("error reading directory: %w", err)
+	}
+
+	supportedFiles := _mime.BuildExtensionSet(exts)
+	count := 0
+	for _, entry := range entries {
+		ok, err := isSupportedEntry(src, entry, supportedFiles)
+		if err != nil {
+			continue
+		}
+		if ok {
+			count++
+		}
+	}
+	return count, nil
 }

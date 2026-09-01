@@ -1,9 +1,12 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"embed"
 	"fmt"
+	"log/slog"
+	"time"
 
 	"github.com/pressly/goose/v3"
 )
@@ -28,6 +31,12 @@ func InitializeSchema(db *sql.DB) error {
 		if _, err := db.Exec(string(seeder)); err != nil {
 			return fmt.Errorf("seed %s: %w", seed, err)
 		}
+	}
+
+	backfillCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if err := BackfillProcessedSizes(backfillCtx, db); err != nil {
+		slog.Default().Error("backfill processed sizes", "error", err)
 	}
 
 	return nil

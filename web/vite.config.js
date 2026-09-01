@@ -15,8 +15,7 @@ export default defineConfig({
 	},
 	server: {
 		proxy: {
-			'/api': `http://localhost:${process.env.API_PORT || '3000'}`,
-			'/health': `http://localhost:${process.env.API_PORT || '3000'}`
+			'/api': `http://localhost:${process.env.API_PORT || '3000'}`
 		}
 	},
 	test: {

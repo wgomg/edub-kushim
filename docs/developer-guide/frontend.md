@@ -507,15 +507,14 @@ There are **no load functions** (`+page.js`) — every page fetches in
 ### 1. Simple fetch-on-mount
 
 The dashboard runs one parallel batch with `Promise.all`
-(`+page.svelte:19-35`):
+(`+page.svelte:18-26`):
 
 ```js
 async function fetchDashboard() {
 	if (fetching) return;               // overlap guard
 	fetching = true;
 	try {
-		[health, recentDocs, dashboard] = await Promise.all([
-			api.health(),
+		[recentDocs, dashboard] = await Promise.all([
 			api.documents.list(15, 0),
 			api.dashboard()
 		]);
@@ -529,7 +528,7 @@ onMount(() => {
 ```
 
 Auto-refresh is an opt-in `$effect`-managed interval (§4) plus an
-`onDestroy` cleanup (`+page.svelte:37-52`).
+`onDestroy` cleanup (`+page.svelte:32-47`).
 
 ### 2. AbortController with stale-response guard
 

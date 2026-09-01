@@ -36,9 +36,9 @@ func (q *Queries) CountTrashDocuments(ctx context.Context) (int64, error) {
 
 const createDocument = `-- name: CreateDocument :one
 INSERT INTO document (
-    document_id, title, md5_checksum, sha512_checksum, original_type, file_size, page_count, word_count,
+    document_id, title, md5_checksum, sha512_checksum, original_type, file_size, processed_size, page_count, word_count,
     char_count, language, original_path, storage_path, text_content
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id
 `
 
 type CreateDocumentParams struct {
@@ -48,6 +48,7 @@ type CreateDocumentParams struct {
 	Sha512Checksum string
 	OriginalType   string
 	FileSize       int64
+	ProcessedSize  int64
 	PageCount      int32
 	WordCount      int32
 	CharCount      int32
@@ -65,6 +66,7 @@ func (q *Queries) CreateDocument(ctx context.Context, arg CreateDocumentParams) 
 		arg.Sha512Checksum,
 		arg.OriginalType,
 		arg.FileSize,
+		arg.ProcessedSize,
 		arg.PageCount,
 		arg.WordCount,
 		arg.CharCount,

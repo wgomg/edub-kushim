@@ -70,10 +70,11 @@ func (q *Queries) StorageTrendDaily(ctx context.Context) ([]StorageTrendDailyRow
 }
 
 type DocumentAggregatesRow struct {
-	TotalFiles int64
-	TotalBytes int64
-	TotalPages int64
-	TotalWords int64
+	TotalFiles     int64
+	TotalBytes     int64
+	ProcessedBytes int64
+	TotalPages     int64
+	TotalWords     int64
 }
 
 type DistributionRow struct {
@@ -272,9 +273,10 @@ func (q *Queries) DocumentAggregates(ctx context.Context) (DocumentAggregatesRow
 	err := q.db.QueryRowContext(ctx,
 		`SELECT COUNT(*),
 			CAST(COALESCE(SUM(file_size), 0) AS BIGINT),
+			CAST(COALESCE(SUM(GREATEST(processed_size, 0)), 0) AS BIGINT),
 			CAST(COALESCE(SUM(page_count), 0) AS BIGINT),
 			CAST(COALESCE(SUM(word_count), 0) AS BIGINT)
 		FROM document WHERE deleted_at IS NULL`,
-	).Scan(&r.TotalFiles, &r.TotalBytes, &r.TotalPages, &r.TotalWords)
+	).Scan(&r.TotalFiles, &r.TotalBytes, &r.ProcessedBytes, &r.TotalPages, &r.TotalWords)
 	return r, err
 }

@@ -228,7 +228,7 @@ These methods are written manually (no sqlc) and follow a consistent pattern:
 | `OriginalTypeBreakdown` | `SELECT original_type, COUNT(*), SUM(file_size) FROM document GROUP BY original_type ORDER BY total_bytes DESC` | `[]OriginalTypeBreakdownRow` |
 | `StorageTrendDaily` | `SELECT date(created_at), COUNT(*), SUM(file_size) FROM document GROUP BY day ORDER BY day` | `[]StorageTrendDailyRow` |
 | `ListActiveTasks` | `SELECT ... FROM task WHERE status IN ('pending','processing','waiting') ORDER BY CASE status (processing→pending→waiting), started_at ASC NULLS LAST, created_at ASC LIMIT/OFFSET` | `[]Task` |
-| `DocumentAggregates` | `SELECT COUNT(*), SUM(file_size), SUM(page_count), SUM(word_count) FROM document` | `DocumentAggregatesRow` |
+| `DocumentAggregates` | `SELECT COUNT(*), SUM(file_size), SUM(GREATEST(processed_size,0)), SUM(page_count), SUM(word_count) FROM document WHERE deleted_at IS NULL` | `DocumentAggregatesRow` (adds `ProcessedBytes`; `GREATEST` excludes the backfill `-1` sentinel) |
 | `LanguageDistribution` | `SELECT language, COUNT(*) FROM document WHERE language != 'und' AND language != '' GROUP BY language ORDER BY count DESC` | `[]DistributionRow` |
 | `DocumentTypeDistribution` | `SELECT dt.name, COUNT(*) FROM document d JOIN document_type dt ON d.document_type_id = dt.id WHERE d.document_type_id != 1 GROUP BY dt.id, dt.name ORDER BY count DESC` | `[]DistributionRow` |
 | `TagFrequency` | `SELECT t.name, COUNT(*) FROM document_tag dt JOIN tag t ON dt.tag_id = t.id GROUP BY t.id, t.name ORDER BY count DESC LIMIT 10` | `[]DistributionRow` |
@@ -248,7 +248,7 @@ The last 4 methods back the dashboard analytics panel. `LanguageDistribution` an
 
 ## Core Tables
 
-- `document` — Main storage: `document_id` (UUID, UNIQUE), `md5_checksum`, `sha512_checksum` (UNIQUE), `file_size` (`BIGINT`), `page_count` (`INTEGER`, Go: `int32`), `word_count` (`int32`), `char_count` (`int32`), `language`, `text_content`, file paths, `deleted_at` (`TIMESTAMPTZ`, nullable — soft-delete marker, NULL = active). Primary key: `id BIGINT GENERATED ALWAYS AS IDENTITY`.
+- `document` — Main storage: `document_id` (UUID, UNIQUE), `md5_checksum`, `sha512_checksum` (UNIQUE), `file_size` (`BIGINT`, original inbox file size), `processed_size` (`BIGINT`, processed file size; `0` = unknown, `-1` = backfill sentinel for missing files), `page_count` (`INTEGER`, Go: `int32`), `word_count` (`int32`), `char_count` (`int32`), `language`, `text_content`, file paths, `deleted_at` (`TIMESTAMPTZ`, nullable — soft-delete marker, NULL = active). Primary key: `id BIGINT GENERATED ALWAYS AS IDENTITY`.
 - `saved_search` — Saved search configurations: `id`, `name`, `filter_json` (JSON), `created_at TIMESTAMPTZ NOT NULL` (Go: `time.Time`)
 - `task` — Async processing: `task_id` (UUID), `batch_id` (nullable), `task_type`, `payload` (`JSONB`), `result` (`JSONB`), `dedup_key` (nullable), `status`, timestamps, `error`, `attempts int32`
 - `tag` — Classification tags (seeded with 110+ Dewey Decimal tags)

@@ -21,9 +21,9 @@ FROM document WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT $1 OFFSET 
 
 -- name: CreateDocument :one
 INSERT INTO document (
-    document_id, title, md5_checksum, sha512_checksum, original_type, file_size, page_count, word_count,
+    document_id, title, md5_checksum, sha512_checksum, original_type, file_size, processed_size, page_count, word_count,
     char_count, language, original_path, storage_path, text_content
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id;
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id;
 
 -- name: UpdateDocumentMetadata :exec
 UPDATE document SET

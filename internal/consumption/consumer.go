@@ -276,7 +276,7 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 	txCtx, txCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer txCancel()
 
-		tx, err := 	c.client.BeginTx(txCtx, nil)
+	tx, err := c.client.BeginTx(txCtx, nil)
 	if err != nil {
 		if removeErr := RemoveFile(*file.StorageProcessedPath); removeErr != nil {
 			c.logger.Error(&documentID, "failed to clean up processed file: %v", removeErr)
@@ -290,16 +290,16 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 	defer func() {
 		if err != nil {
 			tx.Rollback()
-		if file.StorageProcessedPath != nil {
-			if removeErr := RemoveFile(*file.StorageProcessedPath); removeErr != nil {
-				c.logger.Error(&documentID, "failed to clean up processed storage file: %v", removeErr)
+			if file.StorageProcessedPath != nil {
+				if removeErr := RemoveFile(*file.StorageProcessedPath); removeErr != nil {
+					c.logger.Error(&documentID, "failed to clean up processed storage file: %v", removeErr)
+				}
 			}
-		}
-		if file.StorageOriginalPath != nil {
-			if removeErr := RemoveFile(*file.StorageOriginalPath); removeErr != nil {
-				c.logger.Error(&documentID, "failed to clean up original storage file: %v", removeErr)
+			if file.StorageOriginalPath != nil {
+				if removeErr := RemoveFile(*file.StorageOriginalPath); removeErr != nil {
+					c.logger.Error(&documentID, "failed to clean up original storage file: %v", removeErr)
+				}
 			}
-		}
 		}
 
 		if file.OCRTmpPath != nil {
@@ -322,6 +322,10 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 	}()
 
 	tq := c.client.WithTx(tx)
+	processedSize := int64(0)
+	if info, err := os.Stat(*file.StorageProcessedPath); err == nil {
+		processedSize = info.Size()
+	}
 	documentDbId, err := tq.CreateDocument(txCtx, database.CreateDocumentParams{
 		DocumentID:     documentID,
 		Title:          file.Name,
@@ -329,6 +333,7 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 		Sha512Checksum: file.SHA512Checksum,
 		OriginalType:   file.MimeType,
 		FileSize:       file.FileSize,
+		ProcessedSize:  processedSize,
 		OriginalPath:   "",
 		StoragePath:    *file.StorageProcessedPath,
 		TextContent:    file.Text,

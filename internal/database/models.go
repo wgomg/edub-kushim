@@ -52,6 +52,7 @@ type Document struct {
 	TextSearchVector interface{}
 	DeletedAt        sql.NullTime
 	HasThumbnail     bool
+	ProcessedSize    int64
 }
 
 type DocumentPeople struct {

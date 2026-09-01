@@ -9,7 +9,6 @@
 	import DocumentAnalyticsPanel from '$lib/components/DocumentAnalyticsPanel.svelte';
 	import ProcessingHealthPanel from '$lib/components/ProcessingHealthPanel.svelte';
 
-	let health = $state();
 	let recentDocs = $state([]);
 	let dashboard = $state();
 	let autoRefresh = $state(false);
@@ -20,11 +19,7 @@
 		if (fetching) return;
 		fetching = true;
 		try {
-			[health, recentDocs, dashboard] = await Promise.all([
-				api.health(),
-				api.documents.list(15, 0),
-				api.dashboard()
-			]);
+			[recentDocs, dashboard] = await Promise.all([api.documents.list(15, 0), api.dashboard()]);
 		} finally {
 			fetching = false;
 		}
@@ -60,9 +55,6 @@
 	}
 
 	let docColumns = $derived(chunk(recentDocs, 5));
-	let activeTotal = $derived(
-		(dashboard?.processing ?? 0) + (dashboard?.pending ?? 0) + (dashboard?.waiting ?? 0)
-	);
 </script>
 
 <div class="space-y-6">
@@ -81,14 +73,6 @@
 
 	<div class="grid grid-cols-2 gap-4 sm:grid-cols-5">
 		<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
-			<p class="text-sm text-parchment-500">Server</p>
-			<p class="mt-1 text-lg font-semibold text-parchment-200">{health?.status ?? '…'}</p>
-		</div>
-		<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
-			<p class="text-sm text-parchment-500">Version</p>
-			<p class="mt-1 text-lg font-semibold text-parchment-200">{health?.version ?? '…'}</p>
-		</div>
-		<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 			<p class="text-sm text-parchment-500">Total Files</p>
 			<p class="mt-1 text-lg font-semibold text-parchment-200">{dashboard?.total_files ?? '…'}</p>
 		</div>
@@ -97,9 +81,19 @@
 			<p class="mt-1 text-lg font-semibold text-parchment-200">{dashboard?.total_batches ?? '…'}</p>
 		</div>
 		<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
-			<p class="text-sm text-parchment-500">Total Size</p>
+			<p class="text-sm text-parchment-500">Files in Inbox</p>
+			<p class="mt-1 text-lg font-semibold text-parchment-200">{dashboard?.inbox_files ?? '…'}</p>
+		</div>
+		<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
+			<p class="text-sm text-parchment-500">Originals Size</p>
 			<p class="mt-1 text-lg font-semibold text-parchment-200">
-				{dashboard ? formatSize(Math.round(dashboard.total_size_gb * 1073741824)) : '…'}
+				{dashboard ? formatSize(dashboard.originals_size_bytes) : '…'}
+			</p>
+		</div>
+		<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
+			<p class="text-sm text-parchment-500">Processed Size</p>
+			<p class="mt-1 text-lg font-semibold text-parchment-200">
+				{dashboard ? formatSize(dashboard.processed_size_bytes) : '…'}
 			</p>
 		</div>
 	</div>
@@ -153,7 +147,10 @@
 	{/if}
 
 	{#if dashboard}
-		<ActiveTasksStrip tasks={dashboard?.running_tasks ?? []} total={activeTotal} />
+		<ActiveTasksStrip
+			tasks={dashboard.running_tasks?.tasks ?? []}
+			count={dashboard.running_tasks?.count ?? 0}
+		/>
 
 		<section>
 			<h2 class="mb-3 text-lg font-semibold text-parchment-200">Recent Batches</h2>

@@ -173,5 +173,3 @@ func consumeOnCompletedThumbnail(payload json.RawMessage) string {
 	json.Unmarshal(payload, &p)
 	return p.OnCompletedThumbnail
 }
-
-

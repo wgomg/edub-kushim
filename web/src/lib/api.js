@@ -86,9 +86,6 @@ export const api = {
 	},
 	dashboard: () => request('/api/v1/dashboard'),
 
-	health: () =>
-		request('/health').then((data) => data ?? { status: 'unreachable', version: '-', time: '-' }),
-
 	documents: {
 		list: (limit = 50, offset = 0, sortBy = 'created_at', sortOrder = 'desc') =>
 			request(
