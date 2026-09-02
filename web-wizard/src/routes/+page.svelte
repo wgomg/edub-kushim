@@ -157,7 +157,9 @@
 			'database.port': Number(cfg.database.port),
 			'database.user': cfg.database.user,
 			'database.database': cfg.database.database,
-			'database.sslmode': cfg.database.sslmode
+			'database.sslmode': cfg.database.sslmode,
+			'database.runtime': cfg.database.runtime,
+			'database.container': cfg.database.container
 		};
 	}
 
@@ -456,6 +458,45 @@
 						<option value="verify-full">verify-full</option>
 					</select>
 				</div>
+				<div>
+					<label for="db-runtime" class="mb-1 block text-sm font-medium text-parchment-200">
+						Runtime
+					</label>
+					<select
+						id="db-runtime"
+						name="db-runtime"
+						bind:value={cfg.database.runtime}
+						class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+					>
+						<option value="host">host</option>
+						<option value="docker">docker</option>
+						<option value="podman">podman</option>
+						<option value="remote">remote</option>
+					</select>
+					<p class="mt-1 text-xs text-parchment-500">
+						Where restores run psql: on this machine (host), inside a container (docker/podman), or
+						not at all (remote — restore must be done manually on the remote host).
+					</p>
+				</div>
+				{#if cfg.database.runtime === 'docker' || cfg.database.runtime === 'podman'}
+					<div>
+						<label for="db-container" class="mb-1 block text-sm font-medium text-parchment-200">
+							Container name
+						</label>
+						<input
+							id="db-container"
+							name="db-container"
+							type="text"
+							autocomplete="off"
+							bind:value={cfg.database.container}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+						/>
+						<p class="mt-1 text-xs text-parchment-500">
+							Required for docker/podman: the container running PostgreSQL, where psql is executed
+							for restores.
+						</p>
+					</div>
+				{/if}
 			</div>
 		</section>
 

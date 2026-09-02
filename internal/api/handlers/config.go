@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -98,6 +99,11 @@ func (h *ConfigHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(resp)
+}
+
+var dbConnectionKeys = []string{
+	"database.host", "database.port", "database.user", "database.password",
+	"database.database", "database.sslmode", "database.dsn",
 }
 
 func (h *ConfigHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
@@ -245,7 +251,7 @@ func (h *ConfigHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
 
 	immediate := make(map[string]any, len(body))
 	for k, v := range body {
-		if strings.HasPrefix(k, "database.") {
+		if slices.Contains(dbConnectionKeys, k) {
 			continue
 		}
 		if k == "storage.storage_dir" || k == "storage.consumption_dir" {
@@ -334,11 +340,13 @@ func (h *ConfigHandler) handleConfigTask(ctx context.Context, batchId, dedupKey 
 
 func dbParamsFromBody(body map[string]any, current config.DatabaseConfig) (config.DatabaseConfig, error) {
 	db := config.DatabaseConfig{
-		Host:     asString(body["database.host"]),
-		User:     asString(body["database.user"]),
-		Password: asString(body["database.password"]),
-		Database: asString(body["database.database"]),
-		SSLMode:  asString(body["database.sslmode"]),
+		Host:      asString(body["database.host"]),
+		User:      asString(body["database.user"]),
+		Password:  asString(body["database.password"]),
+		Database:  asString(body["database.database"]),
+		SSLMode:   asString(body["database.sslmode"]),
+		Runtime:   asString(body["database.runtime"]),
+		Container: asString(body["database.container"]),
 	}
 	if db.Host == "" {
 		db.Host = current.Host
@@ -354,6 +362,12 @@ func dbParamsFromBody(body map[string]any, current config.DatabaseConfig) (confi
 	}
 	if db.SSLMode == "" {
 		db.SSLMode = current.SSLMode
+	}
+	if db.Runtime == "" {
+		db.Runtime = current.Runtime
+	}
+	if db.Container == "" {
+		db.Container = current.Container
 	}
 
 	switch v := body["database.port"].(type) {
@@ -393,6 +407,9 @@ func dbParamsFromBody(body map[string]any, current config.DatabaseConfig) (confi
 	case "", "disable", "allow", "prefer", "require", "verify-ca", "verify-full":
 	default:
 		return db, fmt.Errorf("database.sslmode must be one of: disable, allow, prefer, require, verify-ca, verify-full")
+	}
+	if err := config.ValidateDatabaseRuntime(db.Runtime, db.Container); err != nil {
+		return db, err
 	}
 	return db, nil
 }

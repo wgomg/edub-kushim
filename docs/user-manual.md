@@ -645,20 +645,27 @@ kushim restore /path/to/backup.tar.gz --dry-run
 | ---------- | ---------------------------------------------------------- |
 | `--force`  | Skip confirmation prompt and PID file check                |
 | `--dry-run`| Validate the archive without making any changes            |
-
 The restore process:
+
 1. Validates the `tar.gz` archive and reads the manifest
-2. Checks that the queue daemon is not running (refuses unless `--force`)
-3. Prompts for confirmation (skipped with `--force`)
-4. Extracts the archive to a temporary directory
-5. Executes the SQL dump against the database (schema drop + recreate + data insert) — skipped for `documents`-mode archives
-6. Rewrites database storage paths from the archived storage directory (manifest `storage_dir`, or `storage.storage_dir` from the archived config for old backups) to the current one — `document.storage_path`, `document.original_path`, and `orphaned_file.file_path`; skipped when the directories match or the archived dir can't be determined (`~`-relative archived paths are skipped with a warning). Also skipped for `documents`-mode archives (no DB was restored; ensure `storage.storage_dir` matches or update the DB manually)
-7. Replaces storage (via atomic rename-swap) — skipped for `database`-mode archives
-8. Saves the archived config as `config.yaml.restored` — the current configuration stays intact (update `storage.storage_dir` in it to match the rewritten paths before applying)
-9. Prints restart instructions
+2. Checks restore tooling: `host` runtime requires `psql` on PATH; `docker`/`podman` require the runtime binary and `database.container`; `remote` refuses with manual-restore guidance (skipped for `documents`-mode archives)
+3. Checks that the queue daemon is not running (refuses unless `--force`)
+4. Prompts for confirmation (skipped with `--force`)
+5. Extracts the archive to a temporary directory
+6. Executes the SQL dump against the database via `psql` (schema drop + recreate + data insert; the dump's own transaction keeps it atomic) — skipped for `documents`-mode archives
+7. Rewrites database storage paths from the archived storage directory (manifest `storage_dir`, or `storage.storage_dir` from the archived config for old backups) to the current one — `document.storage_path`, `document.original_path`, and `orphaned_file.file_path`; skipped when the directories match or the archived dir can't be determined (`~`-relative archived paths are skipped with a warning). Also skipped for `documents`-mode archives (no DB was restored; ensure `storage.storage_dir` matches or update the DB manually)
+8. Replaces storage (via atomic rename-swap) — skipped for `database`-mode archives
+9. Saves the archived config as `config.yaml.restored` — the current configuration stays intact (update `storage.storage_dir` in it to match the rewritten paths before applying)
+10. Prints restart instructions
 
 Archives created before backup modes existed have no `mode` in the manifest and
 restore as `full`.
+
+The restore runs `psql` per `database.runtime`: on the host (`host`, requires
+`psql` installed — the `postgresql-client` package), or inside the named
+container (`docker`/`podman`, requires `database.container`). With
+`runtime: remote` the restore refuses before touching anything — unzip the
+archive and run `psql -f edub.sql` manually on the remote host.
 
 ---
 
@@ -673,7 +680,7 @@ kushim migrate storage --storage-dir <new> [--consumption-dir <new>]
 
 #### `kushim migrate database`
 
-Copies the current database to a new PostgreSQL server and points `config.yaml` at it, running the same steps as the `migrate-db` config task: pre-migration safety snapshot (config `backup.path`, retention-capped), SQL dump (schema + data, `goose_db_version` preserved), destination validation (refuses databases with tables but no edub migration history; skips restore when the destination already holds data), and a deferred `config.yaml` update.
+Copies the current database to a new PostgreSQL server and points `config.yaml` at it, running the same steps as the `migrate-db` config task: pre-migration safety snapshot (config `backup.path`, retention-capped), SQL dump (schema + data, `goose_db_version` preserved), destination validation (refuses databases with tables but no edub migration history; skips restore when the destination already holds data), and a deferred `config.yaml` update. The destination restore runs `psql` per the current config's `database.runtime` (host binary or exec into the current container, connecting over TCP to the destination); `runtime: remote` refuses before dumping.
 
 | Flag         | Description                                                        |
 | ------------ | ------------------------------------------------------------------ |
@@ -2174,6 +2181,10 @@ database:
   password: edub
   database: edub
   sslmode: disable
+  # Where restores run psql: host (psql installed on this machine), docker/podman
+  # (psql executed inside the named container), or remote (automated restore disabled).
+  runtime: host
+  # container: edub-postgres   # required when runtime is docker/podman
   # Or use a DSN string instead (overrides discrete fields):
   # dsn: "postgres://edub:edub@localhost:5432/edub?sslmode=disable"
 

@@ -50,15 +50,39 @@ type ServerConfig struct {
 }
 
 type DatabaseConfig struct {
-	Type     string   `mapstructure:"type" yaml:"type" json:"type"`
-	Host     string   `yaml:"host,omitempty" json:"host"`
-	Port     int      `yaml:"port,omitempty" json:"port"`
-	User     string   `yaml:"user,omitempty" json:"user"`
-	Password string   `yaml:"password,omitempty" json:"password"`
-	Database string   `yaml:"database,omitempty" json:"database"`
-	SSLMode  string   `yaml:"sslmode,omitempty" json:"sslmode"`
-	DSN      string   `yaml:"dsn,omitempty" json:"dsn"`
-	Seeders  []string `yaml:"seeders,omitempty" json:"seeders"`
+	Type      string   `mapstructure:"type" yaml:"type" json:"type"`
+	Host      string   `yaml:"host,omitempty" json:"host"`
+	Port      int      `yaml:"port,omitempty" json:"port"`
+	User      string   `yaml:"user,omitempty" json:"user"`
+	Password  string   `yaml:"password,omitempty" json:"password"`
+	Database  string   `yaml:"database,omitempty" json:"database"`
+	SSLMode   string   `yaml:"sslmode,omitempty" json:"sslmode"`
+	DSN       string   `yaml:"dsn,omitempty" json:"dsn"`
+	Runtime   string   `yaml:"runtime,omitempty" json:"runtime"`
+	Container string   `yaml:"container,omitempty" json:"container"`
+	Seeders   []string `yaml:"seeders,omitempty" json:"seeders"`
+}
+
+// container name charset per docker/podman naming rules: https://github.com/moby/moby/blob/master/daemon/names/names.go
+var reContainerName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]+$`)
+
+func ValidateDatabaseRuntime(runtime, container string) error {
+	switch runtime {
+	case "", "host":
+		return nil
+	case "docker", "podman":
+		if container == "" {
+			return fmt.Errorf("database.container is required when database.runtime is %s", runtime)
+		}
+		if !reContainerName.MatchString(container) {
+			return fmt.Errorf("database.container %q contains invalid characters — use letters, digits, '.', '_' or '-'", container)
+		}
+		return nil
+	case "remote":
+		return nil
+	default:
+		return fmt.Errorf("database.runtime must be one of host, docker, podman, remote, got %q", runtime)
+	}
 }
 
 func DatabaseConnectionChanged(old, new DatabaseConfig) bool {
@@ -415,6 +439,7 @@ func DefaultConfig(configDir string) *Config {
 			Password: "edub",
 			Database: "edub",
 			SSLMode:  "disable",
+			Runtime:  "host",
 		},
 		Storage: StorageConfig{
 			ConsumptionDir: filepath.Join(configDir, "inbox"),
@@ -561,6 +586,10 @@ func finalizeConfig(cfg *Config, configDir string) error {
 
 	if cfg.Srv.MaxBatchDelete < 1 {
 		return fmt.Errorf("server.max_batch_delete must be >= 1")
+	}
+
+	if err := ValidateDatabaseRuntime(cfg.Db.Runtime, cfg.Db.Container); err != nil {
+		return err
 	}
 
 	if cfg.Storage.Trash.RetentionDays < 1 {

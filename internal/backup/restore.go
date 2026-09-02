@@ -14,6 +14,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 )
 
@@ -123,7 +124,7 @@ func ExtractArchive(archivePath, destDir string) error {
 	return nil
 }
 
-func ReplaceFiles(extractDir string, db *sql.DB, configPath, storageDir string) error {
+func ReplaceFiles(extractDir string, db *sql.DB, dbCfg config.DatabaseConfig, dsn, configPath, storageDir string) error {
 	manifestData, err := os.ReadFile(filepath.Join(extractDir, "manifest.json"))
 	if err != nil {
 		return fmt.Errorf("read manifest: %w", err)
@@ -146,8 +147,8 @@ func ReplaceFiles(extractDir string, db *sql.DB, configPath, storageDir string) 
 			return fmt.Errorf("database connection required for sql-dump restore")
 		}
 		sqlPath := filepath.Join(extractDir, "edub.sql")
-		if err := database.ExecuteDumpFile(context.Background(), db, sqlPath); err != nil {
-			return fmt.Errorf("execute sql dump: %w", err)
+		if err := database.RestoreDumpViaPSQL(context.Background(), dbCfg.Runtime, dbCfg.Container, dsn, sqlPath); err != nil {
+			return fmt.Errorf("restore sql dump: %w", err)
 		}
 	}
 

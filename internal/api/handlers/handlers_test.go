@@ -2292,6 +2292,36 @@ func TestPutConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("runtime/container persist immediately when bundled with a db migration", func(t *testing.T) {
+		fullResetDB(t, env.client.DB())
+		h, configDir := setup(t)
+
+		body, _ := json.Marshal(map[string]any{
+			"database.host":      "127.0.0.1",
+			"database.runtime":   "docker",
+			"database.container": "edub-postgres",
+		})
+		w := rec()
+		r := req(t, "PUT", "/api/v1/config", body)
+		h.PutConfig(w, r)
+
+		testutil.AssertEqual(t, w.Code, http.StatusAccepted, "status")
+		if countTasks(t, configtask.DedupKeyMigrateDB) == 0 {
+			t.Error("expected migrate-db task to be queued for the db.host change")
+		}
+
+		reloaded, err := config.Load(configDir)
+		if err != nil {
+			t.Fatalf("reload config: %v", err)
+		}
+		if reloaded.Db.Runtime != "docker" {
+			t.Errorf("runtime = %q, want %q", reloaded.Db.Runtime, "docker")
+		}
+		if reloaded.Db.Container != "edub-postgres" {
+			t.Errorf("container = %q, want %q", reloaded.Db.Container, "edub-postgres")
+		}
+	})
+
 	t.Run("storage PUT while a migration is processing returns 409", func(t *testing.T) {
 		fullResetDB(t, env.client.DB())
 		h, _ := setup(t)

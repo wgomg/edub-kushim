@@ -30,6 +30,10 @@ database:
   password: edub
   database: edub
   sslmode: disable
+  # Where restores run psql: host (psql installed on this machine), docker/podman
+  # (psql executed inside the named container), or remote (automated restore disabled).
+  runtime: host
+  # container: edub-postgres   # required when runtime is docker/podman
 
 storage:
   consumption_dir: '~/.config/edub-kushim/inbox'

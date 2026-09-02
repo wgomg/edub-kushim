@@ -1,7 +1,6 @@
 package database
 
 import (
-	"bufio"
 	"compress/gzip"
 	"context"
 	"database/sql"
@@ -109,127 +108,6 @@ func SQLDumpToFile(ctx context.Context, db *sql.DB, schemaFS embed.FS, destPath 
 		return fmt.Errorf("write sql dump %s: %w", destPath, err)
 	}
 	return nil
-}
-
-func ExecuteDumpFile(ctx context.Context, db *sql.DB, dumpPath string) error {
-	f, err := os.Open(dumpPath)
-	if err != nil {
-		return fmt.Errorf("open dump file: %w", err)
-	}
-	defer f.Close()
-
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 64*1024), 128*1024*1024)
-	splitter := &dumpSplitter{}
-	scanner.Split(splitter.split)
-
-	idx := 0
-	for scanner.Scan() {
-		stmt := strings.TrimSpace(scanner.Text())
-		if stmt == "" {
-			continue
-		}
-		idx++
-		if _, err := db.ExecContext(ctx, stmt); err != nil {
-			return fmt.Errorf("execute dump statement %d: %w", idx, err)
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("read dump: %w", err)
-	}
-	return nil
-}
-
-type dumpSplitter struct {
-	inSingle     bool
-	inDollar     bool
-	dollarTag    string
-	lineComment  bool
-	blockComment bool
-}
-
-func (s *dumpSplitter) split(data []byte, atEOF bool) (advance int, token []byte, err error) {
-	i := 0
-	for i < len(data) {
-		switch {
-		case s.inSingle:
-			if data[i] == '\'' {
-				if i+1 < len(data) && data[i+1] == '\'' {
-					i += 2
-					continue
-				}
-				s.inSingle = false
-			}
-			i++
-		case s.lineComment:
-			if data[i] == '\n' {
-				s.lineComment = false
-			}
-			i++
-		case s.blockComment:
-			if data[i] == '*' && i+1 < len(data) && data[i+1] == '/' {
-				s.blockComment = false
-				i += 2
-			} else {
-				i++
-			}
-		case s.inDollar:
-			if strings.HasPrefix(string(data[i:]), s.dollarTag) {
-				s.inDollar = false
-				i += len(s.dollarTag)
-			} else {
-				i++
-			}
-		case data[i] == '\'':
-			s.inSingle = true
-			i++
-		case data[i] == '-' && i+1 < len(data) && data[i+1] == '-':
-			s.lineComment = true
-			i += 2
-		case data[i] == '/' && i+1 < len(data) && data[i+1] == '*':
-			s.blockComment = true
-			i += 2
-		case data[i] == '$':
-			if tag, ok := dollarQuoteTag(data[i:]); ok {
-				s.inDollar = true
-				s.dollarTag = tag
-				i += len(tag)
-			} else {
-				i++
-			}
-		case data[i] == ';':
-			return i + 1, data[:i+1], nil
-		default:
-			i++
-		}
-	}
-
-	if atEOF {
-		if s.inSingle || s.inDollar || s.lineComment || s.blockComment {
-			return 0, nil, fmt.Errorf("dump ends with an unterminated statement")
-		}
-		if strings.TrimSpace(string(data)) == "" {
-			return 0, nil, nil
-		}
-		return 0, nil, fmt.Errorf("dump ends with an unterminated SQL statement")
-	}
-	return 0, nil, nil
-}
-
-func dollarQuoteTag(s []byte) (string, bool) {
-	if len(s) < 2 || s[0] != '$' {
-		return "", false
-	}
-	for i := 1; i < len(s); i++ {
-		c := s[i]
-		if c == '$' {
-			return string(s[:i+1]), true
-		}
-		if !(c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9') {
-			return "", false
-		}
-	}
-	return "", false
 }
 
 func dumpGooseVersion(ctx context.Context, tx *sql.Tx, w io.Writer) error {

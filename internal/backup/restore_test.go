@@ -12,9 +12,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 )
+
+func restoreDBConfig(t *testing.T) (config.DatabaseConfig, string) {
+	t.Helper()
+	return config.DatabaseConfig{Runtime: "host"}, database.TestDSN(t)
+}
 
 func TestValidateArchive_Valid(t *testing.T) {
 	db := database.NewTestDB(t)
@@ -197,7 +203,8 @@ func TestReplaceFiles_SQLDump(t *testing.T) {
 		database.InitializeSchema(restoreDB)
 	})
 
-	if err := ReplaceFiles(extractDir, restoreDB, configPath, filepath.Join(dir, "new_storage")); err != nil {
+	dbCfg, dsn := restoreDBConfig(t)
+	if err := ReplaceFiles(extractDir, restoreDB, dbCfg, dsn, configPath, filepath.Join(dir, "new_storage")); err != nil {
 		t.Fatalf("ReplaceFiles: %v", err)
 	}
 
@@ -218,7 +225,8 @@ func TestReplaceFiles_PathRewrite(t *testing.T) {
 	extractDir, configPath := createRewriteTestBackup(t, fmt.Sprintf("storage:\n  storage_dir: %q\n", oldStorage), oldStorage)
 
 	restoreDB := newRestoreDB(t)
-	if err := ReplaceFiles(extractDir, restoreDB, configPath, newStorage); err != nil {
+	dbCfg, dsn := restoreDBConfig(t)
+	if err := ReplaceFiles(extractDir, restoreDB, dbCfg, dsn, configPath, newStorage); err != nil {
 		t.Fatalf("ReplaceFiles: %v", err)
 	}
 
@@ -252,7 +260,8 @@ func TestReplaceFiles_PathRewrite_SameDirNoOp(t *testing.T) {
 	extractDir, configPath := createRewriteTestBackup(t, fmt.Sprintf("storage:\n  storage_dir: %q\n", oldStorage), oldStorage)
 
 	restoreDB := newRestoreDB(t)
-	if err := ReplaceFiles(extractDir, restoreDB, configPath, oldStorage); err != nil {
+	dbCfg, dsn := restoreDBConfig(t)
+	if err := ReplaceFiles(extractDir, restoreDB, dbCfg, dsn, configPath, oldStorage); err != nil {
 		t.Fatalf("ReplaceFiles: %v", err)
 	}
 
@@ -291,7 +300,8 @@ func TestReplaceFiles_PathRewrite_ManifestFallback(t *testing.T) {
 	}
 
 	restoreDB := newRestoreDB(t)
-	if err := ReplaceFiles(extractDir, restoreDB, configPath, newStorage); err != nil {
+	dbCfg, dsn := restoreDBConfig(t)
+	if err := ReplaceFiles(extractDir, restoreDB, dbCfg, dsn, configPath, newStorage); err != nil {
 		t.Fatalf("ReplaceFiles: %v", err)
 	}
 
@@ -333,7 +343,8 @@ func TestReplaceFiles_PathRewrite_TildeRejected(t *testing.T) {
 	testutil.CreateTestFile(t, filepath.Join(extractDir, "config.yaml"), "storage:\n  storage_dir: ~/storage\n")
 
 	restoreDB := newRestoreDB(t)
-	if err := ReplaceFiles(extractDir, restoreDB, configPath, newStorage); err != nil {
+	dbCfg, dsn := restoreDBConfig(t)
+	if err := ReplaceFiles(extractDir, restoreDB, dbCfg, dsn, configPath, newStorage); err != nil {
 		t.Fatalf("ReplaceFiles: %v", err)
 	}
 
@@ -358,7 +369,8 @@ func TestReplaceFiles_ConfigSavedAsRestored(t *testing.T) {
 	testutil.CreateTestFile(t, configPath, editedConfig)
 
 	restoreDB := newRestoreDB(t)
-	if err := ReplaceFiles(extractDir, restoreDB, configPath, newStorage); err != nil {
+	dbCfg, dsn := restoreDBConfig(t)
+	if err := ReplaceFiles(extractDir, restoreDB, dbCfg, dsn, configPath, newStorage); err != nil {
 		t.Fatalf("ReplaceFiles: %v", err)
 	}
 
@@ -448,7 +460,8 @@ func TestReplaceFiles_UnknownFormat(t *testing.T) {
 	manifestData := `{"version":1,"format":"sqlite-file","timestamp":"","app_version":"","db_size_bytes":0,"storage_files_count":0,"storage_size_bytes":0,"config_hash":""}`
 	testutil.CreateTestFile(t, filepath.Join(extractDir, "manifest.json"), manifestData)
 
-	err := ReplaceFiles(extractDir, nil, configPath, t.TempDir())
+	dbCfg, dsn := restoreDBConfig(t)
+	err := ReplaceFiles(extractDir, nil, dbCfg, dsn, configPath, t.TempDir())
 	if err == nil {
 		t.Fatal("ReplaceFiles: expected error for unknown format, got nil")
 	}
@@ -501,7 +514,8 @@ func TestReplaceFiles_ThumbnailsRestored(t *testing.T) {
 	}
 
 	newStorage := filepath.Join(dir, "new_storage")
-	if err := ReplaceFiles(extractDir, nil, configPath, newStorage); err != nil {
+	dbCfg, dsn := restoreDBConfig(t)
+	if err := ReplaceFiles(extractDir, nil, dbCfg, dsn, configPath, newStorage); err != nil {
 		t.Fatalf("ReplaceFiles: %v", err)
 	}
 
@@ -564,7 +578,8 @@ func TestReplaceFiles_DocumentsMode_SkipsSQL(t *testing.T) {
 
 	// documents-mode restore must not execute the SQL dump. If it does,
 	// the document_type row gets dropped and recreated with a new id.
-	if err := ReplaceFiles(extract, db, filepath.Join(dir, "config.yaml"), filepath.Join(dir, "new_storage")); err != nil {
+	dbCfg, dsn := restoreDBConfig(t)
+	if err := ReplaceFiles(extract, db, dbCfg, dsn, filepath.Join(dir, "config.yaml"), filepath.Join(dir, "new_storage")); err != nil {
 		t.Fatalf("ReplaceFiles: %v", err)
 	}
 
@@ -584,7 +599,8 @@ func TestReplaceFiles_DatabaseMode_StorageUntouched(t *testing.T) {
 	newStorage := filepath.Join(dir, "new_storage")
 
 	db := newRestoreDB(t)
-	if err := ReplaceFiles(extract, db, configPath, newStorage); err != nil {
+	dbCfg, dsn := restoreDBConfig(t)
+	if err := ReplaceFiles(extract, db, dbCfg, dsn, configPath, newStorage); err != nil {
 		t.Fatalf("ReplaceFiles: %v", err)
 	}
 
@@ -626,7 +642,8 @@ func TestReplaceFiles_LegacyManifestNoMode_TreatedAsFull(t *testing.T) {
 		t.Fatal("preseed no rows in document_type")
 	}
 
-	if err := ReplaceFiles(extract, db, filepath.Join(dir, "config.yaml"), filepath.Join(dir, "storage")); err != nil {
+	dbCfg, dsn := restoreDBConfig(t)
+	if err := ReplaceFiles(extract, db, dbCfg, dsn, filepath.Join(dir, "config.yaml"), filepath.Join(dir, "storage")); err != nil {
 		t.Fatalf("ReplaceFiles: %v", err)
 	}
 

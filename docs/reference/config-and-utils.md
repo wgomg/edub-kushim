@@ -6,7 +6,7 @@
 - `AppConfig`: `Env Environment`, `LogLevel string`, `Logging LoggingConfig`, `ConfigDir string`
   - `LoggingConfig`: `MaxSize int`, `MaxBackups int`, `MaxAge int`, `Compress bool`
 - `ServerConfig`: `Host`, `Port`, `ReadTimeout`, `WriteTimeout`, `IdleTimeout`, `MaxUploadSize` (MB), `MaxConcurrentBatches` (default 4), `AuthEnabled` (when false, auth middleware passes all requests through; default `true` for existing installs, `false` for fresh bootstrap), `SessionSecret` (64-char hex JWT signing key; auto-generated during setup, fallback in-memory generation at server start), `MaxDownloadFiles`, `MaxDownloadSizeMB`, `MaxBatchDelete`
-- `DatabaseConfig`: `Type`, `Host`, `Port`, `User`, `Password`, `Database`, `SSLMode`, `DSN`, `Seeders []string`
+- `DatabaseConfig`: `Type`, `Host`, `Port`, `User`, `Password`, `Database`, `SSLMode`, `DSN`, `Runtime` (host|docker|podman|remote, default host — where restores run psql), `Container` (required when runtime is docker/podman), `Seeders []string`
 - `StorageConfig`: `ConsumptionDir`, `StorageDir`, `Trash TrashConfig`
 - `TrashConfig`: `RetentionDays` (default 30)
 - `ConsumerConfig`: `SupportedFiles []string`, `Workers int`, `MaxFilesPerBatch int`, `TextExtractor TextExtractorConfig`, `PdfOptimizer PdfOptimizerConfig`, `OCR OCRConfig`, `Polling PollingConfig`, `Reclaim ReclaimConfig`

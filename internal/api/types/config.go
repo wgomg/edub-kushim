@@ -51,11 +51,13 @@ type TrashConfigResponse struct {
 }
 
 type DatabaseConfigResponse struct {
-	Host     string `json:"host"`
-	Port     int    `json:"port"`
-	User     string `json:"user"`
-	Database string `json:"database"`
-	SSLMode  string `json:"sslmode"`
+	Host      string `json:"host"`
+	Port      int    `json:"port"`
+	User      string `json:"user"`
+	Database  string `json:"database"`
+	SSLMode   string `json:"sslmode"`
+	Runtime   string `json:"runtime"`
+	Container string `json:"container"`
 }
 
 type ConfigResponse struct {
@@ -330,6 +332,8 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Database.User = cfg.Db.User
 	resp.Database.Database = cfg.Db.Database
 	resp.Database.SSLMode = cfg.Db.SSLMode
+	resp.Database.Runtime = cfg.Db.Runtime
+	resp.Database.Container = cfg.Db.Container
 	resp.App.Initialized = cfg.App.ConfigDir != ""
 	resp.App.LogLevel = cfg.App.LogLevel
 	resp.App.Logging = LoggingConfigResponse{

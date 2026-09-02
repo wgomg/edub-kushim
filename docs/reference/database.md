@@ -60,13 +60,14 @@ Migrations run automatically on startup (no manual CLI command needed):
 
 ---
 
-## `dump.go` / `migrate.go`
+## `dump.go` / `psqlrestore.go` / `migrate.go`
 
 The SQL dump/restore machinery lives in `internal/database/` (shared by `kushim backup`, `kushim restore`, the `migrate-db` config task, and the `migrate-storage` config task):
 
 - `DumpSchemaAndData(ctx, db, schemaFS, w)` — Writes a complete SQL dump to `w`: a single `BEGIN...COMMIT` transaction that recreates the schema from the embedded migrations (preamble drops the public schema), recreates the `goose_db_version` table from the live schema (introspection-based DDL) and carries its rows across the dump so a restored database can be reconnected without goose re-applying migrations, then batch-inserts all table data (excluding `goose_db_version` and `backup_lock` — the latter is recreated by its own migration).
 - `SQLDumpToFile(ctx, db, schemaFS, destPath)` — Gzipped variant (the gzip footer is flushed before the file is closed); used for the pre-migration safety snapshot.
-- `ExecuteDumpFile(ctx, db, dumpPath)` — Runs the dump's statements one at a time via a quote-aware splitter (single-quote literals, `''` escapes, dollar-quoted strings, comments) so memory stays bounded regardless of dump size; the dump's own transaction keeps execution atomic.
+- `CheckRestoreTooling(runtime, container)` — Verifies the external tooling for a restore under the configured `database.runtime`: `psql` on PATH (`host`), the `docker`/`podman` binary plus a non-empty container name, or refuses outright for `remote` with manual-restore guidance. Runs before any destructive step.
+- `RestoreDumpViaPSQL(ctx, runtime, container, dsn, dumpPath)` — Pipes a plain SQL dump file into `psql`, executed on the host (`psql -X -v ON_ERROR_STOP=1 -f <dump> <dsn>`, password via `PGPASSWORD` so it never appears on argv) or inside the container (`<runtime> exec -i -e PGPASSWORD=<pw> <container> psql -X -v ON_ERROR_STOP=1 -h localhost -U <user> -d <db>`, dump piped to stdin; `-h localhost` forces TCP + password auth inside the container). The dump's own `BEGIN/COMMIT` keeps the restore atomic and `ON_ERROR_STOP=1` fails fast; stderr is captured into the error message.
 - `ValidateMigrationDestination(ctx, db)` — Refuses the destructive restore when the destination holds tables without edub migration history (goose version table present with rows), so a mistyped/reused database name is never silently wiped.
 - `RewriteStoragePaths(ctx, db, oldDir, newDir)` — Rewrites `document.storage_path`/`original_path` and `orphaned_file.file_path` from `oldDir` to `newDir` in a single transaction (LIKE-escaped prefix match); used by restore and the `migrate-storage` task.
 - `RewriteTaskPayloadPaths(ctx, db, oldConsumptionDir, newConsumptionDir)` — Rewrites `file_path` inside pending `consume` task payloads (JSON) from the old consumption dir to the new one via `jsonb_set` with a strict-prefix match; runs before files move so queued work references the new inbox paths.

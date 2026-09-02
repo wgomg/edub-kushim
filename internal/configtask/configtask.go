@@ -147,6 +147,10 @@ func MigrateDatabase(ctx context.Context, logger *utils.Logger, p MigrateDBPaylo
 		return fmt.Errorf("load config from %s: %w", p.ConfigDir, err)
 	}
 
+	if err := database.CheckRestoreTooling(cfg.Db.Runtime, cfg.Db.Container); err != nil {
+		return err
+	}
+
 	oldDB, err := database.NewPostgresDB(config.BuildPostgresDSN(cfg.Db))
 	if err != nil {
 		return fmt.Errorf("connect to current database: %w", err)
@@ -211,7 +215,7 @@ func MigrateDatabase(ctx context.Context, logger *utils.Logger, p MigrateDBPaylo
 	}
 	defer newDB.Close()
 
-	if err := restoreData(ctx, newDB, tmpPath, logger); err != nil {
+	if err := restoreData(ctx, cfg.Db, newDB, newDSN, tmpPath, logger); err != nil {
 		return err
 	}
 
@@ -420,7 +424,7 @@ func pruneSafetySnapshots(dir string, logger *utils.Logger) {
 	}
 }
 
-func restoreData(ctx context.Context, newDB *sql.DB, dumpPath string, logger *utils.Logger) error {
+func restoreData(ctx context.Context, dbCfg config.DatabaseConfig, newDB *sql.DB, newDSN, dumpPath string, logger *utils.Logger) error {
 	if destinationHasData(ctx, newDB) {
 		logger.Info(nil, "migrate-db: destination database already has data, skipping data migration")
 		return nil
@@ -428,7 +432,7 @@ func restoreData(ctx context.Context, newDB *sql.DB, dumpPath string, logger *ut
 	if err := database.ValidateMigrationDestination(ctx, newDB); err != nil {
 		return err
 	}
-	return database.ExecuteDumpFile(ctx, newDB, dumpPath)
+	return database.RestoreDumpViaPSQL(ctx, dbCfg.Runtime, dbCfg.Container, newDSN, dumpPath)
 }
 
 func destinationHasData(ctx context.Context, db *sql.DB) bool {

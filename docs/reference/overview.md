@@ -110,7 +110,8 @@ internal/
 │   ├── connection.go      # DB connection (PostgreSQL via pgx, 25 max conn, auto-create database, WithConnectTimeout)
 │   ├── client.go          # Client wrapper — embeds *Queries, exposes BeginTx/DB()
 │   ├── schema.go          # InitializeSchema — goose migrations + seeders (tags, doc-types, people-types)
-│   ├── dump.go            # SQL dump/restore: DumpSchemaAndData, SQLDumpToFile, ExecuteDumpFile (statement-splitter), goose version preservation
+│   ├── dump.go            # SQL dump: DumpSchemaAndData, SQLDumpToFile, goose version preservation
+│   ├── psqlrestore.go     # Restore via psql: CheckRestoreTooling, RestoreDumpViaPSQL (host or docker/podman exec)
 │   ├── migrate.go         # RewriteStoragePaths, ValidateMigrationDestination, WaitForTaskDrain (shared with backup handler)
 │   ├── models.go          # Generated data models (Document now has PageCount, WordCount, CharCount, Language; added SavedSearch)
 │   ├── db.go              # Database interface (Queries, WithTx)

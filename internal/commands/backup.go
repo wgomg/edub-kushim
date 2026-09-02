@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/backup"
+	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 )
 
@@ -165,6 +166,13 @@ func restoreHandler(c *Container, args []string) error {
 		return nil
 	}
 
+	if mode != backup.BackupModeDocuments {
+		cfg := c.cfg.Load()
+		if err := database.CheckRestoreTooling(cfg.Db.Runtime, cfg.Db.Container); err != nil {
+			return err
+		}
+	}
+
 	client, err := checkBackupPreconditions(c, "restore")
 	if err != nil {
 		return err
@@ -217,10 +225,11 @@ func restoreHandler(c *Container, args []string) error {
 	if err != nil {
 		return err
 	}
-	configPath := filepath.Join(c.cfg.Load().App.ConfigDir, "config.yaml")
+	cfg := c.cfg.Load()
+	configPath := filepath.Join(cfg.App.ConfigDir, "config.yaml")
 
 	fmt.Println("Replacing files...")
-	if err := backup.ReplaceFiles(tmpDir, db, configPath, c.cfg.Load().Storage.StorageDir); err != nil {
+	if err := backup.ReplaceFiles(tmpDir, db, cfg.Db, config.BuildPostgresDSN(cfg.Db), configPath, cfg.Storage.StorageDir); err != nil {
 		return fmt.Errorf("replace files: %w", err)
 	}
 
