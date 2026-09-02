@@ -66,3 +66,28 @@ func TestCountFilePaths_SkipsNonRegular(t *testing.T) {
 		t.Fatalf("count = %d, want 1 (symlink must be skipped)", n)
 	}
 }
+
+func TestSameDevice_SameDirectory(t *testing.T) {
+	dir := t.TempDir()
+
+	same, err := SameDevice(dir, dir)
+	if err != nil {
+		t.Fatalf("SameDevice(dir, dir) error: %v", err)
+	}
+	if !same {
+		t.Errorf("SameDevice(dir, dir) = false, want true")
+	}
+}
+
+func TestSameDevice_TargetMissingFallsBackToParent(t *testing.T) {
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "does-not-exist")
+
+	same, err := SameDevice(dir, missing)
+	if err != nil {
+		t.Fatalf("SameDevice(existing, missing) error: %v", err)
+	}
+	if !same {
+		t.Errorf("SameDevice(existing, missing) = false, want true (target missing must compare parent's device)")
+	}
+}

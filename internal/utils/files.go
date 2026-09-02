@@ -136,3 +136,29 @@ func CountFilePaths(src string, exts []string) (int, error) {
 	}
 	return count, nil
 }
+
+func SameDevice(a, b string) (bool, error) {
+	sa, err := os.Stat(a)
+	if err != nil {
+		return false, err
+	}
+	sb, err := os.Stat(b)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return false, err
+		}
+		sb, err = os.Stat(filepath.Dir(b))
+		if err != nil {
+			return false, err
+		}
+	}
+	da, ok := sa.Sys().(*syscall.Stat_t)
+	if !ok {
+		return false, fmt.Errorf("unexpected stat type for %s", a)
+	}
+	db, ok := sb.Sys().(*syscall.Stat_t)
+	if !ok {
+		return false, fmt.Errorf("unexpected stat type for %s", b)
+	}
+	return da.Dev == db.Dev, nil
+}

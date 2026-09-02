@@ -13,6 +13,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/backup"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 func checkBackupPreconditions(c *Container, operation string) (*database.Client, error) {
@@ -121,10 +122,11 @@ func backupHandler(c *Container, args []string) error {
 
 func restoreHandler(c *Container, args []string) error {
 	fp := NewFlagParser(args)
-	if fp.Help("Usage: kushim restore <backup-file.tar.gz> [--force] [--dry-run]\n" +
+	if fp.Help("Usage: kushim restore <backup-file.tar.gz> [--force] [--dry-run] [--temp-dir <dir>]\n" +
 		"  Restore from a backup archive.\n\n" +
 		"  --force     Skip confirmation prompt\n" +
-		"  --dry-run   Validate backup without restoring") {
+		"  --dry-run   Validate backup without restoring\n" +
+		"  --temp-dir <dir>  Directory for extraction staging (default: next to storage_dir)") {
 		return nil
 	}
 
@@ -132,6 +134,8 @@ func restoreHandler(c *Container, args []string) error {
 	fp.Bool("--force", &force)
 	dryRun := false
 	fp.Bool("--dry-run", &dryRun)
+	var tempDirOverride string
+	fp.String("--temp-dir", &tempDirOverride)
 
 	rest := fp.Rest()
 	if len(rest) == 0 {
@@ -210,11 +214,22 @@ func restoreHandler(c *Container, args []string) error {
 		}
 	}
 
-	tmpDir, err := os.MkdirTemp("", "edub-restore-*")
+	tempParent := tempDirOverride
+	if tempParent == "" {
+		tempParent = filepath.Dir(c.cfg.Load().Storage.StorageDir)
+	}
+	if err := os.MkdirAll(tempParent, 0755); err != nil {
+		return fmt.Errorf("create temp parent: %w", err)
+	}
+	tmpDir, err := os.MkdirTemp(tempParent, "edub-restore-*")
 	if err != nil {
 		return fmt.Errorf("create temp dir: %w", err)
 	}
 	defer os.RemoveAll(tmpDir)
+
+	if err := checkRestoreDiskSpace(tempParent, filepath.Dir(c.cfg.Load().Storage.StorageDir), manifest); err != nil {
+		return err
+	}
 
 	fmt.Println("Extracting archive...")
 	if err := backup.ExtractArchive(archivePath, tmpDir); err != nil {
@@ -236,6 +251,65 @@ func restoreHandler(c *Container, args []string) error {
 	fmt.Println("Restore completed successfully.")
 	fmt.Printf("Restored config saved as %s — the archived storage_dir may not match rewritten paths; update before applying.\n", configPath+".restored")
 	fmt.Println("Restart the services to pick up the restored data.")
+
+	return nil
+}
+
+const gib = 1024 * 1024 * 1024
+
+func checkRestoreDiskSpace(tempParent, storageParent string, manifest *backup.Manifest) error {
+	mode := manifest.Mode
+	if mode == "" {
+		mode = backup.BackupModeFull
+	}
+
+	var required int64
+	switch mode {
+	case backup.BackupModeDatabase:
+		if manifest.DbSizeBytes <= 0 {
+			return fmt.Errorf("manifest is corrupt or hand-made: db_size_bytes = %d — refusing to restore", manifest.DbSizeBytes)
+		}
+		required = manifest.DbSizeBytes
+	case backup.BackupModeDocuments:
+		if manifest.StorageSizeBytes <= 0 {
+			return fmt.Errorf("manifest is corrupt or hand-made: storage_size_bytes = %d — refusing to restore", manifest.StorageSizeBytes)
+		}
+		required = manifest.StorageSizeBytes
+	default:
+		if manifest.DbSizeBytes <= 0 || manifest.StorageSizeBytes <= 0 {
+			return fmt.Errorf("manifest is corrupt or hand-made: db_size_bytes = %d, storage_size_bytes = %d — refusing to restore", manifest.DbSizeBytes, manifest.StorageSizeBytes)
+		}
+		required = manifest.DbSizeBytes + manifest.StorageSizeBytes
+	}
+
+	need := uint64(float64(required) * 1.05)
+
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(tempParent, &st); err != nil {
+		return fmt.Errorf("statfs %s: %w", tempParent, err)
+	}
+	free := st.Bavail * uint64(st.Bsize)
+	if free < need {
+		return fmt.Errorf("insufficient disk space on %s: restore needs ~%.1f GB, %.1f GB available — free space or pass --temp-dir <dir with at least %.1f GB free>",
+			tempParent, float64(required)/gib, float64(free)/gib, float64(need)/gib)
+	}
+
+	onSameDevice, err := utils.SameDevice(tempParent, storageParent)
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", storageParent, err)
+	}
+	if !onSameDevice {
+		var st2 syscall.Statfs_t
+		if err := syscall.Statfs(storageParent, &st2); err != nil {
+			return fmt.Errorf("statfs %s: %w", storageParent, err)
+		}
+		storageNeed := uint64(float64(manifest.StorageSizeBytes) * 1.05)
+		free2 := st2.Bavail * uint64(st2.Bsize)
+		if free2 < storageNeed {
+			return fmt.Errorf("insufficient disk space on %s: storage copy needs ~%.1f GB, %.1f GB available — free space or pass --temp-dir <dir on the same filesystem as %s>",
+				storageParent, float64(manifest.StorageSizeBytes)/gib, float64(free2)/gib, storageParent)
+		}
+	}
 
 	return nil
 }

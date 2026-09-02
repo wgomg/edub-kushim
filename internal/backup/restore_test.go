@@ -19,7 +19,7 @@ import (
 
 func restoreDBConfig(t *testing.T) (config.DatabaseConfig, string) {
 	t.Helper()
-	return config.DatabaseConfig{Runtime: "host"}, database.TestDSN(t)
+	return config.DatabaseConfig{Runtime: "podman", Container: "edub-test-pg"}, database.TestDSN(t)
 }
 
 func TestValidateArchive_Valid(t *testing.T) {

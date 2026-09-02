@@ -638,25 +638,28 @@ Restore database and storage from a backup archive. The archived configuration i
 kushim restore /path/to/edub-backup-2026-06-30T02-00-00.tar.gz
 kushim restore /path/to/backup.tar.gz --force
 kushim restore /path/to/backup.tar.gz --dry-run
+kushim restore /path/to/backup.tar.gz --temp-dir /mnt/scratch
 
 ```
 
-| Flag       | Description                                                |
-| ---------- | ---------------------------------------------------------- |
-| `--force`  | Skip confirmation prompt and PID file check                |
-| `--dry-run`| Validate the archive without making any changes            |
+| Flag         | Description                                                                   |
+| ------------ | ----------------------------------------------------------------------------- |
+| `--force`    | Skip confirmation prompt and PID file check                                   |
+| `--dry-run`  | Validate the archive without making any changes                               |
+| `--temp-dir` | Directory for extraction staging (default: next to `storage.storage_dir`)     |
 The restore process:
 
 1. Validates the `tar.gz` archive and reads the manifest
 2. Checks restore tooling: `host` runtime requires `psql` on PATH; `docker`/`podman` require the runtime binary and `database.container`; `remote` refuses with manual-restore guidance (skipped for `documents`-mode archives)
 3. Checks that the queue daemon is not running (refuses unless `--force`)
 4. Prompts for confirmation (skipped with `--force`)
-5. Extracts the archive to a temporary directory
-6. Executes the SQL dump against the database via `psql` (schema drop + recreate + data insert; the dump's own transaction keeps it atomic) — skipped for `documents`-mode archives
-7. Rewrites database storage paths from the archived storage directory (manifest `storage_dir`, or `storage.storage_dir` from the archived config for old backups) to the current one — `document.storage_path`, `document.original_path`, and `orphaned_file.file_path`; skipped when the directories match or the archived dir can't be determined (`~`-relative archived paths are skipped with a warning). Also skipped for `documents`-mode archives (no DB was restored; ensure `storage.storage_dir` matches or update the DB manually)
-8. Replaces storage (via atomic rename-swap) — skipped for `database`-mode archives
-9. Saves the archived config as `config.yaml.restored` — the current configuration stays intact (update `storage.storage_dir` in it to match the rewritten paths before applying)
-10. Prints restart instructions
+5. Pre-flights disk space: refuses corrupt/hand-made manifests (a mode-relevant size of zero), and refuses when the staging directory (or the storage parent, for cross-device staging) lacks ~1.05× the required extraction size — the error names the directory and suggests `--temp-dir`
+6. Extracts the archive to a temporary directory created next to `storage.storage_dir` (or under `--temp-dir` when given) — not `/tmp`, which on modern desktops is a quota-limited tmpfs
+7. Executes the SQL dump against the database via `psql` (schema drop + recreate + data insert; the dump's own transaction keeps it atomic) — skipped for `documents`-mode archives
+8. Rewrites database storage paths from the archived storage directory (manifest `storage_dir`, or `storage.storage_dir` from the archived config for old backups) to the current one — `document.storage_path`, `document.original_path`, and `orphaned_file.file_path`; skipped when the directories match or the archived dir can't be determined (`~`-relative archived paths are skipped with a warning). Also skipped for `documents`-mode archives (no DB was restored; ensure `storage.storage_dir` matches or update the DB manually)
+9. Replaces storage — when the extracted storage is on the same filesystem as `storage.storage_dir` it is renamed directly into place (atomic, no copy); otherwise it is copied into a sibling `storage-swap-*` directory first and then swapped in, so an interrupted copy never touches the live storage. Skipped for `database`-mode archives
+10. Saves the archived config as `config.yaml.restored` — the current configuration stays intact (update `storage.storage_dir` in it to match the rewritten paths before applying)
+11. Prints restart instructions
 
 Archives created before backup modes existed have no `mode` in the manifest and
 restore as `full`.

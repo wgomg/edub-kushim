@@ -16,6 +16,7 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 func ValidateArchive(path string) (*Manifest, error) {
@@ -180,14 +181,23 @@ func ReplaceFiles(extractDir string, db *sql.DB, dbCfg config.DatabaseConfig, ds
 			if err := os.MkdirAll(filepath.Dir(storageDir), 0755); err != nil {
 				return fmt.Errorf("create storage parent: %w", err)
 			}
-			tmpStorage, err := os.MkdirTemp(filepath.Dir(storageDir), "storage-swap-*")
-			if err != nil {
-				return fmt.Errorf("create temp storage dir: %w", err)
-			}
-			defer os.RemoveAll(tmpStorage)
 
-			if err := copyDir(extractStorage, tmpStorage); err != nil {
-				return fmt.Errorf("copy storage to temp: %w", err)
+			renameInPlace, err := utils.SameDevice(extractStorage, storageDir)
+			if err != nil {
+				return fmt.Errorf("stat storage dirs: %w", err)
+			}
+
+			tmpStorage := ""
+			if !renameInPlace {
+				tmpStorage, err = os.MkdirTemp(filepath.Dir(storageDir), "storage-swap-*")
+				if err != nil {
+					return fmt.Errorf("create temp storage dir: %w", err)
+				}
+				defer os.RemoveAll(tmpStorage)
+
+				if err := copyDir(extractStorage, tmpStorage); err != nil {
+					return fmt.Errorf("copy storage to temp: %w", err)
+				}
 			}
 
 			oldBackup := storageDir + ".old"
@@ -197,9 +207,16 @@ func ReplaceFiles(extractDir string, db *sql.DB, dbCfg config.DatabaseConfig, ds
 				return fmt.Errorf("rename old storage: %w", err)
 			}
 
-			if err := os.Rename(tmpStorage, storageDir); err != nil {
-				os.Rename(oldBackup, storageDir)
-				return fmt.Errorf("rename new storage: %w", err)
+			if renameInPlace {
+				if err := os.Rename(extractStorage, storageDir); err != nil {
+					os.Rename(oldBackup, storageDir)
+					return fmt.Errorf("rename new storage: %w", err)
+				}
+			} else {
+				if err := os.Rename(tmpStorage, storageDir); err != nil {
+					os.Rename(oldBackup, storageDir)
+					return fmt.Errorf("rename new storage: %w", err)
+				}
 			}
 
 			os.RemoveAll(oldBackup)
