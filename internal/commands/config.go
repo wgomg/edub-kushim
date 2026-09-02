@@ -171,7 +171,10 @@ func unsetConfigValue(configDir, key string) error {
 		return fmt.Errorf("marshal config: %w", err)
 	}
 
-	tmpDir, err := os.MkdirTemp("", "kushim-config-*")
+	if err := os.MkdirAll(configDir, 0700); err != nil {
+		return fmt.Errorf("create config dir: %w", err)
+	}
+	tmpDir, err := os.MkdirTemp(configDir, "kushim-config-*")
 	if err != nil {
 		return fmt.Errorf("create temp dir: %w", err)
 	}
@@ -227,7 +230,10 @@ func atomicSetConfig(configDir string, body map[string]any) error {
 		v.Set(key, val)
 	}
 
-	tmpDir, err := os.MkdirTemp("", "kushim-config-*")
+	if err := os.MkdirAll(configDir, 0700); err != nil {
+		return fmt.Errorf("create config dir: %w", err)
+	}
+	tmpDir, err := os.MkdirTemp(configDir, "kushim-config-*")
 	if err != nil {
 		return fmt.Errorf("create temp dir: %w", err)
 	}
