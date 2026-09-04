@@ -7,7 +7,7 @@
 	import PdfPage from './PdfPage.svelte';
 	import './pdf-viewer.css';
 
-	let { url, title } = $props();
+	let { url, title, actions, rootClass = '', scrollClass = 'h-[75vh] overflow-y-auto' } = $props();
 
 	let pdfDoc = $state(null);
 	let pages = $state({});
@@ -405,7 +405,9 @@
 	});
 </script>
 
-<div class="flex flex-col overflow-hidden rounded-lg border border-clay-800 bg-clay-950">
+<div
+	class="flex flex-col overflow-hidden rounded-lg border border-clay-800 bg-clay-950 {rootClass}"
+>
 	<div class="flex flex-wrap items-center gap-2 border-b border-clay-800 bg-clay-900 px-3 py-2">
 		<div class="flex items-center gap-1">
 			<button
@@ -432,7 +434,11 @@
 				class="rounded-md p-1.5 text-parchment-300 hover:bg-clay-800 hover:text-parchment-100 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 				><Icon name="plus" /></button
 			>
+			<span class="min-w-10 text-center text-xs text-parchment-500 tabular-nums"
+				>{Math.round(scale * 100)}%</span
+			>
 		</div>
+		<span class="mx-1 h-5 w-px bg-clay-700" aria-hidden="true"></span>
 		<div class="flex items-center gap-1 text-sm text-parchment-400">
 			<button
 				type="button"
@@ -471,64 +477,76 @@
 			>
 		</div>
 		<div class="flex-1"></div>
+		{@render actions?.()}
+		<span class="mx-1 h-5 w-px bg-clay-700" aria-hidden="true"></span>
 		<button
 			type="button"
 			onclick={() => (findOpen = !findOpen)}
 			aria-label="Find in document"
 			title="Find in document"
+			aria-expanded={findOpen}
+			aria-pressed={findOpen}
 			class="rounded-md p-1.5 text-parchment-300 hover:bg-clay-800 hover:text-parchment-100 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 			><Icon name="search" /></button
 		>
-		{#if findOpen}
-			<div class="flex items-center gap-2">
-				<input
-					type="text"
-					bind:value={findQuery}
-					oninput={onFindInput}
-					aria-label="Find text"
-					placeholder="Find in document…"
-					autocomplete="off"
-					class="w-48 rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
-				/>
-				<span
-					class="text-xs text-parchment-400 tabular-nums"
-					aria-label={findMatches.length > 0
-						? `Match ${currentMatch + 1} of ${findMatches.length}`
-						: findQuery.trim()
-							? 'No matches'
-							: undefined}
-				>
-					{findMatches.length > 0
-						? `${currentMatch + 1} / ${findMatches.length}`
-						: findQuery.trim()
-							? 'No matches'
-							: ''}
-				</span>
-				<button
-					type="button"
-					onclick={() => goToMatch(currentMatch - 1)}
-					disabled={findMatches.length === 0}
-					aria-label="Previous match"
-					title="Previous match"
-					class="rounded-md p-1.5 text-parchment-300 hover:bg-clay-800 hover:text-parchment-100 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-40"
-					><Icon name="chevron-left" /></button
-				>
-				<button
-					type="button"
-					onclick={() => goToMatch(currentMatch + 1)}
-					disabled={findMatches.length === 0}
-					aria-label="Next match"
-					title="Next match"
-					class="rounded-md p-1.5 text-parchment-300 hover:bg-clay-800 hover:text-parchment-100 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-40"
-					><Icon name="chevron-right" /></button
-				>
-			</div>
-		{/if}
 	</div>
+	{#if findOpen}
+		<div class="flex items-center gap-2 bg-clay-900 px-3 py-2">
+			<input
+				type="text"
+				bind:value={findQuery}
+				oninput={onFindInput}
+				onkeydown={(e) => {
+					if (e.key === 'Escape') {
+						e.preventDefault();
+						findOpen = false;
+						findQuery = '';
+						runFind();
+					}
+				}}
+				aria-label="Find text"
+				placeholder="Find in document…"
+				autocomplete="off"
+				class="w-48 rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
+			/>
+			<span
+				class="text-xs text-parchment-400 tabular-nums"
+				aria-label={findMatches.length > 0
+					? `Match ${currentMatch + 1} of ${findMatches.length}`
+					: findQuery.trim()
+						? 'No matches'
+						: undefined}
+			>
+				{findMatches.length > 0
+					? `${currentMatch + 1} / ${findMatches.length}`
+					: findQuery.trim()
+						? 'No matches'
+						: ''}
+			</span>
+			<button
+				type="button"
+				onclick={() => goToMatch(currentMatch - 1)}
+				disabled={findMatches.length === 0}
+				aria-label="Previous match"
+				title="Previous match"
+				class="rounded-md p-1.5 text-parchment-300 hover:bg-clay-800 hover:text-parchment-100 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-40"
+				><Icon name="chevron-left" /></button
+			>
+			<button
+				type="button"
+				onclick={() => goToMatch(currentMatch + 1)}
+				disabled={findMatches.length === 0}
+				aria-label="Next match"
+				title="Next match"
+				class="rounded-md p-1.5 text-parchment-300 hover:bg-clay-800 hover:text-parchment-100 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-40"
+				><Icon name="chevron-right" /></button
+			>
+		</div>
+	{/if}
 	<div
 		bind:this={scrollEl}
 		onscroll={onScroll}
-		class="relative h-[75vh] overflow-y-auto bg-clay-950 p-4"
+		class="relative {scrollClass} bg-clay-950 p-4"
 		role="region"
 		aria-label={title ? `PDF viewer: ${title}` : 'PDF viewer'}
 	>

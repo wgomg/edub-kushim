@@ -135,13 +135,13 @@ The stances that shape every page:
 Conventions on top of the standard file-based routing:
 
 - Dynamic-route params arrive as a **prop** in Svelte 5
-  (`web/src/routes/documents/[id]/+page.svelte:9`):
+  (`web/src/routes/documents/[id]/+page.svelte:12`):
 
 ```js
 let { params } = $props();
 ```
 
-  and are used directly: `api.documents.get(params.id)` (`:55`).
+  and are used directly: `api.documents.get(params.id)` (`:58`).
 - **No load functions anywhere** (`+page.js`) — pages fetch in `onMount` (§9).
   This is a deliberate SPA-mode decision, not an oversight.
 - **Every internal link/href goes through `resolve('/documents')`**
@@ -565,7 +565,7 @@ function fetch({ sortBy, sortOrder, limit, offset }) {
 
 Pages trigger reloads by bumping a `refreshKey` prop (a number);
 DataTable watches it in an `untrack`ed effect (§4). Detail pages re-fetch after
-mutations (`refreshDoc()`, `documents/[id]/+page.svelte:74-78`).
+mutations (`refreshDoc()`, `documents/[id]/+page.svelte:80-84`).
 
 ### Loading / error / empty states
 
@@ -652,7 +652,7 @@ window.addEventListener('beforeunload', handleBeforeUnload);
 return () => window.removeEventListener('beforeunload', handleBeforeUnload);
 ```
 
-**A `$derived` dirty flag** (`documents/[id]/+page.svelte:31-36`):
+**A `$derived` dirty flag** (`documents/[id]/+page.svelte:38-43`):
 
 ```js
 let dirty = $derived(
@@ -821,8 +821,9 @@ Semantic roles:
 
 Aesthetic conventions to keep: `focus-visible:ring-2 focus-visible:ring-gold-500
 focus-visible:outline-none` on interactive elements, `motion-reduce:animate-none`
-next to every spinner, arbitrary values like `h-[75vh]` for the PDF viewer
-scroll container (`documents/[id]/+page.svelte` → `PdfViewer.svelte`), and a `peer-checked:` toggle built purely
+next to every spinner, arbitrary values like `h-[75vh]` as `PdfViewer`'s default
+`scrollClass` (the detail page overrides it with `rootClass="h-full"` +
+`scrollClass="flex-1 min-h-0 overflow-y-auto"` for the workspace layout), and a `peer-checked:` toggle built purely
 from classes (`settings/+page.svelte:1251-1261`).
 
 The wizard uses the same system with a 10-color subset in
@@ -972,7 +973,7 @@ dotted-map pattern (`settings/+page.svelte:176-261`).
 | Design tokens (`@theme`) | `web/src/routes/layout.css`, `web-wizard/src/app.css` |
 | Auth/role gates | `web/src/routes/+layout.svelte:31-40`, `trash/+page.svelte:204` |
 | Modal + confirm dialog | `web/src/lib/components/Modal.svelte`, `ConfirmDialog.svelte` |
-| Dirty tracking + beforeunload | `web/src/routes/settings/+page.svelte:43-62`, `documents/[id]/+page.svelte:31-36` |
+| Dirty tracking + beforeunload | `web/src/routes/settings/+page.svelte:43-62`, `documents/[id]/+page.svelte:38-43` |
 | Wizard step machine | `web-wizard/src/routes/+page.svelte:6,30-34` |
 | Dotted-key config map | `web-wizard/+page.svelte:121-162`, `web/src/routes/settings/+page.svelte:176-261` |
 | Vite aliases / proxy | `web/vite.config.js`, `web-wizard/vite.config.js` |
