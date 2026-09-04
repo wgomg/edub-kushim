@@ -5,6 +5,40 @@
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<meta name="text-scale" content="scale" />
 		<meta name="theme-color" content="#1a1512" />
+		<script>
+			if (typeof Promise.withResolvers !== 'function') {
+				Promise.withResolvers = () => {
+					let resolve, reject;
+					const promise = new Promise((res, rej) => {
+						resolve = res;
+						reject = rej;
+					});
+					return { promise, resolve, reject };
+				};
+			}
+			if (typeof AbortSignal.any !== 'function') {
+				AbortSignal.any = (signals) => {
+					const controller = new AbortController();
+					for (const s of signals) {
+						if (s.aborted) {
+							controller.abort();
+							break;
+						}
+						s.addEventListener('abort', () => controller.abort(), { once: true });
+					}
+					return controller.signal;
+				};
+			}
+			if (typeof crypto.randomUUID !== 'function') {
+				crypto.randomUUID = () => {
+					const b = crypto.getRandomValues(new Uint8Array(16));
+					b[6] = (b[6] & 0x0f) | 0x40;
+					b[8] = (b[8] & 0x3f) | 0x80;
+					const h = [...b].map((x) => x.toString(16).padStart(2, '0'));
+					return `${h.slice(0, 4).join('')}-${h.slice(4, 6).join('')}-${h.slice(6, 8).join('')}-${h.slice(8, 10).join('')}-${h.slice(10).join('')}`;
+				};
+			}
+		</script>
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">

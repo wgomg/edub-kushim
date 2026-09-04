@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 export const TEST_USER = { username: 'admin', role: 'admin' };
 
 export const DOCUMENTS = [
@@ -5,7 +7,13 @@ export const DOCUMENTS = [
 		id: 1,
 		title: 'Annual Report 2025',
 		file_size: 1048576,
+		original_type: 'application/pdf',
+		page_count: 2,
 		created_at: '2026-01-15T10:00:00Z',
+		modified_at: '2026-01-15T10:00:00Z',
+		md5_checksum: 'd41d8cd98f00b204e9800998ecf8427e',
+		sha512_checksum:
+			'cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e',
 		tags: [{ name: 'report' }],
 		people: [],
 		language: 'eng',
@@ -15,7 +23,13 @@ export const DOCUMENTS = [
 		id: 2,
 		title: 'Contract NDA',
 		file_size: 2048,
+		original_type: 'application/pdf',
+		page_count: 1,
 		created_at: '2026-02-01T10:00:00Z',
+		modified_at: '2026-02-01T10:00:00Z',
+		md5_checksum: 'd41d8cd98f00b204e9800998ecf8427e',
+		sha512_checksum:
+			'cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e',
 		tags: [],
 		people: [],
 		language: 'eng',
@@ -61,6 +75,12 @@ export async function mockApi(page, overrides = {}) {
 			json(route, { results: DOCUMENTS, total: DOCUMENTS.length }),
 		'/api/v1/documents': (route) => json(route, DOCUMENTS),
 		'/api/v1/documents/1': (route) => json(route, DOCUMENTS[0]),
+		'/api/v1/documents/1/file': (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/pdf',
+				body: readFileSync(new URL('./fixtures/sample.pdf', import.meta.url))
+			}),
 		'/api/v1/tasks': (route) => json(route, []),
 		'/api/v1/tags': (route) => json(route, { results: [], total: 0 }),
 		'/api/v1/saved-searches': (route) => json(route, []),

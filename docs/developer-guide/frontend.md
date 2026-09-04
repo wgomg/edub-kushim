@@ -821,8 +821,8 @@ Semantic roles:
 
 Aesthetic conventions to keep: `focus-visible:ring-2 focus-visible:ring-gold-500
 focus-visible:outline-none` on interactive elements, `motion-reduce:animate-none`
-next to every spinner, arbitrary values like `h-[75vh]` for the PDF iframe
-(`documents/[id]/+page.svelte:165`), and a `peer-checked:` toggle built purely
+next to every spinner, arbitrary values like `h-[75vh]` for the PDF viewer
+scroll container (`documents/[id]/+page.svelte` → `PdfViewer.svelte`), and a `peer-checked:` toggle built purely
 from classes (`settings/+page.svelte:1251-1261`).
 
 The wizard uses the same system with a 10-color subset in

@@ -7,6 +7,7 @@
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
 	import * as authStore from '$lib/stores/authStore.js';
+	import PdfViewer from '$lib/components/PdfViewer.svelte';
 	let { params } = $props();
 
 	let doc = $state();
@@ -24,10 +25,12 @@
 
 	let tagQuery = $state('');
 	let tagResults = $state([]);
+	let tagHighlight = $state(-1);
 
 	let peopleQuery = $state('');
 	let peopleResults = $state([]);
 	let selectedPeopleTypeId = $state(1);
+	let peopleHighlight = $state(-1);
 
 	let dirty = $derived(
 		doc &&
@@ -123,6 +126,7 @@
 
 	async function searchTags(q) {
 		tagQuery = q;
+		tagHighlight = -1;
 		if (!q.trim()) {
 			tagResults = [];
 			return;
@@ -134,9 +138,43 @@
 		}
 	}
 
+	function onTagKeydown(e) {
+		if (e.key === 'ArrowDown') {
+			e.preventDefault();
+			if (tagResults.length > 0) {
+				tagHighlight = (tagHighlight + 1) % tagResults.length;
+				scrollTagHighlight();
+			}
+		} else if (e.key === 'ArrowUp') {
+			e.preventDefault();
+			if (tagResults.length > 0) {
+				tagHighlight =
+					tagHighlight < 0
+						? tagResults.length - 1
+						: (tagHighlight - 1 + tagResults.length) % tagResults.length;
+				scrollTagHighlight();
+			}
+		} else if (e.key === 'Enter') {
+			const tag = tagResults[tagHighlight];
+			if (tag) {
+				e.preventDefault();
+				selectTag(tag);
+			}
+		} else if (e.key === 'Escape') {
+			tagResults = [];
+			tagHighlight = -1;
+		}
+	}
+
+	function scrollTagHighlight() {
+		if (tagHighlight < 0) return;
+		document.getElementById(`tag-option-${tagHighlight}`)?.scrollIntoView({ block: 'nearest' });
+	}
+
 	function selectTag(tag) {
 		tagQuery = '';
 		tagResults = [];
+		tagHighlight = -1;
 		addTag(tag.id);
 	}
 
@@ -152,6 +190,7 @@
 
 	async function searchPeople(q) {
 		peopleQuery = q;
+		peopleHighlight = -1;
 		if (!q.trim()) {
 			peopleResults = [];
 			return;
@@ -163,9 +202,45 @@
 		}
 	}
 
+	function onPeopleKeydown(e) {
+		if (e.key === 'ArrowDown') {
+			e.preventDefault();
+			if (peopleResults.length > 0) {
+				peopleHighlight = (peopleHighlight + 1) % peopleResults.length;
+				scrollPeopleHighlight();
+			}
+		} else if (e.key === 'ArrowUp') {
+			e.preventDefault();
+			if (peopleResults.length > 0) {
+				peopleHighlight =
+					peopleHighlight < 0
+						? peopleResults.length - 1
+						: (peopleHighlight - 1 + peopleResults.length) % peopleResults.length;
+				scrollPeopleHighlight();
+			}
+		} else if (e.key === 'Enter') {
+			const person = peopleResults[peopleHighlight];
+			if (person) {
+				e.preventDefault();
+				selectPerson(person);
+			}
+		} else if (e.key === 'Escape') {
+			peopleResults = [];
+			peopleHighlight = -1;
+		}
+	}
+
+	function scrollPeopleHighlight() {
+		if (peopleHighlight < 0) return;
+		document
+			.getElementById(`person-option-${peopleHighlight}`)
+			?.scrollIntoView({ block: 'nearest' });
+	}
+
 	function selectPerson(person) {
 		peopleQuery = '';
 		peopleResults = [];
+		peopleHighlight = -1;
 		addPerson(person.id);
 	}
 
@@ -193,14 +268,10 @@
 	{:else}
 		<div class="flex items-start gap-6">
 			<div class="min-w-0 flex-1">
-				<h1 class="text-2xl font-semibold break-words text-parchment-200">{doc.title}</h1>
+				<h1 class="text-2xl font-semibold wrap-break-word text-parchment-200">{doc.title}</h1>
 
 				<div class="mt-4 overflow-hidden rounded-lg border border-clay-800">
-					<iframe
-						src={resolve(`/api/v1/documents/${doc.id}/file`)}
-						class="h-[75vh] w-full"
-						title={doc.title}
-					></iframe>
+					<PdfViewer url={resolve(`/api/v1/documents/${doc.id}/file`)} title={doc.title} />
 				</div>
 			</div>
 
@@ -285,6 +356,7 @@
 								autocomplete="off"
 								bind:value={tagQuery}
 								oninput={() => searchTags(tagQuery)}
+								onkeydown={onTagKeydown}
 								placeholder="Search tags…"
 								class="w-full rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
 							/>
@@ -294,8 +366,13 @@
 								>
 									{#each tagResults as tag, i (i)}
 										<button
+											id={`tag-option-${i}`}
 											onclick={() => selectTag(tag)}
-											class="w-full px-2 py-1 text-left text-sm text-parchment-200 hover:bg-clay-800 focus-visible:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+											onmouseenter={() => (tagHighlight = i)}
+											class="w-full px-2 py-1 text-left text-sm text-parchment-200 hover:bg-clay-800 focus-visible:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none {tagHighlight ===
+											i
+												? 'bg-clay-800'
+												: ''}"
 										>
 											{tag.name}
 										</button>
@@ -344,6 +421,7 @@
 								autocomplete="off"
 								bind:value={peopleQuery}
 								oninput={() => searchPeople(peopleQuery)}
+								onkeydown={onPeopleKeydown}
 								placeholder="Search people…"
 								class="w-full rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
 							/>
@@ -353,8 +431,13 @@
 								>
 									{#each peopleResults as person, i (i)}
 										<button
+											id={`person-option-${i}`}
 											onclick={() => selectPerson(person)}
-											class="w-full px-2 py-1 text-left text-sm text-parchment-200 hover:bg-clay-800 focus-visible:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+											onmouseenter={() => (peopleHighlight = i)}
+											class="w-full px-2 py-1 text-left text-sm text-parchment-200 hover:bg-clay-800 focus-visible:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none {peopleHighlight ===
+											i
+												? 'bg-clay-800'
+												: ''}"
 										>
 											{person.name}
 										</button>
