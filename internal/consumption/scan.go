@@ -67,13 +67,30 @@ func ScanAndEnqueue(ctx context.Context, cfg *config.Config, client *database.Cl
 	duplicates, dupErr := queryDuplicatesByMD5(ctx, client, md5hashes)
 	if dupErr != nil {
 		logger.Error(nil, "scan: batch dedup query: %v", dupErr)
-		duplicates = make(map[string]string)
+		duplicates = make(map[string]duplicateInfo)
 	}
 
+	// MD5s already enqueued earlier in this scan; the consume task's dedup
+	// key ("consume:<md5>") would reject a second copy anyway
+	seen := make(map[string]bool)
+
 	for _, e := range entries {
-		if docID, ok := duplicates[e.md5]; ok {
-			logger.Info(nil, "scan: skipping %s (duplicate of document %s)", e.path, docID)
+		if seen[e.md5] {
+			logger.Info(nil, "scan: moving %s to errors/duplicated (duplicate within this scan)", e.path)
+			MoveFailedFile(cfg.Storage.StorageDir, e.path, "duplicate", logger, nil)
 			continue
+		}
+
+		if dup, ok := duplicates[e.md5]; ok {
+			sha512sum, shaErr := calculateSHA512(e.path)
+			if shaErr != nil {
+				logger.Error(nil, "scan: sha512 %s: %v", e.path, shaErr)
+			} else if sha512sum == dup.sha512 {
+				logger.Info(nil, "scan: moving %s to errors/duplicated (duplicate of document %s)", e.path, dup.documentID)
+				MoveFailedFile(cfg.Storage.StorageDir, e.path, "duplicate", logger, nil)
+				continue
+			}
+			// MD5 collision with a differing SHA512 — enqueue normally
 		}
 
 		consumeTaskID := uuid.New().String()
@@ -104,6 +121,7 @@ func ScanAndEnqueue(ctx context.Context, cfg *config.Config, client *database.Cl
 			logger.Error(nil, "scan: create consume task for %s: %v", e.path, err)
 			continue
 		}
+		seen[e.md5] = true
 
 		enrichPayload, _ := json.Marshal(map[string]any{
 			"waiting_for": consumeTaskID,
@@ -166,9 +184,16 @@ func ScanAndEnqueue(ctx context.Context, cfg *config.Config, client *database.Cl
 	return batchID, enqueued, nil
 }
 
-// queryDuplicatesByMD5 returns a map of md5_checksum → document_id for all
+// duplicateInfo pairs an existing document's ID with its stored SHA512 for
+// parity verification before quarantining a scan-time duplicate
+type duplicateInfo struct {
+	documentID string
+	sha512     string
+}
+
+// queryDuplicatesByMD5 returns a map of md5_checksum → duplicateInfo for all
 // hashes that already exist in the document table.
-func queryDuplicatesByMD5(ctx context.Context, client *database.Client, hashes []string) (map[string]string, error) {
+func queryDuplicatesByMD5(ctx context.Context, client *database.Client, hashes []string) (map[string]duplicateInfo, error) {
 	if len(hashes) == 0 {
 		return nil, nil
 	}
@@ -181,7 +206,7 @@ func queryDuplicatesByMD5(ctx context.Context, client *database.Client, hashes [
 	}
 
 	query := fmt.Sprintf(
-		"SELECT md5_checksum, document_id FROM document WHERE md5_checksum IN (%s)",
+		"SELECT md5_checksum, document_id, sha512_checksum FROM document WHERE md5_checksum IN (%s) AND deleted_at IS NULL",
 		strings.Join(placeholders, ","),
 	)
 
@@ -191,13 +216,13 @@ func queryDuplicatesByMD5(ctx context.Context, client *database.Client, hashes [
 	}
 	defer rows.Close()
 
-	duplicates := make(map[string]string)
+	duplicates := make(map[string]duplicateInfo)
 	for rows.Next() {
-		var md5, docID string
-		if err := rows.Scan(&md5, &docID); err != nil {
+		var md5, docID, sha512 string
+		if err := rows.Scan(&md5, &docID, &sha512); err != nil {
 			return nil, err
 		}
-		duplicates[md5] = docID
+		duplicates[md5] = duplicateInfo{documentID: docID, sha512: sha512}
 	}
 	return duplicates, rows.Err()
 }

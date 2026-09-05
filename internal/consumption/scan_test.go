@@ -3,12 +3,14 @@ package consumption
 import (
 	"context"
 	"database/sql"
+	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/storage"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -123,12 +125,16 @@ func TestScanAndEnqueue_SkipsDuplicates(t *testing.T) {
 	cfg, client, cleanup := setupScanTest(t)
 	defer cleanup()
 
-	// Insert a document with a known MD5
+	// Insert a document with the file's real MD5 and SHA512
 	pdfPath := filepath.Join(cfg.Storage.ConsumptionDir, "dup-doc.pdf")
 	testutil.CreateTestPDF(t, pdfPath, "duplicate content")
 	md5, err := utils.CalculateMD5(pdfPath)
 	if err != nil {
 		t.Fatalf("CalculateMD5: %v", err)
+	}
+	sha512, err := calculateSHA512(pdfPath)
+	if err != nil {
+		t.Fatalf("calculateSHA512: %v", err)
 	}
 
 	docType, err := client.ListAllDocumentTypes(context.Background())
@@ -136,12 +142,13 @@ func TestScanAndEnqueue_SkipsDuplicates(t *testing.T) {
 		t.Fatal("no document types found")
 	}
 	_, err = client.CreateDocument(context.Background(), database.CreateDocumentParams{
-		DocumentID:   uuid.New().String(),
-		Title:        "existing-doc",
-		Md5Checksum:  md5,
-		OriginalPath: "/tmp/existing.pdf",
-		StoragePath:  "/tmp/existing-stored.pdf",
-		FileSize:     1024,
+		DocumentID:     uuid.New().String(),
+		Title:          "existing-doc",
+		Md5Checksum:    md5,
+		Sha512Checksum: sha512,
+		OriginalPath:   "/tmp/existing.pdf",
+		StoragePath:    "/tmp/existing-stored.pdf",
+		FileSize:       1024,
 	})
 	if err != nil {
 		t.Fatalf("CreateDocument: %v", err)
@@ -158,18 +165,32 @@ func TestScanAndEnqueue_SkipsDuplicates(t *testing.T) {
 	if count != 0 {
 		t.Errorf("count = %d, want 0", count)
 	}
+
+	// Duplicate file must be moved out of the inbox into errors/duplicated/
+	if _, err := os.Stat(pdfPath); !os.IsNotExist(err) {
+		t.Fatal("duplicate should have been moved out of the inbox")
+	}
+	dupesDir := filepath.Join(cfg.Storage.StorageDir, storage.DirErrors, storage.DirErrorsDuplicates)
+	entries, _ := os.ReadDir(dupesDir)
+	if len(entries) == 0 {
+		t.Fatal("expected at least one file in duplicate error directory")
+	}
 }
 
 func TestScanAndEnqueue_MixedNewAndDuplicate(t *testing.T) {
 	cfg, client, cleanup := setupScanTest(t)
 	defer cleanup()
 
-	// Insert a document with a known MD5
+	// Insert a document with the file's real MD5 and SHA512
 	dupPath := filepath.Join(cfg.Storage.ConsumptionDir, "existing.pdf")
 	testutil.CreateTestPDF(t, dupPath, "existing content")
 	md5, err := utils.CalculateMD5(dupPath)
 	if err != nil {
 		t.Fatalf("CalculateMD5: %v", err)
+	}
+	sha512, err := calculateSHA512(dupPath)
+	if err != nil {
+		t.Fatalf("calculateSHA512: %v", err)
 	}
 
 	docType, err := client.ListAllDocumentTypes(context.Background())
@@ -177,12 +198,13 @@ func TestScanAndEnqueue_MixedNewAndDuplicate(t *testing.T) {
 		t.Fatal("no document types found")
 	}
 	_, err = client.CreateDocument(context.Background(), database.CreateDocumentParams{
-		DocumentID:   uuid.New().String(),
-		Title:        "existing-doc",
-		Md5Checksum:  md5,
-		OriginalPath: "/tmp/existing.pdf",
-		StoragePath:  "/tmp/existing-stored.pdf",
-		FileSize:     1024,
+		DocumentID:     uuid.New().String(),
+		Title:          "existing-doc",
+		Md5Checksum:    md5,
+		Sha512Checksum: sha512,
+		OriginalPath:   "/tmp/existing.pdf",
+		StoragePath:    "/tmp/existing-stored.pdf",
+		FileSize:       1024,
 	})
 	if err != nil {
 		t.Fatalf("CreateDocument: %v", err)
@@ -210,6 +232,16 @@ func TestScanAndEnqueue_MixedNewAndDuplicate(t *testing.T) {
 	}
 	if batch.Status != "queued" {
 		t.Errorf("batch.Status = %q, want queued", batch.Status)
+	}
+
+	// Duplicate file must be moved out of the inbox into errors/duplicated/
+	if _, err := os.Stat(dupPath); !os.IsNotExist(err) {
+		t.Fatal("duplicate should have been moved out of the inbox")
+	}
+	dupesDir := filepath.Join(cfg.Storage.StorageDir, storage.DirErrors, storage.DirErrorsDuplicates)
+	entries, _ := os.ReadDir(dupesDir)
+	if len(entries) == 0 {
+		t.Fatal("expected at least one file in duplicate error directory")
 	}
 }
 
@@ -311,12 +343,13 @@ func TestQueryDuplicatesByMD5_WithMatch(t *testing.T) {
 
 	docID := uuid.New().String()
 	_, err = client.CreateDocument(context.Background(), database.CreateDocumentParams{
-		DocumentID:   docID,
-		Title:        "test",
-		Md5Checksum:  "abc123",
-		OriginalPath: "/tmp/test.pdf",
-		StoragePath:  "/tmp/test-stored.pdf",
-		FileSize:     1024,
+		DocumentID:     docID,
+		Title:          "test",
+		Md5Checksum:    "abc123",
+		Sha512Checksum: "sha512value",
+		OriginalPath:   "/tmp/test.pdf",
+		StoragePath:    "/tmp/test-stored.pdf",
+		FileSize:       1024,
 	})
 	if err != nil {
 		t.Fatalf("CreateDocument: %v", err)
@@ -329,7 +362,10 @@ func TestQueryDuplicatesByMD5_WithMatch(t *testing.T) {
 	if len(duplicates) != 1 {
 		t.Fatalf("duplicates count = %d, want 1", len(duplicates))
 	}
-	if duplicates["abc123"] != docID {
-		t.Errorf("duplicates[abc123] = %q, want %q", duplicates["abc123"], docID)
+	if duplicates["abc123"].documentID != docID {
+		t.Errorf("duplicates[abc123].documentID = %q, want %q", duplicates["abc123"].documentID, docID)
+	}
+	if duplicates["abc123"].sha512 != "sha512value" {
+		t.Errorf("duplicates[abc123].sha512 = %q, want %q", duplicates["abc123"].sha512, "sha512value")
 	}
 }
