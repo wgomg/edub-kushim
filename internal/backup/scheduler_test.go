@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"database/sql"
 	"testing"
 	"time"
 )
@@ -65,5 +66,32 @@ func TestNextBackupTime_EmptyPreferredTimeDefaultsTo0200(t *testing.T) {
 	expected := time.Date(2026, 7, 29, 2, 0, 0, 0, time.UTC)
 	if !result.Equal(expected) {
 		t.Errorf("NextBackupTime(\"\") = %v, want %v (default 02:00)", result, expected)
+	}
+}
+
+func TestDueFromHistory_RecentBlocks(t *testing.T) {
+	if due := dueFromHistory(1, sql.NullTime{}, 1, "02:00"); due {
+		t.Error("dueFromHistory with recent>0 must return false")
+	}
+}
+
+func TestDueFromHistory_NullCompletedDue(t *testing.T) {
+	if due := dueFromHistory(0, sql.NullTime{}, 1, "02:00"); !due {
+		t.Error("dueFromHistory with no completed run must return true")
+	}
+}
+
+func TestDueFromHistory_RecentCompletedBeforeWindow(t *testing.T) {
+	completed := time.Now().UTC().Add(-30 * time.Minute)
+	if due := dueFromHistory(0, sql.NullTime{Time: completed, Valid: true}, 1, time.Now().UTC().Add(time.Hour).Format("15:04")); due {
+		t.Error("dueFromHistory with daily interval and recent completion must return false")
+	}
+}
+
+func TestDueFromHistory_RecentCompletedAfterWindow(t *testing.T) {
+	completed := time.Now().UTC().Add(-3 * time.Hour)
+	past := time.Now().UTC().Add(-2 * time.Hour).Format("15:04")
+	if due := dueFromHistory(0, sql.NullTime{Time: completed, Valid: true}, 0.5, past); !due {
+		t.Error("dueFromHistory with sub-daily interval past next-window must return true")
 	}
 }

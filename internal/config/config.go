@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -315,6 +316,13 @@ type BackupConfig struct {
 	Keep     int     `mapstructure:"keep" yaml:"keep" json:"keep"`
 }
 
+type MirrorConfig struct {
+	Enabled  bool    `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
+	Path     string  `mapstructure:"path" yaml:"path" json:"path"`
+	Interval float64 `mapstructure:"interval" yaml:"interval" json:"interval"`
+	Time     string  `mapstructure:"time" yaml:"time" json:"time"`
+}
+
 type Config struct {
 	App      AppConfig      `mapstructure:"app" yaml:"app" json:"app"`
 	Srv      ServerConfig   `mapstructure:"server" yaml:"server" json:"server"`
@@ -323,6 +331,7 @@ type Config struct {
 	Consumer ConsumerConfig `yaml:"consumer" json:"consumer"`
 	Enricher EnricherConfig `mapstructure:"enricher" yaml:"enricher" json:"enricher"`
 	Backup   BackupConfig   `mapstructure:"backup" yaml:"backup" json:"backup"`
+	Mirror   MirrorConfig   `mapstructure:"mirror" yaml:"mirror" json:"mirror"`
 }
 
 // engine identifiers grouped by tool category.
@@ -751,7 +760,108 @@ func finalizeConfig(cfg *Config, configDir string) error {
 		}
 	}
 
+	if cfg.Mirror.Enabled {
+		if cfg.Mirror.Path == "" {
+			return fmt.Errorf("mirror.path is required when mirror.enabled is true")
+		}
+		if cfg.Mirror.Interval <= 0 {
+			return fmt.Errorf("mirror.interval must be > 0")
+		}
+		if cfg.Mirror.Time == "" {
+			cfg.Mirror.Time = "02:00"
+		}
+		if _, err := parseHHMM(cfg.Mirror.Time, false); err != nil {
+			return fmt.Errorf("mirror.time: %w", err)
+		}
+		if err := ValidateMirrorDestination(cfg.Mirror.Path, cfg.Storage.StorageDir, cfg.Backup.Path); err != nil {
+			return err
+		}
+		if !IsRemoteMirrorTarget(cfg.Mirror.Path) {
+			cfg.Mirror.Path = expandPath(cfg.Mirror.Path, homeDir)
+			if err := os.MkdirAll(cfg.Mirror.Path, 0755); err != nil {
+				return fmt.Errorf("failed to create mirror directory: %w", err)
+			}
+		}
+	}
+
 	return nil
+}
+
+func ValidateMirrorDestination(dest, storageDir, backupPath string) error {
+	if strings.HasPrefix(dest, "-") {
+		return fmt.Errorf("mirror destination %q starts with '-' — refusing", dest)
+	}
+	if IsRemoteMirrorTarget(dest) {
+		return nil
+	}
+	abs, err := resolvePath(dest)
+	if err != nil {
+		return fmt.Errorf("resolve mirror destination: %w", err)
+	}
+	storageAbs, err := resolvePath(storageDir)
+	if err != nil {
+		return fmt.Errorf("resolve storage dir: %w", err)
+	}
+	if abs == storageAbs {
+		return fmt.Errorf("mirror destination %q is the storage directory itself", dest)
+	}
+	if isWithinPath(abs, storageAbs) {
+		return fmt.Errorf("mirror destination %q is inside the storage directory — refusing", dest)
+	}
+	if isWithinPath(storageAbs, abs) {
+		return fmt.Errorf("mirror destination %q contains the storage directory — refusing", dest)
+	}
+	if backupPath != "" {
+		backupAbs, err := resolvePath(backupPath)
+		if err != nil {
+			return fmt.Errorf("resolve backup path: %w", err)
+		}
+		if isWithinPath(abs, backupAbs) {
+			return fmt.Errorf("mirror destination %q is inside the backup directory — refusing", dest)
+		}
+	}
+	return nil
+}
+
+func isWithinPath(path, dir string) bool {
+	return path == dir || strings.HasPrefix(path, dir+string(filepath.Separator))
+}
+
+func resolvePath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	abs = filepath.Clean(abs)
+	var rest []string
+	cur := abs
+	for {
+		resolved, err := filepath.EvalSymlinks(cur)
+		if err == nil {
+			for _, r := range slices.Backward(rest) {
+				resolved = filepath.Join(resolved, r)
+			}
+			return resolved, nil
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return "", err
+		}
+		rest = append(rest, filepath.Base(cur))
+		cur = parent
+	}
+}
+
+func IsRemoteMirrorTarget(path string) bool {
+	if strings.HasPrefix(path, "rsync://") {
+		return true
+	}
+	colon := strings.IndexByte(path, ':')
+	if colon <= 0 {
+		return false
+	}
+	host := path[:colon]
+	return !strings.Contains(host, "/") && !strings.ContainsAny(host, " \t")
 }
 
 func expandPath(path, homeDir string) string {

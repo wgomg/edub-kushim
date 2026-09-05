@@ -177,9 +177,11 @@ The `ConfigTaskHandler` lives in its own package (`internal/configtask/`) to kee
 
 ### CLI (`kushim`)
 
-The `Container` registers all five task types (`"consume"`, `"enrich"`, `"thumbnail"`, `"config"`, `"backup"`)
+The `Container` registers all six task types (`"consume"`, `"enrich"`, `"thumbnail"`, `"config"`, `"backup"`, `"mirror"`)
 and creates a `MatcherClient` connected to the Unix socket at `<config_dir>/kushim-hugot.sock`.
 The `"backup"` type is handled by `BackupTaskHandler` which acquires the DB-backed backup lock via `AcquireBackupLock`, waits for in-flight tasks to drain, runs the backup, and releases the lock. It implements `DedupKey` returning `backup:<mode>:<date>` (mode parsed from the task payload, default `full`).
+
+The `"mirror"` type is handled by `MirrorTaskHandler` which acquires the same backup lock, then delegates to `mirror.RunLocked` (drain → 5-minute `TouchBackupLock` heartbeat → `rsync -a --delete --info=stats2 --timeout=600` → `.edub-mirror.json` state write) and releases the lock. It implements `DedupKey` returning `mirror:<UTC date>`.
 The `TagService` and `Enricher` receive the client instead of a direct Hugot reference:
 
 ```go
@@ -190,9 +192,10 @@ registry.Register("consume", taskhandlers.NewConsumeTaskHandler(consumer, store,
 registry.Register("enrich", taskhandlers.NewEnrichTaskHandler(enricher, client.Queries, c.logger))
 registry.Register("config", configtask.NewConfigTaskHandler(c.logger))
 registry.Register("backup", taskhandlers.NewBackupTaskHandler(c.db, client.Queries, func() *config.Config { return c.cfg.Load() }, c.logger))
+registry.Register("mirror", taskhandlers.NewMirrorTaskHandler(client.Queries, func() *config.Config { return c.cfg.Load() }, c.logger))
 ```
 
-The `BackupTaskHandler` receives a config getter closure used for the backup-root fallback (`backup.path`) and the config path; the backup `mode`/`path`/`keep` come from the task payload, with the path validated against the configured backup roots. The config pool is started alongside
+The `BackupTaskHandler` receives a config getter closure used for the backup-root fallback (`backup.path`) and the config path; the backup `mode`/`path`/`keep` come from the task payload, with the path validated against the configured backup roots. The `MirrorTaskHandler` receives the queries and a config getter; the mirror destination comes from the payload (falling back to `mirror.path`) and is validated via `mirror.ValidateDestination`. The config pool is started alongside
 consume/enrich pools when a CLI command runs.
 
 ### Server (`edub`)

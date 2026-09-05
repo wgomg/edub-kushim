@@ -86,6 +86,18 @@ func (q *Queries) CountActiveBackupTasks(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const countActiveMirrorTasks = `-- name: CountActiveMirrorTasks :one
+SELECT COUNT(*) FROM task
+WHERE task_type = 'mirror' AND status IN ('pending', 'processing')
+`
+
+func (q *Queries) CountActiveMirrorTasks(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countActiveMirrorTasks)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countAllTasks = `-- name: CountAllTasks :one
 SELECT COUNT(*) FROM task
 `
@@ -132,6 +144,19 @@ type CountRecentBackupTasksByModeParams struct {
 
 func (q *Queries) CountRecentBackupTasksByMode(ctx context.Context, arg CountRecentBackupTasksByModeParams) (int64, error) {
 	row := q.db.QueryRowContext(ctx, countRecentBackupTasksByMode, arg.Column1, arg.Column2)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countRecentMirrorTasks = `-- name: CountRecentMirrorTasks :one
+SELECT COUNT(*) FROM task
+WHERE task_type = 'mirror' AND created_at > NOW() - ($1 || ' minutes')::INTERVAL
+  AND dedup_key LIKE 'mirror:%'
+`
+
+func (q *Queries) CountRecentMirrorTasks(ctx context.Context, dollar_1 sql.NullString) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countRecentMirrorTasks, dollar_1)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -386,6 +411,21 @@ LIMIT 1
 
 func (q *Queries) GetLastCompletedBackupByMode(ctx context.Context, dollar_1 sql.NullString) (sql.NullTime, error) {
 	row := q.db.QueryRowContext(ctx, getLastCompletedBackupByMode, dollar_1)
+	var completed_at sql.NullTime
+	err := row.Scan(&completed_at)
+	return completed_at, err
+}
+
+const getLastCompletedMirror = `-- name: GetLastCompletedMirror :one
+SELECT completed_at FROM task
+WHERE task_type = 'mirror' AND status = 'completed'
+  AND dedup_key LIKE 'mirror:%'
+ORDER BY completed_at DESC
+LIMIT 1
+`
+
+func (q *Queries) GetLastCompletedMirror(ctx context.Context) (sql.NullTime, error) {
+	row := q.db.QueryRowContext(ctx, getLastCompletedMirror)
 	var completed_at sql.NullTime
 	err := row.Scan(&completed_at)
 	return completed_at, err

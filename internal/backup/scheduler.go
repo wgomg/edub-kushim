@@ -49,9 +49,6 @@ func IsBackupDue(ctx context.Context, queries *database.Queries, schedule config
 	if err != nil {
 		return false, err
 	}
-	if recent > 0 {
-		return false, nil
-	}
 
 	completedAt, err := queries.GetLastCompletedBackupByMode(ctx, sql.NullString{String: schedule.Mode, Valid: true})
 	if err != nil {
@@ -61,10 +58,33 @@ func IsBackupDue(ctx context.Context, queries *database.Queries, schedule config
 		return false, err
 	}
 
-	if !completedAt.Valid {
-		return true, nil
+	return dueFromHistory(recent, completedAt, schedule.Interval, schedule.Time), nil
+}
+
+func IsMirrorDue(ctx context.Context, queries *database.Queries, schedule config.MirrorConfig) (bool, error) {
+	recent, err := queries.CountRecentMirrorTasks(ctx, sql.NullString{String: "5", Valid: true})
+	if err != nil {
+		return false, err
 	}
 
-	next := NextBackupTime(completedAt.Time, schedule.Interval, schedule.Time)
-	return !time.Now().Before(next), nil
+	completedAt, err := queries.GetLastCompletedMirror(ctx)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return true, nil
+		}
+		return false, err
+	}
+
+	return dueFromHistory(recent, completedAt, schedule.Interval, schedule.Time), nil
+}
+
+func dueFromHistory(recent int64, completedAt sql.NullTime, interval float64, preferredTime string) bool {
+	if recent > 0 {
+		return false
+	}
+	if !completedAt.Valid {
+		return true
+	}
+	next := NextBackupTime(completedAt.Time, interval, preferredTime)
+	return !time.Now().Before(next)
 }

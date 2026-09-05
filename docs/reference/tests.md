@@ -5,10 +5,11 @@
 The project has **20+ test packages and 375+ unit/integration tests**, with a three-tier
 run strategy (Go backend + web UI):
 
-- **`make test`** (12 packages, no database required) — LLM registry, config, API types,
+- **`make test`** (13 packages, no database required) — LLM registry, config, API types,
   tools runner, utils (text normalization, logging), tagmatch, storage walk, auth tokens,
   auth middleware + permissions, content analyzer (prompt building, tag filtering, token
-  estimation), error classification (`errs`), and worker pool lifecycle.
+  estimation), error classification (`errs`), worker pool lifecycle, and mirror (rsync
+  stats parsing, remote-target detection, destination guards).
 - **`make test-db`** (6 additional packages, requires PostgreSQL) — database CRUD queries,
   search engine, task system (store/dispatcher/runner/pool), service layer (batch,
   orphaned, errored files, users, enrichment, API keys), API handlers, and consumption
@@ -62,7 +63,7 @@ The `global` ruleset requires the `test` and `web` checks to pass before a PR to
 | Package | Tests | What it covers |
 |---------|-------|---------------|
 | `internal/llm` | 27 | Registry creation (fixture + embedded fallback), model lookup for known/missing providers and models, adapter/provider/model listing, default URL derivation, catalog reload, concurrent access safety |
-| `internal/config` | 38 | Default config values, ParseHHMM, polling window validation (valid + invalid), IsWithinActiveWindows, OCR workers, finalizeConfig (reclaim max retries, doc-type refinement non-negative, request-delay bounds, fallback validation: missing adapter/provider/model rejected, negative fallback request_delay rejected, valid enabled fallback accepted, nil/disabled fallback skipped), Load (applies OcrWorkers), SaveMap (merge/no file/invalid file), watcher (fire on change/missing file/invalid YAML) |
+| `internal/config` | 50 | Default config values, ParseHHMM, polling window validation (valid + invalid), IsWithinActiveWindows, OCR workers, finalizeConfig (reclaim max retries, doc-type refinement non-negative, request-delay bounds, fallback validation: missing adapter/provider/model rejected, negative fallback request_delay rejected, valid enabled fallback accepted, nil/disabled fallback skipped), Load (applies OcrWorkers), SaveMap (merge/no file/invalid file), watcher (fire on change/missing file/invalid YAML), IsRemoteMirrorTarget (11 cases: rsync://, user@host, host-only colon, slash/whitespace rejections), ValidateMirrorDestination (dash-prefixed refused, remote skipped, inside-storage refused, storage-itself refused, ancestor-of-storage refused, inside-backup refused, unrelated local accepted, symlink-into-storage refused) |
 | `internal/api/types` | 11 | ConfigResponseFrom: logging defaults/custom, reclaim max retries, prompt template, max batch delete, doc type refinement, pause on credit error, fallback (nil → omitted; enabled fallback maps all llm fields), consumer fields (supported_files, converter), available file types (required flag, extension aliases) |
 | `internal/mime` | 9 | IsPDF/IsImage/IsOfficeDoc predicates, ExtensionFromMimeType, MimeTypeFromExtension (canonical + alias extensions, case-insensitive, unknown → octet-stream), ExtensionsFor (canonical + aliases per type, nil for unknown), BuildExtensionSet, Supported constants + slice invariants |
 | `internal/tools` | 20 | OptimizePdf (no timeout/with timeout/file not found/cancellation/nil optimizer), ConvertToPdf (nil converter/file not found/with converter/timeout deadline), AnalyzeContent/AnalyzeDocType (timeout deadline, nil analyzer), isProviderError (generic/credits true; content-too-large, token-limit, canceled, deadline-exceeded false — direct and wrapped), fallback paths (provider error → fallback result; ContentTooLargeError, cancellation, and DeadlineExceeded never call the fallback; no fallback configured → error; fallback failure propagates with the fallback provider; doc-type refinement fallback) |
@@ -81,7 +82,8 @@ The `global` ruleset requires the `test` and `web` checks to pass before a PR to
 | `internal/api/handlers` | 65 | Document CRUD, tag/people/DocumentType CRUD, user CRUD (with role), task endpoints, saved searches, concurrent operations, dashboard running tasks + analytics + processing health, analytics error path, config handler get/status, PutConfig runtime/container immediate-persistence alongside db migration, batch delete limits, error helpers, auth login (valid/invalid/empty/claims/role), auth logout, API key generate/revoke/rotate/status/forbidden/invalid-id/not-found + wire-format contract (has_api_key present, has_key absent, api_key_prefix present), MeHandler (valid/missing-id/not-found), self-service API key handlers (MeGenerateKey/MeRevokeKey/MeRotateKey/MeGetKeyStatus/unauthorized + wire-format contract), orphaned handler (list/scan/delete/restore/move-to-inbox/delete-all/move-all), errored handler (list/download/delete/delete-all), logs handler (invalid name/file not found/success/line clamping/large file tail/empty file), people-type reserved-name guard (create/update rejected for `person`, case-insensitive; non-reserved name accepted) |
 | `internal/consumption` | 20 | Full consumer pipeline via mock runner (file discovery, DB transaction, file movement, duplicate detection), file I/O helpers (get, move, copy, remove, clean up), checksum calculation, orphaned file management |
 | `internal/commands` | 16 | Config handler (help/path/validate valid+invalid/get/missing key/set/invalid set/unset/missing key/unset without key/dump/unknown args), parseValue, deleteNestedKey, highlight snippet ANSI markers. CGo-gated package: compiles only under `CGO_ENABLED=1` (runs via `make test-cgo`) |
-| `internal/backup` | 12 | Create (full backup/missing DB/missing storage/no files/SQL dump content), ApplyRetention (delete oldest/keep all/keep 0), ValidateArchive (valid/invalid gzip/missing manifest/missing file), ExtractArchive (valid/path traversal/symlink skip), ReplaceFiles (SQL dump/unknown format/documents-mode storage swap, same-device rename path), CopyDir |
+| `internal/backup` | 16 | Create (full backup/missing DB/missing storage/no files/SQL dump content), ApplyRetention (delete oldest/keep all/keep 0), ValidateArchive (valid/invalid gzip/missing manifest/missing file), ExtractArchive (valid/path traversal/symlink skip), ReplaceFiles (SQL dump/unknown format/documents-mode storage swap, same-device rename path), CopyDir, NextBackupTime (daily/sub-daily/clamp/empty-time), dueFromHistory (recent blocks, null-completed due, daily recent-completion not due, sub-daily past-window due) |
+| `internal/mirror` | 8 | Available (sanity), IsRemoteTarget (user@host/rsync:///local), parseStats (stats2 format with reg count + comma-formatted total, deleted-file lines ignored per P1 fix, empty/malformed degrade to zero, commas in the outer count) |
 
 ---
 
@@ -178,7 +180,7 @@ from `crypto/x509` root cert loading in the Go standard library.
 ### Makefile targets
 
 ```bash
-make test          # CGO_ENABLED=0, 12 packages, 60s timeout (no DB needed)
+make test          # CGO_ENABLED=0, 13 packages, 60s timeout (no DB needed)
 make test-verbose  # same with -v output
 make test-web      # web/ vitest unit + component tests (no database)
 make test-web-e2e  # web/ Playwright smokes with mocked API (requires npx playwright install chromium)
@@ -188,9 +190,9 @@ The Makefile explicitly sets `CGO_ENABLED=0` for test targets, overriding the
 `export CGO_ENABLED := 1` used for build targets. This ensures tests run in
 any environment regardless of C library availability.
 
-**12 packages run without a database:** `llm`, `config`, `api/types`, `tools`,
+**13 packages run without a database:** `llm`, `config`, `api/types`, `tools`,
 `utils`, `tagmatch`, `storage`, `auth`, `api`, `tools/adapters/contentanalyzer`,
-`errs`, `pool`.
+`errs`, `pool`, `mirror`.
 
 ### Database-dependent tests (`make test-db`)
 

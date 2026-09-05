@@ -296,7 +296,8 @@ See `AuthMiddleware` under `server.go` → Functions.
 - `ServerConfigResponse` — `Host string`, `Port int`
 - `StorageConfigResponse` — `ConsumptionDir string` (inbox path), `StorageDir string` (processed document path)
 - `DatabaseConfigResponse` — `Path string` (not used with PostgreSQL)
-- `ConfigResponse` — `App AppConfigResponse`, `Server ServerConfigResponse`, `Storage StorageConfigResponse`, `Database DatabaseConfigResponse`, `Consumer ConsumerConfigResponse`, `Enricher EnricherConfigResponse`, `Backup BackupConfigResponse`, `AvailableEngines map[string][]EngineEntry`, `AvailableFileTypes []AvailableFileType`
+- `ConfigResponse` — `App AppConfigResponse`, `Server ServerConfigResponse`, `Storage StorageConfigResponse`, `Database DatabaseConfigResponse`, `Consumer ConsumerConfigResponse`, `Enricher EnricherConfigResponse`, `Backup BackupConfigResponse`, `Mirror MirrorConfigResponse`, `AvailableEngines map[string][]EngineEntry`, `AvailableFileTypes []AvailableFileType`
+- `MirrorConfigResponse` — `Enabled bool`, `Path string` (local path or `[user@]host:path` remote target), `Interval float64` (days), `Time string` (HH:MM)
 - `AvailableFileType` — `MimeType string`, `Label string`, `Extensions []string` (canonical + aliases, e.g. TIFF → `.tiff`, `.tif`), `Required bool` (PDF only) — drives the supported-file-types checkboxes in both UIs
 - `ConsumerConfigResponse` — `SupportedFiles []string`, `Workers int`, `MaxFilesPerBatch int`, `Converter DocxOdtConverterResponse`, `TextExtractor TextExtractorResponse`, `PdfOptimizer PdfOptimizerResponse`, `OCR OCRResponse`, `Thumbnail ThumbnailConfigResponse`, `Polling PollingConfigResponse`, `Reclaim ReclaimConfigResponse`
 - `ThumbnailConfigResponse` — `Enabled bool`, `Engine string`, `DPI int`, `MaxWidth int`, `Quality int`, `Timeout int`, `Workers int`

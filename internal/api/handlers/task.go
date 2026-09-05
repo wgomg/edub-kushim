@@ -584,6 +584,8 @@ func taskLabel(taskType string, dedupKey sql.NullString) string {
 			return "Backup"
 		}
 		return "Backup (" + mode + ")"
+	case strings.HasPrefix(key, "mirror:"):
+		return "Mirror"
 	case key == "config:migrate-db":
 		return "Database migration"
 	case key == "config:migrate-storage":

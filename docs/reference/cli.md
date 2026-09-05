@@ -4,7 +4,7 @@
 
 ### Globals
 
-`commandSets` map with `"cli"` key (CLI commands) and `"server"` key (edub commands: `version`). CLI set contains: `version`, `consume`, `search`, `hugot`, `task`, `user`, `setup`, `enrich`, `queue`, `storage`, `backup`, `config`, `restore`.
+`commandSets` map with `"cli"` key (CLI commands) and `"server"` key (edub commands: `version`). CLI set contains: `version`, `consume`, `search`, `hugot`, `task`, `user`, `setup`, `enrich`, `queue`, `storage`, `backup`, `mirror`, `config`, `restore`.
 
 > **Note**: The `edub` binary has its own standalone runner in `cmd/edub/runner.go` that only handles the `version` command (server mode is the default when no command matches).
 
@@ -43,7 +43,7 @@
 
 ### Struct
 
-- `Container` — `cfg` (atomic.Pointer), `logger`, `db`, `engine`, `cache`, `dispatcher`, `pools struct { consume *pool.Pool; enrich *pool.Pool; config *pool.Pool; backup *pool.Pool }`
+- `Container` — `cfg` (atomic.Pointer), `logger`, `db`, `engine`, `cache`, `dispatcher`, `pools struct { consume *pool.Pool; enrich *pool.Pool; config *pool.Pool; backup *pool.Pool; mirror *pool.Pool }`
   - **Methods**:
     - `NewContainer(cfg, logger)` — No DB
     - `NewContainerWithDB(cfg, logger, db)` — With provided DB
@@ -170,8 +170,13 @@ kushim storage thumbnails cleanup [--dry-run]
 - `runPollingLoop(ctx, c, client, batchSvc, maxConcurrent)` — Goroutine that runs on its own dynamic ticker (configured by `consumer.polling.interval`, minimum 1 minute). Reads config from `c.cfg.Load()` (atomically loaded by the queue daemon's 5-second housekeeping ticker, so config changes propagate from disk within ~5 seconds without a restart). Checks capacity (`CountQueuedBatches + CountLiveBatches < MaxConcurrentBatches`) and missing external tools (recomputed only when the config pointer changes) before calling `consumption.ScanAndEnqueue`.
 - `pollingTick(ctx, c, client, batchSvc, maxConcurrent, missingTools)` — Single polling iteration: capacity check, missing tools check, then delegates to `consumption.ScanAndEnqueue` to scan inbox, deduplicate, and create a `queued` batch with consume+enrich task pairs.
 - `maybeScheduleBackup(ctx, c, client) error` — When `backup.enabled` is set, checks the shared backup lock once per tick (`CountActiveBackupTasks`), then iterates `cfg.Backup.Schedules`, calling `backup.IsBackupDue` per schedule (per-mode 5-minute cooldown + per-mode last-completed derivation). Each due schedule enqueues a `"backup"` task whose payload captures the schedule's `mode`, `path`, and `keep` at enqueue time.
+- `maybeScheduleMirror(ctx, c, client) error` — When `mirror.enabled` is set, checks the shared backup lock once per tick (`CountActiveMirrorTasks`), then calls `backup.IsMirrorDue` (5-minute cooldown + last-completed derivation, same anchor as backups). Each due mirror enqueues a `"mirror"` task whose payload captures the config's `path` and `interval` at enqueue time.
+- `maybeScheduleTask(ctx, c, client, taskType, active, due, payload) error` — Shared scheduling core used by both `maybeScheduleBackup` and `maybeScheduleMirror`: active-count check, due check, then enqueue with a fresh UUID task ID.
+- `startPool(c, ctx, name, started, pp) error` / `stopPool(c, name, started, pp)` — Shared pool lifecycle helpers used by the housekeeping ticker for the backup and mirror pools (start lazily on enable, stop on disable/reconnect/shutdown).
 
 The daemon also starts a **backup pool** (1 worker, 60s poll interval) when `backup.enabled` becomes `true` (checked lazily on each housekeeping tick, so enabling backup at runtime via config reload creates the pool without a restart). When backup is disabled at runtime via config reload, the pool is stopped and cleaned up on the same 5s ticker. The pool executes scheduled backup tasks via `BackupTaskHandler` (which reads config via a getter closure for the backup root fallback; the mode/path/keep come from the task payload, validated against the configured backup roots). The ticker and polling loop check the DB-backed `backup_lock` table via `IsBackupLocked` — backup scheduling and polling are skipped while a backup is in progress, while stale reclamation continues to run unconditionally.
+
+The daemon likewise starts a **mirror pool** (1 worker, 60s poll interval) when `mirror.enabled` becomes `true` (same lazy start/stop semantics as the backup pool). It executes scheduled mirror tasks via `MirrorTaskHandler`, which acquires the backup lock, drains in-flight tasks, runs `rsync -a --delete --info=stats2 --timeout=600` over the storage tree, and writes a `.edub-mirror.json` state file into the destination. A 5-minute heartbeat (`TouchBackupLock`) refreshes the lock while rsync runs so long mirrors never trip the 30-minute staleness window.
 
 ---
 
@@ -198,6 +203,15 @@ The daemon also starts a **backup pool** (1 worker, 60s poll interval) when `bac
 
 - `backupHandler(c, args) error` — `kushim backup [--path <dir>] [--mode <full|database|documents>]` — Runs a synchronous backup: checks preconditions (`IsBackupLocked`, `CountProcessingTasks`, polling status), acquires `AcquireBackupLock`, creates a `tar.gz` archive per the mode (`full` = DB dump + config + storage; `database` = DB dump + config only; `documents` = config + storage only), prints the result, releases the lock. Manual backups never apply retention.
 - `restoreHandler(c, args) error` — `kushim restore <backup-file.tar.gz> [--force] [--dry-run] [--temp-dir <dir>]` — Validates the archive, checks restore tooling per `database.runtime` (`host` requires `psql` on PATH; `docker`/`podman` require the runtime binary and `database.container`; `remote` refuses with manual-restore guidance; skipped for `documents`-mode archives and `--dry-run`), checks preconditions, acquires `AcquireBackupLock`, checks the running daemon's PID file, prompts for confirmation (unless `--force`), runs `checkRestoreDiskSpace` (refuses corrupt/hand-made manifests with zero mode-relevant sizes and refuses when the staging parent — or the storage parent for cross-device staging — lacks ~1.05× the required size), creates the extraction staging dir next to `storage.storage_dir` (or under `--temp-dir`), restores per the manifest mode (`full`: SQL dump via `psql` + storage swap + path rewrite; `documents`: storage swap only; `database`: SQL dump via `psql` + path rewrite only; legacy manifests without `mode` restore as `full`), saves the archived config as `config.yaml.restored`, releases the lock. `ReplaceFiles` renames the extracted `storage/` onto `storage_dir` when both are on the same device, falling back to a `storage-swap-*` copy (completed before the swap) for cross-device staging.
+
+---
+
+## `mirror.go`
+
+### Functions
+
+- `mirrorHandler(c, args) error` — `kushim mirror [--path <dest>]` — Runs a synchronous mirror of the storage tree to a local path or rsync remote target (`[user@]host:path`). Unlike the backup command, it **waits** for the backup lock (polling `AcquireBackupLock` every 5s) instead of refusing, then drains in-flight tasks and runs `rsync -a --delete --info=stats2 --timeout=600 <storage>/ <dest>` (process-group-killed on Ctrl-C so the spawned `ssh` for remote targets is reaped too). Writes a `.edub-mirror.json` diagnostics file (timestamp, file count, bytes, app version) into the destination and prints the stats. Requires `rsync` on PATH; remote targets need passwordless ssh. Destination guards (symlink-resolved) refuse paths inside `storage_dir` or the backup directory, paths containing storage, and dash-prefixed destinations.
+- `waitForBackupLock(ctx, client) error` — Polls `AcquireBackupLock` every 5 seconds until acquired or the context is canceled (SIGINT/SIGTERM). The mirror's wait-don't-refuse semantic: the held lock blocks new task claims, so the drain is safe even with polling enabled.
 
 ---
 

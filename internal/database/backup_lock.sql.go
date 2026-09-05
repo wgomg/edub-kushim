@@ -44,3 +44,15 @@ func (q *Queries) ReleaseBackupLock(ctx context.Context) (int64, error) {
 	}
 	return result.RowsAffected()
 }
+
+const touchBackupLock = `-- name: TouchBackupLock :execrows
+UPDATE backup_lock SET started_at = NOW() WHERE id = 1 AND running = true
+`
+
+func (q *Queries) TouchBackupLock(ctx context.Context) (int64, error) {
+	result, err := q.db.ExecContext(ctx, touchBackupLock)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}

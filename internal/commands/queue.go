@@ -107,6 +107,8 @@ func queueHandler(c *Container, args []string) error {
 
 	var backupPool *pool.Pool
 	var backupPoolStarted bool
+	var mirrorPool *pool.Pool
+	var mirrorPoolStarted bool
 
 	go runPollingLoop(ctx, c, func() *database.Client { return client }, func() *service.Batch { return batchSvc }, maxConcurrent)
 
@@ -168,11 +170,10 @@ func queueHandler(c *Container, args []string) error {
 						c.cfg.Store(oldCfg)
 					} else {
 						if backupPoolStarted {
-							stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-							backupPool.Stop(stopCtx)
-							cancel()
-							backupPool = nil
-							backupPoolStarted = false
+							stopPool(c, "backup", &backupPoolStarted, &backupPool)
+						}
+						if mirrorPoolStarted {
+							stopPool(c, "mirror", &mirrorPoolStarted, &mirrorPool)
 						}
 						client = newClient
 						batchSvc = service.NewBatch(client, c.cfg.Load().Consumer.Reclaim.MaxRetries)
@@ -189,14 +190,8 @@ func queueHandler(c *Container, args []string) error {
 
 			if cfg.Backup.Enabled {
 				if !backupPoolStarted {
-					var poolErr error
-					backupPool, poolErr = c.GetPool("backup")
-					if poolErr != nil {
-						c.logger.Error(nil, "backup pool: %v", poolErr)
-					} else {
-						backupPool.Start(ctx)
-						backupPoolStarted = true
-						c.logger.Info(nil, "backup pool started (delayed)")
+					if err := startPool(c, ctx, "backup", &backupPoolStarted, &backupPool); err != nil {
+						c.logger.Error(nil, "backup pool: %v", err)
 					}
 				}
 				locked, lockErr := client.Queries.IsBackupLocked(ctx)
@@ -208,12 +203,27 @@ func queueHandler(c *Container, args []string) error {
 					}
 				}
 			} else if backupPoolStarted {
-				stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				backupPool.Stop(stopCtx)
-				cancel()
-				backupPool = nil
-				backupPoolStarted = false
+				stopPool(c, "backup", &backupPoolStarted, &backupPool)
 				c.logger.Info(nil, "backup pool stopped (backup disabled)")
+			}
+
+			if cfg.Mirror.Enabled {
+				if !mirrorPoolStarted {
+					if err := startPool(c, ctx, "mirror", &mirrorPoolStarted, &mirrorPool); err != nil {
+						c.logger.Error(nil, "mirror pool: %v", err)
+					}
+				}
+				locked, lockErr := client.Queries.IsBackupLocked(ctx)
+				if lockErr != nil {
+					c.logger.Error(nil, "mirror lock check: %v", lockErr)
+				} else if locked == 0 {
+					if err := maybeScheduleMirror(ctx, c, client, cfg); err != nil {
+						c.logger.Error(nil, "mirror scheduling: %v", err)
+					}
+				}
+			} else if mirrorPoolStarted {
+				stopPool(c, "mirror", &mirrorPoolStarted, &mirrorPool)
+				c.logger.Info(nil, "mirror pool stopped (mirror disabled)")
 			}
 
 			if cfg.Consumer.Thumbnail.Enabled && cfg.Consumer.Thumbnail.BackfillInterval > 0 {
@@ -237,11 +247,8 @@ func queueHandler(c *Container, args []string) error {
 
 		case <-ctx.Done():
 			c.logger.Info(nil, "queue daemon stopped")
-			if backupPool != nil && backupPoolStarted {
-				shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				backupPool.Stop(shutdownCtx)
-				cancel()
-			}
+			stopPool(c, "backup", &backupPoolStarted, &backupPool)
+			stopPool(c, "mirror", &mirrorPoolStarted, &mirrorPool)
 			return nil
 		}
 	}
@@ -441,46 +448,101 @@ func pollingTick(ctx context.Context, c *Container, client *database.Client, bat
 	c.logger.Info(nil, "polling: batch %s created with %d files", batchID, enqueued)
 }
 
+func startPool(c *Container, ctx context.Context, name string, started *bool, pp **pool.Pool) error {
+	if *started {
+		return nil
+	}
+	p, err := c.GetPool(name)
+	if err != nil {
+		return err
+	}
+	p.Start(ctx)
+	*pp = p
+	*started = true
+	c.logger.Info(nil, "%s pool started (delayed)", name)
+	return nil
+}
+
+func stopPool(c *Container, name string, started *bool, pp **pool.Pool) {
+	if !*started || *pp == nil {
+		return
+	}
+	stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	(*pp).Stop(stopCtx)
+	*pp = nil
+	*started = false
+}
+
+func maybeScheduleTask(ctx context.Context, c *Container, client *database.Client, taskType string, active func(context.Context) (int64, error), due func(context.Context) (bool, error), payload map[string]any) error {
+	activeCount, err := active(ctx)
+	if err != nil {
+		return fmt.Errorf("check active %s tasks: %w", taskType, err)
+	}
+	if activeCount > 0 {
+		return nil
+	}
+
+	ok, err := due(ctx)
+	if err != nil {
+		return fmt.Errorf("check %s due: %w", taskType, err)
+	}
+	if !ok {
+		return nil
+	}
+
+	dispatcher, err := c.GetDispatcher()
+	if err != nil {
+		return fmt.Errorf("get dispatcher: %w", err)
+	}
+
+	payloadJSON, _ := json.Marshal(payload)
+	taskID := uuid.New().String()
+	if _, err := dispatcher.Enqueue(ctx, taskType, "", payloadJSON, taskID); err != nil {
+		return fmt.Errorf("enqueue %s task: %w", taskType, err)
+	}
+
+	c.logger.Info(nil, "%s task %s scheduled", taskType, taskID)
+	return nil
+}
+
 func maybeScheduleBackup(ctx context.Context, c *Container, client *database.Client, cfg *config.Config) error {
 	if !cfg.Backup.Enabled {
 		return nil
 	}
 
-	active, err := client.Queries.CountActiveBackupTasks(ctx)
-	if err != nil {
-		return fmt.Errorf("check active backup tasks: %w", err)
+	for _, schedule := range cfg.Backup.Schedules {
+		s := schedule
+		payload := map[string]any{
+			"mode": s.Mode,
+			"path": s.Path,
+			"keep": s.Keep,
+		}
+		if err := maybeScheduleTask(ctx, c, client, "backup",
+			func(ctx context.Context) (int64, error) { return client.Queries.CountActiveBackupTasks(ctx) },
+			func(ctx context.Context) (bool, error) { return backup.IsBackupDue(ctx, client.Queries, s) },
+			payload,
+		); err != nil {
+			return err
+		}
 	}
-	if active > 0 {
+	return nil
+}
+
+func maybeScheduleMirror(ctx context.Context, c *Container, client *database.Client, cfg *config.Config) error {
+	if !cfg.Mirror.Enabled {
 		return nil
 	}
 
-	for _, schedule := range cfg.Backup.Schedules {
-		due, err := backup.IsBackupDue(ctx, client.Queries, schedule)
-		if err != nil {
-			return fmt.Errorf("check backup due (%s): %w", schedule.Mode, err)
-		}
-		if !due {
-			continue
-		}
-
-		dispatcher, err := c.GetDispatcher()
-		if err != nil {
-			return fmt.Errorf("get dispatcher: %w", err)
-		}
-
-		payload, _ := json.Marshal(map[string]any{
-			"mode": schedule.Mode,
-			"path": schedule.Path,
-			"keep": schedule.Keep,
-		})
-		taskID := uuid.New().String()
-		if _, err := dispatcher.Enqueue(ctx, "backup", "", payload, taskID); err != nil {
-			return fmt.Errorf("enqueue backup task (%s): %w", schedule.Mode, err)
-		}
-
-		c.logger.Info(nil, "backup task %s scheduled (mode=%s)", taskID, schedule.Mode)
+	payload := map[string]any{
+		"path":     cfg.Mirror.Path,
+		"interval": cfg.Mirror.Interval,
 	}
-	return nil
+	return maybeScheduleTask(ctx, c, client, "mirror",
+		func(ctx context.Context) (int64, error) { return client.Queries.CountActiveMirrorTasks(ctx) },
+		func(ctx context.Context) (bool, error) { return backup.IsMirrorDue(ctx, client.Queries, cfg.Mirror) },
+		payload,
+	)
 }
 
 func maybeScheduleThumbnailBackfill(ctx context.Context, c *Container, client *database.Client, cfg *config.Config, lastRun *time.Time) error {

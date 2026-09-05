@@ -54,7 +54,8 @@ internal/
 │   ├── enrich.go          # Enrich single document command
 │   ├── queue.go           # Queue daemon for background batch consumption (Postgres LISTEN/NOTIFY)
 │   ├── config.go          # `kushim config` command (dump/get/set/unset/validate/path)
-│   └── backup.go          # Backup and restore commands
+│   ├── backup.go          # Backup and restore commands
+│   └── mirror.go          # `kushim mirror` command (rsync --delete, waits for the backup lock)
 ├── configtask/            # Config task handler
 │   └── configtask.go      # ConfigTaskHandler — downloads tessdata/Hugot model in background; migrate-db op copies the database when connection settings change, migrate-storage op relocates files when storage dirs change ("config" task type)
 ├── enrichment/            # Enrichment engine (LLM pipeline)
@@ -89,13 +90,16 @@ internal/
 │   └── handlers/
 │       ├── consume.go     # ConsumeTaskHandler (uses FileFromPath)
 │       ├── enrich.go      # EnrichTaskHandler (fetches document, calls Enricher.Enrich)
-│       └── backup.go      # BackupTaskHandler (SQL dump, tar.gz, retention)
+│       ├── backup.go      # BackupTaskHandler (SQL dump, tar.gz, retention)
+│       └── mirror.go      # MirrorTaskHandler (backup lock gate, RunLocked → rsync --delete)
 ├── search/                # Full-text search engine
 │   └── search.go          # Engine, Result (with Language, DocumentTypeID, checksums), Filter (structured search), sanitizeQuery, SearchStructured (returns results + total count)
 ├── backup/                # Backup & restore
 │   ├── backup.go          # Create backup (SQL dump, tar.gz, manifest, retention)
 │   ├── restore.go         # Validate, extract, and replace files from backup archive
-│   └── scheduler.go       # Backup scheduling (NextBackupTime, IsBackupDue, DB-driven schedule derivation)
+│   └── scheduler.go       # Backup scheduling (NextBackupTime, IsBackupDue, IsMirrorDue, dueFromHistory)
+├── mirror/                # rsync document mirror
+│   └── mirror.go          # Run (rsync -a --delete, stats parsing), WriteState (.edub-mirror.json), RunLocked (drain → heartbeat → run), StartHeartbeat (TouchBackupLock)
 ├── config/                # Configuration parsing
 │   ├── config.go          # Configuration structs and loading (ConsolidationSimilarity, default thresholds, engine identifier constants, AvailableEngines map)
 │   ├── setup.go           # Bootstrap config, SaveMap, tessdata/Hugot model download helpers

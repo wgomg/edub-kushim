@@ -40,6 +40,7 @@ type Container struct {
 		thumbnail *pool.Pool
 		config    *pool.Pool
 		backup    *pool.Pool
+		mirror    *pool.Pool
 	}
 }
 
@@ -100,6 +101,7 @@ func (c *Container) InvalidateDB() {
 	c.pools.thumbnail = nil
 	c.pools.config = nil
 	c.pools.backup = nil
+	c.pools.mirror = nil
 }
 
 func (c *Container) reconnectClient() (*database.Client, error) {
@@ -164,6 +166,7 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 	registry.Register("thumbnail", taskhandlers.NewThumbnailTaskHandler(tools.NewRunner(c.logger, c.cfg.Load(), []string{"thumbnail"}), client.Queries, c.logger, func() *config.Config { return c.cfg.Load() }))
 	registry.Register("config", configtask.NewConfigTaskHandler(c.logger))
 	registry.Register("backup", taskhandlers.NewBackupTaskHandler(c.db, client.Queries, func() *config.Config { return c.cfg.Load() }, c.logger))
+	registry.Register("mirror", taskhandlers.NewMirrorTaskHandler(client.Queries, func() *config.Config { return c.cfg.Load() }, c.logger))
 
 	c.dispatcher = task.NewDispatcher(c.logger, store, registry)
 	c.runner = task.NewRunner(store, registry, c.logger)
@@ -199,6 +202,8 @@ func (c *Container) GetPool(taskType string) (*pool.Pool, error) {
 		pp = &c.pools.config
 	case "backup":
 		pp = &c.pools.backup
+	case "mirror":
+		pp = &c.pools.mirror
 	default:
 		return nil, fmt.Errorf("unknown pool task type: %q", taskType)
 	}
@@ -224,6 +229,9 @@ func (c *Container) GetPool(taskType string) (*pool.Pool, error) {
 			workers = 1
 			interval = 5 * time.Second
 		case "backup":
+			workers = 1
+			interval = 60 * time.Second
+		case "mirror":
 			workers = 1
 			interval = 60 * time.Second
 		}
@@ -269,6 +277,11 @@ func (c *Container) Close() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		c.pools.backup.Stop(ctx)
+	}
+	if c.pools.mirror != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		c.pools.mirror.Stop(ctx)
 	}
 	if c.db != nil {
 		c.db.Close()

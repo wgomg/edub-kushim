@@ -76,6 +76,13 @@ var engineInstallHints = map[string]map[string]string{
 		"Alpine":        "sudo apk add imagemagick",
 		"macOS":         "brew install imagemagick",
 	},
+	"rsync": {
+		"Debian/Ubuntu": "sudo apt install rsync",
+		"Arch":          "sudo pacman -S rsync",
+		"Fedora":        "sudo dnf install rsync",
+		"Alpine":        "sudo apk add rsync",
+		"macOS":         "brew install rsync",
+	},
 }
 
 var companionInstallHints = map[string]map[string]string{
@@ -242,6 +249,10 @@ func MissingExternalTools(cfg *Config) []ExternalTool {
 	}
 	if cfg.Consumer.Thumbnail.Engine == Thumbnail.Imagemagick {
 		checkEngine(Thumbnail.Imagemagick, "thumbnail", Thumbnail.Imagemagick)
+	}
+
+	if cfg.Mirror.Enabled {
+		checkEngine("rsync", "mirror", "rsync")
 	}
 
 	if cfg.Consumer.Converter.Enabled {

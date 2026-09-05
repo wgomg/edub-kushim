@@ -75,6 +75,11 @@ var commandSets = map[string]map[string]Command{
 			Description: "Create a backup of database, config, and storage files",
 			Handler:     backupHandler,
 		},
+		"mirror": {
+			Name:        "mirror",
+			Description: "Mirror the storage tree to a destination with rsync --delete",
+			Handler:     mirrorHandler,
+		},
 		"config": {
 			Name:        "config",
 			Description: "View and edit config values",

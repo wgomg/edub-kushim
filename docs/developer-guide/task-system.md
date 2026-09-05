@@ -53,8 +53,8 @@ The cast of characters:
 | queue daemon | `internal/commands/queue.go` | orchestrates batches |
 | consume command | `internal/commands/consume.go` | runs one batch |
 
-The five task types (`internal/commands/container.go:127-134`): `consume`,
-`enrich`, `thumbnail`, `config`, `backup`.
+The six task types (`internal/commands/container.go:127-134`): `consume`,
+`enrich`, `thumbnail`, `config`, `backup`, `mirror`.
 
 ---
 
@@ -512,6 +512,7 @@ Key formats in use:
 | consume | `consume:<md5>` (scan/restore paths) or the file path (direct CLI) | `scan.go:90-97`, `service/orphaned.go:183` |
 | enrich | `enrich:doc:<document_id>` | `handlers/enrich.go:52-61`, `service/enrich.go:44` |
 | backup | `backup:<UTC date>` | `handlers/backup.go:36-38` |
+| mirror | `mirror:<UTC date>` | `handlers/mirror.go` |
 | config | `config:tessdata:<lang>` / `config:hugot` / `config:migrate-db` / `config:migrate-storage` | `configtask/configtask.go` |
 
 The waiting (child) enrich tasks store **no dedup key** — dedup only kicks in
@@ -649,6 +650,22 @@ WHERE id = 1 AND (NOT running OR started_at <= NOW() - INTERVAL '30 minutes');
   `IsBackupDue` and the lock is free; the `backup:<date>` dedup key prevents
   same-day duplicates.
 
+The **mirror** task (`internal/task/handlers/mirror.go`) participates in the
+same gate: it acquires the backup lock, drains in-flight work, and runs
+`rsync -a --delete` over the storage tree (see `internal/mirror/`). Because a
+large rsync can exceed the 30-minute staleness window, the handler runs a
+heartbeat that refreshes `backup_lock.started_at` every 5 minutes
+(`TouchBackupLock`) for the rsync itself — the gate never goes stale
+mid-mirror. The heartbeat starts only *after* `WaitForTaskDrain` returns, so
+the 30-minute staleness recovery still applies during a long drain (a
+continuously busy pipeline cannot keep the lock fresh forever and block
+backups/migrations). Scheduling mirrors `IsBackupDue` as `IsMirrorDue` (same
+`NextBackupTime` anchoring, keyed on the last completed `mirror:<date>` task);
+the manual `kushim mirror` command bypasses task dedup but still waits for the
+lock and drain, and writes the `.edub-mirror.json` diagnostics file into the
+destination. Both the handler and the CLI share `mirror.RunLocked`, which owns
+the drain → heartbeat → rsync → state-file sequence.
+
 ---
 
 ## 13. Configuration knobs
@@ -662,6 +679,7 @@ WHERE id = 1 AND (NOT running OR started_at <= NOW() - INTERVAL '30 minutes');
 | `consumer.reclaim.max_retries` | `3` | the attempts budget |
 | `consumer.reclaim.stale_task_after` | `600` (s) | processing-staleness cutoff (≥ 60) |
 | `backup.enabled` / `backup.schedules` | — | backup scheduling (per-mode: full/database/documents, each with interval/time/path/keep) |
+| `mirror.enabled` / `mirror.path` / `mirror.interval` / `mirror.time` | — | mirror scheduling (rsync --delete over storage; requires rsync on PATH) |
 | `polling.interval` (min) | — | inbox scan cadence (floor 1 min) |
 | `polling.active_windows` | — | only scan within these windows |
 

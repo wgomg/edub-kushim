@@ -23,6 +23,12 @@ export const toolHints = {
 		Arch: 'sudo pacman -S curl',
 		Fedora: 'sudo dnf install curl',
 		macOS: 'brew install curl'
+	},
+	rsync: {
+		'Debian/Ubuntu': 'sudo apt install rsync',
+		Arch: 'sudo pacman -S rsync',
+		Fedora: 'sudo dnf install rsync',
+		macOS: 'brew install rsync'
 	}
 };
 

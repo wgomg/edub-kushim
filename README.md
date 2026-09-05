@@ -212,6 +212,7 @@ New to the codebase? The guides in [`docs/developer-guide/`](docs/developer-guid
 - **Post-LLM consolidation** — normalized tags re-matched against canonical embeddings to fix casing and synonym mismatches
 - **User accounts & auth** — bcrypt passwords, JWT sessions, API keys, role-based access (admin/editor/viewer)
 - **Backup & restore** — App-level PostgreSQL SQL dump (schema + data in a transaction), timestamped `tar.gz` archives with config + storage; per-mode backups (`full`/`database`/`documents`) with independent schedules, retention, and mode-aware restore
+- **Document mirror** — faithful rsync copy of the storage tree (`rsync -a --delete`) to a local path or remote target (`[user@]host:path`), scheduled via `mirror.{enabled,path,interval,time}` or run manually with `kushim mirror`; shares the backup lock with a 5-minute heartbeat so long mirrors never trip the staleness window, and writes a `.edub-mirror.json` diagnostics file into the destination
 - **Orphaned file management** — detect, quarantine, restore, and re-ingest orphaned files
 - **Trash / soft delete** — deleting a document moves it to a trash directory with a retention period; restore or permanently delete from the trash API or the web UI Trash page, with an hourly auto-purge
 - **Dashboard** — active tasks strip (pending/processing/waiting, processing-first), batch overview, storage analytics, document type/language/tag distributions

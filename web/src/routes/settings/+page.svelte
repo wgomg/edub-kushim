@@ -197,12 +197,25 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 		};
 	}
 
+	function ensureMirrorBlock() {
+		if (!cfg) return;
+		if (!cfg.mirror || !(cfg.mirror.interval > 0)) {
+			cfg.mirror = {
+				enabled: cfg.mirror?.enabled ?? false,
+				path: cfg.mirror?.path ?? '',
+				interval: 1,
+				time: cfg.mirror?.time || '02:00'
+			};
+		}
+	}
+
 	onMount(async () => {
 		const loaded = await api.config.get();
 		if (loaded) {
 			cfg = loaded;
 			ensureFallbacksArray();
 			ensureThumbnailBlock();
+			ensureMirrorBlock();
 			syncMimeCheckboxes();
 			checkStatus();
 			snapshotState();
@@ -361,6 +374,10 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			'backup.enabled': cfg.backup.enabled,
 			'backup.path': cfg.backup.path,
 			'backup.schedules': cfg.backup.schedules ?? [],
+			'mirror.enabled': cfg.mirror.enabled,
+			'mirror.path': cfg.mirror.path,
+			'mirror.interval': Number(cfg.mirror.interval),
+			'mirror.time': cfg.mirror.time,
 			'app.log_level': cfg.app.log_level,
 			'app.logging.max_size': Number(cfg.app.logging.max_size),
 			'app.logging.max_backups': Number(cfg.app.logging.max_backups),
@@ -388,6 +405,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 				cfg = loaded;
 				ensureFallbacksArray();
 				ensureThumbnailBlock();
+				ensureMirrorBlock();
 				syncMimeCheckboxes();
 				snapshotState();
 			}
@@ -2345,6 +2363,89 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						>
 							+ Add schedule
 						</button>
+					</div>
+				</section>
+
+				<section class="mb-3 rounded-xl border border-clay-800 bg-clay-900 p-5">
+					<h2 class="mb-4 text-lg font-semibold text-parchment-200">Mirror</h2>
+					{#if missingTools?.find((t) => t.engine === 'rsync')}
+						<div
+							class="mb-4 rounded-lg border border-terracotta-600 bg-terracotta-500/10 p-3 text-sm text-terracotta-500"
+						>
+							<p class="font-medium">“rsync” not installed (required for the mirror)</p>
+							<p class="mt-1 text-parchment-400">Mirror runs will fail until rsync is installed.</p>
+							{#each Object.entries(hintsForEngine('rsync')) as [system, cmd], i (i)}
+								<pre class="mt-1 overflow-x-auto text-xs text-parchment-300">{system}: {cmd}</pre>
+							{/each}
+						</div>
+					{/if}
+					<div class="grid gap-4 sm:grid-cols-2">
+						<div>
+							<label for="mirror-enabled" class="mb-1 block text-sm font-medium text-parchment-200">
+								Enabled
+							</label>
+							<input
+								id="mirror-enabled"
+								name="mirror-enabled"
+								autocomplete="off"
+								type="checkbox"
+								bind:checked={cfg.mirror.enabled}
+								class="mt-2 h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus-visible:ring-gold-500"
+							/>
+						</div>
+						<div>
+							<label for="mirror-path" class="mb-1 block text-sm font-medium text-parchment-200">
+								Destination
+							</label>
+							<input
+								id="mirror-path"
+								name="mirror-path"
+								autocomplete="off"
+								spellcheck="false"
+								type="text"
+								bind:value={cfg.mirror.path}
+								placeholder="/mnt/nas/documents or user@host:/path"
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+							<p class="mt-1 text-xs break-words text-parchment-500">
+								Local path or rsync remote target ([user@]host:path; ssh key setup is your
+								responsibility). Files deleted from storage are removed here too (<code
+									class="font-mono"
+									translate="no">--delete</code
+								>).
+							</p>
+						</div>
+						<div>
+							<label for="mirror-interval" class="mb-1 block text-sm font-medium text-parchment-200"
+								>Interval (days)</label
+							>
+							<input
+								id="mirror-interval"
+								name="mirror-interval"
+								autocomplete="off"
+								type="number"
+								inputmode="numeric"
+								min="0.1"
+								step="0.1"
+								bind:value={cfg.mirror.interval}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+						<div>
+							<label for="mirror-time" class="mb-1 block text-sm font-medium text-parchment-200"
+								>Preferred time (HH:MM)</label
+							>
+							<input
+								id="mirror-time"
+								name="mirror-time"
+								autocomplete="off"
+								type="text"
+								bind:value={cfg.mirror.time}
+								pattern="([01][0-9]|2[0-3]):[0-5][0-9]"
+								placeholder="HH:MM…"
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
 					</div>
 				</section>
 

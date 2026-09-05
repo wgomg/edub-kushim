@@ -7,3 +7,6 @@ WHERE id = 1 AND (NOT running OR started_at <= NOW() - INTERVAL '30 minutes');
 
 -- name: ReleaseBackupLock :execrows
 UPDATE backup_lock SET running = false, started_at = NULL WHERE id = 1 AND running = true;
+
+-- name: TouchBackupLock :execrows
+UPDATE backup_lock SET started_at = NOW() WHERE id = 1 AND running = true;

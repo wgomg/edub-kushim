@@ -68,6 +68,7 @@ type ConfigResponse struct {
 	Consumer           ConsumerConfigResponse          `json:"consumer"`
 	Enricher           EnricherConfigResponse          `json:"enricher"`
 	Backup             BackupConfigResponse            `json:"backup"`
+	Mirror             MirrorConfigResponse            `json:"mirror"`
 	AvailableEngines   map[string][]config.EngineEntry `json:"available_engines"`
 	AvailableFileTypes []AvailableFileType             `json:"available_file_types"`
 }
@@ -228,6 +229,13 @@ type BackupConfigResponse struct {
 	Schedules []BackupScheduleResponse `json:"schedules"`
 }
 
+type MirrorConfigResponse struct {
+	Enabled  bool    `json:"enabled"`
+	Path     string  `json:"path"`
+	Interval float64 `json:"interval"`
+	Time     string  `json:"time"`
+}
+
 type LlmModelsResponse struct {
 	Adapters  map[string][]string        `json:"adapters"`
 	Providers map[string][]LlmModelEntry `json:"providers"`
@@ -362,6 +370,10 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 			Path:     s.Path,
 		}
 	}
+	resp.Mirror.Enabled = cfg.Mirror.Enabled
+	resp.Mirror.Path = cfg.Mirror.Path
+	resp.Mirror.Interval = cfg.Mirror.Interval
+	resp.Mirror.Time = cfg.Mirror.Time
 	resp.AvailableEngines = config.AvailableEngines
 	resp.AvailableFileTypes = buildAvailableFileTypes()
 	return resp

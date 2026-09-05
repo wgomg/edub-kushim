@@ -630,6 +630,48 @@ Archive names are prefixed with the mode: `edub-backup-full-<timestamp>.tar.gz`,
 Manual backups never apply retention — only scheduled backups prune old
 archives, using the schedule's `keep` for that mode.
 
+### `kushim mirror`
+
+Mirror the storage tree to a destination with `rsync --delete`, producing a
+faithful, browsable second copy of the documents. Unlike backups (tar
+archives), the mirror is a live tree: files deleted from `storage/` are
+deleted from the destination on the next run. It is **not** a restore source —
+`kushim restore` only reads backup archives.
+
+```
+kushim mirror
+kushim mirror --path /mnt/nas/documents
+kushim mirror --path user@nas:/srv/documents
+
+```
+
+| Flag     | Default                    | Description                                                                  |
+| -------- | -------------------------- | ---------------------------------------------------------------------------- |
+| `--path` | Config `mirror.path`       | Destination: local path or rsync remote target (`[user@]host:path`)          |
+
+The command waits for the backup lock (mirror, backup, and migrations never
+run concurrently) and for in-flight consume/enrich/thumbnail tasks to drain,
+then runs `rsync -a --delete --info=stats2 --timeout=600 <storage>/ <dest>` and
+writes a small `.edub-mirror.json` diagnostics file (timestamp, file count,
+bytes, app version) into the destination. Because the held lock blocks new
+task claims, the manual mirror is safe even with polling enabled — no
+polling-window coordination needed. The 10-minute rsync idle timeout aborts
+stalled transfers (unreachable remotes, hung ssh) so the backup lock is never
+held indefinitely; Ctrl-C also kills the spawned `ssh` for remote targets.
+
+Prerequisites:
+
+- `rsync` must be installed (`sudo apt install rsync`, `brew install rsync`, …)
+- For remote targets, passwordless ssh access to the host must be configured
+  (ssh key setup is the user's responsibility)
+
+The destination is validated at config load and before each run: it must not
+resolve (through symlinks) inside `storage_dir` or the backup directory, must
+not contain or equal the storage dir, and must not start with `-`.
+
+Warning: the mirror is faithful — `--delete` propagates deletions. Keep tar
+backups (`kushim backup`) as the mitigation for accidental mass deletion.
+
 ### `kushim restore`
 
 Restore database and storage from a backup archive. The archived configuration is preserved as `config.yaml.restored`, not applied.
@@ -2293,6 +2335,12 @@ backup:
   #     time: "02:30"
   #     keep: 10
   #     path: /mnt/nas/documents        # optional per-schedule override
+
+mirror:
+  # enabled: true
+  # path: /mnt/nas/documents            # local path or [user@]host:path (ssh key setup is yours)
+  # interval: 1                         # days between mirrors
+  # time: "02:00"                       # preferred time of day (HH:MM)
 ```
 
 > **Matcher memory**: The tag matcher is the largest single memory consumer in
@@ -2314,6 +2362,7 @@ backup:
 | `storage`                      | Inbox and processed file directories                                   |
 | `storage.trash`                | Trash retention: `retention_days` (default 30) before soft-deleted documents are permanently purged |
 | `backup`                       | Scheduled backups: `enabled`, fallback `path`, and a `schedules` list — one entry per mode (`full`/`database`/`documents`) with its own `interval`, `time`, `keep`, and optional `path`. Deprecated flat `interval`/`time`/`keep` fields are auto-converted to a single `full` schedule. `backup.enabled: true` without any schedule (and without flat fields) is a config error — add at least one entry to `schedules` |
+| `mirror`                       | Faithful rsync copy of the storage tree: `enabled`, `path` (local path or `[user@]host:path` remote target), `interval` (days), `time` (HH:MM). Runs with `rsync -a --delete` — deletions propagate to the destination. Requires `rsync` on PATH; remote targets need passwordless ssh. `mirror.enabled: true` without a `path` is a config error |
 | `consumer`                     | Pipeline: which tools to use, which files to accept                    |
 | `consumer.max_files_per_batch` | Max files per consume batch (default 10, 0 = unlimited)                |
 | `consumer.polling`             | Auto-consume scheduler settings (enabled, interval)                    |

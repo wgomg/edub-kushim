@@ -250,6 +250,7 @@ test-short:
 		./internal/tools/adapters/contentanalyzer/ \
 		./internal/errs/ \
 		./internal/pool/ \
+		./internal/mirror/ \
 
 # Default test target (same as test-short for now).
 test: test-short

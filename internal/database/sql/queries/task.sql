@@ -307,3 +307,19 @@ WHERE task_type = 'backup' AND status = 'completed'
   AND dedup_key LIKE 'backup:' || $1 || ':%'
 ORDER BY completed_at DESC
 LIMIT 1;
+
+-- name: CountRecentMirrorTasks :one
+SELECT COUNT(*) FROM task
+WHERE task_type = 'mirror' AND created_at > NOW() - ($1 || ' minutes')::INTERVAL
+  AND dedup_key LIKE 'mirror:%';
+
+-- name: CountActiveMirrorTasks :one
+SELECT COUNT(*) FROM task
+WHERE task_type = 'mirror' AND status IN ('pending', 'processing');
+
+-- name: GetLastCompletedMirror :one
+SELECT completed_at FROM task
+WHERE task_type = 'mirror' AND status = 'completed'
+  AND dedup_key LIKE 'mirror:%'
+ORDER BY completed_at DESC
+LIMIT 1;

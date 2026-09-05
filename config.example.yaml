@@ -159,3 +159,11 @@ backup:
   #     time: "02:30"
   #     keep: 10
   #     path: /mnt/nas/documents        # optional per-schedule override
+
+mirror:
+  # Faithful rsync copy of the storage tree (--delete: files removed from
+  # storage are removed from the destination too). Requires rsync on PATH.
+  # enabled: true
+  # path: /mnt/nas/documents            # local path or [user@]host:path (ssh key setup is yours)
+  # interval: 1                         # days between mirrors
+  # time: "02:00"                       # preferred time of day (HH:MM)

@@ -2,7 +2,7 @@
 
 ## Structs
 
-- `Config` — `App AppConfig`, `Srv ServerConfig`, `Db DatabaseConfig`, `Storage StorageConfig`, `Consumer ConsumerConfig`, `Enricher EnricherConfig`, `Backup BackupConfig`
+- `Config` — `App AppConfig`, `Srv ServerConfig`, `Db DatabaseConfig`, `Storage StorageConfig`, `Consumer ConsumerConfig`, `Enricher EnricherConfig`, `Backup BackupConfig`, `Mirror MirrorConfig`
 - `AppConfig`: `Env Environment`, `LogLevel string`, `Logging LoggingConfig`, `ConfigDir string`
   - `LoggingConfig`: `MaxSize int`, `MaxBackups int`, `MaxAge int`, `Compress bool`
 - `ServerConfig`: `Host`, `Port`, `ReadTimeout`, `WriteTimeout`, `IdleTimeout`, `MaxUploadSize` (MB), `MaxConcurrentBatches` (default 4), `AuthEnabled` (when false, auth middleware passes all requests through; default `true` for existing installs, `false` for fresh bootstrap), `SessionSecret` (64-char hex JWT signing key; auto-generated during setup, fallback in-memory generation at server start), `MaxDownloadFiles`, `MaxDownloadSizeMB`, `MaxBatchDelete`
@@ -24,6 +24,9 @@
    - `TagMatcherConfig`: `Timeout` (0 = disabled), `ReduceTargetWords`, `ChunkSize` (default 4096 tokens to bound matcher memory; 0 = model's `max_position_embeddings` minus 12), `Hugot HugotConfig`, `TopN`, `MinSimilarity`, `ConsolidationSimilarity`
     - `HugotConfig`: `Model`, `Backend` (`"GO"` or `"ort"`), `ModelPath`, `BackendLibPath`; internal-only (no yaml/json tags): `CpuMemArena bool` (default `false`), `MemPattern bool` (default `false`)
 - `BackupConfig`: `Enabled bool`, `Path string` (fallback output dir), `Schedules []BackupSchedule` (mode/interval/time/path/keep). Deprecated flat `Interval`/`Time`/`Keep` fields are kept for auto-conversion into a single `full` schedule by `finalizeConfig`.
+- `MirrorConfig`: `Enabled bool`, `Path string` (local path or `[user@]host:path` remote target), `Interval float64` (days), `Time string` (HH:MM, default `02:00`). Validated by `finalizeConfig` (path required when enabled, interval > 0, HH:MM parse, `ValidateMirrorDestination` before `MkdirAll`).
+- `IsRemoteMirrorTarget(path) bool` — Detects rsync remote syntax: `rsync://host/module` or `[user@]host:path` (host part without `/` or whitespace). Remote targets skip `~` expansion/`MkdirAll`.
+- `ValidateMirrorDestination(dest, storageDir, backupPath) error` — Symlink-resolved containment guard (refuses dest inside/containing/equal to storage, inside backup, dash-prefixed). Used by `finalizeConfig` (load time) and `mirror.ValidateDestination` (execution time).
 - `ToolConfig`: `Command string`, `Timeout time.Duration`
 
 ## Constants
