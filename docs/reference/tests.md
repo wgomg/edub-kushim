@@ -251,8 +251,10 @@ pipeline (link paths, transactions, future code paths that touch
 
 Also runs `internal/configtask` (migrate-db/migrate-storage tests). The
 migrate-db tests exec `psql` inside the test DB container via
-`database.runtime=podman|docker` (picked by `containerRuntime(t)`), so no
-host `postgresql-client` is needed; the container name comes from
+`database.runtime=podman|docker` — `containerRuntime(t)` picks the first CLI
+on PATH that can see the running container (so podman on a runner whose
+container runs under docker falls through to docker) — so no host
+`postgresql-client` is needed; the container name comes from
 `TEST_DATABASE_CONTAINER` (default `edub-test-pg`, CI sets `postgres`):
 
 ```bash

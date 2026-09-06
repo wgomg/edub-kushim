@@ -19,22 +19,28 @@ import (
 	"github.com/wgomg/edub-kushim/internal/testutil"
 )
 
-// containerRuntime picks the test container CLI available on PATH so the
-// migrate-db tests work on both local dev (podman) and CI (docker). The
-// container name comes from TEST_DATABASE_CONTAINER; local dev uses
-// "edub-test-pg" (AGENTS.md), CI's postgres service is "postgres".
+// containerRuntime picks the test container CLI that can see the running
+// test container, so the migrate-db tests work on both local dev (podman)
+// and CI (docker). The container name comes from TEST_DATABASE_CONTAINER;
+// local dev uses "edub-test-pg" (AGENTS.md), CI's postgres service is
+// "postgres". A CLI on PATH that cannot see the container (e.g. podman on
+// a runner whose container runs under docker) falls through to the next.
 func containerRuntime(t *testing.T) (string, string) {
 	t.Helper()
+	container := os.Getenv("TEST_DATABASE_CONTAINER")
+	if container == "" {
+		container = "edub-test-pg"
+	}
 	for _, name := range []string{"podman", "docker"} {
-		if _, err := exec.LookPath(name); err == nil {
-			container := os.Getenv("TEST_DATABASE_CONTAINER")
-			if container == "" {
-				container = "edub-test-pg"
-			}
+		if _, err := exec.LookPath(name); err != nil {
+			continue
+		}
+		out, err := exec.Command(name, "inspect", "--format", "{{.State.Running}}", container).Output()
+		if err == nil && strings.TrimSpace(string(out)) == "true" {
 			return name, container
 		}
 	}
-	t.Skip("neither podman nor docker on PATH; cannot exec psql inside the test DB container")
+	t.Skip("neither podman nor docker on PATH can see the test DB container; cannot exec psql inside it")
 	return "", ""
 }
 

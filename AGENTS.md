@@ -104,8 +104,9 @@ make vuln-cgo     # CGo-enabled variant, full call graph (requires make build-de
   auto-dropped with `DROP ... WITH (FORCE)` — no manual cleanup. The PG user must be superuser
   (CI/containers are).
 - **No host psql needed**: configtask migrate-db tests exec psql inside the test DB container
-  (`database.runtime=podman|docker` in the test config, picked via `containerRuntime(t)`); the
-  container name comes from `TEST_DATABASE_CONTAINER` (default `edub-test-pg`, CI sets `postgres`).
+  (`database.runtime=podman|docker` in the test config; `containerRuntime(t)` picks the first CLI
+  on PATH that can see the running container); the container name comes from
+  `TEST_DATABASE_CONTAINER` (default `edub-test-pg`, CI sets `postgres`).
 - Covered: database queries, task lifecycle, search engine, API handlers, consumption pipeline
   (mock runner), configtask migrations, CLI commands (via `make test-cgo`). Not covered: real
   OCR/PDF adapters.
