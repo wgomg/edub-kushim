@@ -653,9 +653,14 @@ The command waits for the backup lock (mirror, backup, and migrations never
 run concurrently) and for in-flight consume/enrich/thumbnail tasks to drain,
 then runs `rsync -a --delete --info=stats2 --timeout=600 <storage>/ <dest>` and
 writes a small `.edub-mirror.json` diagnostics file (timestamp, file count,
-bytes, app version) into the destination. Because the held lock blocks new
-task claims, the manual mirror is safe even with polling enabled — no
-polling-window coordination needed. The 10-minute rsync idle timeout aborts
+bytes, app version) into the destination. On completion it prints the file
+count (thousands-separated) plus the per-run breakdown parsed from rsync's
+stats2 output, e.g. `Mirror completed: 139,524 files (3 transferred: 2
+created, 1 updated, 0 deleted), 80,080,709,948 bytes` — "files" is the total
+regular files in the tree, and the parenthetical shows what this run actually
+changed. Because the held lock blocks new task claims, the manual mirror is
+safe even with polling enabled — no polling-window coordination needed. The
+10-minute rsync idle timeout aborts
 stalled transfers (unreachable remotes, hung ssh) so the backup lock is never
 held indefinitely; Ctrl-C also kills the spawned `ssh` for remote targets.
 

@@ -30,8 +30,12 @@ type State struct {
 }
 
 type Result struct {
-	Files int64 `json:"files"`
-	Bytes int64 `json:"bytes"`
+	Files       int64 `json:"files"`
+	Bytes       int64 `json:"bytes"`
+	Transferred int64 `json:"transferred"`
+	Created     int64 `json:"created"`
+	Deleted     int64 `json:"deleted"`
+	Updated     int64 `json:"updated"`
 }
 
 func Available() bool {
@@ -79,12 +83,13 @@ func parseStats(output string) *Result {
 		line = strings.TrimSpace(line)
 		switch {
 		case strings.HasPrefix(line, "Number of files:"):
-			if i := strings.Index(line, "(reg:"); i >= 0 {
-				rest := line[i+len("(reg:"):]
-				if before, _, ok := strings.Cut(rest, ","); ok {
-					res.Files = parseCount(before)
-				}
-			}
+			res.Files = parseRegCount(line)
+		case strings.HasPrefix(line, "Number of regular files transferred:"):
+			res.Transferred = parseCount(strings.TrimPrefix(line, "Number of regular files transferred:"))
+		case strings.HasPrefix(line, "Number of created files:"):
+			res.Created = parseRegCount(line)
+		case strings.HasPrefix(line, "Number of deleted files:"):
+			res.Deleted = parseLeadingCount(strings.TrimPrefix(line, "Number of deleted files:"))
 		case strings.HasPrefix(line, "Total file size:"):
 			rest := strings.TrimSpace(strings.TrimPrefix(line, "Total file size:"))
 			if before, _, ok := strings.Cut(rest, " bytes"); ok {
@@ -92,7 +97,29 @@ func parseStats(output string) *Result {
 			}
 		}
 	}
+	res.Updated = max(res.Transferred-res.Created, 0)
 	return &res
+}
+
+func parseRegCount(line string) int64 {
+	_, after, ok := strings.Cut(line, "(reg:")
+	if !ok {
+		return 0
+	}
+	rest := strings.TrimSpace(after)
+	end := 0
+	for end < len(rest) && (rest[end] == ',' || rest[end] >= '0' && rest[end] <= '9') {
+		end++
+	}
+	return parseCount(rest[:end])
+}
+
+func parseLeadingCount(rest string) int64 {
+	rest = strings.TrimSpace(rest)
+	if i := strings.IndexAny(rest, " ("); i >= 0 {
+		rest = rest[:i]
+	}
+	return parseCount(rest)
 }
 
 func parseCount(s string) int64 {
@@ -101,6 +128,27 @@ func parseCount(s string) int64 {
 		return 0
 	}
 	return n
+}
+
+func formatCount(n int64) string {
+	s := strconv.FormatInt(n, 10)
+	start := 0
+	if s[0] == '-' {
+		start = 1
+	}
+	var out []byte
+	for i := 0; i < len(s); i++ {
+		if i > start && (len(s)-i)%3 == 0 {
+			out = append(out, ',')
+		}
+		out = append(out, s[i])
+	}
+	return string(out)
+}
+
+func (r *Result) Summary() string {
+	return fmt.Sprintf("%s files (%d transferred: %d created, %d updated, %d deleted), %s bytes",
+		formatCount(r.Files), r.Transferred, r.Created, r.Updated, r.Deleted, formatCount(r.Bytes))
 }
 
 func WriteState(dest string, state State) error {
@@ -173,7 +221,7 @@ func runLocked(ctx context.Context, queries *database.Queries, logger *utils.Log
 		logger.Error(nil, "write mirror state: %v", err)
 	}
 
-	logger.Info(nil, "mirror completed: %d files, %d bytes", result.Files, result.Bytes)
+	logger.Info(nil, "mirror completed: %s", result.Summary())
 	return result, state.Timestamp, nil
 }
 

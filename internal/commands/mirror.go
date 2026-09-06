@@ -63,7 +63,7 @@ func mirrorHandler(c *Container, args []string) error {
 		return fmt.Errorf("mirror failed: %w", err)
 	}
 
-	fmt.Printf("Mirror completed: %d files, %d bytes\n", result.Files, result.Bytes)
+	fmt.Printf("Mirror completed: %s\n", result.Summary())
 	fmt.Printf("State file: %s/.edub-mirror.json\n", dest)
 	return nil
 }

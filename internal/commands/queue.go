@@ -579,12 +579,9 @@ func maybeScheduleMirror(ctx context.Context, c *Container, client *database.Cli
 
 func maybeScheduleThumbnailBackfill(ctx context.Context, c *Container, client *database.Client, cfg *config.Config, lastRun *time.Time) error {
 	if !cfg.Consumer.Thumbnail.Enabled || cfg.Consumer.Thumbnail.BackfillInterval <= 0 {
-		c.logger.Debug(nil, "thumbnail backfill: skipped — disabled (enabled=%v, backfill_interval=%v, backfill_time=%q)",
-			cfg.Consumer.Thumbnail.Enabled, cfg.Consumer.Thumbnail.BackfillInterval, cfg.Consumer.Thumbnail.BackfillTime)
 		return nil
 	}
 
-	seededFromDB := false
 	if lastRun.IsZero() {
 		lastBatch, err := client.Queries.GetLastThumbnailBackfillBatchCreatedAt(ctx)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -593,24 +590,18 @@ func maybeScheduleThumbnailBackfill(ctx context.Context, c *Container, client *d
 		}
 		if err == nil {
 			*lastRun = lastBatch.Time
-			seededFromDB = true
 		}
 	}
 	// Anchor a fresh schedule to the preferred time so the first run honors off-hours.
 	if lastRun.IsZero() {
 		*lastRun = previousTimeOfDay(time.Now(), cfg.Consumer.Thumbnail.BackfillTime)
-		c.logger.Debug(nil, "thumbnail backfill: seeded from preferred time anchor (backfill_interval=%v, backfill_time=%q, last_run=%s)",
-			cfg.Consumer.Thumbnail.BackfillInterval, cfg.Consumer.Thumbnail.BackfillTime, lastRun.Format(time.RFC3339))
-	} else if seededFromDB {
-		c.logger.Debug(nil, "thumbnail backfill: seeded from last batch (backfill_interval=%v, last_run=%s)",
-			cfg.Consumer.Thumbnail.BackfillInterval, lastRun.Format(time.RFC3339))
 	}
 
 	next := backup.NextBackupTime(*lastRun, cfg.Consumer.Thumbnail.BackfillInterval, cfg.Consumer.Thumbnail.BackfillTime)
 	now := time.Now()
 	due := !now.Before(next)
-	c.logger.Debug(nil, "thumbnail backfill: due check (last_run=%s, next=%s, now=%s, due=%v, backfill_interval=%v)",
-		lastRun.Format(time.RFC3339), next.Format(time.RFC3339), now.Format(time.RFC3339), due, cfg.Consumer.Thumbnail.BackfillInterval)
+	// c.logger.Debug(nil, "thumbnail backfill: due check (last_run=%s, next=%s, now=%s, due=%v, backfill_interval=%v)",
+	// 	lastRun.Format(time.RFC3339), next.Format(time.RFC3339), now.Format(time.RFC3339), due, cfg.Consumer.Thumbnail.BackfillInterval)
 	if !due {
 		return nil
 	}
