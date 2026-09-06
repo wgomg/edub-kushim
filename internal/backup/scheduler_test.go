@@ -69,6 +69,19 @@ func TestNextBackupTime_EmptyPreferredTimeDefaultsTo0200(t *testing.T) {
 	}
 }
 
+func TestNextBackupTime_DailyStrictlyAfter(t *testing.T) {
+	loc := time.FixedZone("EDT", -4*60*60)
+	after := time.Date(2026, 9, 5, 22, 49, 47, 0, loc)
+	result := NextBackupTime(after, 1, "02:30")
+	expected := time.Date(2026, 9, 6, 2, 30, 0, 0, loc)
+	if !result.Equal(expected) {
+		t.Errorf("NextBackupTime = %v, want %v", result, expected)
+	}
+	if !result.After(after) {
+		t.Errorf("NextBackupTime = %v, must be strictly after %v", result, after)
+	}
+}
+
 func TestDueFromHistory_RecentBlocks(t *testing.T) {
 	if due := dueFromHistory(1, sql.NullTime{}, 1, "02:00"); due {
 		t.Error("dueFromHistory with recent>0 must return false")

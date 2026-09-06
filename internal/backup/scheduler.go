@@ -28,8 +28,13 @@ func NextBackupTime(after time.Time, intervalDays float64, preferredTime string)
 	if intervalDays >= 1.0 {
 		refDay := time.Date(after.Year(), after.Month(), after.Day(), 0, 0, 0, 0, loc)
 		targetDay := refDay.AddDate(0, 0, int(intervalDays))
-		return time.Date(targetDay.Year(), targetDay.Month(), targetDay.Day(),
+		next := time.Date(targetDay.Year(), targetDay.Month(), targetDay.Day(),
 			prefTime.Hour(), prefTime.Minute(), 0, 0, loc)
+		// contract: never return a time at or before `after` (observed same-day next)
+		for !next.After(after) {
+			next = next.AddDate(0, 0, 1)
+		}
+		return next
 	}
 
 	intervalDur := time.Duration(intervalDays * 24 * float64(time.Hour))
