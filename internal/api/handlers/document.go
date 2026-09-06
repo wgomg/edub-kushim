@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"html"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"strconv"
@@ -259,6 +260,11 @@ func (h *DocumentHandler) SearchDocuments(w http.ResponseWriter, r *http.Request
 	limit := pb.GetInt64("limit", 50, 1, 100)
 	offset := pb.GetInt64("offset", 0, 0, 0)
 
+	if offset < 0 || offset > math.MaxInt32 {
+		http.Error(w, "Invalid offset", http.StatusBadRequest)
+		return
+	}
+
 	results, err := h.engine.Search(ctx, q, int32(limit), int32(offset))
 	if err != nil {
 		h.logger.Error(&reqID, "Search failed: %v", err)
@@ -315,6 +321,10 @@ func (h *DocumentHandler) SearchDocumentsStructured(w http.ResponseWriter, r *ht
 	}
 	if filter.Limit > 100 {
 		filter.Limit = 100
+	}
+	if filter.Offset < 0 {
+		http.Error(w, "Invalid offset", http.StatusBadRequest)
+		return
 	}
 
 	results, total, err := h.engine.SearchStructured(ctx, filter)
@@ -659,11 +669,17 @@ func (h *DocumentHandler) UpdateDocument(w http.ResponseWriter, r *http.Request)
 		textContent = current.TextContent
 	}
 
+	var textHash sql.NullString
+	if textContent.Valid {
+		textHash = sql.NullString{String: utils.SHA256Hex(textContent.String), Valid: true}
+	}
+
 	err = h.client.UpdateDocumentEditable(ctx, database.UpdateDocumentEditableParams{
 		Title:          req.Title,
 		DocumentTypeID: req.DocumentTypeID,
 		Language:       req.Language,
 		TextContent:    textContent,
+		TextHash:       textHash,
 		DocumentID:     documentID,
 	})
 	if err != nil {

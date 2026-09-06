@@ -82,6 +82,20 @@ func (e *Engine) Search(ctx context.Context, query string, limit, offset int32) 
 		return nil, nil
 	}
 
+	if offset > 0 {
+		total, err := e.queries.CountDocumentsStructured(ctx, database.SearchFilter{
+			Query:  query,
+			Limit:  limit,
+			Offset: offset,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("tsvector search count: %w", err)
+		}
+		if int64(offset) >= total {
+			return []Result{}, nil
+		}
+	}
+
 	rows, err := e.queries.SearchDocumentsStructured(ctx, database.SearchFilter{
 		Query:  query,
 		Limit:  limit,
@@ -150,6 +164,10 @@ func (e *Engine) SearchStructured(ctx context.Context, filter Filter) ([]Result,
 	total, err := e.queries.CountDocumentsStructured(ctx, dbFilter)
 	if err != nil {
 		return nil, 0, fmt.Errorf("structured search count: %w", err)
+	}
+
+	if int64(dbFilter.Offset) >= total {
+		return []Result{}, total, nil
 	}
 
 	rows, err := e.queries.SearchDocumentsStructured(ctx, dbFilter)

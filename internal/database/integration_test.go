@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 func TestCreateAndGetDocument(t *testing.T) {
@@ -1456,5 +1458,354 @@ func TestBackfillProcessedSizes_SentinelContract(t *testing.T) {
 	}
 	if agg.ProcessedBytes != 12345 {
 		t.Fatalf("DocumentAggregates.ProcessedBytes = %d, want 12345 (-1 excluded)", agg.ProcessedBytes)
+	}
+}
+
+// insertContentDoc creates a document with explicit TextContent and an
+// optional pre-set TextHash. Used by the search/text_hash tests below
+// where the existing insertDoc helper (fixed docID, hardcoded "content"
+// text) is too rigid.
+func insertContentDoc(t *testing.T, q *Queries, docID, content string, textHash sql.NullString) int64 {
+	t.Helper()
+	id, err := q.CreateDocument(context.Background(), CreateDocumentParams{
+		DocumentID:     docID,
+		Title:          docID + ".pdf",
+		Md5Checksum:    "md5-" + docID,
+		Sha512Checksum: "sha512-" + docID,
+		OriginalType:   "application/pdf",
+		FileSize:       int64(len(content)),
+		OriginalPath:   "/tmp/" + docID,
+		StoragePath:    "/tmp/storage/" + docID,
+		TextContent:    sql.NullString{String: content, Valid: true},
+		TextHash:       textHash,
+		PageCount:      1,
+		WordCount:      1,
+		CharCount:      int32(len(content)),
+		Language:       "eng",
+	})
+	if err != nil {
+		t.Fatalf("create %s: %v", docID, err)
+	}
+	return id
+}
+
+// TestStructuredSearchMultiTagAnd pins the conjunction contract: a document
+// must carry every requested tag to match. The baseline measured
+// 116+890=1006 under the old OR semantics; with AND the same input must
+// return exactly the intersection.
+func TestStructuredSearchMultiTagAnd(t *testing.T) {
+	q, _ := NewTestQueries(t)
+	resetDB(t, q)
+	ctx := context.Background()
+
+	taxID, err := q.CreateTag(ctx, "taxes")
+	if err != nil {
+		t.Fatalf("create tag taxes: %v", err)
+	}
+	govID, err := q.CreateTag(ctx, "government")
+	if err != nil {
+		t.Fatalf("create tag government: %v", err)
+	}
+	secID, err := q.CreateTag(ctx, "government secrecy")
+	if err != nil {
+		t.Fatalf("create tag government secrecy: %v", err)
+	}
+
+	// docA: government + government secrecy + taxes (matches all three)
+	// docB: government only (matches one of three)
+	// docC: government secrecy only (matches one of three)
+	// docD: government + taxes (matches two)
+	docA := insertContentDoc(t, q, "tag-and-a", "alpha", sql.NullString{})
+	docB := insertContentDoc(t, q, "tag-and-b", "beta", sql.NullString{})
+	docC := insertContentDoc(t, q, "tag-and-c", "gamma", sql.NullString{})
+	docD := insertContentDoc(t, q, "tag-and-d", "delta", sql.NullString{})
+
+	mustAdd := func(docID int64, tagID int64) {
+		t.Helper()
+		if err := q.AddDocumentTag(ctx, AddDocumentTagParams{DocumentID: docID, TagID: tagID}); err != nil {
+			t.Fatalf("add tag: %v", err)
+		}
+	}
+	mustAdd(docA, govID)
+	mustAdd(docA, secID)
+	mustAdd(docA, taxID)
+	mustAdd(docB, govID)
+	mustAdd(docC, secID)
+	mustAdd(docD, govID)
+	mustAdd(docD, taxID)
+
+	ids := func(results []FTSDocumentRow) map[string]bool {
+		m := map[string]bool{}
+		for _, r := range results {
+			m[r.DocumentID] = true
+		}
+		return m
+	}
+
+	t.Run("two tags returns intersection only", func(t *testing.T) {
+		got, err := q.SearchDocumentsStructured(ctx, SearchFilter{
+			Tags:  []string{"government", "government secrecy"},
+			Limit: 100,
+		})
+		if err != nil {
+			t.Fatalf("search: %v", err)
+		}
+		count, err := q.CountDocumentsStructured(ctx, SearchFilter{
+			Tags:  []string{"government", "government secrecy"},
+			Limit: 100,
+		})
+		if err != nil {
+			t.Fatalf("count: %v", err)
+		}
+		gotIDs := ids(got)
+		if len(got) != 1 || !gotIDs["tag-and-a"] {
+			t.Fatalf("intersection search = %v, want exactly [tag-and-a]", gotIDs)
+		}
+		if count != 1 {
+			t.Fatalf("intersection count = %d, want 1", count)
+		}
+	})
+
+	t.Run("three tags requires all three", func(t *testing.T) {
+		got, err := q.SearchDocumentsStructured(ctx, SearchFilter{
+			Tags:  []string{"taxes", "government", "government secrecy"},
+			Limit: 100,
+		})
+		if err != nil {
+			t.Fatalf("search: %v", err)
+		}
+		gotIDs := ids(got)
+		if len(got) != 1 || !gotIDs["tag-and-a"] {
+			t.Fatalf("three-tag search = %v, want exactly [tag-and-a]", gotIDs)
+		}
+	})
+
+	t.Run("duplicate tag names do not inflate HAVING count", func(t *testing.T) {
+		got, err := q.SearchDocumentsStructured(ctx, SearchFilter{
+			Tags:  []string{"government", "government", "government secrecy"},
+			Limit: 100,
+		})
+		if err != nil {
+			t.Fatalf("search: %v", err)
+		}
+		gotIDs := ids(got)
+		if len(got) != 1 || !gotIDs["tag-and-a"] {
+			t.Fatalf("dup-tag search = %v, want exactly [tag-and-a] (dedupe)", gotIDs)
+		}
+	})
+
+	t.Run("unknown tag returns nothing", func(t *testing.T) {
+		got, err := q.SearchDocumentsStructured(ctx, SearchFilter{
+			Tags:  []string{"nonexistent"},
+			Limit: 100,
+		})
+		if err != nil {
+			t.Fatalf("search: %v", err)
+		}
+		if len(got) != 0 {
+			t.Fatalf("unknown tag search = %d results, want 0", len(got))
+		}
+		count, _ := q.CountDocumentsStructured(ctx, SearchFilter{Tags: []string{"nonexistent"}, Limit: 100})
+		if count != 0 {
+			t.Fatalf("unknown tag count = %d, want 0", count)
+		}
+	})
+
+	t.Run("single tag still returns union (degenerate AND)", func(t *testing.T) {
+		got, err := q.SearchDocumentsStructured(ctx, SearchFilter{
+			Tags:  []string{"government"},
+			Limit: 100,
+		})
+		if err != nil {
+			t.Fatalf("search: %v", err)
+		}
+		gotIDs := ids(got)
+		if len(got) != 3 || !gotIDs["tag-and-a"] || !gotIDs["tag-and-b"] || !gotIDs["tag-and-d"] {
+			t.Fatalf("single-tag search = %v, want [tag-and-a tag-and-b tag-and-d]", gotIDs)
+		}
+	})
+}
+
+// TestStructuredSearchRankDescOrderTieBreak pins the FTS ordering contract:
+// results are ranked best-first by ts_rank, and equal-rank ties are
+// broken deterministically by document id so LIMIT/OFFSET pagination
+// doesn't skip or duplicate rows across pages.
+func TestStructuredSearchRankDescOrderTieBreak(t *testing.T) {
+	q, _ := NewTestQueries(t)
+	resetDB(t, q)
+	ctx := context.Background()
+
+	// Three documents with the same repeated query term so ts_rank lands
+	// on ties; the tie-break by d.id must give ascending id order.
+	insertContentDoc(t, q, "rank-c", "budget budget budget report", sql.NullString{})
+	insertContentDoc(t, q, "rank-a", "budget report", sql.NullString{})
+	insertContentDoc(t, q, "rank-b", "budget budget report", sql.NullString{})
+
+	got, err := q.SearchDocumentsStructured(ctx, SearchFilter{
+		Query: "budget",
+		Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(got) < 2 {
+		t.Fatalf("need at least 2 results to assert order, got %d", len(got))
+	}
+
+	// First result must have rank >= every later result.
+	for i := 1; i < len(got); i++ {
+		if got[0].Rank < got[i].Rank {
+			t.Fatalf("rank not best-first: result[0].Rank=%f < result[%d].Rank=%f", got[0].Rank, i, got[i].Rank)
+		}
+	}
+
+	// Among rows with the same rank (ties), d.id must be ascending.
+	for i := 1; i < len(got); i++ {
+		if got[i-1].Rank == got[i].Rank && got[i-1].ID >= got[i].ID {
+			t.Fatalf("rank ties not broken by d.id: got %d (id=%d) before %d (id=%d) at equal rank %f",
+				i-1, got[i-1].ID, i, got[i].ID, got[i].Rank)
+		}
+	}
+}
+
+// TestStructuredSearchPastTheEndOffset verifies the past-the-end behaviour
+// at the database layer. The guard that returns empty results without
+// issuing the search query lives in the search engine; at the DB layer
+// past-the-end offsets simply yield zero rows with the correct count.
+func TestStructuredSearchPastTheEndOffset(t *testing.T) {
+	q, _ := NewTestQueries(t)
+	resetDB(t, q)
+	ctx := context.Background()
+
+	insertContentDoc(t, q, "past-end-1", "alpha alpha alpha", sql.NullString{})
+	insertContentDoc(t, q, "past-end-2", "alpha alpha", sql.NullString{})
+
+	t.Run("offset=0 hot path returns full page", func(t *testing.T) {
+		got, err := q.SearchDocumentsStructured(ctx, SearchFilter{
+			Query:  "alpha",
+			Limit:  10,
+			Offset: 0,
+		})
+		if err != nil {
+			t.Fatalf("search: %v", err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("offset=0 results = %d, want 2", len(got))
+		}
+	})
+
+	t.Run("offset past total returns empty results, count unaffected", func(t *testing.T) {
+		got, err := q.SearchDocumentsStructured(ctx, SearchFilter{
+			Query:  "alpha",
+			Limit:  10,
+			Offset: 50,
+		})
+		if err != nil {
+			t.Fatalf("search: %v", err)
+		}
+		if len(got) != 0 {
+			t.Fatalf("past-the-end results = %d, want 0", len(got))
+		}
+		count, err := q.CountDocumentsStructured(ctx, SearchFilter{Query: "alpha", Limit: 10, Offset: 50})
+		if err != nil {
+			t.Fatalf("count: %v", err)
+		}
+		if count != 2 {
+			t.Fatalf("count = %d, want 2 (offset does not affect count)", count)
+		}
+	})
+}
+
+// TestBackfillTextHash covers the backfill contract:
+//   - rows with text_content get text_hash = sha256(text_content);
+//   - rows with NULL text_content keep text_hash NULL;
+//   - a row whose text_hash was set concurrently (e.g. by the consumer)
+//     is not clobbered by the backfill (the TOCTOU-safe WHERE clause);
+//   - re-running is idempotent.
+func TestBackfillTextHash(t *testing.T) {
+	q, db := NewTestQueries(t)
+	resetDB(t, q)
+	ctx := context.Background()
+
+	// bf-hash1: text_content present, text_hash NULL → backfilled.
+	// bf-hash2: text_content present + pre-set text_hash from a concurrent
+	// writer → must NOT be overwritten by the backfill.
+	insertContentDoc(t, q, "bf-hash1", "hello world", sql.NullString{})
+	insertContentDoc(t, q, "bf-hash2", "stale text", sql.NullString{
+		String: "writer-set-hash",
+		Valid:  true,
+	})
+	// bf-null: text_content column is actually NULL (not just empty).
+	if _, err := q.db.ExecContext(ctx,
+		`INSERT INTO document (document_id, title, md5_checksum, sha512_checksum, original_type, file_size, original_path, storage_path, page_count, word_count, char_count, language)
+		 VALUES ('bf-null', 'bf-null.pdf', 'md5-bf-null', 'sha512-bf-null', 'application/pdf', 0, '/tmp/bf-null', '/tmp/storage/bf-null', 0, 0, 0, 'eng')`,
+	); err != nil {
+		t.Fatalf("insert bf-null: %v", err)
+	}
+
+	if err := BackfillTextHash(ctx, db); err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+
+	var (
+		got1, got2 sql.NullString
+	)
+	if err := q.db.QueryRowContext(ctx, `SELECT text_hash FROM document WHERE document_id='bf-hash1'`).Scan(&got1); err != nil {
+		t.Fatalf("read bf-hash1: %v", err)
+	}
+	if err := q.db.QueryRowContext(ctx, `SELECT text_hash FROM document WHERE document_id='bf-hash2'`).Scan(&got2); err != nil {
+		t.Fatalf("read bf-hash2: %v", err)
+	}
+	want1 := utils.SHA256Hex("hello world")
+	if !got1.Valid || got1.String != want1 {
+		t.Fatalf("bf-hash1.text_hash = %+v, want %q", got1, want1)
+	}
+	if !got2.Valid || got2.String != "writer-set-hash" {
+		t.Fatalf("bf-hash2.text_hash = %+v, want \"writer-set-hash\" (backfill must not clobber concurrent writers)", got2)
+	}
+
+	var gotNull sql.NullString
+	if err := q.db.QueryRowContext(ctx, `SELECT text_hash FROM document WHERE document_id='bf-null'`).Scan(&gotNull); err != nil {
+		t.Fatalf("read bf-null: %v", err)
+	}
+	if gotNull.Valid {
+		t.Fatalf("bf-null.text_hash = %+v, want NULL (no content ⇒ no hash)", gotNull)
+	}
+
+	if err := BackfillTextHash(ctx, db); err != nil {
+		t.Fatalf("backfill second run: %v", err)
+	}
+	var got1Again sql.NullString
+	if err := q.db.QueryRowContext(ctx, `SELECT text_hash FROM document WHERE document_id='bf-hash1'`).Scan(&got1Again); err != nil {
+		t.Fatalf("read bf-hash1 (re-run): %v", err)
+	}
+	if got1Again != got1 {
+		t.Fatalf("bf-hash1.text_hash changed on re-run: was %q, now %q", got1.String, got1Again.String)
+	}
+}
+
+// TestTextHashPersistedAtWrite pins the consume-side contract: a
+// CreateDocument call with an explicit TextHash must persist that value
+// to the row. The end-to-end round-trip through Consumer.Process is
+// covered in internal/consumption/integration_test.go.
+func TestTextHashPersistedAtWrite(t *testing.T) {
+	q, _ := NewTestQueries(t)
+	resetDB(t, q)
+	ctx := context.Background()
+
+	want := utils.SHA256Hex("round-trip content for the text_hash column")
+	insertContentDoc(t, q, "hash-rt", "round-trip content for the text_hash column", sql.NullString{
+		String: want,
+		Valid:  true,
+	})
+
+	// GetDocumentRow doesn't currently select text_hash, so confirm via
+	// direct SQL — this is the field the backfill / cache contract reads.
+	var got sql.NullString
+	if err := q.db.QueryRowContext(ctx, `SELECT text_hash FROM document WHERE document_id='hash-rt'`).Scan(&got); err != nil {
+		t.Fatalf("read text_hash: %v", err)
+	}
+	if !got.Valid || got.String != want {
+		t.Fatalf("persisted text_hash = %+v, want %q", got, want)
 	}
 }

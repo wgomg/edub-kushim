@@ -342,6 +342,7 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string, pr
 		OriginalPath:   "",
 		StoragePath:    *file.StorageProcessedPath,
 		TextContent:    file.Text,
+		TextHash:       sql.NullString{String: utils.SHA256Hex(file.Text.String), Valid: file.Text.Valid},
 		PageCount:      int32(file.PageCount),
 		WordCount:      int32(len(strings.Fields(file.Text.String))),
 		CharCount:      int32(utf8.RuneCountInString(file.Text.String)),

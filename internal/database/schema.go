@@ -39,6 +39,12 @@ func InitializeSchema(db *sql.DB) error {
 		slog.Default().Error("backfill processed sizes", "error", err)
 	}
 
+	hashCtx, hashCancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer hashCancel()
+	if err := BackfillTextHash(hashCtx, db); err != nil {
+		slog.Default().Error("backfill text hash", "error", err)
+	}
+
 	return nil
 }
 

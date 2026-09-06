@@ -53,6 +53,7 @@ type Document struct {
 	DeletedAt        sql.NullTime
 	HasThumbnail     bool
 	ProcessedSize    int64
+	TextHash         sql.NullString
 }
 
 type DocumentPeople struct {

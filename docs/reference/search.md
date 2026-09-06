@@ -92,10 +92,10 @@ type FileSizeRange struct {
 ### Methods
 
 #### `Engine.Search(ctx, query string, limit, offset int32) ([]Result, error)`
-Simple tsvector search. Calls `database.SearchDocumentsStructured` with a minimal `SearchFilter`. Returns results with `ts_rank` and `ts_headline` snippet.
+Simple tsvector search. Calls `database.SearchDocumentsStructured` with a minimal `SearchFilter`. Returns results with `ts_rank` and `ts_headline` snippet. When `offset > 0`, a count query runs first and past-the-end offsets return an empty slice without issuing the search query.
 
 #### `Engine.SearchStructured(ctx, filter Filter) ([]Result, total int64, error)`
-Structured search with metadata filters. First calls `database.CountDocumentsStructured()` for total count, then `database.SearchDocumentsStructured()` for paginated results. Translates the `Filter` struct into the database-layer `SearchFilter` struct.
+Structured search with metadata filters. First calls `database.CountDocumentsStructured()` for total count, then `database.SearchDocumentsStructured()` for paginated results. Translates the `Filter` struct into the database-layer `SearchFilter` struct. When `offset >= total`, returns an empty result slice with the correct `total` without issuing the search query.
 
 ### Functions
 
@@ -150,9 +150,9 @@ A dynamic SQL query builder that composes `WHERE` clauses with proper parameteri
 Builds a SELECT query dynamically:
 
 - If `filter.Query` is non-empty: adds `WHERE d.text_search_vector @@ plainto_tsquery('simple', $N)`, `ts_rank()` for rank, `ts_headline()` for highlighting
-- Applies tag subquery (`document_tag JOIN tag`), people subqueries (`document_people JOIN people JOIN people_type`, or `document_people JOIN people` name-only when `type == "person"`), document type subquery, language equality, date ranges, file size ranges
+- Applies tag subquery (`document_tag JOIN tag`; multiple tags are conjunctive — a document must carry every requested tag), people subqueries (`document_people JOIN people JOIN people_type`, or `document_people JOIN people` name-only when `type == "person"`), document type subquery, language equality, date ranges, file size ranges
 - Applies missing filters (`MissingLanguage` → `d.language IN ('und','')`, `MissingType` → `d.document_type_id = 1`, `Untagged` → `NOT EXISTS` subquery on `document_tag`)
-- When query is present: ordered by `rank`; otherwise ordered by `sort_by`/`sort_order` (whitelisted: `title`, `file_size`, `created_at`, `page_count`)
+- When query is present: ordered by `rank` descending (most relevant first); otherwise ordered by `sort_by`/`sort_order` (whitelisted: `title`, `file_size`, `created_at`, `page_count`)
 - Uses `LIMIT $N OFFSET $N` for pagination
 
 #### `CountDocumentsStructured(ctx, filter) (int64, error)`

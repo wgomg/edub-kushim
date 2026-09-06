@@ -37,8 +37,8 @@ func (q *Queries) CountTrashDocuments(ctx context.Context) (int64, error) {
 const createDocument = `-- name: CreateDocument :one
 INSERT INTO document (
     document_id, title, md5_checksum, sha512_checksum, original_type, file_size, processed_size, page_count, word_count,
-    char_count, language, original_path, storage_path, text_content
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id
+    char_count, language, original_path, storage_path, text_content, text_hash
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING id
 `
 
 type CreateDocumentParams struct {
@@ -56,6 +56,7 @@ type CreateDocumentParams struct {
 	OriginalPath   string
 	StoragePath    string
 	TextContent    sql.NullString
+	TextHash       sql.NullString
 }
 
 func (q *Queries) CreateDocument(ctx context.Context, arg CreateDocumentParams) (int64, error) {
@@ -74,6 +75,7 @@ func (q *Queries) CreateDocument(ctx context.Context, arg CreateDocumentParams) 
 		arg.OriginalPath,
 		arg.StoragePath,
 		arg.TextContent,
+		arg.TextHash,
 	)
 	var id int64
 	err := row.Scan(&id)
@@ -1049,8 +1051,9 @@ UPDATE document SET
     document_type_id = $2,
     language = $3,
     text_content = $4,
+    text_hash = $5,
     modified_at = CURRENT_TIMESTAMP
-WHERE document_id = $5
+WHERE document_id = $6
 `
 
 type UpdateDocumentEditableParams struct {
@@ -1058,6 +1061,7 @@ type UpdateDocumentEditableParams struct {
 	DocumentTypeID int64
 	Language       string
 	TextContent    sql.NullString
+	TextHash       sql.NullString
 	DocumentID     string
 }
 
@@ -1067,6 +1071,7 @@ func (q *Queries) UpdateDocumentEditable(ctx context.Context, arg UpdateDocument
 		arg.DocumentTypeID,
 		arg.Language,
 		arg.TextContent,
+		arg.TextHash,
 		arg.DocumentID,
 	)
 	return err

@@ -2547,3 +2547,59 @@ func TestEnqueueConfigTasks(t *testing.T) {
 		}
 	})
 }
+
+// TestSearchDocuments_OffsetBounds pins the GET-tier offset validation:
+// huge values must return 400 (previously wrapped into a negative SQL
+// OFFSET → 500). Negative values must also be rejected.
+func TestSearchDocuments_OffsetBounds(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	h := newDocHandler(env)
+
+	docUUID(t, env.client.Queries, "stage0-offset.pdf")
+
+	t.Run("offset above MaxInt32 returns 400", func(t *testing.T) {
+		w := rec()
+		// math.MaxInt32 + 1 = 2147483648 — would wrap to -2147483648 on
+		// the int32 cast and trigger a 500 from PostgreSQL otherwise.
+		h.SearchDocuments(w, req(t, "GET", "/api/v1/documents/search?q=stage0&offset=2147483648", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusBadRequest, "status")
+	})
+
+	t.Run("offset above MaxInt32 but parsable returns 400", func(t *testing.T) {
+		// 3000000000 fits in int64 but exceeds math.MaxInt32 — this is the
+		// exact wrap-around scenario the validation guards against.
+		w := rec()
+		h.SearchDocuments(w, req(t, "GET", "/api/v1/documents/search?q=stage0&offset=3000000000", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusBadRequest, "status")
+	})
+
+	t.Run("offset=0 succeeds", func(t *testing.T) {
+		w := rec()
+		h.SearchDocuments(w, req(t, "GET", "/api/v1/documents/search?q=stage0&offset=0", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+	})
+}
+
+// TestSearchDocumentsStructured_OffsetBounds pins the same validation on
+// the POST tier: filter.Offset is int32 so it cannot exceed MaxInt32, but
+// a negative value must still be rejected.
+func TestSearchDocumentsStructured_OffsetBounds(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	h := newDocHandler(env)
+
+	docUUID(t, env.client.Queries, "stage0-post-offset.pdf")
+
+	t.Run("negative offset returns 400", func(t *testing.T) {
+		w := rec()
+		body := []byte(`{"query":"stage0","offset":-1}`)
+		h.SearchDocumentsStructured(w, req(t, "POST", "/api/v1/documents/search", body))
+		testutil.AssertEqual(t, w.Code, http.StatusBadRequest, "status")
+	})
+
+	t.Run("offset=0 succeeds", func(t *testing.T) {
+		w := rec()
+		body := []byte(`{"query":"stage0","offset":0}`)
+		h.SearchDocumentsStructured(w, req(t, "POST", "/api/v1/documents/search", body))
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+	})
+}

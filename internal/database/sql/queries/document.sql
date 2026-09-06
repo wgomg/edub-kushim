@@ -22,8 +22,8 @@ FROM document WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT $1 OFFSET 
 -- name: CreateDocument :one
 INSERT INTO document (
     document_id, title, md5_checksum, sha512_checksum, original_type, file_size, processed_size, page_count, word_count,
-    char_count, language, original_path, storage_path, text_content
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id;
+    char_count, language, original_path, storage_path, text_content, text_hash
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING id;
 
 -- name: UpdateDocumentMetadata :exec
 UPDATE document SET
@@ -39,8 +39,9 @@ UPDATE document SET
     document_type_id = $2,
     language = $3,
     text_content = $4,
+    text_hash = $5,
     modified_at = CURRENT_TIMESTAMP
-WHERE document_id = $5;
+WHERE document_id = $6;
 
 -- name: UpdateDocumentMetadataById :exec
 UPDATE document SET

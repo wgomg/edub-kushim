@@ -83,6 +83,10 @@
 - **Structured search** (`POST /api/v1/documents/search`) — dynamic SQL query builder with filters for tags, people, document type, language, date range, file size
 - **Search engine** (`internal/search/search.go`) — `Engine.SearchStructured()` returning results + total count
 - **Database query builder** (`internal/database/structured_search.go`) — dynamic `WHERE` clause composition with proper parameterization, batch tag/people fetching
+- **Multi-tag filters are AND** — a document must carry every requested tag (`GROUP BY … HAVING COUNT(DISTINCT tag) = n`, names deduped in Go); the count query mirrors the search query
+- **Past-the-end pagination guards** — `offset >= total` returns empty results without issuing the search query (was 7–53 s zero-row calls); server-side `offset` bounds validated (0–2147483647, else `400`)
+- **FTS results ranked best-first** — `ORDER BY rank DESC` (was ascending, worst matches first)
+- **`document.text_hash`** — sha256 (hex) of `text_content` for content identity (Stage 1 chunk reassembly + Stage 2 reduction cache), written at consume/editable update and backfilled idempotently at startup (keyset batches of 500)
 - **Autocomplete endpoints** — prefix search for tags (`SearchTagsByName`), people (`SearchPeopleByName`), document types, person types
 - **Saved searches** — `saved_search` table, CRUD API, frontend save/load/delete
 - **Frontend query parser** (`searchFilter.js`) — tokenizes `field:value` syntax into structured filter state

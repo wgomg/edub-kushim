@@ -72,19 +72,30 @@ func (b *queryBuilder) eq(col, val string) {
 	b.add(fmt.Sprintf("AND d.%s = $%d", col, b.nextIndex()), val)
 }
 
-func (b *queryBuilder) subqueryIn(col, subquery string, values []string) {
-	if len(values) == 0 {
+func (b *queryBuilder) tagsAnd(names []string) {
+	if len(names) == 0 {
 		return
 	}
-	placeholders := make([]string, len(values))
-	for i := range values {
-		placeholders[i] = fmt.Sprintf("$%d", b.nextIndex()+i)
+	names = dedupeStrings(names)
+	idx := b.nextIndex()
+	b.add(fmt.Sprintf(`AND d.id IN (SELECT dt.document_id FROM document_tag dt
+		JOIN tag t ON dt.tag_id = t.id
+		WHERE t.name = ANY($%d::text[])
+		GROUP BY dt.document_id
+		HAVING COUNT(DISTINCT t.id) = %d)`, idx, len(names)), names)
+}
+
+func dedupeStrings(s []string) []string {
+	seen := make(map[string]struct{}, len(s))
+	out := make([]string, 0, len(s))
+	for _, v := range s {
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
 	}
-	args := make([]any, len(values))
-	for i, v := range values {
-		args[i] = v
-	}
-	b.add(fmt.Sprintf("AND d.%s IN (%s)", col, fmt.Sprintf(subquery, strings.Join(placeholders, ","))), args...)
+	return out
 }
 
 func (b *queryBuilder) addMissingFilters(filter SearchFilter) {
@@ -144,11 +155,7 @@ func (q *Queries) SearchDocumentsStructured(ctx context.Context, filter SearchFi
 			WHERE 1=1 AND d.deleted_at IS NULL`)
 	}
 
-	b.subqueryIn("id",
-		`SELECT dt.document_id FROM document_tag dt
-		JOIN tag t ON dt.tag_id = t.id
-		WHERE t.name IN (%s)`,
-		filter.Tags)
+	b.tagsAnd(filter.Tags)
 
 	for _, p := range filter.People {
 		nameIdx := b.nextIndex()
@@ -179,7 +186,7 @@ func (q *Queries) SearchDocumentsStructured(ctx context.Context, filter SearchFi
 	b.addMissingFilters(filter)
 
 	if filter.Query != "" {
-		b.add(`ORDER BY rank`)
+		b.add(`ORDER BY rank DESC, d.id`)
 	} else {
 		sortCol := "created_at"
 		sortDir := "DESC"
@@ -238,11 +245,7 @@ func (q *Queries) CountDocumentsStructured(ctx context.Context, filter SearchFil
 		b.add(`SELECT COUNT(*) FROM document d WHERE 1=1 AND d.deleted_at IS NULL`)
 	}
 
-	b.subqueryIn("id",
-		`SELECT dt.document_id FROM document_tag dt
-		JOIN tag t ON dt.tag_id = t.id
-		WHERE t.name IN (%s)`,
-		filter.Tags)
+	b.tagsAnd(filter.Tags)
 
 	for _, p := range filter.People {
 		nameIdx := b.nextIndex()

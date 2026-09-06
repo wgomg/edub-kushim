@@ -17,7 +17,6 @@ func setupSearchTest(t *testing.T) (*Engine, *database.Queries) {
 	return engine, q
 }
 
-
 func insertSearchDocRaw(t *testing.T, q *database.Queries, docID, title, language string, docTypeID int64, tag string) int64 {
 	t.Helper()
 	id, err := q.CreateDocument(context.Background(), database.CreateDocumentParams{
@@ -286,4 +285,86 @@ func TestNewEngine(t *testing.T) {
 	if engine == nil {
 		t.Fatal("expected non-nil engine")
 	}
+}
+
+// TestSearchPastTheEndOffset pins plan §0 decision 3 / rec 2: when the GET
+// tier-1 engine is asked for an offset at or past the result count, it
+// returns an empty non-nil slice without issuing the search query.
+// offset=0 is the hot SPA path and must NOT trigger the count query —
+// verifying that would require query interception, so we only assert the
+// offset>0 short-circuit path here.
+func TestSearchPastTheEndOffset(t *testing.T) {
+	engine, q := setupSearchTest(t)
+	ctx := context.Background()
+
+	// insertSearchDocRaw takes an explicit docID so the three rows don't
+	// collide on the helper's `len(textContent)`-derived UUID.
+	insertSearchDocRaw(t, q, "pe-1", "p1.pdf", "eng", 3, "")
+	insertSearchDocRaw(t, q, "pe-2", "p2.pdf", "eng", 3, "")
+	insertSearchDocRaw(t, q, "pe-3", "p3.pdf", "eng", 3, "")
+
+	t.Run("offset beyond total returns empty slice, no error", func(t *testing.T) {
+		got, err := engine.Search(ctx, "content", 10, 50)
+		testutil.AssertNoError(t, err, "search past-the-end")
+		if got == nil {
+			t.Fatal("expected non-nil empty slice (handler must serialise to [] not null)")
+		}
+		if len(got) != 0 {
+			t.Fatalf("expected empty results, got %d", len(got))
+		}
+	})
+
+	t.Run("offset at total returns empty slice", func(t *testing.T) {
+		got, err := engine.Search(ctx, "content", 10, 3)
+		testutil.AssertNoError(t, err, "search at total")
+		if got == nil || len(got) != 0 {
+			t.Fatalf("expected empty non-nil slice, got len=%d nil=%v", len(got), got == nil)
+		}
+	})
+
+	t.Run("offset within range returns matches", func(t *testing.T) {
+		got, err := engine.Search(ctx, "content", 10, 1)
+		testutil.AssertNoError(t, err, "search in range")
+		if len(got) == 0 {
+			t.Fatal("expected matches for offset=1 with total=3")
+		}
+	})
+}
+
+// TestStructuredSearchPastTheEndOffset pins the same guard for the
+// structured (POST) tier: offset >= total returns empty results with the
+// authoritative total, so the SPA's "X–Y of Z" pagination stays correct.
+func TestStructuredSearchPastTheEndOffset(t *testing.T) {
+	engine, q := setupSearchTest(t)
+	ctx := context.Background()
+
+	insertSearchDocRaw(t, q, "spe-1", "sp1.pdf", "eng", 3, "")
+	insertSearchDocRaw(t, q, "spe-2", "sp2.pdf", "eng", 3, "")
+
+	t.Run("offset beyond total returns empty slice and correct total", func(t *testing.T) {
+		results, total, err := engine.SearchStructured(ctx, Filter{
+			Query:  "content",
+			Limit:  10,
+			Offset: 100,
+		})
+		testutil.AssertNoError(t, err, "search past-the-end")
+		if results == nil {
+			t.Fatal("expected non-nil empty slice")
+		}
+		if len(results) != 0 {
+			t.Fatalf("expected empty results, got %d", len(results))
+		}
+		testutil.AssertEqual(t, total, int64(2), "total reflects true match count, not offset")
+	})
+
+	t.Run("offset within range returns matches and total", func(t *testing.T) {
+		results, total, err := engine.SearchStructured(ctx, Filter{
+			Query:  "content",
+			Limit:  1,
+			Offset: 0,
+		})
+		testutil.AssertNoError(t, err, "search page 1")
+		testutil.AssertEqual(t, len(results), 1, "page size")
+		testutil.AssertEqual(t, total, int64(2), "total")
+	})
 }

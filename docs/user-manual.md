@@ -1207,9 +1207,12 @@ GET /api/v1/documents/search?q=<query>&limit=50&offset=0
 | ----------- | ------------ | -------------------------------------------------------- |
 | `q`         | — (required) | tsquery plain text (tokenized with `plainto_tsquery`) |
 | `limit`     | `50`         | Max results (1–100)                                      |
-| `offset`    | `0`          | Pagination offset                                        |
+| `offset`    | `0`          | Pagination offset (0–2147483647)                         |
 
 Response `200` — array of `FTSDocumentResponse` (adds `rank`, `snippet`, `text_content`).
+Results are ranked best-first by relevance (`ts_rank`, descending). An `offset` at or
+past the last result returns an empty array instantly (no search query is issued);
+`offset` outside 0–2147483647 is rejected with `400`.
 
 > **Security note**: The `snippet` field is HTML-escaped before returning. Only `<b>`/`</b>` highlighting tags from `ts_headline` are preserved; all other HTML is escaped to prevent XSS.
 
@@ -1242,6 +1245,12 @@ reserved value `"person"` matches the person across **all** their relationship
 types (e.g. a person linked to one document as author and to another as
 recipient matches once). Because `person` is reserved, creating or renaming a
 people type to `person` is rejected with `400`.
+
+`tags` entries are combined with **AND**: a document must carry every requested
+tag (previously OR). When `query` is present, results are ranked best-first by
+relevance; when absent, `sort_by`/`sort_order` applies. An `offset` at or past
+the last result returns `results: []` with the correct `total` (no search query
+is issued); `offset` must be within 0–2147483647 (`400` otherwise).
 
 Response `200` — `SearchResponse`:
 

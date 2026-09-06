@@ -165,6 +165,26 @@ func TestConsumerProcessHappyPath(t *testing.T) {
 			t.Fatalf("expected positive word count, got %d", doc.WordCount)
 		}
 	})
+
+	t.Run("text_hash matches sha256 of extracted text", func(t *testing.T) {
+		// Read both columns and verify the invariant text_hash == sha256(text_content).
+		// We don't hardcode the mock's text — the invariant is what we care about.
+		var textContent, textHash sql.NullString
+		if err := client.DB().QueryRowContext(ctx,
+			`SELECT text_content, text_hash FROM document WHERE document_id = $1`, docID,
+		).Scan(&textContent, &textHash); err != nil {
+			t.Fatalf("read text_hash + text_content: %v", err)
+		}
+		if !textHash.Valid {
+			t.Fatal("text_hash is NULL after consume; consumer must always set it for documents with content")
+		}
+		if !textContent.Valid {
+			t.Fatal("text_content unexpectedly NULL; cannot verify hash")
+		}
+		if want := utils.SHA256Hex(textContent.String); textHash.String != want {
+			t.Fatalf("text_hash = %s, want %s (sha256 of text_content)", textHash.String, want)
+		}
+	})
 }
 
 func TestConsumerDuplicateDetection(t *testing.T) {
