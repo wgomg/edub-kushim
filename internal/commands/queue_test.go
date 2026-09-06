@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -41,6 +42,9 @@ func TestPreviousTimeOfDay(t *testing.T) {
 // batches and batches that already own tasks must be left alone. Without this
 // guard a zero-task queued batch would block the polling gate forever.
 func TestSweepEmptyQueuedBatches(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
 	client := database.NewTestClient(t)
 	ctx := context.Background()
 

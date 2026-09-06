@@ -37,7 +37,7 @@ make test          # runs all non-CGo tests
 make test-verbose  # same with verbose output
 make test-db       # database-dependent tests (requires TEST_DATABASE_URL)
 make test-cgo      # CGo-gated tests (requires make build-deps first)
-make test-cgo-db   # consumption with CGo + DB (requires make build-deps + TEST_DATABASE_URL)
+make test-cgo-db   # consumption + configtask + internal/commands with CGo + DB (requires make build-deps + TEST_DATABASE_URL)
 make test-one PKG=./internal/errs/   # single package; add RUN=Name to filter
 make test-web      # web/ vitest unit + component tests (no database)
 make test-web-e2e  # web/ Playwright smokes with mocked API (requires npx playwright install chromium first)
@@ -51,7 +51,7 @@ make vuln-cgo      # CGo-enabled variant, full call graph (requires make build-d
 
 - `web` job: lints, runs `npm run test` (vitest), and builds the main SPA (`npm ci && npm run lint && npm run test && npm run build` in `web/`), then runs the E2E smokes (`npx playwright install --with-deps chromium && npm run test:e2e` — the E2E `webServer` builds the SPA itself and serves it with an SPA fallback). Then builds the wizard SPA, stages both with `make stage-web`, and uploads them as the `web-assets` artifact. Staging is required because `internal/static/build` and `internal/wizard/static` are gitignored but embedded via `//go:embed` — a fresh checkout has no assets to compile against.
 - `test` job (depends on `web`): downloads `web-assets`, stages it with `make stage-web-artifact`, then runs `make test` and `make test-db` against a postgres:17 service container (`TEST_DATABASE_URL` pointing at `localhost:5432`).
-- `test-cgo` job (depends on `web`): installs the C build prerequisites, builds the C libraries with `make build-deps TOKENIZERS_ARCH=amd64` (cached under `build/` keyed by `hashFiles('Makefile')`), then runs `make test-cgo` and `make test-cgo-db` against the same postgres:17 service container. This surfaces the CGo-only packages (`internal/commands`, consumption under CGo) on every push/PR.
+- `test-cgo` job (depends on `web`): installs the C build prerequisites, builds the C libraries with `make build-deps TOKENIZERS_ARCH=amd64` (cached under `build/` keyed by `hashFiles('Makefile')`), then runs `make test-cgo` (no DB; DB-gated tests in `internal/commands` skip) and `make test-cgo-db` (with DB; those tests actually run) against the same postgres:17 service container. This surfaces the CGo-only packages (`internal/commands`, consumption under CGo) on every push/PR.
 - `vulncheck` job (depends on `web`): stages the `web-assets` artifact, installs govulncheck (pinned `@v1.7.0`), and runs `make vuln`. Like `make test`, it runs with `CGO_ENABLED=0`, so the CGo-gated packages (`cmd/kushim`, `internal/commands`) are excluded from the CI scan; `make vuln-cgo` covers them locally.
 
 The `global` ruleset requires the `test` and `web` checks to pass before a PR to `master` can merge.
@@ -81,7 +81,7 @@ The `global` ruleset requires the `test` and `web` checks to pass before a PR to
 | `internal/service` | 76 | Batch create/get/owner-state/pending/active/cancel/queue, RetryFailed (restores discarded enriches, batch-scoped), ResetStaleProcessingTasks (restore + global sweep), ResetProcessingTasksByBatch restore, orphaned scan/delete/restore/move-to-inbox, errored files list/download/delete/delete-all, user API key create/revoke/rotate/validate, user Create with role defaults/explicit/invalid, UpdateRole (valid/invalid), Update with role change, password validation (12+ rules) |
 | `internal/api/handlers` | 65 | Document CRUD, tag/people/DocumentType CRUD, user CRUD (with role), task endpoints, saved searches, concurrent operations, dashboard running tasks + analytics + processing health, analytics error path, config handler get/status, PutConfig runtime/container immediate-persistence alongside db migration, batch delete limits, error helpers, auth login (valid/invalid/empty/claims/role), auth logout, API key generate/revoke/rotate/status/forbidden/invalid-id/not-found + wire-format contract (has_api_key present, has_key absent, api_key_prefix present), MeHandler (valid/missing-id/not-found), self-service API key handlers (MeGenerateKey/MeRevokeKey/MeRotateKey/MeGetKeyStatus/unauthorized + wire-format contract), orphaned handler (list/scan/delete/restore/move-to-inbox/delete-all/move-all), errored handler (list/download/delete/delete-all), logs handler (invalid name/file not found/success/line clamping/large file tail/empty file), people-type reserved-name guard (create/update rejected for `person`, case-insensitive; non-reserved name accepted) |
 | `internal/consumption` | 20 | Full consumer pipeline via mock runner (file discovery, DB transaction, file movement, duplicate detection), file I/O helpers (get, move, copy, remove, clean up), checksum calculation, orphaned file management |
-| `internal/commands` | 16 | Config handler (help/path/validate valid+invalid/get/missing key/set/invalid set/unset/missing key/unset without key/dump/unknown args), parseValue, deleteNestedKey, highlight snippet ANSI markers. CGo-gated package: compiles only under `CGO_ENABLED=1` (runs via `make test-cgo`) |
+| `internal/commands` | 24 | Config handler (help/path/validate valid+invalid/get/missing key/set/invalid set/unset/missing key/unset without key/dump/unknown args), parseValue, deleteNestedKey, highlight snippet ANSI markers, previousTimeOfDay, empty-queued-batch sweep (DB-gated via `t.Skip` when `TEST_DATABASE_URL` unset; runs under `make test-cgo-db`). CGo-gated package: compiles only under `CGO_ENABLED=1` (runs via `make test-cgo` / `make test-cgo-db`) |
 | `internal/backup` | 16 | Create (full backup/missing DB/missing storage/no files/SQL dump content), ApplyRetention (delete oldest/keep all/keep 0), ValidateArchive (valid/invalid gzip/missing manifest/missing file), ExtractArchive (valid/path traversal/symlink skip), ReplaceFiles (SQL dump/unknown format/documents-mode storage swap, same-device rename path), CopyDir, NextBackupTime (daily/sub-daily/clamp/empty-time), dueFromHistory (recent blocks, null-completed due, daily recent-completion not due, sub-daily past-window due) |
 | `internal/mirror` | 8 | Available (sanity), IsRemoteTarget (user@host/rsync:///local), parseStats (stats2 format with reg count + comma-formatted total, deleted-file lines ignored per P1 fix, empty/malformed degrade to zero, commas in the outer count) |
 
@@ -256,6 +256,11 @@ on PATH that can see the running container (so podman on a runner whose
 container runs under docker falls through to docker) — so no host
 `postgresql-client` is needed; the container name comes from
 `TEST_DATABASE_CONTAINER` (default `edub-test-pg`, CI sets `postgres`):
+
+Also runs `internal/commands` (DB-gated tests in a CGo package — e.g.
+`TestSweepEmptyQueuedBatches`). Those tests `t.Skip` when `TEST_DATABASE_URL`
+is unset (as in the `make test-cgo` step), so the package must be listed here
+for them to actually exercise the behavior in CI.
 
 ```bash
 make test-cgo-db   # requires make build-deps first + TEST_DATABASE_URL

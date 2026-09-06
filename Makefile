@@ -296,7 +296,8 @@ test-backup:
 test-cgo-db:
 	CGO_ENABLED=1 go test -tags "XLA,ORT" -count=1 -timeout 120s \
 		./internal/consumption/ \
-		./internal/configtask/
+		./internal/configtask/ \
+		./internal/commands/
 
 # Single-package run for development. Filter with RUN, e.g.:
 #   make test-one PKG=./internal/errs/ RUN=TestSleepAfterRequest
