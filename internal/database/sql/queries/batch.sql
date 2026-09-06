@@ -77,8 +77,11 @@ ORDER BY created_at LIMIT 1;
 -- name: GetBatch :one
 SELECT * FROM batch WHERE id = $1;
 
--- name: CountQueuedBatches :one
-SELECT COUNT(*) FROM batch WHERE status = 'queued';
+-- name: CountQueuedConsumeBatches :one
+-- Same exclusion list as GetNextQueuedBatch: config/backup/mirror batches
+-- own their lifecycle in their handlers and never occupy a consume slot.
+SELECT COUNT(*) FROM batch
+WHERE status = 'queued' AND source NOT IN ('config', 'backup', 'mirror');
 
 -- name: GetNextQueuedBatch :one
 -- config/backup/mirror batches own their lifecycle in their handlers and
@@ -86,6 +89,15 @@ SELECT COUNT(*) FROM batch WHERE status = 'queued';
 SELECT * FROM batch
 WHERE status = 'queued' AND source NOT IN ('config', 'backup', 'mirror')
 ORDER BY created_at LIMIT 1;
+
+-- name: DeleteBatch :exec
+DELETE FROM batch WHERE id = $1;
+
+-- name: ListEmptyQueuedBatches :many
+SELECT id FROM batch b
+WHERE b.status = 'queued'
+  AND b.created_at < now() - ($1::int * INTERVAL '1 minute')
+  AND NOT EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id);
 
 -- name: RequeueBatch :exec
 UPDATE batch SET status = 'queued' WHERE id = $1;

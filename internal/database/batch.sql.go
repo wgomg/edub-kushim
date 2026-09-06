@@ -89,12 +89,15 @@ func (q *Queries) CountPausedBatches(ctx context.Context) (int64, error) {
 	return count, err
 }
 
-const countQueuedBatches = `-- name: CountQueuedBatches :one
-SELECT COUNT(*) FROM batch WHERE status = 'queued'
+const countQueuedConsumeBatches = `-- name: CountQueuedConsumeBatches :one
+SELECT COUNT(*) FROM batch
+WHERE status = 'queued' AND source NOT IN ('config', 'backup', 'mirror')
 `
 
-func (q *Queries) CountQueuedBatches(ctx context.Context) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countQueuedBatches)
+// Same exclusion list as GetNextQueuedBatch: config/backup/mirror batches
+// own their lifecycle in their handlers and never occupy a consume slot.
+func (q *Queries) CountQueuedConsumeBatches(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countQueuedConsumeBatches)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -113,6 +116,15 @@ type CreateBatchParams struct {
 
 func (q *Queries) CreateBatch(ctx context.Context, arg CreateBatchParams) error {
 	_, err := q.db.ExecContext(ctx, createBatch, arg.ID, arg.Source, arg.Status)
+	return err
+}
+
+const deleteBatch = `-- name: DeleteBatch :exec
+DELETE FROM batch WHERE id = $1
+`
+
+func (q *Queries) DeleteBatch(ctx context.Context, id string) error {
+	_, err := q.db.ExecContext(ctx, deleteBatch, id)
 	return err
 }
 
@@ -371,6 +383,36 @@ func (q *Queries) ListBatchOverviews(ctx context.Context, arg ListBatchOverviews
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEmptyQueuedBatches = `-- name: ListEmptyQueuedBatches :many
+SELECT id FROM batch b
+WHERE b.status = 'queued'
+  AND b.created_at < now() - ($1::int * INTERVAL '1 minute')
+  AND NOT EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id)
+`
+
+func (q *Queries) ListEmptyQueuedBatches(ctx context.Context, dollar_1 int32) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listEmptyQueuedBatches, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

@@ -285,57 +285,68 @@ func (h *ConfigHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ConfigHandler) enqueueConfigTasks(ctx context.Context, cfg *config.Config) int {
-	enqueued := 0
-	batchID := uuid.New().String()
-
-	h.services.Batch.Create(ctx, batchID, configSource, "queued")
+	type pendingTask struct {
+		dedupKey string
+		payload  map[string]string
+	}
+	var tasks []pendingTask
 
 	for _, lang := range config.MissingTessdataLanguages(cfg) {
 		key := "config:tessdata:" + lang
-		if h.handleConfigTask(ctx, batchID, key, map[string]string{
-			"config_dir": cfg.App.ConfigDir,
-			"op":         "tessdata",
-			"lang":       lang,
-		}) {
-			enqueued++
+		if !h.configTaskCovered(ctx, key) {
+			tasks = append(tasks, pendingTask{dedupKey: key, payload: map[string]string{
+				"config_dir": cfg.App.ConfigDir,
+				"op":         "tessdata",
+				"lang":       lang,
+			}})
 		}
 	}
 
-	if config.MissingHugotModel(cfg) {
-		if h.handleConfigTask(ctx, batchID, "config:hugot", map[string]string{
+	if config.MissingHugotModel(cfg) && !h.configTaskCovered(ctx, "config:hugot") {
+		tasks = append(tasks, pendingTask{dedupKey: "config:hugot", payload: map[string]string{
 			"config_dir": cfg.App.ConfigDir,
 			"op":         "hugot",
-		}) {
-			enqueued++
-		}
+		}})
 	}
 
+	if len(tasks) == 0 {
+		return 0
+	}
+
+	batchID := uuid.New().String()
+	if err := h.services.Batch.Create(ctx, batchID, configSource, "queued"); err != nil {
+		h.logger.Error(nil, "create config batch: %v", err)
+		return 0
+	}
+
+	enqueued := 0
+	for _, t := range tasks {
+		payload, _ := json.Marshal(t.payload)
+		if _, err := h.dispatcher.Enqueue(ctx, configtask.TaskTypeConfig, batchID, payload, ""); err != nil {
+			h.logger.Error(nil, "enqueue config task %s: %v", t.dedupKey, err)
+			continue
+		}
+		enqueued++
+	}
+
+	if enqueued == 0 {
+		if err := h.queries.DeleteBatch(ctx, batchID); err != nil {
+			h.logger.Error(nil, "delete empty config batch %s: %v", batchID, err)
+		}
+		return 0
+	}
 	return enqueued
 }
 
-func (h *ConfigHandler) handleConfigTask(ctx context.Context, batchId, dedupKey string, payloadFields map[string]string) bool {
+func (h *ConfigHandler) configTaskCovered(ctx context.Context, dedupKey string) bool {
 	existing, err := h.queries.GetConfigTaskByDedupKey(ctx, sql.NullString{String: dedupKey, Valid: true})
 	if err == nil {
-		switch existing.Status {
-		case "pending", "processing":
-			return false
-		default:
-			if err := h.queries.RetryTask(ctx, existing.ID); err != nil {
-				h.logger.Error(nil, "retry config task %d: %v", existing.ID, err)
-				return false
-			}
-			return true
-		}
-	} else if !errors.Is(err, sql.ErrNoRows) {
+		return existing.Status == "pending" || existing.Status == "processing"
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
 		h.logger.Error(nil, "lookup config task for dedup key %s: %v", dedupKey, err)
 	}
-
-	payload, _ := json.Marshal(payloadFields)
-	if _, err := h.dispatcher.Enqueue(ctx, configtask.TaskTypeConfig, batchId, payload, ""); err != nil {
-		h.logger.Error(nil, "enqueue config task %s: %v", dedupKey, err)
-		return false
-	}
-	return true
+	return false
 }
 
 func dbParamsFromBody(body map[string]any, current config.DatabaseConfig) (config.DatabaseConfig, error) {
@@ -494,6 +505,9 @@ func (h *ConfigHandler) enqueueDBMigration(ctx context.Context, w http.ResponseW
 
 	if _, err := h.dispatcher.Enqueue(ctx, configtask.TaskTypeConfig, batchID, payloadJSON, ""); err != nil {
 		h.logger.Error(nil, "enqueue migration task: %v", err)
+		if delErr := h.queries.DeleteBatch(ctx, batchID); delErr != nil {
+			h.logger.Error(nil, "delete empty config batch %s: %v", batchID, delErr)
+		}
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to enqueue database migration"})
 		return false
 	}
@@ -523,6 +537,9 @@ func (h *ConfigHandler) enqueueStorageMigration(ctx context.Context, w http.Resp
 
 	if _, err := h.dispatcher.Enqueue(ctx, configtask.TaskTypeConfig, batchID, payloadJSON, ""); err != nil {
 		h.logger.Error(nil, "enqueue storage migration task: %v", err)
+		if delErr := h.queries.DeleteBatch(ctx, batchID); delErr != nil {
+			h.logger.Error(nil, "delete empty config batch %s: %v", batchID, delErr)
+		}
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to enqueue storage migration"})
 		return false
 	}

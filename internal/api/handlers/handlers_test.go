@@ -2346,3 +2346,204 @@ func TestPutConfig(t *testing.T) {
 		testutil.AssertEqual(t, w.Code, http.StatusConflict, "status")
 	})
 }
+
+// TestEnqueueConfigTasks guards the central zombie-batch fix: saving a config
+// must not create a zero-task `config` batch (which would block the polling
+// gate forever), and a previously-completed/failed config task for the same
+// dedup key must yield a fresh pending task under a new batch — never a retry
+// of the old task (the old behavior reset the old batch's task and stranded
+// the new batch with nothing to do).
+func TestEnqueueConfigTasks(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	ctx := context.Background()
+
+	buildHandler := func(t *testing.T, satisfied bool) (*ConfigHandler, string) {
+		t.Helper()
+		configDir := t.TempDir()
+		storageDir := filepath.Join(configDir, "storage")
+		inboxDir := filepath.Join(configDir, "inbox")
+		tessDir := filepath.Join(configDir, "tessdata")
+		hugotDir := filepath.Join(configDir, "tagmatcher", "hugot", "models", "bge-m3")
+		for _, d := range []string{storageDir, inboxDir} {
+			if err := os.MkdirAll(d, 0755); err != nil {
+				t.Fatalf("create dir: %v", err)
+			}
+		}
+		body := map[string]any{
+			"database.host":           "localhost",
+			"database.port":           5432,
+			"database.user":           "edub",
+			"database.password":       "edub",
+			"database.database":       "edub",
+			"database.sslmode":        "disable",
+			"storage.storage_dir":     storageDir,
+			"storage.consumption_dir": inboxDir,
+			// Place tessdata + hugot under the config dir so Missing* checks agree
+			// with what we create on disk below.
+			"consumer.ocr.engine":    "gosseract",
+			"consumer.ocr.languages": []string{"eng"},
+			"consumer.ocr.data_dir":  tessDir,
+		}
+		if satisfied {
+			if err := os.MkdirAll(tessDir, 0755); err != nil {
+				t.Fatalf("create tessdata dir: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(tessDir, "eng.traineddata"), nil, 0644); err != nil {
+				t.Fatalf("create tessdata file: %v", err)
+			}
+			if err := os.MkdirAll(hugotDir, 0755); err != nil {
+				t.Fatalf("create hugot dir: %v", err)
+			}
+		}
+		if err := config.SaveMap(configDir, body); err != nil {
+			t.Fatalf("seed config: %v", err)
+		}
+		cfg, err := config.Load(configDir)
+		if err != nil {
+			t.Fatalf("load config: %v", err)
+		}
+		var setCfg atomic.Value
+		setCfg.Store(cfg)
+		return NewConfigHandler(
+			func() *config.Config { return setCfg.Load().(*config.Config) },
+			func(c *config.Config) { setCfg.Store(c) },
+			env.client.Queries,
+			env.logger,
+			env.dispatcher,
+			env.services,
+		), configDir
+	}
+
+	countBatches := func(t *testing.T) (int64, []string) {
+		t.Helper()
+		rows, err := env.client.DB().QueryContext(ctx,
+			`SELECT id FROM batch WHERE source = 'config'`)
+		if err != nil {
+			t.Fatalf("list config batches: %v", err)
+		}
+		defer rows.Close()
+		var ids []string
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				t.Fatalf("scan batch id: %v", err)
+			}
+			ids = append(ids, id)
+		}
+		return int64(len(ids)), ids
+	}
+
+	t.Run("nothing missing creates no config batch", func(t *testing.T) {
+		fullResetDB(t, env.client.DB())
+		// Tessdata file + hugot model dir both present: MissingTessdataLanguages
+		// and MissingHugotModel both return nothing-to-do.
+		h, _ := buildHandler(t, true)
+
+		body, _ := json.Marshal(map[string]any{
+			"app.log_level": "info",
+		})
+		w := rec()
+		h.PutConfig(w, req(t, "PUT", "/api/v1/config", body))
+
+		if w.Code < 200 || w.Code >= 300 {
+			t.Fatalf("status = %d, want 2xx", w.Code)
+		}
+		n, ids := countBatches(t)
+		if n != 0 {
+			t.Errorf("saved config created %d config batch(es) with no work to do: %v", n, ids)
+		}
+	})
+
+	t.Run("completed task gets a fresh row under a new batch, not a retry", func(t *testing.T) {
+		fullResetDB(t, env.client.DB())
+		// No tessdata file: MissingTessdataLanguages returns ["eng"], so the
+		// path under test is actually exercised.
+		h, _ := buildHandler(t, false)
+
+		// Seed a completed config task for config:tessdata:eng under an old batch.
+		oldBatchID := "00000000-0000-0000-0000-000000000001"
+		if err := env.client.Queries.CreateBatch(ctx, database.CreateBatchParams{
+			ID:     oldBatchID,
+			Source: "config",
+			Status: "completed",
+		}); err != nil {
+			t.Fatalf("seed old batch: %v", err)
+		}
+		oldPayload, _ := json.Marshal(map[string]string{
+			"config_dir": "irrelevant",
+			"op":         "tessdata",
+			"lang":       "eng",
+		})
+		raw := json.RawMessage(oldPayload)
+		if _, err := env.client.Queries.CreateTask(ctx, database.CreateTaskParams{
+			TaskID:   "seeded-completed-task-id",
+			TaskType: configtask.TaskTypeConfig,
+			Status:   "completed",
+			BatchID:  sql.NullString{String: oldBatchID, Valid: true},
+			Payload:  &raw,
+			DedupKey: sql.NullString{String: "config:tessdata:eng", Valid: true},
+		}); err != nil {
+			t.Fatalf("seed completed task: %v", err)
+		}
+
+		// Save the config (non-migration change) → enqueueConfigTasks runs.
+		body, _ := json.Marshal(map[string]any{
+			"app.log_level": "info",
+		})
+		w := rec()
+		h.PutConfig(w, req(t, "PUT", "/api/v1/config", body))
+
+		if w.Code != http.StatusCreated {
+			t.Fatalf("status = %d, want 201; body=%s", w.Code, w.Body.String())
+		}
+
+		// A new pending task must exist for the same dedup key, with a different
+		// task_id and a different (newly created) batch_id than the seeded one.
+		var newTaskID string
+		var newBatchID string
+		var status string
+		var attempts int32
+		err := env.client.DB().QueryRowContext(ctx,
+			`SELECT task_id, batch_id, status, attempts FROM task
+			 WHERE task_type = 'config' AND dedup_key = 'config:tessdata:eng'
+			 ORDER BY created_at DESC LIMIT 1`,
+		).Scan(&newTaskID, &newBatchID, &status, &attempts)
+		if err != nil {
+			t.Fatalf("query new task: %v", err)
+		}
+		if newTaskID == "seeded-completed-task-id" {
+			t.Errorf("expected a fresh task_id for the retry, got the seeded completed one — RetryTask behavior leaked through")
+		}
+		if status != "pending" {
+			t.Errorf("new task status = %q, want pending", status)
+		}
+		if attempts != 0 {
+			t.Errorf("new task attempts = %d, want 0 (a fresh row, not a retry)", attempts)
+		}
+		if newBatchID == oldBatchID {
+			t.Errorf("new task was placed in the old batch %s; it must belong to a new batch created by enqueueConfigTasks", newBatchID)
+		}
+
+		// The new batch must be source='config' and queued/active (handler will finalize it).
+		var newBatchStatus string
+		if err := env.client.DB().QueryRowContext(ctx,
+			`SELECT status FROM batch WHERE id = $1`, newBatchID,
+		).Scan(&newBatchStatus); err != nil {
+			t.Fatalf("read new batch: %v", err)
+		}
+		if newBatchStatus == "failed" {
+			t.Errorf("new batch was marked failed; expected queued (handler will run and finalize it)")
+		}
+
+		// The seeded completed task must be untouched.
+		var oldStatus string
+		if err := env.client.DB().QueryRowContext(ctx,
+			`SELECT status FROM task WHERE task_id = 'seeded-completed-task-id'`,
+		).Scan(&oldStatus); err != nil {
+			t.Fatalf("read old task: %v", err)
+		}
+		if oldStatus != "completed" {
+			t.Errorf("old completed task was mutated: status = %q, want completed", oldStatus)
+		}
+	})
+}

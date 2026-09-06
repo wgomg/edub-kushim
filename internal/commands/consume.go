@@ -273,7 +273,7 @@ func consumeHandler(c *Container, args []string) error {
 
 	batchSvc := service.NewBatch(client, c.cfg.Load().Consumer.Reclaim.MaxRetries)
 
-	countBefore, err := batchSvc.CountQueuedBatches(ctx)
+	countBefore, err := batchSvc.CountQueuedConsumeBatches(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to check queue: %w", err)
 	}

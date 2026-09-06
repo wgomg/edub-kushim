@@ -348,10 +348,10 @@ func (s *Batch) ListPausedBatches(ctx context.Context) ([]string, error) {
 	return ids, nil
 }
 
-func (s *Batch) CountQueuedBatches(ctx context.Context) (int64, error) {
-	count, err := s.queries.CountQueuedBatches(ctx)
+func (s *Batch) CountQueuedConsumeBatches(ctx context.Context) (int64, error) {
+	count, err := s.queries.CountQueuedConsumeBatches(ctx)
 	if err != nil {
-		return 0, errs.FromDB(err, "count queued batches")
+		return 0, errs.FromDB(err, "count queued consume batches")
 	}
 	return count, nil
 }

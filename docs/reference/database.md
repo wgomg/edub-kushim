@@ -153,7 +153,7 @@ The SQL dump/restore machinery lives in `internal/database/` (shared by `kushim 
 
 ### Batch
 
-`CreateBatch`, `GetBatch`, `SetBatchProcessing`, `SetBatchCompleted`, `SetBatchFailed`, `SetBatchCancelled`, `SetBatchPaused`, `CountQueuedBatches`, `CountPausedBatches`, `GetNextQueuedBatch`, `ListPausedBatches`, `CountLiveBatches`, `ListStaleBatchOwners`, `CleanupCompletedBatches`, `QuarantineProcessingTasksByBatch`, `ResetProcessingTasksByBatch`, `GetQuarantinedConsumeTaskPayloads`, `TryInsertBatchOwner`, `UpdateBatchOwnerIfStale`, `AcquireBatchOwnerForce`, `HeartbeatBatchOwner`, `ReleaseBatchOwner`, `DeleteBatchOwnerByBatchID`, `ListBatchOverviews`
+`CreateBatch`, `GetBatch`, `SetBatchProcessing`, `SetBatchCompleted`, `SetBatchFailed`, `SetBatchCancelled`, `SetBatchPaused`, `CountQueuedConsumeBatches` (queued batches that occupy a consume slot; excludes `config`/`backup`/`mirror`), `CountPausedBatches`, `GetNextQueuedBatch`, `ListPausedBatches`, `CountLiveBatches`, `ListStaleBatchOwners`, `CleanupCompletedBatches`, `QuarantineProcessingTasksByBatch`, `ResetProcessingTasksByBatch`, `GetQuarantinedConsumeTaskPayloads`, `TryInsertBatchOwner`, `UpdateBatchOwnerIfStale`, `AcquireBatchOwnerForce`, `HeartbeatBatchOwner`, `ReleaseBatchOwner`, `DeleteBatchOwnerByBatchID`, `DeleteBatch`, `ListEmptyQueuedBatches` (queued batches with zero tasks older than N minutes), `ListBatchOverviews`
 
 ### User
 

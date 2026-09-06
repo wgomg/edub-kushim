@@ -232,6 +232,10 @@ func queueHandler(c *Container, args []string) error {
 				}
 			}
 
+			if err := sweepEmptyQueuedBatches(ctx, client, c.logger); err != nil {
+				c.logger.Error(nil, "empty queued batch sweep: %v", err)
+			}
+
 			if cfg.Consumer.Reclaim.Enabled {
 				if err := reclaimStaleBatches(ctx, cfg, client, batchSvc, c.logger); err != nil {
 					c.logger.Error(nil, "stale reclamation: %v", err)
@@ -252,6 +256,22 @@ func queueHandler(c *Container, args []string) error {
 			return nil
 		}
 	}
+}
+
+// Zero-task queued batches are never finalized and would block the polling gate.
+func sweepEmptyQueuedBatches(ctx context.Context, client *database.Client, logger *utils.Logger) error {
+	ids, err := client.Queries.ListEmptyQueuedBatches(ctx, 10)
+	if err != nil {
+		return fmt.Errorf("list empty queued batches: %w", err)
+	}
+	for _, id := range ids {
+		if err := client.Queries.SetBatchFailed(ctx, id); err != nil {
+			logger.Error(nil, "fail empty queued batch %s: %v", id, err)
+			continue
+		}
+		logger.Info(nil, "reaped empty queued batch %s (no tasks after 10 minutes)", id)
+	}
+	return nil
 }
 
 func reclaimStaleBatches(ctx context.Context, cfg *config.Config, client *database.Client, batchSvc *service.Batch, logger *utils.Logger) error {
@@ -407,7 +427,9 @@ func runPollingLoop(ctx context.Context, c *Container, getClient func() *databas
 }
 
 func pollingTick(ctx context.Context, c *Container, client *database.Client, batchSvc *service.Batch, maxConcurrent int, missingTools []config.ExternalTool) {
-	queuedCount, err := batchSvc.CountQueuedBatches(ctx)
+	// Only count batches that occupy a consume slot; config/backup/mirror
+	// batches own their lifecycle in their handlers (see GetNextQueuedBatch).
+	queuedCount, err := batchSvc.CountQueuedConsumeBatches(ctx)
 	if err != nil {
 		c.logger.Error(nil, "polling: count queued batches: %v", err)
 		return
@@ -557,25 +579,38 @@ func maybeScheduleMirror(ctx context.Context, c *Container, client *database.Cli
 
 func maybeScheduleThumbnailBackfill(ctx context.Context, c *Container, client *database.Client, cfg *config.Config, lastRun *time.Time) error {
 	if !cfg.Consumer.Thumbnail.Enabled || cfg.Consumer.Thumbnail.BackfillInterval <= 0 {
+		c.logger.Debug(nil, "thumbnail backfill: skipped — disabled (enabled=%v, backfill_interval=%v, backfill_time=%q)",
+			cfg.Consumer.Thumbnail.Enabled, cfg.Consumer.Thumbnail.BackfillInterval, cfg.Consumer.Thumbnail.BackfillTime)
 		return nil
 	}
 
+	seededFromDB := false
 	if lastRun.IsZero() {
 		lastBatch, err := client.Queries.GetLastThumbnailBackfillBatchCreatedAt(ctx)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			c.logger.Debug(nil, "thumbnail backfill: last batch lookup failed: %v", err)
 			return fmt.Errorf("get last thumbnail backfill batch: %w", err)
 		}
 		if err == nil {
 			*lastRun = lastBatch.Time
+			seededFromDB = true
 		}
 	}
 	// Anchor a fresh schedule to the preferred time so the first run honors off-hours.
 	if lastRun.IsZero() {
 		*lastRun = previousTimeOfDay(time.Now(), cfg.Consumer.Thumbnail.BackfillTime)
+		c.logger.Debug(nil, "thumbnail backfill: seeded from preferred time anchor (backfill_time=%q, last_run=%s)",
+			cfg.Consumer.Thumbnail.BackfillTime, lastRun.Format(time.RFC3339))
+	} else if seededFromDB {
+		c.logger.Debug(nil, "thumbnail backfill: seeded from last batch (last_run=%s)", lastRun.Format(time.RFC3339))
 	}
 
 	next := backup.NextBackupTime(*lastRun, cfg.Consumer.Thumbnail.BackfillInterval, cfg.Consumer.Thumbnail.BackfillTime)
-	if time.Now().Before(next) {
+	now := time.Now()
+	due := !now.Before(next)
+	c.logger.Debug(nil, "thumbnail backfill: due check (last_run=%s, next=%s, now=%s, due=%v)",
+		lastRun.Format(time.RFC3339), next.Format(time.RFC3339), now.Format(time.RFC3339), due)
+	if !due {
 		return nil
 	}
 
@@ -584,6 +619,7 @@ func maybeScheduleThumbnailBackfill(ctx context.Context, c *Container, client *d
 		return fmt.Errorf("check active thumbnail backfill batches: %w", err)
 	}
 	if active > 0 {
+		c.logger.Debug(nil, "thumbnail backfill: skipped — %d active batch(es)", active)
 		return nil
 	}
 
@@ -592,7 +628,7 @@ func maybeScheduleThumbnailBackfill(ctx context.Context, c *Container, client *d
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	if err := cmd.Start(); err != nil {
-		c.logger.Error(nil, "fork kushim thumbnails --all: %v", err)
+		c.logger.Error(nil, "fork kushim thumbnails --all: %v (last_run=%s, next=%s)", err, lastRun.Format(time.RFC3339), next.Format(time.RFC3339))
 		return nil
 	}
 	go func() { cmd.Wait() }()
@@ -600,6 +636,7 @@ func maybeScheduleThumbnailBackfill(ctx context.Context, c *Container, client *d
 	// Advance only after a successful fork so a failed start retries next tick.
 	*lastRun = time.Now()
 	c.logger.Info(nil, "forked kushim thumbnails --all (PID %d)", cmd.Process.Pid)
+	c.logger.Debug(nil, "thumbnail backfill: forked (pid=%d, last_run=%s)", cmd.Process.Pid, lastRun.Format(time.RFC3339))
 	return nil
 }
 
