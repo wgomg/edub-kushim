@@ -99,7 +99,7 @@ silently mean "openai-compatible").
 
 ### The system message
 
-`shared.go:31`:
+`shared.go:30`:
 
 ```go
 const SystemMessage = "You are a helpful assistant specialized in document analysis and metadata extraction"
@@ -107,12 +107,12 @@ const SystemMessage = "You are a helpful assistant specialized in document analy
 
 ### The default prompt template
 
-`shared.go:123-131` — a Go `text/template` (not a string concat), the heart
+`shared.go:134-142` — a Go `text/template` (not a string concat), the heart
 of the extraction contract:
 
 ```
 Analyze the excerpts of a document provided below and extract the following data:
-- Document title: In excerpts language, truncate to 127 characters if longer
+- Document title: The title as written in the document, in excerpts language, copied verbatim — never invent or append wording of your own; colons and subtitles are legitimate only when the original title itself has one. If no title line appears in the excerpts, use the first substantive line of the text as the title, still copied verbatim. Truncate to 127 characters if longer
 {{.DocTypePrompt}}
 - Tags: At most {{.RequestedTags}} thematic tags describing the document's topics and domains. English only. ...
 {{.TagsPrompt}}
@@ -129,25 +129,31 @@ Design points:
 - **The output contract is spelled out in the prompt**: "Return ONLY a json
   string ... with keys: title, type, tags, people, language" — the adapters
   parse exactly that shape (§6).
+- **Titles are copied, never composed**: the model returns the document's
+  own title verbatim — no invented subtitles, summaries, or appended
+  clauses; colons/subtitles are legitimate only when the original title has
+  one. With no title line in the excerpts, it falls back to the first
+  substantive line of the text, also verbatim. The 127-char cap in the
+  prompt is guidance; `enricher.go` truncates server-side regardless.
 - **The constraint lists are injected** as template sub-blocks:
   `documentTypePrompt` (`"- Document type: choose one of the following:\n  -
-  %s (%s)\n"` per type, `shared.go:183-190`), `peopleTypePrompt`
-  (`"  Available types:\n    - %s (%s)\n"`, `shared.go:174-181`), and
+  %s (%s)\n"` per type, `shared.go:194-201`), `peopleTypePrompt`
+  (`"  Available types:\n    - %s (%s)\n"`, `shared.go:185-192`), and
   `tagsPrompt` (`" Prefer tags from the following list if thematically
-  related: '%s'"`, `shared.go:192-197` — the semantic-matcher suggestions,
+  related: '%s'"`, `shared.go:203-208` — the semantic-matcher suggestions,
   comma-joined).
 - **Tag count is a buffer**: `requestedTagCount = 8` is requested but only
-  `maxTags = 5` survive post-processing (`shared.go:24-29`) — ask for more
+  `maxTags = 5` survive post-processing (`shared.go:23-28`) — ask for more
   than you keep, so filtering (§10) doesn't starve the result.
 - **`customTemplate` overrides** when set in config
   (`ContentAnalyzer.PromptTemplate`); **any parse/execute error falls back
-  silently to the default** (`shared.go:151-154, 166-169`) — a broken custom
+  silently to the default** (`shared.go:162-165, 176-180`) — a broken custom
   template degrades, it doesn't crash.
 - **Head/tail and metadata** feed the second call (§10):
-  `BuildDocTypePrompt` (`shared.go:265-281`) asks to re-evaluate the type
+  `BuildDocTypePrompt` (`shared.go:262-278`) asks to re-evaluate the type
   from "the opening and closing sections of the full document", with context
   like `"600 total words, 12 pages, application/pdf"` (`DocMetadata.Format`,
-  `shared.go:242-263`).
+  `shared.go:245-260`).
 
 ---
 
@@ -296,7 +302,7 @@ known list, language checked. The LLM's word is never persisted raw.
 
 ## 7. The error taxonomy
 
-Three typed errors in `shared.go:33-101`, each with a distinct recovery path
+Three typed errors in `shared.go:44-71`, each with a distinct recovery path
 in the enricher:
 
 ```go
@@ -317,10 +323,10 @@ type InsufficientCreditsError struct {   // 402/429: billing problem
 ```
 
 - **`ContentTooLargeError`** — thrown *before* the HTTP call by
-  `checkContentTooLarge` (`shared.go:79-88`): `EstimateTokens(prompt) >
+  `checkContentTooLarge` (`shared.go:90-99`): `EstimateTokens(prompt) >
   caps.MaxInputTokens`. Skipped when the catalog lacks a max-input value.
 - **`TokenLimitError`** — parsed from the provider's error body with a regex
-  (`shared.go:90-101`):
+  (`shared.go:101-112`):
 
 ```go
 var tokenLimitRE = regexp.MustCompile(
@@ -328,7 +334,7 @@ var tokenLimitRE = regexp.MustCompile(
 )
 ```
 
-- **`InsufficientCreditsError`** (`shared.go:62-73`) — **HTTP 402 or 429** is
+- **`InsufficientCreditsError`** (`shared.go:63-71`) — **HTTP 402 or 429** is
   a credit error for any provider; plus a qwen special case: HTTP 400 with
   `"arrearage"` in the body.
 
@@ -398,20 +404,20 @@ Note: the catalog has **no cost fields** — `entryToCapability`
 
 ## 10. The enricher pipeline
 
-`Enricher.Enrich` (`internal/enrichment/enricher.go:51-396`) is the
+`Enricher.Enrich` (`internal/enrichment/enricher.go:51-404`) is the
 orchestrator. Step by step:
 
-1. **Reduce for the LLM** (`enricher.go:62-73`): `ReduceContent(text, 150,
+1. **Reduce for the LLM** (`enricher.go:65-77`): `ReduceContent(text, 150,
    targetWordCount)` — chunk size 150, target from config (2000) or a
    fraction of the document for negative config values (`targetWordCount`,
-   `enricher.go:398-404`, floor 2000). On reduction error, **falls back to
+   `enricher.go:406-412`, floor 2000). On reduction error, **falls back to
    raw text** — a broken reducer never blocks analysis.
-2. **Reduce for the tag matcher** (`enricher.go:75-84`): same, target 4000.
-3. **Load context** (`enricher.go:86-97`): document types, people types, all
+2. **Reduce for the tag matcher** (`enricher.go:79-88`): same, target 4000.
+3. **Load context** (`enricher.go:90-101`): document types, people types, all
    tags.
-4. **Tag matching** (`enricher.go:106-118`): `runner.MatchTags`; on error or
+4. **Tag matching** (`enricher.go:110-123`): `runner.MatchTags`; on error or
    zero matches, falls back to the full tag-name list as suggestions.
-5. **Analyze with a 2-attempt loop** (`enricher.go:120-168`):
+5. **Analyze with a 2-attempt loop** (`enricher.go:125-174`):
 
 ```go
 for i := range 2 {
@@ -434,45 +440,45 @@ for i := range 2 {
    - Too-large → **shrink the reduced text by the token ratio × 0.9 and
       retry once**; a second failure (or below `minTargetWords` = 100) errors
       with `"document too large for model %s/%s: %d tokens exceeds budget
-      (max_input_tokens=%d)"` (`enricher.go:156-162`).
+      (max_input_tokens=%d)"` (`enricher.go:163-167`).
    - Credit error → the typed `task.Error` with `PauseBatch` — the task
       runner pauses the whole batch (§12 of the task-system guide). With a
       fallback configured, the batch pauses only when **both** primary and
       fallback failed with a credit error (the runner retries through the
       fallback first, §7); the reported provider in the error is the actual
       failing one (`credErr.Provider`, which may be the fallback).
-6. **Empty-result retry** (`enricher.go:170-179`): if the analysis came back
-   with every field empty (`isEmptyAnalysis`, `enricher.go:435-437`), one
+6. **Empty-result retry** (`enricher.go:176-185`): if the analysis came back
+   with every field empty (`isEmptyAnalysis`, `enricher.go:443-445`), one
    more `AnalyzeContent`; still empty → error.
-7. **Doc-type refinement** (`enricher.go:181-203`): only when enabled and the
+7. **Doc-type refinement** (`enricher.go:187-209`): only when enabled and the
    text was actually reduced; head/tail sampled via
    `ExtractHeadTailWords(text, HeadWords, TailWords)` (600/400) with
    `DocMetadata`; `AnalyzeDocType` failure keeps the first-pass type (logged,
    not fatal).
-8. **Normalize tags** (`enricher.go:205`): `NormalizeTags` — the
-   normalization pipeline from `shared.go:385-397`.
-9. **Canonicalize people** (`enricher.go:207-213`): Latin names as-is;
+8. **Normalize tags** (`enricher.go:211`): `NormalizeTags` — the
+   normalization pipeline from `shared.go:382-394`.
+9. **Canonicalize people** (`enricher.go:213-219`): Latin names as-is;
    non-Latin names use `NameRomanized` or an **anyascii transliteration**
-   (`canonicalPersonName`, `enricher.go:418-433`); `NormalizedName =
+   (`canonicalPersonName`, `enricher.go:426-441`); `NormalizedName =
    utils.NormalizeForDB(canonical)`.
-10. **Filter tags** (`enricher.go:215-228`): `FilterTags` (`shared.go:283-383`)
+10. **Filter tags** (`enricher.go:234`): `FilterTags` (`shared.go:280-380`)
     drops tags that are >3 words, overlap with LLM people names, are
     multi-token subsets of known normalized names, overlap doc-type names, or
     are contained in the title; caps at 5.
-11. **Consolidate** (`enricher.go:230-237`): `service.Tag.Consolidate` maps
+11. **Consolidate** (`enricher.go:236-244`): `service.Tag.Consolidate` maps
     LLM tags onto canonical existing tags via the semantic matcher
     (`semantic-matching.md` §7).
-12. **Persist metadata** (`enricher.go:247-265`): title truncated to 127
+12. **Persist metadata** (`enricher.go:254-273`): title truncated to 127
     (`utils.Truncate`), doc type validated against the DB list (fallback
     `"undetermined"`), `UpdateDocumentMetadata`.
-13. **OCR language auto-detect** (`enricher.go:267`,
-    `ensureOCRLanguage` `enricher.go:439-491`): the detected 3-letter ISO
+13. **OCR language auto-detect** (`enricher.go:275`,
+    `ensureOCRLanguage` `enricher.go:447-500`): the detected 3-letter ISO
     code is added to `consumer.ocr.languages` and persisted via
     `config.SaveMap` — for the gosseract engine the tessdata download runs
     in a goroutine and config persists only on success.
-14. **Tags to DB** (`enricher.go:269-297`): batch `Tag.Create` (tolerating
+14. **Tags to DB** (`enricher.go:277-305`): batch `Tag.Create` (tolerating
     conflicts), then `ClearDocumentTags` + `AddDocumentTag` per tag.
-15. **People to DB** (`enricher.go:299-389`): dedupe by normalized name,
+15. **People to DB** (`enricher.go:307-397`): dedupe by normalized name,
     `CreatePeople` with a race fallback (`sql.ErrNoRows` →
     `GetPeopleByNormalizedName` + `UpdatePeopleNative`), unknown LLM types →
     `"unknown"`, then `ClearDocumentPeople` + `AddDocumentPeople`.
