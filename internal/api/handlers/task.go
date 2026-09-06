@@ -186,6 +186,7 @@ func batchSummaryToResponse(s *service.BatchSummary) types.BatchSummaryResponse 
 	return types.BatchSummaryResponse{
 		BatchID: s.BatchID,
 		Status:  s.Status,
+		Source:  s.Source,
 		BatchCounts: types.BatchCounts{
 			Total:      s.Waiting + s.Pending + s.Processing + s.Completed + s.Failed + s.Cancelled + s.Discarded,
 			Waiting:    s.Waiting,
@@ -636,6 +637,19 @@ func taskToResponse(t database.Task) types.TaskResponse {
 		completed = &v
 	}
 
+	var progress *types.TaskProgressResponse
+	if t.Progress != nil {
+		var p task.ProgressSnapshot
+		if json.Unmarshal(*t.Progress, &p) == nil && p.Step != "" {
+			progress = &types.TaskProgressResponse{
+				Step:      p.Step,
+				Detail:    p.Detail,
+				Pct:       p.Pct,
+				UpdatedAt: p.UpdatedAt,
+			}
+		}
+	}
+
 	fileName := ""
 	payloadDocID := ""
 	if t.Payload != nil {
@@ -686,6 +700,7 @@ func taskToResponse(t database.Task) types.TaskResponse {
 		DocumentID:   docID,
 		Error:        errStr,
 		Label:        label,
+		Progress:     progress,
 		CreatedAt:    t.CreatedAt.Time.Format(time.RFC3339),
 		StartedAt:    started,
 		CompletedAt:  completed,

@@ -36,7 +36,7 @@ func newTestConsumeHandler(t *testing.T) (*handlers.ConsumeTaskHandler, *task.St
 	testutil.AssertNoError(t, err, "create consumer")
 
 	store := task.NewStore(client.Queries)
-	return handlers.NewConsumeTaskHandler(consumer, store, logger), store
+	return handlers.NewConsumeTaskHandler(consumer, store, client.Queries, logger), store
 }
 
 // insertConsumeEnrichPair creates a waiting enrich linked to a pending consume

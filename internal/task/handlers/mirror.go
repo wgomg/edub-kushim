@@ -34,7 +34,12 @@ func (h *MirrorTaskHandler) DedupKey(payload json.RawMessage) string {
 	return fmt.Sprintf("mirror:%s", time.Now().UTC().Format("2006-01-02"))
 }
 
-func (h *MirrorTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMessage, error) {
+func (h *MirrorTaskHandler) Handle(ctx context.Context, t task.Task) (out json.RawMessage, err error) {
+	progress := task.NewProgressTracker(h.queries, t.TaskID)
+	defer func() {
+		task.FinalizeBatchStatus(ctx, h.queries, t.BatchID, err != nil)
+	}()
+
 	rowsAffected, err := h.queries.AcquireBackupLock(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("acquire backup lock: %w", err)
@@ -42,6 +47,7 @@ func (h *MirrorTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMe
 	if rowsAffected == 0 {
 		return nil, fmt.Errorf("backup lock held — skipping")
 	}
+	task.MarkBatchProcessing(ctx, h.queries, t.BatchID)
 	defer func() {
 		if _, relErr := h.queries.ReleaseBackupLock(context.Background()); relErr != nil {
 			h.logger.Error(nil, "release backup lock: %v", relErr)
@@ -70,7 +76,10 @@ func (h *MirrorTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMe
 		return nil, err
 	}
 
-	result, timestamp, err := mirror.RunLocked(ctx, h.queries, h.logger, cfg.Storage.StorageDir, dest)
+	result, timestamp, err := mirror.RunLockedWithProgress(ctx, h.queries, h.logger, cfg.Storage.StorageDir, dest,
+		func(count int64) { progress.Set("drain-wait", fmt.Sprintf("%d in-flight", count), 0) },
+		func() { progress.Set("sync", dest, 0) },
+	)
 	if err != nil {
 		return nil, err
 	}

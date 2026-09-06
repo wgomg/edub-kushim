@@ -61,11 +61,12 @@ type MigrateStoragePayload struct {
 }
 
 type ConfigTaskHandler struct {
-	logger *utils.Logger
+	queries *database.Queries
+	logger  *utils.Logger
 }
 
-func NewConfigTaskHandler(logger *utils.Logger) *ConfigTaskHandler {
-	return &ConfigTaskHandler{logger: logger}
+func NewConfigTaskHandler(queries *database.Queries, logger *utils.Logger) *ConfigTaskHandler {
+	return &ConfigTaskHandler{queries: queries, logger: logger}
 }
 
 func (h *ConfigTaskHandler) DedupKey(payload json.RawMessage) string {
@@ -91,7 +92,13 @@ func (h *ConfigTaskHandler) DedupKey(payload json.RawMessage) string {
 	return ""
 }
 
-func (h *ConfigTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMessage, error) {
+func (h *ConfigTaskHandler) Handle(ctx context.Context, t task.Task) (result json.RawMessage, err error) {
+	progress := task.NewProgressTracker(h.queries, t.TaskID)
+	task.MarkBatchProcessing(ctx, h.queries, t.BatchID)
+	defer func() {
+		task.FinalizeBatchStatus(ctx, h.queries, t.BatchID, err != nil)
+	}()
+
 	var p struct {
 		ConfigDir string `json:"config_dir"`
 		Op        string `json:"op"`
@@ -108,44 +115,50 @@ func (h *ConfigTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMe
 
 	switch p.Op {
 	case opTessdata:
+		progress.Set("download", p.Lang, 0)
 		if err := config.DownloadTessdataLanguage(ctx, cfg, p.Lang); err != nil {
 			return nil, err
 		}
 		return json.Marshal(map[string]string{"lang": p.Lang})
 
 	case opHugot:
+		progress.Set("download", "hugot model", 0)
 		if err := config.DownloadHugotModel(ctx, cfg, h.logger); err != nil {
 			return nil, err
 		}
 		return json.Marshal(map[string]string{"model": "hugot"})
 
 	case opMigrateDB:
-		return h.handleMigrateDB(ctx, t)
+		return h.handleMigrateDB(ctx, t, progress)
 
 	case opMigrateStorage:
-		return h.handleMigrateStorage(ctx, t)
+		return h.handleMigrateStorage(ctx, t, progress)
 
 	default:
 		return nil, fmt.Errorf("unsupported config task operation: %q", p.Op)
 	}
 }
 
-func (h *ConfigTaskHandler) handleMigrateDB(ctx context.Context, t task.Task) (json.RawMessage, error) {
+func (h *ConfigTaskHandler) handleMigrateDB(ctx context.Context, t task.Task, progress *task.ProgressTracker) (json.RawMessage, error) {
 	var p MigrateDBPayload
 	if err := json.Unmarshal(t.Payload, &p); err != nil {
 		return nil, fmt.Errorf("unmarshal migrate-db payload: %w", err)
 	}
-	if err := MigrateDatabase(ctx, h.logger, p); err != nil {
+	if err := MigrateDatabase(ctx, h.logger, p, func(step, detail string, pct float64) {
+		progress.Set(step, detail, pct)
+	}); err != nil {
 		return nil, err
 	}
 	return json.Marshal(map[string]string{"status": "migrated"})
 }
 
-func MigrateDatabase(ctx context.Context, logger *utils.Logger, p MigrateDBPayload) error {
+func MigrateDatabase(ctx context.Context, logger *utils.Logger, p MigrateDBPayload, progress ...task.ProgressFunc) error {
 	cfg, err := config.Load(p.ConfigDir)
 	if err != nil {
 		return fmt.Errorf("load config from %s: %w", p.ConfigDir, err)
 	}
+
+	report := task.Progress(progress)
 
 	if err := database.CheckRestoreTooling(cfg.Db.Runtime, cfg.Db.Container); err != nil {
 		return err
@@ -172,10 +185,13 @@ func MigrateDatabase(ctx context.Context, logger *utils.Logger, p MigrateDBPaylo
 		}
 	}()
 
-	if err := database.WaitForTaskDrain(ctx, oldClient.Queries, logger, "migrate-db"); err != nil {
+	if err := database.WaitForTaskDrain(ctx, oldClient.Queries, logger, "migrate-db", func(count int64) {
+		report("migrate-db", fmt.Sprintf("drain-wait: %d in-flight", count), 0)
+	}); err != nil {
 		return err
 	}
 
+	report("migrate-db", "dump", 0)
 	logger.Info(nil, "migrate-db: copying database to %s@%s:%s/%s", p.User, p.Host, p.Port, p.Database)
 
 	safetySnapshot(ctx, oldDB, cfg, logger)
@@ -215,6 +231,7 @@ func MigrateDatabase(ctx context.Context, logger *utils.Logger, p MigrateDBPaylo
 	}
 	defer newDB.Close()
 
+	report("migrate-db", "restore", 0)
 	if err := restoreData(ctx, cfg.Db, newDB, newDSN, tmpPath, logger); err != nil {
 		return err
 	}
@@ -238,12 +255,14 @@ func MigrateDatabase(ctx context.Context, logger *utils.Logger, p MigrateDBPaylo
 	return nil
 }
 
-func (h *ConfigTaskHandler) handleMigrateStorage(ctx context.Context, t task.Task) (json.RawMessage, error) {
+func (h *ConfigTaskHandler) handleMigrateStorage(ctx context.Context, t task.Task, progress *task.ProgressTracker) (json.RawMessage, error) {
 	var p MigrateStoragePayload
 	if err := json.Unmarshal(t.Payload, &p); err != nil {
 		return nil, fmt.Errorf("unmarshal migrate-storage payload: %w", err)
 	}
-	err := MigrateStorage(ctx, h.logger, p)
+	err := MigrateStorage(ctx, h.logger, p, func(step, detail string, pct float64) {
+		progress.Set(step, detail, pct)
+	})
 	switch {
 	case err == nil:
 		return json.Marshal(map[string]string{"status": "migrated"})
@@ -254,12 +273,14 @@ func (h *ConfigTaskHandler) handleMigrateStorage(ctx context.Context, t task.Tas
 	}
 }
 
-func MigrateStorage(ctx context.Context, logger *utils.Logger, p MigrateStoragePayload) error {
+func MigrateStorage(ctx context.Context, logger *utils.Logger, p MigrateStoragePayload, progress ...task.ProgressFunc) error {
 	storageChanged := DirChanged(p.OldStorageDir, p.NewStorageDir)
 	consumptionChanged := DirChanged(p.OldConsumptionDir, p.NewConsumptionDir)
 	if !storageChanged && !consumptionChanged {
 		return ErrNoOp
 	}
+
+	report := task.Progress(progress)
 
 	cfg, err := config.Load(p.ConfigDir)
 	if err != nil {
@@ -289,7 +310,9 @@ func MigrateStorage(ctx context.Context, logger *utils.Logger, p MigrateStorageP
 		}
 	}()
 
-	if err := database.WaitForTaskDrain(ctx, client.Queries, logger, "migrate-storage"); err != nil {
+	if err := database.WaitForTaskDrain(ctx, client.Queries, logger, "migrate-storage", func(count int64) {
+		report("migrate-storage", fmt.Sprintf("drain-wait: %d in-flight", count), 0)
+	}); err != nil {
 		return err
 	}
 
@@ -301,24 +324,28 @@ func MigrateStorage(ctx context.Context, logger *utils.Logger, p MigrateStorageP
 	// Rewrite pending consume task payloads before touching the files so
 	// queued work references the new inbox paths.
 	if consumptionChanged {
+		report("migrate-storage", "rewrite payloads", 0)
 		if err := database.RewriteTaskPayloadPaths(ctx, db, p.OldConsumptionDir, p.NewConsumptionDir); err != nil {
 			return err
 		}
 	}
 
 	if storageChanged {
+		report("migrate-storage", "move storage", 0)
 		if err := moveDirEntries(ctx, p.OldStorageDir, p.NewStorageDir, mode, true, logger); err != nil {
 			return err
 		}
 	}
 
 	if consumptionChanged {
+		report("migrate-storage", "move consumption", 0)
 		if err := moveDirEntries(ctx, p.OldConsumptionDir, p.NewConsumptionDir, mode, false, logger); err != nil {
 			return err
 		}
 	}
 
 	if storageChanged {
+		report("migrate-storage", "rewrite paths", 0)
 		if err := database.RewriteStoragePaths(ctx, db, p.OldStorageDir, p.NewStorageDir); err != nil {
 			return fmt.Errorf("rewrite storage paths: %w", err)
 		}

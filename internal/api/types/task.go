@@ -1,18 +1,26 @@
 package types
 
+type TaskProgressResponse struct {
+	Step      string  `json:"step"`
+	Detail    string  `json:"detail,omitempty"`
+	Pct       float64 `json:"pct,omitempty"`
+	UpdatedAt string  `json:"updated_at"`
+}
+
 type TaskResponse struct {
-	TaskID       string  `json:"task_id"`
-	BatchID      string  `json:"batch_id"`
-	TaskType     string  `json:"task_type"`
-	FileName     string  `json:"file_name"`
-	PayloadDocID string  `json:"payload_doc_id"`
-	Status       string  `json:"status"`
-	DocumentID   *int64  `json:"document_id"`
-	Error        *string `json:"error"`
-	Label        string  `json:"label"`
-	CreatedAt    string  `json:"created_at"`
-	StartedAt    *string `json:"started_at"`
-	CompletedAt  *string `json:"completed_at"`
+	TaskID       string                `json:"task_id"`
+	BatchID      string                `json:"batch_id"`
+	TaskType     string                `json:"task_type"`
+	FileName     string                `json:"file_name"`
+	PayloadDocID string                `json:"payload_doc_id"`
+	Status       string                `json:"status"`
+	DocumentID   *int64                `json:"document_id"`
+	Error        *string               `json:"error"`
+	Label        string                `json:"label"`
+	Progress     *TaskProgressResponse `json:"progress,omitempty"`
+	CreatedAt    string                `json:"created_at"`
+	StartedAt    *string               `json:"started_at"`
+	CompletedAt  *string               `json:"completed_at"`
 }
 
 type BatchCounts struct {
@@ -31,6 +39,7 @@ type BatchCounts struct {
 type BatchSummaryResponse struct {
 	BatchID string `json:"batch_id"`
 	Status  string `json:"status"`
+	Source  string `json:"source"`
 	BatchCounts
 	OwnerPID int64 `json:"owner_pid,omitempty"`
 }

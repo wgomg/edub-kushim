@@ -12,10 +12,8 @@
 
 	let cfg = $state(null);
 	let saving = $state(false);
-	let pendingTasks = $state(0);
 	let missingTools = $state([]);
 	let toolStatus = $state([]);
-	let pollInterval;
 	let showToken = $state(false);
 	let fallbackShowTokens = $state({});
 
@@ -224,28 +222,15 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 		window.addEventListener('beforeunload', handleBeforeUnload);
 		return () => {
 			window.removeEventListener('beforeunload', handleBeforeUnload);
-			if (pollInterval) clearInterval(pollInterval);
 		};
 	});
 
 	async function checkStatus() {
 		const status = await api.config.status();
 		if (status) {
-			pendingTasks = status.pending_tasks;
 			missingTools = status.missing_tools ?? [];
 			toolStatus = status.tools ?? [];
 		}
-	}
-
-	function startPolling() {
-		if (pollInterval) clearInterval(pollInterval);
-		pollInterval = setInterval(async () => {
-			await checkStatus();
-			if (pendingTasks === 0) {
-				clearInterval(pollInterval);
-				pollInterval = null;
-			}
-		}, 3000);
 	}
 
 	function addLanguage() {
@@ -390,10 +375,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 		saving = true;
 		try {
 			const res = await api.config.update(bodyFromConfig());
-			if (res && 'pending_tasks' in res && res.pending_tasks > 0) {
-				pendingTasks = res.pending_tasks;
-				toastStore.success(res.message || 'Settings saved. Downloads in progress…');
-				startPolling();
+			if (res?.message) {
+				toastStore.success(res.message);
 			} else {
 				toastStore.success('Settings saved.');
 			}
@@ -510,15 +493,6 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 	<div class="mx-auto max-w-3xl space-y-6">
 		<div class="flex items-center justify-between">
 			<h1 class="text-2xl font-bold text-balance text-parchment-200">Settings</h1>
-			{#if pendingTasks > 0}
-				<div class="flex items-center gap-2 text-sm text-gold-500" aria-live="polite">
-					<div
-						aria-hidden="true"
-						class="h-4 w-4 animate-spin rounded-full border-2 border-clay-800 border-t-gold-500 motion-reduce:animate-none"
-					></div>
-					{pendingTasks} task(s) pending
-				</div>
-			{/if}
 		</div>
 
 		<div class="flex gap-1 border-b border-clay-800" role="tablist" aria-label="Settings sections">
@@ -2407,7 +2381,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 								placeholder="/mnt/nas/documents or user@host:/path"
 								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 							/>
-							<p class="mt-1 text-xs break-words text-parchment-500">
+							<p class="mt-1 text-xs wrap-break-word text-parchment-500">
 								Local path or rsync remote target ([user@]host:path; ssh key setup is your
 								responsibility). Files deleted from storage are removed here too (<code
 									class="font-mono"

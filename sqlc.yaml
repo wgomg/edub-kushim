@@ -16,3 +16,5 @@ sql:
             go_type: '*encoding/json.RawMessage'
           - column: 'task.payload'
             go_type: '*encoding/json.RawMessage'
+          - column: 'task.progress'
+            go_type: '*encoding/json.RawMessage'

@@ -126,7 +126,7 @@ func RunStandalone(inputPath, outputPath string, languages []string, dataDir str
 
 		var phase1Err error
 		for i := range numPages {
-			if i > 0 && i%50 == 0 {
+			if i > 0 && i%10 == 0 {
 				fmt.Fprintf(os.Stdout, "OCR page %d/%d\n", i+1, numPages)
 			}
 			ocrW, ocrH, ocrSamples, ocrPixmap, err := doc.RenderPage(mupdfCtx, i, ocrDPI)

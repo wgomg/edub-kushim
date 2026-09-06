@@ -84,6 +84,31 @@ Seven statuses, all plain strings (no CHECK constraint — the code owns the
 vocabulary): `pending`, `processing`, `waiting`, `completed`, `failed`,
 `discarded`, `cancelled`.
 
+The `progress` column (migration 00011) is a nullable JSONB snapshot of the
+current pipeline step, written by the owning handler while the task is
+`processing`:
+
+```json
+{"step": "ocr", "detail": "page 3/12", "pct": 25.0, "updated_at": "2026-09-05T22:00:00Z"}
+```
+
+`step` is required; `detail` and `pct` are optional. It is a display aid
+only — the pipeline never reads it back. `ClaimTask` clears it so each
+attempt starts clean, and `UpdateTaskProgress` only writes while
+`status = 'processing'`, so a write racing the stale-sweep reset is a no-op.
+The reclaim/retry paths (`ResetProcessingTasksByBatch`,
+`ResetStaleProcessingTasks`, `RetryTask`) also clear `progress` alongside
+the status flip, so a re-queued task never displays a stale step from a
+previous attempt. `ProgressTracker` (`internal/task/progress.go`) is the
+single writer per task and throttles writes to ≥1/s unless the step
+changes; the JSONB shape is the shared `task.ProgressSnapshot` struct that
+the API and CLI readers decode. Step vocabularies:
+consume (`duplicate-check`, `convert`, `extract-text`, `ocr`, `optimize`,
+`place`, `commit`, `activate-children`), enrich (`reduce`, `tag-match`,
+`analyze`, `consolidate`, `persist`), thumbnail (`render`, `save`), backup
+(`drain-wait`, `snapshot`, `retention`), mirror (`drain-wait`, `sync`),
+config (`download`, `migrate-db`, `migrate-storage`).
+
 The lifecycle:
 
 ```
@@ -397,7 +422,28 @@ per-batch worker. Batch-mode flow (`consume.go:75-183`):
 `pollBatch` (`consume.go:532-626`) is the progress monitor: a 500ms ticker
 watches the batch row, prints per-file transitions (pending→processing,
 →completed, →failed) from a `previous` map, detects the pause transition
-(`ErrBatchPaused`), and prints the summary when `remain == 0`.
+(`ErrBatchPaused`), and prints the summary when `remain == 0`. While a task
+is `processing`, it also prints live `progress.step`/`detail` updates (e.g.
+`ocr page 3/12`) whenever the recorded progress changes.
+
+### Non-consume batches: backup, mirror, config
+
+Backup and mirror tasks get real batch rows (`source = 'backup'` /
+`'mirror'`, status `queued`) so they flow through the batches UI instead of
+being invisible orphans (`maybeScheduleTask`, `queue.go:477-507`); config
+batches already did this. The queue daemon never forks consume workers for
+these batches: `GetNextQueuedBatch` excludes `config`/`backup`/`mirror`
+sources, so no watchdog holds a `max_concurrent_batches` slot for the
+duration of a long backup.
+
+The handlers own the lifecycle directly, keeping the status accurate even
+when `kushim queue` is not running: `MarkBatchProcessing` at start (after
+the backup lock is acquired) and `FinalizeBatchStatus` (completed/failed)
+at the end, once no sibling tasks remain active (`internal/task/batch.go`).
+Because these batches have no `batch_owner` row in that case, the service
+layer forces `Orphaned = false` for `config`/`backup`/`mirror` sources —
+otherwise the UI would show a bogus orphan state and a Resume button that
+forks a consume worker (`internal/service/batch.go`).
 
 Standalone mode (`consume.go:191-319`, no daemon) refuses to run while any
 paused batch exists, scans the inbox, enqueues the consume+enrich task pairs,

@@ -498,11 +498,21 @@ func maybeScheduleTask(ctx context.Context, c *Container, client *database.Clien
 
 	payloadJSON, _ := json.Marshal(payload)
 	taskID := uuid.New().String()
-	if _, err := dispatcher.Enqueue(ctx, taskType, "", payloadJSON, taskID); err != nil {
+
+	batchID := uuid.New().String()
+	if err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
+		ID:     batchID,
+		Source: taskType,
+		Status: "queued",
+	}); err != nil {
+		return fmt.Errorf("create %s batch: %w", taskType, err)
+	}
+
+	if _, err := dispatcher.Enqueue(ctx, taskType, batchID, payloadJSON, taskID); err != nil {
 		return fmt.Errorf("enqueue %s task: %w", taskType, err)
 	}
 
-	c.logger.Info(nil, "%s task %s scheduled", taskType, taskID)
+	c.logger.Info(nil, "%s task %s scheduled (batch %s)", taskType, taskID, batchID)
 	return nil
 }
 

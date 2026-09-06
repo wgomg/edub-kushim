@@ -164,3 +164,34 @@ func (o *Owner) CleanupCompleted(ctx context.Context) error {
 func IsOrphaned(state OwnerState, pending, processing int64) bool {
 	return state != OwnerLive && (pending > 0 || processing > 0)
 }
+
+func MarkBatchProcessing(ctx context.Context, queries *database.Queries, batchID string) {
+	if batchID == "" {
+		return
+	}
+	_ = queries.SetBatchProcessing(ctx, batchID)
+}
+
+func FinalizeBatchStatus(ctx context.Context, queries *database.Queries, batchID string, failed bool) {
+	if batchID == "" {
+		return
+	}
+	bid := sql.NullString{String: batchID, Valid: true}
+	for _, status := range []string{"pending", "waiting"} {
+		count, err := queries.CountTasksByBatchAndStatus(ctx, database.CountTasksByBatchAndStatusParams{
+			BatchID: bid,
+			Status:  status,
+		})
+		if err != nil {
+			return
+		}
+		if count > 0 {
+			return
+		}
+	}
+	if failed {
+		_ = queries.SetBatchFailed(ctx, batchID)
+	} else {
+		_ = queries.SetBatchCompleted(ctx, batchID)
+	}
+}

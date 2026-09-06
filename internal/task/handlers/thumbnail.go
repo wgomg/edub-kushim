@@ -48,11 +48,14 @@ func (h *ThumbnailTaskHandler) Handle(ctx context.Context, t task.Task) (json.Ra
 	}
 
 	tmpPath := filepath.Join(os.TempDir(), fmt.Sprintf("thumb_%s.jpg", t.TaskID))
+	progress := task.NewProgressTracker(h.queries, t.TaskID)
+	progress.Set("render", "", 0)
 	result, err := h.runner.GenerateThumbnail(ctx, p.DocumentID, p.StoragePath, tmpPath)
 	if err != nil {
 		return nil, &task.Error{ReqID: p.DocumentID, Err: err}
 	}
 
+	progress.Set("save", "", 0)
 	thumbPath := storage.ThumbnailPath(h.getCfg().Storage.StorageDir, document.CreatedAt.Time, p.DocumentID)
 	if err := consumption.MoveFile(tmpPath, thumbPath); err != nil {
 		os.Remove(tmpPath)

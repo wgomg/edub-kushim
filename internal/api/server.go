@@ -98,7 +98,7 @@ func (s *Server) rebuild(client *database.Client) {
 	services.ErroredFiles = service.NewErroredFiles(cfg, s.logger)
 
 	registry := task.NewRegistry()
-	registry.Register("config", configtask.NewConfigTaskHandler(s.logger))
+	registry.Register("config", configtask.NewConfigTaskHandler(client.Queries, s.logger))
 
 	dispatcher := task.NewDispatcher(s.logger, workStore, registry)
 	configRunner := task.NewRunner(configStore, registry, s.logger)

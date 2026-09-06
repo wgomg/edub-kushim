@@ -50,7 +50,7 @@ func TestMigrateStorage_NoOpReturnsErrNoOp(t *testing.T) {
 }
 
 func TestHandleMigrateStorage_NoOpReturnsNoOpStatus(t *testing.T) {
-	h := NewConfigTaskHandler(testutil.NewTestLogger())
+	h := NewConfigTaskHandler(nil, testutil.NewTestLogger())
 	payload, _ := json.Marshal(MigrateStoragePayload{
 		Op:                opMigrateStorage,
 		ConfigDir:         t.TempDir(),

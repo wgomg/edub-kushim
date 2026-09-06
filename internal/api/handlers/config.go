@@ -547,16 +547,20 @@ func (h *ConfigHandler) ConfigStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.queries != nil {
-		rows, err := h.queries.CountTasksByStatus(ctx)
-		if err != nil {
-			resp.Errors = append(resp.Errors, err.Error())
-		} else {
-			for _, row := range rows {
-				if row.Status == "pending" || row.Status == "processing" {
-					resp.PendingTasks += int(row.Count)
-				}
+		// The setup wizard's completion gate polls this count; scope it to
+		// config tasks so it only reflects downloads/migrations.
+		for _, status := range []string{"pending", "processing"} {
+			count, err := h.queries.CountTasksByStatusAndType(ctx, database.CountTasksByStatusAndTypeParams{
+				Status:   status,
+				TaskType: configtask.TaskTypeConfig,
+			})
+			if err != nil {
+				resp.Errors = append(resp.Errors, err.Error())
+				continue
 			}
+			pendingTasks += int(count)
 		}
+		resp.PendingTasks = pendingTasks
 
 		failedTasks, err := h.queries.ListAllTasksByStatusAndType(ctx, database.ListAllTasksByStatusAndTypeParams{
 			Status:   "failed",

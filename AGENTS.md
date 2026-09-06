@@ -87,12 +87,12 @@ export TEST_DATABASE_URL="postgres://edub:edub@localhost:5432/edub?sslmode=disab
 ```
 
 ```bash
-make test          # 12 packages, no database needed, CGO_ENABLED=0
+make test          # 13 packages, no database needed, CGO_ENABLED=0
 make test-verbose  # same with -v
 make test-db       # 6 additional packages, requires PostgreSQL via TEST_DATABASE_URL
 make test-backup   # backup package, requires PostgreSQL via TEST_DATABASE_URL
 make test-cgo      # CGo-gated tests incl. internal/commands (requires make build-deps first)
-make test-cgo-db   # consumption with CGo + DB (requires make build-deps + TEST_DATABASE_URL)
+make test-cgo-db   # consumption + configtask with CGo + DB (requires make build-deps + TEST_DATABASE_URL)
 make test-one PKG=./internal/errs/   # single package; add RUN=Name to filter
 make test-web      # web/ unit + component tests (vitest, no database)
 make test-web-e2e  # web/ E2E smokes with mocked API (requires `npx playwright install chromium` first)
@@ -103,10 +103,15 @@ make vuln-cgo     # CGo-enabled variant, full call graph (requires make build-de
 - **Isolation**: each test package gets its own database (`edub_test_<pkg_dir>`) via `runtime.Caller`,
   auto-dropped with `DROP ... WITH (FORCE)` — no manual cleanup. The PG user must be superuser
   (CI/containers are).
+- **No host psql needed**: configtask migrate-db tests exec psql inside the test DB container
+  (`database.runtime=podman|docker` in the test config, picked via `containerRuntime(t)`); the
+  container name comes from `TEST_DATABASE_CONTAINER` (default `edub-test-pg`, CI sets `postgres`).
 - Covered: database queries, task lifecycle, search engine, API handlers, consumption pipeline
-  (mock runner), CLI commands (via `make test-cgo`). Not covered: real OCR/PDF adapters.
+  (mock runner), configtask migrations, CLI commands (via `make test-cgo`). Not covered: real
+  OCR/PDF adapters.
 - CI (`test-cgo` job) builds C deps (cached under `build/`, key includes `hashFiles('Makefile')`)
-  and runs `make test-cgo` + `make test-cgo-db` against a `postgres:17` service.
+  and runs `make test-cgo` + `make test-cgo-db` against a `postgres:17` service, with
+  `TEST_DATABASE_CONTAINER=postgres`.
 - Full testing reference: `docs/reference/tests.md`.
 
 ## Web UI (SvelteKit)

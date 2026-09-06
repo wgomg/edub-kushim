@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -17,6 +18,25 @@ import (
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 )
+
+// containerRuntime picks the test container CLI available on PATH so the
+// migrate-db tests work on both local dev (podman) and CI (docker). The
+// container name comes from TEST_DATABASE_CONTAINER; local dev uses
+// "edub-test-pg" (AGENTS.md), CI's postgres service is "postgres".
+func containerRuntime(t *testing.T) (string, string) {
+	t.Helper()
+	for _, name := range []string{"podman", "docker"} {
+		if _, err := exec.LookPath(name); err == nil {
+			container := os.Getenv("TEST_DATABASE_CONTAINER")
+			if container == "" {
+				container = "edub-test-pg"
+			}
+			return name, container
+		}
+	}
+	t.Skip("neither podman nor docker on PATH; cannot exec psql inside the test DB container")
+	return "", ""
+}
 
 func TestMigrateDBTask(t *testing.T) {
 	baseDSN := os.Getenv("TEST_DATABASE_URL")
@@ -48,6 +68,7 @@ func TestMigrateDBTask(t *testing.T) {
 		t.Fatalf("get source database name: %v", err)
 	}
 
+	runtime, container := containerRuntime(t)
 	if err := config.SaveMap(configDir, map[string]any{
 		"database.host":           u.Hostname(),
 		"database.port":           port,
@@ -55,6 +76,8 @@ func TestMigrateDBTask(t *testing.T) {
 		"database.password":       password,
 		"database.database":       srcDBName,
 		"database.sslmode":        u.Query().Get("sslmode"),
+		"database.runtime":        runtime,
+		"database.container":      container,
 		"storage.storage_dir":     storageDir,
 		"storage.consumption_dir": filepath.Join(configDir, "inbox"),
 	}); err != nil {
@@ -87,7 +110,7 @@ func TestMigrateDBTask(t *testing.T) {
 		SSLMode:   u.Query().Get("sslmode"),
 	})
 
-	h := NewConfigTaskHandler(testutil.NewTestLogger())
+	h := NewConfigTaskHandler(queries, testutil.NewTestLogger())
 	if _, err := h.Handle(ctx, task.Task{TaskID: "migrate-test", Payload: payload}); err != nil {
 		t.Fatalf("Handle(migrate-db): %v", err)
 	}
@@ -195,7 +218,7 @@ func TestMigrateDBTask_RefusesForeignDestination(t *testing.T) {
 
 	ctx := context.Background()
 
-	_, srcDB := database.NewTestQueries(t)
+	queries, srcDB := database.NewTestQueries(t)
 
 	configDir := t.TempDir()
 	storageDir := filepath.Join(configDir, "storage")
@@ -212,6 +235,7 @@ func TestMigrateDBTask_RefusesForeignDestination(t *testing.T) {
 		t.Fatalf("get source database name: %v", err)
 	}
 
+	runtime, container := containerRuntime(t)
 	if err := config.SaveMap(configDir, map[string]any{
 		"database.host":           u.Hostname(),
 		"database.port":           port,
@@ -219,6 +243,8 @@ func TestMigrateDBTask_RefusesForeignDestination(t *testing.T) {
 		"database.password":       password,
 		"database.database":       srcDBName,
 		"database.sslmode":        u.Query().Get("sslmode"),
+		"database.runtime":        runtime,
+		"database.container":      container,
 		"storage.storage_dir":     storageDir,
 		"storage.consumption_dir": filepath.Join(configDir, "inbox"),
 	}); err != nil {
@@ -249,7 +275,7 @@ func TestMigrateDBTask_RefusesForeignDestination(t *testing.T) {
 		SSLMode:   u.Query().Get("sslmode"),
 	})
 
-	h := NewConfigTaskHandler(testutil.NewTestLogger())
+	h := NewConfigTaskHandler(queries, testutil.NewTestLogger())
 	if _, err := h.Handle(ctx, task.Task{TaskID: "migrate-foreign", Payload: payload}); err == nil {
 		t.Fatal("Handle(migrate-db) against a foreign database succeeded, want refusal")
 	}
@@ -292,6 +318,7 @@ func TestMigrateStorageTask(t *testing.T) {
 				t.Fatalf("get database name: %v", err)
 			}
 
+			runtime, container := containerRuntime(t)
 			configDir := t.TempDir()
 			oldStorage := filepath.Join(configDir, "storage")
 			oldInbox := filepath.Join(configDir, "inbox")
@@ -305,6 +332,8 @@ func TestMigrateStorageTask(t *testing.T) {
 				"database.password":       password,
 				"database.database":       dbName,
 				"database.sslmode":        u.Query().Get("sslmode"),
+				"database.runtime":        runtime,
+				"database.container":      container,
 				"storage.storage_dir":     oldStorage,
 				"storage.consumption_dir": oldInbox,
 				"storage.migration_mode":  mode,
@@ -388,7 +417,7 @@ func TestMigrateStorageTask(t *testing.T) {
 				NewConsumptionDir: newInbox,
 			})
 
-			h := NewConfigTaskHandler(testutil.NewTestLogger())
+			h := NewConfigTaskHandler(queries, testutil.NewTestLogger())
 			if _, err := h.Handle(ctx, task.Task{TaskID: "migrate-storage-test", Payload: payload}); err != nil {
 				t.Fatalf("Handle(migrate-storage): %v", err)
 			}

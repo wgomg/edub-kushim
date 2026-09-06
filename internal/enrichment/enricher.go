@@ -48,9 +48,11 @@ func NewEnricher(cfg *config.Config, logger *utils.Logger, queries *database.Que
 	return e, nil
 }
 
-func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*json.RawMessage, error) {
+func (e *Enricher) Enrich(ctx context.Context, document database.Document, progress ...task.ProgressFunc) (*json.RawMessage, error) {
 	logId := document.DocumentID
 	ctx = context.WithValue(ctx, "reqid", logId)
+
+	report := task.Progress(progress)
 
 	start := time.Now()
 	e.logger.Info(&logId, "starting enrichment for file %s", document.StoragePath)
@@ -62,6 +64,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 
 	chunkSize := 150
 
+	report("reduce", "", 0)
 	llmContent, err := e.runner.ReduceContent(ctx, document.TextContent.String, chunkSize,
 		targetWordCount(int(document.WordCount), e.config.Enricher.TextReducer.TargetWords))
 	if err != nil {
@@ -105,6 +108,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 	}
 
 	matchTagsStart := time.Now()
+	report("tag-match", "", 0)
 	matchedTags, err := e.runner.MatchTags(ctx, document.DocumentID, tagsContent.Text)
 	if err != nil || len(matchedTags.Tags) == 0 {
 		if err != nil {
@@ -119,6 +123,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 	}
 
 	var analysis *tools.ContentAnalysisResult
+	report("analyze", "", 0)
 	for i := range 2 {
 		analysis, err = e.runner.AnalyzeContent(ctx, llmContent.Text, docTypes, peopleTypes, tagSuggestions)
 		if err == nil {
@@ -229,6 +234,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 	analysis.Tags = contentanalyzer.FilterTags(analysis.Tags, analysis.People, knownNormalized, analysis.Title, docTypeNames)
 
 	consolidateStart := time.Now()
+	report("consolidate", "", 0)
 	consolidated, err := e.runner.ConsolidateTags(ctx, document.DocumentID, analysis.Tags)
 	if err != nil {
 		e.logger.Error(&logId, "post-LLM consolidation failed: %v", err)
@@ -256,6 +262,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document) (*jso
 	}
 	docTypeID := docTypeMap[analysis.DocType]
 
+	report("persist", "", 0)
 	if err := e.queries.UpdateDocumentMetadata(ctx, database.UpdateDocumentMetadataParams{
 		Title:          analysis.Title,
 		DocumentTypeID: docTypeID,

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"slices"
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/database"
@@ -13,6 +14,7 @@ import (
 type BatchSummary struct {
 	BatchID    string
 	Status     string
+	Source     string
 	Waiting    int64
 	Pending    int64
 	Processing int64
@@ -49,6 +51,10 @@ type Batch struct {
 	maxRetries int32
 }
 
+// config/backup/mirror batches have no batch_owner row by design; never
+// report them as orphaned.
+var nonConsumeSources = []string{"config", "backup", "mirror"}
+
 func NewBatch(client *database.Client, maxRetries int) *Batch {
 	return &Batch{client: client, queries: client.Queries, maxRetries: int32(maxRetries)}
 }
@@ -62,6 +68,7 @@ func (s *Batch) GetSummary(ctx context.Context, batchID string) (*BatchSummary, 
 		return nil, errs.FromDB(err, "get batch "+batchID)
 	}
 	summary.Status = batch.Status
+	summary.Source = batch.Source
 
 	for _, status := range statuses {
 		count, err := s.queries.CountTasksByBatchAndStatus(ctx, database.CountTasksByBatchAndStatusParams{
@@ -96,7 +103,7 @@ func (s *Batch) GetSummary(ctx context.Context, batchID string) (*BatchSummary, 
 	} else {
 		summary.OwnerState = state.String()
 		summary.OwnerPID = pid
-		summary.Orphaned = task.IsOrphaned(state, summary.Pending, summary.Processing)
+		summary.Orphaned = task.IsOrphaned(state, summary.Pending, summary.Processing) && !slices.Contains(nonConsumeSources, batch.Source)
 	}
 
 	return summary, nil
@@ -182,7 +189,7 @@ func (s *Batch) ListOverviews(ctx context.Context, limit, offset int32) ([]Batch
 			Cancelled:  toInt64(row.Cancelled),
 			Discarded:  toInt64(row.Discarded),
 			OwnerState: state.String(),
-			Orphaned:   task.IsOrphaned(state, pending, processing),
+			Orphaned:   task.IsOrphaned(state, pending, processing) && !slices.Contains(nonConsumeSources, row.Source),
 			DurationMs: durationMs,
 		})
 	}

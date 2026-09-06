@@ -111,9 +111,11 @@ func NewConsumerWithRunner(cfg *config.Config, logger *utils.Logger, client *dat
 	}, nil
 }
 
-func (c *Consumer) Process(ctx context.Context, file File, documentID string) (File, error) {
+func (c *Consumer) Process(ctx context.Context, file File, documentID string, progress ...task.ProgressFunc) (File, error) {
 	start := time.Now()
 	c.logger.Info(&documentID, "starting consumption for file %s", file.OriginalPath)
+
+	report := task.Progress(progress)
 
 	defer func() {
 		elapsed := time.Since(start)
@@ -124,6 +126,7 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 		}
 	}()
 
+	report("duplicate-check", "", 0)
 	duplicated, err := c.isDuplicate(ctx, file.OriginalPath)
 	if err != nil {
 		MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
@@ -135,13 +138,13 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 		return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("file is a duplicate, skipping")}
 	}
 
-	file, err = c.convertToPdf(ctx, file, documentID)
+	file, err = c.convertToPdf(ctx, file, documentID, report)
 	if err != nil {
 		MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 		return file, &task.Error{ReqID: documentID, Err: err}
 	}
 
-	file, err = c.extractText(ctx, file, documentID)
+	file, err = c.extractText(ctx, file, documentID, report)
 	if err != nil {
 		MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 		return file, &task.Error{ReqID: documentID, Err: err}
@@ -195,6 +198,7 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 	)
 	file.StorageProcessedPath = &fullStoragePath
 
+	report("place", "", 0)
 	if file.OCRTmpPath != nil {
 		c.logger.Debug(
 			&documentID,
@@ -273,6 +277,7 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string) (F
 		}
 	}
 
+	report("commit", "", 0)
 	txCtx, txCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer txCancel()
 
@@ -507,7 +512,7 @@ func calculateSHA512(path string) (string, error) {
 	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
-func (c *Consumer) convertToPdf(ctx context.Context, file File, documentID string) (File, error) {
+func (c *Consumer) convertToPdf(ctx context.Context, file File, documentID string, report task.ProgressFunc) (File, error) {
 	if !c.config.Consumer.Converter.Enabled {
 		return file, nil
 	}
@@ -515,6 +520,7 @@ func (c *Consumer) convertToPdf(ctx context.Context, file File, documentID strin
 		return file, nil
 	}
 
+	report("convert", "", 0)
 	convertedPath, err := c.runner.ConvertToPdf(ctx, file.OriginalPath, file.MimeType)
 	if err != nil {
 		return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("document conversion failed: %w", err)}
@@ -526,7 +532,7 @@ func (c *Consumer) convertToPdf(ctx context.Context, file File, documentID strin
 	return file, nil
 }
 
-func (c *Consumer) extractText(ctx context.Context, file File, documentID string) (File, error) {
+func (c *Consumer) extractText(ctx context.Context, file File, documentID string, report task.ProgressFunc) (File, error) {
 	memBefore := utils.ReadMemSnapshot()
 
 	extractPath := file.OriginalPath
@@ -543,9 +549,10 @@ func (c *Consumer) extractText(ctx context.Context, file File, documentID string
 	if mime.IsImage(file.MimeType) {
 		c.logger.Info(&documentID, "image file %s, proceeding directly to OCR", file.Name)
 		file.PageCount = 1
-		return c.ocrAndReextract(ctx, file, documentID, memBefore, memBefore)
+		return c.ocrAndReextract(ctx, file, documentID, memBefore, memBefore, report)
 	}
 
+	report("extract-text", "", 0)
 	extractResult, err := c.runner.ExtractText(ctx, extractPath, extractMimeType)
 	memAfterExtract := utils.ReadMemSnapshot()
 	c.logger.Debug(&documentID, "extractText: %s", utils.FormatMemDelta(memBefore, memAfterExtract))
@@ -563,6 +570,7 @@ func (c *Consumer) extractText(ctx context.Context, file File, documentID string
 
 		if mime.IsPDF(extractMimeType) {
 			c.logger.Debug(&documentID, "optimizePdf: entering for %s", extractPath)
+			report("optimize", "", 0)
 			optimizationResult, err := c.runner.OptimizePdf(ctx, documentID, extractPath)
 			memAfterOpt := utils.ReadMemSnapshot()
 			c.logger.Debug(&documentID, "optimizePdf: %s", utils.FormatMemDelta(memAfterExtract, memAfterOpt))
@@ -582,13 +590,22 @@ func (c *Consumer) extractText(ctx context.Context, file File, documentID string
 	}
 
 	c.logger.Info(&documentID, "no text extracted from %s, OCR needed", file.Name)
-	return c.ocrAndReextract(ctx, file, documentID, memAfterExtract, memBefore)
+	return c.ocrAndReextract(ctx, file, documentID, memAfterExtract, memBefore, report)
 }
 
-func (c *Consumer) ocrAndReextract(ctx context.Context, file File, documentID string, memBeforeOCR, memBeforeAll utils.MemSnapshot) (File, error) {
+func (c *Consumer) ocrAndReextract(ctx context.Context, file File, documentID string, memBeforeOCR, memBeforeAll utils.MemSnapshot, report task.ProgressFunc) (File, error) {
 	ocrInputPath := file.OriginalPath
 	if file.ConvertedPdfTmpPath != nil {
 		ocrInputPath = *file.ConvertedPdfTmpPath
+	}
+	// Per-page progress is deferred to a follow-up plan: the internal-ocr
+	// subprocess streams "OCR page N/M" lines to the logs every 10 pages, but
+	// they are not wired into the progress callback yet. Report the step with
+	// the page total so the job doesn't look stale.
+	if file.PageCount > 0 {
+		report("ocr", fmt.Sprintf("page 0/%d", file.PageCount), 0)
+	} else {
+		report("ocr", "", 0)
 	}
 	ocrResult, err := c.runner.OCR(ctx, documentID, ocrInputPath)
 	memAfterOCR := utils.ReadMemSnapshot()
@@ -596,6 +613,9 @@ func (c *Consumer) ocrAndReextract(ctx context.Context, file File, documentID st
 	if err != nil {
 		c.logger.Error(&documentID, "OCR failed for %s: %v", file.Name, err)
 		return file, &task.Error{ReqID: documentID, Err: err}
+	}
+	if file.PageCount > 0 {
+		report("ocr", fmt.Sprintf("page %d/%d", file.PageCount, file.PageCount), 100)
 	}
 
 	extractResult, err := c.runner.ExtractText(ctx, *ocrResult.TmpPath, mime.PDF)

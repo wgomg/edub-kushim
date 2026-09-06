@@ -48,7 +48,8 @@ WHERE batch_id = $1 AND status = 'processing' AND attempts >= $2;
 -- name: ResetProcessingTasksByBatch :execrows
 UPDATE task SET
     status = 'pending',
-    attempts = attempts + 1
+    attempts = attempts + 1,
+    progress = NULL
 WHERE batch_id = $1 AND status = 'processing' AND attempts < $2;
 
 -- name: CleanupCompletedBatches :execrows
@@ -80,7 +81,11 @@ SELECT * FROM batch WHERE id = $1;
 SELECT COUNT(*) FROM batch WHERE status = 'queued';
 
 -- name: GetNextQueuedBatch :one
-SELECT * FROM batch WHERE status = 'queued' ORDER BY created_at LIMIT 1;
+-- config/backup/mirror batches own their lifecycle in their handlers and
+-- must not be forked as consume workers.
+SELECT * FROM batch
+WHERE status = 'queued' AND source NOT IN ('config', 'backup', 'mirror')
+ORDER BY created_at LIMIT 1;
 
 -- name: RequeueBatch :exec
 UPDATE batch SET status = 'queued' WHERE id = $1;

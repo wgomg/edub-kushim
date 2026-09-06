@@ -29,7 +29,7 @@ func ValidateMigrationDestination(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
-func WaitForTaskDrain(ctx context.Context, queries *Queries, logger *utils.Logger, what string) error {
+func WaitForTaskDrain(ctx context.Context, queries *Queries, logger *utils.Logger, what string, onWait ...func(count int64)) error {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
@@ -43,6 +43,9 @@ func WaitForTaskDrain(ctx context.Context, queries *Queries, logger *utils.Logge
 		}
 
 		logger.Info(nil, "%s: waiting for %d in-flight task(s) to drain", what, count)
+		if len(onWait) > 0 && onWait[0] != nil {
+			onWait[0](count)
+		}
 
 		select {
 		case <-ctx.Done():

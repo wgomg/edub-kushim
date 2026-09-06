@@ -215,9 +215,13 @@ func (q *Queries) GetNextPendingTaskOfTypeForOwnerWithGate(ctx context.Context, 
 }
 
 const getNextQueuedBatch = `-- name: GetNextQueuedBatch :one
-SELECT id, source, status, created_at FROM batch WHERE status = 'queued' ORDER BY created_at LIMIT 1
+SELECT id, source, status, created_at FROM batch
+WHERE status = 'queued' AND source NOT IN ('config', 'backup', 'mirror')
+ORDER BY created_at LIMIT 1
 `
 
+// config/backup/mirror batches own their lifecycle in their handlers and
+// must not be forked as consume workers.
 func (q *Queries) GetNextQueuedBatch(ctx context.Context) (Batch, error) {
 	row := q.db.QueryRowContext(ctx, getNextQueuedBatch)
 	var i Batch
@@ -491,7 +495,8 @@ func (q *Queries) RequeueBatch(ctx context.Context, id string) error {
 const resetProcessingTasksByBatch = `-- name: ResetProcessingTasksByBatch :execrows
 UPDATE task SET
     status = 'pending',
-    attempts = attempts + 1
+    attempts = attempts + 1,
+    progress = NULL
 WHERE batch_id = $1 AND status = 'processing' AND attempts < $2
 `
 

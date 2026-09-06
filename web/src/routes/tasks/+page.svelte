@@ -4,7 +4,7 @@
 	import { resolve } from '$app/paths';
 	import { RETRY_ICON, RESUME_ICON, CANCEL_ICON, actionButton } from '$lib/icons.js';
 	import { escapeHtml } from '$lib/utils/html.js';
-	import { statusChipClasses } from '$lib/utils/statusChip.js';
+	import { sourceBadgeClasses, statusChipClasses } from '$lib/utils/statusChip.js';
 	import { api } from '$lib/api';
 	import DataTable from '$lib/components/DataTable.svelte';
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
@@ -33,6 +33,16 @@
 				if (!v) return '—';
 				return `<span class="font-mono">${escapeHtml(v)}</span>`;
 			}
+		},
+		{
+			key: 'source',
+			label: 'Source',
+			sortable: true,
+			cell: (v) => {
+				const cls = sourceBadgeClasses(v);
+				return `<span class="inline-block rounded-full px-2 py-0.5 text-xs font-medium ${cls}">${escapeHtml(v || '—')}</span>`;
+			},
+			minWidth: '110px'
 		},
 		{
 			key: 'total',

@@ -262,7 +262,7 @@ make test-cgo
 make test-cgo-glibc    # podman: kushim-glibc-builder
 make test-cgo-musl     # podman: kushim-musl-builder
 
-# Consumption with CGo + DB (requires make build-deps + TEST_DATABASE_URL)
+# Consumption + configtask with CGo + DB (requires make build-deps + TEST_DATABASE_URL)
 make test-cgo-db
 
 # Web UI tests (vitest unit + component tests, no database)

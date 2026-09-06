@@ -1483,11 +1483,15 @@ GET /wizard/config/status
 ```
 
 Returns `{ "configured": bool, "pending_tasks": int, "errors": []string, "tools": [...], "missing_tools": [...] }`.
-The `tools` array contains the full availability status for every relevant external tool
-(engine binaries, curl prerequisite, ocrmypdf companions, tesseract language-pack hints).
-`missing_tools` is the hard-blocking subset (missing engines, required companions, curl).
-The wizard and settings page poll this endpoint every 3 seconds to track download progress
-and refresh tool-status warnings. **Authentication required (admin role).**
+`pending_tasks` counts only active `config` tasks (pending + processing) — it
+feeds the wizard's setup-completion gate; the settings page no longer shows a
+global pending badge (config downloads/migrations are visible via the batches
+views). The `tools` array contains the full availability status for every
+relevant external tool (engine binaries, curl prerequisite, ocrmypdf
+companions, tesseract language-pack hints). `missing_tools` is the
+hard-blocking subset (missing engines, required companions, curl). The wizard
+polls this endpoint every 3 seconds to track download progress and refresh
+tool-status warnings. **Authentication required (admin role).**
 
 ---
 
@@ -2149,6 +2153,12 @@ Same as DocumentResponse with these extra fields:
   "document_id": 42,
   "error": null,
   "label": "report.pdf",
+  "progress": {
+    "step": "ocr",
+    "detail": "page 3/12",
+    "pct": 25.0,
+    "updated_at": "2024-03-19T10:30:08Z"
+  },
   "created_at": "2024-03-19T10:30:00Z",
   "started_at": "2024-03-19T10:30:05Z",
   "completed_at": "2024-03-19T10:30:12Z"
@@ -2164,11 +2174,18 @@ otherwise derived from the task type and dedup key (e.g. `"Backup (full)"`,
 for other task types it falls back to the task type name (`"Consume"`, `"Enrich"`,
 `"Thumbnail"`).
 
+`progress` is present only while the task is `processing` and a handler has
+reported a step. It is a display aid: `step` is required, `detail`/`pct`
+optional, `updated_at` is the last write time (writes are throttled to ≥1/s
+unless the step changes).
+
 #### BatchSummaryResponse
 
 ```json
 {
   "batch_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "completed",
+  "source": "polling",
   "total": 5,
   "waiting": 0,
   "pending": 2,
@@ -2181,7 +2198,11 @@ for other task types it falls back to the task type name (`"Consume"`, `"Enrich"
 }
 ```
 
-`owner_state` (`"none"`, `"live"`, `"stale"`) is included when set.
+`source` is how the batch was created (`polling`/`cli` for consume batches,
+`config`, `backup`, `mirror`, `thumbbackfill`). `owner_state` (`"none"`,
+`"live"`, `"stale"`) is included when set. Batches with source
+`config`/`backup`/`mirror` never report `orphaned: true` — they have no
+`batch_owner` row by design (their handlers own the lifecycle).
 
 ---
 

@@ -133,14 +133,29 @@ func WriteState(dest string, state State) error {
 	return nil
 }
 
-func RunLocked(ctx context.Context, queries *database.Queries, logger *utils.Logger, storageDir, dest string) (*Result, string, error) {
-	if err := database.WaitForTaskDrain(ctx, queries, logger, "mirror"); err != nil {
+func RunLocked(ctx context.Context, queries *database.Queries, logger *utils.Logger, storageDir, dest string, onWait ...func(count int64)) (*Result, string, error) {
+	var wait func(count int64)
+	if len(onWait) > 0 {
+		wait = onWait[0]
+	}
+	return runLocked(ctx, queries, logger, storageDir, dest, wait, nil)
+}
+
+func RunLockedWithProgress(ctx context.Context, queries *database.Queries, logger *utils.Logger, storageDir, dest string, onWait func(count int64), onSync func()) (*Result, string, error) {
+	return runLocked(ctx, queries, logger, storageDir, dest, onWait, onSync)
+}
+
+func runLocked(ctx context.Context, queries *database.Queries, logger *utils.Logger, storageDir, dest string, onWait func(count int64), onSync func()) (*Result, string, error) {
+	if err := database.WaitForTaskDrain(ctx, queries, logger, "mirror", onWait); err != nil {
 		return nil, "", err
 	}
 
 	stopHeartbeat := StartHeartbeat(ctx, queries, logger, 5*time.Minute)
 	defer stopHeartbeat()
 
+	if onSync != nil {
+		onSync()
+	}
 	logger.Info(nil, "starting mirror to %s", dest)
 	result, err := Run(ctx, storageDir, dest)
 	if err != nil {

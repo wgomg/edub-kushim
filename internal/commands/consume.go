@@ -563,6 +563,7 @@ func pollBatch(ctx context.Context, queries *database.Queries, cp, ep, tp *pool.
 	tp.Start(ctx)
 
 	previous := make(map[string]string)
+	previousProgress := make(map[string]string)
 
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
@@ -604,10 +605,28 @@ func pollBatch(ctx context.Context, queries *database.Queries, cp, ep, tp *pool.
 		for _, t := range tasks {
 			switch t.Status {
 			case "processing":
+				prog := ""
+				if t.Progress != nil {
+					var p task.ProgressSnapshot
+					if json.Unmarshal(*t.Progress, &p) == nil && p.Step != "" {
+						prog = p.Step
+						if p.Detail != "" {
+							prog += " " + p.Detail
+						}
+					}
+				}
 				if previous[t.TaskID] != "processing" && previous[t.TaskID] == "pending" {
 					info := taskDisplayInfo(t)
-					fmt.Printf("  [%d/%d] %-8s %s ... processing\n", info.index, total, info.taskType, info.fileName)
+					status := "processing"
+					if prog != "" {
+						status = prog
+					}
+					fmt.Printf("  [%d/%d] %-8s %s ... %s\n", info.index, total, info.taskType, info.fileName, status)
+				} else if prog != "" && previousProgress[t.TaskID] != prog {
+					info := taskDisplayInfo(t)
+					fmt.Printf("  [%d/%d] %-8s %s ... %s\n", info.index, total, info.taskType, info.fileName, prog)
 				}
+				previousProgress[t.TaskID] = prog
 			case "completed":
 				if previous[t.TaskID] != "completed" && previous[t.TaskID] != "" {
 					info := taskDisplayInfo(t)

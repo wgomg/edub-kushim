@@ -247,7 +247,13 @@ assertions remain mode-independent: `setupConsumerTest` stubs `pageCounter` to
 return 1 unconditionally, so the assertions are deterministic whether MuPDF
 is reachable or not. The tier's value is exercising the full CGo+DB
 pipeline (link paths, transactions, future code paths that touch
-`countPages`) — not asserting on `countPages` output:
+`countPages`) — not asserting on `countPages` output.
+
+Also runs `internal/configtask` (migrate-db/migrate-storage tests). The
+migrate-db tests exec `psql` inside the test DB container via
+`database.runtime=podman|docker` (picked by `containerRuntime(t)`), so no
+host `postgresql-client` is needed; the container name comes from
+`TEST_DATABASE_CONTAINER` (default `edub-test-pg`, CI sets `postgres`):
 
 ```bash
 make test-cgo-db   # requires make build-deps first + TEST_DATABASE_URL

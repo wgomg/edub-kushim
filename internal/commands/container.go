@@ -161,10 +161,10 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 	}
 
 	registry := task.NewRegistry()
-	registry.Register("consume", taskhandlers.NewConsumeTaskHandler(consumer, store, c.logger))
+	registry.Register("consume", taskhandlers.NewConsumeTaskHandler(consumer, store, client.Queries, c.logger))
 	registry.Register("enrich", taskhandlers.NewEnrichTaskHandler(enricher, client.Queries, c.logger))
 	registry.Register("thumbnail", taskhandlers.NewThumbnailTaskHandler(tools.NewRunner(c.logger, c.cfg.Load(), []string{"thumbnail"}), client.Queries, c.logger, func() *config.Config { return c.cfg.Load() }))
-	registry.Register("config", configtask.NewConfigTaskHandler(c.logger))
+	registry.Register("config", configtask.NewConfigTaskHandler(client.Queries, c.logger))
 	registry.Register("backup", taskhandlers.NewBackupTaskHandler(c.db, client.Queries, func() *config.Config { return c.cfg.Load() }, c.logger))
 	registry.Register("mirror", taskhandlers.NewMirrorTaskHandler(client.Queries, func() *config.Config { return c.cfg.Load() }, c.logger))
 

@@ -67,6 +67,7 @@ func (r *Runner) Next(ctx context.Context, taskType string) (err error) {
 		ID:       task.ID,
 		TaskID:   task.TaskID,
 		TaskType: task.TaskType,
+		BatchID:  task.BatchID.String,
 		Payload:  *task.Payload,
 	})
 	if err != nil {

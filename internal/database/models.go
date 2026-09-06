@@ -130,6 +130,7 @@ type Task struct {
 	CompletedAt sql.NullTime
 	Error       sql.NullString
 	Attempts    int32
+	Progress    *json.RawMessage
 }
 
 type User struct {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/wgomg/edub-kushim/internal/consumption"
+	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -13,18 +14,22 @@ import (
 type ConsumeTaskHandler struct {
 	consumer *consumption.Consumer
 	store    *task.Store
+	queries  *database.Queries
 	logger   *utils.Logger
 }
 
-func NewConsumeTaskHandler(consumer *consumption.Consumer, store *task.Store, logger *utils.Logger) *ConsumeTaskHandler {
+func NewConsumeTaskHandler(consumer *consumption.Consumer, store *task.Store, queries *database.Queries, logger *utils.Logger) *ConsumeTaskHandler {
 	return &ConsumeTaskHandler{
 		consumer: consumer,
 		store:    store,
+		queries:  queries,
 		logger:   logger,
 	}
 }
 
 func (h *ConsumeTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMessage, error) {
+	progress := task.NewProgressTracker(h.queries, t.TaskID)
+
 	var p struct {
 		FilePath             string `json:"file_path"`
 		DocumentID           string `json:"document_id"`
@@ -50,7 +55,7 @@ func (h *ConsumeTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawM
 		return nil, h.withDiscardAttempt(ctx, t, p.OnCompleted, p.OnCompletedThumbnail, fmt.Errorf("build file from path: %w", err))
 	}
 
-	file, err = h.consumer.Process(ctx, file, p.DocumentID)
+	file, err = h.consumer.Process(ctx, file, p.DocumentID, progress.Set)
 	{
 		mem := utils.ReadMemFull()
 		h.logger.Debug(&p.DocumentID, "post-consume memory: %s", utils.FormatMemFull(mem))
@@ -83,6 +88,10 @@ func (h *ConsumeTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawM
 		if err := h.activateChildThumbnail(ctx, t, p.OnCompletedThumbnail, p.DocumentID, *file.StorageProcessedPath); err != nil {
 			return nil, &task.Error{ReqID: p.DocumentID, Err: fmt.Errorf("activate thumbnail task: %w", err)}
 		}
+	}
+
+	if (p.OnCompleted != "" || p.OnCompletedThumbnail != "") && file.DocumentDbId.Int64 != 0 {
+		progress.Set("activate-children", "", 0)
 	}
 
 	return raw, nil

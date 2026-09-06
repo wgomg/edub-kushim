@@ -42,6 +42,19 @@
 						<p class="truncate text-sm font-medium text-parchment-200" title={task.label}>
 							{task.label}
 						</p>
+						{#if task.progress}
+							<p
+								class="mt-1 truncate text-xs text-lapis-400"
+								title={task.progress.detail
+									? `${task.progress.step}: ${task.progress.detail}`
+									: task.progress.step}
+							>
+								{task.progress.step}{task.progress.detail ? ` ${task.progress.detail}` : ''}
+								<span class="text-parchment-500">
+									· {formatRelative(task.progress.updated_at)} ago
+								</span>
+							</p>
+						{/if}
 						<div class="mt-2 flex items-center justify-between gap-2">
 							<span
 								class="inline-block rounded-full px-2.5 py-0.5 text-xs font-medium {statusChipClasses(

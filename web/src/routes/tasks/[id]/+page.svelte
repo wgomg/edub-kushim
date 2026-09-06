@@ -2,6 +2,8 @@
 	import { onMount } from 'svelte';
 	import { resolve } from '$app/paths';
 	import { api } from '$lib/api';
+	import { formatRelative } from '$lib/utils/html.js';
+	import { statusChipClasses } from '$lib/utils/statusChip.js';
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
 
 	let { params } = $props();
@@ -13,19 +15,6 @@
 	function formatDate(v) {
 		if (!v) return '—';
 		return new Date(v).toLocaleString();
-	}
-
-	function statusBadgeClass(status) {
-		const colors = {
-			waiting: 'bg-amber-600/20 text-amber-400',
-			pending: 'bg-parchment-500/20 text-parchment-400',
-			processing: 'bg-lapis-600/20 text-lapis-600',
-			completed: 'bg-emerald-600/20 text-emerald-500',
-			failed: 'bg-terracotta-600/20 text-terracotta-500',
-			cancelled: 'bg-parchment-500/10 text-parchment-500',
-			discarded: 'bg-terracotta-600/10 text-terracotta-400'
-		};
-		return colors[status] ?? 'bg-parchment-500/10 text-parchment-500';
 	}
 
 	onMount(async () => {
@@ -55,7 +44,7 @@
 	</a>
 
 	{#if loading}
-		<p class="text-parchment-500">Loading…</p>
+		<p class="text-parchment-500" aria-live="polite">Loading…</p>
 	{:else if !task}
 		<div class="rounded-lg border border-clay-800 bg-clay-900 p-6 text-center">
 			<p class="text-parchment-500">Task not found</p>
@@ -72,7 +61,7 @@
 				Task <span class="font-mono text-sm text-parchment-400">{task.task_id}</span>
 			</h1>
 			<span
-				class="inline-block rounded-full px-2.5 py-0.5 text-xs font-medium {statusBadgeClass(
+				class="inline-block rounded-full px-2.5 py-0.5 text-xs font-medium {statusChipClasses(
 					task.status
 				)}"
 			>
@@ -100,7 +89,7 @@
 
 			<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 				<p class="text-xs font-medium tracking-wider text-parchment-500 uppercase">File Name</p>
-				<p class="mt-1 break-words text-parchment-200">{task.file_name ?? '—'}</p>
+				<p class="mt-1 wrap-break-word text-parchment-200">{task.file_name ?? '—'}</p>
 			</div>
 
 			{#if task.document_id}
@@ -136,6 +125,33 @@
 			</div>
 		</div>
 
+		{#if task.progress}
+			<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
+				<p class="text-xs font-medium tracking-wider text-parchment-500 uppercase">Progress</p>
+				<div class="mt-2 flex items-center justify-between gap-2">
+					<p class="text-sm font-medium text-parchment-200">
+						{task.progress.step}{task.progress.detail ? ` — ${task.progress.detail}` : ''}
+					</p>
+					{#if task.progress.pct}
+						<span class="shrink-0 text-sm text-parchment-400 tabular-nums"
+							>{Math.round(task.progress.pct)}%</span
+						>
+					{/if}
+				</div>
+				{#if task.progress.pct}
+					<div class="mt-2 h-2 w-full overflow-hidden rounded-full bg-clay-800">
+						<div
+							class="h-full rounded-full bg-lapis-600"
+							style="width: {Math.min(task.progress.pct, 100)}%"
+						></div>
+					</div>
+				{/if}
+				<p class="mt-2 text-xs text-parchment-500">
+					Last update {formatRelative(task.progress.updated_at)} ago
+				</p>
+			</div>
+		{/if}
+
 		{#if task.error}
 			<div class="rounded-lg border border-terracotta-600 bg-terracotta-800/30 p-4">
 				<p class="text-xs font-medium tracking-wider text-parchment-400 uppercase">Error</p>
@@ -147,6 +163,7 @@
 			<button
 				onclick={handleRetry}
 				disabled={retrying}
+				aria-live="polite"
 				class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-950 focus-visible:outline-none disabled:opacity-50"
 			>
 				{retrying ? 'Retrying…' : 'Retry Task'}
