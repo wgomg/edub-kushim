@@ -3,6 +3,7 @@ package handlers
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"io"
 	"math"
 	"net/http"
@@ -16,6 +17,8 @@ import (
 )
 
 var logLineStart = regexp.MustCompile(`^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}\s+(ERROR|FATAL|DEBUG|WARN|INFO)\s*:`)
+
+const maxLogLineBytes = 1024 * 1024
 
 var allowedLogNames = map[string]bool{
 	"kushim": true,
@@ -90,20 +93,33 @@ func (h *LogsHandler) ListLogs(w http.ResponseWriter, r *http.Request) {
 		reader = f
 	}
 
-	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+	br := bufio.NewReaderSize(reader, 64*1024)
 
 	var allLines []string
-	for scanner.Scan() {
-		allLines = append(allLines, scanner.Text())
-	}
-
-	if err := scanner.Err(); err != nil {
-		h.logger.Error(&reqID, "scan log file %s: %v", logPath, err)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": "failed to read log"})
-		return
+	truncated := 0
+	for {
+		chunk, err := br.ReadBytes('\n')
+		if len(chunk) > 0 {
+			line := chunk
+			if len(line) > 0 && line[len(line)-1] == '\n' {
+				line = line[:len(line)-1]
+			}
+			if len(line) > maxLogLineBytes {
+				truncated += len(line) - maxLogLineBytes
+				line = fmt.Appendf(line[:maxLogLineBytes], "\n... [%d bytes truncated]", len(line)-maxLogLineBytes)
+			}
+			allLines = append(allLines, string(line))
+		}
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			h.logger.Error(&reqID, "read log file %s: %v", logPath, err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": "failed to read log"})
+			return
+		}
 	}
 
 	var merged []string
@@ -113,6 +129,18 @@ func (h *LogsHandler) ListLogs(w http.ResponseWriter, r *http.Request) {
 		} else {
 			merged[len(merged)-1] += "\n" + line
 		}
+	}
+
+	for i := range merged {
+		if len(merged[i]) > maxLogLineBytes {
+			extra := len(merged[i]) - maxLogLineBytes
+			merged[i] = merged[i][:maxLogLineBytes] + fmt.Sprintf("\n... [%d bytes truncated]", extra)
+			truncated += extra
+		}
+	}
+
+	if truncated > 0 {
+		h.logger.Debug(&reqID, "log file %s: %d bytes truncated", logPath, truncated)
 	}
 
 	if partialFirstLine && len(merged) > 0 {

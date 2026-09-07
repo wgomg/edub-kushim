@@ -162,3 +162,50 @@ func TestLogsHandler_ListLogs_EmptyFile(t *testing.T) {
 	json.NewDecoder(w.Body).Decode(&body)
 	testutil.AssertEqual(t, len(body.Lines), 0, "empty file")
 }
+
+func TestLogsHandler_ListLogs_OversizedLine(t *testing.T) {
+	h, configDir := newLogsHandler(t)
+
+	oversized := strings.Repeat("A", 3*1024*1024/2)
+	logPath := filepath.Join(configDir, "logs", "kushim.log")
+	content := oversized + "\n2026/01/01 10:00:01 INFO  : after\n"
+	if err := os.WriteFile(logPath, []byte(content), 0644); err != nil {
+		t.Fatalf("write log file: %v", err)
+	}
+
+	w := rec()
+	r := req(t, "GET", "/api/v1/logs/kushim", nil)
+	r.SetPathValue("name", "kushim")
+	h.ListLogs(w, r)
+	testutil.AssertEqual(t, w.Code, http.StatusOK, "status must not fail on oversized line")
+
+	var body struct {
+		Lines []string `json:"lines"`
+	}
+	json.NewDecoder(w.Body).Decode(&body)
+	testutil.AssertEqual(t, len(body.Lines), 2, "oversized and trailing line both returned")
+	testutil.AssertEqual(t, strings.Contains(body.Lines[0], "bytes truncated"), true, "truncation marker present")
+	testutil.AssertEqual(t, body.Lines[1], "2026/01/01 10:00:01 INFO  : after", "trailing line read after oversized line")
+}
+
+func TestLogsHandler_ListLogs_NoTrailingNewline(t *testing.T) {
+	h, configDir := newLogsHandler(t)
+	logPath := filepath.Join(configDir, "logs", "queue.log")
+	content := "2026/01/01 10:00:00 INFO  : first\n2026/01/01 10:00:01 INFO  : last"
+	if err := os.WriteFile(logPath, []byte(content), 0644); err != nil {
+		t.Fatalf("write log file: %v", err)
+	}
+
+	w := rec()
+	r := req(t, "GET", "/api/v1/logs/queue", nil)
+	r.SetPathValue("name", "queue")
+	h.ListLogs(w, r)
+	testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+	var body struct {
+		Lines []string `json:"lines"`
+	}
+	json.NewDecoder(w.Body).Decode(&body)
+	testutil.AssertEqual(t, len(body.Lines), 2, "both lines read including final partial line")
+	testutil.AssertEqual(t, body.Lines[1], "2026/01/01 10:00:01 INFO  : last", "final line without trailing newline preserved")
+}
