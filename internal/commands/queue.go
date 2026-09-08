@@ -22,6 +22,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/pool"
 	"github.com/wgomg/edub-kushim/internal/service"
+	"github.com/wgomg/edub-kushim/internal/types"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -496,7 +497,7 @@ func stopPool(c *Container, name string, started *bool, pp **pool.Pool) {
 	*started = false
 }
 
-func maybeScheduleTask(ctx context.Context, c *Container, client *database.Client, taskType string, active func(context.Context) (int64, error), due func(context.Context) (bool, error), payload map[string]any) error {
+func maybeScheduleTask(ctx context.Context, c *Container, client *database.Client, taskType types.TaskType, source types.BatchSource, active func(context.Context) (int64, error), due func(context.Context) (bool, error), payload map[string]any) error {
 	activeCount, err := active(ctx)
 	if err != nil {
 		return fmt.Errorf("check active %s tasks: %w", taskType, err)
@@ -524,8 +525,8 @@ func maybeScheduleTask(ctx context.Context, c *Container, client *database.Clien
 	batchID := uuid.New().String()
 	if err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
 		ID:     batchID,
-		Source: taskType,
-		Status: "queued",
+		Source: source,
+		Status: types.Batch.Status.Queued,
 	}); err != nil {
 		return fmt.Errorf("create %s batch: %w", taskType, err)
 	}
@@ -550,7 +551,7 @@ func maybeScheduleBackup(ctx context.Context, c *Container, client *database.Cli
 			"path": s.Path,
 			"keep": s.Keep,
 		}
-		if err := maybeScheduleTask(ctx, c, client, "backup",
+		if err := maybeScheduleTask(ctx, c, client, types.Task.Type.Backup, types.Batch.Source.Backup,
 			func(ctx context.Context) (int64, error) { return client.Queries.CountActiveBackupTasks(ctx) },
 			func(ctx context.Context) (bool, error) { return backup.IsBackupDue(ctx, client.Queries, s) },
 			payload,
@@ -570,7 +571,7 @@ func maybeScheduleMirror(ctx context.Context, c *Container, client *database.Cli
 		"path":     cfg.Mirror.Path,
 		"interval": cfg.Mirror.Interval,
 	}
-	return maybeScheduleTask(ctx, c, client, "mirror",
+	return maybeScheduleTask(ctx, c, client, types.Task.Type.Mirror, types.Batch.Source.Mirror,
 		func(ctx context.Context) (int64, error) { return client.Queries.CountActiveMirrorTasks(ctx) },
 		func(ctx context.Context) (bool, error) { return backup.IsMirrorDue(ctx, client.Queries, cfg.Mirror) },
 		payload,

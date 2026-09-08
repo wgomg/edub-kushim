@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/types"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -39,6 +40,11 @@ func Get(ctx context.Context, queries *database.Queries, taskID string) (databas
 }
 
 func ListFiltered(ctx context.Context, queries *database.Queries, f TaskFilter) ([]database.Task, error) {
+	// "active" is a filter pseudo-status, never a column value; combined
+	// with other filters it matches nothing by definition.
+	if f.Status == "active" && (f.BatchID != "" || f.TaskType != "") {
+		return []database.Task{}, nil
+	}
 	switch {
 	case f.Status == "active" && f.BatchID == "" && f.TaskType == "":
 		return queries.ListActiveTasks(ctx, database.ListActiveTasksParams{
@@ -47,60 +53,60 @@ func ListFiltered(ctx context.Context, queries *database.Queries, f TaskFilter) 
 	case f.BatchID != "" && f.Status != "" && f.TaskType != "" && f.Limit > 0:
 		return queries.ListTasksByBatchAndStatusAndType(ctx, database.ListTasksByBatchAndStatusAndTypeParams{
 			BatchID:  sql.NullString{String: f.BatchID, Valid: true},
-			Status:   f.Status,
-			TaskType: f.TaskType,
+			Status:   types.TaskStatus(f.Status),
+			TaskType: types.TaskType(f.TaskType),
 			Limit:    f.Limit,
 			Offset:   f.Offset,
 		})
 	case f.BatchID != "" && f.Status != "" && f.TaskType != "":
 		return queries.ListAllTasksByBatchAndStatusAndType(ctx, database.ListAllTasksByBatchAndStatusAndTypeParams{
 			BatchID:  sql.NullString{String: f.BatchID, Valid: true},
-			Status:   f.Status,
-			TaskType: f.TaskType,
+			Status:   types.TaskStatus(f.Status),
+			TaskType: types.TaskType(f.TaskType),
 		})
 	case f.BatchID != "" && f.TaskType != "" && f.Limit > 0:
 		return queries.ListTasksByBatchAndType(ctx, database.ListTasksByBatchAndTypeParams{
 			BatchID:  sql.NullString{String: f.BatchID, Valid: true},
-			TaskType: f.TaskType,
+			TaskType: types.TaskType(f.TaskType),
 			Limit:    f.Limit,
 			Offset:   f.Offset,
 		})
 	case f.BatchID != "" && f.TaskType != "":
 		return queries.ListAllTasksByBatchAndType(ctx, database.ListAllTasksByBatchAndTypeParams{
 			BatchID:  sql.NullString{String: f.BatchID, Valid: true},
-			TaskType: f.TaskType,
+			TaskType: types.TaskType(f.TaskType),
 		})
 	case f.Status != "" && f.TaskType != "" && f.Limit > 0:
 		return queries.ListTasksByStatusAndType(ctx, database.ListTasksByStatusAndTypeParams{
-			Status:   f.Status,
-			TaskType: f.TaskType,
+			Status:   types.TaskStatus(f.Status),
+			TaskType: types.TaskType(f.TaskType),
 			Limit:    f.Limit,
 			Offset:   f.Offset,
 		})
 	case f.Status != "" && f.TaskType != "":
 		return queries.ListAllTasksByStatusAndType(ctx, database.ListAllTasksByStatusAndTypeParams{
-			Status:   f.Status,
-			TaskType: f.TaskType,
+			Status:   types.TaskStatus(f.Status),
+			TaskType: types.TaskType(f.TaskType),
 		})
 	case f.TaskType != "" && f.Limit > 0:
 		return queries.ListTasksByType(ctx, database.ListTasksByTypeParams{
-			TaskType: f.TaskType,
+			TaskType: types.TaskType(f.TaskType),
 			Limit:    f.Limit,
 			Offset:   f.Offset,
 		})
 	case f.TaskType != "":
-		return queries.ListAllTasksByType(ctx, f.TaskType)
+		return queries.ListAllTasksByType(ctx, types.TaskType(f.TaskType))
 	case f.BatchID != "" && f.Status != "" && f.Limit > 0:
 		return queries.ListTasksByBatchAndStatus(ctx, database.ListTasksByBatchAndStatusParams{
 			BatchID: sql.NullString{String: f.BatchID, Valid: true},
-			Status:  f.Status,
+			Status:  types.TaskStatus(f.Status),
 			Limit:   f.Limit,
 			Offset:  f.Offset,
 		})
 	case f.BatchID != "" && f.Status != "":
 		return queries.ListAllTasksByBatchAndStatus(ctx, database.ListAllTasksByBatchAndStatusParams{
 			BatchID: sql.NullString{String: f.BatchID, Valid: true},
-			Status:  f.Status,
+			Status:  types.TaskStatus(f.Status),
 		})
 	case f.BatchID != "" && f.Limit > 0:
 		return queries.ListTasksByBatch(ctx, database.ListTasksByBatchParams{
@@ -112,12 +118,12 @@ func ListFiltered(ctx context.Context, queries *database.Queries, f TaskFilter) 
 		return queries.ListAllTasksByBatch(ctx, sql.NullString{String: f.BatchID, Valid: true})
 	case f.Status != "" && f.Limit > 0:
 		return queries.ListTasksByStatus(ctx, database.ListTasksByStatusParams{
-			Status: f.Status,
+			Status: types.TaskStatus(f.Status),
 			Limit:  f.Limit,
 			Offset: f.Offset,
 		})
 	case f.Status != "":
-		return queries.ListAllTasksByStatus(ctx, f.Status)
+		return queries.ListAllTasksByStatus(ctx, types.TaskStatus(f.Status))
 	case f.Limit > 0:
 		return queries.ListTasks(ctx, database.ListTasksParams{
 			Limit:  f.Limit,
@@ -136,14 +142,14 @@ func Retry(ctx context.Context, queries *database.Queries, logger *utils.Logger,
 		}
 		return err
 	}
-	if task.Status != "failed" {
+	if task.Status != types.Task.Status.Failed {
 		return fmt.Errorf("task %q is %s, not failed", taskID, task.Status)
 	}
 	if err := queries.RetryTask(ctx, task.ID); err != nil {
 		return err
 	}
 
-	if task.TaskType == "consume" && task.Payload != nil {
+	if task.TaskType == types.Task.Type.Consume && task.Payload != nil {
 		if onCompleted := consumeOnCompleted(*task.Payload); onCompleted != "" {
 			if _, err := queries.SetEnrichTaskWaiting(ctx, onCompleted); err != nil {
 				logger.Error(nil, "restore enrich task %s after retry of consume %s failed: %v (will be recovered by activation or sweep)", onCompleted, taskID, err)

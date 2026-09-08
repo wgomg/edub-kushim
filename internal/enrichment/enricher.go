@@ -12,7 +12,6 @@ import (
 	"time"
 
 	anyascii "github.com/anyascii/go"
-	types "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/service"
@@ -33,11 +32,11 @@ type Enricher struct {
 	logger   *utils.Logger
 	queries  *database.Queries
 	runner   *tools.Runner
-	services *types.CrudServices
+	services *service.CrudServices
 	mu       sync.Mutex
 }
 
-func NewEnricher(cfg *config.Config, logger *utils.Logger, queries *database.Queries, services *types.CrudServices, matcher tagmatcher.Matcher) (*Enricher, error) {
+func NewEnricher(cfg *config.Config, logger *utils.Logger, queries *database.Queries, services *service.CrudServices, matcher tagmatcher.Matcher) (*Enricher, error) {
 	e := &Enricher{
 		config:   cfg,
 		logger:   logger,

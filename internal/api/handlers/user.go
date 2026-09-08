@@ -7,19 +7,19 @@ import (
 	"strings"
 	"time"
 
-	itypes "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
+	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type UserHandler struct {
-	services *itypes.CrudServices
+	services *service.CrudServices
 	logger   *utils.Logger
 }
 
-func NewUserHandler(services *itypes.CrudServices, logger *utils.Logger) *UserHandler {
+func NewUserHandler(services *service.CrudServices, logger *utils.Logger) *UserHandler {
 	return &UserHandler{services: services, logger: logger}
 }
 

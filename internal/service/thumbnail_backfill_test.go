@@ -14,6 +14,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/testutil"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 func newThumbnailBackfill(t *testing.T) (*ThumbnailBackfill, *database.Client, *recordingTaskCreator, *recordingBatchCreator) {
@@ -50,7 +51,7 @@ func createBackfillTestDoc(t *testing.T, client *database.Client, title, seed st
 	return docID
 }
 
-func createTestConsumeTask(t *testing.T, client *database.Client, batchID, status string, documentID string) {
+func createTestConsumeTask(t *testing.T, client *database.Client, batchID string, status types.TaskStatus, documentID string) {
 	t.Helper()
 	ctx := context.Background()
 	raw, _ := json.Marshal(map[string]any{"document_id": documentID})
@@ -127,12 +128,12 @@ func TestThumbnailBackfill_BackfillAll_SkipsPendingDuplicate(t *testing.T) {
 	docA := createBackfillTestDoc(t, client, "dup.pdf", "a")
 	docB := createBackfillTestDoc(t, client, "ok.pdf", "b")
 
-	taskMock.createFn = func(taskType, batchID string, payload json.RawMessage, taskID, status, dedupKey string) (string, error) {
+	taskMock.createFn = func(taskType types.TaskType, batchID string, payload json.RawMessage, taskID string, status types.TaskStatus, dedupKey string) (string, error) {
 		if dedupKey == "thumbnail:doc:"+docA {
 			return "", &pgconn.PgError{Code: pgerrcode.UniqueViolation, ConstraintName: "idx_task_dedup"}
 		}
 		taskMock.calls = append(taskMock.calls, mockTaskCall{
-			TaskType: taskType, BatchID: batchID, Payload: payload, TaskID: taskID, Status: status, DedupKey: dedupKey,
+			TaskType: string(taskType), BatchID: batchID, Payload: payload, TaskID: taskID, Status: string(status), DedupKey: dedupKey,
 		})
 		return taskID, nil
 	}
@@ -207,7 +208,7 @@ func TestThumbnailBackfill_BackfillDocument_SurfacesPendingConflict(t *testing.T
 
 	_, docUUID := database.CreateTestDocument(t, client.Queries, "queued.pdf")
 
-	taskMock.createFn = func(_, _ string, _ json.RawMessage, _, _, dedupKey string) (string, error) {
+	taskMock.createFn = func(_ types.TaskType, _ string, _ json.RawMessage, _ string, _ types.TaskStatus, dedupKey string) (string, error) {
 		return "", &pgconn.PgError{Code: pgerrcode.UniqueViolation, ConstraintName: "idx_task_dedup"}
 	}
 
@@ -229,11 +230,11 @@ func TestThumbnailBackfill_BackfillBatch_Success(t *testing.T) {
 	docE := createBackfillTestDoc(t, client, "e.pdf", "e")
 
 	const srcBatch = "src-batch"
-	createTestConsumeTask(t, client, srcBatch, "completed", docA)
-	createTestConsumeTask(t, client, srcBatch, "completed", docB)
-	createTestConsumeTask(t, client, "other-batch", "completed", docC)
-	createTestConsumeTask(t, client, srcBatch, "pending", docD)
-	createTestConsumeTask(t, client, srcBatch, "completed", docE)
+	createTestConsumeTask(t, client, srcBatch, types.Task.Status.Completed, docA)
+	createTestConsumeTask(t, client, srcBatch, types.Task.Status.Completed, docB)
+	createTestConsumeTask(t, client, "other-batch", types.Task.Status.Completed, docC)
+	createTestConsumeTask(t, client, srcBatch, types.Task.Status.Pending, docD)
+	createTestConsumeTask(t, client, srcBatch, types.Task.Status.Completed, docE)
 	if err := client.Queries.SetDocumentHasThumbnail(ctx, docE); err != nil {
 		t.Fatalf("set has_thumbnail: %v", err)
 	}
@@ -274,8 +275,8 @@ func TestThumbnailBackfill_BackfillAll_DeletesTasksWhenBatchCreationFails(t *tes
 
 	store := task.NewStore(client.Queries)
 	batchMock := &recordingBatchCreator{}
-	batchMock.createFn = func(id, source, status string) error {
-		batchMock.calls = append(batchMock.calls, mockTaskCall{BatchID: id, Source: source, Status: status})
+	batchMock.createFn = func(id string, source types.BatchSource, status types.BatchStatus) error {
+		batchMock.calls = append(batchMock.calls, mockTaskCall{BatchID: id, Source: string(source), Status: string(status)})
 		return fmt.Errorf("simulated batch insert failure")
 	}
 	svc := NewThumbnailBackfill(client.Queries, testutil.NewTestLogger(), store, batchMock)
@@ -303,8 +304,8 @@ func TestThumbnailBackfill_BackfillDocument_DeletesTaskWhenBatchCreationFails(t 
 
 	store := task.NewStore(client.Queries)
 	batchMock := &recordingBatchCreator{}
-	batchMock.createFn = func(id, source, status string) error {
-		batchMock.calls = append(batchMock.calls, mockTaskCall{BatchID: id, Source: source, Status: status})
+	batchMock.createFn = func(id string, source types.BatchSource, status types.BatchStatus) error {
+		batchMock.calls = append(batchMock.calls, mockTaskCall{BatchID: id, Source: string(source), Status: string(status)})
 		return fmt.Errorf("simulated batch insert failure")
 	}
 	svc := NewThumbnailBackfill(client.Queries, testutil.NewTestLogger(), store, batchMock)
@@ -328,12 +329,12 @@ func TestThumbnailBackfill_BackfillAll_ContinuesOnTaskError(t *testing.T) {
 	docA := createBackfillTestDoc(t, client, "fail.pdf", "a")
 	docB := createBackfillTestDoc(t, client, "ok.pdf", "b")
 
-	taskMock.createFn = func(taskType, batchID string, payload json.RawMessage, taskID, status, dedupKey string) (string, error) {
+	taskMock.createFn = func(taskType types.TaskType, batchID string, payload json.RawMessage, taskID string, status types.TaskStatus, dedupKey string) (string, error) {
 		if dedupKey == "thumbnail:doc:"+docA {
 			return "", fmt.Errorf("simulated task insert failure")
 		}
 		taskMock.calls = append(taskMock.calls, mockTaskCall{
-			TaskType: taskType, BatchID: batchID, Payload: payload, TaskID: taskID, Status: status, DedupKey: dedupKey,
+			TaskType: string(taskType), BatchID: batchID, Payload: payload, TaskID: taskID, Status: string(status), DedupKey: dedupKey,
 		})
 		return taskID, nil
 	}
@@ -355,7 +356,7 @@ func TestThumbnailBackfill_BackfillAll_AllSkippedCreatesNoBatch(t *testing.T) {
 	createBackfillTestDoc(t, client, "dup1.pdf", "a")
 	createBackfillTestDoc(t, client, "dup2.pdf", "b")
 
-	taskMock.createFn = func(_, _ string, _ json.RawMessage, _, _, _ string) (string, error) {
+	taskMock.createFn = func(_ types.TaskType, _ string, _ json.RawMessage, _ string, _ types.TaskStatus, _ string) (string, error) {
 		return "", &pgconn.PgError{Code: pgerrcode.UniqueViolation, ConstraintName: "idx_task_dedup"}
 	}
 

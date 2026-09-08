@@ -12,13 +12,13 @@ import (
 	"strconv"
 	"strings"
 
-	itypes "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/mime"
 	"github.com/wgomg/edub-kushim/internal/search"
+	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/storage"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -36,11 +36,11 @@ type DocumentHandler struct {
 	client    *database.Client
 	logger    *utils.Logger
 	engine    *search.Engine
-	services  *itypes.CrudServices
+	services  *service.CrudServices
 	getConfig func() *config.Config
 }
 
-func NewDocumentHandler(client *database.Client, logger *utils.Logger, engine *search.Engine, services *itypes.CrudServices, getConfig func() *config.Config) *DocumentHandler {
+func NewDocumentHandler(client *database.Client, logger *utils.Logger, engine *search.Engine, services *service.CrudServices, getConfig func() *config.Config) *DocumentHandler {
 	return &DocumentHandler{
 		client:    client,
 		logger:    logger,

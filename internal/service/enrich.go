@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 type ReEnrich struct {
@@ -31,7 +32,7 @@ func (s *ReEnrich) ReEnrich(ctx context.Context, documentUUID string) (batchID s
 
 	batchID = uuid.New().String()
 
-	if err := s.batchCreator.Create(ctx, batchID, "reenrich", "queued"); err != nil {
+	if err := s.batchCreator.Create(ctx, batchID, types.Batch.Source.Reenrich, types.Batch.Status.Queued); err != nil {
 		return "", errs.FromDB(err, "create batch")
 	}
 
@@ -41,7 +42,7 @@ func (s *ReEnrich) ReEnrich(ctx context.Context, documentUUID string) (batchID s
 		"document_id": documentUUID,
 	})
 
-	_, err = s.taskCreator.CreateTask(ctx, "enrich", batchID, payload, taskID, "pending", "enrich:doc:"+documentUUID)
+	_, err = s.taskCreator.CreateTask(ctx, types.Task.Type.Enrich, batchID, payload, taskID, types.Task.Status.Pending, "enrich:doc:"+documentUUID)
 	if err != nil {
 		return "", errs.FromDB(err, "create enrich task")
 	}

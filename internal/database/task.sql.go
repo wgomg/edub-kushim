@@ -9,6 +9,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 const cancelPendingTasksByBatch = `-- name: CancelPendingTasksByBatch :execrows
@@ -169,7 +171,7 @@ SELECT COUNT(*) FROM task WHERE batch_id = $1 AND status = $2
 
 type CountTasksByBatchAndStatusParams struct {
 	BatchID sql.NullString
-	Status  string
+	Status  types.TaskStatus
 }
 
 func (q *Queries) CountTasksByBatchAndStatus(ctx context.Context, arg CountTasksByBatchAndStatusParams) (int64, error) {
@@ -184,7 +186,7 @@ SELECT status, COUNT(*) as count FROM task GROUP BY status
 `
 
 type CountTasksByStatusRow struct {
-	Status string
+	Status types.TaskStatus
 	Count  int64
 }
 
@@ -216,8 +218,8 @@ SELECT COUNT(*) FROM task WHERE status = $1 AND task_type = $2
 `
 
 type CountTasksByStatusAndTypeParams struct {
-	Status   string
-	TaskType string
+	Status   types.TaskStatus
+	TaskType types.TaskType
 }
 
 func (q *Queries) CountTasksByStatusAndType(ctx context.Context, arg CountTasksByStatusAndTypeParams) (int64, error) {
@@ -235,8 +237,8 @@ INSERT INTO task (
 
 type CreateTaskParams struct {
 	TaskID   string
-	TaskType string
-	Status   string
+	TaskType types.TaskType
+	Status   types.TaskStatus
 	BatchID  sql.NullString
 	Payload  *json.RawMessage
 	DedupKey sql.NullString
@@ -466,7 +468,7 @@ WHERE status = 'pending' AND task_type = $1
 ORDER BY created_at LIMIT 1
 `
 
-func (q *Queries) GetNextPendingTaskOfType(ctx context.Context, taskType string) (int64, error) {
+func (q *Queries) GetNextPendingTaskOfType(ctx context.Context, taskType types.TaskType) (int64, error) {
 	row := q.db.QueryRowContext(ctx, getNextPendingTaskOfType, taskType)
 	var id int64
 	err := row.Scan(&id)
@@ -480,7 +482,7 @@ WHERE status = 'pending' AND task_type = $1
 ORDER BY created_at LIMIT 1
 `
 
-func (q *Queries) GetNextPendingTaskOfTypeWithGate(ctx context.Context, taskType string) (int64, error) {
+func (q *Queries) GetNextPendingTaskOfTypeWithGate(ctx context.Context, taskType types.TaskType) (int64, error) {
 	row := q.db.QueryRowContext(ctx, getNextPendingTaskOfTypeWithGate, taskType)
 	var id int64
 	err := row.Scan(&id)
@@ -732,7 +734,7 @@ FROM task WHERE batch_id = $1 AND status = $2 ORDER BY created_at DESC
 
 type ListAllTasksByBatchAndStatusParams struct {
 	BatchID sql.NullString
-	Status  string
+	Status  types.TaskStatus
 }
 
 func (q *Queries) ListAllTasksByBatchAndStatus(ctx context.Context, arg ListAllTasksByBatchAndStatusParams) ([]Task, error) {
@@ -781,8 +783,8 @@ FROM task WHERE batch_id = $1 AND status = $2 AND task_type = $3 ORDER BY create
 
 type ListAllTasksByBatchAndStatusAndTypeParams struct {
 	BatchID  sql.NullString
-	Status   string
-	TaskType string
+	Status   types.TaskStatus
+	TaskType types.TaskType
 }
 
 func (q *Queries) ListAllTasksByBatchAndStatusAndType(ctx context.Context, arg ListAllTasksByBatchAndStatusAndTypeParams) ([]Task, error) {
@@ -831,7 +833,7 @@ FROM task WHERE batch_id = $1 AND task_type = $2 ORDER BY created_at DESC
 
 type ListAllTasksByBatchAndTypeParams struct {
 	BatchID  sql.NullString
-	TaskType string
+	TaskType types.TaskType
 }
 
 func (q *Queries) ListAllTasksByBatchAndType(ctx context.Context, arg ListAllTasksByBatchAndTypeParams) ([]Task, error) {
@@ -878,7 +880,7 @@ SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
 FROM task WHERE status = $1 ORDER BY created_at DESC
 `
 
-func (q *Queries) ListAllTasksByStatus(ctx context.Context, status string) ([]Task, error) {
+func (q *Queries) ListAllTasksByStatus(ctx context.Context, status types.TaskStatus) ([]Task, error) {
 	rows, err := q.db.QueryContext(ctx, listAllTasksByStatus, status)
 	if err != nil {
 		return nil, err
@@ -923,8 +925,8 @@ FROM task WHERE status = $1 AND task_type = $2 ORDER BY created_at DESC
 `
 
 type ListAllTasksByStatusAndTypeParams struct {
-	Status   string
-	TaskType string
+	Status   types.TaskStatus
+	TaskType types.TaskType
 }
 
 func (q *Queries) ListAllTasksByStatusAndType(ctx context.Context, arg ListAllTasksByStatusAndTypeParams) ([]Task, error) {
@@ -971,7 +973,7 @@ SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
 FROM task WHERE task_type = $1 ORDER BY created_at DESC
 `
 
-func (q *Queries) ListAllTasksByType(ctx context.Context, taskType string) ([]Task, error) {
+func (q *Queries) ListAllTasksByType(ctx context.Context, taskType types.TaskType) ([]Task, error) {
 	rows, err := q.db.QueryContext(ctx, listAllTasksByType, taskType)
 	if err != nil {
 		return nil, err
@@ -1054,7 +1056,7 @@ LIMIT $2 OFFSET $3
 `
 
 type ListDistinctBatchIDsByStatusParams struct {
-	Status string
+	Status types.TaskStatus
 	Limit  int32
 	Offset int32
 }
@@ -1189,7 +1191,7 @@ FROM task WHERE batch_id = $1 AND status = $2 ORDER BY created_at DESC LIMIT $3 
 
 type ListTasksByBatchAndStatusParams struct {
 	BatchID sql.NullString
-	Status  string
+	Status  types.TaskStatus
 	Limit   int32
 	Offset  int32
 }
@@ -1245,8 +1247,8 @@ FROM task WHERE batch_id = $1 AND status = $2 AND task_type = $3 ORDER BY create
 
 type ListTasksByBatchAndStatusAndTypeParams struct {
 	BatchID  sql.NullString
-	Status   string
-	TaskType string
+	Status   types.TaskStatus
+	TaskType types.TaskType
 	Limit    int32
 	Offset   int32
 }
@@ -1303,7 +1305,7 @@ FROM task WHERE batch_id = $1 AND task_type = $2 ORDER BY created_at DESC LIMIT 
 
 type ListTasksByBatchAndTypeParams struct {
 	BatchID  sql.NullString
-	TaskType string
+	TaskType types.TaskType
 	Limit    int32
 	Offset   int32
 }
@@ -1358,7 +1360,7 @@ FROM task WHERE status = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3
 `
 
 type ListTasksByStatusParams struct {
-	Status string
+	Status types.TaskStatus
 	Limit  int32
 	Offset int32
 }
@@ -1408,8 +1410,8 @@ FROM task WHERE status = $1 AND task_type = $2 ORDER BY created_at DESC LIMIT $3
 `
 
 type ListTasksByStatusAndTypeParams struct {
-	Status   string
-	TaskType string
+	Status   types.TaskStatus
+	TaskType types.TaskType
 	Limit    int32
 	Offset   int32
 }
@@ -1464,7 +1466,7 @@ FROM task WHERE task_type = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3
 `
 
 type ListTasksByTypeParams struct {
-	TaskType string
+	TaskType types.TaskType
 	Limit    int32
 	Offset   int32
 }

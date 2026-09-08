@@ -53,21 +53,23 @@ The cast of characters:
 | queue daemon | `internal/commands/queue.go` | orchestrates batches |
 | consume command | `internal/commands/consume.go` | runs one batch |
 
-The six task types (`internal/commands/container.go:127-134`): `consume`,
-`enrich`, `thumbnail`, `config`, `backup`, `mirror`.
+The six task types (declared in `internal/types`, registered in
+`internal/commands/container.go`): `consume`, `enrich`, `thumbnail`,
+`config`, `backup`, `mirror`.
 
 ---
 
 ## 2. The task table and statuses
 
-Schema (`internal/database/sql/schema/migrations/00001_baseline.sql:41-55`):
+Schema (`internal/database/sql/schema/migrations/00001_baseline.sql:41-55`,
+with enum columns from migration `00013`):
 
 ```sql
 CREATE TABLE task (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     task_id TEXT NOT NULL UNIQUE,
-    task_type TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending',
+    task_type task_type NOT NULL,
+    status task_status NOT NULL DEFAULT 'pending',
     batch_id TEXT,
     payload JSONB,
     result JSONB,
@@ -80,9 +82,15 @@ CREATE TABLE task (
 );
 ```
 
-Seven statuses, all plain strings (no CHECK constraint — the code owns the
-vocabulary): `pending`, `processing`, `waiting`, `completed`, `failed`,
-`discarded`, `cancelled`.
+Seven statuses, enforced by the `task_status` enum: `pending`, `processing`,
+`waiting`, `completed`, `failed`, `discarded`, `cancelled`. The vocabulary is
+closed at the database level (enum columns, migration `00013`) and mirrored
+by the Go registry in `internal/types` — the single declaration point in Go
+(`types.Task.Type.*`, `types.Task.Status.*`, `types.Batch.Source.*`,
+`types.Batch.Status.*`), wired into sqlc-generated code via column
+overrides. `batch.source`, `batch.status`, `task.task_type`, and
+`task.status` are all enum columns; an unregistered value fails the insert
+(and migration `00013` aborts loudly on pre-existing legacy values).
 
 The `progress` column (migration 00011) is a nullable JSONB snapshot of the
 current pipeline step, written by the owning handler while the task is

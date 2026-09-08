@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/types"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -111,8 +112,8 @@ func ScanAndEnqueue(ctx context.Context, cfg *config.Config, client *database.Cl
 		consumePayloadPtr := json.RawMessage(consumePayload)
 		_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
 			TaskID:   consumeTaskID,
-			TaskType: "consume",
-			Status:   "pending",
+			TaskType: types.Task.Type.Consume,
+			Status:   types.Task.Status.Pending,
 			BatchID:  sql.NullString{String: batchID, Valid: true},
 			Payload:  &consumePayloadPtr,
 			DedupKey: sql.NullString{String: "consume:" + e.md5, Valid: true},
@@ -132,8 +133,8 @@ func ScanAndEnqueue(ctx context.Context, cfg *config.Config, client *database.Cl
 		enrichPayloadPtr := json.RawMessage(enrichPayload)
 		_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
 			TaskID:   enrichTaskID,
-			TaskType: "enrich",
-			Status:   "waiting",
+			TaskType: types.Task.Type.Enrich,
+			Status:   types.Task.Status.Waiting,
 			BatchID:  sql.NullString{String: batchID, Valid: true},
 			Payload:  &enrichPayloadPtr,
 			DedupKey: sql.NullString{Valid: false},
@@ -152,8 +153,8 @@ func ScanAndEnqueue(ctx context.Context, cfg *config.Config, client *database.Cl
 			thumbnailPayloadPtr := json.RawMessage(thumbnailPayload)
 			_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
 				TaskID:   thumbnailTaskID,
-				TaskType: "thumbnail",
-				Status:   "waiting",
+				TaskType: types.Task.Type.Thumbnail,
+				Status:   types.Task.Status.Waiting,
 				BatchID:  sql.NullString{String: batchID, Valid: true},
 				Payload:  &thumbnailPayloadPtr,
 				DedupKey: sql.NullString{Valid: false},
@@ -174,8 +175,8 @@ func ScanAndEnqueue(ctx context.Context, cfg *config.Config, client *database.Cl
 	// consumer loop from picking up an incomplete or empty batch (race fix).
 	err = client.Queries.CreateBatch(ctx, database.CreateBatchParams{
 		ID:     batchID,
-		Source: "polling",
-		Status: "queued",
+		Source: types.Batch.Source.Polling,
+		Status: types.Batch.Status.Queued,
 	})
 	if err != nil {
 		return "", 0, err

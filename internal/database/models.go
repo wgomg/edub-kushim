@@ -6,9 +6,202 @@ package database
 
 import (
 	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
+	"fmt"
 	"time"
+
+	"github.com/wgomg/edub-kushim/internal/types"
 )
+
+type BatchSource string
+
+const (
+	BatchSourceCli             BatchSource = "cli"
+	BatchSourceApi             BatchSource = "api"
+	BatchSourceUpload          BatchSource = "upload"
+	BatchSourcePolling         BatchSource = "polling"
+	BatchSourceReenrich        BatchSource = "reenrich"
+	BatchSourceOrphanedRestore BatchSource = "orphaned-restore"
+	BatchSourceThumbbackfill   BatchSource = "thumbbackfill"
+	BatchSourceBackup          BatchSource = "backup"
+	BatchSourceMirror          BatchSource = "mirror"
+	BatchSourceConfig          BatchSource = "config"
+)
+
+func (e *BatchSource) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = BatchSource(s)
+	case string:
+		*e = BatchSource(s)
+	default:
+		return fmt.Errorf("unsupported scan type for BatchSource: %T", src)
+	}
+	return nil
+}
+
+type NullBatchSource struct {
+	BatchSource BatchSource
+	Valid       bool // Valid is true if BatchSource is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullBatchSource) Scan(value interface{}) error {
+	if value == nil {
+		ns.BatchSource, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.BatchSource.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullBatchSource) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.BatchSource), nil
+}
+
+type BatchStatus string
+
+const (
+	BatchStatusQueued     BatchStatus = "queued"
+	BatchStatusProcessing BatchStatus = "processing"
+	BatchStatusCompleted  BatchStatus = "completed"
+	BatchStatusFailed     BatchStatus = "failed"
+	BatchStatusPaused     BatchStatus = "paused"
+	BatchStatusCancelled  BatchStatus = "cancelled"
+)
+
+func (e *BatchStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = BatchStatus(s)
+	case string:
+		*e = BatchStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for BatchStatus: %T", src)
+	}
+	return nil
+}
+
+type NullBatchStatus struct {
+	BatchStatus BatchStatus
+	Valid       bool // Valid is true if BatchStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullBatchStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.BatchStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.BatchStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullBatchStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.BatchStatus), nil
+}
+
+type TaskStatus string
+
+const (
+	TaskStatusPending    TaskStatus = "pending"
+	TaskStatusProcessing TaskStatus = "processing"
+	TaskStatusCompleted  TaskStatus = "completed"
+	TaskStatusFailed     TaskStatus = "failed"
+	TaskStatusCancelled  TaskStatus = "cancelled"
+	TaskStatusDiscarded  TaskStatus = "discarded"
+	TaskStatusWaiting    TaskStatus = "waiting"
+)
+
+func (e *TaskStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = TaskStatus(s)
+	case string:
+		*e = TaskStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for TaskStatus: %T", src)
+	}
+	return nil
+}
+
+type NullTaskStatus struct {
+	TaskStatus TaskStatus
+	Valid      bool // Valid is true if TaskStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullTaskStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.TaskStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.TaskStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullTaskStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.TaskStatus), nil
+}
+
+type TaskType string
+
+const (
+	TaskTypeConsume   TaskType = "consume"
+	TaskTypeEnrich    TaskType = "enrich"
+	TaskTypeThumbnail TaskType = "thumbnail"
+	TaskTypeBackup    TaskType = "backup"
+	TaskTypeMirror    TaskType = "mirror"
+	TaskTypeConfig    TaskType = "config"
+)
+
+func (e *TaskType) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = TaskType(s)
+	case string:
+		*e = TaskType(s)
+	default:
+		return fmt.Errorf("unsupported scan type for TaskType: %T", src)
+	}
+	return nil
+}
+
+type NullTaskType struct {
+	TaskType TaskType
+	Valid    bool // Valid is true if TaskType is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullTaskType) Scan(value interface{}) error {
+	if value == nil {
+		ns.TaskType, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.TaskType.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullTaskType) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.TaskType), nil
+}
 
 type BackupLock struct {
 	ID        int32
@@ -18,8 +211,8 @@ type BackupLock struct {
 
 type Batch struct {
 	ID        string
-	Source    string
-	Status    string
+	Source    types.BatchSource
+	Status    types.BatchStatus
 	CreatedAt sql.NullTime
 }
 
@@ -120,8 +313,8 @@ type Tag struct {
 type Task struct {
 	ID          int64
 	TaskID      string
-	TaskType    string
-	Status      string
+	TaskType    types.TaskType
+	Status      types.TaskStatus
 	BatchID     sql.NullString
 	Payload     *json.RawMessage
 	Result      *json.RawMessage

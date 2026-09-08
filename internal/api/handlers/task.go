@@ -12,23 +12,23 @@ import (
 	"syscall"
 	"time"
 
-	itypes "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/task"
+	itypes "github.com/wgomg/edub-kushim/internal/types"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type TaskHandler struct {
-	services  *itypes.CrudServices
+	services  *service.CrudServices
 	queries   *database.Queries
 	logger    *utils.Logger
 	getConfig func() *config.Config
 }
 
-func NewTaskHandler(services *itypes.CrudServices, queries *database.Queries, logger *utils.Logger, getConfig func() *config.Config) *TaskHandler {
+func NewTaskHandler(services *service.CrudServices, queries *database.Queries, logger *utils.Logger, getConfig func() *config.Config) *TaskHandler {
 	return &TaskHandler{
 		services:  services,
 		queries:   queries,
@@ -283,7 +283,7 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	perStatus := map[string]int64{}
 	if statusErr == nil {
 		for _, r := range statusRows {
-			perStatus[r.Status] = r.Count
+			perStatus[string(r.Status)] = r.Count
 		}
 	}
 
@@ -573,7 +573,7 @@ func (h *TaskHandler) CancelBatch(w http.ResponseWriter, r *http.Request) {
 
 // Keep in sync with configtask.DedupKey(): drift here silently degrades
 // config/backup labels to the bare task type.
-func taskLabel(taskType string, dedupKey sql.NullString) string {
+func taskLabel(taskType itypes.TaskType, dedupKey sql.NullString) string {
 	key := dedupKey.String
 	switch {
 	case strings.HasPrefix(key, "backup:"):
@@ -597,14 +597,14 @@ func taskLabel(taskType string, dedupKey sql.NullString) string {
 		return "Download Hugot model"
 	}
 	switch taskType {
-	case "consume":
+	case itypes.Task.Type.Consume:
 		return "Consume"
-	case "enrich":
+	case itypes.Task.Type.Enrich:
 		return "Enrich"
-	case "thumbnail":
+	case itypes.Task.Type.Thumbnail:
 		return "Thumbnail"
 	default:
-		return taskType
+		return string(taskType)
 	}
 }
 
@@ -665,8 +665,8 @@ func taskToResponse(t database.Task) types.TaskResponse {
 			fileName = p.FileName
 		}
 
-		if t.TaskType == "enrich" || t.TaskType == "thumbnail" {
-			if t.Status == "discarded" {
+		if t.TaskType == itypes.Task.Type.Enrich || t.TaskType == itypes.Task.Type.Thumbnail {
+			if t.Status == itypes.Task.Status.Discarded {
 				var enrichPayload struct {
 					WaitingFor string `json:"waiting_for"`
 				}
@@ -675,7 +675,7 @@ func taskToResponse(t database.Task) types.TaskResponse {
 			} else {
 				payloadDocID = p.DocumentID
 			}
-		} else if t.TaskType == "consume" && t.Status == "completed" {
+		} else if t.TaskType == itypes.Task.Type.Consume && t.Status == itypes.Task.Status.Completed {
 			payloadDocID = p.DocumentID
 		}
 	}
@@ -683,7 +683,7 @@ func taskToResponse(t database.Task) types.TaskResponse {
 	label := taskLabel(t.TaskType, t.DedupKey)
 	if fileName != "" {
 		switch t.TaskType {
-		case "consume", "enrich", "thumbnail":
+		case itypes.Task.Type.Consume, itypes.Task.Type.Enrich, itypes.Task.Type.Thumbnail:
 			label += ": " + fileName
 		default:
 			label = fileName
@@ -693,10 +693,10 @@ func taskToResponse(t database.Task) types.TaskResponse {
 	return types.TaskResponse{
 		TaskID:       t.TaskID,
 		BatchID:      t.BatchID.String,
-		TaskType:     t.TaskType,
+		TaskType:     string(t.TaskType),
 		FileName:     fileName,
 		PayloadDocID: payloadDocID,
-		Status:       t.Status,
+		Status:       string(t.Status),
 		DocumentID:   docID,
 		Error:        errStr,
 		Label:        label,

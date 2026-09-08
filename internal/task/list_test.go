@@ -8,6 +8,7 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/testutil"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 func TestListFilteredActiveOrdering(t *testing.T) {
@@ -15,7 +16,7 @@ func TestListFilteredActiveOrdering(t *testing.T) {
 	ctx := context.Background()
 
 	batch := sql.NullString{String: "listf-batch", Valid: true}
-	create := func(taskID, taskType, status string) int64 {
+	create := func(taskID string, taskType types.TaskType, status types.TaskStatus) int64 {
 		t.Helper()
 		id, err := q.CreateTask(ctx, database.CreateTaskParams{
 			TaskID: taskID, TaskType: taskType, Status: status, BatchID: batch,
@@ -26,15 +27,15 @@ func TestListFilteredActiveOrdering(t *testing.T) {
 
 	// Two processing tasks, claimed in order: the earlier claim has the
 	// earlier started_at and must sort first within the processing tier.
-	proc1ID := create("listf-proc-1", "consume", "pending")
-	proc2ID := create("listf-proc-2", "consume", "pending")
+	proc1ID := create("listf-proc-1", types.Task.Type.Consume, types.Task.Status.Pending)
+	proc2ID := create("listf-proc-2", types.Task.Type.Consume, types.Task.Status.Pending)
 	_, err := q.ClaimTask(ctx, proc1ID)
 	testutil.AssertNoError(t, err, "claim proc 1")
 	_, err = q.ClaimTask(ctx, proc2ID)
 	testutil.AssertNoError(t, err, "claim proc 2")
-	create("listf-pending", "consume", "pending")
-	create("listf-waiting", "enrich", "waiting")
-	create("listf-completed", "consume", "completed")
+	create("listf-pending", types.Task.Type.Consume, types.Task.Status.Pending)
+	create("listf-waiting", types.Task.Type.Enrich, types.Task.Status.Waiting)
+	create("listf-completed", types.Task.Type.Consume, types.Task.Status.Completed)
 
 	got, err := ListFiltered(ctx, q, TaskFilter{Status: "active", Limit: 10})
 	testutil.AssertNoError(t, err, "list active")
@@ -56,7 +57,7 @@ func TestListFilteredActiveLimit(t *testing.T) {
 	for i := 1; i <= 3; i++ {
 		taskID := fmt.Sprintf("listf-limit-%d", i)
 		_, err := q.CreateTask(ctx, database.CreateTaskParams{
-			TaskID: taskID, TaskType: "consume", Status: "pending",
+			TaskID: taskID, TaskType: types.Task.Type.Consume, Status: types.Task.Status.Pending,
 		})
 		testutil.AssertNoError(t, err, "create task "+taskID)
 	}
@@ -73,7 +74,7 @@ func TestListFilteredActiveWithBatchOrTypeFilter(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := q.CreateTask(ctx, database.CreateTaskParams{
-		TaskID: "listf-other", TaskType: "consume", Status: "pending",
+		TaskID: "listf-other", TaskType: types.Task.Type.Consume, Status: types.Task.Status.Pending,
 		BatchID: sql.NullString{String: "listf-other-batch", Valid: true},
 	})
 	testutil.AssertNoError(t, err, "create other-batch task")

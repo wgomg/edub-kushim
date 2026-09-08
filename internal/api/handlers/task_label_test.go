@@ -3,6 +3,8 @@ package handlers
 import (
 	"database/sql"
 	"testing"
+
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 func snull(s string) sql.NullString {
@@ -29,7 +31,7 @@ func TestTaskLabel(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := taskLabel(tt.taskType, tt.dedupKey); got != tt.want {
+			if got := taskLabel(types.TaskType(tt.taskType), tt.dedupKey); got != tt.want {
 				t.Fatalf("taskLabel(%q, %q) = %q, want %q", tt.taskType, tt.dedupKey.String, got, tt.want)
 			}
 		})

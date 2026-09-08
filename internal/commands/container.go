@@ -8,7 +8,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	types "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/configtask"
 	"github.com/wgomg/edub-kushim/internal/consumption"
@@ -21,6 +20,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/task"
 	taskhandlers "github.com/wgomg/edub-kushim/internal/task/handlers"
 	"github.com/wgomg/edub-kushim/internal/tools"
+	"github.com/wgomg/edub-kushim/internal/types"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -33,7 +33,7 @@ type Container struct {
 	dispatcher *task.Dispatcher
 	runner     *task.Runner
 	store      *task.Store
-	services   *types.CrudServices
+	services   *service.CrudServices
 	pools      struct {
 		consume   *pool.Pool
 		enrich    *pool.Pool
@@ -143,7 +143,7 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 	peopleTypeSvc := service.NewPeopleType(client.Queries, c.logger)
 	docTypeSvc := service.NewDocumentType(client.Queries, c.logger)
 
-	c.services = &types.CrudServices{
+	c.services = &service.CrudServices{
 		Tag: tagSvc, People: peopleSvc, PeopleType: peopleTypeSvc, DocumentType: docTypeSvc,
 	}
 
@@ -161,12 +161,12 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 	}
 
 	registry := task.NewRegistry()
-	registry.Register("consume", taskhandlers.NewConsumeTaskHandler(consumer, store, client.Queries, c.logger))
-	registry.Register("enrich", taskhandlers.NewEnrichTaskHandler(enricher, client.Queries, c.logger))
-	registry.Register("thumbnail", taskhandlers.NewThumbnailTaskHandler(tools.NewRunner(c.logger, c.cfg.Load(), []string{"thumbnail"}), client.Queries, c.logger, func() *config.Config { return c.cfg.Load() }))
-	registry.Register("config", configtask.NewConfigTaskHandler(client.Queries, c.logger))
-	registry.Register("backup", taskhandlers.NewBackupTaskHandler(c.db, client.Queries, func() *config.Config { return c.cfg.Load() }, c.logger))
-	registry.Register("mirror", taskhandlers.NewMirrorTaskHandler(client.Queries, func() *config.Config { return c.cfg.Load() }, c.logger))
+	registry.Register(types.Task.Type.Consume, taskhandlers.NewConsumeTaskHandler(consumer, store, client.Queries, c.logger))
+	registry.Register(types.Task.Type.Enrich, taskhandlers.NewEnrichTaskHandler(enricher, client.Queries, c.logger))
+	registry.Register(types.Task.Type.Thumbnail, taskhandlers.NewThumbnailTaskHandler(tools.NewRunner(c.logger, c.cfg.Load(), []string{"thumbnail"}), client.Queries, c.logger, func() *config.Config { return c.cfg.Load() }))
+	registry.Register(types.Task.Type.Config, configtask.NewConfigTaskHandler(client.Queries, c.logger))
+	registry.Register(types.Task.Type.Backup, taskhandlers.NewBackupTaskHandler(c.db, client.Queries, func() *config.Config { return c.cfg.Load() }, c.logger))
+	registry.Register(types.Task.Type.Mirror, taskhandlers.NewMirrorTaskHandler(client.Queries, func() *config.Config { return c.cfg.Load() }, c.logger))
 
 	c.dispatcher = task.NewDispatcher(c.logger, store, registry)
 	c.runner = task.NewRunner(store, registry, c.logger)

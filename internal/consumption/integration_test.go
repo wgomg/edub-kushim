@@ -18,6 +18,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/storage"
 	"github.com/wgomg/edub-kushim/internal/testutil"
+	"github.com/wgomg/edub-kushim/internal/types"
 	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -470,7 +471,7 @@ func TestQuarantineFailedFiles(t *testing.T) {
 
 		batchID := uuid.New().String()
 		err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-			ID: batchID, Source: "test", Status: "processing",
+			ID: batchID, Source: types.Batch.Source.CLI, Status: types.Batch.Status.Processing,
 		})
 		testutil.AssertNoError(t, err, "create batch")
 
@@ -537,7 +538,7 @@ func TestQuarantineFailedFiles(t *testing.T) {
 
 		batchID := uuid.New().String()
 		err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-			ID: batchID, Source: "test", Status: "processing",
+			ID: batchID, Source: types.Batch.Source.CLI, Status: types.Batch.Status.Processing,
 		})
 		testutil.AssertNoError(t, err, "create batch")
 
@@ -569,7 +570,7 @@ func TestQuarantineFailedFiles(t *testing.T) {
 
 		batchID := uuid.New().String()
 		err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-			ID: batchID, Source: "test", Status: "processing",
+			ID: batchID, Source: types.Batch.Source.CLI, Status: types.Batch.Status.Processing,
 		})
 		testutil.AssertNoError(t, err, "create batch")
 

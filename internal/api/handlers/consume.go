@@ -13,10 +13,11 @@ import (
 
 	"github.com/gabriel-vasile/mimetype"
 	"github.com/google/uuid"
-	itypes "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/task"
+	"github.com/wgomg/edub-kushim/internal/types"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -25,10 +26,10 @@ type ConsumeHandler struct {
 	logger    *utils.Logger
 	workStore *task.Store
 	queries   *database.Queries
-	services  *itypes.CrudServices
+	services  *service.CrudServices
 }
 
-func NewConsumeHandler(getConfig func() *config.Config, logger *utils.Logger, workStore *task.Store, queries *database.Queries, services *itypes.CrudServices) *ConsumeHandler {
+func NewConsumeHandler(getConfig func() *config.Config, logger *utils.Logger, workStore *task.Store, queries *database.Queries, services *service.CrudServices) *ConsumeHandler {
 	return &ConsumeHandler{
 		getConfig: getConfig,
 		logger:    logger,
@@ -68,7 +69,7 @@ func (h *ConsumeHandler) enqueueBatchFiles(ctx context.Context, batchID string, 
 			consumePayloadMap["on_completed_thumbnail"] = thumbnailTaskID
 		}
 		consumePayload, _ := json.Marshal(consumePayloadMap)
-		_, err := h.workStore.CreateTask(ctx, "consume", batchID, consumePayload, consumeTaskID, "pending", "consume:"+md5hash)
+		_, err := h.workStore.CreateTask(ctx, types.Task.Type.Consume, batchID, consumePayload, consumeTaskID, types.Task.Status.Pending, "consume:"+md5hash)
 		if err != nil {
 			h.logger.Error(&reqID, "enqueue %s: %v", path, err)
 			continue
@@ -80,7 +81,7 @@ func (h *ConsumeHandler) enqueueBatchFiles(ctx context.Context, batchID string, 
 			"file_index":  i + 1,
 			"document_id": documentID,
 		})
-		if _, err := h.workStore.CreateTask(ctx, "enrich", batchID, enrichPayload, enrichTaskID, "waiting", ""); err != nil {
+		if _, err := h.workStore.CreateTask(ctx, types.Task.Type.Enrich, batchID, enrichPayload, enrichTaskID, types.Task.Status.Waiting, ""); err != nil {
 			h.logger.Error(&reqID, "create enrich task for %s: %v", path, err)
 			continue
 		}
@@ -91,7 +92,7 @@ func (h *ConsumeHandler) enqueueBatchFiles(ctx context.Context, batchID string, 
 				"file_name":   filepath.Base(path),
 				"file_index":  i + 1,
 			})
-			if _, err := h.workStore.CreateTask(ctx, "thumbnail", batchID, thumbnailPayload, thumbnailTaskID, "waiting", ""); err != nil {
+			if _, err := h.workStore.CreateTask(ctx, types.Task.Type.Thumbnail, batchID, thumbnailPayload, thumbnailTaskID, types.Task.Status.Waiting, ""); err != nil {
 				h.logger.Error(&reqID, "create thumbnail task for %s: %v", path, err)
 			}
 		}
@@ -141,7 +142,7 @@ func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 
 	batchID := uuid.New().String()
 
-	h.services.Batch.Create(ctx, batchID, "api", "queued")
+	h.services.Batch.Create(ctx, batchID, types.Batch.Source.API, types.Batch.Status.Queued)
 
 	enqueued := h.enqueueBatchFiles(ctx, batchID, paths, reqID)
 
@@ -316,7 +317,7 @@ func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	batchID := uuid.New().String()
-	if err := h.services.Batch.Create(ctx, batchID, "api-upload", "queued"); err != nil {
+	if err := h.services.Batch.Create(ctx, batchID, types.Batch.Source.Upload, types.Batch.Status.Queued); err != nil {
 		h.logger.Error(&reqID, "create batch %s: %v", batchID, err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return

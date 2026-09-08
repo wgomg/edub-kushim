@@ -13,16 +13,17 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/storage"
+	"github.com/wgomg/edub-kushim/internal/types"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type TaskCreator interface {
-	CreateTask(ctx context.Context, taskType, batchID string, payload json.RawMessage,
-		taskID, status, dedupKey string) (string, error)
+	CreateTask(ctx context.Context, taskType types.TaskType, batchID string, payload json.RawMessage,
+		taskID string, status types.TaskStatus, dedupKey string) (string, error)
 }
 
 type BatchCreator interface {
-	Create(ctx context.Context, id, source, status string) error
+	Create(ctx context.Context, id string, source types.BatchSource, status types.BatchStatus) error
 }
 
 type Orphaned struct {
@@ -185,7 +186,7 @@ func (s *Orphaned) Restore(ctx context.Context, id int64) error {
 	}
 	consumePayload, _ := json.Marshal(consumePayloadMap)
 
-	_, err = s.taskCreator.CreateTask(ctx, "consume", batchID, consumePayload, consumeTaskID, "pending", "consume:"+md5)
+	_, err = s.taskCreator.CreateTask(ctx, types.Task.Type.Consume, batchID, consumePayload, consumeTaskID, types.Task.Status.Pending, "consume:"+md5)
 	if err != nil {
 		storage.RemoveOrphanedFile(destPath)
 		return fmt.Errorf("create consume task: %w", err)
@@ -198,7 +199,7 @@ func (s *Orphaned) Restore(ctx context.Context, id int64) error {
 		"document_id": row.DocumentKey,
 	})
 
-	_, err = s.taskCreator.CreateTask(ctx, "enrich", batchID, enrichPayload, enrichTaskID, "waiting", "")
+	_, err = s.taskCreator.CreateTask(ctx, types.Task.Type.Enrich, batchID, enrichPayload, enrichTaskID, types.Task.Status.Waiting, "")
 	if err != nil {
 		storage.RemoveOrphanedFile(destPath)
 		return fmt.Errorf("create enrich task: %w", err)
@@ -210,14 +211,14 @@ func (s *Orphaned) Restore(ctx context.Context, id int64) error {
 			"file_name":   filepath.Base(destPath),
 			"file_index":  1,
 		})
-		_, err = s.taskCreator.CreateTask(ctx, "thumbnail", batchID, thumbnailPayload, thumbnailTaskID, "waiting", "")
+		_, err = s.taskCreator.CreateTask(ctx, types.Task.Type.Thumbnail, batchID, thumbnailPayload, thumbnailTaskID, types.Task.Status.Waiting, "")
 		if err != nil {
 			storage.RemoveOrphanedFile(destPath)
 			return fmt.Errorf("create thumbnail task: %w", err)
 		}
 	}
 
-	if err := s.batchCreator.Create(ctx, batchID, "orphaned-restore", "queued"); err != nil {
+	if err := s.batchCreator.Create(ctx, batchID, types.Batch.Source.OrphanedRestore, types.Batch.Status.Queued); err != nil {
 		storage.RemoveOrphanedFile(destPath)
 		return fmt.Errorf("create batch: %w", err)
 	}

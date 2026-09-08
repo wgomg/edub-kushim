@@ -10,6 +10,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/pool"
 	"github.com/wgomg/edub-kushim/internal/testutil"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 // mockHandler implements Handler for testing.
@@ -79,7 +80,7 @@ func TestStoreCreateAndGetTask(t *testing.T) {
 	store, _, _ := setupTaskTest(t)
 	ctx := context.Background()
 
-	taskID, err := store.CreateTask(ctx, "test-type", "", json.RawMessage(`{"foo":"bar"}`), "", "", "")
+	taskID, err := store.CreateTask(ctx, types.Task.Type.Consume, "", json.RawMessage(`{"foo":"bar"}`), "", "", "")
 	testutil.AssertNoError(t, err, "create task")
 	if taskID == "" {
 		t.Fatal("expected non-empty task ID")
@@ -87,8 +88,8 @@ func TestStoreCreateAndGetTask(t *testing.T) {
 
 	task, err := store.GetTaskByTaskID(ctx, taskID)
 	testutil.AssertNoError(t, err, "get by taskID")
-	testutil.AssertEqual(t, task.TaskType, "test-type", "type")
-	testutil.AssertEqual(t, task.Status, "pending", "status")
+	testutil.AssertEqual(t, string(task.TaskType), "consume", "type")
+	testutil.AssertEqual(t, string(task.Status), "pending", "status")
 
 	task2, err := store.GetTask(ctx, task.ID)
 	testutil.AssertNoError(t, err, "get by ID")
@@ -99,7 +100,7 @@ func TestStoreCreateWithBatchID(t *testing.T) {
 	store, _, _ := setupTaskTest(t)
 	ctx := context.Background()
 
-	taskID, err := store.CreateTask(ctx, "test", "batch-123", json.RawMessage(`{}`), "", "", "")
+	taskID, err := store.CreateTask(ctx, types.Task.Type.Consume, "batch-123", json.RawMessage(`{}`), "", "", "")
 	testutil.AssertNoError(t, err, "create")
 	task, _ := store.GetTaskByTaskID(ctx, taskID)
 	if !task.BatchID.Valid || task.BatchID.String != "batch-123" {
@@ -116,13 +117,13 @@ func TestStoreClaimAndComplete(t *testing.T) {
 
 	claimed, err := store.ClaimNextPending(ctx, "consume")
 	testutil.AssertNoError(t, err, "claim")
-	testutil.AssertEqual(t, claimed.Status, "processing", "after claim")
+	testutil.AssertEqual(t, string(claimed.Status), "processing", "after claim")
 
 	_, err = store.CompleteTask(ctx, claimed.ID, json.RawMessage(`{"ok":true}`))
 	testutil.AssertNoError(t, err, "complete")
 
 	task, _ := store.GetTask(ctx, claimed.ID)
-	testutil.AssertEqual(t, task.Status, "completed", "after complete")
+	testutil.AssertEqual(t, string(task.Status), "completed", "after complete")
 	if task.Result == nil {
 		t.Fatal("expected non-nil result")
 	}
@@ -142,7 +143,7 @@ func TestStoreClaimAndFail(t *testing.T) {
 	testutil.AssertNoError(t, err, "fail")
 
 	task, _ := store.GetTask(ctx, claimed.ID)
-	testutil.AssertEqual(t, task.Status, "failed", "after fail")
+	testutil.AssertEqual(t, string(task.Status), "failed", "after fail")
 	testutil.AssertEqual(t, task.Error.String, "something went wrong", "error")
 }
 
@@ -207,11 +208,11 @@ func TestRetry(t *testing.T) {
 	err = Retry(ctx, store.queries, logger, "retry-c1")
 	testutil.AssertNoError(t, err, "retry")
 	consume, _ := store.GetTaskByTaskID(ctx, "retry-c1")
-	testutil.AssertEqual(t, consume.Status, "pending", "consume pending after retry")
+	testutil.AssertEqual(t, string(consume.Status), "pending", "consume pending after retry")
 	enrich, _ := store.GetTaskByTaskID(ctx, "retry-e1")
-	testutil.AssertEqual(t, enrich.Status, "waiting", "enrich restored to waiting")
+	testutil.AssertEqual(t, string(enrich.Status), "waiting", "enrich restored to waiting")
 	thumbnail, _ := store.GetTaskByTaskID(ctx, "retry-t1")
-	testutil.AssertEqual(t, thumbnail.Status, "waiting", "thumbnail restored to waiting")
+	testutil.AssertEqual(t, string(thumbnail.Status), "waiting", "thumbnail restored to waiting")
 
 	// error path: only failed tasks can be retried
 	err = Retry(ctx, store.queries, logger, "retry-c1")
@@ -226,7 +227,7 @@ func TestRetry(t *testing.T) {
 	err = Retry(ctx, store.queries, logger, "retry-c2")
 	testutil.AssertNoError(t, err, "retry without on_completed")
 	enrich, _ = store.GetTaskByTaskID(ctx, "retry-e2")
-	testutil.AssertEqual(t, enrich.Status, "discarded", "unlinked enrich untouched")
+	testutil.AssertEqual(t, string(enrich.Status), "discarded", "unlinked enrich untouched")
 }
 
 func TestRunnerCompletesTask(t *testing.T) {
@@ -240,7 +241,7 @@ func TestRunnerCompletesTask(t *testing.T) {
 	_, err := store.CreateTask(ctx, "consume", "", json.RawMessage(`{}`), "", "", "")
 	testutil.AssertNoError(t, err, "create")
 
-	err = runner.Next(ctx, "consume")
+	err = runner.Next(ctx, types.Task.Type.Consume)
 	testutil.AssertNoError(t, err, "run")
 	testutil.AssertEqual(t, handler.HandledCount(), 1, "called")
 }
@@ -251,13 +252,13 @@ func TestRunnerFailsTask(t *testing.T) {
 
 	handler := newMockHandler()
 	handler.fail = true
-	registry.Register("failing", handler)
+	registry.Register(types.Task.Type.Enrich, handler)
 
 	ctx := context.Background()
-	_, err := store.CreateTask(ctx, "failing", "", json.RawMessage(`{}`), "", "", "")
+	_, err := store.CreateTask(ctx, types.Task.Type.Enrich, "", json.RawMessage(`{}`), "", "", "")
 	testutil.AssertNoError(t, err, "create")
 
-	err = runner.Next(ctx, "failing")
+	err = runner.Next(ctx, types.Task.Type.Enrich)
 	testutil.AssertNoError(t, err, "run (error swallowed)")
 
 	// The task should be marked as failed
@@ -302,18 +303,18 @@ func TestRunnerExtractsReqIDFromWrappedError(t *testing.T) {
 
 	handler := &wrappedFailHandler{}
 	handler.fail = true
-	registry.Register("wrapped", handler)
+	registry.Register(types.Task.Type.Enrich, handler)
 
 	ctx := context.Background()
-	_, err := store.CreateTask(ctx, "wrapped", "", json.RawMessage(`{}`), "", "", "")
+	_, err := store.CreateTask(ctx, types.Task.Type.Enrich, "", json.RawMessage(`{}`), "", "", "")
 	testutil.AssertNoError(t, err, "create")
 
-	err = runner.Next(ctx, "wrapped")
+	err = runner.Next(ctx, types.Task.Type.Enrich)
 	testutil.AssertNoError(t, err, "run (error swallowed)")
 	testutil.AssertEqual(t, handler.HandledCount(), 1, "called")
 
 	// Failed task should not be claimable again
-	_, err = store.ClaimNextPending(ctx, "wrapped")
+	_, err = store.ClaimNextPending(ctx, types.Task.Type.Enrich)
 	testutil.AssertError(t, err, "failed task should not be claimable")
 }
 
@@ -322,32 +323,32 @@ func TestRunnerFailsTaskOnPanic(t *testing.T) {
 	runner := NewRunner(store, registry, testutil.NewTestLogger())
 
 	handler := &panickingHandler{}
-	registry.Register("panicking", handler)
+	registry.Register(types.Task.Type.Enrich, handler)
 
 	ctx := context.Background()
-	taskID, err := store.CreateTask(ctx, "panicking", "", json.RawMessage(`{}`), "", "", "")
+	taskID, err := store.CreateTask(ctx, types.Task.Type.Enrich, "", json.RawMessage(`{}`), "", "", "")
 	testutil.AssertNoError(t, err, "create")
 
-	err = runner.Next(ctx, "panicking")
+	err = runner.Next(ctx, types.Task.Type.Enrich)
 	testutil.AssertError(t, err, "panic should surface as error")
 
 	task, err := store.GetTaskByTaskID(ctx, taskID)
 	testutil.AssertNoError(t, err, "get task")
 	testutil.AssertEqual(t, handler.HandledCount(), 1, "handler called")
-	testutil.AssertEqual(t, task.Status, "failed", "task failed on panic")
+	testutil.AssertEqual(t, string(task.Status), "failed", "task failed on panic")
 	testutil.AssertEqual(t, task.Error.String, "panic: boom", "panic text recorded")
 
 	// The failed task must not be stranded claimable in 'processing'
-	_, err = store.ClaimNextPending(ctx, "panicking")
+	_, err = store.ClaimNextPending(ctx, types.Task.Type.Enrich)
 	testutil.AssertError(t, err, "failed task should not be claimable")
 }
 
 func TestRunnerNoTasks(t *testing.T) {
 	store, registry, _ := setupTaskTest(t)
 	runner := NewRunner(store, registry, testutil.NewTestLogger())
-	registry.Register("test", newMockHandler())
+	registry.Register(types.Task.Type.Consume, newMockHandler())
 
-	err := runner.Next(context.Background(), "test")
+	err := runner.Next(context.Background(), types.Task.Type.Consume)
 	testutil.AssertNoError(t, err, "no tasks")
 }
 
@@ -368,13 +369,13 @@ func TestRunnerNilPayload(t *testing.T) {
 	)
 	testutil.AssertNoError(t, err, "insert nil-payload task")
 
-	err = runner.Next(ctx, "consume")
+	err = runner.Next(ctx, types.Task.Type.Consume)
 	testutil.AssertNoError(t, err, "runner should not error on nil payload")
 	testutil.AssertEqual(t, handler.HandledCount(), 0, "handler should not be called")
 
 	task, err := q.GetTaskByTaskID(ctx, "nil-payload-task")
 	testutil.AssertNoError(t, err, "get task")
-	testutil.AssertEqual(t, task.Status, "failed", "task should be failed")
+	testutil.AssertEqual(t, string(task.Status), "failed", "task should be failed")
 	if task.Error.String != "task has nil payload" {
 		t.Fatalf("expected nil payload error, got %q", task.Error.String)
 	}
@@ -385,26 +386,26 @@ func TestDispatcher(t *testing.T) {
 	dispatcher := NewDispatcher(testutil.NewTestLogger(), store, registry)
 
 	handler := newMockHandler()
-	registry.Register("work", handler)
+	registry.Register(types.Task.Type.Consume, handler)
 
 	ctx := context.Background()
-	taskID, err := dispatcher.Enqueue(ctx, "work", "batch-1", json.RawMessage(`{"k":"v"}`), "", "")
+	taskID, err := dispatcher.Enqueue(ctx, types.Task.Type.Consume, "batch-1", json.RawMessage(`{"k":"v"}`), "", "")
 	testutil.AssertNoError(t, err, "enqueue")
 	if taskID == "" {
 		t.Fatal("expected non-empty task ID")
 	}
 
 	task, _ := store.GetTaskByTaskID(ctx, taskID)
-	testutil.AssertEqual(t, task.TaskType, "work", "type")
+	testutil.AssertEqual(t, string(task.TaskType), "consume", "type")
 	testutil.AssertEqual(t, task.BatchID.String, "batch-1", "batch")
 }
 
 func TestDispatcherCustomStatus(t *testing.T) {
 	store, registry, _ := setupTaskTest(t)
 	dispatcher := NewDispatcher(testutil.NewTestLogger(), store, registry)
-	registry.Register("delayed", newMockHandler())
+	registry.Register(types.Task.Type.Config, newMockHandler())
 
-	_, err := dispatcher.Enqueue(context.Background(), "delayed", "", json.RawMessage(`{}`), "", "waiting")
+	_, err := dispatcher.Enqueue(context.Background(), types.Task.Type.Config, "", json.RawMessage(`{}`), "", types.Task.Status.Waiting)
 	testutil.AssertNoError(t, err, "enqueue with waiting")
 }
 
@@ -419,9 +420,9 @@ func TestDispatcherRejectsUnknownType(t *testing.T) {
 func TestDispatcherCustomID(t *testing.T) {
 	store, registry, _ := setupTaskTest(t)
 	dispatcher := NewDispatcher(testutil.NewTestLogger(), store, registry)
-	registry.Register("custom-id", newMockHandler())
+	registry.Register(types.Task.Type.Config, newMockHandler())
 
-	taskID, err := dispatcher.Enqueue(context.Background(), "custom-id", "", json.RawMessage(`{}`), "my-id", "")
+	taskID, err := dispatcher.Enqueue(context.Background(), types.Task.Type.Config, "", json.RawMessage(`{}`), "my-id", "")
 	testutil.AssertNoError(t, err, "enqueue")
 	testutil.AssertEqual(t, taskID, "my-id", "custom id")
 }
@@ -436,7 +437,7 @@ func TestClaimNextPendingGating(t *testing.T) {
 	t.Run("consume claimable when backup unlocked", func(t *testing.T) {
 		claimed, err := store.ClaimNextPending(ctx, "consume")
 		testutil.AssertNoError(t, err, "claim consume")
-		testutil.AssertEqual(t, claimed.Status, "processing", "claimed")
+		testutil.AssertEqual(t, string(claimed.Status), "processing", "claimed")
 	})
 
 	// Create another consume task and lock backup
@@ -453,7 +454,7 @@ func TestClaimNextPendingGating(t *testing.T) {
 	})
 
 	t.Run("enrich blocked when backup locked", func(t *testing.T) {
-		_, err := store.ClaimNextPending(ctx, "enrich")
+		_, err := store.ClaimNextPending(ctx, types.Task.Type.Enrich)
 		testutil.AssertError(t, err, "enrich claim should fail during backup")
 	})
 
@@ -461,18 +462,18 @@ func TestClaimNextPendingGating(t *testing.T) {
 		_, err := store.CreateTask(ctx, "config", "", json.RawMessage(`{"op":"test"}`), "", "", "")
 		testutil.AssertNoError(t, err, "create config task")
 
-		claimed, err := store.ClaimNextPending(ctx, "config")
+		claimed, err := store.ClaimNextPending(ctx, types.Task.Type.Config)
 		testutil.AssertNoError(t, err, "config claim should work during backup")
-		testutil.AssertEqual(t, claimed.Status, "processing", "config claimed")
+		testutil.AssertEqual(t, string(claimed.Status), "processing", "config claimed")
 	})
 }
 
 func TestPoolLifecycle(t *testing.T) {
 	store, registry, _ := setupTaskTest(t)
 	runner := NewRunner(store, registry, testutil.NewTestLogger())
-	registry.Register("ptest", newMockHandler())
+	registry.Register(types.Task.Type.Config, newMockHandler())
 
-	p := pool.New(testutil.NewTestLogger(), runner, 1, 50*time.Millisecond, "ptest")
+	p := pool.New(testutil.NewTestLogger(), runner, 1, 50*time.Millisecond, "config")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()

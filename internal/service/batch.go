@@ -9,6 +9,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/task"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 type BatchSummary struct {
@@ -53,22 +54,22 @@ type Batch struct {
 
 // config/backup/mirror batches have no batch_owner row by design; never
 // report them as orphaned.
-var nonConsumeSources = []string{"config", "backup", "mirror"}
+var nonConsumeSources = types.NonConsumeBatchSources()
 
 func NewBatch(client *database.Client, maxRetries int) *Batch {
 	return &Batch{client: client, queries: client.Queries, maxRetries: int32(maxRetries)}
 }
 
 func (s *Batch) GetSummary(ctx context.Context, batchID string) (*BatchSummary, error) {
-	statuses := []string{"waiting", "pending", "processing", "completed", "failed", "cancelled", "discarded"}
+	statuses := types.AllTaskStatuses()
 	summary := &BatchSummary{BatchID: batchID}
 
 	batch, err := s.queries.GetBatch(ctx, batchID)
 	if err != nil {
 		return nil, errs.FromDB(err, "get batch "+batchID)
 	}
-	summary.Status = batch.Status
-	summary.Source = batch.Source
+	summary.Status = string(batch.Status)
+	summary.Source = string(batch.Source)
 
 	for _, status := range statuses {
 		count, err := s.queries.CountTasksByBatchAndStatus(ctx, database.CountTasksByBatchAndStatusParams{
@@ -76,22 +77,22 @@ func (s *Batch) GetSummary(ctx context.Context, batchID string) (*BatchSummary, 
 			Status:  status,
 		})
 		if err != nil {
-			return nil, errs.FromDB(err, "count "+status+" for batch "+batchID)
+			return nil, errs.FromDB(err, "count "+string(status)+" for batch "+batchID)
 		}
 		switch status {
-		case "waiting":
+		case types.Task.Status.Waiting:
 			summary.Waiting = count
-		case "pending":
+		case types.Task.Status.Pending:
 			summary.Pending = count
-		case "processing":
+		case types.Task.Status.Processing:
 			summary.Processing = count
-		case "completed":
+		case types.Task.Status.Completed:
 			summary.Completed = count
-		case "failed":
+		case types.Task.Status.Failed:
 			summary.Failed = count
-		case "cancelled":
+		case types.Task.Status.Cancelled:
 			summary.Cancelled = count
-		case "discarded":
+		case types.Task.Status.Discarded:
 			summary.Discarded = count
 		}
 	}
@@ -115,7 +116,7 @@ func (s *Batch) ListSummaries(ctx context.Context, f task.BatchFilter) ([]BatchS
 
 	if f.Status != "" {
 		rows, err = s.queries.ListDistinctBatchIDsByStatus(ctx, database.ListDistinctBatchIDsByStatusParams{
-			Status: f.Status,
+			Status: types.TaskStatus(f.Status),
 			Limit:  f.Limit,
 			Offset: f.Offset,
 		})
@@ -177,8 +178,8 @@ func (s *Batch) ListOverviews(ctx context.Context, limit, offset int32) ([]Batch
 
 		items = append(items, BatchOverview{
 			BatchID:    row.BatchID,
-			Status:     row.BatchStatus,
-			Source:     row.Source,
+			Status:     string(row.BatchStatus),
+			Source:     string(row.Source),
 			CreatedAt:  createdAt,
 			Total:      row.Total,
 			Waiting:    waiting,
@@ -241,7 +242,7 @@ func (s *Batch) RetryFailed(ctx context.Context, batchID string) (int64, error) 
 	return count, nil
 }
 
-func (s *Batch) Create(ctx context.Context, id, source, status string) error {
+func (s *Batch) Create(ctx context.Context, id string, source types.BatchSource, status types.BatchStatus) error {
 	if id == "" {
 		return errs.EInvalid("create batch", sql.ErrNoRows)
 	}
@@ -308,14 +309,14 @@ func (s *Batch) ActiveIDs(ctx context.Context) ([]string, error) {
 }
 
 func (s *Batch) HasPendingWork(ctx context.Context, batchID string) (bool, error) {
-	statuses := []string{"pending", "processing", "waiting"}
+	statuses := []types.TaskStatus{types.Task.Status.Pending, types.Task.Status.Processing, types.Task.Status.Waiting}
 	for _, status := range statuses {
 		count, err := s.queries.CountTasksByBatchAndStatus(ctx, database.CountTasksByBatchAndStatusParams{
 			BatchID: sql.NullString{String: batchID, Valid: true},
 			Status:  status,
 		})
 		if err != nil {
-			return false, errs.FromDB(err, "count "+status+" for batch "+batchID)
+			return false, errs.FromDB(err, "count "+string(status)+" for batch "+batchID)
 		}
 		if count > 0 {
 			return true, nil

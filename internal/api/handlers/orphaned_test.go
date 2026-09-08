@@ -14,6 +14,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/testutil"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 func newOrphanedHandler(t *testing.T) (*OrphanedHandler, *config.Config) {
@@ -39,11 +40,11 @@ func newOrphanedHandler(t *testing.T) (*OrphanedHandler, *config.Config) {
 
 type mockTaskCreator struct{}
 
-func (m *mockTaskCreator) CreateTask(_ context.Context, _, _ string, _ json.RawMessage, _, _, _ string) (string, error) {
+func (m *mockTaskCreator) CreateTask(_ context.Context, _ types.TaskType, _ string, _ json.RawMessage, _ string, _ types.TaskStatus, _ string) (string, error) {
 	return "", nil
 }
 
-func (m *mockTaskCreator) Create(_ context.Context, _, _, _ string) error {
+func (m *mockTaskCreator) Create(_ context.Context, _ string, _ types.BatchSource, _ types.BatchStatus) error {
 	return nil
 }
 

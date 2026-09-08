@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/wgomg/edub-kushim/internal/types"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -25,7 +26,7 @@ func NewRunner(store *Store, registry *Registry, logger *utils.Logger) *Runner {
 	}
 }
 
-func (r *Runner) Next(ctx context.Context, taskType string) (err error) {
+func (r *Runner) Next(ctx context.Context, taskType types.TaskType) (err error) {
 	task, err := r.store.ClaimNextPending(ctx, taskType)
 	if err != nil {
 		if err == sql.ErrNoRows {

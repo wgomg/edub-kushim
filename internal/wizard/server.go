@@ -14,6 +14,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/pool"
 	"github.com/wgomg/edub-kushim/internal/task"
+	"github.com/wgomg/edub-kushim/internal/types"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -96,7 +97,7 @@ func (s *Server) bootstrap(configDir string) (*config.Config, *database.Client, 
 	client := database.NewClient(db)
 	store := task.NewStore(client.Queries)
 	registry := task.NewRegistry()
-	registry.Register("config", configtask.NewConfigTaskHandler(client.Queries, s.logger))
+	registry.Register(types.Task.Type.Config, configtask.NewConfigTaskHandler(client.Queries, s.logger))
 
 	dispatcher := task.NewDispatcher(s.logger, store, registry)
 	runner := task.NewRunner(store, registry, s.logger)

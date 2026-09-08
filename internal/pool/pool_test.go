@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wgomg/edub-kushim/internal/types"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -13,7 +14,7 @@ type countRunner struct {
 	count atomic.Int32
 }
 
-func (r *countRunner) Next(_ context.Context, _ string) error {
+func (r *countRunner) Next(_ context.Context, _ types.TaskType) error {
 	r.count.Add(1)
 	return nil
 }
@@ -73,7 +74,7 @@ type panicRunner struct {
 	panicOn int32
 }
 
-func (r *panicRunner) Next(_ context.Context, _ string) error {
+func (r *panicRunner) Next(_ context.Context, _ types.TaskType) error {
 	n := r.calls.Add(1)
 	if n == r.panicOn {
 		panic("test panic")

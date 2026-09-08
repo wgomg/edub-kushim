@@ -29,8 +29,6 @@ func DirChanged(oldDir, newDir string) bool {
 }
 
 const (
-	TaskTypeConfig = "config"
-
 	opTessdata       = "tessdata"
 	opHugot          = "hugot"
 	opMigrateDB      = "migrate-db"

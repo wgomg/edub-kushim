@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 
-	itypes "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/tagmatch"
@@ -30,11 +29,11 @@ func matcherUnavailableResponse(w http.ResponseWriter) {
 }
 
 type TagHandler struct {
-	services *itypes.CrudServices
+	services *service.CrudServices
 	logger   *utils.Logger
 }
 
-func NewTagHandler(services *itypes.CrudServices, logger *utils.Logger) *TagHandler {
+func NewTagHandler(services *service.CrudServices, logger *utils.Logger) *TagHandler {
 	return &TagHandler{services: services, logger: logger}
 }
 

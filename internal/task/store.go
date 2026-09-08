@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 type Store struct {
@@ -25,15 +26,15 @@ func (s *Store) SetOwnerID(id string) {
 
 func (s *Store) CreateTask(
 	ctx context.Context,
-	taskType, batchID string,
+	taskType types.TaskType, batchID string,
 	payload json.RawMessage,
-	taskID, status, dedupKey string,
+	taskID string, status types.TaskStatus, dedupKey string,
 ) (string, error) {
 	if taskID == "" {
 		taskID = uuid.New().String()
 	}
 	if status == "" {
-		status = "pending"
+		status = types.Task.Status.Pending
 	}
 
 	var dkey sql.NullString
@@ -55,11 +56,11 @@ func (s *Store) CreateTask(
 	return taskID, nil
 }
 
-func (s *Store) ClaimNextPending(ctx context.Context, taskType string) (database.Task, error) {
+func (s *Store) ClaimNextPending(ctx context.Context, taskType types.TaskType) (database.Task, error) {
 	var id int64
 	var err error
 
-	gated := taskType == "consume" || taskType == "enrich" || taskType == "thumbnail"
+	gated := taskType == types.Task.Type.Consume || taskType == types.Task.Type.Enrich || taskType == types.Task.Type.Thumbnail
 
 	if s.ownerID != "" {
 		if gated {

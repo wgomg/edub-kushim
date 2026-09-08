@@ -12,6 +12,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/storage"
 	"github.com/wgomg/edub-kushim/internal/testutil"
+	"github.com/wgomg/edub-kushim/internal/types"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -283,7 +284,7 @@ func TestScanAndEnqueue_PausedBatchesSkip(t *testing.T) {
 
 	// Create a paused batch to trigger the guard.
 	err := client.Queries.CreateBatch(context.Background(), database.CreateBatchParams{
-		ID: "paused-guard-test", Source: "test", Status: "paused",
+		ID: "paused-guard-test", Source: types.Batch.Source.CLI, Status: types.Batch.Status.Paused,
 	})
 	if err != nil {
 		t.Fatalf("CreateBatch: %v", err)

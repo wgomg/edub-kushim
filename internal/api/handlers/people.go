@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 
-	itypes "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/service"
@@ -15,11 +14,11 @@ import (
 )
 
 type PeopleHandler struct {
-	services *itypes.CrudServices
+	services *service.CrudServices
 	logger   *utils.Logger
 }
 
-func NewPeopleHandler(services *itypes.CrudServices, logger *utils.Logger) *PeopleHandler {
+func NewPeopleHandler(services *service.CrudServices, logger *utils.Logger) *PeopleHandler {
 	return &PeopleHandler{services: services, logger: logger}
 }
 

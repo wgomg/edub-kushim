@@ -18,3 +18,19 @@ sql:
             go_type: '*encoding/json.RawMessage'
           - column: 'task.progress'
             go_type: '*encoding/json.RawMessage'
+          - db_type: 'batch_source'
+            go_type:
+              import: 'github.com/wgomg/edub-kushim/internal/types'
+              type: 'BatchSource'
+          - db_type: 'batch_status'
+            go_type:
+              import: 'github.com/wgomg/edub-kushim/internal/types'
+              type: 'BatchStatus'
+          - db_type: 'task_type'
+            go_type:
+              import: 'github.com/wgomg/edub-kushim/internal/types'
+              type: 'TaskType'
+          - db_type: 'task_status'
+            go_type:
+              import: 'github.com/wgomg/edub-kushim/internal/types'
+              type: 'TaskStatus'

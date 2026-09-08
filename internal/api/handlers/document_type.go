@@ -6,18 +6,17 @@ import (
 	"strconv"
 	"strings"
 
-	itypes "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type DocumentTypeHandler struct {
-	services *itypes.CrudServices
+	services *service.CrudServices
 	logger   *utils.Logger
 }
 
-func NewDocumentTypeHandler(services *itypes.CrudServices, logger *utils.Logger) *DocumentTypeHandler {
+func NewDocumentTypeHandler(services *service.CrudServices, logger *utils.Logger) *DocumentTypeHandler {
 	return &DocumentTypeHandler{services: services, logger: logger}
 }
 

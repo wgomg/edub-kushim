@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/types"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -177,7 +178,7 @@ func FinalizeBatchStatus(ctx context.Context, queries *database.Queries, batchID
 		return
 	}
 	bid := sql.NullString{String: batchID, Valid: true}
-	for _, status := range []string{"pending", "waiting"} {
+	for _, status := range []types.TaskStatus{types.Task.Status.Pending, types.Task.Status.Waiting} {
 		count, err := queries.CountTasksByBatchAndStatus(ctx, database.CountTasksByBatchAndStatusParams{
 			BatchID: bid,
 			Status:  status,

@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
+	"github.com/wgomg/edub-kushim/internal/types"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -64,7 +65,7 @@ func (s *ThumbnailBackfill) BackfillAll(ctx context.Context) (batchID string, en
 	if enqueued == 0 {
 		return "", 0, skipped, nil
 	}
-	if err := s.batchCreator.Create(ctx, runBatchID, "thumbbackfill", "queued"); err != nil {
+	if err := s.batchCreator.Create(ctx, runBatchID, types.Batch.Source.Thumbbackfill, types.Batch.Status.Queued); err != nil {
 		return "", enqueued, skipped, errs.FromDB(err, "create batch")
 	}
 	batchCreated = true
@@ -95,7 +96,7 @@ func (s *ThumbnailBackfill) BackfillBatch(ctx context.Context, batchID string) (
 	if enqueued == 0 {
 		return "", 0, skipped, nil
 	}
-	if err := s.batchCreator.Create(ctx, runBatchID, "thumbbackfill", "queued"); err != nil {
+	if err := s.batchCreator.Create(ctx, runBatchID, types.Batch.Source.Thumbbackfill, types.Batch.Status.Queued); err != nil {
 		return "", enqueued, skipped, errs.FromDB(err, "create batch")
 	}
 	batchCreated = true
@@ -121,7 +122,7 @@ func (s *ThumbnailBackfill) BackfillDocument(ctx context.Context, documentUUID s
 	if !taskCreated {
 		return "", errs.EConflict("backfill thumbnail", fmt.Errorf("document %s already has a thumbnail or a task is already queued", documentUUID))
 	}
-	if err := s.batchCreator.Create(ctx, runBatchID, "thumbbackfill", "queued"); err != nil {
+	if err := s.batchCreator.Create(ctx, runBatchID, types.Batch.Source.Thumbbackfill, types.Batch.Status.Queued); err != nil {
 		s.deleteUnbatchedTasks(runBatchID)
 		return "", errs.FromDB(err, "create batch")
 	}
@@ -139,7 +140,7 @@ func (s *ThumbnailBackfill) addDocument(ctx context.Context, batchID, documentID
 		"document_id":  documentID,
 		"storage_path": storagePath,
 	})
-	_, err := s.taskCreator.CreateTask(ctx, "thumbnail", batchID, payload, uuid.New().String(), "pending", "thumbnail:doc:"+documentID)
+	_, err := s.taskCreator.CreateTask(ctx, types.Task.Type.Thumbnail, batchID, payload, uuid.New().String(), types.Task.Status.Pending, "thumbnail:doc:"+documentID)
 	if err != nil {
 		err = errs.FromDB(err, "create thumbnail task")
 		if errs.KindOf(err) == errs.KindConflict {

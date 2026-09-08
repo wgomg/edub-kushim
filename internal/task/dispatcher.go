@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/wgomg/edub-kushim/internal/types"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -23,7 +24,7 @@ func NewDispatcher(logger *utils.Logger, store *Store, registry *Registry) *Disp
 	}
 }
 
-func (d *Dispatcher) Enqueue(ctx context.Context, taskType, batchID string, payload json.RawMessage, taskID string, status ...string) (string, error) {
+func (d *Dispatcher) Enqueue(ctx context.Context, taskType types.TaskType, batchID string, payload json.RawMessage, taskID string, status ...types.TaskStatus) (string, error) {
 	_, err := d.registry.Get(taskType)
 	if err != nil {
 		return "", err
@@ -34,7 +35,7 @@ func (d *Dispatcher) Enqueue(ctx context.Context, taskType, batchID string, payl
 	if taskID == "" {
 		taskID = uuid.New().String()
 	}
-	taskStatus := "pending"
+	taskStatus := types.Task.Status.Pending
 	if len(status) > 0 && status[0] != "" {
 		taskStatus = status[0]
 	}

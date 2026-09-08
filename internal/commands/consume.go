@@ -21,6 +21,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/pool"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/task"
+	"github.com/wgomg/edub-kushim/internal/types"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -98,7 +99,7 @@ func consumeHandler(c *Container, args []string) error {
 			hasConsumeTasks := false
 			if listErr == nil {
 				for _, t := range tasks {
-					if t.TaskType == "consume" {
+					if t.TaskType == types.Task.Type.Consume {
 						hasConsumeTasks = true
 						break
 					}
@@ -110,7 +111,7 @@ func consumeHandler(c *Container, args []string) error {
 		}
 
 		batch, batchErr := client.Queries.GetBatch(ctx, batchIDParam)
-		if batchErr == nil && batch.Status == "paused" {
+		if batchErr == nil && batch.Status == types.Batch.Status.Paused {
 			fmt.Printf("Batch %s is paused due to an LLM provider credit/balance error.\n", batchIDParam)
 			fmt.Printf("Resolve the billing issue, then re-queue the batch and run this command again.\n")
 			return nil
@@ -238,7 +239,7 @@ func consumeHandler(c *Container, args []string) error {
 			consumePayloadMap["on_completed_thumbnail"] = thumbnailTaskID
 		}
 		consumePayload, _ := json.Marshal(consumePayloadMap)
-		_, err := c.dispatcher.Enqueue(ctx, "consume", batchID, consumePayload, consumeTaskID)
+		_, err := c.dispatcher.Enqueue(ctx, types.Task.Type.Consume, batchID, consumePayload, consumeTaskID)
 		if err != nil {
 			c.logger.Error(&documentID, "enqueue %s: %v", f.OriginalPath, err)
 			continue
@@ -250,7 +251,7 @@ func consumeHandler(c *Container, args []string) error {
 			"file_name":   filepath.Base(f.OriginalPath),
 			"file_index":  i + 1,
 		})
-		if _, err := c.dispatcher.Enqueue(ctx, "enrich", batchID, enrichPayload, enrichTaskID, "waiting"); err != nil {
+		if _, err := c.dispatcher.Enqueue(ctx, types.Task.Type.Enrich, batchID, enrichPayload, enrichTaskID, types.Task.Status.Waiting); err != nil {
 			c.logger.Error(&documentID, "create enrich task for %s: %v", f.OriginalPath, err)
 		}
 
@@ -260,7 +261,7 @@ func consumeHandler(c *Container, args []string) error {
 				"file_name":   filepath.Base(f.OriginalPath),
 				"file_index":  i + 1,
 			})
-			if _, err := c.dispatcher.Enqueue(ctx, "thumbnail", batchID, thumbnailPayload, thumbnailTaskID, "waiting"); err != nil {
+			if _, err := c.dispatcher.Enqueue(ctx, types.Task.Type.Thumbnail, batchID, thumbnailPayload, thumbnailTaskID, types.Task.Status.Waiting); err != nil {
 				c.logger.Error(&documentID, "create thumbnail task for %s: %v", f.OriginalPath, err)
 			}
 		}
@@ -280,8 +281,8 @@ func consumeHandler(c *Container, args []string) error {
 
 	if err := client.CreateBatch(ctx, database.CreateBatchParams{
 		ID:     batchID,
-		Source: "cli",
-		Status: "queued",
+		Source: types.Batch.Source.CLI,
+		Status: types.Batch.Status.Queued,
 	}); err != nil {
 		return fmt.Errorf("create batch: %w", err)
 	}
@@ -514,7 +515,7 @@ type taskDisplay struct {
 }
 
 func taskDisplayInfo(t database.Task) taskDisplay {
-	info := taskDisplay{taskType: t.TaskType}
+	info := taskDisplay{taskType: string(t.TaskType)}
 	if t.Payload == nil {
 		return info
 	}
@@ -536,7 +537,7 @@ func taskDisplayInfo(t database.Task) taskDisplay {
 func totalFiles(tasks []database.Task) int {
 	maxIdx := 0
 	for _, t := range tasks {
-		if t.TaskType == "consume" {
+		if t.TaskType == types.Task.Type.Consume {
 			info := taskDisplayInfo(t)
 			if info.index > maxIdx {
 				maxIdx = info.index
@@ -549,7 +550,7 @@ func totalFiles(tasks []database.Task) int {
 
 	n := 0
 	for _, t := range tasks {
-		if t.TaskType == "consume" {
+		if t.TaskType == types.Task.Type.Consume {
 			n++
 		}
 	}
@@ -582,7 +583,7 @@ func pollBatch(ctx context.Context, queries *database.Queries, cp, ep, tp *pool.
 		}
 
 		batch, err := queries.GetBatch(ctx, batchID)
-		if err == nil && batch.Status == "paused" {
+		if err == nil && batch.Status == types.Batch.Status.Paused {
 			fmt.Printf("\nBatch paused: LLM provider credit/balance error detected. Resolve billing and re-queue the batch.\n")
 			stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer stopCancel()
@@ -604,7 +605,7 @@ func pollBatch(ctx context.Context, queries *database.Queries, cp, ep, tp *pool.
 		remain := 0
 		for _, t := range tasks {
 			switch t.Status {
-			case "processing":
+			case types.Task.Status.Processing:
 				prog := ""
 				if t.Progress != nil {
 					var p task.ProgressSnapshot
@@ -627,12 +628,12 @@ func pollBatch(ctx context.Context, queries *database.Queries, cp, ep, tp *pool.
 					fmt.Printf("  [%d/%d] %-8s %s ... %s\n", info.index, total, info.taskType, info.fileName, prog)
 				}
 				previousProgress[t.TaskID] = prog
-			case "completed":
+			case types.Task.Status.Completed:
 				if previous[t.TaskID] != "completed" && previous[t.TaskID] != "" {
 					info := taskDisplayInfo(t)
 					fmt.Printf("  [%d/%d] %-8s %s ... done\n", info.index, total, info.taskType, info.fileName)
 				}
-			case "failed":
+			case types.Task.Status.Failed:
 				if previous[t.TaskID] != "failed" && previous[t.TaskID] != "" {
 					info := taskDisplayInfo(t)
 					errMsg := ""
@@ -642,20 +643,20 @@ func pollBatch(ctx context.Context, queries *database.Queries, cp, ep, tp *pool.
 					fmt.Printf("  [%d/%d] %-8s %s ... failed%s\n", info.index, total, info.taskType, info.fileName, errMsg)
 				}
 			}
-			if t.Status == "pending" || t.Status == "processing" {
+			if t.Status == types.Task.Status.Pending || t.Status == types.Task.Status.Processing {
 				remain++
 			}
-			previous[t.TaskID] = t.Status
+			previous[t.TaskID] = string(t.Status)
 		}
 
 		if remain == 0 {
 			var files, taskCount, failed int64
 			for _, t := range tasks {
 				taskCount++
-				if t.TaskType == "consume" {
+				if t.TaskType == types.Task.Type.Consume {
 					files++
 				}
-				if t.Status == "failed" {
+				if t.Status == types.Task.Status.Failed {
 					failed++
 				}
 			}
@@ -681,7 +682,7 @@ func setBatchTerminalStatus(ctx context.Context, queries *database.Queries, batc
 		return fmt.Errorf("get batch: %w", err)
 	}
 	switch batch.Status {
-	case "completed", "failed", "cancelled", "paused":
+	case types.Batch.Status.Completed, types.Batch.Status.Failed, types.Batch.Status.Cancelled, types.Batch.Status.Paused:
 		return nil
 	}
 
@@ -692,7 +693,7 @@ func setBatchTerminalStatus(ctx context.Context, queries *database.Queries, batc
 
 	hasFailed := false
 	for _, t := range tasks {
-		if t.Status == "failed" {
+		if t.Status == types.Task.Status.Failed {
 			hasFailed = true
 			break
 		}

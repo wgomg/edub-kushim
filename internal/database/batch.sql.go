@@ -10,6 +10,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"time"
+
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 const acquireBatchOwnerForce = `-- name: AcquireBatchOwnerForce :execrows
@@ -110,8 +112,8 @@ ON CONFLICT (id) DO NOTHING
 
 type CreateBatchParams struct {
 	ID     string
-	Source string
-	Status string
+	Source types.BatchSource
+	Status types.BatchStatus
 }
 
 func (q *Queries) CreateBatch(ctx context.Context, arg CreateBatchParams) error {
@@ -195,7 +197,7 @@ ORDER BY created_at LIMIT 1
 `
 
 type GetNextPendingTaskOfTypeForOwnerParams struct {
-	TaskType string
+	TaskType types.TaskType
 	OwnerID  string
 }
 
@@ -215,7 +217,7 @@ ORDER BY created_at LIMIT 1
 `
 
 type GetNextPendingTaskOfTypeForOwnerWithGateParams struct {
-	TaskType string
+	TaskType types.TaskType
 	OwnerID  string
 }
 
@@ -336,9 +338,9 @@ type ListBatchOverviewsParams struct {
 
 type ListBatchOverviewsRow struct {
 	BatchID            string
-	Source             string
+	Source             types.BatchSource
 	BatchCreatedAt     sql.NullTime
-	BatchStatus        string
+	BatchStatus        types.BatchStatus
 	Total              int64
 	Waiting            int64
 	Pending            int64

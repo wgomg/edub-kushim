@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	itypes "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/configtask"
@@ -23,10 +22,9 @@ import (
 	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/task"
+	itypes "github.com/wgomg/edub-kushim/internal/types"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
-
-const configSource = "config"
 
 type ConfigHandler struct {
 	getConfig   func() *config.Config
@@ -34,7 +32,7 @@ type ConfigHandler struct {
 	queries     *database.Queries
 	logger      *utils.Logger
 	dispatcher  *task.Dispatcher
-	services    *itypes.CrudServices
+	services    *service.CrudServices
 	OnBootstrap func(configDir string) (*config.Config, *database.Client, *task.Dispatcher, error)
 }
 
@@ -44,7 +42,7 @@ func NewConfigHandler(
 	queries *database.Queries,
 	logger *utils.Logger,
 	dispatcher *task.Dispatcher,
-	services *itypes.CrudServices,
+	services *service.CrudServices,
 ) *ConfigHandler {
 	return &ConfigHandler{
 		getConfig:   getConfig,
@@ -60,7 +58,7 @@ func (h *ConfigHandler) SetServices(client *database.Client, dispatcher *task.Di
 	h.dispatcher = dispatcher
 	if client != nil {
 		h.queries = client.Queries
-		h.services = &itypes.CrudServices{
+		h.services = &service.CrudServices{
 			Batch: service.NewBatch(client, h.getConfig().Consumer.Reclaim.MaxRetries),
 			User:  service.NewUser(client.Queries),
 		}
@@ -314,7 +312,7 @@ func (h *ConfigHandler) enqueueConfigTasks(ctx context.Context, cfg *config.Conf
 	}
 
 	batchID := uuid.New().String()
-	if err := h.services.Batch.Create(ctx, batchID, configSource, "queued"); err != nil {
+	if err := h.services.Batch.Create(ctx, batchID, itypes.Batch.Source.Config, itypes.Batch.Status.Queued); err != nil {
 		h.logger.Error(nil, "create config batch: %v", err)
 		return 0
 	}
@@ -322,7 +320,7 @@ func (h *ConfigHandler) enqueueConfigTasks(ctx context.Context, cfg *config.Conf
 	enqueued := 0
 	for _, t := range tasks {
 		payload, _ := json.Marshal(t.payload)
-		if _, err := h.dispatcher.Enqueue(ctx, configtask.TaskTypeConfig, batchID, payload, ""); err != nil {
+		if _, err := h.dispatcher.Enqueue(ctx, itypes.Task.Type.Config, batchID, payload, ""); err != nil {
 			h.logger.Error(nil, "enqueue config task %s: %v", t.dedupKey, err)
 			continue
 		}
@@ -341,7 +339,7 @@ func (h *ConfigHandler) enqueueConfigTasks(ctx context.Context, cfg *config.Conf
 func (h *ConfigHandler) configTaskCovered(ctx context.Context, dedupKey string) bool {
 	existing, err := h.queries.GetConfigTaskByDedupKey(ctx, sql.NullString{String: dedupKey, Valid: true})
 	if err == nil {
-		return existing.Status == "pending" || existing.Status == "processing"
+		return existing.Status == itypes.Task.Status.Pending || existing.Status == itypes.Task.Status.Processing
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		h.logger.Error(nil, "lookup config task for dedup key %s: %v", dedupKey, err)
@@ -462,7 +460,7 @@ func probeWritableDir(dir, key string) error {
 func (h *ConfigHandler) tryAcquireConfigTaskSlot(ctx context.Context, w http.ResponseWriter, dedupKey, label string) bool {
 	existing, err := h.queries.GetConfigTaskByDedupKey(ctx, sql.NullString{String: dedupKey, Valid: true})
 	switch {
-	case err == nil && existing.Status == "processing":
+	case err == nil && existing.Status == itypes.Task.Status.Processing:
 		writeJSON(w, http.StatusConflict, map[string]any{"error": label + " already in progress"})
 		return false
 	case err == nil:
@@ -472,7 +470,7 @@ func (h *ConfigHandler) tryAcquireConfigTaskSlot(ctx context.Context, w http.Res
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to queue " + label})
 			return false
 		}
-		if deleted == 0 && existing.Status == "pending" {
+		if deleted == 0 && existing.Status == itypes.Task.Status.Pending {
 			writeJSON(w, http.StatusConflict, map[string]any{"error": label + " already in progress"})
 			return false
 		}
@@ -501,9 +499,9 @@ func (h *ConfigHandler) enqueueDBMigration(ctx context.Context, w http.ResponseW
 	payloadJSON, _ := json.Marshal(payload)
 
 	batchID := uuid.New().String()
-	h.services.Batch.Create(ctx, batchID, configSource, "queued")
+	h.services.Batch.Create(ctx, batchID, itypes.Batch.Source.Config, itypes.Batch.Status.Queued)
 
-	if _, err := h.dispatcher.Enqueue(ctx, configtask.TaskTypeConfig, batchID, payloadJSON, ""); err != nil {
+	if _, err := h.dispatcher.Enqueue(ctx, itypes.Task.Type.Config, batchID, payloadJSON, ""); err != nil {
 		h.logger.Error(nil, "enqueue migration task: %v", err)
 		if delErr := h.queries.DeleteBatch(ctx, batchID); delErr != nil {
 			h.logger.Error(nil, "delete empty config batch %s: %v", batchID, delErr)
@@ -533,9 +531,9 @@ func (h *ConfigHandler) enqueueStorageMigration(ctx context.Context, w http.Resp
 	payloadJSON, _ := json.Marshal(payload)
 
 	batchID := uuid.New().String()
-	h.services.Batch.Create(ctx, batchID, configSource, "queued")
+	h.services.Batch.Create(ctx, batchID, itypes.Batch.Source.Config, itypes.Batch.Status.Queued)
 
-	if _, err := h.dispatcher.Enqueue(ctx, configtask.TaskTypeConfig, batchID, payloadJSON, ""); err != nil {
+	if _, err := h.dispatcher.Enqueue(ctx, itypes.Task.Type.Config, batchID, payloadJSON, ""); err != nil {
 		h.logger.Error(nil, "enqueue storage migration task: %v", err)
 		if delErr := h.queries.DeleteBatch(ctx, batchID); delErr != nil {
 			h.logger.Error(nil, "delete empty config batch %s: %v", batchID, delErr)
@@ -566,10 +564,10 @@ func (h *ConfigHandler) ConfigStatus(w http.ResponseWriter, r *http.Request) {
 	if h.queries != nil {
 		// The setup wizard's completion gate polls this count; scope it to
 		// config tasks so it only reflects downloads/migrations.
-		for _, status := range []string{"pending", "processing"} {
+		for _, status := range []itypes.TaskStatus{itypes.Task.Status.Pending, itypes.Task.Status.Processing} {
 			count, err := h.queries.CountTasksByStatusAndType(ctx, database.CountTasksByStatusAndTypeParams{
 				Status:   status,
-				TaskType: configtask.TaskTypeConfig,
+				TaskType: itypes.Task.Type.Config,
 			})
 			if err != nil {
 				resp.Errors = append(resp.Errors, err.Error())
@@ -580,8 +578,8 @@ func (h *ConfigHandler) ConfigStatus(w http.ResponseWriter, r *http.Request) {
 		resp.PendingTasks = pendingTasks
 
 		failedTasks, err := h.queries.ListAllTasksByStatusAndType(ctx, database.ListAllTasksByStatusAndTypeParams{
-			Status:   "failed",
-			TaskType: configtask.TaskTypeConfig,
+			Status:   itypes.Task.Status.Failed,
+			TaskType: itypes.Task.Type.Config,
 		})
 		if err != nil {
 			h.logger.Error(nil, "list failed config tasks: %v", err)
@@ -627,8 +625,8 @@ func (h *ConfigHandler) RetryFailedConfig(w http.ResponseWriter, r *http.Request
 	}
 
 	failedTasks, err := h.queries.ListAllTasksByStatusAndType(ctx, database.ListAllTasksByStatusAndTypeParams{
-		Status:   "failed",
-		TaskType: configtask.TaskTypeConfig,
+		Status:   itypes.Task.Status.Failed,
+		TaskType: itypes.Task.Type.Config,
 	})
 	if err != nil {
 		h.logger.Error(nil, "list failed config tasks: %v", err)

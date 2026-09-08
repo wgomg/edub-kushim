@@ -6,11 +6,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/wgomg/edub-kushim/internal/types"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type Runner interface {
-	Next(ctx context.Context, taskType string) error
+	Next(ctx context.Context, taskType types.TaskType) error
 }
 
 type Pool struct {
@@ -110,7 +111,7 @@ func (p *Pool) runWorker(id int, logPrefix string) (rerr error) {
 			mem := utils.ReadMemFull()
 			p.logger.Debug(nil, "%s periodic memory: %s", logPrefix, utils.FormatMemFull(mem))
 		case <-time.After(p.interval):
-			if err := p.runner.Next(p.ctx, p.taskType); err != nil {
+			if err := p.runner.Next(p.ctx, types.TaskType(p.taskType)); err != nil {
 				p.logger.Error(nil, "%s: %v", logPrefix, err)
 			}
 		}

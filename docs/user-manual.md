@@ -2212,8 +2212,12 @@ unless the step changes).
 }
 ```
 
-`source` is how the batch was created (`polling`/`cli` for consume batches,
-`config`, `backup`, `mirror`, `thumbbackfill`). `owner_state` (`"none"`,
+`source` is how the batch was created: `cli` (`kushim consume`), `api`
+(`POST /api/v1/consume`), `upload` (`POST /api/v1/consume/upload`),
+`polling` (daemon inbox scan), `reenrich`, `orphaned-restore`,
+`thumbbackfill`, `config`, `backup`, `mirror`. The vocabulary is a closed
+Postgres enum (`batch_source`), mirrored by the Go registry in
+`internal/types`. `owner_state` (`"none"`,
 `"live"`, `"stale"`) is included when set. Batches with source
 `config`/`backup`/`mirror` never report `orphaned: true` — they have no
 `batch_owner` row by design (their handlers own the lifecycle).

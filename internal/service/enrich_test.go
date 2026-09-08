@@ -8,35 +8,36 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/testutil"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 type recordingTaskCreator struct {
 	calls    []mockTaskCall
-	createFn func(taskType, batchID string, payload json.RawMessage, taskID, status, dedupKey string) (string, error)
+	createFn func(taskType types.TaskType, batchID string, payload json.RawMessage, taskID string, status types.TaskStatus, dedupKey string) (string, error)
 }
 
-func (m *recordingTaskCreator) CreateTask(_ context.Context, taskType, batchID string, payload json.RawMessage, taskID, status, dedupKey string) (string, error) {
+func (m *recordingTaskCreator) CreateTask(_ context.Context, taskType types.TaskType, batchID string, payload json.RawMessage, taskID string, status types.TaskStatus, dedupKey string) (string, error) {
 	if m.createFn != nil {
 		return m.createFn(taskType, batchID, payload, taskID, status, dedupKey)
 	}
 	m.calls = append(m.calls, mockTaskCall{
-		TaskType: taskType, BatchID: batchID, Payload: payload,
-		TaskID: taskID, Status: status, DedupKey: dedupKey,
+		TaskType: string(taskType), BatchID: batchID, Payload: payload,
+		TaskID: taskID, Status: string(status), DedupKey: dedupKey,
 	})
 	return taskID, nil
 }
 
 type recordingBatchCreator struct {
 	calls    []mockTaskCall
-	createFn func(id, source, status string) error
+	createFn func(id string, source types.BatchSource, status types.BatchStatus) error
 }
 
-func (m *recordingBatchCreator) Create(_ context.Context, id, source, status string) error {
+func (m *recordingBatchCreator) Create(_ context.Context, id string, source types.BatchSource, status types.BatchStatus) error {
 	if m.createFn != nil {
 		return m.createFn(id, source, status)
 	}
 	m.calls = append(m.calls, mockTaskCall{
-		BatchID: id, Source: source, Status: status,
+		BatchID: id, Source: string(source), Status: string(status),
 	})
 	return nil
 }
@@ -100,7 +101,7 @@ func TestReEnrich_TaskCreationFails(t *testing.T) {
 	_, docUUID := database.CreateTestDocument(t, client.Queries, "fail-task.pdf")
 
 	taskMock := &recordingTaskCreator{
-		createFn: func(_, _ string, _ json.RawMessage, _, _, _ string) (string, error) {
+		createFn: func(_ types.TaskType, _ string, _ json.RawMessage, _ string, _ types.TaskStatus, _ string) (string, error) {
 			return "", fmt.Errorf("create task: unique constraint")
 		},
 	}

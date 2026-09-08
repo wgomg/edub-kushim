@@ -12,6 +12,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/testutil"
+	"github.com/wgomg/edub-kushim/internal/types"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -30,13 +31,13 @@ type mockTaskCall struct {
 	Source   string
 }
 
-func (m *mockTaskCreator) CreateTask(_ context.Context, taskType, batchID string, payload json.RawMessage, taskID, status, dedupKey string) (string, error) {
-	m.calls = append(m.calls, mockTaskCall{TaskType: taskType, BatchID: batchID, Payload: payload, TaskID: taskID, Status: status, DedupKey: dedupKey})
+func (m *mockTaskCreator) CreateTask(_ context.Context, taskType types.TaskType, batchID string, payload json.RawMessage, taskID string, status types.TaskStatus, dedupKey string) (string, error) {
+	m.calls = append(m.calls, mockTaskCall{TaskType: string(taskType), BatchID: batchID, Payload: payload, TaskID: taskID, Status: string(status), DedupKey: dedupKey})
 	return taskID, nil
 }
 
-func (m *mockTaskCreator) Create(_ context.Context, id, source, status string) error {
-	m.calls = append(m.calls, mockTaskCall{BatchID: id, Source: source, Status: status})
+func (m *mockTaskCreator) Create(_ context.Context, id string, source types.BatchSource, status types.BatchStatus) error {
+	m.calls = append(m.calls, mockTaskCall{BatchID: id, Source: string(source), Status: string(status)})
 	return m.createErr
 }
 

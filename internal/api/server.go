@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	types "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/api/handlers"
 	"github.com/wgomg/edub-kushim/internal/auth"
 	"github.com/wgomg/edub-kushim/internal/config"
@@ -23,6 +22,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/static"
 	"github.com/wgomg/edub-kushim/internal/tagmatch"
 	"github.com/wgomg/edub-kushim/internal/task"
+	"github.com/wgomg/edub-kushim/internal/types"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -32,7 +32,7 @@ type Server struct {
 	addr          string
 	cfg           atomic.Pointer[config.Config]
 	matcherClient *tagmatch.MatcherClient
-	services      *types.CrudServices
+	services      *service.CrudServices
 	configWatcher *config.Watcher
 	db            *sql.DB
 	client        *database.Client
@@ -78,7 +78,7 @@ func (s *Server) rebuild(client *database.Client) {
 	if err != nil {
 		s.logger.Fatal("tag service: ", err)
 	}
-	services := &types.CrudServices{Tag: tagSvc}
+	services := &service.CrudServices{Tag: tagSvc}
 	services.Batch = service.NewBatch(client, cfg.Consumer.Reclaim.MaxRetries)
 	services.People = service.NewPeople(client.Queries, s.logger)
 	services.PeopleType = service.NewPeopleType(client.Queries, s.logger)
@@ -98,7 +98,7 @@ func (s *Server) rebuild(client *database.Client) {
 	services.ErroredFiles = service.NewErroredFiles(cfg, s.logger)
 
 	registry := task.NewRegistry()
-	registry.Register("config", configtask.NewConfigTaskHandler(client.Queries, s.logger))
+	registry.Register(types.Task.Type.Config, configtask.NewConfigTaskHandler(client.Queries, s.logger))
 
 	dispatcher := task.NewDispatcher(s.logger, workStore, registry)
 	configRunner := task.NewRunner(configStore, registry, s.logger)
@@ -194,7 +194,7 @@ func registerRoutes(
 	dispatcher *task.Dispatcher,
 	getConfig func() *config.Config,
 	onConfigSet func(*config.Config),
-	services *types.CrudServices,
+	services *service.CrudServices,
 	workStore *task.Store,
 ) *http.ServeMux {
 	mux := http.NewServeMux()

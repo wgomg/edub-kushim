@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/task"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 func taskHandler(c *Container, args []string) error {
@@ -164,7 +165,7 @@ func taskStatusHandler(c *Container, args []string) error {
 	if t.CompletedAt.Valid {
 		fmt.Printf("Completed:  %s\n", t.CompletedAt.Time.Format(time.RFC3339))
 	}
-	if t.Status != "failed" {
+	if t.Status != types.Task.Status.Failed {
 		docID := ""
 		docDbID := int64(0)
 		if t.Result != nil {

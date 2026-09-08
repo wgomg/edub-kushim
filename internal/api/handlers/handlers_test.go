@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	itypes "github.com/wgomg/edub-kushim/internal"
 	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/auth"
 	"github.com/wgomg/edub-kushim/internal/config"
@@ -28,6 +27,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/tagmatch"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/testutil"
+	itypes "github.com/wgomg/edub-kushim/internal/types"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -41,7 +41,7 @@ type handlerTestEnv struct {
 	peopleTypeSvc *service.PeopleType
 	docTypeSvc    *service.DocumentType
 	userSvc       *service.User
-	services      *itypes.CrudServices
+	services      *service.CrudServices
 	workStore     *task.Store
 	dispatcher    *task.Dispatcher
 	registry      *task.Registry
@@ -89,7 +89,7 @@ func newHandlerTestEnv(t *testing.T) *handlerTestEnv {
 	trashCfg := config.DefaultConfig("/tmp/test")
 	trashSvc := service.NewTrashService(client, trashCfg, logger)
 
-	services := &itypes.CrudServices{
+	services := &service.CrudServices{
 		Batch:        batchSvc,
 		Tag:          tagSvc,
 		People:       peopleSvc,
@@ -642,7 +642,7 @@ func TestTaskEndpoints(t *testing.T) {
 
 	t.Run("cancel batch with pending tasks", func(t *testing.T) {
 		batchID := "cancel-pending-test"
-		err := env.client.CreateBatch(ctx, database.CreateBatchParams{ID: batchID, Source: "test", Status: "queued"})
+		err := env.client.CreateBatch(ctx, database.CreateBatchParams{ID: batchID, Source: itypes.Batch.Source.CLI, Status: itypes.Batch.Status.Queued})
 		testutil.AssertNoError(t, err, "create batch")
 
 		pendPayload := json.RawMessage(`{}`)
@@ -669,7 +669,7 @@ func TestTaskEndpoints(t *testing.T) {
 
 	t.Run("cancel batch with dead owner", func(t *testing.T) {
 		batchID := "cancel-dead-owner"
-		err := env.client.CreateBatch(ctx, database.CreateBatchParams{ID: batchID, Source: "test", Status: "queued"})
+		err := env.client.CreateBatch(ctx, database.CreateBatchParams{ID: batchID, Source: itypes.Batch.Source.CLI, Status: itypes.Batch.Status.Queued})
 		testutil.AssertNoError(t, err, "create batch")
 
 		deadPayload := json.RawMessage(`{}`)
@@ -879,12 +879,12 @@ func TestGetDashboardProcessingHealth(t *testing.T) {
 	database.CreateTestDocument(t, env.client.Queries, "ph-doc.pdf")
 
 	err := env.client.CreateBatch(ctx, database.CreateBatchParams{
-		ID: "ph-batch-1", Source: "test", Status: "queued",
+		ID: "ph-batch-1", Source: itypes.Batch.Source.CLI, Status: itypes.Batch.Status.Queued,
 	})
 	testutil.AssertNoError(t, err, "create batch 1")
 
 	err = env.client.CreateBatch(ctx, database.CreateBatchParams{
-		ID: "ph-batch-2", Source: "test", Status: "queued",
+		ID: "ph-batch-2", Source: itypes.Batch.Source.CLI, Status: itypes.Batch.Status.Queued,
 	})
 	testutil.AssertNoError(t, err, "create batch 2")
 
@@ -1070,7 +1070,7 @@ func TestEnqueueBatchFilesDedup(t *testing.T) {
 		}
 
 		batchID := uuid.New().String()
-		if err := h.queries.CreateBatch(ctx, database.CreateBatchParams{ID: batchID, Source: "test", Status: "queued"}); err != nil {
+		if err := h.queries.CreateBatch(ctx, database.CreateBatchParams{ID: batchID, Source: itypes.Batch.Source.CLI, Status: itypes.Batch.Status.Queued}); err != nil {
 			t.Fatal(err)
 		}
 
@@ -1112,7 +1112,7 @@ func TestEnqueueBatchFilesDedup(t *testing.T) {
 		}
 
 		batchID := uuid.New().String()
-		if err := h.queries.CreateBatch(ctx, database.CreateBatchParams{ID: batchID, Source: "test", Status: "queued"}); err != nil {
+		if err := h.queries.CreateBatch(ctx, database.CreateBatchParams{ID: batchID, Source: itypes.Batch.Source.CLI, Status: itypes.Batch.Status.Queued}); err != nil {
 			t.Fatal(err)
 		}
 
@@ -1645,7 +1645,7 @@ func TestProcessingHealthMissingTools(t *testing.T) {
 	h := NewTaskHandler(env.services, env.client.Queries, env.logger, func() *config.Config { return cfg })
 
 	ctx := context.Background()
-	err := env.client.CreateBatch(ctx, database.CreateBatchParams{ID: "mh-batch", Source: "test", Status: "queued"})
+	err := env.client.CreateBatch(ctx, database.CreateBatchParams{ID: "mh-batch", Source: itypes.Batch.Source.CLI, Status: itypes.Batch.Status.Queued})
 	testutil.AssertNoError(t, err, "create batch")
 
 	reqID := "missing-tools"
@@ -2464,8 +2464,8 @@ func TestEnqueueConfigTasks(t *testing.T) {
 		oldBatchID := "00000000-0000-0000-0000-000000000001"
 		if err := env.client.Queries.CreateBatch(ctx, database.CreateBatchParams{
 			ID:     oldBatchID,
-			Source: "config",
-			Status: "completed",
+			Source: itypes.Batch.Source.Config,
+			Status: itypes.Batch.Status.Completed,
 		}); err != nil {
 			t.Fatalf("seed old batch: %v", err)
 		}
@@ -2477,7 +2477,7 @@ func TestEnqueueConfigTasks(t *testing.T) {
 		raw := json.RawMessage(oldPayload)
 		if _, err := env.client.Queries.CreateTask(ctx, database.CreateTaskParams{
 			TaskID:   "seeded-completed-task-id",
-			TaskType: configtask.TaskTypeConfig,
+			TaskType: itypes.Task.Type.Config,
 			Status:   "completed",
 			BatchID:  sql.NullString{String: oldBatchID, Valid: true},
 			Payload:  &raw,
