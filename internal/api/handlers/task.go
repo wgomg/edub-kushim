@@ -609,17 +609,6 @@ func taskLabel(taskType itypes.TaskType, dedupKey sql.NullString) string {
 }
 
 func taskToResponse(t database.Task) types.TaskResponse {
-	var docID *int64
-	if t.Result != nil {
-		var r struct {
-			DocumentID int64 `json:"document_id"`
-		}
-		json.Unmarshal(*t.Result, &r)
-		if r.DocumentID != 0 {
-			docID = &r.DocumentID
-		}
-	}
-
 	var errStr *string
 	if t.Error.Valid {
 		errStr = &t.Error.String
@@ -659,24 +648,11 @@ func taskToResponse(t database.Task) types.TaskResponse {
 			DocumentID string `json:"document_id"`
 		}
 		json.Unmarshal(*t.Payload, &p)
+		payloadDocID = p.DocumentID
 		if p.FilePath != "" {
 			fileName = filepath.Base(p.FilePath)
 		} else {
 			fileName = p.FileName
-		}
-
-		if t.TaskType == itypes.Task.Type.Enrich || t.TaskType == itypes.Task.Type.Thumbnail {
-			if t.Status == itypes.Task.Status.Discarded {
-				var enrichPayload struct {
-					WaitingFor string `json:"waiting_for"`
-				}
-				json.Unmarshal(*t.Payload, &enrichPayload)
-				payloadDocID = enrichPayload.WaitingFor
-			} else {
-				payloadDocID = p.DocumentID
-			}
-		} else if t.TaskType == itypes.Task.Type.Consume && t.Status == itypes.Task.Status.Completed {
-			payloadDocID = p.DocumentID
 		}
 	}
 
@@ -697,7 +673,6 @@ func taskToResponse(t database.Task) types.TaskResponse {
 		FileName:     fileName,
 		PayloadDocID: payloadDocID,
 		Status:       string(t.Status),
-		DocumentID:   docID,
 		Error:        errStr,
 		Label:        label,
 		Progress:     progress,

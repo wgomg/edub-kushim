@@ -92,15 +92,15 @@
 				<p class="mt-1 wrap-break-word text-parchment-200">{task.file_name ?? '—'}</p>
 			</div>
 
-			{#if task.document_id}
+			{#if task.payload_doc_id}
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-xs font-medium tracking-wider text-parchment-500 uppercase">Document ID</p>
 					<p class="mt-1">
 						<a
-							href={resolve(`/documents/${task.document_id}`)}
+							href={resolve(`/documents/${task.payload_doc_id}`)}
 							class="font-mono text-sm text-lapis-400 hover:text-lapis-300"
 						>
-							{task.document_id}
+							{task.payload_doc_id}
 						</a>
 					</p>
 				</div>

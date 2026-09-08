@@ -170,7 +170,7 @@ See `AuthMiddleware` under `server.go` → Functions.
 
 ### Structs
 
-- `TaskResponse` — `TaskID`, `BatchID`, `TaskType`, `FileName`, `PayloadDocID`, `Status`, `DocumentID *int64`, `Error *string`, `Label` (`TaskType: file name` for consume/enrich/thumbnail, task-type/dedup-key derived otherwise), `CreatedAt`, `StartedAt *string`, `CompletedAt *string`
+- `TaskResponse` — `TaskID`, `BatchID`, `TaskType`, `FileName`, `PayloadDocID`, `Status`, `Error *string`, `Label` (`TaskType: file name` for consume/enrich/thumbnail, task-type/dedup-key derived otherwise), `CreatedAt`, `StartedAt *string`, `CompletedAt *string`
 - `BatchSummaryResponse` — `BatchID`, `Status` (queued/processing/completed/failed/cancelled), `Total`, `Waiting`, `Pending`, `Processing`, `Completed`, `Failed`, `Cancelled`, `Discarded`
 - `BatchOverviewItem` — `BatchID`, `Status`, `Source`, `CreatedAt`, `Total`, `Waiting`, `Pending`, `Processing`, `Completed`, `Failed`, `Cancelled`, `Discarded`, `OwnerState`, `Orphaned`, `DurationMs *int64`
 - `BatchCounts` — `Total`, `Waiting`, `Pending`, `Processing`, `Completed`, `Failed`, `Cancelled`, `Discarded`

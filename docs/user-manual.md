@@ -1733,7 +1733,6 @@ Response `200`:
       "file_name": "report.pdf",
       "payload_doc_id": "",
       "status": "completed",
-      "document_id": 42,
       "error": null,
       "created_at": "2024-03-19T10:30:00Z",
       "started_at": "2024-03-19T10:30:05Z",
@@ -2025,7 +2024,6 @@ Response `200`:
         "file_name": "report.pdf",
         "payload_doc_id": "",
         "status": "processing",
-        "document_id": null,
         "error": null,
         "label": "Consume: report.pdf",
         "created_at": "2026-06-25T10:30:00Z",
@@ -2039,7 +2037,6 @@ Response `200`:
         "file_name": "",
         "payload_doc_id": "",
         "status": "pending",
-        "document_id": null,
         "error": null,
         "label": "Database migration",
         "created_at": "2026-06-25T10:28:00Z",
@@ -2164,7 +2161,6 @@ Same as DocumentResponse with these extra fields:
   "file_name": "report.pdf",
   "payload_doc_id": "550e8400-e29b-41d4-a716-446655440000",
   "status": "completed",
-  "document_id": 42,
   "error": null,
   "label": "report.pdf",
   "progress": {
@@ -2179,8 +2175,13 @@ Same as DocumentResponse with these extra fields:
 }
 ```
 
-`document_id` is the numeric database row ID; `payload_doc_id` carries the
-document UUID when the task payload references one. `label` is
+`payload_doc_id` carries the document UUID whenever the task payload has a
+non-empty `document_id` — for `consume` tasks only after the document record
+exists, for `enrich`/`thumbnail` tasks once activated, and for failed tasks of
+any type whose payload references a document (the web UI links it to the
+document page). Discarded `enrich`/`thumbnail` children have an empty
+`payload_doc_id` (their payload only carries `waiting_for`, the parent task
+id). `label` is
 `TaskType: file name` for consume/enrich/thumbnail tasks with a payload file
 (e.g. `"Consume: report.pdf"`), the file name alone for other task types,
 otherwise derived from the task type and dedup key (e.g. `"Backup (full)"`,

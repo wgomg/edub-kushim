@@ -14,7 +14,6 @@ type TaskResponse struct {
 	FileName     string                `json:"file_name"`
 	PayloadDocID string                `json:"payload_doc_id"`
 	Status       string                `json:"status"`
-	DocumentID   *int64                `json:"document_id"`
 	Error        *string               `json:"error"`
 	Label        string                `json:"label"`
 	Progress     *TaskProgressResponse `json:"progress,omitempty"`

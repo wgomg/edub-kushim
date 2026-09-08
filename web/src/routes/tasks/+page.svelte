@@ -158,15 +158,10 @@
 			width: '100%',
 			cell: (_v, row) => {
 				const parts = [];
-				if (
-					row.task_type === 'enrich' ||
-					(row.task_type === 'consume' && row.status === 'completed')
-				) {
-					if (row.payload_doc_id) {
-						parts.push(
-							`<span class="text-parchment-400 text-xs">document:</span> <span class="font-mono text-parchment-300">${escapeHtml(row.payload_doc_id)}</span>`
-						);
-					}
+				if (row.payload_doc_id) {
+					parts.push(
+						`<span class="text-parchment-400 text-xs">document:</span> <a href="${escapeHtml(resolve(`/documents/${row.payload_doc_id}`))}" class="font-mono text-lapis-400 hover:text-lapis-300">${escapeHtml(row.payload_doc_id)}</a>`
+					);
 				}
 				if (row.file_name) {
 					parts.push(
