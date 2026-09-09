@@ -3,7 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { api } from '$lib/api';
-	import { formatSize } from '$lib/utils/html.js';
+	import { formatSize, formatNumber } from '$lib/utils/html.js';
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
 	import * as authStore from '$lib/stores/authStore.js';
@@ -272,8 +272,12 @@
 		<div class="flex flex-wrap items-center gap-2 text-sm text-parchment-400">
 			<span class="rounded-full bg-clay-800 px-2 py-0.5">{doc.original_type}</span>
 			<span class="rounded-full bg-clay-800 px-2 py-0.5">{formatSize(doc.file_size)}</span>
-			<span class="rounded-full bg-clay-800 px-2 py-0.5">{doc.page_count ?? '—'} pages</span>
-			<span class="rounded-full bg-clay-800 px-2 py-0.5">{doc.word_count ?? '—'} words</span>
+			<span class="rounded-full bg-clay-800 px-2 py-0.5"
+				>{formatNumber(doc.page_count) ?? '—'} pages</span
+			>
+			<span class="rounded-full bg-clay-800 px-2 py-0.5"
+				>{formatNumber(doc.word_count) ?? '—'} words</span
+			>
 			<span>
 				Modified
 				{new Date(doc.modified_at).toLocaleDateString(undefined, {
