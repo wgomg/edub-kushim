@@ -2,7 +2,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { resolve } from '$app/paths';
 	import { api } from '$lib/api';
-	import { formatSize } from '$lib/utils/html.js';
+	import { formatSize, formatNumber } from '$lib/utils/html.js';
 	import StoragePanel from '$lib/components/StoragePanel.svelte';
 	import BatchOverviewPanel from '$lib/components/BatchOverviewPanel.svelte';
 	import ActiveTasksStrip from '$lib/components/ActiveTasksStrip.svelte';
