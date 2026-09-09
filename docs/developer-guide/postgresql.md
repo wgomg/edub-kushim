@@ -371,10 +371,11 @@ indexed) — which keeps payloads for machine data only.
 Plain SQL functions (not triggers) are used to centralize business conditions
 so they can be reused across queries.
 
-The backup gate (`00005_backup_lock.sql:12-18` + `task.sql:35-40`):
+The maintenance-lock gate (`00014_maintenance_lock_predicate.sql`, reading the
+`backup_lock` table created in `00005_backup_lock.sql`):
 
 ```sql
-CREATE OR REPLACE FUNCTION is_backup_running() RETURNS boolean AS $$
+CREATE OR REPLACE FUNCTION is_maintenance_lock_held() RETURNS boolean AS $$
 BEGIN
   RETURN EXISTS (
     SELECT 1 FROM backup_lock
@@ -385,15 +386,19 @@ $$ LANGUAGE plpgsql;
 ```
 
 ```sql
--- name: GetNextPendingTaskOfTypeWithGate :one
+-- name: GetNextPendingTaskOfType :one
 SELECT id FROM task
-WHERE status = 'pending' AND task_type = $1
-  AND NOT is_backup_running()
+WHERE status = 'pending' AND task_type = @task_type
+  AND (NOT @gated::boolean OR NOT is_maintenance_lock_held())
 ORDER BY created_at LIMIT 1;
 ```
 
 The function encodes the lock's *staleness rule* in one place; every worker
-poll (and the backup task itself) consults it. The lock is acquired with a
+poll (and the backup task itself) consults it. Which task types claim under
+the gate (`gated = true`) is declared once in the Go registry
+(`types.TaskType.IsLockGated()`: consume, enrich, thumbnail); all other types
+claim with `gated = false`, so the predicate can never leak into their
+queries. The lock is acquired with a
 conditional UPDATE on the single-row table (§2) — an atomic
 compare-and-swap:
 

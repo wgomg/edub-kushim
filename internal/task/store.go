@@ -60,26 +60,19 @@ func (s *Store) ClaimNextPending(ctx context.Context, taskType types.TaskType) (
 	var id int64
 	var err error
 
-	gated := taskType == types.Task.Type.Consume || taskType == types.Task.Type.Enrich || taskType == types.Task.Type.Thumbnail
+	gated := taskType.IsLockGated()
 
 	if s.ownerID != "" {
-		if gated {
-			id, err = s.queries.GetNextPendingTaskOfTypeForOwnerWithGate(ctx, database.GetNextPendingTaskOfTypeForOwnerWithGateParams{
-				TaskType: taskType,
-				OwnerID:  s.ownerID,
-			})
-		} else {
-			id, err = s.queries.GetNextPendingTaskOfTypeForOwner(ctx, database.GetNextPendingTaskOfTypeForOwnerParams{
-				TaskType: taskType,
-				OwnerID:  s.ownerID,
-			})
-		}
+		id, err = s.queries.GetNextPendingTaskOfTypeForOwner(ctx, database.GetNextPendingTaskOfTypeForOwnerParams{
+			TaskType: taskType,
+			OwnerID:  s.ownerID,
+			Gated:    gated,
+		})
 	} else {
-		if gated {
-			id, err = s.queries.GetNextPendingTaskOfTypeWithGate(ctx, taskType)
-		} else {
-			id, err = s.queries.GetNextPendingTaskOfType(ctx, taskType)
-		}
+		id, err = s.queries.GetNextPendingTaskOfType(ctx, database.GetNextPendingTaskOfTypeParams{
+			TaskType: taskType,
+			Gated:    gated,
+		})
 	}
 	if err != nil {
 		return database.Task{}, err

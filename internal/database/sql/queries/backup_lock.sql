@@ -1,5 +1,5 @@
 -- name: IsBackupLocked :one
-SELECT CASE WHEN is_backup_running() THEN 1 ELSE 0 END;
+SELECT CASE WHEN is_maintenance_lock_held() THEN 1 ELSE 0 END;
 
 -- name: AcquireBackupLock :execrows
 UPDATE backup_lock SET running = true, started_at = NOW()

@@ -174,6 +174,14 @@ func (t TaskStatus) Valid() bool {
 	return slices.Contains(allTaskStatuses, t)
 }
 
+func (t TaskType) IsBlocking() bool {
+	return slices.Contains(blockingTaskTypes, t)
+}
+
+func (t TaskType) IsLockGated() bool {
+	return slices.Contains(lockGatedTaskTypes, t)
+}
+
 func AllBatchSources() []BatchSource  { return slices.Clone(allBatchSources) }
 func AllBatchStatuses() []BatchStatus { return slices.Clone(allBatchStatuses) }
 func AllTaskTypes() []TaskType        { return slices.Clone(allTaskTypes) }
@@ -218,6 +226,17 @@ var allTaskTypes = []TaskType{
 	Task.Type.Backup,
 	Task.Type.Mirror,
 	Task.Type.Config,
+}
+
+var blockingTaskTypes = []TaskType{
+	Task.Type.Backup,
+	Task.Type.Mirror,
+}
+
+var lockGatedTaskTypes = []TaskType{
+	Task.Type.Consume,
+	Task.Type.Enrich,
+	Task.Type.Thumbnail,
 }
 
 var allTaskStatuses = []TaskStatus{

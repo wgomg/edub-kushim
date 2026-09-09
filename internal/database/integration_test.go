@@ -1209,13 +1209,13 @@ func TestGatedQueriesBlockDuringBackup(t *testing.T) {
 	_ = id
 
 	t.Run("ungated returns task when unlocked", func(t *testing.T) {
-		taskID, err := q.GetNextPendingTaskOfType(ctx, types.Task.Type.Consume)
+		taskID, err := q.GetNextPendingTaskOfType(ctx, GetNextPendingTaskOfTypeParams{TaskType: types.Task.Type.Consume, Gated: false})
 		assertNoError(t, err, "ungated claim")
 		assertEqual(t, taskID > 0, true, "got a task id")
 	})
 
 	t.Run("gated returns task when unlocked", func(t *testing.T) {
-		taskID, err := q.GetNextPendingTaskOfTypeWithGate(ctx, types.Task.Type.Consume)
+		taskID, err := q.GetNextPendingTaskOfType(ctx, GetNextPendingTaskOfTypeParams{TaskType: types.Task.Type.Consume, Gated: true})
 		assertNoError(t, err, "gated claim unlocked")
 		assertEqual(t, taskID > 0, true, "got a task id")
 	})
@@ -1225,12 +1225,12 @@ func TestGatedQueriesBlockDuringBackup(t *testing.T) {
 	assertNoError(t, err, "acquire lock")
 
 	t.Run("gated returns ErrNoRows when locked", func(t *testing.T) {
-		_, err := q.GetNextPendingTaskOfTypeWithGate(ctx, types.Task.Type.Consume)
+		_, err := q.GetNextPendingTaskOfType(ctx, GetNextPendingTaskOfTypeParams{TaskType: types.Task.Type.Consume, Gated: true})
 		assertEqual(t, err, sql.ErrNoRows, "gated claim blocked during backup")
 	})
 
 	t.Run("ungated still returns task when locked", func(t *testing.T) {
-		taskID, err := q.GetNextPendingTaskOfType(ctx, types.Task.Type.Consume)
+		taskID, err := q.GetNextPendingTaskOfType(ctx, GetNextPendingTaskOfTypeParams{TaskType: types.Task.Type.Consume, Gated: false})
 		assertNoError(t, err, "ungated claim still works")
 		assertEqual(t, taskID > 0, true, "got a task id")
 	})
@@ -1245,8 +1245,8 @@ func TestGatedQueriesBlockDuringBackup(t *testing.T) {
 			BatchID: sql.NullString{String: batchID, Valid: true},
 		})
 
-		_, err := q.GetNextPendingTaskOfTypeForOwnerWithGate(ctx, GetNextPendingTaskOfTypeForOwnerWithGateParams{
-			TaskType: types.Task.Type.Consume, OwnerID: "gate-owner",
+		_, err := q.GetNextPendingTaskOfTypeForOwner(ctx, GetNextPendingTaskOfTypeForOwnerParams{
+			TaskType: types.Task.Type.Consume, OwnerID: "gate-owner", Gated: true,
 		})
 		assertEqual(t, err, sql.ErrNoRows, "gated owner claim blocked during backup")
 	})

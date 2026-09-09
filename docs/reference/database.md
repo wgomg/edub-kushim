@@ -288,7 +288,11 @@ after the baseline are written as numbered migration files (starting at `00002`)
 migrations: `00001_baseline.sql`, `00002_tsvector.sql`, `00003_tsvector_index.sql`,
 `00004_listen_notify.sql`, `00005_backup_lock.sql`, `00006_rename_mime_type.sql`
 (`document.mime_type` / `orphaned_file.mime_type` → `original_type`), `00007_trash_soft_delete.sql`
-(adds nullable `document.deleted_at` + partial index `idx_document_deleted_at`). Goose tracks
+(adds nullable `document.deleted_at` + partial index `idx_document_deleted_at`),
+`00008_thumbnail.sql`, `00009_thumbnail_backfill_index.sql`, `00010_processed_size.sql`,
+`00011_task_progress.sql`, `00012_text_hash.sql`, `00013_task_vocabulary_enums.sql`,
+`00014_maintenance_lock_predicate.sql` (renames the gate predicate `is_backup_running()` →
+`is_maintenance_lock_held()`). Goose tracks
 which versions have been applied in the `goose_db_version` table.
 
 ## Migration Version Table

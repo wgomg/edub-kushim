@@ -465,25 +465,17 @@ func (q *Queries) GetNextPendingTask(ctx context.Context) (int64, error) {
 const getNextPendingTaskOfType = `-- name: GetNextPendingTaskOfType :one
 SELECT id FROM task
 WHERE status = 'pending' AND task_type = $1
+  AND (NOT $2::boolean OR NOT is_maintenance_lock_held())
 ORDER BY created_at LIMIT 1
 `
 
-func (q *Queries) GetNextPendingTaskOfType(ctx context.Context, taskType types.TaskType) (int64, error) {
-	row := q.db.QueryRowContext(ctx, getNextPendingTaskOfType, taskType)
-	var id int64
-	err := row.Scan(&id)
-	return id, err
+type GetNextPendingTaskOfTypeParams struct {
+	TaskType types.TaskType
+	Gated    bool
 }
 
-const getNextPendingTaskOfTypeWithGate = `-- name: GetNextPendingTaskOfTypeWithGate :one
-SELECT id FROM task
-WHERE status = 'pending' AND task_type = $1
-  AND NOT is_backup_running()
-ORDER BY created_at LIMIT 1
-`
-
-func (q *Queries) GetNextPendingTaskOfTypeWithGate(ctx context.Context, taskType types.TaskType) (int64, error) {
-	row := q.db.QueryRowContext(ctx, getNextPendingTaskOfTypeWithGate, taskType)
+func (q *Queries) GetNextPendingTaskOfType(ctx context.Context, arg GetNextPendingTaskOfTypeParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getNextPendingTaskOfType, arg.TaskType, arg.Gated)
 	var id int64
 	err := row.Scan(&id)
 	return id, err

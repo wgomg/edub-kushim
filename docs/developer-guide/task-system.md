@@ -298,13 +298,14 @@ someone took the lease away; the worker keeps running but its claims
 ### The lease gates claiming
 
 `Store.ClaimNextPending` only claims tasks from batches **this process owns**
-(`batch.sql:63-74`):
+(`batch.sql:64-69`):
 
 ```sql
 -- name: GetNextPendingTaskOfTypeForOwner :one
 SELECT id FROM task
-WHERE status = 'pending' AND task_type = $1
-  AND batch_id IN (SELECT batch_id FROM batch_owner WHERE owner_id = $2)
+WHERE status = 'pending' AND task_type = @task_type
+  AND batch_id IN (SELECT batch_id FROM batch_owner WHERE owner_id = @owner_id)
+  AND (NOT @gated::boolean OR NOT is_maintenance_lock_held())
 ORDER BY created_at LIMIT 1;
 ```
 
@@ -680,7 +681,7 @@ The wizard also auto-resumes config setup on boot
 
 Backups must not race the pipeline. The mechanism is a **single-row lock
 table** plus a SQL function used as a claim gate
-(`00005_backup_lock.sql` + `task.sql:18-22`):
+(`00005_backup_lock.sql` + `00014_maintenance_lock_predicate.sql` + `task.sql:13-17`):
 
 ```sql
 UPDATE backup_lock SET running = true, started_at = NOW()
@@ -690,10 +691,14 @@ WHERE id = 1 AND (NOT running OR started_at <= NOW() - INTERVAL '30 minutes');
 - Acquiring affects 0 rows if the lock is held and fresh — the same
   rows-affected discipline as task claims. The 30-minute staleness window
   means a crashed backup (no release) auto-expires.
-- `is_backup_running()` is called in the **task-claim queries** themselves
-  (`GetNextPendingTaskOfTypeWithGate`): while a backup holds the lock, no
-  new consume/enrich task is claimed — workers go idle instead of mutating
-  documents mid-backup.
+- `is_maintenance_lock_held()` is called in the **task-claim queries**
+  themselves (`GetNextPendingTaskOfType` / `GetNextPendingTaskOfTypeForOwner`
+  via their `Gated` flag): while a backup holds the lock, no new
+  consume/enrich task is claimed — workers go idle instead of mutating
+  documents mid-backup. Which types claim gated is declared once in the
+  registry (`types.TaskType.IsLockGated()`: consume, enrich, thumbnail);
+  blocking types that acquire the lock (`IsBlocking()`: backup, mirror) and
+  config claim ungated.
 - The backup handler (`internal/task/handlers/backup.go`) holds the
   lock for its whole run (release via `defer`), then **drains** in-flight
   work (`database.WaitForTaskDrain`, `internal/database/migrate.go`: 5s ticker on

@@ -12,13 +12,8 @@ SELECT id FROM task WHERE status = 'pending' ORDER BY created_at LIMIT 1;
 
 -- name: GetNextPendingTaskOfType :one
 SELECT id FROM task
-WHERE status = 'pending' AND task_type = $1
-ORDER BY created_at LIMIT 1;
-
--- name: GetNextPendingTaskOfTypeWithGate :one
-SELECT id FROM task
-WHERE status = 'pending' AND task_type = $1
-  AND NOT is_backup_running()
+WHERE status = 'pending' AND task_type = @task_type
+  AND (NOT @gated::boolean OR NOT is_maintenance_lock_held())
 ORDER BY created_at LIMIT 1;
 
 -- name: ListTasks :many

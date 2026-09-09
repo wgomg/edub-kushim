@@ -92,3 +92,30 @@ func TestNonConsumeBatchSources(t *testing.T) {
 		}
 	}
 }
+
+func TestIsBlocking(t *testing.T) {
+	cases := map[TaskType]bool{
+		Task.Type.Backup: true,
+		Task.Type.Mirror: true,
+		Task.Type.Config: false,
+	}
+	for typ, want := range cases {
+		if got := typ.IsBlocking(); got != want {
+			t.Errorf("TaskType(%q).IsBlocking() = %v, want %v", typ, got, want)
+		}
+	}
+}
+
+func TestIsLockGated(t *testing.T) {
+	cases := map[TaskType]bool{
+		Task.Type.Consume:   true,
+		Task.Type.Enrich:    true,
+		Task.Type.Thumbnail: true,
+		Task.Type.Config:    false,
+	}
+	for typ, want := range cases {
+		if got := typ.IsLockGated(); got != want {
+			t.Errorf("TaskType(%q).IsLockGated() = %v, want %v", typ, got, want)
+		}
+	}
+}

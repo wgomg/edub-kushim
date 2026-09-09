@@ -23,7 +23,7 @@ func (q *Queries) AcquireBackupLock(ctx context.Context) (int64, error) {
 }
 
 const isBackupLocked = `-- name: IsBackupLocked :one
-SELECT CASE WHEN is_backup_running() THEN 1 ELSE 0 END
+SELECT CASE WHEN is_maintenance_lock_held() THEN 1 ELSE 0 END
 `
 
 func (q *Queries) IsBackupLocked(ctx context.Context) (int32, error) {

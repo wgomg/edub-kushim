@@ -193,36 +193,18 @@ const getNextPendingTaskOfTypeForOwner = `-- name: GetNextPendingTaskOfTypeForOw
 SELECT id FROM task
 WHERE status = 'pending' AND task_type = $1
   AND batch_id IN (SELECT batch_id FROM batch_owner WHERE owner_id = $2)
+  AND (NOT $3::boolean OR NOT is_maintenance_lock_held())
 ORDER BY created_at LIMIT 1
 `
 
 type GetNextPendingTaskOfTypeForOwnerParams struct {
 	TaskType types.TaskType
 	OwnerID  string
+	Gated    bool
 }
 
 func (q *Queries) GetNextPendingTaskOfTypeForOwner(ctx context.Context, arg GetNextPendingTaskOfTypeForOwnerParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, getNextPendingTaskOfTypeForOwner, arg.TaskType, arg.OwnerID)
-	var id int64
-	err := row.Scan(&id)
-	return id, err
-}
-
-const getNextPendingTaskOfTypeForOwnerWithGate = `-- name: GetNextPendingTaskOfTypeForOwnerWithGate :one
-SELECT id FROM task
-WHERE status = 'pending' AND task_type = $1
-  AND batch_id IN (SELECT batch_id FROM batch_owner WHERE owner_id = $2)
-  AND NOT is_backup_running()
-ORDER BY created_at LIMIT 1
-`
-
-type GetNextPendingTaskOfTypeForOwnerWithGateParams struct {
-	TaskType types.TaskType
-	OwnerID  string
-}
-
-func (q *Queries) GetNextPendingTaskOfTypeForOwnerWithGate(ctx context.Context, arg GetNextPendingTaskOfTypeForOwnerWithGateParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, getNextPendingTaskOfTypeForOwnerWithGate, arg.TaskType, arg.OwnerID)
+	row := q.db.QueryRowContext(ctx, getNextPendingTaskOfTypeForOwner, arg.TaskType, arg.OwnerID, arg.Gated)
 	var id int64
 	err := row.Scan(&id)
 	return id, err

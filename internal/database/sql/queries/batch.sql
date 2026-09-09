@@ -63,15 +63,9 @@ DELETE FROM batch_owner WHERE batch_id IN (
 
 -- name: GetNextPendingTaskOfTypeForOwner :one
 SELECT id FROM task
-WHERE status = 'pending' AND task_type = $1
-  AND batch_id IN (SELECT batch_id FROM batch_owner WHERE owner_id = $2)
-ORDER BY created_at LIMIT 1;
-
--- name: GetNextPendingTaskOfTypeForOwnerWithGate :one
-SELECT id FROM task
-WHERE status = 'pending' AND task_type = $1
-  AND batch_id IN (SELECT batch_id FROM batch_owner WHERE owner_id = $2)
-  AND NOT is_backup_running()
+WHERE status = 'pending' AND task_type = @task_type
+  AND batch_id IN (SELECT batch_id FROM batch_owner WHERE owner_id = @owner_id)
+  AND (NOT @gated::boolean OR NOT is_maintenance_lock_held())
 ORDER BY created_at LIMIT 1;
 
 -- name: GetBatch :one
