@@ -3,10 +3,12 @@ package task
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/pool"
 	"github.com/wgomg/edub-kushim/internal/testutil"
@@ -71,7 +73,7 @@ func setupTaskTest(t *testing.T) (*Store, *Registry, *database.Queries) {
 	t.Helper()
 	q, db := database.NewTestQueries(t)
 	database.ResetTestDatabase(db)
-	store := NewStore(q)
+	store := NewStore(database.NewClient(db))
 	registry := NewRegistry()
 	return store, registry, q
 }
@@ -115,7 +117,7 @@ func TestStoreClaimAndComplete(t *testing.T) {
 	_, err := store.CreateTask(ctx, "consume", "", json.RawMessage(`{"file":"test.pdf"}`), "", "", "")
 	testutil.AssertNoError(t, err, "create")
 
-	claimed, err := store.ClaimNextPending(ctx, "consume")
+	claimed, _, err := store.ClaimNextPending(ctx, "consume")
 	testutil.AssertNoError(t, err, "claim")
 	testutil.AssertEqual(t, string(claimed.Status), "processing", "after claim")
 
@@ -136,7 +138,7 @@ func TestStoreClaimAndFail(t *testing.T) {
 	_, err := store.CreateTask(ctx, "consume", "", json.RawMessage(`{}`), "", "", "")
 	testutil.AssertNoError(t, err, "create")
 
-	claimed, err := store.ClaimNextPending(ctx, "consume")
+	claimed, _, err := store.ClaimNextPending(ctx, "consume")
 	testutil.AssertNoError(t, err, "claim")
 
 	err = store.FailTask(ctx, claimed.ID, "something went wrong")
@@ -151,7 +153,7 @@ func TestStoreNoTasks(t *testing.T) {
 	store, _, _ := setupTaskTest(t)
 	ctx := context.Background()
 
-	_, err := store.ClaimNextPending(ctx, "consume")
+	_, _, err := store.ClaimNextPending(ctx, "consume")
 	testutil.AssertError(t, err, "no tasks")
 }
 
@@ -205,7 +207,7 @@ func TestRetry(t *testing.T) {
 	_, err = store.CreateTask(ctx, "consume", "", json.RawMessage(`{"on_completed":"retry-e1","on_completed_thumbnail":"retry-t1"}`), "retry-c1", "failed", "")
 	testutil.AssertNoError(t, err, "create failed consume")
 
-	err = Retry(ctx, store.queries, logger, "retry-c1")
+	err = Retry(ctx, store.client, logger, "retry-c1")
 	testutil.AssertNoError(t, err, "retry")
 	consume, _ := store.GetTaskByTaskID(ctx, "retry-c1")
 	testutil.AssertEqual(t, string(consume.Status), "pending", "consume pending after retry")
@@ -215,7 +217,7 @@ func TestRetry(t *testing.T) {
 	testutil.AssertEqual(t, string(thumbnail.Status), "waiting", "thumbnail restored to waiting")
 
 	// error path: only failed tasks can be retried
-	err = Retry(ctx, store.queries, logger, "retry-c1")
+	err = Retry(ctx, store.client, logger, "retry-c1")
 	testutil.AssertError(t, err, "pending task cannot be retried")
 
 	// error path: consume without on_completed retries without touching anything
@@ -224,7 +226,7 @@ func TestRetry(t *testing.T) {
 	_, err = store.CreateTask(ctx, "consume", "", json.RawMessage(`{"file_path":"/tmp/x.pdf"}`), "retry-c2", "failed", "")
 	testutil.AssertNoError(t, err, "create failed consume without on_completed")
 
-	err = Retry(ctx, store.queries, logger, "retry-c2")
+	err = Retry(ctx, store.client, logger, "retry-c2")
 	testutil.AssertNoError(t, err, "retry without on_completed")
 	enrich, _ = store.GetTaskByTaskID(ctx, "retry-e2")
 	testutil.AssertEqual(t, string(enrich.Status), "discarded", "unlinked enrich untouched")
@@ -314,7 +316,7 @@ func TestRunnerExtractsReqIDFromWrappedError(t *testing.T) {
 	testutil.AssertEqual(t, handler.HandledCount(), 1, "called")
 
 	// Failed task should not be claimable again
-	_, err = store.ClaimNextPending(ctx, types.Task.Type.Enrich)
+	_, _, err = store.ClaimNextPending(ctx, types.Task.Type.Enrich)
 	testutil.AssertError(t, err, "failed task should not be claimable")
 }
 
@@ -339,7 +341,7 @@ func TestRunnerFailsTaskOnPanic(t *testing.T) {
 	testutil.AssertEqual(t, task.Error.String, "panic: boom", "panic text recorded")
 
 	// The failed task must not be stranded claimable in 'processing'
-	_, err = store.ClaimNextPending(ctx, types.Task.Type.Enrich)
+	_, _, err = store.ClaimNextPending(ctx, types.Task.Type.Enrich)
 	testutil.AssertError(t, err, "failed task should not be claimable")
 }
 
@@ -435,7 +437,7 @@ func TestClaimNextPendingGating(t *testing.T) {
 	testutil.AssertNoError(t, err, "create consume task")
 
 	t.Run("consume claimable when backup unlocked", func(t *testing.T) {
-		claimed, err := store.ClaimNextPending(ctx, "consume")
+		claimed, _, err := store.ClaimNextPending(ctx, "consume")
 		testutil.AssertNoError(t, err, "claim consume")
 		testutil.AssertEqual(t, string(claimed.Status), "processing", "claimed")
 	})
@@ -446,15 +448,15 @@ func TestClaimNextPendingGating(t *testing.T) {
 
 	_, err = q.AcquireBackupLock(ctx)
 	testutil.AssertNoError(t, err, "acquire backup lock")
-	defer q.ReleaseBackupLock(ctx)
+	defer q.ReleaseBackupLock(ctx, uuid.NullUUID{})
 
 	t.Run("consume blocked when backup locked", func(t *testing.T) {
-		_, err := store.ClaimNextPending(ctx, "consume")
+		_, _, err := store.ClaimNextPending(ctx, "consume")
 		testutil.AssertError(t, err, "consume claim should fail during backup")
 	})
 
 	t.Run("enrich blocked when backup locked", func(t *testing.T) {
-		_, err := store.ClaimNextPending(ctx, types.Task.Type.Enrich)
+		_, _, err := store.ClaimNextPending(ctx, types.Task.Type.Enrich)
 		testutil.AssertError(t, err, "enrich claim should fail during backup")
 	})
 
@@ -462,7 +464,7 @@ func TestClaimNextPendingGating(t *testing.T) {
 		_, err := store.CreateTask(ctx, "config", "", json.RawMessage(`{"op":"test"}`), "", "", "")
 		testutil.AssertNoError(t, err, "create config task")
 
-		claimed, err := store.ClaimNextPending(ctx, types.Task.Type.Config)
+		claimed, _, err := store.ClaimNextPending(ctx, types.Task.Type.Config)
 		testutil.AssertNoError(t, err, "config claim should work during backup")
 		testutil.AssertEqual(t, string(claimed.Status), "processing", "config claimed")
 	})
@@ -482,4 +484,190 @@ func TestPoolLifecycle(t *testing.T) {
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer stopCancel()
 	p.Stop(stopCtx)
+}
+
+func setupTaskTestClient(t *testing.T) (*Store, *Registry, *database.Client) {
+	t.Helper()
+	_, db := database.NewTestQueries(t)
+	database.ResetTestDatabase(db)
+	store := NewStore(database.NewClient(db))
+	return store, NewRegistry(), database.NewClient(db)
+}
+
+func createBackupTask(t *testing.T, store *Store, taskID string) {
+	t.Helper()
+	_, err := store.CreateTask(context.Background(), types.Task.Type.Backup, "", json.RawMessage(`{}`), taskID, "", "")
+	testutil.AssertNoError(t, err, "create backup task")
+}
+
+func lockHeld(t *testing.T, client *database.Client) bool {
+	t.Helper()
+	v, err := client.Queries.IsBackupLocked(context.Background())
+	testutil.AssertNoError(t, err, "check lock")
+	return v == 1
+}
+
+func TestStoreClaimBlockingTask_SetsLockAndToken(t *testing.T) {
+	store, _, client := setupTaskTestClient(t)
+	createBackupTask(t, store, "bk-token")
+
+	task, token, err := store.ClaimNextPending(context.Background(), types.Task.Type.Backup)
+	testutil.AssertNoError(t, err, "claim blocking")
+	if token == uuid.Nil {
+		t.Fatal("expected a non-nil claim token")
+	}
+	if !task.ClaimToken.Valid || task.ClaimToken.UUID != token {
+		t.Fatalf("task claim_token=%v, want %v", task.ClaimToken.UUID, token)
+	}
+	if string(task.Status) != "processing" {
+		t.Fatalf("status=%s, want processing", task.Status)
+	}
+	if !lockHeld(t, client) {
+		t.Fatal("expected maintenance lock to be held after blocking claim")
+	}
+}
+
+func TestStoreClaimBlockingTask_CollisionDefers(t *testing.T) {
+	store, _, _ := setupTaskTestClient(t)
+	ctx := context.Background()
+	createBackupTask(t, store, "bk-first")
+	createBackupTask(t, store, "bk-second")
+
+	if _, _, err := store.ClaimNextPending(ctx, types.Task.Type.Backup); err != nil {
+		t.Fatalf("first claim: %v", err)
+	}
+
+	_, _, err := store.ClaimNextPending(ctx, types.Task.Type.Backup)
+	if !errors.Is(err, ErrLockBusy) {
+		t.Fatalf("second claim: want ErrLockBusy, got %v", err)
+	}
+
+	row, err := store.GetTaskByTaskID(ctx, "bk-second")
+	testutil.AssertNoError(t, err, "get bk-second")
+	if string(row.Status) != "pending" {
+		t.Fatalf("bk-second status=%s, want pending (rolled back)", row.Status)
+	}
+}
+
+func TestStoreCompleteBlockingTask_ReleasesLock(t *testing.T) {
+	store, _, client := setupTaskTestClient(t)
+	ctx := context.Background()
+	createBackupTask(t, store, "bk-complete")
+
+	task, token, err := store.ClaimNextPending(ctx, types.Task.Type.Backup)
+	testutil.AssertNoError(t, err, "claim")
+
+	rows, err := store.CompleteBlockingTask(ctx, task.ID, json.RawMessage(`{"ok":true}`), token)
+	testutil.AssertNoError(t, err, "complete")
+	if rows != 1 {
+		t.Fatalf("rows=%d, want 1", rows)
+	}
+	if lockHeld(t, client) {
+		t.Fatal("lock should be released after a successful blocking complete")
+	}
+
+	row, _ := store.GetTask(ctx, task.ID)
+	if string(row.Status) != "completed" {
+		t.Fatalf("status=%s, want completed", row.Status)
+	}
+}
+
+func TestStoreCompleteBlockingTask_WrongTokenNoop(t *testing.T) {
+	store, _, client := setupTaskTestClient(t)
+	ctx := context.Background()
+	createBackupTask(t, store, "bk-wrong-complete")
+
+	task, _, err := store.ClaimNextPending(ctx, types.Task.Type.Backup)
+	testutil.AssertNoError(t, err, "claim")
+
+	rows, err := store.CompleteBlockingTask(ctx, task.ID, json.RawMessage(`{}`), uuid.New())
+	testutil.AssertNoError(t, err, "complete wrong-token")
+	if rows != 0 {
+		t.Fatalf("rows=%d, want 0 (token guard must noop the transition)", rows)
+	}
+	if !lockHeld(t, client) {
+		t.Fatal("lock should still be held after a wrong-token complete")
+	}
+
+	row, _ := store.GetTask(ctx, task.ID)
+	if string(row.Status) != "processing" {
+		t.Fatalf("status=%s, want processing", row.Status)
+	}
+}
+
+func TestStoreFailBlockingTask_ReleasesLock(t *testing.T) {
+	store, _, client := setupTaskTestClient(t)
+	ctx := context.Background()
+	createBackupTask(t, store, "bk-fail")
+
+	task, token, err := store.ClaimNextPending(ctx, types.Task.Type.Backup)
+	testutil.AssertNoError(t, err, "claim")
+
+	if err := store.FailBlockingTask(ctx, task.ID, "boom", token); err != nil {
+		t.Fatalf("fail: %v", err)
+	}
+	if lockHeld(t, client) {
+		t.Fatal("lock should be released after a successful blocking fail")
+	}
+
+	row, _ := store.GetTask(ctx, task.ID)
+	if string(row.Status) != "failed" {
+		t.Fatalf("status=%s, want failed", row.Status)
+	}
+}
+
+func TestStoreFailBlockingTask_WrongTokenNoop(t *testing.T) {
+	store, _, client := setupTaskTestClient(t)
+	ctx := context.Background()
+	createBackupTask(t, store, "bk-wrong-fail")
+
+	task, _, err := store.ClaimNextPending(ctx, types.Task.Type.Backup)
+	testutil.AssertNoError(t, err, "claim")
+
+	if err := store.FailBlockingTask(ctx, task.ID, "boom", uuid.New()); err != nil {
+		t.Fatalf("fail wrong-token: %v", err)
+	}
+	if !lockHeld(t, client) {
+		t.Fatal("lock should still be held after a wrong-token fail")
+	}
+
+	row, _ := store.GetTask(ctx, task.ID)
+	if string(row.Status) != "processing" {
+		t.Fatalf("status=%s, want processing", row.Status)
+	}
+}
+
+func TestStoreGuardAgainstStaleClaimant(t *testing.T) {
+	store, _, client := setupTaskTestClient(t)
+	ctx := context.Background()
+	createBackupTask(t, store, "bk-stale")
+
+	task, token, err := store.ClaimNextPending(ctx, types.Task.Type.Backup)
+	testutil.AssertNoError(t, err, "claim")
+
+	fresh := uuid.New()
+	if _, err := client.DB().ExecContext(ctx, "UPDATE backup_lock SET owner_token = $1 WHERE id = 1", fresh); err != nil {
+		t.Fatalf("overwrite lock token: %v", err)
+	}
+	if _, err := client.DB().ExecContext(ctx, "UPDATE task SET claim_token = $1 WHERE id = $2", fresh, task.ID); err != nil {
+		t.Fatalf("overwrite task token: %v", err)
+	}
+
+	rows, err := store.CompleteBlockingTask(ctx, task.ID, json.RawMessage(`{}`), token)
+	testutil.AssertNoError(t, err, "stale complete")
+	if rows != 0 {
+		t.Fatalf("stale complete rows=%d, want 0", rows)
+	}
+	if !lockHeld(t, client) {
+		t.Fatal("fresh holder's lock was dropped by a stale claimant's complete")
+	}
+
+	rows, err = store.CompleteBlockingTask(ctx, task.ID, json.RawMessage(`{"ok":true}`), fresh)
+	testutil.AssertNoError(t, err, "fresh complete")
+	if rows != 1 {
+		t.Fatalf("fresh complete rows=%d, want 1", rows)
+	}
+	if lockHeld(t, client) {
+		t.Fatal("lock should be released after the fresh holder completes")
+	}
 }

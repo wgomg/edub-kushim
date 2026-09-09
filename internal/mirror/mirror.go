@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/utils"
@@ -186,19 +187,19 @@ func RunLocked(ctx context.Context, queries *database.Queries, logger *utils.Log
 	if len(onWait) > 0 {
 		wait = onWait[0]
 	}
-	return runLocked(ctx, queries, logger, storageDir, dest, wait, nil)
+	return runLocked(ctx, queries, logger, storageDir, dest, wait, nil, uuid.NullUUID{})
 }
 
-func RunLockedWithProgress(ctx context.Context, queries *database.Queries, logger *utils.Logger, storageDir, dest string, onWait func(count int64), onSync func()) (*Result, string, error) {
-	return runLocked(ctx, queries, logger, storageDir, dest, onWait, onSync)
+func RunLockedWithProgress(ctx context.Context, queries *database.Queries, logger *utils.Logger, storageDir, dest string, onWait func(count int64), onSync func(), token uuid.NullUUID) (*Result, string, error) {
+	return runLocked(ctx, queries, logger, storageDir, dest, onWait, onSync, token)
 }
 
-func runLocked(ctx context.Context, queries *database.Queries, logger *utils.Logger, storageDir, dest string, onWait func(count int64), onSync func()) (*Result, string, error) {
+func runLocked(ctx context.Context, queries *database.Queries, logger *utils.Logger, storageDir, dest string, onWait func(count int64), onSync func(), token uuid.NullUUID) (*Result, string, error) {
 	if err := database.WaitForTaskDrain(ctx, queries, logger, "mirror", onWait); err != nil {
 		return nil, "", err
 	}
 
-	stopHeartbeat := StartHeartbeat(ctx, queries, logger, 5*time.Minute)
+	stopHeartbeat := StartHeartbeat(ctx, queries, logger, 5*time.Minute, token)
 	defer stopHeartbeat()
 
 	if onSync != nil {
@@ -225,7 +226,7 @@ func runLocked(ctx context.Context, queries *database.Queries, logger *utils.Log
 	return result, state.Timestamp, nil
 }
 
-func StartHeartbeat(ctx context.Context, queries *database.Queries, logger *utils.Logger, interval time.Duration) func() {
+func StartHeartbeat(ctx context.Context, queries *database.Queries, logger *utils.Logger, interval time.Duration, token uuid.NullUUID) func() {
 	stopCh := make(chan struct{})
 	go func() {
 		ticker := time.NewTicker(interval)
@@ -235,8 +236,8 @@ func StartHeartbeat(ctx context.Context, queries *database.Queries, logger *util
 			case <-stopCh:
 				return
 			case <-ticker.C:
-				if _, err := queries.TouchBackupLock(ctx); err != nil {
-					logger.Error(nil, "mirror heartbeat: touch backup lock: %v", err)
+				if _, err := queries.TouchMaintenanceLockForTask(ctx, token); err != nil {
+					logger.Error(nil, "mirror heartbeat: touch maintenance lock: %v", err)
 				}
 			}
 		}

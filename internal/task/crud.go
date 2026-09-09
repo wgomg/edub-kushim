@@ -134,8 +134,8 @@ func ListFiltered(ctx context.Context, queries *database.Queries, f TaskFilter) 
 	}
 }
 
-func Retry(ctx context.Context, queries *database.Queries, logger *utils.Logger, taskID string) error {
-	task, err := queries.GetTaskByTaskID(ctx, taskID)
+func Retry(ctx context.Context, client *database.Client, logger *utils.Logger, taskID string) error {
+	task, err := client.Queries.GetTaskByTaskID(ctx, taskID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrTaskNotFound
@@ -145,18 +145,39 @@ func Retry(ctx context.Context, queries *database.Queries, logger *utils.Logger,
 	if task.Status != types.Task.Status.Failed {
 		return fmt.Errorf("task %q is %s, not failed", taskID, task.Status)
 	}
-	if err := queries.RetryTask(ctx, task.ID); err != nil {
-		return err
+
+	if task.TaskType.IsBlocking() {
+		// the lock must not outlive the processing row it was claimed for
+		tx, err := client.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("begin transaction for retry %s: %w", taskID, err)
+		}
+		defer tx.Rollback()
+
+		txQ := client.Queries.WithTx(tx)
+		if _, err := txQ.ReleaseMaintenanceLockForBatch(ctx, task.BatchID); err != nil {
+			return fmt.Errorf("release maintenance lock for retry %s: %w", taskID, err)
+		}
+		if err := txQ.RetryTask(ctx, task.ID); err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit transaction for retry %s: %w", taskID, err)
+		}
+	} else {
+		if err := client.Queries.RetryTask(ctx, task.ID); err != nil {
+			return err
+		}
 	}
 
 	if task.TaskType == types.Task.Type.Consume && task.Payload != nil {
 		if onCompleted := consumeOnCompleted(*task.Payload); onCompleted != "" {
-			if _, err := queries.SetEnrichTaskWaiting(ctx, onCompleted); err != nil {
+			if _, err := client.Queries.SetEnrichTaskWaiting(ctx, onCompleted); err != nil {
 				logger.Error(nil, "restore enrich task %s after retry of consume %s failed: %v (will be recovered by activation or sweep)", onCompleted, taskID, err)
 			}
 		}
 		if onCompletedThumbnail := consumeOnCompletedThumbnail(*task.Payload); onCompletedThumbnail != "" {
-			if _, err := queries.SetEnrichTaskWaiting(ctx, onCompletedThumbnail); err != nil {
+			if _, err := client.Queries.SetEnrichTaskWaiting(ctx, onCompletedThumbnail); err != nil {
 				logger.Error(nil, "restore thumbnail task %s after retry of consume %s failed: %v (will be recovered by activation or sweep)", onCompletedThumbnail, taskID, err)
 			}
 		}

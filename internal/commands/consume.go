@@ -395,9 +395,23 @@ func consumeCancelHandler(c *Container, args []string) error {
 
 	syscall.Kill(int(bo.Pid), syscall.SIGTERM)
 
-	procCount, procErr := client.CancelProcessingTasksByBatch(cancelCtx, sql.NullString{String: batchID, Valid: true})
+	tx, txErr := client.BeginTx(cancelCtx, nil)
+	if txErr != nil {
+		return fmt.Errorf("begin cancel transaction: %w", txErr)
+	}
+	bid := sql.NullString{String: batchID, Valid: true}
+	txQ := client.Queries.WithTx(tx)
+	if _, relErr := txQ.ReleaseMaintenanceLockForBatch(cancelCtx, bid); relErr != nil {
+		tx.Rollback()
+		return fmt.Errorf("release maintenance lock: %w", relErr)
+	}
+	procCount, procErr := txQ.CancelProcessingTasksByBatch(cancelCtx, bid)
 	if procErr != nil {
+		tx.Rollback()
 		return fmt.Errorf("cancel processing tasks: %w", procErr)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit cancel transaction: %w", err)
 	}
 
 	client.ReleaseBatchOwner(cancelCtx, database.ReleaseBatchOwnerParams{
@@ -711,7 +725,7 @@ func triggerOrphanScan(c *Container) {
 		c.logger.Error(nil, "orphan scan: get client: %v", err)
 		return
 	}
-	store := task.NewStore(client.Queries)
+	store := task.NewStore(client)
 	batchSvc := service.NewBatch(client, c.cfg.Load().Consumer.Reclaim.MaxRetries)
 	svc := service.NewOrphaned(client.Queries, c.cfg.Load(), c.logger, store, batchSvc)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)

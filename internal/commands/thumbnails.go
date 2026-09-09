@@ -56,7 +56,7 @@ func backfillThumbnailsHandler(c *Container, args []string) error {
 		return fmt.Errorf("database: %w", err)
 	}
 
-	store := task.NewStore(client.Queries)
+	store := task.NewStore(client)
 	batchSvc := service.NewBatch(client, cfg.Consumer.Reclaim.MaxRetries)
 	svc := service.NewThumbnailBackfill(client.Queries, c.logger, store, batchSvc)
 

@@ -7,6 +7,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/mirror"
 )
@@ -42,7 +43,7 @@ func mirrorHandler(c *Container, args []string) error {
 	if err := waitForBackupLock(ctx, client); err != nil {
 		return err
 	}
-	defer client.Queries.ReleaseBackupLock(context.Background())
+	defer client.Queries.ReleaseBackupLock(context.Background(), uuid.NullUUID{})
 
 	cfg := c.cfg.Load()
 	dest := cfg.Mirror.Path

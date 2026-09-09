@@ -147,7 +147,7 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 		Tag: tagSvc, People: peopleSvc, PeopleType: peopleTypeSvc, DocumentType: docTypeSvc,
 	}
 
-	store := task.NewStore(client.Queries)
+	store := task.NewStore(client)
 	c.store = store
 
 	consumer, err := consumption.NewConsumer(c.cfg.Load(), c.logger, client)

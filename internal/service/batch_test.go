@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/testutil"
@@ -830,6 +831,50 @@ func TestBatch_ResetStaleProcessingTasks(t *testing.T) {
 		enrich, _ := client.Queries.GetTaskByTaskID(ctx, "rsts-e2")
 		testutil.AssertEqual(t, enrich.Status, "discarded", "waiting enrich swept to discarded")
 	})
+}
+
+func TestBatch_ResetStaleProcessingTasks_ReleasesBlockingLock(t *testing.T) {
+	svc, client := newTestBatch(t)
+	ctx := context.Background()
+
+	taskID, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
+		TaskID: "rsts-bk", TaskType: "backup", Status: "processing",
+	})
+	testutil.AssertNoError(t, err, "create processing backup")
+
+	token := uuid.New()
+	if _, err := client.DB().ExecContext(ctx,
+		"UPDATE task SET claim_token = $1, started_at = NOW() - INTERVAL '10 minutes' WHERE id = $2",
+		token, taskID); err != nil {
+		t.Fatalf("set claim token and stale started_at: %v", err)
+	}
+	if _, err := client.DB().ExecContext(ctx,
+		"UPDATE backup_lock SET running = true, started_at = NOW(), owner_token = $1 WHERE id = 1",
+		token); err != nil {
+		t.Fatalf("hold lock with token: %v", err)
+	}
+
+	held, err := client.Queries.IsBackupLocked(ctx)
+	testutil.AssertNoError(t, err, "pre-reset lock check")
+	if held != 1 {
+		t.Fatalf("pre-reset lock held=%d, want 1", held)
+	}
+
+	if _, err := svc.ResetStaleProcessingTasks(ctx, 60); err != nil {
+		t.Fatalf("reset stale: %v", err)
+	}
+
+	held, err = client.Queries.IsBackupLocked(ctx)
+	testutil.AssertNoError(t, err, "post-reset lock check")
+	if held != 0 {
+		t.Fatalf("post-reset lock held=%d, want 0 (stale blocking task must release its lock)", held)
+	}
+
+	row, err := client.Queries.GetTask(ctx, taskID)
+	testutil.AssertNoError(t, err, "get task")
+	if string(row.Status) != "pending" {
+		t.Fatalf("status=%s, want pending", row.Status)
+	}
 }
 
 func TestBatch_ListStaleBatchOwners(t *testing.T) {

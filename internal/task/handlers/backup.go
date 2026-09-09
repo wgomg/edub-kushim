@@ -53,19 +53,7 @@ func (h *BackupTaskHandler) Handle(ctx context.Context, t task.Task) (out json.R
 		task.FinalizeBatchStatus(ctx, h.queries, t.BatchID, err != nil)
 	}()
 
-	rowsAffected, err := h.queries.AcquireBackupLock(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("acquire backup lock: %w", err)
-	}
-	if rowsAffected == 0 {
-		return nil, fmt.Errorf("backup lock held — skipping")
-	}
 	task.MarkBatchProcessing(ctx, h.queries, t.BatchID)
-	defer func() {
-		if _, relErr := h.queries.ReleaseBackupLock(context.Background()); relErr != nil {
-			h.logger.Error(nil, "release backup lock: %v", relErr)
-		}
-	}()
 
 	if err := database.WaitForTaskDrain(ctx, h.queries, h.logger, "backup", func(count int64) {
 		progress.Set("drain-wait", fmt.Sprintf("%d in-flight", count), 0)

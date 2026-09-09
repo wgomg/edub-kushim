@@ -95,7 +95,7 @@ func (s *Server) bootstrap(configDir string) (*config.Config, *database.Client, 
 	}
 
 	client := database.NewClient(db)
-	store := task.NewStore(client.Queries)
+	store := task.NewStore(client)
 	registry := task.NewRegistry()
 	registry.Register(types.Task.Type.Config, configtask.NewConfigTaskHandler(client.Queries, s.logger))
 

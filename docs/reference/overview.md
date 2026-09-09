@@ -99,7 +99,7 @@ internal/
 │   ├── restore.go         # Validate, extract, and replace files from backup archive
 │   └── scheduler.go       # Backup scheduling (NextBackupTime, IsBackupDue, IsMirrorDue, dueFromHistory)
 ├── mirror/                # rsync document mirror
-│   └── mirror.go          # Run (rsync -a --delete, stats parsing), WriteState (.edub-mirror.json), RunLocked (drain → heartbeat → run), StartHeartbeat (TouchBackupLock)
+│   └── mirror.go          # Run (rsync -a --delete, stats parsing), WriteState (.edub-mirror.json), RunLocked (drain → heartbeat → run), StartHeartbeat (TouchMaintenanceLockForTask)
 ├── config/                # Configuration parsing
 │   ├── config.go          # Configuration structs and loading (ConsolidationSimilarity, default thresholds, engine identifier constants, AvailableEngines map)
 │   ├── setup.go           # Bootstrap config, SaveMap, tessdata/Hugot model download helpers

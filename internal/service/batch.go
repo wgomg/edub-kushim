@@ -275,9 +275,26 @@ func (s *Batch) BeginCancel(ctx context.Context, batchID string) (pendingCancell
 }
 
 func (s *Batch) CompleteCancel(ctx context.Context, batchID, ownerID string) (processingCancelled int64, err error) {
-	processingCancelled, err = s.queries.CancelProcessingTasksByBatch(ctx, sql.NullString{String: batchID, Valid: true})
+	tx, err := s.client.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, errs.FromDB(err, "begin transaction for cancel "+batchID)
+	}
+	defer tx.Rollback()
+
+	bid := sql.NullString{String: batchID, Valid: true}
+	txQ := s.client.Queries.WithTx(tx)
+
+	if _, err := txQ.ReleaseMaintenanceLockForBatch(ctx, bid); err != nil {
+		return 0, errs.FromDB(err, "release maintenance lock for batch "+batchID)
+	}
+
+	processingCancelled, err = txQ.CancelProcessingTasksByBatch(ctx, bid)
 	if err != nil {
 		return 0, errs.FromDB(err, "cancel processing tasks for batch "+batchID)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, errs.FromDB(err, "commit transaction for cancel "+batchID)
 	}
 
 	s.queries.ReleaseBatchOwner(ctx, database.ReleaseBatchOwnerParams{
@@ -433,6 +450,10 @@ func (s *Batch) ResetProcessingTasksByBatch(ctx context.Context, batchID string)
 	bid := sql.NullString{String: batchID, Valid: true}
 	txQ := s.client.Queries.WithTx(tx)
 
+	if _, err := txQ.ReleaseMaintenanceLockForBatch(ctx, bid); err != nil {
+		return 0, errs.FromDB(err, "release maintenance lock for batch "+batchID)
+	}
+
 	quarantined, err := txQ.QuarantineProcessingTasksByBatch(ctx, database.QuarantineProcessingTasksByBatchParams{
 		BatchID:  bid,
 		Attempts: s.maxRetries,
@@ -469,6 +490,10 @@ func (s *Batch) ResetStaleProcessingTasks(ctx context.Context, staleAfterSeconds
 
 	cutoff := time.Now().Add(-time.Duration(staleAfterSeconds) * time.Second)
 	txQ := s.client.Queries.WithTx(tx)
+
+	if _, err := txQ.ReleaseMaintenanceLockForStaleTasks(ctx, sql.NullTime{Time: cutoff, Valid: true}); err != nil {
+		return 0, errs.FromDB(err, "release maintenance lock for stale tasks")
+	}
 
 	quarantined, err := txQ.QuarantineStaleProcessingTasks(ctx, database.QuarantineStaleProcessingTasksParams{
 		Attempts:  s.maxRetries,

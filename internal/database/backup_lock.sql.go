@@ -7,15 +7,30 @@ package database
 
 import (
 	"context"
+
+	"github.com/google/uuid"
 )
 
 const acquireBackupLock = `-- name: AcquireBackupLock :execrows
-UPDATE backup_lock SET running = true, started_at = NOW()
+UPDATE backup_lock SET running = true, started_at = NOW(), owner_token = NULL
 WHERE id = 1 AND (NOT running OR started_at <= NOW() - INTERVAL '30 minutes')
 `
 
 func (q *Queries) AcquireBackupLock(ctx context.Context) (int64, error) {
 	result, err := q.db.ExecContext(ctx, acquireBackupLock)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const acquireMaintenanceLockForTask = `-- name: AcquireMaintenanceLockForTask :execrows
+UPDATE backup_lock SET running = true, started_at = NOW(), owner_token = $1
+WHERE id = 1 AND (NOT running OR started_at <= NOW() - INTERVAL '30 minutes')
+`
+
+func (q *Queries) AcquireMaintenanceLockForTask(ctx context.Context, ownerToken uuid.NullUUID) (int64, error) {
+	result, err := q.db.ExecContext(ctx, acquireMaintenanceLockForTask, ownerToken)
 	if err != nil {
 		return 0, err
 	}
@@ -34,23 +49,38 @@ func (q *Queries) IsBackupLocked(ctx context.Context) (int32, error) {
 }
 
 const releaseBackupLock = `-- name: ReleaseBackupLock :execrows
-UPDATE backup_lock SET running = false, started_at = NULL WHERE id = 1 AND running = true
+UPDATE backup_lock SET running = false, started_at = NULL, owner_token = NULL
+WHERE id = 1 AND running = true AND owner_token IS NOT DISTINCT FROM $1
 `
 
-func (q *Queries) ReleaseBackupLock(ctx context.Context) (int64, error) {
-	result, err := q.db.ExecContext(ctx, releaseBackupLock)
+func (q *Queries) ReleaseBackupLock(ctx context.Context, ownerToken uuid.NullUUID) (int64, error) {
+	result, err := q.db.ExecContext(ctx, releaseBackupLock, ownerToken)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected()
 }
 
-const touchBackupLock = `-- name: TouchBackupLock :execrows
-UPDATE backup_lock SET started_at = NOW() WHERE id = 1 AND running = true
+const releaseMaintenanceLockForTask = `-- name: ReleaseMaintenanceLockForTask :execrows
+UPDATE backup_lock SET running = false, started_at = NULL, owner_token = NULL
+WHERE id = 1 AND running = true AND owner_token IS NOT DISTINCT FROM $1
 `
 
-func (q *Queries) TouchBackupLock(ctx context.Context) (int64, error) {
-	result, err := q.db.ExecContext(ctx, touchBackupLock)
+func (q *Queries) ReleaseMaintenanceLockForTask(ctx context.Context, ownerToken uuid.NullUUID) (int64, error) {
+	result, err := q.db.ExecContext(ctx, releaseMaintenanceLockForTask, ownerToken)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const touchMaintenanceLockForTask = `-- name: TouchMaintenanceLockForTask :execrows
+UPDATE backup_lock SET started_at = NOW()
+WHERE id = 1 AND running = true AND owner_token IS NOT DISTINCT FROM $1
+`
+
+func (q *Queries) TouchMaintenanceLockForTask(ctx context.Context, ownerToken uuid.NullUUID) (int64, error) {
+	result, err := q.db.ExecContext(ctx, touchMaintenanceLockForTask, ownerToken)
 	if err != nil {
 		return 0, err
 	}

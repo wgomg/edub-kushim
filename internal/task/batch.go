@@ -127,6 +127,10 @@ func (o *Owner) ResetProcessingByBatch(ctx context.Context, batchID string) (int
 	bid := sql.NullString{String: batchID, Valid: true}
 	txQ := o.client.Queries.WithTx(tx)
 
+	if _, err := txQ.ReleaseMaintenanceLockForBatch(ctx, bid); err != nil {
+		return 0, fmt.Errorf("release maintenance lock for batch: %w", err)
+	}
+
 	quarantined, err := txQ.QuarantineProcessingTasksByBatch(ctx, database.QuarantineProcessingTasksByBatchParams{
 		BatchID:  bid,
 		Attempts: o.maxRetries,

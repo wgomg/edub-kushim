@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/task"
@@ -178,7 +179,7 @@ func MigrateDatabase(ctx context.Context, logger *utils.Logger, p MigrateDBPaylo
 		return fmt.Errorf("backup lock held by another process — migration cannot start")
 	}
 	defer func() {
-		if _, relErr := oldClient.Queries.ReleaseBackupLock(context.Background()); relErr != nil {
+		if _, relErr := oldClient.Queries.ReleaseBackupLock(context.Background(), uuid.NullUUID{}); relErr != nil {
 			logger.Error(nil, "release backup lock after migration: %v", relErr)
 		}
 	}()
@@ -303,7 +304,7 @@ func MigrateStorage(ctx context.Context, logger *utils.Logger, p MigrateStorageP
 		return fmt.Errorf("backup lock held by another process — migration cannot start")
 	}
 	defer func() {
-		if _, relErr := client.Queries.ReleaseBackupLock(context.Background()); relErr != nil {
+		if _, relErr := client.Queries.ReleaseBackupLock(context.Background(), uuid.NullUUID{}); relErr != nil {
 			logger.Error(nil, "release backup lock after storage migration: %v", relErr)
 		}
 	}()

@@ -35,7 +35,7 @@ func newTestConsumeHandler(t *testing.T) (*handlers.ConsumeTaskHandler, *task.St
 	consumer, err := consumption.NewConsumer(cfg, logger, client)
 	testutil.AssertNoError(t, err, "create consumer")
 
-	store := task.NewStore(client.Queries)
+	store := task.NewStore(client)
 	return handlers.NewConsumeTaskHandler(consumer, store, client.Queries, logger), store
 }
 

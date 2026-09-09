@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/types"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -27,20 +29,22 @@ func NewRunner(store *Store, registry *Registry, logger *utils.Logger) *Runner {
 }
 
 func (r *Runner) Next(ctx context.Context, taskType types.TaskType) (err error) {
-	task, err := r.store.ClaimNextPending(ctx, taskType)
+	task, token, err := r.store.ClaimNextPending(ctx, taskType)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if err == sql.ErrNoRows || errors.Is(err, ErrLockBusy) {
 			return nil
 		}
 		return fmt.Errorf("claim next pending task: %w", err)
 	}
+
+	blocking := taskType.IsBlocking()
 
 	defer func() {
 		if rcv := recover(); rcv != nil {
 			failCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			reqID := task.TaskID
-			if failErr := r.store.FailTask(failCtx, task.ID, fmt.Sprintf("panic: %v", rcv)); failErr != nil {
+			if failErr := r.failTask(failCtx, task, token, blocking, fmt.Sprintf("panic: %v", rcv)); failErr != nil {
 				r.logger.Error(&reqID, "task %s panicked and fail-write failed: %v (stale sweep will reclaim)", task.TaskID, failErr)
 			}
 			r.logger.Error(&reqID, "task %s panicked and was failed: %v", task.TaskID, rcv)
@@ -49,7 +53,7 @@ func (r *Runner) Next(ctx context.Context, taskType types.TaskType) (err error) 
 	}()
 
 	if task.Payload == nil {
-		_ = r.store.FailTask(ctx, task.ID, "task has nil payload")
+		_ = r.failTask(ctx, task, token, blocking, "task has nil payload")
 		reqID := (*string)(nil)
 		if tErr, ok := errors.AsType[*Error](err); ok {
 			reqID = &tErr.ReqID
@@ -60,19 +64,20 @@ func (r *Runner) Next(ctx context.Context, taskType types.TaskType) (err error) 
 
 	h, err := r.registry.Get(task.TaskType)
 	if err != nil {
-		_ = r.store.FailTask(ctx, task.ID, err.Error())
+		_ = r.failTask(ctx, task, token, blocking, err.Error())
 		return nil
 	}
 
 	result, err := h.Handle(ctx, Task{
-		ID:       task.ID,
-		TaskID:   task.TaskID,
-		TaskType: task.TaskType,
-		BatchID:  task.BatchID.String,
-		Payload:  *task.Payload,
+		ID:         task.ID,
+		TaskID:     task.TaskID,
+		TaskType:   task.TaskType,
+		BatchID:    task.BatchID.String,
+		Payload:    *task.Payload,
+		ClaimToken: token,
 	})
 	if err != nil {
-		_ = r.store.FailTask(ctx, task.ID, err.Error())
+		_ = r.failTask(ctx, task, token, blocking, err.Error())
 		reqID := (*string)(nil)
 		if tErr, ok := errors.AsType[*Error](err); ok {
 			reqID = &tErr.ReqID
@@ -86,11 +91,11 @@ func (r *Runner) Next(ctx context.Context, taskType types.TaskType) (err error) 
 		return nil
 	}
 
-	if err := r.completeTaskWithRetry(ctx, task.ID, result); err != nil {
+	if err := r.completeTaskWithRetry(ctx, task, token, blocking, result); err != nil {
 		// The handler's real work already succeeded.  Marking failed makes the
 		// task visible and retryable rather than stuck in processing forever.
 		failMsg := fmt.Sprintf("complete task failed after retries: %v", err)
-		if failErr := r.store.FailTask(ctx, task.ID, failMsg); failErr != nil {
+		if failErr := r.failTask(ctx, task, token, blocking, failMsg); failErr != nil {
 			return fmt.Errorf("complete task %d (and fail fallback): %v / %w", task.ID, failErr, err)
 		}
 		reqID := (*string)(nil)
@@ -104,15 +109,28 @@ func (r *Runner) Next(ctx context.Context, taskType types.TaskType) (err error) 
 	return nil
 }
 
+func (r *Runner) failTask(ctx context.Context, task database.Task, token uuid.UUID, blocking bool, msg string) error {
+	if blocking {
+		return r.store.FailBlockingTask(ctx, task.ID, msg, token)
+	}
+	return r.store.FailTask(ctx, task.ID, msg)
+}
+
 // completeTaskWithRetry calls CompleteTask with bounded retries and backoff.
 // The failure class is transient write contention (SQLITE_BUSY), so a few
 // retries cover the common case without infinite looping.
-func (r *Runner) completeTaskWithRetry(ctx context.Context, id int64, result json.RawMessage) error {
+func (r *Runner) completeTaskWithRetry(ctx context.Context, task database.Task, token uuid.UUID, blocking bool, result json.RawMessage) error {
 	const maxAttempts = 3
 	backoff := 50 * time.Millisecond
 
 	for attempt := 1; ; attempt++ {
-		rows, err := r.store.CompleteTask(ctx, id, result)
+		var rows int64
+		var err error
+		if blocking {
+			rows, err = r.store.CompleteBlockingTask(ctx, task.ID, result, token)
+		} else {
+			rows, err = r.store.CompleteTask(ctx, task.ID, result)
+		}
 		if err == nil && rows > 0 {
 			return nil
 		}

@@ -29,9 +29,9 @@ func TestListFilteredActiveOrdering(t *testing.T) {
 	// earlier started_at and must sort first within the processing tier.
 	proc1ID := create("listf-proc-1", types.Task.Type.Consume, types.Task.Status.Pending)
 	proc2ID := create("listf-proc-2", types.Task.Type.Consume, types.Task.Status.Pending)
-	_, err := q.ClaimTask(ctx, proc1ID)
+	_, err := q.ClaimTask(ctx, database.ClaimTaskParams{ID: proc1ID})
 	testutil.AssertNoError(t, err, "claim proc 1")
-	_, err = q.ClaimTask(ctx, proc2ID)
+	_, err = q.ClaimTask(ctx, database.ClaimTaskParams{ID: proc2ID})
 	testutil.AssertNoError(t, err, "claim proc 2")
 	create("listf-pending", types.Task.Type.Consume, types.Task.Status.Pending)
 	create("listf-waiting", types.Task.Type.Enrich, types.Task.Status.Waiting)

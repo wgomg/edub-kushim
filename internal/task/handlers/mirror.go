@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/mirror"
@@ -40,19 +41,7 @@ func (h *MirrorTaskHandler) Handle(ctx context.Context, t task.Task) (out json.R
 		task.FinalizeBatchStatus(ctx, h.queries, t.BatchID, err != nil)
 	}()
 
-	rowsAffected, err := h.queries.AcquireBackupLock(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("acquire backup lock: %w", err)
-	}
-	if rowsAffected == 0 {
-		return nil, fmt.Errorf("backup lock held — skipping")
-	}
 	task.MarkBatchProcessing(ctx, h.queries, t.BatchID)
-	defer func() {
-		if _, relErr := h.queries.ReleaseBackupLock(context.Background()); relErr != nil {
-			h.logger.Error(nil, "release backup lock: %v", relErr)
-		}
-	}()
 
 	var payload struct {
 		Path string `json:"path"`
@@ -79,6 +68,7 @@ func (h *MirrorTaskHandler) Handle(ctx context.Context, t task.Task) (out json.R
 	result, timestamp, err := mirror.RunLockedWithProgress(ctx, h.queries, h.logger, cfg.Storage.StorageDir, dest,
 		func(count int64) { progress.Set("drain-wait", fmt.Sprintf("%d in-flight", count), 0) },
 		func() { progress.Set("sync", dest, 0) },
+		uuid.NullUUID{UUID: t.ClaimToken, Valid: true},
 	)
 	if err != nil {
 		return nil, err

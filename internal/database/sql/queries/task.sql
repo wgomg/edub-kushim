@@ -18,87 +18,87 @@ ORDER BY created_at LIMIT 1;
 
 -- name: ListTasks :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, claim_token
 FROM task ORDER BY created_at DESC LIMIT $1 OFFSET $2;
 
 -- name: ListTasksByStatus :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, claim_token
 FROM task WHERE status = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3;
 
 -- name: ListTasksByBatch :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, claim_token
 FROM task WHERE batch_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3;
 
 -- name: ListTasksByBatchAndStatus :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, claim_token
 FROM task WHERE batch_id = $1 AND status = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4;
 
 -- name: ListAllTasks :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, claim_token
 FROM task ORDER BY created_at DESC;
 
 -- name: ListAllTasksByStatus :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, claim_token
 FROM task WHERE status = $1 ORDER BY created_at DESC;
 
 -- name: ListAllTasksByBatch :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, claim_token
 FROM task WHERE batch_id = $1 ORDER BY created_at DESC;
 
 -- name: ListAllTasksByBatchAndStatus :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, claim_token
 FROM task WHERE batch_id = $1 AND status = $2 ORDER BY created_at DESC;
 
 -- name: ListTasksByBatchAndStatusAndType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, claim_token
 FROM task WHERE batch_id = $1 AND status = $2 AND task_type = $3 ORDER BY created_at DESC LIMIT $4 OFFSET $5;
 
 -- name: ListAllTasksByBatchAndStatusAndType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, claim_token
 FROM task WHERE batch_id = $1 AND status = $2 AND task_type = $3 ORDER BY created_at DESC;
 
 -- name: ListTasksByBatchAndType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, claim_token
 FROM task WHERE batch_id = $1 AND task_type = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4;
 
 -- name: ListAllTasksByBatchAndType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, claim_token
 FROM task WHERE batch_id = $1 AND task_type = $2 ORDER BY created_at DESC;
 
 -- name: ListTasksByStatusAndType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, claim_token
 FROM task WHERE status = $1 AND task_type = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4;
 
 -- name: ListAllTasksByStatusAndType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, claim_token
 FROM task WHERE status = $1 AND task_type = $2 ORDER BY created_at DESC;
 
 -- name: ListTasksByType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, claim_token
 FROM task WHERE task_type = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3;
 
 -- name: ListAllTasksByType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, claim_token
 FROM task WHERE task_type = $1 ORDER BY created_at DESC;
 
 -- name: ListActiveTasks :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, claim_token
 FROM task
 WHERE status IN ('pending', 'processing', 'waiting')
 ORDER BY
@@ -108,7 +108,9 @@ ORDER BY
 LIMIT $1 OFFSET $2;
 
 -- name: CountProcessingTasks :one
-SELECT COUNT(*) FROM task WHERE status = 'processing' AND task_type IN ('consume', 'enrich', 'thumbnail');
+SELECT COUNT(*) FROM task
+WHERE status = 'processing'
+  AND task_type = ANY(@types::task_type[]);
 
 -- name: CountTasksByBatchAndStatus :one
 SELECT COUNT(*) FROM task WHERE batch_id = $1 AND status = $2;
@@ -122,8 +124,41 @@ INSERT INTO task (
 UPDATE task SET
     status = 'processing',
     started_at = CURRENT_TIMESTAMP,
-    progress = NULL
+    progress = NULL,
+    claim_token = $2
 WHERE id = $1 AND status = 'pending';
+
+-- name: CompleteBlockingTask :execrows
+UPDATE task SET
+    status = 'completed',
+    result = $1,
+    completed_at = CURRENT_TIMESTAMP,
+    attempts = 0
+WHERE id = $2 AND status = 'processing' AND claim_token = $3;
+
+-- name: FailBlockingTask :execrows
+UPDATE task SET
+    status = 'failed',
+    completed_at = CURRENT_TIMESTAMP,
+    error = $1
+WHERE id = $2 AND status = 'processing' AND claim_token = $3;
+
+-- name: ReleaseMaintenanceLockForStaleTasks :execrows
+UPDATE backup_lock SET running = false, started_at = NULL, owner_token = NULL
+WHERE id = 1 AND running = true AND owner_token IN (
+  SELECT claim_token FROM task
+  WHERE status = 'processing'
+    AND task_type IN ('backup', 'mirror')
+    AND task.started_at < $1
+);
+
+-- name: ReleaseMaintenanceLockForBatch :execrows
+UPDATE backup_lock SET running = false, started_at = NULL, owner_token = NULL
+WHERE id = 1 AND running = true AND owner_token IN (
+  SELECT claim_token FROM task
+  WHERE batch_id = $1 AND status = 'processing'
+    AND task_type IN ('backup', 'mirror')
+);
 
 -- name: UpdateTaskProgress :exec
 UPDATE task SET progress = $2
@@ -159,7 +194,7 @@ SELECT COUNT(*) FROM task WHERE status = $1 AND task_type = $2;
 
 -- name: GetConfigTaskByDedupKey :one
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, claim_token
 FROM task WHERE task_type = 'config' AND dedup_key = $1
 ORDER BY created_at DESC LIMIT 1;
 

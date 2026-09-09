@@ -273,7 +273,7 @@ func TestThumbnailBackfill_BackfillAll_DeletesTasksWhenBatchCreationFails(t *tes
 	createBackfillTestDoc(t, client, "a.pdf", "a")
 	createBackfillTestDoc(t, client, "b.pdf", "b")
 
-	store := task.NewStore(client.Queries)
+	store := task.NewStore(client)
 	batchMock := &recordingBatchCreator{}
 	batchMock.createFn = func(id string, source types.BatchSource, status types.BatchStatus) error {
 		batchMock.calls = append(batchMock.calls, mockTaskCall{BatchID: id, Source: string(source), Status: string(status)})
@@ -302,7 +302,7 @@ func TestThumbnailBackfill_BackfillDocument_DeletesTaskWhenBatchCreationFails(t 
 
 	_, docUUID := database.CreateTestDocument(t, client.Queries, "single.pdf")
 
-	store := task.NewStore(client.Queries)
+	store := task.NewStore(client)
 	batchMock := &recordingBatchCreator{}
 	batchMock.createFn = func(id string, source types.BatchSource, status types.BatchStatus) error {
 		batchMock.calls = append(batchMock.calls, mockTaskCall{BatchID: id, Source: string(source), Status: string(status)})

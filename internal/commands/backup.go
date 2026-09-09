@@ -10,9 +10,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/backup"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/types"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -30,7 +32,7 @@ func checkBackupPreconditions(c *Container, operation string) (*database.Client,
 		return nil, fmt.Errorf("a scheduled backup is in progress — wait for it to finish")
 	}
 
-	count, err := client.Queries.CountProcessingTasks(context.Background())
+	count, err := client.Queries.CountProcessingTasks(context.Background(), types.LockGatedTaskTypes())
 	if err != nil {
 		return nil, fmt.Errorf("check processing tasks: %w", err)
 	}
@@ -82,7 +84,7 @@ func backupHandler(c *Container, args []string) error {
 	if rowsAffected == 0 {
 		return fmt.Errorf("backup lock held by another process — wait for it to finish")
 	}
-	defer client.Queries.ReleaseBackupLock(context.Background())
+	defer client.Queries.ReleaseBackupLock(context.Background(), uuid.NullUUID{})
 
 	backupDir := c.cfg.Load().Backup.Path
 	if overridePath != "" {
@@ -189,7 +191,7 @@ func restoreHandler(c *Container, args []string) error {
 	if rowsAffected == 0 {
 		return fmt.Errorf("backup lock held by another process — wait for it to finish")
 	}
-	defer client.Queries.ReleaseBackupLock(context.Background())
+	defer client.Queries.ReleaseBackupLock(context.Background(), uuid.NullUUID{})
 
 	pidFile := filepath.Join(c.cfg.Load().App.ConfigDir, "kushim-queue.pid")
 	if data, err := os.ReadFile(pidFile); err == nil {

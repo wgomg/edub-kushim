@@ -23,15 +23,17 @@ import (
 
 type TaskHandler struct {
 	services  *service.CrudServices
+	client    *database.Client
 	queries   *database.Queries
 	logger    *utils.Logger
 	getConfig func() *config.Config
 }
 
-func NewTaskHandler(services *service.CrudServices, queries *database.Queries, logger *utils.Logger, getConfig func() *config.Config) *TaskHandler {
+func NewTaskHandler(services *service.CrudServices, client *database.Client, logger *utils.Logger, getConfig func() *config.Config) *TaskHandler {
 	return &TaskHandler{
 		services:  services,
-		queries:   queries,
+		client:    client,
+		queries:   client.Queries,
 		logger:    logger,
 		getConfig: getConfig,
 	}
@@ -115,7 +117,7 @@ func (h *TaskHandler) RetryTask(w http.ResponseWriter, r *http.Request) {
 
 	taskID := r.PathValue("id")
 
-	if err := task.Retry(ctx, h.queries, h.logger, taskID); err != nil {
+	if err := task.Retry(ctx, h.client, h.logger, taskID); err != nil {
 		if errors.Is(err, task.ErrTaskNotFound) {
 			http.Error(w, "Task not found", http.StatusNotFound)
 			return

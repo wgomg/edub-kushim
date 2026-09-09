@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
@@ -204,9 +205,10 @@ func (ns NullTaskType) Value() (driver.Value, error) {
 }
 
 type BackupLock struct {
-	ID        int32
-	Running   bool
-	StartedAt sql.NullTime
+	ID         int32
+	Running    bool
+	StartedAt  sql.NullTime
+	OwnerToken uuid.NullUUID
 }
 
 type Batch struct {
@@ -325,6 +327,7 @@ type Task struct {
 	Error       sql.NullString
 	Attempts    int32
 	Progress    *json.RawMessage
+	ClaimToken  uuid.NullUUID
 }
 
 type User struct {

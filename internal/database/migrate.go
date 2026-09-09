@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wgomg/edub-kushim/internal/types"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -34,7 +35,7 @@ func WaitForTaskDrain(ctx context.Context, queries *Queries, logger *utils.Logge
 	defer ticker.Stop()
 
 	for {
-		count, err := queries.CountProcessingTasks(ctx)
+		count, err := queries.CountProcessingTasks(ctx, types.LockGatedTaskTypes())
 		if err != nil {
 			return fmt.Errorf("count processing tasks: %w", err)
 		}

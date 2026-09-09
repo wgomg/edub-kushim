@@ -148,14 +148,18 @@ Workers claim tasks with a **compare-and-swap UPDATE**, not a lock
 -- name: ClaimTask :execrows
 UPDATE task SET
     status = 'processing',
-    started_at = CURRENT_TIMESTAMP
+    started_at = CURRENT_TIMESTAMP,
+    progress = NULL,
+    claim_token = $2
 WHERE id = $1 AND status = 'pending';
 ```
 
 The `WHERE status = 'pending'` is the entire concurrency control: of N racing
 workers, exactly one flips the row and affects 1 row; the rest affect 0. The
 Go side checks `RowsAffected` (that's what sqlc's `:execrows` annotation
-means) and treats 0 as "someone else got it" (`internal/task/store.go:58-96`):
+means) and treats 0 as "someone else got it" (`internal/task/store.go:58-96`).
+The `claim_token` column is written only by the blocking claim path (§12) and
+is NULL for every other task type.
 
 ```go
 rows, err := s.queries.ClaimTask(ctx, id)
@@ -167,7 +171,8 @@ if rows == 0 {
 This is the project-wide pattern: **every concurrency-sensitive transition is
 a guarded UPDATE with rows-affected acknowledgment** — `ClaimTask`,
 `CompleteTask`, `TryInsertBatchOwner`, `UpdateBatchOwnerIfStale`,
-`HeartbeatBatchOwner`, `ReleaseBatchOwner`, `AcquireBackupLock`. Nothing is
+`HeartbeatBatchOwner`, `ReleaseBatchOwner`, `AcquireBackupLock`,
+`AcquireMaintenanceLockForTask`. Nothing is
 ever "SELECT then UPDATE"; the guard and the write are one statement.
 
 Why not `SELECT ... FOR UPDATE SKIP LOCKED`? The UPDATE-guard needs no
@@ -446,9 +451,9 @@ sources, so no watchdog holds a `max_concurrent_batches` slot for the
 duration of a long backup.
 
 The handlers own the lifecycle directly, keeping the status accurate even
-when `kushim queue` is not running: `MarkBatchProcessing` at start (after
-the backup lock is acquired) and `FinalizeBatchStatus` (completed/failed)
-at the end, once no sibling tasks remain active (`internal/task/batch.go`).
+when `kushim queue` is not running: `MarkBatchProcessing` at start and
+`FinalizeBatchStatus` (completed/failed) at the end, once no sibling tasks
+remain active (`internal/task/batch.go`).
 Because these batches have no `batch_owner` row in that case, the service
 layer forces `Orphaned = false` for `config`/`backup`/`mirror` sources —
 otherwise the UI would show a bogus orphan state and a Resume button that
@@ -681,10 +686,12 @@ The wizard also auto-resumes config setup on boot
 
 Backups must not race the pipeline. The mechanism is a **single-row lock
 table** plus a SQL function used as a claim gate
-(`00005_backup_lock.sql` + `00014_maintenance_lock_predicate.sql` + `task.sql:13-17`):
+(`00005_backup_lock.sql` + `00014_maintenance_lock_predicate.sql` +
+`00015_claim_token_lock.sql` + `task.sql:13-17`):
 
 ```sql
-UPDATE backup_lock SET running = true, started_at = NOW()
+-- name: AcquireMaintenanceLockForTask :execrows
+UPDATE backup_lock SET running = true, started_at = NOW(), owner_token = $1
 WHERE id = 1 AND (NOT running OR started_at <= NOW() - INTERVAL '30 minutes');
 ```
 
@@ -699,8 +706,33 @@ WHERE id = 1 AND (NOT running OR started_at <= NOW() - INTERVAL '30 minutes');
   registry (`types.TaskType.IsLockGated()`: consume, enrich, thumbnail);
   blocking types that acquire the lock (`IsBlocking()`: backup, mirror) and
   config claim ungated.
-- The backup handler (`internal/task/handlers/backup.go`) holds the
-  lock for its whole run (release via `defer`), then **drains** in-flight
+- **Claim-time acquisition**: a blocking task acquires the lock
+  **inside the claim transaction**
+  (`Store.claimBlockingNextPending`, `internal/task/store.go`):
+  `GetNextPendingTaskOfType` → `ClaimTask` → `AcquireMaintenanceLockForTask`
+  run in one tx with a per-claim UUID token written to both the task row
+  (`task.claim_token`) and the lock row (`backup_lock.owner_token`). If the
+  acquire affects 0 rows (another blocking task holds the lock), the claim
+  rolls back — the task stays `pending` — and `ErrLockBusy` is returned;
+  the runner maps it to a quiet `nil` so the pool's next tick retries
+  instead of failing the task. Two blocking tasks due the same day serialize
+  with both eventually completing.
+- **Token-guarded release**: the lock is held from claim until the task
+  leaves `processing`. `CompleteBlockingTask` / `FailBlockingTask`
+  (`internal/task/store.go`) transition the task (`WHERE id = $2 AND status
+  = 'processing' AND claim_token = $3`) and, only when the transition
+  affected a row, release the lock in the same tx
+  (`ReleaseMaintenanceLockForTask`, guarded by `owner_token IS NOT DISTINCT
+  FROM $1`). Every leave-`processing` sweep/reset/cancel/retry path
+  (`ResetStaleProcessingTasks`, `ResetProcessingTasksByBatch`, `CompleteCancel`,
+  the consume-cancel CLI, `Owner.ResetProcessingByBatch`, `task.Retry`)
+  releases via a subselect on the task rows' `claim_token`
+  (`ReleaseMaintenanceLockForStaleTasks` / `ReleaseMaintenanceLockForBatch`)
+  inside the transition's transaction. A stale claimant's late terminal
+  write is a token-mismatch no-op (rows = 0 → no release), so it can never
+  drop a fresh holder's lock.
+- The backup handler (`internal/task/handlers/backup.go`) runs with the lock
+  held; it **drains** in-flight
   work (`database.WaitForTaskDrain`, `internal/database/migrate.go`: 5s ticker on
   `CountProcessingTasks` until zero) before snapshotting, then applies
   retention. The `migrate-db` and `migrate-storage` config tasks use the same drain helper
@@ -710,11 +742,12 @@ WHERE id = 1 AND (NOT running OR started_at <= NOW() - INTERVAL '30 minutes');
   same-day duplicates.
 
 The **mirror** task (`internal/task/handlers/mirror.go`) participates in the
-same gate: it acquires the backup lock, drains in-flight work, and runs
+same gate: it is claimed with the lock held, drains in-flight work, and runs
 `rsync -a --delete` over the storage tree (see `internal/mirror/`). Because a
 large rsync can exceed the 30-minute staleness window, the handler runs a
 heartbeat that refreshes `backup_lock.started_at` every 5 minutes
-(`TouchBackupLock`) for the rsync itself — the gate never goes stale
+(`TouchMaintenanceLockForTask`, guarded by the claim token) for the rsync
+itself — the gate never goes stale
 mid-mirror. The heartbeat starts only *after* `WaitForTaskDrain` returns, so
 the 30-minute staleness recovery still applies during a long drain (a
 continuously busy pipeline cannot keep the lock fresh forever and block
@@ -723,7 +756,16 @@ backups/migrations). Scheduling mirrors `IsBackupDue` as `IsMirrorDue` (same
 the manual `kushim mirror` command bypasses task dedup but still waits for the
 lock and drain, and writes the `.edub-mirror.json` diagnostics file into the
 destination. Both the handler and the CLI share `mirror.RunLocked`, which owns
-the drain → heartbeat → rsync → state-file sequence.
+the drain → heartbeat → rsync → state-file sequence (the CLI passes a NULL
+token, matching its NULL-owner lock from `AcquireBackupLock`).
+
+Manual `kushim backup` / `kushim restore` and the configtask migrations
+use the plain `AcquireBackupLock` / `ReleaseBackupLock` (NULL token): their
+release is guarded by `owner_token IS NOT DISTINCT FROM NULL`, so it can only
+release a NULL-owner lock and never a blocking task's tokenized lock.
+
+A backup longer than 30 minutes loses the lock (the backup handler has no
+touch heartbeat), and the age sweep resets blocking tasks.
 
 ---
 

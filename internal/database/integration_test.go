@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/types"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -102,7 +103,7 @@ func TestTaskLifecycle(t *testing.T) {
 	id := insertTask(t, q, "tc-1", types.Task.Status.Pending)
 	task, _ := q.GetTask(ctx, id)
 	assertEqual(t, string(task.Status), "pending", "pending")
-	rows, _ := q.ClaimTask(ctx, id)
+	rows, _ := q.ClaimTask(ctx, ClaimTaskParams{ID: id})
 	assertEqual(t, rows, int64(1), "claimed")
 	task, _ = q.GetTask(ctx, id)
 	assertEqual(t, string(task.Status), "processing", "processing")
@@ -1055,7 +1056,7 @@ func TestTaskHealthQueries(t *testing.T) {
 			TaskID: "th-completed", TaskType: types.Task.Type.Consume, Status: types.Task.Status.Pending,
 		})
 		assertNoError(t, err, "create completed task")
-		_, err = q.ClaimTask(ctx, id1)
+		_, err = q.ClaimTask(ctx, ClaimTaskParams{ID: id1})
 		assertNoError(t, err, "claim")
 		_, err = q.CompleteTask(ctx, CompleteTaskParams{ID: id1, Result: nil})
 		assertNoError(t, err, "complete")
@@ -1078,7 +1079,7 @@ func TestTaskHealthQueries(t *testing.T) {
 			BatchID: sql.NullString{String: "th-batch-2", Valid: true},
 		})
 		assertNoError(t, err, "create processing task")
-		rows, err := q.ClaimTask(ctx, id4)
+		rows, err := q.ClaimTask(ctx, ClaimTaskParams{ID: id4})
 		assertNoError(t, err, "claim processing task")
 		assertEqual(t, rows, int64(1), "claimed")
 
@@ -1133,7 +1134,7 @@ func TestBackupLockLifecycle(t *testing.T) {
 	})
 
 	t.Run("release and verify unlocked", func(t *testing.T) {
-		rows, err := q.ReleaseBackupLock(ctx)
+		rows, err := q.ReleaseBackupLock(ctx, uuid.NullUUID{})
 		assertNoError(t, err, "release")
 		assertEqual(t, rows, int64(1), "one row released")
 
@@ -1143,14 +1144,14 @@ func TestBackupLockLifecycle(t *testing.T) {
 	})
 
 	// Cleanup in case test fails mid-way
-	q.ReleaseBackupLock(ctx)
+	q.ReleaseBackupLock(ctx, uuid.NullUUID{})
 }
 
 func TestAcquireBackupLockConflict(t *testing.T) {
 	q, db := NewTestQueries(t)
 	defer db.Close()
 	ctx := context.Background()
-	defer q.ReleaseBackupLock(ctx)
+	defer q.ReleaseBackupLock(ctx, uuid.NullUUID{})
 
 	rows, err := q.AcquireBackupLock(ctx)
 	assertNoError(t, err, "first acquire")
@@ -1168,29 +1169,47 @@ func TestCountProcessingTasks(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("empty", func(t *testing.T) {
-		count, err := q.CountProcessingTasks(ctx)
+		count, err := q.CountProcessingTasks(ctx, types.LockGatedTaskTypes())
 		assertNoError(t, err, "count")
 		assertEqual(t, count, int64(0), "zero processing tasks")
 	})
 
 	t.Run("counts only consume and enrich", func(t *testing.T) {
 		id1, _ := q.CreateTask(ctx, CreateTaskParams{TaskID: "cpt-1", TaskType: types.Task.Type.Consume, Status: types.Task.Status.Pending})
-		q.ClaimTask(ctx, id1)
+		q.ClaimTask(ctx, ClaimTaskParams{ID: id1})
 
 		id2, _ := q.CreateTask(ctx, CreateTaskParams{TaskID: "cpt-2", TaskType: types.Task.Type.Enrich, Status: types.Task.Status.Pending})
-		q.ClaimTask(ctx, id2)
+		q.ClaimTask(ctx, ClaimTaskParams{ID: id2})
 
 		// config task in processing should NOT be counted
 		id3, _ := q.CreateTask(ctx, CreateTaskParams{TaskID: "cpt-3", TaskType: types.Task.Type.Config, Status: types.Task.Status.Pending})
-		q.ClaimTask(ctx, id3)
+		q.ClaimTask(ctx, ClaimTaskParams{ID: id3})
 
-		count, err := q.CountProcessingTasks(ctx)
+		count, err := q.CountProcessingTasks(ctx, types.LockGatedTaskTypes())
 		assertNoError(t, err, "count with tasks")
 		assertEqual(t, count, int64(2), "only consume + enrich")
 	})
 
+	t.Run("excludes blocking types so a drain never self-waits", func(t *testing.T) {
+		// the registry-driven drain list must ignore backup/mirror so a
+		// blocking task in processing is invisible to WaitForTaskDrain.
+		resetDB(t, q)
+		idBk, _ := q.CreateTask(ctx, CreateTaskParams{TaskID: "cpt-bk", TaskType: types.Task.Type.Backup, Status: types.Task.Status.Pending})
+		q.ClaimTask(ctx, ClaimTaskParams{ID: idBk})
+
+		idMr, _ := q.CreateTask(ctx, CreateTaskParams{TaskID: "cpt-mr", TaskType: types.Task.Type.Mirror, Status: types.Task.Status.Pending})
+		q.ClaimTask(ctx, ClaimTaskParams{ID: idMr})
+
+		idCn, _ := q.CreateTask(ctx, CreateTaskParams{TaskID: "cpt-cn", TaskType: types.Task.Type.Consume, Status: types.Task.Status.Pending})
+		q.ClaimTask(ctx, ClaimTaskParams{ID: idCn})
+
+		count, err := q.CountProcessingTasks(ctx, types.LockGatedTaskTypes())
+		assertNoError(t, err, "count")
+		assertEqual(t, count, int64(1), "only the consume task; blocking excluded")
+	})
+
 	// Cleanup
-	q.ReleaseBackupLock(ctx)
+	q.ReleaseBackupLock(ctx, uuid.NullUUID{})
 }
 
 func TestGatedQueriesBlockDuringBackup(t *testing.T) {
@@ -1198,7 +1217,7 @@ func TestGatedQueriesBlockDuringBackup(t *testing.T) {
 	defer db.Close()
 	resetDB(t, q)
 	ctx := context.Background()
-	defer q.ReleaseBackupLock(ctx)
+	defer q.ReleaseBackupLock(ctx, uuid.NullUUID{})
 
 	// Create a pending consume task
 	payload := json.RawMessage(`{"file":"test.pdf"}`)

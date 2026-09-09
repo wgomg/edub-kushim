@@ -187,6 +187,8 @@ func AllBatchStatuses() []BatchStatus { return slices.Clone(allBatchStatuses) }
 func AllTaskTypes() []TaskType        { return slices.Clone(allTaskTypes) }
 func AllTaskStatuses() []TaskStatus   { return slices.Clone(allTaskStatuses) }
 
+func LockGatedTaskTypes() []TaskType { return slices.Clone(lockGatedTaskTypes) }
+
 // NonConsumeBatchSources are the sources whose batches own their lifecycle
 // in their handlers and never occupy a consume slot.
 func NonConsumeBatchSources() []BatchSource { return slices.Clone(nonConsumeBatchSources) }

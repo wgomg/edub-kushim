@@ -179,9 +179,9 @@ The `ConfigTaskHandler` lives in its own package (`internal/configtask/`) to kee
 
 The `Container` registers all six task types (`"consume"`, `"enrich"`, `"thumbnail"`, `"config"`, `"backup"`, `"mirror"`)
 and creates a `MatcherClient` connected to the Unix socket at `<config_dir>/kushim-hugot.sock`.
-The `"backup"` type is handled by `BackupTaskHandler` which acquires the DB-backed backup lock via `AcquireBackupLock`, waits for in-flight tasks to drain, runs the backup, and releases the lock. It implements `DedupKey` returning `backup:<mode>:<date>` (mode parsed from the task payload, default `full`).
+The `"backup"` type is handled by `BackupTaskHandler` which runs with the DB-backed maintenance lock already held (acquired at claim time, in the claim transaction), waits for in-flight tasks to drain, runs the backup, and lets the runner release the lock on completion/failure (token-guarded). It implements `DedupKey` returning `backup:<mode>:<date>` (mode parsed from the task payload, default `full`).
 
-The `"mirror"` type is handled by `MirrorTaskHandler` which acquires the same backup lock, then delegates to `mirror.RunLocked` (drain → 5-minute `TouchBackupLock` heartbeat → `rsync -a --delete --info=stats2 --timeout=600` → `.edub-mirror.json` state write) and releases the lock. It implements `DedupKey` returning `mirror:<UTC date>`.
+The `"mirror"` type is handled by `MirrorTaskHandler` which runs with the same lock already held (claim-time acquisition), then delegates to `mirror.RunLocked` (drain → 5-minute `TouchMaintenanceLockForTask` heartbeat → `rsync -a --delete --info=stats2 --timeout=600` → `.edub-mirror.json` state write); the runner releases the lock on completion/failure. It implements `DedupKey` returning `mirror:<UTC date>`.
 The `TagService` and `Enricher` receive the client instead of a direct Hugot reference:
 
 ```go

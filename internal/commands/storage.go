@@ -99,7 +99,7 @@ func orphansHandler(c *Container, args []string) error {
 		return fmt.Errorf("database: %w", err)
 	}
 
-	store := task.NewStore(client.Queries)
+	store := task.NewStore(client)
 	batchSvc := service.NewBatch(client, c.cfg.Load().Consumer.Reclaim.MaxRetries)
 	svc := service.NewOrphaned(client.Queries, c.cfg.Load(), c.logger, store, batchSvc)
 

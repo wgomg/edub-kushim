@@ -10,6 +10,8 @@ import (
 	"database/sql"
 	"encoding/json"
 
+	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
@@ -43,12 +45,41 @@ const claimTask = `-- name: ClaimTask :execrows
 UPDATE task SET
     status = 'processing',
     started_at = CURRENT_TIMESTAMP,
-    progress = NULL
+    progress = NULL,
+    claim_token = $2
 WHERE id = $1 AND status = 'pending'
 `
 
-func (q *Queries) ClaimTask(ctx context.Context, id int64) (int64, error) {
-	result, err := q.db.ExecContext(ctx, claimTask, id)
+type ClaimTaskParams struct {
+	ID         int64
+	ClaimToken uuid.NullUUID
+}
+
+func (q *Queries) ClaimTask(ctx context.Context, arg ClaimTaskParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, claimTask, arg.ID, arg.ClaimToken)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const completeBlockingTask = `-- name: CompleteBlockingTask :execrows
+UPDATE task SET
+    status = 'completed',
+    result = $1,
+    completed_at = CURRENT_TIMESTAMP,
+    attempts = 0
+WHERE id = $2 AND status = 'processing' AND claim_token = $3
+`
+
+type CompleteBlockingTaskParams struct {
+	Result     *json.RawMessage
+	ID         int64
+	ClaimToken uuid.NullUUID
+}
+
+func (q *Queries) CompleteBlockingTask(ctx context.Context, arg CompleteBlockingTaskParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, completeBlockingTask, arg.Result, arg.ID, arg.ClaimToken)
 	if err != nil {
 		return 0, err
 	}
@@ -124,11 +155,13 @@ func (q *Queries) CountDistinctBatches(ctx context.Context) (int64, error) {
 }
 
 const countProcessingTasks = `-- name: CountProcessingTasks :one
-SELECT COUNT(*) FROM task WHERE status = 'processing' AND task_type IN ('consume', 'enrich', 'thumbnail')
+SELECT COUNT(*) FROM task
+WHERE status = 'processing'
+  AND task_type = ANY($1::task_type[])
 `
 
-func (q *Queries) CountProcessingTasks(ctx context.Context) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countProcessingTasks)
+func (q *Queries) CountProcessingTasks(ctx context.Context, argTypes []types.TaskType) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countProcessingTasks, pq.Array(argTypes))
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -374,6 +407,28 @@ func (q *Queries) DiscardWaitingEnrichesOfFailedConsumesGlobal(ctx context.Conte
 	return result.RowsAffected()
 }
 
+const failBlockingTask = `-- name: FailBlockingTask :execrows
+UPDATE task SET
+    status = 'failed',
+    completed_at = CURRENT_TIMESTAMP,
+    error = $1
+WHERE id = $2 AND status = 'processing' AND claim_token = $3
+`
+
+type FailBlockingTaskParams struct {
+	Error      sql.NullString
+	ID         int64
+	ClaimToken uuid.NullUUID
+}
+
+func (q *Queries) FailBlockingTask(ctx context.Context, arg FailBlockingTaskParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, failBlockingTask, arg.Error, arg.ID, arg.ClaimToken)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const failTask = `-- name: FailTask :exec
 UPDATE task SET
     status = 'failed',
@@ -394,7 +449,7 @@ func (q *Queries) FailTask(ctx context.Context, arg FailTaskParams) error {
 
 const getConfigTaskByDedupKey = `-- name: GetConfigTaskByDedupKey :one
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, claim_token
 FROM task WHERE task_type = 'config' AND dedup_key = $1
 ORDER BY created_at DESC LIMIT 1
 `
@@ -417,6 +472,7 @@ func (q *Queries) GetConfigTaskByDedupKey(ctx context.Context, dedupKey sql.Null
 		&i.Error,
 		&i.Attempts,
 		&i.Progress,
+		&i.ClaimToken,
 	)
 	return i, err
 }
@@ -482,7 +538,7 @@ func (q *Queries) GetNextPendingTaskOfType(ctx context.Context, arg GetNextPendi
 }
 
 const getTask = `-- name: GetTask :one
-SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key, created_at, started_at, completed_at, error, attempts, progress FROM task WHERE id = $1
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key, created_at, started_at, completed_at, error, attempts, progress, claim_token FROM task WHERE id = $1
 `
 
 func (q *Queries) GetTask(ctx context.Context, id int64) (Task, error) {
@@ -503,12 +559,13 @@ func (q *Queries) GetTask(ctx context.Context, id int64) (Task, error) {
 		&i.Error,
 		&i.Attempts,
 		&i.Progress,
+		&i.ClaimToken,
 	)
 	return i, err
 }
 
 const getTaskByBatchID = `-- name: GetTaskByBatchID :many
-SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key, created_at, started_at, completed_at, error, attempts, progress FROM task WHERE batch_id = $1 ORDER BY created_at
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key, created_at, started_at, completed_at, error, attempts, progress, claim_token FROM task WHERE batch_id = $1 ORDER BY created_at
 `
 
 func (q *Queries) GetTaskByBatchID(ctx context.Context, batchID sql.NullString) ([]Task, error) {
@@ -535,6 +592,7 @@ func (q *Queries) GetTaskByBatchID(ctx context.Context, batchID sql.NullString) 
 			&i.Error,
 			&i.Attempts,
 			&i.Progress,
+			&i.ClaimToken,
 		); err != nil {
 			return nil, err
 		}
@@ -550,7 +608,7 @@ func (q *Queries) GetTaskByBatchID(ctx context.Context, batchID sql.NullString) 
 }
 
 const getTaskByTaskID = `-- name: GetTaskByTaskID :one
-SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key, created_at, started_at, completed_at, error, attempts, progress FROM task WHERE task_id = $1
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key, created_at, started_at, completed_at, error, attempts, progress, claim_token FROM task WHERE task_id = $1
 `
 
 func (q *Queries) GetTaskByTaskID(ctx context.Context, taskID string) (Task, error) {
@@ -571,13 +629,14 @@ func (q *Queries) GetTaskByTaskID(ctx context.Context, taskID string) (Task, err
 		&i.Error,
 		&i.Attempts,
 		&i.Progress,
+		&i.ClaimToken,
 	)
 	return i, err
 }
 
 const listActiveTasks = `-- name: ListActiveTasks :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, claim_token
 FROM task
 WHERE status IN ('pending', 'processing', 'waiting')
 ORDER BY
@@ -616,6 +675,7 @@ func (q *Queries) ListActiveTasks(ctx context.Context, arg ListActiveTasksParams
 			&i.Error,
 			&i.Attempts,
 			&i.Progress,
+			&i.ClaimToken,
 		); err != nil {
 			return nil, err
 		}
@@ -632,7 +692,7 @@ func (q *Queries) ListActiveTasks(ctx context.Context, arg ListActiveTasksParams
 
 const listAllTasks = `-- name: ListAllTasks :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, claim_token
 FROM task ORDER BY created_at DESC
 `
 
@@ -660,6 +720,7 @@ func (q *Queries) ListAllTasks(ctx context.Context) ([]Task, error) {
 			&i.Error,
 			&i.Attempts,
 			&i.Progress,
+			&i.ClaimToken,
 		); err != nil {
 			return nil, err
 		}
@@ -676,7 +737,7 @@ func (q *Queries) ListAllTasks(ctx context.Context) ([]Task, error) {
 
 const listAllTasksByBatch = `-- name: ListAllTasksByBatch :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, claim_token
 FROM task WHERE batch_id = $1 ORDER BY created_at DESC
 `
 
@@ -704,6 +765,7 @@ func (q *Queries) ListAllTasksByBatch(ctx context.Context, batchID sql.NullStrin
 			&i.Error,
 			&i.Attempts,
 			&i.Progress,
+			&i.ClaimToken,
 		); err != nil {
 			return nil, err
 		}
@@ -720,7 +782,7 @@ func (q *Queries) ListAllTasksByBatch(ctx context.Context, batchID sql.NullStrin
 
 const listAllTasksByBatchAndStatus = `-- name: ListAllTasksByBatchAndStatus :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, claim_token
 FROM task WHERE batch_id = $1 AND status = $2 ORDER BY created_at DESC
 `
 
@@ -753,6 +815,7 @@ func (q *Queries) ListAllTasksByBatchAndStatus(ctx context.Context, arg ListAllT
 			&i.Error,
 			&i.Attempts,
 			&i.Progress,
+			&i.ClaimToken,
 		); err != nil {
 			return nil, err
 		}
@@ -769,7 +832,7 @@ func (q *Queries) ListAllTasksByBatchAndStatus(ctx context.Context, arg ListAllT
 
 const listAllTasksByBatchAndStatusAndType = `-- name: ListAllTasksByBatchAndStatusAndType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, claim_token
 FROM task WHERE batch_id = $1 AND status = $2 AND task_type = $3 ORDER BY created_at DESC
 `
 
@@ -803,6 +866,7 @@ func (q *Queries) ListAllTasksByBatchAndStatusAndType(ctx context.Context, arg L
 			&i.Error,
 			&i.Attempts,
 			&i.Progress,
+			&i.ClaimToken,
 		); err != nil {
 			return nil, err
 		}
@@ -819,7 +883,7 @@ func (q *Queries) ListAllTasksByBatchAndStatusAndType(ctx context.Context, arg L
 
 const listAllTasksByBatchAndType = `-- name: ListAllTasksByBatchAndType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, claim_token
 FROM task WHERE batch_id = $1 AND task_type = $2 ORDER BY created_at DESC
 `
 
@@ -852,6 +916,7 @@ func (q *Queries) ListAllTasksByBatchAndType(ctx context.Context, arg ListAllTas
 			&i.Error,
 			&i.Attempts,
 			&i.Progress,
+			&i.ClaimToken,
 		); err != nil {
 			return nil, err
 		}
@@ -868,7 +933,7 @@ func (q *Queries) ListAllTasksByBatchAndType(ctx context.Context, arg ListAllTas
 
 const listAllTasksByStatus = `-- name: ListAllTasksByStatus :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, claim_token
 FROM task WHERE status = $1 ORDER BY created_at DESC
 `
 
@@ -896,6 +961,7 @@ func (q *Queries) ListAllTasksByStatus(ctx context.Context, status types.TaskSta
 			&i.Error,
 			&i.Attempts,
 			&i.Progress,
+			&i.ClaimToken,
 		); err != nil {
 			return nil, err
 		}
@@ -912,7 +978,7 @@ func (q *Queries) ListAllTasksByStatus(ctx context.Context, status types.TaskSta
 
 const listAllTasksByStatusAndType = `-- name: ListAllTasksByStatusAndType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, claim_token
 FROM task WHERE status = $1 AND task_type = $2 ORDER BY created_at DESC
 `
 
@@ -945,6 +1011,7 @@ func (q *Queries) ListAllTasksByStatusAndType(ctx context.Context, arg ListAllTa
 			&i.Error,
 			&i.Attempts,
 			&i.Progress,
+			&i.ClaimToken,
 		); err != nil {
 			return nil, err
 		}
@@ -961,7 +1028,7 @@ func (q *Queries) ListAllTasksByStatusAndType(ctx context.Context, arg ListAllTa
 
 const listAllTasksByType = `-- name: ListAllTasksByType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, claim_token
 FROM task WHERE task_type = $1 ORDER BY created_at DESC
 `
 
@@ -989,6 +1056,7 @@ func (q *Queries) ListAllTasksByType(ctx context.Context, taskType types.TaskTyp
 			&i.Error,
 			&i.Attempts,
 			&i.Progress,
+			&i.ClaimToken,
 		); err != nil {
 			return nil, err
 		}
@@ -1078,7 +1146,7 @@ func (q *Queries) ListDistinctBatchIDsByStatus(ctx context.Context, arg ListDist
 
 const listTasks = `-- name: ListTasks :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, claim_token
 FROM task ORDER BY created_at DESC LIMIT $1 OFFSET $2
 `
 
@@ -1111,6 +1179,7 @@ func (q *Queries) ListTasks(ctx context.Context, arg ListTasksParams) ([]Task, e
 			&i.Error,
 			&i.Attempts,
 			&i.Progress,
+			&i.ClaimToken,
 		); err != nil {
 			return nil, err
 		}
@@ -1127,7 +1196,7 @@ func (q *Queries) ListTasks(ctx context.Context, arg ListTasksParams) ([]Task, e
 
 const listTasksByBatch = `-- name: ListTasksByBatch :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, claim_token
 FROM task WHERE batch_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3
 `
 
@@ -1161,6 +1230,7 @@ func (q *Queries) ListTasksByBatch(ctx context.Context, arg ListTasksByBatchPara
 			&i.Error,
 			&i.Attempts,
 			&i.Progress,
+			&i.ClaimToken,
 		); err != nil {
 			return nil, err
 		}
@@ -1177,7 +1247,7 @@ func (q *Queries) ListTasksByBatch(ctx context.Context, arg ListTasksByBatchPara
 
 const listTasksByBatchAndStatus = `-- name: ListTasksByBatchAndStatus :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, claim_token
 FROM task WHERE batch_id = $1 AND status = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4
 `
 
@@ -1217,6 +1287,7 @@ func (q *Queries) ListTasksByBatchAndStatus(ctx context.Context, arg ListTasksBy
 			&i.Error,
 			&i.Attempts,
 			&i.Progress,
+			&i.ClaimToken,
 		); err != nil {
 			return nil, err
 		}
@@ -1233,7 +1304,7 @@ func (q *Queries) ListTasksByBatchAndStatus(ctx context.Context, arg ListTasksBy
 
 const listTasksByBatchAndStatusAndType = `-- name: ListTasksByBatchAndStatusAndType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, claim_token
 FROM task WHERE batch_id = $1 AND status = $2 AND task_type = $3 ORDER BY created_at DESC LIMIT $4 OFFSET $5
 `
 
@@ -1275,6 +1346,7 @@ func (q *Queries) ListTasksByBatchAndStatusAndType(ctx context.Context, arg List
 			&i.Error,
 			&i.Attempts,
 			&i.Progress,
+			&i.ClaimToken,
 		); err != nil {
 			return nil, err
 		}
@@ -1291,7 +1363,7 @@ func (q *Queries) ListTasksByBatchAndStatusAndType(ctx context.Context, arg List
 
 const listTasksByBatchAndType = `-- name: ListTasksByBatchAndType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, claim_token
 FROM task WHERE batch_id = $1 AND task_type = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4
 `
 
@@ -1331,6 +1403,7 @@ func (q *Queries) ListTasksByBatchAndType(ctx context.Context, arg ListTasksByBa
 			&i.Error,
 			&i.Attempts,
 			&i.Progress,
+			&i.ClaimToken,
 		); err != nil {
 			return nil, err
 		}
@@ -1347,7 +1420,7 @@ func (q *Queries) ListTasksByBatchAndType(ctx context.Context, arg ListTasksByBa
 
 const listTasksByStatus = `-- name: ListTasksByStatus :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, claim_token
 FROM task WHERE status = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3
 `
 
@@ -1381,6 +1454,7 @@ func (q *Queries) ListTasksByStatus(ctx context.Context, arg ListTasksByStatusPa
 			&i.Error,
 			&i.Attempts,
 			&i.Progress,
+			&i.ClaimToken,
 		); err != nil {
 			return nil, err
 		}
@@ -1397,7 +1471,7 @@ func (q *Queries) ListTasksByStatus(ctx context.Context, arg ListTasksByStatusPa
 
 const listTasksByStatusAndType = `-- name: ListTasksByStatusAndType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, claim_token
 FROM task WHERE status = $1 AND task_type = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4
 `
 
@@ -1437,6 +1511,7 @@ func (q *Queries) ListTasksByStatusAndType(ctx context.Context, arg ListTasksByS
 			&i.Error,
 			&i.Attempts,
 			&i.Progress,
+			&i.ClaimToken,
 		); err != nil {
 			return nil, err
 		}
@@ -1453,7 +1528,7 @@ func (q *Queries) ListTasksByStatusAndType(ctx context.Context, arg ListTasksByS
 
 const listTasksByType = `-- name: ListTasksByType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, claim_token
 FROM task WHERE task_type = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3
 `
 
@@ -1487,6 +1562,7 @@ func (q *Queries) ListTasksByType(ctx context.Context, arg ListTasksByTypeParams
 			&i.Error,
 			&i.Attempts,
 			&i.Progress,
+			&i.ClaimToken,
 		); err != nil {
 			return nil, err
 		}
@@ -1516,6 +1592,41 @@ type QuarantineStaleProcessingTasksParams struct {
 
 func (q *Queries) QuarantineStaleProcessingTasks(ctx context.Context, arg QuarantineStaleProcessingTasksParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, quarantineStaleProcessingTasks, arg.Attempts, arg.StartedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const releaseMaintenanceLockForBatch = `-- name: ReleaseMaintenanceLockForBatch :execrows
+UPDATE backup_lock SET running = false, started_at = NULL, owner_token = NULL
+WHERE id = 1 AND running = true AND owner_token IN (
+  SELECT claim_token FROM task
+  WHERE batch_id = $1 AND status = 'processing'
+    AND task_type IN ('backup', 'mirror')
+)
+`
+
+func (q *Queries) ReleaseMaintenanceLockForBatch(ctx context.Context, batchID sql.NullString) (int64, error) {
+	result, err := q.db.ExecContext(ctx, releaseMaintenanceLockForBatch, batchID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const releaseMaintenanceLockForStaleTasks = `-- name: ReleaseMaintenanceLockForStaleTasks :execrows
+UPDATE backup_lock SET running = false, started_at = NULL, owner_token = NULL
+WHERE id = 1 AND running = true AND owner_token IN (
+  SELECT claim_token FROM task
+  WHERE status = 'processing'
+    AND task_type IN ('backup', 'mirror')
+    AND task.started_at < $1
+)
+`
+
+func (q *Queries) ReleaseMaintenanceLockForStaleTasks(ctx context.Context, startedAt sql.NullTime) (int64, error) {
+	result, err := q.db.ExecContext(ctx, releaseMaintenanceLockForStaleTasks, startedAt)
 	if err != nil {
 		return 0, err
 	}

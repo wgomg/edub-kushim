@@ -85,8 +85,8 @@ func (s *Server) rebuild(client *database.Client) {
 	services.DocumentType = service.NewDocumentType(client.Queries, s.logger)
 	services.User = service.NewUser(client.Queries)
 
-	workStore := task.NewStore(client.Queries)
-	configStore := task.NewStore(client.Queries)
+	workStore := task.NewStore(client)
+	configStore := task.NewStore(client)
 
 	services.Orphaned = service.NewOrphaned(client.Queries, cfg, s.logger, workStore, services.Batch)
 	services.Orphaned.ScanAndQuarantineAsync()
@@ -305,14 +305,14 @@ func registerRoutes(
 	mux.Handle("PUT /api/v1/users/{id}/api-key", RequireRole(admin...)(http.HandlerFunc(apiKeyHandler.RotateKey)))
 	mux.Handle("GET /api/v1/users/{id}/api-key", RequireRole(admin...)(http.HandlerFunc(apiKeyHandler.GetKeyStatus)))
 
-	configHandler := handlers.NewConfigHandler(getConfig, onConfigSet, client.Queries, logger, dispatcher, services)
+	configHandler := handlers.NewConfigHandler(getConfig, onConfigSet, client, logger, dispatcher, services)
 	mux.HandleFunc("GET /wizard/bootstrap", configHandler.Bootstrap)
 	mux.Handle("GET /wizard/config", RequireRole(admin...)(http.HandlerFunc(configHandler.GetConfig)))
 	mux.Handle("PUT /wizard/config", RequireRole(admin...)(http.HandlerFunc(configHandler.PutConfig)))
 	mux.Handle("GET /wizard/config/status", RequireRole(admin...)(http.HandlerFunc(configHandler.ConfigStatus)))
 	mux.Handle("POST /wizard/config/retry", RequireRole(admin...)(http.HandlerFunc(configHandler.RetryFailedConfig)))
 
-	taskHandler := handlers.NewTaskHandler(services, client.Queries, logger, getConfig)
+	taskHandler := handlers.NewTaskHandler(services, client, logger, getConfig)
 	mux.Handle("GET /api/v1/tasks", RequireRole(viewer...)(http.HandlerFunc(taskHandler.ListTasks)))
 	mux.Handle("GET /api/v1/tasks/{id}", RequireRole(viewer...)(http.HandlerFunc(taskHandler.GetTask)))
 	mux.Handle("POST /api/v1/tasks/{id}/retry", RequireRole(editor...)(http.HandlerFunc(taskHandler.RetryTask)))

@@ -29,6 +29,7 @@ import (
 type ConfigHandler struct {
 	getConfig   func() *config.Config
 	onConfigSet func(*config.Config)
+	client      *database.Client
 	queries     *database.Queries
 	logger      *utils.Logger
 	dispatcher  *task.Dispatcher
@@ -39,7 +40,7 @@ type ConfigHandler struct {
 func NewConfigHandler(
 	getConfig func() *config.Config,
 	onConfigSet func(*config.Config),
-	queries *database.Queries,
+	client *database.Client,
 	logger *utils.Logger,
 	dispatcher *task.Dispatcher,
 	services *service.CrudServices,
@@ -47,7 +48,8 @@ func NewConfigHandler(
 	return &ConfigHandler{
 		getConfig:   getConfig,
 		onConfigSet: onConfigSet,
-		queries:     queries,
+		client:      client,
+		queries:     client.Queries,
 		logger:      logger,
 		dispatcher:  dispatcher,
 		services:    services,
@@ -57,6 +59,7 @@ func NewConfigHandler(
 func (h *ConfigHandler) SetServices(client *database.Client, dispatcher *task.Dispatcher) {
 	h.dispatcher = dispatcher
 	if client != nil {
+		h.client = client
 		h.queries = client.Queries
 		h.services = &service.CrudServices{
 			Batch: service.NewBatch(client, h.getConfig().Consumer.Reclaim.MaxRetries),
@@ -636,7 +639,7 @@ func (h *ConfigHandler) RetryFailedConfig(w http.ResponseWriter, r *http.Request
 
 	retried := 0
 	for _, t := range failedTasks {
-		if err := task.Retry(ctx, h.queries, h.logger, t.TaskID); err != nil {
+		if err := task.Retry(ctx, h.client, h.logger, t.TaskID); err != nil {
 			h.logger.Error(nil, "retry config task %s: %v", t.TaskID, err)
 			continue
 		}

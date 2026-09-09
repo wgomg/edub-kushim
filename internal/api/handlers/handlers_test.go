@@ -83,7 +83,7 @@ func newHandlerTestEnv(t *testing.T) *handlerTestEnv {
 	userSvc := service.NewUser(client.Queries)
 
 	batchSvc := service.NewBatch(client, 3)
-	workStore := task.NewStore(client.Queries)
+	workStore := task.NewStore(client)
 	reenrichSvc := service.NewReEnrich(client.Queries, workStore, batchSvc)
 
 	trashCfg := config.DefaultConfig("/tmp/test")
@@ -587,7 +587,7 @@ func TestDocumentTypeCrud(t *testing.T) {
 
 func TestTaskEndpoints(t *testing.T) {
 	env := newHandlerTestEnv(t)
-	h := NewTaskHandler(env.services, env.client.Queries, env.logger, func() *config.Config { return nil })
+	h := NewTaskHandler(env.services, env.client, env.logger, func() *config.Config { return nil })
 	ctx := context.Background()
 
 	e2ePayload := json.RawMessage(`{"file":"test.pdf"}`)
@@ -708,7 +708,7 @@ func TestTaskEndpoints(t *testing.T) {
 
 func TestGetDashboardRunningTasks(t *testing.T) {
 	env := newHandlerTestEnv(t)
-	h := NewTaskHandler(env.services, env.client.Queries, env.logger, func() *config.Config { return nil })
+	h := NewTaskHandler(env.services, env.client, env.logger, func() *config.Config { return nil })
 	ctx := context.Background()
 
 	docDBID, docUUID := database.CreateTestDocument(t, env.client.Queries, "dash-act-doc.pdf")
@@ -719,7 +719,7 @@ func TestGetDashboardRunningTasks(t *testing.T) {
 		Payload: &activePayload,
 	})
 	testutil.AssertNoError(t, err, "create task 1")
-	_, ctErr := env.client.ClaimTask(ctx, task1ID)
+	_, ctErr := env.client.ClaimTask(ctx, database.ClaimTaskParams{ID: task1ID})
 	testutil.AssertNoError(t, ctErr, "claim task 1")
 
 	pendingPayload := json.RawMessage(`{"file_path":"/tmp/uploads/invoice.pdf","document_id":"some-doc-uuid"}`)
@@ -852,7 +852,7 @@ func TestGetDashboardRunningTasks(t *testing.T) {
 
 func TestGetDashboardAnalyticsError(t *testing.T) {
 	env := newHandlerTestEnv(t)
-	h := NewTaskHandler(env.services, env.client.Queries, env.logger, func() *config.Config { return nil })
+	h := NewTaskHandler(env.services, env.client, env.logger, func() *config.Config { return nil })
 
 	database.CreateTestDocument(t, env.client.Queries, "err-test.pdf")
 
@@ -873,7 +873,7 @@ func TestGetDashboardAnalyticsError(t *testing.T) {
 
 func TestGetDashboardProcessingHealth(t *testing.T) {
 	env := newHandlerTestEnv(t)
-	h := NewTaskHandler(env.services, env.client.Queries, env.logger, func() *config.Config { return nil })
+	h := NewTaskHandler(env.services, env.client, env.logger, func() *config.Config { return nil })
 	ctx := context.Background()
 
 	database.CreateTestDocument(t, env.client.Queries, "ph-doc.pdf")
@@ -893,7 +893,7 @@ func TestGetDashboardProcessingHealth(t *testing.T) {
 		BatchID: sql.NullString{String: "ph-batch-1", Valid: true},
 	})
 	testutil.AssertNoError(t, err, "create completed task")
-	_, ctErr := env.client.ClaimTask(ctx, task1ID)
+	_, ctErr := env.client.ClaimTask(ctx, database.ClaimTaskParams{ID: task1ID})
 	testutil.AssertNoError(t, ctErr, "claim")
 	_, ctErr = env.client.CompleteTask(ctx, database.CompleteTaskParams{ID: task1ID, Result: nil})
 	testutil.AssertNoError(t, ctErr, "complete")
@@ -1338,20 +1338,20 @@ func TestUserCrud(t *testing.T) {
 	})
 }
 
-func newTestConfigHandler(cfg *config.Config, queries *database.Queries, logger *utils.Logger, dispatcher *task.Dispatcher) *ConfigHandler {
+func newTestConfigHandler(cfg *config.Config, client *database.Client, logger *utils.Logger, dispatcher *task.Dispatcher) *ConfigHandler {
 	var ptr atomic.Pointer[config.Config]
 	if cfg != nil {
 		ptr.Store(cfg)
 	}
 	getConfig := func() *config.Config { return ptr.Load() }
 	onConfigSet := func(c *config.Config) { ptr.Store(c) }
-	return NewConfigHandler(getConfig, onConfigSet, queries, logger, dispatcher, nil)
+	return NewConfigHandler(getConfig, onConfigSet, client, logger, dispatcher, nil)
 }
 
 func TestConfigHandlerCreateAdminUser(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	cfg := config.DefaultConfig("/tmp/test")
-	h := newTestConfigHandler(cfg, env.client.Queries, env.logger, nil)
+	h := newTestConfigHandler(cfg, env.client, env.logger, nil)
 	h.SetServices(env.client, nil)
 
 	t.Run("create admin user", func(t *testing.T) {
@@ -1396,7 +1396,7 @@ func TestConfigHandlerCreateAdminUser(t *testing.T) {
 	})
 
 	t.Run("nil services returns 400", func(t *testing.T) {
-		h2 := newTestConfigHandler(cfg, env.client.Queries, env.logger, nil)
+		h2 := newTestConfigHandler(cfg, env.client, env.logger, nil)
 		body, _ := json.Marshal(types.CreateUserRequest{
 			Username: "test", Password: "Password123!",
 		})
@@ -1410,7 +1410,7 @@ func TestConfigHandlerGetConfig(t *testing.T) {
 	env := newHandlerTestEnv(t)
 
 	t.Run("nil config returns default", func(t *testing.T) {
-		h := newTestConfigHandler(nil, env.client.Queries, env.logger, nil)
+		h := newTestConfigHandler(nil, env.client, env.logger, nil)
 		w := rec()
 		h.GetConfig(w, req(t, "GET", "/wizard/config", nil))
 		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
@@ -1429,7 +1429,7 @@ func TestConfigHandlerGetConfig(t *testing.T) {
 		stored.Storage.StorageDir = "/custom/storage"
 		stored.Db.Host = "10.0.0.1"
 		stored.Db.Port = 5433
-		h := newTestConfigHandler(stored, env.client.Queries, env.logger, nil)
+		h := newTestConfigHandler(stored, env.client, env.logger, nil)
 		w := rec()
 		h.GetConfig(w, req(t, "GET", "/wizard/config", nil))
 		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
@@ -1448,7 +1448,7 @@ func TestConfigHandlerGetConfig(t *testing.T) {
 		var ptr atomic.Pointer[config.Config]
 		getConfig := func() *config.Config { return ptr.Load() }
 		onConfigSet := func(c *config.Config) { ptr.Store(c) }
-		h := NewConfigHandler(getConfig, onConfigSet, env.client.Queries, env.logger, nil, nil)
+		h := NewConfigHandler(getConfig, onConfigSet, env.client, env.logger, nil, nil)
 		bootstrapped := config.DefaultConfig("/tmp/boot")
 		bootstrapped.Srv.Port = 7777
 		onConfigSet(bootstrapped)
@@ -1467,7 +1467,7 @@ func TestConfigHandlerConfigStatus(t *testing.T) {
 	env := newHandlerTestEnv(t)
 
 	t.Run("nil config reports not configured", func(t *testing.T) {
-		h := newTestConfigHandler(nil, env.client.Queries, env.logger, nil)
+		h := newTestConfigHandler(nil, env.client, env.logger, nil)
 		w := rec()
 		h.ConfigStatus(w, req(t, "GET", "/wizard/config/status", nil))
 		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
@@ -1642,7 +1642,7 @@ func TestProcessingHealthMissingTools(t *testing.T) {
 
 	cfg := config.DefaultConfig("/tmp/test")
 	cfg.Consumer.OCR.Engine = "ocrmypdf"
-	h := NewTaskHandler(env.services, env.client.Queries, env.logger, func() *config.Config { return cfg })
+	h := NewTaskHandler(env.services, env.client, env.logger, func() *config.Config { return cfg })
 
 	ctx := context.Background()
 	err := env.client.CreateBatch(ctx, database.CreateBatchParams{ID: "mh-batch", Source: itypes.Batch.Source.CLI, Status: itypes.Batch.Status.Queued})
@@ -2208,7 +2208,7 @@ func TestPutConfig(t *testing.T) {
 		return NewConfigHandler(
 			func() *config.Config { return setCfg.Load().(*config.Config) },
 			func(c *config.Config) { setCfg.Store(c) },
-			env.client.Queries,
+			env.client,
 			env.logger,
 			env.dispatcher,
 			env.services,
@@ -2407,7 +2407,7 @@ func TestEnqueueConfigTasks(t *testing.T) {
 		return NewConfigHandler(
 			func() *config.Config { return setCfg.Load().(*config.Config) },
 			func(c *config.Config) { setCfg.Store(c) },
-			env.client.Queries,
+			env.client,
 			env.logger,
 			env.dispatcher,
 			env.services,
