@@ -74,15 +74,21 @@
 	<div class="grid grid-cols-2 gap-4 sm:grid-cols-5">
 		<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 			<p class="text-sm text-parchment-500">Total Files</p>
-			<p class="mt-1 text-lg font-semibold text-parchment-200">{dashboard?.total_files ?? '…'}</p>
+			<p class="mt-1 text-lg font-semibold text-parchment-200">
+				{dashboard ? formatNumber(dashboard.total_files) : '…'}
+			</p>
 		</div>
 		<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 			<p class="text-sm text-parchment-500">Total Batches</p>
-			<p class="mt-1 text-lg font-semibold text-parchment-200">{dashboard?.total_batches ?? '…'}</p>
+			<p class="mt-1 text-lg font-semibold text-parchment-200">
+				{dashboard ? formatNumber(dashboard.total_batches) : '…'}
+			</p>
 		</div>
 		<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 			<p class="text-sm text-parchment-500">Files in Inbox</p>
-			<p class="mt-1 text-lg font-semibold text-parchment-200">{dashboard?.inbox_files ?? '…'}</p>
+			<p class="mt-1 text-lg font-semibold text-parchment-200">
+				{dashboard ? formatNumber(dashboard.inbox_files) : '…'}
+			</p>
 		</div>
 		<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 			<p class="text-sm text-parchment-500">Originals Size</p>
@@ -104,42 +110,44 @@
 			<div class="grid grid-cols-2 gap-4 sm:grid-cols-7">
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-sm text-parchment-500">Waiting</p>
-					<p class="mt-1 text-lg font-semibold text-amber-400 tabular-nums">{dashboard.waiting}</p>
+					<p class="mt-1 text-lg font-semibold text-amber-400 tabular-nums">
+						{formatNumber(dashboard.waiting)}
+					</p>
 				</div>
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-sm text-parchment-500">Pending</p>
 					<p class="mt-1 text-lg font-semibold text-parchment-400 tabular-nums">
-						{dashboard.pending}
+						{formatNumber(dashboard.pending)}
 					</p>
 				</div>
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-sm text-parchment-500">Processing</p>
 					<p class="mt-1 text-lg font-semibold text-lapis-600 tabular-nums">
-						{dashboard.processing}
+						{formatNumber(dashboard.processing)}
 					</p>
 				</div>
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-sm text-parchment-500">Completed</p>
 					<p class="mt-1 text-lg font-semibold text-emerald-500 tabular-nums">
-						{dashboard.completed}
+						{formatNumber(dashboard.completed)}
 					</p>
 				</div>
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-sm text-parchment-500">Failed</p>
 					<p class="mt-1 text-lg font-semibold text-terracotta-500 tabular-nums">
-						{dashboard.failed}
+						{formatNumber(dashboard.failed)}
 					</p>
 				</div>
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-sm text-parchment-500">Cancelled</p>
 					<p class="mt-1 text-lg font-semibold text-parchment-500 tabular-nums">
-						{dashboard.cancelled}
+						{formatNumber(dashboard.cancelled)}
 					</p>
 				</div>
 				<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 					<p class="text-sm text-parchment-500">Discarded</p>
 					<p class="mt-1 text-lg font-semibold text-terracotta-400 tabular-nums">
-						{dashboard.discarded}
+						{formatNumber(dashboard.discarded)}
 					</p>
 				</div>
 			</div>
