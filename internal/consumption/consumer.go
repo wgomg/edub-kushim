@@ -41,6 +41,8 @@ type runner interface {
 
 var _ runner = (*tools.Runner)(nil)
 
+const commitTxTimeout = 30 * time.Second
+
 type Consumer struct {
 	config      *config.Config
 	logger      *utils.Logger
@@ -278,7 +280,7 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string, pr
 	}
 
 	report("commit", "", 0)
-	txCtx, txCancel := context.WithTimeout(ctx, 5*time.Second)
+	txCtx, txCancel := context.WithTimeout(ctx, commitTxTimeout)
 	defer txCancel()
 	txStart := time.Now()
 	c.logger.Debug(&documentID, "tx: begin (pool %s)", formatDBStats(c.client.DB().Stats()))

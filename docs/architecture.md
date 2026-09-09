@@ -156,7 +156,7 @@ rendering mode 3** (`3 Tr`) for invisible‑but‑selectable text.
 Document record created via `CreateDocument` with a generated `document_id` UUID,
 auto-increment ID obtained from `RETURNING id`, date‑based storage paths
 generated, paths updated via `UpdateDocumentPaths`. The transaction is
-DB‑only (fast writes), bounded by a 5‑second context timeout.
+DB‑only (fast writes), bounded by a 30‑second context timeout.
 
 The UUID serves as the stable external identifier for the API, while the
 auto-increment ID is used for internal storage paths.
