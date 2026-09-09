@@ -280,9 +280,12 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string, pr
 	report("commit", "", 0)
 	txCtx, txCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer txCancel()
+	txStart := time.Now()
+	c.logger.Debug(&documentID, "tx: begin (pool %s)", formatDBStats(c.client.DB().Stats()))
 
 	tx, err := c.client.BeginTx(txCtx, nil)
 	if err != nil {
+		err = annotateTxTimeout(err, formatDBStats(c.client.DB().Stats()), time.Since(txStart))
 		if removeErr := RemoveFile(*file.StorageProcessedPath); removeErr != nil {
 			c.logger.Error(&documentID, "failed to clean up processed file: %v", removeErr)
 		}
@@ -348,6 +351,7 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string, pr
 		CharCount:      int32(utf8.RuneCountInString(file.Text.String)),
 	})
 	if err != nil {
+		err = annotateTxTimeout(err, formatDBStats(c.client.DB().Stats()), time.Since(txStart))
 		MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 		return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("failed to create document record: %w", err)}
 	}
@@ -363,12 +367,14 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string, pr
 		DocumentID:   documentID,
 	})
 	if err != nil {
+		err = annotateTxTimeout(err, formatDBStats(c.client.DB().Stats()), time.Since(txStart))
 		MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 		return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("failed to update storage path: %w", err)}
 	}
 
 	c.logger.Debug(&documentID, "Committing transaction")
 	if err := tx.Commit(); err != nil {
+		err = annotateTxTimeout(err, formatDBStats(c.client.DB().Stats()), time.Since(txStart))
 		c.logger.Error(&documentID, "Transaction commit failed: %v", err)
 		c.logger.Error(&documentID, "Attempting to rollback file operations")
 		if removeErr := RemoveFile(*file.StorageProcessedPath); removeErr != nil {
@@ -398,6 +404,20 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string, pr
 	}
 
 	return file, nil
+}
+
+func formatDBStats(s sql.DBStats) string {
+	return fmt.Sprintf(
+		"open=%d inUse=%d idle=%d waitCount=%d waitDuration=%s maxIdleClosed=%d maxLifetimeClosed=%d",
+		s.MaxOpenConnections, s.InUse, s.Idle, s.WaitCount, s.WaitDuration, s.MaxIdleClosed, s.MaxLifetimeClosed,
+	)
+}
+
+func annotateTxTimeout(err error, stats string, elapsed time.Duration) error {
+	if !errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	return fmt.Errorf("%w [tx deadline exceeded; elapsed %s; pool %s]", err, elapsed, stats)
 }
 
 func MoveFailedFile(storageDir, originalPath, errType string, logger *utils.Logger, docID *string) {
