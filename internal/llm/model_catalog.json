@@ -192,6 +192,20 @@
   },
   {
     "provider": "mistral",
+    "model_id": "mistral-large-2512",
+    "display_name": "Mistral Large",
+    "max_input_tokens": 256000,
+    "max_output_tokens": 6144,
+    "reasoning": false,
+    "reasoning_efforts": [],
+    "supports_structured_output": true,
+    "supports_temperature": true,
+    "supports_prompt_caching": false,
+    "adapter": "openai-compatible",
+    "official_url": "https://api.mistral.ai/v1"
+  },
+  {
+    "provider": "mistral",
     "model_id": "mistral-small-latest",
     "display_name": "Mistral Small",
     "max_input_tokens": 256000,
