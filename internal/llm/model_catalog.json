@@ -521,5 +521,22 @@
     "supports_prompt_caching": true,
     "adapter": "openai-compatible",
     "official_url": "https://api.z.ai/api/paas/v4"
+  },
+  {
+    "provider": "opencode",
+    "model_id": "deepseek-v4-flash",
+    "display_name": "DeepSeek V4 Flash",
+    "max_input_tokens": 1000000,
+    "max_output_tokens": 384000,
+    "reasoning": true,
+    "reasoning_efforts": [
+      "high",
+      "max"
+    ],
+    "supports_structured_output": true,
+    "supports_temperature": true,
+    "supports_prompt_caching": true,
+    "adapter": "openai-compatible",
+    "official_url": "https://opencode.ai/zen/v1"
   }
 ]
