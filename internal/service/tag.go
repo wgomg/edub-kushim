@@ -268,10 +268,6 @@ func (s *Tag) Delete(ctx context.Context, ids []int64) ([]DeleteResult, error) {
 	return results, nil
 }
 
-func (s *Tag) Consolidate(ctx context.Context, docId string, queries []string) ([]string, error) {
-	return s.embedder.Consolidate(ctx, docId, queries)
-}
-
 func (s *Tag) encodeAndAddBatch(ctx context.Context, names []string) {
 	if err := s.embedder.AddToStore(ctx, names); err != nil {
 		s.logger.Error(nil, "tag service: add to store: %v", err)

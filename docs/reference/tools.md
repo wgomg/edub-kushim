@@ -61,7 +61,7 @@ type ContentAnalyzer interface {
 - `parseTokenLimitError(body []byte) error` — Matches provider error bodies against the regex `maximum context length is (\d+) tokens.*?you requested (?:about )?(\d+) tokens` and returns a `TokenLimitError` with the parsed counts. Returns nil on no match or zero values. Covers OpenAI, DeepSeek, and compatible providers; for Anthropic (different error format) it returns nil and the error propagates as generic API failure.
 - `BuildPrompt(text, docTypes, peopleTypes, tagSuggestions, customTemplate) string` — Builds system prompt with JSON output instructions including people types. Prompts the LLM to provide a `name_romanized` field for any name containing non-Latin characters (Korean, Arabic, Cyrillic, Hebrew, etc.). When `customTemplate` is non-empty (after trimming whitespace), it is used as a Go `text/template` with placeholders `{{.DocTypePrompt}}`, `{{.TagsPrompt}}`, `{{.PeoplePrompt}}`, `{{.Text}}`, and `{{.RequestedTags}}`. On parse or execution error, falls back silently to the hardcoded default template. The rendered prompt is captured in `AnalysisResult.Prompt` for debugging.
 - `NormalizeTags(raw []string) []string` — Converts LLM-extracted tags to canonical space-separated form: folds accented characters to ASCII base letters (é→e, ü→u, ñ→n) via the shared `normalizeCore` pipeline, then deduplicates and rejects empty strings.
-- `FilterTags(tags, people, knownPeopleNormalized, title, docTypeNames) []string` — Post-normalization deterministic tag cleaner. Drops tags with more than 3 tokens, tags sharing any token with a person's `NormalizedName` (pre-populated by the enricher via `canonicalPersonName` + `NormalizeForDB`), multi-word tags (≥2 tokens) whose full token set is a strict subset of a known person's normalized name (from the full `people` table, passed via `knownPeopleNormalized`), tags matching a doc-type name token, and tags whose token set is a subset of the document title's token set. Caps survivors at `maxTags` (5) in emit order. Operates after `NormalizeTags` and before `Consolidate`.
+- `FilterTags(tags, people, knownPeopleNormalized, title, docTypeNames) []string` — Post-normalization deterministic tag cleaner. Drops tags with more than 3 tokens, tags sharing any token with a person's `NormalizedName` (pre-populated by the enricher via `canonicalPersonName` + `NormalizeForDB`), multi-word tags (≥2 tokens) whose full token set is a strict subset of a known person's normalized name (from the full `people` table, passed via `knownPeopleNormalized`), tags matching a doc-type name token, and tags whose token set is a subset of the document title's token set. Caps survivors at `maxTags` (5) in emit order. Operates after `NormalizeTags` and before rank-based consolidation.
 - `buildTokenUsageStats(prompt, completion, total int) *json.RawMessage` — Creates token usage stats JSON
 
 ### Adapter integration
@@ -111,17 +111,27 @@ Both `Analyze()` and `AnalyzeDocType()` call `checkContentTooLarge` with their c
 ```go
 type Matcher interface {
     Match(ctx, docId, input string) ([]string, error)
+    Rank(ctx, docId string, queries []string) ([]RankResult, error)
     Close()
     Name() string
 }
 
 type Embedder interface {
     Encode(ctx, docId *string, texts []string) ([][]float32, error)
-    Consolidate(ctx, docId string, queries []string) ([]string, error)
     AddToStore(ctx context.Context, names []string) error
     RemoveFromStore(ctx context.Context, names []string) error
     Close()
     Name() string
+}
+
+type Candidate struct {
+    Tag        string  `json:"tag"`
+    Similarity float64 `json:"similarity"`
+}
+
+type RankResult struct {
+    KeptName   string      `json:"kept_name"`
+    Candidates []Candidate `json:"candidates"`
 }
 
 type EmbeddingStore interface {
@@ -131,7 +141,15 @@ type EmbeddingStore interface {
 }
 ```
 
-The `Matcher` interface is used by the Runner for document-to-tag matching. The `Embedder` interface is used by TagService for encoding and post-LLM consolidation; `AddToStore`/`RemoveFromStore` delegate store management to the adapter (encoding + adding to the embedding store, or removing from it). The `EmbeddingStore` interface provides read/write access to the shared tag embedding cache.
+The `Matcher` interface is used by the Runner for document-to-tag matching
+(`Match`) and post-LLM tag ranking (`Rank`). The `Embedder` interface is used
+by TagService for encoding and store management; `AddToStore`/`RemoveFromStore`
+delegate store management to the adapter (encoding + adding to the embedding
+store, or removing from it). The `EmbeddingStore` interface provides read/write
+access to the shared tag embedding cache. `RankResult` carries the name to keep
+when no candidate is chosen (`KeptName`) plus up to two ranked candidates with
+scores; the replacement decision lives in the enricher's
+`applyConsolidationPolicy`.
 
 The composition root builds a single `*Hugot` (for the `kushim` CLI) or uses a `*tagmatch.MatcherClient` (for the `edub` API server) — both satisfy the `Matcher` and `Embedder` interfaces. The `MatcherClient` forwards all calls over a Unix socket to a standalone `kushim hugot` process.
 
@@ -150,13 +168,13 @@ The composition root builds a single `*Hugot` (for the `kushim` CLI) or uses a `
 - **Fields**: `store EmbeddingStore` — shared reference to the tag embedding cache
 - **Methods**:
   - `Match(ctx, docId, input)` — Reads all entries from the store, encodes the input, ranks by cosine similarity, returns top-N matches
-  - `Consolidate(ctx, docId, queries []string)` — Reads all entries from the store internally, normalizes query tags via `normalizeForEmbedding`, encodes them, re-matches against canonical tag embeddings
+  - `Rank(ctx, docId, queries []string)` — Reads all entries from the store internally, normalizes query tags via `utils.NormalizeTagEmbedding`, encodes them, ranks against canonical tag embeddings, and returns up to two candidates per query with scores plus the kept name
   - `Encode(ctx, *docId, texts)` — Batch embedding with chunked encoding for long inputs. Does NOT normalize input — shared with document text matching where punctuation is meaningful.
-  - `AddToStore(ctx, names)` — Normalizes names via `normalizeForEmbedding`, encodes them in batches of 32 (`embedBatchSize`), and adds them to the store
+  - `AddToStore(ctx, names)` — Normalizes names via `utils.NormalizeTagEmbedding`, encodes them in batches of 32 (`embedBatchSize`), and adds them to the store
   - `RemoveFromStore(ctx, names)` — Removes names from the store (moved from TagService)
   - `SetStore(s EmbeddingStore)` — Injects the shared store reference after construction
   - `Close()` — Idempotent (nil-safe, sets session to nil after destroy)
-- **Nil-receiver guards**: `Match`, `Consolidate`, `Encode` all return an error if `h == nil`, preventing typed-nil interface panics
+- **Nil-receiver guards**: `Match`, `Rank`, `Encode` all return an error if `h == nil`, preventing typed-nil interface panics
 - **Helpers**: `meanPool`, `rankMatches`, `cosineSimilarity`, `tokenize`, `encodeChunked`, `readMaxPositionEmbeddings`, `downloadLib`, `getBackendSession`
 
 ---

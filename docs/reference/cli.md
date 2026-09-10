@@ -66,7 +66,8 @@
 | -------------------------------- | ------ | -------------------------------------------------------------------------- |
 | `POST /rpc/v1/encode`            | POST   | Accepts `{"texts": [...]}`, returns `{"embeddings": [[...], ...]}`         |
 | `POST /rpc/v1/match`             | POST   | Accepts `{"doc_id", "input"}`, returns `{"matches": []}` |
-| `POST /rpc/v1/consolidate`       | POST   | Accepts `{"doc_id", "queries"}`, returns `{"results": []}`                 |
+| `POST /rpc/v1/rank`              | POST   | Accepts `{"doc_id", "queries"}`, returns `{"results": [{"kept_name", "candidates": [{"tag", "similarity"}]}]}` |
+| `POST /rpc/v1/consolidate`       | POST   | Legacy endpoint (pre-upgrade clients): accepts `{"doc_id", "queries"}`, returns `{"results": []}` |
 | `POST /rpc/v1/add-to-store`      | POST   | Accepts `{"names": [...]}`, encodes and adds to embedding store            |
 | `POST /rpc/v1/remove-from-store` | POST   | Accepts `{"names": [...]}`, removes from embedding store                   |
 | `GET /health`                    | GET    | Returns `{"ok": true}`                                                     |

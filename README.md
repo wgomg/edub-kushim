@@ -153,7 +153,7 @@ flowchart TB
     API --> DB
     DB -->|"NOTIFY"| Q
     Q -->|"fork"| Worker
-    EP -.->|"encode/match/consolidate"| H
+    EP -.->|"encode/match/rank/consolidate"| H
 ```
 
 Documents are searchable immediately via PostgreSQL full-text search (tsvector) or structured search; enrichment (classification, tagging, people extraction) happens asynchronously.
@@ -209,7 +209,7 @@ New to the codebase? The guides in [`docs/developer-guide/`](docs/developer-guid
 - **Structured search** — metadata filters (tags, people, document type, language, date range, file size) combined with full-text queries
 - **Async enrichment** — task queue with worker pools, batch tracking, progress polling; TextRank reduction before LLM
 - **Fallback LLM provider** — optional second provider/model tried automatically when the primary fails with a provider error (network, credits, rate limit, malformed response); disabled by default
-- **Post-LLM consolidation** — normalized tags re-matched against canonical embeddings to fix casing and synonym mismatches
+- **Post-LLM consolidation** — normalized tags ranked against canonical embeddings; the enricher replaces a tag with its top candidate when similarity meets the consolidation threshold
 - **User accounts & auth** — bcrypt passwords, JWT sessions, API keys, role-based access (admin/editor/viewer)
 - **Backup & restore** — App-level PostgreSQL SQL dump (schema + data in a transaction), timestamped `tar.gz` archives with config + storage; per-mode backups (`full`/`database`/`documents`) with independent schedules, retention, and mode-aware restore
 - **Document mirror** — faithful rsync copy of the storage tree (`rsync -a --delete`) to a local path or remote target (`[user@]host:path`), scheduled via `mirror.{enabled,path,interval,time}` or run manually with `kushim mirror`; shares the backup lock with a 5-minute heartbeat so long mirrors never trip the staleness window, and writes a `.edub-mirror.json` diagnostics file into the destination

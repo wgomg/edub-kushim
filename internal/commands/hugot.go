@@ -93,6 +93,7 @@ func serveHugotHandler(c *Container, args []string) error {
 	mux.HandleFunc("/rpc/v1/encode", handleEncode(hugot, c.logger, bodyCap))
 	mux.HandleFunc("/rpc/v1/match", handleMatch(hugot, c.logger, bodyCap))
 	mux.HandleFunc("/rpc/v1/consolidate", handleConsolidate(hugot, c.logger, bodyCap))
+	mux.HandleFunc("/rpc/v1/rank", handleRank(hugot, c.logger, bodyCap))
 	mux.HandleFunc("/rpc/v1/add-to-store", handleAddToStore(hugot, c.logger, bodyCap))
 	mux.HandleFunc("/rpc/v1/remove-from-store", handleRemoveFromStore(hugot, c.logger, bodyCap))
 	mux.HandleFunc("/health", handleHealth)
@@ -237,6 +238,31 @@ func handleConsolidate(h *tagmatcher.Hugot, log *utils.Logger, maxBodyBytes int)
 			return
 		}
 		results, err := h.Consolidate(r.Context(), req.DocID, req.Queries)
+		if err != nil {
+			respondError(w, log, err, http.StatusInternalServerError, "internal error")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"results": results})
+	}
+}
+
+func handleRank(h *tagmatcher.Hugot, log *utils.Logger, maxBodyBytes int) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, int64(maxBodyBytes))
+		var req struct {
+			DocID   string   `json:"doc_id"`
+			Queries []string `json:"queries"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			respondError(w, log, err, http.StatusBadRequest, "bad request")
+			return
+		}
+		results, err := h.Rank(r.Context(), req.DocID, req.Queries)
 		if err != nil {
 			respondError(w, log, err, http.StatusInternalServerError, "internal error")
 			return

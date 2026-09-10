@@ -3,8 +3,6 @@ package cache
 import (
 	"context"
 	"fmt"
-	"regexp"
-	"strings"
 
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/tagmatcher"
@@ -32,13 +30,8 @@ func BuildTagCache(ctx context.Context, queries *database.Queries, logger *utils
 		return nil
 	}
 
-	spaceRE := regexp.MustCompile(` +`)
-	// normalizeForEmbedding counterpart exists in internal/tools/adapters/tagmatcher/hugot.go — keep in sync.
 	for i, name := range tagNames {
-		name = strings.ReplaceAll(name, "-", " ")
-		name = strings.ReplaceAll(name, "_", " ")
-		name = spaceRE.ReplaceAllString(name, " ")
-		tagNames[i] = strings.TrimSpace(name)
+		tagNames[i] = utils.NormalizeTagEmbedding(name)
 	}
 
 	embeddings := make(map[string][]float32, len(tagNames))

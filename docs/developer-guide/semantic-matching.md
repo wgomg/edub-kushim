@@ -158,23 +158,21 @@ store, it can never be suggested.
 from the `tag` table:
 
 1. Loads all tag names (`ListAllTagsNames`).
-2. Normalizes each name for embedding:
+2. Normalizes each name for embedding via the shared helper
+   `utils.NormalizeTagEmbedding` (`internal/utils/tagname.go`):
 
 ```go
-spaceRE := regexp.MustCompile(` +`)
-// normalizeForEmbedding counterpart exists in internal/tools/adapters/tagmatcher/hugot.go — keep in sync.
-for i, name := range tagNames {
-	name = strings.ReplaceAll(name, "-", " ")
-	name = strings.ReplaceAll(name, "_", " ")
-	name = spaceRE.ReplaceAllString(name, " ")
-	tagNames[i] = strings.TrimSpace(name)
+func NormalizeTagEmbedding(s string) string {
+	s = strings.ReplaceAll(s, "-", " ")
+	s = strings.ReplaceAll(s, "_", " ")
+	s = tagSpaceRE.ReplaceAllString(s, " ")
+	return strings.TrimSpace(s)
 }
 ```
 
-   Note the explicit **"keep in sync"** contract: the same normalization must
-   be applied at add/remove/consolidate time in `hugot.go:116-121`
-   (`normalizeForEmbedding`). If the two drift, a tag stored as
-   `machine-learning` won't match a query normalized to `machine learning`.
+   The same helper is applied at add/remove/rank time in `hugot.go`, so the
+   daemon and the bootstrap can never drift: a tag stored as
+   `machine-learning` always matches a query normalized to `machine learning`.
 3. Encodes in batches of `batchSize = 32`, then **swaps the whole map under
    one lock** (`bootstrap.go:59-61`) — an atomic publish; readers never see a
    half-built store.
@@ -295,33 +293,45 @@ The result is capped at `TopN` (15). The top scores are logged for debugging
 
 ## 7. Consolidation: tag-to-tag
 
-`Consolidate` (`hugot.go:214-249`) maps LLM-produced tag names onto canonical
-existing tags — the "the LLM said 'machine learning' but the store has
-'machine-learning'" fix. Differences from `Match`:
+`Rank` (`hugot.go:240-278`) ranks LLM-produced tag names against canonical
+existing tags — the "the LLM said 'machine learning' but the store
+has 'machine-learning'" fix. Differences from `Match`:
 
 - It encodes the query tag names (not document text) — each is short, so it
   rides the batched path.
 - It uses a **separate, higher threshold** (`consolidationSim`), because
   tag-name-to-tag-name similarity is inherently sparser than
-  document-to-tag (see §10):
+  document-to-tag (see §10).
+- It returns **candidates with scores**; the replacement decision is the
+  enricher's:
 
 ```go
 for i, qEmb := range out.Embeddings {
+	results[i].KeptName = normalized[i]
 	matches := h.rankMatches(qEmb, entries, h.consolidationSim)
-	if len(matches) > 0 {
-		result[i] = matches[0].tag     // replace with the canonical tag
-	} else {
-		result[i] = queries[i]         // keep the LLM's name
+	if len(matches) > rankCandidates {
+		matches = matches[:rankCandidates]
+	}
+	for _, m := range matches {
+		results[i].Candidates = append(results[i].Candidates,
+			Candidate{Tag: m.tag, Similarity: m.similarity})
 	}
 }
 ```
 
+- `KeptName` is the **normalized** query after a completed ranking, but the
+  **original** query when ranking short-circuits (empty store,
+  `consolidationSim == 0.0`, or an embedding-count mismatch).
 - If `consolidationSim == 0.0` (disabled) or the store is empty, queries pass
-  through unchanged (`hugot.go:219-221`).
+  through unchanged with no candidates.
 
-`service.Tag.Consolidate` (`internal/service/tag.go:271-273`) is a thin
-delegation to the embedder, called by the enricher after `FilterTags`
-(`enricher.go:230-237`).
+`Runner.RankTags` (`internal/tools/runner.go`) wraps the call with the
+configured timeout, and the enricher applies the argmax policy locally
+via `applyConsolidationPolicy` (`internal/enrichment/enricher.go`): each tag is
+replaced by its top candidate when the candidate's similarity meets
+`consolidation_similarity`; otherwise the `KeptName` is kept. The threshold
+re-check is redundant with the daemon-side filter but is the shape later
+policy bands attach to.
 
 ---
 
@@ -332,13 +342,13 @@ The interfaces (`internal/tools/adapters/tagmatcher/adapter.go`):
 ```go
 type Matcher interface {
 	Match(ctx context.Context, docId, input string) ([]string, error)
+	Rank(ctx context.Context, docId string, queries []string) ([]RankResult, error)
 	Close()
 	Name() string
 }
 
 type Embedder interface {
 	Encode(ctx context.Context, docId *string, texts []string) ([][]float32, error)
-	Consolidate(ctx context.Context, docId string, queries []string) ([]string, error)
 	AddToStore(ctx context.Context, names []string) error
 	RemoveFromStore(ctx context.Context, names []string) error
 	Close()
@@ -349,8 +359,11 @@ type Embedder interface {
 - `*Hugot` implements both (in-process, cgo build).
 - `*tagmatch.MatcherClient` (`internal/tagmatch/client.go:44`) implements both
   over the Unix socket — used by `edub`, which cannot load the model. The RPC
-  surface is `Match`, `Consolidate`, `AddToStore`, `RemoveFromStore`,
-  `Health` (`internal/commands/hugot.go:95-99`).
+  surface is `Match`, `Rank`, `AddToStore`, `RemoveFromStore`, `Health`
+  (`internal/commands/hugot.go:95-99`). `Rank` prefers `/rpc/v1/rank` and
+  falls back to the legacy `/rpc/v1/consolidate` on 404 (old daemon), wrapping
+  each returned name as a `RankResult{KeptName: name}` with no candidates so
+  the enricher keeps it verbatim.
 - The client wraps every call in `ErrMatcherUnavailable` when the socket
   daemon is down — which is what turns tag CRUD into 503.
 
@@ -383,7 +396,7 @@ model once and serves RPC over a Unix socket (`<config-dir>/kushim-hugot.sock`).
 The HTTP endpoints are body-size-capped RPC handlers (`bodyCap`). The client
 imposes no client-level timeout of its own — the caller's context deadline
 (`enricher.tagmatcher.timeout`, applied by `Runner.MatchTags` and
-`Runner.ConsolidateTags`) is the sole bound, since encoding large documents
+`Runner.RankTags`) is the sole bound, since encoding large documents
 can take a while.
 
 ---
@@ -456,16 +469,17 @@ catalog/derivation, add it to both switch statements.
    - `runner.MatchTags(ctx, docId, reducedText)` → `tagSuggestions`; on error
      or zero matches, falls back to the full tag-name list
      (`enricher.go:106-118`).
-   - `service.Tag.Consolidate` after the LLM pass (`enricher.go:230-237`).
+   - `runner.RankTags(ctx, docId, analysis.Tags)` after the LLM pass
+     (`enricher.go:235-243`); `applyConsolidationPolicy` applies the
+     replacement decision.
 4. **API tag creation** triggers a store refresh through the same service.
 
 ---
 
 ## 12. Gotchas
 
-- **`normalizeForEmbedding` has two copies** — `hugot.go:116-121` and
-  `bootstrap.go:32-38` — with a "keep in sync" comment on each. Change one,
-  change both.
+- **`NormalizeTagEmbedding` is centralized** — `internal/utils/tagname.go` is
+  the single normalization used by `hugot.go` and `bootstrap.go`.
 - **The store is the tag universe.** Tags not in `entries` can never be
   suggested, and `Match` returns nothing when the store is empty — even if
   the model works.

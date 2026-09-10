@@ -465,9 +465,10 @@ for i := range 2 {
     drops tags that are >3 words, overlap with LLM people names, are
     multi-token subsets of known normalized names, overlap doc-type names, or
     are contained in the title; caps at 5.
-11. **Consolidate** (`enricher.go:236-244`): `service.Tag.Consolidate` maps
-    LLM tags onto canonical existing tags via the semantic matcher
-    (`semantic-matching.md` §7).
+11. **Consolidate** (`enricher.go:236-244`): `Runner.RankTags` ranks LLM tags
+    against canonical existing tags, then `applyConsolidationPolicy` replaces
+    each tag with its top candidate when the similarity meets
+    `consolidation_similarity`.
 12. **Persist metadata** (`enricher.go:254-273`): title truncated to 127
     (`utils.Truncate`), doc type validated against the DB list (fallback
     `"undetermined"`), `UpdateDocumentMetadata`.

@@ -40,7 +40,8 @@ A standalone HTTP server over a Unix domain socket (`kushim-hugot.sock` in the c
 | -------------------------------- | ------ | ---------------------------- |
 | `POST /rpc/v1/encode`            | POST   | Encode text to embeddings    |
 | `POST /rpc/v1/match`             | POST   | Match text against tags      |
-| `POST /rpc/v1/consolidate`       | POST   | Consolidate tag names        |
+| `POST /rpc/v1/rank`              | POST   | Rank tag names against the store, return candidates with scores |
+| `POST /rpc/v1/consolidate`       | POST   | Legacy consolidation endpoint (pre-upgrade clients only) |
 | `POST /rpc/v1/add-to-store`      | POST   | Add names to embedding store |
 | `POST /rpc/v1/remove-from-store` | POST   | Remove names from store      |
 | `GET /health`                    | GET    | Health check                 |
@@ -94,7 +95,7 @@ flowchart TB
     end
 
     subgraph Hugot["kushim hugot\n(matcher RPC server)"]
-        H["Unix socket\nencode / match / consolidate"]
+        H["Unix socket\nencode / match / rank / consolidate"]
     end
 
     HTTP[HTTP Request] --> API
@@ -244,9 +245,12 @@ The enrichment pipeline:
    form via `NormalizeTags`: lowercased, hyphens/underscores→spaces, non-alpha stripped,
    whitespace collapsed, deduplicated. This ensures the LLM's hyphenation instructions
    or symbol handling don't produce OOD tokens in the embedding model.
-5. **Post-LLM Tag Consolidation** — Normalized tags are re-matched against canonical
-   tag embeddings via `Consolidate` (delegated to the matcher interface), fixing casing
-   and synonym mismatches that survive the normalization step.
+5. **Post-LLM Tag Consolidation** — Normalized tags are ranked against canonical
+   tag embeddings via `Rank` (the matcher returns candidates with scores; the
+   replacement decision is the enricher's). `applyConsolidationPolicy` replaces
+   each tag with its top candidate when the candidate's similarity meets
+   `consolidation_similarity`, fixing casing and synonym mismatches that survive
+   the normalization step.
 5. **New Tag Store Update** — any new tags created during enrichment are batch-created
    via `services.Tag.Create(ctx, analysis.Tags)`. The service delegates store management
    to the matcher via `AddToStore`, which encodes new names and adds them to the shared

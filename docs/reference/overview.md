@@ -45,7 +45,7 @@ internal/
 │   ├── container.go       # Dependency injection container (DB, pools, cache, dispatcher); includes config pool
 │   ├── flags.go           # CLI flag parser (shared by commands)
 │   ├── search.go          # Search command (CLI)
-│   ├── hugot.go           # Matcher RPC server over Unix socket (encode, match, consolidate, store ops)
+│   ├── hugot.go           # Matcher RPC server over Unix socket (encode, match, rank, consolidate, store ops)
 │   ├── notify.go          # Postgres LISTEN/NOTIFY goroutine for the queue daemon
 │   ├── storage.go         # Storage commands: `kushim storage orphans` (list, scan, delete, restore, move-to-inbox)
 │   ├── setup.go           # Setup command — launches web wizard by default, --cli for terminal mode

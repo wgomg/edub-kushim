@@ -441,7 +441,7 @@ func (r *Runner) MatchTags(ctx context.Context, docId, input string) (*TagMatchR
 	return &TagMatchResult{Tags: tags}, nil
 }
 
-func (r *Runner) ConsolidateTags(ctx context.Context, docId string, queries []string) ([]string, error) {
+func (r *Runner) RankTags(ctx context.Context, docId string, queries []string) ([]tagmatcher.RankResult, error) {
 	if r.tagMatcher == nil {
 		return nil, fmt.Errorf("tag matcher not configured")
 	}
@@ -451,13 +451,13 @@ func (r *Runner) ConsolidateTags(ctx context.Context, docId string, queries []st
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	tags, err := runWithTimeout(ctx, func() ([]string, error) {
-		return r.tagMatcher.Consolidate(ctx, docId, queries)
+	results, err := runWithTimeout(ctx, func() ([]tagmatcher.RankResult, error) {
+		return r.tagMatcher.Rank(ctx, docId, queries)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("tag consolidation: %w", err)
 	}
-	return tags, nil
+	return results, nil
 }
 
 func isProviderError(err error) bool {

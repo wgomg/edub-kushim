@@ -4,14 +4,21 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"time"
 	"unicode/utf8"
+
+	"github.com/wgomg/edub-kushim/internal/tools/adapters/tagmatcher"
 )
 
 var ErrMatcherUnavailable = fmt.Errorf("matcher unavailable")
+
+type StatusError struct{ Code int }
+
+func (e *StatusError) Error() string { return fmt.Sprintf("status %d", e.Code) }
 
 // - bytesPerWord is a generous per-word byte estimate (covers CJK ~3 bytes/char plus
 // low-whitespace degenerate text).
@@ -84,7 +91,7 @@ func (c *MatcherClient) do(ctx context.Context, method, path string, req, resp a
 	defer httpResp.Body.Close()
 
 	if httpResp.StatusCode != http.StatusOK {
-		return fmt.Errorf("%w: status %d", ErrMatcherUnavailable, httpResp.StatusCode)
+		return fmt.Errorf("%w: %w", ErrMatcherUnavailable, &StatusError{Code: httpResp.StatusCode})
 	}
 
 	if resp != nil {
@@ -153,6 +160,37 @@ func (c *MatcherClient) Encode(ctx context.Context, _ *string, texts []string) (
 		return nil, err
 	}
 	return resp.Embeddings, nil
+}
+
+func (c *MatcherClient) Rank(ctx context.Context, docId string, queries []string) ([]tagmatcher.RankResult, error) {
+	var resp struct {
+		Results []tagmatcher.RankResult `json:"results"`
+	}
+	req := struct {
+		DocID   string   `json:"doc_id"`
+		Queries []string `json:"queries"`
+	}{DocID: docId, Queries: queries}
+	err := c.do(ctx, "POST", "/rpc/v1/rank", req, &resp)
+	var se *StatusError
+	if errors.As(err, &se) && se.Code == http.StatusNotFound {
+		return c.rankViaConsolidate(ctx, docId, queries)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return resp.Results, nil
+}
+
+func (c *MatcherClient) rankViaConsolidate(ctx context.Context, docId string, queries []string) ([]tagmatcher.RankResult, error) {
+	names, err := c.Consolidate(ctx, docId, queries)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]tagmatcher.RankResult, len(names))
+	for i, name := range names {
+		results[i] = tagmatcher.RankResult{KeptName: name}
+	}
+	return results, nil
 }
 
 func (c *MatcherClient) Consolidate(ctx context.Context, docId string, queries []string) ([]string, error) {

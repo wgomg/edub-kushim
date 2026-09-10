@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"testing"
 	"time"
 
@@ -696,18 +695,22 @@ func TestAnalyzeContent_FallbackChainPropagatesLastFailure(t *testing.T) {
 
 // mockTagMatcher satisfies tagmatcher.Matcher for testing.
 type mockTagMatcher struct {
-	consolidateFn func(ctx context.Context, docId string, queries []string) ([]string, error)
+	rankFn func(ctx context.Context, docId string, queries []string) ([]tagmatcher.RankResult, error)
 }
 
 func (m *mockTagMatcher) Match(ctx context.Context, docId, input string) ([]string, error) {
 	return nil, nil
 }
 
-func (m *mockTagMatcher) Consolidate(ctx context.Context, docId string, queries []string) ([]string, error) {
-	if m.consolidateFn != nil {
-		return m.consolidateFn(ctx, docId, queries)
+func (m *mockTagMatcher) Rank(ctx context.Context, docId string, queries []string) ([]tagmatcher.RankResult, error) {
+	if m.rankFn != nil {
+		return m.rankFn(ctx, docId, queries)
 	}
-	return queries, nil
+	results := make([]tagmatcher.RankResult, len(queries))
+	for i, q := range queries {
+		results[i] = tagmatcher.RankResult{KeptName: q}
+	}
+	return results, nil
 }
 
 func (m *mockTagMatcher) Close()       {}
@@ -716,7 +719,7 @@ func (m *mockTagMatcher) Name() string { return "mock" }
 // Compile-time assertion that mockTagMatcher satisfies the interface.
 var _ tagmatcher.Matcher = (*mockTagMatcher)(nil)
 
-func TestConsolidateTags_TimeoutAppliesDeadline(t *testing.T) {
+func TestRankTags_TimeoutAppliesDeadline(t *testing.T) {
 	tests := []struct {
 		name         string
 		timeout      int
@@ -730,9 +733,13 @@ func TestConsolidateTags_TimeoutAppliesDeadline(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var receivedCtx context.Context
 			mock := &mockTagMatcher{
-				consolidateFn: func(ctx context.Context, docId string, queries []string) ([]string, error) {
+				rankFn: func(ctx context.Context, docId string, queries []string) ([]tagmatcher.RankResult, error) {
 					receivedCtx = ctx
-					return queries, nil
+					results := make([]tagmatcher.RankResult, len(queries))
+					for i, q := range queries {
+						results[i] = tagmatcher.RankResult{KeptName: q}
+					}
+					return results, nil
 				},
 			}
 			r := &Runner{
@@ -746,12 +753,14 @@ func TestConsolidateTags_TimeoutAppliesDeadline(t *testing.T) {
 			}
 
 			queries := []string{"alpha", "beta"}
-			tags, err := r.ConsolidateTags(context.Background(), "doc-1", queries)
+			results, err := r.RankTags(context.Background(), "doc-1", queries)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if !slices.Equal(tags, queries) {
-				t.Errorf("ConsolidateTags returned %v, want %v", tags, queries)
+			for i, q := range queries {
+				if results[i].KeptName != q {
+					t.Errorf("RankTags returned %v, want kept names %v", results, queries)
+				}
 			}
 			if _, ok := receivedCtx.Deadline(); ok != tt.wantDeadline {
 				t.Errorf("context deadline presence = %v, want %v", ok, tt.wantDeadline)
@@ -760,9 +769,9 @@ func TestConsolidateTags_TimeoutAppliesDeadline(t *testing.T) {
 	}
 }
 
-func TestConsolidateTags_HungMatcher_ReturnsDeadlineExceeded(t *testing.T) {
+func TestRankTags_HungMatcher_ReturnsDeadlineExceeded(t *testing.T) {
 	mock := &mockTagMatcher{
-		consolidateFn: func(ctx context.Context, docId string, queries []string) ([]string, error) {
+		rankFn: func(ctx context.Context, docId string, queries []string) ([]tagmatcher.RankResult, error) {
 			<-ctx.Done()
 			return nil, ctx.Err()
 		},
@@ -778,7 +787,7 @@ func TestConsolidateTags_HungMatcher_ReturnsDeadlineExceeded(t *testing.T) {
 	}
 
 	start := time.Now()
-	_, err := r.ConsolidateTags(context.Background(), "doc-1", []string{"alpha"})
+	_, err := r.RankTags(context.Background(), "doc-1", []string{"alpha"})
 	if err == nil {
 		t.Fatal("expected error when matcher never returns")
 	}
@@ -786,17 +795,17 @@ func TestConsolidateTags_HungMatcher_ReturnsDeadlineExceeded(t *testing.T) {
 		t.Errorf("expected context.DeadlineExceeded, got %v", err)
 	}
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
-		t.Errorf("ConsolidateTags took %v, want bounded by the 1s timeout", elapsed)
+		t.Errorf("RankTags took %v, want bounded by the 1s timeout", elapsed)
 	}
 }
 
-func TestConsolidateTags_NilMatcher(t *testing.T) {
+func TestRankTags_NilMatcher(t *testing.T) {
 	r := &Runner{
 		logger: utils.NewDiscardLogger(),
 		config: &config.Config{},
 	}
 
-	_, err := r.ConsolidateTags(context.Background(), "doc-1", nil)
+	_, err := r.RankTags(context.Background(), "doc-1", nil)
 	if err == nil {
 		t.Fatal("expected error when matcher is nil")
 	}

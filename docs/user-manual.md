@@ -542,7 +542,8 @@ endpoints:
 | ------------------------------- | ------ | -------------------------------------------- |
 | `POST /rpc/v1/encode`           | POST   | Encode text into embedding vectors            |
 | `POST /rpc/v1/match`            | POST   | Match document content against the tag embedding store |
-| `POST /rpc/v1/consolidate`      | POST   | Consolidate LLM output labels to known tags   |
+| `POST /rpc/v1/rank`             | POST   | Rank tag names against the store; returns candidates with similarity scores |
+| `POST /rpc/v1/consolidate`      | POST   | Legacy consolidation endpoint (pre-upgrade clients only) |
 | `POST /rpc/v1/add-to-store`     | POST   | Add new tag names to the embedding store      |
 | `POST /rpc/v1/remove-from-store`| POST   | Remove tag names from the embedding store     |
 | `GET /health`                   | GET    | Health check                                 |

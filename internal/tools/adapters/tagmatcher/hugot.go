@@ -12,7 +12,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 
@@ -104,20 +103,10 @@ func NewHugot(logger *utils.Logger, tmCfg config.TagMatcherConfig, pipeName stri
 
 const embedBatchSize = 32
 
+const rankCandidates = 2
+
 func (h *Hugot) SetStore(s EmbeddingStore) {
 	h.store = s
-}
-
-var embeddingSpaceRE = regexp.MustCompile(` +`)
-
-// normalizeForEmbedding normalizes tag names before embedding.
-// Applied in AddToStore, RemoveFromStore, and Consolidate, not in Encode (which also handles document text).
-// Counterpart in internal/cache/bootstrap.go duplicates this logic — keep in sync.
-func normalizeForEmbedding(s string) string {
-	s = strings.ReplaceAll(s, "-", " ")
-	s = strings.ReplaceAll(s, "_", " ")
-	s = embeddingSpaceRE.ReplaceAllString(s, " ")
-	return strings.TrimSpace(s)
 }
 
 func (h *Hugot) AddToStore(ctx context.Context, names []string) error {
@@ -126,7 +115,7 @@ func (h *Hugot) AddToStore(ctx context.Context, names []string) error {
 	}
 	normalized := make([]string, len(names))
 	for i, n := range names {
-		normalized[i] = normalizeForEmbedding(n)
+		normalized[i] = utils.NormalizeTagEmbedding(n)
 	}
 	names = normalized
 	for i := 0; i < len(names); i += embedBatchSize {
@@ -154,7 +143,7 @@ func (h *Hugot) RemoveFromStore(ctx context.Context, names []string) error {
 	}
 	normalized := make([]string, len(names))
 	for i, n := range names {
-		normalized[i] = normalizeForEmbedding(n)
+		normalized[i] = utils.NormalizeTagEmbedding(n)
 	}
 	names = normalized
 	for _, name := range names {
@@ -222,7 +211,7 @@ func (h *Hugot) Consolidate(ctx context.Context, docId string, queries []string)
 
 	normalized := make([]string, len(queries))
 	for i, q := range queries {
-		normalized[i] = normalizeForEmbedding(q)
+		normalized[i] = utils.NormalizeTagEmbedding(q)
 	}
 	queries = normalized
 
@@ -246,6 +235,46 @@ func (h *Hugot) Consolidate(ctx context.Context, docId string, queries []string)
 	}
 
 	return result, nil
+}
+
+func (h *Hugot) Rank(ctx context.Context, docId string, queries []string) ([]RankResult, error) {
+	if h == nil {
+		return nil, fmt.Errorf("tag matcher not initialized")
+	}
+	results := make([]RankResult, len(queries))
+	for i, q := range queries {
+		results[i] = RankResult{KeptName: q}
+	}
+	entries := h.store.Entries()
+	if len(queries) == 0 || len(entries) == 0 || h.consolidationSim == 0.0 {
+		return results, nil
+	}
+
+	normalized := make([]string, len(queries))
+	for i, q := range queries {
+		normalized[i] = utils.NormalizeTagEmbedding(q)
+		results[i].KeptName = normalized[i]
+	}
+
+	out, err := h.pipeline.RunPipeline(ctx, normalized)
+	if err != nil {
+		return nil, fmt.Errorf("encode queries: %w", err)
+	}
+	if len(out.Embeddings) != len(queries) {
+		return results, nil
+	}
+
+	for i, qEmb := range out.Embeddings {
+		matches := h.rankMatches(qEmb, entries, h.consolidationSim)
+		if len(matches) > rankCandidates {
+			matches = matches[:rankCandidates]
+		}
+		for _, m := range matches {
+			results[i].Candidates = append(results[i].Candidates,
+				Candidate{Tag: m.tag, Similarity: m.similarity})
+		}
+	}
+	return results, nil
 }
 
 func (h *Hugot) Name() string {

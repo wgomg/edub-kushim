@@ -234,10 +234,11 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 
 	consolidateStart := time.Now()
 	report("consolidate", "", 0)
-	consolidated, err := e.runner.ConsolidateTags(ctx, document.DocumentID, analysis.Tags)
+	ranked, err := e.runner.RankTags(ctx, document.DocumentID, analysis.Tags)
 	if err != nil {
 		e.logger.Error(&logId, "post-LLM consolidation failed: %v", err)
 	} else {
+		consolidated := e.applyConsolidationPolicy(analysis.Tags, ranked, &logId)
 		analysis.Tags = consolidated
 		e.logger.Debug(&logId, "post-LLM consolidation: %d tags (%s)", len(consolidated), time.Since(consolidateStart))
 	}
@@ -400,6 +401,25 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 		return &emptyStats, nil
 	}
 	return analysis.Stats, nil
+}
+
+func (e *Enricher) applyConsolidationPolicy(queries []string, ranked []tagmatcher.RankResult, logId *string) []string {
+	threshold := e.config.Enricher.TagMatcher.ConsolidationSimilarity
+	out := make([]string, len(queries))
+	for i := range queries {
+		if i >= len(ranked) {
+			out[i] = queries[i]
+			continue
+		}
+		cands := ranked[i].Candidates
+		if len(cands) > 0 && cands[0].Similarity >= threshold {
+			e.logger.Info(logId, "consolidate %q → %s (%.3f)", queries[i], cands[0].Tag, cands[0].Similarity)
+			out[i] = cands[0].Tag
+		} else {
+			out[i] = ranked[i].KeptName
+		}
+	}
+	return out
 }
 
 func targetWordCount(contentWC, targetWC int) int {
