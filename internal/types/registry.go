@@ -10,6 +10,7 @@ type BatchSource string
 type BatchStatus string
 type TaskType string
 type TaskStatus string
+type TagVerdict string
 
 var Batch = struct {
 	Source struct {
@@ -134,6 +135,30 @@ func ParseBatchSource(s string) (BatchSource, error) {
 	return v, nil
 }
 
+var TagVerdicts = struct {
+	Same    TagVerdict
+	Variant TagVerdict
+	Related TagVerdict
+}{
+	Same:    "same",
+	Variant: "variant",
+	Related: "related",
+}
+
+func ParseTagVerdict(s string) (TagVerdict, error) {
+	v := TagVerdict(s)
+	if !v.Valid() {
+		return "", fmt.Errorf("invalid tag verdict %q", s)
+	}
+	return v, nil
+}
+
+func (v TagVerdict) Valid() bool {
+	return slices.Contains(allTagVerdicts, v)
+}
+
+func AllTagVerdicts() []TagVerdict { return slices.Clone(allTagVerdicts) }
+
 func ParseBatchStatus(s string) (BatchStatus, error) {
 	v := BatchStatus(s)
 	if !v.Valid() {
@@ -249,4 +274,10 @@ var allTaskStatuses = []TaskStatus{
 	Task.Status.Cancelled,
 	Task.Status.Discarded,
 	Task.Status.Waiting,
+}
+
+var allTagVerdicts = []TagVerdict{
+	TagVerdicts.Same,
+	TagVerdicts.Variant,
+	TagVerdicts.Related,
 }

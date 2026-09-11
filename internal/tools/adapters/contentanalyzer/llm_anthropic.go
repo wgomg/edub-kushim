@@ -159,6 +159,67 @@ func (l *LlmAnthropic) applyTemperature(reqBody *anthropicRequest, temp float64)
 	}
 }
 
+func (l *LlmAnthropic) doRequest(ctx context.Context, reqBody anthropicRequest, errLabel string) (*anthropicResponse, string, error) {
+	jsonBody, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, "", fmt.Errorf("marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", l.baseURL()+"/messages", bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return nil, "", fmt.Errorf("create request: %w", err)
+	}
+
+	if l.llmCfg.Token != "" {
+		httpReq.Header.Set("x-api-key", l.llmCfg.Token)
+	}
+	httpReq.Header.Set("anthropic-version", "2023-06-01")
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "application/json")
+
+	resp, err := l.client.Do(httpReq)
+	defer sleepAfterRequest(ctx, l.llmCfg.RequestDelay)
+	if err != nil {
+		return nil, "", fmt.Errorf("send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		if tokErr := parseTokenLimitError(body); tokErr != nil {
+			return nil, "", tokErr
+		}
+		if credErr := parseInsufficientCreditsError(body, resp.StatusCode, "anthropic"); credErr != nil {
+			return nil, "", credErr
+		}
+		return nil, "", fmt.Errorf("%s: status %s: %s", errLabel, resp.Status, string(body))
+	}
+
+	var anthResp anthropicResponse
+	if err := json.Unmarshal(body, &anthResp); err != nil {
+		return nil, "", fmt.Errorf("decode response: %w", err)
+	}
+
+	if len(anthResp.Content) == 0 {
+		return nil, "", fmt.Errorf("empty response from LLM")
+	}
+
+	var responseText strings.Builder
+	for _, block := range anthResp.Content {
+		if block.Type == "text" && block.Text != "" {
+			responseText.WriteString(block.Text)
+		}
+	}
+
+	if responseText.Len() == 0 {
+		return nil, "", fmt.Errorf("no text content in response")
+	}
+
+	responseContent := strings.TrimSpace(responseText.String())
+	responseContent = utils.CleanCodeBlock(responseContent)
+	return &anthResp, responseContent, nil
+}
+
 func (l *LlmAnthropic) Analyze(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*AnalysisResult, error) {
 	prompt := BuildPrompt(text, docTypes, peopleTypes, tagSuggestions, l.promptTemplate)
 
@@ -179,63 +240,10 @@ func (l *LlmAnthropic) Analyze(ctx context.Context, text string, docTypes []data
 	l.applyReasoning(&reqBody, reqBody.MaxTokens)
 	l.applyTemperature(&reqBody, l.llmCfg.Temperature)
 
-	jsonBody, err := json.Marshal(reqBody)
+	chatResp, responseContent, err := l.doRequest(ctx, reqBody, "API error")
 	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
+		return nil, err
 	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", l.baseURL()+"/messages", bytes.NewBuffer(jsonBody))
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-
-	if l.llmCfg.Token != "" {
-		httpReq.Header.Set("x-api-key", l.llmCfg.Token)
-	}
-	httpReq.Header.Set("anthropic-version", "2023-06-01")
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "application/json")
-
-	resp, err := l.client.Do(httpReq)
-	defer sleepAfterRequest(ctx, l.llmCfg.RequestDelay)
-	if err != nil {
-		return nil, fmt.Errorf("send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		if tokErr := parseTokenLimitError(body); tokErr != nil {
-			return nil, tokErr
-		}
-		if credErr := parseInsufficientCreditsError(body, resp.StatusCode, "anthropic"); credErr != nil {
-			return nil, credErr
-		}
-		return nil, fmt.Errorf("API error: status %s: %s", resp.Status, string(body))
-	}
-
-	var anthResp anthropicResponse
-	if err := json.Unmarshal(body, &anthResp); err != nil {
-		return nil, fmt.Errorf("decode response: %w", err)
-	}
-
-	if len(anthResp.Content) == 0 {
-		return nil, fmt.Errorf("empty response from LLM")
-	}
-
-	var responseText strings.Builder
-	for _, block := range anthResp.Content {
-		if block.Type == "text" && block.Text != "" {
-			responseText.WriteString(block.Text)
-		}
-	}
-
-	if responseText.Len() == 0 {
-		return nil, fmt.Errorf("no text content in response")
-	}
-
-	responseContent := strings.TrimSpace(responseText.String())
-	responseContent = utils.CleanCodeBlock(responseContent)
 
 	var analysisResult AnalysisResult
 	if err := json.Unmarshal([]byte(responseContent), &analysisResult); err != nil {
@@ -243,9 +251,9 @@ func (l *LlmAnthropic) Analyze(ctx context.Context, text string, docTypes []data
 	}
 
 	analysisResult.Stats = buildTokenUsageStats(
-		anthResp.Usage.InputTokens,
-		anthResp.Usage.OutputTokens,
-		anthResp.Usage.InputTokens+anthResp.Usage.OutputTokens,
+		chatResp.Usage.InputTokens,
+		chatResp.Usage.OutputTokens,
+		chatResp.Usage.InputTokens+chatResp.Usage.OutputTokens,
 	)
 	analysisResult.Prompt = prompt
 
@@ -302,63 +310,10 @@ func (l *LlmAnthropic) AnalyzeDocType(ctx context.Context, prevResult *AnalysisR
 	l.applyReasoning(&reqBody, reqBody.MaxTokens)
 	l.applyTemperature(&reqBody, 0)
 
-	jsonBody, err := json.Marshal(reqBody)
+	_, responseContent, err := l.doRequest(ctx, reqBody, "doc type refinement")
 	if err != nil {
-		return "", fmt.Errorf("marshal request: %w", err)
+		return "", err
 	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", l.baseURL()+"/messages", bytes.NewBuffer(jsonBody))
-	if err != nil {
-		return "", fmt.Errorf("create request: %w", err)
-	}
-
-	if l.llmCfg.Token != "" {
-		httpReq.Header.Set("x-api-key", l.llmCfg.Token)
-	}
-	httpReq.Header.Set("anthropic-version", "2023-06-01")
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "application/json")
-
-	resp, err := l.client.Do(httpReq)
-	defer sleepAfterRequest(ctx, l.llmCfg.RequestDelay)
-	if err != nil {
-		return "", fmt.Errorf("send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		if tokErr := parseTokenLimitError(body); tokErr != nil {
-			return "", tokErr
-		}
-		if credErr := parseInsufficientCreditsError(body, resp.StatusCode, "anthropic"); credErr != nil {
-			return "", credErr
-		}
-		return "", fmt.Errorf("doc type refinement: status %s: %s", resp.Status, string(body))
-	}
-
-	var anthResp anthropicResponse
-	if err := json.Unmarshal(body, &anthResp); err != nil {
-		return "", fmt.Errorf("decode response: %w", err)
-	}
-
-	if len(anthResp.Content) == 0 {
-		return "", fmt.Errorf("empty response from LLM")
-	}
-
-	var responseText strings.Builder
-	for _, block := range anthResp.Content {
-		if block.Type == "text" && block.Text != "" {
-			responseText.WriteString(block.Text)
-		}
-	}
-
-	if responseText.Len() == 0 {
-		return "", fmt.Errorf("no text content in response")
-	}
-
-	responseContent := strings.TrimSpace(responseText.String())
-	responseContent = utils.CleanCodeBlock(responseContent)
 
 	var result struct {
 		Type string `json:"type"`
@@ -373,6 +328,33 @@ func (l *LlmAnthropic) AnalyzeDocType(ctx context.Context, prevResult *AnalysisR
 		}
 	}
 	return result.Type, nil
+}
+
+func (l *LlmAnthropic) Adjudicate(ctx context.Context, pairs []TagPairEvidence) ([]TagVerdictResult, error) {
+	prompt := BuildAdjudicationPrompt(pairs)
+
+	if err := checkContentTooLarge(l.caps, AdjudicationSystemMessage+"\n"+prompt); err != nil {
+		return nil, err
+	}
+
+	reqBody := anthropicRequest{
+		Model:     l.llmCfg.Model,
+		MaxTokens: l.defaultMaxTokens(),
+		Messages: []anthropicMessage{
+			{Role: "user", Content: prompt},
+		},
+		System:       AdjudicationSystemMessage,
+		Stream:       false,
+		CacheControl: &cacheControlEphemeral{Type: "ephemeral"},
+	}
+	l.applyReasoning(&reqBody, reqBody.MaxTokens)
+	l.applyTemperature(&reqBody, 0)
+
+	_, responseContent, err := l.doRequest(ctx, reqBody, "tag adjudication")
+	if err != nil {
+		return nil, err
+	}
+	return ParseAdjudicationResponse(responseContent, len(pairs))
 }
 
 func (l *LlmAnthropic) Name() string {

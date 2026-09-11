@@ -109,6 +109,7 @@ func TestOptimizePdf_WithTimeout_ContextHasDeadline(t *testing.T) {
 type mockContentAnalyzer struct {
 	analyzeFn        func(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*contentanalyzer.AnalysisResult, error)
 	analyzeDocTypeFn func(ctx context.Context, prevResult *contentanalyzer.AnalysisResult, headTailText string, docTypes []database.DocumentType, metadata contentanalyzer.DocMetadata) (string, error)
+	adjudicateFn     func(ctx context.Context, pairs []contentanalyzer.TagPairEvidence) ([]contentanalyzer.TagVerdictResult, error)
 }
 
 func (m *mockContentAnalyzer) Analyze(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*contentanalyzer.AnalysisResult, error) {
@@ -123,6 +124,13 @@ func (m *mockContentAnalyzer) AnalyzeDocType(ctx context.Context, prevResult *co
 		return m.analyzeDocTypeFn(ctx, prevResult, headTailText, docTypes, metadata)
 	}
 	return "document", nil
+}
+
+func (m *mockContentAnalyzer) Adjudicate(ctx context.Context, pairs []contentanalyzer.TagPairEvidence) ([]contentanalyzer.TagVerdictResult, error) {
+	if m.adjudicateFn != nil {
+		return m.adjudicateFn(ctx, pairs)
+	}
+	return nil, nil
 }
 
 func (m *mockContentAnalyzer) Name() string { return "mock" }

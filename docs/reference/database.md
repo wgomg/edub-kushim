@@ -93,6 +93,7 @@ The SQL dump/restore machinery lives in `internal/database/` (shared by `kushim 
 - `Batch` — `ID`, `Source`, `Status` (queued/processing/completed/failed/cancelled), `CreatedAt sql.NullTime`
 - `BatchOwner` — `BatchID`, `OwnerID`, `Pid`, `AcquiredAt`, `LastHeartbeat`
 - `OrphanedFile` — `ID`, `DocumentKey`, `DocumentKeyType` (uuid/dbid), `FilePath`, `OriginalPath`, `SourceDir` (originals/processed), `FileSize`, `OriginalType`, `DetectedAt`, `Status` (pending/deleted/restored/reingested), `ActionAt`, `ActionType`
+- `TagVerdictEvent` — `ID`, `DocumentID int64` (FK → `document.id`, ON DELETE CASCADE), `Query`, `Target`, `Sim float64`, `Verdict types.TagVerdict` (`same`/`variant`/`related`), `VerdictModel sql.NullString` (NULL for cache-applied rows), `PolicyVersion`, `VerdictAt time.Time`
 
 ---
 
@@ -166,6 +167,10 @@ The SQL dump/restore machinery lives in `internal/database/` (shared by `kushim 
 ### Orphaned file
 
 `CreateOrphanedFile`, `GetOrphanedFile`, `ListOrphanedFiles` (pending only, ordered by detected_at DESC), `MarkOrphanedFileDeleted`, `MarkOrphanedFileRestored`, `MarkOrphanedFileReingested`, `MarkAllOrphanedFilesDeleted` (bulk UPDATE pending→deleted)
+
+### Tag verdict event
+
+`InsertTagVerdictEvent` (`:execrows` — `ON CONFLICT (query, target, policy_version) WHERE verdict_model IS NOT NULL DO NOTHING`, returns 0 when a concurrent worker already judged the pair fresh), `LatestTagVerdictsForPairs` (`DISTINCT ON (query, target)` latest verdict per pair at a given `policy_version`, served by `idx_tag_verdict_event_pair`)
 
 ---
 
@@ -296,7 +301,11 @@ migrations: `00001_baseline.sql`, `00002_tsvector.sql`, `00003_tsvector_index.sq
 and `task.claim_token` for token-guarded lock acquisition/release),
 `00016_tag_symbol_forms.sql` (collapses legacy spelled-out tag forms into their symbol
 forms: `c plus plus` → `c++`, `c sharp` → `c#`, `dot net` → `.net`, `asp net` → `asp.net`,
-`vbnet` → `vb.net`, deduping `document_tag` rows and deleting the obsolete spelled rows). Goose tracks
+`vbnet` → `vb.net`, deduping `document_tag` rows and deleting the obsolete spelled rows),
+`00017_tag_verdict_events.sql` (adds the `tag_verdict` enum — `same`/`variant`/`related` —
+and the append-only `tag_verdict_event` table with a partial unique index
+`idx_tag_verdict_event_fresh_pair` on `(query, target, policy_version) WHERE verdict_model IS NOT NULL`
+so concurrent workers deduplicate fresh LLM verdicts per pair/version). Goose tracks
 which versions have been applied in the `goose_db_version` table.
 
 ## Migration Version Table

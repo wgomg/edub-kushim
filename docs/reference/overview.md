@@ -59,7 +59,7 @@ internal/
 ├── configtask/            # Config task handler
 │   └── configtask.go      # ConfigTaskHandler — downloads tessdata/Hugot model in background; migrate-db op copies the database when connection settings change, migrate-storage op relocates files when storage dirs change ("config" task type)
 ├── enrichment/            # Enrichment engine (LLM pipeline)
-│   └── enricher.go        # Enricher: dual text reduction → tag matching → token budget pre-check + retry loop → LLM → consolidation → people/tag/doc type with romanization + normalization
+│   └── enricher.go        # Enricher: dual text reduction → tag matching → token budget pre-check + retry loop → LLM → consolidation → tag adjudication → people/tag/doc type with romanization + normalization
 ├── service/               # Merged domain service package (replaces people/tags/documenttypes)
 │   ├── status.go          # Shared CRUD enums (CreateStatus, UpdateStatus, DeleteStatus)
 │   ├── result.go          # Generic result types (CreateResult[T], UpdateResult[T], DeleteResult)

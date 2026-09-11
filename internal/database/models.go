@@ -111,6 +111,49 @@ func (ns NullBatchStatus) Value() (driver.Value, error) {
 	return string(ns.BatchStatus), nil
 }
 
+type TagVerdict string
+
+const (
+	TagVerdictSame    TagVerdict = "same"
+	TagVerdictVariant TagVerdict = "variant"
+	TagVerdictRelated TagVerdict = "related"
+)
+
+func (e *TagVerdict) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = TagVerdict(s)
+	case string:
+		*e = TagVerdict(s)
+	default:
+		return fmt.Errorf("unsupported scan type for TagVerdict: %T", src)
+	}
+	return nil
+}
+
+type NullTagVerdict struct {
+	TagVerdict TagVerdict
+	Valid      bool // Valid is true if TagVerdict is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullTagVerdict) Scan(value interface{}) error {
+	if value == nil {
+		ns.TagVerdict, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.TagVerdict.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullTagVerdict) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.TagVerdict), nil
+}
+
 type TaskStatus string
 
 const (
@@ -310,6 +353,18 @@ type Tag struct {
 	ID        int64
 	Name      string
 	CreatedAt sql.NullTime
+}
+
+type TagVerdictEvent struct {
+	ID            int64
+	DocumentID    int64
+	Query         string
+	Target        string
+	Sim           float64
+	Verdict       types.TagVerdict
+	VerdictModel  sql.NullString
+	PolicyVersion string
+	VerdictAt     time.Time
 }
 
 type Task struct {

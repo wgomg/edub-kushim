@@ -61,6 +61,7 @@ the whole batch pauses (§10).
 type ContentAnalyzer interface {
 	Analyze(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*AnalysisResult, error)
 	AnalyzeDocType(ctx context.Context, prevResult *AnalysisResult, headTailText string, docTypes []database.DocumentType, metadata DocMetadata) (string, error)
+	Adjudicate(ctx context.Context, pairs []TagPairEvidence) ([]TagVerdictResult, error)
 	Name() string
 }
 
@@ -82,6 +83,12 @@ type AnalysisResult struct {
 - `AnalyzeDocType` — a **second, cheaper call** that re-evaluates only the
   document type using the head/tail of the full text (§10). It receives the
   previous result so it can replay the conversation (§4).
+- `Adjudicate` — classifies ambiguous tag pairs as `same` / `variant` /
+  `related` with a temperature-0 request built from `BuildAdjudicationPrompt`
+  and parsed by `ParseAdjudicationResponse` (structured output where the
+  provider supports it). Used by the tag adjudicator when
+  `enricher.tag_adjudicator.enabled` is true; see the
+  [semantic matching guide](semantic-matching.md#adjudication-of-the-ambiguous-band).
 - `PassContext` (`json:"-"`) carries the exact system+user prompts from the
   first call so the second call can replay them — never serialized to the
   API response.
@@ -465,11 +472,15 @@ for i := range 2 {
     drops tags that are >3 words, overlap with LLM people names, are
     multi-token subsets of known normalized names, overlap doc-type names, or
     are contained in the title; caps at 5.
-11. **Consolidate** (`enricher.go:236-244`): `Runner.RankTags` ranks LLM tags
+11. **Consolidate** (`enricher.go:244-248`): `Runner.RankTags` ranks LLM tags
     against canonical existing tags, then `applyConsolidationPolicy` runs
     `tagpolicy.Evaluate` — deterministic guards (negation, shared token,
     direction) plus a two-band rule: guard-free candidates at or above
-    `auto_replace_similarity` replace, the ambiguous band keeps.
+    `auto_replace_similarity` replace; the ambiguous band is resolved by
+    **tag adjudication** when `enricher.tag_adjudicator.enabled` is true
+    (`Runner.AdjudicateTags`: verdict cache → reciprocal-NN evidence → one LLM
+    call per document; `same` replaces, `variant`/`related` keep). Disabled,
+    failing, or ambiguous adjudication keeps the emitted tag.
 12. **Persist metadata** (`enricher.go:254-273`): title truncated to 127
     (`utils.Truncate`), doc type validated against the DB list (fallback
     `"undetermined"`), `UpdateDocumentMetadata`.

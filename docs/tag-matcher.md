@@ -52,7 +52,7 @@ auto-derived or internal:
 | `top_n` | `15` | Max tags returned per document. |
 | `min_similarity` | `0.40` (bge-m3) | Doc→tag threshold, tuned per model. |
 | `consolidation_similarity` | `0.80` (bge-m3) | Tag→tag consideration floor for post-LLM consolidation (candidates below it never reach the policy). |
-| `auto_replace_similarity` | `0.95` (bge-m3) | Tag→tag auto-replace cutoff: a guard-free candidate at or above it replaces the emitted tag; the band below it keeps. |
+| `auto_replace_similarity` | `0.95` (bge-m3) | Tag→tag auto-replace cutoff: a guard-free candidate at or above it replaces the emitted tag. The band below it is adjudicated by the LLM when `enricher.tag_adjudicator.enabled` is true, otherwise it keeps. |
 | `CpuMemArena` / `MemPattern` | `false` / `false` | ORT memory behavior; see [Memory usage](#memory-usage-by-configuration). Toggle only via `DefaultConfig` (code), not YAML. |
 
 ---

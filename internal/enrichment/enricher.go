@@ -20,6 +20,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/contentanalyzer"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/tagmatcher"
+	"github.com/wgomg/edub-kushim/internal/types"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -244,7 +245,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 	if err != nil {
 		e.logger.Error(&logId, "post-LLM consolidation failed: %v", err)
 	} else {
-		consolidated := e.applyConsolidationPolicy(analysis.Tags, ranked, storeTags, &logId)
+		consolidated := e.applyConsolidationPolicy(ctx, document.ID, document.DocumentID, analysis.Tags, ranked, storeTags, &logId)
 		analysis.Tags = consolidated
 		e.logger.Debug(&logId, "post-LLM consolidation: %d tags (%s)", len(consolidated), time.Since(consolidateStart))
 	}
@@ -409,11 +410,47 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 	return analysis.Stats, nil
 }
 
-func (e *Enricher) applyConsolidationPolicy(queries []string, ranked []tagmatcher.RankResult, storeTags map[string]struct{}, logId *string) []string {
+type bandPairKey struct {
+	query  string
+	target string
+}
+
+type bandPair struct {
+	query       string
+	target      string
+	sim         float64
+	runnerUpSim float64
+	verdict     types.TagVerdict
+	model       string
+	cached      bool
+}
+
+type reciprocalEvidence struct {
+	tag string
+	sim float64
+}
+
+func (e *Enricher) applyConsolidationPolicy(ctx context.Context, docId int64, documentID string, queries []string, ranked []tagmatcher.RankResult, storeTags map[string]struct{}, logId *string) []string {
 	decisions := tagpolicy.Evaluate(queries, ranked, storeTags, e.config.Enricher.TagMatcher.AutoReplaceSimilarity)
 	out := make([]string, len(queries))
+
+	var bandPairs []*bandPair
+	bandAt := make(map[int]*bandPair)
+	seen := make(map[bandPairKey]*bandPair)
+
 	for i, d := range decisions {
 		out[i] = d.Output
+		if d.Reason == tagpolicy.ReasonBand {
+			key := bandPairKey{query: d.Query, target: d.Target}
+			bp, ok := seen[key]
+			if !ok {
+				bp = &bandPair{query: d.Query, target: d.Target, sim: d.Sim, runnerUpSim: d.RunnerUpSim}
+				seen[key] = bp
+				bandPairs = append(bandPairs, bp)
+			}
+			bandAt[i] = bp
+			continue
+		}
 		switch d.Action {
 		case tagpolicy.ActionReplace:
 			e.logger.Info(logId, "consolidation[%s]: replace %q → %q (sim=%.3f runner=%.3f reason=%s)",
@@ -426,7 +463,198 @@ func (e *Enricher) applyConsolidationPolicy(queries []string, ranked []tagmatche
 				tagpolicy.Version, d.Query, d.Reason)
 		}
 	}
+
+	if len(bandPairs) > 0 && e.config.Enricher.TagAdjudicator.Enabled {
+		e.adjudicateBandPairs(ctx, documentID, bandPairs, logId)
+	}
+
+	for i := range decisions {
+		bp, ok := bandAt[i]
+		if !ok {
+			continue
+		}
+		d := decisions[i]
+		if bp.verdict.Valid() {
+			e.writeVerdictEvent(ctx, docId, d, bp, logId)
+		}
+		switch {
+		case bp.verdict == types.TagVerdicts.Same:
+			out[i] = d.Target
+			e.logger.Info(logId, "consolidation[%s]: replace %q → %q (sim=%.3f runner=%.3f reason=adjudicated verdict=%s model=%s cached=%t)",
+				tagpolicy.Version, d.Query, d.Target, d.Sim, d.RunnerUpSim, bp.verdict, bp.model, bp.cached)
+		case bp.verdict.Valid():
+			e.logger.Info(logId, "consolidation[%s]: keep %q (sim=%.3f reason=ambiguous_band verdict=%s cached=%t)",
+				tagpolicy.Version, d.Query, d.Sim, bp.verdict, bp.cached)
+		default:
+			e.logger.Info(logId, "consolidation[%s]: keep %q (sim=%.3f reason=%s)",
+				tagpolicy.Version, d.Query, d.Sim, d.Reason)
+		}
+	}
 	return out
+}
+
+func (e *Enricher) writeVerdictEvent(ctx context.Context, docId int64, d tagpolicy.Decision, bp *bandPair, logId *string) {
+	var verdictModel sql.NullString
+	if !bp.cached {
+		verdictModel = sql.NullString{String: bp.model, Valid: bp.model != ""}
+	}
+	n, err := e.queries.InsertTagVerdictEvent(ctx, database.InsertTagVerdictEventParams{
+		DocumentID:    docId,
+		Query:         d.Query,
+		Target:        d.Target,
+		Sim:           d.Sim,
+		Verdict:       bp.verdict,
+		VerdictModel:  verdictModel,
+		PolicyVersion: tagpolicy.Version,
+	})
+	if err != nil {
+		e.logger.Error(logId, "tag verdict event insert failed: %v", err)
+		return
+	}
+	if n > 0 || bp.cached {
+		return
+	}
+
+	rows, err := e.queries.LatestTagVerdictsForPairs(ctx, database.LatestTagVerdictsForPairsParams{
+		PolicyVersion: tagpolicy.Version,
+		Queries:       []string{d.Query},
+		Targets:       []string{d.Target},
+	})
+	if err != nil {
+		e.logger.Error(logId, "tag verdict cache re-read after conflict failed: %v", err)
+		return
+	}
+	if len(rows) == 0 || !rows[0].Verdict.Valid() {
+		return
+	}
+	bp.verdict = rows[0].Verdict
+	bp.cached = true
+	if rows[0].VerdictModel.Valid {
+		bp.model = rows[0].VerdictModel.String
+	}
+	if _, err := e.queries.InsertTagVerdictEvent(ctx, database.InsertTagVerdictEventParams{
+		DocumentID:    docId,
+		Query:         d.Query,
+		Target:        d.Target,
+		Sim:           d.Sim,
+		Verdict:       bp.verdict,
+		VerdictModel:  sql.NullString{},
+		PolicyVersion: tagpolicy.Version,
+	}); err != nil {
+		e.logger.Error(logId, "tag verdict event insert failed: %v", err)
+	}
+}
+
+func (e *Enricher) adjudicateBandPairs(ctx context.Context, documentID string, pairs []*bandPair, logId *string) {
+	queries := make([]string, len(pairs))
+	targets := make([]string, len(pairs))
+	for i, bp := range pairs {
+		queries[i] = bp.query
+		targets[i] = bp.target
+	}
+
+	rows, err := e.queries.LatestTagVerdictsForPairs(ctx, database.LatestTagVerdictsForPairsParams{
+		PolicyVersion: tagpolicy.Version,
+		Queries:       queries,
+		Targets:       targets,
+	})
+	if err != nil {
+		e.logger.Error(logId, "tag verdict cache lookup failed: %v", err)
+	}
+	cached := make(map[bandPairKey]database.LatestTagVerdictsForPairsRow, len(rows))
+	for _, row := range rows {
+		cached[bandPairKey{query: row.Query, target: row.Target}] = row
+	}
+
+	var unresolved []*bandPair
+	for _, bp := range pairs {
+		row, ok := cached[bandPairKey{query: bp.query, target: bp.target}]
+		if !ok || !row.Verdict.Valid() {
+			unresolved = append(unresolved, bp)
+			continue
+		}
+		bp.verdict = row.Verdict
+		bp.cached = true
+		if row.VerdictModel.Valid {
+			bp.model = row.VerdictModel.String
+		}
+	}
+	if len(unresolved) == 0 {
+		return
+	}
+
+	evidence := e.reciprocalEvidence(ctx, documentID, unresolved, logId)
+	evidencePairs := make([]contentanalyzer.TagPairEvidence, len(unresolved))
+	for i, bp := range unresolved {
+		ev := evidence[bp.target]
+		evidencePairs[i] = contentanalyzer.TagPairEvidence{
+			Query:             bp.query,
+			Target:            bp.target,
+			Sim:               bp.sim,
+			RunnerUpSim:       bp.runnerUpSim,
+			TargetRunnerUpTag: ev.tag,
+			TargetRunnerUpSim: ev.sim,
+		}
+	}
+
+	results, err := e.runner.AdjudicateTags(ctx, evidencePairs)
+	if err == nil && len(results) != len(unresolved) {
+		err = fmt.Errorf("adjudicator returned %d verdicts for %d pairs", len(results), len(unresolved))
+	}
+	if err == nil {
+		for i, r := range results {
+			if !r.Verdict.Valid() {
+				err = fmt.Errorf("ambiguous verdict for pair %q → %q", unresolved[i].query, unresolved[i].target)
+				break
+			}
+		}
+	}
+	if err != nil {
+		e.logger.Error(logId, "tag adjudication failed, keeping %d pairs: %v", len(unresolved), err)
+		return
+	}
+
+	model := e.config.Enricher.TagAdjudicator.Llm.Model
+	for i, r := range results {
+		unresolved[i].verdict = r.Verdict
+		unresolved[i].model = model
+	}
+}
+
+func (e *Enricher) reciprocalEvidence(ctx context.Context, documentID string, pairs []*bandPair, logId *string) map[string]reciprocalEvidence {
+	targets := make([]string, 0, len(pairs))
+	seen := make(map[string]struct{}, len(pairs))
+	for _, bp := range pairs {
+		if _, ok := seen[bp.target]; ok {
+			continue
+		}
+		seen[bp.target] = struct{}{}
+		targets = append(targets, bp.target)
+	}
+
+	evidence := make(map[string]reciprocalEvidence, len(targets))
+	if len(targets) == 0 {
+		return evidence
+	}
+
+	ranked, err := e.runner.RankTags(ctx, documentID, targets)
+	if err != nil {
+		e.logger.Error(logId, "tag adjudication evidence rank failed: %v", err)
+		return evidence
+	}
+	for i, target := range targets {
+		if i >= len(ranked) {
+			break
+		}
+		for _, c := range ranked[i].Candidates {
+			if c.Tag == target {
+				continue
+			}
+			evidence[target] = reciprocalEvidence{tag: c.Tag, sim: c.Similarity}
+			break
+		}
+	}
+	return evidence
 }
 
 func targetWordCount(contentWC, targetWC int) int {

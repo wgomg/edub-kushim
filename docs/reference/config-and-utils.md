@@ -15,7 +15,8 @@
    - `TextExtractorConfig`: `Engine string`, `Timeout int` (0 = disabled, no artificial deadline)
    - `PdfOptimizerConfig`: `Engine string`, `Fallback string`, `Timeout int` (0 = disabled)
    - `OCRConfig`: `Engine string`, `Languages []string`, `DataDir string`, `Timeout int` (0 = disabled), `OcrWorkers int` (0 = auto, resolved by the parent runner to `max(1, NumCPU / (max_concurrent_batches × consumer.workers))`)
-- `EnricherConfig`: `Workers int`, `TextReducer TextReducerConfig`, `ContentAnalyzer ContentAnalyzerConfig`, `TagMatcher TagMatcherConfig`
+- `EnricherConfig`: `Workers int`, `TextReducer TextReducerConfig`, `ContentAnalyzer ContentAnalyzerConfig`, `TagMatcher TagMatcherConfig`, `TagAdjudicator TagAdjudicatorConfig`
+   - `TagAdjudicatorConfig`: `Enabled bool` (default `false` — opt-in), `Timeout int` (defaults to `ContentAnalyzer.Timeout` when zero), `Llm LlmConfig` (same shape as the analyzer's; when `provider` or `model` is empty, `finalizeConfig` copies the content analyzer's `llm` wholesale — no fallback chain)
    - `TextReducerConfig`: `Engine string`, `Timeout int` (0 = disabled), `TargetWords int`
   - `ContentAnalyzerConfig`: `Enabled bool` (default `false`), `Timeout int`, `Llm LlmConfig`, `Fallbacks []FallbackConfig` (empty = absent/disabled), `PromptTemplate string`, `DocTypeRefinement DocTypeRefinementConfig`
       - `LlmConfig`: `Adapter string`, `Provider string`, `Model string`, `Token string`, `Reasoning bool` (yaml:"-", set via model catalog), `ReasoningEffort string` (yaml:"-", set via model catalog), `Temperature float64`

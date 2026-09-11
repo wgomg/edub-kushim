@@ -252,7 +252,12 @@ The enrichment pipeline:
    direction) block unsafe merges, and only a guard-free candidate at or above
    `auto_replace_similarity` replaces the emitted tag — everything else keeps,
    fixing casing and synonym mismatches that survive the normalization step
-   while letting new concepts be born.
+   while letting new concepts be born. The ambiguous band (guard-free, below
+   the cutoff) is resolved by **tag adjudication** when
+   `enricher.tag_adjudicator.enabled` is true: cached verdicts from
+   `tag_verdict_event` apply without an LLM call, and unresolved pairs go
+   through one `AdjudicateTags` call per document (reciprocal-NN evidence;
+   `same` replaces with the target, `variant`/`related` keep; failures keep).
 5. **New Tag Store Update** — any new tags created during enrichment are batch-created
    via `services.Tag.Create(ctx, analysis.Tags)`. The service delegates store management
    to the matcher via `AddToStore`, which encodes new names and adds them to the shared

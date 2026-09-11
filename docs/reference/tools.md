@@ -6,11 +6,11 @@
 
 `Runner`
 
-- **Fields**: `logger`, `config`, `textExtractor`, `ocr`, `pdfOptimizer`, `tagMatcher tagmatcher.Matcher`, `contentAnalyzer`, `fallbackAnalyzers []contentanalyzer.ContentAnalyzer` + `fallbackMeta []fallbackMeta` (one entry per enabled `enricher.contentanalyzer.fallbacks` entry, empty when none are configured), `textReducer`
+- **Fields**: `logger`, `config`, `textExtractor`, `ocr`, `pdfOptimizer`, `tagMatcher tagmatcher.Matcher`, `contentAnalyzer`, `tagAdjudicator contentanalyzer.ContentAnalyzer` (built from `cfg.Enricher.TagAdjudicator` when enabled; logs an error and stays nil when construction fails), `fallbackAnalyzers []contentanalyzer.ContentAnalyzer` + `fallbackMeta []fallbackMeta` (one entry per enabled `enricher.contentanalyzer.fallbacks` entry, empty when none are configured), `textReducer`
 - **Functions**:
   - `NewRunner(logger, cfg, tools []string) *Runner` — Initializes only the listed tool adapters (e.g., `["textextractor","ocr","pdfoptimizer"]` for consumer). Loads the LLM model catalog from `<configDir>/model_catalog.json` via `llm.NewRegistry`. No longer creates a tagmatcher internally. Content analyzer is created via the new adapter-based factory: `contentanalyzer.NewContentAnalyzer(logger, cfg.ToolConfig, &cfg.Enricher.ContentAnalyzer.Llm, cfg.Enricher.ContentAnalyzer.PromptTemplate, reg)`. For each **enabled** entry in `cfg.Enricher.ContentAnalyzer.Fallbacks`, an analyzer is built from that entry's `Llm` block with the same factory and appended to `fallbackAnalyzers` (with its provider/model recorded in `fallbackMeta`); entries whose factory fails are skipped with a logged error.
   - `NewRunnerWithMatcher(logger, cfg, tools, matcher tagmatcher.Matcher) *Runner` — Calls `NewRunner` then conditionally sets `r.tagMatcher` if `matcher != nil` and `"tagmatcher"` is in the tools list.
-- **Methods**: `ExtractText`, `OCR(ctx, docId, path)`, `OptimizePdf(ctx, docId, path)`, `ReduceContent`, `MatchTags(ctx, docId, input)`, `AnalyzeContent`, `AnalyzeDocType` — the two analyzer methods retry through `fallbackAnalyzers` in order when the primary error passes `isProviderError` (provider-attributable failure and at least one fallback is configured), returning the first success or the last error; request-side and lifecycle errors never retry.
+- **Methods**: `ExtractText`, `OCR(ctx, docId, path)`, `OptimizePdf(ctx, docId, path)`, `ReduceContent`, `MatchTags(ctx, docId, input)`, `AnalyzeContent`, `AnalyzeDocType` — the two analyzer methods retry through `fallbackAnalyzers` in order when the primary error passes `isProviderError` (provider-attributable failure and at least one fallback is configured), returning the first success or the last error; request-side and lifecycle errors never retry. `AdjudicateTags(ctx, pairs []contentanalyzer.TagPairEvidence) ([]contentanalyzer.TagVerdictResult, error)` — classifies ambiguous tag pairs via `tagAdjudicator.Adjudicate` under the `enricher.tag_adjudicator.timeout`; returns "tag adjudicator not configured" when the adjudicator is disabled or failed to construct.
 - **Result types**: `TextExtractionResult`, `OCRResult`, `PdfOptimizationResult`, `TextReducerResult` (with Text, WordCount, CharCount, TargetWordCount), `TagMatchResult`, `ContentAnalysisResult` (with People)
 - **Helper**: `runWithTimeout[T](ctx, fn) (T, error)` — Generic goroutine wrapper with context cancellation. `isProviderError(err) bool` — true for provider-attributable failures (network, HTTP status, credits); false for `ContentTooLargeError`, `TokenLimitError`, `context.Canceled`, `context.DeadlineExceeded`.
 - **Timeout behavior**: `ExtractText`, `OCR`, `ReduceContent`, and `MatchTags` each read their component's configured `Timeout` and only wrap the context with `context.WithTimeout` when the value is > 0. A timeout of 0 means no artificial deadline — parent context cancellation still propagates via `runWithTimeout`. The same guarded pattern is used by `OptimizePdf`. Config validation rejects negative timeout values at load time.
@@ -25,6 +25,7 @@
 type ContentAnalyzer interface {
     Analyze(ctx, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*AnalysisResult, error)
     AnalyzeDocType(ctx, prevResult, headTailText, docTypes, metadata DocMetadata) (string, error)
+    Adjudicate(ctx, pairs []TagPairEvidence) ([]TagVerdictResult, error)
     Name() string
 }
 ```
@@ -34,6 +35,8 @@ type ContentAnalyzer interface {
 - `AnalysisResult` — `Title`, `DocType`, `Tags`, `People []PeopleResult`, `Language`, `Stats *json.RawMessage`, `Prompt`
 - `DocMetadata` — `WordCount int32`, `PageCount int32`, `MimeType string`. Returned by `Format()` as a human-readable string (e.g. `"15234 total words, 42 pages, application/pdf"`). Returns empty string when all fields are zero/empty.
 - `PeopleResult` — `Name`, `NameRomanized` (optional, for non-Latin names), `Type`, `NormalizedName` (pre-populated by enricher via `canonicalPersonName` + `NormalizeForDB`, used by `FilterTags`, excluded from JSON serialization via `json:"-"`)
+- `TagPairEvidence` — `Query`, `Target`, `Sim`, `RunnerUpSim` (query-side runner-up similarity), `TargetRunnerUpTag`/`TargetRunnerUpSim` (target's nearest other store tag). Fed to `Adjudicate`'s prompt.
+- `TagVerdictResult` — `Index int`, `Verdict types.TagVerdict` (`same`/`variant`/`related`; zero verdict = ambiguous entry, caller keeps).
 
 ### Factory
 
@@ -63,10 +66,13 @@ type ContentAnalyzer interface {
 - `NormalizeTags(raw []string) []string` — Converts LLM-extracted tags to canonical form via `utils.NormalizeTag` (NFKC, lowercase, dash family → space, accent folding, keeps letters of any Unicode script, digits, and `+ # .`, strips everything else, collapses whitespace), then deduplicates and rejects empty/whitespace-only results.
 - `FilterTags(tags, people, knownPeopleNormalized, title, docTypeNames) []string` — Post-normalization deterministic tag cleaner. Drops tags with more than 3 tokens, tags sharing any token with a person's `NormalizedName` (pre-populated by the enricher via `canonicalPersonName` + `NormalizeForDB`), multi-word tags (≥2 tokens) whose full token set is a strict subset of a known person's normalized name (from the full `people` table, passed via `knownPeopleNormalized`), tags matching a doc-type name token, and tags whose token set is a subset of the document title's token set. Caps survivors at `maxTags` (5) in emit order. Operates after `NormalizeTags` and before rank-based consolidation.
 - `buildTokenUsageStats(prompt, completion, total int) *json.RawMessage` — Creates token usage stats JSON
+- `AdjudicationSystemMessage` (exported) — `"You are a tag-taxonomy classifier. Decide whether pairs of tag terms denote the same concept."`
+- `BuildAdjudicationPrompt(pairs []TagPairEvidence) string` — Builds the JSON-verdict prompt: per pair, the two terms, their embedding similarity, the query-side runner-up similarity, and the target's nearest other store tag.
+- `ParseAdjudicationResponse(content string, n int) ([]TagVerdictResult, error)` — Parses `{"pairs":[{"index":0,"verdict":"same"},...]}` (code-fenced or plain) into one result per pair; unknown verdict strings, out-of-range indices, and short slices leave the affected entries with a zero verdict (ambiguous → caller keeps). Invalid JSON returns an error.
 
 ### Adapter integration
 
-Both `Analyze()` and `AnalyzeDocType()` call `checkContentTooLarge` with their constructed prompt before making any HTTP request. If it returns an error, the adapter returns the `ContentTooLargeError` directly — no API call is made, saving time and credits. Both adapter `doRequest()` methods (OpenAI's shared `doRequest`, Anthropic's inline HTTP in both `Analyze` and `AnalyzeDocType`) also call `parseTokenLimitError` on non-200 responses, catching provider-side context-length errors at response time.
+Both `Analyze()` and `AnalyzeDocType()` call `checkContentTooLarge` with their constructed prompt before making any HTTP request. If it returns an error, the adapter returns the `ContentTooLargeError` directly — no API call is made, saving time and credits. Both adapter `doRequest()` methods (OpenAI's shared `doRequest`, Anthropic's shared `doRequest`) also call `parseTokenLimitError` on non-200 responses, catching provider-side context-length errors at response time. `Adjudicate()` follows the same path: `checkContentTooLarge` → request (temperature 0) → `doRequest` → `ParseAdjudicationResponse`.
 
 ---
 
@@ -84,6 +90,7 @@ Both `Analyze()` and `AnalyzeDocType()` call `checkContentTooLarge` with their c
   - Uses `response_format: {type: "json_object"}` only when `caps.SupportsResponseSchema`
 - Default provider URL from the registry's `ProviderDefaultURL(provider)`
 - Token usage from `usage` field
+- `Adjudicate` — reuses `buildRequestBody`/`doRequest` with temperature 0 and the `json_object` response format when `caps.SupportsResponseSchema`
 
 ---
 
@@ -101,6 +108,7 @@ Both `Analyze()` and `AnalyzeDocType()` call `checkContentTooLarge` with their c
   - Reasoning enabled with effort levels → `output_config: {effort: ...}`; `thinking: {type: "adaptive"}` unless the model is in `anthropicManualThinkingModels`, which gets explicit `thinking: {type: "enabled"}` with budget
   - `max_tokens` fixed at `256` for the no-generation doc-type refinement pass, else `caps.MaxOutputTokens` (fallback 4096 when unset)
 - Token usage from `usage.input_tokens` + `usage.output_tokens`
+- Shared transport: `doRequest(ctx, reqBody, errLabel)` marshals, sends, and decodes one `/messages` call (headers, status/error parsing, text-block extraction); `Analyze`, `AnalyzeDocType`, and `Adjudicate` all go through it. `Adjudicate` uses temperature 0 and `AdjudicationSystemMessage`.
 
 ---
 

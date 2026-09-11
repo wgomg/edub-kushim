@@ -1396,6 +1396,7 @@ func resetDB(t *testing.T, q *Queries) {
 		"document_tag", "document_people", "document",
 		"task", "saved_search", `"user"`,
 		"tag", "people", "people_type", "document_type",
+		"tag_verdict_event",
 	}
 	for _, tbl := range tables {
 		if _, err := q.db.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s", tbl)); err != nil {
@@ -1828,4 +1829,61 @@ func TestTextHashPersistedAtWrite(t *testing.T) {
 	if !got.Valid || got.String != want {
 		t.Fatalf("persisted text_hash = %+v, want %q", got, want)
 	}
+}
+
+func TestTagVerdictEvent_RoundTrip(t *testing.T) {
+	q, db := NewTestQueries(t)
+	defer db.Close()
+	resetDB(t, q)
+	ctx := context.Background()
+
+	docID, _ := CreateTestDocument(t, q, "verdict-rt.pdf")
+
+	insert := func(query, target string, sim float64, verdict types.TagVerdict, model string, policy string) {
+		var vm sql.NullString
+		if model != "" {
+			vm = sql.NullString{String: model, Valid: true}
+		}
+		_, err := q.InsertTagVerdictEvent(ctx, InsertTagVerdictEventParams{
+			DocumentID:    docID,
+			Query:         query,
+			Target:        target,
+			Sim:           sim,
+			Verdict:       verdict,
+			VerdictModel:  vm,
+			PolicyVersion: policy,
+		})
+		assertNoError(t, err, "insert event")
+	}
+
+	// Two rows for the same pair at v1: the latest by verdict_at wins.
+	insert("democracy", "direct democracy", 0.81, types.TagVerdicts.Variant, "model-a", "v1")
+	insert("democracy", "direct democracy", 0.82, types.TagVerdicts.Same, "", "v1")
+	// A row at v2 must be excluded by the version filter.
+	insert("democracy", "direct democracy", 0.83, types.TagVerdicts.Related, "model-b", "v2")
+	// An unrelated pair that should not match the cache lookup.
+	insert("anarchism", "anarcho communism", 0.80, types.TagVerdicts.Related, "model-a", "v1")
+
+	rows, err := q.LatestTagVerdictsForPairs(ctx, LatestTagVerdictsForPairsParams{
+		PolicyVersion: "v1",
+		Queries:       []string{"democracy", "anarchism"},
+		Targets:       []string{"direct democracy", "anarcho communism"},
+	})
+	assertNoError(t, err, "cache lookup")
+	assertEqual(t, len(rows), 2, "two distinct pairs")
+
+	byQuery := map[string]LatestTagVerdictsForPairsRow{}
+	for _, r := range rows {
+		byQuery[r.Query] = r
+	}
+
+	democracy := byQuery["democracy"]
+	assertEqual(t, string(democracy.Verdict), "same", "latest verdict at v1 wins")
+	assertEqual(t, democracy.VerdictModel.Valid, false, "NULL model round-trips as invalid")
+	assertEqual(t, democracy.PolicyVersion, "v1", "v2 row excluded by version filter")
+
+	anarchism := byQuery["anarchism"]
+	assertEqual(t, string(anarchism.Verdict), "related", "second pair matched")
+	assertEqual(t, anarchism.VerdictModel.Valid, true, "non-NULL model round-trips as valid")
+	assertEqual(t, anarchism.VerdictModel.String, "model-a", "model preserved")
 }

@@ -38,7 +38,9 @@ Semantic matching happens at two points in the enrichment pipeline:
    (`internal/enrichment/enricher.go:106-118`).
 2. **Post-LLM consolidation** — the tags the LLM produced are re-embedded and
    mapped onto the canonical tag names ("concept → existing tag") when
-   similarity is high enough (`enricher.go:230-237`).
+   similarity is high enough (`enricher.go:244-248`). The ambiguous band
+   (guard-free candidates below the auto-replace cutoff) is then adjudicated
+   by the LLM when `enricher.tag_adjudicator.enabled` is true — §7.
 
 The core type is `*tagmatcher.Hugot` (`internal/tools/adapters/tagmatcher/hugot.go`),
 an in-process embedding model (Hugot + ONNX runtime or pure-Go backend) that
@@ -334,6 +336,37 @@ every decision but never affects it. Each decision is logged as
 debug level). Fallback results from the legacy daemon (no candidates) pass
 through `KeptName` verbatim.
 
+### Adjudication of the ambiguous band
+
+With `enricher.tag_adjudicator.enabled: true`, the enricher resolves the
+ambiguous band with an LLM verdict instead of defaulting to keep, in three
+steps:
+
+1. **Verdict cache** — `LatestTagVerdictsForPairs` reads the latest verdict per
+   `(query, target)` at the current `tagpolicy.Version` from
+   `tag_verdict_event`. Cached pairs resolve immediately — `same` replaces with
+   the target, `variant`/`related` keep — with no LLM call.
+2. **Evidence** — for the remaining pairs, one batched `RankTags` call runs
+   target-as-query. The target's nearest other store tag (first candidate whose
+   tag differs from the target) and the query-side runner-up similarity are
+   attached to the pair as evidence. A rank failure drops the evidence, not
+   the pair.
+3. **Verdict** — one `AdjudicateTags` call per document
+   (`ContentAnalyzer.Adjudicate`, temperature 0, structured output where the
+   provider supports it) classifies each pair as `same` / `variant` /
+   `related`. `same` replaces the emitted tag with the target;
+   `variant`/`related` keep. Any error, empty result, or ambiguous entry keeps
+   every unresolved pair and logs one error line.
+
+Every band-pair occurrence that has a verdict writes a row to the append-only
+`tag_verdict_event` table: fresh verdicts record the judging model,
+cache-applied ones store NULL `verdict_model`. A partial unique index on
+`(query, target, policy_version) WHERE verdict_model IS NOT NULL` deduplicates
+fresh verdicts across concurrent workers: the losing insert re-reads the cached
+verdict and applies it as cache-applied. When the adjudicator is unavailable
+(disabled, or failed to construct), the whole step is skipped and band pairs
+keep as without adjudication.
+
 ---
 
 ## 8. Interfaces: local and remote implementations
@@ -489,8 +522,11 @@ statements.
      or zero matches, falls back to the full tag-name list
      (`enricher.go:106-118`).
    - `runner.RankTags(ctx, docId, analysis.Tags)` after the LLM pass
-     (`enricher.go:235-243`); `applyConsolidationPolicy` applies the
+     (`enricher.go:244`); `applyConsolidationPolicy` applies the
      replacement decision via `tagpolicy.Evaluate` (guards + two bands).
+   - `runner.AdjudicateTags(ctx, pairs)` resolves the ambiguous band when
+     `enricher.tag_adjudicator.enabled` is true (cache + evidence + one LLM
+     call per document, §7).
 4. **API tag creation** triggers a store refresh through the same service.
 
 ---
@@ -526,6 +562,13 @@ statements.
   zero `top_n` disables suggestions entirely.
 - **Consolidation with `consolidationSim == 0.0` passes through** — that's
   the documented "disable consolidation" knob, not a bug.
+- **The adjudicator is disabled by default** — the ambiguous band keeps until
+  `enricher.tag_adjudicator.enabled: true`, and an explicit `llm` block is only
+  needed when deviating from the content analyzer's LLM (an empty
+  `provider`/`model` copies the analyzer's `llm` wholesale).
+- **Verdicts are cache-scoped to `tagpolicy.Version`** — bumping the policy
+  version invalidates every cached verdict at once (old rows stay in the event
+  table for analysis, they are simply never read for the new version).
 
 ---
 

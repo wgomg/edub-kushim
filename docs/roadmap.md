@@ -56,12 +56,13 @@
 
 ### Enrichment Pipeline
 
-- Async enrichment pipeline: consume → enqueue enrich → text reduction → tag matching → LLM classification → tag consolidation
+- Async enrichment pipeline: consume → enqueue enrich → text reduction → tag matching → LLM classification → tag consolidation → LLM adjudication
 - LLM providers: OpenAI, Anthropic, DeepSeek, Mistral, Qwen, Zhipu (via `ContentAnalyzer` interface)
 - Text reduction via TextRank extractive summarization (TF-IDF, weighted PageRank, diversity penalty)
 - Semantic tag matching via Hugot (Go or ONNX backend), cosine similarity, chunked encoding
 - Dual text reduction: separate `target_words` for LLM and `reduce_target_words` for tag matching
-- Post-LLM tag consolidation via `Rank` + enricher-side `applyConsolidationPolicy` backed by `tagpolicy` (fixes casing, hyphenation, synonym mismatches; the replacement decision lives in the enricher; deterministic guards — negation, shared token, direction — plus a two-band rule: guard-free candidates at or above the model-derived `auto_replace_similarity` replace, the ambiguous band keeps)
+- Post-LLM tag consolidation via `Rank` + enricher-side `applyConsolidationPolicy` backed by `tagpolicy` (fixes casing, hyphenation, synonym mismatches; the replacement decision lives in the enricher; deterministic guards — negation, shared token, direction — plus a two-band rule: guard-free candidates at or above the model-derived `auto_replace_similarity` replace, the ambiguous band is adjudicated)
+- **LLM tag adjudication** (opt-in via `enricher.tag_adjudicator`, disabled by default): ambiguous-band pairs are classified `same` / `variant` / `related` by the configured LLM — `same` replaces the emitted tag with the canonical target, `variant`/`related` keep. Verdicts are cached per `(query, target, policy_version)` in the append-only `tag_verdict_event` table, so a repeat pair resolves without an LLM call; fresh verdicts are deduplicated across concurrent workers by a partial unique index on fresh rows. Prompt evidence: the pair's embedding similarity, the query-side runner-up, and the target's nearest other store tag via a target-as-query `Rank`. Failures, timeouts, and ambiguous responses keep the emitted tag.
 - **Post-normalization tag filtering** (`FilterTags`) — rule-based validator drops >3-word tags, tags matching person names (from the current document or the full `people` table via strict-subset rule), and tags that restate the title, then caps at `maxTags` (5). Prompt over-requests 8 tags to survive filtering.
 - Tag embedding cache (`BuildTagCache`) — pre-computed tag embeddings at startup
 - **New tag cache update**: newly created tags during enrichment are immediately encoded and added to the embedding cache

@@ -13,6 +13,7 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/llm"
+	"github.com/wgomg/edub-kushim/internal/types"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -380,4 +381,73 @@ func NormalizeTags(raw []string) []string {
 		result = append(result, t)
 	}
 	return result
+}
+
+type TagPairEvidence struct {
+	Query             string
+	Target            string
+	Sim               float64
+	RunnerUpSim       float64
+	TargetRunnerUpTag string
+	TargetRunnerUpSim float64
+}
+
+type TagVerdictResult struct {
+	Index   int
+	Verdict types.TagVerdict
+}
+
+const AdjudicationSystemMessage = "You are a tag-taxonomy classifier. Decide whether pairs of tag terms denote the same concept."
+
+func BuildAdjudicationPrompt(pairs []TagPairEvidence) string {
+	var sb strings.Builder
+	sb.WriteString("For each pair below, decide whether the two terms denote the same concept.\n")
+	sb.WriteString("Answer with ONLY a JSON object: {\"pairs\":[{\"index\":0,\"verdict\":\"same\"},...]}, one entry per pair, no explanations.\n")
+	sb.WriteString("Verdict must be exactly one of:\n")
+	sb.WriteString("- \"same\": the terms denote one concept (synonyms, spelling variants, or exact equivalents)\n")
+	sb.WriteString("- \"variant\": closely related but distinct concepts (one is a narrower or broader form of the other)\n")
+	sb.WriteString("- \"related\": related but different concepts\n")
+	sb.WriteString("Use \"same\" only when the terms denote one concept.\n\n")
+	for i, p := range pairs {
+		fmt.Fprintf(&sb, "Pair %d:\n", i)
+		fmt.Fprintf(&sb, "  query: %q\n", p.Query)
+		fmt.Fprintf(&sb, "  target: %q\n", p.Target)
+		fmt.Fprintf(&sb, "  query-target embedding similarity: %.3f\n", p.Sim)
+		if p.RunnerUpSim > 0 {
+			fmt.Fprintf(&sb, "  query's runner-up similarity: %.3f\n", p.RunnerUpSim)
+		}
+		if p.TargetRunnerUpTag != "" {
+			fmt.Fprintf(&sb, "  target's nearest other store tag: %q (similarity %.3f)\n", p.TargetRunnerUpTag, p.TargetRunnerUpSim)
+		}
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
+func ParseAdjudicationResponse(content string, n int) ([]TagVerdictResult, error) {
+	content = utils.CleanCodeBlock(strings.TrimSpace(content))
+	var parsed struct {
+		Pairs []struct {
+			Index   int    `json:"index"`
+			Verdict string `json:"verdict"`
+		} `json:"pairs"`
+	}
+	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+		return nil, fmt.Errorf("parse adjudication response: %w", err)
+	}
+	results := make([]TagVerdictResult, n)
+	for i := range results {
+		results[i].Index = i
+	}
+	for _, p := range parsed.Pairs {
+		if p.Index < 0 || p.Index >= n {
+			continue
+		}
+		v, err := types.ParseTagVerdict(p.Verdict)
+		if err != nil {
+			continue
+		}
+		results[p.Index].Verdict = v
+	}
+	return results, nil
 }

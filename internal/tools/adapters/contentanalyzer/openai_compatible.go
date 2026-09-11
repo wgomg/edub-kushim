@@ -316,6 +316,28 @@ func (l *LlmOpenAiCompatible) buildRequestMessages(system, user, assistant strin
 	return messages
 }
 
+func (l *LlmOpenAiCompatible) Adjudicate(ctx context.Context, pairs []TagPairEvidence) ([]TagVerdictResult, error) {
+	prompt := BuildAdjudicationPrompt(pairs)
+
+	if err := checkContentTooLarge(l.caps, AdjudicationSystemMessage+"\n"+prompt); err != nil {
+		return nil, err
+	}
+
+	reqBody := l.buildRequestBody(AdjudicationSystemMessage, prompt, "", 0)
+
+	chatResp, err := l.doRequest(ctx, reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("tag adjudication: %w", err)
+	}
+
+	if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message.Content == "" {
+		return nil, fmt.Errorf("empty response from LLM")
+	}
+
+	responseContent := strings.TrimSpace(chatResp.Choices[0].Message.Content)
+	return ParseAdjudicationResponse(responseContent, len(pairs))
+}
+
 func (l *LlmOpenAiCompatible) Name() string {
 	return "openai-compatible"
 }

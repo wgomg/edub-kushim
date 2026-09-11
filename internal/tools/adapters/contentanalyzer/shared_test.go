@@ -11,6 +11,7 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/llm"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 func TestNormalizeTags_Transforms(t *testing.T) {
@@ -707,5 +708,76 @@ func TestSleepAfterRequest_CancelledContextAbortsEarly(t *testing.T) {
 	sleepAfterRequest(ctx, 1)
 	if elapsed := time.Since(start); elapsed >= 500*time.Millisecond {
 		t.Errorf("sleepAfterRequest slept %v after cancellation, want early abort", elapsed)
+	}
+}
+
+func TestParseAdjudicationResponse(t *testing.T) {
+	same := types.TagVerdicts.Same
+	variant := types.TagVerdicts.Variant
+
+	tests := []struct {
+		name    string
+		content string
+		n       int
+		want    []TagVerdictResult
+	}{
+		{
+			name:    "clean JSON with all valid verdicts",
+			content: `{"pairs":[{"index":0,"verdict":"same"},{"index":1,"verdict":"variant"}]}`,
+			n:       2,
+			want: []TagVerdictResult{
+				{Index: 0, Verdict: same},
+				{Index: 1, Verdict: variant},
+			},
+		},
+		{
+			name:    "code-fenced JSON",
+			content: "```json\n{\"pairs\":[{\"index\":0,\"verdict\":\"same\"}]}\n```",
+			n:       1,
+			want:    []TagVerdictResult{{Index: 0, Verdict: same}},
+		},
+		{
+			name:    "unknown verdict string is dropped",
+			content: `{"pairs":[{"index":0,"verdict":"foobar"}]}`,
+			n:       1,
+			want:    []TagVerdictResult{{Index: 0, Verdict: ""}},
+		},
+		{
+			name:    "out-of-range index is dropped",
+			content: `{"pairs":[{"index":5,"verdict":"same"}]}`,
+			n:       2,
+			want: []TagVerdictResult{
+				{Index: 0, Verdict: ""},
+				{Index: 1, Verdict: ""},
+			},
+		},
+		{
+			name:    "short slice leaves trailing entries ambiguous",
+			content: `{"pairs":[{"index":0,"verdict":"same"}]}`,
+			n:       3,
+			want: []TagVerdictResult{
+				{Index: 0, Verdict: same},
+				{Index: 1, Verdict: ""},
+				{Index: 2, Verdict: ""},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseAdjudicationResponse(tt.content, tt.n)
+			if err != nil {
+				t.Fatalf("ParseAdjudicationResponse: unexpected error: %v", err)
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("ParseAdjudicationResponse = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseAdjudicationResponse_InvalidJSON(t *testing.T) {
+	_, err := ParseAdjudicationResponse("not json", 2)
+	if err == nil {
+		t.Fatal("expected error for invalid JSON, got nil")
 	}
 }

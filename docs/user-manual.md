@@ -2358,6 +2358,14 @@ enricher:
     hugot:
       model: 'BAAI/bge-m3'
       backend: 'ort' # ort (ONNX Runtime) | GO
+  # tag_adjudicator:             # optional LLM verdicts for ambiguous tag pairs
+  #   enabled: false             # disabled by default — enable after configuring LLM
+  #   timeout: 120               # defaults to contentanalyzer.timeout
+  #   llm:                       # defaults to contentanalyzer.llm (provider/model)
+  #     adapter: 'openai-compatible'
+  #     provider: 'openai'
+  #     model: 'gpt-4o'
+  #     token: ''
 
 backup:
   # enabled: true
@@ -2424,6 +2432,7 @@ mirror:
 | `enricher.contentanalyzer.doc_type_refinement` | Second-pass doc type refinement with head+tail of raw text (enabled, head_words, tail_words) |
 | `enricher.tagmatcher`          | Semantic tag matching via Hugot (embeddings) — see [Tag Matcher guide](tag-matcher.md) for memory/CPU tuning |
 | `enricher.tagmatcher.hugot`    | Hugot-specific settings (model, backend)                               |
+| `enricher.tag_adjudicator`     | Optional LLM verdicts for ambiguous tag pairs: `enabled` (default `false`), `timeout` (defaults to `contentanalyzer.timeout`), `llm` (defaults to `contentanalyzer.llm` when `provider`/`model` are empty). When enabled, ambiguous-band pairs are classified `same`/`variant`/`related`, verdicts are cached in `tag_verdict_event`, and `same` replaces the emitted tag with the canonical target |
 
 ---
 

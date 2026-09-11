@@ -37,6 +37,7 @@ type Runner struct {
 	documentConverter converter.DocumentConverter
 	tagMatcher        tagmatcher.Matcher
 	contentAnalyzer   contentanalyzer.ContentAnalyzer
+	tagAdjudicator    contentanalyzer.ContentAnalyzer
 	fallbackAnalyzers []contentanalyzer.ContentAnalyzer
 	fallbackMeta      []fallbackMeta
 	textReducer       textreducer.TextReducer
@@ -175,6 +176,14 @@ func NewRunner(logger *utils.Logger, cfg *config.Config, tools []string) *Runner
 				logger.Error(nil, "create content analyzer: %v", caErr)
 			}
 			r.contentAnalyzer = ca
+			if cfg.Enricher.TagAdjudicator.Enabled {
+				adj, adjErr := contentanalyzer.NewContentAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.Enricher.TagAdjudicator.Timeout) * time.Second}, &cfg.Enricher.TagAdjudicator.Llm, cfg.Enricher.ContentAnalyzer.PromptTemplate, reg)
+				if adjErr != nil {
+					logger.Error(nil, "create tag adjudicator: %v", adjErr)
+				} else {
+					r.tagAdjudicator = adj
+				}
+			}
 			for i := range cfg.Enricher.ContentAnalyzer.Fallbacks {
 				fb := &cfg.Enricher.ContentAnalyzer.Fallbacks[i]
 				if !fb.Enabled {
@@ -458,6 +467,21 @@ func (r *Runner) RankTags(ctx context.Context, docId string, queries []string) (
 		return nil, fmt.Errorf("tag consolidation: %w", err)
 	}
 	return results, nil
+}
+
+func (r *Runner) AdjudicateTags(ctx context.Context, pairs []contentanalyzer.TagPairEvidence) ([]contentanalyzer.TagVerdictResult, error) {
+	if r.tagAdjudicator == nil {
+		return nil, fmt.Errorf("tag adjudicator not configured")
+	}
+	timeout := time.Duration(r.config.Enricher.TagAdjudicator.Timeout) * time.Second
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	return runWithTimeout(ctx, func() ([]contentanalyzer.TagVerdictResult, error) {
+		return r.tagAdjudicator.Adjudicate(ctx, pairs)
+	})
 }
 
 func isProviderError(err error) bool {

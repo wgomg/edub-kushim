@@ -244,11 +244,18 @@ type FallbackConfig struct {
 	Llm     LlmConfig `mapstructure:"llm" yaml:"llm" json:"llm"`
 }
 
+type TagAdjudicatorConfig struct {
+	Enabled bool      `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
+	Timeout int       `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
+	Llm     LlmConfig `mapstructure:"llm" yaml:"llm" json:"llm"`
+}
+
 type EnricherConfig struct {
 	Workers         int                   `mapstructure:"workers" yaml:"workers" json:"workers"`
 	TextReducer     TextReducerConfig     `mapstructure:"textreducer" yaml:"textreducer" json:"textreducer"`
 	ContentAnalyzer ContentAnalyzerConfig `mapstructure:"contentanalyzer" yaml:"contentanalyzer" json:"contentanalyzer"`
 	TagMatcher      TagMatcherConfig      `mapstructure:"tagmatcher" yaml:"tagmatcher" json:"tagmatcher"`
+	TagAdjudicator  TagAdjudicatorConfig  `mapstructure:"tag_adjudicator" yaml:"tag_adjudicator" json:"tag_adjudicator"`
 }
 
 type LlmConfig struct {
@@ -543,6 +550,9 @@ func DefaultConfig(configDir string) *Config {
 					MemPattern:  false,
 				},
 			},
+			TagAdjudicator: TagAdjudicatorConfig{
+				Enabled: false,
+			},
 		},
 	}
 }
@@ -671,6 +681,13 @@ func finalizeConfig(cfg *Config, configDir string) error {
 		if llmCfg.RequestDelay < 0 || llmCfg.RequestDelay > maxRequestDelaySeconds {
 			return fmt.Errorf("enricher.contentanalyzer.fallbacks[%d].llm.request_delay must be between 0 and %d", i, maxRequestDelaySeconds)
 		}
+	}
+
+	if cfg.Enricher.TagAdjudicator.Timeout == 0 {
+		cfg.Enricher.TagAdjudicator.Timeout = cfg.Enricher.ContentAnalyzer.Timeout
+	}
+	if cfg.Enricher.TagAdjudicator.Llm.Provider == "" || cfg.Enricher.TagAdjudicator.Llm.Model == "" {
+		cfg.Enricher.TagAdjudicator.Llm = cfg.Enricher.ContentAnalyzer.Llm
 	}
 
 	homeDir, err := os.UserHomeDir()

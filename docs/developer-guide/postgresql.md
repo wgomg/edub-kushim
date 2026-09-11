@@ -565,7 +565,7 @@ Knowing what *isn't* here is as instructive as what is:
 | `pg_trgm` / `ILIKE` / `LIKE`-with-`%`-prefix | Name search is `LIKE $1` with the caller appending `%` (prefix match only) — an index-friendly pattern. Fuzzy/substring search would need trigram indexes, which aren't needed. |
 | `FILTER (WHERE ...)` | The codebase predates it or simply prefers portability: `SUM(CASE WHEN ... THEN 1 ELSE 0 END)` is the classic form that works everywhere. |
 | `gen_random_uuid()` | UUIDs are generated in Go (`google/uuid`) and passed in as TEXT PKs — keeps the DB layer free of pgcrypto and the IDs available before the insert. |
-| Enum types (`CREATE TYPE ... AS ENUM`) | Statuses/roles are TEXT + `CHECK (col IN (...))` — adding a value is a plain migration, not an `ALTER TYPE` (which is awkwardly transactional in older versions). |
+| Enum types (`CREATE TYPE ... AS ENUM`) | Most statuses are TEXT + `CHECK (col IN (...))` — adding a value is a plain migration, not an `ALTER TYPE` (which is awkwardly transactional in older versions). Real enums exist where sqlc maps them to Go types with a registry: `batch_source`/`batch_status`/`task_type`/`task_status` (00013) and `tag_verdict` (`same`/`variant`/`related`, 00017, mapped to `types.TagVerdict`). |
 | `date_trunc` | Dashboard day-bucketing uses `date(created_at)` — enough for daily granularity. |
 | Window functions (`OVER (...)`) | The batch overview's per-group aggregates fit `LATERAL` + `GROUP BY`; no running-total/partition-rank need has appeared. |
 | Full-text search on `jsonb` | FTS targets `text_content` only; JSONB payloads are machine data. |
@@ -587,6 +587,8 @@ Knowing what *isn't* here is as instructive as what is:
 | Idempotent multi-row seeds with `ON CONFLICT` | `sql/schema/seed-*.sql` |
 | Upsert + `excluded` | `sql/queries/batch.sql:24-31`, `tag.sql:17-20`, `people.sql`, `document_tag.sql` |
 | Optimistic claim (`:execrows`) | `sql/queries/task.sql:99-104` |
+| Partial unique index + `ON CONFLICT (cols) WHERE predicate DO NOTHING` | `00017_tag_verdict_events.sql` (fresh verdicts deduped per pair/version) + `sql/queries/tag_verdict_event.sql` |
+| `DISTINCT ON (...) ... IN (SELECT unnest(...), unnest(...))` | `sql/queries/tag_verdict_event.sql` (latest verdict per pair, batched) |
 | LATERAL + conditional aggregation | `sql/queries/batch.sql:137-166` |
 | Scalar subqueries, `NOT EXISTS`, `UNION ALL` literals | `internal/database/dashboard.go:83-120,239-248` |
 | JSONB `->>` extraction | `internal/database/dashboard.go:98-100` |
