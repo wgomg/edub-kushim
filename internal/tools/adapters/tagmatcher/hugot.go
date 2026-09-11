@@ -113,11 +113,6 @@ func (h *Hugot) AddToStore(ctx context.Context, names []string) error {
 	if h == nil {
 		return fmt.Errorf("tag matcher not initialized")
 	}
-	normalized := make([]string, len(names))
-	for i, n := range names {
-		normalized[i] = utils.NormalizeTagEmbedding(n)
-	}
-	names = normalized
 	for i := 0; i < len(names); i += embedBatchSize {
 		end := min(i+embedBatchSize, len(names))
 		chunk := names[i:end]
@@ -141,11 +136,6 @@ func (h *Hugot) RemoveFromStore(ctx context.Context, names []string) error {
 	if h == nil {
 		return fmt.Errorf("tag matcher not initialized")
 	}
-	normalized := make([]string, len(names))
-	for i, n := range names {
-		normalized[i] = utils.NormalizeTagEmbedding(n)
-	}
-	names = normalized
 	for _, name := range names {
 		h.store.Remove(name)
 		h.logger.Info(nil, "hugot: remove from store `%s`", name)
@@ -209,12 +199,6 @@ func (h *Hugot) Consolidate(ctx context.Context, docId string, queries []string)
 		return queries, nil
 	}
 
-	normalized := make([]string, len(queries))
-	for i, q := range queries {
-		normalized[i] = utils.NormalizeTagEmbedding(q)
-	}
-	queries = normalized
-
 	out, err := h.pipeline.RunPipeline(ctx, queries)
 	if err != nil {
 		return nil, fmt.Errorf("encode queries: %w", err)
@@ -250,13 +234,7 @@ func (h *Hugot) Rank(ctx context.Context, docId string, queries []string) ([]Ran
 		return results, nil
 	}
 
-	normalized := make([]string, len(queries))
-	for i, q := range queries {
-		normalized[i] = utils.NormalizeTagEmbedding(q)
-		results[i].KeptName = normalized[i]
-	}
-
-	out, err := h.pipeline.RunPipeline(ctx, normalized)
+	out, err := h.pipeline.RunPipeline(ctx, queries)
 	if err != nil {
 		return nil, fmt.Errorf("encode queries: %w", err)
 	}

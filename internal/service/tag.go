@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"strings"
 
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
@@ -114,7 +113,7 @@ func (s *Tag) Create(ctx context.Context, names []string) ([]CreateResult[databa
 	}
 
 	for i, raw := range names {
-		name := strings.TrimSpace(raw)
+		name := utils.NormalizeTag(raw)
 		if name == "" {
 			results[i] = CreateResult[database.Tag]{Status: Invalid}
 			continue
@@ -159,6 +158,7 @@ func (s *Tag) Update(ctx context.Context, pairs []TagUpdatePair) ([]UpdateResult
 	type rename struct {
 		idx     int
 		oldName string
+		name    string
 	}
 	var renames []rename
 
@@ -174,7 +174,7 @@ func (s *Tag) Update(ctx context.Context, pairs []TagUpdatePair) ([]UpdateResult
 	}
 
 	for i, p := range pairs {
-		name := strings.TrimSpace(p.Name)
+		name := utils.NormalizeTag(p.Name)
 		if name == "" {
 			results[i] = UpdateResult[database.Tag]{Status: UpdateInvalid}
 			continue
@@ -212,7 +212,7 @@ func (s *Tag) Update(ctx context.Context, pairs []TagUpdatePair) ([]UpdateResult
 		}
 
 		newNames = append(newNames, name)
-		renames = append(renames, rename{idx: i, oldName: old.Name})
+		renames = append(renames, rename{idx: i, oldName: old.Name, name: name})
 	}
 
 	for _, r := range renames {
@@ -228,7 +228,7 @@ func (s *Tag) Update(ctx context.Context, pairs []TagUpdatePair) ([]UpdateResult
 	for _, r := range renames {
 		updatedTag := database.Tag{
 			ID:   pairs[r.idx].ID,
-			Name: pairs[r.idx].Name,
+			Name: r.name,
 		}
 		results[r.idx] = UpdateResult[database.Tag]{Entity: updatedTag, Status: Updated}
 	}

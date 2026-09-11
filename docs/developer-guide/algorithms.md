@@ -344,11 +344,11 @@ plausible prose, not a list of fragments.
 
 ## 11. Text normalization utilities
 
-`internal/utils/text.go` holds the shared string machinery.
+`internal/utils/text.go` and `tagname.go` hold the shared string machinery.
 
 ### `NormalizeForDB` — the canonical key normalization
 
-Used for people names, tag matching, and any DB key that must be
+Used for people names and any DB key that must be
 case/accent/format-insensitive (`text.go:107-131`). The pipeline:
 NFKC → lowercase → trim → hyphen/underscore/dash-family → space → **accent
 folding** → strip non-`[a-z ]` → collapse spaces.
@@ -376,6 +376,21 @@ marks, recompose — "José" and "Jose" normalize identically. The fold is built
 from per-call `norm.Form.String` primitives rather than a shared
 `transform.Chain` because `transform.Chain` carries cross-call state and is
 not safe for concurrent use — this is the canonical pattern to copy.
+
+### `NormalizeTag` — the canonical tag name
+
+Tag names have their own normalizer (`tagname.go`): NFKC → lowercase → trim →
+dash family (`-`, `_`, en/em dash, `\u2010`, `\u2011`, `\uFF0D`) → space →
+accent folding → strip everything except letters of any Unicode script,
+decimal digits, and `+ # .` → collapse spaces. A result with no letter and no
+digit is rejected (returns `""`, which callers treat as invalid), so `"..."`
+never becomes a tag. Unlike `NormalizeForDB` it does **not** restrict to
+`[a-z ]`: `c++`, `c#`, `asp.net`, `3d`, and `история` survive as themselves.
+
+It is applied at the tag save chokepoints (`service.Tag.Create`/`Update`) and
+by the enrichment pipeline through `contentanalyzer.normalizeCore`/
+`NormalizeTags`. The embedding cache and the matcher consume names verbatim —
+no per-key re-normalization — so store keys always equal DB names.
 
 ### `Truncate` — rune-safe, with a sentinel
 
@@ -506,4 +521,4 @@ token estimate is what drives that loop. See
 
 ---
 
-*Last verified against the tree: 2026-08-03. If code and doc disagree, code wins.*
+*Last verified against the tree: 2026-09-11. If code and doc disagree, code wins.*

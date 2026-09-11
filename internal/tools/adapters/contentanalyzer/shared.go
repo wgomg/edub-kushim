@@ -14,11 +14,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/llm"
 	"github.com/wgomg/edub-kushim/internal/utils"
-	"golang.org/x/text/unicode/norm"
 )
-
-var nonAlphaKeepSpaces = regexp.MustCompile(`[^a-z ]`)
-var multiSpaceRE = regexp.MustCompile(` +`)
 
 const (
 	maxTags          = 5
@@ -134,7 +130,7 @@ func buildTokenUsageStats(prompt, completion, total int) *json.RawMessage {
 const defaultPromptTemplate = `Analyze the excerpts of a document provided below and extract the following data:
 - Document title: The title as written in the document, in excerpts language, copied verbatim — never invent or append wording of your own; colons and subtitles are legitimate only when the original title itself has one. If no title line appears in the excerpts, use the first substantive line of the text as the title, still copied verbatim. Truncate to 127 characters if longer
 {{.DocTypePrompt}}
-- Tags: At most {{.RequestedTags}} thematic tags describing the document's topics and domains. English only. Each tag is one to three words naming a recognizable subject, field, or period. Tags describe facets the title does not already state. For names containing symbols (e.g., C++, C#), use the conventional spelled-out form (e.g., c plus plus, c sharp). Tags are conceptual categories — fields, domains, disciplines, periods, methods. Tags are never specific people, works, or places. Use only widely-recognized standard terminology a general educated audience would know. If an existing suggestion tag captures the concept adequately, prefer it over inventing a narrower label.{{.TagsPrompt}}
+- Tags: At most {{.RequestedTags}} thematic tags describing the document's topics and domains. English only. Each tag is one to three words naming a recognizable subject, field, or period. Tags describe facets the title does not already state. Tags are conceptual categories — fields, domains, disciplines, periods, methods. Tags are never specific people, works, or places. Use only widely-recognized standard terminology a general educated audience would know. If an existing suggestion tag captures the concept adequately, prefer it over inventing a narrower label.{{.TagsPrompt}}
 - People: People associated with the document. For each person provide: name (the person's name in their own native script/language — only when you can independently determine it; if you are not confident of the person's actual native form, leave this empty rather than copying how this document renders the name), name_romanized (a Latin-script/romanized form of the name — always provide this, even when name is already in Latin script), and a type from the list below. Only include individuals who play a substantive role in the document's creation, execution, or primary subject matter — exclude incidental mentions. Note: names captured here must NOT be re-used as tags.
 {{.PeoplePrompt}}- Language: 3-letter ISO 639-2 code (e.g. 'eng','spa','jpn','fra','deu','zho','kor','ara','por','rus'). Detect the primary language even from noisy or mixed text. Only use 'und' as a last resort if the text is truly too short or ambiguous to determine.
 Return ONLY a json string without any explanations, numbers, additional text, text formatting or text/code blocks, with keys: title, type, tags, people (array of objects with keys: name, name_romanized, type), language.
@@ -208,14 +204,7 @@ func tagsPrompt(tags []string) string {
 }
 
 func normalizeCore(s string) string {
-	s = norm.NFKC.String(s)
-	s = strings.ToLower(strings.TrimSpace(s))
-	s = strings.ReplaceAll(s, "-", " ")
-	s = strings.ReplaceAll(s, "_", " ")
-	s = utils.FoldAccents(s)
-	s = nonAlphaKeepSpaces.ReplaceAllString(s, "")
-	s = multiSpaceRE.ReplaceAllString(s, " ")
-	return strings.TrimSpace(s)
+	return utils.NormalizeTag(s)
 }
 
 func normalizeToTokens(s string) []string {

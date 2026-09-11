@@ -252,7 +252,7 @@ The last 4 methods back the dashboard analytics panel. `LanguageDistribution` an
 - `document` — Main storage: `document_id` (UUID, UNIQUE), `md5_checksum`, `sha512_checksum` (UNIQUE), `file_size` (`BIGINT`, original inbox file size), `processed_size` (`BIGINT`, processed file size; `0` = unknown, `-1` = backfill sentinel for missing files), `page_count` (`INTEGER`, Go: `int32`), `word_count` (`int32`), `char_count` (`int32`), `language`, `text_content`, file paths, `deleted_at` (`TIMESTAMPTZ`, nullable — soft-delete marker, NULL = active). Primary key: `id BIGINT GENERATED ALWAYS AS IDENTITY`.
 - `saved_search` — Saved search configurations: `id`, `name`, `filter_json` (JSON), `created_at TIMESTAMPTZ NOT NULL` (Go: `time.Time`)
 - `task` — Async processing: `task_id` (UUID), `batch_id` (nullable), `task_type`, `payload` (`JSONB`), `result` (`JSONB`), `dedup_key` (nullable), `status`, timestamps, `error`, `attempts int32`
-- `tag` — Classification tags (seeded with 110+ Dewey Decimal tags)
+- `tag` — Classification tags (seeded with 110+ Dewey Decimal tags). `name` is UNIQUE and stored in canonical form: `service.Tag.Create`/`Update` normalize every incoming name through `utils.NormalizeTag` (lowercase, accent-folded, dash family → space, keeps `+ # .`, digits, and letters of any Unicode script) before insert.
 - `document_type` — Document type classification (seeded with types like `article`, `book`, `report`). `description` defaults to `''`.
 - `people` — People/entities (`name` UNIQUE, `name_native` nullable, `normalized_name` NOT NULL UNIQUE)
 - `people_type` — Roles for people
@@ -292,7 +292,11 @@ migrations: `00001_baseline.sql`, `00002_tsvector.sql`, `00003_tsvector_index.sq
 `00008_thumbnail.sql`, `00009_thumbnail_backfill_index.sql`, `00010_processed_size.sql`,
 `00011_task_progress.sql`, `00012_text_hash.sql`, `00013_task_vocabulary_enums.sql`,
 `00014_maintenance_lock_predicate.sql` (renames the gate predicate `is_backup_running()` →
-`is_maintenance_lock_held()`). Goose tracks
+`is_maintenance_lock_held()`), `00015_claim_token_lock.sql` (adds `backup_lock.owner_token`
+and `task.claim_token` for token-guarded lock acquisition/release),
+`00016_tag_symbol_forms.sql` (collapses legacy spelled-out tag forms into their symbol
+forms: `c plus plus` → `c++`, `c sharp` → `c#`, `dot net` → `.net`, `asp net` → `asp.net`,
+`vbnet` → `vb.net`, deduping `document_tag` rows and deleting the obsolete spelled rows). Goose tracks
 which versions have been applied in the `goose_db_version` table.
 
 ## Migration Version Table

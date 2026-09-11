@@ -158,28 +158,21 @@ store, it can never be suggested.
 from the `tag` table:
 
 1. Loads all tag names (`ListAllTagsNames`).
-2. Normalizes each name for embedding via the shared helper
-   `utils.NormalizeTagEmbedding` (`internal/utils/tagname.go`):
-
-```go
-func NormalizeTagEmbedding(s string) string {
-	s = strings.ReplaceAll(s, "-", " ")
-	s = strings.ReplaceAll(s, "_", " ")
-	s = tagSpaceRE.ReplaceAllString(s, " ")
-	return strings.TrimSpace(s)
-}
-```
-
-   The same helper is applied at add/remove/rank time in `hugot.go`, so the
-   daemon and the bootstrap can never drift: a tag stored as
-   `machine-learning` always matches a query normalized to `machine learning`.
+2. Embeds them **verbatim** — no per-key transformation. Tag names are
+   already canonical: `service.Tag.Create`/`Update` normalize every name
+   through `utils.NormalizeTag` (`internal/utils/tagname.go`) before it
+   reaches the DB, so the stored name is the embedding key and the matcher
+   never re-derives a different form.
 3. Encodes in batches of `batchSize = 32`, then **swaps the whole map under
    one lock** (`bootstrap.go:59-61`) — an atomic publish; readers never see a
    half-built store.
 
 The store is rebuilt at `kushim hugot` daemon startup, and incrementally
 updated on tag CRUD (`service.Tag.encodeAndAddBatch` via `AddToStore`,
-`service/tag.go:275-279`).
+`service/tag.go:275-279`). `AddToStore`, `RemoveFromStore`, `Consolidate` and
+`Rank` in `hugot.go` likewise use their inputs verbatim — the canonical form
+is guaranteed upstream (DB names on the store side, `contentanalyzer.NormalizeTags`
+on the query side), so any per-call normalization would only introduce drift.
 
 ---
 
@@ -478,8 +471,10 @@ catalog/derivation, add it to both switch statements.
 
 ## 12. Gotchas
 
-- **`NormalizeTagEmbedding` is centralized** — `internal/utils/tagname.go` is
-  the single normalization used by `hugot.go` and `bootstrap.go`.
+- **Tag names are canonical before they reach the store** — `utils.NormalizeTag`
+  (`internal/utils/tagname.go`) runs at the DB save chokepoints
+  (`service.Tag.Create`/`Update`); the cache and the matcher use names
+  verbatim, so store keys always equal DB names.
 - **The store is the tag universe.** Tags not in `entries` can never be
   suggested, and `Match` returns nothing when the store is empty — even if
   the model works.
@@ -508,4 +503,4 @@ catalog/derivation, add it to both switch statements.
 
 ---
 
-*Last verified against the tree: 2026-08-03. If code and doc disagree, code wins.*
+*Last verified against the tree: 2026-09-11. If code and doc disagree, code wins.*

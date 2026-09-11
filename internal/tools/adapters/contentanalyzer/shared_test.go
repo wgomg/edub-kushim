@@ -25,8 +25,8 @@ func TestNormalizeTags_Transforms(t *testing.T) {
 		{"already space-separated", []string{"social justice"}, []string{"social justice"}},
 		{"lowercased", []string{"Anarchism"}, []string{"anarchism"}},
 		{"mixed case hyphens", []string{"Post-Left-Anarchism"}, []string{"post left anarchism"}},
-		{"strips non-alpha", []string{"c++"}, []string{"c"}},
-		{"strips digits", []string{"c2"}, []string{"c"}},
+		{"keeps symbols", []string{"c++"}, []string{"c++"}},
+		{"keeps digits", []string{"c2"}, []string{"c2"}},
 		{"collapses spaces", []string{"social   justice"}, []string{"social justice"}},
 		{"trims whitespace", []string{"  anarchism  "}, []string{"anarchism"}},
 		{"multiple tags", []string{"anarchism", "social justice"}, []string{"anarchism", "social justice"}},
@@ -539,7 +539,7 @@ func TestNormalizeTags_DeduplicatesAndDropsEmpty(t *testing.T) {
 		{"dedup after normalize", []string{"Anarchism", "anarchism"}, []string{"anarchism"}},
 		{"dedup hyphen vs space", []string{"social-justice", "social justice"}, []string{"social justice"}},
 		{"drops all-special tags", []string{"!!!"}, []string{}},
-		{"drops empty after strip", []string{"123"}, []string{}},
+		{"keeps digits-only", []string{"123"}, []string{"123"}},
 		{"mixed keep and drop", []string{"anarchism", "!!!"}, []string{"anarchism"}},
 	}
 	for _, tt := range tests {

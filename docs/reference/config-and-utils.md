@@ -178,7 +178,15 @@ per tool category, used by the frontend settings UI to populate select dropdowns
 
 ### Functions
 
-`CountWords`, `EstimateTokensFromWords`, `EstimateTokens` (character-based token estimator for LLM budget checks — single pass counting CJK vs Latin runes, uses blended formula `cjk*1.5 + non_cjk/4` when CJK ratio > 10%, otherwise `total/4`), `CleanUp` (removes special chars), `Truncate` (rune-aware; returns "Unknown" for whitespace-only, trims trailing whitespace after truncation), `CleanCodeBlock`, `ContainsNonLatin` (checks for CJK, Cyrillic, Arabic, Hebrew, Greek, Thai, Devanagari, Bengali, Hangul), `FoldAccents` (stateless NFD → drop Mn → NFC accent fold; the canonical fold shared by `NormalizeForDB` and the content analyzer, safe for concurrent use), `NormalizeForDB` (NFKC → lowercase → dash/underscore to space → accent fold → strip non-`[a-z ]` → collapse whitespace)
+`CountWords`, `EstimateTokensFromWords`, `EstimateTokens` (character-based token estimator for LLM budget checks — single pass counting CJK vs Latin runes, uses blended formula `cjk*1.5 + non_cjk/4` when CJK ratio > 10%, otherwise `total/4`), `CleanUp` (removes special chars), `Truncate` (rune-aware; returns "Unknown" for whitespace-only, trims trailing whitespace after truncation), `CleanCodeBlock`, `ContainsNonLatin` (checks for CJK, Cyrillic, Arabic, Hebrew, Greek, Thai, Devanagari, Bengali, Hangul), `FoldAccents` (stateless NFD → drop Mn → NFC accent fold; the canonical fold shared by `NormalizeForDB` and `NormalizeTag`, safe for concurrent use), `NormalizeForDB` (NFKC → lowercase → dash/underscore to space → accent fold → strip non-`[a-z ]` → collapse whitespace)
+
+---
+
+## `tagname.go`
+
+### Functions
+
+`NormalizeTag` (canonical tag name — NFKC → lowercase → dash family to space → accent fold → keep letters of any Unicode script, digits, and `+ # .` → collapse whitespace; returns `""` when the result has no letter or digit), `containsLetterOrDigit` (rune scan backing the empty-result rule).
 
 ---
 

@@ -30,10 +30,6 @@ func BuildTagCache(ctx context.Context, queries *database.Queries, logger *utils
 		return nil
 	}
 
-	for i, name := range tagNames {
-		tagNames[i] = utils.NormalizeTagEmbedding(name)
-	}
-
 	embeddings := make(map[string][]float32, len(tagNames))
 	for i := 0; i < len(tagNames); i += batchSize {
 		end := min(i+batchSize, len(tagNames))

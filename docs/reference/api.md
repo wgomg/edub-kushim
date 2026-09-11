@@ -197,8 +197,8 @@ See `AuthMiddleware` under `server.go` → Functions.
   - **Methods**:
     - `NewTagHandler(services, logger) *TagHandler`
     - `List(w, r)` — `GET /api/v1/tags?q=<prefix>&limit=50&offset=0` — With `q`: searches by prefix via `services.Tag.SearchByNameWithDocumentCount`. Without `q`: lists paginated via `services.Tag.ListWithDocumentCount`. Returns `{results, total}` with `document_count` per tag.
-    - `Create(w, r)` — `POST /api/v1/tags` — Accepts `{name}`. Calls `services.Tag.Create(ctx, []string{name})`. Maps status: `Created` → 201 with `{id,name}`, `Conflict` → 409 with existing `{id,name}`, `Invalid` → 400.
-    - `Update(w, r)` — `PUT /api/v1/tags/{id}` — Accepts `{name}`. Calls `services.Tag.Update(ctx, []UpdatePair{{ID: id, Name: name}})`. Maps status: `Updated`/`Noop` → 200 with `{id,name}`, `Conflict` → 409, `NotFound` → 404, `Invalid` → 400.
+    - `Create(w, r)` — `POST /api/v1/tags` — Accepts `{name}`. Calls `services.Tag.Create(ctx, []string{name})`. The service normalizes the name through `utils.NormalizeTag` (lowercase, accent-folded, keeps `+ # .`, digits, and letters of any Unicode script); the response `name` is the canonical form and conflicts are checked against canonical names. Maps status: `Created` → 201 with `{id,name}`, `Conflict` → 409 with existing `{id,name}`, `Invalid` → 400 (empty after normalization).
+    - `Update(w, r)` — `PUT /api/v1/tags/{id}` — Accepts `{name}`. Calls `services.Tag.Update(ctx, []UpdatePair{{ID: id, Name: name}})`. The name is normalized the same way; `Noop` (200) is returned when the canonical form equals the stored name. Maps status: `Updated`/`Noop` → 200 with `{id,name}`, `Conflict` → 409, `NotFound` → 404, `Invalid` → 400.
     - `Delete(w, r)` — `DELETE /api/v1/tags/{id}` — Calls `services.Tag.Delete(ctx, []int64{id})`. Maps status: `Deleted` → 204, `NotFound` → 404.
 
 ---
