@@ -247,10 +247,12 @@ The enrichment pipeline:
    or symbol handling don't produce OOD tokens in the embedding model.
 5. **Post-LLM Tag Consolidation** — Normalized tags are ranked against canonical
    tag embeddings via `Rank` (the matcher returns candidates with scores; the
-   replacement decision is the enricher's). `applyConsolidationPolicy` replaces
-   each tag with its top candidate when the candidate's similarity meets
-   `consolidation_similarity`, fixing casing and synonym mismatches that survive
-   the normalization step.
+   replacement decision is the enricher's). `applyConsolidationPolicy` delegates
+   to `tagpolicy.Evaluate`: deterministic guards (negation, shared token,
+   direction) block unsafe merges, and only a guard-free candidate at or above
+   `auto_replace_similarity` replaces the emitted tag — everything else keeps,
+   fixing casing and synonym mismatches that survive the normalization step
+   while letting new concepts be born.
 5. **New Tag Store Update** — any new tags created during enrichment are batch-created
    via `services.Tag.Create(ctx, analysis.Tags)`. The service delegates store management
    to the matcher via `AddToStore`, which encodes new names and adds them to the shared

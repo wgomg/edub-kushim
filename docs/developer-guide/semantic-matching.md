@@ -319,12 +319,20 @@ for i, qEmb := range out.Embeddings {
   through unchanged with no candidates.
 
 `Runner.RankTags` (`internal/tools/runner.go`) wraps the call with the
-configured timeout, and the enricher applies the argmax policy locally
-via `applyConsolidationPolicy` (`internal/enrichment/enricher.go`): each tag is
-replaced by its top candidate when the candidate's similarity meets
-`consolidation_similarity`; otherwise the `KeptName` is kept. The threshold
-re-check is redundant with the daemon-side filter but is the shape later
-policy bands attach to.
+configured timeout, and the enricher applies the replacement policy locally
+via `applyConsolidationPolicy` (`internal/enrichment/enricher.go`), which
+delegates to `tagpolicy.Evaluate` (`internal/enrichment/tagpolicy/policy.go`).
+Per query the policy runs, in order: short-slice and empty-candidates
+passthrough, an identity fast path, three deterministic guards — negation
+(exactly one side carries `anti`/`contra`/`non`), shared token (partial token
+overlap), direction (query tokens a strict subset of the target's) — and then
+the similarity bands: a guard-free candidate at or above
+`auto_replace_similarity` replaces, anything below keeps the `KeptName` (the
+ambiguous band defaults to keep). The runner-up similarity is recorded on
+every decision but never affects it. Each decision is logged as
+`consolidation[v1]: replace|keep|passthrough … reason=…` (passthrough at
+debug level). Fallback results from the legacy daemon (no candidates) pass
+through `KeptName` verbatim.
 
 ---
 
@@ -407,7 +415,8 @@ All knobs live under `enricher.tagmatcher` in the config
 | `hugot.cpu_mem_arena` / `mem_pattern` | `false` | ORT memory knobs (§2) |
 | `top_n` | `15` (derived) | max suggestions returned |
 | `min_similarity` | model-derived | document→tag threshold |
-| `consolidation_similarity` | model-derived | tag→tag threshold |
+| `consolidation_similarity` | model-derived | tag→tag consideration floor (candidates below it never reach the policy) |
+| `auto_replace_similarity` | model-derived | tag→tag auto-replace cutoff (guard-free candidates at or above it replace) |
 | `timeout` | `120` (s) | per-call budget |
 | `reduce_target_words` | `4000` | text is reduced to ≤ this many words before embedding |
 
@@ -444,11 +453,28 @@ func defaultConsolidationSimilarity(modelShortName string) float64 {
 		return 0.75
 	}
 }
+
+// defaultAutoReplaceSimilarity ... the similarity at or above which a
+// guard-free non-identity candidate replaces the emitted tag; each value is
+// the consolidation default + 0.15 ...
+func defaultAutoReplaceSimilarity(modelShortName string) float64 {
+	switch modelShortName {
+	case "bge-m3":
+		return 0.95
+	case "all-mpnet-base-v2":
+		return 0.90
+	case "all-MiniLM-L6-v2":
+		return 0.85
+	default:
+		return 0.90
+	}
+}
 ```
 
 Rules of thumb: raise `min_similarity` if false positives appear; keep
-`consolidation_similarity` well above it. If you add a model to the
-catalog/derivation, add it to both switch statements.
+`consolidation_similarity` well above it and `auto_replace_similarity` above
+that. If you add a model to the catalog/derivation, add it to all three switch
+statements.
 
 ---
 
@@ -464,7 +490,7 @@ catalog/derivation, add it to both switch statements.
      (`enricher.go:106-118`).
    - `runner.RankTags(ctx, docId, analysis.Tags)` after the LLM pass
      (`enricher.go:235-243`); `applyConsolidationPolicy` applies the
-     replacement decision.
+     replacement decision via `tagpolicy.Evaluate` (guards + two bands).
 4. **API tag creation** triggers a store refresh through the same service.
 
 ---

@@ -283,6 +283,7 @@ type TagMatcherConfig struct {
 	TopN                    int         `yaml:"-" json:"top_n"`
 	MinSimilarity           float64     `yaml:"-" json:"min_similarity"`
 	ConsolidationSimilarity float64     `yaml:"-" json:"consolidation_similarity"`
+	AutoReplaceSimilarity   float64     `yaml:"-" json:"auto_replace_similarity"`
 }
 
 type ToolConfig struct {
@@ -685,6 +686,7 @@ func finalizeConfig(cfg *Config, configDir string) error {
 	cfg.Enricher.TagMatcher.TopN = 15
 	cfg.Enricher.TagMatcher.MinSimilarity = defaultMinSimilarity(modelShortName)
 	cfg.Enricher.TagMatcher.ConsolidationSimilarity = defaultConsolidationSimilarity(modelShortName)
+	cfg.Enricher.TagMatcher.AutoReplaceSimilarity = defaultAutoReplaceSimilarity(modelShortName)
 	cfg.Enricher.TagMatcher.Hugot.BackendLibPath = filepath.Join(configDir, "tagmatcher", "hugot", "libs")
 
 	cfg.Storage.ConsumptionDir = expandPath(cfg.Storage.ConsumptionDir, homeDir)
@@ -984,5 +986,22 @@ func defaultConsolidationSimilarity(modelShortName string) float64 {
 		return 0.70 // 384-dim, compressed distribution
 	default:
 		return 0.75
+	}
+}
+
+// defaultAutoReplaceSimilarity returns the similarity at or above which a
+// guard-free non-identity candidate replaces the emitted tag. Each value is the
+// model's consolidation default plus 0.15, the band width established for
+// bge-m3 (0.80 → 0.95) in the consolidation false-merges report.
+func defaultAutoReplaceSimilarity(modelShortName string) float64 {
+	switch modelShortName {
+	case "bge-m3":
+		return 0.95
+	case "all-mpnet-base-v2":
+		return 0.90
+	case "all-MiniLM-L6-v2":
+		return 0.85
+	default:
+		return 0.90
 	}
 }

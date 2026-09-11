@@ -14,6 +14,7 @@ import (
 	anyascii "github.com/anyascii/go"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/enrichment/tagpolicy"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/tools"
@@ -104,6 +105,11 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 	var tagsNames []string
 	for _, t := range allTags {
 		tagsNames = append(tagsNames, t.Name)
+	}
+
+	storeTags := make(map[string]struct{}, len(allTags))
+	for _, t := range allTags {
+		storeTags[t.Name] = struct{}{}
 	}
 
 	matchTagsStart := time.Now()
@@ -238,7 +244,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 	if err != nil {
 		e.logger.Error(&logId, "post-LLM consolidation failed: %v", err)
 	} else {
-		consolidated := e.applyConsolidationPolicy(analysis.Tags, ranked, &logId)
+		consolidated := e.applyConsolidationPolicy(analysis.Tags, ranked, storeTags, &logId)
 		analysis.Tags = consolidated
 		e.logger.Debug(&logId, "post-LLM consolidation: %d tags (%s)", len(consolidated), time.Since(consolidateStart))
 	}
@@ -403,20 +409,21 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 	return analysis.Stats, nil
 }
 
-func (e *Enricher) applyConsolidationPolicy(queries []string, ranked []tagmatcher.RankResult, logId *string) []string {
-	threshold := e.config.Enricher.TagMatcher.ConsolidationSimilarity
+func (e *Enricher) applyConsolidationPolicy(queries []string, ranked []tagmatcher.RankResult, storeTags map[string]struct{}, logId *string) []string {
+	decisions := tagpolicy.Evaluate(queries, ranked, storeTags, e.config.Enricher.TagMatcher.AutoReplaceSimilarity)
 	out := make([]string, len(queries))
-	for i := range queries {
-		if i >= len(ranked) {
-			out[i] = queries[i]
-			continue
-		}
-		cands := ranked[i].Candidates
-		if len(cands) > 0 && cands[0].Similarity >= threshold {
-			e.logger.Info(logId, "consolidate %q → %s (%.3f)", queries[i], cands[0].Tag, cands[0].Similarity)
-			out[i] = cands[0].Tag
-		} else {
-			out[i] = ranked[i].KeptName
+	for i, d := range decisions {
+		out[i] = d.Output
+		switch d.Action {
+		case tagpolicy.ActionReplace:
+			e.logger.Info(logId, "consolidation[%s]: replace %q → %q (sim=%.3f runner=%.3f reason=%s)",
+				tagpolicy.Version, d.Query, d.Target, d.Sim, d.RunnerUpSim, d.Reason)
+		case tagpolicy.ActionKeep:
+			e.logger.Info(logId, "consolidation[%s]: keep %q (sim=%.3f reason=%s)",
+				tagpolicy.Version, d.Query, d.Sim, d.Reason)
+		default:
+			e.logger.Debug(logId, "consolidation[%s]: passthrough %q (reason=%s)",
+				tagpolicy.Version, d.Query, d.Reason)
 		}
 	}
 	return out

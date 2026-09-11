@@ -61,7 +61,7 @@
 - Text reduction via TextRank extractive summarization (TF-IDF, weighted PageRank, diversity penalty)
 - Semantic tag matching via Hugot (Go or ONNX backend), cosine similarity, chunked encoding
 - Dual text reduction: separate `target_words` for LLM and `reduce_target_words` for tag matching
-- Post-LLM tag consolidation via `Rank` + enricher-side `applyConsolidationPolicy` (fixes casing, hyphenation, synonym mismatches; the replacement decision lives in the enricher)
+- Post-LLM tag consolidation via `Rank` + enricher-side `applyConsolidationPolicy` backed by `tagpolicy` (fixes casing, hyphenation, synonym mismatches; the replacement decision lives in the enricher; deterministic guards — negation, shared token, direction — plus a two-band rule: guard-free candidates at or above the model-derived `auto_replace_similarity` replace, the ambiguous band keeps)
 - **Post-normalization tag filtering** (`FilterTags`) — rule-based validator drops >3-word tags, tags matching person names (from the current document or the full `people` table via strict-subset rule), and tags that restate the title, then caps at `maxTags` (5). Prompt over-requests 8 tags to survive filtering.
 - Tag embedding cache (`BuildTagCache`) — pre-computed tag embeddings at startup
 - **New tag cache update**: newly created tags during enrichment are immediately encoded and added to the embedding cache

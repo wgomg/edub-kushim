@@ -466,9 +466,10 @@ for i := range 2 {
     multi-token subsets of known normalized names, overlap doc-type names, or
     are contained in the title; caps at 5.
 11. **Consolidate** (`enricher.go:236-244`): `Runner.RankTags` ranks LLM tags
-    against canonical existing tags, then `applyConsolidationPolicy` replaces
-    each tag with its top candidate when the similarity meets
-    `consolidation_similarity`.
+    against canonical existing tags, then `applyConsolidationPolicy` runs
+    `tagpolicy.Evaluate` — deterministic guards (negation, shared token,
+    direction) plus a two-band rule: guard-free candidates at or above
+    `auto_replace_similarity` replace, the ambiguous band keeps.
 12. **Persist metadata** (`enricher.go:254-273`): title truncated to 127
     (`utils.Truncate`), doc type validated against the DB list (fallback
     `"undetermined"`), `UpdateDocumentMetadata`.
