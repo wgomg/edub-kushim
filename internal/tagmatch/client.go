@@ -210,6 +210,16 @@ func (c *MatcherClient) Consolidate(ctx context.Context, docId string, queries [
 	return resp.Results, nil
 }
 
+func (c *MatcherClient) SimilarPairs(ctx context.Context) ([]tagmatcher.SimilarPair, error) {
+	var resp struct {
+		Pairs []tagmatcher.SimilarPair `json:"pairs"`
+	}
+	if err := c.do(ctx, "GET", "/rpc/v1/similar-pairs", nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Pairs, nil
+}
+
 func (c *MatcherClient) Health(ctx context.Context) error {
 	return c.do(ctx, "GET", "/health", nil, nil)
 }

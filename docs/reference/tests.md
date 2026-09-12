@@ -210,10 +210,10 @@ instructions) instead of requiring `psql` on the host PATH.
 
 ### CGo-dependent tests (`make test-cgo`)
 
-These 26 tests require `CGO_ENABLED=1` to compile because their source files
-are tagged `//go:build cgo` (or, for `internal/commands`, the package imports
-the cgo-gated tagmatcher adapter). Most use only pure-Go code; only the MuPDF
-tests and the command handlers exercise actual CGo function calls.
+These 46 tests require `CGO_ENABLED=1` to compile because their source files
+are tagged `//go:build cgo` (or, for `internal/commands` and `internal/tools`,
+the packages import the cgo-gated adapters). Most use only pure-Go code; only
+the MuPDF tests and the command handlers exercise actual CGo function calls.
 
 Requires the C toolchain and built C libraries (Tesseract, Leptonica, MuPDF,
 libtokenizers) on the host. Run inside the builder containers to avoid
@@ -225,18 +225,21 @@ make test-cgo-glibc    # podman: kushim-glibc-builder
 make test-cgo-musl     # podman: kushim-musl-builder
 ```
 
-**4 packages, 26 tests:**
+**5 packages, 46 tests:**
 
 | Package | Tests | CGo at runtime? |
 |---------|-------|-----------------|
 | `internal/tools/adapters` | 2 | Yes — MuPDF page render |
 | `internal/tools/adapters/ocr` | 6 | No (pure Go, build-tag gated) |
 | `internal/tools/adapters/tagmatcher` | 2 | No (pure Go, build-tag gated) |
+| `internal/tools` | 20 | No (pure Go tests; package links the cgo adapters transitively) |
 | `internal/commands` | 16 | No (pure Go tests; package links the cgo adapters transitively) |
 
 `internal/commands` is not part of `make test`: the package only compiles with
 CGo (`hugot.go` imports the `//go:build cgo`-gated tagmatcher adapter), and
 kushim — the only binary importing it — is always built with CGo.
+`internal/tools` runs in both tiers: `make test` builds it without CGo, and
+`make test-cgo` re-runs it with the cgo adapters linked.
 
 ### Full CGo+DB run (`make test-cgo-db`)
 

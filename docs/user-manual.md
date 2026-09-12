@@ -543,6 +543,7 @@ endpoints:
 | `POST /rpc/v1/encode`           | POST   | Encode text into embedding vectors            |
 | `POST /rpc/v1/match`            | POST   | Match document content against the tag embedding store |
 | `POST /rpc/v1/rank`             | POST   | Rank tag names against the store; returns candidates with similarity scores |
+| `GET /rpc/v1/similar-pairs`     | GET    | Return every unordered pair of store entries at or above the consolidation-similarity floor (pair cache) |
 | `POST /rpc/v1/consolidate`      | POST   | Legacy consolidation endpoint (pre-upgrade clients only) |
 | `POST /rpc/v1/add-to-store`     | POST   | Add new tag names to the embedding store      |
 | `POST /rpc/v1/remove-from-store`| POST   | Remove tag names from the embedding store     |
@@ -1284,7 +1285,7 @@ Response `200` — `PersonListResponse` envelope: `{ "results": [{ "id": 1, "nam
 
 ### Merge Tag Suggestions
 
-Lists candidate tag pairs for an explicit merge, ranked by embedding similarity and — when adjudication history exists — population overlap and verdict counts. The scan is on-demand and O(store size) in embedding work, so it is meant for a manual review surface, not polling. Editor-gated in the UI; viewer-readable via the API.
+Lists candidate tag pairs for an explicit merge, ranked by embedding similarity and — when adjudication history exists — population overlap and verdict counts. The pair list is served from the matcher daemon's in-memory pair cache (every unordered pair of store entries at or above the consolidation-similarity floor, maintained on tag CRUD), so the endpoint does no per-request embedding work. Editor-gated in the UI; viewer-readable via the API.
 
 ```
 GET /api/v1/tags/merge?limit=20

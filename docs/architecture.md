@@ -41,6 +41,7 @@ A standalone HTTP server over a Unix domain socket (`kushim-hugot.sock` in the c
 | `POST /rpc/v1/encode`            | POST   | Encode text to embeddings    |
 | `POST /rpc/v1/match`             | POST   | Match text against tags      |
 | `POST /rpc/v1/rank`              | POST   | Rank tag names against the store, return candidates with scores |
+| `GET /rpc/v1/similar-pairs`      | GET    | Return the cached high-similarity tag pairs (merge-review surface) |
 | `POST /rpc/v1/consolidate`       | POST   | Legacy consolidation endpoint (pre-upgrade clients only) |
 | `POST /rpc/v1/add-to-store`      | POST   | Add names to embedding store |
 | `POST /rpc/v1/remove-from-store` | POST   | Remove names from store      |
@@ -95,7 +96,7 @@ flowchart TB
     end
 
     subgraph Hugot["kushim hugot\n(matcher RPC server)"]
-        H["Unix socket\nencode / match / rank / consolidate"]
+        H["Unix socket\nencode / match / rank / consolidate / similar-pairs"]
     end
 
     HTTP[HTTP Request] --> API
@@ -260,10 +261,12 @@ The enrichment pipeline:
    `same` replaces with the target, `variant`/`related` keep; failures keep).
    Nothing merges tags automatically: pre-existing duplicates that survive
    consolidation are resolved by the operator through the **merge-review
-   surface** — `GET /api/v1/tags/merge` scans the embedding store for
-   high-similarity pairs and ranks them by population overlap and verdict
-   history from `tag_verdict_event` (similarity-only, lower-confidence rows
-   when the event table is empty), and `POST /api/v1/tags/{id}/merge`
+   surface** — `GET /api/v1/tags/merge` reads the matcher daemon's pair cache
+   (every unordered pair of store entries at or above the consolidation
+   similarity floor, maintained incrementally on tag CRUD) and ranks the pairs
+   by population overlap and verdict history from `tag_verdict_event`
+   (similarity-only, lower-confidence rows when the event table is empty), and
+   `POST /api/v1/tags/{id}/merge`
    hard-merges a source tag into a target in one transaction (re-points
    `document_tag` rows, deletes the source tag, removes the source name from
    the embedding store). Both endpoints are exposed in the tags page UI

@@ -327,6 +327,7 @@ test-cgo:
 		./internal/tools/adapters \
 		./internal/tools/adapters/ocr \
 		./internal/tools/adapters/tagmatcher \
+		./internal/tools/ \
 		./internal/commands/
 
 test-cgo-glibc:

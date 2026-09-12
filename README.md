@@ -153,7 +153,7 @@ flowchart TB
     API --> DB
     DB -->|"NOTIFY"| Q
     Q -->|"fork"| Worker
-    EP -.->|"encode/match/rank/consolidate"| H
+    EP -.->|"encode/match/rank/consolidate/similar-pairs"| H
 ```
 
 Documents are searchable immediately via PostgreSQL full-text search (tsvector) or structured search; enrichment (classification, tagging, people extraction) happens asynchronously.

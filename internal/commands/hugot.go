@@ -94,6 +94,7 @@ func serveHugotHandler(c *Container, args []string) error {
 	mux.HandleFunc("/rpc/v1/match", handleMatch(hugot, c.logger, bodyCap))
 	mux.HandleFunc("/rpc/v1/consolidate", handleConsolidate(hugot, c.logger, bodyCap))
 	mux.HandleFunc("/rpc/v1/rank", handleRank(hugot, c.logger, bodyCap))
+	mux.HandleFunc("/rpc/v1/similar-pairs", handleSimilarPairs(hugot, c.logger))
 	mux.HandleFunc("/rpc/v1/add-to-store", handleAddToStore(hugot, c.logger, bodyCap))
 	mux.HandleFunc("/rpc/v1/remove-from-store", handleRemoveFromStore(hugot, c.logger, bodyCap))
 	mux.HandleFunc("/health", handleHealth)
@@ -269,6 +270,22 @@ func handleRank(h *tagmatcher.Hugot, log *utils.Logger, maxBodyBytes int) http.H
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{"results": results})
+	}
+}
+
+func handleSimilarPairs(h *tagmatcher.Hugot, log *utils.Logger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		pairs, err := h.SimilarPairs(r.Context())
+		if err != nil {
+			respondError(w, log, err, http.StatusInternalServerError, "internal error")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"pairs": pairs})
 	}
 }
 

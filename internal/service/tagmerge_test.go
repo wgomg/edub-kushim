@@ -16,7 +16,7 @@ import (
 
 type mockMatcher struct {
 	mu    sync.Mutex
-	pairs map[string]tagmatcher.Candidate
+	pairs []tagmatcher.SimilarPair
 }
 
 func (m *mockMatcher) Match(ctx context.Context, docId, input string) ([]string, error) {
@@ -24,16 +24,17 @@ func (m *mockMatcher) Match(ctx context.Context, docId, input string) ([]string,
 }
 
 func (m *mockMatcher) Rank(ctx context.Context, docId string, queries []string) ([]tagmatcher.RankResult, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	results := make([]tagmatcher.RankResult, len(queries))
 	for i, q := range queries {
 		results[i] = tagmatcher.RankResult{KeptName: q}
-		if cand, ok := m.pairs[q]; ok {
-			results[i].Candidates = []tagmatcher.Candidate{cand}
-		}
 	}
 	return results, nil
+}
+
+func (m *mockMatcher) SimilarPairs(ctx context.Context) ([]tagmatcher.SimilarPair, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]tagmatcher.SimilarPair(nil), m.pairs...), nil
 }
 
 func (m *mockMatcher) Close() {}
@@ -167,9 +168,8 @@ func TestTagMerge_Suggestions_EmptyEventTableIsSimilarityOnly(t *testing.T) {
 	// Only surface the pair between our two tags; ignore every other tag the
 	// service scans, so the test counts exactly one suggestion.
 	matcher := &mockMatcher{
-		pairs: map[string]tagmatcher.Candidate{
-			"software development": {Tag: "software engineering", Similarity: 0.92},
-			"software engineering": {Tag: "software development", Similarity: 0.92},
+		pairs: []tagmatcher.SimilarPair{
+			{A: "software development", B: "software engineering", Similarity: 0.92},
 		},
 	}
 	svc.matcher = matcher
@@ -181,7 +181,7 @@ func TestTagMerge_Suggestions_EmptyEventTableIsSimilarityOnly(t *testing.T) {
 	testutil.AssertEqual(t, results[0].Confidence, mergeSuggestionConfidenceSimilarityOnly, "empty event table → similarity-only")
 	testutil.AssertEqual(t, results[0].EventCount, int64(0), "no event rows")
 	testutil.AssertEqual(t, results[0].SameCount+results[0].VariantCount+results[0].RelatedCount, int64(0), "no verdict counts")
-	testutil.AssertEqual(t, results[0].Similarity, 0.92, "similarity from rank")
+	testutil.AssertEqual(t, results[0].Similarity, 0.92, "similarity from pair cache")
 }
 
 func TestTagMerge_Suggestions_PopulationConfidenceAndOrdering(t *testing.T) {
@@ -223,9 +223,8 @@ func TestTagMerge_Suggestions_PopulationConfidenceAndOrdering(t *testing.T) {
 	insert("beta", "alpha", types.TagVerdicts.Same, "v1")
 
 	matcher := &mockMatcher{
-		pairs: map[string]tagmatcher.Candidate{
-			"alpha": {Tag: "beta", Similarity: 0.90},
-			"beta":  {Tag: "alpha", Similarity: 0.90},
+		pairs: []tagmatcher.SimilarPair{
+			{A: "alpha", B: "beta", Similarity: 0.90},
 		},
 	}
 	svc.matcher = matcher
@@ -241,7 +240,7 @@ func TestTagMerge_Suggestions_PopulationConfidenceAndOrdering(t *testing.T) {
 	testutil.AssertEqual(t, s.VariantCount, int64(1), "variant count")
 	testutil.AssertEqual(t, s.RelatedCount, int64(1), "related count")
 	testutil.AssertEqual(t, s.SameCount, int64(1), "same count from the reverse orientation")
-	testutil.AssertEqual(t, s.Similarity, 0.90, "similarity from rank")
+	testutil.AssertEqual(t, s.Similarity, 0.90, "similarity from pair cache")
 
 	testutil.AssertEqual(t, len(s.Tags), 2, "two tag entries")
 	testutil.AssertEqual(t, s.Tags[0].ID, alphaID, "alpha (higher document count) is first")

@@ -142,6 +142,49 @@ func (q *Queries) ListAllTagsNames(ctx context.Context) ([]string, error) {
 	return items, nil
 }
 
+const listAllTagsWithDocumentCount = `-- name: ListAllTagsWithDocumentCount :many
+SELECT t.id, t.name, t.created_at, COUNT(dt.document_id) AS document_count
+FROM tag t
+LEFT JOIN document_tag dt ON t.id = dt.tag_id
+GROUP BY t.id
+ORDER BY t.created_at DESC
+`
+
+type ListAllTagsWithDocumentCountRow struct {
+	ID            int64
+	Name          string
+	CreatedAt     sql.NullTime
+	DocumentCount int64
+}
+
+func (q *Queries) ListAllTagsWithDocumentCount(ctx context.Context) ([]ListAllTagsWithDocumentCountRow, error) {
+	rows, err := q.db.QueryContext(ctx, listAllTagsWithDocumentCount)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAllTagsWithDocumentCountRow
+	for rows.Next() {
+		var i ListAllTagsWithDocumentCountRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.CreatedAt,
+			&i.DocumentCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTags = `-- name: ListTags :many
 SELECT id, name, created_at FROM tag ORDER BY created_at DESC LIMIT $1 OFFSET $2
 `

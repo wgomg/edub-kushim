@@ -12,9 +12,16 @@ type RankResult struct {
 	Candidates []Candidate `json:"candidates"`
 }
 
+type SimilarPair struct {
+	A          string  `json:"a"`
+	B          string  `json:"b"`
+	Similarity float64 `json:"similarity"`
+}
+
 type Matcher interface {
 	Match(ctx context.Context, docId, input string) ([]string, error)
 	Rank(ctx context.Context, docId string, queries []string) ([]RankResult, error)
+	SimilarPairs(ctx context.Context) ([]SimilarPair, error)
 	Close()
 	Name() string
 }

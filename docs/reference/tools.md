@@ -120,6 +120,7 @@ Both `Analyze()` and `AnalyzeDocType()` call `checkContentTooLarge` with their c
 type Matcher interface {
     Match(ctx, docId, input string) ([]string, error)
     Rank(ctx, docId string, queries []string) ([]RankResult, error)
+    SimilarPairs(ctx context.Context) ([]SimilarPair, error)
     Close()
     Name() string
 }
@@ -142,6 +143,12 @@ type RankResult struct {
     Candidates []Candidate `json:"candidates"`
 }
 
+type SimilarPair struct {
+    A          string  `json:"a"`
+    B          string  `json:"b"`
+    Similarity float64 `json:"similarity"`
+}
+
 type EmbeddingStore interface {
     Add(key string, embedding []float32)
     Remove(key string)
@@ -150,14 +157,16 @@ type EmbeddingStore interface {
 ```
 
 The `Matcher` interface is used by the Runner for document-to-tag matching
-(`Match`) and post-LLM tag ranking (`Rank`). The `Embedder` interface is used
+(`Match`), post-LLM tag ranking (`Rank`), and by `TagMerge.Suggestions` for
+the merge-review pair list (`SimilarPairs`). The `Embedder` interface is used
 by TagService for encoding and store management; `AddToStore`/`RemoveFromStore`
 delegate store management to the adapter (encoding + adding to the embedding
 store, or removing from it). The `EmbeddingStore` interface provides read/write
 access to the shared tag embedding cache. `RankResult` carries the name to keep
 when no candidate is chosen (`KeptName`) plus up to two ranked candidates with
 scores; the replacement decision lives in the enricher's
-`applyConsolidationPolicy`.
+`applyConsolidationPolicy`. `SimilarPair` is an unordered pair of store names
+with their cosine similarity, canonicalized so each pair is stored once.
 
 The composition root builds a single `*Hugot` (for the `kushim` CLI) or uses a `*tagmatch.MatcherClient` (for the `edub` API server) — both satisfy the `Matcher` and `Embedder` interfaces. The `MatcherClient` forwards all calls over a Unix socket to a standalone `kushim hugot` process.
 
@@ -173,17 +182,18 @@ The composition root builds a single `*Hugot` (for the `kushim` CLI) or uses a `
 - **Chunked encoding**: Texts exceeding the effective chunk size (configured `chunk_size`, default `4096`; `0` = the model's `max_position_embeddings` minus a 12-token safety margin, 8180 for BGE-M3) are split into overlapping token chunks, mean-pooled. The default bounds per-request memory — see [Tag Matcher guide](../tag-matcher.md)
 - **Ranking**: Cosine similarity on L2-normalized embeddings (dot product); separate `minSimilarity` (doc→tag), `consolidationSim` (tag→tag consideration floor) and the enricher-side `auto_replace_similarity` (tag→tag auto-replace cutoff)
 - **Config**: `TopN`, `MinSimilarity`, `ConsolidationSimilarity`, `ChunkSize` (default 4096; `0` = model max, clamped to `max_position_embeddings` − 12), `ChunkOverlap` (10% of chunk size)
-- **Fields**: `store EmbeddingStore` — shared reference to the tag embedding cache
+- **Fields**: `store EmbeddingStore` — shared reference to the tag embedding cache; `pairs` — mutex-guarded map of unordered `similarPairKey` → cosine similarity holding every pair of store entries at or above `consolidationSim`
 - **Methods**:
   - `Match(ctx, docId, input)` — Reads all entries from the store, encodes the input, ranks by cosine similarity, returns top-N matches
   - `Rank(ctx, docId, queries []string)` — Reads all entries from the store internally, encodes the queries verbatim (they are already canonical — `contentanalyzer.NormalizeTags` output), ranks against the store embeddings, and returns up to two candidates per query with scores plus the kept name
+  - `SimilarPairs(ctx)` — Snapshots the pair cache under the mutex and returns it as a slice of `SimilarPair`
   - `Encode(ctx, *docId, texts)` — Batch embedding with chunked encoding for long inputs. Does NOT normalize input — shared with document text matching where punctuation is meaningful.
-  - `AddToStore(ctx, names)` — Encodes names verbatim (canonical DB names from `service.Tag.Create`/`Update`) in batches of 32 (`embedBatchSize`), and adds them to the store
-  - `RemoveFromStore(ctx, names)` — Removes names from the store (moved from TagService)
-  - `SetStore(s EmbeddingStore)` — Injects the shared store reference after construction
+  - `AddToStore(ctx, names)` — Encodes names verbatim (canonical DB names from `service.Tag.Create`/`Update`) in batches of 32 (`embedBatchSize`), adds them to the store, and maintains the pair cache: one `Entries()` snapshot per batch, prune-then-insert per name (re-encodes drop stale pairs), fresh batch vectors used for intra-batch pairs
+  - `RemoveFromStore(ctx, names)` — Removes names from the store and drops every pair mentioning them
+  - `SetStore(s EmbeddingStore)` — Injects the shared store reference after construction and rebuilds the pair cache from the store's entries (N²/2 cosine pass, skipped when `consolidationSim` is 0)
   - `Close()` — Idempotent (nil-safe, sets session to nil after destroy)
-- **Nil-receiver guards**: `Match`, `Rank`, `Encode` all return an error if `h == nil`, preventing typed-nil interface panics
-- **Helpers**: `meanPool`, `rankMatches`, `cosineSimilarity`, `tokenize`, `encodeChunked`, `readMaxPositionEmbeddings`, `downloadLib`, `getBackendSession`
+- **Nil-receiver guards**: `Match`, `Rank`, `SimilarPairs`, `Encode` all return an error if `h == nil`, preventing typed-nil interface panics
+- **Helpers**: `meanPool`, `rankMatches`, `cosineSimilarity`, `tokenize`, `encodeChunked`, `readMaxPositionEmbeddings`, `downloadLib`, `getBackendSession`, `canonicalPairKey`, `rebuildPairs`, `addPairsFor`, `removePairsFor`
 
 ---
 

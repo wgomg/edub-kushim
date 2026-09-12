@@ -721,6 +721,10 @@ func (m *mockTagMatcher) Rank(ctx context.Context, docId string, queries []strin
 	return results, nil
 }
 
+func (m *mockTagMatcher) SimilarPairs(ctx context.Context) ([]tagmatcher.SimilarPair, error) {
+	return nil, nil
+}
+
 func (m *mockTagMatcher) Close()       {}
 func (m *mockTagMatcher) Name() string { return "mock" }
 

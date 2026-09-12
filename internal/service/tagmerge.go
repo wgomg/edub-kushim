@@ -14,8 +14,6 @@ import (
 const (
 	mergeSuggestionConfidencePopulation     = "population"
 	mergeSuggestionConfidenceSimilarityOnly = "similarity_only"
-	rankBatchSize                           = 256
-	maxTagCountLimit                        = 100000
 )
 
 type MergeTagResult struct {
@@ -133,64 +131,44 @@ type pairEvidence struct {
 }
 
 func (s *TagMerge) Suggestions(ctx context.Context, limit int) ([]MergeSuggestion, error) {
-	tags, err := s.client.Queries.ListAllTags(ctx)
+	pairs, err := s.matcher.SimilarPairs(ctx)
 	if err != nil {
-		return nil, errs.FromDB(err, "list all tags")
+		return nil, err
 	}
 
-	counts, err := s.client.Queries.ListTagsWithDocumentCount(ctx, database.ListTagsWithDocumentCountParams{
-		Limit:  maxTagCountLimit,
-		Offset: 0,
-	})
+	tags, err := s.client.Queries.ListAllTagsWithDocumentCount(ctx)
 	if err != nil {
-		return nil, errs.FromDB(err, "list tag document counts")
+		return nil, errs.FromDB(err, "list all tags with document counts")
 	}
 
 	tagByName := make(map[string]database.Tag, len(tags))
-	countByID := make(map[int64]int64, len(counts))
+	countByID := make(map[int64]int64, len(tags))
 	for _, t := range tags {
-		tagByName[t.Name] = t
-	}
-	for _, c := range counts {
-		countByID[c.ID] = c.DocumentCount
+		tagByName[t.Name] = database.Tag{ID: t.ID, Name: t.Name, CreatedAt: t.CreatedAt}
+		countByID[t.ID] = t.DocumentCount
 	}
 
-	names := make([]string, 0, len(tags))
-	for _, t := range tags {
-		names = append(names, t.Name)
-	}
-
-	pairs := make(map[string]*pairEvidence)
-	for start := 0; start < len(names); start += rankBatchSize {
-		end := min(start+rankBatchSize, len(names))
-		results, err := s.matcher.Rank(ctx, "", names[start:end])
-		if err != nil {
-			return nil, err
+	pairEv := make(map[string]*pairEvidence, len(pairs))
+	for _, p := range pairs {
+		if _, ok := tagByName[p.A]; !ok {
+			continue
 		}
-		for _, r := range results {
-			for _, cand := range r.Candidates {
-				if cand.Tag == r.KeptName {
-					continue
-				}
-				if _, ok := tagByName[cand.Tag]; !ok {
-					continue
-				}
-				key := pairKey(r.KeptName, cand.Tag)
-				ev := pairs[key]
-				if ev == nil {
-					ev = &pairEvidence{a: r.KeptName, b: cand.Tag}
-					pairs[key] = ev
-				}
-				if cand.Similarity > ev.similarity {
-					ev.similarity = cand.Similarity
-				}
-			}
+		if _, ok := tagByName[p.B]; !ok {
+			continue
+		}
+		key := pairKey(p.A, p.B)
+		ev := pairEv[key]
+		if ev == nil {
+			ev = &pairEvidence{a: p.A, b: p.B, similarity: p.Similarity}
+			pairEv[key] = ev
+		} else if p.Similarity > ev.similarity {
+			ev.similarity = p.Similarity
 		}
 	}
 
-	queries := make([]string, 0, len(pairs)*2)
-	targets := make([]string, 0, len(pairs)*2)
-	for _, ev := range pairs {
+	queries := make([]string, 0, len(pairEv)*2)
+	targets := make([]string, 0, len(pairEv)*2)
+	for _, ev := range pairEv {
 		queries = append(queries, ev.a, ev.b)
 		targets = append(targets, ev.b, ev.a)
 	}
@@ -208,7 +186,7 @@ func (s *TagMerge) Suggestions(ctx context.Context, limit int) ([]MergeSuggestio
 		if _, ok := tagByName[row.Target]; !ok {
 			continue
 		}
-		ev, ok := pairs[pairKey(row.Query, row.Target)]
+		ev, ok := pairEv[pairKey(row.Query, row.Target)]
 		if !ok {
 			continue
 		}
@@ -219,8 +197,8 @@ func (s *TagMerge) Suggestions(ctx context.Context, limit int) ([]MergeSuggestio
 		ev.relatedCount += row.RelatedCount
 	}
 
-	suggestions := make([]MergeSuggestion, 0, len(pairs))
-	for _, ev := range pairs {
+	suggestions := make([]MergeSuggestion, 0, len(pairEv))
+	for _, ev := range pairEv {
 		a := tagByName[ev.a]
 		b := tagByName[ev.b]
 		ta := MergeSuggestionTag{ID: a.ID, Name: a.Name, DocumentCount: countByID[a.ID]}

@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/knights-analytics/hugot"
 	"github.com/knights-analytics/hugot/backends"
@@ -39,6 +40,13 @@ type Hugot struct {
 	chunkSize        int     // effective max tokens per chunk
 	chunkOverlap     int     // overlap in tokens between consecutive chunks
 	store            EmbeddingStore
+
+	pairsMu sync.Mutex
+	pairs   map[similarPairKey]float64
+}
+
+type similarPairKey struct {
+	a, b string
 }
 
 type match struct {
@@ -98,6 +106,7 @@ func NewHugot(logger *utils.Logger, tmCfg config.TagMatcherConfig, pipeName stri
 		chunkSize:        effectiveChunkSize,
 		chunkOverlap:     chunkOverlap,
 		consolidationSim: tmCfg.ConsolidationSimilarity,
+		pairs:            make(map[similarPairKey]float64),
 	}, nil
 }
 
@@ -107,6 +116,30 @@ const rankCandidates = 2
 
 func (h *Hugot) SetStore(s EmbeddingStore) {
 	h.store = s
+	h.rebuildPairs()
+}
+
+func (h *Hugot) rebuildPairs() {
+	h.pairsMu.Lock()
+	defer h.pairsMu.Unlock()
+	h.pairs = make(map[similarPairKey]float64)
+	if h.consolidationSim == 0.0 {
+		return
+	}
+	entries := h.store.Entries()
+	names := make([]string, 0, len(entries))
+	for name := range entries {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for i := 0; i < len(names); i++ {
+		for j := i + 1; j < len(names); j++ {
+			sim := cosineSimilarity(entries[names[i]], entries[names[j]])
+			if sim >= h.consolidationSim {
+				h.pairs[canonicalPairKey(names[i], names[j])] = sim
+			}
+		}
+	}
 }
 
 func (h *Hugot) AddToStore(ctx context.Context, names []string) error {
@@ -122,14 +155,56 @@ func (h *Hugot) AddToStore(ctx context.Context, names []string) error {
 			h.logger.Error(nil, "hugot: add to store: encode batch %v: %v", chunk, err)
 			continue
 		}
+
+		var existing map[string][]float32
+		if h.consolidationSim != 0.0 {
+			existing = h.store.Entries()
+		}
 		for j, name := range chunk {
 			if j < len(vecs) && vecs[j] != nil {
 				h.store.Add(name, vecs[j])
+				h.addPairsFor(name, vecs[j], chunk, vecs, existing)
 				h.logger.Info(nil, "hugot: add to store `%s`", name)
 			}
 		}
 	}
 	return nil
+}
+
+func (h *Hugot) addPairsFor(name string, emb []float32, chunk []string, vecs [][]float32, existing map[string][]float32) {
+	if h.consolidationSim == 0.0 {
+		return
+	}
+	h.pairsMu.Lock()
+	defer h.pairsMu.Unlock()
+	for k := range h.pairs {
+		if k.a == name || k.b == name {
+			delete(h.pairs, k)
+		}
+	}
+	for other, otherEmb := range existing {
+		if other == name {
+			continue
+		}
+		sim := cosineSimilarity(emb, otherEmb)
+		if sim >= h.consolidationSim {
+			h.pairs[canonicalPairKey(name, other)] = sim
+		}
+	}
+	for k, otherEmb := range vecs {
+		if otherEmb == nil || chunk[k] == name {
+			continue
+		}
+		key := canonicalPairKey(name, chunk[k])
+		sim := cosineSimilarity(emb, otherEmb)
+		if sim >= h.consolidationSim {
+			h.pairs[key] = sim
+		} else {
+			// batch members may have been compared above with their pre-batch
+			// embeddings; drop the pair when the fresh embedding no longer qualifies
+			delete(h.pairs, key)
+		}
+	}
 }
 
 func (h *Hugot) RemoveFromStore(ctx context.Context, names []string) error {
@@ -138,9 +213,40 @@ func (h *Hugot) RemoveFromStore(ctx context.Context, names []string) error {
 	}
 	for _, name := range names {
 		h.store.Remove(name)
+		h.removePairsFor(name)
 		h.logger.Info(nil, "hugot: remove from store `%s`", name)
 	}
 	return nil
+}
+
+func (h *Hugot) removePairsFor(name string) {
+	h.pairsMu.Lock()
+	defer h.pairsMu.Unlock()
+	for k := range h.pairs {
+		if k.a == name || k.b == name {
+			delete(h.pairs, k)
+		}
+	}
+}
+
+func (h *Hugot) SimilarPairs(ctx context.Context) ([]SimilarPair, error) {
+	if h == nil {
+		return nil, fmt.Errorf("tag matcher not initialized")
+	}
+	h.pairsMu.Lock()
+	defer h.pairsMu.Unlock()
+	out := make([]SimilarPair, 0, len(h.pairs))
+	for k, sim := range h.pairs {
+		out = append(out, SimilarPair{A: k.a, B: k.b, Similarity: sim})
+	}
+	return out, nil
+}
+
+func canonicalPairKey(a, b string) similarPairKey {
+	if a < b {
+		return similarPairKey{a: a, b: b}
+	}
+	return similarPairKey{a: b, b: a}
 }
 
 func (h *Hugot) Close() {

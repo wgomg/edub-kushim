@@ -36,6 +36,13 @@ SELECT COUNT(*) FROM tag WHERE name LIKE $1;
 -- name: SearchTagsByName :many
 SELECT * FROM tag WHERE name LIKE $1 ORDER BY name ASC LIMIT $2 OFFSET $3;
 
+-- name: ListAllTagsWithDocumentCount :many
+SELECT t.*, COUNT(dt.document_id) AS document_count
+FROM tag t
+LEFT JOIN document_tag dt ON t.id = dt.tag_id
+GROUP BY t.id
+ORDER BY t.created_at DESC;
+
 -- name: ListTagsWithDocumentCount :many
 SELECT t.*, COUNT(dt.document_id) AS document_count
 FROM tag t
