@@ -11,6 +11,7 @@
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
 	import { api } from '$lib/api';
 	import * as authStore from '$lib/stores/authStore.js';
+	import { formatNumber } from '$lib/utils/html.js';
 
 	let showModal = $state(false);
 	let editingTag = $state(null);
@@ -19,6 +20,13 @@
 	let query = $state(new URL(window.location.href).searchParams.get('q') || '');
 	let refreshKey = $state(0);
 	let savingTag = $state(false);
+	let showMergeSuggestions = $state(false);
+	let mergeSuggestions = $state([]);
+	let loadingSuggestions = $state(false);
+	let suggestionsError = $state('');
+	let mergingPair = $state(null);
+	let dismissedPairs = $state(new Set());
+	let survivorByPair = $state({});
 
 	const columns = [
 		{
@@ -124,19 +132,81 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			return;
 		}
 	}
+
+	function pairKey(s) {
+		return `${s.tags[0].id}-${s.tags[1].id}`;
+	}
+
+	async function toggleMergeSuggestions() {
+		showMergeSuggestions = !showMergeSuggestions;
+		if (!showMergeSuggestions) return;
+		loadingSuggestions = true;
+		suggestionsError = '';
+		const result = await api.tags.mergeSuggestions(20);
+		if (result.ok) {
+			mergeSuggestions = result.data?.results ?? [];
+		} else {
+			mergeSuggestions = [];
+			suggestionsError =
+				result.status === 503
+					? 'Matcher unavailable — merge review is offline.'
+					: 'Failed to load merge suggestions.';
+		}
+		loadingSuggestions = false;
+	}
+
+	function visibleSuggestions() {
+		return mergeSuggestions.filter((s) => !dismissedPairs.has(pairKey(s)));
+	}
+
+	async function handleMerge(s) {
+		const key = pairKey(s);
+		const survivorId = survivorByPair[key] ?? s.tags[0].id;
+		const survivor = s.tags.find((t) => t.id === survivorId);
+		const deleted = s.tags.find((t) => t.id !== survivorId);
+		const ok = await confirmStore.confirm({
+			title: 'Merge tags',
+			message: `Delete tag "${deleted.name}" and move its documents into "${survivor.name}"?`,
+			danger: true
+		});
+		if (!ok) return;
+		mergingPair = key;
+		const result = await api.tags.merge(deleted.id, survivor.id);
+		mergingPair = null;
+		if (result.ok) {
+			mergeSuggestions = mergeSuggestions.filter((x) => pairKey(x) !== key);
+			refreshKey++;
+			toastStore.success(`Merged "${deleted.name}" into "${survivor.name}"`);
+		} else {
+			toastStore.error('Failed to merge tags');
+		}
+	}
+
+	function dismiss(s) {
+		const key = pairKey(s);
+		dismissedPairs = new Set([...dismissedPairs, key]);
+	}
 </script>
 
 <div class="space-y-4">
 	<div class="flex items-center justify-between">
 		<h1 class="text-2xl font-semibold text-balance text-parchment-200">Tags</h1>
-		{#if !authStore.authEnabled() || authStore.isEditor()}
-			<button
-				onclick={openNew}
-				class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-			>
-				New Tag
-			</button>
-		{/if}
+		<div class="flex items-center gap-2">
+			{#if !authStore.authEnabled() || authStore.isEditor()}
+				<button
+					onclick={toggleMergeSuggestions}
+					class="rounded-lg border border-clay-700 px-4 py-2 text-sm font-medium text-parchment-200 hover:border-gold-500 hover:text-gold-400 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+				>
+					{showMergeSuggestions ? 'Hide merges' : 'Review merges'}
+				</button>
+				<button
+					onclick={openNew}
+					class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+				>
+					New Tag
+				</button>
+			{/if}
+		</div>
 	</div>
 
 	<div class="flex items-center gap-2">
@@ -155,9 +225,92 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			name="tag-filter"
 			autocomplete="off"
 			placeholder="Filter tags…"
-			class="w-full max-w-xs rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
+			class="w-full max-w-xs rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 		/>
 	</div>
+
+	{#if showMergeSuggestions}
+		<div class="rounded-lg border border-clay-700 bg-clay-900 p-4">
+			<h2 class="mb-3 text-sm font-semibold text-parchment-200">Merge suggestions</h2>
+			{#if loadingSuggestions}
+				<p class="text-sm text-parchment-500">Loading merge suggestions…</p>
+			{:else if suggestionsError}
+				<p class="text-sm text-terracotta-500" role="alert">{suggestionsError}</p>
+			{:else if visibleSuggestions().length === 0}
+				<p class="text-sm text-parchment-500">No merge suggestions.</p>
+			{:else}
+				<ul class="space-y-3">
+					{#each visibleSuggestions() as s (pairKey(s))}
+						{@const key = pairKey(s)}
+						{@const survivorId = survivorByPair[key] ?? s.tags[0].id}
+						<li class="rounded-md border border-clay-800 bg-clay-950 p-3">
+							<div class="flex flex-wrap items-center justify-between gap-3">
+								<div class="min-w-0">
+									<div class="flex flex-wrap items-center gap-2">
+										<span class="text-sm font-medium text-parchment-200">{s.tags[0].name}</span>
+										<span class="text-parchment-600" aria-hidden="true">↔</span>
+										<span class="text-sm font-medium text-parchment-200">{s.tags[1].name}</span>
+										<span class="rounded bg-clay-800 px-1.5 py-0.5 text-xs text-gold-400">
+											{Math.round(s.similarity * 100)}%
+										</span>
+										{#if s.confidence === 'population'}
+											<span
+												class="rounded bg-clay-800 px-1.5 py-0.5 text-xs text-parchment-300"
+												title="Backed by adjudication history"
+											>
+												population
+											</span>
+										{:else}
+											<span
+												class="rounded bg-clay-800 px-1.5 py-0.5 text-xs text-parchment-500"
+												title="Similarity only — no adjudication history"
+											>
+												similarity-only
+											</span>
+										{/if}
+									</div>
+									<div class="mt-1 text-xs text-parchment-500">
+										{#if s.confidence === 'population'}
+											overlap {formatNumber(s.document_overlap)} · same
+											{formatNumber(s.same_count)} · variant {formatNumber(s.variant_count)} · related
+											{formatNumber(s.related_count)}
+										{:else}
+											no overlap data
+										{/if}
+									</div>
+								</div>
+								<div class="flex shrink-0 items-center gap-2">
+									<select
+										value={survivorId}
+										onchange={(e) => (survivorByPair[key] = parseInt(e.currentTarget.value, 10))}
+										class="rounded-md border border-clay-700 bg-clay-900 px-2 py-1 text-xs text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+										aria-label="Surviving tag"
+									>
+										{#each s.tags as t (t.id)}
+											<option value={t.id}>{t.name}</option>
+										{/each}
+									</select>
+									<button
+										onclick={() => handleMerge(s)}
+										disabled={mergingPair === key}
+										class="rounded-md bg-gold-500 px-3 py-1 text-xs font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-50"
+									>
+										{mergingPair === key ? 'Merging…' : 'Merge'}
+									</button>
+									<button
+										onclick={() => dismiss(s)}
+										class="rounded-md px-2 py-1 text-xs text-parchment-400 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+									>
+										Dismiss
+									</button>
+								</div>
+							</div>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		</div>
+	{/if}
 
 	<DataTable
 		{columns}
@@ -192,7 +345,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 					type="text"
 					bind:value={formName}
 					placeholder="Tag name…"
-					class="w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
+					class="w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 				/>
 			</div>
 			{#if error}
@@ -202,14 +355,14 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 				<button
 					type="button"
 					onclick={() => (showModal = false)}
-					class="rounded-md px-3 py-1.5 text-xs font-medium text-parchment-400 hover:bg-clay-800"
+					class="rounded-md px-3 py-1.5 text-xs font-medium text-parchment-400 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 				>
 					Cancel
 				</button>
 				<button
 					type="submit"
 					disabled={savingTag}
-					class="rounded-md bg-gold-500 px-3 py-1.5 text-xs font-medium text-clay-950 hover:bg-gold-600 disabled:opacity-50"
+					class="rounded-md bg-gold-500 px-3 py-1.5 text-xs font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-50"
 				>
 					{savingTag ? 'Saving…' : editingTag ? 'Save' : 'Create'}
 				</button>

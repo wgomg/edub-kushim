@@ -35,6 +35,18 @@ func (q *Queries) ClearDocumentTags(ctx context.Context, documentID int64) error
 	return err
 }
 
+const deleteDocumentTagsForTag = `-- name: DeleteDocumentTagsForTag :execrows
+DELETE FROM document_tag WHERE tag_id = $1
+`
+
+func (q *Queries) DeleteDocumentTagsForTag(ctx context.Context, tagID int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteDocumentTagsForTag, tagID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const getDocumentTags = `-- name: GetDocumentTags :many
 SELECT t.id, t.name, t.created_at FROM tag t
 JOIN document_tag dt ON t.id = dt.tag_id
@@ -119,6 +131,29 @@ func (q *Queries) GetTagDocuments(ctx context.Context, tagID int64) ([]GetTagDoc
 		return nil, err
 	}
 	return items, nil
+}
+
+const reassignDocumentTags = `-- name: ReassignDocumentTags :execrows
+UPDATE document_tag dt
+SET tag_id = $1
+WHERE dt.tag_id = $2
+  AND NOT EXISTS (
+      SELECT 1 FROM document_tag dt2
+      WHERE dt2.document_id = dt.document_id AND dt2.tag_id = $1
+  )
+`
+
+type ReassignDocumentTagsParams struct {
+	TargetID int64
+	SourceID int64
+}
+
+func (q *Queries) ReassignDocumentTags(ctx context.Context, arg ReassignDocumentTagsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, reassignDocumentTags, arg.TargetID, arg.SourceID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const removeDocumentTag = `-- name: RemoveDocumentTag :exec

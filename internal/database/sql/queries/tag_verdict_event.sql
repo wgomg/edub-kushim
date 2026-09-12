@@ -11,3 +11,14 @@ FROM tag_verdict_event
 WHERE policy_version = @policy_version
   AND (query, target) IN (SELECT unnest(@queries::text[]), unnest(@targets::text[]))
 ORDER BY query, target, verdict_at DESC;
+
+-- name: TagPairEvidenceStats :many
+SELECT query, target,
+       COUNT(DISTINCT document_id) AS document_count,
+       COUNT(*) AS event_count,
+       COUNT(*) FILTER (WHERE verdict = 'same') AS same_count,
+       COUNT(*) FILTER (WHERE verdict = 'variant') AS variant_count,
+       COUNT(*) FILTER (WHERE verdict = 'related') AS related_count
+FROM tag_verdict_event
+WHERE (query, target) IN (SELECT unnest(@queries::text[]), unnest(@targets::text[]))
+GROUP BY query, target;

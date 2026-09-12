@@ -212,3 +212,63 @@ func (h *TagHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Tag not found", http.StatusNotFound)
 	}
 }
+
+func (h *TagHandler) Merge(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := ctx.Value("reqid").(string)
+
+	idStr := r.PathValue("id")
+	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid id", http.StatusBadRequest)
+		return
+	}
+
+	var req types.MergeTagRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.TargetID <= 0 {
+		http.Error(w, "target_id is required", http.StatusBadRequest)
+		return
+	}
+
+	result, err := h.services.TagMerge.Merge(ctx, id, req.TargetID)
+	if err != nil {
+		writeServiceError(w, h.logger, &reqID, "merge tag", err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(types.MergeTagResponse{
+		ID:         result.TargetID,
+		Name:       result.TargetName,
+		Reassigned: result.Reassigned,
+	})
+}
+
+func (h *TagHandler) MergeSuggestions(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := ctx.Value("reqid").(string)
+
+	pb := utils.GetParamBag(r)
+	if pb == nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	limit := pb.GetInt64("limit", 20, 1, 100)
+
+	suggestions, err := h.services.TagMerge.Suggestions(ctx, int(limit))
+	if err != nil {
+		if isMatcherUnavailable(err) {
+			matcherUnavailableResponse(w)
+			return
+		}
+		writeServiceError(w, h.logger, &reqID, "merge suggestions", err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"results": suggestions})
+}

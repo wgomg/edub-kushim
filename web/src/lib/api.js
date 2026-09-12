@@ -248,7 +248,14 @@ export const api = {
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ name })
 			}),
-		delete: (id) => requestRaw(`/api/v1/tags/${id}`, { method: 'DELETE' })
+		delete: (id) => requestRaw(`/api/v1/tags/${id}`, { method: 'DELETE' }),
+		mergeSuggestions: (limit = 20) => requestRaw(`/api/v1/tags/merge?limit=${limit}`),
+		merge: (sourceId, targetId) =>
+			requestRaw(`/api/v1/tags/${sourceId}/merge`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ target_id: targetId })
+			})
 	},
 
 	people: {

@@ -66,6 +66,7 @@ internal/
 │   ├── people.go          # People service (NewPeople, batch CRUD)
 │   ├── peopletype.go      # PeopleType service (NewPeopleType, batch CRUD)
 │   ├── tag.go             # Tag service (NewTag, batch CRUD, embedder integration)
+│   ├── tagmerge.go        # TagMerge service (NewTagMerge — explicit hard merge of two tags + merge-suggestion scan over embedding similarity and verdict history)
 │   ├── document_type.go   # DocumentType service (NewDocumentType, batch CRUD)
 │   ├── batch.go           # Batch service (NewBatch, GetSummary, ListSummaries, ListOverviews, Create, BeginCancel/CompleteCancel, CountOrphaned, RetryFailed, HasPendingWork, IsLockedByLiveOwner)
 │   ├── orphaned.go        # Orphaned file service (scan, list, delete, restore, move-to-inbox)

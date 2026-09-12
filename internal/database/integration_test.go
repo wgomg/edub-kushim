@@ -1318,7 +1318,117 @@ func TestListPausedBatches(t *testing.T) {
 	assertEqual(t, ids[1], "paused-b", "second paused")
 }
 
+func TestReassignDocumentTagsSkipsAndClears(t *testing.T) {
+	q, _ := NewTestQueries(t)
+	ctx := context.Background()
+
+	doc1ID := CreateUniqueDocument(t, q, "ra-1.pdf")
+	doc2ID := CreateUniqueDocument(t, q, "ra-2.pdf")
+	doc3ID := CreateUniqueDocument(t, q, "ra-3.pdf")
+
+	sourceID, err := q.CreateTag(ctx, "reassign-source")
+	assertNoError(t, err, "create source tag")
+	targetID, err := q.CreateTag(ctx, "reassign-target")
+	assertNoError(t, err, "create target tag")
+
+	assertNoError(t, q.AddDocumentTag(ctx, AddDocumentTagParams{DocumentID: doc1ID, TagID: sourceID}), "doc1 → source")
+	assertNoError(t, q.AddDocumentTag(ctx, AddDocumentTagParams{DocumentID: doc2ID, TagID: sourceID}), "doc2 → source")
+	assertNoError(t, q.AddDocumentTag(ctx, AddDocumentTagParams{DocumentID: doc2ID, TagID: targetID}), "doc2 → target")
+	assertNoError(t, q.AddDocumentTag(ctx, AddDocumentTagParams{DocumentID: doc3ID, TagID: targetID}), "doc3 → target")
+
+	reassigned, err := q.ReassignDocumentTags(ctx, ReassignDocumentTagsParams{SourceID: sourceID, TargetID: targetID})
+	assertNoError(t, err, "reassign")
+	assertEqual(t, reassigned, int64(1), "only doc1 (source-only) is re-pointed; doc2 already has target so its source row is skipped")
+
+	leftovers, err := q.DeleteDocumentTagsForTag(ctx, sourceID)
+	assertNoError(t, err, "delete leftovers")
+	assertEqual(t, leftovers, int64(1), "doc2's skipped source row is the only leftover")
+
+	assertNoError(t, q.DeleteTag(ctx, sourceID), "delete source tag")
+
+	_, err = q.GetTag(ctx, sourceID)
+	assertEqual(t, err, sql.ErrNoRows, "source tag is gone")
+
+	target, err := q.GetTag(ctx, targetID)
+	assertNoError(t, err, "target still exists")
+	assertEqual(t, target.Name, "reassign-target", "target name untouched")
+
+	assertEqual(t, len(mustGetDocumentTags(t, q, doc1ID)), 1, "doc1 carries one tag")
+	assertEqual(t, mustGetDocumentTags(t, q, doc1ID)[0].ID, targetID, "doc1's tag is the target")
+
+	assertEqual(t, len(mustGetDocumentTags(t, q, doc2ID)), 1, "doc2 carries one tag (leftover cleared)")
+	assertEqual(t, mustGetDocumentTags(t, q, doc2ID)[0].ID, targetID, "doc2's tag is the target")
+
+	assertEqual(t, len(mustGetDocumentTags(t, q, doc3ID)), 1, "doc3 carries one tag")
+	assertEqual(t, mustGetDocumentTags(t, q, doc3ID)[0].ID, targetID, "doc3's tag is the target (unchanged)")
+}
+
+func TestTagPairEvidenceStatsAggregates(t *testing.T) {
+	q, _ := NewTestQueries(t)
+	ctx := context.Background()
+	docID, _ := CreateTestDocument(t, q, "tpe-1.pdf")
+
+	insert := func(query, target string, verdict types.TagVerdict, model, policy string) {
+		var vm sql.NullString
+		if model != "" {
+			vm = sql.NullString{String: model, Valid: true}
+		}
+		_, err := q.InsertTagVerdictEvent(ctx, InsertTagVerdictEventParams{
+			DocumentID:    docID,
+			Query:         query,
+			Target:        target,
+			Sim:           0.85,
+			Verdict:       verdict,
+			VerdictModel:  vm,
+			PolicyVersion: policy,
+		})
+		assertNoError(t, err, "insert event "+query+"→"+target)
+	}
+
+	insert("software development", "software engineering", types.TagVerdicts.Variant, "model-a", "v1")
+	insert("software development", "software engineering", types.TagVerdicts.Same, "model-a", "v2")
+	insert("software engineering", "software development", types.TagVerdicts.Related, "model-a", "v1")
+	insert("java", "javascript", types.TagVerdicts.Related, "model-a", "v1")
+
+	rows, err := q.TagPairEvidenceStats(ctx, TagPairEvidenceStatsParams{
+		Queries: []string{"software development", "software engineering", "java"},
+		Targets: []string{"software engineering", "software development", "javascript"},
+	})
+	assertNoError(t, err, "stats")
+
+	var ab, ba, java TagPairEvidenceStatsRow
+	for _, r := range rows {
+		switch {
+		case r.Query == "software development" && r.Target == "software engineering":
+			ab = r
+		case r.Query == "software engineering" && r.Target == "software development":
+			ba = r
+		case r.Query == "java" && r.Target == "javascript":
+			java = r
+		}
+	}
+
+	assertEqual(t, ab.EventCount, int64(2), "(a,b) event count")
+	assertEqual(t, ab.VariantCount, int64(1), "(a,b) variant count")
+	assertEqual(t, ab.SameCount, int64(1), "(a,b) same count")
+	assertEqual(t, ab.RelatedCount, int64(0), "(a,b) related count")
+	assertEqual(t, ab.DocumentCount, int64(1), "(a,b) distinct docs in this orientation")
+
+	assertEqual(t, ba.EventCount, int64(1), "(b,a) event count")
+	assertEqual(t, ba.RelatedCount, int64(1), "(b,a) related count")
+
+	assertEqual(t, java.EventCount, int64(1), "java pair event count")
+	assertEqual(t, java.RelatedCount, int64(1), "java pair related count")
+}
+
 // --- helpers ---
+
+func mustGetDocumentTags(t *testing.T, q *Queries, documentID int64) []Tag {
+	t.Helper()
+	tags, err := q.GetDocumentTags(context.Background(), documentID)
+	assertNoError(t, err, "get document tags")
+	return tags
+}
 
 func insertDoc(t *testing.T, q *Queries, title, md5, sha512 string) (int64, string) {
 	t.Helper()

@@ -1,6 +1,9 @@
 -- name: GetTag :one
 SELECT * FROM tag WHERE id = $1;
 
+-- name: GetTagForUpdate :one
+SELECT * FROM tag WHERE id = $1 FOR UPDATE;
+
 -- name: GetTagByName :one
 SELECT * FROM tag WHERE name = $1;
 

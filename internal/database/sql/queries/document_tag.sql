@@ -20,3 +20,15 @@ DELETE FROM document_tag WHERE document_id = $1 AND tag_id = $2;
 
 -- name: ClearDocumentTags :exec
 DELETE FROM document_tag WHERE document_id = $1;
+
+-- name: ReassignDocumentTags :execrows
+UPDATE document_tag dt
+SET tag_id = @target_id
+WHERE dt.tag_id = @source_id
+  AND NOT EXISTS (
+      SELECT 1 FROM document_tag dt2
+      WHERE dt2.document_id = dt.document_id AND dt2.tag_id = @target_id
+  );
+
+-- name: DeleteDocumentTagsForTag :execrows
+DELETE FROM document_tag WHERE tag_id = $1;

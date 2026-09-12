@@ -1282,6 +1282,60 @@ GET /api/v1/document-types
 
 Response `200` — `PersonListResponse` envelope: `{ "results": [{ "id": 1, "name": "…", "document_count": N }], "total": N }` (people-types and document-types add `description`).
 
+### Merge Tag Suggestions
+
+Lists candidate tag pairs for an explicit merge, ranked by embedding similarity and — when adjudication history exists — population overlap and verdict counts. The scan is on-demand and O(store size) in embedding work, so it is meant for a manual review surface, not polling. Editor-gated in the UI; viewer-readable via the API.
+
+```
+GET /api/v1/tags/merge?limit=20
+```
+
+Response `200`:
+
+```json
+{
+  "results": [
+    {
+      "tags": [
+        { "id": 1, "name": "software engineering", "document_count": 12 },
+        { "id": 2, "name": "software development", "document_count": 3 }
+      ],
+      "similarity": 0.92,
+      "event_count": 5,
+      "document_overlap": 4,
+      "same_count": 1,
+      "variant_count": 3,
+      "related_count": 1,
+      "confidence": "population"
+    }
+  ]
+}
+```
+
+- `tags` — exactly two entries in canonical order (higher document count first, tie-break lexicographically smaller name). This is a display default, not a merge decision.
+- `confidence` — `"population"` when the pair has adjudication event rows, `"similarity_only"` otherwise (lower-confidence, ranked by similarity alone).
+- `503` when the matcher daemon is unreachable.
+
+### Merge Tags
+
+Hard-merges a source tag into a target tag in one transaction: all `document_tag` rows re-point to the target (documents already carrying the target keep a single row), the source tag is deleted, and the source name is removed from the embedding store. Nothing merges automatically — this is always an explicit operator action. Editor/admin only.
+
+```
+POST /api/v1/tags/{id}/merge
+Content-Type: application/json
+
+{ "target_id": 5 }
+```
+
+Response `200`:
+
+```json
+{ "id": 5, "name": "software engineering", "reassigned": 12 }
+```
+
+- `400` — `target_id` missing/zero, or source and target are the same tag.
+- `404` — source or target tag does not exist.
+
 ### Saved Searches
 
 Save, list, and delete named search configurations.

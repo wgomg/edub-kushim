@@ -258,13 +258,23 @@ The enrichment pipeline:
    `tag_verdict_event` apply without an LLM call, and unresolved pairs go
    through one `AdjudicateTags` call per document (reciprocal-NN evidence;
    `same` replaces with the target, `variant`/`related` keep; failures keep).
-5. **New Tag Store Update** — any new tags created during enrichment are batch-created
+   Nothing merges tags automatically: pre-existing duplicates that survive
+   consolidation are resolved by the operator through the **merge-review
+   surface** — `GET /api/v1/tags/merge` scans the embedding store for
+   high-similarity pairs and ranks them by population overlap and verdict
+   history from `tag_verdict_event` (similarity-only, lower-confidence rows
+   when the event table is empty), and `POST /api/v1/tags/{id}/merge`
+   hard-merges a source tag into a target in one transaction (re-points
+   `document_tag` rows, deletes the source tag, removes the source name from
+   the embedding store). Both endpoints are exposed in the tags page UI
+   ("Review merges" section, editor-gated).
+6. **New Tag Store Update** — any new tags created during enrichment are batch-created
    via `services.Tag.Create(ctx, analysis.Tags)`. The service delegates store management
    to the matcher via `AddToStore`, which encodes new names and adds them to the shared
    embedding store. This makes them available for matching against subsequent documents
    without additional encode. When using the RPC client, this forwards the request to the
    matcher process over the Unix socket.
-6. **Result Logging** — token usage stats and prompt text are logged.
+7. **Result Logging** — token usage stats and prompt text are logged.
 
 ### People Deduplication
 

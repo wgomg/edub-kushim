@@ -172,6 +172,45 @@ func SeedTagByName(t TB, queries *Queries, name string) Tag {
 	return tag
 }
 
+func MustCreateTag(t TB, queries *Queries, name string) int64 {
+	t.Helper()
+	id, err := queries.CreateTag(context.Background(), name)
+	if err != nil {
+		t.Fatalf("create tag %q: %v", name, err)
+	}
+	return id
+}
+
+func MustAddDocumentTag(t TB, queries *Queries, documentID, tagID int64) {
+	t.Helper()
+	if err := queries.AddDocumentTag(context.Background(), AddDocumentTagParams{
+		DocumentID: documentID, TagID: tagID,
+	}); err != nil {
+		t.Fatalf("add document_tag: %v", err)
+	}
+}
+
+func CreateUniqueDocument(t TB, queries *Queries, title string) int64 {
+	t.Helper()
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	id, err := queries.CreateDocument(context.Background(), CreateDocumentParams{
+		DocumentID:     "ud-" + suffix,
+		Title:          title,
+		Md5Checksum:    "md5-" + suffix,
+		Sha512Checksum: "sha512-" + suffix,
+		OriginalType:   "application/pdf",
+		FileSize:       100,
+		OriginalPath:   "/tmp/" + title,
+		StoragePath:    "/tmp/storage/" + title,
+		TextContent:    sql.NullString{String: "content", Valid: true},
+		PageCount:      1, WordCount: 1, CharCount: 7, Language: "eng",
+	})
+	if err != nil {
+		t.Fatalf("create document %q: %v", title, err)
+	}
+	return id
+}
+
 func ResetTestDatabase(db *sql.DB) {
 	ctx := context.Background()
 	tables := []string{

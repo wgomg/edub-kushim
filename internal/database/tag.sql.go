@@ -77,6 +77,17 @@ func (q *Queries) GetTagByName(ctx context.Context, name string) (Tag, error) {
 	return i, err
 }
 
+const getTagForUpdate = `-- name: GetTagForUpdate :one
+SELECT id, name, created_at FROM tag WHERE id = $1 FOR UPDATE
+`
+
+func (q *Queries) GetTagForUpdate(ctx context.Context, id int64) (Tag, error) {
+	row := q.db.QueryRowContext(ctx, getTagForUpdate, id)
+	var i Tag
+	err := row.Scan(&i.ID, &i.Name, &i.CreatedAt)
+	return i, err
+}
+
 const listAllTags = `-- name: ListAllTags :many
 SELECT id, name, created_at FROM tag ORDER BY created_at DESC
 `

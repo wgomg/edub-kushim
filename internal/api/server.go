@@ -79,6 +79,7 @@ func (s *Server) rebuild(client *database.Client) {
 		s.logger.Fatal("tag service: ", err)
 	}
 	services := &service.CrudServices{Tag: tagSvc}
+	services.TagMerge = service.NewTagMerge(client, s.matcherClient, s.matcherClient, s.logger)
 	services.Batch = service.NewBatch(client, cfg.Consumer.Reclaim.MaxRetries)
 	services.People = service.NewPeople(client.Queries, s.logger)
 	services.PeopleType = service.NewPeopleType(client.Queries, s.logger)
@@ -268,9 +269,11 @@ func registerRoutes(
 
 	tagHandler := handlers.NewTagHandler(services, logger)
 	mux.Handle("GET /api/v1/tags", RequireRole(viewer...)(http.HandlerFunc(tagHandler.List)))
+	mux.Handle("GET /api/v1/tags/merge", RequireRole(viewer...)(http.HandlerFunc(tagHandler.MergeSuggestions)))
 	mux.Handle("POST /api/v1/tags", RequireRole(editor...)(http.HandlerFunc(tagHandler.Create)))
 	mux.Handle("PUT /api/v1/tags/{id}", RequireRole(editor...)(http.HandlerFunc(tagHandler.Update)))
 	mux.Handle("DELETE /api/v1/tags/{id}", RequireRole(editor...)(http.HandlerFunc(tagHandler.Delete)))
+	mux.Handle("POST /api/v1/tags/{id}/merge", RequireRole(editor...)(http.HandlerFunc(tagHandler.Merge)))
 
 	peopleHandler := handlers.NewPeopleHandler(services, logger)
 	mux.Handle("GET /api/v1/people", RequireRole(viewer...)(http.HandlerFunc(peopleHandler.List)))

@@ -100,3 +100,61 @@ func (q *Queries) LatestTagVerdictsForPairs(ctx context.Context, arg LatestTagVe
 	}
 	return items, nil
 }
+
+const tagPairEvidenceStats = `-- name: TagPairEvidenceStats :many
+SELECT query, target,
+       COUNT(DISTINCT document_id) AS document_count,
+       COUNT(*) AS event_count,
+       COUNT(*) FILTER (WHERE verdict = 'same') AS same_count,
+       COUNT(*) FILTER (WHERE verdict = 'variant') AS variant_count,
+       COUNT(*) FILTER (WHERE verdict = 'related') AS related_count
+FROM tag_verdict_event
+WHERE (query, target) IN (SELECT unnest($1::text[]), unnest($2::text[]))
+GROUP BY query, target
+`
+
+type TagPairEvidenceStatsParams struct {
+	Queries []string
+	Targets []string
+}
+
+type TagPairEvidenceStatsRow struct {
+	Query         string
+	Target        string
+	DocumentCount int64
+	EventCount    int64
+	SameCount     int64
+	VariantCount  int64
+	RelatedCount  int64
+}
+
+func (q *Queries) TagPairEvidenceStats(ctx context.Context, arg TagPairEvidenceStatsParams) ([]TagPairEvidenceStatsRow, error) {
+	rows, err := q.db.QueryContext(ctx, tagPairEvidenceStats, pq.Array(arg.Queries), pq.Array(arg.Targets))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TagPairEvidenceStatsRow
+	for rows.Next() {
+		var i TagPairEvidenceStatsRow
+		if err := rows.Scan(
+			&i.Query,
+			&i.Target,
+			&i.DocumentCount,
+			&i.EventCount,
+			&i.SameCount,
+			&i.VariantCount,
+			&i.RelatedCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

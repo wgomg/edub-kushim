@@ -200,6 +200,8 @@ See `AuthMiddleware` under `server.go` → Functions.
     - `Create(w, r)` — `POST /api/v1/tags` — Accepts `{name}`. Calls `services.Tag.Create(ctx, []string{name})`. The service normalizes the name through `utils.NormalizeTag` (lowercase, accent-folded, keeps `+ # .`, digits, and letters of any Unicode script); the response `name` is the canonical form and conflicts are checked against canonical names. Maps status: `Created` → 201 with `{id,name}`, `Conflict` → 409 with existing `{id,name}`, `Invalid` → 400 (empty after normalization).
     - `Update(w, r)` — `PUT /api/v1/tags/{id}` — Accepts `{name}`. Calls `services.Tag.Update(ctx, []UpdatePair{{ID: id, Name: name}})`. The name is normalized the same way; `Noop` (200) is returned when the canonical form equals the stored name. Maps status: `Updated`/`Noop` → 200 with `{id,name}`, `Conflict` → 409, `NotFound` → 404, `Invalid` → 400.
     - `Delete(w, r)` — `DELETE /api/v1/tags/{id}` — Calls `services.Tag.Delete(ctx, []int64{id})`. Maps status: `Deleted` → 204, `NotFound` → 404.
+    - `Merge(w, r)` — `POST /api/v1/tags/{id}/merge` — Accepts `{target_id}` (nonzero → else 400). Calls `services.TagMerge.Merge(ctx, sourceID, targetID)`: one transaction re-points `document_tag` rows from the source to the target (skipping documents that already carry the target), deletes the leftover source rows, deletes the source tag, then removes the source name from the embedding store (log-only failure, same contract as tag delete). Errors map through `errs.KindOf`: `NotFound` → 404 (source or target gone), `Invalid` → 400 (same id). Returns `200` with `{id, name, reassigned}` (target id/name + reassigned row count).
+    - `MergeSuggestions(w, r)` — `GET /api/v1/tags/merge?limit=` — `limit` via `ParamBag` (default 20, clamped 1–100). Calls `services.TagMerge.Suggestions(ctx, limit)`: ranks every tag name as a query against the embedding store (batched), pairs candidates above the similarity floor, and enriches each pair with `TagPairEvidenceStats` (population overlap + verdict history across both orientations). Each suggestion carries two tags in canonical order (higher document count first, tie lexicographically smaller name), similarity, evidence counts, and `confidence` (`"population"` when the pair has event rows, `"similarity_only"` otherwise). Matcher unreachable → 503 (same contract as tag CRUD). Returns `200` with `{results: [...]}`.
 
 ---
 
@@ -476,6 +478,7 @@ mux.Handle("POST /api/v1/documents/download", RequireRole(viewer...)(...))
 mux.Handle("GET /api/v1/filter-languages", RequireRole(viewer...)(...))
 mux.Handle("GET /api/v1/supported-mime-types", RequireRole(viewer...)(...))
 mux.Handle("GET /api/v1/tags", RequireRole(viewer...)(...))
+mux.Handle("GET /api/v1/tags/merge", RequireRole(viewer...)(...))
 mux.Handle("GET /api/v1/people", RequireRole(viewer...)(...))
 mux.Handle("GET /api/v1/people-types", RequireRole(viewer...)(...))
 mux.Handle("GET /api/v1/document-types", RequireRole(viewer...)(...))
@@ -508,6 +511,7 @@ mux.Handle("POST /api/v1/documents/batch-type", RequireRole(editor...)(...))
 mux.Handle("POST /api/v1/tags", RequireRole(editor...)(...))
 mux.Handle("PUT /api/v1/tags/{id}", RequireRole(editor...)(...))
 mux.Handle("DELETE /api/v1/tags/{id}", RequireRole(editor...)(...))
+mux.Handle("POST /api/v1/tags/{id}/merge", RequireRole(editor...)(...))
 mux.Handle("POST /api/v1/people", RequireRole(editor...)(...))
 mux.Handle("PUT /api/v1/people/{id}", RequireRole(editor...)(...))
 mux.Handle("DELETE /api/v1/people/{id}", RequireRole(editor...)(...))
