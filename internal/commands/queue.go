@@ -614,9 +614,10 @@ func maybeScheduleThumbnailBackfill(ctx context.Context, c *Container, client *d
 			*lastRun = lastBatch.Time
 		}
 	}
-	// Anchor a fresh schedule to the preferred time so the first run honors off-hours.
+	// The virtual anchor makes the first run land at the next occurrence of the
+	// preferred time; the interval counts from that first run onward.
 	if lastRun.IsZero() {
-		*lastRun = previousTimeOfDay(time.Now(), cfg.Consumer.Thumbnail.BackfillTime)
+		*lastRun = backup.FirstRunAnchor(time.Now(), cfg.Consumer.Thumbnail.BackfillInterval, cfg.Consumer.Thumbnail.BackfillTime)
 	}
 
 	next := backup.NextBackupTime(*lastRun, cfg.Consumer.Thumbnail.BackfillInterval, cfg.Consumer.Thumbnail.BackfillTime)
@@ -669,9 +670,10 @@ func maybeScheduleTagReconcile(ctx context.Context, c *Container, client *databa
 			*lastRun = lastBatch.Time
 		}
 	}
-	// Anchor a fresh schedule to the preferred time so the first run honors off-hours.
+	// The virtual anchor makes the first run land at the next occurrence of the
+	// preferred time; the interval counts from that first run onward.
 	if lastRun.IsZero() {
-		*lastRun = previousTimeOfDay(time.Now(), cfg.Enricher.TagReconcile.Time)
+		*lastRun = backup.FirstRunAnchor(time.Now(), cfg.Enricher.TagReconcile.Interval, cfg.Enricher.TagReconcile.Time)
 	}
 
 	next := backup.NextBackupTime(*lastRun, cfg.Enricher.TagReconcile.Interval, cfg.Enricher.TagReconcile.Time)
@@ -721,21 +723,4 @@ func maybeScheduleTagReconcile(ctx context.Context, c *Container, client *databa
 	*lastRun = time.Now()
 	c.logger.Info(nil, "tag reconcile task %s scheduled (batch %s)", taskID, batchID)
 	return nil
-}
-
-func previousTimeOfDay(now time.Time, hhmm string) time.Time {
-	pref := "02:00"
-	if hhmm != "" {
-		pref = hhmm
-	}
-	prefTime, err := time.Parse("15:04", pref)
-	if err != nil {
-		prefTime, _ = time.Parse("15:04", "02:00")
-	}
-	loc := now.Location()
-	candidate := time.Date(now.Year(), now.Month(), now.Day(), prefTime.Hour(), prefTime.Minute(), 0, 0, loc)
-	if candidate.After(now) {
-		candidate = candidate.AddDate(0, 0, -1)
-	}
-	return candidate
 }

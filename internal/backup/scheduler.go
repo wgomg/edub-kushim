@@ -46,6 +46,34 @@ func NextBackupTime(after time.Time, intervalDays float64, preferredTime string)
 	return candidate
 }
 
+func nextOccurrence(now time.Time, preferredTime string) time.Time {
+	pref := "02:00"
+	if preferredTime != "" {
+		pref = preferredTime
+	}
+	prefTime, err := time.Parse("15:04", pref)
+	if err != nil {
+		prefTime, _ = time.Parse("15:04", "02:00")
+	}
+	loc := now.Location()
+	candidate := time.Date(now.Year(), now.Month(), now.Day(), prefTime.Hour(), prefTime.Minute(), 0, 0, loc)
+	if !candidate.After(now) {
+		candidate = candidate.AddDate(0, 0, 1)
+	}
+	return candidate
+}
+
+func FirstRunAnchor(now time.Time, intervalDays float64, preferredTime string) time.Time {
+	if intervalDays <= 0 {
+		intervalDays = 1
+	}
+	first := nextOccurrence(now, preferredTime)
+	if intervalDays < 1 {
+		return first.Add(-time.Duration(intervalDays * 24 * float64(time.Hour)))
+	}
+	return first.AddDate(0, 0, -int(intervalDays))
+}
+
 func IsBackupDue(ctx context.Context, queries *database.Queries, schedule config.BackupSchedule) (bool, error) {
 	recent, err := queries.CountRecentBackupTasksByMode(ctx, database.CountRecentBackupTasksByModeParams{
 		Column1: sql.NullString{String: "5", Valid: true},
