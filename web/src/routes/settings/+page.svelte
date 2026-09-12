@@ -15,6 +15,7 @@
 	let missingTools = $state([]);
 	let toolStatus = $state([]);
 	let showToken = $state(false);
+	let adjudicatorShowToken = $state(false);
 	let fallbackShowTokens = $state({});
 
 	let activeTab = $state(
@@ -98,6 +99,13 @@
 
 	function adapterProviders(fb) {
 		return llmModels.adapters[fb?.llm?.adapter] ?? [];
+	}
+
+	function onAdjudicatorAdapterChange() {
+		if (!cfg.enricher.tag_adjudicator.llm.adapter) {
+			cfg.enricher.tag_adjudicator.llm.provider = '';
+			cfg.enricher.tag_adjudicator.llm.model = '';
+		}
 	}
 
 	function providerModels(fb) {
@@ -207,6 +215,38 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 		}
 	}
 
+	function ensureTagReconcileBlock() {
+		if (!cfg) return;
+		if (!cfg.enricher) cfg.enricher = {};
+		if (cfg.enricher.tag_reconcile) return;
+		cfg.enricher.tag_reconcile = {
+			enabled: false,
+			report_only: true,
+			interval: 7,
+			time: '02:00',
+			max_rejudge: 200,
+			max_retag: 1000
+		};
+	}
+
+	function ensureTagAdjudicatorBlock() {
+		if (!cfg) return;
+		if (!cfg.enricher) cfg.enricher = {};
+		if (cfg.enricher.tag_adjudicator) return;
+		cfg.enricher.tag_adjudicator = {
+			enabled: false,
+			timeout: 0,
+			llm: {
+				adapter: '',
+				provider: '',
+				model: '',
+				token: '',
+				temperature: 0,
+				request_delay: 0
+			}
+		};
+	}
+
 	onMount(async () => {
 		const loaded = await api.config.get();
 		if (loaded) {
@@ -214,6 +254,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			ensureFallbacksArray();
 			ensureThumbnailBlock();
 			ensureMirrorBlock();
+			ensureTagReconcileBlock();
+			ensureTagAdjudicatorBlock();
 			syncMimeCheckboxes();
 			checkStatus();
 			snapshotState();
@@ -345,6 +387,21 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			'enricher.tagmatcher.chunk_size': Number(cfg.enricher.tagmatcher.chunk_size),
 			'enricher.tagmatcher.hugot.model': cfg.enricher.tagmatcher.hugot.model,
 			'enricher.tagmatcher.hugot.backend': cfg.enricher.tagmatcher.hugot.backend,
+			'enricher.tag_adjudicator.enabled': cfg.enricher.tag_adjudicator.enabled,
+			'enricher.tag_adjudicator.timeout': Number(cfg.enricher.tag_adjudicator.timeout),
+			'enricher.tag_adjudicator.llm.adapter': cfg.enricher.tag_adjudicator.llm.adapter,
+			'enricher.tag_adjudicator.llm.provider': cfg.enricher.tag_adjudicator.llm.provider,
+			'enricher.tag_adjudicator.llm.model': cfg.enricher.tag_adjudicator.llm.model,
+			'enricher.tag_adjudicator.llm.token': cfg.enricher.tag_adjudicator.llm.token,
+			'enricher.tag_adjudicator.llm.request_delay': Number(
+				cfg.enricher.tag_adjudicator.llm.request_delay
+			),
+			'enricher.tag_reconcile.enabled': cfg.enricher.tag_reconcile.enabled,
+			'enricher.tag_reconcile.report_only': cfg.enricher.tag_reconcile.report_only,
+			'enricher.tag_reconcile.interval': Number(cfg.enricher.tag_reconcile.interval),
+			'enricher.tag_reconcile.time': cfg.enricher.tag_reconcile.time,
+			'enricher.tag_reconcile.max_rejudge': Number(cfg.enricher.tag_reconcile.max_rejudge),
+			'enricher.tag_reconcile.max_retag': Number(cfg.enricher.tag_reconcile.max_retag),
 			'storage.consumption_dir': cfg.storage.consumption_dir,
 			'storage.storage_dir': cfg.storage.storage_dir,
 			'storage.migration_mode': cfg.storage.migration_mode,
@@ -389,6 +446,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 				ensureFallbacksArray();
 				ensureThumbnailBlock();
 				ensureMirrorBlock();
+				ensureTagReconcileBlock();
+				ensureTagAdjudicatorBlock();
 				syncMimeCheckboxes();
 				snapshotState();
 			}
@@ -2139,6 +2198,279 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 								<option value="ort">ort</option>
 								<option value="GO">GO</option>
 							</select>
+						</div>
+					</div>
+				</section>
+
+				<section class="mb-3 rounded-xl border border-clay-800 bg-clay-900 p-5">
+					<div class="mb-4 flex items-center justify-between">
+						<h2 class="text-lg font-semibold text-parchment-200">Tag adjudicator</h2>
+						<label class="relative inline-flex cursor-pointer items-center">
+							<input
+								type="checkbox"
+								aria-label="Enable tag adjudicator"
+								bind:checked={cfg.enricher.tag_adjudicator.enabled}
+								class="peer sr-only"
+							/>
+							<div
+								class="h-6 w-11 rounded-full border border-clay-700 bg-clay-800 peer-checked:border-gold-500 peer-checked:bg-gold-600 peer-focus-visible:ring-2 peer-focus-visible:ring-gold-500 peer-focus-visible:ring-offset-2 after:absolute after:top-0.5 after:left-0.5 after:h-5 after:w-5 after:rounded-full after:bg-parchment-400 after:transition-transform peer-checked:after:translate-x-full peer-checked:after:bg-white"
+							></div>
+							<span class="ml-2 text-sm text-parchment-300">Enabled</span>
+						</label>
+					</div>
+					{#if cfg.enricher.tag_adjudicator.enabled}
+						<div class="grid gap-4 sm:grid-cols-2">
+							<div>
+								<label
+									for="tag-adjudicator-timeout"
+									class="mb-1 block text-sm font-medium text-parchment-200"
+								>
+									Timeout (s)
+								</label>
+								<input
+									id="tag-adjudicator-timeout"
+									name="tag-adjudicator-timeout"
+									autocomplete="off"
+									type="number"
+									inputmode="numeric"
+									min="0"
+									bind:value={cfg.enricher.tag_adjudicator.timeout}
+									class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+								/>
+							</div>
+
+							<div>
+								<label
+									for="tag-adjudicator-adapter"
+									class="mb-1 block text-sm font-medium text-parchment-200"
+								>
+									Adapter
+								</label>
+								<select
+									id="tag-adjudicator-adapter"
+									name="tag-adjudicator-adapter"
+									bind:value={cfg.enricher.tag_adjudicator.llm.adapter}
+									onchange={onAdjudicatorAdapterChange}
+									class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+								>
+									<option value="">Inherit from content analyzer</option>
+									{#each Object.keys(llmModels.adapters) as adapter (adapter)}
+										<option value={adapter}>{adapter}</option>
+									{/each}
+								</select>
+							</div>
+
+							<div>
+								<label
+									for="tag-adjudicator-provider"
+									class="mb-1 block text-sm font-medium text-parchment-200"
+								>
+									Provider
+								</label>
+								<select
+									id="tag-adjudicator-provider"
+									name="tag-adjudicator-provider"
+									bind:value={cfg.enricher.tag_adjudicator.llm.provider}
+									class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+								>
+									<option value="">Inherit from content analyzer</option>
+									{#each adapterProviders(cfg.enricher.tag_adjudicator) as provider (provider)}
+										<option value={provider}>{provider}</option>
+									{/each}
+								</select>
+							</div>
+
+							<div>
+								<label
+									for="tag-adjudicator-model"
+									class="mb-1 block text-sm font-medium text-parchment-200"
+								>
+									Model
+								</label>
+								<select
+									id="tag-adjudicator-model"
+									name="tag-adjudicator-model"
+									bind:value={cfg.enricher.tag_adjudicator.llm.model}
+									class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+								>
+									<option value="">Inherit from content analyzer</option>
+									{#each providerModels(cfg.enricher.tag_adjudicator) as m (m.id)}
+										<option value={m.id}>{m.id}</option>
+									{/each}
+								</select>
+							</div>
+
+							<div>
+								<label
+									for="tag-adjudicator-token"
+									class="mb-1 block text-sm font-medium text-parchment-200"
+								>
+									Token
+								</label>
+								<div class="flex gap-2">
+									<input
+										id="tag-adjudicator-token"
+										type={adjudicatorShowToken ? 'text' : 'password'}
+										bind:value={cfg.enricher.tag_adjudicator.llm.token}
+										placeholder="sk-…"
+										autocomplete="off"
+										class="flex-1 rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+									/>
+									<button
+										type="button"
+										onclick={() => (adjudicatorShowToken = !adjudicatorShowToken)}
+										class="rounded-lg border border-clay-800 px-3 text-sm text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+									>
+										{adjudicatorShowToken ? 'Hide' : 'Show'}
+									</button>
+								</div>
+							</div>
+
+							<div>
+								<label
+									for="tag-adjudicator-request-delay"
+									class="mb-1 block text-sm font-medium text-parchment-200"
+								>
+									Request delay (s)
+								</label>
+								<input
+									id="tag-adjudicator-request-delay"
+									name="tag-adjudicator-request-delay"
+									autocomplete="off"
+									type="number"
+									inputmode="numeric"
+									min="0"
+									max="60"
+									step="0.1"
+									bind:value={cfg.enricher.tag_adjudicator.llm.request_delay}
+									class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+								/>
+							</div>
+						</div>
+					{/if}
+				</section>
+
+				<section class="mb-3 rounded-xl border border-clay-800 bg-clay-900 p-5">
+					<h2 class="mb-4 text-lg font-semibold text-parchment-200">Tag reconciliation</h2>
+					{#if cfg.enricher.tag_reconcile.enabled && !cfg.enricher.tag_adjudicator?.enabled}
+						<div
+							class="mb-4 rounded-lg border border-amber-600 bg-amber-500/10 p-3 text-sm text-amber-400"
+						>
+							<p class="font-medium">Tag adjudicator not enabled</p>
+							<p class="mt-1 text-parchment-400">
+								Acting runs require the tag adjudicator — enable it with the toggle on the "Tag
+								adjudicator" card above. Until then, scheduled runs stay snapshot-only.
+							</p>
+						</div>
+					{/if}
+					<div class="grid gap-4 sm:grid-cols-2">
+						<div>
+							<label
+								for="tag-reconcile-enabled"
+								class="mb-1 block text-sm font-medium text-parchment-200">Enabled</label
+							>
+							<div class="flex items-center gap-2">
+								<input
+									id="tag-reconcile-enabled"
+									name="tag-reconcile-enabled"
+									autocomplete="off"
+									type="checkbox"
+									bind:checked={cfg.enricher.tag_reconcile.enabled}
+									class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus-visible:ring-gold-500"
+								/>
+								<span class="text-sm text-parchment-400">
+									{cfg.enricher.tag_reconcile.enabled ? 'Active' : 'Inactive'}
+								</span>
+							</div>
+						</div>
+						<div>
+							<label
+								for="tag-reconcile-report-only"
+								class="mb-1 block text-sm font-medium text-parchment-200">Report only</label
+							>
+							<div class="flex items-center gap-2">
+								<input
+									id="tag-reconcile-report-only"
+									name="tag-reconcile-report-only"
+									autocomplete="off"
+									type="checkbox"
+									bind:checked={cfg.enricher.tag_reconcile.report_only}
+									class="h-5 w-5 rounded border-clay-800 bg-clay-950 text-gold-500 focus-visible:ring-gold-500"
+								/>
+								<span class="text-sm text-parchment-400">
+									{cfg.enricher.tag_reconcile.report_only ? 'Enabled' : 'Disabled'}
+								</span>
+							</div>
+							<p class="mt-1 text-xs text-parchment-500">
+								The first run is always report-only regardless of this toggle.
+							</p>
+						</div>
+						<div>
+							<label
+								for="tag-reconcile-interval"
+								class="mb-1 block text-sm font-medium text-parchment-200">Interval (days)</label
+							>
+							<input
+								id="tag-reconcile-interval"
+								name="tag-reconcile-interval"
+								autocomplete="off"
+								type="number"
+								inputmode="numeric"
+								min="1"
+								bind:value={cfg.enricher.tag_reconcile.interval}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+						<div>
+							<label
+								for="tag-reconcile-time"
+								class="mb-1 block text-sm font-medium text-parchment-200">Preferred time</label
+							>
+							<input
+								id="tag-reconcile-time"
+								name="tag-reconcile-time"
+								autocomplete="off"
+								type="text"
+								placeholder="02:00"
+								pattern="([01][0-9]|2[0-3]):[0-5][0-9]"
+								bind:value={cfg.enricher.tag_reconcile.time}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+							<p class="mt-1 text-xs text-parchment-500">HH:MM, 24-hour.</p>
+						</div>
+						<div>
+							<label
+								for="tag-reconcile-max-rejudge"
+								class="mb-1 block text-sm font-medium text-parchment-200"
+								>Max pairs judged per run</label
+							>
+							<input
+								id="tag-reconcile-max-rejudge"
+								name="tag-reconcile-max-rejudge"
+								autocomplete="off"
+								type="number"
+								inputmode="numeric"
+								min="1"
+								bind:value={cfg.enricher.tag_reconcile.max_rejudge}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+						<div>
+							<label
+								for="tag-reconcile-max-retag"
+								class="mb-1 block text-sm font-medium text-parchment-200"
+								>Max documents re-tagged per run</label
+							>
+							<input
+								id="tag-reconcile-max-retag"
+								name="tag-reconcile-max-retag"
+								autocomplete="off"
+								type="number"
+								inputmode="numeric"
+								min="1"
+								bind:value={cfg.enricher.tag_reconcile.max_retag}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-3 py-2 text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
 						</div>
 					</div>
 				</section>

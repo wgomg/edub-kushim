@@ -615,3 +615,106 @@ func TestFinalizeConfig_ThumbnailBackfillValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestDefaultConfig_TagReconcile(t *testing.T) {
+	cfg := DefaultConfig(t.TempDir())
+	if cfg.Enricher.TagReconcile.Enabled {
+		t.Error("TagReconcile.Enabled should default to false")
+	}
+	if !cfg.Enricher.TagReconcile.ReportOnly {
+		t.Error("TagReconcile.ReportOnly should default to true (first run is structural)")
+	}
+	if cfg.Enricher.TagReconcile.Interval != 7 {
+		t.Errorf("TagReconcile.Interval = %v, want 7", cfg.Enricher.TagReconcile.Interval)
+	}
+	if cfg.Enricher.TagReconcile.Time != "02:00" {
+		t.Errorf("TagReconcile.Time = %q, want 02:00", cfg.Enricher.TagReconcile.Time)
+	}
+	if cfg.Enricher.TagReconcile.MaxRejudge != 200 {
+		t.Errorf("TagReconcile.MaxRejudge = %d, want 200", cfg.Enricher.TagReconcile.MaxRejudge)
+	}
+	if cfg.Enricher.TagReconcile.MaxRetag != 1000 {
+		t.Errorf("TagReconcile.MaxRetag = %d, want 1000", cfg.Enricher.TagReconcile.MaxRetag)
+	}
+}
+
+func TestFinalizeConfig_TagReconcile(t *testing.T) {
+	t.Run("zero interval defaults to 7", func(t *testing.T) {
+		cfg := DefaultConfig(t.TempDir())
+		cfg.Enricher.TagReconcile.Interval = 0
+		if err := finalizeConfig(cfg, t.TempDir()); err != nil {
+			t.Fatalf("finalizeConfig: %v", err)
+		}
+		if cfg.Enricher.TagReconcile.Interval != 7 {
+			t.Errorf("Interval = %v, want 7", cfg.Enricher.TagReconcile.Interval)
+		}
+	})
+	t.Run("negative interval defaults to 7", func(t *testing.T) {
+		cfg := DefaultConfig(t.TempDir())
+		cfg.Enricher.TagReconcile.Interval = -1
+		if err := finalizeConfig(cfg, t.TempDir()); err != nil {
+			t.Fatalf("finalizeConfig: %v", err)
+		}
+		if cfg.Enricher.TagReconcile.Interval != 7 {
+			t.Errorf("Interval = %v, want 7", cfg.Enricher.TagReconcile.Interval)
+		}
+	})
+	t.Run("zero max_rejudge defaults to 200", func(t *testing.T) {
+		cfg := DefaultConfig(t.TempDir())
+		cfg.Enricher.TagReconcile.MaxRejudge = 0
+		if err := finalizeConfig(cfg, t.TempDir()); err != nil {
+			t.Fatalf("finalizeConfig: %v", err)
+		}
+		if cfg.Enricher.TagReconcile.MaxRejudge != 200 {
+			t.Errorf("MaxRejudge = %d, want 200", cfg.Enricher.TagReconcile.MaxRejudge)
+		}
+	})
+	t.Run("zero max_retag defaults to 1000", func(t *testing.T) {
+		cfg := DefaultConfig(t.TempDir())
+		cfg.Enricher.TagReconcile.MaxRetag = 0
+		if err := finalizeConfig(cfg, t.TempDir()); err != nil {
+			t.Fatalf("finalizeConfig: %v", err)
+		}
+		if cfg.Enricher.TagReconcile.MaxRetag != 1000 {
+			t.Errorf("MaxRetag = %d, want 1000", cfg.Enricher.TagReconcile.MaxRetag)
+		}
+	})
+	t.Run("empty time defaults to 02:00", func(t *testing.T) {
+		cfg := DefaultConfig(t.TempDir())
+		cfg.Enricher.TagReconcile.Time = ""
+		if err := finalizeConfig(cfg, t.TempDir()); err != nil {
+			t.Fatalf("finalizeConfig: %v", err)
+		}
+		if cfg.Enricher.TagReconcile.Time != "02:00" {
+			t.Errorf("Time = %q, want 02:00", cfg.Enricher.TagReconcile.Time)
+		}
+	})
+	t.Run("invalid time rejected", func(t *testing.T) {
+		cfg := DefaultConfig(t.TempDir())
+		cfg.Enricher.TagReconcile.Time = "25:99"
+		if err := finalizeConfig(cfg, t.TempDir()); err == nil {
+			t.Error("expected error for time=25:99")
+		}
+	})
+	t.Run("non-integer minute rejected", func(t *testing.T) {
+		cfg := DefaultConfig(t.TempDir())
+		cfg.Enricher.TagReconcile.Time = "12:7"
+		if err := finalizeConfig(cfg, t.TempDir()); err == nil {
+			t.Error("expected error for time=12:7")
+		}
+	})
+	t.Run("explicit positive values preserved", func(t *testing.T) {
+		cfg := DefaultConfig(t.TempDir())
+		cfg.Enricher.TagReconcile.Interval = 3
+		cfg.Enricher.TagReconcile.Time = "04:30"
+		cfg.Enricher.TagReconcile.MaxRejudge = 50
+		cfg.Enricher.TagReconcile.MaxRetag = 500
+		if err := finalizeConfig(cfg, t.TempDir()); err != nil {
+			t.Fatalf("finalizeConfig: %v", err)
+		}
+		if cfg.Enricher.TagReconcile.Interval != 3 || cfg.Enricher.TagReconcile.Time != "04:30" ||
+			cfg.Enricher.TagReconcile.MaxRejudge != 50 || cfg.Enricher.TagReconcile.MaxRetag != 500 {
+			t.Fatalf("explicit values overwritten: %+v", cfg.Enricher.TagReconcile)
+		}
+	})
+}

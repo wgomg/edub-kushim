@@ -363,3 +363,9 @@ WHERE task_type = 'mirror' AND status = 'completed'
   AND dedup_key LIKE 'mirror:%'
 ORDER BY completed_at DESC
 LIMIT 1;
+
+-- name: GetLastCompletedTagReconcileTask :one
+SELECT completed_at FROM task
+WHERE task_type = 'tagreconcile' AND status = 'completed'
+ORDER BY completed_at DESC
+LIMIT 1;

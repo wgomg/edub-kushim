@@ -72,16 +72,16 @@ ORDER BY created_at LIMIT 1;
 SELECT * FROM batch WHERE id = $1;
 
 -- name: CountQueuedConsumeBatches :one
--- Same exclusion list as GetNextQueuedBatch: config/backup/mirror batches
--- own their lifecycle in their handlers and never occupy a consume slot.
+-- Same exclusion list as GetNextQueuedBatch: config/backup/mirror/tagreconcile
+-- batches own their lifecycle in their handlers and never occupy a consume slot.
 SELECT COUNT(*) FROM batch
-WHERE status = 'queued' AND source NOT IN ('config', 'backup', 'mirror');
+WHERE status = 'queued' AND source NOT IN ('config', 'backup', 'mirror', 'tagreconcile');
 
 -- name: GetNextQueuedBatch :one
--- config/backup/mirror batches own their lifecycle in their handlers and
--- must not be forked as consume workers.
+-- config/backup/mirror/tagreconcile batches own their lifecycle in their
+-- handlers and must not be forked as consume workers.
 SELECT * FROM batch
-WHERE status = 'queued' AND source NOT IN ('config', 'backup', 'mirror')
+WHERE status = 'queued' AND source NOT IN ('config', 'backup', 'mirror', 'tagreconcile')
 ORDER BY created_at LIMIT 1;
 
 -- name: DeleteBatch :exec
@@ -176,5 +176,15 @@ WHERE source = 'thumbbackfill' AND status IN ('queued', 'processing');
 -- name: GetLastThumbnailBackfillBatchCreatedAt :one
 SELECT created_at FROM batch
 WHERE source = 'thumbbackfill'
+ORDER BY created_at DESC
+LIMIT 1;
+
+-- name: CountActiveTagReconcileBatches :one
+SELECT COUNT(*) FROM batch
+WHERE source = 'tagreconcile' AND status IN ('queued', 'processing');
+
+-- name: GetLastTagReconcileBatchCreatedAt :one
+SELECT created_at FROM batch
+WHERE source = 'tagreconcile'
 ORDER BY created_at DESC
 LIMIT 1;

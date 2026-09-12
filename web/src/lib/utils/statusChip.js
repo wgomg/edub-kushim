@@ -14,7 +14,8 @@ const sourceClasses = {
 	config: 'bg-amber-600/20 text-amber-400',
 	backup: 'bg-terracotta-600/20 text-terracotta-500',
 	mirror: 'bg-violet-600/20 text-violet-400',
-	thumbbackfill: 'bg-parchment-500/20 text-parchment-400'
+	thumbbackfill: 'bg-parchment-500/20 text-parchment-400',
+	tagreconcile: 'bg-cyan-600/20 text-cyan-400'
 };
 
 const bandClasses = {

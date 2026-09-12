@@ -191,3 +191,7 @@ UPDATE document SET
 WHERE document_id = ANY($2::text[])
   AND deleted_at IS NULL
 RETURNING document_id;
+
+-- name: GetDocumentIDsByDocumentIDs :many
+SELECT document_id, id FROM document
+WHERE document_id = ANY($1::text[]);

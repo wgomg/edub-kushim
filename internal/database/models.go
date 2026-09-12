@@ -28,6 +28,7 @@ const (
 	BatchSourceBackup          BatchSource = "backup"
 	BatchSourceMirror          BatchSource = "mirror"
 	BatchSourceConfig          BatchSource = "config"
+	BatchSourceTagreconcile    BatchSource = "tagreconcile"
 )
 
 func (e *BatchSource) Scan(src interface{}) error {
@@ -204,12 +205,13 @@ func (ns NullTaskStatus) Value() (driver.Value, error) {
 type TaskType string
 
 const (
-	TaskTypeConsume   TaskType = "consume"
-	TaskTypeEnrich    TaskType = "enrich"
-	TaskTypeThumbnail TaskType = "thumbnail"
-	TaskTypeBackup    TaskType = "backup"
-	TaskTypeMirror    TaskType = "mirror"
-	TaskTypeConfig    TaskType = "config"
+	TaskTypeConsume      TaskType = "consume"
+	TaskTypeEnrich       TaskType = "enrich"
+	TaskTypeThumbnail    TaskType = "thumbnail"
+	TaskTypeBackup       TaskType = "backup"
+	TaskTypeMirror       TaskType = "mirror"
+	TaskTypeConfig       TaskType = "config"
+	TaskTypeTagreconcile TaskType = "tagreconcile"
 )
 
 func (e *TaskType) Scan(src interface{}) error {

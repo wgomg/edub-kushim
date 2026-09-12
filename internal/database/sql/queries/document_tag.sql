@@ -30,5 +30,15 @@ WHERE dt.tag_id = @source_id
       WHERE dt2.document_id = dt.document_id AND dt2.tag_id = @target_id
   );
 
+-- name: RepointDocumentTagsForDocs :execrows
+UPDATE document_tag dt
+SET tag_id = @target_id
+WHERE dt.tag_id = @source_id
+  AND dt.document_id = ANY(@document_ids::bigint[])
+  AND NOT EXISTS (
+      SELECT 1 FROM document_tag dt2
+      WHERE dt2.document_id = dt.document_id AND dt2.tag_id = @target_id
+  );
+
 -- name: DeleteDocumentTagsForTag :execrows
 DELETE FROM document_tag WHERE tag_id = $1;

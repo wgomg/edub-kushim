@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -250,12 +251,36 @@ type TagAdjudicatorConfig struct {
 	Llm     LlmConfig `mapstructure:"llm" yaml:"llm" json:"llm"`
 }
 
+type TagReconcileConfig struct {
+	Enabled    bool    `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
+	ReportOnly bool    `mapstructure:"report_only" yaml:"report_only" json:"report_only"`
+	Interval   float64 `mapstructure:"interval" yaml:"interval" json:"interval"`
+	Time       string  `mapstructure:"time" yaml:"time" json:"time"`
+	MaxRejudge int     `mapstructure:"max_rejudge" yaml:"max_rejudge" json:"max_rejudge"`
+	MaxRetag   int     `mapstructure:"max_retag" yaml:"max_retag" json:"max_retag"`
+}
+
 type EnricherConfig struct {
 	Workers         int                   `mapstructure:"workers" yaml:"workers" json:"workers"`
 	TextReducer     TextReducerConfig     `mapstructure:"textreducer" yaml:"textreducer" json:"textreducer"`
 	ContentAnalyzer ContentAnalyzerConfig `mapstructure:"contentanalyzer" yaml:"contentanalyzer" json:"contentanalyzer"`
 	TagMatcher      TagMatcherConfig      `mapstructure:"tagmatcher" yaml:"tagmatcher" json:"tagmatcher"`
 	TagAdjudicator  TagAdjudicatorConfig  `mapstructure:"tag_adjudicator" yaml:"tag_adjudicator" json:"tag_adjudicator"`
+	TagReconcile    TagReconcileConfig    `mapstructure:"tag_reconcile" yaml:"tag_reconcile" json:"tag_reconcile"`
+}
+
+func (c *Config) ResolvedAdjudicatorLlm() LlmConfig {
+	if c.Enricher.TagAdjudicator.Llm.Provider == "" || c.Enricher.TagAdjudicator.Llm.Model == "" {
+		return c.Enricher.ContentAnalyzer.Llm
+	}
+	return c.Enricher.TagAdjudicator.Llm
+}
+
+func (c *Config) ResolvedAdjudicatorTimeout() int {
+	if c.Enricher.TagAdjudicator.Timeout == 0 {
+		return c.Enricher.ContentAnalyzer.Timeout
+	}
+	return c.Enricher.TagAdjudicator.Timeout
 }
 
 type LlmConfig struct {
@@ -553,6 +578,14 @@ func DefaultConfig(configDir string) *Config {
 			TagAdjudicator: TagAdjudicatorConfig{
 				Enabled: false,
 			},
+			TagReconcile: TagReconcileConfig{
+				Enabled:    false,
+				ReportOnly: true,
+				Interval:   7,
+				Time:       "02:00",
+				MaxRejudge: 200,
+				MaxRetag:   1000,
+			},
 		},
 	}
 }
@@ -683,11 +716,23 @@ func finalizeConfig(cfg *Config, configDir string) error {
 		}
 	}
 
-	if cfg.Enricher.TagAdjudicator.Timeout == 0 {
-		cfg.Enricher.TagAdjudicator.Timeout = cfg.Enricher.ContentAnalyzer.Timeout
+	if cfg.Enricher.TagReconcile.Interval <= 0 {
+		cfg.Enricher.TagReconcile.Interval = 7
 	}
-	if cfg.Enricher.TagAdjudicator.Llm.Provider == "" || cfg.Enricher.TagAdjudicator.Llm.Model == "" {
-		cfg.Enricher.TagAdjudicator.Llm = cfg.Enricher.ContentAnalyzer.Llm
+	if cfg.Enricher.TagReconcile.MaxRejudge <= 0 {
+		cfg.Enricher.TagReconcile.MaxRejudge = 200
+	}
+	if cfg.Enricher.TagReconcile.MaxRetag <= 0 {
+		cfg.Enricher.TagReconcile.MaxRetag = 1000
+	}
+	if cfg.Enricher.TagReconcile.Time == "" {
+		cfg.Enricher.TagReconcile.Time = "02:00"
+	}
+	if _, err := parseHHMM(cfg.Enricher.TagReconcile.Time, false); err != nil {
+		return fmt.Errorf("enricher.tag_reconcile.time: %w", err)
+	}
+	if cfg.Enricher.TagReconcile.Enabled && !cfg.Enricher.TagAdjudicator.Enabled {
+		slog.Warn("enricher.tag_reconcile.enabled is set but enricher.tag_adjudicator.enabled is false — scheduled runs will be snapshot-only (no LLM re-adjudication, no writes)")
 	}
 
 	homeDir, err := os.UserHomeDir()

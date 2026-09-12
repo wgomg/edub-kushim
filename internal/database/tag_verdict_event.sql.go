@@ -14,6 +14,60 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
+const deleteFreshTagVerdictsForPairs = `-- name: DeleteFreshTagVerdictsForPairs :execrows
+DELETE FROM tag_verdict_event
+WHERE verdict_model IS NOT NULL
+  AND (query, target) IN (SELECT unnest($1::text[]), unnest($2::text[]))
+`
+
+type DeleteFreshTagVerdictsForPairsParams struct {
+	Column1 []string
+	Column2 []string
+}
+
+func (q *Queries) DeleteFreshTagVerdictsForPairs(ctx context.Context, arg DeleteFreshTagVerdictsForPairsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteFreshTagVerdictsForPairs, pq.Array(arg.Column1), pq.Array(arg.Column2))
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const documentIDsForPairs = `-- name: DocumentIDsForPairs :many
+SELECT DISTINCT document_id
+FROM tag_verdict_event
+WHERE (query, target) IN (SELECT unnest($1::text[]), unnest($2::text[]))
+ORDER BY document_id
+`
+
+type DocumentIDsForPairsParams struct {
+	Column1 []string
+	Column2 []string
+}
+
+func (q *Queries) DocumentIDsForPairs(ctx context.Context, arg DocumentIDsForPairsParams) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, documentIDsForPairs, pq.Array(arg.Column1), pq.Array(arg.Column2))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var document_id int64
+		if err := rows.Scan(&document_id); err != nil {
+			return nil, err
+		}
+		items = append(items, document_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const insertTagVerdictEvent = `-- name: InsertTagVerdictEvent :execrows
 INSERT INTO tag_verdict_event
     (document_id, query, target, sim, verdict, verdict_model, policy_version)
@@ -45,6 +99,62 @@ func (q *Queries) InsertTagVerdictEvent(ctx context.Context, arg InsertTagVerdic
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const latestTagVerdictRowsForPairs = `-- name: LatestTagVerdictRowsForPairs :many
+SELECT DISTINCT ON (query, target)
+       query, target, document_id, sim, verdict, verdict_model, policy_version, verdict_at
+FROM tag_verdict_event
+WHERE (query, target) IN (SELECT unnest($1::text[]), unnest($2::text[]))
+ORDER BY query, target, verdict_at DESC
+`
+
+type LatestTagVerdictRowsForPairsParams struct {
+	Column1 []string
+	Column2 []string
+}
+
+type LatestTagVerdictRowsForPairsRow struct {
+	Query         string
+	Target        string
+	DocumentID    int64
+	Sim           float64
+	Verdict       types.TagVerdict
+	VerdictModel  sql.NullString
+	PolicyVersion string
+	VerdictAt     time.Time
+}
+
+func (q *Queries) LatestTagVerdictRowsForPairs(ctx context.Context, arg LatestTagVerdictRowsForPairsParams) ([]LatestTagVerdictRowsForPairsRow, error) {
+	rows, err := q.db.QueryContext(ctx, latestTagVerdictRowsForPairs, pq.Array(arg.Column1), pq.Array(arg.Column2))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LatestTagVerdictRowsForPairsRow
+	for rows.Next() {
+		var i LatestTagVerdictRowsForPairsRow
+		if err := rows.Scan(
+			&i.Query,
+			&i.Target,
+			&i.DocumentID,
+			&i.Sim,
+			&i.Verdict,
+			&i.VerdictModel,
+			&i.PolicyVersion,
+			&i.VerdictAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const latestTagVerdictsForPairs = `-- name: LatestTagVerdictsForPairs :many
@@ -157,4 +267,275 @@ func (q *Queries) TagPairEvidenceStats(ctx context.Context, arg TagPairEvidenceS
 		return nil, err
 	}
 	return items, nil
+}
+
+const tagVerdictPairsByVerdict = `-- name: TagVerdictPairsByVerdict :many
+SELECT DISTINCT ON (query, target)
+       query, target, document_id, sim, verdict, verdict_model, policy_version, verdict_at
+FROM tag_verdict_event
+WHERE policy_version = $1 AND verdict_model IS NOT NULL
+  AND verdict IN ('variant', 'related')
+ORDER BY query, target, verdict_at DESC
+`
+
+type TagVerdictPairsByVerdictRow struct {
+	Query         string
+	Target        string
+	DocumentID    int64
+	Sim           float64
+	Verdict       types.TagVerdict
+	VerdictModel  sql.NullString
+	PolicyVersion string
+	VerdictAt     time.Time
+}
+
+func (q *Queries) TagVerdictPairsByVerdict(ctx context.Context, policyVersion string) ([]TagVerdictPairsByVerdictRow, error) {
+	rows, err := q.db.QueryContext(ctx, tagVerdictPairsByVerdict, policyVersion)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TagVerdictPairsByVerdictRow
+	for rows.Next() {
+		var i TagVerdictPairsByVerdictRow
+		if err := rows.Scan(
+			&i.Query,
+			&i.Target,
+			&i.DocumentID,
+			&i.Sim,
+			&i.Verdict,
+			&i.VerdictModel,
+			&i.PolicyVersion,
+			&i.VerdictAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const tagVerdictPairsOlderThan = `-- name: TagVerdictPairsOlderThan :many
+SELECT DISTINCT ON (query, target)
+       query, target, document_id, sim, verdict, verdict_model, policy_version, verdict_at
+FROM tag_verdict_event
+WHERE policy_version = $1 AND verdict_model IS NOT NULL AND verdict_at < $2
+ORDER BY query, target, verdict_at DESC
+`
+
+type TagVerdictPairsOlderThanParams struct {
+	PolicyVersion string
+	VerdictAt     time.Time
+}
+
+type TagVerdictPairsOlderThanRow struct {
+	Query         string
+	Target        string
+	DocumentID    int64
+	Sim           float64
+	Verdict       types.TagVerdict
+	VerdictModel  sql.NullString
+	PolicyVersion string
+	VerdictAt     time.Time
+}
+
+func (q *Queries) TagVerdictPairsOlderThan(ctx context.Context, arg TagVerdictPairsOlderThanParams) ([]TagVerdictPairsOlderThanRow, error) {
+	rows, err := q.db.QueryContext(ctx, tagVerdictPairsOlderThan, arg.PolicyVersion, arg.VerdictAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TagVerdictPairsOlderThanRow
+	for rows.Next() {
+		var i TagVerdictPairsOlderThanRow
+		if err := rows.Scan(
+			&i.Query,
+			&i.Target,
+			&i.DocumentID,
+			&i.Sim,
+			&i.Verdict,
+			&i.VerdictModel,
+			&i.PolicyVersion,
+			&i.VerdictAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const tagVerdictPairsWithMissingTags = `-- name: TagVerdictPairsWithMissingTags :many
+SELECT DISTINCT tve.query, tve.target,
+       NOT EXISTS (SELECT 1 FROM tag t WHERE t.name = tve.query) AS query_missing,
+       NOT EXISTS (SELECT 1 FROM tag t WHERE t.name = tve.target) AS target_missing
+FROM tag_verdict_event tve
+WHERE NOT EXISTS (SELECT 1 FROM tag t WHERE t.name = tve.query)
+   OR NOT EXISTS (SELECT 1 FROM tag t WHERE t.name = tve.target)
+`
+
+type TagVerdictPairsWithMissingTagsRow struct {
+	Query         string
+	Target        string
+	QueryMissing  bool
+	TargetMissing bool
+}
+
+func (q *Queries) TagVerdictPairsWithMissingTags(ctx context.Context) ([]TagVerdictPairsWithMissingTagsRow, error) {
+	rows, err := q.db.QueryContext(ctx, tagVerdictPairsWithMissingTags)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TagVerdictPairsWithMissingTagsRow
+	for rows.Next() {
+		var i TagVerdictPairsWithMissingTagsRow
+		if err := rows.Scan(
+			&i.Query,
+			&i.Target,
+			&i.QueryMissing,
+			&i.TargetMissing,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const tagVerdictPairsWithoutFreshVerdict = `-- name: TagVerdictPairsWithoutFreshVerdict :many
+SELECT DISTINCT ON (tve.query, tve.target)
+       tve.query, tve.target, tve.document_id, tve.sim, tve.verdict,
+       tve.verdict_model, tve.policy_version, tve.verdict_at
+FROM tag_verdict_event tve
+WHERE NOT EXISTS (
+    SELECT 1 FROM tag_verdict_event f
+    WHERE f.query = tve.query AND f.target = tve.target
+      AND f.policy_version = $1 AND f.verdict_model IS NOT NULL
+)
+ORDER BY tve.query, tve.target, tve.verdict_at DESC
+`
+
+type TagVerdictPairsWithoutFreshVerdictRow struct {
+	Query         string
+	Target        string
+	DocumentID    int64
+	Sim           float64
+	Verdict       types.TagVerdict
+	VerdictModel  sql.NullString
+	PolicyVersion string
+	VerdictAt     time.Time
+}
+
+func (q *Queries) TagVerdictPairsWithoutFreshVerdict(ctx context.Context, policyVersion string) ([]TagVerdictPairsWithoutFreshVerdictRow, error) {
+	rows, err := q.db.QueryContext(ctx, tagVerdictPairsWithoutFreshVerdict, policyVersion)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TagVerdictPairsWithoutFreshVerdictRow
+	for rows.Next() {
+		var i TagVerdictPairsWithoutFreshVerdictRow
+		if err := rows.Scan(
+			&i.Query,
+			&i.Target,
+			&i.DocumentID,
+			&i.Sim,
+			&i.Verdict,
+			&i.VerdictModel,
+			&i.PolicyVersion,
+			&i.VerdictAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const tagVerdictQueriesWithRows = `-- name: TagVerdictQueriesWithRows :many
+SELECT DISTINCT query FROM tag_verdict_event
+WHERE query = ANY($1::text[]) OR target = ANY($1::text[])
+`
+
+func (q *Queries) TagVerdictQueriesWithRows(ctx context.Context, dollar_1 []string) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, tagVerdictQueriesWithRows, pq.Array(dollar_1))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var query string
+		if err := rows.Scan(&query); err != nil {
+			return nil, err
+		}
+		items = append(items, query)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const upsertFreshTagVerdict = `-- name: UpsertFreshTagVerdict :execrows
+INSERT INTO tag_verdict_event
+    (document_id, query, target, sim, verdict, verdict_model, policy_version)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+ON CONFLICT (query, target, policy_version) WHERE verdict_model IS NOT NULL
+DO UPDATE SET verdict = EXCLUDED.verdict, verdict_model = EXCLUDED.verdict_model,
+              sim = EXCLUDED.sim, verdict_at = now()
+`
+
+type UpsertFreshTagVerdictParams struct {
+	DocumentID    int64
+	Query         string
+	Target        string
+	Sim           float64
+	Verdict       types.TagVerdict
+	VerdictModel  sql.NullString
+	PolicyVersion string
+}
+
+func (q *Queries) UpsertFreshTagVerdict(ctx context.Context, arg UpsertFreshTagVerdictParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, upsertFreshTagVerdict,
+		arg.DocumentID,
+		arg.Query,
+		arg.Target,
+		arg.Sim,
+		arg.Verdict,
+		arg.VerdictModel,
+		arg.PolicyVersion,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }

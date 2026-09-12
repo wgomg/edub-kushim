@@ -3,19 +3,19 @@ package types
 import "testing"
 
 func TestAllCounts(t *testing.T) {
-	if got, want := len(AllBatchSources()), 10; got != want {
+	if got, want := len(AllBatchSources()), 11; got != want {
 		t.Errorf("AllBatchSources len = %d, want %d", got, want)
 	}
 	if got, want := len(AllBatchStatuses()), 6; got != want {
 		t.Errorf("AllBatchStatuses len = %d, want %d", got, want)
 	}
-	if got, want := len(AllTaskTypes()), 6; got != want {
+	if got, want := len(AllTaskTypes()), 7; got != want {
 		t.Errorf("AllTaskTypes len = %d, want %d", got, want)
 	}
 	if got, want := len(AllTaskStatuses()), 7; got != want {
 		t.Errorf("AllTaskStatuses len = %d, want %d", got, want)
 	}
-	if got, want := len(NonConsumeBatchSources()), 3; got != want {
+	if got, want := len(NonConsumeBatchSources()), 4; got != want {
 		t.Errorf("NonConsumeBatchSources len = %d, want %d", got, want)
 	}
 }
@@ -87,7 +87,7 @@ func TestAllReturnsClone(t *testing.T) {
 
 func TestNonConsumeBatchSources(t *testing.T) {
 	for _, src := range NonConsumeBatchSources() {
-		if src != Batch.Source.Config && src != Batch.Source.Backup && src != Batch.Source.Mirror {
+		if src != Batch.Source.Config && src != Batch.Source.Backup && src != Batch.Source.Mirror && src != Batch.Source.TagReconcile {
 			t.Errorf("unexpected non-consume source: %q", src)
 		}
 	}
@@ -108,10 +108,11 @@ func TestIsBlocking(t *testing.T) {
 
 func TestIsLockGated(t *testing.T) {
 	cases := map[TaskType]bool{
-		Task.Type.Consume:   true,
-		Task.Type.Enrich:    true,
-		Task.Type.Thumbnail: true,
-		Task.Type.Config:    false,
+		Task.Type.Consume:      true,
+		Task.Type.Enrich:       true,
+		Task.Type.Thumbnail:    true,
+		Task.Type.TagReconcile: true,
+		Task.Type.Config:       false,
 	}
 	for typ, want := range cases {
 		if got := typ.IsLockGated(); got != want {

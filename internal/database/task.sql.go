@@ -507,6 +507,20 @@ func (q *Queries) GetLastCompletedMirror(ctx context.Context) (sql.NullTime, err
 	return completed_at, err
 }
 
+const getLastCompletedTagReconcileTask = `-- name: GetLastCompletedTagReconcileTask :one
+SELECT completed_at FROM task
+WHERE task_type = 'tagreconcile' AND status = 'completed'
+ORDER BY completed_at DESC
+LIMIT 1
+`
+
+func (q *Queries) GetLastCompletedTagReconcileTask(ctx context.Context) (sql.NullTime, error) {
+	row := q.db.QueryRowContext(ctx, getLastCompletedTagReconcileTask)
+	var completed_at sql.NullTime
+	err := row.Scan(&completed_at)
+	return completed_at, err
+}
+
 const getNextPendingTask = `-- name: GetNextPendingTask :one
 SELECT id FROM task WHERE status = 'pending' ORDER BY created_at LIMIT 1
 `

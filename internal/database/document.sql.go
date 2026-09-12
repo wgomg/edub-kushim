@@ -308,6 +308,39 @@ func (q *Queries) GetDocumentBySHA512Checksum(ctx context.Context, sha512Checksu
 	return i, err
 }
 
+const getDocumentIDsByDocumentIDs = `-- name: GetDocumentIDsByDocumentIDs :many
+SELECT document_id, id FROM document
+WHERE document_id = ANY($1::text[])
+`
+
+type GetDocumentIDsByDocumentIDsRow struct {
+	DocumentID string
+	ID         int64
+}
+
+func (q *Queries) GetDocumentIDsByDocumentIDs(ctx context.Context, dollar_1 []string) ([]GetDocumentIDsByDocumentIDsRow, error) {
+	rows, err := q.db.QueryContext(ctx, getDocumentIDsByDocumentIDs, pq.Array(dollar_1))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetDocumentIDsByDocumentIDsRow
+	for rows.Next() {
+		var i GetDocumentIDsByDocumentIDsRow
+		if err := rows.Scan(&i.DocumentID, &i.ID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getDocumentThumbnailMeta = `-- name: GetDocumentThumbnailMeta :one
 SELECT document_id, created_at, has_thumbnail
 FROM document WHERE document_id = $1 AND deleted_at IS NULL

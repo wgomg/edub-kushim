@@ -110,6 +110,8 @@ func queueHandler(c *Container, args []string) error {
 	var backupPoolStarted bool
 	var mirrorPool *pool.Pool
 	var mirrorPoolStarted bool
+	var tagReconcilePool *pool.Pool
+	var tagReconcilePoolStarted bool
 
 	go runPollingLoop(ctx, c, func() *database.Client { return client }, func() *service.Batch { return batchSvc }, maxConcurrent)
 
@@ -135,6 +137,7 @@ func queueHandler(c *Container, args []string) error {
 
 	var lastStaleTaskClaim time.Time
 	var lastThumbnailBackfill time.Time
+	var lastTagReconcile time.Time
 
 	for {
 		select {
@@ -175,6 +178,9 @@ func queueHandler(c *Container, args []string) error {
 						}
 						if mirrorPoolStarted {
 							stopPool(c, "mirror", &mirrorPoolStarted, &mirrorPool)
+						}
+						if tagReconcilePoolStarted {
+							stopPool(c, "tagreconcile", &tagReconcilePoolStarted, &tagReconcilePool)
 						}
 						client = newClient
 						batchSvc = service.NewBatch(client, c.cfg.Load().Consumer.Reclaim.MaxRetries)
@@ -233,6 +239,20 @@ func queueHandler(c *Container, args []string) error {
 				}
 			}
 
+			if cfg.Enricher.TagReconcile.Enabled {
+				if !tagReconcilePoolStarted {
+					if err := startPool(c, ctx, "tagreconcile", &tagReconcilePoolStarted, &tagReconcilePool); err != nil {
+						c.logger.Error(nil, "tag reconcile pool: %v", err)
+					}
+				}
+				if err := maybeScheduleTagReconcile(ctx, c, client, cfg, &lastTagReconcile); err != nil {
+					c.logger.Error(nil, "tag reconcile scheduling: %v", err)
+				}
+			} else if tagReconcilePoolStarted {
+				stopPool(c, "tagreconcile", &tagReconcilePoolStarted, &tagReconcilePool)
+				c.logger.Info(nil, "tag reconcile pool stopped (disabled)")
+			}
+
 			if err := sweepEmptyQueuedBatches(ctx, client, c.logger); err != nil {
 				c.logger.Error(nil, "empty queued batch sweep: %v", err)
 			}
@@ -254,6 +274,7 @@ func queueHandler(c *Container, args []string) error {
 			c.logger.Info(nil, "queue daemon stopped")
 			stopPool(c, "backup", &backupPoolStarted, &backupPool)
 			stopPool(c, "mirror", &mirrorPoolStarted, &mirrorPool)
+			stopPool(c, "tagreconcile", &tagReconcilePoolStarted, &tagReconcilePool)
 			return nil
 		}
 	}
@@ -630,6 +651,75 @@ func maybeScheduleThumbnailBackfill(ctx context.Context, c *Container, client *d
 	*lastRun = time.Now()
 	c.logger.Info(nil, "forked kushim thumbnails --all (PID %d)", cmd.Process.Pid)
 	c.logger.Debug(nil, "thumbnail backfill: forked (pid=%d, last_run=%s)", cmd.Process.Pid, lastRun.Format(time.RFC3339))
+	return nil
+}
+
+func maybeScheduleTagReconcile(ctx context.Context, c *Container, client *database.Client, cfg *config.Config, lastRun *time.Time) error {
+	if !cfg.Enricher.TagReconcile.Enabled {
+		return nil
+	}
+
+	if lastRun.IsZero() {
+		lastBatch, err := client.Queries.GetLastTagReconcileBatchCreatedAt(ctx)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			c.logger.Debug(nil, "tag reconcile: last batch lookup failed: %v", err)
+			return fmt.Errorf("get last tag reconcile batch: %w", err)
+		}
+		if err == nil {
+			*lastRun = lastBatch.Time
+		}
+	}
+	// Anchor a fresh schedule to the preferred time so the first run honors off-hours.
+	if lastRun.IsZero() {
+		*lastRun = previousTimeOfDay(time.Now(), cfg.Enricher.TagReconcile.Time)
+	}
+
+	next := backup.NextBackupTime(*lastRun, cfg.Enricher.TagReconcile.Interval, cfg.Enricher.TagReconcile.Time)
+	now := time.Now()
+	if now.Before(next) {
+		return nil
+	}
+
+	active, err := client.Queries.CountActiveTagReconcileBatches(ctx)
+	if err != nil {
+		return fmt.Errorf("check active tag reconcile batches: %w", err)
+	}
+	if active > 0 {
+		c.logger.Debug(nil, "tag reconcile: skipped — %d active batch(es)", active)
+		return nil
+	}
+
+	locked, err := client.Queries.IsBackupLocked(ctx)
+	if err != nil {
+		return fmt.Errorf("backup lock check: %w", err)
+	}
+	if locked > 0 {
+		c.logger.Debug(nil, "tag reconcile: skipped — maintenance lock held")
+		return nil
+	}
+
+	dispatcher, err := c.GetDispatcher()
+	if err != nil {
+		return fmt.Errorf("get dispatcher: %w", err)
+	}
+
+	batchID := uuid.New().String()
+	if err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
+		ID:     batchID,
+		Source: types.Batch.Source.TagReconcile,
+		Status: types.Batch.Status.Queued,
+	}); err != nil {
+		return fmt.Errorf("create tag reconcile batch: %w", err)
+	}
+
+	taskID := uuid.New().String()
+	if _, err := dispatcher.Enqueue(ctx, types.Task.Type.TagReconcile, batchID, json.RawMessage("{}"), taskID); err != nil {
+		return fmt.Errorf("enqueue tag reconcile task: %w", err)
+	}
+
+	// Advance only after a successful enqueue so a failed schedule retries next tick.
+	*lastRun = time.Now()
+	c.logger.Info(nil, "tag reconcile task %s scheduled (batch %s)", taskID, batchID)
 	return nil
 }
 

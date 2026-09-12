@@ -13,6 +13,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/consumption"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/enrichment"
+	"github.com/wgomg/edub-kushim/internal/enrichment/tagreconcile"
 	"github.com/wgomg/edub-kushim/internal/pool"
 	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/service"
@@ -35,12 +36,13 @@ type Container struct {
 	store      *task.Store
 	services   *service.CrudServices
 	pools      struct {
-		consume   *pool.Pool
-		enrich    *pool.Pool
-		thumbnail *pool.Pool
-		config    *pool.Pool
-		backup    *pool.Pool
-		mirror    *pool.Pool
+		consume      *pool.Pool
+		enrich       *pool.Pool
+		thumbnail    *pool.Pool
+		config       *pool.Pool
+		backup       *pool.Pool
+		mirror       *pool.Pool
+		tagreconcile *pool.Pool
 	}
 }
 
@@ -102,6 +104,7 @@ func (c *Container) InvalidateDB() {
 	c.pools.config = nil
 	c.pools.backup = nil
 	c.pools.mirror = nil
+	c.pools.tagreconcile = nil
 }
 
 func (c *Container) reconnectClient() (*database.Client, error) {
@@ -146,6 +149,7 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 	c.services = &service.CrudServices{
 		Tag: tagSvc, People: peopleSvc, PeopleType: peopleTypeSvc, DocumentType: docTypeSvc,
 	}
+	c.services.TagMerge = service.NewTagMerge(client, matcherClient, matcherClient, c.logger)
 
 	store := task.NewStore(client)
 	c.store = store
@@ -167,6 +171,17 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 	registry.Register(types.Task.Type.Config, configtask.NewConfigTaskHandler(client.Queries, c.logger))
 	registry.Register(types.Task.Type.Backup, taskhandlers.NewBackupTaskHandler(c.db, client.Queries, func() *config.Config { return c.cfg.Load() }, c.logger))
 	registry.Register(types.Task.Type.Mirror, taskhandlers.NewMirrorTaskHandler(client.Queries, func() *config.Config { return c.cfg.Load() }, c.logger))
+	registry.Register(types.Task.Type.TagReconcile, taskhandlers.NewTagReconcileTaskHandler(
+		tagreconcile.NewReconciler(
+			func() *config.Config { return c.cfg.Load() },
+			client,
+			c.services,
+			tools.NewRunnerWithMatcher(c.logger, c.cfg.Load(), []string{"contentanalyzer", "tagmatcher"}, matcherClient),
+			c.logger,
+		),
+		client.Queries,
+		c.logger,
+	))
 
 	c.dispatcher = task.NewDispatcher(c.logger, store, registry)
 	c.runner = task.NewRunner(store, registry, c.logger)
@@ -204,6 +219,8 @@ func (c *Container) GetPool(taskType string) (*pool.Pool, error) {
 		pp = &c.pools.backup
 	case "mirror":
 		pp = &c.pools.mirror
+	case "tagreconcile":
+		pp = &c.pools.tagreconcile
 	default:
 		return nil, fmt.Errorf("unknown pool task type: %q", taskType)
 	}
@@ -232,6 +249,9 @@ func (c *Container) GetPool(taskType string) (*pool.Pool, error) {
 			workers = 1
 			interval = 60 * time.Second
 		case "mirror":
+			workers = 1
+			interval = 60 * time.Second
+		case "tagreconcile":
 			workers = 1
 			interval = 60 * time.Second
 		}
@@ -282,6 +302,11 @@ func (c *Container) Close() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		c.pools.mirror.Stop(ctx)
+	}
+	if c.pools.tagreconcile != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		c.pools.tagreconcile.Stop(ctx)
 	}
 	if c.db != nil {
 		c.db.Close()

@@ -159,10 +159,35 @@ type ThumbnailConfigResponse struct {
 }
 
 type EnricherConfigResponse struct {
-	Workers         int                     `json:"workers"`
-	TextReducer     TextReducerResponse     `json:"textreducer"`
-	ContentAnalyzer ContentAnalyzerResponse `json:"contentanalyzer"`
-	TagMatcher      TagMatcherResponse      `json:"tagmatcher"`
+	Workers         int                          `json:"workers"`
+	TextReducer     TextReducerResponse          `json:"textreducer"`
+	ContentAnalyzer ContentAnalyzerResponse      `json:"contentanalyzer"`
+	TagMatcher      TagMatcherResponse           `json:"tagmatcher"`
+	TagAdjudicator  TagAdjudicatorConfigResponse `json:"tag_adjudicator"`
+	TagReconcile    TagReconcileConfigResponse   `json:"tag_reconcile"`
+}
+
+type TagAdjudicatorConfigResponse struct {
+	Enabled bool                      `json:"enabled"`
+	Timeout int                       `json:"timeout"`
+	Llm     TagAdjudicatorLlmResponse `json:"llm"`
+}
+
+type TagAdjudicatorLlmResponse struct {
+	Adapter      string  `json:"adapter"`
+	Provider     string  `json:"provider"`
+	Model        string  `json:"model"`
+	Token        string  `json:"token,omitempty"`
+	RequestDelay float64 `json:"request_delay"`
+}
+
+type TagReconcileConfigResponse struct {
+	Enabled    bool    `json:"enabled"`
+	ReportOnly bool    `json:"report_only"`
+	Interval   float64 `json:"interval"`
+	Time       string  `json:"time"`
+	MaxRejudge int     `json:"max_rejudge"`
+	MaxRetag   int     `json:"max_retag"`
 }
 
 type TextReducerResponse struct {
@@ -331,6 +356,19 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Enricher.TagMatcher.ChunkSize = cfg.Enricher.TagMatcher.ChunkSize
 	resp.Enricher.TagMatcher.Hugot.Model = cfg.Enricher.TagMatcher.Hugot.Model
 	resp.Enricher.TagMatcher.Hugot.Backend = cfg.Enricher.TagMatcher.Hugot.Backend
+	resp.Enricher.TagAdjudicator.Enabled = cfg.Enricher.TagAdjudicator.Enabled
+	resp.Enricher.TagAdjudicator.Timeout = cfg.Enricher.TagAdjudicator.Timeout
+	resp.Enricher.TagAdjudicator.Llm.Adapter = cfg.Enricher.TagAdjudicator.Llm.Adapter
+	resp.Enricher.TagAdjudicator.Llm.Provider = cfg.Enricher.TagAdjudicator.Llm.Provider
+	resp.Enricher.TagAdjudicator.Llm.Model = cfg.Enricher.TagAdjudicator.Llm.Model
+	resp.Enricher.TagAdjudicator.Llm.Token = cfg.Enricher.TagAdjudicator.Llm.Token
+	resp.Enricher.TagAdjudicator.Llm.RequestDelay = cfg.Enricher.TagAdjudicator.Llm.RequestDelay
+	resp.Enricher.TagReconcile.Enabled = cfg.Enricher.TagReconcile.Enabled
+	resp.Enricher.TagReconcile.ReportOnly = cfg.Enricher.TagReconcile.ReportOnly
+	resp.Enricher.TagReconcile.Interval = cfg.Enricher.TagReconcile.Interval
+	resp.Enricher.TagReconcile.Time = cfg.Enricher.TagReconcile.Time
+	resp.Enricher.TagReconcile.MaxRejudge = cfg.Enricher.TagReconcile.MaxRejudge
+	resp.Enricher.TagReconcile.MaxRetag = cfg.Enricher.TagReconcile.MaxRetag
 	resp.Storage.ConsumptionDir = cfg.Storage.ConsumptionDir
 	resp.Storage.StorageDir = cfg.Storage.StorageDir
 	resp.Storage.MigrationMode = cfg.Storage.MigrationMode

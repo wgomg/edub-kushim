@@ -614,7 +614,7 @@ func (e *Enricher) adjudicateBandPairs(ctx context.Context, documentID string, p
 		return
 	}
 
-	model := e.config.Enricher.TagAdjudicator.Llm.Model
+	model := e.config.ResolvedAdjudicatorLlm().Model
 	for i, r := range results {
 		unresolved[i].verdict = r.Verdict
 		unresolved[i].model = model

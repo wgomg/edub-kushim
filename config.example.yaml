@@ -142,6 +142,24 @@ enricher:
       model: BAAI/bge-m3
       backend: ort
 
+  # tag_adjudicator:             # optional LLM verdicts for ambiguous tag pairs
+  #   enabled: false             # disabled by default — enable after configuring LLM
+  #   timeout: 120               # defaults to contentanalyzer.timeout when 0
+  #   llm:                       # defaults to contentanalyzer.llm when provider/model are empty
+  #     adapter: 'openai-compatible'
+  #     provider: 'openai'
+  #     model: 'gpt-4o'
+  #     token: ''
+  #     request_delay: 1
+
+  # tag_reconcile:               # scheduled re-adjudication of stored tag verdicts
+  #   enabled: false             # disabled by default
+  #   report_only: true          # snapshot-only runs (no writes); the first run is always report-only
+  #   interval: 7                # days between runs
+  #   time: "02:00"              # preferred time of day (HH:MM)
+  #   max_rejudge: 200           # max pairs re-evaluated per run
+  #   max_retag: 1000            # max documents re-pointed per run
+
 backup:
   # enabled: true
   # path: /var/backups                  # fallback directory (also used by manual CLI)

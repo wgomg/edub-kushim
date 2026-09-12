@@ -2131,7 +2131,7 @@ Object with `count` (total active tasks across all task types, uncapped) and `ta
 | `tasks`       | `array`  | Active tasks, capped at 25, ordered processing-first then oldest-queued                                                |
 | `tasks[].task_id` | `string` | Task UUID                                                                                                          |
 | `tasks[].batch_id` | `string` | Batch UUID (empty for `backup`/`config` tasks)                                                                     |
-| `tasks[].task_type` | `string` | `consume`, `enrich`, `thumbnail`, `config`, or `backup`                                                            |
+| `tasks[].task_type` | `string` | `consume`, `enrich`, `thumbnail`, `config`, `backup`, `mirror`, or `tagreconcile`                                                            |
 | `tasks[].file_name` | `string` | File name from the payload, if any                                                                                 |
 | `tasks[].status` | `string` | `pending`, `processing`, or `waiting`                                                                              |
 | `tasks[].label` | `string` | Human-readable title: `TaskType: file name` for consume/enrich/thumbnail (e.g. `"Consume: report.pdf"`), else derived from task type + dedup key (e.g. `"Backup (full)"`, `"Database migration"`, `"Download tessdata (eng)"`) |
@@ -2272,12 +2272,12 @@ unless the step changes).
 `source` is how the batch was created: `cli` (`kushim consume`), `api`
 (`POST /api/v1/consume`), `upload` (`POST /api/v1/consume/upload`),
 `polling` (daemon inbox scan), `reenrich`, `orphaned-restore`,
-`thumbbackfill`, `config`, `backup`, `mirror`. The vocabulary is a closed
-Postgres enum (`batch_source`), mirrored by the Go registry in
-`internal/types`. `owner_state` (`"none"`,
+`thumbbackfill`, `config`, `backup`, `mirror`, `tagreconcile`. The
+vocabulary is a closed Postgres enum (`batch_source`), mirrored by the Go
+registry in `internal/types`. `owner_state` (`"none"`,
 `"live"`, `"stale"`) is included when set. Batches with source
-`config`/`backup`/`mirror` never report `orphaned: true` — they have no
-`batch_owner` row by design (their handlers own the lifecycle).
+`config`/`backup`/`mirror`/`tagreconcile` never report `orphaned: true` —
+they have no `batch_owner` row by design (their handlers own the lifecycle).
 
 ---
 
@@ -2415,12 +2415,20 @@ enricher:
       backend: 'ort' # ort (ONNX Runtime) | GO
   # tag_adjudicator:             # optional LLM verdicts for ambiguous tag pairs
   #   enabled: false             # disabled by default — enable after configuring LLM
-  #   timeout: 120               # defaults to contentanalyzer.timeout
-  #   llm:                       # defaults to contentanalyzer.llm (provider/model)
+  #   timeout: 120               # defaults to contentanalyzer.timeout when 0
+  #   llm:                       # defaults to contentanalyzer.llm when provider/model are empty
   #     adapter: 'openai-compatible'
   #     provider: 'openai'
   #     model: 'gpt-4o'
   #     token: ''
+  #     request_delay: 1
+  # tag_reconcile:               # scheduled re-adjudication of stored tag verdicts
+  #   enabled: false             # disabled by default
+  #   report_only: true          # snapshot-only runs (no writes); the first run is always report-only
+  #   interval: 7                # days between runs
+  #   time: "02:00"              # preferred time of day (HH:MM)
+  #   max_rejudge: 200           # max pairs re-evaluated per run
+  #   max_retag: 1000            # max documents re-pointed per run
 
 backup:
   # enabled: true
@@ -2487,7 +2495,8 @@ mirror:
 | `enricher.contentanalyzer.doc_type_refinement` | Second-pass doc type refinement with head+tail of raw text (enabled, head_words, tail_words) |
 | `enricher.tagmatcher`          | Semantic tag matching via Hugot (embeddings) — see [Tag Matcher guide](tag-matcher.md) for memory/CPU tuning |
 | `enricher.tagmatcher.hugot`    | Hugot-specific settings (model, backend)                               |
-| `enricher.tag_adjudicator`     | Optional LLM verdicts for ambiguous tag pairs: `enabled` (default `false`), `timeout` (defaults to `contentanalyzer.timeout`), `llm` (defaults to `contentanalyzer.llm` when `provider`/`model` are empty). When enabled, ambiguous-band pairs are classified `same`/`variant`/`related`, verdicts are cached in `tag_verdict_event`, and `same` replaces the emitted tag with the canonical target |
+| `enricher.tag_adjudicator`     | Optional LLM verdicts for ambiguous tag pairs: `enabled` (default `false`), `timeout` (defaults to `contentanalyzer.timeout` at use time when `0`), `llm` (defaults to `contentanalyzer.llm` at use time when `provider`/`model` are empty — the raw values are preserved in config so the inheritance survives saves). When enabled, ambiguous-band pairs are classified `same`/`variant`/`related`, verdicts are cached in `tag_verdict_event`, and `same` replaces the emitted tag with the canonical target |
+| `enricher.tag_reconcile`       | Scheduled re-adjudication of stored tag verdicts: `enabled` (default `false`), `report_only` (default `true`; the first run is always report-only regardless), `interval` (days between runs, default `7`), `time` (HH:MM preferred time, default `02:00`), `max_rejudge` (max pairs re-evaluated per run, default `200`), `max_retag` (max documents re-pointed per run, default `1000`). The queue daemon enqueues a `tagreconcile` task when due; runs re-evaluate stale/unjudged/drifted/aged pairs against the current policy and store, healing absorbed tags and applying flips. Requires the tag adjudicator for acting (write) runs — without it, runs stay snapshot-only |
 
 ---
 

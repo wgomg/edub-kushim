@@ -177,7 +177,8 @@ func NewRunner(logger *utils.Logger, cfg *config.Config, tools []string) *Runner
 			}
 			r.contentAnalyzer = ca
 			if cfg.Enricher.TagAdjudicator.Enabled {
-				adj, adjErr := contentanalyzer.NewContentAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.Enricher.TagAdjudicator.Timeout) * time.Second}, &cfg.Enricher.TagAdjudicator.Llm, cfg.Enricher.ContentAnalyzer.PromptTemplate, reg)
+				adjLlm := cfg.ResolvedAdjudicatorLlm()
+				adj, adjErr := contentanalyzer.NewContentAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.ResolvedAdjudicatorTimeout()) * time.Second}, &adjLlm, cfg.Enricher.ContentAnalyzer.PromptTemplate, reg)
 				if adjErr != nil {
 					logger.Error(nil, "create tag adjudicator: %v", adjErr)
 				} else {
@@ -473,7 +474,7 @@ func (r *Runner) AdjudicateTags(ctx context.Context, pairs []contentanalyzer.Tag
 	if r.tagAdjudicator == nil {
 		return nil, fmt.Errorf("tag adjudicator not configured")
 	}
-	timeout := time.Duration(r.config.Enricher.TagAdjudicator.Timeout) * time.Second
+	timeout := time.Duration(r.config.ResolvedAdjudicatorTimeout()) * time.Second
 	if timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, timeout)

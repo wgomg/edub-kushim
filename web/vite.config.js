@@ -42,7 +42,8 @@ export default defineConfig({
 					include: [
 						'src/lib/components/**/*.test.js',
 						'src/lib/stores/authStore.test.js',
-						'src/lib/api.test.js'
+						'src/lib/api.test.js',
+						'src/routes/**/*.test.js'
 					]
 				}
 			}

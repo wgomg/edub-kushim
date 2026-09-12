@@ -24,6 +24,7 @@ var Batch = struct {
 		Backup          BatchSource
 		Mirror          BatchSource
 		Config          BatchSource
+		TagReconcile    BatchSource
 	}
 	Status struct {
 		Queued     BatchStatus
@@ -45,6 +46,7 @@ var Batch = struct {
 		Backup          BatchSource
 		Mirror          BatchSource
 		Config          BatchSource
+		TagReconcile    BatchSource
 	}{
 		CLI:             "cli",
 		API:             "api",
@@ -56,6 +58,7 @@ var Batch = struct {
 		Backup:          "backup",
 		Mirror:          "mirror",
 		Config:          "config",
+		TagReconcile:    "tagreconcile",
 	},
 	Status: struct {
 		Queued     BatchStatus
@@ -76,12 +79,13 @@ var Batch = struct {
 
 var Task = struct {
 	Type struct {
-		Consume   TaskType
-		Enrich    TaskType
-		Thumbnail TaskType
-		Backup    TaskType
-		Mirror    TaskType
-		Config    TaskType
+		Consume      TaskType
+		Enrich       TaskType
+		Thumbnail    TaskType
+		Backup       TaskType
+		Mirror       TaskType
+		Config       TaskType
+		TagReconcile TaskType
 	}
 	Status struct {
 		Pending    TaskStatus
@@ -94,19 +98,21 @@ var Task = struct {
 	}
 }{
 	Type: struct {
-		Consume   TaskType
-		Enrich    TaskType
-		Thumbnail TaskType
-		Backup    TaskType
-		Mirror    TaskType
-		Config    TaskType
+		Consume      TaskType
+		Enrich       TaskType
+		Thumbnail    TaskType
+		Backup       TaskType
+		Mirror       TaskType
+		Config       TaskType
+		TagReconcile TaskType
 	}{
-		Consume:   "consume",
-		Enrich:    "enrich",
-		Thumbnail: "thumbnail",
-		Backup:    "backup",
-		Mirror:    "mirror",
-		Config:    "config",
+		Consume:      "consume",
+		Enrich:       "enrich",
+		Thumbnail:    "thumbnail",
+		Backup:       "backup",
+		Mirror:       "mirror",
+		Config:       "config",
+		TagReconcile: "tagreconcile",
 	},
 	Status: struct {
 		Pending    TaskStatus
@@ -229,12 +235,14 @@ var allBatchSources = []BatchSource{
 	Batch.Source.Backup,
 	Batch.Source.Mirror,
 	Batch.Source.Config,
+	Batch.Source.TagReconcile,
 }
 
 var nonConsumeBatchSources = []BatchSource{
 	Batch.Source.Config,
 	Batch.Source.Backup,
 	Batch.Source.Mirror,
+	Batch.Source.TagReconcile,
 }
 
 var allBatchStatuses = []BatchStatus{
@@ -253,6 +261,7 @@ var allTaskTypes = []TaskType{
 	Task.Type.Backup,
 	Task.Type.Mirror,
 	Task.Type.Config,
+	Task.Type.TagReconcile,
 }
 
 var blockingTaskTypes = []TaskType{
@@ -264,6 +273,7 @@ var lockGatedTaskTypes = []TaskType{
 	Task.Type.Consume,
 	Task.Type.Enrich,
 	Task.Type.Thumbnail,
+	Task.Type.TagReconcile,
 }
 
 var allTaskStatuses = []TaskStatus{

@@ -8,6 +8,8 @@ package database
 import (
 	"context"
 	"database/sql"
+
+	"github.com/lib/pq"
 )
 
 const addDocumentTag = `-- name: AddDocumentTag :exec
@@ -168,4 +170,29 @@ type RemoveDocumentTagParams struct {
 func (q *Queries) RemoveDocumentTag(ctx context.Context, arg RemoveDocumentTagParams) error {
 	_, err := q.db.ExecContext(ctx, removeDocumentTag, arg.DocumentID, arg.TagID)
 	return err
+}
+
+const repointDocumentTagsForDocs = `-- name: RepointDocumentTagsForDocs :execrows
+UPDATE document_tag dt
+SET tag_id = $1
+WHERE dt.tag_id = $2
+  AND dt.document_id = ANY($3::bigint[])
+  AND NOT EXISTS (
+      SELECT 1 FROM document_tag dt2
+      WHERE dt2.document_id = dt.document_id AND dt2.tag_id = $1
+  )
+`
+
+type RepointDocumentTagsForDocsParams struct {
+	TargetID    int64
+	SourceID    int64
+	DocumentIds []int64
+}
+
+func (q *Queries) RepointDocumentTagsForDocs(ctx context.Context, arg RepointDocumentTagsForDocsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, repointDocumentTagsForDocs, arg.TargetID, arg.SourceID, pq.Array(arg.DocumentIds))
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
