@@ -136,8 +136,8 @@ func queueHandler(c *Container, args []string) error {
 	defer hkTicker.Stop()
 
 	var lastStaleTaskClaim time.Time
-	var lastThumbnailBackfill time.Time
-	var lastTagReconcile time.Time
+	var thumbnailBackfillState scheduleState
+	var tagReconcileState scheduleState
 
 	for {
 		select {
@@ -234,7 +234,7 @@ func queueHandler(c *Container, args []string) error {
 			}
 
 			if cfg.Consumer.Thumbnail.Enabled && cfg.Consumer.Thumbnail.BackfillInterval > 0 {
-				if err := maybeScheduleThumbnailBackfill(ctx, c, client, cfg, &lastThumbnailBackfill); err != nil {
+				if err := maybeScheduleThumbnailBackfill(ctx, c, client, cfg, &thumbnailBackfillState); err != nil {
 					c.logger.Error(nil, "thumbnail backfill scheduling: %v", err)
 				}
 			}
@@ -245,7 +245,7 @@ func queueHandler(c *Container, args []string) error {
 						c.logger.Error(nil, "tag reconcile pool: %v", err)
 					}
 				}
-				if err := maybeScheduleTagReconcile(ctx, c, client, cfg, &lastTagReconcile); err != nil {
+				if err := maybeScheduleTagReconcile(ctx, c, client, cfg, &tagReconcileState); err != nil {
 					c.logger.Error(nil, "tag reconcile scheduling: %v", err)
 				}
 			} else if tagReconcilePoolStarted {
@@ -568,9 +568,10 @@ func maybeScheduleBackup(ctx context.Context, c *Container, client *database.Cli
 	for _, schedule := range cfg.Backup.Schedules {
 		s := schedule
 		payload := map[string]any{
-			"mode": s.Mode,
-			"path": s.Path,
-			"keep": s.Keep,
+			"mode":     s.Mode,
+			"path":     s.Path,
+			"keep":     s.Keep,
+			"schedule": backup.ScheduleTiming{Interval: s.Interval, Time: s.Time},
 		}
 		if err := maybeScheduleTask(ctx, c, client, types.Task.Type.Backup, types.Batch.Source.Backup,
 			func(ctx context.Context) (int64, error) { return client.Queries.CountActiveBackupTasks(ctx) },
@@ -591,6 +592,7 @@ func maybeScheduleMirror(ctx context.Context, c *Container, client *database.Cli
 	payload := map[string]any{
 		"path":     cfg.Mirror.Path,
 		"interval": cfg.Mirror.Interval,
+		"schedule": backup.ScheduleTiming{Interval: cfg.Mirror.Interval, Time: cfg.Mirror.Time},
 	}
 	return maybeScheduleTask(ctx, c, client, types.Task.Type.Mirror, types.Batch.Source.Mirror,
 		func(ctx context.Context) (int64, error) { return client.Queries.CountActiveMirrorTasks(ctx) },
@@ -599,32 +601,59 @@ func maybeScheduleMirror(ctx context.Context, c *Container, client *database.Cli
 	)
 }
 
-func maybeScheduleThumbnailBackfill(ctx context.Context, c *Container, client *database.Client, cfg *config.Config, lastRun *time.Time) error {
+// scheduleState tracks the in-memory anchor and the timing the anchor ran
+// under, so an edited schedule re-phases the next run until it succeeds and a
+// reverted edit falls back to the steady rule.
+type scheduleState struct {
+	lastRun        time.Time
+	runTiming      *backup.ScheduleTiming
+	pendingRephase bool
+}
+
+func (s *scheduleState) nextDue(timing backup.ScheduleTiming) time.Time {
+	if s.runTiming == nil {
+		s.runTiming = &timing
+	}
+	if s.runTiming.Equal(timing) {
+		s.pendingRephase = false
+		return backup.NextBackupTime(s.lastRun, timing.Interval, timing.Time)
+	}
+	s.pendingRephase = true
+	return backup.NextScheduledTime(s.lastRun, timing.Interval, timing.Time)
+}
+
+// markRun advances the anchor after a successful run under timing.
+func (s *scheduleState) markRun(timing backup.ScheduleTiming) {
+	s.lastRun = time.Now()
+	s.runTiming = &timing
+	s.pendingRephase = false
+}
+
+func maybeScheduleThumbnailBackfill(ctx context.Context, c *Container, client *database.Client, cfg *config.Config, state *scheduleState) error {
 	if !cfg.Consumer.Thumbnail.Enabled || cfg.Consumer.Thumbnail.BackfillInterval <= 0 {
 		return nil
 	}
 
-	if lastRun.IsZero() {
+	if state.lastRun.IsZero() {
 		lastBatch, err := client.Queries.GetLastThumbnailBackfillBatchCreatedAt(ctx)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			c.logger.Debug(nil, "thumbnail backfill: last batch lookup failed: %v", err)
 			return fmt.Errorf("get last thumbnail backfill batch: %w", err)
 		}
 		if err == nil {
-			*lastRun = lastBatch.Time
+			state.lastRun = lastBatch.Time
 		}
 	}
 	// The virtual anchor makes the first run land at the next occurrence of the
 	// preferred time; the interval counts from that first run onward.
-	if lastRun.IsZero() {
-		*lastRun = backup.FirstRunAnchor(time.Now(), cfg.Consumer.Thumbnail.BackfillInterval, cfg.Consumer.Thumbnail.BackfillTime)
+	if state.lastRun.IsZero() {
+		state.lastRun = backup.FirstRunAnchor(time.Now(), cfg.Consumer.Thumbnail.BackfillInterval, cfg.Consumer.Thumbnail.BackfillTime)
 	}
 
-	next := backup.NextBackupTime(*lastRun, cfg.Consumer.Thumbnail.BackfillInterval, cfg.Consumer.Thumbnail.BackfillTime)
+	timing := backup.ScheduleTiming{Interval: cfg.Consumer.Thumbnail.BackfillInterval, Time: cfg.Consumer.Thumbnail.BackfillTime}
+	next := state.nextDue(timing)
 	now := time.Now()
 	due := !now.Before(next)
-	// c.logger.Debug(nil, "thumbnail backfill: due check (last_run=%s, next=%s, now=%s, due=%v, backfill_interval=%v)",
-	// 	lastRun.Format(time.RFC3339), next.Format(time.RFC3339), now.Format(time.RFC3339), due, cfg.Consumer.Thumbnail.BackfillInterval)
 	if !due {
 		return nil
 	}
@@ -643,40 +672,41 @@ func maybeScheduleThumbnailBackfill(ctx context.Context, c *Container, client *d
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	if err := cmd.Start(); err != nil {
-		c.logger.Error(nil, "fork kushim thumbnails --all: %v (last_run=%s, next=%s)", err, lastRun.Format(time.RFC3339), next.Format(time.RFC3339))
+		c.logger.Error(nil, "fork kushim thumbnails --all: %v (last_run=%s, next=%s)", err, state.lastRun.Format(time.RFC3339), next.Format(time.RFC3339))
 		return nil
 	}
 	go func() { cmd.Wait() }()
 
 	// Advance only after a successful fork so a failed start retries next tick.
-	*lastRun = time.Now()
+	state.markRun(timing)
 	c.logger.Info(nil, "forked kushim thumbnails --all (PID %d)", cmd.Process.Pid)
-	c.logger.Debug(nil, "thumbnail backfill: forked (pid=%d, last_run=%s)", cmd.Process.Pid, lastRun.Format(time.RFC3339))
+	c.logger.Debug(nil, "thumbnail backfill: forked (pid=%d, last_run=%s)", cmd.Process.Pid, state.lastRun.Format(time.RFC3339))
 	return nil
 }
 
-func maybeScheduleTagReconcile(ctx context.Context, c *Container, client *database.Client, cfg *config.Config, lastRun *time.Time) error {
+func maybeScheduleTagReconcile(ctx context.Context, c *Container, client *database.Client, cfg *config.Config, state *scheduleState) error {
 	if !cfg.Enricher.TagReconcile.Enabled {
 		return nil
 	}
 
-	if lastRun.IsZero() {
+	if state.lastRun.IsZero() {
 		lastBatch, err := client.Queries.GetLastTagReconcileBatchCreatedAt(ctx)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			c.logger.Debug(nil, "tag reconcile: last batch lookup failed: %v", err)
 			return fmt.Errorf("get last tag reconcile batch: %w", err)
 		}
 		if err == nil {
-			*lastRun = lastBatch.Time
+			state.lastRun = lastBatch.Time
 		}
 	}
 	// The virtual anchor makes the first run land at the next occurrence of the
 	// preferred time; the interval counts from that first run onward.
-	if lastRun.IsZero() {
-		*lastRun = backup.FirstRunAnchor(time.Now(), cfg.Enricher.TagReconcile.Interval, cfg.Enricher.TagReconcile.Time)
+	if state.lastRun.IsZero() {
+		state.lastRun = backup.FirstRunAnchor(time.Now(), cfg.Enricher.TagReconcile.Interval, cfg.Enricher.TagReconcile.Time)
 	}
 
-	next := backup.NextBackupTime(*lastRun, cfg.Enricher.TagReconcile.Interval, cfg.Enricher.TagReconcile.Time)
+	timing := backup.ScheduleTiming{Interval: cfg.Enricher.TagReconcile.Interval, Time: cfg.Enricher.TagReconcile.Time}
+	next := state.nextDue(timing)
 	now := time.Now()
 	if now.Before(next) {
 		return nil
@@ -720,7 +750,7 @@ func maybeScheduleTagReconcile(ctx context.Context, c *Container, client *databa
 	}
 
 	// Advance only after a successful enqueue so a failed schedule retries next tick.
-	*lastRun = time.Now()
+	state.markRun(timing)
 	c.logger.Info(nil, "tag reconcile task %s scheduled (batch %s)", taskID, batchID)
 	return nil
 }

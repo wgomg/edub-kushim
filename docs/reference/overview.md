@@ -98,7 +98,7 @@ internal/
 ├── backup/                # Backup & restore
 │   ├── backup.go          # Create backup (SQL dump, tar.gz, manifest, retention)
 │   ├── restore.go         # Validate, extract, and replace files from backup archive
-│   └── scheduler.go       # Backup scheduling (NextBackupTime, FirstRunAnchor, IsBackupDue, IsMirrorDue, dueFromHistory)
+│   └── scheduler.go       # Backup scheduling (NextBackupTime, NextScheduledTime, ScheduleTiming, FirstRunAnchor, IsBackupDue, IsMirrorDue, dueFromHistory, scheduleTimingFromPayload)
 ├── mirror/                # rsync document mirror
 │   └── mirror.go      # Run (rsync -a --delete, stats parsing), WriteState (.edub-mirror.json), RunLocked (heartbeat → drain → run; heartbeat via database.StartMaintenanceLockHeartbeat)
 ├── config/                # Configuration parsing

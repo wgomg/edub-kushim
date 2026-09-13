@@ -2545,6 +2545,12 @@ mirror:
 | `enricher.tag_adjudicator`     | Optional LLM verdicts for ambiguous tag pairs: `enabled` (default `false`), `timeout` (defaults to `contentanalyzer.timeout` at use time when `0`), `llm` (defaults to `contentanalyzer.llm` at use time when `provider`/`model` are empty — the raw values are preserved in config so the inheritance survives saves). When enabled, ambiguous-band pairs are classified `same`/`variant`/`related`, verdicts are cached in `tag_verdict_event`, and `same` replaces the emitted tag with the canonical target |
 | `enricher.tag_reconcile`       | Scheduled re-adjudication of stored tag verdicts: `enabled` (default `false`), `report_only` (default `true`; the first run is always report-only regardless), `interval` (days between runs, default `7`), `time` (HH:MM preferred time, default `02:00`), `max_rejudge` (max pairs re-evaluated per run, default `200`), `max_retag` (max documents re-pointed per run, default `1000`). The queue daemon enqueues a `tagreconcile` task when due; runs re-evaluate stale/unjudged/drifted/aged pairs against the current policy and store, healing absorbed tags and applying flips. Requires the tag adjudicator for acting (write) runs — without it, runs stay snapshot-only |
 
+> **Schedule changes**: changing a scheduled task's interval or preferred time
+> takes effect at the closest upcoming occurrence of the new timing; if that
+> occurrence is already past, the task runs once immediately as catch-up and
+> the new cadence counts from that run. This applies to backups, the mirror,
+> thumbnail backfill, and tag reconciliation.
+
 ---
 
 ## Configuration Timeout Guidelines

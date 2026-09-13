@@ -739,7 +739,12 @@ WHERE id = 1 AND (NOT running OR started_at <= NOW() - INTERVAL '30 minutes');
   before copying the database or moving storage files.
 - Scheduling: the queue daemon's ticker enqueues a `backup` task when
   `IsBackupDue` and the lock is free; the `backup:<date>` dedup key prevents
-  same-day duplicates.
+  same-day duplicates. The enqueue payload records the schedule
+  (`schedule: {interval, time}`) that produced the task; `IsBackupDue` parses
+  it from the last completed task and, when it differs from the current config
+  timing, re-phases the next run to the closest upcoming occurrence of the new
+  timing instead of waiting a full interval (tasks completed before this
+  change carry no recorded schedule and keep the steady rule).
 
 The **mirror** task (`internal/task/handlers/mirror.go`) participates in the
 same gate: it is claimed with the lock held, drains in-flight work, and runs
@@ -753,7 +758,8 @@ shared `database.StartMaintenanceLockHeartbeat` helper *before*
 helper is used by the backup, tagreconcile, and thumbbackfill handlers, which
 all start it before their drain and keep it running through completion.
 Scheduling mirrors `IsBackupDue` as `IsMirrorDue` (same
-`NextBackupTime` anchoring, keyed on the last completed `mirror:<date>` task);
+`NextBackupTime` anchoring, keyed on the last completed `mirror:<date>` task,
+with the same payload-derived re-phase on schedule edits);
 the manual `kushim mirror` command bypasses task dedup but still waits for the
 lock and drain, and writes the `.edub-mirror.json` diagnostics file into the
 destination. Both the handler and the CLI share `mirror.RunLocked`, which owns

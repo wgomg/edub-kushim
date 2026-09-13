@@ -478,33 +478,43 @@ func (q *Queries) GetConfigTaskByDedupKey(ctx context.Context, dedupKey sql.Null
 }
 
 const getLastCompletedBackupByMode = `-- name: GetLastCompletedBackupByMode :one
-SELECT completed_at FROM task
+SELECT completed_at, payload FROM task
 WHERE task_type = 'backup' AND status = 'completed'
   AND dedup_key LIKE 'backup:' || $1 || ':%'
 ORDER BY completed_at DESC
 LIMIT 1
 `
 
-func (q *Queries) GetLastCompletedBackupByMode(ctx context.Context, dollar_1 sql.NullString) (sql.NullTime, error) {
+type GetLastCompletedBackupByModeRow struct {
+	CompletedAt sql.NullTime
+	Payload     *json.RawMessage
+}
+
+func (q *Queries) GetLastCompletedBackupByMode(ctx context.Context, dollar_1 sql.NullString) (GetLastCompletedBackupByModeRow, error) {
 	row := q.db.QueryRowContext(ctx, getLastCompletedBackupByMode, dollar_1)
-	var completed_at sql.NullTime
-	err := row.Scan(&completed_at)
-	return completed_at, err
+	var i GetLastCompletedBackupByModeRow
+	err := row.Scan(&i.CompletedAt, &i.Payload)
+	return i, err
 }
 
 const getLastCompletedMirror = `-- name: GetLastCompletedMirror :one
-SELECT completed_at FROM task
+SELECT completed_at, payload FROM task
 WHERE task_type = 'mirror' AND status = 'completed'
   AND dedup_key LIKE 'mirror:%'
 ORDER BY completed_at DESC
 LIMIT 1
 `
 
-func (q *Queries) GetLastCompletedMirror(ctx context.Context) (sql.NullTime, error) {
+type GetLastCompletedMirrorRow struct {
+	CompletedAt sql.NullTime
+	Payload     *json.RawMessage
+}
+
+func (q *Queries) GetLastCompletedMirror(ctx context.Context) (GetLastCompletedMirrorRow, error) {
 	row := q.db.QueryRowContext(ctx, getLastCompletedMirror)
-	var completed_at sql.NullTime
-	err := row.Scan(&completed_at)
-	return completed_at, err
+	var i GetLastCompletedMirrorRow
+	err := row.Scan(&i.CompletedAt, &i.Payload)
+	return i, err
 }
 
 const getLastCompletedTagReconcileTask = `-- name: GetLastCompletedTagReconcileTask :one

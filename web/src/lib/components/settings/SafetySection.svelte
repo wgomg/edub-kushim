@@ -165,6 +165,13 @@
 					</button>
 				</div>
 			</div>
+			<div class="mt-4">
+				<Note variant="info">
+					Changing the interval or preferred time takes effect at the closest upcoming occurrence of
+					the new timing. If that time has already passed since the last run, the task runs once
+					immediately and the new cadence counts from that run.
+				</Note>
+			</div>
 		</Card>
 
 		<Card
@@ -214,6 +221,13 @@
 					pattern="([01][0-9]|2[0-3]):[0-5][0-9]"
 					bind:value={cfg.mirror.time}
 				/>
+			</div>
+			<div class="mt-4">
+				<Note variant="info">
+					Changing the interval or preferred time takes effect at the closest upcoming occurrence of
+					the new timing. If that time has already passed since the last run, the task runs once
+					immediately and the new cadence counts from that run.
+				</Note>
 			</div>
 		</Card>
 	</div>

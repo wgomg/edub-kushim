@@ -280,7 +280,13 @@ is queued/processing or the maintenance lock is held. With no prior batch,
 `FirstRunAnchor` (`internal/backup/scheduler.go`) anchors to the *next*
 occurrence of the preferred time minus the interval, so a freshly-enabled
 schedule lands its first run at the next preferred time (not a full interval
-out); later runs count the interval from the previous run. The handler
+out); later runs count the interval from the previous run. The daemon keeps
+per-schedulable in-memory state (`scheduleState` in `internal/commands/queue.go`)
+recording the timing the last run anchored under: an edited interval or
+preferred time re-phases the next run to the closest upcoming occurrence of
+the new timing (in-memory only — a daemon restart between the edit and the
+re-phased run falls back to the steady rule), and a reverted edit before the
+run restores the steady rule. The handler
 (`internal/task/handlers/tagreconcile.go`) owns the batch lifecycle
 (`MarkBatchProcessing`/`FinalizeBatchStatus`), dedups on
 `tagreconcile:<UTC date>`, and reports a JSON `Report` — worklist counts per

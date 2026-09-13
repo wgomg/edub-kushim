@@ -342,7 +342,7 @@ SELECT COUNT(*) FROM task
 WHERE task_type = 'backup' AND status IN ('pending', 'processing');
 
 -- name: GetLastCompletedBackupByMode :one
-SELECT completed_at FROM task
+SELECT completed_at, payload FROM task
 WHERE task_type = 'backup' AND status = 'completed'
   AND dedup_key LIKE 'backup:' || $1 || ':%'
 ORDER BY completed_at DESC
@@ -358,7 +358,7 @@ SELECT COUNT(*) FROM task
 WHERE task_type = 'mirror' AND status IN ('pending', 'processing');
 
 -- name: GetLastCompletedMirror :one
-SELECT completed_at FROM task
+SELECT completed_at, payload FROM task
 WHERE task_type = 'mirror' AND status = 'completed'
   AND dedup_key LIKE 'mirror:%'
 ORDER BY completed_at DESC
