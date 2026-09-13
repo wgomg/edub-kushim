@@ -144,8 +144,8 @@
   },
   {
     "provider": "deepseek",
-    "model_id": "deepseek-v4-flash",
-    "display_name": "DeepSeek V4 Flash",
+    "model_id": "deepseek-flash",
+    "display_name": "DeepSeek Flash",
     "max_input_tokens": 1000000,
     "max_output_tokens": 384000,
     "reasoning": true,
