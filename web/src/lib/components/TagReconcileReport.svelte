@@ -1,9 +1,10 @@
 <script>
-	import { formatNumber } from '$lib/utils/html.js';
+	import { documentsLabel, formatNumber } from '$lib/utils/html.js';
 	import {
 		affectedDocuments,
 		changedDecisions,
 		notActedGroups,
+		splitKeepFlips,
 		sumReassigned,
 		worklistReasons,
 		worklistTotal
@@ -23,17 +24,20 @@
 
 	const cleared = $derived(report?.invalidated_entries ?? []);
 	const merges = $derived((reportOnly ? report?.planned_merges : report?.merges) ?? []);
-	const retags = $derived((reportOnly ? report?.planned_keep_flips : report?.retag_entries) ?? []);
+	const keepFlips = $derived(splitKeepFlips(report));
+	const creates = $derived(keepFlips.creates);
+	const retags = $derived(
+		(reportOnly ? keepFlips.retags : (report?.retag_entries ?? [])).filter(
+			(entry) => (entry?.reassigned ?? 0) > 0
+		)
+	);
 	const mergeDocs = $derived(sumReassigned(merges));
+	const createsDocs = $derived(sumReassigned(creates));
 	const retagDocs = $derived(sumReassigned(retags));
 	const notActed = $derived(notActedGroups(report?.skips, report?.capped, report?.no_documents));
 	const notActedTotal = $derived(notActed.reduce((sum, group) => sum + group.count, 0));
 
 	const runDate = $derived(completedAt ? new Date(completedAt).toLocaleString() : '—');
-
-	function documentsLabel(count) {
-		return `${formatNumber(count)} ${count === 1 ? 'document' : 'documents'}`;
-	}
 
 	function plural(count, singular, pluralForm) {
 		return count === 1 ? singular : pluralForm;
@@ -62,7 +66,15 @@
 			{plural(confirmed, 'decision was', 'decisions were')} confirmed.
 			{formatNumber(changed)}
 			{plural(changed, 'decision', 'decisions')}
-			{reportOnly ? 'would change' : 'changed'}, affecting {documentsLabel(documents)}.
+			{#if creates.length > 0}
+				{reportOnly ? 'would change' : 'changed'}
+				({formatNumber(creates.length)}
+				{plural(creates.length, 'tag created back', 'tags created back')}),
+				{reportOnly ? 'affecting' : 'moving'}
+				{documentsLabel(documents)}.
+			{:else}
+				{reportOnly ? 'would change' : 'changed'}, affecting {documentsLabel(documents)}.
+			{/if}
 		</p>
 
 		{#if why.length > 0}
@@ -86,7 +98,7 @@
 							class="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 text-sm font-medium text-parchment-200 [&::-webkit-details-marker]:hidden"
 						>
 							<span>
-								{reportOnly ? 'Would clear' : 'Cleared'} obsolete decisions ({cleared.length})
+								Discard cached decisions for tags that no longer exist ({cleared.length})
 							</span>
 							<svg
 								class="size-4 shrink-0 text-parchment-500 transition-transform group-open:rotate-90 motion-reduce:transition-none"
@@ -148,6 +160,47 @@
 					</details>
 				{/if}
 
+				{#if reportOnly && creates.length > 0}
+					<details class="group rounded-lg border border-clay-800 bg-clay-950">
+						<summary
+							class="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 text-sm font-medium text-parchment-200 [&::-webkit-details-marker]:hidden"
+						>
+							<span>
+								Would create tags ({creates.length}
+								{plural(creates.length, 'pair', 'pairs')}, {documentsLabel(createsDocs)})
+							</span>
+							<svg
+								class="size-4 shrink-0 text-parchment-500 transition-transform group-open:rotate-90 motion-reduce:transition-none"
+								viewBox="0 0 20 20"
+								fill="currentColor"
+								aria-hidden="true"
+							>
+								<path
+									fill-rule="evenodd"
+									d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z"
+									clip-rule="evenodd"
+								/>
+							</svg>
+						</summary>
+						<ul class="space-y-1 border-t border-clay-800 px-4 py-3">
+							{#each creates as entry, i (i)}
+								<li class="text-sm text-parchment-300">
+									create tag <span class="font-mono">{entry.query}</span>
+									<span class="text-parchment-600" aria-hidden="true">—</span>
+									<span class="text-parchment-500">previously replaced by</span>
+									<span class="font-mono">{entry.target}</span>
+									<span class="text-parchment-600" aria-hidden="true">—</span>
+									<span class="text-parchment-500">
+										{(entry.reassigned ?? 0) > 0
+											? `${documentsLabel(entry.reassigned)} move back`
+											: 'no documents to move'}
+									</span>
+								</li>
+							{/each}
+						</ul>
+					</details>
+				{/if}
+
 				{#if retags.length > 0}
 					<details class="group rounded-lg border border-clay-800 bg-clay-950">
 						<summary
@@ -173,10 +226,10 @@
 						<ul class="space-y-1 border-t border-clay-800 px-4 py-3">
 							{#each retags as entry, i (i)}
 								<li class="text-sm text-parchment-300">
+									move {documentsLabel(entry.reassigned ?? 0)} from
 									<span class="font-mono">{entry.target}</span>
-									<span class="text-parchment-600" aria-hidden="true">→</span>
+									back to
 									<span class="font-mono">{entry.query}</span>
-									<span class="text-parchment-500">({documentsLabel(entry.reassigned ?? 0)})</span>
 								</li>
 							{/each}
 						</ul>

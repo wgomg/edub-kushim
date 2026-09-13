@@ -98,6 +98,8 @@ type MergeEntry struct {
 	Query      string `json:"query"`
 	Target     string `json:"target"`
 	Reassigned int64  `json:"reassigned"`
+	Reason     string `json:"reason,omitempty"`
+	CreatesTag bool   `json:"creates_tag"`
 }
 
 type entry struct {
@@ -111,6 +113,7 @@ type entry struct {
 	documentID    int64
 	category      string
 	queryMissing  bool
+	reason        string
 	docIDs        []int64
 
 	trueRank     tagmatcher.RankResult
@@ -177,8 +180,8 @@ func (r *Reconciler) Run(ctx context.Context, progress task.ProgressFunc) (Repor
 
 	if !cfg.Enricher.TagAdjudicator.Enabled {
 		report.AdjudicatorDisabled = true
-		r.logger.Info(nil, "tag reconcile: adjudicator disabled — worklist snapshot stale=%d unjudged=%d drifted=%d aged=%d (report_only=%t)",
-			report.Worklist.Stale, report.Worklist.Unjudged, report.Worklist.Drifted, report.Worklist.Aged, report.ReportOnly)
+		r.logger.Info(nil, "tag reconcile: adjudicator is disabled — no decisions were changed (report_only=%t); pairs needing re-check: %d under older rules, %d never judged, %d with usage drift, %d stale over 90 days",
+			report.ReportOnly, report.Worklist.Stale, report.Worklist.Unjudged, report.Worklist.Drifted, report.Worklist.Aged)
 		return report, nil
 	}
 
@@ -192,9 +195,48 @@ func (r *Reconciler) Run(ctx context.Context, progress task.ProgressFunc) (Repor
 
 	progress("apply", "applying flips", 0)
 	r.applyPass(ctx, cfg, worklist, &report, tagCounts)
+	r.logSummary(report)
 
 	progress("report", "reporting", 1)
 	return report, nil
+}
+
+func (r *Reconciler) logSummary(report Report) {
+	checked := report.Worklist.Stale + report.Worklist.Unjudged + report.Worklist.Drifted + report.Worklist.Aged
+	skipped := 0
+	for _, n := range report.Skips {
+		skipped += n
+	}
+	if report.ReportOnly {
+		documents := sumReassigned(report.PlannedMerges) + sumReassigned(report.PlannedKeepFlips)
+		created := 0
+		for _, e := range report.PlannedKeepFlips {
+			if e.CreatesTag {
+				created++
+			}
+		}
+		r.logger.Info(nil, "tag reconcile: done (report-only, nothing changed) — %d pairs re-checked, %d judged; %d merges and %d restorations planned (%d documents would move, %d tags would be created); %d skipped, %d over cap",
+			checked, report.Judged, report.Flips.ToMerge, report.Flips.ToKeep, documents, created, skipped, report.Capped)
+		return
+	}
+	documents := sumReassigned(report.Merges) + sumReassigned(report.RetagEntries)
+	r.logger.Info(nil, "tag reconcile: done — %d pairs re-checked, %d judged; %d merges and %d restorations applied (%d documents re-pointed); %d skipped, %d over cap",
+		checked, report.Judged, report.Flips.ToMerge, report.Flips.ToKeep, documents, skipped, report.Capped)
+}
+
+func sumReassigned(entries []MergeEntry) int64 {
+	var sum int64
+	for _, e := range entries {
+		sum += e.Reassigned
+	}
+	return sum
+}
+
+func reasonSuffix(reason string) string {
+	if reason == "" {
+		return ""
+	}
+	return " reason=" + reason
 }
 
 func (r *Reconciler) buildWorklist(ctx context.Context, cfg *config.Config, storeTags map[string]database.Tag, tagCounts map[string]int64, report *Report) ([]*entry, int, error) {
@@ -239,7 +281,7 @@ func (r *Reconciler) buildWorklist(ctx context.Context, cfg *config.Config, stor
 		}
 		for _, p := range deadTargetPairs {
 			report.InvalidatedEntries = append(report.InvalidatedEntries, MergeEntry{Query: p[0], Target: p[1]})
-			r.logger.Info(nil, "tag reconcile: invalidated pair %q → %q (dead target)", p[0], p[1])
+			r.logger.Info(nil, "tag reconcile: discarding cached decision %q → %q — the target tag no longer exists", p[0], p[1])
 		}
 	}
 
@@ -268,7 +310,7 @@ func (r *Reconciler) buildWorklist(ctx context.Context, cfg *config.Config, stor
 				continue
 			}
 			if latest.Verdict == types.TagVerdicts.Same {
-				r.logger.Info(nil, "tag reconcile: skipped dead-query pair %q → %q (stable absorption)", row.Query, row.Target)
+				r.logger.Info(nil, "tag reconcile: skipping %q → %q — %q no longer exists and its documents are already tagged %q", row.Query, row.Target, row.Query, row.Target)
 				continue
 			}
 			worklist = append(worklist, &entry{
@@ -660,10 +702,12 @@ func (r *Reconciler) evidencePass(ctx context.Context, cfg *config.Config, workl
 			e.freshVerdict = types.TagVerdicts.Same
 			e.freshModel = policyModel()
 			e.confirmed = true
+			e.reason = string(d.Reason)
 		case tagpolicy.ReasonNegation, tagpolicy.ReasonSharedToken, tagpolicy.ReasonDirection:
 			e.freshVerdict = types.TagVerdicts.Variant
 			e.freshModel = policyModel()
 			e.confirmed = true
+			e.reason = string(d.Reason)
 		case tagpolicy.ReasonBand:
 			bandEntries = append(bandEntries, e)
 		default:
@@ -713,6 +757,7 @@ func (r *Reconciler) adjudicateBand(ctx context.Context, cfg *config.Config, ban
 			}
 			e.freshVerdict = res.Verdict
 			e.freshModel = adjudicatorModel
+			e.reason = "adjudicated"
 		}
 	}
 
@@ -810,8 +855,9 @@ func (r *Reconciler) applyPass(ctx context.Context, cfg *config.Config, worklist
 					Query:      e.query,
 					Target:     e.target,
 					Reassigned: tagCounts[e.query],
+					Reason:     e.reason,
 				})
-				r.logger.Info(nil, "tag reconcile (report-only): would merge %q → %q", e.query, e.target)
+				r.logger.Info(nil, "tag reconcile (report-only): would merge %q into %q (%d documents)%s", e.query, e.target, tagCounts[e.query], reasonSuffix(e.reason))
 			} else {
 				plannedKeepFlips = append(plannedKeepFlips, e)
 			}
@@ -842,7 +888,7 @@ func (r *Reconciler) applyPass(ctx context.Context, cfg *config.Config, worklist
 		appliedFlip = true
 		repointed, err := r.applyKeepFlip(ctx, e)
 		if err != nil {
-			r.logger.Error(nil, "tag reconcile: keep flip %q → %q: %v", e.target, e.query, err)
+			r.logger.Error(nil, "tag reconcile: keep flip for %q failed: %v", e.query, err)
 			continue
 		}
 		report.Flips.ToKeep++
@@ -852,6 +898,8 @@ func (r *Reconciler) applyPass(ctx context.Context, cfg *config.Config, worklist
 				Query:      e.query,
 				Target:     e.target,
 				Reassigned: int64(repointed),
+				Reason:     e.reason,
+				CreatesTag: e.queryMissing,
 			})
 		} else {
 			report.NoDocuments++
@@ -885,19 +933,57 @@ func (r *Reconciler) resolvePlannedKeepFlips(ctx context.Context, entries []*ent
 	for _, e := range entries {
 		reassigned := int64(len(e.docIDs))
 		if reassigned == 0 {
-			count, ok := counts[orderedPairKey(e.query, e.target)]
-			if !ok {
-				continue
-			}
-			reassigned = count
+			reassigned = counts[orderedPairKey(e.query, e.target)]
 		}
 		report.Flips.ToKeep++
 		report.PlannedKeepFlips = append(report.PlannedKeepFlips, MergeEntry{
 			Query:      e.query,
 			Target:     e.target,
 			Reassigned: reassigned,
+			Reason:     e.reason,
+			CreatesTag: e.queryMissing,
 		})
-		r.logger.Info(nil, "tag reconcile (report-only): would re-point %q → %q (docs=%d)", e.target, e.query, reassigned)
+		r.logPlannedKeepFlip(e, reassigned)
+	}
+}
+
+type keepFlipOutcome int
+
+const (
+	keepFlipCreatedWithDocs keepFlipOutcome = iota
+	keepFlipCreatedNoDocs
+	keepFlipMovedWithDocs
+	keepFlipMovedNoDocs
+)
+
+func keepFlipOutcomeOf(e *entry, documents int64) keepFlipOutcome {
+	switch {
+	case e.queryMissing && documents > 0:
+		return keepFlipCreatedWithDocs
+	case e.queryMissing:
+		return keepFlipCreatedNoDocs
+	case documents > 0:
+		return keepFlipMovedWithDocs
+	default:
+		return keepFlipMovedNoDocs
+	}
+}
+
+func (r *Reconciler) logPlannedKeepFlip(e *entry, reassigned int64) {
+	suffix := reasonSuffix(e.reason)
+	switch keepFlipOutcomeOf(e, reassigned) {
+	case keepFlipCreatedWithDocs:
+		r.logger.Info(nil, "tag reconcile (report-only): would create tag %q — it was being replaced with %q; %d documents would move back%s",
+			e.query, e.target, reassigned, suffix)
+	case keepFlipCreatedNoDocs:
+		r.logger.Info(nil, "tag reconcile (report-only): would create tag %q — it was being replaced with %q; no documents to move%s",
+			e.query, e.target, suffix)
+	case keepFlipMovedWithDocs:
+		r.logger.Info(nil, "tag reconcile (report-only): would move %d documents tagged %q back to %q%s",
+			reassigned, e.target, e.query, suffix)
+	case keepFlipMovedNoDocs:
+		r.logger.Info(nil, "tag reconcile (report-only): would keep %q separate from %q; no documents to move%s",
+			e.query, e.target, suffix)
 	}
 }
 
@@ -942,8 +1028,9 @@ func (r *Reconciler) applyMergeFlip(ctx context.Context, e *entry, report *Repor
 		Query:      e.query,
 		Target:     e.target,
 		Reassigned: res.Reassigned,
+		Reason:     e.reason,
 	})
-	r.logger.Info(nil, "tag reconcile: merged %q → %q (reassigned=%d)", e.query, e.target, res.Reassigned)
+	r.logger.Info(nil, "tag reconcile: merged %q into %q (re-pointed %d documents)", e.query, e.target, res.Reassigned)
 	if err := r.upsertVerdict(ctx, e); err != nil {
 		r.logger.Error(nil, "tag reconcile: upsert verdict after merge %q → %q: %v", e.query, e.target, err)
 	}
@@ -981,7 +1068,7 @@ func (r *Reconciler) applyKeepFlip(ctx context.Context, e *entry) (int, error) {
 		}
 	}
 	if len(docIDs) == 0 {
-		r.logger.Info(nil, "tag reconcile: no documents for %q → %q", e.query, e.target)
+		r.logKeepFlipResult(e, 0)
 		if err := r.upsertVerdict(ctx, e); err != nil {
 			r.logger.Error(nil, "tag reconcile: upsert verdict for %q → %q: %v", e.query, e.target, err)
 		}
@@ -1018,13 +1105,28 @@ func (r *Reconciler) applyKeepFlip(ctx context.Context, e *entry) (int, error) {
 		return 0, fmt.Errorf("commit: %w", err)
 	}
 
-	r.logger.Info(nil, "tag reconcile: re-pointed %q → %q (%d documents)", e.target, e.query, repointed)
+	r.logKeepFlipResult(e, repointed)
 	return int(repointed), nil
+}
+
+func (r *Reconciler) logKeepFlipResult(e *entry, repointed int64) {
+	switch keepFlipOutcomeOf(e, repointed) {
+	case keepFlipCreatedWithDocs:
+		r.logger.Info(nil, "tag reconcile: created tag %q — it was being replaced with %q; re-pointed %d documents",
+			e.query, e.target, repointed)
+	case keepFlipCreatedNoDocs:
+		r.logger.Info(nil, "tag reconcile: created tag %q — it was being replaced with %q; no documents to move",
+			e.query, e.target)
+	case keepFlipMovedWithDocs:
+		r.logger.Info(nil, "tag reconcile: moved %d documents tagged %q back to %q", repointed, e.target, e.query)
+	case keepFlipMovedNoDocs:
+		r.logger.Info(nil, "tag reconcile: kept %q separate from %q; no documents to move", e.query, e.target)
+	}
 }
 
 func (r *Reconciler) upsertVerdict(ctx context.Context, e *entry) error {
 	if e.documentID == 0 {
-		r.logger.Warn(nil, "tag reconcile: verdict row for %q → %q skipped — no attributable document", e.query, e.target)
+		r.logger.Warn(nil, "tag reconcile: corrected decision for %q (kept separate from %q) not recorded — no document to attribute it to; the pair will be re-checked next run", e.query, e.target)
 		return nil
 	}
 	_, err := r.client.UpsertFreshTagVerdict(ctx, database.UpsertFreshTagVerdictParams{

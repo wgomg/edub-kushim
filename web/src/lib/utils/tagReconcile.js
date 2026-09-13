@@ -15,7 +15,7 @@ const skipReasonLabels = {
 		"the checker couldn't decide confidently — kept as-is, retried next run",
 	below_floor: 'the tags are no longer similar enough to confuse',
 	query_reborn: 'the tag already exists — nothing left to do',
-	no_documents: 'no documents carried these tags'
+	no_documents: 'the tag was restored, but no documents carried these tags'
 };
 
 const cappedLabel = 'run limit reached — remaining pairs wait for the next run';
@@ -44,6 +44,22 @@ export function affectedDocuments(report = {}) {
 
 export function sumReassigned(entries = []) {
 	return (entries ?? []).reduce((sum, entry) => sum + (entry?.reassigned ?? 0), 0);
+}
+
+export function splitKeepFlips(report = {}) {
+	const entries = [...(report?.planned_keep_flips ?? []), ...(report?.retag_entries ?? [])];
+	const creates = [];
+	const retags = [];
+	for (const entry of entries) {
+		// reports persisted before creates_tag existed fall back to the document
+		// count, where a zero-document keep flip can only mean a tag creation
+		const createsTag =
+			entry?.creates_tag === true ||
+			(entry?.creates_tag === undefined && (entry?.reassigned ?? 0) === 0);
+		if (createsTag) creates.push(entry);
+		else retags.push(entry);
+	}
+	return { creates, retags };
 }
 
 export function worklistReasons(worklist = {}) {

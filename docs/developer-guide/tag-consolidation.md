@@ -288,8 +288,14 @@ counts, re-tags, invalidations, skip reasons — as the task result. The report
 also carries pair-level entries (`planned_merges`, `planned_keep_flips`,
 `retag_entries`, `invalidated_entries`) plus `capped`, `no_documents`, and
 `adjudicator_disabled`; report-only keep-flip document counts come from a
-single batched `TagPairEvidenceStats` call, and no-document keep flips are
-counted in `no_documents` so the judged/skips/capped partition stays exact.
+single batched `TagPairEvidenceStats` call (a stats failure keeps every
+planned entry with zero documents instead of dropping it), and no-document
+keep flips are counted in `no_documents` so the judged/skips/capped partition
+stays exact. Each pair entry carries `reason` — the policy guard that decided
+it (`auto_replace`, `negation_guard`, `shared_token_guard`, `direction_guard`)
+or `adjudicated` for LLM-judged pairs — and `creates_tag` (true when a keep
+flip creates the query tag; always present in new reports, absent only in
+reports persisted before the field existed).
 The report is served by `GET /api/v1/tags/reconciliation/report` (latest
 completed run, viewer-gated, Postgres-only) and the `result` field on
 `GET /api/v1/tasks/{id}` for `tagreconcile` tasks (list endpoints omit it);

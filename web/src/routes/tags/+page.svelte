@@ -11,7 +11,7 @@
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
 	import { api } from '$lib/api';
 	import * as authStore from '$lib/stores/authStore.js';
-	import { formatNumber } from '$lib/utils/html.js';
+	import { formatNumber, documentsLabel } from '$lib/utils/html.js';
 	import TagReconcileCard from '$lib/components/TagReconcileCard.svelte';
 
 	let showModal = $state(false);
@@ -251,38 +251,48 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 								<div class="min-w-0">
 									<div class="flex flex-wrap items-center gap-2">
 										<span class="text-sm font-medium text-parchment-200">{s.tags[0].name}</span>
+										<span class="text-xs text-parchment-500">
+											· {documentsLabel(s.tags[0].document_count)}
+										</span>
 										<span class="text-parchment-600" aria-hidden="true">↔</span>
 										<span class="text-sm font-medium text-parchment-200">{s.tags[1].name}</span>
-										<span class="rounded bg-clay-800 px-1.5 py-0.5 text-xs text-gold-400">
+										<span class="text-xs text-parchment-500">
+											· {documentsLabel(s.tags[1].document_count)}
+										</span>
+										<span
+											class="rounded bg-clay-800 px-1.5 py-0.5 text-xs text-gold-400"
+											title="Embedding similarity"
+										>
 											{Math.round(s.similarity * 100)}%
 										</span>
 										{#if s.confidence === 'population'}
 											<span
 												class="rounded bg-clay-800 px-1.5 py-0.5 text-xs text-parchment-300"
-												title="Backed by adjudication history"
+												title="This pair has usage history from past enrichment runs"
 											>
-												population
+												backed by usage data
 											</span>
 										{:else}
 											<span
 												class="rounded bg-clay-800 px-1.5 py-0.5 text-xs text-parchment-500"
-												title="Similarity only — no adjudication history"
+												title="No usage data yet — suggested by name similarity alone"
 											>
-												similarity-only
+												similarity only
 											</span>
 										{/if}
 									</div>
 									<div class="mt-1 text-xs text-parchment-500">
 										{#if s.confidence === 'population'}
-											overlap {formatNumber(s.document_overlap)} · same
-											{formatNumber(s.same_count)} · variant {formatNumber(s.variant_count)} · related
-											{formatNumber(s.related_count)}
+											{documentsLabel(s.document_overlap)} carry both tags;
+											{formatNumber(s.variant_count + s.related_count)} automatic checks judged them related
+											rather than the same concept; {formatNumber(s.same_count)} judged them the same
 										{:else}
-											no overlap data
+											no usage data yet — suggested by name similarity alone
 										{/if}
 									</div>
 								</div>
 								<div class="flex shrink-0 items-center gap-2">
+									<span class="text-xs text-parchment-500">Keep:</span>
 									<select
 										value={survivorId}
 										onchange={(e) => (survivorByPair[key] = parseInt(e.currentTarget.value, 10))}

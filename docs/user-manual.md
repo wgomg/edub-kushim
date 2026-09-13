@@ -1360,7 +1360,7 @@ Response `200`:
     "confirmed": 5,
     "flips": { "to_merge": 0, "to_keep": 5 },
     "planned_keep_flips": [
-      { "query": "machine learning", "target": "ml", "reassigned": 12 }
+      { "query": "machine learning", "target": "ml", "reassigned": 12, "reason": "adjudicated", "creates_tag": true }
     ],
     "skips": { "below_floor": 38, "query_reborn": 51, "adjudication_error": 25 }
   }
@@ -1372,6 +1372,9 @@ Response `200`:
   `planned_keep_flips`, `retag_entries`, `invalidated_entries`), skip reasons, and the
   `capped` / `no_documents` / `adjudicator_disabled` markers. Pair-level fields appear
   only when the run recorded them (a run with no flips has no `planned_keep_flips`).
+  Each pair entry carries `reason` (the policy guard that decided it, or
+  `adjudicated` for LLM-judged pairs) and `creates_tag` (true when a keep flip
+  creates the query tag; always present in new reports).
 - `404` — no completed `tagreconcile` run exists yet.
 
 ### Saved Searches

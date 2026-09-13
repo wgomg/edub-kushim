@@ -1,5 +1,12 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { escapeHtml, formatSize, formatDuration, formatRelative } from './html.js';
+import {
+	escapeHtml,
+	formatSize,
+	formatDuration,
+	formatRelative,
+	formatNumber,
+	documentsLabel
+} from './html.js';
 
 describe('escapeHtml', () => {
 	it('escapes all five entities', () => {
@@ -32,6 +39,19 @@ describe('formatSize', () => {
 		expect(formatSize(1536)).toBe(nf.format(1.5) + '\u00A0KB');
 		expect(formatSize(1048576)).toBe(nf.format(1) + '\u00A0MB');
 		expect(formatSize(1073741824)).toBe(nf.format(1) + '\u00A0GB');
+	});
+});
+
+describe('documentsLabel', () => {
+	it('labels zero, one and many documents', () => {
+		expect(documentsLabel(0)).toBe('0 documents');
+		expect(documentsLabel(1)).toBe('1 document');
+		expect(documentsLabel(12)).toBe(`${formatNumber(12)} documents`);
+	});
+
+	it('treats null and undefined as zero', () => {
+		expect(documentsLabel(null)).toBe('0 documents');
+		expect(documentsLabel(undefined)).toBe('0 documents');
 	});
 });
 

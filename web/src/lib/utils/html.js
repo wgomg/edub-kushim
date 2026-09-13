@@ -22,6 +22,11 @@ export function formatNumber(n) {
 	return Number(n).toLocaleString();
 }
 
+export function documentsLabel(count) {
+	const value = count ?? 0;
+	return `${formatNumber(value)} ${value === 1 ? 'document' : 'documents'}`;
+}
+
 export function formatDuration(ms) {
 	if (ms == null) return '—';
 	const totalSec = Math.floor(ms / 1000);

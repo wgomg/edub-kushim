@@ -153,9 +153,10 @@ anti-oscillating:
   run is always **report-only** (it lists would-be actions and touches
   nothing), regardless of the `report_only` flag.
 - **Report:** each run persists a full JSON report as its task result — worklist
-  counts, judged/confirmed, flips, planned/applied pair entries, and skip
-  reasons — surfaced in the web UI on the task detail page and as a summary
-  card on the tags page.
+  counts, judged/confirmed, flips, planned/applied pair entries (each carrying
+  the decision reason and whether it creates a tag), and skip reasons —
+  surfaced in the web UI on the task detail page and as a summary card on the
+  tags page.
 - With the adjudicator disabled, runs log the worklist snapshot and complete
   without LLM calls or writes. The queue daemon warns when reconciliation is
   enabled without the adjudicator.
