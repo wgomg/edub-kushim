@@ -140,7 +140,7 @@ func (s *ThumbnailBackfill) addDocument(ctx context.Context, batchID, documentID
 		"document_id":  documentID,
 		"storage_path": storagePath,
 	})
-	_, err := s.taskCreator.CreateTask(ctx, types.Task.Type.Thumbnail, batchID, payload, uuid.New().String(), types.Task.Status.Pending, "thumbnail:doc:"+documentID)
+	_, err := s.taskCreator.CreateTask(ctx, types.Task.Type.ThumbBackfill, batchID, payload, uuid.New().String(), types.Task.Status.Pending, "thumbnail:doc:"+documentID)
 	if err != nil {
 		err = errs.FromDB(err, "create thumbnail task")
 		if errs.KindOf(err) == errs.KindConflict {

@@ -267,9 +267,10 @@ UI ("Review merges" on the tags page).
 
 `internal/enrichment/tagreconcile` + the task plumbing. Migration
 `00018_tag_reconcile_vocabulary.sql` adds `tagreconcile` to the `task_type` and
-`batch_source` enums; the `internal/types` registry declares it **lock-gated**
-(claims defer while the maintenance lock is held) and **non-blocking**, and it
-joins `nonConsumeBatchSources` so its batches never occupy a consume slot.
+`batch_source` enums; the `internal/types` registry declares it **blocking**
+(acquires the maintenance lock at claim time, drains in-flight tasks, and
+heartbeats the lock during the run), and it joins `nonConsumeBatchSources` so
+its batches never occupy a consume slot.
 
 **Scheduling** — `maybeScheduleTagReconcile` (`internal/commands/queue.go:658`)
 runs on the queue daemon's housekeeping ticker (thumbnail-backfill precedent):

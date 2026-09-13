@@ -198,7 +198,7 @@ Works on hosts without OCR/PDF tools because no consume tasks are created.
 ### `kushim thumbnails <mode>`
 
 Backfill thumbnails for documents that don't have one yet (`has_thumbnail = FALSE`).
-Enqueues `pending` thumbnail tasks into a new `queued` batch — nothing is
+Enqueues `pending` `thumbbackfill` tasks into a new `queued` batch — nothing is
 processed inline; run `kushim queue` (or leave the daemon running) to generate
 the thumbnails.
 
@@ -234,7 +234,10 @@ Batch 660e8400-e29b-41d4-a716-446655440001 queued with 12 thumbnail task(s) — 
 
 Documents whose thumbnail task is already `pending` are skipped — the dedup key
 `thumbnail:doc:<uuid>` (unique partial index) prevents duplicate queued tasks.
-Failed tasks fall outside the index, so a re-run re-enqueues them.
+Failed tasks fall outside the index, so a re-run re-enqueues them. Backfill
+tasks are blocking: the processing pool claims them with the maintenance lock
+held (mutually exclusive with backup, mirror, and tag reconciliation) and
+waits for in-flight consume/enrich/thumbnail tasks to drain before rendering.
 
 #### Scheduled backfill
 
@@ -2171,7 +2174,7 @@ Object with `count` (total active tasks across all task types, uncapped) and `ta
 | `tasks`       | `array`  | Active tasks, capped at 25, ordered processing-first then oldest-queued                                                |
 | `tasks[].task_id` | `string` | Task UUID                                                                                                          |
 | `tasks[].batch_id` | `string` | Batch UUID (empty for `backup`/`config` tasks)                                                                     |
-| `tasks[].task_type` | `string` | `consume`, `enrich`, `thumbnail`, `config`, `backup`, `mirror`, or `tagreconcile`                                                            |
+| `tasks[].task_type` | `string` | `consume`, `enrich`, `thumbnail`, `config`, `backup`, `mirror`, `tagreconcile`, or `thumbbackfill`                                                            |
 | `tasks[].file_name` | `string` | File name from the payload, if any                                                                                 |
 | `tasks[].status` | `string` | `pending`, `processing`, or `waiting`                                                                              |
 | `tasks[].label` | `string` | Human-readable title: `TaskType: file name` for consume/enrich/thumbnail (e.g. `"Consume: report.pdf"`), else derived from task type + dedup key (e.g. `"Backup (full)"`, `"Database migration"`, `"Download tessdata (eng)"`) |
@@ -2283,7 +2286,7 @@ id). `label` is
 otherwise derived from the task type and dedup key (e.g. `"Backup (full)"`,
 `"Database migration"`, `"Download tessdata (eng)"`, `"Download Hugot model"`);
 for other task types it falls back to the task type name (`"Consume"`, `"Enrich"`,
-`"Thumbnail"`).
+`"Thumbnail"`, `"Thumbnail backfill"`).
 
 `progress` is present only while the task is `processing` and a handler has
 reported a step. It is a display aid: `step` is required, `detail`/`pct`

@@ -53,9 +53,9 @@ The cast of characters:
 | queue daemon | `internal/commands/queue.go` | orchestrates batches |
 | consume command | `internal/commands/consume.go` | runs one batch |
 
-The six task types (declared in `internal/types`, registered in
+The eight task types (declared in `internal/types`, registered in
 `internal/commands/container.go`): `consume`, `enrich`, `thumbnail`,
-`config`, `backup`, `mirror`.
+`config`, `backup`, `mirror`, `tagreconcile`, `thumbbackfill`.
 
 ---
 
@@ -700,12 +700,12 @@ WHERE id = 1 AND (NOT running OR started_at <= NOW() - INTERVAL '30 minutes');
   means a crashed backup (no release) auto-expires.
 - `is_maintenance_lock_held()` is called in the **task-claim queries**
   themselves (`GetNextPendingTaskOfType` / `GetNextPendingTaskOfTypeForOwner`
-  via their `Gated` flag): while a backup holds the lock, no new
+  via their `Gated` flag): while a blocking task holds the lock, no new
   consume/enrich task is claimed — workers go idle instead of mutating
   documents mid-backup. Which types claim gated is declared once in the
   registry (`types.TaskType.IsLockGated()`: consume, enrich, thumbnail);
-  blocking types that acquire the lock (`IsBlocking()`: backup, mirror) and
-  config claim ungated.
+  blocking types that acquire the lock (`IsBlocking()`: backup, mirror,
+  tagreconcile, thumbbackfill) and config claim ungated.
 - **Claim-time acquisition**: a blocking task acquires the lock
   **inside the claim transaction**
   (`Store.claimBlockingNextPending`, `internal/task/store.go`):
@@ -747,25 +747,38 @@ same gate: it is claimed with the lock held, drains in-flight work, and runs
 large rsync can exceed the 30-minute staleness window, the handler runs a
 heartbeat that refreshes `backup_lock.started_at` every 5 minutes
 (`TouchMaintenanceLockForTask`, guarded by the claim token) for the rsync
-itself — the gate never goes stale
-mid-mirror. The heartbeat starts only *after* `WaitForTaskDrain` returns, so
-the 30-minute staleness recovery still applies during a long drain (a
-continuously busy pipeline cannot keep the lock fresh forever and block
-backups/migrations). Scheduling mirrors `IsBackupDue` as `IsMirrorDue` (same
+itself — the gate never goes stale mid-mirror. The heartbeat is started by the
+shared `database.StartMaintenanceLockHeartbeat` helper *before*
+`WaitForTaskDrain` returns, so the drain-wait itself is covered too; the same
+helper is used by the backup, tagreconcile, and thumbbackfill handlers, which
+all start it before their drain and keep it running through completion.
+Scheduling mirrors `IsBackupDue` as `IsMirrorDue` (same
 `NextBackupTime` anchoring, keyed on the last completed `mirror:<date>` task);
 the manual `kushim mirror` command bypasses task dedup but still waits for the
 lock and drain, and writes the `.edub-mirror.json` diagnostics file into the
 destination. Both the handler and the CLI share `mirror.RunLocked`, which owns
-the drain → heartbeat → rsync → state-file sequence (the CLI passes a NULL
+the heartbeat → drain → rsync → state-file sequence (the CLI passes a NULL
 token, matching its NULL-owner lock from `AcquireBackupLock`).
+
+The **tagreconcile** task (`internal/task/handlers/tagreconcile.go`) and the
+**thumbbackfill** task (`internal/task/handlers/thumbnail_backfill.go`, a thin
+wrapper that adds drain-wait + heartbeat around the per-document
+`ThumbnailTaskHandler`) are blocking-class tasks too: they are claimed with
+the lock held, drain in-flight work via `WaitForTaskDrain`, and run the same
+5-minute heartbeat across the whole run. `ThumbnailBackfill`
+(`internal/service/thumbnail_backfill.go`) creates `thumbbackfill` tasks
+(dedup key `thumbnail:doc:<uuid>`) in `thumbbackfill` batches, which the
+forked consume child processes with a dedicated 1-worker/2s `thumbbackfill`
+pool; per-document `thumbnail` tasks remain lock-gated.
 
 Manual `kushim backup` / `kushim restore` and the configtask migrations
 use the plain `AcquireBackupLock` / `ReleaseBackupLock` (NULL token): their
 release is guarded by `owner_token IS NOT DISTINCT FROM NULL`, so it can only
 release a NULL-owner lock and never a blocking task's tokenized lock.
 
-A backup longer than 30 minutes loses the lock (the backup handler has no
-touch heartbeat), and the age sweep resets blocking tasks.
+A blocking task longer than 30 minutes keeps its lock alive via the 5-minute
+heartbeat, and the age sweep resets blocking tasks whose `started_at` exceeds
+`stale_task_after`.
 
 ---
 

@@ -1637,12 +1637,17 @@ UPDATE backup_lock SET running = false, started_at = NULL, owner_token = NULL
 WHERE id = 1 AND running = true AND owner_token IN (
   SELECT claim_token FROM task
   WHERE batch_id = $1 AND status = 'processing'
-    AND task_type IN ('backup', 'mirror')
+    AND task_type = ANY($2::task_type[])
 )
 `
 
-func (q *Queries) ReleaseMaintenanceLockForBatch(ctx context.Context, batchID sql.NullString) (int64, error) {
-	result, err := q.db.ExecContext(ctx, releaseMaintenanceLockForBatch, batchID)
+type ReleaseMaintenanceLockForBatchParams struct {
+	BatchID sql.NullString
+	Types   []types.TaskType
+}
+
+func (q *Queries) ReleaseMaintenanceLockForBatch(ctx context.Context, arg ReleaseMaintenanceLockForBatchParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, releaseMaintenanceLockForBatch, arg.BatchID, pq.Array(arg.Types))
 	if err != nil {
 		return 0, err
 	}
@@ -1654,13 +1659,18 @@ UPDATE backup_lock SET running = false, started_at = NULL, owner_token = NULL
 WHERE id = 1 AND running = true AND owner_token IN (
   SELECT claim_token FROM task
   WHERE status = 'processing'
-    AND task_type IN ('backup', 'mirror')
+    AND task_type = ANY($2::task_type[])
     AND task.started_at < $1
 )
 `
 
-func (q *Queries) ReleaseMaintenanceLockForStaleTasks(ctx context.Context, startedAt sql.NullTime) (int64, error) {
-	result, err := q.db.ExecContext(ctx, releaseMaintenanceLockForStaleTasks, startedAt)
+type ReleaseMaintenanceLockForStaleTasksParams struct {
+	StartedAt sql.NullTime
+	Types     []types.TaskType
+}
+
+func (q *Queries) ReleaseMaintenanceLockForStaleTasks(ctx context.Context, arg ReleaseMaintenanceLockForStaleTasksParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, releaseMaintenanceLockForStaleTasks, arg.StartedAt, pq.Array(arg.Types))
 	if err != nil {
 		return 0, err
 	}

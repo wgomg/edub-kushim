@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/backup"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
@@ -54,6 +55,10 @@ func (h *BackupTaskHandler) Handle(ctx context.Context, t task.Task) (out json.R
 	}()
 
 	task.MarkBatchProcessing(ctx, h.queries, t.BatchID)
+
+	stopHeartbeat := database.StartMaintenanceLockHeartbeat(ctx, h.queries, h.logger, 5*time.Minute,
+		uuid.NullUUID{UUID: t.ClaimToken, Valid: true})
+	defer stopHeartbeat()
 
 	if err := database.WaitForTaskDrain(ctx, h.queries, h.logger, "backup", func(count int64) {
 		progress.Set("drain-wait", fmt.Sprintf("%d in-flight", count), 0)

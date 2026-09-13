@@ -36,13 +36,14 @@ type Container struct {
 	store      *task.Store
 	services   *service.CrudServices
 	pools      struct {
-		consume      *pool.Pool
-		enrich       *pool.Pool
-		thumbnail    *pool.Pool
-		config       *pool.Pool
-		backup       *pool.Pool
-		mirror       *pool.Pool
-		tagreconcile *pool.Pool
+		consume       *pool.Pool
+		enrich        *pool.Pool
+		thumbnail     *pool.Pool
+		thumbbackfill *pool.Pool
+		config        *pool.Pool
+		backup        *pool.Pool
+		mirror        *pool.Pool
+		tagreconcile  *pool.Pool
 	}
 }
 
@@ -101,6 +102,7 @@ func (c *Container) InvalidateDB() {
 	c.pools.consume = nil
 	c.pools.enrich = nil
 	c.pools.thumbnail = nil
+	c.pools.thumbbackfill = nil
 	c.pools.config = nil
 	c.pools.backup = nil
 	c.pools.mirror = nil
@@ -167,7 +169,9 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 	registry := task.NewRegistry()
 	registry.Register(types.Task.Type.Consume, taskhandlers.NewConsumeTaskHandler(consumer, store, client.Queries, c.logger))
 	registry.Register(types.Task.Type.Enrich, taskhandlers.NewEnrichTaskHandler(enricher, client.Queries, c.logger))
-	registry.Register(types.Task.Type.Thumbnail, taskhandlers.NewThumbnailTaskHandler(tools.NewRunner(c.logger, c.cfg.Load(), []string{"thumbnail"}), client.Queries, c.logger, func() *config.Config { return c.cfg.Load() }))
+	thumbnailHandler := taskhandlers.NewThumbnailTaskHandler(tools.NewRunner(c.logger, c.cfg.Load(), []string{"thumbnail"}), client.Queries, c.logger, func() *config.Config { return c.cfg.Load() })
+	registry.Register(types.Task.Type.Thumbnail, thumbnailHandler)
+	registry.Register(types.Task.Type.ThumbBackfill, taskhandlers.NewThumbnailBackfillTaskHandler(thumbnailHandler, client.Queries, c.logger))
 	registry.Register(types.Task.Type.Config, configtask.NewConfigTaskHandler(client.Queries, c.logger))
 	registry.Register(types.Task.Type.Backup, taskhandlers.NewBackupTaskHandler(c.db, client.Queries, func() *config.Config { return c.cfg.Load() }, c.logger))
 	registry.Register(types.Task.Type.Mirror, taskhandlers.NewMirrorTaskHandler(client.Queries, func() *config.Config { return c.cfg.Load() }, c.logger))
@@ -213,6 +217,8 @@ func (c *Container) GetPool(taskType string) (*pool.Pool, error) {
 		pp = &c.pools.enrich
 	case "thumbnail":
 		pp = &c.pools.thumbnail
+	case "thumbbackfill":
+		pp = &c.pools.thumbbackfill
 	case "config":
 		pp = &c.pools.config
 	case "backup":
@@ -241,6 +247,9 @@ func (c *Container) GetPool(taskType string) (*pool.Pool, error) {
 			interval = 5 * time.Second
 		case "thumbnail":
 			workers = max(c.cfg.Load().Consumer.Thumbnail.Workers, 1)
+			interval = 2 * time.Second
+		case "thumbbackfill":
+			workers = 1
 			interval = 2 * time.Second
 		case "config":
 			workers = 1
@@ -287,6 +296,11 @@ func (c *Container) Close() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		c.pools.thumbnail.Stop(ctx)
+	}
+	if c.pools.thumbbackfill != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		c.pools.thumbbackfill.Stop(ctx)
 	}
 	if c.pools.config != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

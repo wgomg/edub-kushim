@@ -9,7 +9,7 @@ func TestAllCounts(t *testing.T) {
 	if got, want := len(AllBatchStatuses()), 6; got != want {
 		t.Errorf("AllBatchStatuses len = %d, want %d", got, want)
 	}
-	if got, want := len(AllTaskTypes()), 7; got != want {
+	if got, want := len(AllTaskTypes()), 8; got != want {
 		t.Errorf("AllTaskTypes len = %d, want %d", got, want)
 	}
 	if got, want := len(AllTaskStatuses()), 7; got != want {
@@ -95,9 +95,11 @@ func TestNonConsumeBatchSources(t *testing.T) {
 
 func TestIsBlocking(t *testing.T) {
 	cases := map[TaskType]bool{
-		Task.Type.Backup: true,
-		Task.Type.Mirror: true,
-		Task.Type.Config: false,
+		Task.Type.Backup:        true,
+		Task.Type.Mirror:        true,
+		Task.Type.TagReconcile:  true,
+		Task.Type.ThumbBackfill: true,
+		Task.Type.Config:        false,
 	}
 	for typ, want := range cases {
 		if got := typ.IsBlocking(); got != want {
@@ -108,11 +110,12 @@ func TestIsBlocking(t *testing.T) {
 
 func TestIsLockGated(t *testing.T) {
 	cases := map[TaskType]bool{
-		Task.Type.Consume:      true,
-		Task.Type.Enrich:       true,
-		Task.Type.Thumbnail:    true,
-		Task.Type.TagReconcile: true,
-		Task.Type.Config:       false,
+		Task.Type.Consume:       true,
+		Task.Type.Enrich:        true,
+		Task.Type.Thumbnail:     true,
+		Task.Type.TagReconcile:  false,
+		Task.Type.ThumbBackfill: false,
+		Task.Type.Config:        false,
 	}
 	for typ, want := range cases {
 		if got := typ.IsLockGated(); got != want {

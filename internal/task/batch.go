@@ -127,7 +127,10 @@ func (o *Owner) ResetProcessingByBatch(ctx context.Context, batchID string) (int
 	bid := sql.NullString{String: batchID, Valid: true}
 	txQ := o.client.Queries.WithTx(tx)
 
-	if _, err := txQ.ReleaseMaintenanceLockForBatch(ctx, bid); err != nil {
+	if _, err := txQ.ReleaseMaintenanceLockForBatch(ctx, database.ReleaseMaintenanceLockForBatchParams{
+		BatchID: bid,
+		Types:   types.BlockingTaskTypes(),
+	}); err != nil {
 		return 0, fmt.Errorf("release maintenance lock for batch: %w", err)
 	}
 

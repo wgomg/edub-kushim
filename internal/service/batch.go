@@ -284,7 +284,10 @@ func (s *Batch) CompleteCancel(ctx context.Context, batchID, ownerID string) (pr
 	bid := sql.NullString{String: batchID, Valid: true}
 	txQ := s.client.Queries.WithTx(tx)
 
-	if _, err := txQ.ReleaseMaintenanceLockForBatch(ctx, bid); err != nil {
+	if _, err := txQ.ReleaseMaintenanceLockForBatch(ctx, database.ReleaseMaintenanceLockForBatchParams{
+		BatchID: bid,
+		Types:   types.BlockingTaskTypes(),
+	}); err != nil {
 		return 0, errs.FromDB(err, "release maintenance lock for batch "+batchID)
 	}
 
@@ -450,7 +453,10 @@ func (s *Batch) ResetProcessingTasksByBatch(ctx context.Context, batchID string)
 	bid := sql.NullString{String: batchID, Valid: true}
 	txQ := s.client.Queries.WithTx(tx)
 
-	if _, err := txQ.ReleaseMaintenanceLockForBatch(ctx, bid); err != nil {
+	if _, err := txQ.ReleaseMaintenanceLockForBatch(ctx, database.ReleaseMaintenanceLockForBatchParams{
+		BatchID: bid,
+		Types:   types.BlockingTaskTypes(),
+	}); err != nil {
 		return 0, errs.FromDB(err, "release maintenance lock for batch "+batchID)
 	}
 
@@ -491,7 +497,10 @@ func (s *Batch) ResetStaleProcessingTasks(ctx context.Context, staleAfterSeconds
 	cutoff := time.Now().Add(-time.Duration(staleAfterSeconds) * time.Second)
 	txQ := s.client.Queries.WithTx(tx)
 
-	if _, err := txQ.ReleaseMaintenanceLockForStaleTasks(ctx, sql.NullTime{Time: cutoff, Valid: true}); err != nil {
+	if _, err := txQ.ReleaseMaintenanceLockForStaleTasks(ctx, database.ReleaseMaintenanceLockForStaleTasksParams{
+		StartedAt: sql.NullTime{Time: cutoff, Valid: true},
+		Types:     types.BlockingTaskTypes(),
+	}); err != nil {
 		return 0, errs.FromDB(err, "release maintenance lock for stale tasks")
 	}
 

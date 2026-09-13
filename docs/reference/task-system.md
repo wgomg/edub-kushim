@@ -177,11 +177,13 @@ The `ConfigTaskHandler` lives in its own package (`internal/configtask/`) to kee
 
 ### CLI (`kushim`)
 
-The `Container` registers all six task types (`"consume"`, `"enrich"`, `"thumbnail"`, `"config"`, `"backup"`, `"mirror"`)
+The `Container` registers all eight task types (`"consume"`, `"enrich"`, `"thumbnail"`, `"config"`, `"backup"`, `"mirror"`, `"tagreconcile"`, `"thumbbackfill"`)
 and creates a `MatcherClient` connected to the Unix socket at `<config_dir>/kushim-hugot.sock`.
 The `"backup"` type is handled by `BackupTaskHandler` which runs with the DB-backed maintenance lock already held (acquired at claim time, in the claim transaction), waits for in-flight tasks to drain, runs the backup, and lets the runner release the lock on completion/failure (token-guarded). It implements `DedupKey` returning `backup:<mode>:<date>` (mode parsed from the task payload, default `full`).
 
-The `"mirror"` type is handled by `MirrorTaskHandler` which runs with the same lock already held (claim-time acquisition), then delegates to `mirror.RunLocked` (drain → 5-minute `TouchMaintenanceLockForTask` heartbeat → `rsync -a --delete --info=stats2 --timeout=600` → `.edub-mirror.json` state write); the runner releases the lock on completion/failure. It implements `DedupKey` returning `mirror:<UTC date>`.
+The `"mirror"` type is handled by `MirrorTaskHandler` which runs with the same lock already held (claim-time acquisition), then delegates to `mirror.RunLocked` (5-minute `TouchMaintenanceLockForTask` heartbeat started before the drain → drain → `rsync -a --delete --info=stats2 --timeout=600` → `.edub-mirror.json` state write); the runner releases the lock on completion/failure. It implements `DedupKey` returning `mirror:<UTC date>`.
+
+The `"tagreconcile"` type is handled by `TagReconcileTaskHandler` which runs with the lock already held, drains in-flight tasks, runs the reconciler, and owns the batch lifecycle. The `"thumbbackfill"` type is handled by `ThumbnailBackfillTaskHandler`, a wrapper that adds the same drain-wait + heartbeat around the per-document `ThumbnailTaskHandler`; backfill tasks are created by `service.ThumbnailBackfill` (dedup key `thumbnail:doc:<uuid>`) and processed by a dedicated 1-worker/2s pool, while per-document `thumbnail` tasks remain lock-gated.
 The `TagService` and `Enricher` receive the client instead of a direct Hugot reference:
 
 ```go

@@ -117,6 +117,11 @@ func consumeHandler(c *Container, args []string) error {
 			return nil
 		}
 
+		batchSource := types.Batch.Source.CLI
+		if batchErr == nil {
+			batchSource = batch.Source
+		}
+
 		ownerID := uuid.New().String()
 		pid := os.Getpid()
 		owner := task.NewOwner(client, ownerID, pid, c.logger, c.cfg.Load().Consumer.Reclaim.MaxRetries)
@@ -157,6 +162,11 @@ func consumeHandler(c *Container, args []string) error {
 			return fmt.Errorf("failed to get thumbnail pool: %w", err)
 		}
 
+		bp, err := c.GetPool("thumbbackfill")
+		if err != nil {
+			return fmt.Errorf("failed to get thumbbackfill pool: %w", err)
+		}
+
 		if err := c.SetRunnerOwnerID(ownerID); err != nil {
 			return fmt.Errorf("set runner owner: %w", err)
 		}
@@ -166,7 +176,7 @@ func consumeHandler(c *Container, args []string) error {
 		hb := task.NewHeartbeat(owner, heartbeatInterval, c.logger)
 		hb.Start(ctx)
 
-		err = pollBatch(ctx, client.Queries, p, ep, tp, c.logger, batchIDParam)
+		err = pollBatch(ctx, client.Queries, p, ep, tp, bp, c.logger, batchIDParam, batchSource)
 		if err == nil {
 			batchSvc := service.NewBatch(client, c.cfg.Load().Consumer.Reclaim.MaxRetries)
 			if setErr := setBatchTerminalStatus(ctx, client.Queries, batchSvc, batchIDParam); setErr != nil {
@@ -310,6 +320,11 @@ func consumeHandler(c *Container, args []string) error {
 		return fmt.Errorf("failed to get thumbnail pool: %w", err)
 	}
 
+	bp, err := c.GetPool("thumbbackfill")
+	if err != nil {
+		return fmt.Errorf("failed to get thumbbackfill pool: %w", err)
+	}
+
 	ownerID := uuid.New().String()
 	owner := task.NewOwner(client, ownerID, os.Getpid(), c.logger, c.cfg.Load().Consumer.Reclaim.MaxRetries)
 
@@ -326,7 +341,7 @@ func consumeHandler(c *Container, args []string) error {
 	hb := task.NewHeartbeat(owner, heartbeatInterval, c.logger)
 	hb.Start(ctx)
 
-	err = pollBatch(ctx, client.Queries, p, ep, tp, c.logger, batchID)
+	err = pollBatch(ctx, client.Queries, p, ep, tp, bp, c.logger, batchID, types.Batch.Source.CLI)
 	if err == nil {
 		if setErr := setBatchTerminalStatus(ctx, client.Queries, batchSvc, batchID); setErr != nil {
 			c.logger.Error(nil, "set batch terminal status %s: %v", batchID, setErr)
@@ -401,7 +416,10 @@ func consumeCancelHandler(c *Container, args []string) error {
 	}
 	bid := sql.NullString{String: batchID, Valid: true}
 	txQ := client.Queries.WithTx(tx)
-	if _, relErr := txQ.ReleaseMaintenanceLockForBatch(cancelCtx, bid); relErr != nil {
+	if _, relErr := txQ.ReleaseMaintenanceLockForBatch(cancelCtx, database.ReleaseMaintenanceLockForBatchParams{
+		BatchID: bid,
+		Types:   types.BlockingTaskTypes(),
+	}); relErr != nil {
 		tx.Rollback()
 		return fmt.Errorf("release maintenance lock: %w", relErr)
 	}
@@ -571,16 +589,33 @@ func totalFiles(tasks []database.Task) int {
 	return n
 }
 
-func pollBatch(ctx context.Context, queries *database.Queries, cp, ep, tp *pool.Pool, logger *utils.Logger, batchID string) error {
+func pollBatch(ctx context.Context, queries *database.Queries, cp, ep, tp, bp *pool.Pool, logger *utils.Logger, batchID string, source types.BatchSource) error {
 	logger.SetLevel(utils.LevelSilent)
-	cp.Start(ctx)
-	ep.Start(ctx)
-	tp.Start(ctx)
+
+	pools := []*pool.Pool{cp, ep, tp}
+	if source == types.Batch.Source.Thumbbackfill {
+		pools = []*pool.Pool{bp}
+	}
+	for _, p := range pools {
+		p.Start(ctx)
+	}
+
+	stopPools := func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		for _, p := range pools {
+			p.Stop(stopCtx)
+		}
+	}
 
 	previous := make(map[string]string)
 	previousProgress := make(map[string]string)
 
-	ticker := time.NewTicker(500 * time.Millisecond)
+	tickInterval := 500 * time.Millisecond
+	if source == types.Batch.Source.Thumbbackfill {
+		tickInterval = 2 * time.Second
+	}
+	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
 
 	for {
@@ -588,22 +623,14 @@ func pollBatch(ctx context.Context, queries *database.Queries, cp, ep, tp *pool.
 		case <-ticker.C:
 		case <-ctx.Done():
 			fmt.Println("\nBatch cancelled")
-			stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer stopCancel()
-			cp.Stop(stopCtx)
-			ep.Stop(stopCtx)
-			tp.Stop(stopCtx)
+			stopPools()
 			return ctx.Err()
 		}
 
 		batch, err := queries.GetBatch(ctx, batchID)
 		if err == nil && batch.Status == types.Batch.Status.Paused {
 			fmt.Printf("\nBatch paused: LLM provider credit/balance error detected. Resolve billing and re-queue the batch.\n")
-			stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer stopCancel()
-			cp.Stop(stopCtx)
-			ep.Stop(stopCtx)
-			tp.Stop(stopCtx)
+			stopPools()
 			return ErrBatchPaused
 		}
 
@@ -680,11 +707,7 @@ func pollBatch(ctx context.Context, queries *database.Queries, cp, ep, tp *pool.
 				fmt.Printf("\nSummary: %d files, %d tasks — all successful\n", files, taskCount)
 			}
 
-			stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			cp.Stop(stopCtx)
-			ep.Stop(stopCtx)
-			tp.Stop(stopCtx)
+			stopPools()
 			return nil
 		}
 	}

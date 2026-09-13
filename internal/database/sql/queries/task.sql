@@ -148,7 +148,7 @@ UPDATE backup_lock SET running = false, started_at = NULL, owner_token = NULL
 WHERE id = 1 AND running = true AND owner_token IN (
   SELECT claim_token FROM task
   WHERE status = 'processing'
-    AND task_type IN ('backup', 'mirror')
+    AND task_type = ANY(@types::task_type[])
     AND task.started_at < $1
 );
 
@@ -157,7 +157,7 @@ UPDATE backup_lock SET running = false, started_at = NULL, owner_token = NULL
 WHERE id = 1 AND running = true AND owner_token IN (
   SELECT claim_token FROM task
   WHERE batch_id = $1 AND status = 'processing'
-    AND task_type IN ('backup', 'mirror')
+    AND task_type = ANY(@types::task_type[])
 );
 
 -- name: UpdateTaskProgress :exec

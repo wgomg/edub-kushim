@@ -195,12 +195,12 @@ func RunLockedWithProgress(ctx context.Context, queries *database.Queries, logge
 }
 
 func runLocked(ctx context.Context, queries *database.Queries, logger *utils.Logger, storageDir, dest string, onWait func(count int64), onSync func(), token uuid.NullUUID) (*Result, string, error) {
+	stopHeartbeat := database.StartMaintenanceLockHeartbeat(ctx, queries, logger, 5*time.Minute, token)
+	defer stopHeartbeat()
+
 	if err := database.WaitForTaskDrain(ctx, queries, logger, "mirror", onWait); err != nil {
 		return nil, "", err
 	}
-
-	stopHeartbeat := StartHeartbeat(ctx, queries, logger, 5*time.Minute, token)
-	defer stopHeartbeat()
 
 	if onSync != nil {
 		onSync()
@@ -224,23 +224,4 @@ func runLocked(ctx context.Context, queries *database.Queries, logger *utils.Log
 
 	logger.Info(nil, "mirror completed: %s", result.Summary())
 	return result, state.Timestamp, nil
-}
-
-func StartHeartbeat(ctx context.Context, queries *database.Queries, logger *utils.Logger, interval time.Duration, token uuid.NullUUID) func() {
-	stopCh := make(chan struct{})
-	go func() {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-stopCh:
-				return
-			case <-ticker.C:
-				if _, err := queries.TouchMaintenanceLockForTask(ctx, token); err != nil {
-					logger.Error(nil, "mirror heartbeat: touch maintenance lock: %v", err)
-				}
-			}
-		}
-	}()
-	return func() { close(stopCh) }
 }

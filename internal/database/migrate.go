@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/types"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -54,6 +56,28 @@ func WaitForTaskDrain(ctx context.Context, queries *Queries, logger *utils.Logge
 		case <-ticker.C:
 		}
 	}
+}
+
+func StartMaintenanceLockHeartbeat(ctx context.Context, queries *Queries, logger *utils.Logger, interval time.Duration, token uuid.NullUUID) func() {
+	stopCh := make(chan struct{})
+	var stopOnce sync.Once
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopCh:
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if _, err := queries.TouchMaintenanceLockForTask(ctx, token); err != nil {
+					logger.Error(nil, "maintenance lock heartbeat: touch: %v", err)
+				}
+			}
+		}
+	}()
+	return func() { stopOnce.Do(func() { close(stopCh) }) }
 }
 
 func RewriteStoragePaths(ctx context.Context, db *sql.DB, oldDir, newDir string) error {

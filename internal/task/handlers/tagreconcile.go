@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/enrichment/tagreconcile"
 	"github.com/wgomg/edub-kushim/internal/task"
@@ -39,6 +40,16 @@ func (h *TagReconcileTaskHandler) Handle(ctx context.Context, t task.Task) (out 
 	}()
 
 	task.MarkBatchProcessing(ctx, h.queries, t.BatchID)
+
+	stopHeartbeat := database.StartMaintenanceLockHeartbeat(ctx, h.queries, h.logger, 5*time.Minute,
+		uuid.NullUUID{UUID: t.ClaimToken, Valid: true})
+	defer stopHeartbeat()
+
+	if err := database.WaitForTaskDrain(ctx, h.queries, h.logger, "tag reconcile", func(count int64) {
+		progress.Set("drain-wait", fmt.Sprintf("%d in-flight", count), 0)
+	}); err != nil {
+		return nil, err
+	}
 
 	report, err := h.reconciler.Run(ctx, progress.Set)
 	if err != nil {

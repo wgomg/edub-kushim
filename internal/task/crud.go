@@ -155,7 +155,10 @@ func Retry(ctx context.Context, client *database.Client, logger *utils.Logger, t
 		defer tx.Rollback()
 
 		txQ := client.Queries.WithTx(tx)
-		if _, err := txQ.ReleaseMaintenanceLockForBatch(ctx, task.BatchID); err != nil {
+		if _, err := txQ.ReleaseMaintenanceLockForBatch(ctx, database.ReleaseMaintenanceLockForBatchParams{
+			BatchID: task.BatchID,
+			Types:   types.BlockingTaskTypes(),
+		}); err != nil {
 			return fmt.Errorf("release maintenance lock for retry %s: %w", taskID, err)
 		}
 		if err := txQ.RetryTask(ctx, task.ID); err != nil {

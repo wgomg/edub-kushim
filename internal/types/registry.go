@@ -79,13 +79,14 @@ var Batch = struct {
 
 var Task = struct {
 	Type struct {
-		Consume      TaskType
-		Enrich       TaskType
-		Thumbnail    TaskType
-		Backup       TaskType
-		Mirror       TaskType
-		Config       TaskType
-		TagReconcile TaskType
+		Consume       TaskType
+		Enrich        TaskType
+		Thumbnail     TaskType
+		Backup        TaskType
+		Mirror        TaskType
+		Config        TaskType
+		TagReconcile  TaskType
+		ThumbBackfill TaskType
 	}
 	Status struct {
 		Pending    TaskStatus
@@ -98,21 +99,23 @@ var Task = struct {
 	}
 }{
 	Type: struct {
-		Consume      TaskType
-		Enrich       TaskType
-		Thumbnail    TaskType
-		Backup       TaskType
-		Mirror       TaskType
-		Config       TaskType
-		TagReconcile TaskType
+		Consume       TaskType
+		Enrich        TaskType
+		Thumbnail     TaskType
+		Backup        TaskType
+		Mirror        TaskType
+		Config        TaskType
+		TagReconcile  TaskType
+		ThumbBackfill TaskType
 	}{
-		Consume:      "consume",
-		Enrich:       "enrich",
-		Thumbnail:    "thumbnail",
-		Backup:       "backup",
-		Mirror:       "mirror",
-		Config:       "config",
-		TagReconcile: "tagreconcile",
+		Consume:       "consume",
+		Enrich:        "enrich",
+		Thumbnail:     "thumbnail",
+		Backup:        "backup",
+		Mirror:        "mirror",
+		Config:        "config",
+		TagReconcile:  "tagreconcile",
+		ThumbBackfill: "thumbbackfill",
 	},
 	Status: struct {
 		Pending    TaskStatus
@@ -220,6 +223,8 @@ func AllTaskStatuses() []TaskStatus   { return slices.Clone(allTaskStatuses) }
 
 func LockGatedTaskTypes() []TaskType { return slices.Clone(lockGatedTaskTypes) }
 
+func BlockingTaskTypes() []TaskType { return slices.Clone(blockingTaskTypes) }
+
 // NonConsumeBatchSources are the sources whose batches own their lifecycle
 // in their handlers and never occupy a consume slot.
 func NonConsumeBatchSources() []BatchSource { return slices.Clone(nonConsumeBatchSources) }
@@ -262,18 +267,20 @@ var allTaskTypes = []TaskType{
 	Task.Type.Mirror,
 	Task.Type.Config,
 	Task.Type.TagReconcile,
+	Task.Type.ThumbBackfill,
 }
 
 var blockingTaskTypes = []TaskType{
 	Task.Type.Backup,
 	Task.Type.Mirror,
+	Task.Type.TagReconcile,
+	Task.Type.ThumbBackfill,
 }
 
 var lockGatedTaskTypes = []TaskType{
 	Task.Type.Consume,
 	Task.Type.Enrich,
 	Task.Type.Thumbnail,
-	Task.Type.TagReconcile,
 }
 
 var allTaskStatuses = []TaskStatus{

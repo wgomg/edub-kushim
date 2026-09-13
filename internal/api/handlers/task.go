@@ -638,6 +638,8 @@ func taskLabel(taskType itypes.TaskType, dedupKey sql.NullString) string {
 		return "Enrich"
 	case itypes.Task.Type.Thumbnail:
 		return "Thumbnail"
+	case itypes.Task.Type.ThumbBackfill:
+		return "Thumbnail backfill"
 	default:
 		return string(taskType)
 	}

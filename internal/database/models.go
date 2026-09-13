@@ -205,13 +205,14 @@ func (ns NullTaskStatus) Value() (driver.Value, error) {
 type TaskType string
 
 const (
-	TaskTypeConsume      TaskType = "consume"
-	TaskTypeEnrich       TaskType = "enrich"
-	TaskTypeThumbnail    TaskType = "thumbnail"
-	TaskTypeBackup       TaskType = "backup"
-	TaskTypeMirror       TaskType = "mirror"
-	TaskTypeConfig       TaskType = "config"
-	TaskTypeTagreconcile TaskType = "tagreconcile"
+	TaskTypeConsume       TaskType = "consume"
+	TaskTypeEnrich        TaskType = "enrich"
+	TaskTypeThumbnail     TaskType = "thumbnail"
+	TaskTypeBackup        TaskType = "backup"
+	TaskTypeMirror        TaskType = "mirror"
+	TaskTypeConfig        TaskType = "config"
+	TaskTypeTagreconcile  TaskType = "tagreconcile"
+	TaskTypeThumbbackfill TaskType = "thumbbackfill"
 )
 
 func (e *TaskType) Scan(src interface{}) error {

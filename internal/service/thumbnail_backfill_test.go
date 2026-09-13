@@ -92,7 +92,7 @@ func TestThumbnailBackfill_BackfillAll_Success(t *testing.T) {
 	wantDedup := map[string]string{"thumbnail:doc:" + docA: docA, "thumbnail:doc:" + docB: docB}
 	gotDedup := map[string]bool{}
 	for _, call := range taskMock.calls {
-		testutil.AssertEqual(t, call.TaskType, "thumbnail", "task type")
+		testutil.AssertEqual(t, call.TaskType, "thumbbackfill", "task type")
 		testutil.AssertEqual(t, call.Status, "pending", "task status")
 		testutil.AssertEqual(t, call.BatchID, batchID, "task batch ID matches")
 		if call.DedupKey == "" {
@@ -166,7 +166,7 @@ func TestThumbnailBackfill_BackfillDocument_Success(t *testing.T) {
 	testutil.AssertEqual(t, batchMock.calls[0].Status, "queued", "batch status")
 
 	testutil.AssertEqual(t, len(taskMock.calls), 1, "task creation called")
-	testutil.AssertEqual(t, taskMock.calls[0].TaskType, "thumbnail", "task type")
+	testutil.AssertEqual(t, taskMock.calls[0].TaskType, "thumbbackfill", "task type")
 	testutil.AssertEqual(t, taskMock.calls[0].Status, "pending", "task status")
 	testutil.AssertEqual(t, taskMock.calls[0].DedupKey, "thumbnail:doc:"+docUUID, "dedup key format")
 
