@@ -341,18 +341,35 @@ environments or CI.
 ### In-App Settings Page
 
 The main web UI (`web/`) includes a **Settings** page at `/settings` backed by the same
-`/wizard/config` API endpoints. It provides a single-page form covering all configurable
-fields: server host/port, max upload/download sizes, max download files; OCR engine, timeout, data directory, languages;
-consumer workers, max files per batch, supported file types (checkbox list with PDF locked on), DOCX/ODT converter (enabled, binary, timeout); polling scheduler on/off toggle and interval; text extractor engine/timeout;
-PDF optimizer engine/fallback/timeout;
-enricher workers; content analyzer enabled toggle + adapter/provider/model cascading selectors (loaded from model catalog) + token + temperature + reasoning;
-tag matcher engine/timeout, reduce-target-words, chunk size, Hugot model/backend;
-tag adjudicator enabled toggle + timeout + LLM sub-block (adapter/provider/model with an "Inherit from content analyzer" option, token, request delay);
-tag reconciliation enabled/report-only toggles, interval, preferred time, max pairs judged per run, max documents re-tagged per run;
-text reducer engine/timeout/target-words;
-backup enabled/disabled, fallback output path, per-mode schedule list (mode, interval, preferred time, keep count, optional per-schedule output path);
-mirror enabled/disabled, destination path (local or `[user@]host:path`), interval, preferred time.
-Changes trigger background downloads for any
+`/wizard/config` API endpoints. It is one scrollable form grouped into sections — Overview
+(toolchain health), Intake (uploads & server, watched inbox, accepted file types, office
+converter), Processing (OCR, text extraction, PDF optimizer, thumbnails, throughput &
+recovery), Enrichment (content analyzer, text reducer, tag matcher, tag adjudicator, tag
+reconciliation, enrichment workers), Storage (directories, trash, database), Safety
+(backups, mirror), Access (sign-in, users), and System (logging) — with a sticky rail that
+tracks the active section (each section has a URL hash, `#overview`…`#system`), a
+`/`-focused search that filters fields and cards, and a fixed save bar with an
+unsaved-changes count. The orchestrator (`settings/+page.svelte`) loads the config,
+snapshots it, and PATCHes the flattened dotted-key map on save; the section components
+live in `web/src/lib/components/settings/`.
+
+Fields cover: server host/port, max upload/download sizes, max download files; OCR engine,
+timeout, data directory, languages (chips); consumer workers, max files per batch,
+supported file types (checkbox list with PDF locked on), DOCX/ODT converter (enabled,
+binary, timeout); polling scheduler on/off toggle, interval, active windows; text
+extractor engine/timeout; PDF optimizer engine/fallback/timeout; thumbnails (enabled,
+engine, dpi, max width, quality, timeout, workers, backfill); enricher workers; content
+analyzer enabled toggle + adapter/provider/model cascading selectors (loaded from model
+catalog) + token + temperature + pause on credit error + request delay + doc type
+refinement + fallback LLM list; tag matcher timeout/reduce-target-words/chunk-size/Hugot
+model/backend; tag adjudicator enabled toggle + timeout + LLM sub-block (adapter/provider/
+model with an "Inherit from content analyzer" option, token, request delay); tag
+reconciliation enabled/report-only toggles, interval, preferred time, max pairs judged per
+run, max documents re-tagged per run; text reducer engine/timeout/target-words; backup
+enabled/disabled, fallback output path, per-mode schedule list (mode, interval, preferred
+time, keep count, optional per-schedule output path); mirror enabled/disabled, destination
+path (local or `[user@]host:path`), interval, preferred time; database connection fields;
+trash retention; logging level and rotation. Changes trigger background downloads for any
 missing tessdata or Hugot model files. **Inline tool-status warnings** appear beneath
 each engine selector when the selected external tool is missing, and a persistent
 amber banner at the top of the app shows whenever required tools are not installed.

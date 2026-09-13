@@ -2839,35 +2839,97 @@ accept and enqueue files.
 
 ## Settings Page
 
-The main web UI includes a **Settings** page at `/settings` with two tabs:
+The main web UI includes a **Settings** page at `/settings`: one scrollable
+form grouped into sections, with a rail on the left that tracks the active
+section as you scroll (each section has a URL hash — `#overview`, `#intake`,
+`#processing`, `#enrichment`, `#storage`, `#safety`, `#access`, `#system` —
+so any section is deep-linkable). A search box at the top filters fields and
+cards across all sections, and a save bar slides up from the bottom when
+there are unsaved changes, with a per-section dirty dot on the rail.
 
-### Configuration Tab
+### Overview
 
-A single-page form for all user-configurable settings:
+Toolchain health: every external tool the pipeline calls, with an
+available/not-installed badge and expandable install hints for missing
+tools, plus an "N of M" availability counter.
 
-- **Server**: host, port, max upload/download sizes, max download files,
-  max concurrent batches, max batch delete, authentication enabled toggle
-- **OCR**: engine selector, timeout, data directory, languages list (add/remove)
-- **Consumer**: workers, max files per batch, supported file types (checkbox list, PDF always on), DOCX/ODT converter (enabled toggle, binary path, timeout)
-- **Thumbnails**: enabled toggle, engine (mupdf), DPI, max width (px), quality (1–100), timeout (seconds; 0 = disabled), workers (1 = single worker)
-- **Polling**: enabled toggle, interval, active windows (start/end pairs, add/remove)
-- **Reclaim**: auto-resume toggle, max retries, stale task after (seconds)
-- **Text extractor**: engine, timeout
+### Intake
+
+- **Uploads & server**: host, port, max upload/download sizes, max download
+  files, max concurrent batches, max batch delete
+- **Watched inbox**: polling enabled toggle, scan interval, active windows
+  (start/end pairs, add/remove)
+- **Accepted file types**: checkbox list (PDF always on)
+- **Office converter**: DOCX/ODT conversion toggle, binary path, timeout
+
+### Processing
+
+- **OCR**: engine selector (with availability badge), timeout, languages as
+  chips (add/remove), tessdata directory, workers
+- **Text extraction**: engine, timeout
 - **PDF optimizer**: engine, fallback, timeout
-- **Enricher**: workers
-- **Content analyzer (LLM)**: enabled toggle, timeout, adapter (openai-compatible/anthropic),
-  provider (filtered by adapter), model (filtered by provider, loaded from model catalog),
-  token, temperature, pause on credit error toggle,
-  request delay (seconds to sleep after each LLM request; 0 = off, max 60),
-  reasoning toggle (shown when model supports it),
-  reasoning effort (shown when reasoning enabled),
-  doc type refinement (enabled, head words, tail words)
-- **Tag matcher**: engine, timeout, reduce target words, chunk size, Hugot model,
-  Hugot backend (ort/GO)
+- **Thumbnails**: enabled toggle, engine, DPI, max width (px), quality
+  (1–100), timeout (seconds; 0 = disabled), workers (1 = single worker),
+  backfill interval and preferred time
+- **Throughput & recovery**: consumer workers, max files per batch, and a
+  "Recovery" disclosure with the auto-resume toggle, max retries, and stale
+  task after (seconds)
+
+### Enrichment
+
+- **Content analyzer (LLM)**: enabled toggle, timeout, adapter
+  (openai-compatible/anthropic), provider (filtered by adapter), model
+  (filtered by provider, loaded from model catalog), token (with show/hide),
+  temperature, pause on credit error toggle, request delay (seconds to sleep
+  after each LLM request; 0 = off, max 60), a "Prompt template (advanced)"
+  disclosure, doc type refinement (enabled, head words, tail words), and a
+  Fallback LLMs list (add/remove/reorder rows, each with its own enable
+  toggle, cascading adapter→provider→model selectors, token show/hide,
+  temperature, request delay)
 - **Text reducer**: engine, timeout, target words
-- **Storage**: consumption directory, storage directory
-- **Trash**: retention period in days (`storage.trash.retention_days`, default 30)
-- **Database**: host, port, user, password, database name, SSL mode
+- **Tag matcher**: timeout, reduce target words, chunk size, Hugot model,
+  Hugot backend (ort/GO)
+- **Tag adjudicator**: enabled toggle; when enabled, timeout plus an LLM
+  sub-block whose adapter/provider/model can inherit from the content
+  analyzer
+- **Tag reconciliation**: enabled toggle, report-only toggle, interval
+  (days), preferred time (HH:MM), max pairs judged per run, max documents
+  re-tagged per run, plus an amber hint when enabled without the adjudicator
+- **Enrichment workers**: worker count
+
+### Storage
+
+- **Directories**: consumption directory, storage directory, migration mode
+  (copy/move) with a warning for move
+- **Trash**: retention period in days (`storage.trash.retention_days`,
+  default 30)
+- **Database**: host, port, user, database name, SSL mode, runtime
+  (host/docker/podman/remote) with a conditional container-name field
+
+### Safety
+
+- **Backups**: enabled toggle, fallback output directory, per-mode schedule
+  list (add/remove rows with mode, interval, preferred time, keep count, and
+  optional output path)
+- **Mirror**: enabled toggle, destination path (local or `[user@]host:path`),
+  interval, preferred time, and a missing-rsync warning
+
+### Access
+
+- **Sign-in**: require-sign-in toggle
+- **Users**: DataTable with Username, Created At, and Actions (edit, delete)
+  columns. **Create User** opens a modal with Username (required) and
+  Password (required; the server enforces a 12-character minimum plus
+  uppercase/lowercase/digit/special-character rules). **Edit** opens a modal
+  with Username pre-filled and Password optional (placeholder: "Leave blank
+  to keep current"). **Delete** opens a confirmation dialog; on confirm the
+  user is permanently removed. Pagination controls with configurable page
+  sizes (10/25/50/100).
+
+### System
+
+- **Logging**: log level ("warn" included), max size per file, max backups
+  to keep, max age, compress rotated logs toggle
 
 Changes are saved via the `/wizard/config` API and trigger background
 downloads for any missing tessdata or Hugot model files. A spinner and
@@ -2885,16 +2947,6 @@ the selected external tool is missing from `PATH`. When the OCR engine is
 
 A **sticky amber banner** at the top of the app layout shows whenever
 required tools are not installed, with a link to the settings page.
-
-### Users Tab
-
-The Users tab provides user account management:
-
-- **DataTable** listing all users with Username, Created At, and Actions (edit, delete) columns
-- **Create User** button opens a modal with Username (required) and Password (required; the server enforces a 12-character minimum plus uppercase/lowercase/digit/special-character rules)
-- **Edit** button opens a modal with Username pre-filled and Password optional (placeholder: "Leave blank to keep current")
-- **Delete** opens a confirmation dialog; on confirm the user is permanently removed
-- Pagination controls with configurable page sizes (10/25/50/100)
 
 ## Build: Setup Wizard
 

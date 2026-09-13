@@ -187,7 +187,7 @@
 				>
 					⚠️ {missingCount} required tool(s) not installed — document consumption is paused.
 					<a
-						href={resolve(`/settings`)}
+						href={resolve(`/settings#overview`)}
 						class="underline hover:text-gold-400 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 						>Review Settings</a
 					>

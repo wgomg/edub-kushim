@@ -266,7 +266,7 @@ web/                      # SvelteKit SPA frontend (main UI)
 │       ├── documents/orphaned/
 │       │   └── +page.svelte      # Orphaned + errored file management page
 │       ├── settings/
-│       │   └── +page.svelte      # Settings page — OCR, consumer, enricher config + Users tab
+│       │   └── +page.svelte      # Settings page — grouped config form + section components (web/src/lib/components/settings/)
 │       ├── tags/
 │       │   └── +page.svelte      # Tag management page
 │       ├── people/

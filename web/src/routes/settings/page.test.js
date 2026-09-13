@@ -241,7 +241,7 @@ describe('Settings — Tag reconciliation section', () => {
 
 		await screen.findByRole('heading', { name: 'Tag reconciliation' });
 
-		fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+		fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
 
 		await waitFor(() => expect(apiMocks.configUpdate).toHaveBeenCalledTimes(1));
 
@@ -271,9 +271,7 @@ describe('Settings — Tag reconciliation section', () => {
 
 		await screen.findByRole('heading', { name: 'Tag reconciliation' });
 		expect(await screen.findByText(/Tag adjudicator not enabled/)).toBeTruthy();
-		expect(
-			await screen.findByText(/enable it with the toggle on the "Tag adjudicator" card above/)
-		).toBeTruthy();
+		expect(await screen.findByText(/enable it on the Tag adjudicator card/)).toBeTruthy();
 	});
 
 	it('hides the adjudicator hint when the adjudicator is enabled', async () => {

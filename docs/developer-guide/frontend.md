@@ -276,15 +276,14 @@ There are **no** class-style components, no `export let` props, no slots, no
 - **`<svelte:window>`** — document-level event listener for delegated clicks
   on `data-*` action buttons (`tasks/+page.svelte:304`).
 - **`bind:` inventory**: `bind:value` for inputs (≈45 sites; works deep into
-  `$state` objects: `bind:value={cfg.server.host}`, `settings/+page.svelte:448`,
+  `$state` objects: `bind:value={cfg.server.host}`, `IntakeSection.svelte:35`,
   and inside `{#each}` loops), `bind:checked` for checkboxes
-  (`settings/+page.svelte:560`), `bind:this` for element refs stored in
+  (`Switch.svelte:18`), `bind:this` for element refs stored in
   `$state` (§4).
 - **Uncontrolled inputs with `oninput`** when the value must pass through a
-  function: `oninput={(e) => updateLanguage(i, e.currentTarget.value)}`
-  (`settings/+page.svelte:844`). A deliberate hybrid in FilterPanel:
-  `bind:value={f.documentType}` for display plus `onchange` to push to the
-  store (`FilterPanel.svelte:373`).
+  function: `oninput={onTagInput}` (`FilterPanel.svelte:240`). A deliberate
+  hybrid in FilterPanel: `bind:value={f.documentType}` for display plus
+  `onchange` to push to the store (`FilterPanel.svelte:373`).
 - **No `class:` directive** — classes are computed inline with ternaries
   (`documents/+page.svelte:264`) or a variant map (`Toast.svelte:18-21`:
   `{variantClasses[toast.variant] || variantClasses.info}`).
@@ -623,11 +622,12 @@ for the filter. `serializeFilter` always wraps field values in double quotes
 (the tokenizer strips them); unconditional quoting keeps multi-word tags,
 types, languages, and person names intact through the URL round-trip.
 
-### 3. Plain `history.replaceState` — settings tabs, wizard step
+### 3. Plain `history.replaceState` — legacy settings redirect, wizard step
 
 When no SvelteKit navigation is needed, `switchTab` writes the param directly
-(`settings/+page.svelte:23-28`); the wizard mirrors its step the same way
-(`web-wizard/+page.svelte:30-34`).
+(`web-wizard/+page.svelte:30-34`); the settings page uses SvelteKit's
+`replaceState` only for the legacy `?tab=Users` → `#access` redirect
+(`settings/+page.svelte:356-363`).
 
 Also in play: `page.subscribe(($p) => ...)` for reacting to URL changes
 (`tasks/+page.svelte:234-236` reads `?batch=`), and DataTable's own
@@ -643,9 +643,9 @@ Submit handlers call `e.preventDefault()` first; the login flow
 API → branch on result → `goto` in a `finally` that clears `loading`. Two
 dirty-tracking styles exist:
 
-**JSON snapshots + `beforeunload`** (`settings/+page.svelte:43-62`) — compare
-`JSON.stringify(cfg)` against an original captured at load, registered in
-`onMount` with proper cleanup (`:130-131`):
+**JSON snapshots + `beforeunload`** (`settings/+page.svelte:279-293`) — compare
+`JSON.stringify(bodyFromConfig())` against an original captured at load, registered
+in `onMount` with proper cleanup (`:436-445`):
 
 ```js
 window.addEventListener('beforeunload', handleBeforeUnload);
@@ -665,8 +665,8 @@ let dirty = $derived(
 
 Validation is manual per-field `$state` error strings (wizard admin form,
 `web-wizard/+page.svelte:222-245`), supplemented by HTML constraints
-(`minlength`, `pattern` — `settings/+page.svelte:1021-1024`). Inline list
-editing uses immutable array replacement (`settings/+page.svelte:154-174`).
+(`minlength`, `pattern` — `IntakeSection.svelte:131-134`). Inline list
+editing uses immutable array replacement (`IntakeSection.svelte:9-18`).
 
 ---
 
@@ -716,7 +716,7 @@ identical in `documents/orphaned/+page.svelte:170-171`):
 {/if}
 ```
 
-Settings uses `!authStore.isAdmin()` (`settings/+page.svelte:376-377`).
+Settings uses `!authStore.isAdmin()` (`settings/+page.svelte:452`).
 
 ### Action-level gates
 
@@ -824,7 +824,7 @@ focus-visible:outline-none` on interactive elements, `motion-reduce:animate-none
 next to every spinner, arbitrary values like `h-[75vh]` as `PdfViewer`'s default
 `scrollClass` (the detail page overrides it with `rootClass="h-full"` +
 `scrollClass="flex-1 min-h-0 overflow-y-auto"` for the workspace layout), and a `peer-checked:` toggle built purely
-from classes (`settings/+page.svelte:1251-1261`).
+from classes (`Switch.svelte:22`).
 
 The wizard uses the same system with a 10-color subset in
 `web-wizard/src/app.css:5-17`. `.prettierrc` points
@@ -941,7 +941,7 @@ return {
 
 The Go side merges it with `config.SaveMap` (viper dot-keys → YAML, see
 `internal/config/setup.go:76`). The main app's settings page repeats the same
-dotted-map pattern (`settings/+page.svelte:176-261`).
+dotted-map pattern (`settings/+page.svelte:122-240`).
 
 ### Wizard vs main app
 
@@ -973,9 +973,9 @@ dotted-map pattern (`settings/+page.svelte:176-261`).
 | Design tokens (`@theme`) | `web/src/routes/layout.css`, `web-wizard/src/app.css` |
 | Auth/role gates | `web/src/routes/+layout.svelte:31-40`, `trash/+page.svelte:204` |
 | Modal + confirm dialog | `web/src/lib/components/Modal.svelte`, `ConfirmDialog.svelte` |
-| Dirty tracking + beforeunload | `web/src/routes/settings/+page.svelte:43-62`, `documents/[id]/+page.svelte:38-43` |
+| Dirty tracking + beforeunload | `web/src/routes/settings/+page.svelte:279-293`, `documents/[id]/+page.svelte:38-43` |
 | Wizard step machine | `web-wizard/src/routes/+page.svelte:6,30-34` |
-| Dotted-key config map | `web-wizard/+page.svelte:121-162`, `web/src/routes/settings/+page.svelte:176-261` |
+| Dotted-key config map | `web-wizard/+page.svelte:121-162`, `web/src/routes/settings/+page.svelte:122-240` |
 | Vite aliases / proxy | `web/vite.config.js`, `web-wizard/vite.config.js` |
 | SPA mode config | `web/svelte.config.js` (adapter-static + fallback) |
 
