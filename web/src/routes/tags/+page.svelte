@@ -12,6 +12,7 @@
 	import { api } from '$lib/api';
 	import * as authStore from '$lib/stores/authStore.js';
 	import { formatNumber } from '$lib/utils/html.js';
+	import TagReconcileCard from '$lib/components/TagReconcileCard.svelte';
 
 	let showModal = $state(false);
 	let editingTag = $state(null);
@@ -208,6 +209,8 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			{/if}
 		</div>
 	</div>
+
+	<TagReconcileCard />
 
 	<div class="flex items-center gap-2">
 		<label for="tag-filter" class="sr-only">Filter tags</label>

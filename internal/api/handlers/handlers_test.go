@@ -706,6 +706,123 @@ func TestTaskEndpoints(t *testing.T) {
 	})
 }
 
+func TestGetTagReconcileReport(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+
+	env := newHandlerTestEnv(t)
+	h := NewTaskHandler(env.services, env.client, env.logger, func() *config.Config { return nil })
+	ctx := context.Background()
+
+	t.Run("no completed run returns 404", func(t *testing.T) {
+		w := rec()
+		h.GetTagReconcileReport(w, req(t, "GET", "/api/v1/tags/reconciliation/report", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusNotFound, "status")
+	})
+
+	t.Run("completed task with result returns 200", func(t *testing.T) {
+		err := env.client.CreateBatch(ctx, database.CreateBatchParams{
+			ID: "rc-report-b1", Source: "tagreconcile", Status: "queued",
+		})
+		testutil.AssertNoError(t, err, "create batch")
+
+		resultJSON := json.RawMessage(`{"report_only":true,"worklist":{"stale":3},"judged":0}`)
+		_, err = env.client.CreateTask(ctx, database.CreateTaskParams{
+			TaskID: "rc-report-t1", TaskType: "tagreconcile", Status: "completed",
+			BatchID:  sql.NullString{String: "rc-report-b1", Valid: true},
+			DedupKey: sql.NullString{String: "tagreconcile:2026-09-13", Valid: true},
+		})
+		testutil.AssertNoError(t, err, "create task")
+
+		// Complete the task via the SQL the handler queries against.
+		_, err = env.client.DB().ExecContext(ctx,
+			`UPDATE task SET result = $1, completed_at = now() WHERE task_id = 'rc-report-t1'`,
+			resultJSON,
+		)
+		testutil.AssertNoError(t, err, "set result")
+
+		w := rec()
+		h.GetTagReconcileReport(w, req(t, "GET", "/api/v1/tags/reconciliation/report", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var resp types.TagReconcileReportResponse
+		json.NewDecoder(w.Body).Decode(&resp)
+		testutil.AssertEqual(t, resp.TaskID, "rc-report-t1", "task_id")
+		if resp.CompletedAt == "" {
+			t.Fatal("expected non-empty completed_at")
+		}
+		if resp.Result == nil {
+			t.Fatal("expected non-nil result")
+		}
+	})
+
+	t.Run("task list omits result while detail includes it", func(t *testing.T) {
+		w := rec()
+		r := req(t, "GET", "/api/v1/tasks/rc-report-t1", nil)
+		r.SetPathValue("id", "rc-report-t1")
+		h.GetTask(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "detail status")
+
+		var detail types.TaskResponse
+		json.NewDecoder(w.Body).Decode(&detail)
+		if detail.Result == nil {
+			t.Fatal("expected detail response to include result")
+		}
+
+		w2 := rec()
+		h.ListTasks(w2, req(t, "GET", "/api/v1/tasks?limit=100", nil))
+		testutil.AssertEqual(t, w2.Code, http.StatusOK, "list status")
+
+		var list types.ListTasksResponse
+		json.NewDecoder(w2.Body).Decode(&list)
+		var found bool
+		for _, item := range list.Tasks {
+			if item.TaskID != "rc-report-t1" {
+				continue
+			}
+			found = true
+			if item.Result != nil {
+				t.Fatalf("expected list response to omit result, got %v", item.Result)
+			}
+		}
+		if !found {
+			t.Fatal("rc-report-t1 not found in task list")
+		}
+	})
+
+	t.Run("completed task without result returns result null", func(t *testing.T) {
+		err := env.client.CreateBatch(ctx, database.CreateBatchParams{
+			ID: "rc-report-b2", Source: "tagreconcile", Status: "queued",
+		})
+		testutil.AssertNoError(t, err, "create batch")
+
+		_, err = env.client.CreateTask(ctx, database.CreateTaskParams{
+			TaskID: "rc-report-t2", TaskType: "tagreconcile", Status: "completed",
+			BatchID:  sql.NullString{String: "rc-report-b2", Valid: true},
+			DedupKey: sql.NullString{String: "tagreconcile:2026-09-13-2", Valid: true},
+		})
+		testutil.AssertNoError(t, err, "create task")
+
+		// Complete the task without setting a result.
+		_, err = env.client.DB().ExecContext(ctx,
+			`UPDATE task SET completed_at = now() WHERE task_id = 'rc-report-t2'`,
+		)
+		testutil.AssertNoError(t, err, "complete task")
+
+		w := rec()
+		h.GetTagReconcileReport(w, req(t, "GET", "/api/v1/tags/reconciliation/report", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var resp types.TagReconcileReportResponse
+		json.NewDecoder(w.Body).Decode(&resp)
+		testutil.AssertEqual(t, resp.TaskID, "rc-report-t2", "task_id")
+		if resp.Result != nil && string(resp.Result) != "null" {
+			t.Fatalf("expected nil or null result, got %v", resp.Result)
+		}
+	})
+}
+
 func TestGetDashboardRunningTasks(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	h := NewTaskHandler(env.services, env.client, env.logger, func() *config.Config { return nil })

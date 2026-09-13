@@ -1337,6 +1337,43 @@ Response `200`:
 - `400` — `target_id` missing/zero, or source and target are the same tag.
 - `404` — source or target tag does not exist.
 
+### Tag Reconciliation Report
+
+Returns the report of the most recent completed scheduled tag reconciliation run
+(`task_type='tagreconcile'`). Read-only — the endpoint only touches Postgres, so it
+never depends on the matcher daemon.
+
+```
+GET /api/v1/tags/reconciliation/report
+```
+
+Response `200`:
+
+```json
+{
+  "task_id": "660e8400-e29b-41d4-a716-446655440001",
+  "completed_at": "2024-03-19T10:30:12Z",
+  "result": {
+    "report_only": true,
+    "worklist": { "stale": 116, "unjudged": 3, "drifted": 0, "aged": 0 },
+    "judged": 5,
+    "confirmed": 5,
+    "flips": { "to_merge": 0, "to_keep": 5 },
+    "planned_keep_flips": [
+      { "query": "machine learning", "target": "ml", "reassigned": 12 }
+    ],
+    "skips": { "below_floor": 38, "query_reborn": 51, "adjudication_error": 25 }
+  }
+}
+```
+
+- `result` is the raw `Report` JSON persisted as the task's result: worklist counts,
+  judged/confirmed, flips, planned/applied pair entries (`planned_merges`,
+  `planned_keep_flips`, `retag_entries`, `invalidated_entries`), skip reasons, and the
+  `capped` / `no_documents` / `adjudicator_disabled` markers. Pair-level fields appear
+  only when the run recorded them (a run with no flips has no `planned_keep_flips`).
+- `404` — no completed `tagreconcile` run exists yet.
+
 ### Saved Searches
 
 Save, list, and delete named search configurations.
@@ -2249,6 +2286,10 @@ for other task types it falls back to the task type name (`"Consume"`, `"Enrich"
 reported a step. It is a display aid: `step` is required, `detail`/`pct`
 optional, `updated_at` is the last write time (writes are throttled to ≥1/s
 unless the step changes).
+
+`result` is present only on the single-task endpoint for `tagreconcile` tasks —
+the persisted reconciliation `Report` JSON described under [Tag Reconciliation
+Report](#tag-reconciliation-report). List endpoints and other task types omit it.
 
 #### BatchSummaryResponse
 

@@ -521,6 +521,26 @@ func (q *Queries) GetLastCompletedTagReconcileTask(ctx context.Context) (sql.Nul
 	return completed_at, err
 }
 
+const getLastCompletedTagReconcileTaskWithResult = `-- name: GetLastCompletedTagReconcileTaskWithResult :one
+SELECT task_id, completed_at, result FROM task
+WHERE task_type = 'tagreconcile' AND status = 'completed'
+ORDER BY completed_at DESC
+LIMIT 1
+`
+
+type GetLastCompletedTagReconcileTaskWithResultRow struct {
+	TaskID      string
+	CompletedAt sql.NullTime
+	Result      *json.RawMessage
+}
+
+func (q *Queries) GetLastCompletedTagReconcileTaskWithResult(ctx context.Context) (GetLastCompletedTagReconcileTaskWithResultRow, error) {
+	row := q.db.QueryRowContext(ctx, getLastCompletedTagReconcileTaskWithResult)
+	var i GetLastCompletedTagReconcileTaskWithResultRow
+	err := row.Scan(&i.TaskID, &i.CompletedAt, &i.Result)
+	return i, err
+}
+
 const getNextPendingTask = `-- name: GetNextPendingTask :one
 SELECT id FROM task WHERE status = 'pending' ORDER BY created_at LIMIT 1
 `

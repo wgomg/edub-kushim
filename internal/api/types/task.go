@@ -1,5 +1,7 @@
 package types
 
+import "encoding/json"
+
 type TaskProgressResponse struct {
 	Step      string  `json:"step"`
 	Detail    string  `json:"detail,omitempty"`
@@ -20,6 +22,13 @@ type TaskResponse struct {
 	CreatedAt    string                `json:"created_at"`
 	StartedAt    *string               `json:"started_at"`
 	CompletedAt  *string               `json:"completed_at"`
+	Result       json.RawMessage       `json:"result,omitempty"`
+}
+
+type TagReconcileReportResponse struct {
+	TaskID      string          `json:"task_id"`
+	CompletedAt string          `json:"completed_at"`
+	Result      json.RawMessage `json:"result"`
 }
 
 type BatchCounts struct {

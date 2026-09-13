@@ -369,3 +369,9 @@ SELECT completed_at FROM task
 WHERE task_type = 'tagreconcile' AND status = 'completed'
 ORDER BY completed_at DESC
 LIMIT 1;
+
+-- name: GetLastCompletedTagReconcileTaskWithResult :one
+SELECT task_id, completed_at, result FROM task
+WHERE task_type = 'tagreconcile' AND status = 'completed'
+ORDER BY completed_at DESC
+LIMIT 1;

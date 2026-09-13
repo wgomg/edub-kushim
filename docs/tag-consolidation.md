@@ -152,6 +152,10 @@ anti-oscillating:
 - **Bounds:** `max_rejudge` pairs and `max_retag` documents per run; the first
   run is always **report-only** (it lists would-be actions and touches
   nothing), regardless of the `report_only` flag.
+- **Report:** each run persists a full JSON report as its task result — worklist
+  counts, judged/confirmed, flips, planned/applied pair entries, and skip
+  reasons — surfaced in the web UI on the task detail page and as a summary
+  card on the tags page.
 - With the adjudicator disabled, runs log the worklist snapshot and complete
   without LLM calls or writes. The queue daemon warns when reconciliation is
   enabled without the adjudicator.
@@ -206,7 +210,10 @@ internals — see [tag-matcher.md](tag-matcher.md).
 - **Monitoring**: consolidation decisions live in the kushim log
   (`consolidation[v1]: … reason=…`); reconciliation results in the task's JSON
   report (worklist counts, judged/confirmed, flips, merges, re-tags,
-  invalidations), visible in the tasks UI.
+  invalidations), visible in the web UI — the task detail page shows the full
+  report with pair-level breakdowns (would-be merges, would-be re-tags,
+  invalidated decisions, skip reasons), and the tags page shows a summary card
+  for the latest run.
 
 ---
 

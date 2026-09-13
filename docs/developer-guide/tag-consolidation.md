@@ -284,7 +284,17 @@ out); later runs count the interval from the previous run. The handler
 (`MarkBatchProcessing`/`FinalizeBatchStatus`), dedups on
 `tagreconcile:<UTC date>`, and reports a JSON `Report` — worklist counts per
 category, judged/confirmed, flips by direction, merges with reassignment
-counts, re-tags, invalidations, skip reasons — as the task result.
+counts, re-tags, invalidations, skip reasons — as the task result. The report
+also carries pair-level entries (`planned_merges`, `planned_keep_flips`,
+`retag_entries`, `invalidated_entries`) plus `capped`, `no_documents`, and
+`adjudicator_disabled`; report-only keep-flip document counts come from a
+single batched `TagPairEvidenceStats` call, and no-document keep flips are
+counted in `no_documents` so the judged/skips/capped partition stays exact.
+The report is served by `GET /api/v1/tags/reconciliation/report` (latest
+completed run, viewer-gated, Postgres-only) and the `result` field on
+`GET /api/v1/tasks/{id}` for `tagreconcile` tasks (list endpoints omit it);
+the web UI renders it on the task detail page and as a summary card on the
+tags page.
 
 **Worklist** (from what the table persists, plus logs):
 

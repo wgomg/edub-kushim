@@ -64,15 +64,22 @@ func NewReconciler(getConfig func() *config.Config, client *database.Client,
 }
 
 type Report struct {
-	ReportOnly  bool           `json:"report_only"`
-	Worklist    WorklistCounts `json:"worklist"`
-	Judged      int            `json:"judged"`
-	Confirmed   int            `json:"confirmed"`
-	Flips       FlipCounts     `json:"flips"`
-	Merges      []MergeEntry   `json:"merges"`
-	Retags      int            `json:"retags"`
-	Invalidated int            `json:"invalidated"`
-	Skips       map[string]int `json:"skips"`
+	ReportOnly          bool           `json:"report_only"`
+	Worklist            WorklistCounts `json:"worklist"`
+	Judged              int            `json:"judged"`
+	Confirmed           int            `json:"confirmed"`
+	Flips               FlipCounts     `json:"flips"`
+	Merges              []MergeEntry   `json:"merges"`
+	Retags              int            `json:"retags"`
+	Invalidated         int            `json:"invalidated"`
+	Skips               map[string]int `json:"skips"`
+	PlannedMerges       []MergeEntry   `json:"planned_merges,omitempty"`
+	PlannedKeepFlips    []MergeEntry   `json:"planned_keep_flips,omitempty"`
+	RetagEntries        []MergeEntry   `json:"retag_entries,omitempty"`
+	InvalidatedEntries  []MergeEntry   `json:"invalidated_entries,omitempty"`
+	Capped              int            `json:"capped,omitempty"`
+	NoDocuments         int            `json:"no_documents,omitempty"`
+	AdjudicatorDisabled bool           `json:"adjudicator_disabled,omitempty"`
 }
 
 type WorklistCounts struct {
@@ -169,12 +176,14 @@ func (r *Reconciler) Run(ctx context.Context, progress task.ProgressFunc) (Repor
 	report.Invalidated = invalidated
 
 	if !cfg.Enricher.TagAdjudicator.Enabled {
+		report.AdjudicatorDisabled = true
 		r.logger.Info(nil, "tag reconcile: adjudicator disabled — worklist snapshot stale=%d unjudged=%d drifted=%d aged=%d (report_only=%t)",
 			report.Worklist.Stale, report.Worklist.Unjudged, report.Worklist.Drifted, report.Worklist.Aged, report.ReportOnly)
 		return report, nil
 	}
 
 	if len(worklist) > cfg.Enricher.TagReconcile.MaxRejudge {
+		report.Capped = len(worklist) - cfg.Enricher.TagReconcile.MaxRejudge
 		worklist = worklist[:cfg.Enricher.TagReconcile.MaxRejudge]
 	}
 
@@ -182,7 +191,7 @@ func (r *Reconciler) Run(ctx context.Context, progress task.ProgressFunc) (Repor
 	r.evidencePass(ctx, cfg, worklist, policyStoreTags)
 
 	progress("apply", "applying flips", 0)
-	r.applyPass(ctx, cfg, worklist, &report)
+	r.applyPass(ctx, cfg, worklist, &report, tagCounts)
 
 	progress("report", "reporting", 1)
 	return report, nil
@@ -229,6 +238,7 @@ func (r *Reconciler) buildWorklist(ctx context.Context, cfg *config.Config, stor
 			}
 		}
 		for _, p := range deadTargetPairs {
+			report.InvalidatedEntries = append(report.InvalidatedEntries, MergeEntry{Query: p[0], Target: p[1]})
 			r.logger.Info(nil, "tag reconcile: invalidated pair %q → %q (dead target)", p[0], p[1])
 		}
 	}
@@ -764,11 +774,12 @@ func (r *Reconciler) adjudicateBand(ctx context.Context, cfg *config.Config, ban
 	}
 }
 
-func (r *Reconciler) applyPass(ctx context.Context, cfg *config.Config, worklist []*entry, report *Report) {
+func (r *Reconciler) applyPass(ctx context.Context, cfg *config.Config, worklist []*entry, report *Report, tagCounts map[string]int64) {
 	budget := cfg.Enricher.TagReconcile.MaxRetag
 	appliedFlip := false
+	var plannedKeepFlips []*entry
 
-	for _, e := range worklist {
+	for i, e := range worklist {
 		if e.skipReason != "" {
 			report.Skips[e.skipReason]++
 			continue
@@ -795,15 +806,26 @@ func (r *Reconciler) applyPass(ctx context.Context, cfg *config.Config, worklist
 		if report.ReportOnly {
 			if flipToMerge {
 				report.Flips.ToMerge++
+				report.PlannedMerges = append(report.PlannedMerges, MergeEntry{
+					Query:      e.query,
+					Target:     e.target,
+					Reassigned: tagCounts[e.query],
+				})
 				r.logger.Info(nil, "tag reconcile (report-only): would merge %q → %q", e.query, e.target)
 			} else {
-				report.Flips.ToKeep++
-				r.logger.Info(nil, "tag reconcile (report-only): would re-point %q → %q (docs=%d)", e.target, e.query, len(e.docIDs))
+				plannedKeepFlips = append(plannedKeepFlips, e)
 			}
 			continue
 		}
 
 		if budget <= 0 && appliedFlip {
+			for _, rest := range worklist[i+1:] {
+				if rest.skipReason != "" {
+					report.Skips[rest.skipReason]++
+				} else {
+					report.Capped++
+				}
+			}
 			break
 		}
 
@@ -825,8 +847,81 @@ func (r *Reconciler) applyPass(ctx context.Context, cfg *config.Config, worklist
 		}
 		report.Flips.ToKeep++
 		report.Retags += repointed
+		if repointed > 0 {
+			report.RetagEntries = append(report.RetagEntries, MergeEntry{
+				Query:      e.query,
+				Target:     e.target,
+				Reassigned: int64(repointed),
+			})
+		} else {
+			report.NoDocuments++
+		}
 		budget -= repointed
 	}
+
+	if len(plannedKeepFlips) > 0 {
+		r.resolvePlannedKeepFlips(ctx, plannedKeepFlips, report)
+	}
+}
+
+func (r *Reconciler) resolvePlannedKeepFlips(ctx context.Context, entries []*entry, report *Report) {
+	var needCounts []*entry
+	for _, e := range entries {
+		if len(e.docIDs) == 0 {
+			needCounts = append(needCounts, e)
+		}
+	}
+
+	counts := map[string]int64{}
+	if len(needCounts) > 0 {
+		resolved, err := r.pairDocumentCounts(ctx, needCounts)
+		if err != nil {
+			r.logger.Error(nil, "tag reconcile: document counts for report-only keep flips: %v", err)
+		} else {
+			counts = resolved
+		}
+	}
+
+	for _, e := range entries {
+		reassigned := int64(len(e.docIDs))
+		if reassigned == 0 {
+			count, ok := counts[orderedPairKey(e.query, e.target)]
+			if !ok {
+				continue
+			}
+			reassigned = count
+		}
+		report.Flips.ToKeep++
+		report.PlannedKeepFlips = append(report.PlannedKeepFlips, MergeEntry{
+			Query:      e.query,
+			Target:     e.target,
+			Reassigned: reassigned,
+		})
+		r.logger.Info(nil, "tag reconcile (report-only): would re-point %q → %q (docs=%d)", e.target, e.query, reassigned)
+	}
+}
+
+func (r *Reconciler) pairDocumentCounts(ctx context.Context, entries []*entry) (map[string]int64, error) {
+	queries := make([]string, 0, len(entries))
+	targets := make([]string, 0, len(entries))
+	counts := make(map[string]int64, len(entries))
+	for _, e := range entries {
+		queries = append(queries, e.query)
+		targets = append(targets, e.target)
+		counts[orderedPairKey(e.query, e.target)] = 0
+	}
+
+	stats, err := r.client.TagPairEvidenceStats(ctx, database.TagPairEvidenceStatsParams{
+		Queries: queries,
+		Targets: targets,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("tag pair evidence stats: %w", err)
+	}
+	for _, s := range stats {
+		counts[orderedPairKey(s.Query, s.Target)] = s.DocumentCount
+	}
+	return counts, nil
 }
 
 func (r *Reconciler) applyMergeFlip(ctx context.Context, e *entry, report *Report) error {

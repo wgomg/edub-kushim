@@ -18,6 +18,62 @@ func rawPayload(t *testing.T, v any) *json.RawMessage {
 	return &raw
 }
 
+func TestTaskToResponse_Result(t *testing.T) {
+	resultJSON := json.RawMessage(`{"report_only":true,"worklist":{"stale":5}}`)
+
+	t.Run("list response omits result", func(t *testing.T) {
+		got := taskToResponse(database.Task{
+			TaskType: itypes.Task.Type.TagReconcile,
+			Status:   itypes.Task.Status.Completed,
+			Result:   &resultJSON,
+		})
+		if got.Result != nil {
+			t.Fatalf("expected nil Result in list response, got %v", got.Result)
+		}
+	})
+
+	t.Run("detail response includes tagreconcile result", func(t *testing.T) {
+		got := taskDetailResponse(database.Task{
+			TaskType: itypes.Task.Type.TagReconcile,
+			Status:   itypes.Task.Status.Completed,
+			Result:   &resultJSON,
+		})
+		if got.Result == nil {
+			t.Fatal("expected non-nil Result")
+		}
+		var report struct {
+			ReportOnly bool `json:"report_only"`
+		}
+		if err := json.Unmarshal(got.Result, &report); err != nil {
+			t.Fatalf("unmarshal Result: %v", err)
+		}
+		if !report.ReportOnly {
+			t.Fatal("result.report_only = false, want true")
+		}
+	})
+
+	t.Run("detail response omits result of other task types", func(t *testing.T) {
+		got := taskDetailResponse(database.Task{
+			TaskType: itypes.Task.Type.Consume,
+			Status:   itypes.Task.Status.Completed,
+			Result:   &resultJSON,
+		})
+		if got.Result != nil {
+			t.Fatalf("expected nil Result for consume task, got %v", got.Result)
+		}
+	})
+
+	t.Run("nil result yields omitted field", func(t *testing.T) {
+		got := taskDetailResponse(database.Task{
+			TaskType: itypes.Task.Type.TagReconcile,
+			Status:   itypes.Task.Status.Completed,
+		})
+		if got.Result != nil {
+			t.Fatalf("expected nil Result, got %v", got.Result)
+		}
+	})
+}
+
 func TestTaskToResponse_PayloadDocID(t *testing.T) {
 	const docUUID = "f0e1d2c3-b4a5-4687-8901-23456789abcd"
 

@@ -250,6 +250,7 @@ export const api = {
 			}),
 		delete: (id) => requestRaw(`/api/v1/tags/${id}`, { method: 'DELETE' }),
 		mergeSuggestions: (limit = 20) => requestRaw(`/api/v1/tags/merge?limit=${limit}`),
+		reconcileReport: () => requestRaw('/api/v1/tags/reconciliation/report'),
 		merge: (sourceId, targetId) =>
 			requestRaw(`/api/v1/tags/${sourceId}/merge`, {
 				method: 'POST',

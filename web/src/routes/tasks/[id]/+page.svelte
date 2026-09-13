@@ -5,6 +5,7 @@
 	import { formatRelative } from '$lib/utils/html.js';
 	import { statusChipClasses } from '$lib/utils/statusChip.js';
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
+	import TagReconcileReport from '$lib/components/TagReconcileReport.svelte';
 
 	let { params } = $props();
 
@@ -157,6 +158,10 @@
 				<p class="text-xs font-medium tracking-wider text-parchment-400 uppercase">Error</p>
 				<p class="mt-1 text-sm whitespace-pre-wrap text-parchment-200">{task.error}</p>
 			</div>
+		{/if}
+
+		{#if task?.task_type === 'tagreconcile' && task?.result}
+			<TagReconcileReport report={task.result} completedAt={task.completed_at} />
 		{/if}
 
 		{#if task.status === 'failed'}

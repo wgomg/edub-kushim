@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -73,6 +74,47 @@ func TestReconcileBatchAndTaskQueries(t *testing.T) {
 	}
 	if ts, err := q.GetLastCompletedTagReconcileTask(ctx); err != nil || !ts.Valid {
 		t.Fatalf("GetLastCompletedTagReconcileTask = %v, %v", ts, err)
+	}
+
+	// GetLastCompletedTagReconcileTaskWithResult returns the same row with result.
+	row, err := q.GetLastCompletedTagReconcileTaskWithResult(ctx)
+	if err != nil {
+		t.Fatalf("GetLastCompletedTagReconcileTaskWithResult: %v", err)
+	}
+	if row.TaskID != "rc-t1" {
+		t.Fatalf("GetLastCompletedTagReconcileTaskWithResult TaskID = %q, want rc-t1", row.TaskID)
+	}
+	if row.Result != nil {
+		t.Fatalf("GetLastCompletedTagReconcileTaskWithResult Result = %v, want nil", row.Result)
+	}
+
+	// Insert a second completed task with a non-nil result.
+	resultJSON := json.RawMessage(`{"report_only":true,"worklist":{"stale":1}}`)
+	if _, err := q.db.ExecContext(ctx,
+		"INSERT INTO task (task_id, task_type, status, batch_id, dedup_key, result, completed_at) VALUES ('rc-t2', 'tagreconcile', 'completed', 'rc-b1', 'tagreconcile:2026-09-13', $1, now())",
+		resultJSON); err != nil {
+		t.Fatalf("insert task with result: %v", err)
+	}
+
+	// Latest completed row should now be rc-t2.
+	row2, err := q.GetLastCompletedTagReconcileTaskWithResult(ctx)
+	if err != nil {
+		t.Fatalf("GetLastCompletedTagReconcileTaskWithResult after insert: %v", err)
+	}
+	if row2.TaskID != "rc-t2" {
+		t.Fatalf("GetLastCompletedTagReconcileTaskWithResult TaskID = %q, want rc-t2", row2.TaskID)
+	}
+	if row2.Result == nil {
+		t.Fatal("GetLastCompletedTagReconcileTaskWithResult Result = nil, want non-nil")
+	}
+	var report struct {
+		ReportOnly bool `json:"report_only"`
+	}
+	if err := json.Unmarshal(*row2.Result, &report); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	if !report.ReportOnly {
+		t.Fatal("result.report_only = false, want true")
 	}
 }
 

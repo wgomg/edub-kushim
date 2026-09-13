@@ -267,9 +267,12 @@ func registerRoutes(
 	mux.Handle("DELETE /api/v1/errored", RequireRole(editor...)(http.HandlerFunc(erroredHandler.DeleteErrored)))
 	mux.Handle("POST /api/v1/errored/delete-all", RequireRole(editor...)(http.HandlerFunc(erroredHandler.DeleteAllErrored)))
 
+	taskHandler := handlers.NewTaskHandler(services, client, logger, getConfig)
+
 	tagHandler := handlers.NewTagHandler(services, logger)
 	mux.Handle("GET /api/v1/tags", RequireRole(viewer...)(http.HandlerFunc(tagHandler.List)))
 	mux.Handle("GET /api/v1/tags/merge", RequireRole(viewer...)(http.HandlerFunc(tagHandler.MergeSuggestions)))
+	mux.Handle("GET /api/v1/tags/reconciliation/report", RequireRole(viewer...)(http.HandlerFunc(taskHandler.GetTagReconcileReport)))
 	mux.Handle("POST /api/v1/tags", RequireRole(editor...)(http.HandlerFunc(tagHandler.Create)))
 	mux.Handle("PUT /api/v1/tags/{id}", RequireRole(editor...)(http.HandlerFunc(tagHandler.Update)))
 	mux.Handle("DELETE /api/v1/tags/{id}", RequireRole(editor...)(http.HandlerFunc(tagHandler.Delete)))
@@ -315,7 +318,6 @@ func registerRoutes(
 	mux.Handle("GET /wizard/config/status", RequireRole(admin...)(http.HandlerFunc(configHandler.ConfigStatus)))
 	mux.Handle("POST /wizard/config/retry", RequireRole(admin...)(http.HandlerFunc(configHandler.RetryFailedConfig)))
 
-	taskHandler := handlers.NewTaskHandler(services, client, logger, getConfig)
 	mux.Handle("GET /api/v1/tasks", RequireRole(viewer...)(http.HandlerFunc(taskHandler.ListTasks)))
 	mux.Handle("GET /api/v1/tasks/{id}", RequireRole(viewer...)(http.HandlerFunc(taskHandler.GetTask)))
 	mux.Handle("POST /api/v1/tasks/{id}/retry", RequireRole(editor...)(http.HandlerFunc(taskHandler.RetryTask)))

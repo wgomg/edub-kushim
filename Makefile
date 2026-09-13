@@ -297,7 +297,8 @@ test-cgo-db:
 	CGO_ENABLED=1 go test -tags "XLA,ORT" -count=1 -timeout 120s \
 		./internal/consumption/ \
 		./internal/configtask/ \
-		./internal/commands/
+		./internal/commands/ \
+		./internal/api/handlers/
 
 # Single-package run for development. Filter with RUN, e.g.:
 #   make test-one PKG=./internal/errs/ RUN=TestSleepAfterRequest
@@ -328,7 +329,8 @@ test-cgo:
 		./internal/tools/adapters/ocr \
 		./internal/tools/adapters/tagmatcher \
 		./internal/tools/ \
-		./internal/commands/
+		./internal/commands/ \
+		./internal/enrichment/tagreconcile/
 
 test-cgo-glibc:
 	podman run --rm \

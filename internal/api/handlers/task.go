@@ -108,7 +108,40 @@ func (h *TaskHandler) GetTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(taskToResponse(t))
+	json.NewEncoder(w).Encode(taskDetailResponse(t))
+}
+
+func (h *TaskHandler) GetTagReconcileReport(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := ctx.Value("reqid").(string)
+
+	row, err := h.queries.GetLastCompletedTagReconcileTaskWithResult(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "no completed tag reconciliation run", http.StatusNotFound)
+			return
+		}
+		h.logger.Error(&reqID, "get tag reconciliation report: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	completedAt := ""
+	if row.CompletedAt.Valid {
+		completedAt = row.CompletedAt.Time.Format(time.RFC3339)
+	}
+
+	result := json.RawMessage(nil)
+	if row.Result != nil {
+		result = *row.Result
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(types.TagReconcileReportResponse{
+		TaskID:      row.TaskID,
+		CompletedAt: completedAt,
+		Result:      result,
+	})
 }
 
 func (h *TaskHandler) RetryTask(w http.ResponseWriter, r *http.Request) {
@@ -611,6 +644,14 @@ func taskLabel(taskType itypes.TaskType, dedupKey sql.NullString) string {
 }
 
 func taskToResponse(t database.Task) types.TaskResponse {
+	return buildTaskResponse(t, false)
+}
+
+func taskDetailResponse(t database.Task) types.TaskResponse {
+	return buildTaskResponse(t, true)
+}
+
+func buildTaskResponse(t database.Task, includeResult bool) types.TaskResponse {
 	var errStr *string
 	if t.Error.Valid {
 		errStr = &t.Error.String
@@ -668,6 +709,11 @@ func taskToResponse(t database.Task) types.TaskResponse {
 		}
 	}
 
+	var result json.RawMessage
+	if includeResult && t.TaskType == itypes.Task.Type.TagReconcile && t.Result != nil {
+		result = *t.Result
+	}
+
 	return types.TaskResponse{
 		TaskID:       t.TaskID,
 		BatchID:      t.BatchID.String,
@@ -681,5 +727,6 @@ func taskToResponse(t database.Task) types.TaskResponse {
 		CreatedAt:    t.CreatedAt.Time.Format(time.RFC3339),
 		StartedAt:    started,
 		CompletedAt:  completed,
+		Result:       result,
 	}
 }
