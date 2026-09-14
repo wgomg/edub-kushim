@@ -587,7 +587,10 @@ queued" (`commands/enrich.go:37-45`).
 Two sweeps recover from dead workers, both driven by the **attempts budget**
 (`Consumer.Reclaim.MaxRetries`, default 3) and the **staleness cutoff**
 (`StaleTaskAfter`, default 600s — a task is only stale if it's been in
-`processing` longer than that, so a slow-but-alive task isn't touched):
+`processing` longer than that, so a slow-but-alive task isn't touched). The
+age transitions below apply to the gated class only (consume, enrich,
+thumbnail); blocking-class tasks (backup, mirror, tagreconcile,
+thumbbackfill) are swept by ownership-gated variants instead:
 
 ```sql
 -- name: QuarantineStaleProcessingTasks :execrows
@@ -595,20 +598,73 @@ UPDATE task SET
     status = 'failed',
     error = 'Max retries exceeded (' || attempts || ')',
     completed_at = CURRENT_TIMESTAMP
-WHERE status = 'processing' AND attempts >= $1 AND started_at < $2;
+WHERE status = 'processing' AND attempts >= $1 AND started_at < $2
+  AND task_type <> ALL(@types::task_type[]);
 
 -- name: ResetStaleProcessingTasks :execrows
 UPDATE task SET
     status = 'pending',
-    attempts = attempts + 1
-WHERE status = 'processing' AND attempts < $1 AND started_at < $2;
+    attempts = attempts + 1,
+    progress = NULL
+WHERE status = 'processing' AND attempts < $1 AND started_at < $2
+  AND task_type <> ALL(@types::task_type[]);
 ```
 
-(`task.sql:218-229`; per-batch variants at `batch.sql:41-52`.) Below the
-budget → requeue with `attempts + 1`; at/above it → `failed` with a
-recognizable error string. The global sweep runs from the queue daemon's
-housekeeping ticker; the per-batch variant runs at consume entry and batch
-resume.
+(`task.sql`; per-batch variants at `batch.sql:41-52`.) Below the budget →
+requeue with `attempts + 1`; at/above it → `failed` with a recognizable
+error string. The global sweep runs from the queue daemon's housekeeping
+ticker; the per-batch variant runs at consume entry and batch resume.
+
+**Blocking-class recovery is gated on maintenance-lock ownership.** A
+blocking task is swept only when the lock is not held fresh by its own
+claim — `backup_lock.owner_token IS DISTINCT FROM task.claim_token`, or the
+token still matches but `backup_lock.started_at` is past the 30-minute
+freshness window (the holder crashed without heartbeating). A live holder
+(5-minute heartbeat refreshing) keeps both the task row and the lock; a
+crashed holder is recovered exactly once. The sweep transaction releases
+stale holders' locks first (`ReleaseMaintenanceLockForStaleHolders` — the
+release subselect reads `status = 'processing'`, so it must run before the
+resets), then applies the blocking transitions:
+
+```sql
+-- name: QuarantineStaleBlockingTasks :execrows
+UPDATE task SET
+    status = 'failed',
+    error = 'Max retries exceeded (' || attempts || ')',
+    completed_at = CURRENT_TIMESTAMP
+FROM backup_lock
+WHERE backup_lock.id = 1
+  AND task.status = 'processing'
+  AND task.task_type = ANY(@types::task_type[])
+  AND task.attempts >= $1
+  AND task.started_at < $2
+  AND (
+    backup_lock.owner_token IS DISTINCT FROM task.claim_token
+    OR backup_lock.started_at <= NOW() - INTERVAL '30 minutes'
+  );
+
+-- name: ResetStaleBlockingTasks :execrows
+UPDATE task SET
+    status = 'pending',
+    attempts = attempts + 1,
+    progress = NULL
+FROM backup_lock
+WHERE backup_lock.id = 1
+  AND task.status = 'processing'
+  AND task.task_type = ANY(@types::task_type[])
+  AND task.attempts < $1
+  AND task.started_at < $2
+  AND (
+    backup_lock.owner_token IS DISTINCT FROM task.claim_token
+    OR backup_lock.started_at <= NOW() - INTERVAL '30 minutes'
+  );
+```
+
+The window expression is character-identical to the acquire queries' steal
+boundary, so "the sweep says stale" and "an acquire would succeed" never
+disagree. Manual NULL-token locks are never touched by the sweep (the
+release's token-membership subselect cannot match NULL); manual recovery
+stays acquire-steal only.
 
 `attempts` increments **only** on reclamation resets — a normal handler
 failure goes straight to `failed` (visible, manually retryable) without
@@ -623,7 +679,7 @@ copying the parent's error text — broader than the old per-task discard,
 which only handled `'Max retries exceeded'` tasks. The sweep runs
 unconditionally (even with zero quarantined rows), so it also catches legacy
 stuck data. The global stale-task sweep (`ResetStaleProcessingTasks`,
-`service/batch.go:455-496`) runs a global variant of the same sweep, since
+`service/batch.go:490`) runs a global variant of the same sweep, since
 its quarantined consumes have no batch-level recovery point.
 
 Both sweeps also **restore**: the reset half (consume back to `pending`)
@@ -727,10 +783,13 @@ WHERE id = 1 AND (NOT running OR started_at <= NOW() - INTERVAL '30 minutes');
   (`ResetStaleProcessingTasks`, `ResetProcessingTasksByBatch`, `CompleteCancel`,
   the consume-cancel CLI, `Owner.ResetProcessingByBatch`, `task.Retry`)
   releases via a subselect on the task rows' `claim_token`
-  (`ReleaseMaintenanceLockForStaleTasks` / `ReleaseMaintenanceLockForBatch`)
-  inside the transition's transaction. A stale claimant's late terminal
-  write is a token-mismatch no-op (rows = 0 → no release), so it can never
-  drop a fresh holder's lock.
+  (`ReleaseMaintenanceLockForStaleHolders` / `ReleaseMaintenanceLockForBatch`)
+  inside the transition's transaction. The stale-holder variant releases
+  only when the lock is past the 30-minute freshness window and its
+  `owner_token` belongs to a `processing` blocking claim, so a live holder's
+  fresh lock is never dropped by the age sweep. A stale claimant's late
+  terminal write is a token-mismatch no-op (rows = 0 → no release), so it
+  can never drop a fresh holder's lock.
 - The backup handler (`internal/task/handlers/backup.go`) runs with the lock
   held; it **drains** in-flight
   work (`database.WaitForTaskDrain`, `internal/database/migrate.go`: 5s ticker on
@@ -783,8 +842,9 @@ release is guarded by `owner_token IS NOT DISTINCT FROM NULL`, so it can only
 release a NULL-owner lock and never a blocking task's tokenized lock.
 
 A blocking task longer than 30 minutes keeps its lock alive via the 5-minute
-heartbeat, and the age sweep resets blocking tasks whose `started_at` exceeds
-`stale_task_after`.
+heartbeat, and the age sweep leaves it alone: blocking-class recovery is
+gated on lock ownership (§10), so a live heartbeating holder is never reset
+mid-run.
 
 ---
 

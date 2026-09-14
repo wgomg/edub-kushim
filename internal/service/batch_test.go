@@ -833,7 +833,158 @@ func TestBatch_ResetStaleProcessingTasks(t *testing.T) {
 	})
 }
 
-func TestBatch_ResetStaleProcessingTasks_ReleasesBlockingLock(t *testing.T) {
+func TestBatch_ResetStaleProcessingTasks_TokenMismatchRecovery(t *testing.T) {
+	svc, client := newTestBatch(t)
+	ctx := context.Background()
+
+	foreignTaskID, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
+		TaskID: "rsts-mm-f", TaskType: "backup", Status: "processing",
+	})
+	testutil.AssertNoError(t, err, "create foreign processing backup")
+	foreignToken := uuid.New()
+	if _, err := client.DB().ExecContext(ctx,
+		"UPDATE task SET claim_token = $1, started_at = NOW() WHERE id = $2",
+		foreignToken, foreignTaskID); err != nil {
+		t.Fatalf("set foreign claim token and fresh started_at: %v", err)
+	}
+
+	ownTaskID, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
+		TaskID: "rsts-mm", TaskType: "backup", Status: "processing",
+	})
+	testutil.AssertNoError(t, err, "create orphaned processing backup")
+	ownToken := uuid.New()
+	if _, err := client.DB().ExecContext(ctx,
+		"UPDATE task SET claim_token = $1, started_at = NOW() - INTERVAL '10 minutes' WHERE id = $2",
+		ownToken, ownTaskID); err != nil {
+		t.Fatalf("set orphan claim token and stale started_at: %v", err)
+	}
+	if _, err := client.DB().ExecContext(ctx,
+		"UPDATE backup_lock SET running = true, started_at = NOW(), owner_token = $1 WHERE id = 1",
+		foreignToken); err != nil {
+		t.Fatalf("hold lock with foreign token: %v", err)
+	}
+
+	n, err := svc.ResetStaleProcessingTasks(ctx, 60)
+	testutil.AssertNoError(t, err, "reset stale")
+	testutil.AssertEqual(t, n, int64(1), "only orphaned task reset")
+
+	orphan, err := client.Queries.GetTask(ctx, ownTaskID)
+	testutil.AssertNoError(t, err, "get orphan task")
+	testutil.AssertEqual(t, orphan.Status, "pending", "orphan reset to pending")
+
+	foreign, err := client.Queries.GetTask(ctx, foreignTaskID)
+	testutil.AssertNoError(t, err, "get foreign task")
+	testutil.AssertEqual(t, foreign.Status, "processing", "foreign holder untouched")
+
+	held, err := client.Queries.IsBackupLocked(ctx)
+	testutil.AssertNoError(t, err, "post-reset lock check")
+	if held != 1 {
+		t.Fatalf("foreign holder's lock was released, want held=%d", held)
+	}
+}
+
+func TestBatch_ResetStaleProcessingTasks_WindowExpiryRecovery(t *testing.T) {
+	svc, client := newTestBatch(t)
+	ctx := context.Background()
+
+	taskID, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
+		TaskID: "rsts-we", TaskType: "mirror", Status: "processing",
+	})
+	testutil.AssertNoError(t, err, "create processing mirror")
+
+	token := uuid.New()
+	if _, err := client.DB().ExecContext(ctx,
+		"UPDATE task SET claim_token = $1, started_at = NOW() - INTERVAL '40 minutes' WHERE id = $2",
+		token, taskID); err != nil {
+		t.Fatalf("set claim token and stale started_at: %v", err)
+	}
+	if _, err := client.DB().ExecContext(ctx,
+		"UPDATE backup_lock SET running = true, started_at = NOW() - INTERVAL '31 minutes', owner_token = $1 WHERE id = 1",
+		token); err != nil {
+		t.Fatalf("hold lock with expired started_at: %v", err)
+	}
+
+	n, err := svc.ResetStaleProcessingTasks(ctx, 60)
+	testutil.AssertNoError(t, err, "reset stale")
+	testutil.AssertEqual(t, n, int64(1), "one blocking task reset")
+
+	row, err := client.Queries.GetTask(ctx, taskID)
+	testutil.AssertNoError(t, err, "get task")
+	testutil.AssertEqual(t, row.Status, "pending", "task reset to pending")
+
+	held, err := client.Queries.IsBackupLocked(ctx)
+	testutil.AssertNoError(t, err, "post-reset lock check")
+	testutil.AssertEqual(t, held, 0, "lock released after window expiry")
+
+	n2, err := svc.ResetStaleProcessingTasks(ctx, 60)
+	testutil.AssertNoError(t, err, "second sweep")
+	testutil.AssertEqual(t, n2, int64(0), "no-op on second sweep")
+}
+
+func TestBatch_ResetStaleProcessingTasks_QuarantineOwnershipGate(t *testing.T) {
+	svc, client := newTestBatch(t)
+	ctx := context.Background()
+
+	t.Run("ownership-failed quarantine", func(t *testing.T) {
+		taskID, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
+			TaskID: "rsts-qg1", TaskType: "backup", Status: "processing",
+		})
+		testutil.AssertNoError(t, err, "create processing backup")
+		if _, err := client.DB().ExecContext(ctx,
+			"UPDATE task SET claim_token = $1, started_at = NOW() - INTERVAL '10 minutes', attempts = 3 WHERE id = $2",
+			uuid.New(), taskID); err != nil {
+			t.Fatalf("set stale with max attempts: %v", err)
+		}
+
+		n, err := svc.ResetStaleProcessingTasks(ctx, 60)
+		testutil.AssertNoError(t, err, "reset stale")
+		testutil.AssertEqual(t, n, int64(1), "one task quarantined")
+
+		row, err := client.Queries.GetTask(ctx, taskID)
+		testutil.AssertNoError(t, err, "get task")
+		testutil.AssertEqual(t, row.Status, "failed", "task quarantined to failed")
+		testutil.AssertEqual(t, row.Error.String, "Max retries exceeded (3)", "quarantine error message")
+	})
+
+	t.Run("live holder not quarantined", func(t *testing.T) {
+		taskID, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
+			TaskID: "rsts-qg2", TaskType: "tagreconcile", Status: "processing",
+		})
+		testutil.AssertNoError(t, err, "create processing tagreconcile")
+		token := uuid.New()
+		if _, err := client.DB().ExecContext(ctx,
+			"UPDATE task SET claim_token = $1, started_at = NOW() - INTERVAL '10 minutes', attempts = 3 WHERE id = $2",
+			token, taskID); err != nil {
+			t.Fatalf("set stale with max attempts: %v", err)
+		}
+		if _, err := client.DB().ExecContext(ctx,
+			"UPDATE backup_lock SET running = true, started_at = NOW(), owner_token = $1 WHERE id = 1",
+			token); err != nil {
+			t.Fatalf("hold lock with matching token: %v", err)
+		}
+
+		n, err := svc.ResetStaleProcessingTasks(ctx, 60)
+		testutil.AssertNoError(t, err, "reset stale")
+		testutil.AssertEqual(t, n, int64(0), "nothing quarantined")
+
+		row, err := client.Queries.GetTask(ctx, taskID)
+		testutil.AssertNoError(t, err, "get task")
+		testutil.AssertEqual(t, row.Status, "processing", "task untouched")
+		testutil.AssertEqual(t, row.Attempts, int32(3), "attempts preserved")
+		testutil.AssertEqual(t, row.ClaimToken.UUID, token, "claim token preserved")
+
+		var owner uuid.NullUUID
+		var running bool
+		if err := client.DB().QueryRowContext(ctx,
+			"SELECT owner_token, running FROM backup_lock WHERE id = 1").Scan(&owner, &running); err != nil {
+			t.Fatalf("read lock state: %v", err)
+		}
+		testutil.AssertEqual(t, running, true, "lock still held")
+		testutil.AssertEqual(t, owner.UUID, token, "lock owner token preserved")
+	})
+}
+
+func TestBatch_ResetStaleProcessingTasks_KeepsLiveBlockingHolder(t *testing.T) {
 	svc, client := newTestBatch(t)
 	ctx := context.Background()
 
@@ -866,14 +1017,14 @@ func TestBatch_ResetStaleProcessingTasks_ReleasesBlockingLock(t *testing.T) {
 
 	held, err = client.Queries.IsBackupLocked(ctx)
 	testutil.AssertNoError(t, err, "post-reset lock check")
-	if held != 0 {
-		t.Fatalf("post-reset lock held=%d, want 0 (stale blocking task must release its lock)", held)
+	if held != 1 {
+		t.Fatalf("post-reset lock held=%d, want 1 (live holder keeps its lock)", held)
 	}
 
 	row, err := client.Queries.GetTask(ctx, taskID)
 	testutil.AssertNoError(t, err, "get task")
-	if string(row.Status) != "pending" {
-		t.Fatalf("status=%s, want pending", row.Status)
+	if string(row.Status) != "processing" {
+		t.Fatalf("status=%s, want processing", row.Status)
 	}
 }
 

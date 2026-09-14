@@ -497,16 +497,33 @@ func (s *Batch) ResetStaleProcessingTasks(ctx context.Context, staleAfterSeconds
 	cutoff := time.Now().Add(-time.Duration(staleAfterSeconds) * time.Second)
 	txQ := s.client.Queries.WithTx(tx)
 
-	if _, err := txQ.ReleaseMaintenanceLockForStaleTasks(ctx, database.ReleaseMaintenanceLockForStaleTasksParams{
+	// the maintenance lock release must precede the resets because its subselect reads status = 'processing'.
+	if _, err := txQ.ReleaseMaintenanceLockForStaleHolders(ctx, types.BlockingTaskTypes()); err != nil {
+		return 0, errs.FromDB(err, "release maintenance lock for stale holders")
+	}
+
+	blockingQuarantined, err := txQ.QuarantineStaleBlockingTasks(ctx, database.QuarantineStaleBlockingTasksParams{
+		Attempts:  s.maxRetries,
 		StartedAt: sql.NullTime{Time: cutoff, Valid: true},
 		Types:     types.BlockingTaskTypes(),
-	}); err != nil {
-		return 0, errs.FromDB(err, "release maintenance lock for stale tasks")
+	})
+	if err != nil {
+		return 0, errs.FromDB(err, "quarantine stale blocking tasks")
+	}
+
+	blockingReset, err := txQ.ResetStaleBlockingTasks(ctx, database.ResetStaleBlockingTasksParams{
+		Attempts:  s.maxRetries,
+		StartedAt: sql.NullTime{Time: cutoff, Valid: true},
+		Types:     types.BlockingTaskTypes(),
+	})
+	if err != nil {
+		return 0, errs.FromDB(err, "reset stale blocking tasks")
 	}
 
 	quarantined, err := txQ.QuarantineStaleProcessingTasks(ctx, database.QuarantineStaleProcessingTasksParams{
 		Attempts:  s.maxRetries,
 		StartedAt: sql.NullTime{Time: cutoff, Valid: true},
+		Types:     types.BlockingTaskTypes(),
 	})
 	if err != nil {
 		return 0, errs.FromDB(err, "quarantine stale processing tasks")
@@ -515,6 +532,7 @@ func (s *Batch) ResetStaleProcessingTasks(ctx context.Context, staleAfterSeconds
 	reset, err := txQ.ResetStaleProcessingTasks(ctx, database.ResetStaleProcessingTasksParams{
 		Attempts:  s.maxRetries,
 		StartedAt: sql.NullTime{Time: cutoff, Valid: true},
+		Types:     types.BlockingTaskTypes(),
 	})
 	if err != nil {
 		return 0, errs.FromDB(err, "reset stale processing tasks")
@@ -524,7 +542,7 @@ func (s *Batch) ResetStaleProcessingTasks(ctx context.Context, staleAfterSeconds
 		return 0, errs.FromDB(err, "restore discarded enrich tasks")
 	}
 
-	// Quarantined stale consumes have no batch-level recovery point (the
+	// quarantined stale consumes have no batch-level recovery point (the
 	// batch owner may still be live), so sweep their waiting enriches here.
 	if _, err := txQ.DiscardWaitingEnrichesOfFailedConsumesGlobal(ctx); err != nil {
 		return 0, errs.FromDB(err, "discard waiting enriches of failed consumes")
@@ -534,7 +552,7 @@ func (s *Batch) ResetStaleProcessingTasks(ctx context.Context, staleAfterSeconds
 		return 0, errs.FromDB(err, "commit transaction for reset stale processing tasks")
 	}
 
-	return quarantined + reset, nil
+	return blockingQuarantined + blockingReset + quarantined + reset, nil
 }
 
 func (s *Batch) batchOwnerState(ctx context.Context, batchID string) (task.OwnerState, int64, error) {
