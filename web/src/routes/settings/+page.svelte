@@ -40,6 +40,14 @@
 		ensureMirrorBlock();
 		ensureTagReconcileBlock();
 		ensureTagAdjudicatorBlock();
+		ensureContentAnalyzerTags();
+	}
+
+	function ensureContentAnalyzerTags() {
+		if (!cfg) return;
+		const ca = cfg.enricher.contentanalyzer;
+		if (!(ca.min_tags > 0)) ca.min_tags = 3;
+		if (!(ca.max_tags > 0)) ca.max_tags = 5;
 	}
 
 	function ensureFallbacksArray() {
@@ -169,6 +177,8 @@
 			'enricher.textreducer.target_words': Number(cfg.enricher.textreducer.target_words),
 			'enricher.contentanalyzer.enabled': cfg.enricher.contentanalyzer.enabled,
 			'enricher.contentanalyzer.timeout': Number(cfg.enricher.contentanalyzer.timeout),
+			'enricher.contentanalyzer.min_tags': Number(cfg.enricher.contentanalyzer.min_tags),
+			'enricher.contentanalyzer.max_tags': Number(cfg.enricher.contentanalyzer.max_tags),
 			'enricher.contentanalyzer.prompt_template': cfg.enricher.contentanalyzer.prompt_template,
 			'enricher.contentanalyzer.pause_on_credit_error':
 				cfg.enricher.contentanalyzer.pause_on_credit_error,
@@ -454,7 +464,7 @@
 {:else if !cfg}
 	<div class="text-parchment-500">Loading settings…</div>
 {:else}
-	<div class="mx-auto max-w-[64rem] pb-24" bind:this={rootEl}>
+	<div class="mx-auto max-w-5xl pb-24" bind:this={rootEl}>
 		<div class="mb-7 max-w-3xl">
 			<h1 class="text-[1.625rem] font-semibold tracking-[-0.01em] text-parchment-200">Settings</h1>
 			<p class="mt-1.5 mb-4 text-parchment-500">
@@ -465,7 +475,7 @@
 
 		<div class="grid gap-10 lg:grid-cols-[13.75rem_minmax(0,1fr)] lg:items-start">
 			<SettingsRail active={activeGroup} {dirtyGroups} counts={matchCounts} tools={toolsSummary} />
-			<div class="max-w-[46rem] min-w-0">
+			<div class="max-w-184 min-w-0">
 				<OverviewSection tools={toolStatus} statusKnown={statusLoaded} />
 				<IntakeSection {cfg} {mimeTypeOptions} />
 				<ProcessingSection {cfg} {toolStatus} statusKnown={statusLoaded} />

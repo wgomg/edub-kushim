@@ -51,7 +51,7 @@ func TestBuildPrompt_DefaultTemplate(t *testing.T) {
 	}
 	tagSuggestions := []string{"ai", "ml"}
 
-	result := BuildPrompt("sample text", docTypes, peopleTypes, tagSuggestions, "")
+	result := BuildPrompt("sample text", docTypes, peopleTypes, tagSuggestions, "", 3, 5)
 
 	if !strings.Contains(result, "sample text") {
 		t.Error("expected output to contain the input text")
@@ -68,14 +68,14 @@ func TestBuildPrompt_DefaultTemplate(t *testing.T) {
 	if !strings.Contains(result, "Analyze the excerpts") {
 		t.Error("expected output to start with default prompt header")
 	}
-	if !strings.Contains(result, "At most 8 thematic tags") {
-		t.Error("expected prompt to contain 'At most 8 thematic tags' from RequestedTags field")
+	if !strings.Contains(result, "Between 3 and 5 thematic tags") {
+		t.Error("expected prompt to contain 'Between 3 and 5 thematic tags' from MinTags/MaxTags fields")
 	}
 }
 
 func TestBuildPrompt_CustomTemplate(t *testing.T) {
 	custom := "Custom prompt: {{.Text}} and {{.DocTypePrompt}}"
-	result := BuildPrompt("hello world", nil, nil, nil, custom)
+	result := BuildPrompt("hello world", nil, nil, nil, custom, 3, 5)
 
 	expected := "Custom prompt: hello world and - Document type: choose one of the following:\n"
 	if result != expected {
@@ -84,7 +84,7 @@ func TestBuildPrompt_CustomTemplate(t *testing.T) {
 }
 
 func TestBuildPrompt_MalformedTemplateFallsBack(t *testing.T) {
-	result := BuildPrompt("text", nil, nil, nil, "{{.Invalid")
+	result := BuildPrompt("text", nil, nil, nil, "{{.Invalid", 3, 5)
 
 	if !strings.Contains(result, "text") {
 		t.Error("expected fallback to default template with input text")
@@ -95,7 +95,7 @@ func TestBuildPrompt_MalformedTemplateFallsBack(t *testing.T) {
 }
 
 func TestBuildPrompt_ExecutionErrorFallsBack(t *testing.T) {
-	result := BuildPrompt("text", nil, nil, nil, "{{.Nonexistent}}")
+	result := BuildPrompt("text", nil, nil, nil, "{{.Nonexistent}}", 3, 5)
 
 	if !strings.Contains(result, "text") {
 		t.Error("expected fallback to default template with input text")
@@ -103,7 +103,7 @@ func TestBuildPrompt_ExecutionErrorFallsBack(t *testing.T) {
 }
 
 func TestBuildPrompt_WhitespaceCustomTemplateUsesDefault(t *testing.T) {
-	result := BuildPrompt("text", nil, nil, nil, "   \n  ")
+	result := BuildPrompt("text", nil, nil, nil, "   \n  ", 3, 5)
 
 	if !strings.Contains(result, "Analyze the excerpts") {
 		t.Error("expected whitespace-only template to use default")
@@ -520,7 +520,7 @@ func TestFilterTags(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := FilterTags(tt.tags, tt.people, tt.knownNormalized, tt.title, tt.docTypeNames)
+			got := FilterTags(tt.tags, tt.people, tt.knownNormalized, tt.title, tt.docTypeNames, 5)
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("FilterTags(%v, %v, %v, %q, %v) = %v, want %v",
 					tt.tags, tt.people, tt.knownNormalized, tt.title, tt.docTypeNames, got, tt.want)
@@ -779,5 +779,164 @@ func TestParseAdjudicationResponse_InvalidJSON(t *testing.T) {
 	_, err := ParseAdjudicationResponse("not json", 2)
 	if err == nil {
 		t.Fatal("expected error for invalid JSON, got nil")
+	}
+}
+
+func TestBuildTagSplitPrompt(t *testing.T) {
+	result := BuildTagSplitPrompt([]string{"supply and demand", "physics"})
+	if !strings.Contains(result, `"supply and demand"`) {
+		t.Error("prompt should contain first tag")
+	}
+	if !strings.Contains(result, `"physics"`) {
+		t.Error("prompt should contain second tag")
+	}
+	if !strings.Contains(result, "Tag 0") || !strings.Contains(result, "Tag 1") {
+		t.Error("prompt should contain indexed tag entries")
+	}
+	if !strings.Contains(result, "split") || !strings.Contains(result, "keep") {
+		t.Error("prompt should mention both verdict options")
+	}
+}
+
+func TestParseTagSplitResponse(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		n       int
+		want    []TagSplitResult
+	}{
+		{
+			name:    "keep and split",
+			content: `{"splits":[{"index":0,"verdict":"keep"},{"index":1,"verdict":"split","components":["supply","demand"]}]}`,
+			n:       2,
+			want: []TagSplitResult{
+				{Verdict: TagSplitKeep},
+				{Verdict: TagSplitSplit, Components: []string{"supply", "demand"}},
+			},
+		},
+		{
+			name:    "all keep",
+			content: `{"splits":[{"index":0,"verdict":"keep"},{"index":1,"verdict":"keep"}]}`,
+			n:       2,
+			want: []TagSplitResult{
+				{Verdict: TagSplitKeep},
+				{Verdict: TagSplitKeep},
+			},
+		},
+		{
+			name:    "out of range index ignored",
+			content: `{"splits":[{"index":5,"verdict":"split","components":["a","b"]}]}`,
+			n:       2,
+			want:    []TagSplitResult{{}, {}},
+		},
+		{
+			name:    "single component treated as ambiguous",
+			content: `{"splits":[{"index":0,"verdict":"split","components":["only one"]}]}`,
+			n:       1,
+			want:    []TagSplitResult{{}},
+		},
+		{
+			name:    "empty components treated as ambiguous",
+			content: `{"splits":[{"index":0,"verdict":"split","components":[]}]}`,
+			n:       1,
+			want:    []TagSplitResult{{}},
+		},
+		{
+			name:    "unknown verdict treated as ambiguous",
+			content: `{"splits":[{"index":0,"verdict":"maybe"}]}`,
+			n:       1,
+			want:    []TagSplitResult{{}},
+		},
+		{
+			name:    "empty splits returns all defaults",
+			content: `{"splits":[]}`,
+			n:       2,
+			want:    []TagSplitResult{{}, {}},
+		},
+		{
+			name:    "code block stripped",
+			content: "```json\n{\"splits\":[{\"index\":0,\"verdict\":\"keep\"}]}\n```",
+			n:       1,
+			want: []TagSplitResult{
+				{Verdict: TagSplitKeep},
+			},
+		},
+		{
+			name:    "components trimmed of whitespace",
+			content: `{"splits":[{"index":0,"verdict":"split","components":["  supply  ","  demand  "]}]}`,
+			n:       1,
+			want: []TagSplitResult{
+				{Verdict: TagSplitSplit, Components: []string{"supply", "demand"}},
+			},
+		},
+		{
+			name:    "empty components filtered",
+			content: `{"splits":[{"index":0,"verdict":"split","components":["supply","","demand"]}]}`,
+			n:       1,
+			want: []TagSplitResult{
+				{Verdict: TagSplitSplit, Components: []string{"supply", "demand"}},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseTagSplitResponse(tt.content, tt.n)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(got) != len(tt.want) {
+				t.Fatalf("len = %d, want %d", len(got), len(tt.want))
+			}
+			for i := range got {
+				if got[i].Verdict != tt.want[i].Verdict {
+					t.Errorf("[%d].Verdict = %q, want %q", i, got[i].Verdict, tt.want[i].Verdict)
+				}
+				if !reflect.DeepEqual(got[i].Components, tt.want[i].Components) {
+					t.Errorf("[%d].Components = %v, want %v", i, got[i].Components, tt.want[i].Components)
+				}
+			}
+		})
+	}
+}
+
+func TestParseTagSplitResponse_InvalidJSON(t *testing.T) {
+	_, err := ParseTagSplitResponse("not json", 1)
+	if err == nil {
+		t.Fatal("expected error for invalid JSON, got nil")
+	}
+}
+
+func TestSplitComponents(t *testing.T) {
+	filter := NewTagFilter(nil, nil, "", nil)
+	tests := []struct {
+		name string
+		raw  []string
+		want []string
+	}{
+		{"empty", nil, []string{}},
+		{"dedup", []string{"supply", "supply"}, []string{"supply"}},
+		{"drops empty", []string{"supply", "", "demand"}, []string{"supply", "demand"}},
+		{"normalizes", []string{"  Supply  ", "DEMAND"}, []string{"supply", "demand"}},
+		{"drops four words", []string{"one two three four"}, []string{}},
+		{"drops too long", []string{strings.Repeat("x", maxTagLength+1)}, []string{}},
+		{"keeps three words", []string{"supply chain management"}, []string{"supply chain management"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := SplitComponents(tt.raw, filter)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("SplitComponents(%v) = %v, want %v", tt.raw, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSplitComponents_AppliesDocumentFilter(t *testing.T) {
+	people := []PeopleResult{{NormalizedName: "John Smith"}}
+	filter := NewTagFilter(people, nil, "machine learning applications", []string{"research article"})
+	got := SplitComponents([]string{"John Smith", "machine learning", "physics", "research article"}, filter)
+	want := []string{"physics"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("SplitComponents = %v, want %v", got, want)
 	}
 }

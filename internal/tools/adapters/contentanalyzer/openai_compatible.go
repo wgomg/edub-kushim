@@ -21,6 +21,8 @@ type LlmOpenAiCompatible struct {
 	llmCfg         *config.LlmConfig
 	caps           *llm.ModelCapability
 	promptTemplate string
+	minTags        int
+	maxTags        int
 	client         *http.Client
 	reg            *llm.Registry
 }
@@ -55,13 +57,15 @@ type openaiResponse struct {
 	Usage   openaiUsage    `json:"usage"`
 }
 
-func NewLlmOpenAiCompatible(logger *utils.Logger, cfg config.ToolConfig, llmCfg *config.LlmConfig, caps *llm.ModelCapability, promptTemplate string, reg *llm.Registry) (*LlmOpenAiCompatible, error) {
+func NewLlmOpenAiCompatible(logger *utils.Logger, cfg config.ToolConfig, llmCfg *config.LlmConfig, caps *llm.ModelCapability, promptTemplate string, minTags, maxTags int, reg *llm.Registry) (*LlmOpenAiCompatible, error) {
 	return &LlmOpenAiCompatible{
 		logger:         logger,
 		config:         cfg,
 		llmCfg:         llmCfg,
 		caps:           caps,
 		promptTemplate: promptTemplate,
+		minTags:        minTags,
+		maxTags:        maxTags,
 		client:         &http.Client{},
 		reg:            reg,
 	}, nil
@@ -190,7 +194,7 @@ func (l *LlmOpenAiCompatible) doRequest(ctx context.Context, reqBody map[string]
 }
 
 func (l *LlmOpenAiCompatible) Analyze(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*AnalysisResult, error) {
-	prompt := BuildPrompt(text, docTypes, peopleTypes, tagSuggestions, l.promptTemplate)
+	prompt := BuildPrompt(text, docTypes, peopleTypes, tagSuggestions, l.promptTemplate, l.minTags, l.maxTags)
 
 	if err := checkContentTooLarge(l.caps, SystemMessage+"\n"+prompt); err != nil {
 		return nil, err
@@ -336,6 +340,28 @@ func (l *LlmOpenAiCompatible) Adjudicate(ctx context.Context, pairs []TagPairEvi
 
 	responseContent := strings.TrimSpace(chatResp.Choices[0].Message.Content)
 	return ParseAdjudicationResponse(responseContent, len(pairs))
+}
+
+func (l *LlmOpenAiCompatible) AdjudicateTagSplits(ctx context.Context, tags []string) ([]TagSplitResult, error) {
+	prompt := BuildTagSplitPrompt(tags)
+
+	if err := checkContentTooLarge(l.caps, TagSplitSystemMessage+"\n"+prompt); err != nil {
+		return nil, err
+	}
+
+	reqBody := l.buildRequestBody(TagSplitSystemMessage, prompt, "", 0)
+
+	chatResp, err := l.doRequest(ctx, reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("tag split adjudication: %w", err)
+	}
+
+	if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message.Content == "" {
+		return nil, fmt.Errorf("empty response from LLM")
+	}
+
+	responseContent := strings.TrimSpace(chatResp.Choices[0].Message.Content)
+	return ParseTagSplitResponse(responseContent, len(tags))
 }
 
 func (l *LlmOpenAiCompatible) Name() string {

@@ -268,6 +268,10 @@ func (s *Tag) Delete(ctx context.Context, ids []int64) ([]DeleteResult, error) {
 	return results, nil
 }
 
+func (s *Tag) RemoveFromStore(ctx context.Context, names []string) error {
+	return s.embedder.RemoveFromStore(ctx, names)
+}
+
 func (s *Tag) encodeAndAddBatch(ctx context.Context, names []string) {
 	if err := s.embedder.AddToStore(ctx, names); err != nil {
 		s.logger.Error(nil, "tag service: add to store: %v", err)

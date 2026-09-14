@@ -22,6 +22,7 @@ type ContentAnalyzer interface {
 	Analyze(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*AnalysisResult, error)
 	AnalyzeDocType(ctx context.Context, prevResult *AnalysisResult, headTailText string, docTypes []database.DocumentType, metadata DocMetadata) (string, error)
 	Adjudicate(ctx context.Context, pairs []TagPairEvidence) ([]TagVerdictResult, error)
+	AdjudicateTagSplits(ctx context.Context, tags []string) ([]TagSplitResult, error)
 	Name() string
 }
 
@@ -36,7 +37,7 @@ type AnalysisResult struct {
 	PassContext *json.RawMessage `json:"-"`
 }
 
-func NewContentAnalyzer(logger *utils.Logger, cfg config.ToolConfig, llmCfg *config.LlmConfig, promptTemplate string, reg *llm.Registry) (ContentAnalyzer, error) {
+func NewContentAnalyzer(logger *utils.Logger, cfg config.ToolConfig, llmCfg *config.LlmConfig, promptTemplate string, minTags, maxTags int, reg *llm.Registry) (ContentAnalyzer, error) {
 	if reg == nil {
 		return nil, fmt.Errorf("registry is required for %q adapter", llmCfg.Adapter)
 	}
@@ -44,8 +45,8 @@ func NewContentAnalyzer(logger *utils.Logger, cfg config.ToolConfig, llmCfg *con
 
 	switch llmCfg.Adapter {
 	case "anthropic":
-		return NewLlmAnthropic(logger, cfg, llmCfg, caps, promptTemplate, reg)
+		return NewLlmAnthropic(logger, cfg, llmCfg, caps, promptTemplate, minTags, maxTags, reg)
 	default:
-		return NewLlmOpenAiCompatible(logger, cfg, llmCfg, caps, promptTemplate, reg)
+		return NewLlmOpenAiCompatible(logger, cfg, llmCfg, caps, promptTemplate, minTags, maxTags, reg)
 	}
 }

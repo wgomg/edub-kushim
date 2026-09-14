@@ -205,6 +205,8 @@ type DocTypeRefinementResponse struct {
 type ContentAnalyzerResponse struct {
 	Enabled            bool                      `json:"enabled"`
 	Timeout            int                       `json:"timeout"`
+	MinTags            int                       `json:"min_tags"`
+	MaxTags            int                       `json:"max_tags"`
 	Llm                LlmConfigResponse         `json:"llm"`
 	Fallbacks          []FallbackConfigResponse  `json:"fallbacks,omitempty"`
 	PromptTemplate     string                    `json:"prompt_template,omitempty"`
@@ -320,6 +322,8 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Enricher.TextReducer.TargetWords = cfg.Enricher.TextReducer.TargetWords
 	resp.Enricher.ContentAnalyzer.Enabled = cfg.Enricher.ContentAnalyzer.Enabled
 	resp.Enricher.ContentAnalyzer.Timeout = cfg.Enricher.ContentAnalyzer.Timeout
+	resp.Enricher.ContentAnalyzer.MinTags = cfg.Enricher.ContentAnalyzer.MinTags
+	resp.Enricher.ContentAnalyzer.MaxTags = cfg.Enricher.ContentAnalyzer.MaxTags
 	resp.Enricher.ContentAnalyzer.PromptTemplate = cfg.Enricher.ContentAnalyzer.PromptTemplate
 	resp.Enricher.ContentAnalyzer.PauseOnCreditError = cfg.Enricher.ContentAnalyzer.PauseOnCreditError
 	resp.Enricher.ContentAnalyzer.DocTypeRefinement = DocTypeRefinementResponse{

@@ -233,6 +233,8 @@ type DocTypeRefinementConfig struct {
 type ContentAnalyzerConfig struct {
 	Enabled            bool                    `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
 	Timeout            int                     `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
+	MinTags            int                     `mapstructure:"min_tags" yaml:"min_tags" json:"min_tags"`
+	MaxTags            int                     `mapstructure:"max_tags" yaml:"max_tags" json:"max_tags"`
 	Llm                LlmConfig               `mapstructure:"llm" yaml:"llm" json:"llm"`
 	Fallbacks          []FallbackConfig        `mapstructure:"fallbacks" yaml:"fallbacks" json:"fallbacks,omitempty"`
 	PromptTemplate     string                  `mapstructure:"prompt_template" yaml:"prompt_template" json:"prompt_template,omitempty"`
@@ -548,6 +550,8 @@ func DefaultConfig(configDir string) *Config {
 			ContentAnalyzer: ContentAnalyzerConfig{
 				Enabled:            false,
 				Timeout:            120,
+				MinTags:            3,
+				MaxTags:            5,
 				PromptTemplate:     "",
 				PauseOnCreditError: true,
 				Llm: LlmConfig{
@@ -623,6 +627,17 @@ func finalizeConfig(cfg *Config, configDir string) error {
 		if llmCfg.Model == "" {
 			return fmt.Errorf("enricher.contentanalyzer.llm.model is required when content analyzer is enabled")
 		}
+	}
+	if cfg.Enricher.ContentAnalyzer.MinTags == 0 {
+		cfg.Enricher.ContentAnalyzer.MinTags = 3
+	}
+	if cfg.Enricher.ContentAnalyzer.MaxTags == 0 {
+		cfg.Enricher.ContentAnalyzer.MaxTags = 5
+	}
+	if cfg.Enricher.ContentAnalyzer.MinTags < 1 ||
+		cfg.Enricher.ContentAnalyzer.MinTags > cfg.Enricher.ContentAnalyzer.MaxTags ||
+		cfg.Enricher.ContentAnalyzer.MaxTags > 20 {
+		return fmt.Errorf("enricher.contentanalyzer.min_tags and max_tags must satisfy 1 <= min_tags <= max_tags <= 20")
 	}
 	if len(cfg.Consumer.OCR.Languages) == 0 {
 		return fmt.Errorf("consumer.ocr.languages is required — run 'kushim setup --languages eng,spa,...' first")
@@ -745,7 +760,7 @@ func finalizeConfig(cfg *Config, configDir string) error {
 	modelParts := strings.Split(cfg.Enricher.TagMatcher.Hugot.Model, "/")
 	modelShortName := modelParts[len(modelParts)-1]
 	cfg.Enricher.TagMatcher.Hugot.ModelPath = filepath.Join(configDir, "tagmatcher", "hugot", "models", modelShortName)
-	cfg.Enricher.TagMatcher.TopN = 15
+	cfg.Enricher.TagMatcher.TopN = 3 * cfg.Enricher.ContentAnalyzer.MaxTags
 	cfg.Enricher.TagMatcher.MinSimilarity = defaultMinSimilarity(modelShortName)
 	cfg.Enricher.TagMatcher.ConsolidationSimilarity = defaultConsolidationSimilarity(modelShortName)
 	cfg.Enricher.TagMatcher.AutoReplaceSimilarity = defaultAutoReplaceSimilarity(modelShortName)

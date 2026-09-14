@@ -263,3 +263,62 @@ func TestEntryReasonField(t *testing.T) {
 		t.Error("queryMissing should be true")
 	}
 }
+
+func TestBuildJointWorklist(t *testing.T) {
+	r := &Reconciler{logger: testutil.NewTestLogger()}
+	allTags := []database.Tag{
+		{ID: 1, Name: "supply and demand"},
+		{ID: 2, Name: "physics"},
+		{ID: 3, Name: "capitalism vs socialism"},
+		{ID: 4, Name: "and"},
+		{ID: 5, Name: "rock or roll"},
+	}
+	tagCounts := map[string]int64{
+		"supply and demand":     10,
+		"capitalism vs socialism": 5,
+		"rock or roll":          3,
+	}
+
+	entries := r.buildJointWorklist(allTags, tagCounts)
+
+	if len(entries) != 3 {
+		t.Fatalf("len(entries) = %d, want 3", len(entries))
+	}
+
+	// sorted by name
+	if entries[0].name != "capitalism vs socialism" {
+		t.Errorf("[0].name = %q, want capitalism vs socialism", entries[0].name)
+	}
+	if entries[1].name != "rock or roll" {
+		t.Errorf("[1].name = %q, want rock or roll", entries[1].name)
+	}
+	if entries[2].name != "supply and demand" {
+		t.Errorf("[2].name = %q, want supply and demand", entries[2].name)
+	}
+
+	if entries[2].docCount != 10 {
+		t.Errorf("[2].docCount = %d, want 10", entries[2].docCount)
+	}
+	if entries[0].docCount != 5 {
+		t.Errorf("[0].docCount = %d, want 5", entries[0].docCount)
+	}
+	if entries[1].docCount != 3 {
+		t.Errorf("[1].docCount = %d, want 3", entries[1].docCount)
+	}
+
+	if entries[2].segments[0] != "supply" || entries[2].segments[1] != "demand" {
+		t.Errorf("[2].segments = %v, want [supply demand]", entries[2].segments)
+	}
+}
+
+func TestBuildJointWorklist_NoJointTags(t *testing.T) {
+	r := &Reconciler{logger: testutil.NewTestLogger()}
+	allTags := []database.Tag{
+		{ID: 1, Name: "physics"},
+		{ID: 2, Name: "machine learning"},
+	}
+	entries := r.buildJointWorklist(allTags, nil)
+	if len(entries) != 0 {
+		t.Errorf("len(entries) = %d, want 0", len(entries))
+	}
+}

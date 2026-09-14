@@ -21,6 +21,8 @@ type LlmAnthropic struct {
 	llmCfg         *config.LlmConfig
 	caps           *llm.ModelCapability
 	promptTemplate string
+	minTags        int
+	maxTags        int
 	client         *http.Client
 	reg            *llm.Registry
 }
@@ -95,13 +97,15 @@ type anthropicResponse struct {
 	Usage        anthropicUsage          `json:"usage"`
 }
 
-func NewLlmAnthropic(logger *utils.Logger, cfg config.ToolConfig, llmCfg *config.LlmConfig, caps *llm.ModelCapability, promptTemplate string, reg *llm.Registry) (*LlmAnthropic, error) {
+func NewLlmAnthropic(logger *utils.Logger, cfg config.ToolConfig, llmCfg *config.LlmConfig, caps *llm.ModelCapability, promptTemplate string, minTags, maxTags int, reg *llm.Registry) (*LlmAnthropic, error) {
 	return &LlmAnthropic{
 		logger:         logger,
 		config:         cfg,
 		llmCfg:         llmCfg,
 		caps:           caps,
 		promptTemplate: promptTemplate,
+		minTags:        minTags,
+		maxTags:        maxTags,
 		client:         &http.Client{},
 		reg:            reg,
 	}, nil
@@ -221,7 +225,7 @@ func (l *LlmAnthropic) doRequest(ctx context.Context, reqBody anthropicRequest, 
 }
 
 func (l *LlmAnthropic) Analyze(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*AnalysisResult, error) {
-	prompt := BuildPrompt(text, docTypes, peopleTypes, tagSuggestions, l.promptTemplate)
+	prompt := BuildPrompt(text, docTypes, peopleTypes, tagSuggestions, l.promptTemplate, l.minTags, l.maxTags)
 
 	if err := checkContentTooLarge(l.caps, SystemMessage+"\n"+prompt); err != nil {
 		return nil, err
@@ -355,6 +359,33 @@ func (l *LlmAnthropic) Adjudicate(ctx context.Context, pairs []TagPairEvidence) 
 		return nil, err
 	}
 	return ParseAdjudicationResponse(responseContent, len(pairs))
+}
+
+func (l *LlmAnthropic) AdjudicateTagSplits(ctx context.Context, tags []string) ([]TagSplitResult, error) {
+	prompt := BuildTagSplitPrompt(tags)
+
+	if err := checkContentTooLarge(l.caps, TagSplitSystemMessage+"\n"+prompt); err != nil {
+		return nil, err
+	}
+
+	reqBody := anthropicRequest{
+		Model:     l.llmCfg.Model,
+		MaxTokens: l.defaultMaxTokens(),
+		Messages: []anthropicMessage{
+			{Role: "user", Content: prompt},
+		},
+		System:       TagSplitSystemMessage,
+		Stream:       false,
+		CacheControl: &cacheControlEphemeral{Type: "ephemeral"},
+	}
+	l.applyReasoning(&reqBody, reqBody.MaxTokens)
+	l.applyTemperature(&reqBody, 0)
+
+	_, responseContent, err := l.doRequest(ctx, reqBody, "tag split adjudication")
+	if err != nil {
+		return nil, err
+	}
+	return ParseTagSplitResponse(responseContent, len(tags))
 }
 
 func (l *LlmAnthropic) Name() string {

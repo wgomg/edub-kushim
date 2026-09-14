@@ -211,6 +211,10 @@ func (m *mockAdjudicator) Adjudicate(ctx context.Context, pairs []contentanalyze
 	return nil, nil
 }
 
+func (m *mockAdjudicator) AdjudicateTagSplits(_ context.Context, _ []string) ([]contentanalyzer.TagSplitResult, error) {
+	return nil, nil
+}
+
 func (m *mockAdjudicator) Name() string { return "mock-adjudicator" }
 
 type mockTagMatcher struct {

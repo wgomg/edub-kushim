@@ -64,22 +64,24 @@ func NewReconciler(getConfig func() *config.Config, client *database.Client,
 }
 
 type Report struct {
-	ReportOnly          bool           `json:"report_only"`
-	Worklist            WorklistCounts `json:"worklist"`
-	Judged              int            `json:"judged"`
-	Confirmed           int            `json:"confirmed"`
-	Flips               FlipCounts     `json:"flips"`
-	Merges              []MergeEntry   `json:"merges"`
-	Retags              int            `json:"retags"`
-	Invalidated         int            `json:"invalidated"`
-	Skips               map[string]int `json:"skips"`
-	PlannedMerges       []MergeEntry   `json:"planned_merges,omitempty"`
-	PlannedKeepFlips    []MergeEntry   `json:"planned_keep_flips,omitempty"`
-	RetagEntries        []MergeEntry   `json:"retag_entries,omitempty"`
-	InvalidatedEntries  []MergeEntry   `json:"invalidated_entries,omitempty"`
-	Capped              int            `json:"capped,omitempty"`
-	NoDocuments         int            `json:"no_documents,omitempty"`
-	AdjudicatorDisabled bool           `json:"adjudicator_disabled,omitempty"`
+	ReportOnly          bool              `json:"report_only"`
+	Worklist            WorklistCounts    `json:"worklist"`
+	Judged              int               `json:"judged"`
+	Confirmed           int               `json:"confirmed"`
+	Flips               FlipCounts        `json:"flips"`
+	Merges              []MergeEntry      `json:"merges"`
+	Retags              int               `json:"retags"`
+	Invalidated         int               `json:"invalidated"`
+	Skips               map[string]int    `json:"skips"`
+	PlannedMerges       []MergeEntry      `json:"planned_merges,omitempty"`
+	PlannedKeepFlips    []MergeEntry      `json:"planned_keep_flips,omitempty"`
+	RetagEntries        []MergeEntry      `json:"retag_entries,omitempty"`
+	InvalidatedEntries  []MergeEntry      `json:"invalidated_entries,omitempty"`
+	JointSplits         []JointSplitEntry `json:"joint_splits,omitempty"`
+	PlannedJointSplits  []JointSplitEntry `json:"planned_joint_splits,omitempty"`
+	Capped              int               `json:"capped,omitempty"`
+	NoDocuments         int               `json:"no_documents,omitempty"`
+	AdjudicatorDisabled bool              `json:"adjudicator_disabled,omitempty"`
 }
 
 type WorklistCounts struct {
@@ -87,6 +89,14 @@ type WorklistCounts struct {
 	Unjudged int `json:"unjudged"`
 	Drifted  int `json:"drifted"`
 	Aged     int `json:"aged"`
+	Joint    int `json:"joint"`
+}
+
+type JointSplitEntry struct {
+	Query      string   `json:"query"`
+	Components []string `json:"components"`
+	Reassigned int64    `json:"reassigned"`
+	Reason     string   `json:"reason,omitempty"`
 }
 
 type FlipCounts struct {
@@ -178,10 +188,15 @@ func (r *Reconciler) Run(ctx context.Context, progress task.ProgressFunc) (Repor
 	}
 	report.Invalidated = invalidated
 
+	jointWorklist := r.buildJointWorklist(allTags, tagCounts)
+	report.Worklist.Joint = len(jointWorklist)
+
 	if !cfg.Enricher.TagAdjudicator.Enabled {
 		report.AdjudicatorDisabled = true
-		r.logger.Info(nil, "tag reconcile: adjudicator is disabled — no decisions were changed (report_only=%t); pairs needing re-check: %d under older rules, %d never judged, %d with usage drift, %d stale over 90 days",
-			report.ReportOnly, report.Worklist.Stale, report.Worklist.Unjudged, report.Worklist.Drifted, report.Worklist.Aged)
+		r.decideJointSplits(ctx, cfg, jointWorklist)
+		r.planJointSplits(jointWorklist, &report)
+		r.logger.Info(nil, "tag reconcile: adjudicator is disabled — no decisions were changed (report_only=%t); pairs needing re-check: %d under older rules, %d never judged, %d with usage drift, %d stale over 90 days; %d joint tags detected (would split %d deterministically)",
+			report.ReportOnly, report.Worklist.Stale, report.Worklist.Unjudged, report.Worklist.Drifted, report.Worklist.Aged, report.Worklist.Joint, len(report.PlannedJointSplits))
 		return report, nil
 	}
 
@@ -189,12 +204,24 @@ func (r *Reconciler) Run(ctx context.Context, progress task.ProgressFunc) (Repor
 		report.Capped = len(worklist) - cfg.Enricher.TagReconcile.MaxRejudge
 		worklist = worklist[:cfg.Enricher.TagReconcile.MaxRejudge]
 	}
+	if remaining := cfg.Enricher.TagReconcile.MaxRejudge - len(worklist); len(jointWorklist) > remaining {
+		report.Capped += len(jointWorklist) - remaining
+		jointWorklist = jointWorklist[:remaining]
+	}
 
 	progress("evidence", "ranking worklist pairs", 0)
 	r.evidencePass(ctx, cfg, worklist, policyStoreTags)
 
+	progress("splits", "adjudicating joint tags", 0)
+	r.decideJointSplits(ctx, cfg, jointWorklist)
+
 	progress("apply", "applying flips", 0)
 	r.applyPass(ctx, cfg, worklist, &report, tagCounts)
+	if report.ReportOnly {
+		r.planJointSplits(jointWorklist, &report)
+	} else {
+		r.applyJointSplits(ctx, cfg, jointWorklist, &report, storeTags, policyStoreTags)
+	}
 	r.logSummary(report)
 
 	progress("report", "reporting", 1)
@@ -215,13 +242,13 @@ func (r *Reconciler) logSummary(report Report) {
 				created++
 			}
 		}
-		r.logger.Info(nil, "tag reconcile: done (report-only, nothing changed) — %d pairs re-checked, %d judged; %d merges and %d restorations planned (%d documents would move, %d tags would be created); %d skipped, %d over cap",
-			checked, report.Judged, report.Flips.ToMerge, report.Flips.ToKeep, documents, created, skipped, report.Capped)
+		r.logger.Info(nil, "tag reconcile: done (report-only, nothing changed) — %d pairs re-checked, %d judged; %d merges and %d restorations planned (%d documents would move, %d tags would be created); %d joint tags would split; %d skipped, %d over cap",
+			checked, report.Judged, report.Flips.ToMerge, report.Flips.ToKeep, documents, created, len(report.PlannedJointSplits), skipped, report.Capped)
 		return
 	}
 	documents := sumReassigned(report.Merges) + sumReassigned(report.RetagEntries)
-	r.logger.Info(nil, "tag reconcile: done — %d pairs re-checked, %d judged; %d merges and %d restorations applied (%d documents re-pointed); %d skipped, %d over cap",
-		checked, report.Judged, report.Flips.ToMerge, report.Flips.ToKeep, documents, skipped, report.Capped)
+	r.logger.Info(nil, "tag reconcile: done — %d pairs re-checked, %d judged; %d merges and %d restorations applied (%d documents re-pointed); %d joint tags split; %d skipped, %d over cap",
+		checked, report.Judged, report.Flips.ToMerge, report.Flips.ToKeep, documents, len(report.JointSplits), skipped, report.Capped)
 }
 
 func sumReassigned(entries []MergeEntry) int64 {
@@ -438,6 +465,16 @@ func (r *Reconciler) buildWorklist(ctx context.Context, cfg *config.Config, stor
 	}
 
 	r.bootstrapWorklist(ctx, cfg, &worklist, collected)
+
+	filtered := worklist[:0]
+	for _, e := range worklist {
+		if utils.SplitJointTag(e.query) != nil {
+			r.logger.Debug(nil, "tag reconcile: dropping pair %q → %q — %q joins concepts with a conjunction and is split apart, not merged", e.query, e.target, e.query)
+			continue
+		}
+		filtered = append(filtered, e)
+	}
+	worklist = filtered
 
 	sort.SliceStable(worklist, func(i, j int) bool {
 		ci, cj := catOrder[worklist[i].category], catOrder[worklist[j].category]

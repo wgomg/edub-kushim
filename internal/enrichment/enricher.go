@@ -29,13 +29,20 @@ const (
 	minTargetWords   = 100
 )
 
+type splitDecision struct {
+	verdict    contentanalyzer.TagSplitVerdict
+	components []string
+}
+
 type Enricher struct {
-	config   *config.Config
-	logger   *utils.Logger
-	queries  *database.Queries
-	runner   *tools.Runner
-	services *service.CrudServices
-	mu       sync.Mutex
+	config     *config.Config
+	logger     *utils.Logger
+	queries    *database.Queries
+	runner     *tools.Runner
+	services   *service.CrudServices
+	mu         sync.Mutex
+	splitMu    sync.Mutex
+	splitCache map[string]splitDecision
 }
 
 func NewEnricher(cfg *config.Config, logger *utils.Logger, queries *database.Queries, services *service.CrudServices, matcher tagmatcher.Matcher) (*Enricher, error) {
@@ -237,7 +244,9 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 	for _, p := range existingPeople {
 		knownNormalized = append(knownNormalized, normalizedPeopleKey(p))
 	}
-	analysis.Tags = contentanalyzer.FilterTags(analysis.Tags, analysis.People, knownNormalized, analysis.Title, docTypeNames)
+	analysis.Tags = contentanalyzer.FilterTags(analysis.Tags, analysis.People, knownNormalized, analysis.Title, docTypeNames, e.config.Enricher.ContentAnalyzer.MaxTags)
+	tagFilter := contentanalyzer.NewTagFilter(analysis.People, knownNormalized, analysis.Title, docTypeNames)
+	analysis.Tags = e.splitJointTags(ctx, analysis.Tags, tagFilter, &logId)
 
 	consolidateStart := time.Now()
 	report("consolidate", "", 0)
@@ -408,6 +417,106 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 		return &emptyStats, nil
 	}
 	return analysis.Stats, nil
+}
+
+func (e *Enricher) splitJointTags(ctx context.Context, tags []string, filter *contentanalyzer.TagFilter, logId *string) []string {
+	var candidates []string
+	for _, t := range tags {
+		if utils.SplitJointTag(t) != nil {
+			candidates = append(candidates, t)
+		}
+	}
+	if len(candidates) == 0 {
+		return tags
+	}
+
+	decisions := e.splitVerdicts(ctx, candidates, logId)
+
+	maxComponents := e.config.Enricher.ContentAnalyzer.MaxTags
+	components := make(map[string][]string, len(candidates))
+	for _, candidate := range candidates {
+		d, ok := decisions[candidate]
+		if !ok || d.verdict != contentanalyzer.TagSplitSplit {
+			continue
+		}
+		valid := contentanalyzer.SplitComponents(d.components, filter)
+		if len(valid) < 2 || len(valid) > maxComponents {
+			continue
+		}
+		components[candidate] = valid
+	}
+	if len(components) == 0 {
+		return tags
+	}
+
+	out := make([]string, 0, len(tags)+len(components))
+	seen := make(map[string]bool, len(tags))
+	for _, t := range tags {
+		segments, ok := components[t]
+		if !ok {
+			if !seen[t] {
+				seen[t] = true
+				out = append(out, t)
+			}
+			continue
+		}
+		for _, segment := range segments {
+			if seen[segment] {
+				continue
+			}
+			seen[segment] = true
+			out = append(out, segment)
+		}
+		e.logger.Info(logId, "tag split: %q → %v", t, segments)
+	}
+	return out
+}
+
+func (e *Enricher) splitVerdicts(ctx context.Context, candidates []string, logId *string) map[string]splitDecision {
+	e.splitMu.Lock()
+	if e.splitCache == nil {
+		e.splitCache = make(map[string]splitDecision)
+	}
+	decisions := make(map[string]splitDecision, len(candidates))
+	var uncached []string
+	for _, name := range candidates {
+		if d, ok := e.splitCache[name]; ok {
+			decisions[name] = d
+			continue
+		}
+		uncached = append(uncached, name)
+	}
+	e.splitMu.Unlock()
+
+	if len(uncached) == 0 {
+		return decisions
+	}
+
+	if !e.runner.HasTagAdjudicator() {
+		for _, name := range uncached {
+			decisions[name] = splitDecision{verdict: contentanalyzer.TagSplitSplit, components: utils.SplitJointTag(name)}
+		}
+		return decisions
+	}
+
+	results, err := e.runner.AdjudicateTagSplits(ctx, uncached)
+	if err != nil {
+		e.logger.Error(logId, "tag split adjudication failed, keeping %d joint tags: %v", len(uncached), err)
+		return decisions
+	}
+	if len(results) != len(uncached) {
+		e.logger.Error(logId, "tag split adjudication returned %d verdicts for %d tags, keeping them", len(results), len(uncached))
+		return decisions
+	}
+
+	e.splitMu.Lock()
+	defer e.splitMu.Unlock()
+	for i, r := range results {
+		d := splitDecision{verdict: r.Verdict, components: r.Components}
+		decisions[uncached[i]] = d
+		e.splitCache[uncached[i]] = d
+	}
+	return decisions
 }
 
 type bandPairKey struct {

@@ -133,6 +133,10 @@ func (m *mockContentAnalyzer) Adjudicate(ctx context.Context, pairs []contentana
 	return nil, nil
 }
 
+func (m *mockContentAnalyzer) AdjudicateTagSplits(_ context.Context, _ []string) ([]contentanalyzer.TagSplitResult, error) {
+	return nil, nil
+}
+
 func (m *mockContentAnalyzer) Name() string { return "mock" }
 
 func TestAnalyzeContent_TimeoutAppliesDeadline(t *testing.T) {

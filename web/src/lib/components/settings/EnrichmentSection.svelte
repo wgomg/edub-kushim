@@ -177,6 +177,28 @@
 						min="1"
 						bind:value={cfg.enricher.contentanalyzer.timeout}
 					/>
+					<UnitField
+						id="content-analyzer-min-tags"
+						label="Min tags"
+						unit="tags"
+						type="number"
+						inputmode="numeric"
+						min="1"
+						max="20"
+						hint="Lower bound requested from the analyzer."
+						bind:value={cfg.enricher.contentanalyzer.min_tags}
+					/>
+					<UnitField
+						id="content-analyzer-max-tags"
+						label="Max tags"
+						unit="tags"
+						type="number"
+						inputmode="numeric"
+						min="1"
+						max="20"
+						hint="Upper bound per document; also scales how many tag suggestions the matcher feeds the prompt."
+						bind:value={cfg.enricher.contentanalyzer.max_tags}
+					/>
 					<div class="sm:col-span-2">
 						<Switch
 							id="content-analyzer-pause-credit"
@@ -185,6 +207,14 @@
 						/>
 					</div>
 				</div>
+
+				{#if cfg.enricher.contentanalyzer.min_tags > cfg.enricher.contentanalyzer.max_tags}
+					<div class="mt-4">
+						<Note variant="warn" title="Tag range inverted.">
+							Min tags must be less than or equal to max tags; the save will be rejected.
+						</Note>
+					</div>
+				{/if}
 
 				<details class="adv mt-[1.125rem] border-t border-dashed border-clay-700 pt-3">
 					<summary

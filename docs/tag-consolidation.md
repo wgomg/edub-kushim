@@ -17,6 +17,7 @@ concept from the vocabulary. Every failure, ambiguity, or outage defaults to
 
 - [The problem it solves](#the-problem-it-solves)
 - [How a tag is decided](#how-a-tag-is-decided)
+- [Joint tags](#joint-tags)
 - [LLM adjudication (opt-in)](#llm-adjudication-opt-in)
 - [Merge review](#merge-review)
 - [Scheduled reconciliation](#scheduled-reconciliation)
@@ -54,17 +55,22 @@ and review.
 
 ## How a tag is decided
 
-Per enrichment, after the LLM emits up to 8 tags (trimmed to 5):
+Per enrichment, after the LLM emits up to `max_tags + 3` tags (trimmed to
+`max_tags`, default 5):
 
 1. Emitted names are canonicalized (`utils.NormalizeTag`: NFKC, lowercase,
    accent-folded; `+`, `#`, `.`, digits, and non-Latin scripts preserved —
    `c++` is one token). The same normalizer runs at the tag-service save
    chokepoints, so store names are always canonical and identity is exact
    string equality.
-2. The matcher daemon ranks each name against the tag store and returns up to
+2. `FilterTags` drops deterministic garbage (see below), then a split pass
+   replaces tags that join concepts with a conjunction (`and`, `or`, `vs`,
+   `vs.`, `versus`) by their components — see
+   [Joint tags](#joint-tags) below.
+3. The matcher daemon ranks each name against the tag store and returns up to
    two candidates with similarity scores, all at or above the **consideration
    floor** (`consolidation_similarity`, 0.80 for bge-m3).
-3. The enricher's policy decides, in order:
+4. The enricher's policy decides, in order:
 
 | Rule | Outcome | Catches |
 | ---- | ------- | ------- |
@@ -82,6 +88,38 @@ Every decision is logged in the kushim (enrichment) log as
 `consolidation[v1]: replace|keep|passthrough <tag> … reason=…`, so the policy's
 behavior is auditable after the fact — and so the reconciliation task can
 recover history the database never captured.
+
+---
+
+## Joint tags
+
+A tag that joins concepts with a conjunction (`and`, `or`, `vs`, `vs.`,
+`versus` — after normalization `&` is stripped, so "rock & roll" is not joint)
+is detected by `utils.SplitJointTag` and replaced by its components before
+consolidation, so "supply and demand" becomes `supply` + `demand` instead of a
+single tag that the matcher can never match cleanly.
+
+- **Detection**: a canonical tag is joint when it has at least two segments
+  around a conjunction token that is neither leading nor trailing. Tags of
+  more than three tokens never reach the split pass — `FilterTags` drops them
+  first, so detectable joint tags are exactly the 2–3-word single-conjunction
+  forms.
+- **Decision**: with the tag adjudicator enabled, the split decision is
+  LLM-adjudicated (`AdjudicateTagSplits`, same adjudicator as tag pairs) —
+  the LLM distinguishes a genuine joint ("supply and demand") from a proper
+  name or set phrase ("dungeons and dragons", "rock and roll") and returns the
+  components when splitting. Verdicts are memoized per tag name within the
+  enricher process, so a joint tag seen across documents is adjudicated once.
+  With the adjudicator disabled, all detected joint tags split
+  deterministically.
+- **Validation**: components pass the same rules as emitted tags — normalized,
+  deduplicated, ≤3 words, ≤64 characters, no person/title/doc-type token
+  matches — and a split must yield between 2 and `max_tags` valid components;
+  anything else keeps the joint tag as-is. Split products may push a document
+  past `max_tags` — accepted; worst-case bound is 2 × `max_tags`.
+- **Retroactive cleanup**: the scheduled reconciliation task scans the store
+  for joint tags and splits them with document re-pointing — see
+  [Scheduled reconciliation](#scheduled-reconciliation).
 
 ---
 
@@ -143,20 +181,32 @@ anti-oscillating:
   (a merged or deleted tag — dead-target verdicts are invalidated so a cached
   `same` verdict can never resurrect a deleted tag); and, for history the table
   never captured, pairs parsed from the daemon's rotated logs
-  (`hugot.log*`/`kushim.log*`, `.gz` rotations included).
+  (`hugot.log*`/`kushim.log*`, `.gz` rotations included). A joint-tag scan
+  (appended after the pair scans, same caps) detects store tags that join
+  concepts with a conjunction (`and`, `or`, `vs`, `vs.`, `versus`) and splits
+  them into their components.
 - **How it flips:** each pair is re-evaluated through the current policy on a
   fresh rank; band survivors are re-adjudicated, and a verdict flip must be
   confirmed by a second, orientation-reversed adjudication before it applies.
   A merge flip runs the full merge operation; a keep flip creates the tag and
-  re-points only the affected documents.
+  re-points only the affected documents. A joint-tag split ranks the components
+  against the store excluding the joint tag itself, consolidates them through
+  the policy, creates them via `Tag.Create`, adds them to every document
+  carrying the joint tag (single set-based insert), and deletes the joint tag
+  with a post-commit store removal — idempotent and crash-tolerant (component
+  creation and document assignment are additive, deletion is last). Pair
+  entries whose query is itself a joint tag are dropped from the pair worklist
+  so a merge verdict can never resurrect a tag the split scan is deleting.
 - **Bounds:** `max_rejudge` pairs and `max_retag` documents per run; the first
   run is always **report-only** (it lists would-be actions and touches
-  nothing), regardless of the `report_only` flag.
+  nothing), regardless of the `report_only` flag. The joint-tag scan shares
+  both caps.
 - **Report:** each run persists a full JSON report as its task result — worklist
-  counts, judged/confirmed, flips, planned/applied pair entries (each carrying
-  the decision reason and whether it creates a tag), and skip reasons —
-  surfaced in the web UI on the task detail page and as a summary card on the
-  tags page.
+  counts (including the joint-tag category), judged/confirmed, flips,
+  planned/applied pair entries (each carrying the decision reason and whether
+  it creates a tag), planned/applied joint splits (query, components,
+  reassigned documents, reason), and skip reasons — surfaced in the web UI on
+  the task detail page and as a summary card on the tags page.
 - With the adjudicator disabled, runs log the worklist snapshot and complete
   without LLM calls or writes. The queue daemon warns when reconciliation is
   enabled without the adjudicator.

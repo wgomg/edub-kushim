@@ -149,9 +149,12 @@ Design points:
   `tagsPrompt` (`" Prefer tags from the following list if thematically
   related: '%s'"`, `shared.go:203-208` — the semantic-matcher suggestions,
   comma-joined).
-- **Tag count is a buffer**: `requestedTagCount = 8` is requested but only
-  `maxTags = 5` survive post-processing (`shared.go:23-28`) — ask for more
-  than you keep, so filtering (§10) doesn't starve the result.
+- **Tag count is a buffer**: the prompt requests `max_tags + 3` tags
+  (`tagRequestBuffer`, `shared.go`) but only `max_tags` survive
+  post-processing (`enricher.contentanalyzer.max_tags`, default 5) — ask for
+  more than you keep, so filtering doesn't starve the result. The prompt asks
+  for "Between `min_tags` and `max_tags`" tags and forbids merging concepts
+  with a conjunction.
 - **`customTemplate` overrides** when set in config
   (`ContentAnalyzer.PromptTemplate`); **any parse/execute error falls back
   silently to the default** (`shared.go:162-165, 176-180`) — a broken custom

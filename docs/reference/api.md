@@ -311,7 +311,7 @@ See `AuthMiddleware` under `server.go` → Functions.
 - `OCRResponse` — `Engine string`, `Languages []string`, `DataDir string`, `Timeout int`
 - `EnricherConfigResponse` — `Workers int`, `TextReducer TextReducerResponse`, `ContentAnalyzer ContentAnalyzerResponse`, `TagMatcher TagMatcherResponse`
 - `TextReducerResponse` — `Engine string`, `Timeout int`, `TargetWords int`
-- `ContentAnalyzerResponse` — `Enabled bool`, `Timeout int`, `Llm LlmConfigResponse`, `Fallbacks []FallbackConfigResponse` (omitempty — absent when no fallbacks are configured), `PromptTemplate string`
+- `ContentAnalyzerResponse` — `Enabled bool`, `Timeout int`, `MinTags int`, `MaxTags int`, `Llm LlmConfigResponse`, `Fallbacks []FallbackConfigResponse` (omitempty — absent when no fallbacks are configured), `PromptTemplate string`
 - `FallbackConfigResponse` — `Enabled bool`, `Llm LlmConfigResponse`
 - `LlmConfigResponse` — `Adapter string`, `Provider string`, `Model string`, `Token string`, `Reasoning bool`, `ReasoningEffort string`, `Temperature float64`
 - `LlmModelEntry` — `ID string`, `Capabilities` (SupportsReasoning, ReasoningEfforts, MaxInputTokens, MaxOutputTokens, SupportsTemperature, SupportsResponseSchema)

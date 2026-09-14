@@ -12,6 +12,28 @@ import (
 	"github.com/lib/pq"
 )
 
+const addComponentTagsToTagDocuments = `-- name: AddComponentTagsToTagDocuments :execrows
+INSERT INTO document_tag (document_id, tag_id)
+SELECT dt.document_id, c.tag_id
+FROM document_tag dt
+CROSS JOIN unnest($1::bigint[]) AS c(tag_id)
+WHERE dt.tag_id = $2
+ON CONFLICT (document_id, tag_id) DO NOTHING
+`
+
+type AddComponentTagsToTagDocumentsParams struct {
+	ComponentIds []int64
+	JointID      int64
+}
+
+func (q *Queries) AddComponentTagsToTagDocuments(ctx context.Context, arg AddComponentTagsToTagDocumentsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, addComponentTagsToTagDocuments, pq.Array(arg.ComponentIds), arg.JointID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const addDocumentTag = `-- name: AddDocumentTag :exec
 INSERT INTO document_tag (document_id, tag_id)
 VALUES ($1, $2)
@@ -68,6 +90,33 @@ func (q *Queries) GetDocumentTags(ctx context.Context, documentID int64) ([]Tag,
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getTagDocumentIDs = `-- name: GetTagDocumentIDs :many
+SELECT dt.document_id FROM document_tag dt WHERE dt.tag_id = $1
+`
+
+func (q *Queries) GetTagDocumentIDs(ctx context.Context, tagID int64) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, getTagDocumentIDs, tagID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var document_id int64
+		if err := rows.Scan(&document_id); err != nil {
+			return nil, err
+		}
+		items = append(items, document_id)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

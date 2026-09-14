@@ -171,14 +171,14 @@ func NewRunner(logger *utils.Logger, cfg *config.Config, tools []string) *Runner
 			}
 			r.textReducer, _ = textreducer.NewTextReducer(logger, toolCfg)
 		case "contentanalyzer":
-			ca, caErr := contentanalyzer.NewContentAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.Enricher.ContentAnalyzer.Timeout) * time.Second}, &cfg.Enricher.ContentAnalyzer.Llm, cfg.Enricher.ContentAnalyzer.PromptTemplate, reg)
+			ca, caErr := contentanalyzer.NewContentAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.Enricher.ContentAnalyzer.Timeout) * time.Second}, &cfg.Enricher.ContentAnalyzer.Llm, cfg.Enricher.ContentAnalyzer.PromptTemplate, cfg.Enricher.ContentAnalyzer.MinTags, cfg.Enricher.ContentAnalyzer.MaxTags, reg)
 			if caErr != nil {
 				logger.Error(nil, "create content analyzer: %v", caErr)
 			}
 			r.contentAnalyzer = ca
 			if cfg.Enricher.TagAdjudicator.Enabled {
 				adjLlm := cfg.ResolvedAdjudicatorLlm()
-				adj, adjErr := contentanalyzer.NewContentAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.ResolvedAdjudicatorTimeout()) * time.Second}, &adjLlm, cfg.Enricher.ContentAnalyzer.PromptTemplate, reg)
+				adj, adjErr := contentanalyzer.NewContentAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.ResolvedAdjudicatorTimeout()) * time.Second}, &adjLlm, cfg.Enricher.ContentAnalyzer.PromptTemplate, 0, 0, reg)
 				if adjErr != nil {
 					logger.Error(nil, "create tag adjudicator: %v", adjErr)
 				} else {
@@ -190,7 +190,7 @@ func NewRunner(logger *utils.Logger, cfg *config.Config, tools []string) *Runner
 				if !fb.Enabled {
 					continue
 				}
-				fbCa, fbErr := contentanalyzer.NewContentAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.Enricher.ContentAnalyzer.Timeout) * time.Second}, &fb.Llm, cfg.Enricher.ContentAnalyzer.PromptTemplate, reg)
+				fbCa, fbErr := contentanalyzer.NewContentAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.Enricher.ContentAnalyzer.Timeout) * time.Second}, &fb.Llm, cfg.Enricher.ContentAnalyzer.PromptTemplate, cfg.Enricher.ContentAnalyzer.MinTags, cfg.Enricher.ContentAnalyzer.MaxTags, reg)
 				if fbErr != nil {
 					logger.Error(nil, "create fallback content analyzer: %v", fbErr)
 					continue
@@ -470,6 +470,10 @@ func (r *Runner) RankTags(ctx context.Context, docId string, queries []string) (
 	return results, nil
 }
 
+func (r *Runner) HasTagAdjudicator() bool {
+	return r.tagAdjudicator != nil
+}
+
 func (r *Runner) AdjudicateTags(ctx context.Context, pairs []contentanalyzer.TagPairEvidence) ([]contentanalyzer.TagVerdictResult, error) {
 	if r.tagAdjudicator == nil {
 		return nil, fmt.Errorf("tag adjudicator not configured")
@@ -482,6 +486,21 @@ func (r *Runner) AdjudicateTags(ctx context.Context, pairs []contentanalyzer.Tag
 	}
 	return runWithTimeout(ctx, func() ([]contentanalyzer.TagVerdictResult, error) {
 		return r.tagAdjudicator.Adjudicate(ctx, pairs)
+	})
+}
+
+func (r *Runner) AdjudicateTagSplits(ctx context.Context, tags []string) ([]contentanalyzer.TagSplitResult, error) {
+	if r.tagAdjudicator == nil {
+		return nil, fmt.Errorf("tag adjudicator not configured")
+	}
+	timeout := time.Duration(r.config.ResolvedAdjudicatorTimeout()) * time.Second
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	return runWithTimeout(ctx, func() ([]contentanalyzer.TagSplitResult, error) {
+		return r.tagAdjudicator.AdjudicateTagSplits(ctx, tags)
 	})
 }
 

@@ -1358,26 +1358,31 @@ Response `200`:
   "completed_at": "2024-03-19T10:30:12Z",
   "result": {
     "report_only": true,
-    "worklist": { "stale": 116, "unjudged": 3, "drifted": 0, "aged": 0 },
+    "worklist": { "stale": 116, "unjudged": 3, "drifted": 0, "aged": 0, "joint": 2 },
     "judged": 5,
     "confirmed": 5,
     "flips": { "to_merge": 0, "to_keep": 5 },
     "planned_keep_flips": [
       { "query": "machine learning", "target": "ml", "reassigned": 12, "reason": "adjudicated", "creates_tag": true }
     ],
+    "planned_joint_splits": [
+      { "query": "supply and demand", "components": ["supply", "demand"], "reassigned": 8, "reason": "adjudicated" }
+    ],
     "skips": { "below_floor": 38, "query_reborn": 51, "adjudication_error": 25 }
   }
 }
 ```
 
-- `result` is the raw `Report` JSON persisted as the task's result: worklist counts,
-  judged/confirmed, flips, planned/applied pair entries (`planned_merges`,
-  `planned_keep_flips`, `retag_entries`, `invalidated_entries`), skip reasons, and the
-  `capped` / `no_documents` / `adjudicator_disabled` markers. Pair-level fields appear
-  only when the run recorded them (a run with no flips has no `planned_keep_flips`).
-  Each pair entry carries `reason` (the policy guard that decided it, or
-  `adjudicated` for LLM-judged pairs) and `creates_tag` (true when a keep flip
-  creates the query tag; always present in new reports).
+- `result` is the raw `Report` JSON persisted as the task's result: worklist counts
+  (including the `joint` category for conjunction-joined tags), judged/confirmed,
+  flips, planned/applied pair entries (`planned_merges`, `planned_keep_flips`,
+  `retag_entries`, `invalidated_entries`), planned/applied joint splits
+  (`planned_joint_splits` / `joint_splits` — query, components, reassigned documents,
+  reason), skip reasons, and the `capped` / `no_documents` / `adjudicator_disabled`
+  markers. Pair-level fields appear only when the run recorded them (a run with no
+  flips has no `planned_keep_flips`). Each pair entry carries `reason` (the policy
+  guard that decided it, or `adjudicated` for LLM-judged pairs) and `creates_tag`
+  (true when a keep flip creates the query tag; always present in new reports).
 - `404` — no completed `tagreconcile` run exists yet.
 
 ### Saved Searches
@@ -1531,6 +1536,8 @@ Three-phase API:
   "enricher.textreducer.target_words": 2000,
   "enricher.contentanalyzer.enabled": true,
   "enricher.contentanalyzer.timeout": 120,
+  "enricher.contentanalyzer.min_tags": 3,
+  "enricher.contentanalyzer.max_tags": 5,
   "enricher.contentanalyzer.prompt_template": "",
   "enricher.contentanalyzer.pause_on_credit_error": true,
   "enricher.contentanalyzer.doc_type_refinement.enabled": true,
@@ -2431,6 +2438,8 @@ enricher:
   contentanalyzer:
     enabled: false # disabled by default — enable after configuring LLM
     timeout: 120
+    # min_tags: 3  # lower bound requested from the analyzer (default 3)
+    # max_tags: 5  # upper bound per document (default 5, max 20); also scales the matcher's suggestion list
     # pause_on_credit_error: true  # pause batch on LLM provider credit/balance errors
     # prompt_template: ''  # optional custom LLM prompt; see docs for available placeholders
     # doc_type_refinement:
@@ -2535,6 +2544,8 @@ mirror:
 | `enricher.textreducer`         | Text summarization before LLM (TextRank)                               |
 | `enricher.contentanalyzer`     | LLM-based document classification (adapter/provider/model)                         |
 | `enricher.contentanalyzer.llm` | Adapter/provider/model config (flat structure with capability flags)                |
+| `enricher.contentanalyzer.min_tags` | Lower bound of thematic tags requested from the analyzer (default `3`; validated `1 ≤ min ≤ max ≤ 20`) |
+| `enricher.contentanalyzer.max_tags` | Upper bound of thematic tags per document (default `5`, max `20`); also scales how many tag suggestions the matcher feeds the prompt (`TopN = 3 × max_tags`) |
 | `enricher.contentanalyzer.prompt_template` | Custom Go `text/template` for the LLM prompt; empty = built-in default |
 | `enricher.contentanalyzer.pause_on_credit_error` | Pause the batch when the LLM provider returns a credit/balance error (default `true`) |
 | `enricher.contentanalyzer.llm.request_delay` | Seconds to sleep after each LLM request (default `1`; `0` = off, max `60`) — for rate-limited providers |
@@ -2543,7 +2554,7 @@ mirror:
 | `enricher.tagmatcher`          | Semantic tag matching via Hugot (embeddings) — see [Tag Matcher guide](tag-matcher.md) for memory/CPU tuning |
 | `enricher.tagmatcher.hugot`    | Hugot-specific settings (model, backend)                               |
 | `enricher.tag_adjudicator`     | Optional LLM verdicts for ambiguous tag pairs: `enabled` (default `false`), `timeout` (defaults to `contentanalyzer.timeout` at use time when `0`), `llm` (defaults to `contentanalyzer.llm` at use time when `provider`/`model` are empty — the raw values are preserved in config so the inheritance survives saves). When enabled, ambiguous-band pairs are classified `same`/`variant`/`related`, verdicts are cached in `tag_verdict_event`, and `same` replaces the emitted tag with the canonical target |
-| `enricher.tag_reconcile`       | Scheduled re-adjudication of stored tag verdicts: `enabled` (default `false`), `report_only` (default `true`; the first run is always report-only regardless), `interval` (days between runs, default `7`), `time` (HH:MM preferred time, default `02:00`), `max_rejudge` (max pairs re-evaluated per run, default `200`), `max_retag` (max documents re-pointed per run, default `1000`). The queue daemon enqueues a `tagreconcile` task when due; runs re-evaluate stale/unjudged/drifted/aged pairs against the current policy and store, healing absorbed tags and applying flips. Requires the tag adjudicator for acting (write) runs — without it, runs stay snapshot-only |
+| `enricher.tag_reconcile`       | Scheduled re-adjudication of stored tag verdicts: `enabled` (default `false`), `report_only` (default `true`; the first run is always report-only regardless), `interval` (days between runs, default `7`), `time` (HH:MM preferred time, default `02:00`), `max_rejudge` (max pairs re-evaluated per run, default `200`), `max_retag` (max documents re-pointed per run, default `1000`). The queue daemon enqueues a `tagreconcile` task when due; runs re-evaluate stale/unjudged/drifted/aged pairs against the current policy and store, healing absorbed tags and applying flips, and split store tags that join concepts with a conjunction into their components (adjudicated when the tag adjudicator is enabled, deterministic otherwise) — both under the same per-run caps. Requires the tag adjudicator for acting (write) runs — without it, runs stay snapshot-only |
 
 > **Schedule changes**: changing a scheduled task's interval or preferred time
 > takes effect at the closest upcoming occurrence of the new timing; if that
@@ -2886,7 +2897,8 @@ tools, plus an "N of M" availability counter.
 
 ### Enrichment
 
-- **Content analyzer (LLM)**: enabled toggle, timeout, adapter
+- **Content analyzer (LLM)**: enabled toggle, timeout, min tags and max tags
+  (1–20, min ≤ max enforced on save), adapter
   (openai-compatible/anthropic), provider (filtered by adapter), model
   (filtered by provider, loaded from model catalog), token (with show/hide),
   temperature, pause on credit error toggle, request delay (seconds to sleep

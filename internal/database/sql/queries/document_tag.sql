@@ -40,5 +40,16 @@ WHERE dt.tag_id = @source_id
       WHERE dt2.document_id = dt.document_id AND dt2.tag_id = @target_id
   );
 
+-- name: GetTagDocumentIDs :many
+SELECT dt.document_id FROM document_tag dt WHERE dt.tag_id = $1;
+
+-- name: AddComponentTagsToTagDocuments :execrows
+INSERT INTO document_tag (document_id, tag_id)
+SELECT dt.document_id, c.tag_id
+FROM document_tag dt
+CROSS JOIN unnest(@component_ids::bigint[]) AS c(tag_id)
+WHERE dt.tag_id = @joint_id
+ON CONFLICT (document_id, tag_id) DO NOTHING;
+
 -- name: DeleteDocumentTagsForTag :execrows
 DELETE FROM document_tag WHERE tag_id = $1;
