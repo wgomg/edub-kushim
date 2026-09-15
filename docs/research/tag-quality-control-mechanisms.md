@@ -127,7 +127,8 @@ heuristics:
 ```
 
 `category ∈ {topic, form_genre, place, person, other}` plus a standardness flag
-turns F2 and F3 into filterable fields. This is the form-filling evaluation pattern
+turns F2 and F3 into fields the §4.1 facet gate enforces deterministically. This is
+the form-filling evaluation pattern
 of G-Eval [32] and the criteria-decomposition effect of [5]. The adapters already
 parse arbitrary shapes (`AnalysisResult`), and `response_format: json_object` is
 already sent where the model catalog supports structured output.
@@ -200,17 +201,47 @@ an Oracle* [19]: deterministic guardrails over stochastic judges. This extends t
 existing `FilterTags`/`NewTagFilter` layer (`shared.go`), which already drops tags
 over three words, people-name overlaps, document-type token overlaps, and title
 containment. Hard gates belong **only** where classification is unambiguous — facet
-confusion:
+confusion — and their signal is the generator's own per-tag self-classification,
+not any curated list:
 
-- **form/genre lexicon** cross-checked against `document_type` names and a small
-  curated form-heading list (anthology, essay, fable, letters, adaptation,
-  spectatorship…) — kills F2;
-- **place names** via a gazetteer or NER-lite cross-check — kills F3.
+- **self-classification enforcement — kills F2 and F3.** The `category` field of
+  the §3.1 typed output: the model's in-context judgment of whether each tag names
+  a subject, a form/genre, a place, or a person. Enforcement is a deterministic
+  string comparison on an already-parsed field: `form_genre` is not born as a
+  topical tag (its information already lives in the `document_type` facet, or an
+  explicit genre facet per §7.1); `person` is not born either (persons already
+  have the People facet); `place` is born only when the term denotes a country or
+  a continent (§7.2).
 
-Everything fuzzier should feed a *score*, not a hard reject: abstract-nominal head
-morphology (`critique`, `agency`, `scapegoating`, `dissolution` as head noun with no
-store anchor), generic single-word tags (`thought`, `knowledge`, `irony` — visible
-in the zero-use orphan sample), token-IDF specificity. The weak–strong verification
+A curated form-heading list or a gazetteer would be wrong twice over. It would be
+**wrong by construction**: form-vs-topic is a property of the tag *relative to the
+document* — `letters` is a form tag on a correspondence collection and a topic tag
+on a history of letter-writing — so a word list decides by surface form what only
+context can decide. And it would be **unmaintainable in the exact way this design
+has already rejected**: static, out-of-band curation that silently rots and hands
+the rest of the pipeline a false sense of coverage — the same grounds on which the
+consolidation design rejected a seeded canonical vocabulary (§3.3's content-driven
+stance applies verbatim). The self-classification route also fails safely (§8): a
+mislabeled topic is rejected rather than born, re-emerges on the next document, and
+its misclassification rate is measurable through the §5.2 review queue instead of
+rotting invisibly in a list. That the field can be gated on at all rests on §2.3's
+asymmetry: the same model that cannot reliably *obey* "never emit places" while
+generating freely (§1, F3) can *classify* its own emission under a forced choice.
+
+The place branch is the one curated set this design accepts: a fixed,
+document-independent whitelist of countries and continents. It does not decide
+whether a term is a place — the model's `category` does that — only whether a
+`place` is of tag-worthy scope (a country or continent) rather than a
+sub-national one. Being bounded and universal, it lacks the document-relative
+failure modes that rule out a form-heading list, and a miss is a visible drop
+on the enrichment log rather than a silent no-op.
+
+Everything fuzzier should feed a *score*, not a hard reject — and the score's
+inputs are pattern classes of the language, not curated word lists:
+abstract-nominal head morphology (`critique`, `agency`, `scapegoating`,
+`dissolution` as head noun with no store anchor), generic single-word tags
+(`thought`, `knowledge`, `irony` — visible in the zero-use orphan sample),
+token-IDF specificity. The weak–strong verification
 analysis [6] explains why: the value of a cheap verifier is governed by its
 **calibration** and **sharpness**, and a blunt gate on a fuzzy signal destroys
 sharpness (near-coin-flip cases land in the reject band and get no strong
@@ -397,11 +428,14 @@ an explicit optional genre facet; reject topical-tag candidates that encode form
 The precedent is deep: aboutness and form are maintained as separate concerns in
 subject indexing — LC now keeps form/genre in a separate thesaurus (LCGFT) from
 topical headings [22, 23]. F2 then stops being a judgment call and becomes a
-*misdirected facet*, which is exactly what makes the §4.1 hard gate safe.
+*misdirected facet* — something the generator itself can recognize in context
+(§3.1) and the pipeline can enforce deterministically (§4.1).
 
 ### 7.2 Places
 
-Same treatment: a geographic facet, or the §4.1 gazetteer gate. LCSH likewise
+Same treatment: a geographic facet, or the §4.1 self-classification enforcement
+(`category = place`) restricted to countries and continents from the fixed
+whitelist. LCSH likewise
 maintains geographic headings as their own machinery rather than mixing them into
 topical strings [23].
 
@@ -451,7 +485,7 @@ flowchart TD
 
 | Priority | Mechanism | Where it lands | Cost |
 |---|---|---|---|
-| P0 | facet gates (§4.1: genre lexicon + doc-type overlap, place gazetteer) | `contentanalyzer` filter layer | free |
+| P0 | facet gates (§4.1: self-classification enforcement + doc-type token overlap; needs the §3.1 typed output) | `contentanalyzer` filter layer | free |
 | P0 | typed output, facet separation, choose-or-justify, negative exemplars (§3.1–3.4) | `defaultPromptTemplate` + parse validation | free |
 | P1 | rubric judge on newborns, two-threshold cascade, verdict cache (§4.2–4.3) | enricher, after the consolidation policy keeps — the `tag_adjudicator` config pattern (default-off, timeout, own LLM block), new `tag_quality_event` table | one bounded LLM call per document with novel births |
 | P1 | multi-sample stability filter (§3.5) — alternative or complement to the judge | enricher + hugot store clustering | k short cached completions per document |

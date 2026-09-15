@@ -490,14 +490,18 @@ for i := range 2 {
    non-Latin names use `NameRomanized` or an **anyascii transliteration**
    (`canonicalPersonName`, `enricher.go:426-441`); `NormalizedName =
    utils.NormalizeForDB(canonical)`.
-10. **Facet separation and tag filtering** (`enricher.go:263-273`):
-    `SeparateFacets` drops tags the model self-classified as `form_genre`
-    (they belong to `document_type`) and logs every drop as
-    `tags[facet]: drop <term> (category=… reason=matches_document_type|
-    model_self_classification)`; `FilterTags` (`shared.go:280-380`) then drops
-    tags that are >3 words, overlap with LLM people names, are multi-token
-    subsets of known normalized names, overlap doc-type names, or are
-    contained in the title; caps at 5.
+10. **Facet separation and tag filtering** (`enricher.go:263-267`):
+    `SeparateFacets` gates typed emissions by the model's own `category`:
+    `form_genre` tags are dropped (they belong to `document_type`),
+    `person` and `work` tags are dropped, and `place` tags survive only when
+    the term is a whitelisted country or continent. Every drop is logged as
+    `tags[facet]: drop <term> (category=… reason=…)` with `reason` one of
+    `matches_document_type`, `model_self_classification`, `people_facet`,
+    `forbidden_category`, `non_whitelisted_place`; `topic`/`other` and
+    untyped emissions pass through. `FilterTags` (`shared.go:276-383`) then
+    drops tags that are >3 words, overlap with LLM people names, are
+    multi-token subsets of known normalized names, overlap doc-type names, or
+    are contained in the title; caps at 5.
 11. **Consolidate** (`enricher.go:244-248`): `Runner.RankTags` ranks LLM tags
     against canonical existing tags, then `applyConsolidationPolicy` runs
     `tagpolicy.Evaluate` — deterministic guards (negation, shared token,
@@ -593,10 +597,10 @@ separate errors, so setup can't silently half-configure. `Reasoning` /
 - **`tokenBudgetRatio = 0.9` is a safety margin** — the shrink target is
   90% of the budget ratio, absorbing token-estimate error. Tightening it
   invites a second too-large failure.
-- **String-shaped tag arrays bypass the facet drop** — older/weaker models and
+- **String-shaped tag arrays bypass the facet gate** — older/weaker models and
   custom templates that return `"tags": ["…"]` parse fine, but every entry
   carries `category: other`, so no tag is dropped by `SeparateFacets`; the
-  form/genre gate only sees object-shaped emissions.
+  form/genre, person, work, and place gates only see object-shaped emissions.
 
 ---
 

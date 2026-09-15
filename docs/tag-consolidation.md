@@ -63,9 +63,10 @@ and `max_tags`, default 3–5, and capped at `max_tags` by the filter):
    `c++` is one token). The same normalizer runs at the tag-service save
    chokepoints, so store names are always canonical and identity is exact
    string equality.
-2. Tags the model self-classified as `form_genre` — what the document *is*,
-   rather than its subject matter — are dropped (they belong in
-   `document_type`) and every drop is logged as `tags[facet]: drop …`.
+2. Typed tags are gated by the model's own `category`: `form_genre`,
+   `person`, and `work` emissions are dropped, and `place` emissions survive
+   only as countries or continents — every drop is logged as
+   `tags[facet]: drop …`. `topic`/`other` and untyped emissions pass through.
    `FilterTags` then drops deterministic garbage (see below), and a split pass
    replaces tags that join concepts with a conjunction (`and`, `or`, `vs`,
    `vs.`, `versus`) by their components — see

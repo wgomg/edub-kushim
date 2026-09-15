@@ -250,10 +250,13 @@ The enrichment pipeline:
 4. **Tag Normalization and Facet Separation** — LLM-extracted tags are normalized to canonical
    space-separated form via `NormalizeTags`: lowercased, hyphens/underscores→spaces, non-alpha
    stripped, whitespace collapsed, deduplicated. This ensures the LLM's hyphenation instructions
-   or symbol handling don't produce OOD tokens in the embedding model. Tags the model
-   self-classified as `form_genre` — what the document *is*, as opposed to its subject matter —
-   are then dropped by `SeparateFacets` and logged (`tags[facet]: drop …`), because that facet
-   belongs to `document_type`; countries and continents stay admissible as tags.
+   or symbol handling don't produce OOD tokens in the embedding model. Typed emissions are then
+   gated by `SeparateFacets` and every drop is logged (`tags[facet]: drop …`): `form_genre` tags
+   (what the document *is*, as opposed to its subject matter) are dropped because that facet
+   belongs to `document_type`; `person` tags are dropped because people have their own facet;
+   `work` tags are dropped as non-vocabulary; `place` tags survive only as countries or
+   continents from the embedded whitelist, so cities, provinces, and regions are rejected.
+   `topic`/`other` and untyped emissions pass through ungated.
 5. **Post-LLM Tag Consolidation** — Normalized tags are ranked against canonical
    tag embeddings via `Rank` (the matcher returns candidates with scores; the
    replacement decision is the enricher's). `applyConsolidationPolicy` delegates

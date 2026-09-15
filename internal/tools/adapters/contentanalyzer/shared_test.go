@@ -1146,40 +1146,67 @@ func TestSeparateFacets(t *testing.T) {
 			wantKept: []string{"physics"},
 		},
 		{
-			name:    "form_genre dropped, topic kept",
-			tags:    []string{"physics", "literary anthology"},
-			details: []TagDetail{{Term: "physics", Category: TagCategoryTopic}, {Term: "literary anthology", Category: TagCategoryFormGenre}},
-			wantKept: []string{"physics"},
-			wantDropped: []FacetDrop{{Term: "literary anthology", Category: TagCategoryFormGenre}},
+			name:        "form_genre dropped, topic kept",
+			tags:        []string{"physics", "literary anthology"},
+			details:     []TagDetail{{Term: "physics", Category: TagCategoryTopic}, {Term: "literary anthology", Category: TagCategoryFormGenre}},
+			wantKept:    []string{"physics"},
+			wantDropped: []FacetDrop{{Term: "literary anthology", Category: TagCategoryFormGenre, Reason: "model_self_classification"}},
 		},
 		{
-			name:    "non-form_genre categories kept",
-			tags:    []string{"physics", "palestine", "newfoundland"},
-			details: []TagDetail{{Term: "physics", Category: TagCategoryTopic}, {Term: "palestine", Category: TagCategoryPlace}, {Term: "newfoundland", Category: TagCategoryPlace}},
-			wantKept: []string{"physics", "palestine", "newfoundland"},
+			name:        "topic and whitelisted place kept, sub-national place dropped",
+			tags:        []string{"physics", "palestine", "newfoundland"},
+			details:     []TagDetail{{Term: "physics", Category: TagCategoryTopic}, {Term: "palestine", Category: TagCategoryPlace}, {Term: "newfoundland", Category: TagCategoryPlace}},
+			wantKept:    []string{"physics", "palestine"},
+			wantDropped: []FacetDrop{{Term: "newfoundland", Category: TagCategoryPlace, Reason: "non_whitelisted_place"}},
 		},
 		{
-			name:         "confirmed when term matches docTypeNames",
+			name:         "matches_document_type when term matches docTypeNames",
 			tags:         []string{"physics"},
 			details:      []TagDetail{{Term: "physics", Category: TagCategoryFormGenre}},
 			docTypeNames: []string{"physics"},
 			wantKept:     []string{},
-			wantDropped:  []FacetDrop{{Term: "physics", Category: TagCategoryFormGenre, Confirmed: true}},
+			wantDropped:  []FacetDrop{{Term: "physics", Category: TagCategoryFormGenre, Reason: "matches_document_type"}},
 		},
 		{
-			name:         "not confirmed when term does not match docTypeNames",
+			name:         "model_self_classification when term does not match docTypeNames",
 			tags:         []string{"physics"},
 			details:      []TagDetail{{Term: "physics", Category: TagCategoryFormGenre}},
 			docTypeNames: []string{"letter"},
 			wantKept:     []string{},
-			wantDropped:  []FacetDrop{{Term: "physics", Category: TagCategoryFormGenre, Confirmed: false}},
+			wantDropped:  []FacetDrop{{Term: "physics", Category: TagCategoryFormGenre, Reason: "model_self_classification"}},
 		},
 		{
-			name:    "normalization aligns detail and tag",
-			tags:    []string{"form genre"},
-			details: []TagDetail{{Term: "Form-Genre", Category: TagCategoryFormGenre}},
-			wantKept: []string{},
-			wantDropped: []FacetDrop{{Term: "form genre", Category: TagCategoryFormGenre}},
+			name:        "normalization aligns detail and tag",
+			tags:        []string{"form genre"},
+			details:     []TagDetail{{Term: "Form-Genre", Category: TagCategoryFormGenre}},
+			wantKept:    []string{},
+			wantDropped: []FacetDrop{{Term: "form genre", Category: TagCategoryFormGenre, Reason: "model_self_classification"}},
+		},
+		{
+			name:        "person dropped",
+			tags:        []string{"physics", "marie curie"},
+			details:     []TagDetail{{Term: "physics", Category: TagCategoryTopic}, {Term: "marie curie", Category: TagCategoryPerson}},
+			wantKept:    []string{"physics"},
+			wantDropped: []FacetDrop{{Term: "marie curie", Category: TagCategoryPerson, Reason: "people_facet"}},
+		},
+		{
+			name:        "work dropped",
+			tags:        []string{"physics", "origin of species"},
+			details:     []TagDetail{{Term: "physics", Category: TagCategoryTopic}, {Term: "origin of species", Category: TagCategoryWork}},
+			wantKept:    []string{"physics"},
+			wantDropped: []FacetDrop{{Term: "origin of species", Category: TagCategoryWork, Reason: "forbidden_category"}},
+		},
+		{
+			name:     "topic and other always survive",
+			tags:     []string{"physics", "misc"},
+			details:  []TagDetail{{Term: "physics", Category: TagCategoryTopic}, {Term: "misc", Category: TagCategoryOther}},
+			wantKept: []string{"physics", "misc"},
+		},
+		{
+			name:     "untyped tag without detail row kept",
+			tags:     []string{"physics", "orphan"},
+			details:  []TagDetail{{Term: "physics", Category: TagCategoryTopic}},
+			wantKept: []string{"physics", "orphan"},
 		},
 	}
 	for _, tt := range tests {
@@ -1193,6 +1220,92 @@ func TestSeparateFacets(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestIsWhitelistedPlace(t *testing.T) {
+	tests := []struct {
+		name string
+		term string
+		want bool
+	}{
+		// Countries.
+		{"spain", "spain", true},
+		{"united states", "united states", true},
+		{"palestine", "palestine", true},
+		{"taiwan", "taiwan", true},
+		{"kosovo", "kosovo", true},
+		// Continents.
+		{"europe", "europe", true},
+		{"africa", "africa", true},
+		{"north america", "north america", true},
+		// Aliases.
+		{"usa", "usa", true},
+		{"uk", "uk", true},
+		{"uae", "uae", true},
+		{"drc", "drc", true},
+		{"great britain", "great britain", true},
+		{"czech republic", "czech republic", true},
+		{"holland", "holland", true},
+		{"cape verde", "cape verde", true},
+		{"swaziland", "swaziland", true},
+		// Dotted forms.
+		{"u.s.a.", "u.s.a.", true},
+		{"u.k.", "u.k.", true},
+		{"u.s.", "u.s.", true},
+		// Article forms.
+		{"the philippines", "the philippines", true},
+		{"the gambia", "the gambia", true},
+		{"the netherlands", "the netherlands", true},
+		{"the bahamas", "the bahamas", true},
+		{"the united states", "the united states", true},
+		{"the united kingdom", "the united kingdom", true},
+		// Case folding.
+		{"Spain", "Spain", true},
+		{"USA", "USA", true},
+		{"The Philippines", "The Philippines", true},
+		// Punctuation folding.
+		{"Cote d'Ivoire", "Cote d'Ivoire", true},
+		{"Timor-Leste", "Timor-Leste", true},
+		// Sub-national misses.
+		{"newfoundland", "newfoundland", false},
+		{"the hague", "the hague", false},
+		{"london", "london", false},
+		{"california", "california", false},
+		// Empty/odd.
+		{"", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := IsWhitelistedPlace(tt.term)
+			if got != tt.want {
+				t.Errorf("IsWhitelistedPlace(%q) = %v, want %v", tt.term, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPlaceWhitelist_Hygiene(t *testing.T) {
+	seen := make(map[string]string, len(placeWhitelist))
+	for _, raw := range allWhitelistEntries() {
+		key := placeWhitelistKey(raw)
+		if prev, dup := seen[key]; dup {
+			t.Errorf("duplicate normalized key %q from entries %q and %q", key, prev, raw)
+		}
+		seen[key] = raw
+	}
+	for _, raw := range allWhitelistEntries() {
+		if !IsWhitelistedPlace(raw) {
+			t.Errorf("whitelist entry %q does not survive its own lookup", raw)
+		}
+	}
+}
+
+// allWhitelistEntries returns all raw entries (continents + countries).
+func allWhitelistEntries() []string {
+	all := make([]string, 0, len(continentNames)+len(countryNames))
+	all = append(all, continentNames...)
+	all = append(all, countryNames...)
+	return all
 }
 
 func TestNormalizeTagCategory(t *testing.T) {

@@ -482,10 +482,311 @@ func ParseAnalysisResponse(content string) (*AnalysisResult, error) {
 	}, nil
 }
 
+var continentNames = []string{
+	"africa", "antarctica", "asia", "europe",
+	"north america", "south america", "oceania", "america",
+}
+
+var countryNames = []string{
+	// UN member and observer states.
+	"afghanistan",
+	"albania",
+	"algeria",
+	"andorra",
+	"angola",
+	"antigua and barbuda",
+	"argentina",
+	"armenia",
+	"australia",
+	"austria",
+	"azerbaijan",
+	"bahamas",
+	"bahrain",
+	"bangladesh",
+	"barbados",
+	"belarus",
+	"belgium",
+	"belize",
+	"benin",
+	"bhutan",
+	"bolivia",
+	"bosnia and herzegovina",
+	"botswana",
+	"brazil",
+	"brunei",
+	"bulgaria",
+	"burkina faso",
+	"burundi",
+	"cabo verde",
+	"cambodia",
+	"cameroon",
+	"canada",
+	"central african republic",
+	"chad",
+	"chile",
+	"china",
+	"colombia",
+	"comoros",
+	"congo",
+	"costa rica",
+	"croatia",
+	"cuba",
+	"cyprus",
+	"czechia",
+	"democratic republic of the congo",
+	"denmark",
+	"djibouti",
+	"dominica",
+	"dominican republic",
+	"ecuador",
+	"egypt",
+	"el salvador",
+	"equatorial guinea",
+	"eritrea",
+	"estonia",
+	"eswatini",
+	"ethiopia",
+	"fiji",
+	"finland",
+	"france",
+	"gabon",
+	"gambia",
+	"georgia",
+	"germany",
+	"ghana",
+	"greece",
+	"grenada",
+	"guatemala",
+	"guinea",
+	"guinea-bissau",
+	"guyana",
+	"haiti",
+	"holy see",
+	"honduras",
+	"hungary",
+	"iceland",
+	"india",
+	"indonesia",
+	"iran",
+	"iraq",
+	"ireland",
+	"israel",
+	"italy",
+	"ivory coast",
+	"jamaica",
+	"japan",
+	"jordan",
+	"kazakhstan",
+	"kenya",
+	"kiribati",
+	"kuwait",
+	"kyrgyzstan",
+	"laos",
+	"latvia",
+	"lebanon",
+	"lesotho",
+	"liberia",
+	"libya",
+	"liechtenstein",
+	"lithuania",
+	"luxembourg",
+	"madagascar",
+	"malawi",
+	"malaysia",
+	"maldives",
+	"mali",
+	"malta",
+	"marshall islands",
+	"mauritania",
+	"mauritius",
+	"mexico",
+	"micronesia",
+	"moldova",
+	"monaco",
+	"mongolia",
+	"montenegro",
+	"morocco",
+	"mozambique",
+	"myanmar",
+	"namibia",
+	"nauru",
+	"nepal",
+	"netherlands",
+	"new zealand",
+	"nicaragua",
+	"niger",
+	"nigeria",
+	"north korea",
+	"north macedonia",
+	"norway",
+	"oman",
+	"pakistan",
+	"palau",
+	"palestine",
+	"panama",
+	"papua new guinea",
+	"paraguay",
+	"peru",
+	"philippines",
+	"poland",
+	"portugal",
+	"qatar",
+	"romania",
+	"russia",
+	"rwanda",
+	"saint kitts and nevis",
+	"saint lucia",
+	"saint vincent and the grenadines",
+	"samoa",
+	"san marino",
+	"sao tome and principe",
+	"saudi arabia",
+	"senegal",
+	"serbia",
+	"seychelles",
+	"sierra leone",
+	"singapore",
+	"slovakia",
+	"slovenia",
+	"solomon islands",
+	"somalia",
+	"south africa",
+	"south korea",
+	"south sudan",
+	"spain",
+	"sri lanka",
+	"sudan",
+	"suriname",
+	"sweden",
+	"switzerland",
+	"syria",
+	"tajikistan",
+	"tanzania",
+	"thailand",
+	"timor-leste",
+	"togo",
+	"tonga",
+	"trinidad and tobago",
+	"tunisia",
+	"turkey",
+	"turkmenistan",
+	"tuvalu",
+	"uganda",
+	"ukraine",
+	"united arab emirates",
+	"united kingdom",
+	"united states",
+	"uruguay",
+	"uzbekistan",
+	"vanuatu",
+	"vatican city",
+	"venezuela",
+	"vietnam",
+	"yemen",
+	"zambia",
+	"zimbabwe",
+	// Contested and partially recognized states.
+	"abkhazia",
+	"kosovo",
+	"northern cyprus",
+	"sahrawi arab democratic republic",
+	"somaliland",
+	"south ossetia",
+	"taiwan",
+	"transnistria",
+	"western sahara",
+	// Short and alternate names.
+	"antigua barbuda",
+	"bosnia herzegovina",
+	"britain",
+	"brunei darussalam",
+	"burma",
+	"cape verde",
+	"congo-brazzaville",
+	"congo-kinshasa",
+	"cote d'ivoire",
+	"cote d ivoire",
+	"czech republic",
+	"democratic republic of congo",
+	"dprk",
+	"drc",
+	"east timor",
+	"federated states of micronesia",
+	"great britain",
+	"holland",
+	"macedonia",
+	"palestinian territories",
+	"republic of korea",
+	"republic of the congo",
+	"russian federation",
+	"st kitts and nevis",
+	"st lucia",
+	"st vincent and the grenadines",
+	"st. kitts and nevis",
+	"st. lucia",
+	"st. vincent and the grenadines",
+	"state of palestine",
+	"swaziland",
+	"trinidad tobago",
+	"turkiye",
+	"u.a.e.",
+	"u.k.",
+	"u.s.",
+	"u.s.a.",
+	"uae",
+	"uk",
+	"united states of america",
+	"us",
+	"usa",
+	"vatican",
+	"viet nam",
+}
+
+var placeWhitelist = buildPlaceWhitelist()
+
+func placeWhitelistKey(term string) string {
+	return strings.TrimPrefix(normalizeCore(term), "the ")
+}
+
+func buildPlaceWhitelist() map[string]struct{} {
+	names := make([]string, 0, len(continentNames)+len(countryNames))
+	names = append(names, continentNames...)
+	names = append(names, countryNames...)
+	m := make(map[string]struct{}, len(names))
+	for _, n := range names {
+		m[placeWhitelistKey(n)] = struct{}{}
+	}
+	return m
+}
+
+func IsWhitelistedPlace(term string) bool {
+	_, ok := placeWhitelist[placeWhitelistKey(term)]
+	return ok
+}
+
 type FacetDrop struct {
-	Term      string
-	Category  string
-	Confirmed bool
+	Term     string
+	Category string
+	Reason   string
+}
+
+func classifyCategory(tag, category string, docTypes map[string]struct{}) (string, bool) {
+	switch category {
+	case TagCategoryFormGenre:
+		if _, ok := docTypes[normalizeCore(tag)]; ok {
+			return "matches_document_type", true
+		}
+		return "model_self_classification", true
+	case TagCategoryPerson:
+		return "people_facet", true
+	case TagCategoryWork:
+		return "forbidden_category", true
+	case TagCategoryPlace:
+		if !IsWhitelistedPlace(tag) {
+			return "non_whitelisted_place", true
+		}
+	}
+	return "", false
 }
 
 func SeparateFacets(tags []string, details []TagDetail, docTypeNames []string) ([]string, []FacetDrop) {
@@ -504,16 +805,15 @@ func SeparateFacets(tags []string, details []TagDetail, docTypeNames []string) (
 	var dropped []FacetDrop
 	for _, tag := range tags {
 		category, ok := categoryByTerm[normalizeCore(tag)]
-		if ok && category == TagCategoryFormGenre {
-			dropped = append(dropped, FacetDrop{Term: tag, Category: category})
+		if !ok {
+			kept = append(kept, tag)
+			continue
+		}
+		if reason, drop := classifyCategory(tag, category, docTypes); drop {
+			dropped = append(dropped, FacetDrop{Term: tag, Category: category, Reason: reason})
 			continue
 		}
 		kept = append(kept, tag)
-	}
-	for i := range dropped {
-		if _, ok := docTypes[dropped[i].Term]; ok {
-			dropped[i].Confirmed = true
-		}
 	}
 	return kept, dropped
 }

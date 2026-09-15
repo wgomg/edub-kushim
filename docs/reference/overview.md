@@ -185,7 +185,7 @@ internal/
 │       ├── mupdf_nocgo.go      # Non-CGo stub (build-tag gated)
 │       ├── contentanalyzer/    # LLM classification adapters (capability-based)
 │       │   ├── adapter.go               # ContentAnalyzer interface + factory (adapter-based dispatch)
-│       │   ├── shared.go                # BuildPrompt, ParseAnalysisResponse, SeparateFacets, TagDetail, SystemMessage, ContentTooLargeError, TokenLimitError, checkContentTooLarge, parseTokenLimitError, FilterTags, NormalizeTags
+│       │   ├── shared.go                # BuildPrompt, ParseAnalysisResponse, SeparateFacets, IsWhitelistedPlace, TagDetail, SystemMessage, ContentTooLargeError, TokenLimitError, checkContentTooLarge, parseTokenLimitError, FilterTags, NormalizeTags
 │       │   ├── openai_compatible.go     # OpenAI-compatible API (absorbs former OpenAI, DeepSeek, Mistral, etc.)
 │       │   ├── llm_anthropic.go         # Anthropic Messages API with capability flags
 │       │   └── shared.go                # Shared prompt building, tag filtering, error detection helpers
