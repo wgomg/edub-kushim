@@ -260,6 +260,16 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 	for _, p := range existingPeople {
 		knownNormalized = append(knownNormalized, normalizedPeopleKey(p))
 	}
+	kept, facetDrops := contentanalyzer.SeparateFacets(analysis.Tags, analysis.TagDetails, docTypeNames)
+	for _, drop := range facetDrops {
+		if drop.Confirmed {
+			e.logger.Info(&logId, "tags[facet]: drop %q (category=%s reason=matches_document_type)", drop.Term, drop.Category)
+		} else {
+			e.logger.Info(&logId, "tags[facet]: drop %q (category=%s reason=model_self_classification)", drop.Term, drop.Category)
+		}
+	}
+	analysis.Tags = kept
+
 	analysis.Tags = contentanalyzer.FilterTags(analysis.Tags, analysis.People, knownNormalized, analysis.Title, docTypeNames, e.config.Enricher.ContentAnalyzer.MaxTags)
 	tagFilter := contentanalyzer.NewTagFilter(analysis.People, knownNormalized, analysis.Title, docTypeNames)
 	analysis.Tags = e.splitJointTags(ctx, analysis.Tags, tagFilter, &logId)

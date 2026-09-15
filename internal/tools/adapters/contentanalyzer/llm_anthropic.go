@@ -249,8 +249,8 @@ func (l *LlmAnthropic) Analyze(ctx context.Context, text string, docTypes []data
 		return nil, err
 	}
 
-	var analysisResult AnalysisResult
-	if err := json.Unmarshal([]byte(responseContent), &analysisResult); err != nil {
+	analysisResult, err := ParseAnalysisResponse(responseContent)
+	if err != nil {
 		return nil, fmt.Errorf("LLM returned invalid JSON: %w\nraw: %s", err, responseContent)
 	}
 
@@ -266,7 +266,7 @@ func (l *LlmAnthropic) Analyze(ctx context.Context, text string, docTypes []data
 	rm := json.RawMessage(ctxJSON)
 	analysisResult.PassContext = &rm
 
-	return &analysisResult, nil
+	return analysisResult, nil
 }
 
 func (l *LlmAnthropic) AnalyzeDocType(ctx context.Context, prevResult *AnalysisResult, headTailText string, docTypes []database.DocumentType, metadata DocMetadata) (string, error) {
@@ -326,8 +326,7 @@ func (l *LlmAnthropic) AnalyzeDocType(ctx context.Context, prevResult *AnalysisR
 		return "", fmt.Errorf("LLM returned invalid JSON: %w\nraw: %s", err, responseContent)
 	}
 	if result.Type == "" {
-		var full AnalysisResult
-		if err := json.Unmarshal([]byte(responseContent), &full); err == nil {
+		if full, perr := ParseAnalysisResponse(responseContent); perr == nil {
 			return full.DocType, nil
 		}
 	}

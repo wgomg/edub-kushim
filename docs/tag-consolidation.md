@@ -55,15 +55,18 @@ and review.
 
 ## How a tag is decided
 
-Per enrichment, after the LLM emits up to `max_tags + 3` tags (trimmed to
-`max_tags`, default 5):
+Per enrichment, after the LLM emits its tags (prompted for between `min_tags`
+and `max_tags`, default 3–5, and capped at `max_tags` by the filter):
 
 1. Emitted names are canonicalized (`utils.NormalizeTag`: NFKC, lowercase,
    accent-folded; `+`, `#`, `.`, digits, and non-Latin scripts preserved —
    `c++` is one token). The same normalizer runs at the tag-service save
    chokepoints, so store names are always canonical and identity is exact
    string equality.
-2. `FilterTags` drops deterministic garbage (see below), then a split pass
+2. Tags the model self-classified as `form_genre` — what the document *is*,
+   rather than its subject matter — are dropped (they belong in
+   `document_type`) and every drop is logged as `tags[facet]: drop …`.
+   `FilterTags` then drops deterministic garbage (see below), and a split pass
    replaces tags that join concepts with a conjunction (`and`, `or`, `vs`,
    `vs.`, `versus`) by their components — see
    [Joint tags](#joint-tags) below.

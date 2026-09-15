@@ -30,6 +30,7 @@ type AnalysisResult struct {
 	Title       string           `json:"title"`
 	DocType     string           `json:"type"`
 	Tags        []string         `json:"tags"`
+	TagDetails  []TagDetail      `json:"tag_details,omitempty"`
 	People      []PeopleResult   `json:"people"`
 	Language    string           `json:"language"`
 	Stats       *json.RawMessage `json:"stats"`

@@ -124,10 +124,10 @@ func buildTokenUsageStats(prompt, completion, total int) *json.RawMessage {
 const defaultPromptTemplate = `Analyze the excerpts of a document provided below and extract the following data:
 - Document title: The title as written in the document, in excerpts language, copied verbatim — never invent or append wording of your own; colons and subtitles are legitimate only when the original title itself has one. If no title line appears in the excerpts, use the first substantive line of the text as the title, still copied verbatim. Truncate to 127 characters if longer
 {{.DocTypePrompt}}
-- Tags: Between {{.MinTags}} and {{.MaxTags}} thematic tags describing the document's topics and domains. English only. Each tag is one to three words naming a recognizable subject, field, or period. Tags describe facets the title does not already state. Tags are conceptual categories — fields, domains, disciplines, periods, methods. Tags are never specific people, works, or places. Never merge two distinct concepts into a single tag with a conjunction such as "and", "or", or "vs" — emit each concept as its own tag. Use only widely-recognized standard terminology a general educated audience would know. Prefer the most standard, widely-recognized term for the subject; use a narrower term only when the document is specifically about that subfield. If an existing suggestion tag captures the concept adequately, prefer it over inventing a narrower label.{{.TagsPrompt}}
+- Tags: Between {{.MinTags}} and {{.MaxTags}} thematic tags describing the document's topics and domains. English only. Each tag is one to three words naming a recognizable subject, field, or period. Tags describe facets the title does not already state. Tags are conceptual categories — fields, domains, disciplines, periods, methods. Tags describe subject matter only; what the document is — its form or genre — belongs in the document type field, never in tags. Tags are never specific people or works. A place may be a tag only when it denotes a country or a continent — including contested or partially recognized states such as 'palestine' or 'taiwan' — never a city, province, region, or other sub-national place. Never merge two distinct concepts into a single tag with a conjunction such as "and", "or", or "vs" — emit each concept as its own tag. Use only widely-recognized standard terminology a general educated audience would know. Prefer the most standard, widely-recognized term for the subject; use a narrower term only when the document is specifically about that subfield. If an existing suggestion tag captures the concept adequately, prefer it over inventing a narrower label. Each tag is an object with keys: term, category, is_standard_term. Category is exactly one of: topic (subject matter), form_genre (what the document is), place, person, work, other. is_standard_term is true only when the term is widely-recognized standard terminology, not a coinage specific to this document. Do not emit tags like these: 'literary anthology' (a form — it belongs in the document type), 'racial scapegoating' (an argument specific to this document, not standard terminology), 'newfoundland' (a sub-national place — only countries and continents may be tags), 'bail spring replacement' (a device detail too narrow for a shared vocabulary).{{.TagsPrompt}}
 - People: People associated with the document. For each person provide: name (the person's name in their own native script/language — only when you can independently determine it; if you are not confident of the person's actual native form, leave this empty rather than copying how this document renders the name), name_romanized (a Latin-script/romanized form of the name — always provide this, even when name is already in Latin script), and a type from the list below. Only include individuals who play a substantive role in the document's creation, execution, or primary subject matter — exclude incidental mentions. Note: names captured here must NOT be re-used as tags.
 {{.PeoplePrompt}}- Language: 3-letter ISO 639-2 code (e.g. 'eng','spa','jpn','fra','deu','zho','kor','ara','por','rus'). Detect the primary language even from noisy or mixed text. Only use 'und' as a last resort if the text is truly too short or ambiguous to determine.
-Return ONLY a json string without any explanations, numbers, additional text, text formatting or text/code blocks, with keys: title, type, tags, people (array of objects with keys: name, name_romanized, type), language.
+Return ONLY a json string without any explanations, numbers, additional text, text formatting or text/code blocks, with keys: title, type, tags (array of objects with keys: term, category, is_standard_term), people (array of objects with keys: name, name_romanized, type), language.
 
 Document Excerpts: {{.Text}}`
 
@@ -197,7 +197,7 @@ func tagsPrompt(tags []string) string {
 		return ""
 	}
 	return fmt.Sprintf(
-		" Prefer tags from the following list if thematically related to document excerpts: '%s'",
+		" Every tag must either come from this list of existing tags or be a defensible standard subject term that this document specifically warrants: '%s'",
 		strings.Join(tags, ","),
 	)
 }
@@ -406,6 +406,116 @@ func NormalizeTags(raw []string) []string {
 		result = append(result, t)
 	}
 	return result
+}
+
+type TagDetail struct {
+	Term           string `json:"term"`
+	Category       string `json:"category"`
+	IsStandardTerm bool   `json:"is_standard_term"`
+}
+
+const (
+	TagCategoryTopic     = "topic"
+	TagCategoryFormGenre = "form_genre"
+	TagCategoryPlace     = "place"
+	TagCategoryPerson    = "person"
+	TagCategoryWork      = "work"
+	TagCategoryOther     = "other"
+)
+
+func normalizeTagCategory(raw string) string {
+	c := strings.NewReplacer("-", "_", " ", "_").Replace(strings.ToLower(strings.TrimSpace(raw)))
+	switch c {
+	case TagCategoryTopic, TagCategoryFormGenre, TagCategoryPlace, TagCategoryPerson, TagCategoryWork:
+		return c
+	default:
+		return TagCategoryOther
+	}
+}
+
+type analysisWire struct {
+	Title    string          `json:"title"`
+	DocType  string          `json:"type"`
+	Tags     json.RawMessage `json:"tags"`
+	People   []PeopleResult  `json:"people"`
+	Language string          `json:"language"`
+}
+
+func ParseAnalysisResponse(content string) (*AnalysisResult, error) {
+	var wire analysisWire
+	if err := json.Unmarshal([]byte(content), &wire); err != nil {
+		return nil, fmt.Errorf("parse analysis response: %w", err)
+	}
+	var elements []json.RawMessage
+	if len(wire.Tags) > 0 {
+		if err := json.Unmarshal(wire.Tags, &elements); err != nil {
+			return nil, fmt.Errorf("parse tags: %w", err)
+		}
+	}
+	tags := make([]string, 0, len(elements))
+	details := make([]TagDetail, 0, len(elements))
+	for _, el := range elements {
+		var term string
+		if err := json.Unmarshal(el, &term); err == nil {
+			tags = append(tags, term)
+			details = append(details, TagDetail{Term: term, Category: TagCategoryOther})
+			continue
+		}
+		var d TagDetail
+		if err := json.Unmarshal(el, &d); err != nil {
+			continue
+		}
+		if strings.TrimSpace(d.Term) == "" {
+			continue
+		}
+		d.Category = normalizeTagCategory(d.Category)
+		tags = append(tags, d.Term)
+		details = append(details, d)
+	}
+	return &AnalysisResult{
+		Title:      wire.Title,
+		DocType:    wire.DocType,
+		Tags:       tags,
+		TagDetails: details,
+		People:     wire.People,
+		Language:   wire.Language,
+	}, nil
+}
+
+type FacetDrop struct {
+	Term      string
+	Category  string
+	Confirmed bool
+}
+
+func SeparateFacets(tags []string, details []TagDetail, docTypeNames []string) ([]string, []FacetDrop) {
+	if len(details) == 0 {
+		return tags, nil
+	}
+	categoryByTerm := make(map[string]string, len(details))
+	for _, d := range details {
+		categoryByTerm[normalizeCore(d.Term)] = d.Category
+	}
+	docTypes := make(map[string]struct{}, len(docTypeNames))
+	for _, name := range docTypeNames {
+		docTypes[normalizeCore(name)] = struct{}{}
+	}
+	kept := make([]string, 0, len(tags))
+	var dropped []FacetDrop
+	for _, tag := range tags {
+		category, ok := categoryByTerm[normalizeCore(tag)]
+		if ok && category == TagCategoryFormGenre {
+			dropped = append(dropped, FacetDrop{Term: tag, Category: category})
+			continue
+		}
+		kept = append(kept, tag)
+	}
+	for i := range dropped {
+		if _, ok := docTypes[dropped[i].Term]; ok {
+			dropped[i].Confirmed = true
+		}
+	}
+	return kept, dropped
 }
 
 type TagPairEvidence struct {

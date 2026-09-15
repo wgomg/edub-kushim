@@ -214,8 +214,8 @@ func (l *LlmOpenAiCompatible) Analyze(ctx context.Context, text string, docTypes
 	responseContent := strings.TrimSpace(chatResp.Choices[0].Message.Content)
 	responseContent = utils.CleanCodeBlock(responseContent)
 
-	var analysisResult AnalysisResult
-	if err := json.Unmarshal([]byte(responseContent), &analysisResult); err != nil {
+	analysisResult, err := ParseAnalysisResponse(responseContent)
+	if err != nil {
 		return nil, fmt.Errorf("LLM returned invalid JSON: %w\nraw: %s", err, responseContent)
 	}
 
@@ -231,7 +231,7 @@ func (l *LlmOpenAiCompatible) Analyze(ctx context.Context, text string, docTypes
 	rm := json.RawMessage(ctxJSON)
 	analysisResult.PassContext = &rm
 
-	return &analysisResult, nil
+	return analysisResult, nil
 }
 
 func (l *LlmOpenAiCompatible) AnalyzeDocType(ctx context.Context, prevResult *AnalysisResult, headTailText string, docTypes []database.DocumentType, metadata DocMetadata) (string, error) {
@@ -301,8 +301,7 @@ func (l *LlmOpenAiCompatible) AnalyzeDocType(ctx context.Context, prevResult *An
 		return "", fmt.Errorf("LLM returned invalid JSON: %w\nraw: %s", err, responseContent)
 	}
 	if result.Type == "" {
-		var full AnalysisResult
-		if err := json.Unmarshal([]byte(responseContent), &full); err == nil {
+		if full, perr := ParseAnalysisResponse(responseContent); perr == nil {
 			return full.DocType, nil
 		}
 	}

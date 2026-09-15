@@ -55,13 +55,14 @@ the whole batch pauses (§10).
 
 ## 2. The ContentAnalyzer interface
 
-`internal/tools/adapters/contentanalyzer/adapter.go:21-36`:
+`internal/tools/adapters/contentanalyzer/adapter.go:21-37`:
 
 ```go
 type ContentAnalyzer interface {
 	Analyze(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*AnalysisResult, error)
 	AnalyzeDocType(ctx context.Context, prevResult *AnalysisResult, headTailText string, docTypes []database.DocumentType, metadata DocMetadata) (string, error)
 	Adjudicate(ctx context.Context, pairs []TagPairEvidence) ([]TagVerdictResult, error)
+	AdjudicateTagSplits(ctx context.Context, tags []string) ([]TagSplitResult, error)
 	Name() string
 }
 
@@ -69,6 +70,7 @@ type AnalysisResult struct {
 	Title       string           `json:"title"`
 	DocType     string           `json:"type"`
 	Tags        []string         `json:"tags"`
+	TagDetails  []TagDetail      `json:"tag_details,omitempty"`
 	People      []PeopleResult   `json:"people"`
 	Language    string           `json:"language"`
 	Stats       *json.RawMessage `json:"stats"`
@@ -89,6 +91,12 @@ type AnalysisResult struct {
   provider supports it). Used by the tag adjudicator when
   `enricher.tag_adjudicator.enabled` is true; see the
   [semantic matching guide](semantic-matching.md#adjudication-of-the-ambiguous-band).
+- `TagDetails` — the typed mirror of `Tags`, one `{term, category,
+  is_standard_term}` entry per tag. `category` is folded to `topic` /
+  `form_genre` / `place` / `person` / `work` / `other` (a missing or unknown
+  value becomes `other`), and string-shaped tag entries are `other` by
+  construction. Consumed once by the enricher's facet gate
+  (`SeparateFacets`, §10) — never persisted or returned to clients.
 - `PassContext` (`json:"-"`) carries the exact system+user prompts from the
   first call so the second call can replay them — never serialized to the
   API response.
@@ -121,12 +129,11 @@ of the extraction contract:
 Analyze the excerpts of a document provided below and extract the following data:
 - Document title: The title as written in the document, in excerpts language, copied verbatim — never invent or append wording of your own; colons and subtitles are legitimate only when the original title itself has one. If no title line appears in the excerpts, use the first substantive line of the text as the title, still copied verbatim. Truncate to 127 characters if longer
 {{.DocTypePrompt}}
-- Tags: At most {{.RequestedTags}} thematic tags describing the document's topics and domains. English only. ...
-{{.TagsPrompt}}
+- Tags: Between {{.MinTags}} and {{.MaxTags}} thematic tags describing the document's topics and domains. English only. ... Tags describe subject matter only; what the document is — its form or genre — belongs in the document type field, never in tags. Tags are never specific people or works. A place may be a tag only when it denotes a country or a continent — including contested or partially recognized states such as 'palestine' or 'taiwan' — never a city, province, region, or other sub-national place. ... Each tag is an object with keys: term, category, is_standard_term. Category is exactly one of: topic (subject matter), form_genre (what the document is), place, person, work, other. is_standard_term is true only when the term is widely-recognized standard terminology, not a coinage specific to this document. Do not emit tags like these: 'literary anthology' (a form — it belongs in the document type), 'racial scapegoating' (an argument specific to this document, not standard terminology), 'newfoundland' (a sub-national place — only countries and continents may be tags), 'bail spring replacement' (a device detail too narrow for a shared vocabulary).{{.TagsPrompt}}
 - People: People associated with the document. For each person provide: name (the person's name in their own native script/language ...), name_romanized (...), and a type from the list below. ...
 {{.PeoplePrompt}}- Language: 3-letter ISO 639-2 code (e.g. 'eng','spa','jpn',...). Detect the primary language even from noisy or mixed text. Only use 'und' as a last resort ...
 
-Return ONLY a json string without any explanations, numbers, additional text, text formatting or text/code blocks, with keys: title, type, tags, people (array of objects with keys: name, name_romanized, type), language.
+Return ONLY a json string without any explanations, numbers, additional text, text formatting or text/code blocks, with keys: title, type, tags (array of objects with keys: term, category, is_standard_term), people (array of objects with keys: name, name_romanized, type), language.
 
 Document Excerpts: {{.Text}}
 ```
@@ -134,8 +141,9 @@ Document Excerpts: {{.Text}}
 Design points:
 
 - **The output contract is spelled out in the prompt**: "Return ONLY a json
-  string ... with keys: title, type, tags, people, language" — the adapters
-  parse exactly that shape (§6).
+  string ... with keys: title, type, tags, people, language" — with tags as
+  typed objects (`term`, `category`, `is_standard_term`). The adapters parse
+  that shape and the older plain-string array alike (§6).
 - **Titles are copied, never composed**: the model returns the document's
   own title verbatim — no invented subtitles, summaries, or appended
   clauses; colons/subtitles are legitimate only when the original title has
@@ -146,15 +154,18 @@ Design points:
   `documentTypePrompt` (`"- Document type: choose one of the following:\n  -
   %s (%s)\n"` per type, `shared.go:194-201`), `peopleTypePrompt`
   (`"  Available types:\n    - %s (%s)\n"`, `shared.go:185-192`), and
-  `tagsPrompt` (`" Prefer tags from the following list if thematically
-  related: '%s'"`, `shared.go:203-208` — the semantic-matcher suggestions,
+  `tagsPrompt` (`" Every tag must either come from this list of existing tags
+  or be a defensible standard subject term that this document specifically
+  warrants: '%s'"`, `shared.go` — the semantic-matcher suggestions,
   comma-joined).
-- **Tag count is a buffer**: the prompt requests `max_tags + 3` tags
-  (`tagRequestBuffer`, `shared.go`) but only `max_tags` survive
-  post-processing (`enricher.contentanalyzer.max_tags`, default 5) — ask for
-  more than you keep, so filtering doesn't starve the result. The prompt asks
-  for "Between `min_tags` and `max_tags`" tags and forbids merging concepts
-  with a conjunction.
+- **Tag range is configurable**: the prompt asks for "Between `min_tags` and
+  `max_tags`" tags (`enricher.contentanalyzer.min_tags`/`max_tags`, default
+  3/5) and forbids merging concepts with a conjunction; the post-processing
+  filter caps survivors at `max_tags`. The prompt also states the facet rule —
+  tags describe subject matter, forms/genres belong in the document type, and
+  a place is a tag only for countries and continents — plus one-line negative
+  exemplars for each known failure mode (`literary anthology`,
+  `racial scapegoating`, `newfoundland`, `bail spring replacement`).
 - **`customTemplate` overrides** when set in config
   (`ContentAnalyzer.PromptTemplate`); **any parse/execute error falls back
   silently to the default** (`shared.go:162-165, 176-180`) — a broken custom
@@ -218,9 +229,9 @@ Anthropic-specific rules the adapter encodes:
   — newer models don't accept it. The doc-type call passes `temp = 0`.
 
 Response parsing (`llm_anthropic.go:216-254`): content blocks with
-`block.Type == "text"` are joined, then `CleanCodeBlock` + `json.Unmarshal`
-into `AnalysisResult`; usage → `Stats`; the full prompt is persisted in
-`Prompt`; `PassContext` serializes `{system, user_prompt}` for the replay.
+`block.Type == "text"` are joined, then `CleanCodeBlock` +
+`ParseAnalysisResponse` (§6); usage → `Stats`; the full prompt is persisted
+in `Prompt`; `PassContext` serializes `{system, user_prompt}` for the replay.
 
 **`AnalyzeDocType` replays the conversation** (`llm_anthropic.go:259-374`):
 
@@ -297,12 +308,20 @@ Schema:
 1. `strings.TrimSpace` on the response text.
 2. `utils.CleanCodeBlock` (`internal/utils/text.go:67-75`) — strips
    `` ```json `` / `` ``` `` fences and trims.
-3. `json.Unmarshal` into `AnalysisResult`.
+3. `ParseAnalysisResponse` (`shared.go:444-483`) — decodes the wire shape
+   (`title`, `type`, `tags`, `people`, `language`) and normalizes `tags`
+   element by element: a JSON string becomes a tag with `category: other`; an
+   object must carry a non-empty `term`, and its `category` is folded to the
+   known set (missing or unknown → `other`). Mixed arrays parse element-wise
+   and unparseable elements are skipped; a `tags` value that is not an array
+   fails the whole parse, and a missing/`null` `tags` key yields empty slices.
 
-If unmarshal fails, the error embeds the raw text:
+If the top-level decode fails, the error embeds the raw text:
 `"LLM returned invalid JSON: %w\nraw: %s"` (`llm_anthropic.go:236-242`) — the
 raw response goes into the error so the failure is debuggable from the task
-log.
+log. The `AnalyzeDocType` fallback for a response with no `type` key re-parses
+through the same helper, so an object-shaped response still yields its
+`DocType`.
 
 Validation happens *upstream* of parsing, in the enricher (§10): tags are
 filtered/normalized, people canonicalized, doc type checked against the
@@ -471,10 +490,14 @@ for i := range 2 {
    non-Latin names use `NameRomanized` or an **anyascii transliteration**
    (`canonicalPersonName`, `enricher.go:426-441`); `NormalizedName =
    utils.NormalizeForDB(canonical)`.
-10. **Filter tags** (`enricher.go:234`): `FilterTags` (`shared.go:280-380`)
-    drops tags that are >3 words, overlap with LLM people names, are
-    multi-token subsets of known normalized names, overlap doc-type names, or
-    are contained in the title; caps at 5.
+10. **Facet separation and tag filtering** (`enricher.go:263-273`):
+    `SeparateFacets` drops tags the model self-classified as `form_genre`
+    (they belong to `document_type`) and logs every drop as
+    `tags[facet]: drop <term> (category=… reason=matches_document_type|
+    model_self_classification)`; `FilterTags` (`shared.go:280-380`) then drops
+    tags that are >3 words, overlap with LLM people names, are multi-token
+    subsets of known normalized names, overlap doc-type names, or are
+    contained in the title; caps at 5.
 11. **Consolidate** (`enricher.go:244-248`): `Runner.RankTags` ranks LLM tags
     against canonical existing tags, then `applyConsolidationPolicy` runs
     `tagpolicy.Evaluate` — deterministic guards (negation, shared token,
@@ -570,7 +593,11 @@ separate errors, so setup can't silently half-configure. `Reasoning` /
 - **`tokenBudgetRatio = 0.9` is a safety margin** — the shrink target is
   90% of the budget ratio, absorbing token-estimate error. Tightening it
   invites a second too-large failure.
+- **String-shaped tag arrays bypass the facet drop** — older/weaker models and
+  custom templates that return `"tags": ["…"]` parse fine, but every entry
+  carries `category: other`, so no tag is dropped by `SeparateFacets`; the
+  form/genre gate only sees object-shaped emissions.
 
 ---
 
-*Last verified against the tree: 2026-08-03. If code and doc disagree, code wins.*
+*Last verified against the tree: 2026-09-15. If code and doc disagree, code wins.*

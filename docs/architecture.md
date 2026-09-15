@@ -227,6 +227,9 @@ The enrichment pipeline:
      is built dynamically from the model's capability flags (reasoning, structured output,
      temperature, etc.) looked up from the model catalog registry. Returns structured JSON:
      title, type, tags, people (with types like author, sender), language.
+     Tags are typed objects — `term`, `category` (`topic`, `form_genre`, `place`, `person`,
+     `work`, `other`), `is_standard_term` — so the model self-classifies what each term is;
+     plain-string tag arrays are still accepted and parsed into the same shape.
      For non-Latin names (Korean, Arabic, Cyrillic, etc.), the LLM is prompted to
      provide a `name_romanized` field alongside the original name.
      If the response is entirely empty, one automatic retry is performed.
@@ -244,10 +247,13 @@ The enrichment pipeline:
     prefix. The head+tail is extracted via `ExtractHeadTailWords` (default 600 head, 400
     tail words) separated by a `[...]` marker. On error the first-pass type is preserved.
     Configured via `enricher.contentanalyzer.doc_type_refinement` (enabled by default).
-4. **Tag Normalization** — LLM-extracted tags are normalized to canonical space-separated
-   form via `NormalizeTags`: lowercased, hyphens/underscores→spaces, non-alpha stripped,
-   whitespace collapsed, deduplicated. This ensures the LLM's hyphenation instructions
-   or symbol handling don't produce OOD tokens in the embedding model.
+4. **Tag Normalization and Facet Separation** — LLM-extracted tags are normalized to canonical
+   space-separated form via `NormalizeTags`: lowercased, hyphens/underscores→spaces, non-alpha
+   stripped, whitespace collapsed, deduplicated. This ensures the LLM's hyphenation instructions
+   or symbol handling don't produce OOD tokens in the embedding model. Tags the model
+   self-classified as `form_genre` — what the document *is*, as opposed to its subject matter —
+   are then dropped by `SeparateFacets` and logged (`tags[facet]: drop …`), because that facet
+   belongs to `document_type`; countries and continents stay admissible as tags.
 5. **Post-LLM Tag Consolidation** — Normalized tags are ranked against canonical
    tag embeddings via `Rank` (the matcher returns candidates with scores; the
    replacement decision is the enricher's). `applyConsolidationPolicy` delegates

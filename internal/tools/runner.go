@@ -84,6 +84,7 @@ type ContentAnalysisResult struct {
 	Title       string                         `json:"title"`
 	DocType     string                         `json:"type"`
 	Tags        []string                       `json:"tags"`
+	TagDetails  []contentanalyzer.TagDetail    `json:"tag_details,omitempty"`
 	People      []contentanalyzer.PeopleResult `json:"people"`
 	Language    string                         `json:"language"`
 	Stats       *json.RawMessage               `json:"stats"`
@@ -559,6 +560,7 @@ func (r *Runner) AnalyzeContent(ctx context.Context, text string, docTypes []dat
 		Title:       result.Title,
 		DocType:     result.DocType,
 		Tags:        result.Tags,
+		TagDetails:  result.TagDetails,
 		People:      result.People,
 		Language:    result.Language,
 		Stats:       result.Stats,

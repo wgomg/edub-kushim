@@ -966,3 +966,259 @@ func TestSplitComponents_AppliesDocumentFilter(t *testing.T) {
 		t.Errorf("SplitComponents = %v, want %v", got, want)
 	}
 }
+
+func TestParseAnalysisResponse(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    *AnalysisResult
+		wantErr bool
+	}{
+		{
+			name:    "invalid JSON",
+			content: "not json",
+			wantErr: true,
+		},
+		{
+			name:    "non-array tags",
+			content: `{"title":"t","tags":"bad"}`,
+			wantErr: true,
+		},
+		{
+			name:    "null tags",
+			content: `{"title":"t","tags":null}`,
+			want:    &AnalysisResult{Title: "t", Tags: []string{}, TagDetails: []TagDetail{}},
+		},
+		{
+			name:    "empty tags array",
+			content: `{"title":"t","tags":[]}`,
+			want:    &AnalysisResult{Title: "t", Tags: []string{}, TagDetails: []TagDetail{}},
+		},
+		{
+			name:    "missing tags key",
+			content: `{"title":"t"}`,
+			want:    &AnalysisResult{Title: "t", Tags: []string{}, TagDetails: []TagDetail{}},
+		},
+		{
+			name:    "string tags",
+			content: `{"title":"t","tags":["opioid crisis","physics"]}`,
+			want: &AnalysisResult{
+				Title: "t",
+				Tags:  []string{"opioid crisis", "physics"},
+				TagDetails: []TagDetail{
+					{Term: "opioid crisis", Category: TagCategoryOther},
+					{Term: "physics", Category: TagCategoryOther},
+				},
+			},
+		},
+		{
+			name:    "object tags",
+			content: `{"title":"t","tags":[{"term":"opioid crisis","category":"topic","is_standard_term":true}]}`,
+			want: &AnalysisResult{
+				Title: "t",
+				Tags:  []string{"opioid crisis"},
+				TagDetails: []TagDetail{
+					{Term: "opioid crisis", Category: TagCategoryTopic, IsStandardTerm: true},
+				},
+			},
+		},
+		{
+			name:    "object tags unknown category",
+			content: `{"tags":[{"term":"x","category":"banana"}]}`,
+			want: &AnalysisResult{
+				Tags:       []string{"x"},
+				TagDetails: []TagDetail{{Term: "x", Category: TagCategoryOther}},
+			},
+		},
+		{
+			name:    "mixed string and object tags",
+			content: `{"tags":["simple",{"term":"typed","category":"place"}]}`,
+			want: &AnalysisResult{
+				Tags: []string{"simple", "typed"},
+				TagDetails: []TagDetail{
+					{Term: "simple", Category: TagCategoryOther},
+					{Term: "typed", Category: TagCategoryPlace},
+				},
+			},
+		},
+		{
+			name:    "object without term skipped",
+			content: `{"tags":[{"category":"topic"},"valid"]}`,
+			want: &AnalysisResult{
+				Tags:       []string{"valid"},
+				TagDetails: []TagDetail{{Term: "valid", Category: TagCategoryOther}},
+			},
+		},
+		{
+			name:    "object with empty term skipped",
+			content: `{"tags":[{"term":"  ","category":"topic"},"valid"]}`,
+			want: &AnalysisResult{
+				Tags:       []string{"valid"},
+				TagDetails: []TagDetail{{Term: "valid", Category: TagCategoryOther}},
+			},
+		},
+		{
+			name:    "malformed element in array skipped",
+			content: `{"tags":[123,"valid"]}`,
+			want: &AnalysisResult{
+				Tags:       []string{"valid"},
+				TagDetails: []TagDetail{{Term: "valid", Category: TagCategoryOther}},
+			},
+		},
+		{
+			name:    "category folding",
+			content: `{"tags":[{"term":"a","category":"Form Genre"},{"term":"b","category":"form-genre"},{"term":"c","category":"  Topic  "}]}`,
+			want: &AnalysisResult{
+				Tags: []string{"a", "b", "c"},
+				TagDetails: []TagDetail{
+					{Term: "a", Category: TagCategoryFormGenre},
+					{Term: "b", Category: TagCategoryFormGenre},
+					{Term: "c", Category: TagCategoryTopic},
+				},
+			},
+		},
+		{
+			name:    "title docType people language",
+			content: `{"title":"My Doc","type":"article","people":[{"name":"Jane","type":"author"}],"language":"eng"}`,
+			want: &AnalysisResult{
+				Title:      "My Doc",
+				DocType:    "article",
+				People:     []PeopleResult{{Name: "Jane", Type: "author"}},
+				Language:   "eng",
+				Tags:       []string{},
+				TagDetails: []TagDetail{},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseAnalysisResponse(tt.content)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got.Title != tt.want.Title {
+				t.Errorf("Title = %q, want %q", got.Title, tt.want.Title)
+			}
+			if got.DocType != tt.want.DocType {
+				t.Errorf("DocType = %q, want %q", got.DocType, tt.want.DocType)
+			}
+			if !reflect.DeepEqual(got.Tags, tt.want.Tags) {
+				t.Errorf("Tags = %v, want %v", got.Tags, tt.want.Tags)
+			}
+			if !reflect.DeepEqual(got.TagDetails, tt.want.TagDetails) {
+				t.Errorf("TagDetails = %+v, want %+v", got.TagDetails, tt.want.TagDetails)
+			}
+			if !reflect.DeepEqual(got.People, tt.want.People) {
+				t.Errorf("People = %+v, want %+v", got.People, tt.want.People)
+			}
+			if got.Language != tt.want.Language {
+				t.Errorf("Language = %q, want %q", got.Language, tt.want.Language)
+			}
+		})
+	}
+}
+
+func TestSeparateFacets(t *testing.T) {
+	tests := []struct {
+		name         string
+		tags         []string
+		details      []TagDetail
+		docTypeNames []string
+		wantKept     []string
+		wantDropped  []FacetDrop
+	}{
+		{
+			name:     "nil details passthrough",
+			tags:     []string{"physics"},
+			details:  nil,
+			wantKept: []string{"physics"},
+		},
+		{
+			name:     "empty details passthrough",
+			tags:     []string{"physics"},
+			details:  []TagDetail{},
+			wantKept: []string{"physics"},
+		},
+		{
+			name:    "form_genre dropped, topic kept",
+			tags:    []string{"physics", "literary anthology"},
+			details: []TagDetail{{Term: "physics", Category: TagCategoryTopic}, {Term: "literary anthology", Category: TagCategoryFormGenre}},
+			wantKept: []string{"physics"},
+			wantDropped: []FacetDrop{{Term: "literary anthology", Category: TagCategoryFormGenre}},
+		},
+		{
+			name:    "non-form_genre categories kept",
+			tags:    []string{"physics", "palestine", "newfoundland"},
+			details: []TagDetail{{Term: "physics", Category: TagCategoryTopic}, {Term: "palestine", Category: TagCategoryPlace}, {Term: "newfoundland", Category: TagCategoryPlace}},
+			wantKept: []string{"physics", "palestine", "newfoundland"},
+		},
+		{
+			name:         "confirmed when term matches docTypeNames",
+			tags:         []string{"physics"},
+			details:      []TagDetail{{Term: "physics", Category: TagCategoryFormGenre}},
+			docTypeNames: []string{"physics"},
+			wantKept:     []string{},
+			wantDropped:  []FacetDrop{{Term: "physics", Category: TagCategoryFormGenre, Confirmed: true}},
+		},
+		{
+			name:         "not confirmed when term does not match docTypeNames",
+			tags:         []string{"physics"},
+			details:      []TagDetail{{Term: "physics", Category: TagCategoryFormGenre}},
+			docTypeNames: []string{"letter"},
+			wantKept:     []string{},
+			wantDropped:  []FacetDrop{{Term: "physics", Category: TagCategoryFormGenre, Confirmed: false}},
+		},
+		{
+			name:    "normalization aligns detail and tag",
+			tags:    []string{"form genre"},
+			details: []TagDetail{{Term: "Form-Genre", Category: TagCategoryFormGenre}},
+			wantKept: []string{},
+			wantDropped: []FacetDrop{{Term: "form genre", Category: TagCategoryFormGenre}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotKept, gotDropped := SeparateFacets(tt.tags, tt.details, tt.docTypeNames)
+			if !reflect.DeepEqual(gotKept, tt.wantKept) {
+				t.Errorf("kept = %v, want %v", gotKept, tt.wantKept)
+			}
+			if !reflect.DeepEqual(gotDropped, tt.wantDropped) {
+				t.Errorf("dropped = %+v, want %+v", gotDropped, tt.wantDropped)
+			}
+		})
+	}
+}
+
+func TestNormalizeTagCategory(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"topic", "topic", TagCategoryTopic},
+		{"form_genre", "form_genre", TagCategoryFormGenre},
+		{"place", "place", TagCategoryPlace},
+		{"person", "person", TagCategoryPerson},
+		{"work", "work", TagCategoryWork},
+		{"case fold", "Topic", TagCategoryTopic},
+		{"hyphen variant", "form-genre", TagCategoryFormGenre},
+		{"space variant", "form genre", TagCategoryFormGenre},
+		{"whitespace trimmed", "  Topic  ", TagCategoryTopic},
+		{"unknown category", "banana", TagCategoryOther},
+		{"empty string", "", TagCategoryOther},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := normalizeTagCategory(tt.raw)
+			if got != tt.want {
+				t.Errorf("normalizeTagCategory(%q) = %q, want %q", tt.raw, got, tt.want)
+			}
+		})
+	}
+}
