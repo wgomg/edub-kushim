@@ -159,6 +159,7 @@ enricher:
   #   time: "02:00"              # preferred time of day (HH:MM)
   #   max_rejudge: 200           # max pairs re-evaluated per run
   #   max_retag: 1000            # max documents re-pointed per run
+  #   dead_tag_grace_days: 7     # days a tag must stay without documents before the sweep removes it
 
 backup:
   # enabled: true

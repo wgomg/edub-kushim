@@ -126,11 +126,15 @@ The SQL dump/restore machinery lives in `internal/database/` (shared by `kushim 
 
 ### Tag
 
-`CreateTag` (`INSERT ... ON CONFLICT (name) DO NOTHING`, `:execresult`), `GetTag`, `GetTagForUpdate` (`SELECT ... FOR UPDATE` — row lock used by the tag-merge transaction), `GetTagByName`, `ListTags`, `ListAllTags`, `ListAllTagsNames`, `SearchTagsByName` (prefix search with `LIKE $1` + `LIMIT $2`), `UpdateTag`, `DeleteTag`
+`CreateTag` (`INSERT ... ON CONFLICT (name) DO NOTHING`, `:execresult`), `GetTag`, `GetTagForUpdate` (`SELECT ... FOR UPDATE` — row lock used by the tag-merge transaction), `GetTagByName`, `ListTags`, `ListAllTags`, `ListAllTagsNames`, `SearchTagsByName` (prefix search with `LIKE $1` + `LIMIT $2`), `UpdateTag`, `DeleteTag`, `MarkOrphanTags` (`:execrows` — sets `orphaned_since = now()` on document-less tags without a mark), `ClearOrphanTagMarks` (`:execrows` — clears marks on tags that currently have documents), `ClearOrphanTagMarksByTagIDs` (array of tag ids — called by every assignment path so the sweep grace tracks real last usage), `ListOrphanTags` (`:many` — marked for longer than a cutoff and still document-less, ordered by name), `DeleteOrphanTags` (`:many` — deletes the same set, returning the names; both queries re-check the `NOT EXISTS (document_tag)` guard so a tag re-assigned mid-run is never listed or deleted)
 
 ### Document tag
 
-`AddDocumentTag`, `RemoveDocumentTag`, `GetDocumentTags`, `ClearDocumentTags`, `GetTagDocuments`, `ReassignDocumentTags` (`:execrows` — re-points `document_tag` rows from a source tag to a target tag, skipping documents that already carry the target via a `NOT EXISTS` guard), `DeleteDocumentTagsForTag` (`:execrows` — removes leftover source rows before the tag row is deleted)
+`AddDocumentTag` (`source` parameter, `INSERT ... ON CONFLICT (document_id, tag_id) DO NOTHING` — used by enrichment with `source = 'enrich'`; an existing row is never downgraded), `UpsertManualDocumentTag` (`INSERT ... ON CONFLICT (document_id, tag_id) DO UPDATE SET source = 'manual'` — operator writes pin the row so re-enrichment keeps it), `RemoveDocumentTag`, `GetDocumentTags`, `ClearDocumentTags`, `ClearEnrichDocumentTags` (`source = 'enrich'` only — re-enrichment keeps manual assignments), `GetTagDocuments`, `ReassignDocumentTags` (`:execrows` — re-points `document_tag` rows from a source tag to a target tag, skipping documents that already carry the target via a `NOT EXISTS` guard), `DeleteDocumentTagsForTag` (`:execrows` — removes leftover source rows before the tag row is deleted)
+
+### Deleted tag
+
+`ListAllDeletedTags` (`:many` — `name`, `kind`, `target_name`, newest first; the enricher and reconciler load this once per run as the blocklist), `ListDeletedTags` (`:many` — `name`, `kind`, `target_name`, `created_at` with an optional `name_prefix` filter, paged by `page_limit`/`page_offset`), `CountDeletedTags`, `UpsertDeletedTag` (`INSERT ... ON CONFLICT (name) DO UPDATE` — refreshes `kind`/`target_name`/`created_at`; written by tag delete and inside the merge transaction), `GetDeletedTag`, `DeleteDeletedTag`
 
 ### Document type
 
@@ -257,7 +261,7 @@ The last 4 methods back the dashboard analytics panel. `LanguageDistribution` an
 - `document` — Main storage: `document_id` (UUID, UNIQUE), `md5_checksum`, `sha512_checksum` (UNIQUE), `file_size` (`BIGINT`, original inbox file size), `processed_size` (`BIGINT`, processed file size; `0` = unknown, `-1` = backfill sentinel for missing files), `page_count` (`INTEGER`, Go: `int32`), `word_count` (`int32`), `char_count` (`int32`), `language`, `text_content`, file paths, `deleted_at` (`TIMESTAMPTZ`, nullable — soft-delete marker, NULL = active). Primary key: `id BIGINT GENERATED ALWAYS AS IDENTITY`.
 - `saved_search` — Saved search configurations: `id`, `name`, `filter_json` (JSON), `created_at TIMESTAMPTZ NOT NULL` (Go: `time.Time`)
 - `task` — Async processing: `task_id` (UUID), `batch_id` (nullable), `task_type`, `payload` (`JSONB`), `result` (`JSONB`), `dedup_key` (nullable), `status`, timestamps, `error`, `attempts int32`
-- `tag` — Classification tags (seeded with 110+ Dewey Decimal tags). `name` is UNIQUE and stored in canonical form: `service.Tag.Create`/`Update` normalize every incoming name through `utils.NormalizeTag` (lowercase, accent-folded, dash family → space, keeps `+ # .`, digits, and letters of any Unicode script) before insert.
+- `tag` — Classification tags (seeded with 110+ Dewey Decimal tags). `name` is UNIQUE and stored in canonical form: `service.Tag.Create`/`Update` normalize every incoming name through `utils.NormalizeTag` (lowercase, accent-folded, dash family → space, keeps `+ # .`, digits, and letters of any Unicode script) before insert. `orphaned_since TIMESTAMPTZ` (nullable) marks the last reconciliation run that observed the tag without documents; the sweep deletes tags whose mark is older than `enricher.tag_reconcile.dead_tag_grace_days`, and assignment paths clear the mark.
 - `document_type` — Document type classification (seeded with types like `article`, `book`, `report`). `description` defaults to `''`.
 - `people` — People/entities (`name` UNIQUE, `name_native` nullable, `normalized_name` NOT NULL UNIQUE)
 - `people_type` — Roles for people
@@ -265,10 +269,11 @@ The last 4 methods back the dashboard analytics panel. `LanguageDistribution` an
 - `batch` — Batch processing units: `id`, `source`, `status` (queued/processing/completed/failed/cancelled), `created_at`
 - `batch_owner` — Batch ownership: `batch_id` (PK, FK to batch), `owner_id`, `pid` (`BIGINT`), `acquired_at`, `last_heartbeat`
 - `orphaned_file` — Detected orphaned files: `document_key`, `document_key_type` (uuid/dbid), `source_dir` (originals/processed), `file_path`, `file_size` (`BIGINT`), `original_type`, `detected_at`, `status` (pending/deleted/restored/reingested), `action_at`, `action_type`. CHECK constraints on `document_key_type`, `source_dir`, `status`, `action_type`.
+- `deleted_tag` — Tag blocklist: `name` (PK, canonical form), `kind` (`blocked`|`merged`, CHECK constrained), `target_name` (nullable, set for merged rows), `created_at TIMESTAMPTZ NOT NULL DEFAULT now()`. Written when an operator deletes a tag (`blocked`) or merges one away (`merged` + target) and read by the enricher/reconciler to keep enrichment from resurrecting the name.
 
 ## Junction Tables
 
-- `document_tag` — (document_id, tag_id), PK(document_id, tag_id), FK ON DELETE CASCADE
+- `document_tag` — (document_id, tag_id, `source` `'enrich'|'manual'` NOT NULL DEFAULT `'enrich'`), PK(document_id, tag_id), FK ON DELETE CASCADE
 - `document_people` — (document_id, people_id, people_type_id), PK(document_id, people_id, people_type_id), FK ON DELETE CASCADE
 
 
@@ -279,6 +284,7 @@ The last 4 methods back the dashboard analytics panel. `LanguageDistribution` an
 - `document_people`: `document_id`, `people_id`
 - `document_tag`: `document_id`, `tag_id`
 - `people`: `normalized_name` (UNIQUE)
+- `tag`: partial `idx_tag_orphaned_since` (`orphaned_since WHERE orphaned_since IS NOT NULL`)
 - `batch`: `status`
 - `batch_owner`: `owner_id`, `last_heartbeat`
 - `orphaned_file`: `status`, `detected_at`
@@ -286,7 +292,9 @@ The last 4 methods back the dashboard analytics panel. `LanguageDistribution` an
 ## Schema Idempotency
 
 Junction table inserts (`document_tag`, `document_people`) use `INSERT ... ON CONFLICT ... DO NOTHING`
-instead of plain `INSERT` to avoid duplicate-key errors on re-enrichment.
+instead of plain `INSERT` to avoid duplicate-key errors on re-enrichment; the operator
+tag-write query (`UpsertManualDocumentTag`) uses `DO UPDATE SET source = 'manual'` so an
+existing enrichment row is upgraded instead of ignored.
 
 The consolidated baseline (`00001_baseline.sql`) creates the initial schema. New schema changes
 after the baseline are written as numbered migration files (starting at `00002`). Current

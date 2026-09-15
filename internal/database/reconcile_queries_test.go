@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"slices"
 	"testing"
 	"time"
 
@@ -152,7 +153,7 @@ func TestReconcileWorklistScans(t *testing.T) {
 
 	n, err := q.UpsertFreshTagVerdict(ctx, UpsertFreshTagVerdictParams{
 		DocumentID: docID, Query: rQ, Target: rT, Sim: 0.91,
-		Verdict: types.TagVerdicts.Variant,
+		Verdict:       types.TagVerdicts.Variant,
 		VerdictModel:  sql.NullString{String: "policy:v1", Valid: true},
 		PolicyVersion: "v1",
 	})
@@ -168,7 +169,7 @@ func TestReconcileWorklistScans(t *testing.T) {
 
 	n, err = q.UpsertFreshTagVerdict(ctx, UpsertFreshTagVerdictParams{
 		DocumentID: docID, Query: rQ, Target: rT, Sim: 0.92,
-		Verdict: types.TagVerdicts.Related,
+		Verdict:       types.TagVerdicts.Related,
 		VerdictModel:  sql.NullString{String: "policy:v1", Valid: true},
 		PolicyVersion: "v1",
 	})
@@ -340,4 +341,117 @@ func TestReconcileConsumeSlotExclusion(t *testing.T) {
 	if _, err := q.GetNextQueuedBatch(ctx); err != sql.ErrNoRows {
 		t.Fatalf("GetNextQueuedBatch must not return tagreconcile batch, got %v", err)
 	}
+}
+
+func assertOrphanMark(t *testing.T, q *Queries, id int64, want bool) {
+	t.Helper()
+	var marked sql.NullTime
+	if err := q.db.QueryRowContext(context.Background(), "SELECT orphaned_since FROM tag WHERE id = $1", id).Scan(&marked); err != nil {
+		t.Fatalf("read orphan mark for tag %d: %v", id, err)
+	}
+	if marked.Valid != want {
+		t.Fatalf("tag %d orphan mark = %v, want marked=%v", id, marked, want)
+	}
+}
+
+// TestOrphanTagMarkLifecycle covers the marker maintenance the sweep relies on:
+// only document-less tags get a mark, assignment clears it by tag id, and the
+// sweep predicates keep tags that currently hold documents out of the delete set.
+func TestOrphanTagMarkLifecycle(t *testing.T) {
+	q, db := NewTestQueries(t)
+	defer db.Close()
+	resetDB(t, q)
+	ctx := context.Background()
+	cutoff := time.Now().Add(-7 * 24 * time.Hour)
+
+	orphanID := reconcileInsertTag(t, q, "orphan lifecycle tag")
+	usedID := reconcileInsertTag(t, q, "used lifecycle tag")
+	docID := reconcileInsertDoc(t, q, "orphan-lifecycle-doc")
+	if err := q.AddDocumentTag(ctx, AddDocumentTagParams{DocumentID: docID, TagID: usedID, Source: "enrich"}); err != nil {
+		t.Fatalf("tag document: %v", err)
+	}
+
+	if _, err := q.MarkOrphanTags(ctx); err != nil {
+		t.Fatalf("MarkOrphanTags: %v", err)
+	}
+	assertOrphanMark(t, q, orphanID, true)
+	assertOrphanMark(t, q, usedID, false)
+
+	if err := q.ClearOrphanTagMarksByTagIDs(ctx, []int64{orphanID}); err != nil {
+		t.Fatalf("ClearOrphanTagMarksByTagIDs: %v", err)
+	}
+	assertOrphanMark(t, q, orphanID, false)
+
+	// Age both marks: both look sweep-eligible by timestamp, but only the tag
+	// without document_tag rows may be listed or deleted.
+	if _, err := q.MarkOrphanTags(ctx); err != nil {
+		t.Fatalf("MarkOrphanTags: %v", err)
+	}
+	for _, id := range []int64{orphanID, usedID} {
+		if _, err := q.db.ExecContext(ctx, "UPDATE tag SET orphaned_since = now() - interval '30 days' WHERE id = $1", id); err != nil {
+			t.Fatalf("age orphan mark %d: %v", id, err)
+		}
+	}
+
+	names, err := q.ListOrphanTags(ctx, cutoff)
+	if err != nil {
+		t.Fatalf("ListOrphanTags: %v", err)
+	}
+	if !slices.Contains(names, "orphan lifecycle tag") {
+		t.Fatalf("ListOrphanTags = %v, want the aged orphan", names)
+	}
+	if slices.Contains(names, "used lifecycle tag") {
+		t.Fatalf("ListOrphanTags = %v, must exclude a tag that still has documents", names)
+	}
+
+	deleted, err := q.DeleteOrphanTags(ctx, cutoff)
+	if err != nil {
+		t.Fatalf("DeleteOrphanTags: %v", err)
+	}
+	if !slices.Contains(deleted, "orphan lifecycle tag") {
+		t.Fatalf("DeleteOrphanTags = %v, want the aged orphan", deleted)
+	}
+	if slices.Contains(deleted, "used lifecycle tag") {
+		t.Fatalf("DeleteOrphanTags = %v, must not delete a tag that still has documents", deleted)
+	}
+
+	var surviving int
+	if err := q.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM tag WHERE id = $1", usedID).Scan(&surviving); err != nil {
+		t.Fatalf("count used tag: %v", err)
+	}
+	if surviving != 1 {
+		t.Fatal("tag holding documents must survive the sweep")
+	}
+}
+
+// TestOrphanTagMarkTransactionRollback pins the report-only contract: a sweep
+// that refreshes marks inside a transaction must see them within that
+// transaction and leave no trace once it rolls back.
+func TestOrphanTagMarkTransactionRollback(t *testing.T) {
+	q, db := NewTestQueries(t)
+	defer db.Close()
+	resetDB(t, q)
+	ctx := context.Background()
+
+	freshID := reconcileInsertTag(t, q, "rollback mark tag")
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	txQ := New(tx)
+	if _, err := txQ.MarkOrphanTags(ctx); err != nil {
+		t.Fatalf("MarkOrphanTags in tx: %v", err)
+	}
+	names, err := txQ.ListOrphanTags(ctx, time.Now().Add(time.Second))
+	if err != nil {
+		t.Fatalf("ListOrphanTags in tx: %v", err)
+	}
+	if !slices.Contains(names, "rollback mark tag") {
+		t.Fatalf("ListOrphanTags in tx = %v, want the freshly marked tag", names)
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	assertOrphanMark(t, q, freshID, false)
 }

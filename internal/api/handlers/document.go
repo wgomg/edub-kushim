@@ -764,13 +764,16 @@ func (h *DocumentHandler) AddDocumentTag(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	err = h.client.AddDocumentTag(ctx, database.AddDocumentTagParams{
+	err = h.client.UpsertManualDocumentTag(ctx, database.UpsertManualDocumentTagParams{
 		DocumentID: doc.ID,
 		TagID:      req.TagID,
 	})
 	if err != nil {
 		writeServiceError(w, h.logger, &reqID, "add document tag", errs.FromDB(err, "add document tag"))
 		return
+	}
+	if err := h.client.ClearOrphanTagMarksByTagIDs(ctx, []int64{req.TagID}); err != nil {
+		h.logger.Error(&reqID, "add document tag: clear orphan mark for tag %d: %v", req.TagID, err)
 	}
 
 	w.WriteHeader(http.StatusNoContent)
@@ -942,7 +945,7 @@ func (h *DocumentHandler) BatchAssignTags(w http.ResponseWriter, r *http.Request
 
 			if !failed {
 				for _, tagID := range req.TagIDs {
-					if err := tq.AddDocumentTag(ctx, database.AddDocumentTagParams{
+					if err := tq.UpsertManualDocumentTag(ctx, database.UpsertManualDocumentTagParams{
 						DocumentID: doc.ID,
 						TagID:      tagID,
 					}); err != nil {
@@ -956,6 +959,15 @@ func (h *DocumentHandler) BatchAssignTags(w http.ResponseWriter, r *http.Request
 			}
 
 			if !failed {
+				if err := tq.ClearOrphanTagMarksByTagIDs(ctx, req.TagIDs); err != nil {
+					tx.Rollback()
+					h.logger.Error(&reqID, "batch tag: clear orphan marks for doc %s: %v", id, err)
+					result.Failed = append(result.Failed, types.BatchTagError{ID: id, Error: "failed to add tag"})
+					failed = true
+				}
+			}
+
+			if !failed {
 				if err := tx.Commit(); err != nil {
 					h.logger.Error(&reqID, "batch tag: commit tx for doc %s: %v", id, err)
 					result.Failed = append(result.Failed, types.BatchTagError{ID: id, Error: "internal error"})
@@ -964,7 +976,7 @@ func (h *DocumentHandler) BatchAssignTags(w http.ResponseWriter, r *http.Request
 			}
 		} else {
 			for _, tagID := range req.TagIDs {
-				if err := h.client.AddDocumentTag(ctx, database.AddDocumentTagParams{
+				if err := h.client.UpsertManualDocumentTag(ctx, database.UpsertManualDocumentTagParams{
 					DocumentID: doc.ID,
 					TagID:      tagID,
 				}); err != nil {
@@ -972,6 +984,11 @@ func (h *DocumentHandler) BatchAssignTags(w http.ResponseWriter, r *http.Request
 					result.Failed = append(result.Failed, types.BatchTagError{ID: id, Error: "failed to add tag"})
 					failed = true
 					break
+				}
+			}
+			if !failed {
+				if err := h.client.ClearOrphanTagMarksByTagIDs(ctx, req.TagIDs); err != nil {
+					h.logger.Error(&reqID, "batch tag: clear orphan marks for doc %s: %v", id, err)
 				}
 			}
 		}

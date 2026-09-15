@@ -161,7 +161,7 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 		return nil, err
 	}
 
-	enricher, err := enrichment.NewEnricher(c.cfg.Load(), c.logger, client.Queries, c.services, matcherClient)
+	enricher, err := enrichment.NewEnricher(c.cfg.Load(), c.logger, client, c.services, matcherClient)
 	if err != nil {
 		return nil, err
 	}

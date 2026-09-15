@@ -636,6 +636,9 @@ func TestDefaultConfig_TagReconcile(t *testing.T) {
 	if cfg.Enricher.TagReconcile.MaxRetag != 1000 {
 		t.Errorf("TagReconcile.MaxRetag = %d, want 1000", cfg.Enricher.TagReconcile.MaxRetag)
 	}
+	if cfg.Enricher.TagReconcile.DeadTagGraceDays != 7 {
+		t.Errorf("TagReconcile.DeadTagGraceDays = %d, want 7", cfg.Enricher.TagReconcile.DeadTagGraceDays)
+	}
 }
 
 func TestFinalizeConfig_TagReconcile(t *testing.T) {
@@ -677,6 +680,26 @@ func TestFinalizeConfig_TagReconcile(t *testing.T) {
 		}
 		if cfg.Enricher.TagReconcile.MaxRetag != 1000 {
 			t.Errorf("MaxRetag = %d, want 1000", cfg.Enricher.TagReconcile.MaxRetag)
+		}
+	})
+	t.Run("zero dead_tag_grace_days defaults to 7", func(t *testing.T) {
+		cfg := DefaultConfig(t.TempDir())
+		cfg.Enricher.TagReconcile.DeadTagGraceDays = 0
+		if err := finalizeConfig(cfg, t.TempDir()); err != nil {
+			t.Fatalf("finalizeConfig: %v", err)
+		}
+		if cfg.Enricher.TagReconcile.DeadTagGraceDays != 7 {
+			t.Errorf("DeadTagGraceDays = %d, want 7", cfg.Enricher.TagReconcile.DeadTagGraceDays)
+		}
+	})
+	t.Run("negative dead_tag_grace_days defaults to 7", func(t *testing.T) {
+		cfg := DefaultConfig(t.TempDir())
+		cfg.Enricher.TagReconcile.DeadTagGraceDays = -1
+		if err := finalizeConfig(cfg, t.TempDir()); err != nil {
+			t.Fatalf("finalizeConfig: %v", err)
+		}
+		if cfg.Enricher.TagReconcile.DeadTagGraceDays != 7 {
+			t.Errorf("DeadTagGraceDays = %d, want 7", cfg.Enricher.TagReconcile.DeadTagGraceDays)
 		}
 	})
 	t.Run("empty time defaults to 02:00", func(t *testing.T) {

@@ -293,7 +293,8 @@ run restores the steady rule. The handler
 category, judged/confirmed, flips by direction, merges with reassignment
 counts, re-tags, invalidations, skip reasons — as the task result. The report
 also carries pair-level entries (`planned_merges`, `planned_keep_flips`,
-`retag_entries`, `invalidated_entries`) plus `capped`, `no_documents`, and
+`retag_entries`, `invalidated_entries`) plus `capped`, `no_documents`,
+`swept` (orphan tags deleted, or the would-be count in report-only runs), and
 `adjudicator_disabled`; report-only keep-flip document counts come from a
 single batched `TagPairEvidenceStats` call (a stats failure keeps every
 planned entry with zero documents instead of dropping it), and no-document
@@ -325,12 +326,15 @@ tags page.
   `TagVerdictPairsByVerdict` + `TagPairEvidenceStats`.
 - **Log bootstrap** (`bootstrap.go`) — pairs absent from the table entirely,
   parsed from `hugot.log*`/`kushim.log*` rotations (timestamped siblings,
-  `.gz` decompressed, chronological). Three line shapes are recognized: the
+  `.gz` decompressed, chronological). Four line shapes are recognized: the
   pre-rewrite `hugot: consolidate "q" → t (sim)`, the unversioned
-  `consolidate "q" → t (sim)`, and `consolidation[vN]: keep "q" (sim=…
-  reason=ambiguous_band …)` — any version prefix. Guard-reason keeps and
-  `auto_replace` replaces are not parsed (they were decided by rules that
-  replay deterministically); REQIDs resolve to document ids via
+  `consolidate "q" → t (sim)`, `consolidation[vN]: keep "q" (sim=…
+  reason=ambiguous_band …)` — any version prefix — and the band-less
+  `consolidation[vN]: keep "q" (reason=rank_unavailable)` emitted when the
+  post-LLM rank call fails (parsed with an empty target and zero similarity,
+  so the entry flows through the normal re-adjudication path). Guard-reason
+  keeps and `auto_replace` replaces are not parsed (they were decided by rules
+  that replay deterministically); REQIDs resolve to document ids via
   `GetDocumentIDsByDocumentIDs`, unresolvable ones are dropped but the pair is
   kept; table rows supersede log-derived entries.
 
@@ -350,15 +354,38 @@ fresh verdict that differs from the stored one is confirmed by a second,
 orientations agree; ambiguity or disagreement keeps the stored verdict.
 
 **Flips and caps**: a merge flip runs the full `TagMerge.Merge` (query tag
-deleted, all assignments re-pointed). A keep flip `Tag.Create`s the query tag
-(Created or Conflict both fine), re-points only the pair's affected documents
-(`RepointDocumentTagsForDocs`, event-derived or REQID-derived doc ids, with
-the `NOT EXISTS` guard), and upserts the verdict last — all in one
-transaction. Every adjudicated pair (flip or agreement) upserts a fresh verdict
-row at the current version (`UpsertFreshTagVerdict`, `verdict_model` = the
-adjudicator model or `policy:<version>`), refreshing `verdict_at` so the aged
-scan does not re-judge it. `max_retag` bounds re-pointed documents per run,
-with a first-pair carve-out (the budget is soft by at most one pair).
+deleted, all assignments re-pointed). A keep flip resolves the pair's affected
+documents (`DocumentIDsForPairs`, event-derived or REQID-derived doc ids)
+*before* touching the store: when the pair has no resolvable documents the
+entry is only marked judged (`upsertVerdict`) and no tag is created, so an
+unattributed pair cannot add a name to the vocabulary. Otherwise the keep flip
+`Tag.Create`s the query tag (Created or Conflict both fine), re-points only
+those documents (`RepointDocumentTagsForDocs`, with the `NOT EXISTS` guard),
+clears their orphan marks, and upserts the verdict — all in one transaction.
+Every adjudicated pair (flip or agreement) upserts a fresh verdict row at the
+current version (`UpsertFreshTagVerdict`, `verdict_model` = the adjudicator
+model or `policy:<version>`), refreshing `verdict_at` so the aged scan does
+not re-judge it. `max_retag` bounds re-pointed documents per run, with a
+first-pair carve-out (the budget is soft by at most one pair).
+
+**Blocklist enforcement**: a query whose name is in the `deleted_tag`
+blocklist is skipped before the create — the flip is not applied and the skip
+is logged, but the pair still gets its fresh verdict so it is not re-judged.
+Blocked names are dropped by enrichment; merged names are rewritten to their
+merge target there. Only the operator restore path (and re-creating the tag
+through the operator create endpoint) clears a blocklist row.
+
+**Orphan-tag sweep**: each run maintains `tag.orphaned_since` — marks are
+cleared for tags that currently hold documents (`ClearOrphanTagMarks`), then
+set for document-less tags without one (`MarkOrphanTags`) — and deletes (plus
+removes from the embedding store) tags whose mark is older than
+`enricher.tag_reconcile.dead_tag_grace_days` (default 7). Every assignment
+path clears the assigned tags' marks (`ClearOrphanTagMarksByTagIDs`) so the
+grace window reflects real last usage rather than the last reconcile
+observation. The list/delete queries re-check `NOT EXISTS (document_tag)`, so
+a tag re-assigned mid-run is never deleted. Report-only runs refresh the marks
+inside a transaction that is always rolled back, so the reported `swept` count
+predicts what the next apply would delete.
 
 **Report-only**: the first run is always report-only
 (`GetLastCompletedTagReconcileTask` finds no completed prior run), regardless
@@ -383,8 +410,11 @@ daemon warns when reconciliation is enabled without the adjudicator.
   automatic flips only re-tag documents.
 - **Bounded automation** — policy-version pinning, the double-orientation
   confirmation, `max_rejudge`/`max_retag`, and the report-only first run.
-- **Dead names cannot resurrect** — dead-target verdict rows are deleted, so
-  no cached `same` verdict can re-create a merged/deleted tag.
+- **Dead names cannot resurrect** — dead-target verdict rows are deleted and
+  every operator delete/merge is recorded in the `deleted_tag` blocklist:
+  enrichment drops blocked names (and rewrites merged names to their merge
+  target), and the reconciler skips their restoration, so no cached `same`
+  verdict or later LLM emission can re-create a merged/deleted tag.
 
 ---
 

@@ -250,6 +250,11 @@ func (r *Reconciler) applyJointSplit(ctx context.Context, cfg *config.Config, e 
 	}); err != nil {
 		return 0, fmt.Errorf("add component tags: %w", err)
 	}
+	if len(docIDs) > 0 {
+		if err := txQ.ClearOrphanTagMarksByTagIDs(ctx, componentIDs); err != nil {
+			return 0, fmt.Errorf("clear component orphan tag marks: %w", err)
+		}
+	}
 	if err := txQ.DeleteTag(ctx, joint.ID); err != nil {
 		return 0, fmt.Errorf("delete joint tag: %w", err)
 	}

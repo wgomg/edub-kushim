@@ -201,6 +201,13 @@ anti-oscillating:
   run is always **report-only** (it lists would-be actions and touches
   nothing), regardless of the `report_only` flag. The joint-tag scan shares
   both caps.
+- **Dead-tag hygiene:** the same run sweeps zero-assignment tags — a tag whose
+  `orphaned_since` mark is older than `dead_tag_grace_days` (default 7) is
+  deleted and removed from the embedding store, and every assignment path
+  clears the mark so the window tracks real last usage. Names blocked or
+  merged away by an operator are skipped by the keep-flip path (and dropped or
+  rewritten by enrichment), so they cannot be resurrected outside the restore
+  flow.
 - **Report:** each run persists a full JSON report as its task result — worklist
   counts (including the joint-tag category), judged/confirmed, flips,
   planned/applied pair entries (each carrying the decision reason and whether
@@ -233,6 +240,7 @@ enricher:
   #   time: "02:00"              # preferred time of day (HH:MM)
   #   max_rejudge: 200           # max pairs re-evaluated per run
   #   max_retag: 1000            # max documents re-pointed per run
+  #   dead_tag_grace_days: 7     # days a tag must stay without documents before the sweep removes it
 ```
 
 Both blocks are also editable on the Settings page ("Tag adjudicator" and "Tag

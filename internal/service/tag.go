@@ -16,6 +16,13 @@ type TagUpdatePair struct {
 	Name string
 }
 
+const (
+	DeletedTagKindBlocked = "blocked"
+	DeletedTagKindMerged  = "merged"
+
+	DocumentTagSourceEnrich = "enrich"
+)
+
 type Tag struct {
 	queries  *database.Queries
 	embedder tagmatcher.Embedder
@@ -99,13 +106,51 @@ func (s *Tag) SearchByNameWithDocumentCount(ctx context.Context, prefix string, 
 }
 
 func (s *Tag) Create(ctx context.Context, names []string) ([]CreateResult[database.Tag], error) {
+	results, newNames, err := s.createWithQueries(ctx, s.queries, names)
+	if err != nil {
+		return nil, err
+	}
+	if len(newNames) > 0 {
+		s.encodeAndAddBatch(ctx, newNames)
+	}
+	return results, nil
+}
+
+func (s *Tag) CreateAndUnblock(ctx context.Context, names []string) ([]CreateResult[database.Tag], error) {
+	results, err := s.Create(ctx, names)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range results {
+		if r.Status != Created && r.Status != Conflict {
+			continue
+		}
+		if err := s.queries.DeleteDeletedTag(ctx, r.Entity.Name); err != nil {
+			return nil, errs.FromDB(err, "clear deleted tag "+r.Entity.Name)
+		}
+	}
+	return results, nil
+}
+
+func (s *Tag) CreateTx(ctx context.Context, q *database.Queries, names []string) ([]CreateResult[database.Tag], []string, error) {
+	return s.createWithQueries(ctx, q, names)
+}
+
+func (s *Tag) AddToStore(ctx context.Context, names []string) {
+	if len(names) == 0 {
+		return
+	}
+	s.encodeAndAddBatch(ctx, names)
+}
+
+func (s *Tag) createWithQueries(ctx context.Context, q *database.Queries, names []string) ([]CreateResult[database.Tag], []string, error) {
 	results := make([]CreateResult[database.Tag], len(names))
 	var newNames []string
 	var newIdx []int
 
-	existingTags, err := s.queries.ListAllTags(ctx)
+	existingTags, err := q.ListAllTags(ctx)
 	if err != nil {
-		return nil, errs.FromDB(err, "load existing tags")
+		return nil, nil, errs.FromDB(err, "load existing tags")
 	}
 	existingMap := make(map[string]database.Tag, len(existingTags))
 	for _, t := range existingTags {
@@ -124,17 +169,17 @@ func (s *Tag) Create(ctx context.Context, names []string) ([]CreateResult[databa
 			continue
 		}
 
-		id, err := s.queries.CreateTag(ctx, name)
+		id, err := q.CreateTag(ctx, name)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				existing, err := s.queries.GetTagByName(ctx, name)
+				existing, err := q.GetTagByName(ctx, name)
 				if err != nil {
-					return nil, errs.FromDB(err, "get tag by name after conflict "+name)
+					return nil, nil, errs.FromDB(err, "get tag by name after conflict "+name)
 				}
 				results[i] = CreateResult[database.Tag]{Entity: existing, Status: Conflict}
 				continue
 			}
-			return nil, errs.FromDB(err, "create tag "+name)
+			return nil, nil, errs.FromDB(err, "create tag "+name)
 		}
 
 		results[i] = CreateResult[database.Tag]{Entity: database.Tag{ID: id, Name: name}, Status: Created}
@@ -142,14 +187,11 @@ func (s *Tag) Create(ctx context.Context, names []string) ([]CreateResult[databa
 		newIdx = append(newIdx, i)
 	}
 
-	if len(newNames) > 0 {
-		s.encodeAndAddBatch(ctx, newNames)
-		for j, name := range newNames {
-			results[newIdx[j]].Entity.Name = name
-		}
+	for j, name := range newNames {
+		results[newIdx[j]].Entity.Name = name
 	}
 
-	return results, nil
+	return results, newNames, nil
 }
 
 func (s *Tag) Update(ctx context.Context, pairs []TagUpdatePair) ([]UpdateResult[database.Tag], error) {
@@ -259,6 +301,13 @@ func (s *Tag) Delete(ctx context.Context, ids []int64) ([]DeleteResult, error) {
 			return nil, errs.FromDB(err, "delete tag")
 		}
 
+		if err := s.queries.UpsertDeletedTag(ctx, database.UpsertDeletedTagParams{
+			Name: tag.Name,
+			Kind: DeletedTagKindBlocked,
+		}); err != nil {
+			s.logger.Error(nil, "tag service: record deleted tag %q: %v", tag.Name, err)
+		}
+
 		if err := s.embedder.RemoveFromStore(ctx, []string{tag.Name}); err != nil {
 			s.logger.Error(nil, "tag service: remove from store: %v", err)
 		}
@@ -266,6 +315,38 @@ func (s *Tag) Delete(ctx context.Context, ids []int64) ([]DeleteResult, error) {
 	}
 
 	return results, nil
+}
+
+func (s *Tag) ListDeleted(ctx context.Context, prefix string, limit, offset int32) ([]database.DeletedTag, int64, error) {
+	rows, err := s.queries.ListDeletedTags(ctx, database.ListDeletedTagsParams{
+		NamePrefix: prefix,
+		PageLimit:  limit,
+		PageOffset: offset,
+	})
+	if err != nil {
+		return nil, 0, errs.FromDB(err, "list deleted tags")
+	}
+	total, err := s.queries.CountDeletedTags(ctx, prefix)
+	if err != nil {
+		return nil, 0, errs.FromDB(err, "count deleted tags")
+	}
+	return rows, total, nil
+}
+
+func (s *Tag) RestoreDeleted(ctx context.Context, name string) (database.DeletedTag, error) {
+	row, err := s.queries.GetDeletedTag(ctx, name)
+	if err != nil {
+		return database.DeletedTag{}, errs.FromDB(err, "restore deleted tag")
+	}
+	if row.Kind == DeletedTagKindBlocked {
+		if _, err := s.Create(ctx, []string{row.Name}); err != nil {
+			return row, err
+		}
+	}
+	if err := s.queries.DeleteDeletedTag(ctx, name); err != nil {
+		return row, errs.FromDB(err, "restore deleted tag")
+	}
+	return row, nil
 }
 
 func (s *Tag) RemoveFromStore(ctx context.Context, names []string) error {

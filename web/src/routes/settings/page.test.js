@@ -95,7 +95,8 @@ const fullCfg = () => ({
 			interval: 7,
 			time: '03:30',
 			max_rejudge: 250,
-			max_retag: 2000
+			max_retag: 2000,
+			dead_tag_grace_days: 14
 		}
 	},
 	storage: {
@@ -172,7 +173,7 @@ describe('Settings — Tag reconciliation section', () => {
 		expect(requestDelay).toBeTruthy();
 	});
 
-	it('renders the card with the six bound inputs', async () => {
+	it('renders the card with the seven bound inputs', async () => {
 		apiMocks.configGet.mockResolvedValue(fullCfg());
 		render(Page);
 
@@ -196,6 +197,9 @@ describe('Settings — Tag reconciliation section', () => {
 
 		const maxRetag = document.getElementById('tag-reconcile-max-retag');
 		expect(Number(maxRetag.value)).toBe(2000);
+
+		const deadTagGrace = document.getElementById('tag-reconcile-dead-tag-grace');
+		expect(Number(deadTagGrace.value)).toBe(14);
 	});
 
 	it('ensureTagReconcileBlock fills the default block when missing', async () => {
@@ -214,6 +218,8 @@ describe('Settings — Tag reconciliation section', () => {
 		expect(time.value).toBe('02:00');
 		const maxRejudge = document.getElementById('tag-reconcile-max-rejudge');
 		expect(Number(maxRejudge.value)).toBe(200);
+		const deadTagGrace = document.getElementById('tag-reconcile-dead-tag-grace');
+		expect(Number(deadTagGrace.value)).toBe(7);
 	});
 
 	it('ensureTagAdjudicatorBlock fills the default block when missing', async () => {
@@ -233,7 +239,7 @@ describe('Settings — Tag reconciliation section', () => {
 		expect(Number(timeout.value)).toBe(0);
 	});
 
-	it('bodyFromConfig carries the thirteen tag_reconcile and tag_adjudicator keys on save', async () => {
+	it('bodyFromConfig carries the fourteen tag_reconcile and tag_adjudicator keys on save', async () => {
 		apiMocks.configGet.mockResolvedValue(fullCfg());
 		apiMocks.configUpdate.mockResolvedValue({ message: 'Settings saved.' });
 
@@ -259,6 +265,7 @@ describe('Settings — Tag reconciliation section', () => {
 		expect(body['enricher.tag_reconcile.time']).toBe('03:30');
 		expect(body['enricher.tag_reconcile.max_rejudge']).toBe(250);
 		expect(body['enricher.tag_reconcile.max_retag']).toBe(2000);
+		expect(body['enricher.tag_reconcile.dead_tag_grace_days']).toBe(14);
 	});
 
 	it('shows the adjudicator dependency hint when enabled without the adjudicator', async () => {

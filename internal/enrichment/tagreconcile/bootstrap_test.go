@@ -30,7 +30,8 @@ func TestParseBootstrapLogs(t *testing.T) {
 			"2026/08/03 04:00:01 INFO  : REQID=doc-6 consolidation[v2]: keep \"fascism\" (sim=0.860 reason=ambiguous_band verdict=variant cached=false)\n"+
 			"2026/08/03 04:00:02 INFO  : REQID=doc-7 consolidation[v1]: keep \"liberalism\" (sim=0.850 reason=negation_guard)\n"+
 			"2026/08/03 04:00:03 INFO  : REQID=doc-8 consolidation[v1]: replace \"marxism\" → \"communism\" (sim=0.950 runner=0.900 reason=auto_replace)\n"+
-			"2026/08/03 04:00:04 INFO  : REQID=doc-9 consolidation[v1]: keep \"capitalism\" (sim=0.912 reason=ambiguous_band verdict=same cached=true)\n"), 0644); err != nil {
+			"2026/08/03 04:00:04 INFO  : REQID=doc-9 consolidation[v1]: keep \"capitalism\" (sim=0.912 reason=ambiguous_band verdict=same cached=true)\n"+
+			"2026/08/03 04:00:05 INFO  : REQID=doc-10 consolidation[v1]: keep \"quantum gravity\" (reason=rank_unavailable)\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -73,6 +74,27 @@ func TestParseBootstrapLogs(t *testing.T) {
 
 	if pairs["doc-3"] != nil {
 		t.Fatal("unknown line must be ignored")
+	}
+
+	// rank_unavailable: targetless band-keep with sim=0, unjudged category.
+	rg := pairs["quantum gravity"]
+	if rg == nil {
+		t.Fatal("rank_unavailable line must be parsed")
+	}
+	if rg.absorbed {
+		t.Error("rank_unavailable pair must not be absorbed")
+	}
+	if rg.target != "" {
+		t.Errorf("rank_unavailable target = %q, want empty", rg.target)
+	}
+	if rg.sim != 0 {
+		t.Errorf("rank_unavailable sim = %v, want 0", rg.sim)
+	}
+	if rg.verdict.Valid() {
+		t.Errorf("rank_unavailable verdict = %v, want invalid", rg.verdict)
+	}
+	if len(rg.docIDs) != 1 || rg.docIDs[0] != "doc-10" {
+		t.Errorf("rank_unavailable docIDs = %v, want [doc-10]", rg.docIDs)
 	}
 }
 

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 
 	"github.com/wgomg/edub-kushim/internal/database"
@@ -49,4 +50,133 @@ func TestTag_NormalizeAtSave(t *testing.T) {
 		testutil.AssertNoError(t, err, "update")
 		testutil.AssertEqual(t, updateResults[0].Status, Noop, "noop on equivalent rename")
 	})
+}
+
+func TestTag_CreateTx(t *testing.T) {
+	svc, client := newTestTag(t)
+	ctx := context.Background()
+
+	tx, err := client.BeginTx(ctx, nil)
+	testutil.AssertNoError(t, err, "begin tx")
+	defer tx.Rollback()
+	txQ := client.WithTx(tx)
+
+	results, newNames, err := svc.CreateTx(ctx, txQ, []string{"tx-test-1", "tx-test-2"})
+	testutil.AssertNoError(t, err, "create tx")
+	testutil.AssertEqual(t, len(results), 2, "two results")
+	testutil.AssertEqual(t, len(newNames), 2, "two new names")
+
+	for i, r := range results {
+		testutil.AssertEqual(t, r.Status, Created, "result status")
+		if r.Entity.ID == 0 {
+			t.Errorf("result[%d] has zero ID", i)
+		}
+	}
+
+	// Rollback: the tags must not be visible to a new query outside the tx.
+	tx.Rollback()
+	results2, err := svc.Create(ctx, []string{"tx-test-1"})
+	testutil.AssertNoError(t, err, "re-create after rollback")
+	// After rollback, the tags don't exist, so Create should create them fresh.
+	if results2[0].Status != Created {
+		t.Errorf("status after rollback = %v, want Created", results2[0].Status)
+	}
+}
+
+func TestTag_AddToStore(t *testing.T) {
+	svc, _ := newTestTag(t)
+	ctx := context.Background()
+	// Should not panic on empty list.
+	svc.AddToStore(ctx, nil)
+	svc.AddToStore(ctx, []string{})
+}
+
+func TestTag_RestoreDeleted_Blocked(t *testing.T) {
+	svc, client := newTestTag(t)
+	ctx := context.Background()
+
+	// Seed a blocked deleted-tag entry with a name containing characters
+	// that NormalizeTag transforms (hyphens → spaces).
+	const tagDeleted = "restore-test-blocked"
+	const tagNormalized = "restore test blocked"
+	testutil.AssertNoError(t, client.Queries.UpsertDeletedTag(ctx, database.UpsertDeletedTagParams{
+		Name: tagDeleted,
+		Kind: "blocked",
+	}), "seed blocked tag")
+
+	// Restore should re-create the tag and delete the blocklist row.
+	row, err := svc.RestoreDeleted(ctx, tagDeleted)
+	testutil.AssertNoError(t, err, "restore blocked")
+	testutil.AssertEqual(t, row.Name, tagDeleted, "restored name")
+	testutil.AssertEqual(t, row.Kind, "blocked", "restored kind")
+
+	// Blocklist entry must be gone (keyed by original name).
+	_, err = client.Queries.GetDeletedTag(ctx, tagDeleted)
+	testutil.AssertError(t, err, "blocklist row removed")
+
+	// Tag must exist in the tag table under the normalized name.
+	tag, err := client.Queries.GetTagByName(ctx, tagNormalized)
+	testutil.AssertNoError(t, err, "tag exists after restore")
+	testutil.AssertEqual(t, tag.Name, tagNormalized, "tag name")
+}
+
+func TestTag_RestoreDeleted_Merged(t *testing.T) {
+	svc, client := newTestTag(t)
+	ctx := context.Background()
+
+	// Seed a merged deleted-tag entry.
+	testutil.AssertNoError(t, client.Queries.UpsertDeletedTag(ctx, database.UpsertDeletedTagParams{
+		Name:       "restore-test-merged",
+		Kind:       "merged",
+		TargetName: sql.NullString{String: "some-target", Valid: true},
+	}), "seed merged tag")
+
+	// Restore merged: un-map only, no re-create.
+	row, err := svc.RestoreDeleted(ctx, "restore-test-merged")
+	testutil.AssertNoError(t, err, "restore merged")
+	testutil.AssertEqual(t, row.Name, "restore-test-merged", "restored name")
+	testutil.AssertEqual(t, row.Kind, "merged", "restored kind")
+
+	// Blocklist entry must be gone.
+	_, err = client.Queries.GetDeletedTag(ctx, "restore-test-merged")
+	testutil.AssertError(t, err, "blocklist row removed")
+
+	// Tag must NOT exist in the tag table (merged restore doesn't create).
+	_, err = client.Queries.GetTagByName(ctx, "restore-test-merged")
+	testutil.AssertError(t, err, "tag must not exist for merged restore")
+}
+
+func TestTag_RestoreDeleted_NotFound(t *testing.T) {
+	svc, _ := newTestTag(t)
+	ctx := context.Background()
+
+	_, err := svc.RestoreDeleted(ctx, "nonexistent-tag")
+	testutil.AssertError(t, err, "not found")
+}
+
+func TestTag_CreateAndUnblock(t *testing.T) {
+	svc, client := newTestTag(t)
+	ctx := context.Background()
+
+	testutil.AssertNoError(t, client.Queries.UpsertDeletedTag(ctx, database.UpsertDeletedTagParams{
+		Name: "recreate me",
+		Kind: DeletedTagKindBlocked,
+	}), "seed blocked tag")
+
+	// Create alone must keep the blocklist row: the automatic paths rely on it
+	// to keep guarding a deleted name.
+	results, err := svc.Create(ctx, []string{"recreate me"})
+	testutil.AssertNoError(t, err, "create")
+	testutil.AssertEqual(t, results[0].Status, Created, "created")
+	if _, err := client.Queries.GetDeletedTag(ctx, "recreate me"); err != nil {
+		t.Fatalf("Create must not clear the blocklist row: %v", err)
+	}
+
+	// CreateAndUnblock is the operator path: re-creating the name unblocks it.
+	results, err = svc.CreateAndUnblock(ctx, []string{"Recreate Me"})
+	testutil.AssertNoError(t, err, "create and unblock")
+	testutil.AssertEqual(t, results[0].Status, Conflict, "conflict on existing tag")
+	if _, err := client.Queries.GetDeletedTag(ctx, "recreate me"); err == nil {
+		t.Fatal("CreateAndUnblock must clear the blocklist row")
+	}
 }

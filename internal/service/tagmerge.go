@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"slices"
 
@@ -96,12 +97,26 @@ func (s *TagMerge) Merge(ctx context.Context, sourceID, targetID int64) (MergeTa
 		return MergeTagResult{}, errs.FromDB(err, "reassign document tags")
 	}
 
+	if reassigned > 0 {
+		if err := txQ.ClearOrphanTagMarksByTagIDs(ctx, []int64{targetID}); err != nil {
+			return MergeTagResult{}, errs.FromDB(err, "clear orphan tag marks")
+		}
+	}
+
 	if _, err := txQ.DeleteDocumentTagsForTag(ctx, sourceID); err != nil {
 		return MergeTagResult{}, errs.FromDB(err, "delete leftover document tags")
 	}
 
 	if err := txQ.DeleteTag(ctx, sourceID); err != nil {
 		return MergeTagResult{}, errs.FromDB(err, "delete source tag")
+	}
+
+	if err := txQ.UpsertDeletedTag(ctx, database.UpsertDeletedTagParams{
+		Name:       source.Name,
+		Kind:       DeletedTagKindMerged,
+		TargetName: sql.NullString{String: target.Name, Valid: true},
+	}); err != nil {
+		return MergeTagResult{}, errs.FromDB(err, "record merged tag")
 	}
 
 	if err := tx.Commit(); err != nil {

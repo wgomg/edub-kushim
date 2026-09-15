@@ -585,7 +585,7 @@ Knowing what *isn't* here is as instructive as what is:
 | Single-row lock table + SQL gate function | `sql/schema/migrations/00005_backup_lock.sql`, `sql/queries/backup_lock.sql`, `sql/queries/task.sql:35-40` |
 | Soft delete + partial index | `sql/schema/migrations/00007_trash_soft_delete.sql` |
 | Idempotent multi-row seeds with `ON CONFLICT` | `sql/schema/seed-*.sql` |
-| Upsert + `excluded` | `sql/queries/batch.sql:24-31`, `tag.sql:17-20`, `people.sql`, `document_tag.sql` |
+| Upsert + `excluded` | `sql/queries/batch.sql:24-31`, `tag.sql:17-20`, `people.sql`, `document_tag.sql`, `deleted_tag.sql` |
 | Optimistic claim (`:execrows`) | `sql/queries/task.sql:99-104` |
 | Partial unique index + `ON CONFLICT (cols) WHERE predicate DO NOTHING` | `00017_tag_verdict_events.sql` (fresh verdicts deduped per pair/version) + `sql/queries/tag_verdict_event.sql` |
 | `DISTINCT ON (...) ... IN (SELECT unnest(...), unnest(...))` | `sql/queries/tag_verdict_event.sql` (latest verdict per pair, batched) |

@@ -204,6 +204,8 @@ See `AuthMiddleware` under `server.go` → Functions.
     - `Delete(w, r)` — `DELETE /api/v1/tags/{id}` — Calls `services.Tag.Delete(ctx, []int64{id})`. Maps status: `Deleted` → 204, `NotFound` → 404.
     - `Merge(w, r)` — `POST /api/v1/tags/{id}/merge` — Accepts `{target_id}` (nonzero → else 400). Calls `services.TagMerge.Merge(ctx, sourceID, targetID)`: one transaction re-points `document_tag` rows from the source to the target (skipping documents that already carry the target), deletes the leftover source rows, deletes the source tag, then removes the source name from the embedding store (log-only failure, same contract as tag delete). Errors map through `errs.KindOf`: `NotFound` → 404 (source or target gone), `Invalid` → 400 (same id). Returns `200` with `{id, name, reassigned}` (target id/name + reassigned row count).
     - `MergeSuggestions(w, r)` — `GET /api/v1/tags/merge?limit=` — `limit` via `ParamBag` (default 20, clamped 1–100). Calls `services.TagMerge.Suggestions(ctx, limit)`: fetches the full pair list from the matcher daemon (`SimilarPairs` RPC — every unordered pair of store entries at or above the consolidation-similarity floor), drops pairs whose names are no longer in the tag table, and enriches each pair with `TagPairEvidenceStats` (population overlap + verdict history across both orientations). Each suggestion carries two tags in canonical order (higher document count first, tie lexicographically smaller name), similarity, evidence counts, and `confidence` (`"population"` when the pair has event rows, `"similarity_only"` otherwise). Matcher unreachable → 503 (same contract as tag CRUD). Returns `200` with `{results: [...]}`.
+    - `ListDeleted(w, r)` — `GET /api/v1/tags/deleted?q=<prefix>&limit=50&offset=0` — Calls `services.Tag.ListDeleted(ctx, prefix, limit, offset)` (`ListDeletedTags` + `CountDeletedTags`). Returns `200` with `{results: [{name, kind, target_name?, created_at}], total}`; `kind` is `blocked` or `merged`, `target_name` only for merged rows. Editor/admin only.
+    - `RestoreDeleted(w, r)` — `DELETE /api/v1/tags/deleted/{name}` — Calls `services.Tag.RestoreDeleted(ctx, name)`: reads the blocklist row, re-creates the tag for a `blocked` kind (a `Conflict` — tag already exists — is tolerated, and the embedding store is updated by `Tag.Create`), then deletes the blocklist row only on success so a failed restore keeps the name blocked; a `merged` kind only drops the row (no re-create). Unknown name → `404` via `errs.KindOf`; matcher unavailable on the create path → 503. Returns `200` with `{name, kind}`. Editor/admin only.
 
 ---
 
@@ -514,6 +516,8 @@ mux.Handle("POST /api/v1/tags", RequireRole(editor...)(...))
 mux.Handle("PUT /api/v1/tags/{id}", RequireRole(editor...)(...))
 mux.Handle("DELETE /api/v1/tags/{id}", RequireRole(editor...)(...))
 mux.Handle("POST /api/v1/tags/{id}/merge", RequireRole(editor...)(...))
+mux.Handle("GET /api/v1/tags/deleted", RequireRole(editor...)(...))
+mux.Handle("DELETE /api/v1/tags/deleted/{name}", RequireRole(editor...)(...))
 mux.Handle("POST /api/v1/people", RequireRole(editor...)(...))
 mux.Handle("PUT /api/v1/people/{id}", RequireRole(editor...)(...))
 mux.Handle("DELETE /api/v1/people/{id}", RequireRole(editor...)(...))

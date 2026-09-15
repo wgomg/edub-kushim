@@ -184,7 +184,7 @@ func MustCreateTag(t TB, queries *Queries, name string) int64 {
 func MustAddDocumentTag(t TB, queries *Queries, documentID, tagID int64) {
 	t.Helper()
 	if err := queries.AddDocumentTag(context.Background(), AddDocumentTagParams{
-		DocumentID: documentID, TagID: tagID,
+		DocumentID: documentID, TagID: tagID, Source: "enrich",
 	}); err != nil {
 		t.Fatalf("add document_tag: %v", err)
 	}

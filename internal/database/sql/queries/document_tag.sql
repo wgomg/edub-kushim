@@ -11,15 +11,23 @@ JOIN document_tag dt ON d.id = dt.document_id
 WHERE dt.tag_id = $1 AND d.deleted_at IS NULL;
 
 -- name: AddDocumentTag :exec
-INSERT INTO document_tag (document_id, tag_id)
-VALUES ($1, $2)
+INSERT INTO document_tag (document_id, tag_id, source)
+VALUES ($1, $2, $3)
 ON CONFLICT (document_id, tag_id) DO NOTHING;
+
+-- name: UpsertManualDocumentTag :exec
+INSERT INTO document_tag (document_id, tag_id, source)
+VALUES ($1, $2, 'manual')
+ON CONFLICT (document_id, tag_id) DO UPDATE SET source = 'manual';
 
 -- name: RemoveDocumentTag :exec
 DELETE FROM document_tag WHERE document_id = $1 AND tag_id = $2;
 
 -- name: ClearDocumentTags :exec
 DELETE FROM document_tag WHERE document_id = $1;
+
+-- name: ClearEnrichDocumentTags :exec
+DELETE FROM document_tag WHERE document_id = $1 AND source = 'enrich';
 
 -- name: ReassignDocumentTags :execrows
 UPDATE document_tag dt

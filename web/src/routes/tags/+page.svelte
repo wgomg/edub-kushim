@@ -5,7 +5,7 @@
 	import { defaultFilter } from '$lib/stores/searchFilter.js';
 	import DataTable from '$lib/components/DataTable.svelte';
 	import Modal from '$lib/components/Modal.svelte';
-	import { EDIT_ICON, DELETE_ICON, actionButton } from '$lib/icons.js';
+	import { EDIT_ICON, DELETE_ICON, RESTORE_ICON, actionButton } from '$lib/icons.js';
 	import { escapeHtml } from '$lib/utils/html.js';
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
@@ -28,6 +28,8 @@
 	let mergingPair = $state(null);
 	let dismissedPairs = $state(new Set());
 	let survivorByPair = $state({});
+	let showDeleted = $state(false);
+	let deletedRefreshKey = $state(0);
 
 	const columns = [
 		{
@@ -63,8 +65,51 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 		goto(resolve('/documents'));
 	}
 
+	const deletedColumns = [
+		{
+			key: 'name',
+			label: 'Name',
+			sortable: false,
+			width: '100%'
+		},
+		{
+			key: 'kind',
+			label: 'Kind',
+			sortable: false,
+			width: '220px',
+			cell: (_v, row) =>
+				row.kind === 'merged' && row.target_name
+					? `merged into ${escapeHtml(row.target_name)}`
+					: 'blocked'
+		},
+		{
+			key: 'created_at',
+			label: 'Deleted',
+			sortable: false,
+			width: '180px',
+			cell: (v) => (v ? new Date(v).toLocaleString() : '')
+		},
+		{
+			key: 'actions',
+			label: 'Actions',
+			sortable: false,
+			noUnderline: true,
+			cellClass: 'whitespace-nowrap',
+			cell: (_v, row) => {
+				if (!authStore.authEnabled() || !authStore.isEditor()) return '';
+				return actionButton(RESTORE_ICON, 'Restore', 'text-parchment-400 hover:text-gold-500', {
+					'data-restore-tag': escapeHtml(row.name)
+				});
+			}
+		}
+	];
+
 	async function fetch({ limit, offset }) {
 		return await api.tags.list(query, limit, offset);
+	}
+
+	async function fetchDeleted({ limit, offset }) {
+		return await api.tags.deletedList({ q: query, limit, offset });
 	}
 
 	function openNew() {
@@ -115,6 +160,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 		if (!ok) return;
 		await api.tags.delete(tagId);
 		refreshKey++;
+		deletedRefreshKey++;
 	}
 
 	function handlePageClick(e) {
@@ -136,6 +182,32 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 
 	function pairKey(s) {
 		return `${s.tags[0].id}-${s.tags[1].id}`;
+	}
+
+	function toggleDeleted() {
+		showDeleted = !showDeleted;
+	}
+
+	async function handleRestore(name) {
+		const ok = await confirmStore.confirm({
+			title: 'Restore tag',
+			message: `Restore tag "${name}"? Enrichment may assign it again.`
+		});
+		if (!ok) return;
+		const result = await api.tags.restoreDeleted(name);
+		if (result.ok) {
+			deletedRefreshKey++;
+			refreshKey++;
+			toastStore.success(`Restored "${name}"`);
+		} else {
+			toastStore.error('Failed to restore tag');
+		}
+	}
+
+	function handleDeletedActionClick(e) {
+		const restoreBtn = e.target.closest('[data-restore-tag]');
+		if (!restoreBtn) return;
+		handleRestore(restoreBtn.getAttribute('data-restore-tag'));
 	}
 
 	async function toggleMergeSuggestions() {
@@ -177,6 +249,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 		if (result.ok) {
 			mergeSuggestions = mergeSuggestions.filter((x) => pairKey(x) !== key);
 			refreshKey++;
+			deletedRefreshKey++;
 			toastStore.success(`Merged "${deleted.name}" into "${survivor.name}"`);
 		} else {
 			toastStore.error('Failed to merge tags');
@@ -194,6 +267,12 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 		<h1 class="text-2xl font-semibold text-balance text-parchment-200">Tags</h1>
 		<div class="flex items-center gap-2">
 			{#if !authStore.authEnabled() || authStore.isEditor()}
+				<button
+					onclick={toggleDeleted}
+					class="rounded-lg border border-clay-700 px-4 py-2 text-sm font-medium text-parchment-200 hover:border-gold-500 hover:text-gold-400 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+				>
+					{showDeleted ? 'Hide deleted' : 'Deleted tags'}
+				</button>
 				<button
 					onclick={toggleMergeSuggestions}
 					class="rounded-lg border border-clay-700 px-4 py-2 text-sm font-medium text-parchment-200 hover:border-gold-500 hover:text-gold-400 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -220,6 +299,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 			bind:value={query}
 			oninput={() => {
 				refreshKey++;
+				deletedRefreshKey++;
 				const url = new URL(window.location.href);
 				if (query) url.searchParams.set('q', query);
 				else url.searchParams.delete('q');
@@ -322,6 +402,26 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 					{/each}
 				</ul>
 			{/if}
+		</div>
+	{/if}
+
+	{#if showDeleted}
+		<div class="rounded-lg border border-clay-700 bg-clay-900 p-4">
+			<h2 class="mb-3 text-sm font-semibold text-parchment-200">Deleted tags</h2>
+			<p class="mb-3 text-xs text-parchment-500">
+				Names listed here are blocked from enrichment. Blocked tags are re-created when restored;
+				merged names are simply allowed again.
+			</p>
+			<DataTable
+				columns={deletedColumns}
+				fetch={fetchDeleted}
+				keyField="name"
+				title=""
+				defaultPageSize={10}
+				pageSizes={[10, 25, 50]}
+				refreshKey={deletedRefreshKey}
+				onActionClick={handleDeletedActionClick}
+			/>
 		</div>
 	{/if}
 

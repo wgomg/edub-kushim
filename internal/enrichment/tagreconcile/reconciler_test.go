@@ -4,9 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"os"
 	"testing"
 
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 )
 
@@ -274,9 +276,9 @@ func TestBuildJointWorklist(t *testing.T) {
 		{ID: 5, Name: "rock or roll"},
 	}
 	tagCounts := map[string]int64{
-		"supply and demand":     10,
+		"supply and demand":       10,
 		"capitalism vs socialism": 5,
-		"rock or roll":          3,
+		"rock or roll":            3,
 	}
 
 	entries := r.buildJointWorklist(allTags, tagCounts)
@@ -320,5 +322,100 @@ func TestBuildJointWorklist_NoJointTags(t *testing.T) {
 	entries := r.buildJointWorklist(allTags, nil)
 	if len(entries) != 0 {
 		t.Errorf("len(entries) = %d, want 0", len(entries))
+	}
+}
+
+func TestSampleNamesSuffix(t *testing.T) {
+	tests := []struct {
+		name  string
+		names []string
+		want  string
+	}{
+		{"few", []string{"alpha", "beta"}, ": alpha, beta"},
+		{"exactly five", []string{"a", "b", "c", "d", "e"}, ": a, b, c, d, e"},
+		{"truncated at six", []string{"a", "b", "c", "d", "e", "f"}, ": a, b, c, d, e, …"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sampleNamesSuffix(tt.names)
+			if got != tt.want {
+				t.Errorf("sampleNamesSuffix() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLogDeletedTagKeepFlip(t *testing.T) {
+	r := &Reconciler{logger: testutil.NewTestLogger()}
+	e := &entry{query: "removed", target: "kept"}
+
+	// blocked: no panic, no extra fields needed.
+	r.logDeletedTagKeepFlip(e, database.ListAllDeletedTagsRow{
+		Kind: "blocked",
+	})
+
+	// merged with target: no panic.
+	r.logDeletedTagKeepFlip(e, database.ListAllDeletedTagsRow{
+		Kind:       "merged",
+		TargetName: sql.NullString{String: "target", Valid: true},
+	})
+
+	// merged with null target: no panic.
+	r.logDeletedTagKeepFlip(e, database.ListAllDeletedTagsRow{
+		Kind:       "merged",
+		TargetName: sql.NullString{},
+	})
+}
+
+// TestApplyKeepFlip_ZeroDocsCreatesNoTag guards the §3.2 ordering fix: when
+// there are no documents linking the query→target pair, applyKeepFlip must
+// return early without creating the query tag. This prevents the reconciler
+// from polluting the tag store with unattributed names.
+func TestApplyKeepFlip_ZeroDocsCreatesNoTag(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+
+	ctx := context.Background()
+	client := database.NewTestClient(t)
+	t.Cleanup(func() { client.DB().Close() })
+
+	tagSvc, err := service.NewTag(client.Queries, testutil.NewTestLogger(), testutil.NewMockEmbedder())
+	if err != nil {
+		t.Fatalf("NewTag: %v", err)
+	}
+	services := &service.CrudServices{Tag: tagSvc}
+
+	r := &Reconciler{
+		client:   client,
+		services: services,
+		logger:   testutil.NewTestLogger(),
+	}
+
+	// Seed a target tag so tagByName succeeds.
+	database.MustCreateTag(t, client.Queries, "keepflip-zero-target")
+
+	e := &entry{
+		query:  "keepflip-zero-query",
+		target: "keepflip-zero-target",
+		docIDs: nil, // empty: DocumentIDsForPairs would return nothing
+	}
+	blocklist := make(map[string]database.ListAllDeletedTagsRow)
+
+	repointed, skipped, err := r.applyKeepFlip(ctx, e, blocklist)
+	if err != nil {
+		t.Fatalf("applyKeepFlip: %v", err)
+	}
+	if skipped {
+		t.Fatal("applyKeepFlip must not be skipped for a non-blocked query")
+	}
+	if repointed != 0 {
+		t.Fatalf("repointed = %d, want 0", repointed)
+	}
+
+	// The query tag must NOT have been created.
+	_, err = client.Queries.GetTagByName(ctx, "keepflip-zero-query")
+	if err == nil {
+		t.Fatal("zero-docs keep-flip must not create a tag in the database")
 	}
 }

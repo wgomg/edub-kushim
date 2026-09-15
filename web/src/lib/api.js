@@ -249,6 +249,17 @@ export const api = {
 				body: JSON.stringify({ name })
 			}),
 		delete: (id) => requestRaw(`/api/v1/tags/${id}`, { method: 'DELETE' }),
+		deletedList: ({ q = '', limit = 50, offset = 0 } = {}) => {
+			const params = new URLSearchParams();
+			if (q) params.set('q', q);
+			params.set('limit', String(limit));
+			params.set('offset', String(offset));
+			return request(`/api/v1/tags/deleted?${params.toString()}`).then(
+				(data) => data ?? { results: [], total: 0 }
+			);
+		},
+		restoreDeleted: (name) =>
+			requestRaw(`/api/v1/tags/deleted/${encodeURIComponent(name)}`, { method: 'DELETE' }),
 		mergeSuggestions: (limit = 20) => requestRaw(`/api/v1/tags/merge?limit=${limit}`),
 		reconcileReport: () => requestRaw('/api/v1/tags/reconciliation/report'),
 		merge: (sourceId, targetId) =>

@@ -60,3 +60,32 @@ ORDER BY t.name ASC LIMIT $2 OFFSET $3;
 
 -- name: DeleteTag :exec
 DELETE FROM tag WHERE id = $1;
+
+-- name: MarkOrphanTags :execrows
+UPDATE tag t SET orphaned_since = now()
+WHERE t.orphaned_since IS NULL
+  AND NOT EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id);
+
+-- name: ClearOrphanTagMarks :execrows
+UPDATE tag t SET orphaned_since = NULL
+WHERE t.orphaned_since IS NOT NULL
+  AND EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id);
+
+-- name: ClearOrphanTagMarksByTagIDs :exec
+UPDATE tag SET orphaned_since = NULL
+WHERE id = ANY(@tag_ids::bigint[])
+  AND orphaned_since IS NOT NULL;
+
+-- name: ListOrphanTags :many
+SELECT t.name FROM tag t
+WHERE t.orphaned_since IS NOT NULL
+  AND t.orphaned_since < @orphaned_before::timestamptz
+  AND NOT EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
+ORDER BY t.name;
+
+-- name: DeleteOrphanTags :many
+DELETE FROM tag t
+WHERE t.orphaned_since IS NOT NULL
+  AND t.orphaned_since < @orphaned_before::timestamptz
+  AND NOT EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
+RETURNING t.name;

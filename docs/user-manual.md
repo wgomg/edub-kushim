@@ -1159,7 +1159,7 @@ Content-Type: application/json
 }
 ```
 
-Response `204 No Content`. Idempotent (duplicate adds are silently ignored). Returns `404` if document or tag is not found.
+Response `204 No Content`. Idempotent (duplicate adds are silently ignored). Returns `404` if document or tag is not found. The assignment is stored with `source = 'manual'`, so re-enrichment — which clears and rewrites only `enrich`-sourced rows — keeps it.
 
 ### Remove Document Tag
 
@@ -1322,7 +1322,7 @@ Response `200`:
 
 ### Merge Tags
 
-Hard-merges a source tag into a target tag in one transaction: all `document_tag` rows re-point to the target (documents already carrying the target keep a single row), the source tag is deleted, and the source name is removed from the embedding store. Nothing merges automatically — this is always an explicit operator action. Editor/admin only.
+Hard-merges a source tag into a target tag in one transaction: all `document_tag` rows re-point to the target (documents already carrying the target keep a single row), the source tag is deleted, and the source name is removed from the embedding store. The source name is also recorded in the deleted-tag blocklist as `merged` with the target as its pointer, so a later LLM emission of the source name resolves to the target instead of re-creating the tag. Nothing merges automatically — this is always an explicit operator action. Editor/admin only.
 
 ```
 POST /api/v1/tags/{id}/merge
@@ -1339,6 +1339,43 @@ Response `200`:
 
 - `400` — `target_id` missing/zero, or source and target are the same tag.
 - `404` — source or target tag does not exist.
+
+### Deleted Tags
+
+Deleted and merged tag names are kept in a blocklist so enrichment does not silently re-create them: blocked names are dropped when the LLM emits them again and merged names are rewritten to the merge target (dropped when the target no longer exists). Operators manage the list from the tags page ("Deleted tags" section, per-row Restore with confirmation); `POST /api/v1/tags` also clears the blocklist row for the name being created, so re-creating a deleted tag through the API un-blocks it. Editor/admin only.
+
+```
+GET /api/v1/tags/deleted?q=soft&limit=50&offset=0
+```
+
+Response `200`:
+
+```json
+{
+  "results": [
+    { "name": "software development", "kind": "blocked", "created_at": "2024-03-19T10:30:12Z" },
+    { "name": "ml", "kind": "merged", "target_name": "machine learning", "created_at": "2024-03-18T09:00:00Z" }
+  ],
+  "total": 2
+}
+```
+
+- `kind` — `blocked` (operator delete via `DELETE /api/v1/tags/{id}`) or `merged` (source of a hard merge; `target_name` carries the merge target).
+- `q` filters by name prefix; `limit` (default `50`, max `100`) and `offset` paginate.
+
+```
+DELETE /api/v1/tags/deleted/{name}
+```
+
+Response `200`:
+
+```json
+{ "name": "software development", "kind": "blocked" }
+```
+
+- Restoring a `blocked` name re-creates the tag (an existing tag is tolerated) and then drops the blocklist row.
+- Restoring a `merged` name only drops the row — the merge itself is not undone.
+- `404` — the name is not in the blocklist.
 
 ### Tag Reconciliation Report
 
@@ -1368,7 +1405,8 @@ Response `200`:
     "planned_joint_splits": [
       { "query": "supply and demand", "components": ["supply", "demand"], "reassigned": 8, "reason": "adjudicated" }
     ],
-    "skips": { "below_floor": 38, "query_reborn": 51, "adjudication_error": 25 }
+    "skips": { "below_floor": 38, "query_reborn": 51, "adjudication_error": 25 },
+    "swept": 3
   }
 }
 ```
@@ -1378,11 +1416,13 @@ Response `200`:
   flips, planned/applied pair entries (`planned_merges`, `planned_keep_flips`,
   `retag_entries`, `invalidated_entries`), planned/applied joint splits
   (`planned_joint_splits` / `joint_splits` — query, components, reassigned documents,
-  reason), skip reasons, and the `capped` / `no_documents` / `adjudicator_disabled`
-  markers. Pair-level fields appear only when the run recorded them (a run with no
-  flips has no `planned_keep_flips`). Each pair entry carries `reason` (the policy
-  guard that decided it, or `adjudicated` for LLM-judged pairs) and `creates_tag`
-  (true when a keep flip creates the query tag; always present in new reports).
+  reason), skip reasons, the `swept` count of orphan tags deleted during the run
+  (the would-be count in report-only runs), and the `capped` / `no_documents` /
+  `adjudicator_disabled` markers. Pair-level fields appear only when the run recorded
+  them (a run with no flips has no `planned_keep_flips`). Each pair entry carries
+  `reason` (the policy guard that decided it, or `adjudicated` for LLM-judged pairs)
+  and `creates_tag` (true when a keep flip creates the query tag; always present in
+  new reports).
 - `404` — no completed `tagreconcile` run exists yet.
 
 ### Saved Searches
@@ -2485,6 +2525,7 @@ enricher:
   #   time: "02:00"              # preferred time of day (HH:MM)
   #   max_rejudge: 200           # max pairs re-evaluated per run
   #   max_retag: 1000            # max documents re-pointed per run
+  #   dead_tag_grace_days: 7     # days a tag must stay without documents before the sweep removes it
 
 backup:
   # enabled: true
@@ -2554,7 +2595,7 @@ mirror:
 | `enricher.tagmatcher`          | Semantic tag matching via Hugot (embeddings) — see [Tag Matcher guide](tag-matcher.md) for memory/CPU tuning |
 | `enricher.tagmatcher.hugot`    | Hugot-specific settings (model, backend)                               |
 | `enricher.tag_adjudicator`     | Optional LLM verdicts for ambiguous tag pairs: `enabled` (default `false`), `timeout` (defaults to `contentanalyzer.timeout` at use time when `0`), `llm` (defaults to `contentanalyzer.llm` at use time when `provider`/`model` are empty — the raw values are preserved in config so the inheritance survives saves). When enabled, ambiguous-band pairs are classified `same`/`variant`/`related`, verdicts are cached in `tag_verdict_event`, and `same` replaces the emitted tag with the canonical target |
-| `enricher.tag_reconcile`       | Scheduled re-adjudication of stored tag verdicts: `enabled` (default `false`), `report_only` (default `true`; the first run is always report-only regardless), `interval` (days between runs, default `7`), `time` (HH:MM preferred time, default `02:00`), `max_rejudge` (max pairs re-evaluated per run, default `200`), `max_retag` (max documents re-pointed per run, default `1000`). The queue daemon enqueues a `tagreconcile` task when due; runs re-evaluate stale/unjudged/drifted/aged pairs against the current policy and store, healing absorbed tags and applying flips, and split store tags that join concepts with a conjunction into their components (adjudicated when the tag adjudicator is enabled, deterministic otherwise) — both under the same per-run caps. Requires the tag adjudicator for acting (write) runs — without it, runs stay snapshot-only |
+| `enricher.tag_reconcile`       | Scheduled re-adjudication of stored tag verdicts: `enabled` (default `false`), `report_only` (default `true`; the first run is always report-only regardless), `interval` (days between runs, default `7`), `time` (HH:MM preferred time, default `02:00`), `max_rejudge` (max pairs re-evaluated per run, default `200`), `max_retag` (max documents re-pointed per run, default `1000`), `dead_tag_grace_days` (days a tag must stay without documents before the orphan sweep removes it, default `7`; `≤ 0` resets to the default). The queue daemon enqueues a `tagreconcile` task when due; runs re-evaluate stale/unjudged/drifted/aged pairs against the current policy and store, healing absorbed tags and applying flips, split store tags that join concepts with a conjunction into their components (adjudicated when the tag adjudicator is enabled, deterministic otherwise) — both under the same per-run caps — and delete tags that have had no documents for longer than the grace window (report-only runs list the would-be deletions). Requires the tag adjudicator for acting (write) runs — without it, runs stay snapshot-only |
 
 > **Schedule changes**: changing a scheduled task's interval or preferred time
 > takes effect at the closest upcoming occurrence of the new timing; if that
@@ -2915,7 +2956,9 @@ tools, plus an "N of M" availability counter.
   analyzer
 - **Tag reconciliation**: enabled toggle, report-only toggle, interval
   (days), preferred time (HH:MM), max pairs judged per run, max documents
-  re-tagged per run, plus an amber hint when enabled without the adjudicator
+  re-tagged per run, orphan tag grace period (days a document-less tag must
+  stay unused before the sweep removes it), plus an amber hint when enabled
+  without the adjudicator
 - **Enrichment workers**: worker count
 
 ### Storage

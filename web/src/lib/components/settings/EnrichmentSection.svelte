@@ -678,6 +678,16 @@
 					min="1"
 					bind:value={cfg.enricher.tag_reconcile.max_retag}
 				/>
+				<UnitField
+					id="tag-reconcile-dead-tag-grace"
+					label="Orphan tag grace period"
+					unit="days"
+					type="number"
+					inputmode="numeric"
+					min="1"
+					hint="Tags left without documents for this many days are removed during reconciliation."
+					bind:value={cfg.enricher.tag_reconcile.dead_tag_grace_days}
+				/>
 			</div>
 			<div class="mt-4">
 				<Note variant="info">

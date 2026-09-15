@@ -25,8 +25,9 @@ import (
 )
 
 const (
-	tokenBudgetRatio = 0.9
-	minTargetWords   = 100
+	tokenBudgetRatio   = 0.9
+	minTargetWords     = 100
+	fallbackVocabLimit = 200
 )
 
 type splitDecision struct {
@@ -37,6 +38,7 @@ type splitDecision struct {
 type Enricher struct {
 	config     *config.Config
 	logger     *utils.Logger
+	client     *database.Client
 	queries    *database.Queries
 	runner     *tools.Runner
 	services   *service.CrudServices
@@ -45,11 +47,12 @@ type Enricher struct {
 	splitCache map[string]splitDecision
 }
 
-func NewEnricher(cfg *config.Config, logger *utils.Logger, queries *database.Queries, services *service.CrudServices, matcher tagmatcher.Matcher) (*Enricher, error) {
+func NewEnricher(cfg *config.Config, logger *utils.Logger, client *database.Client, services *service.CrudServices, matcher tagmatcher.Matcher) (*Enricher, error) {
 	e := &Enricher{
 		config:   cfg,
 		logger:   logger,
-		queries:  queries,
+		client:   client,
+		queries:  client.Queries,
 		services: services,
 		runner:   tools.NewRunnerWithMatcher(logger, cfg, []string{"textreducer", "contentanalyzer", "tagmatcher"}, matcher),
 	}
@@ -107,6 +110,14 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 	if err != nil {
 		return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to retrieve tags: %w", err)}
 	}
+	deletedTags, err := e.queries.ListAllDeletedTags(ctx)
+	if err != nil {
+		return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to retrieve deleted tags: %w", err)}
+	}
+	blocklist := make(map[string]database.ListAllDeletedTagsRow, len(deletedTags))
+	for _, row := range deletedTags {
+		blocklist[utils.NormalizeTag(row.Name)] = row
+	}
 
 	var tagSuggestions []string
 
@@ -125,11 +136,16 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 	matchedTags, err := e.runner.MatchTags(ctx, document.DocumentID, tagsContent.Text)
 	if err != nil || len(matchedTags.Tags) == 0 {
 		if err != nil {
-			e.logger.Error(&logId, "tag matching failed, using all tags: %v", err)
+			e.logger.Error(&logId, "tag matching failed: %v", err)
 		} else {
-			e.logger.Debug(&logId, "tag matching returned no matches, using all tags")
+			e.logger.Debug(&logId, "tag matching returned no matches")
 		}
-		tagSuggestions = tagsNames
+		if len(tagsNames) <= fallbackVocabLimit {
+			tagSuggestions = tagsNames
+			e.logger.Info(&logId, "using all %d tags as suggestions (vocabulary within fallback limit)", len(tagsNames))
+		} else {
+			e.logger.Info(&logId, "no tag suggestions (vocabulary of %d tags exceeds fallback limit)", len(tagsNames))
+		}
 	} else {
 		tagSuggestions = matchedTags.Tags
 		e.logger.Debug(&logId, "tag matching: %d tags (%s)", len(tagSuggestions), time.Since(matchTagsStart))
@@ -247,12 +263,16 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 	analysis.Tags = contentanalyzer.FilterTags(analysis.Tags, analysis.People, knownNormalized, analysis.Title, docTypeNames, e.config.Enricher.ContentAnalyzer.MaxTags)
 	tagFilter := contentanalyzer.NewTagFilter(analysis.People, knownNormalized, analysis.Title, docTypeNames)
 	analysis.Tags = e.splitJointTags(ctx, analysis.Tags, tagFilter, &logId)
+	analysis.Tags = e.applyDeletedTagPolicy(analysis.Tags, storeTags, blocklist, &logId)
 
 	consolidateStart := time.Now()
 	report("consolidate", "", 0)
 	ranked, err := e.runner.RankTags(ctx, document.DocumentID, analysis.Tags)
 	if err != nil {
 		e.logger.Error(&logId, "post-LLM consolidation failed: %v", err)
+		for _, tag := range analysis.Tags {
+			e.logger.Info(&logId, "consolidation[%s]: keep %q (reason=rank_unavailable)", tagpolicy.Version, tag)
+		}
 	} else {
 		consolidated := e.applyConsolidationPolicy(ctx, document.ID, document.DocumentID, analysis.Tags, ranked, storeTags, &logId)
 		analysis.Tags = consolidated
@@ -290,9 +310,16 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 
 	e.ensureOCRLanguage(ctx, analysis.Language)
 
-	results, err := e.services.Tag.Create(ctx, analysis.Tags)
+	tx, err := e.client.BeginTx(ctx, nil)
 	if err != nil {
-		e.logger.Error(&logId, "batch create tags: %v", err)
+		return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("begin tag transaction: %w", err)}
+	}
+	defer tx.Rollback()
+	txQ := e.client.WithTx(tx)
+
+	results, newNames, err := e.services.Tag.CreateTx(ctx, txQ, analysis.Tags)
+	if err != nil {
+		return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("batch create tags: %w", err)}
 	}
 
 	var tagIDs []int64
@@ -308,17 +335,28 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 		}
 	}
 
-	if err := e.queries.ClearDocumentTags(ctx, document.ID); err != nil {
+	if err := txQ.ClearEnrichDocumentTags(ctx, document.ID); err != nil {
 		return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("clear document tags: %w", err)}
 	}
 	for _, tagID := range tagIDs {
-		if err := e.queries.AddDocumentTag(ctx, database.AddDocumentTagParams{
+		if err := txQ.AddDocumentTag(ctx, database.AddDocumentTagParams{
 			DocumentID: document.ID,
 			TagID:      tagID,
+			Source:     service.DocumentTagSourceEnrich,
 		}); err != nil {
-			e.logger.Error(&logId, "add document tag: %w", err)
+			return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("add document tag: %w", err)}
 		}
 	}
+	if len(tagIDs) > 0 {
+		if err := txQ.ClearOrphanTagMarksByTagIDs(ctx, tagIDs); err != nil {
+			return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("clear orphan tag marks: %w", err)}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("commit tag transaction: %w", err)}
+	}
+
+	e.services.Tag.AddToStore(ctx, newNames)
 
 	peopleMap := make(map[string]int64, len(existingPeople))
 	for _, p := range existingPeople {
@@ -468,6 +506,42 @@ func (e *Enricher) splitJointTags(ctx context.Context, tags []string, filter *co
 			out = append(out, segment)
 		}
 		e.logger.Info(logId, "tag split: %q → %v", t, segments)
+	}
+	return out
+}
+
+func (e *Enricher) applyDeletedTagPolicy(tags []string, storeTags map[string]struct{}, blocklist map[string]database.ListAllDeletedTagsRow, logId *string) []string {
+	if len(blocklist) == 0 {
+		return tags
+	}
+
+	out := make([]string, 0, len(tags))
+	seen := make(map[string]bool, len(tags))
+	for _, tag := range tags {
+		if row, ok := blocklist[utils.NormalizeTag(tag)]; ok {
+			switch row.Kind {
+			case service.DeletedTagKindBlocked:
+				e.logger.Info(logId, "deleted tag policy: dropping %q — the tag was deleted by an operator", tag)
+				continue
+			case service.DeletedTagKindMerged:
+				target := row.TargetName.String
+				if !row.TargetName.Valid || target == "" {
+					e.logger.Info(logId, "deleted tag policy: dropping %q — the merge target is unknown", tag)
+					continue
+				}
+				if _, ok := storeTags[target]; !ok {
+					e.logger.Info(logId, "deleted tag policy: dropping %q — it was merged into %q, which no longer exists", tag, target)
+					continue
+				}
+				e.logger.Info(logId, "deleted tag policy: rewriting %q to %q (merged)", tag, target)
+				tag = target
+			}
+		}
+		if seen[tag] {
+			continue
+		}
+		seen[tag] = true
+		out = append(out, tag)
 	}
 	return out
 }

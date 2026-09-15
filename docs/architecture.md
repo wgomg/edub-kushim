@@ -218,7 +218,9 @@ The enrichment pipeline:
    names via the `Matcher` interface. In the `kushim` CLI, this uses direct Hugot calls
    and the local embedding store. In the `edub` API server, the `MatcherClient` forwards
    the request over a Unix socket to the external matcher process. Falls back to all tags
-   on failure.
+   on failure, but only while the vocabulary has at most 200 names — beyond that the
+   fallback is empty (and the prompt omits the tag-preference clause) so an oversized
+   list cannot crowd out the document text.
  3. **LLM Classification (first pass)** — the reduced content, along with available document types
      and tag suggestions, is sent to the configured LLM adapter. The adapter is selected by
      `llm.adapter` (`openai-compatible` or `anthropic`) and the request body
@@ -270,13 +272,22 @@ The enrichment pipeline:
    hard-merges a source tag into a target in one transaction (re-points
    `document_tag` rows, deletes the source tag, removes the source name from
    the embedding store). Both endpoints are exposed in the tags page UI
-   ("Review merges" section, editor-gated).
-6. **New Tag Store Update** — any new tags created during enrichment are batch-created
-   via `services.Tag.Create(ctx, analysis.Tags)`. The service delegates store management
-   to the matcher via `AddToStore`, which encodes new names and adds them to the shared
-   embedding store. This makes them available for matching against subsequent documents
-   without additional encode. When using the RPC client, this forwards the request to the
-   matcher process over the Unix socket.
+   ("Review merges" section, editor-gated). Deleting or merging a tag records
+   its name in the `deleted_tag` blocklist (inside the merge transaction for
+   merges), so later LLM emissions cannot resurrect it: enrichment drops
+   blocked names and rewrites merged names to their target, and the reconciler
+   skips their restoration. The tags page lists the blocklist with per-row
+   restore, and the operator create path un-blocks the name it creates.
+6. **New Tag Store Update** — tag creation, the enrichment-owned `document_tag` sweep,
+   and the per-tag assignments run in one database transaction per document
+   (`services.Tag.CreateTx` on the transaction handle): new tags are created, only
+   `enrich`-sourced assignment rows are cleared (manual assignments survive), the
+   surviving tags are assigned with `source = 'enrich'`, and their orphan marks are
+   cleared. Any failure rolls the whole set back. After the commit,
+   `services.Tag.AddToStore` encodes the new names and adds them to the shared embedding
+   store, making them available for matching against subsequent documents without an
+   additional encode. When using the RPC client, this forwards the request to the matcher
+   process over the Unix socket.
 7. **Result Logging** — token usage stats and prompt text are logged.
 
 ### People Deduplication
@@ -365,7 +376,7 @@ refinement + fallback LLM list; tag matcher timeout/reduce-target-words/chunk-si
 model/backend; tag adjudicator enabled toggle + timeout + LLM sub-block (adapter/provider/
 model with an "Inherit from content analyzer" option, token, request delay); tag
 reconciliation enabled/report-only toggles, interval, preferred time, max pairs judged per
-run, max documents re-tagged per run; text reducer engine/timeout/target-words; backup
+run, max documents re-tagged per run, orphan tag grace period; text reducer engine/timeout/target-words; backup
 enabled/disabled, fallback output path, per-mode schedule list (mode, interval, preferred
 time, keep count, optional per-schedule output path); mirror enabled/disabled, destination
 path (local or `[user@]host:path`), interval, preferred time; database connection fields;

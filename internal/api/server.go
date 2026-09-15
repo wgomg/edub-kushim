@@ -271,11 +271,13 @@ func registerRoutes(
 
 	tagHandler := handlers.NewTagHandler(services, logger)
 	mux.Handle("GET /api/v1/tags", RequireRole(viewer...)(http.HandlerFunc(tagHandler.List)))
+	mux.Handle("GET /api/v1/tags/deleted", RequireRole(editor...)(http.HandlerFunc(tagHandler.ListDeleted)))
 	mux.Handle("GET /api/v1/tags/merge", RequireRole(viewer...)(http.HandlerFunc(tagHandler.MergeSuggestions)))
 	mux.Handle("GET /api/v1/tags/reconciliation/report", RequireRole(viewer...)(http.HandlerFunc(taskHandler.GetTagReconcileReport)))
 	mux.Handle("POST /api/v1/tags", RequireRole(editor...)(http.HandlerFunc(tagHandler.Create)))
 	mux.Handle("PUT /api/v1/tags/{id}", RequireRole(editor...)(http.HandlerFunc(tagHandler.Update)))
 	mux.Handle("DELETE /api/v1/tags/{id}", RequireRole(editor...)(http.HandlerFunc(tagHandler.Delete)))
+	mux.Handle("DELETE /api/v1/tags/deleted/{name}", RequireRole(editor...)(http.HandlerFunc(tagHandler.RestoreDeleted)))
 	mux.Handle("POST /api/v1/tags/{id}/merge", RequireRole(editor...)(http.HandlerFunc(tagHandler.Merge)))
 
 	peopleHandler := handlers.NewPeopleHandler(services, logger)

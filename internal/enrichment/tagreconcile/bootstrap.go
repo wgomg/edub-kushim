@@ -37,6 +37,8 @@ var (
 	reKushimConsolidate = regexp.MustCompile(`REQID=(\S+) consolidate "([^"]+)" → (.+) \((\d+\.\d+)\)$`)
 	// kushim.log (Stage 1+): consolidation[vN]: keep "<query>" (sim=<s> reason=ambiguous_band [verdict=<v> cached=<b>])
 	reBandKeep = regexp.MustCompile(`REQID=(\S+) consolidation\[v\d+\]: keep "([^"]+)" \(sim=(\d+\.\d+) reason=ambiguous_band(?: verdict=(\w+)(?: cached=\w+)?)?\)$`)
+	// kushim.log (Stage 1+): consolidation[vN]: keep "<query>" (reason=rank_unavailable)
+	reRankUnavailableKeep = regexp.MustCompile(`REQID=(\S+) consolidation\[v\d+\]: keep "([^"]+)" \(reason=rank_unavailable\)$`)
 )
 
 func parseBootstrapLogs(logsDir string, logger *utils.Logger) map[string]*parsedPair {
@@ -98,6 +100,10 @@ func parseLine(line string, pairs map[string]*parsedPair) {
 	}
 	if m := reBandKeep.FindStringSubmatch(line); m != nil {
 		addParsedPair(pairs, m[2], "", m[3], false, types.TagVerdict(m[4]), m[1], lineTime(line))
+		return
+	}
+	if m := reRankUnavailableKeep.FindStringSubmatch(line); m != nil {
+		addParsedPair(pairs, m[2], "", "0", false, "", m[1], lineTime(line))
 		return
 	}
 }

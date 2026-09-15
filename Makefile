@@ -298,6 +298,7 @@ test-cgo-db:
 		./internal/consumption/ \
 		./internal/configtask/ \
 		./internal/commands/ \
+		./internal/enrichment/tagreconcile/ \
 		./internal/api/handlers/
 
 # Single-package run for development. Filter with RUN, e.g.:

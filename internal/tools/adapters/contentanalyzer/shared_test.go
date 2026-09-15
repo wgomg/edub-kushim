@@ -102,6 +102,32 @@ func TestBuildPrompt_ExecutionErrorFallsBack(t *testing.T) {
 	}
 }
 
+func TestTagsPrompt_EmptyListReturnsEmpty(t *testing.T) {
+	got := tagsPrompt(nil)
+	if got != "" {
+		t.Errorf("tagsPrompt(nil) = %q, want empty", got)
+	}
+	got = tagsPrompt([]string{})
+	if got != "" {
+		t.Errorf("tagsPrompt([]) = %q, want empty", got)
+	}
+}
+
+func TestBuildPrompt_EmptyTagSuggestions(t *testing.T) {
+	docTypes := []database.DocumentType{
+		{Name: "article", Description: "A written composition"},
+	}
+	result := BuildPrompt("sample text", docTypes, nil, nil, "", 3, 5)
+
+	if !strings.Contains(result, "sample text") {
+		t.Error("expected output to contain the input text")
+	}
+	// Empty tag list must not produce a malformed clause with empty quotes.
+	if strings.Contains(result, "''") {
+		t.Error("empty tag suggestions must not produce empty quotes in the prompt")
+	}
+}
+
 func TestBuildPrompt_WhitespaceCustomTemplateUsesDefault(t *testing.T) {
 	result := BuildPrompt("text", nil, nil, nil, "   \n  ", 3, 5)
 

@@ -17,10 +17,6 @@ import (
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
-const (
-	tagRequestBuffer = 3
-)
-
 const SystemMessage = "You are a helpful assistant specialized in document analysis and metadata extraction"
 
 // sleepAfterRequest paces requests toward rate-limited providers. Aborts early
@@ -140,7 +136,6 @@ type promptData struct {
 	TagsPrompt    string
 	PeoplePrompt  string
 	Text          string
-	RequestedTags int
 	MinTags       int
 	MaxTags       int
 }
@@ -165,7 +160,6 @@ func BuildPrompt(text string, docTypes []database.DocumentType, peopleTypes []da
 		TagsPrompt:    tagsPrompt,
 		PeoplePrompt:  peoplePrompt,
 		Text:          text,
-		RequestedTags: maxTags + tagRequestBuffer,
 		MinTags:       minTags,
 		MaxTags:       maxTags,
 	}
@@ -199,6 +193,9 @@ func documentTypePrompt(types []database.DocumentType) string {
 }
 
 func tagsPrompt(tags []string) string {
+	if len(tags) == 0 {
+		return ""
+	}
 	return fmt.Sprintf(
 		" Prefer tags from the following list if thematically related to document excerpts: '%s'",
 		strings.Join(tags, ","),

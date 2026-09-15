@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/config"
@@ -81,6 +82,7 @@ type Report struct {
 	PlannedJointSplits  []JointSplitEntry `json:"planned_joint_splits,omitempty"`
 	Capped              int               `json:"capped,omitempty"`
 	NoDocuments         int               `json:"no_documents,omitempty"`
+	Swept               int               `json:"swept,omitempty"`
 	AdjudicatorDisabled bool              `json:"adjudicator_disabled,omitempty"`
 }
 
@@ -169,6 +171,14 @@ func (r *Reconciler) Run(ctx context.Context, progress task.ProgressFunc) (Repor
 		storeTags[t.Name] = t
 		policyStoreTags[t.Name] = struct{}{}
 	}
+	deletedTags, err := r.client.ListAllDeletedTags(ctx)
+	if err != nil {
+		return report, fmt.Errorf("list deleted tags: %w", err)
+	}
+	blocklist := make(map[string]database.ListAllDeletedTagsRow, len(deletedTags))
+	for _, row := range deletedTags {
+		blocklist[utils.NormalizeTag(row.Name)] = row
+	}
 	tagCounts := make(map[string]int64, len(allTags))
 	{
 		rows, err := r.client.ListAllTagsWithDocumentCount(ctx)
@@ -216,12 +226,13 @@ func (r *Reconciler) Run(ctx context.Context, progress task.ProgressFunc) (Repor
 	r.decideJointSplits(ctx, cfg, jointWorklist)
 
 	progress("apply", "applying flips", 0)
-	r.applyPass(ctx, cfg, worklist, &report, tagCounts)
+	r.applyPass(ctx, cfg, worklist, &report, tagCounts, blocklist)
 	if report.ReportOnly {
 		r.planJointSplits(jointWorklist, &report)
 	} else {
 		r.applyJointSplits(ctx, cfg, jointWorklist, &report, storeTags, policyStoreTags)
 	}
+	r.sweepOrphanTags(ctx, cfg, &report)
 	r.logSummary(report)
 
 	progress("report", "reporting", 1)
@@ -249,6 +260,69 @@ func (r *Reconciler) logSummary(report Report) {
 	documents := sumReassigned(report.Merges) + sumReassigned(report.RetagEntries)
 	r.logger.Info(nil, "tag reconcile: done — %d pairs re-checked, %d judged; %d merges and %d restorations applied (%d documents re-pointed); %d joint tags split; %d skipped, %d over cap",
 		checked, report.Judged, report.Flips.ToMerge, report.Flips.ToKeep, documents, len(report.JointSplits), skipped, report.Capped)
+}
+
+func (r *Reconciler) sweepOrphanTags(ctx context.Context, cfg *config.Config, report *Report) {
+	graceDays := cfg.Enricher.TagReconcile.DeadTagGraceDays
+	cutoff := time.Now().Add(-time.Duration(graceDays) * 24 * time.Hour)
+
+	q := r.client.Queries
+	if report.ReportOnly {
+		// refresh marks in a rolled-back transaction so the report predicts
+		// the next apply on the same state without persisting anything
+		tx, err := r.client.BeginTx(ctx, nil)
+		if err != nil {
+			r.logger.Error(nil, "tag reconcile: begin orphan mark transaction: %v", err)
+			return
+		}
+		defer tx.Rollback()
+		q = r.client.WithTx(tx)
+	}
+
+	if _, err := q.ClearOrphanTagMarks(ctx); err != nil {
+		r.logger.Error(nil, "tag reconcile: clear orphan tag marks: %v", err)
+		return
+	}
+	if _, err := q.MarkOrphanTags(ctx); err != nil {
+		r.logger.Error(nil, "tag reconcile: mark orphan tags: %v", err)
+		return
+	}
+
+	planned, err := q.ListOrphanTags(ctx, cutoff)
+	if err != nil {
+		r.logger.Error(nil, "tag reconcile: list orphan tags: %v", err)
+		return
+	}
+	if len(planned) == 0 {
+		return
+	}
+
+	if report.ReportOnly {
+		report.Swept = len(planned)
+		r.logger.Info(nil, "tag reconcile (report-only): would delete %d tags orphaned for over %d days%s",
+			len(planned), graceDays, sampleNamesSuffix(planned))
+		return
+	}
+
+	deleted, err := q.DeleteOrphanTags(ctx, cutoff)
+	if err != nil {
+		r.logger.Error(nil, "tag reconcile: delete orphan tags: %v", err)
+		return
+	}
+	report.Swept = len(deleted)
+	if err := r.services.Tag.RemoveFromStore(ctx, deleted); err != nil {
+		r.logger.Error(nil, "tag reconcile: remove swept tags from store: %v", err)
+	}
+	r.logger.Info(nil, "tag reconcile: deleted %d tags orphaned for over %d days%s",
+		len(deleted), graceDays, sampleNamesSuffix(deleted))
+}
+
+func sampleNamesSuffix(names []string) string {
+	const maxSample = 5
+	if len(names) > maxSample {
+		return fmt.Sprintf(": %s, …", strings.Join(names[:maxSample], ", "))
+	}
+	return ": " + strings.Join(names, ", ")
 }
 
 func sumReassigned(entries []MergeEntry) int64 {
@@ -856,7 +930,7 @@ func (r *Reconciler) adjudicateBand(ctx context.Context, cfg *config.Config, ban
 	}
 }
 
-func (r *Reconciler) applyPass(ctx context.Context, cfg *config.Config, worklist []*entry, report *Report, tagCounts map[string]int64) {
+func (r *Reconciler) applyPass(ctx context.Context, cfg *config.Config, worklist []*entry, report *Report, tagCounts map[string]int64, blocklist map[string]database.ListAllDeletedTagsRow) {
 	budget := cfg.Enricher.TagReconcile.MaxRetag
 	appliedFlip := false
 	var plannedKeepFlips []*entry
@@ -923,9 +997,12 @@ func (r *Reconciler) applyPass(ctx context.Context, cfg *config.Config, worklist
 		}
 
 		appliedFlip = true
-		repointed, err := r.applyKeepFlip(ctx, e)
+		repointed, skipped, err := r.applyKeepFlip(ctx, e, blocklist)
 		if err != nil {
 			r.logger.Error(nil, "tag reconcile: keep flip for %q failed: %v", e.query, err)
+			continue
+		}
+		if skipped {
 			continue
 		}
 		report.Flips.ToKeep++
@@ -1074,15 +1151,42 @@ func (r *Reconciler) applyMergeFlip(ctx context.Context, e *entry, report *Repor
 	return nil
 }
 
-func (r *Reconciler) applyKeepFlip(ctx context.Context, e *entry) (int, error) {
+func (r *Reconciler) applyKeepFlip(ctx context.Context, e *entry, blocklist map[string]database.ListAllDeletedTagsRow) (int, bool, error) {
 	targetTag, ok := r.tagByName(ctx, e.target)
 	if !ok {
-		return 0, fmt.Errorf("target tag %q not in store", e.target)
+		return 0, false, fmt.Errorf("target tag %q not in store", e.target)
+	}
+
+	if row, deleted := blocklist[utils.NormalizeTag(e.query)]; deleted {
+		r.logDeletedTagKeepFlip(e, row)
+		if err := r.upsertVerdict(ctx, e); err != nil {
+			r.logger.Error(nil, "tag reconcile: upsert verdict for %q → %q: %v", e.query, e.target, err)
+		}
+		return 0, true, nil
+	}
+
+	docIDs := e.docIDs
+	var err error
+	if len(docIDs) == 0 {
+		docIDs, err = r.client.DocumentIDsForPairs(ctx, database.DocumentIDsForPairsParams{
+			Column1: []string{e.query},
+			Column2: []string{e.target},
+		})
+		if err != nil {
+			return 0, false, fmt.Errorf("document ids for pair: %w", err)
+		}
+	}
+	if len(docIDs) == 0 {
+		r.logKeepFlipResult(e, 0)
+		if err := r.upsertVerdict(ctx, e); err != nil {
+			r.logger.Error(nil, "tag reconcile: upsert verdict for %q → %q: %v", e.query, e.target, err)
+		}
+		return 0, false, nil
 	}
 
 	results, err := r.services.Tag.Create(ctx, []string{e.query})
 	if err != nil {
-		return 0, fmt.Errorf("create query tag: %w", err)
+		return 0, false, fmt.Errorf("create query tag: %w", err)
 	}
 	var queryTag database.Tag
 	for _, res := range results {
@@ -1091,30 +1195,12 @@ func (r *Reconciler) applyKeepFlip(ctx context.Context, e *entry) (int, error) {
 		}
 	}
 	if queryTag.ID == 0 {
-		return 0, fmt.Errorf("create query tag %q: invalid result", e.query)
-	}
-
-	docIDs := e.docIDs
-	if len(docIDs) == 0 {
-		docIDs, err = r.client.DocumentIDsForPairs(ctx, database.DocumentIDsForPairsParams{
-			Column1: []string{e.query},
-			Column2: []string{e.target},
-		})
-		if err != nil {
-			return 0, fmt.Errorf("document ids for pair: %w", err)
-		}
-	}
-	if len(docIDs) == 0 {
-		r.logKeepFlipResult(e, 0)
-		if err := r.upsertVerdict(ctx, e); err != nil {
-			r.logger.Error(nil, "tag reconcile: upsert verdict for %q → %q: %v", e.query, e.target, err)
-		}
-		return 0, nil
+		return 0, false, fmt.Errorf("create query tag %q: invalid result", e.query)
 	}
 
 	tx, err := r.client.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, fmt.Errorf("begin transaction: %w", err)
+		return 0, false, fmt.Errorf("begin transaction: %w", err)
 	}
 	defer tx.Rollback()
 	txQ := r.client.WithTx(tx)
@@ -1125,7 +1211,12 @@ func (r *Reconciler) applyKeepFlip(ctx context.Context, e *entry) (int, error) {
 		DocumentIds: docIDs,
 	})
 	if err != nil {
-		return 0, fmt.Errorf("repoint document tags: %w", err)
+		return 0, false, fmt.Errorf("repoint document tags: %w", err)
+	}
+	if repointed > 0 {
+		if err := txQ.ClearOrphanTagMarksByTagIDs(ctx, []int64{queryTag.ID}); err != nil {
+			return 0, false, fmt.Errorf("clear orphan tag marks: %w", err)
+		}
 	}
 	if _, err := txQ.UpsertFreshTagVerdict(ctx, database.UpsertFreshTagVerdictParams{
 		DocumentID:    e.documentID,
@@ -1136,14 +1227,22 @@ func (r *Reconciler) applyKeepFlip(ctx context.Context, e *entry) (int, error) {
 		VerdictModel:  sql.NullString{String: e.freshModel, Valid: e.freshModel != ""},
 		PolicyVersion: tagpolicy.Version,
 	}); err != nil {
-		return 0, fmt.Errorf("upsert verdict: %w", err)
+		return 0, false, fmt.Errorf("upsert verdict: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return 0, fmt.Errorf("commit: %w", err)
+		return 0, false, fmt.Errorf("commit: %w", err)
 	}
 
 	r.logKeepFlipResult(e, repointed)
-	return int(repointed), nil
+	return int(repointed), false, nil
+}
+
+func (r *Reconciler) logDeletedTagKeepFlip(e *entry, row database.ListAllDeletedTagsRow) {
+	if row.Kind == service.DeletedTagKindMerged {
+		r.logger.Info(nil, "tag reconcile: skipping restoration of %q — it was merged into %q", e.query, row.TargetName.String)
+		return
+	}
+	r.logger.Info(nil, "tag reconcile: skipping restoration of %q — the tag was deleted by an operator", e.query)
 }
 
 func (r *Reconciler) logKeepFlipResult(e *entry, repointed int64) {

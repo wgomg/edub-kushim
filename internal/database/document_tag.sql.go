@@ -35,18 +35,19 @@ func (q *Queries) AddComponentTagsToTagDocuments(ctx context.Context, arg AddCom
 }
 
 const addDocumentTag = `-- name: AddDocumentTag :exec
-INSERT INTO document_tag (document_id, tag_id)
-VALUES ($1, $2)
+INSERT INTO document_tag (document_id, tag_id, source)
+VALUES ($1, $2, $3)
 ON CONFLICT (document_id, tag_id) DO NOTHING
 `
 
 type AddDocumentTagParams struct {
 	DocumentID int64
 	TagID      int64
+	Source     string
 }
 
 func (q *Queries) AddDocumentTag(ctx context.Context, arg AddDocumentTagParams) error {
-	_, err := q.db.ExecContext(ctx, addDocumentTag, arg.DocumentID, arg.TagID)
+	_, err := q.db.ExecContext(ctx, addDocumentTag, arg.DocumentID, arg.TagID, arg.Source)
 	return err
 }
 
@@ -56,6 +57,15 @@ DELETE FROM document_tag WHERE document_id = $1
 
 func (q *Queries) ClearDocumentTags(ctx context.Context, documentID int64) error {
 	_, err := q.db.ExecContext(ctx, clearDocumentTags, documentID)
+	return err
+}
+
+const clearEnrichDocumentTags = `-- name: ClearEnrichDocumentTags :exec
+DELETE FROM document_tag WHERE document_id = $1 AND source = 'enrich'
+`
+
+func (q *Queries) ClearEnrichDocumentTags(ctx context.Context, documentID int64) error {
+	_, err := q.db.ExecContext(ctx, clearEnrichDocumentTags, documentID)
 	return err
 }
 
@@ -72,7 +82,7 @@ func (q *Queries) DeleteDocumentTagsForTag(ctx context.Context, tagID int64) (in
 }
 
 const getDocumentTags = `-- name: GetDocumentTags :many
-SELECT t.id, t.name, t.created_at FROM tag t
+SELECT t.id, t.name, t.created_at, t.orphaned_since FROM tag t
 JOIN document_tag dt ON t.id = dt.tag_id
 WHERE dt.document_id = $1
 `
@@ -86,7 +96,12 @@ func (q *Queries) GetDocumentTags(ctx context.Context, documentID int64) ([]Tag,
 	var items []Tag
 	for rows.Next() {
 		var i Tag
-		if err := rows.Scan(&i.ID, &i.Name, &i.CreatedAt); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.CreatedAt,
+			&i.OrphanedSince,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -244,4 +259,20 @@ func (q *Queries) RepointDocumentTagsForDocs(ctx context.Context, arg RepointDoc
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const upsertManualDocumentTag = `-- name: UpsertManualDocumentTag :exec
+INSERT INTO document_tag (document_id, tag_id, source)
+VALUES ($1, $2, 'manual')
+ON CONFLICT (document_id, tag_id) DO UPDATE SET source = 'manual'
+`
+
+type UpsertManualDocumentTagParams struct {
+	DocumentID int64
+	TagID      int64
+}
+
+func (q *Queries) UpsertManualDocumentTag(ctx context.Context, arg UpsertManualDocumentTagParams) error {
+	_, err := q.db.ExecContext(ctx, upsertManualDocumentTag, arg.DocumentID, arg.TagID)
+	return err
 }

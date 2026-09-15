@@ -106,7 +106,7 @@ func (h *TagHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results, err := h.services.Tag.Create(ctx, []string{req.Name})
+	results, err := h.services.Tag.CreateAndUnblock(ctx, []string{req.Name})
 	if err != nil {
 		if isMatcherUnavailable(err) {
 			matcherUnavailableResponse(w)
@@ -246,6 +246,64 @@ func (h *TagHandler) Merge(w http.ResponseWriter, r *http.Request) {
 		Name:       result.TargetName,
 		Reassigned: result.Reassigned,
 	})
+}
+
+func (h *TagHandler) ListDeleted(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := ctx.Value("reqid").(string)
+
+	pb := utils.GetParamBag(r)
+	if pb == nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	q := pb.Get("q", "")
+	limit := pb.GetInt64("limit", 50, 1, 100)
+	offset := pb.GetInt64("offset", 0, 0, 100000)
+
+	rows, total, err := h.services.Tag.ListDeleted(ctx, q, int32(limit), int32(offset))
+	if err != nil {
+		writeServiceError(w, h.logger, &reqID, "list deleted tags", err)
+		return
+	}
+
+	responses := make([]types.DeletedTagResponse, len(rows))
+	for i, t := range rows {
+		responses[i] = types.DeletedTagResponse{
+			Name:       t.Name,
+			Kind:       t.Kind,
+			TargetName: t.TargetName.String,
+			CreatedAt:  t.CreatedAt,
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(types.DeletedTagListResponse{Results: responses, Total: total})
+}
+
+func (h *TagHandler) RestoreDeleted(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := ctx.Value("reqid").(string)
+
+	name := strings.TrimSpace(r.PathValue("name"))
+	if name == "" {
+		http.Error(w, "Tag name is required", http.StatusBadRequest)
+		return
+	}
+
+	row, err := h.services.Tag.RestoreDeleted(ctx, name)
+	if err != nil {
+		if isMatcherUnavailable(err) {
+			matcherUnavailableResponse(w)
+			return
+		}
+		writeServiceError(w, h.logger, &reqID, "restore deleted tag", err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"name": row.Name, "kind": row.Kind})
 }
 
 func (h *TagHandler) MergeSuggestions(w http.ResponseWriter, r *http.Request) {

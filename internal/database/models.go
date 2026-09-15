@@ -272,6 +272,13 @@ type BatchOwner struct {
 	LastHeartbeat time.Time
 }
 
+type DeletedTag struct {
+	Name       string
+	Kind       string
+	TargetName sql.NullString
+	CreatedAt  time.Time
+}
+
 type Document struct {
 	ID               int64
 	DocumentID       string
@@ -306,6 +313,7 @@ type DocumentPeople struct {
 type DocumentTag struct {
 	DocumentID int64
 	TagID      int64
+	Source     string
 }
 
 type DocumentType struct {
@@ -353,9 +361,10 @@ type SavedSearch struct {
 }
 
 type Tag struct {
-	ID        int64
-	Name      string
-	CreatedAt sql.NullTime
+	ID            int64
+	Name          string
+	CreatedAt     sql.NullTime
+	OrphanedSince sql.NullTime
 }
 
 type TagVerdictEvent struct {

@@ -8,7 +8,35 @@ package database
 import (
 	"context"
 	"database/sql"
+	"time"
+
+	"github.com/lib/pq"
 )
+
+const clearOrphanTagMarks = `-- name: ClearOrphanTagMarks :execrows
+UPDATE tag t SET orphaned_since = NULL
+WHERE t.orphaned_since IS NOT NULL
+  AND EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
+`
+
+func (q *Queries) ClearOrphanTagMarks(ctx context.Context) (int64, error) {
+	result, err := q.db.ExecContext(ctx, clearOrphanTagMarks)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const clearOrphanTagMarksByTagIDs = `-- name: ClearOrphanTagMarksByTagIDs :exec
+UPDATE tag SET orphaned_since = NULL
+WHERE id = ANY($1::bigint[])
+  AND orphaned_since IS NOT NULL
+`
+
+func (q *Queries) ClearOrphanTagMarksByTagIDs(ctx context.Context, tagIds []int64) error {
+	_, err := q.db.ExecContext(ctx, clearOrphanTagMarksByTagIDs, pq.Array(tagIds))
+	return err
+}
 
 const countTags = `-- name: CountTags :one
 SELECT COUNT(*) FROM tag
@@ -46,6 +74,37 @@ func (q *Queries) CreateTag(ctx context.Context, name string) (int64, error) {
 	return id, err
 }
 
+const deleteOrphanTags = `-- name: DeleteOrphanTags :many
+DELETE FROM tag t
+WHERE t.orphaned_since IS NOT NULL
+  AND t.orphaned_since < $1::timestamptz
+  AND NOT EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
+RETURNING t.name
+`
+
+func (q *Queries) DeleteOrphanTags(ctx context.Context, orphanedBefore time.Time) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, deleteOrphanTags, orphanedBefore)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		items = append(items, name)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const deleteTag = `-- name: DeleteTag :exec
 DELETE FROM tag WHERE id = $1
 `
@@ -56,40 +115,55 @@ func (q *Queries) DeleteTag(ctx context.Context, id int64) error {
 }
 
 const getTag = `-- name: GetTag :one
-SELECT id, name, created_at FROM tag WHERE id = $1
+SELECT id, name, created_at, orphaned_since FROM tag WHERE id = $1
 `
 
 func (q *Queries) GetTag(ctx context.Context, id int64) (Tag, error) {
 	row := q.db.QueryRowContext(ctx, getTag, id)
 	var i Tag
-	err := row.Scan(&i.ID, &i.Name, &i.CreatedAt)
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.CreatedAt,
+		&i.OrphanedSince,
+	)
 	return i, err
 }
 
 const getTagByName = `-- name: GetTagByName :one
-SELECT id, name, created_at FROM tag WHERE name = $1
+SELECT id, name, created_at, orphaned_since FROM tag WHERE name = $1
 `
 
 func (q *Queries) GetTagByName(ctx context.Context, name string) (Tag, error) {
 	row := q.db.QueryRowContext(ctx, getTagByName, name)
 	var i Tag
-	err := row.Scan(&i.ID, &i.Name, &i.CreatedAt)
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.CreatedAt,
+		&i.OrphanedSince,
+	)
 	return i, err
 }
 
 const getTagForUpdate = `-- name: GetTagForUpdate :one
-SELECT id, name, created_at FROM tag WHERE id = $1 FOR UPDATE
+SELECT id, name, created_at, orphaned_since FROM tag WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) GetTagForUpdate(ctx context.Context, id int64) (Tag, error) {
 	row := q.db.QueryRowContext(ctx, getTagForUpdate, id)
 	var i Tag
-	err := row.Scan(&i.ID, &i.Name, &i.CreatedAt)
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.CreatedAt,
+		&i.OrphanedSince,
+	)
 	return i, err
 }
 
 const listAllTags = `-- name: ListAllTags :many
-SELECT id, name, created_at FROM tag ORDER BY created_at DESC
+SELECT id, name, created_at, orphaned_since FROM tag ORDER BY created_at DESC
 `
 
 func (q *Queries) ListAllTags(ctx context.Context) ([]Tag, error) {
@@ -101,7 +175,12 @@ func (q *Queries) ListAllTags(ctx context.Context) ([]Tag, error) {
 	var items []Tag
 	for rows.Next() {
 		var i Tag
-		if err := rows.Scan(&i.ID, &i.Name, &i.CreatedAt); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.CreatedAt,
+			&i.OrphanedSince,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -143,7 +222,7 @@ func (q *Queries) ListAllTagsNames(ctx context.Context) ([]string, error) {
 }
 
 const listAllTagsWithDocumentCount = `-- name: ListAllTagsWithDocumentCount :many
-SELECT t.id, t.name, t.created_at, COUNT(dt.document_id) AS document_count
+SELECT t.id, t.name, t.created_at, t.orphaned_since, COUNT(dt.document_id) AS document_count
 FROM tag t
 LEFT JOIN document_tag dt ON t.id = dt.tag_id
 GROUP BY t.id
@@ -154,6 +233,7 @@ type ListAllTagsWithDocumentCountRow struct {
 	ID            int64
 	Name          string
 	CreatedAt     sql.NullTime
+	OrphanedSince sql.NullTime
 	DocumentCount int64
 }
 
@@ -170,6 +250,7 @@ func (q *Queries) ListAllTagsWithDocumentCount(ctx context.Context) ([]ListAllTa
 			&i.ID,
 			&i.Name,
 			&i.CreatedAt,
+			&i.OrphanedSince,
 			&i.DocumentCount,
 		); err != nil {
 			return nil, err
@@ -185,8 +266,39 @@ func (q *Queries) ListAllTagsWithDocumentCount(ctx context.Context) ([]ListAllTa
 	return items, nil
 }
 
+const listOrphanTags = `-- name: ListOrphanTags :many
+SELECT t.name FROM tag t
+WHERE t.orphaned_since IS NOT NULL
+  AND t.orphaned_since < $1::timestamptz
+  AND NOT EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
+ORDER BY t.name
+`
+
+func (q *Queries) ListOrphanTags(ctx context.Context, orphanedBefore time.Time) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listOrphanTags, orphanedBefore)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		items = append(items, name)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTags = `-- name: ListTags :many
-SELECT id, name, created_at FROM tag ORDER BY created_at DESC LIMIT $1 OFFSET $2
+SELECT id, name, created_at, orphaned_since FROM tag ORDER BY created_at DESC LIMIT $1 OFFSET $2
 `
 
 type ListTagsParams struct {
@@ -203,7 +315,12 @@ func (q *Queries) ListTags(ctx context.Context, arg ListTagsParams) ([]Tag, erro
 	var items []Tag
 	for rows.Next() {
 		var i Tag
-		if err := rows.Scan(&i.ID, &i.Name, &i.CreatedAt); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.CreatedAt,
+			&i.OrphanedSince,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -218,7 +335,7 @@ func (q *Queries) ListTags(ctx context.Context, arg ListTagsParams) ([]Tag, erro
 }
 
 const listTagsWithDocumentCount = `-- name: ListTagsWithDocumentCount :many
-SELECT t.id, t.name, t.created_at, COUNT(dt.document_id) AS document_count
+SELECT t.id, t.name, t.created_at, t.orphaned_since, COUNT(dt.document_id) AS document_count
 FROM tag t
 LEFT JOIN document_tag dt ON t.id = dt.tag_id
 GROUP BY t.id
@@ -234,6 +351,7 @@ type ListTagsWithDocumentCountRow struct {
 	ID            int64
 	Name          string
 	CreatedAt     sql.NullTime
+	OrphanedSince sql.NullTime
 	DocumentCount int64
 }
 
@@ -250,6 +368,7 @@ func (q *Queries) ListTagsWithDocumentCount(ctx context.Context, arg ListTagsWit
 			&i.ID,
 			&i.Name,
 			&i.CreatedAt,
+			&i.OrphanedSince,
 			&i.DocumentCount,
 		); err != nil {
 			return nil, err
@@ -265,8 +384,22 @@ func (q *Queries) ListTagsWithDocumentCount(ctx context.Context, arg ListTagsWit
 	return items, nil
 }
 
+const markOrphanTags = `-- name: MarkOrphanTags :execrows
+UPDATE tag t SET orphaned_since = now()
+WHERE t.orphaned_since IS NULL
+  AND NOT EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
+`
+
+func (q *Queries) MarkOrphanTags(ctx context.Context) (int64, error) {
+	result, err := q.db.ExecContext(ctx, markOrphanTags)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const searchTagsByName = `-- name: SearchTagsByName :many
-SELECT id, name, created_at FROM tag WHERE name LIKE $1 ORDER BY name ASC LIMIT $2 OFFSET $3
+SELECT id, name, created_at, orphaned_since FROM tag WHERE name LIKE $1 ORDER BY name ASC LIMIT $2 OFFSET $3
 `
 
 type SearchTagsByNameParams struct {
@@ -284,7 +417,12 @@ func (q *Queries) SearchTagsByName(ctx context.Context, arg SearchTagsByNamePara
 	var items []Tag
 	for rows.Next() {
 		var i Tag
-		if err := rows.Scan(&i.ID, &i.Name, &i.CreatedAt); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.CreatedAt,
+			&i.OrphanedSince,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -299,7 +437,7 @@ func (q *Queries) SearchTagsByName(ctx context.Context, arg SearchTagsByNamePara
 }
 
 const searchTagsByNameWithDocumentCount = `-- name: SearchTagsByNameWithDocumentCount :many
-SELECT t.id, t.name, t.created_at, COUNT(dt.document_id) AS document_count
+SELECT t.id, t.name, t.created_at, t.orphaned_since, COUNT(dt.document_id) AS document_count
 FROM tag t
 LEFT JOIN document_tag dt ON t.id = dt.tag_id
 WHERE t.name LIKE $1
@@ -317,6 +455,7 @@ type SearchTagsByNameWithDocumentCountRow struct {
 	ID            int64
 	Name          string
 	CreatedAt     sql.NullTime
+	OrphanedSince sql.NullTime
 	DocumentCount int64
 }
 
@@ -333,6 +472,7 @@ func (q *Queries) SearchTagsByNameWithDocumentCount(ctx context.Context, arg Sea
 			&i.ID,
 			&i.Name,
 			&i.CreatedAt,
+			&i.OrphanedSince,
 			&i.DocumentCount,
 		); err != nil {
 			return nil, err

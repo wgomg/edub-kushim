@@ -2720,3 +2720,40 @@ func TestSearchDocumentsStructured_OffsetBounds(t *testing.T) {
 		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
 	})
 }
+
+// TestAddDocumentTag_ClearsOrphanMark pins the assignment-path contract the
+// orphan sweep grace relies on: a manual assignment must drop the tag's
+// orphaned_since marker so the grace window tracks real usage.
+func TestAddDocumentTag_ClearsOrphanMark(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	h := newDocHandler(env)
+	ctx := context.Background()
+
+	tagID := database.MustCreateTag(t, env.client.Queries, "handler orphan clear")
+	_, docUUID := database.CreateTestDocument(t, env.client.Queries, "handler-orphan-clear.pdf")
+
+	if _, err := env.client.Queries.MarkOrphanTags(ctx); err != nil {
+		t.Fatalf("MarkOrphanTags: %v", err)
+	}
+	var marked sql.NullTime
+	if err := env.client.DB().QueryRowContext(ctx, "SELECT orphaned_since FROM tag WHERE id = $1", tagID).Scan(&marked); err != nil {
+		t.Fatalf("read orphan mark: %v", err)
+	}
+	if !marked.Valid {
+		t.Fatal("tag should be marked orphaned before assignment")
+	}
+
+	body, _ := json.Marshal(types.AddDocumentTagRequest{TagID: tagID})
+	r := req(t, "POST", "/api/v1/documents/"+docUUID+"/tags", body)
+	r.SetPathValue("id", docUUID)
+	w := rec()
+	h.AddDocumentTag(w, r)
+	testutil.AssertEqual(t, w.Code, http.StatusNoContent, "status")
+
+	if err := env.client.DB().QueryRowContext(ctx, "SELECT orphaned_since FROM tag WHERE id = $1", tagID).Scan(&marked); err != nil {
+		t.Fatalf("read orphan mark after assignment: %v", err)
+	}
+	if marked.Valid {
+		t.Fatalf("manual assignment must clear the orphan mark, got %v", marked)
+	}
+}
