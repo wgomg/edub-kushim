@@ -132,6 +132,14 @@ Kept tags are then created via `services.Tag.Create` → `AddToStore`, so a born
 tag is immediately part of the store and later emissions of the same name hit
 the identity fast path — the self-healing loop.
 
+When `enricher.tag_quality.enabled` is true, `applyTagQuality`
+(`enricher.go`) filters that kept set once more before persist: novel names
+(absent from the store) pass the deterministic weak band, resolve from the
+`tag_quality_event` cache, or go into one rubric call per document; rejected
+names are dropped for that document only. The judge's prompt, criteria, and
+cache semantics are documented in the
+[semantic matching guide](semantic-matching.md#rubric-judge-for-novel-tags).
+
 ---
 
 ## 4. LLM adjudication
@@ -420,10 +428,12 @@ daemon warns when reconciliation is enabled without the adjudicator.
 
 ## 10. Gotchas
 
-- **The adjudicator and reconciliation are disabled by default** — the
-  ambiguous band keeps, and the event table stays empty, until
-  `enricher.tag_adjudicator.enabled: true`. Merge suggestions then run
-  similarity-only (`similarity_only` confidence).
+- **The adjudicator, quality judge, and reconciliation are disabled by
+  default** — the ambiguous band keeps, novel tags are born unfiltered, and
+  both event tables stay empty until `enricher.tag_adjudicator.enabled`,
+  `enricher.tag_quality.enabled`, and `enricher.tag_reconcile.enabled` are
+  set. Merge suggestions then run similarity-only (`similarity_only`
+  confidence).
 - **The first reconciliation run is always report-only**, even with
   `report_only: false` — flip behavior only starts with the second run.
 - **`GET /rpc/v1/similar-pairs` has no legacy fallback** — after upgrading
@@ -436,6 +446,8 @@ daemon warns when reconciliation is enabled without the adjudicator.
   invalidates every cached verdict at once (old rows stay in the table for
   analysis; they are simply never read for the new version). Until the
   reconciler runs, every band pair is re-judged fresh — the caps are the bound.
+  Quality verdicts carry an independent pin, `TagQualityVersion` — bumping it
+  retires every cached quality verdict at once.
 - **The pair cache rebuild is N²/2 at daemon boot** — sub-second to a few
   seconds at hundreds-to-low-thousands of tags, but it is part of the
   `TimeoutStartSec` budget alongside model load and tag-cache build.

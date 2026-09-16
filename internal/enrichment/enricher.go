@@ -28,6 +28,11 @@ const (
 	tokenBudgetRatio   = 0.9
 	minTargetWords     = 100
 	fallbackVocabLimit = 200
+
+	// v1 reject-band constants. Provisional until the Stage 8 calibration
+	// re-measures them on production data; deliberately not operator-tunable.
+	tagQualityTLow               = -1.0
+	tagQualityNoAnchorSimilarity = 0.60
 )
 
 type splitDecision struct {
@@ -116,7 +121,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 	}
 	blocklist := make(map[string]database.ListAllDeletedTagsRow, len(deletedTags))
 	for _, row := range deletedTags {
-		blocklist[utils.NormalizeTag(row.Name)] = row
+		blocklist[row.Name] = row
 	}
 
 	var tagSuggestions []string
@@ -129,6 +134,11 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 	storeTags := make(map[string]struct{}, len(allTags))
 	for _, t := range allTags {
 		storeTags[t.Name] = struct{}{}
+	}
+
+	dbNames := make(map[string]struct{}, len(allTags))
+	for _, t := range allTags {
+		dbNames[t.Name] = struct{}{}
 	}
 
 	matchTagsStart := time.Now()
@@ -274,15 +284,21 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 	consolidateStart := time.Now()
 	report("consolidate", "", 0)
 	ranked, err := e.runner.RankTags(ctx, document.DocumentID, analysis.Tags)
+	var decisions []tagpolicy.Decision
 	if err != nil {
 		e.logger.Error(&logId, "post-LLM consolidation failed: %v", err)
 		for _, tag := range analysis.Tags {
 			e.logger.Info(&logId, "consolidation[%s]: keep %q (reason=rank_unavailable)", tagpolicy.Version, tag)
 		}
 	} else {
-		consolidated := e.applyConsolidationPolicy(ctx, document.ID, document.DocumentID, analysis.Tags, ranked, storeTags, &logId)
+		var consolidated []string
+		consolidated, decisions = e.applyConsolidationPolicy(ctx, document.ID, document.DocumentID, analysis.Tags, ranked, storeTags, &logId)
 		analysis.Tags = consolidated
 		e.logger.Debug(&logId, "post-LLM consolidation: %d tags (%s)", len(consolidated), time.Since(consolidateStart))
+	}
+
+	if e.config.Enricher.TagQuality.Enabled {
+		analysis.Tags = e.applyTagQuality(ctx, analysis, decisions, dbNames, llmContent.Text, document.ID, &logId)
 	}
 
 	statsStr := "null"
@@ -524,7 +540,7 @@ func (e *Enricher) applyDeletedTagPolicy(tags []string, storeTags map[string]str
 	out := make([]string, 0, len(tags))
 	seen := make(map[string]bool, len(tags))
 	for _, tag := range tags {
-		if row, ok := blocklist[utils.NormalizeTag(tag)]; ok {
+		if row, ok := blocklist[tag]; ok {
 			switch row.Kind {
 			case service.DeletedTagKindBlocked:
 				e.logger.Info(logId, "deleted tag policy: dropping %q — the tag was deleted by an operator", tag)
@@ -619,7 +635,7 @@ type reciprocalEvidence struct {
 	sim float64
 }
 
-func (e *Enricher) applyConsolidationPolicy(ctx context.Context, docId int64, documentID string, queries []string, ranked []tagmatcher.RankResult, storeTags map[string]struct{}, logId *string) []string {
+func (e *Enricher) applyConsolidationPolicy(ctx context.Context, docId int64, documentID string, queries []string, ranked []tagmatcher.RankResult, storeTags map[string]struct{}, logId *string) ([]string, []tagpolicy.Decision) {
 	decisions := tagpolicy.Evaluate(queries, ranked, storeTags, e.config.Enricher.TagMatcher.AutoReplaceSimilarity)
 	out := make([]string, len(queries))
 
@@ -679,7 +695,7 @@ func (e *Enricher) applyConsolidationPolicy(ctx context.Context, docId int64, do
 				tagpolicy.Version, d.Query, d.Sim, d.Reason)
 		}
 	}
-	return out
+	return out, decisions
 }
 
 func (e *Enricher) writeVerdictEvent(ctx context.Context, docId int64, d tagpolicy.Decision, bp *bandPair, logId *string) {
@@ -689,8 +705,8 @@ func (e *Enricher) writeVerdictEvent(ctx context.Context, docId int64, d tagpoli
 	}
 	n, err := e.queries.InsertTagVerdictEvent(ctx, database.InsertTagVerdictEventParams{
 		DocumentID:    docId,
-		Query:         d.Query,
-		Target:        d.Target,
+		Query:         utils.NormalizeTag(d.Query),
+		Target:        utils.NormalizeTag(d.Target),
 		Sim:           d.Sim,
 		Verdict:       bp.verdict,
 		VerdictModel:  verdictModel,
@@ -723,8 +739,8 @@ func (e *Enricher) writeVerdictEvent(ctx context.Context, docId int64, d tagpoli
 	}
 	if _, err := e.queries.InsertTagVerdictEvent(ctx, database.InsertTagVerdictEventParams{
 		DocumentID:    docId,
-		Query:         d.Query,
-		Target:        d.Target,
+		Query:         utils.NormalizeTag(d.Query),
+		Target:        utils.NormalizeTag(d.Target),
 		Sim:           d.Sim,
 		Verdict:       bp.verdict,
 		VerdictModel:  sql.NullString{},
@@ -732,6 +748,233 @@ func (e *Enricher) writeVerdictEvent(ctx context.Context, docId int64, d tagpoli
 	}); err != nil {
 		e.logger.Error(logId, "tag verdict event insert failed: %v", err)
 	}
+}
+
+type novelTag struct {
+	emitted  string
+	category string
+	standard *bool
+	bestSim  float64
+	haveSim  bool
+}
+
+func tagQualityScore(standardTerm *bool, category string, bestSim float64, haveSim bool, noAnchorSim float64) int {
+	score := 0
+	switch {
+	case standardTerm == nil:
+	case *standardTerm:
+		score += 1
+	default:
+		score -= 1
+	}
+	if category == contentanalyzer.TagCategoryOther {
+		score -= 1
+	}
+	if haveSim && bestSim < noAnchorSim {
+		score -= 1
+	}
+	return score
+}
+
+func isStandardLabel(v *bool) string {
+	switch {
+	case v == nil:
+		return "absent"
+	case *v:
+		return "true"
+	default:
+		return "false"
+	}
+}
+
+func marshalTagQualityCriteria(r contentanalyzer.TagQualityResult) json.RawMessage {
+	data, err := json.Marshal(r.Criteria())
+	if err != nil {
+		return json.RawMessage("{}")
+	}
+	return data
+}
+
+func tagQualityCriteriaLog(criteria json.RawMessage) string {
+	var c contentanalyzer.TagQualityCriteria
+	if err := json.Unmarshal(criteria, &c); err != nil {
+		return "unknown"
+	}
+	return c.String()
+}
+
+func (e *Enricher) applyTagQuality(ctx context.Context, analysis *tools.ContentAnalysisResult, decisions []tagpolicy.Decision, dbNames map[string]struct{}, reducedText string, docId int64, logId *string) []string {
+	typedByTerm := make(map[string]contentanalyzer.TagDetail, len(analysis.TagDetails))
+	for _, d := range analysis.TagDetails {
+		typedByTerm[utils.NormalizeTag(d.Term)] = d
+	}
+	simByOutput := make(map[string]float64, len(decisions))
+	for _, d := range decisions {
+		if _, ok := simByOutput[d.Output]; !ok {
+			simByOutput[d.Output] = d.Sim
+		}
+	}
+
+	rejected := make(map[string]bool)
+	seenNovel := make(map[string]bool)
+	var novels []*novelTag
+	for _, out := range analysis.Tags {
+		if out == "" {
+			continue
+		}
+		if _, ok := dbNames[out]; ok {
+			continue
+		}
+		if seenNovel[out] {
+			continue
+		}
+		seenNovel[out] = true
+		n := &novelTag{emitted: out, category: contentanalyzer.TagCategoryOther}
+		if d, ok := typedByTerm[out]; ok {
+			n.standard = d.IsStandardTerm
+			if d.Category != "" {
+				n.category = d.Category
+			}
+		}
+		if sim, ok := simByOutput[out]; ok && sim > 0 {
+			n.bestSim, n.haveSim = sim, true
+		}
+		if score := tagQualityScore(n.standard, n.category, n.bestSim, n.haveSim, tagQualityNoAnchorSimilarity); float64(score) < tagQualityTLow {
+			e.logger.Info(logId, "tagquality[%s]: reject %q (reason=weak_score score=%d is_standard=%s category=%s best_sim=%.3f)",
+				contentanalyzer.TagQualityVersion, out, score, isStandardLabel(n.standard), n.category, n.bestSim)
+			rejected[out] = true
+			continue
+		}
+		novels = append(novels, n)
+	}
+
+	var uncached []*novelTag
+	if len(novels) > 0 {
+		keys := make([]string, len(novels))
+		for i, n := range novels {
+			keys[i] = n.emitted
+		}
+		rows, err := e.queries.LatestTagQualityEventsForNames(ctx, database.LatestTagQualityEventsForNamesParams{
+			PolicyVersion: contentanalyzer.TagQualityVersion,
+			TagNames:      keys,
+		})
+		if err != nil {
+			e.logger.Error(logId, "tag quality cache lookup failed: %v", err)
+		}
+		cached := make(map[string]database.LatestTagQualityEventsForNamesRow, len(rows))
+		for _, row := range rows {
+			cached[row.TagName] = row
+		}
+		for _, n := range novels {
+			row, ok := cached[n.emitted]
+			if !ok {
+				uncached = append(uncached, n)
+				continue
+			}
+			e.writeTagQualityEvent(ctx, docId, n.emitted, row.Criteria, row.Pass, "", logId)
+			if !row.Pass {
+				rejected[n.emitted] = true
+				e.logger.Info(logId, "tagquality[%s]: reject %q (reason=judge cached=true model=%s criteria=%s)",
+					contentanalyzer.TagQualityVersion, n.emitted, row.VerdictModel.String, tagQualityCriteriaLog(row.Criteria))
+			}
+		}
+	}
+
+	if len(uncached) > 0 {
+		if !e.runner.HasTagQualityJudge() {
+			e.logger.Error(logId, "tagquality[%s]: judge not configured, keeping %d novel tags", contentanalyzer.TagQualityVersion, len(uncached))
+		} else {
+			candidates := make([]contentanalyzer.TagQualityCandidate, len(uncached))
+			for i, n := range uncached {
+				candidates[i] = contentanalyzer.TagQualityCandidate{
+					Index:            i,
+					Term:             n.emitted,
+					Category:         n.category,
+					WhitelistedPlace: contentanalyzer.IsWhitelistedPlace(n.emitted),
+				}
+			}
+			results, err := e.runner.JudgeTagQuality(ctx, reducedText, candidates)
+			if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+				results, err = e.runner.JudgeTagQuality(ctx, reducedText, candidates)
+			}
+			if err == nil && len(results) != len(candidates) {
+				err = fmt.Errorf("judge returned %d verdicts for %d candidates", len(results), len(candidates))
+			}
+			if err != nil {
+				e.logger.Error(logId, "tagquality[%s]: judge failed, keeping %d novel tags: %v", contentanalyzer.TagQualityVersion, len(uncached), err)
+			} else {
+				model := e.config.ResolvedQualityLlm().Model
+				for i, r := range results {
+					n := uncached[i]
+					pass, criteria, finalModel := e.writeTagQualityEvent(ctx, docId, n.emitted, marshalTagQualityCriteria(r), r.Passed(), model, logId)
+					if !pass {
+						rejected[n.emitted] = true
+						e.logger.Info(logId, "tagquality[%s]: reject %q (reason=judge criteria=%s model=%s)",
+							contentanalyzer.TagQualityVersion, n.emitted, tagQualityCriteriaLog(criteria), finalModel)
+					}
+				}
+			}
+		}
+	}
+
+	out := make([]string, 0, len(analysis.Tags))
+	for _, tag := range analysis.Tags {
+		if rejected[tag] {
+			continue
+		}
+		out = append(out, tag)
+	}
+	return out
+}
+
+// writeTagQualityEvent records a verdict row for this document. A fresh
+// verdict (model != "") writes the judged row; on conflict the row cached by
+// another worker wins for this document's decision, followed by a
+// cache-applied row with a NULL model, mirroring writeVerdictEvent.
+func (e *Enricher) writeTagQualityEvent(ctx context.Context, docId int64, name string, criteria json.RawMessage, pass bool, model string, logId *string) (bool, json.RawMessage, string) {
+	verdictModel := sql.NullString{String: model, Valid: model != ""}
+	n, err := e.queries.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
+		DocumentID:    docId,
+		TagName:       utils.NormalizeTag(name),
+		Criteria:      criteria,
+		Pass:          pass,
+		VerdictModel:  verdictModel,
+		PolicyVersion: contentanalyzer.TagQualityVersion,
+	})
+	if err != nil {
+		e.logger.Error(logId, "tag quality event insert failed: %v", err)
+		return pass, criteria, model
+	}
+	if n > 0 || !verdictModel.Valid {
+		return pass, criteria, model
+	}
+
+	rows, err := e.queries.LatestTagQualityEventsForNames(ctx, database.LatestTagQualityEventsForNamesParams{
+		PolicyVersion: contentanalyzer.TagQualityVersion,
+		TagNames:      []string{name},
+	})
+	if err != nil {
+		e.logger.Error(logId, "tag quality cache re-read after conflict failed: %v", err)
+		return pass, criteria, model
+	}
+	if len(rows) == 0 {
+		return pass, criteria, model
+	}
+	row := rows[0]
+	if _, err := e.queries.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
+		DocumentID:    docId,
+		TagName:       utils.NormalizeTag(name),
+		Criteria:      row.Criteria,
+		Pass:          row.Pass,
+		VerdictModel:  sql.NullString{},
+		PolicyVersion: contentanalyzer.TagQualityVersion,
+	}); err != nil {
+		e.logger.Error(logId, "tag quality event insert failed: %v", err)
+	}
+	if row.VerdictModel.Valid {
+		model = row.VerdictModel.String
+	}
+	return row.Pass, row.Criteria, model
 }
 
 func (e *Enricher) adjudicateBandPairs(ctx context.Context, documentID string, pairs []*bandPair, logId *string) {

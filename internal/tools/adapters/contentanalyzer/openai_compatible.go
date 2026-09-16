@@ -363,6 +363,28 @@ func (l *LlmOpenAiCompatible) AdjudicateTagSplits(ctx context.Context, tags []st
 	return ParseTagSplitResponse(responseContent, len(tags))
 }
 
+func (l *LlmOpenAiCompatible) JudgeTagQuality(ctx context.Context, text string, candidates []TagQualityCandidate) ([]TagQualityResult, error) {
+	prompt := BuildTagQualityPrompt(text, candidates)
+
+	if err := checkContentTooLarge(l.caps, TagQualitySystemMessage+"\n"+prompt); err != nil {
+		return nil, err
+	}
+
+	reqBody := l.buildRequestBody(TagQualitySystemMessage, prompt, "", 0)
+
+	chatResp, err := l.doRequest(ctx, reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("tag quality judge: %w", err)
+	}
+
+	if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message.Content == "" {
+		return nil, fmt.Errorf("empty response from LLM")
+	}
+
+	responseContent := strings.TrimSpace(chatResp.Choices[0].Message.Content)
+	return ParseTagQualityResponse(responseContent, len(candidates))
+}
+
 func (l *LlmOpenAiCompatible) Name() string {
 	return "openai-compatible"
 }

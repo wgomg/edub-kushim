@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"os"
 	"reflect"
 	"strings"
@@ -41,7 +42,7 @@ func TestApplyConsolidationPolicy_ReplacesAboveAutoReplaceCutoff(t *testing.T) {
 		{KeptName: "bar", Candidates: []tagmatcher.Candidate{{Tag: "baz", Similarity: 0.5}}},
 	}
 
-	got := e.applyConsolidationPolicy(context.Background(), 0, "", queries, ranked, nil, nil)
+	got, _ := e.applyConsolidationPolicy(context.Background(), 0, "", queries, ranked, nil, nil)
 
 	want := []string{"foobar", "bar"}
 	if !reflect.DeepEqual(got, want) {
@@ -56,7 +57,7 @@ func TestApplyConsolidationPolicy_KeepsKeptNameInAmbiguousBand(t *testing.T) {
 		{KeptName: "foo", Candidates: []tagmatcher.Candidate{{Tag: "foobar", Similarity: 0.80}}},
 	}
 
-	got := e.applyConsolidationPolicy(context.Background(), 0, "", queries, ranked, nil, nil)
+	got, _ := e.applyConsolidationPolicy(context.Background(), 0, "", queries, ranked, nil, nil)
 
 	if len(got) != 1 || got[0] != "foo" {
 		t.Errorf("applyConsolidationPolicy = %v, want [foo]", got)
@@ -68,7 +69,7 @@ func TestApplyConsolidationPolicy_KeepsKeptNameOnNoCandidates(t *testing.T) {
 	queries := []string{"foo"}
 	ranked := []tagmatcher.RankResult{{KeptName: "foo"}}
 
-	got := e.applyConsolidationPolicy(context.Background(), 0, "", queries, ranked, nil, nil)
+	got, _ := e.applyConsolidationPolicy(context.Background(), 0, "", queries, ranked, nil, nil)
 
 	if len(got) != 1 || got[0] != "foo" {
 		t.Errorf("applyConsolidationPolicy = %v, want [foo]", got)
@@ -80,7 +81,7 @@ func TestApplyConsolidationPolicy_FallsBackToQueryOnShortResult(t *testing.T) {
 	queries := []string{"a", "b", "c"}
 	ranked := []tagmatcher.RankResult{{KeptName: "A"}}
 
-	got := e.applyConsolidationPolicy(context.Background(), 0, "", queries, ranked, nil, nil)
+	got, _ := e.applyConsolidationPolicy(context.Background(), 0, "", queries, ranked, nil, nil)
 
 	want := []string{"A", "b", "c"}
 	if !reflect.DeepEqual(got, want) {
@@ -92,7 +93,7 @@ func TestApplyConsolidationPolicy_EmptyRankedReturnsQueries(t *testing.T) {
 	e := newPolicyEnricher(0.5)
 	queries := []string{"a", "b"}
 
-	got := e.applyConsolidationPolicy(context.Background(), 0, "", queries, nil, nil, nil)
+	got, _ := e.applyConsolidationPolicy(context.Background(), 0, "", queries, nil, nil, nil)
 
 	if !reflect.DeepEqual(got, queries) {
 		t.Errorf("applyConsolidationPolicy(nil) = %v, want %v", got, queries)
@@ -125,7 +126,7 @@ func TestApplyConsolidationPolicy_LogsDecisions(t *testing.T) {
 			mkRanked("foo", "foobar", 0.93),
 		}
 
-		got := e.applyConsolidationPolicy(context.Background(), 0, "", queries, ranked, nil, nil)
+		got, _ := e.applyConsolidationPolicy(context.Background(), 0, "", queries, ranked, nil, nil)
 		if len(got) != 1 || got[0] != "foobar" {
 			t.Fatalf("output = %v, want [foobar]", got)
 		}
@@ -149,7 +150,7 @@ func TestApplyConsolidationPolicy_LogsDecisions(t *testing.T) {
 			mkRanked("foo", "foobar", 0.80),
 		}
 
-		got := e.applyConsolidationPolicy(context.Background(), 0, "", queries, ranked, nil, nil)
+		got, _ := e.applyConsolidationPolicy(context.Background(), 0, "", queries, ranked, nil, nil)
 		if len(got) != 1 || got[0] != "foo" {
 			t.Fatalf("output = %v, want [foo]", got)
 		}
@@ -168,7 +169,7 @@ func TestApplyConsolidationPolicy_LogsDecisions(t *testing.T) {
 		queries := []string{"foo"}
 		ranked := []tagmatcher.RankResult{{KeptName: "foo"}}
 
-		got := e.applyConsolidationPolicy(context.Background(), 0, "", queries, ranked, nil, nil)
+		got, _ := e.applyConsolidationPolicy(context.Background(), 0, "", queries, ranked, nil, nil)
 		if len(got) != 1 || got[0] != "foo" {
 			t.Fatalf("output = %v, want [foo]", got)
 		}
@@ -215,6 +216,10 @@ func (m *mockAdjudicator) AdjudicateTagSplits(_ context.Context, _ []string) ([]
 	return nil, nil
 }
 
+func (m *mockAdjudicator) JudgeTagQuality(_ context.Context, _ string, _ []contentanalyzer.TagQualityCandidate) ([]contentanalyzer.TagQualityResult, error) {
+	return nil, nil
+}
+
 func (m *mockAdjudicator) Name() string { return "mock-adjudicator" }
 
 type mockTagMatcher struct {
@@ -232,6 +237,10 @@ func (m *mockTagMatcher) Rank(ctx context.Context, docId string, queries []strin
 		results[i] = tagmatcher.RankResult{KeptName: q}
 	}
 	return results, nil
+}
+
+func (m *mockTagMatcher) SimilarPairs(_ context.Context) ([]tagmatcher.SimilarPair, error) {
+	return nil, nil
 }
 
 func (m *mockTagMatcher) Close()       {}
@@ -355,7 +364,7 @@ func TestApplyConsolidationPolicy_Adjudication(t *testing.T) {
 		}
 
 		ranked := []tagmatcher.RankResult{mkRanked("democratic socialism", "social democracy", 0.81)}
-		got := e.applyConsolidationPolicy(context.Background(), docID, "adj-test-doc", []string{"democratic socialism"}, ranked, nil, nil)
+		got, _ := e.applyConsolidationPolicy(context.Background(), docID, "adj-test-doc", []string{"democratic socialism"}, ranked, nil, nil)
 		adjAssertEqual(t, len(got), 1, "output length")
 		adjAssertEqual(t, got[0], "social democracy", "cached same replaces")
 		adjAssertEqual(t, adj.called, 0, "adjudicator call count")
@@ -374,7 +383,7 @@ func TestApplyConsolidationPolicy_Adjudication(t *testing.T) {
 		}
 
 		ranked := []tagmatcher.RankResult{mkRanked("democratic socialism", "social democracy", 0.81)}
-		got := e.applyConsolidationPolicy(context.Background(), docID, "adj-test-doc", []string{"democratic socialism"}, ranked, nil, nil)
+		got, _ := e.applyConsolidationPolicy(context.Background(), docID, "adj-test-doc", []string{"democratic socialism"}, ranked, nil, nil)
 		adjAssertEqual(t, len(got), 1, "output length")
 		adjAssertEqual(t, got[0], "social democracy", "fresh same replaces")
 		adjAssertEqual(t, adj.called, 1, "adjudicator call count")
@@ -394,7 +403,7 @@ func TestApplyConsolidationPolicy_Adjudication(t *testing.T) {
 		}
 
 		ranked := []tagmatcher.RankResult{mkRanked("democratic socialism", "social democracy", 0.81)}
-		got := e.applyConsolidationPolicy(context.Background(), docID, "adj-test-doc", []string{"democratic socialism"}, ranked, nil, nil)
+		got, _ := e.applyConsolidationPolicy(context.Background(), docID, "adj-test-doc", []string{"democratic socialism"}, ranked, nil, nil)
 		adjAssertEqual(t, len(got), 1, "output length")
 		adjAssertEqual(t, got[0], "democratic socialism", "variant keeps query")
 		adjAssertEqual(t, countEvents(t, q, docID, "democratic socialism", "social democracy"), 1, "event rows for variant")
@@ -442,7 +451,7 @@ func TestApplyConsolidationPolicy_Adjudication(t *testing.T) {
 		docID := createTestDocForAdjudication(t, q)
 
 		ranked := []tagmatcher.RankResult{mkRanked("democratic socialism", "social democracy", 0.81)}
-		got := e.applyConsolidationPolicy(context.Background(), docID, "adj-test-doc", []string{"democratic socialism"}, ranked, nil, nil)
+		got, _ := e.applyConsolidationPolicy(context.Background(), docID, "adj-test-doc", []string{"democratic socialism"}, ranked, nil, nil)
 		adjAssertEqual(t, len(got), 1, "output length")
 		adjAssertEqual(t, got[0], "democratic socialism", "error keeps query")
 		out := buf.String()
@@ -483,4 +492,155 @@ func TestWriteVerdictEvent_ConflictReReadsStoredVerdict(t *testing.T) {
 	adjAssertEqual(t, string(bp.verdict), "variant", "stored verdict wins over conflicting fresh insert")
 	adjAssertEqual(t, bp.cached, true, "pair marked as cache-applied")
 	adjAssertEqual(t, bp.model, "other-model", "stored model recorded")
+}
+
+func TestTagQualityScore(t *testing.T) {
+	tTrue := true
+	tFalse := false
+
+	tests := []struct {
+		name         string
+		standardTerm *bool
+		category     string
+		bestSim      float64
+		haveSim      bool
+		noAnchorSim  float64
+		want         int
+	}{
+		{"nil standard, topic, no sim", nil, "topic", 0, false, 0.6, 0},
+		{"true standard, topic, no sim", &tTrue, "topic", 0, false, 0.6, 1},
+		{"false standard, topic, no sim", &tFalse, "topic", 0, false, 0.6, -1},
+		{"nil standard, other, no sim", nil, "other", 0, false, 0.6, -1},
+		{"true standard, other, no sim", &tTrue, "other", 0, false, 0.6, 0},
+		{"false standard, other, no sim", &tFalse, "other", 0, false, 0.6, -2},
+		{"true standard, topic, sim above floor", &tTrue, "topic", 0.8, true, 0.6, 1},
+		{"true standard, topic, sim below floor", &tTrue, "topic", 0.5, true, 0.6, 0},
+		{"true standard, topic, sim==0 haveSim=false", &tTrue, "topic", 0, false, 0.6, 1},
+		{"false standard, other, sim below floor", &tFalse, "other", 0.4, true, 0.6, -3},
+		{"nil standard, other, sim below floor", nil, "other", 0.4, true, 0.6, -2},
+		{"true standard, topic, haveSim=false sim ignored", &tTrue, "topic", 0.5, false, 0.6, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tagQualityScore(tt.standardTerm, tt.category, tt.bestSim, tt.haveSim, tt.noAnchorSim)
+			if got != tt.want {
+				t.Errorf("tagQualityScore() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTagQualityEvent_InsertAndCacheRead(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	q, db := database.NewTestQueries(t)
+	t.Cleanup(func() { db.Close() })
+
+	ctx := context.Background()
+
+	// Create a test document (FK target).
+	docID, err := q.CreateDocument(ctx, database.CreateDocumentParams{
+		DocumentID:     "tq-test-doc",
+		Title:          "tq-test.pdf",
+		Md5Checksum:    "tq-md5",
+		Sha512Checksum: "tq-sha512",
+		OriginalType:   "application/pdf",
+		FileSize:       100,
+		OriginalPath:   "/tmp/tq-orig.pdf",
+		StoragePath:    "/tmp/tq-storage.pdf",
+		PageCount:      1,
+		WordCount:      5,
+		CharCount:      30,
+		Language:       "eng",
+	})
+	if err != nil {
+		t.Fatalf("create test document: %v", err)
+	}
+
+	criteria := json.RawMessage(`{"subject_matter":true,"standard_term":true,"not_person_place_work":true,"appropriately_broad":true}`)
+
+	// Insert a fresh verdict.
+	n, err := q.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
+		DocumentID:    docID,
+		TagName:       "quantum physics",
+		Criteria:      criteria,
+		Pass:          true,
+		VerdictModel:  sql.NullString{String: "judge-model", Valid: true},
+		PolicyVersion: "v1",
+	})
+	if err != nil {
+		t.Fatalf("insert fresh: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("expected 1 row inserted, got %d", n)
+	}
+
+	// Duplicate fresh insert must be a no-op (ON CONFLICT DO NOTHING).
+	n, err = q.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
+		DocumentID:    docID,
+		TagName:       "quantum physics",
+		Criteria:      criteria,
+		Pass:          false,
+		VerdictModel:  sql.NullString{String: "other-model", Valid: true},
+		PolicyVersion: "v1",
+	})
+	if err != nil {
+		t.Fatalf("insert duplicate: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("expected 0 rows on conflict, got %d", n)
+	}
+
+	// Cache read must return the first row.
+	rows, err := q.LatestTagQualityEventsForNames(ctx, database.LatestTagQualityEventsForNamesParams{
+		PolicyVersion: "v1",
+		TagNames:      []string{"quantum physics", "absent name"},
+	})
+	if err != nil {
+		t.Fatalf("cache read: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 cached row, got %d", len(rows))
+	}
+	if rows[0].TagName != "quantum physics" {
+		t.Errorf("expected tag_name=quantum physics, got %q", rows[0].TagName)
+	}
+	if !rows[0].Pass {
+		t.Error("expected pass=true from cached row")
+	}
+	if rows[0].VerdictModel.String != "judge-model" {
+		t.Errorf("expected model=judge-model, got %q", rows[0].VerdictModel.String)
+	}
+
+	// Insert a cache-applied row (NULL model).
+	n, err = q.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
+		DocumentID:    docID,
+		TagName:       "quantum physics",
+		Criteria:      criteria,
+		Pass:          true,
+		VerdictModel:  sql.NullString{},
+		PolicyVersion: "v1",
+	})
+	if err != nil {
+		t.Fatalf("insert cache-applied: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("expected 1 row for cache-applied, got %d", n)
+	}
+
+	// Latest read now returns the most recent row (cache-applied with NULL model).
+	rows, err = q.LatestTagQualityEventsForNames(ctx, database.LatestTagQualityEventsForNamesParams{
+		PolicyVersion: "v1",
+		TagNames:      []string{"quantum physics"},
+	})
+	if err != nil {
+		t.Fatalf("cache read after cache-applied: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	if rows[0].VerdictModel.Valid {
+		t.Errorf("expected NULL model for latest row, got %q", rows[0].VerdictModel.String)
+	}
 }

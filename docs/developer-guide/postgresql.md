@@ -587,8 +587,9 @@ Knowing what *isn't* here is as instructive as what is:
 | Idempotent multi-row seeds with `ON CONFLICT` | `sql/schema/seed-*.sql` |
 | Upsert + `excluded` | `sql/queries/batch.sql:24-31`, `tag.sql:17-20`, `people.sql`, `document_tag.sql`, `deleted_tag.sql` |
 | Optimistic claim (`:execrows`) | `sql/queries/task.sql:99-104` |
-| Partial unique index + `ON CONFLICT (cols) WHERE predicate DO NOTHING` | `00017_tag_verdict_events.sql` (fresh verdicts deduped per pair/version) + `sql/queries/tag_verdict_event.sql` |
+| Partial unique index + `ON CONFLICT (cols) WHERE predicate DO NOTHING` | `00017_tag_verdict_events.sql` (fresh verdicts deduped per pair/version) + `00024_tag_quality_events.sql` (fresh tag-quality verdicts deduped per name/version) + `sql/queries/tag_verdict_event.sql`, `sql/queries/tag_quality_event.sql` |
 | `DISTINCT ON (...) ... IN (SELECT unnest(...), unnest(...))` | `sql/queries/tag_verdict_event.sql` (latest verdict per pair, batched) |
+| `DISTINCT ON (col) ... = ANY($1::text[])` (batched cache read) | `sql/queries/tag_quality_event.sql` (latest rubric verdict per tag name) |
 | LATERAL + conditional aggregation | `sql/queries/batch.sql:137-166` |
 | Scalar subqueries, `NOT EXISTS`, `UNION ALL` literals | `internal/database/dashboard.go:83-120,239-248` |
 | JSONB `->>` extraction | `internal/database/dashboard.go:98-100` |

@@ -38,6 +38,7 @@ type Runner struct {
 	tagMatcher        tagmatcher.Matcher
 	contentAnalyzer   contentanalyzer.ContentAnalyzer
 	tagAdjudicator    contentanalyzer.ContentAnalyzer
+	tagQualityJudge   contentanalyzer.ContentAnalyzer
 	fallbackAnalyzers []contentanalyzer.ContentAnalyzer
 	fallbackMeta      []fallbackMeta
 	textReducer       textreducer.TextReducer
@@ -184,6 +185,15 @@ func NewRunner(logger *utils.Logger, cfg *config.Config, tools []string) *Runner
 					logger.Error(nil, "create tag adjudicator: %v", adjErr)
 				} else {
 					r.tagAdjudicator = adj
+				}
+			}
+			if cfg.Enricher.TagQuality.Enabled {
+				qLlm := cfg.ResolvedQualityLlm()
+				q, qErr := contentanalyzer.NewContentAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.ResolvedQualityTimeout()) * time.Second}, &qLlm, cfg.Enricher.ContentAnalyzer.PromptTemplate, 0, 0, reg)
+				if qErr != nil {
+					logger.Error(nil, "create tag quality judge: %v", qErr)
+				} else {
+					r.tagQualityJudge = q
 				}
 			}
 			for i := range cfg.Enricher.ContentAnalyzer.Fallbacks {
@@ -502,6 +512,25 @@ func (r *Runner) AdjudicateTagSplits(ctx context.Context, tags []string) ([]cont
 	}
 	return runWithTimeout(ctx, func() ([]contentanalyzer.TagSplitResult, error) {
 		return r.tagAdjudicator.AdjudicateTagSplits(ctx, tags)
+	})
+}
+
+func (r *Runner) HasTagQualityJudge() bool {
+	return r.tagQualityJudge != nil
+}
+
+func (r *Runner) JudgeTagQuality(ctx context.Context, text string, candidates []contentanalyzer.TagQualityCandidate) ([]contentanalyzer.TagQualityResult, error) {
+	if r.tagQualityJudge == nil {
+		return nil, fmt.Errorf("tag quality judge not configured")
+	}
+	timeout := time.Duration(r.config.ResolvedQualityTimeout()) * time.Second
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	return runWithTimeout(ctx, func() ([]contentanalyzer.TagQualityResult, error) {
+		return r.tagQualityJudge.JudgeTagQuality(ctx, text, candidates)
 	})
 }
 

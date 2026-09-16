@@ -11,6 +11,8 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+
+	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type TB interface {
@@ -174,7 +176,7 @@ func SeedTagByName(t TB, queries *Queries, name string) Tag {
 
 func MustCreateTag(t TB, queries *Queries, name string) int64 {
 	t.Helper()
-	id, err := queries.CreateTag(context.Background(), name)
+	id, err := queries.CreateTag(context.Background(), utils.NormalizeTag(name))
 	if err != nil {
 		t.Fatalf("create tag %q: %v", name, err)
 	}

@@ -23,6 +23,7 @@ type ContentAnalyzer interface {
 	AnalyzeDocType(ctx context.Context, prevResult *AnalysisResult, headTailText string, docTypes []database.DocumentType, metadata DocMetadata) (string, error)
 	Adjudicate(ctx context.Context, pairs []TagPairEvidence) ([]TagVerdictResult, error)
 	AdjudicateTagSplits(ctx context.Context, tags []string) ([]TagSplitResult, error)
+	JudgeTagQuality(ctx context.Context, text string, candidates []TagQualityCandidate) ([]TagQualityResult, error)
 	Name() string
 }
 

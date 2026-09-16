@@ -3,6 +3,7 @@ package contentanalyzer
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"sync"
@@ -967,6 +968,8 @@ func TestSplitComponents_AppliesDocumentFilter(t *testing.T) {
 	}
 }
 
+func boolPtr(v bool) *bool { return &v }
+
 func TestParseAnalysisResponse(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -1018,7 +1021,7 @@ func TestParseAnalysisResponse(t *testing.T) {
 				Title: "t",
 				Tags:  []string{"opioid crisis"},
 				TagDetails: []TagDetail{
-					{Term: "opioid crisis", Category: TagCategoryTopic, IsStandardTerm: true},
+					{Term: "opioid crisis", Category: TagCategoryTopic, IsStandardTerm: boolPtr(true)},
 				},
 			},
 		},
@@ -1333,5 +1336,166 @@ func TestNormalizeTagCategory(t *testing.T) {
 				t.Errorf("normalizeTagCategory(%q) = %q, want %q", tt.raw, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestBuildTagQualityPrompt(t *testing.T) {
+	candidates := []TagQualityCandidate{
+		{Index: 0, Term: "quantum computing", Category: "topic"},
+		{Index: 1, Term: "spain", Category: "place", WhitelistedPlace: true},
+		{Index: 2, Term: "John Smith", Category: "person"},
+	}
+	prompt := BuildTagQualityPrompt("A text about quantum physics", candidates)
+
+	// Must include the document text.
+	if !strings.Contains(prompt, "A text about quantum physics") {
+		t.Error("prompt missing document text")
+	}
+	// Must list each candidate with its term and category.
+	for _, c := range candidates {
+		if !strings.Contains(prompt, fmt.Sprintf("Tag %d: term=%q category=%s", c.Index, c.Term, c.Category)) {
+			t.Errorf("prompt missing candidate %d", c.Index)
+		}
+	}
+	// Whitelisted place must include the carve-out note.
+	if !strings.Contains(prompt, "whitelisted country or continent") {
+		t.Error("prompt missing whitelisted place note")
+	}
+	// Must contain the four criteria and the response format.
+	for _, kw := range []string{"subject_matter", "standard_term", "not_person_place_work", "appropriately_broad", "JSON"} {
+		if !strings.Contains(prompt, kw) {
+			t.Errorf("prompt missing keyword %q", kw)
+		}
+	}
+}
+
+func TestParseTagQualityResponse_RoundTrip(t *testing.T) {
+	candidates := []TagQualityCandidate{
+		{Index: 0, Term: "foo", Category: "topic"},
+		{Index: 1, Term: "bar", Category: "topic"},
+	}
+
+	// Simulate a well-formed LLM response.
+	allTrue := `{"tags":[
+		{"index":0,"subject_matter":true,"standard_term":true,"not_person_place_work":true,"appropriately_broad":true},
+		{"index":1,"subject_matter":false,"standard_term":true,"not_person_place_work":true,"appropriately_broad":false}
+	]}`
+	results, err := ParseTagQualityResponse(allTrue, len(candidates))
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	if !results[0].Passed() {
+		t.Error("candidate 0 should pass")
+	}
+	if results[1].Passed() {
+		t.Error("candidate 1 should fail (subject_matter=false)")
+	}
+
+	// Prompt builder should produce a non-empty prompt.
+	prompt := BuildTagQualityPrompt("doc text", candidates)
+	if prompt == "" {
+		t.Error("prompt is empty")
+	}
+}
+
+func TestParseTagQualityResponse_MissingIndex(t *testing.T) {
+	// Only 1 of 2 candidates returned — must error.
+	partial := `{"tags":[{"index":0,"subject_matter":true,"standard_term":true,"not_person_place_work":true,"appropriately_broad":true}]}`
+	results, err := ParseTagQualityResponse(partial, 2)
+	if err == nil {
+		t.Fatal("expected error for missing index, got nil")
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results even on error, got %d", len(results))
+	}
+	// Index 0 should be populated, index 1 should be zero-valued.
+	if !results[0].Passed() {
+		t.Error("index 0 should have been populated")
+	}
+	if results[1].Passed() {
+		t.Error("index 1 should be zero-valued (all false)")
+	}
+}
+
+func TestParseTagQualityResponse_IncompleteVerdict(t *testing.T) {
+	// One criterion omitted (nil) — must error.
+	incomplete := `{"tags":[{"index":0,"subject_matter":true,"standard_term":true,"not_person_place_work":true}]}`
+	_, err := ParseTagQualityResponse(incomplete, 1)
+	if err == nil {
+		t.Fatal("expected error for incomplete verdict, got nil")
+	}
+}
+
+func TestParseTagQualityResponse_InvalidJSON(t *testing.T) {
+	_, err := ParseTagQualityResponse("not json", 1)
+	if err == nil {
+		t.Fatal("expected error for invalid JSON")
+	}
+}
+
+func TestTagQualityResult_Passed(t *testing.T) {
+	tests := []struct {
+		name string
+		r    TagQualityResult
+		want bool
+	}{
+		{"all true", TagQualityResult{SubjectMatter: true, StandardTerm: true, NotPersonPlaceWork: true, AppropriatelyBroad: true}, true},
+		{"one false", TagQualityResult{SubjectMatter: false, StandardTerm: true, NotPersonPlaceWork: true, AppropriatelyBroad: true}, false},
+		{"all false", TagQualityResult{}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.r.Passed(); got != tt.want {
+				t.Errorf("Passed() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTagDetail_PresenceSemantics(t *testing.T) {
+	// String-shape tag: IsStandardTerm must be nil (no evidence).
+	stringTag := `{"title":"t","tags":["hello"]}`
+	result, err := ParseAnalysisResponse(stringTag)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(result.TagDetails) != 1 {
+		t.Fatalf("expected 1 detail, got %d", len(result.TagDetails))
+	}
+	if result.TagDetails[0].IsStandardTerm != nil {
+		t.Errorf("string-shape: IsStandardTerm should be nil, got %v", *result.TagDetails[0].IsStandardTerm)
+	}
+
+	// Object with true: IsStandardTerm must be non-nil and true.
+	trueTag := `{"title":"t","tags":[{"term":"foo","category":"topic","is_standard_term":true}]}`
+	result, err = ParseAnalysisResponse(trueTag)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if result.TagDetails[0].IsStandardTerm == nil || !*result.TagDetails[0].IsStandardTerm {
+		t.Error("object true: IsStandardTerm should be *true")
+	}
+
+	// Object with false: IsStandardTerm must be non-nil and false.
+	falseTag := `{"title":"t","tags":[{"term":"bar","category":"topic","is_standard_term":false}]}`
+	result, err = ParseAnalysisResponse(falseTag)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if result.TagDetails[0].IsStandardTerm == nil || *result.TagDetails[0].IsStandardTerm {
+		t.Error("object false: IsStandardTerm should be *false")
+	}
+
+	// Object without key: IsStandardTerm must be nil (omitted).
+	omitTag := `{"title":"t","tags":[{"term":"baz","category":"topic"}]}`
+	result, err = ParseAnalysisResponse(omitTag)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if result.TagDetails[0].IsStandardTerm != nil {
+		t.Error("object omitted: IsStandardTerm should be nil")
 	}
 }

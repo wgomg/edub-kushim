@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/tagmatcher"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 // Version is bumped whenever the policy's gates, guards, thresholds, or band
@@ -105,7 +104,7 @@ func evaluate(query string, ranked []tagmatcher.RankResult, i int, storeTags map
 }
 
 func tokenSet(name string) map[string]struct{} {
-	tokens := strings.Fields(utils.NormalizeTag(name))
+	tokens := strings.Fields(name)
 	set := make(map[string]struct{}, len(tokens))
 	for _, t := range tokens {
 		set[t] = struct{}{}
@@ -114,7 +113,7 @@ func tokenSet(name string) map[string]struct{} {
 }
 
 func hasNegationMark(name string, storeTags map[string]struct{}) bool {
-	for tok := range strings.FieldsSeq(utils.NormalizeTag(name)) {
+	for tok := range strings.FieldsSeq(name) {
 		for _, prefix := range negationPrefixes {
 			if tok == prefix {
 				return true

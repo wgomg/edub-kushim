@@ -169,7 +169,7 @@ func (s *Tag) createWithQueries(ctx context.Context, q *database.Queries, names 
 			continue
 		}
 
-		id, err := q.CreateTag(ctx, name)
+		id, err := q.CreateTag(ctx, utils.NormalizeTag(name))
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				existing, err := q.GetTagByName(ctx, name)
@@ -239,7 +239,7 @@ func (s *Tag) Update(ctx context.Context, pairs []TagUpdatePair) ([]UpdateResult
 		}
 
 		if err := s.queries.UpdateTag(ctx, database.UpdateTagParams{
-			Name: name,
+			Name: utils.NormalizeTag(name),
 			ID:   p.ID,
 		}); err != nil {
 			if errs.IsConstraint(err) {
@@ -302,7 +302,7 @@ func (s *Tag) Delete(ctx context.Context, ids []int64) ([]DeleteResult, error) {
 		}
 
 		if err := s.queries.UpsertDeletedTag(ctx, database.UpsertDeletedTagParams{
-			Name: tag.Name,
+			Name: utils.NormalizeTag(tag.Name),
 			Kind: DeletedTagKindBlocked,
 		}); err != nil {
 			s.logger.Error(nil, "tag service: record deleted tag %q: %v", tag.Name, err)

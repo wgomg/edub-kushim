@@ -311,7 +311,7 @@ See `AuthMiddleware` under `server.go` → Functions.
 - `TextExtractorResponse` — `Engine string`, `Timeout int`
 - `PdfOptimizerResponse` — `Engine string`, `Fallback string`, `Timeout int`
 - `OCRResponse` — `Engine string`, `Languages []string`, `DataDir string`, `Timeout int`
-- `EnricherConfigResponse` — `Workers int`, `TextReducer TextReducerResponse`, `ContentAnalyzer ContentAnalyzerResponse`, `TagMatcher TagMatcherResponse`
+- `EnricherConfigResponse` — `Workers int`, `TextReducer TextReducerResponse`, `ContentAnalyzer ContentAnalyzerResponse`, `TagMatcher TagMatcherResponse`, `TagAdjudicator TagAdjudicatorConfigResponse`, `TagQuality TagQualityConfigResponse`, `TagReconcile TagReconcileConfigResponse`
 - `TextReducerResponse` — `Engine string`, `Timeout int`, `TargetWords int`
 - `ContentAnalyzerResponse` — `Enabled bool`, `Timeout int`, `MinTags int`, `MaxTags int`, `Llm LlmConfigResponse`, `Fallbacks []FallbackConfigResponse` (omitempty — absent when no fallbacks are configured), `PromptTemplate string`
 - `FallbackConfigResponse` — `Enabled bool`, `Llm LlmConfigResponse`
@@ -321,6 +321,10 @@ See `AuthMiddleware` under `server.go` → Functions.
 - `DocTypeRefinementResponse` — `Enabled bool`, `HeadWords int`, `TailWords int`
 - `TagMatcherResponse` — `Engine string`, `Timeout int`, `ReduceTargetWords int`, `ChunkSize int`, `Hugot HugotResponse`
 - `HugotResponse` — `Model string`, `Backend string`
+- `TagAdjudicatorConfigResponse` — `Enabled bool`, `Timeout int`, `Llm TagAdjudicatorLlmResponse`
+- `TagQualityConfigResponse` — `Enabled bool`, `Timeout int`, `Llm TagAdjudicatorLlmResponse` (the weak-band thresholds are internal constants, absent from the response by design)
+- `TagAdjudicatorLlmResponse` — `Adapter string`, `Provider string`, `Model string`, `Token string` (omitempty), `RequestDelay float64`
+- `TagReconcileConfigResponse` — `Enabled bool`, `ReportOnly bool`, `Interval float64`, `Time string`, `MaxRejudge int`, `MaxRetag int`, `DeadTagGraceDays int`
 - `FailedTaskSummary` — `TaskID string`, `Op string`, `Lang string` (omitempty), `Error string`
 - `BootstrapResponse` — `AuthEnabled bool`, `MissingTools []config.ExternalTool` — Returned by `GET /wizard/bootstrap`. Contains only non-sensitive fields so the SPA can render the login screen without exposing LLM tokens or DB connection details.
 - `ConfigStatusResponse` — `Configured bool`, `PendingTasks int`, `FailedTasks []FailedTaskSummary` (omitempty), `Errors []string`, `Tools []config.ExternalTool` (full availability list), `MissingTools []config.ExternalTool` (hard-blocking subset)

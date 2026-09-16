@@ -367,6 +367,17 @@ type Tag struct {
 	OrphanedSince sql.NullTime
 }
 
+type TagQualityEvent struct {
+	ID            int64
+	DocumentID    int64
+	TagName       string
+	Criteria      json.RawMessage
+	Pass          bool
+	VerdictModel  sql.NullString
+	PolicyVersion string
+	VerdictAt     time.Time
+}
+
 type TagVerdictEvent struct {
 	ID            int64
 	DocumentID    int64

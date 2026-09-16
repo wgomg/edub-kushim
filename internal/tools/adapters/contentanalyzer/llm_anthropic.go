@@ -387,6 +387,33 @@ func (l *LlmAnthropic) AdjudicateTagSplits(ctx context.Context, tags []string) (
 	return ParseTagSplitResponse(responseContent, len(tags))
 }
 
+func (l *LlmAnthropic) JudgeTagQuality(ctx context.Context, text string, candidates []TagQualityCandidate) ([]TagQualityResult, error) {
+	prompt := BuildTagQualityPrompt(text, candidates)
+
+	if err := checkContentTooLarge(l.caps, TagQualitySystemMessage+"\n"+prompt); err != nil {
+		return nil, err
+	}
+
+	reqBody := anthropicRequest{
+		Model:     l.llmCfg.Model,
+		MaxTokens: l.defaultMaxTokens(),
+		Messages: []anthropicMessage{
+			{Role: "user", Content: prompt},
+		},
+		System:       TagQualitySystemMessage,
+		Stream:       false,
+		CacheControl: &cacheControlEphemeral{Type: "ephemeral"},
+	}
+	l.applyReasoning(&reqBody, reqBody.MaxTokens)
+	l.applyTemperature(&reqBody, 0)
+
+	_, responseContent, err := l.doRequest(ctx, reqBody, "tag quality judge")
+	if err != nil {
+		return nil, err
+	}
+	return ParseTagQualityResponse(responseContent, len(candidates))
+}
+
 func (l *LlmAnthropic) Name() string {
 	return "anthropic"
 }

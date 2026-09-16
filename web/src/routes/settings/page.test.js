@@ -89,6 +89,11 @@ const fullCfg = () => ({
 			timeout: 30,
 			llm: { adapter: '', provider: '', model: '', token: '', request_delay: 0 }
 		},
+		tag_quality: {
+			enabled: false,
+			timeout: 0,
+			llm: { adapter: '', provider: '', model: '', token: '', temperature: 0, request_delay: 0 }
+		},
 		tag_reconcile: {
 			enabled: true,
 			report_only: true,
@@ -239,7 +244,27 @@ describe('Settings — Tag reconciliation section', () => {
 		expect(Number(timeout.value)).toBe(0);
 	});
 
-	it('bodyFromConfig carries the fourteen tag_reconcile and tag_adjudicator keys on save', async () => {
+	it('ensureTagQualityBlock fills the default block when missing', async () => {
+		const cfg = fullCfg();
+		delete cfg.enricher.tag_quality;
+		apiMocks.configGet.mockResolvedValue(cfg);
+
+		render(Page);
+
+		await screen.findByRole('heading', { name: 'Tag reconciliation' });
+
+		const toggle = screen.getByRole('checkbox', { name: 'Enable tag quality judge' });
+		expect(toggle.checked).toBe(false);
+		fireEvent.click(toggle);
+
+		const timeout = document.getElementById('tag-quality-timeout');
+		expect(Number(timeout.value)).toBe(0);
+		// The reject-band thresholds are internal constants, not operator knobs.
+		expect(document.getElementById('tag-quality-t-low')).toBeNull();
+		expect(document.getElementById('tag-quality-no-anchor-similarity')).toBeNull();
+	});
+
+	it('bodyFromConfig carries the tag_reconcile, tag_adjudicator, and tag_quality keys on save', async () => {
 		apiMocks.configGet.mockResolvedValue(fullCfg());
 		apiMocks.configUpdate.mockResolvedValue({ message: 'Settings saved.' });
 
@@ -266,6 +291,13 @@ describe('Settings — Tag reconciliation section', () => {
 		expect(body['enricher.tag_reconcile.max_rejudge']).toBe(250);
 		expect(body['enricher.tag_reconcile.max_retag']).toBe(2000);
 		expect(body['enricher.tag_reconcile.dead_tag_grace_days']).toBe(14);
+		expect(body['enricher.tag_quality.enabled']).toBe(false);
+		expect(body['enricher.tag_quality.timeout']).toBe(0);
+		expect(body['enricher.tag_quality.llm.adapter']).toBe('');
+		expect(body['enricher.tag_quality.llm.provider']).toBe('');
+		expect(body['enricher.tag_quality.llm.model']).toBe('');
+		expect(body['enricher.tag_quality.llm.token']).toBe('');
+		expect(body['enricher.tag_quality.llm.request_delay']).toBe(0);
 	});
 
 	it('shows the adjudicator dependency hint when enabled without the adjudicator', async () => {

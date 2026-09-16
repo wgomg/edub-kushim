@@ -112,9 +112,9 @@ func (s *TagMerge) Merge(ctx context.Context, sourceID, targetID int64) (MergeTa
 	}
 
 	if err := txQ.UpsertDeletedTag(ctx, database.UpsertDeletedTagParams{
-		Name:       source.Name,
+		Name:       utils.NormalizeTag(source.Name),
 		Kind:       DeletedTagKindMerged,
-		TargetName: sql.NullString{String: target.Name, Valid: true},
+		TargetName: sql.NullString{String: utils.NormalizeTag(target.Name), Valid: true},
 	}); err != nil {
 		return MergeTagResult{}, errs.FromDB(err, "record merged tag")
 	}

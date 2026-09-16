@@ -40,6 +40,7 @@
 		ensureMirrorBlock();
 		ensureTagReconcileBlock();
 		ensureTagAdjudicatorBlock();
+		ensureTagQualityBlock();
 		ensureContentAnalyzerTags();
 	}
 
@@ -105,6 +106,24 @@
 		if (!cfg.enricher) cfg.enricher = {};
 		if (cfg.enricher.tag_adjudicator) return;
 		cfg.enricher.tag_adjudicator = {
+			enabled: false,
+			timeout: 0,
+			llm: {
+				adapter: '',
+				provider: '',
+				model: '',
+				token: '',
+				temperature: 0,
+				request_delay: 0
+			}
+		};
+	}
+
+	function ensureTagQualityBlock() {
+		if (!cfg) return;
+		if (!cfg.enricher) cfg.enricher = {};
+		if (cfg.enricher.tag_quality) return;
+		cfg.enricher.tag_quality = {
 			enabled: false,
 			timeout: 0,
 			llm: {
@@ -218,6 +237,13 @@
 			'enricher.tag_adjudicator.llm.request_delay': Number(
 				cfg.enricher.tag_adjudicator.llm.request_delay
 			),
+			'enricher.tag_quality.enabled': cfg.enricher.tag_quality.enabled,
+			'enricher.tag_quality.timeout': Number(cfg.enricher.tag_quality.timeout),
+			'enricher.tag_quality.llm.adapter': cfg.enricher.tag_quality.llm.adapter,
+			'enricher.tag_quality.llm.provider': cfg.enricher.tag_quality.llm.provider,
+			'enricher.tag_quality.llm.model': cfg.enricher.tag_quality.llm.model,
+			'enricher.tag_quality.llm.token': cfg.enricher.tag_quality.llm.token,
+			'enricher.tag_quality.llm.request_delay': Number(cfg.enricher.tag_quality.llm.request_delay),
 			'enricher.tag_reconcile.enabled': cfg.enricher.tag_reconcile.enabled,
 			'enricher.tag_reconcile.report_only': cfg.enricher.tag_reconcile.report_only,
 			'enricher.tag_reconcile.interval': Number(cfg.enricher.tag_reconcile.interval),

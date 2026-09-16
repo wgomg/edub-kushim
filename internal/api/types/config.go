@@ -164,7 +164,14 @@ type EnricherConfigResponse struct {
 	ContentAnalyzer ContentAnalyzerResponse      `json:"contentanalyzer"`
 	TagMatcher      TagMatcherResponse           `json:"tagmatcher"`
 	TagAdjudicator  TagAdjudicatorConfigResponse `json:"tag_adjudicator"`
+	TagQuality      TagQualityConfigResponse     `json:"tag_quality"`
 	TagReconcile    TagReconcileConfigResponse   `json:"tag_reconcile"`
+}
+
+type TagQualityConfigResponse struct {
+	Enabled bool                      `json:"enabled"`
+	Timeout int                       `json:"timeout"`
+	Llm     TagAdjudicatorLlmResponse `json:"llm"`
 }
 
 type TagAdjudicatorConfigResponse struct {
@@ -368,6 +375,13 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Enricher.TagAdjudicator.Llm.Model = cfg.Enricher.TagAdjudicator.Llm.Model
 	resp.Enricher.TagAdjudicator.Llm.Token = cfg.Enricher.TagAdjudicator.Llm.Token
 	resp.Enricher.TagAdjudicator.Llm.RequestDelay = cfg.Enricher.TagAdjudicator.Llm.RequestDelay
+	resp.Enricher.TagQuality.Enabled = cfg.Enricher.TagQuality.Enabled
+	resp.Enricher.TagQuality.Timeout = cfg.Enricher.TagQuality.Timeout
+	resp.Enricher.TagQuality.Llm.Adapter = cfg.Enricher.TagQuality.Llm.Adapter
+	resp.Enricher.TagQuality.Llm.Provider = cfg.Enricher.TagQuality.Llm.Provider
+	resp.Enricher.TagQuality.Llm.Model = cfg.Enricher.TagQuality.Llm.Model
+	resp.Enricher.TagQuality.Llm.Token = cfg.Enricher.TagQuality.Llm.Token
+	resp.Enricher.TagQuality.Llm.RequestDelay = cfg.Enricher.TagQuality.Llm.RequestDelay
 	resp.Enricher.TagReconcile.Enabled = cfg.Enricher.TagReconcile.Enabled
 	resp.Enricher.TagReconcile.ReportOnly = cfg.Enricher.TagReconcile.ReportOnly
 	resp.Enricher.TagReconcile.Interval = cfg.Enricher.TagReconcile.Interval

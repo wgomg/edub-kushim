@@ -88,12 +88,12 @@ func TestTagMerge_Merge_HappyPath(t *testing.T) {
 	svc, embedder, client := newTestTagMerge(t)
 	ctx := context.Background()
 
-	if err := embedder.AddToStore(ctx, []string{"reassign-source", "reassign-target"}); err != nil {
+	if err := embedder.AddToStore(ctx, []string{"reassign source", "reassign target"}); err != nil {
 		t.Fatalf("seed embedder store: %v", err)
 	}
 
-	sourceID := database.MustCreateTag(t, client.Queries, "reassign-source")
-	targetID := database.MustCreateTag(t, client.Queries, "reassign-target")
+	sourceID := database.MustCreateTag(t, client.Queries, "reassign source")
+	targetID := database.MustCreateTag(t, client.Queries, "reassign target")
 
 	doc1ID := database.CreateUniqueDocument(t, client.Queries, "rm-1.pdf")
 	doc2ID := database.CreateUniqueDocument(t, client.Queries, "rm-2.pdf")
@@ -108,12 +108,12 @@ func TestTagMerge_Merge_HappyPath(t *testing.T) {
 	testutil.AssertNoError(t, err, "merge")
 	testutil.AssertEqual(t, result.SourceID, sourceID, "source id")
 	testutil.AssertEqual(t, result.TargetID, targetID, "target id")
-	testutil.AssertEqual(t, result.TargetName, "reassign-target", "target name")
+	testutil.AssertEqual(t, result.TargetName, "reassign target", "target name")
 	testutil.AssertEqual(t, result.Reassigned, int64(1), "one document re-pointed (doc1); doc2 was skipped because it already had the target")
 
 	removed := embedder.removed()
 	testutil.AssertEqual(t, len(removed), 1, "RemoveFromStore called exactly once")
-	testutil.AssertEqual(t, removed[0], "reassign-source", "source name passed to RemoveFromStore")
+	testutil.AssertEqual(t, removed[0], "reassign source", "source name passed to RemoveFromStore")
 
 	_, err = client.Queries.GetTag(ctx, sourceID)
 	if !errors.Is(err, sql.ErrNoRows) {
@@ -121,15 +121,15 @@ func TestTagMerge_Merge_HappyPath(t *testing.T) {
 	}
 	target, err := client.Queries.GetTag(ctx, targetID)
 	testutil.AssertNoError(t, err, "get target")
-	testutil.AssertEqual(t, target.Name, "reassign-target", "target name unchanged")
+	testutil.AssertEqual(t, target.Name, "reassign target", "target name unchanged")
 
 	tags1 := getDocTagNames(t, client.Queries, doc1ID)
 	testutil.AssertEqual(t, len(tags1), 1, "doc1 carries one tag")
-	testutil.AssertEqual(t, tags1[0], "reassign-target", "doc1's tag is the target")
+	testutil.AssertEqual(t, tags1[0], "reassign target", "doc1's tag is the target")
 
 	tags2 := getDocTagNames(t, client.Queries, doc2ID)
 	testutil.AssertEqual(t, len(tags2), 1, "doc2 carries one tag (leftover cleared)")
-	testutil.AssertEqual(t, tags2[0], "reassign-target", "doc2's tag is the target")
+	testutil.AssertEqual(t, tags2[0], "reassign target", "doc2's tag is the target")
 }
 
 func TestTagMerge_Merge_Errors(t *testing.T) {

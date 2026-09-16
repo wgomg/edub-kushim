@@ -287,6 +287,17 @@ The enrichment pipeline:
    blocked names and rewrites merged names to their target, and the reconciler
    skips their restoration. The tags page lists the blocklist with per-row
    restore, and the operator create path un-blocks the name it creates.
+   When `enricher.tag_quality.enabled` is true, the kept set passes one more
+   filter before it reaches the store: novel names (absent from the
+   vocabulary) are scored by a deterministic weak band and, above it, judged
+   by a four-criteria rubric (`subject_matter`, `standard_term`,
+   `not_person_place_work`, `appropriately_broad`) in one temperature-0 LLM
+   call per document. Verdicts are cached per `(tag_name, policy_version)` in
+   `tag_quality_event`, so a re-emitted name resolves without a call; a
+   weak-band score below the internal threshold, or a failing rubric
+   verdict, drops the tag for that document only. Judge failures retry once
+   and then keep every novel tag; the band thresholds are internal v1
+   constants, not config keys.
 6. **New Tag Store Update** — tag creation, the enrichment-owned `document_tag` sweep,
    and the per-tag assignments run in one database transaction per document
    (`services.Tag.CreateTx` on the transaction handle): new tags are created, only

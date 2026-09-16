@@ -367,6 +367,52 @@ verdict and applies it as cache-applied. When the adjudicator is unavailable
 (disabled, or failed to construct), the whole step is skipped and band pairs
 keep as without adjudication.
 
+### Rubric judge for novel tags
+
+Consolidation decides what is a duplicate; the quality judge decides what
+deserves to be born. With `enricher.tag_quality.enabled: true` (default
+`false`), the enricher filters the consolidated list **before persist**: only
+tags whose normalized names are absent from the store are candidates (a tag
+that already exists was born long ago and is never re-judged).
+
+Candidates first pass a deterministic **weak band** that scores the emitted
+evidence — `is_standard_term` +1 when true, 0 when absent, −1 when false;
+category `other` −1; best store similarity below the internal
+`no_anchor_similarity` (0.60) −1. A score below the internal `t_low` (−1,
+i.e. ≤ −2) drops the tag with a `tagquality[v1]: reject … (reason=weak_score
+…)` line and no LLM call. Weak rejections are deterministic per emission and
+are not cached: a later emission of the same name with better typed evidence
+re-scores and may reach the judge.
+
+The survivors resolve in two steps:
+
+1. **Verdict cache** — `LatestTagQualityEventsForNames` reads the latest row
+   per name at the current `TagQualityVersion` from `tag_quality_event`.
+   Cached verdicts apply with no LLM call.
+2. **Verdict** — one temperature-0 `JudgeTagQuality` call per document for
+   the uncached names. The prompt carries the reduced document text (the same
+   text the generator saw) and one line per candidate with its term, typed
+   category, and — for whitelisted countries/continents — an explicit note
+   that the tag must not be rejected for being a place. A verdict passes only
+   when all four criteria are true: the tag is a subject matter (not a
+   form/genre), standard terminology (not a document-specific coinage), not a
+   person/work/non-whitelisted place, and appropriately broad for a shared
+   vocabulary.
+
+Fresh verdicts write a row with the judging model in `verdict_model`; the
+partial unique index on `(tag_name, policy_version) WHERE verdict_model IS NOT
+NULL` deduplicates concurrent workers, and a losing insert re-reads the cached
+verdict, applies it, and writes a cache-applied row with NULL `verdict_model`.
+A judge error, timeout, or incomplete response retries once and then keeps
+every novel tag (birth-as-today) with an error log.
+
+The judge LLM and timeout default to the content analyzer's
+(`ResolvedQualityLlm`/`ResolvedQualityTimeout`, resolved at use time); config
+validation logs a warning when the resolved judge equals the generator, since
+a shared model biases every verdict with the generator's own failure modes.
+The weak-band thresholds are provisional v1 constants in the enricher, not
+config keys.
+
 ---
 
 ## 8. Interfaces: local and remote implementations
@@ -527,6 +573,9 @@ statements.
    - `runner.AdjudicateTags(ctx, pairs)` resolves the ambiguous band when
      `enricher.tag_adjudicator.enabled` is true (cache + evidence + one LLM
      call per document, §7).
+   - `runner.JudgeTagQuality(ctx, reducedText, candidates)` filters the
+     consolidated novel set when `enricher.tag_quality.enabled` is true
+     (weak band → cache → one rubric call per document, §7).
 4. **API tag creation** triggers a store refresh through the same service.
 
 ---
@@ -566,6 +615,10 @@ statements.
   `enricher.tag_adjudicator.enabled: true`, and an explicit `llm` block is only
   needed when deviating from the content analyzer's LLM (an empty
   `provider`/`model` copies the analyzer's `llm` wholesale).
+- **The quality judge is disabled by default** — novel tags are born
+  untouched until `enricher.tag_quality.enabled: true`. Its weak-band
+  thresholds are internal v1 constants (`t_low = -1`,
+  `no_anchor_similarity = 0.60`), deliberately not operator-tunable.
 - **Verdicts are cache-scoped to `tagpolicy.Version`** — bumping the policy
   version invalidates every cached verdict at once (old rows stay in the event
   table for analysis, they are simply never read for the new version).

@@ -322,7 +322,6 @@ func NewTagFilter(people []PeopleResult, knownPeopleNormalized []string, title s
 }
 
 func (f *TagFilter) Accept(tag string) bool {
-	tag = normalizeCore(tag)
 	tagTokens := strings.Fields(tag)
 	if len(tagTokens) > maxTagWords || len(tagTokens) == 0 || len(tag) > maxTagLength {
 		return false
@@ -411,7 +410,7 @@ func NormalizeTags(raw []string) []string {
 type TagDetail struct {
 	Term           string `json:"term"`
 	Category       string `json:"category"`
-	IsStandardTerm bool   `json:"is_standard_term"`
+	IsStandardTerm *bool  `json:"is_standard_term"`
 }
 
 const (
@@ -773,7 +772,7 @@ type FacetDrop struct {
 func classifyCategory(tag, category string, docTypes map[string]struct{}) (string, bool) {
 	switch category {
 	case TagCategoryFormGenre:
-		if _, ok := docTypes[normalizeCore(tag)]; ok {
+		if _, ok := docTypes[tag]; ok {
 			return "matches_document_type", true
 		}
 		return "model_self_classification", true
@@ -804,7 +803,7 @@ func SeparateFacets(tags []string, details []TagDetail, docTypeNames []string) (
 	kept := make([]string, 0, len(tags))
 	var dropped []FacetDrop
 	for _, tag := range tags {
-		category, ok := categoryByTerm[normalizeCore(tag)]
+		category, ok := categoryByTerm[tag]
 		if !ok {
 			kept = append(kept, tag)
 			continue
@@ -948,6 +947,129 @@ func ParseTagSplitResponse(content string, n int) ([]TagSplitResult, error) {
 			results[s.Index].Verdict = TagSplitSplit
 			results[s.Index].Components = components
 		}
+	}
+	return results, nil
+}
+
+type TagQualityCandidate struct {
+	Index            int
+	Term             string
+	Category         string
+	WhitelistedPlace bool
+}
+
+type TagQualityResult struct {
+	Index              int
+	SubjectMatter      bool
+	StandardTerm       bool
+	NotPersonPlaceWork bool
+	AppropriatelyBroad bool
+}
+
+func (r TagQualityResult) Passed() bool {
+	return r.SubjectMatter && r.StandardTerm && r.NotPersonPlaceWork && r.AppropriatelyBroad
+}
+
+// TagQualityCriteria is the persisted wire shape of one candidate's rubric
+// verdict. Pointer fields distinguish an omitted key from an explicit false.
+type TagQualityCriteria struct {
+	SubjectMatter      *bool `json:"subject_matter"`
+	StandardTerm       *bool `json:"standard_term"`
+	NotPersonPlaceWork *bool `json:"not_person_place_work"`
+	AppropriatelyBroad *bool `json:"appropriately_broad"`
+}
+
+func (r TagQualityResult) Criteria() TagQualityCriteria {
+	return TagQualityCriteria{
+		SubjectMatter:      &r.SubjectMatter,
+		StandardTerm:       &r.StandardTerm,
+		NotPersonPlaceWork: &r.NotPersonPlaceWork,
+		AppropriatelyBroad: &r.AppropriatelyBroad,
+	}
+}
+
+func (c TagQualityCriteria) Complete() bool {
+	return c.SubjectMatter != nil && c.StandardTerm != nil &&
+		c.NotPersonPlaceWork != nil && c.AppropriatelyBroad != nil
+}
+
+func (c TagQualityCriteria) String() string {
+	return fmt.Sprintf("subject_matter=%t standard_term=%t not_person_place_work=%t appropriately_broad=%t",
+		c.SubjectMatter != nil && *c.SubjectMatter,
+		c.StandardTerm != nil && *c.StandardTerm,
+		c.NotPersonPlaceWork != nil && *c.NotPersonPlaceWork,
+		c.AppropriatelyBroad != nil && *c.AppropriatelyBroad)
+}
+
+// TagQualityVersion pins the measurement generation: bump it whenever the
+// criteria text or the prompt changes, so cached verdicts from an older
+// generation never apply to a newer one.
+const TagQualityVersion = "v1"
+
+const TagQualitySystemMessage = "You are a tag-quality judge. Decide whether each candidate tag is fit for a shared document vocabulary."
+
+func BuildTagQualityPrompt(text string, candidates []TagQualityCandidate) string {
+	var sb strings.Builder
+	sb.WriteString("For each candidate tag below, answer four yes/no questions about its fitness as a tag for the document.\n")
+	sb.WriteString("1. subject_matter: is the tag a subject matter of the document, not its form or genre?\n")
+	sb.WriteString("2. standard_term: is the tag standard, widely-recognized terminology, not a coinage specific to this document?\n")
+	sb.WriteString("3. not_person_place_work: is the tag neither a person, nor a work, nor a place outside the whitelisted set?\n")
+	sb.WriteString("4. appropriately_broad: is the tag appropriately broad for a shared vocabulary, not a per-document detail?\n")
+	sb.WriteString("Answer with ONLY a JSON object: {\"tags\":[{\"index\":0,\"subject_matter\":true,\"standard_term\":true,\"not_person_place_work\":true,\"appropriately_broad\":true},...]}, one entry per candidate, no explanations.\n\n")
+	sb.WriteString("Document text:\n")
+	sb.WriteString(text)
+	sb.WriteString("\n\nCandidate tags:\n")
+	for _, c := range candidates {
+		fmt.Fprintf(&sb, "Tag %d: term=%q category=%s", c.Index, c.Term, c.Category)
+		if c.WhitelistedPlace {
+			sb.WriteString(" (whitelisted country or continent — it is a legitimate place tag and must not be rejected for being a place)")
+		}
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
+// ParseTagQualityResponse returns an error when any candidate lacks a fully
+// specified verdict: a zero-valued result must never be read as an
+// all-criteria-false rejection, or a truncated response would cache a spurious
+// permanent rejection.
+func ParseTagQualityResponse(content string, n int) ([]TagQualityResult, error) {
+	content = utils.CleanCodeBlock(strings.TrimSpace(content))
+	var parsed struct {
+		Tags []struct {
+			Index int `json:"index"`
+			TagQualityCriteria
+		} `json:"tags"`
+	}
+	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+		return nil, fmt.Errorf("parse tag quality response: %w", err)
+	}
+	results := make([]TagQualityResult, n)
+	present := make([]bool, n)
+	for i := range results {
+		results[i].Index = i
+	}
+	for _, t := range parsed.Tags {
+		if t.Index < 0 || t.Index >= n || !t.Complete() {
+			continue
+		}
+		results[t.Index] = TagQualityResult{
+			Index:              t.Index,
+			SubjectMatter:      *t.SubjectMatter,
+			StandardTerm:       *t.StandardTerm,
+			NotPersonPlaceWork: *t.NotPersonPlaceWork,
+			AppropriatelyBroad: *t.AppropriatelyBroad,
+		}
+		present[t.Index] = true
+	}
+	var missing []int
+	for i, ok := range present {
+		if !ok {
+			missing = append(missing, i)
+		}
+	}
+	if len(missing) > 0 {
+		return results, fmt.Errorf("incomplete tag quality response: no verdict for candidate indices %v", missing)
 	}
 	return results, nil
 }

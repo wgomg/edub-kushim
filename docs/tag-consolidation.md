@@ -19,6 +19,7 @@ concept from the vocabulary. Every failure, ambiguity, or outage defaults to
 - [How a tag is decided](#how-a-tag-is-decided)
 - [Joint tags](#joint-tags)
 - [LLM adjudication (opt-in)](#llm-adjudication-opt-in)
+- [Tag quality judge (opt-in)](#tag-quality-judge-opt-in)
 - [Merge review](#merge-review)
 - [Scheduled reconciliation](#scheduled-reconciliation)
 - [Configuration](#configuration)
@@ -148,6 +149,44 @@ resolves it with one cheap LLM classification per document:
 
 ---
 
+## Tag quality judge (opt-in)
+
+Adjudication decides what is a duplicate of an existing tag; the quality judge
+decides what deserves to be born. With `enricher.tag_quality.enabled: true`
+(default `false`), the novel tags that survive consolidation — names absent
+from the vocabulary — are filtered before they are created:
+
+- **Weak band**: each candidate is scored from its typed emission —
+  `is_standard_term` +1 when true, 0 when absent, −1 when false; category
+  `other` −1; best store similarity below the internal floor (0.60) −1. A
+  score below the internal threshold (−1, i.e. ≤ −2) is dropped without
+  an LLM call, and the rejection is never cached — a later emission with
+  stronger evidence re-scores.
+- **Rubric verdict**: the survivors are judged in one temperature-0 LLM call
+  per document against four binary criteria — the tag is a subject matter (not
+  a form or genre), standard, widely-recognized terminology (not a coinage
+  specific to the document), not a person/work/non-whitelisted place, and
+  appropriately broad for a shared vocabulary. A verdict passes only when all
+  four are true. Whitelisted countries and continents are never rejected for
+  being a place, so the typed facet gate and this judge cannot disagree.
+- **Cache**: verdicts are stored in the `tag_quality_event` table keyed by
+  `(tag_name, policy_version)`. A re-emitted name resolves from the cache with
+  no LLM call, whichever document produced it; a model or policy change is
+  reflected by bumping the version.
+- **Failure safety**: any timeout, provider error, or incomplete response
+  retries once and then keeps every novel tag — birth falls back to the
+  pre-judge behavior, and enrichment never blocks or fails on the judge.
+- **Logging**: rejections are logged as `tagquality[v1]: reject …` lines
+  (weak-band and judged variants both carry the reason), siblings of the
+  `consolidation[v1]` and `tags[facet]:` lines.
+
+Both band thresholds are internal v1 constants, not configuration keys; the
+judge LLM and timeout inherit the content analyzer's unless the `llm` block
+overrides them, and a warning is logged when the resolved judge equals the
+generator.
+
+---
+
 ## Merge review
 
 Nothing merges automatically. The conservative policy deliberately keeps
@@ -237,6 +276,15 @@ enricher:
   #     model: 'gpt-4o'
   #     token: ''
   #     request_delay: 1
+  # tag_quality:                 # optional rubric judge for newly emitted tags
+  #   enabled: false             # disabled by default — enable after configuring LLM
+  #   timeout: 120               # defaults to contentanalyzer.timeout when 0
+  #   llm:                       # defaults to contentanalyzer.llm when provider/model are empty (use a different model: judge hygiene)
+  #     adapter: 'openai-compatible'
+  #     provider: 'openai'
+  #     model: 'gpt-4o'
+  #     token: ''
+  #     request_delay: 1
   # tag_reconcile:               # scheduled re-adjudication of stored tag verdicts
   #   enabled: false             # disabled by default
   #   report_only: true          # snapshot-only runs (no writes); the first run is always report-only
@@ -247,12 +295,12 @@ enricher:
   #   dead_tag_grace_days: 7     # days a tag must stay without documents before the sweep removes it
 ```
 
-Both blocks are also editable on the Settings page ("Tag adjudicator" and "Tag
-reconciliation" cards), including an "Inherit from content analyzer" option for
-the adjudicator's LLM — leaving the LLM fields empty follows the content
-analyzer's model even after it changes. The similarity thresholds
-(`consolidation_similarity`, `auto_replace_similarity`) are model-derived
-internals — see [tag-matcher.md](tag-matcher.md).
+All three blocks are also editable on the Settings page ("Tag adjudicator",
+"Tag quality", and "Tag reconciliation" cards), including an "Inherit from
+content analyzer" option for the judge LLMs — leaving the LLM fields empty
+follows the content analyzer's model even after it changes. The similarity
+thresholds (`consolidation_similarity`, `auto_replace_similarity`) and the
+quality band constants are internals — see [tag-matcher.md](tag-matcher.md).
 
 ---
 

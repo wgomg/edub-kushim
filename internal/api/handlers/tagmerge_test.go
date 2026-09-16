@@ -31,8 +31,8 @@ func TestTagMergeHandler_Merge_HappyPath(t *testing.T) {
 	h := NewTagHandler(env.services, env.logger)
 	ctx := context.Background()
 
-	sourceID := database.MustCreateTag(t, env.client.Queries, "handler-merge-source")
-	targetID := database.MustCreateTag(t, env.client.Queries, "handler-merge-target")
+	sourceID := database.MustCreateTag(t, env.client.Queries, "handler merge source")
+	targetID := database.MustCreateTag(t, env.client.Queries, "handler merge target")
 
 	docID, _ := database.CreateTestDocument(t, env.client.Queries, "hm.pdf")
 	database.MustAddDocumentTag(t, env.client.Queries, docID, sourceID)
@@ -49,7 +49,7 @@ func TestTagMergeHandler_Merge_HappyPath(t *testing.T) {
 		t.Fatalf("decode response: %v", err)
 	}
 	testutil.AssertEqual(t, resp.ID, targetID, "response id is the target")
-	testutil.AssertEqual(t, resp.Name, "handler-merge-target", "response name is the target name")
+	testutil.AssertEqual(t, resp.Name, "handler merge target", "response name is the target name")
 	testutil.AssertEqual(t, resp.Reassigned, int64(1), "one document re-pointed")
 
 	if _, err := env.client.Queries.GetTag(ctx, sourceID); err == nil {

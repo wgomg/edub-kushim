@@ -200,7 +200,7 @@ func (r *Reconciler) applyJointSplit(ctx context.Context, cfg *config.Config, e 
 	outputs := make([]string, 0, len(decisions))
 	seen := make(map[string]bool, len(decisions))
 	for _, d := range decisions {
-		name := utils.NormalizeTag(d.Output)
+		name := d.Output
 		if name == "" || seen[name] || name == e.name {
 			continue
 		}

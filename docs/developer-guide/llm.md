@@ -91,6 +91,15 @@ type AnalysisResult struct {
   provider supports it). Used by the tag adjudicator when
   `enricher.tag_adjudicator.enabled` is true; see the
   [semantic matching guide](semantic-matching.md#adjudication-of-the-ambiguous-band).
+- `JudgeTagQuality` — judges novel tags against a four-criteria rubric
+  (`subject_matter`, `standard_term`, `not_person_place_work`,
+  `appropriately_broad`) with a temperature-0 request built from
+  `BuildTagQualityPrompt` (reduced document text plus one line per candidate
+  with its term, typed category, and a whitelisted-place carve-out note) and
+  parsed by `ParseTagQualityResponse` (a missing or partially specified
+  verdict for any candidate is an error, never a silent rejection). Used by
+  the enricher when `enricher.tag_quality.enabled` is true; see the
+  [semantic matching guide](semantic-matching.md#rubric-judge-for-novel-tags).
 - `TagDetails` — the typed mirror of `Tags`, one `{term, category,
   is_standard_term}` entry per tag. `category` is folded to `topic` /
   `form_genre` / `place` / `person` / `work` / `other` (a missing or unknown
@@ -511,21 +520,35 @@ for i := range 2 {
     (`Runner.AdjudicateTags`: verdict cache → reciprocal-NN evidence → one LLM
     call per document; `same` replaces, `variant`/`related` keep). Disabled,
     failing, or ambiguous adjudication keeps the emitted tag.
-12. **Persist metadata** (`enricher.go:254-273`): title truncated to 127
+12. **Tag quality judge** (`enricher.go`, `applyTagQuality`): only when
+    `enricher.tag_quality.enabled` is true. Novel tags — consolidated outputs
+    whose normalized names are absent from the vocabulary — are first scored
+    by the deterministic weak band (`is_standard_term` +1/absent 0/−1,
+    category `other` −1, best store similarity below the internal
+    `no_anchor_similarity` 0.60 −1); a score below the internal
+    `t_low` (−1, i.e. ≤ −2) is dropped with a `tagquality[v1]: reject …
+    (reason=weak_score …)` line and never cached. Survivors resolve from the
+    `tag_quality_event` cache or go into one temperature-0 `JudgeTagQuality`
+    call per document; a verdict passes only when all four criteria are true,
+    and a whitelisted country/continent is never rejected for being a place.
+    Fresh verdicts record the judging model, cache-applied ones NULL. A judge
+    failure or timeout retries once and then degrades to keeping every novel
+    tag.
+13. **Persist metadata** (`enricher.go:254-273`): title truncated to 127
     (`utils.Truncate`), doc type validated against the DB list (fallback
     `"undetermined"`), `UpdateDocumentMetadata`.
-13. **OCR language auto-detect** (`enricher.go:275`,
+14. **OCR language auto-detect** (`enricher.go:275`,
     `ensureOCRLanguage` `enricher.go:447-500`): the detected 3-letter ISO
     code is added to `consumer.ocr.languages` and persisted via
     `config.SaveMap` — for the gosseract engine the tessdata download runs
     in a goroutine and config persists only on success.
-14. **Tags to DB** (`enricher.go:277-305`): batch `Tag.Create` (tolerating
+15. **Tags to DB** (`enricher.go:277-305`): batch `Tag.Create` (tolerating
     conflicts), then `ClearDocumentTags` + `AddDocumentTag` per tag.
-15. **People to DB** (`enricher.go:307-397`): dedupe by normalized name,
+16. **People to DB** (`enricher.go:307-397`): dedupe by normalized name,
     `CreatePeople` with a race fallback (`sql.ErrNoRows` →
     `GetPeopleByNormalizedName` + `UpdatePeopleNative`), unknown LLM types →
     `"unknown"`, then `ClearDocumentPeople` + `AddDocumentPeople`.
-16. **Return** the stats JSON (the task result).
+17. **Return** the stats JSON (the task result).
 
 ---
 
@@ -550,6 +573,8 @@ Under `enricher` (`internal/config/config.go:164-195`):
 | `contentanalyzer.fallbacks` | `[]` | ordered list of `{enabled, llm.*}` fallbacks tried on provider errors; each enabled entry requires adapter/provider/model (with `request_delay` 0–60) |
 | `tagmatcher.reduce_target_words` | `4000` | matcher reduction target |
 | `tagmatcher.hugot.*` | — | model/backend (§9 of the semantic-matching guide) |
+| `tag_adjudicator.enabled` / `timeout` / `llm.*` | `false` / analyzer timeout / analyzer llm | ambiguous-band pair verdicts (semantic-matching guide) |
+| `tag_quality.enabled` / `timeout` / `llm.*` | `false` / analyzer timeout / analyzer llm | rubric verdicts for novel tags; the weak-band thresholds are internal v1 constants (`t_low = -1`, `no_anchor_similarity = 0.60`), not config keys |
 
 Validation (`finalizeConfig`, `config.go:447-460`): when content analysis is
 enabled, `adapter`, `provider`, and `model` are all **required** — three

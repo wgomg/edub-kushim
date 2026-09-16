@@ -152,6 +152,16 @@ enricher:
   #     token: ''
   #     request_delay: 1
 
+  # tag_quality:                 # rubric judge for newly emitted tags (judge LLM should differ from the generator)
+  #   enabled: false             # disabled by default
+  #   timeout: 120               # defaults to contentanalyzer.timeout when 0
+  #   llm:                       # defaults to contentanalyzer.llm when provider/model are empty
+  #     adapter: 'openai-compatible'
+  #     provider: 'openai'
+  #     model: 'gpt-4o'
+  #     token: ''
+  #     request_delay: 1
+
   # tag_reconcile:               # scheduled re-adjudication of stored tag verdicts
   #   enabled: false             # disabled by default
   #   report_only: true          # snapshot-only runs (no writes); the first run is always report-only

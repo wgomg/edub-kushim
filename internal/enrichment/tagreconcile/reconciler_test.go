@@ -393,11 +393,11 @@ func TestApplyKeepFlip_ZeroDocsCreatesNoTag(t *testing.T) {
 	}
 
 	// Seed a target tag so tagByName succeeds.
-	database.MustCreateTag(t, client.Queries, "keepflip-zero-target")
+	database.MustCreateTag(t, client.Queries, "keepflip zero target")
 
 	e := &entry{
-		query:  "keepflip-zero-query",
-		target: "keepflip-zero-target",
+		query:  "keepflip zero query",
+		target: "keepflip zero target",
 		docIDs: nil, // empty: DocumentIDsForPairs would return nothing
 	}
 	blocklist := make(map[string]database.ListAllDeletedTagsRow)
@@ -414,7 +414,7 @@ func TestApplyKeepFlip_ZeroDocsCreatesNoTag(t *testing.T) {
 	}
 
 	// The query tag must NOT have been created.
-	_, err = client.Queries.GetTagByName(ctx, "keepflip-zero-query")
+	_, err = client.Queries.GetTagByName(ctx, "keepflip zero query")
 	if err == nil {
 		t.Fatal("zero-docs keep-flip must not create a tag in the database")
 	}

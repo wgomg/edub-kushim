@@ -177,7 +177,7 @@ func (r *Reconciler) Run(ctx context.Context, progress task.ProgressFunc) (Repor
 	}
 	blocklist := make(map[string]database.ListAllDeletedTagsRow, len(deletedTags))
 	for _, row := range deletedTags {
-		blocklist[utils.NormalizeTag(row.Name)] = row
+		blocklist[row.Name] = row
 	}
 	tagCounts := make(map[string]int64, len(allTags))
 	{
@@ -1157,7 +1157,7 @@ func (r *Reconciler) applyKeepFlip(ctx context.Context, e *entry, blocklist map[
 		return 0, false, fmt.Errorf("target tag %q not in store", e.target)
 	}
 
-	if row, deleted := blocklist[utils.NormalizeTag(e.query)]; deleted {
+	if row, deleted := blocklist[e.query]; deleted {
 		r.logDeletedTagKeepFlip(e, row)
 		if err := r.upsertVerdict(ctx, e); err != nil {
 			r.logger.Error(nil, "tag reconcile: upsert verdict for %q → %q: %v", e.query, e.target, err)
@@ -1220,8 +1220,8 @@ func (r *Reconciler) applyKeepFlip(ctx context.Context, e *entry, blocklist map[
 	}
 	if _, err := txQ.UpsertFreshTagVerdict(ctx, database.UpsertFreshTagVerdictParams{
 		DocumentID:    e.documentID,
-		Query:         e.query,
-		Target:        e.target,
+		Query:         utils.NormalizeTag(e.query),
+		Target:        utils.NormalizeTag(e.target),
 		Sim:           e.freshSim,
 		Verdict:       e.freshVerdict,
 		VerdictModel:  sql.NullString{String: e.freshModel, Valid: e.freshModel != ""},
@@ -1267,8 +1267,8 @@ func (r *Reconciler) upsertVerdict(ctx context.Context, e *entry) error {
 	}
 	_, err := r.client.UpsertFreshTagVerdict(ctx, database.UpsertFreshTagVerdictParams{
 		DocumentID:    e.documentID,
-		Query:         e.query,
-		Target:        e.target,
+		Query:         utils.NormalizeTag(e.query),
+		Target:        utils.NormalizeTag(e.target),
 		Sim:           e.freshSim,
 		Verdict:       e.freshVerdict,
 		VerdictModel:  sql.NullString{String: e.freshModel, Valid: e.freshModel != ""},

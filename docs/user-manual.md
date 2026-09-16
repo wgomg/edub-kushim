@@ -2518,6 +2518,15 @@ enricher:
   #     model: 'gpt-4o'
   #     token: ''
   #     request_delay: 1
+  # tag_quality:                 # optional rubric judge for newly emitted tags (use a different model than the generator)
+  #   enabled: false             # disabled by default
+  #   timeout: 120               # defaults to contentanalyzer.timeout when 0
+  #   llm:                       # defaults to contentanalyzer.llm when provider/model are empty
+  #     adapter: 'openai-compatible'
+  #     provider: 'openai'
+  #     model: 'gpt-4o'
+  #     token: ''
+  #     request_delay: 1
   # tag_reconcile:               # scheduled re-adjudication of stored tag verdicts
   #   enabled: false             # disabled by default
   #   report_only: true          # snapshot-only runs (no writes); the first run is always report-only
@@ -2595,6 +2604,7 @@ mirror:
 | `enricher.tagmatcher`          | Semantic tag matching via Hugot (embeddings) — see [Tag Matcher guide](tag-matcher.md) for memory/CPU tuning |
 | `enricher.tagmatcher.hugot`    | Hugot-specific settings (model, backend)                               |
 | `enricher.tag_adjudicator`     | Optional LLM verdicts for ambiguous tag pairs: `enabled` (default `false`), `timeout` (defaults to `contentanalyzer.timeout` at use time when `0`), `llm` (defaults to `contentanalyzer.llm` at use time when `provider`/`model` are empty — the raw values are preserved in config so the inheritance survives saves). When enabled, ambiguous-band pairs are classified `same`/`variant`/`related`, verdicts are cached in `tag_verdict_event`, and `same` replaces the emitted tag with the canonical target |
+| `enricher.tag_quality`         | Optional rubric judge for newly emitted tags: `enabled` (default `false`), `timeout` (defaults to `contentanalyzer.timeout` at use time when `0`), `llm` (defaults to `contentanalyzer.llm` at use time when `provider`/`model` are empty). When enabled, tags that survive consolidation and are absent from the vocabulary pass a deterministic weak band and then a four-criteria rubric (`subject_matter`, `standard_term`, `not_person_place_work`, `appropriately_broad`); verdicts are cached per name in `tag_quality_event`, rejections drop the tag for that document and are logged as `tagquality[v1]` lines, and a judge failure retries once then keeps every novel tag. The band thresholds are internal v1 constants, not config keys — the judge LLM should differ from the generator, and a warning is logged when the resolved judge equals the generator model |
 | `enricher.tag_reconcile`       | Scheduled re-adjudication of stored tag verdicts: `enabled` (default `false`), `report_only` (default `true`; the first run is always report-only regardless), `interval` (days between runs, default `7`), `time` (HH:MM preferred time, default `02:00`), `max_rejudge` (max pairs re-evaluated per run, default `200`), `max_retag` (max documents re-pointed per run, default `1000`), `dead_tag_grace_days` (days a tag must stay without documents before the orphan sweep removes it, default `7`; `≤ 0` resets to the default). The queue daemon enqueues a `tagreconcile` task when due; runs re-evaluate stale/unjudged/drifted/aged pairs against the current policy and store, healing absorbed tags and applying flips, split store tags that join concepts with a conjunction into their components (adjudicated when the tag adjudicator is enabled, deterministic otherwise) — both under the same per-run caps — and delete tags that have had no documents for longer than the grace window (report-only runs list the would-be deletions). Requires the tag adjudicator for acting (write) runs — without it, runs stay snapshot-only |
 
 > **Schedule changes**: changing a scheduled task's interval or preferred time
@@ -2954,6 +2964,10 @@ tools, plus an "N of M" availability counter.
 - **Tag adjudicator**: enabled toggle; when enabled, timeout plus an LLM
   sub-block whose adapter/provider/model can inherit from the content
   analyzer
+- **Tag quality**: enabled toggle; when enabled, timeout plus an LLM
+  sub-block whose adapter/provider/model can inherit from the content
+  analyzer, with a note that the judge model should differ from the content
+  analyzer's
 - **Tag reconciliation**: enabled toggle, report-only toggle, interval
   (days), preferred time (HH:MM), max pairs judged per run, max documents
   re-tagged per run, orphan tag grace period (days a document-less tag must

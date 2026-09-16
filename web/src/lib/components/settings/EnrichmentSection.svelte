@@ -40,6 +40,13 @@
 		}
 	}
 
+	function onTagQualityAdapterChange() {
+		if (!cfg.enricher.tag_quality.llm.adapter) {
+			cfg.enricher.tag_quality.llm.provider = '';
+			cfg.enricher.tag_quality.llm.model = '';
+		}
+	}
+
 	function addFallback() {
 		const ca = cfg.enricher.contentanalyzer;
 		if (!ca.fallbacks) ca.fallbacks = [];
@@ -611,6 +618,108 @@
 						step="0.1"
 						bind:value={cfg.enricher.tag_adjudicator.llm.request_delay}
 					/>
+				</div>
+			{/if}
+		</Card>
+
+		<Card
+			title="Tag quality"
+			name="tag quality judge rubric reject threshold similar"
+			description="Rubric judge that filters newly emitted tags before they enter the shared vocabulary."
+		>
+			{#snippet actions()}
+				<Switch
+					bind:checked={cfg.enricher.tag_quality.enabled}
+					label="Enabled"
+					ariaLabel="Enable tag quality judge"
+				/>
+			{/snippet}
+
+			{#if cfg.enricher.tag_quality.enabled}
+				<div class="grid gap-4 sm:grid-cols-2">
+					<UnitField
+						id="tag-quality-timeout"
+						label="Timeout"
+						unit="s"
+						type="number"
+						inputmode="numeric"
+						min="0"
+						hint="0 = no deadline"
+						bind:value={cfg.enricher.tag_quality.timeout}
+					/>
+					<div class="field">
+						<label for="tag-quality-adapter" class="text-[0.8125rem] font-medium text-parchment-200"
+							>Adapter</label
+						>
+						<select
+							id="tag-quality-adapter"
+							name="tag-quality-adapter"
+							bind:value={cfg.enricher.tag_quality.llm.adapter}
+							onchange={onTagQualityAdapterChange}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-2.5 py-[0.45rem] text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+						>
+							<option value="">Inherit from content analyzer</option>
+							{#each Object.keys(llmModels.adapters) as adapter (adapter)}
+								<option value={adapter}>{adapter}</option>
+							{/each}
+						</select>
+					</div>
+					<div class="field">
+						<label
+							for="tag-quality-provider"
+							class="text-[0.8125rem] font-medium text-parchment-200">Provider</label
+						>
+						<select
+							id="tag-quality-provider"
+							name="tag-quality-provider"
+							bind:value={cfg.enricher.tag_quality.llm.provider}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-2.5 py-[0.45rem] text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+						>
+							<option value="">Inherit from content analyzer</option>
+							{#each adapterProviders(cfg.enricher.tag_quality.llm) as provider (provider)}
+								<option value={provider}>{provider}</option>
+							{/each}
+						</select>
+					</div>
+					<div class="field">
+						<label for="tag-quality-model" class="text-[0.8125rem] font-medium text-parchment-200"
+							>Model</label
+						>
+						<select
+							id="tag-quality-model"
+							name="tag-quality-model"
+							bind:value={cfg.enricher.tag_quality.llm.model}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-2.5 py-[0.45rem] text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+						>
+							<option value="">Inherit from content analyzer</option>
+							{#each providerModels(cfg.enricher.tag_quality.llm) as model (model.id)}
+								<option value={model.id}>{model.id}</option>
+							{/each}
+						</select>
+					</div>
+					<div class="field">
+						<label for="tag-quality-token" class="text-[0.8125rem] font-medium text-parchment-200"
+							>Token</label
+						>
+						<TokenField id="tag-quality-token" bind:value={cfg.enricher.tag_quality.llm.token} />
+					</div>
+					<UnitField
+						id="tag-quality-request-delay"
+						label="Request delay"
+						unit="s"
+						type="number"
+						inputmode="numeric"
+						min="0"
+						max="60"
+						step="0.1"
+						bind:value={cfg.enricher.tag_quality.llm.request_delay}
+					/>
+				</div>
+				<div class="mt-4">
+					<Note variant="info">
+						The judge LLM should differ from the content analyzer's model; a shared model biases
+						every verdict with the generator's own failure modes.
+					</Note>
 				</div>
 			{/if}
 		</Card>

@@ -94,6 +94,7 @@ The SQL dump/restore machinery lives in `internal/database/` (shared by `kushim 
 - `BatchOwner` — `BatchID`, `OwnerID`, `Pid`, `AcquiredAt`, `LastHeartbeat`
 - `OrphanedFile` — `ID`, `DocumentKey`, `DocumentKeyType` (uuid/dbid), `FilePath`, `OriginalPath`, `SourceDir` (originals/processed), `FileSize`, `OriginalType`, `DetectedAt`, `Status` (pending/deleted/restored/reingested), `ActionAt`, `ActionType`
 - `TagVerdictEvent` — `ID`, `DocumentID int64` (FK → `document.id`, ON DELETE CASCADE), `Query`, `Target`, `Sim float64`, `Verdict types.TagVerdict` (`same`/`variant`/`related`), `VerdictModel sql.NullString` (NULL for cache-applied rows), `PolicyVersion`, `VerdictAt time.Time`
+- `TagQualityEvent` — `ID`, `DocumentID int64` (FK → `document.id`, ON DELETE CASCADE), `TagName`, `Criteria json.RawMessage` (JSONB, the four rubric booleans), `Pass bool`, `VerdictModel sql.NullString` (NULL for cache-applied rows), `PolicyVersion`, `VerdictAt time.Time`
 
 ---
 
@@ -175,6 +176,10 @@ The SQL dump/restore machinery lives in `internal/database/` (shared by `kushim 
 ### Tag verdict event
 
 `InsertTagVerdictEvent` (`:execrows` — `ON CONFLICT (query, target, policy_version) WHERE verdict_model IS NOT NULL DO NOTHING`, returns 0 when a concurrent worker already judged the pair fresh), `LatestTagVerdictsForPairs` (`DISTINCT ON (query, target)` latest verdict per pair at a given `policy_version`, served by `idx_tag_verdict_event_pair`), `TagPairEvidenceStats` (per-pair population and verdict aggregates across all policy versions — `COUNT(DISTINCT document_id)`, event count, and `same`/`variant`/`related` counts — restricted to the requested pair list; feeds the merge-suggestions scan)
+
+### Tag quality event
+
+`InsertTagQualityEvent` (`:execrows` — `ON CONFLICT (tag_name, policy_version) WHERE verdict_model IS NOT NULL DO NOTHING`, returns 0 when a concurrent worker already cached the name fresh), `LatestTagQualityEventsForNames` (`DISTINCT ON (tag_name)` latest row per requested name at a given `policy_version`, served by `idx_tag_quality_event_name`; returns only the names that have rows, so the caller's absent names go to the judge)
 
 ---
 
@@ -270,6 +275,8 @@ The last 4 methods back the dashboard analytics panel. `LanguageDistribution` an
 - `batch_owner` — Batch ownership: `batch_id` (PK, FK to batch), `owner_id`, `pid` (`BIGINT`), `acquired_at`, `last_heartbeat`
 - `orphaned_file` — Detected orphaned files: `document_key`, `document_key_type` (uuid/dbid), `source_dir` (originals/processed), `file_path`, `file_size` (`BIGINT`), `original_type`, `detected_at`, `status` (pending/deleted/restored/reingested), `action_at`, `action_type`. CHECK constraints on `document_key_type`, `source_dir`, `status`, `action_type`.
 - `deleted_tag` — Tag blocklist: `name` (PK, canonical form), `kind` (`blocked`|`merged`, CHECK constrained), `target_name` (nullable, set for merged rows), `created_at TIMESTAMPTZ NOT NULL DEFAULT now()`. Written when an operator deletes a tag (`blocked`) or merges one away (`merged` + target) and read by the enricher/reconciler to keep enrichment from resurrecting the name.
+- `tag_verdict_event` — Append-only tag-adjudication verdicts: `document_id` (FK → `document.id`, ON DELETE CASCADE), `query`, `target`, `sim`, `verdict` (`same`/`variant`/`related`), `verdict_model` (nullable — NULL for cache-applied rows), `policy_version`, `verdict_at`. A partial unique index on `(query, target, policy_version) WHERE verdict_model IS NOT NULL` deduplicates fresh verdicts across concurrent workers.
+- `tag_quality_event` — Append-only tag-quality rubric verdicts: `document_id` (FK → `document.id`, ON DELETE CASCADE), `tag_name` (canonical form), `criteria` (JSONB — `subject_matter`, `standard_term`, `not_person_place_work`, `appropriately_broad`), `pass`, `verdict_model` (nullable — NULL for cache-applied rows), `policy_version`, `verdict_at`. A partial unique index on `(tag_name, policy_version) WHERE verdict_model IS NOT NULL` deduplicates fresh verdicts across concurrent workers; the newest row per name is the cache, so a re-emitted name resolves without an LLM call.
 
 ## Junction Tables
 
@@ -285,6 +292,8 @@ The last 4 methods back the dashboard analytics panel. `LanguageDistribution` an
 - `document_tag`: `document_id`, `tag_id`
 - `people`: `normalized_name` (UNIQUE)
 - `tag`: partial `idx_tag_orphaned_since` (`orphaned_since WHERE orphaned_since IS NOT NULL`)
+- `tag_verdict_event`: `idx_tag_verdict_event_pair` (`query, target, policy_version, verdict_at DESC`), `idx_tag_verdict_event_stale` (`policy_version, verdict_at`), partial unique `idx_tag_verdict_event_fresh_pair` (`(query, target, policy_version) WHERE verdict_model IS NOT NULL`)
+- `tag_quality_event`: `idx_tag_quality_event_name` (`tag_name, policy_version, verdict_at DESC`), partial unique `idx_tag_quality_event_fresh_name` (`(tag_name, policy_version) WHERE verdict_model IS NOT NULL`)
 - `batch`: `status`
 - `batch_owner`: `owner_id`, `last_heartbeat`
 - `orphaned_file`: `status`, `detected_at`
@@ -313,7 +322,20 @@ forms: `c plus plus` → `c++`, `c sharp` → `c#`, `dot net` → `.net`, `asp n
 `00017_tag_verdict_events.sql` (adds the `tag_verdict` enum — `same`/`variant`/`related` —
 and the append-only `tag_verdict_event` table with a partial unique index
 `idx_tag_verdict_event_fresh_pair` on `(query, target, policy_version) WHERE verdict_model IS NOT NULL`
-so concurrent workers deduplicate fresh LLM verdicts per pair/version). Goose tracks
+so concurrent workers deduplicate fresh LLM verdicts per pair/version),
+`00018_tag_reconcile_vocabulary.sql` (adds `tagreconcile` to the `task_type` and
+`batch_source` enums), `00019_thumbbackfill_task_type.sql` (adds the `thumbbackfill`
+task type), `00020_deleted_tag_table.sql` (creates the `deleted_tag` blocklist with
+`name` as PK and the `kind` CHECK), `00021_document_tag_source.sql` (adds
+`document_tag.source` — `enrich`/`manual` — so re-enrichment never clears operator
+assignments), `00022_tag_orphaned_since.sql` (adds the nullable `tag.orphaned_since`
+mark) with `00023_tag_orphaned_since_index.sql` (partial
+`idx_tag_orphaned_since WHERE orphaned_since IS NOT NULL`),
+`00024_tag_quality_events.sql` (adds the append-only `tag_quality_event` table —
+`tag_name`, JSONB `criteria`, `pass`, nullable `verdict_model`, `policy_version` —
+with the partial unique index `idx_tag_quality_event_fresh_name` on
+`(tag_name, policy_version) WHERE verdict_model IS NOT NULL` for fresh-verdict
+deduplication, mirroring the verdict table). Goose tracks
 which versions have been applied in the `goose_db_version` table.
 
 ## Migration Version Table

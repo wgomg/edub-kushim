@@ -253,6 +253,12 @@ type TagAdjudicatorConfig struct {
 	Llm     LlmConfig `mapstructure:"llm" yaml:"llm" json:"llm"`
 }
 
+type TagQualityConfig struct {
+	Enabled bool      `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
+	Timeout int       `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
+	Llm     LlmConfig `mapstructure:"llm" yaml:"llm" json:"llm"`
+}
+
 type TagReconcileConfig struct {
 	Enabled          bool    `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
 	ReportOnly       bool    `mapstructure:"report_only" yaml:"report_only" json:"report_only"`
@@ -269,6 +275,7 @@ type EnricherConfig struct {
 	ContentAnalyzer ContentAnalyzerConfig `mapstructure:"contentanalyzer" yaml:"contentanalyzer" json:"contentanalyzer"`
 	TagMatcher      TagMatcherConfig      `mapstructure:"tagmatcher" yaml:"tagmatcher" json:"tagmatcher"`
 	TagAdjudicator  TagAdjudicatorConfig  `mapstructure:"tag_adjudicator" yaml:"tag_adjudicator" json:"tag_adjudicator"`
+	TagQuality      TagQualityConfig      `mapstructure:"tag_quality" yaml:"tag_quality" json:"tag_quality"`
 	TagReconcile    TagReconcileConfig    `mapstructure:"tag_reconcile" yaml:"tag_reconcile" json:"tag_reconcile"`
 }
 
@@ -284,6 +291,20 @@ func (c *Config) ResolvedAdjudicatorTimeout() int {
 		return c.Enricher.ContentAnalyzer.Timeout
 	}
 	return c.Enricher.TagAdjudicator.Timeout
+}
+
+func (c *Config) ResolvedQualityLlm() LlmConfig {
+	if c.Enricher.TagQuality.Llm.Provider == "" || c.Enricher.TagQuality.Llm.Model == "" {
+		return c.Enricher.ContentAnalyzer.Llm
+	}
+	return c.Enricher.TagQuality.Llm
+}
+
+func (c *Config) ResolvedQualityTimeout() int {
+	if c.Enricher.TagQuality.Timeout == 0 {
+		return c.Enricher.ContentAnalyzer.Timeout
+	}
+	return c.Enricher.TagQuality.Timeout
 }
 
 type LlmConfig struct {
@@ -583,6 +604,9 @@ func DefaultConfig(configDir string) *Config {
 			TagAdjudicator: TagAdjudicatorConfig{
 				Enabled: false,
 			},
+			TagQuality: TagQualityConfig{
+				Enabled: false,
+			},
 			TagReconcile: TagReconcileConfig{
 				Enabled:          false,
 				ReportOnly:       true,
@@ -753,6 +777,13 @@ func finalizeConfig(cfg *Config, configDir string) error {
 	}
 	if cfg.Enricher.TagReconcile.Enabled && !cfg.Enricher.TagAdjudicator.Enabled {
 		slog.Warn("enricher.tag_reconcile.enabled is set but enricher.tag_adjudicator.enabled is false — scheduled runs will be snapshot-only (no LLM re-adjudication, no writes)")
+	}
+	if cfg.Enricher.TagQuality.Enabled {
+		q := cfg.ResolvedQualityLlm()
+		g := cfg.Enricher.ContentAnalyzer.Llm
+		if q.Provider == g.Provider && q.Model == g.Model {
+			slog.Warn("enricher.tag_quality.llm resolves to the generator model — judge hygiene requires a different model; shared failure modes will bias every verdict")
+		}
 	}
 
 	homeDir, err := os.UserHomeDir()
