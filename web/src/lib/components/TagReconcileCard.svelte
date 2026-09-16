@@ -30,6 +30,21 @@
 	const changed = $derived(changedDecisions(report));
 	const documents = $derived(affectedDocuments(report));
 	const runDate = $derived(data?.completed_at ? new Date(data.completed_at).toLocaleString() : '—');
+	const provisional = $derived(report.provisional ?? null);
+	const provisionalParts = $derived.by(() => {
+		const p = provisional;
+		if (!p?.worklist) return [];
+		const parts = [];
+		if (p.promoted) parts.push(`${formatNumber(p.promoted)} promoted`);
+		if (p.rejudged) parts.push(`${formatNumber(p.rejudged)} re-judged`);
+		if (p.deferred) parts.push(`${formatNumber(p.deferred)} deferred to review`);
+		if (p.no_judge) parts.push(`${formatNumber(p.no_judge)} awaiting the judge`);
+		if (p.zero_assignment) parts.push(`${formatNumber(p.zero_assignment)} without documents`);
+		if (p.skipped) parts.push(`${formatNumber(p.skipped)} skipped`);
+		if (p.failed) parts.push(`${formatNumber(p.failed)} failed`);
+		if (parts.length === 0) parts.push('nothing to act on');
+		return parts;
+	});
 </script>
 
 <div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
@@ -87,6 +102,13 @@
 				<p class="text-xs text-parchment-500">documents affected</p>
 			</div>
 		</div>
+
+		{#if provisionalParts.length > 0}
+			<p class="mt-3 text-xs text-parchment-500">
+				New tags past the provisional grace window: {formatNumber(provisional.worklist)} —
+				{provisionalParts.join(' · ')}
+			</p>
+		{/if}
 
 		<a
 			href={resolve(`/tasks/${data.task_id}`)}

@@ -8,10 +8,25 @@ import (
 	"slices"
 	"strings"
 	"sync"
+
+	"github.com/google/uuid"
 )
 
 //go:embed model_catalog.json
 var embeddedCatalog []byte
+
+var (
+	sessionOnce sync.Once
+	sessionID   string
+)
+
+// SessionID returns the process-stable identifier for providers whose catalog
+// entry declares a session_header; gateways use it for request routing and
+// prompt caching, so it must stay constant across requests.
+func SessionID() string {
+	sessionOnce.Do(func() { sessionID = uuid.NewString() })
+	return sessionID
+}
 
 type ModelCapability struct {
 	SupportsReasoning        bool
@@ -32,38 +47,41 @@ type ProviderModel struct {
 }
 
 type catalogEntry struct {
-	Provider                string   `json:"provider"`
-	Adapter                 string   `json:"adapter"`
-	ModelID                 string   `json:"model_id"`
-	DisplayName             string   `json:"display_name"`
-	OfficialURL             string   `json:"official_url"`
-	MaxInputTokens          int      `json:"max_input_tokens"`
-	MaxOutputTokens         int      `json:"max_output_tokens"`
-	Reasoning               bool     `json:"reasoning"`
-	ReasoningEfforts        []string `json:"reasoning_efforts,omitempty"`
-	SupportsStructuredOutput bool    `json:"supports_structured_output"`
-	SupportsTemperature     bool     `json:"supports_temperature"`
-	SupportsPromptCaching   bool     `json:"supports_prompt_caching"`
+	Provider                 string   `json:"provider"`
+	Adapter                  string   `json:"adapter"`
+	ModelID                  string   `json:"model_id"`
+	DisplayName              string   `json:"display_name"`
+	OfficialURL              string   `json:"official_url"`
+	SessionHeader            string   `json:"session_header,omitempty"`
+	MaxInputTokens           int      `json:"max_input_tokens"`
+	MaxOutputTokens          int      `json:"max_output_tokens"`
+	Reasoning                bool     `json:"reasoning"`
+	ReasoningEfforts         []string `json:"reasoning_efforts,omitempty"`
+	SupportsStructuredOutput bool     `json:"supports_structured_output"`
+	SupportsTemperature      bool     `json:"supports_temperature"`
+	SupportsPromptCaching    bool     `json:"supports_prompt_caching"`
 }
 
 type Registry struct {
-	mu         sync.RWMutex
+	mu          sync.RWMutex
 	catalogPath string
-	entries    []catalogEntry
-	index      map[string]int
-	adapters   map[string][]string
+	entries     []catalogEntry
+	index       map[string]int
+	adapters    map[string][]string
 
-	providerAdapters map[string]string
-	providerURLs     map[string]string
+	providerAdapters       map[string]string
+	providerURLs           map[string]string
+	providerSessionHeaders map[string]string
 }
 
 func NewRegistry(catalogPath string) (*Registry, error) {
 	r := &Registry{
-		catalogPath:      catalogPath,
-		index:            make(map[string]int),
-		adapters:         make(map[string][]string),
-		providerAdapters: make(map[string]string),
-		providerURLs:     make(map[string]string),
+		catalogPath:            catalogPath,
+		index:                  make(map[string]int),
+		adapters:               make(map[string][]string),
+		providerAdapters:       make(map[string]string),
+		providerURLs:           make(map[string]string),
+		providerSessionHeaders: make(map[string]string),
 	}
 	if err := r.load(); err != nil {
 		return nil, err
@@ -95,6 +113,9 @@ func (r *Registry) load() error {
 		if _, ok := r.providerURLs[e.Provider]; !ok {
 			r.providerURLs[e.Provider] = e.OfficialURL
 		}
+		if _, ok := r.providerSessionHeaders[e.Provider]; !ok && e.SessionHeader != "" {
+			r.providerSessionHeaders[e.Provider] = e.SessionHeader
+		}
 	}
 	return nil
 }
@@ -105,6 +126,7 @@ func (r *Registry) Reload() error {
 
 	r.providerAdapters = make(map[string]string)
 	r.providerURLs = make(map[string]string)
+	r.providerSessionHeaders = make(map[string]string)
 	if err := r.load(); err != nil {
 		return err
 	}
@@ -218,6 +240,14 @@ func (r *Registry) ModelsForProvider(provider string) []ProviderModel {
 
 func (r *Registry) ProviderDefaultURL(provider string) string {
 	return r.providerURLs[provider]
+}
+
+// ProviderSessionHeader returns the header a provider expects its client
+// session identifier in, or "" when the provider does not ask for one.
+func (r *Registry) ProviderSessionHeader(provider string) string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.providerSessionHeaders[provider]
 }
 
 func (r *Registry) ProviderAdapter(provider string) string {

@@ -195,3 +195,7 @@ RETURNING document_id;
 -- name: GetDocumentIDsByDocumentIDs :many
 SELECT document_id, id FROM document
 WHERE document_id = ANY($1::text[]);
+
+-- name: GetDocumentTextForTagQuality :one
+SELECT text_content, word_count FROM document
+WHERE id = $1 AND deleted_at IS NULL;

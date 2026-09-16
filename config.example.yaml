@@ -170,6 +170,7 @@ enricher:
   #   max_rejudge: 200           # max pairs re-evaluated per run
   #   max_retag: 1000            # max documents re-pointed per run
   #   dead_tag_grace_days: 7     # days a tag must stay without documents before the sweep removes it
+  #   provisional_grace_days: 30 # days a provisional (quarantined) tag may stay unreviewed before the sweep re-checks it
 
 backup:
   # enabled: true

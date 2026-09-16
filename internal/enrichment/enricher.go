@@ -82,7 +82,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 
 	report("reduce", "", 0)
 	llmContent, err := e.runner.ReduceContent(ctx, document.TextContent.String, chunkSize,
-		targetWordCount(int(document.WordCount), e.config.Enricher.TextReducer.TargetWords))
+		TargetWordCount(int(document.WordCount), e.config.Enricher.TextReducer.TargetWords))
 	if err != nil {
 		e.logger.Error(&logId, "llm text reduction failed, using raw text: %w", err)
 	} else {
@@ -93,7 +93,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 	}
 
 	tagsContent, err := e.runner.ReduceContent(ctx, document.TextContent.String, chunkSize,
-		targetWordCount(int(document.WordCount), e.config.Enricher.TagMatcher.ReduceTargetWords))
+		TargetWordCount(int(document.WordCount), e.config.Enricher.TagMatcher.ReduceTargetWords))
 	if err != nil {
 		e.logger.Error(&logId, "tag text reduction failed, using raw text: %w", err)
 	} else {
@@ -542,7 +542,7 @@ func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, res
 	for i, p := range passed {
 		ids[i] = p.id
 	}
-	countRows, err := q.CountTagDocumentsByTagIDs(ctx, ids)
+	countRows, err := q.CountLiveTagDocumentsByTagIDs(ctx, ids)
 	if err != nil {
 		e.logger.Error(logId, "tag quality promotion document count failed: %v", err)
 		return nil
@@ -1192,7 +1192,7 @@ func (e *Enricher) reciprocalEvidence(ctx context.Context, documentID string, pa
 	return evidence
 }
 
-func targetWordCount(contentWC, targetWC int) int {
+func TargetWordCount(contentWC, targetWC int) int {
 	result := targetWC
 	if result < 0 {
 		result = contentWC / -result

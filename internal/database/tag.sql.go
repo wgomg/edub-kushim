@@ -38,6 +38,19 @@ func (q *Queries) ClearOrphanTagMarksByTagIDs(ctx context.Context, tagIds []int6
 	return err
 }
 
+const countProvisionalTags = `-- name: CountProvisionalTags :one
+SELECT COUNT(*) FROM tag t
+WHERE t.promoted_at IS NULL
+  AND EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
+`
+
+func (q *Queries) CountProvisionalTags(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countProvisionalTags)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countTags = `-- name: CountTags :one
 SELECT COUNT(*) FROM tag
 `
@@ -112,6 +125,21 @@ DELETE FROM tag WHERE id = $1
 func (q *Queries) DeleteTag(ctx context.Context, id int64) error {
 	_, err := q.db.ExecContext(ctx, deleteTag, id)
 	return err
+}
+
+const firstDocumentIDForTag = `-- name: FirstDocumentIDForTag :one
+SELECT dt.document_id FROM document_tag dt
+JOIN document d ON d.id = dt.document_id
+WHERE dt.tag_id = $1 AND d.deleted_at IS NULL
+ORDER BY dt.document_id
+LIMIT 1
+`
+
+func (q *Queries) FirstDocumentIDForTag(ctx context.Context, tagID int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, firstDocumentIDForTag, tagID)
+	var document_id int64
+	err := row.Scan(&document_id)
+	return document_id, err
 }
 
 const getTag = `-- name: GetTag :one
@@ -295,6 +323,94 @@ func (q *Queries) ListPromotedTagNames(ctx context.Context) ([]string, error) {
 			return nil, err
 		}
 		items = append(items, name)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listProvisionalTagsOlderThan = `-- name: ListProvisionalTagsOlderThan :many
+SELECT t.id, t.name, t.created_at FROM tag t
+WHERE t.promoted_at IS NULL
+  AND t.created_at < $1::timestamptz
+ORDER BY t.created_at
+`
+
+type ListProvisionalTagsOlderThanRow struct {
+	ID        int64
+	Name      string
+	CreatedAt sql.NullTime
+}
+
+func (q *Queries) ListProvisionalTagsOlderThan(ctx context.Context, cutoff time.Time) ([]ListProvisionalTagsOlderThanRow, error) {
+	rows, err := q.db.QueryContext(ctx, listProvisionalTagsOlderThan, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListProvisionalTagsOlderThanRow
+	for rows.Next() {
+		var i ListProvisionalTagsOlderThanRow
+		if err := rows.Scan(&i.ID, &i.Name, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listProvisionalTagsWithDocumentCount = `-- name: ListProvisionalTagsWithDocumentCount :many
+SELECT t.id, t.name, coalesce(t.created_at, now()) AS created_at,
+       (SELECT COUNT(*) FROM document_tag dt
+        JOIN document d ON d.id = dt.document_id
+        WHERE dt.tag_id = t.id AND d.deleted_at IS NULL) AS document_count
+FROM tag t
+WHERE t.promoted_at IS NULL
+  AND EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
+ORDER BY coalesce(t.created_at, now()) DESC
+LIMIT $1 OFFSET $2
+`
+
+type ListProvisionalTagsWithDocumentCountParams struct {
+	Limit  int32
+	Offset int32
+}
+
+type ListProvisionalTagsWithDocumentCountRow struct {
+	ID            int64
+	Name          string
+	CreatedAt     sql.NullTime
+	DocumentCount int64
+}
+
+func (q *Queries) ListProvisionalTagsWithDocumentCount(ctx context.Context, arg ListProvisionalTagsWithDocumentCountParams) ([]ListProvisionalTagsWithDocumentCountRow, error) {
+	rows, err := q.db.QueryContext(ctx, listProvisionalTagsWithDocumentCount, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListProvisionalTagsWithDocumentCountRow
+	for rows.Next() {
+		var i ListProvisionalTagsWithDocumentCountRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.CreatedAt,
+			&i.DocumentCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

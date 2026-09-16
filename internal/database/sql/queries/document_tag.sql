@@ -67,3 +67,11 @@ SELECT tag_id, COUNT(*) AS document_count
 FROM document_tag
 WHERE tag_id = ANY(@tag_ids::bigint[])
 GROUP BY tag_id;
+
+-- name: CountLiveTagDocumentsByTagIDs :many
+SELECT dt.tag_id, COUNT(*) AS document_count
+FROM document_tag dt
+JOIN document d ON d.id = dt.document_id
+WHERE dt.tag_id = ANY(@tag_ids::bigint[])
+  AND d.deleted_at IS NULL
+GROUP BY dt.tag_id;

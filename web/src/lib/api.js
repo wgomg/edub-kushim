@@ -262,6 +262,11 @@ export const api = {
 			requestRaw(`/api/v1/tags/deleted/${encodeURIComponent(name)}`, { method: 'DELETE' }),
 		mergeSuggestions: (limit = 20) => requestRaw(`/api/v1/tags/merge?limit=${limit}`),
 		reconcileReport: () => requestRaw('/api/v1/tags/reconciliation/report'),
+		provisionalList: (limit = 50, offset = 0) => {
+			const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+			return requestRaw(`/api/v1/tags/provisional?${params.toString()}`);
+		},
+		promote: (id) => requestRaw(`/api/v1/tags/${id}/promote`, { method: 'POST' }),
 		merge: (sourceId, targetId) =>
 			requestRaw(`/api/v1/tags/${sourceId}/merge`, {
 				method: 'POST',

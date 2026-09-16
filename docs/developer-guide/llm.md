@@ -412,15 +412,19 @@ caveats: `algorithms.md` §12.
 
 `internal/llm/registry.go` loads `model_catalog.json` — from disk
 (`<config-dir>/model_catalog.json` if present) or the embedded copy
-(`//go:embed model_catalog.json`, `registry.go:13-14`) — and indexes it.
+(`//go:embed model_catalog.json`, `registry.go:15-16`) — and indexes it.
 
-Catalog entry fields (`registry.go:34-47`): `provider`, `adapter`,
-`model_id`, `display_name`, `official_url`, `max_input_tokens`,
-`max_output_tokens`, `reasoning`, `reasoning_efforts`,
+Catalog entry fields (`registry.go:49-63`): `provider`, `adapter`,
+`model_id`, `display_name`, `official_url`, `session_header`,
+`max_input_tokens`, `max_output_tokens`, `reasoning`, `reasoning_efforts`,
 `supports_structured_output`, `supports_temperature`,
-`supports_prompt_caching`. Six providers: openai, deepseek, mistral,
-anthropic, qwen, zhipu — each entry carries its own `official_url`, which is
-how the adapters know the endpoint:
+`supports_prompt_caching`. Eight providers: openai, deepseek, mistral,
+anthropic, qwen, zhipu, opencode, opencode-go — each entry carries its own
+`official_url`, which is how the adapters know the endpoint. Providers that
+declare `session_header` receive the process-stable `llm.SessionID()` in that
+header on every request (both adapters set it; opencode and opencode-go ask for
+`x-opencode-session`, which their gateway uses for request routing and prompt
+caching):
 
 ```go
 key := provider + "/" + modelID
@@ -429,14 +433,14 @@ i, ok := r.index[key]
 return entryToCapability(entry)
 ```
 
-(`registry.go:160-172`). Lookups feed the API surface
+(`registry.go:182-194`). Lookups feed the API surface
 (`ModelsForProvider`, `ProvidersForAdapter`) and the capability gating in
 both adapters. **Unknown model → nil capabilities** → adapters degrade
 gracefully: no temperature, no reasoning, no structured output, no token
 pre-check.
 
 Note: the catalog has **no cost fields** — `entryToCapability`
-(`registry.go:146-158`) hardcodes zero input/output cost per token.
+(`registry.go:168-180`) hardcodes zero input/output cost per token.
 
 ---
 
@@ -550,8 +554,12 @@ for i := range 2 {
     the layer off every created tag is promoted atomically with its insert and
     the batch's new names are added to the embedding store after the commit;
     with the layer on births land provisional, `promoteEligible` runs inside the
-    transaction (cached pass verdict + ≥ 2 distinct documents → `PromoteTags`),
-    and only the promoted names are added to the store.
+    transaction (cached pass verdict + ≥ 2 distinct live documents →
+    `PromoteTags`; trashed carriers do not count, and the same rule backs the
+    reconciliation sweep), and only the promoted names are added to the store.
+    Verdict-less provisionals are resolved later by the scheduled sweep or the
+    review queue (see the
+    [semantic matching promotion section](semantic-matching.md#promotion-out-of-quarantine)).
 16. **People to DB** (`enricher.go:307-397`): dedupe by normalized name,
     `CreatePeople` with a race fallback (`sql.ErrNoRows` →
     `GetPeopleByNormalizedName` + `UpdatePeopleNative`), unknown LLM types →

@@ -138,10 +138,11 @@ When `enricher.tag_quality.enabled` is true, `applyTagQuality`
 `tag_quality_event` cache, or go into one rubric call per document; rejected
 names are dropped for that document only. Survivors are born **provisional**
 and are promoted inline once a cached passing verdict and assignments on ≥2
-distinct documents coincide; only promoted names enter the store. The judge's
+distinct live documents coincide; only promoted names enter the store. The judge's
 prompt, criteria, and cache semantics are documented in the
 [semantic matching guide](semantic-matching.md#rubric-judge-for-novel-tags),
-and the promotion rule in its
+and the promotion rule — including the review queue and the reconciliation
+sweep that resolve the names the inline path cannot — in its
 [promotion section](semantic-matching.md#promotion-out-of-quarantine).
 
 ---
@@ -306,7 +307,9 @@ category, judged/confirmed, flips by direction, merges with reassignment
 counts, re-tags, invalidations, skip reasons — as the task result. The report
 also carries pair-level entries (`planned_merges`, `planned_keep_flips`,
 `retag_entries`, `invalidated_entries`) plus `capped`, `no_documents`,
-`swept` (orphan tags deleted, or the would-be count in report-only runs), and
+`swept` (orphan tags deleted, or the would-be count in report-only runs),
+`provisional` (the provisional sweep's `worklist`, `zero_assignment`,
+`promoted`, `rejudged`, `deferred`, `no_judge`, `skipped`, `failed`), and
 `adjudicator_disabled`; report-only keep-flip document counts come from a
 single batched `TagPairEvidenceStats` call (a stats failure keeps every
 planned entry with zero documents instead of dropping it), and no-document
@@ -399,6 +402,30 @@ a tag re-assigned mid-run is never deleted. Report-only runs refresh the marks
 inside a transaction that is always rolled back, so the reported `swept` count
 predicts what the next apply would delete.
 
+**Provisional sweep**: after the orphan sweep, the same run walks provisional
+tags older than `enricher.tag_reconcile.provisional_grace_days` (default 30),
+oldest first. Zero-assignment rows are only counted — the orphan sweep owns
+their deletion. Rows whose latest verdict at `TagQualityVersion` passes and
+that hold ≥2 live documents are promoted through `service.Tag.Promote` (the
+same method behind `POST /api/v1/tags/{id}/promote`, so the log line and the
+store add match the operator path). Verdict-less rows are re-judged under the
+shared `max_rejudge` budget: `FirstDocumentIDForTag` picks the first live
+carrier, `GetDocumentTextForTagQuality` fetches its text and word count, and
+`Runner.ReduceContent` reduces it with `enrichment.TargetWordCount` (the
+tagreconcile runner loads the `textreducer` tool for this path). One
+`JudgeTagQuality` call judges the single candidate — category `other` and the
+whitelisted-place flag recomputed from the name — and a failure retries once
+unless the error carries `context.Canceled`/`DeadlineExceeded`. The verdict is
+written with `InsertTagQualityEvent`, the enricher's `DO NOTHING` conflict
+rule: a concurrent fresh verdict is kept and its `pass`/model drive the
+decision instead of being overwritten. A fresh pass promotes at ≥2 live
+documents, a reject is deferred to the review queue, a tag with no live
+document text is skipped, a missing judge is reported as `no_judge`, and
+lookup or write failures as `failed`; the run never deletes a tag. Report-only
+runs count would-promote/would-re-judge and touch nothing. The counts land in
+`Report.Provisional` (`worklist`, `zero_assignment`, `promoted`, `rejudged`,
+`deferred`, `no_judge`, `skipped`, `failed`).
+
 **Report-only**: the first run is always report-only
 (`GetLastCompletedTagReconcileTask` finds no completed prior run), regardless
 of the flag — it executes the full evidence/evaluation path and logs every
@@ -442,10 +469,11 @@ daemon warns when reconciliation is enabled without the adjudicator.
   on, a newborn is attached and searchable from birth but stays out of the
   embedding store — and therefore out of suggestions, consolidation targets,
   and the all-names fallback — until it has a cached passing verdict and
-  assignments on ≥2 distinct documents. Verdict-less births (judge outages)
-  and re-emitted legacy provisionals never get a verdict row either — a name in
-  the tag table is not novel, so the judge never sees it again — and stay
-  provisional.
+  assignments on ≥2 distinct live documents. Verdict-less births (judge
+  outages) and re-emitted legacy provisionals never get a verdict row in
+  flight — a name in the tag table is not novel, so the judge never sees it
+  again — and stay provisional until the reconciliation sweep's provisional
+  phase or an operator in the review queue resolves them.
 - **The first reconciliation run is always report-only**, even with
   `report_only: false` — flip behavior only starts with the second run.
 - **`GET /rpc/v1/similar-pairs` has no legacy fallback** — after upgrading

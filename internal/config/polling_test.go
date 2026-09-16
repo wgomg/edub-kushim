@@ -639,6 +639,9 @@ func TestDefaultConfig_TagReconcile(t *testing.T) {
 	if cfg.Enricher.TagReconcile.DeadTagGraceDays != 7 {
 		t.Errorf("TagReconcile.DeadTagGraceDays = %d, want 7", cfg.Enricher.TagReconcile.DeadTagGraceDays)
 	}
+	if cfg.Enricher.TagReconcile.ProvisionalGraceDays != 30 {
+		t.Errorf("TagReconcile.ProvisionalGraceDays = %d, want 30", cfg.Enricher.TagReconcile.ProvisionalGraceDays)
+	}
 }
 
 func TestFinalizeConfig_TagReconcile(t *testing.T) {
@@ -700,6 +703,26 @@ func TestFinalizeConfig_TagReconcile(t *testing.T) {
 		}
 		if cfg.Enricher.TagReconcile.DeadTagGraceDays != 7 {
 			t.Errorf("DeadTagGraceDays = %d, want 7", cfg.Enricher.TagReconcile.DeadTagGraceDays)
+		}
+	})
+	t.Run("zero provisional_grace_days defaults to 30", func(t *testing.T) {
+		cfg := DefaultConfig(t.TempDir())
+		cfg.Enricher.TagReconcile.ProvisionalGraceDays = 0
+		if err := finalizeConfig(cfg, t.TempDir()); err != nil {
+			t.Fatalf("finalizeConfig: %v", err)
+		}
+		if cfg.Enricher.TagReconcile.ProvisionalGraceDays != 30 {
+			t.Errorf("ProvisionalGraceDays = %d, want 30", cfg.Enricher.TagReconcile.ProvisionalGraceDays)
+		}
+	})
+	t.Run("negative provisional_grace_days defaults to 30", func(t *testing.T) {
+		cfg := DefaultConfig(t.TempDir())
+		cfg.Enricher.TagReconcile.ProvisionalGraceDays = -1
+		if err := finalizeConfig(cfg, t.TempDir()); err != nil {
+			t.Fatalf("finalizeConfig: %v", err)
+		}
+		if cfg.Enricher.TagReconcile.ProvisionalGraceDays != 30 {
+			t.Errorf("ProvisionalGraceDays = %d, want 30", cfg.Enricher.TagReconcile.ProvisionalGraceDays)
 		}
 	})
 	t.Run("empty time defaults to 02:00", func(t *testing.T) {

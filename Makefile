@@ -325,12 +325,13 @@ test-web-e2e:
 .PHONY: test-cgo test-cgo-glibc test-cgo-musl
 
 test-cgo:
-	go test -tags "XLA,ORT" -count=1 -timeout 120s \
-		./internal/tools/adapters \
-		./internal/tools/adapters/ocr \
-		./internal/tools/adapters/tagmatcher \
+	CGO_ENABLED=1 go test -tags "XLA,ORT" -count=1 -timeout 120s \
+		./internal/tools/adapters/ \
+		./internal/tools/adapters/ocr/ \
+		./internal/tools/adapters/tagmatcher/ \
 		./internal/tools/ \
 		./internal/commands/ \
+		./internal/enrichment/ \
 		./internal/enrichment/tagreconcile/
 
 test-cgo-glibc:

@@ -455,3 +455,98 @@ func TestOrphanTagMarkTransactionRollback(t *testing.T) {
 	}
 	assertOrphanMark(t, q, freshID, false)
 }
+
+func TestMigration00026TagPromotionCorrection(t *testing.T) {
+	q, db := NewTestQueries(t)
+	defer db.Close()
+	resetDB(t, q)
+	ctx := context.Background()
+
+	docID1 := reconcileInsertDoc(t, q, "m26-doc1")
+	docID2 := reconcileInsertDoc(t, q, "m26-doc2")
+
+	// Fixture A: backfill signature (promoted_at = created_at), 1 doc → demoted by Up.
+	backfillSig := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	tagA := reconcileInsertTag(t, q, "m26-backfill-single")
+	q.db.ExecContext(ctx, "UPDATE tag SET created_at = $1, promoted_at = $1 WHERE id = $2", backfillSig, tagA)
+	q.db.ExecContext(ctx, "INSERT INTO document_tag (document_id, tag_id, source) VALUES ($1, $2, 'enrich')", docID1, tagA)
+
+	// Fixture B: backfill signature, 2 docs → survives Up.
+	tagB := reconcileInsertTag(t, q, "m26-backfill-double")
+	q.db.ExecContext(ctx, "UPDATE tag SET created_at = $1, promoted_at = $1 WHERE id = $2", backfillSig, tagB)
+	q.db.ExecContext(ctx, "INSERT INTO document_tag (document_id, tag_id, source) VALUES ($1, $2, 'enrich')", docID1, tagB)
+	q.db.ExecContext(ctx, "INSERT INTO document_tag (document_id, tag_id, source) VALUES ($1, $2, 'enrich')", docID2, tagB)
+
+	// Fixture C: runtime promotion (promoted_at ≠ created_at), 1 doc → survives Up.
+	tagC := reconcileInsertTag(t, q, "m26-runtime-single")
+	q.db.ExecContext(ctx, "UPDATE tag SET created_at = $1, promoted_at = $2 WHERE id = $3",
+		backfillSig, time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC), tagC)
+	q.db.ExecContext(ctx, "INSERT INTO document_tag (document_id, tag_id, source) VALUES ($1, $2, 'enrich')", docID1, tagC)
+
+	// Fixture D: NULL created_at, promoted_at set, 1 doc → survives (documented edge).
+	tagD := reconcileInsertTag(t, q, "m26-null-created")
+	q.db.ExecContext(ctx, "UPDATE tag SET created_at = NULL, promoted_at = now() - interval '1 day' WHERE id = $1", tagD)
+	q.db.ExecContext(ctx, "INSERT INTO document_tag (document_id, tag_id, source) VALUES ($1, $2, 'enrich')", docID1, tagD)
+
+	isProvisional := func(tagID int64) bool {
+		t.Helper()
+		var v bool
+		if err := q.db.QueryRowContext(ctx, "SELECT (promoted_at IS NULL) FROM tag WHERE id = $1", tagID).Scan(&v); err != nil {
+			t.Fatalf("check provisional for tag %d: %v", tagID, err)
+		}
+		return v
+	}
+
+	// --- Up: demote backfill singletons (signature + <2 docs) ---
+	n, err := q.db.ExecContext(ctx, `
+		UPDATE tag t SET promoted_at = NULL
+		WHERE t.promoted_at IS NOT NULL
+		  AND t.promoted_at = t.created_at
+		  AND (SELECT COUNT(*) FROM document_tag dt WHERE dt.tag_id = t.id) < 2`)
+	if err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+	if up, _ := n.RowsAffected(); up < 1 {
+		t.Fatalf("Up affected %d rows, want >= 1 (at least fixture A)", up)
+	}
+	if !isProvisional(tagA) {
+		t.Error("A (backfill + 1 doc): want provisional after Up")
+	}
+	if isProvisional(tagB) {
+		t.Error("B (backfill + 2 docs): want promoted after Up")
+	}
+	if isProvisional(tagC) {
+		t.Error("C (runtime promotion): want promoted after Up")
+	}
+	if isProvisional(tagD) {
+		t.Error("D (NULL created_at): want promoted after Up")
+	}
+
+	// --- Down: re-promote provisionals that still have assignments ---
+	n, err = q.db.ExecContext(ctx, `
+		UPDATE tag t SET promoted_at = coalesce(t.created_at, now())
+		WHERE t.promoted_at IS NULL
+		  AND EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)`)
+	if err != nil {
+		t.Fatalf("Down: %v", err)
+	}
+	if down, _ := n.RowsAffected(); down < 1 {
+		t.Fatalf("Down affected %d rows, want >= 1 (at least fixture A)", down)
+	}
+	if isProvisional(tagA) {
+		t.Error("A (backfill + 1 doc): want promoted after Down")
+	}
+	if isProvisional(tagD) {
+		t.Error("D (NULL created_at): want promoted after Down")
+	}
+
+	// After Down, A's backfill signature should be restored (promoted_at = created_at).
+	var sigOK bool
+	if err := q.db.QueryRowContext(ctx,
+		"SELECT (promoted_at IS NOT DISTINCT FROM created_at) FROM tag WHERE id = $1", tagA).Scan(&sigOK); err != nil {
+		t.Fatalf("check sig for A: %v", err)
+	}
+	if !sigOK {
+		t.Error("A after Down: want promoted_at = created_at (backfill signature restored)")
+	}
+}

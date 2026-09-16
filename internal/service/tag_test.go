@@ -261,3 +261,122 @@ func TestTag_CreateAndUnblock(t *testing.T) {
 		t.Fatal("CreateAndUnblock must clear the blocklist row")
 	}
 }
+
+func TestTag_ListProvisional(t *testing.T) {
+	svc, client := newTestTag(t)
+	ctx := context.Background()
+
+	// Create a tag and set promoted_at = NULL to make it provisional.
+	tagID := database.MustCreateTag(t, client.Queries, "list-prov-tag")
+	_, err := client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", tagID)
+	testutil.AssertNoError(t, err, "set provisional")
+
+	// Create a document and link it to the tag.
+	docID := database.CreateUniqueDocument(t, client.Queries, "prov-doc")
+	database.MustAddDocumentTag(t, client.Queries, docID, tagID)
+
+	// ListProvisional must return the provisional tag.
+	rows, err := svc.ListProvisional(ctx, 50, 0)
+	testutil.AssertNoError(t, err, "list provisional")
+	if len(rows) == 0 {
+		t.Fatal("expected at least one provisional tag")
+	}
+	found := false
+	for _, row := range rows {
+		if row.ID == tagID {
+			found = true
+			if row.DocumentCount != 1 {
+				t.Errorf("DocumentCount = %d, want 1", row.DocumentCount)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("tag %d not found in provisional list", tagID)
+	}
+
+	// CountProvisional must match.
+	count, err := svc.CountProvisional(ctx)
+	testutil.AssertNoError(t, err, "count provisional")
+	if count < 1 {
+		t.Errorf("CountProvisional = %d, want >= 1", count)
+	}
+}
+
+func TestTag_LatestQualityEventsForNames(t *testing.T) {
+	svc, client := newTestTag(t)
+	ctx := context.Background()
+
+	tagID := database.MustCreateTag(t, client.Queries, "quality-events-tag")
+	docID := database.CreateUniqueDocument(t, client.Queries, "quality-test-doc")
+	database.MustAddDocumentTag(t, client.Queries, docID, tagID)
+
+	// Insert a quality event.
+	criteria := []byte(`{"subject_matter":true,"standard_term":true,"not_person_place_work":true,"appropriately_broad":true}`)
+	_, err := client.Queries.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
+		DocumentID:    docID,
+		TagName:       "quality-events-tag",
+		Criteria:      criteria,
+		Pass:          true,
+		VerdictModel:  sql.NullString{String: "test-model", Valid: true},
+		PolicyVersion: "v1",
+	})
+	testutil.AssertNoError(t, err, "insert quality event")
+
+	events, err := svc.LatestQualityEventsForNames(ctx, []string{"quality-events-tag"})
+	testutil.AssertNoError(t, err, "latest events")
+	testutil.AssertEqual(t, len(events), 1, "one event")
+	testutil.AssertEqual(t, events[0].Pass, true, "pass")
+	testutil.AssertEqual(t, events[0].VerdictModel.String, "test-model", "model")
+	testutil.AssertEqual(t, events[0].TagName, "quality-events-tag", "tag name")
+
+	// Non-existent name returns nothing.
+	events, err = svc.LatestQualityEventsForNames(ctx, []string{"nonexistent"})
+	testutil.AssertNoError(t, err, "nonexistent")
+	testutil.AssertEqual(t, len(events), 0, "no events")
+}
+
+func TestTag_Promote(t *testing.T) {
+	svc, client := newTestTag(t)
+	ctx := context.Background()
+
+	t.Run("promote a provisional tag", func(t *testing.T) {
+		// Create a tag and set promoted_at = NULL to make it provisional.
+		tagID := database.MustCreateTag(t, client.Queries, "promote-me-tag")
+		_, err := client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", tagID)
+		testutil.AssertNoError(t, err, "set provisional")
+
+		tag, err := svc.Get(ctx, tagID)
+		testutil.AssertNoError(t, err, "get tag")
+		if tag.PromotedAt.Valid {
+			t.Fatal("tag should not be promoted yet")
+		}
+
+		tag, status, err := svc.Promote(ctx, tagID, "test-reason")
+		testutil.AssertNoError(t, err, "promote")
+		testutil.AssertEqual(t, status, PromotePromoted, "promoted status")
+
+		// Re-fetch to verify the update persisted.
+		tag, err = svc.Get(ctx, tagID)
+		testutil.AssertNoError(t, err, "re-fetch after promote")
+		if !tag.PromotedAt.Valid {
+			t.Error("tag should be promoted now")
+		}
+	})
+
+	t.Run("already promoted", func(t *testing.T) {
+		results, err := svc.Create(ctx, []string{"already-promoted-tag"})
+		testutil.AssertNoError(t, err, "create")
+		testutil.AssertEqual(t, results[0].Status, Created, "created")
+		tagID := results[0].Entity.ID
+
+		_, status, err := svc.Promote(ctx, tagID, "test-reason")
+		testutil.AssertNoError(t, err, "promote again")
+		testutil.AssertEqual(t, status, PromoteAlreadyPromoted, "already promoted")
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		_, status, err := svc.Promote(ctx, 999999, "test-reason")
+		testutil.AssertNoError(t, err, "not found")
+		testutil.AssertEqual(t, status, PromoteNotFound, "not found status")
+	})
+}

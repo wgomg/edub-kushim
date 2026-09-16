@@ -189,13 +189,14 @@ type TagAdjudicatorLlmResponse struct {
 }
 
 type TagReconcileConfigResponse struct {
-	Enabled          bool    `json:"enabled"`
-	ReportOnly       bool    `json:"report_only"`
-	Interval         float64 `json:"interval"`
-	Time             string  `json:"time"`
-	MaxRejudge       int     `json:"max_rejudge"`
-	MaxRetag         int     `json:"max_retag"`
-	DeadTagGraceDays int     `json:"dead_tag_grace_days"`
+	Enabled              bool    `json:"enabled"`
+	ReportOnly           bool    `json:"report_only"`
+	Interval             float64 `json:"interval"`
+	Time                 string  `json:"time"`
+	MaxRejudge           int     `json:"max_rejudge"`
+	MaxRetag             int     `json:"max_retag"`
+	DeadTagGraceDays     int     `json:"dead_tag_grace_days"`
+	ProvisionalGraceDays int     `json:"provisional_grace_days"`
 }
 
 type TextReducerResponse struct {
@@ -389,6 +390,7 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Enricher.TagReconcile.MaxRejudge = cfg.Enricher.TagReconcile.MaxRejudge
 	resp.Enricher.TagReconcile.MaxRetag = cfg.Enricher.TagReconcile.MaxRetag
 	resp.Enricher.TagReconcile.DeadTagGraceDays = cfg.Enricher.TagReconcile.DeadTagGraceDays
+	resp.Enricher.TagReconcile.ProvisionalGraceDays = cfg.Enricher.TagReconcile.ProvisionalGraceDays
 	resp.Storage.ConsumptionDir = cfg.Storage.ConsumptionDir
 	resp.Storage.StorageDir = cfg.Storage.StorageDir
 	resp.Storage.MigrationMode = cfg.Storage.MigrationMode

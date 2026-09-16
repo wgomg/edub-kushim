@@ -1417,13 +1417,75 @@ Response `200`:
   `retag_entries`, `invalidated_entries`), planned/applied joint splits
   (`planned_joint_splits` / `joint_splits` — query, components, reassigned documents,
   reason), skip reasons, the `swept` count of orphan tags deleted during the run
-  (the would-be count in report-only runs), and the `capped` / `no_documents` /
+  (the would-be count in report-only runs), the `provisional` counts of the
+  provisional-tag sweep (`worklist`, `zero_assignment`, `promoted`, `rejudged`,
+  `deferred`, `no_judge`, `skipped`, `failed`), and the `capped` / `no_documents` /
   `adjudicator_disabled` markers. Pair-level fields appear only when the run recorded
   them (a run with no flips has no `planned_keep_flips`). Each pair entry carries
   `reason` (the policy guard that decided it, or `adjudicated` for LLM-judged pairs)
   and `creates_tag` (true when a keep flip creates the query tag; always present in
   new reports).
 - `404` — no completed `tagreconcile` run exists yet.
+
+### Provisional Tag Review Queue
+
+Lists tags that are provisional (`promoted_at IS NULL`) and carry at least one
+assignment, newest first, each with its latest rubric verdict. `document_count`
+counts live (non-trashed) documents only. Viewer-readable.
+
+```
+GET /api/v1/tags/provisional?limit=50&offset=0
+```
+
+Response `200`:
+
+```json
+{
+  "results": [
+    {
+      "id": 42,
+      "name": "machine learning",
+      "document_count": 1,
+      "created_at": "2024-03-01T09:12:00Z",
+      "verdict": {
+        "pass": true,
+        "criteria": {
+          "subject_matter": true,
+          "standard_term": true,
+          "not_person_place_work": true,
+          "appropriately_broad": true
+        },
+        "model": "gpt-4o-mini",
+        "verdict_at": "2024-03-01T09:12:01Z"
+      }
+    }
+  ],
+  "total": 1
+}
+```
+
+- `total` counts every provisional tag with at least one assignment, independent of the page.
+- `verdict` is `null` for names with no recorded rubric verdict (judge outage at birth, re-emitted legacy provisionals).
+- `model` is omitted for cache-applied verdicts, which carry a stored decision without a judging model.
+- `limit` defaults to 50 (1–100); `offset` defaults to 0 (negative values clamp to 0).
+
+### Promote a Provisional Tag
+
+Promotes one provisional tag into the shared vocabulary and the embedding store —
+the same promotion path the scheduled reconciliation sweep uses. Editor/admin only.
+
+```
+POST /api/v1/tags/{id}/promote
+```
+
+- `204` — the tag was provisional and is now promoted, logged as `tagquality[v1]: promote "<name>" (reason=human-approve)`.
+- `409` — the tag is already promoted.
+- `404` — no tag with that id.
+- `400` — the id is not a number.
+
+Rejecting a provisional tag uses the regular delete endpoint
+(`DELETE /api/v1/tags/{id}`), which records the name in the `deleted_tag`
+blocklist; the tags page exposes both actions in its "Review new tags" section.
 
 ### Saved Searches
 
@@ -2535,6 +2597,7 @@ enricher:
   #   max_rejudge: 200           # max pairs re-evaluated per run
   #   max_retag: 1000            # max documents re-pointed per run
   #   dead_tag_grace_days: 7     # days a tag must stay without documents before the sweep removes it
+  #   provisional_grace_days: 30 # days a provisional (quarantined) tag may stay unreviewed before the sweep re-checks it
 
 backup:
   # enabled: true
@@ -2604,8 +2667,8 @@ mirror:
 | `enricher.tagmatcher`          | Semantic tag matching via Hugot (embeddings) — see [Tag Matcher guide](tag-matcher.md) for memory/CPU tuning |
 | `enricher.tagmatcher.hugot`    | Hugot-specific settings (model, backend)                               |
 | `enricher.tag_adjudicator`     | Optional LLM verdicts for ambiguous tag pairs: `enabled` (default `false`), `timeout` (defaults to `contentanalyzer.timeout` at use time when `0`), `llm` (defaults to `contentanalyzer.llm` at use time when `provider`/`model` are empty — the raw values are preserved in config so the inheritance survives saves). When enabled, ambiguous-band pairs are classified `same`/`variant`/`related`, verdicts are cached in `tag_verdict_event`, and `same` replaces the emitted tag with the canonical target |
-| `enricher.tag_quality`         | Optional rubric judge for newly emitted tags: `enabled` (default `false`), `timeout` (defaults to `contentanalyzer.timeout` at use time when `0`), `llm` (defaults to `contentanalyzer.llm` at use time when `provider`/`model` are empty). When enabled, tags that survive consolidation and are absent from the vocabulary pass a deterministic weak band and then a four-criteria rubric (`subject_matter`, `standard_term`, `not_person_place_work`, `appropriately_broad`); verdicts are cached per name in `tag_quality_event`, rejections drop the tag for that document and are logged as `tagquality[v1]` lines, and a judge failure retries once then keeps every novel tag. Survivors are **provisional**: attached and searchable from birth, but excluded from the embedding store — and therefore from suggestions, consolidation targets, and the suggestion fallback — until a cached passing verdict plus assignments on ≥2 distinct documents promote them inline (logged as `tagquality[v1]: promote …`); a verdict-less birth (judge outage) or re-emitted legacy provisional never gets a verdict row — a name in the tag table is not novel, so the judge never sees it again — and stays out of the vocabulary. The band thresholds are internal v1 constants, not config keys — the judge LLM should differ from the generator, and a warning is logged when the resolved judge equals the generator model |
-| `enricher.tag_reconcile`       | Scheduled re-adjudication of stored tag verdicts: `enabled` (default `false`), `report_only` (default `true`; the first run is always report-only regardless), `interval` (days between runs, default `7`), `time` (HH:MM preferred time, default `02:00`), `max_rejudge` (max pairs re-evaluated per run, default `200`), `max_retag` (max documents re-pointed per run, default `1000`), `dead_tag_grace_days` (days a tag must stay without documents before the orphan sweep removes it, default `7`; `≤ 0` resets to the default). The queue daemon enqueues a `tagreconcile` task when due; runs re-evaluate stale/unjudged/drifted/aged pairs against the current policy and store, healing absorbed tags and applying flips, split store tags that join concepts with a conjunction into their components (adjudicated when the tag adjudicator is enabled, deterministic otherwise) — both under the same per-run caps — and delete tags that have had no documents for longer than the grace window (report-only runs list the would-be deletions). Requires the tag adjudicator for acting (write) runs — without it, runs stay snapshot-only |
+| `enricher.tag_quality`         | Optional rubric judge for newly emitted tags: `enabled` (default `false`), `timeout` (defaults to `contentanalyzer.timeout` at use time when `0`), `llm` (defaults to `contentanalyzer.llm` at use time when `provider`/`model` are empty). When enabled, tags that survive consolidation and are absent from the vocabulary pass a deterministic weak band and then a four-criteria rubric (`subject_matter`, `standard_term`, `not_person_place_work`, `appropriately_broad`); verdicts are cached per name in `tag_quality_event`, rejections drop the tag for that document and are logged as `tagquality[v1]` lines, and a judge failure retries once then keeps every novel tag. Survivors are **provisional**: attached and searchable from birth, but excluded from the embedding store — and therefore from suggestions, consolidation targets, and the suggestion fallback — until a cached passing verdict plus assignments on ≥2 distinct live (non-trashed) documents promote them inline (logged as `tagquality[v1]: promote …`); a verdict-less birth (judge outage) or re-emitted legacy provisional never gets a verdict row — a name in the tag table is not novel, so the judge never sees it again — and stays out of the vocabulary until the scheduled reconciliation sweep re-judges it or an operator promotes it from the review queue. The band thresholds are internal v1 constants, not config keys — the judge LLM should differ from the generator, and a warning is logged when the resolved judge equals the generator model |
+| `enricher.tag_reconcile`       | Scheduled re-adjudication of stored tag verdicts: `enabled` (default `false`), `report_only` (default `true`; the first run is always report-only regardless), `interval` (days between runs, default `7`), `time` (HH:MM preferred time, default `02:00`), `max_rejudge` (max pairs re-evaluated per run, default `200`), `max_retag` (max documents re-pointed per run, default `1000`), `dead_tag_grace_days` (days a tag must stay without documents before the orphan sweep removes it, default `7`; `≤ 0` resets to the default), `provisional_grace_days` (days a provisional tag may stay unreviewed before the provisional sweep re-checks it, default `30`; `≤ 0` resets to the default). The queue daemon enqueues a `tagreconcile` task when due; runs re-evaluate stale/unjudged/drifted/aged pairs against the current policy and store, healing absorbed tags and applying flips, split store tags that join concepts with a conjunction into their components (adjudicated when the tag adjudicator is enabled, deterministic otherwise) — both under the same per-run caps — delete tags that have had no documents for longer than the grace window, and re-check provisional tags older than `provisional_grace_days`: a stored passing verdict plus ≥2 live documents promotes the name immediately, verdict-less names are re-judged under the `max_rejudge` cap and promoted when they pass, and rejected names stay queued for the review surface on the tags page (report-only runs list the would-be promotions and verdicts). Requires the tag adjudicator for acting (write) runs — without it, runs stay snapshot-only |
 
 > **Schedule changes**: changing a scheduled task's interval or preferred time
 > takes effect at the closest upcoming occurrence of the new timing; if that
@@ -2971,8 +3034,10 @@ tools, plus an "N of M" availability counter.
 - **Tag reconciliation**: enabled toggle, report-only toggle, interval
   (days), preferred time (HH:MM), max pairs judged per run, max documents
   re-tagged per run, orphan tag grace period (days a document-less tag must
-  stay unused before the sweep removes it), plus an amber hint when enabled
-  without the adjudicator
+  stay unused before the sweep removes it), provisional tag grace period
+  (days a provisional tag may stay unreviewed before the reconciliation
+  sweep re-checks it), plus an amber hint when enabled without the
+  adjudicator
 - **Enrichment workers**: worker count
 
 ### Storage

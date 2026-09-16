@@ -30,6 +30,19 @@
 	let survivorByPair = $state({});
 	let showDeleted = $state(false);
 	let deletedRefreshKey = $state(0);
+	let showProvisional = $state(false);
+	let provisionalTags = $state([]);
+	let provisionalTotal = $state(0);
+	let loadingProvisional = $state(false);
+	let provisionalError = $state('');
+	let actingProvisional = $state(null);
+
+	const provisionalCriteria = [
+		{ key: 'subject_matter', label: 'subject matter' },
+		{ key: 'standard_term', label: 'standard term' },
+		{ key: 'not_person_place_work', label: 'not person/place/work' },
+		{ key: 'appropriately_broad', label: 'appropriately broad' }
+	];
 
 	const columns = [
 		{
@@ -260,6 +273,72 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 		const key = pairKey(s);
 		dismissedPairs = new Set([...dismissedPairs, key]);
 	}
+
+	async function loadProvisional() {
+		loadingProvisional = true;
+		provisionalError = '';
+		const result = await api.tags.provisionalList(50, 0);
+		if (result.ok) {
+			provisionalTags = result.data?.results ?? [];
+			provisionalTotal = result.data?.total ?? 0;
+		} else {
+			provisionalTags = [];
+			provisionalTotal = 0;
+			provisionalError = 'Failed to load new tags.';
+		}
+		loadingProvisional = false;
+	}
+
+	async function toggleProvisional() {
+		showProvisional = !showProvisional;
+		if (!showProvisional) return;
+		await loadProvisional();
+	}
+
+	async function handleApprove(tag) {
+		actingProvisional = tag.id;
+		const result = await api.tags.promote(tag.id);
+		actingProvisional = null;
+		if (result.ok) {
+			toastStore.success(`Approved "${tag.name}"`);
+			refreshKey++;
+		} else if (result.status !== 409) {
+			toastStore.error('Failed to approve tag');
+		}
+		await loadProvisional();
+	}
+
+	async function handleRejectProvisional(tag) {
+		const ok = await confirmStore.confirm({
+			title: 'Reject tag',
+			message: `Reject tag "${tag.name}"? It is deleted and blocked from enrichment.`,
+			danger: true
+		});
+		if (!ok) return;
+		actingProvisional = tag.id;
+		const result = await api.tags.delete(tag.id);
+		actingProvisional = null;
+		if (result.ok) {
+			toastStore.success(`Rejected "${tag.name}"`);
+			refreshKey++;
+			deletedRefreshKey++;
+		} else {
+			toastStore.error('Failed to reject tag');
+		}
+		await loadProvisional();
+	}
+
+	function criterionMark(value) {
+		if (value === true) return 'yes';
+		if (value === false) return 'no';
+		return '—';
+	}
+
+	function criterionClass(value) {
+		if (value === true) return 'text-emerald-500';
+		if (value === false) return 'text-terracotta-500';
+		return 'text-parchment-500';
+	}
 </script>
 
 <div class="space-y-4">
@@ -278,6 +357,12 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 					class="rounded-lg border border-clay-700 px-4 py-2 text-sm font-medium text-parchment-200 hover:border-gold-500 hover:text-gold-400 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 				>
 					{showMergeSuggestions ? 'Hide merges' : 'Review merges'}
+				</button>
+				<button
+					onclick={toggleProvisional}
+					class="rounded-lg border border-clay-700 px-4 py-2 text-sm font-medium text-parchment-200 hover:border-gold-500 hover:text-gold-400 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+				>
+					{showProvisional ? 'Hide new tags' : 'Review new tags'}
 				</button>
 				<button
 					onclick={openNew}
@@ -395,6 +480,110 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 										class="rounded-md px-2 py-1 text-xs text-parchment-400 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 									>
 										Dismiss
+									</button>
+								</div>
+							</div>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		</div>
+	{/if}
+
+	{#if showProvisional}
+		<div class="rounded-lg border border-clay-700 bg-clay-900 p-4">
+			<div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+				<h2 class="text-sm font-semibold text-parchment-200">Review new tags</h2>
+				{#if provisionalTotal > 0}
+					<span class="text-xs text-parchment-500">
+						showing {formatNumber(provisionalTags.length)} of {formatNumber(provisionalTotal)}
+					</span>
+				{/if}
+			</div>
+			<p class="mb-3 text-xs text-parchment-500">
+				New tags stay provisional until the quality judge passes them and a second document carries
+				them. Approve promotes a tag into the shared vocabulary; reject deletes it and blocks it
+				from enrichment.
+			</p>
+			{#if loadingProvisional}
+				<p class="text-sm text-parchment-500">Loading new tags…</p>
+			{:else if provisionalError}
+				<p class="text-sm text-terracotta-500" role="alert">{provisionalError}</p>
+			{:else if provisionalTags.length === 0}
+				<p class="text-sm text-parchment-500">
+					No provisional tags. New tags appear here once enrichment assigns them to a document.
+				</p>
+			{:else}
+				<ul class="space-y-3">
+					{#each provisionalTags as tag (tag.id)}
+						<li class="rounded-md border border-clay-800 bg-clay-950 p-3">
+							<div class="flex flex-wrap items-center justify-between gap-3">
+								<div class="min-w-0">
+									<div class="flex flex-wrap items-center gap-2">
+										<span class="text-sm font-medium text-parchment-200">{tag.name}</span>
+										<span class="text-xs text-parchment-500">
+											· {documentsLabel(tag.document_count)}
+										</span>
+										<span class="text-xs text-parchment-500">
+											· created {new Date(tag.created_at).toLocaleDateString()}
+										</span>
+										{#if tag.verdict === null}
+											<span
+												class="rounded bg-clay-800 px-1.5 py-0.5 text-xs text-parchment-500"
+												title="Never judged — no verdict was recorded when this tag was born"
+											>
+												no verdict
+											</span>
+										{:else if tag.verdict.pass}
+											<span
+												class="rounded bg-emerald-600/20 px-1.5 py-0.5 text-xs text-emerald-500"
+												title="The quality judge passed this tag"
+											>
+												{tag.document_count >= 2 ? 'eligible' : 'awaiting second document'}
+											</span>
+										{:else}
+											<span
+												class="rounded bg-amber-600/20 px-1.5 py-0.5 text-xs text-amber-400"
+												title="The quality judge rejected this tag"
+											>
+												judge rejected
+											</span>
+										{/if}
+									</div>
+									{#if tag.verdict !== null}
+										<div class="mt-1 flex flex-wrap items-center gap-1.5">
+											{#each provisionalCriteria as c (c.key)}
+												<span
+													class="rounded bg-clay-800 px-1.5 py-0.5 text-xs {criterionClass(
+														tag.verdict.criteria?.[c.key]
+													)}"
+												>
+													{c.label}: {criterionMark(tag.verdict.criteria?.[c.key])}
+												</span>
+											{/each}
+											{#if tag.verdict.model}
+												<span class="text-xs text-parchment-500">{tag.verdict.model}</span>
+											{/if}
+											<span class="text-xs text-parchment-500">
+												{new Date(tag.verdict.verdict_at).toLocaleString()}
+											</span>
+										</div>
+									{/if}
+								</div>
+								<div class="flex shrink-0 items-center gap-2">
+									<button
+										onclick={() => handleApprove(tag)}
+										disabled={actingProvisional === tag.id}
+										class="rounded-md bg-gold-500 px-3 py-1 text-xs font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-50"
+									>
+										Approve
+									</button>
+									<button
+										onclick={() => handleRejectProvisional(tag)}
+										disabled={actingProvisional === tag.id}
+										class="rounded-md px-3 py-1 text-xs text-parchment-400 hover:bg-clay-800 hover:text-terracotta-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-50"
+									>
+										Reject
 									</button>
 								</div>
 							</div>

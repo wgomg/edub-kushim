@@ -83,6 +83,35 @@ UPDATE tag SET orphaned_since = NULL
 WHERE id = ANY(@tag_ids::bigint[])
   AND orphaned_since IS NOT NULL;
 
+-- name: ListProvisionalTagsWithDocumentCount :many
+SELECT t.id, t.name, coalesce(t.created_at, now()) AS created_at,
+       (SELECT COUNT(*) FROM document_tag dt
+        JOIN document d ON d.id = dt.document_id
+        WHERE dt.tag_id = t.id AND d.deleted_at IS NULL) AS document_count
+FROM tag t
+WHERE t.promoted_at IS NULL
+  AND EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
+ORDER BY coalesce(t.created_at, now()) DESC
+LIMIT $1 OFFSET $2;
+
+-- name: CountProvisionalTags :one
+SELECT COUNT(*) FROM tag t
+WHERE t.promoted_at IS NULL
+  AND EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id);
+
+-- name: ListProvisionalTagsOlderThan :many
+SELECT t.id, t.name, t.created_at FROM tag t
+WHERE t.promoted_at IS NULL
+  AND t.created_at < @cutoff::timestamptz
+ORDER BY t.created_at;
+
+-- name: FirstDocumentIDForTag :one
+SELECT dt.document_id FROM document_tag dt
+JOIN document d ON d.id = dt.document_id
+WHERE dt.tag_id = $1 AND d.deleted_at IS NULL
+ORDER BY dt.document_id
+LIMIT 1;
+
 -- name: ListOrphanTags :many
 SELECT t.name FROM tag t
 WHERE t.orphaned_since IS NOT NULL

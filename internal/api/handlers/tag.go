@@ -213,6 +213,102 @@ func (h *TagHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := ctx.Value("reqid").(string)
+
+	pb := utils.GetParamBag(r)
+	if pb == nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	limit := pb.GetInt64("limit", 50, 1, 100)
+	offset := pb.GetInt64("offset", 0, 0, 100000)
+	if offset < 0 {
+		offset = 0
+	}
+
+	rows, err := h.services.Tag.ListProvisional(ctx, int32(limit), int32(offset))
+	if err != nil {
+		writeServiceError(w, h.logger, &reqID, "list provisional tags", err)
+		return
+	}
+	total, err := h.services.Tag.CountProvisional(ctx)
+	if err != nil {
+		writeServiceError(w, h.logger, &reqID, "count provisional tags", err)
+		return
+	}
+
+	responses := make([]types.ProvisionalTagResponse, len(rows))
+	if len(rows) > 0 {
+		names := make([]string, len(rows))
+		for i, t := range rows {
+			names[i] = t.Name
+		}
+		events, err := h.services.Tag.LatestQualityEventsForNames(ctx, names)
+		if err != nil {
+			writeServiceError(w, h.logger, &reqID, "provisional tag verdicts", err)
+			return
+		}
+		verdicts := make(map[string]types.TagQualityVerdictInfo, len(events))
+		for _, e := range events {
+			info := types.TagQualityVerdictInfo{
+				Pass:      e.Pass,
+				Model:     e.VerdictModel.String,
+				VerdictAt: e.VerdictAt,
+			}
+			var criteria types.TagQualityCriteriaView
+			if len(e.Criteria) > 0 && json.Unmarshal(e.Criteria, &criteria) == nil {
+				info.Criteria = &criteria
+			}
+			verdicts[e.TagName] = info
+		}
+		for i, t := range rows {
+			responses[i] = types.ProvisionalTagResponse{
+				ID:            t.ID,
+				Name:          t.Name,
+				DocumentCount: t.DocumentCount,
+				// the list query coalesces created_at, so the value is always present
+				CreatedAt: t.CreatedAt.Time,
+			}
+			if v, ok := verdicts[t.Name]; ok {
+				responses[i].Verdict = &v
+			}
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(types.ProvisionalTagListResponse{Results: responses, Total: total})
+}
+
+func (h *TagHandler) PromoteTag(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := ctx.Value("reqid").(string)
+
+	idStr := r.PathValue("id")
+	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid id", http.StatusBadRequest)
+		return
+	}
+
+	_, status, err := h.services.Tag.Promote(ctx, id, "human-approve")
+	if err != nil {
+		writeServiceError(w, h.logger, &reqID, "promote tag", err)
+		return
+	}
+
+	switch status {
+	case service.PromotePromoted:
+		w.WriteHeader(http.StatusNoContent)
+	case service.PromoteAlreadyPromoted:
+		http.Error(w, "Tag is already promoted", http.StatusConflict)
+	default:
+		http.Error(w, "Tag not found", http.StatusNotFound)
+	}
+}
+
 func (h *TagHandler) Merge(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)

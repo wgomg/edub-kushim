@@ -3,6 +3,7 @@ package tagreconcile
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/enrichment"
 	"github.com/wgomg/edub-kushim/internal/enrichment/tagpolicy"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/task"
@@ -84,6 +86,18 @@ type Report struct {
 	NoDocuments         int               `json:"no_documents,omitempty"`
 	Swept               int               `json:"swept,omitempty"`
 	AdjudicatorDisabled bool              `json:"adjudicator_disabled,omitempty"`
+	Provisional         ProvisionalCounts `json:"provisional,omitempty"`
+}
+
+type ProvisionalCounts struct {
+	Worklist   int `json:"worklist"`
+	ZeroAssign int `json:"zero_assignment"`
+	Promoted   int `json:"promoted"`
+	Rejudged   int `json:"rejudged"`
+	Deferred   int `json:"deferred"`
+	NoJudge    int `json:"no_judge"`
+	Skipped    int `json:"skipped"`
+	Failed     int `json:"failed"`
 }
 
 type WorklistCounts struct {
@@ -233,6 +247,7 @@ func (r *Reconciler) Run(ctx context.Context, progress task.ProgressFunc) (Repor
 		r.applyJointSplits(ctx, cfg, jointWorklist, &report, storeTags, policyStoreTags)
 	}
 	r.sweepOrphanTags(ctx, cfg, &report)
+	r.sweepProvisionalTags(ctx, cfg, &report)
 	r.logSummary(report)
 
 	progress("report", "reporting", 1)
@@ -323,6 +338,239 @@ func sampleNamesSuffix(names []string) string {
 		return fmt.Sprintf(": %s, …", strings.Join(names[:maxSample], ", "))
 	}
 	return ": " + strings.Join(names, ", ")
+}
+
+type provisionalEntry struct {
+	id   int64
+	name string
+	docs int64
+}
+
+func (r *Reconciler) sweepProvisionalTags(ctx context.Context, cfg *config.Config, report *Report) {
+	graceDays := cfg.Enricher.TagReconcile.ProvisionalGraceDays
+	cutoff := time.Now().Add(-time.Duration(graceDays) * 24 * time.Hour)
+
+	worklist, err := r.client.ListProvisionalTagsOlderThan(ctx, cutoff)
+	if err != nil {
+		r.logger.Error(nil, "tag reconcile: list provisional tags: %v", err)
+		return
+	}
+	report.Provisional.Worklist = len(worklist)
+	if len(worklist) == 0 {
+		return
+	}
+
+	ids := make([]int64, len(worklist))
+	names := make([]string, len(worklist))
+	for i, t := range worklist {
+		ids[i] = t.ID
+		names[i] = t.Name
+	}
+	assigned, err := r.client.CountTagDocumentsByTagIDs(ctx, ids)
+	if err != nil {
+		r.logger.Error(nil, "tag reconcile: count provisional tag documents: %v", err)
+		return
+	}
+	assignedCounts := make(map[int64]int64, len(assigned))
+	for _, row := range assigned {
+		assignedCounts[row.TagID] = row.DocumentCount
+	}
+
+	// promotion evidence is live-document only, like the judge's text input
+	live, err := r.client.CountLiveTagDocumentsByTagIDs(ctx, ids)
+	if err != nil {
+		r.logger.Error(nil, "tag reconcile: count live provisional tag documents: %v", err)
+		return
+	}
+	liveCounts := make(map[int64]int64, len(live))
+	for _, row := range live {
+		liveCounts[row.TagID] = row.DocumentCount
+	}
+
+	events, err := r.services.Tag.LatestQualityEventsForNames(ctx, names)
+	if err != nil {
+		r.logger.Error(nil, "tag reconcile: provisional tag verdict lookup: %v", err)
+		return
+	}
+	verdicts := make(map[string]database.LatestTagQualityEventsForNamesRow, len(events))
+	for _, e := range events {
+		verdicts[e.TagName] = e
+	}
+
+	var rejudge []*provisionalEntry
+	for _, t := range worklist {
+		if assignedCounts[t.ID] == 0 {
+			// the orphan sweep in this same run owns zero-assignment rows
+			report.Provisional.ZeroAssign++
+			continue
+		}
+		docs := liveCounts[t.ID]
+
+		row, ok := verdicts[t.Name]
+		if !ok {
+			rejudge = append(rejudge, &provisionalEntry{id: t.ID, name: t.Name, docs: docs})
+			continue
+		}
+		if !row.Pass || docs < 2 {
+			continue
+		}
+
+		if report.ReportOnly {
+			report.Provisional.Promoted++
+			r.logger.Info(nil, "tag reconcile (report-only): would promote %q (docs=%d model=%s)", t.Name, docs, verdictModelLabel(row.VerdictModel))
+			continue
+		}
+		if _, status, err := r.services.Tag.Promote(ctx, t.ID, "sweep"); err != nil {
+			r.logger.Error(nil, "tag reconcile: promote provisional tag %q: %v", t.Name, err)
+		} else if status == service.PromotePromoted {
+			report.Provisional.Promoted++
+			r.logger.Info(nil, "tag reconcile: promoted %q (docs=%d model=%s)", t.Name, docs, verdictModelLabel(row.VerdictModel))
+		}
+	}
+
+	if len(rejudge) == 0 {
+		return
+	}
+
+	budget := cfg.Enricher.TagReconcile.MaxRejudge
+	if len(rejudge) > budget {
+		rejudge = rejudge[:budget]
+	}
+
+	if report.ReportOnly {
+		report.Provisional.Rejudged = len(rejudge)
+		r.logger.Info(nil, "tag reconcile (report-only): would re-judge %d provisional tags older than %d days", len(rejudge), graceDays)
+		return
+	}
+	if !r.runner.HasTagQualityJudge() {
+		report.Provisional.NoJudge = len(rejudge)
+		r.logger.Info(nil, "tag reconcile: tag quality judge is not configured — %d provisional tags stay queued", len(rejudge))
+		return
+	}
+
+	r.rejudgeProvisionalTags(ctx, cfg, rejudge, report)
+}
+
+func (r *Reconciler) rejudgeProvisionalTags(ctx context.Context, cfg *config.Config, entries []*provisionalEntry, report *Report) {
+	const chunkSize = 150
+
+	model := cfg.ResolvedQualityLlm().Model
+	for _, e := range entries {
+		docID, err := r.client.FirstDocumentIDForTag(ctx, e.id)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				report.Provisional.Skipped++
+				r.logger.Info(nil, "tag reconcile: provisional tag %q has no live document — left for review", e.name)
+				continue
+			}
+			r.logger.Error(nil, "tag reconcile: first document for provisional tag %q: %v", e.name, err)
+			report.Provisional.Failed++
+			continue
+		}
+		doc, err := r.client.GetDocumentTextForTagQuality(ctx, docID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				report.Provisional.Skipped++
+				r.logger.Info(nil, "tag reconcile: provisional tag %q has no live document text — left for review", e.name)
+				continue
+			}
+			r.logger.Error(nil, "tag reconcile: document text for provisional tag %q: %v", e.name, err)
+			report.Provisional.Failed++
+			continue
+		}
+
+		reduced, err := r.runner.ReduceContent(ctx, doc.TextContent.String, chunkSize,
+			enrichment.TargetWordCount(int(doc.WordCount), cfg.Enricher.TagMatcher.ReduceTargetWords))
+		if err != nil {
+			r.logger.Error(nil, "tag reconcile: reduce text for provisional tag %q: %v", e.name, err)
+		}
+
+		candidates := []contentanalyzer.TagQualityCandidate{{
+			Index:            0,
+			Term:             e.name,
+			Category:         contentanalyzer.TagCategoryOther,
+			WhitelistedPlace: contentanalyzer.IsWhitelistedPlace(e.name),
+		}}
+		results, err := r.runner.JudgeTagQuality(ctx, reduced.Text, candidates)
+		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			results, err = r.runner.JudgeTagQuality(ctx, reduced.Text, candidates)
+		}
+		if err != nil {
+			r.logger.Error(nil, "tag reconcile: judge provisional tag %q: %v", e.name, err)
+			report.Provisional.Failed++
+			continue
+		}
+		if len(results) != len(candidates) {
+			r.logger.Error(nil, "tag reconcile: judge returned %d verdicts for provisional tag %q", len(results), e.name)
+			report.Provisional.Failed++
+			continue
+		}
+
+		res := results[0]
+		criteria, err := json.Marshal(res.Criteria())
+		if err != nil {
+			r.logger.Error(nil, "tag reconcile: marshal criteria for provisional tag %q: %v", e.name, err)
+			report.Provisional.Failed++
+			continue
+		}
+		pass, finalModel, err := r.recordProvisionalVerdict(ctx, docID, e.name, criteria, res.Passed(), model)
+		if err != nil {
+			r.logger.Error(nil, "tag reconcile: record provisional verdict for %q: %v", e.name, err)
+			report.Provisional.Failed++
+			continue
+		}
+		report.Provisional.Rejudged++
+
+		if !pass {
+			report.Provisional.Deferred++
+			r.logger.Info(nil, "tag reconcile: provisional tag %q rejected by the judge — deferred to the review queue", e.name)
+			continue
+		}
+		if e.docs < 2 {
+			continue
+		}
+		if _, status, err := r.services.Tag.Promote(ctx, e.id, "sweep"); err != nil {
+			r.logger.Error(nil, "tag reconcile: promote provisional tag %q: %v", e.name, err)
+		} else if status == service.PromotePromoted {
+			report.Provisional.Promoted++
+			r.logger.Info(nil, "tag reconcile: promoted %q (docs=%d model=%s)", e.name, e.docs, finalModel)
+		}
+	}
+}
+
+func (r *Reconciler) recordProvisionalVerdict(ctx context.Context, docID int64, name string, criteria json.RawMessage, pass bool, model string) (bool, string, error) {
+	verdictModel := sql.NullString{String: model, Valid: model != ""}
+	stored, err := r.client.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
+		DocumentID:    docID,
+		TagName:       utils.NormalizeTag(name),
+		Criteria:      criteria,
+		Pass:          pass,
+		VerdictModel:  verdictModel,
+		PolicyVersion: contentanalyzer.TagQualityVersion,
+	})
+	if err != nil {
+		return false, "", err
+	}
+	if stored > 0 || !verdictModel.Valid {
+		return pass, model, nil
+	}
+
+	// another writer recorded a fresh verdict first — keep it, never overwrite
+	rows, err := r.services.Tag.LatestQualityEventsForNames(ctx, []string{name})
+	if err != nil {
+		return false, "", err
+	}
+	if len(rows) == 0 {
+		return pass, model, nil
+	}
+	return rows[0].Pass, verdictModelLabel(rows[0].VerdictModel), nil
+}
+
+func verdictModelLabel(model sql.NullString) string {
+	if !model.Valid || model.String == "" {
+		return "cached"
+	}
+	return model.String
 }
 
 func sumReassigned(entries []MergeEntry) int64 {

@@ -7,6 +7,7 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
+	"github.com/wgomg/edub-kushim/internal/tools/adapters/contentanalyzer"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/tagmatcher"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -103,6 +104,36 @@ func (s *Tag) SearchByNameWithDocumentCount(ctx context.Context, prefix string, 
 		return nil, errs.FromDB(err, "search tags with document count")
 	}
 	return tags, nil
+}
+
+func (s *Tag) ListProvisional(ctx context.Context, limit, offset int32) ([]database.ListProvisionalTagsWithDocumentCountRow, error) {
+	tags, err := s.queries.ListProvisionalTagsWithDocumentCount(ctx, database.ListProvisionalTagsWithDocumentCountParams{
+		Limit:  limit,
+		Offset: offset,
+	})
+	if err != nil {
+		return nil, errs.FromDB(err, "list provisional tags")
+	}
+	return tags, nil
+}
+
+func (s *Tag) CountProvisional(ctx context.Context) (int64, error) {
+	count, err := s.queries.CountProvisionalTags(ctx)
+	if err != nil {
+		return 0, errs.FromDB(err, "count provisional tags")
+	}
+	return count, nil
+}
+
+func (s *Tag) LatestQualityEventsForNames(ctx context.Context, names []string) ([]database.LatestTagQualityEventsForNamesRow, error) {
+	rows, err := s.queries.LatestTagQualityEventsForNames(ctx, database.LatestTagQualityEventsForNamesParams{
+		PolicyVersion: contentanalyzer.TagQualityVersion,
+		TagNames:      names,
+	})
+	if err != nil {
+		return nil, errs.FromDB(err, "latest tag quality events")
+	}
+	return rows, nil
 }
 
 func (s *Tag) Create(ctx context.Context, names []string) ([]CreateResult[database.Tag], error) {
@@ -325,6 +356,31 @@ func (s *Tag) Delete(ctx context.Context, ids []int64) ([]DeleteResult, error) {
 	}
 
 	return results, nil
+}
+
+func (s *Tag) Promote(ctx context.Context, id int64, reason string) (database.Tag, PromoteStatus, error) {
+	tag, err := s.Get(ctx, id)
+	if err != nil {
+		if errs.KindOf(err) == errs.KindNotFound {
+			return database.Tag{}, PromoteNotFound, nil
+		}
+		return database.Tag{}, PromoteNotFound, err
+	}
+	if tag.PromotedAt.Valid {
+		return tag, PromoteAlreadyPromoted, nil
+	}
+
+	promoted, err := s.queries.PromoteTags(ctx, []int64{id})
+	if err != nil {
+		return tag, PromoteNotFound, errs.FromDB(err, "promote tag")
+	}
+	if promoted == 0 {
+		return tag, PromoteAlreadyPromoted, nil
+	}
+
+	s.encodeAndAddBatch(ctx, []string{tag.Name})
+	s.logger.Info(nil, "tagquality[%s]: promote %q (reason=%s)", contentanalyzer.TagQualityVersion, tag.Name, reason)
+	return tag, PromotePromoted, nil
 }
 
 func (s *Tag) ListDeleted(ctx context.Context, prefix string, limit, offset int32) ([]database.DeletedTag, int64, error) {

@@ -341,6 +341,23 @@ func (q *Queries) GetDocumentIDsByDocumentIDs(ctx context.Context, dollar_1 []st
 	return items, nil
 }
 
+const getDocumentTextForTagQuality = `-- name: GetDocumentTextForTagQuality :one
+SELECT text_content, word_count FROM document
+WHERE id = $1 AND deleted_at IS NULL
+`
+
+type GetDocumentTextForTagQualityRow struct {
+	TextContent sql.NullString
+	WordCount   int32
+}
+
+func (q *Queries) GetDocumentTextForTagQuality(ctx context.Context, id int64) (GetDocumentTextForTagQualityRow, error) {
+	row := q.db.QueryRowContext(ctx, getDocumentTextForTagQuality, id)
+	var i GetDocumentTextForTagQualityRow
+	err := row.Scan(&i.TextContent, &i.WordCount)
+	return i, err
+}
+
 const getDocumentThumbnailMeta = `-- name: GetDocumentThumbnailMeta :one
 SELECT document_id, created_at, has_thumbnail
 FROM document WHERE document_id = $1 AND deleted_at IS NULL

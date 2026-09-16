@@ -25,3 +25,11 @@ const (
 	DeleteNotFound
 	DeleteConflict
 )
+
+type PromoteStatus int
+
+const (
+	PromoteNotFound PromoteStatus = iota
+	PromoteAlreadyPromoted
+	PromotePromoted
+)

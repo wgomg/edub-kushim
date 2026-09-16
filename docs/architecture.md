@@ -303,10 +303,16 @@ The enrichment pipeline:
    they never reach suggestions or consolidation targets. A provisional name
    is promoted inline — inside the persist transaction — when it has a cached
    passing verdict at the current `TagQualityVersion` and assignments on ≥2
-   distinct documents; promotion is one-way, and a verdict-less provisional
-   (judge outage, re-emitted legacy row) is never re-judged — a name in the
-   tag table is not novel, so the judge does not see it again. With the layer
-   off, births are trusted as before.
+   distinct live documents (trashed carriers do not count); promotion is
+   one-way, and a verdict-less provisional (judge outage, re-emitted legacy
+   row) is never re-judged in flight — a name in the tag table is not novel,
+   so the judge does not see it again. Those names are resolved later by the
+   scheduled tag reconciliation, whose provisional phase promotes stored
+   passes and re-judges the rest, or by an operator through the provisional
+   review queue (`GET /api/v1/tags/provisional`,
+   `POST /api/v1/tags/{id}/promote`, and the tags page's "Review new tags"
+   panel); a rejection there is a normal tag delete and lands in the blocklist.
+   With the layer off, births are trusted as before.
 6. **New Tag Store Update** — tag creation, the enrichment-owned `document_tag` sweep,
    and the per-tag assignments run in one database transaction per document
    (`services.Tag.CreateTx` on the transaction handle, with the quality gate as its

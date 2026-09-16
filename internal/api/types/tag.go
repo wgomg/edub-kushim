@@ -19,6 +19,33 @@ type DeletedTagListResponse struct {
 	Total   int64                `json:"total"`
 }
 
+type TagQualityCriteriaView struct {
+	SubjectMatter      *bool `json:"subject_matter"`
+	StandardTerm       *bool `json:"standard_term"`
+	NotPersonPlaceWork *bool `json:"not_person_place_work"`
+	AppropriatelyBroad *bool `json:"appropriately_broad"`
+}
+
+type TagQualityVerdictInfo struct {
+	Pass      bool                    `json:"pass"`
+	Criteria  *TagQualityCriteriaView `json:"criteria"`
+	Model     string                  `json:"model,omitempty"`
+	VerdictAt time.Time               `json:"verdict_at"`
+}
+
+type ProvisionalTagResponse struct {
+	ID            int64                  `json:"id"`
+	Name          string                 `json:"name"`
+	DocumentCount int64                  `json:"document_count"`
+	CreatedAt     time.Time              `json:"created_at"`
+	Verdict       *TagQualityVerdictInfo `json:"verdict"`
+}
+
+type ProvisionalTagListResponse struct {
+	Results []ProvisionalTagResponse `json:"results"`
+	Total   int64                    `json:"total"`
+}
+
 type CreateTagRequest struct {
 	Name string `json:"name"`
 }

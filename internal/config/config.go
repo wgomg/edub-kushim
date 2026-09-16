@@ -260,13 +260,14 @@ type TagQualityConfig struct {
 }
 
 type TagReconcileConfig struct {
-	Enabled          bool    `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
-	ReportOnly       bool    `mapstructure:"report_only" yaml:"report_only" json:"report_only"`
-	Interval         float64 `mapstructure:"interval" yaml:"interval" json:"interval"`
-	Time             string  `mapstructure:"time" yaml:"time" json:"time"`
-	MaxRejudge       int     `mapstructure:"max_rejudge" yaml:"max_rejudge" json:"max_rejudge"`
-	MaxRetag         int     `mapstructure:"max_retag" yaml:"max_retag" json:"max_retag"`
-	DeadTagGraceDays int     `mapstructure:"dead_tag_grace_days" yaml:"dead_tag_grace_days" json:"dead_tag_grace_days"`
+	Enabled              bool    `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
+	ReportOnly           bool    `mapstructure:"report_only" yaml:"report_only" json:"report_only"`
+	Interval             float64 `mapstructure:"interval" yaml:"interval" json:"interval"`
+	Time                 string  `mapstructure:"time" yaml:"time" json:"time"`
+	MaxRejudge           int     `mapstructure:"max_rejudge" yaml:"max_rejudge" json:"max_rejudge"`
+	MaxRetag             int     `mapstructure:"max_retag" yaml:"max_retag" json:"max_retag"`
+	DeadTagGraceDays     int     `mapstructure:"dead_tag_grace_days" yaml:"dead_tag_grace_days" json:"dead_tag_grace_days"`
+	ProvisionalGraceDays int     `mapstructure:"provisional_grace_days" yaml:"provisional_grace_days" json:"provisional_grace_days"`
 }
 
 type EnricherConfig struct {
@@ -608,13 +609,14 @@ func DefaultConfig(configDir string) *Config {
 				Enabled: false,
 			},
 			TagReconcile: TagReconcileConfig{
-				Enabled:          false,
-				ReportOnly:       true,
-				Interval:         7,
-				Time:             "02:00",
-				MaxRejudge:       200,
-				MaxRetag:         1000,
-				DeadTagGraceDays: 7,
+				Enabled:              false,
+				ReportOnly:           true,
+				Interval:             7,
+				Time:                 "02:00",
+				MaxRejudge:           200,
+				MaxRetag:             1000,
+				DeadTagGraceDays:     7,
+				ProvisionalGraceDays: 30,
 			},
 		},
 	}
@@ -768,6 +770,9 @@ func finalizeConfig(cfg *Config, configDir string) error {
 	}
 	if cfg.Enricher.TagReconcile.DeadTagGraceDays <= 0 {
 		cfg.Enricher.TagReconcile.DeadTagGraceDays = 7
+	}
+	if cfg.Enricher.TagReconcile.ProvisionalGraceDays <= 0 {
+		cfg.Enricher.TagReconcile.ProvisionalGraceDays = 30
 	}
 	if cfg.Enricher.TagReconcile.Time == "" {
 		cfg.Enricher.TagReconcile.Time = "02:00"

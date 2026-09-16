@@ -199,16 +199,35 @@ all-names fallback vocabulary (`BuildTagCache` embeds promoted tags only, and
 the enricher composes its fallback and consolidation sets from the promoted
 subset). Promotion is inline, one-way, and runs inside the persist
 transaction: a provisional name with a cached passing verdict at the current
-`TagQualityVersion` and assignments on at least two distinct documents gets
-`promoted_at = now()` and enters the store after the commit. The
-`document_tag` primary key makes the count distinct-document, so a single
+`TagQualityVersion` and assignments on at least two distinct **live** documents
+(trashed carriers are not evidence, in this check and in the reconciliation
+sweep alike) gets `promoted_at = now()` and enters the store after the commit.
+The `document_tag` primary key makes the count distinct-document, so a single
 document re-enriching itself cannot promote a name.
 
 Verdict-less provisionals — judge outages and re-emitted legacy rows — are not
 re-judged in flight: a name already present in the tag table is not novel, so
-the judge never sees it again and it stays provisional. The migration
-backfilled `promoted_at = created_at` for tags that already had assignments and
-left zero-assignment rows provisional; the seeded vocabulary is inserted
+the judge never sees it again. They are re-judged by the scheduled
+reconciliation sweep once they pass `provisional_grace_days` (default 30): the
+sweep promotes names that already hold a cached passing verdict and ≥ 2 live
+documents, re-judges the rest oldest-first under the `max_rejudge` cap (one
+judge call over the tag's first live document, one retry on failure, the
+verdict recorded through the same fresh-verdict/cache path the enricher uses),
+promotes a fresh pass at ≥ 2 live documents, and leaves a rejection queued for
+review. A missing judge, a tag with no live document text, and lookup or write
+failures are counted and skipped rather than failing the run, and the sweep
+never deletes a tag.
+
+Operators resolve what remains from the tags page's "Review new tags" panel or
+the API: `GET /api/v1/tags/provisional` lists provisional tags with a live
+`document_count` and the latest verdict (`null` when no verdict row exists),
+and `POST /api/v1/tags/{id}/promote` promotes one through the same path the
+sweep uses. Rejecting a provisional tag is a normal tag delete, so the name
+lands in the `deleted_tag` blocklist and enrichment cannot resurrect it. The
+trust marker was backfilled from `created_at` for tags that already had
+assignments, and a corrective migration returns the backfill-promoted singletons
+(fewer than two distinct documents) to provisional so the sweep re-judges them;
+zero-assignment rows stay provisional and the seeded vocabulary is inserted
 promoted. Layer off ⇒ newborns are born trusted exactly as before.
 
 ---
@@ -266,10 +285,20 @@ anti-oscillating:
   creation and document assignment are additive, deletion is last). Pair
   entries whose query is itself a joint tag are dropped from the pair worklist
   so a merge verdict can never resurrect a tag the split scan is deleting.
-- **Bounds:** `max_rejudge` pairs and `max_retag` documents per run; the first
-  run is always **report-only** (it lists would-be actions and touches
-  nothing), regardless of the `report_only` flag. The joint-tag scan shares
-  both caps.
+- **Bounds:** `max_rejudge` pairs and `max_retag` documents per run; the
+  provisional re-judge shares the `max_rejudge` budget. The first run is always
+  **report-only** (it lists would-be actions and touches nothing), regardless
+  of the `report_only` flag. The joint-tag scan shares both caps.
+- **Provisional hygiene:** the same run re-checks provisional tags older than
+  `provisional_grace_days` (default 30), oldest first. A stored passing verdict
+  plus ≥ 2 live documents promotes the name with no judge call; verdict-less
+  names are re-judged one at a time (the tag's first live document, reduced
+  with the tag-matcher arithmetic, one retry on failure) and promoted when they
+  pass; a rejection stays queued for the review surface. Zero-assignment rows
+  are only counted — the orphan sweep owns them — and a missing judge, a tag
+  with no live document text, or a failed lookup/write is counted
+  (`no_judge`/`skipped`/`failed`) without failing the run. Report-only runs
+  count would-promote/would-re-judge and touch nothing.
 - **Dead-tag hygiene:** the same run sweeps zero-assignment tags — a tag whose
   `orphaned_since` mark is older than `dead_tag_grace_days` (default 7) is
   deleted and removed from the embedding store, and every assignment path
@@ -281,7 +310,9 @@ anti-oscillating:
   counts (including the joint-tag category), judged/confirmed, flips,
   planned/applied pair entries (each carrying the decision reason and whether
   it creates a tag), planned/applied joint splits (query, components,
-  reassigned documents, reason), and skip reasons — surfaced in the web UI on
+  reassigned documents, reason), skip reasons, and the provisional-sweep
+  counts (`worklist`, `zero_assignment`, `promoted`, `rejudged`, `deferred`,
+  `no_judge`, `skipped`, `failed`) — surfaced in the web UI on
   the task detail page and as a summary card on the tags page.
 - With the adjudicator disabled, runs log the worklist snapshot and complete
   without LLM calls or writes. The queue daemon warns when reconciliation is
@@ -319,6 +350,7 @@ enricher:
   #   max_rejudge: 200           # max pairs re-evaluated per run
   #   max_retag: 1000            # max documents re-pointed per run
   #   dead_tag_grace_days: 7     # days a tag must stay without documents before the sweep removes it
+  #   provisional_grace_days: 30 # days a provisional tag may stay unreviewed before the sweep re-checks it
 ```
 
 All three blocks are also editable on the Settings page ("Tag adjudicator",
@@ -341,6 +373,12 @@ quality band constants are internals — see [tag-matcher.md](tag-matcher.md).
 - **While the adjudicator is off**, the ambiguous band keeps: the store grows
   faster with near-duplicates. That is the accepted safe direction, and the
   merge-review surface is the manual valve.
+- **Provisional review**: with the quality judge on, new names stay provisional
+  until promoted and show up in the tags page's "Review new tags" panel. The
+  reconciliation run's provisional sweep promotes or defers them automatically
+  once they pass `provisional_grace_days`, so the panel is a manual override
+  rather than a required step, and a rejection recorded there is a normal tag
+  delete (blocklist included).
 - **Matcher dependency**: with the daemon down, tag CRUD and merge suggestions
   return 503 and enrichment degrades to LLM-only tags (no consolidation) — the
   pipeline degrades, it does not fail.

@@ -97,7 +97,8 @@
 			time: '02:00',
 			max_rejudge: 200,
 			max_retag: 1000,
-			dead_tag_grace_days: 7
+			dead_tag_grace_days: 7,
+			provisional_grace_days: 30
 		};
 	}
 
@@ -252,6 +253,9 @@
 			'enricher.tag_reconcile.max_retag': Number(cfg.enricher.tag_reconcile.max_retag),
 			'enricher.tag_reconcile.dead_tag_grace_days': Number(
 				cfg.enricher.tag_reconcile.dead_tag_grace_days
+			),
+			'enricher.tag_reconcile.provisional_grace_days': Number(
+				cfg.enricher.tag_reconcile.provisional_grace_days
 			),
 			'storage.consumption_dir': cfg.storage.consumption_dir,
 			'storage.storage_dir': cfg.storage.storage_dir,

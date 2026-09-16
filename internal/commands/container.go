@@ -180,7 +180,7 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 			func() *config.Config { return c.cfg.Load() },
 			client,
 			c.services,
-			tools.NewRunnerWithMatcher(c.logger, c.cfg.Load(), []string{"contentanalyzer", "tagmatcher"}, matcherClient),
+			tools.NewRunnerWithMatcher(c.logger, c.cfg.Load(), []string{"textreducer", "contentanalyzer", "tagmatcher"}, matcherClient),
 			c.logger,
 		),
 		client.Queries,

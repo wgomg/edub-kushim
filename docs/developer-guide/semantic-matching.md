@@ -383,8 +383,10 @@ keep as without adjudication.
 Consolidation decides what is a duplicate; the quality judge decides what
 deserves to be born. With `enricher.tag_quality.enabled: true` (default
 `false`), the enricher filters the consolidated list **before persist**: only
-tags whose normalized names are absent from the store are candidates (a tag
-that already exists was born long ago and is never re-judged).
+tags whose normalized names are absent from the tag table are candidates (a tag
+that already exists was born long ago and is never re-judged in flight; a
+provisional name with no verdict row waits for the scheduled sweep or the
+review queue instead).
 
 Candidates first pass a deterministic **weak band** that scores the emitted
 evidence — `is_standard_term` +1 when true, 0 when absent, −1 when false;
@@ -438,9 +440,10 @@ skipped). A name promotes when both hold:
 
 - a **cached passing verdict** at the current `TagQualityVersion`
   (`LatestTagQualityEventsForNames`), and
-- assignments on **≥ 2 distinct documents** (`CountTagDocumentsByTagIDs` —
-  `document_tag`'s `(document_id, tag_id)` PK makes the count distinct, so a
-  single document re-enriching itself stays at 1).
+- assignments on **≥ 2 distinct live documents**
+  (`CountLiveTagDocumentsByTagIDs` — the `document_tag` `(document_id, tag_id)`
+  PK makes the count distinct, so a single document re-enriching itself stays
+  at 1, and carriers whose document row is trashed do not count).
 
 `PromoteTags` sets `promoted_at = now()` under `WHERE promoted_at IS NULL`, so
 concurrent promotions are idempotent, and the promoted names enter the store
@@ -448,8 +451,28 @@ via `AddToStore` only after the commit (`tagquality[v1]: promote %q
 (docs=%d model=%s)`, `model` or `cached` for a cache-applied verdict).
 Verdict-less provisionals — judge outages and re-emitted legacy rows — are not
 re-judged in flight: a name already present in the tag table is not novel, so
-`applyTagQuality` never sees it again and no verdict row appears. They stay
-provisional and out of the vocabulary.
+`applyTagQuality` never sees it again and no verdict row appears. Two surfaces
+resolve them afterwards:
+
+- The **scheduled reconciliation sweep** (`internal/enrichment/tagreconcile`)
+  re-checks provisional tags older than
+  `enricher.tag_reconcile.provisional_grace_days` (default 30): a stored
+  passing verdict plus ≥ 2 live documents promotes without a judge call, and
+  verdict-less names are re-judged oldest-first under `max_rejudge` — the
+  tag's first live document (`FirstDocumentIDForTag`, `GetDocumentTextForTagQuality`)
+  reduced with `enrichment.TargetWordCount`, one judge call per name, one
+  retry on failure — with the verdict recorded through the enricher's
+  fresh-verdict path (`InsertTagQualityEvent` with `DO NOTHING`, so a
+  concurrent fresh verdict is kept) and a fresh pass promoted immediately at
+  ≥ 2 live documents. Rejects, missing judges, and tags with no live document
+  text stay queued.
+- The **review queue** (`GET /api/v1/tags/provisional`,
+  `POST /api/v1/tags/{id}/promote`, and the tags page's editor-only "Review
+  new tags" panel) is the operator path: it lists provisional names with their
+  live `document_count` and latest verdict — `null` for a name with no row —
+  and promotes one through the same `service.Tag.Promote` method the sweep
+  uses. A rejection is a normal tag delete, so the `deleted_tag` blocklist
+  keeps the name from being reborn.
 
 ---
 
@@ -622,7 +645,7 @@ statements.
      (weak band → cache → one rubric call per document, §7).
    - `promoteEligible` runs inside the persist transaction, after the tag
      assignments and before the commit: a cached passing verdict at the
-     current policy version plus assignments on ≥ 2 distinct documents →
+     current policy version plus assignments on ≥ 2 distinct live documents →
      `PromoteTags`, and the promoted names enter the store after the commit
      (§7).
 4. **API tag creation** triggers a store refresh through the same service.

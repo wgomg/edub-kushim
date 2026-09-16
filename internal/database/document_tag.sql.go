@@ -69,6 +69,43 @@ func (q *Queries) ClearEnrichDocumentTags(ctx context.Context, documentID int64)
 	return err
 }
 
+const countLiveTagDocumentsByTagIDs = `-- name: CountLiveTagDocumentsByTagIDs :many
+SELECT dt.tag_id, COUNT(*) AS document_count
+FROM document_tag dt
+JOIN document d ON d.id = dt.document_id
+WHERE dt.tag_id = ANY($1::bigint[])
+  AND d.deleted_at IS NULL
+GROUP BY dt.tag_id
+`
+
+type CountLiveTagDocumentsByTagIDsRow struct {
+	TagID         int64
+	DocumentCount int64
+}
+
+func (q *Queries) CountLiveTagDocumentsByTagIDs(ctx context.Context, tagIds []int64) ([]CountLiveTagDocumentsByTagIDsRow, error) {
+	rows, err := q.db.QueryContext(ctx, countLiveTagDocumentsByTagIDs, pq.Array(tagIds))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CountLiveTagDocumentsByTagIDsRow
+	for rows.Next() {
+		var i CountLiveTagDocumentsByTagIDsRow
+		if err := rows.Scan(&i.TagID, &i.DocumentCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countTagDocumentsByTagIDs = `-- name: CountTagDocumentsByTagIDs :many
 SELECT tag_id, COUNT(*) AS document_count
 FROM document_tag

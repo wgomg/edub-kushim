@@ -2757,3 +2757,87 @@ func TestAddDocumentTag_ClearsOrphanMark(t *testing.T) {
 		t.Fatalf("manual assignment must clear the orphan mark, got %v", marked)
 	}
 }
+
+func TestListProvisional(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	ctx := context.Background()
+	h := NewTagHandler(env.services, env.logger)
+
+	// Create a tag and manually set promoted_at = NULL to make it provisional.
+	tagID := database.MustCreateTag(t, env.client.Queries, "prov-handler-tag")
+	_, err := env.client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", tagID)
+	testutil.AssertNoError(t, err, "set provisional")
+
+	docID := database.CreateUniqueDocument(t, env.client.Queries, "prov-handler-doc")
+	database.MustAddDocumentTag(t, env.client.Queries, docID, tagID)
+
+	w := rec()
+	r := req(t, "GET", "/api/v1/tags/provisional", nil)
+	h.ListProvisional(w, r)
+	testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+	var resp types.ProvisionalTagListResponse
+	testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
+	if resp.Total < 1 {
+		t.Errorf("Total = %d, want >= 1", resp.Total)
+	}
+
+	found := false
+	for _, tag := range resp.Results {
+		if tag.ID == tagID {
+			found = true
+			testutil.AssertEqual(t, tag.Name, "prov handler tag", "name")
+			testutil.AssertEqual(t, tag.DocumentCount, int64(1), "document count")
+		}
+	}
+	if !found {
+		t.Errorf("tag %d not found in provisional list", tagID)
+	}
+}
+
+func TestPromoteTag(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	ctx := context.Background()
+	h := NewTagHandler(env.services, env.logger)
+
+	t.Run("promote provisional tag", func(t *testing.T) {
+		// Create a tag and set promoted_at = NULL to make it provisional.
+		tagID := database.MustCreateTag(t, env.client.Queries, "promote-handler-tag")
+		_, err := env.client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", tagID)
+		testutil.AssertNoError(t, err, "set provisional")
+
+		w := rec()
+		r := req(t, "POST", "/api/v1/tags/"+fmt.Sprintf("%d", tagID)+"/promote", nil)
+		r.SetPathValue("id", fmt.Sprintf("%d", tagID))
+		h.PromoteTag(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusNoContent, "status")
+	})
+
+	t.Run("already promoted returns 409", func(t *testing.T) {
+		results, err := env.tagSvc.Create(ctx, []string{"already-promoted-handler"})
+		testutil.AssertNoError(t, err, "create")
+		tagID := results[0].Entity.ID
+
+		w := rec()
+		r := req(t, "POST", "/api/v1/tags/"+fmt.Sprintf("%d", tagID)+"/promote", nil)
+		r.SetPathValue("id", fmt.Sprintf("%d", tagID))
+		h.PromoteTag(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusConflict, "status")
+	})
+
+	t.Run("not found returns 404", func(t *testing.T) {
+		w := rec()
+		r := req(t, "POST", "/api/v1/tags/999999/promote", nil)
+		r.SetPathValue("id", "999999")
+		h.PromoteTag(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusNotFound, "status")
+	})
+
+	t.Run("invalid id returns 400", func(t *testing.T) {
+		w := rec()
+		r := req(t, "POST", "/api/v1/tags/abc/promote", nil)
+		r.SetPathValue("id", "abc")
+		h.PromoteTag(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusBadRequest, "status")
+	})
+}

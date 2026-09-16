@@ -13,7 +13,7 @@ internal/
 │   │   ├── health.go      # Health check handler
 │   │   ├── people.go      # People + people-type CRUD handlers (list, create, update, delete)
 │   │   ├── saved_search.go # Saved search CRUD handlers (create, list, delete)
-│   │   ├── tag.go         # Tag CRUD handlers (list, create, update, delete)
+│   │   ├── tag.go         # Tag CRUD handlers (list, create, update, delete, provisional queue, promote)
 │   │   ├── task.go        # Task API handlers (list, get, batch summary, global summary with waiting status)
 │   │   ├── orphaned.go     # Orphaned file management handlers (list, scan, delete, restore, move-to-inbox)
 │   │   ├── trash.go        # Trash/soft-delete handlers (list, get, restore, permanent delete, batch, purge)
@@ -59,13 +59,13 @@ internal/
 ├── configtask/            # Config task handler
 │   └── configtask.go      # ConfigTaskHandler — downloads tessdata/Hugot model in background; migrate-db op copies the database when connection settings change, migrate-storage op relocates files when storage dirs change ("config" task type)
 ├── enrichment/            # Enrichment engine (LLM pipeline)
-│   └── enricher.go        # Enricher: dual text reduction → tag matching → token budget pre-check + retry loop → LLM → consolidation → tag adjudication → people/tag/doc type with romanization + normalization
+│   └── enricher.go        # Enricher: dual text reduction → tag matching → token budget pre-check + retry loop → LLM → consolidation → tag adjudication → tag quality gating/provisional quarantine → people/tag/doc type with romanization + normalization
 ├── service/               # Merged domain service package (replaces people/tags/documenttypes)
-│   ├── status.go          # Shared CRUD enums (CreateStatus, UpdateStatus, DeleteStatus)
+│   ├── status.go          # Shared CRUD enums (CreateStatus, UpdateStatus, DeleteStatus, PromoteStatus)
 │   ├── result.go          # Generic result types (CreateResult[T], UpdateResult[T], DeleteResult)
 │   ├── people.go          # People service (NewPeople, batch CRUD)
 │   ├── peopletype.go      # PeopleType service (NewPeopleType, batch CRUD)
-│   ├── tag.go             # Tag service (NewTag, batch CRUD, embedder integration)
+│   ├── tag.go             # Tag service (NewTag, batch CRUD, provisional listing/promotion, embedder integration)
 │   ├── tagmerge.go        # TagMerge service (NewTagMerge — explicit hard merge of two tags + merge-suggestion scan over embedding similarity and verdict history)
 │   ├── document_type.go   # DocumentType service (NewDocumentType, batch CRUD)
 │   ├── batch.go           # Batch service (NewBatch, GetSummary, ListSummaries, ListOverviews, Create, BeginCancel/CompleteCancel, CountOrphaned, RetryFailed, HasPendingWork, IsLockedByLiveOwner)

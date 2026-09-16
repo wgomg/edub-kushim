@@ -537,6 +537,26 @@
     "supports_temperature": true,
     "supports_prompt_caching": true,
     "adapter": "openai-compatible",
-    "official_url": "https://opencode.ai/zen/v1"
+    "official_url": "https://opencode.ai/zen/v1",
+    "session_header": "x-opencode-session"
+  },
+  {
+    "provider": "opencode-go",
+    "model_id": "mimo-v2.5",
+    "display_name": "MiMo-V2.5",
+    "max_input_tokens": 1000000,
+    "max_output_tokens": 131000,
+    "reasoning": true,
+    "reasoning_efforts": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "supports_structured_output": true,
+    "supports_temperature": true,
+    "supports_prompt_caching": true,
+    "adapter": "openai-compatible",
+    "official_url": "https://opencode.ai/zen/go/v1",
+    "session_header": "x-opencode-session"
   }
 ]

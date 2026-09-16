@@ -419,3 +419,92 @@ func TestApplyKeepFlip_ZeroDocsCreatesNoTag(t *testing.T) {
 		t.Fatal("zero-docs keep-flip must not create a tag in the database")
 	}
 }
+
+func TestVerdictModelLabel(t *testing.T) {
+	tests := []struct {
+		name  string
+		model sql.NullString
+		want  string
+	}{
+		{"valid model", sql.NullString{String: "gpt-4o", Valid: true}, "gpt-4o"},
+		{"empty string", sql.NullString{String: "", Valid: true}, "cached"},
+		{"null", sql.NullString{}, "cached"},
+		{"null with string", sql.NullString{String: "something", Valid: false}, "cached"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := verdictModelLabel(tt.model); got != tt.want {
+				t.Errorf("verdictModelLabel() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestProvisionalCountsJSON(t *testing.T) {
+	pc := ProvisionalCounts{
+		Worklist:   10,
+		ZeroAssign: 2,
+		Promoted:   3,
+		Rejudged:   4,
+		Deferred:   1,
+		NoJudge:    5,
+		Skipped:    2,
+		Failed:     1,
+	}
+	raw, err := json.Marshal(pc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]int
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	testutil.AssertEqual(t, m["worklist"], 10, "worklist")
+	testutil.AssertEqual(t, m["zero_assignment"], 2, "zero_assignment")
+	testutil.AssertEqual(t, m["promoted"], 3, "promoted")
+	testutil.AssertEqual(t, m["rejudged"], 4, "rejudged")
+	testutil.AssertEqual(t, m["deferred"], 1, "deferred")
+	testutil.AssertEqual(t, m["no_judge"], 5, "no_judge")
+	testutil.AssertEqual(t, m["skipped"], 2, "skipped")
+	testutil.AssertEqual(t, m["failed"], 1, "failed")
+}
+
+func TestProvisionalCountsZero(t *testing.T) {
+	pc := ProvisionalCounts{}
+	raw, err := json.Marshal(pc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]int
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	// Zero values should still be present in JSON (struct, not omitempty)
+	for _, key := range []string{"worklist", "zero_assignment", "promoted", "rejudged", "deferred", "no_judge", "skipped", "failed"} {
+		if _, ok := m[key]; !ok {
+			t.Errorf("key %q missing from zero-value JSON", key)
+		}
+	}
+}
+
+func TestReportProvisionalPresent(t *testing.T) {
+	report := Report{
+		Worklist: WorklistCounts{Stale: 1},
+		Skips:    map[string]int{},
+	}
+	raw, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	// ProvisionslCounts is a struct; Go's omitempty does not omit zero-valued structs,
+	// so the key is always present. Verify the shape is correct.
+	prov, ok := m["provisional"].(map[string]any)
+	if !ok {
+		t.Fatalf("provisional key missing or wrong type: %v", m["provisional"])
+	}
+	testutil.AssertEqual(t, int(prov["worklist"].(float64)), 0, "zero worklist")
+}

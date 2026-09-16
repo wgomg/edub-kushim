@@ -166,6 +166,9 @@ func (l *LlmOpenAiCompatible) doRequest(ctx context.Context, reqBody map[string]
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json")
+	if h := l.reg.ProviderSessionHeader(l.llmCfg.Provider); h != "" {
+		httpReq.Header.Set(h, llm.SessionID())
+	}
 
 	resp, err := l.client.Do(httpReq)
 	defer sleepAfterRequest(ctx, l.llmCfg.RequestDelay)
