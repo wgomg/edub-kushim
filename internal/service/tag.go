@@ -106,7 +106,7 @@ func (s *Tag) SearchByNameWithDocumentCount(ctx context.Context, prefix string, 
 }
 
 func (s *Tag) Create(ctx context.Context, names []string) ([]CreateResult[database.Tag], error) {
-	results, newNames, err := s.createWithQueries(ctx, s.queries, names)
+	results, newNames, err := s.createWithQueries(ctx, s.queries, names, false)
 	if err != nil {
 		return nil, err
 	}
@@ -132,8 +132,8 @@ func (s *Tag) CreateAndUnblock(ctx context.Context, names []string) ([]CreateRes
 	return results, nil
 }
 
-func (s *Tag) CreateTx(ctx context.Context, q *database.Queries, names []string) ([]CreateResult[database.Tag], []string, error) {
-	return s.createWithQueries(ctx, q, names)
+func (s *Tag) CreateTx(ctx context.Context, q *database.Queries, names []string, quarantined bool) ([]CreateResult[database.Tag], []string, error) {
+	return s.createWithQueries(ctx, q, names, quarantined)
 }
 
 func (s *Tag) AddToStore(ctx context.Context, names []string) {
@@ -143,10 +143,11 @@ func (s *Tag) AddToStore(ctx context.Context, names []string) {
 	s.encodeAndAddBatch(ctx, names)
 }
 
-func (s *Tag) createWithQueries(ctx context.Context, q *database.Queries, names []string) ([]CreateResult[database.Tag], []string, error) {
+func (s *Tag) createWithQueries(ctx context.Context, q *database.Queries, names []string, quarantined bool) ([]CreateResult[database.Tag], []string, error) {
 	results := make([]CreateResult[database.Tag], len(names))
 	var newNames []string
 	var newIdx []int
+	var newIDs []int64
 
 	existingTags, err := q.ListAllTags(ctx)
 	if err != nil {
@@ -185,10 +186,17 @@ func (s *Tag) createWithQueries(ctx context.Context, q *database.Queries, names 
 		results[i] = CreateResult[database.Tag]{Entity: database.Tag{ID: id, Name: name}, Status: Created}
 		newNames = append(newNames, name)
 		newIdx = append(newIdx, i)
+		newIDs = append(newIDs, id)
 	}
 
 	for j, name := range newNames {
 		results[newIdx[j]].Entity.Name = name
+	}
+
+	if !quarantined && len(newIDs) > 0 {
+		if _, err := q.PromoteTags(ctx, newIDs); err != nil {
+			return nil, nil, errs.FromDB(err, "promote new tags")
+		}
 	}
 
 	return results, newNames, nil
@@ -253,7 +261,9 @@ func (s *Tag) Update(ctx context.Context, pairs []TagUpdatePair) ([]UpdateResult
 			return nil, errs.FromDB(err, "update tag")
 		}
 
-		newNames = append(newNames, name)
+		if old.PromotedAt.Valid {
+			newNames = append(newNames, name)
+		}
 		renames = append(renames, rename{idx: i, oldName: old.Name, name: name})
 	}
 

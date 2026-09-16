@@ -214,13 +214,13 @@ The enrichment pipeline:
 
 1. **Text Reduction** (optional, configurable threshold) — if the document exceeds
    `enricher.textreducer.target_words`, TextRank extracts the most salient content.
-2. **Semantic Tag Pre-filtering** — document content is matched against all existing tag
+2. **Semantic Tag Pre-filtering** — document content is matched against the promoted tag
    names via the `Matcher` interface. In the `kushim` CLI, this uses direct Hugot calls
    and the local embedding store. In the `edub` API server, the `MatcherClient` forwards
-   the request over a Unix socket to the external matcher process. Falls back to all tags
-   on failure, but only while the vocabulary has at most 200 names — beyond that the
-   fallback is empty (and the prompt omits the tag-preference clause) so an oversized
-   list cannot crowd out the document text.
+   the request over a Unix socket to the external matcher process. Falls back to the
+   promoted names on failure, but only while that vocabulary has at most 200 names —
+   beyond that the fallback is empty (and the prompt omits the tag-preference clause) so
+   an oversized list cannot crowd out the document text.
  3. **LLM Classification (first pass)** — the reduced content, along with available document types
      and tag suggestions, is sent to the configured LLM adapter. The adapter is selected by
      `llm.adapter` (`openai-compatible` or `anthropic`) and the request body
@@ -297,16 +297,28 @@ The enrichment pipeline:
    weak-band score below the internal threshold, or a failing rubric
    verdict, drops the tag for that document only. Judge failures retry once
    and then keep every novel tag; the band thresholds are internal v1
-   constants, not config keys.
+   constants, not config keys. Under the same gate that kept set is
+   quarantined: newborns are attached and searchable from birth but stay
+   provisional (`tag.promoted_at` NULL) and out of the embedding store, so
+   they never reach suggestions or consolidation targets. A provisional name
+   is promoted inline — inside the persist transaction — when it has a cached
+   passing verdict at the current `TagQualityVersion` and assignments on ≥2
+   distinct documents; promotion is one-way, and a verdict-less provisional
+   (judge outage, re-emitted legacy row) is never re-judged — a name in the
+   tag table is not novel, so the judge does not see it again. With the layer
+   off, births are trusted as before.
 6. **New Tag Store Update** — tag creation, the enrichment-owned `document_tag` sweep,
    and the per-tag assignments run in one database transaction per document
-   (`services.Tag.CreateTx` on the transaction handle): new tags are created, only
+   (`services.Tag.CreateTx` on the transaction handle, with the quality gate as its
+   quarantine parameter): new tags are created, only
    `enrich`-sourced assignment rows are cleared (manual assignments survive), the
    surviving tags are assigned with `source = 'enrich'`, and their orphan marks are
    cleared. Any failure rolls the whole set back. After the commit,
-   `services.Tag.AddToStore` encodes the new names and adds them to the shared embedding
+   `services.Tag.AddToStore` encodes names and adds them to the shared embedding
    store, making them available for matching against subsequent documents without an
-   additional encode. When using the RPC client, this forwards the request to the matcher
+   additional encode: with the quality layer off the batch's new names, with it on only
+   the tags promoted by the in-transaction check (provisional births stay out until
+   promoted). When using the RPC client, this forwards the request to the matcher
    process over the Unix socket.
 7. **Result Logging** — token usage stats and prompt text are logged.
 

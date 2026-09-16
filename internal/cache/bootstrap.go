@@ -15,7 +15,7 @@ const (
 )
 
 func BuildTagCache(ctx context.Context, queries *database.Queries, logger *utils.Logger, enc tagmatcher.Embedder, store *EmbeddingStore) error {
-	tagNames, err := queries.ListAllTagsNames(ctx)
+	tagNames, err := queries.ListPromotedTagNames(ctx)
 	if err != nil {
 		return fmt.Errorf("list tags: %w", err)
 	}

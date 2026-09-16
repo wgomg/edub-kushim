@@ -1,5 +1,5 @@
-INSERT INTO tag (name)
-VALUES
+INSERT INTO tag (name, promoted_at)
+SELECT seed.name, now() FROM (VALUES
     ('computer science'),
     ('information science'),
     ('journalism'),
@@ -105,4 +105,6 @@ VALUES
     ('medieval history'),
     ('modern history'),
     ('historiography')
-ON CONFLICT (name) DO NOTHING;
+) AS seed(name)
+ON CONFLICT (name) DO UPDATE SET promoted_at = now()
+WHERE tag.promoted_at IS NULL;

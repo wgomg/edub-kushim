@@ -452,9 +452,10 @@ orchestrator. Step by step:
    raw text** — a broken reducer never blocks analysis.
 2. **Reduce for the tag matcher** (`enricher.go:79-88`): same, target 4000.
 3. **Load context** (`enricher.go:90-101`): document types, people types, all
-   tags.
+   tags (unfiltered; the enricher splits the rows into the promoted trust set
+   and the all-rows novel set).
 4. **Tag matching** (`enricher.go:110-123`): `runner.MatchTags`; on error or
-   zero matches, falls back to the full tag-name list as suggestions.
+   zero matches, falls back to the promoted tag-name list as suggestions.
 5. **Analyze with a 2-attempt loop** (`enricher.go:125-174`):
 
 ```go
@@ -532,8 +533,8 @@ for i := range 2 {
     call per document; a verdict passes only when all four criteria are true,
     and a whitelisted country/continent is never rejected for being a place.
     Fresh verdicts record the judging model, cache-applied ones NULL. A judge
-    failure or timeout retries once and then degrades to keeping every novel
-    tag.
+    failure or timeout retries once and then keeps every novel tag — under the
+    gate those births are **provisional** (no verdict row).
 13. **Persist metadata** (`enricher.go:254-273`): title truncated to 127
     (`utils.Truncate`), doc type validated against the DB list (fallback
     `"undetermined"`), `UpdateDocumentMetadata`.
@@ -542,8 +543,15 @@ for i := range 2 {
     code is added to `consumer.ocr.languages` and persisted via
     `config.SaveMap` — for the gosseract engine the tessdata download runs
     in a goroutine and config persists only on success.
-15. **Tags to DB** (`enricher.go:277-305`): batch `Tag.Create` (tolerating
-    conflicts), then `ClearDocumentTags` + `AddDocumentTag` per tag.
+15. **Tags to DB** (`enricher.go:331-392`): batch `Tag.CreateTx` on the persist
+    transaction (`quarantine = enricher.tag_quality.enabled`), tolerating
+    conflicts; `ClearEnrichDocumentTags` + `AddDocumentTag` (`source = 'enrich'`)
+    per tag, plus orphan-mark clearing, all commit or roll back together. With
+    the layer off every created tag is promoted atomically with its insert and
+    the batch's new names are added to the embedding store after the commit;
+    with the layer on births land provisional, `promoteEligible` runs inside the
+    transaction (cached pass verdict + ≥ 2 distinct documents → `PromoteTags`),
+    and only the promoted names are added to the store.
 16. **People to DB** (`enricher.go:307-397`): dedupe by normalized name,
     `CreatePeople` with a race fallback (`sql.ErrNoRows` →
     `GetPeopleByNormalizedName` + `UpdatePeopleNative`), unknown LLM types →

@@ -61,3 +61,9 @@ ON CONFLICT (document_id, tag_id) DO NOTHING;
 
 -- name: DeleteDocumentTagsForTag :execrows
 DELETE FROM document_tag WHERE tag_id = $1;
+
+-- name: CountTagDocumentsByTagIDs :many
+SELECT tag_id, COUNT(*) AS document_count
+FROM document_tag
+WHERE tag_id = ANY(@tag_ids::bigint[])
+GROUP BY tag_id;

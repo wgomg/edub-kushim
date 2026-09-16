@@ -69,6 +69,41 @@ func (q *Queries) ClearEnrichDocumentTags(ctx context.Context, documentID int64)
 	return err
 }
 
+const countTagDocumentsByTagIDs = `-- name: CountTagDocumentsByTagIDs :many
+SELECT tag_id, COUNT(*) AS document_count
+FROM document_tag
+WHERE tag_id = ANY($1::bigint[])
+GROUP BY tag_id
+`
+
+type CountTagDocumentsByTagIDsRow struct {
+	TagID         int64
+	DocumentCount int64
+}
+
+func (q *Queries) CountTagDocumentsByTagIDs(ctx context.Context, tagIds []int64) ([]CountTagDocumentsByTagIDsRow, error) {
+	rows, err := q.db.QueryContext(ctx, countTagDocumentsByTagIDs, pq.Array(tagIds))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CountTagDocumentsByTagIDsRow
+	for rows.Next() {
+		var i CountTagDocumentsByTagIDsRow
+		if err := rows.Scan(&i.TagID, &i.DocumentCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const deleteDocumentTagsForTag = `-- name: DeleteDocumentTagsForTag :execrows
 DELETE FROM document_tag WHERE tag_id = $1
 `
@@ -82,7 +117,7 @@ func (q *Queries) DeleteDocumentTagsForTag(ctx context.Context, tagID int64) (in
 }
 
 const getDocumentTags = `-- name: GetDocumentTags :many
-SELECT t.id, t.name, t.created_at, t.orphaned_since FROM tag t
+SELECT t.id, t.name, t.created_at, t.orphaned_since, t.promoted_at FROM tag t
 JOIN document_tag dt ON t.id = dt.tag_id
 WHERE dt.document_id = $1
 `
@@ -101,6 +136,7 @@ func (q *Queries) GetDocumentTags(ctx context.Context, documentID int64) ([]Tag,
 			&i.Name,
 			&i.CreatedAt,
 			&i.OrphanedSince,
+			&i.PromotedAt,
 		); err != nil {
 			return nil, err
 		}

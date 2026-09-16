@@ -20,6 +20,7 @@ concept from the vocabulary. Every failure, ambiguity, or outage defaults to
 - [Joint tags](#joint-tags)
 - [LLM adjudication (opt-in)](#llm-adjudication-opt-in)
 - [Tag quality judge (opt-in)](#tag-quality-judge-opt-in)
+- [Quarantine and promotion](#quarantine-and-promotion)
 - [Merge review](#merge-review)
 - [Scheduled reconciliation](#scheduled-reconciliation)
 - [Configuration](#configuration)
@@ -174,8 +175,9 @@ from the vocabulary — are filtered before they are created:
   no LLM call, whichever document produced it; a model or policy change is
   reflected by bumping the version.
 - **Failure safety**: any timeout, provider error, or incomplete response
-  retries once and then keeps every novel tag — birth falls back to the
-  pre-judge behavior, and enrichment never blocks or fails on the judge.
+  retries once and then keeps every novel tag — under the gate the birth is
+  provisional and carries no verdict, and enrichment never blocks or fails on
+  the judge.
 - **Logging**: rejections are logged as `tagquality[v1]: reject …` lines
   (weak-band and judged variants both carry the reason), siblings of the
   `consolidation[v1]` and `tags[facet]:` lines.
@@ -184,6 +186,30 @@ Both band thresholds are internal v1 constants, not configuration keys; the
 judge LLM and timeout inherit the content analyzer's unless the `llm` block
 overrides them, and a warning is logged when the resolved judge equals the
 generator.
+
+---
+
+## Quarantine and promotion
+
+With the gate on, the novel tags that survive the judge are **provisional**:
+they are attached to the document and searchable from birth, but
+`tag.promoted_at` is NULL and the name is excluded from the embedding store —
+so it is never suggested, never a consolidation target, and never part of the
+all-names fallback vocabulary (`BuildTagCache` embeds promoted tags only, and
+the enricher composes its fallback and consolidation sets from the promoted
+subset). Promotion is inline, one-way, and runs inside the persist
+transaction: a provisional name with a cached passing verdict at the current
+`TagQualityVersion` and assignments on at least two distinct documents gets
+`promoted_at = now()` and enters the store after the commit. The
+`document_tag` primary key makes the count distinct-document, so a single
+document re-enriching itself cannot promote a name.
+
+Verdict-less provisionals — judge outages and re-emitted legacy rows — are not
+re-judged in flight: a name already present in the tag table is not novel, so
+the judge never sees it again and it stays provisional. The migration
+backfilled `promoted_at = created_at` for tags that already had assignments and
+left zero-assignment rows provisional; the seeded vocabulary is inserted
+promoted. Layer off ⇒ newborns are born trusted exactly as before.
 
 ---
 

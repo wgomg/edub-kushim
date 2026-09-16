@@ -117,8 +117,8 @@ it exists as adjudication evidence.
    wrapper in `internal/tools/runner.go:454`; on error the enricher logs and
    keeps the unconsolidated tags (enrichment never fails on consolidation).
 2. `applyConsolidationPolicy` (`enricher.go:433`) — builds the canonical
-   `storeTags` set from `services.Tag.ListAll`, evaluates via
-   `tagpolicy.Evaluate`, and logs every decision as
+   `storeTags` set from the promoted subset of `services.Tag.ListAll`,
+   evaluates via `tagpolicy.Evaluate`, and logs every decision as
    `consolidation[v1]: replace|keep|passthrough … reason=…` (replace/keep at
    info, passthrough at debug).
 3. Band pairs (`Reason == ambiguous_band`) route to `adjudicateBandPairs`
@@ -128,17 +128,21 @@ it exists as adjudication evidence.
 4. Adjudication evidence uses a second, target-as-query `RankTags`
    (`enricher.go:640`) over the distinct unresolved targets.
 
-Kept tags are then created via `services.Tag.Create` → `AddToStore`, so a born
-tag is immediately part of the store and later emissions of the same name hit
-the identity fast path — the self-healing loop.
+Kept tags are then created through the persist transaction (`CreateTx`), so a
+trusted birth is immediately part of the store and later emissions of the same
+name hit the identity fast path — the self-healing loop.
 
 When `enricher.tag_quality.enabled` is true, `applyTagQuality`
 (`enricher.go`) filters that kept set once more before persist: novel names
-(absent from the store) pass the deterministic weak band, resolve from the
+(absent from the tag table) pass the deterministic weak band, resolve from the
 `tag_quality_event` cache, or go into one rubric call per document; rejected
-names are dropped for that document only. The judge's prompt, criteria, and
-cache semantics are documented in the
-[semantic matching guide](semantic-matching.md#rubric-judge-for-novel-tags).
+names are dropped for that document only. Survivors are born **provisional**
+and are promoted inline once a cached passing verdict and assignments on ≥2
+distinct documents coincide; only promoted names enter the store. The judge's
+prompt, criteria, and cache semantics are documented in the
+[semantic matching guide](semantic-matching.md#rubric-judge-for-novel-tags),
+and the promotion rule in its
+[promotion section](semantic-matching.md#promotion-out-of-quarantine).
 
 ---
 
@@ -434,6 +438,14 @@ daemon warns when reconciliation is enabled without the adjudicator.
   `enricher.tag_quality.enabled`, and `enricher.tag_reconcile.enabled` are
   set. Merge suggestions then run similarity-only (`similarity_only`
   confidence).
+- **Quarantined tags are invisible to the vocabulary** — with `tag_quality`
+  on, a newborn is attached and searchable from birth but stays out of the
+  embedding store — and therefore out of suggestions, consolidation targets,
+  and the all-names fallback — until it has a cached passing verdict and
+  assignments on ≥2 distinct documents. Verdict-less births (judge outages)
+  and re-emitted legacy provisionals never get a verdict row either — a name in
+  the tag table is not novel, so the judge never sees it again — and stay
+  provisional.
 - **The first reconciliation run is always report-only**, even with
   `report_only: false` — flip behavior only starts with the second run.
 - **`GET /rpc/v1/similar-pairs` has no legacy fallback** — after upgrading

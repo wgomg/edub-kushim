@@ -109,7 +109,7 @@ per tool category, used by the frontend settings UI to populate select dropdowns
 
 ### Function
 
-- `BuildTagCache(ctx, queries, logger, hugot, store) error` — Fetches all tag names from DB, creates an initial empty `EmbeddingStore`, embeds tags in batches of 32 via the provided `Hugot` embedder, populates the store. Graceful fallback to empty cache on Hugot init failure.
+- `BuildTagCache(ctx, queries, logger, hugot, store) error` — Fetches the promoted tag names from DB (`ListPromotedTagNames`; provisional tags stay out of the store until promoted), creates an initial empty `EmbeddingStore`, embeds tags in batches of 32 via the provided `Hugot` embedder, populates the store. Graceful fallback to empty cache on Hugot init failure.
 
 ---
 

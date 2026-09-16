@@ -127,11 +127,11 @@ The SQL dump/restore machinery lives in `internal/database/` (shared by `kushim 
 
 ### Tag
 
-`CreateTag` (`INSERT ... ON CONFLICT (name) DO NOTHING`, `:execresult`), `GetTag`, `GetTagForUpdate` (`SELECT ... FOR UPDATE` — row lock used by the tag-merge transaction), `GetTagByName`, `ListTags`, `ListAllTags`, `ListAllTagsNames`, `SearchTagsByName` (prefix search with `LIKE $1` + `LIMIT $2`), `UpdateTag`, `DeleteTag`, `MarkOrphanTags` (`:execrows` — sets `orphaned_since = now()` on document-less tags without a mark), `ClearOrphanTagMarks` (`:execrows` — clears marks on tags that currently have documents), `ClearOrphanTagMarksByTagIDs` (array of tag ids — called by every assignment path so the sweep grace tracks real last usage), `ListOrphanTags` (`:many` — marked for longer than a cutoff and still document-less, ordered by name), `DeleteOrphanTags` (`:many` — deletes the same set, returning the names; both queries re-check the `NOT EXISTS (document_tag)` guard so a tag re-assigned mid-run is never listed or deleted)
+`CreateTag` (`INSERT ... ON CONFLICT (name) DO NOTHING`, `:execresult`), `GetTag`, `GetTagForUpdate` (`SELECT ... FOR UPDATE` — row lock used by the tag-merge transaction), `GetTagByName`, `ListTags`, `ListAllTags` (unfiltered — the enricher's novel-set derivation needs every row), `ListPromotedTagNames` (`promoted_at IS NOT NULL`, `created_at DESC` — the matcher store build), `PromoteTags` (`:execrows` — sets `promoted_at = now()` for the given ids where still NULL, so repeat/concurrent promotions are no-ops), `SearchTagsByName` (prefix search with `LIKE $1` + `LIMIT $2`), `UpdateTag`, `DeleteTag`, `MarkOrphanTags` (`:execrows` — sets `orphaned_since = now()` on document-less tags without a mark), `ClearOrphanTagMarks` (`:execrows` — clears marks on tags that currently have documents), `ClearOrphanTagMarksByTagIDs` (array of tag ids — called by every assignment path so the sweep grace tracks real last usage), `ListOrphanTags` (`:many` — marked for longer than a cutoff and still document-less, ordered by name), `DeleteOrphanTags` (`:many` — deletes the same set, returning the names; both queries re-check the `NOT EXISTS (document_tag)` guard so a tag re-assigned mid-run is never listed or deleted)
 
 ### Document tag
 
-`AddDocumentTag` (`source` parameter, `INSERT ... ON CONFLICT (document_id, tag_id) DO NOTHING` — used by enrichment with `source = 'enrich'`; an existing row is never downgraded), `UpsertManualDocumentTag` (`INSERT ... ON CONFLICT (document_id, tag_id) DO UPDATE SET source = 'manual'` — operator writes pin the row so re-enrichment keeps it), `RemoveDocumentTag`, `GetDocumentTags`, `ClearDocumentTags`, `ClearEnrichDocumentTags` (`source = 'enrich'` only — re-enrichment keeps manual assignments), `GetTagDocuments`, `ReassignDocumentTags` (`:execrows` — re-points `document_tag` rows from a source tag to a target tag, skipping documents that already carry the target via a `NOT EXISTS` guard), `DeleteDocumentTagsForTag` (`:execrows` — removes leftover source rows before the tag row is deleted)
+`AddDocumentTag` (`source` parameter, `INSERT ... ON CONFLICT (document_id, tag_id) DO NOTHING` — used by enrichment with `source = 'enrich'`; an existing row is never downgraded), `UpsertManualDocumentTag` (`INSERT ... ON CONFLICT (document_id, tag_id) DO UPDATE SET source = 'manual'` — operator writes pin the row so re-enrichment keeps it), `RemoveDocumentTag`, `GetDocumentTags`, `ClearDocumentTags`, `ClearEnrichDocumentTags` (`source = 'enrich'` only — re-enrichment keeps manual assignments), `GetTagDocuments`, `CountTagDocumentsByTagIDs` (`:many` — `tag_id` + `COUNT(*)` per requested id; the `(document_id, tag_id)` PK makes the count a distinct-document count, used by the promotion check's ≥ 2-document gate), `ReassignDocumentTags` (`:execrows` — re-points `document_tag` rows from a source tag to a target tag, skipping documents that already carry the target via a `NOT EXISTS` guard), `DeleteDocumentTagsForTag` (`:execrows` — removes leftover source rows before the tag row is deleted)
 
 ### Deleted tag
 
@@ -266,7 +266,7 @@ The last 4 methods back the dashboard analytics panel. `LanguageDistribution` an
 - `document` — Main storage: `document_id` (UUID, UNIQUE), `md5_checksum`, `sha512_checksum` (UNIQUE), `file_size` (`BIGINT`, original inbox file size), `processed_size` (`BIGINT`, processed file size; `0` = unknown, `-1` = backfill sentinel for missing files), `page_count` (`INTEGER`, Go: `int32`), `word_count` (`int32`), `char_count` (`int32`), `language`, `text_content`, file paths, `deleted_at` (`TIMESTAMPTZ`, nullable — soft-delete marker, NULL = active). Primary key: `id BIGINT GENERATED ALWAYS AS IDENTITY`.
 - `saved_search` — Saved search configurations: `id`, `name`, `filter_json` (JSON), `created_at TIMESTAMPTZ NOT NULL` (Go: `time.Time`)
 - `task` — Async processing: `task_id` (UUID), `batch_id` (nullable), `task_type`, `payload` (`JSONB`), `result` (`JSONB`), `dedup_key` (nullable), `status`, timestamps, `error`, `attempts int32`
-- `tag` — Classification tags (seeded with 110+ Dewey Decimal tags). `name` is UNIQUE and stored in canonical form: `service.Tag.Create`/`Update` normalize every incoming name through `utils.NormalizeTag` (lowercase, accent-folded, dash family → space, keeps `+ # .`, digits, and letters of any Unicode script) before insert. `orphaned_since TIMESTAMPTZ` (nullable) marks the last reconciliation run that observed the tag without documents; the sweep deletes tags whose mark is older than `enricher.tag_reconcile.dead_tag_grace_days`, and assignment paths clear the mark.
+- `tag` — Classification tags (seeded with 110+ Dewey Decimal tags). `name` is UNIQUE and stored in canonical form: `service.Tag.Create`/`Update` normalize every incoming name through `utils.NormalizeTag` (lowercase, accent-folded, dash family → space, keeps `+ # .`, digits, and letters of any Unicode script) before insert. `promoted_at TIMESTAMPTZ` (nullable) is the trust marker: NULL = provisional (quarantined — no embedding-store membership, so the name is never suggested nor used as a consolidation target), set = trusted. The quality layer promotes a provisional name inline when it has a cached passing rubric verdict at the current `TagQualityVersion` and assignments on ≥2 distinct documents; every other creation path (operator API, deleted-tag restore, reconciler, seeded vocabulary) is born promoted. `orphaned_since TIMESTAMPTZ` (nullable) marks the last reconciliation run that observed the tag without documents; the sweep deletes tags whose mark is older than `enricher.tag_reconcile.dead_tag_grace_days`, and assignment paths clear the mark.
 - `document_type` — Document type classification (seeded with types like `article`, `book`, `report`). `description` defaults to `''`.
 - `people` — People/entities (`name` UNIQUE, `name_native` nullable, `normalized_name` NOT NULL UNIQUE)
 - `people_type` — Roles for people
@@ -291,7 +291,7 @@ The last 4 methods back the dashboard analytics panel. `LanguageDistribution` an
 - `document_people`: `document_id`, `people_id`
 - `document_tag`: `document_id`, `tag_id`
 - `people`: `normalized_name` (UNIQUE)
-- `tag`: partial `idx_tag_orphaned_since` (`orphaned_since WHERE orphaned_since IS NOT NULL`)
+- `tag`: partial `idx_tag_orphaned_since` (`orphaned_since WHERE orphaned_since IS NOT NULL`), partial `idx_tag_provisional` (`created_at WHERE promoted_at IS NULL` — leads with `created_at` because the useful scans filter the provisional set by age or list it wholesale)
 - `tag_verdict_event`: `idx_tag_verdict_event_pair` (`query, target, policy_version, verdict_at DESC`), `idx_tag_verdict_event_stale` (`policy_version, verdict_at`), partial unique `idx_tag_verdict_event_fresh_pair` (`(query, target, policy_version) WHERE verdict_model IS NOT NULL`)
 - `tag_quality_event`: `idx_tag_quality_event_name` (`tag_name, policy_version, verdict_at DESC`), partial unique `idx_tag_quality_event_fresh_name` (`(tag_name, policy_version) WHERE verdict_model IS NOT NULL`)
 - `batch`: `status`
@@ -335,7 +335,13 @@ mark) with `00023_tag_orphaned_since_index.sql` (partial
 `tag_name`, JSONB `criteria`, `pass`, nullable `verdict_model`, `policy_version` —
 with the partial unique index `idx_tag_quality_event_fresh_name` on
 `(tag_name, policy_version) WHERE verdict_model IS NOT NULL` for fresh-verdict
-deduplication, mirroring the verdict table). Goose tracks
+deduplication, mirroring the verdict table), `00025_tag_promotion.sql` (adds the
+nullable `tag.promoted_at` trust marker with the partial index
+`idx_tag_provisional` on `(created_at) WHERE promoted_at IS NULL`, then backfills
+`promoted_at = created_at` for every tag with at least one `document_tag`
+assignment — the `EXISTS` predicate is the one `MarkOrphanTags` uses, so
+`orphaned_since IS NOT NULL ⇒ promoted_at IS NULL` holds for legacy rows, and
+zero-assignment rows stay provisional). Goose tracks
 which versions have been applied in the `goose_db_version` table.
 
 ## Migration Version Table

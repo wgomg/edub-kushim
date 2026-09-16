@@ -159,7 +159,15 @@ store, it can never be suggested.
 `cache.BuildTagCache` (`internal/cache/bootstrap.go:16`) rebuilds the store
 from the `tag` table:
 
-1. Loads all tag names (`ListAllTagsNames`).
+1. Loads the **promoted** tag names (`ListPromotedTagNames`, i.e.
+   `promoted_at IS NOT NULL`). Store membership is the trust boundary: a
+   provisional tag (`promoted_at` NULL — a quarantined newborn, a
+   zero-assignment legacy row) is excluded from every injection point, so it is
+   never suggested, never a consolidation target, and never part of the
+   all-names fallback vocabulary. Promotion adds the name incrementally
+   (`service.Tag.AddToStore` after the promotion check); a re-run of
+   `BuildTagCache` after a restart converges the store with the table either
+   way.
 2. Embeds them **verbatim** — no per-key transformation. Tag names are
    already canonical: `service.Tag.Create`/`Update` normalize every name
    through `utils.NormalizeTag` (`internal/utils/tagname.go`) before it
@@ -171,10 +179,13 @@ from the `tag` table:
 
 The store is rebuilt at `kushim hugot` daemon startup, and incrementally
 updated on tag CRUD (`service.Tag.encodeAndAddBatch` via `AddToStore`,
-`service/tag.go:275-279`). `AddToStore`, `RemoveFromStore`, `Consolidate` and
-`Rank` in `hugot.go` likewise use their inputs verbatim — the canonical form
-is guaranteed upstream (DB names on the store side, `contentanalyzer.NormalizeTags`
-on the query side), so any per-call normalization would only introduce drift.
+`service/tag.go:275-279`): a create adds names only for trusted births, a rename
+re-embeds the new name only when the renamed tag was promoted, and the enricher
+adds promoted names after the promotion check commits. `AddToStore`,
+`RemoveFromStore`, `Consolidate` and `Rank` in `hugot.go` likewise use their
+inputs verbatim — the canonical form is guaranteed upstream (DB names on the
+store side, `contentanalyzer.NormalizeTags` on the query side), so any per-call
+normalization would only introduce drift.
 
 ---
 
@@ -404,7 +415,9 @@ partial unique index on `(tag_name, policy_version) WHERE verdict_model IS NOT
 NULL` deduplicates concurrent workers, and a losing insert re-reads the cached
 verdict, applies it, and writes a cache-applied row with NULL `verdict_model`.
 A judge error, timeout, or incomplete response retries once and then keeps
-every novel tag (birth-as-today) with an error log.
+every novel tag with an error log — under the quality gate those kept names are
+born **provisional** (no verdict row), so they stay out of the vocabulary and
+await the reconciliation's re-judge.
 
 The judge LLM and timeout default to the content analyzer's
 (`ResolvedQualityLlm`/`ResolvedQualityTimeout`, resolved at use time); config
@@ -412,6 +425,31 @@ validation logs a warning when the resolved judge equals the generator, since
 a shared model biases every verdict with the generator's own failure modes.
 The weak-band thresholds are provisional v1 constants in the enricher, not
 config keys.
+
+### Promotion out of quarantine
+
+Under the same gate, a newborn is attached and searchable from birth but
+provisional: `tag.promoted_at` is NULL and the name is excluded from every
+vocabulary injection point. `promoteEligible` runs inside the enricher's persist
+transaction, after the tag assignments are written and before the commit, over
+the provisional rows the document just touched (fresh `Created` rows and
+`Conflict` rows whose `promoted_at` is invalid; a re-emitted trusted tag is
+skipped). A name promotes when both hold:
+
+- a **cached passing verdict** at the current `TagQualityVersion`
+  (`LatestTagQualityEventsForNames`), and
+- assignments on **≥ 2 distinct documents** (`CountTagDocumentsByTagIDs` —
+  `document_tag`'s `(document_id, tag_id)` PK makes the count distinct, so a
+  single document re-enriching itself stays at 1).
+
+`PromoteTags` sets `promoted_at = now()` under `WHERE promoted_at IS NULL`, so
+concurrent promotions are idempotent, and the promoted names enter the store
+via `AddToStore` only after the commit (`tagquality[v1]: promote %q
+(docs=%d model=%s)`, `model` or `cached` for a cache-applied verdict).
+Verdict-less provisionals — judge outages and re-emitted legacy rows — are not
+re-judged in flight: a name already present in the tag table is not novel, so
+`applyTagQuality` never sees it again and no verdict row appears. They stay
+provisional and out of the vocabulary.
 
 ---
 
@@ -559,23 +597,34 @@ statements.
 
 ## 11. Where it plugs into the pipeline
 
-1. **Tag CRUD** (`service/tag.go`): create/delete tags call
-   `AddToStore`/`RemoveFromStore` to keep the live store in sync
+1. **Tag CRUD** (`service/tag.go`): creates add the new names when the birth is
+   trusted (`Create`/`CreateAndUnblock` promote what they create; a quarantined
+   `CreateTx` birth stays provisional), deletes call `RemoveFromStore`, and a
+   rename re-embeds the new name only when the renamed tag was promoted
    (`encodeAndAddBatch`, `service/tag.go:275-279`).
-2. **Daemon startup** (`commands/hugot.go`): `BuildTagCache` seeds the store.
+2. **Daemon startup** (`commands/hugot.go`): `BuildTagCache` seeds the store
+   from the promoted names (`ListPromotedTagNames`), so provisional tags stay
+   out across restarts.
 3. **Enrichment** (`internal/enrichment/enricher.go`):
    - `runner.MatchTags(ctx, docId, reducedText)` → `tagSuggestions`; on error
-     or zero matches, falls back to the full tag-name list
-     (`enricher.go:106-118`).
+     or zero matches, falls back to the promoted-name list (the enricher's
+     `tagsNames`, composed from the promoted subset of `ListAll`).
    - `runner.RankTags(ctx, docId, analysis.Tags)` after the LLM pass
      (`enricher.go:244`); `applyConsolidationPolicy` applies the
-     replacement decision via `tagpolicy.Evaluate` (guards + two bands).
+     replacement decision via `tagpolicy.Evaluate` (guards + two bands) with
+     the promoted-only `storeTags` set, so quarantined names are not targets
+     and do not feed the negation guard.
    - `runner.AdjudicateTags(ctx, pairs)` resolves the ambiguous band when
      `enricher.tag_adjudicator.enabled` is true (cache + evidence + one LLM
      call per document, §7).
    - `runner.JudgeTagQuality(ctx, reducedText, candidates)` filters the
      consolidated novel set when `enricher.tag_quality.enabled` is true
      (weak band → cache → one rubric call per document, §7).
+   - `promoteEligible` runs inside the persist transaction, after the tag
+     assignments and before the commit: a cached passing verdict at the
+     current policy version plus assignments on ≥ 2 distinct documents →
+     `PromoteTags`, and the promoted names enter the store after the commit
+     (§7).
 4. **API tag creation** triggers a store refresh through the same service.
 
 ---
@@ -588,7 +637,9 @@ statements.
   verbatim, so store keys always equal DB names.
 - **The store is the tag universe.** Tags not in `entries` can never be
   suggested, and `Match` returns nothing when the store is empty — even if
-  the model works.
+  the model works. With the quality layer on this exclusion is deliberate for
+  provisional tags: they are attached and searchable from birth but invisible
+  to the vocabulary until promotion.
 - **Chunk size is clamped by the model**, not just by config: `config.json`
   `max_position_embeddings` minus a 12-token safety margin. Raising
   `chunk_size` beyond the model limit is silently ignored.

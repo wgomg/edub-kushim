@@ -13,8 +13,10 @@ SELECT * FROM tag ORDER BY created_at DESC LIMIT $1 OFFSET $2;
 -- name: ListAllTags :many
 SELECT * FROM tag ORDER BY created_at DESC;
 
--- name: ListAllTagsNames :many
-SELECT name FROM tag ORDER BY created_at DESC;
+-- name: ListPromotedTagNames :many
+SELECT name FROM tag
+WHERE promoted_at IS NOT NULL
+ORDER BY created_at DESC;
 
 -- name: CreateTag :one
 INSERT INTO tag (name)
@@ -26,6 +28,11 @@ RETURNING id;
 UPDATE tag SET
     name = $1
 WHERE id = $2;
+
+-- name: PromoteTags :execrows
+UPDATE tag SET promoted_at = now()
+WHERE id = ANY(@tag_ids::bigint[])
+  AND promoted_at IS NULL;
 
 -- name: CountTags :one
 SELECT COUNT(*) FROM tag;

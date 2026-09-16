@@ -62,6 +62,14 @@ func (m *MockEmbedder) Close() {}
 
 func (m *MockEmbedder) Name() string { return "mock-embedder" }
 
+// Has reports whether a name is currently in the mock store.
+func (m *MockEmbedder) Has(name string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	_, ok := m.store[name]
+	return ok
+}
+
 // SetConsolidateFn replaces the default consolidation behavior.
 func (m *MockEmbedder) SetConsolidateFn(fn func(ctx context.Context, docId string, queries []string) ([]string, error)) {
 	m.mu.Lock()

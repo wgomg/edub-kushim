@@ -61,7 +61,7 @@ func TestTag_CreateTx(t *testing.T) {
 	defer tx.Rollback()
 	txQ := client.WithTx(tx)
 
-	results, newNames, err := svc.CreateTx(ctx, txQ, []string{"tx-test-1", "tx-test-2"})
+	results, newNames, err := svc.CreateTx(ctx, txQ, []string{"tx-test-1", "tx-test-2"}, false)
 	testutil.AssertNoError(t, err, "create tx")
 	testutil.AssertEqual(t, len(results), 2, "two results")
 	testutil.AssertEqual(t, len(newNames), 2, "two new names")
@@ -152,6 +152,87 @@ func TestTag_RestoreDeleted_NotFound(t *testing.T) {
 
 	_, err := svc.RestoreDeleted(ctx, "nonexistent-tag")
 	testutil.AssertError(t, err, "not found")
+}
+
+func TestTag_Create_PromotesBirth(t *testing.T) {
+	svc, client := newTestTag(t)
+	ctx := context.Background()
+
+	results, err := svc.Create(ctx, []string{"promote-test-1", "promote-test-2"})
+	testutil.AssertNoError(t, err, "create")
+	testutil.AssertEqual(t, len(results), 2, "two results")
+	for _, r := range results {
+		testutil.AssertEqual(t, r.Status, Created, "result status")
+	}
+
+	tag1, err := client.Queries.GetTagByName(ctx, "promote test 1")
+	testutil.AssertNoError(t, err, "get tag 1")
+	if !tag1.PromotedAt.Valid {
+		t.Error("tag created via Create must have promoted_at set")
+	}
+
+	tag2, err := client.Queries.GetTagByName(ctx, "promote test 2")
+	testutil.AssertNoError(t, err, "get tag 2")
+	if !tag2.PromotedAt.Valid {
+		t.Error("tag created via Create must have promoted_at set")
+	}
+}
+
+func TestTag_CreateTx_Quarantined_LeavesProvisional(t *testing.T) {
+	svc, client := newTestTag(t)
+	ctx := context.Background()
+
+	tx, err := client.BeginTx(ctx, nil)
+	testutil.AssertNoError(t, err, "begin tx")
+	defer tx.Rollback()
+	txQ := client.WithTx(tx)
+
+	results, newNames, err := svc.CreateTx(ctx, txQ, []string{"quarantined-tag"}, true)
+	testutil.AssertNoError(t, err, "create tx quarantined")
+	testutil.AssertEqual(t, len(results), 1, "one result")
+	testutil.AssertEqual(t, len(newNames), 1, "one new name")
+	testutil.AssertEqual(t, results[0].Status, Created, "created")
+
+	// The result entity for a quarantined birth must not have promoted_at set.
+	if results[0].Entity.PromotedAt.Valid {
+		t.Error("quarantined birth must have promoted_at NULL")
+	}
+
+	// Verify within the transaction (before rollback).
+	tag, err := txQ.GetTagByName(ctx, "quarantined tag")
+	testutil.AssertNoError(t, err, "get quarantined tag in tx")
+	if tag.PromotedAt.Valid {
+		t.Error("quarantined tag in DB must have promoted_at NULL")
+	}
+}
+
+func TestTag_Update_OnlyReembedsPromotedTags(t *testing.T) {
+	svc, client := newTestTag(t)
+	ctx := context.Background()
+	embedder := svc.embedder.(*testutil.MockEmbedder)
+
+	// Create a promoted tag (via Create, which promotes).
+	createResults, err := svc.Create(ctx, []string{"update-reembed-src"})
+	testutil.AssertNoError(t, err, "create promoted tag")
+	testutil.AssertEqual(t, createResults[0].Status, Created, "created")
+	promotedID := createResults[0].Entity.ID
+
+	// Verify the tag is promoted in the DB.
+	tag, err := client.Queries.GetTag(ctx, promotedID)
+	testutil.AssertNoError(t, err, "get created tag")
+	if !tag.PromotedAt.Valid {
+		t.Fatalf("created tag must be promoted, got promoted_at=%v", tag.PromotedAt)
+	}
+
+	// Rename the promoted tag — the new normalized name should enter the store.
+	updateResults, err := svc.Update(ctx, []TagUpdatePair{
+		{ID: promotedID, Name: "update-reembed-dst"},
+	})
+	testutil.AssertNoError(t, err, "update promoted tag")
+	testutil.AssertEqual(t, updateResults[0].Status, Updated, "updated")
+	if !embedder.Has("update reembed dst") {
+		t.Error("renamed promoted tag must be added to the embedder store")
+	}
 }
 
 func TestTag_CreateAndUnblock(t *testing.T) {

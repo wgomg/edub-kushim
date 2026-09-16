@@ -126,18 +126,14 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 
 	var tagSuggestions []string
 
+	storeTags := make(map[string]struct{}, len(allTags))
+	dbNames := make(map[string]struct{}, len(allTags))
 	var tagsNames []string
 	for _, t := range allTags {
-		tagsNames = append(tagsNames, t.Name)
-	}
-
-	storeTags := make(map[string]struct{}, len(allTags))
-	for _, t := range allTags {
-		storeTags[t.Name] = struct{}{}
-	}
-
-	dbNames := make(map[string]struct{}, len(allTags))
-	for _, t := range allTags {
+		if t.PromotedAt.Valid {
+			tagsNames = append(tagsNames, t.Name)
+			storeTags[t.Name] = struct{}{}
+		}
 		dbNames[t.Name] = struct{}{}
 	}
 
@@ -279,7 +275,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 	analysis.Tags = contentanalyzer.FilterTags(analysis.Tags, analysis.People, knownNormalized, analysis.Title, docTypeNames, e.config.Enricher.ContentAnalyzer.MaxTags)
 	tagFilter := contentanalyzer.NewTagFilter(analysis.People, knownNormalized, analysis.Title, docTypeNames)
 	analysis.Tags = e.splitJointTags(ctx, analysis.Tags, tagFilter, &logId)
-	analysis.Tags = e.applyDeletedTagPolicy(analysis.Tags, storeTags, blocklist, &logId)
+	analysis.Tags = e.applyDeletedTagPolicy(analysis.Tags, dbNames, blocklist, &logId)
 
 	consolidateStart := time.Now()
 	report("consolidate", "", 0)
@@ -332,6 +328,9 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 
 	e.ensureOCRLanguage(ctx, analysis.Language)
 
+	quarantine := e.config.Enricher.TagQuality.Enabled
+	var promotedNames []string
+
 	tx, err := e.client.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("begin tag transaction: %w", err)}
@@ -339,7 +338,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 	defer tx.Rollback()
 	txQ := e.client.WithTx(tx)
 
-	results, newNames, err := e.services.Tag.CreateTx(ctx, txQ, analysis.Tags)
+	results, newNames, err := e.services.Tag.CreateTx(ctx, txQ, analysis.Tags, quarantine)
 	if err != nil {
 		return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("batch create tags: %w", err)}
 	}
@@ -349,6 +348,9 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 		switch r.Status {
 		case service.Created:
 			e.logger.Debug(&logId, "tag created %s", analysis.Tags[i])
+			if quarantine {
+				e.logger.Info(&logId, "tagquality[%s]: quarantine %q (reason=birth)", contentanalyzer.TagQualityVersion, analysis.Tags[i])
+			}
 			tagIDs = append(tagIDs, r.Entity.ID)
 		case service.Conflict:
 			tagIDs = append(tagIDs, r.Entity.ID)
@@ -374,11 +376,20 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 			return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("clear orphan tag marks: %w", err)}
 		}
 	}
+
+	if quarantine {
+		promotedNames = e.promoteEligible(ctx, txQ, results, &logId)
+	}
+
 	if err := tx.Commit(); err != nil {
 		return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("commit tag transaction: %w", err)}
 	}
 
-	e.services.Tag.AddToStore(ctx, newNames)
+	if quarantine {
+		e.services.Tag.AddToStore(ctx, promotedNames)
+	} else {
+		e.services.Tag.AddToStore(ctx, newNames)
+	}
 
 	peopleMap := make(map[string]int64, len(existingPeople))
 	for _, p := range existingPeople {
@@ -479,6 +490,98 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 	return analysis.Stats, nil
 }
 
+func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, results []service.CreateResult[database.Tag], logId *string) []string {
+	provisional := make(map[string]int64, len(results))
+	for _, r := range results {
+		if r.Status != service.Created && r.Status != service.Conflict {
+			continue
+		}
+		if r.Entity.PromotedAt.Valid {
+			continue
+		}
+		provisional[r.Entity.Name] = r.Entity.ID
+	}
+	if len(provisional) == 0 {
+		return nil
+	}
+
+	names := make([]string, 0, len(provisional))
+	for name := range provisional {
+		names = append(names, name)
+	}
+	rows, err := q.LatestTagQualityEventsForNames(ctx, database.LatestTagQualityEventsForNamesParams{
+		PolicyVersion: contentanalyzer.TagQualityVersion,
+		TagNames:      names,
+	})
+	if err != nil {
+		e.logger.Error(logId, "tag quality promotion verdict lookup failed: %v", err)
+		return nil
+	}
+
+	type passRow struct {
+		name  string
+		id    int64
+		model string
+	}
+	var passed []passRow
+	for _, row := range rows {
+		if !row.Pass {
+			continue
+		}
+		id, ok := provisional[row.TagName]
+		if !ok {
+			continue
+		}
+		passed = append(passed, passRow{name: row.TagName, id: id, model: row.VerdictModel.String})
+	}
+	if len(passed) == 0 {
+		return nil
+	}
+
+	ids := make([]int64, len(passed))
+	for i, p := range passed {
+		ids[i] = p.id
+	}
+	countRows, err := q.CountTagDocumentsByTagIDs(ctx, ids)
+	if err != nil {
+		e.logger.Error(logId, "tag quality promotion document count failed: %v", err)
+		return nil
+	}
+	counts := make(map[int64]int64, len(countRows))
+	for _, row := range countRows {
+		counts[row.TagID] = row.DocumentCount
+	}
+
+	var eligible []passRow
+	var promoteIDs []int64
+	for _, p := range passed {
+		if counts[p.id] < 2 {
+			continue
+		}
+		eligible = append(eligible, p)
+		promoteIDs = append(promoteIDs, p.id)
+	}
+	if len(promoteIDs) == 0 {
+		return nil
+	}
+
+	if _, err := q.PromoteTags(ctx, promoteIDs); err != nil {
+		e.logger.Error(logId, "tag quality promotion failed: %v", err)
+		return nil
+	}
+
+	promoted := make([]string, len(eligible))
+	for i, p := range eligible {
+		model := p.model
+		if model == "" {
+			model = "cached"
+		}
+		e.logger.Info(logId, "tagquality[%s]: promote %q (docs=%d model=%s)", contentanalyzer.TagQualityVersion, p.name, counts[p.id], model)
+		promoted[i] = p.name
+	}
+	return promoted
+}
+
 func (e *Enricher) splitJointTags(ctx context.Context, tags []string, filter *contentanalyzer.TagFilter, logId *string) []string {
 	var candidates []string
 	for _, t := range tags {
@@ -532,7 +635,7 @@ func (e *Enricher) splitJointTags(ctx context.Context, tags []string, filter *co
 	return out
 }
 
-func (e *Enricher) applyDeletedTagPolicy(tags []string, storeTags map[string]struct{}, blocklist map[string]database.ListAllDeletedTagsRow, logId *string) []string {
+func (e *Enricher) applyDeletedTagPolicy(tags []string, knownTags map[string]struct{}, blocklist map[string]database.ListAllDeletedTagsRow, logId *string) []string {
 	if len(blocklist) == 0 {
 		return tags
 	}
@@ -551,7 +654,7 @@ func (e *Enricher) applyDeletedTagPolicy(tags []string, storeTags map[string]str
 					e.logger.Info(logId, "deleted tag policy: dropping %q — the merge target is unknown", tag)
 					continue
 				}
-				if _, ok := storeTags[target]; !ok {
+				if _, ok := knownTags[target]; !ok {
 					e.logger.Info(logId, "deleted tag policy: dropping %q — it was merged into %q, which no longer exists", tag, target)
 					continue
 				}
@@ -882,7 +985,7 @@ func (e *Enricher) applyTagQuality(ctx context.Context, analysis *tools.ContentA
 
 	if len(uncached) > 0 {
 		if !e.runner.HasTagQualityJudge() {
-			e.logger.Error(logId, "tagquality[%s]: judge not configured, keeping %d novel tags", contentanalyzer.TagQualityVersion, len(uncached))
+			e.logger.Error(logId, "tagquality[%s]: judge not configured, keeping %d novel tags (born provisional)", contentanalyzer.TagQualityVersion, len(uncached))
 		} else {
 			candidates := make([]contentanalyzer.TagQualityCandidate, len(uncached))
 			for i, n := range uncached {
@@ -901,7 +1004,7 @@ func (e *Enricher) applyTagQuality(ctx context.Context, analysis *tools.ContentA
 				err = fmt.Errorf("judge returned %d verdicts for %d candidates", len(results), len(candidates))
 			}
 			if err != nil {
-				e.logger.Error(logId, "tagquality[%s]: judge failed, keeping %d novel tags: %v", contentanalyzer.TagQualityVersion, len(uncached), err)
+				e.logger.Error(logId, "tagquality[%s]: judge failed, keeping %d novel tags (born provisional): %v", contentanalyzer.TagQualityVersion, len(uncached), err)
 			} else {
 				model := e.config.ResolvedQualityLlm().Model
 				for i, r := range results {

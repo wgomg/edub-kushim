@@ -365,6 +365,7 @@ type Tag struct {
 	Name          string
 	CreatedAt     sql.NullTime
 	OrphanedSince sql.NullTime
+	PromotedAt    sql.NullTime
 }
 
 type TagQualityEvent struct {
