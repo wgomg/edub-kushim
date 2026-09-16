@@ -111,7 +111,7 @@ The stances that shape every page:
    `+page.js` load functions anywhere — pages fetch their own data in
    `onMount` (§9).
 3. **It's plain JavaScript, not TypeScript.** `.js`/`.svelte` files, JSDoc for
-   the few public contracts (e.g. `DataTable.svelte:15`). Readability comes
+   the few public contracts (e.g. `DataTable.svelte:7-18`). Readability comes
    from discipline: one `$props()` destructure per component, small pure
    helpers in `lib/`.
 4. **Stores come in three flavors that coexist** (§7): plain modules
@@ -167,7 +167,7 @@ initial value is `undefined` (`+page.svelte:12`).
 $state(null)` (`UploadModal.svelte:14`), `let scrollContainer = $state(null)`
 (`logs/+page.svelte:22`).
 
-**Sets are state, but rebuilt, not mutated** (`DataTable.svelte:54`,
+**Sets are state, but rebuilt, not mutated** (`DataTable.svelte:55`,
 `logs/+page.svelte:23`):
 
 ```js
@@ -208,7 +208,7 @@ $effect(() => {
 
 **`untrack`** breaks the dependency graph so a write inside the effect doesn't
 retrigger it. DataTable reacts to `refreshKey` changes but must not re-run
-because `load()` writes state (`DataTable.svelte:151-162`):
+because `load()` writes state (`DataTable.svelte:110-118`):
 
 ```js
 $effect(() => {
@@ -223,7 +223,7 @@ $effect(() => {
 ```
 
 **One-time init** is a guard flag (`if (!initialized) { initialized = true;
-... }`, `DataTable.svelte:109-116`) rather than `$effect.pre`.
+... }`, `DataTable.svelte:68-90`) rather than `$effect.pre`.
 
 Not used anywhere here: `$state.raw`, `$inspect`, `$host`, `$effect.pre`,
 named `{@snippet}` declarations.
@@ -252,7 +252,7 @@ is the reference:
 Conventions to keep:
 
 - **Props**: one `$props()` destructure at the top, with defaults for optional
-  props (`SearchBar.svelte:11-20`, `DataTable.svelte:37-52`). The component is
+  props (`SearchBar.svelte:11-20`, `DataTable.svelte:37-53`). The component is
   *controlled*: the parent decides visibility and closing. No `bind:this`, no
   imperative API.
 - **`children`** is a snippet rendered with `{@render children()}` — this
@@ -270,7 +270,7 @@ There are **no** class-style components, no `export let` props, no slots, no
 ## 6. Template syntax: conventions
 
 - **`{@html ...}`** — raw HTML insertion, used in exactly two places and both
-  are controlled: DataTable cell renderers (`DataTable.svelte:283-287`) and
+  are controlled: DataTable cell renderers (`DataTable.svelte:377-381`) and
   static icon markup. The contract is documented at the call site — *callers
   must `escapeHtml` user data first* (§13).
 - **`<svelte:window>`** — document-level event listener for delegated clicks
@@ -431,7 +431,7 @@ if (!ok) return;
 ```
 
 And toasts are one-liners: `toastStore.success('Document restored')`
-(`trash/+page.svelte:127`).
+(`trash/+page.svelte:90`).
 
 The **rule of thumb**: runes stores for new cross-component state;
 `filterStore`-style writable stores remain where they already work;
@@ -632,7 +632,7 @@ When no SvelteKit navigation is needed, `switchTab` writes the param directly
 Also in play: `page.subscribe(($p) => ...)` for reacting to URL changes
 (`tasks/+page.svelte:234-236` reads `?batch=`), and DataTable's own
 `urlSync="dt"` prop, which persists `<prefix>_size/_page/_sort/_order` params
-itself (`DataTable.svelte:130-149`).
+itself (`DataTable.svelte:92-108`).
 
 ---
 
@@ -705,7 +705,7 @@ $effect(() => {
 
 ### Page-level gates
 
-Editor-only pages show a permission message (`trash/+page.svelte:204-205`,
+Editor-only pages show a permission message (`trash/+page.svelte:203-204`,
 identical in `documents/orphaned/+page.svelte:170-171`):
 
 ```svelte
@@ -738,13 +738,13 @@ profile page guards itself in `onMount` (`profile/+page.svelte:20-26`).
 
 ## 13. The DataTable pattern and HTML-string cells
 
-`DataTable.svelte` (445 lines) is the workhorse list component: server-side
-paging/sort, skeleton loading rows, `refreshKey` reloads, row selection via a
-rebuilt `Set`, keyboard accessibility, URL sync. It takes 14 props, all with
-defaults (`DataTable.svelte:37-52`).
+`DataTable.svelte` (444 lines) is the workhorse list component: server-side
+paging/sort, spinner loading rows, `refreshKey` reloads, row selection via a
+rebuilt `Set`, keyboard accessibility, URL sync. It takes 15 props, all with
+defaults (`DataTable.svelte:37-53`).
 
 **The unusual part: columns are functions returning HTML strings**, inserted
-raw with `{@html ...}` (`DataTable.svelte:283-287`):
+raw with `{@html ...}` (`DataTable.svelte:377-381`):
 
 ```js
 {@html col.cell(row[col.key], row)}
@@ -785,7 +785,7 @@ return `${actionButton(EDIT_ICON, 'Edit', 'text-parchment-400 hover:text-gold-50
 ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-500', { 'data-delete-tag': row.id })}`;
 ```
 
-(`tags/+page.svelte:46-47`). Clicks are **delegated**: DataTable's
+(`tags/+page.svelte:66-73`). Clicks are **delegated**: DataTable's
 `onActionClick` handler, or a `<svelte:window onclick>` on the tasks page
 (`tasks/+page.svelte:304`), dispatch on `e.target.closest('[data-...]')`.
 
@@ -968,10 +968,10 @@ dotted-map pattern (`settings/+page.svelte:122-240`).
 | Fetch wrappers / 401 handling | `web/src/lib/api.js:7-60` |
 | URL ⇄ state sync | `web/src/routes/logs/+page.svelte:28-53`, `documents/+page.svelte:136-162` |
 | AbortController pattern | `web/src/routes/logs/+page.svelte:55-71` |
-| DataTable columns + `{@html}` cells | `web/src/routes/documents/+page.svelte:24-113`, `DataTable.svelte:283` |
+| DataTable columns + `{@html}` cells | `web/src/routes/documents/+page.svelte:24-113`, `DataTable.svelte:381` |
 | SVG icons + `actionButton` | `web/src/lib/icons.js` |
 | Design tokens (`@theme`) | `web/src/routes/layout.css`, `web-wizard/src/app.css` |
-| Auth/role gates | `web/src/routes/+layout.svelte:31-40`, `trash/+page.svelte:204` |
+| Auth/role gates | `web/src/routes/+layout.svelte:31-40`, `trash/+page.svelte:203` |
 | Modal + confirm dialog | `web/src/lib/components/Modal.svelte`, `ConfirmDialog.svelte` |
 | Dirty tracking + beforeunload | `web/src/routes/settings/+page.svelte:279-293`, `documents/[id]/+page.svelte:38-43` |
 | Wizard step machine | `web-wizard/src/routes/+page.svelte:6,30-34` |
@@ -1008,7 +1008,7 @@ dotted-map pattern (`settings/+page.svelte:122-240`).
 
 - **Mutating a `$state` Set/Map in place is invisible to Svelte.** Rebuild and
   reassign (`selectedKeys = new Set(...)`) — the code comments say exactly this
-  (`DataTable.svelte:92-93`, `logs/+page.svelte:127-130`).
+  (`DataTable.svelte:156-164`, `logs/+page.svelte:127-130`).
 - **`$derived` variables must not be assigned.** If you need to write, use
   `$state` (and `$derived.by` for multi-statement reads).
 - **`$effect` runs when *any* read dependency changes**, including writes it
@@ -1025,7 +1025,7 @@ dotted-map pattern (`settings/+page.svelte:122-240`).
   (`handleUnauthorized`); don't wrap your own redirects around it.
 - **`{@html}` skips all escaping.** Only static markup or
   `escapeHtml`-processed strings go in there (see the comments at
-  `DataTable.svelte:398` and `icons.js:29`).
+  `DataTable.svelte:378-381` and `icons.js:29`).
 - **SPA mode: no load functions, no SSR.** `window`/`localStorage` are safe to
   touch at module or component init — but don't rely on anything server-side.
 - **The dev proxy only forwards `/api`, `/health`, `/wizard`.** New backend
@@ -1035,4 +1035,4 @@ dotted-map pattern (`settings/+page.svelte:122-240`).
 
 ---
 
-*Last verified against the tree: 2026-08-03. If code and doc disagree, code wins.*
+*Last verified against the tree: 2026-09-16. If code and doc disagree, code wins.*

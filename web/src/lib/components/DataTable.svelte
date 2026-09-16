@@ -12,7 +12,6 @@
 	 * @property {Function} [cell] - Custom cell formatter: (value, row) => string
 	 * @property {string} [headerClass] - Extra classes for <th>
 	 * @property {string} [cellClass] - Extra classes for <td>
-	 * @property {boolean} [noUnderline] - Skip underline decoration when onRowClick is set
 	 * @property {string} [width] - Column width.
 	 * @property {string} [maxWidth] - Max column width.
 	 * @property {string} [minWidth] - Min column width.
@@ -31,7 +30,8 @@
 	 * selectable?: boolean,
 	 * onselectionchange?: (selectedRows: any[]) => void,
 	 * onActionClick?: (e: Event, row: any) => void,
-	 * urlSync?: string
+	 * urlSync?: string,
+	 * onTotal?: (total: number | null) => void
 	 * }}
 	 * */
 	let {
@@ -48,7 +48,8 @@
 		defaultSortBy = '',
 		defaultSortOrder = 'desc',
 		onActionClick = null,
-		urlSync = ''
+		urlSync = '',
+		onTotal = null
 	} = $props();
 
 	let selectedKeys = $state(new Set());
@@ -141,6 +142,7 @@
 				data = [];
 				total = null;
 			}
+			if (onTotal) onTotal(total);
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load data';
 			data = [];
@@ -220,226 +222,223 @@
 </script>
 
 <div class="space-y-4">
-	<div class="flex items-center justify-between">
-		{#if title}
-			<h2 class="text-2xl font-semibold text-parchment-200">{title}</h2>
-		{:else}
-			<span></span>
-		{/if}
-		<div class="flex items-center gap-2 text-sm">
-			{#if pageSizes.length > 1}
-				<label for="dt-page-size" class="text-parchment-400">Per page</label>
-				<select
-					id="dt-page-size"
-					name="dt-page-size"
-					value={pageSize}
-					onchange={changePageSize}
-					class="rounded-lg border border-clay-800 bg-clay-900 px-3 py-1.5 text-parchment-200"
-				>
-					{#each pageSizes as size (size)}
-						<option value={size}>{size} </option>
-					{/each}
-				</select>
-			{/if}
-		</div>
-	</div>
+	{#if title}
+		<h2 class="text-2xl font-semibold text-parchment-200">{title}</h2>
+	{/if}
 
-	<!-- Table wrapper: horizontal scroll on narrow screens -->
-	<div class="overflow-x-auto rounded-lg border border-clay-800">
-		<table class="w-full table-auto text-sm">
-			<thead class="sticky top-0 bg-clay-900 text-left text-parchment-400">
-				<tr>
-					{#if selectable}
-						<th class="w-10 px-4 py-3 font-medium whitespace-nowrap select-none" scope="col">
-							<input
-								type="checkbox"
-								aria-label="Select all"
-								checked={data.length > 0 && data.every((row) => selectedKeys.has(row[keyField]))}
-								onchange={toggleAll}
-								class="h-4 w-4 cursor-pointer accent-gold-500"
-							/>
-						</th>
-					{/if}
-					{#each columns as col (col.key)}
-						<th
-							class="px-4 py-3 font-medium whitespace-nowrap transition-colors select-none focus:outline-none {col.sortable
-								? 'cursor-pointer hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-inset'
-								: ''} {col.headerClass || ''}"
-							style="width: {col.width ?? 'auto'}; {col.minWidth &&
-								`min-width: ${col.minWidth};`} {col.maxWidth && `max-width: ${col.maxWidth};`}"
-							scope="col"
-							tabindex={col.sortable ? '0' : undefined}
-							onclick={col.sortable ? () => toggleSort(col.key) : undefined}
-							onkeydown={col.sortable
-								? (e) => {
-										if (e.key === 'Enter' || e.key === ' ') {
-											e.preventDefault();
-											toggleSort(col.key);
+	<div class="rounded-lg border border-clay-800 bg-clay-900">
+		<div class="overflow-x-auto">
+			<table class="w-full table-auto text-sm">
+				<thead class="sticky top-0 bg-clay-900 text-left text-parchment-500">
+					<tr>
+						{#if selectable}
+							<th class="w-10 px-4 py-3 whitespace-nowrap select-none" scope="col">
+								<input
+									type="checkbox"
+									aria-label="Select all"
+									checked={data.length > 0 && data.every((row) => selectedKeys.has(row[keyField]))}
+									onchange={toggleAll}
+									class="h-4 w-4 cursor-pointer accent-gold-500"
+								/>
+							</th>
+						{/if}
+						{#each columns as col (col.key)}
+							<th
+								class="px-4 py-3 font-mono text-[0.6875rem] font-semibold tracking-[0.12em] whitespace-nowrap uppercase transition-colors select-none focus:outline-none {col.sortable
+									? 'cursor-pointer hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-inset'
+									: ''} {col.headerClass || ''}"
+								style="width: {col.width ?? 'auto'}; {col.minWidth &&
+									`min-width: ${col.minWidth};`} {col.maxWidth && `max-width: ${col.maxWidth};`}"
+								scope="col"
+								aria-sort={col.sortable && sortBy === col.key
+									? sortOrder === 'asc'
+										? 'ascending'
+										: 'descending'
+									: undefined}
+								tabindex={col.sortable ? '0' : undefined}
+								onclick={col.sortable ? () => toggleSort(col.key) : undefined}
+								onkeydown={col.sortable
+									? (e) => {
+											if (e.key === 'Enter' || e.key === ' ') {
+												e.preventDefault();
+												toggleSort(col.key);
+											}
 										}
-									}
-								: undefined}
-						>
-							{col.label}
-							{#if col.sortable && sortBy === col.key}
-								<span class="ms-1 inline-block w-4 text-center text-gold-500">
-									{sortOrder === 'asc' ? '▲' : '▼'}
-								</span>
-							{/if}
-						</th>
-					{/each}
-				</tr>
-			</thead>
-			<tbody class="divide-y divide-clay-800" aria-live="polite">
-				{#if loading}
-					<tr class="bg-clay-950">
-						<td
-							colspan={columns.length + (selectable ? 1 : 0)}
-							class="px-4 py-8 text-center text-parchment-500"
-						>
-							<svg
-								class="inline-block h-5 w-5 animate-spin motion-reduce:animate-none"
-								xmlns="http://www.w3.org/2000/svg"
-								fill="none"
-								viewBox="0 0 24 24"
-								aria-hidden="true"
+									: undefined}
 							>
-								<circle
-									class="opacity-25"
-									cx="12"
-									cy="12"
-									r="10"
-									stroke="currentColor"
-									stroke-width="4"
-								/>
-								<path
-									class="opacity-75"
-									fill="currentColor"
-									d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-								/>
-							</svg>
-							<span class="ml-2">Loading…</span>
-						</td>
-					</tr>
-				{:else if error && data.length === 0}
-					<tr class="bg-clay-950">
-						{#if selectable}
-							<td class="w-10 px-4 py-8"></td>
-						{/if}
-						{#each columns as col (col.key)}
-							<td class="px-4 py-8 text-terracotta-500">
-								{#if col.key === columns[0].key}
-									{error}
+								{col.label}
+								{#if col.sortable && sortBy === col.key}
+									<span class="ms-1 inline-block w-4 text-center text-gold-500">
+										{sortOrder === 'asc' ? '▲' : '▼'}
+									</span>
 								{/if}
-							</td>
+							</th>
 						{/each}
 					</tr>
-				{:else if data.length === 0}
-					<tr class="bg-clay-950">
-						{#if selectable}
-							<td class="w-10 px-4 py-8"></td>
-						{/if}
-						{#each columns as col (col.key)}
-							<td class="px-4 py-8 text-parchment-500">
-								{#if col.key === columns[0].key}
-									No results found.
-								{/if}
-							</td>
-						{/each}
-					</tr>
-				{:else}
-					{#each data as row (row[keyField])}
-						<tr
-							class="bg-clay-950 transition-colors {onRowClick
-								? 'cursor-pointer hover:bg-clay-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500'
-								: ''}"
-							tabindex={onRowClick ? '0' : undefined}
-							role={onRowClick ? 'link' : undefined}
-							onclick={onRowClick || onActionClick
-								? (e) => {
-										if (e.target.closest('a, input')) return;
-										const btn = e.target.closest('button');
-										if (btn) {
-											if (onActionClick) onActionClick(e, row);
-											return;
-										}
-										if (onRowClick) onRowClick(row);
-									}
-								: undefined}
-							onkeydown={onRowClick
-								? (e) => {
-										if (e.key === 'Enter' || e.key === ' ') {
-											e.preventDefault();
-											onRowClick(row);
-										}
-									}
-								: undefined}
-						>
-							{#if selectable}
-								<td class="w-10 px-4 py-3">
-									<input
-										type="checkbox"
-										aria-label={`Select row ${row[keyField]}`}
-										checked={selectedKeys.has(row[keyField])}
-										onchange={() => toggleRow(row[keyField])}
-										class="h-4 w-4 cursor-pointer accent-gold-500"
-										onclick={(e) => e.stopPropagation()}
+				</thead>
+				<tbody class="divide-y divide-clay-800" aria-live="polite">
+					{#if loading}
+						<tr>
+							<td
+								colspan={columns.length + (selectable ? 1 : 0)}
+								class="px-4 py-8 text-center text-parchment-500"
+							>
+								<svg
+									class="inline-block h-5 w-5 animate-spin motion-reduce:animate-none"
+									xmlns="http://www.w3.org/2000/svg"
+									fill="none"
+									viewBox="0 0 24 24"
+									aria-hidden="true"
+								>
+									<circle
+										class="opacity-25"
+										cx="12"
+										cy="12"
+										r="10"
+										stroke="currentColor"
+										stroke-width="4"
 									/>
-								</td>
+									<path
+										class="opacity-75"
+										fill="currentColor"
+										d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+									/>
+								</svg>
+								<span class="ml-2">Loading…</span>
+							</td>
+						</tr>
+					{:else if error && data.length === 0}
+						<tr>
+							{#if selectable}
+								<td class="w-10 px-4 py-8"></td>
 							{/if}
 							{#each columns as col (col.key)}
-								<td
-									class="px-4 py-3 text-parchment-200 {col.cellClass || ''} {onRowClick &&
-									!col.noUnderline
-										? 'underline decoration-parchment-500/30 underline-offset-2'
-										: ''}"
-								>
-									{#if col.cell}
-										<!-- cells are built by callers with escapeHtml; raw insertion is required -->
-										<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-										{@html col.cell(row[col.key], row)}
-									{:else}
-										{row[col.key]}
+								<td class="px-4 py-8 text-terracotta-500">
+									{#if col.key === columns[0].key}
+										{error}
 									{/if}
 								</td>
 							{/each}
 						</tr>
-					{/each}
-				{/if}
-			</tbody>
-		</table>
-	</div>
-
-	<!-- Pagination footer -->
-	{#if !loading || data.length > 0}
-		{@const showing = data.length}
-		{@const hasMore = total != null ? pageIndex * pageSize + showing < total : showing >= pageSize}
-		<div class="flex items-center justify-between text-sm">
-			<p class="text-parchment-500">
-				{#if total != null}
-					Showing {pageIndex * pageSize + 1}–{pageIndex * pageSize + showing} of {total}
-				{:else}
-					Showing {showing} result{showing !== 1 ? 's' : ''}
-					{#if pageIndex > 0}
-						(starting at #{pageIndex * pageSize + 1})
+					{:else if data.length === 0}
+						<tr>
+							{#if selectable}
+								<td class="w-10 px-4 py-8"></td>
+							{/if}
+							{#each columns as col (col.key)}
+								<td class="px-4 py-8 text-parchment-500">
+									{#if col.key === columns[0].key}
+										No results found.
+									{/if}
+								</td>
+							{/each}
+						</tr>
+					{:else}
+						{#each data as row (row[keyField])}
+							<tr
+								class="transition-colors {onRowClick
+									? 'cursor-pointer hover:bg-clay-800/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500'
+									: ''}"
+								tabindex={onRowClick ? '0' : undefined}
+								role={onRowClick ? 'link' : undefined}
+								onclick={onRowClick || onActionClick
+									? (e) => {
+											if (e.target.closest('a, input')) return;
+											const btn = e.target.closest('button');
+											if (btn) {
+												if (onActionClick) onActionClick(e, row);
+												return;
+											}
+											if (onRowClick) onRowClick(row);
+										}
+									: undefined}
+								onkeydown={onRowClick
+									? (e) => {
+											if (e.key === 'Enter' || e.key === ' ') {
+												e.preventDefault();
+												onRowClick(row);
+											}
+										}
+									: undefined}
+							>
+								{#if selectable}
+									<td class="w-10 px-4 py-3">
+										<input
+											type="checkbox"
+											aria-label={`Select row ${row[keyField]}`}
+											checked={selectedKeys.has(row[keyField])}
+											onchange={() => toggleRow(row[keyField])}
+											class="h-4 w-4 cursor-pointer accent-gold-500"
+											onclick={(e) => e.stopPropagation()}
+										/>
+									</td>
+								{/if}
+								{#each columns as col (col.key)}
+									<td class="px-4 py-3 text-parchment-200 {col.cellClass || ''}">
+										{#if col.cell}
+											<!-- cells are built by callers with escapeHtml; raw insertion is required -->
+											<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+											{@html col.cell(row[col.key], row)}
+										{:else}
+											{row[col.key]}
+										{/if}
+									</td>
+								{/each}
+							</tr>
+						{/each}
 					{/if}
-				{/if}
-			</p>
-			<div class="flex gap-2">
-				<button
-					disabled={pageIndex === 0}
-					onclick={prevPage}
-					class="rounded-lg border border-clay-800 bg-clay-900 px-3 py-1.5 text-parchment-400 transition-colors hover:bg-clay-800 disabled:opacity-40"
-				>
-					Previous
-				</button>
-				<button
-					disabled={!hasMore}
-					onclick={nextPage}
-					class="rounded-lg border border-clay-800 bg-clay-900 px-3 py-1.5 text-parchment-400 transition-colors hover:bg-clay-800 disabled:opacity-40"
-				>
-					Next
-				</button>
-			</div>
+				</tbody>
+			</table>
 		</div>
-	{/if}
+
+		{#if !loading || data.length > 0}
+			{@const showing = data.length}
+			{@const hasMore =
+				total != null ? pageIndex * pageSize + showing < total : showing >= pageSize}
+			<div class="flex flex-wrap items-center justify-between gap-3 px-4 pt-1 pb-3 text-sm">
+				<p class="text-parchment-500">
+					{#if total != null}
+						Showing {pageIndex * pageSize + 1}–{pageIndex * pageSize + showing} of {total}
+					{:else}
+						Showing {showing} result{showing !== 1 ? 's' : ''}
+						{#if pageIndex > 0}
+							(starting at #{pageIndex * pageSize + 1})
+						{/if}
+					{/if}
+				</p>
+				<div class="flex items-center gap-3">
+					{#if pageSizes.length > 1}
+						<label class="flex items-center gap-2 text-parchment-400">
+							Per page
+							<select
+								id="dt-page-size"
+								name="dt-page-size"
+								value={pageSize}
+								onchange={changePageSize}
+								class="rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							>
+								{#each pageSizes as size (size)}
+									<option value={size}>{size}</option>
+								{/each}
+							</select>
+						</label>
+					{/if}
+					<button
+						disabled={pageIndex === 0}
+						onclick={prevPage}
+						class="rounded-md border border-clay-700 px-2.5 py-1 text-parchment-400 hover:border-gold-500 hover:text-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-40"
+					>
+						Prev
+					</button>
+					<button
+						disabled={!hasMore}
+						onclick={nextPage}
+						class="rounded-md border border-clay-700 px-2.5 py-1 text-parchment-400 hover:border-gold-500 hover:text-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-40"
+					>
+						Next
+					</button>
+				</div>
+			</div>
+		{/if}
+	</div>
 </div>

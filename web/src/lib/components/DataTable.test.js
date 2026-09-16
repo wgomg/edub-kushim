@@ -74,4 +74,24 @@ describe('DataTable', () => {
 		renderTable(fetch);
 		expect(await screen.findByText('backend unreachable')).toBeTruthy();
 	});
+
+	it('calls onTotal with the total after a successful load', async () => {
+		const fetch = vi.fn().mockResolvedValue({ results: ROWS, total: 100 });
+		const onTotal = vi.fn();
+		render(DataTable, {
+			props: { columns: COLUMNS, fetch, title: 'Documents', onTotal }
+		});
+		await screen.findByText('Doc A');
+		expect(onTotal).toHaveBeenCalledWith(100);
+	});
+
+	it('calls onTotal with null when the fetch returns a plain array', async () => {
+		const fetch = vi.fn().mockResolvedValue(ROWS);
+		const onTotal = vi.fn();
+		render(DataTable, {
+			props: { columns: COLUMNS, fetch, title: 'Documents', onTotal }
+		});
+		await screen.findByText('Doc A');
+		expect(onTotal).toHaveBeenCalledWith(null);
+	});
 });

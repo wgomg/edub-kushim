@@ -1342,7 +1342,7 @@ Response `200`:
 
 ### Deleted Tags
 
-Deleted and merged tag names are kept in a blocklist so enrichment does not silently re-create them: blocked names are dropped when the LLM emits them again and merged names are rewritten to the merge target (dropped when the target no longer exists). Operators manage the list from the tags page ("Deleted tags" section, per-row Restore with confirmation); `POST /api/v1/tags` also clears the blocklist row for the name being created, so re-creating a deleted tag through the API un-blocks it. Editor/admin only.
+Deleted and merged tag names are kept in a blocklist so enrichment does not silently re-create them: blocked names are dropped when the LLM emits them again and merged names are rewritten to the merge target (dropped when the target no longer exists). Operators manage the list from the tags page ("Deleted" tab, per-row Restore with confirmation); `POST /api/v1/tags` also clears the blocklist row for the name being created, so re-creating a deleted tag through the API un-blocks it. Editor/admin only.
 
 ```
 GET /api/v1/tags/deleted?q=soft&limit=50&offset=0
@@ -1485,7 +1485,7 @@ POST /api/v1/tags/{id}/promote
 
 Rejecting a provisional tag uses the regular delete endpoint
 (`DELETE /api/v1/tags/{id}`), which records the name in the `deleted_tag`
-blocklist; the tags page exposes both actions in its "Review new tags" section.
+blocklist; the tags page exposes both actions in its "New tags" tab.
 
 ### Saved Searches
 

@@ -272,7 +272,7 @@ document counts) → drop pairs whose names are no longer in the tag table →
 merge decision), confidence `"population"` when the pair has event rows else
 `"similarity_only"`, sort population-first, limit. The endpoint 503s when the
 matcher is down (`isMatcherUnavailable`), surfaced as a distinct state in the
-UI ("Review merges" on the tags page).
+UI ("Merge review" on the tags page).
 
 ---
 
@@ -322,7 +322,7 @@ reports persisted before the field existed).
 The report is served by `GET /api/v1/tags/reconciliation/report` (latest
 completed run, viewer-gated, Postgres-only) and the `result` field on
 `GET /api/v1/tasks/{id}` for `tagreconcile` tasks (list endpoints omit it);
-the web UI renders it on the task detail page and as a summary card on the
+the web UI renders it on the task detail page and as a status strip on the
 tags page.
 
 **Worklist** (from what the table persists, plus logs):

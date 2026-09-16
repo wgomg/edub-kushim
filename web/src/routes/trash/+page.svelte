@@ -59,7 +59,6 @@
 			key: '_actions',
 			label: '',
 			sortable: false,
-			noUnderline: true,
 			cellClass: 'whitespace-nowrap',
 			width: '90px',
 			cell: (_v, row) => {

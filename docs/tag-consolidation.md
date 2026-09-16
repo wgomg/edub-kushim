@@ -218,7 +218,7 @@ review. A missing judge, a tag with no live document text, and lookup or write
 failures are counted and skipped rather than failing the run, and the sweep
 never deletes a tag.
 
-Operators resolve what remains from the tags page's "Review new tags" panel or
+Operators resolve what remains from the tags page's "New tags" tab or
 the API: `GET /api/v1/tags/provisional` lists provisional tags with a live
 `document_count` and the latest verdict (`null` when no verdict row exists),
 and `POST /api/v1/tags/{id}/promote` promotes one through the same path the
@@ -238,7 +238,7 @@ Nothing merges automatically. The conservative policy deliberately keeps
 near-duplicates visible, and the merge-review surface is where an operator
 resolves them:
 
-- **Tags page → "Review merges"** (editor-gated): fetches suggestions on
+- **Tags page → "Merge review" tab** (editor-gated): fetches suggestions on
   demand; each pair shows similarity, population overlap, and verdict history,
   carries a survivor selector (defaulting to the higher-document-count tag),
   Merge with confirmation naming the tag to be deleted, and a session-only
@@ -313,7 +313,7 @@ anti-oscillating:
   reassigned documents, reason), skip reasons, and the provisional-sweep
   counts (`worklist`, `zero_assignment`, `promoted`, `rejudged`, `deferred`,
   `no_judge`, `skipped`, `failed`) — surfaced in the web UI on
-  the task detail page and as a summary card on the tags page.
+  the task detail page and as a status strip on the tags page.
 - With the adjudicator disabled, runs log the worklist snapshot and complete
   without LLM calls or writes. The queue daemon warns when reconciliation is
   enabled without the adjudicator.
@@ -366,7 +366,7 @@ quality band constants are internals — see [tag-matcher.md](tag-matcher.md).
 
 - **Rollout order**: after upgrading, restart `kushim hugot` first (the
   similar-pairs endpoint has no legacy fallback — merge suggestions return 503
-  against an old daemon). Optionally enable the adjudicator, use Review merges
+  against an old daemon). Optionally enable the adjudicator, use the Merge review
   on demand, and enable reconciliation when you want automatic healing. Both
   features default to off so an upgrade never silently changes tag behavior or
   adds LLM cost.
@@ -374,7 +374,7 @@ quality band constants are internals — see [tag-matcher.md](tag-matcher.md).
   faster with near-duplicates. That is the accepted safe direction, and the
   merge-review surface is the manual valve.
 - **Provisional review**: with the quality judge on, new names stay provisional
-  until promoted and show up in the tags page's "Review new tags" panel. The
+  until promoted and show up in the tags page's "New tags" tab. The
   reconciliation run's provisional sweep promotes or defers them automatically
   once they pass `provisional_grace_days`, so the panel is a manual override
   rather than a required step, and a rejection recorded there is a normal tag
@@ -387,7 +387,7 @@ quality band constants are internals — see [tag-matcher.md](tag-matcher.md).
   report (worklist counts, judged/confirmed, flips, merges, re-tags,
   invalidations), visible in the web UI — the task detail page shows the full
   report with pair-level breakdowns (would-be merges, would-be re-tags,
-  invalidated decisions, skip reasons), and the tags page shows a summary card
+  invalidated decisions, skip reasons), and the tags page shows a status strip
   for the latest run.
 
 ---

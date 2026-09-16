@@ -467,8 +467,8 @@ resolve them afterwards:
   ≥ 2 live documents. Rejects, missing judges, and tags with no live document
   text stay queued.
 - The **review queue** (`GET /api/v1/tags/provisional`,
-  `POST /api/v1/tags/{id}/promote`, and the tags page's editor-only "Review
-  new tags" panel) is the operator path: it lists provisional names with their
+  `POST /api/v1/tags/{id}/promote`, and the tags page's editor-only "New
+  tags" tab) is the operator path: it lists provisional names with their
   live `document_count` and latest verdict — `null` for a name with no row —
   and promotes one through the same `service.Tag.Promote` method the sweep
   uses. A rejection is a normal tag delete, so the `deleted_tag` blocklist

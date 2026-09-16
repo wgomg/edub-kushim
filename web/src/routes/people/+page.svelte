@@ -47,7 +47,6 @@
 			key: 'actions',
 			label: 'Actions',
 			sortable: false,
-			noUnderline: true,
 			cellClass: 'whitespace-nowrap',
 			cell: (_v, row) => {
 				if (!authStore.authEnabled() || !authStore.isEditor()) return '';

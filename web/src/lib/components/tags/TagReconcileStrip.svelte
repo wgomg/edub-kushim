@@ -5,6 +5,15 @@
 	import { formatNumber } from '$lib/utils/html.js';
 	import { affectedDocuments, changedDecisions, worklistTotal } from '$lib/utils/tagReconcile.js';
 
+	const stripClass =
+		'mb-4 flex flex-wrap items-center gap-x-3.5 gap-y-2 rounded-lg border border-clay-800 bg-clay-900 px-4 py-2.5 text-[0.8125rem] text-parchment-400';
+	const chipReportOnly =
+		'rounded-full border border-amber-600/40 bg-amber-600/20 px-2.5 py-0.5 font-mono text-[0.6875rem] font-semibold whitespace-nowrap text-amber-400';
+	const chipApplied =
+		'rounded-full border border-emerald-600/40 bg-emerald-600/20 px-2.5 py-0.5 font-mono text-[0.6875rem] font-semibold whitespace-nowrap text-emerald-500';
+	const linkClass =
+		'rounded-sm text-lapis-300 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none';
+
 	let status = $state('loading');
 	let data = $state(null);
 
@@ -47,74 +56,41 @@
 	});
 </script>
 
-<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
+<div class={stripClass}>
 	{#if status === 'loading'}
-		<p class="text-sm text-parchment-500" aria-live="polite">Loading tag reconciliation…</p>
+		<p class="text-parchment-500" aria-live="polite">Loading tag reconciliation…</p>
 	{:else if status === 'missing'}
-		<h2 class="text-sm font-semibold text-parchment-200">Tag reconciliation</h2>
-		<p class="mt-1 text-sm text-parchment-500">
+		<p class="text-parchment-500">
 			Tag reconciliation has never run.
-			<a
-				href={resolve('/settings')}
-				class="rounded-sm text-lapis-400 hover:text-lapis-300 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-				>Open settings</a
-			>
+			<a href={resolve('/settings')} class={linkClass}>Open settings</a>
 		</p>
 	{:else if status === 'error'}
-		<p class="text-sm text-terracotta-500" role="alert">
-			Failed to load the tag reconciliation report.
-		</p>
+		<p class="text-terracotta-500" role="alert">Failed to load the tag reconciliation report.</p>
 	{:else}
-		<div class="flex flex-wrap items-center justify-between gap-2">
-			<h2 class="text-sm font-semibold text-parchment-200">Tag reconciliation</h2>
-			<span
-				class="inline-block rounded-full px-2.5 py-0.5 text-xs font-medium {reportOnly
-					? 'bg-amber-600/20 text-amber-400'
-					: 'bg-emerald-600/20 text-emerald-500'}"
-			>
-				{reportOnly ? 'Report only' : 'Applied'}
-			</span>
-		</div>
-
-		<p class="mt-1 text-xs text-parchment-500">
-			{reportOnly
-				? `Last checked ${runDate} — report only, nothing was changed`
-				: `Last run ${runDate}`}
-		</p>
-
-		<div class="mt-3 grid grid-cols-3 gap-3">
-			<div>
-				<p class="text-lg font-semibold text-parchment-200 tabular-nums">
-					{formatNumber(checked)}
-				</p>
-				<p class="text-xs text-parchment-500">pairs re-checked</p>
-			</div>
-			<div>
-				<p class="text-lg font-semibold text-parchment-200 tabular-nums">
-					{formatNumber(changed)}
-				</p>
-				<p class="text-xs text-parchment-500">decisions changed</p>
-			</div>
-			<div>
-				<p class="text-lg font-semibold text-parchment-200 tabular-nums">
-					{formatNumber(documents)}
-				</p>
-				<p class="text-xs text-parchment-500">documents affected</p>
-			</div>
-		</div>
-
+		<span
+			class="h-[0.45rem] w-[0.45rem] shrink-0 rounded-full {reportOnly
+				? 'bg-amber-400'
+				: 'bg-emerald-400'}"
+			aria-hidden="true"
+		></span>
+		<strong class="font-semibold text-parchment-200">Reconcile</strong>
+		<span class={reportOnly ? chipReportOnly : chipApplied}>
+			{reportOnly ? 'report only' : 'applied'}
+		</span>
+		<span class="font-mono text-xs text-parchment-500">last run {runDate}</span>
+		<span class="text-parchment-300">
+			<b class="font-semibold text-parchment-200 tabular-nums">{formatNumber(checked)}</b> pairs
+			re-checked ·
+			<b class="font-semibold text-parchment-200 tabular-nums">{formatNumber(changed)}</b> decisions
+			changed ·
+			<b class="font-semibold text-parchment-200 tabular-nums">{formatNumber(documents)}</b> docs affected
+		</span>
 		{#if provisionalParts.length > 0}
-			<p class="mt-3 text-xs text-parchment-500">
+			<span class="text-parchment-500">
 				New tags past the provisional grace window: {formatNumber(provisional.worklist)} —
 				{provisionalParts.join(' · ')}
-			</p>
+			</span>
 		{/if}
-
-		<a
-			href={resolve(`/tasks/${data.task_id}`)}
-			class="mt-3 inline-block rounded-sm text-xs text-lapis-400 hover:text-lapis-300 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-		>
-			View full report
-		</a>
+		<a href={resolve(`/tasks/${data.task_id}`)} class="{linkClass} text-xs">View full report →</a>
 	{/if}
 </div>

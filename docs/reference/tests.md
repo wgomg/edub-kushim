@@ -14,7 +14,7 @@ run strategy (Go backend + web UI):
   search engine, task system (store/dispatcher/runner/pool), service layer (batch,
   orphaned, errored files, users, enrichment, API keys), API handlers, and consumption
   pipeline.
-- **`make test-web`** (vitest, no database) — 91 unit + component tests across 12 files
+- **`make test-web`** (vitest, no database) — 93 unit + component tests across 12 files
   in `web/`: pure logic (`searchFilter`, `html` utils, `tagReconcile` utils), stores
   (`filterStore`, `authStore`, `toastStore`, `confirmStore`), the `api` client (fetch
   stubbing, auth header, 401 handling), and the logic-dense components (`DataTable`,
@@ -318,7 +318,7 @@ which resolves `$app/*` modules — and the `child_process`/`url` stub aliases):
 - `components` (jsdom + `svelteTesting()` from `@testing-library/svelte/vite` for
   auto-cleanup) — `authStore.js` and `api.js` (both touch `localStorage` at import
   time, so they need the DOM), plus the component tests: `DataTable.svelte` (rows,
-  sort refetch, empty/error states), `FilterPanel.svelte` (filter-store wiring,
+  sort refetch, empty/error states, `onTotal` reporting), `FilterPanel.svelte` (filter-store wiring,
   tag autocomplete, failure toast), `UploadModal.svelte` (upload success/error paths).
 
 Test files are co-located next to their sources as `*.test.js` (mirroring Go's

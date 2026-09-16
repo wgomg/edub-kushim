@@ -281,11 +281,11 @@ The enrichment pipeline:
    hard-merges a source tag into a target in one transaction (re-points
    `document_tag` rows, deletes the source tag, removes the source name from
    the embedding store). Both endpoints are exposed in the tags page UI
-   ("Review merges" section, editor-gated). Deleting or merging a tag records
+   ("Merge review" tab, editor-gated). Deleting or merging a tag records
    its name in the `deleted_tag` blocklist (inside the merge transaction for
    merges), so later LLM emissions cannot resurrect it: enrichment drops
    blocked names and rewrites merged names to their target, and the reconciler
-   skips their restoration. The tags page lists the blocklist with per-row
+   skips their restoration. The tags page's "Deleted" tab lists the blocklist with per-row
    restore, and the operator create path un-blocks the name it creates.
    When `enricher.tag_quality.enabled` is true, the kept set passes one more
    filter before it reaches the store: novel names (absent from the
@@ -310,8 +310,8 @@ The enrichment pipeline:
    scheduled tag reconciliation, whose provisional phase promotes stored
    passes and re-judges the rest, or by an operator through the provisional
    review queue (`GET /api/v1/tags/provisional`,
-   `POST /api/v1/tags/{id}/promote`, and the tags page's "Review new tags"
-   panel); a rejection there is a normal tag delete and lands in the blocklist.
+   `POST /api/v1/tags/{id}/promote`, and the tags page's "New tags"
+   tab); a rejection there is a normal tag delete and lands in the blocklist.
    With the layer off, births are trusted as before.
 6. **New Tag Store Update** — tag creation, the enrichment-owned `document_tag` sweep,
    and the per-tag assignments run in one database transaction per document

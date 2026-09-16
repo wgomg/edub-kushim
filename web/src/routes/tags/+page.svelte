@@ -1,18 +1,35 @@
 <script>
-	import { goto } from '$app/navigation';
+	import { onMount } from 'svelte';
+	import { goto, replaceState } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { filterStore } from '$lib/stores/filterStore.js';
 	import { defaultFilter } from '$lib/stores/searchFilter.js';
 	import DataTable from '$lib/components/DataTable.svelte';
 	import Modal from '$lib/components/Modal.svelte';
-	import { EDIT_ICON, DELETE_ICON, RESTORE_ICON, actionButton } from '$lib/icons.js';
-	import { escapeHtml } from '$lib/utils/html.js';
+	import TagReconcileStrip from '$lib/components/tags/TagReconcileStrip.svelte';
+	import MergeReview from '$lib/components/tags/MergeReview.svelte';
+	import ProvisionalReview from '$lib/components/tags/ProvisionalReview.svelte';
+	import DeletedTags from '$lib/components/tags/DeletedTags.svelte';
+	import { EDIT_ICON, DELETE_ICON, actionButton } from '$lib/icons.js';
+	import { escapeHtml, formatNumber } from '$lib/utils/html.js';
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
 	import { api } from '$lib/api';
 	import * as authStore from '$lib/stores/authStore.js';
-	import { formatNumber, documentsLabel } from '$lib/utils/html.js';
-	import TagReconcileCard from '$lib/components/TagReconcileCard.svelte';
+
+	const TABS = ['vocabulary', 'merges', 'provisional', 'deleted'];
+
+	// main's p-6 is the sticky view rectangle's origin, so -top-6 lets the strip
+	// stick flush under the topbar instead of leaving a 24px band over the panel
+	const tabStrip =
+		'sticky -top-6 z-20 mb-6 flex items-end gap-1 overflow-x-auto border-b border-clay-800 bg-clay-950 pt-1';
+	const tabBase =
+		'-mb-px inline-flex items-center gap-1.5 rounded-t-md border-b-2 px-3.5 pt-2 pb-2.5 text-sm font-medium whitespace-nowrap transition-colors focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none';
+	const tabActive = 'border-gold-500 text-parchment-200';
+	const tabIdle =
+		'border-transparent text-parchment-400 hover:bg-clay-900 hover:text-parchment-200';
+	const tabBadge =
+		'rounded-full border border-gold-800 px-1.5 font-mono text-[0.6875rem] font-semibold text-gold-500';
 
 	let showModal = $state(false);
 	let editingTag = $state(null);
@@ -20,29 +37,12 @@
 	let error = $state('');
 	let query = $state(new URL(window.location.href).searchParams.get('q') || '');
 	let refreshKey = $state(0);
-	let savingTag = $state(false);
-	let showMergeSuggestions = $state(false);
-	let mergeSuggestions = $state([]);
-	let loadingSuggestions = $state(false);
-	let suggestionsError = $state('');
-	let mergingPair = $state(null);
-	let dismissedPairs = $state(new Set());
-	let survivorByPair = $state({});
-	let showDeleted = $state(false);
 	let deletedRefreshKey = $state(0);
-	let showProvisional = $state(false);
-	let provisionalTags = $state([]);
-	let provisionalTotal = $state(0);
-	let loadingProvisional = $state(false);
-	let provisionalError = $state('');
-	let actingProvisional = $state(null);
-
-	const provisionalCriteria = [
-		{ key: 'subject_matter', label: 'subject matter' },
-		{ key: 'standard_term', label: 'standard term' },
-		{ key: 'not_person_place_work', label: 'not person/place/work' },
-		{ key: 'appropriately_broad', label: 'appropriately broad' }
-	];
+	let savingTag = $state(false);
+	let activeTab = $state('vocabulary');
+	let vocabularyTotal = $state(null);
+	let mergeSuggestions = $state(null);
+	let counts = $state({ merges: 0, provisional: 0, deleted: 0 });
 
 	const columns = [
 		{
@@ -62,67 +62,60 @@
 			key: 'actions',
 			label: 'Actions',
 			sortable: false,
-			noUnderline: true,
 			cellClass: 'whitespace-nowrap',
 			cell: (_v, row) => {
 				if (!authStore.authEnabled() || !authStore.isEditor()) return '';
 				const safeName = escapeHtml(row.name);
-				return `${actionButton(EDIT_ICON, 'Edit', 'text-parchment-400 hover:text-gold-500', { 'data-edit-tag': row.id, 'data-tag-name': safeName })}
-${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-500', { 'data-delete-tag': row.id, 'data-tag-name': safeName })}`;
+				const actionable =
+					'text-parchment-400 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none';
+				return `${actionButton(EDIT_ICON, 'Edit', `${actionable} hover:text-gold-500`, { 'data-edit-tag': row.id, 'data-tag-name': safeName })}
+${actionButton(DELETE_ICON, 'Delete', `${actionable} hover:text-terracotta-500`, { 'data-delete-tag': row.id, 'data-tag-name': safeName })}`;
 			}
 		}
 	];
+
+	function canModerate() {
+		return !authStore.authEnabled() || authStore.isEditor();
+	}
+
+	function tabClass(tab) {
+		return `${tabBase} ${activeTab === tab ? tabActive : tabIdle}`;
+	}
+
+	function selectTab(tab) {
+		activeTab = tab;
+		const url = new URL(window.location.href);
+		replaceState(resolve(`${url.pathname}${url.search}#${tab}`));
+	}
+
+	async function refreshCounts() {
+		const [merges, provisional, deleted] = await Promise.all([
+			api.tags.mergeSuggestions(50),
+			api.tags.provisionalList(1, 0),
+			api.tags.deletedList({ limit: 1 })
+		]);
+		const mergeList = merges.ok ? (merges.data?.results ?? []) : null;
+		mergeSuggestions = mergeList;
+		counts = {
+			merges: mergeList ? mergeList.length : 0,
+			provisional: provisional.ok ? (provisional.data?.total ?? 0) : 0,
+			deleted: deleted?.total ?? 0
+		};
+	}
+
+	function onReviewChanged() {
+		refreshKey++;
+		deletedRefreshKey++;
+		refreshCounts();
+	}
 
 	function filterByTag(row) {
 		filterStore.set({ ...defaultFilter, tags: [row.name] });
 		goto(resolve('/documents'));
 	}
 
-	const deletedColumns = [
-		{
-			key: 'name',
-			label: 'Name',
-			sortable: false,
-			width: '100%'
-		},
-		{
-			key: 'kind',
-			label: 'Kind',
-			sortable: false,
-			width: '220px',
-			cell: (_v, row) =>
-				row.kind === 'merged' && row.target_name
-					? `merged into ${escapeHtml(row.target_name)}`
-					: 'blocked'
-		},
-		{
-			key: 'created_at',
-			label: 'Deleted',
-			sortable: false,
-			width: '180px',
-			cell: (v) => (v ? new Date(v).toLocaleString() : '')
-		},
-		{
-			key: 'actions',
-			label: 'Actions',
-			sortable: false,
-			noUnderline: true,
-			cellClass: 'whitespace-nowrap',
-			cell: (_v, row) => {
-				if (!authStore.authEnabled() || !authStore.isEditor()) return '';
-				return actionButton(RESTORE_ICON, 'Restore', 'text-parchment-400 hover:text-gold-500', {
-					'data-restore-tag': escapeHtml(row.name)
-				});
-			}
-		}
-	];
-
-	async function fetch({ limit, offset }) {
+	async function fetchVocabulary({ limit, offset }) {
 		return await api.tags.list(query, limit, offset);
-	}
-
-	async function fetchDeleted({ limit, offset }) {
-		return await api.tags.deletedList({ q: query, limit, offset });
 	}
 
 	function openNew() {
@@ -174,6 +167,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 		await api.tags.delete(tagId);
 		refreshKey++;
 		deletedRefreshKey++;
+		refreshCounts();
 	}
 
 	function handlePageClick(e) {
@@ -193,439 +187,139 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 		}
 	}
 
-	function pairKey(s) {
-		return `${s.tags[0].id}-${s.tags[1].id}`;
-	}
-
-	function toggleDeleted() {
-		showDeleted = !showDeleted;
-	}
-
-	async function handleRestore(name) {
-		const ok = await confirmStore.confirm({
-			title: 'Restore tag',
-			message: `Restore tag "${name}"? Enrichment may assign it again.`
-		});
-		if (!ok) return;
-		const result = await api.tags.restoreDeleted(name);
-		if (result.ok) {
-			deletedRefreshKey++;
-			refreshKey++;
-			toastStore.success(`Restored "${name}"`);
-		} else {
-			toastStore.error('Failed to restore tag');
-		}
-	}
-
-	function handleDeletedActionClick(e) {
-		const restoreBtn = e.target.closest('[data-restore-tag]');
-		if (!restoreBtn) return;
-		handleRestore(restoreBtn.getAttribute('data-restore-tag'));
-	}
-
-	async function toggleMergeSuggestions() {
-		showMergeSuggestions = !showMergeSuggestions;
-		if (!showMergeSuggestions) return;
-		loadingSuggestions = true;
-		suggestionsError = '';
-		const result = await api.tags.mergeSuggestions(20);
-		if (result.ok) {
-			mergeSuggestions = result.data?.results ?? [];
-		} else {
-			mergeSuggestions = [];
-			suggestionsError =
-				result.status === 503
-					? 'Matcher unavailable — merge review is offline.'
-					: 'Failed to load merge suggestions.';
-		}
-		loadingSuggestions = false;
-	}
-
-	function visibleSuggestions() {
-		return mergeSuggestions.filter((s) => !dismissedPairs.has(pairKey(s)));
-	}
-
-	async function handleMerge(s) {
-		const key = pairKey(s);
-		const survivorId = survivorByPair[key] ?? s.tags[0].id;
-		const survivor = s.tags.find((t) => t.id === survivorId);
-		const deleted = s.tags.find((t) => t.id !== survivorId);
-		const ok = await confirmStore.confirm({
-			title: 'Merge tags',
-			message: `Delete tag "${deleted.name}" and move its documents into "${survivor.name}"?`,
-			danger: true
-		});
-		if (!ok) return;
-		mergingPair = key;
-		const result = await api.tags.merge(deleted.id, survivor.id);
-		mergingPair = null;
-		if (result.ok) {
-			mergeSuggestions = mergeSuggestions.filter((x) => pairKey(x) !== key);
-			refreshKey++;
-			deletedRefreshKey++;
-			toastStore.success(`Merged "${deleted.name}" into "${survivor.name}"`);
-		} else {
-			toastStore.error('Failed to merge tags');
-		}
-	}
-
-	function dismiss(s) {
-		const key = pairKey(s);
-		dismissedPairs = new Set([...dismissedPairs, key]);
-	}
-
-	async function loadProvisional() {
-		loadingProvisional = true;
-		provisionalError = '';
-		const result = await api.tags.provisionalList(50, 0);
-		if (result.ok) {
-			provisionalTags = result.data?.results ?? [];
-			provisionalTotal = result.data?.total ?? 0;
-		} else {
-			provisionalTags = [];
-			provisionalTotal = 0;
-			provisionalError = 'Failed to load new tags.';
-		}
-		loadingProvisional = false;
-	}
-
-	async function toggleProvisional() {
-		showProvisional = !showProvisional;
-		if (!showProvisional) return;
-		await loadProvisional();
-	}
-
-	async function handleApprove(tag) {
-		actingProvisional = tag.id;
-		const result = await api.tags.promote(tag.id);
-		actingProvisional = null;
-		if (result.ok) {
-			toastStore.success(`Approved "${tag.name}"`);
-			refreshKey++;
-		} else if (result.status !== 409) {
-			toastStore.error('Failed to approve tag');
-		}
-		await loadProvisional();
-	}
-
-	async function handleRejectProvisional(tag) {
-		const ok = await confirmStore.confirm({
-			title: 'Reject tag',
-			message: `Reject tag "${tag.name}"? It is deleted and blocked from enrichment.`,
-			danger: true
-		});
-		if (!ok) return;
-		actingProvisional = tag.id;
-		const result = await api.tags.delete(tag.id);
-		actingProvisional = null;
-		if (result.ok) {
-			toastStore.success(`Rejected "${tag.name}"`);
-			refreshKey++;
-			deletedRefreshKey++;
-		} else {
-			toastStore.error('Failed to reject tag');
-		}
-		await loadProvisional();
-	}
-
-	function criterionMark(value) {
-		if (value === true) return 'yes';
-		if (value === false) return 'no';
-		return '—';
-	}
-
-	function criterionClass(value) {
-		if (value === true) return 'text-emerald-500';
-		if (value === false) return 'text-terracotta-500';
-		return 'text-parchment-500';
-	}
+	onMount(() => {
+		const hash = window.location.hash.slice(1);
+		if (TABS.includes(hash)) activeTab = hash;
+		if (canModerate()) refreshCounts();
+	});
 </script>
 
-<div class="space-y-4">
-	<div class="flex items-center justify-between">
-		<h1 class="text-2xl font-semibold text-balance text-parchment-200">Tags</h1>
-		<div class="flex items-center gap-2">
-			{#if !authStore.authEnabled() || authStore.isEditor()}
-				<button
-					onclick={toggleDeleted}
-					class="rounded-lg border border-clay-700 px-4 py-2 text-sm font-medium text-parchment-200 hover:border-gold-500 hover:text-gold-400 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-				>
-					{showDeleted ? 'Hide deleted' : 'Deleted tags'}
-				</button>
-				<button
-					onclick={toggleMergeSuggestions}
-					class="rounded-lg border border-clay-700 px-4 py-2 text-sm font-medium text-parchment-200 hover:border-gold-500 hover:text-gold-400 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-				>
-					{showMergeSuggestions ? 'Hide merges' : 'Review merges'}
-				</button>
-				<button
-					onclick={toggleProvisional}
-					class="rounded-lg border border-clay-700 px-4 py-2 text-sm font-medium text-parchment-200 hover:border-gold-500 hover:text-gold-400 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-				>
-					{showProvisional ? 'Hide new tags' : 'Review new tags'}
-				</button>
-				<button
-					onclick={openNew}
-					class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-				>
-					New Tag
-				</button>
+<div class="mb-5 flex flex-wrap items-start gap-4">
+	<div>
+		<h1 class="text-[1.625rem] font-semibold tracking-[-0.01em] text-parchment-200">Tags</h1>
+		<p class="mt-1.5 text-parchment-500">Curate the shared vocabulary and review tag quality.</p>
+	</div>
+	{#if canModerate()}
+		<div class="ms-auto flex shrink-0 gap-2 pt-1">
+			<button
+				onclick={openNew}
+				class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+			>
+				+ New Tag
+			</button>
+		</div>
+	{/if}
+</div>
+
+<TagReconcileStrip />
+
+<div class={tabStrip} role="tablist" aria-label="Tags sections">
+	<button
+		id="tab-vocabulary"
+		type="button"
+		role="tab"
+		aria-selected={activeTab === 'vocabulary'}
+		aria-controls="panel-vocabulary"
+		onclick={() => selectTab('vocabulary')}
+		class={tabClass('vocabulary')}
+	>
+		Vocabulary
+	</button>
+	{#if canModerate()}
+		<button
+			id="tab-merges"
+			type="button"
+			role="tab"
+			aria-selected={activeTab === 'merges'}
+			aria-controls="panel-merges"
+			onclick={() => selectTab('merges')}
+			class={tabClass('merges')}
+		>
+			Merge review
+			{#if counts.merges}<span class={tabBadge}>{formatNumber(counts.merges)}</span>{/if}
+		</button>
+		<button
+			id="tab-provisional"
+			type="button"
+			role="tab"
+			aria-selected={activeTab === 'provisional'}
+			aria-controls="panel-provisional"
+			onclick={() => selectTab('provisional')}
+			class={tabClass('provisional')}
+		>
+			New tags
+			{#if counts.provisional}<span class={tabBadge}>{formatNumber(counts.provisional)}</span>{/if}
+		</button>
+		<button
+			id="tab-deleted"
+			type="button"
+			role="tab"
+			aria-selected={activeTab === 'deleted'}
+			aria-controls="panel-deleted"
+			onclick={() => selectTab('deleted')}
+			class={tabClass('deleted')}
+		>
+			Deleted
+			{#if counts.deleted}<span class={tabBadge}>{formatNumber(counts.deleted)}</span>{/if}
+		</button>
+	{/if}
+</div>
+
+{#if activeTab === 'vocabulary'}
+	<div id="panel-vocabulary" role="tabpanel" aria-labelledby="tab-vocabulary">
+		<div class="mb-4 flex flex-wrap items-center gap-3">
+			<label for="tag-filter" class="sr-only">Filter tags</label>
+			<input
+				id="tag-filter"
+				name="tag-filter"
+				type="text"
+				bind:value={query}
+				oninput={() => {
+					refreshKey++;
+					const url = new URL(window.location.href);
+					if (query) url.searchParams.set('q', query);
+					else url.searchParams.delete('q');
+					goto(resolve(`${url.pathname}${url.search}${url.hash}`), {
+						replaceState: true,
+						keepFocus: true
+					});
+				}}
+				autocomplete="off"
+				placeholder="Filter tags…"
+				class="w-full max-w-xs rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+			/>
+			{#if vocabularyTotal != null}
+				<span class="ms-auto text-[0.8125rem] text-parchment-500 tabular-nums">
+					<b class="font-semibold text-parchment-300">{formatNumber(vocabularyTotal)}</b> tags
+				</span>
 			{/if}
 		</div>
-	</div>
 
-	<TagReconcileCard />
-
-	<div class="flex items-center gap-2">
-		<label for="tag-filter" class="sr-only">Filter tags</label>
-		<input
-			id="tag-filter"
-			type="text"
-			bind:value={query}
-			oninput={() => {
-				refreshKey++;
-				deletedRefreshKey++;
-				const url = new URL(window.location.href);
-				if (query) url.searchParams.set('q', query);
-				else url.searchParams.delete('q');
-				goto(resolve(url.pathname + url.search), { replaceState: true, keepFocus: true });
-			}}
-			name="tag-filter"
-			autocomplete="off"
-			placeholder="Filter tags…"
-			class="w-full max-w-xs rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+		<DataTable
+			{columns}
+			fetch={fetchVocabulary}
+			{refreshKey}
+			defaultSortBy="document_count"
+			defaultSortOrder="desc"
+			urlSync="tags"
+			onRowClick={filterByTag}
+			onActionClick={handlePageClick}
+			onTotal={(t) => (vocabularyTotal = t)}
 		/>
 	</div>
-
-	{#if showMergeSuggestions}
-		<div class="rounded-lg border border-clay-700 bg-clay-900 p-4">
-			<h2 class="mb-3 text-sm font-semibold text-parchment-200">Merge suggestions</h2>
-			{#if loadingSuggestions}
-				<p class="text-sm text-parchment-500">Loading merge suggestions…</p>
-			{:else if suggestionsError}
-				<p class="text-sm text-terracotta-500" role="alert">{suggestionsError}</p>
-			{:else if visibleSuggestions().length === 0}
-				<p class="text-sm text-parchment-500">No merge suggestions.</p>
-			{:else}
-				<ul class="space-y-3">
-					{#each visibleSuggestions() as s (pairKey(s))}
-						{@const key = pairKey(s)}
-						{@const survivorId = survivorByPair[key] ?? s.tags[0].id}
-						<li class="rounded-md border border-clay-800 bg-clay-950 p-3">
-							<div class="flex flex-wrap items-center justify-between gap-3">
-								<div class="min-w-0">
-									<div class="flex flex-wrap items-center gap-2">
-										<span class="text-sm font-medium text-parchment-200">{s.tags[0].name}</span>
-										<span class="text-xs text-parchment-500">
-											· {documentsLabel(s.tags[0].document_count)}
-										</span>
-										<span class="text-parchment-600" aria-hidden="true">↔</span>
-										<span class="text-sm font-medium text-parchment-200">{s.tags[1].name}</span>
-										<span class="text-xs text-parchment-500">
-											· {documentsLabel(s.tags[1].document_count)}
-										</span>
-										<span
-											class="rounded bg-clay-800 px-1.5 py-0.5 text-xs text-gold-400"
-											title="Embedding similarity"
-										>
-											{Math.round(s.similarity * 100)}%
-										</span>
-										{#if s.confidence === 'population'}
-											<span
-												class="rounded bg-clay-800 px-1.5 py-0.5 text-xs text-parchment-300"
-												title="This pair has usage history from past enrichment runs"
-											>
-												backed by usage data
-											</span>
-										{:else}
-											<span
-												class="rounded bg-clay-800 px-1.5 py-0.5 text-xs text-parchment-500"
-												title="No usage data yet — suggested by name similarity alone"
-											>
-												similarity only
-											</span>
-										{/if}
-									</div>
-									<div class="mt-1 text-xs text-parchment-500">
-										{#if s.confidence === 'population'}
-											{documentsLabel(s.document_overlap)} carry both tags;
-											{formatNumber(s.variant_count + s.related_count)} automatic checks judged them related
-											rather than the same concept; {formatNumber(s.same_count)} judged them the same
-										{:else}
-											no usage data yet — suggested by name similarity alone
-										{/if}
-									</div>
-								</div>
-								<div class="flex shrink-0 items-center gap-2">
-									<span class="text-xs text-parchment-500">Keep:</span>
-									<select
-										value={survivorId}
-										onchange={(e) => (survivorByPair[key] = parseInt(e.currentTarget.value, 10))}
-										class="rounded-md border border-clay-700 bg-clay-900 px-2 py-1 text-xs text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-										aria-label="Surviving tag"
-									>
-										{#each s.tags as t (t.id)}
-											<option value={t.id}>{t.name}</option>
-										{/each}
-									</select>
-									<button
-										onclick={() => handleMerge(s)}
-										disabled={mergingPair === key}
-										class="rounded-md bg-gold-500 px-3 py-1 text-xs font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-50"
-									>
-										{mergingPair === key ? 'Merging…' : 'Merge'}
-									</button>
-									<button
-										onclick={() => dismiss(s)}
-										class="rounded-md px-2 py-1 text-xs text-parchment-400 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-									>
-										Dismiss
-									</button>
-								</div>
-							</div>
-						</li>
-					{/each}
-				</ul>
-			{/if}
-		</div>
-	{/if}
-
-	{#if showProvisional}
-		<div class="rounded-lg border border-clay-700 bg-clay-900 p-4">
-			<div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-				<h2 class="text-sm font-semibold text-parchment-200">Review new tags</h2>
-				{#if provisionalTotal > 0}
-					<span class="text-xs text-parchment-500">
-						showing {formatNumber(provisionalTags.length)} of {formatNumber(provisionalTotal)}
-					</span>
-				{/if}
-			</div>
-			<p class="mb-3 text-xs text-parchment-500">
-				New tags stay provisional until the quality judge passes them and a second document carries
-				them. Approve promotes a tag into the shared vocabulary; reject deletes it and blocks it
-				from enrichment.
-			</p>
-			{#if loadingProvisional}
-				<p class="text-sm text-parchment-500">Loading new tags…</p>
-			{:else if provisionalError}
-				<p class="text-sm text-terracotta-500" role="alert">{provisionalError}</p>
-			{:else if provisionalTags.length === 0}
-				<p class="text-sm text-parchment-500">
-					No provisional tags. New tags appear here once enrichment assigns them to a document.
-				</p>
-			{:else}
-				<ul class="space-y-3">
-					{#each provisionalTags as tag (tag.id)}
-						<li class="rounded-md border border-clay-800 bg-clay-950 p-3">
-							<div class="flex flex-wrap items-center justify-between gap-3">
-								<div class="min-w-0">
-									<div class="flex flex-wrap items-center gap-2">
-										<span class="text-sm font-medium text-parchment-200">{tag.name}</span>
-										<span class="text-xs text-parchment-500">
-											· {documentsLabel(tag.document_count)}
-										</span>
-										<span class="text-xs text-parchment-500">
-											· created {new Date(tag.created_at).toLocaleDateString()}
-										</span>
-										{#if tag.verdict === null}
-											<span
-												class="rounded bg-clay-800 px-1.5 py-0.5 text-xs text-parchment-500"
-												title="Never judged — no verdict was recorded when this tag was born"
-											>
-												no verdict
-											</span>
-										{:else if tag.verdict.pass}
-											<span
-												class="rounded bg-emerald-600/20 px-1.5 py-0.5 text-xs text-emerald-500"
-												title="The quality judge passed this tag"
-											>
-												{tag.document_count >= 2 ? 'eligible' : 'awaiting second document'}
-											</span>
-										{:else}
-											<span
-												class="rounded bg-amber-600/20 px-1.5 py-0.5 text-xs text-amber-400"
-												title="The quality judge rejected this tag"
-											>
-												judge rejected
-											</span>
-										{/if}
-									</div>
-									{#if tag.verdict !== null}
-										<div class="mt-1 flex flex-wrap items-center gap-1.5">
-											{#each provisionalCriteria as c (c.key)}
-												<span
-													class="rounded bg-clay-800 px-1.5 py-0.5 text-xs {criterionClass(
-														tag.verdict.criteria?.[c.key]
-													)}"
-												>
-													{c.label}: {criterionMark(tag.verdict.criteria?.[c.key])}
-												</span>
-											{/each}
-											{#if tag.verdict.model}
-												<span class="text-xs text-parchment-500">{tag.verdict.model}</span>
-											{/if}
-											<span class="text-xs text-parchment-500">
-												{new Date(tag.verdict.verdict_at).toLocaleString()}
-											</span>
-										</div>
-									{/if}
-								</div>
-								<div class="flex shrink-0 items-center gap-2">
-									<button
-										onclick={() => handleApprove(tag)}
-										disabled={actingProvisional === tag.id}
-										class="rounded-md bg-gold-500 px-3 py-1 text-xs font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-50"
-									>
-										Approve
-									</button>
-									<button
-										onclick={() => handleRejectProvisional(tag)}
-										disabled={actingProvisional === tag.id}
-										class="rounded-md px-3 py-1 text-xs text-parchment-400 hover:bg-clay-800 hover:text-terracotta-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-50"
-									>
-										Reject
-									</button>
-								</div>
-							</div>
-						</li>
-					{/each}
-				</ul>
-			{/if}
-		</div>
-	{/if}
-
-	{#if showDeleted}
-		<div class="rounded-lg border border-clay-700 bg-clay-900 p-4">
-			<h2 class="mb-3 text-sm font-semibold text-parchment-200">Deleted tags</h2>
-			<p class="mb-3 text-xs text-parchment-500">
-				Names listed here are blocked from enrichment. Blocked tags are re-created when restored;
-				merged names are simply allowed again.
-			</p>
-			<DataTable
-				columns={deletedColumns}
-				fetch={fetchDeleted}
-				keyField="name"
-				title=""
-				defaultPageSize={10}
-				pageSizes={[10, 25, 50]}
-				refreshKey={deletedRefreshKey}
-				onActionClick={handleDeletedActionClick}
-			/>
-		</div>
-	{/if}
-
-	<DataTable
-		{columns}
-		{fetch}
-		title=""
-		defaultPageSize={50}
-		pageSizes={[10, 25, 50, 100]}
-		{refreshKey}
-		onRowClick={filterByTag}
-		onActionClick={handlePageClick}
-		urlSync="tags"
-	/>
-</div>
+{:else if activeTab === 'merges'}
+	<div id="panel-merges" role="tabpanel" aria-labelledby="tab-merges">
+		<MergeReview initialSuggestions={mergeSuggestions} onchanged={onReviewChanged} />
+	</div>
+{:else if activeTab === 'provisional'}
+	<div id="panel-provisional" role="tabpanel" aria-labelledby="tab-provisional">
+		<ProvisionalReview onchanged={onReviewChanged} />
+	</div>
+{:else if activeTab === 'deleted'}
+	<div id="panel-deleted" role="tabpanel" aria-labelledby="tab-deleted">
+		<DeletedTags refreshKey={deletedRefreshKey} onchanged={onReviewChanged} />
+	</div>
+{/if}
 
 <Modal
 	open={showModal}
