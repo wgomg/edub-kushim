@@ -132,3 +132,88 @@ func TestTagMergeHandler_Suggestions_503WhenMatcherDown(t *testing.T) {
 	h.MergeSuggestions(w, r)
 	testutil.AssertEqual(t, w.Code, http.StatusServiceUnavailable, "matcher down → 503")
 }
+
+func TestTagMergeHandler_DismissMergePair_HappyPath(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	svc := addTagMergeToEnv(t, env)
+	h := NewTagHandler(env.services, env.logger)
+
+	database.MustCreateTag(t, env.client.Queries, "handler dismiss a")
+	database.MustCreateTag(t, env.client.Queries, "handler dismiss b")
+
+	body, _ := json.Marshal(types.MergePairRequest{TagA: "Handler Dismiss A", TagB: "Handler Dismiss B"})
+	w := rec()
+	r := req(t, "POST", "/api/v1/tags/merge/dismissals", body)
+	h.DismissMergePair(w, r)
+
+	testutil.AssertEqual(t, w.Code, http.StatusNoContent, "dismiss → 204")
+
+	dismissals, err := env.client.Queries.ListTagMergeDismissals(context.Background())
+	testutil.AssertNoError(t, err, "list dismissals")
+	testutil.AssertEqual(t, len(dismissals), 1, "one row in DB")
+	testutil.AssertEqual(t, dismissals[0].TagA, "handler dismiss a", "canonical tag_a")
+
+	_ = svc
+}
+
+func TestTagMergeHandler_DismissMergePair_TagNotFound(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	addTagMergeToEnv(t, env)
+	h := NewTagHandler(env.services, env.logger)
+
+	database.MustCreateTag(t, env.client.Queries, "handler dismiss present")
+
+	body, _ := json.Marshal(types.MergePairRequest{TagA: "handler dismiss present", TagB: "handler dismiss missing"})
+	w := rec()
+	r := req(t, "POST", "/api/v1/tags/merge/dismissals", body)
+	h.DismissMergePair(w, r)
+
+	testutil.AssertEqual(t, w.Code, http.StatusNotFound, "missing tag → 404")
+}
+
+func TestTagMergeHandler_DismissMergePair_BadRequest(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	addTagMergeToEnv(t, env)
+	h := NewTagHandler(env.services, env.logger)
+
+	w := rec()
+	r := req(t, "POST", "/api/v1/tags/merge/dismissals", []byte("not json"))
+	h.DismissMergePair(w, r)
+
+	testutil.AssertEqual(t, w.Code, http.StatusBadRequest, "invalid JSON → 400")
+}
+
+func TestTagMergeHandler_RestoreMergePair_HappyPath(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	svc := addTagMergeToEnv(t, env)
+	h := NewTagHandler(env.services, env.logger)
+
+	database.MustCreateTag(t, env.client.Queries, "handler restore a")
+	database.MustCreateTag(t, env.client.Queries, "handler restore b")
+
+	_ = svc
+	_ = svc.DismissPair(context.Background(), "Handler Restore A", "Handler Restore B")
+
+	body, _ := json.Marshal(types.MergePairRequest{TagA: "Handler Restore A", TagB: "Handler Restore B"})
+	w := rec()
+	r := req(t, "DELETE", "/api/v1/tags/merge/dismissals", body)
+	h.RestoreMergePair(w, r)
+
+	testutil.AssertEqual(t, w.Code, http.StatusNoContent, "restore → 204")
+
+	dismissals, err := env.client.Queries.ListTagMergeDismissals(context.Background())
+	testutil.AssertNoError(t, err, "list dismissals")
+	testutil.AssertEqual(t, len(dismissals), 0, "no rows after restore")
+}
+
+func TestTagMergeHandler_RestoreMergePair_BadRequest(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	addTagMergeToEnv(t, env)
+	h := NewTagHandler(env.services, env.logger)
+
+	w := rec()
+	r := req(t, "DELETE", "/api/v1/tags/merge/dismissals", []byte("{invalid"))
+	h.RestoreMergePair(w, r)
+
+	testutil.AssertEqual(t, w.Code, http.StatusBadRequest, "invalid JSON → 400")
+}

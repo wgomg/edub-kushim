@@ -264,15 +264,28 @@ reconciler's dead-name pass (§8) is what prevents a cached verdict from
 resurrecting it. Errors: same id → invalid (400), missing source/target →
 not-found (404).
 
-**`Suggestions(ctx, limit)`**: one `SimilarPairs` RPC →
-`ListAllTagsWithDocumentCount` (one query for the canonical tag set and
-document counts) → drop pairs whose names are no longer in the tag table →
-`TagPairEvidenceStats` over the survivors → shape, canonical two-tag ordering
-(higher document count first, tie lexicographic — a display default, not a
-merge decision), confidence `"population"` when the pair has event rows else
-`"similarity_only"`, sort population-first, limit. The endpoint 503s when the
-matcher is down (`isMatcherUnavailable`), surfaced as a distinct state in the
-UI ("Merge review" on the tags page).
+**`Suggestions(ctx, SuggestionsParams{Limit, ForTag, IncludeDismissed})`**: one
+`SimilarPairs` RPC → `ListAllTagsWithDocumentCount` (one query for the canonical
+tag set and document counts) → drop pairs whose names are no longer in the tag
+table → `ListTagMergeDismissals` into a set keyed by `pairKey` (canonical
+normalized names) → `TagPairEvidenceStats` over the survivors → shape, canonical
+two-tag ordering (higher document count first, tie lexicographic — a display
+default, not a merge decision), confidence `"population"` when the pair has
+event rows else `"similarity_only"`, `Dismissed` from the set, sort
+population-first, then keep up to `Limit` entries per class (live vs dismissed)
+so dismissed pairs cannot displace live suggestions; `ForTag` (normalized)
+narrows the scan to pairs involving one tag for the vocabulary row expansion.
+The endpoint 503s when the matcher is down (`isMatcherUnavailable`), surfaced as
+a distinct state in the UI ("Merge review" on the tags page).
+
+**`DismissPair(ctx, tagA, tagB)` / `RestorePair(ctx, tagA, tagB)`** touch only
+the database, never the matcher: both normalize the names, reject empty or
+identical inputs (invalid → 400) and sort them into canonical order (the pair
+identity is the sorted normalized names, not the display order), then dismiss
+(both tags must exist — `GetTagByName` → 404 otherwise — then upsert with
+`ON CONFLICT DO NOTHING`) or restore (`DeleteTagMergeDismissal`, a no-op for an
+absent row). Dismissals are global and are never pruned, so they survive tag
+delete/recreate cycles.
 
 ---
 

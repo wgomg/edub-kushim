@@ -241,8 +241,17 @@ resolves them:
 - **Tags page → "Merge review" tab** (editor-gated): fetches suggestions on
   demand; each pair shows similarity, population overlap, and verdict history,
   carries a survivor selector (defaulting to the higher-document-count tag),
-  Merge with confirmation naming the tag to be deleted, and a session-only
-  Dismiss.
+  Merge with confirmation naming the tag to be deleted, and Dismiss/Restore.
+  Both document counts link to the documents page pre-filtered by the tag, and
+  the vocabulary table expands an editor row into the same pair cards for the
+  pairs involving that tag.
+- **Dismissals are persisted** in the global `tag_merge_dismissal` table
+  (`POST`/`DELETE /api/v1/tags/merge/dismissals`, editor/admin), so a dismissed
+  pair stays out of the queue across sessions and for every operator. The
+  "Hide dismissed" switch (on by default, remembered per browser) decides
+  whether dismissed pairs are listed; when listed they carry a "dismissed" pill
+  and a Restore action, and the `include_dismissed` parameter returns them
+  without letting them consume the live queue's slots.
 - **Suggestions** come from the matcher daemon's pair cache — every pair of
   store tags at or above the consideration floor, maintained incrementally on
   tag CRUD — ranked by document-population overlap and verdict counts from
@@ -253,7 +262,8 @@ resolves them:
   transaction: `document_tag` rows re-pointed (documents already carrying the
   target keep a single row), leftovers cleared, source tag deleted, source name
   dropped from the embedding store. Editor/admin only; suggestions are
-  viewer-readable via `GET /api/v1/tags/merge`.
+  viewer-readable via `GET /api/v1/tags/merge`, and dismissals are global
+  (shared by all operators), keyed by the two normalized tag names.
 
 ---
 

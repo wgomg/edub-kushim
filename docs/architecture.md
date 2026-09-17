@@ -280,8 +280,13 @@ The enrichment pipeline:
    `POST /api/v1/tags/{id}/merge`
    hard-merges a source tag into a target in one transaction (re-points
    `document_tag` rows, deletes the source tag, removes the source name from
-   the embedding store). Both endpoints are exposed in the tags page UI
-   ("Merge review" tab, editor-gated). Deleting or merging a tag records
+   the embedding store). Dismissed pairs are persisted in the global
+   `tag_merge_dismissal` table (`POST`/`DELETE /api/v1/tags/merge/dismissals`)
+   so they stay out of the queue across sessions, with a "Hide dismissed"
+   switch in the UI. Both endpoints are exposed in the tags page UI
+   ("Merge review" tab, editor-gated), where each pair's document counts link
+   to the documents page filtered by the tag and the vocabulary table expands a
+   row into the same pair cards. Deleting or merging a tag records
    its name in the `deleted_tag` blocklist (inside the merge transaction for
    merges), so later LLM emissions cannot resurrect it: enrichment drops
    blocked names and rewrites merged names to their target, and the reconciler

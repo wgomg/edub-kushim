@@ -1291,8 +1291,12 @@ Response `200` — `PersonListResponse` envelope: `{ "results": [{ "id": 1, "nam
 Lists candidate tag pairs for an explicit merge, ranked by embedding similarity and — when adjudication history exists — population overlap and verdict counts. The pair list is served from the matcher daemon's in-memory pair cache (every unordered pair of store entries at or above the consolidation-similarity floor, maintained on tag CRUD), so the endpoint does no per-request embedding work. Editor-gated in the UI; viewer-readable via the API.
 
 ```
-GET /api/v1/tags/merge?limit=20
+GET /api/v1/tags/merge?limit=20&for_tag=software%20development&include_dismissed=true
 ```
+
+- `limit` — pairs per class (default 20, clamped 1–100).
+- `for_tag` — optional; keeps only the pairs where either tag matches the normalized name, so the vocabulary row expansion can ask for one tag's suggestions.
+- `include_dismissed` — optional (default `false`); when `true`, pairs the operator dismissed are included, marked `"dismissed": true`, and the `limit` is applied per class (up to `limit` live pairs plus up to `limit` dismissed ones, in relevance order) so dismissed pairs never push live suggestions out of the response.
 
 Response `200`:
 
@@ -1318,6 +1322,7 @@ Response `200`:
 
 - `tags` — exactly two entries in canonical order (higher document count first, tie-break lexicographically smaller name). This is a display default, not a merge decision.
 - `confidence` — `"population"` when the pair has adjudication event rows, `"similarity_only"` otherwise (lower-confidence, ranked by similarity alone).
+- `dismissed` — present (`true`) only for pairs in the dismissal list.
 - `503` when the matcher daemon is unreachable.
 
 ### Merge Tags
@@ -1339,6 +1344,28 @@ Response `200`:
 
 - `400` — `target_id` missing/zero, or source and target are the same tag.
 - `404` — source or target tag does not exist.
+
+### Dismissing and Restoring Merge Suggestions
+
+Dismissals are global (shared by all operators) and persisted, so a dismissed pair stays out of the merge queue across sessions until it is restored. The tags page keeps a "Hide dismissed" switch (on by default, remembered per browser) that controls whether dismissed pairs are shown; when shown, they carry a "dismissed" pill and a Restore action. Pair identity is the two normalized tag names, in either order. Editor/admin only.
+
+```
+POST /api/v1/tags/merge/dismissals
+Content-Type: application/json
+
+{ "tag_a": "software development", "tag_b": "software engineering" }
+```
+
+`204 No Content` on success; repeating the same dismissal is a no-op. `404` when either name is not in the tag table, `400` when a name is empty or the two names are identical.
+
+```
+DELETE /api/v1/tags/merge/dismissals
+Content-Type: application/json
+
+{ "tag_a": "software development", "tag_b": "software engineering" }
+```
+
+`204 No Content` on success; restoring a pair that is not dismissed is a no-op.
 
 ### Deleted Tags
 

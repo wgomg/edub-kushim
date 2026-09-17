@@ -175,7 +175,7 @@ func TestTagMerge_Suggestions_EmptyEventTableIsSimilarityOnly(t *testing.T) {
 	svc.matcher = matcher
 	_ = embedder
 
-	results, err := svc.Suggestions(ctx, 20)
+	results, err := svc.Suggestions(ctx, SuggestionsParams{Limit: 20})
 	testutil.AssertNoError(t, err, "suggestions")
 	testutil.AssertEqual(t, len(results), 1, "one pair surfaces")
 	testutil.AssertEqual(t, results[0].Confidence, mergeSuggestionConfidenceSimilarityOnly, "empty event table → similarity-only")
@@ -230,7 +230,7 @@ func TestTagMerge_Suggestions_PopulationConfidenceAndOrdering(t *testing.T) {
 	svc.matcher = matcher
 	_ = embedder
 
-	results, err := svc.Suggestions(ctx, 20)
+	results, err := svc.Suggestions(ctx, SuggestionsParams{Limit: 20})
 	testutil.AssertNoError(t, err, "suggestions")
 	testutil.AssertEqual(t, len(results), 1, "one pair surfaces")
 	s := results[0]
@@ -247,6 +247,256 @@ func TestTagMerge_Suggestions_PopulationConfidenceAndOrdering(t *testing.T) {
 	testutil.AssertEqual(t, s.Tags[0].DocumentCount, int64(3), "alpha document count")
 	testutil.AssertEqual(t, s.Tags[1].ID, betaID, "beta is second")
 	testutil.AssertEqual(t, s.Tags[1].DocumentCount, int64(1), "beta document count")
+}
+
+func TestTagMerge_DismissPair_HappyPath(t *testing.T) {
+	svc, _, client := newTestTagMerge(t)
+	ctx := context.Background()
+
+	idA := database.MustCreateTag(t, client.Queries, "dismiss alpha")
+	idB := database.MustCreateTag(t, client.Queries, "dismiss beta")
+	_ = idA
+	_ = idB
+
+	err := svc.DismissPair(ctx, "Dismiss Alpha", "Dismiss Beta")
+	testutil.AssertNoError(t, err, "dismiss")
+
+	dismissals, err := client.Queries.ListTagMergeDismissals(ctx)
+	testutil.AssertNoError(t, err, "list dismissals")
+	testutil.AssertEqual(t, len(dismissals), 1, "one dismissal row")
+	testutil.AssertEqual(t, dismissals[0].TagA, "dismiss alpha", "canonical tag_a (lowercase)")
+	testutil.AssertEqual(t, dismissals[0].TagB, "dismiss beta", "canonical tag_b (lowercase)")
+}
+
+func TestTagMerge_DismissPair_Idempotent(t *testing.T) {
+	svc, _, client := newTestTagMerge(t)
+	ctx := context.Background()
+
+	database.MustCreateTag(t, client.Queries, "idempotent a")
+	database.MustCreateTag(t, client.Queries, "idempotent b")
+
+	err := svc.DismissPair(ctx, "Idempotent A", "Idempotent B")
+	testutil.AssertNoError(t, err, "first dismiss")
+	err = svc.DismissPair(ctx, "Idempotent A", "Idempotent B")
+	testutil.AssertNoError(t, err, "second dismiss (idempotent)")
+
+	dismissals, err := client.Queries.ListTagMergeDismissals(ctx)
+	testutil.AssertNoError(t, err, "list dismissals")
+	testutil.AssertEqual(t, len(dismissals), 1, "still one row after second dismiss")
+}
+
+func TestTagMerge_DismissPair_TagNotFound(t *testing.T) {
+	svc, _, client := newTestTagMerge(t)
+	ctx := context.Background()
+
+	database.MustCreateTag(t, client.Queries, "dismiss present")
+
+	err := svc.DismissPair(ctx, "dismiss present", "dismiss missing")
+	testutil.AssertError(t, err, "dismiss missing tag")
+	testutil.AssertEqual(t, errs.KindOf(err), errs.KindNotFound, "not-found kind → 404")
+}
+
+func TestTagMerge_DismissPair_EmptyName(t *testing.T) {
+	svc, _, client := newTestTagMerge(t)
+	ctx := context.Background()
+
+	_ = client
+
+	err := svc.DismissPair(ctx, "", "")
+	testutil.AssertError(t, err, "dismiss empty")
+	testutil.AssertEqual(t, errs.KindOf(err), errs.KindInvalid, "invalid kind → 400")
+}
+
+func TestTagMerge_DismissPair_SameTag(t *testing.T) {
+	svc, _, client := newTestTagMerge(t)
+	ctx := context.Background()
+
+	database.MustCreateTag(t, client.Queries, "same-tag")
+
+	err := svc.DismissPair(ctx, "same-tag", "same-tag")
+	testutil.AssertError(t, err, "dismiss same tag")
+	testutil.AssertEqual(t, errs.KindOf(err), errs.KindInvalid, "invalid kind → 400")
+}
+
+func TestTagMerge_RestorePair_HappyPath(t *testing.T) {
+	svc, _, client := newTestTagMerge(t)
+	ctx := context.Background()
+
+	database.MustCreateTag(t, client.Queries, "restore alpha")
+	database.MustCreateTag(t, client.Queries, "restore beta")
+
+	err := svc.DismissPair(ctx, "Restore Alpha", "Restore Beta")
+	testutil.AssertNoError(t, err, "dismiss first")
+
+	err = svc.RestorePair(ctx, "Restore Alpha", "Restore Beta")
+	testutil.AssertNoError(t, err, "restore")
+
+	dismissals, err := client.Queries.ListTagMergeDismissals(ctx)
+	testutil.AssertNoError(t, err, "list dismissals")
+	testutil.AssertEqual(t, len(dismissals), 0, "no dismissals after restore")
+}
+
+func TestTagMerge_RestorePair_Idempotent(t *testing.T) {
+	svc, _, client := newTestTagMerge(t)
+	ctx := context.Background()
+
+	database.MustCreateTag(t, client.Queries, "rest-idem a")
+	database.MustCreateTag(t, client.Queries, "rest-idem b")
+
+	err := svc.RestorePair(ctx, "Rest-Idem A", "Rest-Idem B")
+	testutil.AssertNoError(t, err, "restore without prior dismiss is idempotent")
+}
+
+func TestTagMerge_Suggestions_ForTag(t *testing.T) {
+	svc, _, client := newTestTagMerge(t)
+	ctx := context.Background()
+
+	_ = database.MustCreateTag(t, client.Queries, "paired alpha")
+	_ = database.MustCreateTag(t, client.Queries, "paired beta")
+	_ = database.MustCreateTag(t, client.Queries, "paired gamma")
+
+	matcher := &mockMatcher{
+		pairs: []tagmatcher.SimilarPair{
+			{A: "paired alpha", B: "paired beta", Similarity: 0.90},
+			{A: "paired beta", B: "paired gamma", Similarity: 0.85},
+		},
+	}
+	svc.matcher = matcher
+
+	results, err := svc.Suggestions(ctx, SuggestionsParams{
+		Limit:  50,
+		ForTag: "paired alpha",
+	})
+	testutil.AssertNoError(t, err, "suggestions")
+	testutil.AssertEqual(t, len(results), 1, "only pair involving 'paired alpha'")
+	testutil.AssertEqual(t, results[0].Tags[0].Name, "paired alpha", "first tag")
+	testutil.AssertEqual(t, results[0].Tags[1].Name, "paired beta", "second tag")
+}
+
+func TestTagMerge_Suggestions_ForTag_NoMatch(t *testing.T) {
+	svc, _, client := newTestTagMerge(t)
+	ctx := context.Background()
+
+	_ = database.MustCreateTag(t, client.Queries, "nomatch alpha")
+	_ = database.MustCreateTag(t, client.Queries, "nomatch beta")
+
+	matcher := &mockMatcher{
+		pairs: []tagmatcher.SimilarPair{
+			{A: "nomatch alpha", B: "nomatch beta", Similarity: 0.90},
+		},
+	}
+	svc.matcher = matcher
+
+	results, err := svc.Suggestions(ctx, SuggestionsParams{
+		Limit:  50,
+		ForTag: "nonexistent tag",
+	})
+	testutil.AssertNoError(t, err, "suggestions")
+	testutil.AssertEqual(t, len(results), 0, "no matches for nonexistent tag")
+}
+
+func TestTagMerge_Suggestions_ExcludesDismissed(t *testing.T) {
+	svc, _, client := newTestTagMerge(t)
+	ctx := context.Background()
+
+	_ = database.MustCreateTag(t, client.Queries, "dis-a")
+	_ = database.MustCreateTag(t, client.Queries, "dis-b")
+	_ = database.MustCreateTag(t, client.Queries, "keep-x")
+
+	matcher := &mockMatcher{
+		pairs: []tagmatcher.SimilarPair{
+			{A: "dis a", B: "dis b", Similarity: 0.90},
+			{A: "dis a", B: "keep x", Similarity: 0.80},
+		},
+	}
+	svc.matcher = matcher
+
+	err := svc.DismissPair(ctx, "Dis-A", "Dis-B")
+	testutil.AssertNoError(t, err, "dismiss pair")
+
+	results, err := svc.Suggestions(ctx, SuggestionsParams{Limit: 50})
+	testutil.AssertNoError(t, err, "suggestions (default: exclude dismissed)")
+	testutil.AssertEqual(t, len(results), 1, "only non-dismissed pair")
+	testutil.AssertEqual(t, results[0].Dismissed, false, "result not dismissed")
+}
+
+func TestTagMerge_Suggestions_IncludeDismissed(t *testing.T) {
+	svc, _, client := newTestTagMerge(t)
+	ctx := context.Background()
+
+	_ = database.MustCreateTag(t, client.Queries, "inc-a")
+	_ = database.MustCreateTag(t, client.Queries, "inc-b")
+
+	matcher := &mockMatcher{
+		pairs: []tagmatcher.SimilarPair{
+			{A: "inc a", B: "inc b", Similarity: 0.90},
+		},
+	}
+	svc.matcher = matcher
+
+	err := svc.DismissPair(ctx, "Inc-A", "Inc-B")
+	testutil.AssertNoError(t, err, "dismiss pair")
+
+	results, err := svc.Suggestions(ctx, SuggestionsParams{Limit: 50, IncludeDismissed: true})
+	testutil.AssertNoError(t, err, "suggestions (include dismissed)")
+	testutil.AssertEqual(t, len(results), 1, "dismissed pair included")
+	testutil.AssertEqual(t, results[0].Dismissed, true, "result is dismissed")
+}
+
+func TestTagMerge_Suggestions_PerClassLimit(t *testing.T) {
+	svc, _, client := newTestTagMerge(t)
+	ctx := context.Background()
+
+	for _, name := range []string{"pcls-a", "pcls-b", "pcls-c", "pcls-d", "pcls-e", "pcls-f"} {
+		database.MustCreateTag(t, client.Queries, name)
+	}
+	matcher := &mockMatcher{
+		pairs: []tagmatcher.SimilarPair{
+			{A: "pcls a", B: "pcls b", Similarity: 0.90},
+			{A: "pcls c", B: "pcls d", Similarity: 0.85},
+			{A: "pcls e", B: "pcls f", Similarity: 0.80},
+		},
+	}
+	svc.matcher = matcher
+
+	err := svc.DismissPair(ctx, "Pcls-C", "Pcls-D")
+	testutil.AssertNoError(t, err, "dismiss pair")
+
+	results, err := svc.Suggestions(ctx, SuggestionsParams{Limit: 2, IncludeDismissed: true})
+	testutil.AssertNoError(t, err, "suggestions")
+	pending, dismissed := 0, 0
+	for _, r := range results {
+		if r.Dismissed {
+			dismissed++
+		} else {
+			pending++
+		}
+	}
+	testutil.AssertEqual(t, pending <= 2, true, "pending capped at limit")
+	testutil.AssertEqual(t, dismissed <= 2, true, "dismissed capped at limit")
+}
+
+func TestTagMerge_Suggestions_DismissedFlagged(t *testing.T) {
+	svc, _, client := newTestTagMerge(t)
+	ctx := context.Background()
+
+	_ = database.MustCreateTag(t, client.Queries, "flag-a")
+	_ = database.MustCreateTag(t, client.Queries, "flag-b")
+
+	matcher := &mockMatcher{
+		pairs: []tagmatcher.SimilarPair{
+			{A: "flag a", B: "flag b", Similarity: 0.90},
+		},
+	}
+	svc.matcher = matcher
+
+	err := svc.DismissPair(ctx, "Flag-A", "Flag-B")
+	testutil.AssertNoError(t, err, "dismiss")
+
+	results, err := svc.Suggestions(ctx, SuggestionsParams{Limit: 50, IncludeDismissed: true})
+	testutil.AssertNoError(t, err, "suggestions")
+	testutil.AssertEqual(t, len(results), 1, "one result")
+	testutil.AssertEqual(t, results[0].Dismissed, true, "Dismissed flag is set")
 }
 
 func getDocTagNames(t *testing.T, q *database.Queries, documentID int64) []string {

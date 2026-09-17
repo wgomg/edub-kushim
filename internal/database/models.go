@@ -368,6 +368,12 @@ type Tag struct {
 	PromotedAt    sql.NullTime
 }
 
+type TagMergeDismissal struct {
+	TagA      string
+	TagB      string
+	CreatedAt time.Time
+}
+
 type TagQualityEvent struct {
 	ID            int64
 	DocumentID    int64

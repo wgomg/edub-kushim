@@ -1,8 +1,9 @@
 <script>
-	let { name, size = 16 } = $props();
+	let { name, size = 16, class: klass = '' } = $props();
 </script>
 
 <svg
+	class={klass}
 	xmlns="http://www.w3.org/2000/svg"
 	width={size}
 	height={size}
@@ -38,6 +39,10 @@
 		<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
 		<line x1="10" y1="11" x2="10" y2="17" />
 		<line x1="14" y1="11" x2="14" y2="17" />
+	{:else if name === 'external-link'}
+		<path d="M15 3h6v6" />
+		<path d="M10 14 21 3" />
+		<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
 	{:else if name === 'panel-right-close'}
 		<rect x="3" y="3" width="18" height="18" rx="2" />
 		<line x1="15" y1="3" x2="15" y2="18" />

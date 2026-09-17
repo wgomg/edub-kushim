@@ -39,6 +39,13 @@ type MergeSuggestion struct {
 	VariantCount    int64                `json:"variant_count"`
 	RelatedCount    int64                `json:"related_count"`
 	Confidence      string               `json:"confidence"`
+	Dismissed       bool                 `json:"dismissed,omitempty"`
+}
+
+type SuggestionsParams struct {
+	Limit            int
+	ForTag           string
+	IncludeDismissed bool
 }
 
 type TagMerge struct {
@@ -145,7 +152,7 @@ type pairEvidence struct {
 	relatedCount    int64
 }
 
-func (s *TagMerge) Suggestions(ctx context.Context, limit int) ([]MergeSuggestion, error) {
+func (s *TagMerge) Suggestions(ctx context.Context, params SuggestionsParams) ([]MergeSuggestion, error) {
 	pairs, err := s.matcher.SimilarPairs(ctx)
 	if err != nil {
 		return nil, err
@@ -155,6 +162,17 @@ func (s *TagMerge) Suggestions(ctx context.Context, limit int) ([]MergeSuggestio
 	if err != nil {
 		return nil, errs.FromDB(err, "list all tags with document counts")
 	}
+
+	dismissals, err := s.client.Queries.ListTagMergeDismissals(ctx)
+	if err != nil {
+		return nil, errs.FromDB(err, "list tag merge dismissals")
+	}
+	dismissed := make(map[string]struct{}, len(dismissals))
+	for _, d := range dismissals {
+		dismissed[pairKey(d.TagA, d.TagB)] = struct{}{}
+	}
+
+	forTag := utils.NormalizeTag(params.ForTag)
 
 	tagByName := make(map[string]database.Tag, len(tags))
 	countByID := make(map[int64]int64, len(tags))
@@ -214,6 +232,10 @@ func (s *TagMerge) Suggestions(ctx context.Context, limit int) ([]MergeSuggestio
 
 	suggestions := make([]MergeSuggestion, 0, len(pairEv))
 	for _, ev := range pairEv {
+		if forTag != "" && ev.a != forTag && ev.b != forTag {
+			continue
+		}
+		_, isDismissed := dismissed[pairKey(ev.a, ev.b)]
 		a := tagByName[ev.a]
 		b := tagByName[ev.b]
 		ta := MergeSuggestionTag{ID: a.ID, Name: a.Name, DocumentCount: countByID[a.ID]}
@@ -235,6 +257,7 @@ func (s *TagMerge) Suggestions(ctx context.Context, limit int) ([]MergeSuggestio
 			VariantCount:    ev.variantCount,
 			RelatedCount:    ev.relatedCount,
 			Confidence:      confidence,
+			Dismissed:       isDismissed,
 		})
 	}
 
@@ -272,10 +295,76 @@ func (s *TagMerge) Suggestions(ctx context.Context, limit int) ([]MergeSuggestio
 		return 0
 	})
 
-	if len(suggestions) > limit {
-		suggestions = suggestions[:limit]
+	// each class gets its own Limit share so dismissed pairs can't starve the live queue
+	kept := make([]MergeSuggestion, 0, len(suggestions))
+	pendingKept, dismissedKept := 0, 0
+	for _, s := range suggestions {
+		if s.Dismissed {
+			if !params.IncludeDismissed {
+				continue
+			}
+			if dismissedKept >= params.Limit {
+				continue
+			}
+			dismissedKept++
+		} else {
+			if pendingKept >= params.Limit {
+				continue
+			}
+			pendingKept++
+		}
+		kept = append(kept, s)
 	}
-	return suggestions, nil
+	return kept, nil
+}
+
+func (s *TagMerge) DismissPair(ctx context.Context, tagA, tagB string) error {
+	a, b, err := canonicalMergePair("dismiss merge pair", tagA, tagB)
+	if err != nil {
+		return err
+	}
+	if _, err := s.client.Queries.GetTagByName(ctx, a); err != nil {
+		return errs.FromDB(err, "get tag a for dismissal")
+	}
+	if _, err := s.client.Queries.GetTagByName(ctx, b); err != nil {
+		return errs.FromDB(err, "get tag b for dismissal")
+	}
+	if err := s.client.Queries.UpsertTagMergeDismissal(ctx, database.UpsertTagMergeDismissalParams{
+		TagA: a,
+		TagB: b,
+	}); err != nil {
+		return errs.FromDB(err, "dismiss merge pair")
+	}
+	return nil
+}
+
+func (s *TagMerge) RestorePair(ctx context.Context, tagA, tagB string) error {
+	a, b, err := canonicalMergePair("restore merge pair", tagA, tagB)
+	if err != nil {
+		return err
+	}
+	if _, err := s.client.Queries.DeleteTagMergeDismissal(ctx, database.DeleteTagMergeDismissalParams{
+		TagA: a,
+		TagB: b,
+	}); err != nil {
+		return errs.FromDB(err, "restore merge pair")
+	}
+	return nil
+}
+
+func canonicalMergePair(op, tagA, tagB string) (string, string, error) {
+	a := utils.NormalizeTag(tagA)
+	b := utils.NormalizeTag(tagB)
+	if a == "" || b == "" {
+		return "", "", errs.EInvalid(op, errors.New("tag names are required"))
+	}
+	if a == b {
+		return "", "", errs.EInvalid(op, errors.New("tag names must differ"))
+	}
+	if a > b {
+		a, b = b, a
+	}
+	return a, b, nil
 }
 
 func pairKey(a, b string) string {

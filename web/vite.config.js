@@ -18,6 +18,13 @@ export default defineConfig({
 			'/api': `http://localhost:${process.env.API_PORT || '3000'}`
 		}
 	},
+	build: {
+		rollupOptions: {
+			output: {
+				hashCharacters: 'base36'
+			}
+		}
+	},
 	test: {
 		projects: [
 			{

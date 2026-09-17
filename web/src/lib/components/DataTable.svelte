@@ -31,7 +31,9 @@
 	 * onselectionchange?: (selectedRows: any[]) => void,
 	 * onActionClick?: (e: Event, row: any) => void,
 	 * urlSync?: string,
-	 * onTotal?: (total: number | null) => void
+	 * onTotal?: (total: number | null) => void,
+	 * expandedKey?: any,
+	 * expansion?: Function
 	 * }}
 	 * */
 	let {
@@ -49,7 +51,9 @@
 		defaultSortOrder = 'desc',
 		onActionClick = null,
 		urlSync = '',
-		onTotal = null
+		onTotal = null,
+		expandedKey = null,
+		expansion = null
 	} = $props();
 
 	let selectedKeys = $state(new Set());
@@ -385,6 +389,13 @@
 									</td>
 								{/each}
 							</tr>
+							{#if expansion && row[keyField] === expandedKey}
+								<tr class="border-t border-clay-800 bg-clay-950/40">
+									<td colspan={columns.length + (selectable ? 1 : 0)} class="px-4 py-3">
+										{@render expansion(row)}
+									</td>
+								</tr>
+							{/if}
 						{/each}
 					{/if}
 				</tbody>

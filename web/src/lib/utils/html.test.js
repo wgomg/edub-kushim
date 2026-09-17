@@ -1,11 +1,17 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
+
+vi.mock('$app/paths', () => ({
+	resolve: (path) => path
+}));
+
 import {
 	escapeHtml,
 	formatSize,
 	formatDuration,
 	formatRelative,
 	formatNumber,
-	documentsLabel
+	documentsLabel,
+	documentsForTagHref
 } from './html.js';
 
 describe('escapeHtml', () => {
@@ -67,6 +73,18 @@ describe('formatDuration', () => {
 		expect(formatDuration(61000)).toBe('1\u00A0m 1\u00A0s');
 		expect(formatDuration(3600000)).toBe('1\u00A0h');
 		expect(formatDuration(3661000)).toBe('1\u00A0h 1\u00A0m 1\u00A0s');
+	});
+});
+
+describe('documentsForTagHref', () => {
+	it('produces a URL-encoded documents filter link for a tag name', () => {
+		expect(documentsForTagHref('software development')).toBe(
+			'/documents?q=' + encodeURIComponent('tag:"software development"')
+		);
+	});
+
+	it('encodes special characters in tag names', () => {
+		expect(documentsForTagHref('C++')).toBe('/documents?q=' + encodeURIComponent('tag:"C++"'));
 	});
 });
 

@@ -22,7 +22,7 @@ Deeper context lives in `docs/`:
   Makefile, which always sets the `-tags "XLA,ORT"` tags and the CGo environment
   (`CGO_CPPFLAGS`, `CGO_LDFLAGS`). Non-negotiable.
 - Fresh clones: the Go packages embed the SPA builds via `//go:embed`
-  (`internal/static/build`, `internal/wizard/static` — both gitignored), so *any* Go
+  (`internal/static/build`, `internal/wizard/static` — both gitignored), so _any_ Go
   build or test fails to compile until they exist. Build SPAs first:
   `make web-build wizard-build && make build` (order matters);
   if web/builds exist, `make stage-web` just copies them into place.
@@ -79,7 +79,7 @@ Run one via Podman (preferred) or Docker:
 ```bash
 podman run -d --name edub-test-pg \
   -e POSTGRES_USER=edub -e POSTGRES_PASSWORD=edub \
-  -p 5432:5432 postgres:17   # docker works identically
+  -p <port>:5432 postgres:17   # docker works identically
 ```
 
 ```bash

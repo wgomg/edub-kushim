@@ -412,8 +412,14 @@ func (h *TagHandler) MergeSuggestions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit := pb.GetInt64("limit", 20, 1, 100)
+	forTag := pb.Get("for_tag", "")
+	includeDismissed := pb.GetBool("include_dismissed", false)
 
-	suggestions, err := h.services.TagMerge.Suggestions(ctx, int(limit))
+	suggestions, err := h.services.TagMerge.Suggestions(ctx, service.SuggestionsParams{
+		Limit:            int(limit),
+		ForTag:           forTag,
+		IncludeDismissed: includeDismissed,
+	})
 	if err != nil {
 		if isMatcherUnavailable(err) {
 			matcherUnavailableResponse(w)
@@ -425,4 +431,40 @@ func (h *TagHandler) MergeSuggestions(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"results": suggestions})
+}
+
+func (h *TagHandler) DismissMergePair(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := ctx.Value("reqid").(string)
+
+	var req types.MergePairRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.services.TagMerge.DismissPair(ctx, req.TagA, req.TagB); err != nil {
+		writeServiceError(w, h.logger, &reqID, "dismiss merge pair", err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *TagHandler) RestoreMergePair(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := ctx.Value("reqid").(string)
+
+	var req types.MergePairRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.services.TagMerge.RestorePair(ctx, req.TagA, req.TagB); err != nil {
+		writeServiceError(w, h.logger, &reqID, "restore merge pair", err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }

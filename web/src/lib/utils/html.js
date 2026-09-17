@@ -27,6 +27,10 @@ export function documentsLabel(count) {
 	return `${formatNumber(value)} ${value === 1 ? 'document' : 'documents'}`;
 }
 
+export function documentsForTagHref(name) {
+	return `/documents?q=${encodeURIComponent(`tag:"${name}"`)}`;
+}
+
 export function formatDuration(ms) {
 	if (ms == null) return '—';
 	const totalSec = Math.floor(ms / 1000);

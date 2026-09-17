@@ -63,3 +63,8 @@ type MergeTagResponse struct {
 	Name       string `json:"name"`
 	Reassigned int64  `json:"reassigned"`
 }
+
+type MergePairRequest struct {
+	TagA string `json:"tag_a"`
+	TagB string `json:"tag_b"`
+}

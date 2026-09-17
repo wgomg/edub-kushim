@@ -1,9 +1,11 @@
 <script>
 	import { onMount } from 'svelte';
+	import { resolve } from '$app/paths';
 	import { api } from '$lib/api';
+	import Icon from '$lib/components/Icon.svelte';
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
-	import { documentsLabel, formatNumber } from '$lib/utils/html.js';
+	import { documentsForTagHref, documentsLabel, formatNumber } from '$lib/utils/html.js';
 
 	const PROVISIONAL_LIMIT = 50;
 
@@ -25,6 +27,8 @@
 		'rounded-lg bg-gold-500 px-3 py-1.5 text-xs font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-50';
 	const btnGhost =
 		'rounded-lg px-3 py-1.5 text-xs text-parchment-400 hover:bg-clay-800 hover:text-terracotta-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-50';
+	const countLink =
+		'flex items-center gap-1.5 text-xs text-parchment-400 tabular-nums underline-offset-[3px] hover:text-lapis-300 hover:underline hover:decoration-lapis-300/40 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none';
 
 	let { onchanged = null } = $props();
 
@@ -158,9 +162,10 @@
 			<li class={cardClass}>
 				<div class="flex flex-wrap items-center gap-2">
 					<span class="text-[0.9375rem] font-semibold text-parchment-200">{tag.name}</span>
-					<span class="text-xs text-parchment-500 tabular-nums">
+					<a href={resolve(documentsForTagHref(tag.name))} class={countLink}>
+						<Icon name="external-link" size={12} class="text-lapis-400" />
 						{documentsLabel(tag.document_count)}
-					</span>
+					</a>
 					<span class="text-xs text-parchment-500">
 						· created {new Date(tag.created_at).toLocaleDateString()}
 					</span>
