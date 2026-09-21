@@ -19,6 +19,11 @@ SELECT id, document_id, title, md5_checksum, sha512_checksum, original_type, fil
        char_count, language, created_at, modified_at, document_type_id, original_path, storage_path, has_thumbnail
 FROM document WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT $1 OFFSET $2;
 
+-- name: ListLiveDocumentIDs :many
+SELECT document_id FROM document
+WHERE deleted_at IS NULL
+ORDER BY id;
+
 -- name: CreateDocument :one
 INSERT INTO document (
     document_id, title, md5_checksum, sha512_checksum, original_type, file_size, processed_size, page_count, word_count,

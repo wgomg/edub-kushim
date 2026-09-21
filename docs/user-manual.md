@@ -169,31 +169,66 @@ No running process found for batch 550e8400-e29b-41d4-a716-446655440000
 5 pending tasks cancelled
 ```
 
-### `kushim enrich <document-id>`
+### `kushim enrich [<document-id>] [--limit N | --all]`
 
 Run enrichment (LLM classification: title, document type, tags, people, language)
-on a single **already-consumed** document. Does not re-extract text or re-OCR —
-the document's existing text content from the database is re-classified.
+on **already-consumed** documents. Does not re-extract text or re-OCR: the
+documents' existing text content from the database is re-classified.
+
+Single document:
 
 ```
 kushim enrich 550e8400-e29b-41d4-a716-446655440000
 ```
 
-Creates a queued batch with a single pending enrich task. The `kushim queue` daemon
-picks it up and processes it. Run `kushim queue` if the daemon is not running.
+Bulk run, oldest live documents first:
 
-Output:
+```
+kushim enrich               # up to consumer.max_files_per_batch documents
+kushim enrich --limit 25    # at most 25 documents
+kushim enrich --all         # every live document
+```
+
+| Mode | Scope |
+| ---- | ----- |
+| `<document-id>` | A single document |
+| no argument | The oldest `consumer.max_files_per_batch` live documents (default 10) |
+| `--limit N` | The oldest N live documents |
+| `--all` | Every live document |
+
+Bulk selection is deterministic: live (non-trashed) documents ordered by internal
+id ascending, so repeated `--limit` runs select the same head. Documents whose
+dedup key already has a pending or in-flight enrich task are counted as skipped
+and never abort the run. A bulk run creates one queued batch holding one pending
+enrich task per selected document; when every selected document is skipped, no
+batch is created.
+
+`--limit` and `--all` are mutually exclusive and cannot be combined with a
+document id; `--limit` must be a positive integer.
+
+Output (single document):
 
 ```
 Batch 660e8400-e29b-41d4-a716-446655440001 queued — run 'kushim queue' to process
 ```
 
+Output (bulk):
+
+```
+Batch 660e8400-e29b-41d4-a716-446655440001 queued with 10 enrich task(s) — run 'kushim queue' to process
+```
+
 | Condition | Message |
 | --------- | ------- |
 | Document not found | `Error: document <id> not found` |
-| Re-enrich already queued (dedup) | `Error: re-enrich already queued for document <id>` |
+| Re-enrich already queued (dedup, single) | `Error: re-enrich already queued for document <id>` |
+| Nothing selected | `No live documents to enrich` |
+| Every selected document skipped | `No documents enqueued: N document(s) already have a pending enrich task` |
+| Invalid flags | `Error: --limit and --all are mutually exclusive` / `Error: a document ID cannot be combined with --limit or --all` / `Error: --limit: must be a positive integer` |
 
-Works on hosts without OCR/PDF tools because no consume tasks are created.
+The `kushim queue` daemon picks the batch up and processes it. Run `kushim queue`
+if the daemon is not running. Works on hosts without OCR/PDF tools because no
+consume tasks are created.
 
 ### `kushim thumbnails <mode>`
 

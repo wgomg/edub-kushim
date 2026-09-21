@@ -570,7 +570,7 @@ Key formats in use:
 | Task type | Key | Source |
 |---|---|---|
 | consume | `consume:<md5>` (scan/restore paths) or the file path (direct CLI) | `scan.go:90-97`, `service/orphaned.go:183` |
-| enrich | `enrich:doc:<document_id>` | `handlers/enrich.go:52-61`, `service/enrich.go:44` |
+| enrich | `enrich:doc:<document_id>` | `handlers/enrich.go:52-61`, `service/enrich.go:47,72` |
 | backup | `backup:<UTC date>` | `handlers/backup.go:36-38` |
 | mirror | `mirror:<UTC date>` | `handlers/mirror.go` |
 | config | `config:tessdata:<lang>` / `config:hugot` / `config:migrate-db` / `config:migrate-storage` | `configtask/configtask.go` |
@@ -578,7 +578,7 @@ Key formats in use:
 The waiting (child) enrich tasks store **no dedup key** — dedup only kicks in
 once activated, when the payload gains `document_id`. A duplicate insert
 surfaces as a unique-violation → `errs.KindConflict` → "re-enrich already
-queued" (`commands/enrich.go:37-45`).
+queued" (`commands/enrich.go:85-95`).
 
 ---
 
@@ -723,8 +723,9 @@ sweeps handle process death after the cutoff.
   locked by a live owner (409), then `ResetProcessingTasksByBatch` +
   `RequeueBatch` (`status = 'queued'`) — the daemon's notify/timer picks it
   up and re-forks.
-- **Re-enrich** (`service/enrich.go:26-50`) — a fresh `queued` batch with one
-  `pending` enrich task; the dedup index rejects duplicates.
+- **Re-enrich** (`service/enrich.go:29-53` single, `:55-89` bulk) — a fresh
+  `queued` batch with one `pending` enrich task per document; the dedup index
+  rejects duplicates (the bulk run counts them as skipped).
 
 The reset paths also restore: `ResetProcessingTasksByBatch`
 (`service/batch.go:418-453`), `Owner.ResetProcessingByBatch`

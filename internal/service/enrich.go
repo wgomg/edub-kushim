@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/database"
@@ -48,4 +50,48 @@ func (s *ReEnrich) ReEnrich(ctx context.Context, documentUUID string) (batchID s
 	}
 
 	return batchID, nil
+}
+
+func (s *ReEnrich) ReEnrichMany(ctx context.Context, limit int64) (batchID string, enqueued, skipped int, err error) {
+	documentIDs, err := s.queries.ListLiveDocumentIDs(ctx)
+	if err != nil {
+		return "", 0, 0, errs.FromDB(err, "list live documents")
+	}
+
+	if limit > 0 && int64(len(documentIDs)) > limit {
+		documentIDs = documentIDs[:limit]
+	}
+
+	batchID = uuid.New().String()
+
+	for _, documentID := range documentIDs {
+		payload, _ := json.Marshal(map[string]any{
+			"document_id": documentID,
+		})
+
+		_, err := s.taskCreator.CreateTask(ctx, types.Task.Type.Enrich, batchID, payload, uuid.New().String(), types.Task.Status.Pending, "enrich:doc:"+documentID)
+		if err != nil {
+			skipped++
+			continue
+		}
+		enqueued++
+	}
+
+	if enqueued == 0 {
+		return "", 0, skipped, nil
+	}
+
+	if err := s.batchCreator.Create(ctx, batchID, types.Batch.Source.Reenrich, types.Batch.Status.Queued); err != nil {
+		return "", enqueued, skipped, errs.FromDB(errors.Join(err, s.deleteUnbatchedTasks(batchID)), "create batch")
+	}
+
+	return batchID, enqueued, skipped, nil
+}
+
+// unbatched tasks would keep their dedup keys and block later runs
+func (s *ReEnrich) deleteUnbatchedTasks(batchID string) error {
+	if _, err := s.queries.DeleteTasksByBatch(context.Background(), sql.NullString{String: batchID, Valid: true}); err != nil {
+		return err
+	}
+	return nil
 }

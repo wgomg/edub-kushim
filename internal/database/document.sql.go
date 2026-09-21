@@ -828,6 +828,35 @@ func (q *Queries) ListDocumentsWithoutThumbnailsByBatch(ctx context.Context, bat
 	return items, nil
 }
 
+const listLiveDocumentIDs = `-- name: ListLiveDocumentIDs :many
+SELECT document_id FROM document
+WHERE deleted_at IS NULL
+ORDER BY id
+`
+
+func (q *Queries) ListLiveDocumentIDs(ctx context.Context) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listLiveDocumentIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var document_id string
+		if err := rows.Scan(&document_id); err != nil {
+			return nil, err
+		}
+		items = append(items, document_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTrashDocuments = `-- name: ListTrashDocuments :many
 SELECT id, document_id, title, md5_checksum, sha512_checksum, original_type, file_size, page_count, word_count,
        char_count, language, created_at, modified_at, deleted_at, document_type_id, original_path, storage_path

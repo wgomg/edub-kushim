@@ -52,7 +52,7 @@ var commandSets = map[string]map[string]Command{
 		},
 		"enrich": {
 			Name:        "enrich",
-			Description: "Re-run enrichment for a single document",
+			Description: "Re-run enrichment for one or more documents",
 			Handler:     enrichHandler,
 		},
 		"thumbnails": {

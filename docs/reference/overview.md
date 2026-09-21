@@ -51,7 +51,7 @@ internal/
 │   ├── setup.go           # Setup command — launches web wizard by default, --cli for terminal mode
 │   ├── task.go            # Task commands (list, status, retry)
 │   ├── user.go            # User commands (create)
-│   ├── enrich.go          # Enrich single document command
+│   ├── enrich.go          # Enrich command (single document, --limit N, or --all)
 │   ├── queue.go           # Queue daemon for background batch consumption (Postgres LISTEN/NOTIFY)
 │   ├── config.go          # `kushim config` command (dump/get/set/unset/validate/path)
 │   ├── backup.go          # Backup and restore commands
@@ -72,7 +72,7 @@ internal/
 │   ├── orphaned.go        # Orphaned file service (scan, list, delete, restore, move-to-inbox)
 │   ├── trash.go           # Trash service (soft delete, restore, permanent delete, purge + hourly background purge)
 │   ├── errored.go        # Errored file service (list on disk, get path, delete, delete-all)
-│   ├── enrich.go          # Re-enrich single document service (dedup via active task check)
+│   ├── enrich.go          # Re-enrich service (single document and bulk, dedup via active task check)
 │   ├── password.go        # Password validation rules (12+ chars, complexity)
 │   └── user.go            # User service (CRUD, roles, API key hashing)
 ├── pool/                  # Generic worker pool

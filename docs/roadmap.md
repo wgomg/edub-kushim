@@ -219,7 +219,7 @@
 | `kushim consume --batch <id>` | Resume existing batch                                                                         |
 | `kushim consume --force`      | Override stale PID lock                                                                       |
 | `kushim consume cancel <id>`  | Cancel running batch                                                                          |
-| `kushim enrich <id>`          | Re-run enrichment for a single document                                                       |
+| `kushim enrich [<id>]`        | Re-run enrichment for one document, a limited batch (`--limit N`), or every live document (`--all`); conflicts are skipped |
 | `kushim thumbnails`           | Backfill missing thumbnails (`--all`, `--batch <id>`, `--document <id>`)                      |
 | `kushim search`               | tsvector search with ANSI highlighting                                                        |
 | `kushim task list`            | List tasks with filters                                                                       |

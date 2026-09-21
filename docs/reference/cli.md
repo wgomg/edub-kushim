@@ -89,7 +89,10 @@ Listens on a Unix socket (cleaned up on shutdown). Handles SIGTERM/SIGINT for gr
 
 ### Functions
 
-- `enrichHandler(c, args) error` — Creates a queued batch with a single pending enrich task for a given document UUID. Validates the document exists, creates the batch (source `"reenrich"`, status `"queued"`), then creates an `"enrich"` task with dedup key `"enrich:doc:<uuid>"`. Returns the batch ID. Prints document-not-found and already-queued errors.
+- `enrichHandler(c, args) error` — Flag-aware entry point. A positional document id routes to `enrichDocument`; `--limit N`, `--all`, or no arguments route to `enrichMany` with the effective limit (default `consumer.max_files_per_batch`, `--all` uncapped). `--limit` and `--all` are mutually exclusive and cannot be combined with a document id; `--limit` must be a positive integer.
+- `enrichDocument(c, documentID) error` — Single-document path: creates a queued batch (source `"reenrich"`, status `"queued"`) with one pending `"enrich"` task (dedup key `"enrich:doc:<uuid>"`). Returns the batch ID. Prints document-not-found and already-queued errors.
+- `enrichMany(c, limit) error` — Bulk path: calls `ReEnrich.ReEnrichMany` (limit <= 0 selects every live document) and prints the batch id with the enqueued count, skipped count, and the `kushim queue` hint.
+- `newReEnrichService(c) (*service.ReEnrich, error)` — Builds the `ReEnrich` service from the container's client, task store, and batch service.
 
 ---
 

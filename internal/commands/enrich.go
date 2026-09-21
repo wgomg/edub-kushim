@@ -3,34 +3,83 @@ package commands
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/task"
 )
 
+const enrichHelpText = "Usage: kushim enrich [<document-id>] [--limit N | --all]\n\n" +
+	"  Re-run enrichment (LLM classification).\n\n" +
+	"  With a document id: enqueue that single document.\n" +
+	"  Without a document id: enqueue one batch of live documents, oldest first.\n\n" +
+	"  --limit N         cap the run at N documents (default: consumer.max_files_per_batch)\n" +
+	"  --all             enqueue every live document\n\n" +
+	"  Creates a queued batch with one pending enrich task per document.\n" +
+	"  Start 'kushim queue' to process the batch."
+
 func enrichHandler(c *Container, args []string) error {
-	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
-		fmt.Println("Usage: kushim enrich <document-id>\n\n" +
-			"  Re-run enrichment (LLM classification) for a single document.\n" +
-			"  Creates a queued batch with a pending enrich task.\n" +
-			"  Start 'kushim queue' to process the batch.")
-		if len(args) == 0 {
-			return fmt.Errorf("enrich requires a document ID")
-		}
+	fp := NewFlagParser(args)
+
+	if fp.Help(enrichHelpText) {
 		return nil
 	}
 
-	documentID := args[0]
+	var all bool
+	fp.Bool("--all", &all)
 
-	client, err := c.GetClient()
-	if err != nil {
-		return fmt.Errorf("database: %w", err)
+	var limitRaw string
+	if err := fp.String("--limit", &limitRaw); err != nil {
+		return err
 	}
 
-	store := task.NewStore(client)
-	batchSvc := service.NewBatch(client, c.cfg.Load().Consumer.Reclaim.MaxRetries)
-	svc := service.NewReEnrich(client.Queries, store, batchSvc)
+	limit := 0
+	if limitRaw != "" {
+		v, err := strconv.Atoi(limitRaw)
+		if err != nil || v <= 0 {
+			return fmt.Errorf("--limit: must be a positive integer")
+		}
+		limit = v
+	}
+
+	rest := fp.Rest()
+	if len(rest) > 1 {
+		return fmt.Errorf("enrich accepts at most one document ID")
+	}
+
+	if len(rest) == 1 && strings.HasPrefix(rest[0], "-") {
+		return fmt.Errorf("unknown flag: %s", rest[0])
+	}
+
+	if len(rest) == 1 {
+		if all || limit > 0 {
+			return fmt.Errorf("a document ID cannot be combined with --limit or --all")
+		}
+		return enrichDocument(c, rest[0])
+	}
+
+	if all && limit > 0 {
+		return fmt.Errorf("--limit and --all are mutually exclusive")
+	}
+
+	effectiveLimit := int64(limit)
+	switch {
+	case all:
+		effectiveLimit = 0
+	case limit == 0:
+		effectiveLimit = int64(c.cfg.Load().Consumer.MaxFilesPerBatch)
+	}
+
+	return enrichMany(c, effectiveLimit)
+}
+
+func enrichDocument(c *Container, documentID string) error {
+	svc, err := newReEnrichService(c)
+	if err != nil {
+		return err
+	}
 
 	batchID, err := svc.ReEnrich(context.Background(), documentID)
 	if err != nil {
@@ -47,4 +96,43 @@ func enrichHandler(c *Container, args []string) error {
 
 	fmt.Printf("Batch %s queued — run 'kushim queue' to process\n", batchID)
 	return nil
+}
+
+func enrichMany(c *Container, limit int64) error {
+	svc, err := newReEnrichService(c)
+	if err != nil {
+		return err
+	}
+
+	batchID, enqueued, skipped, err := svc.ReEnrichMany(context.Background(), limit)
+	if err != nil {
+		return fmt.Errorf("re-enrich: %w", err)
+	}
+
+	if batchID == "" {
+		if skipped == 0 {
+			fmt.Println("No live documents to enrich")
+			return nil
+		}
+		fmt.Printf("No documents enqueued: %d document(s) already have a pending enrich task\n", skipped)
+		return nil
+	}
+
+	fmt.Printf("Batch %s queued with %d enrich task(s)", batchID, enqueued)
+	if skipped > 0 {
+		fmt.Printf(", %d skipped (an enrich task is already pending)", skipped)
+	}
+	fmt.Println(" — run 'kushim queue' to process")
+	return nil
+}
+
+func newReEnrichService(c *Container) (*service.ReEnrich, error) {
+	client, err := c.GetClient()
+	if err != nil {
+		return nil, fmt.Errorf("database: %w", err)
+	}
+
+	store := task.NewStore(client)
+	batchSvc := service.NewBatch(client, c.cfg.Load().Consumer.Reclaim.MaxRetries)
+	return service.NewReEnrich(client.Queries, store, batchSvc), nil
 }
