@@ -96,7 +96,7 @@ All raw numbers. Every cut is a consumer's, and every threshold is calibration's
 
 ### 3.4 Computation mode
 
-- **Retrospective pass** — batch computation over a store export (the tooling
+- **Retrospective pass** — offline computation over a store export (the tooling
   register's DuckDB entry), producing measurements for the existing corpus.
 - **Refresh triggers** — store changes and rule-set or measurement version bumps; a
   refresh may be full or incremental, but the version always advances with the rules.

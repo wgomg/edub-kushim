@@ -93,9 +93,9 @@ Already enforced elsewhere; listed so this spec does not restate them:
     trigger and worklist — a high score without the tag flags a candidate gap;
   - lexical support (stemmed term presence, in-house TextRank keyphrases) to narrow the
     flags;
-  - a sampled LLM audit in the existing judge shape — one call per document, batched
-    binary criteria over the flagged dimensions, cached per document content and
-    criteria version.
+  - a sampled LLM audit in the existing judge shape — one call per document covering
+    the flagged dimensions' binary criteria, cached per document content and criteria
+    version.
 - **Known limitation — the recall hole.** The similarity trigger misses
   about-but-dissimilar documents, so audit-detected gaps are a lower bound: sampling
   mitigates, and the contract path is unaffected because it does not use the trigger.

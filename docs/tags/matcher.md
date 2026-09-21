@@ -63,7 +63,7 @@ auto-derived or internal:
 inference call. Its relationship to memory is the single most important thing
 to understand about the matcher:
 
-- Texts of **≤ `chunk_size` tokens** are embedded in one batched call.
+- Texts of **≤ `chunk_size` tokens** are embedded in one call.
 - Longer texts are split into **overlapping windows** (10% overlap, i.e. the
   step is `chunk_size × 0.9`) and the per-chunk embeddings are **mean-pooled**
   into the document embedding. Quality loss from chunking is negligible for
