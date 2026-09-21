@@ -1013,7 +1013,7 @@ func BuildTagQualityPrompt(text string, candidates []TagQualityCandidate) string
 	sb.WriteString("For each candidate tag below, answer four yes/no questions about its fitness as a tag for the document.\n")
 	sb.WriteString("1. subject_matter: is the tag a subject matter of the document, not its form or genre?\n")
 	sb.WriteString("2. standard_term: is the tag standard, widely-recognized terminology, not a coinage specific to this document?\n")
-	sb.WriteString("3. not_person_place_work: is the tag neither a person, nor a work, nor a place outside the whitelisted set?\n")
+	sb.WriteString("3. not_person_place_work: is the tag neither a person, nor a work, nor a place other than a whitelisted country or continent? A whitelisted country or continent is a legitimate place tag and passes this criterion; only a person, a work, or a sub-national place (a city, province, region, or other non-sovereign territory) fails it.\n")
 	sb.WriteString("4. appropriately_broad: is the tag appropriately broad for a shared vocabulary, not a per-document detail?\n")
 	sb.WriteString("Answer with ONLY a JSON object: {\"tags\":[{\"index\":0,\"subject_matter\":true,\"standard_term\":true,\"not_person_place_work\":true,\"appropriately_broad\":true},...]}, one entry per candidate, no explanations.\n\n")
 	sb.WriteString("Document text:\n")
@@ -1022,7 +1022,7 @@ func BuildTagQualityPrompt(text string, candidates []TagQualityCandidate) string
 	for _, c := range candidates {
 		fmt.Fprintf(&sb, "Tag %d: term=%q category=%s", c.Index, c.Term, c.Category)
 		if c.WhitelistedPlace {
-			sb.WriteString(" (whitelisted country or continent — it is a legitimate place tag and must not be rejected for being a place)")
+			sb.WriteString(" (whitelisted country or continent — a legitimate place tag; answer not_person_place_work: true)")
 		}
 		sb.WriteString("\n")
 	}

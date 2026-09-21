@@ -1357,9 +1357,16 @@ func TestBuildTagQualityPrompt(t *testing.T) {
 			t.Errorf("prompt missing candidate %d", c.Index)
 		}
 	}
-	// Whitelisted place must include the carve-out note.
-	if !strings.Contains(prompt, "whitelisted country or continent") {
-		t.Error("prompt missing whitelisted place note")
+	// Whitelisted place must include the carve-out note with the expected verdict.
+	if !strings.Contains(prompt, "answer not_person_place_work: true") {
+		t.Error("prompt missing expected verdict in whitelisted place note")
+	}
+	// Criterion 3 must name the passing class (whitelisted) and the failing classes (sub-national) explicitly.
+	if !strings.Contains(prompt, "passes this criterion") {
+		t.Error("prompt missing whitelisted-passes clause in criterion 3")
+	}
+	if !strings.Contains(prompt, "sub-national place") {
+		t.Error("prompt missing sub-national-place clause in criterion 3")
 	}
 	// Must contain the four criteria and the response format.
 	for _, kw := range []string{"subject_matter", "standard_term", "not_person_place_work", "appropriately_broad", "JSON"} {
