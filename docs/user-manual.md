@@ -555,7 +555,7 @@ endpoints:
 The matcher must be started before `edub` for full functionality.
 If the matcher is not running, tag CRUD operations still succeed — only the tag embedding cache is not updated (errors are logged) and enrichment falls back to LLM-only tags.
 
-See the [Tag Matcher guide](tag-matcher.md) for configuration, memory, and CPU
+See the [Tag Matcher guide](tags/matcher.md) for configuration, memory, and CPU
 tuning (`chunk_size` is the main memory lever and defaults to a safe 4096 tokens).
 
 ---
@@ -2594,7 +2594,7 @@ enricher:
   tagmatcher:
     timeout: 120
     reduce_target_words: 4000 # text reduction before tag matching
-    chunk_size: 4096 # max tokens per inference chunk; 0 = model max (8180 for bge-m3) — see docs/tag-matcher.md
+    chunk_size: 4096 # max tokens per inference chunk; 0 = model max (8180 for bge-m3) — see docs/tags/matcher.md
     hugot:
       model: 'BAAI/bge-m3'
       backend: 'ort' # ort (ONNX Runtime) | GO
@@ -2658,7 +2658,7 @@ mirror:
 > arena and memory-pattern pre-allocation are also disabled by default
 > (internal `CpuMemArena: false`, `MemPattern: false`) to cap idle RSS instead
 > of retaining ~4–5 GB of peak-inference buffers. See the
-> [Tag Matcher guide](tag-matcher.md) for full memory/CPU tuning.
+> [Tag Matcher guide](tags/matcher.md) for full memory/CPU tuning.
 
 ### Key sections
 
@@ -2691,7 +2691,7 @@ mirror:
 | `enricher.contentanalyzer.llm.request_delay` | Seconds to sleep after each LLM request (default `1`; `0` = off, max `60`) — for rate-limited providers |
 | `enricher.contentanalyzer.fallbacks` | Ordered list of fallback LLM configs (each `{enabled, llm}` with the same shape as `llm`), tried in order when the primary fails with a provider error — API down/unreachable, credit/rate-limit, malformed response, provider-side timeout. Disabled by default; validated (adapter/provider/model required, request_delay 0–60) only for each `enabled: true` entry |
 | `enricher.contentanalyzer.doc_type_refinement` | Second-pass doc type refinement with head+tail of raw text (enabled, head_words, tail_words) |
-| `enricher.tagmatcher`          | Semantic tag matching via Hugot (embeddings) — see [Tag Matcher guide](tag-matcher.md) for memory/CPU tuning |
+| `enricher.tagmatcher`          | Semantic tag matching via Hugot (embeddings) — see [Tag Matcher guide](tags/matcher.md) for memory/CPU tuning |
 | `enricher.tagmatcher.hugot`    | Hugot-specific settings (model, backend)                               |
 | `enricher.tag_adjudicator`     | Optional LLM verdicts for ambiguous tag pairs: `enabled` (default `false`), `timeout` (defaults to `contentanalyzer.timeout` at use time when `0`), `llm` (defaults to `contentanalyzer.llm` at use time when `provider`/`model` are empty — the raw values are preserved in config so the inheritance survives saves). When enabled, ambiguous-band pairs are classified `same`/`variant`/`related`, verdicts are cached in `tag_verdict_event`, and `same` replaces the emitted tag with the canonical target |
 | `enricher.tag_quality`         | Optional rubric judge for newly emitted tags: `enabled` (default `false`), `timeout` (defaults to `contentanalyzer.timeout` at use time when `0`), `llm` (defaults to `contentanalyzer.llm` at use time when `provider`/`model` are empty). When enabled, tags that survive consolidation and are absent from the vocabulary pass a deterministic weak band and then a four-criteria rubric (`subject_matter`, `standard_term`, `not_person_place_work`, `appropriately_broad`); verdicts are cached per name in `tag_quality_event`, rejections drop the tag for that document and are logged as `tagquality[v1]` lines, and a judge failure retries once then keeps every novel tag. Survivors are **provisional**: attached and searchable from birth, but excluded from the embedding store — and therefore from suggestions, consolidation targets, and the suggestion fallback — until a cached passing verdict plus assignments on ≥2 distinct live (non-trashed) documents promote them inline (logged as `tagquality[v1]: promote …`); a verdict-less birth (judge outage) or re-emitted legacy provisional never gets a verdict row — a name in the tag table is not novel, so the judge never sees it again — and stays out of the vocabulary until the scheduled reconciliation sweep re-judges it or an operator promotes it from the review queue. The band thresholds are internal v1 constants, not config keys — the judge LLM should differ from the generator, and a warning is logged when the resolved judge equals the generator model |
@@ -3238,7 +3238,7 @@ MemoryMax=8G    # hard cap: systemd OOM-kills only the matcher
 ```
 
 Adjust the values to your `chunk_size` (see the
-[Tag Matcher guide](tag-matcher.md) for per-configuration peaks).
+[Tag Matcher guide](tags/matcher.md) for per-configuration peaks).
 
 ### Generated vs Template Files
 

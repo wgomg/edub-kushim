@@ -63,7 +63,7 @@ Upstream a method on `FeatureExtractionPipeline` (or on the underlying `backends
 
 ### Option 3 — Skip chunking for common cases (quick mitigation)
 
-If `chunk_size` is set to a generous value (e.g., 4096) and most reduced texts fit in 1-2 chunks, the double-tokenization cost is low enough that it can be ignored. This is the current state: the default chunk size of 4096 tokens is deliberate (it bounds matcher memory — see [Tag Matcher guide](../tag-matcher.md)), and the timeout covers the remainder.
+If `chunk_size` is set to a generous value (e.g., 4096) and most reduced texts fit in 1-2 chunks, the double-tokenization cost is low enough that it can be ignored. This is the current state: the default chunk size of 4096 tokens is deliberate (it bounds matcher memory — see [Tag Matcher guide](../tags/matcher.md)), and the timeout covers the remainder.
 
 ## Code References
 

@@ -5,7 +5,7 @@ semantic similarity: the embedding model, the in-memory embedding store, the
 chunking/mean-pooling encoding strategy, cosine ranking, post-LLM
 consolidation, and the daemon that exposes it all over a Unix socket.
 
-It is the internal-mechanics companion to `docs/tag-matcher.md` (which is
+It is the internal-mechanics companion to `docs/tags/matcher.md` (which is
 user-facing). Audience: developers who want to understand, tune, or change how
 tags get suggested.
 

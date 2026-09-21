@@ -136,7 +136,7 @@ enricher:
     reduce_target_words: 4000
     # max tokens per inference chunk. 4096 (default) caps peak memory
     # (~2-6 GB with BGE-M3); 0 = model's max_position_embeddings (8180 for
-    # BGE-M3) and can OOM small hosts. See docs/tag-matcher.md.
+    # BGE-M3) and can OOM small hosts. See docs/tags/10-tag-matcher.md.
     chunk_size: 4096
     hugot:
       model: BAAI/bge-m3

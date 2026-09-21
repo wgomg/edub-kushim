@@ -88,7 +88,7 @@ and `max_tags`, default 3–5, and capped at `max_tags` by the filter):
 | Anything else — the ambiguous band | keep (or adjudicate, below) | the 0.80–0.95 residual |
 
 Both thresholds are model-derived internals (not YAML-settable); see
-[tag-matcher.md](tag-matcher.md) for the per-model values and the derivation.
+[matcher.md](matcher.md) for the per-model values and the derivation.
 
 Every decision is logged in the kushim (enrichment) log as
 `consolidation[v1]: replace|keep|passthrough <tag> … reason=…`, so the policy's
@@ -368,7 +368,7 @@ All three blocks are also editable on the Settings page ("Tag adjudicator",
 content analyzer" option for the judge LLMs — leaving the LLM fields empty
 follows the content analyzer's model even after it changes. The similarity
 thresholds (`consolidation_similarity`, `auto_replace_similarity`) and the
-quality band constants are internals — see [tag-matcher.md](tag-matcher.md).
+quality band constants are internals — see [matcher.md](matcher.md).
 
 ---
 
@@ -404,7 +404,7 @@ quality band constants are internals — see [tag-matcher.md](tag-matcher.md).
 
 ## See Also
 
-- [Tag matcher](tag-matcher.md) — embedding model, thresholds, memory/CPU sizing
-- [Developer guide: tag consolidation](developer-guide/tag-consolidation.md) — internals for developers
-- [User manual](user-manual.md) — merge API, full config reference, task types
-- [Architecture](architecture.md) — pipeline placement and process model
+- [Tag matcher](matcher.md) — embedding model, thresholds, memory/CPU sizing
+- [Developer guide: tag consolidation](../developer-guide/tag-consolidation.md) — internals for developers
+- [User manual](../user-manual.md) — merge API, full config reference, task types
+- [Architecture](../architecture.md) — pipeline placement and process model

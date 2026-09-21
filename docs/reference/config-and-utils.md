@@ -206,7 +206,7 @@ per tool category, used by the frontend settings UI to populate select dropdowns
 
 ## See Also
 
-- [Tag Matcher Guide](../tag-matcher.md) — Matcher config, memory, and CPU tuning (`chunk_size`)
+- [Tag Matcher Guide](../tags/matcher.md) — Matcher config, memory, and CPU tuning (`chunk_size`)
 - [API](api.md) — Uses ParamBag middleware, ConfigHandler for `/wizard/bootstrap` (public) and `/wizard/config` (admin-protected) endpoints
 - [CLI](cli.md) — Uses ConfigDir, Logger, FlagParser, config setup functions
 - [Pipeline](pipeline.md) — Uses Config structs for Consumer/Enricher settings

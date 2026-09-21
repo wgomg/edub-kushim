@@ -6,7 +6,7 @@ adjudication of the ambiguous band, the verdict event table, the matcher RPC
 surface and pair cache, the merge-review service, and the scheduled
 reconciler.
 
-It is the internal-mechanics companion to `docs/tag-consolidation.md`
+It is the internal-mechanics companion to `docs/tags/consolidation.md`
 (operator-facing). Audience: developers who want to understand, tune, or change
 how emitted tags are mapped onto the canonical vocabulary.
 
