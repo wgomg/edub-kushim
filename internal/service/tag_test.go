@@ -13,10 +13,7 @@ func newTestTag(t *testing.T) (*Tag, *database.Client) {
 	t.Helper()
 	client := database.NewTestClient(t)
 	t.Cleanup(func() { client.DB().Close() })
-	tag, err := NewTag(client.Queries, testutil.NewTestLogger(), testutil.NewMockEmbedder())
-	if err != nil {
-		t.Fatalf("NewTag: %v", err)
-	}
+	tag := NewTag(client, testutil.NewTestLogger(), testutil.NewMockEmbedder())
 	return tag, client
 }
 
@@ -176,6 +173,31 @@ func TestTag_Create_PromotesBirth(t *testing.T) {
 	if !tag2.PromotedAt.Valid {
 		t.Error("tag created via Create must have promoted_at set")
 	}
+}
+
+// TestTag_Create_MidBatchFailureRollsBackWholeBatch pins Create's
+// batch-atomic contract: one failing insert must roll back every tag of the
+// batch, not just the failing one. Name content cannot make CreateTag fail
+// (NormalizeTag strips disallowed characters; duplicates surface as
+// conflicts), and Queries is not mockable, so the failure is injected at the
+// DB seam with a CHECK constraint.
+func TestTag_Create_MidBatchFailureRollsBackWholeBatch(t *testing.T) {
+	svc, client := newTestTag(t)
+	ctx := context.Background()
+
+	_, err := client.DB().ExecContext(ctx,
+		`ALTER TABLE tag ADD CONSTRAINT tag_rejects_poison CHECK (name <> 'poison tag')`)
+	testutil.AssertNoError(t, err, "add fault-injection constraint")
+	t.Cleanup(func() {
+		_, _ = client.DB().ExecContext(context.Background(),
+			`ALTER TABLE tag DROP CONSTRAINT IF EXISTS tag_rejects_poison`)
+	})
+
+	_, err = svc.Create(ctx, []string{"atomic rollback probe", "poison tag"})
+	testutil.AssertError(t, err, "create must surface the failing insert")
+
+	_, err = client.Queries.GetTagByName(ctx, "atomic rollback probe")
+	testutil.AssertError(t, err, "earlier insert in the failed batch must be rolled back")
 }
 
 func TestTag_CreateTx_Quarantined_LeavesProvisional(t *testing.T) {

@@ -380,10 +380,7 @@ func TestApplyKeepFlip_ZeroDocsCreatesNoTag(t *testing.T) {
 	client := database.NewTestClient(t)
 	t.Cleanup(func() { client.DB().Close() })
 
-	tagSvc, err := service.NewTag(client.Queries, testutil.NewTestLogger(), testutil.NewMockEmbedder())
-	if err != nil {
-		t.Fatalf("NewTag: %v", err)
-	}
+	tagSvc := service.NewTag(client, testutil.NewTestLogger(), testutil.NewMockEmbedder())
 	services := &service.CrudServices{Tag: tagSvc}
 
 	r := &Reconciler{

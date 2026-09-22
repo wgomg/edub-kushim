@@ -141,11 +141,7 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 
 	matcherClient := tagmatch.NewMatcherClient(c.socketPath(), tagmatch.MaxMatchBodyBytes(c.cfg.Load().Enricher.TagMatcher.ReduceTargetWords))
 
-	tagSvc, err := service.NewTag(client.Queries, c.logger, matcherClient)
-	if err != nil {
-		return nil, fmt.Errorf("tag service: %w", err)
-	}
-
+	tagSvc := service.NewTag(client, c.logger, matcherClient)
 	peopleSvc := service.NewPeople(client.Queries, c.logger)
 	peopleTypeSvc := service.NewPeopleType(client.Queries, c.logger)
 	docTypeSvc := service.NewDocumentType(client.Queries, c.logger)

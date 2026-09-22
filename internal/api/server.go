@@ -74,11 +74,9 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 func (s *Server) rebuild(client *database.Client) {
 	cfg := s.cfg.Load()
 
-	tagSvc, err := service.NewTag(client.Queries, s.logger, s.matcherClient)
-	if err != nil {
-		s.logger.Fatal("tag service: ", err)
-	}
-	services := &service.CrudServices{Tag: tagSvc}
+	services := &service.CrudServices{}
+
+	services.Tag = service.NewTag(client, s.logger, s.matcherClient)
 	services.TagMerge = service.NewTagMerge(client, s.matcherClient, s.matcherClient, s.logger)
 	services.Batch = service.NewBatch(client, cfg.Consumer.Reclaim.MaxRetries)
 	services.People = service.NewPeople(client.Queries, s.logger)

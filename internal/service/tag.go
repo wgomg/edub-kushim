@@ -25,17 +25,17 @@ const (
 )
 
 type Tag struct {
-	queries  *database.Queries
+	client   *database.Client
 	embedder tagmatcher.Embedder
 	logger   *utils.Logger
 }
 
-func NewTag(queries *database.Queries, logger *utils.Logger, embedder tagmatcher.Embedder) (*Tag, error) {
+func NewTag(client *database.Client, logger *utils.Logger, embedder tagmatcher.Embedder) *Tag {
 	return &Tag{
-		queries:  queries,
+		client:   client,
 		embedder: embedder,
 		logger:   logger,
-	}, nil
+	}
 }
 
 func (s *Tag) Close() error {
@@ -44,7 +44,7 @@ func (s *Tag) Close() error {
 }
 
 func (s *Tag) Get(ctx context.Context, id int64) (database.Tag, error) {
-	tag, err := s.queries.GetTag(ctx, id)
+	tag, err := s.client.Queries.GetTag(ctx, id)
 	if err != nil {
 		return database.Tag{}, errs.FromDB(err, "get tag")
 	}
@@ -52,7 +52,7 @@ func (s *Tag) Get(ctx context.Context, id int64) (database.Tag, error) {
 }
 
 func (s *Tag) GetByName(ctx context.Context, name string) (database.Tag, error) {
-	tag, err := s.queries.GetTagByName(ctx, name)
+	tag, err := s.client.Queries.GetTagByName(ctx, name)
 	if err != nil {
 		return database.Tag{}, errs.FromDB(err, "get tag by name")
 	}
@@ -60,7 +60,7 @@ func (s *Tag) GetByName(ctx context.Context, name string) (database.Tag, error) 
 }
 
 func (s *Tag) Count(ctx context.Context) (int64, error) {
-	count, err := s.queries.CountTags(ctx)
+	count, err := s.client.Queries.CountTags(ctx)
 	if err != nil {
 		return 0, errs.FromDB(err, "count tags")
 	}
@@ -68,7 +68,7 @@ func (s *Tag) Count(ctx context.Context) (int64, error) {
 }
 
 func (s *Tag) CountByName(ctx context.Context, prefix string) (int64, error) {
-	count, err := s.queries.CountTagsByName(ctx, prefix+"%")
+	count, err := s.client.Queries.CountTagsByName(ctx, prefix+"%")
 	if err != nil {
 		return 0, errs.FromDB(err, "count tags by name")
 	}
@@ -76,7 +76,7 @@ func (s *Tag) CountByName(ctx context.Context, prefix string) (int64, error) {
 }
 
 func (s *Tag) ListAll(ctx context.Context) ([]database.Tag, error) {
-	tags, err := s.queries.ListAllTags(ctx)
+	tags, err := s.client.Queries.ListAllTags(ctx)
 	if err != nil {
 		return nil, errs.FromDB(err, "list all tags")
 	}
@@ -84,7 +84,7 @@ func (s *Tag) ListAll(ctx context.Context) ([]database.Tag, error) {
 }
 
 func (s *Tag) ListWithDocumentCount(ctx context.Context, limit, offset int32) ([]database.ListTagsWithDocumentCountRow, error) {
-	tags, err := s.queries.ListTagsWithDocumentCount(ctx, database.ListTagsWithDocumentCountParams{
+	tags, err := s.client.Queries.ListTagsWithDocumentCount(ctx, database.ListTagsWithDocumentCountParams{
 		Limit:  limit,
 		Offset: offset,
 	})
@@ -95,7 +95,7 @@ func (s *Tag) ListWithDocumentCount(ctx context.Context, limit, offset int32) ([
 }
 
 func (s *Tag) SearchByNameWithDocumentCount(ctx context.Context, prefix string, limit, offset int32) ([]database.SearchTagsByNameWithDocumentCountRow, error) {
-	tags, err := s.queries.SearchTagsByNameWithDocumentCount(ctx, database.SearchTagsByNameWithDocumentCountParams{
+	tags, err := s.client.Queries.SearchTagsByNameWithDocumentCount(ctx, database.SearchTagsByNameWithDocumentCountParams{
 		Name:   prefix + "%",
 		Limit:  limit,
 		Offset: offset,
@@ -107,7 +107,7 @@ func (s *Tag) SearchByNameWithDocumentCount(ctx context.Context, prefix string, 
 }
 
 func (s *Tag) ListProvisional(ctx context.Context, limit, offset int32) ([]database.ListProvisionalTagsWithDocumentCountRow, error) {
-	tags, err := s.queries.ListProvisionalTagsWithDocumentCount(ctx, database.ListProvisionalTagsWithDocumentCountParams{
+	tags, err := s.client.Queries.ListProvisionalTagsWithDocumentCount(ctx, database.ListProvisionalTagsWithDocumentCountParams{
 		Limit:  limit,
 		Offset: offset,
 	})
@@ -118,7 +118,7 @@ func (s *Tag) ListProvisional(ctx context.Context, limit, offset int32) ([]datab
 }
 
 func (s *Tag) CountProvisional(ctx context.Context) (int64, error) {
-	count, err := s.queries.CountProvisionalTags(ctx)
+	count, err := s.client.Queries.CountProvisionalTags(ctx)
 	if err != nil {
 		return 0, errs.FromDB(err, "count provisional tags")
 	}
@@ -126,7 +126,7 @@ func (s *Tag) CountProvisional(ctx context.Context) (int64, error) {
 }
 
 func (s *Tag) LatestQualityEventsForNames(ctx context.Context, names []string) ([]database.LatestTagQualityEventsForNamesRow, error) {
-	rows, err := s.queries.LatestTagQualityEventsForNames(ctx, database.LatestTagQualityEventsForNamesParams{
+	rows, err := s.client.Queries.LatestTagQualityEventsForNames(ctx, database.LatestTagQualityEventsForNamesParams{
 		PolicyVersion: contentanalyzer.TagQualityVersion,
 		TagNames:      names,
 	})
@@ -137,10 +137,22 @@ func (s *Tag) LatestQualityEventsForNames(ctx context.Context, names []string) (
 }
 
 func (s *Tag) Create(ctx context.Context, names []string) ([]CreateResult[database.Tag], error) {
-	results, newNames, err := s.createWithQueries(ctx, s.queries, names, false)
+	tx, err := s.client.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, errs.FromDB(err, "begin tag create")
+	}
+	defer tx.Rollback()
+
+	txQ := s.client.Queries.WithTx(tx)
+	results, newNames, err := s.CreateTx(ctx, txQ, names, false)
 	if err != nil {
 		return nil, err
 	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, errs.FromDB(err, "commit tag create")
+	}
+
 	if len(newNames) > 0 {
 		s.encodeAndAddBatch(ctx, newNames)
 	}
@@ -156,7 +168,7 @@ func (s *Tag) CreateAndUnblock(ctx context.Context, names []string) ([]CreateRes
 		if r.Status != Created && r.Status != Conflict {
 			continue
 		}
-		if err := s.queries.DeleteDeletedTag(ctx, r.Entity.Name); err != nil {
+		if err := s.client.Queries.DeleteDeletedTag(ctx, r.Entity.Name); err != nil {
 			return nil, errs.FromDB(err, "clear deleted tag "+r.Entity.Name)
 		}
 	}
@@ -164,17 +176,6 @@ func (s *Tag) CreateAndUnblock(ctx context.Context, names []string) ([]CreateRes
 }
 
 func (s *Tag) CreateTx(ctx context.Context, q *database.Queries, names []string, quarantined bool) ([]CreateResult[database.Tag], []string, error) {
-	return s.createWithQueries(ctx, q, names, quarantined)
-}
-
-func (s *Tag) AddToStore(ctx context.Context, names []string) {
-	if len(names) == 0 {
-		return
-	}
-	s.encodeAndAddBatch(ctx, names)
-}
-
-func (s *Tag) createWithQueries(ctx context.Context, q *database.Queries, names []string, quarantined bool) ([]CreateResult[database.Tag], []string, error) {
 	results := make([]CreateResult[database.Tag], len(names))
 	var newNames []string
 	var newIdx []int
@@ -233,6 +234,13 @@ func (s *Tag) createWithQueries(ctx context.Context, q *database.Queries, names 
 	return results, newNames, nil
 }
 
+func (s *Tag) AddToStore(ctx context.Context, names []string) {
+	if len(names) == 0 {
+		return
+	}
+	s.encodeAndAddBatch(ctx, names)
+}
+
 func (s *Tag) Update(ctx context.Context, pairs []TagUpdatePair) ([]UpdateResult[database.Tag], error) {
 	results := make([]UpdateResult[database.Tag], len(pairs))
 	var newNames []string
@@ -243,7 +251,7 @@ func (s *Tag) Update(ctx context.Context, pairs []TagUpdatePair) ([]UpdateResult
 	}
 	var renames []rename
 
-	allTags, err := s.queries.ListAllTags(ctx)
+	allTags, err := s.client.Queries.ListAllTags(ctx)
 	if err != nil {
 		return nil, errs.FromDB(err, "load all tags")
 	}
@@ -277,7 +285,7 @@ func (s *Tag) Update(ctx context.Context, pairs []TagUpdatePair) ([]UpdateResult
 			continue
 		}
 
-		if err := s.queries.UpdateTag(ctx, database.UpdateTagParams{
+		if err := s.client.Queries.UpdateTag(ctx, database.UpdateTagParams{
 			Name: utils.NormalizeTag(name),
 			ID:   p.ID,
 		}); err != nil {
@@ -322,7 +330,7 @@ func (s *Tag) Update(ctx context.Context, pairs []TagUpdatePair) ([]UpdateResult
 func (s *Tag) Delete(ctx context.Context, ids []int64) ([]DeleteResult, error) {
 	results := make([]DeleteResult, len(ids))
 
-	allTags, err := s.queries.ListAllTags(ctx)
+	allTags, err := s.client.Queries.ListAllTags(ctx)
 	if err != nil {
 		return nil, errs.FromDB(err, "load all tags")
 	}
@@ -338,11 +346,11 @@ func (s *Tag) Delete(ctx context.Context, ids []int64) ([]DeleteResult, error) {
 			continue
 		}
 
-		if err := s.queries.DeleteTag(ctx, id); err != nil {
+		if err := s.client.Queries.DeleteTag(ctx, id); err != nil {
 			return nil, errs.FromDB(err, "delete tag")
 		}
 
-		if err := s.queries.UpsertDeletedTag(ctx, database.UpsertDeletedTagParams{
+		if err := s.client.Queries.UpsertDeletedTag(ctx, database.UpsertDeletedTagParams{
 			Name: utils.NormalizeTag(tag.Name),
 			Kind: DeletedTagKindBlocked,
 		}); err != nil {
@@ -370,7 +378,7 @@ func (s *Tag) Promote(ctx context.Context, id int64, reason string) (database.Ta
 		return tag, PromoteAlreadyPromoted, nil
 	}
 
-	promoted, err := s.queries.PromoteTags(ctx, []int64{id})
+	promoted, err := s.client.Queries.PromoteTags(ctx, []int64{id})
 	if err != nil {
 		return tag, PromoteNotFound, errs.FromDB(err, "promote tag")
 	}
@@ -384,7 +392,7 @@ func (s *Tag) Promote(ctx context.Context, id int64, reason string) (database.Ta
 }
 
 func (s *Tag) ListDeleted(ctx context.Context, prefix string, limit, offset int32) ([]database.DeletedTag, int64, error) {
-	rows, err := s.queries.ListDeletedTags(ctx, database.ListDeletedTagsParams{
+	rows, err := s.client.Queries.ListDeletedTags(ctx, database.ListDeletedTagsParams{
 		NamePrefix: prefix,
 		PageLimit:  limit,
 		PageOffset: offset,
@@ -392,7 +400,7 @@ func (s *Tag) ListDeleted(ctx context.Context, prefix string, limit, offset int3
 	if err != nil {
 		return nil, 0, errs.FromDB(err, "list deleted tags")
 	}
-	total, err := s.queries.CountDeletedTags(ctx, prefix)
+	total, err := s.client.Queries.CountDeletedTags(ctx, prefix)
 	if err != nil {
 		return nil, 0, errs.FromDB(err, "count deleted tags")
 	}
@@ -400,7 +408,7 @@ func (s *Tag) ListDeleted(ctx context.Context, prefix string, limit, offset int3
 }
 
 func (s *Tag) RestoreDeleted(ctx context.Context, name string) (database.DeletedTag, error) {
-	row, err := s.queries.GetDeletedTag(ctx, name)
+	row, err := s.client.Queries.GetDeletedTag(ctx, name)
 	if err != nil {
 		return database.DeletedTag{}, errs.FromDB(err, "restore deleted tag")
 	}
@@ -409,7 +417,7 @@ func (s *Tag) RestoreDeleted(ctx context.Context, name string) (database.Deleted
 			return row, err
 		}
 	}
-	if err := s.queries.DeleteDeletedTag(ctx, name); err != nil {
+	if err := s.client.Queries.DeleteDeletedTag(ctx, name); err != nil {
 		return row, errs.FromDB(err, "restore deleted tag")
 	}
 	return row, nil

@@ -51,9 +51,9 @@ func newDocHandler(env *handlerTestEnv) *DocumentHandler {
 	return NewDocumentHandler(env.client, env.logger, env.engine, env.services, func() *config.Config { return config.DefaultConfig("/tmp/test") })
 }
 
-func newMockTagService(queries *database.Queries) (*service.Tag, *testutil.MockEmbedder) {
+func newMockTagService(client *database.Client) (*service.Tag, *testutil.MockEmbedder) {
 	embedder := testutil.NewMockEmbedder()
-	tagSvc, _ := service.NewTag(queries, testutil.NewTestLogger(), embedder)
+	tagSvc := service.NewTag(client, testutil.NewTestLogger(), embedder)
 	return tagSvc, embedder
 }
 
@@ -76,7 +76,7 @@ func newHandlerTestEnv(t *testing.T) *handlerTestEnv {
 	engine := search.NewEngine(logger, client.Queries)
 	matcherClient := tagmatch.NewMatcherClient("/nonexistent/matcher.sock", tagmatch.MaxMatchBodyBytes(4000))
 
-	tagSvc, _ := newMockTagService(client.Queries)
+	tagSvc, _ := newMockTagService(client)
 	peopleSvc := service.NewPeople(client.Queries, logger)
 	peopleTypeSvc := service.NewPeopleType(client.Queries, logger)
 	docTypeSvc := service.NewDocumentType(client.Queries, logger)
