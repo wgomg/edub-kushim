@@ -39,6 +39,7 @@
 		ensureThumbnailBlock();
 		ensureMirrorBlock();
 		ensureTagReconcileBlock();
+		ensureTagMeasureBlock();
 		ensureTagAdjudicatorBlock();
 		ensureTagQualityBlock();
 		ensureContentAnalyzerTags();
@@ -99,6 +100,17 @@
 			max_retag: 1000,
 			dead_tag_grace_days: 7,
 			provisional_grace_days: 30
+		};
+	}
+
+	function ensureTagMeasureBlock() {
+		if (!cfg) return;
+		if (!cfg.enricher) cfg.enricher = {};
+		if (cfg.enricher.tag_measure) return;
+		cfg.enricher.tag_measure = {
+			enabled: false,
+			interval: 7,
+			time: '03:00'
 		};
 	}
 
@@ -257,6 +269,9 @@
 			'enricher.tag_reconcile.provisional_grace_days': Number(
 				cfg.enricher.tag_reconcile.provisional_grace_days
 			),
+			'enricher.tag_measure.enabled': cfg.enricher.tag_measure.enabled,
+			'enricher.tag_measure.interval': Number(cfg.enricher.tag_measure.interval),
+			'enricher.tag_measure.time': cfg.enricher.tag_measure.time,
 			'storage.consumption_dir': cfg.storage.consumption_dir,
 			'storage.storage_dir': cfg.storage.storage_dir,
 			'storage.migration_mode': cfg.storage.migration_mode,

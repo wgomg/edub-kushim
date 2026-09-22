@@ -264,7 +264,26 @@ describe('Settings — Tag reconciliation section', () => {
 		expect(document.getElementById('tag-quality-no-anchor-similarity')).toBeNull();
 	});
 
-	it('bodyFromConfig carries the tag_reconcile, tag_adjudicator, and tag_quality keys on save', async () => {
+	it('ensureTagMeasureBlock fills the default block when missing', async () => {
+		const cfg = fullCfg();
+		delete cfg.enricher.tag_measure;
+		apiMocks.configGet.mockResolvedValue(cfg);
+		apiMocks.configUpdate.mockResolvedValue({ message: 'Settings saved.' });
+
+		render(Page);
+
+		await screen.findByRole('heading', { name: 'Tag measurement' });
+
+		const toggle = screen.getByRole('checkbox', { name: 'Schedule measurement runs' });
+		expect(toggle.checked).toBe(false);
+
+		const interval = document.getElementById('tag-measure-interval');
+		expect(Number(interval.value)).toBe(7);
+		const time = document.getElementById('tag-measure-time');
+		expect(time.value).toBe('03:00');
+	});
+
+	it('bodyFromConfig carries the enricher block keys on save', async () => {
 		apiMocks.configGet.mockResolvedValue(fullCfg());
 		apiMocks.configUpdate.mockResolvedValue({ message: 'Settings saved.' });
 
@@ -298,6 +317,9 @@ describe('Settings — Tag reconciliation section', () => {
 		expect(body['enricher.tag_quality.llm.model']).toBe('');
 		expect(body['enricher.tag_quality.llm.token']).toBe('');
 		expect(body['enricher.tag_quality.llm.request_delay']).toBe(0);
+		expect(body['enricher.tag_measure.enabled']).toBe(false);
+		expect(body['enricher.tag_measure.interval']).toBe(7);
+		expect(body['enricher.tag_measure.time']).toBe('03:00');
 	});
 
 	it('shows the adjudicator dependency hint when enabled without the adjudicator', async () => {

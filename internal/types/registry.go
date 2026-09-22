@@ -25,6 +25,7 @@ var Batch = struct {
 		Mirror          BatchSource
 		Config          BatchSource
 		TagReconcile    BatchSource
+		TagMeasure      BatchSource
 	}
 	Status struct {
 		Queued     BatchStatus
@@ -47,6 +48,7 @@ var Batch = struct {
 		Mirror          BatchSource
 		Config          BatchSource
 		TagReconcile    BatchSource
+		TagMeasure      BatchSource
 	}{
 		CLI:             "cli",
 		API:             "api",
@@ -59,6 +61,7 @@ var Batch = struct {
 		Mirror:          "mirror",
 		Config:          "config",
 		TagReconcile:    "tagreconcile",
+		TagMeasure:      "tagmeasure",
 	},
 	Status: struct {
 		Queued     BatchStatus
@@ -87,6 +90,7 @@ var Task = struct {
 		Config        TaskType
 		TagReconcile  TaskType
 		ThumbBackfill TaskType
+		TagMeasure    TaskType
 	}
 	Status struct {
 		Pending    TaskStatus
@@ -107,6 +111,7 @@ var Task = struct {
 		Config        TaskType
 		TagReconcile  TaskType
 		ThumbBackfill TaskType
+		TagMeasure    TaskType
 	}{
 		Consume:       "consume",
 		Enrich:        "enrich",
@@ -116,6 +121,7 @@ var Task = struct {
 		Config:        "config",
 		TagReconcile:  "tagreconcile",
 		ThumbBackfill: "thumbbackfill",
+		TagMeasure:    "tagmeasure",
 	},
 	Status: struct {
 		Pending    TaskStatus
@@ -241,6 +247,7 @@ var allBatchSources = []BatchSource{
 	Batch.Source.Mirror,
 	Batch.Source.Config,
 	Batch.Source.TagReconcile,
+	Batch.Source.TagMeasure,
 }
 
 var nonConsumeBatchSources = []BatchSource{
@@ -248,6 +255,7 @@ var nonConsumeBatchSources = []BatchSource{
 	Batch.Source.Backup,
 	Batch.Source.Mirror,
 	Batch.Source.TagReconcile,
+	Batch.Source.TagMeasure,
 }
 
 var allBatchStatuses = []BatchStatus{
@@ -268,6 +276,7 @@ var allTaskTypes = []TaskType{
 	Task.Type.Config,
 	Task.Type.TagReconcile,
 	Task.Type.ThumbBackfill,
+	Task.Type.TagMeasure,
 }
 
 var blockingTaskTypes = []TaskType{
@@ -275,6 +284,7 @@ var blockingTaskTypes = []TaskType{
 	Task.Type.Mirror,
 	Task.Type.TagReconcile,
 	Task.Type.ThumbBackfill,
+	Task.Type.TagMeasure,
 }
 
 var lockGatedTaskTypes = []TaskType{

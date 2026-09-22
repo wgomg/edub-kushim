@@ -11,8 +11,8 @@ note asks for.
 
 ## Context — measured baseline (live instance, ~42k documents, 2026-09-02)
 
-From the local benchmark run against `GET/POST /api/v1/documents/search` (full detail in
-`.kilo/reports/search-retrieval-bench-42k.md`, gitignored):
+From a local benchmark run against `GET/POST /api/v1/documents/search` on a
+~42k-document instance:
 
 | Workload (42.2k docs) | Time | Cause |
 |---|---|---|

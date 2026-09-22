@@ -177,13 +177,14 @@ The `ConfigTaskHandler` lives in its own package (`internal/configtask/`) to kee
 
 ### CLI (`kushim`)
 
-The `Container` registers all eight task types (`"consume"`, `"enrich"`, `"thumbnail"`, `"config"`, `"backup"`, `"mirror"`, `"tagreconcile"`, `"thumbbackfill"`)
+The `Container` registers all nine task types (`"consume"`, `"enrich"`, `"thumbnail"`, `"config"`, `"backup"`, `"mirror"`, `"tagreconcile"`, `"thumbbackfill"`, `"tagmeasure"`)
 and creates a `MatcherClient` connected to the Unix socket at `<config_dir>/kushim-hugot.sock`.
 The `"backup"` type is handled by `BackupTaskHandler` which runs with the DB-backed maintenance lock already held (acquired at claim time, in the claim transaction), waits for in-flight tasks to drain, runs the backup, and lets the runner release the lock on completion/failure (token-guarded). It implements `DedupKey` returning `backup:<mode>:<date>` (mode parsed from the task payload, default `full`).
 
 The `"mirror"` type is handled by `MirrorTaskHandler` which runs with the same lock already held (claim-time acquisition), then delegates to `mirror.RunLocked` (5-minute `TouchMaintenanceLockForTask` heartbeat started before the drain → drain → `rsync -a --delete --info=stats2 --timeout=600` → `.edub-mirror.json` state write); the runner releases the lock on completion/failure. It implements `DedupKey` returning `mirror:<UTC date>`.
 
 The `"tagreconcile"` type is handled by `TagReconcileTaskHandler` which runs with the lock already held, drains in-flight tasks, runs the reconciler, and owns the batch lifecycle. Its reconciler runs on a runner built with the `textreducer`, `contentanalyzer` and `tagmatcher` tools — the reducer feeds the provisional re-judge path (`Runner.ReduceContent` over the tag's first live document). The `"thumbbackfill"` type is handled by `ThumbnailBackfillTaskHandler`, a wrapper that adds the same drain-wait + heartbeat around the per-document `ThumbnailTaskHandler`; backfill tasks are created by `service.ThumbnailBackfill` (dedup key `thumbnail:doc:<uuid>`) and processed by a dedicated 1-worker/2s pool, while per-document `thumbnail` tasks remain lock-gated.
+The `"tagmeasure"` type is handled by `TagMeasureTaskHandler` which runs with the lock already held, drains in-flight tasks, and forks `kushim tagmeasure --run <batch-id>`: the child executes the pass (`internal/tags`) in one repeatable-read transaction, writes the evidence records, and prints a report line the handler captures as the task result, while the child's exit code decides completion/failure through the attempts budget. Manual `kushim tagmeasure` runs the same pass in the foreground under the NULL-token lock (wait-for-lock, drain, heartbeat) without any batch or task row.
 The `TagService` and `Enricher` receive the client instead of a direct Hugot reference:
 
 ```go

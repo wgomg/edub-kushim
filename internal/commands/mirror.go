@@ -40,7 +40,7 @@ func mirrorHandler(c *Container, args []string) error {
 	defer stop()
 
 	fmt.Println("Waiting for the backup lock...")
-	if err := waitForBackupLock(ctx, client); err != nil {
+	if err := waitForBackupLock(ctx, client, "Backup"); err != nil {
 		return err
 	}
 	defer client.Queries.ReleaseBackupLock(context.Background(), uuid.NullUUID{})
@@ -69,7 +69,7 @@ func mirrorHandler(c *Container, args []string) error {
 	return nil
 }
 
-func waitForBackupLock(ctx context.Context, client *database.Client) error {
+func waitForBackupLock(ctx context.Context, client *database.Client, what string) error {
 	for {
 		rows, err := client.Queries.AcquireBackupLock(ctx)
 		if err != nil {
@@ -78,7 +78,7 @@ func waitForBackupLock(ctx context.Context, client *database.Client) error {
 		if rows > 0 {
 			return nil
 		}
-		fmt.Println("Backup lock held by another process — waiting...")
+		fmt.Printf("%s lock held by another process — waiting...\n", what)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()

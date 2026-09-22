@@ -16,6 +16,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/enrichment/tagpolicy"
 	"github.com/wgomg/edub-kushim/internal/service"
+	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/contentanalyzer"
@@ -29,8 +30,6 @@ const (
 	minTargetWords     = 100
 	fallbackVocabLimit = 200
 
-	// v1 reject-band constants. Provisional until the Stage 8 calibration
-	// re-measures them on production data; deliberately not operator-tunable.
 	tagQualityTLow               = -1.0
 	tagQualityNoAnchorSimilarity = 0.60
 )
@@ -542,14 +541,10 @@ func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, res
 	for i, p := range passed {
 		ids[i] = p.id
 	}
-	countRows, err := q.CountLiveTagDocumentsByTagIDs(ctx, ids)
+	counts, err := tags.NewStore(q).LiveMass(ctx, ids)
 	if err != nil {
 		e.logger.Error(logId, "tag quality promotion document count failed: %v", err)
 		return nil
-	}
-	counts := make(map[int64]int64, len(countRows))
-	for _, row := range countRows {
-		counts[row.TagID] = row.DocumentCount
 	}
 
 	var eligible []passRow

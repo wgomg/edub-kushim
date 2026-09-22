@@ -22,8 +22,9 @@ how emitted tags are mapped onto the canonical vocabulary.
 6. [Matcher RPC surface and the pair cache](#6-matcher-rpc-surface-and-the-pair-cache)
 7. [Merge review](#7-merge-review)
 8. [Scheduled reconciliation](#8-scheduled-reconciliation)
-9. [Safety properties](#9-safety-properties)
-10. [Gotchas](#10-gotchas)
+9. [Tag extension measurement](#9-tag-extension-measurement)
+10. [Safety properties](#10-safety-properties)
+11. [Gotchas](#11-gotchas)
 
 ---
 
@@ -448,7 +449,50 @@ daemon warns when reconciliation is enabled without the adjudicator.
 
 ---
 
-## 9. Safety properties
+## 9. Tag extension measurement
+
+The measurement pass (`internal/tags`) is the substrate behind every "how much
+do these two names overlap" question in this subsystem. It also retired the
+duplicated SQL those questions used to run on: the enricher's promotion gate,
+the reconciler's live counts, and the merge-review evidence all read through
+`tags.Store` now (`LiveMass` for live per-tag document counts,
+`PairVerdictStats` for the adjudication aggregates).
+
+- **The algebra** (`internal/tags/algebra.go`) is pure: mass, pairwise overlap
+  (`|S(a) ∩ S(b)|` with Jaccard, overlap-coefficient, and both containment
+  ratios), the `≈` set-similarity number, reconstructibility with excess
+  `E = |S(c)| − |S(c) ∩ ⋂S(p)|` and deficit `D = |⋂S(p)| − |S(c) ∩ ⋂S(p)|`,
+  part coverage and productivity, and complement views. No thresholds live in
+  the operators; cuts belong to consumers.
+- **The extension reader** takes a pluggable alias resolver (identity today),
+  so canonical-label folding can land without touching the operators.
+- **The pass** (`internal/tags/measure.go`) reads one REPEATABLE READ snapshot —
+  every tag's live mass, every co-occurring pair's intersection, and each
+  stored two-to-three-word compound's counts against its mechanically derived
+  parts (articles, conjunctions, and prepositions stripped; content modifiers
+  kept) — and appends the readings to the append-only `tag_measurement` table
+  in the same transaction. Records carry the run id (one per pass), the
+  snapshot instant, the rule-set version, the operator, the operands, the raw
+  numbers, an evidence state (`sufficient`/`insufficient` — empty extensions
+  and empty intersections support no reading), and caveats.
+- **Rule-set v0** derives the composition-review worklists from the persisted
+  records: `≈` twin candidates (Jaccard ≥ 0.9 with both masses ≥ 2, gray band
+  0.7–0.9), compound split proposals (both leftovers ≤ 0.1, gray to 0.25), and
+  near-contained siblings (containment ≥ 0.8, gray 0.6–0.8). The worklists are
+  evidence for review; nothing acts on them.
+- **Running it**: `enricher.tag_measure.{enabled, interval, time}` schedules a
+  `tagmeasure` task (disabled by default), and `kushim tagmeasure` runs the
+  pass in the foreground under the maintenance lock, while
+  `kushim tagmeasure --run <batch-id>` is the scheduled fork's execution mode.
+  The pass holds the lock for its whole transaction, so runs are
+  minutes-scale and serialize with every other blocking task.
+
+The pass measures; it never judges. Dispositions — promote, merge, split,
+delete — stay with the reconciler's worklists and the operator surfaces.
+
+---
+
+## 10. Safety properties
 
 - **Keep is the failure direction everywhere**: rank error, adjudicator
   disabled/unavailable/ambiguous, reconciliation disagreement — the emitted or
@@ -470,7 +514,7 @@ daemon warns when reconciliation is enabled without the adjudicator.
 
 ---
 
-## 10. Gotchas
+## 11. Gotchas
 
 - **The adjudicator, quality judge, and reconciliation are disabled by
   default** — the ambiguous band keeps, novel tags are born unfiltered, and

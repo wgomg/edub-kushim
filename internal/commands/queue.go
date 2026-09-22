@@ -112,6 +112,8 @@ func queueHandler(c *Container, args []string) error {
 	var mirrorPoolStarted bool
 	var tagReconcilePool *pool.Pool
 	var tagReconcilePoolStarted bool
+	var tagMeasurePool *pool.Pool
+	var tagMeasurePoolStarted bool
 
 	go runPollingLoop(ctx, c, func() *database.Client { return client }, func() *service.Batch { return batchSvc }, maxConcurrent)
 
@@ -138,6 +140,7 @@ func queueHandler(c *Container, args []string) error {
 	var lastStaleTaskClaim time.Time
 	var thumbnailBackfillState scheduleState
 	var tagReconcileState scheduleState
+	var tagMeasureState scheduleState
 
 	for {
 		select {
@@ -181,6 +184,9 @@ func queueHandler(c *Container, args []string) error {
 						}
 						if tagReconcilePoolStarted {
 							stopPool(c, "tagreconcile", &tagReconcilePoolStarted, &tagReconcilePool)
+						}
+						if tagMeasurePoolStarted {
+							stopPool(c, "tagmeasure", &tagMeasurePoolStarted, &tagMeasurePool)
 						}
 						client = newClient
 						batchSvc = service.NewBatch(client, c.cfg.Load().Consumer.Reclaim.MaxRetries)
@@ -253,6 +259,20 @@ func queueHandler(c *Container, args []string) error {
 				c.logger.Info(nil, "tag reconcile pool stopped (disabled)")
 			}
 
+			if cfg.Enricher.TagMeasure.Enabled {
+				if !tagMeasurePoolStarted {
+					if err := startPool(c, ctx, "tagmeasure", &tagMeasurePoolStarted, &tagMeasurePool); err != nil {
+						c.logger.Error(nil, "tag measure pool: %v", err)
+					}
+				}
+				if err := maybeScheduleTagMeasure(ctx, c, client, cfg, &tagMeasureState); err != nil {
+					c.logger.Error(nil, "tag measure scheduling: %v", err)
+				}
+			} else if tagMeasurePoolStarted {
+				stopPool(c, "tagmeasure", &tagMeasurePoolStarted, &tagMeasurePool)
+				c.logger.Info(nil, "tag measure pool stopped (disabled)")
+			}
+
 			if err := sweepEmptyQueuedBatches(ctx, client, c.logger); err != nil {
 				c.logger.Error(nil, "empty queued batch sweep: %v", err)
 			}
@@ -275,6 +295,7 @@ func queueHandler(c *Container, args []string) error {
 			stopPool(c, "backup", &backupPoolStarted, &backupPool)
 			stopPool(c, "mirror", &mirrorPoolStarted, &mirrorPool)
 			stopPool(c, "tagreconcile", &tagReconcilePoolStarted, &tagReconcilePool)
+			stopPool(c, "tagmeasure", &tagMeasurePoolStarted, &tagMeasurePool)
 			return nil
 		}
 	}
@@ -752,5 +773,76 @@ func maybeScheduleTagReconcile(ctx context.Context, c *Container, client *databa
 	// Advance only after a successful enqueue so a failed schedule retries next tick.
 	state.markRun(timing)
 	c.logger.Info(nil, "tag reconcile task %s scheduled (batch %s)", taskID, batchID)
+	return nil
+}
+
+func maybeScheduleTagMeasure(ctx context.Context, c *Container, client *database.Client, cfg *config.Config, state *scheduleState) error {
+	if !cfg.Enricher.TagMeasure.Enabled {
+		return nil
+	}
+
+	if state.lastRun.IsZero() {
+		lastBatch, err := client.Queries.GetLastTagMeasureBatchCreatedAt(ctx)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			c.logger.Debug(nil, "tag measure: last batch lookup failed: %v", err)
+			return fmt.Errorf("get last tag measure batch: %w", err)
+		}
+		if err == nil {
+			state.lastRun = lastBatch.Time
+		}
+	}
+	// The virtual anchor makes the first run land at the next occurrence of the
+	// preferred time; the interval counts from that first run onward.
+	if state.lastRun.IsZero() {
+		state.lastRun = backup.FirstRunAnchor(time.Now(), cfg.Enricher.TagMeasure.Interval, cfg.Enricher.TagMeasure.Time)
+	}
+
+	timing := backup.ScheduleTiming{Interval: cfg.Enricher.TagMeasure.Interval, Time: cfg.Enricher.TagMeasure.Time}
+	next := state.nextDue(timing)
+	now := time.Now()
+	if now.Before(next) {
+		return nil
+	}
+
+	active, err := client.Queries.CountActiveTagMeasureBatches(ctx)
+	if err != nil {
+		return fmt.Errorf("check active tag measure batches: %w", err)
+	}
+	if active > 0 {
+		c.logger.Debug(nil, "tag measure: skipped — %d active batch(es)", active)
+		return nil
+	}
+
+	locked, err := client.Queries.IsBackupLocked(ctx)
+	if err != nil {
+		return fmt.Errorf("backup lock check: %w", err)
+	}
+	if locked > 0 {
+		c.logger.Debug(nil, "tag measure: skipped — maintenance lock held")
+		return nil
+	}
+
+	dispatcher, err := c.GetDispatcher()
+	if err != nil {
+		return fmt.Errorf("get dispatcher: %w", err)
+	}
+
+	batchID := uuid.New().String()
+	if err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
+		ID:     batchID,
+		Source: types.Batch.Source.TagMeasure,
+		Status: types.Batch.Status.Queued,
+	}); err != nil {
+		return fmt.Errorf("create tag measure batch: %w", err)
+	}
+
+	taskID := uuid.New().String()
+	if _, err := dispatcher.Enqueue(ctx, types.Task.Type.TagMeasure, batchID, json.RawMessage("{}"), taskID); err != nil {
+		return fmt.Errorf("enqueue tag measure task: %w", err)
+	}
+
+	// Advance only after a successful enqueue so a failed schedule retries next tick.
+	state.markRun(timing)
+	c.logger.Info(nil, "tag measure task %s scheduled (batch %s)", taskID, batchID)
 	return nil
 }

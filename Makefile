@@ -251,6 +251,8 @@ test-short:
 		./internal/errs/ \
 		./internal/pool/ \
 		./internal/mirror/ \
+		./internal/types/ \
+		./internal/tags/ \
 
 # Default test target (same as test-short for now).
 test: test-short
@@ -270,6 +272,9 @@ test-verbose:
 		./internal/tools/adapters/contentanalyzer/ \
 		./internal/errs/ \
 		./internal/pool/ \
+		./internal/mirror/ \
+		./internal/types/ \
+		./internal/tags/ \
 
 # Database-dependent tests (requires PostgreSQL 16+).
 .PHONY: test-db
@@ -279,6 +284,7 @@ test-db:
 		./internal/search/ \
 		./internal/task/ \
 		./internal/service/ \
+		./internal/tags/ \
 		./internal/api/handlers/ \
 		./internal/consumption/
 
@@ -331,6 +337,7 @@ test-cgo:
 		./internal/tools/adapters/tagmatcher/ \
 		./internal/tools/ \
 		./internal/commands/ \
+		./internal/task/handlers/ \
 		./internal/enrichment/ \
 		./internal/enrichment/tagreconcile/
 

@@ -172,6 +172,11 @@ enricher:
   #   dead_tag_grace_days: 7     # days a tag must stay without documents before the sweep removes it
   #   provisional_grace_days: 30 # days a provisional (quarantined) tag may stay unreviewed before the sweep re-checks it
 
+  # tag_measure:                 # scheduled tag extension measurement (versioned evidence records)
+  #   enabled: false             # disabled by default
+  #   interval: 7                # days between runs
+  #   time: "03:00"              # preferred time of day (HH:MM)
+
 backup:
   # enabled: true
   # path: /var/backups                  # fallback directory (also used by manual CLI)

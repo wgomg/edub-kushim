@@ -270,6 +270,12 @@ type TagReconcileConfig struct {
 	ProvisionalGraceDays int     `mapstructure:"provisional_grace_days" yaml:"provisional_grace_days" json:"provisional_grace_days"`
 }
 
+type TagMeasureConfig struct {
+	Enabled  bool    `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
+	Interval float64 `mapstructure:"interval" yaml:"interval" json:"interval"`
+	Time     string  `mapstructure:"time" yaml:"time" json:"time"`
+}
+
 type EnricherConfig struct {
 	Workers         int                   `mapstructure:"workers" yaml:"workers" json:"workers"`
 	TextReducer     TextReducerConfig     `mapstructure:"textreducer" yaml:"textreducer" json:"textreducer"`
@@ -278,6 +284,7 @@ type EnricherConfig struct {
 	TagAdjudicator  TagAdjudicatorConfig  `mapstructure:"tag_adjudicator" yaml:"tag_adjudicator" json:"tag_adjudicator"`
 	TagQuality      TagQualityConfig      `mapstructure:"tag_quality" yaml:"tag_quality" json:"tag_quality"`
 	TagReconcile    TagReconcileConfig    `mapstructure:"tag_reconcile" yaml:"tag_reconcile" json:"tag_reconcile"`
+	TagMeasure      TagMeasureConfig      `mapstructure:"tag_measure" yaml:"tag_measure" json:"tag_measure"`
 }
 
 func (c *Config) ResolvedAdjudicatorLlm() LlmConfig {
@@ -618,6 +625,11 @@ func DefaultConfig(configDir string) *Config {
 				DeadTagGraceDays:     7,
 				ProvisionalGraceDays: 30,
 			},
+			TagMeasure: TagMeasureConfig{
+				Enabled:  false,
+				Interval: 7,
+				Time:     "03:00",
+			},
 		},
 	}
 }
@@ -782,6 +794,15 @@ func finalizeConfig(cfg *Config, configDir string) error {
 	}
 	if cfg.Enricher.TagReconcile.Enabled && !cfg.Enricher.TagAdjudicator.Enabled {
 		slog.Warn("enricher.tag_reconcile.enabled is set but enricher.tag_adjudicator.enabled is false — scheduled runs will be snapshot-only (no LLM re-adjudication, no writes)")
+	}
+	if cfg.Enricher.TagMeasure.Interval <= 0 {
+		cfg.Enricher.TagMeasure.Interval = 7
+	}
+	if cfg.Enricher.TagMeasure.Time == "" {
+		cfg.Enricher.TagMeasure.Time = "03:00"
+	}
+	if _, err := parseHHMM(cfg.Enricher.TagMeasure.Time, false); err != nil {
+		return fmt.Errorf("enricher.tag_measure.time: %w", err)
 	}
 	if cfg.Enricher.TagQuality.Enabled {
 		q := cfg.ResolvedQualityLlm()

@@ -8,6 +8,7 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
+	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/tagmatcher"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -158,7 +159,7 @@ func (s *TagMerge) Suggestions(ctx context.Context, params SuggestionsParams) ([
 		return nil, err
 	}
 
-	tags, err := s.client.Queries.ListAllTagsWithDocumentCount(ctx)
+	allTags, err := s.client.Queries.ListAllTagsWithDocumentCount(ctx)
 	if err != nil {
 		return nil, errs.FromDB(err, "list all tags with document counts")
 	}
@@ -174,9 +175,9 @@ func (s *TagMerge) Suggestions(ctx context.Context, params SuggestionsParams) ([
 
 	forTag := utils.NormalizeTag(params.ForTag)
 
-	tagByName := make(map[string]database.Tag, len(tags))
-	countByID := make(map[int64]int64, len(tags))
-	for _, t := range tags {
+	tagByName := make(map[string]database.Tag, len(allTags))
+	countByID := make(map[int64]int64, len(allTags))
+	for _, t := range allTags {
 		tagByName[t.Name] = database.Tag{ID: t.ID, Name: t.Name, CreatedAt: t.CreatedAt}
 		countByID[t.ID] = t.DocumentCount
 	}
@@ -205,12 +206,13 @@ func (s *TagMerge) Suggestions(ctx context.Context, params SuggestionsParams) ([
 		queries = append(queries, ev.a, ev.b)
 		targets = append(targets, ev.b, ev.a)
 	}
-	stats, err := s.client.Queries.TagPairEvidenceStats(ctx, database.TagPairEvidenceStatsParams{
-		Queries: queries,
-		Targets: targets,
-	})
+	evidencePairs := make([]tags.PairNames, 0, len(queries))
+	for i := range queries {
+		evidencePairs = append(evidencePairs, tags.PairNames{Query: queries[i], Target: targets[i]})
+	}
+	stats, err := tags.NewStore(s.client.Queries).PairVerdictStats(ctx, evidencePairs)
 	if err != nil {
-		return nil, errs.FromDB(err, "tag pair evidence stats")
+		return nil, err
 	}
 	for _, row := range stats {
 		if _, ok := tagByName[row.Query]; !ok {
@@ -223,11 +225,11 @@ func (s *TagMerge) Suggestions(ctx context.Context, params SuggestionsParams) ([
 		if !ok {
 			continue
 		}
-		ev.eventCount += row.EventCount
-		ev.documentOverlap += row.DocumentCount
-		ev.sameCount += row.SameCount
-		ev.variantCount += row.VariantCount
-		ev.relatedCount += row.RelatedCount
+		ev.eventCount += row.Events
+		ev.documentOverlap += row.Documents
+		ev.sameCount += row.Same
+		ev.variantCount += row.Variant
+		ev.relatedCount += row.Related
 	}
 
 	suggestions := make([]MergeSuggestion, 0, len(pairEv))

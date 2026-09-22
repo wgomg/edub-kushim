@@ -284,3 +284,22 @@ func TestConfigResponseFrom_AvailableFileTypes(t *testing.T) {
 		t.Errorf("JPEG Extensions = %v, want [.jpg .jpeg]", jpeg.Extensions)
 	}
 }
+
+func TestConfigResponseFrom_TagMeasure(t *testing.T) {
+	cfg := config.DefaultConfig("/tmp/test")
+	cfg.Enricher.TagMeasure.Enabled = true
+	cfg.Enricher.TagMeasure.Interval = 3
+	cfg.Enricher.TagMeasure.Time = "04:30"
+
+	resp := ConfigResponseFrom(cfg)
+
+	if !resp.Enricher.TagMeasure.Enabled {
+		t.Error("TagMeasure.Enabled = false, want true")
+	}
+	if resp.Enricher.TagMeasure.Interval != 3 {
+		t.Errorf("TagMeasure.Interval = %v, want 3", resp.Enricher.TagMeasure.Interval)
+	}
+	if resp.Enricher.TagMeasure.Time != "04:30" {
+		t.Errorf("TagMeasure.Time = %q, want 04:30", resp.Enricher.TagMeasure.Time)
+	}
+}

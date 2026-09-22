@@ -53,9 +53,9 @@ The cast of characters:
 | queue daemon | `internal/commands/queue.go` | orchestrates batches |
 | consume command | `internal/commands/consume.go` | runs one batch |
 
-The eight task types (declared in `internal/types`, registered in
+The nine task types (declared in `internal/types`, registered in
 `internal/commands/container.go`): `consume`, `enrich`, `thumbnail`,
-`config`, `backup`, `mirror`, `tagreconcile`, `thumbbackfill`.
+`config`, `backup`, `mirror`, `tagreconcile`, `thumbbackfill`, `tagmeasure`.
 
 ---
 
@@ -590,7 +590,7 @@ Two sweeps recover from dead workers, both driven by the **attempts budget**
 `processing` longer than that, so a slow-but-alive task isn't touched). The
 age transitions below apply to the gated class only (consume, enrich,
 thumbnail); blocking-class tasks (backup, mirror, tagreconcile,
-thumbbackfill) are swept by ownership-gated variants instead:
+thumbbackfill, tagmeasure) are swept by ownership-gated variants instead:
 
 ```sql
 -- name: QuarantineStaleProcessingTasks :execrows
@@ -762,7 +762,7 @@ WHERE id = 1 AND (NOT running OR started_at <= NOW() - INTERVAL '30 minutes');
   documents mid-backup. Which types claim gated is declared once in the
   registry (`types.TaskType.IsLockGated()`: consume, enrich, thumbnail);
   blocking types that acquire the lock (`IsBlocking()`: backup, mirror,
-  tagreconcile, thumbbackfill) and config claim ungated.
+  tagreconcile, thumbbackfill, tagmeasure) and config claim ungated.
 - **Claim-time acquisition**: a blocking task acquires the lock
   **inside the claim transaction**
   (`Store.claimBlockingNextPending`, `internal/task/store.go`):
@@ -815,7 +815,7 @@ heartbeat that refreshes `backup_lock.started_at` every 5 minutes
 itself — the gate never goes stale mid-mirror. The heartbeat is started by the
 shared `database.StartMaintenanceLockHeartbeat` helper *before*
 `WaitForTaskDrain` returns, so the drain-wait itself is covered too; the same
-helper is used by the backup, tagreconcile, and thumbbackfill handlers, which
+helper is used by the backup, tagreconcile, thumbbackfill, and tagmeasure handlers, which
 all start it before their drain and keep it running through completion.
 Scheduling mirrors `IsBackupDue` as `IsMirrorDue` (same
 `NextBackupTime` anchoring, keyed on the last completed `mirror:<date>` task,
@@ -825,6 +825,14 @@ lock and drain, and writes the `.edub-mirror.json` diagnostics file into the
 destination. Both the handler and the CLI share `mirror.RunLocked`, which owns
 the heartbeat → drain → rsync → state-file sequence (the CLI passes a NULL
 token, matching its NULL-owner lock from `AcquireBackupLock`).
+
+The **tagmeasure** task (`internal/task/handlers/tagmeasure.go`) is a
+blocking-class task too: claimed with the lock held, drained via
+`WaitForTaskDrain`, heartbeat across the whole run — and it additionally forks
+`kushim tagmeasure --run <batch-id>` and waits, so the pass's long
+repeatable-read transaction runs in its own process while the parent keeps the
+lock fresh; the child's printed report line becomes the task result and its
+exit code decides completion/failure.
 
 The **tagreconcile** task (`internal/task/handlers/tagreconcile.go`) and the
 **thumbbackfill** task (`internal/task/handlers/thumbnail_backfill.go`, a thin

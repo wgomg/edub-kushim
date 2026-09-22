@@ -73,8 +73,8 @@ const countLiveTagDocumentsByTagIDs = `-- name: CountLiveTagDocumentsByTagIDs :m
 SELECT dt.tag_id, COUNT(*) AS document_count
 FROM document_tag dt
 JOIN document d ON d.id = dt.document_id
-WHERE dt.tag_id = ANY($1::bigint[])
-  AND d.deleted_at IS NULL
+WHERE d.deleted_at IS NULL
+  AND ($1::bigint[] IS NULL OR dt.tag_id = ANY($1::bigint[]))
 GROUP BY dt.tag_id
 `
 
@@ -83,6 +83,7 @@ type CountLiveTagDocumentsByTagIDsRow struct {
 	DocumentCount int64
 }
 
+// A NULL @tag_ids reads the whole store's live mass per tag.
 func (q *Queries) CountLiveTagDocumentsByTagIDs(ctx context.Context, tagIds []int64) ([]CountLiveTagDocumentsByTagIDsRow, error) {
 	rows, err := q.db.QueryContext(ctx, countLiveTagDocumentsByTagIDs, pq.Array(tagIds))
 	if err != nil {

@@ -69,9 +69,10 @@ WHERE tag_id = ANY(@tag_ids::bigint[])
 GROUP BY tag_id;
 
 -- name: CountLiveTagDocumentsByTagIDs :many
+-- A NULL @tag_ids reads the whole store's live mass per tag.
 SELECT dt.tag_id, COUNT(*) AS document_count
 FROM document_tag dt
 JOIN document d ON d.id = dt.document_id
-WHERE dt.tag_id = ANY(@tag_ids::bigint[])
-  AND d.deleted_at IS NULL
+WHERE d.deleted_at IS NULL
+  AND (@tag_ids::bigint[] IS NULL OR dt.tag_id = ANY(@tag_ids::bigint[]))
 GROUP BY dt.tag_id;

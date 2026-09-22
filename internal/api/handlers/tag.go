@@ -224,10 +224,7 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 	}
 
 	limit := pb.GetInt64("limit", 50, 1, 100)
-	offset := pb.GetInt64("offset", 0, 0, 100000)
-	if offset < 0 {
-		offset = 0
-	}
+	offset := max(pb.GetInt64("offset", 0, 0, 100000), 0)
 
 	rows, err := h.services.Tag.ListProvisional(ctx, int32(limit), int32(offset))
 	if err != nil {

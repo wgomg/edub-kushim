@@ -818,6 +818,40 @@
 		</Card>
 
 		<Card
+			title="Tag measurement"
+			name="tag measurement extension algebra evidence records"
+			description="Periodically measures value extensions and writes versioned evidence records."
+		>
+			<div class="grid gap-4 sm:grid-cols-2">
+				<div class="sm:col-span-2">
+					<Switch
+						id="tag-measure-enabled"
+						bind:checked={cfg.enricher.tag_measure.enabled}
+						label="Schedule measurement runs"
+					/>
+				</div>
+				<UnitField
+					id="tag-measure-interval"
+					label="Interval"
+					unit="days"
+					type="number"
+					inputmode="numeric"
+					min="1"
+					bind:value={cfg.enricher.tag_measure.interval}
+				/>
+				<UnitField
+					id="tag-measure-time"
+					label="Preferred time"
+					mono
+					placeholder="03:00"
+					pattern="([01][0-9]|2[0-3]):[0-5][0-9]"
+					hint="HH:MM, 24-hour."
+					bind:value={cfg.enricher.tag_measure.time}
+				/>
+			</div>
+		</Card>
+
+		<Card
 			title="Enrichment workers"
 			name="enricher workers parallel"
 			description="Parallel documents moving through this stage."

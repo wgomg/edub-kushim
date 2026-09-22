@@ -968,8 +968,6 @@ func TestSplitComponents_AppliesDocumentFilter(t *testing.T) {
 	}
 }
 
-func boolPtr(v bool) *bool { return &v }
-
 func TestParseAnalysisResponse(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -1021,7 +1019,7 @@ func TestParseAnalysisResponse(t *testing.T) {
 				Title: "t",
 				Tags:  []string{"opioid crisis"},
 				TagDetails: []TagDetail{
-					{Term: "opioid crisis", Category: TagCategoryTopic, IsStandardTerm: boolPtr(true)},
+					{Term: "opioid crisis", Category: TagCategoryTopic, IsStandardTerm: new(true)},
 				},
 			},
 		},

@@ -95,6 +95,11 @@ var commandSets = map[string]map[string]Command{
 			Description: "Migrate database or storage to new locations",
 			Handler:     migrateHandler,
 		},
+		"tagmeasure": {
+			Name:        "tagmeasure",
+			Description: "Measure the tag store's extension algebra into versioned evidence records",
+			Handler:     tagMeasureHandler,
+		},
 	},
 	"server": {
 		"version": {

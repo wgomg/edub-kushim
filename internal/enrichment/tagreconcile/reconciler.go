@@ -15,6 +15,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/enrichment"
 	"github.com/wgomg/edub-kushim/internal/enrichment/tagpolicy"
 	"github.com/wgomg/edub-kushim/internal/service"
+	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/contentanalyzer"
@@ -377,14 +378,10 @@ func (r *Reconciler) sweepProvisionalTags(ctx context.Context, cfg *config.Confi
 	}
 
 	// promotion evidence is live-document only, like the judge's text input
-	live, err := r.client.CountLiveTagDocumentsByTagIDs(ctx, ids)
+	liveCounts, err := tags.NewStore(r.client.Queries).LiveMass(ctx, ids)
 	if err != nil {
 		r.logger.Error(nil, "tag reconcile: count live provisional tag documents: %v", err)
 		return
-	}
-	liveCounts := make(map[int64]int64, len(live))
-	for _, row := range live {
-		liveCounts[row.TagID] = row.DocumentCount
 	}
 
 	events, err := r.services.Tag.LatestQualityEventsForNames(ctx, names)
@@ -738,24 +735,20 @@ func (r *Reconciler) buildWorklist(ctx context.Context, cfg *config.Config, stor
 		return nil, 0, fmt.Errorf("tag verdict pairs by verdict: %w", err)
 	}
 	if len(kept) > 0 {
-		statsQueries := make([]string, 0, len(kept)*2)
-		statsTargets := make([]string, 0, len(kept)*2)
+		pairs := make([]tags.PairNames, 0, len(kept)*2)
 		for _, row := range kept {
-			statsQueries = append(statsQueries, row.Query, row.Target)
-			statsTargets = append(statsTargets, row.Target, row.Query)
+			pairs = append(pairs, tags.PairNames{Query: row.Query, Target: row.Target},
+				tags.PairNames{Query: row.Target, Target: row.Query})
 		}
-		stats, err := r.client.TagPairEvidenceStats(ctx, database.TagPairEvidenceStatsParams{
-			Queries: statsQueries,
-			Targets: statsTargets,
-		})
+		stats, err := tags.NewStore(r.client.Queries).PairVerdictStats(ctx, pairs)
 		if err != nil {
-			return nil, 0, fmt.Errorf("tag pair evidence stats: %w", err)
+			return nil, 0, err
 		}
 		overlap := make(map[string]int64, len(stats))
 		for _, s := range stats {
 			key := orderedPairKey(s.Query, s.Target)
-			if s.DocumentCount > overlap[key] {
-				overlap[key] = s.DocumentCount
+			if s.Documents > overlap[key] {
+				overlap[key] = s.Documents
 			}
 		}
 		for _, row := range kept {
@@ -841,10 +834,11 @@ func (r *Reconciler) bootstrapWorklist(ctx context.Context, cfg *config.Config, 
 
 	presentPairs := make(map[string]bool)
 	if len(pairQueries) > 0 {
-		stats, err := r.client.TagPairEvidenceStats(ctx, database.TagPairEvidenceStatsParams{
-			Queries: pairQueries,
-			Targets: pairTargets,
-		})
+		pairs := make([]tags.PairNames, 0, len(pairQueries))
+		for i := range pairQueries {
+			pairs = append(pairs, tags.PairNames{Query: pairQueries[i], Target: pairTargets[i]})
+		}
+		stats, err := tags.NewStore(r.client.Queries).PairVerdictStats(ctx, pairs)
 		if err != nil {
 			r.logger.Error(nil, "tag reconcile bootstrap: pair presence check failed: %v", err)
 			return
@@ -1350,24 +1344,19 @@ func (r *Reconciler) logPlannedKeepFlip(e *entry, reassigned int64) {
 }
 
 func (r *Reconciler) pairDocumentCounts(ctx context.Context, entries []*entry) (map[string]int64, error) {
-	queries := make([]string, 0, len(entries))
-	targets := make([]string, 0, len(entries))
+	pairs := make([]tags.PairNames, 0, len(entries))
 	counts := make(map[string]int64, len(entries))
 	for _, e := range entries {
-		queries = append(queries, e.query)
-		targets = append(targets, e.target)
+		pairs = append(pairs, tags.PairNames{Query: e.query, Target: e.target})
 		counts[orderedPairKey(e.query, e.target)] = 0
 	}
 
-	stats, err := r.client.TagPairEvidenceStats(ctx, database.TagPairEvidenceStatsParams{
-		Queries: queries,
-		Targets: targets,
-	})
+	stats, err := tags.NewStore(r.client.Queries).PairVerdictStats(ctx, pairs)
 	if err != nil {
-		return nil, fmt.Errorf("tag pair evidence stats: %w", err)
+		return nil, err
 	}
 	for _, s := range stats {
-		counts[orderedPairKey(s.Query, s.Target)] = s.DocumentCount
+		counts[orderedPairKey(s.Query, s.Target)] = s.Documents
 	}
 	return counts, nil
 }

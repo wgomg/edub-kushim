@@ -131,7 +131,7 @@ The SQL dump/restore machinery lives in `internal/database/` (shared by `kushim 
 
 ### Document tag
 
-`AddDocumentTag` (`source` parameter, `INSERT ... ON CONFLICT (document_id, tag_id) DO NOTHING` — used by enrichment with `source = 'enrich'`; an existing row is never downgraded), `UpsertManualDocumentTag` (`INSERT ... ON CONFLICT (document_id, tag_id) DO UPDATE SET source = 'manual'` — operator writes pin the row so re-enrichment keeps it), `RemoveDocumentTag`, `GetDocumentTags`, `ClearDocumentTags`, `ClearEnrichDocumentTags` (`source = 'enrich'` only — re-enrichment keeps manual assignments), `GetTagDocuments`, `CountTagDocumentsByTagIDs` (`:many` — `tag_id` + `COUNT(*)` per requested id; the `(document_id, tag_id)` PK makes the count a distinct-document count; used by the reconciliation sweep to tell zero-assignment rows, which the orphan sweep owns, from rows with assignments), `CountLiveTagDocumentsByTagIDs` (`:many` — the same count restricted to live documents by joining `document` with `deleted_at IS NULL`; the ≥ 2-document promotion gate in both the enricher and the reconciliation sweep, so trashed carriers are not evidence), `ReassignDocumentTags` (`:execrows` — re-points `document_tag` rows from a source tag to a target tag, skipping documents that already carry the target via a `NOT EXISTS` guard), `DeleteDocumentTagsForTag` (`:execrows` — removes leftover source rows before the tag row is deleted)
+`AddDocumentTag` (`source` parameter, `INSERT ... ON CONFLICT (document_id, tag_id) DO NOTHING` — used by enrichment with `source = 'enrich'`; an existing row is never downgraded), `UpsertManualDocumentTag` (`INSERT ... ON CONFLICT (document_id, tag_id) DO UPDATE SET source = 'manual'` — operator writes pin the row so re-enrichment keeps it), `RemoveDocumentTag`, `GetDocumentTags`, `ClearDocumentTags`, `ClearEnrichDocumentTags` (`source = 'enrich'` only — re-enrichment keeps manual assignments), `GetTagDocuments`, `CountTagDocumentsByTagIDs` (`:many` — `tag_id` + `COUNT(*)` per requested id; the `(document_id, tag_id)` PK makes the count a distinct-document count; used by the reconciliation sweep to tell zero-assignment rows, which the orphan sweep owns, from rows with assignments), `CountLiveTagDocumentsByTagIDs` (`:many` — the same count restricted to live documents by joining `document` with `deleted_at IS NULL`; a NULL `tag_ids` reads the whole store's per-tag mass, which is how the measurement pass loads its snapshot, while a non-empty array serves the ≥ 2-document promotion gate in both the enricher and the reconciliation sweep, so trashed carriers are not evidence), `ReassignDocumentTags` (`:execrows` — re-points `document_tag` rows from a source tag to a target tag, skipping documents that already carry the target via a `NOT EXISTS` guard), `DeleteDocumentTagsForTag` (`:execrows` — removes leftover source rows before the tag row is deleted)
 
 ### Deleted tag
 
@@ -163,7 +163,7 @@ The SQL dump/restore machinery lives in `internal/database/` (shared by `kushim 
 
 ### Batch
 
-`CreateBatch`, `GetBatch`, `SetBatchProcessing`, `SetBatchCompleted`, `SetBatchFailed`, `SetBatchCancelled`, `SetBatchPaused`, `CountQueuedConsumeBatches` (queued batches that occupy a consume slot; excludes `config`/`backup`/`mirror`), `CountPausedBatches`, `GetNextQueuedBatch`, `ListPausedBatches`, `CountLiveBatches`, `ListStaleBatchOwners`, `CleanupCompletedBatches`, `QuarantineProcessingTasksByBatch`, `ResetProcessingTasksByBatch`, `GetQuarantinedConsumeTaskPayloads`, `TryInsertBatchOwner`, `UpdateBatchOwnerIfStale`, `AcquireBatchOwnerForce`, `HeartbeatBatchOwner`, `ReleaseBatchOwner`, `DeleteBatchOwnerByBatchID`, `DeleteBatch`, `ListEmptyQueuedBatches` (queued batches with zero tasks older than N minutes), `ListBatchOverviews`
+`CreateBatch`, `GetBatch`, `SetBatchProcessing`, `SetBatchCompleted`, `SetBatchFailed`, `SetBatchCancelled`, `SetBatchPaused`, `CountQueuedConsumeBatches` (queued batches that occupy a consume slot; excludes `config`/`backup`/`mirror`/`tagreconcile`/`tagmeasure`), `CountPausedBatches`, `GetNextQueuedBatch`, `ListPausedBatches`, `CountLiveBatches`, `CountActiveTagMeasureBatches` (queued or processing `tagmeasure` batches; the scheduler's active-run gate), `GetLastTagMeasureBatchCreatedAt` (most recent **completed** `tagmeasure` batch's `created_at`; the scheduler's anchor, so a failed or orphaned batch never defers the next scheduled run), `ListStaleBatchOwners`, `CleanupCompletedBatches`, `QuarantineProcessingTasksByBatch`, `ResetProcessingTasksByBatch`, `GetQuarantinedConsumeTaskPayloads`, `TryInsertBatchOwner`, `UpdateBatchOwnerIfStale`, `AcquireBatchOwnerForce`, `HeartbeatBatchOwner`, `ReleaseBatchOwner`, `DeleteBatchOwnerByBatchID`, `DeleteBatch`, `ListEmptyQueuedBatches` (queued batches with zero tasks older than N minutes), `ListBatchOverviews`
 
 ### User
 
@@ -184,6 +184,12 @@ The SQL dump/restore machinery lives in `internal/database/` (shared by `kushim 
 ### Tag quality event
 
 `InsertTagQualityEvent` (`:execrows` — `ON CONFLICT (tag_name, policy_version) WHERE verdict_model IS NOT NULL DO NOTHING`, returns 0 when a concurrent worker already cached the name fresh; the enricher writes fresh _and_ cache-applied rows with it, and the reconciliation sweep reuses it for a re-judged provisional name, keeping whichever fresh verdict landed first and reading its `pass`/`verdict_model` back through `LatestTagQualityEventsForNames`), `LatestTagQualityEventsForNames` (`DISTINCT ON (tag_name)` latest row per requested name at a given `policy_version`, served by `idx_tag_quality_event_name`; returns only the names that have rows, so the caller's absent names go to the judge — read by the enricher's cache/conflict path, the provisional review queue and the sweep's promote-backstop check)
+
+---
+
+### Tag measurement
+
+`SnapshotNow` (`:one` — the transaction timestamp the pass stamps every record with, so `snapshot_at` is the same instant the repeatable-read snapshot was established), `ListTagsForMeasure` (`:many` — every tag with its `promoted_at`, so provisional anchors stay flagged), `TagLivePairOverlaps` (`:many` — exhaustive pairwise co-occurrence over live documents: `tag_a`/`tag_b` with `COUNT(*)`, a self-join on `document_tag` restricted to `b.tag_id > a.tag_id` so each unordered pair appears once and the `(document_id, tag_id)` primary key keeps each document counted once per tag), `TagCompoundReconstructibility` (`:many` — for the given compound/part id arrays, per compound the live documents carrying every part and those that also carry the compound, so the pass derives `E`/`D` exactly; compounds whose parts are missing from the store read as zero and are left out), and `InsertTagMeasurements` (`:exec` — appends a run's records from a `jsonb_to_recordset` payload: `run_id`, `snapshot_at`, `rule_set_version`, `operator`, `operands`, `numbers`, `state`, `caveats`)
 
 ---
 
@@ -351,7 +357,15 @@ zero-assignment rows stay provisional), and
 blanket backfill grandfathered — rows whose `promoted_at` still equals
 `created_at`, the backfill signature, and that hold fewer than two distinct
 documents — so the reconciliation sweep re-judges them; every other grant path
-stamps its own `now()` and survives). Goose tracks
+stamps its own `now()` and survives), `00027_tag_merge_dismissal.sql` (creates
+the `tag_merge_dismissal` table — `tag_a`/`tag_b` in canonical order with a
+`created_at` — recording operator dismissals so merge suggestions stay hidden
+until restored), and `00028_tag_measure.sql` (adds `tagmeasure` to the
+`task_type` and `batch_source` enums and creates the append-only
+`tag_measurement` evidence table — `run_id`, `snapshot_at`, `rule_set_version`,
+`operator` and `state` CHECK constraints, `operands text[]`, `numbers jsonb`,
+`caveats text[]` — with `idx_tag_measurement_run`, `idx_tag_measurement_operator`,
+and a GIN index on `operands`). Goose tracks
 which versions have been applied in the `goose_db_version` table.
 
 ## Migration Version Table

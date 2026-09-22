@@ -56,6 +56,18 @@ func (q *Queries) CleanupCompletedBatches(ctx context.Context) (int64, error) {
 	return result.RowsAffected()
 }
 
+const countActiveTagMeasureBatches = `-- name: CountActiveTagMeasureBatches :one
+SELECT COUNT(*) FROM batch
+WHERE source = 'tagmeasure' AND status IN ('queued', 'processing')
+`
+
+func (q *Queries) CountActiveTagMeasureBatches(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countActiveTagMeasureBatches)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countActiveTagReconcileBatches = `-- name: CountActiveTagReconcileBatches :one
 SELECT COUNT(*) FROM batch
 WHERE source = 'tagreconcile' AND status IN ('queued', 'processing')
@@ -105,10 +117,10 @@ func (q *Queries) CountPausedBatches(ctx context.Context) (int64, error) {
 
 const countQueuedConsumeBatches = `-- name: CountQueuedConsumeBatches :one
 SELECT COUNT(*) FROM batch
-WHERE status = 'queued' AND source NOT IN ('config', 'backup', 'mirror', 'tagreconcile')
+WHERE status = 'queued' AND source NOT IN ('config', 'backup', 'mirror', 'tagreconcile', 'tagmeasure')
 `
 
-// Same exclusion list as GetNextQueuedBatch: config/backup/mirror/tagreconcile
+// Same exclusion list as GetNextQueuedBatch: config/backup/mirror/tagreconcile/tagmeasure
 // batches own their lifecycle in their handlers and never occupy a consume slot.
 func (q *Queries) CountQueuedConsumeBatches(ctx context.Context) (int64, error) {
 	row := q.db.QueryRowContext(ctx, countQueuedConsumeBatches)
@@ -187,6 +199,20 @@ func (q *Queries) GetBatchOwner(ctx context.Context, batchID string) (BatchOwner
 	return i, err
 }
 
+const getLastTagMeasureBatchCreatedAt = `-- name: GetLastTagMeasureBatchCreatedAt :one
+SELECT created_at FROM batch
+WHERE source = 'tagmeasure' AND status = 'completed'
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+func (q *Queries) GetLastTagMeasureBatchCreatedAt(ctx context.Context) (sql.NullTime, error) {
+	row := q.db.QueryRowContext(ctx, getLastTagMeasureBatchCreatedAt)
+	var created_at sql.NullTime
+	err := row.Scan(&created_at)
+	return created_at, err
+}
+
 const getLastTagReconcileBatchCreatedAt = `-- name: GetLastTagReconcileBatchCreatedAt :one
 SELECT created_at FROM batch
 WHERE source = 'tagreconcile'
@@ -238,12 +264,12 @@ func (q *Queries) GetNextPendingTaskOfTypeForOwner(ctx context.Context, arg GetN
 
 const getNextQueuedBatch = `-- name: GetNextQueuedBatch :one
 SELECT id, source, status, created_at FROM batch
-WHERE status = 'queued' AND source NOT IN ('config', 'backup', 'mirror', 'tagreconcile')
+WHERE status = 'queued' AND source NOT IN ('config', 'backup', 'mirror', 'tagreconcile', 'tagmeasure')
 ORDER BY created_at LIMIT 1
 `
 
-// config/backup/mirror/tagreconcile batches own their lifecycle in their
-// handlers and must not be forked as consume workers.
+// config/backup/mirror/tagreconcile/tagmeasure batches own their lifecycle in
+// their handlers and must not be forked as consume workers.
 func (q *Queries) GetNextQueuedBatch(ctx context.Context) (Batch, error) {
 	row := q.db.QueryRowContext(ctx, getNextQueuedBatch)
 	var i Batch
