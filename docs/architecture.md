@@ -388,7 +388,7 @@ The wizard server uses a stripped-down version of the full server stack: it boot
 the config directory (via `config.Bootstrap`), initializes the PostgreSQL schema, creates
 a dispatcher with only the `"config"` task type registered, and runs a single-worker
 pool for background downloads. It serves the wizard UI directly via `//go:embed` on
-`internal/wizard/static/`.
+`internal/api/wizard/static/`.
 
 ### 2. Terminal Setup (`kushim setup --cli`)
 

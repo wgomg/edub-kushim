@@ -6,13 +6,13 @@ import (
 	"mime"
 	"os"
 
-	_mime "github.com/wgomg/edub-kushim/internal/mime"
+	_mime "github.com/wgomg/edub-kushim/internal/documents/mime"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/storage"
+	"github.com/wgomg/edub-kushim/internal/documents/storage"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 

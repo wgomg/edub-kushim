@@ -10,10 +10,10 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/tools"
-	"github.com/wgomg/edub-kushim/internal/tools/adapters/contentanalyzer"
 	"github.com/wgomg/edub-kushim/internal/types"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -129,9 +129,9 @@ func (r *IdentityResolver) resolveCandidates(ctx context.Context, cfg *config.Co
 	for start := 0; start < len(names); start += identityBatchSize {
 		end := min(start+identityBatchSize, len(names))
 		batch := names[start:end]
-		inputs := make([]contentanalyzer.TagIdentityCandidate, len(batch))
+		inputs := make([]analyzer.TagIdentityCandidate, len(batch))
 		for i, name := range batch {
-			inputs[i] = contentanalyzer.TagIdentityCandidate{Index: i, Term: name, ProposedFold: tags.ProposedFold(name)}
+			inputs[i] = analyzer.TagIdentityCandidate{Index: i, Term: name, ProposedFold: tags.ProposedFold(name)}
 		}
 		results, err := r.runner.JudgeTagIdentity(ctx, inputs)
 		if err == nil && len(results) != len(batch) {
@@ -198,9 +198,9 @@ func (r *IdentityResolver) resolvePairs(ctx context.Context, cfg *config.Config,
 	if len(pairs) == 0 {
 		return
 	}
-	evidence := make([]contentanalyzer.TagPairEvidence, len(pairs))
+	evidence := make([]analyzer.TagPairEvidence, len(pairs))
 	for i, p := range pairs {
-		evidence[i] = contentanalyzer.TagPairEvidence{Query: p.query, Target: p.target}
+		evidence[i] = analyzer.TagPairEvidence{Query: p.query, Target: p.target}
 	}
 
 	model := cfg.ResolvedAdjudicatorLlm().Model
@@ -250,9 +250,9 @@ func (r *IdentityResolver) resolvePairs(ctx context.Context, cfg *config.Config,
 		}
 		winner, loser := p.query, p.target
 		switch p.direction {
-		case contentanalyzer.TagDirectionTarget:
+		case analyzer.TagDirectionTarget:
 			winner, loser = p.target, p.query
-		case contentanalyzer.TagDirectionQuery:
+		case analyzer.TagDirectionQuery:
 			winner, loser = p.query, p.target
 		default:
 			if tags.TieBreak(p.query, p.target) == p.query {

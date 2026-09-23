@@ -6,7 +6,7 @@ architecture, page rendering, the parallel worker pipeline, searchable-PDF
 assembly with an invisible text layer, tessdata management, and the
 post-OCR optimization step.
 
-Audience: developers working on `internal/tools/adapters/ocr/`, or anyone
+Audience: developers working on `internal/documents/ocr/`, or anyone
 tuning OCR quality/performance. Companion: `cgo.md` (the
 MuPDF/Tesseract wrapper layer underneath).
 
@@ -40,7 +40,7 @@ the original pages rendered as images *plus* an invisible, selectable text
 layer. That PDF becomes the stored document, and the extracted text feeds
 full-text search.
 
-Everything lives in `internal/tools/adapters/ocr/`:
+Everything lives in `internal/documents/ocr/`:
 
 | File | Role |
 |---|---|
@@ -60,7 +60,7 @@ and **`ocrmypdf`** (external Python tool).
 ## 2. Two engines, one interface
 
 ```go
-// internal/tools/adapters/ocr/adapter.go:11-15
+// internal/documents/ocr/adapter.go:11-15
 type OCR interface {
 	Process(ctx context.Context, docId, path string) (*string, error)
 	CanHandle(mimeType string) bool
@@ -96,7 +96,7 @@ own dependencies (unpaper, pngquant, ...).
 
 The gosseract engine never runs Tesseract *in the parent process*. Instead it
 re-executes the current binary with a hidden subcommand
-(`internal/tools/adapters/ocr/gosseract.go:56-65`):
+(`internal/documents/ocr/gosseract.go:56-65`):
 
 ```go
 outPath := filepath.Join(os.TempDir(), "ocr_"+uuid.New().String()+".pdf")
@@ -358,7 +358,7 @@ backgrounds with alpha don't come out dark.
 ## 9. Tessdata management
 
 Tesseract needs language data files. `EnsureLanguages`
-(`internal/tools/adapters/ocr/tessdata.go:15-48`) downloads missing
+(`internal/documents/ocr/tessdata.go:15-48`) downloads missing
 `.traineddata` files from the `tessdata_fast` repo:
 
 ```go

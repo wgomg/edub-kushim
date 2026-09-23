@@ -15,8 +15,18 @@ import (
 	"github.com/wgomg/edub-kushim/internal/testutil"
 )
 
+// testDB skips the test when no test database is configured, so the package
+// can also run in the no-database unit target.
+func testDB(t *testing.T) *sql.DB {
+	t.Helper()
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	return database.NewTestDB(t)
+}
+
 func TestCreate_FullBackup(t *testing.T) {
-	db := database.NewTestDB(t)
+	db := testDB(t)
 	t.Cleanup(func() { database.ResetTestDatabase(db) })
 
 	dir := t.TempDir()
@@ -83,7 +93,7 @@ func TestCreate_MissingDB(t *testing.T) {
 }
 
 func TestCreate_MissingStorageDir(t *testing.T) {
-	db := database.NewTestDB(t)
+	db := testDB(t)
 	t.Cleanup(func() { database.ResetTestDatabase(db) })
 
 	dir := t.TempDir()
@@ -104,7 +114,7 @@ func TestCreate_MissingStorageDir(t *testing.T) {
 }
 
 func TestCreate_NoStorageFiles(t *testing.T) {
-	db := database.NewTestDB(t)
+	db := testDB(t)
 	t.Cleanup(func() { database.ResetTestDatabase(db) })
 
 	dir := t.TempDir()
@@ -128,7 +138,7 @@ func TestCreate_NoStorageFiles(t *testing.T) {
 }
 
 func TestCreate_SQLDumpContent(t *testing.T) {
-	db := database.NewTestDB(t)
+	db := testDB(t)
 	t.Cleanup(func() { database.ResetTestDatabase(db) })
 
 	dir := t.TempDir()
@@ -235,7 +245,7 @@ func TestApplyRetention_KeepZeroNoOp(t *testing.T) {
 }
 
 func TestCreate_DatabaseMode_ExcludesStorage(t *testing.T) {
-	db := database.NewTestDB(t)
+	db := testDB(t)
 	t.Cleanup(func() { database.ResetTestDatabase(db) })
 
 	dir := t.TempDir()
@@ -339,7 +349,7 @@ func TestCreate_ThumbnailsIncluded(t *testing.T) {
 
 			var db *sql.DB
 			if mode == BackupModeFull {
-				db = database.NewTestDB(t)
+				db = testDB(t)
 				t.Cleanup(func() { database.ResetTestDatabase(db) })
 			}
 

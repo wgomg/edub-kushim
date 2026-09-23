@@ -48,7 +48,7 @@ The cast of characters:
 | `Registry` | `internal/task/registry.go` | task-type → handler map |
 | `Handler` | `internal/task/handler.go` | does the work, returns JSON result |
 | `Runner` | `internal/task/runner.go` | claims + dispatches + completes |
-| `Pool` | `internal/pool/pool.go` | N worker goroutines calling `Runner.Next` |
+| `Pool` | `internal/task/pool.go` | N worker goroutines calling `Nexter.Next` |
 | `Owner` / `Heartbeat` | `internal/task/batch.go`, `heartbeat.go` | batch lease management |
 | queue daemon | `internal/commands/queue.go` | orchestrates batches |
 | consume command | `internal/commands/consume.go` | runs one batch |
@@ -736,7 +736,7 @@ transaction as the reset, so a `discarded` enrich is re-armed exactly when
 its consume returns to `pending`.
 
 The wizard also auto-resumes config setup on boot
-(`internal/wizard/server.go:43-53`).
+(`internal/api/wizard/server.go:43-53`).
 
 ---
 
@@ -809,7 +809,7 @@ WHERE id = 1 AND (NOT running OR started_at <= NOW() - INTERVAL '30 minutes');
 
 The **mirror** task (`internal/task/handlers/mirror.go`) participates in the
 same gate: it is claimed with the lock held, drains in-flight work, and runs
-`rsync -a --delete` over the storage tree (see `internal/mirror/`). Because a
+`rsync -a --delete` over the storage tree (see `internal/backup/`). Because a
 large rsync can exceed the 30-minute staleness window, the handler runs a
 heartbeat that refreshes `backup_lock.started_at` every 5 minutes
 (`TouchMaintenanceLockForTask`, guarded by the claim token) for the rsync
@@ -823,7 +823,7 @@ Scheduling mirrors `IsBackupDue` as `IsMirrorDue` (same
 with the same payload-derived re-phase on schedule edits);
 the manual `kushim mirror` command bypasses task dedup but still waits for the
 lock and drain, and writes the `.edub-mirror.json` diagnostics file into the
-destination. Both the handler and the CLI share `mirror.RunLocked`, which owns
+destination. Both the handler and the CLI share `backup.RunLocked`, which owns
 the heartbeat → drain → rsync → state-file sequence (the CLI passes a NULL
 token, matching its NULL-owner lock from `AcquireBackupLock`).
 

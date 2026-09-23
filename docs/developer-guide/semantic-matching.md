@@ -43,13 +43,13 @@ Semantic matching happens at two points in the enrichment pipeline:
    `enricher.tag_adjudicator.enabled` is true (§7). Similarity ranks
    candidates; it never replaces a name.
 
-The core type is `*tagmatcher.Hugot` (`internal/tools/adapters/tagmatcher/hugot.go`),
+The core type is `*matcher.Hugot` (`internal/matcher/hugot.go`),
 an in-process embedding model (Hugot + ONNX runtime or pure-Go backend) that
 implements the `Matcher` and `Embedder` interfaces
-(`internal/tools/adapters/tagmatcher/adapter.go:5-24`). Two deployments exist:
+(`internal/matcher/adapter.go:5-24`). Two deployments exist:
 
 - **In-process** (`kushim` binary, cgo build): `*Hugot` runs the model directly.
-- **Remote** (`edub` binary, no cgo): `*tagmatch.MatcherClient` speaks HTTP over
+- **Remote** (`edub` binary, no cgo): `*matcher.MatcherClient` speaks HTTP over
   a Unix socket to the `kushim hugot` daemon (§9).
 
 Both satisfy the same interfaces, so the rest of the system cannot tell them
@@ -133,7 +133,7 @@ internet at first run of the ORT backend (`AGENTS.md` flags this).
 ## 3. The embedding store
 
 Matched against *every* tag for *every* document — so tag embeddings are
-cached in memory: `cache.EmbeddingStore` (`internal/cache/embedding_store.go:3`).
+cached in memory: `matcher.TagEmbeddingStore` (`internal/matcher/embedding_store.go:3`).
 
 ```go
 type EmbeddingStore struct {
@@ -142,11 +142,11 @@ type EmbeddingStore struct {
 }
 ```
 
-- It embeds `storeBase` (`internal/cache/cache.go:16`), which owns the
+- It embeds `storeBase` (`internal/matcher/cache.go:16`), which owns the
   `sync.RWMutex` and the `Attr`/`Attrs` metadata map (`dim`, `model`,
   `normalized`); reads take `RLock`, writes take `Lock` — the deep-copy
   `Entries()` discipline is covered in `golang.md` §10.
-- A named-store registry (`cache.Cache`, `cache.go:37`) maps names
+- A named-store registry (`matcher.Cache`, `internal/matcher/cache.go:37`) maps names
   (`"tags"`) to stores with a second RWMutex.
 
 The store is *authoritative for matching*: `Match` iterates whatever is in
@@ -157,7 +157,7 @@ store, it can never be suggested.
 
 ## 4. Bootstrapping the store
 
-`cache.BuildTagCache` (`internal/cache/bootstrap.go:16`) rebuilds the store
+`matcher.BuildTagCache` (`internal/matcher/bootstrap.go:16`) rebuilds the store
 from the `tag` table:
 
 1. Loads the **promoted** tag names (`ListPromotedTagNames`, i.e.
@@ -185,7 +185,7 @@ re-embeds the new name only when the renamed tag was promoted, and the enricher
 adds promoted names after the promotion check commits. `AddToStore`,
 `RemoveFromStore`, `Consolidate` and `Rank` in `hugot.go` likewise use their
 inputs verbatim — the canonical form is guaranteed upstream (DB names on the
-store side, `contentanalyzer.NormalizeTags` on the query side), so any per-call
+store side, `analyzer.NormalizeTags` on the query side), so any per-call
 normalization would only introduce drift.
 
 ---
@@ -335,7 +335,7 @@ for i, qEmb := range out.Embeddings {
 `Runner.RankTags` (`internal/tools/runner.go`) wraps the call with the
 configured timeout, and the enricher applies the identity pipeline locally
 (`internal/enrichment/identity.go`) with candidate generation from
-`tagpolicy.Evaluate` (`internal/enrichment/tagpolicy/policy.go`).
+`policy.Evaluate` (`internal/tags/policy/policy.go`).
 Per query the policy runs, in order: short-slice and empty-candidates
 passthrough, an identity fast path (exact equality with a store tag →
 apply the existing label), and then candidate generation — every remaining
@@ -464,7 +464,7 @@ re-judged in flight: a name already present in the tag table is not novel, so
 `applyTagQuality` never sees it again and no verdict row appears. Two surfaces
 resolve them afterwards:
 
-- The **scheduled reconciliation sweep** (`internal/enrichment/tagreconcile`)
+- The **scheduled reconciliation sweep** (`internal/tags/reconcile`)
   re-checks provisional tags older than
   `enricher.tag_reconcile.provisional_grace_days` (default 30): a stored
   passing verdict plus ≥ 2 live documents promotes without a judge call, and
@@ -488,7 +488,7 @@ resolve them afterwards:
 
 ## 8. Interfaces: local and remote implementations
 
-The interfaces (`internal/tools/adapters/tagmatcher/adapter.go`):
+The interfaces (`internal/matcher/adapter.go`):
 
 ```go
 type Matcher interface {
@@ -508,7 +508,7 @@ type Embedder interface {
 ```
 
 - `*Hugot` implements both (in-process, cgo build).
-- `*tagmatch.MatcherClient` (`internal/tagmatch/client.go:44`) implements both
+- `*matcher.MatcherClient` (`internal/matcher/client.go:44`) implements both
   over the Unix socket — used by `edub`, which cannot load the model. The RPC
   surface is `Match`, `Rank`, `AddToStore`, `RemoveFromStore`, `Health`
   (`internal/commands/hugot.go:95-99`). `Rank` prefers `/rpc/v1/rank` and
@@ -519,7 +519,7 @@ type Embedder interface {
   daemon is down — which is what turns tag CRUD into 503.
 
 The `EmbeddingStore` interface (`adapter.go:20-24`: `Add`/`Remove`/`Entries`)
-is implemented by `cache.EmbeddingStore` and by the test double
+is implemented by `matcher.TagEmbeddingStore` and by the test double
 `testutil.MockEmbedder`.
 
 ---
@@ -530,7 +530,7 @@ is implemented by `cache.EmbeddingStore` and by the test double
 model once and serves RPC over a Unix socket (`<config-dir>/kushim-hugot.sock`).
 
 - **Startup**: removes a stale socket, builds the tag cache
-  (`cache.BuildTagCache`), opens the listener, serves HTTP with a 30s
+  (`matcher.BuildTagCache`), opens the listener, serves HTTP with a 30s
   read/idle timeout and a `WriteTimeout` mirrored from
   `enricher.tagmatcher.timeout` (0 = no deadline), read once at startup.
 - **`--bg`** re-execs itself detached with stdio nulled (same pattern as
@@ -644,7 +644,7 @@ statements.
      `tagsNames`, composed from the promoted subset of `ListAll`).
    - `runner.RankTags(ctx, docId, analysis.Tags)` after the LLM pass;
      `planIdentity` applies identity and candidate generation via
-     `tagpolicy.Evaluate` (identity + gate subjects) with the promoted-only
+     `policy.Evaluate` (identity + gate subjects) with the promoted-only
      store set, so quarantined names are not targets. Style variants and
      aliases are applied before this point through M1/M3 and the alias
      resolver.
@@ -707,7 +707,7 @@ statements.
   untouched until `enricher.tag_quality.enabled: true`. Its weak-band
   thresholds are internal v1 constants (`t_low = -1`,
   `no_anchor_similarity = 0.60`), deliberately not operator-tunable.
-- **Verdicts are cache-scoped to `tagpolicy.Version`** — bumping the policy
+- **Verdicts are cache-scoped to `policy.Version`** — bumping the policy
   version invalidates every cached verdict at once (old rows stay in the event
   table for analysis, they are simply never read for the new version).
 

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 
-	types "github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/auth"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/errs"
@@ -33,7 +32,7 @@ type loginRequest struct {
 
 type loginResponse struct {
 	Token string              `json:"token"`
-	User  types.UserResponse   `json:"user"`
+	User  UserResponse   `json:"user"`
 }
 
 func writeUnauthorized(w http.ResponseWriter) {

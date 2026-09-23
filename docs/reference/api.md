@@ -5,7 +5,7 @@
 ### Struct
 
 - `Server`
-  - **Fields**: `httpServer *http.Server`, `logger *utils.Logger`, `addr string`, `cfg atomic.Pointer[config.Config]`, `matcherClient *tagmatch.MatcherClient`, `services *types.CrudServices`, `configWatcher *config.Watcher`, `pools struct { config *pool.Pool }`
+  - **Fields**: `httpServer *http.Server`, `logger *utils.Logger`, `addr string`, `cfg atomic.Pointer[config.Config]`, `matcherClient *matcher.MatcherClient`, `services *types.CrudServices`, `configWatcher *config.Watcher`, `pools struct { config *task.Pool }`
   - **Methods**:
     - `NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server` — Creates a `MatcherClient` connected to `kushim-hugot.sock` in the config dir, builds `CrudServices` with `Batch`, `Tag` (wired through `MatcherClient`), `People`, `PeopleType`, `DocumentType`, `User`, `Orphaned`, `ErroredFiles`, `ReEnrich` services, creates dispatcher with only the `"config"` task type registered. Generates a random `SessionSecret` if none is configured (with a warning log). Registers routes and middleware chain (request → auth → parambag).
     - `Start() error` — Probes matcher health (startup warning if unreachable), starts config pool, starts config file watcher (5s interval), then HTTP server
@@ -146,7 +146,7 @@ See `AuthMiddleware` under `server.go` → Functions.
 
 ---
 
-## `types/document.go`
+## DTOs (`handlers/document.go`)
 
 ### Structs
 
@@ -157,7 +157,7 @@ See `AuthMiddleware` under `server.go` → Functions.
 - `FTSDocumentResponse`
   - **Fields**: `ID string` (UUID, replaces the old int64 `id`), `Title`, `MD5Checksum`, `SHA512Checksum`, `FileSize`, `PageCount`, `WordCount`, `CharCount`, `Language`, `DocumentTypeID *int64`, `DocumentTypeName *string`, `Tags []TagResponse`, `People []PersonResponse`, `Rank float64`, `Snippet string` (HTML-escaped, `<b>` highlighting preserved), `TextContent string`
 
-### Request Structs (`types/document.go`)
+### Request Structs (`handlers/document.go`)
 
 - `DocumentUpdateRequest` — `Title string`, `DocumentTypeID int64`, `Language string`, `TextContent *string` (omitempty)
 - `AddDocumentTagRequest` — `TagID int64`
@@ -167,7 +167,7 @@ See `AuthMiddleware` under `server.go` → Functions.
 
 ---
 
-## `types/task.go`
+## DTOs (`handlers/task.go`)
 
 ### Structs
 
@@ -208,7 +208,7 @@ See `AuthMiddleware` under `server.go` → Functions.
     - `RestoreMergePair(w, r)` — `DELETE /api/v1/tags/merge/dismissals` — Accepts the same `{tag_a, tag_b}` body. Calls `services.TagMerge.RestorePair`: normalize, canonical order, delete the dismissal row; deleting an absent row is a no-op (`204`). Returns `204` with no body. Editor/admin only.
     - `ListDeleted(w, r)` — `GET /api/v1/tags/deleted?q=<prefix>&limit=50&offset=0` — Calls `services.Tag.ListDeleted(ctx, prefix, limit, offset)` (`ListDeletedTags` + `CountDeletedTags`). Returns `200` with `{results: [{name, kind, target_name?, created_at}], total}`; `kind` is `blocked` or `merged`, `target_name` only for merged rows. Editor/admin only.
     - `RestoreDeleted(w, r)` — `DELETE /api/v1/tags/deleted/{name}` — Calls `services.Tag.RestoreDeleted(ctx, name)`: reads the blocklist row, re-creates the tag for a `blocked` kind (a `Conflict` — tag already exists — is tolerated, and the embedding store is updated by `Tag.Create`), then deletes the blocklist row only on success so a failed restore keeps the name blocked; a `merged` kind only drops the row (no re-create). Unknown name → `404` via `errs.KindOf`; matcher unavailable on the create path → 503. Returns `200` with `{name, kind}`. Editor/admin only.
-    - `ListProvisional(w, r)` — `GET /api/v1/tags/provisional?limit=50&offset=0` — `limit` via `ParamBag` (default 50, clamped 1–100), `offset` (default 0, clamped 0–100000; negative values clamp to 0). Calls `services.Tag.ListProvisional` (`ListProvisionalTagsWithDocumentCount` — `promoted_at IS NULL` with at least one assignment, newest first, `document_count` counting live documents only) and `services.Tag.CountProvisional`, then one batched `services.Tag.LatestQualityEventsForNames` lookup over the page's names at `contentanalyzer.TagQualityVersion` and one `PendingIdentityCounts` lookup over the same names; each row's `criteria` JSON unmarshals into `TagQualityCriteriaView` (a failed unmarshal leaves `criteria` nil). Returns `200` with `{results: [{id, name, document_count, created_at, verdict, pending_identity}], total}`; `verdict` is `null` for names with no event row and `pending_identity` counts unresolved canonical-identity claims referencing the name on either side. Viewer-gated.
+    - `ListProvisional(w, r)` — `GET /api/v1/tags/provisional?limit=50&offset=0` — `limit` via `ParamBag` (default 50, clamped 1–100), `offset` (default 0, clamped 0–100000; negative values clamp to 0). Calls `services.Tag.ListProvisional` (`ListProvisionalTagsWithDocumentCount` — `promoted_at IS NULL` with at least one assignment, newest first, `document_count` counting live documents only) and `services.Tag.CountProvisional`, then one batched `services.Tag.LatestQualityEventsForNames` lookup over the page's names at `analyzer.TagQualityVersion` and one `PendingIdentityCounts` lookup over the same names; each row's `criteria` JSON unmarshals into `TagQualityCriteriaView` (a failed unmarshal leaves `criteria` nil). Returns `200` with `{results: [{id, name, document_count, created_at, verdict, pending_identity}], total}`; `verdict` is `null` for names with no event row and `pending_identity` counts unresolved canonical-identity claims referencing the name on either side. Viewer-gated.
     - `PromoteTag(w, r)` — `POST /api/v1/tags/{id}/promote` — Parses the path id (`400` on a malformed id) and calls `services.Tag.Promote(ctx, id, "human-approve")`, the same service method the reconciliation sweep uses. Maps status: `PromotePromoted` → `204`, `PromoteAlreadyPromoted` → `409`, `PromoteNotFound` → `404`. The service re-reads the tag, promotes it under `promoted_at IS NULL`, adds the name to the embedding store, and logs `tagquality[v1]: promote %q (reason=human-approve)`. Editor/admin only.
     - `ReevaluateIdentity(w, r)` — `POST /api/v1/tags/identity/reevaluate` — Calls `services.TagIdentity.Enqueue(ctx)`: while a `tagidentity` batch is queued or processing it returns `202` with `{already_queued: true}` and an empty `batch_id`; otherwise it creates one blocking task (dedup key `tagidentity`) plus a queued `tagidentity` batch and returns `202` with `{batch_id, already_queued: false}`. The run resolves pending identity evidence under `enricher.tag_reconcile.max_rejudge`. Editor/admin only.
 
@@ -299,7 +299,7 @@ See `AuthMiddleware` under `server.go` → Functions.
 
 ---
 
-## `types/config.go`
+## DTOs (`handlers/config.go`)
 
 ### Structs
 
@@ -337,7 +337,7 @@ See `AuthMiddleware` under `server.go` → Functions.
 
 ### Functions
 
-- `ConfigResponseFrom(cfg *config.Config) ConfigResponse` — Maps internal config to the API response, excluding internal/computed fields (model paths, similarity thresholds, etc.). Includes LLM adapter/provider/model config (flat structure), server host/port, `consumer.supported_files` + `consumer.converter`, and produces the `initialized` boolean in the `app` section plus the `available_file_types` list (derived from `internal/mime` via `mime.ExtensionsFor`).
+- `ConfigResponseFrom(cfg *config.Config) ConfigResponse` — Maps internal config to the API response, excluding internal/computed fields (model paths, similarity thresholds, etc.). Includes LLM adapter/provider/model config (flat structure), server host/port, `consumer.supported_files` + `consumer.converter`, and produces the `initialized` boolean in the `app` section plus the `available_file_types` list (derived from `internal/documents/mime` via `mime.ExtensionsFor`).
 
 ---
 
@@ -400,7 +400,7 @@ See `AuthMiddleware` under `server.go` → Functions.
 
 ---
 
-## `types/tag.go`
+## DTOs (`handlers/tag.go`)
 
 ### Structs
 
@@ -412,14 +412,14 @@ See `AuthMiddleware` under `server.go` → Functions.
 - `ProvisionalTagResponse` — `ID int64`, `Name string`, `DocumentCount int64` (live, non-trashed documents only), `CreatedAt time.Time` (the list query coalesces NULL `created_at` to the current time), `Verdict *TagQualityVerdictInfo` (`null` when the name has no `tag_quality_event` row at the current policy version), `PendingIdentity int64` (unresolved identity claims referencing the tag on either side)
 - `ProvisionalTagListResponse` — `Results []ProvisionalTagResponse`, `Total int64` (all provisional tags with at least one assignment, independent of the page)
 
-## `internal/types.go` (package `types`, import path `github.com/wgomg/edub-kushim/internal`)
+## `CrudServices` (`internal/service/crud.go`)
 
 ### Structs
 
 - `CrudServices` — `Batch *service.Batch`, `Tag *service.Tag`, `People *service.People`, `PeopleType *service.PeopleType`, `DocumentType *service.DocumentType`, `User *service.User`, `Orphaned *service.Orphaned`, `ErroredFiles *service.ErroredFiles`, `ReEnrich *service.ReEnrich`
   - `Close()` — Uses reflection to iterate struct fields; calls `Close()` on every field implementing `io.Closer`. Automatically picks up new services added as fields. `Orphaned` and `ErroredFiles` do not implement `io.Closer` and are skipped silently.
 
-## `types/user.go`
+## DTOs (`handlers/user.go`)
 
 ### Structs
 
@@ -430,7 +430,7 @@ See `AuthMiddleware` under `server.go` → Functions.
 - `CreateAPIKeyResponse` — `APIKey string` (raw key, returned only at creation), `Prefix string` (display-safe prefix `ek_` + first 9 hex chars), `Message string`
 - `APIKeyStatusResponse` — `HasAPIKey bool`, `APIKeyPrefix *string` (omitempty), `APIKeyCreatedAt *string` (omitempty)
 
-## `types/people.go`
+## DTOs (`handlers/people.go`)
 
 ### Structs
 
@@ -442,7 +442,7 @@ See `AuthMiddleware` under `server.go` → Functions.
 - `UpdatePeopleTypeRequest` — `Name string`, `Description string`
 - `PeopleTypeResponse` — `ID int64`, `Name string`, `Description string`
 
-## `types/document_type.go`
+## DTOs (`handlers/document_type.go`)
 
 ### Structs
 
@@ -452,7 +452,7 @@ See `AuthMiddleware` under `server.go` → Functions.
 
 ---
 
-## `types/saved_search.go`
+## DTOs (`handlers/saved_search.go`)
 
 ### Structs
 
@@ -461,7 +461,7 @@ See `AuthMiddleware` under `server.go` → Functions.
 
 ---
 
-## `types/document.go` (additions)
+## DTOs (`handlers/document.go`, additions)
 
 ### Structs
 

@@ -4,13 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/wgomg/edub-kushim/internal/consumption"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/documents/consumption"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/task/handlers"
 	"github.com/wgomg/edub-kushim/internal/testutil"
@@ -22,6 +23,9 @@ import (
 // need a DB-backed store, and internal/task is already in the test-db matrix.
 func newTestConsumeHandler(t *testing.T) (*handlers.ConsumeTaskHandler, *task.Store) {
 	t.Helper()
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
 	cfg, cleanupCfg := testutil.NewTestConfig(t)
 	// keep the consumer constructible without external tools; these tests
 	// never reach Process, so the real runner is never invoked

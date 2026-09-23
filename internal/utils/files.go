@@ -15,7 +15,7 @@ import (
 
 	"github.com/gabriel-vasile/mimetype"
 
-	_mime "github.com/wgomg/edub-kushim/internal/mime"
+	_mime "github.com/wgomg/edub-kushim/internal/documents/mime"
 )
 
 func CalculateMD5(path string) (string, error) {

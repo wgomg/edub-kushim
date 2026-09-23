@@ -273,10 +273,10 @@ system already has, how far it matches the model, and what the delta is.
 
 | Stage / duty | Existing mechanism | Status | Delta |
 |---|---|---|---|
-| **S1 Emission** | Typed generation contract, subject-matter rule, place rule, choose-or-justify, four negatives (`contentanalyzer/shared.go`); suggestions injected from the store | Partial · re-criteria | Prompt teaches document relevance and dictionary standardness; no dimension/decomposition guidance |
+| **S1 Emission** | Typed generation contract, subject-matter rule, place rule, choose-or-justify, four negatives (`analyzer/shared.go`); suggestions injected from the store | Partial · re-criteria | Prompt teaches document relevance and dictionary standardness; no dimension/decomposition guidance |
 | **S2 Facet ownership (P1)** | `SeparateFacets` category gate + country/continent whitelist (`internal/enrichment/enricher.go`) | Aligned | Untyped emissions degrade to string heuristics (accepted) |
-| **S3 Canonicality (P3)** | Consolidation policy gates/bands (`tagpolicy`), LLM adjudicator + verdict cache, merge review + dismissals, reconciler | Partial | Similarity band misses the variant classes; no extension-equality detector; merges are incident-driven, not a standing duty |
-| **S4 Atomicity (P4)** | Conjunction joint-tag split at emission (`enricher.go`, `utils/tagjoint.go`) + stored-joint worklist (`tagreconcile/joint.go`) | Partial · conflict | Conjunction-only scope; no part-value/mass evidence; prospective vs retrospective test |
+| **S3 Canonicality (P3)** | Consolidation policy gates/bands (`policy`), LLM adjudicator + verdict cache, merge review + dismissals, reconciler | Partial | Similarity band misses the variant classes; no extension-equality detector; merges are incident-driven, not a standing duty |
+| **S4 Atomicity (P4)** | Conjunction joint-tag split at emission (`enricher.go`, `utils/tagjoint.go`) + stored-joint worklist (`reconcile/joint.go`) | Partial · conflict | Conjunction-only scope; no part-value/mass evidence; prospective vs retrospective test |
 | **S5 Admission decision** | Weak band + rubric judge + verdict cache; promotion gate (cached pass + ≥ 2 live documents) | Re-criteria · partial | Dictionary criteria; no set predicates among the features; no feature combination or abstention path (operating mode: pinned rules; fitting optional — definition §8.10) |
 | **S6 Lifecycle** | `promoted_at` quarantine/promotion, store trust boundary, sweep, blocklist | Aligned (birth/influence) · Absent (demotion) | Promotion is one-way today; demotion policy decided (definition §8.4), not implemented |
 | **S7 Vocabulary services** | Promoted-only store (`BuildTagCache`), suggestions, consolidation targets, promoted-names fallback | Aligned | — |
@@ -439,13 +439,13 @@ authority moves to features and rules keeps its mechanics and becomes a supplier
 
 | Incumbent component | Role under the model | What crosses the seam |
 |---|---|---|
-| Typed contract and prompt (`contentanalyzer`) | the emission carrier — typed shape and negatives stay; dimension language, decomposition, and coverage are added | consumes the inventory and the canonical-form instruction; produces emissions and proposed names |
+| Typed contract and prompt (`analyzer`) | the emission carrier — typed shape and negatives stay; dimension language, decomposition, and coverage are added | consumes the inventory and the canonical-form instruction; produces emissions and proposed names |
 | Facet gates (`SeparateFacets`) | unchanged policy surface (P1) | facet drops; the place whitelist until its bug is fixed |
 | Seeded vocabulary (`seed-tags.sql`, `seed-tag-aliases.sql`) | the starting inventory: re-derived from the specs (broad, atomic, house form) and extended, with the place list materialized as values and the recognized alternate spellings as alias rows; inserted with influence | consumed by suggestions and as anchors; never a validation list |
-| Consolidation bands (`tagpolicy`) | candidate generation only: identity and gate subjects; similarity ranks, never decides | consumes emissions; produces gate subjects |
+| Consolidation bands (`policy`) | candidate generation only: identity and gate subjects; similarity ranks, never decides | consumes emissions; produces gate subjects |
 | Adjudicator and pair-verdict table | the same-intent gate reader; verdicts become evidence, never identity authority | consumes gate subjects; produces verdicts (features, labels) |
 | Merge review and dismissals | the canonicalization action surface: alias/merge dispositions, with review | consumes canonicalization worklists; produces alias/merge actions |
-| Reconciler (`tagreconcile`) | the retrospective action executor — decomposition, anchor creation, alias materialization, report-only first | consumes composition-review and canonicalization worklists; produces store changes and reports |
+| Reconciler (`reconcile`) | the retrospective action executor — decomposition, anchor creation, alias materialization, report-only first | consumes composition-review and canonicalization worklists; produces store changes and reports |
 | Weak band, rubric judge, quality verdict cache | feature providers for the decision over features; their conjunction stops being the decision | consumes candidates and documents; produces per-criterion booleans and cached features |
 | Quarantine and promotion gate | lifecycle mechanics (existence versus influence); promotion becomes one input to the staged decision | consumes birth and document events; produces provisional/promoted state |
 | Review queue | the deferral sink and the label source | consumes deferrals and flags; produces labels |

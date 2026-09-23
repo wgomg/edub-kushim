@@ -11,13 +11,13 @@ import (
 	"strings"
 
 	"github.com/spf13/viper"
+	"github.com/wgomg/edub-kushim/internal/api/wizard"
 	"github.com/wgomg/edub-kushim/internal/auth"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/utils"
-	"github.com/wgomg/edub-kushim/internal/wizard"
 	"golang.org/x/term"
 )
 

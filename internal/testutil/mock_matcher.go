@@ -7,7 +7,7 @@ import (
 
 )
 
-// MockEmbedder implements tagmatcher.Embedder for testing.
+// MockEmbedder implements matcher.Embedder for testing.
 // It stores embeddings in a simple map and returns fixed results.
 type MockEmbedder struct {
 	mu            sync.RWMutex

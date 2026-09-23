@@ -6,10 +6,10 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
-	"github.com/wgomg/edub-kushim/internal/api/types"
+	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/service"
-	"github.com/wgomg/edub-kushim/internal/tagmatch"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -17,7 +17,7 @@ func isMatcherUnavailable(err error) bool {
 	if err == nil {
 		return false
 	}
-	return errors.Is(err, tagmatch.ErrMatcherUnavailable)
+	return errors.Is(err, matcher.ErrMatcherUnavailable)
 }
 
 func matcherUnavailableResponse(w http.ResponseWriter) {
@@ -54,7 +54,7 @@ func (h *TagHandler) List(w http.ResponseWriter, r *http.Request) {
 	var total int64
 	var err error
 
-	var responses []types.TagResponse
+	var responses []TagResponse
 
 	if q != "" {
 		result, searchErr := h.services.Tag.SearchByNameWithDocumentCount(ctx, q, int32(limit), int32(offset))
@@ -63,9 +63,9 @@ func (h *TagHandler) List(w http.ResponseWriter, r *http.Request) {
 			total, err = h.services.Tag.CountByName(ctx, q)
 		}
 		if err == nil {
-			responses = make([]types.TagResponse, len(result))
+			responses = make([]TagResponse, len(result))
 			for i, t := range result {
-				responses[i] = types.TagResponse{ID: t.ID, Name: t.Name, DocumentCount: t.DocumentCount}
+				responses[i] = TagResponse{ID: t.ID, Name: t.Name, DocumentCount: t.DocumentCount}
 			}
 		}
 	} else {
@@ -75,9 +75,9 @@ func (h *TagHandler) List(w http.ResponseWriter, r *http.Request) {
 			total, err = h.services.Tag.Count(ctx)
 		}
 		if err == nil {
-			responses = make([]types.TagResponse, len(result))
+			responses = make([]TagResponse, len(result))
 			for i, t := range result {
-				responses[i] = types.TagResponse{ID: t.ID, Name: t.Name, DocumentCount: t.DocumentCount}
+				responses[i] = TagResponse{ID: t.ID, Name: t.Name, DocumentCount: t.DocumentCount}
 			}
 		}
 	}
@@ -87,14 +87,14 @@ func (h *TagHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(types.TagListResponse{Results: responses, Total: total})
+	json.NewEncoder(w).Encode(TagListResponse{Results: responses, Total: total})
 }
 
 func (h *TagHandler) Create(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
 
-	var req types.CreateTagRequest
+	var req CreateTagRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
@@ -120,10 +120,10 @@ func (h *TagHandler) Create(w http.ResponseWriter, r *http.Request) {
 	case service.Created:
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(types.TagResponse{ID: results[0].Entity.ID, Name: results[0].Entity.Name})
+		json.NewEncoder(w).Encode(TagResponse{ID: results[0].Entity.ID, Name: results[0].Entity.Name})
 	case service.Apply, service.Alias:
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(types.TagResponse{ID: results[0].Entity.ID, Name: results[0].Entity.Name})
+		json.NewEncoder(w).Encode(TagResponse{ID: results[0].Entity.ID, Name: results[0].Entity.Name})
 	case service.Conflict:
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
@@ -147,7 +147,7 @@ func (h *TagHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req types.UpdateTagRequest
+	var req UpdateTagRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
@@ -172,7 +172,7 @@ func (h *TagHandler) Update(w http.ResponseWriter, r *http.Request) {
 	switch results[0].Status {
 	case service.Updated, service.Noop:
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(types.TagResponse{ID: results[0].Entity.ID, Name: results[0].Entity.Name})
+		json.NewEncoder(w).Encode(TagResponse{ID: results[0].Entity.ID, Name: results[0].Entity.Name})
 	case service.UpdateConflict:
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
@@ -240,7 +240,7 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	responses := make([]types.ProvisionalTagResponse, len(rows))
+	responses := make([]ProvisionalTagResponse, len(rows))
 	if len(rows) > 0 {
 		names := make([]string, len(rows))
 		for i, t := range rows {
@@ -251,14 +251,14 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 			writeServiceError(w, h.logger, &reqID, "provisional tag verdicts", err)
 			return
 		}
-		verdicts := make(map[string]types.TagQualityVerdictInfo, len(events))
+		verdicts := make(map[string]TagQualityVerdictInfo, len(events))
 		for _, e := range events {
-			info := types.TagQualityVerdictInfo{
+			info := TagQualityVerdictInfo{
 				Pass:      e.Pass,
 				Model:     e.VerdictModel.String,
 				VerdictAt: e.VerdictAt,
 			}
-			var criteria types.TagQualityCriteriaView
+			var criteria TagQualityCriteriaView
 			if len(e.Criteria) > 0 && json.Unmarshal(e.Criteria, &criteria) == nil {
 				info.Criteria = &criteria
 			}
@@ -270,7 +270,7 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for i, t := range rows {
-			responses[i] = types.ProvisionalTagResponse{
+			responses[i] = ProvisionalTagResponse{
 				ID:            t.ID,
 				Name:          t.Name,
 				DocumentCount: t.DocumentCount,
@@ -285,7 +285,7 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(types.ProvisionalTagListResponse{Results: responses, Total: total})
+	json.NewEncoder(w).Encode(ProvisionalTagListResponse{Results: responses, Total: total})
 }
 
 func (h *TagHandler) PromoteTag(w http.ResponseWriter, r *http.Request) {
@@ -344,7 +344,7 @@ func (h *TagHandler) Merge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req types.MergeTagRequest
+	var req MergeTagRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
@@ -361,7 +361,7 @@ func (h *TagHandler) Merge(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(types.MergeTagResponse{
+	json.NewEncoder(w).Encode(MergeTagResponse{
 		ID:         result.TargetID,
 		Name:       result.TargetName,
 		Reassigned: result.Reassigned,
@@ -388,9 +388,9 @@ func (h *TagHandler) ListDeleted(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	responses := make([]types.DeletedTagResponse, len(rows))
+	responses := make([]DeletedTagResponse, len(rows))
 	for i, t := range rows {
-		responses[i] = types.DeletedTagResponse{
+		responses[i] = DeletedTagResponse{
 			Name:       t.Name,
 			Kind:       t.Kind,
 			TargetName: t.TargetName.String,
@@ -399,7 +399,7 @@ func (h *TagHandler) ListDeleted(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(types.DeletedTagListResponse{Results: responses, Total: total})
+	json.NewEncoder(w).Encode(DeletedTagListResponse{Results: responses, Total: total})
 }
 
 func (h *TagHandler) RestoreDeleted(w http.ResponseWriter, r *http.Request) {
@@ -461,7 +461,7 @@ func (h *TagHandler) DismissMergePair(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
 
-	var req types.MergePairRequest
+	var req MergePairRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
@@ -479,7 +479,7 @@ func (h *TagHandler) RestoreMergePair(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
 
-	var req types.MergePairRequest
+	var req MergePairRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
@@ -491,4 +491,72 @@ func (h *TagHandler) RestoreMergePair(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type TagListResponse struct {
+	Results []TagResponse `json:"results"`
+	Total   int64         `json:"total"`
+}
+
+type DeletedTagResponse struct {
+	Name       string    `json:"name"`
+	Kind       string    `json:"kind"`
+	TargetName string    `json:"target_name,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+type DeletedTagListResponse struct {
+	Results []DeletedTagResponse `json:"results"`
+	Total   int64                `json:"total"`
+}
+
+type TagQualityCriteriaView struct {
+	SubjectMatter      *bool `json:"subject_matter"`
+	StandardTerm       *bool `json:"standard_term"`
+	NotPersonPlaceWork *bool `json:"not_person_place_work"`
+	AppropriatelyBroad *bool `json:"appropriately_broad"`
+}
+
+type TagQualityVerdictInfo struct {
+	Pass      bool                    `json:"pass"`
+	Criteria  *TagQualityCriteriaView `json:"criteria"`
+	Model     string                  `json:"model,omitempty"`
+	VerdictAt time.Time               `json:"verdict_at"`
+}
+
+type ProvisionalTagResponse struct {
+	ID              int64                  `json:"id"`
+	Name            string                 `json:"name"`
+	DocumentCount   int64                  `json:"document_count"`
+	CreatedAt       time.Time              `json:"created_at"`
+	Verdict         *TagQualityVerdictInfo `json:"verdict"`
+	PendingIdentity int64                  `json:"pending_identity"`
+}
+
+type ProvisionalTagListResponse struct {
+	Results []ProvisionalTagResponse `json:"results"`
+	Total   int64                    `json:"total"`
+}
+
+type CreateTagRequest struct {
+	Name string `json:"name"`
+}
+
+type UpdateTagRequest struct {
+	Name string `json:"name"`
+}
+
+type MergeTagRequest struct {
+	TargetID int64 `json:"target_id"`
+}
+
+type MergeTagResponse struct {
+	ID         int64  `json:"id"`
+	Name       string `json:"name"`
+	Reassigned int64  `json:"reassigned"`
+}
+
+type MergePairRequest struct {
+	TagA string `json:"tag_a"`
+	TagB string `json:"tag_b"`
 }

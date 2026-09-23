@@ -6,7 +6,7 @@ result parsing, the error taxonomy (with the token/credit handling that
 drives batch pausing), the model catalog registry, and the enricher pipeline
 that ties it all to documents.
 
-Audience: developers touching `internal/tools/adapters/contentanalyzer/`,
+Audience: developers touching `internal/llm/analyzer/`,
 `internal/llm/`, `internal/enrichment/`, or the `enricher.*` config, or anyone
 adding a new model/provider.
 
@@ -37,10 +37,10 @@ pieces:
 
 | Piece | Files | Role |
 |---|---|---|
-| `ContentAnalyzer` interface | `contentanalyzer/adapter.go` | the capability contract |
-| Anthropic adapter | `contentanalyzer/llm_anthropic.go` | Claude via `POST /messages` |
-| OpenAI-compatible adapter | `contentanalyzer/openai_compatible.go` | anything with a `/chat/completions` API |
-| Shared prompt/parse logic | `contentanalyzer/shared.go` | system prompt, template, JSON cleaning, errors |
+| `ContentAnalyzer` interface | `analyzer/adapter.go` | the capability contract |
+| Anthropic adapter | `analyzer/llm_anthropic.go` | Claude via `POST /messages` |
+| OpenAI-compatible adapter | `analyzer/openai_compatible.go` | anything with a `/chat/completions` API |
+| Shared prompt/parse logic | `analyzer/shared.go` | system prompt, template, JSON cleaning, errors |
 | Model catalog | `llm/registry.go` + `model_catalog.json` | per-model capabilities |
 | The enricher | `internal/enrichment/enricher.go` | orchestrates: reduce → match → analyze → persist |
 | Task handler | `internal/task/handlers/enrich.go` | the `enrich` task type |
@@ -55,7 +55,7 @@ the whole batch pauses (§10).
 
 ## 2. The ContentAnalyzer interface
 
-`internal/tools/adapters/contentanalyzer/adapter.go:21-37`:
+`internal/llm/analyzer/adapter.go:21-37`:
 
 ```go
 type ContentAnalyzer interface {
@@ -525,7 +525,7 @@ for i := range 2 {
     are contained in the title; caps at 5.
 11. **Identity** (`enricher.go`, `identity.go`): `Runner.RankTags` ranks LLM
     tags against canonical existing tags, then the identity pipeline applies
-    house form, aliases, and key equality, and `tagpolicy.Evaluate` generates
+    house form, aliases, and key equality, and `policy.Evaluate` generates
     identity + gate subjects. Proposed folds are confirmed by the **identity
     judge** and every remaining candidate neighbour is resolved by **tag
     adjudication** when `enricher.tag_adjudicator.enabled` is true

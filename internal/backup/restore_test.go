@@ -19,11 +19,14 @@ import (
 
 func restoreDBConfig(t *testing.T) (config.DatabaseConfig, string) {
 	t.Helper()
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
 	return config.DatabaseConfig{Runtime: "podman", Container: "edub-test-pg"}, database.TestDSN(t)
 }
 
 func TestValidateArchive_Valid(t *testing.T) {
-	db := database.NewTestDB(t)
+	db := testDB(t)
 	t.Cleanup(func() { database.ResetTestDatabase(db) })
 
 	dir := t.TempDir()
@@ -93,7 +96,7 @@ func TestValidateArchive_MissingFile(t *testing.T) {
 }
 
 func TestExtractArchive_Valid(t *testing.T) {
-	db := database.NewTestDB(t)
+	db := testDB(t)
 	t.Cleanup(func() { database.ResetTestDatabase(db) })
 
 	dir := t.TempDir()
@@ -171,7 +174,7 @@ func TestExtractArchive_SymlinkSkipped(t *testing.T) {
 }
 
 func TestReplaceFiles_SQLDump(t *testing.T) {
-	db := database.NewTestDB(t)
+	db := testDB(t)
 	t.Cleanup(func() { database.ResetTestDatabase(db) })
 
 	dir := t.TempDir()
@@ -196,7 +199,7 @@ func TestReplaceFiles_SQLDump(t *testing.T) {
 		t.Fatalf("ExtractArchive: %v", err)
 	}
 
-	restoreDB := database.NewTestDB(t)
+	restoreDB := testDB(t)
 	t.Cleanup(func() {
 		restoreDB.Exec("DROP SCHEMA IF EXISTS public CASCADE")
 		restoreDB.Exec("CREATE SCHEMA public")
@@ -393,7 +396,7 @@ func TestReplaceFiles_ConfigSavedAsRestored(t *testing.T) {
 
 func createRewriteTestBackup(t *testing.T, configContent, oldStorage string) (extractDir, configPath string) {
 	t.Helper()
-	db := database.NewTestDB(t)
+	db := testDB(t)
 	t.Cleanup(func() { database.ResetTestDatabase(db) })
 
 	dir := t.TempDir()
@@ -438,7 +441,7 @@ func insertRewriteTestRows(t *testing.T, db *sql.DB, base string) {
 
 func newRestoreDB(t *testing.T) *sql.DB {
 	t.Helper()
-	db := database.NewTestDB(t)
+	db := testDB(t)
 	t.Cleanup(func() {
 		db.Exec("DROP SCHEMA IF EXISTS public CASCADE")
 		db.Exec("CREATE SCHEMA public")
@@ -536,7 +539,7 @@ func createModeBackup(t *testing.T, mode BackupMode) (string, string) {
 	backupDir := filepath.Join(dir, "backups")
 	os.MkdirAll(backupDir, 0755)
 
-	db := database.NewTestDB(t)
+	db := testDB(t)
 	t.Cleanup(func() { database.ResetTestDatabase(db) })
 
 	result, err := Create(context.Background(), db, database.SchemaFS, BackupModeFull, backupDir, configPath, storageDir)
@@ -565,7 +568,7 @@ func createModeBackup(t *testing.T, mode BackupMode) (string, string) {
 
 func TestReplaceFiles_DocumentsMode_SkipsSQL(t *testing.T) {
 	dir := t.TempDir()
-	db := database.NewTestDB(t)
+	db := testDB(t)
 	t.Cleanup(func() { database.ResetTestDatabase(db) })
 
 	if _, err := db.Exec(`
@@ -618,7 +621,7 @@ func TestReplaceFiles_DatabaseMode_StorageUntouched(t *testing.T) {
 
 func TestReplaceFiles_LegacyManifestNoMode_TreatedAsFull(t *testing.T) {
 	dir := t.TempDir()
-	db := database.NewTestDB(t)
+	db := testDB(t)
 	t.Cleanup(func() { database.ResetTestDatabase(db) })
 
 	extract, _ := createModeBackup(t, BackupModeFull)

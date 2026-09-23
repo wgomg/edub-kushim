@@ -2,7 +2,7 @@
 
 ## Context
 
-The Hugot-based tag matcher (`internal/tools/adapters/tagmatcher/hugot.go`) encodes document text as embeddings via the `Encode()` method. For texts whose token count exceeds the effective chunk size (`chunk_size` config, default 4096; explicit `0` = the model's `max_position_embeddings` minus a 12-token safety margin — 8180 tokens for BGE-M3), it delegates to `encodeChunked()`, which splits the tokens into overlapping windows, encodes each window, and mean-pools the results.
+The Hugot-based tag matcher (`internal/matcher/hugot.go`) encodes document text as embeddings via the `Encode()` method. For texts whose token count exceeds the effective chunk size (`chunk_size` config, default 4096; explicit `0` = the model's `max_position_embeddings` minus a 12-token safety margin — 8180 tokens for BGE-M3), it delegates to `encodeChunked()`, which splits the tokens into overlapping windows, encodes each window, and mean-pools the results.
 
 ## The Waste
 
@@ -67,8 +67,8 @@ If `chunk_size` is set to a generous value (e.g., 4096) and most reduced texts f
 
 ## Code References
 
-- `Encode()` — `/internal/tools/adapters/tagmatcher/hugot.go` l.253–316
+- `Encode()` — `/internal/matcher/hugot.go` l.253–316
   - Tokenization pass at l.275
-- `encodeChunked()` — `/internal/tools/adapters/tagmatcher/hugot.go` l.318–364
+- `encodeChunked()` — `/internal/matcher/hugot.go` l.318–364
   - Second tokenization pass at l.324
   - Decode→re-encode loop at l.338–354 (`backends.Decode` → `RunPipeline`)

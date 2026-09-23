@@ -54,7 +54,7 @@ jobs:
           name: web-assets
           path: |
             internal/static/build
-            internal/wizard/static
+            internal/api/wizard/static
           if-no-files-found: error
 
   build:

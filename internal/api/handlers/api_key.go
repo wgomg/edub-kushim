@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/auth"
-	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/utils"
@@ -66,7 +65,7 @@ func (h *APIKeyHandler) issueKey(w http.ResponseWriter, r *http.Request, keyFunc
 	prefix := rawKey[:len("ek_")+9]
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(types.CreateAPIKeyResponse{
+	json.NewEncoder(w).Encode(CreateAPIKeyResponse{
 		APIKey:  rawKey,
 		Prefix:  prefix,
 		Message: message,
@@ -146,7 +145,7 @@ func (h *APIKeyHandler) GetKeyStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(types.APIKeyStatusResponse{
+	json.NewEncoder(w).Encode(APIKeyStatusResponse{
 		HasAPIKey:       hasKey,
 		APIKeyPrefix:    prefix,
 		APIKeyCreatedAt: createdAt,
@@ -180,7 +179,7 @@ func (h *APIKeyHandler) MeGenerateKey(w http.ResponseWriter, r *http.Request) {
 	prefix := rawKey[:len("ek_")+9]
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(types.CreateAPIKeyResponse{
+	json.NewEncoder(w).Encode(CreateAPIKeyResponse{
 		APIKey:  rawKey,
 		Prefix:  prefix,
 		Message: "Save this API key — it will not be shown again",
@@ -229,7 +228,7 @@ func (h *APIKeyHandler) MeRotateKey(w http.ResponseWriter, r *http.Request) {
 
 	prefix := rawKey[:len("ek_")+9]
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(types.CreateAPIKeyResponse{
+	json.NewEncoder(w).Encode(CreateAPIKeyResponse{
 		APIKey:  rawKey,
 		Prefix:  prefix,
 		Message: "Previous API key has been revoked. Save this new key — it will not be shown again",
@@ -268,7 +267,7 @@ func (h *APIKeyHandler) MeGetKeyStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(types.APIKeyStatusResponse{
+	json.NewEncoder(w).Encode(APIKeyStatusResponse{
 		HasAPIKey:       hasKey,
 		APIKeyPrefix:    prefix,
 		APIKeyCreatedAt: createdAt,

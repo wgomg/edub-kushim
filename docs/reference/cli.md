@@ -43,14 +43,14 @@
 
 ### Struct
 
-- `Container` — `cfg` (atomic.Pointer), `logger`, `db`, `engine`, `cache`, `dispatcher`, `pools struct { consume *pool.Pool; enrich *pool.Pool; config *pool.Pool; backup *pool.Pool; mirror *pool.Pool }`
+- `Container` — `cfg` (atomic.Pointer), `logger`, `db`, `engine`, `cache`, `dispatcher`, `pools struct { consume *task.Pool; enrich *task.Pool; config *task.Pool; backup *task.Pool; mirror *task.Pool }`
   - **Methods**:
     - `NewContainer(cfg, logger)` — No DB
     - `NewContainerWithDB(cfg, logger, db)` — With provided DB
     - `GetDB() (*sql.DB, error)` — Creates DB lazily, runs goose migrations on first open
-    - `GetCache() (*cache.Cache, error)` — Builds tag embedding cache lazily via `cache.BuildTagCache`
+    - `GetCache() (*matcher.Cache, error)` — Builds tag embedding cache lazily via `matcher.BuildTagCache`
     - `GetDispatcher() (*task.Dispatcher, error)` — Lazily creates dispatcher. Creates a `MatcherClient` connected to the Unix socket at `<config_dir>/kushim-hugot.sock`, builds `TagService` wired through the client, and `Enricher` with the matcher.
-    - `GetPool(taskType) (*pool.Pool, error)` — Returns the pool for "consume", "enrich", or "config", lazily creates with dispatcher. Config pool uses 1 worker and 5s poll interval.
+    - `GetPool(taskType) (*task.Pool, error)` — Returns the pool for "consume", "enrich", or "config", lazily creates with dispatcher. Config pool uses 1 worker and 5s poll interval.
     - `GetSearchEngine() (*search.Engine, error)`
     - `Close()` — Stops all pools if created, closes DB
 

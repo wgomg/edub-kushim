@@ -307,7 +307,7 @@ For production, build and embed in Go binary:
 
 ```bash
 make web-build     # builds to internal/static/build/
-make wizard-build  # builds to internal/wizard/static/
+make wizard-build  # builds to internal/api/wizard/static/
 ```
 
 ### Code generation

@@ -36,25 +36,25 @@ web-build:
 
 wizard-build:
 	. "$(NVM_DIR)/nvm.sh" && nvm use && cd web-wizard && npm ci && npm audit fix || true && npm run build
-	rm -rf internal/wizard/static
-	cp -r web-wizard/build internal/wizard/static
+	rm -rf internal/api/wizard/static
+	cp -r web-wizard/build internal/api/wizard/static
 
 # The SPA builds live in gitignored dirs that Go embeds via //go:embed,
 # so they must be staged before any go build/test. Used by CI after npm builds.
 stage-web:
-	rm -rf internal/static/build internal/wizard/static
-	mkdir -p internal/static internal/wizard
+	rm -rf internal/static/build internal/api/wizard/static
+	mkdir -p internal/static internal/api/wizard
 	cp -r web/build internal/static/build
-	cp -r web-wizard/build internal/wizard/static
+	cp -r web-wizard/build internal/api/wizard/static
 
 # Same as stage-web, but from the uploaded web-assets artifact (layout:
-# <dir>/static/build, <dir>/wizard/static), e.g. actions/download-artifact.
+# <dir>/static/build, <dir>/api/wizard/static), e.g. actions/download-artifact.
 WEB_ASSETS_DIR ?= web-assets
 stage-web-artifact:
-	rm -rf internal/static/build internal/wizard/static
-	mkdir -p internal/static internal/wizard
+	rm -rf internal/static/build internal/api/wizard/static
+	mkdir -p internal/static internal/api/wizard
 	cp -r $(WEB_ASSETS_DIR)/static/build internal/static/build
-	cp -r $(WEB_ASSETS_DIR)/wizard/static internal/wizard/static
+	cp -r $(WEB_ASSETS_DIR)/api/wizard/static internal/api/wizard/static
 
 build:
 	go build -tags "XLA,ORT" -ldflags="$(LDFLAGS)" -o $(BINARY) ./cmd/kushim/main.go
@@ -240,17 +240,16 @@ test-short:
 	CGO_ENABLED=0 go test -tags "XLA,ORT" -count=1 -timeout 60s \
 		./internal/llm/ \
 		./internal/config/ \
-		./internal/api/types/ \
 		./internal/tools/ \
 		./internal/utils/ \
-		./internal/tagmatch/ \
-		./internal/storage/ \
+		./internal/matcher/ \
+		./internal/documents/storage/ \
 		./internal/auth/ \
 		./internal/api/ \
-		./internal/tools/adapters/contentanalyzer/ \
+		./internal/llm/analyzer/ \
 		./internal/errs/ \
-		./internal/pool/ \
-		./internal/mirror/ \
+		./internal/task/ \
+		./internal/backup/ \
 		./internal/types/ \
 		./internal/tags/ \
 
@@ -262,17 +261,16 @@ test-verbose:
 	CGO_ENABLED=0 go test -tags "XLA,ORT" -count=1 -v -timeout 60s \
 		./internal/llm/ \
 		./internal/config/ \
-		./internal/api/types/ \
 		./internal/tools/ \
 		./internal/utils/ \
-		./internal/tagmatch/ \
-		./internal/storage/ \
+		./internal/matcher/ \
+		./internal/documents/storage/ \
 		./internal/auth/ \
 		./internal/api/ \
-		./internal/tools/adapters/contentanalyzer/ \
+		./internal/llm/analyzer/ \
 		./internal/errs/ \
-		./internal/pool/ \
-		./internal/mirror/ \
+		./internal/task/ \
+		./internal/backup/ \
 		./internal/types/ \
 		./internal/tags/ \
 
@@ -286,7 +284,7 @@ test-db:
 		./internal/service/ \
 		./internal/tags/ \
 		./internal/api/handlers/ \
-		./internal/consumption/
+		./internal/documents/consumption/
 
 # Backup tests also require PostgreSQL via TEST_DATABASE_URL.
 .PHONY: test-backup
@@ -301,11 +299,11 @@ test-backup:
 
 test-cgo-db:
 	CGO_ENABLED=1 go test -tags "XLA,ORT" -count=1 -timeout 120s \
-		./internal/consumption/ \
+		./internal/documents/consumption/ \
 		./internal/configtask/ \
 		./internal/commands/ \
 		./internal/enrichment/ \
-		./internal/enrichment/tagreconcile/ \
+		./internal/tags/reconcile/ \
 		./internal/api/handlers/
 
 # Single-package run for development. Filter with RUN, e.g.:
@@ -333,14 +331,14 @@ test-web-e2e:
 
 test-cgo:
 	CGO_ENABLED=1 go test -tags "XLA,ORT" -count=1 -timeout 120s \
-		./internal/tools/adapters/ \
-		./internal/tools/adapters/ocr/ \
-		./internal/tools/adapters/tagmatcher/ \
+		./internal/cgo/ \
+		./internal/documents/ocr/ \
+		./internal/matcher/ \
 		./internal/tools/ \
 		./internal/commands/ \
 		./internal/task/handlers/ \
 		./internal/enrichment/ \
-		./internal/enrichment/tagreconcile/
+		./internal/tags/reconcile/
 
 test-cgo-glibc:
 	podman run --rm \

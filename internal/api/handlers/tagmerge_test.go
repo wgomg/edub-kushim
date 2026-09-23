@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/testutil"
@@ -37,14 +36,14 @@ func TestTagMergeHandler_Merge_HappyPath(t *testing.T) {
 	docID, _ := database.CreateTestDocument(t, env.client.Queries, "hm.pdf")
 	database.MustAddDocumentTag(t, env.client.Queries, docID, sourceID)
 
-	body, _ := json.Marshal(types.MergeTagRequest{TargetID: targetID})
+	body, _ := json.Marshal(MergeTagRequest{TargetID: targetID})
 	w := rec()
 	r := req(t, "POST", "/api/v1/tags/"+strconv.FormatInt(sourceID, 10)+"/merge", body)
 	r.SetPathValue("id", strconv.FormatInt(sourceID, 10))
 	h.Merge(w, r)
 
 	testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
-	var resp types.MergeTagResponse
+	var resp MergeTagResponse
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
@@ -64,7 +63,7 @@ func TestTagMergeHandler_Merge_BadRequest(t *testing.T) {
 
 	t.Run("invalid id", func(t *testing.T) {
 		w := rec()
-		body, _ := json.Marshal(types.MergeTagRequest{TargetID: 1})
+		body, _ := json.Marshal(MergeTagRequest{TargetID: 1})
 		r := req(t, "POST", "/api/v1/tags/not-a-number/merge", body)
 		r.SetPathValue("id", "not-a-number")
 		h.Merge(w, r)
@@ -74,7 +73,7 @@ func TestTagMergeHandler_Merge_BadRequest(t *testing.T) {
 	t.Run("missing target_id", func(t *testing.T) {
 		sourceID := database.MustCreateTag(t, env.client.Queries, "missing-target-source")
 		w := rec()
-		body, _ := json.Marshal(types.MergeTagRequest{TargetID: 0})
+		body, _ := json.Marshal(MergeTagRequest{TargetID: 0})
 		r := req(t, "POST", "/api/v1/tags/"+strconv.FormatInt(sourceID, 10)+"/merge", body)
 		r.SetPathValue("id", strconv.FormatInt(sourceID, 10))
 		h.Merge(w, r)
@@ -84,7 +83,7 @@ func TestTagMergeHandler_Merge_BadRequest(t *testing.T) {
 	t.Run("same id is invalid", func(t *testing.T) {
 		id := database.MustCreateTag(t, env.client.Queries, "handler-self-merge")
 		w := rec()
-		body, _ := json.Marshal(types.MergeTagRequest{TargetID: id})
+		body, _ := json.Marshal(MergeTagRequest{TargetID: id})
 		r := req(t, "POST", "/api/v1/tags/"+strconv.FormatInt(id, 10)+"/merge", body)
 		r.SetPathValue("id", strconv.FormatInt(id, 10))
 		h.Merge(w, r)
@@ -100,7 +99,7 @@ func TestTagMergeHandler_Merge_NotFound(t *testing.T) {
 	t.Run("missing source", func(t *testing.T) {
 		targetID := database.MustCreateTag(t, env.client.Queries, "nf-target")
 		w := rec()
-		body, _ := json.Marshal(types.MergeTagRequest{TargetID: targetID})
+		body, _ := json.Marshal(MergeTagRequest{TargetID: targetID})
 		r := req(t, "POST", "/api/v1/tags/999999999/merge", body)
 		r.SetPathValue("id", "999999999")
 		h.Merge(w, r)
@@ -110,7 +109,7 @@ func TestTagMergeHandler_Merge_NotFound(t *testing.T) {
 	t.Run("missing target", func(t *testing.T) {
 		sourceID := database.MustCreateTag(t, env.client.Queries, "nf-source")
 		w := rec()
-		body, _ := json.Marshal(types.MergeTagRequest{TargetID: 999999999})
+		body, _ := json.Marshal(MergeTagRequest{TargetID: 999999999})
 		r := req(t, "POST", "/api/v1/tags/"+strconv.FormatInt(sourceID, 10)+"/merge", body)
 		r.SetPathValue("id", strconv.FormatInt(sourceID, 10))
 		h.Merge(w, r)
@@ -141,7 +140,7 @@ func TestTagMergeHandler_DismissMergePair_HappyPath(t *testing.T) {
 	database.MustCreateTag(t, env.client.Queries, "handler dismiss a")
 	database.MustCreateTag(t, env.client.Queries, "handler dismiss b")
 
-	body, _ := json.Marshal(types.MergePairRequest{TagA: "Handler Dismiss A", TagB: "Handler Dismiss B"})
+	body, _ := json.Marshal(MergePairRequest{TagA: "Handler Dismiss A", TagB: "Handler Dismiss B"})
 	w := rec()
 	r := req(t, "POST", "/api/v1/tags/merge/dismissals", body)
 	h.DismissMergePair(w, r)
@@ -163,7 +162,7 @@ func TestTagMergeHandler_DismissMergePair_TagNotFound(t *testing.T) {
 
 	database.MustCreateTag(t, env.client.Queries, "handler dismiss present")
 
-	body, _ := json.Marshal(types.MergePairRequest{TagA: "handler dismiss present", TagB: "handler dismiss missing"})
+	body, _ := json.Marshal(MergePairRequest{TagA: "handler dismiss present", TagB: "handler dismiss missing"})
 	w := rec()
 	r := req(t, "POST", "/api/v1/tags/merge/dismissals", body)
 	h.DismissMergePair(w, r)
@@ -194,7 +193,7 @@ func TestTagMergeHandler_RestoreMergePair_HappyPath(t *testing.T) {
 	_ = svc
 	_ = svc.DismissPair(context.Background(), "Handler Restore A", "Handler Restore B")
 
-	body, _ := json.Marshal(types.MergePairRequest{TagA: "Handler Restore A", TagB: "Handler Restore B"})
+	body, _ := json.Marshal(MergePairRequest{TagA: "Handler Restore A", TagB: "Handler Restore B"})
 	w := rec()
 	r := req(t, "DELETE", "/api/v1/tags/merge/dismissals", body)
 	h.RestoreMergePair(w, r)

@@ -1,18 +1,18 @@
-# Pool (`internal/pool/`)
+# Worker Pool (`internal/task/pool.go`)
 
 ## `pool.go`
 
 ### Struct
 
-- `Pool` — `logger`, `runner Runner`, `workers int`, `interval time.Duration`, `taskType string`, `stopCh`, `stopOnce`, `wg`, `ctx`, `cancel`
+- `Pool` — `logger`, `runner Nexter`, `workers int`, `interval time.Duration`, `taskType string`, `stopCh`, `stopOnce`, `wg`, `ctx`, `cancel`
   - **Methods**:
-    - `New(logger, runner, workers, interval, taskType) *Pool`
+    - `NewPool(logger, runner, workers, interval, taskType) *Pool`
     - `Start(ctx)` — Starts worker goroutines with a cancellable context
     - `Stop(ctx)` — Signals stop, waits for workers with timeout
 
 ### Interface
 
-- `Runner` — `Next(ctx, taskType string) error` (implemented by `task.Runner`)
+- `Nexter` — `Next(ctx, taskType) error` (implemented by `task.Runner`)
 
 ---
 
@@ -73,7 +73,7 @@ The `Runner.Next` method uses `errors.As(err, &tErr)` to extract `ReqID` from ha
 
 ### Struct
 
-- `Runner` — owns `Store` and `Registry`; implements `pool.Runner`
+- `Runner` — owns `Store` and `Registry`; implements `Nexter`
   - **Methods**:
     - `NewRunner(store, registry, logger) *Runner`
     - `Next(ctx, taskType) error` — generic poll loop: claim next pending task, check for nil payload (fail task if nil), get handler, execute, complete (with retry+FailTask fallback); extracts `ReqID` from handler errors via `errors.As` and passes it to the logger for document-level correlation (`REQID=<doc-id> task <uuid> failed: ...`). A deferred `recover()` after the claim fails the in-flight task with `panic: <text>` (detached 10s-timeout context) and returns the error to the pool, which logs it without restarting the worker
@@ -148,7 +148,7 @@ The `Runner.Next` method uses `errors.As(err, &tErr)` to extract `ReqID` from ha
 
 ## `configtask` (`internal/configtask/configtask.go`)
 
-The `ConfigTaskHandler` lives in its own package (`internal/configtask/`) to keep the edub binary free of CGo dependencies — unlike `internal/task/handlers/`, which transitively imports CGo-only `internal/tools/adapters` through `internal/consumption`.
+The `ConfigTaskHandler` lives in its own package (`internal/configtask/`) to keep the edub binary free of CGo dependencies — unlike `internal/task/handlers/`, which transitively imports CGo-only `internal/cgo` through `internal/documents/consumption`.
 
 ### Constants
 
@@ -181,7 +181,7 @@ The `Container` registers all ten task types (`"consume"`, `"enrich"`, `"thumbna
 and creates a `MatcherClient` connected to the Unix socket at `<config_dir>/kushim-hugot.sock`.
 The `"backup"` type is handled by `BackupTaskHandler` which runs with the DB-backed maintenance lock already held (acquired at claim time, in the claim transaction), waits for in-flight tasks to drain, runs the backup, and lets the runner release the lock on completion/failure (token-guarded). It implements `DedupKey` returning `backup:<mode>:<date>` (mode parsed from the task payload, default `full`).
 
-The `"mirror"` type is handled by `MirrorTaskHandler` which runs with the same lock already held (claim-time acquisition), then delegates to `mirror.RunLocked` (5-minute `TouchMaintenanceLockForTask` heartbeat started before the drain → drain → `rsync -a --delete --info=stats2 --timeout=600` → `.edub-mirror.json` state write); the runner releases the lock on completion/failure. It implements `DedupKey` returning `mirror:<UTC date>`.
+The `"mirror"` type is handled by `MirrorTaskHandler` which runs with the same lock already held (claim-time acquisition), then delegates to `backup.RunLocked` (5-minute `TouchMaintenanceLockForTask` heartbeat started before the drain → drain → `rsync -a --delete --info=stats2 --timeout=600` → `.edub-mirror.json` state write); the runner releases the lock on completion/failure. It implements `DedupKey` returning `mirror:<UTC date>`.
 
 The `"tagreconcile"` type is handled by `TagReconcileTaskHandler` which runs with the lock already held, drains in-flight tasks, runs the reconciler, and owns the batch lifecycle. Its reconciler runs on a runner built with the `textreducer`, `contentanalyzer` and `tagmatcher` tools — the reducer feeds the provisional re-judge path (`Runner.ReduceContent` over the tag's first live document). The `"thumbbackfill"` type is handled by `ThumbnailBackfillTaskHandler`, a wrapper that adds the same drain-wait + heartbeat around the per-document `ThumbnailTaskHandler`; backfill tasks are created by `service.ThumbnailBackfill` (dedup key `thumbnail:doc:<uuid>`) and processed by a dedicated 1-worker/2s pool, while per-document `thumbnail` tasks remain lock-gated.
 The `"tagmeasure"` type is handled by `TagMeasureTaskHandler` which runs with the lock already held, drains in-flight tasks, and forks `kushim tagmeasure --run <batch-id>`: the child executes the pass (`internal/tags`) in one repeatable-read transaction, writes the evidence records, and prints a report line the handler captures as the task result, while the child's exit code decides completion/failure through the attempts budget. Manual `kushim tagmeasure` runs the same pass in the foreground under the NULL-token lock (wait-for-lock, drain, heartbeat) without any batch or task row.
@@ -189,7 +189,7 @@ The `"tagidentity"` type is handled by `TagIdentityTaskHandler`, the same drain 
 The `TagService` and `Enricher` receive the client instead of a direct Hugot reference:
 
 ```go
-matcherClient := tagmatch.NewMatcherClient(c.socketPath(), tagmatch.MaxMatchBodyBytes(cfg.Enricher.TagMatcher.ReduceTargetWords))
+matcherClient := matcher.NewMatcherClient(c.socketPath(), matcher.MaxMatchBodyBytes(cfg.Enricher.TagMatcher.ReduceTargetWords))
 tagSvc := service.NewTag(client, c.logger, matcherClient)
 enricher, err := enrichment.NewEnricher(cfg, c.logger, client, services, matcherClient)
 registry.Register("consume", taskhandlers.NewConsumeTaskHandler(consumer, store, c.logger))
@@ -199,7 +199,7 @@ registry.Register("backup", taskhandlers.NewBackupTaskHandler(c.db, client.Queri
 registry.Register("mirror", taskhandlers.NewMirrorTaskHandler(client.Queries, func() *config.Config { return c.cfg.Load() }, c.logger))
 ```
 
-The `BackupTaskHandler` receives a config getter closure used for the backup-root fallback (`backup.path`) and the config path; the backup `mode`/`path`/`keep` come from the task payload, with the path validated against the configured backup roots. The `MirrorTaskHandler` receives the queries and a config getter; the mirror destination comes from the payload (falling back to `mirror.path`) and is validated via `mirror.ValidateDestination`. The config pool is started alongside
+The `BackupTaskHandler` receives a config getter closure used for the backup-root fallback (`backup.path`) and the config path; the backup `mode`/`path`/`keep` come from the task payload, with the path validated against the configured backup roots. The `MirrorTaskHandler` receives the queries and a config getter; the mirror destination comes from the payload (falling back to `mirror.path`) and is validated via `backup.ValidateDestination`. The config pool is started alongside
 consume/enrich pools when a CLI command runs.
 
 ### Server (`edub`)

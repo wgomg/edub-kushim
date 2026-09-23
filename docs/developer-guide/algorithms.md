@@ -35,7 +35,7 @@ or replace any of these algorithms.
 
 The algorithms live in two places:
 
-- `internal/tools/adapters/textreducer/textrank.go` — the extractive
+- `internal/tools/textreducer/textrank.go` — the extractive
   summarizer (the `TextRank` adapter behind the `textreducer` tool).
 - `internal/utils/text.go` — normalization, truncation, token estimation,
   code-block cleaning.
@@ -472,10 +472,10 @@ keeps memory flat for multi-GB files. `ListFilePaths` additionally sorts by
 | `TextRank.Reduce` | `tools.Runner.ReduceContent` (`internal/tools/runner.go:311-347`) | shrink text to `target_word_count` before LLM (target 2000) and tag matcher (target 4000) |
 | `targetWordCount` logic | `internal/enrichment/enricher.go:398-404` | negative config = fraction of document; floor 2000 |
 | `NormalizeForDB` | `enricher.go:418-433`, people/tag services | canonical DB keys for dedup/lookup |
-| `EstimateTokens` | `contentanalyzer/shared.go` `checkContentTooLarge` | LLM pre-flight budget check |
+| `EstimateTokens` | `analyzer/shared.go` `checkContentTooLarge` | LLM pre-flight budget check |
 | `Truncate` | `enricher.go:247-265` | title ≤ 127 chars |
 | `CleanCodeBlock` | both LLM adapters | strip fences before JSON parse |
-| `ComputeMD5` / SHA-512 | `internal/consumption/scan.go` | content dedup + uniqueness |
+| `ComputeMD5` / SHA-512 | `internal/documents/consumption/scan.go` | content dedup + uniqueness |
 | `StripTags` | textextractor output | remove HTML noise from extracted text |
 
 The enricher also has a second reduction path: when the LLM rejects the text

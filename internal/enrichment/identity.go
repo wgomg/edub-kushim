@@ -7,10 +7,10 @@ import (
 	"fmt"
 
 	"github.com/wgomg/edub-kushim/internal/database"
-	"github.com/wgomg/edub-kushim/internal/enrichment/tagpolicy"
+	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
+	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/tags"
-	"github.com/wgomg/edub-kushim/internal/tools/adapters/contentanalyzer"
-	"github.com/wgomg/edub-kushim/internal/tools/adapters/tagmatcher"
+	"github.com/wgomg/edub-kushim/internal/tags/policy"
 	"github.com/wgomg/edub-kushim/internal/types"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -48,8 +48,8 @@ type identityAnswer struct {
 
 // the plan rides into the enrichment transaction, so adjudication stays
 // outside it
-func (e *Enricher) planIdentity(ctx context.Context, docID int64, documentID string, names []string, ranked []tagmatcher.RankResult, dbNames map[string]struct{}, logId *string) ([]string, tags.Plan, []tagpolicy.Decision) {
-	decisions := tagpolicy.Evaluate(names, ranked)
+func (e *Enricher) planIdentity(ctx context.Context, docID int64, documentID string, names []string, ranked []matcher.RankResult, dbNames map[string]struct{}, logId *string) ([]string, tags.Plan, []policy.Decision) {
+	decisions := policy.Evaluate(names, ranked)
 	plan := tags.Plan{}
 	aliasMap := e.aliasMapFor(ctx, names, logId)
 
@@ -110,7 +110,7 @@ func (e *Enricher) planIdentity(ctx context.Context, docID int64, documentID str
 			flagged[cand.name] = true
 			addPair(cand.name, existing, 0, 0)
 		}
-		if i < len(decisions) && decisions[i].Reason == tagpolicy.ReasonBand && decisions[i].Target != "" {
+		if i < len(decisions) && decisions[i].Reason == policy.ReasonBand && decisions[i].Target != "" {
 			flagged[cand.name] = true
 			addPair(cand.name, decisions[i].Target, decisions[i].Sim, decisions[i].RunnerUpSim)
 		}
@@ -182,9 +182,9 @@ func (e *Enricher) planIdentity(ctx context.Context, docID int64, documentID str
 		}
 		winner, loser := p.query, p.target
 		switch p.direction {
-		case contentanalyzer.TagDirectionTarget:
+		case analyzer.TagDirectionTarget:
 			winner, loser = p.target, p.query
-		case contentanalyzer.TagDirectionQuery:
+		case analyzer.TagDirectionQuery:
 			winner, loser = p.query, p.target
 		default:
 			if tags.TieBreak(p.query, p.target) == p.query {
@@ -372,9 +372,9 @@ func (e *Enricher) identityAnswers(ctx context.Context, flagged map[string]bool,
 	for start := 0; start < len(uncached); start += identityBatchSize {
 		end := min(start+identityBatchSize, len(uncached))
 		batch := uncached[start:end]
-		inputs := make([]contentanalyzer.TagIdentityCandidate, len(batch))
+		inputs := make([]analyzer.TagIdentityCandidate, len(batch))
 		for i, cand := range batch {
-			inputs[i] = contentanalyzer.TagIdentityCandidate{Index: i, Term: cand.name, ProposedFold: cand.fold}
+			inputs[i] = analyzer.TagIdentityCandidate{Index: i, Term: cand.name, ProposedFold: cand.fold}
 		}
 		results, err := e.runner.JudgeTagIdentity(ctx, inputs)
 		if err == nil && len(results) != len(batch) {
@@ -483,16 +483,16 @@ func identityDirection(criteria []byte) string {
 		return ""
 	}
 	switch parsed.Direction {
-	case contentanalyzer.TagDirectionQuery, contentanalyzer.TagDirectionTarget, contentanalyzer.TagDirectionTie:
+	case analyzer.TagDirectionQuery, analyzer.TagDirectionTarget, analyzer.TagDirectionTie:
 		return parsed.Direction
 	}
 	return ""
 }
 
-func (e *Enricher) identityPairEvidence(ctx context.Context, documentID string, pairs []*identityPair, logId *string) []contentanalyzer.TagPairEvidence {
-	evidence := make([]contentanalyzer.TagPairEvidence, len(pairs))
+func (e *Enricher) identityPairEvidence(ctx context.Context, documentID string, pairs []*identityPair, logId *string) []analyzer.TagPairEvidence {
+	evidence := make([]analyzer.TagPairEvidence, len(pairs))
 	for i, p := range pairs {
-		evidence[i] = contentanalyzer.TagPairEvidence{
+		evidence[i] = analyzer.TagPairEvidence{
 			Query:       p.query,
 			Target:      p.target,
 			Sim:         p.sim,
@@ -578,7 +578,7 @@ func (e *Enricher) recordIdentityPair(ctx context.Context, docID int64, p *ident
 	if docID <= 0 {
 		return
 	}
-	e.writeVerdictEvent(ctx, docID, tagpolicy.Decision{
+	e.writeVerdictEvent(ctx, docID, policy.Decision{
 		Query:  p.query,
 		Target: p.target,
 		Output: p.query,
@@ -595,7 +595,7 @@ func boolVerdict(value bool, whenTrue, whenFalse string) string {
 
 // a folded or applied output must not lose its category and standard-term
 // flags
-func renameTagDetails(details []contentanalyzer.TagDetail, plan tags.Plan) []contentanalyzer.TagDetail {
+func renameTagDetails(details []analyzer.TagDetail, plan tags.Plan) []analyzer.TagDetail {
 	outputByInput := make(map[string]string, len(plan.Registrations))
 	for _, reg := range plan.Registrations {
 		input := utils.NormalizeTag(reg.Input)

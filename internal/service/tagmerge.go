@@ -8,8 +8,8 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
+	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/tags"
-	"github.com/wgomg/edub-kushim/internal/tools/adapters/tagmatcher"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -51,12 +51,12 @@ type SuggestionsParams struct {
 
 type TagMerge struct {
 	client   *database.Client
-	matcher  tagmatcher.Matcher
-	embedder tagmatcher.Embedder
+	matcher  matcher.Matcher
+	embedder matcher.Embedder
 	logger   *utils.Logger
 }
 
-func NewTagMerge(client *database.Client, matcher tagmatcher.Matcher, embedder tagmatcher.Embedder, logger *utils.Logger) *TagMerge {
+func NewTagMerge(client *database.Client, matcher matcher.Matcher, embedder matcher.Embedder, logger *utils.Logger) *TagMerge {
 	return &TagMerge{client: client, matcher: matcher, embedder: embedder, logger: logger}
 }
 

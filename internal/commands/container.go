@@ -10,14 +10,13 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/configtask"
-	"github.com/wgomg/edub-kushim/internal/consumption"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/documents/consumption"
 	"github.com/wgomg/edub-kushim/internal/enrichment"
-	"github.com/wgomg/edub-kushim/internal/enrichment/tagreconcile"
-	"github.com/wgomg/edub-kushim/internal/pool"
+	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/service"
-	"github.com/wgomg/edub-kushim/internal/tagmatch"
+	"github.com/wgomg/edub-kushim/internal/tags/reconcile"
 	"github.com/wgomg/edub-kushim/internal/task"
 	taskhandlers "github.com/wgomg/edub-kushim/internal/task/handlers"
 	"github.com/wgomg/edub-kushim/internal/tools"
@@ -36,16 +35,16 @@ type Container struct {
 	store      *task.Store
 	services   *service.CrudServices
 	pools      struct {
-		consume       *pool.Pool
-		enrich        *pool.Pool
-		thumbnail     *pool.Pool
-		thumbbackfill *pool.Pool
-		config        *pool.Pool
-		backup        *pool.Pool
-		mirror        *pool.Pool
-		tagreconcile  *pool.Pool
-		tagmeasure    *pool.Pool
-		tagidentity   *pool.Pool
+		consume       *task.Pool
+		enrich        *task.Pool
+		thumbnail     *task.Pool
+		thumbbackfill *task.Pool
+		config        *task.Pool
+		backup        *task.Pool
+		mirror        *task.Pool
+		tagreconcile  *task.Pool
+		tagmeasure    *task.Pool
+		tagidentity   *task.Pool
 	}
 }
 
@@ -141,7 +140,7 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 		return nil, err
 	}
 
-	matcherClient := tagmatch.NewMatcherClient(c.socketPath(), tagmatch.MaxMatchBodyBytes(c.cfg.Load().Enricher.TagMatcher.ReduceTargetWords))
+	matcherClient := matcher.NewMatcherClient(c.socketPath(), matcher.MaxMatchBodyBytes(c.cfg.Load().Enricher.TagMatcher.ReduceTargetWords))
 
 	tagSvc := service.NewTag(client, c.logger, matcherClient)
 	peopleSvc := service.NewPeople(client.Queries, c.logger)
@@ -176,7 +175,7 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 	registry.Register(types.Task.Type.Backup, taskhandlers.NewBackupTaskHandler(c.db, client.Queries, func() *config.Config { return c.cfg.Load() }, c.logger))
 	registry.Register(types.Task.Type.Mirror, taskhandlers.NewMirrorTaskHandler(client.Queries, func() *config.Config { return c.cfg.Load() }, c.logger))
 	registry.Register(types.Task.Type.TagReconcile, taskhandlers.NewTagReconcileTaskHandler(
-		tagreconcile.NewReconciler(
+		reconcile.NewReconciler(
 			func() *config.Config { return c.cfg.Load() },
 			client,
 			c.services,
@@ -210,8 +209,8 @@ func (c *Container) SetRunnerOwnerID(id string) error {
 	return nil
 }
 
-func (c *Container) GetPool(taskType string) (*pool.Pool, error) {
-	var pp **pool.Pool
+func (c *Container) GetPool(taskType string) (*task.Pool, error) {
+	var pp **task.Pool
 	switch taskType {
 	case "consume":
 		pp = &c.pools.consume
@@ -276,7 +275,7 @@ func (c *Container) GetPool(taskType string) (*pool.Pool, error) {
 			workers = 1
 			interval = 5 * time.Second
 		}
-		*pp = pool.New(c.logger, runner, workers, interval, taskType)
+		*pp = task.NewPool(c.logger, runner, workers, interval, taskType)
 	}
 
 	return *pp, nil

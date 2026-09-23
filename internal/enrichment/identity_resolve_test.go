@@ -8,11 +8,11 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 	"github.com/wgomg/edub-kushim/internal/tools"
-	"github.com/wgomg/edub-kushim/internal/tools/adapters/contentanalyzer"
 	"github.com/wgomg/edub-kushim/internal/types"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -88,10 +88,10 @@ func TestResolvePending_Fold(t *testing.T) {
 	seedPendingIdentityEvent(t, client, tags.IdentityKindFoldGate, "buildings", "")
 	seedPendingIdentityEvent(t, client, tags.IdentityKindConventionalForm, "buildings", "")
 
-	adj.identityFn = func(_ context.Context, candidates []contentanalyzer.TagIdentityCandidate) ([]contentanalyzer.TagIdentityResult, error) {
-		results := make([]contentanalyzer.TagIdentityResult, len(candidates))
+	adj.identityFn = func(_ context.Context, candidates []analyzer.TagIdentityCandidate) ([]analyzer.TagIdentityResult, error) {
+		results := make([]analyzer.TagIdentityResult, len(candidates))
 		for i := range candidates {
-			results[i] = contentanalyzer.TagIdentityResult{
+			results[i] = analyzer.TagIdentityResult{
 				Index:                   i,
 				FoldToBase:              true,
 				FoldPreservesDenotation: true,
@@ -126,13 +126,13 @@ func TestResolvePending_SameIntentPair(t *testing.T) {
 	database.MustCreateTag(t, client.Queries, "settler colonialism")
 	seedPendingIdentityEvent(t, client, tags.IdentityKindSameIntent, "colonization", "settler colonialism")
 
-	adj.adjudicateFn = func(_ context.Context, pairs []contentanalyzer.TagPairEvidence) ([]contentanalyzer.TagVerdictResult, error) {
-		results := make([]contentanalyzer.TagVerdictResult, len(pairs))
+	adj.adjudicateFn = func(_ context.Context, pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error) {
+		results := make([]analyzer.TagVerdictResult, len(pairs))
 		for i := range pairs {
-			results[i] = contentanalyzer.TagVerdictResult{
+			results[i] = analyzer.TagVerdictResult{
 				Index:     i,
 				Verdict:   types.TagVerdicts.Same,
-				Direction: contentanalyzer.TagDirectionQuery,
+				Direction: analyzer.TagDirectionQuery,
 			}
 		}
 		return results, nil
@@ -183,10 +183,10 @@ func TestResolvePending_FoldTargetDeleted(t *testing.T) {
 		t.Fatalf("seed deleted fold target: %v", err)
 	}
 
-	adj.identityFn = func(_ context.Context, candidates []contentanalyzer.TagIdentityCandidate) ([]contentanalyzer.TagIdentityResult, error) {
-		results := make([]contentanalyzer.TagIdentityResult, len(candidates))
+	adj.identityFn = func(_ context.Context, candidates []analyzer.TagIdentityCandidate) ([]analyzer.TagIdentityResult, error) {
+		results := make([]analyzer.TagIdentityResult, len(candidates))
 		for i := range candidates {
-			results[i] = contentanalyzer.TagIdentityResult{
+			results[i] = analyzer.TagIdentityResult{
 				Index:                   i,
 				FoldToBase:              true,
 				FoldPreservesDenotation: true,

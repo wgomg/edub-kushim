@@ -14,13 +14,13 @@ import (
 	anyascii "github.com/anyascii/go"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
-	"github.com/wgomg/edub-kushim/internal/enrichment/tagpolicy"
+	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
+	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/tags"
+	"github.com/wgomg/edub-kushim/internal/tags/policy"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/tools"
-	"github.com/wgomg/edub-kushim/internal/tools/adapters/contentanalyzer"
-	"github.com/wgomg/edub-kushim/internal/tools/adapters/tagmatcher"
 	"github.com/wgomg/edub-kushim/internal/types"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -35,7 +35,7 @@ const (
 )
 
 type splitDecision struct {
-	verdict    contentanalyzer.TagSplitVerdict
+	verdict    analyzer.TagSplitVerdict
 	components []string
 }
 
@@ -51,7 +51,7 @@ type Enricher struct {
 	splitCache map[string]splitDecision
 }
 
-func NewEnricher(cfg *config.Config, logger *utils.Logger, client *database.Client, services *service.CrudServices, matcher tagmatcher.Matcher) (*Enricher, error) {
+func NewEnricher(cfg *config.Config, logger *utils.Logger, client *database.Client, services *service.CrudServices, matcher matcher.Matcher) (*Enricher, error) {
 	e := &Enricher{
 		config:   cfg,
 		logger:   logger,
@@ -163,9 +163,9 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 			break
 		}
 
-		var ctle *contentanalyzer.ContentTooLargeError
-		var tokErr *contentanalyzer.TokenLimitError
-		var credErr *contentanalyzer.InsufficientCreditsError
+		var ctle *analyzer.ContentTooLargeError
+		var tokErr *analyzer.TokenLimitError
+		var credErr *analyzer.InsufficientCreditsError
 
 		var maxTokens, actualTokens int
 		switch {
@@ -220,12 +220,12 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 	refinementCfg := e.config.Enricher.ContentAnalyzer.DocTypeRefinement
 	if refinementCfg.Enabled && llmContent.TargetWordCount > 0 &&
 		int64(document.WordCount) > int64(llmContent.TargetWordCount) {
-		headTailText := contentanalyzer.ExtractHeadTailWords(
+		headTailText := analyzer.ExtractHeadTailWords(
 			document.TextContent.String,
 			refinementCfg.HeadWords,
 			refinementCfg.TailWords,
 		)
-		metadata := contentanalyzer.DocMetadata{
+		metadata := analyzer.DocMetadata{
 			WordCount: document.WordCount,
 			PageCount: document.PageCount,
 			MimeType:  document.OriginalType,
@@ -241,7 +241,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 		}
 	}
 
-	analysis.Tags = contentanalyzer.NormalizeTags(analysis.Tags)
+	analysis.Tags = analyzer.NormalizeTags(analysis.Tags)
 
 	for i, p := range analysis.People {
 		canonicalName, _ := canonicalPersonName(p)
@@ -264,26 +264,26 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 	for _, p := range existingPeople {
 		knownNormalized = append(knownNormalized, normalizedPeopleKey(p))
 	}
-	kept, facetDrops := contentanalyzer.SeparateFacets(analysis.Tags, analysis.TagDetails, docTypeNames)
+	kept, facetDrops := analyzer.SeparateFacets(analysis.Tags, analysis.TagDetails, docTypeNames)
 	for _, drop := range facetDrops {
 		e.logger.Info(&logId, "tags[facet]: drop %q (category=%s reason=%s)", drop.Term, drop.Category, drop.Reason)
 	}
 	analysis.Tags = kept
 
-	analysis.Tags = contentanalyzer.FilterTags(analysis.Tags, analysis.People, knownNormalized, analysis.Title, docTypeNames, e.config.Enricher.ContentAnalyzer.MaxTags)
-	tagFilter := contentanalyzer.NewTagFilter(analysis.People, knownNormalized, analysis.Title, docTypeNames)
+	analysis.Tags = analyzer.FilterTags(analysis.Tags, analysis.People, knownNormalized, analysis.Title, docTypeNames, e.config.Enricher.ContentAnalyzer.MaxTags)
+	tagFilter := analyzer.NewTagFilter(analysis.People, knownNormalized, analysis.Title, docTypeNames)
 	analysis.Tags = e.splitJointTags(ctx, analysis.Tags, tagFilter, &logId)
 	analysis.Tags = e.applyDeletedTagPolicy(analysis.Tags, dbNames, blocklist, &logId)
 
 	consolidateStart := time.Now()
 	report("consolidate", "", 0)
 	ranked, err := e.runner.RankTags(ctx, document.DocumentID, analysis.Tags)
-	var decisions []tagpolicy.Decision
+	var decisions []policy.Decision
 	var identityPlan tags.Plan
 	if err != nil {
 		e.logger.Error(&logId, "post-LLM consolidation failed: %v", err)
 		for _, tag := range analysis.Tags {
-			e.logger.Info(&logId, "consolidation[%s]: keep %q (reason=rank_unavailable)", tagpolicy.Version, tag)
+			e.logger.Info(&logId, "consolidation[%s]: keep %q (reason=rank_unavailable)", policy.Version, tag)
 		}
 		identityPlan, err = e.services.Tag.PlanRegistration(ctx, analysis.Tags)
 		if err != nil {
@@ -354,7 +354,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 		case service.Created:
 			e.logger.Debug(&logId, "tag created %s", r.Entity.Name)
 			if quarantine {
-				e.logger.Info(&logId, "tagquality[%s]: quarantine %q (reason=birth)", contentanalyzer.TagQualityVersion, r.Entity.Name)
+				e.logger.Info(&logId, "tagquality[%s]: quarantine %q (reason=birth)", analyzer.TagQualityVersion, r.Entity.Name)
 			}
 			if !seenTagIDs[r.Entity.ID] {
 				seenTagIDs[r.Entity.ID] = true
@@ -522,7 +522,7 @@ func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, res
 		names = append(names, name)
 	}
 	rows, err := q.LatestTagQualityEventsForNames(ctx, database.LatestTagQualityEventsForNamesParams{
-		PolicyVersion: contentanalyzer.TagQualityVersion,
+		PolicyVersion: analyzer.TagQualityVersion,
 		TagNames:      names,
 	})
 	if err != nil {
@@ -584,13 +584,13 @@ func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, res
 		if model == "" {
 			model = "cached"
 		}
-		e.logger.Info(logId, "tagquality[%s]: promote %q (docs=%d model=%s)", contentanalyzer.TagQualityVersion, p.name, counts[p.id], model)
+		e.logger.Info(logId, "tagquality[%s]: promote %q (docs=%d model=%s)", analyzer.TagQualityVersion, p.name, counts[p.id], model)
 		promoted[i] = p.name
 	}
 	return promoted
 }
 
-func (e *Enricher) splitJointTags(ctx context.Context, tags []string, filter *contentanalyzer.TagFilter, logId *string) []string {
+func (e *Enricher) splitJointTags(ctx context.Context, tags []string, filter *analyzer.TagFilter, logId *string) []string {
 	var candidates []string
 	for _, t := range tags {
 		if utils.SplitJointTag(t) != nil {
@@ -607,10 +607,10 @@ func (e *Enricher) splitJointTags(ctx context.Context, tags []string, filter *co
 	components := make(map[string][]string, len(candidates))
 	for _, candidate := range candidates {
 		d, ok := decisions[candidate]
-		if !ok || d.verdict != contentanalyzer.TagSplitSplit {
+		if !ok || d.verdict != analyzer.TagSplitSplit {
 			continue
 		}
-		valid := contentanalyzer.SplitComponents(d.components, filter)
+		valid := analyzer.SplitComponents(d.components, filter)
 		if len(valid) < 2 || len(valid) > maxComponents {
 			continue
 		}
@@ -701,7 +701,7 @@ func (e *Enricher) splitVerdicts(ctx context.Context, candidates []string, logId
 
 	if !e.runner.HasTagAdjudicator() {
 		for _, name := range uncached {
-			decisions[name] = splitDecision{verdict: contentanalyzer.TagSplitSplit, components: utils.SplitJointTag(name)}
+			decisions[name] = splitDecision{verdict: analyzer.TagSplitSplit, components: utils.SplitJointTag(name)}
 		}
 		return decisions
 	}
@@ -741,7 +741,7 @@ type reciprocalEvidence struct {
 	sim float64
 }
 
-func (e *Enricher) writeVerdictEvent(ctx context.Context, docId int64, d tagpolicy.Decision, bp *bandPair, logId *string) {
+func (e *Enricher) writeVerdictEvent(ctx context.Context, docId int64, d policy.Decision, bp *bandPair, logId *string) {
 	var verdictModel sql.NullString
 	if !bp.cached {
 		verdictModel = sql.NullString{String: bp.model, Valid: bp.model != ""}
@@ -753,7 +753,7 @@ func (e *Enricher) writeVerdictEvent(ctx context.Context, docId int64, d tagpoli
 		Sim:           d.Sim,
 		Verdict:       bp.verdict,
 		VerdictModel:  verdictModel,
-		PolicyVersion: tagpolicy.Version,
+		PolicyVersion: policy.Version,
 	})
 	if err != nil {
 		e.logger.Error(logId, "tag verdict event insert failed: %v", err)
@@ -764,7 +764,7 @@ func (e *Enricher) writeVerdictEvent(ctx context.Context, docId int64, d tagpoli
 	}
 
 	rows, err := e.queries.LatestTagVerdictsForPairs(ctx, database.LatestTagVerdictsForPairsParams{
-		PolicyVersion: tagpolicy.Version,
+		PolicyVersion: policy.Version,
 		Queries:       []string{d.Query},
 		Targets:       []string{d.Target},
 	})
@@ -787,7 +787,7 @@ func (e *Enricher) writeVerdictEvent(ctx context.Context, docId int64, d tagpoli
 		Sim:           d.Sim,
 		Verdict:       bp.verdict,
 		VerdictModel:  sql.NullString{},
-		PolicyVersion: tagpolicy.Version,
+		PolicyVersion: policy.Version,
 	}); err != nil {
 		e.logger.Error(logId, "tag verdict event insert failed: %v", err)
 	}
@@ -810,7 +810,7 @@ func tagQualityScore(standardTerm *bool, category string, bestSim float64, haveS
 	default:
 		score -= 1
 	}
-	if category == contentanalyzer.TagCategoryOther {
+	if category == analyzer.TagCategoryOther {
 		score -= 1
 	}
 	if haveSim && bestSim < noAnchorSim {
@@ -830,7 +830,7 @@ func isStandardLabel(v *bool) string {
 	}
 }
 
-func marshalTagQualityCriteria(r contentanalyzer.TagQualityResult) json.RawMessage {
+func marshalTagQualityCriteria(r analyzer.TagQualityResult) json.RawMessage {
 	data, err := json.Marshal(r.Criteria())
 	if err != nil {
 		return json.RawMessage("{}")
@@ -839,15 +839,15 @@ func marshalTagQualityCriteria(r contentanalyzer.TagQualityResult) json.RawMessa
 }
 
 func tagQualityCriteriaLog(criteria json.RawMessage) string {
-	var c contentanalyzer.TagQualityCriteria
+	var c analyzer.TagQualityCriteria
 	if err := json.Unmarshal(criteria, &c); err != nil {
 		return "unknown"
 	}
 	return c.String()
 }
 
-func (e *Enricher) applyTagQuality(ctx context.Context, analysis *tools.ContentAnalysisResult, decisions []tagpolicy.Decision, dbNames map[string]struct{}, reducedText string, docId int64, logId *string) []string {
-	typedByTerm := make(map[string]contentanalyzer.TagDetail, len(analysis.TagDetails))
+func (e *Enricher) applyTagQuality(ctx context.Context, analysis *tools.ContentAnalysisResult, decisions []policy.Decision, dbNames map[string]struct{}, reducedText string, docId int64, logId *string) []string {
+	typedByTerm := make(map[string]analyzer.TagDetail, len(analysis.TagDetails))
 	for _, d := range analysis.TagDetails {
 		typedByTerm[utils.NormalizeTag(d.Term)] = d
 	}
@@ -872,7 +872,7 @@ func (e *Enricher) applyTagQuality(ctx context.Context, analysis *tools.ContentA
 			continue
 		}
 		seenNovel[out] = true
-		n := &novelTag{emitted: out, category: contentanalyzer.TagCategoryOther}
+		n := &novelTag{emitted: out, category: analyzer.TagCategoryOther}
 		if d, ok := typedByTerm[out]; ok {
 			n.standard = d.IsStandardTerm
 			if d.Category != "" {
@@ -884,7 +884,7 @@ func (e *Enricher) applyTagQuality(ctx context.Context, analysis *tools.ContentA
 		}
 		if score := tagQualityScore(n.standard, n.category, n.bestSim, n.haveSim, tagQualityNoAnchorSimilarity); float64(score) < tagQualityTLow {
 			e.logger.Info(logId, "tagquality[%s]: reject %q (reason=weak_score score=%d is_standard=%s category=%s best_sim=%.3f)",
-				contentanalyzer.TagQualityVersion, out, score, isStandardLabel(n.standard), n.category, n.bestSim)
+				analyzer.TagQualityVersion, out, score, isStandardLabel(n.standard), n.category, n.bestSim)
 			rejected[out] = true
 			continue
 		}
@@ -898,7 +898,7 @@ func (e *Enricher) applyTagQuality(ctx context.Context, analysis *tools.ContentA
 			keys[i] = n.emitted
 		}
 		rows, err := e.queries.LatestTagQualityEventsForNames(ctx, database.LatestTagQualityEventsForNamesParams{
-			PolicyVersion: contentanalyzer.TagQualityVersion,
+			PolicyVersion: analyzer.TagQualityVersion,
 			TagNames:      keys,
 		})
 		if err != nil {
@@ -918,22 +918,22 @@ func (e *Enricher) applyTagQuality(ctx context.Context, analysis *tools.ContentA
 			if !row.Pass {
 				rejected[n.emitted] = true
 				e.logger.Info(logId, "tagquality[%s]: reject %q (reason=judge cached=true model=%s criteria=%s)",
-					contentanalyzer.TagQualityVersion, n.emitted, row.VerdictModel.String, tagQualityCriteriaLog(row.Criteria))
+					analyzer.TagQualityVersion, n.emitted, row.VerdictModel.String, tagQualityCriteriaLog(row.Criteria))
 			}
 		}
 	}
 
 	if len(uncached) > 0 {
 		if !e.runner.HasTagQualityJudge() {
-			e.logger.Error(logId, "tagquality[%s]: judge not configured, keeping %d novel tags (born provisional)", contentanalyzer.TagQualityVersion, len(uncached))
+			e.logger.Error(logId, "tagquality[%s]: judge not configured, keeping %d novel tags (born provisional)", analyzer.TagQualityVersion, len(uncached))
 		} else {
-			candidates := make([]contentanalyzer.TagQualityCandidate, len(uncached))
+			candidates := make([]analyzer.TagQualityCandidate, len(uncached))
 			for i, n := range uncached {
-				candidates[i] = contentanalyzer.TagQualityCandidate{
+				candidates[i] = analyzer.TagQualityCandidate{
 					Index:            i,
 					Term:             n.emitted,
 					Category:         n.category,
-					WhitelistedPlace: contentanalyzer.IsWhitelistedPlace(n.emitted),
+					WhitelistedPlace: analyzer.IsWhitelistedPlace(n.emitted),
 				}
 			}
 			results, err := e.runner.JudgeTagQuality(ctx, reducedText, candidates)
@@ -944,7 +944,7 @@ func (e *Enricher) applyTagQuality(ctx context.Context, analysis *tools.ContentA
 				err = fmt.Errorf("judge returned %d verdicts for %d candidates", len(results), len(candidates))
 			}
 			if err != nil {
-				e.logger.Error(logId, "tagquality[%s]: judge failed, keeping %d novel tags (born provisional): %v", contentanalyzer.TagQualityVersion, len(uncached), err)
+				e.logger.Error(logId, "tagquality[%s]: judge failed, keeping %d novel tags (born provisional): %v", analyzer.TagQualityVersion, len(uncached), err)
 			} else {
 				model := e.config.ResolvedQualityLlm().Model
 				for i, r := range results {
@@ -953,7 +953,7 @@ func (e *Enricher) applyTagQuality(ctx context.Context, analysis *tools.ContentA
 					if !pass {
 						rejected[n.emitted] = true
 						e.logger.Info(logId, "tagquality[%s]: reject %q (reason=judge criteria=%s model=%s)",
-							contentanalyzer.TagQualityVersion, n.emitted, tagQualityCriteriaLog(criteria), finalModel)
+							analyzer.TagQualityVersion, n.emitted, tagQualityCriteriaLog(criteria), finalModel)
 					}
 				}
 			}
@@ -982,7 +982,7 @@ func (e *Enricher) writeTagQualityEvent(ctx context.Context, docId int64, name s
 		Criteria:      criteria,
 		Pass:          pass,
 		VerdictModel:  verdictModel,
-		PolicyVersion: contentanalyzer.TagQualityVersion,
+		PolicyVersion: analyzer.TagQualityVersion,
 	})
 	if err != nil {
 		e.logger.Error(logId, "tag quality event insert failed: %v", err)
@@ -993,7 +993,7 @@ func (e *Enricher) writeTagQualityEvent(ctx context.Context, docId int64, name s
 	}
 
 	rows, err := e.queries.LatestTagQualityEventsForNames(ctx, database.LatestTagQualityEventsForNamesParams{
-		PolicyVersion: contentanalyzer.TagQualityVersion,
+		PolicyVersion: analyzer.TagQualityVersion,
 		TagNames:      []string{name},
 	})
 	if err != nil {
@@ -1010,7 +1010,7 @@ func (e *Enricher) writeTagQualityEvent(ctx context.Context, docId int64, name s
 		Criteria:      row.Criteria,
 		Pass:          row.Pass,
 		VerdictModel:  sql.NullString{},
-		PolicyVersion: contentanalyzer.TagQualityVersion,
+		PolicyVersion: analyzer.TagQualityVersion,
 	}); err != nil {
 		e.logger.Error(logId, "tag quality event insert failed: %v", err)
 	}
@@ -1076,7 +1076,7 @@ func normalizedPeopleKey(p database.People) string {
 // original non-Latin name (if any) for a person result from the LLM.
 // If the LLM provided a romanized name for a non-Latin name, it uses that.
 // Otherwise it falls back to anyascii transliteration.
-func canonicalPersonName(p contentanalyzer.PeopleResult) (canonical, native string) {
+func canonicalPersonName(p analyzer.PeopleResult) (canonical, native string) {
 	raw := p.Name
 	hasNonLatin := utils.ContainsNonLatin(raw)
 

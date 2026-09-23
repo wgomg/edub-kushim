@@ -4,14 +4,14 @@
 
 The tag matcher is a local Unix-socket HTTP server (`kushim hugot`) that serves
 `/rpc/v1/match`, `/rpc/v1/encode`, and `/rpc/v1/consolidate`. The `edub` side
-calls it through `MatcherClient` (`internal/tagmatch/client.go`), which wraps
+calls it through `MatcherClient` (`internal/matcher/client.go`), which wraps
 every call in a configurable context deadline via `runWithTimeout`
 (`internal/tools/runner.go:96-113`, applied in `MatchTags` at
 `internal/tools/runner.go:419-436`).
 
 A recent fix removed the stacked deadlines that masked this problem: the client
 had a hardcoded `http.Client.Timeout: 120 * time.Second`
-(`internal/tagmatch/client.go:59`) independent of the configurable
+(`internal/matcher/client.go:59`) independent of the configurable
 `enricher.tagmatcher.timeout`, silently overriding any config change beyond
 120s and producing `Client.Timeout exceeded while awaiting headers` errors
 under concurrent load. The server mirrored this with a hardcoded
@@ -44,9 +44,9 @@ edub ── MatchTags ── runWithTimeout(ctx) ── HTTP POST /rpc/v1/match
 There is no request queue, no worker pool, and no handler-level locking —
 `handleMatch` (`internal/commands/hugot.go:199-222`) decodes the body and calls
 `h.Match` directly. The same holds for the adapter: `Match`
-(`internal/tools/adapters/tagmatcher/hugot.go:174-212`), `Encode`
-(`internal/tools/adapters/tagmatcher/hugot.go:258-319`), and `encodeChunked`
-(`internal/tools/adapters/tagmatcher/hugot.go:323-366`) contain no mutex.
+(`internal/matcher/hugot.go:174-212`), `Encode`
+(`internal/matcher/hugot.go:258-319`), and `encodeChunked`
+(`internal/matcher/hugot.go:323-366`) contain no mutex.
 
 ## Library Internals: Inference Is Not Serialized
 
@@ -74,7 +74,7 @@ process also has a `MatcherClient` at `internal/api/server.go:56`, but uses it
 only for tag CRUD — encode/consolidate — not enrichment matching.)
 
 The specific mechanism behind the contention is **thread oversubscription**.
-`getBackendSession` (`internal/tools/adapters/tagmatcher/hugot.go:450-482`)
+`getBackendSession` (`internal/matcher/hugot.go:450-482`)
 creates the ORT session without calling `options.WithIntraOpNumThreads()`. ORT's
 default is to use **all available cores** for a single `Session.Run`'s intra-op
 parallelism. When N concurrent calls each spawn threads across all cores, you get
@@ -97,7 +97,7 @@ requests past the budget.
 
 ## Within-Document Serialization Compounds the Problem
 
-`encodeChunked` (`internal/tools/adapters/tagmatcher/hugot.go:323-366`)
+`encodeChunked` (`internal/matcher/hugot.go:323-366`)
 processes overlapping chunks in a sequential `for` loop — one `RunPipeline`
 per chunk. A large document near the 4MB/4000-word cap produces multiple
 sequential inference passes, each of which also pays the decode→re-encode
@@ -127,7 +127,7 @@ case r := <-ch:
 ```
 
 On the **client side** this is transient: `c.client.Do()` respects the request
-context (`http.NewRequestWithContext` at `internal/tagmatch/client.go:73`), so
+context (`http.NewRequestWithContext` at `internal/matcher/client.go:73`), so
 the HTTP call returns within milliseconds with a context error and the goroutine
 exits.
 
@@ -177,11 +177,11 @@ backlog:
 
 - `MatchTags` — `internal/tools/runner.go:419-436` (config timeout as context deadline)
 - `runWithTimeout` — `internal/tools/runner.go:96-113` (returns on ctx.Done, goroutine continues)
-- `NewMatcherClient` — `internal/tagmatch/client.go:49-63` (client `Timeout` removed; context deadline is the sole deadline)
+- `NewMatcherClient` — `internal/matcher/client.go:49-63` (client `Timeout` removed; context deadline is the sole deadline)
 - Matcher server — `internal/commands/hugot.go:111-117` (`WriteTimeout` from config)
 - `handleMatch` — `internal/commands/hugot.go:199-222` (no locking, standard HTTP dispatch)
-- `getBackendSession` — `internal/tools/adapters/tagmatcher/hugot.go:450-482` (ORT session created without `WithIntraOpNumThreads`)
-- `Match` — `internal/tools/adapters/tagmatcher/hugot.go:174-212` (no mutex)
-- `Encode` — `internal/tools/adapters/tagmatcher/hugot.go:258-319` (no mutex)
-- `encodeChunked` — `internal/tools/adapters/tagmatcher/hugot.go:323-366` (sequential per-chunk inference)
+- `getBackendSession` — `internal/matcher/hugot.go:450-482` (ORT session created without `WithIntraOpNumThreads`)
+- `Match` — `internal/matcher/hugot.go:174-212` (no mutex)
+- `Encode` — `internal/matcher/hugot.go:258-319` (no mutex)
+- `encodeChunked` — `internal/matcher/hugot.go:323-366` (sequential per-chunk inference)
 - Hugot v0.7.5: `hugot.go:28-31` (locks map), `hugot.go:194-196` (lock scope = creation only), `backends/model_ort.go:531-581` (`runORTSessionOnBatch`, no mutex, C-level `Session.Run` unstoppable + panic recovery at line 550), `pipelines/featureExtraction.go:289-306` (`RunPipeline`, no mutex)

@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/enrichment"
-	"github.com/wgomg/edub-kushim/internal/tagmatch"
+	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/tools"
 )
 
@@ -54,7 +54,7 @@ func runTagIdentityPass(c *Container, batchID string) error {
 	}
 
 	cfg := c.cfg.Load()
-	matcherClient := tagmatch.NewMatcherClient(c.socketPath(), tagmatch.MaxMatchBodyBytes(cfg.Enricher.TagMatcher.ReduceTargetWords))
+	matcherClient := matcher.NewMatcherClient(c.socketPath(), matcher.MaxMatchBodyBytes(cfg.Enricher.TagMatcher.ReduceTargetWords))
 	runner := tools.NewRunnerWithMatcher(c.logger, cfg, []string{"textreducer", "contentanalyzer", "tagmatcher"}, matcherClient)
 	resolver := enrichment.NewIdentityResolver(
 		func() *config.Config { return c.cfg.Load() },

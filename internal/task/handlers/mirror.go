@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/wgomg/edub-kushim/internal/backup"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
-	"github.com/wgomg/edub-kushim/internal/mirror"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/utils"
 	"github.com/wgomg/edub-kushim/internal/version"
@@ -61,11 +61,11 @@ func (h *MirrorTaskHandler) Handle(ctx context.Context, t task.Task) (out json.R
 		return nil, fmt.Errorf("mirror.path is not configured")
 	}
 
-	if err := mirror.ValidateDestination(dest, cfg.Storage.StorageDir, cfg.Backup.Path); err != nil {
+	if err := backup.ValidateDestination(dest, cfg.Storage.StorageDir, cfg.Backup.Path); err != nil {
 		return nil, err
 	}
 
-	result, timestamp, err := mirror.RunLockedWithProgress(ctx, h.queries, h.logger, cfg.Storage.StorageDir, dest,
+	result, timestamp, err := backup.RunLockedWithProgress(ctx, h.queries, h.logger, cfg.Storage.StorageDir, dest,
 		func(count int64) { progress.Set("drain-wait", fmt.Sprintf("%d in-flight", count), 0) },
 		func() { progress.Set("sync", dest, 0) },
 		uuid.NullUUID{UUID: t.ClaimToken, Valid: true},

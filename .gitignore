@@ -16,7 +16,7 @@ config.prod.yaml
 coverage.out
 
 internal/static/build/*
-internal/wizard/static/*
+internal/api/wizard/static/*
 
 # local-only agent instruction addendum (loaded via .kilo/kilo.jsonc, never committed)
 AGENTS.local.md

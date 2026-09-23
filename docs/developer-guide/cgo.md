@@ -43,10 +43,10 @@ Files involved:
 
 | File | Tag | Role |
 |---|---|---|
-| `internal/tools/adapters/mupdf_wrapper.go` | `//go:build cgo` | the real MuPDF wrapper (`import "C"`) |
-| `internal/tools/adapters/mupdf_nocgo.go` | `//go:build !cgo` | stub twin with identical names |
-| `internal/tools/adapters/ocr/tesseract_link.go` | `//go:build cgo` | static-link flags + Leptonica stderr shim |
-| `internal/tools/adapters/ocr/gosseract.go`, `standalone.go`, `tagmatcher/hugot.go` | `//go:build cgo` | consumers of the wrappers |
+| `internal/cgo/mupdf_wrapper.go` | `//go:build cgo` | the real MuPDF wrapper (`import "C"`) |
+| `internal/cgo/mupdf_nocgo.go` | `//go:build !cgo` | stub twin with identical names |
+| `internal/documents/ocr/tesseract_link.go` | `//go:build cgo` | static-link flags + Leptonica stderr shim |
+| `internal/documents/ocr/gosseract.go`, `standalone.go`, `internal/matcher/hugot.go` | `//go:build cgo` | consumers of the wrappers |
 | `build/` | — | vendored C sources, compiled by `make build-deps` |
 
 The build rule is absolute: all `go build`/`go test` invocations go through
@@ -84,7 +84,7 @@ Two things matter about the preamble:
 
 - **`#cgo` directives** configure the compiler/linker. `${SRCDIR}` expands to
   the directory of the `.go` file at build time — that's how the wrapper
-  reaches `build/mupdf/local/lib` from `internal/tools/adapters/`. This is why
+  reaches `build/mupdf/local/lib` from `internal/cgo/`. This is why
   `make build-deps` must run first: the paths point at artifacts that don't
   exist yet otherwise.
 - **The rest of the comment is ordinary C** — headers plus (crucially) helper
@@ -304,7 +304,7 @@ without the stub breaks `CGO_ENABLED=0` builds.
 ## 7. The `init()` factory swap
 
 The OCR factory needs to compile in both worlds. The default is a failing
-function (`internal/tools/adapters/ocr/adapter.go:18-22`):
+function (`internal/documents/ocr/adapter.go:18-22`):
 
 ```go
 // newGosseract is overridden by gosseract.go via init() when CGo is
@@ -395,12 +395,12 @@ the artifacts.
 Tests that touch the wrappers carry `//go:build cgo` and only run with the
 toolchain installed:
 
-- `internal/tools/adapters/mupdf_wrapper_test.go` — builds a minimal PDF in
+- `internal/cgo/mupdf_wrapper_test.go` — builds a minimal PDF in
   memory **with computed xref byte offsets** (`minimalPDF(t, w, h)`) to
   exercise the render-limit guard without fixture files.
-- `internal/tools/adapters/ocr/gosseract_test.go`, `downscale_test.go` —
+- `internal/documents/ocr/gosseract_test.go`, `downscale_test.go` —
   OCR + image pipeline tests.
-- `internal/tools/adapters/tagmatcher/hugot_test.go` — model tests.
+- `internal/matcher/hugot_test.go` — model tests.
 - `internal/commands` — no `//go:build cgo` tag of its own, but the package
   only compiles with CGo because `hugot.go` imports the cgo-gated tagmatcher
   adapter. It is tested under `make test-cgo`, where it links natively; its

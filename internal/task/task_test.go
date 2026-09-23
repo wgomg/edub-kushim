@@ -4,13 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/database"
-	"github.com/wgomg/edub-kushim/internal/pool"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
@@ -71,6 +71,9 @@ func (e errSentinel) Error() string { return "mock failure" }
 
 func setupTaskTest(t *testing.T) (*Store, *Registry, *database.Queries) {
 	t.Helper()
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
 	q, db := database.NewTestQueries(t)
 	database.ResetTestDatabase(db)
 	store := NewStore(database.NewClient(db))
@@ -475,7 +478,7 @@ func TestPoolLifecycle(t *testing.T) {
 	runner := NewRunner(store, registry, testutil.NewTestLogger())
 	registry.Register(types.Task.Type.Config, newMockHandler())
 
-	p := pool.New(testutil.NewTestLogger(), runner, 1, 50*time.Millisecond, "config")
+	p := NewPool(testutil.NewTestLogger(), runner, 1, 50*time.Millisecond, "config")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
@@ -488,6 +491,9 @@ func TestPoolLifecycle(t *testing.T) {
 
 func setupTaskTestClient(t *testing.T) (*Store, *Registry, *database.Client) {
 	t.Helper()
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
 	_, db := database.NewTestQueries(t)
 	database.ResetTestDatabase(db)
 	store := NewStore(database.NewClient(db))

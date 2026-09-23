@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -33,7 +32,7 @@ func (h *DocumentTypeHandler) List(w http.ResponseWriter, r *http.Request) {
 	q := pb.Get("q", "")
 	limit := pb.GetInt64("limit", 50, 1, 100)
 
-	var result []types.DocumentTypeResponse
+	var result []DocumentTypeResponse
 
 	if q != "" {
 		dts, err := h.services.DocumentType.SearchByNameWithDocumentCount(ctx, q, int32(limit))
@@ -41,9 +40,9 @@ func (h *DocumentTypeHandler) List(w http.ResponseWriter, r *http.Request) {
 			writeServiceError(w, h.logger, &reqID, "list document types", err)
 			return
 		}
-		result = make([]types.DocumentTypeResponse, len(dts))
+		result = make([]DocumentTypeResponse, len(dts))
 		for i, dt := range dts {
-			result[i] = types.DocumentTypeResponse{ID: dt.ID, Name: dt.Name, Description: dt.Description, DocumentCount: dt.DocumentCount}
+			result[i] = DocumentTypeResponse{ID: dt.ID, Name: dt.Name, Description: dt.Description, DocumentCount: dt.DocumentCount}
 		}
 	} else {
 		dts, err := h.services.DocumentType.ListAllWithDocumentCount(ctx)
@@ -51,9 +50,9 @@ func (h *DocumentTypeHandler) List(w http.ResponseWriter, r *http.Request) {
 			writeServiceError(w, h.logger, &reqID, "list document types", err)
 			return
 		}
-		result = make([]types.DocumentTypeResponse, len(dts))
+		result = make([]DocumentTypeResponse, len(dts))
 		for i, dt := range dts {
-			result[i] = types.DocumentTypeResponse{ID: dt.ID, Name: dt.Name, Description: dt.Description, DocumentCount: dt.DocumentCount}
+			result[i] = DocumentTypeResponse{ID: dt.ID, Name: dt.Name, Description: dt.Description, DocumentCount: dt.DocumentCount}
 		}
 	}
 
@@ -65,7 +64,7 @@ func (h *DocumentTypeHandler) Create(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
 
-	var req types.CreateDocumentTypeRequest
+	var req CreateDocumentTypeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
@@ -91,7 +90,7 @@ func (h *DocumentTypeHandler) Create(w http.ResponseWriter, r *http.Request) {
 	case service.Created:
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(types.DocumentTypeResponse{
+		json.NewEncoder(w).Encode(DocumentTypeResponse{
 			ID: results[0].Entity.ID, Name: results[0].Entity.Name, Description: results[0].Entity.Description,
 		})
 	case service.Conflict:
@@ -118,7 +117,7 @@ func (h *DocumentTypeHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req types.UpdateDocumentTypeRequest
+	var req UpdateDocumentTypeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
@@ -143,7 +142,7 @@ func (h *DocumentTypeHandler) Update(w http.ResponseWriter, r *http.Request) {
 	switch results[0].Status {
 	case service.Updated, service.Noop:
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(types.DocumentTypeResponse{
+		json.NewEncoder(w).Encode(DocumentTypeResponse{
 			ID: results[0].Entity.ID, Name: results[0].Entity.Name, Description: results[0].Entity.Description,
 		})
 	case service.UpdateConflict:
@@ -188,4 +187,21 @@ func (h *DocumentTypeHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "Document type not found", http.StatusNotFound)
 	}
+}
+
+type CreateDocumentTypeRequest struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+type UpdateDocumentTypeRequest struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+type DocumentTypeResponse struct {
+	ID            int64  `json:"id"`
+	Name          string `json:"name"`
+	Description   string `json:"description"`
+	DocumentCount int64  `json:"document_count"`
 }

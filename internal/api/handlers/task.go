@@ -12,7 +12,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/service"
@@ -67,8 +66,8 @@ func (h *TaskHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := types.ListTasksResponse{
-		Tasks: make([]types.TaskResponse, 0, len(tasks)),
+	resp := ListTasksResponse{
+		Tasks: make([]TaskResponse, 0, len(tasks)),
 	}
 
 	if batchID != "" {
@@ -137,7 +136,7 @@ func (h *TaskHandler) GetTagReconcileReport(w http.ResponseWriter, r *http.Reque
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(types.TagReconcileReportResponse{
+	json.NewEncoder(w).Encode(TagReconcileReportResponse{
 		TaskID:      row.TaskID,
 		CompletedAt: completedAt,
 		Result:      result,
@@ -205,8 +204,8 @@ func (h *TaskHandler) ListBatches(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := types.ListBatchesResponse{
-		Batches: make([]types.BatchSummaryResponse, 0, len(summaries)),
+	resp := ListBatchesResponse{
+		Batches: make([]BatchSummaryResponse, 0, len(summaries)),
 	}
 
 	for _, s := range summaries {
@@ -217,12 +216,12 @@ func (h *TaskHandler) ListBatches(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
-func batchSummaryToResponse(s *service.BatchSummary) types.BatchSummaryResponse {
-	return types.BatchSummaryResponse{
+func batchSummaryToResponse(s *service.BatchSummary) BatchSummaryResponse {
+	return BatchSummaryResponse{
 		BatchID: s.BatchID,
 		Status:  s.Status,
 		Source:  s.Source,
-		BatchCounts: types.BatchCounts{
+		BatchCounts: BatchCounts{
 			Total:      s.Waiting + s.Pending + s.Processing + s.Completed + s.Failed + s.Cancelled + s.Discarded,
 			Waiting:    s.Waiting,
 			Pending:    s.Pending,
@@ -242,7 +241,7 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
 
-	items := make([]types.BatchOverviewItem, 0)
+	items := make([]BatchOverviewItem, 0)
 	overviews, err := h.services.Batch.ListOverviews(ctx, 10, 0)
 	if err != nil {
 		h.logger.Error(&reqID, "list batch overviews: %v", err)
@@ -252,12 +251,12 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 			if !ov.CreatedAt.IsZero() {
 				createdAt = ov.CreatedAt.Format(time.RFC3339)
 			}
-			items = append(items, types.BatchOverviewItem{
+			items = append(items, BatchOverviewItem{
 				BatchID:   ov.BatchID,
 				Status:    ov.Status,
 				Source:    ov.Source,
 				CreatedAt: createdAt,
-				BatchCounts: types.BatchCounts{
+				BatchCounts: BatchCounts{
 					Total:      ov.Total,
 					Waiting:    ov.Waiting,
 					Pending:    ov.Pending,
@@ -279,14 +278,14 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.logger.Error(&reqID, "list active tasks: %v", err)
 	}
-	runningTasks := make([]types.TaskResponse, 0, len(activeRows))
+	runningTasks := make([]TaskResponse, 0, len(activeRows))
 	for _, t := range activeRows {
 		runningTasks = append(runningTasks, taskToResponse(t))
 	}
 
 	analytics := h.buildDocumentAnalytics(ctx, &reqID)
 
-	var processingHealth *types.ProcessingHealth
+	var processingHealth *ProcessingHealth
 	ph, err := h.buildProcessingHealth(ctx, &reqID)
 	if err != nil {
 		h.logger.Error(&reqID, "processing health: %v", err)
@@ -349,11 +348,11 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 		avgFileSize = totalBytes / totalFiles
 	}
 
-	typeStats := make([]types.OriginalTypeStat, 0)
+	typeStats := make([]OriginalTypeStat, 0)
 	if typeErr == nil {
-		typeStats = make([]types.OriginalTypeStat, 0, len(typeBreakdown))
+		typeStats = make([]OriginalTypeStat, 0, len(typeBreakdown))
 		for _, m := range typeBreakdown {
-			typeStats = append(typeStats, types.OriginalTypeStat{
+			typeStats = append(typeStats, OriginalTypeStat{
 				OriginalType: m.OriginalType,
 				Count:        m.Count,
 				TotalBytes:   m.TotalBytes,
@@ -362,12 +361,12 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var cumulative int64
-	trendPoints := make([]types.StorageTrendPoint, 0)
+	trendPoints := make([]StorageTrendPoint, 0)
 	if trendErr == nil {
-		trendPoints = make([]types.StorageTrendPoint, 0, len(trendRows))
+		trendPoints = make([]StorageTrendPoint, 0, len(trendRows))
 		for _, t := range trendRows {
 			cumulative += t.DailyBytes
-			trendPoints = append(trendPoints, types.StorageTrendPoint{
+			trendPoints = append(trendPoints, StorageTrendPoint{
 				Date:            t.Day,
 				DailyCount:      t.Count,
 				DailyBytes:      t.DailyBytes,
@@ -377,9 +376,9 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(types.DashboardResponse{
+	json.NewEncoder(w).Encode(DashboardResponse{
 		RecentBatches: items,
-		RunningTasks: types.RunningTasksResponse{
+		RunningTasks: RunningTasksResponse{
 			Count: activeCount,
 			Tasks: runningTasks,
 		},
@@ -405,7 +404,7 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *TaskHandler) buildDocumentAnalytics(ctx context.Context, reqID *string) *types.DocumentAnalytics {
+func (h *TaskHandler) buildDocumentAnalytics(ctx context.Context, reqID *string) *DocumentAnalytics {
 	langRows, err := h.queries.LanguageDistribution(ctx)
 	if err != nil {
 		h.logger.Error(reqID, "language distribution: %v", err)
@@ -427,20 +426,20 @@ func (h *TaskHandler) buildDocumentAnalytics(ctx context.Context, reqID *string)
 		return nil
 	}
 
-	analytics := &types.DocumentAnalytics{
-		LanguageDistribution:     make([]types.DistributionItem, 0, len(langRows)),
-		DocumentTypeDistribution: make([]types.DistributionItem, 0, len(docTypeRows)),
-		TagFrequency:             make([]types.DistributionItem, 0, len(tagRows)),
+	analytics := &DocumentAnalytics{
+		LanguageDistribution:     make([]DistributionItem, 0, len(langRows)),
+		DocumentTypeDistribution: make([]DistributionItem, 0, len(docTypeRows)),
+		TagFrequency:             make([]DistributionItem, 0, len(tagRows)),
 	}
 
 	for _, r := range langRows {
-		analytics.LanguageDistribution = append(analytics.LanguageDistribution, types.DistributionItem{Label: r.Label, Count: r.Count})
+		analytics.LanguageDistribution = append(analytics.LanguageDistribution, DistributionItem{Label: r.Label, Count: r.Count})
 	}
 	for _, r := range docTypeRows {
-		analytics.DocumentTypeDistribution = append(analytics.DocumentTypeDistribution, types.DistributionItem{Label: r.Label, Count: r.Count})
+		analytics.DocumentTypeDistribution = append(analytics.DocumentTypeDistribution, DistributionItem{Label: r.Label, Count: r.Count})
 	}
 	for _, r := range tagRows {
-		analytics.TagFrequency = append(analytics.TagFrequency, types.DistributionItem{Label: r.Label, Count: r.Count})
+		analytics.TagFrequency = append(analytics.TagFrequency, DistributionItem{Label: r.Label, Count: r.Count})
 	}
 
 	analytics.MissingLanguageCount = missing.MissingLanguage
@@ -450,7 +449,7 @@ func (h *TaskHandler) buildDocumentAnalytics(ctx context.Context, reqID *string)
 	return analytics
 }
 
-func (h *TaskHandler) buildProcessingHealth(ctx context.Context, reqID *string) (*types.ProcessingHealth, error) {
+func (h *TaskHandler) buildProcessingHealth(ctx context.Context, reqID *string) (*ProcessingHealth, error) {
 	successRow, err := h.queries.TaskSuccessRate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("task success rate: %w", err)
@@ -483,7 +482,7 @@ func (h *TaskHandler) buildProcessingHealth(ctx context.Context, reqID *string) 
 		missingTools = int64(len(config.MissingExternalToolErrors(cfg)))
 	}
 
-	return &types.ProcessingHealth{
+	return &ProcessingHealth{
 		SuccessRate:     successRate,
 		CompletedLast7d: successRow.Completed,
 		FailedLast7d:    successRow.Failed,
@@ -645,15 +644,15 @@ func taskLabel(taskType itypes.TaskType, dedupKey sql.NullString) string {
 	}
 }
 
-func taskToResponse(t database.Task) types.TaskResponse {
+func taskToResponse(t database.Task) TaskResponse {
 	return buildTaskResponse(t, false)
 }
 
-func taskDetailResponse(t database.Task) types.TaskResponse {
+func taskDetailResponse(t database.Task) TaskResponse {
 	return buildTaskResponse(t, true)
 }
 
-func buildTaskResponse(t database.Task, includeResult bool) types.TaskResponse {
+func buildTaskResponse(t database.Task, includeResult bool) TaskResponse {
 	var errStr *string
 	if t.Error.Valid {
 		errStr = &t.Error.String
@@ -671,11 +670,11 @@ func buildTaskResponse(t database.Task, includeResult bool) types.TaskResponse {
 		completed = &v
 	}
 
-	var progress *types.TaskProgressResponse
+	var progress *TaskProgressResponse
 	if t.Progress != nil {
 		var p task.ProgressSnapshot
 		if json.Unmarshal(*t.Progress, &p) == nil && p.Step != "" {
-			progress = &types.TaskProgressResponse{
+			progress = &TaskProgressResponse{
 				Step:      p.Step,
 				Detail:    p.Detail,
 				Pct:       p.Pct,
@@ -716,7 +715,7 @@ func buildTaskResponse(t database.Task, includeResult bool) types.TaskResponse {
 		result = *t.Result
 	}
 
-	return types.TaskResponse{
+	return TaskResponse{
 		TaskID:       t.TaskID,
 		BatchID:      t.BatchID.String,
 		TaskType:     string(t.TaskType),
@@ -731,4 +730,139 @@ func buildTaskResponse(t database.Task, includeResult bool) types.TaskResponse {
 		CompletedAt:  completed,
 		Result:       result,
 	}
+}
+
+type TaskProgressResponse struct {
+	Step      string  `json:"step"`
+	Detail    string  `json:"detail,omitempty"`
+	Pct       float64 `json:"pct,omitempty"`
+	UpdatedAt string  `json:"updated_at"`
+}
+
+type TaskResponse struct {
+	TaskID       string                `json:"task_id"`
+	BatchID      string                `json:"batch_id"`
+	TaskType     string                `json:"task_type"`
+	FileName     string                `json:"file_name"`
+	PayloadDocID string                `json:"payload_doc_id"`
+	Status       string                `json:"status"`
+	Error        *string               `json:"error"`
+	Label        string                `json:"label"`
+	Progress     *TaskProgressResponse `json:"progress,omitempty"`
+	CreatedAt    string                `json:"created_at"`
+	StartedAt    *string               `json:"started_at"`
+	CompletedAt  *string               `json:"completed_at"`
+	Result       json.RawMessage       `json:"result,omitempty"`
+}
+
+type TagReconcileReportResponse struct {
+	TaskID      string          `json:"task_id"`
+	CompletedAt string          `json:"completed_at"`
+	Result      json.RawMessage `json:"result"`
+}
+
+type BatchCounts struct {
+	Total      int64  `json:"total"`
+	Waiting    int64  `json:"waiting"`
+	Pending    int64  `json:"pending"`
+	Processing int64  `json:"processing"`
+	Completed  int64  `json:"completed"`
+	Failed     int64  `json:"failed"`
+	Cancelled  int64  `json:"cancelled"`
+	Discarded  int64  `json:"discarded"`
+	OwnerState string `json:"owner_state,omitempty"`
+	Orphaned   bool   `json:"orphaned"`
+}
+
+type BatchSummaryResponse struct {
+	BatchID string `json:"batch_id"`
+	Status  string `json:"status"`
+	Source  string `json:"source"`
+	BatchCounts
+	OwnerPID int64 `json:"owner_pid,omitempty"`
+}
+
+type ListBatchesResponse struct {
+	Batches []BatchSummaryResponse `json:"batches"`
+}
+
+type ListTasksResponse struct {
+	BatchID string                `json:"batch_id,omitempty"`
+	Summary *BatchSummaryResponse `json:"summary,omitempty"`
+	Tasks   []TaskResponse        `json:"tasks"`
+}
+
+type OriginalTypeStat struct {
+	OriginalType string `json:"original_type"`
+	Count        int64  `json:"count"`
+	TotalBytes   int64  `json:"total_bytes"`
+}
+
+type StorageTrendPoint struct {
+	Date            string `json:"date"`
+	DailyCount      int64  `json:"daily_count"`
+	DailyBytes      int64  `json:"daily_bytes"`
+	CumulativeBytes int64  `json:"cumulative_bytes"`
+}
+
+type BatchOverviewItem struct {
+	BatchID   string `json:"batch_id"`
+	Status    string `json:"status"`
+	Source    string `json:"source"`
+	CreatedAt string `json:"created_at"`
+	BatchCounts
+	DurationMs *int64 `json:"duration_ms,omitempty"`
+}
+
+type DistributionItem struct {
+	Label string `json:"label"`
+	Count int64  `json:"count"`
+}
+
+type DocumentAnalytics struct {
+	LanguageDistribution     []DistributionItem `json:"language_distribution"`
+	DocumentTypeDistribution []DistributionItem `json:"document_type_distribution"`
+	TagFrequency             []DistributionItem `json:"tag_frequency"`
+	MissingLanguageCount     int64              `json:"missing_language_count"`
+	MissingTypeCount         int64              `json:"missing_type_count"`
+	MissingTagsCount         int64              `json:"missing_tags_count"`
+}
+
+type ProcessingHealth struct {
+	SuccessRate     float64 `json:"success_rate"`
+	CompletedLast7d int64   `json:"completed_last_7d"`
+	FailedLast7d    int64   `json:"failed_last_7d"`
+	AvgDurationMs   int64   `json:"avg_duration_ms"`
+	ActiveBatches   int64   `json:"active_batches"`
+	OrphanedBatches int64   `json:"orphaned_batches"`
+	MissingTools    int64   `json:"missing_tools"`
+}
+
+type RunningTasksResponse struct {
+	Count int64          `json:"count"`
+	Tasks []TaskResponse `json:"tasks"`
+}
+
+type DashboardResponse struct {
+	RecentBatches         []BatchOverviewItem  `json:"recent_batches"`
+	RunningTasks          RunningTasksResponse `json:"running_tasks"`
+	Analytics             *DocumentAnalytics   `json:"analytics,omitempty"`
+	ProcessingHealth      *ProcessingHealth    `json:"processing_health,omitempty"`
+	TotalBatches          int64                `json:"total_batches"`
+	TotalFiles            int64                `json:"total_files"`
+	InboxFiles            int64                `json:"inbox_files"`
+	Waiting               int64                `json:"waiting"`
+	Pending               int64                `json:"pending"`
+	Processing            int64                `json:"processing"`
+	Completed             int64                `json:"completed"`
+	Failed                int64                `json:"failed"`
+	Cancelled             int64                `json:"cancelled"`
+	Discarded             int64                `json:"discarded"`
+	OriginalsSizeBytes    int64                `json:"originals_size_bytes"`
+	ProcessedSizeBytes    int64                `json:"processed_size_bytes"`
+	OriginalTypeBreakdown []OriginalTypeStat   `json:"original_type_breakdown"`
+	StorageTrend          []StorageTrendPoint  `json:"storage_trend"`
+	AvgFileSizeBytes      int64                `json:"avg_file_size_bytes"`
+	TotalPages            int64                `json:"total_pages"`
+	TotalWords            int64                `json:"total_words"`
 }

@@ -9,32 +9,32 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
+	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/testutil"
-	"github.com/wgomg/edub-kushim/internal/tools/adapters/tagmatcher"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 type mockMatcher struct {
 	mu    sync.Mutex
-	pairs []tagmatcher.SimilarPair
+	pairs []matcher.SimilarPair
 }
 
 func (m *mockMatcher) Match(ctx context.Context, docId, input string) ([]string, error) {
 	return []string{input}, nil
 }
 
-func (m *mockMatcher) Rank(ctx context.Context, docId string, queries []string) ([]tagmatcher.RankResult, error) {
-	results := make([]tagmatcher.RankResult, len(queries))
+func (m *mockMatcher) Rank(ctx context.Context, docId string, queries []string) ([]matcher.RankResult, error) {
+	results := make([]matcher.RankResult, len(queries))
 	for i, q := range queries {
-		results[i] = tagmatcher.RankResult{KeptName: q}
+		results[i] = matcher.RankResult{KeptName: q}
 	}
 	return results, nil
 }
 
-func (m *mockMatcher) SimilarPairs(ctx context.Context) ([]tagmatcher.SimilarPair, error) {
+func (m *mockMatcher) SimilarPairs(ctx context.Context) ([]matcher.SimilarPair, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return append([]tagmatcher.SimilarPair(nil), m.pairs...), nil
+	return append([]matcher.SimilarPair(nil), m.pairs...), nil
 }
 
 func (m *mockMatcher) Close() {}
@@ -44,7 +44,7 @@ func (m *mockMatcher) Name() string { return "mock-matcher" }
 // trackingEmbedder wraps a base embedder and records the names passed to
 // RemoveFromStore, so tests can assert the merge service removed the source.
 type trackingEmbedder struct {
-	base       tagmatcher.Embedder
+	base       matcher.Embedder
 	mu         sync.Mutex
 	removedAll []string
 }
@@ -167,12 +167,12 @@ func TestTagMerge_Suggestions_EmptyEventTableIsSimilarityOnly(t *testing.T) {
 
 	// Only surface the pair between our two tags; ignore every other tag the
 	// service scans, so the test counts exactly one suggestion.
-	matcher := &mockMatcher{
-		pairs: []tagmatcher.SimilarPair{
+	mock := &mockMatcher{
+		pairs: []matcher.SimilarPair{
 			{A: "software development", B: "software engineering", Similarity: 0.92},
 		},
 	}
-	svc.matcher = matcher
+	svc.matcher = mock
 	_ = embedder
 
 	results, err := svc.Suggestions(ctx, SuggestionsParams{Limit: 20})
@@ -222,12 +222,12 @@ func TestTagMerge_Suggestions_PopulationConfidenceAndOrdering(t *testing.T) {
 	insert("alpha", "beta", types.TagVerdicts.Related, "v2")
 	insert("beta", "alpha", types.TagVerdicts.Same, "v1")
 
-	matcher := &mockMatcher{
-		pairs: []tagmatcher.SimilarPair{
+	mock := &mockMatcher{
+		pairs: []matcher.SimilarPair{
 			{A: "alpha", B: "beta", Similarity: 0.90},
 		},
 	}
-	svc.matcher = matcher
+	svc.matcher = mock
 	_ = embedder
 
 	results, err := svc.Suggestions(ctx, SuggestionsParams{Limit: 20})
@@ -355,13 +355,13 @@ func TestTagMerge_Suggestions_ForTag(t *testing.T) {
 	_ = database.MustCreateTag(t, client.Queries, "paired beta")
 	_ = database.MustCreateTag(t, client.Queries, "paired gamma")
 
-	matcher := &mockMatcher{
-		pairs: []tagmatcher.SimilarPair{
+	mock := &mockMatcher{
+		pairs: []matcher.SimilarPair{
 			{A: "paired alpha", B: "paired beta", Similarity: 0.90},
 			{A: "paired beta", B: "paired gamma", Similarity: 0.85},
 		},
 	}
-	svc.matcher = matcher
+	svc.matcher = mock
 
 	results, err := svc.Suggestions(ctx, SuggestionsParams{
 		Limit:  50,
@@ -380,12 +380,12 @@ func TestTagMerge_Suggestions_ForTag_NoMatch(t *testing.T) {
 	_ = database.MustCreateTag(t, client.Queries, "nomatch alpha")
 	_ = database.MustCreateTag(t, client.Queries, "nomatch beta")
 
-	matcher := &mockMatcher{
-		pairs: []tagmatcher.SimilarPair{
+	mock := &mockMatcher{
+		pairs: []matcher.SimilarPair{
 			{A: "nomatch alpha", B: "nomatch beta", Similarity: 0.90},
 		},
 	}
-	svc.matcher = matcher
+	svc.matcher = mock
 
 	results, err := svc.Suggestions(ctx, SuggestionsParams{
 		Limit:  50,
@@ -403,13 +403,13 @@ func TestTagMerge_Suggestions_ExcludesDismissed(t *testing.T) {
 	_ = database.MustCreateTag(t, client.Queries, "dis-b")
 	_ = database.MustCreateTag(t, client.Queries, "keep-x")
 
-	matcher := &mockMatcher{
-		pairs: []tagmatcher.SimilarPair{
+	mock := &mockMatcher{
+		pairs: []matcher.SimilarPair{
 			{A: "dis a", B: "dis b", Similarity: 0.90},
 			{A: "dis a", B: "keep x", Similarity: 0.80},
 		},
 	}
-	svc.matcher = matcher
+	svc.matcher = mock
 
 	err := svc.DismissPair(ctx, "Dis-A", "Dis-B")
 	testutil.AssertNoError(t, err, "dismiss pair")
@@ -427,12 +427,12 @@ func TestTagMerge_Suggestions_IncludeDismissed(t *testing.T) {
 	_ = database.MustCreateTag(t, client.Queries, "inc-a")
 	_ = database.MustCreateTag(t, client.Queries, "inc-b")
 
-	matcher := &mockMatcher{
-		pairs: []tagmatcher.SimilarPair{
+	mock := &mockMatcher{
+		pairs: []matcher.SimilarPair{
 			{A: "inc a", B: "inc b", Similarity: 0.90},
 		},
 	}
-	svc.matcher = matcher
+	svc.matcher = mock
 
 	err := svc.DismissPair(ctx, "Inc-A", "Inc-B")
 	testutil.AssertNoError(t, err, "dismiss pair")
@@ -450,14 +450,14 @@ func TestTagMerge_Suggestions_PerClassLimit(t *testing.T) {
 	for _, name := range []string{"pcls-a", "pcls-b", "pcls-c", "pcls-d", "pcls-e", "pcls-f"} {
 		database.MustCreateTag(t, client.Queries, name)
 	}
-	matcher := &mockMatcher{
-		pairs: []tagmatcher.SimilarPair{
+	mock := &mockMatcher{
+		pairs: []matcher.SimilarPair{
 			{A: "pcls a", B: "pcls b", Similarity: 0.90},
 			{A: "pcls c", B: "pcls d", Similarity: 0.85},
 			{A: "pcls e", B: "pcls f", Similarity: 0.80},
 		},
 	}
-	svc.matcher = matcher
+	svc.matcher = mock
 
 	err := svc.DismissPair(ctx, "Pcls-C", "Pcls-D")
 	testutil.AssertNoError(t, err, "dismiss pair")
@@ -483,12 +483,12 @@ func TestTagMerge_Suggestions_DismissedFlagged(t *testing.T) {
 	_ = database.MustCreateTag(t, client.Queries, "flag-a")
 	_ = database.MustCreateTag(t, client.Queries, "flag-b")
 
-	matcher := &mockMatcher{
-		pairs: []tagmatcher.SimilarPair{
+	mock := &mockMatcher{
+		pairs: []matcher.SimilarPair{
 			{A: "flag a", B: "flag b", Similarity: 0.90},
 		},
 	}
-	svc.matcher = matcher
+	svc.matcher = mock
 
 	err := svc.DismissPair(ctx, "Flag-A", "Flag-B")
 	testutil.AssertNoError(t, err, "dismiss")

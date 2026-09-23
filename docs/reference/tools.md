@@ -1,4 +1,4 @@
-# Tools Framework (`internal/tools/`)
+# Tools Framework (`internal/tools/` + adapter packages)
 
 ## `runner.go`
 
@@ -6,18 +6,18 @@
 
 `Runner`
 
-- **Fields**: `logger`, `config`, `textExtractor`, `ocr`, `pdfOptimizer`, `tagMatcher tagmatcher.Matcher`, `contentAnalyzer`, `tagAdjudicator contentanalyzer.ContentAnalyzer` (built from `cfg.Enricher.TagAdjudicator` when enabled; logs an error and stays nil when construction fails), `tagQualityJudge contentanalyzer.ContentAnalyzer` (built from `cfg.Enricher.TagQuality` when enabled, same construction-failure contract), `fallbackAnalyzers []contentanalyzer.ContentAnalyzer` + `fallbackMeta []fallbackMeta` (one entry per enabled `enricher.contentanalyzer.fallbacks` entry, empty when none are configured), `textReducer`
+- **Fields**: `logger`, `config`, `textExtractor`, `ocr`, `pdfOptimizer`, `tagMatcher matcher.Matcher`, `contentAnalyzer`, `tagAdjudicator analyzer.ContentAnalyzer` (built from `cfg.Enricher.TagAdjudicator` when enabled; logs an error and stays nil when construction fails), `tagQualityJudge analyzer.ContentAnalyzer` (built from `cfg.Enricher.TagQuality` when enabled, same construction-failure contract), `fallbackAnalyzers []analyzer.ContentAnalyzer` + `fallbackMeta []fallbackMeta` (one entry per enabled `enricher.contentanalyzer.fallbacks` entry, empty when none are configured), `textReducer`
 - **Functions**:
-  - `NewRunner(logger, cfg, tools []string) *Runner` — Initializes only the listed tool adapters (e.g., `["textextractor","ocr","pdfoptimizer"]` for consumer). Loads the LLM model catalog from `<configDir>/model_catalog.json` via `llm.NewRegistry`. No longer creates a tagmatcher internally. Content analyzer is created via the new adapter-based factory: `contentanalyzer.NewContentAnalyzer(logger, cfg.ToolConfig, &cfg.Enricher.ContentAnalyzer.Llm, cfg.Enricher.ContentAnalyzer.PromptTemplate, reg)`. For each **enabled** entry in `cfg.Enricher.ContentAnalyzer.Fallbacks`, an analyzer is built from that entry's `Llm` block with the same factory and appended to `fallbackAnalyzers` (with its provider/model recorded in `fallbackMeta`); entries whose factory fails are skipped with a logged error.
-  - `NewRunnerWithMatcher(logger, cfg, tools, matcher tagmatcher.Matcher) *Runner` — Calls `NewRunner` then conditionally sets `r.tagMatcher` if `matcher != nil` and `"tagmatcher"` is in the tools list.
-- **Methods**: `ExtractText`, `OCR(ctx, docId, path)`, `OptimizePdf(ctx, docId, path)`, `ReduceContent`, `MatchTags(ctx, docId, input)`, `AnalyzeContent`, `AnalyzeDocType` — the two analyzer methods retry through `fallbackAnalyzers` in order when the primary error passes `isProviderError` (provider-attributable failure and at least one fallback is configured), returning the first success or the last error; request-side and lifecycle errors never retry. `AdjudicateTags(ctx, pairs []contentanalyzer.TagPairEvidence) ([]contentanalyzer.TagVerdictResult, error)` — classifies same-intent tag pairs via `tagAdjudicator.Adjudicate` under the `enricher.tag_adjudicator.timeout`; returns "tag adjudicator not configured" when the adjudicator is disabled or failed to construct. `JudgeTagIdentity(ctx, candidates []contentanalyzer.TagIdentityCandidate) ([]contentanalyzer.TagIdentityResult, error)` — answers the three binary canonical-form criteria for flagged candidates via `tagAdjudicator.JudgeTagIdentity` under the same timeout and error contract. `HasTagIdentityJudge() bool` — whether an identity adapter was built at construction time (the same adapter as the adjudicator). `AdjudicateTagSplits(ctx, tags []string) ([]contentanalyzer.TagSplitResult, error)` — decides keep/split for conjunction-joined tags via `tagAdjudicator.AdjudicateTagSplits`, same timeout and error contract. `HasTagAdjudicator() bool` — whether an adjudicator adapter was built at construction time. `JudgeTagQuality(ctx, text string, candidates []contentanalyzer.TagQualityCandidate) ([]contentanalyzer.TagQualityResult, error)` — runs the tag-quality rubric judge over the novel candidates under `enricher.tag_quality.timeout`; returns "tag quality judge not configured" when the layer is disabled or the adapter failed to construct. `HasTagQualityJudge() bool` — whether a tag-quality adapter was built at construction time.
+  - `NewRunner(logger, cfg, tools []string) *Runner` — Initializes only the listed tool adapters (e.g., `["textextractor","ocr","pdfoptimizer"]` for consumer). Loads the LLM model catalog from `<configDir>/model_catalog.json` via `llm.NewRegistry`. No longer creates a tagmatcher internally. Content analyzer is created via the new adapter-based factory: `analyzer.NewContentAnalyzer(logger, cfg.ToolConfig, &cfg.Enricher.ContentAnalyzer.Llm, cfg.Enricher.ContentAnalyzer.PromptTemplate, reg)`. For each **enabled** entry in `cfg.Enricher.ContentAnalyzer.Fallbacks`, an analyzer is built from that entry's `Llm` block with the same factory and appended to `fallbackAnalyzers` (with its provider/model recorded in `fallbackMeta`); entries whose factory fails are skipped with a logged error.
+  - `NewRunnerWithMatcher(logger, cfg, tools, matcher matcher.Matcher) *Runner` — Calls `NewRunner` then conditionally sets `r.tagMatcher` if `matcher != nil` and `"tagmatcher"` is in the tools list.
+- **Methods**: `ExtractText`, `OCR(ctx, docId, path)`, `OptimizePdf(ctx, docId, path)`, `ReduceContent`, `MatchTags(ctx, docId, input)`, `AnalyzeContent`, `AnalyzeDocType` — the two analyzer methods retry through `fallbackAnalyzers` in order when the primary error passes `isProviderError` (provider-attributable failure and at least one fallback is configured), returning the first success or the last error; request-side and lifecycle errors never retry. `AdjudicateTags(ctx, pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error)` — classifies same-intent tag pairs via `tagAdjudicator.Adjudicate` under the `enricher.tag_adjudicator.timeout`; returns "tag adjudicator not configured" when the adjudicator is disabled or failed to construct. `JudgeTagIdentity(ctx, candidates []analyzer.TagIdentityCandidate) ([]analyzer.TagIdentityResult, error)` — answers the three binary canonical-form criteria for flagged candidates via `tagAdjudicator.JudgeTagIdentity` under the same timeout and error contract. `HasTagIdentityJudge() bool` — whether an identity adapter was built at construction time (the same adapter as the adjudicator). `AdjudicateTagSplits(ctx, tags []string) ([]analyzer.TagSplitResult, error)` — decides keep/split for conjunction-joined tags via `tagAdjudicator.AdjudicateTagSplits`, same timeout and error contract. `HasTagAdjudicator() bool` — whether an adjudicator adapter was built at construction time. `JudgeTagQuality(ctx, text string, candidates []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error)` — runs the tag-quality rubric judge over the novel candidates under `enricher.tag_quality.timeout`; returns "tag quality judge not configured" when the layer is disabled or the adapter failed to construct. `HasTagQualityJudge() bool` — whether a tag-quality adapter was built at construction time.
 - **Result types**: `TextExtractionResult`, `OCRResult`, `PdfOptimizationResult`, `TextReducerResult` (with Text, WordCount, CharCount, TargetWordCount), `TagMatchResult`, `ContentAnalysisResult` (with People)
 - **Helper**: `runWithTimeout[T](ctx, fn) (T, error)` — Generic goroutine wrapper with context cancellation. `isProviderError(err) bool` — true for provider-attributable failures (network, HTTP status, credits); false for `ContentTooLargeError`, `TokenLimitError`, `context.Canceled`, `context.DeadlineExceeded`.
 - **Timeout behavior**: `ExtractText`, `OCR`, `ReduceContent`, and `MatchTags` each read their component's configured `Timeout` and only wrap the context with `context.WithTimeout` when the value is > 0. A timeout of 0 means no artificial deadline — parent context cancellation still propagates via `runWithTimeout`. The same guarded pattern is used by `OptimizePdf`. Config validation rejects negative timeout values at load time.
 
 ---
 
-## `adapters/contentanalyzer/adapter.go`
+## `internal/llm/analyzer/adapter.go`
 
 ### Interface
 
@@ -50,7 +50,7 @@ type ContentAnalyzer interface {
 
 ---
 
-## `adapters/contentanalyzer/shared.go`
+## `internal/llm/analyzer/shared.go`
 
 ### Constants
 
@@ -94,7 +94,7 @@ Both `Analyze()` and `AnalyzeDocType()` call `checkContentTooLarge` with their c
 
 ---
 
-## `adapters/contentanalyzer/openai_compatible.go`
+## `internal/llm/analyzer/openai_compatible.go`
 
 ### Struct
 
@@ -112,7 +112,7 @@ Both `Analyze()` and `AnalyzeDocType()` call `checkContentTooLarge` with their c
 
 ---
 
-## `adapters/contentanalyzer/llm_anthropic.go`
+## `internal/llm/analyzer/llm_anthropic.go`
 
 ### Struct
 
@@ -130,7 +130,7 @@ Both `Analyze()` and `AnalyzeDocType()` call `checkContentTooLarge` with their c
 
 ---
 
-## `adapters/tagmatcher/adapter.go`
+## `internal/matcher/adapter.go`
 
 ### Interfaces
 
@@ -186,11 +186,11 @@ scores; the identity decision lives in the enricher's identity pipeline
 (`planIdentity`). `SimilarPair` is an unordered pair of store names
 with their cosine similarity, canonicalized so each pair is stored once.
 
-The composition root builds a single `*Hugot` (for the `kushim` CLI) or uses a `*tagmatch.MatcherClient` (for the `edub` API server) — both satisfy the `Matcher` and `Embedder` interfaces. The `MatcherClient` forwards all calls over a Unix socket to a standalone `kushim hugot` process.
+The composition root builds a single `*Hugot` (for the `kushim` CLI) or uses a `*matcher.MatcherClient` (for the `edub` API server) — both satisfy the `Matcher` and `Embedder` interfaces. The `MatcherClient` forwards all calls over a Unix socket to a standalone `kushim hugot` process.
 
 ---
 
-## `adapters/tagmatcher/hugot.go`
+## `internal/matcher/hugot.go`
 
 ### Struct
 
@@ -203,7 +203,7 @@ The composition root builds a single `*Hugot` (for the `kushim` CLI) or uses a `
 - **Fields**: `store EmbeddingStore` — shared reference to the tag embedding cache; `pairs` — mutex-guarded map of unordered `similarPairKey` → cosine similarity holding every pair of store entries at or above `consolidationSim`
 - **Methods**:
   - `Match(ctx, docId, input)` — Reads all entries from the store, encodes the input, ranks by cosine similarity, returns top-N matches
-  - `Rank(ctx, docId, queries []string)` — Reads all entries from the store internally, encodes the queries verbatim (they are already canonical — `contentanalyzer.NormalizeTags` output), ranks against the store embeddings, and returns up to two candidates per query with scores plus the kept name
+  - `Rank(ctx, docId, queries []string)` — Reads all entries from the store internally, encodes the queries verbatim (they are already canonical — `analyzer.NormalizeTags` output), ranks against the store embeddings, and returns up to two candidates per query with scores plus the kept name
   - `SimilarPairs(ctx)` — Snapshots the pair cache under the mutex and returns it as a slice of `SimilarPair`
   - `Encode(ctx, *docId, texts)` — Batch embedding with chunked encoding for long inputs. Does NOT normalize input — shared with document text matching where punctuation is meaningful.
   - `AddToStore(ctx, names)` — Encodes names verbatim (canonical DB names from `service.Tag.Create`/`Update`) in batches of 32 (`embedBatchSize`), adds them to the store, and maintains the pair cache: one `Entries()` snapshot per batch, prune-then-insert per name (re-encodes drop stale pairs), fresh batch vectors used for intra-batch pairs
@@ -271,7 +271,7 @@ The catalog is loaded at startup from `<configDir>/model_catalog.json`, falling 
 
 ---
 
-## `adapters/textreducer/adapter.go`
+## `internal/tools/textreducer/adapter.go`
 
 ### Interface
 
@@ -288,7 +288,7 @@ type TextReducer interface {
 
 ---
 
-## `adapters/textreducer/textrank.go`
+## `internal/tools/textreducer/textrank.go`
 
 ### Struct
 
@@ -308,7 +308,7 @@ type TextReducer interface {
 
 ---
 
-## `adapters/ocr/adapter.go`
+## `internal/documents/ocr/adapter.go`
 
 ### Interface
 
@@ -320,13 +320,13 @@ type TextReducer interface {
 
 ---
 
-## `adapters/ocr/tesseract_link.go`
+## `internal/documents/ocr/tesseract_link.go`
 
 ### CGo preamble
 
 Links Tesseract, Leptonica, and libpng statically. Includes the Leptonica include path in `#cgo CFLAGS` and exposes a Go function `suppressLeptonicaStderr()` that registers a no-op stderr handler via `leptSetStderrHandler()`. All Leptonica `lept_stderr()` calls in the process are silently dropped. Genuine errors still propagate through Tesseract's C API return codes, which Go handles via `GetBoundingBoxes()` and `SetImageFromBytes()`.
 
-## `adapters/ocr/gosseract.go`
+## `internal/documents/ocr/gosseract.go`
 
 ### Struct
 
@@ -342,7 +342,7 @@ When the subprocess exits with a non-zero code, the adapter checks three conditi
 
 If all three hold, the error is logged as a warning and processing continues — the output PDF is passed to the optimizer. Otherwise, the output is removed and the error is returned as before. This recovers files that would otherwise be quarantined due to exit code 2 from harmless Leptonica TIFF warnings during bitmap font creation (Tesseract's `api->Init()` calls `pixReadMem` with embedded TIFF font data, which fails through the `--without-libtiff` stub).
 
-## `adapters/ocr/standalone.go`
+## `internal/documents/ocr/standalone.go`
 
 ### Function
 
@@ -363,7 +363,7 @@ Calls `suppressLeptonicaStderr()` at the top of the function to suppress Leptoni
 
 ---
 
-## `adapters/textextractor/adapter.go`
+## `internal/documents/textextractor/adapter.go`
 
 ### Interface
 
@@ -384,7 +384,7 @@ Calls `suppressLeptonicaStderr()` at the top of the function to suppress Leptoni
 
 ---
 
-## `adapters/pdfoptimizer/adapter.go`
+## `internal/documents/pdfoptimizer/adapter.go`
 
 ### Interface
 
@@ -401,7 +401,7 @@ Calls `suppressLeptonicaStderr()` at the top of the function to suppress Leptoni
 
 ---
 
-## `adapters/mupdf_wrapper.go`
+## `internal/cgo/mupdf_wrapper.go`
 
 MuPDF 1.28.0 CGo wrapper. 6 C helpers: document open/close, page rendering, text extraction, `pdf_clean_file`.
 

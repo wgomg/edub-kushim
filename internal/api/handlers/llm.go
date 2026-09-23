@@ -4,13 +4,12 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/llm"
 )
 
 type LlmHandler struct {
 	registry  *llm.Registry
-	cached    *types.LlmModelsResponse
+	cached    *LlmModelsResponse
 }
 
 func NewLlmHandler(registry *llm.Registry) *LlmHandler {
@@ -19,7 +18,7 @@ func NewLlmHandler(registry *llm.Registry) *LlmHandler {
 	return h
 }
 
-func (h *LlmHandler) buildResponse() *types.LlmModelsResponse {
+func (h *LlmHandler) buildResponse() *LlmModelsResponse {
 	adapters := make(map[string][]string)
 	for _, adapter := range h.registry.Adapters() {
 		providers := h.registry.ProvidersForAdapter(adapter)
@@ -29,13 +28,13 @@ func (h *LlmHandler) buildResponse() *types.LlmModelsResponse {
 		adapters[adapter] = providers
 	}
 
-	providers := make(map[string][]types.LlmModelEntry)
+	providers := make(map[string][]LlmModelEntry)
 	for _, adapter := range h.registry.Adapters() {
 		for _, provider := range h.registry.ProvidersForAdapter(adapter) {
 			models := h.registry.ModelsForProvider(provider)
-			entries := make([]types.LlmModelEntry, 0, len(models))
+			entries := make([]LlmModelEntry, 0, len(models))
 			for _, m := range models {
-				entry := types.LlmModelEntry{
+				entry := LlmModelEntry{
 					ID: m.ID,
 				}
 				entry.Capabilities.SupportsReasoning = m.Capabilities.SupportsReasoning
@@ -52,7 +51,7 @@ func (h *LlmHandler) buildResponse() *types.LlmModelsResponse {
 		}
 	}
 
-	return &types.LlmModelsResponse{
+	return &LlmModelsResponse{
 		Adapters:  adapters,
 		Providers: providers,
 	}

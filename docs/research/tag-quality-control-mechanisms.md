@@ -51,7 +51,7 @@ in the recent tail:
   document *is*, not what it is *about* — and the schema already owns that facet:
   `document_type`, a closed, LLM-constrained list.
 - **F3 — rule-violating leaks.** `newfoundland`, `libya`. The prompt template
-  (`internal/tools/adapters/contentanalyzer/shared.go:131`) already states *"Tags
+  (`internal/llm/analyzer/shared.go:131`) already states *"Tags
   are conceptual categories — fields, domains, disciplines, periods, methods. Tags
   are never specific people, works, or places."* The leaks pass anyway.
 - **F4 — wrong-granularity device tags.** `spinning reel repair`, `bail spring
@@ -290,7 +290,7 @@ that cut 68% of recommended keyphrases while *increasing* sales 10% [1]. Cost he
 is bounded by construction, the same way the tag adjudicator's band is: one call
 per document that births a novel term, verdicts cached per tag name across
 documents (the `tag_verdict_event` pattern generalized to a `tag_quality_event`
-table, pinned to `tagpolicy.Version`), so a full-corpus re-enrichment pays per
+table, pinned to `policy.Version`), so a full-corpus re-enrichment pays per
 *distinct new term*, not per assignment.
 
 Judge hygiene, each rule evidence-backed:

@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/service"
@@ -23,7 +22,7 @@ func NewUserHandler(services *service.CrudServices, logger *utils.Logger) *UserH
 	return &UserHandler{services: services, logger: logger}
 }
 
-func toUserResponse(user database.User) types.UserResponse {
+func toUserResponse(user database.User) UserResponse {
 	created := ""
 	if user.CreatedAt.Valid {
 		created = user.CreatedAt.Time.Format(time.RFC3339)
@@ -39,7 +38,7 @@ func toUserResponse(user database.User) types.UserResponse {
 		t := user.ApiKeyCreatedAt.Time.Format(time.RFC3339)
 		createdAt = &t
 	}
-	return types.UserResponse{
+	return UserResponse{
 		ID:              user.ID,
 		Username:        user.Username,
 		Role:            user.Role,
@@ -50,7 +49,7 @@ func toUserResponse(user database.User) types.UserResponse {
 	}
 }
 
-func toUserResponseFromRow(row database.ListUsersRow) types.UserResponse {
+func toUserResponseFromRow(row database.ListUsersRow) UserResponse {
 	created := ""
 	if row.CreatedAt.Valid {
 		created = row.CreatedAt.Time.Format(time.RFC3339)
@@ -65,7 +64,7 @@ func toUserResponseFromRow(row database.ListUsersRow) types.UserResponse {
 		t := row.ApiKeyCreatedAt.Time.Format(time.RFC3339)
 		createdAt = &t
 	}
-	return types.UserResponse{
+	return UserResponse{
 		ID:              row.ID,
 		Username:        row.Username,
 		Role:            row.Role,
@@ -101,13 +100,13 @@ func (h *UserHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	responses := make([]types.UserResponse, len(users))
+	responses := make([]UserResponse, len(users))
 	for i, u := range users {
 		responses[i] = toUserResponseFromRow(u)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(types.UserListResponse{Users: responses, Total: total})
+	json.NewEncoder(w).Encode(UserListResponse{Users: responses, Total: total})
 }
 
 func (h *UserHandler) Get(w http.ResponseWriter, r *http.Request) {
@@ -139,7 +138,7 @@ func (h *UserHandler) Create(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
 
-	var req types.CreateUserRequest
+	var req CreateUserRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
@@ -179,7 +178,7 @@ func (h *UserHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req types.UpdateUserRequest
+	var req UpdateUserRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
@@ -234,4 +233,43 @@ func (h *UserHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type CreateUserRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Role     string `json:"role,omitempty"`
+}
+
+type UpdateUserRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password,omitempty"`
+	Role     string `json:"role,omitempty"`
+}
+
+type UserResponse struct {
+	ID              int64   `json:"id"`
+	Username        string  `json:"username"`
+	Role            string  `json:"role"`
+	CreatedAt       string  `json:"created_at"`
+	HasAPIKey       bool    `json:"has_api_key"`
+	APIKeyPrefix    *string `json:"api_key_prefix,omitempty"`
+	APIKeyCreatedAt *string `json:"api_key_created_at,omitempty"`
+}
+
+type UserListResponse struct {
+	Users []UserResponse `json:"users"`
+	Total int64          `json:"total"`
+}
+
+type CreateAPIKeyResponse struct {
+	APIKey  string `json:"api_key"`
+	Prefix  string `json:"prefix"`
+	Message string `json:"message"`
+}
+
+type APIKeyStatusResponse struct {
+	HasAPIKey       bool    `json:"has_api_key"`
+	APIKeyPrefix    *string `json:"api_key_prefix,omitempty"`
+	APIKeyCreatedAt *string `json:"api_key_created_at,omitempty"`
 }

@@ -18,10 +18,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/backup"
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/consumption"
 	"github.com/wgomg/edub-kushim/internal/database"
-	"github.com/wgomg/edub-kushim/internal/pool"
+	"github.com/wgomg/edub-kushim/internal/documents/consumption"
 	"github.com/wgomg/edub-kushim/internal/service"
+	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -106,15 +106,15 @@ func queueHandler(c *Container, args []string) error {
 
 	c.logger.Info(nil, "queue daemon started (max %d concurrent batches)", maxConcurrent)
 
-	var backupPool *pool.Pool
+	var backupPool *task.Pool
 	var backupPoolStarted bool
-	var mirrorPool *pool.Pool
+	var mirrorPool *task.Pool
 	var mirrorPoolStarted bool
-	var tagReconcilePool *pool.Pool
+	var tagReconcilePool *task.Pool
 	var tagReconcilePoolStarted bool
-	var tagMeasurePool *pool.Pool
+	var tagMeasurePool *task.Pool
 	var tagMeasurePoolStarted bool
-	var tagIdentityPool *pool.Pool
+	var tagIdentityPool *task.Pool
 	var tagIdentityPoolStarted bool
 
 	go runPollingLoop(ctx, c, func() *database.Client { return client }, func() *service.Batch { return batchSvc }, maxConcurrent)
@@ -525,7 +525,7 @@ func pollingTick(ctx context.Context, c *Container, client *database.Client, bat
 	c.logger.Info(nil, "polling: batch %s created with %d files", batchID, enqueued)
 }
 
-func startPool(c *Container, ctx context.Context, name string, started *bool, pp **pool.Pool) error {
+func startPool(c *Container, ctx context.Context, name string, started *bool, pp **task.Pool) error {
 	if *started {
 		return nil
 	}
@@ -540,7 +540,7 @@ func startPool(c *Container, ctx context.Context, name string, started *bool, pp
 	return nil
 }
 
-func stopPool(c *Container, name string, started *bool, pp **pool.Pool) {
+func stopPool(c *Container, name string, started *bool, pp **task.Pool) {
 	if !*started || *pp == nil {
 		return
 	}

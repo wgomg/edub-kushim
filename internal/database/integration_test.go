@@ -1918,7 +1918,7 @@ func TestBackfillTextHash(t *testing.T) {
 // TestTextHashPersistedAtWrite pins the consume-side contract: a
 // CreateDocument call with an explicit TextHash must persist that value
 // to the row. The end-to-end round-trip through Consumer.Process is
-// covered in internal/consumption/integration_test.go.
+// covered in internal/documents/consumption/integration_test.go.
 func TestTextHashPersistedAtWrite(t *testing.T) {
 	q, _ := NewTestQueries(t)
 	resetDB(t, q)

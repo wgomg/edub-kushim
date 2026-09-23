@@ -8,7 +8,7 @@ degree of reliability.
 ## Context — how enrichment works today
 
 - `consume` computes MD5/SHA512 over **file bytes** at scan time and skips byte-identical
-  duplicates entirely (no document row, no enrich task — `internal/consumption/scan.go`,
+  duplicates entirely (no document row, no enrich task — `internal/documents/consumption/scan.go`,
   `consumer.go`). Every document that reaches `enrich` therefore has a unique file.
 - `enrich` (`internal/enrichment/enricher.go`) then runs: TextRank reduction (local) →
   semantic tag matching via Hugot/bge-m3 embeddings (local) → LLM content analysis
@@ -174,7 +174,7 @@ flowchart TD
 | 1 | **Content hash** — SHA-256 of normalized extracted text | New `content_hash` column on `document`; check at top of `Enricher.Enrich` | ~0 | Effectively 100%: conservative, misses-only |
 | 2 | User rules (paperless-style match algorithms) | New config per `document_type`/tag; evaluated on `text_content` | ~0 | Deterministic, user-auditable |
 | 3 | **SimHash over normalized text** (digits→`#`, anyascii fold) + Hamming ≤ 3, then stable-token Jaccard or alignment confirmation | New; operates on `text_content` — no new extraction | ~0 | Near-zero FP when confirmed (PPV 1.00) |
-| 4 | Embedding k-NN using existing bge-m3/Hugot infra (`hugot.go` already has chunked `Encode` + `meanPool`; reduced text is already computed) | Reuse `tagmatcher` client + `cache.EmbeddingStore` pattern | 1 local inference | Moderate; needs margin + consensus gates |
+| 4 | Embedding k-NN using existing bge-m3/Hugot infra (`hugot.go` already has chunked `Encode` + `meanPool`; reduced text is already computed) | Reuse the `matcher` client + `matcher.TagEmbeddingStore` pattern | 1 local inference | Moderate; needs margin + consensus gates |
 
 At personal-DMS scale (thousands of documents), brute-force Hamming/cosine scans are
 microseconds — no pgvector or LSH bands needed. A `bigint` column + plain index

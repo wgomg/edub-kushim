@@ -11,15 +11,15 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
-	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/documents/mime"
+	"github.com/wgomg/edub-kushim/internal/documents/storage"
 	"github.com/wgomg/edub-kushim/internal/errs"
-	"github.com/wgomg/edub-kushim/internal/mime"
 	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/service"
-	"github.com/wgomg/edub-kushim/internal/storage"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -82,23 +82,23 @@ func (h *DocumentHandler) ListDocuments(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	response := make([]types.DocumentResponse, len(documents))
+	response := make([]DocumentResponse, len(documents))
 	for i, doc := range documents {
 		docTypeID := doc.DocumentTypeID
 
 		tags, _ := h.client.GetDocumentTags(r.Context(), doc.ID)
-		tagResponses := make([]types.TagResponse, len(tags))
+		tagResponses := make([]TagResponse, len(tags))
 		for j, t := range tags {
-			tagResponses[j] = types.TagResponse{
+			tagResponses[j] = TagResponse{
 				ID:   t.ID,
 				Name: t.Name,
 			}
 		}
 
 		people, _ := h.client.GetDocumentPeopleWithType(r.Context(), doc.ID)
-		personResponses := make([]types.PersonResponse, len(people))
+		personResponses := make([]PersonResponse, len(people))
 		for j, p := range people {
-			personResponses[j] = types.PersonResponse{
+			personResponses[j] = PersonResponse{
 				ID:                    p.ID,
 				Name:                  p.Name,
 				NameNative:            p.NameNative.String,
@@ -108,7 +108,7 @@ func (h *DocumentHandler) ListDocuments(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 
-		response[i] = types.DocumentResponse{
+		response[i] = DocumentResponse{
 			ID:             doc.DocumentID,
 			Title:          doc.Title,
 			MD5Checksum:    doc.Md5Checksum,
@@ -171,17 +171,17 @@ func (h *DocumentHandler) GetDocument(w http.ResponseWriter, r *http.Request) {
 		docTypeName = &doc.DocumentTypeName.String
 	}
 
-	tagResponses := make([]types.TagResponse, len(tags))
+	tagResponses := make([]TagResponse, len(tags))
 	for i, t := range tags {
-		tagResponses[i] = types.TagResponse{
+		tagResponses[i] = TagResponse{
 			ID:   t.ID,
 			Name: t.Name,
 		}
 	}
 
-	personResponses := make([]types.PersonResponse, len(people))
+	personResponses := make([]PersonResponse, len(people))
 	for i, p := range people {
-		personResponses[i] = types.PersonResponse{
+		personResponses[i] = PersonResponse{
 			ID:                    p.ID,
 			Name:                  p.Name,
 			NameNative:            p.NameNative.String,
@@ -191,7 +191,7 @@ func (h *DocumentHandler) GetDocument(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	response := types.DocumentResponse{
+	response := DocumentResponse{
 		ID:               doc.DocumentID,
 		Title:            doc.Title,
 		MD5Checksum:      doc.Md5Checksum,
@@ -272,11 +272,11 @@ func (h *DocumentHandler) SearchDocuments(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	response := make([]types.FTSDocumentResponse, len(results))
+	response := make([]FTSDocumentResponse, len(results))
 	for i, r := range results {
 		docTypeID := r.DocumentTypeID
 
-		response[i] = types.FTSDocumentResponse{
+		response[i] = FTSDocumentResponse{
 			ID:             r.DocumentID,
 			Title:          r.Title,
 			MD5Checksum:    r.MD5Checksum,
@@ -334,23 +334,23 @@ func (h *DocumentHandler) SearchDocumentsStructured(w http.ResponseWriter, r *ht
 		return
 	}
 
-	response := make([]types.FTSDocumentResponse, len(results))
+	response := make([]FTSDocumentResponse, len(results))
 	for i, r := range results {
 		docTypeID := r.DocumentTypeID
 
 		tags, _ := h.client.GetDocumentTags(ctx, r.ID)
-		tagResponses := make([]types.TagResponse, len(tags))
+		tagResponses := make([]TagResponse, len(tags))
 		for j, t := range tags {
-			tagResponses[j] = types.TagResponse{
+			tagResponses[j] = TagResponse{
 				ID:   t.ID,
 				Name: t.Name,
 			}
 		}
 
 		people, _ := h.client.GetDocumentPeopleWithType(ctx, r.ID)
-		personResponses := make([]types.PersonResponse, len(people))
+		personResponses := make([]PersonResponse, len(people))
 		for j, p := range people {
-			personResponses[j] = types.PersonResponse{
+			personResponses[j] = PersonResponse{
 				ID:                    p.ID,
 				Name:                  p.Name,
 				NameNative:            p.NameNative.String,
@@ -360,7 +360,7 @@ func (h *DocumentHandler) SearchDocumentsStructured(w http.ResponseWriter, r *ht
 			}
 		}
 
-		response[i] = types.FTSDocumentResponse{
+		response[i] = FTSDocumentResponse{
 			ID:             r.DocumentID,
 			Title:          r.Title,
 			MD5Checksum:    r.MD5Checksum,
@@ -385,7 +385,7 @@ func (h *DocumentHandler) SearchDocumentsStructured(w http.ResponseWriter, r *ht
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 
-	searchResponse := types.SearchResponse{
+	searchResponse := SearchResponse{
 		Results: response,
 		Total:   total,
 	}
@@ -456,7 +456,7 @@ func (h *DocumentHandler) DownloadDocuments(w http.ResponseWriter, r *http.Reque
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
 
-	var req types.DocumentDownloadRequest
+	var req DocumentDownloadRequest
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB limit on request body
 
 	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
@@ -622,7 +622,7 @@ func (h *DocumentHandler) UpdateDocument(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	var req types.DocumentUpdateRequest
+	var req DocumentUpdateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
@@ -746,7 +746,7 @@ func (h *DocumentHandler) AddDocumentTag(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	var req types.AddDocumentTagRequest
+	var req AddDocumentTagRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
@@ -789,7 +789,7 @@ func (h *DocumentHandler) RemoveDocumentTag(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	var req types.RemoveDocumentTagRequest
+	var req RemoveDocumentTagRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
@@ -817,7 +817,7 @@ func (h *DocumentHandler) BatchDeleteDocuments(w http.ResponseWriter, r *http.Re
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
 
-	var req types.BatchDeleteRequest
+	var req BatchDeleteRequest
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -844,15 +844,15 @@ func (h *DocumentHandler) BatchDeleteDocuments(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	result := types.BatchDeleteResult{}
+	result := BatchDeleteResult{}
 
 	for _, id := range ids {
 		if err := h.services.Trash.SoftDelete(ctx, id); err != nil {
 			if errs.KindOf(err) == errs.KindNotFound {
-				result.Failed = append(result.Failed, types.BatchDeleteError{ID: id, Error: "not found"})
+				result.Failed = append(result.Failed, BatchDeleteError{ID: id, Error: "not found"})
 			} else {
 				h.logger.Error(&reqID, "batch delete: soft delete document %s: %v", id, err)
-				result.Failed = append(result.Failed, types.BatchDeleteError{ID: id, Error: "delete failed"})
+				result.Failed = append(result.Failed, BatchDeleteError{ID: id, Error: "delete failed"})
 			}
 			continue
 		}
@@ -873,7 +873,7 @@ func (h *DocumentHandler) BatchAssignTags(w http.ResponseWriter, r *http.Request
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
 
-	var req types.BatchTagRequest
+	var req BatchTagRequest
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -910,16 +910,16 @@ func (h *DocumentHandler) BatchAssignTags(w http.ResponseWriter, r *http.Request
 	}
 
 	ids := uniqueStrings(req.DocumentIDs)
-	result := types.BatchTagResult{}
+	result := BatchTagResult{}
 
 	for _, id := range ids {
 		doc, err := h.client.GetDocument(ctx, id)
 		if err != nil {
 			if errs.KindOf(errs.FromDB(err, "get document")) == errs.KindNotFound {
-				result.Failed = append(result.Failed, types.BatchTagError{ID: id, Error: "not found"})
+				result.Failed = append(result.Failed, BatchTagError{ID: id, Error: "not found"})
 			} else {
 				h.logger.Error(&reqID, "batch tag: get document %s: %v", id, err)
-				result.Failed = append(result.Failed, types.BatchTagError{ID: id, Error: "internal error"})
+				result.Failed = append(result.Failed, BatchTagError{ID: id, Error: "internal error"})
 			}
 			continue
 		}
@@ -930,7 +930,7 @@ func (h *DocumentHandler) BatchAssignTags(w http.ResponseWriter, r *http.Request
 			tx, err := h.client.BeginTx(ctx, nil)
 			if err != nil {
 				h.logger.Error(&reqID, "batch tag: begin tx for doc %s: %v", id, err)
-				result.Failed = append(result.Failed, types.BatchTagError{ID: id, Error: "internal error"})
+				result.Failed = append(result.Failed, BatchTagError{ID: id, Error: "internal error"})
 				continue
 			}
 
@@ -939,7 +939,7 @@ func (h *DocumentHandler) BatchAssignTags(w http.ResponseWriter, r *http.Request
 			if err := tq.ClearDocumentTags(ctx, doc.ID); err != nil {
 				tx.Rollback()
 				h.logger.Error(&reqID, "batch tag: clear tags for doc %s: %v", id, err)
-				result.Failed = append(result.Failed, types.BatchTagError{ID: id, Error: "failed to clear tags"})
+				result.Failed = append(result.Failed, BatchTagError{ID: id, Error: "failed to clear tags"})
 				failed = true
 			}
 
@@ -951,7 +951,7 @@ func (h *DocumentHandler) BatchAssignTags(w http.ResponseWriter, r *http.Request
 					}); err != nil {
 						tx.Rollback()
 						h.logger.Error(&reqID, "batch tag: add tag %d to doc %s: %v", tagID, id, err)
-						result.Failed = append(result.Failed, types.BatchTagError{ID: id, Error: "failed to add tag"})
+						result.Failed = append(result.Failed, BatchTagError{ID: id, Error: "failed to add tag"})
 						failed = true
 						break
 					}
@@ -962,7 +962,7 @@ func (h *DocumentHandler) BatchAssignTags(w http.ResponseWriter, r *http.Request
 				if err := tq.ClearOrphanTagMarksByTagIDs(ctx, req.TagIDs); err != nil {
 					tx.Rollback()
 					h.logger.Error(&reqID, "batch tag: clear orphan marks for doc %s: %v", id, err)
-					result.Failed = append(result.Failed, types.BatchTagError{ID: id, Error: "failed to add tag"})
+					result.Failed = append(result.Failed, BatchTagError{ID: id, Error: "failed to add tag"})
 					failed = true
 				}
 			}
@@ -970,7 +970,7 @@ func (h *DocumentHandler) BatchAssignTags(w http.ResponseWriter, r *http.Request
 			if !failed {
 				if err := tx.Commit(); err != nil {
 					h.logger.Error(&reqID, "batch tag: commit tx for doc %s: %v", id, err)
-					result.Failed = append(result.Failed, types.BatchTagError{ID: id, Error: "internal error"})
+					result.Failed = append(result.Failed, BatchTagError{ID: id, Error: "internal error"})
 					failed = true
 				}
 			}
@@ -981,7 +981,7 @@ func (h *DocumentHandler) BatchAssignTags(w http.ResponseWriter, r *http.Request
 					TagID:      tagID,
 				}); err != nil {
 					h.logger.Error(&reqID, "batch tag: add tag %d to doc %s: %v", tagID, id, err)
-					result.Failed = append(result.Failed, types.BatchTagError{ID: id, Error: "failed to add tag"})
+					result.Failed = append(result.Failed, BatchTagError{ID: id, Error: "failed to add tag"})
 					failed = true
 					break
 				}
@@ -1011,7 +1011,7 @@ func (h *DocumentHandler) BatchSetDocumentType(w http.ResponseWriter, r *http.Re
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
 
-	var req types.BatchDocumentTypeRequest
+	var req BatchDocumentTypeRequest
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1062,14 +1062,14 @@ func (h *DocumentHandler) BatchSetDocumentType(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	result := types.BatchDocumentTypeResult{Updated: len(updatedIDs)}
+	result := BatchDocumentTypeResult{Updated: len(updatedIDs)}
 	updated := make(map[string]struct{}, len(updatedIDs))
 	for _, id := range updatedIDs {
 		updated[id] = struct{}{}
 	}
 	for _, id := range ids {
 		if _, ok := updated[id]; !ok {
-			result.Failed = append(result.Failed, types.BatchDocumentTypeError{ID: id, Error: "not found"})
+			result.Failed = append(result.Failed, BatchDocumentTypeError{ID: id, Error: "not found"})
 		}
 	}
 
@@ -1092,7 +1092,7 @@ func (h *DocumentHandler) AddDocumentPeople(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	var req types.AddDocumentPeopleRequest
+	var req AddDocumentPeopleRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
@@ -1139,7 +1139,7 @@ func (h *DocumentHandler) RemoveDocumentPeople(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	var req types.RemoveDocumentPeopleRequest
+	var req RemoveDocumentPeopleRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
@@ -1162,4 +1162,170 @@ func (h *DocumentHandler) RemoveDocumentPeople(w http.ResponseWriter, r *http.Re
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type PersonListResponse struct {
+	Results []PersonResponse `json:"results"`
+	Total   int64            `json:"total"`
+}
+
+type TagResponse struct {
+	ID            int64  `json:"id"`
+	Name          string `json:"name"`
+	DocumentCount int64  `json:"document_count"`
+}
+
+type PersonResponse struct {
+	ID                    int64  `json:"id"`
+	Name                  string `json:"name"`
+	NameNative            string `json:"name_native,omitempty"`
+	PersonTypeID          int64  `json:"person_type_id"`
+	PersonTypeName        string `json:"person_type_name"`
+	PersonTypeDescription string `json:"person_type_description"`
+	DocumentCount         int64  `json:"document_count"`
+}
+
+type DocumentResponse struct {
+	ID               string           `json:"id"`
+	Title            string           `json:"title"`
+	MD5Checksum      string           `json:"md5_checksum"`
+	SHA512Checksum   string           `json:"sha512_checksum"`
+	OriginalType     string           `json:"original_type"`
+	FileSize         int64            `json:"file_size"`
+	PageCount        int32            `json:"page_count"`
+	WordCount        int32            `json:"word_count"`
+	CharCount        int32            `json:"char_count"`
+	Language         string           `json:"language"`
+	DocumentTypeID   *int64           `json:"document_type_id,omitempty"`
+	DocumentTypeName *string          `json:"document_type_name,omitempty"`
+	Tags             []TagResponse    `json:"tags,omitempty"`
+	People           []PersonResponse `json:"people,omitempty"`
+	HasThumbnail     bool             `json:"has_thumbnail"`
+	CreatedAt        string           `json:"created_at"`
+	ModifiedAt       string           `json:"modified_at"`
+}
+
+type FTSDocumentResponse struct {
+	ID               string           `json:"id"`
+	Title            string           `json:"title"`
+	MD5Checksum      string           `json:"md5_checksum"`
+	SHA512Checksum   string           `json:"sha512_checksum"`
+	FileSize         int64            `json:"file_size"`
+	PageCount        int32            `json:"page_count"`
+	WordCount        int32            `json:"word_count"`
+	CharCount        int32            `json:"char_count"`
+	Language         string           `json:"language"`
+	DocumentTypeID   *int64           `json:"document_type_id,omitempty"`
+	DocumentTypeName *string          `json:"document_type_name,omitempty"`
+	Tags             []TagResponse    `json:"tags,omitempty"`
+	People           []PersonResponse `json:"people,omitempty"`
+	HasThumbnail     bool             `json:"has_thumbnail"`
+	CreatedAt        string           `json:"created_at"`
+	ModifiedAt       string           `json:"modified_at"`
+	Rank             float64          `json:"rank"`
+	Snippet          string           `json:"snippet"`
+	TextContent      string           `json:"text_content"`
+}
+
+type SearchResponse struct {
+	Results []FTSDocumentResponse `json:"results"`
+	Total   int64                 `json:"total"`
+}
+
+type DocumentUpdateRequest struct {
+	Title          string  `json:"title"`
+	DocumentTypeID int64   `json:"document_type_id"`
+	Language       string  `json:"language"`
+	TextContent    *string `json:"text_content,omitempty"`
+}
+
+type AddDocumentTagRequest struct {
+	TagID int64 `json:"tag_id"`
+}
+
+type RemoveDocumentTagRequest struct {
+	TagID int64 `json:"tag_id"`
+}
+
+type AddDocumentPeopleRequest struct {
+	PeopleID     int64 `json:"people_id"`
+	PeopleTypeID int64 `json:"people_type_id"`
+}
+
+type RemoveDocumentPeopleRequest struct {
+	PeopleID     int64 `json:"people_id"`
+	PeopleTypeID int64 `json:"people_type_id"`
+}
+
+type DocumentDownloadRequest struct {
+	DocumentIDs []string `json:"document_ids"`
+}
+
+type BatchDeleteRequest struct {
+	DocumentIDs []string `json:"document_ids"`
+}
+
+type BatchDeleteError struct {
+	ID    string `json:"id"`
+	Error string `json:"error"`
+}
+
+type BatchDeleteResult struct {
+	Deleted int                `json:"deleted"`
+	Failed  []BatchDeleteError `json:"failed,omitempty"`
+}
+
+type BatchTagRequest struct {
+	DocumentIDs []string `json:"document_ids"`
+	TagIDs      []int64  `json:"tag_ids"`
+	Mode        string   `json:"mode"`
+}
+
+type BatchTagError struct {
+	ID    string `json:"id"`
+	Error string `json:"error"`
+}
+
+type BatchTagResult struct {
+	Assigned int             `json:"assigned"`
+	Failed   []BatchTagError `json:"failed,omitempty"`
+}
+
+type BatchDocumentTypeRequest struct {
+	DocumentIDs    []string `json:"document_ids"`
+	DocumentTypeID int64    `json:"document_type_id"`
+}
+
+type BatchDocumentTypeError struct {
+	ID    string `json:"id"`
+	Error string `json:"error"`
+}
+
+type BatchDocumentTypeResult struct {
+	Updated int                      `json:"updated"`
+	Failed  []BatchDocumentTypeError `json:"failed,omitempty"`
+}
+
+type TrashListResponse struct {
+	Documents []TrashDocumentResponse `json:"documents"`
+	Total     int64                   `json:"total"`
+	Limit     int32                   `json:"limit"`
+	Offset    int32                   `json:"offset"`
+}
+
+type TrashDocumentResponse struct {
+	ID           int64     `json:"id"`
+	DocumentID   string    `json:"document_id"`
+	Title        string    `json:"title"`
+	OriginalType string    `json:"original_type"`
+	FileSize     int64     `json:"file_size"`
+	PageCount    int32     `json:"page_count"`
+	Language     string    `json:"language"`
+	DeletedAt    time.Time `json:"deleted_at"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+type TrashRestoreResponse struct {
+	Restored int                `json:"restored"`
+	Failed   []BatchDeleteError `json:"failed,omitempty"`
 }

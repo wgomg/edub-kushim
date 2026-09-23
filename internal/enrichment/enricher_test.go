@@ -13,11 +13,11 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
-	"github.com/wgomg/edub-kushim/internal/enrichment/tagpolicy"
+	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
+	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/tags"
+	"github.com/wgomg/edub-kushim/internal/tags/policy"
 	"github.com/wgomg/edub-kushim/internal/tools"
-	"github.com/wgomg/edub-kushim/internal/tools/adapters/contentanalyzer"
-	"github.com/wgomg/edub-kushim/internal/tools/adapters/tagmatcher"
 	"github.com/wgomg/edub-kushim/internal/types"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -33,7 +33,7 @@ func TestPlanIdentity_LogsPendingPairs(t *testing.T) {
 	logger := utils.NewLoggerWithWriter(&buf)
 
 	adj := &mockAdjudicator{
-		adjudicateFn: func(_ context.Context, _ []contentanalyzer.TagPairEvidence) ([]contentanalyzer.TagVerdictResult, error) {
+		adjudicateFn: func(_ context.Context, _ []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error) {
 			return nil, context.DeadlineExceeded
 		},
 	}
@@ -58,7 +58,7 @@ func TestPlanIdentity_LogsPendingPairs(t *testing.T) {
 		logger:  logger,
 	}
 
-	ranked := []tagmatcher.RankResult{mkRanked("democratic socialism", "social democracy", 0.81)}
+	ranked := []matcher.RankResult{mkRanked("democratic socialism", "social democracy", 0.81)}
 	_, plan, _ := e.planIdentity(context.Background(), 0, "", []string{"democratic socialism"}, ranked, map[string]struct{}{"social democracy": {}}, nil)
 
 	out := buf.String()
@@ -128,29 +128,29 @@ func TestPlanIdentity_FoldStaysPendingWithoutJudge(t *testing.T) {
 	}
 }
 
-func mkRanked(kept, candTag string, sim float64) tagmatcher.RankResult {
-	return tagmatcher.RankResult{
+func mkRanked(kept, candTag string, sim float64) matcher.RankResult {
+	return matcher.RankResult{
 		KeptName:   kept,
-		Candidates: []tagmatcher.Candidate{{Tag: candTag, Similarity: sim}},
+		Candidates: []matcher.Candidate{{Tag: candTag, Similarity: sim}},
 	}
 }
 
 type mockAdjudicator struct {
-	adjudicateFn func(ctx context.Context, pairs []contentanalyzer.TagPairEvidence) ([]contentanalyzer.TagVerdictResult, error)
-	identityFn   func(ctx context.Context, candidates []contentanalyzer.TagIdentityCandidate) ([]contentanalyzer.TagIdentityResult, error)
+	adjudicateFn func(ctx context.Context, pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error)
+	identityFn   func(ctx context.Context, candidates []analyzer.TagIdentityCandidate) ([]analyzer.TagIdentityResult, error)
 	called       int
 	identityCall int
 }
 
-func (m *mockAdjudicator) Analyze(_ context.Context, _ string, _ []database.DocumentType, _ []database.PeopleType, _ []string) (*contentanalyzer.AnalysisResult, error) {
+func (m *mockAdjudicator) Analyze(_ context.Context, _ string, _ []database.DocumentType, _ []database.PeopleType, _ []string) (*analyzer.AnalysisResult, error) {
 	return nil, nil
 }
 
-func (m *mockAdjudicator) AnalyzeDocType(_ context.Context, _ *contentanalyzer.AnalysisResult, _ string, _ []database.DocumentType, _ contentanalyzer.DocMetadata) (string, error) {
+func (m *mockAdjudicator) AnalyzeDocType(_ context.Context, _ *analyzer.AnalysisResult, _ string, _ []database.DocumentType, _ analyzer.DocMetadata) (string, error) {
 	return "", nil
 }
 
-func (m *mockAdjudicator) Adjudicate(ctx context.Context, pairs []contentanalyzer.TagPairEvidence) ([]contentanalyzer.TagVerdictResult, error) {
+func (m *mockAdjudicator) Adjudicate(ctx context.Context, pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error) {
 	m.called++
 	if m.adjudicateFn != nil {
 		return m.adjudicateFn(ctx, pairs)
@@ -158,15 +158,15 @@ func (m *mockAdjudicator) Adjudicate(ctx context.Context, pairs []contentanalyze
 	return nil, nil
 }
 
-func (m *mockAdjudicator) AdjudicateTagSplits(_ context.Context, _ []string) ([]contentanalyzer.TagSplitResult, error) {
+func (m *mockAdjudicator) AdjudicateTagSplits(_ context.Context, _ []string) ([]analyzer.TagSplitResult, error) {
 	return nil, nil
 }
 
-func (m *mockAdjudicator) JudgeTagQuality(_ context.Context, _ string, _ []contentanalyzer.TagQualityCandidate) ([]contentanalyzer.TagQualityResult, error) {
+func (m *mockAdjudicator) JudgeTagQuality(_ context.Context, _ string, _ []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error) {
 	return nil, nil
 }
 
-func (m *mockAdjudicator) JudgeTagIdentity(ctx context.Context, candidates []contentanalyzer.TagIdentityCandidate) ([]contentanalyzer.TagIdentityResult, error) {
+func (m *mockAdjudicator) JudgeTagIdentity(ctx context.Context, candidates []analyzer.TagIdentityCandidate) ([]analyzer.TagIdentityResult, error) {
 	m.identityCall++
 	if m.identityFn != nil {
 		return m.identityFn(ctx, candidates)
@@ -177,23 +177,23 @@ func (m *mockAdjudicator) JudgeTagIdentity(ctx context.Context, candidates []con
 func (m *mockAdjudicator) Name() string { return "mock-adjudicator" }
 
 type mockTagMatcher struct {
-	rankFn func(ctx context.Context, docId string, queries []string) ([]tagmatcher.RankResult, error)
+	rankFn func(ctx context.Context, docId string, queries []string) ([]matcher.RankResult, error)
 }
 
 func (m *mockTagMatcher) Match(_ context.Context, _, _ string) ([]string, error) { return nil, nil }
 
-func (m *mockTagMatcher) Rank(ctx context.Context, docId string, queries []string) ([]tagmatcher.RankResult, error) {
+func (m *mockTagMatcher) Rank(ctx context.Context, docId string, queries []string) ([]matcher.RankResult, error) {
 	if m.rankFn != nil {
 		return m.rankFn(ctx, docId, queries)
 	}
-	results := make([]tagmatcher.RankResult, len(queries))
+	results := make([]matcher.RankResult, len(queries))
 	for i, q := range queries {
-		results[i] = tagmatcher.RankResult{KeptName: q}
+		results[i] = matcher.RankResult{KeptName: q}
 	}
 	return results, nil
 }
 
-func (m *mockTagMatcher) SimilarPairs(_ context.Context) ([]tagmatcher.SimilarPair, error) {
+func (m *mockTagMatcher) SimilarPairs(_ context.Context) ([]matcher.SimilarPair, error) {
 	return nil, nil
 }
 
@@ -350,10 +350,10 @@ func TestAdjudicateIdentityPairs(t *testing.T) {
 
 	t.Run("fresh same verdict is recorded", func(t *testing.T) {
 		e, q, adj := newAdjudicationEnricher(t)
-		adj.adjudicateFn = func(_ context.Context, pairs []contentanalyzer.TagPairEvidence) ([]contentanalyzer.TagVerdictResult, error) {
-			results := make([]contentanalyzer.TagVerdictResult, len(pairs))
+		adj.adjudicateFn = func(_ context.Context, pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error) {
+			results := make([]analyzer.TagVerdictResult, len(pairs))
 			for i := range pairs {
-				results[i] = contentanalyzer.TagVerdictResult{Index: i, Verdict: types.TagVerdicts.Same, Direction: contentanalyzer.TagDirectionQuery}
+				results[i] = analyzer.TagVerdictResult{Index: i, Verdict: types.TagVerdicts.Same, Direction: analyzer.TagDirectionQuery}
 			}
 			return results, nil
 		}
@@ -363,16 +363,16 @@ func TestAdjudicateIdentityPairs(t *testing.T) {
 
 		adjAssertEqual(t, adj.called, 1, "adjudicator call count")
 		adjAssertEqual(t, p.decided, true, "pair decided")
-		adjAssertEqual(t, p.direction, contentanalyzer.TagDirectionQuery, "direction recorded")
+		adjAssertEqual(t, p.direction, analyzer.TagDirectionQuery, "direction recorded")
 		adjAssertEqual(t, countIdentityVerdicts(t, q, "democratic socialism", "social democracy"), 1, "cached verdict rows")
 	})
 
 	t.Run("fresh variant verdict is recorded", func(t *testing.T) {
 		e, q, adj := newAdjudicationEnricher(t)
-		adj.adjudicateFn = func(_ context.Context, pairs []contentanalyzer.TagPairEvidence) ([]contentanalyzer.TagVerdictResult, error) {
-			results := make([]contentanalyzer.TagVerdictResult, len(pairs))
+		adj.adjudicateFn = func(_ context.Context, pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error) {
+			results := make([]analyzer.TagVerdictResult, len(pairs))
 			for i := range pairs {
-				results[i] = contentanalyzer.TagVerdictResult{Index: i, Verdict: types.TagVerdicts.Variant}
+				results[i] = analyzer.TagVerdictResult{Index: i, Verdict: types.TagVerdicts.Variant}
 			}
 			return results, nil
 		}
@@ -387,7 +387,7 @@ func TestAdjudicateIdentityPairs(t *testing.T) {
 
 	t.Run("adjudicator error leaves the pair pending", func(t *testing.T) {
 		e, q, adj := newAdjudicationEnricher(t)
-		adj.adjudicateFn = func(_ context.Context, _ []contentanalyzer.TagPairEvidence) ([]contentanalyzer.TagVerdictResult, error) {
+		adj.adjudicateFn = func(_ context.Context, _ []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error) {
 			return nil, context.DeadlineExceeded
 		}
 
@@ -420,7 +420,7 @@ func TestWriteVerdictEvent_ConflictReReadsStoredVerdict(t *testing.T) {
 	bp.verdict = types.TagVerdicts.Same
 	bp.model = "test-model"
 
-	e.writeVerdictEvent(context.Background(), docID, tagpolicy.Decision{
+	e.writeVerdictEvent(context.Background(), docID, policy.Decision{
 		Query:  "democratic socialism",
 		Target: "social democracy",
 		Sim:    0.81,

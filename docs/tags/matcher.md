@@ -216,4 +216,4 @@ process; the rest of the system keeps running. Adjust the values to your
 
 - [User Manual](../user-manual.md) — CLI/API reference, full config reference
 - [Architecture](../architecture.md) — matcher server design and process model
-- [Code Reference: tools](../reference/tools.md) — `adapters/tagmatcher/hugot.go` internals
+- [Code Reference: tools](../reference/tools.md) — `internal/matcher/hugot.go` internals

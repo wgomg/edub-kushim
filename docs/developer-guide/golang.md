@@ -57,32 +57,35 @@ cmd/kushim/main.go          kushim binary: CLI entry, command dispatch, hidden s
 cmd/edub/main.go            edub binary: REST API server (+ tiny command dispatch)
 internal/
   api/                      HTTP server, middleware, permission gates
-  api/handlers/             one struct per resource (Tag, Document, Task, ...)
-  api/types/                API DTOs (JSON shapes)
+  api/handlers/             one struct per resource (Tag, Document, Task, ...) + the API DTOs
+  api/wizard/               setup wizard server + embedded SPA
   auth/                     JWT, API keys, roles, context keys
-  backup/                   backup/restore + scheduler
-  cache/                    in-memory embedding cache (RWMutex-guarded maps)
+  backup/                   backup/restore + scheduler + rsync mirror
+  cgo/                      MuPDF CGo glue (real + !cgo stub twins)
   commands/                 kushim CLI commands; DI container; flag parser
   config/                   config structs, defaults, validation, polling watcher
-  consumption/              the ingestion pipeline (Consumer, scan, storage)
+  configtask/               config task handler (model/tessdata download, migrate-db, migrate-storage)
   database/                 sqlc-generated queries + client + migrations + test harness
+  documents/                document domain: consumption, storage, mime, and the
+                            document-processing adapters (ocr, textextractor, converter,
+                            pdfoptimizer, thumbnail)
   enrichment/               async enrich step
   errs/                     the error-kind contract (see §6)
   llm/                      LLM model catalog registry
-  mime/                     MIME type detection helpers
-  pool/                     generic worker pool (see §8)
+  llm/analyzer/             LLM content analyzer adapter
+  matcher/                  tag matcher: Hugot engine, socket client, embedding cache
   search/                   full-text + structured search
   service/                  business logic over database queries (Batch, Tag, People, ...)
-  static/, wizard/          embedded SvelteKit builds
-  storage/                  storage dir walker, trash
-  tagmatch/                 HTTP-over-Unix-socket client for the hugot matcher daemon
-  task/                     task engine: registry, dispatcher, runner, handlers
+  service/crud.go           shared aggregate struct (CrudServices)
+  static/                   embedded SvelteKit build
+  tags/                     tag store, measurement, policy, reconciliation
+  task/                     task engine: registry, dispatcher, runner, handlers, worker pool
   testutil/                 shared test helpers and mocks
   tools/                    the tool adapter layer + composition root (Runner)
-  tools/adapters/           one package per capability: ocr, textextractor, converter, ...
+  tools/textreducer/        TextRank-based text reduction adapter
+  types/                    closed task-system vocabulary registry
   utils/                    logger, metrics, text, files, param bag
   version/                  version string (injected via -ldflags)
-  types.go                  shared aggregate struct (CrudServices)
 ```
 
 Two binaries, same module:
@@ -113,7 +116,7 @@ Project stances to know before reading further:
 Constructors and services return `(value, error)`; the interesting part is how
 `defer` is used. Three shapes recur:
 
-**Panic → error** (`internal/pool/pool.go:91`) — a named return lets the
+**Panic → error** (`internal/task/pool.go:91`) — a named return lets the
 deferred closure convert a worker panic into an error so the pool's restart
 loop can recover:
 
@@ -129,7 +132,7 @@ func (p *Pool) runWorker(id int, logPrefix string) (rerr error) {
 }
 ```
 
-**Rollback only on failure** (`internal/consumption/consumer.go:292`) — the
+**Rollback only on failure** (`internal/documents/consumption/consumer.go:292`) — the
 deferred closure inspects the named `err`:
 
 ```go
@@ -144,7 +147,7 @@ defer func() {
 }()
 ```
 
-**Timing log** (`internal/consumption/consumer.go:116`):
+**Timing log** (`internal/documents/consumption/consumer.go:116`):
 
 ```go
 start := time.Now()
@@ -166,7 +169,7 @@ HTTP layer never touches config internals directly.
 **Every method in this codebase uses a pointer receiver** (`*Tag`, `*Runner`,
 `*Queries`, `*Pool`), for two reasons: methods may mutate state, and structs
 containing `sync.Mutex`/`sync.RWMutex`/`atomic` fields must never be copied —
-`cache.Cache`, `pool.Pool`, and `utils.Logger` are always used through `*T`.
+`matcher.Cache`, `task.Pool`, and `utils.Logger` are always used through `*T`.
 
 Struct tags do triple duty in the config layer — YAML for the file,
 `mapstructure` for the API's dot-key PATCH path, JSON for responses
@@ -189,7 +192,7 @@ Constructors are exported `NewXxx` functions that validate inputs and return
 instead (`NewTextExtractor(...) (TextExtractor, error)`, §4):
 
 ```go
-// internal/tools/adapters/textextractor/pdftotext.go:22 — validates at startup, with an install hint
+// internal/documents/textextractor/pdftotext.go:22 — validates at startup, with an install hint
 func NewPDFToText(logger *utils.Logger, cfg config.ToolConfig) (*PDFToText, error) {
 	path, err := exec.LookPath("pdftotext")
 	if err != nil {
@@ -220,7 +223,7 @@ Each processing capability is one interface plus a factory that switches on the
 configured engine:
 
 ```go
-// internal/tools/adapters/textextractor/adapter.go:11
+// internal/documents/textextractor/adapter.go:11
 type TextExtractor interface {
 	Extract(ctx context.Context, path string, mimeType string) (*string, error)
 	CanHandle(mimeType string) bool
@@ -234,7 +237,7 @@ the same interface by delegating to a slice of the same interface
 (Chain-of-Responsibility):
 
 ```go
-// internal/tools/adapters/textextractor/adapter.go:17
+// internal/documents/textextractor/adapter.go:17
 type CompositeExtractor struct {
 	extractors []TextExtractor
 }
@@ -250,8 +253,8 @@ func (c *CompositeExtractor) Extract(ctx context.Context, path string, mimeType 
 ```
 
 The same pattern repeats for `ocr.OCR`, `converter.DocumentConverter`,
-`pdfoptimizer.PdfOptimizer`, `textreducer.TextReducer`, `contentanalyzer.ContentAnalyzer`,
-`tagmatcher.Matcher` / `tagmatcher.Embedder`.
+`pdfoptimizer.PdfOptimizer`, `textreducer.TextReducer`, `analyzer.ContentAnalyzer`,
+`matcher.Matcher` / `matcher.Embedder`.
 
 Two styles of factory coexist, and the distinction is idiomatic:
 
@@ -274,8 +277,8 @@ type Runner struct {
 	ocr              ocr.OCR
 	pdfOptimizer     pdfoptimizer.PdfOptimizer
 	documentConverter converter.DocumentConverter
-	tagMatcher       tagmatcher.Matcher
-	contentAnalyzer  contentanalyzer.ContentAnalyzer
+	tagMatcher       matcher.Matcher
+	contentAnalyzer  analyzer.ContentAnalyzer
 	textReducer      textreducer.TextReducer
 }
 ```
@@ -285,7 +288,7 @@ injection by constructor argument — no framework involved.
 
 ### Interface extraction for testability (consumer pays)
 
-`internal/consumption/consumer.go:40` defines a *small, private* interface
+`internal/documents/consumption/consumer.go:40` defines a *small, private* interface
 covering only the `Runner` methods the consumer uses, so tests can inject a
 mock without mocking the whole tool stack:
 
@@ -331,7 +334,7 @@ handlers and not others; the `ok` form of the assertion handles both.
 
 ### One interface, two worlds apart
 
-`tagmatcher.Matcher` has two implementations that are physically different
+`matcher.Matcher` has two implementations that are physically different
 processes: `*Hugot` (in-process ONNX model, cgo build) and `*MatcherClient`
 (HTTP over a Unix socket to the `kushim hugot` daemon). The rest of the system
 cannot tell them apart — which is exactly how `edub` (pure Go, no cgo) still
@@ -386,19 +389,19 @@ Every generated query method (`GetDocument`, `CreateTask`, ...) is promoted, so
 `client.GetDocument(...)` works directly — while `Client` adds transaction
 support on top. This is the "wrapper with promotions" idiom.
 
-### 2. `cache.EmbeddingStore` embeds `storeBase` for reuse
+### 2. `matcher.TagEmbeddingStore` embeds `storeBase` for reuse
 
 ```go
-// internal/cache/embedding_store.go:3
-type EmbeddingStore struct {
+// internal/matcher/embedding_store.go:3
+type TagEmbeddingStore struct {
 	storeBase
 	entries map[string][]float32
 }
 ```
 
-`storeBase` (`internal/cache/cache.go:16`) owns the `sync.RWMutex` and the
-`Attr`/`Attrs` methods; embedding promotes both, so `*EmbeddingStore` satisfies
-`cache.Store` without duplicating code.
+`storeBase` (`internal/matcher/cache.go:16`) owns the `sync.RWMutex` and the
+`Attr`/`Attrs` methods; embedding promotes both, so `*TagEmbeddingStore` satisfies
+`matcher.Store` without duplicating code.
 
 ### 3. `auth.Claims` embeds `jwt.RegisteredClaims`
 
@@ -542,12 +545,12 @@ The project's goroutines always follow two rules: **listen for an explicit
 stop channel AND `ctx.Done()`**, and **never share memory except through
 channels or guarded fields**.
 
-### The worker pool: `internal/pool`
+### The worker pool: `internal/task`
 
-`pool.Pool` is a generic bounded worker pool — but note the design: workers
+`task.Pool` is a generic bounded worker pool — but note the design: workers
 *poll* the database on a timer rather than receiving jobs from a channel. The
 DB (`ClaimNextPending`) is the queue; the pool just bounds concurrency
-(`internal/pool/pool.go:71`):
+(`internal/task/pool.go:71`):
 
 ```go
 func (p *Pool) workerLoop(id int) {
@@ -597,7 +600,7 @@ and bounded by a timeout (§10).
 
 Four patterns recur; all solve a specific problem *here*.
 
-**Unbuffered channel for backpressure** (`internal/storage/orphaned.go:40`) —
+**Unbuffered channel for backpressure** (`internal/documents/storage/orphaned.go:40`) —
 the producer blocks until the consumer takes each item, so a slow consumer
 throttles the disk scan naturally. A separate buffered `error` channel carries
 the first walk error:
@@ -647,7 +650,7 @@ The primitives are used in small, scoped guards; the applications worth
 knowing:
 
 **Read-heavy caches take `RWMutex` and return deep copies** so callers can't
-race the lock (`internal/cache/embedding_store.go:49`):
+race the lock (`internal/matcher/embedding_store.go:49`):
 
 ```go
 func (e *EmbeddingStore) Entries() map[string][]float32 {
@@ -662,7 +665,7 @@ func (e *EmbeddingStore) Entries() map[string][]float32 {
 ```
 
 **Bounded shutdown**: `Stop` wraps `wg.Wait()` in a goroutine and races it
-against the context (`internal/pool/pool.go:57`):
+against the context (`internal/task/pool.go:57`):
 
 ```go
 done := make(chan struct{})
@@ -680,7 +683,7 @@ case <-ctx.Done():
 ```
 
 **`sync.Once` for idempotent cleanup** — `Stop` can be called twice safely
-(`internal/pool/pool.go:50`); also the heartbeat stop (`task/heartbeat.go:15`)
+(`internal/task/pool.go:50`); also the heartbeat stop (`task/heartbeat.go:15`)
 and the tessdata download guard (`ocr/tessdata.go:15`):
 
 ```go
@@ -775,7 +778,7 @@ shutdown. Constructors verify the binary exists at startup with `exec.LookPath`
 `ghostscript`, `tesseract --list-langs`, and the project's own binaries.
 
 The Gosseract OCR adapter doesn't call Tesseract in-process at all — it
-**re-executes itself** with a hidden subcommand (`internal/tools/adapters/ocr/gosseract.go:56`):
+**re-executes itself** with a hidden subcommand (`internal/documents/ocr/gosseract.go:56`):
 
 ```go
 cmd := exec.CommandContext(ctx, os.Args[0], "internal-ocr",
@@ -831,7 +834,7 @@ The tag matcher daemon listens on a Unix socket
 (`internal/commands/hugot.go:100`) — with stale-socket removal before listen,
 `EADDRINUSE` detected via `errors.As` to `syscall.Errno`, and `os.Remove` after
 shutdown. The client speaks plain HTTP over the socket by overriding the
-transport's dialer (`internal/tagmatch/client.go:49`):
+transport's dialer (`internal/matcher/client.go:49`):
 
 ```go
 client: &http.Client{
@@ -1024,10 +1027,10 @@ project ships self-contained binaries. Five sites:
 | Directive | What's embedded | Consumed as |
 |---|---|---|
 | `internal/static/fs.go:11` `//go:embed build` | SvelteKit SPA build | `embed.FS` → `fs.Sub(buildFS, "build")` → `http.FileServer` |
-| `internal/wizard/fs.go:8` `//go:embed static` | setup wizard SPA | same `fs.Sub` pattern |
+| `internal/api/wizard/fs.go:8` `//go:embed static` | setup wizard SPA | same `fs.Sub` pattern |
 | `internal/database/schema.go:11` `//go:embed sql/schema` | migrations + seeds | `goose.SetBaseFS(SchemaFS)` + `ReadFile` |
 | `internal/llm/registry.go:13` `//go:embed model_catalog.json` | LLM catalog fallback | `[]byte` |
-| `internal/tools/adapters/ocr/font_embed.go:11` `//go:embed kushim_font.ttf` | TrueType font for invisible OCR text layer | `[]byte` → `pdf.AddUTF8FontFromBytes` |
+| `internal/documents/ocr/font_embed.go:11` `//go:embed kushim_font.ttf` | TrueType font for invisible OCR text layer | `[]byte` → `pdf.AddUTF8FontFromBytes` |
 
 A directory embeds as an `embed.FS` (plus `fs.Sub` when the embed root is a
 parent dir); a single file embeds as `[]byte` (single-file embeds need the
@@ -1092,7 +1095,7 @@ type TagHandler struct {
 func (h *TagHandler) List(w http.ResponseWriter, r *http.Request) { ... }
 ```
 
-Dependencies are shared through `types.CrudServices` (`internal/types.go:10`),
+Dependencies are shared through `types.CrudServices` (`internal/service/crud.go:8`),
 a plain struct of service pointers — assembled once in `NewServer`.
 
 ### Middleware
@@ -1129,7 +1132,7 @@ a synthetic admin — the whole server still works for local setups.
 `IdleTimeout`), started in a goroutine, shut down gracefully via
 `server.Shutdown(ctx)` with a 30-second deadline and `srv.services.Close()` —
 which uses reflection to close every service implementing `io.Closer`
-(`internal/types.go:23`):
+(`internal/service/crud.go:23`):
 
 ```go
 func (s *CrudServices) Close() {
@@ -1264,7 +1267,7 @@ func (m *mockPdfOptimizer) Optimize(ctx context.Context, docId, path string) (*s
 ```
 
 Shared test doubles live in `internal/testutil/` — including `MockEmbedder`, a
-fake implementation of the real `tagmatcher.Embedder` interface used by API
+fake implementation of the real `matcher.Embedder` interface used by API
 handler tests.
 
 **HTTP handler tests** drive handler structs directly with `httptest.NewRequest`
@@ -1341,23 +1344,23 @@ sticks to `any`.
 
 | I want to see... | Go to |
 |---|---|
-| A goroutine + select loop | `internal/pool/pool.go` (worker), `internal/commands/queue.go` (daemon), `internal/task/heartbeat.go` |
-| Channels (producer/consumer, fan-out) | `internal/tools/adapters/ocr/standalone.go`, `internal/storage/orphaned.go` |
+| A goroutine + select loop | `internal/task/pool.go` (worker), `internal/commands/queue.go` (daemon), `internal/task/heartbeat.go` |
+| Channels (producer/consumer, fan-out) | `internal/documents/ocr/standalone.go`, `internal/documents/storage/orphaned.go` |
 | Non-blocking send | `internal/commands/notify.go:56` |
-| `sync.Once` idempotent stop | `internal/pool/pool.go:50`, `internal/task/heartbeat.go:15` |
+| `sync.Once` idempotent stop | `internal/task/pool.go:50`, `internal/task/heartbeat.go:15` |
 | `atomic.Pointer` hot reload | `internal/commands/container.go:27`, `internal/api/server.go:33`, `internal/config/watcher.go` |
 | Timer drain/reset | `internal/commands/queue.go:116` |
 | Signals → cancellation | `internal/commands/consume.go:33` (`watchSignals`), `cmd/edub/main.go:82` |
-| `os/exec` + self-reexec | `internal/commands/queue.go:54`, `internal/tools/adapters/ocr/gosseract.go:56` |
-| Unix socket HTTP client/server | `internal/tagmatch/client.go:49`, `internal/commands/hugot.go:100` |
-| Interfaces + composite | `internal/tools/adapters/textextractor/adapter.go` |
-| Interface extraction for tests | `internal/consumption/consumer.go:40` |
+| `os/exec` + self-reexec | `internal/commands/queue.go:54`, `internal/documents/ocr/gosseract.go:56` |
+| Unix socket HTTP client/server | `internal/matcher/client.go:49`, `internal/commands/hugot.go:100` |
+| Interfaces + composite | `internal/documents/textextractor/adapter.go` |
+| Interface extraction for tests | `internal/documents/consumption/consumer.go:40` |
 | Optional interface discovery | `internal/task/registry.go:28` |
-| Struct embedding | `internal/database/client.go`, `internal/cache/embedding_store.go`, `internal/auth/claims.go` |
+| Struct embedding | `internal/database/client.go`, `internal/matcher/embedding_store.go`, `internal/auth/claims.go` |
 | Typed errors + `Unwrap` | `internal/errs/errs.go`, `internal/task/errors.go` |
 | `errors.Is`/`errors.As` | `internal/api/handlers/tag.go:17`, `internal/task/runner.go:62` |
 | Context values (typed keys) | `internal/auth/claims.go:30`, `internal/utils/parambag.go:114`, `internal/api/server.go:320` |
-| Transactions (defer rollback) | `internal/service/batch.go:400`, `internal/consumption/consumer.go:292` |
+| Transactions (defer rollback) | `internal/service/batch.go:400`, `internal/documents/consumption/consumer.go:292` |
 | sqlc generated queries | `internal/database/document.sql.go`, `db.go`, `models.go` |
 | Migrations/seeds via embed | `internal/database/schema.go` |
 | Defaults-first config load | `internal/config/config.go:420` |
@@ -1365,15 +1368,15 @@ sticks to `any`.
 | Middleware chain | `internal/api/permission.go`, `internal/api/server.go:316` |
 | Go 1.22 routing + `PathValue` | `internal/api/server.go:199`, handlers |
 | `go:embed` assets | `internal/static/fs.go`, `internal/database/schema.go`, `internal/llm/registry.go`, `ocr/font_embed.go` |
-| cgo preamble + `#cgo` flags | `internal/tools/adapters/mupdf_wrapper.go`, `ocr/tesseract_link.go` |
-| Stub twin (`!cgo`) | `internal/tools/adapters/mupdf_nocgo.go` |
-| `init()` factory swap | `internal/tools/adapters/ocr/adapter.go` + `gosseract.go:137` |
+| cgo preamble + `#cgo` flags | `internal/cgo/mupdf_wrapper.go`, `ocr/tesseract_link.go` |
+| Stub twin (`!cgo`) | `internal/cgo/mupdf_nocgo.go` |
+| `init()` factory swap | `internal/documents/ocr/adapter.go` + `gosseract.go:137` |
 | CLI registry + flag parser | `internal/commands/commands.go`, `internal/commands/flags.go` |
 | slog custom handlers | `internal/utils/logger.go` |
 | Table-driven tests | `internal/utils/logger_test.go:13` |
 | DB test harness | `internal/database/dbtest.go`, `internal/testutil/testutil.go` |
 | Generics | `internal/tools/runner.go:81`, `internal/service/result.go` |
-| Reflection | `internal/types.go:23` |
+| Reflection | `internal/service/crud.go:23` |
 
 ---
 

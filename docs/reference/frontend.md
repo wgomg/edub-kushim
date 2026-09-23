@@ -113,8 +113,8 @@ Bare `go build` invocations are not supported.
 The Makefile exports `CGO_ENABLED=1`, `CGO_CPPFLAGS`, and `CGO_LDFLAGS` so Go can find the headers and tokenizers library.
 Linker flags are embedded in source files:
 
-- `internal/tools/adapters/ocr/tesseract_link.go` — Static linking for Tesseract + Leptonica + libpng + platform libraries (`lstdc++`, `lm`, `lpthread`, `ldl`, `lz`)
-- `internal/tools/adapters/mupdf_wrapper.go` — Static linking for MuPDF + platform libraries and `lfreetype`, `ljbig2dec`, `lmujs`, `lopenjp2`, `lz`, `lcrypto`
+- `internal/documents/ocr/tesseract_link.go` — Static linking for Tesseract + Leptonica + libpng + platform libraries (`lstdc++`, `lm`, `lpthread`, `ldl`, `lz`)
+- `internal/cgo/mupdf_wrapper.go` — Static linking for MuPDF + platform libraries and `lfreetype`, `ljbig2dec`, `lmujs`, `lopenjp2`, `lz`, `lcrypto`
 
 ## GitHub Actions release
 
@@ -133,7 +133,7 @@ See `AGENTS.md` → Releases for the full process and gotchas.
 # Setup Wizard (`web-wizard/`)
 
 A standalone SvelteKit SPA for initial configuration, embedded into the `kushim`
-binary at `internal/wizard/static/`.
+binary at `internal/api/wizard/static/`.
 
 ## Purpose
 
@@ -156,7 +156,7 @@ parchment palette) via Tailwind CSS.
 ## Build
 
 ```bash
-make wizard-build         # npm ci && npm run build, copy to internal/wizard/static
+make wizard-build         # npm ci && npm run build, copy to internal/api/wizard/static
 ```
 
 ## See Also

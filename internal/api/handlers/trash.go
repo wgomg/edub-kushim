@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/service"
@@ -22,8 +21,8 @@ func NewTrashHandler(logger *utils.Logger, trashSvc *service.TrashService, getCo
 	return &TrashHandler{logger: logger, trashSvc: trashSvc, getConfig: getConfig}
 }
 
-func mapTrashDocument(row database.ListTrashDocumentsRow) types.TrashDocumentResponse {
-	return types.TrashDocumentResponse{
+func mapTrashDocument(row database.ListTrashDocumentsRow) TrashDocumentResponse {
+	return TrashDocumentResponse{
 		ID:           row.ID,
 		DocumentID:   row.DocumentID,
 		Title:        row.Title,
@@ -61,13 +60,13 @@ func (h *TrashHandler) ListTrash(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := make([]types.TrashDocumentResponse, len(documents))
+	response := make([]TrashDocumentResponse, len(documents))
 	for i, doc := range documents {
 		response[i] = mapTrashDocument(doc)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(types.TrashListResponse{
+	json.NewEncoder(w).Encode(TrashListResponse{
 		Documents: response,
 		Total:     total,
 		Limit:     int32(limit),
@@ -165,7 +164,7 @@ func (h *TrashHandler) BatchPermanentlyDelete(w http.ResponseWriter, r *http.Req
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
 
-	var req types.BatchDeleteRequest
+	var req BatchDeleteRequest
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -192,11 +191,11 @@ func (h *TrashHandler) BatchPermanentlyDelete(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	result := types.BatchDeleteResult{}
+	result := BatchDeleteResult{}
 	for _, id := range ids {
 		if err := h.trashSvc.PermanentlyDelete(ctx, id); err != nil {
 			h.logger.Error(&reqID, "batch permanent delete %s: %v", id, err)
-			result.Failed = append(result.Failed, types.BatchDeleteError{ID: id, Error: "delete failed"})
+			result.Failed = append(result.Failed, BatchDeleteError{ID: id, Error: "delete failed"})
 			continue
 		}
 		result.Deleted++
@@ -215,7 +214,7 @@ func (h *TrashHandler) BatchRestore(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
 
-	var req types.BatchDeleteRequest
+	var req BatchDeleteRequest
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -242,11 +241,11 @@ func (h *TrashHandler) BatchRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result := types.TrashRestoreResponse{}
+	result := TrashRestoreResponse{}
 	for _, id := range ids {
 		if err := h.trashSvc.RestoreDocument(ctx, id); err != nil {
 			h.logger.Error(&reqID, "batch restore %s: %v", id, err)
-			result.Failed = append(result.Failed, types.BatchDeleteError{ID: id, Error: "restore failed"})
+			result.Failed = append(result.Failed, BatchDeleteError{ID: id, Error: "restore failed"})
 			continue
 		}
 		result.Restored++

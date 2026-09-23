@@ -90,8 +90,8 @@ into the Go binaries:
 
 - `web` build → `internal/static/build/`, embedded with `//go:embed` and served
   by the `edub` API server at `/` (`internal/static/fs.go`).
-- `web-wizard` build → `internal/wizard/static/`, embedded and served by
-  `kushim setup` at `http://0.0.0.0:8420` (`internal/wizard/fs.go`).
+- `web-wizard` build → `internal/api/wizard/static/`, embedded and served by
+  `kushim setup` at `http://0.0.0.0:8420` (`internal/api/wizard/fs.go`).
 
 Build order matters: `make web-build && make build` (the embed step fails if
 the SPA output is missing — CI stages it with `make stage-web`).

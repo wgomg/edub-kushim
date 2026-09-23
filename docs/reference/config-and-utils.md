@@ -28,7 +28,7 @@
 - `BackupConfig`: `Enabled bool`, `Path string` (fallback output dir), `Schedules []BackupSchedule` (mode/interval/time/path/keep). Deprecated flat `Interval`/`Time`/`Keep` fields are kept for auto-conversion into a single `full` schedule by `finalizeConfig`.
 - `MirrorConfig`: `Enabled bool`, `Path string` (local path or `[user@]host:path` remote target), `Interval float64` (days), `Time string` (HH:MM, default `02:00`). Validated by `finalizeConfig` (path required when enabled, interval > 0, HH:MM parse, `ValidateMirrorDestination` before `MkdirAll`).
 - `IsRemoteMirrorTarget(path) bool` — Detects rsync remote syntax: `rsync://host/module` or `[user@]host:path` (host part without `/` or whitespace). Remote targets skip `~` expansion/`MkdirAll`.
-- `ValidateMirrorDestination(dest, storageDir, backupPath) error` — Symlink-resolved containment guard (refuses dest inside/containing/equal to storage, inside backup, dash-prefixed). Used by `finalizeConfig` (load time) and `mirror.ValidateDestination` (execution time).
+- `ValidateMirrorDestination(dest, storageDir, backupPath) error` — Symlink-resolved containment guard (refuses dest inside/containing/equal to storage, inside backup, dash-prefixed). Used by `finalizeConfig` (load time) and `backup.ValidateDestination` (execution time).
 - `ToolConfig`: `Command string`, `Timeout time.Duration`
 
 ## Constants
@@ -86,7 +86,7 @@ per tool category, used by the frontend settings UI to populate select dropdowns
 
 ---
 
-# Cache (`internal/cache/`)
+# Cache (`internal/matcher/`)
 
 ## `cache.go`
 
@@ -109,7 +109,7 @@ per tool category, used by the frontend settings UI to populate select dropdowns
 
 ### Function
 
-- `BuildTagCache(ctx, queries, logger, hugot, store) error` — Fetches the promoted tag names from DB (`ListPromotedTagNames`; provisional tags stay out of the store until promoted), creates an initial empty `EmbeddingStore`, embeds tags in batches of 32 via the provided `Hugot` embedder, populates the store. Graceful fallback to empty cache on Hugot init failure.
+- `BuildTagCache(ctx, queries, logger, hugot, store) error` — Fetches the promoted tag names from DB (`ListPromotedTagNames`; provisional tags stay out of the store until promoted), creates an initial empty `TagEmbeddingStore`, embeds tags in batches of 32 via the provided `Embedder`, populates the store. Graceful fallback to empty cache on Hugot init failure.
 
 ---
 
@@ -117,9 +117,9 @@ per tool category, used by the frontend settings UI to populate select dropdowns
 
 ### Struct
 
-`EmbeddingStore` — Embeds `storeBase`, fields: `entries map[string][]float32`
+`TagEmbeddingStore` — Embeds `storeBase`, fields: `entries map[string][]float32`
 
-- **Methods**: `Keys()`, `Len()`, `Remove(key)`, `Get(key) ([]float32, bool)`, `Add(key, embedding)`, `Entries() map[string][]float32` (returns deep copy)
+- **Methods**: `Keys()`, `Len()`, `Remove(key)`, `Add(key, embedding)`, `Entries() map[string][]float32` (returns deep copy)
 
 ---
 

@@ -15,15 +15,15 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/documents/converter"
+	"github.com/wgomg/edub-kushim/internal/documents/ocr"
+	"github.com/wgomg/edub-kushim/internal/documents/pdfoptimizer"
+	"github.com/wgomg/edub-kushim/internal/documents/textextractor"
+	"github.com/wgomg/edub-kushim/internal/documents/thumbnail"
 	"github.com/wgomg/edub-kushim/internal/llm"
-	"github.com/wgomg/edub-kushim/internal/tools/adapters/contentanalyzer"
-	"github.com/wgomg/edub-kushim/internal/tools/adapters/converter"
-	"github.com/wgomg/edub-kushim/internal/tools/adapters/ocr"
-	"github.com/wgomg/edub-kushim/internal/tools/adapters/pdfoptimizer"
-	"github.com/wgomg/edub-kushim/internal/tools/adapters/tagmatcher"
-	"github.com/wgomg/edub-kushim/internal/tools/adapters/textextractor"
-	"github.com/wgomg/edub-kushim/internal/tools/adapters/textreducer"
-	"github.com/wgomg/edub-kushim/internal/tools/adapters/thumbnail"
+	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
+	"github.com/wgomg/edub-kushim/internal/matcher"
+	"github.com/wgomg/edub-kushim/internal/tools/textreducer"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -35,12 +35,12 @@ type Runner struct {
 	pdfOptimizer      pdfoptimizer.PdfOptimizer
 	thumbnailer       thumbnail.Thumbnailer
 	documentConverter converter.DocumentConverter
-	tagMatcher        tagmatcher.Matcher
-	contentAnalyzer   contentanalyzer.ContentAnalyzer
-	tagAdjudicator    contentanalyzer.ContentAnalyzer
-	tagQualityJudge   contentanalyzer.ContentAnalyzer
-	tagIdentityJudge  contentanalyzer.ContentAnalyzer
-	fallbackAnalyzers []contentanalyzer.ContentAnalyzer
+	tagMatcher        matcher.Matcher
+	contentAnalyzer   analyzer.ContentAnalyzer
+	tagAdjudicator    analyzer.ContentAnalyzer
+	tagQualityJudge   analyzer.ContentAnalyzer
+	tagIdentityJudge  analyzer.ContentAnalyzer
+	fallbackAnalyzers []analyzer.ContentAnalyzer
 	fallbackMeta      []fallbackMeta
 	textReducer       textreducer.TextReducer
 }
@@ -83,15 +83,15 @@ type TagMatchResult struct {
 }
 
 type ContentAnalysisResult struct {
-	Title       string                         `json:"title"`
-	DocType     string                         `json:"type"`
-	Tags        []string                       `json:"tags"`
-	TagDetails  []contentanalyzer.TagDetail    `json:"tag_details,omitempty"`
-	People      []contentanalyzer.PeopleResult `json:"people"`
-	Language    string                         `json:"language"`
-	Stats       *json.RawMessage               `json:"stats"`
-	Prompt      string                         `json:"prompt"`
-	PassContext *json.RawMessage               `json:"-"`
+	Title       string                  `json:"title"`
+	DocType     string                  `json:"type"`
+	Tags        []string                `json:"tags"`
+	TagDetails  []analyzer.TagDetail    `json:"tag_details,omitempty"`
+	People      []analyzer.PeopleResult `json:"people"`
+	Language    string                  `json:"language"`
+	Stats       *json.RawMessage        `json:"stats"`
+	Prompt      string                  `json:"prompt"`
+	PassContext *json.RawMessage        `json:"-"`
 }
 
 // runWithTimeout runs fn in a goroutine and returns its result,
@@ -174,14 +174,14 @@ func NewRunner(logger *utils.Logger, cfg *config.Config, tools []string) *Runner
 			}
 			r.textReducer, _ = textreducer.NewTextReducer(logger, toolCfg)
 		case "contentanalyzer":
-			ca, caErr := contentanalyzer.NewContentAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.Enricher.ContentAnalyzer.Timeout) * time.Second}, &cfg.Enricher.ContentAnalyzer.Llm, cfg.Enricher.ContentAnalyzer.PromptTemplate, cfg.Enricher.ContentAnalyzer.MinTags, cfg.Enricher.ContentAnalyzer.MaxTags, reg)
+			ca, caErr := analyzer.NewContentAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.Enricher.ContentAnalyzer.Timeout) * time.Second}, &cfg.Enricher.ContentAnalyzer.Llm, cfg.Enricher.ContentAnalyzer.PromptTemplate, cfg.Enricher.ContentAnalyzer.MinTags, cfg.Enricher.ContentAnalyzer.MaxTags, reg)
 			if caErr != nil {
 				logger.Error(nil, "create content analyzer: %v", caErr)
 			}
 			r.contentAnalyzer = ca
 			if cfg.Enricher.TagAdjudicator.Enabled {
 				adjLlm := cfg.ResolvedAdjudicatorLlm()
-				adj, adjErr := contentanalyzer.NewContentAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.ResolvedAdjudicatorTimeout()) * time.Second}, &adjLlm, cfg.Enricher.ContentAnalyzer.PromptTemplate, 0, 0, reg)
+				adj, adjErr := analyzer.NewContentAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.ResolvedAdjudicatorTimeout()) * time.Second}, &adjLlm, cfg.Enricher.ContentAnalyzer.PromptTemplate, 0, 0, reg)
 				if adjErr != nil {
 					logger.Error(nil, "create tag adjudicator: %v", adjErr)
 				} else {
@@ -191,7 +191,7 @@ func NewRunner(logger *utils.Logger, cfg *config.Config, tools []string) *Runner
 			}
 			if cfg.Enricher.TagQuality.Enabled {
 				qLlm := cfg.ResolvedQualityLlm()
-				q, qErr := contentanalyzer.NewContentAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.ResolvedQualityTimeout()) * time.Second}, &qLlm, cfg.Enricher.ContentAnalyzer.PromptTemplate, 0, 0, reg)
+				q, qErr := analyzer.NewContentAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.ResolvedQualityTimeout()) * time.Second}, &qLlm, cfg.Enricher.ContentAnalyzer.PromptTemplate, 0, 0, reg)
 				if qErr != nil {
 					logger.Error(nil, "create tag quality judge: %v", qErr)
 				} else {
@@ -203,7 +203,7 @@ func NewRunner(logger *utils.Logger, cfg *config.Config, tools []string) *Runner
 				if !fb.Enabled {
 					continue
 				}
-				fbCa, fbErr := contentanalyzer.NewContentAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.Enricher.ContentAnalyzer.Timeout) * time.Second}, &fb.Llm, cfg.Enricher.ContentAnalyzer.PromptTemplate, cfg.Enricher.ContentAnalyzer.MinTags, cfg.Enricher.ContentAnalyzer.MaxTags, reg)
+				fbCa, fbErr := analyzer.NewContentAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.Enricher.ContentAnalyzer.Timeout) * time.Second}, &fb.Llm, cfg.Enricher.ContentAnalyzer.PromptTemplate, cfg.Enricher.ContentAnalyzer.MinTags, cfg.Enricher.ContentAnalyzer.MaxTags, reg)
 				if fbErr != nil {
 					logger.Error(nil, "create fallback content analyzer: %v", fbErr)
 					continue
@@ -216,7 +216,7 @@ func NewRunner(logger *utils.Logger, cfg *config.Config, tools []string) *Runner
 	return r
 }
 
-func NewRunnerWithMatcher(logger *utils.Logger, cfg *config.Config, tools []string, matcher tagmatcher.Matcher) *Runner {
+func NewRunnerWithMatcher(logger *utils.Logger, cfg *config.Config, tools []string, matcher matcher.Matcher) *Runner {
 	r := NewRunner(logger, cfg, tools)
 	if matcher != nil && slices.Contains(tools, "tagmatcher") {
 		r.tagMatcher = matcher
@@ -464,7 +464,7 @@ func (r *Runner) MatchTags(ctx context.Context, docId, input string) (*TagMatchR
 	return &TagMatchResult{Tags: tags}, nil
 }
 
-func (r *Runner) RankTags(ctx context.Context, docId string, queries []string) ([]tagmatcher.RankResult, error) {
+func (r *Runner) RankTags(ctx context.Context, docId string, queries []string) ([]matcher.RankResult, error) {
 	if r.tagMatcher == nil {
 		return nil, fmt.Errorf("tag matcher not configured")
 	}
@@ -474,7 +474,7 @@ func (r *Runner) RankTags(ctx context.Context, docId string, queries []string) (
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	results, err := runWithTimeout(ctx, func() ([]tagmatcher.RankResult, error) {
+	results, err := runWithTimeout(ctx, func() ([]matcher.RankResult, error) {
 		return r.tagMatcher.Rank(ctx, docId, queries)
 	})
 	if err != nil {
@@ -487,7 +487,7 @@ func (r *Runner) HasTagAdjudicator() bool {
 	return r.tagAdjudicator != nil
 }
 
-func (r *Runner) AdjudicateTags(ctx context.Context, pairs []contentanalyzer.TagPairEvidence) ([]contentanalyzer.TagVerdictResult, error) {
+func (r *Runner) AdjudicateTags(ctx context.Context, pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error) {
 	if r.tagAdjudicator == nil {
 		return nil, fmt.Errorf("tag adjudicator not configured")
 	}
@@ -497,12 +497,12 @@ func (r *Runner) AdjudicateTags(ctx context.Context, pairs []contentanalyzer.Tag
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	return runWithTimeout(ctx, func() ([]contentanalyzer.TagVerdictResult, error) {
+	return runWithTimeout(ctx, func() ([]analyzer.TagVerdictResult, error) {
 		return r.tagAdjudicator.Adjudicate(ctx, pairs)
 	})
 }
 
-func (r *Runner) AdjudicateTagSplits(ctx context.Context, tags []string) ([]contentanalyzer.TagSplitResult, error) {
+func (r *Runner) AdjudicateTagSplits(ctx context.Context, tags []string) ([]analyzer.TagSplitResult, error) {
 	if r.tagAdjudicator == nil {
 		return nil, fmt.Errorf("tag adjudicator not configured")
 	}
@@ -512,7 +512,7 @@ func (r *Runner) AdjudicateTagSplits(ctx context.Context, tags []string) ([]cont
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	return runWithTimeout(ctx, func() ([]contentanalyzer.TagSplitResult, error) {
+	return runWithTimeout(ctx, func() ([]analyzer.TagSplitResult, error) {
 		return r.tagAdjudicator.AdjudicateTagSplits(ctx, tags)
 	})
 }
@@ -521,7 +521,7 @@ func (r *Runner) HasTagQualityJudge() bool {
 	return r.tagQualityJudge != nil
 }
 
-func (r *Runner) JudgeTagQuality(ctx context.Context, text string, candidates []contentanalyzer.TagQualityCandidate) ([]contentanalyzer.TagQualityResult, error) {
+func (r *Runner) JudgeTagQuality(ctx context.Context, text string, candidates []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error) {
 	if r.tagQualityJudge == nil {
 		return nil, fmt.Errorf("tag quality judge not configured")
 	}
@@ -531,7 +531,7 @@ func (r *Runner) JudgeTagQuality(ctx context.Context, text string, candidates []
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	return runWithTimeout(ctx, func() ([]contentanalyzer.TagQualityResult, error) {
+	return runWithTimeout(ctx, func() ([]analyzer.TagQualityResult, error) {
 		return r.tagQualityJudge.JudgeTagQuality(ctx, text, candidates)
 	})
 }
@@ -540,7 +540,7 @@ func (r *Runner) HasTagIdentityJudge() bool {
 	return r.tagIdentityJudge != nil
 }
 
-func (r *Runner) JudgeTagIdentity(ctx context.Context, candidates []contentanalyzer.TagIdentityCandidate) ([]contentanalyzer.TagIdentityResult, error) {
+func (r *Runner) JudgeTagIdentity(ctx context.Context, candidates []analyzer.TagIdentityCandidate) ([]analyzer.TagIdentityResult, error) {
 	if r.tagIdentityJudge == nil {
 		return nil, fmt.Errorf("tag identity judge not configured")
 	}
@@ -550,7 +550,7 @@ func (r *Runner) JudgeTagIdentity(ctx context.Context, candidates []contentanaly
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	return runWithTimeout(ctx, func() ([]contentanalyzer.TagIdentityResult, error) {
+	return runWithTimeout(ctx, func() ([]analyzer.TagIdentityResult, error) {
 		return r.tagIdentityJudge.JudgeTagIdentity(ctx, candidates)
 	})
 }
@@ -559,8 +559,8 @@ func isProviderError(err error) bool {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
-	var ctle *contentanalyzer.ContentTooLargeError
-	var tokErr *contentanalyzer.TokenLimitError
+	var ctle *analyzer.ContentTooLargeError
+	var tokErr *analyzer.TokenLimitError
 	return !errors.As(err, &ctle) && !errors.As(err, &tokErr)
 }
 
@@ -574,7 +574,7 @@ func (r *Runner) AnalyzeContent(ctx context.Context, text string, docTypes []dat
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	result, err := runWithTimeout(ctx, func() (*contentanalyzer.AnalysisResult, error) {
+	result, err := runWithTimeout(ctx, func() (*analyzer.AnalysisResult, error) {
 		return r.contentAnalyzer.Analyze(ctx, text, docTypes, peopleTypes, tagSuggestions)
 	})
 	if err != nil && isProviderError(err) {
@@ -590,7 +590,7 @@ func (r *Runner) AnalyzeContent(ctx context.Context, text string, docTypes []dat
 				fbProvider, fbModel = r.fallbackMeta[i].Provider, r.fallbackMeta[i].Model
 			}
 			r.logger.Info(reqID, "trying fallback analyzer (%s/%s)", fbProvider, fbModel)
-			result, err = runWithTimeout(ctx, func() (*contentanalyzer.AnalysisResult, error) {
+			result, err = runWithTimeout(ctx, func() (*analyzer.AnalysisResult, error) {
 				return fb.Analyze(ctx, text, docTypes, peopleTypes, tagSuggestions)
 			})
 			if err == nil {
@@ -619,7 +619,7 @@ func (r *Runner) AnalyzeContent(ctx context.Context, text string, docTypes []dat
 	}, nil
 }
 
-func (r *Runner) AnalyzeDocType(ctx context.Context, prevResult *ContentAnalysisResult, headTailText string, docTypes []database.DocumentType, metadata contentanalyzer.DocMetadata) (string, error) {
+func (r *Runner) AnalyzeDocType(ctx context.Context, prevResult *ContentAnalysisResult, headTailText string, docTypes []database.DocumentType, metadata analyzer.DocMetadata) (string, error) {
 	if r.contentAnalyzer == nil {
 		return "", fmt.Errorf("content analyzer not configured")
 	}
@@ -629,7 +629,7 @@ func (r *Runner) AnalyzeDocType(ctx context.Context, prevResult *ContentAnalysis
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	prev := &contentanalyzer.AnalysisResult{
+	prev := &analyzer.AnalysisResult{
 		PassContext: prevResult.PassContext,
 		Title:       prevResult.Title,
 		DocType:     prevResult.DocType,

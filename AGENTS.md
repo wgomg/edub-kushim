@@ -23,7 +23,7 @@ Deeper context lives in `docs/`:
   Makefile, which always sets the `-tags "XLA,ORT"` tags and the CGo environment
   (`CGO_CPPFLAGS`, `CGO_LDFLAGS`). Non-negotiable.
 - Fresh clones: the Go packages embed the SPA builds via `//go:embed`
-  (`internal/static/build`, `internal/wizard/static` — both gitignored), so _any_ Go
+  (`internal/static/build`, `internal/api/wizard/static` — both gitignored), so _any_ Go
   build or test fails to compile until they exist. Build SPAs first:
   `make web-build wizard-build && make build` (order matters);
   if web/builds exist, `make stage-web` just copies them into place.
@@ -88,12 +88,12 @@ export TEST_DATABASE_URL="postgres://edub:edub@localhost:5432/edub?sslmode=disab
 ```
 
 ```bash
-make test          # 13 packages, no database needed, CGO_ENABLED=0
+make test          # 14 packages, no database needed, CGO_ENABLED=0
 make test-verbose  # same with -v
-make test-db       # 6 additional packages, requires PostgreSQL via TEST_DATABASE_URL
+make test-db       # database-backed tests, requires PostgreSQL via TEST_DATABASE_URL
 make test-backup   # backup package, requires PostgreSQL via TEST_DATABASE_URL
 make test-cgo      # CGo-gated tests incl. internal/commands (requires make build-deps first)
-make test-cgo-db   # consumption + configtask + internal/commands with CGo + DB (requires make build-deps + TEST_DATABASE_URL)
+make test-cgo-db   # DB-gated tests in CGo packages (requires make build-deps + TEST_DATABASE_URL)
 make test-one PKG=./internal/errs/   # single package; add RUN=Name to filter
 make test-web      # web/ unit + component tests (vitest, no database)
 make test-web-e2e  # web/ E2E smokes with mocked API (requires `npx playwright install chromium` first)
@@ -119,7 +119,7 @@ make vuln-cgo     # CGo-enabled variant, full call graph (requires make build-de
 ## Web UI (SvelteKit)
 
 - Two SPAs: `web/` (main → `internal/static/build/`) and `web-wizard/` (setup wizard →
-  `internal/wizard/static/`); both embedded via `//go:embed`. CI stages them with
+  `internal/api/wizard/static/`); both embedded via `//go:embed`. CI stages them with
   `make stage-web` (web job) / `make stage-web-artifact` (Go jobs consume the `web-assets` artifact).
 - Node 24 per `.nvmrc`; the Makefile auto-sources nvm. Any npm/npx command must run
   under the `.nvmrc` Node version — run `nvm use` first (verify with `node -v`), never
@@ -157,4 +157,4 @@ make vuln-cgo     # CGo-enabled variant, full call graph (requires make build-de
   searchable PDFs — see `docs/developer-guide/ocr-pipeline.md`.
 - Hugot ORT backend downloads the ONNX runtime on first use — needs internet. Go backend has no runtime deps.
 - ORT defaults disable the CPU memory arena and pattern pre-allocation (RSS ~2.2–2.5 GB vs ~4–5 GB),
-  set in `internal/tools/adapters/tagmatcher/hugot.go` (`WithCPUMemArena(false)`).
+  set in `internal/matcher/hugot.go` (`WithCPUMemArena(false)`).

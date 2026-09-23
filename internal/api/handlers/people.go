@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/utils"
@@ -39,7 +38,7 @@ func (h *PeopleHandler) List(w http.ResponseWriter, r *http.Request) {
 	var total int64
 	var err error
 
-	var responses []types.PersonResponse
+	var responses []PersonResponse
 
 	if q != "" {
 		people, searchErr := h.services.People.SearchByNameWithDocumentCount(ctx, q, int32(limit), int32(offset))
@@ -48,13 +47,13 @@ func (h *PeopleHandler) List(w http.ResponseWriter, r *http.Request) {
 			total, err = h.services.People.CountByName(ctx, q)
 		}
 		if err == nil {
-			responses = make([]types.PersonResponse, len(people))
+			responses = make([]PersonResponse, len(people))
 			for i, p := range people {
 				nameNative := ""
 				if p.NameNative.Valid {
 					nameNative = p.NameNative.String
 				}
-				responses[i] = types.PersonResponse{ID: p.ID, Name: p.Name, NameNative: nameNative, DocumentCount: p.DocumentCount}
+				responses[i] = PersonResponse{ID: p.ID, Name: p.Name, NameNative: nameNative, DocumentCount: p.DocumentCount}
 			}
 		}
 	} else {
@@ -64,13 +63,13 @@ func (h *PeopleHandler) List(w http.ResponseWriter, r *http.Request) {
 			total, err = h.services.People.Count(ctx)
 		}
 		if err == nil {
-			responses = make([]types.PersonResponse, len(people))
+			responses = make([]PersonResponse, len(people))
 			for i, p := range people {
 				nameNative := ""
 				if p.NameNative.Valid {
 					nameNative = p.NameNative.String
 				}
-				responses[i] = types.PersonResponse{ID: p.ID, Name: p.Name, NameNative: nameNative, DocumentCount: p.DocumentCount}
+				responses[i] = PersonResponse{ID: p.ID, Name: p.Name, NameNative: nameNative, DocumentCount: p.DocumentCount}
 			}
 		}
 	}
@@ -80,14 +79,14 @@ func (h *PeopleHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(types.PersonListResponse{Results: responses, Total: total})
+	json.NewEncoder(w).Encode(PersonListResponse{Results: responses, Total: total})
 }
 
 func (h *PeopleHandler) Create(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
 
-	var req types.CreatePersonRequest
+	var req CreatePersonRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
@@ -117,7 +116,7 @@ func (h *PeopleHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(types.PersonResponse{
+		json.NewEncoder(w).Encode(PersonResponse{
 			ID: results[0].Entity.ID, Name: results[0].Entity.Name, NameNative: nameNative,
 		})
 	case service.Conflict:
@@ -148,7 +147,7 @@ func (h *PeopleHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req types.UpdatePersonRequest
+	var req UpdatePersonRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
@@ -177,7 +176,7 @@ func (h *PeopleHandler) Update(w http.ResponseWriter, r *http.Request) {
 			nameNative = results[0].Entity.NameNative.String
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(types.PersonResponse{
+		json.NewEncoder(w).Encode(PersonResponse{
 			ID: results[0].Entity.ID, Name: results[0].Entity.Name, NameNative: nameNative,
 		})
 	case service.UpdateConflict:
@@ -238,7 +237,7 @@ func (h *PeopleHandler) ListPeopleTypes(w http.ResponseWriter, r *http.Request) 
 	limit := pb.GetInt64("limit", 50, 1, 100)
 	offset := pb.GetInt64("offset", 0, 0, 100000)
 
-	var result []types.PeopleTypeResponse
+	var result []PeopleTypeResponse
 
 	if q != "" {
 		pts, err := h.services.PeopleType.Search(ctx, q, int32(limit))
@@ -246,9 +245,9 @@ func (h *PeopleHandler) ListPeopleTypes(w http.ResponseWriter, r *http.Request) 
 			writeServiceError(w, h.logger, &reqID, "list people types", err)
 			return
 		}
-		result = make([]types.PeopleTypeResponse, len(pts))
+		result = make([]PeopleTypeResponse, len(pts))
 		for i, pt := range pts {
-			result[i] = types.PeopleTypeResponse{ID: pt.ID, Name: pt.Name, Description: pt.Description}
+			result[i] = PeopleTypeResponse{ID: pt.ID, Name: pt.Name, Description: pt.Description}
 		}
 	} else {
 		pts, err := h.services.PeopleType.List(ctx, int32(limit), int32(offset))
@@ -256,9 +255,9 @@ func (h *PeopleHandler) ListPeopleTypes(w http.ResponseWriter, r *http.Request) 
 			writeServiceError(w, h.logger, &reqID, "list people types", err)
 			return
 		}
-		result = make([]types.PeopleTypeResponse, len(pts))
+		result = make([]PeopleTypeResponse, len(pts))
 		for i, pt := range pts {
-			result[i] = types.PeopleTypeResponse{ID: pt.ID, Name: pt.Name, Description: pt.Description}
+			result[i] = PeopleTypeResponse{ID: pt.ID, Name: pt.Name, Description: pt.Description}
 		}
 	}
 
@@ -270,7 +269,7 @@ func (h *PeopleHandler) CreatePeopleType(w http.ResponseWriter, r *http.Request)
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
 
-	var req types.CreatePeopleTypeRequest
+	var req CreatePeopleTypeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
@@ -300,7 +299,7 @@ func (h *PeopleHandler) CreatePeopleType(w http.ResponseWriter, r *http.Request)
 	case service.Created:
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(types.PeopleTypeResponse{
+		json.NewEncoder(w).Encode(PeopleTypeResponse{
 			ID: results[0].Entity.ID, Name: results[0].Entity.Name, Description: results[0].Entity.Description,
 		})
 	case service.Conflict:
@@ -327,7 +326,7 @@ func (h *PeopleHandler) UpdatePeopleType(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	var req types.UpdatePeopleTypeRequest
+	var req UpdatePeopleTypeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
@@ -356,7 +355,7 @@ func (h *PeopleHandler) UpdatePeopleType(w http.ResponseWriter, r *http.Request)
 	switch results[0].Status {
 	case service.Updated, service.Noop:
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(types.PeopleTypeResponse{
+		json.NewEncoder(w).Encode(PeopleTypeResponse{
 			ID: results[0].Entity.ID, Name: results[0].Entity.Name, Description: results[0].Entity.Description,
 		})
 	case service.UpdateConflict:
@@ -401,4 +400,30 @@ func (h *PeopleHandler) DeletePeopleType(w http.ResponseWriter, r *http.Request)
 	default:
 		http.Error(w, "People type not found", http.StatusNotFound)
 	}
+}
+
+type CreatePersonRequest struct {
+	Name       string `json:"name"`
+	NameNative string `json:"name_native"`
+}
+
+type UpdatePersonRequest struct {
+	Name       string `json:"name"`
+	NameNative string `json:"name_native"`
+}
+
+type CreatePeopleTypeRequest struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+type UpdatePeopleTypeRequest struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+type PeopleTypeResponse struct {
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
 }

@@ -16,7 +16,7 @@ config.prod.yaml
 build/
 node_modules/
 internal/static/build/
-internal/wizard/static/
+internal/api/wizard/static/
 *.md
 docs/
 

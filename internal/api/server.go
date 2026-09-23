@@ -16,11 +16,10 @@ import (
 	"github.com/wgomg/edub-kushim/internal/configtask"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/llm"
-	"github.com/wgomg/edub-kushim/internal/pool"
+	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/static"
-	"github.com/wgomg/edub-kushim/internal/tagmatch"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
 	"github.com/wgomg/edub-kushim/internal/utils"
@@ -31,13 +30,13 @@ type Server struct {
 	logger        *utils.Logger
 	addr          string
 	cfg           atomic.Pointer[config.Config]
-	matcherClient *tagmatch.MatcherClient
+	matcherClient *matcher.MatcherClient
 	services      *service.CrudServices
 	configWatcher *config.Watcher
 	db            *sql.DB
 	client        *database.Client
 	pools         struct {
-		config *pool.Pool
+		config *task.Pool
 	}
 }
 
@@ -53,7 +52,7 @@ func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
 		logger.Info(nil, "WARNING: server.session_secret is empty — generated temporary in-memory secret (sessions lost on restart)")
 	}
 
-	matcherClient := tagmatch.NewMatcherClient(filepath.Join(cfg.App.ConfigDir, "kushim-hugot.sock"), tagmatch.MaxMatchBodyBytes(cfg.Enricher.TagMatcher.ReduceTargetWords))
+	matcherClient := matcher.NewMatcherClient(filepath.Join(cfg.App.ConfigDir, "kushim-hugot.sock"), matcher.MaxMatchBodyBytes(cfg.Enricher.TagMatcher.ReduceTargetWords))
 
 	initial := new(config.Config)
 	*initial = cfg
@@ -103,7 +102,7 @@ func (s *Server) rebuild(client *database.Client) {
 	dispatcher := task.NewDispatcher(s.logger, workStore, registry)
 	configRunner := task.NewRunner(configStore, registry, s.logger)
 
-	s.pools.config = pool.New(s.logger, configRunner, 1, 5*time.Second, "config")
+	s.pools.config = task.NewPool(s.logger, configRunner, 1, 5*time.Second, "config")
 
 	onConfigSet := func(cfg *config.Config) {
 		if cfg.Srv.SessionSecret == "" {

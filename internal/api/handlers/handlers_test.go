@@ -17,14 +17,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/auth"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/configtask"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/service"
-	"github.com/wgomg/edub-kushim/internal/tagmatch"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 	itypes "github.com/wgomg/edub-kushim/internal/types"
@@ -35,7 +34,7 @@ type handlerTestEnv struct {
 	client        *database.Client
 	logger        *utils.Logger
 	engine        *search.Engine
-	matcherClient *tagmatch.MatcherClient
+	matcherClient *matcher.MatcherClient
 	tagSvc        *service.Tag
 	peopleSvc     *service.People
 	peopleTypeSvc *service.PeopleType
@@ -74,7 +73,7 @@ func newHandlerTestEnv(t *testing.T) *handlerTestEnv {
 	fullResetDB(t, client.DB())
 	logger := testutil.NewTestLogger()
 	engine := search.NewEngine(logger, client.Queries)
-	matcherClient := tagmatch.NewMatcherClient("/nonexistent/matcher.sock", tagmatch.MaxMatchBodyBytes(4000))
+	matcherClient := matcher.NewMatcherClient("/nonexistent/matcher.sock", matcher.MaxMatchBodyBytes(4000))
 
 	tagSvc, _ := newMockTagService(client)
 	peopleSvc := service.NewPeople(client.Queries, logger)
@@ -168,7 +167,7 @@ func TestDocumentList(t *testing.T) {
 		w := rec()
 		h.ListDocuments(w, req(t, "GET", "/api/v1/documents?limit=10", nil))
 		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
-		var docs []types.DocumentResponse
+		var docs []DocumentResponse
 		json.NewDecoder(w.Body).Decode(&docs)
 		if len(docs) == 0 {
 			t.Fatal("expected documents")
@@ -189,7 +188,7 @@ func TestDocumentGet(t *testing.T) {
 		r.SetPathValue("id", dID)
 		h.GetDocument(w, r)
 		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
-		var doc types.DocumentResponse
+		var doc DocumentResponse
 		json.NewDecoder(w.Body).Decode(&doc)
 		testutil.AssertEqual(t, doc.Title, "get-test.pdf", "title")
 		testutil.AssertEqual(t, doc.ID, dID, "uuid")
@@ -211,7 +210,7 @@ func TestDocumentUpdate(t *testing.T) {
 	dID := docUUID(t, env.client.Queries, "before.pdf")
 
 	t.Run("success", func(t *testing.T) {
-		body, _ := json.Marshal(types.DocumentUpdateRequest{
+		body, _ := json.Marshal(DocumentUpdateRequest{
 			Title: "after.pdf", DocumentTypeID: 1, Language: "spa",
 		})
 		w := rec()
@@ -224,7 +223,7 @@ func TestDocumentUpdate(t *testing.T) {
 	})
 
 	t.Run("empty title rejected", func(t *testing.T) {
-		body, _ := json.Marshal(types.DocumentUpdateRequest{
+		body, _ := json.Marshal(DocumentUpdateRequest{
 			Title: "", DocumentTypeID: 1, Language: "eng",
 		})
 		w := rec()
@@ -235,7 +234,7 @@ func TestDocumentUpdate(t *testing.T) {
 	})
 
 	t.Run("invalid doc type rejected", func(t *testing.T) {
-		body, _ := json.Marshal(types.DocumentUpdateRequest{
+		body, _ := json.Marshal(DocumentUpdateRequest{
 			Title: "valid.pdf", DocumentTypeID: -1, Language: "eng",
 		})
 		w := rec()
@@ -289,7 +288,7 @@ func TestDocumentTagLifecycle(t *testing.T) {
 	r.SetPathValue("id", dID)
 	h.GetDocument(w, r)
 
-	var doc types.DocumentResponse
+	var doc DocumentResponse
 	json.NewDecoder(w.Body).Decode(&doc)
 	if len(doc.Tags) == 0 {
 		t.Fatal("expected at least 1 tag")
@@ -364,7 +363,7 @@ func TestDownloadDocumentsValidation(t *testing.T) {
 
 	t.Run("empty document_ids", func(t *testing.T) {
 		w := rec()
-		body, _ := json.Marshal(types.DocumentDownloadRequest{DocumentIDs: []string{}})
+		body, _ := json.Marshal(DocumentDownloadRequest{DocumentIDs: []string{}})
 		h.DownloadDocuments(w, req(t, "POST", "/api/v1/documents/download", body))
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("expected 400, got %d", w.Code)
@@ -379,7 +378,7 @@ func TestDownloadDocumentsValidation(t *testing.T) {
 	t.Run("too many ids", func(t *testing.T) {
 		w := rec()
 		// 3 unique IDs exceeds MaxDownloadFiles=2
-		body, _ := json.Marshal(types.DocumentDownloadRequest{
+		body, _ := json.Marshal(DocumentDownloadRequest{
 			DocumentIDs: []string{"a", "b", "c"},
 		})
 		h.DownloadDocuments(w, req(t, "POST", "/api/v1/documents/download", body))
@@ -395,7 +394,7 @@ func TestDownloadDocumentsValidation(t *testing.T) {
 
 	t.Run("non-existent ids", func(t *testing.T) {
 		w := rec()
-		body, _ := json.Marshal(types.DocumentDownloadRequest{
+		body, _ := json.Marshal(DocumentDownloadRequest{
 			DocumentIDs: []string{"nonexistent-id"},
 		})
 		h.DownloadDocuments(w, req(t, "POST", "/api/v1/documents/download", body))
@@ -412,7 +411,7 @@ func TestDownloadDocumentsValidation(t *testing.T) {
 	t.Run("size exceeds limit", func(t *testing.T) {
 		dID := docUUID(t, env.client.Queries, "size-test.pdf")
 		w := rec()
-		body, _ := json.Marshal(types.DocumentDownloadRequest{
+		body, _ := json.Marshal(DocumentDownloadRequest{
 			DocumentIDs: []string{dID},
 		})
 		h.DownloadDocuments(w, req(t, "POST", "/api/v1/documents/download", body))
@@ -543,7 +542,7 @@ func TestPeopleTypeReservedName(t *testing.T) {
 	rejected := func(name, errMsg string) {
 		t.Helper()
 		w := rec()
-		body, _ := json.Marshal(types.CreatePeopleTypeRequest{Name: name})
+		body, _ := json.Marshal(CreatePeopleTypeRequest{Name: name})
 		h.CreatePeopleType(w, req(t, "POST", "/api/v1/people-types", body))
 		testutil.AssertEqual(t, w.Code, http.StatusBadRequest, errMsg)
 	}
@@ -553,12 +552,12 @@ func TestPeopleTypeReservedName(t *testing.T) {
 	}
 
 	w := rec()
-	body, _ := json.Marshal(types.CreatePeopleTypeRequest{Name: "test-custom-type"})
+	body, _ := json.Marshal(CreatePeopleTypeRequest{Name: "test-custom-type"})
 	h.CreatePeopleType(w, req(t, "POST", "/api/v1/people-types", body))
 	testutil.AssertEqual(t, w.Code, http.StatusCreated, "non-reserved name accepted")
 
 	w = rec()
-	updateBody, _ := json.Marshal(types.UpdatePeopleTypeRequest{Name: "person"})
+	updateBody, _ := json.Marshal(UpdatePeopleTypeRequest{Name: "person"})
 	r := req(t, "PUT", "/api/v1/people-types/1", updateBody)
 	r.SetPathValue("id", "1")
 	h.UpdatePeopleType(w, r)
@@ -602,7 +601,7 @@ func TestTaskEndpoints(t *testing.T) {
 		w := rec()
 		h.ListTasks(w, req(t, "GET", "/api/v1/tasks?limit=10", nil))
 		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
-		var resp types.ListTasksResponse
+		var resp ListTasksResponse
 		json.NewDecoder(w.Body).Decode(&resp)
 		if len(resp.Tasks) == 0 {
 			t.Fatal("expected tasks")
@@ -615,7 +614,7 @@ func TestTaskEndpoints(t *testing.T) {
 		r.SetPathValue("id", "task-e2e-1")
 		h.GetTask(w, r)
 		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
-		var resp types.TaskResponse
+		var resp TaskResponse
 		json.NewDecoder(w.Body).Decode(&resp)
 		testutil.AssertEqual(t, resp.TaskID, "task-e2e-1", "task id")
 	})
@@ -747,7 +746,7 @@ func TestGetTagReconcileReport(t *testing.T) {
 		h.GetTagReconcileReport(w, req(t, "GET", "/api/v1/tags/reconciliation/report", nil))
 		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
 
-		var resp types.TagReconcileReportResponse
+		var resp TagReconcileReportResponse
 		json.NewDecoder(w.Body).Decode(&resp)
 		testutil.AssertEqual(t, resp.TaskID, "rc-report-t1", "task_id")
 		if resp.CompletedAt == "" {
@@ -765,7 +764,7 @@ func TestGetTagReconcileReport(t *testing.T) {
 		h.GetTask(w, r)
 		testutil.AssertEqual(t, w.Code, http.StatusOK, "detail status")
 
-		var detail types.TaskResponse
+		var detail TaskResponse
 		json.NewDecoder(w.Body).Decode(&detail)
 		if detail.Result == nil {
 			t.Fatal("expected detail response to include result")
@@ -775,7 +774,7 @@ func TestGetTagReconcileReport(t *testing.T) {
 		h.ListTasks(w2, req(t, "GET", "/api/v1/tasks?limit=100", nil))
 		testutil.AssertEqual(t, w2.Code, http.StatusOK, "list status")
 
-		var list types.ListTasksResponse
+		var list ListTasksResponse
 		json.NewDecoder(w2.Body).Decode(&list)
 		var found bool
 		for _, item := range list.Tasks {
@@ -815,7 +814,7 @@ func TestGetTagReconcileReport(t *testing.T) {
 		h.GetTagReconcileReport(w, req(t, "GET", "/api/v1/tags/reconciliation/report", nil))
 		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
 
-		var resp types.TagReconcileReportResponse
+		var resp TagReconcileReportResponse
 		json.NewDecoder(w.Body).Decode(&resp)
 		testutil.AssertEqual(t, resp.TaskID, "rc-report-t2", "task_id")
 		if resp.Result != nil && string(resp.Result) != "null" {
@@ -851,7 +850,7 @@ func TestGetDashboardRunningTasks(t *testing.T) {
 	h.GetDashboard(w, req(t, "GET", "/api/v1/dashboard", nil))
 	testutil.AssertEqual(t, w.Code, http.StatusOK, "dashboard status")
 
-	var resp types.DashboardResponse
+	var resp DashboardResponse
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode dashboard: %v", err)
 	}
@@ -916,7 +915,7 @@ func TestGetDashboardRunningTasks(t *testing.T) {
 	h.GetDashboard(w2, req(t, "GET", "/api/v1/dashboard", nil))
 	testutil.AssertEqual(t, w2.Code, http.StatusOK, "dashboard status after seeding")
 
-	var resp2 types.DashboardResponse
+	var resp2 DashboardResponse
 	if err := json.NewDecoder(w2.Body).Decode(&resp2); err != nil {
 		t.Fatalf("decode dashboard: %v", err)
 	}
@@ -1035,7 +1034,7 @@ func TestGetDashboardProcessingHealth(t *testing.T) {
 	h.GetDashboard(w, req(t, "GET", "/api/v1/dashboard", nil))
 	testutil.AssertEqual(t, w.Code, http.StatusOK, "dashboard status")
 
-	var resp types.DashboardResponse
+	var resp DashboardResponse
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode dashboard: %v", err)
 	}
@@ -1254,14 +1253,14 @@ func TestUserCrud(t *testing.T) {
 	var bobID int64
 
 	t.Run("create user", func(t *testing.T) {
-		body, _ := json.Marshal(types.CreateUserRequest{
+		body, _ := json.Marshal(CreateUserRequest{
 			Username: "alice", Password: "Password123!",
 		})
 		w := rec()
 		h.Create(w, req(t, "POST", "/api/v1/users", body))
 		testutil.AssertEqual(t, w.Code, http.StatusCreated, "status")
 
-		var resp types.UserResponse
+		var resp UserResponse
 		json.NewDecoder(w.Body).Decode(&resp)
 		testutil.AssertEqual(t, resp.Username, "alice", "username")
 		testutil.AssertEqual(t, resp.Role, "viewer", "default role")
@@ -1278,7 +1277,7 @@ func TestUserCrud(t *testing.T) {
 	})
 
 	t.Run("create duplicate username", func(t *testing.T) {
-		body, _ := json.Marshal(types.CreateUserRequest{
+		body, _ := json.Marshal(CreateUserRequest{
 			Username: "alice", Password: "Password123!",
 		})
 		w := rec()
@@ -1287,7 +1286,7 @@ func TestUserCrud(t *testing.T) {
 	})
 
 	t.Run("create empty username rejected", func(t *testing.T) {
-		body, _ := json.Marshal(types.CreateUserRequest{
+		body, _ := json.Marshal(CreateUserRequest{
 			Username: "", Password: "password123",
 		})
 		w := rec()
@@ -1296,7 +1295,7 @@ func TestUserCrud(t *testing.T) {
 	})
 
 	t.Run("create empty password rejected", func(t *testing.T) {
-		body, _ := json.Marshal(types.CreateUserRequest{
+		body, _ := json.Marshal(CreateUserRequest{
 			Username: "bob", Password: "",
 		})
 		w := rec()
@@ -1305,7 +1304,7 @@ func TestUserCrud(t *testing.T) {
 	})
 
 	t.Run("create short password rejected", func(t *testing.T) {
-		body, _ := json.Marshal(types.CreateUserRequest{
+		body, _ := json.Marshal(CreateUserRequest{
 			Username: "bob", Password: "abc",
 		})
 		w := rec()
@@ -1320,7 +1319,7 @@ func TestUserCrud(t *testing.T) {
 		h.Get(w, r)
 		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
 
-		var resp types.UserResponse
+		var resp UserResponse
 		json.NewDecoder(w.Body).Decode(&resp)
 		testutil.AssertEqual(t, resp.ID, createdID, "id")
 		testutil.AssertEqual(t, resp.Username, "alice", "username")
@@ -1345,7 +1344,7 @@ func TestUserCrud(t *testing.T) {
 		h.List(w, req(t, "GET", "/api/v1/users?limit=10", nil))
 		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
 
-		var resp types.UserListResponse
+		var resp UserListResponse
 		json.NewDecoder(w.Body).Decode(&resp)
 		if len(resp.Users) == 0 {
 			t.Fatal("expected at least 1 user")
@@ -1356,7 +1355,7 @@ func TestUserCrud(t *testing.T) {
 	})
 
 	t.Run("update username", func(t *testing.T) {
-		body, _ := json.Marshal(types.UpdateUserRequest{
+		body, _ := json.Marshal(UpdateUserRequest{
 			Username: "alicia",
 		})
 		w := rec()
@@ -1365,14 +1364,14 @@ func TestUserCrud(t *testing.T) {
 		h.Update(w, r)
 		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
 
-		var resp types.UserResponse
+		var resp UserResponse
 		json.NewDecoder(w.Body).Decode(&resp)
 		testutil.AssertEqual(t, resp.Username, "alicia", "updated username")
 		testutil.AssertEqual(t, resp.Role, "viewer", "role unchanged")
 	})
 
 	t.Run("update user role", func(t *testing.T) {
-		body, _ := json.Marshal(types.UpdateUserRequest{
+		body, _ := json.Marshal(UpdateUserRequest{
 			Username: "alicia",
 			Role:     "editor",
 		})
@@ -1382,14 +1381,14 @@ func TestUserCrud(t *testing.T) {
 		h.Update(w, r)
 		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
 
-		var resp types.UserResponse
+		var resp UserResponse
 		json.NewDecoder(w.Body).Decode(&resp)
 		testutil.AssertEqual(t, resp.Username, "alicia", "username")
 		testutil.AssertEqual(t, resp.Role, "editor", "updated role")
 	})
 
 	t.Run("update with invalid role rejected", func(t *testing.T) {
-		body, _ := json.Marshal(types.UpdateUserRequest{
+		body, _ := json.Marshal(UpdateUserRequest{
 			Username: "alicia",
 			Role:     "superadmin",
 		})
@@ -1401,7 +1400,7 @@ func TestUserCrud(t *testing.T) {
 	})
 
 	t.Run("update non-existent user", func(t *testing.T) {
-		body, _ := json.Marshal(types.UpdateUserRequest{
+		body, _ := json.Marshal(UpdateUserRequest{
 			Username: "ghost",
 		})
 		w := rec()
@@ -1412,17 +1411,17 @@ func TestUserCrud(t *testing.T) {
 	})
 
 	t.Run("update to duplicate username", func(t *testing.T) {
-		body, _ := json.Marshal(types.CreateUserRequest{
+		body, _ := json.Marshal(CreateUserRequest{
 			Username: "bob", Password: "Password123!",
 		})
 		w := rec()
 		h.Create(w, req(t, "POST", "/api/v1/users", body))
 		testutil.AssertEqual(t, w.Code, http.StatusCreated, "create bob")
-		var bobResp types.UserResponse
+		var bobResp UserResponse
 		json.NewDecoder(w.Body).Decode(&bobResp)
 		bobID = bobResp.ID
 
-		body2, _ := json.Marshal(types.UpdateUserRequest{
+		body2, _ := json.Marshal(UpdateUserRequest{
 			Username: "bob",
 		})
 		w2 := rec()
@@ -1473,14 +1472,14 @@ func TestConfigHandlerCreateAdminUser(t *testing.T) {
 	h.SetServices(env.client, nil)
 
 	t.Run("create admin user", func(t *testing.T) {
-		body, _ := json.Marshal(types.CreateUserRequest{
+		body, _ := json.Marshal(CreateUserRequest{
 			Username: "admin-wizard", Password: "Password123!",
 		})
 		w := rec()
 		h.CreateAdminUser(w, req(t, "POST", "/wizard/admin-user", body))
 		testutil.AssertEqual(t, w.Code, http.StatusCreated, "status")
 
-		var resp types.UserResponse
+		var resp UserResponse
 		json.NewDecoder(w.Body).Decode(&resp)
 		testutil.AssertEqual(t, resp.Username, "admin-wizard", "username")
 		testutil.AssertEqual(t, resp.Role, "admin", "role")
@@ -1490,7 +1489,7 @@ func TestConfigHandlerCreateAdminUser(t *testing.T) {
 	})
 
 	t.Run("duplicate username returns conflict", func(t *testing.T) {
-		body, _ := json.Marshal(types.CreateUserRequest{
+		body, _ := json.Marshal(CreateUserRequest{
 			Username: "admin-wizard", Password: "Password123!",
 		})
 		w := rec()
@@ -1505,7 +1504,7 @@ func TestConfigHandlerCreateAdminUser(t *testing.T) {
 	})
 
 	t.Run("empty username rejected", func(t *testing.T) {
-		body, _ := json.Marshal(types.CreateUserRequest{
+		body, _ := json.Marshal(CreateUserRequest{
 			Username: "", Password: "Password123!",
 		})
 		w := rec()
@@ -1515,7 +1514,7 @@ func TestConfigHandlerCreateAdminUser(t *testing.T) {
 
 	t.Run("nil services returns 400", func(t *testing.T) {
 		h2 := newTestConfigHandler(cfg, env.client, env.logger, nil)
-		body, _ := json.Marshal(types.CreateUserRequest{
+		body, _ := json.Marshal(CreateUserRequest{
 			Username: "test", Password: "Password123!",
 		})
 		w := rec()
@@ -1533,7 +1532,7 @@ func TestConfigHandlerGetConfig(t *testing.T) {
 		h.GetConfig(w, req(t, "GET", "/wizard/config", nil))
 		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
 
-		var resp types.ConfigResponse
+		var resp ConfigResponse
 		json.NewDecoder(w.Body).Decode(&resp)
 		testutil.AssertEqual(t, resp.Server.Host, "0.0.0.0", "default host")
 		testutil.AssertEqual(t, resp.Server.AuthEnabled, true, "default auth_enabled")
@@ -1552,7 +1551,7 @@ func TestConfigHandlerGetConfig(t *testing.T) {
 		h.GetConfig(w, req(t, "GET", "/wizard/config", nil))
 		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
 
-		var resp types.ConfigResponse
+		var resp ConfigResponse
 		json.NewDecoder(w.Body).Decode(&resp)
 		testutil.AssertEqual(t, resp.Server.Port, 9999, "stored port")
 		testutil.AssertEqual(t, resp.Server.AuthEnabled, false, "stored auth_enabled")
@@ -1574,7 +1573,7 @@ func TestConfigHandlerGetConfig(t *testing.T) {
 
 		w := rec()
 		h.GetConfig(w, req(t, "GET", "/wizard/config", nil))
-		var resp types.ConfigResponse
+		var resp ConfigResponse
 		json.NewDecoder(w.Body).Decode(&resp)
 		testutil.AssertEqual(t, resp.Server.Port, 7777, "bootstrapped port")
 		testutil.AssertEqual(t, resp.Server.AuthEnabled, true, "auth_enabled from default")
@@ -1590,7 +1589,7 @@ func TestConfigHandlerConfigStatus(t *testing.T) {
 		h.ConfigStatus(w, req(t, "GET", "/wizard/config/status", nil))
 		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
 
-		var resp types.ConfigStatusResponse
+		var resp ConfigStatusResponse
 		json.NewDecoder(w.Body).Decode(&resp)
 		testutil.AssertEqual(t, resp.Configured, false, "not configured when nil")
 	})
@@ -1603,7 +1602,7 @@ func TestBatchDeleteDocumentsMaxLimit(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	h := NewDocumentHandler(env.client, env.logger, env.engine, env.services, func() *config.Config { return cfg })
 
-	body, _ := json.Marshal(types.BatchDeleteRequest{
+	body, _ := json.Marshal(BatchDeleteRequest{
 		DocumentIDs: []string{"a", "b", "c"},
 	})
 	w := rec()
@@ -1669,7 +1668,7 @@ func TestBatchSetDocumentType(t *testing.T) {
 		before, err := env.client.GetDocument(ctx, dID1)
 		testutil.AssertNoError(t, err, "get before")
 
-		body, _ := json.Marshal(types.BatchDocumentTypeRequest{
+		body, _ := json.Marshal(BatchDocumentTypeRequest{
 			DocumentIDs:    []string{dID1, dID2},
 			DocumentTypeID: newType,
 		})
@@ -1677,7 +1676,7 @@ func TestBatchSetDocumentType(t *testing.T) {
 		h.BatchSetDocumentType(w, req(t, "POST", "/api/v1/documents/batch-type", body))
 		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
 
-		var resp types.BatchDocumentTypeResult
+		var resp BatchDocumentTypeResult
 		json.NewDecoder(w.Body).Decode(&resp)
 		testutil.AssertEqual(t, resp.Updated, 2, "updated count")
 		testutil.AssertEqual(t, len(resp.Failed), 0, "no failures")
@@ -1704,7 +1703,7 @@ func TestBatchSetDocumentType(t *testing.T) {
 		})
 		testutil.AssertNoError(t, err, "soft delete")
 
-		body, _ := json.Marshal(types.BatchDocumentTypeRequest{
+		body, _ := json.Marshal(BatchDocumentTypeRequest{
 			DocumentIDs:    []string{dAlive, dGone},
 			DocumentTypeID: newType,
 		})
@@ -1712,7 +1711,7 @@ func TestBatchSetDocumentType(t *testing.T) {
 		h.BatchSetDocumentType(w, req(t, "POST", "/api/v1/documents/batch-type", body))
 		testutil.AssertEqual(t, w.Code, http.StatusOK, "partial success stays 200")
 
-		var resp types.BatchDocumentTypeResult
+		var resp BatchDocumentTypeResult
 		json.NewDecoder(w.Body).Decode(&resp)
 		testutil.AssertEqual(t, resp.Updated, 1, "only alive doc updated")
 		testutil.AssertEqual(t, len(resp.Failed), 1, "soft-deleted reported")
@@ -1740,7 +1739,7 @@ func TestBatchSetDocumentType(t *testing.T) {
 		}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
-				body, _ := json.Marshal(types.BatchDocumentTypeRequest{
+				body, _ := json.Marshal(BatchDocumentTypeRequest{
 					DocumentIDs:    []string{dID},
 					DocumentTypeID: tc.typeID,
 				})
@@ -1980,7 +1979,7 @@ func TestAuthMeHandler(t *testing.T) {
 		h.MeHandler(w, r)
 		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
 
-		var resp types.UserResponse
+		var resp UserResponse
 		json.NewDecoder(w.Body).Decode(&resp)
 		testutil.AssertEqual(t, resp.Username, "meuser", "username")
 		testutil.AssertEqual(t, resp.Role, "editor", "role")
@@ -2042,7 +2041,7 @@ func TestAPIKeyHandler(t *testing.T) {
 		h.GenerateKey(w, r)
 		testutil.AssertEqual(t, w.Code, http.StatusCreated, "status")
 
-		var resp types.CreateAPIKeyResponse
+		var resp CreateAPIKeyResponse
 		json.NewDecoder(w.Body).Decode(&resp)
 		if !strings.HasPrefix(resp.APIKey, "ek_") {
 			t.Fatalf("expected api_key to start with ek_, got %q", resp.APIKey)
@@ -2059,7 +2058,7 @@ func TestAPIKeyHandler(t *testing.T) {
 		h.GetKeyStatus(w, r)
 		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
 
-		var resp types.APIKeyStatusResponse
+		var resp APIKeyStatusResponse
 		json.NewDecoder(w.Body).Decode(&resp)
 		if !resp.HasAPIKey {
 			t.Fatal("expected has_api_key to be true")
@@ -2101,7 +2100,7 @@ func TestAPIKeyHandler(t *testing.T) {
 		h.RotateKey(w, r)
 		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
 
-		var resp types.CreateAPIKeyResponse
+		var resp CreateAPIKeyResponse
 		json.NewDecoder(w.Body).Decode(&resp)
 		if !strings.HasPrefix(resp.APIKey, "ek_") {
 			t.Fatalf("expected rotated api_key to start with ek_, got %q", resp.APIKey)
@@ -2123,7 +2122,7 @@ func TestAPIKeyHandler(t *testing.T) {
 		h.GetKeyStatus(w, r)
 		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
 
-		var resp types.APIKeyStatusResponse
+		var resp APIKeyStatusResponse
 		json.NewDecoder(w.Body).Decode(&resp)
 		if resp.HasAPIKey {
 			t.Fatal("expected has_api_key to be false after revoke")
@@ -2170,7 +2169,7 @@ func TestMeAPIKeyHandler(t *testing.T) {
 		h.MeGenerateKey(w, r)
 		testutil.AssertEqual(t, w.Code, http.StatusCreated, "status")
 
-		var resp types.CreateAPIKeyResponse
+		var resp CreateAPIKeyResponse
 		json.NewDecoder(w.Body).Decode(&resp)
 		if !strings.HasPrefix(resp.APIKey, "ek_") {
 			t.Fatalf("expected api_key to start with ek_, got %q", resp.APIKey)
@@ -2183,7 +2182,7 @@ func TestMeAPIKeyHandler(t *testing.T) {
 		h.MeGetKeyStatus(w, r)
 		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
 
-		var resp types.APIKeyStatusResponse
+		var resp APIKeyStatusResponse
 		json.NewDecoder(w.Body).Decode(&resp)
 		if !resp.HasAPIKey {
 			t.Fatal("expected has_api_key to be true")
@@ -2217,7 +2216,7 @@ func TestMeAPIKeyHandler(t *testing.T) {
 		h.MeRotateKey(w, r)
 		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
 
-		var resp types.CreateAPIKeyResponse
+		var resp CreateAPIKeyResponse
 		json.NewDecoder(w.Body).Decode(&resp)
 		if !strings.HasPrefix(resp.APIKey, "ek_") {
 			t.Fatalf("expected api_key to start with ek_, got %q", resp.APIKey)
@@ -2237,7 +2236,7 @@ func TestMeAPIKeyHandler(t *testing.T) {
 		h.MeGetKeyStatus(w, r)
 		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
 
-		var resp types.APIKeyStatusResponse
+		var resp APIKeyStatusResponse
 		json.NewDecoder(w.Body).Decode(&resp)
 		if resp.HasAPIKey {
 			t.Fatal("expected has_api_key to be false after revoke")
@@ -2744,7 +2743,7 @@ func TestAddDocumentTag_ClearsOrphanMark(t *testing.T) {
 		t.Fatal("tag should be marked orphaned before assignment")
 	}
 
-	body, _ := json.Marshal(types.AddDocumentTagRequest{TagID: tagID})
+	body, _ := json.Marshal(AddDocumentTagRequest{TagID: tagID})
 	r := req(t, "POST", "/api/v1/documents/"+docUUID+"/tags", body)
 	r.SetPathValue("id", docUUID)
 	w := rec()
@@ -2777,7 +2776,7 @@ func TestListProvisional(t *testing.T) {
 	h.ListProvisional(w, r)
 	testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
 
-	var resp types.ProvisionalTagListResponse
+	var resp ProvisionalTagListResponse
 	testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
 	if resp.Total < 1 {
 		t.Errorf("Total = %d, want >= 1", resp.Total)

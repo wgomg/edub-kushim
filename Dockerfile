@@ -32,7 +32,7 @@ ENV GOMODCACHE=/go/pkg/mod
 WORKDIR /workspace
 COPY . .
 COPY --from=web-builder /build/web/build ./internal/static/build
-COPY --from=web-builder /build/web-wizard/build ./internal/wizard/static
+COPY --from=web-builder /build/web-wizard/build ./internal/api/wizard/static
 RUN make build-deps && make build
 
 

@@ -8,11 +8,11 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/wgomg/edub-kushim/internal/cgo"
 	"github.com/wgomg/edub-kushim/internal/commands"
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/tools/adapters"
-	"github.com/wgomg/edub-kushim/internal/tools/adapters/ocr"
-	"github.com/wgomg/edub-kushim/internal/tools/adapters/thumbnail"
+	"github.com/wgomg/edub-kushim/internal/documents/ocr"
+	"github.com/wgomg/edub-kushim/internal/documents/thumbnail"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -148,12 +148,12 @@ func main() {
 			fmt.Fprintf(os.Stderr, "usage: kushim internal-mupdf-clean --input <file> --output <file>\n")
 			os.Exit(1)
 		}
-		ctx, err := adapters.NewMuContext()
+		ctx, err := cgo.NewMuContext()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "mupdf context: %v\n", err)
 			os.Exit(1)
 		}
-		opts := adapters.NewCleanOptions()
+		opts := cgo.NewCleanOptions()
 		if err := ctx.PdfCleanFile(inputPath, outputPath, opts); err != nil {
 			fmt.Fprintf(os.Stderr, "mupdf pdf_clean_file: %v\n", err)
 			os.Exit(1)

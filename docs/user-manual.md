@@ -3241,12 +3241,12 @@ rebuild it:
 
 ```bash
 nvm use        # activate the Node.js version from .nvmrc
-make wizard-build         # Build SvelteKit wizard, copy to internal/wizard/static
+make wizard-build         # Build SvelteKit wizard, copy to internal/api/wizard/static
 ```
 
 The wizard uses the same design system (clay/gold/lapis/parchment palette)
 and is embedded into the `kushim` binary via `//go:embed` on
-`internal/wizard/static/`.
+`internal/api/wizard/static/`.
 
 ## Systemd Service Files
 

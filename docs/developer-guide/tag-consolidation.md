@@ -44,16 +44,15 @@ The subsystem spans these packages:
 | Package | Role |
 | ------- | ---- |
 | `internal/tags` | canonical-form identity mechanics: house form (M1), lemma/stem signatures (M2, evidence only), key equality (M3), tie-break (M4), alias/evidence types, deterministic planning |
-| `internal/enrichment/tagpolicy` | pure candidate generation: identity + band subjects, no logging, no config |
+| `internal/tags/policy` | pure candidate generation: identity + band subjects, no logging, no config |
 | `internal/enrichment` (`enricher.go`) | adapter: alias lookup, identity planning, judge/adjudicator orchestration, plan application |
-| `internal/enrichment/tagreconcile` | scheduled re-adjudication + log bootstrap parser + identity-evidence sweep |
+| `internal/tags/reconcile` | scheduled re-adjudication + log bootstrap parser + identity-evidence sweep |
 | `internal/service/tagmerge.go` | merge operation + merge suggestions |
-| `internal/tools/adapters/tagmatcher` | the daemon: `Rank`, pair cache, embedding store |
-| `internal/tagmatch` | the RPC client (`edub`'s deployment) |
+| `internal/matcher` | the daemon (`Rank`, pair cache, embedding store) and the RPC client (`edub`'s deployment) |
 | `internal/database` | migrations 00017/00018/00029, verdict + evidence queries |
 
-Two deployments share the `tagmatcher.Matcher` interface: the in-process
-`*Hugot` (kushim, cgo) and `*tagmatch.MatcherClient` (edub, Unix-socket RPC to
+Two deployments share the `matcher.Matcher` interface: the in-process
+`*Hugot` (kushim, cgo) and `*matcher.MatcherClient` (edub, Unix-socket RPC to
 `kushim hugot`). Any interface change must update both plus the test doubles
 (`internal/testutil`, `internal/tools/runner_test.go`).
 
@@ -99,13 +98,13 @@ admin and emission registration paths
   and resolves them to canonical names in one query. It backs registration,
   suggestions, structured search, and the enricher.
 
-### 2.2 `tagpolicy` — candidate generation
+### 2.2 Candidate generation (`internal/tags/policy`)
 
-`tagpolicy` (`internal/enrichment/tagpolicy/policy.go`) is a pure function of
+`policy` (`internal/tags/policy/policy.go`) is a pure function of
 its inputs — no logging, no config, no I/O, no cgo:
 
 ```go
-func Evaluate(queries []string, ranked []tagmatcher.RankResult) []Decision
+func Evaluate(queries []string, ranked []matcher.RankResult) []Decision
 ```
 
 Each `Decision` records `Query`, `Output`, `Target`, `Sim`, `RunnerUpSim`,
@@ -323,7 +322,7 @@ The daemon (`internal/commands/hugot.go`) serves:
 | `GET /rpc/v1/similar-pairs` | The full pair cache — every unordered pair of store entries ≥ the floor. No legacy fallback: an old daemon 404s → matcher-unavailable → suggestions 503 until the daemon restarts. |
 | `POST /rpc/v1/consolidate` | Legacy endpoint (`Hugot.Consolidate`, `hugot.go:299`) kept for pre-upgrade clients only. |
 
-`MatcherClient.Rank` (`internal/tagmatch/client.go:165`) prefers `/rpc/v1/rank`
+`MatcherClient.Rank` (`internal/matcher/client.go:165`) prefers `/rpc/v1/rank`
 and falls back to the legacy endpoint on 404 via `rankViaConsolidate`
 (`client.go:184`), wrapping each returned name as a no-candidates
 `RankResult` — which the policy passes through verbatim. Both skew directions
@@ -395,7 +394,7 @@ delete/recreate cycles.
 
 ## 8. Scheduled reconciliation
 
-`internal/enrichment/tagreconcile` + the task plumbing. Migration
+`internal/tags/reconcile` + the task plumbing. Migration
 `00018_tag_reconcile_vocabulary.sql` adds `tagreconcile` to the `task_type` and
 `batch_source` enums; the `internal/types` registry declares it **blocking**
 (acquires the maintenance lock at claim time, drains in-flight tasks, and
@@ -451,7 +450,7 @@ tags page.
   deleted target); dead-query pairs whose latest verdict is not `same` are
   re-adjudicated (a `same` latest means stable absorption — skipped).
 - **Stale/unjudged** — `TagVerdictPairsWithoutFreshVerdict`: no fresh row at
-  the current `tagpolicy.Version` (older version → stale; current version with
+  the current `policy.Version` (older version → stale; current version with
   NULL `verdict_model` → unjudged).
 - **Aged** — `TagVerdictPairsOlderThan`, fresh rows older than 90 days.
 - **Drifted** — fresh `variant`/`related` pairs whose document-population
@@ -480,7 +479,7 @@ and capped by `max_rejudge`.
 target-as-query rank pass for reciprocal evidence. Entries whose query is a
 store tag again (born since) or whose stored target fell below the
 consideration floor are dropped — future emissions will resolve them. The rest
-are evaluated through `tagpolicy.Evaluate` on the current store with the
+are evaluated through `policy.Evaluate` on the current store with the
 stored target at its fresh similarity: `identity` where the query equals the
 stored target, otherwise `ambiguous_band` → LLM adjudication (batches of 50).
 A fresh verdict that differs from the stored one is confirmed by a second,
@@ -661,7 +660,7 @@ delete — stay with the reconciler's worklists and the operator surfaces.
 - **`consolidation_similarity: 0` disables the whole subsystem** — `Rank`
   returns no candidates, the pair cache stays empty, everything passes
   through. That is the documented knob, not a bug.
-- **Verdicts are cache-scoped to `tagpolicy.Version`** — bumping the version
+- **Verdicts are cache-scoped to `policy.Version`** — bumping the version
   invalidates every cached verdict at once (old rows stay in the table for
   analysis; they are simply never read for the new version). Until the
   reconciler runs, every band pair is re-judged fresh — the caps are the bound.
@@ -676,7 +675,7 @@ delete — stay with the reconciler's worklists and the operator surfaces.
   decisions, `identity[v0]` dispositions). `hugot.log` only holds the
   pre-rewrite history (which is exactly what the bootstrap parser reads).
 - **Interface changes ripple** — `Matcher`/`Embedder` implementations include
-  `*Hugot`, `*tagmatch.MatcherClient`, and the test doubles in
+  `*Hugot`, `*matcher.MatcherClient`, and the test doubles in
   `internal/testutil` and `internal/tools/runner_test.go`; keep them all
   consistent.
 - **Similarity never decides** — a high-similarity neighbour is only a gate

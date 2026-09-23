@@ -16,9 +16,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/consumption"
 	"github.com/wgomg/edub-kushim/internal/database"
-	"github.com/wgomg/edub-kushim/internal/pool"
+	"github.com/wgomg/edub-kushim/internal/documents/consumption"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
@@ -589,12 +588,12 @@ func totalFiles(tasks []database.Task) int {
 	return n
 }
 
-func pollBatch(ctx context.Context, queries *database.Queries, cp, ep, tp, bp *pool.Pool, logger *utils.Logger, batchID string, source types.BatchSource) error {
+func pollBatch(ctx context.Context, queries *database.Queries, cp, ep, tp, bp *task.Pool, logger *utils.Logger, batchID string, source types.BatchSource) error {
 	logger.SetLevel(utils.LevelSilent)
 
-	pools := []*pool.Pool{cp, ep, tp}
+	pools := []*task.Pool{cp, ep, tp}
 	if source == types.Batch.Source.Thumbbackfill {
-		pools = []*pool.Pool{bp}
+		pools = []*task.Pool{bp}
 	}
 	for _, p := range pools {
 		p.Start(ctx)

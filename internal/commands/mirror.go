@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/wgomg/edub-kushim/internal/backup"
 	"github.com/wgomg/edub-kushim/internal/database"
-	"github.com/wgomg/edub-kushim/internal/mirror"
 )
 
 func mirrorHandler(c *Container, args []string) error {
@@ -27,7 +27,7 @@ func mirrorHandler(c *Container, args []string) error {
 		return fmt.Errorf("unknown arguments: %v", rest)
 	}
 
-	if !mirror.Available() {
+	if !backup.Available() {
 		return fmt.Errorf("rsync is not installed — install it (e.g. 'sudo apt install rsync') to use the mirror feature")
 	}
 
@@ -54,12 +54,12 @@ func mirrorHandler(c *Container, args []string) error {
 		return fmt.Errorf("mirror.path is not configured — set it in the config or pass --path")
 	}
 
-	if err := mirror.ValidateDestination(dest, cfg.Storage.StorageDir, cfg.Backup.Path); err != nil {
+	if err := backup.ValidateDestination(dest, cfg.Storage.StorageDir, cfg.Backup.Path); err != nil {
 		return err
 	}
 
 	fmt.Printf("Mirroring %s -> %s\n", cfg.Storage.StorageDir, dest)
-	result, _, err := mirror.RunLocked(ctx, client.Queries, c.logger, cfg.Storage.StorageDir, dest)
+	result, _, err := backup.RunLocked(ctx, client.Queries, c.logger, cfg.Storage.StorageDir, dest)
 	if err != nil {
 		return fmt.Errorf("mirror failed: %w", err)
 	}

@@ -8,9 +8,9 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
+	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
+	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/tags"
-	"github.com/wgomg/edub-kushim/internal/tools/adapters/contentanalyzer"
-	"github.com/wgomg/edub-kushim/internal/tools/adapters/tagmatcher"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -28,11 +28,11 @@ const (
 
 type Tag struct {
 	client   *database.Client
-	embedder tagmatcher.Embedder
+	embedder matcher.Embedder
 	logger   *utils.Logger
 }
 
-func NewTag(client *database.Client, logger *utils.Logger, embedder tagmatcher.Embedder) *Tag {
+func NewTag(client *database.Client, logger *utils.Logger, embedder matcher.Embedder) *Tag {
 	return &Tag{
 		client:   client,
 		embedder: embedder,
@@ -129,7 +129,7 @@ func (s *Tag) CountProvisional(ctx context.Context) (int64, error) {
 
 func (s *Tag) LatestQualityEventsForNames(ctx context.Context, names []string) ([]database.LatestTagQualityEventsForNamesRow, error) {
 	rows, err := s.client.Queries.LatestTagQualityEventsForNames(ctx, database.LatestTagQualityEventsForNamesParams{
-		PolicyVersion: contentanalyzer.TagQualityVersion,
+		PolicyVersion: analyzer.TagQualityVersion,
 		TagNames:      names,
 	})
 	if err != nil {
@@ -713,7 +713,7 @@ func (s *Tag) Promote(ctx context.Context, id int64, reason string) (database.Ta
 	}
 
 	s.encodeAndAddBatch(ctx, []string{tag.Name})
-	s.logger.Info(nil, "tagquality[%s]: promote %q (reason=%s)", contentanalyzer.TagQualityVersion, tag.Name, reason)
+	s.logger.Info(nil, "tagquality[%s]: promote %q (reason=%s)", analyzer.TagQualityVersion, tag.Name, reason)
 	return tag, PromotePromoted, nil
 }
 

@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
-	"github.com/wgomg/edub-kushim/internal/api/types"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
@@ -27,7 +27,7 @@ func (h *SavedSearchHandler) Create(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
 
-	var req types.CreateSavedSearchRequest
+	var req CreateSavedSearchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.logger.Debug(&reqID, "create saved search: invalid body: %v", err)
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -71,9 +71,9 @@ func (h *SavedSearchHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := make([]types.SavedSearchResponse, len(searches))
+	response := make([]SavedSearchResponse, len(searches))
 	for i, s := range searches {
-		response[i] = types.SavedSearchResponse{
+		response[i] = SavedSearchResponse{
 			ID:        s.ID,
 			Name:      s.Name,
 			Filter:    json.RawMessage(s.FilterJson),
@@ -103,4 +103,16 @@ func (h *SavedSearchHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type CreateSavedSearchRequest struct {
+	Name   string          `json:"name"`
+	Filter json.RawMessage `json:"filter"`
+}
+
+type SavedSearchResponse struct {
+	ID        int64           `json:"id"`
+	Name      string          `json:"name"`
+	Filter    json.RawMessage `json:"filter"`
+	CreatedAt time.Time       `json:"created_at"`
 }
