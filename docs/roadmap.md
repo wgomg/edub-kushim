@@ -74,7 +74,7 @@
 - Tag embedding cache (`BuildTagCache`) — pre-computed embeddings for the promoted tag set at matcher startup; provisional tags stay out until promoted
 - **New tag cache update**: created tags are encoded and added to the embedding cache — trusted births directly, quarantined births only once the promotion check passes
 - **Classification persistence**: enrichment writes to `document_tag`, `document_people`, `document.document_type_id` including auto-creating new tags/people as needed
-- Seeded tag vocabulary (110+ Dewey Decimal tags via `sql/seed-tags.sql`, inserted promoted so the shipped vocabulary is in the store on first boot)
+- Seeded tag vocabulary (402 values via `sql/seed-tags.sql`: broad, atomic, house-form subject dimensions plus the country and continent place list, inserted promoted so the shipped inventory is in the store on first boot) and seeded aliases (`sql/seed-tag-aliases.sql`: country and continent alternate spellings plus `christianism`, inserted only when no tag row bears the alias name)
 - Seeded document types (`sql/seed-document-types.sql`)
 - Seeded people types (`sql/seed-people-types.sql`)
 - Token usage stats and prompt logging

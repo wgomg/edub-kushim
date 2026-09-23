@@ -125,7 +125,7 @@ resetDB(t, q)
 ```
 
 The `resetDB` helper deletes all rows from every table, resets identity sequences, and
-re-runs the seed SQL for `document_type`, `people_type`, and `tag`.
+re-runs the seed SQL for `document_type`, `people_type`, `tag`, and `tag_alias`.
 
 Foreign key constraints are enforced by PostgreSQL just as in production.
 The connection pool uses `SetMaxOpenConns(25)`.

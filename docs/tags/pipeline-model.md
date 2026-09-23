@@ -441,7 +441,7 @@ authority moves to features and rules keeps its mechanics and becomes a supplier
 |---|---|---|
 | Typed contract and prompt (`contentanalyzer`) | the emission carrier — typed shape and negatives stay; dimension language, decomposition, and coverage are added | consumes the inventory and the canonical-form instruction; produces emissions and proposed names |
 | Facet gates (`SeparateFacets`) | unchanged policy surface (P1) | facet drops; the place whitelist until its bug is fixed |
-| Seeded vocabulary (`seed-tags.sql`) | the starting inventory — re-derived from the specs (broad, atomic, house form) and extended, with the place list materialized as values; inserted with influence | consumed by suggestions and as anchors; never a validation list |
+| Seeded vocabulary (`seed-tags.sql`, `seed-tag-aliases.sql`) | the starting inventory: re-derived from the specs (broad, atomic, house form) and extended, with the place list materialized as values and the recognized alternate spellings as alias rows; inserted with influence | consumed by suggestions and as anchors; never a validation list |
 | Consolidation bands (`tagpolicy`) | candidate generation only: identity and gate subjects; similarity ranks, never decides | consumes emissions; produces gate subjects |
 | Adjudicator and pair-verdict table | the same-intent gate reader; verdicts become evidence, never identity authority | consumes gate subjects; produces verdicts (features, labels) |
 | Merge review and dismissals | the canonicalization action surface: alias/merge dispositions, with review | consumes canonicalization worklists; produces alias/merge actions |

@@ -22,7 +22,7 @@ func InitializeSchema(db *sql.DB) error {
 		return fmt.Errorf("run migrations: %w", err)
 	}
 
-	seeders := []string{"tags", "document-types", "people-types"}
+	seeders := []string{"tags", "tag-aliases", "document-types", "people-types"}
 	for _, seed := range seeders {
 		seeder, err := SchemaFS.ReadFile(fmt.Sprintf("sql/schema/seed-%s.sql", seed))
 		if err != nil {

@@ -1,0 +1,46 @@
+INSERT INTO tag_alias (alias_name, canonical_tag_id, rule_set_version)
+SELECT a.alias, t.id, 'v0'
+FROM (VALUES
+    ('us', 'united states'),
+    ('usa', 'united states'),
+    ('u.s.', 'united states'),
+    ('u.s.a.', 'united states'),
+    ('united states of america', 'united states'),
+    ('uk', 'united kingdom'),
+    ('u.k.', 'united kingdom'),
+    ('britain', 'united kingdom'),
+    ('great britain', 'united kingdom'),
+    ('uae', 'united arab emirates'),
+    ('u.a.e.', 'united arab emirates'),
+    ('congo brazzaville', 'congo'),
+    ('republic of the congo', 'congo'),
+    ('congo kinshasa', 'drc'),
+    ('democratic republic of congo', 'drc'),
+    ('democratic republic of the congo', 'drc'),
+    ('russian federation', 'russia'),
+    ('dprk', 'north korea'),
+    ('republic of korea', 'south korea'),
+    ('state of palestine', 'palestine'),
+    ('palestinian territories', 'palestine'),
+    ('czech republic', 'czechia'),
+    ('turkiye', 'turkey'),
+    ('burma', 'myanmar'),
+    ('swaziland', 'eswatini'),
+    ('cape verde', 'cabo verde'),
+    ('east timor', 'timor leste'),
+    ('macedonia', 'north macedonia'),
+    ('holland', 'netherlands'),
+    ('vatican', 'vatican city'),
+    ('federated states of micronesia', 'micronesia'),
+    ('cote d ivoire', 'ivory coast'),
+    ('antigua barbuda', 'antigua and barbuda'),
+    ('bosnia herzegovina', 'bosnia and herzegovina'),
+    ('trinidad tobago', 'trinidad and tobago'),
+    ('st lucia', 'saint lucia'),
+    ('st. lucia', 'saint lucia'),
+    ('sahrawi arab democratic republic', 'western sahara'),
+    ('christianism', 'christianity')
+) AS a(alias, canonical)
+JOIN tag t ON t.name = a.canonical
+WHERE NOT EXISTS (SELECT 1 FROM tag existing WHERE existing.name = a.alias)
+ON CONFLICT (alias_name) DO NOTHING;

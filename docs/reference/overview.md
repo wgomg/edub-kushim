@@ -114,7 +114,7 @@ internal/
 ├── database/              # Database layer (sqlc-generated + manual)
 │   ├── connection.go      # DB connection (PostgreSQL via pgx, 25 max conn, auto-create database, WithConnectTimeout)
 │   ├── client.go          # Client wrapper — embeds *Queries, exposes BeginTx/DB()
-│   ├── schema.go          # InitializeSchema — goose migrations + seeders (tags, doc-types, people-types)
+│   ├── schema.go          # InitializeSchema — goose migrations + seeders (tags, tag-aliases, doc-types, people-types)
 │   ├── dump.go            # SQL dump: DumpSchemaAndData, SQLDumpToFile, goose version preservation
 │   ├── psqlrestore.go     # Restore via psql: CheckRestoreTooling, RestoreDumpViaPSQL (host or docker/podman exec)
 │   ├── migrate.go         # RewriteStoragePaths, ValidateMigrationDestination, WaitForTaskDrain (shared with backup handler)
@@ -136,7 +136,7 @@ internal/
 │   ├── user.sql.go        # Generated user queries
 │   ├── saved_search.sql.go # Generated saved search queries (CreateSavedSearch, ListSavedSearches, DeleteSavedSearch)
 │   └── sql/               # Embedded SQL assets
-│       ├── schema/        # Seed SQL files (seed-tags.sql, seed-document-types.sql, seed-people-types.sql)
+│       ├── schema/        # Seed SQL files (seed-tags.sql, seed-tag-aliases.sql, seed-document-types.sql, seed-people-types.sql)
 │       │   └── migrations/ # goose versioned migrations (00001_baseline.sql, ...) — also read by sqlc
 │       └── queries/       # SQL queries for sqlc
 │           ├── document.sql

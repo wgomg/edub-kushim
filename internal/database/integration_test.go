@@ -1516,7 +1516,7 @@ func resetDB(t *testing.T, q *Queries) {
 	for _, tbl := range []string{"document_type", "people_type", "tag", `"user"`, "task", "document", "saved_search", "orphaned_file"} {
 		q.db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s ALTER COLUMN id RESTART WITH 1", tbl))
 	}
-	seeds := []string{"document-types", "people-types", "tags"}
+	seeds := []string{"document-types", "people-types", "tags", "tag-aliases"}
 	for _, seed := range seeds {
 		data, err := SchemaFS.ReadFile(fmt.Sprintf("sql/schema/seed-%s.sql", seed))
 		if err != nil {

@@ -937,8 +937,9 @@ DB and running `CREATE DATABASE` with a quoted, injection-safe identifier
 ### Migrations and seeds
 
 `internal/database/schema.go` embeds `sql/schema` (see §15) and runs goose
-migrations, then executes idempotent seed SQL for tags, document types, and
-people types — all from the embedded FS, so binaries are self-contained.
+migrations, then executes idempotent seed SQL for tags, tag aliases, document
+types, and people types — all from the embedded FS, so binaries are
+self-contained.
 
 ### The test harness
 
