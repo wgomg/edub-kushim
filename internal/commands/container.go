@@ -45,6 +45,7 @@ type Container struct {
 		mirror        *pool.Pool
 		tagreconcile  *pool.Pool
 		tagmeasure    *pool.Pool
+		tagidentity   *pool.Pool
 	}
 }
 
@@ -109,6 +110,7 @@ func (c *Container) InvalidateDB() {
 	c.pools.mirror = nil
 	c.pools.tagreconcile = nil
 	c.pools.tagmeasure = nil
+	c.pools.tagidentity = nil
 }
 
 func (c *Container) reconnectClient() (*database.Client, error) {
@@ -185,6 +187,7 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 		c.logger,
 	))
 	registry.Register(types.Task.Type.TagMeasure, taskhandlers.NewTagMeasureTaskHandler(client.Queries, c.logger))
+	registry.Register(types.Task.Type.TagIdentity, taskhandlers.NewTagIdentityTaskHandler(client.Queries, c.logger))
 
 	c.dispatcher = task.NewDispatcher(c.logger, store, registry)
 	c.runner = task.NewRunner(store, registry, c.logger)
@@ -228,6 +231,8 @@ func (c *Container) GetPool(taskType string) (*pool.Pool, error) {
 		pp = &c.pools.tagreconcile
 	case "tagmeasure":
 		pp = &c.pools.tagmeasure
+	case "tagidentity":
+		pp = &c.pools.tagidentity
 	default:
 		return nil, fmt.Errorf("unknown pool task type: %q", taskType)
 	}
@@ -265,6 +270,9 @@ func (c *Container) GetPool(taskType string) (*pool.Pool, error) {
 			workers = 1
 			interval = 60 * time.Second
 		case "tagmeasure":
+			workers = 1
+			interval = 5 * time.Second
+		case "tagidentity":
 			workers = 1
 			interval = 5 * time.Second
 		}
@@ -330,6 +338,11 @@ func (c *Container) Close() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		c.pools.tagmeasure.Stop(ctx)
+	}
+	if c.pools.tagidentity != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		c.pools.tagidentity.Stop(ctx)
 	}
 	if c.db != nil {
 		c.db.Close()

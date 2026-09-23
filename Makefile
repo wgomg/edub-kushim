@@ -294,7 +294,7 @@ test-db:
 test-backup:
 	CGO_ENABLED=0 go test -tags "XLA,ORT" -count=1 -timeout 120s ./internal/backup/
 
-# Consumption + configtask with CGo + DB — requires make build-deps + TEST_DATABASE_URL.
+# Consumption + configtask + enrichment with CGo + DB — requires make build-deps + TEST_DATABASE_URL.
 # Tests that need psql use database.runtime=podman in their config and exec
 # into the edub-test-pg test container, so no local psql install is needed.
 .PHONY: test-cgo-db
@@ -304,6 +304,7 @@ test-cgo-db:
 		./internal/consumption/ \
 		./internal/configtask/ \
 		./internal/commands/ \
+		./internal/enrichment/ \
 		./internal/enrichment/tagreconcile/ \
 		./internal/api/handlers/
 

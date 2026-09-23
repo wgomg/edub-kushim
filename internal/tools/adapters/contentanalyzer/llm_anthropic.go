@@ -417,6 +417,33 @@ func (l *LlmAnthropic) JudgeTagQuality(ctx context.Context, text string, candida
 	return ParseTagQualityResponse(responseContent, len(candidates))
 }
 
+func (l *LlmAnthropic) JudgeTagIdentity(ctx context.Context, candidates []TagIdentityCandidate) ([]TagIdentityResult, error) {
+	prompt := BuildTagIdentityPrompt(candidates)
+
+	if err := checkContentTooLarge(l.caps, TagIdentitySystemMessage+"\n"+prompt); err != nil {
+		return nil, err
+	}
+
+	reqBody := anthropicRequest{
+		Model:     l.llmCfg.Model,
+		MaxTokens: l.defaultMaxTokens(),
+		Messages: []anthropicMessage{
+			{Role: "user", Content: prompt},
+		},
+		System:       TagIdentitySystemMessage,
+		Stream:       false,
+		CacheControl: &cacheControlEphemeral{Type: "ephemeral"},
+	}
+	l.applyReasoning(&reqBody, reqBody.MaxTokens)
+	l.applyTemperature(&reqBody, 0)
+
+	_, responseContent, err := l.doRequest(ctx, reqBody, "tag identity judge")
+	if err != nil {
+		return nil, err
+	}
+	return ParseTagIdentityResponse(responseContent, len(candidates))
+}
+
 func (l *LlmAnthropic) Name() string {
 	return "anthropic"
 }

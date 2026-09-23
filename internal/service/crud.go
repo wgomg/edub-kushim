@@ -17,6 +17,7 @@ type CrudServices struct {
 	ErroredFiles *ErroredFiles
 	ReEnrich     *ReEnrich
 	Trash        *TrashService
+	TagIdentity  *TagIdentity
 }
 
 func (s *CrudServices) Close() {

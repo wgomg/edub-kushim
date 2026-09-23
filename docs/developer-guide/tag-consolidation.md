@@ -1,24 +1,25 @@
-# Developer Guide — Tag Consolidation Policy
+# Developer Guide — Tag Consolidation and Identity
 
 This guide explains how the post-LLM tag-consolidation subsystem works
-internally: the pure policy layer, the enricher flow that applies it, LLM
-adjudication of the ambiguous band, the verdict event table, the matcher RPC
-surface and pair cache, the merge-review service, and the scheduled
-reconciler.
+internally: the birth-time identity machinery, the pure candidate-generation
+policy, the enricher flow that applies it, LLM adjudication of the same-intent
+gate, the verdict and identity-evidence tables, the matcher RPC surface and
+pair cache, the merge-review service, and the scheduled reconciler.
 
-It is the internal-mechanics companion to `docs/tags/consolidation.md`
-(operator-facing). Audience: developers who want to understand, tune, or change
-how emitted tags are mapped onto the canonical vocabulary.
+It is the internal-mechanics companion to `docs/tags/consolidation.md` and
+`docs/tags/canonical-form-and-identity.md` (design). Audience: developers who
+want to understand, tune, or change how emitted tags are mapped onto the
+canonical vocabulary.
 
 ---
 
 ## Table of contents
 
 1. [Orientation](#1-orientation)
-2. [The policy layer](#2-the-policy-layer)
+2. [The identity machinery and the policy layer](#2-the-identity-machinery-and-the-policy-layer)
 3. [The enricher flow](#3-the-enricher-flow)
 4. [LLM adjudication](#4-llm-adjudication)
-5. [The verdict event table](#5-the-verdict-event-table)
+5. [The verdict and evidence tables](#5-the-verdict-and-evidence-tables)
 6. [Matcher RPC surface and the pair cache](#6-matcher-rpc-surface-and-the-pair-cache)
 7. [Merge review](#7-merge-review)
 8. [Scheduled reconciliation](#8-scheduled-reconciliation)
@@ -33,7 +34,7 @@ how emitted tags are mapped onto the canonical vocabulary.
 Consolidation runs at the end of enrichment, after the LLM emits tags
 (architecture pipeline step 5). The seam is deliberate: **the matcher daemon
 only ranks** — it embeds the emitted names and returns candidates with scores —
-and **the enricher owns the replacement decision**. That split lets the policy
+and **the enricher owns the identity decision**. That split lets the pipeline
 (and everything built on it: adjudication, reconciliation) live in non-cgo
 packages that run in both binaries, while the cgo-gated model stays in the
 daemon.
@@ -42,96 +43,155 @@ The subsystem spans these packages:
 
 | Package | Role |
 | ------- | ---- |
-| `internal/enrichment/tagpolicy` | pure decision layer: gates + bands, no logging, no config |
-| `internal/enrichment` (`enricher.go`) | adapter: store set, decision logging, verdict writes, adjudication orchestration |
-| `internal/enrichment/tagreconcile` | scheduled re-adjudication + log bootstrap parser |
+| `internal/tags` | canonical-form identity mechanics: house form (M1), lemma/stem signatures (M2, evidence only), key equality (M3), tie-break (M4), alias/evidence types, deterministic planning |
+| `internal/enrichment/tagpolicy` | pure candidate generation: identity + band subjects, no logging, no config |
+| `internal/enrichment` (`enricher.go`) | adapter: alias lookup, identity planning, judge/adjudicator orchestration, plan application |
+| `internal/enrichment/tagreconcile` | scheduled re-adjudication + log bootstrap parser + identity-evidence sweep |
 | `internal/service/tagmerge.go` | merge operation + merge suggestions |
 | `internal/tools/adapters/tagmatcher` | the daemon: `Rank`, pair cache, embedding store |
 | `internal/tagmatch` | the RPC client (`edub`'s deployment) |
-| `internal/database` | migrations 00017/00018, event-table queries |
+| `internal/database` | migrations 00017/00018/00029, verdict + evidence queries |
 
 Two deployments share the `tagmatcher.Matcher` interface: the in-process
 `*Hugot` (kushim, cgo) and `*tagmatch.MatcherClient` (edub, Unix-socket RPC to
 `kushim hugot`). Any interface change must update both plus the test doubles
 (`internal/testutil`, `internal/tools/runner_test.go`).
 
-Thresholds involved (both model-derived, `internal/config/config.go`):
-`consolidation_similarity` is the **consideration floor** — the daemon's `Rank`
-candidate filter (bge-m3 → 0.80); `auto_replace_similarity` is the
-**auto-replace cutoff** consumed by the policy (bge-m3 → 0.95 = the
-consolidation default + 0.15). Per-model values and the derivation switches are
-documented in the [semantic matching guide](semantic-matching.md#10-thresholds-and-configuration).
+Thresholds involved (`internal/config/config.go`): `consolidation_similarity`
+is the **consideration floor** — the daemon's `Rank` candidate filter
+(bge-m3 → 0.80). The former `auto_replace_similarity` cutoff is no longer
+consumed by any decision: a similarity score never replaces a name on its own,
+only identity or the same-intent gate do. The field is still derived per model
+and serialized in config responses. Per-model values and the derivation
+switches are documented in the [semantic matching guide](semantic-matching.md#10-thresholds-and-configuration).
 
 ---
 
-## 2. The policy layer
+## 2. The identity machinery and the policy layer
+
+### 2.1 `internal/tags` — canonical-form mechanics
+
+The mechanical body (`internal/tags/identity.go`) is pure and shared by the
+admin and emission registration paths
+(design: [canonical form and identity](../tags/canonical-form-and-identity.md)):
+
+- **M1 — house form** (`HouseForm`): word ordinals (`nineteenth century` →
+  `19th century`) and roman numerals (`world war ii` → `world war 2`, `xiv` →
+  `14`) convert to numeric house style; English dictionary words that happen to
+  parse as roman numerals (`mix`, `mid`) are left alone. The rewrite is a style
+  rewrite and is written directly at registration.
+- **M2 — shape signatures** (`ComputeSignature`): per-token lemma (golem) and
+  stem (snowball) signatures. They are evidence only — the stemmer's output is
+  never written, and a proposed fold (`ProposedFold`) is never applied
+  unconfirmed.
+- **M3 — key equality** (`Key`): the identity key is the house form, so style
+  variants collapse without judging.
+- **M4 — tie-break** (`TieBreak`): fixed lexical order decides when the
+  direction criteria do not separate two labels.
+- **Version**: `IdentityRuleSetVersion = "v0"` is stamped on every alias row and
+  identity-evidence row.
+- **`PlanDeterministic`** — the admin path's deterministic phase: normalization,
+  M1 rewrites, alias lookup, key equality, M2 flagging. It never proposes a fold
+  for application, never adjudicates, and never makes an alias; flagged shape
+  relations register provisionally with pending evidence. `NameIndex` memoizes
+  keys and signatures per name so the flagging loops compare cached values.
+- **`ResolveAliases`** — the single alias resolver: normalizes and dedupes names
+  and resolves them to canonical names in one query. It backs registration,
+  suggestions, structured search, and the enricher.
+
+### 2.2 `tagpolicy` — candidate generation
 
 `tagpolicy` (`internal/enrichment/tagpolicy/policy.go`) is a pure function of
 its inputs — no logging, no config, no I/O, no cgo:
 
 ```go
-func Evaluate(queries []string, ranked []tagmatcher.RankResult,
-	storeTags map[string]struct{}, autoReplaceSim float64) []Decision
+func Evaluate(queries []string, ranked []tagmatcher.RankResult) []Decision
 ```
 
 Each `Decision` records `Query`, `Output`, `Target`, `Sim`, `RunnerUpSim`,
 `Action` (`Passthrough` / `Replace` / `Keep`) and `Reason` (`identity`,
-`auto_replace`, `negation_guard`, `shared_token_guard`, `direction_guard`,
 `ambiguous_band`, `no_candidates`, `short_slice`). `Version = "v1"`
-(`policy.go:12`) is the policy version stamped on every decision log and stored
-verdict — bumping it is what marks all stored verdicts stale to the reconciler.
+(`policy.go`) is the policy version stamped on stored verdicts — bumping it is
+what marks all stored verdicts stale to the reconciler.
 
 Per query, `Evaluate` runs in order:
 
 1. **Passthrough** — short slices (ranked shorter than queries) and results
    with no candidates (legacy-daemon fallback, disabled consolidation) pass
    through untouched; they are already decided.
-2. **Identity fast path** — exact equality with a store tag (names are
-   canonical on both sides, so this is string equality) → replace. This is
-   ~87% of real traffic: casing, hyphenation, and symbol-form fixes.
-3. **Negation guard** — exactly one of {query, target} carries a negation
-   prefix: a standalone `anti`/`contra`/`non` token of the normalized name, or
-   a closed compound (`antifascism`) whose stripped remainder exists as a store
-   tag → keep. Two-sided detection blocks both flip directions without
-   touching true synonyms (`birth control` → `contraception`).
-4. **Shared-token guard** — *proper partial* token overlap (neither side a
-   strict subset of the other) → keep. Deliberately blunt; blocked genuine
-   synonyms become merge-review candidates.
-5. **Direction guard** — query tokens a strict subset of the target's
-   (`democracy` ⊂ `direct democracy`) → keep, so the broader term is born. The
-   reverse direction (target ⊂ query, e.g. `social revolution` vs `revolution`)
-   deliberately falls through to the bands — it is adjudication material, not a
-   deterministic keep.
-6. **Bands** — a guard-free candidate at or above `autoReplaceSim` → replace;
-   otherwise `ambiguous_band` → keep (the enricher may adjudicate, §4).
+2. **Identity** — exact equality with a store tag (names are canonical on both
+   sides, so this is string equality) → replace. This remains the bulk of real
+   traffic: casing, hyphenation, and symbol-form fixes after normalization;
+   key-equivalent style variants resolve earlier through M3.
+3. **Band subjects** — every other candidate becomes a gate subject
+   (`ambiguous_band`): the emitted `KeptName` is kept and the top candidate is
+   recorded with its similarity and runner-up. Similarity ranks and filters
+   candidates; it never replaces or keeps on its own.
 
 The runner-up similarity is recorded on every decision and never affects it —
 it exists as adjudication evidence.
+
+### 2.3 The gate and its dispositions
+
+Flagged candidates and band subjects are resolved before the persist
+transaction — adjudication stays outside it:
+
+- **Folds (J1/J2/J5)** — one identity-judge call per flagged candidate answers
+  three binary criteria: fold to base form, fold preserves denotation,
+  conventional written form. A fold applies only when all three confirm; a
+  candidate whose criteria have no judge answer stays provisional with the
+  three criteria recorded as pending evidence.
+- **Same-intent pairs (J3/J4)** — the pair adjudicator answers `same` /
+  `variant` / `related`, plus a direction for `same` (`query`, `target`, or
+  `tie`; a tie falls back to M4). `same` yields the alias disposition;
+  `variant`/`related` keep both names.
+- **Dispositions** — `apply` (the name resolves to an existing value by alias
+  or key equality), `register` (new value), `alias` (the losing name becomes a
+  `tag_alias` row; when the loser already exists as a tag, its assignments are
+  re-pointed, its row is removed, and its own aliases are retargeted onto the
+  canonical — no chains), `defer` (gray: the candidate registers provisionally
+  for review). A candidate that wins a pair against a store label makes the
+  store label the alias (candidate-wins).
+- **Pending evidence** — with the adjudicator disabled or unavailable, flagged
+  candidates stay provisional and pending rows accumulate in
+  `tag_identity_event`. The triggered run
+  (`kushim tagidentity --run <batch-id>`, enqueued by
+  `POST /api/v1/tags/identity/reevaluate`) and the reconciler's identity sweep
+  resolve them through the same cache; whichever runs first records the
+  verdict.
 
 ---
 
 ## 3. The enricher flow
 
-`internal/enrichment/enricher.go`:
+`internal/enrichment/enricher.go` + `internal/enrichment/identity.go`:
 
-1. `e.runner.RankTags(ctx, docId, analysis.Tags)` (`enricher.go:244`) — timeout
-   wrapper in `internal/tools/runner.go:454`; on error the enricher logs and
-   keeps the unconsolidated tags (enrichment never fails on consolidation).
-2. `applyConsolidationPolicy` (`enricher.go:433`) — builds the canonical
-   `storeTags` set from the promoted subset of `services.Tag.ListAll`,
-   evaluates via `tagpolicy.Evaluate`, and logs every decision as
-   `consolidation[v1]: replace|keep|passthrough … reason=…` (replace/keep at
-   info, passthrough at debug).
-3. Band pairs (`Reason == ambiguous_band`) route to `adjudicateBandPairs`
-   (`enricher.go:548`) when the adjudicator is enabled; `writeVerdictEvent`
-   (`enricher.go:496`) records one row per band-pair occurrence that has a
-   verdict.
-4. Adjudication evidence uses a second, target-as-query `RankTags`
-   (`enricher.go:640`) over the distinct unresolved targets.
+1. **Suggestions** — the suggestion set (matched tags or the vocabulary
+   fallback) is alias-resolved to canonical names before injection.
+2. `e.runner.RankTags(ctx, docId, analysis.Tags)` — timeout wrapper in
+   `internal/tools/runner.go`; on error the enricher logs, keeps the
+   unconsolidated names, and falls back to the deterministic planner
+   (`PlanRegistration`) for registration (enrichment never fails on
+   consolidation).
+3. **Planning** (`planIdentity`) runs outside the transaction: one alias-map
+   query, M1 house form, M3 key-equality application, M2 shape flagging through
+   a `NameIndex`, band subjects from the ranked decisions, and same-emission
+   shape pairs. Flagged candidates go into one batched identity-judge call
+   (cache first: `tag_identity_event` at `IdentityRuleSetVersion`); flagged
+   pairs go through the pair adjudicator. The result is a `tags.Plan` carrying
+   registrations, alias actions, and evidence rows, and per-disposition log
+   lines (`identity[v0]: apply|alias|defer|separate …`).
+4. **Application** (`CreatePlannedTx`) runs inside the caller's persist
+   transaction: registrations (write-boundary normalization, blocklist
+   re-check, provisional births, promotion when not quarantined), scheduled
+   alias actions (re-point, delete, flatten, alias row), and identity-evidence
+   rows. `renameTagDetails` keeps the analyzer's typed metadata attached to
+   folded or applied outputs.
+5. **Store hygiene** after the commit: promoted/new names enter the embedding
+   store and removed alias names leave it.
 
-Kept tags are then created through the persist transaction (`CreateTx`), so a
-trusted birth is immediately part of the store and later emissions of the same
-name hit the identity fast path — the self-healing loop.
+A trusted birth is immediately part of the store, and later emissions of the
+same name hit M3 or the alias resolver — the self-healing loop.
 
 When `enricher.tag_quality.enabled` is true, `applyTagQuality`
 (`enricher.go`) filters that kept set once more before persist: novel names
@@ -159,30 +219,52 @@ fall back to the content analyzer's `llm`/`timeout` when the block's own values
 are empty, so the inherit state survives settings saves and analyzer model
 changes keep propagating.
 
-The call chain: `Runner.AdjudicateTags` (bounded by the adjudicator timeout) →
-`ContentAnalyzer.Adjudicate` on both LLM adapters (openai-compatible and
-anthropic) — temperature 0, structured output where the provider supports it.
-The prompt is built by `BuildAdjudicationPrompt` (pair terms, the pair's
-embedding similarity, the query-side runner-up, the target's nearest other
-store tag); `ParseAdjudicationResponse` maps unknown verdicts, out-of-range
-indices, and short slices to ambiguous entries. See the
-[LLM guide](llm.md) for the adapter contract.
+The adjudicator gate covers two calls, both bounded by the adjudicator timeout
+and both temperature 0 with structured output where the provider supports it:
+
+- **Identity judge** — `Runner.JudgeTagIdentity` →
+  `ContentAnalyzer.JudgeTagIdentity` on both LLM adapters. One call per batch of
+  flagged candidates answers the three binary criteria; the prompt is built by
+  `BuildTagIdentityPrompt` and the response parsed by
+  `ParseTagIdentityResponse`, which requires a complete verdict per candidate —
+  an omitted criterion errors rather than reading as an all-false rejection.
+  The evidence payload (`CriteriaRecord`) carries the criteria plus the fold the
+  mechanism proposed.
+- **Pair adjudication** — `Runner.AdjudicateTags` →
+  `ContentAnalyzer.Adjudicate`. The prompt (`BuildAdjudicationPrompt`) carries
+  the same-intent test, the pair terms, the pair's embedding similarity, the
+  query-side runner-up, and the target's nearest other store tag; for a `same`
+  verdict it also asks which term is the precise one (`direction`:
+  `query`/`target`/`tie`). `ParseAdjudicationResponse` maps unknown verdicts,
+  out-of-range indices, and short slices to ambiguous entries and drops unknown
+  direction values. See the [LLM guide](llm.md) for the adapter contract.
 
 Resolution order per document:
 
-1. **Verdict cache** — `LatestTagVerdictsForPairs` reads the latest verdict per
-   `(query, target)` at the current `tagpolicy.Version`. Cached pairs resolve
-   with no LLM call: `same` replaces with the target, `variant`/`related` keep.
-2. **Evidence** — one batched target-as-query rank (a rank failure drops the
+1. **Identity criteria cache** — the latest verdict per
+   `(kind, candidate, partner)` in `tag_identity_event` at
+   `IdentityRuleSetVersion` resolves the three criteria without a call; only
+   candidates without a complete cached set enter the judge batch.
+2. **Pair cache** — the latest `same_intent` row per `(candidate, partner)`
+   resolves the pair, with the direction carried in its criteria payload; only
+   unresolved pairs enter the adjudicator batch.
+3. **Evidence** — one batched target-as-query rank (a rank failure drops the
    evidence, not the pair).
-3. **Verdict** — one `AdjudicateTags` call for all of the document's
-   unresolved pairs. Any error, empty result, or ambiguous entry keeps every
-   unresolved pair and logs one error line. A disabled or failed-to-construct
-   adjudicator skips the step entirely — Stage-1 behavior.
+4. **Verdict** — batched `AdjudicateTags` calls for all unresolved pairs. Any
+   error, empty result, or ambiguous entry leaves those pairs pending: the
+   candidates register provisionally with a pending `same_intent` row, resolved
+   later by the triggered run or the reconciler's identity sweep. A disabled or
+   failed-to-construct adjudicator skips both calls entirely — candidates
+   register provisionally, folds are not applied, and every claim waits as
+   pending evidence.
+
+Decided pairs are recorded in the identity table (criteria + direction + model)
+and, when the emission carries a document, also as a document-anchored
+`tag_verdict_event` row so the reconciler's pair view stays complete.
 
 ---
 
-## 5. The verdict event table
+## 5. The verdict and evidence tables
 
 Migration `00017_tag_verdict_events.sql` creates the `tag_verdict` enum
 (`same`/`variant`/`related`, wired into `internal/types` with a sqlc
@@ -207,6 +289,27 @@ The table is deliberately a shared schema object, not a KV cache:
 counts across both orientations and all policy versions (it feeds merge
 suggestions and the reconciliation drift scan), and the reconciler's worklist
 scans (§8) all query it. Query reference: [database reference](../reference/database.md).
+
+Migration `00029_tag_identity.sql` adds the two identity objects:
+
+- **`tag_alias`** — `(alias_name UNIQUE, canonical_tag_id REFERENCES tag(id) ON
+  DELETE CASCADE, rule_set_version, created_at)`. The canonical-only rule is
+  structural: alias rows never enter the embedding store, so a losing name can
+  never be suggested or become a consolidation target. Alias resolution reads
+  through one joined query (`ResolveTagAliasNames`) that returns the canonical
+  name directly.
+- **`tag_identity_event`** — `(kind, candidate, partner, criteria JSONB NOT
+  NULL, verdict, model, rule_set_version, created_at)` with kinds `base_form`,
+  `fold_gate`, `conventional_form` (candidate criteria, partner NULL) and
+  `same_intent` (pair rows; `direction` lives in the criteria payload). The
+  table serves both the identity verdict cache (latest row per
+  `(kind, candidate, partner)` at the current rule-set version with a non-NULL
+  verdict) and the pending-evidence queue (rows with NULL verdict, deduplicated
+  by a partial unique index over `(kind, candidate, COALESCE(partner,''),
+  rule_set_version)`; a second partial index on `created_at WHERE verdict IS
+  NULL` serves the pending backlog scan and count). Verdicts settle in place
+  through `ResolveTagIdentityEvent`, which only touches rows that are still
+  pending, so the triggered run and the sweep cannot overwrite each other.
 
 ---
 
@@ -323,14 +426,15 @@ also carries pair-level entries (`planned_merges`, `planned_keep_flips`,
 `retag_entries`, `invalidated_entries`) plus `capped`, `no_documents`,
 `swept` (orphan tags deleted, or the would-be count in report-only runs),
 `provisional` (the provisional sweep's `worklist`, `zero_assignment`,
-`promoted`, `rejudged`, `deferred`, `no_judge`, `skipped`, `failed`), and
-`adjudicator_disabled`; report-only keep-flip document counts come from a
+`promoted`, `rejudged`, `deferred`, `no_judge`, `skipped`, `failed`),
+`identity` (the identity sweep's `pending`, `resolved`, `folded`, `aliased`,
+`deferred`, `failed`), and `adjudicator_disabled`; report-only keep-flip
+document counts come from a
 single batched `TagPairEvidenceStats` call (a stats failure keeps every
 planned entry with zero documents instead of dropping it), and no-document
 keep flips are counted in `no_documents` so the judged/skips/capped partition
-stays exact. Each pair entry carries `reason` — the policy guard that decided
-it (`auto_replace`, `negation_guard`, `shared_token_guard`, `direction_guard`)
-or `adjudicated` for LLM-judged pairs — and `creates_tag` (true when a keep
+stays exact. Each pair entry carries `reason` — `adjudicated` for LLM-judged
+pairs — and `creates_tag` (true when a keep
 flip creates the query tag; always present in new reports, absent only in
 reports persisted before the field existed).
 The report is served by `GET /api/v1/tags/reconciliation/report` (latest
@@ -360,10 +464,11 @@ tags page.
   `consolidate "q" → t (sim)`, `consolidation[vN]: keep "q" (sim=…
   reason=ambiguous_band …)` — any version prefix — and the band-less
   `consolidation[vN]: keep "q" (reason=rank_unavailable)` emitted when the
-  post-LLM rank call fails (parsed with an empty target and zero similarity,
-  so the entry flows through the normal re-adjudication path). Guard-reason
-  keeps and `auto_replace` replaces are not parsed (they were decided by rules
-  that replay deterministically); REQIDs resolve to document ids via
+  post-LLM rank call fails (  parsed with an empty target and zero similarity,
+  so the entry flows through the normal re-adjudication path). Legacy
+  guard-reason keeps and `auto_replace` replaces from pre-identity logs are not
+  parsed — they were decided by rules that no longer exist; REQIDs resolve to
+  document ids via
   `GetDocumentIDsByDocumentIDs`, unresolvable ones are dropped but the pair is
   kept; table rows supersede log-derived entries.
 
@@ -376,9 +481,9 @@ target-as-query rank pass for reciprocal evidence. Entries whose query is a
 store tag again (born since) or whose stored target fell below the
 consideration floor are dropped — future emissions will resolve them. The rest
 are evaluated through `tagpolicy.Evaluate` on the current store with the
-stored target at its fresh similarity: `auto_replace` → merge flip, guard
-reasons → keep flip, `ambiguous_band` → LLM adjudication (batches of 50). A
-fresh verdict that differs from the stored one is confirmed by a second,
+stored target at its fresh similarity: `identity` where the query equals the
+stored target, otherwise `ambiguous_band` → LLM adjudication (batches of 50).
+A fresh verdict that differs from the stored one is confirmed by a second,
 **orientation-reversed** adjudication pass — the flip applies only when both
 orientations agree; ambiguity or disagreement keeps the stored verdict.
 
@@ -393,7 +498,7 @@ those documents (`RepointDocumentTagsForDocs`, with the `NOT EXISTS` guard),
 clears their orphan marks, and upserts the verdict — all in one transaction.
 Every adjudicated pair (flip or agreement) upserts a fresh verdict row at the
 current version (`UpsertFreshTagVerdict`, `verdict_model` = the adjudicator
-model or `policy:<version>`), refreshing `verdict_at` so the aged scan does
+model; empty when a cached verdict was applied), refreshing `verdict_at` so the aged scan does
 not re-judge it. `max_retag` bounds re-pointed documents per run, with a
 first-pair carve-out (the budget is soft by at most one pair).
 
@@ -439,6 +544,18 @@ lookup or write failures as `failed`; the run never deletes a tag. Report-only
 runs count would-promote/would-re-judge and touch nothing. The counts land in
 `Report.Provisional` (`worklist`, `zero_assignment`, `promoted`, `rejudged`,
 `deferred`, `no_judge`, `skipped`, `failed`).
+
+**Identity-evidence sweep**: after the provisional sweep, the same run resolves
+pending identity evidence up to `max_rejudge` rows through the shared resolver
+(`internal/enrichment/identity_resolve.go`). Candidate criteria are judged in
+batches, same-intent pairs adjudicated, and the dispositions applied: a
+confirmed fold renames the tag (or aliases it when the folded name already
+exists), a same-intent loser becomes an alias of its winner, a deleted fold
+target is skipped, and a deferral stays for review. The per-pair cache settles
+each claim once, so the triggered run and this sweep converge on whichever
+runs first. Report-only runs skip the sweep. The counts land in
+`Report.Identity` (`pending`, `resolved`, `folded`, `aliased`, `deferred`,
+`failed`); with the adjudicator disabled the sweep only counts the backlog.
 
 **Report-only**: the first run is always report-only
 (`GetLastCompletedTagReconcileTask` finds no completed prior run), regardless
@@ -496,31 +613,36 @@ delete — stay with the reconciler's worklists and the operator surfaces.
 
 - **Keep is the failure direction everywhere**: rank error, adjudicator
   disabled/unavailable/ambiguous, reconciliation disagreement — the emitted or
-  stored state is kept, and enrichment never blocks or fails on this
-  subsystem.
+  stored state is kept, unresolved claims stay pending, and enrichment never
+  blocks or fails on this subsystem.
 - **Wrong keeps are visible and mergeable; wrong replacements are silent and
-  permanent** — hence the asymmetric strictness: deterministic guards only
-  *block*; the only paths to replacement are identity, the auto-replace
-  cutoff, an explicit `same` verdict, or an operator's merge.
-- **Nothing merges automatically** — merges are explicit operator actions;
-  automatic flips only re-tag documents.
-- **Bounded automation** — policy-version pinning, the double-orientation
-  confirmation, `max_rejudge`/`max_retag`, and the report-only first run.
-- **Dead names cannot resurrect** — dead-target verdict rows are deleted and
-  every operator delete/merge is recorded in the `deleted_tag` blocklist:
+  permanent** — hence the asymmetric strictness: similarity never decides. The
+  only paths that change a name are M1 style rewrites, M3 key equality, a fold
+  confirmed by all three criteria, an explicit `same` verdict (with direction),
+  and an operator's merge.
+- **Merges are explicit operator actions**; the automatic path uses the alias
+  disposition instead, so a losing name stays resolvable through `tag_alias`
+  rather than being deleted outright.
+- **Bounded automation** — policy-version and rule-set-version pinning, the
+  double-orientation confirmation, `max_rejudge`/`max_retag`, and the
+  report-only first run.
+- **Dead names cannot resurrect** — the registration path re-checks the
+  `deleted_tag` blocklist (a blocked name is never registered and never
+  aliased), fold application skips deleted targets, dead-target verdict rows
+  are deleted, and every operator delete/merge is recorded in the blocklist:
   enrichment drops blocked names (and rewrites merged names to their merge
-  target), and the reconciler skips their restoration, so no cached `same`
-  verdict or later LLM emission can re-create a merged/deleted tag.
+  target), and the reconciler skips their restoration.
 
 ---
 
 ## 11. Gotchas
 
 - **The adjudicator, quality judge, and reconciliation are disabled by
-  default** — the ambiguous band keeps, novel tags are born unfiltered, and
-  both event tables stay empty until `enricher.tag_adjudicator.enabled`,
-  `enricher.tag_quality.enabled`, and `enricher.tag_reconcile.enabled` are
-  set. Merge suggestions then run similarity-only (`similarity_only`
+  default** — novel tags are born unfiltered, folds are not applied, and
+  same-intent claims wait as pending evidence (their candidates register
+  provisionally) until `enricher.tag_adjudicator.enabled` is set or the
+  triggered run/sweep resolves them; both event tables stay empty until their
+  layers run. Merge suggestions then run similarity-only (`similarity_only`
   confidence).
 - **Quarantined tags are invisible to the vocabulary** — with `tag_quality`
   on, a newborn is attached and searchable from birth but stays out of the
@@ -543,23 +665,25 @@ delete — stay with the reconciler's worklists and the operator surfaces.
   invalidates every cached verdict at once (old rows stay in the table for
   analysis; they are simply never read for the new version). Until the
   reconciler runs, every band pair is re-judged fresh — the caps are the bound.
-  Quality verdicts carry an independent pin, `TagQualityVersion` — bumping it
-  retires every cached quality verdict at once.
+  Identity evidence carries an independent pin, `IdentityRuleSetVersion`, and
+  quality verdicts another, `TagQualityVersion`; bumping either retires its
+  cached rows at once.
 - **The pair cache rebuild is N²/2 at daemon boot** — sub-second to a few
   seconds at hundreds-to-low-thousands of tags, but it is part of the
   `TimeoutStartSec` budget alongside model load and tag-cache build.
-- **Consolidation decision logs live in the kushim (enrichment) log, not
-  `hugot.log`** — since the policy moved enricher-side. `hugot.log` only holds
-  the pre-rewrite history (which is exactly what the bootstrap parser reads).
+- **Consolidation and identity logs live in the kushim (enrichment) log, not
+  `hugot.log`** — since the policy moved enricher-side (`consolidation[v1]`
+  decisions, `identity[v0]` dispositions). `hugot.log` only holds the
+  pre-rewrite history (which is exactly what the bootstrap parser reads).
 - **Interface changes ripple** — `Matcher`/`Embedder` implementations include
   `*Hugot`, `*tagmatch.MatcherClient`, and the test doubles in
   `internal/testutil` and `internal/tools/runner_test.go`; keep them all
   consistent.
-- **The shared-token guard is deliberately blunt** — genuine synonyms that
-  share a token (`software development` / `software engineering`) are kept and
-  become merge-review candidates, not replacements. That is the design, not a
-  miss.
+- **Similarity never decides** — a high-similarity neighbour is only a gate
+  subject; a name changes only through M1/M3, a fully confirmed fold, an
+  explicit `same` verdict, or an operator merge. Bands that keep without a
+  verdict stay provisional with pending evidence.
 
 ---
 
-*Last verified against the tree: 2026-09-12. If code and doc disagree, code wins.*
+*Last verified against the tree: 2026-09-22. If code and doc disagree, code wins.*

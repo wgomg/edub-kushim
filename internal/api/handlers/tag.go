@@ -121,6 +121,9 @@ func (h *TagHandler) Create(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(types.TagResponse{ID: results[0].Entity.ID, Name: results[0].Entity.Name})
+	case service.Apply, service.Alias:
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(types.TagResponse{ID: results[0].Entity.ID, Name: results[0].Entity.Name})
 	case service.Conflict:
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
@@ -261,13 +264,19 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 			}
 			verdicts[e.TagName] = info
 		}
+		pending, err := h.services.Tag.PendingIdentityCounts(ctx, names)
+		if err != nil {
+			writeServiceError(w, h.logger, &reqID, "provisional tag identity evidence", err)
+			return
+		}
 		for i, t := range rows {
 			responses[i] = types.ProvisionalTagResponse{
 				ID:            t.ID,
 				Name:          t.Name,
 				DocumentCount: t.DocumentCount,
 				// the list query coalesces created_at, so the value is always present
-				CreatedAt: t.CreatedAt.Time,
+				CreatedAt:       t.CreatedAt.Time,
+				PendingIdentity: pending[t.Name],
 			}
 			if v, ok := verdicts[t.Name]; ok {
 				responses[i].Verdict = &v
@@ -304,6 +313,24 @@ func (h *TagHandler) PromoteTag(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "Tag not found", http.StatusNotFound)
 	}
+}
+
+func (h *TagHandler) ReevaluateIdentity(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := ctx.Value("reqid").(string)
+
+	batchID, alreadyQueued, err := h.services.TagIdentity.Enqueue(ctx)
+	if err != nil {
+		writeServiceError(w, h.logger, &reqID, "enqueue tag identity run", err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	json.NewEncoder(w).Encode(map[string]any{
+		"batch_id":       batchID,
+		"already_queued": alreadyQueued,
+	})
 }
 
 func (h *TagHandler) Merge(w http.ResponseWriter, r *http.Request) {

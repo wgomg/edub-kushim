@@ -36,11 +36,12 @@ Semantic matching happens at two points in the enrichment pipeline:
    reduced text is embedded and matched against the known tags; the top
    matches are passed into the prompt as "prefer these tags if relevant"
    (`internal/enrichment/enricher.go:106-118`).
-2. **Post-LLM consolidation** — the tags the LLM produced are re-embedded and
-   mapped onto the canonical tag names ("concept → existing tag") when
-   similarity is high enough (`enricher.go:244-248`). The ambiguous band
-   (guard-free candidates below the auto-replace cutoff) is then adjudicated
-   by the LLM when `enricher.tag_adjudicator.enabled` is true — §7.
+2. **Post-LLM consolidation and identity** — the tags the LLM produced are
+   re-embedded and mapped onto the canonical tag names ("concept → existing
+   tag") by identity — house form, alias lookup, key equality — and by the
+   same-intent gate, which adjudicates candidate neighbours with an LLM when
+   `enricher.tag_adjudicator.enabled` is true (§7). Similarity ranks
+   candidates; it never replaces a name.
 
 The core type is `*tagmatcher.Hugot` (`internal/tools/adapters/tagmatcher/hugot.go`),
 an in-process embedding model (Hugot + ONNX runtime or pure-Go backend) that
@@ -308,7 +309,7 @@ has 'machine-learning'" fix. Differences from `Match`:
 - It uses a **separate, higher threshold** (`consolidationSim`), because
   tag-name-to-tag-name similarity is inherently sparser than
   document-to-tag (see §10).
-- It returns **candidates with scores**; the replacement decision is the
+- It returns **candidates with scores**; the identity decision is the
   enricher's:
 
 ```go
@@ -332,51 +333,60 @@ for i, qEmb := range out.Embeddings {
   through unchanged with no candidates.
 
 `Runner.RankTags` (`internal/tools/runner.go`) wraps the call with the
-configured timeout, and the enricher applies the replacement policy locally
-via `applyConsolidationPolicy` (`internal/enrichment/enricher.go`), which
-delegates to `tagpolicy.Evaluate` (`internal/enrichment/tagpolicy/policy.go`).
+configured timeout, and the enricher applies the identity pipeline locally
+(`internal/enrichment/identity.go`) with candidate generation from
+`tagpolicy.Evaluate` (`internal/enrichment/tagpolicy/policy.go`).
 Per query the policy runs, in order: short-slice and empty-candidates
-passthrough, an identity fast path, three deterministic guards — negation
-(exactly one side carries `anti`/`contra`/`non`), shared token (partial token
-overlap), direction (query tokens a strict subset of the target's) — and then
-the similarity bands: a guard-free candidate at or above
-`auto_replace_similarity` replaces, anything below keeps the `KeptName` (the
-ambiguous band defaults to keep). The runner-up similarity is recorded on
-every decision but never affects it. Each decision is logged as
-`consolidation[v1]: replace|keep|passthrough … reason=…` (passthrough at
-debug level). Fallback results from the legacy daemon (no candidates) pass
-through `KeptName` verbatim.
+passthrough, an identity fast path (exact equality with a store tag →
+apply the existing label), and then candidate generation — every remaining
+candidate neighbour is kept as a **gate subject** with its similarity and
+runner-up recorded as adjudication evidence. Similarity never replaces or
+keeps on its own; gates and identity do. Each disposition is logged as
+`identity[v0]: apply|alias|defer|separate …`. Fallback results from the legacy
+daemon (no candidates) pass through `KeptName` verbatim. Style variants and
+aliases never reach the policy: M1 house form, M3 key equality, and the alias
+resolver apply the canonical value before ranking output is used.
 
-### Adjudication of the ambiguous band
+### Identity adjudication
 
-With `enricher.tag_adjudicator.enabled: true`, the enricher resolves the
-ambiguous band with an LLM verdict instead of defaulting to keep, in three
-steps:
+Identity has two LLM paths, both under `enricher.tag_adjudicator.enabled`:
 
-1. **Verdict cache** — `LatestTagVerdictsForPairs` reads the latest verdict per
-   `(query, target)` at the current `tagpolicy.Version` from
-   `tag_verdict_event`. Cached pairs resolve immediately — `same` replaces with
-   the target, `variant`/`related` keep — with no LLM call.
-2. **Evidence** — for the remaining pairs, one batched `RankTags` call runs
-   target-as-query. The target's nearest other store tag (first candidate whose
-   tag differs from the target) and the query-side runner-up similarity are
-   attached to the pair as evidence. A rank failure drops the evidence, not
-   the pair.
-3. **Verdict** — one `AdjudicateTags` call per document
-   (`ContentAnalyzer.Adjudicate`, temperature 0, structured output where the
-   provider supports it) classifies each pair as `same` / `variant` /
-   `related`. `same` replaces the emitted tag with the target;
-   `variant`/`related` keep. Any error, empty result, or ambiguous entry keeps
-   every unresolved pair and logs one error line.
+1. **Folds** — a candidate with a mechanically proposed lexical fold (M2
+   signatures) is judged by one batched identity-judge call
+   (`JudgeTagIdentity`) answering three binary criteria: fold to base form
+   (J1), fold preserves denotation (J2), conventional written form (J5). The
+   fold applies only when all three confirm; a candidate whose criteria lack a
+   judge answer stays provisional with the three criteria recorded as pending
+   evidence.
+2. **Same-intent pairs** — every gate subject is adjudicated:
+   - **Pair cache** — the latest `same_intent` row per `(candidate, partner)`
+     at `IdentityRuleSetVersion` from `tag_identity_event` resolves the pair
+     with no LLM call, carrying the direction in its criteria payload.
+   - **Evidence** — one batched `RankTags` call runs target-as-query for the
+     remaining pairs (a rank failure drops the evidence, not the pair).
+   - **Verdict** — one `AdjudicateTags` call per batch (`ContentAnalyzer.Adjudicate`,
+     temperature 0, structured output where the provider supports it)
+     classifies each pair against the same-intent test — can either term stand
+     for the other without loss or change of meaning? — as `same` / `variant` /
+     `related`, plus a direction for `same` (`query`, `target`, or `tie`; a tie
+     falls back to lexical order). `same` **aliases** the losing name onto the
+     winner (a losing store label becomes the alias, its assignments are
+     re-pointed, and its own aliases are retargeted); `variant`/`related`
+     register both names. Any error, empty result, or ambiguous entry leaves
+     those pairs pending, with the candidates born provisional and a pending
+     `same_intent` row written.
 
-Every band-pair occurrence that has a verdict writes a row to the append-only
-`tag_verdict_event` table: fresh verdicts record the judging model,
-cache-applied ones store NULL `verdict_model`. A partial unique index on
-`(query, target, policy_version) WHERE verdict_model IS NOT NULL` deduplicates
-fresh verdicts across concurrent workers: the losing insert re-reads the cached
-verdict and applies it as cache-applied. When the adjudicator is unavailable
-(disabled, or failed to construct), the whole step is skipped and band pairs
-keep as without adjudication.
+Decided pairs write an identity-evidence row (criteria + direction + model) and,
+when the emission carries a document, also an append-only `tag_verdict_event`
+row: fresh verdicts record the judging model, cache-applied ones store NULL
+`verdict_model`. A partial unique index on `(query, target, policy_version)
+WHERE verdict_model IS NOT NULL` deduplicates fresh document-anchored verdicts
+across concurrent workers: the losing insert re-reads the cached verdict and
+applies it as cache-applied. Pending identity evidence is resolved later by the
+triggered run or the reconciler's identity sweep; whichever runs first settles
+the claim for both. When the adjudicator is unavailable (disabled, or failed to
+construct), both paths are skipped: candidates register provisionally and every
+claim waits as pending evidence.
 
 ### Rubric judge for novel tags
 
@@ -555,8 +565,8 @@ All knobs live under `enricher.tagmatcher` in the config
 | `hugot.cpu_mem_arena` / `mem_pattern` | `false` | ORT memory knobs (§2) |
 | `top_n` | `15` (derived) | max suggestions returned |
 | `min_similarity` | model-derived | document→tag threshold |
-| `consolidation_similarity` | model-derived | tag→tag consideration floor (candidates below it never reach the policy) |
-| `auto_replace_similarity` | model-derived | tag→tag auto-replace cutoff (guard-free candidates at or above it replace) |
+| `consolidation_similarity` | model-derived | tag→tag consideration floor (candidates below it never reach the identity pipeline) |
+| `auto_replace_similarity` | model-derived | formerly the tag→tag auto-replace cutoff; still derived but no decision consumes it |
 | `timeout` | `120` (s) | per-call budget |
 | `reduce_target_words` | `4000` | text is reduced to ≤ this many words before embedding |
 
@@ -612,8 +622,8 @@ func defaultAutoReplaceSimilarity(modelShortName string) float64 {
 ```
 
 Rules of thumb: raise `min_similarity` if false positives appear; keep
-`consolidation_similarity` well above it and `auto_replace_similarity` above
-that. If you add a model to the catalog/derivation, add it to all three switch
+`consolidation_similarity` well above it. If you add a model to the
+catalog/derivation, add it to all three switch
 statements.
 
 ---
@@ -632,14 +642,16 @@ statements.
    - `runner.MatchTags(ctx, docId, reducedText)` → `tagSuggestions`; on error
      or zero matches, falls back to the promoted-name list (the enricher's
      `tagsNames`, composed from the promoted subset of `ListAll`).
-   - `runner.RankTags(ctx, docId, analysis.Tags)` after the LLM pass
-     (`enricher.go:244`); `applyConsolidationPolicy` applies the
-     replacement decision via `tagpolicy.Evaluate` (guards + two bands) with
-     the promoted-only `storeTags` set, so quarantined names are not targets
-     and do not feed the negation guard.
-   - `runner.AdjudicateTags(ctx, pairs)` resolves the ambiguous band when
-     `enricher.tag_adjudicator.enabled` is true (cache + evidence + one LLM
-     call per document, §7).
+   - `runner.RankTags(ctx, docId, analysis.Tags)` after the LLM pass;
+     `planIdentity` applies identity and candidate generation via
+     `tagpolicy.Evaluate` (identity + gate subjects) with the promoted-only
+     store set, so quarantined names are not targets. Style variants and
+     aliases are applied before this point through M1/M3 and the alias
+     resolver.
+   - `runner.JudgeTagIdentity(ctx, candidates)` confirms proposed folds (J1/J2/J5)
+     and `runner.AdjudicateTags(ctx, pairs)` resolves the same-intent gate when
+     `enricher.tag_adjudicator.enabled` is true (cache + evidence + batched LLM
+     calls, §7); unresolved claims stay pending as identity evidence.
    - `runner.JudgeTagQuality(ctx, reducedText, candidates)` filters the
      consolidated novel set when `enricher.tag_quality.enabled` is true
      (weak band → cache → one rubric call per document, §7).
@@ -685,8 +697,10 @@ statements.
   zero `top_n` disables suggestions entirely.
 - **Consolidation with `consolidationSim == 0.0` passes through** — that's
   the documented "disable consolidation" knob, not a bug.
-- **The adjudicator is disabled by default** — the ambiguous band keeps until
-  `enricher.tag_adjudicator.enabled: true`, and an explicit `llm` block is only
+- **The adjudicator is disabled by default** — folds are not applied and
+  same-intent claims wait as pending evidence (candidates born provisional)
+  until `enricher.tag_adjudicator.enabled: true` or the triggered run/sweep
+  resolves them, and an explicit `llm` block is only
   needed when deviating from the content analyzer's LLM (an empty
   `provider`/`model` copies the analyzer's `llm` wholesale).
 - **The quality judge is disabled by default** — novel tags are born

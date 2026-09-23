@@ -125,13 +125,11 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 
 	var tagSuggestions []string
 
-	storeTags := make(map[string]struct{}, len(allTags))
 	dbNames := make(map[string]struct{}, len(allTags))
 	var tagsNames []string
 	for _, t := range allTags {
 		if t.PromotedAt.Valid {
 			tagsNames = append(tagsNames, t.Name)
-			storeTags[t.Name] = struct{}{}
 		}
 		dbNames[t.Name] = struct{}{}
 	}
@@ -155,6 +153,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 		tagSuggestions = matchedTags.Tags
 		e.logger.Debug(&logId, "tag matching: %d tags (%s)", len(tagSuggestions), time.Since(matchTagsStart))
 	}
+	tagSuggestions = e.canonicalSuggestions(ctx, tagSuggestions, &logId)
 
 	var analysis *tools.ContentAnalysisResult
 	report("analyze", "", 0)
@@ -280,17 +279,23 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 	report("consolidate", "", 0)
 	ranked, err := e.runner.RankTags(ctx, document.DocumentID, analysis.Tags)
 	var decisions []tagpolicy.Decision
+	var identityPlan tags.Plan
 	if err != nil {
 		e.logger.Error(&logId, "post-LLM consolidation failed: %v", err)
 		for _, tag := range analysis.Tags {
 			e.logger.Info(&logId, "consolidation[%s]: keep %q (reason=rank_unavailable)", tagpolicy.Version, tag)
 		}
+		identityPlan, err = e.services.Tag.PlanRegistration(ctx, analysis.Tags)
+		if err != nil {
+			return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("identity planning failed: %w", err)}
+		}
 	} else {
 		var consolidated []string
-		consolidated, decisions = e.applyConsolidationPolicy(ctx, document.ID, document.DocumentID, analysis.Tags, ranked, storeTags, &logId)
+		consolidated, identityPlan, decisions = e.planIdentity(ctx, document.ID, document.DocumentID, analysis.Tags, ranked, dbNames, &logId)
 		analysis.Tags = consolidated
 		e.logger.Debug(&logId, "post-LLM consolidation: %d tags (%s)", len(consolidated), time.Since(consolidateStart))
 	}
+	analysis.TagDetails = renameTagDetails(analysis.TagDetails, identityPlan)
 
 	if e.config.Enricher.TagQuality.Enabled {
 		analysis.Tags = e.applyTagQuality(ctx, analysis, decisions, dbNames, llmContent.Text, document.ID, &logId)
@@ -337,24 +342,31 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 	defer tx.Rollback()
 	txQ := e.client.WithTx(tx)
 
-	results, newNames, err := e.services.Tag.CreateTx(ctx, txQ, analysis.Tags, quarantine)
+	results, newNames, err := e.services.Tag.CreatePlannedTx(ctx, txQ, identityPlan, quarantine)
 	if err != nil {
 		return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("batch create tags: %w", err)}
 	}
 
 	var tagIDs []int64
+	seenTagIDs := make(map[int64]bool, len(results))
 	for i, r := range results {
 		switch r.Status {
 		case service.Created:
-			e.logger.Debug(&logId, "tag created %s", analysis.Tags[i])
+			e.logger.Debug(&logId, "tag created %s", r.Entity.Name)
 			if quarantine {
-				e.logger.Info(&logId, "tagquality[%s]: quarantine %q (reason=birth)", contentanalyzer.TagQualityVersion, analysis.Tags[i])
+				e.logger.Info(&logId, "tagquality[%s]: quarantine %q (reason=birth)", contentanalyzer.TagQualityVersion, r.Entity.Name)
 			}
-			tagIDs = append(tagIDs, r.Entity.ID)
-		case service.Conflict:
-			tagIDs = append(tagIDs, r.Entity.ID)
+			if !seenTagIDs[r.Entity.ID] {
+				seenTagIDs[r.Entity.ID] = true
+				tagIDs = append(tagIDs, r.Entity.ID)
+			}
+		case service.Conflict, service.Apply, service.Alias:
+			if !seenTagIDs[r.Entity.ID] {
+				seenTagIDs[r.Entity.ID] = true
+				tagIDs = append(tagIDs, r.Entity.ID)
+			}
 		default:
-			e.logger.Error(&logId, "create tag %q: invalid", analysis.Tags[i])
+			e.logger.Error(&logId, "create tag %q: invalid", identityPlan.Registrations[i].Input)
 		}
 	}
 
@@ -389,6 +401,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 	} else {
 		e.services.Tag.AddToStore(ctx, newNames)
 	}
+	e.services.Tag.RemoveFromStore(ctx, identityPlan.RemovedStoreNames())
 
 	peopleMap := make(map[string]int64, len(existingPeople))
 	for _, p := range existingPeople {
@@ -713,11 +726,6 @@ func (e *Enricher) splitVerdicts(ctx context.Context, candidates []string, logId
 	return decisions
 }
 
-type bandPairKey struct {
-	query  string
-	target string
-}
-
 type bandPair struct {
 	query       string
 	target      string
@@ -731,69 +739,6 @@ type bandPair struct {
 type reciprocalEvidence struct {
 	tag string
 	sim float64
-}
-
-func (e *Enricher) applyConsolidationPolicy(ctx context.Context, docId int64, documentID string, queries []string, ranked []tagmatcher.RankResult, storeTags map[string]struct{}, logId *string) ([]string, []tagpolicy.Decision) {
-	decisions := tagpolicy.Evaluate(queries, ranked, storeTags, e.config.Enricher.TagMatcher.AutoReplaceSimilarity)
-	out := make([]string, len(queries))
-
-	var bandPairs []*bandPair
-	bandAt := make(map[int]*bandPair)
-	seen := make(map[bandPairKey]*bandPair)
-
-	for i, d := range decisions {
-		out[i] = d.Output
-		if d.Reason == tagpolicy.ReasonBand {
-			key := bandPairKey{query: d.Query, target: d.Target}
-			bp, ok := seen[key]
-			if !ok {
-				bp = &bandPair{query: d.Query, target: d.Target, sim: d.Sim, runnerUpSim: d.RunnerUpSim}
-				seen[key] = bp
-				bandPairs = append(bandPairs, bp)
-			}
-			bandAt[i] = bp
-			continue
-		}
-		switch d.Action {
-		case tagpolicy.ActionReplace:
-			e.logger.Info(logId, "consolidation[%s]: replace %q → %q (sim=%.3f runner=%.3f reason=%s)",
-				tagpolicy.Version, d.Query, d.Target, d.Sim, d.RunnerUpSim, d.Reason)
-		case tagpolicy.ActionKeep:
-			e.logger.Info(logId, "consolidation[%s]: keep %q (sim=%.3f reason=%s)",
-				tagpolicy.Version, d.Query, d.Sim, d.Reason)
-		default:
-			e.logger.Debug(logId, "consolidation[%s]: passthrough %q (reason=%s)",
-				tagpolicy.Version, d.Query, d.Reason)
-		}
-	}
-
-	if len(bandPairs) > 0 && e.config.Enricher.TagAdjudicator.Enabled {
-		e.adjudicateBandPairs(ctx, documentID, bandPairs, logId)
-	}
-
-	for i := range decisions {
-		bp, ok := bandAt[i]
-		if !ok {
-			continue
-		}
-		d := decisions[i]
-		if bp.verdict.Valid() {
-			e.writeVerdictEvent(ctx, docId, d, bp, logId)
-		}
-		switch {
-		case bp.verdict == types.TagVerdicts.Same:
-			out[i] = d.Target
-			e.logger.Info(logId, "consolidation[%s]: replace %q → %q (sim=%.3f runner=%.3f reason=adjudicated verdict=%s model=%s cached=%t)",
-				tagpolicy.Version, d.Query, d.Target, d.Sim, d.RunnerUpSim, bp.verdict, bp.model, bp.cached)
-		case bp.verdict.Valid():
-			e.logger.Info(logId, "consolidation[%s]: keep %q (sim=%.3f reason=ambiguous_band verdict=%s cached=%t)",
-				tagpolicy.Version, d.Query, d.Sim, bp.verdict, bp.cached)
-		default:
-			e.logger.Info(logId, "consolidation[%s]: keep %q (sim=%.3f reason=%s)",
-				tagpolicy.Version, d.Query, d.Sim, d.Reason)
-		}
-	}
-	return out, decisions
 }
 
 func (e *Enricher) writeVerdictEvent(ctx context.Context, docId int64, d tagpolicy.Decision, bp *bandPair, logId *string) {
@@ -1073,82 +1018,6 @@ func (e *Enricher) writeTagQualityEvent(ctx context.Context, docId int64, name s
 		model = row.VerdictModel.String
 	}
 	return row.Pass, row.Criteria, model
-}
-
-func (e *Enricher) adjudicateBandPairs(ctx context.Context, documentID string, pairs []*bandPair, logId *string) {
-	queries := make([]string, len(pairs))
-	targets := make([]string, len(pairs))
-	for i, bp := range pairs {
-		queries[i] = bp.query
-		targets[i] = bp.target
-	}
-
-	rows, err := e.queries.LatestTagVerdictsForPairs(ctx, database.LatestTagVerdictsForPairsParams{
-		PolicyVersion: tagpolicy.Version,
-		Queries:       queries,
-		Targets:       targets,
-	})
-	if err != nil {
-		e.logger.Error(logId, "tag verdict cache lookup failed: %v", err)
-	}
-	cached := make(map[bandPairKey]database.LatestTagVerdictsForPairsRow, len(rows))
-	for _, row := range rows {
-		cached[bandPairKey{query: row.Query, target: row.Target}] = row
-	}
-
-	var unresolved []*bandPair
-	for _, bp := range pairs {
-		row, ok := cached[bandPairKey{query: bp.query, target: bp.target}]
-		if !ok || !row.Verdict.Valid() {
-			unresolved = append(unresolved, bp)
-			continue
-		}
-		bp.verdict = row.Verdict
-		bp.cached = true
-		if row.VerdictModel.Valid {
-			bp.model = row.VerdictModel.String
-		}
-	}
-	if len(unresolved) == 0 {
-		return
-	}
-
-	evidence := e.reciprocalEvidence(ctx, documentID, unresolved, logId)
-	evidencePairs := make([]contentanalyzer.TagPairEvidence, len(unresolved))
-	for i, bp := range unresolved {
-		ev := evidence[bp.target]
-		evidencePairs[i] = contentanalyzer.TagPairEvidence{
-			Query:             bp.query,
-			Target:            bp.target,
-			Sim:               bp.sim,
-			RunnerUpSim:       bp.runnerUpSim,
-			TargetRunnerUpTag: ev.tag,
-			TargetRunnerUpSim: ev.sim,
-		}
-	}
-
-	results, err := e.runner.AdjudicateTags(ctx, evidencePairs)
-	if err == nil && len(results) != len(unresolved) {
-		err = fmt.Errorf("adjudicator returned %d verdicts for %d pairs", len(results), len(unresolved))
-	}
-	if err == nil {
-		for i, r := range results {
-			if !r.Verdict.Valid() {
-				err = fmt.Errorf("ambiguous verdict for pair %q → %q", unresolved[i].query, unresolved[i].target)
-				break
-			}
-		}
-	}
-	if err != nil {
-		e.logger.Error(logId, "tag adjudication failed, keeping %d pairs: %v", len(unresolved), err)
-		return
-	}
-
-	model := e.config.ResolvedAdjudicatorLlm().Model
-	for i, r := range results {
-		unresolved[i].verdict = r.Verdict
-		unresolved[i].model = model
-	}
 }
 
 func (e *Enricher) reciprocalEvidence(ctx context.Context, documentID string, pairs []*bandPair, logId *string) map[string]reciprocalEvidence {

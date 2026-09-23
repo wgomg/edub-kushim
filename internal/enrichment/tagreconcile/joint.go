@@ -126,7 +126,7 @@ func (r *Reconciler) planJointSplits(entries []*jointEntry, report *Report) {
 	}
 }
 
-func (r *Reconciler) applyJointSplits(ctx context.Context, cfg *config.Config, entries []*jointEntry, report *Report, storeTags map[string]database.Tag, policyStoreTags map[string]struct{}) {
+func (r *Reconciler) applyJointSplits(ctx context.Context, cfg *config.Config, entries []*jointEntry, report *Report, storeTags map[string]database.Tag) {
 	budget := cfg.Enricher.TagReconcile.MaxRetag
 	applied := false
 
@@ -148,7 +148,7 @@ func (r *Reconciler) applyJointSplits(ctx context.Context, cfg *config.Config, e
 			break
 		}
 
-		reassigned, err := r.applyJointSplit(ctx, cfg, e, storeTags, policyStoreTags)
+		reassigned, err := r.applyJointSplit(ctx, e, storeTags)
 		if err != nil {
 			r.logger.Error(nil, "tag reconcile: split %q failed: %v", e.name, err)
 			report.Skips["split_error"]++
@@ -167,7 +167,7 @@ func (r *Reconciler) applyJointSplits(ctx context.Context, cfg *config.Config, e
 	}
 }
 
-func (r *Reconciler) applyJointSplit(ctx context.Context, cfg *config.Config, e *jointEntry, storeTags map[string]database.Tag, policyStoreTags map[string]struct{}) (int64, error) {
+func (r *Reconciler) applyJointSplit(ctx context.Context, e *jointEntry, storeTags map[string]database.Tag) (int64, error) {
 	joint, ok := storeTags[e.name]
 	if !ok {
 		return 0, fmt.Errorf("tag %q no longer in store", e.name)
@@ -190,13 +190,7 @@ func (r *Reconciler) applyJointSplit(ctx context.Context, cfg *config.Config, e 
 		ranked[i].Candidates = candidates
 	}
 
-	policyStore := make(map[string]struct{}, len(policyStoreTags))
-	for name := range policyStoreTags {
-		if name != e.name {
-			policyStore[name] = struct{}{}
-		}
-	}
-	decisions := tagpolicy.Evaluate(e.components, ranked, policyStore, cfg.Enricher.TagMatcher.AutoReplaceSimilarity)
+	decisions := tagpolicy.Evaluate(e.components, ranked)
 	outputs := make([]string, 0, len(decisions))
 	seen := make(map[string]bool, len(decisions))
 	for _, d := range decisions {
@@ -217,10 +211,12 @@ func (r *Reconciler) applyJointSplit(ctx context.Context, cfg *config.Config, e 
 	}
 	var componentIDs []int64
 	for i, res := range results {
-		if res.Status != service.Created && res.Status != service.Conflict {
+		switch res.Status {
+		case service.Created, service.Conflict, service.Apply:
+			componentIDs = append(componentIDs, res.Entity.ID)
+		default:
 			return 0, fmt.Errorf("create component %q: invalid result", outputs[i])
 		}
-		componentIDs = append(componentIDs, res.Entity.ID)
 	}
 
 	tx, err := r.client.BeginTx(ctx, nil)
@@ -264,10 +260,6 @@ func (r *Reconciler) applyJointSplit(ctx context.Context, cfg *config.Config, e 
 
 	if err := r.services.Tag.RemoveFromStore(ctx, []string{e.name}); err != nil {
 		r.logger.Error(nil, "tag reconcile: split %q: remove from store: %v", e.name, err)
-	}
-	delete(policyStoreTags, e.name)
-	for _, name := range outputs {
-		policyStoreTags[name] = struct{}{}
 	}
 	return int64(len(docIDs)), nil
 }

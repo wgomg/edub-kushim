@@ -2,6 +2,7 @@ package contentanalyzer
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -1502,5 +1503,167 @@ func TestTagDetail_PresenceSemantics(t *testing.T) {
 	}
 	if result.TagDetails[0].IsStandardTerm != nil {
 		t.Error("object omitted: IsStandardTerm should be nil")
+	}
+}
+
+func TestParseTagIdentityResponse(t *testing.T) {
+	complete := `{"terms":[
+		{"index":0,"fold_to_base":true,"fold_preserves_denotation":true,"conventional_form":true},
+		{"index":1,"fold_to_base":false,"fold_preserves_denotation":false,"conventional_form":false}
+	]}`
+	fenced := "```json\n{\"terms\":[{\"index\":0,\"fold_to_base\":false,\"fold_preserves_denotation\":true,\"conventional_form\":true}]}\n```"
+	// one criterion omitted: a zero-valued result must never read as an all-false rejection
+	incomplete := `{"terms":[{"index":0,"fold_to_base":true,"conventional_form":true}]}`
+	// only 1 of 2 candidates returned
+	missingIndex := `{"terms":[{"index":0,"fold_to_base":true,"fold_preserves_denotation":true,"conventional_form":true}]}`
+
+	tests := []struct {
+		name    string
+		content string
+		n       int
+		wantErr bool
+		want0   *TagIdentityResult
+	}{
+		{
+			name:    "complete JSON parses both candidates",
+			content: complete,
+			n:       2,
+			wantErr: false,
+			want0: &TagIdentityResult{
+				Index: 0, FoldToBase: true, FoldPreservesDenotation: true, ConventionalForm: true,
+			},
+		},
+		{
+			name:    "code-fenced JSON",
+			content: fenced,
+			n:       1,
+			wantErr: false,
+			want0: &TagIdentityResult{
+				Index: 0, FoldToBase: false, FoldPreservesDenotation: true, ConventionalForm: true,
+			},
+		},
+		{
+			name:    "incomplete verdict must error",
+			content: incomplete,
+			n:       1,
+			wantErr: true,
+		},
+		{
+			name:    "missing index must error",
+			content: missingIndex,
+			n:       2,
+			wantErr: true,
+		},
+		{
+			name:    "invalid JSON must error",
+			content: "not json",
+			n:       1,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			results, err := ParseTagIdentityResponse(tt.content, tt.n)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(results) != tt.n {
+				t.Fatalf("results = %d, want %d", len(results), tt.n)
+			}
+			if tt.want0 != nil && !reflect.DeepEqual(results[0], *tt.want0) {
+				t.Errorf("results[0] = %+v, want %+v", results[0], *tt.want0)
+			}
+		})
+	}
+}
+
+func TestTagIdentityResult_CriteriaRecord(t *testing.T) {
+	result := TagIdentityResult{
+		FoldToBase: true, FoldPreservesDenotation: true, ConventionalForm: false,
+	}
+
+	raw := result.CriteriaRecord("buildings")
+	var stored TagIdentityCriteria
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		t.Fatalf("record does not round-trip the criteria: %v", err)
+	}
+	if !stored.Complete() {
+		t.Fatalf("record lost a criterion: %s", stored)
+	}
+	if stored.FoldToBase == nil || !*stored.FoldToBase {
+		t.Error("fold_to_base = false, want true")
+	}
+	if stored.ConventionalForm == nil || *stored.ConventionalForm {
+		t.Error("conventional_form = true, want false")
+	}
+	var envelope struct {
+		ProposedFold string `json:"proposed_fold"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		t.Fatalf("envelope: %v", err)
+	}
+	if envelope.ProposedFold != "buildings" {
+		t.Errorf("proposed_fold = %q, want buildings", envelope.ProposedFold)
+	}
+
+	empty := result.CriteriaRecord("")
+	if strings.Contains(string(empty), "proposed_fold") {
+		t.Errorf("fold-less record should omit proposed_fold: %s", empty)
+	}
+}
+
+func TestParseAdjudicationResponse_Direction(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{
+			name:    "query direction",
+			content: `{"pairs":[{"index":0,"verdict":"same","direction":"query"}]}`,
+			want:    TagDirectionQuery,
+		},
+		{
+			name:    "target direction",
+			content: `{"pairs":[{"index":0,"verdict":"same","direction":"target"}]}`,
+			want:    TagDirectionTarget,
+		},
+		{
+			name:    "tie direction",
+			content: `{"pairs":[{"index":0,"verdict":"same","direction":"tie"}]}`,
+			want:    TagDirectionTie,
+		},
+		{
+			name:    "unknown direction is dropped",
+			content: `{"pairs":[{"index":0,"verdict":"same","direction":"sideways"}]}`,
+			want:    "",
+		},
+		{
+			name:    "absent direction stays empty",
+			content: `{"pairs":[{"index":0,"verdict":"same"}]}`,
+			want:    "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			results, err := ParseAdjudicationResponse(tt.content, 1)
+			if err != nil {
+				t.Fatalf("ParseAdjudicationResponse: %v", err)
+			}
+			if results[0].Verdict != types.TagVerdicts.Same {
+				t.Errorf("verdict = %q, want same", results[0].Verdict)
+			}
+			if results[0].Direction != tt.want {
+				t.Errorf("direction = %q, want %q", results[0].Direction, tt.want)
+			}
+		})
 	}
 }

@@ -300,8 +300,8 @@ for values on dimensions nor teaches compound decomposition (`X of Y`, adjective
 device + operation, both-parts-exist compounds). The suggestions surface is the
 vocabulary's only influence on emission.
 
-**S3 — canonicality.** The mechanisms are substantial: `tagpolicy` gates and bands,
-LLM adjudication of the ambiguous band with `tag_verdict_event`, merge review with
+**S3 — canonicality.** The mechanisms are substantial: the birth-time identity pipeline
+(M1–M4 with the same-intent gate, `tag_identity_event`, `tag_alias`), merge review with
 persisted dismissals (`tag_merge_dismissal`), and scheduled reconciliation. What the
 model adds is the *signal*: one label per intent decided by extension equality (P3)
 rather than embedding similarity. The snapshot shows why the difference matters — the
@@ -338,7 +338,7 @@ the old standard, which is the label-hygiene caveat of definition §6.6.
 **S6 — lifecycle.** Implemented as the model wants for birth and influence: a label
 exists and is searchable from birth; provisional values are excluded from every
 injection point (store built from promoted names only, promoted-names fallback,
-identity/auto-replace targets); promotion is inline plus swept; judge failure degrades to
+identity and gate subjects); promotion is inline plus swept; judge failure degrades to
 provisional; the blocklist prevents rebirth. The gap is demotion: influence is granted
 one-way, and the only demotion ever executed was the one-off `00026` promotion
 correction — the revocable-influence principle (definition §6.5) has no lifecycle.
@@ -442,8 +442,8 @@ authority moves to features and rules keeps its mechanics and becomes a supplier
 | Typed contract and prompt (`contentanalyzer`) | the emission carrier — typed shape and negatives stay; dimension language, decomposition, and coverage are added | consumes the inventory and the canonical-form instruction; produces emissions and proposed names |
 | Facet gates (`SeparateFacets`) | unchanged policy surface (P1) | facet drops; the place whitelist until its bug is fixed |
 | Seeded vocabulary (`seed-tags.sql`) | the starting inventory — re-derived from the specs (broad, atomic, house form) and extended, with the place list materialized as values; inserted with influence | consumed by suggestions and as anchors; never a validation list |
-| Consolidation bands (`tagpolicy`) | candidate generation plus conservative replacement mechanics; similarity triggers, never decides identity | consumes emissions; produces band candidates |
-| Adjudicator and pair-verdict table | the gray-band identity reader; verdicts become evidence, never identity authority | consumes candidate pairs; produces verdicts (features, labels) |
+| Consolidation bands (`tagpolicy`) | candidate generation only: identity and gate subjects; similarity ranks, never decides | consumes emissions; produces gate subjects |
+| Adjudicator and pair-verdict table | the same-intent gate reader; verdicts become evidence, never identity authority | consumes gate subjects; produces verdicts (features, labels) |
 | Merge review and dismissals | the canonicalization action surface: alias/merge dispositions, with review | consumes canonicalization worklists; produces alias/merge actions |
 | Reconciler (`tagreconcile`) | the retrospective action executor — decomposition, anchor creation, alias materialization, report-only first | consumes composition-review and canonicalization worklists; produces store changes and reports |
 | Weak band, rubric judge, quality verdict cache | feature providers for the decision over features; their conjunction stops being the decision | consumes candidates and documents; produces per-criterion booleans and cached features |
@@ -481,8 +481,6 @@ compute a retired signal may live on as feature providers.
 |---|---|---|
 | Weak-band reject (the ≤ −2 conjunction) | a single-signal decision; its three signals become features | the staged decision (§3) |
 | Promotion gate as a conjunctive rule (cached pass AND ≥ 2 documents) | a single-signal decision; mass and the judge verdict become rule-set inputs | the staged decision (§3) |
-| Similarity auto-replace (guard-free candidate at or above `auto_replace_similarity`) | identity by similarity, not by key equality or the same-intent gate | canonical-form identity (M2–M4) |
-| Negation, shared-token, and direction guards | heuristics that exist to contain similarity replacement; redundant once identity is gate-based and containment is measured | same |
 | `max_tags` as a quality bound | a count cap contradicts coverage: the contract must deliver every applicable dimension | the completeness contract |
 | "Never split non-conjunctions" at runtime | contradicts P4's fan; the prospective/retrospective split was the interim | general decomposition at emission |
 | Reject-as-delete for provisional twins (name into the blocklist) | same-intent labels alias, never delete | the alias disposition; terminal rejects keep the blocklist |
@@ -490,8 +488,9 @@ compute a retired signal may live on as feature providers.
 | Legacy prompt and judge criteria (document relevance, dictionary standardness) | the definition re-derives both | the re-criteria, with the measurement-version bump |
 | Duplicated measurement helpers (`CountLiveTagDocumentsByTagIDs`, `TagPairEvidenceStats`) | subsumed by the extension algebra | the measurement substrate |
 
-Sequencing rules for the retirements: guards and auto-replace go only after the
-same-intent gate exists; the cap lifts only when the contract asks for coverage; the
+Sequencing rules for the retirements: the guards and similarity auto-replace are
+retired — identity is gate-based at birth; the cap lifts only when the contract asks
+for coverage; the
 runtime splitting restriction lifts with the general decomposition; the blocklist's
 existing entries (258 names) get a reconciliation pass — same-intent twins become
 aliases, terminal rejects stay; and every retired criteria text rides the version bump

@@ -6,6 +6,8 @@ const (
 	Created CreateStatus = iota
 	Conflict
 	Invalid
+	Apply
+	Alias
 )
 
 type UpdateStatus int

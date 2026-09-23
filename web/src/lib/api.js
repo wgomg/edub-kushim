@@ -284,6 +284,7 @@ export const api = {
 			return requestRaw(`/api/v1/tags/provisional?${params.toString()}`);
 		},
 		promote: (id) => requestRaw(`/api/v1/tags/${id}/promote`, { method: 'POST' }),
+		reevaluateIdentity: () => requestRaw('/api/v1/tags/identity/reevaluate', { method: 'POST' }),
 		merge: (sourceId, targetId) =>
 			requestRaw(`/api/v1/tags/${sourceId}/merge`, {
 				method: 'POST',

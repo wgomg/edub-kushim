@@ -56,6 +56,18 @@ func (q *Queries) CleanupCompletedBatches(ctx context.Context) (int64, error) {
 	return result.RowsAffected()
 }
 
+const countActiveTagIdentityBatches = `-- name: CountActiveTagIdentityBatches :one
+SELECT COUNT(*) FROM batch
+WHERE source = 'tagidentity' AND status IN ('queued', 'processing')
+`
+
+func (q *Queries) CountActiveTagIdentityBatches(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countActiveTagIdentityBatches)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countActiveTagMeasureBatches = `-- name: CountActiveTagMeasureBatches :one
 SELECT COUNT(*) FROM batch
 WHERE source = 'tagmeasure' AND status IN ('queued', 'processing')
@@ -117,10 +129,10 @@ func (q *Queries) CountPausedBatches(ctx context.Context) (int64, error) {
 
 const countQueuedConsumeBatches = `-- name: CountQueuedConsumeBatches :one
 SELECT COUNT(*) FROM batch
-WHERE status = 'queued' AND source NOT IN ('config', 'backup', 'mirror', 'tagreconcile', 'tagmeasure')
+WHERE status = 'queued' AND source NOT IN ('config', 'backup', 'mirror', 'tagreconcile', 'tagmeasure', 'tagidentity')
 `
 
-// Same exclusion list as GetNextQueuedBatch: config/backup/mirror/tagreconcile/tagmeasure
+// Same exclusion list as GetNextQueuedBatch: config/backup/mirror/tagreconcile/tagmeasure/tagidentity
 // batches own their lifecycle in their handlers and never occupy a consume slot.
 func (q *Queries) CountQueuedConsumeBatches(ctx context.Context) (int64, error) {
 	row := q.db.QueryRowContext(ctx, countQueuedConsumeBatches)
@@ -264,12 +276,12 @@ func (q *Queries) GetNextPendingTaskOfTypeForOwner(ctx context.Context, arg GetN
 
 const getNextQueuedBatch = `-- name: GetNextQueuedBatch :one
 SELECT id, source, status, created_at FROM batch
-WHERE status = 'queued' AND source NOT IN ('config', 'backup', 'mirror', 'tagreconcile', 'tagmeasure')
+WHERE status = 'queued' AND source NOT IN ('config', 'backup', 'mirror', 'tagreconcile', 'tagmeasure', 'tagidentity')
 ORDER BY created_at LIMIT 1
 `
 
-// config/backup/mirror/tagreconcile/tagmeasure batches own their lifecycle in
-// their handlers and must not be forked as consume workers.
+// config/backup/mirror/tagreconcile/tagmeasure/tagidentity batches own their
+// lifecycle in their handlers and must not be forked as consume workers.
 func (q *Queries) GetNextQueuedBatch(ctx context.Context) (Batch, error) {
 	row := q.db.QueryRowContext(ctx, getNextQueuedBatch)
 	var i Batch

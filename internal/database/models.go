@@ -30,6 +30,7 @@ const (
 	BatchSourceConfig          BatchSource = "config"
 	BatchSourceTagreconcile    BatchSource = "tagreconcile"
 	BatchSourceTagmeasure      BatchSource = "tagmeasure"
+	BatchSourceTagidentity     BatchSource = "tagidentity"
 )
 
 func (e *BatchSource) Scan(src interface{}) error {
@@ -215,6 +216,7 @@ const (
 	TaskTypeTagreconcile  TaskType = "tagreconcile"
 	TaskTypeThumbbackfill TaskType = "thumbbackfill"
 	TaskTypeTagmeasure    TaskType = "tagmeasure"
+	TaskTypeTagidentity   TaskType = "tagidentity"
 )
 
 func (e *TaskType) Scan(src interface{}) error {
@@ -368,6 +370,26 @@ type Tag struct {
 	CreatedAt     sql.NullTime
 	OrphanedSince sql.NullTime
 	PromotedAt    sql.NullTime
+}
+
+type TagAlias struct {
+	ID             int64
+	AliasName      string
+	CanonicalTagID int64
+	RuleSetVersion string
+	CreatedAt      time.Time
+}
+
+type TagIdentityEvent struct {
+	ID             int64
+	Kind           string
+	Candidate      string
+	Partner        sql.NullString
+	Criteria       json.RawMessage
+	Verdict        sql.NullString
+	Model          sql.NullString
+	RuleSetVersion string
+	CreatedAt      time.Time
 }
 
 type TagMeasurement struct {

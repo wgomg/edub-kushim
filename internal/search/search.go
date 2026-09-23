@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
@@ -76,6 +77,47 @@ func NewEngine(logger *utils.Logger, queries *database.Queries) *Engine {
 	}
 }
 
+func (e *Engine) resolveTagAliases(ctx context.Context, names []string) ([]string, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+	normalized := make([]string, 0, len(names))
+	seen := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		n := utils.NormalizeTag(name)
+		if n == "" {
+			continue
+		}
+		if _, ok := seen[n]; ok {
+			continue
+		}
+		seen[n] = struct{}{}
+		normalized = append(normalized, n)
+	}
+	if len(normalized) == 0 {
+		return nil, nil
+	}
+
+	aliases, err := tags.ResolveAliases(ctx, e.queries, normalized)
+	if err != nil {
+		return nil, fmt.Errorf("resolve tag aliases: %w", err)
+	}
+
+	out := make([]string, 0, len(normalized))
+	resolved := make(map[string]struct{}, len(normalized))
+	for _, name := range normalized {
+		if canonical, ok := aliases[name]; ok {
+			name = canonical
+		}
+		if _, ok := resolved[name]; ok {
+			continue
+		}
+		resolved[name] = struct{}{}
+		out = append(out, name)
+	}
+	return out, nil
+}
+
 func (e *Engine) Search(ctx context.Context, query string, limit, offset int32) ([]Result, error) {
 	query = sanitizeQuery(query)
 	if query == "" {
@@ -133,9 +175,14 @@ func (e *Engine) Search(ctx context.Context, query string, limit, offset int32) 
 }
 
 func (e *Engine) SearchStructured(ctx context.Context, filter Filter) ([]Result, int64, error) {
+	tags, err := e.resolveTagAliases(ctx, filter.Tags)
+	if err != nil {
+		return nil, 0, err
+	}
+
 	dbFilter := database.SearchFilter{
 		Query:           sanitizeQuery(filter.Query),
-		Tags:            filter.Tags,
+		Tags:            tags,
 		DocumentType:    filter.DocumentType,
 		Language:        filter.Language,
 		SortBy:          filter.SortBy,

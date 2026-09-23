@@ -1,0 +1,166 @@
+package tags
+
+import "testing"
+
+func TestHouseForm(t *testing.T) {
+	cases := []struct {
+		name string
+		want string
+	}{
+		{"nineteenth century", "19th century"},
+		{"first", "1st"},
+		{"world war ii", "world war 2"},
+		{"xiv", "14"},
+		{"mix design", "mix design"},
+		{"history", "history"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := HouseForm(tc.name); got != tc.want {
+				t.Errorf("HouseForm(%q) = %q, want %q", tc.name, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestTieBreak(t *testing.T) {
+	if got := TieBreak("b", "a"); got != "a" {
+		t.Errorf("TieBreak(b, a) = %q, want a", got)
+	}
+	if got := TieBreak("a", "b"); got != "a" {
+		t.Errorf("TieBreak(a, b) = %q, want a", got)
+	}
+}
+
+func TestPlanDeterministic(t *testing.T) {
+	noEvidence := map[string]int{}
+
+	cases := []struct {
+		name       string
+		view       StoreView
+		input      string
+		wantDisp   Disposition
+		wantName   string
+		wantResolv string
+		wantProv   bool
+		wantFold   string
+		wantKinds  map[string]int
+	}{
+		{
+			name: "fresh name normalizes and registers promoted",
+			view: StoreView{},
+			// normalization happens at the write boundary
+			input:     "Fresh Topic",
+			wantDisp:  DispositionRegister,
+			wantName:  "fresh topic",
+			wantKinds: noEvidence,
+		},
+		{
+			name:       "exact existing name conflicts",
+			view:       StoreView{Names: []string{"kept tag"}},
+			input:      "kept tag",
+			wantDisp:   DispositionConflict,
+			wantName:   "kept tag",
+			wantResolv: "kept tag",
+			wantKinds:  noEvidence,
+		},
+		{
+			name:       "key-equal style variant applies the store value",
+			view:       StoreView{Names: []string{"world war ii"}},
+			input:      "world war 2",
+			wantDisp:   DispositionApply,
+			wantName:   "world war 2",
+			wantResolv: "world war ii",
+			wantKinds:  noEvidence,
+		},
+		{
+			name:       "alias resolves to its canonical value",
+			view:       StoreView{Names: []string{"kept tag"}, Aliases: map[string]string{"old name": "kept tag"}},
+			input:      "old name",
+			wantDisp:   DispositionApply,
+			wantName:   "old name",
+			wantResolv: "kept tag",
+			wantKinds:  noEvidence,
+		},
+		{
+			name:      "blocked name is never registered",
+			view:      StoreView{Blocked: map[string]struct{}{"blocked name": {}}},
+			input:     "blocked name",
+			wantDisp:  DispositionInvalid,
+			wantName:  "blocked name",
+			wantKinds: noEvidence,
+		},
+		{
+			name:     "inflection flags a fold but never applies it",
+			view:     StoreView{},
+			input:    "buildings",
+			wantDisp: DispositionRegister,
+			wantName: "buildings",
+			wantKinds: map[string]int{
+				IdentityKindBaseForm:         1,
+				IdentityKindFoldGate:         1,
+				IdentityKindConventionalForm: 1,
+			},
+			wantProv: true,
+			wantFold: "building",
+		},
+		{
+			name:     "shape relation records pending evidence without adjudicating",
+			view:     StoreView{Names: []string{"buildings"}},
+			input:    "building",
+			wantDisp: DispositionRegister,
+			wantName: "building",
+			wantKinds: map[string]int{
+				IdentityKindSameIntent: 1,
+			},
+			wantProv: true,
+			wantFold: "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			plan := PlanDeterministic([]string{tc.input}, tc.view)
+
+			if len(plan.Registrations) != 1 {
+				t.Fatalf("registrations = %d, want 1", len(plan.Registrations))
+			}
+			reg := plan.Registrations[0]
+			if reg.Disposition != tc.wantDisp {
+				t.Errorf("disposition = %q, want %q", reg.Disposition, tc.wantDisp)
+			}
+			if reg.Name != tc.wantName {
+				t.Errorf("name = %q, want %q", reg.Name, tc.wantName)
+			}
+			if reg.Resolved != tc.wantResolv {
+				t.Errorf("resolved = %q, want %q", reg.Resolved, tc.wantResolv)
+			}
+			if reg.Provisional != tc.wantProv {
+				t.Errorf("provisional = %v, want %v", reg.Provisional, tc.wantProv)
+			}
+			if reg.Fold != tc.wantFold {
+				t.Errorf("fold = %q, want %q", reg.Fold, tc.wantFold)
+			}
+			if len(plan.Aliases) != 0 {
+				t.Errorf("aliases = %v, want none: the deterministic phase never makes aliases", plan.Aliases)
+			}
+
+			gotKinds := map[string]int{}
+			for _, e := range plan.Evidence {
+				gotKinds[e.Kind]++
+				if e.Verdict != "" {
+					t.Errorf("evidence[%s] carries verdict %q; only judged rows may", e.Kind, e.Verdict)
+				}
+			}
+			if len(gotKinds) != len(tc.wantKinds) {
+				t.Errorf("evidence kinds = %v, want %v", gotKinds, tc.wantKinds)
+			}
+			for kind, want := range tc.wantKinds {
+				if gotKinds[kind] != want {
+					t.Errorf("evidence[%s] = %d, want %d", kind, gotKinds[kind], want)
+				}
+			}
+		})
+	}
+}

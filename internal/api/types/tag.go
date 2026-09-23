@@ -34,11 +34,12 @@ type TagQualityVerdictInfo struct {
 }
 
 type ProvisionalTagResponse struct {
-	ID            int64                  `json:"id"`
-	Name          string                 `json:"name"`
-	DocumentCount int64                  `json:"document_count"`
-	CreatedAt     time.Time              `json:"created_at"`
-	Verdict       *TagQualityVerdictInfo `json:"verdict"`
+	ID              int64                  `json:"id"`
+	Name            string                 `json:"name"`
+	DocumentCount   int64                  `json:"document_count"`
+	CreatedAt       time.Time              `json:"created_at"`
+	Verdict         *TagQualityVerdictInfo `json:"verdict"`
+	PendingIdentity int64                  `json:"pending_identity"`
 }
 
 type ProvisionalTagListResponse struct {

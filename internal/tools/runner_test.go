@@ -141,6 +141,10 @@ func (m *mockContentAnalyzer) JudgeTagQuality(_ context.Context, _ string, _ []c
 	return nil, nil
 }
 
+func (m *mockContentAnalyzer) JudgeTagIdentity(_ context.Context, _ []contentanalyzer.TagIdentityCandidate) ([]contentanalyzer.TagIdentityResult, error) {
+	return nil, nil
+}
+
 func (m *mockContentAnalyzer) Name() string { return "mock" }
 
 func TestAnalyzeContent_TimeoutAppliesDeadline(t *testing.T) {

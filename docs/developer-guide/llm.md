@@ -85,12 +85,19 @@ type AnalysisResult struct {
 - `AnalyzeDocType` — a **second, cheaper call** that re-evaluates only the
   document type using the head/tail of the full text (§10). It receives the
   previous result so it can replay the conversation (§4).
-- `Adjudicate` — classifies ambiguous tag pairs as `same` / `variant` /
-  `related` with a temperature-0 request built from `BuildAdjudicationPrompt`
+- `Adjudicate` — classifies gate subjects against the same-intent test as
+  `same` / `variant` / `related` (plus a direction for `same`) with a
+  temperature-0 request built from `BuildAdjudicationPrompt`
   and parsed by `ParseAdjudicationResponse` (structured output where the
   provider supports it). Used by the tag adjudicator when
   `enricher.tag_adjudicator.enabled` is true; see the
-  [semantic matching guide](semantic-matching.md#adjudication-of-the-ambiguous-band).
+  [semantic matching guide](semantic-matching.md#identity-adjudication).
+- `JudgeTagIdentity` — answers the three binary canonical-form criteria for a
+  flagged candidate (`fold_to_base`, `fold_preserves_denotation`,
+  `conventional_form`) with a temperature-0 request built from
+  `BuildTagIdentityPrompt` and parsed by `ParseTagIdentityResponse` (a
+  candidate without a complete verdict errors). Used by the tag gate when
+  `enricher.tag_adjudicator.enabled` is true.
 - `JudgeTagQuality` — judges novel tags against a four-criteria rubric
   (`subject_matter`, `standard_term`, `not_person_place_work`,
   `appropriately_broad`) with a temperature-0 request built from
@@ -516,15 +523,16 @@ for i := range 2 {
     drops tags that are >3 words, overlap with LLM people names, are
     multi-token subsets of known normalized names, overlap doc-type names, or
     are contained in the title; caps at 5.
-11. **Consolidate** (`enricher.go:244-248`): `Runner.RankTags` ranks LLM tags
-    against canonical existing tags, then `applyConsolidationPolicy` runs
-    `tagpolicy.Evaluate` — deterministic guards (negation, shared token,
-    direction) plus a two-band rule: guard-free candidates at or above
-    `auto_replace_similarity` replace; the ambiguous band is resolved by
-    **tag adjudication** when `enricher.tag_adjudicator.enabled` is true
-    (`Runner.AdjudicateTags`: verdict cache → reciprocal-NN evidence → one LLM
-    call per document; `same` replaces, `variant`/`related` keep). Disabled,
-    failing, or ambiguous adjudication keeps the emitted tag.
+11. **Identity** (`enricher.go`, `identity.go`): `Runner.RankTags` ranks LLM
+    tags against canonical existing tags, then the identity pipeline applies
+    house form, aliases, and key equality, and `tagpolicy.Evaluate` generates
+    identity + gate subjects. Proposed folds are confirmed by the **identity
+    judge** and every remaining candidate neighbour is resolved by **tag
+    adjudication** when `enricher.tag_adjudicator.enabled` is true
+    (`Runner.JudgeTagIdentity` / `Runner.AdjudicateTags`: caches → evidence →
+    batched LLM calls; `same` aliases the losing name, `variant`/`related`
+    register both). Disabled, failing, or ambiguous adjudication leaves the
+    claim pending — the candidate registers provisionally.
 12. **Tag quality judge** (`enricher.go`, `applyTagQuality`): only when
     `enricher.tag_quality.enabled` is true. Novel tags — consolidated outputs
     whose normalized names are absent from the vocabulary — are first scored
@@ -589,7 +597,7 @@ Under `enricher` (`internal/config/config.go:164-195`):
 | `contentanalyzer.fallbacks` | `[]` | ordered list of `{enabled, llm.*}` fallbacks tried on provider errors; each enabled entry requires adapter/provider/model (with `request_delay` 0–60) |
 | `tagmatcher.reduce_target_words` | `4000` | matcher reduction target |
 | `tagmatcher.hugot.*` | — | model/backend (§9 of the semantic-matching guide) |
-| `tag_adjudicator.enabled` / `timeout` / `llm.*` | `false` / analyzer timeout / analyzer llm | ambiguous-band pair verdicts (semantic-matching guide) |
+| `tag_adjudicator.enabled` / `timeout` / `llm.*` | `false` / analyzer timeout / analyzer llm | identity gate: fold confirmation and same-intent pair verdicts (semantic-matching guide) |
 | `tag_quality.enabled` / `timeout` / `llm.*` | `false` / analyzer timeout / analyzer llm | rubric verdicts for novel tags; the weak-band thresholds are internal v1 constants (`t_low = -1`, `no_anchor_similarity = 0.60`), not config keys |
 
 Validation (`finalizeConfig`, `config.go:447-460`): when content analysis is

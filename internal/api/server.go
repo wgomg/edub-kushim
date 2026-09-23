@@ -94,6 +94,7 @@ func (s *Server) rebuild(client *database.Client) {
 	services.Trash.StartBackgroundPurge()
 
 	services.ReEnrich = service.NewReEnrich(client.Queries, workStore, services.Batch)
+	services.TagIdentity = service.NewTagIdentity(client.Queries, workStore, services.Batch)
 	services.ErroredFiles = service.NewErroredFiles(cfg, s.logger)
 
 	registry := task.NewRegistry()
@@ -280,6 +281,7 @@ func registerRoutes(
 	mux.Handle("DELETE /api/v1/tags/{id}", RequireRole(editor...)(http.HandlerFunc(tagHandler.Delete)))
 	mux.Handle("DELETE /api/v1/tags/deleted/{name}", RequireRole(editor...)(http.HandlerFunc(tagHandler.RestoreDeleted)))
 	mux.Handle("POST /api/v1/tags/{id}/merge", RequireRole(editor...)(http.HandlerFunc(tagHandler.Merge)))
+	mux.Handle("POST /api/v1/tags/identity/reevaluate", RequireRole(editor...)(http.HandlerFunc(tagHandler.ReevaluateIdentity)))
 	mux.Handle("POST /api/v1/tags/{id}/promote", RequireRole(editor...)(http.HandlerFunc(tagHandler.PromoteTag)))
 
 	peopleHandler := handlers.NewPeopleHandler(services, logger)

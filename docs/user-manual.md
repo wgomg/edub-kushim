@@ -743,6 +743,25 @@ they are evidence for review.
 The schedule is opt-in through `enricher.tag_measure` (disabled by default) and
 can also be triggered from the settings page.
 
+### `kushim tagidentity`
+
+Resolve the pending tag-identity evidence: the flagged candidates' canonical-form
+criteria (base form, fold preservation, conventional written form) are judged,
+same-intent claims are adjudicated, and the dispositions are applied — confirmed
+folds rename (or alias) a name, a losing name becomes an alias of its winner,
+and claims without a judge answer stay pending for the next run.
+
+```bash
+kushim tagidentity --run <batch-id>  # the queued trigger's execution mode
+```
+
+`--run <batch-id>` is how the queue daemon executes a triggered run — it takes
+no lock (the claiming task holds it and already drained in-flight work) and is
+invoked by the `tagidentity` task the review surface enqueues through
+`POST /api/v1/tags/identity/reevaluate`. There is no manual foreground mode: the
+endpoint is the trigger and the scheduled reconciliation's identity sweep is the
+standing backstop, so claims nobody triggers still resolve.
+
 ### `kushim restore`
 
 Restore database and storage from a backup archive. The archived configuration is preserved as `config.yaml.restored`, not applied.
@@ -1535,6 +1554,7 @@ Response `200`:
       "name": "machine learning",
       "document_count": 1,
       "created_at": "2024-03-01T09:12:00Z",
+      "pending_identity": 0,
       "verdict": {
         "pass": true,
         "criteria": {
@@ -1554,6 +1574,7 @@ Response `200`:
 
 - `total` counts every provisional tag with at least one assignment, independent of the page.
 - `verdict` is `null` for names with no recorded rubric verdict (judge outage at birth, re-emitted legacy provisionals).
+- `pending_identity` is the number of unresolved canonical-identity claims referencing the tag (as the flagged candidate or as the partner); when it is nonzero the queue shows an "identity pending" badge and a "Reevaluate identity" trigger.
 - `model` is omitted for cache-applied verdicts, which carry a stored decision without a judging model.
 - `limit` defaults to 50 (1–100); `offset` defaults to 0 (negative values clamp to 0).
 
@@ -1574,6 +1595,29 @@ POST /api/v1/tags/{id}/promote
 Rejecting a provisional tag uses the regular delete endpoint
 (`DELETE /api/v1/tags/{id}`), which records the name in the `deleted_tag`
 blocklist; the tags page exposes both actions in its "New tags" tab.
+
+### Reevaluate Pending Tag Identity
+
+Enqueues a run over the pending canonical-identity evidence: proposed folds are
+judged (base form, fold preservation, conventional written form), same-intent
+claims are adjudicated, and the dispositions are applied — a confirmed fold
+renames the tag (or aliases it when the folded name already exists), and a
+losing name becomes an alias of its winner. Editor/admin only.
+
+```
+POST /api/v1/tags/identity/reevaluate
+```
+
+Response `202`:
+
+```json
+{ "batch_id": "3f0f…", "already_queued": false }
+```
+
+- `already_queued` is `true` when a `tagidentity` run is still queued or
+  processing: the call is then a no-op and `batch_id` is empty.
+- Claims also resolve automatically on the scheduled reconciliation's identity
+  sweep, so this endpoint is the on-demand path, not a requirement.
 
 ### Saved Searches
 
@@ -2371,7 +2415,7 @@ Object with `count` (total active tasks across all task types, uncapped) and `ta
 | `tasks`       | `array`  | Active tasks, capped at 25, ordered processing-first then oldest-queued                                                |
 | `tasks[].task_id` | `string` | Task UUID                                                                                                          |
 | `tasks[].batch_id` | `string` | Batch UUID (empty for `backup`/`config` tasks)                                                                     |
-| `tasks[].task_type` | `string` | `consume`, `enrich`, `thumbnail`, `config`, `backup`, `mirror`, `tagreconcile`, `tagmeasure`, or `thumbbackfill`                                                            |
+| `tasks[].task_type` | `string` | `consume`, `enrich`, `thumbnail`, `config`, `backup`, `mirror`, `tagreconcile`, `tagmeasure`, `tagidentity`, or `thumbbackfill`                                                            |
 | `tasks[].file_name` | `string` | File name from the payload, if any                                                                                 |
 | `tasks[].status` | `string` | `pending`, `processing`, or `waiting`                                                                              |
 | `tasks[].label` | `string` | Human-readable title: `TaskType: file name` for consume/enrich/thumbnail (e.g. `"Consume: report.pdf"`), else derived from task type + dedup key (e.g. `"Backup (full)"`, `"Database migration"`, `"Download tessdata (eng)"`) |
@@ -2516,11 +2560,12 @@ Report](#tag-reconciliation-report). List endpoints and other task types omit it
 `source` is how the batch was created: `cli` (`kushim consume`), `api`
 (`POST /api/v1/consume`), `upload` (`POST /api/v1/consume/upload`),
 `polling` (daemon inbox scan), `reenrich`, `orphaned-restore`,
-`thumbbackfill`, `config`, `backup`, `mirror`, `tagreconcile`, `tagmeasure`. The
+`thumbbackfill`, `config`, `backup`, `mirror`, `tagreconcile`, `tagmeasure`,
+`tagidentity`. The
 vocabulary is a closed Postgres enum (`batch_source`), mirrored by the Go
 registry in `internal/types`. `owner_state` (`"none"`,
 `"live"`, `"stale"`) is included when set. Batches with source
-`config`/`backup`/`mirror`/`tagreconcile`/`tagmeasure` never report `orphaned: true` —
+`config`/`backup`/`mirror`/`tagreconcile`/`tagmeasure`/`tagidentity` never report `orphaned: true` —
 they have no `batch_owner` row by design (their handlers own the lifecycle).
 
 ---
@@ -2759,9 +2804,9 @@ mirror:
 | `enricher.contentanalyzer.doc_type_refinement` | Second-pass doc type refinement with head+tail of raw text (enabled, head_words, tail_words) |
 | `enricher.tagmatcher`          | Semantic tag matching via Hugot (embeddings) — see [Tag Matcher guide](tags/matcher.md) for memory/CPU tuning |
 | `enricher.tagmatcher.hugot`    | Hugot-specific settings (model, backend)                               |
-| `enricher.tag_adjudicator`     | Optional LLM verdicts for ambiguous tag pairs: `enabled` (default `false`), `timeout` (defaults to `contentanalyzer.timeout` at use time when `0`), `llm` (defaults to `contentanalyzer.llm` at use time when `provider`/`model` are empty — the raw values are preserved in config so the inheritance survives saves). When enabled, ambiguous-band pairs are classified `same`/`variant`/`related`, verdicts are cached in `tag_verdict_event`, and `same` replaces the emitted tag with the canonical target |
+| `enricher.tag_adjudicator`     | Optional LLM verdicts for the identity gate: `enabled` (default `false`), `timeout` (defaults to `contentanalyzer.timeout` at use time when `0`), `llm` (defaults to `contentanalyzer.llm` at use time when `provider`/`model` are empty — the raw values are preserved in config so the inheritance survives saves). When enabled, proposed folds are confirmed against three criteria (base form, fold preservation, conventional written form) and candidate neighbours are classified `same`/`variant`/`related` with a direction for `same`; verdicts are cached per claim in `tag_identity_event`, `same` aliases the losing name onto the winner, and claims without a verdict stay pending — their candidates born provisional — for the triggered run or the reconciliation sweep |
 | `enricher.tag_quality`         | Optional rubric judge for newly emitted tags: `enabled` (default `false`), `timeout` (defaults to `contentanalyzer.timeout` at use time when `0`), `llm` (defaults to `contentanalyzer.llm` at use time when `provider`/`model` are empty). When enabled, tags that survive consolidation and are absent from the vocabulary pass a deterministic weak band and then a four-criteria rubric (`subject_matter`, `standard_term`, `not_person_place_work`, `appropriately_broad`); verdicts are cached per name in `tag_quality_event`, rejections drop the tag for that document and are logged as `tagquality[v1]` lines, and a judge failure retries once then keeps every novel tag. Survivors are **provisional**: attached and searchable from birth, but excluded from the embedding store — and therefore from suggestions, consolidation targets, and the suggestion fallback — until a cached passing verdict plus assignments on ≥2 distinct live (non-trashed) documents promote them inline (logged as `tagquality[v1]: promote …`); a verdict-less birth (judge outage) or re-emitted legacy provisional never gets a verdict row — a name in the tag table is not novel, so the judge never sees it again — and stays out of the vocabulary until the scheduled reconciliation sweep re-judges it or an operator promotes it from the review queue. The band thresholds are internal v1 constants, not config keys — the judge LLM should differ from the generator, and a warning is logged when the resolved judge equals the generator model |
-| `enricher.tag_reconcile`       | Scheduled re-adjudication of stored tag verdicts: `enabled` (default `false`), `report_only` (default `true`; the first run is always report-only regardless), `interval` (days between runs, default `7`), `time` (HH:MM preferred time, default `02:00`), `max_rejudge` (max pairs re-evaluated per run, default `200`), `max_retag` (max documents re-pointed per run, default `1000`), `dead_tag_grace_days` (days a tag must stay without documents before the orphan sweep removes it, default `7`; `≤ 0` resets to the default), `provisional_grace_days` (days a provisional tag may stay unreviewed before the provisional sweep re-checks it, default `30`; `≤ 0` resets to the default). The queue daemon enqueues a `tagreconcile` task when due; runs re-evaluate stale/unjudged/drifted/aged pairs against the current policy and store, healing absorbed tags and applying flips, split store tags that join concepts with a conjunction into their components (adjudicated when the tag adjudicator is enabled, deterministic otherwise) — both under the same per-run caps — delete tags that have had no documents for longer than the grace window, and re-check provisional tags older than `provisional_grace_days`: a stored passing verdict plus ≥2 live documents promotes the name immediately, verdict-less names are re-judged under the `max_rejudge` cap and promoted when they pass, and rejected names stay queued for the review surface on the tags page (report-only runs list the would-be promotions and verdicts). Requires the tag adjudicator for acting (write) runs — without it, runs stay snapshot-only |
+| `enricher.tag_reconcile`       | Scheduled re-adjudication of stored tag verdicts: `enabled` (default `false`), `report_only` (default `true`; the first run is always report-only regardless), `interval` (days between runs, default `7`), `time` (HH:MM preferred time, default `02:00`), `max_rejudge` (max pairs re-evaluated per run, default `200`), `max_retag` (max documents re-pointed per run, default `1000`), `dead_tag_grace_days` (days a tag must stay without documents before the orphan sweep removes it, default `7`; `≤ 0` resets to the default), `provisional_grace_days` (days a provisional tag may stay unreviewed before the provisional sweep re-checks it, default `30`; `≤ 0` resets to the default). The queue daemon enqueues a `tagreconcile` task when due; runs re-evaluate stale/unjudged/drifted/aged pairs against the current policy and store, healing absorbed tags and applying flips, split store tags that join concepts with a conjunction into their components (adjudicated when the tag adjudicator is enabled, deterministic otherwise) — both under the same per-run caps — delete tags that have had no documents for longer than the grace window, and re-check provisional tags older than `provisional_grace_days`: a stored passing verdict plus ≥2 live documents promotes the name immediately, verdict-less names are re-judged under the `max_rejudge` cap and promoted when they pass, and rejected names stay queued for the review surface on the tags page (report-only runs list the would-be promotions and verdicts). After the provisional sweep it resolves pending identity evidence under the same `max_rejudge` budget: candidate criteria are judged, same-intent losers become aliases of their winners, and confirmed folds are applied. Requires the tag adjudicator for acting (write) runs — without it, runs stay snapshot-only |
 
 | `enricher.tag_measure`         | Scheduled tag extension measurement: `enabled` (default `false`), `interval` (days between runs, default `7`), `time` (HH:MM preferred time, default `03:00`). The queue daemon enqueues a `tagmeasure` task when due (anchored on the most recent completed run); the pass reads one REPEATABLE READ snapshot and appends versioned evidence records (`tag_measurement`) for per-value mass, pairwise overlap with Jaccard/overlap/containment coefficients, compound reconstructibility against mechanically derived parts, and part coverage, plus the derived composition-review worklists (`≈` twin candidates, compound split proposals, near-contained siblings) as evidence only — nothing is promoted, merged, split, or deleted. `kushim tagmeasure` runs the pass in the foreground under the maintenance lock |
 

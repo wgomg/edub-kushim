@@ -78,7 +78,7 @@ func (h *TagMeasureTaskHandler) forkAndWait(runID string) (json.RawMessage, erro
 		return nil, fmt.Errorf("tag measure run failed: %s", msg)
 	}
 
-	result := extractReport(stdout.Bytes())
+	result := extractReport(stdout.Bytes(), tags.ReportPrefix)
 	if result == nil {
 		wrapped, _ := json.Marshal(map[string]string{"output": stdout.String()})
 		return wrapped, nil
@@ -86,13 +86,13 @@ func (h *TagMeasureTaskHandler) forkAndWait(runID string) (json.RawMessage, erro
 	return result, nil
 }
 
-func extractReport(stdout []byte) json.RawMessage {
+func extractReport(stdout []byte, prefix string) json.RawMessage {
 	for line := range bytes.SplitSeq(stdout, []byte("\n")) {
 		trimmed := bytes.TrimSpace(line)
-		if !bytes.HasPrefix(trimmed, []byte(tags.ReportPrefix)) {
+		if !bytes.HasPrefix(trimmed, []byte(prefix)) {
 			continue
 		}
-		payload := bytes.TrimSpace(bytes.TrimPrefix(trimmed, []byte(tags.ReportPrefix)))
+		payload := bytes.TrimSpace(bytes.TrimPrefix(trimmed, []byte(prefix)))
 		if json.Valid(payload) {
 			return payload
 		}

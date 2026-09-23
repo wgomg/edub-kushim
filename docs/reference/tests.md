@@ -42,7 +42,7 @@ make test          # runs all non-CGo tests
 make test-verbose  # same with verbose output
 make test-db       # database-dependent tests (requires TEST_DATABASE_URL)
 make test-cgo      # CGo-gated tests (requires make build-deps first)
-make test-cgo-db   # consumption + configtask + internal/commands + tagreconcile + api/handlers with CGo + DB (requires make build-deps + TEST_DATABASE_URL)
+make test-cgo-db   # consumption + configtask + internal/commands + enrichment + tagreconcile + api/handlers with CGo + DB (requires make build-deps + TEST_DATABASE_URL)
 make test-one PKG=./internal/errs/   # single package; add RUN=Name to filter
 make test-web      # web/ vitest unit + component tests (no database)
 make test-web-e2e  # web/ Playwright smokes with mocked API (requires npx playwright install chromium first)
@@ -56,7 +56,7 @@ make vuln-cgo      # CGo-enabled variant, full call graph (requires make build-d
 
 - `web` job: lints, runs `npm run test` (vitest), and builds the main SPA (`npm ci && npm run lint && npm run test && npm run build` in `web/`), then runs the E2E smokes (`npx playwright install --with-deps chromium && npm run test:e2e` — the E2E `webServer` builds the SPA itself and serves it with an SPA fallback). Then builds the wizard SPA, stages both with `make stage-web`, and uploads them as the `web-assets` artifact. Staging is required because `internal/static/build` and `internal/wizard/static` are gitignored but embedded via `//go:embed` — a fresh checkout has no assets to compile against.
 - `test` job (depends on `web`): downloads `web-assets`, stages it with `make stage-web-artifact`, then runs `make test` and `make test-db` against a postgres:17 service container (`TEST_DATABASE_URL` pointing at `localhost:5432`).
-- `test-cgo` job (depends on `web`): installs the C build prerequisites, builds the C libraries with `make build-deps TOKENIZERS_ARCH=amd64` (cached under `build/` keyed by `hashFiles('Makefile')`), then runs `make test-cgo` (no DB; DB-gated tests in `internal/commands` skip) and `make test-cgo-db` (with DB; those tests actually run) against the same postgres:17 service container. This surfaces the CGo-only packages (`internal/commands`, consumption under CGo) on every push/PR.
+- `test-cgo` job (depends on `web`): installs the C build prerequisites, builds the C libraries with `make build-deps TOKENIZERS_ARCH=amd64` (cached under `build/` keyed by `hashFiles('Makefile')`), then runs `make test-cgo` (no DB; DB-gated tests in `internal/commands` and `internal/enrichment` skip) and `make test-cgo-db` (with DB; those tests actually run) against the same postgres:17 service container. This surfaces the CGo-only packages (`internal/commands`, consumption under CGo) on every push/PR.
 - `vulncheck` job (depends on `web`): stages the `web-assets` artifact, installs govulncheck (pinned `@v1.7.0`), and runs `make vuln`. Like `make test`, it runs with `CGO_ENABLED=0`, so the CGo-gated packages (`cmd/kushim`, `internal/commands`) are excluded from the CI scan; `make vuln-cgo` covers them locally.
 
 The `global` ruleset requires the `test` and `web` checks to pass before a PR to `master` can merge.
@@ -78,7 +78,7 @@ The `global` ruleset requires the `test` and `web` checks to pass before a PR to
 | `internal/auth` | 7 | Session secret generation, JWT generation/validation round-trip with role, wrong secret rejection, expired token rejection, malformed token rejection, token part structure, ValidRole cases |
 | `internal/api` | 24 | Auth middleware: public path bypass, no-token 401, invalid token 401, wrong secret 401, valid token passes with context injection (includes role), missing bearer prefix, empty authorization header, disabled bypasses all paths, valid API key 200 (includes role), invalid API key 401, wrong prefix falls through to JWT, auth-disabled bypasses API key check, internal error returns 500, valid cookie, invalid cookie, header takes priority over cookie. Permission middleware: RequireRole for admin/editor/viewer (allows+forbids), missing role, invalid role |
 | `internal/tools/adapters/contentanalyzer` | 48 | NormalizeTags (transforms, accent folding, dedup/drop), NormalizeCore_Concurrent (8-goroutine race guard pinning exact outputs), BuildPrompt (default/custom/malformed/execution error/whitespace/empty tag list), BuildDocTypePrompt (with/without metadata), ExtractHeadTailWords, FilterTags (18 cases: person token overlap, title overlap, doc-type match, known name subset, >3-word cap, maxTags cap, combined rules), ParseAnalysisResponse (string/object/mixed tag arrays, skipped malformed and empty-term elements, category folding, unknown→other, non-array error, missing/null/empty tags), SeparateFacets (form_genre drops with the document-type/self-classification reason split, person/work drops, place whitelist keep/drop, topic/other and untyped passthrough, nil/empty details passthrough, normalization alignment), IsWhitelistedPlace (countries, continents, aliases, dotted and article forms, case/punctuation folding, sub-national misses), place-whitelist hygiene (no duplicate normalized keys, every entry survives its own lookup), normalizeTagCategory, DocMetadata.Format (all fields/partial/zero-valued), checkContentTooLarge (nil caps/zero/negative/within limit/exceeds), parseTokenLimitError (no match/empty/valid OpenAI/zero tokens/partial match), BuildTagSplitPrompt, ParseTagSplitResponse (keep/split, out-of-range index, single/empty components, unknown verdict, empty splits, code-block strip, whitespace trim, empty-component filter, invalid JSON), SplitComponents (dedup, empty drop, normalization, 4-word/too-long rejection, 3-word keep, per-document filter: person/title/doc-type drops), BuildTagQualityPrompt (document text, per-candidate line, whitelisted-place note, criteria keywords), ParseTagQualityResponse (passing/failing verdicts, missing-index and incomplete-verdict errors, invalid JSON) and TagQualityResult.Passed, TagDetail presence semantics (string shape and omitted key → nil, explicit true/false → non-nil) |
-| `internal/enrichment` | 10 | Consolidation policy unit cases (auto-replace cutoff, ambiguous-band keep, no-candidate and short-result fallbacks, empty rank), DB-gated decision logging (`TestApplyConsolidationPolicy_LogsDecisions`) and LLM adjudication (`TestApplyConsolidationPolicy_Adjudication`), verdict-event conflict re-read, the deterministic tag-quality weak band (`TestTagQualityScore`), and the DB-gated fresh-verdict insert + cache read path (`TestTagQualityEvent_InsertAndCacheRead`) |
+| `internal/enrichment` | 10 | Identity planning and the deterministic phase (`HouseForm` house-form cases, `PlanDeterministic` apply/conflict/key-equal/blocked/fold-pending paths, `TieBreak`), pending-pair logging, fold-stays-pending without a judge, DB-gated pair adjudication (`TestAdjudicateIdentityPairs`: cached verdict applies without a call, fresh verdicts recorded, errors stay pending), resolver folds and same-intent aliasing (`TestResolvePending_*`: confirmed fold renames, deleted fold target is not resurrected, disabled adjudicator leaves evidence pending), verdict-event conflict re-read, the deterministic tag-quality weak band (`TestTagQualityScore`), and the DB-gated fresh-verdict insert + cache read path (`TestTagQualityEvent_InsertAndCacheRead`) |
 | `internal/enrichment/tagreconcile` | 26 | Bootstrap log parsing (pre-rewrite/unversioned/band-keep including `reason=rank_unavailable`, REQID resolution, malformed lines ignored), worklist building (stale/unjudged/drifted/aged/joint categories, ordering and caps, joint-tag pair exclusion), split-component evidence parsing, report-only planning, sample-name suffix rendering, deleted-tag keep-flip logging, provisional-sweep helpers (`verdictModelLabel` branches, `ProvisionalCounts` JSON shape and `Report.Provisional` presence), and the DB-gated `TestApplyKeepFlip_ZeroDocsCreatesNoTag` (zero resolvable documents must not create the query tag; runs under `make test-cgo-db`) |
 | `internal/errs` | 7 | Error constructors preserve kind/op/cause, Error() string formatting, Unwrap(), KindOf through plain/wrapped/nil errors, FromDB (nil→nil, ErrNoRows→NotFound, unique violation→Conflict, other→Internal), PgError predicates (unique/foreign key/deadlock/serialization/plain/wrapped) |
 | `internal/pool` | 5 | StartStop (workers call runner, stop terminates), ContextCancellation (cancel stops pool), DoubleStop (sync.Once no panic), PanicRecovery_Restart (worker survives panic and restarts), PanicRecovery_StopDuringRestart (clean shutdown during restart delay) |
@@ -283,14 +283,16 @@ Also runs `internal/enrichment/tagreconcile` (DB-gated reconciler tests — e.g.
 document-ID ordering fix against a real database). Those tests also `t.Skip`
 when `TEST_DATABASE_URL` is unset, so the package is listed in both tiers.
 
-The parent `internal/enrichment` package (consolidation-policy, adjudication,
-verdict-event and tag-quality tests) also runs under `make test-cgo`; its three
-DB-gated tests (`TestApplyConsolidationPolicy_LogsDecisions`,
-`TestApplyConsolidationPolicy_Adjudication`,
+The parent `internal/enrichment` package (identity planning, adjudication,
+verdict-event and tag-quality tests) runs under both `make test-cgo` and
+`make test-cgo-db`: its DB-gated tests
+(`TestPlanIdentity_LogsPendingPairs`, `TestPlanIdentity_FoldStaysPendingWithoutJudge`,
+`TestAdjudicateIdentityPairs`, `TestResolvePending_Fold`,
+`TestResolvePending_SameIntentPair`, `TestResolvePending_AdjudicatorDisabled`,
+`TestResolvePending_FoldTargetDeleted`,
 `TestTagQualityEvent_InsertAndCacheRead`) `t.Skip` when `TEST_DATABASE_URL` is
-unset, so they only exercise PostgreSQL when the package is invoked with a test
-database (`make test-one PKG=./internal/enrichment/` with `TEST_DATABASE_URL`
-set).
+unset, and the `test-cgo-db` listing is what makes them exercise PostgreSQL in
+CI.
 
 ```bash
 make test-cgo-db   # requires make build-deps first + TEST_DATABASE_URL

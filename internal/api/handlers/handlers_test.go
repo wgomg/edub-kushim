@@ -98,6 +98,7 @@ func newHandlerTestEnv(t *testing.T) *handlerTestEnv {
 		User:         userSvc,
 		ReEnrich:     reenrichSvc,
 		Trash:        trashSvc,
+		TagIdentity:  service.NewTagIdentity(client.Queries, workStore, batchSvc),
 	}
 
 	registry := task.NewRegistry()
@@ -2814,7 +2815,8 @@ func TestPromoteTag(t *testing.T) {
 	})
 
 	t.Run("already promoted returns 409", func(t *testing.T) {
-		results, err := env.tagSvc.Create(ctx, []string{"already-promoted-handler"})
+		// a base-form name is not flagged by M2 and promotes at birth
+		results, err := env.tagSvc.Create(ctx, []string{"promote-handler"})
 		testutil.AssertNoError(t, err, "create")
 		tagID := results[0].Entity.ID
 
@@ -2839,5 +2841,38 @@ func TestPromoteTag(t *testing.T) {
 		r.SetPathValue("id", "abc")
 		h.PromoteTag(w, r)
 		testutil.AssertEqual(t, w.Code, http.StatusBadRequest, "status")
+	})
+}
+
+func TestReevaluateIdentity(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	h := NewTagHandler(env.services, env.logger)
+
+	type reevaluateResponse struct {
+		BatchID       string `json:"batch_id"`
+		AlreadyQueued bool   `json:"already_queued"`
+	}
+
+	post := func(t *testing.T) reevaluateResponse {
+		t.Helper()
+		w := rec()
+		r := req(t, "POST", "/api/v1/tags/identity/reevaluate", nil)
+		h.ReevaluateIdentity(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusAccepted, "status")
+		var resp reevaluateResponse
+		testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
+		return resp
+	}
+
+	t.Run("first reevaluate queues a run", func(t *testing.T) {
+		resp := post(t)
+		testutil.AssertEqual(t, resp.BatchID != "", true, "batch id present")
+		testutil.AssertEqual(t, resp.AlreadyQueued, false, "queues on a cold queue")
+	})
+
+	t.Run("repeated reevaluate reports the active run", func(t *testing.T) {
+		resp := post(t)
+		testutil.AssertEqual(t, resp.AlreadyQueued, true, "the first run is still active")
+		testutil.AssertEqual(t, resp.BatchID, "", "no second batch")
 	})
 }

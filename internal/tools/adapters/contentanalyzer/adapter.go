@@ -24,6 +24,7 @@ type ContentAnalyzer interface {
 	Adjudicate(ctx context.Context, pairs []TagPairEvidence) ([]TagVerdictResult, error)
 	AdjudicateTagSplits(ctx context.Context, tags []string) ([]TagSplitResult, error)
 	JudgeTagQuality(ctx context.Context, text string, candidates []TagQualityCandidate) ([]TagQualityResult, error)
+	JudgeTagIdentity(ctx context.Context, candidates []TagIdentityCandidate) ([]TagIdentityResult, error)
 	Name() string
 }
 

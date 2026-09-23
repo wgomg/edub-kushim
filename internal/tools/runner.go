@@ -39,6 +39,7 @@ type Runner struct {
 	contentAnalyzer   contentanalyzer.ContentAnalyzer
 	tagAdjudicator    contentanalyzer.ContentAnalyzer
 	tagQualityJudge   contentanalyzer.ContentAnalyzer
+	tagIdentityJudge  contentanalyzer.ContentAnalyzer
 	fallbackAnalyzers []contentanalyzer.ContentAnalyzer
 	fallbackMeta      []fallbackMeta
 	textReducer       textreducer.TextReducer
@@ -185,6 +186,7 @@ func NewRunner(logger *utils.Logger, cfg *config.Config, tools []string) *Runner
 					logger.Error(nil, "create tag adjudicator: %v", adjErr)
 				} else {
 					r.tagAdjudicator = adj
+					r.tagIdentityJudge = adj
 				}
 			}
 			if cfg.Enricher.TagQuality.Enabled {
@@ -531,6 +533,25 @@ func (r *Runner) JudgeTagQuality(ctx context.Context, text string, candidates []
 	}
 	return runWithTimeout(ctx, func() ([]contentanalyzer.TagQualityResult, error) {
 		return r.tagQualityJudge.JudgeTagQuality(ctx, text, candidates)
+	})
+}
+
+func (r *Runner) HasTagIdentityJudge() bool {
+	return r.tagIdentityJudge != nil
+}
+
+func (r *Runner) JudgeTagIdentity(ctx context.Context, candidates []contentanalyzer.TagIdentityCandidate) ([]contentanalyzer.TagIdentityResult, error) {
+	if r.tagIdentityJudge == nil {
+		return nil, fmt.Errorf("tag identity judge not configured")
+	}
+	timeout := time.Duration(r.config.ResolvedAdjudicatorTimeout()) * time.Second
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	return runWithTimeout(ctx, func() ([]contentanalyzer.TagIdentityResult, error) {
+		return r.tagIdentityJudge.JudgeTagIdentity(ctx, candidates)
 	})
 }
 

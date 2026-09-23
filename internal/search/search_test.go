@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 )
 
@@ -366,5 +367,51 @@ func TestStructuredSearchPastTheEndOffset(t *testing.T) {
 		testutil.AssertNoError(t, err, "search page 1")
 		testutil.AssertEqual(t, len(results), 1, "page size")
 		testutil.AssertEqual(t, total, int64(2), "total")
+	})
+}
+
+func TestTagAliasResolution(t *testing.T) {
+	engine, q := setupSearchTest(t)
+	ctx := context.Background()
+
+	canonicalID := database.MustCreateTag(t, q, "world war 2")
+	_, err := q.InsertTagAlias(ctx, database.InsertTagAliasParams{
+		AliasName:      "world war ii",
+		CanonicalTagID: canonicalID,
+		RuleSetVersion: tags.IdentityRuleSetVersion,
+	})
+	testutil.AssertNoError(t, err, "seed alias")
+
+	t.Run("alias names resolve to canonical and dedupe", func(t *testing.T) {
+		got, err := engine.resolveTagAliases(ctx, []string{"world war ii", "Other Tag", "other tag", "world war 2"})
+		testutil.AssertNoError(t, err, "resolve")
+
+		want := []string{"world war 2", "other tag"}
+		testutil.AssertEqual(t, len(got), len(want), "resolved and deduped length")
+		for i := range want {
+			testutil.AssertEqual(t, got[i], want[i], "resolved order")
+		}
+	})
+
+	t.Run("empty input stays empty", func(t *testing.T) {
+		got, err := engine.resolveTagAliases(ctx, nil)
+		testutil.AssertNoError(t, err, "resolve empty")
+		testutil.AssertEqual(t, len(got), 0, "no names")
+	})
+
+	t.Run("structured filter accepts alias and duplicate names", func(t *testing.T) {
+		docID := insertSearchDocRaw(t, q, "sd-alias-1", "naval-battle.pdf", "eng", 3, "")
+		database.MustAddDocumentTag(t, q, docID, canonicalID)
+
+		// tagsAnd counts DISTINCT tag ids against the input length: an
+		// unresolved alias or a duplicated name yields no rows at all
+		results, total, err := engine.SearchStructured(ctx, Filter{
+			Tags:  []string{"world war ii", "world war 2"},
+			Limit: 10,
+		})
+		testutil.AssertNoError(t, err, "alias filter search")
+		testutil.AssertEqual(t, total, int64(1), "alias filter matches the canonical tagging")
+		testutil.AssertEqual(t, len(results), 1, "one document")
+		testutil.AssertEqual(t, results[0].Title, "naval-battle.pdf", "the aliased document")
 	})
 }

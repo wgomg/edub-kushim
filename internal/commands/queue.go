@@ -114,6 +114,8 @@ func queueHandler(c *Container, args []string) error {
 	var tagReconcilePoolStarted bool
 	var tagMeasurePool *pool.Pool
 	var tagMeasurePoolStarted bool
+	var tagIdentityPool *pool.Pool
+	var tagIdentityPoolStarted bool
 
 	go runPollingLoop(ctx, c, func() *database.Client { return client }, func() *service.Batch { return batchSvc }, maxConcurrent)
 
@@ -187,6 +189,9 @@ func queueHandler(c *Container, args []string) error {
 						}
 						if tagMeasurePoolStarted {
 							stopPool(c, "tagmeasure", &tagMeasurePoolStarted, &tagMeasurePool)
+						}
+						if tagIdentityPoolStarted {
+							stopPool(c, "tagidentity", &tagIdentityPoolStarted, &tagIdentityPool)
 						}
 						client = newClient
 						batchSvc = service.NewBatch(client, c.cfg.Load().Consumer.Reclaim.MaxRetries)
@@ -273,6 +278,12 @@ func queueHandler(c *Container, args []string) error {
 				c.logger.Info(nil, "tag measure pool stopped (disabled)")
 			}
 
+			if !tagIdentityPoolStarted {
+				if err := startPool(c, ctx, "tagidentity", &tagIdentityPoolStarted, &tagIdentityPool); err != nil {
+					c.logger.Error(nil, "tag identity pool: %v", err)
+				}
+			}
+
 			if err := sweepEmptyQueuedBatches(ctx, client, c.logger); err != nil {
 				c.logger.Error(nil, "empty queued batch sweep: %v", err)
 			}
@@ -296,6 +307,7 @@ func queueHandler(c *Container, args []string) error {
 			stopPool(c, "mirror", &mirrorPoolStarted, &mirrorPool)
 			stopPool(c, "tagreconcile", &tagReconcilePoolStarted, &tagReconcilePool)
 			stopPool(c, "tagmeasure", &tagMeasurePoolStarted, &tagMeasurePool)
+			stopPool(c, "tagidentity", &tagIdentityPoolStarted, &tagIdentityPool)
 			return nil
 		}
 	}

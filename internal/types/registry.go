@@ -26,6 +26,7 @@ var Batch = struct {
 		Config          BatchSource
 		TagReconcile    BatchSource
 		TagMeasure      BatchSource
+		TagIdentity     BatchSource
 	}
 	Status struct {
 		Queued     BatchStatus
@@ -49,6 +50,7 @@ var Batch = struct {
 		Config          BatchSource
 		TagReconcile    BatchSource
 		TagMeasure      BatchSource
+		TagIdentity     BatchSource
 	}{
 		CLI:             "cli",
 		API:             "api",
@@ -62,6 +64,7 @@ var Batch = struct {
 		Config:          "config",
 		TagReconcile:    "tagreconcile",
 		TagMeasure:      "tagmeasure",
+		TagIdentity:     "tagidentity",
 	},
 	Status: struct {
 		Queued     BatchStatus
@@ -91,6 +94,7 @@ var Task = struct {
 		TagReconcile  TaskType
 		ThumbBackfill TaskType
 		TagMeasure    TaskType
+		TagIdentity   TaskType
 	}
 	Status struct {
 		Pending    TaskStatus
@@ -112,6 +116,7 @@ var Task = struct {
 		TagReconcile  TaskType
 		ThumbBackfill TaskType
 		TagMeasure    TaskType
+		TagIdentity   TaskType
 	}{
 		Consume:       "consume",
 		Enrich:        "enrich",
@@ -122,6 +127,7 @@ var Task = struct {
 		TagReconcile:  "tagreconcile",
 		ThumbBackfill: "thumbbackfill",
 		TagMeasure:    "tagmeasure",
+		TagIdentity:   "tagidentity",
 	},
 	Status: struct {
 		Pending    TaskStatus
@@ -248,6 +254,7 @@ var allBatchSources = []BatchSource{
 	Batch.Source.Config,
 	Batch.Source.TagReconcile,
 	Batch.Source.TagMeasure,
+	Batch.Source.TagIdentity,
 }
 
 var nonConsumeBatchSources = []BatchSource{
@@ -256,6 +263,7 @@ var nonConsumeBatchSources = []BatchSource{
 	Batch.Source.Mirror,
 	Batch.Source.TagReconcile,
 	Batch.Source.TagMeasure,
+	Batch.Source.TagIdentity,
 }
 
 var allBatchStatuses = []BatchStatus{
@@ -277,6 +285,7 @@ var allTaskTypes = []TaskType{
 	Task.Type.TagReconcile,
 	Task.Type.ThumbBackfill,
 	Task.Type.TagMeasure,
+	Task.Type.TagIdentity,
 }
 
 var blockingTaskTypes = []TaskType{
@@ -285,6 +294,7 @@ var blockingTaskTypes = []TaskType{
 	Task.Type.TagReconcile,
 	Task.Type.ThumbBackfill,
 	Task.Type.TagMeasure,
+	Task.Type.TagIdentity,
 }
 
 var lockGatedTaskTypes = []TaskType{

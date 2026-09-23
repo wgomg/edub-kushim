@@ -39,7 +39,7 @@ func TestExtractReport(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := extractReport([]byte(tc.stdout))
+			got := extractReport([]byte(tc.stdout), tags.ReportPrefix)
 			if tc.want == "" {
 				if got != nil {
 					t.Errorf("extractReport = %s, want nil", got)

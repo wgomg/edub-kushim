@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 )
 
@@ -49,7 +50,7 @@ func TestTag_NormalizeAtSave(t *testing.T) {
 	})
 }
 
-func TestTag_CreateTx(t *testing.T) {
+func TestTag_CreatePlannedTx_Rollback(t *testing.T) {
 	svc, client := newTestTag(t)
 	ctx := context.Background()
 
@@ -58,8 +59,10 @@ func TestTag_CreateTx(t *testing.T) {
 	defer tx.Rollback()
 	txQ := client.WithTx(tx)
 
-	results, newNames, err := svc.CreateTx(ctx, txQ, []string{"tx-test-1", "tx-test-2"}, false)
-	testutil.AssertNoError(t, err, "create tx")
+	plan, err := svc.buildPlan(ctx, txQ, []string{"tx-test-1", "tx-test-2"}, false)
+	testutil.AssertNoError(t, err, "build plan")
+	results, newNames, err := svc.CreatePlannedTx(ctx, txQ, plan, false)
+	testutil.AssertNoError(t, err, "create planned tx")
 	testutil.AssertEqual(t, len(results), 2, "two results")
 	testutil.AssertEqual(t, len(newNames), 2, "two new names")
 
@@ -200,7 +203,7 @@ func TestTag_Create_MidBatchFailureRollsBackWholeBatch(t *testing.T) {
 	testutil.AssertError(t, err, "earlier insert in the failed batch must be rolled back")
 }
 
-func TestTag_CreateTx_Quarantined_LeavesProvisional(t *testing.T) {
+func TestTag_CreatePlannedTx_Quarantined_LeavesProvisional(t *testing.T) {
 	svc, client := newTestTag(t)
 	ctx := context.Background()
 
@@ -209,8 +212,10 @@ func TestTag_CreateTx_Quarantined_LeavesProvisional(t *testing.T) {
 	defer tx.Rollback()
 	txQ := client.WithTx(tx)
 
-	results, newNames, err := svc.CreateTx(ctx, txQ, []string{"quarantined-tag"}, true)
-	testutil.AssertNoError(t, err, "create tx quarantined")
+	plan, err := svc.buildPlan(ctx, txQ, []string{"quarantined-tag"}, false)
+	testutil.AssertNoError(t, err, "build plan")
+	results, newNames, err := svc.CreatePlannedTx(ctx, txQ, plan, true)
+	testutil.AssertNoError(t, err, "create planned tx quarantined")
 	testutil.AssertEqual(t, len(results), 1, "one result")
 	testutil.AssertEqual(t, len(newNames), 1, "one new name")
 	testutil.AssertEqual(t, results[0].Status, Created, "created")
@@ -266,11 +271,11 @@ func TestTag_CreateAndUnblock(t *testing.T) {
 		Kind: DeletedTagKindBlocked,
 	}), "seed blocked tag")
 
-	// Create alone must keep the blocklist row: the automatic paths rely on it
-	// to keep guarding a deleted name.
+	// Create alone must refuse a blocklisted name and keep the blocklist row:
+	// the automatic paths rely on it to keep guarding a deleted name.
 	results, err := svc.Create(ctx, []string{"recreate me"})
 	testutil.AssertNoError(t, err, "create")
-	testutil.AssertEqual(t, results[0].Status, Created, "created")
+	testutil.AssertEqual(t, results[0].Status, Invalid, "blocklisted name is not registered")
 	if _, err := client.Queries.GetDeletedTag(ctx, "recreate me"); err != nil {
 		t.Fatalf("Create must not clear the blocklist row: %v", err)
 	}
@@ -278,7 +283,7 @@ func TestTag_CreateAndUnblock(t *testing.T) {
 	// CreateAndUnblock is the operator path: re-creating the name unblocks it.
 	results, err = svc.CreateAndUnblock(ctx, []string{"Recreate Me"})
 	testutil.AssertNoError(t, err, "create and unblock")
-	testutil.AssertEqual(t, results[0].Status, Conflict, "conflict on existing tag")
+	testutil.AssertEqual(t, results[0].Status, Created, "created by the unblock path")
 	if _, err := client.Queries.GetDeletedTag(ctx, "recreate me"); err == nil {
 		t.Fatal("CreateAndUnblock must clear the blocklist row")
 	}
@@ -386,7 +391,8 @@ func TestTag_Promote(t *testing.T) {
 	})
 
 	t.Run("already promoted", func(t *testing.T) {
-		results, err := svc.Create(ctx, []string{"already-promoted-tag"})
+		// a base-form name is not flagged by M2 and promotes at birth
+		results, err := svc.Create(ctx, []string{"promote-tag"})
 		testutil.AssertNoError(t, err, "create")
 		testutil.AssertEqual(t, results[0].Status, Created, "created")
 		tagID := results[0].Entity.ID
@@ -400,5 +406,82 @@ func TestTag_Promote(t *testing.T) {
 		_, status, err := svc.Promote(ctx, 999999, "test-reason")
 		testutil.AssertNoError(t, err, "not found")
 		testutil.AssertEqual(t, status, PromoteNotFound, "not found status")
+	})
+}
+
+func TestTag_ApplyAliasPlan(t *testing.T) {
+	svc, client := newTestTag(t)
+	ctx := context.Background()
+
+	canonicalID := database.MustCreateTag(t, client.Queries, "alias canonical tag")
+	loserID := database.MustCreateTag(t, client.Queries, "alias loser tag")
+
+	onlyLoser := database.CreateUniqueDocument(t, client.Queries, "alias-doc-1")
+	both := database.CreateUniqueDocument(t, client.Queries, "alias-doc-2")
+	database.MustAddDocumentTag(t, client.Queries, onlyLoser, loserID)
+	database.MustAddDocumentTag(t, client.Queries, both, loserID)
+	database.MustAddDocumentTag(t, client.Queries, both, canonicalID)
+
+	// the loser owns an alias: it must retarget onto the canonical, no chains
+	_, err := client.Queries.InsertTagAlias(ctx, database.InsertTagAliasParams{
+		AliasName:      "old loser alias",
+		CanonicalTagID: loserID,
+		RuleSetVersion: tags.IdentityRuleSetVersion,
+	})
+	testutil.AssertNoError(t, err, "seed alias on the loser")
+
+	testutil.AssertNoError(t, svc.ApplyAliasPlan(ctx, []tags.AliasAction{
+		{AliasName: "alias loser tag", Canonical: "alias canonical tag", RemoveExistingTag: true},
+		{AliasName: "never a row", Canonical: "alias canonical tag"},
+	}), "apply alias plan")
+
+	if _, err := client.Queries.GetTagByName(ctx, "alias loser tag"); err == nil {
+		t.Error("loser tag row must be removed")
+	}
+
+	canonicalDocs, err := client.Queries.GetTagDocumentIDs(ctx, canonicalID)
+	testutil.AssertNoError(t, err, "canonical assignments")
+	testutil.AssertEqual(t, len(canonicalDocs), 2, "both documents re-point onto the canonical")
+	loserDocs, err := client.Queries.GetTagDocumentIDs(ctx, loserID)
+	testutil.AssertNoError(t, err, "loser assignments")
+	testutil.AssertEqual(t, len(loserDocs), 0, "no assignment keeps pointing at the loser")
+
+	alias, err := client.Queries.GetTagAliasByName(ctx, "alias loser tag")
+	testutil.AssertNoError(t, err, "loser name becomes an alias")
+	testutil.AssertEqual(t, alias.CanonicalTagID, canonicalID, "alias target")
+	testutil.AssertEqual(t, alias.RuleSetVersion, tags.IdentityRuleSetVersion, "alias rule-set version")
+
+	oldAlias, err := client.Queries.GetTagAliasByName(ctx, "old loser alias")
+	testutil.AssertNoError(t, err, "the loser's own alias survives")
+	testutil.AssertEqual(t, oldAlias.CanonicalTagID, canonicalID, "retargeted onto the canonical")
+
+	neverAlias, err := client.Queries.GetTagAliasByName(ctx, "never a row")
+	testutil.AssertNoError(t, err, "a never-registered name becomes an alias directly")
+	testutil.AssertEqual(t, neverAlias.CanonicalTagID, canonicalID, "alias target")
+	if _, err := client.Queries.GetTagByName(ctx, "never a row"); err == nil {
+		t.Error("an alias name must not register a tag row")
+	}
+
+	t.Run("registration consults the alias", func(t *testing.T) {
+		results, err := svc.Create(ctx, []string{"alias loser tag"})
+		testutil.AssertNoError(t, err, "create through alias")
+		testutil.AssertEqual(t, len(results), 1, "one result")
+		testutil.AssertEqual(t, results[0].Status, Apply, "apply through alias")
+		testutil.AssertEqual(t, results[0].Entity.ID, canonicalID, "canonical entity")
+	})
+
+	t.Run("blocked names are never aliased", func(t *testing.T) {
+		testutil.AssertNoError(t, client.Queries.UpsertDeletedTag(ctx, database.UpsertDeletedTagParams{
+			Name: "blocked loser",
+			Kind: DeletedTagKindBlocked,
+		}), "seed blocked tag")
+
+		testutil.AssertNoError(t, svc.ApplyAliasPlan(ctx, []tags.AliasAction{
+			{AliasName: "blocked loser", Canonical: "alias canonical tag"},
+		}), "apply blocked alias")
+
+		if _, err := client.Queries.GetTagAliasByName(ctx, "blocked loser"); err == nil {
+			t.Error("a blocklisted name must never be aliased")
+		}
 	})
 }

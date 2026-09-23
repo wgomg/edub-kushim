@@ -14,6 +14,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/enrichment/tagpolicy"
+	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/contentanalyzer"
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/tagmatcher"
@@ -21,167 +22,110 @@ import (
 	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
-func newPolicyEnricher(autoReplace float64) *Enricher {
-	return &Enricher{
-		config: &config.Config{
-			Enricher: config.EnricherConfig{
-				TagMatcher: config.TagMatcherConfig{
-					AutoReplaceSimilarity: autoReplace,
-				},
-			},
-		},
-		logger: utils.NewDiscardLogger(),
+func TestPlanIdentity_LogsPendingPairs(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
 	}
-}
+	q, db := database.NewTestQueries(t)
+	t.Cleanup(func() { db.Close() })
 
-func TestApplyConsolidationPolicy_ReplacesAboveAutoReplaceCutoff(t *testing.T) {
-	e := newPolicyEnricher(0.85)
-	queries := []string{"foo", "bar"}
-	ranked := []tagmatcher.RankResult{
-		{KeptName: "foo", Candidates: []tagmatcher.Candidate{{Tag: "foobar", Similarity: 0.92}}},
-		{KeptName: "bar", Candidates: []tagmatcher.Candidate{{Tag: "baz", Similarity: 0.5}}},
-	}
-
-	got, _ := e.applyConsolidationPolicy(context.Background(), 0, "", queries, ranked, nil, nil)
-
-	want := []string{"foobar", "bar"}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("applyConsolidationPolicy = %v, want %v", got, want)
-	}
-}
-
-func TestApplyConsolidationPolicy_KeepsKeptNameInAmbiguousBand(t *testing.T) {
-	e := newPolicyEnricher(0.90)
-	queries := []string{"foo"}
-	ranked := []tagmatcher.RankResult{
-		{KeptName: "foo", Candidates: []tagmatcher.Candidate{{Tag: "foobar", Similarity: 0.80}}},
-	}
-
-	got, _ := e.applyConsolidationPolicy(context.Background(), 0, "", queries, ranked, nil, nil)
-
-	if len(got) != 1 || got[0] != "foo" {
-		t.Errorf("applyConsolidationPolicy = %v, want [foo]", got)
-	}
-}
-
-func TestApplyConsolidationPolicy_KeepsKeptNameOnNoCandidates(t *testing.T) {
-	e := newPolicyEnricher(0.0)
-	queries := []string{"foo"}
-	ranked := []tagmatcher.RankResult{{KeptName: "foo"}}
-
-	got, _ := e.applyConsolidationPolicy(context.Background(), 0, "", queries, ranked, nil, nil)
-
-	if len(got) != 1 || got[0] != "foo" {
-		t.Errorf("applyConsolidationPolicy = %v, want [foo]", got)
-	}
-}
-
-func TestApplyConsolidationPolicy_FallsBackToQueryOnShortResult(t *testing.T) {
-	e := newPolicyEnricher(0.0)
-	queries := []string{"a", "b", "c"}
-	ranked := []tagmatcher.RankResult{{KeptName: "A"}}
-
-	got, _ := e.applyConsolidationPolicy(context.Background(), 0, "", queries, ranked, nil, nil)
-
-	want := []string{"A", "b", "c"}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("applyConsolidationPolicy = %v, want %v", got, want)
-	}
-}
-
-func TestApplyConsolidationPolicy_EmptyRankedReturnsQueries(t *testing.T) {
-	e := newPolicyEnricher(0.5)
-	queries := []string{"a", "b"}
-
-	got, _ := e.applyConsolidationPolicy(context.Background(), 0, "", queries, nil, nil, nil)
-
-	if !reflect.DeepEqual(got, queries) {
-		t.Errorf("applyConsolidationPolicy(nil) = %v, want %v", got, queries)
-	}
-}
-
-func newLoggingPolicyEnricher(autoReplace float64, debug bool) (*Enricher, *bytes.Buffer) {
 	var buf bytes.Buffer
-	l := utils.NewLoggerWithWriter(&buf)
-	if debug {
-		l.SetLevel(utils.LevelDebug)
+	logger := utils.NewLoggerWithWriter(&buf)
+
+	adj := &mockAdjudicator{
+		adjudicateFn: func(_ context.Context, _ []contentanalyzer.TagPairEvidence) ([]contentanalyzer.TagVerdictResult, error) {
+			return nil, context.DeadlineExceeded
+		},
 	}
-	return &Enricher{
+	runner := &tools.Runner{}
+	setUnexportedField(t, runner, "logger", logger)
+	setUnexportedField(t, runner, "config", &config.Config{
+		Enricher: config.EnricherConfig{
+			TagMatcher:     config.TagMatcherConfig{Timeout: 0},
+			TagAdjudicator: config.TagAdjudicatorConfig{Timeout: 0},
+		},
+	})
+	setUnexportedField(t, runner, "tagAdjudicator", adj)
+
+	e := &Enricher{
 		config: &config.Config{
 			Enricher: config.EnricherConfig{
-				TagMatcher: config.TagMatcherConfig{
-					AutoReplaceSimilarity: autoReplace,
-				},
+				TagAdjudicator: config.TagAdjudicatorConfig{Enabled: true, Llm: config.LlmConfig{Model: "test-model"}},
 			},
 		},
-		logger: l,
-	}, &buf
+		queries: q,
+		runner:  runner,
+		logger:  logger,
+	}
+
+	ranked := []tagmatcher.RankResult{mkRanked("democratic socialism", "social democracy", 0.81)}
+	_, plan, _ := e.planIdentity(context.Background(), 0, "", []string{"democratic socialism"}, ranked, map[string]struct{}{"social democracy": {}}, nil)
+
+	out := buf.String()
+	if !strings.Contains(out, "defer \"democratic socialism\" vs \"social democracy\" to review") {
+		t.Errorf("expected pending-pair log, got:\n%s", out)
+	}
+	pending := 0
+	for _, row := range plan.Evidence {
+		if row.Kind == tags.IdentityKindSameIntent && row.Verdict == "" {
+			pending++
+		}
+	}
+	adjAssertEqual(t, pending, 1, "pending evidence rows")
+	adjAssertEqual(t, plan.Registrations[0].Provisional, true, "candidate stays provisional")
 }
 
-func TestApplyConsolidationPolicy_LogsDecisions(t *testing.T) {
-	t.Run("replace is logged at info with version and reason", func(t *testing.T) {
-		e, buf := newLoggingPolicyEnricher(0.90, false)
-		queries := []string{"foo"}
-		ranked := []tagmatcher.RankResult{
-			mkRanked("foo", "foobar", 0.93),
-		}
+func TestPlanIdentity_FoldStaysPendingWithoutJudge(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	q, db := database.NewTestQueries(t)
+	t.Cleanup(func() { db.Close() })
+	if _, err := db.Exec("DELETE FROM tag_identity_event"); err != nil {
+		t.Fatalf("clear tag_identity_event: %v", err)
+	}
 
-		got, _ := e.applyConsolidationPolicy(context.Background(), 0, "", queries, ranked, nil, nil)
-		if len(got) != 1 || got[0] != "foobar" {
-			t.Fatalf("output = %v, want [foobar]", got)
-		}
-
-		out := buf.String()
-		if !strings.Contains(out, "consolidation[v1]: replace") {
-			t.Errorf("expected replace line in log, got:\n%s", out)
-		}
-		if !strings.Contains(out, `"foo"`) || !strings.Contains(out, `"foobar"`) {
-			t.Errorf("expected query and target in log, got:\n%s", out)
-		}
-		if !strings.Contains(out, "reason=auto_replace") {
-			t.Errorf("expected reason=auto_replace in log, got:\n%s", out)
-		}
+	logger := utils.NewDiscardLogger()
+	runner := &tools.Runner{}
+	setUnexportedField(t, runner, "logger", logger)
+	setUnexportedField(t, runner, "config", &config.Config{
+		Enricher: config.EnricherConfig{
+			TagAdjudicator: config.TagAdjudicatorConfig{Timeout: 0},
+		},
 	})
 
-	t.Run("band keep is logged at info with reason", func(t *testing.T) {
-		e, buf := newLoggingPolicyEnricher(0.90, false)
-		queries := []string{"foo"}
-		ranked := []tagmatcher.RankResult{
-			mkRanked("foo", "foobar", 0.80),
-		}
+	e := &Enricher{
+		config: &config.Config{
+			Enricher: config.EnricherConfig{
+				TagAdjudicator: config.TagAdjudicatorConfig{Enabled: false},
+			},
+		},
+		queries: q,
+		runner:  runner,
+		logger:  logger,
+	}
 
-		got, _ := e.applyConsolidationPolicy(context.Background(), 0, "", queries, ranked, nil, nil)
-		if len(got) != 1 || got[0] != "foo" {
-			t.Fatalf("output = %v, want [foo]", got)
-		}
+	_, plan, _ := e.planIdentity(context.Background(), 0, "", []string{"buildings"}, nil, map[string]struct{}{}, nil)
 
-		out := buf.String()
-		if !strings.Contains(out, "consolidation[v1]: keep") {
-			t.Errorf("expected keep line in log, got:\n%s", out)
-		}
-		if !strings.Contains(out, "reason=ambiguous_band") {
-			t.Errorf("expected reason=ambiguous_band in log, got:\n%s", out)
-		}
-	})
+	if len(plan.Registrations) != 1 {
+		t.Fatalf("registrations = %d, want 1", len(plan.Registrations))
+	}
+	reg := plan.Registrations[0]
+	adjAssertEqual(t, reg.Name, "buildings", "unreduced name registers")
+	adjAssertEqual(t, reg.Fold, "building", "fold stays proposed")
+	adjAssertEqual(t, reg.Provisional, true, "unresolved fold registers provisionally")
+	adjAssertEqual(t, len(plan.Aliases), 0, "no alias without a verdict")
 
-	t.Run("passthrough with no candidates is logged only at debug", func(t *testing.T) {
-		e, buf := newLoggingPolicyEnricher(0.90, true)
-		queries := []string{"foo"}
-		ranked := []tagmatcher.RankResult{{KeptName: "foo"}}
-
-		got, _ := e.applyConsolidationPolicy(context.Background(), 0, "", queries, ranked, nil, nil)
-		if len(got) != 1 || got[0] != "foo" {
-			t.Fatalf("output = %v, want [foo]", got)
+	kinds := map[string]int{}
+	for _, row := range plan.Evidence {
+		if row.Verdict != "" {
+			t.Errorf("evidence[%s] carries verdict %q; the criteria are unresolved", row.Kind, row.Verdict)
 		}
-
-		out := buf.String()
-		if !strings.Contains(out, "consolidation[v1]: passthrough") {
-			t.Errorf("expected passthrough line in log, got:\n%s", out)
-		}
-		if !strings.Contains(out, "reason=no_candidates") {
-			t.Errorf("expected reason=no_candidates in log, got:\n%s", out)
-		}
-	})
+		kinds[row.Kind]++
+	}
+	for _, kind := range []string{tags.IdentityKindBaseForm, tags.IdentityKindFoldGate, tags.IdentityKindConventionalForm} {
+		adjAssertEqual(t, kinds[kind], 1, "pending criterion row "+kind)
+	}
 }
 
 func mkRanked(kept, candTag string, sim float64) tagmatcher.RankResult {
@@ -193,7 +137,9 @@ func mkRanked(kept, candTag string, sim float64) tagmatcher.RankResult {
 
 type mockAdjudicator struct {
 	adjudicateFn func(ctx context.Context, pairs []contentanalyzer.TagPairEvidence) ([]contentanalyzer.TagVerdictResult, error)
+	identityFn   func(ctx context.Context, candidates []contentanalyzer.TagIdentityCandidate) ([]contentanalyzer.TagIdentityResult, error)
 	called       int
+	identityCall int
 }
 
 func (m *mockAdjudicator) Analyze(_ context.Context, _ string, _ []database.DocumentType, _ []database.PeopleType, _ []string) (*contentanalyzer.AnalysisResult, error) {
@@ -217,6 +163,14 @@ func (m *mockAdjudicator) AdjudicateTagSplits(_ context.Context, _ []string) ([]
 }
 
 func (m *mockAdjudicator) JudgeTagQuality(_ context.Context, _ string, _ []contentanalyzer.TagQualityCandidate) ([]contentanalyzer.TagQualityResult, error) {
+	return nil, nil
+}
+
+func (m *mockAdjudicator) JudgeTagIdentity(ctx context.Context, candidates []contentanalyzer.TagIdentityCandidate) ([]contentanalyzer.TagIdentityResult, error) {
+	m.identityCall++
+	if m.identityFn != nil {
+		return m.identityFn(ctx, candidates)
+	}
 	return nil, nil
 }
 
@@ -345,55 +299,76 @@ func adjAssertEqual(t *testing.T, got, want any, msg string) {
 	}
 }
 
-func TestApplyConsolidationPolicy_Adjudication(t *testing.T) {
-	t.Run("cached verdict applies without LLM call", func(t *testing.T) {
-		e, q, adj := newAdjudicationEnricher(t)
-		docID := createTestDocForAdjudication(t, q)
-
-		_, err := q.InsertTagVerdictEvent(context.Background(), database.InsertTagVerdictEventParams{
-			DocumentID:    docID,
-			Query:         "democratic socialism",
-			Target:        "social democracy",
-			Sim:           0.81,
-			Verdict:       types.TagVerdicts.Same,
-			VerdictModel:  sql.NullString{},
-			PolicyVersion: "v1",
+func TestAdjudicateIdentityPairs(t *testing.T) {
+	insertIdentityVerdict := func(t *testing.T, q *database.Queries, candidate, partner, verdict, direction string) {
+		t.Helper()
+		criteria := []byte("{}")
+		if direction != "" {
+			criteria = []byte(`{"direction":"` + direction + `"}`)
+		}
+		if _, err := q.InsertTagIdentityEvent(context.Background(), database.InsertTagIdentityEventParams{
+			Kind:           tags.IdentityKindSameIntent,
+			Candidate:      candidate,
+			Partner:        sql.NullString{String: partner, Valid: true},
+			Criteria:       criteria,
+			Verdict:        sql.NullString{String: verdict, Valid: true},
+			RuleSetVersion: tags.IdentityRuleSetVersion,
+		}); err != nil {
+			t.Fatalf("seed identity verdict: %v", err)
+		}
+	}
+	countIdentityVerdicts := func(t *testing.T, q *database.Queries, candidate, partner string) int {
+		t.Helper()
+		rows, err := q.LatestTagIdentityEventsForCandidates(context.Background(), database.LatestTagIdentityEventsForCandidatesParams{
+			RuleSetVersion: tags.IdentityRuleSetVersion,
+			Candidates:     []string{candidate},
 		})
 		if err != nil {
-			t.Fatalf("seed cache: %v", err)
+			t.Fatalf("count identity verdicts: %v", err)
 		}
+		n := 0
+		for _, row := range rows {
+			if row.Kind == tags.IdentityKindSameIntent && row.Partner.Valid && row.Partner.String == partner && row.Verdict.Valid {
+				n++
+			}
+		}
+		return n
+	}
 
-		ranked := []tagmatcher.RankResult{mkRanked("democratic socialism", "social democracy", 0.81)}
-		got, _ := e.applyConsolidationPolicy(context.Background(), docID, "adj-test-doc", []string{"democratic socialism"}, ranked, nil, nil)
-		adjAssertEqual(t, len(got), 1, "output length")
-		adjAssertEqual(t, got[0], "social democracy", "cached same replaces")
+	t.Run("cached verdict applies without LLM call", func(t *testing.T) {
+		e, q, adj := newAdjudicationEnricher(t)
+		insertIdentityVerdict(t, q, "democratic socialism", "social democracy", "same", "target")
+
+		p := &identityPair{query: "democratic socialism", target: "social democracy"}
+		e.adjudicateIdentityPairs(context.Background(), 0, "", []*identityPair{p}, nil)
+
 		adjAssertEqual(t, adj.called, 0, "adjudicator call count")
+		adjAssertEqual(t, p.decided, true, "pair decided")
+		adjAssertEqual(t, string(p.verdict), "same", "cached verdict")
+		adjAssertEqual(t, p.direction, "target", "cached direction")
 	})
 
-	t.Run("fresh same verdict replaces", func(t *testing.T) {
+	t.Run("fresh same verdict is recorded", func(t *testing.T) {
 		e, q, adj := newAdjudicationEnricher(t)
-		docID := createTestDocForAdjudication(t, q)
-
 		adj.adjudicateFn = func(_ context.Context, pairs []contentanalyzer.TagPairEvidence) ([]contentanalyzer.TagVerdictResult, error) {
 			results := make([]contentanalyzer.TagVerdictResult, len(pairs))
 			for i := range pairs {
-				results[i] = contentanalyzer.TagVerdictResult{Index: i, Verdict: types.TagVerdicts.Same}
+				results[i] = contentanalyzer.TagVerdictResult{Index: i, Verdict: types.TagVerdicts.Same, Direction: contentanalyzer.TagDirectionQuery}
 			}
 			return results, nil
 		}
 
-		ranked := []tagmatcher.RankResult{mkRanked("democratic socialism", "social democracy", 0.81)}
-		got, _ := e.applyConsolidationPolicy(context.Background(), docID, "adj-test-doc", []string{"democratic socialism"}, ranked, nil, nil)
-		adjAssertEqual(t, len(got), 1, "output length")
-		adjAssertEqual(t, got[0], "social democracy", "fresh same replaces")
+		p := &identityPair{query: "democratic socialism", target: "social democracy"}
+		e.adjudicateIdentityPairs(context.Background(), 0, "", []*identityPair{p}, nil)
+
 		adjAssertEqual(t, adj.called, 1, "adjudicator call count")
-		adjAssertEqual(t, countEvents(t, q, docID, "democratic socialism", "social democracy"), 1, "event rows")
+		adjAssertEqual(t, p.decided, true, "pair decided")
+		adjAssertEqual(t, p.direction, contentanalyzer.TagDirectionQuery, "direction recorded")
+		adjAssertEqual(t, countIdentityVerdicts(t, q, "democratic socialism", "social democracy"), 1, "cached verdict rows")
 	})
 
-	t.Run("fresh variant verdict keeps", func(t *testing.T) {
+	t.Run("fresh variant verdict is recorded", func(t *testing.T) {
 		e, q, adj := newAdjudicationEnricher(t)
-		docID := createTestDocForAdjudication(t, q)
-
 		adj.adjudicateFn = func(_ context.Context, pairs []contentanalyzer.TagPairEvidence) ([]contentanalyzer.TagVerdictResult, error) {
 			results := make([]contentanalyzer.TagVerdictResult, len(pairs))
 			for i := range pairs {
@@ -402,63 +377,25 @@ func TestApplyConsolidationPolicy_Adjudication(t *testing.T) {
 			return results, nil
 		}
 
-		ranked := []tagmatcher.RankResult{mkRanked("democratic socialism", "social democracy", 0.81)}
-		got, _ := e.applyConsolidationPolicy(context.Background(), docID, "adj-test-doc", []string{"democratic socialism"}, ranked, nil, nil)
-		adjAssertEqual(t, len(got), 1, "output length")
-		adjAssertEqual(t, got[0], "democratic socialism", "variant keeps query")
-		adjAssertEqual(t, countEvents(t, q, docID, "democratic socialism", "social democracy"), 1, "event rows for variant")
+		p := &identityPair{query: "democratic socialism", target: "social democracy"}
+		e.adjudicateIdentityPairs(context.Background(), 0, "", []*identityPair{p}, nil)
+
+		adjAssertEqual(t, p.decided, true, "pair decided")
+		adjAssertEqual(t, string(p.verdict), "variant", "variant recorded")
+		adjAssertEqual(t, countIdentityVerdicts(t, q, "democratic socialism", "social democracy"), 1, "cached verdict rows")
 	})
 
-	t.Run("adjudicator error keeps all and logs", func(t *testing.T) {
-		if os.Getenv("TEST_DATABASE_URL") == "" {
-			t.Skip("TEST_DATABASE_URL not set")
+	t.Run("adjudicator error leaves the pair pending", func(t *testing.T) {
+		e, q, adj := newAdjudicationEnricher(t)
+		adj.adjudicateFn = func(_ context.Context, _ []contentanalyzer.TagPairEvidence) ([]contentanalyzer.TagVerdictResult, error) {
+			return nil, context.DeadlineExceeded
 		}
-		q, db := database.NewTestQueries(t)
-		t.Cleanup(func() { db.Close() })
 
-		var buf bytes.Buffer
-		logger := utils.NewLoggerWithWriter(&buf)
+		p := &identityPair{query: "democratic socialism", target: "social democracy"}
+		e.adjudicateIdentityPairs(context.Background(), 0, "", []*identityPair{p}, nil)
 
-		adj := &mockAdjudicator{
-			adjudicateFn: func(_ context.Context, _ []contentanalyzer.TagPairEvidence) ([]contentanalyzer.TagVerdictResult, error) {
-				return nil, context.DeadlineExceeded
-			},
-		}
-		matcher := &mockTagMatcher{}
-
-		runner := &tools.Runner{}
-		setUnexportedField(t, runner, "logger", logger)
-		setUnexportedField(t, runner, "config", &config.Config{
-			Enricher: config.EnricherConfig{
-				TagMatcher:     config.TagMatcherConfig{Timeout: 0},
-				TagAdjudicator: config.TagAdjudicatorConfig{Timeout: 0},
-			},
-		})
-		setUnexportedField(t, runner, "tagAdjudicator", adj)
-		setUnexportedField(t, runner, "tagMatcher", matcher)
-
-		e := &Enricher{
-			config: &config.Config{
-				Enricher: config.EnricherConfig{
-					TagMatcher:     config.TagMatcherConfig{AutoReplaceSimilarity: 0.95},
-					TagAdjudicator: config.TagAdjudicatorConfig{Enabled: true, Llm: config.LlmConfig{Model: "test-model"}},
-				},
-			},
-			queries: q,
-			runner:  runner,
-			logger:  logger,
-		}
-		docID := createTestDocForAdjudication(t, q)
-
-		ranked := []tagmatcher.RankResult{mkRanked("democratic socialism", "social democracy", 0.81)}
-		got, _ := e.applyConsolidationPolicy(context.Background(), docID, "adj-test-doc", []string{"democratic socialism"}, ranked, nil, nil)
-		adjAssertEqual(t, len(got), 1, "output length")
-		adjAssertEqual(t, got[0], "democratic socialism", "error keeps query")
-		out := buf.String()
-		if !strings.Contains(out, "tag adjudication failed, keeping 1 pairs") {
-			t.Errorf("expected adjudication failure log, got:\n%s", out)
-		}
-		adjAssertEqual(t, countEvents(t, q, docID, "democratic socialism", "social democracy"), 0, "no event rows on failure")
+		adjAssertEqual(t, p.decided, false, "pair stays undecided")
+		adjAssertEqual(t, countIdentityVerdicts(t, q, "democratic socialism", "social democracy"), 0, "no cached verdict rows")
 	})
 }
 

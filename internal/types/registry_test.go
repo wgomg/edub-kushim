@@ -3,19 +3,19 @@ package types
 import "testing"
 
 func TestAllCounts(t *testing.T) {
-	if got, want := len(AllBatchSources()), 12; got != want {
+	if got, want := len(AllBatchSources()), 13; got != want {
 		t.Errorf("AllBatchSources len = %d, want %d", got, want)
 	}
 	if got, want := len(AllBatchStatuses()), 6; got != want {
 		t.Errorf("AllBatchStatuses len = %d, want %d", got, want)
 	}
-	if got, want := len(AllTaskTypes()), 9; got != want {
+	if got, want := len(AllTaskTypes()), 10; got != want {
 		t.Errorf("AllTaskTypes len = %d, want %d", got, want)
 	}
 	if got, want := len(AllTaskStatuses()), 7; got != want {
 		t.Errorf("AllTaskStatuses len = %d, want %d", got, want)
 	}
-	if got, want := len(NonConsumeBatchSources()), 5; got != want {
+	if got, want := len(NonConsumeBatchSources()), 6; got != want {
 		t.Errorf("NonConsumeBatchSources len = %d, want %d", got, want)
 	}
 }
@@ -92,6 +92,7 @@ func TestNonConsumeBatchSources(t *testing.T) {
 		Batch.Source.Mirror:       true,
 		Batch.Source.TagReconcile: true,
 		Batch.Source.TagMeasure:   true,
+		Batch.Source.TagIdentity:  true,
 	}
 	for _, src := range NonConsumeBatchSources() {
 		if !want[src] {
@@ -107,6 +108,7 @@ func TestIsBlocking(t *testing.T) {
 		Task.Type.TagReconcile:  true,
 		Task.Type.ThumbBackfill: true,
 		Task.Type.TagMeasure:    true,
+		Task.Type.TagIdentity:   true,
 		Task.Type.Config:        false,
 	}
 	for typ, want := range cases {
@@ -124,6 +126,7 @@ func TestIsLockGated(t *testing.T) {
 		Task.Type.TagReconcile:  false,
 		Task.Type.ThumbBackfill: false,
 		Task.Type.TagMeasure:    false,
+		Task.Type.TagIdentity:   false,
 		Task.Type.Config:        false,
 	}
 	for typ, want := range cases {

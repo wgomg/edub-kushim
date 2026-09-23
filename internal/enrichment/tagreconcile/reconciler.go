@@ -68,26 +68,27 @@ func NewReconciler(getConfig func() *config.Config, client *database.Client,
 }
 
 type Report struct {
-	ReportOnly          bool              `json:"report_only"`
-	Worklist            WorklistCounts    `json:"worklist"`
-	Judged              int               `json:"judged"`
-	Confirmed           int               `json:"confirmed"`
-	Flips               FlipCounts        `json:"flips"`
-	Merges              []MergeEntry      `json:"merges"`
-	Retags              int               `json:"retags"`
-	Invalidated         int               `json:"invalidated"`
-	Skips               map[string]int    `json:"skips"`
-	PlannedMerges       []MergeEntry      `json:"planned_merges,omitempty"`
-	PlannedKeepFlips    []MergeEntry      `json:"planned_keep_flips,omitempty"`
-	RetagEntries        []MergeEntry      `json:"retag_entries,omitempty"`
-	InvalidatedEntries  []MergeEntry      `json:"invalidated_entries,omitempty"`
-	JointSplits         []JointSplitEntry `json:"joint_splits,omitempty"`
-	PlannedJointSplits  []JointSplitEntry `json:"planned_joint_splits,omitempty"`
-	Capped              int               `json:"capped,omitempty"`
-	NoDocuments         int               `json:"no_documents,omitempty"`
-	Swept               int               `json:"swept,omitempty"`
-	AdjudicatorDisabled bool              `json:"adjudicator_disabled,omitempty"`
-	Provisional         ProvisionalCounts `json:"provisional,omitempty"`
+	ReportOnly          bool                       `json:"report_only"`
+	Worklist            WorklistCounts             `json:"worklist"`
+	Judged              int                        `json:"judged"`
+	Confirmed           int                        `json:"confirmed"`
+	Flips               FlipCounts                 `json:"flips"`
+	Merges              []MergeEntry               `json:"merges"`
+	Retags              int                        `json:"retags"`
+	Invalidated         int                        `json:"invalidated"`
+	Skips               map[string]int             `json:"skips"`
+	PlannedMerges       []MergeEntry               `json:"planned_merges,omitempty"`
+	PlannedKeepFlips    []MergeEntry               `json:"planned_keep_flips,omitempty"`
+	RetagEntries        []MergeEntry               `json:"retag_entries,omitempty"`
+	InvalidatedEntries  []MergeEntry               `json:"invalidated_entries,omitempty"`
+	JointSplits         []JointSplitEntry          `json:"joint_splits,omitempty"`
+	PlannedJointSplits  []JointSplitEntry          `json:"planned_joint_splits,omitempty"`
+	Capped              int                        `json:"capped,omitempty"`
+	NoDocuments         int                        `json:"no_documents,omitempty"`
+	Swept               int                        `json:"swept,omitempty"`
+	AdjudicatorDisabled bool                       `json:"adjudicator_disabled,omitempty"`
+	Provisional         ProvisionalCounts          `json:"provisional,omitempty"`
+	Identity            *enrichment.IdentityReport `json:"identity,omitempty"`
 }
 
 type ProvisionalCounts struct {
@@ -181,10 +182,8 @@ func (r *Reconciler) Run(ctx context.Context, progress task.ProgressFunc) (Repor
 		return report, fmt.Errorf("list tags: %w", err)
 	}
 	storeTags := make(map[string]database.Tag, len(allTags))
-	policyStoreTags := make(map[string]struct{}, len(allTags))
 	for _, t := range allTags {
 		storeTags[t.Name] = t
-		policyStoreTags[t.Name] = struct{}{}
 	}
 	deletedTags, err := r.client.ListAllDeletedTags(ctx)
 	if err != nil {
@@ -235,7 +234,7 @@ func (r *Reconciler) Run(ctx context.Context, progress task.ProgressFunc) (Repor
 	}
 
 	progress("evidence", "ranking worklist pairs", 0)
-	r.evidencePass(ctx, cfg, worklist, policyStoreTags)
+	r.evidencePass(ctx, cfg, worklist)
 
 	progress("splits", "adjudicating joint tags", 0)
 	r.decideJointSplits(ctx, cfg, jointWorklist)
@@ -245,14 +244,33 @@ func (r *Reconciler) Run(ctx context.Context, progress task.ProgressFunc) (Repor
 	if report.ReportOnly {
 		r.planJointSplits(jointWorklist, &report)
 	} else {
-		r.applyJointSplits(ctx, cfg, jointWorklist, &report, storeTags, policyStoreTags)
+		r.applyJointSplits(ctx, cfg, jointWorklist, &report, storeTags)
 	}
 	r.sweepOrphanTags(ctx, cfg, &report)
 	r.sweepProvisionalTags(ctx, cfg, &report)
+	r.sweepIdentityEvidence(ctx, cfg, &report)
 	r.logSummary(report)
 
 	progress("report", "reporting", 1)
 	return report, nil
+}
+
+func (r *Reconciler) sweepIdentityEvidence(ctx context.Context, cfg *config.Config, report *Report) {
+	if report.ReportOnly {
+		return
+	}
+	resolver := enrichment.NewIdentityResolver(r.getConfig, r.logger, r.client, r.services, r.runner)
+	identityReport, err := resolver.ResolvePending(ctx, cfg.Enricher.TagReconcile.MaxRejudge)
+	if err != nil {
+		r.logger.Error(nil, "tag reconcile: identity evidence sweep failed: %v", err)
+		return
+	}
+	if identityReport.Pending == 0 {
+		return
+	}
+	report.Identity = identityReport
+	r.logger.Info(nil, "tag reconcile: identity evidence — %d pending, %d resolved, %d folded, %d aliased, %d deferred, %d failed",
+		identityReport.Pending, identityReport.Resolved, identityReport.Folded, identityReport.Aliased, identityReport.Deferred, identityReport.Failed)
 }
 
 func (r *Reconciler) logSummary(report Report) {
@@ -933,7 +951,7 @@ func lastDocID(ids []int64) int64 {
 	return ids[len(ids)-1]
 }
 
-func (r *Reconciler) evidencePass(ctx context.Context, cfg *config.Config, worklist []*entry, policyStoreTags map[string]struct{}) {
+func (r *Reconciler) evidencePass(ctx context.Context, cfg *config.Config, worklist []*entry) {
 	for i := 0; i < len(worklist); i += rankBatchSize {
 		end := min(i+rankBatchSize, len(worklist))
 		queries := make([]string, 0, end-i)
@@ -1047,24 +1065,9 @@ func (r *Reconciler) evidencePass(ctx context.Context, cfg *config.Config, workl
 		}
 		e.freshRank = synth
 
-		decisions := tagpolicy.Evaluate([]string{e.query}, []tagmatcher.RankResult{synth},
-			policyStoreTags, cfg.Enricher.TagMatcher.AutoReplaceSimilarity)
-		d := decisions[0]
-		switch d.Reason {
-		case tagpolicy.ReasonAutoReplace:
-			e.freshVerdict = types.TagVerdicts.Same
-			e.freshModel = policyModel()
-			e.confirmed = true
-			e.reason = string(d.Reason)
-		case tagpolicy.ReasonNegation, tagpolicy.ReasonSharedToken, tagpolicy.ReasonDirection:
-			e.freshVerdict = types.TagVerdicts.Variant
-			e.freshModel = policyModel()
-			e.confirmed = true
-			e.reason = string(d.Reason)
-		case tagpolicy.ReasonBand:
+		decisions := tagpolicy.Evaluate([]string{e.query}, []tagmatcher.RankResult{synth})
+		if decisions[0].Reason == tagpolicy.ReasonBand {
 			bandEntries = append(bandEntries, e)
-		default:
-			e.skipReason = string(d.Reason)
 		}
 	}
 
@@ -1520,10 +1523,6 @@ func (r *Reconciler) tagByName(ctx context.Context, name string) (database.Tag, 
 		return database.Tag{}, false
 	}
 	return tag, true
-}
-
-func policyModel() string {
-	return "policy:" + tagpolicy.Version
 }
 
 func orderedPairKey(a, b string) string {

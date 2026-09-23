@@ -37,6 +37,7 @@
 	let loading = $state(true);
 	let error = $state('');
 	let acting = $state(null);
+	let identityActing = $state(false);
 
 	onMount(load);
 
@@ -87,6 +88,18 @@
 		await load();
 	}
 
+	async function reevaluateIdentity() {
+		identityActing = true;
+		const result = await api.tags.reevaluateIdentity();
+		identityActing = false;
+		if (result.ok) {
+			toastStore.success('Identity adjudication queued');
+		} else {
+			toastStore.error('Failed to queue identity adjudication');
+		}
+		await load();
+	}
+
 	function criterionMark(value) {
 		if (value === true) return '✓';
 		if (value === false) return '✗';
@@ -131,6 +144,16 @@
 				· showing first {formatNumber(tags.length)}{/if}
 		</span>
 	{/if}
+	{#if tags.some((tag) => tag.pending_identity > 0)}
+		<button
+			onclick={reevaluateIdentity}
+			disabled={identityActing}
+			class="{btnGhost} ml-auto"
+			title="Adjudicate the pending identity evidence now instead of waiting for the scheduled sweep"
+		>
+			{identityActing ? 'Queueing…' : 'Reevaluate identity'}
+		</button>
+	{/if}
 </div>
 
 <p class="mb-4 max-w-3xl text-[0.8125rem] text-parchment-500">
@@ -170,6 +193,14 @@
 						· created {new Date(tag.created_at).toLocaleDateString()}
 					</span>
 					<span class={verdictPillClass(tag)} title={verdictTitle(tag)}>{verdictLabel(tag)}</span>
+					{#if tag.pending_identity > 0}
+						<span
+							class={pillWarn}
+							title="This tag is waiting for a same-intent decision; the scheduled sweep resolves it, or trigger the reevaluation"
+						>
+							identity pending
+						</span>
+					{/if}
 				</div>
 				{#if tag.verdict}
 					<div class="mt-2.5 flex flex-wrap items-center gap-1.5">

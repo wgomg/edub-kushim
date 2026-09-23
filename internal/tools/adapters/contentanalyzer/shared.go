@@ -124,7 +124,7 @@ func buildTokenUsageStats(prompt, completion, total int) *json.RawMessage {
 const defaultPromptTemplate = `Analyze the excerpts of a document provided below and extract the following data:
 - Document title: The title as written in the document, in excerpts language, copied verbatim — never invent or append wording of your own; colons and subtitles are legitimate only when the original title itself has one. If no title line appears in the excerpts, use the first substantive line of the text as the title, still copied verbatim. Truncate to 127 characters if longer
 {{.DocTypePrompt}}
-- Tags: Between {{.MinTags}} and {{.MaxTags}} thematic tags describing the document's topics and domains. English only. Each tag is one to three words naming a recognizable subject, field, or period. Tags describe facets the title does not already state. Tags are conceptual categories — fields, domains, disciplines, periods, methods. Tags describe subject matter only; what the document is — its form or genre — belongs in the document type field, never in tags. Tags are never specific people or works. A place may be a tag only when it denotes a country or a continent — including contested or partially recognized states such as 'palestine' or 'taiwan' — never a city, province, region, or other sub-national place. Never merge two distinct concepts into a single tag with a conjunction such as "and", "or", or "vs" — emit each concept as its own tag. Use only widely-recognized standard terminology a general educated audience would know. Prefer the most standard, widely-recognized term for the subject; use a narrower term only when the document is specifically about that subfield. If an existing suggestion tag captures the concept adequately, prefer it over inventing a narrower label. Each tag is an object with keys: term, category, is_standard_term. Category is exactly one of: topic (subject matter), form_genre (what the document is), place, person, work, other. is_standard_term is true only when the term is widely-recognized standard terminology, not a coinage specific to this document. Do not emit tags like these: 'literary anthology' (a form — it belongs in the document type), 'racial scapegoating' (an argument specific to this document, not standard terminology), 'newfoundland' (a sub-national place — only countries and continents may be tags), 'bail spring replacement' (a device detail too narrow for a shared vocabulary).{{.TagsPrompt}}
+- Tags: Between {{.MinTags}} and {{.MaxTags}} thematic tags describing the document's topics and domains. English only. Each tag is one to three words naming a recognizable subject, field, or period. Write each tag in house form: base/lemma form for countable nouns and verbs ('building', not 'buildings'), while established inflected names stand ('data', 'human rights') and lexicalized derivations and gerunds stand ('programming', 'learning'); ordinals and numerals in numeric style ('world war 2', '19th century', never 'world war ii' or 'second world war'); the conventional written form of the term ('c++', not 'c plus plus'); never a dictionary headword substituted for the term's usual name ('data', not 'datum'). Tags describe facets the title does not already state. Tags are conceptual categories — fields, domains, disciplines, periods, methods. Tags describe subject matter only; what the document is — its form or genre — belongs in the document type field, never in tags. Tags are never specific people or works. A place may be a tag only when it denotes a country or a continent — including contested or partially recognized states such as 'palestine' or 'taiwan' — never a city, province, region, or other sub-national place. Never merge two distinct concepts into a single tag with a conjunction such as "and", "or", or "vs" — emit each concept as its own tag. Use only widely-recognized standard terminology a general educated audience would know. Prefer the most standard, widely-recognized term for the subject; use a narrower term only when the document is specifically about that subfield. If an existing suggestion tag captures the concept adequately, prefer it over inventing a narrower label. Each tag is an object with keys: term, category, is_standard_term. Category is exactly one of: topic (subject matter), form_genre (what the document is), place, person, work, other. is_standard_term is true only when the term is widely-recognized standard terminology, not a coinage specific to this document. Do not emit tags like these: 'literary anthology' (a form — it belongs in the document type), 'racial scapegoating' (an argument specific to this document, not standard terminology), 'newfoundland' (a sub-national place — only countries and continents may be tags), 'bail spring replacement' (a device detail too narrow for a shared vocabulary).{{.TagsPrompt}}
 - People: People associated with the document. For each person provide: name (the person's name in their own native script/language — only when you can independently determine it; if you are not confident of the person's actual native form, leave this empty rather than copying how this document renders the name), name_romanized (a Latin-script/romanized form of the name — always provide this, even when name is already in Latin script), and a type from the list below. Only include individuals who play a substantive role in the document's creation, execution, or primary subject matter — exclude incidental mentions. Note: names captured here must NOT be re-used as tags.
 {{.PeoplePrompt}}- Language: 3-letter ISO 639-2 code (e.g. 'eng','spa','jpn','fra','deu','zho','kor','ara','por','rus'). Detect the primary language even from noisy or mixed text. Only use 'und' as a last resort if the text is truly too short or ambiguous to determine.
 Return ONLY a json string without any explanations, numbers, additional text, text formatting or text/code blocks, with keys: title, type, tags (array of objects with keys: term, category, is_standard_term), people (array of objects with keys: name, name_romanized, type), language.
@@ -827,21 +827,32 @@ type TagPairEvidence struct {
 }
 
 type TagVerdictResult struct {
-	Index   int
-	Verdict types.TagVerdict
+	Index     int
+	Verdict   types.TagVerdict
+	Direction string
 }
 
-const AdjudicationSystemMessage = "You are a tag-taxonomy classifier. Decide whether pairs of tag terms denote the same concept."
+// direction answers for a same-intent pair: which term's standard sense is
+// exactly the dimension; a tie leaves the choice to the deterministic
+// tie-break
+const (
+	TagDirectionQuery  = "query"
+	TagDirectionTarget = "target"
+	TagDirectionTie    = "tie"
+)
+
+const AdjudicationSystemMessage = "You are a tag-taxonomy classifier. Decide whether pairs of tag terms denote one value."
 
 func BuildAdjudicationPrompt(pairs []TagPairEvidence) string {
 	var sb strings.Builder
-	sb.WriteString("For each pair below, decide whether the two terms denote the same concept.\n")
-	sb.WriteString("Answer with ONLY a JSON object: {\"pairs\":[{\"index\":0,\"verdict\":\"same\"},...]}, one entry per pair, no explanations.\n")
+	sb.WriteString("For each pair below, decide whether the two terms denote one value: faithful replacement holds when either term can stand for the other without loss or change of meaning.\n")
+	sb.WriteString("Answer with ONLY a JSON object: {\"pairs\":[{\"index\":0,\"verdict\":\"same\",\"direction\":\"query\"},...]}, one entry per pair, no explanations.\n")
 	sb.WriteString("Verdict must be exactly one of:\n")
-	sb.WriteString("- \"same\": the terms denote one concept (synonyms, spelling variants, or exact equivalents)\n")
+	sb.WriteString("- \"same\": the terms denote one value (morphographic variants, spelling variants, or intent-equivalent derivations)\n")
 	sb.WriteString("- \"variant\": closely related but distinct concepts (one is a narrower or broader form of the other)\n")
 	sb.WriteString("- \"related\": related but different concepts\n")
-	sb.WriteString("Use \"same\" only when the terms denote one concept.\n\n")
+	sb.WriteString("Use \"same\" only when faithful replacement holds; when in doubt, answer \"variant\" or \"related\".\n")
+	sb.WriteString("When the verdict is \"same\", also answer which term is the precise one: \"direction\":\"query\" when the query term's standard sense is exactly the dimension, \"direction\":\"target\" when the target term's is, \"direction\":\"tie\" when neither is more precise. A polysemous term loses to the precise one.\n\n")
 	for i, p := range pairs {
 		fmt.Fprintf(&sb, "Pair %d:\n", i)
 		fmt.Fprintf(&sb, "  query: %q\n", p.Query)
@@ -862,8 +873,9 @@ func ParseAdjudicationResponse(content string, n int) ([]TagVerdictResult, error
 	content = utils.CleanCodeBlock(strings.TrimSpace(content))
 	var parsed struct {
 		Pairs []struct {
-			Index   int    `json:"index"`
-			Verdict string `json:"verdict"`
+			Index     int    `json:"index"`
+			Verdict   string `json:"verdict"`
+			Direction string `json:"direction"`
 		} `json:"pairs"`
 	}
 	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
@@ -882,6 +894,10 @@ func ParseAdjudicationResponse(content string, n int) ([]TagVerdictResult, error
 			continue
 		}
 		results[p.Index].Verdict = v
+		switch p.Direction {
+		case TagDirectionQuery, TagDirectionTarget, TagDirectionTie:
+			results[p.Index].Direction = p.Direction
+		}
 	}
 	return results, nil
 }
@@ -1070,6 +1086,121 @@ func ParseTagQualityResponse(content string, n int) ([]TagQualityResult, error) 
 	}
 	if len(missing) > 0 {
 		return results, fmt.Errorf("incomplete tag quality response: no verdict for candidate indices %v", missing)
+	}
+	return results, nil
+}
+
+type TagIdentityCandidate struct {
+	Index        int
+	Term         string
+	ProposedFold string
+}
+
+type TagIdentityResult struct {
+	Index                   int
+	FoldToBase              bool
+	FoldPreservesDenotation bool
+	ConventionalForm        bool
+}
+
+// the persisted wire shape of one candidate's identity verdict; pointer
+// fields distinguish an omitted key from an explicit false
+type TagIdentityCriteria struct {
+	FoldToBase              *bool `json:"fold_to_base"`
+	FoldPreservesDenotation *bool `json:"fold_preserves_denotation"`
+	ConventionalForm        *bool `json:"conventional_form"`
+}
+
+func (r TagIdentityResult) Criteria() TagIdentityCriteria {
+	return TagIdentityCriteria{
+		FoldToBase:              &r.FoldToBase,
+		FoldPreservesDenotation: &r.FoldPreservesDenotation,
+		ConventionalForm:        &r.ConventionalForm,
+	}
+}
+
+// the three criterion answers plus the fold the mechanism proposed
+func (r TagIdentityResult) CriteriaRecord(proposedFold string) []byte {
+	record := struct {
+		TagIdentityCriteria
+		ProposedFold string `json:"proposed_fold,omitempty"`
+	}{TagIdentityCriteria: r.Criteria(), ProposedFold: proposedFold}
+	raw, err := json.Marshal(record)
+	if err != nil {
+		return []byte("{}")
+	}
+	return raw
+}
+
+func (c TagIdentityCriteria) Complete() bool {
+	return c.FoldToBase != nil && c.FoldPreservesDenotation != nil && c.ConventionalForm != nil
+}
+
+func (c TagIdentityCriteria) String() string {
+	return fmt.Sprintf("fold_to_base=%t fold_preserves_denotation=%t conventional_form=%t",
+		c.FoldToBase != nil && *c.FoldToBase,
+		c.FoldPreservesDenotation != nil && *c.FoldPreservesDenotation,
+		c.ConventionalForm != nil && *c.ConventionalForm)
+}
+
+const TagIdentitySystemMessage = "You are a tag-identity judge. Decide the canonical written form of each tag term."
+
+func BuildTagIdentityPrompt(candidates []TagIdentityCandidate) string {
+	var sb strings.Builder
+	sb.WriteString("For each candidate tag term below, answer three yes/no questions about its canonical written form.\n")
+	sb.WriteString("1. fold_to_base: should the term be written in its base form? A relational adjective falls to its noun when it denotes the same thing (chilean -> chile). An inflected form stands when it is the established name of the sense (data, human rights) or denotes a different sense than the base (arms is not arm). Lexicalized derivations and gerunds stand (programming, learning, running); a derived word that names its own concept is never reduced to a root. Answer false when the term already stands or its proposed fold would cross denotation.\n")
+	sb.WriteString("2. fold_preserves_denotation: does the proposed fold preserve the term's denotation, without generalizing, specializing, or merging sibling concepts? Answer true when no fold is proposed.\n")
+	sb.WriteString("3. conventional_form: is the term written in the conventional form its domain uses? Spelled-out symbols are not conventional (c plus plus should be c++). Answer true when the term is already conventional.\n")
+	sb.WriteString("Answer with ONLY a JSON object: {\"terms\":[{\"index\":0,\"fold_to_base\":false,\"fold_preserves_denotation\":true,\"conventional_form\":true},...]}, one entry per candidate, no explanations.\n\n")
+	sb.WriteString("Candidate terms:\n")
+	for _, c := range candidates {
+		fmt.Fprintf(&sb, "Tag %d: term=%q", c.Index, c.Term)
+		if c.ProposedFold != "" && c.ProposedFold != c.Term {
+			fmt.Fprintf(&sb, " proposed_fold=%q", c.ProposedFold)
+		}
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
+// returns an error when any candidate lacks a fully specified verdict: a
+// zero-valued result must never be read as an all-criteria-false rejection
+func ParseTagIdentityResponse(content string, n int) ([]TagIdentityResult, error) {
+	content = utils.CleanCodeBlock(strings.TrimSpace(content))
+	var parsed struct {
+		Terms []struct {
+			Index int `json:"index"`
+			TagIdentityCriteria
+		} `json:"terms"`
+	}
+	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+		return nil, fmt.Errorf("parse tag identity response: %w", err)
+	}
+	results := make([]TagIdentityResult, n)
+	present := make([]bool, n)
+	for i := range results {
+		results[i].Index = i
+	}
+	for _, t := range parsed.Terms {
+		if t.Index < 0 || t.Index >= n || !t.Complete() {
+			continue
+		}
+		results[t.Index] = TagIdentityResult{
+			Index:                   t.Index,
+			FoldToBase:              *t.FoldToBase,
+			FoldPreservesDenotation: *t.FoldPreservesDenotation,
+			ConventionalForm:        *t.ConventionalForm,
+		}
+		present[t.Index] = true
+	}
+	var missing []int
+	for i, ok := range present {
+		if !ok {
+			missing = append(missing, i)
+		}
+	}
+	if len(missing) > 0 {
+		return results, fmt.Errorf("incomplete tag identity response: no verdict for candidate indices %v", missing)
 	}
 	return results, nil
 }

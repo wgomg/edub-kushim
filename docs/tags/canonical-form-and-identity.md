@@ -215,8 +215,12 @@ Behavior references for annotation; the gray rows are where review lands.
    accumulated gate labels, not assumed.
 3. **Criteria and calibration** — criteria wording, pinned versions, and any thresholds
    are the calibration layer's subject (definition §8.9), not this spec's.
-4. **Alias representation** — schema work; the semantics are fixed in M5.
-5. **Package selection** — the lemmatizer and stemmer roles are fixed here; the
-   packages belong to the tooling register and the implementation plan.
+4. **Alias representation** — implemented as `tag_alias` (`alias_name` unique →
+   `canonical_tag_id` with `ON DELETE CASCADE`, rule-set version): canonical-only
+   by construction, since alias rows never enter the embedding store. The
+   semantics are fixed in M5.
+5. **Package selection** — the lemmatizer is `golem/v4` with the English
+   dictionary and the stemmer is `blevesearch/snowballstem` (English); their
+   roles are fixed here. Changing either is a rule-set version event.
 6. **Legacy cleanup** — non-English and longer-than-three-word rows (out of scope here,
    separate plan).

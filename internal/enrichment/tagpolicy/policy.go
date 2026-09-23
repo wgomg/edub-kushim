@@ -1,8 +1,6 @@
 package tagpolicy
 
 import (
-	"strings"
-
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/tagmatcher"
 )
 
@@ -22,10 +20,6 @@ type Reason string
 
 const (
 	ReasonIdentity     Reason = "identity"
-	ReasonAutoReplace  Reason = "auto_replace"
-	ReasonNegation     Reason = "negation_guard"
-	ReasonSharedToken  Reason = "shared_token_guard"
-	ReasonDirection    Reason = "direction_guard"
 	ReasonBand         Reason = "ambiguous_band"
 	ReasonNoCandidates Reason = "no_candidates"
 	ReasonShortSlice   Reason = "short_slice"
@@ -41,17 +35,15 @@ type Decision struct {
 	Reason      Reason
 }
 
-var negationPrefixes = []string{"anti", "contra", "non"}
-
-func Evaluate(queries []string, ranked []tagmatcher.RankResult, storeTags map[string]struct{}, autoReplaceSim float64) []Decision {
+func Evaluate(queries []string, ranked []tagmatcher.RankResult) []Decision {
 	decisions := make([]Decision, len(queries))
 	for i, query := range queries {
-		decisions[i] = evaluate(query, ranked, i, storeTags, autoReplaceSim)
+		decisions[i] = evaluate(query, ranked, i)
 	}
 	return decisions
 }
 
-func evaluate(query string, ranked []tagmatcher.RankResult, i int, storeTags map[string]struct{}, autoReplaceSim float64) Decision {
+func evaluate(query string, ranked []tagmatcher.RankResult, i int) Decision {
 	d := Decision{Query: query, Output: query, Action: ActionPassthrough, Reason: ReasonShortSlice}
 	if i >= len(ranked) {
 		return d
@@ -79,74 +71,6 @@ func evaluate(query string, ranked []tagmatcher.RankResult, i int, storeTags map
 
 	d.Output = ranked[i].KeptName
 	d.Action = ActionKeep
-
-	qset := tokenSet(query)
-	tset := tokenSet(cand.Tag)
-
-	switch {
-	case hasNegationMark(query, storeTags) != hasNegationMark(cand.Tag, storeTags):
-		d.Reason = ReasonNegation
-	// only partial overlap counts: when the query's tokens are all contained
-	// in the candidate's, the direction guard below handles it; the reverse
-	// containment is deliberately left to the bands
-	case overlaps(qset, tset) && !strictSubset(qset, tset) && !strictSubset(tset, qset):
-		d.Reason = ReasonSharedToken
-	case strictSubset(qset, tset):
-		d.Reason = ReasonDirection
-	case cand.Similarity >= autoReplaceSim:
-		d.Output = cand.Tag
-		d.Action = ActionReplace
-		d.Reason = ReasonAutoReplace
-	default:
-		d.Reason = ReasonBand
-	}
+	d.Reason = ReasonBand
 	return d
-}
-
-func tokenSet(name string) map[string]struct{} {
-	tokens := strings.Fields(name)
-	set := make(map[string]struct{}, len(tokens))
-	for _, t := range tokens {
-		set[t] = struct{}{}
-	}
-	return set
-}
-
-func hasNegationMark(name string, storeTags map[string]struct{}) bool {
-	for tok := range strings.FieldsSeq(name) {
-		for _, prefix := range negationPrefixes {
-			if tok == prefix {
-				return true
-			}
-			remainder := strings.TrimPrefix(tok, prefix)
-			if remainder == tok || remainder == "" {
-				continue
-			}
-			if _, ok := storeTags[remainder]; ok {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func overlaps(a, b map[string]struct{}) bool {
-	for tok := range a {
-		if _, ok := b[tok]; ok {
-			return true
-		}
-	}
-	return false
-}
-
-func strictSubset(a, b map[string]struct{}) bool {
-	if len(a) == 0 || len(a) >= len(b) {
-		return false
-	}
-	for tok := range a {
-		if _, ok := b[tok]; !ok {
-			return false
-		}
-	}
-	return true
 }

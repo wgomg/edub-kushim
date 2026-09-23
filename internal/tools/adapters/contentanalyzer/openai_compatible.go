@@ -388,6 +388,28 @@ func (l *LlmOpenAiCompatible) JudgeTagQuality(ctx context.Context, text string, 
 	return ParseTagQualityResponse(responseContent, len(candidates))
 }
 
+func (l *LlmOpenAiCompatible) JudgeTagIdentity(ctx context.Context, candidates []TagIdentityCandidate) ([]TagIdentityResult, error) {
+	prompt := BuildTagIdentityPrompt(candidates)
+
+	if err := checkContentTooLarge(l.caps, TagIdentitySystemMessage+"\n"+prompt); err != nil {
+		return nil, err
+	}
+
+	reqBody := l.buildRequestBody(TagIdentitySystemMessage, prompt, "", 0)
+
+	chatResp, err := l.doRequest(ctx, reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("tag identity judge: %w", err)
+	}
+
+	if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message.Content == "" {
+		return nil, fmt.Errorf("empty response from LLM")
+	}
+
+	responseContent := strings.TrimSpace(chatResp.Choices[0].Message.Content)
+	return ParseTagIdentityResponse(responseContent, len(candidates))
+}
+
 func (l *LlmOpenAiCompatible) Name() string {
 	return "openai-compatible"
 }

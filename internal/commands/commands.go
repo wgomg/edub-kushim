@@ -100,6 +100,11 @@ var commandSets = map[string]map[string]Command{
 			Description: "Measure the tag store's extension algebra into versioned evidence records",
 			Handler:     tagMeasureHandler,
 		},
+		"tagidentity": {
+			Name:        "tagidentity",
+			Description: "Adjudicate pending tag identity evidence and apply its dispositions",
+			Handler:     tagIdentityHandler,
+		},
 	},
 	"server": {
 		"version": {

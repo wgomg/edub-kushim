@@ -76,22 +76,28 @@ and `max_tags`, default 3–5, and capped at `max_tags` by the filter):
 3. The matcher daemon ranks each name against the tag store and returns up to
    two candidates with similarity scores, all at or above the **consideration
    floor** (`consolidation_similarity`, 0.80 for bge-m3).
-4. The enricher's policy decides, in order:
+4. The enricher resolves identity before any judging: names are normalized and
+   brought to house form (M1: word ordinals and roman numerals become numeric,
+   `world war ii` → `world war 2`), alias names resolve to their canonical
+   value, and key-equal names (M3) apply the existing label. Similarity ranks
+   candidate neighbours but never replaces or keeps on its own:
 
 | Rule | Outcome | Catches |
 | ---- | ------- | ------- |
-| Exact identity with a store tag | replace | the 87% — casing, hyphenation, and symbol-form fixes |
-| Negation guard — exactly one side carries `anti`/`contra`/`non` | keep | antonym flips in both directions, including closed compounds (`antifascism` → `fascism`) |
-| Shared-token guard — the two names share tokens | keep | lexical collisions (`access control` / `remote control`) |
-| Direction guard — query tokens a strict subset of the target's | keep | parent starvation (`democracy` kept over `direct democracy`); the broader term is born |
-| Guard-free candidate at or above `auto_replace_similarity` (0.95, bge-m3) | replace | true synonyms close to identity |
-| Anything else — the ambiguous band | keep (or adjudicate, below) | the 0.80–0.95 residual |
+| Alias lookup — the name is a `tag_alias` row | apply the canonical value | names that already lost a same-intent decision |
+| Key equality (M3) — house form matches a store tag | apply the store label | style variants (`nineteenth century` / `19th century`) |
+| Exact identity with a store tag | apply the store label | casing, hyphenation, and symbol-form fixes after normalization |
+| Flagged fold — a mechanically proposed reduction (M2) | judged: base form (J1), fold gate (J2), conventional form (J5); the fold applies only when all three confirm | inflections (`buildings` → `building`), relational adjectives, conventional forms (`c plus plus` → `c++`) |
+| Any other candidate neighbour — the same-intent gate | judged (J3) with a direction (J4): `same` aliases the loser onto the winner (a store label that loses becomes the alias), `variant`/`related` register both | the residual band and shape-related pairs |
+| No judge available | the claim waits: the candidate registers provisionally with a pending identity-evidence row | adjudicator disabled or unreachable |
 
-Both thresholds are model-derived internals (not YAML-settable); see
-[matcher.md](matcher.md) for the per-model values and the derivation.
+The consideration floor (`consolidation_similarity`, 0.80 for bge-m3) is a
+model-derived internal (not YAML-settable); the former auto-replace cutoff no
+longer decides anything. See [matcher.md](matcher.md) for the per-model value
+and the derivation.
 
-Every decision is logged in the kushim (enrichment) log as
-`consolidation[v1]: replace|keep|passthrough <tag> … reason=…`, so the policy's
+Every identity disposition is logged in the kushim (enrichment) log
+(`identity[v0]: apply|alias|defer|separate <name> …`), so the pipeline's
 behavior is auditable after the fact — and so the reconciliation task can
 recover history the database never captured.
 
@@ -131,13 +137,17 @@ single tag that the matcher can never match cleanly.
 
 ## LLM adjudication (opt-in)
 
-The ambiguous band is where similarity alone cannot decide. With
-`enricher.tag_adjudicator.enabled: true` (default `false`), the enricher
-resolves it with one cheap LLM classification per document:
+Identity is where similarity alone cannot decide. With
+`enricher.tag_adjudicator.enabled: true` (default `false`), the gate resolves
+proposed folds and candidate neighbours with LLM calls:
 
-- **Verdicts**: `same` (one concept → replace the emitted tag with the
+- **Folds**: one identity call per flagged candidate answers the three binary
+  canonical-form criteria (base form, fold preservation, conventional written
+  form); the fold applies only when all three confirm.
+- **Verdicts**: `same` (one value → the losing name becomes an alias of the
   canonical target), `variant` (broader/narrower → keep, the tag is born),
-  `related` (different concepts → keep).
+  `related` (different concepts → keep); for `same` the call also names the
+  precise term (`query`, `target`, or `tie`, with lexical order breaking ties).
 - **Cache**: every verdict is stored in the `tag_verdict_event` table keyed by
   `(query, target, policy_version)`. A repeat pair resolves from the cache with
   no LLM call, whichever document produced it.
@@ -367,7 +377,7 @@ All three blocks are also editable on the Settings page ("Tag adjudicator",
 "Tag quality", and "Tag reconciliation" cards), including an "Inherit from
 content analyzer" option for the judge LLMs — leaving the LLM fields empty
 follows the content analyzer's model even after it changes. The similarity
-thresholds (`consolidation_similarity`, `auto_replace_similarity`) and the
+floor (`consolidation_similarity`), the identity rule-set version, and the
 quality band constants are internals — see [matcher.md](matcher.md).
 
 ---
@@ -380,9 +390,11 @@ quality band constants are internals — see [matcher.md](matcher.md).
   on demand, and enable reconciliation when you want automatic healing. Both
   features default to off so an upgrade never silently changes tag behavior or
   adds LLM cost.
-- **While the adjudicator is off**, the ambiguous band keeps: the store grows
-  faster with near-duplicates. That is the accepted safe direction, and the
-  merge-review surface is the manual valve.
+- **While the adjudicator is off**, claims wait: folds are not applied and
+  same-intent pairs leave pending identity evidence with their candidates born
+  provisional (resolvable later by `POST /api/v1/tags/identity/reevaluate` or
+  the reconciliation sweep). The store grows faster with near-duplicates — the
+  accepted safe direction — and the merge-review surface is the manual valve.
 - **Provisional review**: with the quality judge on, new names stay provisional
   until promoted and show up in the tags page's "New tags" tab. The
   reconciliation run's provisional sweep promotes or defers them automatically

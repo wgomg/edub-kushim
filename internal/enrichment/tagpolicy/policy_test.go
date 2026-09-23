@@ -6,14 +6,6 @@ import (
 	"github.com/wgomg/edub-kushim/internal/tools/adapters/tagmatcher"
 )
 
-func storeSet(names ...string) map[string]struct{} {
-	s := make(map[string]struct{}, len(names))
-	for _, n := range names {
-		s[n] = struct{}{}
-	}
-	return s
-}
-
 func mkResult(kept string, cands ...tagmatcher.Candidate) tagmatcher.RankResult {
 	return tagmatcher.RankResult{KeptName: kept, Candidates: cands}
 }
@@ -23,16 +15,11 @@ func cand(tag string, sim float64) tagmatcher.Candidate {
 }
 
 func TestEvaluate(t *testing.T) {
-	// auto-replace cutoff shared across the table; band-boundary cases pin sim
-	// just below and at/above it.
-	const cutoff = 0.90
-
 	tests := []struct {
-		name      string
-		queries   []string
-		ranked    []tagmatcher.RankResult
-		storeTags map[string]struct{}
-		want      []Decision
+		name    string
+		queries []string
+		ranked  []tagmatcher.RankResult
+		want    []Decision
 	}{
 		{
 			name:    "short slice falls back to query",
@@ -60,7 +47,6 @@ func TestEvaluate(t *testing.T) {
 				{Query: "foo", Output: "foo", Action: ActionPassthrough, Reason: ReasonNoCandidates},
 			},
 		},
-
 		{
 			name:    "identity replaces with sim and runner recorded",
 			queries: []string{"foo"},
@@ -71,121 +57,50 @@ func TestEvaluate(t *testing.T) {
 				{Query: "foo", Output: "foo", Target: "foo", Sim: 1.0, RunnerUpSim: 0.5, Action: ActionReplace, Reason: ReasonIdentity},
 			},
 		},
-
 		{
-			name:      "negation spaced first token blocks flip",
-			queries:   []string{"anti fascism"},
-			ranked:    []tagmatcher.RankResult{mkResult("anti fascism", cand("fascism", 0.95))},
-			storeTags: storeSet("fascism"),
+			name:    "candidate neighbour is a band subject",
+			queries: []string{"foo"},
+			ranked: []tagmatcher.RankResult{
+				mkResult("foo", cand("foobar", 0.92), cand("bar", 0.5)),
+			},
 			want: []Decision{
-				{Query: "anti fascism", Output: "anti fascism", Target: "fascism", Sim: 0.95, Action: ActionKeep, Reason: ReasonNegation},
+				{Query: "foo", Output: "foo", Target: "foobar", Sim: 0.92, RunnerUpSim: 0.5, Action: ActionKeep, Reason: ReasonBand},
 			},
 		},
 		{
-			name:      "negation closed compound blocks flip when remainder is a store tag",
-			queries:   []string{"antifascism"},
-			ranked:    []tagmatcher.RankResult{mkResult("antifascism", cand("fascism", 0.92))},
-			storeTags: storeSet("fascism"),
+			name:    "high similarity stays a band subject",
+			queries: []string{"social revolution"},
+			ranked:  []tagmatcher.RankResult{mkResult("social revolution", cand("revolution", 0.99))},
 			want: []Decision{
-				{Query: "antifascism", Output: "antifascism", Target: "fascism", Sim: 0.92, Action: ActionKeep, Reason: ReasonNegation},
+				{Query: "social revolution", Output: "social revolution", Target: "revolution", Sim: 0.99, Action: ActionKeep, Reason: ReasonBand},
 			},
 		},
 		{
-			name:      "negation remainder absent from store does not block",
-			queries:   []string{"antifascist"},
-			ranked:    []tagmatcher.RankResult{mkResult("antifascist", cand("fascism", 0.92))},
-			storeTags: storeSet("fascism"), // not "fascist"
-			want: []Decision{
-				{Query: "antifascist", Output: "fascism", Target: "fascism", Sim: 0.92, Action: ActionReplace, Reason: ReasonAutoReplace},
-			},
-		},
-		{
-			name:      "negation both sides marked does not block",
-			queries:   []string{"anti capitalism"},
-			ranked:    []tagmatcher.RankResult{mkResult("anti capitalism", cand("anti fascism", 0.95))},
-			storeTags: storeSet("capitalism", "fascism"),
-			want: []Decision{
-				{Query: "anti capitalism", Output: "anti capitalism", Target: "anti fascism", Sim: 0.95, Action: ActionKeep, Reason: ReasonSharedToken},
-			},
-		},
-		{
-			name:      "non prefix standalone blocks",
-			queries:   []string{"non violence"},
-			ranked:    []tagmatcher.RankResult{mkResult("non violence", cand("violence", 0.95))},
-			storeTags: storeSet("violence"),
-			want: []Decision{
-				{Query: "non violence", Output: "non violence", Target: "violence", Sim: 0.95, Action: ActionKeep, Reason: ReasonNegation},
-			},
-		},
-
-		{
-			name:    "partial token overlap blocks",
+			name:    "partial token overlap stays a band subject",
 			queries: []string{"access control"},
 			ranked:  []tagmatcher.RankResult{mkResult("access control", cand("remote control", 0.92))},
 			want: []Decision{
-				{Query: "access control", Output: "access control", Target: "remote control", Sim: 0.92, Action: ActionKeep, Reason: ReasonSharedToken},
+				{Query: "access control", Output: "access control", Target: "remote control", Sim: 0.92, Action: ActionKeep, Reason: ReasonBand},
 			},
 		},
 		{
-			name:    "equal token sets with different word order block",
-			queries: []string{"labor movement"},
-			ranked:  []tagmatcher.RankResult{mkResult("labor movement", cand("movement labor", 0.95))},
+			name:    "negation pair stays a band subject",
+			queries: []string{"anti fascism"},
+			ranked:  []tagmatcher.RankResult{mkResult("anti fascism", cand("fascism", 0.95))},
 			want: []Decision{
-				{Query: "labor movement", Output: "labor movement", Target: "movement labor", Sim: 0.95, Action: ActionKeep, Reason: ReasonSharedToken},
+				{Query: "anti fascism", Output: "anti fascism", Target: "fascism", Sim: 0.95, Action: ActionKeep, Reason: ReasonBand},
 			},
 		},
-
 		{
-			name:    "query strict subset of target keeps so parent is born",
+			name:    "subset direction stays a band subject",
 			queries: []string{"democracy"},
 			ranked:  []tagmatcher.RankResult{mkResult("democracy", cand("direct democracy", 0.89))},
 			want: []Decision{
-				{Query: "democracy", Output: "democracy", Target: "direct democracy", Sim: 0.89, Action: ActionKeep, Reason: ReasonDirection},
+				{Query: "democracy", Output: "democracy", Target: "direct democracy", Sim: 0.89, Action: ActionKeep, Reason: ReasonBand},
 			},
 		},
 		{
-			name:    "target strict subset of query falls to band keep",
-			queries: []string{"social revolution"},
-			ranked:  []tagmatcher.RankResult{mkResult("social revolution", cand("revolution", 0.85))},
-			want: []Decision{
-				{Query: "social revolution", Output: "social revolution", Target: "revolution", Sim: 0.85, Action: ActionKeep, Reason: ReasonBand},
-			},
-		},
-		{
-			name:    "target strict subset above cutoff replaces",
-			queries: []string{"social revolution"},
-			ranked:  []tagmatcher.RankResult{mkResult("social revolution", cand("revolution", 0.92))},
-			want: []Decision{
-				{Query: "social revolution", Output: "revolution", Target: "revolution", Sim: 0.92, Action: ActionReplace, Reason: ReasonAutoReplace},
-			},
-		},
-
-		{
-			name:    "guard-free below cutoff keeps in band",
-			queries: []string{"foo"},
-			ranked:  []tagmatcher.RankResult{mkResult("foo", cand("foobar", cutoff-0.01))},
-			want: []Decision{
-				{Query: "foo", Output: "foo", Target: "foobar", Sim: cutoff - 0.01, Action: ActionKeep, Reason: ReasonBand},
-			},
-		},
-		{
-			name:    "guard-free at cutoff replaces",
-			queries: []string{"foo"},
-			ranked:  []tagmatcher.RankResult{mkResult("foo", cand("foobar", cutoff))},
-			want: []Decision{
-				{Query: "foo", Output: "foobar", Target: "foobar", Sim: cutoff, Action: ActionReplace, Reason: ReasonAutoReplace},
-			},
-		},
-		{
-			name:    "guard-free above cutoff replaces",
-			queries: []string{"foo"},
-			ranked:  []tagmatcher.RankResult{mkResult("foo", cand("foobar", cutoff+0.02))},
-			want: []Decision{
-				{Query: "foo", Output: "foobar", Target: "foobar", Sim: cutoff + 0.02, Action: ActionReplace, Reason: ReasonAutoReplace},
-			},
-		},
-		{
-			name:    "disjoint guard-free below cutoff keeps in band",
+			name:    "disjoint candidate stays a band subject",
 			queries: []string{"foo"},
 			ranked:  []tagmatcher.RankResult{mkResult("foo", cand("bar", 0.5))},
 			want: []Decision{
@@ -196,7 +111,7 @@ func TestEvaluate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := Evaluate(tt.queries, tt.ranked, tt.storeTags, cutoff)
+			got := Evaluate(tt.queries, tt.ranked)
 			assertDecisions(t, got, tt.want)
 		})
 	}
