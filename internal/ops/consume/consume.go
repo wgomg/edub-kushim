@@ -1,0 +1,770 @@
+package consume
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/wgomg/edub-kushim/internal/config"
+	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/documents/consumption"
+	"github.com/wgomg/edub-kushim/internal/log"
+	"github.com/wgomg/edub-kushim/internal/ops/container"
+	"github.com/wgomg/edub-kushim/internal/ops/flags"
+	"github.com/wgomg/edub-kushim/internal/service"
+	"github.com/wgomg/edub-kushim/internal/task"
+	"github.com/wgomg/edub-kushim/internal/types"
+)
+
+const (
+	heartbeatInterval = 5 * time.Second
+)
+
+var ErrBatchPaused = errors.New("batch paused due to LLM credit/balance error")
+
+func watchSignals(ctx context.Context, cancel context.CancelFunc) {
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	go func() {
+		select {
+		case <-sigCh:
+			cancel()
+		case <-ctx.Done():
+		}
+		signal.Stop(sigCh)
+	}()
+}
+
+func Run(c *container.Container, args []string) error {
+	if len(args) > 0 && args[0] == "cancel" {
+		return consumeCancelHandler(c, args[1:])
+	}
+
+	fp := flags.NewFlagParser(args)
+
+	if fp.Help("Usage: kushim consume [--batch <id>]\n" +
+		"  Scan inbox, create one task per file, and process them.\n" +
+		"  Streams per-file progress to stdout.\n\n" +
+		"  Prerequisite: kushim hugot must be running (sibling process).\n" +
+		"  Start it in a separate terminal or via systemd before running consume.\n\n" +
+		"  --batch <id>      resume processing of an existing batch\n" +
+		"  --force           override stale PID file lock\n\n" +
+		"Subcommands:\n" +
+		"  cancel <id>       cancel a running batch") {
+		return nil
+	}
+
+	var batchIDParam string
+	fp.String("--batch", &batchIDParam)
+
+	force := false
+	fp.Bool("--force", &force)
+
+	if rest := fp.Rest(); len(rest) > 0 {
+		return fmt.Errorf("unknown flag: %s", rest[0])
+	}
+
+	p, err := c.GetPool("consume")
+	if err != nil {
+		return fmt.Errorf("failed to get pool: %w", err)
+	}
+
+	client, err := c.GetClient()
+	if err != nil {
+		return fmt.Errorf("failed to get database: %w", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	allTools := config.MissingExternalTools(c.GetConfig())
+	missingTools := config.FilterToolErrors(allTools)
+	if len(missingTools) > 0 {
+		printToolBlock(missingTools)
+	}
+
+	if batchIDParam != "" {
+		if len(missingTools) > 0 {
+			tasks, listErr := task.ListFiltered(ctx, client.Queries, task.TaskFilter{
+				BatchID: batchIDParam,
+			})
+			hasConsumeTasks := false
+			if listErr == nil {
+				for _, t := range tasks {
+					if t.TaskType == types.Task.Type.Consume {
+						hasConsumeTasks = true
+						break
+					}
+				}
+			}
+			if hasConsumeTasks || listErr != nil {
+				return fmt.Errorf("consume blocked: missing required external tools")
+			}
+		}
+
+		batch, batchErr := client.Queries.GetBatch(ctx, batchIDParam)
+		if batchErr == nil && batch.Status == types.Batch.Status.Paused {
+			fmt.Printf("Batch %s is paused due to an LLM provider credit/balance error.\n", batchIDParam)
+			fmt.Printf("Resolve the billing issue, then re-queue the batch and run this command again.\n")
+			return nil
+		}
+
+		batchSource := types.Batch.Source.CLI
+		if batchErr == nil {
+			batchSource = batch.Source
+		}
+
+		ownerID := uuid.New().String()
+		pid := os.Getpid()
+		owner := task.NewOwner(client, ownerID, pid, c.GetLogger(), c.GetConfig().Consumer.Reclaim.MaxRetries)
+		c.GetLogger().Info(nil, "consume: acquiring batch %s (PID=%d, ownerID=%s)", batchIDParam, pid, ownerID)
+
+		if err := owner.Acquire(ctx, batchIDParam, task.StaleAfter); err == task.ErrBatchLocked {
+			if !force {
+				bo, boErr := client.GetBatchOwner(ctx, batchIDParam)
+				if boErr == nil {
+					return fmt.Errorf("batch %s is being processed by PID %d (use --force to override)", batchIDParam, bo.Pid)
+				}
+				return fmt.Errorf("batch %s is being processed by another process (use --force to override)", batchIDParam)
+			}
+			if err := owner.AcquireForce(ctx, batchIDParam); err != nil {
+				return fmt.Errorf("force acquire: %w", err)
+			}
+		} else if err != nil {
+			return fmt.Errorf("acquire batch %s: %w", batchIDParam, err)
+		}
+
+		c.GetLogger().Debug(nil, "consume: GOMAXPROCS=%d", runtime.GOMAXPROCS(0))
+
+		reset, _ := owner.ResetProcessingByBatch(ctx, batchIDParam)
+		if reset > 0 {
+			fmt.Printf("  reset %d orphaned processing tasks\n", reset)
+		}
+		if err := consumption.QuarantineFailedFiles(ctx, client.Queries, c.GetConfig().Storage.StorageDir, c.GetLogger(), batchIDParam); err != nil {
+			c.GetLogger().Error(nil, "quarantine files for batch %s: %v", batchIDParam, err)
+		}
+
+		ep, err := c.GetPool("enrich")
+		if err != nil {
+			return fmt.Errorf("failed to get enrich pool: %w", err)
+		}
+
+		tp, err := c.GetPool("thumbnail")
+		if err != nil {
+			return fmt.Errorf("failed to get thumbnail pool: %w", err)
+		}
+
+		bp, err := c.GetPool("thumbbackfill")
+		if err != nil {
+			return fmt.Errorf("failed to get thumbbackfill pool: %w", err)
+		}
+
+		if err := c.SetRunnerOwnerID(ownerID); err != nil {
+			return fmt.Errorf("set runner owner: %w", err)
+		}
+
+		watchSignals(ctx, cancel)
+
+		hb := task.NewHeartbeat(owner, heartbeatInterval, c.GetLogger())
+		hb.Start(ctx)
+
+		err = pollBatch(ctx, client.Queries, p, ep, tp, bp, c.GetLogger(), batchIDParam, batchSource)
+		if err == nil {
+			batchSvc := service.NewBatch(client, c.GetConfig().Consumer.Reclaim.MaxRetries)
+			if setErr := setBatchTerminalStatus(ctx, client.Queries, batchSvc, batchIDParam); setErr != nil {
+				c.GetLogger().Error(nil, "set batch terminal status %s: %v", batchIDParam, setErr)
+			}
+		} else if errors.Is(err, ErrBatchPaused) {
+			err = nil
+		}
+
+		triggerOrphanScan(c)
+
+		hb.Stop()
+		relCtx, relCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if relErr := owner.Release(relCtx, batchIDParam); relErr != nil {
+			c.GetLogger().Error(nil, "release batch %s: %v", batchIDParam, relErr)
+		}
+		relCancel()
+
+		return err
+	}
+
+	printOcrmypdfAdvisory(c.GetConfig(), allTools)
+
+	if len(missingTools) > 0 {
+		return fmt.Errorf("consume blocked: missing required external tools")
+	}
+
+	pausedIDs, err := client.Queries.ListPausedBatches(ctx)
+	if err != nil {
+		return fmt.Errorf("check paused batches: %w", err)
+	}
+	if len(pausedIDs) > 0 {
+		return fmt.Errorf(
+			"%d paused batch(es) exist due to LLM credit/balance errors: %s\n"+
+				"Resolve the billing issue, then resume or cancel each paused batch before creating new ones.",
+			len(pausedIDs), strings.Join(pausedIDs, ", "),
+		)
+	}
+
+	files, err := consumption.GetFiles(
+		c.GetConfig().Storage.ConsumptionDir,
+		c.GetConfig().Consumer.SupportedFiles,
+		c.GetConfig().Consumer.MaxFilesPerBatch,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to scan inbox: %w", err)
+	}
+
+	if len(files) == 0 {
+		fmt.Println("No files found in consumption directory")
+		return nil
+	}
+
+	dispatcher, err := c.GetDispatcher()
+	if err != nil {
+		return fmt.Errorf("failed to get dispatcher: %w", err)
+	}
+
+	batchID := uuid.New().String()
+	enqueued := 0
+	thumbnailsEnabled := c.GetConfig().Consumer.Thumbnail.Enabled
+	for i, f := range files {
+		consumeTaskID := uuid.New().String()
+		enrichTaskID := uuid.New().String()
+		thumbnailTaskID := uuid.New().String()
+		documentID := uuid.New().String()
+
+		consumePayloadMap := map[string]any{
+			"file_path":    f.OriginalPath,
+			"file_index":   i + 1,
+			"on_completed": enrichTaskID,
+			"document_id":  documentID,
+		}
+		if thumbnailsEnabled {
+			consumePayloadMap["on_completed_thumbnail"] = thumbnailTaskID
+		}
+		consumePayload, _ := json.Marshal(consumePayloadMap)
+		_, err := dispatcher.Enqueue(ctx, types.Task.Type.Consume, batchID, consumePayload, consumeTaskID)
+		if err != nil {
+			c.GetLogger().Error(&documentID, "enqueue %s: %v", f.OriginalPath, err)
+			continue
+		}
+		enqueued++
+
+		enrichPayload, _ := json.Marshal(map[string]any{
+			"waiting_for": consumeTaskID,
+			"file_name":   filepath.Base(f.OriginalPath),
+			"file_index":  i + 1,
+		})
+		if _, err := dispatcher.Enqueue(ctx, types.Task.Type.Enrich, batchID, enrichPayload, enrichTaskID, types.Task.Status.Waiting); err != nil {
+			c.GetLogger().Error(&documentID, "create enrich task for %s: %v", f.OriginalPath, err)
+		}
+
+		if thumbnailsEnabled {
+			thumbnailPayload, _ := json.Marshal(map[string]any{
+				"waiting_for": consumeTaskID,
+				"file_name":   filepath.Base(f.OriginalPath),
+				"file_index":  i + 1,
+			})
+			if _, err := dispatcher.Enqueue(ctx, types.Task.Type.Thumbnail, batchID, thumbnailPayload, thumbnailTaskID, types.Task.Status.Waiting); err != nil {
+				c.GetLogger().Error(&documentID, "create thumbnail task for %s: %v", f.OriginalPath, err)
+			}
+		}
+	}
+
+	if enqueued == 0 {
+		fmt.Printf("No new files to consume\n")
+		return nil
+	}
+
+	batchSvc := service.NewBatch(client, c.GetConfig().Consumer.Reclaim.MaxRetries)
+
+	countBefore, err := batchSvc.CountQueuedConsumeBatches(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to check queue: %w", err)
+	}
+
+	if err := client.CreateBatch(ctx, database.CreateBatchParams{
+		ID:     batchID,
+		Source: types.Batch.Source.CLI,
+		Status: types.Batch.Status.Queued,
+	}); err != nil {
+		return fmt.Errorf("create batch: %w", err)
+	}
+
+	fmt.Printf("Batch: %s\n", batchID)
+
+	if countBefore > 0 {
+		fmt.Println("Batch queued — kushim queue will pick it up. Run 'kushim queue' if you haven't started it yet.")
+		return nil
+	}
+
+	for i, file := range files {
+		fmt.Printf("[%d/%d] %s → queued\n", i+1, len(files), file.Name)
+	}
+
+	fmt.Println("Waiting for completion...")
+
+	ep, err := c.GetPool("enrich")
+	if err != nil {
+		return fmt.Errorf("failed to get enrich pool: %w", err)
+	}
+
+	tp, err := c.GetPool("thumbnail")
+	if err != nil {
+		return fmt.Errorf("failed to get thumbnail pool: %w", err)
+	}
+
+	bp, err := c.GetPool("thumbbackfill")
+	if err != nil {
+		return fmt.Errorf("failed to get thumbbackfill pool: %w", err)
+	}
+
+	ownerID := uuid.New().String()
+	owner := task.NewOwner(client, ownerID, os.Getpid(), c.GetLogger(), c.GetConfig().Consumer.Reclaim.MaxRetries)
+
+	if err := owner.Acquire(ctx, batchID, task.StaleAfter); err != nil {
+		return fmt.Errorf("acquire batch %s: %w", batchID, err)
+	}
+
+	if err := c.SetRunnerOwnerID(ownerID); err != nil {
+		return fmt.Errorf("set runner owner: %w", err)
+	}
+
+	watchSignals(ctx, cancel)
+
+	hb := task.NewHeartbeat(owner, heartbeatInterval, c.GetLogger())
+	hb.Start(ctx)
+
+	err = pollBatch(ctx, client.Queries, p, ep, tp, bp, c.GetLogger(), batchID, types.Batch.Source.CLI)
+	if err == nil {
+		if setErr := setBatchTerminalStatus(ctx, client.Queries, batchSvc, batchID); setErr != nil {
+			c.GetLogger().Error(nil, "set batch terminal status %s: %v", batchID, setErr)
+		}
+	} else if errors.Is(err, ErrBatchPaused) {
+		err = nil
+	}
+
+	triggerOrphanScan(c)
+
+	hb.Stop()
+	relCtx, relCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	if relErr := owner.Release(relCtx, batchID); relErr != nil {
+		c.GetLogger().Error(nil, "release batch %s: %v", batchID, relErr)
+	}
+	relCancel()
+
+	return err
+}
+
+func consumeCancelHandler(c *container.Container, args []string) error {
+	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
+		fmt.Println("Usage: kushim consume cancel <batch-id>\n\n" +
+			"  Cancel a running batch. Pending tasks are marked as cancelled\n" +
+			"  and a SIGTERM is sent to the process currently processing the batch.")
+		if len(args) == 0 {
+			return fmt.Errorf("cancel requires a batch ID")
+		}
+		return nil
+	}
+
+	batchID := args[0]
+
+	client, err := c.GetClient()
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+
+	cancelCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	count, err := client.CancelPendingTasksByBatch(cancelCtx, sql.NullString{String: batchID, Valid: true})
+	if err != nil {
+		return fmt.Errorf("cancel pending tasks: %w", err)
+	}
+
+	bo, err := client.GetBatchOwner(cancelCtx, batchID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			fmt.Printf("No running process found for batch %s\n", batchID)
+			fmt.Printf("%d pending tasks cancelled\n", count)
+			return nil
+		}
+		return fmt.Errorf("get batch owner: %w", err)
+	}
+
+	if !IsAlive(bo.Pid) {
+		fmt.Printf("Process %d is no longer running\n", bo.Pid)
+		fmt.Printf("%d pending tasks cancelled\n", count)
+		client.ReleaseBatchOwner(cancelCtx, database.ReleaseBatchOwnerParams{
+			BatchID: batchID,
+			OwnerID: bo.OwnerID,
+		})
+		return nil
+	}
+
+	syscall.Kill(int(bo.Pid), syscall.SIGTERM)
+
+	tx, txErr := client.BeginTx(cancelCtx, nil)
+	if txErr != nil {
+		return fmt.Errorf("begin cancel transaction: %w", txErr)
+	}
+	bid := sql.NullString{String: batchID, Valid: true}
+	txQ := client.Queries.WithTx(tx)
+	if _, relErr := txQ.ReleaseMaintenanceLockForBatch(cancelCtx, database.ReleaseMaintenanceLockForBatchParams{
+		BatchID: bid,
+		Types:   types.BlockingTaskTypes(),
+	}); relErr != nil {
+		tx.Rollback()
+		return fmt.Errorf("release maintenance lock: %w", relErr)
+	}
+	procCount, procErr := txQ.CancelProcessingTasksByBatch(cancelCtx, bid)
+	if procErr != nil {
+		tx.Rollback()
+		return fmt.Errorf("cancel processing tasks: %w", procErr)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit cancel transaction: %w", err)
+	}
+
+	client.ReleaseBatchOwner(cancelCtx, database.ReleaseBatchOwnerParams{
+		BatchID: batchID,
+		OwnerID: bo.OwnerID,
+	})
+
+	fmt.Printf("Batch %s: %d pending + %d processing cancelled, signal sent to PID %d\n",
+		batchID, count, procCount, bo.Pid)
+	return nil
+}
+
+func IsAlive(pid int64) bool {
+	return syscall.Kill(int(pid), 0) == nil
+}
+
+func printToolBlock(missing []config.ExternalTool) {
+	fmt.Println("Cannot consume — the following required tools are not installed:")
+	for _, t := range missing {
+		if t.Engine == "curl" {
+			fmt.Printf("  Prerequisite \"curl\" — %s\n", t.Purpose)
+		} else if len(t.Companions) > 0 {
+			fmt.Printf("  OCR engine \"%s\" (binary not found in PATH)\n", t.Engine)
+		} else {
+			fmt.Printf("  %s engine \"%s\" (binary not found in PATH)\n", t.Category, t.Engine)
+		}
+		for _, system := range config.InstallHintOrder {
+			if cmd, ok := t.InstallHints[system]; ok {
+				fmt.Printf("    %-16s %s\n", system+":", cmd)
+			}
+		}
+		fmt.Println()
+		for _, c := range t.Companions {
+			if c.Required && !c.Available {
+				fmt.Printf("  Companion \"%s\" — %s\n", c.Command, c.Purpose)
+				for _, system := range config.InstallHintOrder {
+					if cmd, ok := c.InstallHints[system]; ok {
+						fmt.Printf("    %-16s %s\n", system+":", cmd)
+					}
+				}
+				fmt.Println()
+			}
+		}
+	}
+	fmt.Println("Install the missing tools, or switch to a built-in engine via `kushim setup` or the Settings page.")
+}
+
+func printOcrmypdfAdvisory(cfg *config.Config, allTools []config.ExternalTool) {
+	if cfg.Consumer.OCR.Engine != config.OCR.OcrMyPdf {
+		return
+	}
+	if len(cfg.Consumer.OCR.Languages) == 0 {
+		return
+	}
+
+	var ocrTool *config.ExternalTool
+	for i, t := range allTools {
+		if t.Engine == config.OCR.OcrMyPdf {
+			ocrTool = &allTools[i]
+			break
+		}
+	}
+	if ocrTool == nil {
+		return
+	}
+
+	fmt.Printf("\nNote: ocrmypdf uses the system tesseract, which reads its own tessdata directory.\n")
+	fmt.Printf("Make sure the tesseract language packs for your configured languages are installed:\n\n")
+	fmt.Printf("  Configured languages: %s\n", strings.Join(cfg.Consumer.OCR.Languages, ", "))
+	if len(ocrTool.LangHints) > 0 {
+		combined := make(map[string][]string)
+		for _, lh := range ocrTool.LangHints {
+			for _, system := range config.InstallHintOrder {
+				if cmd, ok := lh.InstallHints[system]; ok {
+					combined[system] = append(combined[system], cmd)
+				}
+			}
+		}
+		for _, system := range config.InstallHintOrder {
+			cmds, ok := combined[system]
+			if !ok {
+				continue
+			}
+			seen := map[string]bool{}
+			var unique []string
+			for _, c := range cmds {
+				if !seen[c] {
+					seen[c] = true
+					unique = append(unique, c)
+				}
+			}
+			fmt.Printf("    %-16s %s\n", system+":", strings.Join(unique, "  "))
+		}
+	}
+	fmt.Println()
+
+	for _, c := range ocrTool.Companions {
+		if !c.Required && !c.Available {
+			fmt.Printf("Optional companion \"%s\" — %s\n", c.Command, c.Purpose)
+			fmt.Printf("  ocrmypdf will skip this feature. Install it for best results:\n")
+			for _, system := range config.InstallHintOrder {
+				if cmd, ok := c.InstallHints[system]; ok {
+					fmt.Printf("    %-16s %s\n", system+":", cmd)
+				}
+			}
+			fmt.Println()
+		}
+	}
+}
+
+type taskDisplay struct {
+	index    int
+	fileName string
+	taskType string
+}
+
+func taskDisplayInfo(t database.Task) taskDisplay {
+	info := taskDisplay{taskType: string(t.TaskType)}
+	if t.Payload == nil {
+		return info
+	}
+	var p struct {
+		FilePath  string `json:"file_path"`
+		FileName  string `json:"file_name"`
+		FileIndex int    `json:"file_index"`
+	}
+	json.Unmarshal(*t.Payload, &p)
+	info.index = p.FileIndex
+	if p.FilePath != "" {
+		info.fileName = filepath.Base(p.FilePath)
+	} else {
+		info.fileName = p.FileName
+	}
+	return info
+}
+
+func totalFiles(tasks []database.Task) int {
+	maxIdx := 0
+	for _, t := range tasks {
+		if t.TaskType == types.Task.Type.Consume {
+			info := taskDisplayInfo(t)
+			if info.index > maxIdx {
+				maxIdx = info.index
+			}
+		}
+	}
+	if maxIdx > 0 {
+		return maxIdx
+	}
+
+	n := 0
+	for _, t := range tasks {
+		if t.TaskType == types.Task.Type.Consume {
+			n++
+		}
+	}
+	return n
+}
+
+func pollBatch(ctx context.Context, queries *database.Queries, cp, ep, tp, bp *task.Pool, logger *log.Logger, batchID string, source types.BatchSource) error {
+	logger.SetLevel(log.LevelSilent)
+
+	pools := []*task.Pool{cp, ep, tp}
+	if source == types.Batch.Source.Thumbbackfill {
+		pools = []*task.Pool{bp}
+	}
+	for _, p := range pools {
+		p.Start(ctx)
+	}
+
+	stopPools := func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		for _, p := range pools {
+			p.Stop(stopCtx)
+		}
+	}
+
+	previous := make(map[string]string)
+	previousProgress := make(map[string]string)
+
+	tickInterval := 500 * time.Millisecond
+	if source == types.Batch.Source.Thumbbackfill {
+		tickInterval = 2 * time.Second
+	}
+	ticker := time.NewTicker(tickInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			fmt.Println("\nBatch cancelled")
+			stopPools()
+			return ctx.Err()
+		}
+
+		batch, err := queries.GetBatch(ctx, batchID)
+		if err == nil && batch.Status == types.Batch.Status.Paused {
+			fmt.Printf("\nBatch paused: LLM provider credit/balance error detected. Resolve billing and re-queue the batch.\n")
+			stopPools()
+			return ErrBatchPaused
+		}
+
+		tasks, err := task.ListFiltered(ctx, queries, task.TaskFilter{
+			BatchID: batchID,
+		})
+		if err != nil {
+			continue
+		}
+
+		total := totalFiles(tasks)
+
+		remain := 0
+		for _, t := range tasks {
+			switch t.Status {
+			case types.Task.Status.Processing:
+				prog := ""
+				if t.Progress != nil {
+					var p task.ProgressSnapshot
+					if json.Unmarshal(*t.Progress, &p) == nil && p.Step != "" {
+						prog = p.Step
+						if p.Detail != "" {
+							prog += " " + p.Detail
+						}
+					}
+				}
+				if previous[t.TaskID] != "processing" && previous[t.TaskID] == "pending" {
+					info := taskDisplayInfo(t)
+					status := "processing"
+					if prog != "" {
+						status = prog
+					}
+					fmt.Printf("  [%d/%d] %-8s %s ... %s\n", info.index, total, info.taskType, info.fileName, status)
+				} else if prog != "" && previousProgress[t.TaskID] != prog {
+					info := taskDisplayInfo(t)
+					fmt.Printf("  [%d/%d] %-8s %s ... %s\n", info.index, total, info.taskType, info.fileName, prog)
+				}
+				previousProgress[t.TaskID] = prog
+			case types.Task.Status.Completed:
+				if previous[t.TaskID] != "completed" && previous[t.TaskID] != "" {
+					info := taskDisplayInfo(t)
+					fmt.Printf("  [%d/%d] %-8s %s ... done\n", info.index, total, info.taskType, info.fileName)
+				}
+			case types.Task.Status.Failed:
+				if previous[t.TaskID] != "failed" && previous[t.TaskID] != "" {
+					info := taskDisplayInfo(t)
+					errMsg := ""
+					if t.Error.Valid {
+						errMsg = fmt.Sprintf(": %s", t.Error.String)
+					}
+					fmt.Printf("  [%d/%d] %-8s %s ... failed%s\n", info.index, total, info.taskType, info.fileName, errMsg)
+				}
+			}
+			if t.Status == types.Task.Status.Pending || t.Status == types.Task.Status.Processing {
+				remain++
+			}
+			previous[t.TaskID] = string(t.Status)
+		}
+
+		if remain == 0 {
+			var files, taskCount, failed int64
+			for _, t := range tasks {
+				taskCount++
+				if t.TaskType == types.Task.Type.Consume {
+					files++
+				}
+				if t.Status == types.Task.Status.Failed {
+					failed++
+				}
+			}
+			if failed > 0 {
+				fmt.Printf("\nSummary: %d files, %d tasks — %d successful, %d failed\n", files, taskCount, taskCount-failed, failed)
+			} else {
+				fmt.Printf("\nSummary: %d files, %d tasks — all successful\n", files, taskCount)
+			}
+
+			stopPools()
+			return nil
+		}
+	}
+}
+
+func setBatchTerminalStatus(ctx context.Context, queries *database.Queries, batchSvc *service.Batch, batchID string) error {
+	batch, err := queries.GetBatch(ctx, batchID)
+	if err != nil {
+		return fmt.Errorf("get batch: %w", err)
+	}
+	switch batch.Status {
+	case types.Batch.Status.Completed, types.Batch.Status.Failed, types.Batch.Status.Cancelled, types.Batch.Status.Paused:
+		return nil
+	}
+
+	tasks, err := task.ListFiltered(ctx, queries, task.TaskFilter{BatchID: batchID})
+	if err != nil {
+		return fmt.Errorf("list tasks: %w", err)
+	}
+
+	hasFailed := false
+	for _, t := range tasks {
+		if t.Status == types.Task.Status.Failed {
+			hasFailed = true
+			break
+		}
+	}
+
+	if hasFailed {
+		return batchSvc.SetBatchFailed(ctx, batchID)
+	}
+	return batchSvc.SetBatchCompleted(ctx, batchID)
+}
+
+func triggerOrphanScan(c *container.Container) {
+	client, err := c.GetClient()
+	if err != nil {
+		c.GetLogger().Error(nil, "orphan scan: get client: %v", err)
+		return
+	}
+	store := task.NewStore(client)
+	batchSvc := service.NewBatch(client, c.GetConfig().Consumer.Reclaim.MaxRetries)
+	svc := service.NewOrphaned(client.Queries, c.GetConfig(), c.GetLogger(), store, batchSvc)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	count, err := svc.ScanAndQuarantine(ctx)
+	if err != nil {
+		c.GetLogger().Error(nil, "orphan scan after batch: %v", err)
+		return
+	}
+	if count > 0 {
+		c.GetLogger().Info(nil, "post-batch orphan scan: %d files quarantined", count)
+	}
+}

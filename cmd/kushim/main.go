@@ -9,16 +9,18 @@ import (
 	"strings"
 
 	"github.com/wgomg/edub-kushim/internal/cgo"
-	"github.com/wgomg/edub-kushim/internal/commands"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/documents/ocr"
 	"github.com/wgomg/edub-kushim/internal/documents/thumbnail"
 	"github.com/wgomg/edub-kushim/internal/log"
+	"github.com/wgomg/edub-kushim/internal/ops/cli"
+	"github.com/wgomg/edub-kushim/internal/ops/container"
+	"github.com/wgomg/edub-kushim/internal/ops/setup"
 )
 
 func main() {
 	if len(os.Args) < 2 {
-		commands.PrintUsage()
+		cli.PrintUsage()
 	}
 
 	commandName := os.Args[1]
@@ -26,7 +28,7 @@ func main() {
 
 	if commandName == "setup" {
 		startupLogger := log.NewLogger("info")
-		if err := commands.RunSetup(args, startupLogger); err != nil {
+		if err := setup.RunSetup(args, startupLogger); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -163,7 +165,7 @@ func main() {
 	}
 
 	if commandName == "--help" || commandName == "-h" {
-		commands.PrintUsage()
+		cli.PrintUsage()
 		return
 	}
 
@@ -194,10 +196,10 @@ func main() {
 	}); err != nil {
 		logger.Error(nil, "failed to open log file: %v", err)
 	}
-	container := commands.NewContainer(cfg, logger)
-	defer container.Close()
+	c := container.NewContainer(cfg, logger)
+	defer c.Close()
 
-	runner := commands.NewCommandRunner(container, "cli")
+	runner := cli.NewCommandRunner(c, "cli")
 
 	if err := runner.ExecuteCommand(commandName, args); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)

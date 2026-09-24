@@ -1,0 +1,353 @@
+package setup
+
+import (
+	"bufio"
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
+	"strings"
+
+	"github.com/spf13/viper"
+	"github.com/wgomg/edub-kushim/internal/api/wizard"
+	"github.com/wgomg/edub-kushim/internal/auth"
+	"github.com/wgomg/edub-kushim/internal/config"
+	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/errs"
+	"github.com/wgomg/edub-kushim/internal/log"
+	"github.com/wgomg/edub-kushim/internal/ops/flags"
+	"github.com/wgomg/edub-kushim/internal/service"
+	"golang.org/x/term"
+)
+
+func RunSetup(args []string, logger *log.Logger) error {
+	configDir, err := config.ConfigDir()
+	if err != nil {
+		return fmt.Errorf("cannot determine config directory: %w", err)
+	}
+	configPath := filepath.Join(*configDir, "config.yaml")
+	if _, err := os.Stat(configPath); err == nil {
+		return fmt.Errorf("setup has already been completed — remove %s to re-run", configPath)
+	}
+
+	var cli bool
+	p := flags.NewFlagParser(args)
+	if err := p.Bool("--cli", &cli); err != nil {
+		return err
+	}
+
+	if cli {
+		return runSetupCLI(args, logger)
+	}
+	return runSetupWizard(args, logger)
+}
+
+func runSetupWizard(args []string, logger *log.Logger) error {
+	addr := "0.0.0.0:8420"
+
+	srv := wizard.NewServer(addr, logger)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.Start()
+	}()
+
+	logger.Info(nil, "Setup wizard running at http://%s", addr)
+
+	select {
+	case err := <-errCh:
+		return err
+	}
+}
+
+func runSetupCLI(args []string, logger *log.Logger) error {
+	var langs, inboxDir, storageDir, optimizationFallback, ocrEngine, pdfEngine, textExtractorEngine, dbDsn string
+	var resetDb, cli bool
+	var adminUser, adminPassword string
+
+	p := flags.NewFlagParser(args)
+	if err := p.Bool("--cli", &cli); err != nil {
+		return err
+	}
+	if err := p.Bool("--reset-database", &resetDb); err != nil {
+		return err
+	}
+	if err := p.String("--languages", &langs); err != nil {
+		return err
+	}
+	if err := p.String("--inbox-path", &inboxDir); err != nil {
+		return err
+	}
+	if err := p.String("--storage-path", &storageDir); err != nil {
+		return err
+	}
+	if err := p.String("--consumer-pdfoptimizer-fallback", &optimizationFallback); err != nil {
+		return err
+	}
+	if err := p.String("--consumer-pdfoptimizer-engine", &pdfEngine); err != nil {
+		return err
+	}
+	if err := p.String("--consumer-ocr-engine", &ocrEngine); err != nil {
+		return err
+	}
+	if err := p.String("--consumer-textextractor-engine", &textExtractorEngine); err != nil {
+		return err
+	}
+	if err := p.String("--admin-user", &adminUser); err != nil {
+		return err
+	}
+	if err := p.String("--admin-password", &adminPassword); err != nil {
+		return err
+	}
+	if err := p.String("--db-dsn", &dbDsn); err != nil {
+		return err
+	}
+	if rest := p.Rest(); len(rest) > 0 {
+		return fmt.Errorf("unknown flag(s): %v", rest)
+	}
+
+	if langs == "" {
+		return fmt.Errorf(`usage: kushim setup --languages eng,spa,...
+
+Flags:
+  --languagess                       ISO 639-3 codes (eng, spa, fra, ...)
+  --inbox-path                       inbox directory (default: ~/.config/edub-kushim/inbox)
+  --storage-path                     storage directory (default: ~/.config/edub-kushim/storage)
+  --consumer-ocr-engine              gosseract | ocrmypdf (default: gosseract)
+  --consumer-textextractor-engine    mupdf | gopdf | pdftotext (default: mupdf)
+  --consumer-pdfoptimizer-engine     mupdf | gs (default: mupdf)
+  --consumer-pdfoptimizer-fallback   external PDF optimizer binary (ignored when engine is gs)
+  --admin-user                       admin username (prompted if omitted)
+  --admin-password                   admin password (prompted if omitted)
+  --db-dsn                           PostgreSQL DSN (default: localhost:5432)
+  --reset-database                   drop all tables and re-run schema + seeders`)
+	}
+
+	langList := strings.Split(langs, ",")
+
+	validOCREngines := []string{config.OCR.Gosseract, config.OCR.OcrMyPdf}
+	if ocrEngine != "" && !slices.Contains(validOCREngines, ocrEngine) {
+		return fmt.Errorf("invalid --consumer-ocr-engine %q: must be one of %v", ocrEngine, validOCREngines)
+	}
+	validPdfEngines := []string{config.PdfOptimizer.MuPDF, config.PdfOptimizer.GS}
+	if pdfEngine != "" && !slices.Contains(validPdfEngines, pdfEngine) {
+		return fmt.Errorf("invalid --consumer-pdfoptimizer-engine %q: must be one of %v", pdfEngine, validPdfEngines)
+	}
+	validTextExtractorEngines := []string{config.TextExtractor.MuPDF, config.TextExtractor.GoPdf, config.TextExtractor.PdfToText}
+	if textExtractorEngine != "" && !slices.Contains(validTextExtractorEngines, textExtractorEngine) {
+		return fmt.Errorf("invalid --consumer-textextractor-engine %q: must be one of %v", textExtractorEngine, validTextExtractorEngines)
+	}
+
+	configDir, err := config.ConfigDir()
+	if err != nil {
+		logger.Fatal("Cannot determine home directory:", err)
+	}
+
+	cfg := config.DefaultConfig(*configDir)
+	cfg.Consumer.OCR.Languages = langList
+
+	if ocrEngine != "" {
+		cfg.Consumer.OCR.Engine = ocrEngine
+	}
+	if pdfEngine != "" {
+		cfg.Consumer.PdfOptimizer.Engine = pdfEngine
+	}
+	if textExtractorEngine != "" {
+		cfg.Consumer.TextExtractor.Engine = textExtractorEngine
+	}
+
+	if inboxDir != "" {
+		cfg.Storage.ConsumptionDir = inboxDir
+	}
+	if storageDir != "" {
+		cfg.Storage.StorageDir = storageDir
+	}
+
+	if pdfEngine == config.PdfOptimizer.GS {
+		optimizationFallback = ""
+	} else if optimizationFallback != "" {
+		cfg.Consumer.PdfOptimizer.Fallback = optimizationFallback
+	}
+
+	v := viper.New()
+	v.SetConfigType("yaml")
+	v.SetConfigPermissions(0600)
+	configPath := filepath.Join(*configDir, "config.yaml")
+
+	if _, err := os.Stat(configPath); err == nil {
+		v.SetConfigFile(configPath)
+		if err := v.ReadInConfig(); err != nil {
+			return fmt.Errorf("read existing config: %w", err)
+		}
+	}
+
+	v.Set("consumer.ocr.languages", langList)
+	if ocrEngine != "" {
+		v.Set("consumer.ocr.engine", ocrEngine)
+	}
+	if pdfEngine != "" {
+		v.Set("consumer.pdfoptimizer.engine", pdfEngine)
+	}
+	if textExtractorEngine != "" {
+		v.Set("consumer.textextractor.engine", textExtractorEngine)
+	}
+	if inboxDir != "" {
+		v.Set("storage.consumption_dir", inboxDir)
+	}
+	if storageDir != "" {
+		v.Set("storage.storage_dir", storageDir)
+	}
+	if optimizationFallback != "" {
+		v.Set("consumer.pdfoptimizer.fallback", optimizationFallback)
+	}
+
+	secret, err := auth.GenerateSessionSecret()
+	if err != nil {
+		return fmt.Errorf("generate session secret: %w", err)
+	}
+	v.Set("server.session_secret", secret)
+
+	if dbDsn != "" {
+		cfg.Db.DSN = dbDsn
+		v.Set("database.dsn", dbDsn)
+	}
+
+	if err := v.WriteConfigAs(configPath); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+	if err := os.Chmod(configPath, 0600); err != nil {
+		return fmt.Errorf("chmod config: %w", err)
+	}
+	logger.Info(nil, "created config: %s", configPath)
+
+	if err := os.MkdirAll(cfg.Storage.ConsumptionDir, 0755); err != nil {
+		return fmt.Errorf("create inbox directory: %w", err)
+	}
+	if err := os.MkdirAll(cfg.Storage.StorageDir, 0755); err != nil {
+		return fmt.Errorf("create storage directory: %w", err)
+	}
+
+	tessdataDir := cfg.Consumer.OCR.DataDir
+	if err := os.MkdirAll(tessdataDir, 0755); err != nil {
+		return fmt.Errorf("create tessdata directory: %w", err)
+	}
+
+	db, err := database.NewPostgresDB(config.BuildPostgresDSN(cfg.Db))
+	if err != nil {
+		return fmt.Errorf("open database: %w", err)
+	}
+
+	if resetDb {
+		logger.Info(nil, "resetting database...")
+		if err := database.ResetDatabase(db); err != nil {
+			db.Close()
+			return err
+		}
+		logger.Info(nil, "database reset complete")
+	} else {
+		if err := database.InitializeSchema(db); err != nil {
+			db.Close()
+			return err
+		}
+	}
+	db.Close()
+	logger.Info(nil, "created database")
+
+	cfg, err = config.Load(*configDir)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+
+	if err := config.DownloadHugotModel(context.Background(), cfg, logger); err != nil {
+		return fmt.Errorf("hugot model download: %w", err)
+	}
+
+	if cfg.Consumer.PdfOptimizer.Engine == config.PdfOptimizer.MuPDF && optimizationFallback != "" {
+		if _, err := exec.LookPath(optimizationFallback); err != nil {
+			logger.Info(nil, "WARNING: --consumer-pdfoptimizer-fallback %s set but %q not found on PATH. "+
+				"Install it before running 'kushim consume'.", optimizationFallback, optimizationFallback)
+		}
+	}
+
+	if cfg.Consumer.OCR.Engine == config.OCR.Gosseract {
+		for _, lang := range langList {
+			if err := config.DownloadTessdataLanguage(context.Background(), cfg, lang); err != nil {
+				return err
+			}
+			logger.Info(nil, "downloaded: %s", lang)
+		}
+	}
+
+	if adminUser == "" {
+		scanner := bufio.NewScanner(os.Stdin)
+		fmt.Print("Enter admin username: ")
+		scanner.Scan()
+		adminUser = strings.TrimSpace(scanner.Text())
+		if adminUser == "" {
+			return fmt.Errorf("admin username cannot be empty")
+		}
+		if err := scanner.Err(); err != nil {
+			return fmt.Errorf("read username: %w", err)
+		}
+	}
+
+	if adminPassword == "" {
+		fmt.Print("Enter admin password: ")
+		password, err := term.ReadPassword(int(os.Stdin.Fd()))
+		fmt.Println()
+		if err != nil {
+			return fmt.Errorf("read password: %w", err)
+		}
+		adminPassword = string(password)
+
+		fmt.Print("Confirm admin password: ")
+		confirm, err := term.ReadPassword(int(os.Stdin.Fd()))
+		fmt.Println()
+		if err != nil {
+			return fmt.Errorf("confirm password: %w", err)
+		}
+		if adminPassword != string(confirm) {
+			return fmt.Errorf("passwords do not match")
+		}
+	}
+
+	db, err = database.NewPostgresDB(config.BuildPostgresDSN(cfg.Db))
+	if err != nil {
+		return fmt.Errorf("open database: %w", err)
+	}
+	defer db.Close()
+
+	client := database.NewClient(db)
+	userSvc := service.NewUser(client.Queries)
+	if _, err := userSvc.Create(context.Background(), adminUser, adminPassword, "admin"); err != nil {
+		if errs.KindOf(err) == errs.KindConflict {
+			return fmt.Errorf("admin user '%s' already exists", adminUser)
+		}
+		return fmt.Errorf("create admin user: %w", err)
+	}
+
+	logger.Info(nil, "admin user '%s' created", adminUser)
+
+	svcPath, err := config.GenerateServiceFiles(cfg.App.ConfigDir)
+	if err != nil {
+		logger.Warn(nil, "Failed to generate systemd service files: %v", err)
+	} else {
+		fmt.Printf("\nService files written to: %s\n\n", svcPath)
+		fmt.Println("To install and start as system services:")
+		fmt.Printf("  sudo cp %s/* /etc/systemd/system/\n", svcPath)
+		fmt.Println("  sudo systemctl daemon-reload")
+		fmt.Println("  sudo systemctl enable --now edub-kushim.target")
+	}
+
+	if cfg.Consumer.OCR.Engine == config.OCR.Gosseract {
+		logger.Info(nil, "setup complete — %d languages in %s", len(langList), tessdataDir)
+	} else {
+		logger.Info(nil, "setup complete — %d languages configured with %s engine",
+			len(langList), cfg.Consumer.OCR.Engine)
+	}
+	fmt.Println("\nNext: run 'kushim consume' to process documents")
+
+	return nil
+}

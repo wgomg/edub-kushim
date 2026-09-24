@@ -16,11 +16,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/configtask"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/documents/mime"
 	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/log"
+	"github.com/wgomg/edub-kushim/internal/ops/configtask"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/task"
 	itypes "github.com/wgomg/edub-kushim/internal/types"

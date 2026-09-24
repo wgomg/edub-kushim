@@ -60,31 +60,31 @@ internal/
   api/handlers/             one struct per resource (Tag, Document, Task, ...) + the API DTOs
   api/wizard/               setup wizard server + embedded SPA
   auth/                     JWT, API keys, roles, context keys
-  backup/                   backup/restore + scheduler + rsync mirror
+  backup/                   backup/restore + scheduler + rsync mirror + their task handlers
   cgo/                      MuPDF CGo glue (real + !cgo stub twins)
-  commands/                 kushim CLI commands; DI container; flag parser
   config/                   config structs, defaults, validation, polling watcher
-  configtask/               config task handler (model/tessdata download, migrate-db, migrate-storage)
   database/                 sqlc-generated queries + client + migrations + test harness
-  documents/                document domain: consumption, storage, mime, and the
-                            document-processing adapters (ocr, textextractor, converter,
-                            pdfoptimizer, thumbnail)
-  enrichment/               async enrich step
+  documents/                document domain: consumption (consumer, scan + its task handlers),
+                            storage, mime, and the document-processing adapters (ocr,
+                            textextractor, converter, pdfoptimizer, thumbnail)
+  enrichment/               async enrich step + its task handlers
   errs/                     the error-kind contract (see §6)
   llm/                      LLM model catalog registry
   llm/analyzer/             LLM content analyzer adapter
   matcher/                  tag matcher: Hugot engine, socket client, embedding cache
+  ops/                      process layer: cli/ (kushim verbs), queue/ (daemon + LISTEN/NOTIFY),
+                            consume/ (per-batch child), setup/, container/ (DI), flags/,
+                            configtask/ (config task handler)
   search/                   full-text + structured search
   service/                  business logic over database queries (Batch, Tag, People, ...)
   service/crud.go           shared aggregate struct (CrudServices)
   static/                   embedded SvelteKit build
-  tags/                     tag store, measurement, policy, reconciliation
-  task/                     task engine: registry, dispatcher, runner, handlers, worker pool
+  tags/                     tag store, measurement, policy, reconciliation + the tagmeasure handler
+  task/                     task engine: registry, dispatcher, runner, worker pool, RunBlocking
   testutil/                 shared test helpers and mocks
   tools/                    the tool adapter layer + composition root (Runner)
   tools/textreducer/        TextRank-based text reduction adapter
   types/                    closed task-system vocabulary registry
-  utils/                    logger, metrics, text, files, param bag
   version/                  version string (injected via -ldflags)
 ```
 
@@ -308,7 +308,7 @@ var _ runner = (*tools.Runner)(nil)
 The `var _ runner = (*tools.Runner)(nil)` line is a **compile-time assertion**:
 if `*tools.Runner` ever stops satisfying `runner`, the build fails. The project
 uses this trick wherever correctness depends on an implicit relationship (also
-in `task/handlers/backup.go:18` and `task/handlers/enrich.go`).
+in `internal/backup/backup_task.go:18` and `internal/enrichment/enrich.go`).
 
 ### Optional interface discovery
 
@@ -494,7 +494,7 @@ I/O; long-running components own a cancelable context and propagate it to all
 their goroutines, and every goroutine checks `ctx.Done()` (§8). The
 codebase-specific bits:
 
-**Signals → cancellation** (`internal/commands/consume.go:33` — a reusable
+**Signals → cancellation** (`internal/ops/consume/consume.go:35` — a reusable
 pattern):
 
 ```go
@@ -618,7 +618,7 @@ func WalkStorageDir(storageDir string) (<-chan OrphanedFileInfo, <-chan error) {
 }
 ```
 
-**Non-blocking send (notification coalescing)** (`internal/commands/notify.go:56`)
+**Non-blocking send (notification coalescing)** (`internal/ops/queue/notify.go:68-71`)
 — Postgres NOTIFYs become wake-up hints; if the channel is full the
 notification is *dropped* — the 30-second safety timer is the source of truth,
 so dropping is safe:
@@ -696,14 +696,15 @@ p.stopOnce.Do(func() {
 ```
 
 **`atomic.Pointer[T]` for lock-free config hot-reload.** The DI container
-stores the live config this way (`internal/commands/container.go:27`):
+stores the live config this way (`internal/ops/container/container.go:29`):
 
 ```go
 cfg atomic.Pointer[config.Config]
 ```
 
-Every runtime config read goes through `c.cfg.Load()`; the polling watcher
-publishes reloads with `c.cfg.Store(newCfg)` (§14). Readers never block, and
+Every runtime config read outside the container goes through
+`c.GetConfig()`; the polling watcher and the queue daemon publish reloads with
+`c.SetConfig(newCfg)` (§14). Readers never block, and
 there are no read locks in the hot path. The same pattern powers
 `api/server.go:33` and `wizard/server.go:36`.
 
@@ -717,8 +718,8 @@ fill the role.
 
 Periodic work is a ticker with `defer Stop`, selected against `ctx.Done()` —
 used by the heartbeat (`task/heartbeat.go:33`), config watcher
-(`config/watcher.go:66`), trash purge (`service/trash.go:218`), backup drain
-(`task/handlers/backup.go:83`), and queue housekeeping (`queue.go:120`):
+(`config/watcher.go:66`), trash purge (`service/trash.go:350`), task drain
+(`database/migrate.go:36`), and queue housekeeping (`queue.go:142`):
 
 ```go
 ticker := time.NewTicker(5 * time.Second)
@@ -735,7 +736,7 @@ for {
 
 Resetting a `time.Timer` that already fired (or is about to) is the classic
 trap. The queue daemon's 30-second safety net shows the drain-before-`Reset`
-dance (`internal/commands/queue.go:116`):
+dance (`internal/ops/queue/queue.go:156-162`):
 
 ```go
 safetyTimer := time.NewTimer(safetyInterval)
@@ -799,8 +800,8 @@ known-harmless stderr noise is filtered (gosseract.go:122).
 ### Daemonization and PID files
 
 `kushim queue --bg` spawns `exec.Command(os.Args[0], "queue")` with stdio
-detached (`internal/commands/queue.go:54`). The daemon writes a PID file and
-detects stale entries with a zero signal probe (`queue.go:66`):
+detached (`internal/ops/queue/queue.go:59`). The daemon writes a PID file and
+detects stale entries with a zero signal probe (`queue.go:72`):
 
 ```go
 if data, err := os.ReadFile(pidFile); err == nil {
@@ -831,7 +832,7 @@ Or conversion to context cancellation via `watchSignals` (§7).
 ### Unix domain sockets
 
 The tag matcher daemon listens on a Unix socket
-(`internal/commands/hugot.go:100`) — with stale-socket removal before listen,
+(`internal/ops/cli/hugot.go:102`) — with stale-socket removal before listen,
 `EADDRINUSE` detected via `errors.As` to `syscall.Errno`, and `os.Remove` after
 shutdown. The client speaks plain HTTP over the socket by overriding the
 transport's dialer (`internal/matcher/client.go:49`):
@@ -1008,13 +1009,13 @@ v.WriteConfigAs(configPath)
 ```
 
 Config edits are atomic: write to a temp dir, *validate by loading*, then
-`os.Rename` over the real file (`internal/commands/config.go:213`).
+`os.Rename` over the real file (`internal/ops/cli/config.go:194`).
 
 ### Hot reload
 
-`config.Watcher` polls the file's `ModTime` on a ticker (`internal/config/watcher.go:61`)
-and calls an `onReload` callback; the callback does `container.cfg.Store(newCfg)`
-(§10). Every consumer reads `c.cfg.Load()`. No restart needed, no locks in the
+`config.Watcher` polls the file's `ModTime` on a ticker (`internal/config/watcher.go:66`)
+and calls an `onReload` callback; the callback does `container.SetConfig(newCfg)`
+(§10). Every consumer reads `c.GetConfig()`. No restart needed, no locks in the
 read path.
 
 ---
@@ -1157,23 +1158,23 @@ dependency-closing loop.
 There is no cobra/urfave: the CLI is hand-rolled and deliberately small.
 
 A `Command` is a struct with a name, description, and handler
-(`internal/commands/commands.go:10`); commands are registered in a map per
+(`internal/ops/cli/commands.go:15`); commands are registered in a map per
 command set (`"cli"` for `kushim`, `"server"` for `edub`) and dispatched by
 first argument (`commands.go:109`). Errors bubble to `main`, which prints and
 exits 1 (`cmd/kushim/main.go:158`). Subcommands (`kushim task list|status|retry`)
-are plain `switch args[0]` dispatch (`internal/commands/task.go:28`).
+are plain `switch args[0]` dispatch (`internal/ops/cli/task.go:31`).
 
 ### The DI container
 
-`commands.Container` (`internal/commands/container.go`) is the composition root
+`container.Container` (`internal/ops/container/container.go`) is the composition root
 for the CLI: it lazily builds the logger, DB client, services, and tools, and
 holds the `atomic.Pointer[config.Config]` for hot reload (§10).
 
 ### Flags: a tiny parser
 
-`FlagParser` (`internal/commands/flags.go:8`) walks `[]string`, tracks consumed
+`FlagParser` (`internal/ops/flags/flags.go:8`) walks `[]string`, tracks consumed
 indices so positional args survive, and offers typed getters with range checks.
-Usage looks like (`internal/commands/search.go:21`):
+Usage looks like (`internal/ops/cli/search.go:16`):
 
 ```go
 limit := 20
@@ -1344,15 +1345,15 @@ sticks to `any`.
 
 | I want to see... | Go to |
 |---|---|
-| A goroutine + select loop | `internal/task/pool.go` (worker), `internal/commands/queue.go` (daemon), `internal/task/heartbeat.go` |
+| A goroutine + select loop | `internal/task/pool.go` (worker), `internal/ops/queue/queue.go` (daemon), `internal/task/heartbeat.go` |
 | Channels (producer/consumer, fan-out) | `internal/documents/ocr/standalone.go`, `internal/documents/storage/orphaned.go` |
-| Non-blocking send | `internal/commands/notify.go:56` |
+| Non-blocking send | `internal/ops/queue/notify.go:68-71` |
 | `sync.Once` idempotent stop | `internal/task/pool.go:50`, `internal/task/heartbeat.go:15` |
-| `atomic.Pointer` hot reload | `internal/commands/container.go:27`, `internal/api/server.go:33`, `internal/config/watcher.go` |
-| Timer drain/reset | `internal/commands/queue.go:116` |
-| Signals → cancellation | `internal/commands/consume.go:33` (`watchSignals`), `cmd/edub/main.go:82` |
-| `os/exec` + self-reexec | `internal/commands/queue.go:54`, `internal/documents/ocr/gosseract.go:56` |
-| Unix socket HTTP client/server | `internal/matcher/client.go:49`, `internal/commands/hugot.go:100` |
+| `atomic.Pointer` hot reload | `internal/ops/container/container.go:29`, `internal/api/server.go:33`, `internal/config/watcher.go` |
+| Timer drain/reset | `internal/ops/queue/queue.go:156-162` |
+| Signals → cancellation | `internal/ops/consume/consume.go:35` (`watchSignals`), `cmd/edub/main.go:82` |
+| `os/exec` + self-reexec | `internal/ops/queue/queue.go:59`, `internal/documents/ocr/gosseract.go:56` |
+| Unix socket HTTP client/server | `internal/matcher/client.go:49`, `internal/ops/cli/hugot.go:102` |
 | Interfaces + composite | `internal/documents/textextractor/adapter.go` |
 | Interface extraction for tests | `internal/documents/consumption/consumer.go:40` |
 | Optional interface discovery | `internal/task/registry.go:28` |
@@ -1371,7 +1372,7 @@ sticks to `any`.
 | cgo preamble + `#cgo` flags | `internal/cgo/mupdf_wrapper.go`, `ocr/tesseract_link.go` |
 | Stub twin (`!cgo`) | `internal/cgo/mupdf_nocgo.go` |
 | `init()` factory swap | `internal/documents/ocr/adapter.go` + `gosseract.go:137` |
-| CLI registry + flag parser | `internal/commands/commands.go`, `internal/commands/flags.go` |
+| CLI registry + flag parser | `internal/ops/cli/commands.go`, `internal/ops/flags/flags.go` |
 | slog custom handlers | `internal/log/logger.go` |
 | Table-driven tests | `internal/log/logger_test.go:13` |
 | DB test harness | `internal/database/dbtest.go`, `internal/testutil/testutil.go` |
@@ -1410,7 +1411,7 @@ sticks to `any`.
 - **Map iteration order is random** — don't rely on it (the cache's `Entries()`
   deep-copy exists because of this).
 - **`time.Timer` reset without drain** can fire immediately after `Reset`
-  (`queue.go:116` shows the correct pattern).
+  (`queue.go:156-162` shows the correct pattern).
 - **Buffered channel capacity matters.** Capacity 1 in `runWithTimeout`
   prevents goroutine leaks; `errs` channel in `WalkStorageDir` has capacity 1 so
   the first error survives.

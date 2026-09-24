@@ -314,7 +314,7 @@ Migration `00029_tag_identity.sql` adds the two identity objects:
 
 ## 6. Matcher RPC surface and the pair cache
 
-The daemon (`internal/commands/hugot.go`) serves:
+The daemon (`internal/ops/cli/hugot.go`) serves:
 
 | Endpoint | Purpose |
 | -------- | ------- |
@@ -401,7 +401,7 @@ delete/recreate cycles.
 heartbeats the lock during the run), and it joins `nonConsumeBatchSources` so
 its batches never occupy a consume slot.
 
-**Scheduling** — `maybeScheduleTagReconcile` (`internal/commands/queue.go:658`)
+**Scheduling** — `maybeScheduleTagReconcile` (`internal/ops/queue/queue.go`)
 runs on the queue daemon's housekeeping ticker (thumbnail-backfill precedent):
 the daemon starts a 1-worker/60s pool for the source; `lastRun` is anchored on
 the most recent `tagreconcile` batch's `created_at`; a run is skipped while one
@@ -410,13 +410,13 @@ is queued/processing or the maintenance lock is held. With no prior batch,
 occurrence of the preferred time minus the interval, so a freshly-enabled
 schedule lands its first run at the next preferred time (not a full interval
 out); later runs count the interval from the previous run. The daemon keeps
-per-schedulable in-memory state (`scheduleState` in `internal/commands/queue.go`)
+per-schedulable in-memory state (`scheduleState` in `internal/ops/queue/queue.go`)
 recording the timing the last run anchored under: an edited interval or
 preferred time re-phases the next run to the closest upcoming occurrence of
 the new timing (in-memory only — a daemon restart between the edit and the
 re-phased run falls back to the steady rule), and a reverted edit before the
 run restores the steady rule. The handler
-(`internal/task/handlers/tagreconcile.go`) owns the batch lifecycle
+(`internal/tags/reconcile/tagreconcile.go`) owns the batch lifecycle
 (`MarkBatchProcessing`/`FinalizeBatchStatus`), dedups on
 `tagreconcile:<UTC date>`, and reports a JSON `Report` — worklist counts per
 category, judged/confirmed, flips by direction, merges with reassignment

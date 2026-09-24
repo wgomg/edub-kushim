@@ -14,14 +14,13 @@ import (
 	"github.com/wgomg/edub-kushim/internal/documents/consumption"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/task"
-	"github.com/wgomg/edub-kushim/internal/task/handlers"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 )
 
 // newTestConsumeHandler builds a handler wired to a fresh test database.
 // Lives here as an external test package: the consume handler's discard paths
 // need a DB-backed store, and internal/task is already in the test-db matrix.
-func newTestConsumeHandler(t *testing.T) (*handlers.ConsumeTaskHandler, *task.Store) {
+func newTestConsumeHandler(t *testing.T) (*consumption.ConsumeTaskHandler, *task.Store) {
 	t.Helper()
 	if os.Getenv("TEST_DATABASE_URL") == "" {
 		t.Skip("TEST_DATABASE_URL not set")
@@ -40,7 +39,7 @@ func newTestConsumeHandler(t *testing.T) (*handlers.ConsumeTaskHandler, *task.St
 	testutil.AssertNoError(t, err, "create consumer")
 
 	store := task.NewStore(client)
-	return handlers.NewConsumeTaskHandler(consumer, store, client.Queries, logger), store
+	return consumption.NewConsumeTaskHandler(consumer, store, client.Queries, logger), store
 }
 
 // insertConsumeEnrichPair creates a waiting enrich linked to a pending consume

@@ -122,7 +122,7 @@ The `Runner.Next` method uses `errors.As(err, &tErr)` to extract `ReqID` from ha
 
 ---
 
-## `handlers/consume.go`
+## `consume.go` (`internal/documents/consumption`)
 
 ### Struct
 
@@ -136,7 +136,7 @@ The `Runner.Next` method uses `errors.As(err, &tErr)` to extract `ReqID` from ha
     - `recoverOnCompleted(payload)` — private: lenient re-parse of `on_completed` from a payload that failed strict unmarshalling, so the paired enrich can still be discarded.
     - `DedupKey(payload) string` — Returns file path from payload
 
-## `handlers/enrich.go`
+## `enrich.go` (`internal/enrichment`)
 
 ### Struct
 
@@ -146,9 +146,9 @@ The `Runner.Next` method uses `errors.As(err, &tErr)` to extract `ReqID` from ha
     - `Handle(ctx, t) (json.RawMessage, error)` — Unmarshals `{"document_id":"<uuid>"}`, calls `h.queries.GetDocument` (lookup by UUID), then `enricher.Enrich`
     - `DedupKey(payload) string` — Returns `"enrich:doc:<uuid>"` or empty string
 
-## `configtask` (`internal/configtask/configtask.go`)
+## `configtask` (`internal/ops/configtask/configtask.go`)
 
-The `ConfigTaskHandler` lives in its own package (`internal/configtask/`) to keep the edub binary free of CGo dependencies — unlike `internal/task/handlers/`, which transitively imports CGo-only `internal/cgo` through `internal/documents/consumption`.
+The `ConfigTaskHandler` lives in its own package (`internal/ops/configtask/`) to keep the edub binary free of CGo dependencies — unlike the domain packages that host the other task handlers, which transitively import CGo-only `internal/cgo` through `internal/documents/consumption`.
 
 ### Constants
 
@@ -173,7 +173,7 @@ The `ConfigTaskHandler` lives in its own package (`internal/configtask/`) to kee
 
 ---
 
-## Container Integration (`internal/commands/container.go`)
+## Container Integration (`internal/ops/container/container.go`)
 
 ### CLI (`kushim`)
 
@@ -189,14 +189,14 @@ The `"tagidentity"` type is handled by `TagIdentityTaskHandler`, the same drain 
 The `TagService` and `Enricher` receive the client instead of a direct Hugot reference:
 
 ```go
-matcherClient := matcher.NewMatcherClient(c.socketPath(), matcher.MaxMatchBodyBytes(cfg.Enricher.TagMatcher.ReduceTargetWords))
-tagSvc := service.NewTag(client, c.logger, matcherClient)
-enricher, err := enrichment.NewEnricher(cfg, c.logger, client, services, matcherClient)
-registry.Register("consume", taskhandlers.NewConsumeTaskHandler(consumer, store, c.logger))
-registry.Register("enrich", taskhandlers.NewEnrichTaskHandler(enricher, client.Queries, c.logger))
-registry.Register("config", configtask.NewConfigTaskHandler(c.logger))
-registry.Register("backup", taskhandlers.NewBackupTaskHandler(c.db, client.Queries, func() *config.Config { return c.cfg.Load() }, c.logger))
-registry.Register("mirror", taskhandlers.NewMirrorTaskHandler(client.Queries, func() *config.Config { return c.cfg.Load() }, c.logger))
+matcherClient := matcher.NewMatcherClient(c.SocketPath(), matcher.MaxMatchBodyBytes(cfg.Enricher.TagMatcher.ReduceTargetWords))
+tagSvc := service.NewTag(client, c.GetLogger(), matcherClient)
+enricher, err := enrichment.NewEnricher(cfg, c.GetLogger(), client, services, matcherClient)
+registry.Register("consume", consumption.NewConsumeTaskHandler(consumer, store, c.GetLogger()))
+registry.Register("enrich", enrichment.NewEnrichTaskHandler(enricher, client.Queries, c.GetLogger()))
+registry.Register("config", configtask.NewConfigTaskHandler(client.Queries, c.GetLogger()))
+registry.Register("backup", backup.NewBackupTaskHandler(c.db, client.Queries, func() *config.Config { return c.GetConfig() }, c.GetLogger()))
+registry.Register("mirror", backup.NewMirrorTaskHandler(client.Queries, func() *config.Config { return c.GetConfig() }, c.GetLogger()))
 ```
 
 The `BackupTaskHandler` receives a config getter closure used for the backup-root fallback (`backup.path`) and the config path; the backup `mode`/`path`/`keep` come from the task payload, with the path validated against the configured backup roots. The `MirrorTaskHandler` receives the queries and a config getter; the mirror destination comes from the payload (falling back to `mirror.path`) and is validated via `backup.ValidateDestination`. The config pool is started alongside
@@ -208,7 +208,7 @@ The `Server` only registers the `"config"` task type. Consume/enrich pools are *
 — the server enqueues tasks and the `kushim queue` daemon forks `kushim consume --batch <id>` subprocesses instead:
 
 ```go
-registry.Register("config", configtask.NewConfigTaskHandler(logger))
+registry.Register("config", configtask.NewConfigTaskHandler(client.Queries, logger))
 ```
 
 Only the config pool (1 worker, 5s poll interval) is started on server boot and

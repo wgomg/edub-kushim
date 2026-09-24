@@ -43,7 +43,7 @@ pieces:
 | Shared prompt/parse logic | `analyzer/shared.go` | system prompt, template, JSON cleaning, errors |
 | Model catalog | `llm/registry.go` + `model_catalog.json` | per-model capabilities |
 | The enricher | `internal/enrichment/enricher.go` | orchestrates: reduce → match → analyze → persist |
-| Task handler | `internal/task/handlers/enrich.go` | the `enrich` task type |
+| Task handler | `internal/enrichment/enrich.go` | the `enrich` task type |
 
 Flow: a document's text is reduced (TextRank — see
 `algorithms.md`), tag-matched (see

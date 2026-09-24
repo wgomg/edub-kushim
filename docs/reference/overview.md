@@ -35,29 +35,14 @@ internal/
 │   └── api_key.go          # API key generation and hashing (ek_ prefix, SHA-256)
 ├── backup/                 # Backup, restore, scheduling, and the rsync document mirror
 │   ├── backup.go           # Create backup (SQL dump, tar.gz, manifest, retention)
+│   ├── backup_task.go      # BackupTaskHandler (drain-wait → snapshot → retention, batch lifecycle)
 │   ├── restore.go          # Validate, extract, and replace files from backup archive
 │   ├── scheduler.go        # Backup scheduling (NextBackupTime, NextScheduledTime, ScheduleTiming, FirstRunAnchor, IsBackupDue, IsMirrorDue, dueFromHistory, scheduleTimingFromPayload)
-│   └── mirror.go           # Run (rsync -a --delete, stats parsing), WriteState (.edub-mirror.json), RunLocked (heartbeat → drain → run; heartbeat via database.StartMaintenanceLockHeartbeat)
+│   ├── mirror.go           # Run (rsync -a --delete, stats parsing), WriteState (.edub-mirror.json), RunLocked (heartbeat → drain → run; heartbeat via database.StartMaintenanceLockHeartbeat)
+│   └── mirror_task.go      # MirrorTaskHandler (batch lifecycle + RunLocked → rsync --delete)
 ├── cgo/                    # MuPDF CGo glue
 │   ├── mupdf_wrapper.go    # MuPDF CGo wrapper (6 C helpers + Go API)
 │   └── mupdf_nocgo.go      # Non-CGo stub (build-tag gated)
-├── commands/               # CLI command framework
-│   ├── commands.go         # Command definitions and runner
-│   ├── consume.go          # Document consumption command (--batch, cancel)
-│   ├── container.go        # Dependency injection container (DB, pools, cache, dispatcher); includes config pool
-│   ├── flags.go            # CLI flag parser (shared by commands)
-│   ├── search.go           # Search command (CLI)
-│   ├── hugot.go            # Matcher RPC server over Unix socket (encode, match, rank, consolidate, store ops)
-│   ├── notify.go           # Postgres LISTEN/NOTIFY goroutine for the queue daemon
-│   ├── storage.go          # Storage commands: `kushim storage orphans` (list, scan, delete, restore, move-to-inbox)
-│   ├── setup.go            # Setup command — launches web wizard by default, --cli for terminal mode
-│   ├── task.go             # Task commands (list, status, retry)
-│   ├── user.go             # User commands (create)
-│   ├── enrich.go           # Enrich command (single document, --limit N, or --all)
-│   ├── queue.go            # Queue daemon for background batch consumption (Postgres LISTEN/NOTIFY)
-│   ├── config.go           # `kushim config` command (dump/get/set/unset/validate/path)
-│   ├── backup.go           # Backup and restore commands
-│   └── mirror.go           # `kushim mirror` command (rsync --delete, waits for the backup lock)
 ├── config/                 # Configuration parsing
 │   ├── config.go           # Configuration structs and loading (ConsolidationSimilarity, default thresholds, engine identifier constants, AvailableEngines map)
 │   ├── configdir.go        # ConfigDir() — returns ~/.config/edub-kushim
@@ -65,8 +50,6 @@ internal/
 │   ├── servicefiles.go     # Generates systemd service files during setup
 │   ├── tools.go            # External tool availability checks (MissingExternalTools)
 │   └── watcher.go          # File-based config watcher (hot-reload on disk change)
-├── configtask/             # Config task handler
-│   └── configtask.go       # ConfigTaskHandler — downloads tessdata/Hugot model in background; migrate-db op copies the database when connection settings change, migrate-storage op relocates files when storage dirs change ("config" task type)
 ├── database/               # Database layer (sqlc-generated + manual)
 │   ├── connection.go       # DB connection (PostgreSQL via pgx, 25 max conn, auto-create database, WithConnectTimeout)
 │   ├── client.go           # Client wrapper — embeds *Queries, exposes BeginTx/DB()
@@ -107,10 +90,13 @@ internal/
 │           ├── user.sql
 │           └── orphaned.sql
 ├── documents/              # Document domain: ingestion, storage, MIME, and processing adapters
-│   ├── consumption/        # Document processing engine
+│   ├── consumption/        # Document processing engine + its task handlers
 │   │   ├── consumer.go     # Main consumer (extract → OCR → optimize → store), duplicate detection (MD5+SHA512)
+│   │   ├── consume.go      # ConsumeTaskHandler (uses FileFromPath)
 │   │   ├── scan.go         # ScanAndEnqueue — shared inbox scan → dedup → batch creation
-│   │   └── storage.go      # File operations, checksums, FileFromPath, MIME detection via mimetype lib
+│   │   ├── storage.go      # File operations, checksums, FileFromPath, MIME detection via mimetype lib
+│   │   ├── thumbnail.go    # ThumbnailTaskHandler (render + save page thumbnail)
+│   │   └── thumbnail_backfill.go # ThumbnailBackfillTaskHandler (drain-wait + heartbeat wrapper)
 │   ├── storage/            # Filesystem operations for documents and orphaned/trashed files
 │   │   ├── dirs.go         # Canonical storage subdirectory name constants (Dir*), part of the persisted data contract
 │   │   ├── paths.go        # Path derivation helpers (ThumbnailPath)
@@ -147,10 +133,12 @@ internal/
 │       ├── adapter.go      # Thumbnailer interface + factory
 │       ├── mupdf.go        # MuPDF page renderer (CGo)
 │       └── standalone.go   # RunStandalone thumbnail pipeline (subprocess entry)
-├── enrichment/             # Enrichment engine (LLM pipeline)
+├── enrichment/             # Enrichment engine (LLM pipeline) + its task handlers
 │   ├── enricher.go         # Enricher: dual text reduction → tag matching → token budget pre-check + retry loop → LLM → consolidation → tag adjudication → tag quality gating/provisional quarantine → people/tag/doc type with romanization + normalization
+│   ├── enrich.go           # EnrichTaskHandler (fetches document, calls Enricher.Enrich)
 │   ├── identity.go         # Canonical-form identity mechanics (house form, key equality, tie-break) used by the enricher
 │   ├── identity_resolve.go # Pending identity-evidence resolver (NewIdentityResolver, IdentityReport)
+│   ├── tagidentity.go      # TagIdentityTaskHandler (forks `kushim tagidentity --run`)
 │   └── text.go             # truncate — rune-aware title truncation with the "Unknown" sentinel
 ├── errs/                   # Error classification (kind, wrapping, FromDB/PgError mapping)
 ├── llm/                    # LLM capability registry
@@ -172,6 +160,35 @@ internal/
 │   ├── cache.go            # Generic thread-safe store (Set, Get)
 │   ├── bootstrap.go        # BuildTagCache — pre-compute tag embeddings at startup
 │   └── embedding_store.go  # TagEmbeddingStore (map[string][]float32 with thread-safe ops)
+├── ops/                    # Process layer: CLI verbs, queue daemon, consume child, setup, composition root
+│   ├── cli/                # Command table and the `kushim` verbs
+│   │   ├── commands.go     # Command definitions and runner
+│   │   ├── backup.go       # Backup and restore commands
+│   │   ├── config.go       # `kushim config` command (dump/get/set/unset/validate/path)
+│   │   ├── enrich.go       # Enrich command (single document, --limit N, or --all)
+│   │   ├── hugot.go        # Matcher RPC server over Unix socket (encode, match, rank, consolidate, store ops)
+│   │   ├── migrate.go      # `kushim migrate` database/storage migration commands
+│   │   ├── mirror.go       # `kushim mirror` command (rsync --delete, waits for the backup lock)
+│   │   ├── search.go       # Search command (CLI)
+│   │   ├── storage.go      # Storage commands: `kushim storage orphans` (list, scan, delete, restore, move-to-inbox)
+│   │   ├── tagidentity.go  # `kushim tagidentity --run <batch-id>` identity-adjudication child
+│   │   ├── tagmeasure.go   # `kushim tagmeasure [--run <batch-id>]` measurement child
+│   │   ├── task.go         # Task commands (list, status, retry)
+│   │   ├── thumbnails.go   # `kushim thumbnails <mode>` backfill enqueue
+│   │   └── user.go         # User commands (create)
+│   ├── container/          # Dependency injection container
+│   │   └── container.go    # DB, pools, cache, dispatcher, task-handler registry; config/logger/services accessors
+│   ├── queue/              # Queue daemon for background batch consumption (Postgres LISTEN/NOTIFY)
+│   │   ├── queue.go        # Daemon loop: scheduling, stale reclamation, pool lifecycle, config hot-reload
+│   │   └── notify.go       # Postgres LISTEN/NOTIFY goroutine for the queue daemon
+│   ├── consume/            # `kushim consume` child process
+│   │   └── consume.go      # Enqueues consume+enrich tasks, polls batch progress, cancel subcommand
+│   ├── setup/              # Setup command — launches web wizard by default, --cli for terminal mode
+│   │   └── setup.go
+│   ├── flags/              # CLI flag parser (shared by the ops packages)
+│   │   └── flags.go
+│   └── configtask/         # Config task handler
+│       └── configtask.go   # ConfigTaskHandler — downloads tessdata/Hugot model in background; migrate-db op copies the database when connection settings change, migrate-storage op relocates files when storage dirs change ("config" task type)
 ├── search/                 # Full-text search engine
 │   └── search.go           # Engine, Result (with Language, DocumentTypeID, checksums), Filter (structured search), sanitizeQuery, SearchStructured (returns results + total count)
 ├── service/                # Merged domain service package (replaces people/tags/documenttypes)
@@ -195,6 +212,7 @@ internal/
 ├── tags/                   # Tag subsystem (store, measurement, identity, policy, reconciliation)
 │   ├── store.go            # Store wrapper over tag queries (NewStore, PairNames, PairVerdictStats, CompoundIntersection)
 │   ├── measure.go          # Measurement pass (NewRunner, Report, WorklistCounts)
+│   ├── tagmeasure.go       # TagMeasureTaskHandler (forks `kushim tagmeasure --run`) + ForkAndExtractReport/ExtractReport
 │   ├── evidence.go         # Evidence records and JSON encoding (RuleSetVersion, Record, EncodeRows)
 │   ├── identity.go         # Identity planning types (Disposition, AliasAction, Registration, Plan)
 │   ├── worklist.go         # Rule-set v0 worklist cuts (DeriveWorklists, Twin/Sibling/CompoundSplit)
@@ -205,6 +223,7 @@ internal/
 │   │   └── policy.go       # Evaluate, Decision, Version — no logging, no config, no I/O
 │   └── reconcile/          # Scheduled re-adjudication
 │       ├── reconciler.go   # Reconciler — worklist + report (NewReconciler, Report, ProvisionalCounts)
+│       ├── tagreconcile.go # TagReconcileTaskHandler (reconciler run + batch lifecycle)
 │       ├── bootstrap.go    # Log bootstrap parser (absorbed pairs and band-keep lines from the daemon's log rotations)
 │       └── joint.go        # Joint-tag split scan and component adjudication
 ├── task/                   # Generic task system
@@ -212,24 +231,14 @@ internal/
 │   ├── crud.go             # Task CRUD (Get, ListFiltered, Retry, CountBatchStatuses, ListBatchSummaries)
 │   ├── dispatcher.go       # Task dispatcher (Enqueue with custom taskID/status)
 │   ├── errors.go           # Error wrapper carrying ReqID for log correlation
-│   ├── handler.go          # Handler + Dedupable interfaces
+│   ├── handler.go          # Handler + Dedupable interfaces; RunBlocking — shared blocking-task lifecycle
 │   ├── heartbeat.go        # Heartbeat goroutine — periodic Owner.Heartbeat every 5s
 │   ├── pool.go             # Generic worker pool (Pool, Start/Stop, worker loop; Nexter interface)
 │   ├── progress.go         # Progress tracking (ProgressFunc, ProgressSnapshot, ProgressTracker)
 │   ├── registry.go         # Task type → handler registry
 │   ├── runner.go           # Worker poll loop (claim → execute → complete with retry fallback)
 │   ├── store.go            # Task persistence (CreateTask, ClaimNextPending, CompleteTask, FailTask, SetPending, Discard)
-│   ├── types.go            # Task domain struct
-│   └── handlers/           # Per-type task handlers
-│       ├── consume.go      # ConsumeTaskHandler (uses FileFromPath)
-│       ├── enrich.go       # EnrichTaskHandler (fetches document, calls Enricher.Enrich)
-│       ├── backup.go       # BackupTaskHandler (SQL dump, tar.gz, retention)
-│       ├── mirror.go       # MirrorTaskHandler (backup lock gate, RunLocked → rsync --delete)
-│       ├── thumbnail.go    # ThumbnailTaskHandler (render + save page thumbnail)
-│       ├── thumbnail_backfill.go # ThumbnailBackfillTaskHandler (drain-wait + heartbeat wrapper)
-│       ├── tagreconcile.go # TagReconcileTaskHandler (reconciler run + batch lifecycle)
-│       ├── tagmeasure.go   # TagMeasureTaskHandler (forks `kushim tagmeasure --run`)
-│       └── tagidentity.go  # TagIdentityTaskHandler (forks `kushim tagidentity --run`)
+│   └── types.go            # Task domain struct
 ├── testutil/               # Test helpers (config fixtures, minimal PDFs, assertions)
 ├── textnorm/               # Tag and DB-key canonicalization
 │   ├── tagname.go          # NormalizeTag — canonical tag names

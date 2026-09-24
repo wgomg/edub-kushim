@@ -253,7 +253,7 @@ The `Makefile` also provides containerized builds (`make build-glibc`, `make bui
 ### Test
 
 ```bash
-# Runs all tests that don't require CGo or PostgreSQL (156 test functions, preferred)
+# Runs all tests that don't require CGo or PostgreSQL (400 test functions, preferred)
 make test
 
 # Verbose output for development

@@ -7,8 +7,8 @@ the backup gate. It is the *conceptual* companion to
 `docs/reference/task-system.md` (the file inventory): it answers "why can't a
 task be lost or run twice?"
 
-Audience: developers touching `internal/task/`, `internal/commands/queue.go`,
-`internal/commands/consume.go`, or the task/batch queries.
+Audience: developers touching `internal/task/`, `internal/ops/queue/queue.go`,
+`internal/ops/consume/consume.go`, or the task/batch queries.
 
 ---
 
@@ -46,15 +46,15 @@ The cast of characters:
 |---|---|---|
 | `Dispatcher` | `internal/task/dispatcher.go` | creates tasks (`Enqueue`) |
 | `Registry` | `internal/task/registry.go` | task-type → handler map |
-| `Handler` | `internal/task/handler.go` | does the work, returns JSON result |
+| `Handler` | `internal/task/handler.go` | does the work, returns JSON result; `RunBlocking` wraps the blocking-task lifecycle |
 | `Runner` | `internal/task/runner.go` | claims + dispatches + completes |
 | `Pool` | `internal/task/pool.go` | N worker goroutines calling `Nexter.Next` |
 | `Owner` / `Heartbeat` | `internal/task/batch.go`, `heartbeat.go` | batch lease management |
-| queue daemon | `internal/commands/queue.go` | orchestrates batches |
-| consume command | `internal/commands/consume.go` | runs one batch |
+| queue daemon | `internal/ops/queue/queue.go` | orchestrates batches |
+| consume command | `internal/ops/consume/consume.go` | runs one batch |
 
 The ten task types (declared in `internal/types`, registered in
-`internal/commands/container.go`): `consume`, `enrich`, `thumbnail`,
+`internal/ops/container/container.go`): `consume`, `enrich`, `thumbnail`,
 `config`, `backup`, `mirror`, `tagreconcile`, `thumbbackfill`, `tagmeasure`,
 `tagidentity`.
 
@@ -330,19 +330,19 @@ batch has no pending/processing/waiting tasks left.
 
 ## 6. The queue daemon
 
-`kushim queue` (`internal/commands/queue.go`) is the orchestrator. It never
+`kushim queue` (`internal/ops/queue/queue.go`) is the orchestrator. It never
 processes tasks itself.
 
 ### The wake-up loop
 
 Three mechanisms keep it responsive without busy-polling
-(`queue.go:111-150`):
+(`queue.go:133-316`):
 
 ```go
 go runPollingLoop(ctx, c, client, batchSvc, maxConcurrent)
 
 notifyCh := make(chan struct{}, 4)
-go listenForBatchNotifications(ctx, config.BuildPostgresDSN(c.cfg.Load().Db), notifyCh, c.logger)
+go listenForBatchNotifications(ctx, config.BuildPostgresDSN(c.GetConfig().Db), notifyCh, c.GetLogger())
 
 safetyInterval := 30 * time.Second
 safetyTimer := time.NewTimer(safetyInterval)
@@ -363,7 +363,7 @@ for {
 	...
 ```
 
-1. **Postgres NOTIFY** (`internal/commands/notify.go`): a dedicated
+1. **Postgres NOTIFY** (`internal/ops/queue/notify.go`): a dedicated
    single-connection pool does `LISTEN batch_queued` +
    `WaitForNotification`, pushing a token into `notifyCh`. The trigger lives
    in the database (`00004_listen_notify.sql`) and fires on `INSERT`/`UPDATE`
@@ -414,12 +414,12 @@ the batch can be re-forked.
 
 ## 7. The consume command
 
-`kushim consume --batch <id>` (`internal/commands/consume.go`) is the
-per-batch worker. Batch-mode flow (`consume.go:75-183`):
+`kushim consume --batch <id>` (`internal/ops/consume/consume.go`) is the
+per-batch worker. Batch-mode flow (`consume.go:95-200`):
 
-1. **Paused-batch hard stop** (`consume.go:112-117`): a paused batch refuses
+1. **Paused-batch hard stop** (`consume.go:114-119`): a paused batch refuses
    to run, with a message about resolving the LLM billing issue.
-2. **Acquire the lease** with `--force` escalation (`consume.go:119-137`):
+2. **Acquire the lease** with `--force` escalation (`consume.go:131-144`):
    `ErrBatchLocked` without `--force` prints the incumbent PID and exits;
    with `--force` it calls `AcquireForce` (the `excluded` upsert).
 3. **Entry repair** (`consume.go:141-147`): reset orphaned processing tasks
@@ -470,7 +470,7 @@ owner/heartbeat/pollBatch sequence in-process.
 ## 8. Parent/child choreography: waiting tasks
 
 A consume task creates its enrich task *immediately*, in `waiting` state,
-with mutual references (`handlers/consume.go:224-244`):
+with mutual references (`internal/ops/consume/consume.go:245-285`):
 
 ```go
 consumePayload, _ := json.Marshal(map[string]any{
@@ -487,7 +487,7 @@ dispatcher.Enqueue(ctx, "enrich", batchID, enrichPayload, enrichTaskID, "waiting
 ```
 
 On consume success, the child is **activated** (`activateChildEnrich`,
-`handlers/consume.go:107-121`): it validates the `waiting_for` link, injects
+`internal/documents/consumption/consume.go:99-135`): it validates the `waiting_for` link, injects
 `document_id` into the payload, and flips the child to `pending`:
 
 ```sql
@@ -502,7 +502,7 @@ WHERE id = $2 AND status IN ('waiting', 'discarded') AND task_type = 'enrich';
 
 The `IN ('waiting', 'discarded')` guard means a discarded child can also be
 re-armed. On consume failure, the child is **discarded**
-(`deactivateChildEnrich`, `handlers/consume.go:120-153`) — marked
+(`deactivateChildEnrich`, `internal/documents/consumption/consume.go:136-170`) — marked
 `discarded` with the parent's error, so the enrich never runs against a
 document that doesn't exist, and it doesn't count as a failed task.
 
@@ -513,7 +513,7 @@ activated) is a benign no-op logged at info level.
 
 **Every consume failure path discards the child**, not just failures inside
 `Process` — the handler wraps all error returns in `withDiscardAttempt`
-(`handlers/consume.go:158-166`), covering the early exits too: payload
+(`internal/documents/consumption/consume.go:247-260`), covering the early exits too: payload
 unmarshal failure (with a best-effort lenient re-parse of `on_completed` via
 `recoverOnCompleted`), an empty `file_path`, and `FileFromPath` failures
 (the realistic crash-retry case: the inbox file was already moved). If the
@@ -557,7 +557,7 @@ CREATE UNIQUE INDEX idx_task_dedup ON task(task_type, dedup_key)
 Uniqueness holds **only while the task is live** — once it completes/fails,
 the row drops out of the index and the same key becomes insertable again
 (that's how a re-ingest after a crash works). The Go side
-(`internal/task/handler.go:12-14`, `registry.go:28-37`) computes keys via the
+(`internal/task/handler.go:18-20`, `registry.go:28-37`) computes keys via the
 optional `Dedupable` interface:
 
 ```go
@@ -571,15 +571,15 @@ Key formats in use:
 | Task type | Key | Source |
 |---|---|---|
 | consume | `consume:<md5>` (scan/restore paths) or the file path (direct CLI) | `scan.go:90-97`, `service/orphaned.go:183` |
-| enrich | `enrich:doc:<document_id>` | `handlers/enrich.go:52-61`, `service/enrich.go:47,72` |
-| backup | `backup:<UTC date>` | `handlers/backup.go:36-38` |
-| mirror | `mirror:<UTC date>` | `handlers/mirror.go` |
-| config | `config:tessdata:<lang>` / `config:hugot` / `config:migrate-db` / `config:migrate-storage` | `configtask/configtask.go` |
+| enrich | `enrich:doc:<document_id>` | `internal/enrichment/enrich.go:51-60`, `service/enrich.go:47,72` |
+| backup | `backup:<UTC date>` | `internal/backup/backup_task.go:36-38` |
+| mirror | `mirror:<UTC date>` | `internal/backup/mirror_task.go` |
+| config | `config:tessdata:<lang>` / `config:hugot` / `config:migrate-db` / `config:migrate-storage` | `internal/ops/configtask/configtask.go` |
 
 The waiting (child) enrich tasks store **no dedup key** — dedup only kicks in
 once activated, when the payload gains `document_id`. A duplicate insert
 surfaces as a unique-violation → `errs.KindConflict` → "re-enrich already
-queued" (`commands/enrich.go:85-95`).
+queued" (`internal/ops/cli/enrich.go:92-93`).
 
 ---
 
@@ -792,7 +792,7 @@ WHERE id = 1 AND (NOT running OR started_at <= NOW() - INTERVAL '30 minutes');
   fresh lock is never dropped by the age sweep. A stale claimant's late
   terminal write is a token-mismatch no-op (rows = 0 → no release), so it
   can never drop a fresh holder's lock.
-- The backup handler (`internal/task/handlers/backup.go`) runs with the lock
+- The backup handler (`internal/backup/backup_task.go`) runs with the lock
   held; it **drains** in-flight
   work (`database.WaitForTaskDrain`, `internal/database/migrate.go`: 5s ticker on
   `CountProcessingTasks` until zero) before snapshotting, then applies
@@ -807,7 +807,7 @@ WHERE id = 1 AND (NOT running OR started_at <= NOW() - INTERVAL '30 minutes');
   timing instead of waiting a full interval (tasks completed before this
   change carry no recorded schedule and keep the steady rule).
 
-The **mirror** task (`internal/task/handlers/mirror.go`) participates in the
+The **mirror** task (`internal/backup/mirror_task.go`) participates in the
 same gate: it is claimed with the lock held, drains in-flight work, and runs
 `rsync -a --delete` over the storage tree (see `internal/backup/`). Because a
 large rsync can exceed the 30-minute staleness window, the handler runs a
@@ -815,9 +815,11 @@ heartbeat that refreshes `backup_lock.started_at` every 5 minutes
 (`TouchMaintenanceLockForTask`, guarded by the claim token) for the rsync
 itself — the gate never goes stale mid-mirror. The heartbeat is started by the
 shared `database.StartMaintenanceLockHeartbeat` helper *before*
-`WaitForTaskDrain` returns, so the drain-wait itself is covered too; the same
-helper is used by the backup, tagreconcile, thumbbackfill, tagmeasure, and tagidentity handlers, which
-all start it before their drain and keep it running through completion.
+`WaitForTaskDrain` returns, so the drain-wait itself is covered too; the
+backup, tagreconcile, tagmeasure and tagidentity handlers get that sequence —
+heartbeat, drain, body, batch finalize — from the shared `task.RunBlocking`
+lifecycle (`internal/task/handler.go`), while the thumbbackfill wrapper starts
+the helper directly and keeps it running through the inner handler.
 Scheduling mirrors `IsBackupDue` as `IsMirrorDue` (same
 `NextBackupTime` anchoring, keyed on the last completed `mirror:<date>` task,
 with the same payload-derived re-phase on schedule edits);
@@ -827,7 +829,7 @@ destination. Both the handler and the CLI share `backup.RunLocked`, which owns
 the heartbeat → drain → rsync → state-file sequence (the CLI passes a NULL
 token, matching its NULL-owner lock from `AcquireBackupLock`).
 
-The **tagmeasure** task (`internal/task/handlers/tagmeasure.go`) is a
+The **tagmeasure** task (`internal/tags/tagmeasure.go`) is a
 blocking-class task too: claimed with the lock held, drained via
 `WaitForTaskDrain`, heartbeat across the whole run — and it additionally forks
 `kushim tagmeasure --run <batch-id>` and waits, so the pass's long
@@ -835,7 +837,7 @@ repeatable-read transaction runs in its own process while the parent keeps the
 lock fresh; the child's printed report line becomes the task result and its
 exit code decides completion/failure.
 
-The **tagidentity** task (`internal/task/handlers/tagidentity.go`) follows the
+The **tagidentity** task (`internal/enrichment/tagidentity.go`) follows the
 same fork-and-wait shape: claimed with the lock held, drained via
 `WaitForTaskDrain`, heartbeat across the run, then forks
 `kushim tagidentity --run <batch-id>`; the child resolves pending identity
@@ -846,8 +848,8 @@ foreground mode and no schedule: the review surface's reevaluate action
 enqueues it, its pool runs unconditionally, and the reconciliation's identity
 sweep covers claims nobody triggers.
 
-The **tagreconcile** task (`internal/task/handlers/tagreconcile.go`) and the
-**thumbbackfill** task (`internal/task/handlers/thumbnail_backfill.go`, a thin
+The **tagreconcile** task (`internal/tags/reconcile/tagreconcile.go`) and the
+**thumbbackfill** task (`internal/documents/consumption/thumbnail_backfill.go`, a thin
 wrapper that adds drain-wait + heartbeat around the per-document
 `ThumbnailTaskHandler`) are blocking-class tasks too: they are claimed with
 the lock held, drain in-flight work via `WaitForTaskDrain`, and run the same

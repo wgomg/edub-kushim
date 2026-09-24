@@ -225,7 +225,7 @@ fix:
 .PHONY: vuln
 vuln:
 	CGO_ENABLED=0 govulncheck -tags "XLA,ORT" \
-		$(shell go list ./... | grep -v -E '/(cmd/kushim|internal/commands)$$|/node_modules/')
+		$(shell go list ./... | grep -v -E '/(cmd/kushim|internal/ops/cli|internal/ops/queue)$$|/node_modules/')
 
 .PHONY: vuln-cgo
 vuln-cgo:
@@ -302,8 +302,9 @@ test-backup:
 test-cgo-db:
 	CGO_ENABLED=1 go test -tags "XLA,ORT" -count=1 -timeout 120s \
 		./internal/documents/consumption/ \
-		./internal/configtask/ \
-		./internal/commands/ \
+		./internal/ops/configtask/ \
+		./internal/ops/cli/ \
+		./internal/ops/queue/ \
 		./internal/enrichment/ \
 		./internal/tags/reconcile/ \
 		./internal/api/handlers/
@@ -337,8 +338,8 @@ test-cgo:
 		./internal/documents/ocr/ \
 		./internal/matcher/ \
 		./internal/tools/ \
-		./internal/commands/ \
-		./internal/task/handlers/ \
+		./internal/ops/cli/ \
+		./internal/ops/queue/ \
 		./internal/enrichment/ \
 		./internal/tags/reconcile/
 

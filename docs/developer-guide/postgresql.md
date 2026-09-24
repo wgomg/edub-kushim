@@ -437,7 +437,7 @@ AFTER INSERT OR UPDATE ON batch
 FOR EACH ROW EXECUTE FUNCTION notify_batch_queued();
 ```
 
-Client side (`internal/commands/notify.go`) — a **dedicated single-connection
+Client side (`internal/ops/queue/notify.go`) — a **dedicated single-connection
 pool** (LISTEN state is per-connection, so it must never be shared):
 
 ```go
@@ -585,7 +585,7 @@ Knowing what *isn't* here is as instructive as what is:
 | Identity columns, partial indexes, composite PKs, CHECKs | `sql/schema/migrations/00001_baseline.sql` |
 | Generated tsvector column | `sql/schema/migrations/00002_tsvector.sql` |
 | GIN + CONCURRENTLY + NO TRANSACTION | `sql/schema/migrations/00003_tsvector_index.sql` |
-| Trigger + `pg_notify` | `sql/schema/migrations/00004_listen_notify.sql` + `internal/commands/notify.go` |
+| Trigger + `pg_notify` | `sql/schema/migrations/00004_listen_notify.sql` + `internal/ops/queue/notify.go` |
 | Single-row lock table + SQL gate function | `sql/schema/migrations/00005_backup_lock.sql`, `sql/queries/backup_lock.sql`, `sql/queries/task.sql:35-40` |
 | Soft delete + partial index | `sql/schema/migrations/00007_trash_soft_delete.sql` |
 | Idempotent multi-row seeds with `ON CONFLICT` | `sql/schema/seed-*.sql` |

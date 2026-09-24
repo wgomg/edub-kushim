@@ -401,7 +401,7 @@ toolchain installed:
 - `internal/documents/ocr/gosseract_test.go`, `downscale_test.go` —
   OCR + image pipeline tests.
 - `internal/matcher/hugot_test.go` — model tests.
-- `internal/commands` — no `//go:build cgo` tag of its own, but the package
+- `internal/ops/cli` — no `//go:build cgo` tag of its own, but the package
   only compiles with CGo because `hugot.go` imports the cgo-gated tagmatcher
   adapter. It is tested under `make test-cgo`, where it links natively; its
   tests themselves are pure Go (config handler, snippet highlighting).

@@ -51,7 +51,7 @@ kushim queue ── forks: kushim consume --batch <id> (per-batch processing)
 ```
 
 - `edub` enqueues consume/enrich tasks with `status='queued'` when `POST /api/v1/consume` is called;
-  the `kushim queue` daemon (`internal/commands/queue.go`) picks the batch up (Postgres
+  the `kushim queue` daemon (`internal/ops/queue/queue.go`) picks the batch up (Postgres
   `LISTEN batch_queued` + 30s safety poll) and forks `kushim consume --batch <id>` as a child
   process. `kushim` must be on PATH or sibling of `edub`.
 - The matcher (`kushim hugot`) must be running before `edub` starts. Tag CRUD returns 503 otherwise.
@@ -92,7 +92,7 @@ make test          # 14 packages, no database needed, CGO_ENABLED=0
 make test-verbose  # same with -v
 make test-db       # database-backed tests, requires PostgreSQL via TEST_DATABASE_URL
 make test-backup   # backup package, requires PostgreSQL via TEST_DATABASE_URL
-make test-cgo      # CGo-gated tests incl. internal/commands (requires make build-deps first)
+make test-cgo      # CGo-gated tests incl. internal/ops/cli and internal/ops/queue (requires make build-deps first)
 make test-cgo-db   # DB-gated tests in CGo packages (requires make build-deps + TEST_DATABASE_URL)
 make test-one PKG=./internal/errs/   # single package; add RUN=Name to filter
 make test-web      # web/ unit + component tests (vitest, no database)

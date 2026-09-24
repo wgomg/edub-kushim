@@ -511,7 +511,7 @@ type Embedder interface {
 - `*matcher.MatcherClient` (`internal/matcher/client.go:44`) implements both
   over the Unix socket — used by `edub`, which cannot load the model. The RPC
   surface is `Match`, `Rank`, `AddToStore`, `RemoveFromStore`, `Health`
-  (`internal/commands/hugot.go:95-99`). `Rank` prefers `/rpc/v1/rank` and
+  (`internal/ops/cli/hugot.go:93-100`). `Rank` prefers `/rpc/v1/rank` and
   falls back to the legacy `/rpc/v1/consolidate` on 404 (old daemon), wrapping
   each returned name as a `RankResult{KeptName: name}` with no candidates so
   the enricher keeps it verbatim.
@@ -526,7 +526,7 @@ is implemented by `matcher.TagEmbeddingStore` and by the test double
 
 ## 9. The matcher daemon
 
-`kushim hugot` (`internal/commands/hugot.go`) is the daemon that loads the
+`kushim hugot` (`internal/ops/cli/hugot.go`) is the daemon that loads the
 model once and serves RPC over a Unix socket (`<config-dir>/kushim-hugot.sock`).
 
 - **Startup**: removes a stale socket, builds the tag cache
@@ -635,7 +635,7 @@ statements.
    `CreateTx` birth stays provisional), deletes call `RemoveFromStore`, and a
    rename re-embeds the new name only when the renamed tag was promoted
    (`encodeAndAddBatch`, `service/tag.go:275-279`).
-2. **Daemon startup** (`commands/hugot.go`): `BuildTagCache` seeds the store
+2. **Daemon startup** (`internal/ops/cli/hugot.go`): `BuildTagCache` seeds the store
    from the promoted names (`ListPromotedTagNames`), so provisional tags stay
    out across restarts.
 3. **Enrichment** (`internal/enrichment/enricher.go`):

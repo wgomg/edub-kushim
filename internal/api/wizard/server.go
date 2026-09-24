@@ -10,9 +10,9 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/api/handlers"
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/configtask"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/log"
+	"github.com/wgomg/edub-kushim/internal/ops/configtask"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
 )

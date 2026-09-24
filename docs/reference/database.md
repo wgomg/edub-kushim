@@ -55,8 +55,8 @@ When adding a new migration:
 Migrations run automatically on startup (no manual CLI command needed):
 
 - **Server** (`edub`) — called in `cmd/edub/main.go` after `NewPostgresDB()`
-- **CLI commands** (`kushim consume`, `search`, `task`) — called in `internal/commands/container.go` `GetDB()` when the connection is first acquired
-- **Reconnect** (`kushim queue`) — `Container.reconnectClient()` re-runs `InitializeSchema` as a no-op safety net after a DB config change
+- **CLI commands** (`kushim consume`, `search`, `task`) — called in `internal/ops/container/container.go` `GetDB()` when the connection is first acquired
+- **Reconnect** (`kushim queue`) — `Container.ReconnectClient()` re-runs `InitializeSchema` as a no-op safety net after a DB config change
 
 ---
 

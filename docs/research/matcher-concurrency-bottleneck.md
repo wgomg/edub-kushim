@@ -15,10 +15,10 @@ had a hardcoded `http.Client.Timeout: 120 * time.Second`
 `enricher.tagmatcher.timeout`, silently overriding any config change beyond
 120s and producing `Client.Timeout exceeded while awaiting headers` errors
 under concurrent load. The server mirrored this with a hardcoded
-`WriteTimeout: 120 * time.Second` (`internal/commands/hugot.go:114`). Both are
+`WriteTimeout: 120 * time.Second` (`internal/ops/cli/hugot.go:114-118`). Both are
 now driven by the config value: the client relies solely on the context
 deadline (client `Timeout` removed), and the server's `WriteTimeout` is derived
-from `enricher.tagmatcher.timeout` (`internal/commands/hugot.go:111-117`,
+from `enricher.tagmatcher.timeout` (`internal/ops/cli/hugot.go:113-118`,
 `0` = no deadline).
 
 Removing the stacked deadlines surfaced the underlying issue this report
@@ -27,7 +27,7 @@ occasionally exhaust the timeout budget.
 
 ## Architecture: No Queue, No Worker Pool, No Locking
 
-The matcher server is a plain `http.Server` (`internal/commands/hugot.go:111-117`)
+The matcher server is a plain `http.Server` (`internal/ops/cli/hugot.go:114-118`)
 with standard `net/http` dispatch. Each request runs in its own goroutine:
 
 ```
@@ -42,7 +42,7 @@ edub ── MatchTags ── runWithTimeout(ctx) ── HTTP POST /rpc/v1/match
 ```
 
 There is no request queue, no worker pool, and no handler-level locking —
-`handleMatch` (`internal/commands/hugot.go:199-222`) decodes the body and calls
+`handleMatch` (`internal/ops/cli/hugot.go:201-224`) decodes the body and calls
 `h.Match` directly. The same holds for the adapter: `Match`
 (`internal/matcher/hugot.go:174-212`), `Encode`
 (`internal/matcher/hugot.go:258-319`), and `encodeChunked`
@@ -67,7 +67,7 @@ Hugot v0.7.5 does not serialize inference at the library level either:
 Because nothing serializes inference, concurrent requests do not queue up —
 they *contend*. The concurrency source is the queue daemon: `kushim queue` forks
 up to `server.max_concurrent_batches` `kushim consume --batch <id>` processes,
-each creating its own `MatcherClient` (`internal/commands/container.go:133`) and
+each creating its own `MatcherClient` (`internal/ops/container/container.go:163`) and
 running up to `enricher.workers` (default 1) enrichment workers. So concurrent
 matcher requests = `max_concurrent_batches × enricher.workers`. (The `edub`
 process also has a `MatcherClient` at `internal/api/server.go:56`, but uses it
@@ -178,8 +178,8 @@ backlog:
 - `MatchTags` — `internal/tools/runner.go:419-436` (config timeout as context deadline)
 - `runWithTimeout` — `internal/tools/runner.go:96-113` (returns on ctx.Done, goroutine continues)
 - `NewMatcherClient` — `internal/matcher/client.go:49-63` (client `Timeout` removed; context deadline is the sole deadline)
-- Matcher server — `internal/commands/hugot.go:111-117` (`WriteTimeout` from config)
-- `handleMatch` — `internal/commands/hugot.go:199-222` (no locking, standard HTTP dispatch)
+- Matcher server — `internal/ops/cli/hugot.go:114-118` (`WriteTimeout` from config)
+- `handleMatch` — `internal/ops/cli/hugot.go:201-224` (no locking, standard HTTP dispatch)
 - `getBackendSession` — `internal/matcher/hugot.go:450-482` (ORT session created without `WithIntraOpNumThreads`)
 - `Match` — `internal/matcher/hugot.go:174-212` (no mutex)
 - `Encode` — `internal/matcher/hugot.go:258-319` (no mutex)

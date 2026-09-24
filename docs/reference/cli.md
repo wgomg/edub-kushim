@@ -1,28 +1,30 @@
-# CLI Commands (`internal/commands/`)
+# CLI Commands (`internal/ops/`)
 
-## `commands.go`
+The process layer is split by role: the verb table and the `kushim` verbs live in `internal/ops/cli`, the queue daemon and its LISTEN/NOTIFY loop in `internal/ops/queue`, the per-batch child in `internal/ops/consume`, the setup flow in `internal/ops/setup`, the dependency-injection container in `internal/ops/container`, the shared flag parser in `internal/ops/flags`, and the config task handler in `internal/ops/configtask`.
+
+## `commands.go` (`ops/cli`)
 
 ### Globals
 
-`commandSets` map with `"cli"` key (CLI commands) and `"server"` key (edub commands: `version`). CLI set contains: `version`, `consume`, `search`, `hugot`, `task`, `user`, `setup`, `enrich`, `thumbnails`, `queue`, `storage`, `backup`, `mirror`, `config`, `restore`, `migrate`, `tagmeasure`, `tagidentity`.
+`commandSets` map with `"cli"` key (CLI commands) and `"server"` key (edub commands: `version`). CLI set contains: `version`, `consume`, `search`, `hugot`, `task`, `user`, `setup`, `enrich`, `thumbnails`, `queue`, `storage`, `backup`, `mirror`, `config`, `restore`, `migrate`, `tagmeasure`, `tagidentity`. The `consume`, `queue`, and `setup` entries delegate to `consume.Run`, `queue.Run`, and `setup.RunSetup` respectively.
 
 > **Note**: The `edub` binary has its own standalone runner in `cmd/edub/runner.go` that only handles the `version` command (server mode is the default when no command matches).
 
 ### Structs
 
-- `Command` — `Name`, `Description`, `Handler func(container *Container, args []string) error`
-- `CommandRunner` — `container *Container`, `commands map[string]Command`
-  - **Methods**: `NewCommandRunner(container, set string) *CommandRunner`, `ExecuteCommand(name, args) error`
+- `Command` — `Name`, `Description`, `Handler func(c *container.Container, args []string) error`
+- `CommandRunner` — `container *container.Container`, `commands map[string]Command`
+  - **Methods**: `NewCommandRunner(c, set string) *CommandRunner`, `ExecuteCommand(name, args) error`
 
 ### Functions
 
 - `ListCommands() []Command`
 - `PrintUsage()` — Prints CLI usage, calls `os.Exit(1)`
-- `versionHandler(container, args) error` — Prints `"Document Management System v{version}"`
+- `versionHandler(c, args) error` — Prints `"Document Management System v{version}"`
 
 ---
 
-## `consume.go`
+## `consume.go` (`ops/consume`)
 
 ### Globals
 
@@ -30,7 +32,8 @@
 
 ### Functions
 
-- `consumeHandler(c, args) error` — Enqueues files in paired (consume + enrich) tasks; direct-fallback if queue empty, `--batch <id>` for batch resume, `--force` to override a stale lease when resuming a batch. Subcommand `cancel <batch-id>` cancels a running batch. If paused batches exist (from unresolved LLM credit/balance errors), `kushim consume` (without `--batch`) refuses with an error listing the paused batch IDs. After `pollBatch` returns, if the batch completed normally it calls `setBatchTerminalStatus`; if the batch was paused (`ErrBatchPaused`) it suppresses the error so the caller returns cleanly.
+- `Run(c, args) error` — Enqueues files in paired (consume + enrich) tasks; direct-fallback if queue empty, `--batch <id>` for batch resume, `--force` to override a stale lease when resuming a batch. Subcommand `cancel <batch-id>` cancels a running batch. If paused batches exist (from unresolved LLM credit/balance errors), `kushim consume` (without `--batch`) refuses with an error listing the paused batch IDs. After `pollBatch` returns, if the batch completed normally it calls `setBatchTerminalStatus`; if the batch was paused (`ErrBatchPaused`) it suppresses the error so the caller returns cleanly.
+- `IsAlive(pid) bool` — Signal-0 liveness check for a batch owner PID, shared with the queue daemon's stale-owner reclamation.
 - `consumeCancelHandler(c, args) error` — Cancels pending + processing tasks via DB, reads batch owner PID from batch_owner table, sends SIGTERM.
 - `pollBatch(ctx, queries, cp, ep, logger, batchID) error` — Streams per-file progress to stdout; returns `nil` when all tasks finish, `ErrBatchPaused` when the runner pauses the batch, or `ctx.Err()` on cancellation.
 - `setBatchTerminalStatus(ctx, queries, batchSvc, batchID) error` — Computes a terminal status (`completed` or `failed`) from task outcomes. Has a defense-in-depth guard: if the batch is already in a terminal state (`completed`, `failed`, `cancelled`, `paused`), it returns `nil` without modifying the batch.
@@ -39,18 +42,26 @@
 
 ---
 
-## `container.go`
+## `container.go` (`ops/container`)
 
 ### Struct
 
-- `Container` — `cfg` (atomic.Pointer), `logger`, `db`, `engine`, `cache`, `dispatcher`, `pools struct { consume *task.Pool; enrich *task.Pool; config *task.Pool; backup *task.Pool; mirror *task.Pool }`
+- `Container` — `cfg` (atomic.Pointer), `logger`, `db`, `client`, `engine`, `dispatcher`, `runner`, `store`, `services`, and a `pools struct` with one slot per task type (`consume`, `enrich`, `thumbnail`, `thumbbackfill`, `config`, `backup`, `mirror`, `tagreconcile`, `tagmeasure`, `tagidentity`)
   - **Methods**:
     - `NewContainer(cfg, logger)` — No DB
     - `NewContainerWithDB(cfg, logger, db)` — With provided DB
+    - `GetConfig() *config.Config` / `SetConfig(cfg)` — Atomic load/store of the live config (the queue daemon swaps it on hot reload)
+    - `GetLogger() *log.Logger`
+    - `GetServices() (*service.CrudServices, error)` — Ensures the dispatcher (and its CRUD services) is initialized
     - `GetDB() (*sql.DB, error)` — Creates DB lazily, runs goose migrations on first open
-    - `GetCache() (*matcher.Cache, error)` — Builds tag embedding cache lazily via `matcher.BuildTagCache`
+    - `GetClient() (*database.Client, error)` — Lazily wraps the DB
+    - `InvalidateDB()` — Closes the DB and drops the client, dispatcher, runner, engine, store, services, and pools so the next accessor rebuilds them
+    - `ReconnectClient() (*database.Client, error)` — Opens a new DB from the current config, invalidates, and returns the new client
+    - `SocketPath() string` — `<config_dir>/kushim-hugot.sock`
     - `GetDispatcher() (*task.Dispatcher, error)` — Lazily creates dispatcher. Creates a `MatcherClient` connected to the Unix socket at `<config_dir>/kushim-hugot.sock`, builds `TagService` wired through the client, and `Enricher` with the matcher.
-    - `GetPool(taskType) (*task.Pool, error)` — Returns the pool for "consume", "enrich", or "config", lazily creates with dispatcher. Config pool uses 1 worker and 5s poll interval.
+    - `GetRunner() (*task.Runner, error)` — Builds the runner over the dispatcher and registers every task handler (consume, enrich, thumbnail, thumbbackfill, config, backup, mirror, tagreconcile, tagmeasure, tagidentity)
+    - `SetRunnerOwnerID(id) error` — Per-process batch owner UUID
+    - `GetPool(taskType) (*task.Pool, error)` — Returns (or lazily creates) the pool for a task type, with the worker count and poll interval for that type
     - `GetSearchEngine() (*search.Engine, error)`
     - `Close()` — Stops all pools if created, closes DB
 
@@ -76,7 +87,7 @@ Listens on a Unix socket (cleaned up on shutdown). Handles SIGTERM/SIGINT for gr
 
 ---
 
-## `flags.go`
+## `flags.go` (`ops/flags`)
 
 ### Struct
 
@@ -107,14 +118,13 @@ Listens on a Unix socket (cleaned up on shutdown). Handles SIGTERM/SIGINT for gr
 
 ---
 
-## `setup.go`
+## `setup.go` (`ops/setup`)
 
 ### Functions
 
-- `RunSetup(args, logger) error` — Dispatches to either `runSetupWizard` (default) or `runSetupCLI` (when `--cli` flag is set).
+- `RunSetup(args, logger) error` — Dispatches to either `runSetupWizard` (default) or `runSetupCLI` (when `--cli` flag is set). Called both by `cmd/kushim/main.go` (before any config is loaded) and by the `setup` verb-table entry.
 - `runSetupWizard(args, logger) error` — Starts a standalone HTTP wizard server on `0.0.0.0:8420` serving the embedded SvelteKit wizard SPA. The server bootstraps config on first PUT request.
 - `runSetupCLI(args, logger) error` — Accepts `--languages` through `--consumer-pdfoptimizer-fallback` (same as wizard), plus `--db-dsn`, `--admin-user`, `--admin-password`, `--reset-database`. `--db-dsn` sets `cfg.Db.DSN` (used immediately for the DB connection) and persists it to config.yaml as `database.dsn` (overrides the individual `database.*` fields). Generates and persists a session secret. Downloads Tesseract language data and Hugot model (`BAAI/bge-m3`). Creates config.yaml, directories, initializes database schema (or resets it with `--reset-database`). Prompts interactively for admin username/password when omitted. Creates the admin user via `service.User.Create()`. After setup completes, generates systemd service files to `<configDir>/systemd/` via `config.GenerateServiceFiles` and prints copy/install instructions.
-- `setupHandler(c, args) error` — Returns error telling the user to use `kushim setup` for the wizard or `kushim setup --cli --languages ...` for terminal setup
 
 ---
 
@@ -158,11 +168,13 @@ kushim storage thumbnails cleanup [--dry-run]
 
 ---
 
-## `queue.go`
+## `queue.go` (`ops/queue`)
+
+The daemon's Postgres `LISTEN` goroutine lives in the same package (`notify.go`).
 
 ### Functions
 
-- `queueHandler(c, args) error` — Starts the batch queue daemon for background consumption and inbox polling. Accepts `--bg` to daemonize (re-execs without `--bg` and returns). In daemon mode: checks PID file for single-instance, sets up signal handling (SIGTERM/SIGINT → graceful shutdown with PID file cleanup), opens log file at `<config_dir>/logs/queue.log`, spawns a polling goroutine, and runs three concurrent scheduling paths:
+- `Run(c, args) error` — Starts the batch queue daemon for background consumption and inbox polling. Accepts `--bg` to daemonize (re-execs without `--bg` and returns). In daemon mode: checks PID file for single-instance, sets up signal handling (SIGTERM/SIGINT → graceful shutdown with PID file cleanup), opens log file at `<config_dir>/logs/queue.log`, spawns a polling goroutine, and runs three concurrent scheduling paths:
   - **Notification-driven consumption** — A dedicated `LISTEN` goroutine connects to Postgres via a separate pgxpool (MinConns=1, MaxConns=1) and listens on the `batch_queued` channel. When a batch transitions to `status='queued'`, a database trigger sends a `pg_notify` that wakes the goroutine, which forwards the signal over a buffered channel (capacity 4). The daemon picks the batch up in milliseconds, calls `consumeNextQueuedBatch` which forks `kushim consume --batch <id> --force`.
   - **Safety timer** — A 30-second timer guarantees consumption runs at least once every 30s, even if a notification is dropped (connection blip, reconnection). Resets on each notification-driven consumption.
   - **Housekeeping ticker** — A 5-second ticker for stale reclamation and backup scheduling. Runs:
@@ -173,7 +185,7 @@ kushim storage thumbnails cleanup [--dry-run]
 - `reclaimStaleBatches(ctx, batchSvc, logger) error` — Iterates stale batch owners, signals SIGTERM to the owner PID (if alive), quarantines tasks at or above `consumer.reclaim.max_retries` to `failed`, resets remaining processing→pending with incremented attempt counter, re-queues, deletes owner. Only called when `consumer.reclaim.enabled` is `true`.
 - `reclaimStaleTasks(ctx, batchSvc, cfg, logger) error` — Age-based sweep for individual tasks stuck in `processing` beyond `consumer.reclaim.stale_task_after`. Delegates to `service.Batch.ResetStaleProcessingTasks` which quarantines (attempts ≥ maxRetries → `failed`) and resets (attempts < maxRetries → `pending` + increment) in a single transaction; blocking-class tasks go through ownership-gated variants keyed on the maintenance lock (token match + freshness window). Logs the count of reclaimed tasks.
 - `consumeNextQueuedBatch(ctx, client, batchSvc, maxConcurrent, logger) error` — Picks and dispatches the next queued batch.
-- `runPollingLoop(ctx, c, client, batchSvc, maxConcurrent)` — Goroutine that runs on its own dynamic ticker (configured by `consumer.polling.interval`, minimum 1 minute). Reads config from `c.cfg.Load()` (atomically loaded by the queue daemon's 5-second housekeeping ticker, so config changes propagate from disk within ~5 seconds without a restart). Checks capacity (`CountQueuedConsumeBatches + CountLiveBatches < MaxConcurrentBatches`) and missing external tools (recomputed only when the config pointer changes) before calling `consumption.ScanAndEnqueue`.
+- `runPollingLoop(ctx, c, client, batchSvc, maxConcurrent)` — Goroutine that runs on its own dynamic ticker (configured by `consumer.polling.interval`, minimum 1 minute). Reads config from `c.GetConfig()` (atomically loaded by the queue daemon's 5-second housekeeping ticker, so config changes propagate from disk within ~5 seconds without a restart). Checks capacity (`CountQueuedConsumeBatches + CountLiveBatches < MaxConcurrentBatches`) and missing external tools (recomputed only when the config pointer changes) before calling `consumption.ScanAndEnqueue`.
 - `pollingTick(ctx, c, client, batchSvc, maxConcurrent, missingTools)` — Single polling iteration: capacity check, missing tools check, then delegates to `consumption.ScanAndEnqueue` to scan inbox, deduplicate, and create a `queued` batch with consume+enrich task pairs.
 - `maybeScheduleBackup(ctx, c, client) error` — When `backup.enabled` is set, checks the shared backup lock once per tick (`CountActiveBackupTasks`), then iterates `cfg.Backup.Schedules`, calling `backup.IsBackupDue` per schedule (per-mode 5-minute cooldown + per-mode last-completed derivation). Each due schedule enqueues a `"backup"` task whose payload captures the schedule's `mode`, `path`, and `keep` at enqueue time.
 - `maybeScheduleMirror(ctx, c, client) error` — When `mirror.enabled` is set, checks the shared backup lock once per tick (`CountActiveMirrorTasks`), then calls `backup.IsMirrorDue` (5-minute cooldown + last-completed derivation, same anchor as backups). Each due mirror enqueues a `"mirror"` task whose payload captures the config's `path` and `interval` at enqueue time.
