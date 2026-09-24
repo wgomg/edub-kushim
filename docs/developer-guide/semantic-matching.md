@@ -35,7 +35,7 @@ Semantic matching happens at two points in the enrichment pipeline:
 1. **Tag suggestions for the LLM** — before the LLM analyzes a document, the
    reduced text is embedded and matched against the known tags; the top
    matches are passed into the prompt as "prefer these tags if relevant"
-   (`internal/enrichment/enricher.go:106-118`).
+   (`internal/enrichment/enricher.go:132-151`).
 2. **Post-LLM consolidation and identity** — the tags the LLM produced are
    re-embedded and mapped onto the canonical tag names ("concept → existing
    tag") by identity — house form, alias lookup, key equality — and by the
@@ -53,7 +53,7 @@ implements the `Matcher` and `Embedder` interfaces
   a Unix socket to the `kushim hugot` daemon (§9).
 
 Both satisfy the same interfaces, so the rest of the system cannot tell them
-apart. The tag service (`internal/service/tag.go`) holds whichever one was
+apart. The tag service (`internal/tags/curation/tag.go`) holds whichever one was
 wired in as its `embedder`.
 
 The whole flow is: **tags → embeddings (store) → document text → embedding →
@@ -166,11 +166,11 @@ from the `tag` table:
    zero-assignment legacy row) is excluded from every injection point, so it is
    never suggested, never a consolidation target, and never part of the
    all-names fallback vocabulary. Promotion adds the name incrementally
-   (`service.Tag.AddToStore` after the promotion check); a re-run of
+   (`curation.Tag.AddToStore` after the promotion check); a re-run of
    `BuildTagCache` after a restart converges the store with the table either
    way.
 2. Embeds them **verbatim** — no per-key transformation. Tag names are
-   already canonical: `service.Tag.Create`/`Update` normalize every name
+   already canonical: `curation.Tag.Create`/`Update` normalize every name
    through `textnorm.NormalizeTag` (`internal/textnorm/tagname.go`) before it
    reaches the DB, so the stored name is the embedding key and the matcher
    never re-derives a different form.
@@ -179,7 +179,7 @@ from the `tag` table:
    half-built store.
 
 The store is rebuilt at `kushim hugot` daemon startup, and incrementally
-updated on tag CRUD (`service.Tag.encodeAndAddBatch` via `AddToStore`,
+updated on tag CRUD (`curation.Tag.encodeAndAddBatch` via `AddToStore`,
 `service/tag.go:275-279`): a create adds names only for trusted births, a rename
 re-embeds the new name only when the renamed tag was promoted, and the enricher
 adds promoted names after the promotion check commits. `AddToStore`,
@@ -334,7 +334,7 @@ for i, qEmb := range out.Embeddings {
 
 `Runner.RankTags` (`internal/tools/runner.go`) wraps the call with the
 configured timeout, and the enricher applies the identity pipeline locally
-(`internal/enrichment/identity.go`) with candidate generation from
+(`internal/tags/admission/identity.go`) with candidate generation from
 `policy.Evaluate` (`internal/tags/policy/policy.go`).
 Per query the policy runs, in order: short-slice and empty-candidates
 passthrough, an identity fast path (exact equality with a store tag →
@@ -461,7 +461,7 @@ via `AddToStore` only after the commit (`tagquality[v1]: promote %q
 (docs=%d model=%s)`, `model` or `cached` for a cache-applied verdict).
 Verdict-less provisionals — judge outages and re-emitted legacy rows — are not
 re-judged in flight: a name already present in the tag table is not novel, so
-`applyTagQuality` never sees it again and no verdict row appears. Two surfaces
+`Adjudicator.ApplyTagQuality` never sees it again and no verdict row appears. Two surfaces
 resolve them afterwards:
 
 - The **scheduled reconciliation sweep** (`internal/tags/reconcile`)
@@ -470,7 +470,7 @@ resolve them afterwards:
   passing verdict plus ≥ 2 live documents promotes without a judge call, and
   verdict-less names are re-judged oldest-first under `max_rejudge` — the
   tag's first live document (`FirstDocumentIDForTag`, `GetDocumentTextForTagQuality`)
-  reduced with `enrichment.TargetWordCount`, one judge call per name, one
+  reduced with `matcher.TargetWordCount`, one judge call per name, one
   retry on failure — with the verdict recorded through the enricher's
   fresh-verdict path (`InsertTagQualityEvent` with `DO NOTHING`, so a
   concurrent fresh verdict is kept) and a fresh pass promoted immediately at
@@ -480,7 +480,7 @@ resolve them afterwards:
   `POST /api/v1/tags/{id}/promote`, and the tags page's editor-only "New
   tags" tab) is the operator path: it lists provisional names with their
   live `document_count` and latest verdict — `null` for a name with no row —
-  and promotes one through the same `service.Tag.Promote` method the sweep
+  and promotes one through the same `curation.Tag.Promote` method the sweep
   uses. A rejection is a normal tag delete, so the `deleted_tag` blocklist
   keeps the name from being reborn.
 
@@ -643,7 +643,7 @@ statements.
      or zero matches, falls back to the promoted-name list (the enricher's
      `tagsNames`, composed from the promoted subset of `ListAll`).
    - `runner.RankTags(ctx, docId, analysis.Tags)` after the LLM pass;
-     `planIdentity` applies identity and candidate generation via
+     `Adjudicator.PlanIdentity` applies identity and candidate generation via
      `policy.Evaluate` (identity + gate subjects) with the promoted-only
      store set, so quarantined names are not targets. Style variants and
      aliases are applied before this point through M1/M3 and the alias
@@ -668,7 +668,7 @@ statements.
 
 - **Tag names are canonical before they reach the store** — `textnorm.NormalizeTag`
   (`internal/textnorm/tagname.go`) runs at the DB save chokepoints
-  (`service.Tag.Create`/`Update`); the cache and the matcher use names
+  (`curation.Tag.Create`/`Update`); the cache and the matcher use names
   verbatim, so store keys always equal DB names.
 - **The store is the tag universe.** Tags not in `entries` can never be
   suggested, and `Match` returns nothing when the store is empty — even if

@@ -26,6 +26,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/ops/configtask"
 	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/service"
+	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 	itypes "github.com/wgomg/edub-kushim/internal/types"
@@ -36,7 +37,9 @@ type handlerTestEnv struct {
 	logger        *log.Logger
 	engine        *search.Engine
 	matcherClient *matcher.MatcherClient
-	tagSvc        *service.Tag
+	tagSvc        *curation.Tag
+	tagMerge      *curation.TagMerge
+	tagIdentity   *curation.TagIdentity
 	peopleSvc     *service.People
 	peopleTypeSvc *service.PeopleType
 	docTypeSvc    *service.DocumentType
@@ -48,12 +51,12 @@ type handlerTestEnv struct {
 }
 
 func newDocHandler(env *handlerTestEnv) *DocumentHandler {
-	return NewDocumentHandler(env.client, env.logger, env.engine, env.services, func() *config.Config { return config.DefaultConfig("/tmp/test") })
+	return NewDocumentHandler(env.client, env.logger, env.engine, env.services, env.tagSvc, func() *config.Config { return config.DefaultConfig("/tmp/test") })
 }
 
-func newMockTagService(client *database.Client) (*service.Tag, *testutil.MockEmbedder) {
+func newMockTagService(client *database.Client) (*curation.Tag, *testutil.MockEmbedder) {
 	embedder := testutil.NewMockEmbedder()
-	tagSvc := service.NewTag(client, testutil.NewTestLogger(), embedder)
+	tagSvc := curation.NewTag(client, testutil.NewTestLogger(), embedder)
 	return tagSvc, embedder
 }
 
@@ -89,16 +92,17 @@ func newHandlerTestEnv(t *testing.T) *handlerTestEnv {
 	trashCfg := config.DefaultConfig("/tmp/test")
 	trashSvc := service.NewTrashService(client, trashCfg, logger)
 
+	tagMerge := curation.NewTagMerge(client, matcherClient, testutil.NewMockEmbedder(), logger)
+	tagIdentity := curation.NewTagIdentity(client.Queries, workStore, batchSvc)
+
 	services := &service.CrudServices{
 		Batch:        batchSvc,
-		Tag:          tagSvc,
 		People:       peopleSvc,
 		PeopleType:   peopleTypeSvc,
 		DocumentType: docTypeSvc,
 		User:         userSvc,
 		ReEnrich:     reenrichSvc,
 		Trash:        trashSvc,
-		TagIdentity:  service.NewTagIdentity(client.Queries, workStore, batchSvc),
 	}
 
 	registry := task.NewRegistry()
@@ -111,6 +115,8 @@ func newHandlerTestEnv(t *testing.T) *handlerTestEnv {
 		engine:        engine,
 		matcherClient: matcherClient,
 		tagSvc:        tagSvc,
+		tagMerge:      tagMerge,
+		tagIdentity:   tagIdentity,
 		peopleSvc:     peopleSvc,
 		peopleTypeSvc: peopleTypeSvc,
 		docTypeSvc:    docTypeSvc,
@@ -350,7 +356,7 @@ func TestDownloadDocumentsValidation(t *testing.T) {
 	cfg.Srv.MaxDownloadSizeMB = 0 // any positive size exceeds
 
 	env := newHandlerTestEnv(t)
-	h := NewDocumentHandler(env.client, env.logger, env.engine, env.services, func() *config.Config { return cfg })
+	h := NewDocumentHandler(env.client, env.logger, env.engine, env.services, env.tagSvc, func() *config.Config { return cfg })
 
 	t.Run("invalid body", func(t *testing.T) {
 		w := rec()
@@ -1601,7 +1607,7 @@ func TestBatchDeleteDocumentsMaxLimit(t *testing.T) {
 	cfg.Srv.MaxBatchDelete = 2
 
 	env := newHandlerTestEnv(t)
-	h := NewDocumentHandler(env.client, env.logger, env.engine, env.services, func() *config.Config { return cfg })
+	h := NewDocumentHandler(env.client, env.logger, env.engine, env.services, env.tagSvc, func() *config.Config { return cfg })
 
 	body, _ := json.Marshal(BatchDeleteRequest{
 		DocumentIDs: []string{"a", "b", "c"},
@@ -2762,7 +2768,7 @@ func TestAddDocumentTag_ClearsOrphanMark(t *testing.T) {
 func TestListProvisional(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
-	h := NewTagHandler(env.services, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagMerge, env.tagIdentity, env.logger)
 
 	// Create a tag and manually set promoted_at = NULL to make it provisional.
 	tagID := database.MustCreateTag(t, env.client.Queries, "prov-handler-tag")
@@ -2799,7 +2805,7 @@ func TestListProvisional(t *testing.T) {
 func TestPromoteTag(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
-	h := NewTagHandler(env.services, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagMerge, env.tagIdentity, env.logger)
 
 	t.Run("promote provisional tag", func(t *testing.T) {
 		// Create a tag and set promoted_at = NULL to make it provisional.
@@ -2846,7 +2852,7 @@ func TestPromoteTag(t *testing.T) {
 
 func TestReevaluateIdentity(t *testing.T) {
 	env := newHandlerTestEnv(t)
-	h := NewTagHandler(env.services, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagMerge, env.tagIdentity, env.logger)
 
 	type reevaluateResponse struct {
 		BatchID       string `json:"batch_id"`

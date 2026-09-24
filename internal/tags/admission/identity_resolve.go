@@ -1,4 +1,4 @@
-package enrichment
+package admission
 
 import (
 	"context"
@@ -14,6 +14,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/tags"
+	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/textnorm"
 	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/types"
@@ -24,16 +25,16 @@ type IdentityResolver struct {
 	logger    *log.Logger
 	client    *database.Client
 	runner    *tools.Runner
-	services  *service.CrudServices
+	tag       *curation.Tag
 }
 
-func NewIdentityResolver(getConfig func() *config.Config, logger *log.Logger, client *database.Client, services *service.CrudServices, runner *tools.Runner) *IdentityResolver {
+func NewIdentityResolver(getConfig func() *config.Config, logger *log.Logger, client *database.Client, tag *curation.Tag, runner *tools.Runner) *IdentityResolver {
 	return &IdentityResolver{
 		getConfig: getConfig,
 		logger:    logger,
 		client:    client,
 		runner:    runner,
-		services:  services,
+		tag:       tag,
 	}
 }
 
@@ -295,7 +296,7 @@ func (r *IdentityResolver) resolvePairs(ctx context.Context, cfg *config.Config,
 	if len(actions) == 0 {
 		return
 	}
-	if err := r.services.Tag.ApplyAliasPlan(ctx, actions); err != nil {
+	if err := r.tag.ApplyAliasPlan(ctx, actions); err != nil {
 		r.logger.Error(nil, "tag identity: apply alias plan failed: %v", err)
 		report.Failed += len(actions)
 		return
@@ -316,7 +317,7 @@ func (r *IdentityResolver) applyFold(ctx context.Context, from, to string) (bool
 	}
 
 	if _, err := r.client.Queries.GetTagByName(ctx, to); err == nil {
-		if err := r.services.Tag.ApplyAliasPlan(ctx, []tags.AliasAction{{AliasName: from, Canonical: to, RemoveExistingTag: true}}); err != nil {
+		if err := r.tag.ApplyAliasPlan(ctx, []tags.AliasAction{{AliasName: from, Canonical: to, RemoveExistingTag: true}}); err != nil {
 			return false, err
 		}
 		return true, nil
@@ -331,7 +332,7 @@ func (r *IdentityResolver) applyFold(ctx context.Context, from, to string) (bool
 	if err != nil {
 		return false, err
 	}
-	results, err := r.services.Tag.Update(ctx, []service.TagUpdatePair{{ID: tag.ID, Name: to}})
+	results, err := r.tag.Update(ctx, []curation.TagUpdatePair{{ID: tag.ID, Name: to}})
 	if err != nil {
 		return false, err
 	}
@@ -339,7 +340,7 @@ func (r *IdentityResolver) applyFold(ctx context.Context, from, to string) (bool
 	case service.Updated, service.Noop:
 		return true, nil
 	case service.UpdateConflict:
-		if err := r.services.Tag.ApplyAliasPlan(ctx, []tags.AliasAction{{AliasName: from, Canonical: to, RemoveExistingTag: true}}); err != nil {
+		if err := r.tag.ApplyAliasPlan(ctx, []tags.AliasAction{{AliasName: from, Canonical: to, RemoveExistingTag: true}}); err != nil {
 			return false, err
 		}
 		return true, nil

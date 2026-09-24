@@ -453,7 +453,7 @@ Note: the catalog has **no cost fields** — `entryToCapability`
 
 ## 10. The enricher pipeline
 
-`Enricher.Enrich` (`internal/enrichment/enricher.go:51-404`) is the
+`Enricher.Enrich` (`internal/enrichment/enricher.go:61-498`) is the
 orchestrator. Step by step:
 
 1. **Reduce for the LLM** (`enricher.go:65-77`): `ReduceContent(text, 150,
@@ -533,7 +533,7 @@ for i := range 2 {
     batched LLM calls; `same` aliases the losing name, `variant`/`related`
     register both). Disabled, failing, or ambiguous adjudication leaves the
     claim pending — the candidate registers provisionally.
-12. **Tag quality judge** (`enricher.go`, `applyTagQuality`): only when
+12. **Tag quality judge** (`internal/tags/admission/adjudicator.go`, `Adjudicator.ApplyTagQuality`): only when
     `enricher.tag_quality.enabled` is true. Novel tags — consolidated outputs
     whose normalized names are absent from the vocabulary — are first scored
     by the deterministic weak band (`is_standard_term` +1/absent 0/−1,

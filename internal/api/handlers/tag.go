@@ -11,6 +11,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/service"
+	"github.com/wgomg/edub-kushim/internal/tags/curation"
 )
 
 func isMatcherUnavailable(err error) bool {
@@ -29,12 +30,14 @@ func matcherUnavailableResponse(w http.ResponseWriter) {
 }
 
 type TagHandler struct {
-	services *service.CrudServices
+	tag      *curation.Tag
+	merges   *curation.TagMerge
+	identity *curation.TagIdentity
 	logger   *log.Logger
 }
 
-func NewTagHandler(services *service.CrudServices, logger *log.Logger) *TagHandler {
-	return &TagHandler{services: services, logger: logger}
+func NewTagHandler(tag *curation.Tag, merges *curation.TagMerge, identity *curation.TagIdentity, logger *log.Logger) *TagHandler {
+	return &TagHandler{tag: tag, merges: merges, identity: identity, logger: logger}
 }
 
 func (h *TagHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -57,10 +60,10 @@ func (h *TagHandler) List(w http.ResponseWriter, r *http.Request) {
 	var responses []TagResponse
 
 	if q != "" {
-		result, searchErr := h.services.Tag.SearchByNameWithDocumentCount(ctx, q, int32(limit), int32(offset))
+		result, searchErr := h.tag.SearchByNameWithDocumentCount(ctx, q, int32(limit), int32(offset))
 		err = searchErr
 		if err == nil {
-			total, err = h.services.Tag.CountByName(ctx, q)
+			total, err = h.tag.CountByName(ctx, q)
 		}
 		if err == nil {
 			responses = make([]TagResponse, len(result))
@@ -69,10 +72,10 @@ func (h *TagHandler) List(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	} else {
-		result, listErr := h.services.Tag.ListWithDocumentCount(ctx, int32(limit), int32(offset))
+		result, listErr := h.tag.ListWithDocumentCount(ctx, int32(limit), int32(offset))
 		err = listErr
 		if err == nil {
-			total, err = h.services.Tag.Count(ctx)
+			total, err = h.tag.Count(ctx)
 		}
 		if err == nil {
 			responses = make([]TagResponse, len(result))
@@ -106,7 +109,7 @@ func (h *TagHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results, err := h.services.Tag.CreateAndUnblock(ctx, []string{req.Name})
+	results, err := h.tag.CreateAndUnblock(ctx, []string{req.Name})
 	if err != nil {
 		if isMatcherUnavailable(err) {
 			matcherUnavailableResponse(w)
@@ -159,7 +162,7 @@ func (h *TagHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results, err := h.services.Tag.Update(ctx, []service.TagUpdatePair{{ID: id, Name: req.Name}})
+	results, err := h.tag.Update(ctx, []curation.TagUpdatePair{{ID: id, Name: req.Name}})
 	if err != nil {
 		if isMatcherUnavailable(err) {
 			matcherUnavailableResponse(w)
@@ -198,7 +201,7 @@ func (h *TagHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results, err := h.services.Tag.Delete(ctx, []int64{id})
+	results, err := h.tag.Delete(ctx, []int64{id})
 	if err != nil {
 		if isMatcherUnavailable(err) {
 			matcherUnavailableResponse(w)
@@ -229,12 +232,12 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 	limit := pb.GetInt64("limit", 50, 1, 100)
 	offset := max(pb.GetInt64("offset", 0, 0, 100000), 0)
 
-	rows, err := h.services.Tag.ListProvisional(ctx, int32(limit), int32(offset))
+	rows, err := h.tag.ListProvisional(ctx, int32(limit), int32(offset))
 	if err != nil {
 		writeServiceError(w, h.logger, &reqID, "list provisional tags", err)
 		return
 	}
-	total, err := h.services.Tag.CountProvisional(ctx)
+	total, err := h.tag.CountProvisional(ctx)
 	if err != nil {
 		writeServiceError(w, h.logger, &reqID, "count provisional tags", err)
 		return
@@ -246,7 +249,7 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 		for i, t := range rows {
 			names[i] = t.Name
 		}
-		events, err := h.services.Tag.LatestQualityEventsForNames(ctx, names)
+		events, err := h.tag.LatestQualityEventsForNames(ctx, names)
 		if err != nil {
 			writeServiceError(w, h.logger, &reqID, "provisional tag verdicts", err)
 			return
@@ -264,7 +267,7 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 			}
 			verdicts[e.TagName] = info
 		}
-		pending, err := h.services.Tag.PendingIdentityCounts(ctx, names)
+		pending, err := h.tag.PendingIdentityCounts(ctx, names)
 		if err != nil {
 			writeServiceError(w, h.logger, &reqID, "provisional tag identity evidence", err)
 			return
@@ -299,7 +302,7 @@ func (h *TagHandler) PromoteTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, status, err := h.services.Tag.Promote(ctx, id, "human-approve")
+	_, status, err := h.tag.Promote(ctx, id, "human-approve")
 	if err != nil {
 		writeServiceError(w, h.logger, &reqID, "promote tag", err)
 		return
@@ -319,7 +322,7 @@ func (h *TagHandler) ReevaluateIdentity(w http.ResponseWriter, r *http.Request) 
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
 
-	batchID, alreadyQueued, err := h.services.TagIdentity.Enqueue(ctx)
+	batchID, alreadyQueued, err := h.identity.Enqueue(ctx)
 	if err != nil {
 		writeServiceError(w, h.logger, &reqID, "enqueue tag identity run", err)
 		return
@@ -354,7 +357,7 @@ func (h *TagHandler) Merge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.services.TagMerge.Merge(ctx, id, req.TargetID)
+	result, err := h.merges.Merge(ctx, id, req.TargetID)
 	if err != nil {
 		writeServiceError(w, h.logger, &reqID, "merge tag", err)
 		return
@@ -382,7 +385,7 @@ func (h *TagHandler) ListDeleted(w http.ResponseWriter, r *http.Request) {
 	limit := pb.GetInt64("limit", 50, 1, 100)
 	offset := pb.GetInt64("offset", 0, 0, 100000)
 
-	rows, total, err := h.services.Tag.ListDeleted(ctx, q, int32(limit), int32(offset))
+	rows, total, err := h.tag.ListDeleted(ctx, q, int32(limit), int32(offset))
 	if err != nil {
 		writeServiceError(w, h.logger, &reqID, "list deleted tags", err)
 		return
@@ -412,7 +415,7 @@ func (h *TagHandler) RestoreDeleted(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	row, err := h.services.Tag.RestoreDeleted(ctx, name)
+	row, err := h.tag.RestoreDeleted(ctx, name)
 	if err != nil {
 		if isMatcherUnavailable(err) {
 			matcherUnavailableResponse(w)
@@ -439,7 +442,7 @@ func (h *TagHandler) MergeSuggestions(w http.ResponseWriter, r *http.Request) {
 	forTag := pb.Get("for_tag", "")
 	includeDismissed := pb.GetBool("include_dismissed", false)
 
-	suggestions, err := h.services.TagMerge.Suggestions(ctx, service.SuggestionsParams{
+	suggestions, err := h.merges.Suggestions(ctx, curation.SuggestionsParams{
 		Limit:            int(limit),
 		ForTag:           forTag,
 		IncludeDismissed: includeDismissed,
@@ -467,7 +470,7 @@ func (h *TagHandler) DismissMergePair(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.services.TagMerge.DismissPair(ctx, req.TagA, req.TagB); err != nil {
+	if err := h.merges.DismissPair(ctx, req.TagA, req.TagB); err != nil {
 		writeServiceError(w, h.logger, &reqID, "dismiss merge pair", err)
 		return
 	}
@@ -485,7 +488,7 @@ func (h *TagHandler) RestoreMergePair(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.services.TagMerge.RestorePair(ctx, req.TagA, req.TagB); err != nil {
+	if err := h.merges.RestorePair(ctx, req.TagA, req.TagB); err != nil {
 		writeServiceError(w, h.logger, &reqID, "restore merge pair", err)
 		return
 	}

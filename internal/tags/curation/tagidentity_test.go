@@ -1,4 +1,4 @@
-package service
+package curation
 
 import (
 	"context"
@@ -8,10 +8,52 @@ import (
 	"testing"
 
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
+
+type mockTaskCall struct {
+	TaskType string
+	BatchID  string
+	Payload  json.RawMessage
+	TaskID   string
+	Status   string
+	DedupKey string
+	Source   string
+}
+
+type recordingTaskCreator struct {
+	calls    []mockTaskCall
+	createFn func(taskType types.TaskType, batchID string, payload json.RawMessage, taskID string, status types.TaskStatus, dedupKey string) (string, error)
+}
+
+func (m *recordingTaskCreator) CreateTask(_ context.Context, taskType types.TaskType, batchID string, payload json.RawMessage, taskID string, status types.TaskStatus, dedupKey string) (string, error) {
+	if m.createFn != nil {
+		return m.createFn(taskType, batchID, payload, taskID, status, dedupKey)
+	}
+	m.calls = append(m.calls, mockTaskCall{
+		TaskType: string(taskType), BatchID: batchID, Payload: payload,
+		TaskID: taskID, Status: string(status), DedupKey: dedupKey,
+	})
+	return taskID, nil
+}
+
+type recordingBatchCreator struct {
+	calls    []mockTaskCall
+	createFn func(id string, source types.BatchSource, status types.BatchStatus) error
+}
+
+func (m *recordingBatchCreator) Create(_ context.Context, id string, source types.BatchSource, status types.BatchStatus) error {
+	if m.createFn != nil {
+		return m.createFn(id, source, status)
+	}
+	m.calls = append(m.calls, mockTaskCall{
+		BatchID: id, Source: string(source), Status: string(status),
+	})
+	return nil
+}
 
 func newTagIdentityTestClient(t *testing.T) *database.Client {
 	t.Helper()
@@ -53,7 +95,7 @@ func TestTagIdentityEnqueue(t *testing.T) {
 		batchMock := &recordingBatchCreator{}
 		svc := NewTagIdentity(client.Queries, taskMock, batchMock)
 
-		batchSvc := NewBatch(client, 3)
+		batchSvc := service.NewBatch(client, 3)
 		testutil.AssertNoError(t, batchSvc.Create(context.Background(), "existing-run", types.Batch.Source.TagIdentity, types.Batch.Status.Queued), "seed active batch")
 
 		batchID, alreadyQueued, err := svc.Enqueue(context.Background())
@@ -116,7 +158,7 @@ func TestTagIdentityEnqueue(t *testing.T) {
 }
 
 type capturingTaskCreator struct {
-	inner    TaskCreator
+	inner    service.TaskCreator
 	captured []string
 }
 

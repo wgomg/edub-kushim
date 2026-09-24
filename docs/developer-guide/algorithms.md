@@ -390,7 +390,7 @@ digit is rejected (returns `""`, which callers treat as invalid), so `"..."`
 never becomes a tag. Unlike `NormalizeForDB` it does **not** restrict to
 `[a-z ]`: `c++`, `c#`, `asp.net`, `3d`, and `история` survive as themselves.
 
-It is applied at the tag save chokepoints (`service.Tag.Create`/`Update`) and
+It is applied at the tag save chokepoints (`curation.Tag.Create`/`Update`) and
 by the enrichment pipeline through `contentanalyzer.normalizeCore`/
 `NormalizeTags`. The embedding cache and the matcher consume names verbatim —
 no per-key re-normalization — so store keys always equal DB names.
@@ -473,10 +473,10 @@ keeps memory flat for multi-GB files. `ListFilePaths` additionally sorts by
 | Algorithm / utility | Caller | Purpose |
 |---|---|---|
 | `TextRank.Reduce` | `tools.Runner.ReduceContent` (`internal/tools/runner.go:311-347`) | shrink text to `target_word_count` before LLM (target 2000) and tag matcher (target 4000) |
-| `targetWordCount` logic | `internal/enrichment/enricher.go:398-404` | negative config = fraction of document; floor 2000 |
-| `NormalizeForDB` | `enricher.go:418-433`, people/tag services | canonical DB keys for dedup/lookup |
+| `TargetWordCount` | `internal/matcher/client.go:49-55` | negative config = fraction of document; floor 2000 |
+| `NormalizeForDB` | `internal/enrichment/enricher.go:426`, people/curation services | canonical DB keys for dedup/lookup |
 | `estimateTokens` | `analyzer/shared.go` `checkContentTooLarge` | LLM pre-flight budget check |
-| `truncate` | `enricher.go:247-265` | title ≤ 127 chars |
+| `truncate` | `internal/enrichment/text.go:5-20` | title ≤ 127 chars |
 | `cleanCodeBlock` | both LLM adapters | strip fences before JSON parse |
 | `CalculateMD5` / SHA-512 | `internal/documents/consumption/scan.go` | content dedup + uniqueness |
 | `stripTags` | textextractor output | remove HTML noise from extracted text |

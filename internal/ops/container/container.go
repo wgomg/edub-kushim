@@ -19,6 +19,8 @@ import (
 	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/tags"
+	"github.com/wgomg/edub-kushim/internal/tags/admission"
+	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/tags/reconcile"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/tools"
@@ -35,6 +37,8 @@ type Container struct {
 	runner     *task.Runner
 	store      *task.Store
 	services   *service.CrudServices
+	tag        *curation.Tag
+	merges     *curation.TagMerge
 	pools      struct {
 		consume       *task.Pool
 		enrich        *task.Pool
@@ -74,11 +78,11 @@ func (c *Container) GetLogger() *log.Logger {
 	return c.logger
 }
 
-func (c *Container) GetServices() (*service.CrudServices, error) {
+func (c *Container) GetTagService() (*curation.Tag, error) {
 	if _, err := c.GetDispatcher(); err != nil {
 		return nil, err
 	}
-	return c.services, nil
+	return c.tag, nil
 }
 
 func (c *Container) GetDB() (*sql.DB, error) {
@@ -120,6 +124,8 @@ func (c *Container) InvalidateDB() {
 	c.engine = nil
 	c.store = nil
 	c.services = nil
+	c.tag = nil
+	c.merges = nil
 	c.pools.consume = nil
 	c.pools.enrich = nil
 	c.pools.thumbnail = nil
@@ -162,15 +168,15 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 
 	matcherClient := matcher.NewMatcherClient(c.SocketPath(), matcher.MaxMatchBodyBytes(c.cfg.Load().Enricher.TagMatcher.ReduceTargetWords))
 
-	tagSvc := service.NewTag(client, c.logger, matcherClient)
+	c.tag = curation.NewTag(client, c.logger, matcherClient)
+	c.merges = curation.NewTagMerge(client, matcherClient, matcherClient, c.logger)
 	peopleSvc := service.NewPeople(client.Queries, c.logger)
 	peopleTypeSvc := service.NewPeopleType(client.Queries, c.logger)
 	docTypeSvc := service.NewDocumentType(client.Queries, c.logger)
 
 	c.services = &service.CrudServices{
-		Tag: tagSvc, People: peopleSvc, PeopleType: peopleTypeSvc, DocumentType: docTypeSvc,
+		People: peopleSvc, PeopleType: peopleTypeSvc, DocumentType: docTypeSvc,
 	}
-	c.services.TagMerge = service.NewTagMerge(client, matcherClient, matcherClient, c.logger)
 
 	store := task.NewStore(client)
 	c.store = store
@@ -180,7 +186,7 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 		return nil, err
 	}
 
-	enricher, err := enrichment.NewEnricher(c.cfg.Load(), c.logger, client, c.services, matcherClient)
+	enricher, err := enrichment.NewEnricher(c.cfg.Load(), c.logger, client, c.tag, matcherClient)
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +204,8 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 		reconcile.NewReconciler(
 			func() *config.Config { return c.cfg.Load() },
 			client,
-			c.services,
+			c.tag,
+			c.merges,
 			tools.NewRunnerWithMatcher(c.logger, c.cfg.Load(), []string{"textreducer", "contentanalyzer", "tagmatcher"}, matcherClient),
 			c.logger,
 		),
@@ -206,7 +213,7 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 		c.logger,
 	))
 	registry.Register(types.Task.Type.TagMeasure, tags.NewTagMeasureTaskHandler(client.Queries, c.logger))
-	registry.Register(types.Task.Type.TagIdentity, enrichment.NewTagIdentityTaskHandler(client.Queries, c.logger))
+	registry.Register(types.Task.Type.TagIdentity, admission.NewTagIdentityTaskHandler(client.Queries, c.logger))
 
 	c.dispatcher = task.NewDispatcher(c.logger, store, registry)
 	c.runner = task.NewRunner(store, registry, c.logger)
@@ -365,6 +372,9 @@ func (c *Container) Close() {
 	}
 	if c.db != nil {
 		c.db.Close()
+	}
+	if c.tag != nil {
+		c.tag.Close()
 	}
 	if c.services != nil {
 		c.services.Close()

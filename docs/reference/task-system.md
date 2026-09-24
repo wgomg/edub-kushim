@@ -185,13 +185,13 @@ The `"mirror"` type is handled by `MirrorTaskHandler` which runs with the same l
 
 The `"tagreconcile"` type is handled by `TagReconcileTaskHandler` which runs with the lock already held, drains in-flight tasks, runs the reconciler, and owns the batch lifecycle. Its reconciler runs on a runner built with the `textreducer`, `contentanalyzer` and `tagmatcher` tools — the reducer feeds the provisional re-judge path (`Runner.ReduceContent` over the tag's first live document). The `"thumbbackfill"` type is handled by `ThumbnailBackfillTaskHandler`, a wrapper that adds the same drain-wait + heartbeat around the per-document `ThumbnailTaskHandler`; backfill tasks are created by `service.ThumbnailBackfill` (dedup key `thumbnail:doc:<uuid>`) and processed by a dedicated 1-worker/2s pool, while per-document `thumbnail` tasks remain lock-gated.
 The `"tagmeasure"` type is handled by `TagMeasureTaskHandler` which runs with the lock already held, drains in-flight tasks, and forks `kushim tagmeasure --run <batch-id>`: the child executes the pass (`internal/tags`) in one repeatable-read transaction, writes the evidence records, and prints a report line the handler captures as the task result, while the child's exit code decides completion/failure through the attempts budget. Manual `kushim tagmeasure` runs the same pass in the foreground under the NULL-token lock (wait-for-lock, drain, heartbeat) without any batch or task row.
-The `"tagidentity"` type is handled by `TagIdentityTaskHandler`, the same drain + heartbeat + fork shape: it forks `kushim tagidentity --run <batch-id>`, whose child resolves the pending identity evidence through `enrichment.IdentityResolver` and prints the `tagidentity-report: <json>` line (pending/resolved/folded/aliased/deferred/failed) the handler captures; the exit code decides completion/failure. The queue daemon runs its pool unconditionally (the trigger is `POST /api/v1/tags/identity/reevaluate`, not a schedule), and a run with the adjudicator disabled only counts the backlog.
-The `TagService` and `Enricher` receive the client instead of a direct Hugot reference:
+The `"tagidentity"` type is handled by `TagIdentityTaskHandler`, the same drain + heartbeat + fork shape: it forks `kushim tagidentity --run <batch-id>`, whose child resolves the pending identity evidence through `admission.IdentityResolver` and prints the `tagidentity-report: <json>` line (pending/resolved/folded/aliased/deferred/failed) the handler captures; the exit code decides completion/failure. The queue daemon runs its pool unconditionally (the trigger is `POST /api/v1/tags/identity/reevaluate`, not a schedule), and a run with the adjudicator disabled only counts the backlog.
+The tag services and `Enricher` receive the client instead of a direct Hugot reference:
 
 ```go
 matcherClient := matcher.NewMatcherClient(c.SocketPath(), matcher.MaxMatchBodyBytes(cfg.Enricher.TagMatcher.ReduceTargetWords))
-tagSvc := service.NewTag(client, c.GetLogger(), matcherClient)
-enricher, err := enrichment.NewEnricher(cfg, c.GetLogger(), client, services, matcherClient)
+tagSvc := curation.NewTag(client, c.GetLogger(), matcherClient)
+enricher, err := enrichment.NewEnricher(cfg, c.GetLogger(), client, tagSvc, matcherClient)
 registry.Register("consume", consumption.NewConsumeTaskHandler(consumer, store, c.GetLogger()))
 registry.Register("enrich", enrichment.NewEnrichTaskHandler(enricher, client.Queries, c.GetLogger()))
 registry.Register("config", configtask.NewConfigTaskHandler(client.Queries, c.GetLogger()))

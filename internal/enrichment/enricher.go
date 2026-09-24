@@ -19,47 +19,41 @@ import (
 	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/tags"
+	"github.com/wgomg/edub-kushim/internal/tags/admission"
+	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/tags/policy"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/textnorm"
 	"github.com/wgomg/edub-kushim/internal/tools"
-	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 const (
 	tokenBudgetRatio   = 0.9
 	minTargetWords     = 100
 	fallbackVocabLimit = 200
-
-	tagQualityTLow               = -1.0
-	tagQualityNoAnchorSimilarity = 0.60
 )
 
-type splitDecision struct {
-	verdict    analyzer.TagSplitVerdict
-	components []string
-}
-
 type Enricher struct {
-	config     *config.Config
-	logger     *log.Logger
-	client     *database.Client
-	queries    *database.Queries
-	runner     *tools.Runner
-	services   *service.CrudServices
-	mu         sync.Mutex
-	splitMu    sync.Mutex
-	splitCache map[string]splitDecision
+	config    *config.Config
+	logger    *log.Logger
+	client    *database.Client
+	queries   *database.Queries
+	runner    *tools.Runner
+	tag       *curation.Tag
+	admission *admission.Adjudicator
+	mu        sync.Mutex
 }
 
-func NewEnricher(cfg *config.Config, logger *log.Logger, client *database.Client, services *service.CrudServices, matcher matcher.Matcher) (*Enricher, error) {
+func NewEnricher(cfg *config.Config, logger *log.Logger, client *database.Client, tag *curation.Tag, matcher matcher.Matcher) (*Enricher, error) {
+	runner := tools.NewRunnerWithMatcher(logger, cfg, []string{"textreducer", "contentanalyzer", "tagmatcher"}, matcher)
 	e := &Enricher{
-		config:   cfg,
-		logger:   logger,
-		client:   client,
-		queries:  client.Queries,
-		services: services,
-		runner:   tools.NewRunnerWithMatcher(logger, cfg, []string{"textreducer", "contentanalyzer", "tagmatcher"}, matcher),
+		config:    cfg,
+		logger:    logger,
+		client:    client,
+		queries:   client.Queries,
+		tag:       tag,
+		runner:    runner,
+		admission: admission.NewAdjudicator(cfg, logger, client.Queries, runner),
 	}
 	return e, nil
 }
@@ -82,7 +76,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 
 	report("reduce", "", 0)
 	llmContent, err := e.runner.ReduceContent(ctx, document.TextContent.String, chunkSize,
-		TargetWordCount(int(document.WordCount), e.config.Enricher.TextReducer.TargetWords))
+		matcher.TargetWordCount(int(document.WordCount), e.config.Enricher.TextReducer.TargetWords))
 	if err != nil {
 		e.logger.Error(&logId, "llm text reduction failed, using raw text: %w", err)
 	} else {
@@ -93,7 +87,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 	}
 
 	tagsContent, err := e.runner.ReduceContent(ctx, document.TextContent.String, chunkSize,
-		TargetWordCount(int(document.WordCount), e.config.Enricher.TagMatcher.ReduceTargetWords))
+		matcher.TargetWordCount(int(document.WordCount), e.config.Enricher.TagMatcher.ReduceTargetWords))
 	if err != nil {
 		e.logger.Error(&logId, "tag text reduction failed, using raw text: %w", err)
 	} else {
@@ -111,7 +105,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 	if err != nil {
 		return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to retrieve people types: %w", err)}
 	}
-	allTags, err := e.services.Tag.ListAll(ctx)
+	allTags, err := e.tag.ListAll(ctx)
 	if err != nil {
 		return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to retrieve tags: %w", err)}
 	}
@@ -154,7 +148,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 		tagSuggestions = matchedTags.Tags
 		e.logger.Debug(&logId, "tag matching: %d tags (%s)", len(tagSuggestions), time.Since(matchTagsStart))
 	}
-	tagSuggestions = e.canonicalSuggestions(ctx, tagSuggestions, &logId)
+	tagSuggestions = e.admission.CanonicalSuggestions(ctx, tagSuggestions, &logId)
 
 	var analysis *tools.ContentAnalysisResult
 	report("analyze", "", 0)
@@ -273,8 +267,8 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 
 	analysis.Tags = analyzer.FilterTags(analysis.Tags, analysis.People, knownNormalized, analysis.Title, docTypeNames, e.config.Enricher.ContentAnalyzer.MaxTags)
 	tagFilter := analyzer.NewTagFilter(analysis.People, knownNormalized, analysis.Title, docTypeNames)
-	analysis.Tags = e.splitJointTags(ctx, analysis.Tags, tagFilter, &logId)
-	analysis.Tags = e.applyDeletedTagPolicy(analysis.Tags, dbNames, blocklist, &logId)
+	analysis.Tags = e.admission.SplitJointTags(ctx, analysis.Tags, tagFilter, &logId)
+	analysis.Tags = e.admission.ApplyDeletedTagPolicy(analysis.Tags, dbNames, blocklist, &logId)
 
 	consolidateStart := time.Now()
 	report("consolidate", "", 0)
@@ -286,20 +280,20 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 		for _, tag := range analysis.Tags {
 			e.logger.Info(&logId, "consolidation[%s]: keep %q (reason=rank_unavailable)", policy.Version, tag)
 		}
-		identityPlan, err = e.services.Tag.PlanRegistration(ctx, analysis.Tags)
+		identityPlan, err = e.tag.PlanRegistration(ctx, analysis.Tags)
 		if err != nil {
 			return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("identity planning failed: %w", err)}
 		}
 	} else {
 		var consolidated []string
-		consolidated, identityPlan, decisions = e.planIdentity(ctx, document.ID, document.DocumentID, analysis.Tags, ranked, dbNames, &logId)
+		consolidated, identityPlan, decisions = e.admission.PlanIdentity(ctx, document.ID, document.DocumentID, analysis.Tags, ranked, dbNames, &logId)
 		analysis.Tags = consolidated
 		e.logger.Debug(&logId, "post-LLM consolidation: %d tags (%s)", len(consolidated), time.Since(consolidateStart))
 	}
-	analysis.TagDetails = renameTagDetails(analysis.TagDetails, identityPlan)
+	analysis.TagDetails = admission.RenameTagDetails(analysis.TagDetails, identityPlan)
 
 	if e.config.Enricher.TagQuality.Enabled {
-		analysis.Tags = e.applyTagQuality(ctx, analysis, decisions, dbNames, llmContent.Text, document.ID, &logId)
+		analysis.Tags = e.admission.ApplyTagQuality(ctx, analysis, decisions, dbNames, llmContent.Text, document.ID, &logId)
 	}
 
 	statsStr := "null"
@@ -343,7 +337,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 	defer tx.Rollback()
 	txQ := e.client.WithTx(tx)
 
-	results, newNames, err := e.services.Tag.CreatePlannedTx(ctx, txQ, identityPlan, quarantine)
+	results, newNames, err := e.tag.CreatePlannedTx(ctx, txQ, identityPlan, quarantine)
 	if err != nil {
 		return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("batch create tags: %w", err)}
 	}
@@ -378,7 +372,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 		if err := txQ.AddDocumentTag(ctx, database.AddDocumentTagParams{
 			DocumentID: document.ID,
 			TagID:      tagID,
-			Source:     service.DocumentTagSourceEnrich,
+			Source:     curation.DocumentTagSourceEnrich,
 		}); err != nil {
 			return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("add document tag: %w", err)}
 		}
@@ -398,11 +392,11 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 	}
 
 	if quarantine {
-		e.services.Tag.AddToStore(ctx, promotedNames)
+		e.tag.AddToStore(ctx, promotedNames)
 	} else {
-		e.services.Tag.AddToStore(ctx, newNames)
+		e.tag.AddToStore(ctx, newNames)
 	}
-	e.services.Tag.RemoveFromStore(ctx, identityPlan.RemovedStoreNames())
+	e.tag.RemoveFromStore(ctx, identityPlan.RemovedStoreNames())
 
 	peopleMap := make(map[string]int64, len(existingPeople))
 	for _, p := range existingPeople {
@@ -589,480 +583,6 @@ func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, res
 		promoted[i] = p.name
 	}
 	return promoted
-}
-
-func (e *Enricher) splitJointTags(ctx context.Context, tags []string, filter *analyzer.TagFilter, logId *string) []string {
-	var candidates []string
-	for _, t := range tags {
-		if textnorm.SplitJointTag(t) != nil {
-			candidates = append(candidates, t)
-		}
-	}
-	if len(candidates) == 0 {
-		return tags
-	}
-
-	decisions := e.splitVerdicts(ctx, candidates, logId)
-
-	maxComponents := e.config.Enricher.ContentAnalyzer.MaxTags
-	components := make(map[string][]string, len(candidates))
-	for _, candidate := range candidates {
-		d, ok := decisions[candidate]
-		if !ok || d.verdict != analyzer.TagSplitSplit {
-			continue
-		}
-		valid := analyzer.SplitComponents(d.components, filter)
-		if len(valid) < 2 || len(valid) > maxComponents {
-			continue
-		}
-		components[candidate] = valid
-	}
-	if len(components) == 0 {
-		return tags
-	}
-
-	out := make([]string, 0, len(tags)+len(components))
-	seen := make(map[string]bool, len(tags))
-	for _, t := range tags {
-		segments, ok := components[t]
-		if !ok {
-			if !seen[t] {
-				seen[t] = true
-				out = append(out, t)
-			}
-			continue
-		}
-		for _, segment := range segments {
-			if seen[segment] {
-				continue
-			}
-			seen[segment] = true
-			out = append(out, segment)
-		}
-		e.logger.Info(logId, "tag split: %q → %v", t, segments)
-	}
-	return out
-}
-
-func (e *Enricher) applyDeletedTagPolicy(tags []string, knownTags map[string]struct{}, blocklist map[string]database.ListAllDeletedTagsRow, logId *string) []string {
-	if len(blocklist) == 0 {
-		return tags
-	}
-
-	out := make([]string, 0, len(tags))
-	seen := make(map[string]bool, len(tags))
-	for _, tag := range tags {
-		if row, ok := blocklist[tag]; ok {
-			switch row.Kind {
-			case service.DeletedTagKindBlocked:
-				e.logger.Info(logId, "deleted tag policy: dropping %q — the tag was deleted by an operator", tag)
-				continue
-			case service.DeletedTagKindMerged:
-				target := row.TargetName.String
-				if !row.TargetName.Valid || target == "" {
-					e.logger.Info(logId, "deleted tag policy: dropping %q — the merge target is unknown", tag)
-					continue
-				}
-				if _, ok := knownTags[target]; !ok {
-					e.logger.Info(logId, "deleted tag policy: dropping %q — it was merged into %q, which no longer exists", tag, target)
-					continue
-				}
-				e.logger.Info(logId, "deleted tag policy: rewriting %q to %q (merged)", tag, target)
-				tag = target
-			}
-		}
-		if seen[tag] {
-			continue
-		}
-		seen[tag] = true
-		out = append(out, tag)
-	}
-	return out
-}
-
-func (e *Enricher) splitVerdicts(ctx context.Context, candidates []string, logId *string) map[string]splitDecision {
-	e.splitMu.Lock()
-	if e.splitCache == nil {
-		e.splitCache = make(map[string]splitDecision)
-	}
-	decisions := make(map[string]splitDecision, len(candidates))
-	var uncached []string
-	for _, name := range candidates {
-		if d, ok := e.splitCache[name]; ok {
-			decisions[name] = d
-			continue
-		}
-		uncached = append(uncached, name)
-	}
-	e.splitMu.Unlock()
-
-	if len(uncached) == 0 {
-		return decisions
-	}
-
-	if !e.runner.HasTagAdjudicator() {
-		for _, name := range uncached {
-			decisions[name] = splitDecision{verdict: analyzer.TagSplitSplit, components: textnorm.SplitJointTag(name)}
-		}
-		return decisions
-	}
-
-	results, err := e.runner.AdjudicateTagSplits(ctx, uncached)
-	if err != nil {
-		e.logger.Error(logId, "tag split adjudication failed, keeping %d joint tags: %v", len(uncached), err)
-		return decisions
-	}
-	if len(results) != len(uncached) {
-		e.logger.Error(logId, "tag split adjudication returned %d verdicts for %d tags, keeping them", len(results), len(uncached))
-		return decisions
-	}
-
-	e.splitMu.Lock()
-	defer e.splitMu.Unlock()
-	for i, r := range results {
-		d := splitDecision{verdict: r.Verdict, components: r.Components}
-		decisions[uncached[i]] = d
-		e.splitCache[uncached[i]] = d
-	}
-	return decisions
-}
-
-type bandPair struct {
-	query       string
-	target      string
-	sim         float64
-	runnerUpSim float64
-	verdict     types.TagVerdict
-	model       string
-	cached      bool
-}
-
-type reciprocalEvidence struct {
-	tag string
-	sim float64
-}
-
-func (e *Enricher) writeVerdictEvent(ctx context.Context, docId int64, d policy.Decision, bp *bandPair, logId *string) {
-	var verdictModel sql.NullString
-	if !bp.cached {
-		verdictModel = sql.NullString{String: bp.model, Valid: bp.model != ""}
-	}
-	n, err := e.queries.InsertTagVerdictEvent(ctx, database.InsertTagVerdictEventParams{
-		DocumentID:    docId,
-		Query:         textnorm.NormalizeTag(d.Query),
-		Target:        textnorm.NormalizeTag(d.Target),
-		Sim:           d.Sim,
-		Verdict:       bp.verdict,
-		VerdictModel:  verdictModel,
-		PolicyVersion: policy.Version,
-	})
-	if err != nil {
-		e.logger.Error(logId, "tag verdict event insert failed: %v", err)
-		return
-	}
-	if n > 0 || bp.cached {
-		return
-	}
-
-	rows, err := e.queries.LatestTagVerdictsForPairs(ctx, database.LatestTagVerdictsForPairsParams{
-		PolicyVersion: policy.Version,
-		Queries:       []string{d.Query},
-		Targets:       []string{d.Target},
-	})
-	if err != nil {
-		e.logger.Error(logId, "tag verdict cache re-read after conflict failed: %v", err)
-		return
-	}
-	if len(rows) == 0 || !rows[0].Verdict.Valid() {
-		return
-	}
-	bp.verdict = rows[0].Verdict
-	bp.cached = true
-	if rows[0].VerdictModel.Valid {
-		bp.model = rows[0].VerdictModel.String
-	}
-	if _, err := e.queries.InsertTagVerdictEvent(ctx, database.InsertTagVerdictEventParams{
-		DocumentID:    docId,
-		Query:         textnorm.NormalizeTag(d.Query),
-		Target:        textnorm.NormalizeTag(d.Target),
-		Sim:           d.Sim,
-		Verdict:       bp.verdict,
-		VerdictModel:  sql.NullString{},
-		PolicyVersion: policy.Version,
-	}); err != nil {
-		e.logger.Error(logId, "tag verdict event insert failed: %v", err)
-	}
-}
-
-type novelTag struct {
-	emitted  string
-	category string
-	standard *bool
-	bestSim  float64
-	haveSim  bool
-}
-
-func tagQualityScore(standardTerm *bool, category string, bestSim float64, haveSim bool, noAnchorSim float64) int {
-	score := 0
-	switch {
-	case standardTerm == nil:
-	case *standardTerm:
-		score += 1
-	default:
-		score -= 1
-	}
-	if category == analyzer.TagCategoryOther {
-		score -= 1
-	}
-	if haveSim && bestSim < noAnchorSim {
-		score -= 1
-	}
-	return score
-}
-
-func isStandardLabel(v *bool) string {
-	switch {
-	case v == nil:
-		return "absent"
-	case *v:
-		return "true"
-	default:
-		return "false"
-	}
-}
-
-func marshalTagQualityCriteria(r analyzer.TagQualityResult) json.RawMessage {
-	data, err := json.Marshal(r.Criteria())
-	if err != nil {
-		return json.RawMessage("{}")
-	}
-	return data
-}
-
-func tagQualityCriteriaLog(criteria json.RawMessage) string {
-	var c analyzer.TagQualityCriteria
-	if err := json.Unmarshal(criteria, &c); err != nil {
-		return "unknown"
-	}
-	return c.String()
-}
-
-func (e *Enricher) applyTagQuality(ctx context.Context, analysis *tools.ContentAnalysisResult, decisions []policy.Decision, dbNames map[string]struct{}, reducedText string, docId int64, logId *string) []string {
-	typedByTerm := make(map[string]analyzer.TagDetail, len(analysis.TagDetails))
-	for _, d := range analysis.TagDetails {
-		typedByTerm[textnorm.NormalizeTag(d.Term)] = d
-	}
-	simByOutput := make(map[string]float64, len(decisions))
-	for _, d := range decisions {
-		if _, ok := simByOutput[d.Output]; !ok {
-			simByOutput[d.Output] = d.Sim
-		}
-	}
-
-	rejected := make(map[string]bool)
-	seenNovel := make(map[string]bool)
-	var novels []*novelTag
-	for _, out := range analysis.Tags {
-		if out == "" {
-			continue
-		}
-		if _, ok := dbNames[out]; ok {
-			continue
-		}
-		if seenNovel[out] {
-			continue
-		}
-		seenNovel[out] = true
-		n := &novelTag{emitted: out, category: analyzer.TagCategoryOther}
-		if d, ok := typedByTerm[out]; ok {
-			n.standard = d.IsStandardTerm
-			if d.Category != "" {
-				n.category = d.Category
-			}
-		}
-		if sim, ok := simByOutput[out]; ok && sim > 0 {
-			n.bestSim, n.haveSim = sim, true
-		}
-		if score := tagQualityScore(n.standard, n.category, n.bestSim, n.haveSim, tagQualityNoAnchorSimilarity); float64(score) < tagQualityTLow {
-			e.logger.Info(logId, "tagquality[%s]: reject %q (reason=weak_score score=%d is_standard=%s category=%s best_sim=%.3f)",
-				analyzer.TagQualityVersion, out, score, isStandardLabel(n.standard), n.category, n.bestSim)
-			rejected[out] = true
-			continue
-		}
-		novels = append(novels, n)
-	}
-
-	var uncached []*novelTag
-	if len(novels) > 0 {
-		keys := make([]string, len(novels))
-		for i, n := range novels {
-			keys[i] = n.emitted
-		}
-		rows, err := e.queries.LatestTagQualityEventsForNames(ctx, database.LatestTagQualityEventsForNamesParams{
-			PolicyVersion: analyzer.TagQualityVersion,
-			TagNames:      keys,
-		})
-		if err != nil {
-			e.logger.Error(logId, "tag quality cache lookup failed: %v", err)
-		}
-		cached := make(map[string]database.LatestTagQualityEventsForNamesRow, len(rows))
-		for _, row := range rows {
-			cached[row.TagName] = row
-		}
-		for _, n := range novels {
-			row, ok := cached[n.emitted]
-			if !ok {
-				uncached = append(uncached, n)
-				continue
-			}
-			e.writeTagQualityEvent(ctx, docId, n.emitted, row.Criteria, row.Pass, "", logId)
-			if !row.Pass {
-				rejected[n.emitted] = true
-				e.logger.Info(logId, "tagquality[%s]: reject %q (reason=judge cached=true model=%s criteria=%s)",
-					analyzer.TagQualityVersion, n.emitted, row.VerdictModel.String, tagQualityCriteriaLog(row.Criteria))
-			}
-		}
-	}
-
-	if len(uncached) > 0 {
-		if !e.runner.HasTagQualityJudge() {
-			e.logger.Error(logId, "tagquality[%s]: judge not configured, keeping %d novel tags (born provisional)", analyzer.TagQualityVersion, len(uncached))
-		} else {
-			candidates := make([]analyzer.TagQualityCandidate, len(uncached))
-			for i, n := range uncached {
-				candidates[i] = analyzer.TagQualityCandidate{
-					Index:            i,
-					Term:             n.emitted,
-					Category:         n.category,
-					WhitelistedPlace: analyzer.IsWhitelistedPlace(n.emitted),
-				}
-			}
-			results, err := e.runner.JudgeTagQuality(ctx, reducedText, candidates)
-			if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-				results, err = e.runner.JudgeTagQuality(ctx, reducedText, candidates)
-			}
-			if err == nil && len(results) != len(candidates) {
-				err = fmt.Errorf("judge returned %d verdicts for %d candidates", len(results), len(candidates))
-			}
-			if err != nil {
-				e.logger.Error(logId, "tagquality[%s]: judge failed, keeping %d novel tags (born provisional): %v", analyzer.TagQualityVersion, len(uncached), err)
-			} else {
-				model := e.config.ResolvedQualityLlm().Model
-				for i, r := range results {
-					n := uncached[i]
-					pass, criteria, finalModel := e.writeTagQualityEvent(ctx, docId, n.emitted, marshalTagQualityCriteria(r), r.Passed(), model, logId)
-					if !pass {
-						rejected[n.emitted] = true
-						e.logger.Info(logId, "tagquality[%s]: reject %q (reason=judge criteria=%s model=%s)",
-							analyzer.TagQualityVersion, n.emitted, tagQualityCriteriaLog(criteria), finalModel)
-					}
-				}
-			}
-		}
-	}
-
-	out := make([]string, 0, len(analysis.Tags))
-	for _, tag := range analysis.Tags {
-		if rejected[tag] {
-			continue
-		}
-		out = append(out, tag)
-	}
-	return out
-}
-
-// writeTagQualityEvent records a verdict row for this document. A fresh
-// verdict (model != "") writes the judged row; on conflict the row cached by
-// another worker wins for this document's decision, followed by a
-// cache-applied row with a NULL model, mirroring writeVerdictEvent.
-func (e *Enricher) writeTagQualityEvent(ctx context.Context, docId int64, name string, criteria json.RawMessage, pass bool, model string, logId *string) (bool, json.RawMessage, string) {
-	verdictModel := sql.NullString{String: model, Valid: model != ""}
-	n, err := e.queries.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
-		DocumentID:    docId,
-		TagName:       textnorm.NormalizeTag(name),
-		Criteria:      criteria,
-		Pass:          pass,
-		VerdictModel:  verdictModel,
-		PolicyVersion: analyzer.TagQualityVersion,
-	})
-	if err != nil {
-		e.logger.Error(logId, "tag quality event insert failed: %v", err)
-		return pass, criteria, model
-	}
-	if n > 0 || !verdictModel.Valid {
-		return pass, criteria, model
-	}
-
-	rows, err := e.queries.LatestTagQualityEventsForNames(ctx, database.LatestTagQualityEventsForNamesParams{
-		PolicyVersion: analyzer.TagQualityVersion,
-		TagNames:      []string{name},
-	})
-	if err != nil {
-		e.logger.Error(logId, "tag quality cache re-read after conflict failed: %v", err)
-		return pass, criteria, model
-	}
-	if len(rows) == 0 {
-		return pass, criteria, model
-	}
-	row := rows[0]
-	if _, err := e.queries.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
-		DocumentID:    docId,
-		TagName:       textnorm.NormalizeTag(name),
-		Criteria:      row.Criteria,
-		Pass:          row.Pass,
-		VerdictModel:  sql.NullString{},
-		PolicyVersion: analyzer.TagQualityVersion,
-	}); err != nil {
-		e.logger.Error(logId, "tag quality event insert failed: %v", err)
-	}
-	if row.VerdictModel.Valid {
-		model = row.VerdictModel.String
-	}
-	return row.Pass, row.Criteria, model
-}
-
-func (e *Enricher) reciprocalEvidence(ctx context.Context, documentID string, pairs []*bandPair, logId *string) map[string]reciprocalEvidence {
-	targets := make([]string, 0, len(pairs))
-	seen := make(map[string]struct{}, len(pairs))
-	for _, bp := range pairs {
-		if _, ok := seen[bp.target]; ok {
-			continue
-		}
-		seen[bp.target] = struct{}{}
-		targets = append(targets, bp.target)
-	}
-
-	evidence := make(map[string]reciprocalEvidence, len(targets))
-	if len(targets) == 0 {
-		return evidence
-	}
-
-	ranked, err := e.runner.RankTags(ctx, documentID, targets)
-	if err != nil {
-		e.logger.Error(logId, "tag adjudication evidence rank failed: %v", err)
-		return evidence
-	}
-	for i, target := range targets {
-		if i >= len(ranked) {
-			break
-		}
-		for _, c := range ranked[i].Candidates {
-			if c.Tag == target {
-				continue
-			}
-			evidence[target] = reciprocalEvidence{tag: c.Tag, sim: c.Similarity}
-			break
-		}
-	}
-	return evidence
-}
-
-func TargetWordCount(contentWC, targetWC int) int {
-	result := targetWC
-	if result < 0 {
-		result = contentWC / -result
-	}
-	return max(2000, result)
 }
 
 func normalizedPeopleKey(p database.People) string {

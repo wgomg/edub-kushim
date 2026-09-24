@@ -182,8 +182,8 @@ delegate store management to the adapter (encoding + adding to the embedding
 store, or removing from it). The `EmbeddingStore` interface provides read/write
 access to the shared tag embedding cache. `RankResult` carries the name to keep
 when no candidate is chosen (`KeptName`) plus up to two ranked candidates with
-scores; the identity decision lives in the enricher's identity pipeline
-(`planIdentity`). `SimilarPair` is an unordered pair of store names
+scores; the identity decision lives in the admission pipeline
+(`Adjudicator.PlanIdentity`). `SimilarPair` is an unordered pair of store names
 with their cosine similarity, canonicalized so each pair is stored once.
 
 The composition root builds a single `*Hugot` (for the `kushim` CLI) or uses a `*matcher.MatcherClient` (for the `edub` API server) — both satisfy the `Matcher` and `Embedder` interfaces. The `MatcherClient` forwards all calls over a Unix socket to a standalone `kushim hugot` process.
@@ -206,7 +206,7 @@ The composition root builds a single `*Hugot` (for the `kushim` CLI) or uses a `
   - `Rank(ctx, docId, queries []string)` — Reads all entries from the store internally, encodes the queries verbatim (they are already canonical — `analyzer.NormalizeTags` output), ranks against the store embeddings, and returns up to two candidates per query with scores plus the kept name
   - `SimilarPairs(ctx)` — Snapshots the pair cache under the mutex and returns it as a slice of `SimilarPair`
   - `Encode(ctx, *docId, texts)` — Batch embedding with chunked encoding for long inputs. Does NOT normalize input — shared with document text matching where punctuation is meaningful.
-  - `AddToStore(ctx, names)` — Encodes names verbatim (canonical DB names from `service.Tag.Create`/`Update`) in batches of 32 (`embedBatchSize`), adds them to the store, and maintains the pair cache: one `Entries()` snapshot per batch, prune-then-insert per name (re-encodes drop stale pairs), fresh batch vectors used for intra-batch pairs
+  - `AddToStore(ctx, names)` — Encodes names verbatim (canonical DB names from `curation.Tag.Create`/`Update`) in batches of 32 (`embedBatchSize`), adds them to the store, and maintains the pair cache: one `Entries()` snapshot per batch, prune-then-insert per name (re-encodes drop stale pairs), fresh batch vectors used for intra-batch pairs
   - `RemoveFromStore(ctx, names)` — Removes names from the store and drops every pair mentioning them
   - `SetStore(s EmbeddingStore)` — Injects the shared store reference after construction and rebuilds the pair cache from the store's entries (N²/2 cosine pass, skipped when `consolidationSim` is 0)
   - `Close()` — Idempotent (nil-safe, sets session to nil after destroy)

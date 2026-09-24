@@ -46,6 +46,14 @@ func MaxMatchBodyBytes(reduceTargetWords int) int {
 	}
 }
 
+func TargetWordCount(contentWC, targetWC int) int {
+	result := targetWC
+	if result < 0 {
+		result = contentWC / -result
+	}
+	return max(2000, result)
+}
+
 type MatcherClient struct {
 	client            *http.Client
 	maxMatchBodyBytes int

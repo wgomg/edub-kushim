@@ -205,7 +205,7 @@ func (r *Reconciler) applyJointSplit(ctx context.Context, e *jointEntry, storeTa
 		return 0, fmt.Errorf("no valid components after consolidation")
 	}
 
-	results, err := r.services.Tag.Create(ctx, outputs)
+	results, err := r.tag.Create(ctx, outputs)
 	if err != nil {
 		return 0, fmt.Errorf("create component tags: %w", err)
 	}
@@ -258,7 +258,7 @@ func (r *Reconciler) applyJointSplit(ctx context.Context, e *jointEntry, storeTa
 		return 0, fmt.Errorf("commit split: %w", err)
 	}
 
-	if err := r.services.Tag.RemoveFromStore(ctx, []string{e.name}); err != nil {
+	if err := r.tag.RemoveFromStore(ctx, []string{e.name}); err != nil {
 		r.logger.Error(nil, "tag reconcile: split %q: remove from store: %v", e.name, err)
 	}
 	return int64(len(docIDs)), nil

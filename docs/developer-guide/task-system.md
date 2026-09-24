@@ -837,11 +837,11 @@ repeatable-read transaction runs in its own process while the parent keeps the
 lock fresh; the child's printed report line becomes the task result and its
 exit code decides completion/failure.
 
-The **tagidentity** task (`internal/enrichment/tagidentity.go`) follows the
+The **tagidentity** task (`internal/tags/admission/tagidentity.go`) follows the
 same fork-and-wait shape: claimed with the lock held, drained via
 `WaitForTaskDrain`, heartbeat across the run, then forks
 `kushim tagidentity --run <batch-id>`; the child resolves pending identity
-evidence through `enrichment.IdentityResolver` and prints the
+evidence through `admission.IdentityResolver` and prints the
 `tagidentity-report: <json>` line (pending/resolved/folded/aliased/deferred/
 failed) that becomes the task result. Unlike `tagmeasure` there is no manual
 foreground mode and no schedule: the review surface's reevaluate action

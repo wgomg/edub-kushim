@@ -392,7 +392,7 @@ func EnsureLanguages(logger *log.Logger, dataDir string, languages []string) err
 - `TESSDATA_PREFIX` is set process-wide, pointing Tesseract at the data dir
   (`tessdata.go:44-45`).
 - The enricher also auto-adds detected languages to the OCR config and
-  triggers the download (`ensureOCRLanguage`, `internal/enrichment/enricher.go:439-491`)
+  triggers the download (`ensureOCRLanguage`, `internal/enrichment/enricher.go:621-674`)
   — see `llm.md` §10.
 
 ---

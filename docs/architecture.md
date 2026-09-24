@@ -324,12 +324,12 @@ The enrichment pipeline:
    With the layer off, births are trusted as before.
 6. **New Tag Store Update** — tag creation, the enrichment-owned `document_tag` sweep,
    and the per-tag assignments run in one database transaction per document
-   (`services.Tag.CreateTx` on the transaction handle, with the quality gate as its
+   (`tag.CreateTx` on the transaction handle, with the quality gate as its
    quarantine parameter): new tags are created, only
    `enrich`-sourced assignment rows are cleared (manual assignments survive), the
    surviving tags are assigned with `source = 'enrich'`, and their orphan marks are
    cleared. Any failure rolls the whole set back. After the commit,
-   `services.Tag.AddToStore` encodes names and adds them to the shared embedding
+   `tag.AddToStore` encodes names and adds them to the shared embedding
    store, making them available for matching against subsequent documents without an
    additional encode: with the quality layer off the batch's new names, with it on only
    the tags promoted by the in-transaction check (provisional births stay out until

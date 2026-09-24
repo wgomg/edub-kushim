@@ -21,6 +21,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/static"
+	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
@@ -32,6 +33,9 @@ type Server struct {
 	cfg           atomic.Pointer[config.Config]
 	matcherClient *matcher.MatcherClient
 	services      *service.CrudServices
+	tag           *curation.Tag
+	tagMerge      *curation.TagMerge
+	tagIdentity   *curation.TagIdentity
 	configWatcher *config.Watcher
 	db            *sql.DB
 	client        *database.Client
@@ -75,8 +79,8 @@ func (s *Server) rebuild(client *database.Client) {
 
 	services := &service.CrudServices{}
 
-	services.Tag = service.NewTag(client, s.logger, s.matcherClient)
-	services.TagMerge = service.NewTagMerge(client, s.matcherClient, s.matcherClient, s.logger)
+	s.tag = curation.NewTag(client, s.logger, s.matcherClient)
+	s.tagMerge = curation.NewTagMerge(client, s.matcherClient, s.matcherClient, s.logger)
 	services.Batch = service.NewBatch(client, cfg.Consumer.Reclaim.MaxRetries)
 	services.People = service.NewPeople(client.Queries, s.logger)
 	services.PeopleType = service.NewPeopleType(client.Queries, s.logger)
@@ -93,7 +97,7 @@ func (s *Server) rebuild(client *database.Client) {
 	services.Trash.StartBackgroundPurge()
 
 	services.ReEnrich = service.NewReEnrich(client.Queries, workStore, services.Batch)
-	services.TagIdentity = service.NewTagIdentity(client.Queries, workStore, services.Batch)
+	s.tagIdentity = curation.NewTagIdentity(client.Queries, workStore, services.Batch)
 	services.ErroredFiles = service.NewErroredFiles(cfg, s.logger)
 
 	registry := task.NewRegistry()
@@ -113,7 +117,7 @@ func (s *Server) rebuild(client *database.Client) {
 
 	getConfigFn := func() *config.Config { return s.cfg.Load() }
 
-	mux := registerRoutes(s.logger, client, dispatcher, getConfigFn, onConfigSet, services, workStore)
+	mux := registerRoutes(s.logger, client, dispatcher, getConfigFn, onConfigSet, services, workStore, s.tag, s.tagMerge, s.tagIdentity)
 	registerStaticRoutes(mux)
 
 	s.services = services
@@ -156,6 +160,9 @@ func (s *Server) reconnectDB(newDB *sql.DB) {
 		s.pools.config.Stop(ctx)
 		cancel()
 	}
+	if s.tag != nil {
+		s.tag.Close()
+	}
 	if s.services != nil {
 		s.services.Close()
 	}
@@ -195,6 +202,9 @@ func registerRoutes(
 	onConfigSet func(*config.Config),
 	services *service.CrudServices,
 	workStore *task.Store,
+	tag *curation.Tag,
+	tagMerge *curation.TagMerge,
+	tagIdentity *curation.TagIdentity,
 ) *http.ServeMux {
 	mux := http.NewServeMux()
 	engine := search.NewEngine(logger, client.Queries)
@@ -217,7 +227,7 @@ func registerRoutes(
 	mux.HandleFunc("POST /api/v1/auth/login", authHandler.Login)
 	mux.HandleFunc("POST /api/v1/auth/logout", authHandler.Logout)
 
-	docHandler := handlers.NewDocumentHandler(client, logger, engine, services, getConfig)
+	docHandler := handlers.NewDocumentHandler(client, logger, engine, services, tag, getConfig)
 	viewer := []auth.Role{auth.RoleViewer, auth.RoleEditor, auth.RoleAdmin}
 	editor := []auth.Role{auth.RoleEditor, auth.RoleAdmin}
 	admin := []auth.Role{auth.RoleAdmin}
@@ -267,7 +277,7 @@ func registerRoutes(
 
 	taskHandler := handlers.NewTaskHandler(services, client, logger, getConfig)
 
-	tagHandler := handlers.NewTagHandler(services, logger)
+	tagHandler := handlers.NewTagHandler(tag, tagMerge, tagIdentity, logger)
 	mux.Handle("GET /api/v1/tags", RequireRole(viewer...)(http.HandlerFunc(tagHandler.List)))
 	mux.Handle("GET /api/v1/tags/deleted", RequireRole(editor...)(http.HandlerFunc(tagHandler.ListDeleted)))
 	mux.Handle("GET /api/v1/tags/provisional", RequireRole(viewer...)(http.HandlerFunc(tagHandler.ListProvisional)))
@@ -449,6 +459,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	defer cancel()
 	s.pools.config.Stop(stopCtx)
 
+	if s.tag != nil {
+		s.tag.Close()
+	}
 	s.services.Close()
 
 	return nil

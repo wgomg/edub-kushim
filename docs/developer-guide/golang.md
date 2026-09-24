@@ -1090,14 +1090,18 @@ Each resource is a struct holding its dependencies; methods are the handlers
 
 ```go
 type TagHandler struct {
-	services *itypes.CrudServices
+	tag      *curation.Tag
+	merges   *curation.TagMerge
+	identity *curation.TagIdentity
 	logger   *log.Logger
 }
 func (h *TagHandler) List(w http.ResponseWriter, r *http.Request) { ... }
 ```
 
-Dependencies are shared through `types.CrudServices` (`internal/service/crud.go:8`),
-a plain struct of service pointers — assembled once in `NewServer`.
+Dependencies are shared through `service.CrudServices` (`internal/service/crud.go:8`),
+a plain struct of service pointers for the non-tag services; the curation tag
+services are passed directly to the handlers that use them — all assembled once
+in `NewServer`.
 
 ### Middleware
 
@@ -1132,8 +1136,9 @@ a synthetic admin — the whole server still works for local setups.
 `http.Server` with explicit timeouts (`ReadTimeout`, `WriteTimeout`,
 `IdleTimeout`), started in a goroutine, shut down gracefully via
 `server.Shutdown(ctx)` with a 30-second deadline and `srv.services.Close()` —
-which uses reflection to close every service implementing `io.Closer`
-(`internal/service/crud.go:23`):
+which uses reflection to close every remaining service implementing `io.Closer`
+(`internal/service/crud.go:20`); the curation tag service (embedder) is closed
+explicitly first:
 
 ```go
 func (s *CrudServices) Close() {

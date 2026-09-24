@@ -1,4 +1,4 @@
-package enrichment
+package admission
 
 import (
 	"context"
@@ -48,10 +48,10 @@ type identityAnswer struct {
 
 // the plan rides into the enrichment transaction, so adjudication stays
 // outside it
-func (e *Enricher) planIdentity(ctx context.Context, docID int64, documentID string, names []string, ranked []matcher.RankResult, dbNames map[string]struct{}, logId *string) ([]string, tags.Plan, []policy.Decision) {
+func (a *Adjudicator) PlanIdentity(ctx context.Context, docID int64, documentID string, names []string, ranked []matcher.RankResult, dbNames map[string]struct{}, logId *string) ([]string, tags.Plan, []policy.Decision) {
 	decisions := policy.Evaluate(names, ranked)
 	plan := tags.Plan{}
-	aliasMap := e.aliasMapFor(ctx, names, logId)
+	aliasMap := a.aliasMapFor(ctx, names, logId)
 
 	byKey := make(map[string]string, len(dbNames))
 	for name := range dbNames {
@@ -133,7 +133,7 @@ func (e *Enricher) planIdentity(ctx context.Context, docID int64, documentID str
 		}
 	}
 
-	answers := e.identityAnswers(ctx, flagged, candidates, logId)
+	answers := a.identityAnswers(ctx, flagged, candidates, logId)
 	for _, cand := range candidates {
 		if cand.resolved != "" {
 			continue
@@ -173,7 +173,7 @@ func (e *Enricher) planIdentity(ctx context.Context, docID int64, documentID str
 		cand.name = folded
 	}
 
-	e.adjudicateIdentityPairs(ctx, docID, documentID, pairs, logId)
+	a.adjudicateIdentityPairs(ctx, docID, documentID, pairs, logId)
 
 	winnerByLoser := make(map[string]string)
 	for _, p := range pairs {
@@ -212,7 +212,7 @@ func (e *Enricher) planIdentity(ctx context.Context, docID int64, documentID str
 			continue
 		}
 		if p.verdict != types.TagVerdicts.Same {
-			e.logger.Info(logId, "identity[%s]: separate %q and %q (verdict=%s cached=%t)",
+			a.logger.Info(logId, "identity[%s]: separate %q and %q (verdict=%s cached=%t)",
 				tags.IdentityRuleSetVersion, p.query, p.target, p.verdict, p.cached)
 			continue
 		}
@@ -226,7 +226,7 @@ func (e *Enricher) planIdentity(ctx context.Context, docID int64, documentID str
 		} else {
 			plan.Aliases = append(plan.Aliases, tags.AliasAction{AliasName: loser, Canonical: winner})
 		}
-		e.logger.Info(logId, "identity[%s]: alias %q -> %q (verdict=%s direction=%s cached=%t)",
+		a.logger.Info(logId, "identity[%s]: alias %q -> %q (verdict=%s direction=%s cached=%t)",
 			tags.IdentityRuleSetVersion, loser, winner, p.verdict, p.direction, p.cached)
 	}
 
@@ -243,7 +243,7 @@ func (e *Enricher) planIdentity(ctx context.Context, docID int64, documentID str
 		if _, isStore := dbNames[p.target]; !isStore {
 			pendingCandidates[p.target] = true
 		}
-		e.logger.Info(logId, "identity[%s]: defer %q vs %q to review (adjudication unavailable)",
+		a.logger.Info(logId, "identity[%s]: defer %q vs %q to review (adjudication unavailable)",
 			tags.IdentityRuleSetVersion, p.query, p.target)
 	}
 
@@ -312,7 +312,7 @@ func (e *Enricher) planIdentity(ctx context.Context, docID int64, documentID str
 	return outputs, plan, decisions
 }
 
-func (e *Enricher) identityAnswers(ctx context.Context, flagged map[string]bool, candidates []*identityCandidate, logId *string) map[string]identityAnswer {
+func (a *Adjudicator) identityAnswers(ctx context.Context, flagged map[string]bool, candidates []*identityCandidate, logId *string) map[string]identityAnswer {
 	out := make(map[string]identityAnswer)
 	if len(flagged) == 0 {
 		return out
@@ -325,12 +325,12 @@ func (e *Enricher) identityAnswers(ctx context.Context, flagged map[string]bool,
 		}
 	}
 
-	rows, err := e.queries.LatestTagIdentityEventsForCandidates(ctx, database.LatestTagIdentityEventsForCandidatesParams{
+	rows, err := a.queries.LatestTagIdentityEventsForCandidates(ctx, database.LatestTagIdentityEventsForCandidatesParams{
 		RuleSetVersion: tags.IdentityRuleSetVersion,
 		Candidates:     names,
 	})
 	if err != nil {
-		e.logger.Error(logId, "identity verdict cache lookup failed: %v", err)
+		a.logger.Error(logId, "identity verdict cache lookup failed: %v", err)
 	}
 	cached := make(map[string]map[string]database.TagIdentityEvent, len(rows))
 	for _, row := range rows {
@@ -364,8 +364,8 @@ func (e *Enricher) identityAnswers(ctx context.Context, flagged map[string]bool,
 	if len(uncached) == 0 {
 		return out
 	}
-	if !e.runner.HasTagIdentityJudge() {
-		e.logger.Info(logId, "identity[%s]: judge not configured — %d candidates stay provisional", tags.IdentityRuleSetVersion, len(uncached))
+	if !a.runner.HasTagIdentityJudge() {
+		a.logger.Info(logId, "identity[%s]: judge not configured — %d candidates stay provisional", tags.IdentityRuleSetVersion, len(uncached))
 		return out
 	}
 
@@ -376,15 +376,15 @@ func (e *Enricher) identityAnswers(ctx context.Context, flagged map[string]bool,
 		for i, cand := range batch {
 			inputs[i] = analyzer.TagIdentityCandidate{Index: i, Term: cand.name, ProposedFold: cand.fold}
 		}
-		results, err := e.runner.JudgeTagIdentity(ctx, inputs)
+		results, err := a.runner.JudgeTagIdentity(ctx, inputs)
 		if err == nil && len(results) != len(batch) {
 			err = fmt.Errorf("identity judge returned %d verdicts for %d candidates", len(results), len(batch))
 		}
 		if err != nil {
-			e.logger.Error(logId, "identity[%s]: judge failed, %d candidates stay provisional: %v", tags.IdentityRuleSetVersion, len(batch), err)
+			a.logger.Error(logId, "identity[%s]: judge failed, %d candidates stay provisional: %v", tags.IdentityRuleSetVersion, len(batch), err)
 			continue
 		}
-		model := e.config.ResolvedAdjudicatorLlm().Model
+		model := a.config.ResolvedAdjudicatorLlm().Model
 		for i, r := range results {
 			out[batch[i].name] = identityAnswer{
 				FoldToBase:              r.FoldToBase,
@@ -398,11 +398,11 @@ func (e *Enricher) identityAnswers(ctx context.Context, flagged map[string]bool,
 	return out
 }
 
-func (e *Enricher) adjudicateIdentityPairs(ctx context.Context, docID int64, documentID string, pairs []*identityPair, logId *string) {
+func (a *Adjudicator) adjudicateIdentityPairs(ctx context.Context, docID int64, documentID string, pairs []*identityPair, logId *string) {
 	if len(pairs) == 0 {
 		return
 	}
-	if !e.config.Enricher.TagAdjudicator.Enabled || !e.runner.HasTagAdjudicator() {
+	if !a.config.Enricher.TagAdjudicator.Enabled || !a.runner.HasTagAdjudicator() {
 		return
 	}
 
@@ -410,12 +410,12 @@ func (e *Enricher) adjudicateIdentityPairs(ctx context.Context, docID int64, doc
 	for _, p := range pairs {
 		queries = append(queries, p.query)
 	}
-	rows, err := e.queries.LatestTagIdentityEventsForCandidates(ctx, database.LatestTagIdentityEventsForCandidatesParams{
+	rows, err := a.queries.LatestTagIdentityEventsForCandidates(ctx, database.LatestTagIdentityEventsForCandidatesParams{
 		RuleSetVersion: tags.IdentityRuleSetVersion,
 		Candidates:     queries,
 	})
 	if err != nil {
-		e.logger.Error(logId, "identity pair cache lookup failed: %v", err)
+		a.logger.Error(logId, "identity pair cache lookup failed: %v", err)
 	}
 	cached := make(map[string]database.TagIdentityEvent, len(rows))
 	for _, row := range rows {
@@ -442,19 +442,19 @@ func (e *Enricher) adjudicateIdentityPairs(ctx context.Context, docID int64, doc
 		return
 	}
 
-	evidence := e.identityPairEvidence(ctx, documentID, unresolved, logId)
+	evidence := a.identityPairEvidence(ctx, documentID, unresolved, logId)
 	for start := 0; start < len(evidence); start += identityBatchSize {
 		end := min(start+identityBatchSize, len(evidence))
 		batch := unresolved[start:end]
-		results, err := e.runner.AdjudicateTags(ctx, evidence[start:end])
+		results, err := a.runner.AdjudicateTags(ctx, evidence[start:end])
 		if err == nil && len(results) != len(batch) {
 			err = fmt.Errorf("adjudicator returned %d verdicts for %d pairs", len(results), len(batch))
 		}
 		if err != nil {
-			e.logger.Error(logId, "identity[%s]: adjudication failed, %d pairs stay provisional: %v", tags.IdentityRuleSetVersion, len(batch), err)
+			a.logger.Error(logId, "identity[%s]: adjudication failed, %d pairs stay provisional: %v", tags.IdentityRuleSetVersion, len(batch), err)
 			continue
 		}
-		model := e.config.ResolvedAdjudicatorLlm().Model
+		model := a.config.ResolvedAdjudicatorLlm().Model
 		for i, r := range results {
 			if !r.Verdict.Valid() {
 				continue
@@ -471,7 +471,7 @@ func (e *Enricher) adjudicateIdentityPairs(ctx context.Context, docID int64, doc
 		if !p.decided {
 			continue
 		}
-		e.recordIdentityPair(ctx, docID, p, logId)
+		a.recordIdentityPair(ctx, docID, p, logId)
 	}
 }
 
@@ -489,7 +489,7 @@ func identityDirection(criteria []byte) string {
 	return ""
 }
 
-func (e *Enricher) identityPairEvidence(ctx context.Context, documentID string, pairs []*identityPair, logId *string) []analyzer.TagPairEvidence {
+func (a *Adjudicator) identityPairEvidence(ctx context.Context, documentID string, pairs []*identityPair, logId *string) []analyzer.TagPairEvidence {
 	evidence := make([]analyzer.TagPairEvidence, len(pairs))
 	for i, p := range pairs {
 		evidence[i] = analyzer.TagPairEvidence{
@@ -511,7 +511,7 @@ func (e *Enricher) identityPairEvidence(ctx context.Context, documentID string, 
 		seen[p.target] = struct{}{}
 		targets = append(targets, p.target)
 	}
-	reciprocal := e.reciprocalEvidence(ctx, documentID, bandPairsFor(targets), logId)
+	reciprocal := a.reciprocalEvidence(ctx, documentID, bandPairsFor(targets), logId)
 	for i, p := range pairs {
 		if ev, ok := reciprocal[p.target]; ok {
 			evidence[i].TargetRunnerUpTag = ev.tag
@@ -529,7 +529,7 @@ func bandPairsFor(targets []string) []*bandPair {
 	return pairs
 }
 
-func (e *Enricher) recordIdentityPair(ctx context.Context, docID int64, p *identityPair, logId *string) {
+func (a *Adjudicator) recordIdentityPair(ctx context.Context, docID int64, p *identityPair, logId *string) {
 	criteria, err := json.Marshal(map[string]string{"direction": p.direction})
 	if err != nil {
 		criteria = []byte("{}")
@@ -538,7 +538,7 @@ func (e *Enricher) recordIdentityPair(ctx context.Context, docID int64, p *ident
 	if p.model != "" {
 		model = sql.NullString{String: p.model, Valid: true}
 	}
-	n, err := e.queries.InsertTagIdentityEvent(ctx, database.InsertTagIdentityEventParams{
+	n, err := a.queries.InsertTagIdentityEvent(ctx, database.InsertTagIdentityEventParams{
 		Kind:           tags.IdentityKindSameIntent,
 		Candidate:      textnorm.NormalizeTag(p.query),
 		Partner:        sql.NullString{String: textnorm.NormalizeTag(p.target), Valid: true},
@@ -548,16 +548,16 @@ func (e *Enricher) recordIdentityPair(ctx context.Context, docID int64, p *ident
 		RuleSetVersion: tags.IdentityRuleSetVersion,
 	})
 	if err != nil {
-		e.logger.Error(logId, "identity event insert failed: %v", err)
+		a.logger.Error(logId, "identity event insert failed: %v", err)
 		return
 	}
 	if n == 0 && !p.cached {
-		rows, err := e.queries.LatestTagIdentityEventsForCandidates(ctx, database.LatestTagIdentityEventsForCandidatesParams{
+		rows, err := a.queries.LatestTagIdentityEventsForCandidates(ctx, database.LatestTagIdentityEventsForCandidatesParams{
 			RuleSetVersion: tags.IdentityRuleSetVersion,
 			Candidates:     []string{textnorm.NormalizeTag(p.query)},
 		})
 		if err != nil {
-			e.logger.Error(logId, "identity cache re-read after conflict failed: %v", err)
+			a.logger.Error(logId, "identity cache re-read after conflict failed: %v", err)
 			return
 		}
 		for _, row := range rows {
@@ -578,7 +578,7 @@ func (e *Enricher) recordIdentityPair(ctx context.Context, docID int64, p *ident
 	if docID <= 0 {
 		return
 	}
-	e.writeVerdictEvent(ctx, docID, policy.Decision{
+	a.writeVerdictEvent(ctx, docID, policy.Decision{
 		Query:  p.query,
 		Target: p.target,
 		Output: p.query,
@@ -595,7 +595,7 @@ func boolVerdict(value bool, whenTrue, whenFalse string) string {
 
 // a folded or applied output must not lose its category and standard-term
 // flags
-func renameTagDetails(details []analyzer.TagDetail, plan tags.Plan) []analyzer.TagDetail {
+func RenameTagDetails(details []analyzer.TagDetail, plan tags.Plan) []analyzer.TagDetail {
 	outputByInput := make(map[string]string, len(plan.Registrations))
 	for _, reg := range plan.Registrations {
 		input := textnorm.NormalizeTag(reg.Input)
@@ -615,11 +615,11 @@ func renameTagDetails(details []analyzer.TagDetail, plan tags.Plan) []analyzer.T
 	return details
 }
 
-func (e *Enricher) canonicalSuggestions(ctx context.Context, names []string, logId *string) []string {
+func (a *Adjudicator) CanonicalSuggestions(ctx context.Context, names []string, logId *string) []string {
 	if len(names) == 0 {
 		return names
 	}
-	aliasMap := e.aliasMapFor(ctx, names, logId)
+	aliasMap := a.aliasMapFor(ctx, names, logId)
 	if len(aliasMap) == 0 {
 		return names
 	}
@@ -639,10 +639,10 @@ func (e *Enricher) canonicalSuggestions(ctx context.Context, names []string, log
 	return out
 }
 
-func (e *Enricher) aliasMapFor(ctx context.Context, names []string, logId *string) map[string]string {
-	out, err := tags.ResolveAliases(ctx, e.queries, names)
+func (a *Adjudicator) aliasMapFor(ctx context.Context, names []string, logId *string) map[string]string {
+	out, err := tags.ResolveAliases(ctx, a.queries, names)
 	if err != nil {
-		e.logger.Error(logId, "identity alias lookup failed: %v", err)
+		a.logger.Error(logId, "identity alias lookup failed: %v", err)
 		return map[string]string{}
 	}
 	return out

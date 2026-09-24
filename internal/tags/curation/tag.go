@@ -1,4 +1,4 @@
-package service
+package curation
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/matcher"
+	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/textnorm"
 )
@@ -151,20 +152,20 @@ func (s *Tag) PendingIdentityCounts(ctx context.Context, names []string) (map[st
 	return counts, nil
 }
 
-func (s *Tag) Create(ctx context.Context, names []string) ([]CreateResult[database.Tag], error) {
+func (s *Tag) Create(ctx context.Context, names []string) ([]service.CreateResult[database.Tag], error) {
 	return s.create(ctx, names, false)
 }
 
 // the blocklist re-check is exempted so the cleared-blocklist path keeps
 // working
-func (s *Tag) CreateAndUnblock(ctx context.Context, names []string) ([]CreateResult[database.Tag], error) {
+func (s *Tag) CreateAndUnblock(ctx context.Context, names []string) ([]service.CreateResult[database.Tag], error) {
 	results, err := s.create(ctx, names, true)
 	if err != nil {
 		return nil, err
 	}
 	for _, r := range results {
 		switch r.Status {
-		case Created, Conflict, Apply, Alias:
+		case service.Created, service.Conflict, service.Apply, service.Alias:
 		default:
 			continue
 		}
@@ -175,7 +176,7 @@ func (s *Tag) CreateAndUnblock(ctx context.Context, names []string) ([]CreateRes
 	return results, nil
 }
 
-func (s *Tag) create(ctx context.Context, names []string, ignoreBlocklist bool) ([]CreateResult[database.Tag], error) {
+func (s *Tag) create(ctx context.Context, names []string, ignoreBlocklist bool) ([]service.CreateResult[database.Tag], error) {
 	plan, err := s.buildPlan(ctx, s.client.Queries, names, ignoreBlocklist)
 	if err != nil {
 		return nil, err
@@ -250,8 +251,8 @@ func (s *Tag) storeView(ctx context.Context, q *database.Queries, names []string
 	return view, nil
 }
 
-func (s *Tag) CreatePlannedTx(ctx context.Context, q *database.Queries, plan tags.Plan, quarantined bool) ([]CreateResult[database.Tag], []string, error) {
-	results := make([]CreateResult[database.Tag], len(plan.Registrations))
+func (s *Tag) CreatePlannedTx(ctx context.Context, q *database.Queries, plan tags.Plan, quarantined bool) ([]service.CreateResult[database.Tag], []string, error) {
+	results := make([]service.CreateResult[database.Tag], len(plan.Registrations))
 	var newNames []string
 	var promoteIDs []int64
 
@@ -299,55 +300,55 @@ func (s *Tag) CreatePlannedTx(ctx context.Context, q *database.Queries, plan tag
 		name := textnorm.NormalizeTag(reg.Name)
 
 		if reg.Disposition == tags.DispositionInvalid {
-			results[i] = CreateResult[database.Tag]{Status: Invalid}
+			results[i] = service.CreateResult[database.Tag]{Status: service.Invalid}
 			continue
 		}
 		if reg.Disposition == tags.DispositionAlias {
 			canonical, ok := existingMap[textnorm.NormalizeTag(reg.Resolved)]
 			if !ok {
-				results[i] = CreateResult[database.Tag]{Status: Invalid}
+				results[i] = service.CreateResult[database.Tag]{Status: service.Invalid}
 				continue
 			}
-			results[i] = CreateResult[database.Tag]{Entity: canonical, Status: Alias}
+			results[i] = service.CreateResult[database.Tag]{Entity: canonical, Status: service.Alias}
 			continue
 		}
 		if name == "" {
-			results[i] = CreateResult[database.Tag]{Status: Invalid}
+			results[i] = service.CreateResult[database.Tag]{Status: service.Invalid}
 			continue
 		}
 		if _, isBlocked := blocked[name]; isBlocked {
-			results[i] = CreateResult[database.Tag]{Status: Invalid}
+			results[i] = service.CreateResult[database.Tag]{Status: service.Invalid}
 			continue
 		}
 
 		if canonicalName, ok := aliases[name]; ok {
 			canonical, ok := existingMap[canonicalName]
 			if !ok {
-				results[i] = CreateResult[database.Tag]{Status: Invalid}
+				results[i] = service.CreateResult[database.Tag]{Status: service.Invalid}
 				continue
 			}
-			results[i] = CreateResult[database.Tag]{Entity: canonical, Status: Apply}
+			results[i] = service.CreateResult[database.Tag]{Entity: canonical, Status: service.Apply}
 			continue
 		}
 
 		if existing, ok := existingMap[name]; ok {
-			results[i] = CreateResult[database.Tag]{Entity: existing, Status: Conflict}
+			results[i] = service.CreateResult[database.Tag]{Entity: existing, Status: service.Conflict}
 			continue
 		}
 
 		if reg.Resolved != "" {
 			if canonical, ok := existingMap[textnorm.NormalizeTag(reg.Resolved)]; ok {
-				status := Apply
+				status := service.Apply
 				if reg.Disposition == tags.DispositionConflict {
-					status = Conflict
+					status = service.Conflict
 				}
-				results[i] = CreateResult[database.Tag]{Entity: canonical, Status: status}
+				results[i] = service.CreateResult[database.Tag]{Entity: canonical, Status: status}
 				continue
 			}
 		}
 
 		if existing, ok := byKey[tags.Key(name)]; ok && existing.Name != name {
-			results[i] = CreateResult[database.Tag]{Entity: existing, Status: Apply}
+			results[i] = service.CreateResult[database.Tag]{Entity: existing, Status: service.Apply}
 			continue
 		}
 
@@ -358,7 +359,7 @@ func (s *Tag) CreatePlannedTx(ctx context.Context, q *database.Queries, plan tag
 				if err != nil {
 					return nil, nil, errs.FromDB(err, "get tag by name after conflict "+name)
 				}
-				results[i] = CreateResult[database.Tag]{Entity: existing, Status: Conflict}
+				results[i] = service.CreateResult[database.Tag]{Entity: existing, Status: service.Conflict}
 				continue
 			}
 			return nil, nil, errs.FromDB(err, "create tag "+name)
@@ -369,7 +370,7 @@ func (s *Tag) CreatePlannedTx(ctx context.Context, q *database.Queries, plan tag
 		if _, ok := byKey[tags.Key(name)]; !ok {
 			byKey[tags.Key(name)] = created
 		}
-		results[i] = CreateResult[database.Tag]{Entity: created, Status: Created}
+		results[i] = service.CreateResult[database.Tag]{Entity: created, Status: service.Created}
 		newNames = append(newNames, name)
 		if !reg.Provisional {
 			promoteIDs = append(promoteIDs, id)
@@ -568,8 +569,8 @@ func (s *Tag) AddToStore(ctx context.Context, names []string) {
 	s.encodeAndAddBatch(ctx, names)
 }
 
-func (s *Tag) Update(ctx context.Context, pairs []TagUpdatePair) ([]UpdateResult[database.Tag], error) {
-	results := make([]UpdateResult[database.Tag], len(pairs))
+func (s *Tag) Update(ctx context.Context, pairs []TagUpdatePair) ([]service.UpdateResult[database.Tag], error) {
+	results := make([]service.UpdateResult[database.Tag], len(pairs))
 	var newNames []string
 	type rename struct {
 		idx     int
@@ -592,23 +593,23 @@ func (s *Tag) Update(ctx context.Context, pairs []TagUpdatePair) ([]UpdateResult
 	for i, p := range pairs {
 		name := textnorm.NormalizeTag(p.Name)
 		if name == "" {
-			results[i] = UpdateResult[database.Tag]{Status: UpdateInvalid}
+			results[i] = service.UpdateResult[database.Tag]{Status: service.UpdateInvalid}
 			continue
 		}
 
 		old, ok := tagMap[p.ID]
 		if !ok {
-			results[i] = UpdateResult[database.Tag]{Status: UpdateNotFound}
+			results[i] = service.UpdateResult[database.Tag]{Status: service.UpdateNotFound}
 			continue
 		}
 
 		if name == old.Name {
-			results[i] = UpdateResult[database.Tag]{Entity: old, Status: Noop}
+			results[i] = service.UpdateResult[database.Tag]{Entity: old, Status: service.Noop}
 			continue
 		}
 
 		if existing, ok := nameMap[name]; ok && existing.ID != p.ID {
-			results[i] = UpdateResult[database.Tag]{Entity: existing, Status: UpdateConflict}
+			results[i] = service.UpdateResult[database.Tag]{Entity: existing, Status: service.UpdateConflict}
 			continue
 		}
 
@@ -621,7 +622,7 @@ func (s *Tag) Update(ctx context.Context, pairs []TagUpdatePair) ([]UpdateResult
 				if e, ok := nameMap[name]; ok {
 					existing = e
 				}
-				results[i] = UpdateResult[database.Tag]{Entity: existing, Status: UpdateConflict}
+				results[i] = service.UpdateResult[database.Tag]{Entity: existing, Status: service.UpdateConflict}
 				continue
 			}
 			return nil, errs.FromDB(err, "update tag")
@@ -648,14 +649,14 @@ func (s *Tag) Update(ctx context.Context, pairs []TagUpdatePair) ([]UpdateResult
 			ID:   pairs[r.idx].ID,
 			Name: r.name,
 		}
-		results[r.idx] = UpdateResult[database.Tag]{Entity: updatedTag, Status: Updated}
+		results[r.idx] = service.UpdateResult[database.Tag]{Entity: updatedTag, Status: service.Updated}
 	}
 
 	return results, nil
 }
 
-func (s *Tag) Delete(ctx context.Context, ids []int64) ([]DeleteResult, error) {
-	results := make([]DeleteResult, len(ids))
+func (s *Tag) Delete(ctx context.Context, ids []int64) ([]service.DeleteResult, error) {
+	results := make([]service.DeleteResult, len(ids))
 
 	allTags, err := s.client.Queries.ListAllTags(ctx)
 	if err != nil {
@@ -669,7 +670,7 @@ func (s *Tag) Delete(ctx context.Context, ids []int64) ([]DeleteResult, error) {
 	for i, id := range ids {
 		tag, ok := tagMap[id]
 		if !ok {
-			results[i] = DeleteResult{ID: id, Status: DeleteNotFound}
+			results[i] = service.DeleteResult{ID: id, Status: service.DeleteNotFound}
 			continue
 		}
 
@@ -687,35 +688,35 @@ func (s *Tag) Delete(ctx context.Context, ids []int64) ([]DeleteResult, error) {
 		if err := s.embedder.RemoveFromStore(ctx, []string{tag.Name}); err != nil {
 			s.logger.Error(nil, "tag service: remove from store: %v", err)
 		}
-		results[i] = DeleteResult{ID: id, Status: Deleted}
+		results[i] = service.DeleteResult{ID: id, Status: service.Deleted}
 	}
 
 	return results, nil
 }
 
-func (s *Tag) Promote(ctx context.Context, id int64, reason string) (database.Tag, PromoteStatus, error) {
+func (s *Tag) Promote(ctx context.Context, id int64, reason string) (database.Tag, service.PromoteStatus, error) {
 	tag, err := s.Get(ctx, id)
 	if err != nil {
 		if errs.KindOf(err) == errs.KindNotFound {
-			return database.Tag{}, PromoteNotFound, nil
+			return database.Tag{}, service.PromoteNotFound, nil
 		}
-		return database.Tag{}, PromoteNotFound, err
+		return database.Tag{}, service.PromoteNotFound, err
 	}
 	if tag.PromotedAt.Valid {
-		return tag, PromoteAlreadyPromoted, nil
+		return tag, service.PromoteAlreadyPromoted, nil
 	}
 
 	promoted, err := s.client.Queries.PromoteTags(ctx, []int64{id})
 	if err != nil {
-		return tag, PromoteNotFound, errs.FromDB(err, "promote tag")
+		return tag, service.PromoteNotFound, errs.FromDB(err, "promote tag")
 	}
 	if promoted == 0 {
-		return tag, PromoteAlreadyPromoted, nil
+		return tag, service.PromoteAlreadyPromoted, nil
 	}
 
 	s.encodeAndAddBatch(ctx, []string{tag.Name})
 	s.logger.Info(nil, "tagquality[%s]: promote %q (reason=%s)", analyzer.TagQualityVersion, tag.Name, reason)
-	return tag, PromotePromoted, nil
+	return tag, service.PromotePromoted, nil
 }
 
 func (s *Tag) ListDeleted(ctx context.Context, prefix string, limit, offset int32) ([]database.DeletedTag, int64, error) {

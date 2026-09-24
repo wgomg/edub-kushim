@@ -1,4 +1,4 @@
-package service
+package curation
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 )
@@ -29,7 +30,7 @@ func TestTag_NormalizeAtSave(t *testing.T) {
 		results, err := svc.Create(ctx, []string{"C++ "})
 		testutil.AssertNoError(t, err, "create")
 		testutil.AssertEqual(t, len(results), 1, "one result")
-		testutil.AssertEqual(t, results[0].Status, Conflict, "conflict against seeded c++")
+		testutil.AssertEqual(t, results[0].Status, service.Conflict, "conflict against seeded c++")
 		testutil.AssertEqual(t, results[0].Entity.Name, "c++", "conflict entity is seeded canonical name")
 	})
 
@@ -39,14 +40,14 @@ func TestTag_NormalizeAtSave(t *testing.T) {
 		// embedding store (prevents store churn on equivalent renames).
 		createResults, err := svc.Create(ctx, []string{"Machine Learning"})
 		testutil.AssertNoError(t, err, "create")
-		testutil.AssertEqual(t, createResults[0].Status, Created, "created")
+		testutil.AssertEqual(t, createResults[0].Status, service.Created, "created")
 		id := createResults[0].Entity.ID
 
 		updateResults, err := svc.Update(ctx, []TagUpdatePair{
 			{ID: id, Name: "machine learning"},
 		})
 		testutil.AssertNoError(t, err, "update")
-		testutil.AssertEqual(t, updateResults[0].Status, Noop, "noop on equivalent rename")
+		testutil.AssertEqual(t, updateResults[0].Status, service.Noop, "noop on equivalent rename")
 	})
 }
 
@@ -67,7 +68,7 @@ func TestTag_CreatePlannedTx_Rollback(t *testing.T) {
 	testutil.AssertEqual(t, len(newNames), 2, "two new names")
 
 	for i, r := range results {
-		testutil.AssertEqual(t, r.Status, Created, "result status")
+		testutil.AssertEqual(t, r.Status, service.Created, "result status")
 		if r.Entity.ID == 0 {
 			t.Errorf("result[%d] has zero ID", i)
 		}
@@ -78,7 +79,7 @@ func TestTag_CreatePlannedTx_Rollback(t *testing.T) {
 	results2, err := svc.Create(ctx, []string{"tx-test-1"})
 	testutil.AssertNoError(t, err, "re-create after rollback")
 	// After rollback, the tags don't exist, so Create should create them fresh.
-	if results2[0].Status != Created {
+	if results2[0].Status != service.Created {
 		t.Errorf("status after rollback = %v, want Created", results2[0].Status)
 	}
 }
@@ -162,7 +163,7 @@ func TestTag_Create_PromotesBirth(t *testing.T) {
 	testutil.AssertNoError(t, err, "create")
 	testutil.AssertEqual(t, len(results), 2, "two results")
 	for _, r := range results {
-		testutil.AssertEqual(t, r.Status, Created, "result status")
+		testutil.AssertEqual(t, r.Status, service.Created, "result status")
 	}
 
 	tag1, err := client.Queries.GetTagByName(ctx, "promote test 1")
@@ -218,7 +219,7 @@ func TestTag_CreatePlannedTx_Quarantined_LeavesProvisional(t *testing.T) {
 	testutil.AssertNoError(t, err, "create planned tx quarantined")
 	testutil.AssertEqual(t, len(results), 1, "one result")
 	testutil.AssertEqual(t, len(newNames), 1, "one new name")
-	testutil.AssertEqual(t, results[0].Status, Created, "created")
+	testutil.AssertEqual(t, results[0].Status, service.Created, "created")
 
 	// The result entity for a quarantined birth must not have promoted_at set.
 	if results[0].Entity.PromotedAt.Valid {
@@ -241,7 +242,7 @@ func TestTag_Update_OnlyReembedsPromotedTags(t *testing.T) {
 	// Create a promoted tag (via Create, which promotes).
 	createResults, err := svc.Create(ctx, []string{"update-reembed-src"})
 	testutil.AssertNoError(t, err, "create promoted tag")
-	testutil.AssertEqual(t, createResults[0].Status, Created, "created")
+	testutil.AssertEqual(t, createResults[0].Status, service.Created, "created")
 	promotedID := createResults[0].Entity.ID
 
 	// Verify the tag is promoted in the DB.
@@ -256,7 +257,7 @@ func TestTag_Update_OnlyReembedsPromotedTags(t *testing.T) {
 		{ID: promotedID, Name: "update-reembed-dst"},
 	})
 	testutil.AssertNoError(t, err, "update promoted tag")
-	testutil.AssertEqual(t, updateResults[0].Status, Updated, "updated")
+	testutil.AssertEqual(t, updateResults[0].Status, service.Updated, "updated")
 	if !embedder.Has("update reembed dst") {
 		t.Error("renamed promoted tag must be added to the embedder store")
 	}
@@ -275,7 +276,7 @@ func TestTag_CreateAndUnblock(t *testing.T) {
 	// the automatic paths rely on it to keep guarding a deleted name.
 	results, err := svc.Create(ctx, []string{"recreate me"})
 	testutil.AssertNoError(t, err, "create")
-	testutil.AssertEqual(t, results[0].Status, Invalid, "blocklisted name is not registered")
+	testutil.AssertEqual(t, results[0].Status, service.Invalid, "blocklisted name is not registered")
 	if _, err := client.Queries.GetDeletedTag(ctx, "recreate me"); err != nil {
 		t.Fatalf("Create must not clear the blocklist row: %v", err)
 	}
@@ -283,7 +284,7 @@ func TestTag_CreateAndUnblock(t *testing.T) {
 	// CreateAndUnblock is the operator path: re-creating the name unblocks it.
 	results, err = svc.CreateAndUnblock(ctx, []string{"Recreate Me"})
 	testutil.AssertNoError(t, err, "create and unblock")
-	testutil.AssertEqual(t, results[0].Status, Created, "created by the unblock path")
+	testutil.AssertEqual(t, results[0].Status, service.Created, "created by the unblock path")
 	if _, err := client.Queries.GetDeletedTag(ctx, "recreate me"); err == nil {
 		t.Fatal("CreateAndUnblock must clear the blocklist row")
 	}
@@ -380,7 +381,7 @@ func TestTag_Promote(t *testing.T) {
 
 		tag, status, err := svc.Promote(ctx, tagID, "test-reason")
 		testutil.AssertNoError(t, err, "promote")
-		testutil.AssertEqual(t, status, PromotePromoted, "promoted status")
+		testutil.AssertEqual(t, status, service.PromotePromoted, "promoted status")
 
 		// Re-fetch to verify the update persisted.
 		tag, err = svc.Get(ctx, tagID)
@@ -394,18 +395,18 @@ func TestTag_Promote(t *testing.T) {
 		// a base-form name is not flagged by M2 and promotes at birth
 		results, err := svc.Create(ctx, []string{"promote-tag"})
 		testutil.AssertNoError(t, err, "create")
-		testutil.AssertEqual(t, results[0].Status, Created, "created")
+		testutil.AssertEqual(t, results[0].Status, service.Created, "created")
 		tagID := results[0].Entity.ID
 
 		_, status, err := svc.Promote(ctx, tagID, "test-reason")
 		testutil.AssertNoError(t, err, "promote again")
-		testutil.AssertEqual(t, status, PromoteAlreadyPromoted, "already promoted")
+		testutil.AssertEqual(t, status, service.PromoteAlreadyPromoted, "already promoted")
 	})
 
 	t.Run("not found", func(t *testing.T) {
 		_, status, err := svc.Promote(ctx, 999999, "test-reason")
 		testutil.AssertNoError(t, err, "not found")
-		testutil.AssertEqual(t, status, PromoteNotFound, "not found status")
+		testutil.AssertEqual(t, status, service.PromoteNotFound, "not found status")
 	})
 }
 
@@ -466,7 +467,7 @@ func TestTag_ApplyAliasPlan(t *testing.T) {
 		results, err := svc.Create(ctx, []string{"alias loser tag"})
 		testutil.AssertNoError(t, err, "create through alias")
 		testutil.AssertEqual(t, len(results), 1, "one result")
-		testutil.AssertEqual(t, results[0].Status, Apply, "apply through alias")
+		testutil.AssertEqual(t, results[0].Status, service.Apply, "apply through alias")
 		testutil.AssertEqual(t, results[0].Entity.ID, canonicalID, "canonical entity")
 	})
 

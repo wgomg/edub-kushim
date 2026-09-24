@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/wgomg/edub-kushim/internal/database"
-	"github.com/wgomg/edub-kushim/internal/service"
+	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 )
 
@@ -380,13 +380,12 @@ func TestApplyKeepFlip_ZeroDocsCreatesNoTag(t *testing.T) {
 	client := database.NewTestClient(t)
 	t.Cleanup(func() { client.DB().Close() })
 
-	tagSvc := service.NewTag(client, testutil.NewTestLogger(), testutil.NewMockEmbedder())
-	services := &service.CrudServices{Tag: tagSvc}
+	tagSvc := curation.NewTag(client, testutil.NewTestLogger(), testutil.NewMockEmbedder())
 
 	r := &Reconciler{
-		client:   client,
-		services: services,
-		logger:   testutil.NewTestLogger(),
+		client: client,
+		tag:    tagSvc,
+		logger: testutil.NewTestLogger(),
 	}
 
 	// Seed a target tag so tagByName succeeds.

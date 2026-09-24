@@ -45,9 +45,10 @@ The subsystem spans these packages:
 | ------- | ---- |
 | `internal/tags` | canonical-form identity mechanics: house form (M1), lemma/stem signatures (M2, evidence only), key equality (M3), tie-break (M4), alias/evidence types, deterministic planning |
 | `internal/tags/policy` | pure candidate generation: identity + band subjects, no logging, no config |
-| `internal/enrichment` (`enricher.go`) | adapter: alias lookup, identity planning, judge/adjudicator orchestration, plan application |
+| `internal/tags/admission` | admission seams: alias lookup, identity planning, judge/adjudicator orchestration, tag-quality gating, plan application |
+| `internal/enrichment` (`enricher.go`) | coordinator: runs the pipeline and calls the admission seams |
 | `internal/tags/reconcile` | scheduled re-adjudication + log bootstrap parser + identity-evidence sweep |
-| `internal/service/tagmerge.go` | merge operation + merge suggestions |
+| `internal/tags/curation` | tag vocabulary services: tag CRUD, merge operation + merge suggestions, identity-run enqueue |
 | `internal/matcher` | the daemon (`Rank`, pair cache, embedding store) and the RPC client (`edub`'s deployment) |
 | `internal/database` | migrations 00017/00018/00029, verdict + evidence queries |
 
@@ -163,7 +164,7 @@ transaction — adjudication stays outside it:
 
 ## 3. The enricher flow
 
-`internal/enrichment/enricher.go` + `internal/enrichment/identity.go`:
+`internal/enrichment/enricher.go` + `internal/tags/admission/identity.go`:
 
 1. **Suggestions** — the suggestion set (matched tags or the vocabulary
    fallback) is alias-resolved to canonical names before injection.
@@ -172,7 +173,7 @@ transaction — adjudication stays outside it:
    unconsolidated names, and falls back to the deterministic planner
    (`PlanRegistration`) for registration (enrichment never fails on
    consolidation).
-3. **Planning** (`planIdentity`) runs outside the transaction: one alias-map
+3. **Planning** (`Adjudicator.PlanIdentity`) runs outside the transaction: one alias-map
    query, M1 house form, M3 key-equality application, M2 shape flagging through
    a `NameIndex`, band subjects from the ranked decisions, and same-emission
    shape pairs. Flagged candidates go into one batched identity-judge call
@@ -184,7 +185,7 @@ transaction — adjudication stays outside it:
    transaction: registrations (write-boundary normalization, blocklist
    re-check, provisional births, promotion when not quarantined), scheduled
    alias actions (re-point, delete, flatten, alias row), and identity-evidence
-   rows. `renameTagDetails` keeps the analyzer's typed metadata attached to
+   rows. `RenameTagDetails` keeps the analyzer's typed metadata attached to
    folded or applied outputs.
 5. **Store hygiene** after the commit: promoted/new names enter the embedding
    store and removed alias names leave it.
@@ -192,7 +193,7 @@ transaction — adjudication stays outside it:
 A trusted birth is immediately part of the store, and later emissions of the
 same name hit M3 or the alias resolver — the self-healing loop.
 
-When `enricher.tag_quality.enabled` is true, `applyTagQuality`
+When `enricher.tag_quality.enabled` is true, `Adjudicator.ApplyTagQuality`
 (`enricher.go`) filters that kept set once more before persist: novel names
 (absent from the tag table) pass the deterministic weak band, resolve from the
 `tag_quality_event` cache, or go into one rubric call per document; rejected
@@ -344,7 +345,7 @@ the map; `MatcherClient.SimilarPairs` (`client.go:213`) GETs the endpoint.
 
 ## 7. Merge review
 
-`TagMerge` (`internal/service/tagmerge.go`, registered on `CrudServices`) —
+`TagMerge` (`internal/tags/curation/tagmerge.go`) —
 nothing merges automatically; this is the operator's explicit action.
 
 **`Merge(ctx, sourceID, targetID)`** runs one transaction:
@@ -524,12 +525,12 @@ predicts what the next apply would delete.
 tags older than `enricher.tag_reconcile.provisional_grace_days` (default 30),
 oldest first. Zero-assignment rows are only counted — the orphan sweep owns
 their deletion. Rows whose latest verdict at `TagQualityVersion` passes and
-that hold ≥2 live documents are promoted through `service.Tag.Promote` (the
+that hold ≥2 live documents are promoted through `curation.Tag.Promote` (the
 same method behind `POST /api/v1/tags/{id}/promote`, so the log line and the
 store add match the operator path). Verdict-less rows are re-judged under the
 shared `max_rejudge` budget: `FirstDocumentIDForTag` picks the first live
 carrier, `GetDocumentTextForTagQuality` fetches its text and word count, and
-`Runner.ReduceContent` reduces it with `enrichment.TargetWordCount` (the
+`Runner.ReduceContent` reduces it with `matcher.TargetWordCount` (the
 tagreconcile runner loads the `textreducer` tool for this path). One
 `JudgeTagQuality` call judges the single candidate — category `other` and the
 whitelisted-place flag recomputed from the name — and a failure retries once
@@ -546,7 +547,7 @@ runs count would-promote/would-re-judge and touch nothing. The counts land in
 
 **Identity-evidence sweep**: after the provisional sweep, the same run resolves
 pending identity evidence up to `max_rejudge` rows through the shared resolver
-(`internal/enrichment/identity_resolve.go`). Candidate criteria are judged in
+(`internal/tags/admission/identity_resolve.go`). Candidate criteria are judged in
 batches, same-intent pairs adjudicated, and the dispositions applied: a
 confirmed fold renames the tag (or aliases it when the folded name already
 exists), a same-intent loser becomes an alias of its winner, a deleted fold

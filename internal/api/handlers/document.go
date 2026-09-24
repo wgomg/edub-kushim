@@ -21,6 +21,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/service"
+	"github.com/wgomg/edub-kushim/internal/tags/curation"
 )
 
 func sanitizeSnippetHTML(raw string) string {
@@ -37,15 +38,17 @@ type DocumentHandler struct {
 	logger    *log.Logger
 	engine    *search.Engine
 	services  *service.CrudServices
+	tag       *curation.Tag
 	getConfig func() *config.Config
 }
 
-func NewDocumentHandler(client *database.Client, logger *log.Logger, engine *search.Engine, services *service.CrudServices, getConfig func() *config.Config) *DocumentHandler {
+func NewDocumentHandler(client *database.Client, logger *log.Logger, engine *search.Engine, services *service.CrudServices, tag *curation.Tag, getConfig func() *config.Config) *DocumentHandler {
 	return &DocumentHandler{
 		client:    client,
 		logger:    logger,
 		engine:    engine,
 		services:  services,
+		tag:       tag,
 		getConfig: getConfig,
 	}
 }
@@ -758,7 +761,7 @@ func (h *DocumentHandler) AddDocumentTag(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	_, err = h.services.Tag.Get(ctx, req.TagID)
+	_, err = h.tag.Get(ctx, req.TagID)
 	if err != nil {
 		writeServiceError(w, h.logger, &reqID, "get tag", err)
 		return
@@ -903,7 +906,7 @@ func (h *DocumentHandler) BatchAssignTags(w http.ResponseWriter, r *http.Request
 	}
 
 	for _, tagID := range req.TagIDs {
-		if _, err := h.services.Tag.Get(ctx, tagID); err != nil {
+		if _, err := h.tag.Get(ctx, tagID); err != nil {
 			writeServiceError(w, h.logger, &reqID, "validate tag", err)
 			return
 		}

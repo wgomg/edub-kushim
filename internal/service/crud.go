@@ -7,8 +7,6 @@ import (
 
 type CrudServices struct {
 	Batch        *Batch
-	Tag          *Tag
-	TagMerge     *TagMerge
 	People       *People
 	PeopleType   *PeopleType
 	DocumentType *DocumentType
@@ -17,7 +15,6 @@ type CrudServices struct {
 	ErroredFiles *ErroredFiles
 	ReEnrich     *ReEnrich
 	Trash        *TrashService
-	TagIdentity  *TagIdentity
 }
 
 func (s *CrudServices) Close() {

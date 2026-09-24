@@ -12,12 +12,13 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
-	"github.com/wgomg/edub-kushim/internal/enrichment"
 	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/tags"
+	"github.com/wgomg/edub-kushim/internal/tags/admission"
+	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/tags/policy"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/textnorm"
@@ -51,18 +52,20 @@ var catOrder = map[string]int{
 type Reconciler struct {
 	getConfig func() *config.Config
 	client    *database.Client
-	services  *service.CrudServices
+	tag       *curation.Tag
+	merges    *curation.TagMerge
 	runner    *tools.Runner
 	logger    *log.Logger
 }
 
 func NewReconciler(getConfig func() *config.Config, client *database.Client,
-	services *service.CrudServices,
+	tag *curation.Tag, merges *curation.TagMerge,
 	runner *tools.Runner, logger *log.Logger) *Reconciler {
 	return &Reconciler{
 		getConfig: getConfig,
 		client:    client,
-		services:  services,
+		tag:       tag,
+		merges:    merges,
 		runner:    runner,
 		logger:    logger,
 	}
@@ -89,7 +92,7 @@ type Report struct {
 	Swept               int                        `json:"swept,omitempty"`
 	AdjudicatorDisabled bool                       `json:"adjudicator_disabled,omitempty"`
 	Provisional         ProvisionalCounts          `json:"provisional,omitempty"`
-	Identity            *enrichment.IdentityReport `json:"identity,omitempty"`
+	Identity            *admission.IdentityReport `json:"identity,omitempty"`
 }
 
 type ProvisionalCounts struct {
@@ -178,7 +181,7 @@ func (r *Reconciler) Run(ctx context.Context, progress task.ProgressFunc) (Repor
 		report.ReportOnly = true
 	}
 
-	allTags, err := r.services.Tag.ListAll(ctx)
+	allTags, err := r.tag.ListAll(ctx)
 	if err != nil {
 		return report, fmt.Errorf("list tags: %w", err)
 	}
@@ -260,7 +263,7 @@ func (r *Reconciler) sweepIdentityEvidence(ctx context.Context, cfg *config.Conf
 	if report.ReportOnly {
 		return
 	}
-	resolver := enrichment.NewIdentityResolver(r.getConfig, r.logger, r.client, r.services, r.runner)
+	resolver := admission.NewIdentityResolver(r.getConfig, r.logger, r.client, r.tag, r.runner)
 	identityReport, err := resolver.ResolvePending(ctx, cfg.Enricher.TagReconcile.MaxRejudge)
 	if err != nil {
 		r.logger.Error(nil, "tag reconcile: identity evidence sweep failed: %v", err)
@@ -345,7 +348,7 @@ func (r *Reconciler) sweepOrphanTags(ctx context.Context, cfg *config.Config, re
 		return
 	}
 	report.Swept = len(deleted)
-	if err := r.services.Tag.RemoveFromStore(ctx, deleted); err != nil {
+	if err := r.tag.RemoveFromStore(ctx, deleted); err != nil {
 		r.logger.Error(nil, "tag reconcile: remove swept tags from store: %v", err)
 	}
 	r.logger.Info(nil, "tag reconcile: deleted %d tags orphaned for over %d days%s",
@@ -403,7 +406,7 @@ func (r *Reconciler) sweepProvisionalTags(ctx context.Context, cfg *config.Confi
 		return
 	}
 
-	events, err := r.services.Tag.LatestQualityEventsForNames(ctx, names)
+	events, err := r.tag.LatestQualityEventsForNames(ctx, names)
 	if err != nil {
 		r.logger.Error(nil, "tag reconcile: provisional tag verdict lookup: %v", err)
 		return
@@ -436,7 +439,7 @@ func (r *Reconciler) sweepProvisionalTags(ctx context.Context, cfg *config.Confi
 			r.logger.Info(nil, "tag reconcile (report-only): would promote %q (docs=%d model=%s)", t.Name, docs, verdictModelLabel(row.VerdictModel))
 			continue
 		}
-		if _, status, err := r.services.Tag.Promote(ctx, t.ID, "sweep"); err != nil {
+		if _, status, err := r.tag.Promote(ctx, t.ID, "sweep"); err != nil {
 			r.logger.Error(nil, "tag reconcile: promote provisional tag %q: %v", t.Name, err)
 		} else if status == service.PromotePromoted {
 			report.Provisional.Promoted++
@@ -496,7 +499,7 @@ func (r *Reconciler) rejudgeProvisionalTags(ctx context.Context, cfg *config.Con
 		}
 
 		reduced, err := r.runner.ReduceContent(ctx, doc.TextContent.String, chunkSize,
-			enrichment.TargetWordCount(int(doc.WordCount), cfg.Enricher.TagMatcher.ReduceTargetWords))
+			matcher.TargetWordCount(int(doc.WordCount), cfg.Enricher.TagMatcher.ReduceTargetWords))
 		if err != nil {
 			r.logger.Error(nil, "tag reconcile: reduce text for provisional tag %q: %v", e.name, err)
 		}
@@ -545,7 +548,7 @@ func (r *Reconciler) rejudgeProvisionalTags(ctx context.Context, cfg *config.Con
 		if e.docs < 2 {
 			continue
 		}
-		if _, status, err := r.services.Tag.Promote(ctx, e.id, "sweep"); err != nil {
+		if _, status, err := r.tag.Promote(ctx, e.id, "sweep"); err != nil {
 			r.logger.Error(nil, "tag reconcile: promote provisional tag %q: %v", e.name, err)
 		} else if status == service.PromotePromoted {
 			report.Provisional.Promoted++
@@ -572,7 +575,7 @@ func (r *Reconciler) recordProvisionalVerdict(ctx context.Context, docID int64, 
 	}
 
 	// another writer recorded a fresh verdict first — keep it, never overwrite
-	rows, err := r.services.Tag.LatestQualityEventsForNames(ctx, []string{name})
+	rows, err := r.tag.LatestQualityEventsForNames(ctx, []string{name})
 	if err != nil {
 		return false, "", err
 	}
@@ -1374,7 +1377,7 @@ func (r *Reconciler) applyMergeFlip(ctx context.Context, e *entry, report *Repor
 	if !ok {
 		return fmt.Errorf("target tag %q not in store", e.target)
 	}
-	res, err := r.services.TagMerge.Merge(ctx, queryTag.ID, targetTag.ID)
+	res, err := r.merges.Merge(ctx, queryTag.ID, targetTag.ID)
 	if err != nil {
 		return err
 	}
@@ -1425,7 +1428,7 @@ func (r *Reconciler) applyKeepFlip(ctx context.Context, e *entry, blocklist map[
 		return 0, false, nil
 	}
 
-	results, err := r.services.Tag.Create(ctx, []string{e.query})
+	results, err := r.tag.Create(ctx, []string{e.query})
 	if err != nil {
 		return 0, false, fmt.Errorf("create query tag: %w", err)
 	}
@@ -1479,7 +1482,7 @@ func (r *Reconciler) applyKeepFlip(ctx context.Context, e *entry, blocklist map[
 }
 
 func (r *Reconciler) logDeletedTagKeepFlip(e *entry, row database.ListAllDeletedTagsRow) {
-	if row.Kind == service.DeletedTagKindMerged {
+	if row.Kind == curation.DeletedTagKindMerged {
 		r.logger.Info(nil, "tag reconcile: skipping restoration of %q — it was merged into %q", e.query, row.TargetName.String)
 		return
 	}
@@ -1519,7 +1522,7 @@ func (r *Reconciler) upsertVerdict(ctx context.Context, e *entry) error {
 }
 
 func (r *Reconciler) tagByName(ctx context.Context, name string) (database.Tag, bool) {
-	tag, err := r.services.Tag.GetByName(ctx, name)
+	tag, err := r.tag.GetByName(ctx, name)
 	if err != nil {
 		return database.Tag{}, false
 	}

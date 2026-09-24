@@ -52,13 +52,13 @@ The process layer is split by role: the verb table and the `kushim` verbs live i
     - `NewContainerWithDB(cfg, logger, db)` — With provided DB
     - `GetConfig() *config.Config` / `SetConfig(cfg)` — Atomic load/store of the live config (the queue daemon swaps it on hot reload)
     - `GetLogger() *log.Logger`
-    - `GetServices() (*service.CrudServices, error)` — Ensures the dispatcher (and its CRUD services) is initialized
+    - `GetTagService() (*curation.Tag, error)` — Ensures the dispatcher (and its services) is initialized and returns the tag service the `tagidentity` verb resolves pending identity evidence through
     - `GetDB() (*sql.DB, error)` — Creates DB lazily, runs goose migrations on first open
     - `GetClient() (*database.Client, error)` — Lazily wraps the DB
-    - `InvalidateDB()` — Closes the DB and drops the client, dispatcher, runner, engine, store, services, and pools so the next accessor rebuilds them
+    - `InvalidateDB()` — Closes the DB and drops the client, dispatcher, runner, engine, store, services, tag services, and pools so the next accessor rebuilds them
     - `ReconnectClient() (*database.Client, error)` — Opens a new DB from the current config, invalidates, and returns the new client
     - `SocketPath() string` — `<config_dir>/kushim-hugot.sock`
-    - `GetDispatcher() (*task.Dispatcher, error)` — Lazily creates dispatcher. Creates a `MatcherClient` connected to the Unix socket at `<config_dir>/kushim-hugot.sock`, builds `TagService` wired through the client, and `Enricher` with the matcher.
+    - `GetDispatcher() (*task.Dispatcher, error)` — Lazily creates dispatcher. Creates a `MatcherClient` connected to the Unix socket at `<config_dir>/kushim-hugot.sock`, builds the curation tag services (`Tag` wired through the client, `TagMerge`) and `Enricher` with the matcher.
     - `GetRunner() (*task.Runner, error)` — Builds the runner over the dispatcher and registers every task handler (consume, enrich, thumbnail, thumbbackfill, config, backup, mirror, tagreconcile, tagmeasure, tagidentity)
     - `SetRunnerOwnerID(id) error` — Per-process batch owner UUID
     - `GetPool(taskType) (*task.Pool, error)` — Returns (or lazily creates) the pool for a task type, with the worker count and poll interval for that type
@@ -242,7 +242,7 @@ The **tagidentity pool** (1 worker, 5s poll interval, always running) executes t
 
 ### Functions
 
-- `tagIdentityHandler(c, args) error` — `kushim tagidentity --run <batch-id>`: validates the batch id, builds a runner over the `textreducer`, `contentanalyzer` and `tagmatcher` tools plus the matcher client, and resolves the pending identity evidence through `enrichment.IdentityResolver` (criteria judged, same-intent pairs adjudicated, dispositions applied) under `enricher.tag_reconcile.max_rejudge`; prints the report line the queue handler captures. There is no manual foreground mode — the endpoint is the trigger and the reconciliation sweep is the backstop.
+- `tagIdentityHandler(c, args) error` — `kushim tagidentity --run <batch-id>`: validates the batch id, builds a runner over the `textreducer`, `contentanalyzer` and `tagmatcher` tools plus the matcher client, and resolves the pending identity evidence through `admission.IdentityResolver` (criteria judged, same-intent pairs adjudicated, dispositions applied) under `enricher.tag_reconcile.max_rejudge`; prints the report line the queue handler captures. There is no manual foreground mode — the endpoint is the trigger and the reconciliation sweep is the backstop.
 
 ---
 

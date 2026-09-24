@@ -285,6 +285,7 @@ test-db:
 		./internal/task/ \
 		./internal/service/ \
 		./internal/tags/ \
+		./internal/tags/curation/ \
 		./internal/api/handlers/ \
 		./internal/documents/consumption/
 
@@ -306,6 +307,7 @@ test-cgo-db:
 		./internal/ops/cli/ \
 		./internal/ops/queue/ \
 		./internal/enrichment/ \
+		./internal/tags/admission/ \
 		./internal/tags/reconcile/ \
 		./internal/api/handlers/
 
@@ -341,6 +343,7 @@ test-cgo:
 		./internal/ops/cli/ \
 		./internal/ops/queue/ \
 		./internal/enrichment/ \
+		./internal/tags/admission/ \
 		./internal/tags/reconcile/
 
 test-cgo-glibc:

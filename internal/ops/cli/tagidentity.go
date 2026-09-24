@@ -8,10 +8,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/enrichment"
 	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/ops/container"
 	"github.com/wgomg/edub-kushim/internal/ops/flags"
+	"github.com/wgomg/edub-kushim/internal/tags/admission"
 	"github.com/wgomg/edub-kushim/internal/tools"
 )
 
@@ -51,7 +51,7 @@ func runTagIdentityPass(c *container.Container, batchID string) error {
 	if err != nil {
 		return fmt.Errorf("database: %w", err)
 	}
-	services, err := c.GetServices()
+	tagService, err := c.GetTagService()
 	if err != nil {
 		return fmt.Errorf("dispatcher: %w", err)
 	}
@@ -59,11 +59,11 @@ func runTagIdentityPass(c *container.Container, batchID string) error {
 	cfg := c.GetConfig()
 	matcherClient := matcher.NewMatcherClient(c.SocketPath(), matcher.MaxMatchBodyBytes(cfg.Enricher.TagMatcher.ReduceTargetWords))
 	runner := tools.NewRunnerWithMatcher(c.GetLogger(), cfg, []string{"textreducer", "contentanalyzer", "tagmatcher"}, matcherClient)
-	resolver := enrichment.NewIdentityResolver(
+	resolver := admission.NewIdentityResolver(
 		func() *config.Config { return c.GetConfig() },
 		c.GetLogger(),
 		client,
-		services,
+		tagService,
 		runner,
 	)
 
@@ -78,6 +78,6 @@ func runTagIdentityPass(c *container.Container, batchID string) error {
 	}
 	c.GetLogger().Info(nil, "tag identity run %s: pending=%d resolved=%d folded=%d aliased=%d deferred=%d failed=%d",
 		batchID, report.Pending, report.Resolved, report.Folded, report.Aliased, report.Deferred, report.Failed)
-	fmt.Printf("%s%s\n", enrichment.IdentityReportPrefix, raw)
+	fmt.Printf("%s%s\n", admission.IdentityReportPrefix, raw)
 	return nil
 }

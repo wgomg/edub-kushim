@@ -1,4 +1,4 @@
-package enrichment
+package admission
 
 import (
 	"context"
@@ -10,8 +10,8 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
 	"github.com/wgomg/edub-kushim/internal/log"
-	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/tags"
+	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/types"
@@ -51,11 +51,9 @@ func newIdentityResolver(t *testing.T, adjudicatorEnabled bool) (*IdentityResolv
 			},
 		},
 	}
-	services := &service.CrudServices{
-		Tag: service.NewTag(client, testutil.NewTestLogger(), testutil.NewMockEmbedder()),
-	}
+	tagSvc := curation.NewTag(client, testutil.NewTestLogger(), testutil.NewMockEmbedder())
 
-	resolver := NewIdentityResolver(func() *config.Config { return cfg }, logger, client, services, runner)
+	resolver := NewIdentityResolver(func() *config.Config { return cfg }, logger, client, tagSvc, runner)
 	return resolver, client, adj
 }
 
@@ -178,7 +176,7 @@ func TestResolvePending_FoldTargetDeleted(t *testing.T) {
 	seedPendingIdentityEvent(t, client, tags.IdentityKindConventionalForm, "buildings", "")
 	if err := client.Queries.UpsertDeletedTag(ctx, database.UpsertDeletedTagParams{
 		Name: "building",
-		Kind: service.DeletedTagKindBlocked,
+		Kind: curation.DeletedTagKindBlocked,
 	}); err != nil {
 		t.Fatalf("seed deleted fold target: %v", err)
 	}

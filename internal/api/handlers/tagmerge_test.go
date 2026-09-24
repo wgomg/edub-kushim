@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/wgomg/edub-kushim/internal/database"
-	"github.com/wgomg/edub-kushim/internal/service"
+	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 )
 
@@ -16,18 +16,18 @@ import (
 // same nonexistent-socket MatcherClient that the rest of the env uses. The
 // merge path only needs the Embedder; the suggestions path will hit the
 // matcher's 503 when it tries to dial.
-func addTagMergeToEnv(t *testing.T, env *handlerTestEnv) *service.TagMerge {
+func addTagMergeToEnv(t *testing.T, env *handlerTestEnv) *curation.TagMerge {
 	t.Helper()
 	embedder := testutil.NewMockEmbedder()
-	svc := service.NewTagMerge(env.client, env.matcherClient, embedder, env.logger)
-	env.services.TagMerge = svc
+	svc := curation.NewTagMerge(env.client, env.matcherClient, embedder, env.logger)
+	env.tagMerge = svc
 	return svc
 }
 
 func TestTagMergeHandler_Merge_HappyPath(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	addTagMergeToEnv(t, env)
-	h := NewTagHandler(env.services, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagMerge, env.tagIdentity, env.logger)
 	ctx := context.Background()
 
 	sourceID := database.MustCreateTag(t, env.client.Queries, "handler merge source")
@@ -59,7 +59,7 @@ func TestTagMergeHandler_Merge_HappyPath(t *testing.T) {
 func TestTagMergeHandler_Merge_BadRequest(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	addTagMergeToEnv(t, env)
-	h := NewTagHandler(env.services, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagMerge, env.tagIdentity, env.logger)
 
 	t.Run("invalid id", func(t *testing.T) {
 		w := rec()
@@ -94,7 +94,7 @@ func TestTagMergeHandler_Merge_BadRequest(t *testing.T) {
 func TestTagMergeHandler_Merge_NotFound(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	addTagMergeToEnv(t, env)
-	h := NewTagHandler(env.services, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagMerge, env.tagIdentity, env.logger)
 
 	t.Run("missing source", func(t *testing.T) {
 		targetID := database.MustCreateTag(t, env.client.Queries, "nf-target")
@@ -124,7 +124,7 @@ func TestTagMergeHandler_Merge_NotFound(t *testing.T) {
 func TestTagMergeHandler_Suggestions_503WhenMatcherDown(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	addTagMergeToEnv(t, env)
-	h := NewTagHandler(env.services, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagMerge, env.tagIdentity, env.logger)
 
 	w := rec()
 	r := req(t, "GET", "/api/v1/tags/merge?limit=5", nil)
@@ -135,7 +135,7 @@ func TestTagMergeHandler_Suggestions_503WhenMatcherDown(t *testing.T) {
 func TestTagMergeHandler_DismissMergePair_HappyPath(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	svc := addTagMergeToEnv(t, env)
-	h := NewTagHandler(env.services, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagMerge, env.tagIdentity, env.logger)
 
 	database.MustCreateTag(t, env.client.Queries, "handler dismiss a")
 	database.MustCreateTag(t, env.client.Queries, "handler dismiss b")
@@ -158,7 +158,7 @@ func TestTagMergeHandler_DismissMergePair_HappyPath(t *testing.T) {
 func TestTagMergeHandler_DismissMergePair_TagNotFound(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	addTagMergeToEnv(t, env)
-	h := NewTagHandler(env.services, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagMerge, env.tagIdentity, env.logger)
 
 	database.MustCreateTag(t, env.client.Queries, "handler dismiss present")
 
@@ -173,7 +173,7 @@ func TestTagMergeHandler_DismissMergePair_TagNotFound(t *testing.T) {
 func TestTagMergeHandler_DismissMergePair_BadRequest(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	addTagMergeToEnv(t, env)
-	h := NewTagHandler(env.services, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagMerge, env.tagIdentity, env.logger)
 
 	w := rec()
 	r := req(t, "POST", "/api/v1/tags/merge/dismissals", []byte("not json"))
@@ -185,7 +185,7 @@ func TestTagMergeHandler_DismissMergePair_BadRequest(t *testing.T) {
 func TestTagMergeHandler_RestoreMergePair_HappyPath(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	svc := addTagMergeToEnv(t, env)
-	h := NewTagHandler(env.services, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagMerge, env.tagIdentity, env.logger)
 
 	database.MustCreateTag(t, env.client.Queries, "handler restore a")
 	database.MustCreateTag(t, env.client.Queries, "handler restore b")
@@ -208,7 +208,7 @@ func TestTagMergeHandler_RestoreMergePair_HappyPath(t *testing.T) {
 func TestTagMergeHandler_RestoreMergePair_BadRequest(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	addTagMergeToEnv(t, env)
-	h := NewTagHandler(env.services, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagMerge, env.tagIdentity, env.logger)
 
 	w := rec()
 	r := req(t, "DELETE", "/api/v1/tags/merge/dismissals", []byte("{invalid"))

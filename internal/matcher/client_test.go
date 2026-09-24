@@ -41,6 +41,30 @@ func TestMaxMatchBodyBytes(t *testing.T) {
 	}
 }
 
+func TestTargetWordCount(t *testing.T) {
+	tests := []struct {
+		name    string
+		content int
+		target  int
+		want    int
+	}{
+		{"positive target above floor", 5000, 3000, 3000},
+		{"positive target below floor clamps", 5000, 1500, 2000},
+		{"negative target divides content words", 20000, -5, 4000},
+		{"negative ratio below floor clamps", 3000, -4, 2000},
+		{"zero target clamps to floor", 5000, 0, 2000},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := TargetWordCount(tt.content, tt.target)
+			if got != tt.want {
+				t.Errorf("TargetWordCount(%d, %d) = %d, want %d", tt.content, tt.target, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestTruncateUTF8(t *testing.T) {
 	tests := []struct {
 		name     string

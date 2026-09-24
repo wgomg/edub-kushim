@@ -133,12 +133,9 @@ internal/
 │       ├── adapter.go      # Thumbnailer interface + factory
 │       ├── mupdf.go        # MuPDF page renderer (CGo)
 │       └── standalone.go   # RunStandalone thumbnail pipeline (subprocess entry)
-├── enrichment/             # Enrichment engine (LLM pipeline) + its task handlers
-│   ├── enricher.go         # Enricher: dual text reduction → tag matching → token budget pre-check + retry loop → LLM → consolidation → tag adjudication → tag quality gating/provisional quarantine → people/tag/doc type with romanization + normalization
+├── enrichment/             # Enrichment engine (LLM pipeline) + its task handler
+│   ├── enricher.go         # Enricher: dual text reduction → tag matching → token budget pre-check + retry loop → LLM → consolidation → admission seams → people/tag/doc type with romanization + normalization
 │   ├── enrich.go           # EnrichTaskHandler (fetches document, calls Enricher.Enrich)
-│   ├── identity.go         # Canonical-form identity mechanics (house form, key equality, tie-break) used by the enricher
-│   ├── identity_resolve.go # Pending identity-evidence resolver (NewIdentityResolver, IdentityReport)
-│   ├── tagidentity.go      # TagIdentityTaskHandler (forks `kushim tagidentity --run`)
 │   └── text.go             # truncate — rune-aware title truncation with the "Unknown" sentinel
 ├── errs/                   # Error classification (kind, wrapping, FromDB/PgError mapping)
 ├── llm/                    # LLM capability registry
@@ -191,13 +188,11 @@ internal/
 │       └── configtask.go   # ConfigTaskHandler — downloads tessdata/Hugot model in background; migrate-db op copies the database when connection settings change, migrate-storage op relocates files when storage dirs change ("config" task type)
 ├── search/                 # Full-text search engine
 │   └── search.go           # Engine, Result (with Language, DocumentTypeID, checksums), Filter (structured search), sanitizeQuery, SearchStructured (returns results + total count)
-├── service/                # Merged domain service package (replaces people/tags/documenttypes)
+├── service/                # Shared domain service package (people, document types, batches, trash, users)
 │   ├── status.go           # Shared CRUD enums (CreateStatus, UpdateStatus, DeleteStatus, PromoteStatus)
 │   ├── result.go           # Generic result types (CreateResult[T], UpdateResult[T], DeleteResult)
 │   ├── people.go           # People service (NewPeople, batch CRUD)
 │   ├── peopletype.go       # PeopleType service (NewPeopleType, batch CRUD)
-│   ├── tag.go              # Tag service (NewTag, batch CRUD, provisional listing/promotion, embedder integration)
-│   ├── tagmerge.go         # TagMerge service (NewTagMerge — explicit hard merge of two tags + merge-suggestion scan over embedding similarity and verdict history)
 │   ├── document_type.go    # DocumentType service (NewDocumentType, batch CRUD)
 │   ├── batch.go            # Batch service (NewBatch, GetSummary, ListSummaries, ListOverviews, Create, BeginCancel/CompleteCancel, CountOrphaned, RetryFailed, HasPendingWork, IsLockedByLiveOwner)
 │   ├── orphaned.go         # Orphaned file service (scan, list, delete, restore, move-to-inbox)
@@ -219,6 +214,15 @@ internal/
 │   ├── algebra.go          # Extension algebra readings (Set, NewSet, MassOf, EvidenceState)
 │   ├── extension.go        # Read-only tag-store snapshot (NewSnapshot, Tag, Pair, AliasResolver, IdentityResolver)
 │   ├── atomicity.go        # Compound shape classification (ClassifyShape, DeriveParts, MaxCompoundWords)
+│   ├── curation/           # Tag vocabulary services (operator and adapter-visible tag operations)
+│   │   ├── tag.go          # Tag service (NewTag, batch CRUD, provisional listing/promotion, embedder integration)
+│   │   ├── tagmerge.go     # TagMerge service (NewTagMerge — explicit hard merge of two tags + merge-suggestion scan over embedding similarity and verdict history)
+│   │   └── tagidentity.go  # TagIdentity service (NewTagIdentity — enqueues the triggered identity runs)
+│   ├── admission/          # Tag admission (LLM adjudication seams + identity resolution)
+│   │   ├── adjudicator.go  # Adjudicator (NewAdjudicator — canonical suggestions, joint-tag splits, deleted-tag policy, identity planning, tag-quality gating)
+│   │   ├── identity.go     # Canonical-form identity mechanics (house form, key equality, tie-break)
+│   │   ├── identity_resolve.go # Pending identity-evidence resolver (NewIdentityResolver, IdentityReport)
+│   │   └── tagidentity.go  # TagIdentityTaskHandler (forks `kushim tagidentity --run`)
 │   ├── policy/             # Pure candidate generation (identity + band subjects)
 │   │   └── policy.go       # Evaluate, Decision, Version — no logging, no config, no I/O
 │   └── reconcile/          # Scheduled re-adjudication

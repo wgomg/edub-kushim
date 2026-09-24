@@ -1,4 +1,4 @@
-package service
+package curation
 
 import (
 	"context"
@@ -9,16 +9,17 @@ import (
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
+	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 type TagIdentity struct {
 	queries      *database.Queries
-	taskCreator  TaskCreator
-	batchCreator BatchCreator
+	taskCreator  service.TaskCreator
+	batchCreator service.BatchCreator
 }
 
-func NewTagIdentity(queries *database.Queries, taskCreator TaskCreator, batchCreator BatchCreator) *TagIdentity {
+func NewTagIdentity(queries *database.Queries, taskCreator service.TaskCreator, batchCreator service.BatchCreator) *TagIdentity {
 	return &TagIdentity{
 		queries:      queries,
 		taskCreator:  taskCreator,

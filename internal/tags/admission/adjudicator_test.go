@@ -1,4 +1,4 @@
-package enrichment
+package admission
 
 import (
 	"bytes"
@@ -47,7 +47,7 @@ func TestPlanIdentity_LogsPendingPairs(t *testing.T) {
 	})
 	setUnexportedField(t, runner, "tagAdjudicator", adj)
 
-	e := &Enricher{
+	a := &Adjudicator{
 		config: &config.Config{
 			Enricher: config.EnricherConfig{
 				TagAdjudicator: config.TagAdjudicatorConfig{Enabled: true, Llm: config.LlmConfig{Model: "test-model"}},
@@ -59,7 +59,7 @@ func TestPlanIdentity_LogsPendingPairs(t *testing.T) {
 	}
 
 	ranked := []matcher.RankResult{mkRanked("democratic socialism", "social democracy", 0.81)}
-	_, plan, _ := e.planIdentity(context.Background(), 0, "", []string{"democratic socialism"}, ranked, map[string]struct{}{"social democracy": {}}, nil)
+	_, plan, _ := a.PlanIdentity(context.Background(), 0, "", []string{"democratic socialism"}, ranked, map[string]struct{}{"social democracy": {}}, nil)
 
 	out := buf.String()
 	if !strings.Contains(out, "defer \"democratic socialism\" vs \"social democracy\" to review") {
@@ -94,7 +94,7 @@ func TestPlanIdentity_FoldStaysPendingWithoutJudge(t *testing.T) {
 		},
 	})
 
-	e := &Enricher{
+	a := &Adjudicator{
 		config: &config.Config{
 			Enricher: config.EnricherConfig{
 				TagAdjudicator: config.TagAdjudicatorConfig{Enabled: false},
@@ -105,7 +105,7 @@ func TestPlanIdentity_FoldStaysPendingWithoutJudge(t *testing.T) {
 		logger:  logger,
 	}
 
-	_, plan, _ := e.planIdentity(context.Background(), 0, "", []string{"buildings"}, nil, map[string]struct{}{}, nil)
+	_, plan, _ := a.PlanIdentity(context.Background(), 0, "", []string{"buildings"}, nil, map[string]struct{}{}, nil)
 
 	if len(plan.Registrations) != 1 {
 		t.Fatalf("registrations = %d, want 1", len(plan.Registrations))
@@ -200,9 +200,6 @@ func (m *mockTagMatcher) SimilarPairs(_ context.Context) ([]matcher.SimilarPair,
 func (m *mockTagMatcher) Close()       {}
 func (m *mockTagMatcher) Name() string { return "mock-matcher" }
 
-// setUnexportedField writes a value to an unexported struct field via
-// reflection + unsafe. Test-only: tools.Runner fields are unexported and
-// the enrichment package cannot set them through the public API.
 func setUnexportedField(t *testing.T, target any, fieldName string, value any) {
 	t.Helper()
 	v := reflect.ValueOf(target).Elem().FieldByName(fieldName)
@@ -212,7 +209,7 @@ func setUnexportedField(t *testing.T, target any, fieldName string, value any) {
 	reflect.NewAt(v.Type(), unsafe.Pointer(v.UnsafeAddr())).Elem().Set(reflect.ValueOf(value))
 }
 
-func newAdjudicationEnricher(t *testing.T) (*Enricher, *database.Queries, *mockAdjudicator) {
+func newTestAdjudicator(t *testing.T) (*Adjudicator, *database.Queries, *mockAdjudicator) {
 	t.Helper()
 	if os.Getenv("TEST_DATABASE_URL") == "" {
 		t.Skip("TEST_DATABASE_URL not set")
@@ -235,7 +232,7 @@ func newAdjudicationEnricher(t *testing.T) (*Enricher, *database.Queries, *mockA
 	setUnexportedField(t, runner, "tagAdjudicator", adj)
 	setUnexportedField(t, runner, "tagMatcher", matcher)
 
-	e := &Enricher{
+	a := &Adjudicator{
 		config: &config.Config{
 			Enricher: config.EnricherConfig{
 				TagMatcher: config.TagMatcherConfig{
@@ -252,7 +249,7 @@ func newAdjudicationEnricher(t *testing.T) (*Enricher, *database.Queries, *mockA
 		runner:  runner,
 		logger:  logger,
 	}
-	return e, q, adj
+	return a, q, adj
 }
 
 func createTestDocForAdjudication(t *testing.T, q *database.Queries) int64 {
@@ -276,20 +273,6 @@ func createTestDocForAdjudication(t *testing.T, q *database.Queries) int64 {
 		t.Fatalf("create test document: %v", err)
 	}
 	return id
-}
-
-func countEvents(t *testing.T, q *database.Queries, docID int64, query, target string) int {
-	t.Helper()
-	_ = docID
-	rows, err := q.LatestTagVerdictsForPairs(context.Background(), database.LatestTagVerdictsForPairsParams{
-		PolicyVersion: "v1",
-		Queries:       []string{query},
-		Targets:       []string{target},
-	})
-	if err != nil {
-		t.Fatalf("count events: %v", err)
-	}
-	return len(rows)
 }
 
 func adjAssertEqual(t *testing.T, got, want any, msg string) {
@@ -336,11 +319,11 @@ func TestAdjudicateIdentityPairs(t *testing.T) {
 	}
 
 	t.Run("cached verdict applies without LLM call", func(t *testing.T) {
-		e, q, adj := newAdjudicationEnricher(t)
+		a, q, adj := newTestAdjudicator(t)
 		insertIdentityVerdict(t, q, "democratic socialism", "social democracy", "same", "target")
 
 		p := &identityPair{query: "democratic socialism", target: "social democracy"}
-		e.adjudicateIdentityPairs(context.Background(), 0, "", []*identityPair{p}, nil)
+		a.adjudicateIdentityPairs(context.Background(), 0, "", []*identityPair{p}, nil)
 
 		adjAssertEqual(t, adj.called, 0, "adjudicator call count")
 		adjAssertEqual(t, p.decided, true, "pair decided")
@@ -349,7 +332,7 @@ func TestAdjudicateIdentityPairs(t *testing.T) {
 	})
 
 	t.Run("fresh same verdict is recorded", func(t *testing.T) {
-		e, q, adj := newAdjudicationEnricher(t)
+		a, q, adj := newTestAdjudicator(t)
 		adj.adjudicateFn = func(_ context.Context, pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error) {
 			results := make([]analyzer.TagVerdictResult, len(pairs))
 			for i := range pairs {
@@ -359,7 +342,7 @@ func TestAdjudicateIdentityPairs(t *testing.T) {
 		}
 
 		p := &identityPair{query: "democratic socialism", target: "social democracy"}
-		e.adjudicateIdentityPairs(context.Background(), 0, "", []*identityPair{p}, nil)
+		a.adjudicateIdentityPairs(context.Background(), 0, "", []*identityPair{p}, nil)
 
 		adjAssertEqual(t, adj.called, 1, "adjudicator call count")
 		adjAssertEqual(t, p.decided, true, "pair decided")
@@ -368,7 +351,7 @@ func TestAdjudicateIdentityPairs(t *testing.T) {
 	})
 
 	t.Run("fresh variant verdict is recorded", func(t *testing.T) {
-		e, q, adj := newAdjudicationEnricher(t)
+		a, q, adj := newTestAdjudicator(t)
 		adj.adjudicateFn = func(_ context.Context, pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error) {
 			results := make([]analyzer.TagVerdictResult, len(pairs))
 			for i := range pairs {
@@ -378,7 +361,7 @@ func TestAdjudicateIdentityPairs(t *testing.T) {
 		}
 
 		p := &identityPair{query: "democratic socialism", target: "social democracy"}
-		e.adjudicateIdentityPairs(context.Background(), 0, "", []*identityPair{p}, nil)
+		a.adjudicateIdentityPairs(context.Background(), 0, "", []*identityPair{p}, nil)
 
 		adjAssertEqual(t, p.decided, true, "pair decided")
 		adjAssertEqual(t, string(p.verdict), "variant", "variant recorded")
@@ -386,13 +369,13 @@ func TestAdjudicateIdentityPairs(t *testing.T) {
 	})
 
 	t.Run("adjudicator error leaves the pair pending", func(t *testing.T) {
-		e, q, adj := newAdjudicationEnricher(t)
+		a, q, adj := newTestAdjudicator(t)
 		adj.adjudicateFn = func(_ context.Context, _ []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error) {
 			return nil, context.DeadlineExceeded
 		}
 
 		p := &identityPair{query: "democratic socialism", target: "social democracy"}
-		e.adjudicateIdentityPairs(context.Background(), 0, "", []*identityPair{p}, nil)
+		a.adjudicateIdentityPairs(context.Background(), 0, "", []*identityPair{p}, nil)
 
 		adjAssertEqual(t, p.decided, false, "pair stays undecided")
 		adjAssertEqual(t, countIdentityVerdicts(t, q, "democratic socialism", "social democracy"), 0, "no cached verdict rows")
@@ -400,7 +383,7 @@ func TestAdjudicateIdentityPairs(t *testing.T) {
 }
 
 func TestWriteVerdictEvent_ConflictReReadsStoredVerdict(t *testing.T) {
-	e, q, _ := newAdjudicationEnricher(t)
+	a, q, _ := newTestAdjudicator(t)
 	docID := createTestDocForAdjudication(t, q)
 
 	_, err := q.InsertTagVerdictEvent(context.Background(), database.InsertTagVerdictEventParams{
@@ -420,7 +403,7 @@ func TestWriteVerdictEvent_ConflictReReadsStoredVerdict(t *testing.T) {
 	bp.verdict = types.TagVerdicts.Same
 	bp.model = "test-model"
 
-	e.writeVerdictEvent(context.Background(), docID, policy.Decision{
+	a.writeVerdictEvent(context.Background(), docID, policy.Decision{
 		Query:  "democratic socialism",
 		Target: "social democracy",
 		Sim:    0.81,
@@ -476,7 +459,6 @@ func TestTagQualityEvent_InsertAndCacheRead(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Create a test document (FK target).
 	docID, err := q.CreateDocument(ctx, database.CreateDocumentParams{
 		DocumentID:     "tq-test-doc",
 		Title:          "tq-test.pdf",
@@ -497,7 +479,6 @@ func TestTagQualityEvent_InsertAndCacheRead(t *testing.T) {
 
 	criteria := json.RawMessage(`{"subject_matter":true,"standard_term":true,"not_person_place_work":true,"appropriately_broad":true}`)
 
-	// Insert a fresh verdict.
 	n, err := q.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
 		DocumentID:    docID,
 		TagName:       "quantum physics",
@@ -513,7 +494,6 @@ func TestTagQualityEvent_InsertAndCacheRead(t *testing.T) {
 		t.Errorf("expected 1 row inserted, got %d", n)
 	}
 
-	// Duplicate fresh insert must be a no-op (ON CONFLICT DO NOTHING).
 	n, err = q.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
 		DocumentID:    docID,
 		TagName:       "quantum physics",
@@ -529,7 +509,6 @@ func TestTagQualityEvent_InsertAndCacheRead(t *testing.T) {
 		t.Errorf("expected 0 rows on conflict, got %d", n)
 	}
 
-	// Cache read must return the first row.
 	rows, err := q.LatestTagQualityEventsForNames(ctx, database.LatestTagQualityEventsForNamesParams{
 		PolicyVersion: "v1",
 		TagNames:      []string{"quantum physics", "absent name"},
@@ -550,7 +529,6 @@ func TestTagQualityEvent_InsertAndCacheRead(t *testing.T) {
 		t.Errorf("expected model=judge-model, got %q", rows[0].VerdictModel.String)
 	}
 
-	// Insert a cache-applied row (NULL model).
 	n, err = q.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
 		DocumentID:    docID,
 		TagName:       "quantum physics",
@@ -566,7 +544,6 @@ func TestTagQualityEvent_InsertAndCacheRead(t *testing.T) {
 		t.Errorf("expected 1 row for cache-applied, got %d", n)
 	}
 
-	// Latest read now returns the most recent row (cache-applied with NULL model).
 	rows, err = q.LatestTagQualityEventsForNames(ctx, database.LatestTagQualityEventsForNamesParams{
 		PolicyVersion: "v1",
 		TagNames:      []string{"quantum physics"},

@@ -1,4 +1,4 @@
-package enrichment
+package admission
 
 import (
 	"context"
