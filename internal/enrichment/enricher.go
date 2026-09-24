@@ -105,6 +105,14 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 	if err != nil {
 		return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to retrieve people types: %w", err)}
 	}
+	docTypeRefs := make([]analyzer.TypeRef, 0, len(docTypes))
+	for _, dt := range docTypes {
+		docTypeRefs = append(docTypeRefs, analyzer.TypeRef{Name: dt.Name, Description: dt.Description})
+	}
+	peopleTypeRefs := make([]analyzer.TypeRef, 0, len(peopleTypes))
+	for _, pt := range peopleTypes {
+		peopleTypeRefs = append(peopleTypeRefs, analyzer.TypeRef{Name: pt.Name, Description: pt.Description})
+	}
 	allTags, err := e.tag.ListAll(ctx)
 	if err != nil {
 		return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to retrieve tags: %w", err)}
@@ -153,7 +161,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 	var analysis *tools.ContentAnalysisResult
 	report("analyze", "", 0)
 	for i := range 2 {
-		analysis, err = e.runner.AnalyzeContent(ctx, llmContent.Text, docTypes, peopleTypes, tagSuggestions)
+		analysis, err = e.runner.AnalyzeContent(ctx, llmContent.Text, docTypeRefs, peopleTypeRefs, tagSuggestions)
 		if err == nil {
 			break
 		}
@@ -203,7 +211,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 
 	if isEmptyAnalysis(analysis) {
 		e.logger.Info(&logId, "empty analysis result—retrying once")
-		analysis, err = e.runner.AnalyzeContent(ctx, llmContent.Text, docTypes, peopleTypes, tagSuggestions)
+		analysis, err = e.runner.AnalyzeContent(ctx, llmContent.Text, docTypeRefs, peopleTypeRefs, tagSuggestions)
 		if err != nil {
 			return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to analyze content on retry: %w", err)}
 		}
@@ -225,7 +233,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 			PageCount: document.PageCount,
 			MimeType:  document.OriginalType,
 		}
-		refinedType, err := e.runner.AnalyzeDocType(ctx, analysis, headTailText, docTypes, metadata)
+		refinedType, err := e.runner.AnalyzeDocType(ctx, analysis, headTailText, docTypeRefs, metadata)
 		if err != nil {
 			e.logger.Error(&logId, "doc type refinement failed, keeping first pass result: %v", err)
 		} else {

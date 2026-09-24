@@ -142,11 +142,11 @@ type mockAdjudicator struct {
 	identityCall int
 }
 
-func (m *mockAdjudicator) Analyze(_ context.Context, _ string, _ []database.DocumentType, _ []database.PeopleType, _ []string) (*analyzer.AnalysisResult, error) {
+func (m *mockAdjudicator) Analyze(_ context.Context, _ string, _ []analyzer.TypeRef, _ []analyzer.TypeRef, _ []string) (*analyzer.AnalysisResult, error) {
 	return nil, nil
 }
 
-func (m *mockAdjudicator) AnalyzeDocType(_ context.Context, _ *analyzer.AnalysisResult, _ string, _ []database.DocumentType, _ analyzer.DocMetadata) (string, error) {
+func (m *mockAdjudicator) AnalyzeDocType(_ context.Context, _ *analyzer.AnalysisResult, _ string, _ []analyzer.TypeRef, _ analyzer.DocMetadata) (string, error) {
 	return "", nil
 }
 

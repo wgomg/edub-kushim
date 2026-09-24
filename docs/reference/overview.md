@@ -140,7 +140,7 @@ internal/
 ├── errs/                   # Error classification (kind, wrapping, FromDB/PgError mapping)
 ├── llm/                    # LLM capability registry
 │   ├── analyzer/           # LLM classification adapters (capability-based)
-│   │   ├── adapter.go      # ContentAnalyzer interface + factory (adapter-based dispatch)
+│   │   ├── adapter.go      # ContentAnalyzer interface + TypeRef + factory (adapter-based dispatch)
 │   │   ├── shared.go       # BuildPrompt, ParseAnalysisResponse, SeparateFacets, IsWhitelistedPlace, TagDetail, SystemMessage, ContentTooLargeError, TokenLimitError, checkContentTooLarge, parseTokenLimitError, FilterTags, NormalizeTags
 │   │   ├── text.go         # estimateTokens, estimateTokensFromWords, cleanCodeBlock, ContainsNonLatin
 │   │   ├── openai_compatible.go # OpenAI-compatible API (absorbs former OpenAI, DeepSeek, Mistral, etc.)

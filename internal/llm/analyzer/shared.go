@@ -11,7 +11,6 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/llm"
 	"github.com/wgomg/edub-kushim/internal/textnorm"
 	"github.com/wgomg/edub-kushim/internal/types"
@@ -140,7 +139,7 @@ type promptData struct {
 	MaxTags       int
 }
 
-func BuildPrompt(text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string, customTemplate string, minTags, maxTags int) string {
+func BuildPrompt(text string, docTypes []TypeRef, peopleTypes []TypeRef, tagSuggestions []string, customTemplate string, minTags, maxTags int) string {
 	docTypePrompt := documentTypePrompt(docTypes)
 	peoplePrompt := peopleTypePrompt(peopleTypes)
 	tagsPrompt := tagsPrompt(tagSuggestions)
@@ -174,7 +173,7 @@ func BuildPrompt(text string, docTypes []database.DocumentType, peopleTypes []da
 	return buf.String()
 }
 
-func peopleTypePrompt(types []database.PeopleType) string {
+func peopleTypePrompt(types []TypeRef) string {
 	var sb strings.Builder
 	sb.WriteString("  Available types:\n")
 	for _, t := range types {
@@ -183,7 +182,7 @@ func peopleTypePrompt(types []database.PeopleType) string {
 	return sb.String()
 }
 
-func documentTypePrompt(types []database.DocumentType) string {
+func documentTypePrompt(types []TypeRef) string {
 	var sb strings.Builder
 	sb.WriteString("- Document type: choose one of the following:\n")
 	for _, t := range types {
@@ -247,7 +246,7 @@ func (m DocMetadata) Format() string {
 	return strings.Join(parts, ", ")
 }
 
-func BuildDocTypePrompt(headTailText string, docTypes []database.DocumentType, metadata DocMetadata) string {
+func BuildDocTypePrompt(headTailText string, docTypes []TypeRef, metadata DocMetadata) string {
 	var typesList strings.Builder
 	for _, dt := range docTypes {
 		fmt.Fprintf(&typesList, "  - %s (%s)\n", dt.Name, dt.Description)

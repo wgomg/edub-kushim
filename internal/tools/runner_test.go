@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/documents/converter"
 	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
 	"github.com/wgomg/edub-kushim/internal/log"
@@ -107,19 +106,19 @@ func TestOptimizePdf_WithTimeout_ContextHasDeadline(t *testing.T) {
 
 // mockContentAnalyzer records the context for each analysis call.
 type mockContentAnalyzer struct {
-	analyzeFn        func(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*analyzer.AnalysisResult, error)
-	analyzeDocTypeFn func(ctx context.Context, prevResult *analyzer.AnalysisResult, headTailText string, docTypes []database.DocumentType, metadata analyzer.DocMetadata) (string, error)
+	analyzeFn        func(ctx context.Context, text string, docTypes []analyzer.TypeRef, peopleTypes []analyzer.TypeRef, tagSuggestions []string) (*analyzer.AnalysisResult, error)
+	analyzeDocTypeFn func(ctx context.Context, prevResult *analyzer.AnalysisResult, headTailText string, docTypes []analyzer.TypeRef, metadata analyzer.DocMetadata) (string, error)
 	adjudicateFn     func(ctx context.Context, pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error)
 }
 
-func (m *mockContentAnalyzer) Analyze(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
+func (m *mockContentAnalyzer) Analyze(ctx context.Context, text string, docTypes []analyzer.TypeRef, peopleTypes []analyzer.TypeRef, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
 	if m.analyzeFn != nil {
 		return m.analyzeFn(ctx, text, docTypes, peopleTypes, tagSuggestions)
 	}
 	return &analyzer.AnalysisResult{}, nil
 }
 
-func (m *mockContentAnalyzer) AnalyzeDocType(ctx context.Context, prevResult *analyzer.AnalysisResult, headTailText string, docTypes []database.DocumentType, metadata analyzer.DocMetadata) (string, error) {
+func (m *mockContentAnalyzer) AnalyzeDocType(ctx context.Context, prevResult *analyzer.AnalysisResult, headTailText string, docTypes []analyzer.TypeRef, metadata analyzer.DocMetadata) (string, error) {
 	if m.analyzeDocTypeFn != nil {
 		return m.analyzeDocTypeFn(ctx, prevResult, headTailText, docTypes, metadata)
 	}
@@ -160,7 +159,7 @@ func TestAnalyzeContent_TimeoutAppliesDeadline(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var receivedCtx context.Context
 			mock := &mockContentAnalyzer{
-				analyzeFn: func(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
+				analyzeFn: func(ctx context.Context, text string, docTypes []analyzer.TypeRef, peopleTypes []analyzer.TypeRef, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
 					receivedCtx = ctx
 					return &analyzer.AnalysisResult{}, nil
 				},
@@ -190,7 +189,7 @@ func TestAnalyzeContent_TimeoutAppliesDeadline(t *testing.T) {
 func TestAnalyzeDocType_TimeoutAppliesDeadline(t *testing.T) {
 	var receivedCtx context.Context
 	mock := &mockContentAnalyzer{
-		analyzeDocTypeFn: func(ctx context.Context, prevResult *analyzer.AnalysisResult, headTailText string, docTypes []database.DocumentType, metadata analyzer.DocMetadata) (string, error) {
+		analyzeDocTypeFn: func(ctx context.Context, prevResult *analyzer.AnalysisResult, headTailText string, docTypes []analyzer.TypeRef, metadata analyzer.DocMetadata) (string, error) {
 			receivedCtx = ctx
 			return "document", nil
 		},
@@ -456,12 +455,12 @@ func runnerWithFallback(primary, fallback analyzer.ContentAnalyzer) *Runner {
 
 func TestAnalyzeContent_FallbackOnProviderError(t *testing.T) {
 	primary := &mockContentAnalyzer{
-		analyzeFn: func(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
+		analyzeFn: func(ctx context.Context, text string, docTypes []analyzer.TypeRef, peopleTypes []analyzer.TypeRef, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
 			return nil, &analyzer.InsufficientCreditsError{Provider: "primary", HTTPStatus: 402}
 		},
 	}
 	fallback := &mockContentAnalyzer{
-		analyzeFn: func(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
+		analyzeFn: func(ctx context.Context, text string, docTypes []analyzer.TypeRef, peopleTypes []analyzer.TypeRef, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
 			return &analyzer.AnalysisResult{Title: "from fallback"}, nil
 		},
 	}
@@ -478,13 +477,13 @@ func TestAnalyzeContent_FallbackOnProviderError(t *testing.T) {
 
 func TestAnalyzeContent_NoFallbackOnContentTooLarge(t *testing.T) {
 	primary := &mockContentAnalyzer{
-		analyzeFn: func(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
+		analyzeFn: func(ctx context.Context, text string, docTypes []analyzer.TypeRef, peopleTypes []analyzer.TypeRef, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
 			return nil, &analyzer.ContentTooLargeError{EstimatedTokens: 10, MaxInputTokens: 5}
 		},
 	}
 	fallbackCalled := false
 	fallback := &mockContentAnalyzer{
-		analyzeFn: func(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
+		analyzeFn: func(ctx context.Context, text string, docTypes []analyzer.TypeRef, peopleTypes []analyzer.TypeRef, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
 			fallbackCalled = true
 			return &analyzer.AnalysisResult{Title: "fallback"}, nil
 		},
@@ -505,13 +504,13 @@ func TestAnalyzeContent_NoFallbackOnContentTooLarge(t *testing.T) {
 
 func TestAnalyzeContent_NoFallbackOnCancellation(t *testing.T) {
 	primary := &mockContentAnalyzer{
-		analyzeFn: func(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
+		analyzeFn: func(ctx context.Context, text string, docTypes []analyzer.TypeRef, peopleTypes []analyzer.TypeRef, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
 			return nil, context.Canceled
 		},
 	}
 	fallbackCalled := false
 	fallback := &mockContentAnalyzer{
-		analyzeFn: func(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
+		analyzeFn: func(ctx context.Context, text string, docTypes []analyzer.TypeRef, peopleTypes []analyzer.TypeRef, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
 			fallbackCalled = true
 			return &analyzer.AnalysisResult{}, nil
 		},
@@ -532,13 +531,13 @@ func TestAnalyzeContent_NoFallbackOnCancellation(t *testing.T) {
 
 func TestAnalyzeContent_NoFallbackOnDeadlineExceeded(t *testing.T) {
 	primary := &mockContentAnalyzer{
-		analyzeFn: func(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
+		analyzeFn: func(ctx context.Context, text string, docTypes []analyzer.TypeRef, peopleTypes []analyzer.TypeRef, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
 			return nil, context.DeadlineExceeded
 		},
 	}
 	fallbackCalled := false
 	fallback := &mockContentAnalyzer{
-		analyzeFn: func(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
+		analyzeFn: func(ctx context.Context, text string, docTypes []analyzer.TypeRef, peopleTypes []analyzer.TypeRef, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
 			fallbackCalled = true
 			return &analyzer.AnalysisResult{}, nil
 		},
@@ -559,7 +558,7 @@ func TestAnalyzeContent_NoFallbackOnDeadlineExceeded(t *testing.T) {
 
 func TestAnalyzeContent_NoFallbackAnalyzer(t *testing.T) {
 	primary := &mockContentAnalyzer{
-		analyzeFn: func(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
+		analyzeFn: func(ctx context.Context, text string, docTypes []analyzer.TypeRef, peopleTypes []analyzer.TypeRef, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
 			return nil, errors.New("provider exploded")
 		},
 	}
@@ -573,12 +572,12 @@ func TestAnalyzeContent_NoFallbackAnalyzer(t *testing.T) {
 
 func TestAnalyzeContent_FallbackFailurePropagates(t *testing.T) {
 	primary := &mockContentAnalyzer{
-		analyzeFn: func(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
+		analyzeFn: func(ctx context.Context, text string, docTypes []analyzer.TypeRef, peopleTypes []analyzer.TypeRef, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
 			return nil, errors.New("primary network failure")
 		},
 	}
 	fallback := &mockContentAnalyzer{
-		analyzeFn: func(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
+		analyzeFn: func(ctx context.Context, text string, docTypes []analyzer.TypeRef, peopleTypes []analyzer.TypeRef, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
 			return nil, &analyzer.InsufficientCreditsError{Provider: "fallback", HTTPStatus: 402}
 		},
 	}
@@ -599,12 +598,12 @@ func TestAnalyzeContent_FallbackFailurePropagates(t *testing.T) {
 
 func TestAnalyzeDocType_FallbackOnProviderError(t *testing.T) {
 	primary := &mockContentAnalyzer{
-		analyzeDocTypeFn: func(ctx context.Context, prevResult *analyzer.AnalysisResult, headTailText string, docTypes []database.DocumentType, metadata analyzer.DocMetadata) (string, error) {
+		analyzeDocTypeFn: func(ctx context.Context, prevResult *analyzer.AnalysisResult, headTailText string, docTypes []analyzer.TypeRef, metadata analyzer.DocMetadata) (string, error) {
 			return "", errors.New("provider timeout")
 		},
 	}
 	fallback := &mockContentAnalyzer{
-		analyzeDocTypeFn: func(ctx context.Context, prevResult *analyzer.AnalysisResult, headTailText string, docTypes []database.DocumentType, metadata analyzer.DocMetadata) (string, error) {
+		analyzeDocTypeFn: func(ctx context.Context, prevResult *analyzer.AnalysisResult, headTailText string, docTypes []analyzer.TypeRef, metadata analyzer.DocMetadata) (string, error) {
 			return "from fallback", nil
 		},
 	}
@@ -621,17 +620,17 @@ func TestAnalyzeDocType_FallbackOnProviderError(t *testing.T) {
 
 func TestAnalyzeContent_FallbackChainWalksToSuccess(t *testing.T) {
 	primary := &mockContentAnalyzer{
-		analyzeFn: func(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
+		analyzeFn: func(ctx context.Context, text string, docTypes []analyzer.TypeRef, peopleTypes []analyzer.TypeRef, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
 			return nil, errors.New("primary timeout")
 		},
 	}
 	fb0 := &mockContentAnalyzer{
-		analyzeFn: func(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
+		analyzeFn: func(ctx context.Context, text string, docTypes []analyzer.TypeRef, peopleTypes []analyzer.TypeRef, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
 			return nil, errors.New("fb0 timeout")
 		},
 	}
 	fb1 := &mockContentAnalyzer{
-		analyzeFn: func(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
+		analyzeFn: func(ctx context.Context, text string, docTypes []analyzer.TypeRef, peopleTypes []analyzer.TypeRef, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
 			return &analyzer.AnalysisResult{Title: "from fb1"}, nil
 		},
 	}
@@ -666,17 +665,17 @@ func TestAnalyzeContent_FallbackChainWalksToSuccess(t *testing.T) {
 
 func TestAnalyzeContent_FallbackChainPropagatesLastFailure(t *testing.T) {
 	primary := &mockContentAnalyzer{
-		analyzeFn: func(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
+		analyzeFn: func(ctx context.Context, text string, docTypes []analyzer.TypeRef, peopleTypes []analyzer.TypeRef, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
 			return nil, errors.New("primary timeout")
 		},
 	}
 	fb0 := &mockContentAnalyzer{
-		analyzeFn: func(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
+		analyzeFn: func(ctx context.Context, text string, docTypes []analyzer.TypeRef, peopleTypes []analyzer.TypeRef, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
 			return nil, errors.New("fb0 timeout")
 		},
 	}
 	fb1 := &mockContentAnalyzer{
-		analyzeFn: func(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
+		analyzeFn: func(ctx context.Context, text string, docTypes []analyzer.TypeRef, peopleTypes []analyzer.TypeRef, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
 			return nil, &analyzer.InsufficientCreditsError{Provider: "fb1", HTTPStatus: 402}
 		},
 	}

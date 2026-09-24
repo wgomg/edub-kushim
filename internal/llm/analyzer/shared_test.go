@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/llm"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
@@ -45,10 +44,10 @@ func TestNormalizeTags_Transforms(t *testing.T) {
 }
 
 func TestBuildPrompt_DefaultTemplate(t *testing.T) {
-	docTypes := []database.DocumentType{
+	docTypes := []TypeRef{
 		{Name: "article", Description: "A written composition"},
 	}
-	peopleTypes := []database.PeopleType{
+	peopleTypes := []TypeRef{
 		{Name: "author", Description: "Writer of the document"},
 	}
 	tagSuggestions := []string{"ai", "ml"}
@@ -61,8 +60,14 @@ func TestBuildPrompt_DefaultTemplate(t *testing.T) {
 	if !strings.Contains(result, "article") {
 		t.Error("expected output to contain document type name")
 	}
+	if !strings.Contains(result, "article (A written composition)") {
+		t.Error("expected output to render document type description beside its name")
+	}
 	if !strings.Contains(result, "author") {
 		t.Error("expected output to contain people type name")
+	}
+	if !strings.Contains(result, "author (Writer of the document)") {
+		t.Error("expected output to render people type description beside its name")
 	}
 	if !strings.Contains(result, "ai") {
 		t.Error("expected output to contain tag suggestion")
@@ -116,7 +121,7 @@ func TestTagsPrompt_EmptyListReturnsEmpty(t *testing.T) {
 }
 
 func TestBuildPrompt_EmptyTagSuggestions(t *testing.T) {
-	docTypes := []database.DocumentType{
+	docTypes := []TypeRef{
 		{Name: "article", Description: "A written composition"},
 	}
 	result := BuildPrompt("sample text", docTypes, nil, nil, "", 3, 5)
@@ -302,7 +307,7 @@ func TestExtractHeadTailWords(t *testing.T) {
 }
 
 func TestBuildDocTypePrompt(t *testing.T) {
-	docTypes := []database.DocumentType{
+	docTypes := []TypeRef{
 		{Name: "article", Description: "Scholarly article"},
 		{Name: "invoice", Description: "Commercial invoice"},
 	}
@@ -314,6 +319,9 @@ func TestBuildDocTypePrompt(t *testing.T) {
 
 		if !strings.Contains(prompt, "article") {
 			t.Error("expected prompt to contain document type name")
+		}
+		if !strings.Contains(prompt, "article (Scholarly article)") {
+			t.Error("expected prompt to render document type description beside its name")
 		}
 		if !strings.Contains(prompt, "invoice") {
 			t.Error("expected prompt to contain second document type name")

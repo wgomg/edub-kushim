@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/llm"
 	"github.com/wgomg/edub-kushim/internal/log"
 )
@@ -227,7 +226,7 @@ func (l *LlmAnthropic) doRequest(ctx context.Context, reqBody anthropicRequest, 
 	return &anthResp, responseContent, nil
 }
 
-func (l *LlmAnthropic) Analyze(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*AnalysisResult, error) {
+func (l *LlmAnthropic) Analyze(ctx context.Context, text string, docTypes []TypeRef, peopleTypes []TypeRef, tagSuggestions []string) (*AnalysisResult, error) {
 	prompt := BuildPrompt(text, docTypes, peopleTypes, tagSuggestions, l.promptTemplate, l.minTags, l.maxTags)
 
 	if err := checkContentTooLarge(l.caps, SystemMessage+"\n"+prompt); err != nil {
@@ -272,7 +271,7 @@ func (l *LlmAnthropic) Analyze(ctx context.Context, text string, docTypes []data
 	return analysisResult, nil
 }
 
-func (l *LlmAnthropic) AnalyzeDocType(ctx context.Context, prevResult *AnalysisResult, headTailText string, docTypes []database.DocumentType, metadata DocMetadata) (string, error) {
+func (l *LlmAnthropic) AnalyzeDocType(ctx context.Context, prevResult *AnalysisResult, headTailText string, docTypes []TypeRef, metadata DocMetadata) (string, error) {
 	if prevResult.PassContext == nil {
 		return "", fmt.Errorf("pass context is nil")
 	}

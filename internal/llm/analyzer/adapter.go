@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/llm"
 	"github.com/wgomg/edub-kushim/internal/log"
 )
@@ -18,9 +17,16 @@ type PeopleResult struct {
 	NormalizedName string `json:"-"`
 }
 
+// TypeRef is one option of a type list offered to the model, carrying the
+// fields the prompts render: the type's name and its description.
+type TypeRef struct {
+	Name        string
+	Description string
+}
+
 type ContentAnalyzer interface {
-	Analyze(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*AnalysisResult, error)
-	AnalyzeDocType(ctx context.Context, prevResult *AnalysisResult, headTailText string, docTypes []database.DocumentType, metadata DocMetadata) (string, error)
+	Analyze(ctx context.Context, text string, docTypes []TypeRef, peopleTypes []TypeRef, tagSuggestions []string) (*AnalysisResult, error)
+	AnalyzeDocType(ctx context.Context, prevResult *AnalysisResult, headTailText string, docTypes []TypeRef, metadata DocMetadata) (string, error)
 	Adjudicate(ctx context.Context, pairs []TagPairEvidence) ([]TagVerdictResult, error)
 	AdjudicateTagSplits(ctx context.Context, tags []string) ([]TagSplitResult, error)
 	JudgeTagQuality(ctx context.Context, text string, candidates []TagQualityCandidate) ([]TagQualityResult, error)

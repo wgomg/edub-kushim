@@ -23,10 +23,11 @@
 
 ```go
 type ContentAnalyzer interface {
-    Analyze(ctx, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*AnalysisResult, error)
+    Analyze(ctx, text string, docTypes []TypeRef, peopleTypes []TypeRef, tagSuggestions []string) (*AnalysisResult, error)
     AnalyzeDocType(ctx, prevResult, headTailText, docTypes, metadata DocMetadata) (string, error)
     Adjudicate(ctx, pairs []TagPairEvidence) ([]TagVerdictResult, error)
     AdjudicateTagSplits(ctx, tags []string) ([]TagSplitResult, error)
+    JudgeTagQuality(ctx, text string, candidates []TagQualityCandidate) ([]TagQualityResult, error)
     JudgeTagIdentity(ctx, candidates []TagIdentityCandidate) ([]TagIdentityResult, error)
     Name() string
 }
@@ -34,6 +35,7 @@ type ContentAnalyzer interface {
 
 ### Structs
 
+- `TypeRef` — `Name string`, `Description string`. One entry of a type list offered to the model: the type's name and the description the prompt renders beside it; the enricher maps its loaded document-type and people-type rows to these refs before calling `Analyze`/`AnalyzeDocType`.
 - `AnalysisResult` — `Title`, `DocType`, `Tags []string` (canonical downstream field), `TagDetails []TagDetail` (typed mirror of `Tags`, consumed once by the enricher's facet gate, `omitempty` in JSON), `People []PeopleResult`, `Language`, `Stats *json.RawMessage`, `Prompt`, `PassContext *json.RawMessage` (`json:"-"`, the replayed prompts for the doc-type refinement call)
 - `TagDetail` — `Term string`, `Category string`, `IsStandardTerm bool` (`is_standard_term`). `Category` is one of the exported `TagCategory*` constants (`topic`, `form_genre`, `place`, `person`, `work`, `other`); the parse folds case/hyphen/space variants and maps anything missing or unknown to `other`. String-shaped tag entries are `other`; `IsStandardTerm` is `false` unless the model explicitly set it.
 - `DocMetadata` — `WordCount int32`, `PageCount int32`, `MimeType string`. Returned by `Format()` as a human-readable string (e.g. `"15234 total words, 42 pages, application/pdf"`). Returns empty string when all fields are zero/empty.

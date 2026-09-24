@@ -55,14 +55,21 @@ the whole batch pauses (§10).
 
 ## 2. The ContentAnalyzer interface
 
-`internal/llm/analyzer/adapter.go:21-37`:
+`internal/llm/analyzer/adapter.go:20-47`:
 
 ```go
+type TypeRef struct {
+	Name        string
+	Description string
+}
+
 type ContentAnalyzer interface {
-	Analyze(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*AnalysisResult, error)
-	AnalyzeDocType(ctx context.Context, prevResult *AnalysisResult, headTailText string, docTypes []database.DocumentType, metadata DocMetadata) (string, error)
+	Analyze(ctx context.Context, text string, docTypes []TypeRef, peopleTypes []TypeRef, tagSuggestions []string) (*AnalysisResult, error)
+	AnalyzeDocType(ctx context.Context, prevResult *AnalysisResult, headTailText string, docTypes []TypeRef, metadata DocMetadata) (string, error)
 	Adjudicate(ctx context.Context, pairs []TagPairEvidence) ([]TagVerdictResult, error)
 	AdjudicateTagSplits(ctx context.Context, tags []string) ([]TagSplitResult, error)
+	JudgeTagQuality(ctx context.Context, text string, candidates []TagQualityCandidate) ([]TagQualityResult, error)
+	JudgeTagIdentity(ctx context.Context, candidates []TagIdentityCandidate) ([]TagIdentityResult, error)
 	Name() string
 }
 
@@ -81,7 +88,9 @@ type AnalysisResult struct {
 
 - `Analyze` — the main call: full text (already reduced), the known document
   types and people types (to constrain the answer), and tag suggestions (the
-  semantic matcher's output).
+  semantic matcher's output). Both type lists are `TypeRef` values — the name
+  and description each prompt line renders — so the interface carries no
+  persistence type.
 - `AnalyzeDocType` — a **second, cheaper call** that re-evaluates only the
   document type using the head/tail of the full text (§10). It receives the
   previous result so it can replay the conversation (§4).

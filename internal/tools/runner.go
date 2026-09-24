@@ -14,7 +14,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/documents/converter"
 	"github.com/wgomg/edub-kushim/internal/documents/ocr"
 	"github.com/wgomg/edub-kushim/internal/documents/pdfoptimizer"
@@ -564,7 +563,7 @@ func isProviderError(err error) bool {
 	return !errors.As(err, &ctle) && !errors.As(err, &tokErr)
 }
 
-func (r *Runner) AnalyzeContent(ctx context.Context, text string, docTypes []database.DocumentType, peopleTypes []database.PeopleType, tagSuggestions []string) (*ContentAnalysisResult, error) {
+func (r *Runner) AnalyzeContent(ctx context.Context, text string, docTypes []analyzer.TypeRef, peopleTypes []analyzer.TypeRef, tagSuggestions []string) (*ContentAnalysisResult, error) {
 	if r.contentAnalyzer == nil {
 		return nil, fmt.Errorf("content analyzer not configured")
 	}
@@ -619,7 +618,7 @@ func (r *Runner) AnalyzeContent(ctx context.Context, text string, docTypes []dat
 	}, nil
 }
 
-func (r *Runner) AnalyzeDocType(ctx context.Context, prevResult *ContentAnalysisResult, headTailText string, docTypes []database.DocumentType, metadata analyzer.DocMetadata) (string, error) {
+func (r *Runner) AnalyzeDocType(ctx context.Context, prevResult *ContentAnalysisResult, headTailText string, docTypes []analyzer.TypeRef, metadata analyzer.DocMetadata) (string, error) {
 	if r.contentAnalyzer == nil {
 		return "", fmt.Errorf("content analyzer not configured")
 	}
