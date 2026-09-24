@@ -20,10 +20,10 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/documents/consumption"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 func queueHandler(c *Container, args []string) error {
@@ -42,7 +42,7 @@ func queueHandler(c *Container, args []string) error {
 	logFile := filepath.Join(c.cfg.Load().App.ConfigDir, "logs", "queue.log")
 
 	os.MkdirAll(filepath.Dir(logFile), 0755)
-	if err := c.logger.SetLogFile(utils.LogFileConfig{
+	if err := c.logger.SetLogFile(log.LogFileConfig{
 		Path:       logFile,
 		MaxSize:    c.cfg.Load().App.Logging.MaxSize,
 		MaxBackups: c.cfg.Load().App.Logging.MaxBackups,
@@ -314,7 +314,7 @@ func queueHandler(c *Container, args []string) error {
 }
 
 // Zero-task queued batches are never finalized and would block the polling gate.
-func sweepEmptyQueuedBatches(ctx context.Context, client *database.Client, logger *utils.Logger) error {
+func sweepEmptyQueuedBatches(ctx context.Context, client *database.Client, logger *log.Logger) error {
 	ids, err := client.Queries.ListEmptyQueuedBatches(ctx, 10)
 	if err != nil {
 		return fmt.Errorf("list empty queued batches: %w", err)
@@ -329,7 +329,7 @@ func sweepEmptyQueuedBatches(ctx context.Context, client *database.Client, logge
 	return nil
 }
 
-func reclaimStaleBatches(ctx context.Context, cfg *config.Config, client *database.Client, batchSvc *service.Batch, logger *utils.Logger) error {
+func reclaimStaleBatches(ctx context.Context, cfg *config.Config, client *database.Client, batchSvc *service.Batch, logger *log.Logger) error {
 	owners, err := batchSvc.ListStaleBatchOwners(ctx)
 	if err != nil {
 		return fmt.Errorf("list stale batch owners: %w", err)
@@ -377,7 +377,7 @@ func reclaimStaleBatches(ctx context.Context, cfg *config.Config, client *databa
 	return nil
 }
 
-func reclaimStaleTasks(ctx context.Context, batchSvc *service.Batch, cfg *config.Config, logger *utils.Logger) error {
+func reclaimStaleTasks(ctx context.Context, batchSvc *service.Batch, cfg *config.Config, logger *log.Logger) error {
 	count, err := batchSvc.ResetStaleProcessingTasks(ctx, cfg.Consumer.Reclaim.StaleTaskAfter)
 	if err != nil {
 		return fmt.Errorf("reset stale processing tasks: %w", err)
@@ -388,7 +388,7 @@ func reclaimStaleTasks(ctx context.Context, batchSvc *service.Batch, cfg *config
 	return nil
 }
 
-func consumeNextQueuedBatch(ctx context.Context, client *database.Client, batchSvc *service.Batch, maxConcurrent int, logger *utils.Logger) error {
+func consumeNextQueuedBatch(ctx context.Context, client *database.Client, batchSvc *service.Batch, maxConcurrent int, logger *log.Logger) error {
 	liveCount, err := batchSvc.CountLiveBatches(ctx)
 	if err != nil {
 		return fmt.Errorf("count live batches: %w", err)

@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 )
 
 type TextReducer interface {
@@ -12,7 +12,7 @@ type TextReducer interface {
 	Name() string
 }
 
-func NewTextReducer(logger *utils.Logger, cfg config.ToolConfig) (TextReducer, error) {
+func NewTextReducer(logger *log.Logger, cfg config.ToolConfig) (TextReducer, error) {
 	switch cfg.Command {
 	case config.TextReducer.TextRank:
 		tr, err := NewTextRank(logger, cfg)

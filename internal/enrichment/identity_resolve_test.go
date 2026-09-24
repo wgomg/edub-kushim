@@ -9,12 +9,12 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/types"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 func newIdentityResolver(t *testing.T, adjudicatorEnabled bool) (*IdentityResolver, *database.Client, *mockAdjudicator) {
@@ -29,7 +29,7 @@ func newIdentityResolver(t *testing.T, adjudicatorEnabled bool) (*IdentityResolv
 		t.Fatalf("clear tag_identity_event: %v", err)
 	}
 
-	logger := utils.NewDiscardLogger()
+	logger := log.NewDiscardLogger()
 	adj := &mockAdjudicator{}
 
 	runner := &tools.Runner{}

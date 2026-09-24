@@ -18,10 +18,10 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/documents/consumption"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 const (
@@ -588,8 +588,8 @@ func totalFiles(tasks []database.Task) int {
 	return n
 }
 
-func pollBatch(ctx context.Context, queries *database.Queries, cp, ep, tp, bp *task.Pool, logger *utils.Logger, batchID string, source types.BatchSource) error {
-	logger.SetLevel(utils.LevelSilent)
+func pollBatch(ctx context.Context, queries *database.Queries, cp, ep, tp, bp *task.Pool, logger *log.Logger, batchID string, source types.BatchSource) error {
+	logger.SetLevel(log.LevelSilent)
 
 	pools := []*task.Pool{cp, ep, tp}
 	if source == types.Batch.Source.Thumbbackfill {

@@ -13,8 +13,8 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/documents/storage"
 	"github.com/wgomg/edub-kushim/internal/errs"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/types"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type TaskCreator interface {
@@ -29,12 +29,12 @@ type BatchCreator interface {
 type Orphaned struct {
 	queries      *database.Queries
 	cfg          *config.Config
-	logger       *utils.Logger
+	logger       *log.Logger
 	taskCreator  TaskCreator
 	batchCreator BatchCreator
 }
 
-func NewOrphaned(queries *database.Queries, cfg *config.Config, logger *utils.Logger, taskCreator TaskCreator, batchCreator BatchCreator) *Orphaned {
+func NewOrphaned(queries *database.Queries, cfg *config.Config, logger *log.Logger, taskCreator TaskCreator, batchCreator BatchCreator) *Orphaned {
 	return &Orphaned{
 		queries:      queries,
 		cfg:          cfg,
@@ -164,7 +164,7 @@ func (s *Orphaned) Restore(ctx context.Context, id int64) error {
 		return fmt.Errorf("copy to consumption dir: %w", err)
 	}
 
-	md5, err := utils.CalculateMD5(destPath)
+	md5, err := storage.CalculateMD5(destPath)
 	if err != nil {
 		storage.RemoveOrphanedFile(destPath)
 		return fmt.Errorf("compute md5: %w", err)

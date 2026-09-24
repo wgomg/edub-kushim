@@ -11,15 +11,15 @@ import (
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 )
 
 type Ghostscript struct {
-	logger *utils.Logger
+	logger *log.Logger
 	config config.ToolConfig
 }
 
-func NewGhostscript(logger *utils.Logger, cfg config.ToolConfig) (*Ghostscript, error) {
+func NewGhostscript(logger *log.Logger, cfg config.ToolConfig) (*Ghostscript, error) {
 	if _, err := exec.LookPath(cfg.Command); err != nil {
 		return nil, fmt.Errorf("%s not found in PATH: %w\nInstall it (e.g. 'sudo apt install ghostscript' or 'brew install ghostscript') or switch to the built-in 'mupdf' engine", cfg.Command, err)
 	}

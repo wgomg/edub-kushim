@@ -15,11 +15,11 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/documents/mime"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 )
 
 type MuPDF struct {
-	logger   *utils.Logger
+	logger   *log.Logger
 	config   config.ToolConfig
 	dpi      int
 	maxWidth int
@@ -27,7 +27,7 @@ type MuPDF struct {
 }
 
 func init() {
-	newMuPDF = func(logger *utils.Logger, cfg config.ToolConfig, dpi, maxWidth, quality int) (Thumbnailer, error) {
+	newMuPDF = func(logger *log.Logger, cfg config.ToolConfig, dpi, maxWidth, quality int) (Thumbnailer, error) {
 		return &MuPDF{logger: logger, config: cfg, dpi: dpi, maxWidth: maxWidth, quality: quality}, nil
 	}
 }

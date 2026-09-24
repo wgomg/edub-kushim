@@ -9,20 +9,20 @@ import (
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/types"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 const backfillPageSize = 500
 
 type ThumbnailBackfill struct {
 	queries      *database.Queries
-	logger       *utils.Logger
+	logger       *log.Logger
 	taskCreator  TaskCreator
 	batchCreator BatchCreator
 }
 
-func NewThumbnailBackfill(queries *database.Queries, logger *utils.Logger, taskCreator TaskCreator, batchCreator BatchCreator) *ThumbnailBackfill {
+func NewThumbnailBackfill(queries *database.Queries, logger *log.Logger, taskCreator TaskCreator, batchCreator BatchCreator) *ThumbnailBackfill {
 	return &ThumbnailBackfill{
 		queries:      queries,
 		logger:       logger,

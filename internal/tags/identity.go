@@ -11,7 +11,7 @@ import (
 	"github.com/blevesearch/snowballstem"
 	"github.com/blevesearch/snowballstem/english"
 	"github.com/wgomg/edub-kushim/internal/database"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/textnorm"
 )
 
 // pins the birth-time identity rules and the judging body's criteria text;
@@ -267,7 +267,7 @@ func ResolveAliases(ctx context.Context, q *database.Queries, names []string) (m
 	normalized := make([]string, 0, len(names))
 	seen := make(map[string]struct{}, len(names))
 	for _, name := range names {
-		n := utils.NormalizeTag(name)
+		n := textnorm.NormalizeTag(name)
 		if n == "" {
 			continue
 		}
@@ -353,7 +353,7 @@ func PlanDeterministic(names []string, view StoreView) Plan {
 	ix := NewNameIndex(view.Names)
 	plan := Plan{}
 	for _, raw := range names {
-		name := HouseForm(utils.NormalizeTag(raw))
+		name := HouseForm(textnorm.NormalizeTag(raw))
 		reg := Registration{Input: raw, Name: name, Disposition: DispositionRegister}
 		if name == "" {
 			reg.Disposition = DispositionInvalid

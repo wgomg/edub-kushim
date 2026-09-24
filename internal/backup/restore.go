@@ -16,7 +16,7 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/documents/storage"
 )
 
 func ValidateArchive(path string) (*Manifest, error) {
@@ -182,7 +182,7 @@ func ReplaceFiles(extractDir string, db *sql.DB, dbCfg config.DatabaseConfig, ds
 				return fmt.Errorf("create storage parent: %w", err)
 			}
 
-			renameInPlace, err := utils.SameDevice(extractStorage, storageDir)
+			renameInPlace, err := storage.SameDevice(extractStorage, storageDir)
 			if err != nil {
 				return fmt.Errorf("stat storage dirs: %w", err)
 			}

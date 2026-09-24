@@ -5,10 +5,10 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 )
 
-func listenForBatchNotifications(ctx context.Context, dsn string, notifyCh chan<- struct{}, logger *utils.Logger) {
+func listenForBatchNotifications(ctx context.Context, dsn string, notifyCh chan<- struct{}, logger *log.Logger) {
 	poolCfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		logger.Error(nil, "notify: parse DSN: %v", err)

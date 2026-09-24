@@ -17,10 +17,10 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/documents/storage"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/types"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 // integrationTestRunner satisfies the consumption.runner interface.
@@ -87,7 +87,7 @@ func setupConsumerTest(t *testing.T) (*Consumer, *config.Config, *database.Clien
 
 	client := database.NewTestClient(t)
 	database.ResetTestDatabase(client.DB())
-	logger := utils.NewDiscardLogger()
+	logger := log.NewDiscardLogger()
 
 	runner := &integrationTestRunner{
 		extractText: "This is sample extracted text from the test PDF document. It contains enough words to pass the minimum density check and allow the consumption pipeline to proceed normally.",
@@ -182,7 +182,7 @@ func TestConsumerProcessHappyPath(t *testing.T) {
 		if !textContent.Valid {
 			t.Fatal("text_content unexpectedly NULL; cannot verify hash")
 		}
-		if want := utils.SHA256Hex(textContent.String); textHash.String != want {
+		if want := storage.SHA256Hex(textContent.String); textHash.String != want {
 			t.Fatalf("text_hash = %s, want %s (sha256 of text_content)", textHash.String, want)
 		}
 	})
@@ -369,7 +369,7 @@ func TestMoveFailedFile(t *testing.T) {
 			srcPath := filepath.Join(storageDir, "src.pdf")
 			os.WriteFile(srcPath, []byte("content"), 0644)
 
-			logger := utils.NewDiscardLogger()
+			logger := log.NewDiscardLogger()
 			docID := uuid.New().String()
 
 			MoveFailedFile(storageDir, srcPath, tt.errType, logger, &docID)
@@ -467,7 +467,7 @@ func TestQuarantineFailedFiles(t *testing.T) {
 		defer client.DB().Close()
 		ctx := context.Background()
 		storageDir := t.TempDir()
-		logger := utils.NewDiscardLogger()
+		logger := log.NewDiscardLogger()
 
 		batchID := uuid.New().String()
 		err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
@@ -534,7 +534,7 @@ func TestQuarantineFailedFiles(t *testing.T) {
 		defer client.DB().Close()
 		ctx := context.Background()
 		storageDir := t.TempDir()
-		logger := utils.NewDiscardLogger()
+		logger := log.NewDiscardLogger()
 
 		batchID := uuid.New().String()
 		err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
@@ -566,7 +566,7 @@ func TestQuarantineFailedFiles(t *testing.T) {
 		defer client.DB().Close()
 		ctx := context.Background()
 		storageDir := t.TempDir()
-		logger := utils.NewDiscardLogger()
+		logger := log.NewDiscardLogger()
 
 		batchID := uuid.New().String()
 		err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
@@ -732,7 +732,7 @@ func TestNewConsumerConverterBinaryNotFound(t *testing.T) {
 	cfg.Consumer.Converter.Enabled = true
 	cfg.Consumer.Converter.Binary = "nonexistent-binary"
 
-	_, err := NewConsumer(cfg, utils.NewDiscardLogger(), nil)
+	_, err := NewConsumer(cfg, log.NewDiscardLogger(), nil)
 	testutil.AssertError(t, err, "should fail when converter binary not found")
 }
 

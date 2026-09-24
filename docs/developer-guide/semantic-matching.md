@@ -171,7 +171,7 @@ from the `tag` table:
    way.
 2. Embeds them **verbatim** — no per-key transformation. Tag names are
    already canonical: `service.Tag.Create`/`Update` normalize every name
-   through `utils.NormalizeTag` (`internal/utils/tagname.go`) before it
+   through `textnorm.NormalizeTag` (`internal/textnorm/tagname.go`) before it
    reaches the DB, so the stored name is the embedding key and the matcher
    never re-derives a different form.
 3. Encodes in batches of `batchSize = 32`, then **swaps the whole map under
@@ -666,8 +666,8 @@ statements.
 
 ## 12. Gotchas
 
-- **Tag names are canonical before they reach the store** — `utils.NormalizeTag`
-  (`internal/utils/tagname.go`) runs at the DB save chokepoints
+- **Tag names are canonical before they reach the store** — `textnorm.NormalizeTag`
+  (`internal/textnorm/tagname.go`) runs at the DB save chokepoints
   (`service.Tag.Create`/`Update`); the cache and the matcher use names
   verbatim, so store keys always equal DB names.
 - **The store is the tag universe.** Tags not in `entries` can never be

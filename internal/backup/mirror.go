@@ -16,7 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/version"
 )
 
@@ -182,7 +182,7 @@ func WriteState(dest string, state State) error {
 	return nil
 }
 
-func RunLocked(ctx context.Context, queries *database.Queries, logger *utils.Logger, storageDir, dest string, onWait ...func(count int64)) (*Result, string, error) {
+func RunLocked(ctx context.Context, queries *database.Queries, logger *log.Logger, storageDir, dest string, onWait ...func(count int64)) (*Result, string, error) {
 	var wait func(count int64)
 	if len(onWait) > 0 {
 		wait = onWait[0]
@@ -190,11 +190,11 @@ func RunLocked(ctx context.Context, queries *database.Queries, logger *utils.Log
 	return runLocked(ctx, queries, logger, storageDir, dest, wait, nil, uuid.NullUUID{})
 }
 
-func RunLockedWithProgress(ctx context.Context, queries *database.Queries, logger *utils.Logger, storageDir, dest string, onWait func(count int64), onSync func(), token uuid.NullUUID) (*Result, string, error) {
+func RunLockedWithProgress(ctx context.Context, queries *database.Queries, logger *log.Logger, storageDir, dest string, onWait func(count int64), onSync func(), token uuid.NullUUID) (*Result, string, error) {
 	return runLocked(ctx, queries, logger, storageDir, dest, onWait, onSync, token)
 }
 
-func runLocked(ctx context.Context, queries *database.Queries, logger *utils.Logger, storageDir, dest string, onWait func(count int64), onSync func(), token uuid.NullUUID) (*Result, string, error) {
+func runLocked(ctx context.Context, queries *database.Queries, logger *log.Logger, storageDir, dest string, onWait func(count int64), onSync func(), token uuid.NullUUID) (*Result, string, error) {
 	stopHeartbeat := database.StartMaintenanceLockHeartbeat(ctx, queries, logger, 5*time.Minute, token)
 	defer stopHeartbeat()
 

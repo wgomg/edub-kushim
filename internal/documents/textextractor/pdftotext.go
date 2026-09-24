@@ -9,17 +9,17 @@ import (
 	"strings"
 
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 
 	_mime "github.com/wgomg/edub-kushim/internal/documents/mime"
 )
 
 type PDFToText struct {
-	logger *utils.Logger
+	logger *log.Logger
 	config config.ToolConfig
 }
 
-func NewPDFToText(logger *utils.Logger, cfg config.ToolConfig) (*PDFToText, error) {
+func NewPDFToText(logger *log.Logger, cfg config.ToolConfig) (*PDFToText, error) {
 	if _, err := exec.LookPath(cfg.Command); err != nil {
 		return nil, fmt.Errorf("%s not found in PATH: %w\nInstall it (e.g. 'sudo apt install poppler-utils' or 'brew install poppler') or switch to the built-in 'mupdf' engine", cfg.Command, err)
 	}

@@ -13,7 +13,7 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/documents/storage"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 )
 
 type ErroredFileInfo struct {
@@ -26,10 +26,10 @@ type ErroredFileInfo struct {
 
 type ErroredFiles struct {
 	cfg    *config.Config
-	logger *utils.Logger
+	logger *log.Logger
 }
 
-func NewErroredFiles(cfg *config.Config, logger *utils.Logger) *ErroredFiles {
+func NewErroredFiles(cfg *config.Config, logger *log.Logger) *ErroredFiles {
 	return &ErroredFiles{cfg: cfg, logger: logger}
 }
 
@@ -153,5 +153,3 @@ func (s *ErroredFiles) DeleteAll(_ context.Context) (int, error) {
 
 	return count, nil
 }
-
-

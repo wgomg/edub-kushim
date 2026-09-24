@@ -12,7 +12,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/wgomg/edub-kushim/internal/auth"
 	"github.com/wgomg/edub-kushim/internal/database"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 )
 
 const (
@@ -173,7 +173,7 @@ func DownloadTessdataLanguage(ctx context.Context, cfg *Config, lang string) err
 	return nil
 }
 
-func DownloadHugotModel(ctx context.Context, cfg *Config, logger *utils.Logger) error {
+func DownloadHugotModel(ctx context.Context, cfg *Config, logger *log.Logger) error {
 	modelsParent := filepath.Join(cfg.App.ConfigDir, "tagmatcher", "hugot", "models")
 	targetModelPath := filepath.Join(modelsParent, hugotModelDirName)
 

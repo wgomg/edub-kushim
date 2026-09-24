@@ -8,7 +8,8 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
+	"github.com/wgomg/edub-kushim/internal/textnorm"
 )
 
 type CreatePersonInput struct {
@@ -24,10 +25,10 @@ type PeopleUpdatePair struct {
 
 type People struct {
 	queries *database.Queries
-	logger  *utils.Logger
+	logger  *log.Logger
 }
 
-func NewPeople(queries *database.Queries, logger *utils.Logger) *People {
+func NewPeople(queries *database.Queries, logger *log.Logger) *People {
 	return &People{queries: queries, logger: logger}
 }
 
@@ -114,7 +115,7 @@ func (s *People) Create(ctx context.Context, inputs []CreatePersonInput) ([]Crea
 		existingMap[p.Name] = p
 		nKey := p.NormalizedName
 		if nKey == "" {
-			nKey = utils.NormalizeForDB(p.Name)
+			nKey = textnorm.NormalizeForDB(p.Name)
 		}
 		normalizedMap[nKey] = p
 	}
@@ -131,7 +132,7 @@ func (s *People) Create(ctx context.Context, inputs []CreatePersonInput) ([]Crea
 			continue
 		}
 
-		normName := utils.NormalizeForDB(name)
+		normName := textnorm.NormalizeForDB(name)
 		if existing, ok := normalizedMap[normName]; ok {
 			results[i] = CreateResult[database.People]{Entity: existing, Status: Conflict}
 			continue
@@ -180,7 +181,7 @@ func (s *People) Update(ctx context.Context, pairs []PeopleUpdatePair) ([]Update
 		nameMap[p.Name] = p
 		nKey := p.NormalizedName
 		if nKey == "" {
-			nKey = utils.NormalizeForDB(p.Name)
+			nKey = textnorm.NormalizeForDB(p.Name)
 		}
 		normalizedNameMap[nKey] = p
 	}
@@ -210,7 +211,7 @@ func (s *People) Update(ctx context.Context, pairs []PeopleUpdatePair) ([]Update
 			continue
 		}
 
-		normName := utils.NormalizeForDB(name)
+		normName := textnorm.NormalizeForDB(name)
 		if existing, ok := normalizedNameMap[normName]; ok && existing.ID != p.ID {
 			results[i] = UpdateResult[database.People]{Entity: existing, Status: UpdateConflict}
 			continue

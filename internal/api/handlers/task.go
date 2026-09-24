@@ -14,21 +14,22 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/documents/storage"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/task"
 	itypes "github.com/wgomg/edub-kushim/internal/types"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type TaskHandler struct {
 	services  *service.CrudServices
 	client    *database.Client
 	queries   *database.Queries
-	logger    *utils.Logger
+	logger    *log.Logger
 	getConfig func() *config.Config
 }
 
-func NewTaskHandler(services *service.CrudServices, client *database.Client, logger *utils.Logger, getConfig func() *config.Config) *TaskHandler {
+func NewTaskHandler(services *service.CrudServices, client *database.Client, logger *log.Logger, getConfig func() *config.Config) *TaskHandler {
 	return &TaskHandler{
 		services:  services,
 		client:    client,
@@ -42,7 +43,7 @@ func (h *TaskHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
 
-	pb := utils.GetParamBag(r)
+	pb := GetParamBag(r)
 	if pb == nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
@@ -183,7 +184,7 @@ func (h *TaskHandler) ListBatches(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
 
-	pb := utils.GetParamBag(r)
+	pb := GetParamBag(r)
 	if pb == nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
@@ -325,7 +326,7 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 
 	inboxFiles := int64(0)
 	if cfg := h.getConfig(); cfg != nil {
-		n, inboxErr := utils.CountFilePaths(cfg.Storage.ConsumptionDir, cfg.Consumer.SupportedFiles)
+		n, inboxErr := storage.CountFilePaths(cfg.Storage.ConsumptionDir, cfg.Consumer.SupportedFiles)
 		if inboxErr != nil {
 			h.logger.Error(&reqID, "count inbox files: %v", inboxErr)
 		} else {

@@ -11,19 +11,19 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/documents/consumption"
 	"github.com/wgomg/edub-kushim/internal/documents/storage"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/tools"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type ThumbnailTaskHandler struct {
 	runner  *tools.Runner
 	queries *database.Queries
-	logger  *utils.Logger
+	logger  *log.Logger
 	getCfg  func() *config.Config
 }
 
-func NewThumbnailTaskHandler(runner *tools.Runner, queries *database.Queries, logger *utils.Logger, getCfg func() *config.Config) *ThumbnailTaskHandler {
+func NewThumbnailTaskHandler(runner *tools.Runner, queries *database.Queries, logger *log.Logger, getCfg func() *config.Config) *ThumbnailTaskHandler {
 	return &ThumbnailTaskHandler{runner: runner, queries: queries, logger: logger, getCfg: getCfg}
 }
 

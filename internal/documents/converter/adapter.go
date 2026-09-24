@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 )
 
 type DocumentConverter interface {
@@ -13,6 +13,6 @@ type DocumentConverter interface {
 	Name() string
 }
 
-func NewDocumentConverter(logger *utils.Logger, cfg config.ToolConfig, binary string) (DocumentConverter, error) {
+func NewDocumentConverter(logger *log.Logger, cfg config.ToolConfig, binary string) (DocumentConverter, error) {
 	return NewLibreOffice(logger, cfg, binary)
 }

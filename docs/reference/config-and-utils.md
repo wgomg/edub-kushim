@@ -131,9 +131,11 @@ per tool category, used by the frontend settings UI to populate select dropdowns
 
 ---
 
-# Utilities (`internal/utils/`)
+# Utilities
 
-## `config.go`
+The helpers formerly grouped in `internal/utils/` live next to their owners.
+
+## `internal/config/configdir.go`
 
 ### Function
 
@@ -141,16 +143,27 @@ per tool category, used by the frontend settings UI to populate select dropdowns
 
 ---
 
-## `files.go`
+## `internal/documents/storage/`
 
-### Functions
+### `files.go`
 
 `CalculateMD5(path string) (string, error)` — Opens a file, computes its MD5 hash via `crypto/md5`, and returns the hex-encoded digest. Used by the consume handler for enqueue-time dedup and by `Consumer.isDuplicate` for processing-time dedup.
 `ListFilePaths(src string, exts []string, maxFiles int) ([]string, error)` — Scans `src` for files matching the given MIME-type extensions, sorted by creation time (oldest first). Skips directories and unsupported types. When `maxFiles > 0`, stops after collecting that many matching files (early break, avoiding unnecessary I/O).
+`CountFilePaths(src string, exts []string) (int, error)` — Counts matching files without collecting their paths.
+`SameDevice(a, b string) (bool, error)` — Reports whether two paths resolve to the same filesystem device; a missing path falls back to its parent directory.
+`isSupportedEntry` (unexported) — directory-walk predicate shared by `ListFilePaths` and `CountFilePaths`.
+
+### `hash.go`
+
+`SHA256Hex(s string) string` — Hex-encoded SHA-256 of a string; the digest written to `document.text_hash`.
+
+### `copy.go`
+
+`CopyTree(src, dst string) error` — Recursively copies a directory tree (regular files only); `copyFile` (unexported) is the single-file primitive.
 
 ---
 
-## `logger.go`
+## `internal/log/logger.go`
 
 ### Struct
 
@@ -164,35 +177,70 @@ per tool category, used by the frontend settings UI to populate select dropdowns
 
 ---
 
-## `metrics.go`
+## `internal/log/metrics.go`
 
-### Struct
+### Structs
 
 `MemSnapshot` — `HeapInUse uint64`, `HeapAlloc uint64`, `NumGC uint64`, `RSS uint64`
+`MemFull` — embeds `MemSnapshot`; adds `HeapSys uint64`, `HeapIdle uint64`, `HeapReleased uint64`
 
 ### Functions
 
-`ReadMemSnapshot()`, `FormatMemDelta(before, after)`, `HumanDuration(d)`, `readVmRSS()` (from `/proc/self/status`)
+`ReadMemSnapshot()`, `ReadMemFull()`, `FormatMemFull(m)`, `FormatMemDelta(before, after)`, `FormatBytes(b)`, `HumanDuration(d)`, `readVmRSS()` (from `/proc/self/status`)
 
 ---
 
-## `text.go`
+## `internal/llm/analyzer/text.go`
 
 ### Functions
 
-`CountWords`, `EstimateTokensFromWords`, `EstimateTokens` (character-based token estimator for LLM budget checks — single pass counting CJK vs Latin runes, uses blended formula `cjk*1.5 + non_cjk/4` when CJK ratio > 10%, otherwise `total/4`), `CleanUp` (removes special chars), `Truncate` (rune-aware; returns "Unknown" for whitespace-only, trims trailing whitespace after truncation), `CleanCodeBlock`, `ContainsNonLatin` (checks for CJK, Cyrillic, Arabic, Hebrew, Greek, Thai, Devanagari, Bengali, Hangul), `FoldAccents` (stateless NFD → drop Mn → NFC accent fold; the canonical fold shared by `NormalizeForDB` and `NormalizeTag`, safe for concurrent use), `NormalizeForDB` (NFKC → lowercase → dash/underscore to space → accent fold → strip non-`[a-z ]` → collapse whitespace)
+`estimateTokens` (character-based token estimator for LLM budget checks — single pass counting CJK vs Latin runes, uses blended formula `cjk*1.5 + non_cjk/4` when CJK ratio > 10%, otherwise `total/4`), `estimateTokensFromWords` (`words × 1.3`), `cleanCodeBlock` (strips ` ```json ` / ` ``` ` fences and trims LLM responses), `ContainsNonLatin` (checks for CJK, Cyrillic, Arabic, Hebrew, Greek, Thai, Devanagari, Bengali, Hangul)
 
 ---
 
-## `tagname.go`
+## `internal/enrichment/text.go`
+
+### Function
+
+`truncate(s string, maxLength int) string` — Rune-aware truncation; returns `"Unknown"` for whitespace-only input and trims trailing whitespace after truncation.
+
+---
+
+## `internal/tools/textreducer/textrank.go`
+
+### Function
+
+`cleanUp(text string) string` — Removes symbol characters (`$ € £ ¥ ¢ % & * + = < > ^ | ~ @ # \ _ [ ] { }`) before tokenization.
+
+---
+
+## `internal/api/handlers/text.go`
 
 ### Functions
+
+`stripTags`, `stripTagsPtr` (unexported) — Byte-level HTML tag stripping for request fields.
+
+---
+
+## `internal/textnorm/`
+
+Tag and DB-key canonicalization, shared by the tag service, the enricher, the matcher, and the reconciler.
+
+### `normalize.go`
+
+`FoldAccents` (stateless NFD → drop Mn → NFC accent fold; the canonical fold shared by `NormalizeForDB` and `NormalizeTag`, safe for concurrent use), `NormalizeForDB` (NFKC → lowercase → dash/underscore to space → accent fold → strip non-`[a-z ]` → collapse whitespace)
+
+### `tagname.go`
 
 `NormalizeTag` (canonical tag name — NFKC → lowercase → dash family to space → accent fold → keep letters of any Unicode script, digits, and `+ # .` → collapse whitespace; returns `""` when the result has no letter or digit), `containsLetterOrDigit` (rune scan backing the empty-result rule).
 
+### `tagjoint.go`
+
+`SplitJointTag(name string) []string` — Splits a canonical joint tag on its conjunction (`and`, `or`, `vs`, `vs.`, `versus`) and returns the component segments.
+
 ---
 
-## `parambag.go`
+## `internal/api/handlers/parambag.go`
 
 ### Struct
 

@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/types"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 // parsedPair accumulates the evidence of one ordered (query, target) pair
@@ -41,7 +41,7 @@ var (
 	reRankUnavailableKeep = regexp.MustCompile(`REQID=(\S+) consolidation\[v\d+\]: keep "([^"]+)" \(reason=rank_unavailable\)$`)
 )
 
-func parseBootstrapLogs(logsDir string, logger *utils.Logger) map[string]*parsedPair {
+func parseBootstrapLogs(logsDir string, logger *log.Logger) map[string]*parsedPair {
 	pairs := make(map[string]*parsedPair)
 	for _, prefix := range []string{"hugot", "kushim"} {
 		// active file plus lumberjack rotations (timestamped siblings, .gz)

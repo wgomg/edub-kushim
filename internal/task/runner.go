@@ -10,17 +10,17 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/types"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type Runner struct {
 	store    *Store
 	registry *Registry
-	logger   *utils.Logger
+	logger   *log.Logger
 }
 
-func NewRunner(store *Store, registry *Registry, logger *utils.Logger) *Runner {
+func NewRunner(store *Store, registry *Registry, logger *log.Logger) *Runner {
 	return &Runner{
 		store:    store,
 		registry: registry,

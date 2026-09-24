@@ -11,11 +11,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/documents/storage"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/types"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
-func ScanAndEnqueue(ctx context.Context, cfg *config.Config, client *database.Client, logger *utils.Logger) (batchID string, enqueued int, err error) {
+func ScanAndEnqueue(ctx context.Context, cfg *config.Config, client *database.Client, logger *log.Logger) (batchID string, enqueued int, err error) {
 	pausedCount, err := client.Queries.CountPausedBatches(ctx)
 	if err != nil {
 		return "", 0, fmt.Errorf("count paused batches: %w", err)
@@ -25,7 +26,7 @@ func ScanAndEnqueue(ctx context.Context, cfg *config.Config, client *database.Cl
 		return "", 0, nil
 	}
 
-	paths, err := utils.ListFilePaths(
+	paths, err := storage.ListFilePaths(
 		cfg.Storage.ConsumptionDir,
 		cfg.Consumer.SupportedFiles,
 		cfg.Consumer.MaxFilesPerBatch,
@@ -48,7 +49,7 @@ func ScanAndEnqueue(ctx context.Context, cfg *config.Config, client *database.Cl
 	}
 	var entries []fileEntry
 	for i, path := range paths {
-		md5hash, md5Err := utils.CalculateMD5(path)
+		md5hash, md5Err := storage.CalculateMD5(path)
 		if md5Err != nil {
 			logger.Error(nil, "scan: md5 %s: %v", path, md5Err)
 			continue

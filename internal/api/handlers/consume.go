@@ -15,21 +15,22 @@ import (
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/documents/storage"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type ConsumeHandler struct {
 	getConfig func() *config.Config
-	logger    *utils.Logger
+	logger    *log.Logger
 	workStore *task.Store
 	queries   *database.Queries
 	services  *service.CrudServices
 }
 
-func NewConsumeHandler(getConfig func() *config.Config, logger *utils.Logger, workStore *task.Store, queries *database.Queries, services *service.CrudServices) *ConsumeHandler {
+func NewConsumeHandler(getConfig func() *config.Config, logger *log.Logger, workStore *task.Store, queries *database.Queries, services *service.CrudServices) *ConsumeHandler {
 	return &ConsumeHandler{
 		getConfig: getConfig,
 		logger:    logger,
@@ -42,7 +43,7 @@ func NewConsumeHandler(getConfig func() *config.Config, logger *utils.Logger, wo
 func (h *ConsumeHandler) enqueueBatchFiles(ctx context.Context, batchID string, paths []string, reqID string) (enqueued int) {
 	thumbnailsEnabled := h.getConfig().Consumer.Thumbnail.Enabled
 	for i, path := range paths {
-		md5hash, md5Err := utils.CalculateMD5(path)
+		md5hash, md5Err := storage.CalculateMD5(path)
 		if md5Err != nil {
 			h.logger.Error(&reqID, "md5 %s: %v", path, md5Err)
 			continue
@@ -118,7 +119,7 @@ func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	paths, err := utils.ListFilePaths(
+	paths, err := storage.ListFilePaths(
 		cfg.Storage.ConsumptionDir,
 		cfg.Consumer.SupportedFiles,
 		cfg.Consumer.MaxFilesPerBatch,

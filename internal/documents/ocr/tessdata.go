@@ -9,12 +9,12 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 )
 
 var ensureOnce sync.Once
 
-func EnsureLanguages(logger *utils.Logger, dataDir string, languages []string) error {
+func EnsureLanguages(logger *log.Logger, dataDir string, languages []string) error {
 	var err error
 	ensureOnce.Do(func() {
 		if err = os.MkdirAll(dataDir, 0755); err != nil {

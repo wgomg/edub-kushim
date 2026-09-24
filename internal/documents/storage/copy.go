@@ -1,4 +1,4 @@
-package utils
+package storage
 
 import (
 	"io"
@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 )
 
-func CopyFile(src, dst string) error {
+func copyFile(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
@@ -38,7 +38,7 @@ func CopyTree(src, dst string) error {
 		return err
 	}
 	if !info.IsDir() {
-		return CopyFile(src, dst)
+		return copyFile(src, dst)
 	}
 	if err := os.MkdirAll(dst, info.Mode().Perm()); err != nil {
 		return err

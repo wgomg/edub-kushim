@@ -8,17 +8,17 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/task"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type ThumbnailBackfillTaskHandler struct {
 	inner   *ThumbnailTaskHandler
 	queries *database.Queries
-	logger  *utils.Logger
+	logger  *log.Logger
 }
 
-func NewThumbnailBackfillTaskHandler(inner *ThumbnailTaskHandler, queries *database.Queries, logger *utils.Logger) *ThumbnailBackfillTaskHandler {
+func NewThumbnailBackfillTaskHandler(inner *ThumbnailTaskHandler, queries *database.Queries, logger *log.Logger) *ThumbnailBackfillTaskHandler {
 	return &ThumbnailBackfillTaskHandler{inner: inner, queries: queries, logger: logger}
 }
 

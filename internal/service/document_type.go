@@ -6,7 +6,7 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 )
 
 type CreateDocumentTypeInput struct {
@@ -22,10 +22,10 @@ type DocTypeUpdatePair struct {
 
 type DocumentType struct {
 	queries *database.Queries
-	logger  *utils.Logger
+	logger  *log.Logger
 }
 
-func NewDocumentType(queries *database.Queries, logger *utils.Logger) *DocumentType {
+func NewDocumentType(queries *database.Queries, logger *log.Logger) *DocumentType {
 	return &DocumentType{queries: queries, logger: logger}
 }
 

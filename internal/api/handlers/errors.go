@@ -5,10 +5,10 @@ import (
 	"net/http"
 
 	"github.com/wgomg/edub-kushim/internal/errs"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 )
 
-func writeServiceError(w http.ResponseWriter, logger *utils.Logger, reqID *string, op string, err error) {
+func writeServiceError(w http.ResponseWriter, logger *log.Logger, reqID *string, op string, err error) {
 	kind := errs.KindOf(err)
 	switch kind {
 	case errs.KindNotFound:

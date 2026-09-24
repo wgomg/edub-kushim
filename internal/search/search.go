@@ -7,8 +7,9 @@ import (
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/tags"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/textnorm"
 )
 
 type Result struct {
@@ -66,11 +67,11 @@ type Filter struct {
 }
 
 type Engine struct {
-	logger  *utils.Logger
+	logger  *log.Logger
 	queries *database.Queries
 }
 
-func NewEngine(logger *utils.Logger, queries *database.Queries) *Engine {
+func NewEngine(logger *log.Logger, queries *database.Queries) *Engine {
 	return &Engine{
 		logger:  logger,
 		queries: queries,
@@ -84,7 +85,7 @@ func (e *Engine) resolveTagAliases(ctx context.Context, names []string) ([]strin
 	normalized := make([]string, 0, len(names))
 	seen := make(map[string]struct{}, len(names))
 	for _, name := range names {
-		n := utils.NormalizeTag(name)
+		n := textnorm.NormalizeTag(name)
 		if n == "" {
 			continue
 		}

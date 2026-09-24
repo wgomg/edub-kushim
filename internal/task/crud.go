@@ -8,8 +8,8 @@ import (
 	"fmt"
 
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/types"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type BatchFilter struct {
@@ -134,7 +134,7 @@ func ListFiltered(ctx context.Context, queries *database.Queries, f TaskFilter) 
 	}
 }
 
-func Retry(ctx context.Context, client *database.Client, logger *utils.Logger, taskID string) error {
+func Retry(ctx context.Context, client *database.Client, logger *log.Logger, taskID string) error {
 	task, err := client.Queries.GetTaskByTaskID(ctx, taskID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

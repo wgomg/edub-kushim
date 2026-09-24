@@ -245,7 +245,7 @@ Anthropic-specific rules the adapter encodes:
   — newer models don't accept it. The doc-type call passes `temp = 0`.
 
 Response parsing (`llm_anthropic.go:216-254`): content blocks with
-`block.Type == "text"` are joined, then `CleanCodeBlock` +
+`block.Type == "text"` are joined, then `cleanCodeBlock` +
 `ParseAnalysisResponse` (§6); usage → `Stats`; the full prompt is persisted
 in `Prompt`; `PassContext` serializes `{system, user_prompt}` for the replay.
 
@@ -322,7 +322,7 @@ Both adapters parse with the same three steps — no regex extraction, no JSON
 Schema:
 
 1. `strings.TrimSpace` on the response text.
-2. `utils.CleanCodeBlock` (`internal/utils/text.go:67-75`) — strips
+2. `cleanCodeBlock` (`internal/llm/analyzer/text.go`) — strips
    `` ```json `` / `` ``` `` fences and trims.
 3. `ParseAnalysisResponse` (`shared.go:444-483`) — decodes the wire shape
    (`title`, `type`, `tags`, `people`, `language`) and normalizes `tags`
@@ -368,7 +368,7 @@ type InsufficientCreditsError struct {   // 402/429: billing problem
 ```
 
 - **`ContentTooLargeError`** — thrown *before* the HTTP call by
-  `checkContentTooLarge` (`shared.go:90-99`): `EstimateTokens(prompt) >
+  `checkContentTooLarge` (`shared.go:90-99`): `estimateTokens(prompt) >
   caps.MaxInputTokens`. Skipped when the catalog lacks a max-input value.
 - **`TokenLimitError`** — parsed from the provider's error body with a regex
   (`shared.go:101-112`):
@@ -408,7 +408,7 @@ enricher sees — so the batch pauses on credit errors only when the primary
 
 ## 8. Token estimation
 
-`utils.EstimateTokens` (`internal/utils/text.go:25-43`) approximates token
+`estimateTokens` (`internal/llm/analyzer/text.go`) approximates token
 counts without a tokenizer; it feeds the pre-flight `checkContentTooLarge` and
 the enricher's shrink-and-retry loop (§10). Full mechanics and accuracy
 caveats: `algorithms.md` §12.
@@ -510,7 +510,7 @@ for i := range 2 {
 9. **Canonicalize people** (`enricher.go:213-219`): Latin names as-is;
    non-Latin names use `NameRomanized` or an **anyascii transliteration**
    (`canonicalPersonName`, `enricher.go:426-441`); `NormalizedName =
-   utils.NormalizeForDB(canonical)`.
+   textnorm.NormalizeForDB(canonical)`.
 10. **Facet separation and tag filtering** (`enricher.go:263-267`):
     `SeparateFacets` gates typed emissions by the model's own `category`:
     `form_genre` tags are dropped (they belong to `document_type`),
@@ -548,7 +548,7 @@ for i := range 2 {
     failure or timeout retries once and then keeps every novel tag — under the
     gate those births are **provisional** (no verdict row).
 13. **Persist metadata** (`enricher.go:254-273`): title truncated to 127
-    (`utils.Truncate`), doc type validated against the DB list (fallback
+    (`truncate`), doc type validated against the DB list (fallback
     `"undetermined"`), `UpdateDocumentMetadata`.
 14. **OCR language auto-detect** (`enricher.go:275`,
     `ensureOCRLanguage` `enricher.go:447-500`): the detected 3-letter ISO

@@ -13,7 +13,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/documents/ocr"
 	"github.com/wgomg/edub-kushim/internal/documents/thumbnail"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 )
 
 func main() {
@@ -25,7 +25,7 @@ func main() {
 	args := os.Args[2:]
 
 	if commandName == "setup" {
-		startupLogger := utils.NewLogger("info")
+		startupLogger := log.NewLogger("info")
 		if err := commands.RunSetup(args, startupLogger); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
@@ -167,8 +167,8 @@ func main() {
 		return
 	}
 
-	startupLogger := utils.NewLogger("error")
-	configDir, err := utils.ConfigDir()
+	startupLogger := log.NewLogger("error")
+	configDir, err := config.ConfigDir()
 	if err != nil {
 		startupLogger.Fatal("Cannot determine home directory:", err)
 	}
@@ -181,11 +181,11 @@ func main() {
 		startupLogger.Fatal("Failed to load configuration:", err)
 	}
 
-	logger := utils.NewLogger(cfg.App.LogLevel)
+	logger := log.NewLogger(cfg.App.LogLevel)
 	slog.SetDefault(logger.SlogLogger())
 	logFile := filepath.Join(*configDir, "logs", "kushim.log")
 	os.MkdirAll(filepath.Dir(logFile), 0755)
-	if err := logger.SetLogFile(utils.LogFileConfig{
+	if err := logger.SetLogFile(log.LogFileConfig{
 		Path:       logFile,
 		MaxSize:    cfg.App.Logging.MaxSize,
 		MaxBackups: cfg.App.Logging.MaxBackups,

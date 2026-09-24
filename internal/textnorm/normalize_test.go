@@ -1,67 +1,9 @@
-package utils
+package textnorm
 
 import (
 	"sync"
 	"testing"
 )
-
-func TestTruncate(t *testing.T) {
-	tests := []struct {
-		name      string
-		input     string
-		maxLength int
-		want      string
-	}{
-		{"blank input", "", 10, "Unknown"},
-		{"spaces only", "   ", 10, "Unknown"},
-		{"short ascii", "hello", 10, "hello"},
-		{"exactly maxLength", "abcdefghij", 10, "abcdefghij"},
-		{"over maxLength ascii", "abcdefghijklmnopqrstuvwxyz", 10, "abcdefghij"},
-		{"trim trailing space", "Hello World This Is A Test", 12, "Hello World"},
-		{"trim trailing newline", "abcde\nfghij\nklmno", 6, "abcde"},
-		{"no trim when last char is not whitespace", "abcde fghij klmno", 10, "abcde fghi"},
-		{"multi-byte japanese", "日本語テスト文字列です", 5, "日本語テス"},
-		{"multi-byte cyrillic", "Кириллица текста длинное", 10, "Кириллица"},
-		{"mixed ascii and multi-byte", "日本語abc", 5, "日本語ab"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := Truncate(tt.input, tt.maxLength)
-			if got != tt.want {
-				t.Errorf("Truncate(%q, %d) = %q, want %q", tt.input, tt.maxLength, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestEstimateTokens(t *testing.T) {
-	tests := []struct {
-		name string
-		text string
-		want int
-	}{
-		{"empty string", "", 0},
-		{"pure ascii short", "hello", 2},
-		{"pure ascii long", "the quick brown fox jumps over the lazy dog", 11},
-		{"ascii with spaces", "a b c d e f g h i j", 5},
-		{"cjk heavy japanese", "日本語テスト文字列です", 17},
-		{"cjk heavy chinese", "这是一个中文文本测试", 15},
-		{"cjk heavy korean", "한국어 텍스트 테스트입니다", 19},
-		{"mixed low cjk ratio", "hello world 你好", 6},
-		{"mixed high cjk ratio", "hello 日本語テスト", 11},
-		{"single char ascii", "a", 1},
-		{"single char cjk", "日", 2},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := EstimateTokens(tt.text)
-			if got != tt.want {
-				t.Errorf("EstimateTokens(%q) = %d, want %d", tt.text, got, tt.want)
-			}
-		})
-	}
-}
 
 func TestNormalizeForDB(t *testing.T) {
 	tests := []struct {

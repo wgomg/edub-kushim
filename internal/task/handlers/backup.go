@@ -13,8 +13,8 @@ import (
 	"github.com/wgomg/edub-kushim/internal/backup"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/task"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 var _ task.Dedupable = (*BackupTaskHandler)(nil)
@@ -23,10 +23,10 @@ type BackupTaskHandler struct {
 	db        *sql.DB
 	queries   *database.Queries
 	getConfig func() *config.Config
-	logger    *utils.Logger
+	logger    *log.Logger
 }
 
-func NewBackupTaskHandler(db *sql.DB, queries *database.Queries, getConfig func() *config.Config, logger *utils.Logger) *BackupTaskHandler {
+func NewBackupTaskHandler(db *sql.DB, queries *database.Queries, getConfig func() *config.Config, logger *log.Logger) *BackupTaskHandler {
 	return &BackupTaskHandler{
 		db:        db,
 		queries:   queries,

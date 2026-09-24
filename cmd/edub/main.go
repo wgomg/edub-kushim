@@ -13,7 +13,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/api"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 )
 
 func main() {
@@ -34,9 +34,9 @@ func main() {
 }
 
 func startServer() {
-	startupLogger := utils.NewLogger("error")
+	startupLogger := log.NewLogger("error")
 
-	configDir, err := utils.ConfigDir()
+	configDir, err := config.ConfigDir()
 	if err != nil {
 		startupLogger.Fatal("Cannot determine home directory:", err)
 	}
@@ -49,11 +49,11 @@ func startServer() {
 		startupLogger.Fatal("Failed to load configuration:", err)
 	}
 
-	logger := utils.NewLogger(cfg.App.LogLevel)
+	logger := log.NewLogger(cfg.App.LogLevel)
 	slog.SetDefault(logger.SlogLogger())
 	logFile := filepath.Join(*configDir, "logs", "edub.log")
 	os.MkdirAll(filepath.Dir(logFile), 0755)
-	if err := logger.SetLogFile(utils.LogFileConfig{
+	if err := logger.SetLogFile(log.LogFileConfig{
 		Path:       logFile,
 		MaxSize:    cfg.App.Logging.MaxSize,
 		MaxBackups: cfg.App.Logging.MaxBackups,
@@ -68,8 +68,8 @@ func startServer() {
 
 	db, err := database.NewPostgresDB(config.BuildPostgresDSN(cfg.Db))
 	if err != nil {
-		log := utils.NewLogger("error")
-		log.Fatal("Unable to establish database connection:", err)
+		errLogger := log.NewLogger("error")
+		errLogger.Fatal("Unable to establish database connection:", err)
 	}
 
 	if err := database.InitializeSchema(db); err != nil {

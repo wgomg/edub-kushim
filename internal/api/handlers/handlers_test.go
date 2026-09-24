@@ -21,18 +21,19 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/configtask"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/documents/storage"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 	itypes "github.com/wgomg/edub-kushim/internal/types"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type handlerTestEnv struct {
 	client        *database.Client
-	logger        *utils.Logger
+	logger        *log.Logger
 	engine        *search.Engine
 	matcherClient *matcher.MatcherClient
 	tagSvc        *service.Tag
@@ -127,7 +128,7 @@ func req(t *testing.T, method, path string, body []byte) *http.Request {
 	if body != nil {
 		r.Header.Set("Content-Type", "application/json")
 	}
-	r = utils.WithParamBag(r, utils.NewParamBag(r))
+	r = WithParamBag(r, NewParamBag(r))
 	r = r.WithContext(context.WithValue(r.Context(), "reqid", "test-req"))
 	return r
 }
@@ -431,7 +432,7 @@ func TestDownloadDocumentsValidation(t *testing.T) {
 		formBody := "document_ids=" + idsJSON
 		r := httptest.NewRequest("POST", "/api/v1/documents/download", strings.NewReader(formBody))
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		r = utils.WithParamBag(r, utils.NewParamBag(r))
+		r = WithParamBag(r, NewParamBag(r))
 		r = r.WithContext(context.WithValue(r.Context(), "reqid", "test-req"))
 		h.DownloadDocuments(w, r)
 		// MaxDownloadFiles=2, so 3 IDs should fail with "too many", not a parse error
@@ -449,7 +450,7 @@ func TestDownloadDocumentsValidation(t *testing.T) {
 		w := rec()
 		r := httptest.NewRequest("POST", "/api/v1/documents/download", strings.NewReader("document_ids=NOT_VALID_JSON"))
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		r = utils.WithParamBag(r, utils.NewParamBag(r))
+		r = WithParamBag(r, NewParamBag(r))
 		r = r.WithContext(context.WithValue(r.Context(), "reqid", "test-req"))
 		h.DownloadDocuments(w, r)
 		if w.Code != http.StatusBadRequest {
@@ -1205,7 +1206,7 @@ func TestEnqueueBatchFilesDedup(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		md5hash, err := utils.CalculateMD5(filePath)
+		md5hash, err := storage.CalculateMD5(filePath)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1455,7 +1456,7 @@ func TestUserCrud(t *testing.T) {
 	})
 }
 
-func newTestConfigHandler(cfg *config.Config, client *database.Client, logger *utils.Logger, dispatcher *task.Dispatcher) *ConfigHandler {
+func newTestConfigHandler(cfg *config.Config, client *database.Client, logger *log.Logger, dispatcher *task.Dispatcher) *ConfigHandler {
 	var ptr atomic.Pointer[config.Config]
 	if cfg != nil {
 		ptr.Store(cfg)

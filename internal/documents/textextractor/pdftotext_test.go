@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 )
 
 func TestPDFToText_Extract_RejectsRelativePath(t *testing.T) {
@@ -15,7 +15,7 @@ func TestPDFToText_Extract_RejectsRelativePath(t *testing.T) {
 		t.Skip("pdftotext not installed")
 	}
 
-	p, err := NewPDFToText(utils.NewLogger("error"), config.ToolConfig{Command: "pdftotext", Timeout: time.Second})
+	p, err := NewPDFToText(log.NewLogger("error"), config.ToolConfig{Command: "pdftotext", Timeout: time.Second})
 	if err != nil {
 		t.Fatalf("NewPDFToText: %v", err)
 	}

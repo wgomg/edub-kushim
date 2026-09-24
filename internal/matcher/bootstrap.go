@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/wgomg/edub-kushim/internal/database"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 )
 
 const (
@@ -13,7 +13,7 @@ const (
 	batchSize  = 32
 )
 
-func BuildTagCache(ctx context.Context, queries *database.Queries, logger *utils.Logger, enc Embedder, store *TagEmbeddingStore) error {
+func BuildTagCache(ctx context.Context, queries *database.Queries, logger *log.Logger, enc Embedder, store *TagEmbeddingStore) error {
 	tagNames, err := queries.ListPromotedTagNames(ctx)
 	if err != nil {
 		return fmt.Errorf("list tags: %w", err)

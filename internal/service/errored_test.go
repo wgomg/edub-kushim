@@ -8,8 +8,8 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/documents/storage"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/testutil"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 func newTestErroredFiles(t *testing.T) (*ErroredFiles, *config.Config) {
@@ -19,7 +19,7 @@ func newTestErroredFiles(t *testing.T) (*ErroredFiles, *config.Config) {
 	cfg.Storage.StorageDir = filepath.Join(configDir, "storage")
 	os.MkdirAll(cfg.Storage.StorageDir, 0755)
 
-	logger := utils.NewDiscardLogger()
+	logger := log.NewDiscardLogger()
 	svc := NewErroredFiles(cfg, logger)
 	return svc, cfg
 }

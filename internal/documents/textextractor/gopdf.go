@@ -6,7 +6,7 @@ import (
 
 	"github.com/razvandimescu/gopdf/pdf"
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 
 	_mime "github.com/wgomg/edub-kushim/internal/documents/mime"
 )
@@ -19,11 +19,11 @@ import (
 // If this becomes a problem, switch to pdftotext (external tool, streams) or
 // use the MuPDF CGo wrapper's ExtractPageText (also streams).
 type Gopdf struct {
-	logger *utils.Logger
+	logger *log.Logger
 	config config.ToolConfig
 }
 
-func NewGopdf(logger *utils.Logger, cfg config.ToolConfig) (*Gopdf, error) {
+func NewGopdf(logger *log.Logger, cfg config.ToolConfig) (*Gopdf, error) {
 	return &Gopdf{logger: logger, config: cfg}, nil
 }
 

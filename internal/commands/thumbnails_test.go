@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 )
 
 func TestThumbnailsHandler_Help(t *testing.T) {
@@ -49,7 +49,7 @@ database:
 	if err != nil {
 		t.Fatalf("config.Load: %v", err)
 	}
-	c := NewContainer(cfg, utils.NewLogger("error"))
+	c := NewContainer(cfg, log.NewLogger("error"))
 	t.Cleanup(func() { c.Close() })
 
 	err = backfillThumbnailsHandler(c, []string{"--all"})

@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 )
 
 func TestParseValue(t *testing.T) {
@@ -175,7 +175,7 @@ func newTestContainer(t *testing.T) (*Container, string) {
 	if err != nil {
 		t.Fatalf("config.Load: %v", err)
 	}
-	logger := utils.NewLogger("error")
+	logger := log.NewLogger("error")
 	c := NewContainer(cfg, logger)
 	t.Cleanup(func() { c.Close() })
 	return c, configDir

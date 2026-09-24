@@ -7,18 +7,18 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/documents/consumption"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/task"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type ConsumeTaskHandler struct {
 	consumer *consumption.Consumer
 	store    *task.Store
 	queries  *database.Queries
-	logger   *utils.Logger
+	logger   *log.Logger
 }
 
-func NewConsumeTaskHandler(consumer *consumption.Consumer, store *task.Store, queries *database.Queries, logger *utils.Logger) *ConsumeTaskHandler {
+func NewConsumeTaskHandler(consumer *consumption.Consumer, store *task.Store, queries *database.Queries, logger *log.Logger) *ConsumeTaskHandler {
 	return &ConsumeTaskHandler{
 		consumer: consumer,
 		store:    store,
@@ -57,8 +57,8 @@ func (h *ConsumeTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawM
 
 	file, err = h.consumer.Process(ctx, file, p.DocumentID, progress.Set)
 	{
-		mem := utils.ReadMemFull()
-		h.logger.Debug(&p.DocumentID, "post-consume memory: %s", utils.FormatMemFull(mem))
+		mem := log.ReadMemFull()
+		h.logger.Debug(&p.DocumentID, "post-consume memory: %s", log.FormatMemFull(mem))
 	}
 	if err != nil {
 		return nil, h.withDiscardAttempt(ctx, t, p.OnCompleted, p.OnCompletedThumbnail, err)

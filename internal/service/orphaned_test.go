@@ -11,9 +11,10 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/documents/storage"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 	"github.com/wgomg/edub-kushim/internal/types"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type mockTaskCreator struct {
@@ -184,7 +185,7 @@ func TestOrphaned_Restore_UUIDOnly(t *testing.T) {
 		t.Fatal("file should be copied to consumption dir")
 	}
 
-	md5, err := utils.CalculateMD5(destPath)
+	md5, err := storage.CalculateMD5(destPath)
 	testutil.AssertNoError(t, err, "compute md5")
 
 	testutil.AssertEqual(t, len(mock.calls), 4, "should have 4 mock calls (consume + enrich + thumbnail + batch)")
@@ -382,7 +383,7 @@ func TestOrphaned_List(t *testing.T) {
 func TestNewOrphaned(t *testing.T) {
 	client := database.NewTestClient(t)
 	defer client.DB().Close()
-	logger := utils.NewDiscardLogger()
+	logger := log.NewDiscardLogger()
 	configDir := t.TempDir()
 	cfg := config.DefaultConfig(configDir)
 	mock := &mockTaskCreator{}

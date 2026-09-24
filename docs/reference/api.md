@@ -5,9 +5,9 @@
 ### Struct
 
 - `Server`
-  - **Fields**: `httpServer *http.Server`, `logger *utils.Logger`, `addr string`, `cfg atomic.Pointer[config.Config]`, `matcherClient *matcher.MatcherClient`, `services *types.CrudServices`, `configWatcher *config.Watcher`, `pools struct { config *task.Pool }`
+  - **Fields**: `httpServer *http.Server`, `logger *log.Logger`, `addr string`, `cfg atomic.Pointer[config.Config]`, `matcherClient *matcher.MatcherClient`, `services *types.CrudServices`, `configWatcher *config.Watcher`, `pools struct { config *task.Pool }`
   - **Methods**:
-    - `NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server` — Creates a `MatcherClient` connected to `kushim-hugot.sock` in the config dir, builds `CrudServices` with `Batch`, `Tag` (wired through `MatcherClient`), `People`, `PeopleType`, `DocumentType`, `User`, `Orphaned`, `ErroredFiles`, `ReEnrich` services, creates dispatcher with only the `"config"` task type registered. Generates a random `SessionSecret` if none is configured (with a warning log). Registers routes and middleware chain (request → auth → parambag).
+    - `NewServer(cfg config.Config, logger *log.Logger, db *sql.DB) *Server` — Creates a `MatcherClient` connected to `kushim-hugot.sock` in the config dir, builds `CrudServices` with `Batch`, `Tag` (wired through `MatcherClient`), `People`, `PeopleType`, `DocumentType`, `User`, `Orphaned`, `ErroredFiles`, `ReEnrich` services, creates dispatcher with only the `"config"` task type registered. Generates a random `SessionSecret` if none is configured (with a warning log). Registers routes and middleware chain (request → auth → parambag).
     - `Start() error` — Probes matcher health (startup warning if unreachable), starts config pool, starts config file watcher (5s interval), then HTTP server
     - `Shutdown(ctx context.Context) error` — Stops config watcher, shuts down HTTP server, config pool, then `services.Close()`
     - `Addr() string`
@@ -17,10 +17,10 @@
 - `probeMatcher()` — Calls `matcherClient.Health()` with 2s timeout. Logs warning and continues if matcher is unreachable; tag CRUD is unaffected (embedding-store errors are logged and swallowed) and enrich falls back to LLM-only tags.
 - `registerRoutes(logger, client, dispatcher, getConfig, onConfigSet, services, workStore) *http.ServeMux` — Creates and returns a `*http.ServeMux` with all API routes registered; internally creates the `search.Engine` from `client`. Uses Go 1.22+ pattern routing (`"GET /api/v1/documents/{id}"`). Auth routes (`POST /api/v1/auth/login`, `POST /api/v1/auth/logout`) are registered before all other routes so they are public (bypassed by `AuthMiddleware`). Orphaned file routes (`/api/v1/orphaned/...`) are registered via `OrphanedHandler` after the document routes. Errored file routes (`/api/v1/errored/...`) are registered via `ErroredHandler` after the orphaned block. The read-only `GET /api/v1/tags/reconciliation/report` is registered viewer-gated and served by `TaskHandler.GetTagReconcileReport`; the provisional-tag queue routes — `GET /api/v1/tags/provisional` (viewer-gated) and `POST /api/v1/tags/{id}/promote` (editor-gated) — are served by `TagHandler`.
 - `registerStaticRoutes(mux *http.ServeMux)` — Registers `"GET /{path...}"` handler; tries to serve the requested file from the embedded FS, falls back to `index.html` for client-side SPA routes if the file doesn't exist
-- `chainMiddleware(logger *utils.Logger, getSecret func() string, getAuthEnabled func() bool, validateAPIKey func(ctx context.Context, rawKey string) (*database.User, error), getUserByID func(ctx context.Context, id int64) (*database.User, error), h http.Handler) http.Handler` — Composes request + auth + parambag middleware. The auth middleware skips public paths (`/health`, `GET /wizard/bootstrap`, `/api/v1/auth/*`, non-API paths) and validates Bearer tokens (from `Authorization` header or `edub_token` cookie) on all other routes. Only `GET /wizard/bootstrap` is public among `/wizard/*` paths — the rest require authentication (admin role via `RequireRole`). Tokens with `ek_` prefix are validated via `validateAPIKey` closure (hashes + DB lookup); other tokens are validated as JWT via `auth.ValidateToken`.
+- `chainMiddleware(logger *log.Logger, getSecret func() string, getAuthEnabled func() bool, validateAPIKey func(ctx context.Context, rawKey string) (*database.User, error), getUserByID func(ctx context.Context, id int64) (*database.User, error), h http.Handler) http.Handler` — Composes request + auth + parambag middleware. The auth middleware skips public paths (`/health`, `GET /wizard/bootstrap`, `/api/v1/auth/*`, non-API paths) and validates Bearer tokens (from `Authorization` header or `edub_token` cookie) on all other routes. Only `GET /wizard/bootstrap` is public among `/wizard/*` paths — the rest require authentication (admin role via `RequireRole`). Tokens with `ek_` prefix are validated via `validateAPIKey` closure (hashes + DB lookup); other tokens are validated as JWT via `auth.ValidateToken`.
 - `AuthMiddleware(next http.Handler, getSecret func() string, getAuthEnabled func() bool, validateAPIKey func(ctx context.Context, rawKey string) (*database.User, error), getUserByID func(ctx context.Context, id int64) (*database.User, error)) http.Handler` — Extracts `Authorization: Bearer <token>` header. If the header is absent, falls back to the `edub_token` cookie. If token starts with `ek_`, validates via `validateAPIKey` (hashes key, DB lookup) and injects `userID`, `username`, `role` (from DB), and `authSource="apikey"` into context. Otherwise, validates JWT via `auth.ValidateToken`, then re-fetches the user from DB via `getUserByID` to get the current `role` (not trusting the JWT claim for role). Injects `userID`, `username`, `role`, and `authSource="session"`. Returns 401 JSON for missing/invalid/expired tokens or deleted users, 500 JSON for internal errors. Bypasses auth for public paths (`/health`, `GET /wizard/bootstrap`, `/api/v1/auth/*`, non-API paths). When `auth_enabled` is false, the middleware injects an `admin` identity into context and passes every request through.
 - `RequireRole(allowed ...auth.Role) func(http.Handler) http.Handler` — **(`permission.go`)** Middleware factory that returns a handler requiring the request context to contain one of the allowed roles via `auth.RoleKey`. Returns 403 JSON `{"error":"forbidden"}` if role is missing or not in the allowed set. Used to wrap every API route in `registerRoutes`.
-- `requestMiddleware(logger *utils.Logger, next http.Handler) http.Handler` — Adds reqid to context, logs requests
+- `requestMiddleware(logger *log.Logger, next http.Handler) http.Handler` — Adds reqid to context, logs requests
 - `parambagMiddleware(next http.Handler) http.Handler` — Injects ParamBag into request context
 
 ---
@@ -30,10 +30,10 @@
 ### Struct
 
 - `ConsumeHandler`
-  - **Fields**: `getConfig func() *config.Config`, `logger *utils.Logger`, `workStore *task.Store`, `queries *database.Queries`, `services *itypes.CrudServices`
+  - **Fields**: `getConfig func() *config.Config`, `logger *log.Logger`, `workStore *task.Store`, `queries *database.Queries`, `services *itypes.CrudServices`
   - **Methods**:
     - `NewConsumeHandler(getConfig, logger, workStore, queries, services) *ConsumeHandler`
-    - `Consume(w, r)` — Scans inbox using `utils.ListFilePaths`, creates a batch with `status='queued'`, enqueues one pair of (consume + enrich) tasks per file via `workStore.CreateTask`. The `kushim queue` daemon picks up the queued batch for actual processing. Returns `202` with `batch_id`, `total_files`, `enqueued`, and `_links.tasks`. Returns `200` JSON `{batch_id:null, total_files:0, message:"no files found"}` when inbox is empty.
+    - `Consume(w, r)` — Scans inbox using `storage.ListFilePaths`, creates a batch with `status='queued'`, enqueues one pair of (consume + enrich) tasks per file via `workStore.CreateTask`. The `kushim queue` daemon picks up the queued batch for actual processing. Returns `202` with `batch_id`, `total_files`, `enqueued`, and `_links.tasks`. Returns `200` JSON `{batch_id:null, total_files:0, message:"no files found"}` when inbox is empty.
     - `Upload(w, r)` — Accepts multipart upload (`files` field, repeatable), streams bytes to temp files in the inbox, validates MIME type against `consumer.supported_files`, creates a batch with `status='queued'`, enqueues tasks. The `kushim queue` daemon picks up the batch. Returns `202` with `batch_id`, `accepted`, `rejected`, and `_links.tasks`. Returns `413` when body exceeds `server.max_upload_size`. Returns `422` when no supported files are found or required tools are missing.
 
 ---
@@ -43,7 +43,7 @@
 ### Struct
 
 - `DocumentHandler`
-  - **Fields**: `client *database.Client`, `logger *utils.Logger`, `engine *search.Engine`, `services *itypes.CrudServices`, `getConfig func() *config.Config`
+  - **Fields**: `client *database.Client`, `logger *log.Logger`, `engine *search.Engine`, `services *itypes.CrudServices`, `getConfig func() *config.Config`
   - **Methods**:
     - `NewDocumentHandler(queries, logger, engine, services) *DocumentHandler`
     - `ListDocuments(w, r)` — Supports `sort_by` and `sort_order` query params; response includes tags (`TagResponse`), people (`PersonResponse`), content stats (`PageCount`, `WordCount`, `CharCount`), `Language`, `DocumentTypeID`
@@ -72,7 +72,7 @@
 ### Struct
 
 - `TrashHandler`
-  - **Fields**: `logger *utils.Logger`, `trashSvc *service.TrashService`, `getConfig func() *config.Config`
+  - **Fields**: `logger *log.Logger`, `trashSvc *service.TrashService`, `getConfig func() *config.Config`
   - **Methods**:
     - `NewTrashHandler(logger, trashSvc, getConfig) *TrashHandler`
     - `ListTrash(w, r)` — `GET /api/v1/trash` — Paginated trashed documents (`limit` default 50 max 100, `offset`), ordered by `deleted_at` DESC. Returns `TrashListResponse` with `documents`, `total` (via `CountTrash`), `limit`, `offset`.
@@ -90,7 +90,7 @@
 ### Struct
 
 - `AuthHandler`
-  - **Fields**: `userService *service.User`, `getConfig func() *config.Config`, `logger *utils.Logger`
+  - **Fields**: `userService *service.User`, `getConfig func() *config.Config`, `logger *log.Logger`
   - **Methods**:
     - `NewAuthHandler(userService, getConfig, logger) *AuthHandler`
     - `Login(w, r)` — `POST /api/v1/auth/login` — Accepts `{"username", "password"}`. Calls `userService.Authenticate()` (bcrypt compare + DB lookup). On success: generates a 24h JWT via `auth.GenerateToken()` passing `user.Role`, returns `{"token": "...", "user": {"id", "username", "role", "created_at"}}` with 200. Also sets an `edub_token` HttpOnly cookie (`SameSite=Lax`, `Secure` in production, `Max-Age=86400`) so that browser navigations (PDF viewer fetch, `<a href>`) are authenticated without requiring the `Authorization` header. On invalid credentials: returns 401 with generic `"invalid username or password"`. On empty username/password: returns 401 (same generic message to avoid user enumeration). On malformed body: returns 400.
@@ -128,7 +128,7 @@ See `AuthMiddleware` under `server.go` → Functions.
 ### Struct
 
 - `TaskHandler`
-  - **Fields**: `queries *database.Queries`, `logger *utils.Logger`, `getConfig func() *config.Config`
+  - **Fields**: `queries *database.Queries`, `logger *log.Logger`, `getConfig func() *config.Config`
   - **Methods**:
     - `NewTaskHandler(queries, logger, getConfig) *TaskHandler`
     - `ListTasks(w, r)` — Filters by `batch`, `status`, `limit`, `offset`; includes batch summary when `batch` is set. `status=active` is a special value returning `pending`+`processing`+`waiting` (processing-first) via `ListActiveTasks`
@@ -195,11 +195,11 @@ See `AuthMiddleware` under `server.go` → Functions.
 ### Struct
 
 - `TagHandler`
-  - **Fields**: `services *itypes.CrudServices`, `logger *utils.Logger`
+  - **Fields**: `services *itypes.CrudServices`, `logger *log.Logger`
   - **Methods**:
     - `NewTagHandler(services, logger) *TagHandler`
     - `List(w, r)` — `GET /api/v1/tags?q=<prefix>&limit=50&offset=0` — With `q`: searches by prefix via `services.Tag.SearchByNameWithDocumentCount`. Without `q`: lists paginated via `services.Tag.ListWithDocumentCount`. Returns `{results, total}` with `document_count` per tag.
-    - `Create(w, r)` — `POST /api/v1/tags` — Accepts `{name}`. Calls `services.Tag.Create(ctx, []string{name})`. The service normalizes the name through `utils.NormalizeTag` (lowercase, accent-folded, keeps `+ # .`, digits, and letters of any Unicode script); the response `name` is the canonical form and conflicts are checked against canonical names. Maps status: `Created` → 201 with `{id,name}`, `Conflict` → 409 with existing `{id,name}`, `Invalid` → 400 (empty after normalization).
+    - `Create(w, r)` — `POST /api/v1/tags` — Accepts `{name}`. Calls `services.Tag.Create(ctx, []string{name})`. The service normalizes the name through `textnorm.NormalizeTag` (lowercase, accent-folded, keeps `+ # .`, digits, and letters of any Unicode script); the response `name` is the canonical form and conflicts are checked against canonical names. Maps status: `Created` → 201 with `{id,name}`, `Conflict` → 409 with existing `{id,name}`, `Invalid` → 400 (empty after normalization).
     - `Update(w, r)` — `PUT /api/v1/tags/{id}` — Accepts `{name}`. Calls `services.Tag.Update(ctx, []UpdatePair{{ID: id, Name: name}})`. The name is normalized the same way; `Noop` (200) is returned when the canonical form equals the stored name. Maps status: `Updated`/`Noop` → 200 with `{id,name}`, `Conflict` → 409, `NotFound` → 404, `Invalid` → 400.
     - `Delete(w, r)` — `DELETE /api/v1/tags/{id}` — Calls `services.Tag.Delete(ctx, []int64{id})`. Maps status: `Deleted` → 204, `NotFound` → 404.
     - `Merge(w, r)` — `POST /api/v1/tags/{id}/merge` — Accepts `{target_id}` (nonzero → else 400). Calls `services.TagMerge.Merge(ctx, sourceID, targetID)`: one transaction re-points `document_tag` rows from the source to the target (skipping documents that already carry the target), deletes the leftover source rows, deletes the source tag, then removes the source name from the embedding store (log-only failure, same contract as tag delete). Errors map through `errs.KindOf`: `NotFound` → 404 (source or target gone), `Invalid` → 400 (same id). Returns `200` with `{id, name, reassigned}` (target id/name + reassigned row count).
@@ -219,7 +219,7 @@ See `AuthMiddleware` under `server.go` → Functions.
 ### Structs
 
 - `PeopleHandler`
-  - **Fields**: `services *itypes.CrudServices`, `logger *utils.Logger`
+  - **Fields**: `services *itypes.CrudServices`, `logger *log.Logger`
   - **Methods**:
     - `NewPeopleHandler(services, logger) *PeopleHandler`
     - `List(w, r)` — `GET /api/v1/people?q=<prefix>&limit=50&offset=0` — With `q`: searches by prefix via `SearchByNameWithDocumentCount`. Without `q`: lists paginated via `ListWithDocumentCount`. Returns `PersonListResponse` envelope (`{results: PersonResponse[], total: int64}`) with `document_count` per person.
@@ -236,7 +236,7 @@ See `AuthMiddleware` under `server.go` → Functions.
 ### Struct
 
 - `DocumentTypeHandler`
-  - **Fields**: `services *itypes.CrudServices`, `logger *utils.Logger`
+  - **Fields**: `services *itypes.CrudServices`, `logger *log.Logger`
   - **Methods**:
     - `NewDocumentTypeHandler(services, logger) *DocumentTypeHandler`
     - `List(w, r)` — `GET /api/v1/document-types?q=<prefix>&limit=50&offset=0` — With `q`: searches by prefix via `SearchByNameWithDocumentCount`. Without `q`: lists all via `ListAllWithDocumentCount`. Returns `DocumentTypeResponse[]` with `document_count` per type.
@@ -251,7 +251,7 @@ See `AuthMiddleware` under `server.go` → Functions.
 ### Struct
 
 - `UserHandler`
-  - **Fields**: `services *itypes.CrudServices`, `logger *utils.Logger`
+  - **Fields**: `services *itypes.CrudServices`, `logger *log.Logger`
   - **Methods**:
     - `NewUserHandler(services, logger) *UserHandler`
     - `List(w, r)` — `GET /api/v1/users?limit=50&offset=0` — Lists paginated users. Returns `UserListResponse` with `users` array and `total` count. Excludes `password_hash` and `api_key_hash`.
@@ -267,7 +267,7 @@ See `AuthMiddleware` under `server.go` → Functions.
 ### Struct
 
 - `APIKeyHandler`
-  - **Fields**: `userService *service.User`, `logger *utils.Logger`
+  - **Fields**: `userService *service.User`, `logger *log.Logger`
   - **Methods**:
     - `NewAPIKeyHandler(userService, logger) *APIKeyHandler`
     - `GenerateKey(w, r)` — `POST /api/v1/users/{id}/api-key` — Generates a new `ek_`-prefixed API key. Hash (SHA-256), prefix (`ek_` + 9 hex chars), and timestamp are stored in DB. Returns `201` with `{api_key, prefix, message}`. Returns `403` Forbidden for mismatched caller ID. `KindNotFound` → 404.
@@ -286,7 +286,7 @@ See `AuthMiddleware` under `server.go` → Functions.
 ### Struct
 
 - `ConfigHandler`
-  - **Fields**: `getConfig func() *config.Config`, `onConfigSet func(*config.Config)`, `queries *database.Queries`, `logger *utils.Logger`, `dispatcher *task.Dispatcher`, `OnBootstrap func(configDir string) (*config.Config, *database.Queries, *task.Dispatcher, error)`
+  - **Fields**: `getConfig func() *config.Config`, `onConfigSet func(*config.Config)`, `queries *database.Queries`, `logger *log.Logger`, `dispatcher *task.Dispatcher`, `OnBootstrap func(configDir string) (*config.Config, *database.Queries, *task.Dispatcher, error)`
   - **Methods**:
     - `NewConfigHandler(getConfig, onConfigSet, queries, logger, dispatcher) *ConfigHandler` — `getConfig` and `onConfigSet` are closures wrapping a shared `atomic.Pointer[config.Config]`. The handler never owns its own pointer; config flows via these closures, allowing the file watcher to atomically update the shared state without handler coordination.
     - `SetServices(client, dispatcher)` — Sets `client.Queries`, creates CrudServices with `Batch` and `User` services, sets dispatcher on an already-initialized handler. Used by the wizard's auto-resume path after `onConfigSet` stores the bootstrapped config.
@@ -346,7 +346,7 @@ See `AuthMiddleware` under `server.go` → Functions.
 ### Struct
 
 - `OrphanedHandler`
-  - **Fields**: `svc *service.Orphaned`, `logger *utils.Logger`
+  - **Fields**: `svc *service.Orphaned`, `logger *log.Logger`
   - **Methods**:
     - `NewOrphanedHandler(svc, logger) *OrphanedHandler`
     - `ListOrphaned(w, r)` — `GET /api/v1/orphaned` — Lists all pending orphaned file records as JSON array. Returns `200`.
@@ -364,7 +364,7 @@ See `AuthMiddleware` under `server.go` → Functions.
 ### Struct
 
 - `ErroredHandler`
-  - **Fields**: `svc *service.ErroredFiles`, `logger *utils.Logger`
+  - **Fields**: `svc *service.ErroredFiles`, `logger *log.Logger`
   - **Methods**:
     - `NewErroredHandler(svc, logger) *ErroredHandler`
     - `ListErrored(w, r)` — `GET /api/v1/errored` — Lists all errored files from `<storageDir>/errors/` and `<storageDir>/errors/duplicated/` as JSON array with `name`, `subdir`, `size`, `original_type`, `modified_at`. Returns `200`.
@@ -379,7 +379,7 @@ See `AuthMiddleware` under `server.go` → Functions.
 ### Struct
 
 - `SavedSearchHandler`
-  - **Fields**: `queries *database.Queries`, `logger *utils.Logger`
+  - **Fields**: `queries *database.Queries`, `logger *log.Logger`
   - **Methods**:
     - `NewSavedSearchHandler(queries, logger) *SavedSearchHandler`
     - `Create(w, r)` — `POST /api/v1/saved-searches` — Accepts `CreateSavedSearchRequest` JSON, inserts into `saved_search` table, returns `{"id": <new_id>}` with `201 Created`
@@ -393,7 +393,7 @@ See `AuthMiddleware` under `server.go` → Functions.
 ### Struct
 
 - `LogsHandler`
-  - **Fields**: `getConfig func() *config.Config`, `logger *utils.Logger`
+  - **Fields**: `getConfig func() *config.Config`, `logger *log.Logger`
   - **Methods**:
     - `NewLogsHandler(getConfig, logger) *LogsHandler`
     - `ListLogs(w, r)` — `GET /api/v1/logs/{name}` — Reads log files from `{configDir}/logs/{name}.log`. Whitelist restricts `name` to `kushim`, `edub`, `hugot`, `queue` (path traversal prevention). Returns `{"lines": [...]}` JSON. Supports `?lines=N` query param (default 500, floor 100, ceiling 5000). Multi-line entries (e.g. LLM prompt dumps) are merged by timestamp prefix detection so they appear as a single entry. On files > 2 MiB, seeks to end and reads tail chunk. Lines and merged entries longer than 1 MiB are truncated with a `... [N bytes truncated]` marker instead of failing the request. Returns 404 for invalid name or missing file, 500 on read errors.

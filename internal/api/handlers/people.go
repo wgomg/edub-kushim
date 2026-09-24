@@ -8,16 +8,16 @@ import (
 	"strings"
 
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/service"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type PeopleHandler struct {
 	services *service.CrudServices
-	logger   *utils.Logger
+	logger   *log.Logger
 }
 
-func NewPeopleHandler(services *service.CrudServices, logger *utils.Logger) *PeopleHandler {
+func NewPeopleHandler(services *service.CrudServices, logger *log.Logger) *PeopleHandler {
 	return &PeopleHandler{services: services, logger: logger}
 }
 
@@ -25,7 +25,7 @@ func (h *PeopleHandler) List(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
 
-	pb := utils.GetParamBag(r)
+	pb := GetParamBag(r)
 	if pb == nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
@@ -92,13 +92,13 @@ func (h *PeopleHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.Name = utils.StripTags(strings.TrimSpace(req.Name))
+	req.Name = stripTags(strings.TrimSpace(req.Name))
 	if req.Name == "" {
 		http.Error(w, "Person name is required", http.StatusBadRequest)
 		return
 	}
 
-	req.NameNative = utils.StripTags(req.NameNative)
+	req.NameNative = stripTags(req.NameNative)
 
 	results, err := h.services.People.Create(ctx, []service.CreatePersonInput{
 		{Name: req.Name, NameNative: req.NameNative},
@@ -153,13 +153,13 @@ func (h *PeopleHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.Name = utils.StripTags(strings.TrimSpace(req.Name))
+	req.Name = stripTags(strings.TrimSpace(req.Name))
 	if req.Name == "" {
 		http.Error(w, "Person name is required", http.StatusBadRequest)
 		return
 	}
 
-	req.NameNative = utils.StripTags(req.NameNative)
+	req.NameNative = stripTags(req.NameNative)
 
 	results, err := h.services.People.Update(ctx, []service.PeopleUpdatePair{
 		{ID: id, Name: req.Name, NameNative: req.NameNative},
@@ -227,7 +227,7 @@ func (h *PeopleHandler) ListPeopleTypes(w http.ResponseWriter, r *http.Request) 
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
 
-	pb := utils.GetParamBag(r)
+	pb := GetParamBag(r)
 	if pb == nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
@@ -275,7 +275,7 @@ func (h *PeopleHandler) CreatePeopleType(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	req.Name = utils.StripTags(strings.TrimSpace(req.Name))
+	req.Name = stripTags(strings.TrimSpace(req.Name))
 	if req.Name == "" {
 		http.Error(w, "People type name is required", http.StatusBadRequest)
 		return
@@ -285,7 +285,7 @@ func (h *PeopleHandler) CreatePeopleType(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	req.Description = utils.StripTags(req.Description)
+	req.Description = stripTags(req.Description)
 
 	results, err := h.services.PeopleType.Create(ctx, []service.CreatePeopleTypeInput{
 		{Name: req.Name, Description: req.Description},
@@ -332,7 +332,7 @@ func (h *PeopleHandler) UpdatePeopleType(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	req.Name = utils.StripTags(strings.TrimSpace(req.Name))
+	req.Name = stripTags(strings.TrimSpace(req.Name))
 	if req.Name == "" {
 		http.Error(w, "People type name is required", http.StatusBadRequest)
 		return
@@ -342,7 +342,7 @@ func (h *PeopleHandler) UpdatePeopleType(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	req.Description = utils.StripTags(req.Description)
+	req.Description = stripTags(req.Description)
 
 	results, err := h.services.PeopleType.Update(ctx, []service.PeopleTypeUpdatePair{
 		{ID: id, Name: req.Name, Description: req.Description},

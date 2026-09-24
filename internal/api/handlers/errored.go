@@ -6,16 +6,16 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/service"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type ErroredHandler struct {
 	svc    *service.ErroredFiles
-	logger *utils.Logger
+	logger *log.Logger
 }
 
-func NewErroredHandler(svc *service.ErroredFiles, logger *utils.Logger) *ErroredHandler {
+func NewErroredHandler(svc *service.ErroredFiles, logger *log.Logger) *ErroredHandler {
 	return &ErroredHandler{svc: svc, logger: logger}
 }
 

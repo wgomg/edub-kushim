@@ -60,6 +60,7 @@ internal/
 │   └── mirror.go           # `kushim mirror` command (rsync --delete, waits for the backup lock)
 ├── config/                 # Configuration parsing
 │   ├── config.go           # Configuration structs and loading (ConsolidationSimilarity, default thresholds, engine identifier constants, AvailableEngines map)
+│   ├── configdir.go        # ConfigDir() — returns ~/.config/edub-kushim
 │   ├── setup.go            # Bootstrap config, SaveMap, tessdata/Hugot model download helpers
 │   ├── servicefiles.go     # Generates systemd service files during setup
 │   ├── tools.go            # External tool availability checks (MissingExternalTools)
@@ -110,9 +111,12 @@ internal/
 │   │   ├── consumer.go     # Main consumer (extract → OCR → optimize → store), duplicate detection (MD5+SHA512)
 │   │   ├── scan.go         # ScanAndEnqueue — shared inbox scan → dedup → batch creation
 │   │   └── storage.go      # File operations, checksums, FileFromPath, MIME detection via mimetype lib
-│   ├── storage/            # Filesystem operations for orphaned/trashed files
+│   ├── storage/            # Filesystem operations for documents and orphaned/trashed files
 │   │   ├── dirs.go         # Canonical storage subdirectory name constants (Dir*), part of the persisted data contract
 │   │   ├── paths.go        # Path derivation helpers (ThumbnailPath)
+│   │   ├── files.go        # Inbox scanning (ListFilePaths/CountFilePaths), CalculateMD5, SameDevice
+│   │   ├── hash.go         # SHA256Hex — document text hash
+│   │   ├── copy.go         # CopyTree/copyFile — directory-tree copying for backup staging
 │   │   ├── orphaned.go     # Walk originals/processed, quarantine, remove, copy to inbox
 │   │   └── trash.go        # Move files to/from trash dir, remove trash dirs (soft-delete file operations)
 │   ├── mime/               # MIME type predicates, extension mapping, supported-types constants
@@ -146,16 +150,21 @@ internal/
 ├── enrichment/             # Enrichment engine (LLM pipeline)
 │   ├── enricher.go         # Enricher: dual text reduction → tag matching → token budget pre-check + retry loop → LLM → consolidation → tag adjudication → tag quality gating/provisional quarantine → people/tag/doc type with romanization + normalization
 │   ├── identity.go         # Canonical-form identity mechanics (house form, key equality, tie-break) used by the enricher
-│   └── identity_resolve.go # Pending identity-evidence resolver (NewIdentityResolver, IdentityReport)
+│   ├── identity_resolve.go # Pending identity-evidence resolver (NewIdentityResolver, IdentityReport)
+│   └── text.go             # truncate — rune-aware title truncation with the "Unknown" sentinel
 ├── errs/                   # Error classification (kind, wrapping, FromDB/PgError mapping)
 ├── llm/                    # LLM capability registry
 │   ├── analyzer/           # LLM classification adapters (capability-based)
 │   │   ├── adapter.go      # ContentAnalyzer interface + factory (adapter-based dispatch)
 │   │   ├── shared.go       # BuildPrompt, ParseAnalysisResponse, SeparateFacets, IsWhitelistedPlace, TagDetail, SystemMessage, ContentTooLargeError, TokenLimitError, checkContentTooLarge, parseTokenLimitError, FilterTags, NormalizeTags
+│   │   ├── text.go         # estimateTokens, estimateTokensFromWords, cleanCodeBlock, ContainsNonLatin
 │   │   ├── openai_compatible.go # OpenAI-compatible API (absorbs former OpenAI, DeepSeek, Mistral, etc.)
 │   │   └── llm_anthropic.go # Anthropic Messages API with capability flags
 │   ├── model_catalog.json  # Manually curated model catalog (committed to repo)
 │   └── registry.go         # Registry: loads catalog, Lookup, Adapters, ProvidersForAdapter, ModelsForProvider
+├── log/                    # Structured logging and memory metrics
+│   ├── logger.go           # Logger (slog-based console/file handlers, numeric level filtering, reqID)
+│   └── metrics.go          # Memory metrics (HeapInUse, RSS, NumGC), HumanDuration, FormatMemDelta, FormatBytes
 ├── matcher/                # Tag matcher: Hugot engine, RPC client, embedding cache
 │   ├── adapter.go          # Matcher, Embedder, EmbeddingStore interfaces
 │   ├── hugot.go            # Hugot session (Go or ORT backend), cosine similarity, chunked encoding
@@ -222,6 +231,10 @@ internal/
 │       ├── tagmeasure.go   # TagMeasureTaskHandler (forks `kushim tagmeasure --run`)
 │       └── tagidentity.go  # TagIdentityTaskHandler (forks `kushim tagidentity --run`)
 ├── testutil/               # Test helpers (config fixtures, minimal PDFs, assertions)
+├── textnorm/               # Tag and DB-key canonicalization
+│   ├── tagname.go          # NormalizeTag — canonical tag names
+│   ├── tagjoint.go         # SplitJointTag — conjunction-based joint tag splitting
+│   └── normalize.go        # NormalizeForDB, FoldAccents — DB key normalization
 ├── tools/                  # Tool adapter framework + composition root
 │   ├── runner.go           # Unified tool runner (all adapters), runWithTimeout generic wrapper
 │   └── textreducer/        # Text summarization
@@ -229,13 +242,6 @@ internal/
 │       └── textrank.go     # TextRank: chunking, TF-IDF, weighted PageRank, diversity penalty
 ├── types/                  # Closed task-system vocabulary registry
 │   └── registry.go         # Batch sources, task types, statuses, validity/parse helpers
-├── utils/                  # Utilities
-│   ├── config.go           # ConfigDir() — returns ~/.config/edub-kushim
-│   ├── files.go            # ListFilePaths — scans inbox directories with MIME detection
-│   ├── logger.go           # Structured logging (file logging support, numeric level filtering)
-│   ├── metrics.go          # Memory metrics (HeapInUse, RSS, NumGC), HumanDuration, FormatMemDelta
-│   ├── parambag.go         # HTTP parameter parsing (query params, path values)
-│   └── text.go             # CountWords, EstimateTokensFromWords, EstimateTokens, CleanUp, Truncate, CleanCodeBlock, ContainsNonLatin, NormalizeForDB, StripTags, StripTagsPtr
 └── version/                # Application version
     └── version.go          # var Version = "3.0.0"
 

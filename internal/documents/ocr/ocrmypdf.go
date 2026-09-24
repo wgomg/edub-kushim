@@ -11,18 +11,18 @@ import (
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 
 	_mime "github.com/wgomg/edub-kushim/internal/documents/mime"
 )
 
 type OcrMyPdf struct {
-	logger    *utils.Logger
+	logger    *log.Logger
 	config    config.ToolConfig
 	languages []string
 }
 
-func NewOcrMyPdf(logger *utils.Logger, cfg config.ToolConfig, languages []string) (*OcrMyPdf, error) {
+func NewOcrMyPdf(logger *log.Logger, cfg config.ToolConfig, languages []string) (*OcrMyPdf, error) {
 	if _, err := exec.LookPath(cfg.Command); err != nil {
 		return nil, fmt.Errorf("%s not found in PATH: %w\nInstall it (e.g. 'sudo apt install ocrmypdf' or 'brew install ocrmypdf') or switch to the built-in 'gosseract' engine", cfg.Command, err)
 	}

@@ -169,7 +169,7 @@ HTTP layer never touches config internals directly.
 **Every method in this codebase uses a pointer receiver** (`*Tag`, `*Runner`,
 `*Queries`, `*Pool`), for two reasons: methods may mutate state, and structs
 containing `sync.Mutex`/`sync.RWMutex`/`atomic` fields must never be copied —
-`matcher.Cache`, `task.Pool`, and `utils.Logger` are always used through `*T`.
+`matcher.Cache`, `task.Pool`, and `log.Logger` are always used through `*T`.
 
 Struct tags do triple duty in the config layer — YAML for the file,
 `mapstructure` for the API's dot-key PATCH path, JSON for responses
@@ -193,7 +193,7 @@ instead (`NewTextExtractor(...) (TextExtractor, error)`, §4):
 
 ```go
 // internal/documents/textextractor/pdftotext.go:22 — validates at startup, with an install hint
-func NewPDFToText(logger *utils.Logger, cfg config.ToolConfig) (*PDFToText, error) {
+func NewPDFToText(logger *log.Logger, cfg config.ToolConfig) (*PDFToText, error) {
 	path, err := exec.LookPath("pdftotext")
 	if err != nil {
 		return nil, fmt.Errorf("pdftotext not found in PATH (install poppler-utils): %w", err)
@@ -271,7 +271,7 @@ capability — no interface wrapping it:
 
 ```go
 type Runner struct {
-	logger           *utils.Logger
+	logger           *log.Logger
 	config           *config.Config
 	textExtractor    textextractor.TextExtractor
 	ocr              ocr.OCR
@@ -529,7 +529,7 @@ role, _ := r.Context().Value(auth.RoleKey).(string)
 
 (`api/server.go:320` uses a raw `"reqid"` string key for the request ID.)
 
-The param bag rides the same mechanism (`internal/utils/parambag.go:114`): a
+The param bag rides the same mechanism (`internal/api/handlers/parambag.go:114`): a
 private `contextKey` + `WithParamBag`/`GetParamBag` pair.
 
 **Timeouts are enforced independently of adapter cooperation.** Because not
@@ -1090,7 +1090,7 @@ Each resource is a struct holding its dependencies; methods are the handlers
 ```go
 type TagHandler struct {
 	services *itypes.CrudServices
-	logger   *utils.Logger
+	logger   *log.Logger
 }
 func (h *TagHandler) List(w http.ResponseWriter, r *http.Request) { ... }
 ```
@@ -1204,7 +1204,7 @@ arguments with a raw `switch` loop before normal dispatch.
 
 ## 19. Logging
 
-Logging is `log/slog` wrapped in a project logger (`internal/utils/logger.go`).
+Logging is `log/slog` wrapped in a project logger (`internal/log/logger.go`).
 No logrus/zap.
 
 - **Custom level enum** mirrors syslog priorities (`LevelSilent` … `LevelDebug`,
@@ -1359,7 +1359,7 @@ sticks to `any`.
 | Struct embedding | `internal/database/client.go`, `internal/matcher/embedding_store.go`, `internal/auth/claims.go` |
 | Typed errors + `Unwrap` | `internal/errs/errs.go`, `internal/task/errors.go` |
 | `errors.Is`/`errors.As` | `internal/api/handlers/tag.go:17`, `internal/task/runner.go:62` |
-| Context values (typed keys) | `internal/auth/claims.go:30`, `internal/utils/parambag.go:114`, `internal/api/server.go:320` |
+| Context values (typed keys) | `internal/auth/claims.go:30`, `internal/api/handlers/parambag.go:114`, `internal/api/server.go:320` |
 | Transactions (defer rollback) | `internal/service/batch.go:400`, `internal/documents/consumption/consumer.go:292` |
 | sqlc generated queries | `internal/database/document.sql.go`, `db.go`, `models.go` |
 | Migrations/seeds via embed | `internal/database/schema.go` |
@@ -1372,8 +1372,8 @@ sticks to `any`.
 | Stub twin (`!cgo`) | `internal/cgo/mupdf_nocgo.go` |
 | `init()` factory swap | `internal/documents/ocr/adapter.go` + `gosseract.go:137` |
 | CLI registry + flag parser | `internal/commands/commands.go`, `internal/commands/flags.go` |
-| slog custom handlers | `internal/utils/logger.go` |
-| Table-driven tests | `internal/utils/logger_test.go:13` |
+| slog custom handlers | `internal/log/logger.go` |
+| Table-driven tests | `internal/log/logger_test.go:13` |
 | DB test harness | `internal/database/dbtest.go`, `internal/testutil/testutil.go` |
 | Generics | `internal/tools/runner.go:81`, `internal/service/result.go` |
 | Reflection | `internal/service/crud.go:23` |

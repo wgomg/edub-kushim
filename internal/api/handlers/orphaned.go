@@ -7,16 +7,16 @@ import (
 	"strings"
 
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/service"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type OrphanedHandler struct {
 	svc    *service.Orphaned
-	logger *utils.Logger
+	logger *log.Logger
 }
 
-func NewOrphanedHandler(svc *service.Orphaned, logger *utils.Logger) *OrphanedHandler {
+func NewOrphanedHandler(svc *service.Orphaned, logger *log.Logger) *OrphanedHandler {
 	return &OrphanedHandler{svc: svc, logger: logger}
 }
 

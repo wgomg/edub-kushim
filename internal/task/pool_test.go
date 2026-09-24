@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/types"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type countRunner struct {
@@ -21,7 +21,7 @@ func (r *countRunner) Next(_ context.Context, _ types.TaskType) error {
 
 func TestPool_StartStop(t *testing.T) {
 	runner := &countRunner{}
-	p := NewPool(utils.NewDiscardLogger(), runner, 2, 10*time.Millisecond, "test")
+	p := NewPool(log.NewDiscardLogger(), runner, 2, 10*time.Millisecond, "test")
 
 	ctx := t.Context()
 	p.Start(ctx)
@@ -39,7 +39,7 @@ func TestPool_StartStop(t *testing.T) {
 
 func TestPool_ContextCancellation(t *testing.T) {
 	runner := &countRunner{}
-	p := NewPool(utils.NewDiscardLogger(), runner, 1, 10*time.Millisecond, "test")
+	p := NewPool(log.NewDiscardLogger(), runner, 1, 10*time.Millisecond, "test")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	p.Start(ctx)
@@ -58,7 +58,7 @@ func TestPool_ContextCancellation(t *testing.T) {
 
 func TestPool_DoubleStop(t *testing.T) {
 	runner := &countRunner{}
-	p := NewPool(utils.NewDiscardLogger(), runner, 1, 50*time.Millisecond, "test")
+	p := NewPool(log.NewDiscardLogger(), runner, 1, 50*time.Millisecond, "test")
 
 	ctx := context.Background()
 	p.Start(ctx)
@@ -84,7 +84,7 @@ func (r *panicRunner) Next(_ context.Context, _ types.TaskType) error {
 
 func TestPool_PanicRecovery_Restart(t *testing.T) {
 	runner := &panicRunner{panicOn: 1}
-	p := NewPool(utils.NewDiscardLogger(), runner, 1, 10*time.Millisecond, "test")
+	p := NewPool(log.NewDiscardLogger(), runner, 1, 10*time.Millisecond, "test")
 
 	p.Start(t.Context())
 
@@ -101,7 +101,7 @@ func TestPool_PanicRecovery_Restart(t *testing.T) {
 
 func TestPool_PanicRecovery_StopDuringRestart(t *testing.T) {
 	runner := &panicRunner{panicOn: 1}
-	p := NewPool(utils.NewDiscardLogger(), runner, 1, 1*time.Second, "test")
+	p := NewPool(log.NewDiscardLogger(), runner, 1, 1*time.Second, "test")
 
 	p.Start(t.Context())
 	time.Sleep(30 * time.Millisecond)

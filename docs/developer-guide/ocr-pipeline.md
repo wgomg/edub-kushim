@@ -73,7 +73,7 @@ failure). The factory (`adapter.go:24-33`) switches on the configured engine,
 with `newGosseract` as the cgo-gated hook (§7 of the cgo guide):
 
 ```go
-func NewOCR(logger *utils.Logger, cfg config.ToolConfig, pdfOptimizerCmd string, languages []string, dataDir string, ocrWorkers int) (OCR, error) {
+func NewOCR(logger *log.Logger, cfg config.ToolConfig, pdfOptimizerCmd string, languages []string, dataDir string, ocrWorkers int) (OCR, error) {
 	switch cfg.Command {
 	case config.OCR.OcrMyPdf:
 		return NewOcrMyPdf(logger, cfg, languages)
@@ -364,7 +364,7 @@ Tesseract needs language data files. `EnsureLanguages`
 ```go
 var ensureOnce sync.Once
 
-func EnsureLanguages(logger *utils.Logger, dataDir string, languages []string) error {
+func EnsureLanguages(logger *log.Logger, dataDir string, languages []string) error {
 	var err error
 	ensureOnce.Do(func() {
 		if err = os.MkdirAll(dataDir, 0755); err != nil { ... }

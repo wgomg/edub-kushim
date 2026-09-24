@@ -9,9 +9,10 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/tags"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/textnorm"
 )
 
 type TagUpdatePair struct {
@@ -29,10 +30,10 @@ const (
 type Tag struct {
 	client   *database.Client
 	embedder matcher.Embedder
-	logger   *utils.Logger
+	logger   *log.Logger
 }
 
-func NewTag(client *database.Client, logger *utils.Logger, embedder matcher.Embedder) *Tag {
+func NewTag(client *database.Client, logger *log.Logger, embedder matcher.Embedder) *Tag {
 	return &Tag{
 		client:   client,
 		embedder: embedder,
@@ -269,12 +270,12 @@ func (s *Tag) CreatePlannedTx(ctx context.Context, q *database.Queries, plan tag
 
 	aliasNames := make([]string, 0, len(plan.Registrations)+len(plan.Aliases))
 	for _, reg := range plan.Registrations {
-		if name := utils.NormalizeTag(reg.Name); name != "" {
+		if name := textnorm.NormalizeTag(reg.Name); name != "" {
 			aliasNames = append(aliasNames, name)
 		}
 	}
 	for _, action := range plan.Aliases {
-		if name := utils.NormalizeTag(action.AliasName); name != "" {
+		if name := textnorm.NormalizeTag(action.AliasName); name != "" {
 			aliasNames = append(aliasNames, name)
 		}
 	}
@@ -295,14 +296,14 @@ func (s *Tag) CreatePlannedTx(ctx context.Context, q *database.Queries, plan tag
 	}
 
 	for i, reg := range plan.Registrations {
-		name := utils.NormalizeTag(reg.Name)
+		name := textnorm.NormalizeTag(reg.Name)
 
 		if reg.Disposition == tags.DispositionInvalid {
 			results[i] = CreateResult[database.Tag]{Status: Invalid}
 			continue
 		}
 		if reg.Disposition == tags.DispositionAlias {
-			canonical, ok := existingMap[utils.NormalizeTag(reg.Resolved)]
+			canonical, ok := existingMap[textnorm.NormalizeTag(reg.Resolved)]
 			if !ok {
 				results[i] = CreateResult[database.Tag]{Status: Invalid}
 				continue
@@ -335,7 +336,7 @@ func (s *Tag) CreatePlannedTx(ctx context.Context, q *database.Queries, plan tag
 		}
 
 		if reg.Resolved != "" {
-			if canonical, ok := existingMap[utils.NormalizeTag(reg.Resolved)]; ok {
+			if canonical, ok := existingMap[textnorm.NormalizeTag(reg.Resolved)]; ok {
 				status := Apply
 				if reg.Disposition == tags.DispositionConflict {
 					status = Conflict
@@ -376,7 +377,7 @@ func (s *Tag) CreatePlannedTx(ctx context.Context, q *database.Queries, plan tag
 	}
 
 	for _, action := range plan.Aliases {
-		if _, isBlocked := blocked[utils.NormalizeTag(action.AliasName)]; isBlocked {
+		if _, isBlocked := blocked[textnorm.NormalizeTag(action.AliasName)]; isBlocked {
 			continue
 		}
 		if err := s.applyAliasAction(ctx, q, existingMap, action); err != nil {
@@ -428,7 +429,7 @@ func (s *Tag) ApplyAliasPlan(ctx context.Context, actions []tags.AliasAction) er
 
 	var removed []string
 	for _, action := range actions {
-		if _, isBlocked := blocked[utils.NormalizeTag(action.AliasName)]; isBlocked {
+		if _, isBlocked := blocked[textnorm.NormalizeTag(action.AliasName)]; isBlocked {
 			continue
 		}
 		if err := s.applyAliasAction(ctx, txQ, existing, action); err != nil {
@@ -451,8 +452,8 @@ func (s *Tag) ApplyAliasPlan(ctx context.Context, actions []tags.AliasAction) er
 }
 
 func (s *Tag) applyAliasAction(ctx context.Context, q *database.Queries, existing map[string]database.Tag, action tags.AliasAction) error {
-	aliasName := utils.NormalizeTag(action.AliasName)
-	canonicalName := utils.NormalizeTag(action.Canonical)
+	aliasName := textnorm.NormalizeTag(action.AliasName)
+	canonicalName := textnorm.NormalizeTag(action.Canonical)
 	if aliasName == "" || canonicalName == "" || aliasName == canonicalName {
 		return nil
 	}
@@ -526,7 +527,7 @@ func (s *Tag) applyAliasAction(ctx context.Context, q *database.Queries, existin
 
 func (s *Tag) recordIdentityEvidence(ctx context.Context, q *database.Queries, rows []tags.EvidenceRow) error {
 	for _, row := range rows {
-		candidate := utils.NormalizeTag(row.Candidate)
+		candidate := textnorm.NormalizeTag(row.Candidate)
 		if candidate == "" {
 			continue
 		}
@@ -535,7 +536,7 @@ func (s *Tag) recordIdentityEvidence(ctx context.Context, q *database.Queries, r
 			criteria = json.RawMessage("{}")
 		}
 		var partner sql.NullString
-		if p := utils.NormalizeTag(row.Partner); p != "" {
+		if p := textnorm.NormalizeTag(row.Partner); p != "" {
 			partner = sql.NullString{String: p, Valid: true}
 		}
 		var verdict, model sql.NullString
@@ -589,7 +590,7 @@ func (s *Tag) Update(ctx context.Context, pairs []TagUpdatePair) ([]UpdateResult
 	}
 
 	for i, p := range pairs {
-		name := utils.NormalizeTag(p.Name)
+		name := textnorm.NormalizeTag(p.Name)
 		if name == "" {
 			results[i] = UpdateResult[database.Tag]{Status: UpdateInvalid}
 			continue
@@ -612,7 +613,7 @@ func (s *Tag) Update(ctx context.Context, pairs []TagUpdatePair) ([]UpdateResult
 		}
 
 		if err := s.client.Queries.UpdateTag(ctx, database.UpdateTagParams{
-			Name: utils.NormalizeTag(name),
+			Name: textnorm.NormalizeTag(name),
 			ID:   p.ID,
 		}); err != nil {
 			if errs.IsConstraint(err) {
@@ -677,7 +678,7 @@ func (s *Tag) Delete(ctx context.Context, ids []int64) ([]DeleteResult, error) {
 		}
 
 		if err := s.client.Queries.UpsertDeletedTag(ctx, database.UpsertDeletedTagParams{
-			Name: utils.NormalizeTag(tag.Name),
+			Name: textnorm.NormalizeTag(tag.Name),
 			Kind: DeletedTagKindBlocked,
 		}); err != nil {
 			s.logger.Error(nil, "tag service: record deleted tag %q: %v", tag.Name, err)

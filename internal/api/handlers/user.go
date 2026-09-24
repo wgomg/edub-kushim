@@ -9,16 +9,16 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/service"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type UserHandler struct {
 	services *service.CrudServices
-	logger   *utils.Logger
+	logger   *log.Logger
 }
 
-func NewUserHandler(services *service.CrudServices, logger *utils.Logger) *UserHandler {
+func NewUserHandler(services *service.CrudServices, logger *log.Logger) *UserHandler {
 	return &UserHandler{services: services, logger: logger}
 }
 
@@ -79,7 +79,7 @@ func (h *UserHandler) List(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
 
-	pb := utils.GetParamBag(r)
+	pb := GetParamBag(r)
 	if pb == nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
@@ -144,7 +144,7 @@ func (h *UserHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.Username = utils.StripTags(strings.TrimSpace(req.Username))
+	req.Username = stripTags(strings.TrimSpace(req.Username))
 	if req.Username == "" {
 		http.Error(w, "Username is required", http.StatusBadRequest)
 		return
@@ -184,7 +184,7 @@ func (h *UserHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.Username = utils.StripTags(strings.TrimSpace(req.Username))
+	req.Username = stripTags(strings.TrimSpace(req.Username))
 	if req.Username == "" {
 		http.Error(w, "Username is required", http.StatusBadRequest)
 		return

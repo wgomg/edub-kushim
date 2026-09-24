@@ -10,8 +10,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/wgomg/edub-kushim/internal/documents/storage"
 	"github.com/wgomg/edub-kushim/internal/types"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 func TestCreateAndGetDocument(t *testing.T) {
@@ -1887,7 +1887,7 @@ func TestBackfillTextHash(t *testing.T) {
 	if err := q.db.QueryRowContext(ctx, `SELECT text_hash FROM document WHERE document_id='bf-hash2'`).Scan(&got2); err != nil {
 		t.Fatalf("read bf-hash2: %v", err)
 	}
-	want1 := utils.SHA256Hex("hello world")
+	want1 := storage.SHA256Hex("hello world")
 	if !got1.Valid || got1.String != want1 {
 		t.Fatalf("bf-hash1.text_hash = %+v, want %q", got1, want1)
 	}
@@ -1924,7 +1924,7 @@ func TestTextHashPersistedAtWrite(t *testing.T) {
 	resetDB(t, q)
 	ctx := context.Background()
 
-	want := utils.SHA256Hex("round-trip content for the text_hash column")
+	want := storage.SHA256Hex("round-trip content for the text_hash column")
 	insertContentDoc(t, q, "hash-rt", "round-trip content for the text_hash column", sql.NullString{
 		String: want,
 		Valid:  true,

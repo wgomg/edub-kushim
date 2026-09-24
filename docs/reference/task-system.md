@@ -126,7 +126,7 @@ The `Runner.Next` method uses `errors.As(err, &tErr)` to extract `ReqID` from ha
 
 ### Struct
 
-- `ConsumeTaskHandler` — `consumer *consumption.Consumer`, `store *task.Store`, `logger *utils.Logger`
+- `ConsumeTaskHandler` — `consumer *consumption.Consumer`, `store *task.Store`, `logger *log.Logger`
   - **Methods**:
     - `NewConsumeTaskHandler(consumer, store, logger) *ConsumeTaskHandler`
     - `Handle(ctx, t) (json.RawMessage, error)` — Unmarshals payload (`file_path`, `document_id` UUID, `on_completed` enrich task ID), calls `FileFromPath` + `consumer.Process`. On success, if `on_completed` is set and a document was created, activates the linked enrich task via `Store.SetPending`. On **any** failure (payload unmarshal, empty `file_path`, `FileFromPath`, or `Process`), discards the linked enrich task via `withDiscardAttempt` — if the discard itself fails, the error is appended (`"; additionally failed to discard enrich task <id>: ..."`) so it lands in the task's `error` field.
@@ -163,7 +163,7 @@ The `ConfigTaskHandler` lives in its own package (`internal/configtask/`) to kee
 
 ### Struct
 
-- `ConfigTaskHandler` — `logger *utils.Logger`
+- `ConfigTaskHandler` — `logger *log.Logger`
   - **Methods**:
     - `NewConfigTaskHandler(logger) *ConfigTaskHandler`
     - `Handle(ctx, t) (json.RawMessage, error)` — Unmarshals `{"config_dir":"...", "op":"tessdata|hugot|migrate-db|migrate-storage", ...}`, loads config from disk, dispatches to `config.DownloadTessdataLanguage`, `config.DownloadHugotModel`, `handleMigrateDB`, or `handleMigrateStorage`

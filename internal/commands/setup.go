@@ -16,13 +16,13 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/service"
-	"github.com/wgomg/edub-kushim/internal/utils"
 	"golang.org/x/term"
 )
 
-func RunSetup(args []string, logger *utils.Logger) error {
-	configDir, err := utils.ConfigDir()
+func RunSetup(args []string, logger *log.Logger) error {
+	configDir, err := config.ConfigDir()
 	if err != nil {
 		return fmt.Errorf("cannot determine config directory: %w", err)
 	}
@@ -43,7 +43,7 @@ func RunSetup(args []string, logger *utils.Logger) error {
 	return runSetupWizard(args, logger)
 }
 
-func runSetupWizard(args []string, logger *utils.Logger) error {
+func runSetupWizard(args []string, logger *log.Logger) error {
 	addr := "0.0.0.0:8420"
 
 	srv := wizard.NewServer(addr, logger)
@@ -61,7 +61,7 @@ func runSetupWizard(args []string, logger *utils.Logger) error {
 	}
 }
 
-func runSetupCLI(args []string, logger *utils.Logger) error {
+func runSetupCLI(args []string, logger *log.Logger) error {
 	var langs, inboxDir, storageDir, optimizationFallback, ocrEngine, pdfEngine, textExtractorEngine, dbDsn string
 	var resetDb, cli bool
 	var adminUser, adminPassword string
@@ -139,7 +139,7 @@ Flags:
 		return fmt.Errorf("invalid --consumer-textextractor-engine %q: must be one of %v", textExtractorEngine, validTextExtractorEngines)
 	}
 
-	configDir, err := utils.ConfigDir()
+	configDir, err := config.ConfigDir()
 	if err != nil {
 		logger.Fatal("Cannot determine home directory:", err)
 	}

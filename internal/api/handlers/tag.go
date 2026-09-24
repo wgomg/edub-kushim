@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/service"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 func isMatcherUnavailable(err error) bool {
@@ -30,10 +30,10 @@ func matcherUnavailableResponse(w http.ResponseWriter) {
 
 type TagHandler struct {
 	services *service.CrudServices
-	logger   *utils.Logger
+	logger   *log.Logger
 }
 
-func NewTagHandler(services *service.CrudServices, logger *utils.Logger) *TagHandler {
+func NewTagHandler(services *service.CrudServices, logger *log.Logger) *TagHandler {
 	return &TagHandler{services: services, logger: logger}
 }
 
@@ -41,7 +41,7 @@ func (h *TagHandler) List(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
 
-	pb := utils.GetParamBag(r)
+	pb := GetParamBag(r)
 	if pb == nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
@@ -100,7 +100,7 @@ func (h *TagHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.Name = utils.StripTags(strings.TrimSpace(req.Name))
+	req.Name = stripTags(strings.TrimSpace(req.Name))
 	if req.Name == "" {
 		http.Error(w, "Tag name is required", http.StatusBadRequest)
 		return
@@ -153,7 +153,7 @@ func (h *TagHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.Name = utils.StripTags(strings.TrimSpace(req.Name))
+	req.Name = stripTags(strings.TrimSpace(req.Name))
 	if req.Name == "" {
 		http.Error(w, "Tag name is required", http.StatusBadRequest)
 		return
@@ -220,7 +220,7 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
 
-	pb := utils.GetParamBag(r)
+	pb := GetParamBag(r)
 	if pb == nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
@@ -372,7 +372,7 @@ func (h *TagHandler) ListDeleted(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
 
-	pb := utils.GetParamBag(r)
+	pb := GetParamBag(r)
 	if pb == nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
@@ -430,7 +430,7 @@ func (h *TagHandler) MergeSuggestions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
 
-	pb := utils.GetParamBag(r)
+	pb := GetParamBag(r)
 	if pb == nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return

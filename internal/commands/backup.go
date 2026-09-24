@@ -14,8 +14,8 @@ import (
 	"github.com/wgomg/edub-kushim/internal/backup"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/documents/storage"
 	"github.com/wgomg/edub-kushim/internal/types"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 func checkBackupPreconditions(c *Container, operation string) (*database.Client, error) {
@@ -296,7 +296,7 @@ func checkRestoreDiskSpace(tempParent, storageParent string, manifest *backup.Ma
 			tempParent, float64(required)/gib, float64(free)/gib, float64(need)/gib)
 	}
 
-	onSameDevice, err := utils.SameDevice(tempParent, storageParent)
+	onSameDevice, err := storage.SameDevice(tempParent, storageParent)
 	if err != nil {
 		return fmt.Errorf("stat %s: %w", storageParent, err)
 	}

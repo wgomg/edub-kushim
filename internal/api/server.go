@@ -16,18 +16,18 @@ import (
 	"github.com/wgomg/edub-kushim/internal/configtask"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/llm"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/static"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type Server struct {
 	httpServer    *http.Server
-	logger        *utils.Logger
+	logger        *log.Logger
 	addr          string
 	cfg           atomic.Pointer[config.Config]
 	matcherClient *matcher.MatcherClient
@@ -40,7 +40,7 @@ type Server struct {
 	}
 }
 
-func NewServer(cfg config.Config, logger *utils.Logger, db *sql.DB) *Server {
+func NewServer(cfg config.Config, logger *log.Logger, db *sql.DB) *Server {
 	addr := fmt.Sprintf("%s:%d", cfg.Srv.Host, cfg.Srv.Port)
 
 	if cfg.Srv.SessionSecret == "" {
@@ -188,7 +188,7 @@ func registerStaticRoutes(mux *http.ServeMux) {
 }
 
 func registerRoutes(
-	logger *utils.Logger,
+	logger *log.Logger,
 	client *database.Client,
 	dispatcher *task.Dispatcher,
 	getConfig func() *config.Config,
@@ -351,11 +351,11 @@ func registerRoutes(
 	return mux
 }
 
-func chainMiddleware(logger *utils.Logger, getSecret func() string, getAuthEnabled func() bool, validateAPIKey func(ctx context.Context, rawKey string) (*database.User, error), getUserByID func(ctx context.Context, id int64) (*database.User, error), h http.Handler) http.Handler {
+func chainMiddleware(logger *log.Logger, getSecret func() string, getAuthEnabled func() bool, validateAPIKey func(ctx context.Context, rawKey string) (*database.User, error), getUserByID func(ctx context.Context, id int64) (*database.User, error), h http.Handler) http.Handler {
 	return requestMiddleware(logger, AuthMiddleware(parambagMiddleware(h), getSecret, getAuthEnabled, validateAPIKey, getUserByID))
 }
 
-func requestMiddleware(logger *utils.Logger, next http.Handler) http.Handler {
+func requestMiddleware(logger *log.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		reqID := uuid.New().String()
 
@@ -369,8 +369,8 @@ func requestMiddleware(logger *utils.Logger, next http.Handler) http.Handler {
 
 func parambagMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		pb := utils.NewParamBag(r)
-		r = utils.WithParamBag(r, pb)
+		pb := handlers.NewParamBag(r)
+		r = handlers.WithParamBag(r, pb)
 
 		next.ServeHTTP(w, r)
 	})

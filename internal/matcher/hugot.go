@@ -23,7 +23,7 @@ import (
 	"github.com/knights-analytics/hugot/util/safeconv"
 
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 )
 
 type modelConfigJSON struct {
@@ -31,7 +31,7 @@ type modelConfigJSON struct {
 }
 
 type Hugot struct {
-	logger           *utils.Logger
+	logger           *log.Logger
 	session          *hugot.Session
 	pipeline         *pipelines.FeatureExtractionPipeline
 	topN             int
@@ -54,7 +54,7 @@ type match struct {
 	similarity float64
 }
 
-func NewHugot(logger *utils.Logger, tmCfg config.TagMatcherConfig, pipeName string) (*Hugot, error) {
+func NewHugot(logger *log.Logger, tmCfg config.TagMatcherConfig, pipeName string) (*Hugot, error) {
 	logger.Debug(nil, "tagmatcher configured: backend=%s", tmCfg.Hugot.Backend)
 	session, err := getBackendSession(tmCfg, logger)
 	if err != nil {
@@ -560,7 +560,7 @@ func readMaxPositionEmbeddings(path string) (int, error) {
 	return cfg.MaxPositionEmbeddings, nil
 }
 
-func getBackendSession(tmCfg config.TagMatcherConfig, logger *utils.Logger) (*hugot.Session, error) {
+func getBackendSession(tmCfg config.TagMatcherConfig, logger *log.Logger) (*hugot.Session, error) {
 	switch strings.ToLower(tmCfg.Hugot.Backend) {
 	// case "XLA":
 	// 	session, err = hugot.NewXLASession(context.Background())
@@ -599,7 +599,7 @@ func getBackendSession(tmCfg config.TagMatcherConfig, logger *utils.Logger) (*hu
 // file. Must be updated together with the version pinned in the URL below.
 const onnxRuntimeTgzSHA256 = "1254da24fb389cf39dc0ff3451ab48301740ffbfcbaf646849df92f80ee92c57"
 
-func downloadLib(dest, soPath string, logger *utils.Logger) error {
+func downloadLib(dest, soPath string, logger *log.Logger) error {
 	if _, err := os.Stat(soPath); err == nil {
 		return nil
 	}

@@ -6,16 +6,16 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/service"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type DocumentTypeHandler struct {
 	services *service.CrudServices
-	logger   *utils.Logger
+	logger   *log.Logger
 }
 
-func NewDocumentTypeHandler(services *service.CrudServices, logger *utils.Logger) *DocumentTypeHandler {
+func NewDocumentTypeHandler(services *service.CrudServices, logger *log.Logger) *DocumentTypeHandler {
 	return &DocumentTypeHandler{services: services, logger: logger}
 }
 
@@ -23,7 +23,7 @@ func (h *DocumentTypeHandler) List(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
 
-	pb := utils.GetParamBag(r)
+	pb := GetParamBag(r)
 	if pb == nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
@@ -70,13 +70,13 @@ func (h *DocumentTypeHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.Name = utils.StripTags(strings.TrimSpace(req.Name))
+	req.Name = stripTags(strings.TrimSpace(req.Name))
 	if req.Name == "" {
 		http.Error(w, "Document type name is required", http.StatusBadRequest)
 		return
 	}
 
-	req.Description = utils.StripTags(req.Description)
+	req.Description = stripTags(req.Description)
 
 	results, err := h.services.DocumentType.Create(ctx, []service.CreateDocumentTypeInput{
 		{Name: req.Name, Description: req.Description},
@@ -123,13 +123,13 @@ func (h *DocumentTypeHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.Name = utils.StripTags(strings.TrimSpace(req.Name))
+	req.Name = stripTags(strings.TrimSpace(req.Name))
 	if req.Name == "" {
 		http.Error(w, "Document type name is required", http.StatusBadRequest)
 		return
 	}
 
-	req.Description = utils.StripTags(req.Description)
+	req.Description = stripTags(req.Description)
 
 	results, err := h.services.DocumentType.Update(ctx, []service.DocTypeUpdatePair{
 		{ID: id, Name: req.Name, Description: req.Description},

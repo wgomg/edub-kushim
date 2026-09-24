@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 )
 
 type TextExtractor interface {
@@ -45,7 +45,7 @@ func (c *CompositeExtractor) Name() string {
 	return "composite"
 }
 
-func NewTextExtractor(logger *utils.Logger, cfg config.ToolConfig) (TextExtractor, error) {
+func NewTextExtractor(logger *log.Logger, cfg config.ToolConfig) (TextExtractor, error) {
 	var pdfExtractor TextExtractor
 	switch cfg.Command {
 	case config.TextExtractor.PdfToText:

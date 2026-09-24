@@ -10,8 +10,8 @@ import (
 	"github.com/wgomg/edub-kushim/internal/backup"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/task"
-	"github.com/wgomg/edub-kushim/internal/utils"
 	"github.com/wgomg/edub-kushim/internal/version"
 )
 
@@ -20,10 +20,10 @@ var _ task.Dedupable = (*MirrorTaskHandler)(nil)
 type MirrorTaskHandler struct {
 	queries   *database.Queries
 	getConfig func() *config.Config
-	logger    *utils.Logger
+	logger    *log.Logger
 }
 
-func NewMirrorTaskHandler(queries *database.Queries, getConfig func() *config.Config, logger *utils.Logger) *MirrorTaskHandler {
+func NewMirrorTaskHandler(queries *database.Queries, getConfig func() *config.Config, logger *log.Logger) *MirrorTaskHandler {
 	return &MirrorTaskHandler{
 		queries:   queries,
 		getConfig: getConfig,

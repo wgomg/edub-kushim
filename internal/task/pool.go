@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/types"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type Nexter interface {
@@ -15,7 +15,7 @@ type Nexter interface {
 }
 
 type Pool struct {
-	logger   *utils.Logger
+	logger   *log.Logger
 	runner   Nexter
 	workers  int
 	interval time.Duration
@@ -27,7 +27,7 @@ type Pool struct {
 	cancel   context.CancelFunc
 }
 
-func NewPool(logger *utils.Logger, runner Nexter, workers int, interval time.Duration, taskType string) *Pool {
+func NewPool(logger *log.Logger, runner Nexter, workers int, interval time.Duration, taskType string) *Pool {
 	return &Pool{
 		logger:   logger,
 		runner:   runner,
@@ -108,8 +108,8 @@ func (p *Pool) runWorker(id int, logPrefix string) (rerr error) {
 		case <-p.ctx.Done():
 			return nil
 		case <-memTicker.C:
-			mem := utils.ReadMemFull()
-			p.logger.Debug(nil, "%s periodic memory: %s", logPrefix, utils.FormatMemFull(mem))
+			mem := log.ReadMemFull()
+			p.logger.Debug(nil, "%s periodic memory: %s", logPrefix, log.FormatMemFull(mem))
 		case <-time.After(p.interval):
 			if err := p.runner.Next(p.ctx, types.TaskType(p.taskType)); err != nil {
 				p.logger.Error(nil, "%s: %v", logPrefix, err)

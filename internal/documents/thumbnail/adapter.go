@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 )
 
 // Thumbnailer is the interface for document thumbnail adapters.
@@ -17,11 +17,11 @@ type Thumbnailer interface {
 
 // newMuPDF is overridden by mupdf.go via init() when CGo is available.
 // The default returns an error.
-var newMuPDF = func(logger *utils.Logger, cfg config.ToolConfig, dpi, maxWidth, quality int) (Thumbnailer, error) {
+var newMuPDF = func(logger *log.Logger, cfg config.ToolConfig, dpi, maxWidth, quality int) (Thumbnailer, error) {
 	return nil, fmt.Errorf("mupdf thumbnails require CGo — rebuild with CGO_ENABLED=1 and install the MuPDF dev headers")
 }
 
-func NewThumbnailer(logger *utils.Logger, cfg config.ToolConfig, dpi, maxWidth, quality int) (Thumbnailer, error) {
+func NewThumbnailer(logger *log.Logger, cfg config.ToolConfig, dpi, maxWidth, quality int) (Thumbnailer, error) {
 	switch cfg.Command {
 	case config.Thumbnail.MuPDF:
 		return newMuPDF(logger, cfg, dpi, maxWidth, quality)

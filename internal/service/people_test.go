@@ -6,7 +6,7 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/testutil"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/textnorm"
 )
 
 func newTestPeople(t *testing.T) (*People, *database.Client) {
@@ -230,7 +230,7 @@ func TestPeople_CountByName(t *testing.T) {
 
 func TestNormalizeForDB_roundtrip(t *testing.T) {
 	name := "María-José O'Brien"
-	normalized := utils.NormalizeForDB(name)
+	normalized := textnorm.NormalizeForDB(name)
 	expected := "maria jose obrien"
 	if normalized != expected {
 		t.Errorf("NormalizeForDB(%q) = %q, want %q", name, normalized, expected)

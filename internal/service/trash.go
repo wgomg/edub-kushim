@@ -14,7 +14,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/documents/storage"
 	"github.com/wgomg/edub-kushim/internal/errs"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 )
 
 const (
@@ -26,12 +26,12 @@ const (
 type TrashService struct {
 	client *database.Client
 	cfg    *config.Config
-	logger *utils.Logger
+	logger *log.Logger
 	ctx    context.Context
 	cancel context.CancelFunc
 }
 
-func NewTrashService(client *database.Client, cfg *config.Config, logger *utils.Logger) *TrashService {
+func NewTrashService(client *database.Client, cfg *config.Config, logger *log.Logger) *TrashService {
 	return &TrashService{client: client, cfg: cfg, logger: logger}
 }
 

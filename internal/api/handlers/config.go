@@ -20,10 +20,10 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/documents/mime"
 	"github.com/wgomg/edub-kushim/internal/errs"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/task"
 	itypes "github.com/wgomg/edub-kushim/internal/types"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type ConfigHandler struct {
@@ -31,7 +31,7 @@ type ConfigHandler struct {
 	onConfigSet func(*config.Config)
 	client      *database.Client
 	queries     *database.Queries
-	logger      *utils.Logger
+	logger      *log.Logger
 	dispatcher  *task.Dispatcher
 	services    *service.CrudServices
 	OnBootstrap func(configDir string) (*config.Config, *database.Client, *task.Dispatcher, error)
@@ -41,7 +41,7 @@ func NewConfigHandler(
 	getConfig func() *config.Config,
 	onConfigSet func(*config.Config),
 	client *database.Client,
-	logger *utils.Logger,
+	logger *log.Logger,
 	dispatcher *task.Dispatcher,
 	services *service.CrudServices,
 ) *ConfigHandler {
@@ -664,7 +664,7 @@ func (h *ConfigHandler) CreateAdminUser(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	req.Username = utils.StripTags(strings.TrimSpace(req.Username))
+	req.Username = stripTags(strings.TrimSpace(req.Username))
 	if req.Username == "" {
 		http.Error(w, "Username is required", http.StatusBadRequest)
 		return
@@ -700,7 +700,7 @@ func (h *ConfigHandler) CreateAdminUser(w http.ResponseWriter, r *http.Request) 
 func sanitizeConfigStrings(v any) any {
 	switch m := v.(type) {
 	case string:
-		return utils.StripTags(m)
+		return stripTags(m)
 	case map[string]any:
 		for k, val := range m {
 			if k == "prompt_template" {

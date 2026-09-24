@@ -6,7 +6,7 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 )
 
 type CreatePeopleTypeInput struct {
@@ -22,10 +22,10 @@ type PeopleTypeUpdatePair struct {
 
 type PeopleType struct {
 	queries *database.Queries
-	logger  *utils.Logger
+	logger  *log.Logger
 }
 
-func NewPeopleType(queries *database.Queries, logger *utils.Logger) *PeopleType {
+func NewPeopleType(queries *database.Queries, logger *log.Logger) *PeopleType {
 	return &PeopleType{queries: queries, logger: logger}
 }
 

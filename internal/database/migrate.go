@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/types"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 func ValidateMigrationDestination(ctx context.Context, db *sql.DB) error {
@@ -32,7 +32,7 @@ func ValidateMigrationDestination(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
-func WaitForTaskDrain(ctx context.Context, queries *Queries, logger *utils.Logger, what string, onWait ...func(count int64)) error {
+func WaitForTaskDrain(ctx context.Context, queries *Queries, logger *log.Logger, what string, onWait ...func(count int64)) error {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
@@ -58,7 +58,7 @@ func WaitForTaskDrain(ctx context.Context, queries *Queries, logger *utils.Logge
 	}
 }
 
-func StartMaintenanceLockHeartbeat(ctx context.Context, queries *Queries, logger *utils.Logger, interval time.Duration, token uuid.NullUUID) func() {
+func StartMaintenanceLockHeartbeat(ctx context.Context, queries *Queries, logger *log.Logger, interval time.Duration, token uuid.NullUUID) func() {
 	stopCh := make(chan struct{})
 	var stopOnce sync.Once
 	go func() {

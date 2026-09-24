@@ -11,9 +11,9 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/documents/storage"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 	"github.com/wgomg/edub-kushim/internal/types"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 func setupScanTest(t *testing.T) (*config.Config, *database.Client, func()) {
@@ -32,7 +32,7 @@ func TestScanAndEnqueue_EmptyInbox(t *testing.T) {
 	cfg, client, cleanup := setupScanTest(t)
 	defer cleanup()
 
-	logger := utils.NewDiscardLogger()
+	logger := log.NewDiscardLogger()
 	batchID, count, err := ScanAndEnqueue(context.Background(), cfg, client, logger)
 	if err != nil {
 		t.Fatalf("ScanAndEnqueue: %v", err)
@@ -52,7 +52,7 @@ func TestScanAndEnqueue_CreatesBatchAndTasks(t *testing.T) {
 	pdfPath := filepath.Join(cfg.Storage.ConsumptionDir, "new-doc.pdf")
 	testutil.CreateTestPDF(t, pdfPath, "unique content alpha")
 
-	logger := utils.NewDiscardLogger()
+	logger := log.NewDiscardLogger()
 	batchID, count, err := ScanAndEnqueue(context.Background(), cfg, client, logger)
 	if err != nil {
 		t.Fatalf("ScanAndEnqueue: %v", err)
@@ -129,7 +129,7 @@ func TestScanAndEnqueue_SkipsDuplicates(t *testing.T) {
 	// Insert a document with the file's real MD5 and SHA512
 	pdfPath := filepath.Join(cfg.Storage.ConsumptionDir, "dup-doc.pdf")
 	testutil.CreateTestPDF(t, pdfPath, "duplicate content")
-	md5, err := utils.CalculateMD5(pdfPath)
+	md5, err := storage.CalculateMD5(pdfPath)
 	if err != nil {
 		t.Fatalf("CalculateMD5: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestScanAndEnqueue_SkipsDuplicates(t *testing.T) {
 		t.Fatalf("CreateDocument: %v", err)
 	}
 
-	logger := utils.NewDiscardLogger()
+	logger := log.NewDiscardLogger()
 	batchID, count, err := ScanAndEnqueue(context.Background(), cfg, client, logger)
 	if err != nil {
 		t.Fatalf("ScanAndEnqueue: %v", err)
@@ -185,7 +185,7 @@ func TestScanAndEnqueue_MixedNewAndDuplicate(t *testing.T) {
 	// Insert a document with the file's real MD5 and SHA512
 	dupPath := filepath.Join(cfg.Storage.ConsumptionDir, "existing.pdf")
 	testutil.CreateTestPDF(t, dupPath, "existing content")
-	md5, err := utils.CalculateMD5(dupPath)
+	md5, err := storage.CalculateMD5(dupPath)
 	if err != nil {
 		t.Fatalf("CalculateMD5: %v", err)
 	}
@@ -215,7 +215,7 @@ func TestScanAndEnqueue_MixedNewAndDuplicate(t *testing.T) {
 	newPath := filepath.Join(cfg.Storage.ConsumptionDir, "new-doc.pdf")
 	testutil.CreateTestPDF(t, newPath, "brand new content")
 
-	logger := utils.NewDiscardLogger()
+	logger := log.NewDiscardLogger()
 	batchID, count, err := ScanAndEnqueue(context.Background(), cfg, client, logger)
 	if err != nil {
 		t.Fatalf("ScanAndEnqueue: %v", err)
@@ -256,7 +256,7 @@ func TestScanAndEnqueue_MultipleFiles(t *testing.T) {
 		testutil.CreateTestPDF(t, pdfPath, "content"+string(rune('a'+i)))
 	}
 
-	logger := utils.NewDiscardLogger()
+	logger := log.NewDiscardLogger()
 	batchID, count, err := ScanAndEnqueue(context.Background(), cfg, client, logger)
 	if err != nil {
 		t.Fatalf("ScanAndEnqueue: %v", err)
@@ -294,7 +294,7 @@ func TestScanAndEnqueue_PausedBatchesSkip(t *testing.T) {
 	pdfPath := filepath.Join(cfg.Storage.ConsumptionDir, "should-not-be-processed.pdf")
 	testutil.CreateTestPDF(t, pdfPath, "content that should not be scanned")
 
-	logger := utils.NewDiscardLogger()
+	logger := log.NewDiscardLogger()
 	batchID, count, err := ScanAndEnqueue(context.Background(), cfg, client, logger)
 	if err != nil {
 		t.Fatalf("ScanAndEnqueue: %v", err)

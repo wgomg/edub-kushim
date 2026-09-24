@@ -11,22 +11,23 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/tags"
+	"github.com/wgomg/edub-kushim/internal/textnorm"
 	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/types"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type IdentityResolver struct {
 	getConfig func() *config.Config
-	logger    *utils.Logger
+	logger    *log.Logger
 	client    *database.Client
 	runner    *tools.Runner
 	services  *service.CrudServices
 }
 
-func NewIdentityResolver(getConfig func() *config.Config, logger *utils.Logger, client *database.Client, services *service.CrudServices, runner *tools.Runner) *IdentityResolver {
+func NewIdentityResolver(getConfig func() *config.Config, logger *log.Logger, client *database.Client, services *service.CrudServices, runner *tools.Runner) *IdentityResolver {
 	return &IdentityResolver{
 		getConfig: getConfig,
 		logger:    logger,
@@ -307,7 +308,7 @@ func (r *IdentityResolver) resolvePairs(ctx context.Context, cfg *config.Config,
 
 func (r *IdentityResolver) applyFold(ctx context.Context, from, to string) (bool, error) {
 	// the block can land while the fold waits for resolution
-	if _, err := r.client.Queries.GetDeletedTag(ctx, utils.NormalizeTag(to)); err == nil {
+	if _, err := r.client.Queries.GetDeletedTag(ctx, textnorm.NormalizeTag(to)); err == nil {
 		r.logger.Info(nil, "tag identity: fold %q -> %q skipped: target is deleted", from, to)
 		return false, nil
 	} else if !errors.Is(err, sql.ErrNoRows) {

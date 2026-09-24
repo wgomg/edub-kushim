@@ -18,9 +18,9 @@ import (
 	"github.com/wgomg/edub-kushim/internal/documents/mime"
 	"github.com/wgomg/edub-kushim/internal/documents/storage"
 	"github.com/wgomg/edub-kushim/internal/errs"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/service"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 func sanitizeSnippetHTML(raw string) string {
@@ -34,13 +34,13 @@ func sanitizeSnippetHTML(raw string) string {
 
 type DocumentHandler struct {
 	client    *database.Client
-	logger    *utils.Logger
+	logger    *log.Logger
 	engine    *search.Engine
 	services  *service.CrudServices
 	getConfig func() *config.Config
 }
 
-func NewDocumentHandler(client *database.Client, logger *utils.Logger, engine *search.Engine, services *service.CrudServices, getConfig func() *config.Config) *DocumentHandler {
+func NewDocumentHandler(client *database.Client, logger *log.Logger, engine *search.Engine, services *service.CrudServices, getConfig func() *config.Config) *DocumentHandler {
 	return &DocumentHandler{
 		client:    client,
 		logger:    logger,
@@ -56,7 +56,7 @@ func (h *DocumentHandler) ListDocuments(w http.ResponseWriter, r *http.Request) 
 
 	h.logger.Debug(&reqID, "List documents requested")
 
-	pb := utils.GetParamBag(r)
+	pb := GetParamBag(r)
 	if pb == nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
@@ -245,7 +245,7 @@ func (h *DocumentHandler) SearchDocuments(w http.ResponseWriter, r *http.Request
 	reqID := ctx.Value("reqid").(string)
 	h.logger.Debug(&reqID, "Search documents requested")
 
-	pb := utils.GetParamBag(r)
+	pb := GetParamBag(r)
 	if pb == nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
@@ -628,14 +628,14 @@ func (h *DocumentHandler) UpdateDocument(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	req.Title = utils.StripTags(strings.TrimSpace(req.Title))
+	req.Title = stripTags(strings.TrimSpace(req.Title))
 	if req.Title == "" {
 		http.Error(w, "Title is required", http.StatusBadRequest)
 		return
 	}
 
-	req.Language = utils.StripTags(strings.TrimSpace(req.Language))
-	req.TextContent = utils.StripTagsPtr(req.TextContent)
+	req.Language = stripTags(strings.TrimSpace(req.Language))
+	req.TextContent = stripTagsPtr(req.TextContent)
 
 	if req.DocumentTypeID < 1 {
 		http.Error(w, "Invalid document type", http.StatusBadRequest)
@@ -671,7 +671,7 @@ func (h *DocumentHandler) UpdateDocument(w http.ResponseWriter, r *http.Request)
 
 	var textHash sql.NullString
 	if textContent.Valid {
-		textHash = sql.NullString{String: utils.SHA256Hex(textContent.String), Valid: true}
+		textHash = sql.NullString{String: storage.SHA256Hex(textContent.String), Valid: true}
 	}
 
 	err = h.client.UpdateDocumentEditable(ctx, database.UpdateDocumentEditableParams{

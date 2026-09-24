@@ -310,7 +310,7 @@ sit outside the similarity band and never reach adjudication; merges are inciden
 and human rejection deletes names through the blocklist (terminal) where the model's
 disposition for a same-intent label is alias/merge.
 
-**S4 — atomicity.** Runtime, `utils.SplitJointTag` splits on the conjunctions `and`,
+**S4 — atomicity.** Runtime, `textnorm.SplitJointTag` splits on the conjunctions `and`,
 `or`, `vs`, `versus`; the adjudicator can keep/split when enabled, and the reconciler
 re-uses the same detector for stored tags. P4 is wider than conjunctions and is a set
 test, not a surface one. One asymmetry matters for any plan: at emission time a novel

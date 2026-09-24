@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 )
 
 type PdfOptimizer interface {
@@ -12,7 +12,7 @@ type PdfOptimizer interface {
 	Name() string
 }
 
-func NewPdfOptimizer(logger *utils.Logger, cfg config.ToolConfig) (PdfOptimizer, error) {
+func NewPdfOptimizer(logger *log.Logger, cfg config.ToolConfig) (PdfOptimizer, error) {
 	switch cfg.Command {
 	case config.PdfOptimizer.GS:
 		gs, err := NewGhostscript(logger, cfg)

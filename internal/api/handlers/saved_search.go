@@ -8,15 +8,15 @@ import (
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/database"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 )
 
 type SavedSearchHandler struct {
 	queries *database.Queries
-	logger  *utils.Logger
+	logger  *log.Logger
 }
 
-func NewSavedSearchHandler(queries *database.Queries, logger *utils.Logger) *SavedSearchHandler {
+func NewSavedSearchHandler(queries *database.Queries, logger *log.Logger) *SavedSearchHandler {
 	return &SavedSearchHandler{
 		queries: queries,
 		logger:  logger,
@@ -34,7 +34,7 @@ func (h *SavedSearchHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.Name = utils.StripTags(strings.TrimSpace(req.Name))
+	req.Name = stripTags(strings.TrimSpace(req.Name))
 	if req.Name == "" {
 		http.Error(w, "Name is required", http.StatusBadRequest)
 		return

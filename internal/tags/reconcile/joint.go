@@ -12,7 +12,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/tags/policy"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/textnorm"
 )
 
 type jointEntry struct {
@@ -28,7 +28,7 @@ type jointEntry struct {
 func (r *Reconciler) buildJointWorklist(allTags []database.Tag, tagCounts map[string]int64) []*jointEntry {
 	var entries []*jointEntry
 	for _, t := range allTags {
-		segments := utils.SplitJointTag(t.Name)
+		segments := textnorm.SplitJointTag(t.Name)
 		if len(segments) < 2 {
 			continue
 		}

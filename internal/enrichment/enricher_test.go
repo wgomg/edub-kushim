@@ -14,12 +14,12 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/tags/policy"
 	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/types"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 func TestPlanIdentity_LogsPendingPairs(t *testing.T) {
@@ -30,7 +30,7 @@ func TestPlanIdentity_LogsPendingPairs(t *testing.T) {
 	t.Cleanup(func() { db.Close() })
 
 	var buf bytes.Buffer
-	logger := utils.NewLoggerWithWriter(&buf)
+	logger := log.NewLoggerWithWriter(&buf)
 
 	adj := &mockAdjudicator{
 		adjudicateFn: func(_ context.Context, _ []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error) {
@@ -85,7 +85,7 @@ func TestPlanIdentity_FoldStaysPendingWithoutJudge(t *testing.T) {
 		t.Fatalf("clear tag_identity_event: %v", err)
 	}
 
-	logger := utils.NewDiscardLogger()
+	logger := log.NewDiscardLogger()
 	runner := &tools.Runner{}
 	setUnexportedField(t, runner, "logger", logger)
 	setUnexportedField(t, runner, "config", &config.Config{
@@ -223,7 +223,7 @@ func newAdjudicationEnricher(t *testing.T) (*Enricher, *database.Queries, *mockA
 	adj := &mockAdjudicator{}
 	matcher := &mockTagMatcher{}
 
-	logger := utils.NewDiscardLogger()
+	logger := log.NewDiscardLogger()
 	runner := &tools.Runner{}
 	setUnexportedField(t, runner, "logger", logger)
 	setUnexportedField(t, runner, "config", &config.Config{

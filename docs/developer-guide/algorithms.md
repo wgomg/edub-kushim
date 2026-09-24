@@ -33,13 +33,16 @@ or replace any of these algorithms.
 
 ## 1. Orientation
 
-The algorithms live in two places:
+The algorithms live in these places:
 
 - `internal/tools/textreducer/textrank.go` — the extractive
   summarizer (the `TextRank` adapter behind the `textreducer` tool).
-- `internal/utils/text.go` — normalization, truncation, token estimation,
-  code-block cleaning.
-- `internal/utils/files.go` — streaming MD5/SHA-512 for content dedup.
+- `internal/textnorm/` — string normalization shared by tags and people
+  (tag canonicalization, DB key normalization, accent folding).
+- `internal/llm/analyzer/` and `internal/enrichment/` — token estimation,
+  code-block cleaning, and title truncation.
+- `internal/documents/storage/` — streaming MD5 and SHA-256 hashing for
+  content dedup and the text-hash column.
 
 Why they exist: the enricher must not send entire documents to the LLM (token
 budgets) or to the embedding model (context limits). Instead it *reduces* the
@@ -69,7 +72,7 @@ final score; then a **greedy selection** pass that penalizes redundancy.
 The whole pipeline, in `Reduce` (`textrank.go:55-125`):
 
 ```go
-cleanedUpContent := utils.CleanUp(content)
+cleanedUpContent := cleanUp(content)
 wordsArray := strings.Fields(cleanedUpContent)
 
 chunks := createChunks(wordsArray, chunkSize)
@@ -90,11 +93,11 @@ Weights are constants at the top of `Reduce`
 Before anything else, the text is cleaned (`textrank.go:62-63`):
 
 ```go
-cleanedUpContent := utils.CleanUp(content)
+cleanedUpContent := cleanUp(content)
 wordsArray := strings.Fields(cleanedUpContent)
 ```
 
-`utils.CleanUp` (`internal/utils/text.go:45-48`) strips a set of symbol
+`cleanUp` (`internal/tools/textreducer/textrank.go`) strips a set of symbol
 characters (`$ € £ ¥ ¢ % & * + = < > ^ | ~ @ # \ _ [ ] { }`) — they carry no
 lexical signal for the sentence-graph but would pollute token frequency
 counts. `strings.Fields` then splits on any whitespace runs — the project's
@@ -344,16 +347,16 @@ plausible prose, not a list of fragments.
 
 ## 11. Text normalization utilities
 
-`internal/utils/text.go` and `tagname.go` hold the shared string machinery.
+`internal/textnorm/` holds the shared string machinery.
 
 ### `NormalizeForDB` — the canonical key normalization
 
 Used for people names and any DB key that must be
-case/accent/format-insensitive (`text.go:107-131`). The pipeline:
+case/accent/format-insensitive (`internal/textnorm/normalize.go`). The pipeline:
 NFKC → lowercase → trim → hyphen/underscore/dash-family → space → **accent
 folding** → strip non-`[a-z ]` → collapse spaces.
 
-Accent folding is a stateless per-call fold (`text.go:96-106`):
+Accent folding is a stateless per-call fold (`internal/textnorm/normalize.go`):
 
 ```go
 // FoldAccents decomposes, drops combining marks (Mn), and recomposes.
@@ -379,7 +382,7 @@ not safe for concurrent use — this is the canonical pattern to copy.
 
 ### `NormalizeTag` — the canonical tag name
 
-Tag names have their own normalizer (`tagname.go`): NFKC → lowercase → trim →
+Tag names have their own normalizer (`internal/textnorm/tagname.go`): NFKC → lowercase → trim →
 dash family (`-`, `_`, en/em dash, `\u2010`, `\u2011`, `\uFF0D`) → space →
 accent folding → strip everything except letters of any Unicode script,
 decimal digits, and `+ # .` → collapse spaces. A result with no letter and no
@@ -392,22 +395,22 @@ by the enrichment pipeline through `contentanalyzer.normalizeCore`/
 `NormalizeTags`. The embedding cache and the matcher consume names verbatim —
 no per-key re-normalization — so store keys always equal DB names.
 
-### `Truncate` — rune-safe, with a sentinel
+### `truncate` — rune-safe, with a sentinel
 
-`Truncate(s, maxLength)` (`text.go:50-65`) truncates by **runes, not bytes**
+`truncate(s, maxLength)` (`internal/enrichment/text.go`) truncates by **runes, not bytes**
 (essential for CJK), trims trailing whitespace, and returns `"Unknown"` for
 blank input — the project's "no title" sentinel. Titles are truncated to 127
 chars before persisting (the LLM prompt demands the same limit).
 
-### `CleanCodeBlock` — LLM output cleanup
+### `cleanCodeBlock` — LLM output cleanup
 
-`CleanCodeBlock` (`text.go:67-75`) strips ` ```json ` / ` ``` ` fences and
+`cleanCodeBlock` (`internal/llm/analyzer/text.go`) strips ` ```json ` / ` ``` ` fences and
 trims — the pre-step before `json.Unmarshal` of LLM responses. See
 `llm.md` §7.
 
-### `StripTags` — byte-level HTML stripping
+### `stripTags` — byte-level HTML stripping
 
-`StripTags` (`text.go:133-146`) walks bytes, skipping from `<` to the next
+`stripTags` (`internal/api/handlers/text.go`) walks bytes, skipping from `<` to the next
 `>` — a hand-rolled, allocation-light alternative to regex HTML removal for
 OCR/noisy text.
 
@@ -415,10 +418,10 @@ OCR/noisy text.
 
 ## 12. Token estimation
 
-LLM token counting without a tokenizer (`text.go:25-43`):
+LLM token counting without a tokenizer (`internal/llm/analyzer/text.go`):
 
 ```go
-func EstimateTokens(text string) int {
+func estimateTokens(text string) int {
 	var total, cjk int
 	for _, r := range text {
 		total++
@@ -438,7 +441,7 @@ func EstimateTokens(text string) int {
 - Latin-heavy text: ~4 characters per token (the common rule of thumb).
 - CJK-heavy text (>10% Han/Hiragana/Katakana/Hangul): CJK chars count 1.5
   tokens each (they tokenize near 1:1 or worse), other chars 0.25.
-- `EstimateTokensFromWords` (`text.go:21-23`) is the word-based variant:
+- `estimateTokensFromWords` (`internal/llm/analyzer/text.go`) is the word-based variant:
   `words × 1.3`.
 
 This feeds the LLM pre-flight check (`checkContentTooLarge`) — the enricher
@@ -448,11 +451,11 @@ shrinks the reduced text if the estimate exceeds the model's context window.
 
 ## 13. Hashing and checksums
 
-`internal/utils/files.go` streams file contents into hashers:
+`internal/documents/storage/files.go` and `internal/documents/consumption/storage.go` stream file contents into hashers:
 
 ```go
 // streaming MD5: io.Copy into the hasher
-func ComputeMD5(path string) (string, error) { ... }
+func CalculateMD5(path string) (string, error) { ... }
 ```
 
 Both **MD5 and SHA-512** are computed per ingested file. MD5 is the dedup
@@ -472,11 +475,11 @@ keeps memory flat for multi-GB files. `ListFilePaths` additionally sorts by
 | `TextRank.Reduce` | `tools.Runner.ReduceContent` (`internal/tools/runner.go:311-347`) | shrink text to `target_word_count` before LLM (target 2000) and tag matcher (target 4000) |
 | `targetWordCount` logic | `internal/enrichment/enricher.go:398-404` | negative config = fraction of document; floor 2000 |
 | `NormalizeForDB` | `enricher.go:418-433`, people/tag services | canonical DB keys for dedup/lookup |
-| `EstimateTokens` | `analyzer/shared.go` `checkContentTooLarge` | LLM pre-flight budget check |
-| `Truncate` | `enricher.go:247-265` | title ≤ 127 chars |
-| `CleanCodeBlock` | both LLM adapters | strip fences before JSON parse |
-| `ComputeMD5` / SHA-512 | `internal/documents/consumption/scan.go` | content dedup + uniqueness |
-| `StripTags` | textextractor output | remove HTML noise from extracted text |
+| `estimateTokens` | `analyzer/shared.go` `checkContentTooLarge` | LLM pre-flight budget check |
+| `truncate` | `enricher.go:247-265` | title ≤ 127 chars |
+| `cleanCodeBlock` | both LLM adapters | strip fences before JSON parse |
+| `CalculateMD5` / SHA-512 | `internal/documents/consumption/scan.go` | content dedup + uniqueness |
+| `stripTags` | textextractor output | remove HTML noise from extracted text |
 
 The enricher also has a second reduction path: when the LLM rejects the text
 as too large, it re-reduces with a scaled-down target
@@ -497,7 +500,7 @@ token estimate is what drives that loop. See
   score 1.0 — a single-chunk document always gets the maximum position
   weight, which is fine (there's nothing else).
 - **Jaccard on token sets ignores frequency** — "the" repeated 50× weighs the
-  same as once. That's mitigated upstream by `CleanUp` (symbols) but stopwords
+  same as once. That's mitigated upstream by `cleanUp` (symbols) but stopwords
   are not removed anywhere; TF-IDF's idf term handles them in scoring, not in
   similarity.
 - **`sentenceBreak` is Latin-centric** (`[.!?]`); CJK text (no spaces, 。
@@ -510,10 +513,10 @@ token estimate is what drives that loop. See
   similar to two already-selected chunks gets penalized twice. That's
   intended (redundancy kills value), but it makes thresholds sensitive:
   lowering `DiversityThreshold` (0.15) to 0.1 noticeably changes the output.
-- **`EstimateTokens` is an estimate** — real tokenizer counts can differ
+- **`estimateTokens` is an estimate** — real tokenizer counts can differ
   ±30%. The enricher's retry loop absorbs the error; don't tighten budgets to
   the estimate's exact value.
-- **`Truncate` returns `"Unknown"` for whitespace-only input** — callers must
+- **`truncate` returns `"Unknown"` for whitespace-only input** — callers must
   not assume a non-empty return.
 - **Regex-heavy helpers are compiled at package level** (`sentenceBreak`,
   `tokenRe`, `nonAlphaSpace`, `multiSpace`, `spaceRE`) — never inside the

@@ -12,11 +12,11 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/llm"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 )
 
 type LlmOpenAiCompatible struct {
-	logger         *utils.Logger
+	logger         *log.Logger
 	config         config.ToolConfig
 	llmCfg         *config.LlmConfig
 	caps           *llm.ModelCapability
@@ -57,7 +57,7 @@ type openaiResponse struct {
 	Usage   openaiUsage    `json:"usage"`
 }
 
-func NewLlmOpenAiCompatible(logger *utils.Logger, cfg config.ToolConfig, llmCfg *config.LlmConfig, caps *llm.ModelCapability, promptTemplate string, minTags, maxTags int, reg *llm.Registry) (*LlmOpenAiCompatible, error) {
+func NewLlmOpenAiCompatible(logger *log.Logger, cfg config.ToolConfig, llmCfg *config.LlmConfig, caps *llm.ModelCapability, promptTemplate string, minTags, maxTags int, reg *llm.Registry) (*LlmOpenAiCompatible, error) {
 	return &LlmOpenAiCompatible{
 		logger:         logger,
 		config:         cfg,
@@ -215,7 +215,7 @@ func (l *LlmOpenAiCompatible) Analyze(ctx context.Context, text string, docTypes
 	}
 
 	responseContent := strings.TrimSpace(chatResp.Choices[0].Message.Content)
-	responseContent = utils.CleanCodeBlock(responseContent)
+	responseContent = cleanCodeBlock(responseContent)
 
 	analysisResult, err := ParseAnalysisResponse(responseContent)
 	if err != nil {
@@ -295,7 +295,7 @@ func (l *LlmOpenAiCompatible) AnalyzeDocType(ctx context.Context, prevResult *An
 	}
 
 	responseContent := strings.TrimSpace(chatResp.Choices[0].Message.Content)
-	responseContent = utils.CleanCodeBlock(responseContent)
+	responseContent = cleanCodeBlock(responseContent)
 
 	var result struct {
 		Type string `json:"type"`

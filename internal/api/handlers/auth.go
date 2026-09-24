@@ -7,17 +7,17 @@ import (
 	"github.com/wgomg/edub-kushim/internal/auth"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/errs"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/service"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type AuthHandler struct {
 	userService *service.User
 	getConfig   func() *config.Config
-	logger      *utils.Logger
+	logger      *log.Logger
 }
 
-func NewAuthHandler(userService *service.User, getConfig func() *config.Config, logger *utils.Logger) *AuthHandler {
+func NewAuthHandler(userService *service.User, getConfig func() *config.Config, logger *log.Logger) *AuthHandler {
 	return &AuthHandler{
 		userService: userService,
 		getConfig:   getConfig,
@@ -133,5 +133,3 @@ func (h *AuthHandler) MeHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(toUserResponse(user))
 }
-
-

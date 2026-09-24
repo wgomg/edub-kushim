@@ -2,13 +2,13 @@ package database
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"os"
 	"strings"
-
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 func BackfillProcessedSizes(ctx context.Context, db *sql.DB) error {
@@ -135,7 +135,8 @@ func BackfillTextHash(ctx context.Context, db *sql.DB) error {
 				sb.WriteString(", ")
 			}
 			sb.WriteString(fmt.Sprintf("($%d::bigint, $%d::text)", j*2+1, j*2+2))
-			args = append(args, r.id, utils.SHA256Hex(r.text))
+			sum := sha256.Sum256([]byte(r.text))
+			args = append(args, r.id, hex.EncodeToString(sum[:]))
 		}
 		sb.WriteString(") AS v(id, hash) WHERE document.id = v.id AND document.text_hash IS NULL")
 		if _, err := tx.ExecContext(ctx, sb.String(), args...); err != nil {

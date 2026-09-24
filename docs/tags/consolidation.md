@@ -60,7 +60,7 @@ and review.
 Per enrichment, after the LLM emits its tags (prompted for between `min_tags`
 and `max_tags`, default 3–5, and capped at `max_tags` by the filter):
 
-1. Emitted names are canonicalized (`utils.NormalizeTag`: NFKC, lowercase,
+1. Emitted names are canonicalized (`textnorm.NormalizeTag`: NFKC, lowercase,
    accent-folded; `+`, `#`, `.`, digits, and non-Latin scripts preserved —
    `c++` is one token). The same normalizer runs at the tag-service save
    chokepoints, so store names are always canonical and identity is exact
@@ -107,7 +107,7 @@ recover history the database never captured.
 
 A tag that joins concepts with a conjunction (`and`, `or`, `vs`, `vs.`,
 `versus` — after normalization `&` is stripped, so "rock & roll" is not joint)
-is detected by `utils.SplitJointTag` and replaced by its components before
+is detected by `textnorm.SplitJointTag` and replaced by its components before
 consolidation, so "supply and demand" becomes `supply` + `demand` instead of a
 single tag that the matcher can never match cleanly.
 

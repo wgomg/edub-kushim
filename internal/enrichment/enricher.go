@@ -15,14 +15,15 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/tags/policy"
 	"github.com/wgomg/edub-kushim/internal/task"
+	"github.com/wgomg/edub-kushim/internal/textnorm"
 	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/types"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 const (
@@ -41,7 +42,7 @@ type splitDecision struct {
 
 type Enricher struct {
 	config     *config.Config
-	logger     *utils.Logger
+	logger     *log.Logger
 	client     *database.Client
 	queries    *database.Queries
 	runner     *tools.Runner
@@ -51,7 +52,7 @@ type Enricher struct {
 	splitCache map[string]splitDecision
 }
 
-func NewEnricher(cfg *config.Config, logger *utils.Logger, client *database.Client, services *service.CrudServices, matcher matcher.Matcher) (*Enricher, error) {
+func NewEnricher(cfg *config.Config, logger *log.Logger, client *database.Client, services *service.CrudServices, matcher matcher.Matcher) (*Enricher, error) {
 	e := &Enricher{
 		config:   cfg,
 		logger:   logger,
@@ -74,7 +75,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 
 	defer func() {
 		elapsed := time.Since(start)
-		e.logger.Info(&logId, "finished enrichment %s in %s", document.StoragePath, utils.HumanDuration(elapsed))
+		e.logger.Info(&logId, "finished enrichment %s in %s", document.StoragePath, log.HumanDuration(elapsed))
 	}()
 
 	chunkSize := 150
@@ -248,7 +249,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 		if canonicalName == "" && p.NameRomanized != "" {
 			canonicalName = p.NameRomanized
 		}
-		analysis.People[i].NormalizedName = utils.NormalizeForDB(canonicalName)
+		analysis.People[i].NormalizedName = textnorm.NormalizeForDB(canonicalName)
 	}
 
 	docTypeNames := make([]string, 0, len(docTypes))
@@ -309,7 +310,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 	e.logger.Info(&logId, "analysis result: title=%q type=%q tags=%v people=%v lang=%q stats=%s",
 		analysis.Title, analysis.DocType, analysis.Tags, analysis.People, analysis.Language, statsStr)
 
-	analysis.Title = utils.Truncate(analysis.Title, 127)
+	analysis.Title = truncate(analysis.Title, 127)
 
 	docTypeMap := make(map[string]int64, len(docTypes))
 	for _, dt := range docTypes {
@@ -428,7 +429,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 			continue
 		}
 
-		normalized := utils.NormalizeForDB(canonicalName)
+		normalized := textnorm.NormalizeForDB(canonicalName)
 		id, ok := peopleMap[normalized]
 		if !ok {
 			var nameNativeArg sql.NullString
@@ -593,7 +594,7 @@ func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, res
 func (e *Enricher) splitJointTags(ctx context.Context, tags []string, filter *analyzer.TagFilter, logId *string) []string {
 	var candidates []string
 	for _, t := range tags {
-		if utils.SplitJointTag(t) != nil {
+		if textnorm.SplitJointTag(t) != nil {
 			candidates = append(candidates, t)
 		}
 	}
@@ -701,7 +702,7 @@ func (e *Enricher) splitVerdicts(ctx context.Context, candidates []string, logId
 
 	if !e.runner.HasTagAdjudicator() {
 		for _, name := range uncached {
-			decisions[name] = splitDecision{verdict: analyzer.TagSplitSplit, components: utils.SplitJointTag(name)}
+			decisions[name] = splitDecision{verdict: analyzer.TagSplitSplit, components: textnorm.SplitJointTag(name)}
 		}
 		return decisions
 	}
@@ -748,8 +749,8 @@ func (e *Enricher) writeVerdictEvent(ctx context.Context, docId int64, d policy.
 	}
 	n, err := e.queries.InsertTagVerdictEvent(ctx, database.InsertTagVerdictEventParams{
 		DocumentID:    docId,
-		Query:         utils.NormalizeTag(d.Query),
-		Target:        utils.NormalizeTag(d.Target),
+		Query:         textnorm.NormalizeTag(d.Query),
+		Target:        textnorm.NormalizeTag(d.Target),
 		Sim:           d.Sim,
 		Verdict:       bp.verdict,
 		VerdictModel:  verdictModel,
@@ -782,8 +783,8 @@ func (e *Enricher) writeVerdictEvent(ctx context.Context, docId int64, d policy.
 	}
 	if _, err := e.queries.InsertTagVerdictEvent(ctx, database.InsertTagVerdictEventParams{
 		DocumentID:    docId,
-		Query:         utils.NormalizeTag(d.Query),
-		Target:        utils.NormalizeTag(d.Target),
+		Query:         textnorm.NormalizeTag(d.Query),
+		Target:        textnorm.NormalizeTag(d.Target),
 		Sim:           d.Sim,
 		Verdict:       bp.verdict,
 		VerdictModel:  sql.NullString{},
@@ -849,7 +850,7 @@ func tagQualityCriteriaLog(criteria json.RawMessage) string {
 func (e *Enricher) applyTagQuality(ctx context.Context, analysis *tools.ContentAnalysisResult, decisions []policy.Decision, dbNames map[string]struct{}, reducedText string, docId int64, logId *string) []string {
 	typedByTerm := make(map[string]analyzer.TagDetail, len(analysis.TagDetails))
 	for _, d := range analysis.TagDetails {
-		typedByTerm[utils.NormalizeTag(d.Term)] = d
+		typedByTerm[textnorm.NormalizeTag(d.Term)] = d
 	}
 	simByOutput := make(map[string]float64, len(decisions))
 	for _, d := range decisions {
@@ -978,7 +979,7 @@ func (e *Enricher) writeTagQualityEvent(ctx context.Context, docId int64, name s
 	verdictModel := sql.NullString{String: model, Valid: model != ""}
 	n, err := e.queries.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
 		DocumentID:    docId,
-		TagName:       utils.NormalizeTag(name),
+		TagName:       textnorm.NormalizeTag(name),
 		Criteria:      criteria,
 		Pass:          pass,
 		VerdictModel:  verdictModel,
@@ -1006,7 +1007,7 @@ func (e *Enricher) writeTagQualityEvent(ctx context.Context, docId int64, name s
 	row := rows[0]
 	if _, err := e.queries.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
 		DocumentID:    docId,
-		TagName:       utils.NormalizeTag(name),
+		TagName:       textnorm.NormalizeTag(name),
 		Criteria:      row.Criteria,
 		Pass:          row.Pass,
 		VerdictModel:  sql.NullString{},
@@ -1067,7 +1068,7 @@ func TargetWordCount(contentWC, targetWC int) int {
 func normalizedPeopleKey(p database.People) string {
 	key := p.NormalizedName
 	if key == "" {
-		key = utils.NormalizeForDB(p.Name)
+		key = textnorm.NormalizeForDB(p.Name)
 	}
 	return key
 }
@@ -1078,7 +1079,7 @@ func normalizedPeopleKey(p database.People) string {
 // Otherwise it falls back to anyascii transliteration.
 func canonicalPersonName(p analyzer.PeopleResult) (canonical, native string) {
 	raw := p.Name
-	hasNonLatin := utils.ContainsNonLatin(raw)
+	hasNonLatin := analyzer.ContainsNonLatin(raw)
 
 	if !hasNonLatin {
 		return raw, ""

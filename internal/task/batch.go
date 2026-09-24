@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/types"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 const StaleAfter = 15 * time.Second
@@ -41,12 +41,12 @@ type Owner struct {
 	Queries    *database.Queries
 	OwnerID    string
 	PID        int
-	Logger     *utils.Logger
+	Logger     *log.Logger
 	client     *database.Client
 	maxRetries int32
 }
 
-func NewOwner(c *database.Client, ownerID string, pid int, logger *utils.Logger, maxRetries int) *Owner {
+func NewOwner(c *database.Client, ownerID string, pid int, logger *log.Logger, maxRetries int) *Owner {
 	return &Owner{Queries: c.Queries, OwnerID: ownerID, PID: pid, Logger: logger, client: c, maxRetries: int32(maxRetries)}
 }
 

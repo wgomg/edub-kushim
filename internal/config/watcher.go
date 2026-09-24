@@ -7,14 +7,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 )
 
 type Watcher struct {
 	configDir string
 	interval  time.Duration
 	onReload  func(*Config)
-	logger    *utils.Logger
+	logger    *log.Logger
 
 	mu      sync.Mutex
 	lastMod time.Time
@@ -23,7 +23,7 @@ type Watcher struct {
 	wg      sync.WaitGroup
 }
 
-func NewWatcher(configDir string, interval time.Duration, onReload func(*Config), logger *utils.Logger) *Watcher {
+func NewWatcher(configDir string, interval time.Duration, onReload func(*Config), logger *log.Logger) *Watcher {
 	return &Watcher{
 		configDir: configDir,
 		interval:  interval,

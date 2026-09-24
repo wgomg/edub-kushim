@@ -241,7 +241,8 @@ test-short:
 		./internal/llm/ \
 		./internal/config/ \
 		./internal/tools/ \
-		./internal/utils/ \
+		./internal/log/ \
+		./internal/textnorm/ \
 		./internal/matcher/ \
 		./internal/documents/storage/ \
 		./internal/auth/ \
@@ -262,7 +263,8 @@ test-verbose:
 		./internal/llm/ \
 		./internal/config/ \
 		./internal/tools/ \
-		./internal/utils/ \
+		./internal/log/ \
+		./internal/textnorm/ \
 		./internal/matcher/ \
 		./internal/documents/storage/ \
 		./internal/auth/ \

@@ -24,9 +24,9 @@ import (
 	mime "github.com/wgomg/edub-kushim/internal/documents/mime"
 	"github.com/wgomg/edub-kushim/internal/documents/pdfoptimizer"
 	"github.com/wgomg/edub-kushim/internal/documents/storage"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/tools"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 // runner is an interface covering the subset of *tools.Runner methods that
@@ -45,7 +45,7 @@ const commitTxTimeout = 30 * time.Second
 
 type Consumer struct {
 	config      *config.Config
-	logger      *utils.Logger
+	logger      *log.Logger
 	client      *database.Client
 	runner      runner
 	pageCounter func(path string) int
@@ -70,7 +70,7 @@ type File struct {
 	PageCount            int
 }
 
-func NewConsumer(cfg *config.Config, logger *utils.Logger, client *database.Client) (*Consumer, error) {
+func NewConsumer(cfg *config.Config, logger *log.Logger, client *database.Client) (*Consumer, error) {
 	if cfg.Consumer.PdfOptimizer.Fallback != "" {
 		if _, err := pdfoptimizer.NewPdfOptimizer(logger, config.ToolConfig{
 			Command: cfg.Consumer.PdfOptimizer.Fallback,
@@ -103,7 +103,7 @@ func NewConsumer(cfg *config.Config, logger *utils.Logger, client *database.Clie
 	}, nil
 }
 
-func NewConsumerWithRunner(cfg *config.Config, logger *utils.Logger, client *database.Client, runner runner) (*Consumer, error) {
+func NewConsumerWithRunner(cfg *config.Config, logger *log.Logger, client *database.Client, runner runner) (*Consumer, error) {
 	return &Consumer{
 		config:      cfg,
 		logger:      logger,
@@ -122,9 +122,9 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string, pr
 	defer func() {
 		elapsed := time.Since(start)
 		if file.StorageProcessedPath != nil {
-			c.logger.Info(&documentID, "finished consumption %s in %s -> %s", file.OriginalPath, utils.HumanDuration(elapsed), *file.StorageProcessedPath)
+			c.logger.Info(&documentID, "finished consumption %s in %s -> %s", file.OriginalPath, log.HumanDuration(elapsed), *file.StorageProcessedPath)
 		} else {
-			c.logger.Info(&documentID, "finished consumption %s in %s (skipped)", file.OriginalPath, utils.HumanDuration(elapsed))
+			c.logger.Info(&documentID, "finished consumption %s in %s (skipped)", file.OriginalPath, log.HumanDuration(elapsed))
 		}
 	}()
 
@@ -347,7 +347,7 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string, pr
 		OriginalPath:   "",
 		StoragePath:    *file.StorageProcessedPath,
 		TextContent:    file.Text,
-		TextHash:       sql.NullString{String: utils.SHA256Hex(file.Text.String), Valid: file.Text.Valid},
+		TextHash:       sql.NullString{String: storage.SHA256Hex(file.Text.String), Valid: file.Text.Valid},
 		PageCount:      int32(file.PageCount),
 		WordCount:      int32(len(strings.Fields(file.Text.String))),
 		CharCount:      int32(utf8.RuneCountInString(file.Text.String)),
@@ -422,7 +422,7 @@ func annotateTxTimeout(err error, stats string, elapsed time.Duration) error {
 	return fmt.Errorf("%w [tx deadline exceeded; elapsed %s; pool %s]", err, elapsed, stats)
 }
 
-func MoveFailedFile(storageDir, originalPath, errType string, logger *utils.Logger, docID *string) {
+func MoveFailedFile(storageDir, originalPath, errType string, logger *log.Logger, docID *string) {
 	baseName := filepath.Base(originalPath)
 	uuidStr := uuid.New().String()
 	destName := uuidStr + "-" + baseName
@@ -452,7 +452,7 @@ type consumePayload struct {
 	FilePath string `json:"file_path"`
 }
 
-func QuarantineFailedFiles(ctx context.Context, queries *database.Queries, storageDir string, logger *utils.Logger, batchID string) error {
+func QuarantineFailedFiles(ctx context.Context, queries *database.Queries, storageDir string, logger *log.Logger, batchID string) error {
 	rows, err := queries.GetQuarantinedConsumeTaskPayloads(ctx, sql.NullString{String: batchID, Valid: true})
 	if err != nil {
 		return fmt.Errorf("get quarantined consume task payloads: %w", err)
@@ -487,7 +487,7 @@ func QuarantineFailedFiles(ctx context.Context, queries *database.Queries, stora
 }
 
 func (c *Consumer) isDuplicate(ctx context.Context, path string) (bool, error) {
-	md5sum, err := utils.CalculateMD5(path)
+	md5sum, err := storage.CalculateMD5(path)
 	if err != nil {
 		return false, err
 	}
@@ -556,7 +556,7 @@ func (c *Consumer) convertToPdf(ctx context.Context, file File, documentID strin
 }
 
 func (c *Consumer) extractText(ctx context.Context, file File, documentID string, report task.ProgressFunc) (File, error) {
-	memBefore := utils.ReadMemSnapshot()
+	memBefore := log.ReadMemSnapshot()
 
 	extractPath := file.OriginalPath
 	extractMimeType := file.MimeType
@@ -577,8 +577,8 @@ func (c *Consumer) extractText(ctx context.Context, file File, documentID string
 
 	report("extract-text", "", 0)
 	extractResult, err := c.runner.ExtractText(ctx, extractPath, extractMimeType)
-	memAfterExtract := utils.ReadMemSnapshot()
-	c.logger.Debug(&documentID, "extractText: %s", utils.FormatMemDelta(memBefore, memAfterExtract))
+	memAfterExtract := log.ReadMemSnapshot()
+	c.logger.Debug(&documentID, "extractText: %s", log.FormatMemDelta(memBefore, memAfterExtract))
 	if err != nil {
 		return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("text extraction failed: %w", err)}
 	}
@@ -595,8 +595,8 @@ func (c *Consumer) extractText(ctx context.Context, file File, documentID string
 			c.logger.Debug(&documentID, "optimizePdf: entering for %s", extractPath)
 			report("optimize", "", 0)
 			optimizationResult, err := c.runner.OptimizePdf(ctx, documentID, extractPath)
-			memAfterOpt := utils.ReadMemSnapshot()
-			c.logger.Debug(&documentID, "optimizePdf: %s", utils.FormatMemDelta(memAfterExtract, memAfterOpt))
+			memAfterOpt := log.ReadMemSnapshot()
+			c.logger.Debug(&documentID, "optimizePdf: %s", log.FormatMemDelta(memAfterExtract, memAfterOpt))
 			if err != nil {
 				c.logger.Info(&documentID, "optimization failed for %s, using original: %v", file.Name, err)
 			} else {
@@ -616,7 +616,7 @@ func (c *Consumer) extractText(ctx context.Context, file File, documentID string
 	return c.ocrAndReextract(ctx, file, documentID, memAfterExtract, memBefore, report)
 }
 
-func (c *Consumer) ocrAndReextract(ctx context.Context, file File, documentID string, memBeforeOCR, memBeforeAll utils.MemSnapshot, report task.ProgressFunc) (File, error) {
+func (c *Consumer) ocrAndReextract(ctx context.Context, file File, documentID string, memBeforeOCR, memBeforeAll log.MemSnapshot, report task.ProgressFunc) (File, error) {
 	ocrInputPath := file.OriginalPath
 	if file.ConvertedPdfTmpPath != nil {
 		ocrInputPath = *file.ConvertedPdfTmpPath
@@ -631,8 +631,8 @@ func (c *Consumer) ocrAndReextract(ctx context.Context, file File, documentID st
 		report("ocr", "", 0)
 	}
 	ocrResult, err := c.runner.OCR(ctx, documentID, ocrInputPath)
-	memAfterOCR := utils.ReadMemSnapshot()
-	c.logger.Debug(&documentID, "OCR: %s (RSS now %s)", utils.FormatMemDelta(memBeforeOCR, memAfterOCR), utils.FormatBytes(memAfterOCR.RSS))
+	memAfterOCR := log.ReadMemSnapshot()
+	c.logger.Debug(&documentID, "OCR: %s (RSS now %s)", log.FormatMemDelta(memBeforeOCR, memAfterOCR), log.FormatBytes(memAfterOCR.RSS))
 	if err != nil {
 		c.logger.Error(&documentID, "OCR failed for %s: %v", file.Name, err)
 		return file, &task.Error{ReqID: documentID, Err: err}
@@ -642,8 +642,8 @@ func (c *Consumer) ocrAndReextract(ctx context.Context, file File, documentID st
 	}
 
 	extractResult, err := c.runner.ExtractText(ctx, *ocrResult.TmpPath, mime.PDF)
-	memAfterFinal := utils.ReadMemSnapshot()
-	c.logger.Debug(&documentID, "extractText (post-OCR): %s", utils.FormatMemDelta(memAfterOCR, memAfterFinal))
+	memAfterFinal := log.ReadMemSnapshot()
+	c.logger.Debug(&documentID, "extractText (post-OCR): %s", log.FormatMemDelta(memAfterOCR, memAfterFinal))
 	if err != nil {
 		return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("text extraction failed for ocrd file: %w", err)}
 	}
@@ -656,8 +656,8 @@ func (c *Consumer) ocrAndReextract(ctx context.Context, file File, documentID st
 	file.OCRTmpPath = ocrResult.TmpPath
 
 	c.logger.Debug(&documentID, "extractText complete: RSS %s (total delta: %s)",
-		utils.FormatBytes(memAfterFinal.RSS),
-		utils.FormatMemDelta(memBeforeAll, memAfterFinal))
+		log.FormatBytes(memAfterFinal.RSS),
+		log.FormatMemDelta(memBeforeAll, memAfterFinal))
 
 	return file, nil
 }

@@ -16,8 +16,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/documents/storage"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/task"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 var ErrNoOp = errors.New("migration is a no-op")
@@ -61,10 +62,10 @@ type MigrateStoragePayload struct {
 
 type ConfigTaskHandler struct {
 	queries *database.Queries
-	logger  *utils.Logger
+	logger  *log.Logger
 }
 
-func NewConfigTaskHandler(queries *database.Queries, logger *utils.Logger) *ConfigTaskHandler {
+func NewConfigTaskHandler(queries *database.Queries, logger *log.Logger) *ConfigTaskHandler {
 	return &ConfigTaskHandler{queries: queries, logger: logger}
 }
 
@@ -151,7 +152,7 @@ func (h *ConfigTaskHandler) handleMigrateDB(ctx context.Context, t task.Task, pr
 	return json.Marshal(map[string]string{"status": "migrated"})
 }
 
-func MigrateDatabase(ctx context.Context, logger *utils.Logger, p MigrateDBPayload, progress ...task.ProgressFunc) error {
+func MigrateDatabase(ctx context.Context, logger *log.Logger, p MigrateDBPayload, progress ...task.ProgressFunc) error {
 	cfg, err := config.Load(p.ConfigDir)
 	if err != nil {
 		return fmt.Errorf("load config from %s: %w", p.ConfigDir, err)
@@ -272,7 +273,7 @@ func (h *ConfigTaskHandler) handleMigrateStorage(ctx context.Context, t task.Tas
 	}
 }
 
-func MigrateStorage(ctx context.Context, logger *utils.Logger, p MigrateStoragePayload, progress ...task.ProgressFunc) error {
+func MigrateStorage(ctx context.Context, logger *log.Logger, p MigrateStoragePayload, progress ...task.ProgressFunc) error {
 	storageChanged := DirChanged(p.OldStorageDir, p.NewStorageDir)
 	consumptionChanged := DirChanged(p.OldConsumptionDir, p.NewConsumptionDir)
 	if !storageChanged && !consumptionChanged {
@@ -365,7 +366,7 @@ func MigrateStorage(ctx context.Context, logger *utils.Logger, p MigrateStorageP
 	return nil
 }
 
-func moveDirEntries(ctx context.Context, oldDir, newDir, mode string, dirsOnly bool, logger *utils.Logger) error {
+func moveDirEntries(ctx context.Context, oldDir, newDir, mode string, dirsOnly bool, logger *log.Logger) error {
 	entries, err := os.ReadDir(oldDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -391,7 +392,7 @@ func moveDirEntries(ctx context.Context, oldDir, newDir, mode string, dirsOnly b
 	return nil
 }
 
-func movePath(src, dst, mode string, logger *utils.Logger) error {
+func movePath(src, dst, mode string, logger *log.Logger) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
 		return fmt.Errorf("create destination parent: %w", err)
 	}
@@ -402,7 +403,7 @@ func movePath(src, dst, mode string, logger *utils.Logger) error {
 			return nil
 		}
 	}
-	if err := utils.CopyTree(src, dst); err != nil {
+	if err := storage.CopyTree(src, dst); err != nil {
 		return fmt.Errorf("copy %s -> %s: %w", src, dst, err)
 	}
 	if err := os.RemoveAll(src); err != nil {
@@ -411,7 +412,7 @@ func movePath(src, dst, mode string, logger *utils.Logger) error {
 	return nil
 }
 
-func safetySnapshot(ctx context.Context, oldDB *sql.DB, cfg *config.Config, logger *utils.Logger) {
+func safetySnapshot(ctx context.Context, oldDB *sql.DB, cfg *config.Config, logger *log.Logger) {
 	if cfg.Backup.Path == "" {
 		logger.Warn(nil, "backup path not configured, skipping pre-migration safety snapshot")
 		return
@@ -427,7 +428,7 @@ func safetySnapshot(ctx context.Context, oldDB *sql.DB, cfg *config.Config, logg
 
 const maxSafetySnapshots = 5
 
-func pruneSafetySnapshots(dir string, logger *utils.Logger) {
+func pruneSafetySnapshots(dir string, logger *log.Logger) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
@@ -450,7 +451,7 @@ func pruneSafetySnapshots(dir string, logger *utils.Logger) {
 	}
 }
 
-func restoreData(ctx context.Context, dbCfg config.DatabaseConfig, newDB *sql.DB, newDSN, dumpPath string, logger *utils.Logger) error {
+func restoreData(ctx context.Context, dbCfg config.DatabaseConfig, newDB *sql.DB, newDSN, dumpPath string, logger *log.Logger) error {
 	if destinationHasData(ctx, newDB) {
 		logger.Info(nil, "migrate-db: destination database already has data, skipping data migration")
 		return nil

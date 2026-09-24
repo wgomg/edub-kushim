@@ -13,7 +13,7 @@ import (
 	"strconv"
 
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 )
 
 var logLineStart = regexp.MustCompile(`^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}\s+(ERROR|FATAL|DEBUG|WARN|INFO)\s*:`)
@@ -29,10 +29,10 @@ var allowedLogNames = map[string]bool{
 
 type LogsHandler struct {
 	getConfig func() *config.Config
-	logger    *utils.Logger
+	logger    *log.Logger
 }
 
-func NewLogsHandler(getConfig func() *config.Config, logger *utils.Logger) *LogsHandler {
+func NewLogsHandler(getConfig func() *config.Config, logger *log.Logger) *LogsHandler {
 	return &LogsHandler{getConfig: getConfig, logger: logger}
 }
 

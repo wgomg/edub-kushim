@@ -22,13 +22,13 @@ import (
 	"github.com/wgomg/edub-kushim/internal/documents/thumbnail"
 	"github.com/wgomg/edub-kushim/internal/llm"
 	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/tools/textreducer"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type Runner struct {
-	logger            *utils.Logger
+	logger            *log.Logger
 	config            *config.Config
 	textExtractor     textextractor.TextExtractor
 	ocr               ocr.OCR
@@ -117,7 +117,7 @@ func runWithTimeout[T any](ctx context.Context, fn func() (T, error)) (T, error)
 	}
 }
 
-func NewRunner(logger *utils.Logger, cfg *config.Config, tools []string) *Runner {
+func NewRunner(logger *log.Logger, cfg *config.Config, tools []string) *Runner {
 	r := &Runner{logger: logger, config: cfg}
 
 	reg, err := llm.NewRegistry(filepath.Join(cfg.App.ConfigDir, "model_catalog.json"))
@@ -216,7 +216,7 @@ func NewRunner(logger *utils.Logger, cfg *config.Config, tools []string) *Runner
 	return r
 }
 
-func NewRunnerWithMatcher(logger *utils.Logger, cfg *config.Config, tools []string, matcher matcher.Matcher) *Runner {
+func NewRunnerWithMatcher(logger *log.Logger, cfg *config.Config, tools []string, matcher matcher.Matcher) *Runner {
 	r := NewRunner(logger, cfg, tools)
 	if matcher != nil && slices.Contains(tools, "tagmatcher") {
 		r.tagMatcher = matcher

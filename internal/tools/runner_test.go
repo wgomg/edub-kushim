@@ -13,8 +13,8 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/documents/converter"
 	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/matcher"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 // mockPdfOptimizer records context behavior for each Optimize call.
@@ -52,7 +52,7 @@ func TestOptimizePdf_NoTimeout_ContextHasNoDeadline(t *testing.T) {
 	}
 
 	r := &Runner{
-		logger: utils.NewDiscardLogger(),
+		logger: log.NewDiscardLogger(),
 		config: &config.Config{
 			Consumer: config.ConsumerConfig{
 				PdfOptimizer: config.PdfOptimizerConfig{Timeout: 0},
@@ -84,7 +84,7 @@ func TestOptimizePdf_WithTimeout_ContextHasDeadline(t *testing.T) {
 	}
 
 	r := &Runner{
-		logger: utils.NewDiscardLogger(),
+		logger: log.NewDiscardLogger(),
 		config: &config.Config{
 			Consumer: config.ConsumerConfig{
 				PdfOptimizer: config.PdfOptimizerConfig{Timeout: 120},
@@ -167,7 +167,7 @@ func TestAnalyzeContent_TimeoutAppliesDeadline(t *testing.T) {
 			}
 
 			r := &Runner{
-				logger: utils.NewDiscardLogger(),
+				logger: log.NewDiscardLogger(),
 				config: &config.Config{
 					Enricher: config.EnricherConfig{
 						ContentAnalyzer: config.ContentAnalyzerConfig{Timeout: tt.timeout},
@@ -197,7 +197,7 @@ func TestAnalyzeDocType_TimeoutAppliesDeadline(t *testing.T) {
 	}
 
 	r := &Runner{
-		logger: utils.NewDiscardLogger(),
+		logger: log.NewDiscardLogger(),
 		config: &config.Config{
 			Enricher: config.EnricherConfig{
 				ContentAnalyzer: config.ContentAnalyzerConfig{Timeout: 120},
@@ -218,7 +218,7 @@ func TestAnalyzeDocType_TimeoutAppliesDeadline(t *testing.T) {
 func TestOptimizePdf_FileNotFound(t *testing.T) {
 	mock := &mockPdfOptimizer{}
 	r := &Runner{
-		logger: utils.NewDiscardLogger(),
+		logger: log.NewDiscardLogger(),
 		config: &config.Config{
 			Consumer: config.ConsumerConfig{
 				PdfOptimizer: config.PdfOptimizerConfig{Timeout: 0},
@@ -244,7 +244,7 @@ func TestOptimizePdf_ParentCancellation_StopsExecution(t *testing.T) {
 	}
 
 	r := &Runner{
-		logger: utils.NewDiscardLogger(),
+		logger: log.NewDiscardLogger(),
 		config: &config.Config{
 			Consumer: config.ConsumerConfig{
 				PdfOptimizer: config.PdfOptimizerConfig{Timeout: 0},
@@ -271,7 +271,7 @@ func TestOptimizePdf_ParentCancellation_StopsExecution(t *testing.T) {
 
 func TestOptimizePdf_NilOptimizer(t *testing.T) {
 	r := &Runner{
-		logger: utils.NewDiscardLogger(),
+		logger: log.NewDiscardLogger(),
 		config: &config.Config{
 			Consumer: config.ConsumerConfig{
 				PdfOptimizer: config.PdfOptimizerConfig{Timeout: 0},
@@ -287,7 +287,7 @@ func TestOptimizePdf_NilOptimizer(t *testing.T) {
 
 func TestAnalyzeDocType_NilContentAnalyzer(t *testing.T) {
 	r := &Runner{
-		logger: utils.NewDiscardLogger(),
+		logger: log.NewDiscardLogger(),
 		config: &config.Config{},
 	}
 
@@ -318,7 +318,7 @@ var _ converter.DocumentConverter = (*mockDocumentConverter)(nil)
 
 func TestConvertToPdf_NilConverter(t *testing.T) {
 	r := &Runner{
-		logger: utils.NewDiscardLogger(),
+		logger: log.NewDiscardLogger(),
 		config: &config.Config{
 			Consumer: config.ConsumerConfig{
 				Converter: config.DocxOdtConverterConfig{Timeout: 0},
@@ -334,7 +334,7 @@ func TestConvertToPdf_NilConverter(t *testing.T) {
 
 func TestConvertToPdf_FileNotFound(t *testing.T) {
 	r := &Runner{
-		logger: utils.NewDiscardLogger(),
+		logger: log.NewDiscardLogger(),
 		config: &config.Config{
 			Consumer: config.ConsumerConfig{
 				Converter: config.DocxOdtConverterConfig{Timeout: 0},
@@ -351,7 +351,7 @@ func TestConvertToPdf_FileNotFound(t *testing.T) {
 func TestConvertToPdf_WithConverter(t *testing.T) {
 	mock := &mockDocumentConverter{}
 	r := &Runner{
-		logger: utils.NewDiscardLogger(),
+		logger: log.NewDiscardLogger(),
 		config: &config.Config{
 			Consumer: config.ConsumerConfig{
 				Converter: config.DocxOdtConverterConfig{Timeout: 0},
@@ -380,7 +380,7 @@ func TestConvertToPdf_WithTimeout_ContextHasDeadline(t *testing.T) {
 	}
 
 	r := &Runner{
-		logger: utils.NewDiscardLogger(),
+		logger: log.NewDiscardLogger(),
 		config: &config.Config{
 			Consumer: config.ConsumerConfig{
 				Converter: config.DocxOdtConverterConfig{Timeout: 120},
@@ -430,7 +430,7 @@ func TestIsProviderError(t *testing.T) {
 
 func runnerWithFallback(primary, fallback analyzer.ContentAnalyzer) *Runner {
 	r := &Runner{
-		logger: utils.NewDiscardLogger(),
+		logger: log.NewDiscardLogger(),
 		config: &config.Config{
 			Enricher: config.EnricherConfig{
 				ContentAnalyzer: config.ContentAnalyzerConfig{
@@ -637,7 +637,7 @@ func TestAnalyzeContent_FallbackChainWalksToSuccess(t *testing.T) {
 	}
 
 	r := &Runner{
-		logger: utils.NewDiscardLogger(),
+		logger: log.NewDiscardLogger(),
 		config: &config.Config{
 			Enricher: config.EnricherConfig{
 				ContentAnalyzer: config.ContentAnalyzerConfig{
@@ -682,7 +682,7 @@ func TestAnalyzeContent_FallbackChainPropagatesLastFailure(t *testing.T) {
 	}
 
 	r := &Runner{
-		logger: utils.NewDiscardLogger(),
+		logger: log.NewDiscardLogger(),
 		config: &config.Config{
 			Enricher: config.EnricherConfig{
 				ContentAnalyzer: config.ContentAnalyzerConfig{
@@ -767,7 +767,7 @@ func TestRankTags_TimeoutAppliesDeadline(t *testing.T) {
 				},
 			}
 			r := &Runner{
-				logger: utils.NewDiscardLogger(),
+				logger: log.NewDiscardLogger(),
 				config: &config.Config{
 					Enricher: config.EnricherConfig{
 						TagMatcher: config.TagMatcherConfig{Timeout: tt.timeout},
@@ -801,7 +801,7 @@ func TestRankTags_HungMatcher_ReturnsDeadlineExceeded(t *testing.T) {
 		},
 	}
 	r := &Runner{
-		logger: utils.NewDiscardLogger(),
+		logger: log.NewDiscardLogger(),
 		config: &config.Config{
 			Enricher: config.EnricherConfig{
 				TagMatcher: config.TagMatcherConfig{Timeout: 1},
@@ -825,7 +825,7 @@ func TestRankTags_HungMatcher_ReturnsDeadlineExceeded(t *testing.T) {
 
 func TestRankTags_NilMatcher(t *testing.T) {
 	r := &Runner{
-		logger: utils.NewDiscardLogger(),
+		logger: log.NewDiscardLogger(),
 		config: &config.Config{},
 	}
 

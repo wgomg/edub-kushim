@@ -12,11 +12,11 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/llm"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 )
 
 type LlmAnthropic struct {
-	logger         *utils.Logger
+	logger         *log.Logger
 	config         config.ToolConfig
 	llmCfg         *config.LlmConfig
 	caps           *llm.ModelCapability
@@ -97,7 +97,7 @@ type anthropicResponse struct {
 	Usage        anthropicUsage          `json:"usage"`
 }
 
-func NewLlmAnthropic(logger *utils.Logger, cfg config.ToolConfig, llmCfg *config.LlmConfig, caps *llm.ModelCapability, promptTemplate string, minTags, maxTags int, reg *llm.Registry) (*LlmAnthropic, error) {
+func NewLlmAnthropic(logger *log.Logger, cfg config.ToolConfig, llmCfg *config.LlmConfig, caps *llm.ModelCapability, promptTemplate string, minTags, maxTags int, reg *llm.Registry) (*LlmAnthropic, error) {
 	return &LlmAnthropic{
 		logger:         logger,
 		config:         cfg,
@@ -223,7 +223,7 @@ func (l *LlmAnthropic) doRequest(ctx context.Context, reqBody anthropicRequest, 
 	}
 
 	responseContent := strings.TrimSpace(responseText.String())
-	responseContent = utils.CleanCodeBlock(responseContent)
+	responseContent = cleanCodeBlock(responseContent)
 	return &anthResp, responseContent, nil
 }
 

@@ -10,16 +10,16 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/auth"
 	"github.com/wgomg/edub-kushim/internal/errs"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/service"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type APIKeyHandler struct {
 	userService *service.User
-	logger      *utils.Logger
+	logger      *log.Logger
 }
 
-func NewAPIKeyHandler(userService *service.User, logger *utils.Logger) *APIKeyHandler {
+func NewAPIKeyHandler(userService *service.User, logger *log.Logger) *APIKeyHandler {
 	return &APIKeyHandler{userService: userService, logger: logger}
 }
 

@@ -10,16 +10,16 @@ import (
 	"strings"
 
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 
 	_mime "github.com/wgomg/edub-kushim/internal/documents/mime"
 )
 
 type Odt struct {
-	logger *utils.Logger
+	logger *log.Logger
 }
 
-func NewOdt(logger *utils.Logger) *Odt {
+func NewOdt(logger *log.Logger) *Odt {
 	return &Odt{logger: logger}
 }
 

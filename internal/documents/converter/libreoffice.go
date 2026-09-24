@@ -10,18 +10,18 @@ import (
 	"strings"
 
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 
 	_mime "github.com/wgomg/edub-kushim/internal/documents/mime"
 )
 
 type LibreOffice struct {
-	logger *utils.Logger
+	logger *log.Logger
 	config config.ToolConfig
 	binary string
 }
 
-func NewLibreOffice(logger *utils.Logger, cfg config.ToolConfig, binary string) (*LibreOffice, error) {
+func NewLibreOffice(logger *log.Logger, cfg config.ToolConfig, binary string) (*LibreOffice, error) {
 	resolvedPath, err := exec.LookPath(binary)
 	if err != nil {
 		return nil, fmt.Errorf("libreoffice not found: %w", err)

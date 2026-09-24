@@ -12,19 +12,19 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/task"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 var _ task.Dedupable = (*TagMeasureTaskHandler)(nil)
 
 type TagMeasureTaskHandler struct {
 	queries *database.Queries
-	logger  *utils.Logger
+	logger  *log.Logger
 }
 
-func NewTagMeasureTaskHandler(queries *database.Queries, logger *utils.Logger) *TagMeasureTaskHandler {
+func NewTagMeasureTaskHandler(queries *database.Queries, logger *log.Logger) *TagMeasureTaskHandler {
 	return &TagMeasureTaskHandler{queries: queries, logger: logger}
 }
 

@@ -7,17 +7,17 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/enrichment"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/task"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type EnrichTaskHandler struct {
 	enricher *enrichment.Enricher
 	queries  *database.Queries
-	logger   *utils.Logger
+	logger   *log.Logger
 }
 
-func NewEnrichTaskHandler(enricher *enrichment.Enricher, queries *database.Queries, logger *utils.Logger) *EnrichTaskHandler {
+func NewEnrichTaskHandler(enricher *enrichment.Enricher, queries *database.Queries, logger *log.Logger) *EnrichTaskHandler {
 	return &EnrichTaskHandler{enricher: enricher, queries: queries, logger: logger}
 }
 
@@ -39,8 +39,8 @@ func (h *EnrichTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMe
 
 	result, err := h.enricher.Enrich(ctx, document.ToDocument(), task.NewProgressTracker(h.queries, t.TaskID).Set)
 	{
-		mem := utils.ReadMemFull()
-		h.logger.Debug(&p.DocumentID, "post-enrich memory: %s", utils.FormatMemFull(mem))
+		mem := log.ReadMemFull()
+		h.logger.Debug(&p.DocumentID, "post-enrich memory: %s", log.FormatMemFull(mem))
 	}
 	if err != nil {
 		return nil, err

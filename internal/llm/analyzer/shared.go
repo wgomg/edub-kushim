@@ -13,8 +13,8 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/llm"
+	"github.com/wgomg/edub-kushim/internal/textnorm"
 	"github.com/wgomg/edub-kushim/internal/types"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 const SystemMessage = "You are a helpful assistant specialized in document analysis and metadata extraction"
@@ -81,7 +81,7 @@ func checkContentTooLarge(caps *llm.ModelCapability, fullPrompt string) error {
 	if caps == nil || caps.MaxInputTokens <= 0 {
 		return nil
 	}
-	estimated := utils.EstimateTokens(fullPrompt)
+	estimated := estimateTokens(fullPrompt)
 	if estimated > caps.MaxInputTokens {
 		return &ContentTooLargeError{EstimatedTokens: estimated, MaxInputTokens: caps.MaxInputTokens}
 	}
@@ -203,7 +203,7 @@ func tagsPrompt(tags []string) string {
 }
 
 func normalizeCore(s string) string {
-	return utils.NormalizeTag(s)
+	return textnorm.NormalizeTag(s)
 }
 
 func normalizeToTokens(s string) []string {
@@ -870,7 +870,7 @@ func BuildAdjudicationPrompt(pairs []TagPairEvidence) string {
 }
 
 func ParseAdjudicationResponse(content string, n int) ([]TagVerdictResult, error) {
-	content = utils.CleanCodeBlock(strings.TrimSpace(content))
+	content = cleanCodeBlock(strings.TrimSpace(content))
 	var parsed struct {
 		Pairs []struct {
 			Index     int    `json:"index"`
@@ -931,7 +931,7 @@ func BuildTagSplitPrompt(tags []string) string {
 }
 
 func ParseTagSplitResponse(content string, n int) ([]TagSplitResult, error) {
-	content = utils.CleanCodeBlock(strings.TrimSpace(content))
+	content = cleanCodeBlock(strings.TrimSpace(content))
 	var parsed struct {
 		Splits []struct {
 			Index      int      `json:"index"`
@@ -1050,7 +1050,7 @@ func BuildTagQualityPrompt(text string, candidates []TagQualityCandidate) string
 // all-criteria-false rejection, or a truncated response would cache a spurious
 // permanent rejection.
 func ParseTagQualityResponse(content string, n int) ([]TagQualityResult, error) {
-	content = utils.CleanCodeBlock(strings.TrimSpace(content))
+	content = cleanCodeBlock(strings.TrimSpace(content))
 	var parsed struct {
 		Tags []struct {
 			Index int `json:"index"`
@@ -1166,7 +1166,7 @@ func BuildTagIdentityPrompt(candidates []TagIdentityCandidate) string {
 // returns an error when any candidate lacks a fully specified verdict: a
 // zero-valued result must never be read as an all-criteria-false rejection
 func ParseTagIdentityResponse(content string, n int) ([]TagIdentityResult, error) {
-	content = utils.CleanCodeBlock(strings.TrimSpace(content))
+	content = cleanCodeBlock(strings.TrimSpace(content))
 	var parsed struct {
 		Terms []struct {
 			Index int `json:"index"`

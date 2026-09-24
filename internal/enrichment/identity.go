@@ -11,8 +11,8 @@ import (
 	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/tags/policy"
+	"github.com/wgomg/edub-kushim/internal/textnorm"
 	"github.com/wgomg/edub-kushim/internal/types"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 const identityBatchSize = 40
@@ -62,7 +62,7 @@ func (e *Enricher) planIdentity(ctx context.Context, docID int64, documentID str
 
 	candidates := make([]*identityCandidate, len(names))
 	for i, input := range names {
-		cand := &identityCandidate{input: input, name: tags.HouseForm(utils.NormalizeTag(input))}
+		cand := &identityCandidate{input: input, name: tags.HouseForm(textnorm.NormalizeTag(input))}
 		candidates[i] = cand
 		if canonical, ok := aliasMap[cand.name]; ok {
 			cand.name = canonical
@@ -540,8 +540,8 @@ func (e *Enricher) recordIdentityPair(ctx context.Context, docID int64, p *ident
 	}
 	n, err := e.queries.InsertTagIdentityEvent(ctx, database.InsertTagIdentityEventParams{
 		Kind:           tags.IdentityKindSameIntent,
-		Candidate:      utils.NormalizeTag(p.query),
-		Partner:        sql.NullString{String: utils.NormalizeTag(p.target), Valid: true},
+		Candidate:      textnorm.NormalizeTag(p.query),
+		Partner:        sql.NullString{String: textnorm.NormalizeTag(p.target), Valid: true},
 		Criteria:       criteria,
 		Verdict:        sql.NullString{String: string(p.verdict), Valid: true},
 		Model:          model,
@@ -554,7 +554,7 @@ func (e *Enricher) recordIdentityPair(ctx context.Context, docID int64, p *ident
 	if n == 0 && !p.cached {
 		rows, err := e.queries.LatestTagIdentityEventsForCandidates(ctx, database.LatestTagIdentityEventsForCandidatesParams{
 			RuleSetVersion: tags.IdentityRuleSetVersion,
-			Candidates:     []string{utils.NormalizeTag(p.query)},
+			Candidates:     []string{textnorm.NormalizeTag(p.query)},
 		})
 		if err != nil {
 			e.logger.Error(logId, "identity cache re-read after conflict failed: %v", err)
@@ -562,7 +562,7 @@ func (e *Enricher) recordIdentityPair(ctx context.Context, docID int64, p *ident
 		}
 		for _, row := range rows {
 			if row.Kind != tags.IdentityKindSameIntent || !row.Partner.Valid ||
-				row.Partner.String != utils.NormalizeTag(p.target) || !row.Verdict.Valid {
+				row.Partner.String != textnorm.NormalizeTag(p.target) || !row.Verdict.Valid {
 				continue
 			}
 			p.verdict, _ = types.ParseTagVerdict(row.Verdict.String)
@@ -598,7 +598,7 @@ func boolVerdict(value bool, whenTrue, whenFalse string) string {
 func renameTagDetails(details []analyzer.TagDetail, plan tags.Plan) []analyzer.TagDetail {
 	outputByInput := make(map[string]string, len(plan.Registrations))
 	for _, reg := range plan.Registrations {
-		input := utils.NormalizeTag(reg.Input)
+		input := textnorm.NormalizeTag(reg.Input)
 		output := reg.Name
 		if output == "" {
 			output = reg.Resolved
@@ -608,7 +608,7 @@ func renameTagDetails(details []analyzer.TagDetail, plan tags.Plan) []analyzer.T
 		}
 	}
 	for i := range details {
-		if output, ok := outputByInput[utils.NormalizeTag(details[i].Term)]; ok {
+		if output, ok := outputByInput[textnorm.NormalizeTag(details[i].Term)]; ok {
 			details[i].Term = output
 		}
 	}
@@ -627,7 +627,7 @@ func (e *Enricher) canonicalSuggestions(ctx context.Context, names []string, log
 	seen := make(map[string]bool, len(names))
 	for _, name := range names {
 		canonical := name
-		if resolved, ok := aliasMap[utils.NormalizeTag(name)]; ok {
+		if resolved, ok := aliasMap[textnorm.NormalizeTag(name)]; ok {
 			canonical = resolved
 		}
 		if seen[canonical] {

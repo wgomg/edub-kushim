@@ -8,9 +8,10 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/tags"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/textnorm"
 )
 
 const (
@@ -53,10 +54,10 @@ type TagMerge struct {
 	client   *database.Client
 	matcher  matcher.Matcher
 	embedder matcher.Embedder
-	logger   *utils.Logger
+	logger   *log.Logger
 }
 
-func NewTagMerge(client *database.Client, matcher matcher.Matcher, embedder matcher.Embedder, logger *utils.Logger) *TagMerge {
+func NewTagMerge(client *database.Client, matcher matcher.Matcher, embedder matcher.Embedder, logger *log.Logger) *TagMerge {
 	return &TagMerge{client: client, matcher: matcher, embedder: embedder, logger: logger}
 }
 
@@ -120,9 +121,9 @@ func (s *TagMerge) Merge(ctx context.Context, sourceID, targetID int64) (MergeTa
 	}
 
 	if err := txQ.UpsertDeletedTag(ctx, database.UpsertDeletedTagParams{
-		Name:       utils.NormalizeTag(source.Name),
+		Name:       textnorm.NormalizeTag(source.Name),
 		Kind:       DeletedTagKindMerged,
-		TargetName: sql.NullString{String: utils.NormalizeTag(target.Name), Valid: true},
+		TargetName: sql.NullString{String: textnorm.NormalizeTag(target.Name), Valid: true},
 	}); err != nil {
 		return MergeTagResult{}, errs.FromDB(err, "record merged tag")
 	}
@@ -173,7 +174,7 @@ func (s *TagMerge) Suggestions(ctx context.Context, params SuggestionsParams) ([
 		dismissed[pairKey(d.TagA, d.TagB)] = struct{}{}
 	}
 
-	forTag := utils.NormalizeTag(params.ForTag)
+	forTag := textnorm.NormalizeTag(params.ForTag)
 
 	tagByName := make(map[string]database.Tag, len(allTags))
 	countByID := make(map[int64]int64, len(allTags))
@@ -355,8 +356,8 @@ func (s *TagMerge) RestorePair(ctx context.Context, tagA, tagB string) error {
 }
 
 func canonicalMergePair(op, tagA, tagB string) (string, string, error) {
-	a := utils.NormalizeTag(tagA)
-	b := utils.NormalizeTag(tagB)
+	a := textnorm.NormalizeTag(tagA)
+	b := textnorm.NormalizeTag(tagB)
 	if a == "" || b == "" {
 		return "", "", errs.EInvalid(op, errors.New("tag names are required"))
 	}

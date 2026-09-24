@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 )
 
 type mockExtractor struct {
@@ -103,7 +103,7 @@ func TestCompositeExtractor_Name(t *testing.T) {
 }
 
 func TestNewTextExtractor_ReturnsComposite(t *testing.T) {
-	logger := utils.NewDiscardLogger()
+	logger := log.NewDiscardLogger()
 	extractor, err := NewTextExtractor(logger, config.ToolConfig{Command: "gopdf"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -116,7 +116,7 @@ func TestNewTextExtractor_ReturnsComposite(t *testing.T) {
 }
 
 func TestNewTextExtractor_CompositeHandlesAllTypes(t *testing.T) {
-	logger := utils.NewDiscardLogger()
+	logger := log.NewDiscardLogger()
 	extractor, err := NewTextExtractor(logger, config.ToolConfig{Command: "gopdf"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

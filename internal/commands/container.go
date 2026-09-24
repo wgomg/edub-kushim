@@ -13,6 +13,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/documents/consumption"
 	"github.com/wgomg/edub-kushim/internal/enrichment"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/service"
@@ -21,12 +22,11 @@ import (
 	taskhandlers "github.com/wgomg/edub-kushim/internal/task/handlers"
 	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/types"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type Container struct {
 	cfg        atomic.Pointer[config.Config]
-	logger     *utils.Logger
+	logger     *log.Logger
 	db         *sql.DB
 	client     *database.Client
 	engine     *search.Engine
@@ -48,11 +48,11 @@ type Container struct {
 	}
 }
 
-func NewContainer(cfg *config.Config, logger *utils.Logger) *Container {
+func NewContainer(cfg *config.Config, logger *log.Logger) *Container {
 	return NewContainerWithDB(cfg, logger, nil)
 }
 
-func NewContainerWithDB(cfg *config.Config, logger *utils.Logger, db *sql.DB) *Container {
+func NewContainerWithDB(cfg *config.Config, logger *log.Logger, db *sql.DB) *Container {
 	c := &Container{
 		logger: logger,
 		db:     db,

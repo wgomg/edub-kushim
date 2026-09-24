@@ -7,17 +7,17 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/service"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type TrashHandler struct {
-	logger    *utils.Logger
+	logger    *log.Logger
 	trashSvc  *service.TrashService
 	getConfig func() *config.Config
 }
 
-func NewTrashHandler(logger *utils.Logger, trashSvc *service.TrashService, getConfig func() *config.Config) *TrashHandler {
+func NewTrashHandler(logger *log.Logger, trashSvc *service.TrashService, getConfig func() *config.Config) *TrashHandler {
 	return &TrashHandler{logger: logger, trashSvc: trashSvc, getConfig: getConfig}
 }
 
@@ -39,7 +39,7 @@ func (h *TrashHandler) ListTrash(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
 
-	pb := utils.GetParamBag(r)
+	pb := GetParamBag(r)
 	if pb == nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return

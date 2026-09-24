@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 )
 
 const testWatcherInterval = 50 * time.Millisecond
@@ -33,7 +33,7 @@ func TestWatcher_FiresOnChange(t *testing.T) {
 	w := NewWatcher(configDir, testWatcherInterval, func(cfg *Config) {
 		count.Add(1)
 		lastCfg.Store(cfg)
-	}, utils.NewDiscardLogger())
+	}, log.NewDiscardLogger())
 	w.Start()
 	defer w.Stop()
 
@@ -70,7 +70,7 @@ func TestWatcher_NoFireOnMissingFile(t *testing.T) {
 	var count atomic.Int32
 	w := NewWatcher(configDir, testWatcherInterval, func(cfg *Config) {
 		count.Add(1)
-	}, utils.NewDiscardLogger())
+	}, log.NewDiscardLogger())
 	w.Start()
 	defer w.Stop()
 
@@ -88,7 +88,7 @@ func TestWatcher_NoFireOnInvalidYAML(t *testing.T) {
 	var count atomic.Int32
 	w := NewWatcher(configDir, testWatcherInterval, func(cfg *Config) {
 		count.Add(1)
-	}, utils.NewDiscardLogger())
+	}, log.NewDiscardLogger())
 	w.Start()
 	defer w.Stop()
 

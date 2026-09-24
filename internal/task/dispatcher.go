@@ -6,17 +6,17 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/types"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type Dispatcher struct {
-	logger   *utils.Logger
+	logger   *log.Logger
 	registry *Registry
 	store    *Store
 }
 
-func NewDispatcher(logger *utils.Logger, store *Store, registry *Registry) *Dispatcher {
+func NewDispatcher(logger *log.Logger, store *Store, registry *Registry) *Dispatcher {
 	return &Dispatcher{
 		logger:   logger,
 		registry: registry,

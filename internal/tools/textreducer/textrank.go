@@ -10,11 +10,11 @@ import (
 	"strings"
 
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 )
 
 type TextRank struct {
-	logger *utils.Logger
+	logger *log.Logger
 	config config.ToolConfig
 }
 
@@ -48,7 +48,7 @@ type Graph struct {
 	Adjacency [][]float64
 }
 
-func NewTextRank(logger *utils.Logger, cfg config.ToolConfig) (*TextRank, error) {
+func NewTextRank(logger *log.Logger, cfg config.ToolConfig) (*TextRank, error) {
 	return &TextRank{logger: logger, config: cfg}, nil
 }
 
@@ -59,7 +59,7 @@ func (t *TextRank) Reduce(ctx context.Context, content string, chunkSize int, ta
 	DiversityThreshold := 0.15
 	MinPenalty := 0.1
 
-	cleanedUpContent := utils.CleanUp(content)
+	cleanedUpContent := cleanUp(content)
 	wordsArray := strings.Fields(cleanedUpContent)
 
 	chunks := createChunks(wordsArray, chunkSize)
@@ -456,4 +456,9 @@ func calculateFinalScore(chunks []Chunk, tf_weight, graph_weight, position_weigh
 
 func cmpChunk(a, b Chunk) int {
 	return cmp.Compare(b.FinalScore, a.FinalScore)
+}
+
+func cleanUp(text string) string {
+	re := regexp.MustCompile(`[$€£¥¢%&*+=<>^|~@#\\_\[\]{}]`)
+	return re.ReplaceAllString(text, "")
 }

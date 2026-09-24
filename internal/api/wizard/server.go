@@ -12,20 +12,20 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/configtask"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 type Server struct {
 	httpServer *http.Server
-	logger     *utils.Logger
+	logger     *log.Logger
 	addr       string
 	pool       *task.Pool
 	db         *sql.DB
 }
 
-func NewServer(addr string, logger *utils.Logger) *Server {
+func NewServer(addr string, logger *log.Logger) *Server {
 	return &Server{
 		logger: logger,
 		addr:   addr,
@@ -40,7 +40,7 @@ func (s *Server) Start() error {
 	configHandler := handlers.NewConfigHandler(getConfig, onConfigSet, nil, s.logger, nil, nil)
 	configHandler.OnBootstrap = s.bootstrap
 
-	if configDir, err := utils.ConfigDir(); err == nil {
+	if configDir, err := config.ConfigDir(); err == nil {
 		if config.ConfigExists(*configDir) {
 			s.logger.Info(nil, "existing config found at %s — auto-resuming", *configDir)
 			if cfg, client, dispatcher, err := s.bootstrap(*configDir); err != nil {

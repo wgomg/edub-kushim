@@ -7,12 +7,12 @@ import (
 	"strings"
 
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 )
 
 // NewTestLogger creates a discard logger for tests.
-func NewTestLogger() *utils.Logger {
-	return utils.NewDiscardLogger()
+func NewTestLogger() *log.Logger {
+	return log.NewDiscardLogger()
 }
 
 // NewTestConfig creates a Config for testing with temporary directories.

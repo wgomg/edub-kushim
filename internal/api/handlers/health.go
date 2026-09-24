@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/version"
 )
 
@@ -15,7 +15,7 @@ type HealthResponse struct {
 	Time    string `json:"time"`
 }
 
-func HealthHandler(w http.ResponseWriter, r *http.Request, logger *utils.Logger) {
+func HealthHandler(w http.ResponseWriter, r *http.Request, logger *log.Logger) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
 	logger.Debug(&reqID, "Health check requested")

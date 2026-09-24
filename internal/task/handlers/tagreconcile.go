@@ -8,9 +8,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/tags/reconcile"
 	"github.com/wgomg/edub-kushim/internal/task"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 var _ task.Dedupable = (*TagReconcileTaskHandler)(nil)
@@ -18,10 +18,10 @@ var _ task.Dedupable = (*TagReconcileTaskHandler)(nil)
 type TagReconcileTaskHandler struct {
 	reconciler *reconcile.Reconciler
 	queries    *database.Queries
-	logger     *utils.Logger
+	logger     *log.Logger
 }
 
-func NewTagReconcileTaskHandler(r *reconcile.Reconciler, queries *database.Queries, logger *utils.Logger) *TagReconcileTaskHandler {
+func NewTagReconcileTaskHandler(r *reconcile.Reconciler, queries *database.Queries, logger *log.Logger) *TagReconcileTaskHandler {
 	return &TagReconcileTaskHandler{
 		reconciler: r,
 		queries:    queries,

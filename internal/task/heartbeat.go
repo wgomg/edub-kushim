@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 )
 
 type Heartbeat struct {
@@ -13,10 +13,10 @@ type Heartbeat struct {
 	interval time.Duration
 	done     chan struct{}
 	once     sync.Once
-	logger   *utils.Logger
+	logger   *log.Logger
 }
 
-func NewHeartbeat(owner *Owner, interval time.Duration, logger *utils.Logger) *Heartbeat {
+func NewHeartbeat(owner *Owner, interval time.Duration, logger *log.Logger) *Heartbeat {
 	return &Heartbeat{
 		owner:    owner,
 		interval: interval,

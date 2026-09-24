@@ -11,15 +11,15 @@ import (
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 )
 
 type MuPDF struct {
-	logger *utils.Logger
+	logger *log.Logger
 	config config.ToolConfig
 }
 
-func NewMuPDF(logger *utils.Logger, cfg config.ToolConfig) (*MuPDF, error) {
+func NewMuPDF(logger *log.Logger, cfg config.ToolConfig) (*MuPDF, error) {
 	return &MuPDF{logger: logger, config: cfg}, nil
 }
 

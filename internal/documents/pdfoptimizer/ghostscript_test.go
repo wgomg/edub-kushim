@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 )
 
 func TestGhostscript_Optimize_RejectsRelativePath(t *testing.T) {
@@ -15,7 +15,7 @@ func TestGhostscript_Optimize_RejectsRelativePath(t *testing.T) {
 		t.Skip("gs not installed")
 	}
 
-	g, err := NewGhostscript(utils.NewLogger("error"), config.ToolConfig{Command: "gs", Timeout: time.Second})
+	g, err := NewGhostscript(log.NewLogger("error"), config.ToolConfig{Command: "gs", Timeout: time.Second})
 	if err != nil {
 		t.Fatalf("NewGhostscript: %v", err)
 	}

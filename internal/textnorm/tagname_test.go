@@ -1,4 +1,4 @@
-package utils
+package textnorm
 
 import "testing"
 

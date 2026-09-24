@@ -7,17 +7,17 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/cgo"
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 
 	_mime "github.com/wgomg/edub-kushim/internal/documents/mime"
 )
 
 type MuPDF struct {
-	logger *utils.Logger
+	logger *log.Logger
 	config config.ToolConfig
 }
 
-func NewMuPDF(logger *utils.Logger, cfg config.ToolConfig) (*MuPDF, error) {
+func NewMuPDF(logger *log.Logger, cfg config.ToolConfig) (*MuPDF, error) {
 	return &MuPDF{logger: logger, config: cfg}, nil
 }
 

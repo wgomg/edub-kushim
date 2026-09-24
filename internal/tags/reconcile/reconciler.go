@@ -14,14 +14,15 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/enrichment"
 	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/tags/policy"
 	"github.com/wgomg/edub-kushim/internal/task"
+	"github.com/wgomg/edub-kushim/internal/textnorm"
 	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/types"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 const (
@@ -52,12 +53,12 @@ type Reconciler struct {
 	client    *database.Client
 	services  *service.CrudServices
 	runner    *tools.Runner
-	logger    *utils.Logger
+	logger    *log.Logger
 }
 
 func NewReconciler(getConfig func() *config.Config, client *database.Client,
 	services *service.CrudServices,
-	runner *tools.Runner, logger *utils.Logger) *Reconciler {
+	runner *tools.Runner, logger *log.Logger) *Reconciler {
 	return &Reconciler{
 		getConfig: getConfig,
 		client:    client,
@@ -557,7 +558,7 @@ func (r *Reconciler) recordProvisionalVerdict(ctx context.Context, docID int64, 
 	verdictModel := sql.NullString{String: model, Valid: model != ""}
 	stored, err := r.client.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
 		DocumentID:    docID,
-		TagName:       utils.NormalizeTag(name),
+		TagName:       textnorm.NormalizeTag(name),
 		Criteria:      criteria,
 		Pass:          pass,
 		VerdictModel:  verdictModel,
@@ -801,7 +802,7 @@ func (r *Reconciler) buildWorklist(ctx context.Context, cfg *config.Config, stor
 
 	filtered := worklist[:0]
 	for _, e := range worklist {
-		if utils.SplitJointTag(e.query) != nil {
+		if textnorm.SplitJointTag(e.query) != nil {
 			r.logger.Debug(nil, "tag reconcile: dropping pair %q → %q — %q joins concepts with a conjunction and is split apart, not merged", e.query, e.target, e.query)
 			continue
 		}
@@ -1460,8 +1461,8 @@ func (r *Reconciler) applyKeepFlip(ctx context.Context, e *entry, blocklist map[
 	}
 	if _, err := txQ.UpsertFreshTagVerdict(ctx, database.UpsertFreshTagVerdictParams{
 		DocumentID:    e.documentID,
-		Query:         utils.NormalizeTag(e.query),
-		Target:        utils.NormalizeTag(e.target),
+		Query:         textnorm.NormalizeTag(e.query),
+		Target:        textnorm.NormalizeTag(e.target),
 		Sim:           e.freshSim,
 		Verdict:       e.freshVerdict,
 		VerdictModel:  sql.NullString{String: e.freshModel, Valid: e.freshModel != ""},
@@ -1507,8 +1508,8 @@ func (r *Reconciler) upsertVerdict(ctx context.Context, e *entry) error {
 	}
 	_, err := r.client.UpsertFreshTagVerdict(ctx, database.UpsertFreshTagVerdictParams{
 		DocumentID:    e.documentID,
-		Query:         utils.NormalizeTag(e.query),
-		Target:        utils.NormalizeTag(e.target),
+		Query:         textnorm.NormalizeTag(e.query),
+		Target:        textnorm.NormalizeTag(e.target),
 		Sim:           e.freshSim,
 		Verdict:       e.freshVerdict,
 		VerdictModel:  sql.NullString{String: e.freshModel, Valid: e.freshModel != ""},

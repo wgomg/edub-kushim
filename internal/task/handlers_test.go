@@ -12,10 +12,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/documents/consumption"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/task/handlers"
 	"github.com/wgomg/edub-kushim/internal/testutil"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 // newTestConsumeHandler builds a handler wired to a fresh test database.
@@ -35,7 +35,7 @@ func newTestConsumeHandler(t *testing.T) (*handlers.ConsumeTaskHandler, *task.St
 	client := database.NewTestClient(t)
 	t.Cleanup(func() { client.DB().Close() })
 
-	logger := utils.NewDiscardLogger()
+	logger := log.NewDiscardLogger()
 	consumer, err := consumption.NewConsumer(cfg, logger, client)
 	testutil.AssertNoError(t, err, "create consumer")
 

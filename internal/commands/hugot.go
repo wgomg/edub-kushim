@@ -15,8 +15,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/matcher"
-	"github.com/wgomg/edub-kushim/internal/utils"
 )
 
 func serveHugotHandler(c *Container, args []string) error {
@@ -39,7 +39,7 @@ func serveHugotHandler(c *Container, args []string) error {
 
 	logFile := filepath.Join(c.cfg.Load().App.ConfigDir, "logs", "hugot.log")
 	os.MkdirAll(filepath.Dir(logFile), 0755)
-	if err := c.logger.SetLogFile(utils.LogFileConfig{
+	if err := c.logger.SetLogFile(log.LogFileConfig{
 		Path:       logFile,
 		MaxSize:    c.cfg.Load().App.Logging.MaxSize,
 		MaxBackups: c.cfg.Load().App.Logging.MaxBackups,
@@ -147,7 +147,7 @@ func serveHugotHandler(c *Container, args []string) error {
 	return serveError
 }
 
-func notifyReady(log *utils.Logger) {
+func notifyReady(log *log.Logger) {
 	socketPath := os.Getenv("NOTIFY_SOCKET")
 	if socketPath == "" {
 		return
@@ -167,12 +167,12 @@ func notifyReady(log *utils.Logger) {
 	}
 }
 
-func respondError(w http.ResponseWriter, log *utils.Logger, err error, status int, msg string) {
+func respondError(w http.ResponseWriter, log *log.Logger, err error, status int, msg string) {
 	log.Error(nil, "matcher: %v", err)
 	http.Error(w, msg, status)
 }
 
-func handleEncode(h *matcher.Hugot, log *utils.Logger, maxBodyBytes int) http.HandlerFunc {
+func handleEncode(h *matcher.Hugot, log *log.Logger, maxBodyBytes int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -196,7 +196,7 @@ func handleEncode(h *matcher.Hugot, log *utils.Logger, maxBodyBytes int) http.Ha
 	}
 }
 
-func handleMatch(h *matcher.Hugot, log *utils.Logger, maxBodyBytes int) http.HandlerFunc {
+func handleMatch(h *matcher.Hugot, log *log.Logger, maxBodyBytes int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -221,7 +221,7 @@ func handleMatch(h *matcher.Hugot, log *utils.Logger, maxBodyBytes int) http.Han
 	}
 }
 
-func handleConsolidate(h *matcher.Hugot, log *utils.Logger, maxBodyBytes int) http.HandlerFunc {
+func handleConsolidate(h *matcher.Hugot, log *log.Logger, maxBodyBytes int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -246,7 +246,7 @@ func handleConsolidate(h *matcher.Hugot, log *utils.Logger, maxBodyBytes int) ht
 	}
 }
 
-func handleRank(h *matcher.Hugot, log *utils.Logger, maxBodyBytes int) http.HandlerFunc {
+func handleRank(h *matcher.Hugot, log *log.Logger, maxBodyBytes int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -271,7 +271,7 @@ func handleRank(h *matcher.Hugot, log *utils.Logger, maxBodyBytes int) http.Hand
 	}
 }
 
-func handleSimilarPairs(h *matcher.Hugot, log *utils.Logger) http.HandlerFunc {
+func handleSimilarPairs(h *matcher.Hugot, log *log.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -287,7 +287,7 @@ func handleSimilarPairs(h *matcher.Hugot, log *utils.Logger) http.HandlerFunc {
 	}
 }
 
-func handleAddToStore(h *matcher.Hugot, log *utils.Logger, maxBodyBytes int) http.HandlerFunc {
+func handleAddToStore(h *matcher.Hugot, log *log.Logger, maxBodyBytes int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -310,7 +310,7 @@ func handleAddToStore(h *matcher.Hugot, log *utils.Logger, maxBodyBytes int) htt
 	}
 }
 
-func handleRemoveFromStore(h *matcher.Hugot, log *utils.Logger, maxBodyBytes int) http.HandlerFunc {
+func handleRemoveFromStore(h *matcher.Hugot, log *log.Logger, maxBodyBytes int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

@@ -8,7 +8,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/llm"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 )
 
 type PeopleResult struct {
@@ -40,7 +40,7 @@ type AnalysisResult struct {
 	PassContext *json.RawMessage `json:"-"`
 }
 
-func NewContentAnalyzer(logger *utils.Logger, cfg config.ToolConfig, llmCfg *config.LlmConfig, promptTemplate string, minTags, maxTags int, reg *llm.Registry) (ContentAnalyzer, error) {
+func NewContentAnalyzer(logger *log.Logger, cfg config.ToolConfig, llmCfg *config.LlmConfig, promptTemplate string, minTags, maxTags int, reg *llm.Registry) (ContentAnalyzer, error) {
 	if reg == nil {
 		return nil, fmt.Errorf("registry is required for %q adapter", llmCfg.Adapter)
 	}

@@ -10,16 +10,16 @@ import (
 	"strings"
 
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/utils"
+	"github.com/wgomg/edub-kushim/internal/log"
 
 	_mime "github.com/wgomg/edub-kushim/internal/documents/mime"
 )
 
 type Docx struct {
-	logger *utils.Logger
+	logger *log.Logger
 }
 
-func NewDocx(logger *utils.Logger) *Docx {
+func NewDocx(logger *log.Logger) *Docx {
 	return &Docx{logger: logger}
 }
 
