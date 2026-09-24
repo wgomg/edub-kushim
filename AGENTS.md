@@ -80,7 +80,7 @@ Run one via Podman (preferred) or Docker:
 ```bash
 podman run -d --name edub-test-pg \
   -e POSTGRES_USER=edub -e POSTGRES_PASSWORD=edub \
-  -p <port>:5432 postgres:17   # docker works identically
+  -p 5432:5432 postgres:17   # docker works identically
 ```
 
 ```bash
