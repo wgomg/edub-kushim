@@ -89,6 +89,88 @@ func StartMaintenanceLockHeartbeat(ctx context.Context, queries *Queries, logger
 	return func() { stopOnce.Do(func() { close(stopCh) }) }
 }
 
+// HoldMaintenanceLock returns once the maintenance lock is held and the
+// lock-gated tasks have drained, waiting while another process holds the
+// lock. A valid token is a lock the caller already holds, which the helper
+// leaves for the caller to release; otherwise the returned release function
+// releases the lock the helper took. onWait, when non-nil, observes the
+// remaining in-flight count.
+func HoldMaintenanceLock(ctx context.Context, queries *Queries, logger *log.Logger, what string, token uuid.NullUUID, onWait func(count int64)) (func(), error) {
+	return holdMaintenanceLock(ctx, queries, logger, what, token, onWait, true)
+}
+
+// TryHoldMaintenanceLock is HoldMaintenanceLock without the wait: a lock
+// held by another process is returned as an error instead of retried.
+func TryHoldMaintenanceLock(ctx context.Context, queries *Queries, logger *log.Logger, what string, token uuid.NullUUID, onWait func(count int64)) (func(), error) {
+	return holdMaintenanceLock(ctx, queries, logger, what, token, onWait, false)
+}
+
+func holdMaintenanceLock(ctx context.Context, queries *Queries, logger *log.Logger, what string, token uuid.NullUUID, onWait func(count int64), wait bool) (func(), error) {
+	acquired := !token.Valid
+	if acquired {
+		if wait {
+			if err := AcquireMaintenanceLock(ctx, queries, logger, what); err != nil {
+				return nil, err
+			}
+		} else {
+			rows, err := tryAcquireMaintenanceLock(ctx, queries)
+			if err != nil {
+				return nil, err
+			}
+			if rows == 0 {
+				return nil, fmt.Errorf("%s: maintenance lock held by another process", what)
+			}
+		}
+	}
+
+	stopHeartbeat := StartMaintenanceLockHeartbeat(ctx, queries, logger, 5*time.Minute, token)
+	release := func() {
+		stopHeartbeat()
+		if acquired {
+			releaseMaintenanceLock(queries, logger)
+		}
+	}
+	if err := WaitForTaskDrain(ctx, queries, logger, what, onWait); err != nil {
+		release()
+		return nil, err
+	}
+	return release, nil
+}
+
+func tryAcquireMaintenanceLock(ctx context.Context, queries *Queries) (int64, error) {
+	rows, err := queries.AcquireBackupLock(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("acquire maintenance lock: %w", err)
+	}
+	return rows, nil
+}
+
+// AcquireMaintenanceLock waits until the lock is free; each wait is logged
+// and ctx ends the wait.
+func AcquireMaintenanceLock(ctx context.Context, queries *Queries, logger *log.Logger, what string) error {
+	for {
+		rows, err := tryAcquireMaintenanceLock(ctx, queries)
+		if err != nil {
+			return err
+		}
+		if rows > 0 {
+			return nil
+		}
+		logger.Info(nil, "%s: maintenance lock held by another process — waiting...", what)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(5 * time.Second):
+		}
+	}
+}
+
+func releaseMaintenanceLock(queries *Queries, logger *log.Logger) {
+	if _, err := queries.ReleaseBackupLock(context.Background(), uuid.NullUUID{}); err != nil {
+		logger.Error(nil, "release maintenance lock: %v", err)
+	}
+}
+
 // RewriteStoragePaths rewrites stored path columns from an old storage
 // root to the new one, across the document and document-tag tables; both
 // paths must be absolute.

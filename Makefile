@@ -260,6 +260,7 @@ test-short:
 		./internal/backup/ \
 		./internal/types/ \
 		./internal/tags/ \
+		./internal/ops/flags/ \
 
 # Default test target (same as test-short for now).
 test: test-short
@@ -283,6 +284,7 @@ test-verbose:
 		./internal/backup/ \
 		./internal/types/ \
 		./internal/tags/ \
+		./internal/ops/flags/ \
 
 # Database-dependent tests (requires PostgreSQL 16+).
 .PHONY: test-db
@@ -313,6 +315,7 @@ test-cgo-db:
 		./internal/documents/consumption/ \
 		./internal/ops/configtask/ \
 		./internal/ops/cli/ \
+		./internal/ops/consume/ \
 		./internal/ops/queue/ \
 		./internal/enrichment/ \
 		./internal/tags/admission/ \
@@ -349,6 +352,7 @@ test-cgo:
 		./internal/matcher/ \
 		./internal/tools/ \
 		./internal/ops/cli/ \
+		./internal/ops/consume/ \
 		./internal/ops/queue/ \
 		./internal/enrichment/ \
 		./internal/tags/admission/ \

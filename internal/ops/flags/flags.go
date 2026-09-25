@@ -12,7 +12,6 @@ import (
 // flags so the same argument cannot satisfy two flags.
 type FlagParser struct {
 	args []string
-	pos  int
 	used map[int]bool
 	rest []string
 }
@@ -38,79 +37,70 @@ func (p *FlagParser) Help(helpText string) bool {
 // String reads one flag's value into dst when the flag is present;
 // missing value errors.
 func (p *FlagParser) String(flag string, dst *string) error {
-	for i := 0; i < len(p.args); i++ {
-		if p.used[i] {
-			continue
-		}
-		if p.args[i] == flag {
-			if i+1 >= len(p.args) {
-				return fmt.Errorf("%s requires a value", flag)
-			}
-			*dst = p.args[i+1]
-			p.used[i] = true
-			p.used[i+1] = true
-			if i >= p.pos {
-				p.pos = i + 2
-			}
-			return nil
-		}
+	valIdx, found, hasValue := p.take(flag, true)
+	if !found {
+		return nil
 	}
+	if !hasValue {
+		return fmt.Errorf("%s requires a value", flag)
+	}
+	*dst = p.args[valIdx]
 	return nil
 }
 
-// Int reads one integer flag, clamped to the bounds.
+// Int reads one integer flag, rejecting values outside the bounds; a
+// present flag without a value is ignored.
 func (p *FlagParser) Int(flag string, dst *int, min, max int) error {
-	for i := 0; i < len(p.args); i++ {
-		if p.used[i] {
-			continue
-		}
-		if p.args[i] == flag && i+1 < len(p.args) {
-			v, err := strconv.Atoi(p.args[i+1])
-			if err != nil {
-				return fmt.Errorf("%s: invalid integer", flag)
-			}
-			if v < min || v > max {
-				return fmt.Errorf("%s: must be between %d and %d", flag, min, max)
-			}
-			*dst = v
-			p.used[i] = true
-			p.used[i+1] = true
-			if i >= p.pos {
-				p.pos = i + 2
-			}
-			return nil
-		}
+	valIdx, found, hasValue := p.take(flag, true)
+	if !found || !hasValue {
+		return nil
 	}
+	v, err := strconv.Atoi(p.args[valIdx])
+	if err != nil {
+		return fmt.Errorf("%s: invalid integer", flag)
+	}
+	if v < min || v > max {
+		return fmt.Errorf("%s: must be between %d and %d", flag, min, max)
+	}
+	*dst = v
 	return nil
 }
 
 // Bool reads one flag that takes no value.
 func (p *FlagParser) Bool(flag string, dst *bool) error {
-	for i := 0; i < len(p.args); i++ {
-		if p.used[i] {
-			continue
-		}
-		if p.args[i] == flag {
-			*dst = true
-			p.used[i] = true
-			if i >= p.pos {
-				p.pos = i + 1
-			}
-			return nil
-		}
+	if _, found, _ := p.take(flag, false); found {
+		*dst = true
 	}
 	return nil
 }
 
-// Rest returns the positional arguments after the last parsed flag.
+func (p *FlagParser) take(flag string, takesValue bool) (valIdx int, found, hasValue bool) {
+	for i, a := range p.args {
+		if p.used[i] || a != flag {
+			continue
+		}
+		if !takesValue {
+			p.used[i] = true
+			return i, true, true
+		}
+		if i+1 >= len(p.args) {
+			return 0, true, false
+		}
+		p.used[i], p.used[i+1] = true, true
+		return i + 1, true, true
+	}
+	return 0, false, false
+}
+
+// Rest returns every unconsumed argument, positional or not.
 func (p *FlagParser) Rest() []string {
 	if p.rest != nil {
 		return p.rest
 	}
 	p.rest = make([]string, 0)
-	for i := 0; i < len(p.args); i++ {
+	for i, a := range p.args {
 		if !p.used[i] {
-			p.rest = append(p.rest, p.args[i])
+			p.rest = append(p.rest, a)
 		}
 	}
 	return p.rest

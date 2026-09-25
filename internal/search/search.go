@@ -2,7 +2,8 @@
 // over the documents table and the structured filter search (tags with
 // alias resolution, people, document type, language, dates, file size, and
 // the missing-state filters), sharing one result shape with rank and
-// snippet. It is read-only over the persistence layer.
+// snippet. It is read-only over the persistence layer apart from rebuilding
+// the tsvector index.
 package search
 
 import (
@@ -81,17 +82,18 @@ type Filter struct {
 	Untagged        bool           `json:"untagged"`
 }
 
-// Engine is the read-only query surface over the document table.
+// Engine is the query surface over the document table, plus the tsvector
+// index maintenance the search verb exposes.
 type Engine struct {
-	logger  *log.Logger
-	queries *database.Queries
+	logger *log.Logger
+	client *database.Client
 }
 
-// NewEngine builds the search engine over the queries.
-func NewEngine(logger *log.Logger, queries *database.Queries) *Engine {
+// NewEngine builds the search engine over the client.
+func NewEngine(logger *log.Logger, client *database.Client) *Engine {
 	return &Engine{
-		logger:  logger,
-		queries: queries,
+		logger: logger,
+		client: client,
 	}
 }
 
@@ -116,7 +118,7 @@ func (e *Engine) resolveTagAliases(ctx context.Context, names []string) ([]strin
 		return nil, nil
 	}
 
-	aliases, err := tags.ResolveAliases(ctx, e.queries, normalized)
+	aliases, err := tags.ResolveAliases(ctx, e.client.Queries, normalized)
 	if err != nil {
 		return nil, fmt.Errorf("resolve tag aliases: %w", err)
 	}
@@ -147,7 +149,7 @@ func (e *Engine) Search(ctx context.Context, query string, limit, offset int32) 
 	}
 
 	if offset > 0 {
-		total, err := e.queries.CountDocumentsStructured(ctx, database.SearchFilter{
+		total, err := e.client.Queries.CountDocumentsStructured(ctx, database.SearchFilter{
 			Query:  query,
 			Limit:  limit,
 			Offset: offset,
@@ -160,7 +162,7 @@ func (e *Engine) Search(ctx context.Context, query string, limit, offset int32) 
 		}
 	}
 
-	rows, err := e.queries.SearchDocumentsStructured(ctx, database.SearchFilter{
+	rows, err := e.client.Queries.SearchDocumentsStructured(ctx, database.SearchFilter{
 		Query:  query,
 		Limit:  limit,
 		Offset: offset,
@@ -233,7 +235,7 @@ func (e *Engine) SearchStructured(ctx context.Context, filter Filter) ([]Result,
 		dbFilter.FileSize = &struct{ Min, Max *int64 }{filter.FileSize.Min, filter.FileSize.Max}
 	}
 
-	total, err := e.queries.CountDocumentsStructured(ctx, dbFilter)
+	total, err := e.client.Queries.CountDocumentsStructured(ctx, dbFilter)
 	if err != nil {
 		return nil, 0, fmt.Errorf("structured search count: %w", err)
 	}
@@ -242,7 +244,7 @@ func (e *Engine) SearchStructured(ctx context.Context, filter Filter) ([]Result,
 		return []Result{}, total, nil
 	}
 
-	rows, err := e.queries.SearchDocumentsStructured(ctx, dbFilter)
+	rows, err := e.client.Queries.SearchDocumentsStructured(ctx, dbFilter)
 	if err != nil {
 		return nil, 0, fmt.Errorf("structured search: %w", err)
 	}
@@ -276,4 +278,13 @@ func (e *Engine) SearchStructured(ctx context.Context, filter Filter) ([]Result,
 
 func sanitizeQuery(q string) string {
 	return strings.TrimSpace(q)
+}
+
+// Reindex rebuilds the document tsvector GIN index without blocking
+// concurrent writes.
+func (e *Engine) Reindex(ctx context.Context) error {
+	if _, err := e.client.DB().ExecContext(ctx, "REINDEX INDEX CONCURRENTLY idx_document_tsv"); err != nil {
+		return fmt.Errorf("reindex document tsvector index: %w", err)
+	}
+	return nil
 }

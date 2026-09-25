@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -47,7 +46,7 @@ func taskListHandler(c *container.Container, args []string) error {
 		"  List tasks with optional filters.\n\n" +
 		"  --batch <id>      filter by batch UUID\n" +
 		"  --status <s>      filter by status (waiting|pending|processing|completed|failed)\n" +
-		"  --type <type>     filter by task type (consume|enrich)\n" +
+		"  --type <type>     filter by task type (consume|enrich|thumbnail|backup|mirror|config|tagreconcile|thumbbackfill|tagmeasure|tagidentity)\n" +
 		"  --limit N         max results (default 20, max 100)\n" +
 		"  --offset N        result offset (default 0)") {
 		return nil
@@ -91,24 +90,12 @@ func taskListHandler(c *container.Container, args []string) error {
 	fmt.Println(strings.Repeat("-", 80))
 
 	for _, t := range tasks {
-		fileName := ""
-		if t.Payload != nil {
-			var p struct {
-				FilePath string `json:"file_path"`
-				FileName string `json:"file_name"`
-			}
-			_ = json.Unmarshal(*t.Payload, &p)
-			if p.FilePath != "" {
-				fileName = filepath.Base(p.FilePath)
-			} else {
-				fileName = p.FileName
-			}
-		}
+		payload := task.ReadPayload(t.Payload)
 		batchShort := t.BatchID.String
 		if len(batchShort) > 12 {
 			batchShort = batchShort[:12] + "…"
 		}
-		fmt.Printf("%-36s %-10s %-12s %-12s %s\n", t.TaskID, t.TaskType, t.Status, batchShort, fileName)
+		fmt.Printf("%-36s %-10s %-12s %-12s %s\n", t.TaskID, t.TaskType, t.Status, batchShort, payload.DisplayName())
 	}
 
 	return nil
@@ -138,22 +125,9 @@ func taskStatusHandler(c *container.Container, args []string) error {
 		return fmt.Errorf("get task: %w", err)
 	}
 
-	fileName := ""
-	payloadDocID := ""
-	if t.Payload != nil {
-		var p struct {
-			FilePath   string `json:"file_path"`
-			FileName   string `json:"file_name"`
-			DocumentID string `json:"document_id"`
-		}
-		_ = json.Unmarshal(*t.Payload, &p)
-		if p.FilePath != "" {
-			fileName = filepath.Base(p.FilePath)
-		} else {
-			fileName = p.FileName
-		}
-		payloadDocID = p.DocumentID
-	}
+	payload := task.ReadPayload(t.Payload)
+	fileName := payload.DisplayName()
+	payloadDocID := payload.DocumentID
 
 	fmt.Printf("Task ID:    %s\n", t.TaskID)
 	fmt.Printf("Type:       %s\n", t.TaskType)

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/ops/container"
 	"github.com/wgomg/edub-kushim/internal/ops/flags"
 )
@@ -76,7 +77,7 @@ func searchHandler(c *container.Container, args []string) error {
 		fmt.Printf("  %s\n", highlightSnippet(snippet))
 		fmt.Printf("  rank=%.4f  |  %s  |  %s\n",
 			r.Rank,
-			formatSize(r.FileSize),
+			log.FormatBytes(uint64(r.FileSize)),
 			r.CreatedAt.Format("2006-01-02"),
 		)
 	}
@@ -90,32 +91,18 @@ func highlightSnippet(s string) string {
 	return s
 }
 
-func formatSize(bytes int64) string {
-	const unit = 1024
-	if bytes < unit {
-		return fmt.Sprintf("%d B", bytes)
-	}
-	div, exp := int64(unit), 0
-	for n := bytes / unit; n >= unit; n /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
-}
-
 func rebuildIndex(c *container.Container) error {
-	client, err := c.GetClient()
+	engine, err := c.GetSearchEngine()
 	if err != nil {
-		return fmt.Errorf("failed to get database: %w", err)
+		return fmt.Errorf("failed to get search engine: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	start := time.Now()
-	_, err = client.DB().ExecContext(ctx, "REINDEX INDEX CONCURRENTLY idx_document_tsv")
-	if err != nil {
-		return fmt.Errorf("reindex failed: %w", err)
+	if err := engine.Reindex(ctx); err != nil {
+		return err
 	}
 
 	c.GetLogger().Info(nil, "tsvector index rebuilt in %s", time.Since(start).Round(time.Millisecond))

@@ -64,16 +64,11 @@ func runTagMeasureManual(c *container.Container, client *database.Client) error 
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Hour)
 	defer cancel()
 
-	if err := waitForBackupLock(ctx, client, "Tag measure"); err != nil {
+	release, err := database.HoldMaintenanceLock(ctx, client.Queries, c.GetLogger(), "tag measure", uuid.NullUUID{}, nil)
+	if err != nil {
 		return err
 	}
-	defer client.Queries.ReleaseBackupLock(context.Background(), uuid.NullUUID{})
-	stopHeartbeat := database.StartMaintenanceLockHeartbeat(ctx, client.Queries, c.GetLogger(), 5*time.Minute, uuid.NullUUID{})
-	defer stopHeartbeat()
-
-	if err := database.WaitForTaskDrain(ctx, client.Queries, c.GetLogger(), "tag measure"); err != nil {
-		return err
-	}
+	defer release()
 
 	report, err := tags.NewRunner(client, nil).Run(ctx, uuid.New())
 	if err != nil {

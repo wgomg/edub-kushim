@@ -56,7 +56,7 @@ internal/
 │   ├── schema.go           # InitializeSchema — goose migrations + seeders (tags, tag-aliases, doc-types, people-types)
 │   ├── dump.go             # SQL dump: DumpSchemaAndData, SQLDumpToFile, goose version preservation
 │   ├── psqlrestore.go      # Restore via psql: CheckRestoreTooling, RestoreDumpViaPSQL (host or docker/podman exec)
-│   ├── migrate.go          # RewriteStoragePaths, ValidateMigrationDestination, WaitForTaskDrain (shared with backup handler)
+│   ├── migrate.go          # RewriteStoragePaths, ValidateMigrationDestination, WaitForTaskDrain, maintenance-lock helpers (AcquireMaintenanceLock, HoldMaintenanceLock, TryHoldMaintenanceLock)
 │   ├── models.go           # Generated data models (Document now has PageCount, WordCount, CharCount, Language; added SavedSearch)
 │   ├── db.go               # Database interface (Queries, WithTx)
 │   ├── document_sort.go    # ListDocumentsWithSort (whitelisted sort columns)
@@ -179,7 +179,8 @@ internal/
 │   │   ├── queue.go        # Daemon loop: scheduling, stale reclamation, pool lifecycle, config hot-reload
 │   │   └── notify.go       # Postgres LISTEN/NOTIFY goroutine for the queue daemon
 │   ├── consume/            # `kushim consume` child process
-│   │   └── consume.go      # Enqueues consume+enrich tasks, polls batch progress, cancel subcommand
+│   │   ├── consume.go      # Enqueues consume+enrich tasks, polls batch progress, cancel subcommand
+│   │   └── advisories.go   # Tool-block and ocrmypdf advisories printed before a batch starts
 │   ├── setup/              # Setup command — launches web wizard by default, --cli for terminal mode
 │   │   └── setup.go
 │   ├── flags/              # CLI flag parser (shared by the ops packages)
@@ -237,6 +238,7 @@ internal/
 │   ├── errors.go           # Error wrapper carrying ReqID for log correlation
 │   ├── handler.go          # Handler + Dedupable interfaces; RunBlocking — shared blocking-task lifecycle
 │   ├── heartbeat.go        # Heartbeat goroutine — periodic Owner.Heartbeat every 5s
+│   ├── payload.go          # TaskPayload + ReadPayload — display fields decoded from a task payload
 │   ├── pool.go             # Generic worker pool (Pool, Start/Stop, worker loop; Nexter interface)
 │   ├── progress.go         # Progress tracking (ProgressFunc, ProgressSnapshot, ProgressTracker)
 │   ├── registry.go         # Task type → handler registry

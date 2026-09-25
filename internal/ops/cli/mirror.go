@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/backup"
@@ -42,7 +41,7 @@ func mirrorHandler(c *container.Container, args []string) error {
 	defer stop()
 
 	fmt.Println("Waiting for the backup lock...")
-	if err := waitForBackupLock(ctx, client, "Backup"); err != nil {
+	if err := database.AcquireMaintenanceLock(ctx, client.Queries, c.GetLogger(), "Backup"); err != nil {
 		return err
 	}
 	defer client.Queries.ReleaseBackupLock(context.Background(), uuid.NullUUID{})
@@ -69,22 +68,4 @@ func mirrorHandler(c *container.Container, args []string) error {
 	fmt.Printf("Mirror completed: %s\n", result.Summary())
 	fmt.Printf("State file: %s/.edub-mirror.json\n", dest)
 	return nil
-}
-
-func waitForBackupLock(ctx context.Context, client *database.Client, what string) error {
-	for {
-		rows, err := client.Queries.AcquireBackupLock(ctx)
-		if err != nil {
-			return fmt.Errorf("acquire backup lock: %w", err)
-		}
-		if rows > 0 {
-			return nil
-		}
-		fmt.Printf("%s lock held by another process — waiting...\n", what)
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(5 * time.Second):
-		}
-	}
 }

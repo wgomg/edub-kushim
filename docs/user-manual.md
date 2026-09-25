@@ -437,7 +437,7 @@ Output example:
 ─── #42 ─────────────────────────────────────────────
   quarterly-report-2024.pdf
   The <b>budget</b> forecast for Q3 shows a <b>15% increase</b> in revenue
-  rank=0.4213  |  1.2 MB  |  2024-03-19
+  rank=0.4213  |  1.2 MiB  |  2024-03-19
 ```
 
 ### `kushim task list`

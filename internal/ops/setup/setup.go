@@ -119,7 +119,7 @@ func runSetupCLI(args []string, logger *log.Logger) error {
 		return fmt.Errorf(`usage: kushim setup --languages eng,spa,...
 
 Flags:
-  --languagess                       ISO 639-3 codes (eng, spa, fra, ...)
+  --languages                        ISO 639-3 codes (eng, spa, fra, ...)
   --inbox-path                       inbox directory (default: ~/.config/edub-kushim/inbox)
   --storage-path                     storage directory (default: ~/.config/edub-kushim/storage)
   --consumer-ocr-engine              gosseract | ocrmypdf (default: gosseract)
@@ -147,35 +147,13 @@ Flags:
 		return fmt.Errorf("invalid --consumer-textextractor-engine %q: must be one of %v", textExtractorEngine, validTextExtractorEngines)
 	}
 
+	if pdfEngine == config.PdfOptimizer.GS {
+		optimizationFallback = ""
+	}
+
 	configDir, err := config.ConfigDir()
 	if err != nil {
 		logger.Fatal("Cannot determine home directory:", err)
-	}
-
-	cfg := config.DefaultConfig(*configDir)
-	cfg.Consumer.OCR.Languages = langList
-
-	if ocrEngine != "" {
-		cfg.Consumer.OCR.Engine = ocrEngine
-	}
-	if pdfEngine != "" {
-		cfg.Consumer.PdfOptimizer.Engine = pdfEngine
-	}
-	if textExtractorEngine != "" {
-		cfg.Consumer.TextExtractor.Engine = textExtractorEngine
-	}
-
-	if inboxDir != "" {
-		cfg.Storage.ConsumptionDir = inboxDir
-	}
-	if storageDir != "" {
-		cfg.Storage.StorageDir = storageDir
-	}
-
-	if pdfEngine == config.PdfOptimizer.GS {
-		optimizationFallback = ""
-	} else if optimizationFallback != "" {
-		cfg.Consumer.PdfOptimizer.Fallback = optimizationFallback
 	}
 
 	v := viper.New()
@@ -217,7 +195,6 @@ Flags:
 	v.Set("server.session_secret", secret)
 
 	if dbDsn != "" {
-		cfg.Db.DSN = dbDsn
 		v.Set("database.dsn", dbDsn)
 	}
 
@@ -228,6 +205,11 @@ Flags:
 		return fmt.Errorf("chmod config: %w", err)
 	}
 	logger.Info(nil, "created config: %s", configPath)
+
+	cfg, err := config.Load(*configDir)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
 
 	if err := os.MkdirAll(cfg.Storage.ConsumptionDir, 0755); err != nil {
 		return fmt.Errorf("create inbox directory: %w", err)
@@ -245,27 +227,20 @@ Flags:
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
+	defer db.Close()
 
 	if resetDb {
 		logger.Info(nil, "resetting database...")
 		if err := database.ResetDatabase(db); err != nil {
-			db.Close()
 			return err
 		}
 		logger.Info(nil, "database reset complete")
 	} else {
 		if err := database.InitializeSchema(db); err != nil {
-			db.Close()
 			return err
 		}
 	}
-	db.Close()
 	logger.Info(nil, "created database")
-
-	cfg, err = config.Load(*configDir)
-	if err != nil {
-		return fmt.Errorf("load config: %w", err)
-	}
 
 	if err := config.DownloadHugotModel(context.Background(), cfg, logger); err != nil {
 		return fmt.Errorf("hugot model download: %w", err)
@@ -319,12 +294,6 @@ Flags:
 			return fmt.Errorf("passwords do not match")
 		}
 	}
-
-	db, err = database.NewPostgresDB(config.BuildPostgresDSN(cfg.Db))
-	if err != nil {
-		return fmt.Errorf("open database: %w", err)
-	}
-	defer db.Close()
 
 	client := database.NewClient(db)
 	userSvc := service.NewUser(client.Queries)

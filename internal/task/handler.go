@@ -10,7 +10,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/database"
@@ -57,15 +56,15 @@ func RunBlocking(
 
 	MarkBatchProcessing(ctx, queries, t.BatchID)
 
-	stopHeartbeat := database.StartMaintenanceLockHeartbeat(ctx, queries, logger, 5*time.Minute,
-		uuid.NullUUID{UUID: t.ClaimToken, Valid: true})
-	defer stopHeartbeat()
-
-	if err := database.WaitForTaskDrain(ctx, queries, logger, label, func(count int64) {
-		progress.Set("drain-wait", fmt.Sprintf("%d in-flight", count), 0)
-	}); err != nil {
+	release, err := database.HoldMaintenanceLock(ctx, queries, logger, label,
+		uuid.NullUUID{UUID: t.ClaimToken, Valid: true},
+		func(count int64) {
+			progress.Set("drain-wait", fmt.Sprintf("%d in-flight", count), 0)
+		})
+	if err != nil {
 		return nil, err
 	}
+	defer release()
 
 	return body(progress)
 }

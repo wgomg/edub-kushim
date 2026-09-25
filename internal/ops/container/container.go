@@ -35,29 +35,49 @@ import (
 // Container is the composition root: one per process, holding the
 // dynamic config pointer and the lazily constructed dependencies.
 type Container struct {
-	cfg        atomic.Pointer[config.Config]
-	logger     *log.Logger
-	db         *sql.DB
-	client     *database.Client
-	engine     *search.Engine
-	dispatcher *task.Dispatcher
-	runner     *task.Runner
-	store      *task.Store
-	services   *service.CrudServices
-	tag        *curation.Tag
-	merges     *curation.TagMerge
-	pools      struct {
-		consume       *task.Pool
-		enrich        *task.Pool
-		thumbnail     *task.Pool
-		thumbbackfill *task.Pool
-		config        *task.Pool
-		backup        *task.Pool
-		mirror        *task.Pool
-		tagreconcile  *task.Pool
-		tagmeasure    *task.Pool
-		tagidentity   *task.Pool
-	}
+	cfg            atomic.Pointer[config.Config]
+	logger         *log.Logger
+	db             *sql.DB
+	client         *database.Client
+	engine         *search.Engine
+	dispatcher     *task.Dispatcher
+	runner         *task.Runner
+	store          *task.Store
+	services       *service.CrudServices
+	tag            *curation.Tag
+	merges         *curation.TagMerge
+	matcherClient  *matcher.MatcherClient
+	tagToolsRunner *tools.Runner
+	pools          map[types.TaskType]*task.Pool
+}
+
+type poolSpec struct {
+	workers  func(*config.Config) int
+	interval time.Duration
+}
+
+func singleWorker(*config.Config) int { return 1 }
+
+var poolSpecs = map[types.TaskType]poolSpec{
+	types.Task.Type.Consume: {
+		workers:  func(cfg *config.Config) int { return max(cfg.Consumer.Workers, 1) },
+		interval: 2 * time.Second,
+	},
+	types.Task.Type.Enrich: {
+		workers:  func(cfg *config.Config) int { return max(cfg.Enricher.Workers, 1) },
+		interval: 5 * time.Second,
+	},
+	types.Task.Type.Thumbnail: {
+		workers:  func(cfg *config.Config) int { return max(cfg.Consumer.Thumbnail.Workers, 1) },
+		interval: 2 * time.Second,
+	},
+	types.Task.Type.ThumbBackfill: {workers: singleWorker, interval: 2 * time.Second},
+	types.Task.Type.Config:        {workers: singleWorker, interval: 5 * time.Second},
+	types.Task.Type.Backup:        {workers: singleWorker, interval: 60 * time.Second},
+	types.Task.Type.Mirror:        {workers: singleWorker, interval: 60 * time.Second},
+	types.Task.Type.TagReconcile:  {workers: singleWorker, interval: 60 * time.Second},
+	types.Task.Type.TagMeasure:    {workers: singleWorker, interval: 5 * time.Second},
+	types.Task.Type.TagIdentity:   {workers: singleWorker, interval: 5 * time.Second},
 }
 
 // NewContainer builds a container without a database; the DB attaches
@@ -72,6 +92,7 @@ func NewContainerWithDB(cfg *config.Config, logger *log.Logger, db *sql.DB) *Con
 	c := &Container{
 		logger: logger,
 		db:     db,
+		pools:  make(map[types.TaskType]*task.Pool),
 	}
 	c.cfg.Store(cfg)
 	return c
@@ -95,7 +116,7 @@ func (c *Container) GetLogger() *log.Logger {
 // GetTagService lazily builds the curation tag service, embedding
 // through the matcher client; errors when the config lacks a model.
 func (c *Container) GetTagService() (*curation.Tag, error) {
-	if _, err := c.GetDispatcher(); err != nil {
+	if err := c.ensureDispatcher(); err != nil {
 		return nil, err
 	}
 	return c.tag, nil
@@ -133,8 +154,8 @@ func (c *Container) GetClient() (*database.Client, error) {
 	return c.client, nil
 }
 
-// InvalidateDB drops the cached connection so the next GetClient
-// reconnects with the current configuration.
+// InvalidateDB drops every cached dependency so the next access rebuilds
+// from the current configuration.
 func (c *Container) InvalidateDB() {
 	if c.db != nil {
 		_ = c.db.Close()
@@ -148,16 +169,9 @@ func (c *Container) InvalidateDB() {
 	c.services = nil
 	c.tag = nil
 	c.merges = nil
-	c.pools.consume = nil
-	c.pools.enrich = nil
-	c.pools.thumbnail = nil
-	c.pools.thumbbackfill = nil
-	c.pools.config = nil
-	c.pools.backup = nil
-	c.pools.mirror = nil
-	c.pools.tagreconcile = nil
-	c.pools.tagmeasure = nil
-	c.pools.tagidentity = nil
+	c.matcherClient = nil
+	c.tagToolsRunner = nil
+	clear(c.pools)
 }
 
 // ReconnectClient closes the current connection and reopens it from the
@@ -182,20 +196,50 @@ func (c *Container) SocketPath() string {
 	return filepath.Join(c.cfg.Load().App.ConfigDir, "kushim-hugot.sock")
 }
 
-// GetDispatcher lazily builds the task dispatcher with the handler
-// registry; the registry is assembled once and includes every task type
-// the binary handles.
-func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
+// GetMatcherClient returns the matcher RPC client, with request bodies
+// capped at the configured reduce-target size.
+func (c *Container) GetMatcherClient() *matcher.MatcherClient {
+	if c.matcherClient == nil {
+		c.matcherClient = matcher.NewMatcherClient(c.SocketPath(), matcher.MaxMatchBodyBytes(c.cfg.Load().Enricher.TagMatcher.ReduceTargetWords))
+	}
+	return c.matcherClient
+}
+
+// GetTagToolsRunner returns the text reducer, content analyzer, and tag
+// matcher tools over the matcher client.
+func (c *Container) GetTagToolsRunner() *tools.Runner {
+	if c.tagToolsRunner == nil {
+		c.tagToolsRunner = tools.NewRunnerWithMatcher(c.logger, c.cfg.Load(), []string{"textreducer", "contentanalyzer", "tagmatcher"}, c.GetMatcherClient())
+	}
+	return c.tagToolsRunner
+}
+
+// LogFileConfig returns the file-log configuration of the named log file
+// under the config directory's logs directory.
+func (c *Container) LogFileConfig(name string) log.LogFileConfig {
+	cfg := c.cfg.Load()
+	return log.LogFileConfig{
+		Path:       filepath.Join(cfg.App.ConfigDir, "logs", name),
+		MaxSize:    cfg.App.Logging.MaxSize,
+		MaxBackups: cfg.App.Logging.MaxBackups,
+		MaxAge:     cfg.App.Logging.MaxAge,
+		Compress:   cfg.App.Logging.Compress,
+	}
+}
+
+// The dispatcher, runner, store, and tag services are built together so
+// GetDispatcher, GetRunner, and GetTagService work in any call order.
+func (c *Container) ensureDispatcher() error {
 	if c.dispatcher != nil {
-		return c.dispatcher, nil
+		return nil
 	}
 
 	client, err := c.GetClient()
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	matcherClient := matcher.NewMatcherClient(c.SocketPath(), matcher.MaxMatchBodyBytes(c.cfg.Load().Enricher.TagMatcher.ReduceTargetWords))
+	matcherClient := c.GetMatcherClient()
 
 	c.tag = curation.NewTag(client, c.logger, matcherClient)
 	c.merges = curation.NewTagMerge(client, matcherClient, matcherClient, c.logger)
@@ -212,12 +256,12 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 
 	consumer, err := consumption.NewConsumer(c.cfg.Load(), c.logger, client)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	enricher, err := enrichment.NewEnricher(c.cfg.Load(), c.logger, client, c.tag, matcherClient)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	registry := task.NewRegistry()
@@ -235,7 +279,7 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 			client,
 			c.tag,
 			c.merges,
-			tools.NewRunnerWithMatcher(c.logger, c.cfg.Load(), []string{"textreducer", "contentanalyzer", "tagmatcher"}, matcherClient),
+			c.GetTagToolsRunner(),
 			c.logger,
 		),
 		client.Queries,
@@ -247,12 +291,21 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 	c.dispatcher = task.NewDispatcher(c.logger, store, registry)
 	c.runner = task.NewRunner(store, registry, c.logger)
 
+	return nil
+}
+
+// GetDispatcher lazily builds the task dispatcher with the handler
+// registry.
+func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
+	if err := c.ensureDispatcher(); err != nil {
+		return nil, err
+	}
 	return c.dispatcher, nil
 }
 
 // GetRunner lazily builds the claim runner over the registry.
 func (c *Container) GetRunner() (*task.Runner, error) {
-	if _, err := c.GetDispatcher(); err != nil {
+	if err := c.ensureDispatcher(); err != nil {
 		return nil, err
 	}
 	return c.runner, nil
@@ -270,76 +323,24 @@ func (c *Container) SetRunnerOwnerID(id string) error {
 
 // GetPool builds (once) the task pool of the given type with the
 // configured worker count and interval.
-func (c *Container) GetPool(taskType string) (*task.Pool, error) {
-	var pp **task.Pool
-	switch taskType {
-	case "consume":
-		pp = &c.pools.consume
-	case "enrich":
-		pp = &c.pools.enrich
-	case "thumbnail":
-		pp = &c.pools.thumbnail
-	case "thumbbackfill":
-		pp = &c.pools.thumbbackfill
-	case "config":
-		pp = &c.pools.config
-	case "backup":
-		pp = &c.pools.backup
-	case "mirror":
-		pp = &c.pools.mirror
-	case "tagreconcile":
-		pp = &c.pools.tagreconcile
-	case "tagmeasure":
-		pp = &c.pools.tagmeasure
-	case "tagidentity":
-		pp = &c.pools.tagidentity
-	default:
+func (c *Container) GetPool(taskType types.TaskType) (*task.Pool, error) {
+	if pool := c.pools[taskType]; pool != nil {
+		return pool, nil
+	}
+
+	spec, ok := poolSpecs[taskType]
+	if !ok {
 		return nil, fmt.Errorf("unknown pool task type: %q", taskType)
 	}
 
-	if *pp == nil {
-		runner, err := c.GetRunner()
-		if err != nil {
-			return nil, err
-		}
-		var workers int
-		var interval time.Duration
-		switch taskType {
-		case "consume":
-			workers = max(c.cfg.Load().Consumer.Workers, 1)
-			interval = 2 * time.Second
-		case "enrich":
-			workers = max(c.cfg.Load().Enricher.Workers, 1)
-			interval = 5 * time.Second
-		case "thumbnail":
-			workers = max(c.cfg.Load().Consumer.Thumbnail.Workers, 1)
-			interval = 2 * time.Second
-		case "thumbbackfill":
-			workers = 1
-			interval = 2 * time.Second
-		case "config":
-			workers = 1
-			interval = 5 * time.Second
-		case "backup":
-			workers = 1
-			interval = 60 * time.Second
-		case "mirror":
-			workers = 1
-			interval = 60 * time.Second
-		case "tagreconcile":
-			workers = 1
-			interval = 60 * time.Second
-		case "tagmeasure":
-			workers = 1
-			interval = 5 * time.Second
-		case "tagidentity":
-			workers = 1
-			interval = 5 * time.Second
-		}
-		*pp = task.NewPool(c.logger, runner, workers, interval, taskType)
+	runner, err := c.GetRunner()
+	if err != nil {
+		return nil, err
 	}
 
-	return *pp, nil
+	pool := task.NewPool(c.logger, runner, spec.workers(c.cfg.Load()), spec.interval, taskType)
+	c.pools[taskType] = pool
+	return pool, nil
 }
 
 // GetSearchEngine lazily builds the search engine.
@@ -349,62 +350,18 @@ func (c *Container) GetSearchEngine() (*search.Engine, error) {
 		if err != nil {
 			return nil, err
 		}
-		c.engine = search.NewEngine(c.logger, client.Queries)
+		c.engine = search.NewEngine(c.logger, client)
 	}
 	return c.engine, nil
 }
 
-// Close releases the matcher embedder and any open database handle.
+// Close stops every built task pool and releases the embedder, services,
+// and the database handle.
 func (c *Container) Close() {
-	if c.pools.consume != nil {
+	for _, pool := range c.pools {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		c.pools.consume.Stop(ctx)
-	}
-	if c.pools.enrich != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		c.pools.enrich.Stop(ctx)
-	}
-	if c.pools.thumbnail != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		c.pools.thumbnail.Stop(ctx)
-	}
-	if c.pools.thumbbackfill != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		c.pools.thumbbackfill.Stop(ctx)
-	}
-	if c.pools.config != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		c.pools.config.Stop(ctx)
-	}
-	if c.pools.backup != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		c.pools.backup.Stop(ctx)
-	}
-	if c.pools.mirror != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		c.pools.mirror.Stop(ctx)
-	}
-	if c.pools.tagreconcile != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		c.pools.tagreconcile.Stop(ctx)
-	}
-	if c.pools.tagmeasure != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		c.pools.tagmeasure.Stop(ctx)
-	}
-	if c.pools.tagidentity != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		c.pools.tagidentity.Stop(ctx)
+		pool.Stop(ctx)
+		cancel()
 	}
 	if c.db != nil {
 		_ = c.db.Close()

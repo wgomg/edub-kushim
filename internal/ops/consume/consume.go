@@ -1,7 +1,8 @@
 // Package consume is the per-batch consume driver: one child process per
 // batch, processing its consume, enrich and thumbnail tasks through task
 // pools, with batch ownership, heartbeat, the two-phase cancel protocol,
-// and the credit-pause handling.
+// and the credit-pause handling. It also exposes IsAlive, the process
+// liveness check the queue daemon's stale reclamation shares.
 package consume
 
 import (
@@ -51,6 +52,54 @@ func watchSignals(ctx context.Context, cancel context.CancelFunc) {
 	}()
 }
 
+type poolSet struct {
+	consume       *task.Pool
+	enrich        *task.Pool
+	thumbnail     *task.Pool
+	thumbbackfill *task.Pool
+}
+
+func (p poolSet) forSource(source types.BatchSource) []*task.Pool {
+	if source == types.Batch.Source.Thumbbackfill {
+		return []*task.Pool{p.thumbbackfill}
+	}
+	return []*task.Pool{p.consume, p.enrich, p.thumbnail}
+}
+
+func fetchPools(c *container.Container) (poolSet, error) {
+	consumePool, err := c.GetPool(types.Task.Type.Consume)
+	if err != nil {
+		return poolSet{}, fmt.Errorf("failed to get pool: %w", err)
+	}
+	enrichPool, err := c.GetPool(types.Task.Type.Enrich)
+	if err != nil {
+		return poolSet{}, fmt.Errorf("failed to get enrich pool: %w", err)
+	}
+	thumbnailPool, err := c.GetPool(types.Task.Type.Thumbnail)
+	if err != nil {
+		return poolSet{}, fmt.Errorf("failed to get thumbnail pool: %w", err)
+	}
+	backfillPool, err := c.GetPool(types.Task.Type.ThumbBackfill)
+	if err != nil {
+		return poolSet{}, fmt.Errorf("failed to get thumbbackfill pool: %w", err)
+	}
+	return poolSet{
+		consume:       consumePool,
+		enrich:        enrichPool,
+		thumbnail:     thumbnailPool,
+		thumbbackfill: backfillPool,
+	}, nil
+}
+
+type batchRun struct {
+	client  *database.Client
+	owner   *task.Owner
+	ownerID string
+	batchID string
+	source  types.BatchSource
+	pools   poolSet
+}
+
 // Run is the kushim consume verb: with "cancel" it drives the batch
 // cancel protocol; otherwise it claims the given (or next queued) batch,
 // takes ownership, and runs its tasks through the pools until done or
@@ -85,9 +134,9 @@ func Run(c *container.Container, args []string) error {
 		return fmt.Errorf("unknown flag: %s", rest[0])
 	}
 
-	p, err := c.GetPool("consume")
+	pools, err := fetchPools(c)
 	if err != nil {
-		return fmt.Errorf("failed to get pool: %w", err)
+		return err
 	}
 
 	client, err := c.GetClient()
@@ -164,50 +213,14 @@ func Run(c *container.Container, args []string) error {
 			c.GetLogger().Error(nil, "quarantine files for batch %s: %v", batchIDParam, err)
 		}
 
-		ep, err := c.GetPool("enrich")
-		if err != nil {
-			return fmt.Errorf("failed to get enrich pool: %w", err)
-		}
-
-		tp, err := c.GetPool("thumbnail")
-		if err != nil {
-			return fmt.Errorf("failed to get thumbnail pool: %w", err)
-		}
-
-		bp, err := c.GetPool("thumbbackfill")
-		if err != nil {
-			return fmt.Errorf("failed to get thumbbackfill pool: %w", err)
-		}
-
-		if err := c.SetRunnerOwnerID(ownerID); err != nil {
-			return fmt.Errorf("set runner owner: %w", err)
-		}
-
-		watchSignals(ctx, cancel)
-
-		hb := task.NewHeartbeat(owner, heartbeatInterval, c.GetLogger())
-		hb.Start(ctx)
-
-		err = pollBatch(ctx, client.Queries, p, ep, tp, bp, c.GetLogger(), batchIDParam, batchSource)
-		if err == nil {
-			batchSvc := service.NewBatch(client, c.GetConfig().Consumer.Reclaim.MaxRetries)
-			if setErr := setBatchTerminalStatus(ctx, client.Queries, batchSvc, batchIDParam); setErr != nil {
-				c.GetLogger().Error(nil, "set batch terminal status %s: %v", batchIDParam, setErr)
-			}
-		} else if errors.Is(err, ErrBatchPaused) {
-			err = nil
-		}
-
-		triggerOrphanScan(c)
-
-		hb.Stop()
-		relCtx, relCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		if relErr := owner.Release(relCtx, batchIDParam); relErr != nil {
-			c.GetLogger().Error(nil, "release batch %s: %v", batchIDParam, relErr)
-		}
-		relCancel()
-
-		return err
+		return runBatchThroughPools(ctx, cancel, c, batchRun{
+			client:  client,
+			owner:   owner,
+			ownerID: ownerID,
+			batchID: batchIDParam,
+			source:  batchSource,
+			pools:   pools,
+		})
 	}
 
 	printOcrmypdfAdvisory(c.GetConfig(), allTools)
@@ -327,21 +340,6 @@ func Run(c *container.Container, args []string) error {
 
 	fmt.Println("Waiting for completion...")
 
-	ep, err := c.GetPool("enrich")
-	if err != nil {
-		return fmt.Errorf("failed to get enrich pool: %w", err)
-	}
-
-	tp, err := c.GetPool("thumbnail")
-	if err != nil {
-		return fmt.Errorf("failed to get thumbnail pool: %w", err)
-	}
-
-	bp, err := c.GetPool("thumbbackfill")
-	if err != nil {
-		return fmt.Errorf("failed to get thumbbackfill pool: %w", err)
-	}
-
 	ownerID := uuid.New().String()
 	owner := task.NewOwner(client, ownerID, os.Getpid(), c.GetLogger(), c.GetConfig().Consumer.Reclaim.MaxRetries)
 
@@ -349,19 +347,32 @@ func Run(c *container.Container, args []string) error {
 		return fmt.Errorf("acquire batch %s: %w", batchID, err)
 	}
 
-	if err := c.SetRunnerOwnerID(ownerID); err != nil {
+	return runBatchThroughPools(ctx, cancel, c, batchRun{
+		client:  client,
+		owner:   owner,
+		ownerID: ownerID,
+		batchID: batchID,
+		source:  types.Batch.Source.CLI,
+		pools:   pools,
+	})
+}
+
+// The post-acquire sequence both halves of Run share.
+func runBatchThroughPools(ctx context.Context, cancel context.CancelFunc, c *container.Container, run batchRun) error {
+	if err := c.SetRunnerOwnerID(run.ownerID); err != nil {
 		return fmt.Errorf("set runner owner: %w", err)
 	}
 
 	watchSignals(ctx, cancel)
 
-	hb := task.NewHeartbeat(owner, heartbeatInterval, c.GetLogger())
+	hb := task.NewHeartbeat(run.owner, heartbeatInterval, c.GetLogger())
 	hb.Start(ctx)
 
-	err = pollBatch(ctx, client.Queries, p, ep, tp, bp, c.GetLogger(), batchID, types.Batch.Source.CLI)
+	err := pollBatch(ctx, run, c.GetLogger())
 	if err == nil {
-		if setErr := setBatchTerminalStatus(ctx, client.Queries, batchSvc, batchID); setErr != nil {
-			c.GetLogger().Error(nil, "set batch terminal status %s: %v", batchID, setErr)
+		batchSvc := service.NewBatch(run.client, c.GetConfig().Consumer.Reclaim.MaxRetries)
+		if setErr := setBatchTerminalStatus(ctx, run.client.Queries, batchSvc, run.batchID); setErr != nil {
+			c.GetLogger().Error(nil, "set batch terminal status %s: %v", run.batchID, setErr)
 		}
 	} else if errors.Is(err, ErrBatchPaused) {
 		err = nil
@@ -371,8 +382,8 @@ func Run(c *container.Container, args []string) error {
 
 	hb.Stop()
 	relCtx, relCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	if relErr := owner.Release(relCtx, batchID); relErr != nil {
-		c.GetLogger().Error(nil, "release batch %s: %v", batchID, relErr)
+	if relErr := run.owner.Release(relCtx, run.batchID); relErr != nil {
+		c.GetLogger().Error(nil, "release batch %s: %v", run.batchID, relErr)
 	}
 	relCancel()
 
@@ -400,6 +411,15 @@ func consumeCancelHandler(c *container.Container, args []string) error {
 	cancelCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	releaseOwner := func(ownerID string) {
+		if _, err := client.ReleaseBatchOwner(cancelCtx, database.ReleaseBatchOwnerParams{
+			BatchID: batchID,
+			OwnerID: ownerID,
+		}); err != nil {
+			c.GetLogger().Error(nil, "release batch owner for %s: %v", batchID, err)
+		}
+	}
+
 	count, err := client.CancelPendingTasksByBatch(cancelCtx, sql.NullString{String: batchID, Valid: true})
 	if err != nil {
 		return fmt.Errorf("cancel pending tasks: %w", err)
@@ -418,14 +438,13 @@ func consumeCancelHandler(c *container.Container, args []string) error {
 	if !IsAlive(bo.Pid) {
 		fmt.Printf("Process %d is no longer running\n", bo.Pid)
 		fmt.Printf("%d pending tasks cancelled\n", count)
-		client.ReleaseBatchOwner(cancelCtx, database.ReleaseBatchOwnerParams{
-			BatchID: batchID,
-			OwnerID: bo.OwnerID,
-		})
+		releaseOwner(bo.OwnerID)
 		return nil
 	}
 
-	_ = syscall.Kill(int(bo.Pid), syscall.SIGTERM)
+	if err := syscall.Kill(int(bo.Pid), syscall.SIGTERM); err != nil {
+		c.GetLogger().Error(nil, "signal SIGTERM to PID %d for batch %s: %v", bo.Pid, batchID, err)
+	}
 
 	tx, txErr := client.BeginTx(cancelCtx, nil)
 	if txErr != nil {
@@ -449,10 +468,7 @@ func consumeCancelHandler(c *container.Container, args []string) error {
 		return fmt.Errorf("commit cancel transaction: %w", err)
 	}
 
-	client.ReleaseBatchOwner(cancelCtx, database.ReleaseBatchOwnerParams{
-		BatchID: batchID,
-		OwnerID: bo.OwnerID,
-	})
+	releaseOwner(bo.OwnerID)
 
 	fmt.Printf("Batch %s: %d pending + %d processing cancelled, signal sent to PID %d\n",
 		batchID, count, procCount, bo.Pid)
@@ -465,100 +481,6 @@ func IsAlive(pid int64) bool {
 	return syscall.Kill(int(pid), 0) == nil
 }
 
-func printToolBlock(missing []config.ExternalTool) {
-	fmt.Println("Cannot consume — the following required tools are not installed:")
-	for _, t := range missing {
-		if t.Engine == "curl" {
-			fmt.Printf("  Prerequisite \"curl\" — %s\n", t.Purpose)
-		} else if len(t.Companions) > 0 {
-			fmt.Printf("  OCR engine \"%s\" (binary not found in PATH)\n", t.Engine)
-		} else {
-			fmt.Printf("  %s engine \"%s\" (binary not found in PATH)\n", t.Category, t.Engine)
-		}
-		for _, system := range config.InstallHintOrder {
-			if cmd, ok := t.InstallHints[system]; ok {
-				fmt.Printf("    %-16s %s\n", system+":", cmd)
-			}
-		}
-		fmt.Println()
-		for _, c := range t.Companions {
-			if c.Required && !c.Available {
-				fmt.Printf("  Companion \"%s\" — %s\n", c.Command, c.Purpose)
-				for _, system := range config.InstallHintOrder {
-					if cmd, ok := c.InstallHints[system]; ok {
-						fmt.Printf("    %-16s %s\n", system+":", cmd)
-					}
-				}
-				fmt.Println()
-			}
-		}
-	}
-	fmt.Println("Install the missing tools, or switch to a built-in engine via `kushim setup` or the Settings page.")
-}
-
-func printOcrmypdfAdvisory(cfg *config.Config, allTools []config.ExternalTool) {
-	if cfg.Consumer.OCR.Engine != config.OCR.OcrMyPdf {
-		return
-	}
-	if len(cfg.Consumer.OCR.Languages) == 0 {
-		return
-	}
-
-	var ocrTool *config.ExternalTool
-	for i, t := range allTools {
-		if t.Engine == config.OCR.OcrMyPdf {
-			ocrTool = &allTools[i]
-			break
-		}
-	}
-	if ocrTool == nil {
-		return
-	}
-
-	fmt.Printf("\nNote: ocrmypdf uses the system tesseract, which reads its own tessdata directory.\n")
-	fmt.Printf("Make sure the tesseract language packs for your configured languages are installed:\n\n")
-	fmt.Printf("  Configured languages: %s\n", strings.Join(cfg.Consumer.OCR.Languages, ", "))
-	if len(ocrTool.LangHints) > 0 {
-		combined := make(map[string][]string)
-		for _, lh := range ocrTool.LangHints {
-			for _, system := range config.InstallHintOrder {
-				if cmd, ok := lh.InstallHints[system]; ok {
-					combined[system] = append(combined[system], cmd)
-				}
-			}
-		}
-		for _, system := range config.InstallHintOrder {
-			cmds, ok := combined[system]
-			if !ok {
-				continue
-			}
-			seen := map[string]bool{}
-			var unique []string
-			for _, c := range cmds {
-				if !seen[c] {
-					seen[c] = true
-					unique = append(unique, c)
-				}
-			}
-			fmt.Printf("    %-16s %s\n", system+":", strings.Join(unique, "  "))
-		}
-	}
-	fmt.Println()
-
-	for _, c := range ocrTool.Companions {
-		if !c.Required && !c.Available {
-			fmt.Printf("Optional companion \"%s\" — %s\n", c.Command, c.Purpose)
-			fmt.Printf("  ocrmypdf will skip this feature. Install it for best results:\n")
-			for _, system := range config.InstallHintOrder {
-				if cmd, ok := c.InstallHints[system]; ok {
-					fmt.Printf("    %-16s %s\n", system+":", cmd)
-				}
-			}
-			fmt.Println()
-		}
-	}
-}
-
 type taskDisplay struct {
 	index    int
 	fileName string
@@ -566,24 +488,12 @@ type taskDisplay struct {
 }
 
 func taskDisplayInfo(t database.Task) taskDisplay {
-	info := taskDisplay{taskType: string(t.TaskType)}
-	if t.Payload == nil {
-		return info
+	payload := task.ReadPayload(t.Payload)
+	return taskDisplay{
+		index:    payload.FileIndex,
+		fileName: payload.DisplayName(),
+		taskType: string(t.TaskType),
 	}
-	var p struct {
-		FilePath  string `json:"file_path"`
-		FileName  string `json:"file_name"`
-		FileIndex int    `json:"file_index"`
-	}
-	// Display-only: a malformed payload falls back to the zero display values.
-	_ = json.Unmarshal(*t.Payload, &p)
-	info.index = p.FileIndex
-	if p.FilePath != "" {
-		info.fileName = filepath.Base(p.FilePath)
-	} else {
-		info.fileName = p.FileName
-	}
-	return info
 }
 
 func totalFiles(tasks []database.Task) int {
@@ -609,13 +519,11 @@ func totalFiles(tasks []database.Task) int {
 	return n
 }
 
-func pollBatch(ctx context.Context, queries *database.Queries, cp, ep, tp, bp *task.Pool, logger *log.Logger, batchID string, source types.BatchSource) error {
+func pollBatch(ctx context.Context, run batchRun, logger *log.Logger) error {
 	logger.SetLevel(log.LevelSilent)
 
-	pools := []*task.Pool{cp, ep, tp}
-	if source == types.Batch.Source.Thumbbackfill {
-		pools = []*task.Pool{bp}
-	}
+	queries := run.client.Queries
+	pools := run.pools.forSource(run.source)
 	for _, p := range pools {
 		p.Start(ctx)
 	}
@@ -632,7 +540,7 @@ func pollBatch(ctx context.Context, queries *database.Queries, cp, ep, tp, bp *t
 	previousProgress := make(map[string]string)
 
 	tickInterval := 500 * time.Millisecond
-	if source == types.Batch.Source.Thumbbackfill {
+	if run.source == types.Batch.Source.Thumbbackfill {
 		tickInterval = 2 * time.Second
 	}
 	ticker := time.NewTicker(tickInterval)
@@ -647,7 +555,7 @@ func pollBatch(ctx context.Context, queries *database.Queries, cp, ep, tp, bp *t
 			return ctx.Err()
 		}
 
-		batch, err := queries.GetBatch(ctx, batchID)
+		batch, err := queries.GetBatch(ctx, run.batchID)
 		if err == nil && batch.Status == types.Batch.Status.Paused {
 			fmt.Printf("\nBatch paused: LLM provider credit/balance error detected. Resolve billing and re-queue the batch.\n")
 			stopPools()
@@ -655,7 +563,7 @@ func pollBatch(ctx context.Context, queries *database.Queries, cp, ep, tp, bp *t
 		}
 
 		tasks, err := task.ListFiltered(ctx, queries, task.TaskFilter{
-			BatchID: batchID,
+			BatchID: run.batchID,
 		})
 		if err != nil {
 			continue

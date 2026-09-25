@@ -196,24 +196,13 @@ func MigrateDatabase(ctx context.Context, logger *log.Logger, p MigrateDBPayload
 
 	oldClient := database.NewClient(oldDB)
 
-	rows, err := oldClient.Queries.AcquireBackupLock(ctx)
-	if err != nil {
-		return fmt.Errorf("acquire backup lock: %w", err)
-	}
-	if rows == 0 {
-		return fmt.Errorf("backup lock held by another process — migration cannot start")
-	}
-	defer func() {
-		if _, relErr := oldClient.Queries.ReleaseBackupLock(context.Background(), uuid.NullUUID{}); relErr != nil {
-			logger.Error(nil, "release backup lock after migration: %v", relErr)
-		}
-	}()
-
-	if err := database.WaitForTaskDrain(ctx, oldClient.Queries, logger, "migrate-db", func(count int64) {
+	release, err := database.TryHoldMaintenanceLock(ctx, oldClient.Queries, logger, "migrate-db", uuid.NullUUID{}, func(count int64) {
 		report("migrate-db", fmt.Sprintf("drain-wait: %d in-flight", count), 0)
-	}); err != nil {
+	})
+	if err != nil {
 		return err
 	}
+	defer release()
 
 	report("migrate-db", "dump", 0)
 	logger.Info(nil, "migrate-db: copying database to %s@%s:%s/%s", p.User, p.Host, p.Port, p.Database)
@@ -325,24 +314,13 @@ func MigrateStorage(ctx context.Context, logger *log.Logger, p MigrateStoragePay
 
 	client := database.NewClient(db)
 
-	rows, err := client.Queries.AcquireBackupLock(ctx)
-	if err != nil {
-		return fmt.Errorf("acquire backup lock: %w", err)
-	}
-	if rows == 0 {
-		return fmt.Errorf("backup lock held by another process — migration cannot start")
-	}
-	defer func() {
-		if _, relErr := client.Queries.ReleaseBackupLock(context.Background(), uuid.NullUUID{}); relErr != nil {
-			logger.Error(nil, "release backup lock after storage migration: %v", relErr)
-		}
-	}()
-
-	if err := database.WaitForTaskDrain(ctx, client.Queries, logger, "migrate-storage", func(count int64) {
+	release, err := database.TryHoldMaintenanceLock(ctx, client.Queries, logger, "migrate-storage", uuid.NullUUID{}, func(count int64) {
 		report("migrate-storage", fmt.Sprintf("drain-wait: %d in-flight", count), 0)
-	}); err != nil {
+	})
+	if err != nil {
 		return err
 	}
+	defer release()
 
 	mode := strings.ToLower(cfg.Storage.MigrationMode)
 	if mode != "move" {
@@ -459,6 +437,7 @@ const maxSafetySnapshots = 5
 func pruneSafetySnapshots(dir string, logger *log.Logger) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
+		logger.Warn(nil, "safety snapshot pruning skipped: read %s: %v", dir, err)
 		return
 	}
 	var snaps []string

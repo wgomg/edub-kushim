@@ -402,7 +402,7 @@ delete/recreate cycles.
 heartbeats the lock during the run), and it joins `nonConsumeBatchSources` so
 its batches never occupy a consume slot.
 
-**Scheduling** — `maybeScheduleTagReconcile` (`internal/ops/queue/queue.go`)
+**Scheduling** — the anchored scheduler (`maybeScheduleAnchored` with `tagReconcileSpec`, `internal/ops/queue/queue.go`)
 runs on the queue daemon's housekeeping ticker (thumbnail-backfill precedent):
 the daemon starts a 1-worker/60s pool for the source; `lastRun` is anchored on
 the most recent `tagreconcile` batch's `created_at`; a run is skipped while one

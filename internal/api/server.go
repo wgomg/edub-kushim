@@ -217,7 +217,7 @@ func registerRoutes(
 	tagIdentity *curation.TagIdentity,
 ) *http.ServeMux {
 	mux := http.NewServeMux()
-	engine := search.NewEngine(logger, client.Queries)
+	engine := search.NewEngine(logger, client)
 
 	cfg := getConfig()
 	llmRegistry, err := llm.NewRegistry(filepath.Join(cfg.App.ConfigDir, "model_catalog.json"))

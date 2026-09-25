@@ -8,11 +8,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/ops/container"
 	"github.com/wgomg/edub-kushim/internal/ops/flags"
 	"github.com/wgomg/edub-kushim/internal/tags/admission"
-	"github.com/wgomg/edub-kushim/internal/tools"
 )
 
 const tagIdentityHelpText = "Usage: kushim tagidentity --run <batch-id>\n\n" +
@@ -56,18 +54,15 @@ func runTagIdentityPass(c *container.Container, batchID string) error {
 		return fmt.Errorf("dispatcher: %w", err)
 	}
 
-	cfg := c.GetConfig()
-	matcherClient := matcher.NewMatcherClient(c.SocketPath(), matcher.MaxMatchBodyBytes(cfg.Enricher.TagMatcher.ReduceTargetWords))
-	runner := tools.NewRunnerWithMatcher(c.GetLogger(), cfg, []string{"textreducer", "contentanalyzer", "tagmatcher"}, matcherClient)
 	resolver := admission.NewIdentityResolver(
 		func() *config.Config { return c.GetConfig() },
 		c.GetLogger(),
 		client,
 		tagService,
-		runner,
+		c.GetTagToolsRunner(),
 	)
 
-	report, err := resolver.ResolvePending(ctx, cfg.Enricher.TagReconcile.MaxRejudge)
+	report, err := resolver.ResolvePending(ctx, c.GetConfig().Enricher.TagReconcile.MaxRejudge)
 	if err != nil {
 		return fmt.Errorf("tag identity: %w", err)
 	}

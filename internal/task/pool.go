@@ -26,7 +26,7 @@ type Pool struct {
 	runner   Nexter
 	workers  int
 	interval time.Duration
-	taskType string
+	taskType types.TaskType
 	stopCh   chan struct{}
 	stopOnce sync.Once
 	wg       sync.WaitGroup
@@ -36,7 +36,7 @@ type Pool struct {
 
 // NewPool prepares a pool for one task type; Start launches it. workers
 // is the fixed worker count and interval the claim cadence.
-func NewPool(logger *log.Logger, runner Nexter, workers int, interval time.Duration, taskType string) *Pool {
+func NewPool(logger *log.Logger, runner Nexter, workers int, interval time.Duration, taskType types.TaskType) *Pool {
 	return &Pool{
 		logger:   logger,
 		runner:   runner,
@@ -124,7 +124,7 @@ func (p *Pool) runWorker(id int, logPrefix string) (rerr error) {
 			mem := log.ReadMemFull()
 			p.logger.Debug(nil, "%s periodic memory: %s", logPrefix, log.FormatMemFull(mem))
 		case <-time.After(p.interval):
-			if err := p.runner.Next(p.ctx, types.TaskType(p.taskType)); err != nil {
+			if err := p.runner.Next(p.ctx, p.taskType); err != nil {
 				p.logger.Error(nil, "%s: %v", logPrefix, err)
 			}
 		}

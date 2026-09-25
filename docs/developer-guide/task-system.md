@@ -796,8 +796,10 @@ WHERE id = 1 AND (NOT running OR started_at <= NOW() - INTERVAL '30 minutes');
   held; it **drains** in-flight
   work (`database.WaitForTaskDrain`, `internal/database/migrate.go`: 5s ticker on
   `CountProcessingTasks` until zero) before snapshotting, then applies
-  retention. The `migrate-db` and `migrate-storage` config tasks use the same drain helper
-  before copying the database or moving storage files.
+  retention. The `migrate-db` and `migrate-storage` config tasks take the same
+  lock through `database.TryHoldMaintenanceLock` — refusing when another process
+  holds it — and drain in-flight work before copying the database or moving
+  storage files.
 - Scheduling: the queue daemon's ticker enqueues a `backup` task when
   `IsBackupDue` and the lock is free; the `backup:<date>` dedup key prevents
   same-day duplicates. The enqueue payload records the schedule
@@ -818,7 +820,8 @@ shared `database.StartMaintenanceLockHeartbeat` helper *before*
 `WaitForTaskDrain` returns, so the drain-wait itself is covered too; the
 backup, tagreconcile, tagmeasure and tagidentity handlers get that sequence —
 heartbeat, drain, body, batch finalize — from the shared `task.RunBlocking`
-lifecycle (`internal/task/handler.go`), while the thumbbackfill wrapper starts
+lifecycle (`internal/task/handler.go`), which composes `database.HoldMaintenanceLock`
+around the body; the thumbbackfill wrapper starts
 the helper directly and keeps it running through the inner handler.
 Scheduling mirrors `IsBackupDue` as `IsMirrorDue` (same
 `NextBackupTime` anchoring, keyed on the last completed `mirror:<date>` task,

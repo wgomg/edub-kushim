@@ -22,7 +22,8 @@ import (
 )
 
 func serveHugotHandler(c *container.Container, args []string) error {
-	socketPath := filepath.Join(c.GetConfig().App.ConfigDir, "kushim-hugot.sock")
+	defaultSocket := c.SocketPath()
+	socketPath := defaultSocket
 
 	fp := flags.NewFlagParser(args)
 	if fp.Help("Usage: kushim hugot [--bg] [--socket <path>]") {
@@ -39,21 +40,15 @@ func serveHugotHandler(c *container.Container, args []string) error {
 		return fmt.Errorf("unknown flag(s): %v", rest)
 	}
 
-	logFile := filepath.Join(c.GetConfig().App.ConfigDir, "logs", "hugot.log")
-	_ = os.MkdirAll(filepath.Dir(logFile), 0755)
-	if err := c.GetLogger().SetLogFile(log.LogFileConfig{
-		Path:       logFile,
-		MaxSize:    c.GetConfig().App.Logging.MaxSize,
-		MaxBackups: c.GetConfig().App.Logging.MaxBackups,
-		MaxAge:     c.GetConfig().App.Logging.MaxAge,
-		Compress:   c.GetConfig().App.Logging.Compress,
-	}); err != nil {
+	logFile := c.LogFileConfig("hugot.log")
+	_ = os.MkdirAll(filepath.Dir(logFile.Path), 0755)
+	if err := c.GetLogger().SetLogFile(logFile); err != nil {
 		c.GetLogger().Error(nil, "failed to open hugot log file: %v", err)
 	}
 
 	if bgFlag {
 		bgArgs := []string{"hugot"}
-		if socketPath != filepath.Join(c.GetConfig().App.ConfigDir, "kushim-hugot.sock") {
+		if socketPath != defaultSocket {
 			bgArgs = append(bgArgs, "--socket", socketPath)
 		}
 		cmd := exec.Command(os.Args[0], bgArgs...)
@@ -149,7 +144,7 @@ func serveHugotHandler(c *container.Container, args []string) error {
 	return serveError
 }
 
-func notifyReady(log *log.Logger) {
+func notifyReady(logger *log.Logger) {
 	socketPath := os.Getenv("NOTIFY_SOCKET")
 	if socketPath == "" {
 		return
@@ -160,21 +155,21 @@ func notifyReady(log *log.Logger) {
 	addr := &net.UnixAddr{Name: socketPath, Net: "unixgram"}
 	conn, err := net.DialUnix("unixgram", nil, addr)
 	if err != nil {
-		log.Warn(nil, "sd_notify connect: %v", err)
+		logger.Warn(nil, "sd_notify connect: %v", err)
 		return
 	}
 	defer conn.Close()
 	if _, err := conn.Write([]byte("READY=1\n")); err != nil {
-		log.Warn(nil, "sd_notify write: %v", err)
+		logger.Warn(nil, "sd_notify write: %v", err)
 	}
 }
 
-func respondError(w http.ResponseWriter, log *log.Logger, err error, status int, msg string) {
-	log.Error(nil, "matcher: %v", err)
+func respondError(w http.ResponseWriter, logger *log.Logger, err error, status int, msg string) {
+	logger.Error(nil, "matcher: %v", err)
 	http.Error(w, msg, status)
 }
 
-func handleEncode(h *matcher.Hugot, log *log.Logger, maxBodyBytes int) http.HandlerFunc {
+func handleEncode(h *matcher.Hugot, logger *log.Logger, maxBodyBytes int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -185,12 +180,12 @@ func handleEncode(h *matcher.Hugot, log *log.Logger, maxBodyBytes int) http.Hand
 			Texts []string `json:"texts"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			respondError(w, log, err, http.StatusBadRequest, "bad request")
+			respondError(w, logger, err, http.StatusBadRequest, "bad request")
 			return
 		}
 		embeddings, err := h.Encode(r.Context(), nil, req.Texts)
 		if err != nil {
-			respondError(w, log, err, http.StatusInternalServerError, "internal error")
+			respondError(w, logger, err, http.StatusInternalServerError, "internal error")
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -198,7 +193,7 @@ func handleEncode(h *matcher.Hugot, log *log.Logger, maxBodyBytes int) http.Hand
 	}
 }
 
-func handleMatch(h *matcher.Hugot, log *log.Logger, maxBodyBytes int) http.HandlerFunc {
+func handleMatch(h *matcher.Hugot, logger *log.Logger, maxBodyBytes int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -210,12 +205,12 @@ func handleMatch(h *matcher.Hugot, log *log.Logger, maxBodyBytes int) http.Handl
 			Input string `json:"input"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			respondError(w, log, err, http.StatusBadRequest, "bad request")
+			respondError(w, logger, err, http.StatusBadRequest, "bad request")
 			return
 		}
 		matches, err := h.Match(r.Context(), req.DocID, req.Input)
 		if err != nil {
-			respondError(w, log, err, http.StatusInternalServerError, "internal error")
+			respondError(w, logger, err, http.StatusInternalServerError, "internal error")
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -223,7 +218,7 @@ func handleMatch(h *matcher.Hugot, log *log.Logger, maxBodyBytes int) http.Handl
 	}
 }
 
-func handleConsolidate(h *matcher.Hugot, log *log.Logger, maxBodyBytes int) http.HandlerFunc {
+func handleConsolidate(h *matcher.Hugot, logger *log.Logger, maxBodyBytes int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -235,12 +230,12 @@ func handleConsolidate(h *matcher.Hugot, log *log.Logger, maxBodyBytes int) http
 			Queries []string `json:"queries"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			respondError(w, log, err, http.StatusBadRequest, "bad request")
+			respondError(w, logger, err, http.StatusBadRequest, "bad request")
 			return
 		}
 		results, err := h.Consolidate(r.Context(), req.DocID, req.Queries)
 		if err != nil {
-			respondError(w, log, err, http.StatusInternalServerError, "internal error")
+			respondError(w, logger, err, http.StatusInternalServerError, "internal error")
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -248,7 +243,7 @@ func handleConsolidate(h *matcher.Hugot, log *log.Logger, maxBodyBytes int) http
 	}
 }
 
-func handleRank(h *matcher.Hugot, log *log.Logger, maxBodyBytes int) http.HandlerFunc {
+func handleRank(h *matcher.Hugot, logger *log.Logger, maxBodyBytes int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -260,12 +255,12 @@ func handleRank(h *matcher.Hugot, log *log.Logger, maxBodyBytes int) http.Handle
 			Queries []string `json:"queries"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			respondError(w, log, err, http.StatusBadRequest, "bad request")
+			respondError(w, logger, err, http.StatusBadRequest, "bad request")
 			return
 		}
 		results, err := h.Rank(r.Context(), req.DocID, req.Queries)
 		if err != nil {
-			respondError(w, log, err, http.StatusInternalServerError, "internal error")
+			respondError(w, logger, err, http.StatusInternalServerError, "internal error")
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -273,7 +268,7 @@ func handleRank(h *matcher.Hugot, log *log.Logger, maxBodyBytes int) http.Handle
 	}
 }
 
-func handleSimilarPairs(h *matcher.Hugot, log *log.Logger) http.HandlerFunc {
+func handleSimilarPairs(h *matcher.Hugot, logger *log.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -281,7 +276,7 @@ func handleSimilarPairs(h *matcher.Hugot, log *log.Logger) http.HandlerFunc {
 		}
 		pairs, err := h.SimilarPairs(r.Context())
 		if err != nil {
-			respondError(w, log, err, http.StatusInternalServerError, "internal error")
+			respondError(w, logger, err, http.StatusInternalServerError, "internal error")
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -289,7 +284,7 @@ func handleSimilarPairs(h *matcher.Hugot, log *log.Logger) http.HandlerFunc {
 	}
 }
 
-func handleAddToStore(h *matcher.Hugot, log *log.Logger, maxBodyBytes int) http.HandlerFunc {
+func handleAddToStore(h *matcher.Hugot, logger *log.Logger, maxBodyBytes int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -300,11 +295,11 @@ func handleAddToStore(h *matcher.Hugot, log *log.Logger, maxBodyBytes int) http.
 			Names []string `json:"names"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			respondError(w, log, err, http.StatusBadRequest, "bad request")
+			respondError(w, logger, err, http.StatusBadRequest, "bad request")
 			return
 		}
 		if err := h.AddToStore(r.Context(), req.Names); err != nil {
-			respondError(w, log, err, http.StatusInternalServerError, "internal error")
+			respondError(w, logger, err, http.StatusInternalServerError, "internal error")
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -312,7 +307,7 @@ func handleAddToStore(h *matcher.Hugot, log *log.Logger, maxBodyBytes int) http.
 	}
 }
 
-func handleRemoveFromStore(h *matcher.Hugot, log *log.Logger, maxBodyBytes int) http.HandlerFunc {
+func handleRemoveFromStore(h *matcher.Hugot, logger *log.Logger, maxBodyBytes int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -323,11 +318,11 @@ func handleRemoveFromStore(h *matcher.Hugot, log *log.Logger, maxBodyBytes int) 
 			Names []string `json:"names"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			respondError(w, log, err, http.StatusBadRequest, "bad request")
+			respondError(w, logger, err, http.StatusBadRequest, "bad request")
 			return
 		}
 		if err := h.RemoveFromStore(r.Context(), req.Names); err != nil {
-			respondError(w, log, err, http.StatusInternalServerError, "internal error")
+			respondError(w, logger, err, http.StatusInternalServerError, "internal error")
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")

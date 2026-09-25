@@ -146,23 +146,15 @@ func NewCommandRunner(c *container.Container, set string) *CommandRunner {
 	}
 }
 
-// ExecuteCommand looks up the verb and runs it. queue and consume are
-// gated to one instance at a time with an advisory lock.
+// ExecuteCommand looks up the verb and runs it. Mutual exclusion between
+// instances is per verb: the queue daemon gates itself through its PID
+// file, and consume through the batch-ownership protocol.
 func (r *CommandRunner) ExecuteCommand(name string, args []string) error {
 	cmd, exists := r.commands[name]
 	if !exists {
 		return fmt.Errorf("unknown command: %s", name)
 	}
 	return cmd.Handler(r.container, args)
-}
-
-// ListCommands returns the verb table of the given set.
-func ListCommands() []Command {
-	var cmdList []Command
-	for _, cmd := range commandSets["cli"] {
-		cmdList = append(cmdList, cmd)
-	}
-	return cmdList
 }
 
 // PrintUsage prints the CLI verb table and the global flags.

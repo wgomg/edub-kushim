@@ -43,7 +43,7 @@ func configHandler(c *container.Container, args []string) error {
 	configDir := c.GetConfig().App.ConfigDir
 
 	if showPath {
-		fmt.Println(filepath.Join(configDir, "config.yaml"))
+		fmt.Println(configFile(configDir))
 		return nil
 	}
 
@@ -81,18 +81,32 @@ func validateConfig(configDir string) error {
 	return nil
 }
 
-func dumpAllConfig(configDir string) error {
+func configFile(dir string) string {
+	return filepath.Join(dir, "config.yaml")
+}
+
+func loadConfigFile(configDir string) (*viper.Viper, bool, error) {
 	v := viper.New()
 	v.SetConfigType("yaml")
-	configPath := filepath.Join(configDir, "config.yaml")
+	configPath := configFile(configDir)
 
 	if _, err := os.Stat(configPath); err != nil {
-		return fmt.Errorf("config not found: %s", configPath)
+		return v, false, nil
 	}
-
 	v.SetConfigFile(configPath)
 	if err := v.ReadInConfig(); err != nil {
-		return fmt.Errorf("read config: %w", err)
+		return nil, true, fmt.Errorf("read config: %w", err)
+	}
+	return v, true, nil
+}
+
+func dumpAllConfig(configDir string) error {
+	v, found, err := loadConfigFile(configDir)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("config not found: %s", configFile(configDir))
 	}
 
 	keys := v.AllKeys()
@@ -120,17 +134,12 @@ func dumpAllConfig(configDir string) error {
 }
 
 func getConfigValue(configDir, key string) error {
-	v := viper.New()
-	v.SetConfigType("yaml")
-	configPath := filepath.Join(configDir, "config.yaml")
-
-	if _, err := os.Stat(configPath); err != nil {
-		return fmt.Errorf("config not found: %s", configPath)
+	v, found, err := loadConfigFile(configDir)
+	if err != nil {
+		return err
 	}
-
-	v.SetConfigFile(configPath)
-	if err := v.ReadInConfig(); err != nil {
-		return fmt.Errorf("read config: %w", err)
+	if !found {
+		return fmt.Errorf("config not found: %s", configFile(configDir))
 	}
 
 	val := v.Get(key)
@@ -152,7 +161,7 @@ func setConfigValue(configDir, key, rawValue string) error {
 }
 
 func unsetConfigValue(configDir, key string) error {
-	configPath := filepath.Join(configDir, "config.yaml")
+	configPath := configFile(configDir)
 
 	data, err := os.ReadFile(configPath)
 	if err != nil {
@@ -173,26 +182,13 @@ func unsetConfigValue(configDir, key string) error {
 		return fmt.Errorf("marshal config: %w", err)
 	}
 
-	if err := os.MkdirAll(configDir, 0700); err != nil {
-		return fmt.Errorf("create config dir: %w", err)
-	}
-	tmpDir, err := os.MkdirTemp(configDir, "kushim-config-*")
-	if err != nil {
-		return fmt.Errorf("create temp dir: %w", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	tmpConfigPath := filepath.Join(tmpDir, "config.yaml")
-	if err := os.WriteFile(tmpConfigPath, newData, 0644); err != nil {
-		return fmt.Errorf("write temp config: %w", err)
-	}
-
-	if _, err := config.Load(tmpDir); err != nil {
-		return fmt.Errorf("config validation: %w", err)
-	}
-
-	if err := os.Rename(tmpConfigPath, configPath); err != nil {
-		return fmt.Errorf("write config: %w", err)
+	if err := atomicWriteConfig(configDir, func(tmpPath string) error {
+		if err := os.WriteFile(tmpPath, newData, 0644); err != nil {
+			return fmt.Errorf("write temp config: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 
 	fmt.Printf("unset %s\n", key)
@@ -215,23 +211,8 @@ func deleteNestedKey(m map[string]any, key string) bool {
 	return deleteNestedKey(nested, parts[1])
 }
 
-func atomicSetConfig(configDir string, body map[string]any) error {
-	v := viper.New()
-	v.SetConfigType("yaml")
-	v.SetConfigPermissions(0600)
-	configPath := filepath.Join(configDir, "config.yaml")
-
-	if _, err := os.Stat(configPath); err == nil {
-		v.SetConfigFile(configPath)
-		if err := v.ReadInConfig(); err != nil {
-			return fmt.Errorf("read config: %w", err)
-		}
-	}
-
-	for key, val := range body {
-		v.Set(key, val)
-	}
-
+// A write or validation failure leaves the original config untouched.
+func atomicWriteConfig(configDir string, write func(tmpPath string) error) error {
 	if err := os.MkdirAll(configDir, 0700); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
 	}
@@ -241,20 +222,38 @@ func atomicSetConfig(configDir string, body map[string]any) error {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	tmpConfigPath := filepath.Join(tmpDir, "config.yaml")
-	if err := v.WriteConfigAs(tmpConfigPath); err != nil {
-		return fmt.Errorf("write temp config: %w", err)
+	tmpConfigPath := configFile(tmpDir)
+	if err := write(tmpConfigPath); err != nil {
+		return err
 	}
 
 	if _, err := config.Load(tmpDir); err != nil {
 		return fmt.Errorf("config validation: %w", err)
 	}
 
-	if err := os.Rename(tmpConfigPath, configPath); err != nil {
+	if err := os.Rename(tmpConfigPath, configFile(configDir)); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
-
 	return nil
+}
+
+func atomicSetConfig(configDir string, body map[string]any) error {
+	v, _, err := loadConfigFile(configDir)
+	if err != nil {
+		return err
+	}
+	v.SetConfigPermissions(0600)
+
+	for key, val := range body {
+		v.Set(key, val)
+	}
+
+	return atomicWriteConfig(configDir, func(tmpPath string) error {
+		if err := v.WriteConfigAs(tmpPath); err != nil {
+			return fmt.Errorf("write temp config: %w", err)
+		}
+		return nil
+	})
 }
 
 func parseValue(raw string) any {

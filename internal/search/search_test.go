@@ -12,10 +12,10 @@ import (
 
 func setupSearchTest(t *testing.T) (*Engine, *database.Queries) {
 	t.Helper()
-	q, db := database.NewTestQueries(t)
-	database.ResetTestDatabase(db)
-	engine := NewEngine(testutil.NewTestLogger(), q)
-	return engine, q
+	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
+	engine := NewEngine(testutil.NewTestLogger(), client)
+	return engine, client.Queries
 }
 
 func insertSearchDocRaw(t *testing.T, q *database.Queries, docID, title, language string, docTypeID int64, tag string) int64 {
@@ -282,9 +282,18 @@ func TestSanitizeQuery(t *testing.T) {
 
 func TestNewEngine(t *testing.T) {
 	client := database.NewTestClient(t)
-	engine := NewEngine(testutil.NewTestLogger(), client.Queries)
+	engine := NewEngine(testutil.NewTestLogger(), client)
 	if engine == nil {
 		t.Fatal("expected non-nil engine")
+	}
+}
+
+// TestEngineReindex runs the rebuild behind `kushim search --reindex-index`;
+// the SQL and index name are only checked at runtime otherwise.
+func TestEngineReindex(t *testing.T) {
+	engine, _ := setupSearchTest(t)
+	if err := engine.Reindex(context.Background()); err != nil {
+		t.Fatalf("reindex: %v", err)
 	}
 }
 

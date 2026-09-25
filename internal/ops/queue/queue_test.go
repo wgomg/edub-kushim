@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
+	"github.com/wgomg/edub-kushim/internal/backup"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 )
@@ -71,5 +73,52 @@ func TestSweepEmptyQueuedBatches(t *testing.T) {
 	}
 	if g, w := got(withTasksID), "queued"; g != w {
 		t.Errorf("batch with tasks status = %q, want %q (sweep must leave legitimate batches alone)", g, w)
+	}
+}
+
+// TestScheduleStateNextDueRephase pins the schedule anchor: an unchanged
+// schedule counts whole intervals from the last run, an edited schedule
+// re-phases to the next occurrence until it succeeds, and only markRun
+// advances the anchor.
+func TestScheduleStateNextDueRephase(t *testing.T) {
+	lastRun := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	steady := backup.ScheduleTiming{Interval: 7, Time: "02:00"}
+	edited := backup.ScheduleTiming{Interval: 3, Time: "03:30"}
+
+	state := scheduleState{lastRun: lastRun, runTiming: &steady}
+
+	if got, want := state.nextDue(steady), time.Date(2026, 6, 8, 2, 0, 0, 0, time.UTC); !got.Equal(want) {
+		t.Errorf("unchanged schedule next due = %v, want %v (full interval from the last run)", got, want)
+	}
+	if state.pendingRephase {
+		t.Error("pendingRephase set although the schedule did not change")
+	}
+
+	if got, want := state.nextDue(edited), time.Date(2026, 6, 2, 3, 30, 0, 0, time.UTC); !got.Equal(want) {
+		t.Errorf("edited schedule next due = %v, want %v (next occurrence, not the full interval)", got, want)
+	}
+	if !state.pendingRephase {
+		t.Error("pendingRephase not set for the edited schedule")
+	}
+
+	if got, want := state.nextDue(steady), time.Date(2026, 6, 8, 2, 0, 0, 0, time.UTC); !got.Equal(want) {
+		t.Errorf("reverted schedule next due = %v, want %v (falls back to the interval rule)", got, want)
+	}
+	if state.pendingRephase {
+		t.Error("pendingRephase not cleared by the reverted schedule")
+	}
+	if !state.lastRun.Equal(lastRun) {
+		t.Errorf("lastRun = %v, want %v (nextDue must not advance the anchor)", state.lastRun, lastRun)
+	}
+
+	state.markRun(edited)
+	if !state.runTiming.Equal(edited) {
+		t.Errorf("runTiming = %+v, want markRun to adopt the edited schedule %+v", state.runTiming, edited)
+	}
+	if state.pendingRephase {
+		t.Error("pendingRephase not cleared by markRun")
+	}
+	if since := time.Since(state.lastRun); since < 0 || since > 5*time.Second {
+		t.Errorf("lastRun = %v, want it advanced to now", state.lastRun)
 	}
 }

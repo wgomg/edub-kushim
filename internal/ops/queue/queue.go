@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -36,6 +37,32 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
+type daemon struct {
+	c        *container.Container
+	client   atomic.Pointer[database.Client]
+	batchSvc *service.Batch
+
+	notifyCancel context.CancelFunc
+	notifyCh     chan struct{}
+
+	backupPool       poolState
+	mirrorPool       poolState
+	tagReconcilePool poolState
+	tagMeasurePool   poolState
+	tagIdentityPool  poolState
+
+	thumbnailBackfill scheduleState
+	tagReconcile      scheduleState
+	tagMeasure        scheduleState
+
+	lastStaleTaskClaim time.Time
+}
+
+type poolState struct {
+	pool    *task.Pool
+	started bool
+}
+
 // Run is the kushim queue verb: it runs the daemon loop until signalled,
 // claiming batches and tasks and forking the blocking-task children.
 func Run(c *container.Container, args []string) error {
@@ -51,16 +78,10 @@ func Run(c *container.Container, args []string) error {
 	}
 
 	pidFile := filepath.Join(c.GetConfig().App.ConfigDir, "kushim-queue.pid")
-	logFile := filepath.Join(c.GetConfig().App.ConfigDir, "logs", "queue.log")
+	logFile := c.LogFileConfig("queue.log")
 
-	_ = os.MkdirAll(filepath.Dir(logFile), 0755)
-	if err := c.GetLogger().SetLogFile(log.LogFileConfig{
-		Path:       logFile,
-		MaxSize:    c.GetConfig().App.Logging.MaxSize,
-		MaxBackups: c.GetConfig().App.Logging.MaxBackups,
-		MaxAge:     c.GetConfig().App.Logging.MaxAge,
-		Compress:   c.GetConfig().App.Logging.Compress,
-	}); err != nil {
+	_ = os.MkdirAll(filepath.Dir(logFile.Path), 0755)
+	if err := c.GetLogger().SetLogFile(logFile); err != nil {
 		c.GetLogger().Error(nil, "failed to open queue log file: %v", err)
 	}
 
@@ -110,7 +131,6 @@ func Run(c *container.Container, args []string) error {
 		return fmt.Errorf("database: %w", err)
 	}
 
-	batchSvc := service.NewBatch(client, c.GetConfig().Consumer.Reclaim.MaxRetries)
 	maxConcurrent := c.GetConfig().Srv.MaxConcurrentBatches
 	if maxConcurrent < 1 {
 		maxConcurrent = 2
@@ -118,31 +138,16 @@ func Run(c *container.Container, args []string) error {
 
 	c.GetLogger().Info(nil, "queue daemon started (max %d concurrent batches)", maxConcurrent)
 
-	var backupPool *task.Pool
-	var backupPoolStarted bool
-	var mirrorPool *task.Pool
-	var mirrorPoolStarted bool
-	var tagReconcilePool *task.Pool
-	var tagReconcilePoolStarted bool
-	var tagMeasurePool *task.Pool
-	var tagMeasurePoolStarted bool
-	var tagIdentityPool *task.Pool
-	var tagIdentityPoolStarted bool
-
-	go runPollingLoop(ctx, c, func() *database.Client { return client }, func() *service.Batch { return batchSvc }, maxConcurrent)
-
-	var notifyCancel context.CancelFunc
-	stopNotify := func() {
-		if notifyCancel != nil {
-			notifyCancel()
-		}
+	d := &daemon{
+		c:        c,
+		batchSvc: service.NewBatch(client, c.GetConfig().Consumer.Reclaim.MaxRetries),
 	}
-	defer stopNotify()
+	d.client.Store(client)
 
-	notifyCtx, cancel := context.WithCancel(ctx)
-	notifyCancel = cancel
-	notifyCh := make(chan struct{}, 4)
-	go listenForBatchNotifications(notifyCtx, config.BuildPostgresDSN(c.GetConfig().Db), notifyCh, c.GetLogger())
+	go d.runPollingLoop(ctx, maxConcurrent)
+
+	d.startNotify(ctx)
+	defer d.stopNotify()
 
 	safetyInterval := 30 * time.Second
 	safetyTimer := time.NewTimer(safetyInterval)
@@ -151,15 +156,10 @@ func Run(c *container.Container, args []string) error {
 	hkTicker := time.NewTicker(5 * time.Second)
 	defer hkTicker.Stop()
 
-	var lastStaleTaskClaim time.Time
-	var thumbnailBackfillState scheduleState
-	var tagReconcileState scheduleState
-	var tagMeasureState scheduleState
-
 	for {
 		select {
-		case <-notifyCh:
-			if err := consumeNextQueuedBatch(ctx, client, batchSvc, maxConcurrent, c.GetLogger()); err != nil {
+		case <-d.notifyCh:
+			if err := consumeNextQueuedBatch(ctx, d.client.Load(), d.batchSvc, maxConcurrent, c.GetLogger()); err != nil {
 				c.GetLogger().Error(nil, "queue consumption: %v", err)
 			}
 			if !safetyTimer.Stop() {
@@ -171,157 +171,206 @@ func Run(c *container.Container, args []string) error {
 			safetyTimer.Reset(safetyInterval)
 
 		case <-safetyTimer.C:
-			if err := consumeNextQueuedBatch(ctx, client, batchSvc, maxConcurrent, c.GetLogger()); err != nil {
+			if err := consumeNextQueuedBatch(ctx, d.client.Load(), d.batchSvc, maxConcurrent, c.GetLogger()); err != nil {
 				c.GetLogger().Error(nil, "queue consumption: %v", err)
 			}
 			safetyTimer.Reset(safetyInterval)
 
 		case <-hkTicker.C:
-			if newCfg, err := config.Load(c.GetConfig().App.ConfigDir); err != nil {
-				c.GetLogger().Error(nil, "config reload: %v", err)
-			} else {
-				oldCfg := c.GetConfig()
-				c.SetConfig(newCfg)
-				if config.DatabaseConnectionChanged(oldCfg.Db, newCfg.Db) {
-					c.GetLogger().Info(nil, "DB config changed, reconnecting...")
-
-					newClient, err := c.ReconnectClient()
-					if err != nil {
-						c.GetLogger().Error(nil, "failed to reconnect to new DB: %v — keeping previous configuration", err)
-						c.SetConfig(oldCfg)
-					} else {
-						if backupPoolStarted {
-							stopPool(c, "backup", &backupPoolStarted, &backupPool)
-						}
-						if mirrorPoolStarted {
-							stopPool(c, "mirror", &mirrorPoolStarted, &mirrorPool)
-						}
-						if tagReconcilePoolStarted {
-							stopPool(c, "tagreconcile", &tagReconcilePoolStarted, &tagReconcilePool)
-						}
-						if tagMeasurePoolStarted {
-							stopPool(c, "tagmeasure", &tagMeasurePoolStarted, &tagMeasurePool)
-						}
-						if tagIdentityPoolStarted {
-							stopPool(c, "tagidentity", &tagIdentityPoolStarted, &tagIdentityPool)
-						}
-						client = newClient
-						batchSvc = service.NewBatch(client, c.GetConfig().Consumer.Reclaim.MaxRetries)
-
-						stopNotify()
-						notifyCtx, cancel := context.WithCancel(ctx)
-						notifyCancel = cancel
-						notifyCh = make(chan struct{}, 4)
-						go listenForBatchNotifications(notifyCtx, config.BuildPostgresDSN(c.GetConfig().Db), notifyCh, c.GetLogger())
-					}
-				}
-			}
-			cfg := c.GetConfig()
-
-			if cfg.Backup.Enabled {
-				if !backupPoolStarted {
-					if err := startPool(ctx, c, "backup", &backupPoolStarted, &backupPool); err != nil {
-						c.GetLogger().Error(nil, "backup pool: %v", err)
-					}
-				}
-				locked, lockErr := client.Queries.IsBackupLocked(ctx)
-				if lockErr != nil {
-					c.GetLogger().Error(nil, "backup lock check: %v", lockErr)
-				} else if locked == 0 {
-					if err := maybeScheduleBackup(ctx, c, client, cfg); err != nil {
-						c.GetLogger().Error(nil, "backup scheduling: %v", err)
-					}
-				}
-			} else if backupPoolStarted {
-				stopPool(c, "backup", &backupPoolStarted, &backupPool)
-				c.GetLogger().Info(nil, "backup pool stopped (backup disabled)")
-			}
-
-			if cfg.Mirror.Enabled {
-				if !mirrorPoolStarted {
-					if err := startPool(ctx, c, "mirror", &mirrorPoolStarted, &mirrorPool); err != nil {
-						c.GetLogger().Error(nil, "mirror pool: %v", err)
-					}
-				}
-				locked, lockErr := client.Queries.IsBackupLocked(ctx)
-				if lockErr != nil {
-					c.GetLogger().Error(nil, "mirror lock check: %v", lockErr)
-				} else if locked == 0 {
-					if err := maybeScheduleMirror(ctx, c, client, cfg); err != nil {
-						c.GetLogger().Error(nil, "mirror scheduling: %v", err)
-					}
-				}
-			} else if mirrorPoolStarted {
-				stopPool(c, "mirror", &mirrorPoolStarted, &mirrorPool)
-				c.GetLogger().Info(nil, "mirror pool stopped (mirror disabled)")
-			}
-
-			if cfg.Consumer.Thumbnail.Enabled && cfg.Consumer.Thumbnail.BackfillInterval > 0 {
-				if err := maybeScheduleThumbnailBackfill(ctx, c, client, cfg, &thumbnailBackfillState); err != nil {
-					c.GetLogger().Error(nil, "thumbnail backfill scheduling: %v", err)
-				}
-			}
-
-			if cfg.Enricher.TagReconcile.Enabled {
-				if !tagReconcilePoolStarted {
-					if err := startPool(ctx, c, "tagreconcile", &tagReconcilePoolStarted, &tagReconcilePool); err != nil {
-						c.GetLogger().Error(nil, "tag reconcile pool: %v", err)
-					}
-				}
-				if err := maybeScheduleTagReconcile(ctx, c, client, cfg, &tagReconcileState); err != nil {
-					c.GetLogger().Error(nil, "tag reconcile scheduling: %v", err)
-				}
-			} else if tagReconcilePoolStarted {
-				stopPool(c, "tagreconcile", &tagReconcilePoolStarted, &tagReconcilePool)
-				c.GetLogger().Info(nil, "tag reconcile pool stopped (disabled)")
-			}
-
-			if cfg.Enricher.TagMeasure.Enabled {
-				if !tagMeasurePoolStarted {
-					if err := startPool(ctx, c, "tagmeasure", &tagMeasurePoolStarted, &tagMeasurePool); err != nil {
-						c.GetLogger().Error(nil, "tag measure pool: %v", err)
-					}
-				}
-				if err := maybeScheduleTagMeasure(ctx, c, client, cfg, &tagMeasureState); err != nil {
-					c.GetLogger().Error(nil, "tag measure scheduling: %v", err)
-				}
-			} else if tagMeasurePoolStarted {
-				stopPool(c, "tagmeasure", &tagMeasurePoolStarted, &tagMeasurePool)
-				c.GetLogger().Info(nil, "tag measure pool stopped (disabled)")
-			}
-
-			if !tagIdentityPoolStarted {
-				if err := startPool(ctx, c, "tagidentity", &tagIdentityPoolStarted, &tagIdentityPool); err != nil {
-					c.GetLogger().Error(nil, "tag identity pool: %v", err)
-				}
-			}
-
-			if err := sweepEmptyQueuedBatches(ctx, client, c.GetLogger()); err != nil {
-				c.GetLogger().Error(nil, "empty queued batch sweep: %v", err)
-			}
-
-			if cfg.Consumer.Reclaim.Enabled {
-				if err := reclaimStaleBatches(ctx, cfg, client, batchSvc, c.GetLogger()); err != nil {
-					c.GetLogger().Error(nil, "stale reclamation: %v", err)
-				}
-				minInterval := max(cfg.Consumer.Reclaim.StaleTaskAfter/10, 60)
-				if time.Since(lastStaleTaskClaim) > time.Duration(minInterval)*time.Second {
-					if err := reclaimStaleTasks(ctx, batchSvc, cfg, c.GetLogger()); err != nil {
-						c.GetLogger().Error(nil, "stale task reclamation: %v", err)
-					}
-					lastStaleTaskClaim = time.Now()
-				}
-			}
+			d.tick(ctx)
 
 		case <-ctx.Done():
 			c.GetLogger().Info(nil, "queue daemon stopped")
-			stopPool(c, "backup", &backupPoolStarted, &backupPool)
-			stopPool(c, "mirror", &mirrorPoolStarted, &mirrorPool)
-			stopPool(c, "tagreconcile", &tagReconcilePoolStarted, &tagReconcilePool)
-			stopPool(c, "tagmeasure", &tagMeasurePoolStarted, &tagMeasurePool)
-			stopPool(c, "tagidentity", &tagIdentityPoolStarted, &tagIdentityPool)
+			d.stopPools()
 			return nil
 		}
+	}
+}
+
+func (d *daemon) startNotify(ctx context.Context) {
+	notifyCtx, cancel := context.WithCancel(ctx)
+	d.notifyCancel = cancel
+	d.notifyCh = make(chan struct{}, 4)
+	go listenForBatchNotifications(notifyCtx, config.BuildPostgresDSN(d.c.GetConfig().Db), d.notifyCh, d.c.GetLogger())
+}
+
+func (d *daemon) stopNotify() {
+	if d.notifyCancel != nil {
+		d.notifyCancel()
+	}
+}
+
+func startPool(ctx context.Context, c *container.Container, taskType types.TaskType, state *poolState) error {
+	if state.started {
+		return nil
+	}
+	pool, err := c.GetPool(taskType)
+	if err != nil {
+		return err
+	}
+	pool.Start(ctx)
+	state.pool = pool
+	state.started = true
+	c.GetLogger().Info(nil, "%s pool started (delayed)", taskType)
+	return nil
+}
+
+func stopPool(state *poolState) {
+	if !state.started || state.pool == nil {
+		return
+	}
+	stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	state.pool.Stop(stopCtx)
+	state.pool = nil
+	state.started = false
+}
+
+func (d *daemon) stopPools() {
+	stopPool(&d.backupPool)
+	stopPool(&d.mirrorPool)
+	stopPool(&d.tagReconcilePool)
+	stopPool(&d.tagMeasurePool)
+	stopPool(&d.tagIdentityPool)
+}
+
+func (d *daemon) tick(ctx context.Context) {
+	d.reloadConfig(ctx)
+	cfg := d.c.GetConfig()
+
+	d.ensureBackup(ctx, cfg)
+	d.ensureMirror(ctx, cfg)
+
+	if cfg.Consumer.Thumbnail.Enabled && cfg.Consumer.Thumbnail.BackfillInterval > 0 {
+		if err := maybeScheduleAnchored(ctx, d.c, d.client.Load(), cfg, &d.thumbnailBackfill, thumbnailBackfillSpec); err != nil {
+			d.c.GetLogger().Error(nil, "thumbnail backfill scheduling: %v", err)
+		}
+	}
+
+	d.ensureTagReconcile(ctx, cfg)
+	d.ensureTagMeasure(ctx, cfg)
+	d.ensureTagIdentity(ctx)
+
+	if err := sweepEmptyQueuedBatches(ctx, d.client.Load(), d.c.GetLogger()); err != nil {
+		d.c.GetLogger().Error(nil, "empty queued batch sweep: %v", err)
+	}
+
+	d.reclaimStale(ctx, cfg)
+}
+
+func (d *daemon) reloadConfig(ctx context.Context) {
+	newCfg, err := config.Load(d.c.GetConfig().App.ConfigDir)
+	if err != nil {
+		d.c.GetLogger().Error(nil, "config reload: %v", err)
+		return
+	}
+	oldCfg := d.c.GetConfig()
+	d.c.SetConfig(newCfg)
+	if !config.DatabaseConnectionChanged(oldCfg.Db, newCfg.Db) {
+		return
+	}
+
+	d.c.GetLogger().Info(nil, "DB config changed, reconnecting...")
+	newClient, err := d.c.ReconnectClient()
+	if err != nil {
+		d.c.GetLogger().Error(nil, "failed to reconnect to new DB: %v — keeping previous configuration", err)
+		d.c.SetConfig(oldCfg)
+		return
+	}
+
+	d.stopPools()
+	d.client.Store(newClient)
+	d.batchSvc = service.NewBatch(newClient, d.c.GetConfig().Consumer.Reclaim.MaxRetries)
+
+	d.stopNotify()
+	d.startNotify(ctx)
+}
+
+func (d *daemon) ensureBackup(ctx context.Context, cfg *config.Config) {
+	if cfg.Backup.Enabled {
+		if err := startPool(ctx, d.c, types.Task.Type.Backup, &d.backupPool); err != nil {
+			d.c.GetLogger().Error(nil, "backup pool: %v", err)
+		}
+		locked, lockErr := d.client.Load().Queries.IsBackupLocked(ctx)
+		if lockErr != nil {
+			d.c.GetLogger().Error(nil, "backup lock check: %v", lockErr)
+		} else if locked == 0 {
+			if err := maybeScheduleBackup(ctx, d.c, d.client.Load(), cfg); err != nil {
+				d.c.GetLogger().Error(nil, "backup scheduling: %v", err)
+			}
+		}
+	} else if d.backupPool.started {
+		stopPool(&d.backupPool)
+		d.c.GetLogger().Info(nil, "backup pool stopped (backup disabled)")
+	}
+}
+
+func (d *daemon) ensureMirror(ctx context.Context, cfg *config.Config) {
+	if cfg.Mirror.Enabled {
+		if err := startPool(ctx, d.c, types.Task.Type.Mirror, &d.mirrorPool); err != nil {
+			d.c.GetLogger().Error(nil, "mirror pool: %v", err)
+		}
+		locked, lockErr := d.client.Load().Queries.IsBackupLocked(ctx)
+		if lockErr != nil {
+			d.c.GetLogger().Error(nil, "mirror lock check: %v", lockErr)
+		} else if locked == 0 {
+			if err := maybeScheduleMirror(ctx, d.c, d.client.Load(), cfg); err != nil {
+				d.c.GetLogger().Error(nil, "mirror scheduling: %v", err)
+			}
+		}
+	} else if d.mirrorPool.started {
+		stopPool(&d.mirrorPool)
+		d.c.GetLogger().Info(nil, "mirror pool stopped (mirror disabled)")
+	}
+}
+
+func (d *daemon) ensureTagReconcile(ctx context.Context, cfg *config.Config) {
+	if cfg.Enricher.TagReconcile.Enabled {
+		if err := startPool(ctx, d.c, types.Task.Type.TagReconcile, &d.tagReconcilePool); err != nil {
+			d.c.GetLogger().Error(nil, "tag reconcile pool: %v", err)
+		}
+		if err := maybeScheduleAnchored(ctx, d.c, d.client.Load(), cfg, &d.tagReconcile, tagReconcileSpec); err != nil {
+			d.c.GetLogger().Error(nil, "tag reconcile scheduling: %v", err)
+		}
+	} else if d.tagReconcilePool.started {
+		stopPool(&d.tagReconcilePool)
+		d.c.GetLogger().Info(nil, "tag reconcile pool stopped (disabled)")
+	}
+}
+
+func (d *daemon) ensureTagMeasure(ctx context.Context, cfg *config.Config) {
+	if cfg.Enricher.TagMeasure.Enabled {
+		if err := startPool(ctx, d.c, types.Task.Type.TagMeasure, &d.tagMeasurePool); err != nil {
+			d.c.GetLogger().Error(nil, "tag measure pool: %v", err)
+		}
+		if err := maybeScheduleAnchored(ctx, d.c, d.client.Load(), cfg, &d.tagMeasure, tagMeasureSpec); err != nil {
+			d.c.GetLogger().Error(nil, "tag measure scheduling: %v", err)
+		}
+	} else if d.tagMeasurePool.started {
+		stopPool(&d.tagMeasurePool)
+		d.c.GetLogger().Info(nil, "tag measure pool stopped (disabled)")
+	}
+}
+
+func (d *daemon) ensureTagIdentity(ctx context.Context) {
+	if err := startPool(ctx, d.c, types.Task.Type.TagIdentity, &d.tagIdentityPool); err != nil {
+		d.c.GetLogger().Error(nil, "tag identity pool: %v", err)
+	}
+}
+
+func (d *daemon) reclaimStale(ctx context.Context, cfg *config.Config) {
+	if !cfg.Consumer.Reclaim.Enabled {
+		return
+	}
+	if err := reclaimStaleBatches(ctx, cfg, d.client.Load(), d.batchSvc, d.c.GetLogger()); err != nil {
+		d.c.GetLogger().Error(nil, "stale reclamation: %v", err)
+	}
+	minInterval := max(cfg.Consumer.Reclaim.StaleTaskAfter/10, 60)
+	if time.Since(d.lastStaleTaskClaim) > time.Duration(minInterval)*time.Second {
+		if err := reclaimStaleTasks(ctx, d.batchSvc, cfg, d.c.GetLogger()); err != nil {
+			d.c.GetLogger().Error(nil, "stale task reclamation: %v", err)
+		}
+		d.lastStaleTaskClaim = time.Now()
 	}
 }
 
@@ -452,7 +501,8 @@ func consumeNextQueuedBatch(ctx context.Context, client *database.Client, batchS
 	return nil
 }
 
-func runPollingLoop(ctx context.Context, c *container.Container, getClient func() *database.Client, getBatchSvc func() *service.Batch, maxConcurrent int) {
+func (d *daemon) runPollingLoop(ctx context.Context, maxConcurrent int) {
+	c := d.c
 	var missingTools []config.ExternalTool
 	var lastCfg *config.Config
 
@@ -463,13 +513,11 @@ func runPollingLoop(ctx context.Context, c *container.Container, getClient func(
 			lastCfg = cfgPtr
 		}
 
-		// Without this, the polling loop keeps polling the old database after a reconnection.
-		client := getClient()
-		batchSvc := getBatchSvc()
-
 		pollingCfg := cfgPtr.Consumer.Polling
 		interval := max(time.Duration(pollingCfg.Interval)*time.Minute, time.Minute)
 
+		client := d.client.Load()
+		batchSvc := service.NewBatch(client, cfgPtr.Consumer.Reclaim.MaxRetries)
 		if pollingCfg.Enabled && config.IsWithinActiveWindows(pollingCfg.Windows) {
 			locked, lockErr := client.Queries.IsBackupLocked(ctx)
 			if lockErr != nil {
@@ -537,30 +585,26 @@ func pollingTick(ctx context.Context, c *container.Container, client *database.C
 	c.GetLogger().Info(nil, "polling: batch %s created with %d files", batchID, enqueued)
 }
 
-func startPool(ctx context.Context, c *container.Container, name string, started *bool, pp **task.Pool) error {
-	if *started {
-		return nil
-	}
-	p, err := c.GetPool(name)
+func enqueueOwnBatch(ctx context.Context, c *container.Container, client *database.Client, taskType types.TaskType, source types.BatchSource, payload json.RawMessage) (batchID, taskID string, err error) {
+	dispatcher, err := c.GetDispatcher()
 	if err != nil {
-		return err
+		return "", "", fmt.Errorf("get dispatcher: %w", err)
 	}
-	p.Start(ctx)
-	*pp = p
-	*started = true
-	c.GetLogger().Info(nil, "%s pool started (delayed)", name)
-	return nil
-}
 
-func stopPool(c *container.Container, name string, started *bool, pp **task.Pool) {
-	if !*started || *pp == nil {
-		return
+	batchID = uuid.New().String()
+	if err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
+		ID:     batchID,
+		Source: source,
+		Status: types.Batch.Status.Queued,
+	}); err != nil {
+		return "", "", fmt.Errorf("create %s batch: %w", taskType, err)
 	}
-	stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	(*pp).Stop(stopCtx)
-	*pp = nil
-	*started = false
+
+	taskID = uuid.New().String()
+	if _, err := dispatcher.Enqueue(ctx, taskType, batchID, payload, taskID); err != nil {
+		return "", "", fmt.Errorf("enqueue %s task: %w", taskType, err)
+	}
+	return batchID, taskID, nil
 }
 
 func maybeScheduleTask(ctx context.Context, c *container.Container, client *database.Client, taskType types.TaskType, source types.BatchSource, active func(context.Context) (int64, error), due func(context.Context) (bool, error), payload map[string]any) error {
@@ -580,25 +624,10 @@ func maybeScheduleTask(ctx context.Context, c *container.Container, client *data
 		return nil
 	}
 
-	dispatcher, err := c.GetDispatcher()
-	if err != nil {
-		return fmt.Errorf("get dispatcher: %w", err)
-	}
-
 	payloadJSON, _ := json.Marshal(payload)
-	taskID := uuid.New().String()
-
-	batchID := uuid.New().String()
-	if err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-		ID:     batchID,
-		Source: source,
-		Status: types.Batch.Status.Queued,
-	}); err != nil {
-		return fmt.Errorf("create %s batch: %w", taskType, err)
-	}
-
-	if _, err := dispatcher.Enqueue(ctx, taskType, batchID, payloadJSON, taskID); err != nil {
-		return fmt.Errorf("enqueue %s task: %w", taskType, err)
+	batchID, taskID, err := enqueueOwnBatch(ctx, c, client, taskType, source, payloadJSON)
+	if err != nil {
+		return err
 	}
 
 	c.GetLogger().Info(nil, "%s task %s scheduled (batch %s)", taskType, taskID, batchID)
@@ -674,44 +703,117 @@ func (s *scheduleState) markRun(timing backup.ScheduleTiming) {
 	s.pendingRephase = false
 }
 
-func maybeScheduleThumbnailBackfill(ctx context.Context, c *container.Container, client *database.Client, cfg *config.Config, state *scheduleState) error {
-	if !cfg.Consumer.Thumbnail.Enabled || cfg.Consumer.Thumbnail.BackfillInterval <= 0 {
+type anchoredTaskSpec struct {
+	name      string
+	enabled   func(*config.Config) bool
+	lastBatch func(context.Context, *database.Queries) (sql.NullTime, error)
+	timing    func(*config.Config) backup.ScheduleTiming
+	active    func(context.Context, *database.Queries) (int64, error)
+	lockGated bool
+	execute   func(ctx context.Context, c *container.Container, client *database.Client, state *scheduleState, timing backup.ScheduleTiming, next time.Time) error
+}
+
+var (
+	thumbnailBackfillSpec = anchoredTaskSpec{
+		name: "thumbnail backfill",
+		enabled: func(cfg *config.Config) bool {
+			return cfg.Consumer.Thumbnail.Enabled && cfg.Consumer.Thumbnail.BackfillInterval > 0
+		},
+		lastBatch: func(ctx context.Context, q *database.Queries) (sql.NullTime, error) {
+			return q.GetLastThumbnailBackfillBatchCreatedAt(ctx)
+		},
+		timing: func(cfg *config.Config) backup.ScheduleTiming {
+			return backup.ScheduleTiming{Interval: cfg.Consumer.Thumbnail.BackfillInterval, Time: cfg.Consumer.Thumbnail.BackfillTime}
+		},
+		active: func(ctx context.Context, q *database.Queries) (int64, error) {
+			return q.CountActiveThumbnailBackfillBatches(ctx)
+		},
+		execute: executeThumbnailBackfill,
+	}
+	tagReconcileSpec = anchoredTaskSpec{
+		name:    "tag reconcile",
+		enabled: func(cfg *config.Config) bool { return cfg.Enricher.TagReconcile.Enabled },
+		lastBatch: func(ctx context.Context, q *database.Queries) (sql.NullTime, error) {
+			return q.GetLastTagReconcileBatchCreatedAt(ctx)
+		},
+		timing: func(cfg *config.Config) backup.ScheduleTiming {
+			return backup.ScheduleTiming{Interval: cfg.Enricher.TagReconcile.Interval, Time: cfg.Enricher.TagReconcile.Time}
+		},
+		active: func(ctx context.Context, q *database.Queries) (int64, error) {
+			return q.CountActiveTagReconcileBatches(ctx)
+		},
+		lockGated: true,
+		execute:   executeTagReconcile,
+	}
+	tagMeasureSpec = anchoredTaskSpec{
+		name:    "tag measure",
+		enabled: func(cfg *config.Config) bool { return cfg.Enricher.TagMeasure.Enabled },
+		lastBatch: func(ctx context.Context, q *database.Queries) (sql.NullTime, error) {
+			return q.GetLastTagMeasureBatchCreatedAt(ctx)
+		},
+		timing: func(cfg *config.Config) backup.ScheduleTiming {
+			return backup.ScheduleTiming{Interval: cfg.Enricher.TagMeasure.Interval, Time: cfg.Enricher.TagMeasure.Time}
+		},
+		active: func(ctx context.Context, q *database.Queries) (int64, error) {
+			return q.CountActiveTagMeasureBatches(ctx)
+		},
+		lockGated: true,
+		execute:   executeTagMeasure,
+	}
+)
+
+func maybeScheduleAnchored(ctx context.Context, c *container.Container, client *database.Client, cfg *config.Config, state *scheduleState, spec anchoredTaskSpec) error {
+	if !spec.enabled(cfg) {
 		return nil
 	}
 
 	if state.lastRun.IsZero() {
-		lastBatch, err := client.Queries.GetLastThumbnailBackfillBatchCreatedAt(ctx)
+		lastBatch, err := spec.lastBatch(ctx, client.Queries)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			c.GetLogger().Debug(nil, "thumbnail backfill: last batch lookup failed: %v", err)
-			return fmt.Errorf("get last thumbnail backfill batch: %w", err)
+			c.GetLogger().Debug(nil, "%s: last batch lookup failed: %v", spec.name, err)
+			return fmt.Errorf("get last %s batch: %w", spec.name, err)
 		}
 		if err == nil {
 			state.lastRun = lastBatch.Time
 		}
 	}
+
+	timing := spec.timing(cfg)
 	// The virtual anchor makes the first run land at the next occurrence of the
 	// preferred time; the interval counts from that first run onward.
 	if state.lastRun.IsZero() {
-		state.lastRun = backup.FirstRunAnchor(time.Now(), cfg.Consumer.Thumbnail.BackfillInterval, cfg.Consumer.Thumbnail.BackfillTime)
+		state.lastRun = backup.FirstRunAnchor(time.Now(), timing.Interval, timing.Time)
 	}
 
-	timing := backup.ScheduleTiming{Interval: cfg.Consumer.Thumbnail.BackfillInterval, Time: cfg.Consumer.Thumbnail.BackfillTime}
 	next := state.nextDue(timing)
-	now := time.Now()
-	due := !now.Before(next)
-	if !due {
+	if now := time.Now(); now.Before(next) {
 		return nil
 	}
 
-	active, err := client.Queries.CountActiveThumbnailBackfillBatches(ctx)
+	active, err := spec.active(ctx, client.Queries)
 	if err != nil {
-		return fmt.Errorf("check active thumbnail backfill batches: %w", err)
+		return fmt.Errorf("check active %s batches: %w", spec.name, err)
 	}
 	if active > 0 {
-		c.GetLogger().Debug(nil, "thumbnail backfill: skipped — %d active batch(es)", active)
+		c.GetLogger().Debug(nil, "%s: skipped — %d active batch(es)", spec.name, active)
 		return nil
 	}
 
+	if spec.lockGated {
+		locked, err := client.Queries.IsBackupLocked(ctx)
+		if err != nil {
+			return fmt.Errorf("backup lock check: %w", err)
+		}
+		if locked > 0 {
+			c.GetLogger().Debug(nil, "%s: skipped — maintenance lock held", spec.name)
+			return nil
+		}
+	}
+
+	return spec.execute(ctx, c, client, state, timing, next)
+}
+
+func executeThumbnailBackfill(_ context.Context, c *container.Container, _ *database.Client, state *scheduleState, timing backup.ScheduleTiming, next time.Time) error {
 	cmd := exec.Command(os.Args[0], "thumbnails", "--all")
 	cmd.Stdin = nil
 	cmd.Stdout = nil
@@ -729,144 +831,21 @@ func maybeScheduleThumbnailBackfill(ctx context.Context, c *container.Container,
 	return nil
 }
 
-func maybeScheduleTagReconcile(ctx context.Context, c *container.Container, client *database.Client, cfg *config.Config, state *scheduleState) error {
-	if !cfg.Enricher.TagReconcile.Enabled {
-		return nil
-	}
-
-	if state.lastRun.IsZero() {
-		lastBatch, err := client.Queries.GetLastTagReconcileBatchCreatedAt(ctx)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			c.GetLogger().Debug(nil, "tag reconcile: last batch lookup failed: %v", err)
-			return fmt.Errorf("get last tag reconcile batch: %w", err)
-		}
-		if err == nil {
-			state.lastRun = lastBatch.Time
-		}
-	}
-	// The virtual anchor makes the first run land at the next occurrence of the
-	// preferred time; the interval counts from that first run onward.
-	if state.lastRun.IsZero() {
-		state.lastRun = backup.FirstRunAnchor(time.Now(), cfg.Enricher.TagReconcile.Interval, cfg.Enricher.TagReconcile.Time)
-	}
-
-	timing := backup.ScheduleTiming{Interval: cfg.Enricher.TagReconcile.Interval, Time: cfg.Enricher.TagReconcile.Time}
-	next := state.nextDue(timing)
-	now := time.Now()
-	if now.Before(next) {
-		return nil
-	}
-
-	active, err := client.Queries.CountActiveTagReconcileBatches(ctx)
-	if err != nil {
-		return fmt.Errorf("check active tag reconcile batches: %w", err)
-	}
-	if active > 0 {
-		c.GetLogger().Debug(nil, "tag reconcile: skipped — %d active batch(es)", active)
-		return nil
-	}
-
-	locked, err := client.Queries.IsBackupLocked(ctx)
-	if err != nil {
-		return fmt.Errorf("backup lock check: %w", err)
-	}
-	if locked > 0 {
-		c.GetLogger().Debug(nil, "tag reconcile: skipped — maintenance lock held")
-		return nil
-	}
-
-	dispatcher, err := c.GetDispatcher()
-	if err != nil {
-		return fmt.Errorf("get dispatcher: %w", err)
-	}
-
-	batchID := uuid.New().String()
-	if err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-		ID:     batchID,
-		Source: types.Batch.Source.TagReconcile,
-		Status: types.Batch.Status.Queued,
-	}); err != nil {
-		return fmt.Errorf("create tag reconcile batch: %w", err)
-	}
-
-	taskID := uuid.New().String()
-	if _, err := dispatcher.Enqueue(ctx, types.Task.Type.TagReconcile, batchID, json.RawMessage("{}"), taskID); err != nil {
-		return fmt.Errorf("enqueue tag reconcile task: %w", err)
-	}
-
-	// Advance only after a successful enqueue so a failed schedule retries next tick.
-	state.markRun(timing)
-	c.GetLogger().Info(nil, "tag reconcile task %s scheduled (batch %s)", taskID, batchID)
-	return nil
+func executeTagReconcile(ctx context.Context, c *container.Container, client *database.Client, state *scheduleState, timing backup.ScheduleTiming, _ time.Time) error {
+	return enqueueScheduled(ctx, c, client, state, timing, types.Task.Type.TagReconcile, types.Batch.Source.TagReconcile, "tag reconcile")
 }
 
-func maybeScheduleTagMeasure(ctx context.Context, c *container.Container, client *database.Client, cfg *config.Config, state *scheduleState) error {
-	if !cfg.Enricher.TagMeasure.Enabled {
-		return nil
-	}
+func executeTagMeasure(ctx context.Context, c *container.Container, client *database.Client, state *scheduleState, timing backup.ScheduleTiming, _ time.Time) error {
+	return enqueueScheduled(ctx, c, client, state, timing, types.Task.Type.TagMeasure, types.Batch.Source.TagMeasure, "tag measure")
+}
 
-	if state.lastRun.IsZero() {
-		lastBatch, err := client.Queries.GetLastTagMeasureBatchCreatedAt(ctx)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			c.GetLogger().Debug(nil, "tag measure: last batch lookup failed: %v", err)
-			return fmt.Errorf("get last tag measure batch: %w", err)
-		}
-		if err == nil {
-			state.lastRun = lastBatch.Time
-		}
-	}
-	// The virtual anchor makes the first run land at the next occurrence of the
-	// preferred time; the interval counts from that first run onward.
-	if state.lastRun.IsZero() {
-		state.lastRun = backup.FirstRunAnchor(time.Now(), cfg.Enricher.TagMeasure.Interval, cfg.Enricher.TagMeasure.Time)
-	}
-
-	timing := backup.ScheduleTiming{Interval: cfg.Enricher.TagMeasure.Interval, Time: cfg.Enricher.TagMeasure.Time}
-	next := state.nextDue(timing)
-	now := time.Now()
-	if now.Before(next) {
-		return nil
-	}
-
-	active, err := client.Queries.CountActiveTagMeasureBatches(ctx)
+func enqueueScheduled(ctx context.Context, c *container.Container, client *database.Client, state *scheduleState, timing backup.ScheduleTiming, taskType types.TaskType, source types.BatchSource, name string) error {
+	batchID, taskID, err := enqueueOwnBatch(ctx, c, client, taskType, source, json.RawMessage("{}"))
 	if err != nil {
-		return fmt.Errorf("check active tag measure batches: %w", err)
+		return err
 	}
-	if active > 0 {
-		c.GetLogger().Debug(nil, "tag measure: skipped — %d active batch(es)", active)
-		return nil
-	}
-
-	locked, err := client.Queries.IsBackupLocked(ctx)
-	if err != nil {
-		return fmt.Errorf("backup lock check: %w", err)
-	}
-	if locked > 0 {
-		c.GetLogger().Debug(nil, "tag measure: skipped — maintenance lock held")
-		return nil
-	}
-
-	dispatcher, err := c.GetDispatcher()
-	if err != nil {
-		return fmt.Errorf("get dispatcher: %w", err)
-	}
-
-	batchID := uuid.New().String()
-	if err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-		ID:     batchID,
-		Source: types.Batch.Source.TagMeasure,
-		Status: types.Batch.Status.Queued,
-	}); err != nil {
-		return fmt.Errorf("create tag measure batch: %w", err)
-	}
-
-	taskID := uuid.New().String()
-	if _, err := dispatcher.Enqueue(ctx, types.Task.Type.TagMeasure, batchID, json.RawMessage("{}"), taskID); err != nil {
-		return fmt.Errorf("enqueue tag measure task: %w", err)
-	}
-
 	// Advance only after a successful enqueue so a failed schedule retries next tick.
 	state.markRun(timing)
-	c.GetLogger().Info(nil, "tag measure task %s scheduled (batch %s)", taskID, batchID)
+	c.GetLogger().Info(nil, "%s task %s scheduled (batch %s)", name, taskID, batchID)
 	return nil
 }
