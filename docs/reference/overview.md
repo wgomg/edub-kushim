@@ -154,7 +154,6 @@ internal/
 │   ├── adapter.go          # Matcher, Embedder, EmbeddingStore interfaces
 │   ├── hugot.go            # Hugot session (Go or ORT backend), cosine similarity, chunked encoding
 │   ├── client.go           # MatcherClient — HTTP client over Unix socket to the matcher daemon
-│   ├── cache.go            # Generic thread-safe store (Set, Get)
 │   ├── bootstrap.go        # BuildTagCache — pre-compute tag embeddings at startup
 │   └── embedding_store.go  # TagEmbeddingStore (map[string][]float32 with thread-safe ops)
 ├── ops/                    # Process layer: CLI verbs, queue daemon, consume child, setup, composition root

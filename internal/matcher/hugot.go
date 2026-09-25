@@ -121,8 +121,6 @@ func NewHugot(logger *log.Logger, tmCfg config.TagMatcherConfig, pipeName string
 	}, nil
 }
 
-const embedBatchSize = 32
-
 const rankCandidates = 2
 
 // SetStore attaches the tag embedding store that Match, Rank and
@@ -167,7 +165,7 @@ func (h *Hugot) AddToStore(ctx context.Context, names []string) error {
 		end := min(i+embedBatchSize, len(names))
 		chunk := names[i:end]
 
-		vecs, err := h.Encode(ctx, nil, chunk)
+		vecs, err := h.Encode(ctx, "", chunk)
 		if err != nil {
 			h.logger.Error("", "hugot: add to store: encode batch %v: %v", chunk, err)
 			continue
@@ -289,7 +287,7 @@ func (h *Hugot) Match(ctx context.Context, docId, input string) ([]string, error
 		return nil, nil
 	}
 
-	embeddings, err := h.Encode(ctx, &docId, []string{input})
+	embeddings, err := h.Encode(ctx, docId, []string{input})
 	if err != nil {
 		return nil, err
 	}
@@ -399,7 +397,7 @@ func (h *Hugot) Name() string {
 // Encode computes embeddings for a batch of texts. Short texts (≤ chunkSize tokens)
 // are batched into a single pipeline call. Longer texts are encoded individually
 // with overlapping token chunks and mean-pooling.
-func (h *Hugot) Encode(ctx context.Context, docId *string, texts []string) ([][]float32, error) {
+func (h *Hugot) Encode(ctx context.Context, docId string, texts []string) ([][]float32, error) {
 	if h == nil {
 		return nil, fmt.Errorf("tag matcher not initialized")
 	}
@@ -464,11 +462,7 @@ func (h *Hugot) Encode(ctx context.Context, docId *string, texts []string) ([][]
 
 // encodeChunked embeds a single long input by splitting token IDs into
 // overlapping chunks, embedding each chunk, and mean-pooling the results.
-func (h *Hugot) encodeChunked(ctx context.Context, docId *string, input string) ([]float32, error) {
-	id := ""
-	if docId != nil {
-		id = *docId
-	}
+func (h *Hugot) encodeChunked(ctx context.Context, docId string, input string) ([]float32, error) {
 	tk := h.pipeline.Model.Tokenizer
 	if tk == nil {
 		return nil, fmt.Errorf("tokenizer not available")
@@ -485,7 +479,7 @@ func (h *Hugot) encodeChunked(ctx context.Context, docId *string, input string) 
 		step = h.chunkSize / 2
 	}
 	numChunks := ((n - 1) / step) + 1
-	h.logger.Debug(id, "hugot: chunked path — %d tokens into ~%d chunks (step=%d)", n, numChunks, step)
+	h.logger.Debug(docId, "hugot: chunked path — %d tokens into ~%d chunks (step=%d)", n, numChunks, step)
 
 	var allEmbeddings [][]float32
 	for i := 0; i < n; i += step {

@@ -169,7 +169,7 @@ HTTP layer never touches config internals directly.
 **Every method in this codebase uses a pointer receiver** (`*Tag`, `*Runner`,
 `*Queries`, `*Pool`), for two reasons: methods may mutate state, and structs
 containing `sync.Mutex`/`sync.RWMutex`/`atomic` fields must never be copied —
-`matcher.Cache`, `task.Pool`, and `log.Logger` are always used through `*T`.
+`matcher.TagEmbeddingStore`, `task.Pool`, and `log.Logger` are always used through `*T`.
 
 Struct tags do triple duty in the config layer — YAML for the file,
 `mapstructure` for the API's dot-key PATCH path, JSON for responses
@@ -389,19 +389,23 @@ Every generated query method (`GetDocument`, `CreateTask`, ...) is promoted, so
 `client.GetDocument(...)` works directly — while `Client` adds transaction
 support on top. This is the "wrapper with promotions" idiom.
 
-### 2. `matcher.TagEmbeddingStore` embeds `storeBase` for reuse
+### 2. `handlers.BatchSummaryResponse` embeds `BatchCounts` for reuse
 
 ```go
-// internal/matcher/embedding_store.go:3
-type TagEmbeddingStore struct {
-	storeBase
-	entries map[string][]float32
+// internal/api/handlers/task.go:814
+type BatchSummaryResponse struct {
+	BatchID string `json:"batch_id"`
+	Status  string `json:"status"`
+	Source  string `json:"source"`
+	BatchCounts
+	OwnerPID int64 `json:"owner_pid,omitempty"`
 }
 ```
 
-`storeBase` (`internal/matcher/cache.go:16`) owns the `sync.RWMutex` and the
-`Attr`/`Attrs` methods; embedding promotes both, so `*TagEmbeddingStore` satisfies
-`matcher.Store` without duplicating code.
+`BatchCounts` (`internal/api/handlers/task.go:799`) holds the per-status task
+histogram; embedding promotes its fields into both `BatchSummaryResponse` and
+`BatchOverviewItem`, so their JSON shape stays identical without redeclaring
+the counts.
 
 ### 3. `auth.Claims` embeds `jwt.RegisteredClaims`
 

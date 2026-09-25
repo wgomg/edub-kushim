@@ -46,7 +46,7 @@ Semantic matching happens at two points in the enrichment pipeline:
 The core type is `*matcher.Hugot` (`internal/matcher/hugot.go`),
 an in-process embedding model (Hugot + ONNX runtime or pure-Go backend) that
 implements the `Matcher` and `Embedder` interfaces
-(`internal/matcher/adapter.go:5-24`). Two deployments exist:
+(`internal/matcher/adapter.go:39-68`). Two deployments exist:
 
 - **In-process** (`kushim` binary, cgo build): `*Hugot` runs the model directly.
 - **Remote** (`edub` binary, no cgo): `*matcher.MatcherClient` speaks HTTP over
@@ -66,7 +66,7 @@ cosine rank → top-N suggestions**.
 ### Model and pipeline
 
 `NewHugot` builds a Hugot feature-extraction pipeline from a Hugging Face
-model directory (`hugot.go:50-103`):
+model directory (`hugot.go:68-122`):
 
 ```go
 pipeline, err := hugot.NewPipeline(session, hugot.FeatureExtractionConfig{
@@ -85,7 +85,7 @@ pipeline, err := hugot.NewPipeline(session, hugot.FeatureExtractionConfig{
   not by the matcher itself.
 - `WithNormalization()` L2-normalizes every embedding. That is why cosine
   similarity collapses to a plain dot product — `cosineSimilarity`
-  (`hugot.go:418-430`) is just the sum of element-wise products, with a
+  (`hugot.go:563-572`) is just the sum of element-wise products, with a
   length guard:
 
 ```go
@@ -95,10 +95,10 @@ pipeline, err := hugot.NewPipeline(session, hugot.FeatureExtractionConfig{
 
 ### Backend session: ORT vs Go
 
-`getBackendSession` (`hugot.go:450-482`) switches on `Hugot.Backend`:
+`getBackendSession` (`hugot.go:592-624`) switches on `Hugot.Backend`:
 
 - **`"ort"`** — ONNX Runtime via `hugot.NewORTSession`, with two options
-  that matter for memory (the comment at `hugot.go:460-472` is the definitive
+  that matter for memory (the comment at `hugot.go:602-614` is the definitive
   rationale):
 
 ```go
@@ -113,14 +113,14 @@ return hugot.NewORTSession(context.Background(),
   RSS at ~2.2–2.5 GB with BGE-M3 instead of ~4–5 GB, at the cost of ~10–20%
   per-inference latency. Toggle them only if latency matters more than memory.
 - **anything else (`"go"`)** — `hugot.NewGoSession`, pure Go, no runtime
-  downloads. The XLA backend is commented out (`hugot.go:452-453`).
+  downloads. The XLA backend is commented out (`hugot.go:594-595`).
 
 ### The ONNX runtime download
 
 The ORT backend needs `libonnxruntime.so`, which is downloaded on first use if
-missing (`downloadLib`, `hugot.go:489-521`): `curl` the pinned
+missing (`downloadLib`, `hugot.go:631-663`): `curl` the pinned
 `onnxruntime-linux-x64-1.26.0.tgz` from GitHub, **verify its SHA-256 against a
-hardcoded digest** (`onnxruntimeTgzSHA256`, `hugot.go:487`), extract only the
+hardcoded digest** (`onnxruntimeTgzSHA256`, `hugot.go:629`), extract only the
 `.so` with `tar --strip-components=2`, and rename it into
 `<config-dir>/tagmatcher/hugot/libs/`.
 
@@ -133,21 +133,20 @@ internet at first run of the ORT backend (`AGENTS.md` flags this).
 ## 3. The embedding store
 
 Matched against *every* tag for *every* document — so tag embeddings are
-cached in memory: `matcher.TagEmbeddingStore` (`internal/matcher/embedding_store.go:3`).
+cached in memory: `matcher.TagEmbeddingStore` (`internal/matcher/embedding_store.go:9`).
 
 ```go
-type EmbeddingStore struct {
-	storeBase
+type TagEmbeddingStore struct {
+	mu      sync.RWMutex
 	entries map[string][]float32
 }
 ```
 
-- It embeds `storeBase` (`internal/matcher/cache.go:16`), which owns the
-  `sync.RWMutex` and the `Attr`/`Attrs` metadata map (`dim`, `model`,
-  `normalized`); reads take `RLock`, writes take `Lock` — the deep-copy
-  `Entries()` discipline is covered in `golang.md` §10.
-- A named-store registry (`matcher.Cache`, `internal/matcher/cache.go:37`) maps names
-  (`"tags"`) to stores with a second RWMutex.
+It owns its `sync.RWMutex` directly: reads take `RLock`, writes take `Lock`,
+and `Entries()` returns a deep copy so callers never race the lock (the
+discipline is covered in `golang.md` §10). `Hugot.AddToStore` and
+`RemoveFromStore` mutate it through `Add`/`Remove`, and `BuildTagCache` swaps
+the complete map under the same lock.
 
 The store is *authoritative for matching*: `Match` iterates whatever is in
 `entries` — the cache **is** the tag universe. If a tag is missing from the
@@ -157,7 +156,7 @@ store, it can never be suggested.
 
 ## 4. Bootstrapping the store
 
-`matcher.BuildTagCache` (`internal/matcher/bootstrap.go:16`) rebuilds the store
+`matcher.BuildTagCache` (`internal/matcher/bootstrap.go:17`) rebuilds the store
 from the `tag` table:
 
 1. Loads the **promoted** tag names (`ListPromotedTagNames`, i.e.
@@ -174,9 +173,9 @@ from the `tag` table:
    through `textnorm.NormalizeTag` (`internal/textnorm/tagname.go`) before it
    reaches the DB, so the stored name is the embedding key and the matcher
    never re-derives a different form.
-3. Encodes in batches of `batchSize = 32`, then **swaps the whole map under
-   one lock** (`bootstrap.go:59-61`) — an atomic publish; readers never see a
-   half-built store.
+3. Encodes in batches of `embedBatchSize = 32`, then **swaps the whole map
+   under the store's lock** (`bootstrap.go:42-44`), an atomic publish: readers
+   never see a half-built store.
 
 The store is rebuilt at `kushim hugot` daemon startup, and incrementally
 updated on tag CRUD (`curation.Tag.encodeAndAddBatch` via `AddToStore`,
@@ -192,7 +191,7 @@ normalization would only introduce drift.
 
 ## 5. Encoding: short vs long texts
 
-`Encode` (`hugot.go:258-319`) handles two very different inputs with one API:
+`Encode` (`hugot.go:400-461`) handles two very different inputs with one API:
 tag names (a few words) and document text (thousands of tokens).
 
 ```go
@@ -218,7 +217,7 @@ if len(shortTexts) > 0 {
 - **Short texts** (≤ chunk size) are batched into a single pipeline call —
   this is how the 32-at-a-time tag batches stay fast.
 - **Long texts** take the chunked path, `encodeChunked`
-  (`hugot.go:323-366`): tokenize → slice token IDs into overlapping windows →
+  (`hugot.go:465-508`): tokenize → slice token IDs into overlapping windows →
   decode each window back to text (`backends.Decode`) → embed each window →
   **mean-pool** the window embeddings into one vector:
 
@@ -239,7 +238,7 @@ return meanPool(allEmbeddings), nil
 ### The chunk size comes from the model
 
 `NewHugot` reads the model's `config.json` and derives the effective chunk
-size (`hugot.go:74-88`):
+size (`hugot.go:100-106`):
 
 ```go
 safetyMargin := 12
@@ -260,14 +259,14 @@ margin accounts for special tokens. Overlap is 10% of the chunk size
 
 ## 6. Matching: cosine ranking against the store
 
-`Match` (`hugot.go:174-212`) is the document→tags query:
+`Match` (`hugot.go:281-319`) is the document→tags query:
 
 ```go
 entries := h.store.Entries()
 if len(entries) == 0 || h.topN == 0 {
 	return nil, nil
 }
-embeddings, err := h.Encode(ctx, &docId, []string{input})
+embeddings, err := h.Encode(ctx, docId, []string{input})
 ...
 inputEmb := embeddings[0]
 matches := h.rankMatches(inputEmb, entries, h.minSimilarity)
@@ -278,7 +277,7 @@ for i := range topN {
 }
 ```
 
-`rankMatches` (`hugot.go:404-416`) computes the dot-product similarity against
+`rankMatches` (`hugot.go:546-558`) computes the dot-product similarity against
 every cached tag embedding, keeps those `>= minSim`, and sorts descending:
 
 ```go
@@ -294,13 +293,13 @@ sort.Slice(matches, func(i, j int) bool {
 ```
 
 The result is capped at `TopN` (15). The top scores are logged for debugging
-(`hugot.go:200-209`) — useful when tuning thresholds.
+(`hugot.go:307-316`) — useful when tuning thresholds.
 
 ---
 
 ## 7. Consolidation: tag-to-tag
 
-`Rank` (`hugot.go:240-278`) ranks LLM-produced tag names against canonical
+`Rank` (`hugot.go:358-390`) ranks LLM-produced tag names against canonical
 existing tags — the "the LLM said 'machine learning' but the store
 has 'machine-learning'" fix. Differences from `Match`:
 
@@ -499,7 +498,7 @@ type Matcher interface {
 }
 
 type Embedder interface {
-	Encode(ctx context.Context, docId *string, texts []string) ([][]float32, error)
+	Encode(ctx context.Context, docId string, texts []string) ([][]float32, error)
 	AddToStore(ctx context.Context, names []string) error
 	RemoveFromStore(ctx context.Context, names []string) error
 	Close()
@@ -508,17 +507,17 @@ type Embedder interface {
 ```
 
 - `*Hugot` implements both (in-process, cgo build).
-- `*matcher.MatcherClient` (`internal/matcher/client.go:44`) implements both
+- `*matcher.MatcherClient` (`internal/matcher/client.go:76`) implements both
   over the Unix socket — used by `edub`, which cannot load the model. The RPC
   surface is `Match`, `Rank`, `AddToStore`, `RemoveFromStore`, `Health`
-  (`internal/ops/cli/hugot.go:93-100`). `Rank` prefers `/rpc/v1/rank` and
+  (`internal/ops/cli/hugot.go:88-94`). `Rank` prefers `/rpc/v1/rank` and
   falls back to the legacy `/rpc/v1/consolidate` on 404 (old daemon), wrapping
   each returned name as a `RankResult{KeptName: name}` with no candidates so
   the enricher keeps it verbatim.
 - The client wraps every call in `ErrMatcherUnavailable` when the socket
   daemon is down — which is what turns tag CRUD into 503.
 
-The `EmbeddingStore` interface (`adapter.go:20-24`: `Add`/`Remove`/`Entries`)
+The `EmbeddingStore` interface (`adapter.go:72-79`: `Add`/`Remove`/`Entries`)
 is implemented by `matcher.TagEmbeddingStore` and by the test double
 `testutil.MockEmbedder`.
 
@@ -537,8 +536,8 @@ model once and serves RPC over a Unix socket (`<config-dir>/kushim-hugot.sock`).
   `kushim queue --bg`).
 - **Duplicate detection**: `net.Listen("unix", ...)` fails with `EADDRINUSE`
   if the daemon is already running — detected via `errors.As` to
-  `syscall.Errno` (`hugot.go:104-108`).
-- **systemd readiness**: `notifyReady` (`hugot.go:149-167`) writes
+  `syscall.Errno` (`hugot.go:97-104`).
+- **systemd readiness**: `notifyReady` (`hugot.go:147-165`) writes
   `READY=1` to the socket named by `NOTIFY_SOCKET` (unixgram; abstract
   sockets with a leading `@` become `\x00`-prefixed).
 - **Shutdown**: SIGTERM/SIGINT → `server.Shutdown(ctx)` with a 5s budget →
@@ -684,7 +683,7 @@ statements.
   embeddings; the result is an approximation of the full-document embedding.
   Overlap (10%) exists precisely to soften window-boundary effects.
 - **ORT first run needs `curl` + internet** and a *correct* pinned SHA-256
-  (`hugot.go:487`); the download is extracted with `--strip-components=2`
+  (`hugot.go:629`); the download is extracted with `--strip-components=2`
   and renamed to `libonnxruntime.so` — path-sensitive.
 - **The daemon must be running before `edub` starts** (AGENTS.md); the client
   wraps all failures in `ErrMatcherUnavailable`, and tag endpoints 503 while
@@ -693,7 +692,7 @@ statements.
   `if h == nil { return fmt.Errorf("tag matcher not initialized") }` — the
   matcher can be absent when unconfigured; callers must treat that as a
   graceful no-op, not a panic.
-- **`topN == 0` or empty store short-circuits** (`hugot.go:179-181`): a
+- **`topN == 0` or empty store short-circuits** (`hugot.go:286-288`): a
   zero `top_n` disables suggestions entirely.
 - **Consolidation with `consolidationSim == 0.0` passes through** — that's
   the documented "disable consolidation" knob, not a bug.

@@ -4,7 +4,6 @@ import "context"
 
 import (
 	"sync"
-
 )
 
 // MockEmbedder implements matcher.Embedder for testing: a simple map
@@ -23,7 +22,7 @@ func NewMockEmbedder() *MockEmbedder {
 }
 
 // Encode returns a fixed vector per input text.
-func (m *MockEmbedder) Encode(ctx context.Context, docId *string, texts []string) ([][]float32, error) {
+func (m *MockEmbedder) Encode(ctx context.Context, docId string, texts []string) ([][]float32, error) {
 	result := make([][]float32, len(texts))
 	for i := range texts {
 		result[i] = []float32{0.1, 0.2, 0.3}
@@ -83,4 +82,3 @@ func (m *MockEmbedder) SetConsolidateFn(fn func(ctx context.Context, docId strin
 	defer m.mu.Unlock()
 	m.consolidateFn = fn
 }
-

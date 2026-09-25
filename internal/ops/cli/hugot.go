@@ -76,8 +76,8 @@ func serveHugotHandler(c *container.Container, args []string) error {
 	}
 	defer hugot.Close()
 
-	embStore := matcher.NewTagEmbeddingStore(nil, nil)
-	if err := matcher.BuildTagCache(context.Background(), client.Queries, c.GetLogger(), hugot, embStore); err != nil {
+	embStore := matcher.NewTagEmbeddingStore(nil)
+	if err := matcher.BuildTagCache(context.Background(), client.Queries, hugot, embStore); err != nil {
 		c.GetLogger().Error("", "failed to build tag cache: %v — continuing with empty cache", err)
 	}
 	hugot.SetStore(embStore)
@@ -183,7 +183,7 @@ func handleEncode(h *matcher.Hugot, logger *log.Logger, maxBodyBytes int) http.H
 			respondError(w, logger, err, http.StatusBadRequest, "bad request")
 			return
 		}
-		embeddings, err := h.Encode(r.Context(), nil, req.Texts)
+		embeddings, err := h.Encode(r.Context(), "", req.Texts)
 		if err != nil {
 			respondError(w, logger, err, http.StatusInternalServerError, "internal error")
 			return

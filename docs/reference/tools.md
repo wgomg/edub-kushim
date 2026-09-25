@@ -146,7 +146,7 @@ type Matcher interface {
 }
 
 type Embedder interface {
-    Encode(ctx, docId *string, texts []string) ([][]float32, error)
+    Encode(ctx, docId string, texts []string) ([][]float32, error)
     AddToStore(ctx context.Context, names []string) error
     RemoveFromStore(ctx context.Context, names []string) error
     Close()
@@ -207,7 +207,7 @@ The composition root builds a single `*Hugot` (for the `kushim` CLI) or uses a `
   - `Match(ctx, docId, input)` — Reads all entries from the store, encodes the input, ranks by cosine similarity, returns top-N matches
   - `Rank(ctx, docId, queries []string)` — Reads all entries from the store internally, encodes the queries verbatim (they are already canonical — `analyzer.NormalizeTags` output), ranks against the store embeddings, and returns up to two candidates per query with scores plus the kept name
   - `SimilarPairs(ctx)` — Snapshots the pair cache under the mutex and returns it as a slice of `SimilarPair`
-  - `Encode(ctx, *docId, texts)` — Batch embedding with chunked encoding for long inputs. Does NOT normalize input — shared with document text matching where punctuation is meaningful.
+  - `Encode(ctx, docId, texts)` — Batch embedding with chunked encoding for long inputs (an empty `docId` means no log correlation). Does NOT normalize input — shared with document text matching where punctuation is meaningful.
   - `AddToStore(ctx, names)` — Encodes names verbatim (canonical DB names from `curation.Tag.Create`/`Update`) in batches of 32 (`embedBatchSize`), adds them to the store, and maintains the pair cache: one `Entries()` snapshot per batch, prune-then-insert per name (re-encodes drop stale pairs), fresh batch vectors used for intra-batch pairs
   - `RemoveFromStore(ctx, names)` — Removes names from the store and drops every pair mentioning them
   - `SetStore(s EmbeddingStore)` — Injects the shared store reference after construction and rebuilds the pair cache from the store's entries (N²/2 cosine pass, skipped when `consolidationSim` is 0)

@@ -54,13 +54,13 @@ type Matcher interface {
 
 // Embedder maintains the tag vocabulary behind the matcher: Encode turns
 // texts into unit-normalized vectors, and AddToStore and RemoveFromStore
-// keep the stored tags in sync with the tags table. docId is optional and
-// only used for log correlation. Implementations must be safe for
-// concurrent use.
+// keep the stored tags in sync with the tags table. docId is used only for
+// log correlation and is empty when there is none. Implementations must be
+// safe for concurrent use.
 type Embedder interface {
 	// Encode embeds texts in order; the returned slice has one vector per
 	// input, in input order.
-	Encode(ctx context.Context, docId *string, texts []string) ([][]float32, error)
+	Encode(ctx context.Context, docId string, texts []string) ([][]float32, error)
 	AddToStore(ctx context.Context, names []string) error
 	RemoveFromStore(ctx context.Context, names []string) error
 	Close()
@@ -68,8 +68,7 @@ type Embedder interface {
 }
 
 // EmbeddingStore is the tag embedding cache the matcher reads from: a tag
-// name to vector map plus an attribute bag for diagnostics. Implementations
-// must be safe for concurrent use.
+// name to vector map. Implementations must be safe for concurrent use.
 type EmbeddingStore interface {
 	// Add stores an embedding under a tag name, replacing any previous one.
 	Add(key string, embedding []float32)

@@ -187,7 +187,7 @@ type encodeResult struct {
 
 // Encode embeds the texts through the daemon, one returned vector per
 // input, in input order.
-func (c *MatcherClient) Encode(ctx context.Context, _ *string, texts []string) ([][]float32, error) {
+func (c *MatcherClient) Encode(ctx context.Context, _ string, texts []string) ([][]float32, error) {
 	var resp encodeResult
 	req := struct {
 		Texts []string `json:"texts"`

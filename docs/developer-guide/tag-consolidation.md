@@ -319,13 +319,13 @@ The daemon (`internal/ops/cli/hugot.go`) serves:
 
 | Endpoint | Purpose |
 | -------- | ------- |
-| `POST /rpc/v1/rank` | Per query: `{kept_name, candidates: [{tag, similarity}]}` — top-2 candidates (`rankCandidates`, `hugot.go:115`), all ≥ the consideration floor. The daemon makes no replacement decision. |
+| `POST /rpc/v1/rank` | Per query: `{kept_name, candidates: [{tag, similarity}]}` — top-2 candidates (`rankCandidates`, `hugot.go:124`), all ≥ the consideration floor. The daemon makes no replacement decision. |
 | `GET /rpc/v1/similar-pairs` | The full pair cache — every unordered pair of store entries ≥ the floor. No legacy fallback: an old daemon 404s → matcher-unavailable → suggestions 503 until the daemon restarts. |
-| `POST /rpc/v1/consolidate` | Legacy endpoint (`Hugot.Consolidate`, `hugot.go:299`) kept for pre-upgrade clients only. |
+| `POST /rpc/v1/consolidate` | Legacy endpoint (`Hugot.Consolidate`, `hugot.go:324`) kept for pre-upgrade clients only. |
 
-`MatcherClient.Rank` (`internal/matcher/client.go:165`) prefers `/rpc/v1/rank`
+`MatcherClient.Rank` (`internal/matcher/client.go:203`) prefers `/rpc/v1/rank`
 and falls back to the legacy endpoint on 404 via `rankViaConsolidate`
-(`client.go:184`), wrapping each returned name as a no-candidates
+(`client.go:222`), wrapping each returned name as a no-candidates
 `RankResult` — which the policy passes through verbatim. Both skew directions
 therefore keep working without lock-step restarts; only `similar-pairs`
 requires the daemon restart.
@@ -338,8 +338,8 @@ encoding), `AddToStore` adds the new name's pairs with a 1×N pass,
 `RemoveFromStore` drops every pair mentioning the removed name — tag delete and
 rename both flow through it, so renames stay correct. With
 `consolidationSim == 0.0` (consolidation disabled) the cache stays empty,
-matching `Rank`'s early-return. `Hugot.SimilarPairs` (`hugot.go:232`) snapshots
-the map; `MatcherClient.SimilarPairs` (`client.go:213`) GETs the endpoint.
+matching `Rank`'s early-return. `Hugot.SimilarPairs` (`hugot.go:250`) snapshots
+the map; `MatcherClient.SimilarPairs` (`client.go:254`) GETs the endpoint.
 
 ---
 

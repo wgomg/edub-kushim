@@ -49,7 +49,7 @@ type trackingEmbedder struct {
 	removedAll []string
 }
 
-func (t *trackingEmbedder) Encode(ctx context.Context, docId *string, texts []string) ([][]float32, error) {
+func (t *trackingEmbedder) Encode(ctx context.Context, docId string, texts []string) ([][]float32, error) {
 	return t.base.Encode(ctx, docId, texts)
 }
 

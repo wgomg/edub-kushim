@@ -86,30 +86,17 @@ per tool category, used by the frontend settings UI to populate select dropdowns
 
 ---
 
-# Cache (`internal/matcher/`)
-
-## `cache.go`
-
-### Interface
-
-`Store` — `Attr(key) (any, bool)`, `Attrs() map[string]any`, `Keys() []string`, `Len() int`, `Remove(key string)`
-
-### Structs
-
-- `storeBase` — `myu sync.RWMutex`, `attrs map[string]any` — Thread-safe key-value store, `Attrs()` returns a copy
-- `Cache` — `mu sync.RWMutex`, `stores map[string]Store` — Named store registry with `Set(name, store)` and `Get(name) (Store, bool)`
-
----
+# Tag Matcher Store (`internal/matcher/`)
 
 ## `bootstrap.go`
 
 ### Constants
 
-`defaultDim = 384`, `batchSize = 32`
+`embedBatchSize = 32`: batch cap for tag-name encoding, declared in this untagged file so `CGO_ENABLED=0` builds compile it (the cgo-tagged `hugot.go` shares the value)
 
 ### Function
 
-- `BuildTagCache(ctx, queries, logger, hugot, store) error` — Fetches the promoted tag names from DB (`ListPromotedTagNames`; provisional tags stay out of the store until promoted), creates an initial empty `TagEmbeddingStore`, embeds tags in batches of 32 via the provided `Embedder`, populates the store. Graceful fallback to empty cache on Hugot init failure.
+- `BuildTagCache(ctx, queries, enc, store) error`: Fetches the promoted tag names from DB (`ListPromotedTagNames`; provisional tags stay out of the store until promoted), embeds them in batches of `embedBatchSize` via the provided `Embedder`, and swaps the store's complete entry map under its lock. An empty vocabulary leaves an empty store; the daemon call site logs an error and continues with an empty cache.
 
 ---
 
@@ -117,9 +104,10 @@ per tool category, used by the frontend settings UI to populate select dropdowns
 
 ### Struct
 
-`TagEmbeddingStore` — Embeds `storeBase`, fields: `entries map[string][]float32`
+`TagEmbeddingStore`: `mu sync.RWMutex`, `entries map[string][]float32`
 
-- **Methods**: `Keys()`, `Len()`, `Remove(key)`, `Add(key, embedding)`, `Entries() map[string][]float32` (returns deep copy)
+- **Constructor**: `NewTagEmbeddingStore(entries map[string][]float32)`, where a nil map becomes an empty one
+- **Methods**: `Remove(key)`, `Add(key, embedding)`, `Entries() map[string][]float32` (returns a deep copy)
 
 ---
 
