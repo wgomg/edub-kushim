@@ -72,7 +72,7 @@ func (s *Orphaned) ScanAndQuarantine(ctx context.Context) (int, error) {
 	for info := range infos {
 		ok, err := s.quarantineFile(ctx, storageDir, info)
 		if err != nil {
-			s.logger.Error(nil, "quarantine file %s: %v", info.FilePath, err)
+			s.logger.Error("", "quarantine file %s: %v", info.FilePath, err)
 			continue
 		}
 		if ok {
@@ -295,7 +295,7 @@ func (s *Orphaned) MoveAllToInbox(ctx context.Context) (int, error) {
 	moved := 0
 	for _, f := range files {
 		if err := s.MoveToInbox(ctx, f.ID); err != nil {
-			s.logger.Error(nil, "move to inbox orphaned %d: %v", f.ID, err)
+			s.logger.Error("", "move to inbox orphaned %d: %v", f.ID, err)
 			continue
 		}
 		moved++
@@ -313,11 +313,11 @@ func (s *Orphaned) ScanAndQuarantineAsync() {
 
 		count, err := s.ScanAndQuarantine(ctx)
 		if err != nil {
-			s.logger.Error(nil, "orphaned scan: %v", err)
+			s.logger.Error("", "orphaned scan: %v", err)
 			return
 		}
 		if count > 0 {
-			s.logger.Info(nil, "orphaned scan: %d files quarantined", count)
+			s.logger.Info("", "orphaned scan: %d files quarantined", count)
 		}
 	}()
 }

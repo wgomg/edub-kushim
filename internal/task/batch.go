@@ -88,7 +88,7 @@ func (o *Owner) Acquire(ctx context.Context, batchID string, staleAfter time.Dur
 	}
 	if rows == 0 {
 		if o.Logger != nil {
-			o.Logger.Error(nil, "acquire batch %s failed: live owner holds it", batchID)
+			o.Logger.Error("", "acquire batch %s failed: live owner holds it", batchID)
 		}
 		return ErrBatchLocked
 	}
@@ -107,7 +107,7 @@ func (o *Owner) AcquireForce(ctx context.Context, batchID string) error {
 		return fmt.Errorf("force acquire batch owner: %w", err)
 	}
 	if rows == 0 && o.Logger != nil {
-		o.Logger.Error(nil, "AcquireForce for batch %s returned 0 rows — batch_owner row not written (ownerID=%s, pid=%d)", batchID, o.OwnerID, o.PID)
+		o.Logger.Error("", "AcquireForce for batch %s returned 0 rows — batch_owner row not written (ownerID=%s, pid=%d)", batchID, o.OwnerID, o.PID)
 	}
 	return nil
 }

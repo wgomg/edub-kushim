@@ -87,7 +87,7 @@ func printTagMeasureReport(c *container.Container, report *tags.Report, batchID 
 	if batchID != "" {
 		batchSuffix = fmt.Sprintf(" (batch %s)", batchID)
 	}
-	c.GetLogger().Info(nil, "tag measure run %s%s: snapshot=%s rule_set=%s tags=%d operators=%v states=%v skipped=%v worklists=%+v",
+	c.GetLogger().Info("", "tag measure run %s%s: snapshot=%s rule_set=%s tags=%d operators=%v states=%v skipped=%v worklists=%+v",
 		report.RunID, batchSuffix, report.SnapshotAt.Format(time.RFC3339), report.RuleSetVersion, report.Tags,
 		report.Operators, report.States, report.Skipped, report.Worklists)
 

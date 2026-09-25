@@ -389,7 +389,7 @@ row** (`owner_id = "queue-" + batch.ID[:8]`, the daemon's own PID), and fork:
 cmd := exec.Command(os.Args[0], "consume", "--batch", batch.ID, "--force")
 cmd.Stdin = nil; cmd.Stdout = nil; cmd.Stderr = nil
 if err := cmd.Start(); err != nil {
-	logger.Error(nil, "fork consume for batch %s: %v — requeueing", batch.ID, err)
+	logger.Error("", "fork consume for batch %s: %v — requeueing", batch.ID, err)
 	... requeue ...
 	return nil
 }

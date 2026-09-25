@@ -73,7 +73,7 @@ func (h *ThumbnailTaskHandler) Handle(ctx context.Context, t task.Task) (json.Ra
 		return nil, &task.Error{ReqID: p.DocumentID, Err: fmt.Errorf("mark document has_thumbnail: %w", err)}
 	}
 
-	h.logger.Info(&p.DocumentID, "thumbnail generated for %s -> %s (%dx%d)", p.StoragePath, thumbPath, result.Width, result.Height)
+	h.logger.Info(p.DocumentID, "thumbnail generated for %s -> %s (%dx%d)", p.StoragePath, thumbPath, result.Width, result.Height)
 
 	raw, _ := json.Marshal(map[string]any{
 		"document_id": p.DocumentID,

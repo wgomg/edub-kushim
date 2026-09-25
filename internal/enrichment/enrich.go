@@ -46,7 +46,7 @@ func (h *EnrichTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMe
 	result, err := h.enricher.Enrich(ctx, document.ToDocument(), task.NewProgressTracker(h.queries, t.TaskID).Set)
 	{
 		mem := log.ReadMemFull()
-		h.logger.Debug(&p.DocumentID, "post-enrich memory: %s", log.FormatMemFull(mem))
+		h.logger.Debug(p.DocumentID, "post-enrich memory: %s", log.FormatMemFull(mem))
 	}
 	if err != nil {
 		return nil, err

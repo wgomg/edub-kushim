@@ -54,7 +54,7 @@ func (p *Pool) Start(ctx context.Context) {
 	for i := range p.workers {
 		p.wg.Add(1)
 		go p.workerLoop(i)
-		p.logger.Info(nil, "worker %d started", i)
+		p.logger.Info("", "worker %d started", i)
 	}
 }
 
@@ -76,9 +76,9 @@ func (p *Pool) Stop(ctx context.Context) {
 
 	select {
 	case <-done:
-		p.logger.Info(nil, "all workers stopped")
+		p.logger.Info("", "all workers stopped")
 	case <-ctx.Done():
-		p.logger.Info(nil, "worker shutdown timed out")
+		p.logger.Info("", "worker shutdown timed out")
 	}
 }
 
@@ -91,7 +91,7 @@ func (p *Pool) workerLoop(id int) {
 		if err == nil {
 			return
 		}
-		p.logger.Error(nil, "%s restarting after error: %v", logPrefix, err)
+		p.logger.Error("", "%s restarting after error: %v", logPrefix, err)
 		select {
 		case <-p.stopCh:
 			return
@@ -105,7 +105,7 @@ func (p *Pool) workerLoop(id int) {
 func (p *Pool) runWorker(id int, logPrefix string) (rerr error) {
 	defer func() {
 		if r := recover(); r != nil {
-			p.logger.Error(nil, "%s panic recovered: %v", logPrefix, r)
+			p.logger.Error("", "%s panic recovered: %v", logPrefix, r)
 			rerr = fmt.Errorf("worker panic: %v", r)
 		}
 	}()
@@ -116,16 +116,16 @@ func (p *Pool) runWorker(id int, logPrefix string) (rerr error) {
 	for {
 		select {
 		case <-p.stopCh:
-			p.logger.Info(nil, "%s stopping", logPrefix)
+			p.logger.Info("", "%s stopping", logPrefix)
 			return nil
 		case <-p.ctx.Done():
 			return nil
 		case <-memTicker.C:
 			mem := log.ReadMemFull()
-			p.logger.Debug(nil, "%s periodic memory: %s", logPrefix, log.FormatMemFull(mem))
+			p.logger.Debug("", "%s periodic memory: %s", logPrefix, log.FormatMemFull(mem))
 		case <-time.After(p.interval):
 			if err := p.runner.Next(p.ctx, p.taskType); err != nil {
-				p.logger.Error(nil, "%s: %v", logPrefix, err)
+				p.logger.Error("", "%s: %v", logPrefix, err)
 			}
 		}
 	}

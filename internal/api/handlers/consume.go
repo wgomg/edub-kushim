@@ -49,13 +49,13 @@ func (h *ConsumeHandler) enqueueBatchFiles(ctx context.Context, batchID string, 
 	for i, path := range paths {
 		md5hash, md5Err := storage.CalculateMD5(path)
 		if md5Err != nil {
-			h.logger.Error(&reqID, "md5 %s: %v", path, md5Err)
+			h.logger.Error(reqID, "md5 %s: %v", path, md5Err)
 			continue
 		}
 
 		existingDocs, _ := h.queries.GetDocumentByMD5Checksum(ctx, md5hash)
 		if len(existingDocs) > 0 {
-			h.logger.Info(&reqID, "skipping %s (duplicate of document %s)", path, existingDocs[0].DocumentID)
+			h.logger.Info(reqID, "skipping %s (duplicate of document %s)", path, existingDocs[0].DocumentID)
 			continue
 		}
 
@@ -76,7 +76,7 @@ func (h *ConsumeHandler) enqueueBatchFiles(ctx context.Context, batchID string, 
 		consumePayload, _ := json.Marshal(consumePayloadMap)
 		_, err := h.workStore.CreateTask(ctx, types.Task.Type.Consume, batchID, consumePayload, consumeTaskID, types.Task.Status.Pending, "consume:"+md5hash)
 		if err != nil {
-			h.logger.Error(&reqID, "enqueue %s: %v", path, err)
+			h.logger.Error(reqID, "enqueue %s: %v", path, err)
 			continue
 		}
 
@@ -87,7 +87,7 @@ func (h *ConsumeHandler) enqueueBatchFiles(ctx context.Context, batchID string, 
 			"document_id": documentID,
 		})
 		if _, err := h.workStore.CreateTask(ctx, types.Task.Type.Enrich, batchID, enrichPayload, enrichTaskID, types.Task.Status.Waiting, ""); err != nil {
-			h.logger.Error(&reqID, "create enrich task for %s: %v", path, err)
+			h.logger.Error(reqID, "create enrich task for %s: %v", path, err)
 			continue
 		}
 
@@ -98,7 +98,7 @@ func (h *ConsumeHandler) enqueueBatchFiles(ctx context.Context, batchID string, 
 				"file_index":  i + 1,
 			})
 			if _, err := h.workStore.CreateTask(ctx, types.Task.Type.Thumbnail, batchID, thumbnailPayload, thumbnailTaskID, types.Task.Status.Waiting, ""); err != nil {
-				h.logger.Error(&reqID, "create thumbnail task for %s: %v", path, err)
+				h.logger.Error(reqID, "create thumbnail task for %s: %v", path, err)
 			}
 		}
 		enqueued++
@@ -113,7 +113,7 @@ func (h *ConsumeHandler) enqueueBatchFiles(ctx context.Context, batchID string, 
 func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := requestID(ctx)
-	h.logger.Debug(&reqID, "Consume requested")
+	h.logger.Debug(reqID, "Consume requested")
 
 	cfg := h.getConfig()
 
@@ -133,7 +133,7 @@ func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 		cfg.Consumer.MaxFilesPerBatch,
 	)
 	if err != nil {
-		h.logger.Error(&reqID, "Failed to scan inbox: %v", err)
+		h.logger.Error(reqID, "Failed to scan inbox: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -175,7 +175,7 @@ func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 
-	h.logger.Info(&reqID, "enqueued batch %s (%d files, %d enqueued)", batchID, len(paths), enqueued)
+	h.logger.Info(reqID, "enqueued batch %s (%d files, %d enqueued)", batchID, len(paths), enqueued)
 }
 
 // Upload writes an uploaded file into the consumption directory and
@@ -183,7 +183,7 @@ func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := requestID(ctx)
-	h.logger.Debug(&reqID, "Upload requested")
+	h.logger.Debug(reqID, "Upload requested")
 
 	cfg := h.getConfig()
 
@@ -261,7 +261,7 @@ func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 
 		tmpFile, err := os.CreateTemp(inboxDir, "upload-*")
 		if err != nil {
-			h.logger.Error(&reqID, "create temp file: %v", err)
+			h.logger.Error(reqID, "create temp file: %v", err)
 			_ = part.Close()
 			continue
 		}
@@ -283,7 +283,7 @@ func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 				})
 				return
 			}
-			h.logger.Error(&reqID, "copy part: %v", copyErr)
+			h.logger.Error(reqID, "copy part: %v", copyErr)
 			continue
 		}
 
@@ -301,7 +301,7 @@ func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		finalName := fmt.Sprintf("upload-%s-%s", uuid.New().String(), sanitizedName)
 		finalPath := filepath.Join(inboxDir, finalName)
 		if err := os.Rename(tmpPath, finalPath); err != nil {
-			h.logger.Error(&reqID, "rename %s -> %s: %v", tmpPath, finalPath, err)
+			h.logger.Error(reqID, "rename %s -> %s: %v", tmpPath, finalPath, err)
 			continue
 		}
 		accepted = append(accepted, finalPath)
@@ -331,7 +331,7 @@ func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 
 	batchID := uuid.New().String()
 	if err := h.services.Batch.Create(ctx, batchID, types.Batch.Source.Upload, types.Batch.Status.Queued); err != nil {
-		h.logger.Error(&reqID, "create batch %s: %v", batchID, err)
+		h.logger.Error(reqID, "create batch %s: %v", batchID, err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -360,5 +360,5 @@ func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 
-	h.logger.Info(&reqID, "upload batch %s: %d accepted, %d rejected", batchID, len(accepted), len(rejected))
+	h.logger.Info(reqID, "upload batch %s: %d accepted, %d rejected", batchID, len(accepted), len(rejected))
 }

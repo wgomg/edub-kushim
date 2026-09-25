@@ -258,7 +258,7 @@ func (r *Reconciler) Run(ctx context.Context, progress task.ProgressFunc) (Repor
 		report.AdjudicatorDisabled = true
 		r.decideJointSplits(ctx, cfg, jointWorklist)
 		r.planJointSplits(jointWorklist, &report)
-		r.logger.Info(nil, "tag reconcile: adjudicator is disabled — no decisions were changed (report_only=%t); pairs needing re-check: %d under older rules, %d never judged, %d with usage drift, %d stale over 90 days; %d joint tags detected (would split %d deterministically)",
+		r.logger.Info("", "tag reconcile: adjudicator is disabled — no decisions were changed (report_only=%t); pairs needing re-check: %d under older rules, %d never judged, %d with usage drift, %d stale over 90 days; %d joint tags detected (would split %d deterministically)",
 			report.ReportOnly, report.Worklist.Stale, report.Worklist.Unjudged, report.Worklist.Drifted, report.Worklist.Aged, report.Worklist.Joint, len(report.PlannedJointSplits))
 		return report, nil
 	}
@@ -301,14 +301,14 @@ func (r *Reconciler) sweepIdentityEvidence(ctx context.Context, cfg *config.Conf
 	resolver := admission.NewIdentityResolver(r.getConfig, r.logger, r.client, r.tag, r.runner)
 	identityReport, err := resolver.ResolvePending(ctx, cfg.Enricher.TagReconcile.MaxRejudge)
 	if err != nil {
-		r.logger.Error(nil, "tag reconcile: identity evidence sweep failed: %v", err)
+		r.logger.Error("", "tag reconcile: identity evidence sweep failed: %v", err)
 		return
 	}
 	if identityReport.Pending == 0 {
 		return
 	}
 	report.Identity = identityReport
-	r.logger.Info(nil, "tag reconcile: identity evidence — %d pending, %d resolved, %d folded, %d aliased, %d deferred, %d failed",
+	r.logger.Info("", "tag reconcile: identity evidence — %d pending, %d resolved, %d folded, %d aliased, %d deferred, %d failed",
 		identityReport.Pending, identityReport.Resolved, identityReport.Folded, identityReport.Aliased, identityReport.Deferred, identityReport.Failed)
 }
 
@@ -326,12 +326,12 @@ func (r *Reconciler) logSummary(report Report) {
 				created++
 			}
 		}
-		r.logger.Info(nil, "tag reconcile: done (report-only, nothing changed) — %d pairs re-checked, %d judged; %d merges and %d restorations planned (%d documents would move, %d tags would be created); %d joint tags would split; %d skipped, %d over cap",
+		r.logger.Info("", "tag reconcile: done (report-only, nothing changed) — %d pairs re-checked, %d judged; %d merges and %d restorations planned (%d documents would move, %d tags would be created); %d joint tags would split; %d skipped, %d over cap",
 			checked, report.Judged, report.Flips.ToMerge, report.Flips.ToKeep, documents, created, len(report.PlannedJointSplits), skipped, report.Capped)
 		return
 	}
 	documents := sumReassigned(report.Merges) + sumReassigned(report.RetagEntries)
-	r.logger.Info(nil, "tag reconcile: done — %d pairs re-checked, %d judged; %d merges and %d restorations applied (%d documents re-pointed); %d joint tags split; %d skipped, %d over cap",
+	r.logger.Info("", "tag reconcile: done — %d pairs re-checked, %d judged; %d merges and %d restorations applied (%d documents re-pointed); %d joint tags split; %d skipped, %d over cap",
 		checked, report.Judged, report.Flips.ToMerge, report.Flips.ToKeep, documents, len(report.JointSplits), skipped, report.Capped)
 }
 
@@ -345,7 +345,7 @@ func (r *Reconciler) sweepOrphanTags(ctx context.Context, cfg *config.Config, re
 		// the next apply on the same state without persisting anything
 		tx, err := r.client.BeginTx(ctx, nil)
 		if err != nil {
-			r.logger.Error(nil, "tag reconcile: begin orphan mark transaction: %v", err)
+			r.logger.Error("", "tag reconcile: begin orphan mark transaction: %v", err)
 			return
 		}
 		defer tx.Rollback()
@@ -353,17 +353,17 @@ func (r *Reconciler) sweepOrphanTags(ctx context.Context, cfg *config.Config, re
 	}
 
 	if _, err := q.ClearOrphanTagMarks(ctx); err != nil {
-		r.logger.Error(nil, "tag reconcile: clear orphan tag marks: %v", err)
+		r.logger.Error("", "tag reconcile: clear orphan tag marks: %v", err)
 		return
 	}
 	if _, err := q.MarkOrphanTags(ctx); err != nil {
-		r.logger.Error(nil, "tag reconcile: mark orphan tags: %v", err)
+		r.logger.Error("", "tag reconcile: mark orphan tags: %v", err)
 		return
 	}
 
 	planned, err := q.ListOrphanTags(ctx, cutoff)
 	if err != nil {
-		r.logger.Error(nil, "tag reconcile: list orphan tags: %v", err)
+		r.logger.Error("", "tag reconcile: list orphan tags: %v", err)
 		return
 	}
 	if len(planned) == 0 {
@@ -372,21 +372,21 @@ func (r *Reconciler) sweepOrphanTags(ctx context.Context, cfg *config.Config, re
 
 	if report.ReportOnly {
 		report.Swept = len(planned)
-		r.logger.Info(nil, "tag reconcile (report-only): would delete %d tags orphaned for over %d days%s",
+		r.logger.Info("", "tag reconcile (report-only): would delete %d tags orphaned for over %d days%s",
 			len(planned), graceDays, sampleNamesSuffix(planned))
 		return
 	}
 
 	deleted, err := q.DeleteOrphanTags(ctx, cutoff)
 	if err != nil {
-		r.logger.Error(nil, "tag reconcile: delete orphan tags: %v", err)
+		r.logger.Error("", "tag reconcile: delete orphan tags: %v", err)
 		return
 	}
 	report.Swept = len(deleted)
 	if err := r.tag.RemoveFromStore(ctx, deleted); err != nil {
-		r.logger.Error(nil, "tag reconcile: remove swept tags from store: %v", err)
+		r.logger.Error("", "tag reconcile: remove swept tags from store: %v", err)
 	}
-	r.logger.Info(nil, "tag reconcile: deleted %d tags orphaned for over %d days%s",
+	r.logger.Info("", "tag reconcile: deleted %d tags orphaned for over %d days%s",
 		len(deleted), graceDays, sampleNamesSuffix(deleted))
 }
 
@@ -410,7 +410,7 @@ func (r *Reconciler) sweepProvisionalTags(ctx context.Context, cfg *config.Confi
 
 	worklist, err := r.client.ListProvisionalTagsOlderThan(ctx, cutoff)
 	if err != nil {
-		r.logger.Error(nil, "tag reconcile: list provisional tags: %v", err)
+		r.logger.Error("", "tag reconcile: list provisional tags: %v", err)
 		return
 	}
 	report.Provisional.Worklist = len(worklist)
@@ -426,7 +426,7 @@ func (r *Reconciler) sweepProvisionalTags(ctx context.Context, cfg *config.Confi
 	}
 	assigned, err := r.client.CountTagDocumentsByTagIDs(ctx, ids)
 	if err != nil {
-		r.logger.Error(nil, "tag reconcile: count provisional tag documents: %v", err)
+		r.logger.Error("", "tag reconcile: count provisional tag documents: %v", err)
 		return
 	}
 	assignedCounts := make(map[int64]int64, len(assigned))
@@ -437,13 +437,13 @@ func (r *Reconciler) sweepProvisionalTags(ctx context.Context, cfg *config.Confi
 	// promotion evidence is live-document only, like the judge's text input
 	liveCounts, err := tags.NewStore(r.client.Queries).LiveMass(ctx, ids)
 	if err != nil {
-		r.logger.Error(nil, "tag reconcile: count live provisional tag documents: %v", err)
+		r.logger.Error("", "tag reconcile: count live provisional tag documents: %v", err)
 		return
 	}
 
 	events, err := r.tag.LatestQualityEventsForNames(ctx, names)
 	if err != nil {
-		r.logger.Error(nil, "tag reconcile: provisional tag verdict lookup: %v", err)
+		r.logger.Error("", "tag reconcile: provisional tag verdict lookup: %v", err)
 		return
 	}
 	verdicts := make(map[string]database.LatestTagQualityEventsForNamesRow, len(events))
@@ -471,14 +471,14 @@ func (r *Reconciler) sweepProvisionalTags(ctx context.Context, cfg *config.Confi
 
 		if report.ReportOnly {
 			report.Provisional.Promoted++
-			r.logger.Info(nil, "tag reconcile (report-only): would promote %q (docs=%d model=%s)", t.Name, docs, verdictModelLabel(row.VerdictModel))
+			r.logger.Info("", "tag reconcile (report-only): would promote %q (docs=%d model=%s)", t.Name, docs, verdictModelLabel(row.VerdictModel))
 			continue
 		}
 		if _, status, err := r.tag.Promote(ctx, t.ID, "sweep"); err != nil {
-			r.logger.Error(nil, "tag reconcile: promote provisional tag %q: %v", t.Name, err)
+			r.logger.Error("", "tag reconcile: promote provisional tag %q: %v", t.Name, err)
 		} else if status == service.PromotePromoted {
 			report.Provisional.Promoted++
-			r.logger.Info(nil, "tag reconcile: promoted %q (docs=%d model=%s)", t.Name, docs, verdictModelLabel(row.VerdictModel))
+			r.logger.Info("", "tag reconcile: promoted %q (docs=%d model=%s)", t.Name, docs, verdictModelLabel(row.VerdictModel))
 		}
 	}
 
@@ -493,12 +493,12 @@ func (r *Reconciler) sweepProvisionalTags(ctx context.Context, cfg *config.Confi
 
 	if report.ReportOnly {
 		report.Provisional.Rejudged = len(rejudge)
-		r.logger.Info(nil, "tag reconcile (report-only): would re-judge %d provisional tags older than %d days", len(rejudge), graceDays)
+		r.logger.Info("", "tag reconcile (report-only): would re-judge %d provisional tags older than %d days", len(rejudge), graceDays)
 		return
 	}
 	if !r.runner.HasTagQualityJudge() {
 		report.Provisional.NoJudge = len(rejudge)
-		r.logger.Info(nil, "tag reconcile: tag quality judge is not configured — %d provisional tags stay queued", len(rejudge))
+		r.logger.Info("", "tag reconcile: tag quality judge is not configured — %d provisional tags stay queued", len(rejudge))
 		return
 	}
 
@@ -514,10 +514,10 @@ func (r *Reconciler) rejudgeProvisionalTags(ctx context.Context, cfg *config.Con
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				report.Provisional.Skipped++
-				r.logger.Info(nil, "tag reconcile: provisional tag %q has no live document — left for review", e.name)
+				r.logger.Info("", "tag reconcile: provisional tag %q has no live document — left for review", e.name)
 				continue
 			}
-			r.logger.Error(nil, "tag reconcile: first document for provisional tag %q: %v", e.name, err)
+			r.logger.Error("", "tag reconcile: first document for provisional tag %q: %v", e.name, err)
 			report.Provisional.Failed++
 			continue
 		}
@@ -525,10 +525,10 @@ func (r *Reconciler) rejudgeProvisionalTags(ctx context.Context, cfg *config.Con
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				report.Provisional.Skipped++
-				r.logger.Info(nil, "tag reconcile: provisional tag %q has no live document text — left for review", e.name)
+				r.logger.Info("", "tag reconcile: provisional tag %q has no live document text — left for review", e.name)
 				continue
 			}
-			r.logger.Error(nil, "tag reconcile: document text for provisional tag %q: %v", e.name, err)
+			r.logger.Error("", "tag reconcile: document text for provisional tag %q: %v", e.name, err)
 			report.Provisional.Failed++
 			continue
 		}
@@ -536,7 +536,7 @@ func (r *Reconciler) rejudgeProvisionalTags(ctx context.Context, cfg *config.Con
 		reduced, err := r.runner.ReduceContent(ctx, doc.TextContent.String, chunkSize,
 			matcher.TargetWordCount(int(doc.WordCount), cfg.Enricher.TagMatcher.ReduceTargetWords))
 		if err != nil {
-			r.logger.Error(nil, "tag reconcile: reduce text for provisional tag %q: %v", e.name, err)
+			r.logger.Error("", "tag reconcile: reduce text for provisional tag %q: %v", e.name, err)
 		}
 
 		candidates := []analyzer.TagQualityCandidate{{
@@ -550,12 +550,12 @@ func (r *Reconciler) rejudgeProvisionalTags(ctx context.Context, cfg *config.Con
 			results, err = r.runner.JudgeTagQuality(ctx, reduced.Text, candidates)
 		}
 		if err != nil {
-			r.logger.Error(nil, "tag reconcile: judge provisional tag %q: %v", e.name, err)
+			r.logger.Error("", "tag reconcile: judge provisional tag %q: %v", e.name, err)
 			report.Provisional.Failed++
 			continue
 		}
 		if len(results) != len(candidates) {
-			r.logger.Error(nil, "tag reconcile: judge returned %d verdicts for provisional tag %q", len(results), e.name)
+			r.logger.Error("", "tag reconcile: judge returned %d verdicts for provisional tag %q", len(results), e.name)
 			report.Provisional.Failed++
 			continue
 		}
@@ -563,13 +563,13 @@ func (r *Reconciler) rejudgeProvisionalTags(ctx context.Context, cfg *config.Con
 		res := results[0]
 		criteria, err := json.Marshal(res.Criteria())
 		if err != nil {
-			r.logger.Error(nil, "tag reconcile: marshal criteria for provisional tag %q: %v", e.name, err)
+			r.logger.Error("", "tag reconcile: marshal criteria for provisional tag %q: %v", e.name, err)
 			report.Provisional.Failed++
 			continue
 		}
 		pass, finalModel, err := r.recordProvisionalVerdict(ctx, docID, e.name, criteria, res.Passed(), model)
 		if err != nil {
-			r.logger.Error(nil, "tag reconcile: record provisional verdict for %q: %v", e.name, err)
+			r.logger.Error("", "tag reconcile: record provisional verdict for %q: %v", e.name, err)
 			report.Provisional.Failed++
 			continue
 		}
@@ -577,17 +577,17 @@ func (r *Reconciler) rejudgeProvisionalTags(ctx context.Context, cfg *config.Con
 
 		if !pass {
 			report.Provisional.Deferred++
-			r.logger.Info(nil, "tag reconcile: provisional tag %q rejected by the judge — deferred to the review queue", e.name)
+			r.logger.Info("", "tag reconcile: provisional tag %q rejected by the judge — deferred to the review queue", e.name)
 			continue
 		}
 		if e.docs < 2 {
 			continue
 		}
 		if _, status, err := r.tag.Promote(ctx, e.id, "sweep"); err != nil {
-			r.logger.Error(nil, "tag reconcile: promote provisional tag %q: %v", e.name, err)
+			r.logger.Error("", "tag reconcile: promote provisional tag %q: %v", e.name, err)
 		} else if status == service.PromotePromoted {
 			report.Provisional.Promoted++
-			r.logger.Info(nil, "tag reconcile: promoted %q (docs=%d model=%s)", e.name, e.docs, finalModel)
+			r.logger.Info("", "tag reconcile: promoted %q (docs=%d model=%s)", e.name, e.docs, finalModel)
 		}
 	}
 }
@@ -679,12 +679,12 @@ func (r *Reconciler) buildWorklist(ctx context.Context, cfg *config.Config, stor
 				Column1: queries,
 				Column2: targets,
 			}); err != nil {
-				r.logger.Error(nil, "tag reconcile: delete fresh verdicts for %d dead-target pairs: %v", len(deadTargetPairs), err)
+				r.logger.Error("", "tag reconcile: delete fresh verdicts for %d dead-target pairs: %v", len(deadTargetPairs), err)
 			}
 		}
 		for _, p := range deadTargetPairs {
 			report.InvalidatedEntries = append(report.InvalidatedEntries, MergeEntry{Query: p[0], Target: p[1]})
-			r.logger.Info(nil, "tag reconcile: discarding cached decision %q → %q — the target tag no longer exists", p[0], p[1])
+			r.logger.Info("", "tag reconcile: discarding cached decision %q → %q — the target tag no longer exists", p[0], p[1])
 		}
 	}
 
@@ -713,7 +713,7 @@ func (r *Reconciler) buildWorklist(ctx context.Context, cfg *config.Config, stor
 				continue
 			}
 			if latest.Verdict == types.TagVerdicts.Same {
-				r.logger.Info(nil, "tag reconcile: skipping %q → %q — %q no longer exists and its documents are already tagged %q", row.Query, row.Target, row.Query, row.Target)
+				r.logger.Info("", "tag reconcile: skipping %q → %q — %q no longer exists and its documents are already tagged %q", row.Query, row.Target, row.Query, row.Target)
 				continue
 			}
 			worklist = append(worklist, &entry{
@@ -841,7 +841,7 @@ func (r *Reconciler) buildWorklist(ctx context.Context, cfg *config.Config, stor
 	filtered := worklist[:0]
 	for _, e := range worklist {
 		if textnorm.SplitJointTag(e.query) != nil {
-			r.logger.Debug(nil, "tag reconcile: dropping pair %q → %q — %q joins concepts with a conjunction and is split apart, not merged", e.query, e.target, e.query)
+			r.logger.Debug("", "tag reconcile: dropping pair %q → %q — %q joins concepts with a conjunction and is split apart, not merged", e.query, e.target, e.query)
 			continue
 		}
 		filtered = append(filtered, e)
@@ -897,7 +897,7 @@ func (r *Reconciler) bootstrapWorklist(ctx context.Context, cfg *config.Config, 
 		}
 		stats, err := tags.NewStore(r.client.Queries).PairVerdictStats(ctx, pairs)
 		if err != nil {
-			r.logger.Error(nil, "tag reconcile bootstrap: pair presence check failed: %v", err)
+			r.logger.Error("", "tag reconcile bootstrap: pair presence check failed: %v", err)
 			return
 		}
 		for _, s := range stats {
@@ -908,7 +908,7 @@ func (r *Reconciler) bootstrapWorklist(ctx context.Context, cfg *config.Config, 
 	if len(bandQueries) > 0 {
 		rows, err := r.client.TagVerdictQueriesWithRows(ctx, bandQueries)
 		if err != nil {
-			r.logger.Error(nil, "tag reconcile bootstrap: query presence check failed: %v", err)
+			r.logger.Error("", "tag reconcile bootstrap: query presence check failed: %v", err)
 			return
 		}
 		for _, q := range rows {
@@ -965,7 +965,7 @@ func (r *Reconciler) resolveDocIDs(ctx context.Context, parsed map[string]*parse
 	}
 	rows, err := r.client.GetDocumentIDsByDocumentIDs(ctx, all)
 	if err != nil {
-		r.logger.Error(nil, "tag reconcile bootstrap: resolve document ids: %v", err)
+		r.logger.Error("", "tag reconcile bootstrap: resolve document ids: %v", err)
 		return nil
 	}
 	idByDocID := make(map[string]int64, len(rows))
@@ -999,7 +999,7 @@ func (r *Reconciler) evidencePass(ctx context.Context, cfg *config.Config, workl
 		}
 		ranked, err := r.runner.RankTags(ctx, reconcileDocID, queries)
 		if err != nil {
-			r.logger.Error(nil, "tag reconcile: query rank batch failed: %v", err)
+			r.logger.Error("", "tag reconcile: query rank batch failed: %v", err)
 			for _, e := range worklist[i:end] {
 				e.skipReason = "rank_error"
 			}
@@ -1021,7 +1021,7 @@ func (r *Reconciler) evidencePass(ctx context.Context, cfg *config.Config, workl
 		batch := targets[i:end]
 		ranked, err := r.runner.RankTags(ctx, reconcileDocID, batch)
 		if err != nil {
-			r.logger.Error(nil, "tag reconcile: target rank batch failed: %v", err)
+			r.logger.Error("", "tag reconcile: target rank batch failed: %v", err)
 			continue
 		}
 		for j, t := range batch {
@@ -1138,7 +1138,7 @@ func (r *Reconciler) adjudicateBand(ctx context.Context, cfg *config.Config, ban
 		}
 		results, err := r.runner.AdjudicateTags(ctx, evidence)
 		if err != nil {
-			r.logger.Error(nil, "tag reconcile: adjudication batch failed: %v", err)
+			r.logger.Error("", "tag reconcile: adjudication batch failed: %v", err)
 			for _, e := range bandEntries[i:end] {
 				e.skipReason = "adjudication_error"
 			}
@@ -1193,7 +1193,7 @@ func (r *Reconciler) adjudicateBand(ctx context.Context, cfg *config.Config, ban
 		}
 		results, err := r.runner.AdjudicateTags(ctx, evidence)
 		if err != nil {
-			r.logger.Error(nil, "tag reconcile: confirmation batch failed: %v", err)
+			r.logger.Error("", "tag reconcile: confirmation batch failed: %v", err)
 			for _, e := range confirm[i:end] {
 				e.skipReason = "confirmation_error"
 			}
@@ -1238,7 +1238,7 @@ func (r *Reconciler) applyPass(ctx context.Context, cfg *config.Config, worklist
 
 		if !flipToMerge && !flipToKeep {
 			if err := r.upsertVerdict(ctx, e); err != nil {
-				r.logger.Error(nil, "tag reconcile: upsert verdict for %q → %q: %v", e.query, e.target, err)
+				r.logger.Error("", "tag reconcile: upsert verdict for %q → %q: %v", e.query, e.target, err)
 			}
 			continue
 		}
@@ -1252,7 +1252,7 @@ func (r *Reconciler) applyPass(ctx context.Context, cfg *config.Config, worklist
 					Reassigned: tagCounts[e.query],
 					Reason:     e.reason,
 				})
-				r.logger.Info(nil, "tag reconcile (report-only): would merge %q into %q (%d documents)%s", e.query, e.target, tagCounts[e.query], reasonSuffix(e.reason))
+				r.logger.Info("", "tag reconcile (report-only): would merge %q into %q (%d documents)%s", e.query, e.target, tagCounts[e.query], reasonSuffix(e.reason))
 			} else {
 				plannedKeepFlips = append(plannedKeepFlips, e)
 			}
@@ -1273,7 +1273,7 @@ func (r *Reconciler) applyPass(ctx context.Context, cfg *config.Config, worklist
 		if flipToMerge {
 			appliedFlip = true
 			if err := r.applyMergeFlip(ctx, e, report); err != nil {
-				r.logger.Error(nil, "tag reconcile: merge flip %q → %q: %v", e.query, e.target, err)
+				r.logger.Error("", "tag reconcile: merge flip %q → %q: %v", e.query, e.target, err)
 				continue
 			}
 			budget -= int(report.Merges[len(report.Merges)-1].Reassigned)
@@ -1283,7 +1283,7 @@ func (r *Reconciler) applyPass(ctx context.Context, cfg *config.Config, worklist
 		appliedFlip = true
 		repointed, skipped, err := r.applyKeepFlip(ctx, e, blocklist)
 		if err != nil {
-			r.logger.Error(nil, "tag reconcile: keep flip for %q failed: %v", e.query, err)
+			r.logger.Error("", "tag reconcile: keep flip for %q failed: %v", e.query, err)
 			continue
 		}
 		if skipped {
@@ -1322,7 +1322,7 @@ func (r *Reconciler) resolvePlannedKeepFlips(ctx context.Context, entries []*ent
 	if len(needCounts) > 0 {
 		resolved, err := r.pairDocumentCounts(ctx, needCounts)
 		if err != nil {
-			r.logger.Error(nil, "tag reconcile: document counts for report-only keep flips: %v", err)
+			r.logger.Error("", "tag reconcile: document counts for report-only keep flips: %v", err)
 		} else {
 			counts = resolved
 		}
@@ -1371,16 +1371,16 @@ func (r *Reconciler) logPlannedKeepFlip(e *entry, reassigned int64) {
 	suffix := reasonSuffix(e.reason)
 	switch keepFlipOutcomeOf(e, reassigned) {
 	case keepFlipCreatedWithDocs:
-		r.logger.Info(nil, "tag reconcile (report-only): would create tag %q — it was being replaced with %q; %d documents would move back%s",
+		r.logger.Info("", "tag reconcile (report-only): would create tag %q — it was being replaced with %q; %d documents would move back%s",
 			e.query, e.target, reassigned, suffix)
 	case keepFlipCreatedNoDocs:
-		r.logger.Info(nil, "tag reconcile (report-only): would create tag %q — it was being replaced with %q; no documents to move%s",
+		r.logger.Info("", "tag reconcile (report-only): would create tag %q — it was being replaced with %q; no documents to move%s",
 			e.query, e.target, suffix)
 	case keepFlipMovedWithDocs:
-		r.logger.Info(nil, "tag reconcile (report-only): would move %d documents tagged %q back to %q%s",
+		r.logger.Info("", "tag reconcile (report-only): would move %d documents tagged %q back to %q%s",
 			reassigned, e.target, e.query, suffix)
 	case keepFlipMovedNoDocs:
-		r.logger.Info(nil, "tag reconcile (report-only): would keep %q separate from %q; no documents to move%s",
+		r.logger.Info("", "tag reconcile (report-only): would keep %q separate from %q; no documents to move%s",
 			e.query, e.target, suffix)
 	}
 }
@@ -1423,9 +1423,9 @@ func (r *Reconciler) applyMergeFlip(ctx context.Context, e *entry, report *Repor
 		Reassigned: res.Reassigned,
 		Reason:     e.reason,
 	})
-	r.logger.Info(nil, "tag reconcile: merged %q into %q (re-pointed %d documents)", e.query, e.target, res.Reassigned)
+	r.logger.Info("", "tag reconcile: merged %q into %q (re-pointed %d documents)", e.query, e.target, res.Reassigned)
 	if err := r.upsertVerdict(ctx, e); err != nil {
-		r.logger.Error(nil, "tag reconcile: upsert verdict after merge %q → %q: %v", e.query, e.target, err)
+		r.logger.Error("", "tag reconcile: upsert verdict after merge %q → %q: %v", e.query, e.target, err)
 	}
 	return nil
 }
@@ -1439,7 +1439,7 @@ func (r *Reconciler) applyKeepFlip(ctx context.Context, e *entry, blocklist map[
 	if row, deleted := blocklist[e.query]; deleted {
 		r.logDeletedTagKeepFlip(e, row)
 		if err := r.upsertVerdict(ctx, e); err != nil {
-			r.logger.Error(nil, "tag reconcile: upsert verdict for %q → %q: %v", e.query, e.target, err)
+			r.logger.Error("", "tag reconcile: upsert verdict for %q → %q: %v", e.query, e.target, err)
 		}
 		return 0, true, nil
 	}
@@ -1458,7 +1458,7 @@ func (r *Reconciler) applyKeepFlip(ctx context.Context, e *entry, blocklist map[
 	if len(docIDs) == 0 {
 		r.logKeepFlipResult(e, 0)
 		if err := r.upsertVerdict(ctx, e); err != nil {
-			r.logger.Error(nil, "tag reconcile: upsert verdict for %q → %q: %v", e.query, e.target, err)
+			r.logger.Error("", "tag reconcile: upsert verdict for %q → %q: %v", e.query, e.target, err)
 		}
 		return 0, false, nil
 	}
@@ -1518,30 +1518,30 @@ func (r *Reconciler) applyKeepFlip(ctx context.Context, e *entry, blocklist map[
 
 func (r *Reconciler) logDeletedTagKeepFlip(e *entry, row database.ListAllDeletedTagsRow) {
 	if row.Kind == curation.DeletedTagKindMerged {
-		r.logger.Info(nil, "tag reconcile: skipping restoration of %q — it was merged into %q", e.query, row.TargetName.String)
+		r.logger.Info("", "tag reconcile: skipping restoration of %q — it was merged into %q", e.query, row.TargetName.String)
 		return
 	}
-	r.logger.Info(nil, "tag reconcile: skipping restoration of %q — the tag was deleted by an operator", e.query)
+	r.logger.Info("", "tag reconcile: skipping restoration of %q — the tag was deleted by an operator", e.query)
 }
 
 func (r *Reconciler) logKeepFlipResult(e *entry, repointed int64) {
 	switch keepFlipOutcomeOf(e, repointed) {
 	case keepFlipCreatedWithDocs:
-		r.logger.Info(nil, "tag reconcile: created tag %q — it was being replaced with %q; re-pointed %d documents",
+		r.logger.Info("", "tag reconcile: created tag %q — it was being replaced with %q; re-pointed %d documents",
 			e.query, e.target, repointed)
 	case keepFlipCreatedNoDocs:
-		r.logger.Info(nil, "tag reconcile: created tag %q — it was being replaced with %q; no documents to move",
+		r.logger.Info("", "tag reconcile: created tag %q — it was being replaced with %q; no documents to move",
 			e.query, e.target)
 	case keepFlipMovedWithDocs:
-		r.logger.Info(nil, "tag reconcile: moved %d documents tagged %q back to %q", repointed, e.target, e.query)
+		r.logger.Info("", "tag reconcile: moved %d documents tagged %q back to %q", repointed, e.target, e.query)
 	case keepFlipMovedNoDocs:
-		r.logger.Info(nil, "tag reconcile: kept %q separate from %q; no documents to move", e.query, e.target)
+		r.logger.Info("", "tag reconcile: kept %q separate from %q; no documents to move", e.query, e.target)
 	}
 }
 
 func (r *Reconciler) upsertVerdict(ctx context.Context, e *entry) error {
 	if e.documentID == 0 {
-		r.logger.Warn(nil, "tag reconcile: corrected decision for %q (kept separate from %q) not recorded — no document to attribute it to; the pair will be re-checked next run", e.query, e.target)
+		r.logger.Warn("", "tag reconcile: corrected decision for %q (kept separate from %q) not recorded — no document to attribute it to; the pair will be re-checked next run", e.query, e.target)
 		return nil
 	}
 	_, err := r.client.UpsertFreshTagVerdict(ctx, database.UpsertFreshTagVerdictParams{

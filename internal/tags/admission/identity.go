@@ -53,6 +53,10 @@ type identityAnswer struct {
 // ride into the enrichment transaction (so adjudication stays outside it),
 // and the policy decisions journaled per pair.
 func (a *Adjudicator) PlanIdentity(ctx context.Context, docID int64, documentID string, names []string, ranked []matcher.RankResult, dbNames map[string]struct{}, logId *string) ([]string, tags.Plan, []policy.Decision) {
+	id := ""
+	if logId != nil {
+		id = *logId
+	}
 	decisions := policy.Evaluate(names, ranked)
 	plan := tags.Plan{}
 	aliasMap := a.aliasMapFor(ctx, names, logId)
@@ -216,7 +220,7 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, docID int64, documentID 
 			continue
 		}
 		if p.verdict != types.TagVerdicts.Same {
-			a.logger.Info(logId, "identity[%s]: separate %q and %q (verdict=%s cached=%t)",
+			a.logger.Info(id, "identity[%s]: separate %q and %q (verdict=%s cached=%t)",
 				tags.IdentityRuleSetVersion, p.query, p.target, p.verdict, p.cached)
 			continue
 		}
@@ -230,7 +234,7 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, docID int64, documentID 
 		} else {
 			plan.Aliases = append(plan.Aliases, tags.AliasAction{AliasName: loser, Canonical: winner})
 		}
-		a.logger.Info(logId, "identity[%s]: alias %q -> %q (verdict=%s direction=%s cached=%t)",
+		a.logger.Info(id, "identity[%s]: alias %q -> %q (verdict=%s direction=%s cached=%t)",
 			tags.IdentityRuleSetVersion, loser, winner, p.verdict, p.direction, p.cached)
 	}
 
@@ -247,7 +251,7 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, docID int64, documentID 
 		if _, isStore := dbNames[p.target]; !isStore {
 			pendingCandidates[p.target] = true
 		}
-		a.logger.Info(logId, "identity[%s]: defer %q vs %q to review (adjudication unavailable)",
+		a.logger.Info(id, "identity[%s]: defer %q vs %q to review (adjudication unavailable)",
 			tags.IdentityRuleSetVersion, p.query, p.target)
 	}
 
@@ -317,6 +321,10 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, docID int64, documentID 
 }
 
 func (a *Adjudicator) identityAnswers(ctx context.Context, flagged map[string]bool, candidates []*identityCandidate, logId *string) map[string]identityAnswer {
+	id := ""
+	if logId != nil {
+		id = *logId
+	}
 	out := make(map[string]identityAnswer)
 	if len(flagged) == 0 {
 		return out
@@ -334,7 +342,7 @@ func (a *Adjudicator) identityAnswers(ctx context.Context, flagged map[string]bo
 		Candidates:     names,
 	})
 	if err != nil {
-		a.logger.Error(logId, "identity verdict cache lookup failed: %v", err)
+		a.logger.Error(id, "identity verdict cache lookup failed: %v", err)
 	}
 	cached := make(map[string]map[string]database.TagIdentityEvent, len(rows))
 	for _, row := range rows {
@@ -369,7 +377,7 @@ func (a *Adjudicator) identityAnswers(ctx context.Context, flagged map[string]bo
 		return out
 	}
 	if !a.runner.HasTagIdentityJudge() {
-		a.logger.Info(logId, "identity[%s]: judge not configured — %d candidates stay provisional", tags.IdentityRuleSetVersion, len(uncached))
+		a.logger.Info(id, "identity[%s]: judge not configured — %d candidates stay provisional", tags.IdentityRuleSetVersion, len(uncached))
 		return out
 	}
 
@@ -385,7 +393,7 @@ func (a *Adjudicator) identityAnswers(ctx context.Context, flagged map[string]bo
 			err = fmt.Errorf("identity judge returned %d verdicts for %d candidates", len(results), len(batch))
 		}
 		if err != nil {
-			a.logger.Error(logId, "identity[%s]: judge failed, %d candidates stay provisional: %v", tags.IdentityRuleSetVersion, len(batch), err)
+			a.logger.Error(id, "identity[%s]: judge failed, %d candidates stay provisional: %v", tags.IdentityRuleSetVersion, len(batch), err)
 			continue
 		}
 		model := a.config.ResolvedAdjudicatorLlm().Model
@@ -403,6 +411,10 @@ func (a *Adjudicator) identityAnswers(ctx context.Context, flagged map[string]bo
 }
 
 func (a *Adjudicator) adjudicateIdentityPairs(ctx context.Context, docID int64, documentID string, pairs []*identityPair, logId *string) {
+	id := ""
+	if logId != nil {
+		id = *logId
+	}
 	if len(pairs) == 0 {
 		return
 	}
@@ -419,7 +431,7 @@ func (a *Adjudicator) adjudicateIdentityPairs(ctx context.Context, docID int64, 
 		Candidates:     queries,
 	})
 	if err != nil {
-		a.logger.Error(logId, "identity pair cache lookup failed: %v", err)
+		a.logger.Error(id, "identity pair cache lookup failed: %v", err)
 	}
 	cached := make(map[string]database.TagIdentityEvent, len(rows))
 	for _, row := range rows {
@@ -455,7 +467,7 @@ func (a *Adjudicator) adjudicateIdentityPairs(ctx context.Context, docID int64, 
 			err = fmt.Errorf("adjudicator returned %d verdicts for %d pairs", len(results), len(batch))
 		}
 		if err != nil {
-			a.logger.Error(logId, "identity[%s]: adjudication failed, %d pairs stay provisional: %v", tags.IdentityRuleSetVersion, len(batch), err)
+			a.logger.Error(id, "identity[%s]: adjudication failed, %d pairs stay provisional: %v", tags.IdentityRuleSetVersion, len(batch), err)
 			continue
 		}
 		model := a.config.ResolvedAdjudicatorLlm().Model
@@ -534,6 +546,10 @@ func bandPairsFor(targets []string) []*bandPair {
 }
 
 func (a *Adjudicator) recordIdentityPair(ctx context.Context, docID int64, p *identityPair, logId *string) {
+	id := ""
+	if logId != nil {
+		id = *logId
+	}
 	criteria, err := json.Marshal(map[string]string{"direction": p.direction})
 	if err != nil {
 		criteria = []byte("{}")
@@ -552,7 +568,7 @@ func (a *Adjudicator) recordIdentityPair(ctx context.Context, docID int64, p *id
 		RuleSetVersion: tags.IdentityRuleSetVersion,
 	})
 	if err != nil {
-		a.logger.Error(logId, "identity event insert failed: %v", err)
+		a.logger.Error(id, "identity event insert failed: %v", err)
 		return
 	}
 	if n == 0 && !p.cached {
@@ -561,7 +577,7 @@ func (a *Adjudicator) recordIdentityPair(ctx context.Context, docID int64, p *id
 			Candidates:     []string{textnorm.NormalizeTag(p.query)},
 		})
 		if err != nil {
-			a.logger.Error(logId, "identity cache re-read after conflict failed: %v", err)
+			a.logger.Error(id, "identity cache re-read after conflict failed: %v", err)
 			return
 		}
 		for _, row := range rows {
@@ -648,9 +664,13 @@ func (a *Adjudicator) CanonicalSuggestions(ctx context.Context, names []string, 
 }
 
 func (a *Adjudicator) aliasMapFor(ctx context.Context, names []string, logId *string) map[string]string {
+	id := ""
+	if logId != nil {
+		id = *logId
+	}
 	out, err := tags.ResolveAliases(ctx, a.queries, names)
 	if err != nil {
-		a.logger.Error(logId, "identity alias lookup failed: %v", err)
+		a.logger.Error(id, "identity alias lookup failed: %v", err)
 		return map[string]string{}
 	}
 	return out

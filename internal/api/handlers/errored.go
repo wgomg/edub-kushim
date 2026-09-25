@@ -75,7 +75,7 @@ func (h *ErroredHandler) DownloadErrored(w http.ResponseWriter, r *http.Request)
 			http.Error(w, "file not found", http.StatusNotFound)
 			return
 		}
-		h.logger.Error(&reqID, "open errored file %s: %v", path, err)
+		h.logger.Error(reqID, "open errored file %s: %v", path, err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -83,7 +83,7 @@ func (h *ErroredHandler) DownloadErrored(w http.ResponseWriter, r *http.Request)
 
 	stat, err := file.Stat()
 	if err != nil {
-		h.logger.Error(&reqID, "stat errored file %s: %v", path, err)
+		h.logger.Error(reqID, "stat errored file %s: %v", path, err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}

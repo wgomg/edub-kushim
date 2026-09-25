@@ -68,6 +68,10 @@ type splitDecision struct {
 // with approved splits expanded in place. Unapproved and non-joint tags
 // pass through, deduplicated.
 func (a *Adjudicator) SplitJointTags(ctx context.Context, tags []string, filter *analyzer.TagFilter, logId *string) []string {
+	id := ""
+	if logId != nil {
+		id = *logId
+	}
 	var candidates []string
 	for _, t := range tags {
 		if textnorm.SplitJointTag(t) != nil {
@@ -115,7 +119,7 @@ func (a *Adjudicator) SplitJointTags(ctx context.Context, tags []string, filter 
 			seen[segment] = true
 			out = append(out, segment)
 		}
-		a.logger.Info(logId, "tag split: %q → %v", t, segments)
+		a.logger.Info(id, "tag split: %q → %v", t, segments)
 	}
 	return out
 }
@@ -125,6 +129,10 @@ func (a *Adjudicator) SplitJointTags(ctx context.Context, tags []string, filter 
 // merge target when that target still exists, and the result is
 // deduplicated.
 func (a *Adjudicator) ApplyDeletedTagPolicy(tags []string, knownTags map[string]struct{}, blocklist map[string]database.ListAllDeletedTagsRow, logId *string) []string {
+	id := ""
+	if logId != nil {
+		id = *logId
+	}
 	if len(blocklist) == 0 {
 		return tags
 	}
@@ -135,19 +143,19 @@ func (a *Adjudicator) ApplyDeletedTagPolicy(tags []string, knownTags map[string]
 		if row, ok := blocklist[tag]; ok {
 			switch row.Kind {
 			case curation.DeletedTagKindBlocked:
-				a.logger.Info(logId, "deleted tag policy: dropping %q — the tag was deleted by an operator", tag)
+				a.logger.Info(id, "deleted tag policy: dropping %q — the tag was deleted by an operator", tag)
 				continue
 			case curation.DeletedTagKindMerged:
 				target := row.TargetName.String
 				if !row.TargetName.Valid || target == "" {
-					a.logger.Info(logId, "deleted tag policy: dropping %q — the merge target is unknown", tag)
+					a.logger.Info(id, "deleted tag policy: dropping %q — the merge target is unknown", tag)
 					continue
 				}
 				if _, ok := knownTags[target]; !ok {
-					a.logger.Info(logId, "deleted tag policy: dropping %q — it was merged into %q, which no longer exists", tag, target)
+					a.logger.Info(id, "deleted tag policy: dropping %q — it was merged into %q, which no longer exists", tag, target)
 					continue
 				}
-				a.logger.Info(logId, "deleted tag policy: rewriting %q to %q (merged)", tag, target)
+				a.logger.Info(id, "deleted tag policy: rewriting %q to %q (merged)", tag, target)
 				tag = target
 			}
 		}
@@ -161,6 +169,10 @@ func (a *Adjudicator) ApplyDeletedTagPolicy(tags []string, knownTags map[string]
 }
 
 func (a *Adjudicator) splitVerdicts(ctx context.Context, candidates []string, logId *string) map[string]splitDecision {
+	id := ""
+	if logId != nil {
+		id = *logId
+	}
 	a.splitMu.Lock()
 	if a.splitCache == nil {
 		a.splitCache = make(map[string]splitDecision)
@@ -189,11 +201,11 @@ func (a *Adjudicator) splitVerdicts(ctx context.Context, candidates []string, lo
 
 	results, err := a.runner.AdjudicateTagSplits(ctx, uncached)
 	if err != nil {
-		a.logger.Error(logId, "tag split adjudication failed, keeping %d joint tags: %v", len(uncached), err)
+		a.logger.Error(id, "tag split adjudication failed, keeping %d joint tags: %v", len(uncached), err)
 		return decisions
 	}
 	if len(results) != len(uncached) {
-		a.logger.Error(logId, "tag split adjudication returned %d verdicts for %d tags, keeping them", len(results), len(uncached))
+		a.logger.Error(id, "tag split adjudication returned %d verdicts for %d tags, keeping them", len(results), len(uncached))
 		return decisions
 	}
 
@@ -223,6 +235,10 @@ type reciprocalEvidence struct {
 }
 
 func (a *Adjudicator) writeVerdictEvent(ctx context.Context, docId int64, d policy.Decision, bp *bandPair, logId *string) {
+	id := ""
+	if logId != nil {
+		id = *logId
+	}
 	var verdictModel sql.NullString
 	if !bp.cached {
 		verdictModel = sql.NullString{String: bp.model, Valid: bp.model != ""}
@@ -237,7 +253,7 @@ func (a *Adjudicator) writeVerdictEvent(ctx context.Context, docId int64, d poli
 		PolicyVersion: policy.Version,
 	})
 	if err != nil {
-		a.logger.Error(logId, "tag verdict event insert failed: %v", err)
+		a.logger.Error(id, "tag verdict event insert failed: %v", err)
 		return
 	}
 	if n > 0 || bp.cached {
@@ -250,7 +266,7 @@ func (a *Adjudicator) writeVerdictEvent(ctx context.Context, docId int64, d poli
 		Targets:       []string{d.Target},
 	})
 	if err != nil {
-		a.logger.Error(logId, "tag verdict cache re-read after conflict failed: %v", err)
+		a.logger.Error(id, "tag verdict cache re-read after conflict failed: %v", err)
 		return
 	}
 	if len(rows) == 0 || !rows[0].Verdict.Valid() {
@@ -270,7 +286,7 @@ func (a *Adjudicator) writeVerdictEvent(ctx context.Context, docId int64, d poli
 		VerdictModel:  sql.NullString{},
 		PolicyVersion: policy.Version,
 	}); err != nil {
-		a.logger.Error(logId, "tag verdict event insert failed: %v", err)
+		a.logger.Error(id, "tag verdict event insert failed: %v", err)
 	}
 }
 
@@ -334,6 +350,10 @@ func tagQualityCriteriaLog(criteria json.RawMessage) string {
 // returned list; judge failures keep the tags, which are then born
 // provisional.
 func (a *Adjudicator) ApplyTagQuality(ctx context.Context, analysis *tools.ContentAnalysisResult, decisions []policy.Decision, dbNames map[string]struct{}, reducedText string, docId int64, logId *string) []string {
+	id := ""
+	if logId != nil {
+		id = *logId
+	}
 	typedByTerm := make(map[string]analyzer.TagDetail, len(analysis.TagDetails))
 	for _, d := range analysis.TagDetails {
 		typedByTerm[textnorm.NormalizeTag(d.Term)] = d
@@ -370,7 +390,7 @@ func (a *Adjudicator) ApplyTagQuality(ctx context.Context, analysis *tools.Conte
 			n.bestSim, n.haveSim = sim, true
 		}
 		if score := tagQualityScore(n.standard, n.category, n.bestSim, n.haveSim, tagQualityNoAnchorSimilarity); float64(score) < tagQualityTLow {
-			a.logger.Info(logId, "tagquality[%s]: reject %q (reason=weak_score score=%d is_standard=%s category=%s best_sim=%.3f)",
+			a.logger.Info(id, "tagquality[%s]: reject %q (reason=weak_score score=%d is_standard=%s category=%s best_sim=%.3f)",
 				analyzer.TagQualityVersion, out, score, isStandardLabel(n.standard), n.category, n.bestSim)
 			rejected[out] = true
 			continue
@@ -389,7 +409,7 @@ func (a *Adjudicator) ApplyTagQuality(ctx context.Context, analysis *tools.Conte
 			TagNames:      keys,
 		})
 		if err != nil {
-			a.logger.Error(logId, "tag quality cache lookup failed: %v", err)
+			a.logger.Error(id, "tag quality cache lookup failed: %v", err)
 		}
 		cached := make(map[string]database.LatestTagQualityEventsForNamesRow, len(rows))
 		for _, row := range rows {
@@ -404,7 +424,7 @@ func (a *Adjudicator) ApplyTagQuality(ctx context.Context, analysis *tools.Conte
 			a.writeTagQualityEvent(ctx, docId, n.emitted, row.Criteria, row.Pass, "", logId)
 			if !row.Pass {
 				rejected[n.emitted] = true
-				a.logger.Info(logId, "tagquality[%s]: reject %q (reason=judge cached=true model=%s criteria=%s)",
+				a.logger.Info(id, "tagquality[%s]: reject %q (reason=judge cached=true model=%s criteria=%s)",
 					analyzer.TagQualityVersion, n.emitted, row.VerdictModel.String, tagQualityCriteriaLog(row.Criteria))
 			}
 		}
@@ -412,7 +432,7 @@ func (a *Adjudicator) ApplyTagQuality(ctx context.Context, analysis *tools.Conte
 
 	if len(uncached) > 0 {
 		if !a.runner.HasTagQualityJudge() {
-			a.logger.Error(logId, "tagquality[%s]: judge not configured, keeping %d novel tags (born provisional)", analyzer.TagQualityVersion, len(uncached))
+			a.logger.Error(id, "tagquality[%s]: judge not configured, keeping %d novel tags (born provisional)", analyzer.TagQualityVersion, len(uncached))
 		} else {
 			candidates := make([]analyzer.TagQualityCandidate, len(uncached))
 			for i, n := range uncached {
@@ -431,7 +451,7 @@ func (a *Adjudicator) ApplyTagQuality(ctx context.Context, analysis *tools.Conte
 				err = fmt.Errorf("judge returned %d verdicts for %d candidates", len(results), len(candidates))
 			}
 			if err != nil {
-				a.logger.Error(logId, "tagquality[%s]: judge failed, keeping %d novel tags (born provisional): %v", analyzer.TagQualityVersion, len(uncached), err)
+				a.logger.Error(id, "tagquality[%s]: judge failed, keeping %d novel tags (born provisional): %v", analyzer.TagQualityVersion, len(uncached), err)
 			} else {
 				model := a.config.ResolvedQualityLlm().Model
 				for i, r := range results {
@@ -439,7 +459,7 @@ func (a *Adjudicator) ApplyTagQuality(ctx context.Context, analysis *tools.Conte
 					pass, criteria, finalModel := a.writeTagQualityEvent(ctx, docId, n.emitted, marshalTagQualityCriteria(r), r.Passed(), model, logId)
 					if !pass {
 						rejected[n.emitted] = true
-						a.logger.Info(logId, "tagquality[%s]: reject %q (reason=judge criteria=%s model=%s)",
+						a.logger.Info(id, "tagquality[%s]: reject %q (reason=judge criteria=%s model=%s)",
 							analyzer.TagQualityVersion, n.emitted, tagQualityCriteriaLog(criteria), finalModel)
 					}
 				}
@@ -462,6 +482,10 @@ func (a *Adjudicator) ApplyTagQuality(ctx context.Context, analysis *tools.Conte
 // another worker wins for this document's decision, followed by a
 // cache-applied row with a NULL model, mirroring writeVerdictEvent.
 func (a *Adjudicator) writeTagQualityEvent(ctx context.Context, docId int64, name string, criteria json.RawMessage, pass bool, model string, logId *string) (bool, json.RawMessage, string) {
+	id := ""
+	if logId != nil {
+		id = *logId
+	}
 	verdictModel := sql.NullString{String: model, Valid: model != ""}
 	n, err := a.queries.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
 		DocumentID:    docId,
@@ -472,7 +496,7 @@ func (a *Adjudicator) writeTagQualityEvent(ctx context.Context, docId int64, nam
 		PolicyVersion: analyzer.TagQualityVersion,
 	})
 	if err != nil {
-		a.logger.Error(logId, "tag quality event insert failed: %v", err)
+		a.logger.Error(id, "tag quality event insert failed: %v", err)
 		return pass, criteria, model
 	}
 	if n > 0 || !verdictModel.Valid {
@@ -484,7 +508,7 @@ func (a *Adjudicator) writeTagQualityEvent(ctx context.Context, docId int64, nam
 		TagNames:      []string{name},
 	})
 	if err != nil {
-		a.logger.Error(logId, "tag quality cache re-read after conflict failed: %v", err)
+		a.logger.Error(id, "tag quality cache re-read after conflict failed: %v", err)
 		return pass, criteria, model
 	}
 	if len(rows) == 0 {
@@ -499,7 +523,7 @@ func (a *Adjudicator) writeTagQualityEvent(ctx context.Context, docId int64, nam
 		VerdictModel:  sql.NullString{},
 		PolicyVersion: analyzer.TagQualityVersion,
 	}); err != nil {
-		a.logger.Error(logId, "tag quality event insert failed: %v", err)
+		a.logger.Error(id, "tag quality event insert failed: %v", err)
 	}
 	if row.VerdictModel.Valid {
 		model = row.VerdictModel.String
@@ -508,6 +532,10 @@ func (a *Adjudicator) writeTagQualityEvent(ctx context.Context, docId int64, nam
 }
 
 func (a *Adjudicator) reciprocalEvidence(ctx context.Context, documentID string, pairs []*bandPair, logId *string) map[string]reciprocalEvidence {
+	id := ""
+	if logId != nil {
+		id = *logId
+	}
 	targets := make([]string, 0, len(pairs))
 	seen := make(map[string]struct{}, len(pairs))
 	for _, bp := range pairs {
@@ -525,7 +553,7 @@ func (a *Adjudicator) reciprocalEvidence(ctx context.Context, documentID string,
 
 	ranked, err := a.runner.RankTags(ctx, documentID, targets)
 	if err != nil {
-		a.logger.Error(logId, "tag adjudication evidence rank failed: %v", err)
+		a.logger.Error(id, "tag adjudication evidence rank failed: %v", err)
 		return evidence
 	}
 	for i, target := range targets {

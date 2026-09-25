@@ -48,7 +48,7 @@ func (h *TagMeasureTaskHandler) Handle(ctx context.Context, t task.Task) (json.R
 		}
 
 		if report, parseErr := parseReport(result); parseErr == nil {
-			h.logger.Info(nil, "tag measure run %s: snapshot=%s rule_set=%s tags=%d operators=%v states=%v skipped=%v worklists=%+v",
+			h.logger.Info("", "tag measure run %s: snapshot=%s rule_set=%s tags=%d operators=%v states=%v skipped=%v worklists=%+v",
 				report.RunID, report.SnapshotAt.Format(time.RFC3339), report.RuleSetVersion, report.Tags,
 				report.Operators, report.States, report.Skipped, report.Worklists)
 		}

@@ -64,7 +64,7 @@ func (h *DocumentHandler) ListDocuments(w http.ResponseWriter, r *http.Request) 
 	ctx := r.Context()
 	reqID := requestID(ctx)
 
-	h.logger.Debug(&reqID, "List documents requested")
+	h.logger.Debug(reqID, "List documents requested")
 
 	pb := GetParamBag(r)
 	if pb == nil {
@@ -87,7 +87,7 @@ func (h *DocumentHandler) ListDocuments(w http.ResponseWriter, r *http.Request) 
 		},
 	)
 	if err != nil {
-		h.logger.Error(&reqID, "Failed to list documents: %w", err)
+		h.logger.Error(reqID, "Failed to list documents: %w", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -142,7 +142,7 @@ func (h *DocumentHandler) ListDocuments(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusOK)
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		h.logger.Error(&reqID, "Failed to encode documents response: %v", err)
+		h.logger.Error(reqID, "Failed to encode documents response: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
 }
@@ -151,7 +151,7 @@ func (h *DocumentHandler) ListDocuments(w http.ResponseWriter, r *http.Request) 
 func (h *DocumentHandler) GetDocument(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := requestID(ctx)
-	h.logger.Debug(&reqID, "Get document requested")
+	h.logger.Debug(reqID, "Get document requested")
 
 	documentId := r.PathValue("id")
 	if documentId == "" {
@@ -167,12 +167,12 @@ func (h *DocumentHandler) GetDocument(w http.ResponseWriter, r *http.Request) {
 
 	tags, err := h.client.GetDocumentTags(r.Context(), doc.ID)
 	if err != nil {
-		h.logger.Error(&reqID, "Failed to get tags for document %d: %v", doc.DocumentID, err)
+		h.logger.Error(reqID, "Failed to get tags for document %d: %v", doc.DocumentID, err)
 	}
 
 	people, err := h.client.GetDocumentPeopleWithType(r.Context(), doc.ID)
 	if err != nil {
-		h.logger.Error(&reqID, "Failed to get people for document %d: %v", doc.DocumentID, err)
+		h.logger.Error(reqID, "Failed to get people for document %d: %v", doc.DocumentID, err)
 	}
 
 	docTypeID := doc.DocumentTypeID
@@ -226,7 +226,7 @@ func (h *DocumentHandler) GetDocument(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		h.logger.Error(&reqID, "Failed to encode document response: %v", err)
+		h.logger.Error(reqID, "Failed to encode document response: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
 }
@@ -235,11 +235,11 @@ func (h *DocumentHandler) GetDocument(w http.ResponseWriter, r *http.Request) {
 func (h *DocumentHandler) FilterLanguages(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := requestID(ctx)
-	h.logger.Debug(&reqID, "Filter languages requested")
+	h.logger.Debug(reqID, "Filter languages requested")
 
 	languages, err := h.client.DistinctLanguages(ctx)
 	if err != nil {
-		h.logger.Error(&reqID, "Failed to get distinct languages: %v", err)
+		h.logger.Error(reqID, "Failed to get distinct languages: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -248,7 +248,7 @@ func (h *DocumentHandler) FilterLanguages(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusOK)
 
 	if err := json.NewEncoder(w).Encode(languages); err != nil {
-		h.logger.Error(&reqID, "Failed to encode languages: %v", err)
+		h.logger.Error(reqID, "Failed to encode languages: %v", err)
 	}
 }
 
@@ -256,7 +256,7 @@ func (h *DocumentHandler) FilterLanguages(w http.ResponseWriter, r *http.Request
 func (h *DocumentHandler) SearchDocuments(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := requestID(ctx)
-	h.logger.Debug(&reqID, "Search documents requested")
+	h.logger.Debug(reqID, "Search documents requested")
 
 	pb := GetParamBag(r)
 	if pb == nil {
@@ -280,7 +280,7 @@ func (h *DocumentHandler) SearchDocuments(w http.ResponseWriter, r *http.Request
 
 	results, err := h.engine.Search(ctx, q, int32(limit), int32(offset))
 	if err != nil {
-		h.logger.Error(&reqID, "Search failed: %v", err)
+		h.logger.Error(reqID, "Search failed: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -313,7 +313,7 @@ func (h *DocumentHandler) SearchDocuments(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusOK)
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		h.logger.Error(&reqID, "Failed to encode search response: %v", err)
+		h.logger.Error(reqID, "Failed to encode search response: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
 }
@@ -322,7 +322,7 @@ func (h *DocumentHandler) SearchDocuments(w http.ResponseWriter, r *http.Request
 func (h *DocumentHandler) SearchDocumentsStructured(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := requestID(ctx)
-	h.logger.Debug(&reqID, "Structured search requested")
+	h.logger.Debug(reqID, "Structured search requested")
 
 	var filter search.Filter
 	if err := json.NewDecoder(r.Body).Decode(&filter); err != nil {
@@ -343,7 +343,7 @@ func (h *DocumentHandler) SearchDocumentsStructured(w http.ResponseWriter, r *ht
 
 	results, total, err := h.engine.SearchStructured(ctx, filter)
 	if err != nil {
-		h.logger.Error(&reqID, "Structured search failed: %v", err)
+		h.logger.Error(reqID, "Structured search failed: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -405,7 +405,7 @@ func (h *DocumentHandler) SearchDocumentsStructured(w http.ResponseWriter, r *ht
 	}
 
 	if err := json.NewEncoder(w).Encode(searchResponse); err != nil {
-		h.logger.Error(&reqID, "Failed to encode search response: %v", err)
+		h.logger.Error(reqID, "Failed to encode search response: %v", err)
 	}
 }
 
@@ -527,7 +527,7 @@ func (h *DocumentHandler) DownloadDocuments(w http.ResponseWriter, r *http.Reque
 			if errs.KindOf(errs.FromDB(err, "get document")) == errs.KindNotFound {
 				invalidIDs = append(invalidIDs, id)
 			} else {
-				h.logger.Error(&reqID, "download batch: get document %s: %v", id, err)
+				h.logger.Error(reqID, "download batch: get document %s: %v", id, err)
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusInternalServerError)
 				json.NewEncoder(w).Encode(map[string]string{"error": "internal server error"})
@@ -566,11 +566,11 @@ func (h *DocumentHandler) DownloadDocuments(w http.ResponseWriter, r *http.Reque
 
 	for _, doc := range docs {
 		if doc.StoragePath == "" {
-			h.logger.Info(&reqID, "download batch: empty storage path for doc %s, skipping", doc.DocumentID)
+			h.logger.Info(reqID, "download batch: empty storage path for doc %s, skipping", doc.DocumentID)
 			continue
 		}
 		if _, err := os.Stat(doc.StoragePath); err != nil {
-			h.logger.Info(&reqID, "download batch: file missing for doc %s (%s): %v", doc.DocumentID, doc.StoragePath, err)
+			h.logger.Info(reqID, "download batch: file missing for doc %s (%s): %v", doc.DocumentID, doc.StoragePath, err)
 			continue
 		}
 
@@ -578,19 +578,19 @@ func (h *DocumentHandler) DownloadDocuments(w http.ResponseWriter, r *http.Reque
 		name := sanitizeFilename(doc.Title) + "_" + doc.DocumentID[:8] + ext
 		fw, err := zw.Create(name)
 		if err != nil {
-			h.logger.Error(&reqID, "download batch: create zip entry %s: %v", name, err)
+			h.logger.Error(reqID, "download batch: create zip entry %s: %v", name, err)
 			continue
 		}
 
 		fr, err := os.Open(doc.StoragePath)
 		if err != nil {
-			h.logger.Error(&reqID, "download batch: open file %s: %v", doc.StoragePath, err)
+			h.logger.Error(reqID, "download batch: open file %s: %v", doc.StoragePath, err)
 			continue
 		}
 
 		if _, err := io.Copy(fw, fr); err != nil {
 			_ = fr.Close()
-			h.logger.Error(&reqID, "download batch: copy file %s: %v", doc.StoragePath, err)
+			h.logger.Error(reqID, "download batch: copy file %s: %v", doc.StoragePath, err)
 			continue
 		}
 		_ = fr.Close()
@@ -599,13 +599,13 @@ func (h *DocumentHandler) DownloadDocuments(w http.ResponseWriter, r *http.Reque
 
 	if written == 0 {
 		_ = zw.Close()
-		h.logger.Error(&reqID, "download batch: no files could be included in ZIP")
+		h.logger.Error(reqID, "download batch: no files could be included in ZIP")
 		http.Error(w, "none of the requested documents could be downloaded", http.StatusNotFound)
 		return
 	}
 
 	if err := zw.Close(); err != nil {
-		h.logger.Error(&reqID, "download batch: close zip writer: %v", err)
+		h.logger.Error(reqID, "download batch: close zip writer: %v", err)
 	}
 }
 
@@ -737,7 +737,7 @@ func (h *DocumentHandler) ReEnrich(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 
-	h.logger.Info(&reqID, "re-enrich queued for document %s (batch %s)", documentID, batchID)
+	h.logger.Info(reqID, "re-enrich queued for document %s (batch %s)", documentID, batchID)
 }
 
 // DeleteDocument soft-deletes one document into the trash.
@@ -797,7 +797,7 @@ func (h *DocumentHandler) AddDocumentTag(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err := h.client.ClearOrphanTagMarksByTagIDs(ctx, []int64{req.TagID}); err != nil {
-		h.logger.Error(&reqID, "add document tag: clear orphan mark for tag %d: %v", req.TagID, err)
+		h.logger.Error(reqID, "add document tag: clear orphan mark for tag %d: %v", req.TagID, err)
 	}
 
 	w.WriteHeader(http.StatusNoContent)
@@ -878,7 +878,7 @@ func (h *DocumentHandler) BatchDeleteDocuments(w http.ResponseWriter, r *http.Re
 			if errs.KindOf(err) == errs.KindNotFound {
 				result.Failed = append(result.Failed, BatchDeleteError{ID: id, Error: "not found"})
 			} else {
-				h.logger.Error(&reqID, "batch delete: soft delete document %s: %v", id, err)
+				h.logger.Error(reqID, "batch delete: soft delete document %s: %v", id, err)
 				result.Failed = append(result.Failed, BatchDeleteError{ID: id, Error: "delete failed"})
 			}
 			continue
@@ -947,7 +947,7 @@ func (h *DocumentHandler) BatchAssignTags(w http.ResponseWriter, r *http.Request
 			if errs.KindOf(errs.FromDB(err, "get document")) == errs.KindNotFound {
 				result.Failed = append(result.Failed, BatchTagError{ID: id, Error: "not found"})
 			} else {
-				h.logger.Error(&reqID, "batch tag: get document %s: %v", id, err)
+				h.logger.Error(reqID, "batch tag: get document %s: %v", id, err)
 				result.Failed = append(result.Failed, BatchTagError{ID: id, Error: "internal error"})
 			}
 			continue
@@ -958,7 +958,7 @@ func (h *DocumentHandler) BatchAssignTags(w http.ResponseWriter, r *http.Request
 		if req.Mode == "replace" {
 			tx, err := h.client.BeginTx(ctx, nil)
 			if err != nil {
-				h.logger.Error(&reqID, "batch tag: begin tx for doc %s: %v", id, err)
+				h.logger.Error(reqID, "batch tag: begin tx for doc %s: %v", id, err)
 				result.Failed = append(result.Failed, BatchTagError{ID: id, Error: "internal error"})
 				continue
 			}
@@ -967,7 +967,7 @@ func (h *DocumentHandler) BatchAssignTags(w http.ResponseWriter, r *http.Request
 
 			if err := tq.ClearDocumentTags(ctx, doc.ID); err != nil {
 				tx.Rollback()
-				h.logger.Error(&reqID, "batch tag: clear tags for doc %s: %v", id, err)
+				h.logger.Error(reqID, "batch tag: clear tags for doc %s: %v", id, err)
 				result.Failed = append(result.Failed, BatchTagError{ID: id, Error: "failed to clear tags"})
 				failed = true
 			}
@@ -979,7 +979,7 @@ func (h *DocumentHandler) BatchAssignTags(w http.ResponseWriter, r *http.Request
 						TagID:      tagID,
 					}); err != nil {
 						tx.Rollback()
-						h.logger.Error(&reqID, "batch tag: add tag %d to doc %s: %v", tagID, id, err)
+						h.logger.Error(reqID, "batch tag: add tag %d to doc %s: %v", tagID, id, err)
 						result.Failed = append(result.Failed, BatchTagError{ID: id, Error: "failed to add tag"})
 						failed = true
 						break
@@ -990,7 +990,7 @@ func (h *DocumentHandler) BatchAssignTags(w http.ResponseWriter, r *http.Request
 			if !failed {
 				if err := tq.ClearOrphanTagMarksByTagIDs(ctx, req.TagIDs); err != nil {
 					tx.Rollback()
-					h.logger.Error(&reqID, "batch tag: clear orphan marks for doc %s: %v", id, err)
+					h.logger.Error(reqID, "batch tag: clear orphan marks for doc %s: %v", id, err)
 					result.Failed = append(result.Failed, BatchTagError{ID: id, Error: "failed to add tag"})
 					failed = true
 				}
@@ -998,7 +998,7 @@ func (h *DocumentHandler) BatchAssignTags(w http.ResponseWriter, r *http.Request
 
 			if !failed {
 				if err := tx.Commit(); err != nil {
-					h.logger.Error(&reqID, "batch tag: commit tx for doc %s: %v", id, err)
+					h.logger.Error(reqID, "batch tag: commit tx for doc %s: %v", id, err)
 					result.Failed = append(result.Failed, BatchTagError{ID: id, Error: "internal error"})
 					failed = true
 				}
@@ -1009,7 +1009,7 @@ func (h *DocumentHandler) BatchAssignTags(w http.ResponseWriter, r *http.Request
 					DocumentID: doc.ID,
 					TagID:      tagID,
 				}); err != nil {
-					h.logger.Error(&reqID, "batch tag: add tag %d to doc %s: %v", tagID, id, err)
+					h.logger.Error(reqID, "batch tag: add tag %d to doc %s: %v", tagID, id, err)
 					result.Failed = append(result.Failed, BatchTagError{ID: id, Error: "failed to add tag"})
 					failed = true
 					break
@@ -1017,7 +1017,7 @@ func (h *DocumentHandler) BatchAssignTags(w http.ResponseWriter, r *http.Request
 			}
 			if !failed {
 				if err := h.client.ClearOrphanTagMarksByTagIDs(ctx, req.TagIDs); err != nil {
-					h.logger.Error(&reqID, "batch tag: clear orphan marks for doc %s: %v", id, err)
+					h.logger.Error(reqID, "batch tag: clear orphan marks for doc %s: %v", id, err)
 				}
 			}
 		}

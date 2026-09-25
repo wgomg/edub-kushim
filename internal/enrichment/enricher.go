@@ -84,11 +84,11 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 	report := task.Progress(progress)
 
 	start := time.Now()
-	e.logger.Info(&logId, "starting enrichment for file %s", document.StoragePath)
+	e.logger.Info(logId, "starting enrichment for file %s", document.StoragePath)
 
 	defer func() {
 		elapsed := time.Since(start)
-		e.logger.Info(&logId, "finished enrichment %s in %s", document.StoragePath, log.HumanDuration(elapsed))
+		e.logger.Info(logId, "finished enrichment %s in %s", document.StoragePath, log.HumanDuration(elapsed))
 	}()
 
 	chunkSize := 150
@@ -97,10 +97,10 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 	llmContent, err := e.runner.ReduceContent(ctx, document.TextContent.String, chunkSize,
 		matcher.TargetWordCount(int(document.WordCount), e.config.Enricher.TextReducer.TargetWords))
 	if err != nil {
-		e.logger.Error(&logId, "llm text reduction failed, using raw text: %w", err)
+		e.logger.Error(logId, "llm text reduction failed, using raw text: %w", err)
 	} else {
 		if int64(document.WordCount) > int64(llmContent.TargetWordCount) {
-			e.logger.Info(&logId, "long path selected for llm text reduction: document_length=(%d -> %d),  document_word_count=(%d -> %d), target_word_count=%d",
+			e.logger.Info(logId, "long path selected for llm text reduction: document_length=(%d -> %d),  document_word_count=(%d -> %d), target_word_count=%d",
 				document.CharCount, llmContent.CharCount, document.WordCount, llmContent.WordCount, llmContent.TargetWordCount)
 		}
 	}
@@ -108,10 +108,10 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 	tagsContent, err := e.runner.ReduceContent(ctx, document.TextContent.String, chunkSize,
 		matcher.TargetWordCount(int(document.WordCount), e.config.Enricher.TagMatcher.ReduceTargetWords))
 	if err != nil {
-		e.logger.Error(&logId, "tag text reduction failed, using raw text: %w", err)
+		e.logger.Error(logId, "tag text reduction failed, using raw text: %w", err)
 	} else {
 		if int64(document.WordCount) > int64(tagsContent.TargetWordCount) {
-			e.logger.Info(&logId, "long path selected for tag text reduction: document_length=(%d -> %d),  document_word_count=(%d -> %d), target_word_count=%d",
+			e.logger.Info(logId, "long path selected for tag text reduction: document_length=(%d -> %d),  document_word_count=(%d -> %d), target_word_count=%d",
 				document.CharCount, tagsContent.CharCount, document.WordCount, tagsContent.WordCount, tagsContent.TargetWordCount)
 		}
 	}
@@ -161,19 +161,19 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 	matchedTags, err := e.runner.MatchTags(ctx, document.DocumentID, tagsContent.Text)
 	if err != nil || len(matchedTags.Tags) == 0 {
 		if err != nil {
-			e.logger.Error(&logId, "tag matching failed: %v", err)
+			e.logger.Error(logId, "tag matching failed: %v", err)
 		} else {
-			e.logger.Debug(&logId, "tag matching returned no matches")
+			e.logger.Debug(logId, "tag matching returned no matches")
 		}
 		if len(tagsNames) <= fallbackVocabLimit {
 			tagSuggestions = tagsNames
-			e.logger.Info(&logId, "using all %d tags as suggestions (vocabulary within fallback limit)", len(tagsNames))
+			e.logger.Info(logId, "using all %d tags as suggestions (vocabulary within fallback limit)", len(tagsNames))
 		} else {
-			e.logger.Info(&logId, "no tag suggestions (vocabulary of %d tags exceeds fallback limit)", len(tagsNames))
+			e.logger.Info(logId, "no tag suggestions (vocabulary of %d tags exceeds fallback limit)", len(tagsNames))
 		}
 	} else {
 		tagSuggestions = matchedTags.Tags
-		e.logger.Debug(&logId, "tag matching: %d tags (%s)", len(tagSuggestions), time.Since(matchTagsStart))
+		e.logger.Debug(logId, "tag matching: %d tags (%s)", len(tagSuggestions), time.Since(matchTagsStart))
 	}
 	tagSuggestions = e.admission.CanonicalSuggestions(ctx, tagSuggestions, &logId)
 
@@ -229,7 +229,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 	}
 
 	if isEmptyAnalysis(analysis) {
-		e.logger.Info(&logId, "empty analysis result—retrying once")
+		e.logger.Info(logId, "empty analysis result—retrying once")
 		analysis, err = e.runner.AnalyzeContent(ctx, llmContent.Text, docTypeRefs, peopleTypeRefs, tagSuggestions)
 		if err != nil {
 			return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to analyze content on retry: %w", err)}
@@ -254,9 +254,9 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 		}
 		refinedType, err := e.runner.AnalyzeDocType(ctx, analysis, headTailText, docTypeRefs, metadata)
 		if err != nil {
-			e.logger.Error(&logId, "doc type refinement failed, keeping first pass result: %v", err)
+			e.logger.Error(logId, "doc type refinement failed, keeping first pass result: %v", err)
 		} else {
-			e.logger.Info(&logId, "doc type refined: %q → %q", analysis.DocType, refinedType)
+			e.logger.Info(logId, "doc type refined: %q → %q", analysis.DocType, refinedType)
 			if refinedType != "" {
 				analysis.DocType = refinedType
 			}
@@ -288,7 +288,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 	}
 	kept, facetDrops := analyzer.SeparateFacets(analysis.Tags, analysis.TagDetails, docTypeNames)
 	for _, drop := range facetDrops {
-		e.logger.Info(&logId, "tags[facet]: drop %q (category=%s reason=%s)", drop.Term, drop.Category, drop.Reason)
+		e.logger.Info(logId, "tags[facet]: drop %q (category=%s reason=%s)", drop.Term, drop.Category, drop.Reason)
 	}
 	analysis.Tags = kept
 
@@ -303,9 +303,9 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 	var decisions []policy.Decision
 	var identityPlan tags.Plan
 	if err != nil {
-		e.logger.Error(&logId, "post-LLM consolidation failed: %v", err)
+		e.logger.Error(logId, "post-LLM consolidation failed: %v", err)
 		for _, tag := range analysis.Tags {
-			e.logger.Info(&logId, "consolidation[%s]: keep %q (reason=rank_unavailable)", policy.Version, tag)
+			e.logger.Info(logId, "consolidation[%s]: keep %q (reason=rank_unavailable)", policy.Version, tag)
 		}
 		identityPlan, err = e.tag.PlanRegistration(ctx, analysis.Tags)
 		if err != nil {
@@ -315,7 +315,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 		var consolidated []string
 		consolidated, identityPlan, decisions = e.admission.PlanIdentity(ctx, document.ID, document.DocumentID, analysis.Tags, ranked, dbNames, &logId)
 		analysis.Tags = consolidated
-		e.logger.Debug(&logId, "post-LLM consolidation: %d tags (%s)", len(consolidated), time.Since(consolidateStart))
+		e.logger.Debug(logId, "post-LLM consolidation: %d tags (%s)", len(consolidated), time.Since(consolidateStart))
 	}
 	analysis.TagDetails = admission.RenameTagDetails(analysis.TagDetails, identityPlan)
 
@@ -327,8 +327,8 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 	if analysis.Stats != nil {
 		statsStr = string(*analysis.Stats)
 	}
-	e.logger.Debug(&logId, "prompt: %s", analysis.Prompt)
-	e.logger.Info(&logId, "analysis result: title=%q type=%q tags=%v people=%v lang=%q stats=%s",
+	e.logger.Debug(logId, "prompt: %s", analysis.Prompt)
+	e.logger.Info(logId, "analysis result: title=%q type=%q tags=%v people=%v lang=%q stats=%s",
 		analysis.Title, analysis.DocType, analysis.Tags, analysis.People, analysis.Language, statsStr)
 
 	analysis.Title = truncate(analysis.Title, 127)
@@ -349,7 +349,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 		Language:       analysis.Language,
 		DocumentID:     document.DocumentID,
 	}); err != nil {
-		e.logger.Error(&logId, "update document metadata: %w", err)
+		e.logger.Error(logId, "update document metadata: %w", err)
 	}
 
 	e.ensureOCRLanguage(ctx, analysis.Language)
@@ -374,9 +374,9 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 	for i, r := range results {
 		switch r.Status {
 		case service.Created:
-			e.logger.Debug(&logId, "tag created %s", r.Entity.Name)
+			e.logger.Debug(logId, "tag created %s", r.Entity.Name)
 			if quarantine {
-				e.logger.Info(&logId, "tagquality[%s]: quarantine %q (reason=birth)", analyzer.TagQualityVersion, r.Entity.Name)
+				e.logger.Info(logId, "tagquality[%s]: quarantine %q (reason=birth)", analyzer.TagQualityVersion, r.Entity.Name)
 			}
 			if !seenTagIDs[r.Entity.ID] {
 				seenTagIDs[r.Entity.ID] = true
@@ -388,7 +388,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 				tagIDs = append(tagIDs, r.Entity.ID)
 			}
 		default:
-			e.logger.Error(&logId, "create tag %q: invalid", identityPlan.Registrations[i].Input)
+			e.logger.Error(logId, "create tag %q: invalid", identityPlan.Registrations[i].Input)
 		}
 	}
 
@@ -467,7 +467,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 				if errors.Is(err, sql.ErrNoRows) {
 					existing, err := e.queries.GetPeopleByNormalizedName(ctx, normalized)
 					if err != nil {
-						e.logger.Error(&logId, "get people by normalized name after conflict %q: %v", canonicalName, err)
+						e.logger.Error(logId, "get people by normalized name after conflict %q: %v", canonicalName, err)
 						continue
 					}
 					id = existing.ID
@@ -476,15 +476,15 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 							NameNative: sql.NullString{String: nameNative, Valid: true},
 							ID:         id,
 						}); err != nil {
-							e.logger.Debug(&logId, "update people native name %q: %v", nameNative, err)
+							e.logger.Debug(logId, "update people native name %q: %v", nameNative, err)
 						}
 					}
 				} else {
-					e.logger.Error(&logId, "create people %q: %v", canonicalName, err)
+					e.logger.Error(logId, "create people %q: %v", canonicalName, err)
 					continue
 				}
 			} else {
-				e.logger.Debug(&logId, "people created %s", canonicalName)
+				e.logger.Debug(logId, "people created %s", canonicalName)
 			}
 			peopleMap[normalized] = id
 		} else if nameNative != "" {
@@ -492,7 +492,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 				NameNative: sql.NullString{String: nameNative, Valid: true},
 				ID:         id,
 			}); err != nil {
-				e.logger.Debug(&logId, "update people native name %q: %v", nameNative, err)
+				e.logger.Debug(logId, "update people native name %q: %v", nameNative, err)
 			}
 		}
 
@@ -513,7 +513,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 			PeopleID:     dp.peopleID,
 			PeopleTypeID: dp.typeID,
 		}); err != nil {
-			e.logger.Error(&logId, "add document people: %w", err)
+			e.logger.Error(logId, "add document people: %w", err)
 		}
 	}
 
@@ -525,6 +525,10 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, progr
 }
 
 func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, results []service.CreateResult[database.Tag], logId *string) []string {
+	reqID := ""
+	if logId != nil {
+		reqID = *logId
+	}
 	provisional := make(map[string]int64, len(results))
 	for _, r := range results {
 		if r.Status != service.Created && r.Status != service.Conflict {
@@ -548,7 +552,7 @@ func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, res
 		TagNames:      names,
 	})
 	if err != nil {
-		e.logger.Error(logId, "tag quality promotion verdict lookup failed: %v", err)
+		e.logger.Error(reqID, "tag quality promotion verdict lookup failed: %v", err)
 		return nil
 	}
 
@@ -578,7 +582,7 @@ func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, res
 	}
 	counts, err := tags.NewStore(q).LiveMass(ctx, ids)
 	if err != nil {
-		e.logger.Error(logId, "tag quality promotion document count failed: %v", err)
+		e.logger.Error(reqID, "tag quality promotion document count failed: %v", err)
 		return nil
 	}
 
@@ -596,7 +600,7 @@ func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, res
 	}
 
 	if _, err := q.PromoteTags(ctx, promoteIDs); err != nil {
-		e.logger.Error(logId, "tag quality promotion failed: %v", err)
+		e.logger.Error(reqID, "tag quality promotion failed: %v", err)
 		return nil
 	}
 
@@ -606,7 +610,7 @@ func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, res
 		if model == "" {
 			model = "cached"
 		}
-		e.logger.Info(logId, "tagquality[%s]: promote %q (docs=%d model=%s)", analyzer.TagQualityVersion, p.name, counts[p.id], model)
+		e.logger.Info(reqID, "tagquality[%s]: promote %q (docs=%d model=%s)", analyzer.TagQualityVersion, p.name, counts[p.id], model)
 		promoted[i] = p.name
 	}
 	return promoted
@@ -666,19 +670,19 @@ func (e *Enricher) ensureOCRLanguage(ctx context.Context, detectedLang string) {
 		if err := config.SaveMap(e.config.App.ConfigDir, map[string]any{
 			"consumer.ocr.languages": e.config.Consumer.OCR.Languages,
 		}); err != nil {
-			e.logger.Error(nil, "auto-detect OCR language: failed to add %q to config: %v", lang, err)
+			e.logger.Error("", "auto-detect OCR language: failed to add %q to config: %v", lang, err)
 			e.mu.Unlock()
 			return
 		}
 		e.mu.Unlock()
-		e.logger.Info(nil, "auto-detected OCR language %q added to consumer.ocr.languages", lang)
+		e.logger.Info("", "auto-detected OCR language %q added to consumer.ocr.languages", lang)
 		return
 	}
 
 	// Gosseract: download tessdata first, persist only on success.
 	go func() {
 		if err := config.DownloadTessdataLanguage(context.Background(), e.config, lang); err != nil {
-			e.logger.Error(nil, "auto-detect OCR language: tessdata download for %q failed: %v", lang, err)
+			e.logger.Error("", "auto-detect OCR language: tessdata download for %q failed: %v", lang, err)
 			return
 		}
 
@@ -691,11 +695,11 @@ func (e *Enricher) ensureOCRLanguage(ctx context.Context, detectedLang string) {
 		if err := config.SaveMap(e.config.App.ConfigDir, map[string]any{
 			"consumer.ocr.languages": e.config.Consumer.OCR.Languages,
 		}); err != nil {
-			e.logger.Error(nil, "auto-detect OCR language: failed to persist %q after download: %v", lang, err)
+			e.logger.Error("", "auto-detect OCR language: failed to persist %q after download: %v", lang, err)
 			e.mu.Unlock()
 			return
 		}
 		e.mu.Unlock()
-		e.logger.Info(nil, "auto-detected OCR language %q added to consumer.ocr.languages", lang)
+		e.logger.Info("", "auto-detected OCR language %q added to consumer.ocr.languages", lang)
 	}()
 }

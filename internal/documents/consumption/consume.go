@@ -67,7 +67,7 @@ func (h *ConsumeTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawM
 	file, err = h.consumer.Process(ctx, file, p.DocumentID, progress.Set)
 	{
 		mem := log.ReadMemFull()
-		h.logger.Debug(&p.DocumentID, "post-consume memory: %s", log.FormatMemFull(mem))
+		h.logger.Debug(p.DocumentID, "post-consume memory: %s", log.FormatMemFull(mem))
 	}
 	if err != nil {
 		return nil, h.withDiscardAttempt(ctx, t, p.OnCompleted, p.OnCompletedThumbnail, err)
@@ -89,7 +89,7 @@ func (h *ConsumeTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawM
 
 	if p.OnCompleted != "" && file.DocumentDbId.Int64 != 0 {
 		if err := h.activateChildEnrich(ctx, t, p.OnCompleted, p.DocumentID); err != nil {
-			h.logger.Error(&p.DocumentID, "failed to activate enrich task for consume %s: %v", t.TaskID, err)
+			h.logger.Error(p.DocumentID, "failed to activate enrich task for consume %s: %v", t.TaskID, err)
 		}
 	}
 
@@ -173,7 +173,7 @@ func (h *ConsumeTaskHandler) deactivateChildEnrich(
 		return fmt.Errorf("discard enrich task %s: %w", enrichTask.TaskID, err)
 	}
 	if rows == 0 {
-		h.logger.Info(nil, "enrich task %s already discarded or activated (consume %s failed)", enrichTask.TaskID, parent.TaskID)
+		h.logger.Info("", "enrich task %s already discarded or activated (consume %s failed)", enrichTask.TaskID, parent.TaskID)
 	}
 	return nil
 }
@@ -246,7 +246,7 @@ func (h *ConsumeTaskHandler) deactivateChildThumbnail(
 		return fmt.Errorf("discard thumbnail task %s: %w", thumbTask.TaskID, err)
 	}
 	if rows == 0 {
-		h.logger.Info(nil, "thumbnail task %s already discarded or activated (consume %s failed)", thumbTask.TaskID, parent.TaskID)
+		h.logger.Info("", "thumbnail task %s already discarded or activated (consume %s failed)", thumbTask.TaskID, parent.TaskID)
 	}
 	return nil
 }

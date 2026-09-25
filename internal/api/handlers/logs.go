@@ -67,7 +67,7 @@ func (h *LogsHandler) ListLogs(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(map[string]string{"error": "log not found"})
 			return
 		}
-		h.logger.Error(&reqID, "open log file %s: %v", logPath, err)
+		h.logger.Error(reqID, "open log file %s: %v", logPath, err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": "failed to read log"})
@@ -77,7 +77,7 @@ func (h *LogsHandler) ListLogs(w http.ResponseWriter, r *http.Request) {
 
 	stat, err := f.Stat()
 	if err != nil {
-		h.logger.Error(&reqID, "stat log file %s: %v", logPath, err)
+		h.logger.Error(reqID, "stat log file %s: %v", logPath, err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": "failed to read log"})
@@ -91,7 +91,7 @@ func (h *LogsHandler) ListLogs(w http.ResponseWriter, r *http.Request) {
 	if stat.Size() > maxRead {
 		offset := stat.Size() - maxRead
 		if _, err := f.Seek(offset, io.SeekStart); err != nil {
-			h.logger.Error(&reqID, "seek log file %s: %v", logPath, err)
+			h.logger.Error(reqID, "seek log file %s: %v", logPath, err)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
 			json.NewEncoder(w).Encode(map[string]string{"error": "failed to read log"})
@@ -124,7 +124,7 @@ func (h *LogsHandler) ListLogs(w http.ResponseWriter, r *http.Request) {
 			if err == io.EOF {
 				break
 			}
-			h.logger.Error(&reqID, "read log file %s: %v", logPath, err)
+			h.logger.Error(reqID, "read log file %s: %v", logPath, err)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
 			json.NewEncoder(w).Encode(map[string]string{"error": "failed to read log"})
@@ -150,7 +150,7 @@ func (h *LogsHandler) ListLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if truncated > 0 {
-		h.logger.Debug(&reqID, "log file %s: %d bytes truncated", logPath, truncated)
+		h.logger.Debug(reqID, "log file %s: %d bytes truncated", logPath, truncated)
 	}
 
 	if partialFirstLine && len(merged) > 0 {

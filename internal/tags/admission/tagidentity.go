@@ -43,7 +43,7 @@ func (h *TagIdentityTaskHandler) Handle(ctx context.Context, t task.Task) (json.
 		}
 
 		if report, parseErr := parseIdentityReport(result); parseErr == nil {
-			h.logger.Info(nil, "tag identity run: %d pending, %d resolved, %d folded, %d aliased, %d deferred, %d failed",
+			h.logger.Info("", "tag identity run: %d pending, %d resolved, %d folded, %d aliased, %d deferred, %d failed",
 				report.Pending, report.Resolved, report.Folded, report.Aliased, report.Deferred, report.Failed)
 		}
 		return result, nil

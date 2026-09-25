@@ -136,7 +136,7 @@ func (s *TrashService) PermanentlyDelete(ctx context.Context, documentID string)
 	if doc.CreatedAt.Valid {
 		thumbnailPath := storage.ThumbnailPath(s.cfg.Storage.StorageDir, doc.CreatedAt.Time, documentID)
 		if err := os.Remove(thumbnailPath); err != nil && !os.IsNotExist(err) {
-			s.logger.Warn(nil, "permanently delete: remove thumbnail %s: %v", thumbnailPath, err)
+			s.logger.Warn("", "permanently delete: remove thumbnail %s: %v", thumbnailPath, err)
 		}
 	}
 
@@ -157,7 +157,7 @@ func (s *TrashService) PurgeExpired(ctx context.Context) (int64, error) {
 
 	paths, _ := s.CleanupOrphanedThumbnails(ctx, false)
 	if len(paths) > 0 {
-		s.logger.Info(nil, "trash purge: %d orphaned thumbnails removed", len(paths))
+		s.logger.Info("", "trash purge: %d orphaned thumbnails removed", len(paths))
 	}
 
 	return deleted, nil
@@ -168,7 +168,7 @@ func (s *TrashService) cleanupOrphanedTrashDirs(ctx context.Context) {
 	entries, err := os.ReadDir(trashRoot)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			s.logger.Warn(nil, "trash purge: read trash dir: %v", err)
+			s.logger.Warn("", "trash purge: read trash dir: %v", err)
 		}
 		return
 	}
@@ -179,7 +179,7 @@ func (s *TrashService) cleanupOrphanedTrashDirs(ctx context.Context) {
 
 	activeIDs, err := s.activeTrashDocumentIDs(ctx)
 	if err != nil {
-		s.logger.Warn(nil, "trash purge: query active trash ids: %v", err)
+		s.logger.Warn("", "trash purge: query active trash ids: %v", err)
 		return
 	}
 
@@ -195,7 +195,7 @@ func (s *TrashService) cleanupOrphanedTrashDirs(ctx context.Context) {
 			continue
 		}
 		if err := os.RemoveAll(dirPath); err != nil {
-			s.logger.Warn(nil, "trash purge: remove dir %s: %v", entry.Name(), err)
+			s.logger.Warn("", "trash purge: remove dir %s: %v", entry.Name(), err)
 		}
 	}
 }
@@ -225,7 +225,7 @@ func (s *TrashService) CleanupOrphanedThumbnails(ctx context.Context, dryRun boo
 	thumbRoot := filepath.Join(s.cfg.Storage.StorageDir, storage.DirThumbnails)
 	if _, err := os.Stat(thumbRoot); err != nil {
 		if !os.IsNotExist(err) {
-			s.logger.Warn(nil, "thumbnail purge: stat thumbnails dir: %v", err)
+			s.logger.Warn("", "thumbnail purge: stat thumbnails dir: %v", err)
 		}
 		return nil, nil
 	}
@@ -233,7 +233,7 @@ func (s *TrashService) CleanupOrphanedThumbnails(ctx context.Context, dryRun boo
 	var docIDs []string
 	err = filepath.WalkDir(thumbRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			s.logger.Warn(nil, "thumbnail purge: walk %s: %v", path, err)
+			s.logger.Warn("", "thumbnail purge: walk %s: %v", path, err)
 			return nil
 		}
 		if d.IsDir() || filepath.Ext(d.Name()) != ".jpg" {
@@ -243,7 +243,7 @@ func (s *TrashService) CleanupOrphanedThumbnails(ctx context.Context, dryRun boo
 		return nil
 	})
 	if err != nil {
-		s.logger.Warn(nil, "thumbnail purge: walk thumbnails dir: %v", err)
+		s.logger.Warn("", "thumbnail purge: walk thumbnails dir: %v", err)
 		return nil, nil
 	}
 	if len(docIDs) == 0 {
@@ -252,13 +252,13 @@ func (s *TrashService) CleanupOrphanedThumbnails(ctx context.Context, dryRun boo
 
 	existingIDs, err := s.documentIDsExist(ctx, docIDs)
 	if err != nil {
-		s.logger.Warn(nil, "thumbnail purge: query document ids: %v", err)
+		s.logger.Warn("", "thumbnail purge: query document ids: %v", err)
 		return nil, nil
 	}
 
 	err = filepath.WalkDir(thumbRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			s.logger.Warn(nil, "thumbnail purge: walk %s: %v", path, err)
+			s.logger.Warn("", "thumbnail purge: walk %s: %v", path, err)
 			return nil
 		}
 		if ctx.Err() != nil {
@@ -269,7 +269,7 @@ func (s *TrashService) CleanupOrphanedThumbnails(ctx context.Context, dryRun boo
 		}
 		info, err := d.Info()
 		if err != nil {
-			s.logger.Warn(nil, "thumbnail purge: stat %s: %v", path, err)
+			s.logger.Warn("", "thumbnail purge: stat %s: %v", path, err)
 			return nil
 		}
 		if time.Since(info.ModTime()) < thumbnailGracePeriod {
@@ -284,14 +284,14 @@ func (s *TrashService) CleanupOrphanedThumbnails(ctx context.Context, dryRun boo
 			return nil
 		}
 		if err := os.Remove(path); err != nil {
-			s.logger.Warn(nil, "thumbnail purge: remove %s: %v", path, err)
+			s.logger.Warn("", "thumbnail purge: remove %s: %v", path, err)
 			return nil
 		}
 		removeEmptyThumbnailDirs(filepath.Dir(path))
 		return nil
 	})
 	if err != nil {
-		s.logger.Warn(nil, "thumbnail purge: walk thumbnails dir: %v", err)
+		s.logger.Warn("", "thumbnail purge: walk thumbnails dir: %v", err)
 	}
 	return removedPaths, nil
 }
@@ -375,9 +375,9 @@ func (s *TrashService) StartBackgroundPurge() {
 			case <-ticker.C:
 				count, err := s.PurgeExpired(s.ctx)
 				if err != nil {
-					s.logger.Error(nil, "trash purge: %v", err)
+					s.logger.Error("", "trash purge: %v", err)
 				} else if count > 0 {
-					s.logger.Info(nil, "trash purge: %d expired documents permanently deleted", count)
+					s.logger.Info("", "trash purge: %d expired documents permanently deleted", count)
 				}
 			case <-s.ctx.Done():
 				return

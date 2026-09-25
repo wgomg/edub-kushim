@@ -199,11 +199,11 @@ func DownloadHugotModel(ctx context.Context, cfg *Config, logger *log.Logger) er
 	targetModelPath := filepath.Join(modelsParent, hugotModelDirName)
 
 	if _, err := os.Stat(targetModelPath); err == nil {
-		logger.Info(nil, "hugot model already downloaded at %s", targetModelPath)
+		logger.Info("", "hugot model already downloaded at %s", targetModelPath)
 		return nil
 	}
 
-	logger.Info(nil, "downloading %s model for hugot...", hugotModelHFRepo)
+	logger.Info("", "downloading %s model for hugot...", hugotModelHFRepo)
 
 	opts := hugot.NewDownloadOptions()
 	opts.Verbose = true
@@ -221,7 +221,7 @@ func DownloadHugotModel(ctx context.Context, cfg *Config, logger *log.Logger) er
 		return fmt.Errorf("rename model dir %s -> %s: %w", downloadedPath, targetModelPath, err)
 	}
 
-	logger.Info(nil, "hugot model downloaded to %s", targetModelPath)
+	logger.Info("", "hugot model downloaded to %s", targetModelPath)
 	return nil
 }
 

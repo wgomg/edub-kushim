@@ -51,9 +51,9 @@ func (s *Server) Start() error {
 
 	if configDir, err := config.ConfigDir(); err == nil {
 		if config.ConfigExists(*configDir) {
-			s.logger.Info(nil, "existing config found at %s — auto-resuming", *configDir)
+			s.logger.Info("", "existing config found at %s — auto-resuming", *configDir)
 			if cfg, client, dispatcher, err := s.bootstrap(*configDir); err != nil {
-				s.logger.Error(nil, "auto-resume bootstrap: %v", err)
+				s.logger.Error("", "auto-resume bootstrap: %v", err)
 			} else {
 				onConfigSet(cfg)
 				configHandler.SetServices(client, dispatcher)
@@ -78,7 +78,7 @@ func (s *Server) Start() error {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	s.logger.Info(nil, "Starting wizard HTTP server on %s", s.addr)
+	s.logger.Info("", "Starting wizard HTTP server on %s", s.addr)
 	return s.httpServer.ListenAndServe()
 }
 

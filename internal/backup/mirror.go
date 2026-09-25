@@ -228,7 +228,7 @@ func runLocked(ctx context.Context, queries *database.Queries, logger *log.Logge
 	if onSync != nil {
 		onSync()
 	}
-	logger.Info(nil, "starting mirror to %s", dest)
+	logger.Info("", "starting mirror to %s", dest)
 	result, err := Run(ctx, storageDir, dest)
 	if err != nil {
 		return nil, "", fmt.Errorf("mirror failed: %w", err)
@@ -242,9 +242,9 @@ func runLocked(ctx context.Context, queries *database.Queries, logger *log.Logge
 		Version:   version.Version,
 	}
 	if err := WriteState(dest, state); err != nil {
-		logger.Error(nil, "write mirror state: %v", err)
+		logger.Error("", "write mirror state: %v", err)
 	}
 
-	logger.Info(nil, "mirror completed: %s", result.Summary())
+	logger.Info("", "mirror completed: %s", result.Summary())
 	return result, state.Timestamp, nil
 }

@@ -20,7 +20,7 @@ type HealthResponse struct {
 func HealthHandler(w http.ResponseWriter, r *http.Request, logger *log.Logger) {
 	ctx := r.Context()
 	reqID := requestID(ctx)
-	logger.Debug(&reqID, "Health check requested")
+	logger.Debug(reqID, "Health check requested")
 
 	response := HealthResponse{
 		Status:  "healthy",
@@ -32,7 +32,7 @@ func HealthHandler(w http.ResponseWriter, r *http.Request, logger *log.Logger) {
 	w.WriteHeader(http.StatusOK)
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		logger.Error(&reqID, "Failed to encode health response: %v", err)
+		logger.Error(reqID, "Failed to encode health response: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
 }

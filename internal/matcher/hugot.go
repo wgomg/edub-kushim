@@ -66,7 +66,7 @@ type match struct {
 // ten percent token overlap between chunks. It fails when the backend
 // session, the model, or its config cannot be loaded.
 func NewHugot(logger *log.Logger, tmCfg config.TagMatcherConfig, pipeName string) (*Hugot, error) {
-	logger.Debug(nil, "tagmatcher configured: backend=%s", tmCfg.Hugot.Backend)
+	logger.Debug("", "tagmatcher configured: backend=%s", tmCfg.Hugot.Backend)
 	session, err := getBackendSession(tmCfg, logger)
 	if err != nil {
 		return nil, fmt.Errorf("hugot session (%s): %w", tmCfg.Hugot.Backend, err)
@@ -105,7 +105,7 @@ func NewHugot(logger *log.Logger, tmCfg config.TagMatcherConfig, pipeName string
 	}
 	chunkOverlap := effectiveChunkSize / 10
 
-	logger.Debug(nil, "hugot: chunk_size=%d overlap=%d topN=%d min_sim=%.2f",
+	logger.Debug("", "hugot: chunk_size=%d overlap=%d topN=%d min_sim=%.2f",
 		effectiveChunkSize, chunkOverlap, topN, minSim)
 
 	return &Hugot{
@@ -169,7 +169,7 @@ func (h *Hugot) AddToStore(ctx context.Context, names []string) error {
 
 		vecs, err := h.Encode(ctx, nil, chunk)
 		if err != nil {
-			h.logger.Error(nil, "hugot: add to store: encode batch %v: %v", chunk, err)
+			h.logger.Error("", "hugot: add to store: encode batch %v: %v", chunk, err)
 			continue
 		}
 
@@ -181,7 +181,7 @@ func (h *Hugot) AddToStore(ctx context.Context, names []string) error {
 			if j < len(vecs) && vecs[j] != nil {
 				h.store.Add(name, vecs[j])
 				h.addPairsFor(name, vecs[j], chunk, vecs, existing)
-				h.logger.Info(nil, "hugot: add to store `%s`", name)
+				h.logger.Info("", "hugot: add to store `%s`", name)
 			}
 		}
 	}
@@ -232,7 +232,7 @@ func (h *Hugot) RemoveFromStore(ctx context.Context, names []string) error {
 	for _, name := range names {
 		h.store.Remove(name)
 		h.removePairsFor(name)
-		h.logger.Info(nil, "hugot: remove from store `%s`", name)
+		h.logger.Info("", "hugot: remove from store `%s`", name)
 	}
 	return nil
 }
@@ -312,9 +312,9 @@ func (h *Hugot) Match(ctx context.Context, docId, input string) ([]string, error
 		for i := range showN {
 			topScores[i] = fmt.Sprintf("%s(%.3f)", matches[i].tag, matches[i].similarity)
 		}
-		h.logger.Info(&docId, "hugot: top-%d matches: %v", showN, topScores)
+		h.logger.Info(docId, "hugot: top-%d matches: %v", showN, topScores)
 	} else {
-		h.logger.Info(&docId, "hugot: no matches above min_sim=%.2f", h.minSimilarity)
+		h.logger.Info(docId, "hugot: no matches above min_sim=%.2f", h.minSimilarity)
 	}
 
 	return result, nil
@@ -344,7 +344,7 @@ func (h *Hugot) Consolidate(ctx context.Context, docId string, queries []string)
 	for i, qEmb := range out.Embeddings {
 		matches := h.rankMatches(qEmb, entries, h.consolidationSim)
 		if len(matches) > 0 {
-			h.logger.Info(&docId, "hugot: consolidate %q → %s (%.3f)", queries[i], matches[0].tag, matches[0].similarity)
+			h.logger.Info(docId, "hugot: consolidate %q → %s (%.3f)", queries[i], matches[0].tag, matches[0].similarity)
 			result[i] = matches[0].tag
 		} else {
 			result[i] = queries[i]
@@ -465,6 +465,10 @@ func (h *Hugot) Encode(ctx context.Context, docId *string, texts []string) ([][]
 // encodeChunked embeds a single long input by splitting token IDs into
 // overlapping chunks, embedding each chunk, and mean-pooling the results.
 func (h *Hugot) encodeChunked(ctx context.Context, docId *string, input string) ([]float32, error) {
+	id := ""
+	if docId != nil {
+		id = *docId
+	}
 	tk := h.pipeline.Model.Tokenizer
 	if tk == nil {
 		return nil, fmt.Errorf("tokenizer not available")
@@ -481,7 +485,7 @@ func (h *Hugot) encodeChunked(ctx context.Context, docId *string, input string) 
 		step = h.chunkSize / 2
 	}
 	numChunks := ((n - 1) / step) + 1
-	h.logger.Debug(docId, "hugot: chunked path — %d tokens into ~%d chunks (step=%d)", n, numChunks, step)
+	h.logger.Debug(id, "hugot: chunked path — %d tokens into ~%d chunks (step=%d)", n, numChunks, step)
 
 	var allEmbeddings [][]float32
 	for i := 0; i < n; i += step {
@@ -600,7 +604,7 @@ func getBackendSession(tmCfg config.TagMatcherConfig, logger *log.Logger) (*hugo
 		if err := downloadLib(tmCfg.Hugot.BackendLibPath, soPath, logger); err != nil {
 			return nil, err
 		}
-		logger.Debug(nil, "tagmatcher used: backend=%s", "ort")
+		logger.Debug("", "tagmatcher used: backend=%s", "ort")
 		// WithCPUMemArena(false) disables ORT's internal CPU memory arena so that
 		// intermediate tensor allocations are freed after each inference instead of
 		// being retained in a growing pool. This caps idle RSS at ~2.2-2.5 GB with
@@ -620,7 +624,7 @@ func getBackendSession(tmCfg config.TagMatcherConfig, logger *log.Logger) (*hugo
 			options.WithMemPattern(tmCfg.Hugot.MemPattern),
 		)
 	default:
-		logger.Debug(nil, "tagmatcher used: backend=%s", "go")
+		logger.Debug("", "tagmatcher used: backend=%s", "go")
 		return hugot.NewGoSession(context.Background())
 	}
 }
@@ -637,7 +641,7 @@ func downloadLib(dest, soPath string, logger *log.Logger) error {
 
 	url := "https://github.com/microsoft/onnxruntime/releases/download/v1.26.0/onnxruntime-linux-x64-1.26.0.tgz"
 
-	logger.Debug(nil, "ort backend selected: downloading libonnxruntime from %s ...", url)
+	logger.Debug("", "ort backend selected: downloading libonnxruntime from %s ...", url)
 
 	if err := os.MkdirAll(dest, 0755); err != nil {
 		return err

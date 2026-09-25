@@ -37,7 +37,7 @@ func EnsureLanguages(logger *log.Logger, dataDir string, languages []string) err
 				"https://github.com/tesseract-ocr/tessdata_fast/raw/main/%s.traineddata",
 				lang,
 			)
-			logger.Info(nil, "downloading OCR language: %s", lang)
+			logger.Info("", "downloading OCR language: %s", lang)
 			if dlErr := downloadTessdata(url, dest); dlErr != nil {
 				_ = os.Remove(dest)
 				err = fmt.Errorf("download %s: %w", lang, dlErr)
@@ -46,7 +46,7 @@ func EnsureLanguages(logger *log.Logger, dataDir string, languages []string) err
 		}
 
 		_ = os.Setenv("TESSDATA_PREFIX", dataDir)
-		logger.Debug(nil, "TESSDATA_PREFIX=%s", dataDir)
+		logger.Debug("", "TESSDATA_PREFIX=%s", dataDir)
 	})
 	return err
 }

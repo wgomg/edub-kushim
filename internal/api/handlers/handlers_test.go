@@ -2027,6 +2027,29 @@ func TestErrorHelpers(t *testing.T) {
 	})
 }
 
+func TestWriteServiceErrorReqID(t *testing.T) {
+	logged := func(reqID *string) string {
+		var buf bytes.Buffer
+		w := rec()
+		writeServiceError(w, log.NewLoggerWithWriter(&buf), reqID, "do", fmt.Errorf("boom"))
+		testutil.AssertEqual(t, w.Code, http.StatusInternalServerError, "status")
+		return buf.String()
+	}
+
+	reqID := "req-42"
+	if out := logged(&reqID); !strings.Contains(out, "REQID=req-42 do: boom") {
+		t.Errorf("expected the id resolved from the pointer in the log line, got:\n%s", out)
+	}
+
+	out := logged(nil)
+	if strings.Contains(out, "REQID") {
+		t.Errorf("expected no id prefix for a nil reqID, got:\n%s", out)
+	}
+	if !strings.Contains(out, ": do: boom") {
+		t.Errorf("expected the message logged without an id, got:\n%s", out)
+	}
+}
+
 func reqWithAuth(t *testing.T, method, path string, body []byte, userID int64) *http.Request {
 	r := req(t, method, path, body)
 	r = r.WithContext(context.WithValue(r.Context(), auth.UserIDKey, userID))

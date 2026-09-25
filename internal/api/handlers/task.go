@@ -68,7 +68,7 @@ func (h *TaskHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if err != nil {
-		h.logger.Error(&reqID, "list tasks: %v", err)
+		h.logger.Error(reqID, "list tasks: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -81,7 +81,7 @@ func (h *TaskHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
 		resp.BatchID = batchID
 		s, err := h.services.Batch.GetSummary(ctx, batchID)
 		if err != nil {
-			h.logger.Error(&reqID, "get batch summary for %s: %v", batchID, err)
+			h.logger.Error(reqID, "get batch summary for %s: %v", batchID, err)
 			s = &service.BatchSummary{BatchID: batchID, OwnerState: "none"}
 		}
 		summary := batchSummaryToResponse(s)
@@ -109,7 +109,7 @@ func (h *TaskHandler) GetTask(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Task not found", http.StatusNotFound)
 			return
 		}
-		h.logger.Error(&reqID, "get task %s: %v", taskID, err)
+		h.logger.Error(reqID, "get task %s: %v", taskID, err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -130,7 +130,7 @@ func (h *TaskHandler) GetTagReconcileReport(w http.ResponseWriter, r *http.Reque
 			http.Error(w, "no completed tag reconciliation run", http.StatusNotFound)
 			return
 		}
-		h.logger.Error(&reqID, "get tag reconciliation report: %v", err)
+		h.logger.Error(reqID, "get tag reconciliation report: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -165,7 +165,7 @@ func (h *TaskHandler) RetryTask(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Task not found", http.StatusNotFound)
 			return
 		}
-		h.logger.Error(&reqID, "retry task %s: %v", taskID, err)
+		h.logger.Error(reqID, "retry task %s: %v", taskID, err)
 		http.Error(w, "can only retry failed tasks", http.StatusConflict)
 		return
 	}
@@ -182,7 +182,7 @@ func (h *TaskHandler) RetryBatch(w http.ResponseWriter, r *http.Request) {
 
 	retried, err := h.services.Batch.RetryFailed(ctx, batchID)
 	if err != nil {
-		h.logger.Error(&reqID, "retry batch %s: %v", batchID, err)
+		h.logger.Error(reqID, "retry batch %s: %v", batchID, err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -212,7 +212,7 @@ func (h *TaskHandler) ListBatches(w http.ResponseWriter, r *http.Request) {
 		Offset: int32(offset),
 	})
 	if err != nil {
-		h.logger.Error(&reqID, "list batches: %v", err)
+		h.logger.Error(reqID, "list batches: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -259,7 +259,7 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	items := make([]BatchOverviewItem, 0)
 	overviews, err := h.services.Batch.ListOverviews(ctx, 10, 0)
 	if err != nil {
-		h.logger.Error(&reqID, "list batch overviews: %v", err)
+		h.logger.Error(reqID, "list batch overviews: %v", err)
 	} else {
 		for _, ov := range overviews {
 			var createdAt string
@@ -291,7 +291,7 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	activeRows, err := h.queries.ListActiveTasks(ctx,
 		database.ListActiveTasksParams{Limit: 25, Offset: 0})
 	if err != nil {
-		h.logger.Error(&reqID, "list active tasks: %v", err)
+		h.logger.Error(reqID, "list active tasks: %v", err)
 	}
 	runningTasks := make([]TaskResponse, 0, len(activeRows))
 	for _, t := range activeRows {
@@ -303,20 +303,20 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	var processingHealth *ProcessingHealth
 	ph, err := h.buildProcessingHealth(ctx, &reqID)
 	if err != nil {
-		h.logger.Error(&reqID, "processing health: %v", err)
+		h.logger.Error(reqID, "processing health: %v", err)
 	} else {
 		processingHealth = ph
 	}
 
 	totalBatches, batchErr := h.services.Batch.CountDistinct(ctx)
 	if batchErr != nil {
-		h.logger.Error(&reqID, "count distinct batches: %v", batchErr)
+		h.logger.Error(reqID, "count distinct batches: %v", batchErr)
 	}
 
 	agg, aggErr := h.queries.DocumentAggregates(ctx)
 	var totalFiles, totalBytes, processedBytes, totalPages, totalWords int64
 	if aggErr != nil {
-		h.logger.Error(&reqID, "document aggregates: %v", aggErr)
+		h.logger.Error(reqID, "document aggregates: %v", aggErr)
 	} else {
 		totalFiles = agg.TotalFiles
 		totalBytes = agg.TotalBytes
@@ -327,7 +327,7 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 
 	statusRows, statusErr := h.queries.CountTasksByStatus(ctx)
 	if statusErr != nil {
-		h.logger.Error(&reqID, "count tasks by status: %v", statusErr)
+		h.logger.Error(reqID, "count tasks by status: %v", statusErr)
 	}
 	perStatus := map[string]int64{}
 	if statusErr == nil {
@@ -342,7 +342,7 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	if cfg := h.getConfig(); cfg != nil {
 		n, inboxErr := storage.CountFilePaths(cfg.Storage.ConsumptionDir, cfg.Consumer.SupportedFiles)
 		if inboxErr != nil {
-			h.logger.Error(&reqID, "count inbox files: %v", inboxErr)
+			h.logger.Error(reqID, "count inbox files: %v", inboxErr)
 		} else {
 			inboxFiles = int64(n)
 		}
@@ -350,12 +350,12 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 
 	typeBreakdown, typeErr := h.queries.OriginalTypeBreakdown(ctx)
 	if typeErr != nil {
-		h.logger.Error(&reqID, "original type breakdown: %v", typeErr)
+		h.logger.Error(reqID, "original type breakdown: %v", typeErr)
 	}
 
 	trendRows, trendErr := h.queries.StorageTrendDaily(ctx)
 	if trendErr != nil {
-		h.logger.Error(&reqID, "storage trend daily: %v", trendErr)
+		h.logger.Error(reqID, "storage trend daily: %v", trendErr)
 	}
 
 	var avgFileSize int64
@@ -420,24 +420,28 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TaskHandler) buildDocumentAnalytics(ctx context.Context, reqID *string) *DocumentAnalytics {
+	id := ""
+	if reqID != nil {
+		id = *reqID
+	}
 	langRows, err := h.queries.LanguageDistribution(ctx)
 	if err != nil {
-		h.logger.Error(reqID, "language distribution: %v", err)
+		h.logger.Error(id, "language distribution: %v", err)
 		return nil
 	}
 	docTypeRows, err := h.queries.DocumentTypeDistribution(ctx)
 	if err != nil {
-		h.logger.Error(reqID, "document type distribution: %v", err)
+		h.logger.Error(id, "document type distribution: %v", err)
 		return nil
 	}
 	tagRows, err := h.queries.TagFrequency(ctx)
 	if err != nil {
-		h.logger.Error(reqID, "tag frequency: %v", err)
+		h.logger.Error(id, "tag frequency: %v", err)
 		return nil
 	}
 	missing, err := h.queries.MissingCounts(ctx)
 	if err != nil {
-		h.logger.Error(reqID, "missing counts: %v", err)
+		h.logger.Error(id, "missing counts: %v", err)
 		return nil
 	}
 
@@ -465,6 +469,10 @@ func (h *TaskHandler) buildDocumentAnalytics(ctx context.Context, reqID *string)
 }
 
 func (h *TaskHandler) buildProcessingHealth(ctx context.Context, reqID *string) (*ProcessingHealth, error) {
+	id := ""
+	if reqID != nil {
+		id = *reqID
+	}
 	successRow, err := h.queries.TaskSuccessRate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("task success rate: %w", err)
@@ -488,7 +496,7 @@ func (h *TaskHandler) buildProcessingHealth(ctx context.Context, reqID *string) 
 
 	orphanedCount, err := h.services.Batch.CountOrphaned(ctx)
 	if err != nil {
-		h.logger.Debug(reqID, "count orphaned: %v", err)
+		h.logger.Debug(id, "count orphaned: %v", err)
 	}
 
 	missingTools := int64(0)
@@ -517,7 +525,7 @@ func (h *TaskHandler) GetBatchSummary(w http.ResponseWriter, r *http.Request) {
 
 	s, err := h.services.Batch.GetSummary(ctx, batchID)
 	if err != nil {
-		h.logger.Error(&reqID, "get batch summary %s: %v", batchID, err)
+		h.logger.Error(reqID, "get batch summary %s: %v", batchID, err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -525,7 +533,7 @@ func (h *TaskHandler) GetBatchSummary(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(batchSummaryToResponse(s))
 
-	h.logger.Debug(&reqID, "batch summary: %+v", s)
+	h.logger.Debug(reqID, "batch summary: %+v", s)
 }
 
 // ResumeBatch moves a paused batch back to queued.
@@ -537,7 +545,7 @@ func (h *TaskHandler) ResumeBatch(w http.ResponseWriter, r *http.Request) {
 
 	hasWork, err := h.services.Batch.HasPendingWork(ctx, batchID)
 	if err != nil {
-		h.logger.Error(&reqID, "check pending work for batch %s: %v", batchID, err)
+		h.logger.Error(reqID, "check pending work for batch %s: %v", batchID, err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -563,18 +571,18 @@ func (h *TaskHandler) ResumeBatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := h.services.Batch.ResetProcessingTasksByBatch(ctx, batchID); err != nil {
-		h.logger.Error(&reqID, "reset processing tasks for batch %s: %v", batchID, err)
+		h.logger.Error(reqID, "reset processing tasks for batch %s: %v", batchID, err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
 	if err := h.services.Batch.RequeueBatch(ctx, batchID); err != nil {
-		h.logger.Error(&reqID, "requeue batch %s: %v", batchID, err)
+		h.logger.Error(reqID, "requeue batch %s: %v", batchID, err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	h.logger.Info(&reqID, "enqueued batch %s for resumption", batchID)
+	h.logger.Info(reqID, "enqueued batch %s for resumption", batchID)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
@@ -593,7 +601,7 @@ func (h *TaskHandler) CancelBatch(w http.ResponseWriter, r *http.Request) {
 
 	pendingCancelled, ownerPID, ownerID, err := h.services.Batch.BeginCancel(ctx, batchID)
 	if err != nil {
-		h.logger.Error(&reqID, "cancel batch %s: %v", batchID, err)
+		h.logger.Error(reqID, "cancel batch %s: %v", batchID, err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -610,7 +618,7 @@ func (h *TaskHandler) CancelBatch(w http.ResponseWriter, r *http.Request) {
 
 	processingCancelled, err = h.services.Batch.CompleteCancel(ctx, batchID, ownerID)
 	if err != nil {
-		h.logger.Error(&reqID, "complete cancel batch %s: %v", batchID, err)
+		h.logger.Error(reqID, "complete cancel batch %s: %v", batchID, err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}

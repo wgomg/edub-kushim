@@ -29,7 +29,7 @@ func ScanAndEnqueue(ctx context.Context, cfg *config.Config, client *database.Cl
 		return "", 0, fmt.Errorf("count paused batches: %w", err)
 	}
 	if pausedCount > 0 {
-		logger.Info(nil, "scan: skipped — %d paused batch(es) exist; resolve credit issue first", pausedCount)
+		logger.Info("", "scan: skipped — %d paused batch(es) exist; resolve credit issue first", pausedCount)
 		return "", 0, nil
 	}
 
@@ -58,7 +58,7 @@ func ScanAndEnqueue(ctx context.Context, cfg *config.Config, client *database.Cl
 	for i, path := range paths {
 		md5hash, md5Err := storage.CalculateMD5(path)
 		if md5Err != nil {
-			logger.Error(nil, "scan: md5 %s: %v", path, md5Err)
+			logger.Error("", "scan: md5 %s: %v", path, md5Err)
 			continue
 		}
 		entries = append(entries, fileEntry{path: path, md5: md5hash, index: i + 1})
@@ -75,7 +75,7 @@ func ScanAndEnqueue(ctx context.Context, cfg *config.Config, client *database.Cl
 	}
 	duplicates, dupErr := queryDuplicatesByMD5(ctx, client, md5hashes)
 	if dupErr != nil {
-		logger.Error(nil, "scan: batch dedup query: %v", dupErr)
+		logger.Error("", "scan: batch dedup query: %v", dupErr)
 		duplicates = make(map[string]duplicateInfo)
 	}
 
@@ -85,7 +85,7 @@ func ScanAndEnqueue(ctx context.Context, cfg *config.Config, client *database.Cl
 
 	for _, e := range entries {
 		if seen[e.md5] {
-			logger.Info(nil, "scan: moving %s to errors/duplicated (duplicate within this scan)", e.path)
+			logger.Info("", "scan: moving %s to errors/duplicated (duplicate within this scan)", e.path)
 			MoveFailedFile(cfg.Storage.StorageDir, e.path, "duplicate", logger, nil)
 			continue
 		}
@@ -93,9 +93,9 @@ func ScanAndEnqueue(ctx context.Context, cfg *config.Config, client *database.Cl
 		if dup, ok := duplicates[e.md5]; ok {
 			sha512sum, shaErr := calculateSHA512(e.path)
 			if shaErr != nil {
-				logger.Error(nil, "scan: sha512 %s: %v", e.path, shaErr)
+				logger.Error("", "scan: sha512 %s: %v", e.path, shaErr)
 			} else if sha512sum == dup.sha512 {
-				logger.Info(nil, "scan: moving %s to errors/duplicated (duplicate of document %s)", e.path, dup.documentID)
+				logger.Info("", "scan: moving %s to errors/duplicated (duplicate of document %s)", e.path, dup.documentID)
 				MoveFailedFile(cfg.Storage.StorageDir, e.path, "duplicate", logger, nil)
 				continue
 			}
@@ -127,7 +127,7 @@ func ScanAndEnqueue(ctx context.Context, cfg *config.Config, client *database.Cl
 			DedupKey: sql.NullString{String: "consume:" + e.md5, Valid: true},
 		})
 		if err != nil {
-			logger.Error(nil, "scan: create consume task for %s: %v", e.path, err)
+			logger.Error("", "scan: create consume task for %s: %v", e.path, err)
 			continue
 		}
 		seen[e.md5] = true
@@ -148,7 +148,7 @@ func ScanAndEnqueue(ctx context.Context, cfg *config.Config, client *database.Cl
 			DedupKey: sql.NullString{Valid: false},
 		})
 		if err != nil {
-			logger.Error(nil, "scan: create enrich task for %s: %v", e.path, err)
+			logger.Error("", "scan: create enrich task for %s: %v", e.path, err)
 			continue
 		}
 
@@ -168,7 +168,7 @@ func ScanAndEnqueue(ctx context.Context, cfg *config.Config, client *database.Cl
 				DedupKey: sql.NullString{Valid: false},
 			})
 			if err != nil {
-				logger.Error(nil, "scan: create thumbnail task for %s: %v", e.path, err)
+				logger.Error("", "scan: create thumbnail task for %s: %v", e.path, err)
 			}
 		}
 		enqueued++

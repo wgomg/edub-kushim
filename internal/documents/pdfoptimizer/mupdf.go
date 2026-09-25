@@ -42,7 +42,7 @@ func (m *MuPDF) Optimize(ctx context.Context, docId, path string) (*string, erro
 	)
 	outputPath := filepath.Join(tmpDir, outputName)
 
-	m.logger.Debug(&docId, "mupdf: cleaning %s -> %s (PID=%d)", path, outputPath, os.Getpid())
+	m.logger.Debug(docId, "mupdf: cleaning %s -> %s (PID=%d)", path, outputPath, os.Getpid())
 
 	cmd := exec.CommandContext(ctx, os.Args[0], "internal-mupdf-clean", "--input", path, "--output", outputPath)
 	var stderr bytes.Buffer
@@ -56,6 +56,6 @@ func (m *MuPDF) Optimize(ctx context.Context, docId, path string) (*string, erro
 		return nil, fmt.Errorf("mupdf did not create output file")
 	}
 
-	m.logger.Debug(&docId, "mupdf processed %s -> %s", path, outputPath)
+	m.logger.Debug(docId, "mupdf processed %s -> %s", path, outputPath)
 	return &outputPath, nil
 }

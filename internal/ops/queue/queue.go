@@ -82,7 +82,7 @@ func Run(c *container.Container, args []string) error {
 
 	_ = os.MkdirAll(filepath.Dir(logFile.Path), 0755)
 	if err := c.GetLogger().SetLogFile(logFile); err != nil {
-		c.GetLogger().Error(nil, "failed to open queue log file: %v", err)
+		c.GetLogger().Error("", "failed to open queue log file: %v", err)
 	}
 
 	if bgFlag {
@@ -93,7 +93,7 @@ func Run(c *container.Container, args []string) error {
 		if err := cmd.Start(); err != nil {
 			return fmt.Errorf("failed to start background queue daemon: %w", err)
 		}
-		c.GetLogger().Info(nil, "queue daemon started in background (PID %d)", cmd.Process.Pid)
+		c.GetLogger().Info("", "queue daemon started in background (PID %d)", cmd.Process.Pid)
 		return nil
 	}
 
@@ -102,7 +102,7 @@ func Run(c *container.Container, args []string) error {
 		if parseErr == nil && syscall.Kill(pid, 0) == nil {
 			return fmt.Errorf("queue daemon already running (PID %d)", pid)
 		}
-		c.GetLogger().Info(nil, "removing stale PID file from process %d", pid)
+		c.GetLogger().Info("", "removing stale PID file from process %d", pid)
 	}
 
 	if err := os.WriteFile(pidFile, fmt.Appendf(nil, "%d\n", os.Getpid()), 0644); err != nil {
@@ -118,7 +118,7 @@ func Run(c *container.Container, args []string) error {
 	go func() {
 		select {
 		case <-sigCh:
-			c.GetLogger().Info(nil, "shutting down queue daemon...")
+			c.GetLogger().Info("", "shutting down queue daemon...")
 			_ = os.Remove(pidFile)
 			cancel()
 		case <-ctx.Done():
@@ -136,7 +136,7 @@ func Run(c *container.Container, args []string) error {
 		maxConcurrent = 2
 	}
 
-	c.GetLogger().Info(nil, "queue daemon started (max %d concurrent batches)", maxConcurrent)
+	c.GetLogger().Info("", "queue daemon started (max %d concurrent batches)", maxConcurrent)
 
 	d := &daemon{
 		c:        c,
@@ -160,7 +160,7 @@ func Run(c *container.Container, args []string) error {
 		select {
 		case <-d.notifyCh:
 			if err := consumeNextQueuedBatch(ctx, d.client.Load(), d.batchSvc, maxConcurrent, c.GetLogger()); err != nil {
-				c.GetLogger().Error(nil, "queue consumption: %v", err)
+				c.GetLogger().Error("", "queue consumption: %v", err)
 			}
 			if !safetyTimer.Stop() {
 				select {
@@ -172,7 +172,7 @@ func Run(c *container.Container, args []string) error {
 
 		case <-safetyTimer.C:
 			if err := consumeNextQueuedBatch(ctx, d.client.Load(), d.batchSvc, maxConcurrent, c.GetLogger()); err != nil {
-				c.GetLogger().Error(nil, "queue consumption: %v", err)
+				c.GetLogger().Error("", "queue consumption: %v", err)
 			}
 			safetyTimer.Reset(safetyInterval)
 
@@ -180,7 +180,7 @@ func Run(c *container.Container, args []string) error {
 			d.tick(ctx)
 
 		case <-ctx.Done():
-			c.GetLogger().Info(nil, "queue daemon stopped")
+			c.GetLogger().Info("", "queue daemon stopped")
 			d.stopPools()
 			return nil
 		}
@@ -211,7 +211,7 @@ func startPool(ctx context.Context, c *container.Container, taskType types.TaskT
 	pool.Start(ctx)
 	state.pool = pool
 	state.started = true
-	c.GetLogger().Info(nil, "%s pool started (delayed)", taskType)
+	c.GetLogger().Info("", "%s pool started (delayed)", taskType)
 	return nil
 }
 
@@ -243,7 +243,7 @@ func (d *daemon) tick(ctx context.Context) {
 
 	if cfg.Consumer.Thumbnail.Enabled && cfg.Consumer.Thumbnail.BackfillInterval > 0 {
 		if err := maybeScheduleAnchored(ctx, d.c, d.client.Load(), cfg, &d.thumbnailBackfill, thumbnailBackfillSpec); err != nil {
-			d.c.GetLogger().Error(nil, "thumbnail backfill scheduling: %v", err)
+			d.c.GetLogger().Error("", "thumbnail backfill scheduling: %v", err)
 		}
 	}
 
@@ -252,7 +252,7 @@ func (d *daemon) tick(ctx context.Context) {
 	d.ensureTagIdentity(ctx)
 
 	if err := sweepEmptyQueuedBatches(ctx, d.client.Load(), d.c.GetLogger()); err != nil {
-		d.c.GetLogger().Error(nil, "empty queued batch sweep: %v", err)
+		d.c.GetLogger().Error("", "empty queued batch sweep: %v", err)
 	}
 
 	d.reclaimStale(ctx, cfg)
@@ -261,7 +261,7 @@ func (d *daemon) tick(ctx context.Context) {
 func (d *daemon) reloadConfig(ctx context.Context) {
 	newCfg, err := config.Load(d.c.GetConfig().App.ConfigDir)
 	if err != nil {
-		d.c.GetLogger().Error(nil, "config reload: %v", err)
+		d.c.GetLogger().Error("", "config reload: %v", err)
 		return
 	}
 	oldCfg := d.c.GetConfig()
@@ -270,10 +270,10 @@ func (d *daemon) reloadConfig(ctx context.Context) {
 		return
 	}
 
-	d.c.GetLogger().Info(nil, "DB config changed, reconnecting...")
+	d.c.GetLogger().Info("", "DB config changed, reconnecting...")
 	newClient, err := d.c.ReconnectClient()
 	if err != nil {
-		d.c.GetLogger().Error(nil, "failed to reconnect to new DB: %v — keeping previous configuration", err)
+		d.c.GetLogger().Error("", "failed to reconnect to new DB: %v — keeping previous configuration", err)
 		d.c.SetConfig(oldCfg)
 		return
 	}
@@ -289,72 +289,72 @@ func (d *daemon) reloadConfig(ctx context.Context) {
 func (d *daemon) ensureBackup(ctx context.Context, cfg *config.Config) {
 	if cfg.Backup.Enabled {
 		if err := startPool(ctx, d.c, types.Task.Type.Backup, &d.backupPool); err != nil {
-			d.c.GetLogger().Error(nil, "backup pool: %v", err)
+			d.c.GetLogger().Error("", "backup pool: %v", err)
 		}
 		locked, lockErr := d.client.Load().Queries.IsBackupLocked(ctx)
 		if lockErr != nil {
-			d.c.GetLogger().Error(nil, "backup lock check: %v", lockErr)
+			d.c.GetLogger().Error("", "backup lock check: %v", lockErr)
 		} else if locked == 0 {
 			if err := maybeScheduleBackup(ctx, d.c, d.client.Load(), cfg); err != nil {
-				d.c.GetLogger().Error(nil, "backup scheduling: %v", err)
+				d.c.GetLogger().Error("", "backup scheduling: %v", err)
 			}
 		}
 	} else if d.backupPool.started {
 		stopPool(&d.backupPool)
-		d.c.GetLogger().Info(nil, "backup pool stopped (backup disabled)")
+		d.c.GetLogger().Info("", "backup pool stopped (backup disabled)")
 	}
 }
 
 func (d *daemon) ensureMirror(ctx context.Context, cfg *config.Config) {
 	if cfg.Mirror.Enabled {
 		if err := startPool(ctx, d.c, types.Task.Type.Mirror, &d.mirrorPool); err != nil {
-			d.c.GetLogger().Error(nil, "mirror pool: %v", err)
+			d.c.GetLogger().Error("", "mirror pool: %v", err)
 		}
 		locked, lockErr := d.client.Load().Queries.IsBackupLocked(ctx)
 		if lockErr != nil {
-			d.c.GetLogger().Error(nil, "mirror lock check: %v", lockErr)
+			d.c.GetLogger().Error("", "mirror lock check: %v", lockErr)
 		} else if locked == 0 {
 			if err := maybeScheduleMirror(ctx, d.c, d.client.Load(), cfg); err != nil {
-				d.c.GetLogger().Error(nil, "mirror scheduling: %v", err)
+				d.c.GetLogger().Error("", "mirror scheduling: %v", err)
 			}
 		}
 	} else if d.mirrorPool.started {
 		stopPool(&d.mirrorPool)
-		d.c.GetLogger().Info(nil, "mirror pool stopped (mirror disabled)")
+		d.c.GetLogger().Info("", "mirror pool stopped (mirror disabled)")
 	}
 }
 
 func (d *daemon) ensureTagReconcile(ctx context.Context, cfg *config.Config) {
 	if cfg.Enricher.TagReconcile.Enabled {
 		if err := startPool(ctx, d.c, types.Task.Type.TagReconcile, &d.tagReconcilePool); err != nil {
-			d.c.GetLogger().Error(nil, "tag reconcile pool: %v", err)
+			d.c.GetLogger().Error("", "tag reconcile pool: %v", err)
 		}
 		if err := maybeScheduleAnchored(ctx, d.c, d.client.Load(), cfg, &d.tagReconcile, tagReconcileSpec); err != nil {
-			d.c.GetLogger().Error(nil, "tag reconcile scheduling: %v", err)
+			d.c.GetLogger().Error("", "tag reconcile scheduling: %v", err)
 		}
 	} else if d.tagReconcilePool.started {
 		stopPool(&d.tagReconcilePool)
-		d.c.GetLogger().Info(nil, "tag reconcile pool stopped (disabled)")
+		d.c.GetLogger().Info("", "tag reconcile pool stopped (disabled)")
 	}
 }
 
 func (d *daemon) ensureTagMeasure(ctx context.Context, cfg *config.Config) {
 	if cfg.Enricher.TagMeasure.Enabled {
 		if err := startPool(ctx, d.c, types.Task.Type.TagMeasure, &d.tagMeasurePool); err != nil {
-			d.c.GetLogger().Error(nil, "tag measure pool: %v", err)
+			d.c.GetLogger().Error("", "tag measure pool: %v", err)
 		}
 		if err := maybeScheduleAnchored(ctx, d.c, d.client.Load(), cfg, &d.tagMeasure, tagMeasureSpec); err != nil {
-			d.c.GetLogger().Error(nil, "tag measure scheduling: %v", err)
+			d.c.GetLogger().Error("", "tag measure scheduling: %v", err)
 		}
 	} else if d.tagMeasurePool.started {
 		stopPool(&d.tagMeasurePool)
-		d.c.GetLogger().Info(nil, "tag measure pool stopped (disabled)")
+		d.c.GetLogger().Info("", "tag measure pool stopped (disabled)")
 	}
 }
 
 func (d *daemon) ensureTagIdentity(ctx context.Context) {
 	if err := startPool(ctx, d.c, types.Task.Type.TagIdentity, &d.tagIdentityPool); err != nil {
-		d.c.GetLogger().Error(nil, "tag identity pool: %v", err)
+		d.c.GetLogger().Error("", "tag identity pool: %v", err)
 	}
 }
 
@@ -363,12 +363,12 @@ func (d *daemon) reclaimStale(ctx context.Context, cfg *config.Config) {
 		return
 	}
 	if err := reclaimStaleBatches(ctx, cfg, d.client.Load(), d.batchSvc, d.c.GetLogger()); err != nil {
-		d.c.GetLogger().Error(nil, "stale reclamation: %v", err)
+		d.c.GetLogger().Error("", "stale reclamation: %v", err)
 	}
 	minInterval := max(cfg.Consumer.Reclaim.StaleTaskAfter/10, 60)
 	if time.Since(d.lastStaleTaskClaim) > time.Duration(minInterval)*time.Second {
 		if err := reclaimStaleTasks(ctx, d.batchSvc, cfg, d.c.GetLogger()); err != nil {
-			d.c.GetLogger().Error(nil, "stale task reclamation: %v", err)
+			d.c.GetLogger().Error("", "stale task reclamation: %v", err)
 		}
 		d.lastStaleTaskClaim = time.Now()
 	}
@@ -382,10 +382,10 @@ func sweepEmptyQueuedBatches(ctx context.Context, client *database.Client, logge
 	}
 	for _, id := range ids {
 		if err := client.Queries.SetBatchFailed(ctx, id); err != nil {
-			logger.Error(nil, "fail empty queued batch %s: %v", id, err)
+			logger.Error("", "fail empty queued batch %s: %v", id, err)
 			continue
 		}
-		logger.Info(nil, "reaped empty queued batch %s (no tasks after 10 minutes)", id)
+		logger.Info("", "reaped empty queued batch %s (no tasks after 10 minutes)", id)
 	}
 	return nil
 }
@@ -396,43 +396,43 @@ func reclaimStaleBatches(ctx context.Context, cfg *config.Config, client *databa
 		return fmt.Errorf("list stale batch owners: %w", err)
 	}
 	for _, owner := range owners {
-		logger.Info(nil, "reclaiming stale batch %s (owner=%s pid=%d)", owner.BatchID, owner.OwnerID, owner.Pid)
+		logger.Info("", "reclaiming stale batch %s (owner=%s pid=%d)", owner.BatchID, owner.OwnerID, owner.Pid)
 		if consume.IsAlive(owner.Pid) {
 			if err := syscall.Kill(int(owner.Pid), syscall.SIGTERM); err != nil {
-				logger.Error(nil, "signal SIGTERM to PID %d for batch %s: %v", owner.Pid, owner.BatchID, err)
+				logger.Error("", "signal SIGTERM to PID %d for batch %s: %v", owner.Pid, owner.BatchID, err)
 			}
 		}
 		if _, err := batchSvc.ResetProcessingTasksByBatch(ctx, owner.BatchID); err != nil {
-			logger.Error(nil, "reset processing tasks for batch %s: %v", owner.BatchID, err)
+			logger.Error("", "reset processing tasks for batch %s: %v", owner.BatchID, err)
 			continue
 		}
 		if err := consumption.QuarantineFailedFiles(ctx, client.Queries, cfg.Storage.StorageDir, logger, owner.BatchID); err != nil {
-			logger.Error(nil, "quarantine files for batch %s: %v", owner.BatchID, err)
+			logger.Error("", "quarantine files for batch %s: %v", owner.BatchID, err)
 		}
 
 		hasWork, err := batchSvc.HasPendingWork(ctx, owner.BatchID)
 		if err != nil {
-			logger.Error(nil, "check pending work for batch %s: %v", owner.BatchID, err)
+			logger.Error("", "check pending work for batch %s: %v", owner.BatchID, err)
 			continue
 		}
 		if !hasWork {
 			if err := batchSvc.SetBatchFailed(ctx, owner.BatchID); err != nil {
-				logger.Error(nil, "set batch failed %s: %v", owner.BatchID, err)
+				logger.Error("", "set batch failed %s: %v", owner.BatchID, err)
 			}
 		} else {
 			if err := batchSvc.RequeueBatch(ctx, owner.BatchID); err != nil {
-				logger.Error(nil, "requeue batch %s: %v", owner.BatchID, err)
+				logger.Error("", "requeue batch %s: %v", owner.BatchID, err)
 				continue
 			}
 		}
 		if err := batchSvc.DeleteBatchOwnerByBatchID(ctx, owner.BatchID); err != nil {
-			logger.Error(nil, "delete batch owner for batch %s: %v", owner.BatchID, err)
+			logger.Error("", "delete batch owner for batch %s: %v", owner.BatchID, err)
 			continue
 		}
 		if hasWork {
-			logger.Info(nil, "stale batch %s reclaimed and requeued", owner.BatchID)
+			logger.Info("", "stale batch %s reclaimed and requeued", owner.BatchID)
 		} else {
-			logger.Info(nil, "stale batch %s failed — all tasks quarantined", owner.BatchID)
+			logger.Info("", "stale batch %s failed — all tasks quarantined", owner.BatchID)
 		}
 	}
 	return nil
@@ -444,7 +444,7 @@ func reclaimStaleTasks(ctx context.Context, batchSvc *service.Batch, cfg *config
 		return fmt.Errorf("reset stale processing tasks: %w", err)
 	}
 	if count > 0 {
-		logger.Info(nil, "reclaimed %d stale processing tasks (age > %ds)", count, cfg.Consumer.Reclaim.StaleTaskAfter)
+		logger.Info("", "reclaimed %d stale processing tasks (age > %ds)", count, cfg.Consumer.Reclaim.StaleTaskAfter)
 	}
 	return nil
 }
@@ -466,7 +466,7 @@ func consumeNextQueuedBatch(ctx context.Context, client *database.Client, batchS
 		return fmt.Errorf("get next queued batch: %w", err)
 	}
 
-	logger.Info(nil, "consuming queued batch %s", batch.ID)
+	logger.Info("", "consuming queued batch %s", batch.ID)
 
 	if err := batchSvc.SetBatchProcessing(ctx, batch.ID); err != nil {
 		return fmt.Errorf("set batch %s processing: %w", batch.ID, err)
@@ -480,7 +480,7 @@ func consumeNextQueuedBatch(ctx context.Context, client *database.Client, batchS
 		OwnerID: ownerID,
 		Pid:     int64(os.Getpid()),
 	}); err != nil {
-		logger.Error(nil, "pre-create owner for batch %s: %v", batch.ID, err)
+		logger.Error("", "pre-create owner for batch %s: %v", batch.ID, err)
 	}
 
 	// --force so the child overwrites our placeholder owner row.
@@ -489,15 +489,15 @@ func consumeNextQueuedBatch(ctx context.Context, client *database.Client, batchS
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	if err := cmd.Start(); err != nil {
-		logger.Error(nil, "fork consume for batch %s: %v — requeueing", batch.ID, err)
+		logger.Error("", "fork consume for batch %s: %v — requeueing", batch.ID, err)
 		if requeueErr := batchSvc.RequeueBatch(ctx, batch.ID); requeueErr != nil {
-			logger.Error(nil, "requeue batch %s after fork failure: %v", batch.ID, requeueErr)
+			logger.Error("", "requeue batch %s after fork failure: %v", batch.ID, requeueErr)
 		}
 		return nil
 	}
 	go func() { _ = cmd.Wait() }()
 
-	logger.Info(nil, "forked kushim consume --batch %s (PID %d)", batch.ID, cmd.Process.Pid)
+	logger.Info("", "forked kushim consume --batch %s (PID %d)", batch.ID, cmd.Process.Pid)
 	return nil
 }
 
@@ -521,16 +521,16 @@ func (d *daemon) runPollingLoop(ctx context.Context, maxConcurrent int) {
 		if pollingCfg.Enabled && config.IsWithinActiveWindows(pollingCfg.Windows) {
 			locked, lockErr := client.Queries.IsBackupLocked(ctx)
 			if lockErr != nil {
-				c.GetLogger().Error(nil, "polling: backup lock check: %v", lockErr)
+				c.GetLogger().Error("", "polling: backup lock check: %v", lockErr)
 			} else if locked > 0 {
-				c.GetLogger().Debug(nil, "polling: skipped — backup in progress")
+				c.GetLogger().Debug("", "polling: skipped — backup in progress")
 			} else {
 				pollingTick(ctx, c, client, batchSvc, maxConcurrent, missingTools)
 			}
 		} else if pollingCfg.Enabled {
-			c.GetLogger().Debug(nil, "polling: disabled — outside active windows")
+			c.GetLogger().Debug("", "polling: disabled — outside active windows")
 		} else {
-			c.GetLogger().Debug(nil, "polling: disabled")
+			c.GetLogger().Debug("", "polling: disabled")
 		}
 
 		select {
@@ -546,16 +546,16 @@ func pollingTick(ctx context.Context, c *container.Container, client *database.C
 	// batches own their lifecycle in their handlers (see GetNextQueuedBatch).
 	queuedCount, err := batchSvc.CountQueuedConsumeBatches(ctx)
 	if err != nil {
-		c.GetLogger().Error(nil, "polling: count queued batches: %v", err)
+		c.GetLogger().Error("", "polling: count queued batches: %v", err)
 		return
 	}
 	liveCount, err := batchSvc.CountLiveBatches(ctx)
 	if err != nil {
-		c.GetLogger().Error(nil, "polling: count live batches: %v", err)
+		c.GetLogger().Error("", "polling: count live batches: %v", err)
 		return
 	}
 	if queuedCount+liveCount >= int64(maxConcurrent) {
-		c.GetLogger().Debug(nil, "polling: skipped — %d live, %d queued (max %d)", liveCount, queuedCount, maxConcurrent)
+		c.GetLogger().Debug("", "polling: skipped — %d live, %d queued (max %d)", liveCount, queuedCount, maxConcurrent)
 		return
 	}
 
@@ -564,25 +564,25 @@ func pollingTick(ctx context.Context, c *container.Container, client *database.C
 		for i, t := range missingTools {
 			names[i] = t.Engine
 		}
-		c.GetLogger().Error(nil, "polling: skipped — missing external tools: %s", strings.Join(names, ", "))
+		c.GetLogger().Error("", "polling: skipped — missing external tools: %s", strings.Join(names, ", "))
 		return
 	}
 
 	batchID, enqueued, err := consumption.ScanAndEnqueue(ctx, c.GetConfig(), client, c.GetLogger())
 	if err != nil {
-		c.GetLogger().Error(nil, "polling: scan and enqueue: %v", err)
+		c.GetLogger().Error("", "polling: scan and enqueue: %v", err)
 		return
 	}
 	if batchID == "" {
-		c.GetLogger().Debug(nil, "polling: no new files")
+		c.GetLogger().Debug("", "polling: no new files")
 		return
 	}
 	if enqueued == 0 {
-		c.GetLogger().Info(nil, "polling: all files were duplicates (batch %s)", batchID)
+		c.GetLogger().Info("", "polling: all files were duplicates (batch %s)", batchID)
 		return
 	}
 
-	c.GetLogger().Info(nil, "polling: batch %s created with %d files", batchID, enqueued)
+	c.GetLogger().Info("", "polling: batch %s created with %d files", batchID, enqueued)
 }
 
 func enqueueOwnBatch(ctx context.Context, c *container.Container, client *database.Client, taskType types.TaskType, source types.BatchSource, payload json.RawMessage) (batchID, taskID string, err error) {
@@ -630,7 +630,7 @@ func maybeScheduleTask(ctx context.Context, c *container.Container, client *data
 		return err
 	}
 
-	c.GetLogger().Info(nil, "%s task %s scheduled (batch %s)", taskType, taskID, batchID)
+	c.GetLogger().Info("", "%s task %s scheduled (batch %s)", taskType, taskID, batchID)
 	return nil
 }
 
@@ -770,7 +770,7 @@ func maybeScheduleAnchored(ctx context.Context, c *container.Container, client *
 	if state.lastRun.IsZero() {
 		lastBatch, err := spec.lastBatch(ctx, client.Queries)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			c.GetLogger().Debug(nil, "%s: last batch lookup failed: %v", spec.name, err)
+			c.GetLogger().Debug("", "%s: last batch lookup failed: %v", spec.name, err)
 			return fmt.Errorf("get last %s batch: %w", spec.name, err)
 		}
 		if err == nil {
@@ -795,7 +795,7 @@ func maybeScheduleAnchored(ctx context.Context, c *container.Container, client *
 		return fmt.Errorf("check active %s batches: %w", spec.name, err)
 	}
 	if active > 0 {
-		c.GetLogger().Debug(nil, "%s: skipped — %d active batch(es)", spec.name, active)
+		c.GetLogger().Debug("", "%s: skipped — %d active batch(es)", spec.name, active)
 		return nil
 	}
 
@@ -805,7 +805,7 @@ func maybeScheduleAnchored(ctx context.Context, c *container.Container, client *
 			return fmt.Errorf("backup lock check: %w", err)
 		}
 		if locked > 0 {
-			c.GetLogger().Debug(nil, "%s: skipped — maintenance lock held", spec.name)
+			c.GetLogger().Debug("", "%s: skipped — maintenance lock held", spec.name)
 			return nil
 		}
 	}
@@ -819,15 +819,15 @@ func executeThumbnailBackfill(_ context.Context, c *container.Container, _ *data
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	if err := cmd.Start(); err != nil {
-		c.GetLogger().Error(nil, "fork kushim thumbnails --all: %v (last_run=%s, next=%s)", err, state.lastRun.Format(time.RFC3339), next.Format(time.RFC3339))
+		c.GetLogger().Error("", "fork kushim thumbnails --all: %v (last_run=%s, next=%s)", err, state.lastRun.Format(time.RFC3339), next.Format(time.RFC3339))
 		return nil
 	}
 	go func() { _ = cmd.Wait() }()
 
 	// Advance only after a successful fork so a failed start retries next tick.
 	state.markRun(timing)
-	c.GetLogger().Info(nil, "forked kushim thumbnails --all (PID %d)", cmd.Process.Pid)
-	c.GetLogger().Debug(nil, "thumbnail backfill: forked (pid=%d, last_run=%s)", cmd.Process.Pid, state.lastRun.Format(time.RFC3339))
+	c.GetLogger().Info("", "forked kushim thumbnails --all (PID %d)", cmd.Process.Pid)
+	c.GetLogger().Debug("", "thumbnail backfill: forked (pid=%d, last_run=%s)", cmd.Process.Pid, state.lastRun.Format(time.RFC3339))
 	return nil
 }
 
@@ -846,6 +846,6 @@ func enqueueScheduled(ctx context.Context, c *container.Container, client *datab
 	}
 	// Advance only after a successful enqueue so a failed schedule retries next tick.
 	state.markRun(timing)
-	c.GetLogger().Info(nil, "%s task %s scheduled (batch %s)", name, taskID, batchID)
+	c.GetLogger().Info("", "%s task %s scheduled (batch %s)", name, taskID, batchID)
 	return nil
 }

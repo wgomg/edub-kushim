@@ -33,7 +33,7 @@ func (h *SavedSearchHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	var req CreateSavedSearchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.logger.Debug(&reqID, "create saved search: invalid body: %v", err)
+		h.logger.Debug(reqID, "create saved search: invalid body: %v", err)
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
@@ -54,7 +54,7 @@ func (h *SavedSearchHandler) Create(w http.ResponseWriter, r *http.Request) {
 		FilterJson: string(req.Filter),
 	})
 	if err != nil {
-		h.logger.Error(&reqID, "create saved search: %v", err)
+		h.logger.Error(reqID, "create saved search: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -71,7 +71,7 @@ func (h *SavedSearchHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	searches, err := h.queries.ListSavedSearches(ctx)
 	if err != nil {
-		h.logger.Error(&reqID, "list saved searches: %v", err)
+		h.logger.Error(reqID, "list saved searches: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -103,7 +103,7 @@ func (h *SavedSearchHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.queries.DeleteSavedSearch(ctx, id); err != nil {
-		h.logger.Error(&reqID, "delete saved search %d: %v", id, err)
+		h.logger.Error(reqID, "delete saved search %d: %v", id, err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}

@@ -83,7 +83,7 @@ func (g *Ghostscript) Optimize(ctx context.Context, docId, path string) (*string
 		return nil, fmt.Errorf("%s did not create output file", g.Name())
 	}
 
-	g.logger.Debug(&docId, "%s processed %s -> %s", g.Name(), path, outputPath)
+	g.logger.Debug(docId, "%s processed %s -> %s", g.Name(), path, outputPath)
 	return &outputPath, nil
 }
 

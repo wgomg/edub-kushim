@@ -18,6 +18,10 @@ func requestID(ctx context.Context) string {
 }
 
 func writeServiceError(w http.ResponseWriter, logger *log.Logger, reqID *string, op string, err error) {
+	id := ""
+	if reqID != nil {
+		id = *reqID
+	}
 	kind := errs.KindOf(err)
 	switch kind {
 	case errs.KindNotFound:
@@ -31,7 +35,7 @@ func writeServiceError(w http.ResponseWriter, logger *log.Logger, reqID *string,
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "invalid"})
 	default:
-		logger.Error(reqID, "%s: %v", op, err)
+		logger.Error(id, "%s: %v", op, err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
 }

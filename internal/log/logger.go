@@ -132,8 +132,12 @@ func (h *fileHandler) WithGroup(name string) slog.Handler { return h }
 // Error, Debug and Warn write one printf-formatted line: the console copy is
 // gated by the console level and carries the caller's file and line, while a
 // file attached with SetLogFile receives every record without source
-// locations. A non-nil reqID is prepended to the message as "REQID=<id>".
-// All methods are safe for concurrent use.
+// locations. A non-empty reqID is prepended to the message as "REQID=<id>";
+// an empty reqID logs without the prefix, and the prefix is the only
+// correlation mechanism the record carries. Sink write errors are
+// intentionally discarded and never propagate: a logging failure must not
+// interrupt the caller, and there is no second channel to report it. All
+// methods are safe for concurrent use.
 type Logger struct {
 	level          LogLevel
 	consoleLevel   *slog.LevelVar
@@ -284,15 +288,16 @@ func (l *Logger) Level() LogLevel {
 
 // SlogLogger exposes the console path as a standard slog.Logger so external
 // libraries log through the same level gating. It does not write to the log
-// file.
+// file. Attributes attached through WithAttrs are not rendered by this
+// handler, which formats only the message, level, time and source.
 func (l *Logger) SlogLogger() *slog.Logger {
 	return slog.New(l.consoleHandler)
 }
 
-func (l *Logger) log(level slog.Level, pc uintptr, reqID *string, format string, v ...any) {
+func (l *Logger) log(level slog.Level, pc uintptr, reqID string, format string, v ...any) {
 	msg := format
-	if reqID != nil {
-		msg = fmt.Sprintf("REQID=%s ", *reqID) + msg
+	if reqID != "" {
+		msg = fmt.Sprintf("REQID=%s ", reqID) + msg
 	}
 	if len(v) > 0 {
 		msg = fmt.Sprintf(msg, v...)
@@ -308,9 +313,9 @@ func (l *Logger) log(level slog.Level, pc uintptr, reqID *string, format string,
 	}
 }
 
-// Info logs format and v at info level. reqID, when non-nil, is prepended to
-// the message as "REQID=<id>"; format and v follow fmt.Sprintf.
-func (l *Logger) Info(reqID *string, format string, v ...any) {
+// Info logs format and v at info level. reqID, when non-empty, is prepended
+// to the message as "REQID=<id>"; format and v follow fmt.Sprintf.
+func (l *Logger) Info(reqID string, format string, v ...any) {
 	var pc uintptr
 	pcs := [1]uintptr{}
 	if runtime.Callers(2, pcs[:]) > 0 {
@@ -321,7 +326,7 @@ func (l *Logger) Info(reqID *string, format string, v ...any) {
 
 // Error logs format and v at error level, with the same reqID and printf
 // handling as Info.
-func (l *Logger) Error(reqID *string, format string, v ...any) {
+func (l *Logger) Error(reqID string, format string, v ...any) {
 	var pc uintptr
 	pcs := [1]uintptr{}
 	if runtime.Callers(2, pcs[:]) > 0 {
@@ -332,7 +337,7 @@ func (l *Logger) Error(reqID *string, format string, v ...any) {
 
 // Debug logs format and v at debug level, with the same reqID and printf
 // handling as Info.
-func (l *Logger) Debug(reqID *string, format string, v ...any) {
+func (l *Logger) Debug(reqID string, format string, v ...any) {
 	var pc uintptr
 	pcs := [1]uintptr{}
 	if runtime.Callers(2, pcs[:]) > 0 {
@@ -343,7 +348,7 @@ func (l *Logger) Debug(reqID *string, format string, v ...any) {
 
 // Warn logs format and v at warn level, with the same reqID and printf
 // handling as Info.
-func (l *Logger) Warn(reqID *string, format string, v ...any) {
+func (l *Logger) Warn(reqID string, format string, v ...any) {
 	var pc uintptr
 	pcs := [1]uintptr{}
 	if runtime.Callers(2, pcs[:]) > 0 {
@@ -361,12 +366,11 @@ func (l *Logger) Fatal(v ...any) {
 		pc = pcs[0]
 	}
 	msg := fmt.Sprint(v...)
+	record := slog.NewRecord(time.Now(), levelFatalSlog, msg, pc)
 	if l.fileHandler != nil {
-		record := slog.NewRecord(time.Now(), levelFatalSlog, msg, pc)
 		_ = l.fileHandler.Handle(context.Background(), record)
 	}
 	if l.consoleHandler.Enabled(context.Background(), levelFatalSlog) {
-		record := slog.NewRecord(time.Now(), levelFatalSlog, msg, pc)
 		_ = l.consoleHandler.Handle(context.Background(), record)
 	}
 	os.Exit(1)

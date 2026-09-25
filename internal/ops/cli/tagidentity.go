@@ -71,7 +71,7 @@ func runTagIdentityPass(c *container.Container, batchID string) error {
 	if err != nil {
 		return fmt.Errorf("marshal tag identity report: %w", err)
 	}
-	c.GetLogger().Info(nil, "tag identity run %s: pending=%d resolved=%d folded=%d aliased=%d deferred=%d failed=%d",
+	c.GetLogger().Info("", "tag identity run %s: pending=%d resolved=%d folded=%d aliased=%d deferred=%d failed=%d",
 		batchID, report.Pending, report.Resolved, report.Folded, report.Aliased, report.Deferred, report.Failed)
 	fmt.Printf("%s%s\n", admission.IdentityReportPrefix, raw)
 	return nil

@@ -80,7 +80,7 @@ func (h *BackupTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMe
 		keep := max(payload.Keep, 0)
 		configPath := filepath.Join(cfg.App.ConfigDir, "config.yaml")
 
-		h.logger.Info(nil, "starting scheduled backup (mode=%s)", mode)
+		h.logger.Info("", "starting scheduled backup (mode=%s)", mode)
 
 		progress.Set("snapshot", fmt.Sprintf("%s → %s", mode, backupDir), 0)
 		result, err := Create(ctx, h.db, database.SchemaFS, mode, backupDir, configPath, cfg.Storage.StorageDir)
@@ -90,10 +90,10 @@ func (h *BackupTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMe
 
 		progress.Set("retention", "", 0)
 		if err := ApplyRetention(backupDir, mode, keep); err != nil {
-			h.logger.Error(nil, "retention cleanup: %v", err)
+			h.logger.Error("", "retention cleanup: %v", err)
 		}
 
-		h.logger.Info(nil, "backup completed: %s (%d bytes)", result.Path, result.SizeBytes)
+		h.logger.Info("", "backup completed: %s (%d bytes)", result.Path, result.SizeBytes)
 
 		raw, err := json.Marshal(result)
 		if err != nil {

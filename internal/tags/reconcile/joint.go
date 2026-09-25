@@ -74,7 +74,7 @@ func (r *Reconciler) decideJointSplits(ctx context.Context, cfg *config.Config, 
 		}
 		results, err := r.runner.AdjudicateTagSplits(ctx, tags)
 		if err != nil {
-			r.logger.Error(nil, "tag reconcile: tag split adjudication batch failed: %v", err)
+			r.logger.Error("", "tag reconcile: tag split adjudication batch failed: %v", err)
 			for _, e := range entries[i:end] {
 				e.skipReason = "split_adjudication_error"
 			}
@@ -121,7 +121,7 @@ func (r *Reconciler) planJointSplits(entries []*jointEntry, report *Report) {
 			Reassigned: e.docCount,
 			Reason:     e.reason,
 		})
-		r.logger.Info(nil, "tag reconcile (report-only): would split %q → %v (%d documents)%s",
+		r.logger.Info("", "tag reconcile (report-only): would split %q → %v (%d documents)%s",
 			e.name, e.components, e.docCount, reasonSuffix(e.reason))
 	}
 }
@@ -150,7 +150,7 @@ func (r *Reconciler) applyJointSplits(ctx context.Context, cfg *config.Config, e
 
 		reassigned, err := r.applyJointSplit(ctx, e, storeTags)
 		if err != nil {
-			r.logger.Error(nil, "tag reconcile: split %q failed: %v", e.name, err)
+			r.logger.Error("", "tag reconcile: split %q failed: %v", e.name, err)
 			report.Skips["split_error"]++
 			continue
 		}
@@ -161,7 +161,7 @@ func (r *Reconciler) applyJointSplits(ctx context.Context, cfg *config.Config, e
 			Reassigned: reassigned,
 			Reason:     e.reason,
 		})
-		r.logger.Info(nil, "tag reconcile: split %q → %v (re-pointed %d documents)%s",
+		r.logger.Info("", "tag reconcile: split %q → %v (re-pointed %d documents)%s",
 			e.name, e.components, reassigned, reasonSuffix(e.reason))
 		budget -= int(reassigned)
 	}
@@ -259,7 +259,7 @@ func (r *Reconciler) applyJointSplit(ctx context.Context, e *jointEntry, storeTa
 	}
 
 	if err := r.tag.RemoveFromStore(ctx, []string{e.name}); err != nil {
-		r.logger.Error(nil, "tag reconcile: split %q: remove from store: %v", e.name, err)
+		r.logger.Error("", "tag reconcile: split %q: remove from store: %v", e.name, err)
 	}
 	return int64(len(docIDs)), nil
 }

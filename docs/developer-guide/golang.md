@@ -124,7 +124,7 @@ loop can recover:
 func (p *Pool) runWorker(id int, logPrefix string) (rerr error) {
 	defer func() {
 		if r := recover(); r != nil {
-			p.logger.Error(nil, "%s panic recovered: %v", logPrefix, r)
+			p.logger.Error("", "%s panic recovered: %v", logPrefix, r)
 			rerr = fmt.Errorf("worker panic: %v", r)
 		}
 	}()
@@ -153,7 +153,7 @@ defer func() {
 start := time.Now()
 defer func() {
 	elapsed := time.Since(start)
-	c.logger.Info(&documentID, "finished consumption %s in %s", ...)
+	c.logger.Info(documentID, "finished consumption %s in %s", ...)
 }()
 ```
 
@@ -571,7 +571,7 @@ func (p *Pool) workerLoop(id int) {
 		if err == nil {
 			return
 		}
-		p.logger.Error(nil, "%s restarting after error: %v", logPrefix, err)
+		p.logger.Error("", "%s restarting after error: %v", logPrefix, err)
 		select {
 		case <-p.stopCh:        // explicit stop
 			return
@@ -1134,7 +1134,7 @@ func chainMiddleware(..., h http.Handler) http.Handler {
 ```go
 reqID := uuid.New().String()
 ctx := context.WithValue(r.Context(), "reqid", reqID)
-logger.Info(nil, "%s %s REQID=%s", r.Method, r.URL.Path, reqID)
+logger.Info("", "%s %s REQID=%s", r.Method, r.URL.Path, reqID)
 next.ServeHTTP(w, r.WithContext(ctx))
 ```
 
@@ -1233,13 +1233,14 @@ No logrus/zap.
   and without call sites.
 - **Rotation** via lumberjack when `MaxSize > 0` (`SetLogFile`,
   logger.go:175).
-- **Request IDs**: logging methods take an optional `reqID *string` that
-  renders as `REQID=...` — handlers pass `&documentID` or the context's reqid.
+- **Request IDs**: logging methods take a `reqID string`; a non-empty value
+  is prepended to the message as `REQID=<id>`, while an empty string logs
+  without the prefix. Callers pass the document id or the context's reqid.
 - **Test seams**: `NewDiscardLogger()` (slog's `DiscardHandler` at a level above
   Fatal) and `NewLoggerWithWriter(w)` are the standard test loggers.
 
-Example call sites: `c.logger.Info(&documentID, "starting consumption for file %s", ...)`,
-`p.logger.Error(nil, "%s: %v", logPrefix, err)`.
+Example call sites: `c.logger.Info(documentID, "starting consumption for file %s", ...)`,
+`p.logger.Error("", "%s: %v", logPrefix, err)`.
 
 ---
 

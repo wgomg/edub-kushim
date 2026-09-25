@@ -11,7 +11,7 @@ import (
 func listenForBatchNotifications(ctx context.Context, dsn string, notifyCh chan<- struct{}, logger *log.Logger) {
 	poolCfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
-		logger.Error(nil, "notify: parse DSN: %v", err)
+		logger.Error("", "notify: parse DSN: %v", err)
 		return
 	}
 	poolCfg.MinConns = 1
@@ -20,7 +20,7 @@ func listenForBatchNotifications(ctx context.Context, dsn string, notifyCh chan<
 
 	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
-		logger.Error(nil, "notify: create pool: %v", err)
+		logger.Error("", "notify: create pool: %v", err)
 		return
 	}
 	defer pool.Close()
@@ -31,7 +31,7 @@ func listenForBatchNotifications(ctx context.Context, dsn string, notifyCh chan<
 			if ctx.Err() != nil {
 				return
 			}
-			logger.Error(nil, "notify: acquire connection: %v", err)
+			logger.Error("", "notify: acquire connection: %v", err)
 			select {
 			case <-ctx.Done():
 				return
@@ -41,7 +41,7 @@ func listenForBatchNotifications(ctx context.Context, dsn string, notifyCh chan<
 		}
 
 		if _, err := conn.Exec(ctx, "LISTEN batch_queued"); err != nil {
-			logger.Error(nil, "notify: LISTEN: %v", err)
+			logger.Error("", "notify: LISTEN: %v", err)
 			conn.Release()
 			select {
 			case <-ctx.Done():
@@ -51,7 +51,7 @@ func listenForBatchNotifications(ctx context.Context, dsn string, notifyCh chan<
 			continue
 		}
 
-		logger.Info(nil, "notify: listening for batch_queued notifications")
+		logger.Info("", "notify: listening for batch_queued notifications")
 
 		for {
 			_, err := conn.Conn().WaitForNotification(ctx)
@@ -60,7 +60,7 @@ func listenForBatchNotifications(ctx context.Context, dsn string, notifyCh chan<
 					conn.Release()
 					return
 				}
-				logger.Error(nil, "notify: WaitForNotification: %v", err)
+				logger.Error("", "notify: WaitForNotification: %v", err)
 				conn.Release()
 				break
 			}

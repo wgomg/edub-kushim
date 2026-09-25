@@ -50,7 +50,7 @@ func WaitForTaskDrain(ctx context.Context, queries *Queries, logger *log.Logger,
 			return nil
 		}
 
-		logger.Info(nil, "%s: waiting for %d in-flight task(s) to drain", what, count)
+		logger.Info("", "%s: waiting for %d in-flight task(s) to drain", what, count)
 		if len(onWait) > 0 && onWait[0] != nil {
 			onWait[0](count)
 		}
@@ -81,7 +81,7 @@ func StartMaintenanceLockHeartbeat(ctx context.Context, queries *Queries, logger
 				return
 			case <-ticker.C:
 				if _, err := queries.TouchMaintenanceLockForTask(ctx, token); err != nil {
-					logger.Error(nil, "maintenance lock heartbeat: touch: %v", err)
+					logger.Error("", "maintenance lock heartbeat: touch: %v", err)
 				}
 			}
 		}
@@ -156,7 +156,7 @@ func AcquireMaintenanceLock(ctx context.Context, queries *Queries, logger *log.L
 		if rows > 0 {
 			return nil
 		}
-		logger.Info(nil, "%s: maintenance lock held by another process — waiting...", what)
+		logger.Info("", "%s: maintenance lock held by another process — waiting...", what)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -167,7 +167,7 @@ func AcquireMaintenanceLock(ctx context.Context, queries *Queries, logger *log.L
 
 func releaseMaintenanceLock(queries *Queries, logger *log.Logger) {
 	if _, err := queries.ReleaseBackupLock(context.Background(), uuid.NullUUID{}); err != nil {
-		logger.Error(nil, "release maintenance lock: %v", err)
+		logger.Error("", "release maintenance lock: %v", err)
 	}
 }
 

@@ -44,9 +44,9 @@ func TestSetLevel_DynamicChange(t *testing.T) {
 	l := NewLoggerWithWriter(&buf)
 	l.SetLevel(LevelError)
 
-	l.Debug(nil, "should not appear")
-	l.Info(nil, "should not appear")
-	l.Error(nil, "visible")
+	l.Debug("", "should not appear")
+	l.Info("", "should not appear")
+	l.Error("", "visible")
 
 	got := buf.String()
 	if strings.Contains(got, "should not appear") {
@@ -75,7 +75,7 @@ func TestInfo_LevelGating(t *testing.T) {
 			l := NewLoggerWithWriter(&buf)
 			l.SetLevel(parseLogLevel(tt.level))
 
-			l.Info(nil, "hello info")
+			l.Info("", "hello info")
 			got := strings.Contains(buf.String(), "hello info")
 			if got != tt.wantMsg {
 				t.Errorf("Info visible=%v, want %v (buffer: %q)", got, tt.wantMsg, buf.String())
@@ -102,7 +102,7 @@ func TestError_LevelGating(t *testing.T) {
 			l := NewLoggerWithWriter(&buf)
 			l.SetLevel(parseLogLevel(tt.level))
 
-			l.Error(nil, "hello error")
+			l.Error("", "hello error")
 			got := strings.Contains(buf.String(), "hello error")
 			if got != tt.wantMsg {
 				t.Errorf("Error visible=%v, want %v (buffer: %q)", got, tt.wantMsg, buf.String())
@@ -127,7 +127,7 @@ func TestDebug_LevelGating(t *testing.T) {
 			l := NewLoggerWithWriter(&buf)
 			l.SetLevel(parseLogLevel(tt.level))
 
-			l.Debug(nil, "hello debug")
+			l.Debug("", "hello debug")
 			got := strings.Contains(buf.String(), "hello debug")
 			if got != tt.wantMsg {
 				t.Errorf("Debug visible=%v, want %v (buffer: %q)", got, tt.wantMsg, buf.String())
@@ -155,7 +155,7 @@ func TestWarn_LevelGating(t *testing.T) {
 			l := NewLoggerWithWriter(&buf)
 			l.SetLevel(parseLogLevel(tt.level))
 
-			l.Warn(nil, "hello warn")
+			l.Warn("", "hello warn")
 			got := strings.Contains(buf.String(), "hello warn")
 			if got != tt.wantMsg {
 				t.Errorf("Warn visible=%v, want %v (buffer: %q)", got, tt.wantMsg, buf.String())
@@ -170,7 +170,7 @@ func TestReqIDPrefix(t *testing.T) {
 	l.SetLevel(LevelDebug)
 
 	reqID := "abc-123"
-	l.Info(&reqID, "request handled")
+	l.Info(reqID, "request handled")
 
 	got := buf.String()
 	if !strings.Contains(got, "REQID=abc-123") {
@@ -178,19 +178,19 @@ func TestReqIDPrefix(t *testing.T) {
 	}
 }
 
-func TestReqIDPrefix_Nil(t *testing.T) {
+func TestReqIDPrefix_Empty(t *testing.T) {
 	var buf bytes.Buffer
 	l := NewLoggerWithWriter(&buf)
 	l.SetLevel(LevelDebug)
 
-	l.Info(nil, "no reqid here")
+	l.Info("", "no reqid here")
 
 	got := buf.String()
 	if strings.Contains(got, "REQID=") {
 		t.Errorf("unexpected REQID prefix in output, got:\n%s", got)
 	}
-	if !strings.Contains(got, "no reqid here") {
-		t.Errorf("expected message content, got:\n%s", got)
+	if !strings.Contains(got, ": no reqid here") {
+		t.Errorf("expected the message right after the source prefix with no id, got:\n%s", got)
 	}
 }
 
@@ -199,7 +199,7 @@ func TestFormatStringInterpolation(t *testing.T) {
 	l := NewLoggerWithWriter(&buf)
 	l.SetLevel(LevelDebug)
 
-	l.Info(nil, "count=%d name=%s", 42, "test")
+	l.Info("", "count=%d name=%s", 42, "test")
 
 	got := buf.String()
 	if !strings.Contains(got, "count=42 name=test") {
@@ -212,10 +212,10 @@ func TestConsoleFormat_PriPrefix(t *testing.T) {
 	l := NewLoggerWithWriter(&buf)
 	l.SetLevel(LevelDebug)
 
-	l.Info(nil, "msg")
-	l.Error(nil, "msg")
-	l.Debug(nil, "msg")
-	l.Warn(nil, "msg")
+	l.Info("", "msg")
+	l.Error("", "msg")
+	l.Debug("", "msg")
+	l.Warn("", "msg")
 
 	got := buf.String()
 	lines := strings.SplitSeq(strings.TrimSpace(got), "\n")
@@ -231,7 +231,7 @@ func TestConsoleFormat_SourceLocation(t *testing.T) {
 	l := NewLoggerWithWriter(&buf)
 	l.SetLevel(LevelDebug)
 
-	l.Info(nil, "test")
+	l.Info("", "test")
 
 	got := buf.String()
 	if !strings.Contains(got, "logger_test.go:") {
@@ -244,7 +244,7 @@ func TestConsoleFormat_TimestampFormat(t *testing.T) {
 	l := NewLoggerWithWriter(&buf)
 	l.SetLevel(LevelDebug)
 
-	l.Info(nil, "test")
+	l.Info("", "test")
 
 	got := buf.String()
 	// YYYY/MM/DD HH:MM:SS pattern
@@ -257,9 +257,9 @@ func TestNewDiscardLogger_NoOutput(t *testing.T) {
 	l := NewDiscardLogger()
 
 	// Force any output — discard logger suppresses at the handler level.
-	l.Info(nil, "should vanish")
-	l.Error(nil, "should vanish")
-	l.Debug(nil, "should vanish")
+	l.Info("", "should vanish")
+	l.Error("", "should vanish")
+	l.Debug("", "should vanish")
 
 	// Verify it doesn't panic and Level returns the expected default.
 	if l.Level() != LevelInfo {
@@ -284,8 +284,8 @@ func TestSetLogFile_AppendMode(t *testing.T) {
 		t.Fatalf("SetLogFile: %v", err)
 	}
 
-	l.Info(nil, "first line")
-	l.Info(nil, "second line")
+	l.Info("", "first line")
+	l.Info("", "second line")
 
 	data, err := os.ReadFile(logPath)
 	if err != nil {
@@ -320,10 +320,10 @@ func TestFileHandler_CapturesAllLevels(t *testing.T) {
 		t.Fatalf("SetLogFile: %v", err)
 	}
 
-	l.Info(nil, "info msg")
-	l.Debug(nil, "debug msg")
-	l.Error(nil, "error msg")
-	l.Warn(nil, "warn msg")
+	l.Info("", "info msg")
+	l.Debug("", "debug msg")
+	l.Error("", "error msg")
+	l.Warn("", "warn msg")
 
 	// Console should only have error and warn.
 	if strings.Contains(consoleBuf.String(), "info msg") {
@@ -356,7 +356,7 @@ func TestFileFormat_NoSourceLocation(t *testing.T) {
 		t.Fatalf("SetLogFile: %v", err)
 	}
 
-	l.Info(nil, "test file msg")
+	l.Info("", "test file msg")
 
 	data, err := os.ReadFile(logPath)
 	if err != nil {
@@ -383,10 +383,10 @@ func TestFileFormat_LevelPrefix(t *testing.T) {
 		t.Fatalf("SetLogFile: %v", err)
 	}
 
-	l.Info(nil, "info-line")
-	l.Error(nil, "error-line")
-	l.Debug(nil, "debug-line")
-	l.Warn(nil, "warn-line")
+	l.Info("", "info-line")
+	l.Error("", "error-line")
+	l.Debug("", "debug-line")
+	l.Warn("", "warn-line")
 
 	data, err := os.ReadFile(logPath)
 	if err != nil {

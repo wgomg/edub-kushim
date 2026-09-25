@@ -157,7 +157,7 @@ func (s *ErroredFiles) DeleteAll(_ context.Context) (int, error) {
 				continue
 			}
 			if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil {
-				s.logger.Error(nil, "delete errored file %s/%s: %v", subdir, entry.Name(), err)
+				s.logger.Error("", "delete errored file %s/%s: %v", subdir, entry.Name(), err)
 				continue
 			}
 			count++

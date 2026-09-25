@@ -64,19 +64,15 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			writeUnauthorized(w)
 			return
 		}
-		reqID := r.Context().Value("reqid")
-		if reqIDStr, ok := reqID.(string); ok {
-			h.logger.Error(&reqIDStr, "auth login: %v", err)
-		} else {
-			h.logger.Error(nil, "auth login: %v", err)
-		}
+		reqID := requestID(r.Context())
+		h.logger.Error(reqID, "auth login: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
 	token, err := auth.GenerateToken(user.ID, user.Username, user.Role, h.getConfig().Srv.SessionSecret)
 	if err != nil {
-		h.logger.Error(nil, "generate token: %v", err)
+		h.logger.Error("", "generate token: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}

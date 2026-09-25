@@ -159,7 +159,7 @@ func NewRunner(logger *log.Logger, cfg *config.Config, tools []string) *Runner {
 
 	reg, err := llm.NewRegistry(filepath.Join(cfg.App.ConfigDir, "model_catalog.json"))
 	if err != nil {
-		logger.Error(nil, "load model catalog: %v", err)
+		logger.Error("", "load model catalog: %v", err)
 	}
 
 	for _, name := range tools {
@@ -213,14 +213,14 @@ func NewRunner(logger *log.Logger, cfg *config.Config, tools []string) *Runner {
 		case "contentanalyzer":
 			ca, caErr := analyzer.NewContentAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.Enricher.ContentAnalyzer.Timeout) * time.Second}, &cfg.Enricher.ContentAnalyzer.Llm, cfg.Enricher.ContentAnalyzer.PromptTemplate, cfg.Enricher.ContentAnalyzer.MinTags, cfg.Enricher.ContentAnalyzer.MaxTags, reg)
 			if caErr != nil {
-				logger.Error(nil, "create content analyzer: %v", caErr)
+				logger.Error("", "create content analyzer: %v", caErr)
 			}
 			r.contentAnalyzer = ca
 			if cfg.Enricher.TagAdjudicator.Enabled {
 				adjLlm := cfg.ResolvedAdjudicatorLlm()
 				adj, adjErr := analyzer.NewContentAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.ResolvedAdjudicatorTimeout()) * time.Second}, &adjLlm, cfg.Enricher.ContentAnalyzer.PromptTemplate, 0, 0, reg)
 				if adjErr != nil {
-					logger.Error(nil, "create tag adjudicator: %v", adjErr)
+					logger.Error("", "create tag adjudicator: %v", adjErr)
 				} else {
 					r.tagAdjudicator = adj
 					r.tagIdentityJudge = adj
@@ -230,7 +230,7 @@ func NewRunner(logger *log.Logger, cfg *config.Config, tools []string) *Runner {
 				qLlm := cfg.ResolvedQualityLlm()
 				q, qErr := analyzer.NewContentAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.ResolvedQualityTimeout()) * time.Second}, &qLlm, cfg.Enricher.ContentAnalyzer.PromptTemplate, 0, 0, reg)
 				if qErr != nil {
-					logger.Error(nil, "create tag quality judge: %v", qErr)
+					logger.Error("", "create tag quality judge: %v", qErr)
 				} else {
 					r.tagQualityJudge = q
 				}
@@ -242,7 +242,7 @@ func NewRunner(logger *log.Logger, cfg *config.Config, tools []string) *Runner {
 				}
 				fbCa, fbErr := analyzer.NewContentAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.Enricher.ContentAnalyzer.Timeout) * time.Second}, &fb.Llm, cfg.Enricher.ContentAnalyzer.PromptTemplate, cfg.Enricher.ContentAnalyzer.MinTags, cfg.Enricher.ContentAnalyzer.MaxTags, reg)
 				if fbErr != nil {
-					logger.Error(nil, "create fallback content analyzer: %v", fbErr)
+					logger.Error("", "create fallback content analyzer: %v", fbErr)
 					continue
 				}
 				r.fallbackAnalyzers = append(r.fallbackAnalyzers, fbCa)
@@ -379,14 +379,14 @@ func (r *Runner) OptimizePdf(ctx context.Context, docId, path string) (*PdfOptim
 		return r.pdfOptimizer.Optimize(primaryCtx, docId, path)
 	})
 	if errors.Is(err, context.DeadlineExceeded) {
-		r.logger.Error(&docId, "pdf optimizer (%s) timed out after %ds — underlying call abandoned, may still be running",
+		r.logger.Error(docId, "pdf optimizer (%s) timed out after %ds — underlying call abandoned, may still be running",
 			r.config.Consumer.PdfOptimizer.Engine, r.config.Consumer.PdfOptimizer.Timeout)
 	}
 	if err != nil {
 		if r.config.Consumer.PdfOptimizer.Fallback == "" {
 			return nil, fmt.Errorf("pdf optimizer: %w", err)
 		}
-		r.logger.Info(nil, "primary optimizer (%s) failed: %v — falling back to %s",
+		r.logger.Info("", "primary optimizer (%s) failed: %v — falling back to %s",
 			r.config.Consumer.PdfOptimizer.Engine, err, r.config.Consumer.PdfOptimizer.Fallback)
 		fbCfg := config.ToolConfig{
 			Command: r.config.Consumer.PdfOptimizer.Fallback,
@@ -408,7 +408,7 @@ func (r *Runner) OptimizePdf(ctx context.Context, docId, path string) (*PdfOptim
 			return fbOptimizer.Optimize(fbCtx, docId, path)
 		})
 		if errors.Is(err, context.DeadlineExceeded) {
-			r.logger.Error(&docId, "pdf optimizer fallback (%s) timed out after %ds — underlying call abandoned, may still be running",
+			r.logger.Error(docId, "pdf optimizer fallback (%s) timed out after %ds — underlying call abandoned, may still be running",
 				r.config.Consumer.PdfOptimizer.Fallback, r.config.Consumer.PdfOptimizer.Timeout)
 		}
 		if err != nil {
@@ -661,10 +661,7 @@ func (r *Runner) AnalyzeContent(ctx context.Context, text string, docTypes []ana
 		return r.contentAnalyzer.Analyze(ctx, text, docTypes, peopleTypes, tagSuggestions)
 	})
 	if err != nil && isProviderError(err) {
-		var reqID *string
-		if v, ok := ctx.Value("reqid").(string); ok && v != "" {
-			reqID = &v
-		}
+		reqID, _ := ctx.Value("reqid").(string)
 		r.logger.Warn(reqID, "primary analyzer (%s/%s) failed: %v",
 			r.config.Enricher.ContentAnalyzer.Llm.Provider, r.config.Enricher.ContentAnalyzer.Llm.Model, err)
 		for i, fb := range r.fallbackAnalyzers {
@@ -727,10 +724,7 @@ func (r *Runner) AnalyzeDocType(ctx context.Context, prevResult *ContentAnalysis
 		return r.contentAnalyzer.AnalyzeDocType(ctx, prev, headTailText, docTypes, metadata)
 	})
 	if err != nil && isProviderError(err) {
-		var reqID *string
-		if v, ok := ctx.Value("reqid").(string); ok && v != "" {
-			reqID = &v
-		}
+		reqID, _ := ctx.Value("reqid").(string)
 		r.logger.Warn(reqID, "primary analyzer (%s/%s) failed doc-type refinement: %v",
 			r.config.Enricher.ContentAnalyzer.Llm.Provider, r.config.Enricher.ContentAnalyzer.Llm.Model, err)
 		for i, fb := range r.fallbackAnalyzers {

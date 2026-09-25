@@ -149,7 +149,7 @@ func (h *ConfigHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
 
 		svcPath, svcErr := config.GenerateServiceFiles(configDir)
 		if svcErr != nil {
-			h.logger.Warn(nil, "failed to generate service files: %v", svcErr)
+			h.logger.Warn("", "failed to generate service files: %v", svcErr)
 		}
 		resp := map[string]any{
 			"config_dir": configDir,
@@ -204,7 +204,7 @@ func (h *ConfigHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
 		h.onConfigSet(cfg)
 		svcPath, svcErr := config.GenerateServiceFiles(configDir)
 		if svcErr != nil {
-			h.logger.Warn(nil, "failed to generate service files: %v", svcErr)
+			h.logger.Warn("", "failed to generate service files: %v", svcErr)
 		}
 		missing := config.MissingExternalToolErrors(cfg)
 
@@ -328,7 +328,7 @@ func (h *ConfigHandler) enqueueConfigTasks(ctx context.Context, cfg *config.Conf
 
 	batchID := uuid.New().String()
 	if err := h.services.Batch.Create(ctx, batchID, itypes.Batch.Source.Config, itypes.Batch.Status.Queued); err != nil {
-		h.logger.Error(nil, "create config batch: %v", err)
+		h.logger.Error("", "create config batch: %v", err)
 		return 0
 	}
 
@@ -336,7 +336,7 @@ func (h *ConfigHandler) enqueueConfigTasks(ctx context.Context, cfg *config.Conf
 	for _, t := range tasks {
 		payload, _ := json.Marshal(t.payload)
 		if _, err := h.dispatcher.Enqueue(ctx, itypes.Task.Type.Config, batchID, payload, ""); err != nil {
-			h.logger.Error(nil, "enqueue config task %s: %v", t.dedupKey, err)
+			h.logger.Error("", "enqueue config task %s: %v", t.dedupKey, err)
 			continue
 		}
 		enqueued++
@@ -344,7 +344,7 @@ func (h *ConfigHandler) enqueueConfigTasks(ctx context.Context, cfg *config.Conf
 
 	if enqueued == 0 {
 		if err := h.queries.DeleteBatch(ctx, batchID); err != nil {
-			h.logger.Error(nil, "delete empty config batch %s: %v", batchID, err)
+			h.logger.Error("", "delete empty config batch %s: %v", batchID, err)
 		}
 		return 0
 	}
@@ -357,7 +357,7 @@ func (h *ConfigHandler) configTaskCovered(ctx context.Context, dedupKey string) 
 		return existing.Status == itypes.Task.Status.Pending || existing.Status == itypes.Task.Status.Processing
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
-		h.logger.Error(nil, "lookup config task for dedup key %s: %v", dedupKey, err)
+		h.logger.Error("", "lookup config task for dedup key %s: %v", dedupKey, err)
 	}
 	return false
 }
@@ -481,7 +481,7 @@ func (h *ConfigHandler) tryAcquireConfigTaskSlot(ctx context.Context, w http.Res
 	case err == nil:
 		deleted, delErr := h.queries.DeleteConfigTaskByDedupKey(ctx, sql.NullString{String: dedupKey, Valid: true})
 		if delErr != nil {
-			h.logger.Error(nil, "delete stale %s task: %v", label, delErr)
+			h.logger.Error("", "delete stale %s task: %v", label, delErr)
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to queue " + label})
 			return false
 		}
@@ -490,7 +490,7 @@ func (h *ConfigHandler) tryAcquireConfigTaskSlot(ctx context.Context, w http.Res
 			return false
 		}
 	case !errors.Is(err, sql.ErrNoRows):
-		h.logger.Error(nil, "lookup %s task: %v", label, err)
+		h.logger.Error("", "lookup %s task: %v", label, err)
 	}
 	return true
 }
@@ -517,15 +517,15 @@ func (h *ConfigHandler) enqueueDBMigration(ctx context.Context, w http.ResponseW
 	h.services.Batch.Create(ctx, batchID, itypes.Batch.Source.Config, itypes.Batch.Status.Queued)
 
 	if _, err := h.dispatcher.Enqueue(ctx, itypes.Task.Type.Config, batchID, payloadJSON, ""); err != nil {
-		h.logger.Error(nil, "enqueue migration task: %v", err)
+		h.logger.Error("", "enqueue migration task: %v", err)
 		if delErr := h.queries.DeleteBatch(ctx, batchID); delErr != nil {
-			h.logger.Error(nil, "delete empty config batch %s: %v", batchID, delErr)
+			h.logger.Error("", "delete empty config batch %s: %v", batchID, delErr)
 		}
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to enqueue database migration"})
 		return false
 	}
 
-	h.logger.Info(nil, "database migration queued: %s -> %s@%s:%d/%s", cfg.Db.Database, newDB.User, newDB.Host, newDB.Port, newDB.Database)
+	h.logger.Info("", "database migration queued: %s -> %s@%s:%d/%s", cfg.Db.Database, newDB.User, newDB.Host, newDB.Port, newDB.Database)
 	return true
 }
 
@@ -549,15 +549,15 @@ func (h *ConfigHandler) enqueueStorageMigration(ctx context.Context, w http.Resp
 	h.services.Batch.Create(ctx, batchID, itypes.Batch.Source.Config, itypes.Batch.Status.Queued)
 
 	if _, err := h.dispatcher.Enqueue(ctx, itypes.Task.Type.Config, batchID, payloadJSON, ""); err != nil {
-		h.logger.Error(nil, "enqueue storage migration task: %v", err)
+		h.logger.Error("", "enqueue storage migration task: %v", err)
 		if delErr := h.queries.DeleteBatch(ctx, batchID); delErr != nil {
-			h.logger.Error(nil, "delete empty config batch %s: %v", batchID, delErr)
+			h.logger.Error("", "delete empty config batch %s: %v", batchID, delErr)
 		}
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to enqueue storage migration"})
 		return false
 	}
 
-	h.logger.Info(nil, "storage migration queued: %s -> %s", cfg.Storage.StorageDir, payload.NewStorageDir)
+	h.logger.Info("", "storage migration queued: %s -> %s", cfg.Storage.StorageDir, payload.NewStorageDir)
 	return true
 }
 
@@ -599,7 +599,7 @@ func (h *ConfigHandler) ConfigStatus(w http.ResponseWriter, r *http.Request) {
 			TaskType: itypes.Task.Type.Config,
 		})
 		if err != nil {
-			h.logger.Error(nil, "list failed config tasks: %v", err)
+			h.logger.Error("", "list failed config tasks: %v", err)
 		} else {
 			respFailed := make([]FailedTaskSummary, 0, len(failedTasks))
 			for _, t := range failedTasks {
@@ -647,7 +647,7 @@ func (h *ConfigHandler) RetryFailedConfig(w http.ResponseWriter, r *http.Request
 		TaskType: itypes.Task.Type.Config,
 	})
 	if err != nil {
-		h.logger.Error(nil, "list failed config tasks: %v", err)
+		h.logger.Error("", "list failed config tasks: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -655,7 +655,7 @@ func (h *ConfigHandler) RetryFailedConfig(w http.ResponseWriter, r *http.Request
 	retried := 0
 	for _, t := range failedTasks {
 		if err := task.Retry(ctx, h.client, h.logger, t.TaskID); err != nil {
-			h.logger.Error(nil, "retry config task %s: %v", t.TaskID, err)
+			h.logger.Error("", "retry config task %s: %v", t.TaskID, err)
 			continue
 		}
 		retried++

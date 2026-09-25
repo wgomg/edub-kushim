@@ -152,7 +152,7 @@ func (s *TagMerge) Merge(ctx context.Context, sourceID, targetID int64) (MergeTa
 	}
 
 	if err := s.embedder.RemoveFromStore(ctx, []string{source.Name}); err != nil {
-		s.logger.Error(nil, "tag merge: remove from store: %v", err)
+		s.logger.Error("", "tag merge: remove from store: %v", err)
 	}
 
 	return MergeTagResult{

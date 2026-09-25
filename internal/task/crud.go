@@ -186,12 +186,12 @@ func Retry(ctx context.Context, client *database.Client, logger *log.Logger, tas
 	if task.TaskType == types.Task.Type.Consume && task.Payload != nil {
 		if onCompleted := consumeOnCompleted(*task.Payload); onCompleted != "" {
 			if _, err := client.Queries.SetEnrichTaskWaiting(ctx, onCompleted); err != nil {
-				logger.Error(nil, "restore enrich task %s after retry of consume %s failed: %v (will be recovered by activation or sweep)", onCompleted, taskID, err)
+				logger.Error("", "restore enrich task %s after retry of consume %s failed: %v (will be recovered by activation or sweep)", onCompleted, taskID, err)
 			}
 		}
 		if onCompletedThumbnail := consumeOnCompletedThumbnail(*task.Payload); onCompletedThumbnail != "" {
 			if _, err := client.Queries.SetEnrichTaskWaiting(ctx, onCompletedThumbnail); err != nil {
-				logger.Error(nil, "restore thumbnail task %s after retry of consume %s failed: %v (will be recovered by activation or sweep)", onCompletedThumbnail, taskID, err)
+				logger.Error("", "restore thumbnail task %s after retry of consume %s failed: %v (will be recovered by activation or sweep)", onCompletedThumbnail, taskID, err)
 			}
 		}
 	}

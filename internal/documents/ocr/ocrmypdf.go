@@ -100,7 +100,7 @@ func (o *OcrMyPdf) Process(ctx context.Context, docId, path string) (*string, er
 		return nil, fmt.Errorf("%s did not create output file", o.Name())
 	}
 
-	o.logger.Debug(&docId, "%s processed %s -> %s", o.Name(), path, outputPath)
+	o.logger.Debug(docId, "%s processed %s -> %s", o.Name(), path, outputPath)
 	return &outputPath, nil
 }
 

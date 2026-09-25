@@ -101,7 +101,7 @@ func (w *Watcher) check() {
 
 	cfg, err := Load(w.configDir)
 	if err != nil {
-		w.logger.Error(nil, "config file changed, but reload failed: %v", err)
+		w.logger.Error("", "config file changed, but reload failed: %v", err)
 		return
 	}
 
@@ -109,6 +109,6 @@ func (w *Watcher) check() {
 	w.lastMod = info.ModTime()
 	w.mu.Unlock()
 
-	w.logger.Info(nil, "config file changed, reloading...")
+	w.logger.Info("", "config file changed, reloading...")
 	w.onReload(cfg)
 }

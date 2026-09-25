@@ -61,11 +61,11 @@ func startServer() {
 		MaxAge:     cfg.App.Logging.MaxAge,
 		Compress:   cfg.App.Logging.Compress,
 	}); err != nil {
-		logger.Error(nil, "failed to open log file: %v", err)
+		logger.Error("", "failed to open log file: %v", err)
 	}
-	logger.Info(nil, "Starting App...")
-	logger.Info(nil, "Environment: %s", cfg.App.Env)
-	logger.Info(nil, "Log level: %s", cfg.App.LogLevel)
+	logger.Info("", "Starting App...")
+	logger.Info("", "Environment: %s", cfg.App.Env)
+	logger.Info("", "Log level: %s", cfg.App.LogLevel)
 
 	db, err := database.NewPostgresDB(config.BuildPostgresDSN(cfg.Db))
 	if err != nil {
@@ -84,14 +84,14 @@ func startServer() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
-		logger.Info(nil, "Server starting on %s", srv.Addr())
+		logger.Info("", "Server starting on %s", srv.Addr())
 		if err := srv.Start(); err != nil {
 			logger.Fatal("Server failed to start:", err)
 		}
 	}()
 
 	sig := <-quit
-	logger.Info(nil, "Received signal %v, shutting down...", sig)
+	logger.Info("", "Received signal %v, shutting down...", sig)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -100,5 +100,5 @@ func startServer() {
 		logger.Fatal("Server forced to shutdown:", err)
 	}
 
-	logger.Info(nil, "Server stopped")
+	logger.Info("", "Server stopped")
 }

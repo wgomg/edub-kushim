@@ -205,7 +205,7 @@ func (h *TrashHandler) BatchPermanentlyDelete(w http.ResponseWriter, r *http.Req
 	result := BatchDeleteResult{}
 	for _, id := range ids {
 		if err := h.trashSvc.PermanentlyDelete(ctx, id); err != nil {
-			h.logger.Error(&reqID, "batch permanent delete %s: %v", id, err)
+			h.logger.Error(reqID, "batch permanent delete %s: %v", id, err)
 			result.Failed = append(result.Failed, BatchDeleteError{ID: id, Error: "delete failed"})
 			continue
 		}
@@ -257,7 +257,7 @@ func (h *TrashHandler) BatchRestore(w http.ResponseWriter, r *http.Request) {
 	result := TrashRestoreResponse{}
 	for _, id := range ids {
 		if err := h.trashSvc.RestoreDocument(ctx, id); err != nil {
-			h.logger.Error(&reqID, "batch restore %s: %v", id, err)
+			h.logger.Error(reqID, "batch restore %s: %v", id, err)
 			result.Failed = append(result.Failed, BatchDeleteError{ID: id, Error: "restore failed"})
 			continue
 		}

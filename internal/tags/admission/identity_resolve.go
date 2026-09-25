@@ -86,7 +86,7 @@ func (r *IdentityResolver) ResolvePending(ctx context.Context, budget int) (*Ide
 		}
 		report.Pending = int(pending)
 		if pending > 0 {
-			r.logger.Info(nil, "tag identity: adjudicator disabled — %d pending events left", pending)
+			r.logger.Info("", "tag identity: adjudicator disabled — %d pending events left", pending)
 		}
 		return report, nil
 	}
@@ -134,7 +134,7 @@ func (r *IdentityResolver) resolveCandidates(ctx context.Context, cfg *config.Co
 	}
 	if !r.runner.HasTagIdentityJudge() {
 		report.Deferred += len(candidates)
-		r.logger.Info(nil, "tag identity: identity judge not configured — %d candidates stay pending", len(candidates))
+		r.logger.Info("", "tag identity: identity judge not configured — %d candidates stay pending", len(candidates))
 		return
 	}
 
@@ -157,7 +157,7 @@ func (r *IdentityResolver) resolveCandidates(ctx context.Context, cfg *config.Co
 			err = fmt.Errorf("identity judge returned %d verdicts for %d candidates", len(results), len(batch))
 		}
 		if err != nil {
-			r.logger.Error(nil, "tag identity: judge failed for %d candidates: %v", len(batch), err)
+			r.logger.Error("", "tag identity: judge failed for %d candidates: %v", len(batch), err)
 			report.Failed += len(batch)
 			continue
 		}
@@ -183,12 +183,12 @@ func (r *IdentityResolver) resolveCandidates(ctx context.Context, cfg *config.Co
 				continue
 			}
 			if applied, err := r.applyFold(ctx, entry.name, folded); err != nil {
-				r.logger.Error(nil, "tag identity: fold %q -> %q failed: %v", entry.name, folded, err)
+				r.logger.Error("", "tag identity: fold %q -> %q failed: %v", entry.name, folded, err)
 				report.Failed++
 				continue
 			} else if applied {
 				report.Folded++
-				r.logger.Info(nil, "tag identity: fold %q -> %q", entry.name, folded)
+				r.logger.Info("", "tag identity: fold %q -> %q", entry.name, folded)
 			}
 		}
 	}
@@ -206,7 +206,7 @@ func (r *IdentityResolver) resolveRow(ctx context.Context, entry *pendingCandida
 		Criteria: criteria,
 	})
 	if err != nil {
-		r.logger.Error(nil, "tag identity: resolve %s %q failed: %v", kind, entry.name, err)
+		r.logger.Error("", "tag identity: resolve %s %q failed: %v", kind, entry.name, err)
 		report.Failed++
 		return
 	}
@@ -231,7 +231,7 @@ func (r *IdentityResolver) resolvePairs(ctx context.Context, cfg *config.Config,
 			err = fmt.Errorf("adjudicator returned %d verdicts for %d pairs", len(results), len(batch))
 		}
 		if err != nil {
-			r.logger.Error(nil, "tag identity: adjudication failed for %d pairs: %v", len(batch), err)
+			r.logger.Error("", "tag identity: adjudication failed for %d pairs: %v", len(batch), err)
 			report.Failed += len(batch)
 			continue
 		}
@@ -254,7 +254,7 @@ func (r *IdentityResolver) resolvePairs(ctx context.Context, cfg *config.Config,
 				Model:    sql.NullString{String: model, Valid: model != ""},
 				Criteria: criteria,
 			}); err != nil {
-				r.logger.Error(nil, "tag identity: resolve pair %q -> %q failed: %v", p.query, p.target, err)
+				r.logger.Error("", "tag identity: resolve pair %q -> %q failed: %v", p.query, p.target, err)
 				report.Failed++
 				continue
 			}
@@ -304,7 +304,7 @@ func (r *IdentityResolver) resolvePairs(ctx context.Context, cfg *config.Config,
 		if _, err := r.client.Queries.GetTagByName(ctx, loser); err == nil {
 			action.RemoveExistingTag = true
 		} else if !errors.Is(err, sql.ErrNoRows) {
-			r.logger.Error(nil, "tag identity: alias loser lookup %q failed: %v", loser, err)
+			r.logger.Error("", "tag identity: alias loser lookup %q failed: %v", loser, err)
 			report.Failed++
 			continue
 		}
@@ -314,20 +314,20 @@ func (r *IdentityResolver) resolvePairs(ctx context.Context, cfg *config.Config,
 		return
 	}
 	if err := r.tag.ApplyAliasPlan(ctx, actions); err != nil {
-		r.logger.Error(nil, "tag identity: apply alias plan failed: %v", err)
+		r.logger.Error("", "tag identity: apply alias plan failed: %v", err)
 		report.Failed += len(actions)
 		return
 	}
 	report.Aliased += len(actions)
 	for _, action := range actions {
-		r.logger.Info(nil, "tag identity: alias %q -> %q", action.AliasName, action.Canonical)
+		r.logger.Info("", "tag identity: alias %q -> %q", action.AliasName, action.Canonical)
 	}
 }
 
 func (r *IdentityResolver) applyFold(ctx context.Context, from, to string) (bool, error) {
 	// the block can land while the fold waits for resolution
 	if _, err := r.client.Queries.GetDeletedTag(ctx, textnorm.NormalizeTag(to)); err == nil {
-		r.logger.Info(nil, "tag identity: fold %q -> %q skipped: target is deleted", from, to)
+		r.logger.Info("", "tag identity: fold %q -> %q skipped: target is deleted", from, to)
 		return false, nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return false, err

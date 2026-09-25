@@ -496,7 +496,7 @@ func (s *Tag) ApplyAliasPlan(ctx context.Context, actions []tags.AliasAction) er
 	}
 	if len(removed) > 0 {
 		if err := s.embedder.RemoveFromStore(ctx, removed); err != nil {
-			s.logger.Error(nil, "tag service: remove aliased names from store: %v", err)
+			s.logger.Error("", "tag service: remove aliased names from store: %v", err)
 		}
 	}
 	return nil
@@ -690,7 +690,7 @@ func (s *Tag) Update(ctx context.Context, pairs []TagUpdatePair) ([]service.Upda
 
 	for _, r := range renames {
 		if err := s.embedder.RemoveFromStore(ctx, []string{r.oldName}); err != nil {
-			s.logger.Error(nil, "tag service: remove from store: %v", err)
+			s.logger.Error("", "tag service: remove from store: %v", err)
 		}
 	}
 
@@ -739,11 +739,11 @@ func (s *Tag) Delete(ctx context.Context, ids []int64) ([]service.DeleteResult, 
 			Name: textnorm.NormalizeTag(tag.Name),
 			Kind: DeletedTagKindBlocked,
 		}); err != nil {
-			s.logger.Error(nil, "tag service: record deleted tag %q: %v", tag.Name, err)
+			s.logger.Error("", "tag service: record deleted tag %q: %v", tag.Name, err)
 		}
 
 		if err := s.embedder.RemoveFromStore(ctx, []string{tag.Name}); err != nil {
-			s.logger.Error(nil, "tag service: remove from store: %v", err)
+			s.logger.Error("", "tag service: remove from store: %v", err)
 		}
 		results[i] = service.DeleteResult{ID: id, Status: service.Deleted}
 	}
@@ -775,7 +775,7 @@ func (s *Tag) Promote(ctx context.Context, id int64, reason string) (database.Ta
 	}
 
 	s.encodeAndAddBatch(ctx, []string{tag.Name})
-	s.logger.Info(nil, "tagquality[%s]: promote %q (reason=%s)", analyzer.TagQualityVersion, tag.Name, reason)
+	s.logger.Info("", "tagquality[%s]: promote %q (reason=%s)", analyzer.TagQualityVersion, tag.Name, reason)
 	return tag, service.PromotePromoted, nil
 }
 
@@ -822,6 +822,6 @@ func (s *Tag) RemoveFromStore(ctx context.Context, names []string) error {
 
 func (s *Tag) encodeAndAddBatch(ctx context.Context, names []string) {
 	if err := s.embedder.AddToStore(ctx, names); err != nil {
-		s.logger.Error(nil, "tag service: add to store: %v", err)
+		s.logger.Error("", "tag service: add to store: %v", err)
 	}
 }

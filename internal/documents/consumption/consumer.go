@@ -141,16 +141,16 @@ func NewConsumerWithRunner(cfg *config.Config, logger *log.Logger, client *datab
 // caller's UUID, used in paths and logs.
 func (c *Consumer) Process(ctx context.Context, file File, documentID string, progress ...task.ProgressFunc) (File, error) {
 	start := time.Now()
-	c.logger.Info(&documentID, "starting consumption for file %s", file.OriginalPath)
+	c.logger.Info(documentID, "starting consumption for file %s", file.OriginalPath)
 
 	report := task.Progress(progress)
 
 	defer func() {
 		elapsed := time.Since(start)
 		if file.StorageProcessedPath != nil {
-			c.logger.Info(&documentID, "finished consumption %s in %s -> %s", file.OriginalPath, log.HumanDuration(elapsed), *file.StorageProcessedPath)
+			c.logger.Info(documentID, "finished consumption %s in %s -> %s", file.OriginalPath, log.HumanDuration(elapsed), *file.StorageProcessedPath)
 		} else {
-			c.logger.Info(&documentID, "finished consumption %s in %s (skipped)", file.OriginalPath, log.HumanDuration(elapsed))
+			c.logger.Info(documentID, "finished consumption %s in %s (skipped)", file.OriginalPath, log.HumanDuration(elapsed))
 		}
 	}()
 
@@ -229,7 +229,7 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string, pr
 	report("place", "", 0)
 	if file.OCRTmpPath != nil {
 		c.logger.Debug(
-			&documentID,
+			documentID,
 			"Moving OCR file from %s to %s",
 			*file.OCRTmpPath,
 			*file.StorageProcessedPath,
@@ -239,66 +239,66 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string, pr
 			return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("failed to move OCR processed file: %w", err)}
 		}
 		c.logger.Debug(
-			&documentID,
+			documentID,
 			"Moving original file from %s to %s",
 			file.OriginalPath,
 			*file.StorageOriginalPath,
 		)
 		if err := CopyFile(file.OriginalPath, *file.StorageOriginalPath); err != nil {
-			c.logger.Error(&documentID, "Failed to move original file, cleaning up OCR file")
+			c.logger.Error(documentID, "Failed to move original file, cleaning up OCR file")
 			if removeErr := RemoveFile(*file.StorageProcessedPath); removeErr != nil {
-				c.logger.Error(&documentID, "failed to clean up OCR file: %v", removeErr)
+				c.logger.Error(documentID, "failed to clean up OCR file: %v", removeErr)
 			}
 			MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 			return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("failed to move original file: %w", err)}
 		}
 	} else if file.OptimizedPdfTmpPath != nil {
-		c.logger.Debug(&documentID,
+		c.logger.Debug(documentID,
 			"Copying original file from %s to %s", file.OriginalPath, *file.StorageOriginalPath)
 		if err := CopyFile(file.OriginalPath, *file.StorageOriginalPath); err != nil {
 			MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 			return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("failed to copy original file: %w", err)}
 		}
 
-		c.logger.Debug(&documentID,
+		c.logger.Debug(documentID,
 			"Moving optimized file from %s to %s", *file.OptimizedPdfTmpPath, *file.StorageProcessedPath)
 		if err := MoveFile(*file.OptimizedPdfTmpPath, *file.StorageProcessedPath); err != nil {
 			if removeErr := RemoveFile(*file.StorageOriginalPath); removeErr != nil {
-				c.logger.Error(&documentID, "failed to clean up original file post-move error: %v", removeErr)
+				c.logger.Error(documentID, "failed to clean up original file post-move error: %v", removeErr)
 			}
 			MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 			return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("failed to move optimized file: %w", err)}
 		}
 	} else if file.ConvertedPdfTmpPath != nil {
-		c.logger.Debug(&documentID,
+		c.logger.Debug(documentID,
 			"Copying original file from %s to %s", file.OriginalPath, *file.StorageOriginalPath)
 		if err := CopyFile(file.OriginalPath, *file.StorageOriginalPath); err != nil {
 			MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 			return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("failed to copy original file: %w", err)}
 		}
 
-		c.logger.Debug(&documentID,
+		c.logger.Debug(documentID,
 			"Moving converted file from %s to %s", *file.ConvertedPdfTmpPath, *file.StorageProcessedPath)
 		if err := MoveFile(*file.ConvertedPdfTmpPath, *file.StorageProcessedPath); err != nil {
 			if removeErr := RemoveFile(*file.StorageOriginalPath); removeErr != nil {
-				c.logger.Error(&documentID, "failed to clean up original file post-move error: %v", removeErr)
+				c.logger.Error(documentID, "failed to clean up original file post-move error: %v", removeErr)
 			}
 			MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 			return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("failed to move converted file: %w", err)}
 		}
 	} else {
 		// optimization failed or was skipped — use original for both.
-		c.logger.Debug(&documentID,
+		c.logger.Debug(documentID,
 			"Copying original file from %s to %s (no optimized version)", file.OriginalPath, *file.StorageProcessedPath)
 		if err := CopyFile(file.OriginalPath, *file.StorageProcessedPath); err != nil {
 			MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 			return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("failed to copy original file to processed storage: %w", err)}
 		}
-		c.logger.Debug(&documentID,
+		c.logger.Debug(documentID,
 			"Copying original file from %s to %s", file.OriginalPath, *file.StorageOriginalPath)
 		if err := CopyFile(file.OriginalPath, *file.StorageOriginalPath); err != nil {
 			if removeErr := RemoveFile(*file.StorageProcessedPath); removeErr != nil {
-				c.logger.Error(&documentID, "failed to clean up processed file post-copy error: %v", removeErr)
+				c.logger.Error(documentID, "failed to clean up processed file post-copy error: %v", removeErr)
 			}
 			MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 			return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("failed to copy original file to originals storage: %w", err)}
@@ -309,16 +309,16 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string, pr
 	txCtx, txCancel := context.WithTimeout(ctx, commitTxTimeout)
 	defer txCancel()
 	txStart := time.Now()
-	c.logger.Debug(&documentID, "tx: begin (pool %s)", formatDBStats(c.client.DB().Stats()))
+	c.logger.Debug(documentID, "tx: begin (pool %s)", formatDBStats(c.client.DB().Stats()))
 
 	tx, err := c.client.BeginTx(txCtx, nil)
 	if err != nil {
 		err = annotateTxTimeout(err, formatDBStats(c.client.DB().Stats()), time.Since(txStart))
 		if removeErr := RemoveFile(*file.StorageProcessedPath); removeErr != nil {
-			c.logger.Error(&documentID, "failed to clean up processed file: %v", removeErr)
+			c.logger.Error(documentID, "failed to clean up processed file: %v", removeErr)
 		}
 		if removeErr := RemoveFile(*file.StorageOriginalPath); removeErr != nil {
-			c.logger.Error(&documentID, "failed to clean up original file: %v", removeErr)
+			c.logger.Error(documentID, "failed to clean up original file: %v", removeErr)
 		}
 		MoveFailedFile(c.config.Storage.StorageDir, file.OriginalPath, "", c.logger, &documentID)
 		return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("failed to begin database transaction: %w", err)}
@@ -328,31 +328,31 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string, pr
 			tx.Rollback()
 			if file.StorageProcessedPath != nil {
 				if removeErr := RemoveFile(*file.StorageProcessedPath); removeErr != nil {
-					c.logger.Error(&documentID, "failed to clean up processed storage file: %v", removeErr)
+					c.logger.Error(documentID, "failed to clean up processed storage file: %v", removeErr)
 				}
 			}
 			if file.StorageOriginalPath != nil {
 				if removeErr := RemoveFile(*file.StorageOriginalPath); removeErr != nil {
-					c.logger.Error(&documentID, "failed to clean up original storage file: %v", removeErr)
+					c.logger.Error(documentID, "failed to clean up original storage file: %v", removeErr)
 				}
 			}
 		}
 
 		if file.OCRTmpPath != nil {
 			if err := CleanUp(*file.OCRTmpPath); err != nil {
-				c.logger.Debug(&documentID, "failed to clean up ocr temp file: %v", err)
+				c.logger.Debug(documentID, "failed to clean up ocr temp file: %v", err)
 			}
 		}
 
 		if file.OptimizedPdfTmpPath != nil {
 			if err := CleanUp(*file.OptimizedPdfTmpPath); err != nil {
-				c.logger.Debug(&documentID, "failed to clean up optimized temp file: %v", err)
+				c.logger.Debug(documentID, "failed to clean up optimized temp file: %v", err)
 			}
 		}
 
 		if file.ConvertedPdfTmpPath != nil {
 			if err := CleanUp(*file.ConvertedPdfTmpPath); err != nil {
-				c.logger.Debug(&documentID, "failed to clean up converted temp file: %v", err)
+				c.logger.Debug(documentID, "failed to clean up converted temp file: %v", err)
 			}
 		}
 	}()
@@ -384,7 +384,7 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string, pr
 		return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("failed to create document record: %w", err)}
 	}
 
-	c.logger.Debug(&documentID, "Created document with ID: %d", documentDbId)
+	c.logger.Debug(documentID, "Created document with ID: %d", documentDbId)
 
 	file.DocumentID = documentID
 	file.DocumentDbId = sql.NullInt64{Int64: documentDbId, Valid: true}
@@ -400,21 +400,21 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string, pr
 		return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("failed to update storage path: %w", err)}
 	}
 
-	c.logger.Debug(&documentID, "Committing transaction")
+	c.logger.Debug(documentID, "Committing transaction")
 	if err := tx.Commit(); err != nil {
 		err = annotateTxTimeout(err, formatDBStats(c.client.DB().Stats()), time.Since(txStart))
-		c.logger.Error(&documentID, "Transaction commit failed: %v", err)
-		c.logger.Error(&documentID, "Attempting to rollback file operations")
+		c.logger.Error(documentID, "Transaction commit failed: %v", err)
+		c.logger.Error(documentID, "Attempting to rollback file operations")
 		if removeErr := RemoveFile(*file.StorageProcessedPath); removeErr != nil {
 			c.logger.Error(
-				&documentID,
+				documentID,
 				"Failed to rollback processed file after commit failure: %v",
 				removeErr,
 			)
 		}
 		if removeErr := RemoveFile(*file.StorageOriginalPath); removeErr != nil {
 			c.logger.Error(
-				&documentID,
+				documentID,
 				"Failed to rollback original file after commit failure: %v",
 				removeErr,
 			)
@@ -424,7 +424,7 @@ func (c *Consumer) Process(ctx context.Context, file File, documentID string, pr
 	} else {
 		if removeErr := RemoveFile(file.OriginalPath); removeErr != nil {
 			c.logger.Error(
-				&documentID,
+				documentID,
 				"Failed to remove original file from inbox after successful processing: %v",
 				removeErr,
 			)
@@ -452,6 +452,10 @@ func annotateTxTimeout(err error, stats string, elapsed time.Duration) error {
 // directory (errors/duplicated for the duplicate kind), renaming it with a
 // fresh UUID prefix. Move failures are logged, never propagated.
 func MoveFailedFile(storageDir, originalPath, errType string, logger *log.Logger, docID *string) {
+	id := ""
+	if docID != nil {
+		id = *docID
+	}
 	baseName := filepath.Base(originalPath)
 	uuidStr := uuid.New().String()
 	destName := uuidStr + "-" + baseName
@@ -464,17 +468,17 @@ func MoveFailedFile(storageDir, originalPath, errType string, logger *log.Logger
 	}
 
 	if err := os.MkdirAll(destDir, 0755); err != nil {
-		logger.Error(docID, "Failed to create error directory %s: %v", destDir, err)
+		logger.Error(id, "Failed to create error directory %s: %v", destDir, err)
 		return
 	}
 
 	destPath := filepath.Join(destDir, destName)
 	if err := MoveFile(originalPath, destPath); err != nil {
-		logger.Error(docID, "Failed to move failed file %s to %s: %v", originalPath, destPath, err)
+		logger.Error(id, "Failed to move failed file %s to %s: %v", originalPath, destPath, err)
 		return
 	}
 
-	logger.Info(docID, "Moved failed file to %s", destPath)
+	logger.Info(id, "Moved failed file to %s", destPath)
 }
 
 type consumePayload struct {
@@ -582,7 +586,7 @@ func (c *Consumer) convertToPdf(ctx context.Context, file File, documentID strin
 		return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("document conversion failed: %w", err)}
 	}
 
-	c.logger.Debug(&documentID, "converted %s to PDF at %s", file.Name, *convertedPath)
+	c.logger.Debug(documentID, "converted %s to PDF at %s", file.Name, *convertedPath)
 	file.ConvertedPdfTmpPath = convertedPath
 
 	return file, nil
@@ -603,7 +607,7 @@ func (c *Consumer) extractText(ctx context.Context, file File, documentID string
 	}
 
 	if mime.IsImage(file.MimeType) {
-		c.logger.Info(&documentID, "image file %s, proceeding directly to OCR", file.Name)
+		c.logger.Info(documentID, "image file %s, proceeding directly to OCR", file.Name)
 		file.PageCount = 1
 		return c.ocrAndReextract(ctx, file, documentID, memBefore, memBefore, report)
 	}
@@ -611,7 +615,7 @@ func (c *Consumer) extractText(ctx context.Context, file File, documentID string
 	report("extract-text", "", 0)
 	extractResult, err := c.runner.ExtractText(ctx, extractPath, extractMimeType)
 	memAfterExtract := log.ReadMemSnapshot()
-	c.logger.Debug(&documentID, "extractText: %s", log.FormatMemDelta(memBefore, memAfterExtract))
+	c.logger.Debug(documentID, "extractText: %s", log.FormatMemDelta(memBefore, memAfterExtract))
 	if err != nil {
 		return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("text extraction failed: %w", err)}
 	}
@@ -625,13 +629,13 @@ func (c *Consumer) extractText(ctx context.Context, file File, documentID string
 		file.Text = sql.NullString{String: *extractResult.Text, Valid: true}
 
 		if mime.IsPDF(extractMimeType) {
-			c.logger.Debug(&documentID, "optimizePdf: entering for %s", extractPath)
+			c.logger.Debug(documentID, "optimizePdf: entering for %s", extractPath)
 			report("optimize", "", 0)
 			optimizationResult, err := c.runner.OptimizePdf(ctx, documentID, extractPath)
 			memAfterOpt := log.ReadMemSnapshot()
-			c.logger.Debug(&documentID, "optimizePdf: %s", log.FormatMemDelta(memAfterExtract, memAfterOpt))
+			c.logger.Debug(documentID, "optimizePdf: %s", log.FormatMemDelta(memAfterExtract, memAfterOpt))
 			if err != nil {
-				c.logger.Info(&documentID, "optimization failed for %s, using original: %v", file.Name, err)
+				c.logger.Info(documentID, "optimization failed for %s, using original: %v", file.Name, err)
 			} else {
 				file.OptimizedPdfTmpPath = optimizationResult.TmpPath
 			}
@@ -645,7 +649,7 @@ func (c *Consumer) extractText(ctx context.Context, file File, documentID string
 		return file, nil
 	}
 
-	c.logger.Info(&documentID, "no text extracted from %s, OCR needed", file.Name)
+	c.logger.Info(documentID, "no text extracted from %s, OCR needed", file.Name)
 	return c.ocrAndReextract(ctx, file, documentID, memAfterExtract, memBefore, report)
 }
 
@@ -665,9 +669,9 @@ func (c *Consumer) ocrAndReextract(ctx context.Context, file File, documentID st
 	}
 	ocrResult, err := c.runner.OCR(ctx, documentID, ocrInputPath)
 	memAfterOCR := log.ReadMemSnapshot()
-	c.logger.Debug(&documentID, "OCR: %s (RSS now %s)", log.FormatMemDelta(memBeforeOCR, memAfterOCR), log.FormatBytes(memAfterOCR.RSS))
+	c.logger.Debug(documentID, "OCR: %s (RSS now %s)", log.FormatMemDelta(memBeforeOCR, memAfterOCR), log.FormatBytes(memAfterOCR.RSS))
 	if err != nil {
-		c.logger.Error(&documentID, "OCR failed for %s: %v", file.Name, err)
+		c.logger.Error(documentID, "OCR failed for %s: %v", file.Name, err)
 		return file, &task.Error{ReqID: documentID, Err: err}
 	}
 	if file.PageCount > 0 {
@@ -676,7 +680,7 @@ func (c *Consumer) ocrAndReextract(ctx context.Context, file File, documentID st
 
 	extractResult, err := c.runner.ExtractText(ctx, *ocrResult.TmpPath, mime.PDF)
 	memAfterFinal := log.ReadMemSnapshot()
-	c.logger.Debug(&documentID, "extractText (post-OCR): %s", log.FormatMemDelta(memAfterOCR, memAfterFinal))
+	c.logger.Debug(documentID, "extractText (post-OCR): %s", log.FormatMemDelta(memAfterOCR, memAfterFinal))
 	if err != nil {
 		return file, &task.Error{ReqID: documentID, Err: fmt.Errorf("text extraction failed for ocrd file: %w", err)}
 	}
@@ -688,7 +692,7 @@ func (c *Consumer) ocrAndReextract(ctx context.Context, file File, documentID st
 	}
 	file.OCRTmpPath = ocrResult.TmpPath
 
-	c.logger.Debug(&documentID, "extractText complete: RSS %s (total delta: %s)",
+	c.logger.Debug(documentID, "extractText complete: RSS %s (total delta: %s)",
 		log.FormatBytes(memAfterFinal.RSS),
 		log.FormatMemDelta(memBeforeAll, memAfterFinal))
 

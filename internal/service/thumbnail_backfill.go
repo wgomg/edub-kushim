@@ -143,7 +143,7 @@ func (s *ThumbnailBackfill) BackfillDocument(ctx context.Context, documentUUID s
 
 func (s *ThumbnailBackfill) deleteUnbatchedTasks(batchID string) {
 	if _, err := s.queries.DeleteTasksByBatch(context.Background(), sql.NullString{String: batchID, Valid: true}); err != nil {
-		s.logger.Error(nil, "cleanup of unbatched thumbnail tasks: %v", err)
+		s.logger.Error("", "cleanup of unbatched thumbnail tasks: %v", err)
 	}
 }
 
@@ -156,10 +156,10 @@ func (s *ThumbnailBackfill) addDocument(ctx context.Context, batchID, documentID
 	if err != nil {
 		err = errs.FromDB(err, "create thumbnail task")
 		if errs.KindOf(err) == errs.KindConflict {
-			s.logger.Warn(&documentID, "thumbnail task already pending for %s, skipping", documentID)
+			s.logger.Warn(documentID, "thumbnail task already pending for %s, skipping", documentID)
 			return false
 		}
-		s.logger.Error(&documentID, "thumbnail task creation failed for %s: %v", documentID, err)
+		s.logger.Error(documentID, "thumbnail task creation failed for %s: %v", documentID, err)
 		return false
 	}
 	return true

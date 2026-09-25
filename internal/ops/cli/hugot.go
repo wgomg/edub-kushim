@@ -43,7 +43,7 @@ func serveHugotHandler(c *container.Container, args []string) error {
 	logFile := c.LogFileConfig("hugot.log")
 	_ = os.MkdirAll(filepath.Dir(logFile.Path), 0755)
 	if err := c.GetLogger().SetLogFile(logFile); err != nil {
-		c.GetLogger().Error(nil, "failed to open hugot log file: %v", err)
+		c.GetLogger().Error("", "failed to open hugot log file: %v", err)
 	}
 
 	if bgFlag {
@@ -78,7 +78,7 @@ func serveHugotHandler(c *container.Container, args []string) error {
 
 	embStore := matcher.NewTagEmbeddingStore(nil, nil)
 	if err := matcher.BuildTagCache(context.Background(), client.Queries, c.GetLogger(), hugot, embStore); err != nil {
-		c.GetLogger().Error(nil, "failed to build tag cache: %v — continuing with empty cache", err)
+		c.GetLogger().Error("", "failed to build tag cache: %v — continuing with empty cache", err)
 	}
 	hugot.SetStore(embStore)
 
@@ -124,15 +124,15 @@ func serveHugotHandler(c *container.Container, args []string) error {
 		close(serveErr)
 	}()
 
-	c.GetLogger().Info(nil, "listening on %s", socketPath)
+	c.GetLogger().Info("", "listening on %s", socketPath)
 
 	var serveError error
 	select {
 	case <-sigCh:
-		c.GetLogger().Info(nil, "shutting down matcher server...")
+		c.GetLogger().Info("", "shutting down matcher server...")
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		if err := server.Shutdown(ctx); err != nil {
-			c.GetLogger().Error(nil, "matcher shutdown: %v", err)
+			c.GetLogger().Error("", "matcher shutdown: %v", err)
 		}
 		cancel()
 		<-serveErr
@@ -155,17 +155,17 @@ func notifyReady(logger *log.Logger) {
 	addr := &net.UnixAddr{Name: socketPath, Net: "unixgram"}
 	conn, err := net.DialUnix("unixgram", nil, addr)
 	if err != nil {
-		logger.Warn(nil, "sd_notify connect: %v", err)
+		logger.Warn("", "sd_notify connect: %v", err)
 		return
 	}
 	defer conn.Close()
 	if _, err := conn.Write([]byte("READY=1\n")); err != nil {
-		logger.Warn(nil, "sd_notify write: %v", err)
+		logger.Warn("", "sd_notify write: %v", err)
 	}
 }
 
 func respondError(w http.ResponseWriter, logger *log.Logger, err error, status int, msg string) {
-	logger.Error(nil, "matcher: %v", err)
+	logger.Error("", "matcher: %v", err)
 	http.Error(w, msg, status)
 }
 

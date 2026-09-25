@@ -63,7 +63,7 @@ func NewServer(cfg config.Config, logger *log.Logger, db *sql.DB) *Server {
 			logger.Fatal("generate session secret: ", err)
 		}
 		cfg.Srv.SessionSecret = secret
-		logger.Info(nil, "WARNING: server.session_secret is empty — generated temporary in-memory secret (sessions lost on restart)")
+		logger.Info("", "WARNING: server.session_secret is empty — generated temporary in-memory secret (sessions lost on restart)")
 	}
 
 	matcherClient := matcher.NewMatcherClient(filepath.Join(cfg.App.ConfigDir, "kushim-hugot.sock"), matcher.MaxMatchBodyBytes(cfg.Enricher.TagMatcher.ReduceTargetWords))
@@ -222,7 +222,7 @@ func registerRoutes(
 	cfg := getConfig()
 	llmRegistry, err := llm.NewRegistry(filepath.Join(cfg.App.ConfigDir, "model_catalog.json"))
 	if err != nil {
-		logger.Error(nil, "load model catalog: %v", err)
+		logger.Error("", "load model catalog: %v", err)
 	}
 	if llmRegistry != nil {
 		llmHandler := handlers.NewLlmHandler(llmRegistry)
@@ -381,7 +381,7 @@ func requestMiddleware(logger *log.Logger, next http.Handler) http.Handler {
 
 		ctx := context.WithValue(r.Context(), "reqid", reqID)
 
-		logger.Info(nil, "%s %s REQID=%s", r.Method, r.URL.Path, reqID)
+		logger.Info("", "%s %s REQID=%s", r.Method, r.URL.Path, reqID)
 
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
@@ -403,7 +403,7 @@ func (s *Server) Start() error {
 	s.probeMatcher()
 
 	s.pools.config.Start(context.Background())
-	s.logger.Info(nil, "config pool started")
+	s.logger.Info("", "config pool started")
 
 	s.configWatcher = config.NewWatcher(
 		s.cfg.Load().App.ConfigDir,
@@ -412,9 +412,9 @@ func (s *Server) Start() error {
 		s.logger,
 	)
 	s.configWatcher.Start()
-	s.logger.Info(nil, "config watcher started (5s interval)")
+	s.logger.Info("", "config watcher started (5s interval)")
 
-	s.logger.Info(nil, "Starting HTTP server on %s", s.addr)
+	s.logger.Info("", "Starting HTTP server on %s", s.addr)
 	return s.httpServer.ListenAndServe()
 }
 
@@ -430,10 +430,10 @@ func (s *Server) onConfigReload(cfg *config.Config) {
 		return
 	}
 
-	s.logger.Info(nil, "DB config changed, reconnecting...")
+	s.logger.Info("", "DB config changed, reconnecting...")
 	newDB, err := database.NewPostgresDB(config.BuildPostgresDSN(cfg.Db))
 	if err != nil {
-		s.logger.Error(nil, "failed to connect to new DB: %v — keeping previous configuration", err)
+		s.logger.Error("", "failed to connect to new DB: %v — keeping previous configuration", err)
 		s.cfg.Store(oldCfg)
 		return
 	}
@@ -443,7 +443,7 @@ func (s *Server) onConfigReload(cfg *config.Config) {
 		_ = oldDB.Close()
 	}
 	s.db = newDB
-	s.logger.Info(nil, "reconnected to new database")
+	s.logger.Info("", "reconnected to new database")
 }
 
 func (s *Server) probeMatcher() {
@@ -451,20 +451,20 @@ func (s *Server) probeMatcher() {
 	defer cancel()
 
 	if err := s.matcherClient.Health(probeCtx); err != nil {
-		s.logger.Error(nil, "WARNING: matcher unavailable — tag CRUD will 503, enrich will fall back to LLM tags: %v", err)
+		s.logger.Error("", "WARNING: matcher unavailable — tag CRUD will 503, enrich will fall back to LLM tags: %v", err)
 		return
 	}
 
-	s.logger.Info(nil, "matcher reachable")
+	s.logger.Info("", "matcher reachable")
 }
 
 // Shutdown stops the watcher, drains the HTTP server and the pools under
 // the caller's deadline.
 func (s *Server) Shutdown(ctx context.Context) error {
-	s.logger.Info(nil, "Shutting down HTTP server")
+	s.logger.Info("", "Shutting down HTTP server")
 
 	s.configWatcher.Stop()
-	s.logger.Info(nil, "config watcher stopped")
+	s.logger.Info("", "config watcher stopped")
 
 	if err := s.httpServer.Shutdown(ctx); err != nil {
 		return err

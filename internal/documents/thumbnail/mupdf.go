@@ -57,7 +57,7 @@ func (m *MuPDF) Generate(ctx context.Context, docId, path, outputPath string) (w
 	)
 	tmpOutputPath := filepath.Join(tmpDir, outputName)
 
-	m.logger.Debug(&docId, "mupdf: thumbnail %s -> %s (PID=%d)", path, tmpOutputPath, os.Getpid())
+	m.logger.Debug(docId, "mupdf: thumbnail %s -> %s (PID=%d)", path, tmpOutputPath, os.Getpid())
 
 	cmd := exec.CommandContext(ctx, os.Args[0], "internal-thumbnail",
 		"--input", path, "--output", tmpOutputPath,
@@ -88,7 +88,7 @@ func (m *MuPDF) Generate(ctx context.Context, docId, path, outputPath string) (w
 		return 0, 0, fmt.Errorf("move thumbnail into place: %w", err)
 	}
 
-	m.logger.Debug(&docId, "mupdf thumbnail %s -> %s (%dx%d)", path, outputPath, width, height)
+	m.logger.Debug(docId, "mupdf thumbnail %s -> %s (%dx%d)", path, outputPath, width, height)
 	return width, height, nil
 }
 

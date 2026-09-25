@@ -47,17 +47,17 @@ func parseBootstrapLogs(logsDir string, logger *log.Logger) map[string]*parsedPa
 		// active file plus lumberjack rotations (timestamped siblings, .gz)
 		files, err := filepath.Glob(filepath.Join(logsDir, prefix+"*"))
 		if err != nil {
-			logger.Debug(nil, "tag reconcile bootstrap: %s glob failed: %v", prefix, err)
+			logger.Debug("", "tag reconcile bootstrap: %s glob failed: %v", prefix, err)
 			continue
 		}
 		if len(files) == 0 {
-			logger.Debug(nil, "tag reconcile bootstrap: %s.log not found — skipping", prefix)
+			logger.Debug("", "tag reconcile bootstrap: %s.log not found — skipping", prefix)
 			continue
 		}
 		sort.Strings(files)
 		for _, f := range files {
 			if err := parseLogFile(f, pairs); err != nil {
-				logger.Debug(nil, "tag reconcile bootstrap: %s unreadable: %v", f, err)
+				logger.Debug("", "tag reconcile bootstrap: %s unreadable: %v", f, err)
 			}
 		}
 	}

@@ -130,7 +130,7 @@ The parent streams the child's stdout line-by-line into its own logger
 go func() {
 	scanner := bufio.NewScanner(stdout)
 	for scanner.Scan() {
-		o.logger.Info(&docId, "%s", scanner.Text())
+		o.logger.Info(docId, "%s", scanner.Text())
 	}
 }()
 ```
@@ -408,7 +408,7 @@ if err := cmd.Wait(); err != nil {
 	_, isExit := err.(*exec.ExitError)
 	_, outExists := os.Stat(outPath)
 	if isExit && outExists == nil && isNonFatalStderr(stderr.String()) {
-		o.logger.Warn(&docId, "OCR subprocess had non-fatal errors: %v (stderr: %s)", err, stderr.String())
+		o.logger.Warn(docId, "OCR subprocess had non-fatal errors: %v (stderr: %s)", err, stderr.String())
 	} else {
 		os.Remove(outPath)
 		return nil, fmt.Errorf("gosseract OCR: %w (stderr: %s)", err, stderr.String())

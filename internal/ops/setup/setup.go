@@ -61,7 +61,7 @@ func runSetupWizard(args []string, logger *log.Logger) error {
 		errCh <- srv.Start()
 	}()
 
-	logger.Info(nil, "Setup wizard running at http://%s", addr)
+	logger.Info("", "Setup wizard running at http://%s", addr)
 
 	select {
 	case err := <-errCh:
@@ -204,7 +204,7 @@ Flags:
 	if err := os.Chmod(configPath, 0600); err != nil {
 		return fmt.Errorf("chmod config: %w", err)
 	}
-	logger.Info(nil, "created config: %s", configPath)
+	logger.Info("", "created config: %s", configPath)
 
 	cfg, err := config.Load(*configDir)
 	if err != nil {
@@ -230,17 +230,17 @@ Flags:
 	defer db.Close()
 
 	if resetDb {
-		logger.Info(nil, "resetting database...")
+		logger.Info("", "resetting database...")
 		if err := database.ResetDatabase(db); err != nil {
 			return err
 		}
-		logger.Info(nil, "database reset complete")
+		logger.Info("", "database reset complete")
 	} else {
 		if err := database.InitializeSchema(db); err != nil {
 			return err
 		}
 	}
-	logger.Info(nil, "created database")
+	logger.Info("", "created database")
 
 	if err := config.DownloadHugotModel(context.Background(), cfg, logger); err != nil {
 		return fmt.Errorf("hugot model download: %w", err)
@@ -248,7 +248,7 @@ Flags:
 
 	if cfg.Consumer.PdfOptimizer.Engine == config.PdfOptimizer.MuPDF && optimizationFallback != "" {
 		if _, err := exec.LookPath(optimizationFallback); err != nil {
-			logger.Info(nil, "WARNING: --consumer-pdfoptimizer-fallback %s set but %q not found on PATH. "+
+			logger.Info("", "WARNING: --consumer-pdfoptimizer-fallback %s set but %q not found on PATH. "+
 				"Install it before running 'kushim consume'.", optimizationFallback, optimizationFallback)
 		}
 	}
@@ -258,7 +258,7 @@ Flags:
 			if err := config.DownloadTessdataLanguage(context.Background(), cfg, lang); err != nil {
 				return err
 			}
-			logger.Info(nil, "downloaded: %s", lang)
+			logger.Info("", "downloaded: %s", lang)
 		}
 	}
 
@@ -304,11 +304,11 @@ Flags:
 		return fmt.Errorf("create admin user: %w", err)
 	}
 
-	logger.Info(nil, "admin user '%s' created", adminUser)
+	logger.Info("", "admin user '%s' created", adminUser)
 
 	svcPath, err := config.GenerateServiceFiles(cfg.App.ConfigDir)
 	if err != nil {
-		logger.Warn(nil, "Failed to generate systemd service files: %v", err)
+		logger.Warn("", "Failed to generate systemd service files: %v", err)
 	} else {
 		fmt.Printf("\nService files written to: %s\n\n", svcPath)
 		fmt.Println("To install and start as system services:")
@@ -318,9 +318,9 @@ Flags:
 	}
 
 	if cfg.Consumer.OCR.Engine == config.OCR.Gosseract {
-		logger.Info(nil, "setup complete — %d languages in %s", len(langList), tessdataDir)
+		logger.Info("", "setup complete — %d languages in %s", len(langList), tessdataDir)
 	} else {
-		logger.Info(nil, "setup complete — %d languages configured with %s engine",
+		logger.Info("", "setup complete — %d languages configured with %s engine",
 			len(langList), cfg.Consumer.OCR.Engine)
 	}
 	fmt.Println("\nNext: run 'kushim consume' to process documents")

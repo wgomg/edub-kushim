@@ -186,7 +186,7 @@ func Run(c *container.Container, args []string) error {
 		ownerID := uuid.New().String()
 		pid := os.Getpid()
 		owner := task.NewOwner(client, ownerID, pid, c.GetLogger(), c.GetConfig().Consumer.Reclaim.MaxRetries)
-		c.GetLogger().Info(nil, "consume: acquiring batch %s (PID=%d, ownerID=%s)", batchIDParam, pid, ownerID)
+		c.GetLogger().Info("", "consume: acquiring batch %s (PID=%d, ownerID=%s)", batchIDParam, pid, ownerID)
 
 		if err := owner.Acquire(ctx, batchIDParam, task.StaleAfter); err == task.ErrBatchLocked {
 			if !force {
@@ -203,14 +203,14 @@ func Run(c *container.Container, args []string) error {
 			return fmt.Errorf("acquire batch %s: %w", batchIDParam, err)
 		}
 
-		c.GetLogger().Debug(nil, "consume: GOMAXPROCS=%d", runtime.GOMAXPROCS(0))
+		c.GetLogger().Debug("", "consume: GOMAXPROCS=%d", runtime.GOMAXPROCS(0))
 
 		reset, _ := owner.ResetProcessingByBatch(ctx, batchIDParam)
 		if reset > 0 {
 			fmt.Printf("  reset %d orphaned processing tasks\n", reset)
 		}
 		if err := consumption.QuarantineFailedFiles(ctx, client.Queries, c.GetConfig().Storage.StorageDir, c.GetLogger(), batchIDParam); err != nil {
-			c.GetLogger().Error(nil, "quarantine files for batch %s: %v", batchIDParam, err)
+			c.GetLogger().Error("", "quarantine files for batch %s: %v", batchIDParam, err)
 		}
 
 		return runBatchThroughPools(ctx, cancel, c, batchRun{
@@ -281,7 +281,7 @@ func Run(c *container.Container, args []string) error {
 		consumePayload, _ := json.Marshal(consumePayloadMap)
 		_, err := dispatcher.Enqueue(ctx, types.Task.Type.Consume, batchID, consumePayload, consumeTaskID)
 		if err != nil {
-			c.GetLogger().Error(&documentID, "enqueue %s: %v", f.OriginalPath, err)
+			c.GetLogger().Error(documentID, "enqueue %s: %v", f.OriginalPath, err)
 			continue
 		}
 		enqueued++
@@ -292,7 +292,7 @@ func Run(c *container.Container, args []string) error {
 			"file_index":  i + 1,
 		})
 		if _, err := dispatcher.Enqueue(ctx, types.Task.Type.Enrich, batchID, enrichPayload, enrichTaskID, types.Task.Status.Waiting); err != nil {
-			c.GetLogger().Error(&documentID, "create enrich task for %s: %v", f.OriginalPath, err)
+			c.GetLogger().Error(documentID, "create enrich task for %s: %v", f.OriginalPath, err)
 		}
 
 		if thumbnailsEnabled {
@@ -302,7 +302,7 @@ func Run(c *container.Container, args []string) error {
 				"file_index":  i + 1,
 			})
 			if _, err := dispatcher.Enqueue(ctx, types.Task.Type.Thumbnail, batchID, thumbnailPayload, thumbnailTaskID, types.Task.Status.Waiting); err != nil {
-				c.GetLogger().Error(&documentID, "create thumbnail task for %s: %v", f.OriginalPath, err)
+				c.GetLogger().Error(documentID, "create thumbnail task for %s: %v", f.OriginalPath, err)
 			}
 		}
 	}
@@ -372,7 +372,7 @@ func runBatchThroughPools(ctx context.Context, cancel context.CancelFunc, c *con
 	if err == nil {
 		batchSvc := service.NewBatch(run.client, c.GetConfig().Consumer.Reclaim.MaxRetries)
 		if setErr := setBatchTerminalStatus(ctx, run.client.Queries, batchSvc, run.batchID); setErr != nil {
-			c.GetLogger().Error(nil, "set batch terminal status %s: %v", run.batchID, setErr)
+			c.GetLogger().Error("", "set batch terminal status %s: %v", run.batchID, setErr)
 		}
 	} else if errors.Is(err, ErrBatchPaused) {
 		err = nil
@@ -383,7 +383,7 @@ func runBatchThroughPools(ctx context.Context, cancel context.CancelFunc, c *con
 	hb.Stop()
 	relCtx, relCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	if relErr := run.owner.Release(relCtx, run.batchID); relErr != nil {
-		c.GetLogger().Error(nil, "release batch %s: %v", run.batchID, relErr)
+		c.GetLogger().Error("", "release batch %s: %v", run.batchID, relErr)
 	}
 	relCancel()
 
@@ -416,7 +416,7 @@ func consumeCancelHandler(c *container.Container, args []string) error {
 			BatchID: batchID,
 			OwnerID: ownerID,
 		}); err != nil {
-			c.GetLogger().Error(nil, "release batch owner for %s: %v", batchID, err)
+			c.GetLogger().Error("", "release batch owner for %s: %v", batchID, err)
 		}
 	}
 
@@ -443,7 +443,7 @@ func consumeCancelHandler(c *container.Container, args []string) error {
 	}
 
 	if err := syscall.Kill(int(bo.Pid), syscall.SIGTERM); err != nil {
-		c.GetLogger().Error(nil, "signal SIGTERM to PID %d for batch %s: %v", bo.Pid, batchID, err)
+		c.GetLogger().Error("", "signal SIGTERM to PID %d for batch %s: %v", bo.Pid, batchID, err)
 	}
 
 	tx, txErr := client.BeginTx(cancelCtx, nil)
@@ -673,7 +673,7 @@ func setBatchTerminalStatus(ctx context.Context, queries *database.Queries, batc
 func triggerOrphanScan(c *container.Container) {
 	client, err := c.GetClient()
 	if err != nil {
-		c.GetLogger().Error(nil, "orphan scan: get client: %v", err)
+		c.GetLogger().Error("", "orphan scan: get client: %v", err)
 		return
 	}
 	store := task.NewStore(client)
@@ -683,10 +683,10 @@ func triggerOrphanScan(c *container.Container) {
 	defer cancel()
 	count, err := svc.ScanAndQuarantine(ctx)
 	if err != nil {
-		c.GetLogger().Error(nil, "orphan scan after batch: %v", err)
+		c.GetLogger().Error("", "orphan scan after batch: %v", err)
 		return
 	}
 	if count > 0 {
-		c.GetLogger().Info(nil, "post-batch orphan scan: %d files quarantined", count)
+		c.GetLogger().Info("", "post-batch orphan scan: %d files quarantined", count)
 	}
 }

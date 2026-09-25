@@ -198,7 +198,7 @@ func main() {
 		MaxAge:     cfg.App.Logging.MaxAge,
 		Compress:   cfg.App.Logging.Compress,
 	}); err != nil {
-		logger.Error(nil, "failed to open log file: %v", err)
+		logger.Error("", "failed to open log file: %v", err)
 	}
 	c := container.NewContainer(cfg, logger)
 	defer c.Close()

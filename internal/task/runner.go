@@ -55,18 +55,18 @@ func (r *Runner) Next(ctx context.Context, taskType types.TaskType) (err error) 
 			defer cancel()
 			reqID := task.TaskID
 			if failErr := r.failTask(failCtx, task, token, blocking, fmt.Sprintf("panic: %v", rcv)); failErr != nil {
-				r.logger.Error(&reqID, "task %s panicked and fail-write failed: %v (stale sweep will reclaim)", task.TaskID, failErr)
+				r.logger.Error(reqID, "task %s panicked and fail-write failed: %v (stale sweep will reclaim)", task.TaskID, failErr)
 			}
-			r.logger.Error(&reqID, "task %s panicked and was failed: %v", task.TaskID, rcv)
+			r.logger.Error(reqID, "task %s panicked and was failed: %v", task.TaskID, rcv)
 			err = fmt.Errorf("task %s panic: %v", task.TaskID, rcv)
 		}
 	}()
 
 	if task.Payload == nil {
 		_ = r.failTask(ctx, task, token, blocking, "task has nil payload")
-		reqID := (*string)(nil)
+		reqID := ""
 		if tErr, ok := errors.AsType[*Error](err); ok {
-			reqID = &tErr.ReqID
+			reqID = tErr.ReqID
 		}
 		r.logger.Error(reqID, "task %s has nil payload", task.TaskID)
 		return nil
@@ -88,12 +88,12 @@ func (r *Runner) Next(ctx context.Context, taskType types.TaskType) (err error) 
 	})
 	if err != nil {
 		_ = r.failTask(ctx, task, token, blocking, err.Error())
-		reqID := (*string)(nil)
+		reqID := ""
 		if tErr, ok := errors.AsType[*Error](err); ok {
-			reqID = &tErr.ReqID
+			reqID = tErr.ReqID
 			if tErr.PauseBatch && task.BatchID.Valid {
 				if pauseErr := r.store.PauseBatch(ctx, task.BatchID.String); pauseErr != nil {
-					r.logger.Error(&tErr.ReqID, "failed to pause batch %s after credit error: %v", task.BatchID.String, pauseErr)
+					r.logger.Error(tErr.ReqID, "failed to pause batch %s after credit error: %v", task.BatchID.String, pauseErr)
 				}
 			}
 		}
@@ -108,9 +108,9 @@ func (r *Runner) Next(ctx context.Context, taskType types.TaskType) (err error) 
 		if failErr := r.failTask(ctx, task, token, blocking, failMsg); failErr != nil {
 			return fmt.Errorf("complete task %d (and fail fallback): %v / %w", task.ID, failErr, err)
 		}
-		reqID := (*string)(nil)
+		reqID := ""
 		if tErr, ok := errors.AsType[*Error](err); ok {
-			reqID = &tErr.ReqID
+			reqID = tErr.ReqID
 		}
 		r.logger.Error(reqID, "task %s completed handler but CompleteTask failed after retries — task failed instead of stuck", task.TaskID)
 		return nil

@@ -61,11 +61,11 @@ func searchHandler(c *container.Container, args []string) error {
 	}
 
 	if len(results) == 0 {
-		c.GetLogger().Info(nil, "no results for: %s", query)
+		c.GetLogger().Info("", "no results for: %s", query)
 		return nil
 	}
 
-	c.GetLogger().Info(nil, "%d results for: %s", len(results), query)
+	c.GetLogger().Info("", "%d results for: %s", len(results), query)
 
 	for _, r := range results {
 		fmt.Printf("\n─── #%s ─────────────────────────────────────────────\n", r.DocumentID)
@@ -105,6 +105,6 @@ func rebuildIndex(c *container.Container) error {
 		return err
 	}
 
-	c.GetLogger().Info(nil, "tsvector index rebuilt in %s", time.Since(start).Round(time.Millisecond))
+	c.GetLogger().Info("", "tsvector index rebuilt in %s", time.Since(start).Round(time.Millisecond))
 	return nil
 }

@@ -205,7 +205,7 @@ func MigrateDatabase(ctx context.Context, logger *log.Logger, p MigrateDBPayload
 	defer release()
 
 	report("migrate-db", "dump", 0)
-	logger.Info(nil, "migrate-db: copying database to %s@%s:%s/%s", p.User, p.Host, p.Port, p.Database)
+	logger.Info("", "migrate-db: copying database to %s@%s:%s/%s", p.User, p.Host, p.Port, p.Database)
 
 	safetySnapshot(ctx, oldDB, cfg, logger)
 
@@ -264,7 +264,7 @@ func MigrateDatabase(ctx context.Context, logger *log.Logger, p MigrateDBPayload
 		return fmt.Errorf("persist new config: %w", err)
 	}
 
-	logger.Info(nil, "migrate-db: database %q is live and config.yaml updated", p.Database)
+	logger.Info("", "migrate-db: database %q is live and config.yaml updated", p.Database)
 	return nil
 }
 
@@ -368,7 +368,7 @@ func MigrateStorage(ctx context.Context, logger *log.Logger, p MigrateStoragePay
 		return fmt.Errorf("persist new config: %w", err)
 	}
 
-	logger.Info(nil, "migrate-storage: files relocated and config.yaml updated")
+	logger.Info("", "migrate-storage: files relocated and config.yaml updated")
 	return nil
 }
 
@@ -404,7 +404,7 @@ func movePath(src, dst, mode string, logger *log.Logger) error {
 	}
 	if mode == "move" {
 		if err := os.Rename(src, dst); err != nil {
-			logger.Warn(nil, "os.Rename %s -> %s failed: %v (falling back to copy)", src, dst, err)
+			logger.Warn("", "os.Rename %s -> %s failed: %v (falling back to copy)", src, dst, err)
 		} else {
 			return nil
 		}
@@ -420,16 +420,16 @@ func movePath(src, dst, mode string, logger *log.Logger) error {
 
 func safetySnapshot(ctx context.Context, oldDB *sql.DB, cfg *config.Config, logger *log.Logger) {
 	if cfg.Backup.Path == "" {
-		logger.Warn(nil, "backup path not configured, skipping pre-migration safety snapshot")
+		logger.Warn("", "backup path not configured, skipping pre-migration safety snapshot")
 		return
 	}
 	pruneSafetySnapshots(cfg.Backup.Path, logger)
 	backupPath := filepath.Join(cfg.Backup.Path, fmt.Sprintf("pre-migration-%s.sql.gz", time.Now().UTC().Format("2006-01-02T15-04-05")))
 	if err := database.SQLDumpToFile(ctx, oldDB, database.SchemaFS, backupPath); err != nil {
-		logger.Error(nil, "pre-migration safety snapshot failed: %v (continuing)", err)
+		logger.Error("", "pre-migration safety snapshot failed: %v (continuing)", err)
 		return
 	}
-	logger.Info(nil, "pre-migration safety snapshot saved to %s", backupPath)
+	logger.Info("", "pre-migration safety snapshot saved to %s", backupPath)
 }
 
 const maxSafetySnapshots = 5
@@ -437,7 +437,7 @@ const maxSafetySnapshots = 5
 func pruneSafetySnapshots(dir string, logger *log.Logger) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		logger.Warn(nil, "safety snapshot pruning skipped: read %s: %v", dir, err)
+		logger.Warn("", "safety snapshot pruning skipped: read %s: %v", dir, err)
 		return
 	}
 	var snaps []string
@@ -453,14 +453,14 @@ func pruneSafetySnapshots(dir string, logger *log.Logger) {
 	slices.Sort(snaps)
 	for _, p := range snaps[:len(snaps)-maxSafetySnapshots] {
 		if err := os.Remove(p); err != nil {
-			logger.Error(nil, "remove old safety snapshot %s: %v", p, err)
+			logger.Error("", "remove old safety snapshot %s: %v", p, err)
 		}
 	}
 }
 
 func restoreData(ctx context.Context, dbCfg config.DatabaseConfig, newDB *sql.DB, newDSN, dumpPath string, logger *log.Logger) error {
 	if destinationHasData(ctx, newDB) {
-		logger.Info(nil, "migrate-db: destination database already has data, skipping data migration")
+		logger.Info("", "migrate-db: destination database already has data, skipping data migration")
 		return nil
 	}
 	if err := database.ValidateMigrationDestination(ctx, newDB); err != nil {

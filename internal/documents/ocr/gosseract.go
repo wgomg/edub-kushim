@@ -91,7 +91,7 @@ func (o *Gosseract) Process(ctx context.Context, docId, path string) (*string, e
 	go func() {
 		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
-			o.logger.Info(&docId, "%s", scanner.Text())
+			o.logger.Info(docId, "%s", scanner.Text())
 		}
 	}()
 
@@ -99,7 +99,7 @@ func (o *Gosseract) Process(ctx context.Context, docId, path string) (*string, e
 		_, isExit := err.(*exec.ExitError)
 		_, outExists := os.Stat(outPath)
 		if isExit && outExists == nil && isNonFatalStderr(stderr.String()) {
-			o.logger.Warn(&docId, "OCR subprocess had non-fatal errors: %v (stderr: %s)", err, stderr.String())
+			o.logger.Warn(docId, "OCR subprocess had non-fatal errors: %v (stderr: %s)", err, stderr.String())
 		} else {
 			_ = os.Remove(outPath)
 			return nil, fmt.Errorf("gosseract OCR: %w (stderr: %s)", err, stderr.String())
@@ -110,7 +110,7 @@ func (o *Gosseract) Process(ctx context.Context, docId, path string) (*string, e
 		return nil, fmt.Errorf("OCR did not create output file")
 	}
 
-	o.logger.Info(&docId, "created searchable PDF: %s", outPath)
+	o.logger.Info(docId, "created searchable PDF: %s", outPath)
 
 	optResult, err := o.optimizer.Optimize(ctx, docId, outPath)
 	if err != nil {
@@ -118,7 +118,7 @@ func (o *Gosseract) Process(ctx context.Context, docId, path string) (*string, e
 		return nil, fmt.Errorf("optimize OCR output: %w", err)
 	}
 	_ = os.Remove(outPath)
-	o.logger.Debug(&docId, "optimized OCR output: %s -> %s", outPath, *optResult)
+	o.logger.Debug(docId, "optimized OCR output: %s -> %s", outPath, *optResult)
 	return optResult, nil
 }
 
