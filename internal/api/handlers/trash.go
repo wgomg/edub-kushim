@@ -42,7 +42,7 @@ func mapTrashDocument(row database.ListTrashDocumentsRow) TrashDocumentResponse 
 // ListTrash serves the paged trash listing.
 func (h *TrashHandler) ListTrash(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	pb := GetParamBag(r)
 	if pb == nil {
@@ -82,7 +82,7 @@ func (h *TrashHandler) ListTrash(w http.ResponseWriter, r *http.Request) {
 // GetTrashDocument serves one trashed document.
 func (h *TrashHandler) GetTrashDocument(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	documentID := r.PathValue("id")
 	if documentID == "" {
@@ -119,7 +119,7 @@ func (h *TrashHandler) GetTrashDocument(w http.ResponseWriter, r *http.Request) 
 // RestoreDocument moves one document back out of the trash.
 func (h *TrashHandler) RestoreDocument(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	documentID := r.PathValue("id")
 	if documentID == "" {
@@ -138,7 +138,7 @@ func (h *TrashHandler) RestoreDocument(w http.ResponseWriter, r *http.Request) {
 // PermanentlyDeleteDocument removes one trashed document for good.
 func (h *TrashHandler) PermanentlyDeleteDocument(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	documentID := r.PathValue("id")
 	if documentID == "" {
@@ -157,7 +157,7 @@ func (h *TrashHandler) PermanentlyDeleteDocument(w http.ResponseWriter, r *http.
 // PurgeExpired purges the trash rows past their retention.
 func (h *TrashHandler) PurgeExpired(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	count, err := h.trashSvc.PurgeExpired(ctx)
 	if err != nil {
@@ -173,7 +173,7 @@ func (h *TrashHandler) PurgeExpired(w http.ResponseWriter, r *http.Request) {
 // reporting per-document failures.
 func (h *TrashHandler) BatchPermanentlyDelete(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	var req BatchDeleteRequest
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
@@ -225,7 +225,7 @@ func (h *TrashHandler) BatchPermanentlyDelete(w http.ResponseWriter, r *http.Req
 // failures.
 func (h *TrashHandler) BatchRestore(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	var req BatchDeleteRequest
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)

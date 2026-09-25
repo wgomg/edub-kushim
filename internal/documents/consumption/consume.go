@@ -276,7 +276,7 @@ func (h *ConsumeTaskHandler) recoverOnCompleted(payload json.RawMessage) (onComp
 		OnCompleted          string `json:"on_completed"`
 		OnCompletedThumbnail string `json:"on_completed_thumbnail"`
 	}
-	json.Unmarshal(payload, &p)
+	_ = json.Unmarshal(payload, &p)
 	return p.OnCompleted, p.OnCompletedThumbnail
 }
 
@@ -286,6 +286,6 @@ func (h *ConsumeTaskHandler) DedupKey(payload json.RawMessage) string {
 	var p struct {
 		FilePath string `json:"file_path"`
 	}
-	json.Unmarshal(payload, &p)
+	_ = json.Unmarshal(payload, &p)
 	return p.FilePath
 }

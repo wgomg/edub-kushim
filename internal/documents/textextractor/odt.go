@@ -53,7 +53,7 @@ func (o *Odt) Extract(ctx context.Context, path string, _ string) (*string, erro
 				return nil, fmt.Errorf("odt: open content.xml: %w", err)
 			}
 			contentXML, err = io.ReadAll(rc)
-			rc.Close()
+			_ = rc.Close()
 			if err != nil {
 				return nil, fmt.Errorf("odt: read content.xml: %w", err)
 			}
@@ -96,7 +96,7 @@ func extractOdtText(xmlData []byte) (string, error) {
 
 		switch t := tok.(type) {
 		case xml.StartElement:
-			se := xml.CopyToken(t).(xml.StartElement)
+			se, _ := xml.CopyToken(t).(xml.StartElement)
 			local := se.Name.Local
 			space := se.Name.Space
 
@@ -111,7 +111,7 @@ func extractOdtText(xmlData []byte) (string, error) {
 				buf.Write(t)
 			}
 		case xml.EndElement:
-			ee := xml.CopyToken(t).(xml.EndElement)
+			ee, _ := xml.CopyToken(t).(xml.EndElement)
 			local := ee.Name.Local
 			space := ee.Name.Space
 			if space == odtNS && (local == "p" || local == "h") {

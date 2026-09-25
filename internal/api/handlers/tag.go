@@ -48,7 +48,7 @@ func NewTagHandler(tag *curation.Tag, merges *curation.TagMerge, identity *curat
 // document counts.
 func (h *TagHandler) List(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	pb := GetParamBag(r)
 	if pb == nil {
@@ -102,7 +102,7 @@ func (h *TagHandler) List(w http.ResponseWriter, r *http.Request) {
 // Create creates one tag from the JSON body.
 func (h *TagHandler) Create(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	var req CreateTagRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -149,7 +149,7 @@ func (h *TagHandler) Create(w http.ResponseWriter, r *http.Request) {
 // Update renames one tag.
 func (h *TagHandler) Update(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
@@ -201,7 +201,7 @@ func (h *TagHandler) Update(w http.ResponseWriter, r *http.Request) {
 // Delete removes a tag and blocks its name.
 func (h *TagHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
@@ -232,7 +232,7 @@ func (h *TagHandler) Delete(w http.ResponseWriter, r *http.Request) {
 // verdicts and pending identity counts.
 func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	pb := GetParamBag(r)
 	if pb == nil {
@@ -305,7 +305,7 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 // PromoteTag promotes one provisional tag, recording the reason.
 func (h *TagHandler) PromoteTag(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
@@ -333,7 +333,7 @@ func (h *TagHandler) PromoteTag(w http.ResponseWriter, r *http.Request) {
 // ReevaluateIdentity enqueues a fresh identity sweep for the vocabulary.
 func (h *TagHandler) ReevaluateIdentity(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	batchID, alreadyQueued, err := h.identity.Enqueue(ctx)
 	if err != nil {
@@ -352,7 +352,7 @@ func (h *TagHandler) ReevaluateIdentity(w http.ResponseWriter, r *http.Request) 
 // Merge folds one tag into the target from the JSON body.
 func (h *TagHandler) Merge(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
@@ -388,7 +388,7 @@ func (h *TagHandler) Merge(w http.ResponseWriter, r *http.Request) {
 // ListDeleted serves the paged deleted-tag records.
 func (h *TagHandler) ListDeleted(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	pb := GetParamBag(r)
 	if pb == nil {
@@ -423,7 +423,7 @@ func (h *TagHandler) ListDeleted(w http.ResponseWriter, r *http.Request) {
 // RestoreDeleted unblocks one deleted tag name.
 func (h *TagHandler) RestoreDeleted(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	name := strings.TrimSpace(r.PathValue("name"))
 	if name == "" {
@@ -448,7 +448,7 @@ func (h *TagHandler) RestoreDeleted(w http.ResponseWriter, r *http.Request) {
 // MergeSuggestions serves the paged merge-review candidates.
 func (h *TagHandler) MergeSuggestions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	pb := GetParamBag(r)
 	if pb == nil {
@@ -480,7 +480,7 @@ func (h *TagHandler) MergeSuggestions(w http.ResponseWriter, r *http.Request) {
 // DismissMergePair records the decision not to merge a pair.
 func (h *TagHandler) DismissMergePair(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	var req MergePairRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -499,7 +499,7 @@ func (h *TagHandler) DismissMergePair(w http.ResponseWriter, r *http.Request) {
 // RestoreMergePair makes a dismissed pair reviewable again.
 func (h *TagHandler) RestoreMergePair(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	var req MergePairRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

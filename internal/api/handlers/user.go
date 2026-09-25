@@ -80,7 +80,7 @@ func toUserResponseFromRow(row database.ListUsersRow) UserResponse {
 // List serves the paged user listing.
 func (h *UserHandler) List(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	pb := GetParamBag(r)
 	if pb == nil {
@@ -115,7 +115,7 @@ func (h *UserHandler) List(w http.ResponseWriter, r *http.Request) {
 // Get serves one user without the hash.
 func (h *UserHandler) Get(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
@@ -141,7 +141,7 @@ func (h *UserHandler) Get(w http.ResponseWriter, r *http.Request) {
 // Create creates one user from the JSON body.
 func (h *UserHandler) Create(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	var req CreateUserRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -175,7 +175,7 @@ func (h *UserHandler) Create(w http.ResponseWriter, r *http.Request) {
 // Update changes one user's username, password and role.
 func (h *UserHandler) Update(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
@@ -215,7 +215,7 @@ func (h *UserHandler) Update(w http.ResponseWriter, r *http.Request) {
 // Delete removes one user.
 func (h *UserHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)

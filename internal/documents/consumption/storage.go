@@ -233,12 +233,12 @@ func CopyFile(src, dst string) error {
 	defer dstFile.Close()
 
 	if _, err := io.Copy(dstFile, srcFile); err != nil {
-		os.Remove(dst)
+		_ = os.Remove(dst)
 		return fmt.Errorf("failed to copy file contents: %w", err)
 	}
 
 	if err := dstFile.Sync(); err != nil {
-		os.Remove(dst)
+		_ = os.Remove(dst)
 		return fmt.Errorf("failed to sync destination file: %w", err)
 	}
 
@@ -279,17 +279,19 @@ func moveFileCrossDevice(src, dst string, srcInfo os.FileInfo) error {
 	defer dstFile.Close()
 
 	if _, err := io.Copy(dstFile, srcFile); err != nil {
-		os.Remove(dst)
+		_ = os.Remove(dst)
 		return fmt.Errorf("failed to copy file contents: %w", err)
 	}
 
 	if err := dstFile.Sync(); err != nil {
-		os.Remove(dst)
+		_ = os.Remove(dst)
 		return fmt.Errorf("failed to sync destination file: %w", err)
 	}
 
-	srcFile.Close()
-	dstFile.Close()
+	_ = srcFile.Close()
+	if err := dstFile.Close(); err != nil {
+		return fmt.Errorf("failed to close destination file: %w", err)
+	}
 
 	if err := os.Remove(src); err != nil {
 		// if we can't remove source, at least we have the copy

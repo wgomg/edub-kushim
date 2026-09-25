@@ -77,7 +77,7 @@ func (o *OcrMyPdf) Process(ctx context.Context, docId, path string) (*string, er
 
 	if err := cmd.Run(); err != nil {
 		if _, statErr := os.Stat(outputPath); statErr == nil {
-			os.Remove(outputPath)
+			_ = os.Remove(outputPath)
 		}
 		stderrStr := stderr.String()
 		hint := ""

@@ -65,7 +65,7 @@ func (h *ThumbnailTaskHandler) Handle(ctx context.Context, t task.Task) (json.Ra
 	progress.Set("save", "", 0)
 	thumbPath := storage.ThumbnailPath(h.getCfg().Storage.StorageDir, document.CreatedAt.Time, p.DocumentID)
 	if err := MoveFile(tmpPath, thumbPath); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return nil, &task.Error{ReqID: p.DocumentID, Err: fmt.Errorf("move thumbnail into storage: %w", err)}
 	}
 

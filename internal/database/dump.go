@@ -86,11 +86,8 @@ func DumpSchemaAndData(ctx context.Context, db *sql.DB, schemaFS embed.FS, w io.
 	if err := write("SET session_replication_role = 'origin';\n"); err != nil {
 		return err
 	}
-	if err := write("COMMIT;\n"); err != nil {
-		return err
-	}
 
-	return nil
+	return write("COMMIT;\n")
 }
 
 // SQLDumpToFile dumps the database through DumpSchemaAndData into a
@@ -110,7 +107,7 @@ func SQLDumpToFile(ctx context.Context, db *sql.DB, schemaFS embed.FS, destPath 
 		err = fErr
 	}
 	if err != nil {
-		os.Remove(destPath)
+		_ = os.Remove(destPath)
 		return fmt.Errorf("write sql dump %s: %w", destPath, err)
 	}
 	return nil

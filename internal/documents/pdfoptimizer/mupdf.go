@@ -48,7 +48,7 @@ func (m *MuPDF) Optimize(ctx context.Context, docId, path string) (*string, erro
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		os.Remove(outputPath)
+		_ = os.Remove(outputPath)
 		return nil, fmt.Errorf("mupdf pdf_clean_file: %w (stderr: %s)", err, stderr.String())
 	}
 

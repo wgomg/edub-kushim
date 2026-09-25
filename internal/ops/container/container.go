@@ -137,7 +137,7 @@ func (c *Container) GetClient() (*database.Client, error) {
 // reconnects with the current configuration.
 func (c *Container) InvalidateDB() {
 	if c.db != nil {
-		c.db.Close()
+		_ = c.db.Close()
 		c.db = nil
 	}
 	c.client = nil
@@ -407,7 +407,7 @@ func (c *Container) Close() {
 		c.pools.tagidentity.Stop(ctx)
 	}
 	if c.db != nil {
-		c.db.Close()
+		_ = c.db.Close()
 	}
 	if c.tag != nil {
 		c.tag.Close()

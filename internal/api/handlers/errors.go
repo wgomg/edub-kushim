@@ -1,12 +1,21 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
 	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/log"
 )
+
+// requestID extracts the request ID the middleware stores in the context.
+// A missing or non-string value yields the empty string, which handlers
+// already treat as an unknown request id.
+func requestID(ctx context.Context) string {
+	id, _ := ctx.Value("reqid").(string)
+	return id
+}
 
 func writeServiceError(w http.ResponseWriter, logger *log.Logger, reqID *string, op string, err error) {
 	kind := errs.KindOf(err)

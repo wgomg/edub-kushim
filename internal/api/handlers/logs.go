@@ -41,7 +41,7 @@ func NewLogsHandler(getConfig func() *config.Config, logger *log.Logger) *LogsHa
 
 // ListLogs tails one process log, clamped between 100 and 5000 lines.
 func (h *LogsHandler) ListLogs(w http.ResponseWriter, r *http.Request) {
-	reqID := r.Context().Value("reqid").(string)
+	reqID := requestID(r.Context())
 	name := r.PathValue("name")
 	if !allowedLogNames[name] {
 		w.Header().Set("Content-Type", "application/json")
@@ -90,7 +90,13 @@ func (h *LogsHandler) ListLogs(w http.ResponseWriter, r *http.Request) {
 
 	if stat.Size() > maxRead {
 		offset := stat.Size() - maxRead
-		f.Seek(offset, io.SeekStart)
+		if _, err := f.Seek(offset, io.SeekStart); err != nil {
+			h.logger.Error(&reqID, "seek log file %s: %v", logPath, err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": "failed to read log"})
+			return
+		}
 		reader = io.LimitReader(f, maxRead)
 		partialFirstLine = true
 	} else {

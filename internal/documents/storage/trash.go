@@ -130,8 +130,8 @@ func moveFileIfExists(src, dst string) error {
 
 func removeEmptyTrashDirs(storageDir, documentID string) {
 	docTrash := DocumentTrashDir(storageDir, documentID)
-	os.Remove(filepath.Join(docTrash, DirThumbnails))
-	os.Remove(filepath.Join(docTrash, DirOriginal))
-	os.Remove(filepath.Join(docTrash, DirProcessed))
-	os.Remove(docTrash)
+	_ = os.Remove(filepath.Join(docTrash, DirThumbnails))
+	_ = os.Remove(filepath.Join(docTrash, DirOriginal))
+	_ = os.Remove(filepath.Join(docTrash, DirProcessed))
+	_ = os.Remove(docTrash)
 }

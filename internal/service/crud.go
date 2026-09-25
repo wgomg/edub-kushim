@@ -26,7 +26,7 @@ func (s *CrudServices) Close() {
 	for i := 0; i < t.NumField(); i++ {
 		f := v.Field(i)
 		if closer, ok := f.Interface().(io.Closer); ok && !f.IsNil() {
-			closer.Close()
+			_ = closer.Close()
 		}
 	}
 }

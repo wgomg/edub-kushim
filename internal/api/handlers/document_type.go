@@ -24,7 +24,7 @@ func NewDocumentTypeHandler(services *service.CrudServices, logger *log.Logger) 
 // List serves the paged document types with document counts.
 func (h *DocumentTypeHandler) List(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	pb := GetParamBag(r)
 	if pb == nil {
@@ -66,7 +66,7 @@ func (h *DocumentTypeHandler) List(w http.ResponseWriter, r *http.Request) {
 // Create creates one document type from the JSON body.
 func (h *DocumentTypeHandler) Create(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	var req CreateDocumentTypeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -113,7 +113,7 @@ func (h *DocumentTypeHandler) Create(w http.ResponseWriter, r *http.Request) {
 // Update renames one document type.
 func (h *DocumentTypeHandler) Update(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
@@ -168,7 +168,7 @@ func (h *DocumentTypeHandler) Update(w http.ResponseWriter, r *http.Request) {
 // Delete removes one document type.
 func (h *DocumentTypeHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)

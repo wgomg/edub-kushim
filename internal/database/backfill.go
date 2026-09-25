@@ -36,7 +36,7 @@ func BackfillProcessedSizes(ctx context.Context, db *sql.DB) error {
 	for rows.Next() {
 		var r pendingRow
 		if err := rows.Scan(&r.id, &r.path); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return fmt.Errorf("scan pending processed-size row: %w", err)
 		}
 		pending = append(pending, r)
@@ -120,7 +120,7 @@ func BackfillTextHash(ctx context.Context, db *sql.DB) error {
 		for rows.Next() {
 			var r pendingRow
 			if err := rows.Scan(&r.id, &r.text); err != nil {
-				rows.Close()
+				_ = rows.Close()
 				return fmt.Errorf("scan pending text-hash row: %w", err)
 			}
 			pending = append(pending, r)
@@ -152,7 +152,7 @@ func BackfillTextHash(ctx context.Context, db *sql.DB) error {
 		}
 		sb.WriteString(") AS v(id, hash) WHERE document.id = v.id AND document.text_hash IS NULL")
 		if _, err := tx.ExecContext(ctx, sb.String(), args...); err != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			return fmt.Errorf("backfill text_hash batch: %w", err)
 		}
 		if err := tx.Commit(); err != nil {

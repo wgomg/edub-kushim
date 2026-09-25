@@ -74,7 +74,7 @@ func migrateDatabaseHandler(c *container.Container, args []string) error {
 	}
 
 	if host == "" || port == "" || user == "" || database == "" {
-		fmt.Fprintln(os.Stderr, migrateDatabaseUsage)
+		_, _ = fmt.Fprintln(os.Stderr, migrateDatabaseUsage)
 		return fmt.Errorf("--host, --port, --user and --database are required (--password may be set via KUSHIM_DB_PASSWORD)")
 	}
 	if sslMode == "" {
@@ -123,7 +123,7 @@ func migrateStorageHandler(c *container.Container, args []string) error {
 	}
 
 	if newStorage == "" && newConsumption == "" {
-		fmt.Fprintln(os.Stderr, migrateStorageUsage)
+		_, _ = fmt.Fprintln(os.Stderr, migrateStorageUsage)
 		return fmt.Errorf("at least one of --storage-dir or --consumption-dir is required")
 	}
 

@@ -48,7 +48,7 @@ func (h *APIKeyHandler) authorize(r *http.Request, targetID int64) bool {
 
 func (h *APIKeyHandler) issueKey(w http.ResponseWriter, r *http.Request, keyFunc func(context.Context, int64) (string, error), message string, status int) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	id, err := h.parseID(r)
 	if err != nil {
@@ -94,7 +94,7 @@ func (h *APIKeyHandler) RotateKey(w http.ResponseWriter, r *http.Request) {
 // RevokeKey clears a user's API key.
 func (h *APIKeyHandler) RevokeKey(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	id, err := h.parseID(r)
 	if err != nil {
@@ -122,7 +122,7 @@ func (h *APIKeyHandler) RevokeKey(w http.ResponseWriter, r *http.Request) {
 // GetKeyStatus reports a user's key status without secrets.
 func (h *APIKeyHandler) GetKeyStatus(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	id, err := h.parseID(r)
 	if err != nil {
@@ -173,7 +173,7 @@ func (h *APIKeyHandler) callerID(r *http.Request) int64 {
 // MeGenerateKey mints the calling user's own API key.
 func (h *APIKeyHandler) MeGenerateKey(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 	id := h.callerID(r)
 	if id == 0 {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -203,7 +203,7 @@ func (h *APIKeyHandler) MeGenerateKey(w http.ResponseWriter, r *http.Request) {
 // MeRevokeKey revokes the calling user's API key.
 func (h *APIKeyHandler) MeRevokeKey(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 	id := h.callerID(r)
 	if id == 0 {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -225,7 +225,7 @@ func (h *APIKeyHandler) MeRevokeKey(w http.ResponseWriter, r *http.Request) {
 // MeRotateKey rotates the calling user's API key.
 func (h *APIKeyHandler) MeRotateKey(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 	id := h.callerID(r)
 	if id == 0 {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -254,7 +254,7 @@ func (h *APIKeyHandler) MeRotateKey(w http.ResponseWriter, r *http.Request) {
 // MeGetKeyStatus reports the calling user's key status.
 func (h *APIKeyHandler) MeGetKeyStatus(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 	id := h.callerID(r)
 	if id == 0 {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)

@@ -186,7 +186,7 @@ func DownloadTessdataLanguage(ctx context.Context, cfg *Config, lang string) err
 
 	url := fmt.Sprintf("https://github.com/tesseract-ocr/tessdata_fast/raw/main/%s.traineddata", lang)
 	if err := downloadFile(url, dest); err != nil {
-		os.Remove(dest)
+		_ = os.Remove(dest)
 		return fmt.Errorf("download %s: %w", lang, err)
 	}
 	return nil

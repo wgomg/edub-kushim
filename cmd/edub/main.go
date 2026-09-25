@@ -53,7 +53,7 @@ func startServer() {
 	logger := log.NewLogger(cfg.App.LogLevel)
 	slog.SetDefault(logger.SlogLogger())
 	logFile := filepath.Join(*configDir, "logs", "edub.log")
-	os.MkdirAll(filepath.Dir(logFile), 0755)
+	_ = os.MkdirAll(filepath.Dir(logFile), 0755)
 	if err := logger.SetLogFile(log.LogFileConfig{
 		Path:       logFile,
 		MaxSize:    cfg.App.Logging.MaxSize,

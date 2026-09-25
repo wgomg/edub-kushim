@@ -120,10 +120,12 @@ func ExtractArchive(archivePath, destDir string) error {
 			return fmt.Errorf("create file %s: %w", target, err)
 		}
 		if _, err := io.Copy(dst, tr); err != nil {
-			dst.Close()
+			_ = dst.Close()
 			return fmt.Errorf("write file %s: %w", target, err)
 		}
-		dst.Close()
+		if err := dst.Close(); err != nil {
+			return fmt.Errorf("close file %s: %w", target, err)
+		}
 	}
 
 	return nil
@@ -210,7 +212,7 @@ func ReplaceFiles(extractDir string, db *sql.DB, dbCfg config.DatabaseConfig, ds
 			}
 
 			oldBackup := storageDir + ".old"
-			os.RemoveAll(oldBackup)
+			_ = os.RemoveAll(oldBackup)
 
 			if err := os.Rename(storageDir, oldBackup); err != nil && !os.IsNotExist(err) {
 				return fmt.Errorf("rename old storage: %w", err)
@@ -218,17 +220,17 @@ func ReplaceFiles(extractDir string, db *sql.DB, dbCfg config.DatabaseConfig, ds
 
 			if renameInPlace {
 				if err := os.Rename(extractStorage, storageDir); err != nil {
-					os.Rename(oldBackup, storageDir)
+					_ = os.Rename(oldBackup, storageDir)
 					return fmt.Errorf("rename new storage: %w", err)
 				}
 			} else {
 				if err := os.Rename(tmpStorage, storageDir); err != nil {
-					os.Rename(oldBackup, storageDir)
+					_ = os.Rename(oldBackup, storageDir)
 					return fmt.Errorf("rename new storage: %w", err)
 				}
 			}
 
-			os.RemoveAll(oldBackup)
+			_ = os.RemoveAll(oldBackup)
 		}
 	}
 

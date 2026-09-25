@@ -45,7 +45,7 @@ func (h *BackupTaskHandler) DedupKey(payload json.RawMessage) string {
 		Mode string `json:"mode"`
 	}
 	if len(payload) > 0 {
-		json.Unmarshal(payload, &p)
+		_ = json.Unmarshal(payload, &p)
 	}
 	if p.Mode == "" {
 		p.Mode = string(BackupModeFull)

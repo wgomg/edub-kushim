@@ -47,7 +47,7 @@ func NewTaskHandler(services *service.CrudServices, client *database.Client, log
 // task list.
 func (h *TaskHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	pb := GetParamBag(r)
 	if pb == nil {
@@ -99,7 +99,7 @@ func (h *TaskHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
 // GetTask serves one task's row with its progress.
 func (h *TaskHandler) GetTask(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	taskID := r.PathValue("id")
 
@@ -122,7 +122,7 @@ func (h *TaskHandler) GetTask(w http.ResponseWriter, r *http.Request) {
 // report.
 func (h *TaskHandler) GetTagReconcileReport(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	row, err := h.queries.GetLastCompletedTagReconcileTaskWithResult(ctx)
 	if err != nil {
@@ -156,7 +156,7 @@ func (h *TaskHandler) GetTagReconcileReport(w http.ResponseWriter, r *http.Reque
 // RetryTask resets one failed task for reprocessing.
 func (h *TaskHandler) RetryTask(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	taskID := r.PathValue("id")
 
@@ -176,7 +176,7 @@ func (h *TaskHandler) RetryTask(w http.ResponseWriter, r *http.Request) {
 // RetryBatch resets one batch's failed tasks.
 func (h *TaskHandler) RetryBatch(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	batchID := r.PathValue("id")
 
@@ -194,7 +194,7 @@ func (h *TaskHandler) RetryBatch(w http.ResponseWriter, r *http.Request) {
 // ListBatches serves the batch summaries, optionally filtered by status.
 func (h *TaskHandler) ListBatches(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	pb := GetParamBag(r)
 	if pb == nil {
@@ -254,7 +254,7 @@ func batchSummaryToResponse(s *service.BatchSummary) BatchSummaryResponse {
 // analytics, processing health and storage usage.
 func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	items := make([]BatchOverviewItem, 0)
 	overviews, err := h.services.Batch.ListOverviews(ctx, 10, 0)
@@ -511,7 +511,7 @@ func (h *TaskHandler) buildProcessingHealth(ctx context.Context, reqID *string) 
 // GetBatchSummary serves one batch's per-status counts.
 func (h *TaskHandler) GetBatchSummary(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	batchID := r.PathValue("id")
 
@@ -531,7 +531,7 @@ func (h *TaskHandler) GetBatchSummary(w http.ResponseWriter, r *http.Request) {
 // ResumeBatch moves a paused batch back to queued.
 func (h *TaskHandler) ResumeBatch(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	batchID := r.PathValue("id")
 
@@ -587,7 +587,7 @@ func (h *TaskHandler) ResumeBatch(w http.ResponseWriter, r *http.Request) {
 // is signalled, and processing tasks are discarded when it steps down.
 func (h *TaskHandler) CancelBatch(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	batchID := r.PathValue("id")
 
@@ -710,7 +710,7 @@ func buildTaskResponse(t database.Task, includeResult bool) TaskResponse {
 			FileName   string `json:"file_name"`
 			DocumentID string `json:"document_id"`
 		}
-		json.Unmarshal(*t.Payload, &p)
+		_ = json.Unmarshal(*t.Payload, &p)
 		payloadDocID = p.DocumentID
 		if p.FilePath != "" {
 			fileName = filepath.Base(p.FilePath)

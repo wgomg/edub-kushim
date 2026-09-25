@@ -451,7 +451,7 @@ func (r *Runner) GenerateThumbnail(ctx context.Context, docId, path, outputPath 
 		return thumbDims{w, h}, err
 	})
 	if err != nil {
-		os.Remove(outputPath)
+		_ = os.Remove(outputPath)
 		return nil, fmt.Errorf("thumbnail: %w", err)
 	}
 

@@ -34,7 +34,7 @@ func mapErroredFile(f service.ErroredFileInfo) map[string]any {
 // ListErrored serves the errors-directory listing.
 func (h *ErroredHandler) ListErrored(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	files, err := h.svc.List(ctx)
 	if err != nil {
@@ -53,7 +53,7 @@ func (h *ErroredHandler) ListErrored(w http.ResponseWriter, r *http.Request) {
 
 // DownloadErrored streams one errored original for inspection.
 func (h *ErroredHandler) DownloadErrored(w http.ResponseWriter, r *http.Request) {
-	reqID := r.Context().Value("reqid").(string)
+	reqID := requestID(r.Context())
 
 	subdir := r.URL.Query().Get("subdir")
 	filename := r.URL.Query().Get("file")
@@ -94,7 +94,7 @@ func (h *ErroredHandler) DownloadErrored(w http.ResponseWriter, r *http.Request)
 
 // DeleteErrored removes one errored file.
 func (h *ErroredHandler) DeleteErrored(w http.ResponseWriter, r *http.Request) {
-	reqID := r.Context().Value("reqid").(string)
+	reqID := requestID(r.Context())
 
 	subdir := r.URL.Query().Get("subdir")
 	filename := r.URL.Query().Get("file")
@@ -115,7 +115,7 @@ func (h *ErroredHandler) DeleteErrored(w http.ResponseWriter, r *http.Request) {
 // DeleteAllErrored clears the whole errors directory.
 func (h *ErroredHandler) DeleteAllErrored(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	count, err := h.svc.DeleteAll(ctx)
 	if err != nil {

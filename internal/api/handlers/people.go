@@ -27,7 +27,7 @@ func NewPeopleHandler(services *service.CrudServices, logger *log.Logger) *Peopl
 // List serves the paged people listing with document counts.
 func (h *PeopleHandler) List(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	pb := GetParamBag(r)
 	if pb == nil {
@@ -89,7 +89,7 @@ func (h *PeopleHandler) List(w http.ResponseWriter, r *http.Request) {
 // Create creates one person from the JSON body.
 func (h *PeopleHandler) Create(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	var req CreatePersonRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -144,7 +144,7 @@ func (h *PeopleHandler) Create(w http.ResponseWriter, r *http.Request) {
 // Update renames one person.
 func (h *PeopleHandler) Update(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
@@ -207,7 +207,7 @@ func (h *PeopleHandler) Update(w http.ResponseWriter, r *http.Request) {
 // Delete removes one person.
 func (h *PeopleHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
@@ -233,7 +233,7 @@ func (h *PeopleHandler) Delete(w http.ResponseWriter, r *http.Request) {
 // ListPeopleTypes serves the people-type taxonomy with paging.
 func (h *PeopleHandler) ListPeopleTypes(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	pb := GetParamBag(r)
 	if pb == nil {
@@ -276,7 +276,7 @@ func (h *PeopleHandler) ListPeopleTypes(w http.ResponseWriter, r *http.Request) 
 // CreatePeopleType creates one people type from the JSON body.
 func (h *PeopleHandler) CreatePeopleType(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	var req CreatePeopleTypeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -327,7 +327,7 @@ func (h *PeopleHandler) CreatePeopleType(w http.ResponseWriter, r *http.Request)
 // UpdatePeopleType renames one people type.
 func (h *PeopleHandler) UpdatePeopleType(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
@@ -386,7 +386,7 @@ func (h *PeopleHandler) UpdatePeopleType(w http.ResponseWriter, r *http.Request)
 // DeletePeopleType removes one people type.
 func (h *PeopleHandler) DeletePeopleType(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)

@@ -170,13 +170,13 @@ func CopyToConsumptionDir(consumptionDir, sourcePath string) (string, error) {
 	}
 
 	if _, err := io.Copy(dst, src); err != nil {
-		dst.Close()
-		os.Remove(destPath)
+		_ = dst.Close()
+		_ = os.Remove(destPath)
 		return "", fmt.Errorf("copy file: %w", err)
 	}
 
 	if err := dst.Close(); err != nil {
-		os.Remove(destPath)
+		_ = os.Remove(destPath)
 		return "", fmt.Errorf("close destination file: %w", err)
 	}
 

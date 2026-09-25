@@ -211,7 +211,7 @@ func restoreHandler(c *container.Container, args []string) error {
 		fmt.Println("The archived configuration is preserved, not applied.")
 		fmt.Print("Are you sure? (type 'yes' to confirm): ")
 		var confirmation string
-		fmt.Scanln(&confirmation)
+		_, _ = fmt.Scanln(&confirmation)
 		if confirmation != "yes" {
 			fmt.Println("Restore cancelled.")
 			return nil

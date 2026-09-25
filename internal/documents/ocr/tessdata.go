@@ -39,13 +39,13 @@ func EnsureLanguages(logger *log.Logger, dataDir string, languages []string) err
 			)
 			logger.Info(nil, "downloading OCR language: %s", lang)
 			if dlErr := downloadTessdata(url, dest); dlErr != nil {
-				os.Remove(dest)
+				_ = os.Remove(dest)
 				err = fmt.Errorf("download %s: %w", lang, dlErr)
 				return
 			}
 		}
 
-		os.Setenv("TESSDATA_PREFIX", dataDir)
+		_ = os.Setenv("TESSDATA_PREFIX", dataDir)
 		logger.Debug(nil, "TESSDATA_PREFIX=%s", dataDir)
 	})
 	return err

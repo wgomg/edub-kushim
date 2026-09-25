@@ -202,7 +202,7 @@ func consumeOnCompleted(payload json.RawMessage) string {
 	var p struct {
 		OnCompleted string `json:"on_completed"`
 	}
-	json.Unmarshal(payload, &p)
+	_ = json.Unmarshal(payload, &p)
 	return p.OnCompleted
 }
 
@@ -210,6 +210,6 @@ func consumeOnCompletedThumbnail(payload json.RawMessage) string {
 	var p struct {
 		OnCompletedThumbnail string `json:"on_completed_thumbnail"`
 	}
-	json.Unmarshal(payload, &p)
+	_ = json.Unmarshal(payload, &p)
 	return p.OnCompletedThumbnail
 }

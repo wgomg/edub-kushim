@@ -50,7 +50,7 @@ func mapOrphanedFile(f database.OrphanedFile) map[string]any {
 // ListOrphaned serves the quarantined files.
 func (h *OrphanedHandler) ListOrphaned(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	files, err := h.svc.List(ctx)
 	if err != nil {
@@ -70,7 +70,7 @@ func (h *OrphanedHandler) ListOrphaned(w http.ResponseWriter, r *http.Request) {
 // ScanOrphaned runs one scan-and-quarantine sweep.
 func (h *OrphanedHandler) ScanOrphaned(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	count, err := h.svc.ScanAndQuarantine(ctx)
 	if err != nil {
@@ -87,7 +87,7 @@ func (h *OrphanedHandler) ScanOrphaned(w http.ResponseWriter, r *http.Request) {
 // DeleteOrphaned removes one quarantined file.
 func (h *OrphanedHandler) DeleteOrphaned(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
@@ -107,7 +107,7 @@ func (h *OrphanedHandler) DeleteOrphaned(w http.ResponseWriter, r *http.Request)
 // RestoreOrphaned re-consumes one quarantined file.
 func (h *OrphanedHandler) RestoreOrphaned(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
@@ -128,7 +128,7 @@ func (h *OrphanedHandler) RestoreOrphaned(w http.ResponseWriter, r *http.Request
 // directory.
 func (h *OrphanedHandler) MoveToInbox(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
@@ -148,7 +148,7 @@ func (h *OrphanedHandler) MoveToInbox(w http.ResponseWriter, r *http.Request) {
 // DeleteAllOrphaned removes every quarantined file.
 func (h *OrphanedHandler) DeleteAllOrphaned(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	count, err := h.svc.DeleteAll(ctx)
 	if err != nil {
@@ -166,7 +166,7 @@ func (h *OrphanedHandler) DeleteAllOrphaned(w http.ResponseWriter, r *http.Reque
 // directory.
 func (h *OrphanedHandler) MoveAllToInbox(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	count, err := h.svc.MoveAllToInbox(ctx)
 	if err != nil {

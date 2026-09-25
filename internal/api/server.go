@@ -440,7 +440,7 @@ func (s *Server) onConfigReload(cfg *config.Config) {
 
 	s.reconnectDB(newDB)
 	if oldDB := s.db; oldDB != nil {
-		oldDB.Close()
+		_ = oldDB.Close()
 	}
 	s.db = newDB
 	s.logger.Info(nil, "reconnected to new database")

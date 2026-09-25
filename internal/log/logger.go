@@ -224,7 +224,7 @@ func (l *Logger) SetLogFile(cfg LogFileConfig) error {
 	}
 
 	if l.fileCloser != nil {
-		l.fileCloser.Close()
+		_ = l.fileCloser.Close()
 	}
 
 	l.fileHandler = &fileHandler{writer: writer}
@@ -301,10 +301,10 @@ func (l *Logger) log(level slog.Level, pc uintptr, reqID *string, format string,
 	record := slog.NewRecord(time.Now(), level, msg, pc)
 
 	if l.fileHandler != nil {
-		l.fileHandler.Handle(context.Background(), record)
+		_ = l.fileHandler.Handle(context.Background(), record)
 	}
 	if l.consoleHandler.Enabled(context.Background(), level) {
-		l.consoleHandler.Handle(context.Background(), record)
+		_ = l.consoleHandler.Handle(context.Background(), record)
 	}
 }
 
@@ -363,11 +363,11 @@ func (l *Logger) Fatal(v ...any) {
 	msg := fmt.Sprint(v...)
 	if l.fileHandler != nil {
 		record := slog.NewRecord(time.Now(), levelFatalSlog, msg, pc)
-		l.fileHandler.Handle(context.Background(), record)
+		_ = l.fileHandler.Handle(context.Background(), record)
 	}
 	if l.consoleHandler.Enabled(context.Background(), levelFatalSlog) {
 		record := slog.NewRecord(time.Now(), levelFatalSlog, msg, pc)
-		l.consoleHandler.Handle(context.Background(), record)
+		_ = l.consoleHandler.Handle(context.Background(), record)
 	}
 	os.Exit(1)
 }

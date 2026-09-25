@@ -33,7 +33,7 @@ func main() {
 	if commandName == "setup" {
 		startupLogger := log.NewLogger("info")
 		if err := setup.RunSetup(args, startupLogger); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			_, _ = fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 		return
@@ -71,7 +71,7 @@ func main() {
 			}
 		}
 		if inputPath == "" || outputPath == "" || languagesStr == "" || dataDir == "" {
-			fmt.Fprintf(os.Stderr, "usage: kushim internal-ocr --input <file> --output <file> --languages <lang,lang> --datadir <path>\n")
+			_, _ = fmt.Fprintf(os.Stderr, "usage: kushim internal-ocr --input <file> --output <file> --languages <lang,lang> --datadir <path>\n")
 			os.Exit(1)
 		}
 		languages := strings.Split(languagesStr, ",")
@@ -80,12 +80,12 @@ func main() {
 			var err error
 			ocrWorkers, err = strconv.Atoi(ocrWorkersStr)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "invalid --ocr-workers value %q: %v\n", ocrWorkersStr, err)
+				_, _ = fmt.Fprintf(os.Stderr, "invalid --ocr-workers value %q: %v\n", ocrWorkersStr, err)
 				os.Exit(1)
 			}
 		}
 		if err := ocr.RunStandalone(inputPath, outputPath, languages, dataDir, ocrWorkers); err != nil {
-			fmt.Fprintf(os.Stderr, "ocr: %v\n", err)
+			_, _ = fmt.Fprintf(os.Stderr, "ocr: %v\n", err)
 			os.Exit(1)
 		}
 		return
@@ -124,11 +124,11 @@ func main() {
 			}
 		}
 		if inputPath == "" || outputPath == "" {
-			fmt.Fprintf(os.Stderr, "usage: kushim internal-thumbnail --input <file> --output <file> [--dpi <dpi>] [--max-width <px>] [--quality <1-100>]\n")
+			_, _ = fmt.Fprintf(os.Stderr, "usage: kushim internal-thumbnail --input <file> --output <file> [--dpi <dpi>] [--max-width <px>] [--quality <1-100>]\n")
 			os.Exit(1)
 		}
 		if err := thumbnail.RunStandalone(inputPath, outputPath, dpi, maxWidth, quality); err != nil {
-			fmt.Fprintf(os.Stderr, "thumbnail: %v\n", err)
+			_, _ = fmt.Fprintf(os.Stderr, "thumbnail: %v\n", err)
 			os.Exit(1)
 		}
 		return
@@ -151,17 +151,17 @@ func main() {
 			}
 		}
 		if inputPath == "" || outputPath == "" {
-			fmt.Fprintf(os.Stderr, "usage: kushim internal-mupdf-clean --input <file> --output <file>\n")
+			_, _ = fmt.Fprintf(os.Stderr, "usage: kushim internal-mupdf-clean --input <file> --output <file>\n")
 			os.Exit(1)
 		}
 		ctx, err := cgo.NewMuContext()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "mupdf context: %v\n", err)
+			_, _ = fmt.Fprintf(os.Stderr, "mupdf context: %v\n", err)
 			os.Exit(1)
 		}
 		opts := cgo.NewCleanOptions()
 		if err := ctx.PdfCleanFile(inputPath, outputPath, opts); err != nil {
-			fmt.Fprintf(os.Stderr, "mupdf pdf_clean_file: %v\n", err)
+			_, _ = fmt.Fprintf(os.Stderr, "mupdf pdf_clean_file: %v\n", err)
 			os.Exit(1)
 		}
 		ctx.Close()
@@ -190,7 +190,7 @@ func main() {
 	logger := log.NewLogger(cfg.App.LogLevel)
 	slog.SetDefault(logger.SlogLogger())
 	logFile := filepath.Join(*configDir, "logs", "kushim.log")
-	os.MkdirAll(filepath.Dir(logFile), 0755)
+	_ = os.MkdirAll(filepath.Dir(logFile), 0755)
 	if err := logger.SetLogFile(log.LogFileConfig{
 		Path:       logFile,
 		MaxSize:    cfg.App.Logging.MaxSize,
@@ -206,7 +206,7 @@ func main() {
 	runner := cli.NewCommandRunner(c, "cli")
 
 	if err := runner.ExecuteCommand(commandName, args); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }

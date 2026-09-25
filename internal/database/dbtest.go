@@ -49,13 +49,13 @@ func NewTestDB(t TB) *sql.DB {
 		t.Fatalf("failed to open test database: %v", err)
 	}
 	if err := InitializeSchema(db); err != nil {
-		db.Close()
+		_ = db.Close()
 		release()
 		t.Fatalf("failed to initialize schema: %v", err)
 	}
 
 	t.Cleanup(func() {
-		db.Close()
+		_ = db.Close()
 		release()
 	})
 	return db
@@ -99,7 +99,7 @@ func dropTestDatabase(baseDSN, dbName string) {
 		return
 	}
 	defer adminDB.Close()
-	adminDB.ExecContext(context.Background(),
+	_, _ = adminDB.ExecContext(context.Background(),
 		fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", quoteIdent(dbName)))
 }
 
@@ -244,10 +244,14 @@ func ResetTestDatabase(db *sql.DB) {
 		"tag", "people", "people_type", "document_type",
 	}
 	for _, tbl := range tables {
-		db.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s", tbl))
+		if _, err := db.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s", tbl)); err != nil {
+			panic(fmt.Sprintf("reset table %s: %v", tbl, err))
+		}
 	}
 	for _, tbl := range []string{"document_type", "people_type", "tag"} {
-		db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s ALTER COLUMN id RESTART WITH 1", tbl))
+		if _, err := db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s ALTER COLUMN id RESTART WITH 1", tbl)); err != nil {
+			panic(fmt.Sprintf("reset sequence of %s: %v", tbl, err))
+		}
 	}
 	seeds := []string{"document-types", "people-types", "tags", "tag-aliases"}
 	for _, seed := range seeds {

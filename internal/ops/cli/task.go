@@ -97,7 +97,7 @@ func taskListHandler(c *container.Container, args []string) error {
 				FilePath string `json:"file_path"`
 				FileName string `json:"file_name"`
 			}
-			json.Unmarshal(*t.Payload, &p)
+			_ = json.Unmarshal(*t.Payload, &p)
 			if p.FilePath != "" {
 				fileName = filepath.Base(p.FilePath)
 			} else {
@@ -146,7 +146,7 @@ func taskStatusHandler(c *container.Container, args []string) error {
 			FileName   string `json:"file_name"`
 			DocumentID string `json:"document_id"`
 		}
-		json.Unmarshal(*t.Payload, &p)
+		_ = json.Unmarshal(*t.Payload, &p)
 		if p.FilePath != "" {
 			fileName = filepath.Base(p.FilePath)
 		} else {
@@ -175,7 +175,7 @@ func taskStatusHandler(c *container.Container, args []string) error {
 				DocumentDbId int64  `json:"document_db_id"`
 				DocumentID   string `json:"document_id"`
 			}
-			json.Unmarshal(*t.Result, &r)
+			_ = json.Unmarshal(*t.Result, &r)
 			docDbID = r.DocumentDbId
 			docID = r.DocumentID
 		}

@@ -68,7 +68,7 @@ func (m *MuPDF) Generate(ctx context.Context, docId, path, outputPath string) (w
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		os.Remove(tmpOutputPath)
+		_ = os.Remove(tmpOutputPath)
 		return 0, 0, fmt.Errorf("mupdf thumbnail: %w (stderr: %s)", err, stderr.String())
 	}
 
@@ -84,7 +84,7 @@ func (m *MuPDF) Generate(ctx context.Context, docId, path, outputPath string) (w
 	}
 
 	if err := os.Rename(tmpOutputPath, outputPath); err != nil {
-		os.Remove(tmpOutputPath)
+		_ = os.Remove(tmpOutputPath)
 		return 0, 0, fmt.Errorf("move thumbnail into place: %w", err)
 	}
 

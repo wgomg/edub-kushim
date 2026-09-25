@@ -132,7 +132,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		s.pool.Stop(stopCtx)
 	}
 	if s.db != nil {
-		s.db.Close()
+		_ = s.db.Close()
 	}
 
 	return nil
@@ -155,7 +155,7 @@ func registerStaticRoutes(mux *http.ServeMux) {
 			fileServer.ServeHTTP(w, r)
 			return
 		}
-		f.Close()
+		_ = f.Close()
 
 		fileServer.ServeHTTP(w, r)
 	})

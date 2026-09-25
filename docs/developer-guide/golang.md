@@ -465,7 +465,7 @@ PostgreSQL error codes are inspected through `errors.As` to a `*pgconn.PgError`
 (`IsConstraint`, `IsForeignKey`, `IsBusy` — unique violations, FK violations,
 deadlock/serialization).
 
-Handlers convert kinds to HTTP statuses (`internal/api/handlers/errors.go:11`):
+Handlers convert kinds to HTTP statuses (`internal/api/handlers/errors.go:20`):
 
 ```go
 kind := errs.KindOf(err)
@@ -484,6 +484,15 @@ default:
 The takeaway: **wrap with `%w`, translate at the service boundary with
 `errs.FromDB`, classify with `errs.KindOf`, and never leak raw DB errors to
 handlers.**
+
+**Deliberately ignored errors are explicit.** An error that is genuinely
+unactionable — best-effort cleanup (`os.Remove`, read-only `Close`), a
+fire-and-forget child wait, `slog.Handler.Handle` — is written as
+`_ = call(...)` (or `_, _ =` when the callee also returns a value) so the
+intent is visible at the call site. `revive`'s `unhandled-error` rule
+allowlists the callees whose errors never carry information (the `fmt.Print*`
+family, in-memory buffer writes, and `json.Encoder.Encode` response writes)
+and excludes test files; every other bare call fails `make check`.
 
 ---
 
@@ -527,7 +536,9 @@ const RoleKey contextKey = "role"
 role, _ := r.Context().Value(auth.RoleKey).(string)
 ```
 
-(`api/server.go:320` uses a raw `"reqid"` string key for the request ID.)
+(`api/server.go:320` uses a raw `"reqid"` string key for the request ID;
+handlers read it back through the checked `requestID(ctx)` helper at
+`internal/api/handlers/errors.go:15`.)
 
 The param bag rides the same mechanism (`internal/api/handlers/parambag.go:114`): a
 private `contextKey` + `WithParamBag`/`GetParamBag` pair.
@@ -1404,7 +1415,9 @@ sticks to `any`.
 - **`defer ticker.Stop()`** and the drain-before-`Reset` dance for `time.Timer`.
 - **Guard shared state with `sync` primitives or channels** — never globals.
 - **Regenerate after SQL edits**: `sqlc generate`; never hand-edit `*.sql.go`.
-- **`gofmt`/`go vet` before committing**; build through the Makefile
+- **Format with `gofmt` and run `make check` before committing** — the gate is
+  `go fix` + `go vet` + `revive -config revive.toml` over `./...`, and revive
+  must reach zero findings (it must be on `PATH`). Build through the Makefile
   (`make build`), which sets `-tags "XLA,ORT"` and the CGo environment.
 
 ### Gotchas that bit people before

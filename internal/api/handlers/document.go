@@ -62,7 +62,7 @@ func NewDocumentHandler(client *database.Client, logger *log.Logger, engine *sea
 // ListDocuments serves the paged document listing.
 func (h *DocumentHandler) ListDocuments(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	h.logger.Debug(&reqID, "List documents requested")
 
@@ -150,7 +150,7 @@ func (h *DocumentHandler) ListDocuments(w http.ResponseWriter, r *http.Request) 
 // GetDocument serves one document's full view.
 func (h *DocumentHandler) GetDocument(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 	h.logger.Debug(&reqID, "Get document requested")
 
 	documentId := r.PathValue("id")
@@ -234,7 +234,7 @@ func (h *DocumentHandler) GetDocument(w http.ResponseWriter, r *http.Request) {
 // FilterLanguages serves the distinct stored languages.
 func (h *DocumentHandler) FilterLanguages(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 	h.logger.Debug(&reqID, "Filter languages requested")
 
 	languages, err := h.client.DistinctLanguages(ctx)
@@ -255,7 +255,7 @@ func (h *DocumentHandler) FilterLanguages(w http.ResponseWriter, r *http.Request
 // SearchDocuments serves the free-text full-text search.
 func (h *DocumentHandler) SearchDocuments(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 	h.logger.Debug(&reqID, "Search documents requested")
 
 	pb := GetParamBag(r)
@@ -321,7 +321,7 @@ func (h *DocumentHandler) SearchDocuments(w http.ResponseWriter, r *http.Request
 // SearchDocumentsStructured serves the filter search with total count.
 func (h *DocumentHandler) SearchDocumentsStructured(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 	h.logger.Debug(&reqID, "Structured search requested")
 
 	var filter search.Filter
@@ -412,7 +412,7 @@ func (h *DocumentHandler) SearchDocumentsStructured(w http.ResponseWriter, r *ht
 // GetDocumentFile streams the stored file with its content type.
 func (h *DocumentHandler) GetDocumentFile(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	documentId := r.PathValue("id")
 	if documentId == "" {
@@ -439,7 +439,7 @@ func (h *DocumentHandler) GetDocumentFile(w http.ResponseWriter, r *http.Request
 // is none.
 func (h *DocumentHandler) GetDocumentThumbnail(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	documentId := r.PathValue("id")
 	if documentId == "" {
@@ -472,7 +472,7 @@ func (h *DocumentHandler) GetDocumentThumbnail(w http.ResponseWriter, r *http.Re
 // DownloadDocuments streams one document's file or a zip of several.
 func (h *DocumentHandler) DownloadDocuments(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	var req DocumentDownloadRequest
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB limit on request body
@@ -589,16 +589,16 @@ func (h *DocumentHandler) DownloadDocuments(w http.ResponseWriter, r *http.Reque
 		}
 
 		if _, err := io.Copy(fw, fr); err != nil {
-			fr.Close()
+			_ = fr.Close()
 			h.logger.Error(&reqID, "download batch: copy file %s: %v", doc.StoragePath, err)
 			continue
 		}
-		fr.Close()
+		_ = fr.Close()
 		written++
 	}
 
 	if written == 0 {
-		zw.Close()
+		_ = zw.Close()
 		h.logger.Error(&reqID, "download batch: no files could be included in ZIP")
 		http.Error(w, "none of the requested documents could be downloaded", http.StatusNotFound)
 		return
@@ -635,7 +635,7 @@ func uniqueStrings(s []string) []string {
 // corrected text.
 func (h *DocumentHandler) UpdateDocument(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	documentID := r.PathValue("id")
 	if documentID == "" {
@@ -714,7 +714,7 @@ func (h *DocumentHandler) UpdateDocument(w http.ResponseWriter, r *http.Request)
 // ReEnrich enqueues one document's re-enrichment.
 func (h *DocumentHandler) ReEnrich(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	documentID := r.PathValue("id")
 	if documentID == "" {
@@ -743,7 +743,7 @@ func (h *DocumentHandler) ReEnrich(w http.ResponseWriter, r *http.Request) {
 // DeleteDocument soft-deletes one document into the trash.
 func (h *DocumentHandler) DeleteDocument(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	documentID := r.PathValue("id")
 	if documentID == "" {
@@ -762,7 +762,7 @@ func (h *DocumentHandler) DeleteDocument(w http.ResponseWriter, r *http.Request)
 // AddDocumentTag attaches one tag to a document.
 func (h *DocumentHandler) AddDocumentTag(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	documentID := r.PathValue("id")
 	if documentID == "" {
@@ -806,7 +806,7 @@ func (h *DocumentHandler) AddDocumentTag(w http.ResponseWriter, r *http.Request)
 // RemoveDocumentTag detaches one tag from a document.
 func (h *DocumentHandler) RemoveDocumentTag(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	documentID := r.PathValue("id")
 	if documentID == "" {
@@ -842,7 +842,7 @@ func (h *DocumentHandler) RemoveDocumentTag(w http.ResponseWriter, r *http.Reque
 // per-document failures.
 func (h *DocumentHandler) BatchDeleteDocuments(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	var req BatchDeleteRequest
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
@@ -900,7 +900,7 @@ func (h *DocumentHandler) BatchDeleteDocuments(w http.ResponseWriter, r *http.Re
 // per-document failures.
 func (h *DocumentHandler) BatchAssignTags(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	var req BatchTagRequest
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
@@ -1039,7 +1039,7 @@ func (h *DocumentHandler) BatchAssignTags(w http.ResponseWriter, r *http.Request
 // BatchSetDocumentType sets one document type over many documents.
 func (h *DocumentHandler) BatchSetDocumentType(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	var req BatchDocumentTypeRequest
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
@@ -1115,7 +1115,7 @@ func (h *DocumentHandler) BatchSetDocumentType(w http.ResponseWriter, r *http.Re
 // AddDocumentPeople attaches one person to a document with a role.
 func (h *DocumentHandler) AddDocumentPeople(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	documentID := r.PathValue("id")
 	if documentID == "" {
@@ -1163,7 +1163,7 @@ func (h *DocumentHandler) AddDocumentPeople(w http.ResponseWriter, r *http.Reque
 // RemoveDocumentPeople detaches one person role from a document.
 func (h *DocumentHandler) RemoveDocumentPeople(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	documentID := r.PathValue("id")
 	if documentID == "" {

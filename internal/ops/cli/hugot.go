@@ -40,7 +40,7 @@ func serveHugotHandler(c *container.Container, args []string) error {
 	}
 
 	logFile := filepath.Join(c.GetConfig().App.ConfigDir, "logs", "hugot.log")
-	os.MkdirAll(filepath.Dir(logFile), 0755)
+	_ = os.MkdirAll(filepath.Dir(logFile), 0755)
 	if err := c.GetLogger().SetLogFile(log.LogFileConfig{
 		Path:       logFile,
 		MaxSize:    c.GetConfig().App.Logging.MaxSize,
@@ -144,7 +144,7 @@ func serveHugotHandler(c *container.Container, args []string) error {
 	case serveError = <-serveErr:
 	}
 
-	os.Remove(socketPath)
+	_ = os.Remove(socketPath)
 
 	return serveError
 }

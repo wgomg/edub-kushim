@@ -178,10 +178,12 @@ func WriteState(dest string, state State) error {
 		}
 		defer os.Remove(tmp.Name())
 		if _, err := tmp.Write(data); err != nil {
-			tmp.Close()
+			_ = tmp.Close()
 			return fmt.Errorf("write temp state file: %w", err)
 		}
-		tmp.Close()
+		if err := tmp.Close(); err != nil {
+			return fmt.Errorf("close temp state file: %w", err)
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 		cmd := rsyncCommand(ctx, "-a", "--", tmp.Name(), dest+"/"+StateFileName)

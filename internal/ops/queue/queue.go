@@ -53,7 +53,7 @@ func Run(c *container.Container, args []string) error {
 	pidFile := filepath.Join(c.GetConfig().App.ConfigDir, "kushim-queue.pid")
 	logFile := filepath.Join(c.GetConfig().App.ConfigDir, "logs", "queue.log")
 
-	os.MkdirAll(filepath.Dir(logFile), 0755)
+	_ = os.MkdirAll(filepath.Dir(logFile), 0755)
 	if err := c.GetLogger().SetLogFile(log.LogFileConfig{
 		Path:       logFile,
 		MaxSize:    c.GetConfig().App.Logging.MaxSize,
@@ -98,7 +98,7 @@ func Run(c *container.Container, args []string) error {
 		select {
 		case <-sigCh:
 			c.GetLogger().Info(nil, "shutting down queue daemon...")
-			os.Remove(pidFile)
+			_ = os.Remove(pidFile)
 			cancel()
 		case <-ctx.Done():
 		}
@@ -220,7 +220,7 @@ func Run(c *container.Container, args []string) error {
 
 			if cfg.Backup.Enabled {
 				if !backupPoolStarted {
-					if err := startPool(c, ctx, "backup", &backupPoolStarted, &backupPool); err != nil {
+					if err := startPool(ctx, c, "backup", &backupPoolStarted, &backupPool); err != nil {
 						c.GetLogger().Error(nil, "backup pool: %v", err)
 					}
 				}
@@ -239,7 +239,7 @@ func Run(c *container.Container, args []string) error {
 
 			if cfg.Mirror.Enabled {
 				if !mirrorPoolStarted {
-					if err := startPool(c, ctx, "mirror", &mirrorPoolStarted, &mirrorPool); err != nil {
+					if err := startPool(ctx, c, "mirror", &mirrorPoolStarted, &mirrorPool); err != nil {
 						c.GetLogger().Error(nil, "mirror pool: %v", err)
 					}
 				}
@@ -264,7 +264,7 @@ func Run(c *container.Container, args []string) error {
 
 			if cfg.Enricher.TagReconcile.Enabled {
 				if !tagReconcilePoolStarted {
-					if err := startPool(c, ctx, "tagreconcile", &tagReconcilePoolStarted, &tagReconcilePool); err != nil {
+					if err := startPool(ctx, c, "tagreconcile", &tagReconcilePoolStarted, &tagReconcilePool); err != nil {
 						c.GetLogger().Error(nil, "tag reconcile pool: %v", err)
 					}
 				}
@@ -278,7 +278,7 @@ func Run(c *container.Container, args []string) error {
 
 			if cfg.Enricher.TagMeasure.Enabled {
 				if !tagMeasurePoolStarted {
-					if err := startPool(c, ctx, "tagmeasure", &tagMeasurePoolStarted, &tagMeasurePool); err != nil {
+					if err := startPool(ctx, c, "tagmeasure", &tagMeasurePoolStarted, &tagMeasurePool); err != nil {
 						c.GetLogger().Error(nil, "tag measure pool: %v", err)
 					}
 				}
@@ -291,7 +291,7 @@ func Run(c *container.Container, args []string) error {
 			}
 
 			if !tagIdentityPoolStarted {
-				if err := startPool(c, ctx, "tagidentity", &tagIdentityPoolStarted, &tagIdentityPool); err != nil {
+				if err := startPool(ctx, c, "tagidentity", &tagIdentityPoolStarted, &tagIdentityPool); err != nil {
 					c.GetLogger().Error(nil, "tag identity pool: %v", err)
 				}
 			}
@@ -446,7 +446,7 @@ func consumeNextQueuedBatch(ctx context.Context, client *database.Client, batchS
 		}
 		return nil
 	}
-	go func() { cmd.Wait() }()
+	go func() { _ = cmd.Wait() }()
 
 	logger.Info(nil, "forked kushim consume --batch %s (PID %d)", batch.ID, cmd.Process.Pid)
 	return nil
@@ -537,7 +537,7 @@ func pollingTick(ctx context.Context, c *container.Container, client *database.C
 	c.GetLogger().Info(nil, "polling: batch %s created with %d files", batchID, enqueued)
 }
 
-func startPool(c *container.Container, ctx context.Context, name string, started *bool, pp **task.Pool) error {
+func startPool(ctx context.Context, c *container.Container, name string, started *bool, pp **task.Pool) error {
 	if *started {
 		return nil
 	}
@@ -720,7 +720,7 @@ func maybeScheduleThumbnailBackfill(ctx context.Context, c *container.Container,
 		c.GetLogger().Error(nil, "fork kushim thumbnails --all: %v (last_run=%s, next=%s)", err, state.lastRun.Format(time.RFC3339), next.Format(time.RFC3339))
 		return nil
 	}
-	go func() { cmd.Wait() }()
+	go func() { _ = cmd.Wait() }()
 
 	// Advance only after a successful fork so a failed start retries next tick.
 	state.markRun(timing)

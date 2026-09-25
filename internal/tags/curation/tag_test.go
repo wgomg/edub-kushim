@@ -237,7 +237,10 @@ func TestTag_CreatePlannedTx_Quarantined_LeavesProvisional(t *testing.T) {
 func TestTag_Update_OnlyReembedsPromotedTags(t *testing.T) {
 	svc, client := newTestTag(t)
 	ctx := context.Background()
-	embedder := svc.embedder.(*testutil.MockEmbedder)
+	embedder, ok := svc.embedder.(*testutil.MockEmbedder)
+	if !ok {
+		t.Fatalf("unexpected embedder type %T", svc.embedder)
+	}
 
 	// Create a promoted tag (via Create, which promotes).
 	createResults, err := svc.Create(ctx, []string{"update-reembed-src"})

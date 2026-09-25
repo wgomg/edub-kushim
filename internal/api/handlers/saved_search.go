@@ -29,7 +29,7 @@ func NewSavedSearchHandler(queries *database.Queries, logger *log.Logger) *Saved
 // Create stores one named structured filter.
 func (h *SavedSearchHandler) Create(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	var req CreateSavedSearchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -67,7 +67,7 @@ func (h *SavedSearchHandler) Create(w http.ResponseWriter, r *http.Request) {
 // List serves the saved searches of the requesting user.
 func (h *SavedSearchHandler) List(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	searches, err := h.queries.ListSavedSearches(ctx)
 	if err != nil {
@@ -93,7 +93,7 @@ func (h *SavedSearchHandler) List(w http.ResponseWriter, r *http.Request) {
 // Delete removes one saved search.
 func (h *SavedSearchHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)

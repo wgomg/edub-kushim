@@ -21,7 +21,9 @@ func NewTestLogger() *log.Logger {
 
 // NewTestConfig creates a Config for testing with temporary directories.
 // Returns the config and a cleanup function that removes the temp directory.
-func NewTestConfig(t interface{ Fatalf(format string, args ...any) }) (*config.Config, func()) {
+func NewTestConfig(t interface {
+	Fatalf(format string, args ...any)
+}) (*config.Config, func()) {
 	configDir, err := os.MkdirTemp("", "edub-kushim-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp config dir: %v", err)
@@ -34,7 +36,7 @@ func NewTestConfig(t interface{ Fatalf(format string, args ...any) }) (*config.C
 
 	for _, d := range []string{inboxDir, storageDir, dataDir, ocrDataDir} {
 		if err := os.MkdirAll(d, 0755); err != nil {
-			os.RemoveAll(configDir)
+			_ = os.RemoveAll(configDir)
 			t.Fatalf("failed to create dir %s: %v", d, err)
 		}
 	}
@@ -58,7 +60,7 @@ func NewTestConfig(t interface{ Fatalf(format string, args ...any) }) (*config.C
 	cfg.Consumer.Workers = 0
 
 	cleanup := func() {
-		os.RemoveAll(configDir)
+		_ = os.RemoveAll(configDir)
 	}
 
 	return cfg, cleanup
@@ -114,7 +116,9 @@ startxref
 }
 
 // CreateTestPDF writes a minimal PDF holding the content to path.
-func CreateTestPDF(t interface{ Fatalf(format string, args ...any) }, path, content string) {
+func CreateTestPDF(t interface {
+	Fatalf(format string, args ...any)
+}, path, content string) {
 	data := MinimalTextPDF(content)
 	if err := os.WriteFile(path, data, 0644); err != nil {
 		t.Fatalf("failed to write test PDF: %v", err)
@@ -122,7 +126,9 @@ func CreateTestPDF(t interface{ Fatalf(format string, args ...any) }, path, cont
 }
 
 // CreateTestFile writes data to the given path.
-func CreateTestFile(t interface{ Fatalf(format string, args ...any) }, path, content string) {
+func CreateTestFile(t interface {
+	Fatalf(format string, args ...any)
+}, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("failed to write test file: %v", err)
 	}
@@ -134,21 +140,27 @@ func FormatString(format string, args ...any) string {
 }
 
 // AssertEqual fails when the two values' string forms differ.
-func AssertEqual(t interface{ Fatalf(format string, args ...any) }, got, want any, msg string) {
+func AssertEqual(t interface {
+	Fatalf(format string, args ...any)
+}, got, want any, msg string) {
 	if fmt.Sprintf("%v", got) != fmt.Sprintf("%v", want) {
 		t.Fatalf("%s: got %v, want %v", msg, got, want)
 	}
 }
 
 // AssertNoError fails the test on a non-nil error.
-func AssertNoError(t interface{ Fatalf(format string, args ...any) }, err error, msg string) {
+func AssertNoError(t interface {
+	Fatalf(format string, args ...any)
+}, err error, msg string) {
 	if err != nil {
 		t.Fatalf("%s: unexpected error: %v", msg, err)
 	}
 }
 
 // AssertError fails the test when the error is nil.
-func AssertError(t interface{ Fatalf(format string, args ...any) }, err error, msg string) {
+func AssertError(t interface {
+	Fatalf(format string, args ...any)
+}, err error, msg string) {
 	if err == nil {
 		t.Fatalf("%s: expected error, got nil", msg)
 	}

@@ -34,8 +34,8 @@ type loginRequest struct {
 }
 
 type loginResponse struct {
-	Token string              `json:"token"`
-	User  UserResponse   `json:"user"`
+	Token string       `json:"token"`
+	User  UserResponse `json:"user"`
 }
 
 func writeUnauthorized(w http.ResponseWriter) {
@@ -117,7 +117,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 // MeHandler serves the authenticated user's identity.
 func (h *AuthHandler) MeHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 
 	userID, _ := ctx.Value(auth.UserIDKey).(int64)
 	if userID == 0 {

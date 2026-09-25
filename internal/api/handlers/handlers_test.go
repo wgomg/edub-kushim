@@ -2281,7 +2281,8 @@ func TestDocumentReEnrich(t *testing.T) {
 			t.Fatal("expected _links object")
 		}
 		tasksLink := links["tasks"]
-		if tasksLink == nil || !strings.HasPrefix(tasksLink.(string), "/api/v1/tasks?batch=") {
+		link, ok := tasksLink.(string)
+		if tasksLink == nil || !ok || !strings.HasPrefix(link, "/api/v1/tasks?batch=") {
 			t.Fatalf("expected tasks link prefix, got %v", tasksLink)
 		}
 	})
@@ -2330,7 +2331,13 @@ func TestPutConfig(t *testing.T) {
 		var setCfg atomic.Value
 		setCfg.Store(cfg)
 		return NewConfigHandler(
-			func() *config.Config { return setCfg.Load().(*config.Config) },
+			func() *config.Config {
+				cfg, ok := setCfg.Load().(*config.Config)
+				if !ok {
+					return nil
+				}
+				return cfg
+			},
 			func(c *config.Config) { setCfg.Store(c) },
 			env.client,
 			env.logger,
@@ -2529,7 +2536,13 @@ func TestEnqueueConfigTasks(t *testing.T) {
 		var setCfg atomic.Value
 		setCfg.Store(cfg)
 		return NewConfigHandler(
-			func() *config.Config { return setCfg.Load().(*config.Config) },
+			func() *config.Config {
+				cfg, ok := setCfg.Load().(*config.Config)
+				if !ok {
+					return nil
+				}
+				return cfg
+			},
 			func(c *config.Config) { setCfg.Store(c) },
 			env.client,
 			env.logger,

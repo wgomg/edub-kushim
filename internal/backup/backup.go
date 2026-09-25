@@ -110,7 +110,8 @@ func Create(ctx context.Context, db *sql.DB, schemaFS embed.FS, mode BackupMode,
 	storageFilesCount := int64(0)
 	storageSizeBytes := int64(0)
 	if mode != BackupModeDatabase {
-		filepath.Walk(storageDir, func(path string, info os.FileInfo, err error) error {
+		// Best-effort sizing: the walk function never reports an error.
+		_ = filepath.Walk(storageDir, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
 				return nil
 			}
@@ -152,7 +153,7 @@ func Create(ctx context.Context, db *sql.DB, schemaFS embed.FS, mode BackupMode,
 	backupPath := filepath.Join(backupDir, backupName)
 
 	if err := createTarGz(backupPath, tmpDir, storageDir, mode); err != nil {
-		os.Remove(backupPath)
+		_ = os.Remove(backupPath)
 		return nil, fmt.Errorf("create tar.gz: %w", err)
 	}
 
@@ -358,7 +359,7 @@ func copyFile(src, dst string) error {
 	}
 
 	if info, err := os.Stat(src); err == nil {
-		os.Chmod(dst, info.Mode())
+		_ = os.Chmod(dst, info.Mode())
 	}
 
 	return nil

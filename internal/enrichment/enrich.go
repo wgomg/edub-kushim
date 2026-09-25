@@ -61,7 +61,7 @@ func (h *EnrichTaskHandler) DedupKey(payload json.RawMessage) string {
 	var p struct {
 		DocumentID string `json:"document_id"`
 	}
-	json.Unmarshal(payload, &p)
+	_ = json.Unmarshal(payload, &p)
 	if p.DocumentID == "" {
 		return ""
 	}

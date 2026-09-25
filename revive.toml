@@ -1,15 +1,51 @@
-# Revive rules for the Go doc-comment policy: every exported symbol and every
-# package must carry a doc comment, and doc comments must start with the name
-# of the symbol they document. Only the comment rules are enabled on purpose.
+# Revive rules: the Go doc-comment policy (every exported symbol and every
+# package must carry a doc comment starting with the name of the symbol it
+# documents) plus a curated set of correctness and convention rules. All
+# listed rules must reach zero findings under `make check`.
 #
 # Install: go install github.com/mgechev/revive@latest
 # Run:     revive -config revive.toml ./...
 
-# Only the comment rules are enabled on purpose. The node_modules Go files
-# the SPAs' dependencies vendor are not this repository's code.
-exclude = ["web/node_modules/...", "web-wizard/node_modules/..."]
+# The node_modules Go files the SPAs' dependencies vendor are not this
+# repository's code, and neither are the third-party sources unpacked under
+# build/ by `make build-deps`.
+exclude = ["build/...", "web/node_modules/...", "web-wizard/node_modules/..."]
 
 [rule.exported]
   arguments = ["disableStutteringCheck"]
 
 [rule.package-comments]
+
+[rule.defer]
+[rule.datarace]
+[rule.empty-block]
+[rule.identical-branches]
+[rule.identical-switch-conditions]
+[rule.constant-logical-expr]
+[rule.if-return]
+[rule.context-as-argument]
+[rule.error-naming]
+[rule.error-strings]
+[rule.error-return]
+[rule.receiver-naming]
+[rule.range]
+[rule.unexported-return]
+
+# Callees whose error carries no actionable information: CLI diagnostics,
+# in-memory buffer writes, and response writes after WriteHeader. Patterns
+# must cover the whole callee name.
+[rule.unhandled-error]
+  exclude = ["TEST"]
+  arguments = [
+    '^fmt\.Print\w*$',
+    '^encoding/json\.Encoder\.Encode$',
+    '^strings\.Builder\.Write\w*$',
+    '^bytes\.Buffer\.Write\w*$',
+  ]
+
+[rule.unchecked-type-assertion]
+  arguments = [{ accept-ignored-assertion-result = true }]
+
+# Any //revive:disable directive must name its rule and give a reason.
+[directive.specify-disable-rule]
+[directive.specify-disable-reason]

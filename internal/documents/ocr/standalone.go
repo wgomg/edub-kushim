@@ -72,7 +72,7 @@ func RunStandalone(inputPath, outputPath string, languages []string, dataDir str
 	pdf.SetAutoPageBreak(false, 0)
 	pdf.AddUTF8FontFromBytes("KushimText", "", kushimFontData)
 
-	fmt.Fprintf(os.Stdout, "starting OCR on %d pages\n", numPages)
+	_, _ = fmt.Fprintf(os.Stdout, "starting OCR on %d pages\n", numPages)
 
 	if numPages <= 1 {
 		client := newOCRClient(languages)
@@ -132,7 +132,7 @@ func RunStandalone(inputPath, outputPath string, languages []string, dataDir str
 		var phase1Err error
 		for i := range numPages {
 			if i > 0 && i%10 == 0 {
-				fmt.Fprintf(os.Stdout, "OCR page %d/%d\n", i+1, numPages)
+				_, _ = fmt.Fprintf(os.Stdout, "OCR page %d/%d\n", i+1, numPages)
 			}
 			ocrW, ocrH, ocrSamples, ocrPixmap, err := doc.RenderPage(mupdfCtx, i, ocrDPI)
 			if err != nil {
@@ -186,7 +186,7 @@ func runStandaloneImage(inputPath, outputPath string, languages []string) error 
 		return fmt.Errorf("open image: %w", err)
 	}
 	img, _, err := image.Decode(f)
-	f.Close()
+	_ = f.Close()
 	if err != nil {
 		return fmt.Errorf("decode image: %w", err)
 	}

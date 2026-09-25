@@ -228,7 +228,7 @@ func MigrateDatabase(ctx context.Context, logger *log.Logger, p MigrateDBPayload
 	defer os.Remove(tmpPath)
 
 	if err := database.DumpSchemaAndData(ctx, oldDB, database.SchemaFS, tmpDump); err != nil {
-		tmpDump.Close()
+		_ = tmpDump.Close()
 		return fmt.Errorf("dump current database: %w", err)
 	}
 	if err := tmpDump.Close(); err != nil {

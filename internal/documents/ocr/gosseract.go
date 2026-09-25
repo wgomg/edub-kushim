@@ -84,7 +84,7 @@ func (o *Gosseract) Process(ctx context.Context, docId, path string) (*string, e
 	cmd.Env = append(os.Environ(), "OMP_THREAD_LIMIT=1")
 
 	if err := cmd.Start(); err != nil {
-		os.Remove(outPath)
+		_ = os.Remove(outPath)
 		return nil, fmt.Errorf("start OCR subprocess: %w", err)
 	}
 
@@ -101,7 +101,7 @@ func (o *Gosseract) Process(ctx context.Context, docId, path string) (*string, e
 		if isExit && outExists == nil && isNonFatalStderr(stderr.String()) {
 			o.logger.Warn(&docId, "OCR subprocess had non-fatal errors: %v (stderr: %s)", err, stderr.String())
 		} else {
-			os.Remove(outPath)
+			_ = os.Remove(outPath)
 			return nil, fmt.Errorf("gosseract OCR: %w (stderr: %s)", err, stderr.String())
 		}
 	}
@@ -114,10 +114,10 @@ func (o *Gosseract) Process(ctx context.Context, docId, path string) (*string, e
 
 	optResult, err := o.optimizer.Optimize(ctx, docId, outPath)
 	if err != nil {
-		os.Remove(outPath)
+		_ = os.Remove(outPath)
 		return nil, fmt.Errorf("optimize OCR output: %w", err)
 	}
-	os.Remove(outPath)
+	_ = os.Remove(outPath)
 	o.logger.Debug(&docId, "optimized OCR output: %s -> %s", outPath, *optResult)
 	return optResult, nil
 }

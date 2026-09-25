@@ -50,7 +50,7 @@ func RunStandalone(inputPath, outputPath string, dpi, maxWidth, quality int) err
 		return fmt.Errorf("JPEG encode: %w", err)
 	}
 
-	fmt.Fprintf(os.Stdout, "%dx%d\n", img.Bounds().Dx(), img.Bounds().Dy())
+	_, _ = fmt.Fprintf(os.Stdout, "%dx%d\n", img.Bounds().Dx(), img.Bounds().Dy())
 	return nil
 }
 
@@ -61,7 +61,7 @@ func renderSource(inputPath, mimeType string, dpi int) (samples []byte, w, h int
 			return nil, 0, 0, fmt.Errorf("open image: %w", err)
 		}
 		img, _, err := image.Decode(f)
-		f.Close()
+		_ = f.Close()
 		if err != nil {
 			return nil, 0, 0, fmt.Errorf("decode image: %w", err)
 		}

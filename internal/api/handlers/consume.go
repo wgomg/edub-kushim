@@ -112,7 +112,7 @@ func (h *ConsumeHandler) enqueueBatchFiles(ctx context.Context, batchID string, 
 // missing; an empty inbox reports no batch.
 func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 	h.logger.Debug(&reqID, "Consume requested")
 
 	cfg := h.getConfig()
@@ -182,7 +182,7 @@ func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 // returns its served name.
 func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := ctx.Value("reqid").(string)
+	reqID := requestID(ctx)
 	h.logger.Debug(&reqID, "Upload requested")
 
 	cfg := h.getConfig()
@@ -219,10 +219,10 @@ func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	var acceptedPaths []string
 	defer func() {
 		for _, p := range temps {
-			os.Remove(p)
+			_ = os.Remove(p)
 		}
 		for _, p := range acceptedPaths {
-			os.Remove(p)
+			_ = os.Remove(p)
 		}
 	}()
 
@@ -255,22 +255,24 @@ func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		sanitizedName := filepath.Base(part.FileName())
 		if sanitizedName == "" || sanitizedName == "." || sanitizedName == ".." {
 			rejected = append(rejected, map[string]any{"name": part.FileName(), "reason": "invalid filename"})
-			part.Close()
+			_ = part.Close()
 			continue
 		}
 
 		tmpFile, err := os.CreateTemp(inboxDir, "upload-*")
 		if err != nil {
 			h.logger.Error(&reqID, "create temp file: %v", err)
-			part.Close()
+			_ = part.Close()
 			continue
 		}
 		tmpPath := tmpFile.Name()
 		temps = append(temps, tmpPath)
 
 		_, copyErr := io.Copy(tmpFile, part)
-		tmpFile.Close()
-		part.Close()
+		if closeErr := tmpFile.Close(); copyErr == nil && closeErr != nil {
+			copyErr = closeErr
+		}
+		_ = part.Close()
 
 		if copyErr != nil {
 			if _, ok := errors.AsType[*http.MaxBytesError](copyErr); ok {

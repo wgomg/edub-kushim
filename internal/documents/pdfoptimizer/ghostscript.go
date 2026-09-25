@@ -75,7 +75,7 @@ func (g *Ghostscript) Optimize(ctx context.Context, docId, path string) (*string
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		os.Remove(outputPath)
+		_ = os.Remove(outputPath)
 		return nil, fmt.Errorf("%s failed: %w, stderr: %s", g.Name(), err, stderr.String())
 	}
 

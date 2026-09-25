@@ -178,7 +178,8 @@ func BuildPrompt(text string, docTypes []TypeRef, peopleTypes []TypeRef, tagSugg
 	if err := tmpl.Execute(&buf, data); err != nil {
 		buf.Reset()
 		fallback, _ := template.New("prompt").Parse(defaultPromptTemplate)
-		fallback.Execute(&buf, data)
+		// Best-effort fallback: a failed render leaves the buffer as written.
+		_ = fallback.Execute(&buf, data)
 	}
 
 	return buf.String()

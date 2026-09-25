@@ -467,8 +467,8 @@ func probeWritableDir(dir, key string) error {
 	if err != nil {
 		return fmt.Errorf("%s (%s) is not writable: %w", key, dir, err)
 	}
-	probe.Close()
-	os.Remove(probe.Name())
+	_ = probe.Close()
+	_ = os.Remove(probe.Name())
 	return nil
 }
 
@@ -609,7 +609,7 @@ func (h *ConfigHandler) ConfigStatus(w http.ResponseWriter, r *http.Request) {
 					Lang string `json:"lang"`
 				}
 				if t.Payload != nil {
-					json.Unmarshal(*t.Payload, &p)
+					_ = json.Unmarshal(*t.Payload, &p)
 				}
 				summary.Op = p.Op
 				summary.Lang = p.Lang

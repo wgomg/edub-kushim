@@ -78,7 +78,7 @@ make build-glibc-deps   # Run build-deps inside glibc builder container
 make build-musl-deps    # Run build-deps-musl inside musl builder container
 make consume           # build + run kushim consume (inbox scan)
 make clean             # remove binaries
-make check             # go fix + go vet + revive (doc-comment rules in revive.toml; revive must be on PATH)
+make check             # go fix + go vet + revive (doc-comment + correctness rules in revive.toml; revive must be on PATH)
 ```
 
 ## Build dependency chain

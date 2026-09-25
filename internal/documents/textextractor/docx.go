@@ -53,7 +53,7 @@ func (d *Docx) Extract(ctx context.Context, path string, _ string) (*string, err
 				return nil, fmt.Errorf("docx: open word/document.xml: %w", err)
 			}
 			documentXML, err = io.ReadAll(rc)
-			rc.Close()
+			_ = rc.Close()
 			if err != nil {
 				return nil, fmt.Errorf("docx: read word/document.xml: %w", err)
 			}
@@ -96,7 +96,7 @@ func extractDocxText(xmlData []byte) (string, error) {
 
 		switch t := tok.(type) {
 		case xml.StartElement:
-			se := xml.CopyToken(t).(xml.StartElement)
+			se, _ := xml.CopyToken(t).(xml.StartElement)
 			local := se.Name.Local
 			space := se.Name.Space
 
@@ -113,7 +113,7 @@ func extractDocxText(xmlData []byte) (string, error) {
 				buf.Write(t)
 			}
 		case xml.EndElement:
-			ee := xml.CopyToken(t).(xml.EndElement)
+			ee, _ := xml.CopyToken(t).(xml.EndElement)
 			local := ee.Name.Local
 			space := ee.Name.Space
 			if space == docxNS && local == "t" {

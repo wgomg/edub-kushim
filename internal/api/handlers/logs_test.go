@@ -78,7 +78,10 @@ func TestLogsHandler_ListLogs_Success(t *testing.T) {
 
 	var body map[string]any
 	json.NewDecoder(w.Body).Decode(&body)
-	lines := body["lines"].([]any)
+	lines, ok := body["lines"].([]any)
+	if !ok {
+		t.Fatalf("expected lines array, got %v", body["lines"])
+	}
 	testutil.AssertEqual(t, len(lines), 3, "line count")
 	testutil.AssertEqual(t, lines[0], "2026/01/01 10:00:00 INFO  : started", "first line")
 	testutil.AssertEqual(t, lines[2], "2026/01/01 10:00:02 INFO  : done", "last line")
@@ -140,9 +143,15 @@ func TestLogsHandler_ListLogs_LargeFileTail(t *testing.T) {
 
 	var body map[string]any
 	json.NewDecoder(w.Body).Decode(&body)
-	lines := body["lines"].([]any)
+	lines, ok := body["lines"].([]any)
+	if !ok {
+		t.Fatalf("expected lines array, got %v", body["lines"])
+	}
 	testutil.AssertEqual(t, len(lines), 500, "last 500 lines from large file")
-	lastLine := lines[499].(string)
+	lastLine, ok := lines[499].(string)
+	if !ok {
+		t.Fatalf("expected string line, got %v", lines[499])
+	}
 	testutil.AssertEqual(t, strings.HasPrefix(lastLine, "2026/01/01 10:00:00 INFO  : line 049999:"), true, "last line from end")
 }
 

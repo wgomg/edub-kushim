@@ -425,7 +425,7 @@ func consumeCancelHandler(c *container.Container, args []string) error {
 		return nil
 	}
 
-	syscall.Kill(int(bo.Pid), syscall.SIGTERM)
+	_ = syscall.Kill(int(bo.Pid), syscall.SIGTERM)
 
 	tx, txErr := client.BeginTx(cancelCtx, nil)
 	if txErr != nil {
@@ -575,7 +575,8 @@ func taskDisplayInfo(t database.Task) taskDisplay {
 		FileName  string `json:"file_name"`
 		FileIndex int    `json:"file_index"`
 	}
-	json.Unmarshal(*t.Payload, &p)
+	// Display-only: a malformed payload falls back to the zero display values.
+	_ = json.Unmarshal(*t.Payload, &p)
 	info.index = p.FileIndex
 	if p.FilePath != "" {
 		info.fileName = filepath.Base(p.FilePath)
