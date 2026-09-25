@@ -12,12 +12,17 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
+// ReEnrich re-enqueues enrichment for stored documents: one document, or
+// every live document up to a limit. Tasks deduplicate per document, so a
+// triggered run and a bulk run converge on whichever runs first.
 type ReEnrich struct {
 	queries      *database.Queries
 	taskCreator  TaskCreator
 	batchCreator BatchCreator
 }
 
+// NewReEnrich wires the enqueue path to the queries and the task and
+// batch creators.
 func NewReEnrich(queries *database.Queries, taskCreator TaskCreator, batchCreator BatchCreator) *ReEnrich {
 	return &ReEnrich{
 		queries:      queries,
@@ -26,6 +31,8 @@ func NewReEnrich(queries *database.Queries, taskCreator TaskCreator, batchCreato
 	}
 }
 
+// ReEnrich queues one document's enrichment in a fresh reenrich batch;
+// the document must exist.
 func (s *ReEnrich) ReEnrich(ctx context.Context, documentUUID string) (batchID string, err error) {
 	_, err = s.queries.GetDocument(ctx, documentUUID)
 	if err != nil {
@@ -52,6 +59,11 @@ func (s *ReEnrich) ReEnrich(ctx context.Context, documentUUID string) (batchID s
 	return batchID, nil
 }
 
+// ReEnrichMany queues enrichment for every live document, capped by a
+// positive limit. Tasks whose dedup key still holds are skipped; when no
+// task could be enqueued no batch is created, and a batch-creation
+// failure removes the created tasks so their dedup keys do not block
+// later runs.
 func (s *ReEnrich) ReEnrichMany(ctx context.Context, limit int64) (batchID string, enqueued, skipped int, err error) {
 	documentIDs, err := s.queries.ListLiveDocumentIDs(ctx)
 	if err != nil {

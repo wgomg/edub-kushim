@@ -32,6 +32,9 @@ func copyFile(src, dst string) error {
 	return os.Chtimes(dst, info.ModTime(), info.ModTime())
 }
 
+// CopyTree copies a file or a whole directory tree to dst, preserving
+// modes and modification times. It is the fallback where a cross-device
+// move cannot replace a copy.
 func CopyTree(src, dst string) error {
 	info, err := os.Stat(src)
 	if err != nil {

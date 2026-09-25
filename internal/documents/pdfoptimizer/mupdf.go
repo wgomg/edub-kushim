@@ -14,19 +14,24 @@ import (
 	"github.com/wgomg/edub-kushim/internal/log"
 )
 
+// MuPDF rewrites PDFs through the MuPDF C library's clean command.
 type MuPDF struct {
 	logger *log.Logger
 	config config.ToolConfig
 }
 
+// NewMuPDF builds the engine; construction never fails.
 func NewMuPDF(logger *log.Logger, cfg config.ToolConfig) (*MuPDF, error) {
 	return &MuPDF{logger: logger, config: cfg}, nil
 }
 
+// Name identifies the engine.
 func (m *MuPDF) Name() string {
 	return config.PdfOptimizer.MuPDF
 }
 
+// Optimize runs the clean pass over a temp copy and returns its temp
+// path. The path must be absolute.
 func (m *MuPDF) Optimize(ctx context.Context, docId, path string) (*string, error) {
 	tmpDir := os.TempDir()
 	ogName := filepath.Base(path)

@@ -1,3 +1,11 @@
+// Package admission is the tag admission machinery the enricher delegates
+// to: split decisions on joint tags, pinned-policy verdicts on pair
+// matches, quality judging of novel tags, and identity resolution of
+// candidate names against the store. It returns decisions to the caller;
+// its own writes are the verdict and quality event rows it journals, plus
+// the identity resolver's alias applications through curation. The rules
+// it enforces are pinned in tags/policy; the contracts are specified in
+// docs/tags/consolidation.md.
 package admission
 
 import (
@@ -24,6 +32,10 @@ const (
 	tagQualityNoAnchorSimilarity = 0.60
 )
 
+// Adjudicator is the document-level admission machinery: it splits joint
+// tags, journals pair verdicts, and judges the quality of novel tags. The
+// enricher holds one and delegates the corresponding flow steps; the split
+// cache is shared across documents.
 type Adjudicator struct {
 	config     *config.Config
 	logger     *log.Logger
@@ -33,6 +45,9 @@ type Adjudicator struct {
 	splitCache map[string]splitDecision
 }
 
+// NewAdjudicator wires the machinery. When the LLM adjudicator or quality
+// judge is not configured, the corresponding steps degrade: splits fall
+// back to the plain grammar split and novel tags stay, born provisional.
 func NewAdjudicator(cfg *config.Config, logger *log.Logger, queries *database.Queries, runner *tools.Runner) *Adjudicator {
 	return &Adjudicator{
 		config:  cfg,
@@ -47,6 +62,11 @@ type splitDecision struct {
 	components []string
 }
 
+// SplitJointTags asks the LLM adjudicator (or, without one, the plain
+// grammar split) which joint tags to split, validates the components
+// against the filter and the configured maximum, and returns the tag list
+// with approved splits expanded in place. Unapproved and non-joint tags
+// pass through, deduplicated.
 func (a *Adjudicator) SplitJointTags(ctx context.Context, tags []string, filter *analyzer.TagFilter, logId *string) []string {
 	var candidates []string
 	for _, t := range tags {
@@ -100,6 +120,10 @@ func (a *Adjudicator) SplitJointTags(ctx context.Context, tags []string, filter 
 	return out
 }
 
+// ApplyDeletedTagPolicy rewrites a tag list through the deleted-tag
+// blocklist: blocked tags are dropped, merged tags are rewritten to their
+// merge target when that target still exists, and the result is
+// deduplicated.
 func (a *Adjudicator) ApplyDeletedTagPolicy(tags []string, knownTags map[string]struct{}, blocklist map[string]database.ListAllDeletedTagsRow, logId *string) []string {
 	if len(blocklist) == 0 {
 		return tags
@@ -303,6 +327,12 @@ func tagQualityCriteriaLog(criteria json.RawMessage) string {
 	return c.String()
 }
 
+// ApplyTagQuality filters the analysis's tags through the quality gates:
+// the deterministic score rejects weak candidates outright, the verdict
+// cache reuses earlier decisions for the same tag name, and the LLM
+// quality judge settles the rest. Rejected tags are dropped from the
+// returned list; judge failures keep the tags, which are then born
+// provisional.
 func (a *Adjudicator) ApplyTagQuality(ctx context.Context, analysis *tools.ContentAnalysisResult, decisions []policy.Decision, dbNames map[string]struct{}, reducedText string, docId int64, logId *string) []string {
 	typedByTerm := make(map[string]analyzer.TagDetail, len(analysis.TagDetails))
 	for _, d := range analysis.TagDetails {

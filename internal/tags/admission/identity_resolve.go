@@ -20,6 +20,11 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
+// IdentityResolver settles the identity evidence the enricher and the
+// sweeps leave pending: it re-runs the judging body on pending pairs,
+// applies folds and aliases through the curation surface, and reports what
+// it did. It is what the tagidentity verb, the sweep and the task handler
+// share.
 type IdentityResolver struct {
 	getConfig func() *config.Config
 	logger    *log.Logger
@@ -28,6 +33,9 @@ type IdentityResolver struct {
 	tag       *curation.Tag
 }
 
+// NewIdentityResolver wires the resolver to the dynamic config, the
+// database, the tools runner and the curation tag service (its alias
+// applications go through it).
 func NewIdentityResolver(getConfig func() *config.Config, logger *log.Logger, client *database.Client, tag *curation.Tag, runner *tools.Runner) *IdentityResolver {
 	return &IdentityResolver{
 		getConfig: getConfig,
@@ -38,6 +46,8 @@ func NewIdentityResolver(getConfig func() *config.Config, logger *log.Logger, cl
 	}
 }
 
+// IdentityReport counts what one resolution pass did: pending events it
+// saw, folds applied, aliases created, deferrals, and failures.
 type IdentityReport struct {
 	Pending  int `json:"pending"`
 	Resolved int `json:"resolved"`
@@ -47,6 +57,9 @@ type IdentityReport struct {
 	Failed   int `json:"failed"`
 }
 
+// IdentityReportPrefix marks the serialized IdentityReport inside the
+// tagidentity command's output; the task handler extracts the JSON that
+// follows it.
 const IdentityReportPrefix = "tagidentity-report: "
 
 type pendingCandidate struct {
@@ -54,8 +67,12 @@ type pendingCandidate struct {
 	rows map[string]database.TagIdentityEvent
 }
 
-// the per-pair cache converges the triggered run and the sweep on whichever
-// runs first
+// ResolvePending settles up to budget pending identity events: it folds
+// base-form proposals the judge approves, aliases shape-related pairs, and
+// defers everything the judging body cannot answer yet. The per-pair
+// verdict cache converges the triggered run and the scheduled sweep on
+// whichever runs first. Disabling the adjudicator leaves the events
+// pending and only counts them.
 func (r *IdentityResolver) ResolvePending(ctx context.Context, budget int) (*IdentityReport, error) {
 	report := &IdentityReport{}
 	if budget <= 0 {

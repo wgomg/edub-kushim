@@ -12,26 +12,33 @@ import (
 	"github.com/wgomg/edub-kushim/internal/textnorm"
 )
 
+// CreatePersonInput is one person to create: the romanized name and the
+// optional native-script name.
 type CreatePersonInput struct {
 	Name       string
 	NameNative string
 }
 
+// PeopleUpdatePair is one person rename: id plus the new names.
 type PeopleUpdatePair struct {
 	ID         int64
 	Name       string
 	NameNative string
 }
 
+// People is the people CRUD service: lookups, listing with document
+// counts, and create, rename and delete with name-normalization dedup.
 type People struct {
 	queries *database.Queries
 	logger  *log.Logger
 }
 
+// NewPeople wires the people service.
 func NewPeople(queries *database.Queries, logger *log.Logger) *People {
 	return &People{queries: queries, logger: logger}
 }
 
+// Get returns one person by id.
 func (s *People) Get(ctx context.Context, id int64) (database.People, error) {
 	p, err := s.queries.GetPeople(ctx, id)
 	if err != nil {
@@ -40,6 +47,7 @@ func (s *People) Get(ctx context.Context, id int64) (database.People, error) {
 	return p, nil
 }
 
+// GetByName returns one person by exact name.
 func (s *People) GetByName(ctx context.Context, name string) (database.People, error) {
 	p, err := s.queries.GetPeopleByName(ctx, name)
 	if err != nil {
@@ -48,6 +56,7 @@ func (s *People) GetByName(ctx context.Context, name string) (database.People, e
 	return p, nil
 }
 
+// ListAll returns every person.
 func (s *People) ListAll(ctx context.Context) ([]database.People, error) {
 	people, err := s.queries.ListAllPeople(ctx)
 	if err != nil {
@@ -56,6 +65,7 @@ func (s *People) ListAll(ctx context.Context) ([]database.People, error) {
 	return people, nil
 }
 
+// Count counts the people.
 func (s *People) Count(ctx context.Context) (int64, error) {
 	count, err := s.queries.CountPeople(ctx)
 	if err != nil {
@@ -64,6 +74,7 @@ func (s *People) Count(ctx context.Context) (int64, error) {
 	return count, nil
 }
 
+// CountByName counts the people whose names start with the prefix.
 func (s *People) CountByName(ctx context.Context, prefix string) (int64, error) {
 	count, err := s.queries.CountPeopleByName(ctx, prefix+"%")
 	if err != nil {
@@ -72,6 +83,7 @@ func (s *People) CountByName(ctx context.Context, prefix string) (int64, error) 
 	return count, nil
 }
 
+// ListWithDocumentCount pages the people with their document counts.
 func (s *People) ListWithDocumentCount(ctx context.Context, limit, offset int32) ([]database.ListPeopleWithDocumentCountRow, error) {
 	people, err := s.queries.ListPeopleWithDocumentCount(ctx, database.ListPeopleWithDocumentCountParams{
 		Limit:  limit,
@@ -83,6 +95,8 @@ func (s *People) ListWithDocumentCount(ctx context.Context, limit, offset int32)
 	return people, nil
 }
 
+// SearchByNameWithDocumentCount pages the people whose names start with
+// the prefix, with document counts.
 func (s *People) SearchByNameWithDocumentCount(ctx context.Context, prefix string, limit, offset int32) ([]database.SearchPeopleByNameWithDocumentCountRow, error) {
 	people, err := s.queries.SearchPeopleByNameWithDocumentCount(ctx, database.SearchPeopleByNameWithDocumentCountParams{
 		Name:   prefix + "%",
@@ -102,6 +116,9 @@ func toNullString(s string) sql.NullString {
 	return sql.NullString{}
 }
 
+// Create creates people in bulk, deduplicating by the DB-normalized
+// name: conflicts resolve to the existing person, invalid names are
+// rejected.
 func (s *People) Create(ctx context.Context, inputs []CreatePersonInput) ([]CreateResult[database.People], error) {
 	results := make([]CreateResult[database.People], len(inputs))
 
@@ -166,6 +183,8 @@ func (s *People) Create(ctx context.Context, inputs []CreatePersonInput) ([]Crea
 	return results, nil
 }
 
+// Update renames people in bulk, returning one result per pair (conflict,
+// not found, no-op, or updated).
 func (s *People) Update(ctx context.Context, pairs []PeopleUpdatePair) ([]UpdateResult[database.People], error) {
 	results := make([]UpdateResult[database.People], len(pairs))
 
@@ -243,6 +262,8 @@ func (s *People) Update(ctx context.Context, pairs []PeopleUpdatePair) ([]Update
 	return results, nil
 }
 
+// Delete removes people in bulk, reporting per id (deleted, not found,
+// or conflicting with referenced documents).
 func (s *People) Delete(ctx context.Context, ids []int64) ([]DeleteResult, error) {
 	results := make([]DeleteResult, len(ids))
 

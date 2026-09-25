@@ -29,6 +29,9 @@ func matcherUnavailableResponse(w http.ResponseWriter) {
 	})
 }
 
+// TagHandler is the tag API: CRUD, provisional promotion and its
+// quality verdicts, deleted-tag records, merges, and the merge-review
+// endpoints backed by curation.
 type TagHandler struct {
 	tag      *curation.Tag
 	merges   *curation.TagMerge
@@ -36,10 +39,13 @@ type TagHandler struct {
 	logger   *log.Logger
 }
 
+// NewTagHandler wires the tag handler to the curation services.
 func NewTagHandler(tag *curation.Tag, merges *curation.TagMerge, identity *curation.TagIdentity, logger *log.Logger) *TagHandler {
 	return &TagHandler{tag: tag, merges: merges, identity: identity, logger: logger}
 }
 
+// List serves the paged tag listing with a name-prefix search and
+// document counts.
 func (h *TagHandler) List(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -93,6 +99,7 @@ func (h *TagHandler) List(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(TagListResponse{Results: responses, Total: total})
 }
 
+// Create creates one tag from the JSON body.
 func (h *TagHandler) Create(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -139,6 +146,7 @@ func (h *TagHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// Update renames one tag.
 func (h *TagHandler) Update(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -190,6 +198,7 @@ func (h *TagHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// Delete removes a tag and blocks its name.
 func (h *TagHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -219,6 +228,8 @@ func (h *TagHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// ListProvisional serves the paged provisional tag list with quality
+// verdicts and pending identity counts.
 func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -291,6 +302,7 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(ProvisionalTagListResponse{Results: responses, Total: total})
 }
 
+// PromoteTag promotes one provisional tag, recording the reason.
 func (h *TagHandler) PromoteTag(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -318,6 +330,7 @@ func (h *TagHandler) PromoteTag(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// ReevaluateIdentity enqueues a fresh identity sweep for the vocabulary.
 func (h *TagHandler) ReevaluateIdentity(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -336,6 +349,7 @@ func (h *TagHandler) ReevaluateIdentity(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// Merge folds one tag into the target from the JSON body.
 func (h *TagHandler) Merge(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -371,6 +385,7 @@ func (h *TagHandler) Merge(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ListDeleted serves the paged deleted-tag records.
 func (h *TagHandler) ListDeleted(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -405,6 +420,7 @@ func (h *TagHandler) ListDeleted(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(DeletedTagListResponse{Results: responses, Total: total})
 }
 
+// RestoreDeleted unblocks one deleted tag name.
 func (h *TagHandler) RestoreDeleted(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -429,6 +445,7 @@ func (h *TagHandler) RestoreDeleted(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{"name": row.Name, "kind": row.Kind})
 }
 
+// MergeSuggestions serves the paged merge-review candidates.
 func (h *TagHandler) MergeSuggestions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -460,6 +477,7 @@ func (h *TagHandler) MergeSuggestions(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{"results": suggestions})
 }
 
+// DismissMergePair records the decision not to merge a pair.
 func (h *TagHandler) DismissMergePair(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -478,6 +496,7 @@ func (h *TagHandler) DismissMergePair(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// RestoreMergePair makes a dismissed pair reviewable again.
 func (h *TagHandler) RestoreMergePair(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -496,11 +515,15 @@ func (h *TagHandler) RestoreMergePair(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// TagListResponse is one page of the tag listing.
 type TagListResponse struct {
 	Results []TagResponse `json:"results"`
 	Total   int64         `json:"total"`
 }
 
+// DeletedTagResponse is one deleted-tag record as the API shows it:
+// the name, whether it was blocked or merged (with the target), and
+// when.
 type DeletedTagResponse struct {
 	Name       string    `json:"name"`
 	Kind       string    `json:"kind"`
@@ -508,11 +531,13 @@ type DeletedTagResponse struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
+// DeletedTagListResponse is one page of deleted-tag records.
 type DeletedTagListResponse struct {
 	Results []DeletedTagResponse `json:"results"`
 	Total   int64                `json:"total"`
 }
 
+// TagQualityCriteriaView is the API view of the four quality answers.
 type TagQualityCriteriaView struct {
 	SubjectMatter      *bool `json:"subject_matter"`
 	StandardTerm       *bool `json:"standard_term"`
@@ -520,6 +545,8 @@ type TagQualityCriteriaView struct {
 	AppropriatelyBroad *bool `json:"appropriately_broad"`
 }
 
+// TagQualityVerdictInfo is the latest recorded quality verdict for a
+// provisional tag, its criteria (nil when unjudged) and the model.
 type TagQualityVerdictInfo struct {
 	Pass      bool                    `json:"pass"`
 	Criteria  *TagQualityCriteriaView `json:"criteria"`
@@ -527,6 +554,9 @@ type TagQualityVerdictInfo struct {
 	VerdictAt time.Time               `json:"verdict_at"`
 }
 
+// ProvisionalTagResponse is one provisional tag with its document
+// count, creation time, latest quality verdict, and pending identity
+// events.
 type ProvisionalTagResponse struct {
 	ID              int64                  `json:"id"`
 	Name            string                 `json:"name"`
@@ -536,29 +566,37 @@ type ProvisionalTagResponse struct {
 	PendingIdentity int64                  `json:"pending_identity"`
 }
 
+// ProvisionalTagListResponse is one page of provisional tags.
 type ProvisionalTagListResponse struct {
 	Results []ProvisionalTagResponse `json:"results"`
 	Total   int64                    `json:"total"`
 }
 
+// CreateTagRequest is the body of POST /api/v1/tags.
 type CreateTagRequest struct {
 	Name string `json:"name"`
 }
 
+// UpdateTagRequest is the body of a tag rename.
 type UpdateTagRequest struct {
 	Name string `json:"name"`
 }
 
+// MergeTagRequest is the body of a tag merge: the surviving tag's id.
 type MergeTagRequest struct {
 	TargetID int64 `json:"target_id"`
 }
 
+// MergeTagResponse reports the merge: the surviving tag and how many
+// documents were reassigned.
 type MergeTagResponse struct {
 	ID         int64  `json:"id"`
 	Name       string `json:"name"`
 	Reassigned int64  `json:"reassigned"`
 }
 
+// MergePairRequest is the body of a pair-level merge or dismissal: the
+// two tag names as typed.
 type MergePairRequest struct {
 	TagA string `json:"tag_a"`
 	TagB string `json:"tag_b"`

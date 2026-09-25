@@ -1,3 +1,9 @@
+// Package handlers is the REST handler layer: one handler per resource,
+// translating HTTP requests into the use-case services and the domain
+// groups. Handlers read their request parameters through the ParamBag the
+// middleware installs, respond with the package's JSON views, and never
+// query the database outside the services except where the flow demands
+// it.
 package handlers
 
 import (
@@ -14,11 +20,14 @@ import (
 	"github.com/wgomg/edub-kushim/internal/service"
 )
 
+// APIKeyHandler is the API-key management surface: admin endpoints for a
+// user's key and self-service variants under /me.
 type APIKeyHandler struct {
 	userService *service.User
 	logger      *log.Logger
 }
 
+// NewAPIKeyHandler wires the handler to the users service.
 func NewAPIKeyHandler(userService *service.User, logger *log.Logger) *APIKeyHandler {
 	return &APIKeyHandler{userService: userService, logger: logger}
 }
@@ -72,14 +81,17 @@ func (h *APIKeyHandler) issueKey(w http.ResponseWriter, r *http.Request, keyFunc
 	})
 }
 
+// GenerateKey mints an API key for the path's user id.
 func (h *APIKeyHandler) GenerateKey(w http.ResponseWriter, r *http.Request) {
 	h.issueKey(w, r, h.userService.CreateAPIKey, "Save this API key — it will not be shown again", http.StatusCreated)
 }
 
+// RotateKey replaces a user's API key atomically.
 func (h *APIKeyHandler) RotateKey(w http.ResponseWriter, r *http.Request) {
 	h.issueKey(w, r, h.userService.RotateAPIKey, "Previous API key has been revoked. Save this new key — it will not be shown again", http.StatusOK)
 }
 
+// RevokeKey clears a user's API key.
 func (h *APIKeyHandler) RevokeKey(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -107,6 +119,7 @@ func (h *APIKeyHandler) RevokeKey(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// GetKeyStatus reports a user's key status without secrets.
 func (h *APIKeyHandler) GetKeyStatus(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -157,6 +170,7 @@ func (h *APIKeyHandler) callerID(r *http.Request) int64 {
 	return id
 }
 
+// MeGenerateKey mints the calling user's own API key.
 func (h *APIKeyHandler) MeGenerateKey(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -186,6 +200,7 @@ func (h *APIKeyHandler) MeGenerateKey(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// MeRevokeKey revokes the calling user's API key.
 func (h *APIKeyHandler) MeRevokeKey(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -207,6 +222,7 @@ func (h *APIKeyHandler) MeRevokeKey(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// MeRotateKey rotates the calling user's API key.
 func (h *APIKeyHandler) MeRotateKey(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -235,6 +251,7 @@ func (h *APIKeyHandler) MeRotateKey(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// MeGetKeyStatus reports the calling user's key status.
 func (h *APIKeyHandler) MeGetKeyStatus(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)

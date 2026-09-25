@@ -27,15 +27,19 @@ var allowedLogNames = map[string]bool{
 	"queue":  true,
 }
 
+// LogsHandler serves the process log files: the tail of the kushim, edub,
+// hugot or queue log, capped and line-limited.
 type LogsHandler struct {
 	getConfig func() *config.Config
 	logger    *log.Logger
 }
 
+// NewLogsHandler wires the handler to the dynamic config.
 func NewLogsHandler(getConfig func() *config.Config, logger *log.Logger) *LogsHandler {
 	return &LogsHandler{getConfig: getConfig, logger: logger}
 }
 
+// ListLogs tails one process log, clamped between 100 and 5000 lines.
 func (h *LogsHandler) ListLogs(w http.ResponseWriter, r *http.Request) {
 	reqID := r.Context().Value("reqid").(string)
 	name := r.PathValue("name")

@@ -1,3 +1,4 @@
+// The edub binary: the REST API server and the SPA, built without CGo.
 package main
 
 import (

@@ -10,16 +10,23 @@ import (
 	"github.com/wgomg/edub-kushim/internal/task"
 )
 
+// EnrichTaskHandler enriches one stored document as a blocking task: it
+// loads the document row, runs the enrichment coordinator, and stores the
+// result payload on the task.
 type EnrichTaskHandler struct {
 	enricher *Enricher
 	queries  *database.Queries
 	logger   *log.Logger
 }
 
+// NewEnrichTaskHandler wires the handler to the enricher, the queries and
+// the logger.
 func NewEnrichTaskHandler(enricher *Enricher, queries *database.Queries, logger *log.Logger) *EnrichTaskHandler {
 	return &EnrichTaskHandler{enricher: enricher, queries: queries, logger: logger}
 }
 
+// Handle loads the payload's document and enriches it; a missing document
+// fails the task with its id attached.
 func (h *EnrichTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMessage, error) {
 	var p struct {
 		DocumentID string `json:"document_id"`
@@ -48,6 +55,8 @@ func (h *EnrichTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMe
 	return *result, nil
 }
 
+// DedupKey is the payload's document id, so one document never enriches
+// twice concurrently.
 func (h *EnrichTaskHandler) DedupKey(payload json.RawMessage) string {
 	var p struct {
 		DocumentID string `json:"document_id"`

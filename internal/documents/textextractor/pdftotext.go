@@ -14,11 +14,14 @@ import (
 	_mime "github.com/wgomg/edub-kushim/internal/documents/mime"
 )
 
+// PDFToText extracts PDF text through the poppler pdftotext binary.
 type PDFToText struct {
 	logger *log.Logger
 	config config.ToolConfig
 }
 
+// NewPDFToText verifies the binary is on PATH, erroring with install
+// hints when it is not.
 func NewPDFToText(logger *log.Logger, cfg config.ToolConfig) (*PDFToText, error) {
 	if _, err := exec.LookPath(cfg.Command); err != nil {
 		return nil, fmt.Errorf("%s not found in PATH: %w\nInstall it (e.g. 'sudo apt install poppler-utils' or 'brew install poppler') or switch to the built-in 'mupdf' engine", cfg.Command, err)
@@ -27,6 +30,8 @@ func NewPDFToText(logger *log.Logger, cfg config.ToolConfig) (*PDFToText, error)
 	return &PDFToText{logger: logger, config: cfg}, nil
 }
 
+// Extract shells out to pdftotext in raw mode with UTF-8 output, in
+// stream order. The path must be absolute.
 func (p *PDFToText) Extract(ctx context.Context, path string, _ string) (*string, error) {
 	if !filepath.IsAbs(path) {
 		return nil, fmt.Errorf("%s: input path must be absolute, got %q", p.Name(), path)
@@ -48,10 +53,12 @@ func (p *PDFToText) Extract(ctx context.Context, path string, _ string) (*string
 	return &text, nil
 }
 
+// CanHandle reports PDF content types.
 func (p *PDFToText) CanHandle(mimeType string) bool {
 	return _mime.IsPDF(mimeType)
 }
 
+// Name identifies the extractor.
 func (p *PDFToText) Name() string {
 	return config.TextExtractor.PdfToText
 }

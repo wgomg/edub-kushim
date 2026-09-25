@@ -1,3 +1,8 @@
+// Package backup is the data-safety subsystem: scheduled archives of the
+// database dump and the storage files per mode (full, database,
+// documents), retention, restore with path rewriting, the rsync mirror to
+// a remote or local target, the due-scheduling that reads run history, and
+// the backup and mirror task handlers.
 package backup
 
 import (
@@ -21,19 +26,26 @@ import (
 	"github.com/wgomg/edub-kushim/internal/version"
 )
 
+// BackupMode is what an archive covers: the whole installation, the
+// database only, or the documents only.
 type BackupMode string
 
+// The archive modes.
 const (
 	BackupModeFull      BackupMode = "full"
 	BackupModeDatabase  BackupMode = "database"
 	BackupModeDocuments BackupMode = "documents"
 )
 
+// Valid reports whether the mode is one of the declared archive modes.
 func (m BackupMode) Valid() bool {
 	_, ok := config.ValidBackupModes[string(m)]
 	return ok
 }
 
+// Manifest is the archive's self-description, written at its root: the
+// format, the covered mode, the sizes and hashes, and the original
+// storage directory so restore can rewrite paths.
 type Manifest struct {
 	Version           int        `json:"version"`
 	Format            string     `json:"format"`
@@ -47,6 +59,8 @@ type Manifest struct {
 	StorageDir        string     `json:"storage_dir,omitempty"`
 }
 
+// BackupResult reports one archive run: path, size, counts, and the
+// manifest stored inside it.
 type BackupResult struct {
 	Path        string    `json:"path"`
 	SizeBytes   int64     `json:"size_bytes"`
@@ -55,6 +69,9 @@ type BackupResult struct {
 	Manifest    *Manifest `json:"manifest"`
 }
 
+// Create builds one archive in a temp directory and moves it into
+// backupDir: a pg_dump of the schema and data (documents-only mode
+// skips), the storage files per mode, and the sanitized manifest.
 func Create(ctx context.Context, db *sql.DB, schemaFS embed.FS, mode BackupMode, backupDir, configPath, storageDir string) (*BackupResult, error) {
 	if mode == "" {
 		mode = BackupModeFull
@@ -166,6 +183,8 @@ func writeSQLDump(ctx context.Context, db *sql.DB, schemaFS embed.FS, sqlPath st
 	return nil
 }
 
+// ApplyRetention prunes the backup directory for one mode down to keep
+// archives, oldest first; zero keep is a no-op.
 func ApplyRetention(backupDir string, mode BackupMode, keep int) error {
 	if keep <= 0 {
 		return nil

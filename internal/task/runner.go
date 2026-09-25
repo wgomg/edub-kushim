@@ -14,12 +14,19 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
+// Runner drives the claim-run-complete loop for the task types it is
+// registered for. Next claims the next pending task, dispatches to the
+// registered handler, recovers handler panics into task failures, retries
+// the completion write against transient contention, and pauses the batch
+// when a handler error carries PauseBatch. Safe to call from several pool
+// workers.
 type Runner struct {
 	store    *Store
 	registry *Registry
 	logger   *log.Logger
 }
 
+// NewRunner wires the claim loop to the store and the handler registry.
 func NewRunner(store *Store, registry *Registry, logger *log.Logger) *Runner {
 	return &Runner{
 		store:    store,
@@ -28,6 +35,9 @@ func NewRunner(store *Store, registry *Registry, logger *log.Logger) *Runner {
 	}
 }
 
+// Next claims and runs at most one task of the given type. It returns nil
+// when there was nothing to claim or the maintenance lock was busy, so a
+// polling loop treats it as an idle round.
 func (r *Runner) Next(ctx context.Context, taskType types.TaskType) (err error) {
 	task, token, err := r.store.ClaimNextPending(ctx, taskType)
 	if err != nil {

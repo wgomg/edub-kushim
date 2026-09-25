@@ -17,19 +17,28 @@ import (
 
 var _ task.Dedupable = (*TagMeasureTaskHandler)(nil)
 
+// TagMeasureTaskHandler runs the measurement sweep as a blocking task: it
+// forks the tagmeasure verb and extracts its JSON report. The task
+// deduplicates on a fixed key, so concurrent triggers collapse into one
+// sweep.
 type TagMeasureTaskHandler struct {
 	queries *database.Queries
 	logger  *log.Logger
 }
 
+// NewTagMeasureTaskHandler wires the handler to the queries and logger.
 func NewTagMeasureTaskHandler(queries *database.Queries, logger *log.Logger) *TagMeasureTaskHandler {
 	return &TagMeasureTaskHandler{queries: queries, logger: logger}
 }
 
+// DedupKey is fixed for all tag measure tasks: one sweep runs at a time
+// regardless of payload.
 func (h *TagMeasureTaskHandler) DedupKey(payload json.RawMessage) string {
 	return "tagmeasure"
 }
 
+// Handle forks the tagmeasure verb for the task's batch and returns its
+// report as the task result.
 func (h *TagMeasureTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMessage, error) {
 	return task.RunBlocking(ctx, h.queries, h.logger, t, "tag measure", func(progress *task.ProgressTracker) (json.RawMessage, error) {
 		progress.Set("run", "tagmeasure --run "+t.BatchID, 0)
@@ -73,6 +82,8 @@ func ForkAndExtractReport(subcommand, runID, reportPrefix, label string) (json.R
 	return result, nil
 }
 
+// ExtractReport returns the JSON payload following the first stdout line
+// that carries the prefix, nil when no valid report line is present.
 func ExtractReport(stdout []byte, prefix string) json.RawMessage {
 	for line := range bytes.SplitSeq(stdout, []byte("\n")) {
 		trimmed := bytes.TrimSpace(line)

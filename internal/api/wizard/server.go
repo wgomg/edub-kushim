@@ -1,3 +1,7 @@
+// Package wizard is the setup wizard server: the same config handler the
+// API exposes, served on its own port before a configuration exists, with
+// the embedded wizard SPA. Bootstrap happens here first; the main server
+// then serves the configured instance.
 package wizard
 
 import (
@@ -17,6 +21,8 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
+// Server is the setup wizard's HTTP server; Start serves the SPA and the
+// config endpoints until the process is stopped.
 type Server struct {
 	httpServer *http.Server
 	logger     *log.Logger
@@ -25,6 +31,7 @@ type Server struct {
 	db         *sql.DB
 }
 
+// NewServer prepares the wizard server on addr.
 func NewServer(addr string, logger *log.Logger) *Server {
 	return &Server{
 		logger: logger,
@@ -32,6 +39,8 @@ func NewServer(addr string, logger *log.Logger) *Server {
 	}
 }
 
+// Start assembles the wizard routes, auto-resumes an existing
+// configuration if one is found, and serves until Shutdown.
 func (s *Server) Start() error {
 	var cfgPtr atomic.Pointer[config.Config]
 	getConfig := func() *config.Config { return cfgPtr.Load() }
@@ -106,6 +115,8 @@ func (s *Server) bootstrap(configDir string) (*config.Config, *database.Client, 
 	return cfg, client, dispatcher, nil
 }
 
+// Shutdown drains the HTTP server, stops the config pool and closes the
+// database. Safe before Start.
 func (s *Server) Shutdown(ctx context.Context) error {
 	if s.httpServer == nil {
 		return nil

@@ -15,22 +15,29 @@ import (
 	_mime "github.com/wgomg/edub-kushim/internal/documents/mime"
 )
 
+// Odt reads ODT files: the OpenDocument XML inside the zip, rendered to
+// newline-separated paragraph text.
 type Odt struct {
 	logger *log.Logger
 }
 
+// NewOdt builds the reader.
 func NewOdt(logger *log.Logger) *Odt {
 	return &Odt{logger: logger}
 }
 
+// CanHandle reports ODT content types.
 func (o *Odt) CanHandle(mimeType string) bool {
 	return mimeType == _mime.ODT
 }
 
+// Name identifies the reader.
 func (o *Odt) Name() string {
 	return config.TextExtractor.Odt
 }
 
+// Extract reads content.xml from the zip and returns its text runs, one
+// line per paragraph and heading. The path must be absolute.
 func (o *Odt) Extract(ctx context.Context, path string, _ string) (*string, error) {
 	r, err := zip.OpenReader(path)
 	if err != nil {

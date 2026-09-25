@@ -1,3 +1,6 @@
+// Package cli is the CLI verb layer: the verb tables (cli and server
+// sets), the parser and dispatcher over the composition root, and the
+// usage printers. cmd/kushim dispatches through here.
 package cli
 
 import (
@@ -12,6 +15,8 @@ import (
 	"github.com/wgomg/edub-kushim/internal/version"
 )
 
+// Command is one CLI verb: its name, description and handler over the
+// container.
 type Command struct {
 	Name        string
 	Description string
@@ -122,11 +127,14 @@ var commandSets = map[string]map[string]Command{
 	},
 }
 
+// CommandRunner dispatches a verb invocation to the table.
 type CommandRunner struct {
 	container *container.Container
 	commands  map[string]Command
 }
 
+// NewCommandRunner selects the verb table by set (cli or server) and
+// returns the dispatcher.
 func NewCommandRunner(c *container.Container, set string) *CommandRunner {
 	cmds := commandSets["cli"]
 	if s, ok := commandSets[set]; ok {
@@ -138,6 +146,8 @@ func NewCommandRunner(c *container.Container, set string) *CommandRunner {
 	}
 }
 
+// ExecuteCommand looks up the verb and runs it. queue and consume are
+// gated to one instance at a time with an advisory lock.
 func (r *CommandRunner) ExecuteCommand(name string, args []string) error {
 	cmd, exists := r.commands[name]
 	if !exists {
@@ -146,6 +156,7 @@ func (r *CommandRunner) ExecuteCommand(name string, args []string) error {
 	return cmd.Handler(r.container, args)
 }
 
+// ListCommands returns the verb table of the given set.
 func ListCommands() []Command {
 	var cmdList []Command
 	for _, cmd := range commandSets["cli"] {
@@ -154,6 +165,7 @@ func ListCommands() []Command {
 	return cmdList
 }
 
+// PrintUsage prints the CLI verb table and the global flags.
 func PrintUsage() {
 	fmt.Println("Usage: kushim <command> [arguments]")
 	fmt.Println("\nAvailable commands:")
@@ -164,6 +176,7 @@ func PrintUsage() {
 	os.Exit(1)
 }
 
+// PrintServerUsage prints the server command's usage.
 func PrintServerUsage() {
 	fmt.Println("Usage: edub [command]")
 	fmt.Println("\nCommands:")

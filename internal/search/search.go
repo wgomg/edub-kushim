@@ -1,3 +1,8 @@
+// Package search is the document query engine: a tsvector free-text search
+// over the documents table and the structured filter search (tags with
+// alias resolution, people, document type, language, dates, file size, and
+// the missing-state filters), sharing one result shape with rank and
+// snippet. It is read-only over the persistence layer.
 package search
 
 import (
@@ -12,6 +17,8 @@ import (
 	"github.com/wgomg/edub-kushim/internal/textnorm"
 )
 
+// Result is one search hit: the document's display fields plus the
+// tsvector Snippet and Rank (both empty for filter-only matches).
 type Result struct {
 	ID             int64
 	DocumentID     string
@@ -33,21 +40,29 @@ type Result struct {
 	Rank           float64
 }
 
+// PersonFilter is one person clause: a name and, optionally, the person
+// type.
 type PersonFilter struct {
 	Name string `json:"name"`
 	Type string `json:"type"`
 }
 
+// DateRange is one date bound pair, each side optional.
 type DateRange struct {
 	From *string `json:"from"`
 	To   *string `json:"to"`
 }
 
+// FileSizeRange is one size bound pair in bytes, each side optional.
 type FileSizeRange struct {
 	Min *int64 `json:"min"`
 	Max *int64 `json:"max"`
 }
 
+// Filter is the structured search request: the optional free-text query,
+// tag and people filters, document type and language, date and size
+// bounds, sorting and paging, and the missing-state flags (documents with
+// no language, no type, or no tags at all).
 type Filter struct {
 	Query           string         `json:"query"`
 	Tags            []string       `json:"tags"`
@@ -66,11 +81,13 @@ type Filter struct {
 	Untagged        bool           `json:"untagged"`
 }
 
+// Engine is the read-only query surface over the document table.
 type Engine struct {
 	logger  *log.Logger
 	queries *database.Queries
 }
 
+// NewEngine builds the search engine over the queries.
 func NewEngine(logger *log.Logger, queries *database.Queries) *Engine {
 	return &Engine{
 		logger:  logger,
@@ -119,6 +136,10 @@ func (e *Engine) resolveTagAliases(ctx context.Context, names []string) ([]strin
 	return out, nil
 }
 
+// Search runs the sanitized free-text query over the tsvector index,
+// returning rank-ordered hits with snippets. An empty sanitized query
+// returns nothing. An offset past the end returns an empty slice, not an
+// error.
 func (e *Engine) Search(ctx context.Context, query string, limit, offset int32) ([]Result, error) {
 	query = sanitizeQuery(query)
 	if query == "" {
@@ -175,6 +196,9 @@ func (e *Engine) Search(ctx context.Context, query string, limit, offset int32) 
 	return results, nil
 }
 
+// SearchStructured runs the filter search: tag names are normalized and
+// alias-resolved before matching, and the result comes with the total
+// count for paging.
 func (e *Engine) SearchStructured(ctx context.Context, filter Filter) ([]Result, int64, error) {
 	tags, err := e.resolveTagAliases(ctx, filter.Tags)
 	if err != nil {

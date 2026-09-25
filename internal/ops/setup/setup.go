@@ -1,3 +1,7 @@
+// Package setup is the CLI setup flow: it walks the operator through
+// environment and account configuration in the terminal or by serving the
+// wizard, then bootstraps the environment and downloads the assets the
+// configuration requires.
 package setup
 
 import (
@@ -22,6 +26,9 @@ import (
 	"golang.org/x/term"
 )
 
+// RunSetup is the kushim setup verb: it refuses to run over an existing
+// configuration and drives either the terminal wizard or the served
+// wizard, based on the flags.
 func RunSetup(args []string, logger *log.Logger) error {
 	configDir, err := config.ConfigDir()
 	if err != nil {

@@ -32,7 +32,9 @@ Deeper context lives in `docs/`:
 - Containerized (no host C toolchain): `make build-glibc`, `make build-musl`,
   `make build-tools-image`; CGo tests in containers: `make test-cgo-glibc`, `make test-cgo-musl`
 - Go 1.26, module `github.com/wgomg/edub-kushim`
-- `make fix` runs `go fix -tags "XLA,ORT" ./...`
+- `make check` runs `go fix`, `go vet`, then `revive` over `./...`; revive enforces the
+  doc-comment rules in `revive.toml` (revive must be on PATH) and fails on any finding. Always run once after implementation is done, never inbetween or after
+  small individual changes.
 
 ## Two binaries, different CGo
 

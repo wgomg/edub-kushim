@@ -17,6 +17,9 @@ import (
 
 var _ task.Dedupable = (*BackupTaskHandler)(nil)
 
+// BackupTaskHandler creates a backup archive as a blocking task, per the
+// payload's mode and schedule, applying retention; the dedup key is the
+// mode, so one backup runs at a time per mode.
 type BackupTaskHandler struct {
 	db        *sql.DB
 	queries   *database.Queries
@@ -24,6 +27,8 @@ type BackupTaskHandler struct {
 	logger    *log.Logger
 }
 
+// NewBackupTaskHandler wires the handler to the database and the
+// dynamic config.
 func NewBackupTaskHandler(db *sql.DB, queries *database.Queries, getConfig func() *config.Config, logger *log.Logger) *BackupTaskHandler {
 	return &BackupTaskHandler{
 		db:        db,
@@ -33,6 +38,8 @@ func NewBackupTaskHandler(db *sql.DB, queries *database.Queries, getConfig func(
 	}
 }
 
+// DedupKey is the backup mode, so concurrent backups of one mode
+// collapse.
 func (h *BackupTaskHandler) DedupKey(payload json.RawMessage) string {
 	var p struct {
 		Mode string `json:"mode"`
@@ -46,6 +53,8 @@ func (h *BackupTaskHandler) DedupKey(payload json.RawMessage) string {
 	return fmt.Sprintf("backup:%s:%s", p.Mode, time.Now().UTC().Format("2006-01-02"))
 }
 
+// Handle runs the configured backup schedules that are due, creates their
+// archives and applies retention, and returns the run's summary.
 func (h *BackupTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMessage, error) {
 	return task.RunBlocking(ctx, h.queries, h.logger, t, "backup", func(progress *task.ProgressTracker) (json.RawMessage, error) {
 		var payload struct {

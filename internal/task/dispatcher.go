@@ -10,12 +10,16 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
+// Dispatcher enqueues tasks: it validates the task type against the
+// registry, derives the dedup key, and creates the task row in the given
+// state. It is the seam the API and the CLI use to start work.
 type Dispatcher struct {
 	logger   *log.Logger
 	registry *Registry
 	store    *Store
 }
 
+// NewDispatcher wires the enqueue path to the store and the registry.
 func NewDispatcher(logger *log.Logger, store *Store, registry *Registry) *Dispatcher {
 	return &Dispatcher{
 		logger:   logger,
@@ -24,6 +28,10 @@ func NewDispatcher(logger *log.Logger, store *Store, registry *Registry) *Dispat
 	}
 }
 
+// Enqueue creates a task of the given type and returns its task id. An
+// empty taskID becomes a fresh UUID and an empty status becomes pending;
+// an unknown task type errors, and a dedup key matching existing work
+// rejects the creation.
 func (d *Dispatcher) Enqueue(ctx context.Context, taskType types.TaskType, batchID string, payload json.RawMessage, taskID string, status ...types.TaskStatus) (string, error) {
 	_, err := d.registry.Get(taskType)
 	if err != nil {

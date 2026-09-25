@@ -1,3 +1,10 @@
+// Package queue is the queue daemon: it LISTENs for batch and task
+// notifications, polls as a safety net, claims queued consume batches for
+// the per-batch consume children, dispatches every other task type to
+// their handlers, runs the blocking-task sweeps (backup, mirror, tag
+// measure, tag reconcile, tag identity, thumbnails backfill) under the
+// maintenance lock, and requeues stale work. The per-batch consume work
+// itself forks kushim consume children.
 package queue
 
 import (
@@ -29,6 +36,8 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
+// Run is the kushim queue verb: it runs the daemon loop until signalled,
+// claiming batches and tasks and forking the blocking-task children.
 func Run(c *container.Container, args []string) error {
 	fp := flags.NewFlagParser(args)
 	if fp.Help("Usage: kushim queue [--bg]") {

@@ -1,3 +1,7 @@
+// Package consume is the per-batch consume driver: one child process per
+// batch, processing its consume, enrich and thumbnail tasks through task
+// pools, with batch ownership, heartbeat, the two-phase cancel protocol,
+// and the credit-pause handling.
 package consume
 
 import (
@@ -30,6 +34,8 @@ const (
 	heartbeatInterval = 5 * time.Second
 )
 
+// ErrBatchPaused tells the queue the batch hit a credit or balance error
+// and should pause instead of fail.
 var ErrBatchPaused = errors.New("batch paused due to LLM credit/balance error")
 
 func watchSignals(ctx context.Context, cancel context.CancelFunc) {
@@ -45,6 +51,11 @@ func watchSignals(ctx context.Context, cancel context.CancelFunc) {
 	}()
 }
 
+// Run is the kushim consume verb: with "cancel" it drives the batch
+// cancel protocol; otherwise it claims the given (or next queued) batch,
+// takes ownership, and runs its tasks through the pools until done or
+// interrupted. The parent process stays clean and shells the heavy
+// lifting to per-task children where the adapter does so.
 func Run(c *container.Container, args []string) error {
 	if len(args) > 0 && args[0] == "cancel" {
 		return consumeCancelHandler(c, args[1:])
@@ -448,6 +459,8 @@ func consumeCancelHandler(c *container.Container, args []string) error {
 	return nil
 }
 
+// IsAlive reports whether a PID belongs to a live process; a negative
+// pid is always false.
 func IsAlive(pid int64) bool {
 	return syscall.Kill(int(pid), 0) == nil
 }

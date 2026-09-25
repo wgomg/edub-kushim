@@ -11,6 +11,12 @@ import (
 	"github.com/wgomg/edub-kushim/internal/errs"
 )
 
+// AuthMiddleware gates the API and the wizard: without authentication
+// everything runs as admin; with it, bearer tokens and API keys identify
+// the caller while the health check, the wizard bootstrap GET and the
+// auth endpoints stay public, and everything outside /api and /wizard
+// (the SPA itself) passes through. The resolved role and user land in
+// the request context for RequireRole and the handlers.
 func AuthMiddleware(
 	next http.Handler,
 	getSecret func() string,
@@ -19,13 +25,13 @@ func AuthMiddleware(
 	getUserByID func(ctx context.Context, id int64) (*database.User, error),
 ) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-	if !getAuthEnabled() {
-		ctx := context.WithValue(r.Context(), auth.RoleKey, string(auth.RoleAdmin))
-		ctx = context.WithValue(ctx, auth.UserIDKey, int64(1))
-		ctx = context.WithValue(ctx, auth.UsernameKey, "admin")
-		next.ServeHTTP(w, r.WithContext(ctx))
-		return
-	}
+		if !getAuthEnabled() {
+			ctx := context.WithValue(r.Context(), auth.RoleKey, string(auth.RoleAdmin))
+			ctx = context.WithValue(ctx, auth.UserIDKey, int64(1))
+			ctx = context.WithValue(ctx, auth.UsernameKey, "admin")
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
 
 		path := r.URL.Path
 		isWizardPath := strings.HasPrefix(path, "/wizard/")

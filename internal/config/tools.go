@@ -7,6 +7,10 @@ import (
 	"strings"
 )
 
+// ExternalTool is one external capability's readiness report for the UI:
+// the engine, its category, the command looked up, whether it is on PATH,
+// and the install hints per platform. OCR engines carry their configured
+// languages with per-language hints and their companion binaries.
 type ExternalTool struct {
 	Engine       string            `json:"engine"`
 	Category     string            `json:"category"`
@@ -19,11 +23,15 @@ type ExternalTool struct {
 	Companions   []CompanionTool   `json:"companions,omitempty"`
 }
 
+// LangHint is one OCR language's install hints per platform.
 type LangHint struct {
 	Language     string            `json:"language"`
 	InstallHints map[string]string `json:"install_hints"`
 }
 
+// CompanionTool is a binary an engine wraps (ocrmypdf needs tesseract
+// and unpaper): whether it is present and whether its absence blocks the
+// engine.
 type CompanionTool struct {
 	Command      string            `json:"command"`
 	Purpose      string            `json:"purpose"`
@@ -139,6 +147,8 @@ var tesseractLangPackagePatterns = map[string]string{
 	"macOS":         "brew install tesseract (bundles common languages; see brew docs for extras)",
 }
 
+// InstallHintOrder is the platform display order the UI shows install
+// hints in.
 var InstallHintOrder = []string{"Debian/Ubuntu", "Arch", "Fedora", "Alpine", "macOS", "pip"}
 
 func checkOcrmypdfCompanions() []CompanionTool {
@@ -213,6 +223,11 @@ func tesseractLangInstallHints(langs []string) []LangHint {
 	return hints
 }
 
+// MissingExternalTools reports the readiness of every external tool the
+// configuration actually uses: curl always, the configured engines only
+// when they are selected, rsync when mirroring is enabled, the converter
+// binary, and the optimizer fallback. Install hints ride along for the
+// UI.
 func MissingExternalTools(cfg *Config) []ExternalTool {
 	var tools []ExternalTool
 
@@ -290,6 +305,10 @@ func MissingExternalTools(cfg *Config) []ExternalTool {
 	return tools
 }
 
+// FilterToolErrors keeps only the readiness failures the pipeline cannot
+// work around: a missing curl (no downloads at all), any unavailable
+// selected engine, and an ocrmypdf missing a required companion.
+// Available tools and prerequisites other than curl are dropped.
 func FilterToolErrors(all []ExternalTool) []ExternalTool {
 	var result []ExternalTool
 	for _, t := range all {
@@ -316,6 +335,8 @@ func FilterToolErrors(all []ExternalTool) []ExternalTool {
 	return result
 }
 
+// MissingExternalToolErrors returns the blocking readiness failures for
+// the configuration, as the API surfaces them.
 func MissingExternalToolErrors(cfg *Config) []ExternalTool {
 	return FilterToolErrors(MissingExternalTools(cfg))
 }

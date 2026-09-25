@@ -11,12 +11,15 @@ import (
 	"github.com/wgomg/edub-kushim/internal/service"
 )
 
+// AuthHandler is the session API: login, logout, and whoami.
 type AuthHandler struct {
 	userService *service.User
 	getConfig   func() *config.Config
 	logger      *log.Logger
 }
 
+// NewAuthHandler wires the auth handler to the users and the dynamic
+// config.
 func NewAuthHandler(userService *service.User, getConfig func() *config.Config, logger *log.Logger) *AuthHandler {
 	return &AuthHandler{
 		userService: userService,
@@ -41,6 +44,7 @@ func writeUnauthorized(w http.ResponseWriter) {
 	json.NewEncoder(w).Encode(map[string]string{"error": "invalid username or password"})
 }
 
+// Login verifies the credentials and sets the session cookie.
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -96,6 +100,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+// Logout clears the session cookie.
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     "edub_token",
@@ -109,6 +114,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// MeHandler serves the authenticated user's identity.
 func (h *AuthHandler) MeHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)

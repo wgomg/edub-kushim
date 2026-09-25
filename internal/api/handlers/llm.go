@@ -7,11 +7,13 @@ import (
 	"github.com/wgomg/edub-kushim/internal/llm"
 )
 
+// LlmHandler serves the model catalog for the UI.
 type LlmHandler struct {
 	registry  *llm.Registry
 	cached    *LlmModelsResponse
 }
 
+// NewLlmHandler wires the handler to the model registry.
 func NewLlmHandler(registry *llm.Registry) *LlmHandler {
 	h := &LlmHandler{registry: registry}
 	h.cached = h.buildResponse()
@@ -57,6 +59,7 @@ func (h *LlmHandler) buildResponse() *LlmModelsResponse {
 	}
 }
 
+// ListModels serves the catalog's adapters, providers and models.
 func (h *LlmHandler) ListModels(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

@@ -12,14 +12,19 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
+// BatchFilter scopes batch queries for the list and admin surfaces.
 type BatchFilter struct {
 	Status string
 	Limit  int32
 	Offset int32
 }
 
+// ErrTaskNotFound reports a task id that resolves to no row.
 var ErrTaskNotFound = errors.New("task not found")
 
+// TaskFilter scopes task list queries. Empty fields are ignored; the
+// status value "active" is a pseudo-status that selects the active view
+// and combines with no other filter.
 type TaskFilter struct {
 	BatchID  string
 	Status   string
@@ -28,6 +33,7 @@ type TaskFilter struct {
 	Offset   int32
 }
 
+// Get returns one task row, ErrTaskNotFound when the id is unknown.
 func Get(ctx context.Context, queries *database.Queries, taskID string) (database.Task, error) {
 	task, err := queries.GetTaskByTaskID(ctx, taskID)
 	if err != nil {
@@ -39,6 +45,8 @@ func Get(ctx context.Context, queries *database.Queries, taskID string) (databas
 	return task, nil
 }
 
+// ListFiltered lists tasks matching the filter, choosing the matching
+// query shape (empty filters list everything).
 func ListFiltered(ctx context.Context, queries *database.Queries, f TaskFilter) ([]database.Task, error) {
 	// "active" is a filter pseudo-status, never a column value; combined
 	// with other filters it matches nothing by definition.
@@ -134,6 +142,8 @@ func ListFiltered(ctx context.Context, queries *database.Queries, f TaskFilter) 
 	}
 }
 
+// Retry resets a task for reprocessing: it re-queues the task and returns
+// an error for unknown ids or states that cannot be retried.
 func Retry(ctx context.Context, client *database.Client, logger *log.Logger, taskID string) error {
 	task, err := client.Queries.GetTaskByTaskID(ctx, taskID)
 	if err != nil {

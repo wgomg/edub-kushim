@@ -13,6 +13,8 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
+// ValidateMigrationDestination refuses a destination database that holds
+// tables without this application's migration history.
 func ValidateMigrationDestination(ctx context.Context, db *sql.DB) error {
 	var count int64
 	if err := db.QueryRowContext(ctx, `
@@ -32,6 +34,9 @@ func ValidateMigrationDestination(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
+// WaitForTaskDrain polls until no processing task of the lock-gated types
+// remains, reporting the remaining count on onWait; the context ends the
+// wait with an error.
 func WaitForTaskDrain(ctx context.Context, queries *Queries, logger *log.Logger, what string, onWait ...func(count int64)) error {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
@@ -58,6 +63,10 @@ func WaitForTaskDrain(ctx context.Context, queries *Queries, logger *log.Logger,
 	}
 }
 
+// StartMaintenanceLockHeartbeat holds the maintenance lock, renewing it on
+// the given interval until the context ends; it returns a stop function
+// that reports whether every renewal held, so the holder can abort when
+// the lock was lost. token, when valid, names the lock holder's claim.
 func StartMaintenanceLockHeartbeat(ctx context.Context, queries *Queries, logger *log.Logger, interval time.Duration, token uuid.NullUUID) func() {
 	stopCh := make(chan struct{})
 	var stopOnce sync.Once
@@ -80,6 +89,9 @@ func StartMaintenanceLockHeartbeat(ctx context.Context, queries *Queries, logger
 	return func() { stopOnce.Do(func() { close(stopCh) }) }
 }
 
+// RewriteStoragePaths rewrites stored path columns from an old storage
+// root to the new one, across the document and document-tag tables; both
+// paths must be absolute.
 func RewriteStoragePaths(ctx context.Context, db *sql.DB, oldDir, newDir string) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -105,6 +117,9 @@ func RewriteStoragePaths(ctx context.Context, db *sql.DB, oldDir, newDir string)
 	return tx.Commit()
 }
 
+// RewriteTaskPayloadPaths rewrites the consumption directory inside
+// pending tasks' JSON payloads, so tasks queued for the old layout
+// survive a migration.
 func RewriteTaskPayloadPaths(ctx context.Context, db *sql.DB, oldConsumptionDir, newConsumptionDir string) error {
 	pattern := escapeLike(oldConsumptionDir) + "/%"
 	_, err := db.ExecContext(ctx, `

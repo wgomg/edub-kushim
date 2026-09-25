@@ -1,3 +1,9 @@
+// Package service is the API-facing use-case layer: the batch lifecycle
+// with owner liveness and reclaim, the people, people type, document type
+// and user CRUD, the trash lifecycle with its background purge, the
+// errors-directory admin, orphaned files, thumbnail backfill, and
+// re-enrichment enqueueing. It sits between the handlers and the
+// persistence layer and owns no domain invariants beyond its own.
 package service
 
 import (
@@ -12,6 +18,9 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
+// BatchSummary is one batch's task counts by status plus its owner's
+// liveness; Orphaned is never true for the non-consume sources, which
+// have no owner row by design.
 type BatchSummary struct {
 	BatchID    string
 	Status     string
@@ -28,6 +37,8 @@ type BatchSummary struct {
 	OwnerPID   int64
 }
 
+// BatchOverview is one batch row for the list view: identity, counts,
+// owner state, and the run duration once completed.
 type BatchOverview struct {
 	BatchID    string
 	Status     string
@@ -46,6 +57,9 @@ type BatchOverview struct {
 	DurationMs *int64
 }
 
+// Batch is the batch lifecycle service: summaries, orphan detection,
+// retry, cancel protocol, requeueing, and the stale-task reclaim the
+// queue driver uses.
 type Batch struct {
 	client     *database.Client
 	queries    *database.Queries
@@ -56,10 +70,13 @@ type Batch struct {
 // report them as orphaned.
 var nonConsumeSources = types.NonConsumeBatchSources()
 
+// NewBatch wires the batch service; maxRetries bounds the task-store
+// claim-contention retries.
 func NewBatch(client *database.Client, maxRetries int) *Batch {
 	return &Batch{client: client, queries: client.Queries, maxRetries: int32(maxRetries)}
 }
 
+// GetSummary returns one batch's per-status task counts and owner state.
 func (s *Batch) GetSummary(ctx context.Context, batchID string) (*BatchSummary, error) {
 	statuses := types.AllTaskStatuses()
 	summary := &BatchSummary{BatchID: batchID}
@@ -110,6 +127,7 @@ func (s *Batch) GetSummary(ctx context.Context, batchID string) (*BatchSummary, 
 	return summary, nil
 }
 
+// ListSummaries returns the summaries matching the batch filter.
 func (s *Batch) ListSummaries(ctx context.Context, f task.BatchFilter) ([]BatchSummary, error) {
 	var rows []sql.NullString
 	var err error
@@ -144,6 +162,7 @@ func (s *Batch) ListSummaries(ctx context.Context, f task.BatchFilter) ([]BatchS
 	return summaries, nil
 }
 
+// ListOverviews pages the batch rows for the list view.
 func (s *Batch) ListOverviews(ctx context.Context, limit, offset int32) ([]BatchOverview, error) {
 	rows, err := s.queries.ListBatchOverviews(ctx, database.ListBatchOverviewsParams{
 		Limit:  limit,
@@ -197,6 +216,8 @@ func (s *Batch) ListOverviews(ctx context.Context, limit, offset int32) ([]Batch
 	return items, nil
 }
 
+// CountOrphaned counts live batches whose owner is gone while work
+// remains.
 func (s *Batch) CountOrphaned(ctx context.Context) (int64, error) {
 	activeIDs, err := s.queries.ActiveBatchIDs(ctx)
 	if err != nil {
@@ -216,6 +237,8 @@ func (s *Batch) CountOrphaned(ctx context.Context) (int64, error) {
 	return orphanedCount, nil
 }
 
+// RetryFailed resets a batch's failed tasks back to pending and returns
+// how many were reset.
 func (s *Batch) RetryFailed(ctx context.Context, batchID string) (int64, error) {
 	tx, err := s.client.BeginTx(ctx, nil)
 	if err != nil {
@@ -242,6 +265,7 @@ func (s *Batch) RetryFailed(ctx context.Context, batchID string) (int64, error) 
 	return count, nil
 }
 
+// Create inserts the batch row with the given source and status.
 func (s *Batch) Create(ctx context.Context, id string, source types.BatchSource, status types.BatchStatus) error {
 	if id == "" {
 		return errs.EInvalid("create batch", sql.ErrNoRows)
@@ -257,6 +281,9 @@ func (s *Batch) Create(ctx context.Context, id string, source types.BatchSource,
 	return nil
 }
 
+// BeginCancel starts the cancel protocol: the batch flips to cancelling,
+// its pending tasks are cancelled, and the live owner's identity is
+// returned so the caller can signal it to stop.
 func (s *Batch) BeginCancel(ctx context.Context, batchID string) (pendingCancelled int64, ownerPID int64, ownerID string, err error) {
 	pendingCancelled, err = s.queries.CancelPendingTasksByBatch(ctx, sql.NullString{String: batchID, Valid: true})
 	if err != nil {
@@ -274,6 +301,9 @@ func (s *Batch) BeginCancel(ctx context.Context, batchID string) (pendingCancell
 	return pendingCancelled, bo.Pid, bo.OwnerID, nil
 }
 
+// CompleteCancel finishes the cancel protocol: the batch flips to
+// cancelled and its still-processing tasks are cancelled, only after the
+// owner named at BeginCancel has released it.
 func (s *Batch) CompleteCancel(ctx context.Context, batchID, ownerID string) (processingCancelled int64, err error) {
 	tx, err := s.client.BeginTx(ctx, nil)
 	if err != nil {
@@ -312,6 +342,7 @@ func (s *Batch) CompleteCancel(ctx context.Context, batchID, ownerID string) (pr
 	return processingCancelled, nil
 }
 
+// CountDistinct counts the batch ids in the task table.
 func (s *Batch) CountDistinct(ctx context.Context) (int64, error) {
 	count, err := s.queries.CountDistinctBatches(ctx)
 	if err != nil {
@@ -320,6 +351,7 @@ func (s *Batch) CountDistinct(ctx context.Context) (int64, error) {
 	return count, nil
 }
 
+// ActiveIDs lists the batch ids that are not terminal.
 func (s *Batch) ActiveIDs(ctx context.Context) ([]string, error) {
 	ids, err := s.queries.ActiveBatchIDs(ctx)
 	if err != nil {
@@ -328,6 +360,8 @@ func (s *Batch) ActiveIDs(ctx context.Context) ([]string, error) {
 	return ids, nil
 }
 
+// HasPendingWork reports whether the batch still has waiting or pending
+// tasks.
 func (s *Batch) HasPendingWork(ctx context.Context, batchID string) (bool, error) {
 	statuses := []types.TaskStatus{types.Task.Status.Pending, types.Task.Status.Processing, types.Task.Status.Waiting}
 	for _, status := range statuses {
@@ -345,6 +379,8 @@ func (s *Batch) HasPendingWork(ctx context.Context, batchID string) (bool, error
 	return false, nil
 }
 
+// IsLockedByLiveOwner reports whether the batch's owner heartbeat is
+// fresh.
 func (s *Batch) IsLockedByLiveOwner(ctx context.Context, batchID string) (bool, error) {
 	state, _, err := s.batchOwnerState(ctx, batchID)
 	if err != nil {
@@ -353,6 +389,8 @@ func (s *Batch) IsLockedByLiveOwner(ctx context.Context, batchID string) (bool, 
 	return state == task.OwnerLive, nil
 }
 
+// CountPausedBatches counts the credit-paused batches, which block
+// scanning.
 func (s *Batch) CountPausedBatches(ctx context.Context) (int64, error) {
 	count, err := s.queries.CountPausedBatches(ctx)
 	if err != nil {
@@ -361,6 +399,7 @@ func (s *Batch) CountPausedBatches(ctx context.Context) (int64, error) {
 	return count, nil
 }
 
+// ListPausedBatches lists the credit-paused batch ids.
 func (s *Batch) ListPausedBatches(ctx context.Context) ([]string, error) {
 	ids, err := s.queries.ListPausedBatches(ctx)
 	if err != nil {
@@ -369,6 +408,7 @@ func (s *Batch) ListPausedBatches(ctx context.Context) ([]string, error) {
 	return ids, nil
 }
 
+// CountQueuedConsumeBatches counts queued consume batches.
 func (s *Batch) CountQueuedConsumeBatches(ctx context.Context) (int64, error) {
 	count, err := s.queries.CountQueuedConsumeBatches(ctx)
 	if err != nil {
@@ -377,6 +417,8 @@ func (s *Batch) CountQueuedConsumeBatches(ctx context.Context) (int64, error) {
 	return count, nil
 }
 
+// GetNextQueuedBatch claims the next queued consume batch in creation
+// order; sql.ErrNoRows when the queue is empty.
 func (s *Batch) GetNextQueuedBatch(ctx context.Context) (database.Batch, error) {
 	b, err := s.queries.GetNextQueuedBatch(ctx)
 	if err != nil {
@@ -385,6 +427,8 @@ func (s *Batch) GetNextQueuedBatch(ctx context.Context) (database.Batch, error) 
 	return b, nil
 }
 
+// RequeueBatch flips a completed or failed batch back to queued for
+// reprocessing.
 func (s *Batch) RequeueBatch(ctx context.Context, batchID string) error {
 	if err := s.queries.RequeueBatch(ctx, batchID); err != nil {
 		return errs.FromDB(err, "requeue batch")
@@ -392,6 +436,9 @@ func (s *Batch) RequeueBatch(ctx context.Context, batchID string) error {
 	return nil
 }
 
+// SetBatchProcessing flips the batch into its processing state, ignoring
+// absent rows; SetBatchCompleted, SetBatchFailed and SetBatchCancelled
+// are the other lifecycle setters with the same semantics.
 func (s *Batch) SetBatchProcessing(ctx context.Context, batchID string) error {
 	if err := s.queries.SetBatchProcessing(ctx, batchID); err != nil {
 		return errs.FromDB(err, "set batch processing")
@@ -399,6 +446,7 @@ func (s *Batch) SetBatchProcessing(ctx context.Context, batchID string) error {
 	return nil
 }
 
+// SetBatchCompleted settles the batch as completed.
 func (s *Batch) SetBatchCompleted(ctx context.Context, batchID string) error {
 	if err := s.queries.SetBatchCompleted(ctx, batchID); err != nil {
 		return errs.FromDB(err, "set batch completed")
@@ -406,6 +454,7 @@ func (s *Batch) SetBatchCompleted(ctx context.Context, batchID string) error {
 	return nil
 }
 
+// SetBatchFailed settles the batch as failed.
 func (s *Batch) SetBatchFailed(ctx context.Context, batchID string) error {
 	if err := s.queries.SetBatchFailed(ctx, batchID); err != nil {
 		return errs.FromDB(err, "set batch failed")
@@ -413,6 +462,7 @@ func (s *Batch) SetBatchFailed(ctx context.Context, batchID string) error {
 	return nil
 }
 
+// SetBatchCancelled settles the batch as cancelled.
 func (s *Batch) SetBatchCancelled(ctx context.Context, batchID string) error {
 	if err := s.queries.SetBatchCancelled(ctx, batchID); err != nil {
 		return errs.FromDB(err, "set batch cancelled")
@@ -420,6 +470,7 @@ func (s *Batch) SetBatchCancelled(ctx context.Context, batchID string) error {
 	return nil
 }
 
+// CountLiveBatches counts batches in a non-terminal state.
 func (s *Batch) CountLiveBatches(ctx context.Context) (int64, error) {
 	count, err := s.queries.CountLiveBatches(ctx)
 	if err != nil {
@@ -428,6 +479,8 @@ func (s *Batch) CountLiveBatches(ctx context.Context) (int64, error) {
 	return count, nil
 }
 
+// ListStaleBatchOwners returns the ownership rows whose heartbeat is
+// older than the stale threshold.
 func (s *Batch) ListStaleBatchOwners(ctx context.Context) ([]database.ListStaleBatchOwnersRow, error) {
 	owners, err := s.queries.ListStaleBatchOwners(ctx)
 	if err != nil {
@@ -436,6 +489,7 @@ func (s *Batch) ListStaleBatchOwners(ctx context.Context) ([]database.ListStaleB
 	return owners, nil
 }
 
+// DeleteBatchOwnerByBatchID removes a batch's ownership row.
 func (s *Batch) DeleteBatchOwnerByBatchID(ctx context.Context, batchID string) error {
 	if _, err := s.queries.DeleteBatchOwnerByBatchID(ctx, batchID); err != nil {
 		return errs.FromDB(err, "delete batch owner "+batchID)
@@ -443,6 +497,8 @@ func (s *Batch) DeleteBatchOwnerByBatchID(ctx context.Context, batchID string) e
 	return nil
 }
 
+// ResetProcessingTasksByBatch re-queues a batch's processing tasks and
+// returns how many were reset.
 func (s *Batch) ResetProcessingTasksByBatch(ctx context.Context, batchID string) (int64, error) {
 	tx, err := s.client.BeginTx(ctx, nil)
 	if err != nil {
@@ -487,6 +543,8 @@ func (s *Batch) ResetProcessingTasksByBatch(ctx context.Context, batchID string)
 	return quarantined + reset, nil
 }
 
+// ResetStaleProcessingTasks re-queues the processing tasks whose owners
+// went stale, bounded by the staleness threshold in seconds.
 func (s *Batch) ResetStaleProcessingTasks(ctx context.Context, staleAfterSeconds int64) (int64, error) {
 	tx, err := s.client.BeginTx(ctx, nil)
 	if err != nil {

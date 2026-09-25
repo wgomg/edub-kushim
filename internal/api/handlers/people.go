@@ -12,15 +12,19 @@ import (
 	"github.com/wgomg/edub-kushim/internal/service"
 )
 
+// PeopleHandler is the people API: person CRUD and the people-type
+// taxonomy CRUD.
 type PeopleHandler struct {
 	services *service.CrudServices
 	logger   *log.Logger
 }
 
+// NewPeopleHandler wires the people handler to the services.
 func NewPeopleHandler(services *service.CrudServices, logger *log.Logger) *PeopleHandler {
 	return &PeopleHandler{services: services, logger: logger}
 }
 
+// List serves the paged people listing with document counts.
 func (h *PeopleHandler) List(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -82,6 +86,7 @@ func (h *PeopleHandler) List(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(PersonListResponse{Results: responses, Total: total})
 }
 
+// Create creates one person from the JSON body.
 func (h *PeopleHandler) Create(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -136,6 +141,7 @@ func (h *PeopleHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// Update renames one person.
 func (h *PeopleHandler) Update(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -198,6 +204,7 @@ func (h *PeopleHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// Delete removes one person.
 func (h *PeopleHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -223,6 +230,7 @@ func (h *PeopleHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// ListPeopleTypes serves the people-type taxonomy with paging.
 func (h *PeopleHandler) ListPeopleTypes(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -265,6 +273,7 @@ func (h *PeopleHandler) ListPeopleTypes(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(result)
 }
 
+// CreatePeopleType creates one people type from the JSON body.
 func (h *PeopleHandler) CreatePeopleType(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -315,6 +324,7 @@ func (h *PeopleHandler) CreatePeopleType(w http.ResponseWriter, r *http.Request)
 	}
 }
 
+// UpdatePeopleType renames one people type.
 func (h *PeopleHandler) UpdatePeopleType(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -373,6 +383,7 @@ func (h *PeopleHandler) UpdatePeopleType(w http.ResponseWriter, r *http.Request)
 	}
 }
 
+// DeletePeopleType removes one people type.
 func (h *PeopleHandler) DeletePeopleType(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -402,26 +413,32 @@ func (h *PeopleHandler) DeletePeopleType(w http.ResponseWriter, r *http.Request)
 	}
 }
 
+// CreatePersonRequest is the body of a person create: romanized name and
+// the optional native-script name.
 type CreatePersonRequest struct {
 	Name       string `json:"name"`
 	NameNative string `json:"name_native"`
 }
 
+// UpdatePersonRequest is the body of a person update.
 type UpdatePersonRequest struct {
 	Name       string `json:"name"`
 	NameNative string `json:"name_native"`
 }
 
+// CreatePeopleTypeRequest is the body of a people type create.
 type CreatePeopleTypeRequest struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 }
 
+// UpdatePeopleTypeRequest is the body of a people type update.
 type UpdatePeopleTypeRequest struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 }
 
+// PeopleTypeResponse is a people type as the API shows it.
 type PeopleTypeResponse struct {
 	ID          int64  `json:"id"`
 	Name        string `json:"name"`

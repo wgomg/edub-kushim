@@ -46,8 +46,12 @@ type identityAnswer struct {
 	model                   string
 }
 
-// the plan rides into the enrichment transaction, so adjudication stays
-// outside it
+// PlanIdentity plans the document's candidate tags against the store: the
+// pinned policy decides, aliases resolve, and the judging body's answers
+// settle fold proposals where they exist. It returns the output names for
+// the document, the identity plan whose registrations and evidence rows
+// ride into the enrichment transaction (so adjudication stays outside it),
+// and the policy decisions journaled per pair.
 func (a *Adjudicator) PlanIdentity(ctx context.Context, docID int64, documentID string, names []string, ranked []matcher.RankResult, dbNames map[string]struct{}, logId *string) ([]string, tags.Plan, []policy.Decision) {
 	decisions := policy.Evaluate(names, ranked)
 	plan := tags.Plan{}
@@ -593,8 +597,9 @@ func boolVerdict(value bool, whenTrue, whenFalse string) string {
 	return whenFalse
 }
 
-// a folded or applied output must not lose its category and standard-term
-// flags
+// RenameTagDetails rewrites the analysis's tag details after identity
+// resolution so folded and applied outputs keep their category and
+// standard-term flags: each detail's term is replaced by its plan output.
 func RenameTagDetails(details []analyzer.TagDetail, plan tags.Plan) []analyzer.TagDetail {
 	outputByInput := make(map[string]string, len(plan.Registrations))
 	for _, reg := range plan.Registrations {
@@ -615,6 +620,9 @@ func RenameTagDetails(details []analyzer.TagDetail, plan tags.Plan) []analyzer.T
 	return details
 }
 
+// CanonicalSuggestions resolves a list of tag suggestions to their
+// canonical (alias-collapsed) forms, deduplicated and in first-appearance
+// order.
 func (a *Adjudicator) CanonicalSuggestions(ctx context.Context, names []string, logId *string) []string {
 	if len(names) == 0 {
 		return names

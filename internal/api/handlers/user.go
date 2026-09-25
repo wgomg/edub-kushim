@@ -13,11 +13,13 @@ import (
 	"github.com/wgomg/edub-kushim/internal/service"
 )
 
+// UserHandler is the user API: CRUD over the accounts.
 type UserHandler struct {
 	services *service.CrudServices
 	logger   *log.Logger
 }
 
+// NewUserHandler wires the user handler to the services.
 func NewUserHandler(services *service.CrudServices, logger *log.Logger) *UserHandler {
 	return &UserHandler{services: services, logger: logger}
 }
@@ -75,6 +77,7 @@ func toUserResponseFromRow(row database.ListUsersRow) UserResponse {
 	}
 }
 
+// List serves the paged user listing.
 func (h *UserHandler) List(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -109,6 +112,7 @@ func (h *UserHandler) List(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(UserListResponse{Users: responses, Total: total})
 }
 
+// Get serves one user without the hash.
 func (h *UserHandler) Get(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -134,6 +138,7 @@ func (h *UserHandler) Get(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(toUserResponse(user))
 }
 
+// Create creates one user from the JSON body.
 func (h *UserHandler) Create(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -167,6 +172,7 @@ func (h *UserHandler) Create(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(toUserResponse(user))
 }
 
+// Update changes one user's username, password and role.
 func (h *UserHandler) Update(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -206,6 +212,7 @@ func (h *UserHandler) Update(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(toUserResponse(user))
 }
 
+// Delete removes one user.
 func (h *UserHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -235,18 +242,24 @@ func (h *UserHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// CreateUserRequest is the body of POST /api/v1/users; an empty role
+// defaults to viewer.
 type CreateUserRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 	Role     string `json:"role,omitempty"`
 }
 
+// UpdateUserRequest is the body of a user update; an empty password
+// keeps the current one.
 type UpdateUserRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password,omitempty"`
 	Role     string `json:"role,omitempty"`
 }
 
+// UserResponse is a user as the API shows it: no hash, but the API key's
+// existence, prefix and creation time.
 type UserResponse struct {
 	ID              int64   `json:"id"`
 	Username        string  `json:"username"`
@@ -257,17 +270,22 @@ type UserResponse struct {
 	APIKeyCreatedAt *string `json:"api_key_created_at,omitempty"`
 }
 
+// UserListResponse is one page of users.
 type UserListResponse struct {
 	Users []UserResponse `json:"users"`
 	Total int64          `json:"total"`
 }
 
+// CreateAPIKeyResponse returns the freshly minted API key, which the
+// client must store because only its hash is kept server-side.
 type CreateAPIKeyResponse struct {
 	APIKey  string `json:"api_key"`
 	Prefix  string `json:"prefix"`
 	Message string `json:"message"`
 }
 
+// APIKeyStatusResponse says whether a user has an API key and its
+// non-secret metadata.
 type APIKeyStatusResponse struct {
 	HasAPIKey       bool    `json:"has_api_key"`
 	APIKeyPrefix    *string `json:"api_key_prefix,omitempty"`

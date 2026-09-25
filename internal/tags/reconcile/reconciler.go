@@ -1,3 +1,10 @@
+// Package reconcile is the tag store's scheduled maintenance: it sweeps
+// the recorded verdict evidence for stale, unjudged and drifted pairs,
+// re-ranks and re-adjudicates what changed, and applies or plans merges,
+// keep flips, joint splits and provisional-tag outcomes through the
+// curation surface. It is the scheduled reconciliation flow of
+// docs/tags/consolidation.md, the machine-driven complement of the human
+// worklist review.
 package reconcile
 
 import (
@@ -49,6 +56,10 @@ var catOrder = map[string]int{
 	catAged:     3,
 }
 
+// Reconciler is the scheduled tag-store maintainer: it re-judges stale
+// verdict evidence, flips decisions whose evidence changed, plans and
+// applies merges and joint splits, and settles provisional tags, capped
+// per run and report-only when configured.
 type Reconciler struct {
 	getConfig func() *config.Config
 	client    *database.Client
@@ -58,6 +69,9 @@ type Reconciler struct {
 	logger    *log.Logger
 }
 
+// NewReconciler wires the reconciler: the dynamic config, the database,
+// the curation surfaces it writes through, the tools runner, and the
+// logger.
 func NewReconciler(getConfig func() *config.Config, client *database.Client,
 	tag *curation.Tag, merges *curation.TagMerge,
 	runner *tools.Runner, logger *log.Logger) *Reconciler {
@@ -71,30 +85,37 @@ func NewReconciler(getConfig func() *config.Config, client *database.Client,
 	}
 }
 
+// Report summarizes one reconcile run: the worklist by category, the
+// judged, confirmed and flipped counts, the applied and planned merges,
+// keep flips, retags, invalidations and joint splits, and the
+// provisional-tag outcomes.
 type Report struct {
-	ReportOnly          bool                       `json:"report_only"`
-	Worklist            WorklistCounts             `json:"worklist"`
-	Judged              int                        `json:"judged"`
-	Confirmed           int                        `json:"confirmed"`
-	Flips               FlipCounts                 `json:"flips"`
-	Merges              []MergeEntry               `json:"merges"`
-	Retags              int                        `json:"retags"`
-	Invalidated         int                        `json:"invalidated"`
-	Skips               map[string]int             `json:"skips"`
-	PlannedMerges       []MergeEntry               `json:"planned_merges,omitempty"`
-	PlannedKeepFlips    []MergeEntry               `json:"planned_keep_flips,omitempty"`
-	RetagEntries        []MergeEntry               `json:"retag_entries,omitempty"`
-	InvalidatedEntries  []MergeEntry               `json:"invalidated_entries,omitempty"`
-	JointSplits         []JointSplitEntry          `json:"joint_splits,omitempty"`
-	PlannedJointSplits  []JointSplitEntry          `json:"planned_joint_splits,omitempty"`
-	Capped              int                        `json:"capped,omitempty"`
-	NoDocuments         int                        `json:"no_documents,omitempty"`
-	Swept               int                        `json:"swept,omitempty"`
-	AdjudicatorDisabled bool                       `json:"adjudicator_disabled,omitempty"`
-	Provisional         ProvisionalCounts          `json:"provisional,omitempty"`
+	ReportOnly          bool                      `json:"report_only"`
+	Worklist            WorklistCounts            `json:"worklist"`
+	Judged              int                       `json:"judged"`
+	Confirmed           int                       `json:"confirmed"`
+	Flips               FlipCounts                `json:"flips"`
+	Merges              []MergeEntry              `json:"merges"`
+	Retags              int                       `json:"retags"`
+	Invalidated         int                       `json:"invalidated"`
+	Skips               map[string]int            `json:"skips"`
+	PlannedMerges       []MergeEntry              `json:"planned_merges,omitempty"`
+	PlannedKeepFlips    []MergeEntry              `json:"planned_keep_flips,omitempty"`
+	RetagEntries        []MergeEntry              `json:"retag_entries,omitempty"`
+	InvalidatedEntries  []MergeEntry              `json:"invalidated_entries,omitempty"`
+	JointSplits         []JointSplitEntry         `json:"joint_splits,omitempty"`
+	PlannedJointSplits  []JointSplitEntry         `json:"planned_joint_splits,omitempty"`
+	Capped              int                       `json:"capped,omitempty"`
+	NoDocuments         int                       `json:"no_documents,omitempty"`
+	Swept               int                       `json:"swept,omitempty"`
+	AdjudicatorDisabled bool                      `json:"adjudicator_disabled,omitempty"`
+	Provisional         ProvisionalCounts         `json:"provisional"`
 	Identity            *admission.IdentityReport `json:"identity,omitempty"`
 }
 
+// ProvisionalCounts tallies what the run did with provisional tags:
+// worklist hits, zero-assignment outcomes, promotions, rejudgements,
+// deferrals, judge misses, skips and failures.
 type ProvisionalCounts struct {
 	Worklist   int `json:"worklist"`
 	ZeroAssign int `json:"zero_assignment"`
@@ -106,6 +127,8 @@ type ProvisionalCounts struct {
 	Failed     int `json:"failed"`
 }
 
+// WorklistCounts counts the worklist entries by category (stale,
+// unjudged, drifted, aged) plus the joint-tag splits.
 type WorklistCounts struct {
 	Stale    int `json:"stale"`
 	Unjudged int `json:"unjudged"`
@@ -114,6 +137,9 @@ type WorklistCounts struct {
 	Joint    int `json:"joint"`
 }
 
+// JointSplitEntry is one planned or applied joint-tag split: the query,
+// its approved components, how many documents were reassigned, and the
+// reason when it was not applied.
 type JointSplitEntry struct {
 	Query      string   `json:"query"`
 	Components []string `json:"components"`
@@ -121,11 +147,16 @@ type JointSplitEntry struct {
 	Reason     string   `json:"reason,omitempty"`
 }
 
+// FlipCounts counts the evidence-driven direction flips: decisions that
+// became merges and keeps that flipped back.
 type FlipCounts struct {
 	ToMerge int `json:"to_merge"`
 	ToKeep  int `json:"to_keep"`
 }
 
+// MergeEntry is one planned or applied merge: the query, its target, how
+// many documents applying it reassigned, the reason, and whether applying
+// it would first create the target tag.
 type MergeEntry struct {
 	Query      string `json:"query"`
 	Target     string `json:"target"`
@@ -162,6 +193,10 @@ type reciprocalEvidence struct {
 	sim float64
 }
 
+// Run performs one reconciliation pass: it sweeps the recorded evidence,
+// re-judges what changed, and applies or plans the outcomes. progress, if
+// nil, is ignored; report-only runs fill the planned lists without
+// applying anything.
 func (r *Reconciler) Run(ctx context.Context, progress task.ProgressFunc) (Report, error) {
 	cfg := r.getConfig()
 	report := Report{ReportOnly: cfg.Enricher.TagReconcile.ReportOnly, Skips: map[string]int{}}

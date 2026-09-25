@@ -22,6 +22,8 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
+// ConsumeHandler is the intake API: consuming the consumption directory
+// and uploading files into it.
 type ConsumeHandler struct {
 	getConfig func() *config.Config
 	logger    *log.Logger
@@ -30,6 +32,8 @@ type ConsumeHandler struct {
 	services  *service.CrudServices
 }
 
+// NewConsumeHandler wires the intake handler to the dynamic config, the
+// task store, the queries and the services.
 func NewConsumeHandler(getConfig func() *config.Config, logger *log.Logger, workStore *task.Store, queries *database.Queries, services *service.CrudServices) *ConsumeHandler {
 	return &ConsumeHandler{
 		getConfig: getConfig,
@@ -102,6 +106,10 @@ func (h *ConsumeHandler) enqueueBatchFiles(ctx context.Context, batchID string, 
 	return enqueued
 }
 
+// Consume scans the consumption directory and enqueues a batch: one
+// consume task per new file with its waiting enrich (and thumbnail)
+// children, deduplicating by MD5. Unprocessable when required tools are
+// missing; an empty inbox reports no batch.
 func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -170,6 +178,8 @@ func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 	h.logger.Info(&reqID, "enqueued batch %s (%d files, %d enqueued)", batchID, len(paths), enqueued)
 }
 
+// Upload writes an uploaded file into the consumption directory and
+// returns its served name.
 func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)

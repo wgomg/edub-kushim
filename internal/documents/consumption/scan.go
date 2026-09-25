@@ -16,6 +16,13 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
+// ScanAndEnqueue scans the consumption directory and enqueues one consume
+// task (with its waiting enrich and, when thumbnails are enabled, thumbnail
+// child) per new file, deduplicating by MD5 plus SHA-512 parity against
+// existing documents and within the scan itself. The batch row is created
+// only after all tasks are committed, so the queue never sees an empty or
+// partial batch. Any paused batch skips the scan entirely, returning
+// empty with a nil error.
 func ScanAndEnqueue(ctx context.Context, cfg *config.Config, client *database.Client, logger *log.Logger) (batchID string, enqueued int, err error) {
 	pausedCount, err := client.Queries.CountPausedBatches(ctx)
 	if err != nil {

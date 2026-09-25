@@ -1,3 +1,7 @@
+// Package api is the REST server of edub: routing, the auth middleware
+// and role gates, the config watcher driving hot rebuilds of the handler
+// set, the matcher client, the config-reload task pool, and the embedded
+// SPA.
 package api
 
 import (
@@ -26,6 +30,9 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
+// Server is the edub REST server: it assembles the handler set over the
+// current configuration, serves the SPA, and rebuilds the wiring whenever
+// the config watcher reports a change.
 type Server struct {
 	httpServer    *http.Server
 	logger        *log.Logger
@@ -44,6 +51,9 @@ type Server struct {
 	}
 }
 
+// NewServer assembles the server. An empty session secret is generated
+// in memory (sessions do not survive a restart), the matcher client dials
+// the daemon socket, and the initial handler set is built.
 func NewServer(cfg config.Config, logger *log.Logger, db *sql.DB) *Server {
 	addr := fmt.Sprintf("%s:%d", cfg.Srv.Host, cfg.Srv.Port)
 
@@ -386,6 +396,9 @@ func parambagMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// Start probes the matcher (tag endpoints will 503 without it), starts
+// the config-reload pool and watcher, and serves until Shutdown or an
+// accept error.
 func (s *Server) Start() error {
 	s.probeMatcher()
 
@@ -445,6 +458,8 @@ func (s *Server) probeMatcher() {
 	s.logger.Info(nil, "matcher reachable")
 }
 
+// Shutdown stops the watcher, drains the HTTP server and the pools under
+// the caller's deadline.
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.logger.Info(nil, "Shutting down HTTP server")
 
@@ -467,6 +482,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return nil
 }
 
+// Addr returns the bound address.
 func (s *Server) Addr() string {
 	return s.addr
 }

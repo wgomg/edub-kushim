@@ -1,3 +1,9 @@
+// Package llm is the model catalog: the embedded JSON of provider models
+// and their capabilities, loadable overridable from the config directory,
+// plus the process-stable session identifier that session-gated providers
+// expect. The catalog drives what the LLM adapters may send (reasoning,
+// temperature, caching, structured output) and what the API and CLI
+// display.
 package llm
 
 import (
@@ -28,6 +34,9 @@ func SessionID() string {
 	return sessionID
 }
 
+// ModelCapability is what a cataloged model allows: reasoning support and
+// effort levels, temperature, prompt caching, structured output, the
+// context and output limits, and the cataloged per-token costs.
 type ModelCapability struct {
 	SupportsReasoning        bool
 	ReasoningEffortLevels    []string
@@ -40,6 +49,8 @@ type ModelCapability struct {
 	OutputCostPerToken       float64
 }
 
+// ProviderModel is one cataloged model of a provider, as exposed to the
+// API surface.
 type ProviderModel struct {
 	ID           string          `json:"id"`
 	DisplayName  string          `json:"display_name,omitempty"`
@@ -62,6 +73,9 @@ type catalogEntry struct {
 	SupportsPromptCaching    bool     `json:"supports_prompt_caching"`
 }
 
+// Registry is the loaded model catalog, indexed by provider/model with
+// provider metadata alongside. All methods are safe for concurrent use;
+// Reload swaps the whole catalog atomically.
 type Registry struct {
 	mu          sync.RWMutex
 	catalogPath string
@@ -74,6 +88,9 @@ type Registry struct {
 	providerSessionHeaders map[string]string
 }
 
+// NewRegistry loads the catalog from catalogPath, falling back to the
+// embedded copy when the file does not exist. It errors when an existing
+// file cannot be read or parsed.
 func NewRegistry(catalogPath string) (*Registry, error) {
 	r := &Registry{
 		catalogPath:            catalogPath,
@@ -120,6 +137,8 @@ func (r *Registry) load() error {
 	return nil
 }
 
+// Reload re-reads the catalog and rebuilds the indexes; a failure leaves
+// the previous catalog in place.
 func (r *Registry) Reload() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -179,6 +198,8 @@ func entryToCapability(e *catalogEntry) *ModelCapability {
 	}
 }
 
+// Lookup returns the capability of a provider/model pair, nil when the
+// pair is not cataloged.
 func (r *Registry) Lookup(provider, modelID string) *ModelCapability {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -193,6 +214,7 @@ func (r *Registry) Lookup(provider, modelID string) *ModelCapability {
 	return entryToCapability(entry)
 }
 
+// Adapters lists the distinct adapter keys in the catalog, sorted.
 func (r *Registry) Adapters() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -205,6 +227,8 @@ func (r *Registry) Adapters() []string {
 	return result
 }
 
+// ProvidersForAdapter lists the providers an adapter serves, sorted;
+// empty for an unknown adapter.
 func (r *Registry) ProvidersForAdapter(adapter string) []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -216,6 +240,8 @@ func (r *Registry) ProvidersForAdapter(adapter string) []string {
 	return provs
 }
 
+// ModelsForProvider lists a provider's catalog models with their
+// capabilities, ordered by model id.
 func (r *Registry) ModelsForProvider(provider string) []ProviderModel {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -238,6 +264,8 @@ func (r *Registry) ModelsForProvider(provider string) []ProviderModel {
 	return result
 }
 
+// ProviderDefaultURL returns the provider's official URL from the
+// catalog, empty when unknown.
 func (r *Registry) ProviderDefaultURL(provider string) string {
 	return r.providerURLs[provider]
 }
@@ -250,6 +278,8 @@ func (r *Registry) ProviderSessionHeader(provider string) string {
 	return r.providerSessionHeaders[provider]
 }
 
+// ProviderAdapter returns the provider's adapter kind, custom when the
+// catalog does not name one.
 func (r *Registry) ProviderAdapter(provider string) string {
 	a := r.providerAdapters[provider]
 	if a == "" {
@@ -258,6 +288,8 @@ func (r *Registry) ProviderAdapter(provider string) string {
 	return a
 }
 
+// CatalogPath returns the path the registry was built from, the file
+// Reload re-reads.
 func (r *Registry) CatalogPath() string {
 	return r.catalogPath
 }

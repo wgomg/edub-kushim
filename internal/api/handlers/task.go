@@ -21,6 +21,8 @@ import (
 	itypes "github.com/wgomg/edub-kushim/internal/types"
 )
 
+// TaskHandler is the task and batch API: listings, the batch summary and
+// dashboard analytics, retries, and the two-phase batch cancel.
 type TaskHandler struct {
 	services  *service.CrudServices
 	client    *database.Client
@@ -29,6 +31,8 @@ type TaskHandler struct {
 	getConfig func() *config.Config
 }
 
+// NewTaskHandler wires the task handler to the services, the database and
+// the dynamic config.
 func NewTaskHandler(services *service.CrudServices, client *database.Client, logger *log.Logger, getConfig func() *config.Config) *TaskHandler {
 	return &TaskHandler{
 		services:  services,
@@ -39,6 +43,8 @@ func NewTaskHandler(services *service.CrudServices, client *database.Client, log
 	}
 }
 
+// ListTasks serves a batch's tasks, or with no batch filter the global
+// task list.
 func (h *TaskHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -90,6 +96,7 @@ func (h *TaskHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+// GetTask serves one task's row with its progress.
 func (h *TaskHandler) GetTask(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -111,6 +118,8 @@ func (h *TaskHandler) GetTask(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(taskDetailResponse(t))
 }
 
+// GetTagReconcileReport serves the latest completed reconcile task's
+// report.
 func (h *TaskHandler) GetTagReconcileReport(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -144,6 +153,7 @@ func (h *TaskHandler) GetTagReconcileReport(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+// RetryTask resets one failed task for reprocessing.
 func (h *TaskHandler) RetryTask(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -163,6 +173,7 @@ func (h *TaskHandler) RetryTask(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// RetryBatch resets one batch's failed tasks.
 func (h *TaskHandler) RetryBatch(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -180,6 +191,7 @@ func (h *TaskHandler) RetryBatch(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]int64{"retried": retried})
 }
 
+// ListBatches serves the batch summaries, optionally filtered by status.
 func (h *TaskHandler) ListBatches(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -238,6 +250,8 @@ func batchSummaryToResponse(s *service.BatchSummary) BatchSummaryResponse {
 	}
 }
 
+// GetDashboard serves the dashboard: recent batches, running tasks,
+// analytics, processing health and storage usage.
 func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -494,6 +508,7 @@ func (h *TaskHandler) buildProcessingHealth(ctx context.Context, reqID *string) 
 	}, nil
 }
 
+// GetBatchSummary serves one batch's per-status counts.
 func (h *TaskHandler) GetBatchSummary(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -513,6 +528,7 @@ func (h *TaskHandler) GetBatchSummary(w http.ResponseWriter, r *http.Request) {
 	h.logger.Debug(&reqID, "batch summary: %+v", s)
 }
 
+// ResumeBatch moves a paused batch back to queued.
 func (h *TaskHandler) ResumeBatch(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -567,6 +583,8 @@ func (h *TaskHandler) ResumeBatch(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// CancelBatch runs the two-phase cancel: pending tasks cancel, the owner
+// is signalled, and processing tasks are discarded when it steps down.
 func (h *TaskHandler) CancelBatch(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -733,6 +751,7 @@ func buildTaskResponse(t database.Task, includeResult bool) TaskResponse {
 	}
 }
 
+// TaskProgressResponse is the persisted progress snapshot of a task.
 type TaskProgressResponse struct {
 	Step      string  `json:"step"`
 	Detail    string  `json:"detail,omitempty"`
@@ -740,6 +759,9 @@ type TaskProgressResponse struct {
 	UpdatedAt string  `json:"updated_at"`
 }
 
+// TaskResponse is one task as the API shows it: identity, status, the
+// payload's file name and document id, the label, the progress snapshot,
+// and the result once done.
 type TaskResponse struct {
 	TaskID       string                `json:"task_id"`
 	BatchID      string                `json:"batch_id"`
@@ -756,12 +778,16 @@ type TaskResponse struct {
 	Result       json.RawMessage       `json:"result,omitempty"`
 }
 
+// TagReconcileReportResponse points at the task whose result holds the
+// reconcile report.
 type TagReconcileReportResponse struct {
 	TaskID      string          `json:"task_id"`
 	CompletedAt string          `json:"completed_at"`
 	Result      json.RawMessage `json:"result"`
 }
 
+// BatchCounts is the per-status task histogram of one batch, with the
+// owner's liveness.
 type BatchCounts struct {
 	Total      int64  `json:"total"`
 	Waiting    int64  `json:"waiting"`
@@ -775,6 +801,8 @@ type BatchCounts struct {
 	Orphaned   bool   `json:"orphaned"`
 }
 
+// BatchSummaryResponse is one batch's API view: identity, status, source
+// and the counts.
 type BatchSummaryResponse struct {
 	BatchID string `json:"batch_id"`
 	Status  string `json:"status"`
@@ -783,22 +811,28 @@ type BatchSummaryResponse struct {
 	OwnerPID int64 `json:"owner_pid,omitempty"`
 }
 
+// ListBatchesResponse wraps the batch summaries.
 type ListBatchesResponse struct {
 	Batches []BatchSummaryResponse `json:"batches"`
 }
 
+// ListTasksResponse is one batch's task list, optionally with its
+// summary.
 type ListTasksResponse struct {
 	BatchID string                `json:"batch_id,omitempty"`
 	Summary *BatchSummaryResponse `json:"summary,omitempty"`
 	Tasks   []TaskResponse        `json:"tasks"`
 }
 
+// OriginalTypeStat is one file-type bucket of the storage usage.
 type OriginalTypeStat struct {
 	OriginalType string `json:"original_type"`
 	Count        int64  `json:"count"`
 	TotalBytes   int64  `json:"total_bytes"`
 }
 
+// StorageTrendPoint is one day of the storage usage trend: documents and
+// bytes that day, plus the running total.
 type StorageTrendPoint struct {
 	Date            string `json:"date"`
 	DailyCount      int64  `json:"daily_count"`
@@ -806,6 +840,7 @@ type StorageTrendPoint struct {
 	CumulativeBytes int64  `json:"cumulative_bytes"`
 }
 
+// BatchOverviewItem is one recent batch for the dashboard.
 type BatchOverviewItem struct {
 	BatchID   string `json:"batch_id"`
 	Status    string `json:"status"`
@@ -815,11 +850,14 @@ type BatchOverviewItem struct {
 	DurationMs *int64 `json:"duration_ms,omitempty"`
 }
 
+// DistributionItem is one labeled bucket of a distribution chart.
 type DistributionItem struct {
 	Label string `json:"label"`
 	Count int64  `json:"count"`
 }
 
+// DocumentAnalytics is the dashboard's document analytics: language,
+// type and tag distributions plus the missing-state counts.
 type DocumentAnalytics struct {
 	LanguageDistribution     []DistributionItem `json:"language_distribution"`
 	DocumentTypeDistribution []DistributionItem `json:"document_type_distribution"`
@@ -829,6 +867,8 @@ type DocumentAnalytics struct {
 	MissingTagsCount         int64              `json:"missing_tags_count"`
 }
 
+// ProcessingHealth is the dashboard's processing health: success rate,
+// last-week counts, average duration, and the batch and tool health.
 type ProcessingHealth struct {
 	SuccessRate     float64 `json:"success_rate"`
 	CompletedLast7d int64   `json:"completed_last_7d"`
@@ -839,11 +879,13 @@ type ProcessingHealth struct {
 	MissingTools    int64   `json:"missing_tools"`
 }
 
+// RunningTasksResponse lists the currently processing tasks.
 type RunningTasksResponse struct {
 	Count int64          `json:"count"`
 	Tasks []TaskResponse `json:"tasks"`
 }
 
+// DashboardResponse is everything the dashboard needs in one payload.
 type DashboardResponse struct {
 	RecentBatches         []BatchOverviewItem  `json:"recent_batches"`
 	RunningTasks          RunningTasksResponse `json:"running_tasks"`

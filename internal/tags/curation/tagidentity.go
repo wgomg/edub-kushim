@@ -13,12 +13,16 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
+// TagIdentity enqueues identity resolution sweeps: the human trigger for
+// the machinery the admission resolver serves.
 type TagIdentity struct {
 	queries      *database.Queries
 	taskCreator  service.TaskCreator
 	batchCreator service.BatchCreator
 }
 
+// NewTagIdentity wires the enqueue path to the queries and the batch and
+// task creators.
 func NewTagIdentity(queries *database.Queries, taskCreator service.TaskCreator, batchCreator service.BatchCreator) *TagIdentity {
 	return &TagIdentity{
 		queries:      queries,
@@ -27,6 +31,8 @@ func NewTagIdentity(queries *database.Queries, taskCreator service.TaskCreator, 
 	}
 }
 
+// Enqueue queues a tag identity sweep batch and its task, or reports
+// alreadyQueued when one is still active.
 func (s *TagIdentity) Enqueue(ctx context.Context) (batchID string, alreadyQueued bool, err error) {
 	active, err := s.queries.CountActiveTagIdentityBatches(ctx)
 	if err != nil {

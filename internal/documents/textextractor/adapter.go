@@ -1,3 +1,7 @@
+// Package textextractor turns documents into plain text: a PDF extractor
+// chosen by configuration (MuPDF, gopdf or pdftotext), the DOCX and ODT
+// readers, and the composite that dispatches by content type. The runner
+// holds the composite behind the TextExtractor seam.
 package textextractor
 
 import (
@@ -8,20 +12,30 @@ import (
 	"github.com/wgomg/edub-kushim/internal/log"
 )
 
+// TextExtractor reads one document's text.
 type TextExtractor interface {
+	// Extract returns the document's plain text; nil when the document
+	// carries none. The path must be absolute.
 	Extract(ctx context.Context, path string, mimeType string) (*string, error)
+	// CanHandle reports whether the extractor accepts the content type.
 	CanHandle(mimeType string) bool
+	// Name identifies the extractor.
 	Name() string
 }
 
+// CompositeExtractor dispatches to the first extractor that claims the
+// content type.
 type CompositeExtractor struct {
 	extractors []TextExtractor
 }
 
+// NewCompositeExtractor composes the extractors in order; the first
+// CanHandle match serves the request.
 func NewCompositeExtractor(extractors []TextExtractor) *CompositeExtractor {
 	return &CompositeExtractor{extractors: extractors}
 }
 
+// Extract dispatches by content type, erroring when no child claims it.
 func (c *CompositeExtractor) Extract(ctx context.Context, path string, mimeType string) (*string, error) {
 	for _, ext := range c.extractors {
 		if ext.CanHandle(mimeType) {
@@ -32,6 +46,7 @@ func (c *CompositeExtractor) Extract(ctx context.Context, path string, mimeType 
 	return nil, fmt.Errorf("composite: no extractor found for MIME type %s", mimeType)
 }
 
+// CanHandle reports whether any child claims the content type.
 func (c *CompositeExtractor) CanHandle(mimeType string) bool {
 	for _, ext := range c.extractors {
 		if ext.CanHandle(mimeType) {
@@ -41,10 +56,13 @@ func (c *CompositeExtractor) CanHandle(mimeType string) bool {
 	return false
 }
 
+// Name identifies the composite.
 func (c *CompositeExtractor) Name() string {
 	return "composite"
 }
 
+// NewTextExtractor builds the composite: the configured PDF extractor
+// (MuPDF by default) plus the always-present DOCX and ODT readers.
 func NewTextExtractor(logger *log.Logger, cfg config.ToolConfig) (TextExtractor, error) {
 	var pdfExtractor TextExtractor
 	switch cfg.Command {

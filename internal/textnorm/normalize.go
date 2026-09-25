@@ -28,6 +28,11 @@ func FoldAccents(s string) string {
 	return norm.NFC.String(string(out))
 }
 
+// NormalizeForDB produces the canonical lookup form of a human string such
+// as a person name or a document title: NFKC normalization, lowercase,
+// hyphen and dash variants turned into spaces, accent folding, then removal
+// of everything outside a-z and space, collapsed. Lookups must pass both
+// sides through this function to match. Empty input stays empty.
 func NormalizeForDB(s string) string {
 	s = norm.NFKC.String(s)
 	s = strings.ToLower(strings.TrimSpace(s))

@@ -9,6 +9,8 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+// GenerateSessionSecret returns a fresh random 32-byte hex secret for
+// signing session tokens.
 func GenerateSessionSecret() (string, error) {
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
@@ -17,6 +19,7 @@ func GenerateSessionSecret() (string, error) {
 	return hex.EncodeToString(buf), nil
 }
 
+// GenerateToken signs a 24-hour HS256 session token for the user.
 func GenerateToken(userID int64, username, role, secret string) (string, error) {
 	claims := Claims{
 		UserID:   userID,
@@ -32,6 +35,8 @@ func GenerateToken(userID int64, username, role, secret string) (string, error) 
 	return token.SignedString([]byte(secret))
 }
 
+// ValidateToken parses and verifies a token against the secret, HS256
+// only.
 func ValidateToken(tokenString string, secret string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (any, error) {
 		return []byte(secret), nil

@@ -12,19 +12,28 @@ import (
 
 var _ task.Dedupable = (*TagIdentityTaskHandler)(nil)
 
+// TagIdentityTaskHandler runs the tag identity resolution sweep as a
+// blocking task: it forks the tagidentity verb and extracts its JSON
+// report. The task deduplicates on a fixed key, so concurrent triggers
+// collapse into one sweep.
 type TagIdentityTaskHandler struct {
 	queries *database.Queries
 	logger  *log.Logger
 }
 
+// NewTagIdentityTaskHandler wires the handler to the queries and logger.
 func NewTagIdentityTaskHandler(queries *database.Queries, logger *log.Logger) *TagIdentityTaskHandler {
 	return &TagIdentityTaskHandler{queries: queries, logger: logger}
 }
 
+// DedupKey is fixed for all tag identity tasks: only one sweep runs at a
+// time regardless of payload.
 func (h *TagIdentityTaskHandler) DedupKey(payload json.RawMessage) string {
 	return "tagidentity"
 }
 
+// Handle forks the tagidentity verb for the task's batch and returns its
+// report as the task result.
 func (h *TagIdentityTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMessage, error) {
 	return task.RunBlocking(ctx, h.queries, h.logger, t, "tag identity", func(progress *task.ProgressTracker) (json.RawMessage, error) {
 		progress.Set("run", "tagidentity --run "+t.BatchID, 0)

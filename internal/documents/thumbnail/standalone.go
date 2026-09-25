@@ -15,6 +15,9 @@ import (
 	_ "golang.org/x/image/tiff"
 )
 
+// RunStandalone renders one file's thumbnail directly (images) or through
+// MuPDF (everything else), writing a JPEG at the configured width cap and
+// quality. It is the body of the internal-thumbnail verb.
 func RunStandalone(inputPath, outputPath string, dpi, maxWidth, quality int) error {
 	if maxWidth < 1 {
 		return fmt.Errorf("max_width must be >= 1")

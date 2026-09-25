@@ -11,6 +11,8 @@ import (
 // all their document relationship types, omitting the people_type clause.
 const PersonAnyType = "person"
 
+// FTSDocumentRow is one structured-search hit, with rank and snippet
+// filled for free-text queries.
 type FTSDocumentRow struct {
 	ID             int64          `json:"id"`
 	DocumentID     string         `json:"document_id"`
@@ -33,6 +35,8 @@ type FTSDocumentRow struct {
 	Snippet        string         `json:"snippet"`
 }
 
+// SearchFilter is the structured search's query shape, built by the
+// search engine from its user-facing Filter.
 type SearchFilter struct {
 	Query           string
 	Tags            []string
@@ -131,6 +135,8 @@ func (b *queryBuilder) dateRange(col string, r *struct{ From, To *string }) {
 	}
 }
 
+// SearchDocumentsStructured runs the filter search, ordering by the
+// filter's sort key.
 func (q *Queries) SearchDocumentsStructured(ctx context.Context, filter SearchFilter) ([]FTSDocumentRow, error) {
 	b := &queryBuilder{}
 
@@ -235,6 +241,8 @@ func (q *Queries) SearchDocumentsStructured(ctx context.Context, filter SearchFi
 	return items, nil
 }
 
+// CountDocumentsStructured counts the same set the structured search
+// returns, for paging.
 func (q *Queries) CountDocumentsStructured(ctx context.Context, filter SearchFilter) (int64, error) {
 	b := &queryBuilder{}
 

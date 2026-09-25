@@ -14,6 +14,9 @@ import (
 	"github.com/wgomg/edub-kushim/internal/log"
 )
 
+// LlmAnthropic is the Anthropic Messages-API implementation of
+// ContentAnalyzer, gated by the model catalog's capabilities (thinking
+// budget, temperature, prompt caching).
 type LlmAnthropic struct {
 	logger         *log.Logger
 	config         config.ToolConfig
@@ -96,6 +99,8 @@ type anthropicResponse struct {
 	Usage        anthropicUsage          `json:"usage"`
 }
 
+// NewLlmAnthropic wires the adapter; caps may be nil, in which case the
+// capability gates are skipped.
 func NewLlmAnthropic(logger *log.Logger, cfg config.ToolConfig, llmCfg *config.LlmConfig, caps *llm.ModelCapability, promptTemplate string, minTags, maxTags int, reg *llm.Registry) (*LlmAnthropic, error) {
 	return &LlmAnthropic{
 		logger:         logger,
@@ -226,6 +231,7 @@ func (l *LlmAnthropic) doRequest(ctx context.Context, reqBody anthropicRequest, 
 	return &anthResp, responseContent, nil
 }
 
+// Analyze runs the document analysis call against the Anthropic API.
 func (l *LlmAnthropic) Analyze(ctx context.Context, text string, docTypes []TypeRef, peopleTypes []TypeRef, tagSuggestions []string) (*AnalysisResult, error) {
 	prompt := BuildPrompt(text, docTypes, peopleTypes, tagSuggestions, l.promptTemplate, l.minTags, l.maxTags)
 
@@ -271,6 +277,7 @@ func (l *LlmAnthropic) Analyze(ctx context.Context, text string, docTypes []Type
 	return analysisResult, nil
 }
 
+// AnalyzeDocType refines the document type against the Anthropic API.
 func (l *LlmAnthropic) AnalyzeDocType(ctx context.Context, prevResult *AnalysisResult, headTailText string, docTypes []TypeRef, metadata DocMetadata) (string, error) {
 	if prevResult.PassContext == nil {
 		return "", fmt.Errorf("pass context is nil")
@@ -335,6 +342,7 @@ func (l *LlmAnthropic) AnalyzeDocType(ctx context.Context, prevResult *AnalysisR
 	return result.Type, nil
 }
 
+// Adjudicate answers the same-intent pairs through the Anthropic API.
 func (l *LlmAnthropic) Adjudicate(ctx context.Context, pairs []TagPairEvidence) ([]TagVerdictResult, error) {
 	prompt := BuildAdjudicationPrompt(pairs)
 
@@ -362,6 +370,7 @@ func (l *LlmAnthropic) Adjudicate(ctx context.Context, pairs []TagPairEvidence) 
 	return ParseAdjudicationResponse(responseContent, len(pairs))
 }
 
+// AdjudicateTagSplits decides splits through the Anthropic API.
 func (l *LlmAnthropic) AdjudicateTagSplits(ctx context.Context, tags []string) ([]TagSplitResult, error) {
 	prompt := BuildTagSplitPrompt(tags)
 
@@ -389,6 +398,7 @@ func (l *LlmAnthropic) AdjudicateTagSplits(ctx context.Context, tags []string) (
 	return ParseTagSplitResponse(responseContent, len(tags))
 }
 
+// JudgeTagQuality scores candidates through the Anthropic API.
 func (l *LlmAnthropic) JudgeTagQuality(ctx context.Context, text string, candidates []TagQualityCandidate) ([]TagQualityResult, error) {
 	prompt := BuildTagQualityPrompt(text, candidates)
 
@@ -416,6 +426,7 @@ func (l *LlmAnthropic) JudgeTagQuality(ctx context.Context, text string, candida
 	return ParseTagQualityResponse(responseContent, len(candidates))
 }
 
+// JudgeTagIdentity decides canonical forms through the Anthropic API.
 func (l *LlmAnthropic) JudgeTagIdentity(ctx context.Context, candidates []TagIdentityCandidate) ([]TagIdentityResult, error) {
 	prompt := BuildTagIdentityPrompt(candidates)
 
@@ -443,6 +454,7 @@ func (l *LlmAnthropic) JudgeTagIdentity(ctx context.Context, candidates []TagIde
 	return ParseTagIdentityResponse(responseContent, len(candidates))
 }
 
+// Name identifies the Anthropic implementation.
 func (l *LlmAnthropic) Name() string {
 	return "anthropic"
 }

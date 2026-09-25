@@ -16,6 +16,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
+// SystemMessage is the system prompt of the document analysis call.
 const SystemMessage = "You are a helpful assistant specialized in document analysis and metadata extraction"
 
 // sleepAfterRequest paces requests toward rate-limited providers. Aborts early
@@ -30,6 +31,9 @@ func sleepAfterRequest(ctx context.Context, delaySeconds float64) {
 	}
 }
 
+// ContentTooLargeError is raised before a call when the prompt's estimated
+// token count exceeds the model's cataloged input limit. The runner never
+// retries it on a fallback.
 type ContentTooLargeError struct {
 	EstimatedTokens int
 	MaxInputTokens  int
@@ -39,6 +43,8 @@ func (e *ContentTooLargeError) Error() string {
 	return fmt.Sprintf("estimated %d tokens exceeds model limit of %d", e.EstimatedTokens, e.MaxInputTokens)
 }
 
+// TokenLimitError is a provider-side context-length rejection, parsed
+// from the response body.
 type TokenLimitError struct {
 	MaxTokens       int
 	RequestedTokens int
@@ -49,6 +55,8 @@ func (e *TokenLimitError) Error() string {
 	return fmt.Sprintf("token limit: requested %d tokens, model max is %d", e.RequestedTokens, e.MaxTokens)
 }
 
+// InsufficientCreditsError means the provider account cannot pay: HTTP
+// 402, a 429 the caller treats as billing, or the qwen arrearage quirk.
 type InsufficientCreditsError struct {
 	Provider   string
 	HTTPStatus int
@@ -139,6 +147,9 @@ type promptData struct {
 	MaxTags       int
 }
 
+// BuildPrompt renders the analysis prompt through the custom template
+// when one is given (falling back to the default on template errors),
+// with the excerpts, the offered type options and the tag bounds.
 func BuildPrompt(text string, docTypes []TypeRef, peopleTypes []TypeRef, tagSuggestions []string, customTemplate string, minTags, maxTags int) string {
 	docTypePrompt := documentTypePrompt(docTypes)
 	peoplePrompt := peopleTypePrompt(peopleTypes)
@@ -209,6 +220,8 @@ func normalizeToTokens(s string) []string {
 	return strings.Fields(normalizeCore(s))
 }
 
+// ExtractHeadTailWords reduces content to its first and last words, the
+// only sections the document-type refinement reads.
 func ExtractHeadTailWords(content string, headWords, tailWords int) string {
 	words := strings.Fields(content)
 	total := len(words)
@@ -223,12 +236,16 @@ func ExtractHeadTailWords(content string, headWords, tailWords int) string {
 	return sb.String()
 }
 
+// DocMetadata is the document-level context the type-refinement prompt
+// renders: word and page counts and the MIME type, all optional.
 type DocMetadata struct {
 	WordCount int32
 	PageCount int32
 	MimeType  string
 }
 
+// Format renders the metadata for the prompt, skipping the zero values;
+// empty when nothing is known.
 func (m DocMetadata) Format() string {
 	var parts []string
 	if m.WordCount > 0 {
@@ -246,6 +263,8 @@ func (m DocMetadata) Format() string {
 	return strings.Join(parts, ", ")
 }
 
+// BuildDocTypePrompt renders the type-refinement prompt: the offered
+// types, the document's metadata, and the head and tail excerpts.
 func BuildDocTypePrompt(headTailText string, docTypes []TypeRef, metadata DocMetadata) string {
 	var typesList strings.Builder
 	for _, dt := range docTypes {
@@ -279,6 +298,8 @@ type TagFilter struct {
 	titleTokens    map[string]struct{}
 }
 
+// NewTagFilter builds the per-document token sets: the analysis people's
+// names, the known people, the document type names, and the title.
 func NewTagFilter(people []PeopleResult, knownPeopleNormalized []string, title string, docTypeNames []string) *TagFilter {
 	nameTokens := make(map[string]struct{})
 	for _, p := range people {
@@ -320,6 +341,9 @@ func NewTagFilter(people []PeopleResult, knownPeopleNormalized []string, title s
 	}
 }
 
+// Accept reports whether a candidate tag passes the per-document rules:
+// length and word-count bounds, no person names or known people, no
+// document-type tokens, and not fully contained in the title.
 func (f *TagFilter) Accept(tag string) bool {
 	tagTokens := strings.Fields(tag)
 	if len(tagTokens) > maxTagWords || len(tagTokens) == 0 || len(tag) > maxTagLength {
@@ -363,6 +387,8 @@ func (f *TagFilter) Accept(tag string) bool {
 	return !allInTitle
 }
 
+// FilterTags normalizes, deduplicates and filters the analysis tags
+// through the per-document rules, capped at maxTags.
 func FilterTags(tags []string, people []PeopleResult, knownPeopleNormalized []string, title string, docTypeNames []string, maxTags int) []string {
 	filter := NewTagFilter(people, knownPeopleNormalized, title, docTypeNames)
 
@@ -380,6 +406,8 @@ func FilterTags(tags []string, people []PeopleResult, knownPeopleNormalized []st
 	return result
 }
 
+// SplitComponents normalizes adjudicated split components and keeps the
+// ones the per-document filter accepts.
 func SplitComponents(raw []string, filter *TagFilter) []string {
 	normalized := NormalizeTags(raw)
 	result := make([]string, 0, len(normalized))
@@ -392,6 +420,8 @@ func SplitComponents(raw []string, filter *TagFilter) []string {
 	return result
 }
 
+// NormalizeTags applies the tag normalization, drops empties and
+// deduplicates.
 func NormalizeTags(raw []string) []string {
 	seen := make(map[string]bool, len(raw))
 	result := make([]string, 0, len(raw))
@@ -406,12 +436,18 @@ func NormalizeTags(raw []string) []string {
 	return result
 }
 
+// TagDetail is the model's per-tag annotation: the term, its facet
+// category, and whether the term is standard terminology. IsStandardTerm
+// is a pointer so an omitted answer stays distinguishable from a false
+// one.
 type TagDetail struct {
 	Term           string `json:"term"`
 	Category       string `json:"category"`
 	IsStandardTerm *bool  `json:"is_standard_term"`
 }
 
+// The tag facet categories the analysis prompt offers; anything the
+// model answers outside them parses to other.
 const (
 	TagCategoryTopic     = "topic"
 	TagCategoryFormGenre = "form_genre"
@@ -439,6 +475,9 @@ type analysisWire struct {
 	Language string          `json:"language"`
 }
 
+// ParseAnalysisResponse parses the model's JSON answer into the result.
+// Tags may arrive as plain strings or as detail objects; categories
+// normalize to the vocabulary, with anything unknown becoming other.
 func ParseAnalysisResponse(content string) (*AnalysisResult, error) {
 	var wire analysisWire
 	if err := json.Unmarshal([]byte(content), &wire); err != nil {
@@ -757,11 +796,15 @@ func buildPlaceWhitelist() map[string]struct{} {
 	return m
 }
 
+// IsWhitelistedPlace reports whether the term names a continent or a
+// country, the only places allowed as tags.
 func IsWhitelistedPlace(term string) bool {
 	_, ok := placeWhitelist[placeWhitelistKey(term)]
 	return ok
 }
 
+// FacetDrop is one tag the facet separation removed, with its category
+// and the reason.
 type FacetDrop struct {
 	Term     string
 	Category string
@@ -787,6 +830,9 @@ func classifyCategory(tag, category string, docTypes map[string]struct{}) (strin
 	return "", false
 }
 
+// SeparateFacets drops tags that belong to other facets: people, works,
+// non-whitelisted places, and form-or-genre tags that restate the
+// document type. Tags without a parsed detail pass through.
 func SeparateFacets(tags []string, details []TagDetail, docTypeNames []string) ([]string, []FacetDrop) {
 	if len(details) == 0 {
 		return tags, nil
@@ -816,6 +862,9 @@ func SeparateFacets(tags []string, details []TagDetail, docTypeNames []string) (
 	return kept, dropped
 }
 
+// TagPairEvidence is one pair the adjudicator decides: the two terms,
+// their similarity, the query's runner-up similarity, and the target's
+// nearest other store tag.
 type TagPairEvidence struct {
 	Query             string
 	Target            string
@@ -825,23 +874,30 @@ type TagPairEvidence struct {
 	TargetRunnerUpSim float64
 }
 
+// TagVerdictResult is the adjudicator's answer for one pair: the verdict
+// and, when it is same, the direction.
 type TagVerdictResult struct {
 	Index     int
 	Verdict   types.TagVerdict
 	Direction string
 }
 
-// direction answers for a same-intent pair: which term's standard sense is
-// exactly the dimension; a tie leaves the choice to the deterministic
-// tie-break
+// The directions a same verdict can carry: which term's standard sense
+// is exactly the dimension; a tie leaves the choice to the deterministic
+// tie-break.
 const (
 	TagDirectionQuery  = "query"
 	TagDirectionTarget = "target"
 	TagDirectionTie    = "tie"
 )
 
+// AdjudicationSystemMessage is the system prompt of the pair
+// adjudication call.
 const AdjudicationSystemMessage = "You are a tag-taxonomy classifier. Decide whether pairs of tag terms denote one value."
 
+// BuildAdjudicationPrompt renders the same-intent pairs for the judging
+// body: faithful-replacement framing, per-pair similarities, and
+// runner-up context.
 func BuildAdjudicationPrompt(pairs []TagPairEvidence) string {
 	var sb strings.Builder
 	sb.WriteString("For each pair below, decide whether the two terms denote one value: faithful replacement holds when either term can stand for the other without loss or change of meaning.\n")
@@ -868,6 +924,9 @@ func BuildAdjudicationPrompt(pairs []TagPairEvidence) string {
 	return sb.String()
 }
 
+// ParseAdjudicationResponse parses n pair verdicts. Unknown or
+// out-of-range indices and unrecognized verdicts leave that pair
+// unanswered rather than inventing one.
 func ParseAdjudicationResponse(content string, n int) ([]TagVerdictResult, error) {
 	content = cleanCodeBlock(strings.TrimSpace(content))
 	var parsed struct {
@@ -901,20 +960,28 @@ func ParseAdjudicationResponse(content string, n int) ([]TagVerdictResult, error
 	return results, nil
 }
 
+// TagSplitVerdict is the split gate's answer for one tag.
 type TagSplitVerdict string
 
+// The two split verdicts: keep the tag whole, or split it into its
+// distinct concepts.
 const (
 	TagSplitKeep  TagSplitVerdict = "keep"
 	TagSplitSplit TagSplitVerdict = "split"
 )
 
+// TagSplitResult is one tag's split decision: the verdict and, when it is
+// split, the components.
 type TagSplitResult struct {
 	Verdict    TagSplitVerdict
 	Components []string
 }
 
+// TagSplitSystemMessage is the system prompt of the split gate.
 const TagSplitSystemMessage = "You are a tag-taxonomy classifier. Decide whether a tag denotes one concept or several distinct concepts."
 
+// BuildTagSplitPrompt renders the split gate's prompt: keep versus
+// genuinely distinct concepts, one entry per tag.
 func BuildTagSplitPrompt(tags []string) string {
 	var sb strings.Builder
 	sb.WriteString("For each tag below, decide whether it denotes one single concept or several distinct concepts that must become separate tags.\n")
@@ -929,6 +996,8 @@ func BuildTagSplitPrompt(tags []string) string {
 	return sb.String()
 }
 
+// ParseTagSplitResponse parses n split answers; a split with fewer than
+// two components is discarded, and unanswered entries stay zero-valued.
 func ParseTagSplitResponse(content string, n int) ([]TagSplitResult, error) {
 	content = cleanCodeBlock(strings.TrimSpace(content))
 	var parsed struct {
@@ -966,6 +1035,8 @@ func ParseTagSplitResponse(content string, n int) ([]TagSplitResult, error) {
 	return results, nil
 }
 
+// TagQualityCandidate is one tag up for quality judging: its index, term,
+// facet category, and whether it is a whitelisted place.
 type TagQualityCandidate struct {
 	Index            int
 	Term             string
@@ -973,6 +1044,8 @@ type TagQualityCandidate struct {
 	WhitelistedPlace bool
 }
 
+// TagQualityResult is one candidate's rubric answers; Passed requires all
+// four criteria.
 type TagQualityResult struct {
 	Index              int
 	SubjectMatter      bool
@@ -981,6 +1054,8 @@ type TagQualityResult struct {
 	AppropriatelyBroad bool
 }
 
+// Passed reports whether the candidate satisfies all four quality
+// criteria.
 func (r TagQualityResult) Passed() bool {
 	return r.SubjectMatter && r.StandardTerm && r.NotPersonPlaceWork && r.AppropriatelyBroad
 }
@@ -994,6 +1069,7 @@ type TagQualityCriteria struct {
 	AppropriatelyBroad *bool `json:"appropriately_broad"`
 }
 
+// Criteria returns the persisted wire shape of the answers.
 func (r TagQualityResult) Criteria() TagQualityCriteria {
 	return TagQualityCriteria{
 		SubjectMatter:      &r.SubjectMatter,
@@ -1003,11 +1079,14 @@ func (r TagQualityResult) Criteria() TagQualityCriteria {
 	}
 }
 
+// Complete reports whether all four answers were specified.
 func (c TagQualityCriteria) Complete() bool {
 	return c.SubjectMatter != nil && c.StandardTerm != nil &&
 		c.NotPersonPlaceWork != nil && c.AppropriatelyBroad != nil
 }
 
+// String renders the answers for the audit log, treating an omitted
+// answer as false.
 func (c TagQualityCriteria) String() string {
 	return fmt.Sprintf("subject_matter=%t standard_term=%t not_person_place_work=%t appropriately_broad=%t",
 		c.SubjectMatter != nil && *c.SubjectMatter,
@@ -1016,13 +1095,16 @@ func (c TagQualityCriteria) String() string {
 		c.AppropriatelyBroad != nil && *c.AppropriatelyBroad)
 }
 
-// TagQualityVersion pins the measurement generation: bump it whenever the
-// criteria text or the prompt changes, so cached verdicts from an older
-// generation never apply to a newer one.
+// TagQualityVersion pins the quality measurement generation: bump it
+// whenever the criteria text or the prompt changes, so cached verdicts
+// from an older generation never apply to a newer one.
 const TagQualityVersion = "v1"
 
+// TagQualitySystemMessage is the system prompt of the quality judge.
 const TagQualitySystemMessage = "You are a tag-quality judge. Decide whether each candidate tag is fit for a shared document vocabulary."
 
+// BuildTagQualityPrompt renders the four-question rubric over the
+// document text and the candidate tags.
 func BuildTagQualityPrompt(text string, candidates []TagQualityCandidate) string {
 	var sb strings.Builder
 	sb.WriteString("For each candidate tag below, answer four yes/no questions about its fitness as a tag for the document.\n")
@@ -1044,10 +1126,10 @@ func BuildTagQualityPrompt(text string, candidates []TagQualityCandidate) string
 	return sb.String()
 }
 
-// ParseTagQualityResponse returns an error when any candidate lacks a fully
+// ParseTagQualityResponse errors when any candidate lacks a fully
 // specified verdict: a zero-valued result must never be read as an
-// all-criteria-false rejection, or a truncated response would cache a spurious
-// permanent rejection.
+// all-criteria-false rejection, or a truncated response would cache a
+// spurious permanent rejection.
 func ParseTagQualityResponse(content string, n int) ([]TagQualityResult, error) {
 	content = cleanCodeBlock(strings.TrimSpace(content))
 	var parsed struct {
@@ -1089,12 +1171,18 @@ func ParseTagQualityResponse(content string, n int) ([]TagQualityResult, error) 
 	return results, nil
 }
 
+// TagIdentityCandidate is one term the identity judge decides: its
+// index, the term, and the fold the deterministic machinery proposed
+// (empty when none).
 type TagIdentityCandidate struct {
 	Index        int
 	Term         string
 	ProposedFold string
 }
 
+// TagIdentityResult is one candidate's identity answers: whether to fold
+// to base, whether the fold preserves denotation, and whether the term is
+// conventionally written.
 type TagIdentityResult struct {
 	Index                   int
 	FoldToBase              bool
@@ -1102,14 +1190,16 @@ type TagIdentityResult struct {
 	ConventionalForm        bool
 }
 
-// the persisted wire shape of one candidate's identity verdict; pointer
-// fields distinguish an omitted key from an explicit false
+// TagIdentityCriteria is the persisted wire shape of one candidate's
+// identity verdict. Pointer fields distinguish an omitted key from an
+// explicit false.
 type TagIdentityCriteria struct {
 	FoldToBase              *bool `json:"fold_to_base"`
 	FoldPreservesDenotation *bool `json:"fold_preserves_denotation"`
 	ConventionalForm        *bool `json:"conventional_form"`
 }
 
+// Criteria returns the persisted wire shape of the answers.
 func (r TagIdentityResult) Criteria() TagIdentityCriteria {
 	return TagIdentityCriteria{
 		FoldToBase:              &r.FoldToBase,
@@ -1118,7 +1208,8 @@ func (r TagIdentityResult) Criteria() TagIdentityCriteria {
 	}
 }
 
-// the three criterion answers plus the fold the mechanism proposed
+// CriteriaRecord marshals the three answers plus the fold the mechanism
+// proposed, for the identity event's criteria column.
 func (r TagIdentityResult) CriteriaRecord(proposedFold string) []byte {
 	record := struct {
 		TagIdentityCriteria
@@ -1131,10 +1222,13 @@ func (r TagIdentityResult) CriteriaRecord(proposedFold string) []byte {
 	return raw
 }
 
+// Complete reports whether all three answers were specified.
 func (c TagIdentityCriteria) Complete() bool {
 	return c.FoldToBase != nil && c.FoldPreservesDenotation != nil && c.ConventionalForm != nil
 }
 
+// String renders the answers for the log, treating an omitted answer as
+// false.
 func (c TagIdentityCriteria) String() string {
 	return fmt.Sprintf("fold_to_base=%t fold_preserves_denotation=%t conventional_form=%t",
 		c.FoldToBase != nil && *c.FoldToBase,
@@ -1142,8 +1236,11 @@ func (c TagIdentityCriteria) String() string {
 		c.ConventionalForm != nil && *c.ConventionalForm)
 }
 
+// TagIdentitySystemMessage is the system prompt of the identity judge.
 const TagIdentitySystemMessage = "You are a tag-identity judge. Decide the canonical written form of each tag term."
 
+// BuildTagIdentityPrompt renders the canonical-form questions, with each
+// candidate's proposed fold where one exists.
 func BuildTagIdentityPrompt(candidates []TagIdentityCandidate) string {
 	var sb strings.Builder
 	sb.WriteString("For each candidate tag term below, answer three yes/no questions about its canonical written form.\n")
@@ -1162,8 +1259,9 @@ func BuildTagIdentityPrompt(candidates []TagIdentityCandidate) string {
 	return sb.String()
 }
 
-// returns an error when any candidate lacks a fully specified verdict: a
-// zero-valued result must never be read as an all-criteria-false rejection
+// ParseTagIdentityResponse errors when any candidate lacks a fully
+// specified verdict, so a truncated answer is never read as an all-false
+// rejection.
 func ParseTagIdentityResponse(content string, n int) ([]TagIdentityResult, error) {
 	content = cleanCodeBlock(strings.TrimSpace(content))
 	var parsed struct {

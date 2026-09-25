@@ -30,6 +30,12 @@ type modelConfigJSON struct {
 	MaxPositionEmbeddings int `json:"max_position_embeddings"`
 }
 
+// Hugot is the daemon-side embedding engine: it loads the configured
+// backend (ONNX or Go) with its model, embeds texts in token chunks sized
+// from the model's max_position_embeddings, and matches them against an
+// attached tag embedding store. It implements Matcher and Embedder and
+// serves the matcher daemon's HTTP handlers; the pair index behind
+// SimilarPairs is mutex-guarded. Built only into cgo builds.
 type Hugot struct {
 	logger           *log.Logger
 	session          *hugot.Session
@@ -54,6 +60,11 @@ type match struct {
 	similarity float64
 }
 
+// NewHugot loads the model pipeline and derives the effective chunk size
+// from the model's max_position_embeddings: a configured chunk size beyond
+// the model limit or non-positive is clamped, leaving a safety margin and a
+// ten percent token overlap between chunks. It fails when the backend
+// session, the model, or its config cannot be loaded.
 func NewHugot(logger *log.Logger, tmCfg config.TagMatcherConfig, pipeName string) (*Hugot, error) {
 	logger.Debug(nil, "tagmatcher configured: backend=%s", tmCfg.Hugot.Backend)
 	session, err := getBackendSession(tmCfg, logger)
@@ -114,6 +125,9 @@ const embedBatchSize = 32
 
 const rankCandidates = 2
 
+// SetStore attaches the tag embedding store that Match, Rank and
+// SimilarPairs read from. It must be called before the daemon serves
+// requests.
 func (h *Hugot) SetStore(s EmbeddingStore) {
 	h.store = s
 	h.rebuildPairs()
@@ -142,6 +156,9 @@ func (h *Hugot) rebuildPairs() {
 	}
 }
 
+// AddToStore embeds the named tags and adds them to the store and the pair
+// index. AddToStore and RemoveFromStore are what keeps the daemon's view of
+// the tag vocabulary current as tags are created, promoted and deleted.
 func (h *Hugot) AddToStore(ctx context.Context, names []string) error {
 	if h == nil {
 		return fmt.Errorf("tag matcher not initialized")
@@ -207,6 +224,7 @@ func (h *Hugot) addPairsFor(name string, emb []float32, chunk []string, vecs [][
 	}
 }
 
+// RemoveFromStore drops the named tags from the store and the pair index.
 func (h *Hugot) RemoveFromStore(ctx context.Context, names []string) error {
 	if h == nil {
 		return fmt.Errorf("tag matcher not initialized")
@@ -229,6 +247,8 @@ func (h *Hugot) removePairsFor(name string) {
 	}
 }
 
+// SimilarPairs returns the pair index: every stored pair above the
+// consolidation similarity, as maintained by AddToStore and RemoveFromStore.
 func (h *Hugot) SimilarPairs(ctx context.Context) ([]SimilarPair, error) {
 	if h == nil {
 		return nil, fmt.Errorf("tag matcher not initialized")
@@ -249,6 +269,7 @@ func canonicalPairKey(a, b string) similarPairKey {
 	return similarPairKey{a: b, b: a}
 }
 
+// Close destroys the backend session; safe on a nil receiver.
 func (h *Hugot) Close() {
 	if h != nil && h.session != nil {
 		h.session.Destroy()
@@ -256,6 +277,9 @@ func (h *Hugot) Close() {
 	}
 }
 
+// Match embeds the document text and returns up to the configured top N
+// stored tags above the document-match similarity. An empty store or a zero
+// top N returns no matches with a nil error.
 func (h *Hugot) Match(ctx context.Context, docId, input string) ([]string, error) {
 	if h == nil {
 		return nil, fmt.Errorf("tag matcher not initialized")
@@ -296,6 +320,9 @@ func (h *Hugot) Match(ctx context.Context, docId, input string) ([]string, error
 	return result, nil
 }
 
+// Consolidate resolves each query to the stored tag it consolidates to at
+// the consolidation similarity, or to itself when nothing passes. An empty
+// store or a zero similarity returns the queries unchanged.
 func (h *Hugot) Consolidate(ctx context.Context, docId string, queries []string) ([]string, error) {
 	if h == nil {
 		return nil, fmt.Errorf("tag matcher not initialized")
@@ -327,6 +354,9 @@ func (h *Hugot) Consolidate(ctx context.Context, docId string, queries []string)
 	return result, nil
 }
 
+// Rank returns per query the candidates above the consolidation
+// similarity, at most two and best first; KeptName always carries the query
+// itself. An empty store or a zero similarity returns the queries unranked.
 func (h *Hugot) Rank(ctx context.Context, docId string, queries []string) ([]RankResult, error) {
 	if h == nil {
 		return nil, fmt.Errorf("tag matcher not initialized")
@@ -361,6 +391,7 @@ func (h *Hugot) Rank(ctx context.Context, docId string, queries []string) ([]Ran
 	return results, nil
 }
 
+// Name identifies the in-process engine behind the Matcher seam.
 func (h *Hugot) Name() string {
 	return "hugot"
 }

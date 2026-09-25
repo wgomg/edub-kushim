@@ -1,0 +1,15 @@
+# Revive rules for the Go doc-comment policy: every exported symbol and every
+# package must carry a doc comment, and doc comments must start with the name
+# of the symbol they document. Only the comment rules are enabled on purpose.
+#
+# Install: go install github.com/mgechev/revive@latest
+# Run:     revive -config revive.toml ./...
+
+# Only the comment rules are enabled on purpose. The node_modules Go files
+# the SPAs' dependencies vendor are not this repository's code.
+exclude = ["web/node_modules/...", "web-wizard/node_modules/..."]
+
+[rule.exported]
+  arguments = ["disableStutteringCheck"]
+
+[rule.package-comments]

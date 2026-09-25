@@ -13,14 +13,18 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+// User is the account service: CRUD with bcrypt-hashed passwords, role
+// validation, authentication, and the per-user API keys.
 type User struct {
 	queries *database.Queries
 }
 
+// NewUser wires the account service.
 func NewUser(queries *database.Queries) *User {
 	return &User{queries: queries}
 }
 
+// List pages the users without their hashes.
 func (s *User) List(ctx context.Context, limit, offset int32) ([]database.ListUsersRow, error) {
 	users, err := s.queries.ListUsers(ctx, database.ListUsersParams{
 		Limit:  limit,
@@ -32,6 +36,7 @@ func (s *User) List(ctx context.Context, limit, offset int32) ([]database.ListUs
 	return users, nil
 }
 
+// Count counts the users.
 func (s *User) Count(ctx context.Context) (int64, error) {
 	count, err := s.queries.CountUsers(ctx)
 	if err != nil {
@@ -40,6 +45,7 @@ func (s *User) Count(ctx context.Context) (int64, error) {
 	return count, nil
 }
 
+// Get returns one user by id without the hash.
 func (s *User) Get(ctx context.Context, id int64) (database.User, error) {
 	user, err := s.queries.GetUser(ctx, id)
 	if err != nil {
@@ -48,6 +54,8 @@ func (s *User) Get(ctx context.Context, id int64) (database.User, error) {
 	return user, nil
 }
 
+// Create creates a user after validating the password and the role,
+// storing the bcrypt hash.
 func (s *User) Create(ctx context.Context, username, password, role string) (database.User, error) {
 	if err := ValidatePassword(password); err != nil {
 		return database.User{}, err
@@ -84,6 +92,8 @@ func (s *User) Create(ctx context.Context, username, password, role string) (dat
 	return user, nil
 }
 
+// Update changes a user's username, password and role; an empty password
+// keeps the current hash.
 func (s *User) Update(ctx context.Context, id int64, username, password, role string) (database.User, error) {
 	user, err := s.queries.GetUser(ctx, id)
 	if err != nil {
@@ -129,6 +139,7 @@ func (s *User) Update(ctx context.Context, id int64, username, password, role st
 	return user, nil
 }
 
+// Authenticate verifies a login pair; the returned user carries no hash.
 func (s *User) Authenticate(ctx context.Context, username, password string) (database.User, error) {
 	user, err := s.queries.GetUserByUsername(ctx, username)
 	if err != nil {
@@ -143,6 +154,7 @@ func (s *User) Authenticate(ctx context.Context, username, password string) (dat
 	return user, nil
 }
 
+// Delete removes one user.
 func (s *User) Delete(ctx context.Context, id int64) error {
 	if err := s.queries.DeleteUser(ctx, id); err != nil {
 		return errs.FromDB(err, "delete user")
@@ -150,6 +162,8 @@ func (s *User) Delete(ctx context.Context, id int64) error {
 	return nil
 }
 
+// CreateAPIKey mints a fresh random API key, stores its SHA-256 hash and
+// returns the raw key exactly once.
 func (s *User) CreateAPIKey(ctx context.Context, userID int64) (rawKey string, err error) {
 	rawKey, hash, prefix, err := auth.GenerateAPIKey()
 	if err != nil {
@@ -174,6 +188,7 @@ func (s *User) CreateAPIKey(ctx context.Context, userID int64) (rawKey string, e
 	return rawKey, nil
 }
 
+// RevokeAPIKey clears a user's API key.
 func (s *User) RevokeAPIKey(ctx context.Context, userID int64) error {
 	rows, err := s.queries.RevokeUserAPIKey(ctx, userID)
 	if err != nil {
@@ -187,10 +202,13 @@ func (s *User) RevokeAPIKey(ctx context.Context, userID int64) error {
 	return nil
 }
 
+// RotateAPIKey revokes and re-issues the key atomically.
 func (s *User) RotateAPIKey(ctx context.Context, userID int64) (rawKey string, err error) {
 	return s.CreateAPIKey(ctx, userID)
 }
 
+// ValidateAPIKey resolves a raw key to its user through the stored hash;
+// an unknown key fails authentication.
 func (s *User) ValidateAPIKey(ctx context.Context, rawKey string) (database.User, error) {
 	hash := auth.HashAPIKey(rawKey)
 	user, err := s.queries.GetUserByAPIKeyHash(ctx, sql.NullString{String: hash, Valid: true})
@@ -200,6 +218,7 @@ func (s *User) ValidateAPIKey(ctx context.Context, rawKey string) (database.User
 	return user, nil
 }
 
+// UpdateRole sets a user's role after validating it.
 func (s *User) UpdateRole(ctx context.Context, id int64, role string) error {
 	if !auth.ValidRole(role) {
 		return errs.EInvalid("update role", fmt.Errorf("invalid role: %s", role))

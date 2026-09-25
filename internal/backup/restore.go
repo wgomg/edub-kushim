@@ -19,6 +19,8 @@ import (
 	"github.com/wgomg/edub-kushim/internal/documents/storage"
 )
 
+// ValidateArchive checks an archive is a readable gzip/tar of this
+// application's backups and returns its manifest.
 func ValidateArchive(path string) (*Manifest, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -57,6 +59,8 @@ func ValidateArchive(path string) (*Manifest, error) {
 	return nil, fmt.Errorf("manifest.json not found in archive")
 }
 
+// ExtractArchive unpacks the archive into destDir, refusing entries that
+// escape the directory and skipping symlink entries.
 func ExtractArchive(archivePath, destDir string) error {
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return fmt.Errorf("create dest dir: %w", err)
@@ -125,6 +129,11 @@ func ExtractArchive(archivePath, destDir string) error {
 	return nil
 }
 
+// ReplaceFiles installs the extracted backup over the live installation:
+// the SQL dump is replayed into the database (documents-only archives
+// skip it), the storage files are moved into place with the manifest's
+// path rewrite, and the sanitized config is saved as config.yaml
+// (restored). The dump is removed after replay.
 func ReplaceFiles(extractDir string, db *sql.DB, dbCfg config.DatabaseConfig, dsn, configPath, storageDir string) error {
 	manifestData, err := os.ReadFile(filepath.Join(extractDir, "manifest.json"))
 	if err != nil {

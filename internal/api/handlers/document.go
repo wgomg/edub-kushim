@@ -33,6 +33,9 @@ func sanitizeSnippetHTML(raw string) string {
 	return escaped
 }
 
+// DocumentHandler is the document API: listing, search, file and
+// thumbnail downloads, updates, tagging, people attachment, batch
+// operations, trash endpoints, and re-enrichment.
 type DocumentHandler struct {
 	client    *database.Client
 	logger    *log.Logger
@@ -42,6 +45,9 @@ type DocumentHandler struct {
 	getConfig func() *config.Config
 }
 
+// NewDocumentHandler wires the document handler to the database, the
+// search engine, the use-case services, the tag service, and the dynamic
+// config.
 func NewDocumentHandler(client *database.Client, logger *log.Logger, engine *search.Engine, services *service.CrudServices, tag *curation.Tag, getConfig func() *config.Config) *DocumentHandler {
 	return &DocumentHandler{
 		client:    client,
@@ -53,6 +59,7 @@ func NewDocumentHandler(client *database.Client, logger *log.Logger, engine *sea
 	}
 }
 
+// ListDocuments serves the paged document listing.
 func (h *DocumentHandler) ListDocuments(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -140,6 +147,7 @@ func (h *DocumentHandler) ListDocuments(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
+// GetDocument serves one document's full view.
 func (h *DocumentHandler) GetDocument(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -223,6 +231,7 @@ func (h *DocumentHandler) GetDocument(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// FilterLanguages serves the distinct stored languages.
 func (h *DocumentHandler) FilterLanguages(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -243,6 +252,7 @@ func (h *DocumentHandler) FilterLanguages(w http.ResponseWriter, r *http.Request
 	}
 }
 
+// SearchDocuments serves the free-text full-text search.
 func (h *DocumentHandler) SearchDocuments(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -308,6 +318,7 @@ func (h *DocumentHandler) SearchDocuments(w http.ResponseWriter, r *http.Request
 	}
 }
 
+// SearchDocumentsStructured serves the filter search with total count.
 func (h *DocumentHandler) SearchDocumentsStructured(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -398,6 +409,7 @@ func (h *DocumentHandler) SearchDocumentsStructured(w http.ResponseWriter, r *ht
 	}
 }
 
+// GetDocumentFile streams the stored file with its content type.
 func (h *DocumentHandler) GetDocumentFile(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -423,6 +435,8 @@ func (h *DocumentHandler) GetDocumentFile(w http.ResponseWriter, r *http.Request
 	http.ServeFile(w, r, doc.StoragePath)
 }
 
+// GetDocumentThumbnail serves the document's thumbnail, 404 when there
+// is none.
 func (h *DocumentHandler) GetDocumentThumbnail(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -455,6 +469,7 @@ func (h *DocumentHandler) GetDocumentThumbnail(w http.ResponseWriter, r *http.Re
 	http.ServeFile(w, r, thumbPath)
 }
 
+// DownloadDocuments streams one document's file or a zip of several.
 func (h *DocumentHandler) DownloadDocuments(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -598,6 +613,7 @@ func sanitizeFilename(title string) string {
 	return strings.NewReplacer("\r\n", "", "\n", "", "\"", "", "/", "_", "\\", "_", "\x00", "").Replace(title)
 }
 
+// SupportedMimeTypes serves the formats the pipeline ingests.
 func (h *DocumentHandler) SupportedMimeTypes(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(mime.Supported)
@@ -615,6 +631,8 @@ func uniqueStrings(s []string) []string {
 	return result
 }
 
+// UpdateDocument updates a document's title, type, language and optional
+// corrected text.
 func (h *DocumentHandler) UpdateDocument(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -693,6 +711,7 @@ func (h *DocumentHandler) UpdateDocument(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// ReEnrich enqueues one document's re-enrichment.
 func (h *DocumentHandler) ReEnrich(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -721,6 +740,7 @@ func (h *DocumentHandler) ReEnrich(w http.ResponseWriter, r *http.Request) {
 	h.logger.Info(&reqID, "re-enrich queued for document %s (batch %s)", documentID, batchID)
 }
 
+// DeleteDocument soft-deletes one document into the trash.
 func (h *DocumentHandler) DeleteDocument(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -739,6 +759,7 @@ func (h *DocumentHandler) DeleteDocument(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// AddDocumentTag attaches one tag to a document.
 func (h *DocumentHandler) AddDocumentTag(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -782,6 +803,7 @@ func (h *DocumentHandler) AddDocumentTag(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// RemoveDocumentTag detaches one tag from a document.
 func (h *DocumentHandler) RemoveDocumentTag(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -816,6 +838,8 @@ func (h *DocumentHandler) RemoveDocumentTag(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// BatchDeleteDocuments soft-deletes many documents at once, reporting
+// per-document failures.
 func (h *DocumentHandler) BatchDeleteDocuments(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -872,6 +896,8 @@ func (h *DocumentHandler) BatchDeleteDocuments(w http.ResponseWriter, r *http.Re
 	json.NewEncoder(w).Encode(result)
 }
 
+// BatchAssignTags adds or removes tags over many documents, reporting
+// per-document failures.
 func (h *DocumentHandler) BatchAssignTags(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -1010,6 +1036,7 @@ func (h *DocumentHandler) BatchAssignTags(w http.ResponseWriter, r *http.Request
 	json.NewEncoder(w).Encode(result)
 }
 
+// BatchSetDocumentType sets one document type over many documents.
 func (h *DocumentHandler) BatchSetDocumentType(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -1085,6 +1112,7 @@ func (h *DocumentHandler) BatchSetDocumentType(w http.ResponseWriter, r *http.Re
 	json.NewEncoder(w).Encode(result)
 }
 
+// AddDocumentPeople attaches one person to a document with a role.
 func (h *DocumentHandler) AddDocumentPeople(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -1132,6 +1160,7 @@ func (h *DocumentHandler) AddDocumentPeople(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// RemoveDocumentPeople detaches one person role from a document.
 func (h *DocumentHandler) RemoveDocumentPeople(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -1167,17 +1196,22 @@ func (h *DocumentHandler) RemoveDocumentPeople(w http.ResponseWriter, r *http.Re
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// PersonListResponse is one page of people.
 type PersonListResponse struct {
 	Results []PersonResponse `json:"results"`
 	Total   int64            `json:"total"`
 }
 
+// TagResponse is a tag as attached to a document: id, name and the
+// document count the tag carries.
 type TagResponse struct {
 	ID            int64  `json:"id"`
 	Name          string `json:"name"`
 	DocumentCount int64  `json:"document_count"`
 }
 
+// PersonResponse is a person as attached to a document, including the
+// type's display fields.
 type PersonResponse struct {
 	ID                    int64  `json:"id"`
 	Name                  string `json:"name"`
@@ -1188,6 +1222,8 @@ type PersonResponse struct {
 	DocumentCount         int64  `json:"document_count"`
 }
 
+// DocumentResponse is the stored document as the API shows it: identity,
+// counts, type, attached tags and people.
 type DocumentResponse struct {
 	ID               string           `json:"id"`
 	Title            string           `json:"title"`
@@ -1208,6 +1244,8 @@ type DocumentResponse struct {
 	ModifiedAt       string           `json:"modified_at"`
 }
 
+// FTSDocumentResponse is a full-text search hit: the document view plus
+// the tsvector rank, snippet and the stored text.
 type FTSDocumentResponse struct {
 	ID               string           `json:"id"`
 	Title            string           `json:"title"`
@@ -1230,11 +1268,14 @@ type FTSDocumentResponse struct {
 	TextContent      string           `json:"text_content"`
 }
 
+// SearchResponse is one page of search hits.
 type SearchResponse struct {
 	Results []FTSDocumentResponse `json:"results"`
 	Total   int64                 `json:"total"`
 }
 
+// DocumentUpdateRequest is the body of a document update: title, type,
+// language, and optionally the corrected text.
 type DocumentUpdateRequest struct {
 	Title          string  `json:"title"`
 	DocumentTypeID int64   `json:"document_type_id"`
@@ -1242,73 +1283,91 @@ type DocumentUpdateRequest struct {
 	TextContent    *string `json:"text_content,omitempty"`
 }
 
+// AddDocumentTagRequest adds one tag by id.
 type AddDocumentTagRequest struct {
 	TagID int64 `json:"tag_id"`
 }
 
+// RemoveDocumentTagRequest removes one tag by id.
 type RemoveDocumentTagRequest struct {
 	TagID int64 `json:"tag_id"`
 }
 
+// AddDocumentPeopleRequest attaches one person to a document with a
+// role type.
 type AddDocumentPeopleRequest struct {
 	PeopleID     int64 `json:"people_id"`
 	PeopleTypeID int64 `json:"people_type_id"`
 }
 
+// RemoveDocumentPeopleRequest removes one person-role assignment.
 type RemoveDocumentPeopleRequest struct {
 	PeopleID     int64 `json:"people_id"`
 	PeopleTypeID int64 `json:"people_type_id"`
 }
 
+// DocumentDownloadRequest lists the documents a download should cover.
 type DocumentDownloadRequest struct {
 	DocumentIDs []string `json:"document_ids"`
 }
 
+// BatchDeleteRequest is the bulk soft-delete request.
 type BatchDeleteRequest struct {
 	DocumentIDs []string `json:"document_ids"`
 }
 
+// BatchDeleteError is one document that could not be deleted.
 type BatchDeleteError struct {
 	ID    string `json:"id"`
 	Error string `json:"error"`
 }
 
+// BatchDeleteResult reports the bulk soft delete: how many went through
+// and the per-document failures.
 type BatchDeleteResult struct {
 	Deleted int                `json:"deleted"`
 	Failed  []BatchDeleteError `json:"failed,omitempty"`
 }
 
+// BatchTagRequest is a bulk tag change: documents, tags, and the mode
+// (add or remove).
 type BatchTagRequest struct {
 	DocumentIDs []string `json:"document_ids"`
 	TagIDs      []int64  `json:"tag_ids"`
 	Mode        string   `json:"mode"`
 }
 
+// BatchTagError is one document whose tag change failed.
 type BatchTagError struct {
 	ID    string `json:"id"`
 	Error string `json:"error"`
 }
 
+// BatchTagResult reports the bulk tag change outcome.
 type BatchTagResult struct {
 	Assigned int             `json:"assigned"`
 	Failed   []BatchTagError `json:"failed,omitempty"`
 }
 
+// BatchDocumentTypeRequest sets one document type over many documents.
 type BatchDocumentTypeRequest struct {
 	DocumentIDs    []string `json:"document_ids"`
 	DocumentTypeID int64    `json:"document_type_id"`
 }
 
+// BatchDocumentTypeError is one document whose type change failed.
 type BatchDocumentTypeError struct {
 	ID    string `json:"id"`
 	Error string `json:"error"`
 }
 
+// BatchDocumentTypeResult reports the bulk type change outcome.
 type BatchDocumentTypeResult struct {
 	Updated int                      `json:"updated"`
 	Failed  []BatchDocumentTypeError `json:"failed,omitempty"`
 }
 
+// TrashListResponse is one page of the trash listing.
 type TrashListResponse struct {
 	Documents []TrashDocumentResponse `json:"documents"`
 	Total     int64                   `json:"total"`
@@ -1316,6 +1375,7 @@ type TrashListResponse struct {
 	Offset    int32                   `json:"offset"`
 }
 
+// TrashDocumentResponse is one trashed document as the API shows it.
 type TrashDocumentResponse struct {
 	ID           int64     `json:"id"`
 	DocumentID   string    `json:"document_id"`
@@ -1328,6 +1388,7 @@ type TrashDocumentResponse struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
+// TrashRestoreResponse reports a bulk trash restore.
 type TrashRestoreResponse struct {
 	Restored int                `json:"restored"`
 	Failed   []BatchDeleteError `json:"failed,omitempty"`

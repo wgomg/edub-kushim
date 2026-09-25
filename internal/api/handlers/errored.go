@@ -10,11 +10,13 @@ import (
 	"github.com/wgomg/edub-kushim/internal/service"
 )
 
+// ErroredHandler is the errors-directory API: list, download, delete.
 type ErroredHandler struct {
 	svc    *service.ErroredFiles
 	logger *log.Logger
 }
 
+// NewErroredHandler wires the handler to the errors service.
 func NewErroredHandler(svc *service.ErroredFiles, logger *log.Logger) *ErroredHandler {
 	return &ErroredHandler{svc: svc, logger: logger}
 }
@@ -29,6 +31,7 @@ func mapErroredFile(f service.ErroredFileInfo) map[string]any {
 	}
 }
 
+// ListErrored serves the errors-directory listing.
 func (h *ErroredHandler) ListErrored(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -48,6 +51,7 @@ func (h *ErroredHandler) ListErrored(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(result)
 }
 
+// DownloadErrored streams one errored original for inspection.
 func (h *ErroredHandler) DownloadErrored(w http.ResponseWriter, r *http.Request) {
 	reqID := r.Context().Value("reqid").(string)
 
@@ -88,6 +92,7 @@ func (h *ErroredHandler) DownloadErrored(w http.ResponseWriter, r *http.Request)
 	http.ServeContent(w, r, filename, stat.ModTime(), file)
 }
 
+// DeleteErrored removes one errored file.
 func (h *ErroredHandler) DeleteErrored(w http.ResponseWriter, r *http.Request) {
 	reqID := r.Context().Value("reqid").(string)
 
@@ -107,6 +112,7 @@ func (h *ErroredHandler) DeleteErrored(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// DeleteAllErrored clears the whole errors directory.
 func (h *ErroredHandler) DeleteAllErrored(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)

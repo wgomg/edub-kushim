@@ -12,6 +12,8 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
+// WithConnectTimeout appends the connect_timeout parameter to a DSN,
+// returning the DSN unchanged when it is not URL-shaped.
 func WithConnectTimeout(dsn string, seconds int) string {
 	u, err := url.Parse(dsn)
 	if err != nil {
@@ -23,6 +25,8 @@ func WithConnectTimeout(dsn string, seconds int) string {
 	return u.String()
 }
 
+// NewPostgresDB creates the database when it does not exist, opens the
+// pool with the production limits, and pings before returning.
 func NewPostgresDB(dsn string) (*sql.DB, error) {
 	if err := ensureDatabaseExists(dsn); err != nil {
 		return nil, fmt.Errorf("ensure database exists: %w", err)

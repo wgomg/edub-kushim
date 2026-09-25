@@ -20,11 +20,14 @@ const (
 	hugotModelDirName = "bge-m3"
 )
 
+// ConfigExists reports whether a config.yaml is present.
 func ConfigExists(configDir string) bool {
 	_, err := os.Stat(filepath.Join(configDir, "config.yaml"))
 	return err == nil
 }
 
+// LoadOrBootstrap loads the configuration, bootstrapping the environment
+// first when no config exists yet.
 func LoadOrBootstrap(configDir string) (*Config, error) {
 	if ConfigExists(configDir) {
 		return Load(configDir)
@@ -32,6 +35,11 @@ func LoadOrBootstrap(configDir string) (*Config, error) {
 	return Bootstrap(configDir)
 }
 
+// Bootstrap prepares a fresh environment: it creates the config, storage,
+// consumption and tessdata directories, writes the skeleton config with a
+// generated session secret and authentication off, and verifies the
+// database connection opens. It does not download the embedding model or
+// the OCR languages.
 func Bootstrap(configDir string) (*Config, error) {
 	cfg := DefaultConfig(configDir)
 
@@ -73,6 +81,10 @@ func Bootstrap(configDir string) (*Config, error) {
 	return cfg, nil
 }
 
+// SaveMap merges the keys into the on-disk config.yaml through viper
+// (reading the existing file when present), clears the deprecated backup
+// flat fields when schedules are set, and writes the result with 0600
+// permissions, healing a world-readable leftover.
 func SaveMap(configDir string, body map[string]any) error {
 	v := viper.New()
 	v.SetConfigType("yaml")
@@ -138,6 +150,8 @@ func ValidateSave(configDir string, body map[string]any) error {
 	return err
 }
 
+// MissingTessdataLanguages lists the OCR languages whose traineddata
+// files are absent; only the gosseract engine needs them.
 func MissingTessdataLanguages(cfg *Config) []string {
 	if cfg.Consumer.OCR.Engine != OCR.Gosseract {
 		return nil
@@ -153,12 +167,17 @@ func MissingTessdataLanguages(cfg *Config) []string {
 	return missing
 }
 
+// MissingHugotModel reports whether the embedding model has not been
+// downloaded into the config directory's tagmatcher layout.
 func MissingHugotModel(cfg *Config) bool {
 	modelPath := filepath.Join(cfg.App.ConfigDir, "tagmatcher", "hugot", "models", hugotModelDirName)
 	_, err := os.Stat(modelPath)
 	return err != nil
 }
 
+// DownloadTessdataLanguage fetches one OCR language pack from the
+// tessdata_fast repository, skipping when present and removing the
+// download on failure.
 func DownloadTessdataLanguage(ctx context.Context, cfg *Config, lang string) error {
 	dest := filepath.Join(cfg.Consumer.OCR.DataDir, lang+".traineddata")
 	if _, err := os.Stat(dest); err == nil {
@@ -173,6 +192,8 @@ func DownloadTessdataLanguage(ctx context.Context, cfg *Config, lang string) err
 	return nil
 }
 
+// DownloadHugotModel fetches the bge-m3 embedding model into the config
+// directory's tagmatcher layout, skipping when present.
 func DownloadHugotModel(ctx context.Context, cfg *Config, logger *log.Logger) error {
 	modelsParent := filepath.Join(cfg.App.ConfigDir, "tagmatcher", "hugot", "models")
 	targetModelPath := filepath.Join(modelsParent, hugotModelDirName)

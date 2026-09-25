@@ -16,6 +16,8 @@ var uuidRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4
 
 var dbidRe = regexp.MustCompile(`^\d+$`)
 
+// OrphanedFileInfo describes one file found during an orphaned sweep of the
+// storage layout, keyed by the document id its file name encodes.
 type OrphanedFileInfo struct {
 	DocumentKey     string
 	DocumentKeyType string
@@ -26,6 +28,9 @@ type OrphanedFileInfo struct {
 	OriginalType    string
 }
 
+// DetectFileType classifies a file-name stem as "uuid", "dbid", or ""
+// when it names no recognizable document key. It is about the storage
+// layout's naming, not about file content types.
 func DetectFileType(stem string) (keyType string) {
 	lower := strings.ToLower(stem)
 	if uuidRe.MatchString(lower) {
@@ -37,6 +42,10 @@ func DetectFileType(stem string) (keyType string) {
 	return ""
 }
 
+// WalkStorageDir walks the originals and processed subdirectories and
+// reports candidate orphaned files on the info channel; scan failures
+// surface on the error channel and both channels close at the end. The
+// caller must drain the info channel for the walk to progress.
 func WalkStorageDir(storageDir string) (<-chan OrphanedFileInfo, <-chan error) {
 	infos := make(chan OrphanedFileInfo)
 	errs := make(chan error, 1)
@@ -110,6 +119,8 @@ func walkDir(root, sourceDir string, infos chan<- OrphanedFileInfo) error {
 	})
 }
 
+// QuarantineFile moves a suspected orphan into the quarantine directory,
+// returning its new path.
 func QuarantineFile(storageDir string, info OrphanedFileInfo) (string, error) {
 	quarantineDir := filepath.Join(storageDir, DirOrphaned)
 	if err := os.MkdirAll(quarantineDir, 0755); err != nil {
@@ -130,6 +141,7 @@ func QuarantineFile(storageDir string, info OrphanedFileInfo) (string, error) {
 	return destPath, nil
 }
 
+// RemoveOrphanedFile deletes one orphaned file.
 func RemoveOrphanedFile(filePath string) error {
 	if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove orphaned file: %w", err)
@@ -137,6 +149,8 @@ func RemoveOrphanedFile(filePath string) error {
 	return nil
 }
 
+// CopyToConsumptionDir copies a file into the consumption directory for
+// intake, returning the new path. The original stays in place.
 func CopyToConsumptionDir(consumptionDir, sourcePath string) (string, error) {
 	if err := os.MkdirAll(consumptionDir, 0755); err != nil {
 		return "", fmt.Errorf("ensure consumption dir: %w", err)

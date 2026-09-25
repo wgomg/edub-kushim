@@ -1,3 +1,9 @@
+// Package enrichment is the document enrichment coordinator: it reduces
+// the stored text for the model budgets, runs the LLM analysis pass(es),
+// matches tags against the vocabulary, delegates the tag admission
+// decisions to tags/admission, normalizes people, and persists the
+// document's analysis. It decides nothing about tags itself; writes go
+// through curation and the journal.
 package enrichment
 
 import (
@@ -33,6 +39,11 @@ const (
 	fallbackVocabLimit = 200
 )
 
+// Enricher coordinates one document's enrichment: reduction, analysis
+// (with type refinement), matching, admission delegation, people and
+// tag persistence, and progress reporting. The runner and the admission
+// machinery are built inside; the enricher holds no shared mutable state
+// beyond the mutex the flow serializes on.
 type Enricher struct {
 	config    *config.Config
 	logger    *log.Logger
@@ -44,6 +55,10 @@ type Enricher struct {
 	mu        sync.Mutex
 }
 
+// NewEnricher wires the coordinator: the config, the database, the
+// curation tag service every tag write goes through, and the matcher. It
+// builds the tools runner (reduction, analysis, matching) and the
+// admission adjudicator from the same parts.
 func NewEnricher(cfg *config.Config, logger *log.Logger, client *database.Client, tag *curation.Tag, matcher matcher.Matcher) (*Enricher, error) {
 	runner := tools.NewRunnerWithMatcher(logger, cfg, []string{"textreducer", "contentanalyzer", "tagmatcher"}, matcher)
 	e := &Enricher{
@@ -58,6 +73,10 @@ func NewEnricher(cfg *config.Config, logger *log.Logger, client *database.Client
 	return e, nil
 }
 
+// Enrich runs the whole enrichment pass for one stored document and
+// returns the result payload stored on the task. The document row must
+// exist; progress callbacks update the task row. An empty document (no
+// usable text) skips the LLM steps and still updates what it can.
 func (e *Enricher) Enrich(ctx context.Context, document database.Document, progress ...task.ProgressFunc) (*json.RawMessage, error) {
 	logId := document.DocumentID
 	ctx = context.WithValue(ctx, "reqid", logId)

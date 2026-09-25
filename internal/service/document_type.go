@@ -9,26 +9,32 @@ import (
 	"github.com/wgomg/edub-kushim/internal/log"
 )
 
+// CreateDocumentTypeInput is one document type to create.
 type CreateDocumentTypeInput struct {
 	Name        string
 	Description string
 }
 
+// DocTypeUpdatePair is one document-type rename: id plus the new name
+// and description.
 type DocTypeUpdatePair struct {
 	ID          int64
 	Name        string
 	Description string
 }
 
+// DocumentType is the document-type taxonomy CRUD.
 type DocumentType struct {
 	queries *database.Queries
 	logger  *log.Logger
 }
 
+// NewDocumentType wires the document-type service.
 func NewDocumentType(queries *database.Queries, logger *log.Logger) *DocumentType {
 	return &DocumentType{queries: queries, logger: logger}
 }
 
+// Get returns one document type by id.
 func (s *DocumentType) Get(ctx context.Context, id int64) (database.DocumentType, error) {
 	dt, err := s.queries.GetDocumentType(ctx, id)
 	if err != nil {
@@ -37,6 +43,7 @@ func (s *DocumentType) Get(ctx context.Context, id int64) (database.DocumentType
 	return dt, nil
 }
 
+// GetByName returns one document type by exact name.
 func (s *DocumentType) GetByName(ctx context.Context, name string) (database.DocumentType, error) {
 	dt, err := s.queries.GetDocumentTypeByName(ctx, name)
 	if err != nil {
@@ -45,6 +52,7 @@ func (s *DocumentType) GetByName(ctx context.Context, name string) (database.Doc
 	return dt, nil
 }
 
+// ListWithDocumentCount pages the types with their document counts.
 func (s *DocumentType) ListWithDocumentCount(ctx context.Context, limit, offset int32) ([]database.ListDocumentTypesWithDocumentCountRow, error) {
 	dts, err := s.queries.ListDocumentTypesWithDocumentCount(ctx, database.ListDocumentTypesWithDocumentCountParams{
 		Limit:  limit,
@@ -56,6 +64,8 @@ func (s *DocumentType) ListWithDocumentCount(ctx context.Context, limit, offset 
 	return dts, nil
 }
 
+// SearchByNameWithDocumentCount returns the types whose names start with
+// the prefix, with document counts.
 func (s *DocumentType) SearchByNameWithDocumentCount(ctx context.Context, prefix string, limit int32) ([]database.SearchDocumentTypeByNameWithDocumentCountRow, error) {
 	dts, err := s.queries.SearchDocumentTypeByNameWithDocumentCount(ctx, database.SearchDocumentTypeByNameWithDocumentCountParams{
 		Name:  prefix + "%",
@@ -67,6 +77,7 @@ func (s *DocumentType) SearchByNameWithDocumentCount(ctx context.Context, prefix
 	return dts, nil
 }
 
+// ListAllWithDocumentCount returns every type with document counts.
 func (s *DocumentType) ListAllWithDocumentCount(ctx context.Context) ([]database.ListAllDocumentTypesWithDocumentCountRow, error) {
 	dts, err := s.queries.ListAllDocumentTypesWithDocumentCount(ctx)
 	if err != nil {
@@ -75,6 +86,8 @@ func (s *DocumentType) ListAllWithDocumentCount(ctx context.Context) ([]database
 	return dts, nil
 }
 
+// Create creates document types in bulk, deduplicating by normalized
+// name: conflicts resolve to the existing type, empty names are invalid.
 func (s *DocumentType) Create(ctx context.Context, inputs []CreateDocumentTypeInput) ([]CreateResult[database.DocumentType], error) {
 	results := make([]CreateResult[database.DocumentType], len(inputs))
 
@@ -124,6 +137,7 @@ func (s *DocumentType) Create(ctx context.Context, inputs []CreateDocumentTypeIn
 	return results, nil
 }
 
+// Update renames document types in bulk, one result per pair.
 func (s *DocumentType) Update(ctx context.Context, pairs []DocTypeUpdatePair) ([]UpdateResult[database.DocumentType], error) {
 	results := make([]UpdateResult[database.DocumentType], len(pairs))
 
@@ -188,6 +202,8 @@ func (s *DocumentType) Update(ctx context.Context, pairs []DocTypeUpdatePair) ([
 	return results, nil
 }
 
+// Delete removes document types in bulk, reporting per id (deleted, not
+// found, or conflicting with referenced documents).
 func (s *DocumentType) Delete(ctx context.Context, ids []int64) ([]DeleteResult, error) {
 	results := make([]DeleteResult, len(ids))
 

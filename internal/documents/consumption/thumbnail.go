@@ -15,6 +15,9 @@ import (
 	"github.com/wgomg/edub-kushim/internal/tools"
 )
 
+// ThumbnailTaskHandler generates one document's first-page thumbnail into
+// the storage layout's bucketed thumbnail path, using the thumbnail
+// configuration of the moment.
 type ThumbnailTaskHandler struct {
 	runner  *tools.Runner
 	queries *database.Queries
@@ -22,10 +25,15 @@ type ThumbnailTaskHandler struct {
 	getCfg  func() *config.Config
 }
 
+// NewThumbnailTaskHandler wires the handler to the runner, the queries,
+// the logger and the dynamic config.
 func NewThumbnailTaskHandler(runner *tools.Runner, queries *database.Queries, logger *log.Logger, getCfg func() *config.Config) *ThumbnailTaskHandler {
 	return &ThumbnailTaskHandler{runner: runner, queries: queries, logger: logger, getCfg: getCfg}
 }
 
+// Handle renders the payload document's thumbnail into a temp file, moves
+// it into the layout, and marks the document row; the document must exist
+// when the task runs.
 func (h *ThumbnailTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMessage, error) {
 	var p struct {
 		DocumentID  string `json:"document_id"`

@@ -10,6 +10,11 @@ var jointConjunctions = map[string]struct{}{
 	"versus": {},
 }
 
+// SplitJointTag splits a compound tag on its coordinating conjunctions
+// ("and", "or", "vs", "vs.", "versus", case-insensitive), returning the two
+// or more segments joined as they were. A name with no conjunction, with a
+// conjunction at either end, or with fewer than two segments is not a joint
+// tag and yields nil.
 func SplitJointTag(name string) []string {
 	tokens := strings.Fields(name)
 	if len(tokens) == 0 {

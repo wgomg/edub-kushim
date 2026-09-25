@@ -14,11 +14,14 @@ import (
 	"github.com/wgomg/edub-kushim/internal/log"
 )
 
+// Ghostscript rewrites PDFs by shelling out to gs.
 type Ghostscript struct {
 	logger *log.Logger
 	config config.ToolConfig
 }
 
+// NewGhostscript verifies the gs binary is on PATH, erroring with
+// install hints when it is not.
 func NewGhostscript(logger *log.Logger, cfg config.ToolConfig) (*Ghostscript, error) {
 	if _, err := exec.LookPath(cfg.Command); err != nil {
 		return nil, fmt.Errorf("%s not found in PATH: %w\nInstall it (e.g. 'sudo apt install ghostscript' or 'brew install ghostscript') or switch to the built-in 'mupdf' engine", cfg.Command, err)
@@ -27,6 +30,8 @@ func NewGhostscript(logger *log.Logger, cfg config.ToolConfig) (*Ghostscript, er
 	return &Ghostscript{logger: logger, config: cfg}, nil
 }
 
+// Optimize runs gs over a temp copy and returns its path. The path must
+// be absolute.
 func (g *Ghostscript) Optimize(ctx context.Context, docId, path string) (*string, error) {
 	if !filepath.IsAbs(path) {
 		return nil, fmt.Errorf("%s: input path must be absolute, got %q", g.Name(), path)
@@ -82,6 +87,7 @@ func (g *Ghostscript) Optimize(ctx context.Context, docId, path string) (*string
 	return &outputPath, nil
 }
 
+// Name identifies the engine.
 func (g *Ghostscript) Name() string {
 	return config.PdfOptimizer.GS
 }

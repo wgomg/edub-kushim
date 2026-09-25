@@ -15,22 +15,29 @@ import (
 	_mime "github.com/wgomg/edub-kushim/internal/documents/mime"
 )
 
+// Docx reads DOCX files: the Word XML inside the zip, rendered to
+// newline-separated paragraph text.
 type Docx struct {
 	logger *log.Logger
 }
 
+// NewDocx builds the reader.
 func NewDocx(logger *log.Logger) *Docx {
 	return &Docx{logger: logger}
 }
 
+// CanHandle reports DOCX content types.
 func (d *Docx) CanHandle(mimeType string) bool {
 	return mimeType == _mime.DOCX
 }
 
+// Name identifies the reader.
 func (d *Docx) Name() string {
 	return config.TextExtractor.Docx
 }
 
+// Extract reads word/document.xml from the zip and returns its runs as
+// text, one line per paragraph. The path must be absolute.
 func (d *Docx) Extract(ctx context.Context, path string, _ string) (*string, error) {
 	r, err := zip.OpenReader(path)
 	if err != nil {

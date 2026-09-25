@@ -12,8 +12,15 @@ import (
 	"unicode/utf8"
 )
 
+// ErrMatcherUnavailable wraps every transport-level failure of the client:
+// unreachable socket, non-2xx status, and request or response encoding
+// errors. Callers use errors.Is to tell the daemon being down or misbehaving
+// apart from domain-level results.
 var ErrMatcherUnavailable = fmt.Errorf("matcher unavailable")
 
+// StatusError carries the HTTP status the daemon answered with. Rank treats
+// a 404 as an older daemon without the rank endpoint and falls back to the
+// consolidate endpoint.
 type StatusError struct{ Code int }
 
 func (e *StatusError) Error() string { return fmt.Sprintf("status %d", e.Code) }
@@ -31,6 +38,10 @@ const (
 	maxBodyBytes   = 4 * 1024 * 1024
 )
 
+// MaxMatchBodyBytes derives the byte cap for a match request body from the
+// configured reduce target words: a generous per-word byte estimate minus an
+// envelope margin, clamped between 256 KiB and 4 MiB. Non-positive targets
+// get the 4 MiB ceiling.
 func MaxMatchBodyBytes(reduceTargetWords int) int {
 	if reduceTargetWords <= 0 {
 		return maxBodyBytes
@@ -46,6 +57,10 @@ func MaxMatchBodyBytes(reduceTargetWords int) int {
 	}
 }
 
+// TargetWordCount resolves the reduction target a caller configured: a
+// negative target is a divisor of the content's word count (for example -4
+// means one quarter), a positive one is used as-is, and the result never
+// goes below 2000 words.
 func TargetWordCount(contentWC, targetWC int) int {
 	result := targetWC
 	if result < 0 {
@@ -54,11 +69,18 @@ func TargetWordCount(contentWC, targetWC int) int {
 	return max(2000, result)
 }
 
+// MatcherClient is the API-process side of semantic matching: it satisfies
+// Matcher and Embedder by calling the matcher daemon over its Unix-socket
+// HTTP API. All methods are safe for concurrent use; every transport-level
+// failure reports ErrMatcherUnavailable.
 type MatcherClient struct {
 	client            *http.Client
 	maxMatchBodyBytes int
 }
 
+// NewMatcherClient prepares a client for the daemon listening on socketPath.
+// maxMatchBodyBytes caps a match request body: longer inputs are truncated
+// UTF-8-safely below it so requests never exceed the daemon's limit.
 func NewMatcherClient(socketPath string, maxMatchBodyBytes int) *MatcherClient {
 	return &MatcherClient{
 		client: &http.Client{
@@ -109,6 +131,8 @@ func (c *MatcherClient) do(ctx context.Context, method, path string, req, resp a
 	return nil
 }
 
+// Match matches a document's reduced text against the daemon's stored tags.
+// Input longer than the body cap is truncated before the request.
 func (c *MatcherClient) Match(ctx context.Context, docId, input string) ([]string, error) {
 	target := c.maxMatchBodyBytes - envelopeMargin
 	if len(input) > target {
@@ -145,10 +169,14 @@ func truncateUTF8(s string, maxBytes int) string {
 	return b
 }
 
+// Close releases the client's idle connections. In-flight requests are not
+// cancelled.
 func (c *MatcherClient) Close() {
 	c.client.CloseIdleConnections()
 }
 
+// Name identifies this implementation, distinguishing the socket client from
+// the in-process engine behind the Matcher seam.
 func (c *MatcherClient) Name() string {
 	return "matcher-rpc-client"
 }
@@ -157,6 +185,8 @@ type encodeResult struct {
 	Embeddings [][]float32 `json:"embeddings"`
 }
 
+// Encode embeds the texts through the daemon, one returned vector per
+// input, in input order.
 func (c *MatcherClient) Encode(ctx context.Context, _ *string, texts []string) ([][]float32, error) {
 	var resp encodeResult
 	req := struct {
@@ -168,6 +198,8 @@ func (c *MatcherClient) Encode(ctx context.Context, _ *string, texts []string) (
 	return resp.Embeddings, nil
 }
 
+// Rank ranks the queries against the daemon's stored tags. A 404 degrades
+// to Consolidate, returning its results as KeptName-only RankResults.
 func (c *MatcherClient) Rank(ctx context.Context, docId string, queries []string) ([]RankResult, error) {
 	var resp struct {
 		Results []RankResult `json:"results"`
@@ -199,6 +231,8 @@ func (c *MatcherClient) rankViaConsolidate(ctx context.Context, docId string, qu
 	return results, nil
 }
 
+// Consolidate resolves each query to the stored tag it consolidates to at
+// the consolidation similarity, or to itself when nothing passes.
 func (c *MatcherClient) Consolidate(ctx context.Context, docId string, queries []string) ([]string, error) {
 	var resp struct {
 		Results []string `json:"results"`
@@ -216,6 +250,7 @@ func (c *MatcherClient) Consolidate(ctx context.Context, docId string, queries [
 	return resp.Results, nil
 }
 
+// SimilarPairs returns the daemon's stored-tag similarity pairs.
 func (c *MatcherClient) SimilarPairs(ctx context.Context) ([]SimilarPair, error) {
 	var resp struct {
 		Pairs []SimilarPair `json:"pairs"`
@@ -226,10 +261,12 @@ func (c *MatcherClient) SimilarPairs(ctx context.Context) ([]SimilarPair, error)
 	return resp.Pairs, nil
 }
 
+// Health pings the daemon; ErrMatcherUnavailable when it is not reachable.
 func (c *MatcherClient) Health(ctx context.Context) error {
 	return c.do(ctx, "GET", "/health", nil, nil)
 }
 
+// AddToStore embeds the named tags and stores them on the daemon.
 func (c *MatcherClient) AddToStore(ctx context.Context, names []string) error {
 	req := struct {
 		Names []string `json:"names"`
@@ -237,6 +274,7 @@ func (c *MatcherClient) AddToStore(ctx context.Context, names []string) error {
 	return c.do(ctx, "POST", "/rpc/v1/add-to-store", req, nil)
 }
 
+// RemoveFromStore drops the named tags from the daemon's store.
 func (c *MatcherClient) RemoveFromStore(ctx context.Context, names []string) error {
 	req := struct {
 		Names []string `json:"names"`

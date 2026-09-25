@@ -1,8 +1,8 @@
 package tags
 
-// v0 cuts are provisional: calibration replaces the constants and advances
-// RuleSetVersion; cuts stay consumer-side so recalibration never invalidates
-// raw records
+// The v0 worklist cuts are provisional: calibration replaces the constants
+// and advances RuleSetVersion. The cuts stay consumer-side so
+// recalibration never invalidates raw records.
 const (
 	TwinJaccardCut        = 0.9
 	TwinJaccardGrayFloor  = 0.7
@@ -13,6 +13,10 @@ const (
 	SiblingGrayFloor      = 0.6
 )
 
+// Twin is a pair of tags whose document sets are near-identical: Jaccard
+// at or above the gray floor with both masses at or above the minimum.
+// Gray marks the review-needed band between the gray floor and
+// TwinJaccardCut.
 type Twin struct {
 	A, B    string
 	Jaccard float64
@@ -21,6 +25,10 @@ type Twin struct {
 	Gray    bool
 }
 
+// CompoundSplit is a compound tag whose parts reconstruct it, recorded
+// only for sufficient readings; ExcessRatio and DeficitRatio say how far
+// the parts' coverage deviates from the compound's mass. Gray marks the
+// review-needed band above CompoundSplitCut.
 type CompoundSplit struct {
 	Compound     string
 	Parts        []string
@@ -29,18 +37,28 @@ type CompoundSplit struct {
 	Gray         bool
 }
 
+// Sibling is a containment pair: one tag's document set nearly contains
+// the other's, at or above the sibling gray floor. Gray marks the
+// review-needed band below SiblingContainmentCut.
 type Sibling struct {
 	A, B        string
 	Containment float64
 	Gray        bool
 }
 
+// Worklists is the review backlog derived from a measurement sweep: the
+// candidate twins, compound splits and siblings, each gray-flagged where a
+// human still has to decide.
 type Worklists struct {
 	Twins          []Twin
 	CompoundSplits []CompoundSplit
 	Siblings       []Sibling
 }
 
+// DeriveWorklists filters evidence readings into the three review
+// worklists, applying the v0 cuts per operator. Readings that name too
+// few operands, miss their needed numbers, or fall below the floors are
+// dropped.
 func DeriveWorklists(records []Record) Worklists {
 	var w Worklists
 	for _, r := range records {

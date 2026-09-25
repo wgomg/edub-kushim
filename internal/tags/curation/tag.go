@@ -1,3 +1,11 @@
+// Package curation is the tag store's human-facing operations: reading and
+// searching the vocabulary, creating tags through the deterministic
+// identity plan, renaming, deleting with blocklist bookkeeping, promoting
+// provisional tags, managing deleted-tag records, and keeping the matcher's
+// embedding store in sync with the tags table. It is the single owner of
+// the tag-store invariants; the pipeline side applies its writes through
+// this package. The merge-review flows are documented in
+// docs/tags/consolidation.md.
 package curation
 
 import (
@@ -16,11 +24,15 @@ import (
 	"github.com/wgomg/edub-kushim/internal/textnorm"
 )
 
+// TagUpdatePair is one rename request: the tag's id and its new name.
 type TagUpdatePair struct {
 	ID   int64
 	Name string
 }
 
+// The deleted-tag kinds: blocked (deleted by an operator) and merged
+// (folded into a surviving target). DocumentTagSourceEnrich marks document
+// tag rows created by the enrichment pipeline.
 const (
 	DeletedTagKindBlocked = "blocked"
 	DeletedTagKindMerged  = "merged"
@@ -28,12 +40,17 @@ const (
 	DocumentTagSourceEnrich = "enrich"
 )
 
+// Tag is the tag store's read, write and administration surface: CRUD,
+// planned registrations, aliases, deleted tags, promotion, and the sync
+// that keeps the matcher's embedding store aligned with the tags table.
 type Tag struct {
 	client   *database.Client
 	embedder matcher.Embedder
 	logger   *log.Logger
 }
 
+// NewTag wires the store; embedder is the matcher-side vocabulary the
+// tag mutations keep in sync.
 func NewTag(client *database.Client, logger *log.Logger, embedder matcher.Embedder) *Tag {
 	return &Tag{
 		client:   client,
@@ -42,11 +59,13 @@ func NewTag(client *database.Client, logger *log.Logger, embedder matcher.Embedd
 	}
 }
 
+// Close releases the embedder.
 func (s *Tag) Close() error {
 	s.embedder.Close()
 	return nil
 }
 
+// Get returns one tag by id, errs.KindNotFound when absent.
 func (s *Tag) Get(ctx context.Context, id int64) (database.Tag, error) {
 	tag, err := s.client.Queries.GetTag(ctx, id)
 	if err != nil {
@@ -55,6 +74,7 @@ func (s *Tag) Get(ctx context.Context, id int64) (database.Tag, error) {
 	return tag, nil
 }
 
+// GetByName returns one tag by its exact name.
 func (s *Tag) GetByName(ctx context.Context, name string) (database.Tag, error) {
 	tag, err := s.client.Queries.GetTagByName(ctx, name)
 	if err != nil {
@@ -63,6 +83,7 @@ func (s *Tag) GetByName(ctx context.Context, name string) (database.Tag, error) 
 	return tag, nil
 }
 
+// Count returns how many tags exist.
 func (s *Tag) Count(ctx context.Context) (int64, error) {
 	count, err := s.client.Queries.CountTags(ctx)
 	if err != nil {
@@ -71,6 +92,7 @@ func (s *Tag) Count(ctx context.Context) (int64, error) {
 	return count, nil
 }
 
+// CountByName counts the tags whose names start with the prefix.
 func (s *Tag) CountByName(ctx context.Context, prefix string) (int64, error) {
 	count, err := s.client.Queries.CountTagsByName(ctx, prefix+"%")
 	if err != nil {
@@ -79,6 +101,7 @@ func (s *Tag) CountByName(ctx context.Context, prefix string) (int64, error) {
 	return count, nil
 }
 
+// ListAll returns every tag, promoted and provisional.
 func (s *Tag) ListAll(ctx context.Context) ([]database.Tag, error) {
 	tags, err := s.client.Queries.ListAllTags(ctx)
 	if err != nil {
@@ -87,6 +110,7 @@ func (s *Tag) ListAll(ctx context.Context) ([]database.Tag, error) {
 	return tags, nil
 }
 
+// ListWithDocumentCount pages all tags with their live document counts.
 func (s *Tag) ListWithDocumentCount(ctx context.Context, limit, offset int32) ([]database.ListTagsWithDocumentCountRow, error) {
 	tags, err := s.client.Queries.ListTagsWithDocumentCount(ctx, database.ListTagsWithDocumentCountParams{
 		Limit:  limit,
@@ -98,6 +122,8 @@ func (s *Tag) ListWithDocumentCount(ctx context.Context, limit, offset int32) ([
 	return tags, nil
 }
 
+// SearchByNameWithDocumentCount pages the tags whose names start with the
+// prefix, with their live document counts.
 func (s *Tag) SearchByNameWithDocumentCount(ctx context.Context, prefix string, limit, offset int32) ([]database.SearchTagsByNameWithDocumentCountRow, error) {
 	tags, err := s.client.Queries.SearchTagsByNameWithDocumentCount(ctx, database.SearchTagsByNameWithDocumentCountParams{
 		Name:   prefix + "%",
@@ -110,6 +136,7 @@ func (s *Tag) SearchByNameWithDocumentCount(ctx context.Context, prefix string, 
 	return tags, nil
 }
 
+// ListProvisional pages the not-yet-promoted tags with document counts.
 func (s *Tag) ListProvisional(ctx context.Context, limit, offset int32) ([]database.ListProvisionalTagsWithDocumentCountRow, error) {
 	tags, err := s.client.Queries.ListProvisionalTagsWithDocumentCount(ctx, database.ListProvisionalTagsWithDocumentCountParams{
 		Limit:  limit,
@@ -121,6 +148,7 @@ func (s *Tag) ListProvisional(ctx context.Context, limit, offset int32) ([]datab
 	return tags, nil
 }
 
+// CountProvisional counts the not-yet-promoted tags.
 func (s *Tag) CountProvisional(ctx context.Context) (int64, error) {
 	count, err := s.client.Queries.CountProvisionalTags(ctx)
 	if err != nil {
@@ -129,6 +157,8 @@ func (s *Tag) CountProvisional(ctx context.Context) (int64, error) {
 	return count, nil
 }
 
+// LatestQualityEventsForNames returns the most recent quality verdict per
+// tag name under the current quality rule version.
 func (s *Tag) LatestQualityEventsForNames(ctx context.Context, names []string) ([]database.LatestTagQualityEventsForNamesRow, error) {
 	rows, err := s.client.Queries.LatestTagQualityEventsForNames(ctx, database.LatestTagQualityEventsForNamesParams{
 		PolicyVersion: analyzer.TagQualityVersion,
@@ -140,6 +170,8 @@ func (s *Tag) LatestQualityEventsForNames(ctx context.Context, names []string) (
 	return rows, nil
 }
 
+// PendingIdentityCounts returns, per name, how many identity events are
+// still pending judgement.
 func (s *Tag) PendingIdentityCounts(ctx context.Context, names []string) (map[string]int64, error) {
 	rows, err := s.client.Queries.PendingTagIdentityCountsByNames(ctx, names)
 	if err != nil {
@@ -152,12 +184,18 @@ func (s *Tag) PendingIdentityCounts(ctx context.Context, names []string) (map[st
 	return counts, nil
 }
 
+// Create plans and applies registrations for the names in one
+// transaction: conflicts resolve to the existing tag, aliases apply to
+// their canonical, and new tags are born (provisional where the identity
+// machinery flags them) and embedded into the matcher store.
 func (s *Tag) Create(ctx context.Context, names []string) ([]service.CreateResult[database.Tag], error) {
 	return s.create(ctx, names, false)
 }
 
-// the blocklist re-check is exempted so the cleared-blocklist path keeps
-// working
+// CreateAndUnblock is Create plus clearing the deleted-tag blocklist
+// entries of everything it created, resolved or aliased, so the
+// cleared-blocklist path keeps working. The blocklist re-check inside the
+// plan is exempted for the same reason.
 func (s *Tag) CreateAndUnblock(ctx context.Context, names []string) ([]service.CreateResult[database.Tag], error) {
 	results, err := s.create(ctx, names, true)
 	if err != nil {
@@ -204,7 +242,9 @@ func (s *Tag) create(ctx context.Context, names []string, ignoreBlocklist bool) 
 	return results, nil
 }
 
-// no judging call runs in the request: the admin path plans deterministically
+// PlanRegistration plans the registrations for the names without running
+// any judging call in the request: identity evidence is recorded and
+// judgement happens out of band.
 func (s *Tag) PlanRegistration(ctx context.Context, names []string) (tags.Plan, error) {
 	return s.buildPlan(ctx, s.client.Queries, names, false)
 }
@@ -251,6 +291,11 @@ func (s *Tag) storeView(ctx context.Context, q *database.Queries, names []string
 	return view, nil
 }
 
+// CreatePlannedTx applies a planned registration set inside the caller's
+// transaction: it resolves each disposition against the live store, writes
+// the plan's aliases, records the plan's identity evidence, and promotes
+// non-provisional new tags unless quarantined. It returns the per-
+// registration results and the names it created.
 func (s *Tag) CreatePlannedTx(ctx context.Context, q *database.Queries, plan tags.Plan, quarantined bool) ([]service.CreateResult[database.Tag], []string, error) {
 	results := make([]service.CreateResult[database.Tag], len(plan.Registrations))
 	var newNames []string
@@ -399,6 +444,11 @@ func (s *Tag) CreatePlannedTx(ctx context.Context, q *database.Queries, plan tag
 	return results, newNames, nil
 }
 
+// ApplyAliasPlan applies the planned alias actions in one transaction:
+// blocked names are skipped, the loser's own aliases are retargeted (no
+// alias chains), its documents are reassigned and its tag row deleted
+// when RemoveExistingTag is set, and the removed names leave the matcher
+// store after commit.
 func (s *Tag) ApplyAliasPlan(ctx context.Context, actions []tags.AliasAction) error {
 	if len(actions) == 0 {
 		return nil
@@ -562,6 +612,7 @@ func (s *Tag) recordIdentityEvidence(ctx context.Context, q *database.Queries, r
 	return nil
 }
 
+// AddToStore embeds the names into the matcher store, best-effort.
 func (s *Tag) AddToStore(ctx context.Context, names []string) {
 	if len(names) == 0 {
 		return
@@ -569,6 +620,9 @@ func (s *Tag) AddToStore(ctx context.Context, names []string) {
 	s.encodeAndAddBatch(ctx, names)
 }
 
+// Update renames tags in bulk, returning one result per pair (invalid,
+// not found, no-op, conflict, or updated). Renamed promoted tags are
+// re-embedded and their old names leave the matcher store.
 func (s *Tag) Update(ctx context.Context, pairs []TagUpdatePair) ([]service.UpdateResult[database.Tag], error) {
 	results := make([]service.UpdateResult[database.Tag], len(pairs))
 	var newNames []string
@@ -655,6 +709,9 @@ func (s *Tag) Update(ctx context.Context, pairs []TagUpdatePair) ([]service.Upda
 	return results, nil
 }
 
+// Delete removes tags and records each name in the deleted-tag blocklist
+// (kind blocked) so the same vocabulary is not recreated silently; their
+// names leave the matcher store.
 func (s *Tag) Delete(ctx context.Context, ids []int64) ([]service.DeleteResult, error) {
 	results := make([]service.DeleteResult, len(ids))
 
@@ -694,6 +751,9 @@ func (s *Tag) Delete(ctx context.Context, ids []int64) ([]service.DeleteResult, 
 	return results, nil
 }
 
+// Promote promotes one provisional tag and embeds it; already-promoted
+// and not-found cases are reported through the status, and reason goes to
+// the audit log.
 func (s *Tag) Promote(ctx context.Context, id int64, reason string) (database.Tag, service.PromoteStatus, error) {
 	tag, err := s.Get(ctx, id)
 	if err != nil {
@@ -719,6 +779,8 @@ func (s *Tag) Promote(ctx context.Context, id int64, reason string) (database.Ta
 	return tag, service.PromotePromoted, nil
 }
 
+// ListDeleted pages the deleted-tag blocklist by name prefix with its
+// total count.
 func (s *Tag) ListDeleted(ctx context.Context, prefix string, limit, offset int32) ([]database.DeletedTag, int64, error) {
 	rows, err := s.client.Queries.ListDeletedTags(ctx, database.ListDeletedTagsParams{
 		NamePrefix: prefix,
@@ -735,6 +797,8 @@ func (s *Tag) ListDeleted(ctx context.Context, prefix string, limit, offset int3
 	return rows, total, nil
 }
 
+// RestoreDeleted drops a deleted-tag record; blocked entries have their
+// tag recreated through Create. Merged entries only clear the blocklist.
 func (s *Tag) RestoreDeleted(ctx context.Context, name string) (database.DeletedTag, error) {
 	row, err := s.client.Queries.GetDeletedTag(ctx, name)
 	if err != nil {
@@ -751,6 +815,7 @@ func (s *Tag) RestoreDeleted(ctx context.Context, name string) (database.Deleted
 	return row, nil
 }
 
+// RemoveFromStore drops the names from the matcher store's embeddings.
 func (s *Tag) RemoveFromStore(ctx context.Context, names []string) error {
 	return s.embedder.RemoveFromStore(ctx, names)
 }

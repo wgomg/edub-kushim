@@ -15,12 +15,16 @@ import (
 	_mime "github.com/wgomg/edub-kushim/internal/documents/mime"
 )
 
+// LibreOffice converts office documents to PDF through the headless
+// LibreOffice binary.
 type LibreOffice struct {
 	logger *log.Logger
 	config config.ToolConfig
 	binary string
 }
 
+// NewLibreOffice resolves the converter binary on PATH, erroring when it
+// cannot be found.
 func NewLibreOffice(logger *log.Logger, cfg config.ToolConfig, binary string) (*LibreOffice, error) {
 	resolvedPath, err := exec.LookPath(binary)
 	if err != nil {
@@ -29,14 +33,18 @@ func NewLibreOffice(logger *log.Logger, cfg config.ToolConfig, binary string) (*
 	return &LibreOffice{logger: logger, config: cfg, binary: resolvedPath}, nil
 }
 
+// CanHandle reports the editable office formats, DOCX and ODT.
 func (l *LibreOffice) CanHandle(mimeType string) bool {
 	return mimeType == _mime.DOCX || mimeType == _mime.ODT
 }
 
+// Name identifies the engine.
 func (l *LibreOffice) Name() string {
 	return "libreoffice"
 }
 
+// Convert runs LibreOffice headless into the source file's directory and
+// returns the produced PDF's path. The path must be absolute.
 func (l *LibreOffice) Convert(ctx context.Context, path string, mimeType string) (*string, error) {
 	if !filepath.IsAbs(path) {
 		return nil, fmt.Errorf("%s: input path must be absolute, got %q", l.Name(), path)

@@ -1,3 +1,12 @@
+// Package tools is the runner facade over every external capability the
+// pipelines need: text extraction, OCR, document conversion, PDF
+// optimization, thumbnails, text reduction, tag matching, content analysis
+// and the LLM tag judging endpoints. A Runner is constructed naming the
+// capabilities it will use; the runner instantiates their adapters from the
+// configuration, applies each tool's timeout as a context deadline, and for
+// the analyzer calls walks the configured fallback chain on provider-level
+// failures. A capability that was not requested has a nil adapter and its
+// method fails fast.
 package tools
 
 import (
@@ -26,6 +35,12 @@ import (
 	"github.com/wgomg/edub-kushim/internal/tools/textreducer"
 )
 
+// Runner fronts the external capabilities a pipeline was built with.
+// Construct it with NewRunner or NewRunnerWithMatcher naming the tools the
+// pipeline needs; every method checks its capability was requested, applies
+// the tool's configured timeout, and keeps the caller's context cancellation
+// intact. A timeout hit abandons the underlying call, which may still be
+// running; the runner logs that fact.
 type Runner struct {
 	logger            *log.Logger
 	config            *config.Config
@@ -49,27 +64,39 @@ type fallbackMeta struct {
 	Model    string
 }
 
+// TextExtractionResult carries the extracted text; nil when nothing could
+// be extracted.
 type TextExtractionResult struct {
 	Text *string
 }
 
+// OCRResult reports a run of OCR over a document: Success when it ran,
+// TmpPath pointing at the generated searchable PDF (nil when no OCR was
+// needed or it failed), and Confidence, the mean recognition confidence.
 type OCRResult struct {
 	Success    bool
 	TmpPath    *string
 	Confidence *float64
 }
 
+// PdfOptimizationResult reports an optimization run: Success and TmpPath,
+// the rewritten file.
 type PdfOptimizationResult struct {
 	Success bool
 	TmpPath *string
 }
 
+// ThumbnailResult reports the first-page thumbnail's success and pixel
+// dimensions.
 type ThumbnailResult struct {
 	Success bool
 	Width   int
 	Height  int
 }
 
+// TextReducerResult is a reduction outcome: the text (reduced or original
+// when no reduction was needed), its word and character counts, and the
+// target the reduction aimed at.
 type TextReducerResult struct {
 	Text            string
 	WordCount       int
@@ -77,10 +104,15 @@ type TextReducerResult struct {
 	TargetWordCount int
 }
 
+// TagMatchResult carries the existing tag names matched for a document.
 type TagMatchResult struct {
 	Tags []string
 }
 
+// ContentAnalysisResult is the LLM analysis of a document: title, type,
+// tags with per-tag detail, people, language, raw provider stats, the
+// prompt that produced it, and the pass context carried across the
+// multi-pass refinement (never serialized).
 type ContentAnalysisResult struct {
 	Title       string                  `json:"title"`
 	DocType     string                  `json:"type"`
@@ -116,6 +148,12 @@ func runWithTimeout[T any](ctx context.Context, fn func() (T, error)) (T, error)
 	}
 }
 
+// NewRunner instantiates the adapters for the named tools from cfg. The
+// names are the capability keys below ("textextractor", "ocr",
+// "converter", "pdfoptimizer", "thumbnail", "textreducer",
+// "contentanalyzer", "tagmatcher"); an unknown name is logged and skipped.
+// The model catalog is loaded from the config directory; a load failure is
+// logged, leaving the analyzer adapters unconfigured.
 func NewRunner(logger *log.Logger, cfg *config.Config, tools []string) *Runner {
 	r := &Runner{logger: logger, config: cfg}
 
@@ -215,6 +253,9 @@ func NewRunner(logger *log.Logger, cfg *config.Config, tools []string) *Runner {
 	return r
 }
 
+// NewRunnerWithMatcher is NewRunner plus an explicit Matcher, for callers
+// that already hold the right matcher implementation: the engine in-process
+// in the daemon, or the socket client in the API process.
 func NewRunnerWithMatcher(logger *log.Logger, cfg *config.Config, tools []string, matcher matcher.Matcher) *Runner {
 	r := NewRunner(logger, cfg, tools)
 	if matcher != nil && slices.Contains(tools, "tagmatcher") {
@@ -223,6 +264,9 @@ func NewRunnerWithMatcher(logger *log.Logger, cfg *config.Config, tools []string
 	return r
 }
 
+// ExtractText extracts a document's text with the configured extractor
+// chain for its MIME type. The path must exist; the returned Text pointer
+// is nil when the document yields no text.
 func (r *Runner) ExtractText(ctx context.Context, path string, mimeType string) (*TextExtractionResult, error) {
 	if r.textExtractor == nil {
 		return nil, fmt.Errorf("text extractor not configured")
@@ -250,6 +294,9 @@ func (r *Runner) ExtractText(ctx context.Context, path string, mimeType string) 
 	return &result, nil
 }
 
+// OCR runs OCR over a PDF, rendering pages and writing an invisible-text
+// overlay so the result is searchable. The path must exist; TmpPath in the
+// result points at the generated PDF.
 func (r *Runner) OCR(ctx context.Context, docId, path string) (*OCRResult, error) {
 	if r.ocr == nil {
 		return nil, fmt.Errorf("OCR not configured")
@@ -280,6 +327,8 @@ func (r *Runner) OCR(ctx context.Context, docId, path string) (*OCRResult, error
 	return &result, nil
 }
 
+// ConvertToPdf converts an office document to PDF, returning the temp path
+// of the converted file. The path must exist.
 func (r *Runner) ConvertToPdf(ctx context.Context, path string, mimeType string) (*string, error) {
 	if r.documentConverter == nil {
 		return nil, fmt.Errorf("document converter not configured")
@@ -305,6 +354,10 @@ func (r *Runner) ConvertToPdf(ctx context.Context, path string, mimeType string)
 	return outputPath, nil
 }
 
+// OptimizePdf rewrites a PDF through the configured optimizer into a temp
+// path. When the primary engine fails and a fallback is configured, the
+// fallback runs on its own fresh timeout; both failures are returned
+// together. The path must exist.
 func (r *Runner) OptimizePdf(ctx context.Context, docId, path string) (*PdfOptimizationResult, error) {
 	if r.pdfOptimizer == nil {
 		return nil, fmt.Errorf("PDF optimizer not configured")
@@ -370,6 +423,9 @@ func (r *Runner) OptimizePdf(ctx context.Context, docId, path string) (*PdfOptim
 	}, nil
 }
 
+// GenerateThumbnail renders the document's first page as a thumbnail at
+// outputPath, removing the output file when rendering fails. The path must
+// exist.
 func (r *Runner) GenerateThumbnail(ctx context.Context, docId, path, outputPath string) (*ThumbnailResult, error) {
 	if r.thumbnailer == nil {
 		return nil, fmt.Errorf("thumbnailer not configured")
@@ -406,6 +462,10 @@ func (r *Runner) GenerateThumbnail(ctx context.Context, docId, path, outputPath 
 	}, nil
 }
 
+// ReduceContent compresses content toward targetWordCount words, chunked
+// at chunkSize tokens, with the configured TextRank reducer. Content already
+// at or below the target, or a zero target, is returned unchanged with a
+// nil error; a missing reducer is an error only when reduction was needed.
 func (r *Runner) ReduceContent(ctx context.Context, content string, chunkSize, targetWordCount int) (*TextReducerResult, error) {
 	contentWordCount := len(strings.Fields(content))
 	charWordCount := utf8.RuneCountInString(content)
@@ -444,6 +504,8 @@ func (r *Runner) ReduceContent(ctx context.Context, content string, chunkSize, t
 	}, nil
 }
 
+// MatchTags matches a document's reduced text against the stored tag
+// vocabulary.
 func (r *Runner) MatchTags(ctx context.Context, docId, input string) (*TagMatchResult, error) {
 	if r.tagMatcher == nil {
 		return nil, fmt.Errorf("tag matcher not configured")
@@ -463,6 +525,8 @@ func (r *Runner) MatchTags(ctx context.Context, docId, input string) (*TagMatchR
 	return &TagMatchResult{Tags: tags}, nil
 }
 
+// RankTags ranks candidate tag names against the stored vocabulary,
+// returning per-query candidates and kept names.
 func (r *Runner) RankTags(ctx context.Context, docId string, queries []string) ([]matcher.RankResult, error) {
 	if r.tagMatcher == nil {
 		return nil, fmt.Errorf("tag matcher not configured")
@@ -482,10 +546,15 @@ func (r *Runner) RankTags(ctx context.Context, docId string, queries []string) (
 	return results, nil
 }
 
+// HasTagAdjudicator reports whether an LLM tag adjudicator is configured;
+// callers gate the judging steps on it.
 func (r *Runner) HasTagAdjudicator() bool {
 	return r.tagAdjudicator != nil
 }
 
+// AdjudicateTags asks the LLM adjudicator to decide a set of tag pairs
+// (which of two similar tags to keep). Returns an error when no adjudicator
+// was configured.
 func (r *Runner) AdjudicateTags(ctx context.Context, pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error) {
 	if r.tagAdjudicator == nil {
 		return nil, fmt.Errorf("tag adjudicator not configured")
@@ -501,6 +570,8 @@ func (r *Runner) AdjudicateTags(ctx context.Context, pairs []analyzer.TagPairEvi
 	})
 }
 
+// AdjudicateTagSplits asks the LLM adjudicator whether a compound tag
+// should be split. Returns an error when no adjudicator was configured.
 func (r *Runner) AdjudicateTagSplits(ctx context.Context, tags []string) ([]analyzer.TagSplitResult, error) {
 	if r.tagAdjudicator == nil {
 		return nil, fmt.Errorf("tag adjudicator not configured")
@@ -516,10 +587,13 @@ func (r *Runner) AdjudicateTagSplits(ctx context.Context, tags []string) ([]anal
 	})
 }
 
+// HasTagQualityJudge reports whether a tag quality judge is configured.
 func (r *Runner) HasTagQualityJudge() bool {
 	return r.tagQualityJudge != nil
 }
 
+// JudgeTagQuality scores candidate tags against a document's text.
+// Returns an error when no judge was configured.
 func (r *Runner) JudgeTagQuality(ctx context.Context, text string, candidates []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error) {
 	if r.tagQualityJudge == nil {
 		return nil, fmt.Errorf("tag quality judge not configured")
@@ -535,10 +609,14 @@ func (r *Runner) JudgeTagQuality(ctx context.Context, text string, candidates []
 	})
 }
 
+// HasTagIdentityJudge reports whether a tag identity judge is configured.
 func (r *Runner) HasTagIdentityJudge() bool {
 	return r.tagIdentityJudge != nil
 }
 
+// JudgeTagIdentity lets the LLM judge the identity of candidate tags
+// against the existing vocabulary. Returns an error when no judge was
+// configured.
 func (r *Runner) JudgeTagIdentity(ctx context.Context, candidates []analyzer.TagIdentityCandidate) ([]analyzer.TagIdentityResult, error) {
 	if r.tagIdentityJudge == nil {
 		return nil, fmt.Errorf("tag identity judge not configured")
@@ -563,6 +641,12 @@ func isProviderError(err error) bool {
 	return !errors.As(err, &ctle) && !errors.As(err, &tokErr)
 }
 
+// AnalyzeContent analyzes a document's reduced text with the primary
+// analyzer: title, doc type, tags, people and language. On a provider-level
+// error (auth, quota, availability) it walks the configured fallback
+// analyzers, returning the last failure when none succeeds. Content-too-
+// large, token-limit, cancellation and deadline errors are never retried on
+// a fallback.
 func (r *Runner) AnalyzeContent(ctx context.Context, text string, docTypes []analyzer.TypeRef, peopleTypes []analyzer.TypeRef, tagSuggestions []string) (*ContentAnalysisResult, error) {
 	if r.contentAnalyzer == nil {
 		return nil, fmt.Errorf("content analyzer not configured")
@@ -618,6 +702,9 @@ func (r *Runner) AnalyzeContent(ctx context.Context, text string, docTypes []ana
 	}, nil
 }
 
+// AnalyzeDocType refines the document type from the head and tail of the
+// text, given the previous analysis pass. It follows the same fallback
+// chain rules as AnalyzeContent.
 func (r *Runner) AnalyzeDocType(ctx context.Context, prevResult *ContentAnalysisResult, headTailText string, docTypes []analyzer.TypeRef, metadata analyzer.DocMetadata) (string, error) {
 	if r.contentAnalyzer == nil {
 		return "", fmt.Errorf("content analyzer not configured")

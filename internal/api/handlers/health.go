@@ -9,12 +9,14 @@ import (
 	"github.com/wgomg/edub-kushim/internal/version"
 )
 
+// HealthResponse is the liveness probe payload.
 type HealthResponse struct {
 	Status  string `json:"status"`
 	Version string `json:"version"`
 	Time    string `json:"time"`
 }
 
+// HealthHandler serves the liveness check.
 func HealthHandler(w http.ResponseWriter, r *http.Request, logger *log.Logger) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)

@@ -1,5 +1,15 @@
 //go:build cgo
 
+// Package cgo is the C wrapper layer of the binary: the native libraries
+// linked at build time behind Go types, currently MuPDF for page rendering,
+// text extraction and PDF rewriting. Two implementations exist, selected by
+// the cgo build tag: the real wrapper in this file and stubs in
+// mupdf_nocgo.go that fail with "not available" errors, so CGO_ENABLED=0
+// builds (edub, the unit tests) still compile.
+//
+// A MuContext owns a MuPDF context with a capped object store and silenced
+// warnings. MuPDF contexts are not thread-safe: a context must not be used
+// concurrently, so callers open one per unit of work.
 package cgo
 
 /*
@@ -177,17 +187,23 @@ import (
 	"unsafe"
 )
 
-// MuContext wraps a MuPDF fz_context pointer.
+// MuContext owns a MuPDF fz_context: an object store capped at 256 MB to
+// bound memory growth on large scanned documents, and no-op error printing
+// so recoverable MuPDF warnings do not pollute the log. A context is not
+// thread-safe and must not be used after Close.
 type MuContext struct {
 	p *C.fz_context
 }
 
-// MuDocument wraps a MuPDF fz_document pointer.
+// MuDocument wraps an opened fz_document. Its methods take the owning
+// MuContext, and the document must be closed before that context is.
 type MuDocument struct {
 	p *C.fz_document
 }
 
-// NewMuContext creates a new MuPDF context.
+// NewMuContext creates a fresh MuPDF context. Contexts are not shared:
+// create one per unit of work and Close it when done. On non-cgo builds it
+// always fails.
 func NewMuContext() (*MuContext, error) {
 	var ctx *C.fz_context
 	if C.mupdf_new_context(&ctx) != 0 {
@@ -196,7 +212,8 @@ func NewMuContext() (*MuContext, error) {
 	return &MuContext{p: ctx}, nil
 }
 
-// OpenMuDocument opens a PDF file and returns a document handle.
+// OpenMuDocument opens the document at path. The returned document must be
+// Closed before the owning context.
 func (c *MuContext) OpenMuDocument(path string) (*MuDocument, error) {
 	cPath := C.CString(path)
 	defer C.free(unsafe.Pointer(cPath))
@@ -208,12 +225,13 @@ func (c *MuContext) OpenMuDocument(path string) (*MuDocument, error) {
 	return &MuDocument{p: doc}, nil
 }
 
-// NumPages returns the number of pages in the document.
+// NumPages reports how many pages the document contains.
 func (d *MuDocument) NumPages(ctx *MuContext) int {
 	return int(C.fz_count_pages(ctx.p, d.p))
 }
 
-// ExtractPageText extracts text from a single page.
+// ExtractPageText returns the text of one page, numbered from 0 as MuPDF
+// counts pages. The error names the failing page.
 func (d *MuDocument) ExtractPageText(ctx *MuContext, pageNum int) (string, error) {
 	var buf *C.fz_buffer
 	if C.mupdf_extract_page_text(ctx.p, d.p, C.int(pageNum), &buf) != 0 {
@@ -225,8 +243,11 @@ func (d *MuDocument) ExtractPageText(ctx *MuContext, pageNum int) (string, error
 	return string(data), nil
 }
 
-// RenderPage renders a page to RGB pixel data at the given DPI.
-// Returns width, height, and raw RGB samples (caller must free via FreePixmap).
+// RenderPage renders one page at the given DPI and returns its width and
+// height in pixels plus a fresh RGB sample buffer. samples is an independent
+// copy; the pixmap is owned by the caller and must be released with
+// FreePixmap once rendering is done. Pages whose pixel count exceeds the
+// render limit fail instead of allocating unboundedly.
 func (d *MuDocument) RenderPage(ctx *MuContext, pageNum int, dpi float64) (width, height int, samples []byte, pixmap *C.fz_pixmap, err error) {
 	var p *C.fz_pixmap
 	var w, h C.int
@@ -240,7 +261,8 @@ func (d *MuDocument) RenderPage(ctx *MuContext, pageNum int, dpi float64) (width
 	return int(w), int(h), samples, p, nil
 }
 
-// FreePixmap drops a pixmap. Must be called after RenderPage.
+// FreePixmap releases a pixmap returned by RenderPage. Safe to call with a
+// nil pixmap.
 func FreePixmap(ctx *MuContext, pixmap *C.fz_pixmap) {
 	C.fz_drop_pixmap(ctx.p, pixmap)
 }

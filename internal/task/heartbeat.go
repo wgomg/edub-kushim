@@ -8,6 +8,8 @@ import (
 	"github.com/wgomg/edub-kushim/internal/log"
 )
 
+// Heartbeat keeps a batch owner alive on a ticker until Stop or context
+// cancellation. A failed or zero-row heartbeat is logged, never fatal.
 type Heartbeat struct {
 	owner    *Owner
 	interval time.Duration
@@ -16,6 +18,7 @@ type Heartbeat struct {
 	logger   *log.Logger
 }
 
+// NewHeartbeat prepares the ticker for one batch owner.
 func NewHeartbeat(owner *Owner, interval time.Duration, logger *log.Logger) *Heartbeat {
 	return &Heartbeat{
 		owner:    owner,
@@ -25,6 +28,7 @@ func NewHeartbeat(owner *Owner, interval time.Duration, logger *log.Logger) *Hea
 	}
 }
 
+// Start runs the heartbeat loop until Stop or ctx cancellation.
 func (h *Heartbeat) Start(ctx context.Context) {
 	go func() {
 		if h.logger != nil {
@@ -62,6 +66,7 @@ func (h *Heartbeat) Start(ctx context.Context) {
 	}()
 }
 
+// Stop ends the heartbeat loop exactly once.
 func (h *Heartbeat) Stop() {
 	h.once.Do(func() {
 		close(h.done)

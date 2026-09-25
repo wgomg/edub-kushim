@@ -5,6 +5,8 @@ import (
 	"unicode"
 )
 
+// MaxCompoundWords is the largest word count a tag name may have and
+// still classify as a compound rather than too long.
 const MaxCompoundWords = 3
 
 var functionWords = map[string]struct{}{
@@ -21,6 +23,9 @@ var functionWords = map[string]struct{}{
 	"via": {}, "with": {}, "within": {}, "without": {},
 }
 
+// DeriveParts splits a tag name into its content words, dropping function
+// words (articles, conjunctions, prepositions). The parts are what
+// reconstructibility and part-coverage readings compare against.
 func DeriveParts(name string) []string {
 	tokens := strings.Fields(name)
 	parts := make([]string, 0, len(tokens))
@@ -33,8 +38,12 @@ func DeriveParts(name string) []string {
 	return parts
 }
 
+// Shape is the atomicity classification of a tag name.
 type Shape string
 
+// The shapes a name can take: a single word, a compound of at most
+// MaxCompoundWords words, more words than that, non-Latin script, or no
+// content parts after function words are dropped.
 const (
 	ShapeSingleWord Shape = "single_word"
 	ShapeCompound   Shape = "compound"
@@ -43,6 +52,8 @@ const (
 	ShapeNoParts    Shape = "no_parts"
 )
 
+// ClassifyShape classifies a tag name's atomicity shape. Non-Latin-script
+// and empty names are never compounds.
 func ClassifyShape(name string) Shape {
 	if !isLatinScript(name) {
 		return ShapeNonEnglish

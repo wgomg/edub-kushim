@@ -1,3 +1,8 @@
+// Package config is the application configuration: the YAML tree, its
+// defaults and validation, the watcher that reloads it, and the
+// environment provisioning the setup flow and the API call (bootstrap,
+// asset downloads, service files, readiness checks). Everything reads the
+// finalized tree; nothing reaches into the YAML file directly.
 package config
 
 import (
@@ -15,13 +20,16 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Environment is the deployment environment the app runs in.
 type Environment string
 
+// The environments the config names.
 const (
 	Development Environment = "development"
 	Production  Environment = "production"
 )
 
+// LoggingConfig is the log-file rotation section.
 type LoggingConfig struct {
 	MaxSize    int  `mapstructure:"max_size" yaml:"max_size" json:"max_size"`
 	MaxBackups int  `mapstructure:"max_backups" yaml:"max_backups" json:"max_backups"`
@@ -29,6 +37,8 @@ type LoggingConfig struct {
 	Compress   bool `mapstructure:"compress" yaml:"compress" json:"compress"`
 }
 
+// AppConfig is the application section: environment, log level, log-file
+// rotation, and the config directory the process runs from.
 type AppConfig struct {
 	Env       Environment   `mapstructure:"environment" yaml:"environment" json:"environment"`
 	LogLevel  string        `mapstructure:"log_level" yaml:"log_level" json:"log_level"`
@@ -36,6 +46,9 @@ type AppConfig struct {
 	ConfigDir string        `yaml:"-" json:"config_dir"`
 }
 
+// ServerConfig is the API server section: bind address, timeouts, upload
+// and download limits, batch limits, and the authentication toggle and
+// secret.
 type ServerConfig struct {
 	Host                 string        `mapstructure:"host" yaml:"host" json:"host"`
 	Port                 int           `mapstructure:"port" yaml:"port" json:"port"`
@@ -51,6 +64,9 @@ type ServerConfig struct {
 	SessionSecret        string        `mapstructure:"session_secret" yaml:"session_secret" json:"session_secret"`
 }
 
+// DatabaseConfig is the PostgreSQL section: a discrete connection or a
+// full DSN, the container runtime used by the database-backed tests, and
+// the idempotent seeders to apply.
 type DatabaseConfig struct {
 	Type      string   `mapstructure:"type" yaml:"type" json:"type"`
 	Host      string   `yaml:"host,omitempty" json:"host"`
@@ -68,6 +84,9 @@ type DatabaseConfig struct {
 // container name charset per docker/podman naming rules: https://github.com/moby/moby/blob/master/daemon/names/names.go
 var reContainerName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]+$`)
 
+// ValidateDatabaseRuntime checks the database runtime setting: empty and
+// host run against the host, docker and podman require a container name
+// matching the container naming rules, remote accepts any server.
 func ValidateDatabaseRuntime(runtime, container string) error {
 	switch runtime {
 	case "", "host":
@@ -87,6 +106,9 @@ func ValidateDatabaseRuntime(runtime, container string) error {
 	}
 }
 
+// DatabaseConnectionChanged reports whether two database sections point
+// at different connections, comparing the effective connection resolved
+// through the DSN when one is set.
 func DatabaseConnectionChanged(old, new DatabaseConfig) bool {
 	return effectiveConnection(old) != effectiveConnection(new)
 }
@@ -116,6 +138,8 @@ func effectiveConnection(cfg DatabaseConfig) string {
 	return fmt.Sprintf("%s:%d:%s:%s:%s:%s", host, port, user, password, database, sslmode)
 }
 
+// BuildPostgresDSN returns the configured DSN verbatim, or assembles one
+// from the discrete fields; sslmode rides as a query parameter.
 func BuildPostgresDSN(cfg DatabaseConfig) string {
 	if cfg.DSN != "" {
 		return cfg.DSN
@@ -140,10 +164,13 @@ func BuildPostgresDSN(cfg DatabaseConfig) string {
 	return u.String()
 }
 
+// TrashConfig is the trash retention section.
 type TrashConfig struct {
 	RetentionDays int `mapstructure:"retention_days" yaml:"retention_days" json:"retention_days"`
 }
 
+// StorageConfig is the on-disk layout section: consumption and storage
+// directories and the migration mode.
 type StorageConfig struct {
 	ConsumptionDir string      `mapstructure:"consumption_dir" yaml:"consumption_dir" json:"consumption_dir"`
 	StorageDir     string      `mapstructure:"storage_dir" yaml:"storage_dir" json:"storage_dir"`
@@ -151,17 +178,23 @@ type StorageConfig struct {
 	Trash          TrashConfig `mapstructure:"trash" yaml:"trash" json:"trash"`
 }
 
+// TextExtractorConfig is the text extraction section: engine and call
+// timeout.
 type TextExtractorConfig struct {
 	Engine  string `mapstructure:"engine" yaml:"engine" json:"engine"`
 	Timeout int    `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
 }
 
+// PdfOptimizerConfig is the PDF optimizer section: primary engine,
+// fallback engine, timeout.
 type PdfOptimizerConfig struct {
 	Engine   string `mapstructure:"engine" yaml:"engine" json:"engine"`
 	Fallback string `mapstructure:"fallback" yaml:"fallback" json:"fallback"`
 	Timeout  int    `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
 }
 
+// OCRConfig is the OCR section: engine, languages, tessdata directory,
+// timeout and worker count.
 type OCRConfig struct {
 	Engine     string   `mapstructure:"engine" yaml:"engine" json:"engine"`
 	Languages  []string `mapstructure:"languages" yaml:"languages" json:"languages"`
@@ -170,6 +203,8 @@ type OCRConfig struct {
 	OcrWorkers int      `mapstructure:"ocr_workers" yaml:"ocr_workers" json:"ocr_workers"`
 }
 
+// ThumbnailConfig is the thumbnail section: enablement, engine, render
+// DPI, output width, quality, timeout, workers, and the backfill schedule.
 type ThumbnailConfig struct {
 	Enabled          bool    `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
 	Engine           string  `mapstructure:"engine" yaml:"engine" json:"engine"`
@@ -182,29 +217,39 @@ type ThumbnailConfig struct {
 	BackfillTime     string  `mapstructure:"backfill_time" yaml:"backfill_time" json:"backfill_time"`
 }
 
+// PollingWindow is one half-open processing window in HH:MM form.
 type PollingWindow struct {
 	Start string `mapstructure:"start" yaml:"start" json:"start"`
 	End   string `mapstructure:"end" yaml:"end" json:"end"`
 }
 
+// PollingConfig is the directory polling section: enablement, interval in
+// minutes, and the windows the poller works in.
 type PollingConfig struct {
 	Enabled  bool            `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
 	Interval int             `mapstructure:"interval" yaml:"interval" json:"interval"` // minutes
 	Windows  []PollingWindow `mapstructure:"windows" yaml:"windows" json:"windows"`
 }
 
+// ReclaimConfig is the stale-task reclaim section: enablement, retries,
+// and the staleness threshold.
 type ReclaimConfig struct {
 	Enabled        bool  `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
 	MaxRetries     int   `mapstructure:"max_retries" yaml:"max_retries" json:"max_retries"`
 	StaleTaskAfter int64 `mapstructure:"stale_task_after" yaml:"stale_task_after" json:"stale_task_after"`
 }
 
+// DocxOdtConverterConfig is the office-document conversion section:
+// enablement, converter binary, timeout.
 type DocxOdtConverterConfig struct {
 	Enabled bool   `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
 	Binary  string `mapstructure:"binary" yaml:"binary" json:"binary"`
 	Timeout int    `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
 }
 
+// ConsumerConfig is the consumption intake section: accepted files,
+// workers, per-batch limits, the pipeline tool sections, and the polling
+// and reclaim behavior.
 type ConsumerConfig struct {
 	SupportedFiles   []string               `mapstructure:"supported_files" yaml:"supported_files" json:"supported_files"`
 	Workers          int                    `mapstructure:"workers" yaml:"workers" json:"workers"`
@@ -218,18 +263,25 @@ type ConsumerConfig struct {
 	Reclaim          ReclaimConfig          `mapstructure:"reclaim" yaml:"reclaim" json:"reclaim"`
 }
 
+// TextReducerConfig is the text reduction section: engine, timeout, and
+// the reduction target.
 type TextReducerConfig struct {
 	Engine      string `mapstructure:"engine" yaml:"engine" json:"engine"`
 	Timeout     int    `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
 	TargetWords int    `mapstructure:"target_words" yaml:"target_words" json:"target_words"`
 }
 
+// DocTypeRefinementConfig is the second-pass type refinement section:
+// enablement and how much head and tail text the pass reads.
 type DocTypeRefinementConfig struct {
 	Enabled   bool `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
 	HeadWords int  `mapstructure:"head_words" yaml:"head_words" json:"head_words"`
 	TailWords int  `mapstructure:"tail_words" yaml:"tail_words" json:"tail_words"`
 }
 
+// ContentAnalyzerConfig is the LLM document analysis section: enablement,
+// timeout, tag bounds, the primary model, its fallbacks, the optional
+// prompt template, the type-refinement pass, and the credit-pause policy.
 type ContentAnalyzerConfig struct {
 	Enabled            bool                    `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
 	Timeout            int                     `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
@@ -242,23 +294,31 @@ type ContentAnalyzerConfig struct {
 	PauseOnCreditError bool                    `mapstructure:"pause_on_credit_error" yaml:"pause_on_credit_error" json:"pause_on_credit_error"`
 }
 
+// FallbackConfig is one fallback analyzer: enablement and its model.
 type FallbackConfig struct {
 	Enabled bool      `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
 	Llm     LlmConfig `mapstructure:"llm" yaml:"llm" json:"llm"`
 }
 
+// TagAdjudicatorConfig is the LLM tag adjudicator section; an empty model
+// falls back to the analyzer's.
 type TagAdjudicatorConfig struct {
 	Enabled bool      `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
 	Timeout int       `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
 	Llm     LlmConfig `mapstructure:"llm" yaml:"llm" json:"llm"`
 }
 
+// TagQualityConfig is the LLM tag quality judge section; an empty model
+// falls back to the analyzer's.
 type TagQualityConfig struct {
 	Enabled bool      `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
 	Timeout int       `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
 	Llm     LlmConfig `mapstructure:"llm" yaml:"llm" json:"llm"`
 }
 
+// TagReconcileConfig is the scheduled reconciliation section:
+// enablement, report-only mode, schedule, per-run caps, and the grace
+// periods of dead and provisional tags.
 type TagReconcileConfig struct {
 	Enabled              bool    `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
 	ReportOnly           bool    `mapstructure:"report_only" yaml:"report_only" json:"report_only"`
@@ -270,12 +330,16 @@ type TagReconcileConfig struct {
 	ProvisionalGraceDays int     `mapstructure:"provisional_grace_days" yaml:"provisional_grace_days" json:"provisional_grace_days"`
 }
 
+// TagMeasureConfig is the scheduled measurement section: enablement and
+// schedule.
 type TagMeasureConfig struct {
 	Enabled  bool    `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
 	Interval float64 `mapstructure:"interval" yaml:"interval" json:"interval"`
 	Time     string  `mapstructure:"time" yaml:"time" json:"time"`
 }
 
+// EnricherConfig is the enrichment pipeline section: worker count and the
+// tool and judged-step settings.
 type EnricherConfig struct {
 	Workers         int                   `mapstructure:"workers" yaml:"workers" json:"workers"`
 	TextReducer     TextReducerConfig     `mapstructure:"textreducer" yaml:"textreducer" json:"textreducer"`
@@ -287,6 +351,8 @@ type EnricherConfig struct {
 	TagMeasure      TagMeasureConfig      `mapstructure:"tag_measure" yaml:"tag_measure" json:"tag_measure"`
 }
 
+// ResolvedAdjudicatorLlm returns the adjudicator's model, falling back to
+// the content analyzer's when the section does not name one.
 func (c *Config) ResolvedAdjudicatorLlm() LlmConfig {
 	if c.Enricher.TagAdjudicator.Llm.Provider == "" || c.Enricher.TagAdjudicator.Llm.Model == "" {
 		return c.Enricher.ContentAnalyzer.Llm
@@ -294,6 +360,8 @@ func (c *Config) ResolvedAdjudicatorLlm() LlmConfig {
 	return c.Enricher.TagAdjudicator.Llm
 }
 
+// ResolvedAdjudicatorTimeout returns the adjudicator's timeout, falling
+// back to the content analyzer's.
 func (c *Config) ResolvedAdjudicatorTimeout() int {
 	if c.Enricher.TagAdjudicator.Timeout == 0 {
 		return c.Enricher.ContentAnalyzer.Timeout
@@ -301,6 +369,8 @@ func (c *Config) ResolvedAdjudicatorTimeout() int {
 	return c.Enricher.TagAdjudicator.Timeout
 }
 
+// ResolvedQualityLlm returns the quality judge's model, falling back to
+// the content analyzer's when the section does not name one.
 func (c *Config) ResolvedQualityLlm() LlmConfig {
 	if c.Enricher.TagQuality.Llm.Provider == "" || c.Enricher.TagQuality.Llm.Model == "" {
 		return c.Enricher.ContentAnalyzer.Llm
@@ -308,6 +378,8 @@ func (c *Config) ResolvedQualityLlm() LlmConfig {
 	return c.Enricher.TagQuality.Llm
 }
 
+// ResolvedQualityTimeout returns the quality judge's timeout, falling
+// back to the content analyzer's.
 func (c *Config) ResolvedQualityTimeout() int {
 	if c.Enricher.TagQuality.Timeout == 0 {
 		return c.Enricher.ContentAnalyzer.Timeout
@@ -315,6 +387,8 @@ func (c *Config) ResolvedQualityTimeout() int {
 	return c.Enricher.TagQuality.Timeout
 }
 
+// LlmConfig is one LLM endpoint: adapter, provider, model, token,
+// temperature, and the pacing delay between requests (capped at load).
 type LlmConfig struct {
 	Adapter         string  `mapstructure:"adapter" yaml:"adapter" json:"adapter"`
 	Provider        string  `mapstructure:"provider" yaml:"provider" json:"provider"`
@@ -330,6 +404,9 @@ type LlmConfig struct {
 // stall an enricher worker well beyond the content-analyzer timeout budget.
 const maxRequestDelaySeconds = 60
 
+// HugotConfig is the embedding model section: model and backend as
+// configured; the resolved paths and runtime toggles are filled at load
+// time.
 type HugotConfig struct {
 	Model          string `mapstructure:"model" yaml:"model" json:"model"`
 	Backend        string `mapstructure:"backend" yaml:"backend" json:"backend"`
@@ -339,6 +416,9 @@ type HugotConfig struct {
 	MemPattern     bool   `yaml:"-"`
 }
 
+// TagMatcherConfig is the semantic matching section: timeouts, the reduce
+// target and chunk size, the embedding model, and the similarity
+// thresholds (filled at load from the algebra's pinned values).
 type TagMatcherConfig struct {
 	Timeout                 int         `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
 	ReduceTargetWords       int         `mapstructure:"reduce_target_words" yaml:"reduce_target_words" json:"reduce_target_words"`
@@ -350,11 +430,14 @@ type TagMatcherConfig struct {
 	AutoReplaceSimilarity   float64     `yaml:"-" json:"auto_replace_similarity"`
 }
 
+// ToolConfig is one external binary call: command and timeout.
 type ToolConfig struct {
 	Command string        `yaml:"command" json:"command"`
 	Timeout time.Duration `yaml:"timeout" json:"timeout"`
 }
 
+// BackupSchedule is one backup schedule: mode (full, database or
+// documents), cadence, destination path, and retention count.
 type BackupSchedule struct {
 	Mode     string  `mapstructure:"mode" yaml:"mode" json:"mode"`
 	Interval float64 `mapstructure:"interval" yaml:"interval" json:"interval"`
@@ -363,12 +446,16 @@ type BackupSchedule struct {
 	Keep     int     `mapstructure:"keep" yaml:"keep" json:"keep"`
 }
 
+// ValidBackupModes lists the accepted schedule modes.
 var ValidBackupModes = map[string]struct{}{
 	"full":      {},
 	"database":  {},
 	"documents": {},
 }
 
+// BackupConfig is the backup section: enablement, destination, schedules,
+// plus the deprecated flat fields finalize converts into one full
+// schedule.
 type BackupConfig struct {
 	Enabled   bool             `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
 	Path      string           `mapstructure:"path" yaml:"path" json:"path"`
@@ -381,6 +468,7 @@ type BackupConfig struct {
 	Keep     int     `mapstructure:"keep" yaml:"keep" json:"keep"`
 }
 
+// MirrorConfig is the mirror section: enablement, destination, cadence.
 type MirrorConfig struct {
 	Enabled  bool    `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
 	Path     string  `mapstructure:"path" yaml:"path" json:"path"`
@@ -388,6 +476,8 @@ type MirrorConfig struct {
 	Time     string  `mapstructure:"time" yaml:"time" json:"time"`
 }
 
+// Config is the whole application configuration: the YAML tree as loaded,
+// then finalized with defaults and validation.
 type Config struct {
 	App      AppConfig      `mapstructure:"app" yaml:"app" json:"app"`
 	Srv      ServerConfig   `mapstructure:"server" yaml:"server" json:"server"`
@@ -452,11 +542,15 @@ var (
 	}
 )
 
+// EngineEntry is one selectable engine for the setup UI: its value and
+// display label.
 type EngineEntry struct {
 	Value string `json:"value"`
 	Label string `json:"label"`
 }
 
+// AvailableEngines maps a tool category to the engines selectable in the
+// setup UI.
 var AvailableEngines = map[string][]EngineEntry{
 	"ocr": {
 		{Value: OCR.Gosseract, Label: "gosseract"},
@@ -479,6 +573,8 @@ var AvailableEngines = map[string][]EngineEntry{
 	},
 }
 
+// DefaultConfig returns the built-in configuration for the given config
+// directory.
 func DefaultConfig(configDir string) *Config {
 	return &Config{
 		App: AppConfig{
@@ -634,6 +730,10 @@ func DefaultConfig(configDir string) *Config {
 	}
 }
 
+// Load reads the YAML configuration from configDir, starting from the
+// defaults when the file does not exist, and finalizes it: resolved paths,
+// validated and clamped sections, deprecated-field conversion. It fails
+// on unreadable files, malformed YAML, or any invalid section.
 func Load(configDir string) (*Config, error) {
 	cfg := DefaultConfig(configDir)
 
@@ -928,6 +1028,11 @@ func finalizeConfig(cfg *Config, configDir string) error {
 	return nil
 }
 
+// ValidateMirrorDestination refuses mirror destinations that would
+// recurse into the backed-up data: the storage directory itself, anything
+// inside it, an ancestor of it, or anything inside the backup directory.
+// Dash-prefixed destinations are refused outright; remote targets pass
+// without local checks.
 func ValidateMirrorDestination(dest, storageDir, backupPath string) error {
 	if strings.HasPrefix(dest, "-") {
 		return fmt.Errorf("mirror destination %q starts with '-' — refusing", dest)
@@ -993,6 +1098,8 @@ func resolvePath(path string) (string, error) {
 	}
 }
 
+// IsRemoteMirrorTarget reports whether a mirror path is remote (host:path
+// form), which skips the local-path checks.
 func IsRemoteMirrorTarget(path string) bool {
 	if strings.HasPrefix(path, "rsync://") {
 		return true
@@ -1040,6 +1147,8 @@ func parseHHMM(s string, allow2400 bool) (int, error) {
 	return hour*60 + min, nil
 }
 
+// ValidatePollingWindows validates a submitted polling section: every
+// bound is HH:MM and the start precedes the end.
 func ValidatePollingWindows(body map[string]any) error {
 	raw, ok := body["consumer.polling.windows"]
 	if !ok {
@@ -1077,6 +1186,8 @@ func ValidatePollingWindows(body map[string]any) error {
 	return nil
 }
 
+// IsWithinActiveWindows reports whether now falls inside any window; an
+// empty list means always active.
 func IsWithinActiveWindows(windows []PollingWindow) bool {
 	if len(windows) == 0 {
 		return true

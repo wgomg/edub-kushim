@@ -17,15 +17,20 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
+// TaskCreator creates tasks; the task dispatcher satisfies it.
 type TaskCreator interface {
 	CreateTask(ctx context.Context, taskType types.TaskType, batchID string, payload json.RawMessage,
 		taskID string, status types.TaskStatus, dedupKey string) (string, error)
 }
 
+// BatchCreator creates batch rows.
 type BatchCreator interface {
 	Create(ctx context.Context, id string, source types.BatchSource, status types.BatchStatus) error
 }
 
+// Orphaned administers the quarantined files the orphaned sweep finds:
+// list, quarantine, delete, move back into the consumption directory, and
+// re-consume through the task creators.
 type Orphaned struct {
 	queries      *database.Queries
 	cfg          *config.Config
@@ -34,6 +39,8 @@ type Orphaned struct {
 	batchCreator BatchCreator
 }
 
+// NewOrphaned wires the admin to the storage config and the task and
+// batch creators.
 func NewOrphaned(queries *database.Queries, cfg *config.Config, logger *log.Logger, taskCreator TaskCreator, batchCreator BatchCreator) *Orphaned {
 	return &Orphaned{
 		queries:      queries,
@@ -44,6 +51,7 @@ func NewOrphaned(queries *database.Queries, cfg *config.Config, logger *log.Logg
 	}
 }
 
+// List reads the quarantined files from the database view.
 func (s *Orphaned) List(ctx context.Context) ([]database.OrphanedFile, error) {
 	files, err := s.queries.ListOrphanedFiles(ctx)
 	if err != nil {
@@ -52,6 +60,10 @@ func (s *Orphaned) List(ctx context.Context) ([]database.OrphanedFile, error) {
 	return files, nil
 }
 
+// ScanAndQuarantine walks the storage layout, ignores files whose UUID
+// keys name known documents or live rows, and quarantines the rest;
+// dbid-named files are never quarantined. It returns how many were
+// quarantined.
 func (s *Orphaned) ScanAndQuarantine(ctx context.Context) (int, error) {
 	storageDir := s.cfg.Storage.StorageDir
 	infos, errsCh := storage.WalkStorageDir(storageDir)
@@ -125,6 +137,7 @@ func (s *Orphaned) quarantineFile(ctx context.Context, storageDir string, info s
 	return true, nil
 }
 
+// Delete permanently removes one quarantined file.
 func (s *Orphaned) Delete(ctx context.Context, id int64) error {
 	row, err := s.queries.GetOrphanedFile(ctx, id)
 	if err != nil {
@@ -142,6 +155,9 @@ func (s *Orphaned) Delete(ctx context.Context, id int64) error {
 	return nil
 }
 
+// Restore re-consumes one quarantined file through the task creators in
+// a fresh batch; only uuid-named files restore, and a name that resolves
+// to a live document is refused.
 func (s *Orphaned) Restore(ctx context.Context, id int64) error {
 	row, err := s.queries.GetOrphanedFile(ctx, id)
 	if err != nil {
@@ -230,6 +246,8 @@ func (s *Orphaned) Restore(ctx context.Context, id int64) error {
 	return nil
 }
 
+// MoveToInbox copies one quarantined file back into the consumption
+// directory without consuming it.
 func (s *Orphaned) MoveToInbox(ctx context.Context, id int64) error {
 	row, err := s.queries.GetOrphanedFile(ctx, id)
 	if err != nil {
@@ -248,6 +266,7 @@ func (s *Orphaned) MoveToInbox(ctx context.Context, id int64) error {
 	return nil
 }
 
+// DeleteAll removes every quarantined file and returns how many.
 func (s *Orphaned) DeleteAll(ctx context.Context) (int, error) {
 	files, err := s.queries.ListOrphanedFiles(ctx)
 	if err != nil {
@@ -265,6 +284,8 @@ func (s *Orphaned) DeleteAll(ctx context.Context) (int, error) {
 	return len(files), nil
 }
 
+// MoveAllToInbox moves every quarantined file back into the consumption
+// directory and returns how many.
 func (s *Orphaned) MoveAllToInbox(ctx context.Context) (int, error) {
 	files, err := s.queries.ListOrphanedFiles(ctx)
 	if err != nil {
@@ -283,6 +304,8 @@ func (s *Orphaned) MoveAllToInbox(ctx context.Context) (int, error) {
 	return moved, nil
 }
 
+// ScanAndQuarantineAsync runs one sweep in the background; failures are
+// logged, never surfaced.
 func (s *Orphaned) ScanAndQuarantineAsync() {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)

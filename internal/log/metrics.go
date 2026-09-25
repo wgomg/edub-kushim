@@ -11,6 +11,9 @@ import (
 	"time"
 )
 
+// MemSnapshot is a point-in-time memory reading, all values in bytes. Heap
+// figures come from the Go runtime; RSS is read from /proc/self/status and
+// includes native (C) allocations. RSS is zero when /proc is unavailable.
 type MemSnapshot struct {
 	HeapInUse uint64 // /memory/classes/heap/objects:bytes — live heap
 	HeapAlloc uint64 // /gc/heap/allocs:bytes — cumulative allocated
@@ -18,6 +21,8 @@ type MemSnapshot struct {
 	RSS       uint64 // VmRSS from /proc/self/status — total physical RAM (Go + C)
 }
 
+// ReadMemSnapshot returns a point-in-time memory reading. It is cheap enough
+// to call around an operation to measure that operation's footprint.
 func ReadMemSnapshot() MemSnapshot {
 	const (
 		heapInUse = "/memory/classes/heap/objects:bytes"
@@ -76,6 +81,9 @@ type MemFull struct {
 	HeapReleased uint64 // bytes returned to the OS
 }
 
+// ReadMemFull extends ReadMemSnapshot with the runtime.MemStats counters
+// (HeapSys, HeapIdle, HeapReleased) that runtime/metrics does not expose.
+// It stops the world briefly, so prefer ReadMemSnapshot in hot paths.
 func ReadMemFull() MemFull {
 	snap := ReadMemSnapshot()
 
@@ -105,6 +113,8 @@ func FormatMemFull(m MemFull) string {
 	)
 }
 
+// FormatMemDelta renders the change between two snapshots for a log line,
+// e.g. "heap +1.2 MiB, RSS -300.0 KiB, 2 GC(s)".
 func FormatMemDelta(before, after MemSnapshot) string {
 	heapDelta := int64(after.HeapInUse) - int64(before.HeapInUse)
 	rssDelta := int64(after.RSS) - int64(before.RSS)
@@ -129,6 +139,7 @@ func FormatMemDelta(before, after MemSnapshot) string {
 	return parts
 }
 
+// FormatBytes renders a byte count with binary units (B, KiB, MiB, GiB).
 func FormatBytes(b uint64) string {
 	switch {
 	case b >= 1<<30:
@@ -142,6 +153,9 @@ func FormatBytes(b uint64) string {
 	}
 }
 
+// HumanDuration renders a duration at second precision: seconds below a
+// minute, minutes and seconds below an hour, otherwise hours, minutes and
+// seconds.
 func HumanDuration(d time.Duration) string {
 	switch {
 	case d < time.Minute:

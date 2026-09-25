@@ -219,8 +219,14 @@ compose-quickstart:
 compose-quickstart-down:
 	docker compose -f docker-compose.yml -f docker-compose.quickstart.yml down
 
-fix:
+# check runs the static checks in order: go fix rewrites outdated patterns,
+# go vet verifies every package, and revive enforces the doc-comment policy
+# from revive.toml, which must reach zero findings (revive must be on PATH).
+.PHONY: check
+check:
 	go fix -tags "XLA,ORT" ./...
+	go vet -tags "XLA,ORT" ./...
+	revive -config revive.toml -set_exit_status ./...
 
 .PHONY: vuln
 vuln:
@@ -244,6 +250,7 @@ test-short:
 		./internal/log/ \
 		./internal/textnorm/ \
 		./internal/matcher/ \
+		./internal/documents/mime/ \
 		./internal/documents/storage/ \
 		./internal/auth/ \
 		./internal/api/ \
@@ -266,6 +273,7 @@ test-verbose:
 		./internal/log/ \
 		./internal/textnorm/ \
 		./internal/matcher/ \
+		./internal/documents/mime/ \
 		./internal/documents/storage/ \
 		./internal/auth/ \
 		./internal/api/ \

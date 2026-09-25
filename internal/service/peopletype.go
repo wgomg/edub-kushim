@@ -9,26 +9,32 @@ import (
 	"github.com/wgomg/edub-kushim/internal/log"
 )
 
+// CreatePeopleTypeInput is one people type to create.
 type CreatePeopleTypeInput struct {
 	Name        string
 	Description string
 }
 
+// PeopleTypeUpdatePair is one people-type rename: id plus the new name
+// and description.
 type PeopleTypeUpdatePair struct {
 	ID          int64
 	Name        string
 	Description string
 }
 
+// PeopleType is the people-type taxonomy CRUD.
 type PeopleType struct {
 	queries *database.Queries
 	logger  *log.Logger
 }
 
+// NewPeopleType wires the people-type service.
 func NewPeopleType(queries *database.Queries, logger *log.Logger) *PeopleType {
 	return &PeopleType{queries: queries, logger: logger}
 }
 
+// Get returns one people type by id.
 func (s *PeopleType) Get(ctx context.Context, id int64) (database.PeopleType, error) {
 	pt, err := s.queries.GetPeopleType(ctx, id)
 	if err != nil {
@@ -37,6 +43,7 @@ func (s *PeopleType) Get(ctx context.Context, id int64) (database.PeopleType, er
 	return pt, nil
 }
 
+// GetByName returns one people type by exact name.
 func (s *PeopleType) GetByName(ctx context.Context, name string) (database.PeopleType, error) {
 	pt, err := s.queries.GetPeopleTypeByName(ctx, name)
 	if err != nil {
@@ -45,6 +52,7 @@ func (s *PeopleType) GetByName(ctx context.Context, name string) (database.Peopl
 	return pt, nil
 }
 
+// List pages the people types.
 func (s *PeopleType) List(ctx context.Context, limit, offset int32) ([]database.PeopleType, error) {
 	pts, err := s.queries.ListPeopleTypes(ctx, database.ListPeopleTypesParams{Limit: limit, Offset: offset})
 	if err != nil {
@@ -53,6 +61,7 @@ func (s *PeopleType) List(ctx context.Context, limit, offset int32) ([]database.
 	return pts, nil
 }
 
+// ListAll returns every people type.
 func (s *PeopleType) ListAll(ctx context.Context) ([]database.PeopleType, error) {
 	pts, err := s.queries.ListAllPeopleTypes(ctx)
 	if err != nil {
@@ -61,6 +70,7 @@ func (s *PeopleType) ListAll(ctx context.Context) ([]database.PeopleType, error)
 	return pts, nil
 }
 
+// Search returns the people types whose names start with the prefix.
 func (s *PeopleType) Search(ctx context.Context, prefix string, limit int32) ([]database.PeopleType, error) {
 	pts, err := s.queries.SearchPeopleTypeByName(ctx, database.SearchPeopleTypeByNameParams{
 		Name:  prefix + "%",
@@ -72,6 +82,8 @@ func (s *PeopleType) Search(ctx context.Context, prefix string, limit int32) ([]
 	return pts, nil
 }
 
+// Create creates people types in bulk, deduplicating by normalized name:
+// conflicts resolve to the existing type, empty names are invalid.
 func (s *PeopleType) Create(ctx context.Context, inputs []CreatePeopleTypeInput) ([]CreateResult[database.PeopleType], error) {
 	results := make([]CreateResult[database.PeopleType], len(inputs))
 
@@ -121,6 +133,8 @@ func (s *PeopleType) Create(ctx context.Context, inputs []CreatePeopleTypeInput)
 	return results, nil
 }
 
+// Update renames people types in bulk, one result per pair (conflict,
+// not found, no-op, or updated).
 func (s *PeopleType) Update(ctx context.Context, pairs []PeopleTypeUpdatePair) ([]UpdateResult[database.PeopleType], error) {
 	results := make([]UpdateResult[database.PeopleType], len(pairs))
 
@@ -185,6 +199,8 @@ func (s *PeopleType) Update(ctx context.Context, pairs []PeopleTypeUpdatePair) (
 	return results, nil
 }
 
+// Delete removes people types in bulk, reporting per id (deleted, not
+// found, or conflicting with referenced people).
 func (s *PeopleType) Delete(ctx context.Context, ids []int64) ([]DeleteResult, error) {
 	results := make([]DeleteResult, len(ids))
 

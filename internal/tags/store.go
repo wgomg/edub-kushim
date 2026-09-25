@@ -9,12 +9,20 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 )
 
+// Store reads the tag vocabulary for measurement sweeps and persists their
+// readings: live masses, pair evidence stats, the sweep snapshot, compound
+// intersections, and record insertion. All queries run over the given
+// queries value, which the caller attaches to its own transaction when one
+// is in flight.
 type Store struct {
 	q *database.Queries
 }
 
+// NewStore builds the store over the given queries.
 func NewStore(q *database.Queries) *Store { return &Store{q: q} }
 
+// LiveMass returns the live document count per tag id; empty input
+// returns an empty map.
 func (s *Store) LiveMass(ctx context.Context, tagIDs []int64) (map[int64]int64, error) {
 	if len(tagIDs) == 0 {
 		return map[int64]int64{}, nil
@@ -30,10 +38,14 @@ func (s *Store) LiveMass(ctx context.Context, tagIDs []int64) (map[int64]int64, 
 	return mass, nil
 }
 
+// PairNames names one query/target pair for the evidence-stats lookup.
 type PairNames struct {
 	Query, Target string
 }
 
+// PairVerdictStats aggregates the verdict events recorded for the given
+// pairs: the documents seen per pair, the verdict events, and the
+// same/variant/related counts.
 type PairVerdictStats struct {
 	Query, Target string
 	Documents     int64
@@ -43,6 +55,8 @@ type PairVerdictStats struct {
 	Related       int64
 }
 
+// PairVerdictStats loads the verdict-event evidence for the given
+// query/target pairs, in input order.
 func (s *Store) PairVerdictStats(ctx context.Context, pairs []PairNames) ([]PairVerdictStats, error) {
 	queries := make([]string, 0, len(pairs))
 	targets := make([]string, 0, len(pairs))
@@ -72,6 +86,9 @@ func (s *Store) PairVerdictStats(ctx context.Context, pairs []PairNames) ([]Pair
 	return out, nil
 }
 
+// LoadSnapshot reads the whole tag vocabulary, promoted and provisional,
+// with live document masses and the pairwise overlap counts into a
+// Snapshot for a measurement sweep.
 func (s *Store) LoadSnapshot(ctx context.Context) (*Snapshot, error) {
 	rows, err := s.q.ListTagsForMeasure(ctx)
 	if err != nil {
@@ -103,11 +120,17 @@ func (s *Store) LoadSnapshot(ctx context.Context) (*Snapshot, error) {
 	return NewSnapshot(tags, mass, pairs), nil
 }
 
+// CompoundIntersection holds the two counts a reconstructibility reading
+// needs: the intersection across the compound's parts, and the documents
+// both the compound and that intersection carry.
 type CompoundIntersection struct {
 	PartsIntersection int64
 	Both              int64
 }
 
+// CompoundIntersections computes, per compound id, the parts'
+// intersection and the compound-and-parts overlap for the given id lists.
+// Empty input returns an empty map.
 func (s *Store) CompoundIntersections(ctx context.Context, compoundIDs, partIDs []int64) (map[int64]CompoundIntersection, error) {
 	out := make(map[int64]CompoundIntersection, len(compoundIDs))
 	if len(compoundIDs) == 0 {
@@ -131,6 +154,8 @@ func (s *Store) CompoundIntersections(ctx context.Context, compoundIDs, partIDs 
 
 const insertChunk = 2000
 
+// InsertRecords persists the sweep's readings in chunks under the given
+// run id, snapshot instant and rule set version.
 func (s *Store) InsertRecords(ctx context.Context, runID uuid.UUID, snapshotAt time.Time, ruleSetVersion string, records []Record) error {
 	for start := 0; start < len(records); start += insertChunk {
 		end := min(start+insertChunk, len(records))

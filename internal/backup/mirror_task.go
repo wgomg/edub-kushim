@@ -16,12 +16,16 @@ import (
 
 var _ task.Dedupable = (*MirrorTaskHandler)(nil)
 
+// MirrorTaskHandler mirrors the storage directory as a blocking task;
+// its dedup key is the UTC day, one mirror at most per day.
 type MirrorTaskHandler struct {
 	queries   *database.Queries
 	getConfig func() *config.Config
 	logger    *log.Logger
 }
 
+// NewMirrorTaskHandler wires the handler to the queries and the dynamic
+// config.
 func NewMirrorTaskHandler(queries *database.Queries, getConfig func() *config.Config, logger *log.Logger) *MirrorTaskHandler {
 	return &MirrorTaskHandler{
 		queries:   queries,
@@ -30,10 +34,14 @@ func NewMirrorTaskHandler(queries *database.Queries, getConfig func() *config.Co
 	}
 }
 
+// DedupKey is the UTC day, collapsing concurrent triggers into one
+// mirror per calendar day.
 func (h *MirrorTaskHandler) DedupKey(payload json.RawMessage) string {
 	return fmt.Sprintf("mirror:%s", time.Now().UTC().Format("2006-01-02"))
 }
 
+// Handle mirrors under the maintenance lock, waiting for the lock while
+// reporting the queue depth, and returns the mirror stats as the result.
 func (h *MirrorTaskHandler) Handle(ctx context.Context, t task.Task) (out json.RawMessage, err error) {
 	progress := task.NewProgressTracker(h.queries, t.TaskID)
 	defer func() {

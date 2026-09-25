@@ -9,6 +9,8 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 )
 
+// ProgressFunc is the callback handlers use to report step progress; the
+// tracker persists it onto the task row.
 type ProgressFunc func(step, detail string, pct float64)
 
 // ProgressSnapshot is the JSONB shape stored in task.progress. The tracker
@@ -20,6 +22,8 @@ type ProgressSnapshot struct {
 	UpdatedAt string  `json:"updated_at"`
 }
 
+// Progress returns a no-op callback when the slice is empty or its first
+// entry is nil, so handlers can always call the result.
 func Progress(progress []ProgressFunc) ProgressFunc {
 	if len(progress) > 0 && progress[0] != nil {
 		return progress[0]
@@ -27,6 +31,9 @@ func Progress(progress []ProgressFunc) ProgressFunc {
 	return func(string, string, float64) {}
 }
 
+// ProgressTracker persists progress snapshots onto a task row, throttled
+// to one write per step per second. Writes are best-effort: a failed write
+// is dropped and never fails the task.
 type ProgressTracker struct {
 	queries   *database.Queries
 	taskID    string
@@ -35,10 +42,13 @@ type ProgressTracker struct {
 	lastWrite time.Time
 }
 
+// NewProgressTracker tracks one task's progress.
 func NewProgressTracker(queries *database.Queries, taskID string) *ProgressTracker {
 	return &ProgressTracker{queries: queries, taskID: taskID}
 }
 
+// Set records the current step, detail and percentage; the stored snapshot
+// is what the API and CLI display.
 func (p *ProgressTracker) Set(step, detail string, pct float64) {
 	p.mu.Lock()
 	defer p.mu.Unlock()

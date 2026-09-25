@@ -13,11 +13,17 @@ import (
 	"github.com/wgomg/edub-kushim/internal/log"
 )
 
+// TextRank reduces text by scoring overlapping word chunks with term
+// frequency, graph centrality and position (weighted 0.4/0.4/0.2), then
+// keeping the top-scoring chunks under a diversity penalty until the
+// target is met.
 type TextRank struct {
 	logger *log.Logger
 	config config.ToolConfig
 }
 
+// Chunk is one overlapping word window of the content, carrying its
+// scoring fields as the pipeline fills them in.
 type Chunk struct {
 	Id                   int
 	NormalizedPosition   float64
@@ -37,21 +43,28 @@ type Chunk struct {
 	FinalScore           float64
 }
 
+// Node is one chunk as a vertex of the similarity graph.
 type Node struct {
 	ID    int
 	Chunk *Chunk
 	Score float64
 }
 
+// Graph is the chunk similarity graph: nodes plus pairwise adjacency
+// weights.
 type Graph struct {
 	Nodes     []*Node
 	Adjacency [][]float64
 }
 
+// NewTextRank returns the TextRank reducer. Construction never fails
+// today; the error is kept for the interface.
 func NewTextRank(logger *log.Logger, cfg config.ToolConfig) (*TextRank, error) {
 	return &TextRank{logger: logger, config: cfg}, nil
 }
 
+// Reduce scores, selects and reassembles the content per the TextRank
+// weighting.
 func (t *TextRank) Reduce(ctx context.Context, content string, chunkSize int, targetWordCount int) (*string, error) {
 	TfWeight := 0.4
 	GraphWeight := 0.4
@@ -124,6 +137,7 @@ func (t *TextRank) Reduce(ctx context.Context, content string, chunkSize int, ta
 	return &result, nil
 }
 
+// Name identifies the reducer.
 func (t *TextRank) Name() string {
 	return config.TextReducer.TextRank
 }

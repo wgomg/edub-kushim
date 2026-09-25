@@ -11,11 +11,18 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 )
 
+// Runner runs measurement sweeps over the tag store: one Run snapshots the
+// promoted tags under a repeatable-read transaction, records evidence
+// readings for every tag and pair (alias-collapsed through the reader),
+// derives the review worklists, and persists the readings in the same
+// transaction.
 type Runner struct {
 	client *database.Client
 	reader *ExtensionReader
 }
 
+// NewRunner wires the measurement sweep; aliases resolves tag aliases so
+// every reading is recorded under canonical names.
 func NewRunner(client *database.Client, aliases AliasResolver) *Runner {
 	return &Runner{
 		client: client,
@@ -23,8 +30,12 @@ func NewRunner(client *database.Client, aliases AliasResolver) *Runner {
 	}
 }
 
+// ReportPrefix marks the serialized Report inside the task result, the
+// same fork-and-extract convention the tag identity machinery uses.
 const ReportPrefix = "tagmeasure-report: "
 
+// Report summarizes one measurement sweep: totals, operator and state
+// histograms, skip reasons, and the derived worklist tallies.
 type Report struct {
 	RunID          string         `json:"run_id"`
 	SnapshotAt     time.Time      `json:"snapshot_at"`
@@ -36,6 +47,8 @@ type Report struct {
 	Worklists      WorklistCounts `json:"worklists"`
 }
 
+// WorklistCounts tallies the derived review worklists, gray entries
+// (review needed) counted apart from firm ones.
 type WorklistCounts struct {
 	Twins          int `json:"twins"`
 	TwinsGray      int `json:"twins_gray"`
@@ -45,6 +58,10 @@ type WorklistCounts struct {
 	SiblingsGray   int `json:"siblings_gray"`
 }
 
+// Run measures the current tag store and persists its readings. The whole
+// sweep runs under one repeatable-read transaction, so the report and the
+// stored records describe the same snapshot. runID identifies the sweep in
+// the stored rows and the returned report.
 func (r *Runner) Run(ctx context.Context, runID uuid.UUID) (*Report, error) {
 	tx, err := r.client.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
 	if err != nil {

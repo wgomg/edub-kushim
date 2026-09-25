@@ -1,3 +1,7 @@
+// Package configtask runs the environment tasks a configuration change
+// triggers: database and storage migration, tessdata and model downloads.
+// The tasks deduplicate on fixed keys and report no-op migrations with
+// ErrNoOp. Its task handler follows the domain-handler pattern.
 package configtask
 
 import (
@@ -21,8 +25,11 @@ import (
 	"github.com/wgomg/edub-kushim/internal/task"
 )
 
+// ErrNoOp is returned by the migrations when old and new paths match.
 var ErrNoOp = errors.New("migration is a no-op")
 
+// DirChanged reports whether the two directory settings differ after
+// path cleaning; empty on either side means no change.
 func DirChanged(oldDir, newDir string) bool {
 	if oldDir == "" || newDir == "" {
 		return false
@@ -30,6 +37,8 @@ func DirChanged(oldDir, newDir string) bool {
 	return filepath.Clean(oldDir) != filepath.Clean(newDir)
 }
 
+// The environment ops and their enqueue dedup keys, so concurrent
+// triggers collapse.
 const (
 	opTessdata       = "tessdata"
 	opHugot          = "hugot"
@@ -40,6 +49,8 @@ const (
 	DedupKeyMigrateStorage = "config:migrate-storage"
 )
 
+// MigrateDBPayload is the environment task's database migration input:
+// the connection to migrate to.
 type MigrateDBPayload struct {
 	Op        string `json:"op"`
 	ConfigDir string `json:"config_dir"`
@@ -51,6 +62,7 @@ type MigrateDBPayload struct {
 	SSLMode   string `json:"sslmode"`
 }
 
+// MigrateStoragePayload is the environment task's storage move input.
 type MigrateStoragePayload struct {
 	Op                string `json:"op"`
 	ConfigDir         string `json:"config_dir"`
@@ -60,15 +72,20 @@ type MigrateStoragePayload struct {
 	NewConsumptionDir string `json:"new_consumption_dir"`
 }
 
+// ConfigTaskHandler runs the environment tasks: asset downloads and the
+// database and storage migrations, driven by the config API.
 type ConfigTaskHandler struct {
 	queries *database.Queries
 	logger  *log.Logger
 }
 
+// NewConfigTaskHandler wires the handler to the queries and logger.
 func NewConfigTaskHandler(queries *database.Queries, logger *log.Logger) *ConfigTaskHandler {
 	return &ConfigTaskHandler{queries: queries, logger: logger}
 }
 
+// DedupKey derives the environment task's key from its op: per language
+// for tessdata, fixed keys for the migrations and the model download.
 func (h *ConfigTaskHandler) DedupKey(payload json.RawMessage) string {
 	var p struct {
 		Op   string `json:"op"`
@@ -92,6 +109,8 @@ func (h *ConfigTaskHandler) DedupKey(payload json.RawMessage) string {
 	return ""
 }
 
+// Handle dispatches the environment task to its op's handler, tracking
+// progress on the task row and settling the batch at the end.
 func (h *ConfigTaskHandler) Handle(ctx context.Context, t task.Task) (result json.RawMessage, err error) {
 	progress := task.NewProgressTracker(h.queries, t.TaskID)
 	task.MarkBatchProcessing(ctx, h.queries, t.BatchID)
@@ -152,6 +171,11 @@ func (h *ConfigTaskHandler) handleMigrateDB(ctx context.Context, t task.Task, pr
 	return json.Marshal(map[string]string{"status": "migrated"})
 }
 
+// MigrateDatabase migrates the schema to a fresh database named after
+// the configured one: creates it, applies the schema and seeders, copies
+// the data, and swaps the connection. It refuses a destination that is
+// not the configured database plus the migration suffix. Equal
+// connections report ErrNoOp.
 func MigrateDatabase(ctx context.Context, logger *log.Logger, p MigrateDBPayload, progress ...task.ProgressFunc) error {
 	cfg, err := config.Load(p.ConfigDir)
 	if err != nil {
@@ -273,6 +297,10 @@ func (h *ConfigTaskHandler) handleMigrateStorage(ctx context.Context, t task.Tas
 	}
 }
 
+// MigrateStorage moves the document layout to the new directories:
+// originals, processed files and thumbnails are renamed or copied into
+// the new tree, matching the old tree's structure. Equal directories
+// report ErrNoOp.
 func MigrateStorage(ctx context.Context, logger *log.Logger, p MigrateStoragePayload, progress ...task.ProgressFunc) error {
 	storageChanged := DirChanged(p.OldStorageDir, p.NewStorageDir)
 	consumptionChanged := DirChanged(p.OldConsumptionDir, p.NewConsumptionDir)

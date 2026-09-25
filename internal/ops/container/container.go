@@ -1,3 +1,8 @@
+// Package container is the composition root of the kushim process: it
+// owns the dynamic configuration, the database connection and reconnect
+// protocol, the task dispatcher and runner with the handler registry, the
+// pools per task type, and the lazily built services. Everything the CLI
+// verbs and the queue consume reads from here.
 package container
 
 import (
@@ -27,6 +32,8 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
+// Container is the composition root: one per process, holding the
+// dynamic config pointer and the lazily constructed dependencies.
 type Container struct {
 	cfg        atomic.Pointer[config.Config]
 	logger     *log.Logger
@@ -53,10 +60,14 @@ type Container struct {
 	}
 }
 
+// NewContainer builds a container without a database; the DB attaches
+// lazily through GetClient.
 func NewContainer(cfg *config.Config, logger *log.Logger) *Container {
 	return NewContainerWithDB(cfg, logger, nil)
 }
 
+// NewContainerWithDB builds the container over an existing database
+// connection.
 func NewContainerWithDB(cfg *config.Config, logger *log.Logger, db *sql.DB) *Container {
 	c := &Container{
 		logger: logger,
@@ -66,18 +77,23 @@ func NewContainerWithDB(cfg *config.Config, logger *log.Logger, db *sql.DB) *Con
 	return c
 }
 
+// GetConfig returns the current configuration snapshot.
 func (c *Container) GetConfig() *config.Config {
 	return c.cfg.Load()
 }
 
+// SetConfig swaps the configuration snapshot; new lazy services read it.
 func (c *Container) SetConfig(cfg *config.Config) {
 	c.cfg.Store(cfg)
 }
 
+// GetLogger returns the process logger.
 func (c *Container) GetLogger() *log.Logger {
 	return c.logger
 }
 
+// GetTagService lazily builds the curation tag service, embedding
+// through the matcher client; errors when the config lacks a model.
 func (c *Container) GetTagService() (*curation.Tag, error) {
 	if _, err := c.GetDispatcher(); err != nil {
 		return nil, err
@@ -85,6 +101,8 @@ func (c *Container) GetTagService() (*curation.Tag, error) {
 	return c.tag, nil
 }
 
+// GetDB returns the database handle, connecting on first use. The handle
+// stays valid across config reloads that keep the same connection.
 func (c *Container) GetDB() (*sql.DB, error) {
 	if c.db == nil {
 		dsn := config.BuildPostgresDSN(c.cfg.Load().Db)
@@ -101,6 +119,8 @@ func (c *Container) GetDB() (*sql.DB, error) {
 	return c.db, nil
 }
 
+// GetClient returns the query client over the database, building it on
+// first use.
 func (c *Container) GetClient() (*database.Client, error) {
 	if c.client != nil {
 		return c.client, nil
@@ -113,6 +133,8 @@ func (c *Container) GetClient() (*database.Client, error) {
 	return c.client, nil
 }
 
+// InvalidateDB drops the cached connection so the next GetClient
+// reconnects with the current configuration.
 func (c *Container) InvalidateDB() {
 	if c.db != nil {
 		c.db.Close()
@@ -138,6 +160,8 @@ func (c *Container) InvalidateDB() {
 	c.pools.tagidentity = nil
 }
 
+// ReconnectClient closes the current connection and reopens it from the
+// config, returning the fresh client.
 func (c *Container) ReconnectClient() (*database.Client, error) {
 	newDB, err := database.NewPostgresDB(config.BuildPostgresDSN(c.cfg.Load().Db))
 	if err != nil {
@@ -152,10 +176,15 @@ func (c *Container) ReconnectClient() (*database.Client, error) {
 	return c.GetClient()
 }
 
+// SocketPath returns the matcher daemon's Unix-socket path under the
+// config directory.
 func (c *Container) SocketPath() string {
 	return filepath.Join(c.cfg.Load().App.ConfigDir, "kushim-hugot.sock")
 }
 
+// GetDispatcher lazily builds the task dispatcher with the handler
+// registry; the registry is assembled once and includes every task type
+// the binary handles.
 func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 	if c.dispatcher != nil {
 		return c.dispatcher, nil
@@ -221,6 +250,7 @@ func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
 	return c.dispatcher, nil
 }
 
+// GetRunner lazily builds the claim runner over the registry.
 func (c *Container) GetRunner() (*task.Runner, error) {
 	if _, err := c.GetDispatcher(); err != nil {
 		return nil, err
@@ -228,6 +258,8 @@ func (c *Container) GetRunner() (*task.Runner, error) {
 	return c.runner, nil
 }
 
+// SetRunnerOwnerID records the owner identity on the task store for
+// claims and batch ownership rows.
 func (c *Container) SetRunnerOwnerID(id string) error {
 	if _, err := c.GetRunner(); err != nil {
 		return err
@@ -236,6 +268,8 @@ func (c *Container) SetRunnerOwnerID(id string) error {
 	return nil
 }
 
+// GetPool builds (once) the task pool of the given type with the
+// configured worker count and interval.
 func (c *Container) GetPool(taskType string) (*task.Pool, error) {
 	var pp **task.Pool
 	switch taskType {
@@ -308,6 +342,7 @@ func (c *Container) GetPool(taskType string) (*task.Pool, error) {
 	return *pp, nil
 }
 
+// GetSearchEngine lazily builds the search engine.
 func (c *Container) GetSearchEngine() (*search.Engine, error) {
 	if c.engine == nil {
 		client, err := c.GetClient()
@@ -319,6 +354,7 @@ func (c *Container) GetSearchEngine() (*search.Engine, error) {
 	return c.engine, nil
 }
 
+// Close releases the matcher embedder and any open database handle.
 func (c *Container) Close() {
 	if c.pools.consume != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

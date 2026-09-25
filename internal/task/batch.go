@@ -12,12 +12,17 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
+// StaleAfter is how long a batch owner may go without a heartbeat before
+// its ownership counts as stale.
 const StaleAfter = 15 * time.Second
 
+// ErrBatchLocked reports a batch owner collision with a live owner.
 var ErrBatchLocked = errors.New("batch is locked by a live owner")
 
+// OwnerState is the liveness of a batch's owner: none, live, or stale.
 type OwnerState int
 
+// The owner states, in liveness order.
 const (
 	OwnerNone OwnerState = iota
 	OwnerLive
@@ -37,6 +42,9 @@ func (s OwnerState) String() string {
 	}
 }
 
+// Owner claims and holds batch ownership: Acquire takes the row or reports
+// it live or stale, Heartbeat keeps it alive, and Release gives it up. The
+// consume driver and the blocking-task protocol use it.
 type Owner struct {
 	Queries    *database.Queries
 	OwnerID    string
@@ -46,10 +54,14 @@ type Owner struct {
 	maxRetries int32
 }
 
+// NewOwner prepares a batch owner; maxRetries bounds claim contention
+// retries.
 func NewOwner(c *database.Client, ownerID string, pid int, logger *log.Logger, maxRetries int) *Owner {
 	return &Owner{Queries: c.Queries, OwnerID: ownerID, PID: pid, Logger: logger, client: c, maxRetries: int32(maxRetries)}
 }
 
+// Acquire takes a batch's ownership row, taking over a stale one and
+// refusing a live one with ErrBatchLocked.
 func (o *Owner) Acquire(ctx context.Context, batchID string, staleAfter time.Duration) error {
 	rows, err := o.Queries.TryInsertBatchOwner(ctx, database.TryInsertBatchOwnerParams{
 		BatchID: batchID,
@@ -83,6 +95,8 @@ func (o *Owner) Acquire(ctx context.Context, batchID string, staleAfter time.Dur
 	return nil
 }
 
+// AcquireForce takes the ownership row regardless of who holds it, for
+// the takeover paths the cancel protocol drives.
 func (o *Owner) AcquireForce(ctx context.Context, batchID string) error {
 	rows, err := o.Queries.AcquireBatchOwnerForce(ctx, database.AcquireBatchOwnerForceParams{
 		BatchID: batchID,
@@ -98,6 +112,8 @@ func (o *Owner) AcquireForce(ctx context.Context, batchID string) error {
 	return nil
 }
 
+// Heartbeat renews the owner's timestamp, returning the still-live
+// owner rows it saw (a zero row count means this owner's row is gone).
 func (o *Owner) Heartbeat(ctx context.Context) (int64, error) {
 	rows, err := o.Queries.HeartbeatBatchOwner(ctx, o.OwnerID)
 	if err != nil {
@@ -106,6 +122,7 @@ func (o *Owner) Heartbeat(ctx context.Context) (int64, error) {
 	return rows, nil
 }
 
+// Release gives the batch's ownership up.
 func (o *Owner) Release(ctx context.Context, batchID string) error {
 	_, err := o.Queries.ReleaseBatchOwner(ctx, database.ReleaseBatchOwnerParams{
 		BatchID: batchID,
@@ -117,6 +134,7 @@ func (o *Owner) Release(ctx context.Context, batchID string) error {
 	return nil
 }
 
+// ResetProcessingByBatch re-queues a batch's processing tasks.
 func (o *Owner) ResetProcessingByBatch(ctx context.Context, batchID string) (int64, error) {
 	tx, err := o.client.BeginTx(ctx, nil)
 	if err != nil {
@@ -161,6 +179,7 @@ func (o *Owner) ResetProcessingByBatch(ctx context.Context, batchID string) (int
 	return quarantined + reset, nil
 }
 
+// CleanupCompleted removes the ownership rows of completed batches.
 func (o *Owner) CleanupCompleted(ctx context.Context) error {
 	_, err := o.Queries.CleanupCompletedBatches(ctx)
 	if err != nil {
@@ -169,10 +188,16 @@ func (o *Owner) CleanupCompleted(ctx context.Context) error {
 	return nil
 }
 
+// IsOrphaned decides whether a batch needs takeover: the owner state and
+// the pending and processing counts together say whether a dead owner left
+// work behind.
 func IsOrphaned(state OwnerState, pending, processing int64) bool {
 	return state != OwnerLive && (pending > 0 || processing > 0)
 }
 
+// MarkBatchProcessing moves a batch to processing, ignoring rows that no
+// longer exist. It and FinalizeBatchStatus are the bookends of the
+// blocking-task protocol.
 func MarkBatchProcessing(ctx context.Context, queries *database.Queries, batchID string) {
 	if batchID == "" {
 		return
@@ -180,6 +205,8 @@ func MarkBatchProcessing(ctx context.Context, queries *database.Queries, batchID
 	_ = queries.SetBatchProcessing(ctx, batchID)
 }
 
+// FinalizeBatchStatus settles a batch as completed or failed based on the
+// body's error.
 func FinalizeBatchStatus(ctx context.Context, queries *database.Queries, batchID string, failed bool) {
 	if batchID == "" {
 		return

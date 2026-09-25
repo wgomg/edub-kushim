@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// ThumbnailPath builds the storage path for a document's thumbnail,
+// bucketed by the creation time's year, month, day and hour.
 func ThumbnailPath(storageDir string, createdAt time.Time, docID string) string {
 	datePath := filepath.Join(
 		strconv.Itoa(createdAt.Year()),

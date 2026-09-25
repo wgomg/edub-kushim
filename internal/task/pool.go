@@ -10,10 +10,17 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
+// Nexter is the claim loop a Pool drives: one attempt to claim and run the
+// next task of the given type. Runner.Next is the production Nexter; the
+// seam exists so tests and other drivers can replace the loop.
 type Nexter interface {
 	Next(ctx context.Context, taskType types.TaskType) error
 }
 
+// Pool runs worker goroutines that poll a Nexter on a fixed interval for a
+// single task type. Workers restart after a panic or an error, periodic
+// memory snapshots go to the log at debug level, and Stop drains them up
+// to the caller's context deadline.
 type Pool struct {
 	logger   *log.Logger
 	runner   Nexter
@@ -27,6 +34,8 @@ type Pool struct {
 	cancel   context.CancelFunc
 }
 
+// NewPool prepares a pool for one task type; Start launches it. workers
+// is the fixed worker count and interval the claim cadence.
 func NewPool(logger *log.Logger, runner Nexter, workers int, interval time.Duration, taskType string) *Pool {
 	return &Pool{
 		logger:   logger,
@@ -38,6 +47,8 @@ func NewPool(logger *log.Logger, runner Nexter, workers int, interval time.Durat
 	}
 }
 
+// Start launches the workers. Call it once; a second call replaces the
+// context the first batch of workers polls with.
 func (p *Pool) Start(ctx context.Context) {
 	p.ctx, p.cancel = context.WithCancel(ctx)
 	for i := range p.workers {
@@ -47,6 +58,8 @@ func (p *Pool) Start(ctx context.Context) {
 	}
 }
 
+// Stop cancels the workers and waits for them, giving up after the
+// caller's context deadline. Idempotent.
 func (p *Pool) Stop(ctx context.Context) {
 	p.stopOnce.Do(func() {
 		close(p.stopCh)

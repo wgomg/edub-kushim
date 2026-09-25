@@ -11,11 +11,14 @@ import (
 	"github.com/wgomg/edub-kushim/internal/service"
 )
 
+// OrphanedHandler is the orphaned-files API: list, scan-and-quarantine,
+// delete, restore, and move back into the inbox.
 type OrphanedHandler struct {
 	svc    *service.Orphaned
 	logger *log.Logger
 }
 
+// NewOrphanedHandler wires the handler to the orphaned service.
 func NewOrphanedHandler(svc *service.Orphaned, logger *log.Logger) *OrphanedHandler {
 	return &OrphanedHandler{svc: svc, logger: logger}
 }
@@ -44,6 +47,7 @@ func mapOrphanedFile(f database.OrphanedFile) map[string]any {
 	return m
 }
 
+// ListOrphaned serves the quarantined files.
 func (h *OrphanedHandler) ListOrphaned(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -63,6 +67,7 @@ func (h *OrphanedHandler) ListOrphaned(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(result)
 }
 
+// ScanOrphaned runs one scan-and-quarantine sweep.
 func (h *OrphanedHandler) ScanOrphaned(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -79,6 +84,7 @@ func (h *OrphanedHandler) ScanOrphaned(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// DeleteOrphaned removes one quarantined file.
 func (h *OrphanedHandler) DeleteOrphaned(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -98,6 +104,7 @@ func (h *OrphanedHandler) DeleteOrphaned(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// RestoreOrphaned re-consumes one quarantined file.
 func (h *OrphanedHandler) RestoreOrphaned(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -117,6 +124,8 @@ func (h *OrphanedHandler) RestoreOrphaned(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusAccepted)
 }
 
+// MoveToInbox copies one quarantined file back into the consumption
+// directory.
 func (h *OrphanedHandler) MoveToInbox(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -136,6 +145,7 @@ func (h *OrphanedHandler) MoveToInbox(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
+// DeleteAllOrphaned removes every quarantined file.
 func (h *OrphanedHandler) DeleteAllOrphaned(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -152,6 +162,8 @@ func (h *OrphanedHandler) DeleteAllOrphaned(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+// MoveAllToInbox moves every quarantined file back into the consumption
+// directory.
 func (h *OrphanedHandler) MoveAllToInbox(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)

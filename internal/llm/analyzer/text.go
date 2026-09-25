@@ -40,6 +40,9 @@ func cleanCodeBlock(s string) string {
 	return strings.TrimSpace(s)
 }
 
+// ContainsNonLatin reports whether the string carries script beyond the
+// Latin alphabet (Han, Cyrillic, Arabic, and the rest of the CJK and
+// Brahmic families the enricher distinguishes).
 func ContainsNonLatin(s string) bool {
 	for _, r := range s {
 		if unicode.Is(unicode.Hangul, r) ||

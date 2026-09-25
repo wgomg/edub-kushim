@@ -19,6 +19,8 @@ const (
 	mergeSuggestionConfidenceSimilarityOnly = "similarity_only"
 )
 
+// MergeTagResult reports a completed merge: the source id that vanished,
+// the target it merged into, and how many documents were reassigned.
 type MergeTagResult struct {
 	SourceID   int64
 	TargetID   int64
@@ -26,12 +28,18 @@ type MergeTagResult struct {
 	Reassigned int64
 }
 
+// MergeSuggestionTag is one endpoint of a suggested pair: id, name and
+// live document count.
 type MergeSuggestionTag struct {
 	ID            int64  `json:"id"`
 	Name          string `json:"name"`
 	DocumentCount int64  `json:"document_count"`
 }
 
+// MergeSuggestion is one merge-review candidate: the two tags, their
+// embedding similarity, the verdict-event evidence recorded between them,
+// and whether the pair was dismissed. Confidence says whether the pair is
+// backed by a recorded verdict population or by similarity alone.
 type MergeSuggestion struct {
 	Tags            []MergeSuggestionTag `json:"tags"`
 	Similarity      float64              `json:"similarity"`
@@ -44,12 +52,16 @@ type MergeSuggestion struct {
 	Dismissed       bool                 `json:"dismissed,omitempty"`
 }
 
+// SuggestionsParams scopes the merge suggestion listing: page size, an
+// optional focus tag, and whether dismissed pairs come back.
 type SuggestionsParams struct {
 	Limit            int
 	ForTag           string
 	IncludeDismissed bool
 }
 
+// TagMerge executes merge review: the merge itself, the suggestion listing
+// over matcher pairs and verdict evidence, and the dismissal bookkeeping.
 type TagMerge struct {
 	client   *database.Client
 	matcher  matcher.Matcher
@@ -57,10 +69,17 @@ type TagMerge struct {
 	logger   *log.Logger
 }
 
+// NewTagMerge wires the merge service; matcher supplies the similar pairs
+// and embedder keeps the vocabulary in sync after merges.
 func NewTagMerge(client *database.Client, matcher matcher.Matcher, embedder matcher.Embedder, logger *log.Logger) *TagMerge {
 	return &TagMerge{client: client, matcher: matcher, embedder: embedder, logger: logger}
 }
 
+// Merge folds the source tag into the target inside one transaction:
+// documents are reassigned, orphan marks cleared, the source row deleted,
+// and the merge recorded in the deleted-tag blocklist (kind merged) so the
+// name cannot silently come back. The source's name leaves the matcher
+// store after commit.
 func (s *TagMerge) Merge(ctx context.Context, sourceID, targetID int64) (MergeTagResult, error) {
 	if sourceID == targetID {
 		return MergeTagResult{}, errs.EInvalid("merge tag", errors.New("source and target must differ"))
@@ -154,6 +173,10 @@ type pairEvidence struct {
 	relatedCount    int64
 }
 
+// Suggestions lists the merge-review candidates from the matcher's
+// similar pairs, annotated with verdict evidence and confidence, ordered
+// with population-backed pairs first. Dismissed pairs stay hidden unless
+// asked, and each class keeps its own share of the page limit.
 func (s *TagMerge) Suggestions(ctx context.Context, params SuggestionsParams) ([]MergeSuggestion, error) {
 	pairs, err := s.matcher.SimilarPairs(ctx)
 	if err != nil {
@@ -321,6 +344,8 @@ func (s *TagMerge) Suggestions(ctx context.Context, params SuggestionsParams) ([
 	return kept, nil
 }
 
+// DismissPair records the decision not to merge a pair; the names are
+// normalized and ordered, and both tags must exist.
 func (s *TagMerge) DismissPair(ctx context.Context, tagA, tagB string) error {
 	a, b, err := canonicalMergePair("dismiss merge pair", tagA, tagB)
 	if err != nil {
@@ -341,6 +366,7 @@ func (s *TagMerge) DismissPair(ctx context.Context, tagA, tagB string) error {
 	return nil
 }
 
+// RestorePair removes a pair's dismissal so it can be reviewed again.
 func (s *TagMerge) RestorePair(ctx context.Context, tagA, tagB string) error {
 	a, b, err := canonicalMergePair("restore merge pair", tagA, tagB)
 	if err != nil {

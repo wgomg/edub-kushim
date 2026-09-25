@@ -23,7 +23,9 @@ import (
 )
 
 // Gosseract implements OCR using Tesseract (gosseract) with MuPDF for page
-// rendering via the custom CGo wrapper (mupdf_wrapper.go).
+// rendering via the custom CGo wrapper (mupdf_wrapper.go). Process forks
+// this same binary as "kushim internal-ocr", so page-level parallelism
+// lives in a child process and the parent stays responsive.
 type Gosseract struct {
 	logger     *log.Logger
 	config     config.ToolConfig
@@ -34,6 +36,9 @@ type Gosseract struct {
 	dataDir   string
 }
 
+// NewGosseract wires the engine: the optimizer renders pages, the
+// tessdata directory is self-healed on first Process, and an empty
+// language list defaults to English.
 func NewGosseract(logger *log.Logger, cfg config.ToolConfig, optimizerCmd string, languages []string, dataDir string, ocrWorkers int) (*Gosseract, error) {
 	optCfg := config.ToolConfig{Command: optimizerCmd, Timeout: cfg.Timeout}
 	optimizer, err := pdfoptimizer.NewPdfOptimizer(logger, optCfg)
@@ -48,6 +53,9 @@ func NewGosseract(logger *log.Logger, cfg config.ToolConfig, optimizerCmd string
 	return &Gosseract{logger: logger, config: cfg, optimizer: optimizer, languages: languages, dataDir: dataDir, ocrWorkers: ocrWorkers}, nil
 }
 
+// Process forks the internal-ocr verb over the document and returns the
+// searchable PDF's temp path. PDFs only; the internal-ocr verb accepts
+// images directly.
 func (o *Gosseract) Process(ctx context.Context, docId, path string) (*string, error) {
 	if err := EnsureLanguages(o.logger, o.dataDir, o.languages); err != nil {
 		return nil, fmt.Errorf("tessdata setup: %w", err)
@@ -114,10 +122,12 @@ func (o *Gosseract) Process(ctx context.Context, docId, path string) (*string, e
 	return optResult, nil
 }
 
+// CanHandle reports PDF content types.
 func (o *Gosseract) CanHandle(mimeType string) bool {
 	return _mime.IsPDF(mimeType)
 }
 
+// Name identifies the engine.
 func (o *Gosseract) Name() string {
 	return config.OCR.Gosseract
 }

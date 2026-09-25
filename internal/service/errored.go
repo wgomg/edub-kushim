@@ -16,6 +16,8 @@ import (
 	"github.com/wgomg/edub-kushim/internal/log"
 )
 
+// ErroredFileInfo is one file in the errors directory: name, subdirectory,
+// size, detected content type, and modification time.
 type ErroredFileInfo struct {
 	Name         string
 	Subdir       string
@@ -24,15 +26,21 @@ type ErroredFileInfo struct {
 	ModifiedAt   time.Time
 }
 
+// ErroredFiles administers the errors directory: listing, path
+// resolution with traversal protection, and deletion.
 type ErroredFiles struct {
 	cfg    *config.Config
 	logger *log.Logger
 }
 
+// NewErroredFiles builds the admin service over the configured errors
+// directory.
 func NewErroredFiles(cfg *config.Config, logger *log.Logger) *ErroredFiles {
 	return &ErroredFiles{cfg: cfg, logger: logger}
 }
 
+// List walks the errors directory tree and reports the files;
+// subdirectories are not recursed beyond their own entries.
 func (s *ErroredFiles) List(_ context.Context) ([]ErroredFileInfo, error) {
 	storageDir := s.cfg.Storage.StorageDir
 	subdirs := []string{storage.DirErrors, storage.DirErrorsDuplicates}
@@ -80,6 +88,8 @@ func (s *ErroredFiles) List(_ context.Context) ([]ErroredFileInfo, error) {
 	return files, nil
 }
 
+// GetPath resolves a subdirectory and file name to a path inside the
+// errors directory, refusing traversal and unknown subdirectories.
 func (s *ErroredFiles) GetPath(subdir, filename string) (string, error) {
 	clean := filepath.Clean(filename)
 	if strings.Contains(clean, "..") {
@@ -109,6 +119,7 @@ func (s *ErroredFiles) GetPath(subdir, filename string) (string, error) {
 	return abs, nil
 }
 
+// Delete removes one errored file by subdirectory and name.
 func (s *ErroredFiles) Delete(subdir, filename string) error {
 	path, err := s.GetPath(subdir, filename)
 	if err != nil {
@@ -120,6 +131,8 @@ func (s *ErroredFiles) Delete(subdir, filename string) error {
 	return os.Remove(path)
 }
 
+// DeleteAll clears the whole errors directory tree and returns how many
+// files went away.
 func (s *ErroredFiles) DeleteAll(_ context.Context) (int, error) {
 	storageDir := s.cfg.Storage.StorageDir
 	subdirs := []string{storage.DirErrors, storage.DirErrorsDuplicates}

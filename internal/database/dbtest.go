@@ -15,6 +15,8 @@ import (
 	"github.com/wgomg/edub-kushim/internal/textnorm"
 )
 
+// TB is the minimal testing surface the helpers need, so they work with
+// *testing.T and *testing.B alike.
 type TB interface {
 	Fatalf(format string, args ...any)
 	Helper()
@@ -26,6 +28,10 @@ var (
 	testDBRefCountsMu sync.Mutex
 )
 
+// NewTestDB gives the test its own per-package database, initialized with
+// the schema and shared by reference counting across parallel tests;
+// dropped with FORCE when the last user releases it. Requires
+// TEST_DATABASE_URL.
 func NewTestDB(t TB) *sql.DB {
 	t.Helper()
 	baseDSN := os.Getenv("TEST_DATABASE_URL")
@@ -55,6 +61,8 @@ func NewTestDB(t TB) *sql.DB {
 	return db
 }
 
+// TestDSN returns the TEST_DATABASE_URL connection string, failing the
+// test when it is not set.
 func TestDSN(t TB) string {
 	t.Helper()
 	baseDSN := os.Getenv("TEST_DATABASE_URL")
@@ -108,18 +116,24 @@ func testPackageDir() string {
 	return "unknown"
 }
 
+// NewTestQueries returns the queries and the DB they run over.
 func NewTestQueries(t TB) (*Queries, *sql.DB) {
 	t.Helper()
 	db := NewTestDB(t)
 	return New(db), db
 }
 
+// NewTestClient returns the client over its own per-package test
+// database.
 func NewTestClient(t TB) *Client {
 	t.Helper()
 	q, db := NewTestQueries(t)
 	return &Client{Queries: q, db: db}
 }
 
+// CreateTestDocument inserts one live document row with unique values
+// and its storage files laid out on disk; returns the id and the
+// document UUID.
 func CreateTestDocument(t TB, queries *Queries, title string) (int64, string) {
 	t.Helper()
 	ctx := context.Background()
@@ -154,6 +168,8 @@ func CreateTestDocument(t TB, queries *Queries, title string) (int64, string) {
 	return id, docID
 }
 
+// SeedTagByName inserts a promoted tag under the normalized name,
+// skipping when it exists, and returns its id.
 func SeedTagByName(t TB, queries *Queries, name string) Tag {
 	t.Helper()
 	ctx := context.Background()
@@ -174,6 +190,7 @@ func SeedTagByName(t TB, queries *Queries, name string) Tag {
 	return tag
 }
 
+// MustCreateTag creates a tag or fatals.
 func MustCreateTag(t TB, queries *Queries, name string) int64 {
 	t.Helper()
 	id, err := queries.CreateTag(context.Background(), textnorm.NormalizeTag(name))
@@ -183,6 +200,7 @@ func MustCreateTag(t TB, queries *Queries, name string) int64 {
 	return id
 }
 
+// MustAddDocumentTag attaches a tag to a document or fatals.
 func MustAddDocumentTag(t TB, queries *Queries, documentID, tagID int64) {
 	t.Helper()
 	if err := queries.AddDocumentTag(context.Background(), AddDocumentTagParams{
@@ -192,6 +210,8 @@ func MustAddDocumentTag(t TB, queries *Queries, documentID, tagID int64) {
 	}
 }
 
+// CreateUniqueDocument inserts one document with a unique title and
+// stored text, reusing CreateTestDocument.
 func CreateUniqueDocument(t TB, queries *Queries, title string) int64 {
 	t.Helper()
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
@@ -213,6 +233,8 @@ func CreateUniqueDocument(t TB, queries *Queries, title string) int64 {
 	return id
 }
 
+// ResetTestDatabase drops and re-creates the test database named by the
+// DSN, for cross-test isolation.
 func ResetTestDatabase(db *sql.DB) {
 	ctx := context.Background()
 	tables := []string{

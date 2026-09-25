@@ -9,6 +9,11 @@ import (
 	"strings"
 )
 
+// GenerateServiceFiles writes the systemd unit files for the matcher
+// daemon, the queue daemon and the API server, plus the target that ties
+// them together, into configDir/systemd. The units run as the current
+// user, the kushim binary is resolved from this process or PATH, and
+// unchanged files are left alone.
 func GenerateServiceFiles(configDir string) (string, error) {
 	usr, err := user.Current()
 	if err != nil {

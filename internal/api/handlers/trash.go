@@ -11,12 +11,16 @@ import (
 	"github.com/wgomg/edub-kushim/internal/service"
 )
 
+// TrashHandler is the trash API: listing, restore, permanent deletion,
+// purge, and the batch variants.
 type TrashHandler struct {
 	logger    *log.Logger
 	trashSvc  *service.TrashService
 	getConfig func() *config.Config
 }
 
+// NewTrashHandler wires the handler to the trash service and the dynamic
+// config.
 func NewTrashHandler(logger *log.Logger, trashSvc *service.TrashService, getConfig func() *config.Config) *TrashHandler {
 	return &TrashHandler{logger: logger, trashSvc: trashSvc, getConfig: getConfig}
 }
@@ -35,6 +39,7 @@ func mapTrashDocument(row database.ListTrashDocumentsRow) TrashDocumentResponse 
 	}
 }
 
+// ListTrash serves the paged trash listing.
 func (h *TrashHandler) ListTrash(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -74,6 +79,7 @@ func (h *TrashHandler) ListTrash(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// GetTrashDocument serves one trashed document.
 func (h *TrashHandler) GetTrashDocument(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -110,6 +116,7 @@ func (h *TrashHandler) GetTrashDocument(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// RestoreDocument moves one document back out of the trash.
 func (h *TrashHandler) RestoreDocument(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -128,6 +135,7 @@ func (h *TrashHandler) RestoreDocument(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// PermanentlyDeleteDocument removes one trashed document for good.
 func (h *TrashHandler) PermanentlyDeleteDocument(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -146,6 +154,7 @@ func (h *TrashHandler) PermanentlyDeleteDocument(w http.ResponseWriter, r *http.
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// PurgeExpired purges the trash rows past their retention.
 func (h *TrashHandler) PurgeExpired(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -160,6 +169,8 @@ func (h *TrashHandler) PurgeExpired(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{"purged": count})
 }
 
+// BatchPermanentlyDelete permanently deletes many trashed documents,
+// reporting per-document failures.
 func (h *TrashHandler) BatchPermanentlyDelete(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -210,6 +221,8 @@ func (h *TrashHandler) BatchPermanentlyDelete(w http.ResponseWriter, r *http.Req
 	json.NewEncoder(w).Encode(result)
 }
 
+// BatchRestore restores many trashed documents, reporting per-document
+// failures.
 func (h *TrashHandler) BatchRestore(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)

@@ -10,6 +10,10 @@ import (
 	"github.com/wgomg/edub-kushim/internal/task"
 )
 
+// ConsumeTaskHandler consumes one file as a blocking task: it runs the
+// consumer's Process, activates the paired waiting enrich and thumbnail
+// tasks on success, and discards them on failure, best-effort even when
+// the payload does not parse.
 type ConsumeTaskHandler struct {
 	consumer *Consumer
 	store    *task.Store
@@ -17,6 +21,8 @@ type ConsumeTaskHandler struct {
 	logger   *log.Logger
 }
 
+// NewConsumeTaskHandler wires the handler to the consumer, the task store
+// and the queries.
 func NewConsumeTaskHandler(consumer *Consumer, store *task.Store, queries *database.Queries, logger *log.Logger) *ConsumeTaskHandler {
 	return &ConsumeTaskHandler{
 		consumer: consumer,
@@ -26,6 +32,10 @@ func NewConsumeTaskHandler(consumer *Consumer, store *task.Store, queries *datab
 	}
 }
 
+// Handle consumes the payload's file and returns the document's storage
+// path as the task result; the waiting children activate only when the
+// document row was committed, and are discarded with the parent on
+// failure.
 func (h *ConsumeTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMessage, error) {
 	progress := task.NewProgressTracker(h.queries, t.TaskID)
 
@@ -270,6 +280,8 @@ func (h *ConsumeTaskHandler) recoverOnCompleted(payload json.RawMessage) (onComp
 	return p.OnCompleted, p.OnCompletedThumbnail
 }
 
+// DedupKey is the payload's file path, so the same file never enqueues
+// twice concurrently.
 func (h *ConsumeTaskHandler) DedupKey(payload json.RawMessage) string {
 	var p struct {
 		FilePath string `json:"file_path"`

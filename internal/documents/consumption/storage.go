@@ -18,6 +18,11 @@ import (
 	_mime "github.com/wgomg/edub-kushim/internal/documents/mime"
 )
 
+// GetFiles lists the supported files of the consumption directory, oldest
+// by creation time first, detecting each file's content type and
+// computing its MD5 and SHA-512 in one pass. Files whose content type
+// cannot be detected are skipped; the list stops at maxFiles (zero means
+// no limit); a missing directory is an error.
 func GetFiles(src string, exts []string, maxFiles int) ([]File, error) {
 	if _, err := os.Stat(src); os.IsNotExist(err) {
 		return nil, fmt.Errorf("consumption directory `%s` does not exist", src)
@@ -117,6 +122,8 @@ func GetFiles(src string, exts []string, maxFiles int) ([]File, error) {
 	return files, nil
 }
 
+// FileFromPath builds a File for an existing path, detecting its content
+// type and checksums.
 func FileFromPath(path string) (File, error) {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -144,6 +151,7 @@ func FileFromPath(path string) (File, error) {
 	}, nil
 }
 
+// FilePaths extracts the original paths of a file list, in order.
 func FilePaths(files []File) []string {
 	paths := make([]string, len(files))
 	for i, f := range files {
@@ -152,6 +160,7 @@ func FilePaths(files []File) []string {
 	return paths
 }
 
+// RemoveFile deletes a file; an empty or missing path is a no-op.
 func RemoveFile(path string) error {
 	if path == "" {
 		return nil
@@ -168,6 +177,9 @@ func RemoveFile(path string) error {
 	return nil
 }
 
+// MoveFile renames src to dst, creating the destination directory, and
+// falls back to a copy-and-delete across filesystems. A leftover source
+// after such a copy is logged and the move still succeeds.
 func MoveFile(src, dst string) error {
 	srcInfo, err := os.Stat(src)
 	if err != nil {
@@ -191,6 +203,8 @@ func MoveFile(src, dst string) error {
 	return moveFileCrossDevice(src, dst, srcInfo)
 }
 
+// CopyFile copies src to dst with the source's mode, syncing to disk and
+// removing the destination on failure.
 func CopyFile(src, dst string) error {
 	srcInfo, err := os.Stat(src)
 	if err != nil {
@@ -231,6 +245,8 @@ func CopyFile(src, dst string) error {
 	return nil
 }
 
+// CleanUp removes a file if it exists, tolerating a vanished target;
+// other removal errors propagate.
 func CleanUp(path string) error {
 	if path == "" {
 		return nil

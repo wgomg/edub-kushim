@@ -20,8 +20,10 @@ import (
 	"github.com/wgomg/edub-kushim/internal/version"
 )
 
+// StateFileName is the mirror state file's name at the destination root.
 const StateFileName = ".edub-mirror.json"
 
+// State is what a destination's mirror state file records.
 type State struct {
 	Mode      string `json:"mode"`
 	Timestamp string `json:"timestamp"`
@@ -30,6 +32,8 @@ type State struct {
 	Version   string `json:"version"`
 }
 
+// Result reports one mirror run: totals on the target, what rsync
+// transferred, and the created, deleted and updated entries.
 type Result struct {
 	Files       int64 `json:"files"`
 	Bytes       int64 `json:"bytes"`
@@ -39,15 +43,20 @@ type Result struct {
 	Updated     int64 `json:"updated"`
 }
 
+// Available reports whether rsync is on PATH.
 func Available() bool {
 	_, err := exec.LookPath("rsync")
 	return err == nil
 }
 
+// IsRemoteTarget reports whether the destination is remote
+// (host:path form).
 func IsRemoteTarget(dest string) bool {
 	return config.IsRemoteMirrorTarget(dest)
 }
 
+// ValidateDestination refuses mirror destinations that would recurse
+// into the data, as the config's mirror validation does.
 func ValidateDestination(dest, storageDir, backupPath string) error {
 	return config.ValidateMirrorDestination(dest, storageDir, backupPath)
 }
@@ -64,6 +73,9 @@ func rsyncCommand(ctx context.Context, args ...string) *exec.Cmd {
 	return cmd
 }
 
+// Run mirrors the storage directory to the destination, mirroring
+// deletions, and writes the state file at the destination. The returned
+// stats are parsed from rsync's stats output.
 func Run(ctx context.Context, storageDir, dest string) (*Result, error) {
 	if !Available() {
 		return nil, fmt.Errorf("rsync is not installed")
@@ -147,11 +159,13 @@ func formatCount(n int64) string {
 	return string(out)
 }
 
+// Summary renders the result as one human-readable line.
 func (r *Result) Summary() string {
 	return fmt.Sprintf("%s files (%d transferred: %d created, %d updated, %d deleted), %s bytes",
 		formatCount(r.Files), r.Transferred, r.Created, r.Updated, r.Deleted, formatCount(r.Bytes))
 }
 
+// WriteState records a successful run in the destination's state file.
 func WriteState(dest string, state State) error {
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
@@ -182,6 +196,10 @@ func WriteState(dest string, state State) error {
 	return nil
 }
 
+// RunLocked acquires the maintenance lock (skipping cleanly when busy),
+// mirrors, and records the mirror task's completion; onWait reports the
+// queued count while waiting for the lock. Returns the result and the
+// lock token, with ok=false when the lock was busy.
 func RunLocked(ctx context.Context, queries *database.Queries, logger *log.Logger, storageDir, dest string, onWait ...func(count int64)) (*Result, string, error) {
 	var wait func(count int64)
 	if len(onWait) > 0 {
@@ -190,6 +208,9 @@ func RunLocked(ctx context.Context, queries *database.Queries, logger *log.Logge
 	return runLocked(ctx, queries, logger, storageDir, dest, wait, nil, uuid.NullUUID{})
 }
 
+// RunLockedWithProgress is RunLocked with progress callbacks: onWait for
+// the lock wait, onSync when the sync starts. token, when valid, is the
+// blocking task's claim token the run settles.
 func RunLockedWithProgress(ctx context.Context, queries *database.Queries, logger *log.Logger, storageDir, dest string, onWait func(count int64), onSync func(), token uuid.NullUUID) (*Result, string, error) {
 	return runLocked(ctx, queries, logger, storageDir, dest, onWait, onSync, token)
 }

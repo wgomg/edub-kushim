@@ -14,6 +14,11 @@ import (
 
 var ensureOnce sync.Once
 
+// EnsureLanguages makes the tessdata directory exist, downloads any
+// configured language pack that is missing from the tessdata_fast
+// repository, and points Tesseract at the directory through
+// TESSDATA_PREFIX. The work runs once per process; later calls return the
+// first call's result.
 func EnsureLanguages(logger *log.Logger, dataDir string, languages []string) error {
 	var err error
 	ensureOnce.Do(func() {
@@ -75,6 +80,7 @@ func downloadTessdata(url, dest string) error {
 	return nil
 }
 
+// LangString joins language codes the way Tesseract expects them.
 func LangString(languages []string) string {
 	return strings.Join(languages, "+")
 }

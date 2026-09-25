@@ -14,10 +14,13 @@ import (
 	"github.com/wgomg/edub-kushim/internal/textnorm"
 )
 
-// pins the birth-time identity rules and the judging body's criteria text;
-// bump it when either changes
+// IdentityRuleSetVersion pins the birth-time identity rules and the
+// judging body's criteria text; bump it when either changes.
 const IdentityRuleSetVersion = "v0"
 
+// The IdentityKind* values name the evidence rows the identity machinery
+// records: base-form proposals, the fold gate, the conventional-form
+// check, and same-intent shape flags.
 const (
 	IdentityKindBaseForm         = "base_form"
 	IdentityKindFoldGate         = "fold_gate"
@@ -25,6 +28,7 @@ const (
 	IdentityKindSameIntent       = "same_intent"
 )
 
+// The verdict values an identity evidence row carries.
 const (
 	IdentityVerdictFold      = "fold"
 	IdentityVerdictStand     = "stand"
@@ -34,8 +38,14 @@ const (
 	IdentityVerdictDefer     = "defer"
 )
 
+// Disposition is what the deterministic plan says to do with one
+// candidate name.
 type Disposition string
 
+// The dispositions a registration can carry: resolve to an existing
+// canonical, register a new tag (provisional when flagged), conflict on a
+// house-form key match, alias onto a resolved canonical, defer to the
+// judging body, or reject as invalid.
 const (
 	DispositionApply    Disposition = "apply"
 	DispositionRegister Disposition = "register"
@@ -45,12 +55,18 @@ const (
 	DispositionInvalid  Disposition = "invalid"
 )
 
+// AliasAction records one alias to write: the alias name, its canonical
+// target, and whether the alias's own tag row should leave the store once
+// the alias exists.
 type AliasAction struct {
 	AliasName         string
 	Canonical         string
 	RemoveExistingTag bool
 }
 
+// Registration is the plan's outcome for one candidate name: the raw
+// input, its normalized and house-formed form, the disposition, whether
+// it registers provisionally, and the fold the gate should judge.
 type Registration struct {
 	Input       string
 	Name        string
@@ -60,6 +76,9 @@ type Registration struct {
 	Fold        string
 }
 
+// EvidenceRow is one pending identity judgment: its kind, the candidate
+// and partner names, the criteria the judging body receives (JSON), the
+// verdict once judged, and the model that judged.
 type EvidenceRow struct {
 	Kind      string
 	Candidate string
@@ -69,6 +88,9 @@ type EvidenceRow struct {
 	Model     string
 }
 
+// Plan is the deterministic identity plan for a batch of candidate
+// names: registrations, alias writes, and the evidence rows the judging
+// body must settle before anything is written.
 type Plan struct {
 	Registrations      []Registration
 	Aliases            []AliasAction
@@ -76,6 +98,8 @@ type Plan struct {
 	SkipBlocklistCheck bool
 }
 
+// RemovedStoreNames lists the names whose own tag rows leave the store
+// because their alias actions say so.
 func (p Plan) RemovedStoreNames() []string {
 	var out []string
 	for _, action := range p.Aliases {
@@ -86,6 +110,8 @@ func (p Plan) RemovedStoreNames() []string {
 	return out
 }
 
+// StoreView is the store state a plan is computed against: the live
+// names, the aliases that resolve them, and the blocklist.
 type StoreView struct {
 	Names   []string
 	Aliases map[string]string
@@ -114,8 +140,10 @@ func newEnglishLemmatizer() *golem.Lemmatizer {
 	return l
 }
 
-// docs/tags/canonical-form-and-identity.md §3.2 M1: house form; style rewrites
-// are written directly
+// HouseForm applies the house form to a name
+// (docs/tags/canonical-form-and-identity.md §3.2 M1): ordinal words become
+// digits and Roman numerals become digits. Style rewrites are written
+// directly, never proposed.
 func HouseForm(name string) string {
 	tokens := strings.Fields(name)
 	changed := false
@@ -196,19 +224,22 @@ func renderRoman(n int) string {
 	return sb.String()
 }
 
-// docs/tags/canonical-form-and-identity.md §3.2 M3: key equality, so style
-// variants collapse without judging
+// Key is the house-form key equality
+// (docs/tags/canonical-form-and-identity.md §3.2 M3): style variants
+// collapse onto one key without judging.
 func Key(name string) string {
 	return HouseForm(name)
 }
 
-// docs/tags/canonical-form-and-identity.md §3.2 M2: lemma and stem signatures
-// are evidence only; the stemmer's output is never written
+// Signature is a name's lemma and stem signatures
+// (docs/tags/canonical-form-and-identity.md §3.2 M2). They are evidence
+// only; the stemmer's output is never written to the store.
 type Signature struct {
 	Lemmas string
 	Stems  string
 }
 
+// ComputeSignature computes a name's lemma and stem signatures.
 func ComputeSignature(name string) Signature {
 	tokens := strings.Fields(name)
 	lemmas := make([]string, len(tokens))
@@ -223,15 +254,20 @@ func ComputeSignature(name string) Signature {
 	}
 }
 
+// ShapeRelatedTo reports whether the two signatures agree on lemmas or
+// on stems.
 func (s Signature) ShapeRelatedTo(other Signature) bool {
 	return s.Lemmas == other.Lemmas || s.Stems == other.Stems
 }
 
+// NameIndex caches the keys and shape signatures of a set of names so
+// shape comparisons do not recompute them.
 type NameIndex struct {
 	keys  map[string]string
 	shape map[string]Signature
 }
 
+// NewNameIndex indexes the given names.
 func NewNameIndex(names []string) *NameIndex {
 	ix := &NameIndex{
 		keys:  make(map[string]string, len(names)),
@@ -251,6 +287,9 @@ func (ix *NameIndex) ensure(name string) {
 	ix.shape[name] = ComputeSignature(name)
 }
 
+// ShapeRelated reports whether two names are shape related: their keys
+// differ (key equality is handled earlier) but their lemmas or stems
+// agree. Empty and equal names are never related.
 func (ix *NameIndex) ShapeRelated(a, b string) bool {
 	if a == "" || b == "" || a == b {
 		return false
@@ -263,6 +302,8 @@ func (ix *NameIndex) ShapeRelated(a, b string) bool {
 	return ix.shape[a].ShapeRelatedTo(ix.shape[b])
 }
 
+// ResolveAliases maps each normalized name to its canonical form through
+// the alias table; names without an alias are absent from the result.
 func ResolveAliases(ctx context.Context, q *database.Queries, names []string) (map[string]string, error) {
 	normalized := make([]string, 0, len(names))
 	seen := make(map[string]struct{}, len(names))
@@ -292,8 +333,9 @@ func ResolveAliases(ctx context.Context, q *database.Queries, names []string) (m
 	return out, nil
 }
 
-// a proposed fold is never written unconfirmed; the judging body's gate
-// decides
+// ProposedFold proposes the lemma-folded form of a name, or "" when the
+// name is already in base form. A proposed fold is never written
+// unconfirmed; the judging body's gate decides.
 func ProposedFold(name string) string {
 	tokens := strings.Fields(name)
 	changed := false
@@ -310,8 +352,10 @@ func ProposedFold(name string) string {
 	return strings.Join(tokens, " ")
 }
 
-// docs/tags/canonical-form-and-identity.md §3.2 M4: deterministic tie-break for
-// labels the direction criteria do not separate
+// TieBreak is the deterministic tie-break for labels the direction
+// criteria do not separate
+// (docs/tags/canonical-form-and-identity.md §3.2 M4): the
+// lexicographically smaller name wins.
 func TieBreak(a, b string) string {
 	if a <= b {
 		return a
@@ -339,8 +383,10 @@ func stemOf(token string) string {
 	return env.Current()
 }
 
-// never proposes a fold, adjudicates, or makes an alias; flagged shape
-// relations register provisionally and leave pending evidence
+// PlanDeterministic plans the disposition of candidate names against the
+// store view. It never proposes a fold, adjudicates, or writes an alias:
+// flagged shape relations register provisionally and leave pending
+// evidence rows for the judging body.
 func PlanDeterministic(names []string, view StoreView) Plan {
 	byKey := make(map[string]string, len(view.Names))
 	for _, name := range view.Names {

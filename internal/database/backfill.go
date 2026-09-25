@@ -1,3 +1,10 @@
+// Package database is the persistence layer: the sqlc-generated queries
+// and models over PostgreSQL, the connection pool, the embedded schema
+// migrations and seeders, the hand-written query extensions (dashboard
+// aggregates, structured search, document sorting), the maintenance
+// helpers (backfills, migrations, dumps, restores), and the DB test
+// helpers. The *.sql.go files are sqlc-generated; edit the queries and
+// regenerate instead of editing them.
 package database
 
 import (
@@ -11,6 +18,9 @@ import (
 	"strings"
 )
 
+// BackfillProcessedSizes computes the missing processed_size values from
+// the files on disk; run during schema initialization when a migration
+// requires it.
 func BackfillProcessedSizes(ctx context.Context, db *sql.DB) error {
 	rows, err := db.QueryContext(ctx,
 		`SELECT id, storage_path FROM document WHERE processed_size = 0 AND deleted_at IS NULL`)
@@ -78,6 +88,8 @@ func BackfillProcessedSizes(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
+// BackfillTextHash computes the missing text hashes of stored document
+// text in place.
 func BackfillTextHash(ctx context.Context, db *sql.DB) error {
 	var pending bool
 	if err := db.QueryRowContext(ctx,

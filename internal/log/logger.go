@@ -1,3 +1,7 @@
+// Package log provides the process logger: leveled console output, an
+// optional log file that mirrors every record, and the memory and duration
+// formatters that feed log lines. Every package receives a *Logger from its
+// constructor; the package holds no global state.
 package log
 
 import (
@@ -16,8 +20,12 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
+// LogLevel is the console verbosity, ordered from silent (1) to debug (7).
+// It gates console output only; a configured log file always receives every
+// record.
 type LogLevel int
 
+// The console levels, from silent through debug; see LogLevel.
 const (
 	LevelSilent LogLevel = 1
 	LevelFatal  LogLevel = 2
@@ -120,6 +128,12 @@ func (h *fileHandler) WithAttrs(attrs []slog.Attr) slog.Handler { return h }
 
 func (h *fileHandler) WithGroup(name string) slog.Handler { return h }
 
+// Logger is the process-wide logger handed down through constructors. Info,
+// Error, Debug and Warn write one printf-formatted line: the console copy is
+// gated by the console level and carries the caller's file and line, while a
+// file attached with SetLogFile receives every record without source
+// locations. A non-nil reqID is prepended to the message as "REQID=<id>".
+// All methods are safe for concurrent use.
 type Logger struct {
 	level          LogLevel
 	consoleLevel   *slog.LevelVar
@@ -129,6 +143,9 @@ type Logger struct {
 	RawBodyLog     bool
 }
 
+// NewLogger returns a logger writing to the console at the given level. The
+// level is matched case-insensitively and "warning" is accepted for "warn";
+// anything unrecognized falls back to info, so construction never fails.
 func NewLogger(level string) *Logger {
 	logLevel := parseLogLevel(level)
 	consoleLevel := new(slog.LevelVar)
@@ -141,6 +158,8 @@ func NewLogger(level string) *Logger {
 	}
 }
 
+// NewDiscardLogger returns a logger that discards every record. Use it where
+// a *Logger is required but output would be noise, such as in tests.
 func NewDiscardLogger() *Logger {
 	consoleLevel := new(slog.LevelVar)
 	consoleLevel.Set(slog.Level(13))
@@ -151,6 +170,8 @@ func NewDiscardLogger() *Logger {
 	}
 }
 
+// NewLoggerWithWriter returns a logger at debug level that sends its console
+// output to w instead of the process stdout and stderr.
 func NewLoggerWithWriter(w io.Writer) *Logger {
 	consoleLevel := new(slog.LevelVar)
 	consoleLevel.Set(slog.LevelDebug)
@@ -164,6 +185,9 @@ func NewLoggerWithWriter(w io.Writer) *Logger {
 	}
 }
 
+// LogFileConfig describes the log file. A MaxSize greater than zero enables
+// size-based rotation with the given backup count, age and compression; zero
+// opens the file in plain append mode instead.
 type LogFileConfig struct {
 	Path       string
 	MaxSize    int
@@ -172,6 +196,10 @@ type LogFileConfig struct {
 	Compress   bool
 }
 
+// SetLogFile attaches a log file that mirrors every record regardless of the
+// console level. A later call replaces the file and closes the previous one.
+// It returns an error when the plain file cannot be opened, leaving the
+// previous attachment in place.
 func (l *Logger) SetLogFile(cfg LogFileConfig) error {
 	var writer io.Writer
 	var closer io.Closer
@@ -242,15 +270,21 @@ func mapLogLevelToSlog(l LogLevel) slog.Level {
 	}
 }
 
+// SetLevel changes the console level immediately. A configured log file is
+// unaffected.
 func (l *Logger) SetLevel(level LogLevel) {
 	l.level = level
 	l.consoleLevel.Set(mapLogLevelToSlog(level))
 }
 
+// Level reports the current console level.
 func (l *Logger) Level() LogLevel {
 	return l.level
 }
 
+// SlogLogger exposes the console path as a standard slog.Logger so external
+// libraries log through the same level gating. It does not write to the log
+// file.
 func (l *Logger) SlogLogger() *slog.Logger {
 	return slog.New(l.consoleHandler)
 }
@@ -274,6 +308,8 @@ func (l *Logger) log(level slog.Level, pc uintptr, reqID *string, format string,
 	}
 }
 
+// Info logs format and v at info level. reqID, when non-nil, is prepended to
+// the message as "REQID=<id>"; format and v follow fmt.Sprintf.
 func (l *Logger) Info(reqID *string, format string, v ...any) {
 	var pc uintptr
 	pcs := [1]uintptr{}
@@ -283,6 +319,8 @@ func (l *Logger) Info(reqID *string, format string, v ...any) {
 	l.log(slog.LevelInfo, pc, reqID, format, v...)
 }
 
+// Error logs format and v at error level, with the same reqID and printf
+// handling as Info.
 func (l *Logger) Error(reqID *string, format string, v ...any) {
 	var pc uintptr
 	pcs := [1]uintptr{}
@@ -292,6 +330,8 @@ func (l *Logger) Error(reqID *string, format string, v ...any) {
 	l.log(slog.LevelError, pc, reqID, format, v...)
 }
 
+// Debug logs format and v at debug level, with the same reqID and printf
+// handling as Info.
 func (l *Logger) Debug(reqID *string, format string, v ...any) {
 	var pc uintptr
 	pcs := [1]uintptr{}
@@ -301,6 +341,8 @@ func (l *Logger) Debug(reqID *string, format string, v ...any) {
 	l.log(slog.LevelDebug, pc, reqID, format, v...)
 }
 
+// Warn logs format and v at warn level, with the same reqID and printf
+// handling as Info.
 func (l *Logger) Warn(reqID *string, format string, v ...any) {
 	var pc uintptr
 	pcs := [1]uintptr{}
@@ -310,6 +352,8 @@ func (l *Logger) Warn(reqID *string, format string, v ...any) {
 	l.log(slog.LevelWarn, pc, reqID, format, v...)
 }
 
+// Fatal logs v (joined per fmt.Sprint) at fatal level to console and file,
+// then exits the process with status 1.
 func (l *Logger) Fatal(v ...any) {
 	var pc uintptr
 	pcs := [1]uintptr{}

@@ -1,3 +1,7 @@
+// The kushim binary: the CLI verb dispatcher, the matcher daemon host,
+// and the per-batch worker that consume and enrich children fork. In
+// CGo-less builds the internal OCR and thumbnail verbs report their
+// unavailability.
 package main
 
 import (

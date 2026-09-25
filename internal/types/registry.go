@@ -1,4 +1,8 @@
-// Package types is the single Go declaration point for the task-system vocabulary.
+// Package types is the single Go declaration point for the task-system
+// vocabulary: the batch sources and statuses, the task types and
+// statuses, and the tag verdicts, exposed as namespaced constant bags
+// (types.Batch.Source, types.Task.Type) with parse helpers for the wire
+// form. The database's enum columns mirror these values.
 package types
 
 import (
@@ -6,12 +10,22 @@ import (
 	"slices"
 )
 
+// BatchSource says which flow created a batch.
 type BatchSource string
+
+// BatchStatus is the lifecycle state of a batch.
 type BatchStatus string
+
+// TaskType names one kind of unit of work in the queue.
 type TaskType string
+
+// TaskStatus is the lifecycle state of a task.
 type TaskStatus string
+
+// TagVerdict is the judgement the pair evidence recorded.
 type TagVerdict string
 
+// Batch groups the batch source and status wire values.
 var Batch = struct {
 	Source struct {
 		CLI             BatchSource
@@ -83,6 +97,8 @@ var Batch = struct {
 	},
 }
 
+// Task groups the task-type and task-status values the queue and the
+// handlers share.
 var Task = struct {
 	Type struct {
 		Consume       TaskType
@@ -148,6 +164,7 @@ var Task = struct {
 	},
 }
 
+// ParseBatchSource accepts one of the declared source values.
 func ParseBatchSource(s string) (BatchSource, error) {
 	v := BatchSource(s)
 	if !v.Valid() {
@@ -156,6 +173,8 @@ func ParseBatchSource(s string) (BatchSource, error) {
 	return v, nil
 }
 
+// TagVerdicts groups the verdict wire values with their canonical
+// spelling.
 var TagVerdicts = struct {
 	Same    TagVerdict
 	Variant TagVerdict
@@ -166,6 +185,7 @@ var TagVerdicts = struct {
 	Related: "related",
 }
 
+// ParseTagVerdict accepts one of the declared verdict values.
 func ParseTagVerdict(s string) (TagVerdict, error) {
 	v := TagVerdict(s)
 	if !v.Valid() {
@@ -174,12 +194,15 @@ func ParseTagVerdict(s string) (TagVerdict, error) {
 	return v, nil
 }
 
+// Valid reports whether the verdict is one of the declared values.
 func (v TagVerdict) Valid() bool {
 	return slices.Contains(allTagVerdicts, v)
 }
 
+// AllTagVerdicts returns every declared verdict, cloned.
 func AllTagVerdicts() []TagVerdict { return slices.Clone(allTagVerdicts) }
 
+// ParseBatchStatus accepts one of the declared status values.
 func ParseBatchStatus(s string) (BatchStatus, error) {
 	v := BatchStatus(s)
 	if !v.Valid() {
@@ -188,6 +211,7 @@ func ParseBatchStatus(s string) (BatchStatus, error) {
 	return v, nil
 }
 
+// ParseTaskType accepts one of the declared task types.
 func ParseTaskType(s string) (TaskType, error) {
 	v := TaskType(s)
 	if !v.Valid() {
@@ -196,6 +220,7 @@ func ParseTaskType(s string) (TaskType, error) {
 	return v, nil
 }
 
+// ParseTaskStatus accepts one of the declared task statuses.
 func ParseTaskStatus(s string) (TaskStatus, error) {
 	v := TaskStatus(s)
 	if !v.Valid() {
@@ -204,37 +229,55 @@ func ParseTaskStatus(s string) (TaskStatus, error) {
 	return v, nil
 }
 
+// Valid reports whether the source is declared.
 func (s BatchSource) Valid() bool {
 	return slices.Contains(allBatchSources, s)
 }
 
+// Valid reports whether the status is declared.
 func (s BatchStatus) Valid() bool {
 	return slices.Contains(allBatchStatuses, s)
 }
 
+// Valid reports whether the task type is declared.
 func (t TaskType) Valid() bool {
 	return slices.Contains(allTaskTypes, t)
 }
 
+// Valid reports whether the task status is declared.
 func (t TaskStatus) Valid() bool {
 	return slices.Contains(allTaskStatuses, t)
 }
 
+// IsBlocking reports whether the type is a blocking-task protocol type:
+// it forks its own process and owns its batch.
 func (t TaskType) IsBlocking() bool {
 	return slices.Contains(blockingTaskTypes, t)
 }
 
+// IsLockGated reports whether the type runs under the maintenance lock.
 func (t TaskType) IsLockGated() bool {
 	return slices.Contains(lockGatedTaskTypes, t)
 }
 
-func AllBatchSources() []BatchSource  { return slices.Clone(allBatchSources) }
-func AllBatchStatuses() []BatchStatus { return slices.Clone(allBatchStatuses) }
-func AllTaskTypes() []TaskType        { return slices.Clone(allTaskTypes) }
-func AllTaskStatuses() []TaskStatus   { return slices.Clone(allTaskStatuses) }
+// AllBatchSources returns every declared source, cloned.
+func AllBatchSources() []BatchSource { return slices.Clone(allBatchSources) }
 
+// AllBatchStatuses returns every declared batch status, cloned.
+func AllBatchStatuses() []BatchStatus { return slices.Clone(allBatchStatuses) }
+
+// AllTaskTypes returns every declared task type, cloned.
+func AllTaskTypes() []TaskType { return slices.Clone(allTaskTypes) }
+
+// AllTaskStatuses returns every declared task status, cloned.
+func AllTaskStatuses() []TaskStatus { return slices.Clone(allTaskStatuses) }
+
+// LockGatedTaskTypes lists the task types the maintenance lock gates; the
+// lock holder runs them alone.
 func LockGatedTaskTypes() []TaskType { return slices.Clone(lockGatedTaskTypes) }
 
+// BlockingTaskTypes lists the blocking-task protocol types, the ones
+// with dedicated child processes and batch ownership.
 func BlockingTaskTypes() []TaskType { return slices.Clone(blockingTaskTypes) }
 
 // NonConsumeBatchSources are the sources whose batches own their lifecycle

@@ -7,9 +7,12 @@ import (
 	"github.com/google/uuid"
 )
 
-// pins the algebra's rules and the worklist cuts; a bump makes earlier
-// readings stale, not wrong
+// RuleSetVersion pins the algebra's rules and the worklist cuts; a bump
+// makes earlier readings stale, not wrong.
 const RuleSetVersion = "v0"
+
+// The Number* keys name the values a Record's Numbers map carries for each
+// operator; the readings fill them and the worklist cuts read them.
 const (
 	NumberMass               = "mass"
 	NumberProvisional        = "provisional"
@@ -37,8 +40,15 @@ const (
 	NumberPartExists         = "part_exists"
 )
 
+// CaveatNoAdjectiveFolding marks reconstructibility readings whose part
+// matching does not fold adjective forms, so the reading is an
+// approximation of true part coverage.
 const CaveatNoAdjectiveFolding = "no_adjective_folding"
 
+// Record is one evidence reading: the operator applied to its operands,
+// the numbers the algebra computed, the state the reading ended in, and
+// caveats that qualify it. RunID and SnapshotAt tie the reading to a
+// measurement run.
 type Record struct {
 	RunID          uuid.UUID
 	SnapshotAt     time.Time
@@ -58,6 +68,8 @@ type measurementRow struct {
 	Caveats  []string        `json:"caveats"`
 }
 
+// EncodeRows serializes readings into the JSON stored on the measurement
+// rows. A nil caveat list encodes as an empty array, never null.
 func EncodeRows(records []Record) (json.RawMessage, error) {
 	rows := make([]measurementRow, 0, len(records))
 	for _, r := range records {

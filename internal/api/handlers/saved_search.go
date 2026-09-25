@@ -11,11 +11,14 @@ import (
 	"github.com/wgomg/edub-kushim/internal/log"
 )
 
+// SavedSearchHandler is the saved-search API: create, list and delete of
+// named structured filters.
 type SavedSearchHandler struct {
 	queries *database.Queries
 	logger  *log.Logger
 }
 
+// NewSavedSearchHandler wires the handler to the queries.
 func NewSavedSearchHandler(queries *database.Queries, logger *log.Logger) *SavedSearchHandler {
 	return &SavedSearchHandler{
 		queries: queries,
@@ -23,6 +26,7 @@ func NewSavedSearchHandler(queries *database.Queries, logger *log.Logger) *Saved
 	}
 }
 
+// Create stores one named structured filter.
 func (h *SavedSearchHandler) Create(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -60,6 +64,7 @@ func (h *SavedSearchHandler) Create(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]int64{"id": id})
 }
 
+// List serves the saved searches of the requesting user.
 func (h *SavedSearchHandler) List(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -85,6 +90,7 @@ func (h *SavedSearchHandler) List(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+// Delete removes one saved search.
 func (h *SavedSearchHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -105,11 +111,14 @@ func (h *SavedSearchHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// CreateSavedSearchRequest is the body of a saved-search create: a name
+// and the structured filter as raw JSON.
 type CreateSavedSearchRequest struct {
 	Name   string          `json:"name"`
 	Filter json.RawMessage `json:"filter"`
 }
 
+// SavedSearchResponse is one saved search as the API shows it.
 type SavedSearchResponse struct {
 	ID        int64           `json:"id"`
 	Name      string          `json:"name"`

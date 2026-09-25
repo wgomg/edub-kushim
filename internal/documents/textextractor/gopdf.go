@@ -23,10 +23,12 @@ type Gopdf struct {
 	config config.ToolConfig
 }
 
+// NewGopdf builds the extractor; construction never fails.
 func NewGopdf(logger *log.Logger, cfg config.ToolConfig) (*Gopdf, error) {
 	return &Gopdf{logger: logger, config: cfg}, nil
 }
 
+// Extract parses the whole PDF in memory and returns its text.
 func (f *Gopdf) Extract(ctx context.Context, path string, _ string) (*string, error) {
 	doc, err := pdf.OpenFile(path)
 	if err != nil {
@@ -41,10 +43,12 @@ func (f *Gopdf) Extract(ctx context.Context, path string, _ string) (*string, er
 	return &text, nil
 }
 
+// CanHandle reports PDF content types.
 func (f *Gopdf) CanHandle(mimeType string) bool {
 	return _mime.IsPDF(mimeType)
 }
 
+// Name identifies the extractor.
 func (f *Gopdf) Name() string {
 	return config.TextExtractor.GoPdf
 }

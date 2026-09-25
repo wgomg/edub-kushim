@@ -13,6 +13,10 @@ const (
 	batchSize  = 32
 )
 
+// BuildTagCache replaces the store's contents with embeddings of every
+// promoted tag name, encoded in batches, and records the cache metadata
+// (dimension, model, normalization) as attributes. An empty vocabulary
+// leaves an empty store. Intended at daemon startup, before serving.
 func BuildTagCache(ctx context.Context, queries *database.Queries, logger *log.Logger, enc Embedder, store *TagEmbeddingStore) error {
 	tagNames, err := queries.ListPromotedTagNames(ctx)
 	if err != nil {

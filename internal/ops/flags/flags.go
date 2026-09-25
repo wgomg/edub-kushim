@@ -1,3 +1,6 @@
+// Package flags is the CLI argument parser the verbs share: ordered
+// parsing of --flag value pairs with validation, a Help short-circuit,
+// and the unconsumed Rest for positional arguments.
 package flags
 
 import (
@@ -5,6 +8,8 @@ import (
 	"strconv"
 )
 
+// FlagParser walks the verb's argument list, marking consumed
+// flags so the same argument cannot satisfy two flags.
 type FlagParser struct {
 	args []string
 	pos  int
@@ -12,10 +17,14 @@ type FlagParser struct {
 	rest []string
 }
 
+// NewFlagParser parses the given arguments; flags may appear anywhere
+// before the positional rest.
 func NewFlagParser(args []string) *FlagParser {
 	return &FlagParser{args: args, used: make(map[int]bool)}
 }
 
+// Help prints the verb's help text and reports whether --help or -h was
+// present.
 func (p *FlagParser) Help(helpText string) bool {
 	for _, a := range p.args {
 		if a == "--help" || a == "-h" {
@@ -26,6 +35,8 @@ func (p *FlagParser) Help(helpText string) bool {
 	return false
 }
 
+// String reads one flag's value into dst when the flag is present;
+// missing value errors.
 func (p *FlagParser) String(flag string, dst *string) error {
 	for i := 0; i < len(p.args); i++ {
 		if p.used[i] {
@@ -47,6 +58,7 @@ func (p *FlagParser) String(flag string, dst *string) error {
 	return nil
 }
 
+// Int reads one integer flag, clamped to the bounds.
 func (p *FlagParser) Int(flag string, dst *int, min, max int) error {
 	for i := 0; i < len(p.args); i++ {
 		if p.used[i] {
@@ -72,6 +84,7 @@ func (p *FlagParser) Int(flag string, dst *int, min, max int) error {
 	return nil
 }
 
+// Bool reads one flag that takes no value.
 func (p *FlagParser) Bool(flag string, dst *bool) error {
 	for i := 0; i < len(p.args); i++ {
 		if p.used[i] {
@@ -89,6 +102,7 @@ func (p *FlagParser) Bool(flag string, dst *bool) error {
 	return nil
 }
 
+// Rest returns the positional arguments after the last parsed flag.
 func (p *FlagParser) Rest() []string {
 	if p.rest != nil {
 		return p.rest

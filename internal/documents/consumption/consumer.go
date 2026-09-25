@@ -1,3 +1,10 @@
+// Package consumption is the document intake: scanning the consumption
+// directory into batches of consume, enrich and thumbnail tasks, the
+// consumer that turns a file into a stored, searchable document
+// (conversion, extraction, OCR, optimization, checksums, placement), the
+// failure routing to errors and quarantine, and the thumbnail task
+// handlers. Polling windows and reclaim behavior are configuration; the
+// queue drives the handlers.
 package consumption
 
 import (
@@ -43,6 +50,11 @@ var _ runner = (*tools.Runner)(nil)
 
 const commitTxTimeout = 30 * time.Second
 
+// Consumer turns one file into a stored document: dedup check, office
+// conversion when needed, text extraction with OCR fallback for empty
+// text, PDF optimization, checksums, placement into the storage layout,
+// and the document row committed in one transaction. Failures move the
+// original into errors, or quarantine it through the task-discard path.
 type Consumer struct {
 	config      *config.Config
 	logger      *log.Logger
@@ -51,6 +63,9 @@ type Consumer struct {
 	pageCounter func(path string) int
 }
 
+// File is one file moving through the pipeline: its identity (checksums,
+// MIME type, dates), its temporary derivatives (OCR, optimized and
+// converted PDFs), its eventual storage paths, and the extracted text.
 type File struct {
 	Name                 string
 	OriginalPath         string
@@ -70,6 +85,9 @@ type File struct {
 	PageCount            int
 }
 
+// NewConsumer wires the consumer with the real tool runner; the optimizer
+// fallback and the converter binary are verified present at construction,
+// failing fast with install hints.
 func NewConsumer(cfg *config.Config, logger *log.Logger, client *database.Client) (*Consumer, error) {
 	if cfg.Consumer.PdfOptimizer.Fallback != "" {
 		if _, err := pdfoptimizer.NewPdfOptimizer(logger, config.ToolConfig{
@@ -103,6 +121,8 @@ func NewConsumer(cfg *config.Config, logger *log.Logger, client *database.Client
 	}, nil
 }
 
+// NewConsumerWithRunner injects the runner; tests use it with mocks, and
+// no tool availability is verified.
 func NewConsumerWithRunner(cfg *config.Config, logger *log.Logger, client *database.Client, runner runner) (*Consumer, error) {
 	return &Consumer{
 		config:      cfg,
@@ -113,6 +133,12 @@ func NewConsumerWithRunner(cfg *config.Config, logger *log.Logger, client *datab
 	}, nil
 }
 
+// Process consumes one file end to end and returns it enriched with the
+// storage paths, document row id and extracted text. Every failure moves
+// the original into errors and wraps the cause in a task error carrying
+// the document id; after placement, the row commit and the file moves are
+// one transaction rolled back together on failure. documentID is the
+// caller's UUID, used in paths and logs.
 func (c *Consumer) Process(ctx context.Context, file File, documentID string, progress ...task.ProgressFunc) (File, error) {
 	start := time.Now()
 	c.logger.Info(&documentID, "starting consumption for file %s", file.OriginalPath)
@@ -422,6 +448,9 @@ func annotateTxTimeout(err error, stats string, elapsed time.Duration) error {
 	return fmt.Errorf("%w [tx deadline exceeded; elapsed %s; pool %s]", err, elapsed, stats)
 }
 
+// MoveFailedFile moves a failed original into the storage layout's errors
+// directory (errors/duplicated for the duplicate kind), renaming it with a
+// fresh UUID prefix. Move failures are logged, never propagated.
 func MoveFailedFile(storageDir, originalPath, errType string, logger *log.Logger, docID *string) {
 	baseName := filepath.Base(originalPath)
 	uuidStr := uuid.New().String()
@@ -452,6 +481,10 @@ type consumePayload struct {
 	FilePath string `json:"file_path"`
 }
 
+// QuarantineFailedFiles moves the originals of a batch's quarantined
+// consume tasks out of the consumption directory; per-file failures are
+// logged and continue, and the first payload or unmarshal failure is
+// returned.
 func QuarantineFailedFiles(ctx context.Context, queries *database.Queries, storageDir string, logger *log.Logger, batchID string) error {
 	rows, err := queries.GetQuarantinedConsumeTaskPayloads(ctx, sql.NullString{String: batchID, Valid: true})
 	if err != nil {

@@ -16,12 +16,15 @@ import (
 	_mime "github.com/wgomg/edub-kushim/internal/documents/mime"
 )
 
+// OcrMyPdf wraps the external ocrmypdf binary.
 type OcrMyPdf struct {
 	logger    *log.Logger
 	config    config.ToolConfig
 	languages []string
 }
 
+// NewOcrMyPdf verifies the binary is on PATH, erroring with install
+// hints when it is not; an empty language list defaults to English.
 func NewOcrMyPdf(logger *log.Logger, cfg config.ToolConfig, languages []string) (*OcrMyPdf, error) {
 	if _, err := exec.LookPath(cfg.Command); err != nil {
 		return nil, fmt.Errorf("%s not found in PATH: %w\nInstall it (e.g. 'sudo apt install ocrmypdf' or 'brew install ocrmypdf') or switch to the built-in 'gosseract' engine", cfg.Command, err)
@@ -34,6 +37,9 @@ func NewOcrMyPdf(logger *log.Logger, cfg config.ToolConfig, languages []string) 
 	return &OcrMyPdf{logger: logger, config: cfg, languages: languages}, nil
 }
 
+// Process shells out to ocrmypdf, skipping files that already carry a
+// text layer (skip-text mode), and returns the searchable PDF's temp
+// path. The path must be absolute.
 func (o *OcrMyPdf) Process(ctx context.Context, docId, path string) (*string, error) {
 	if !filepath.IsAbs(path) {
 		return nil, fmt.Errorf("%s: input path must be absolute, got %q", o.Name(), path)
@@ -98,10 +104,12 @@ func (o *OcrMyPdf) Process(ctx context.Context, docId, path string) (*string, er
 	return &outputPath, nil
 }
 
+// CanHandle reports PDF content types.
 func (o *OcrMyPdf) CanHandle(mimeType string) bool {
 	return _mime.IsPDF(mimeType)
 }
 
+// Name identifies the engine.
 func (o *OcrMyPdf) Name() string {
 	return config.OCR.OcrMyPdf
 }

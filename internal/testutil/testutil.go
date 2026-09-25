@@ -1,3 +1,7 @@
+// Package testutil is the test-support package: discard loggers, temp
+// configurations wired to temp directories, minimal PDF fixtures, and the
+// assert helpers. It imports the app packages and is imported only by
+// tests.
 package testutil
 
 import (
@@ -60,7 +64,8 @@ func NewTestConfig(t interface{ Fatalf(format string, args ...any) }) (*config.C
 	return cfg, cleanup
 }
 
-// MinimalTextPDF returns a byte slice containing a minimal valid PDF with text content.
+// MinimalTextPDF returns a minimal valid PDF whose text layer holds the
+// content, escaped for the PDF string syntax.
 func MinimalTextPDF(content string) []byte {
 	content = strings.ReplaceAll(content, `\`, `\\`)
 	content = strings.ReplaceAll(content, `(`, `\(`)
@@ -108,7 +113,7 @@ startxref
 	return []byte(pdf)
 }
 
-// CreateTestPDF writes a minimal PDF to the specified path.
+// CreateTestPDF writes a minimal PDF holding the content to path.
 func CreateTestPDF(t interface{ Fatalf(format string, args ...any) }, path, content string) {
 	data := MinimalTextPDF(content)
 	if err := os.WriteFile(path, data, 0644); err != nil {
@@ -123,26 +128,26 @@ func CreateTestFile(t interface{ Fatalf(format string, args ...any) }, path, con
 	}
 }
 
-// FormatString is a convenience wrapper around fmt.Sprintf.
+// FormatString formats like fmt.Sprintf, a helper for assert calls.
 func FormatString(format string, args ...any) string {
 	return fmt.Sprintf(format, args...)
 }
 
-// AssertEqual checks that two values have equal string representations.
+// AssertEqual fails when the two values' string forms differ.
 func AssertEqual(t interface{ Fatalf(format string, args ...any) }, got, want any, msg string) {
 	if fmt.Sprintf("%v", got) != fmt.Sprintf("%v", want) {
 		t.Fatalf("%s: got %v, want %v", msg, got, want)
 	}
 }
 
-// AssertNoError checks that an error is nil.
+// AssertNoError fails the test on a non-nil error.
 func AssertNoError(t interface{ Fatalf(format string, args ...any) }, err error, msg string) {
 	if err != nil {
 		t.Fatalf("%s: unexpected error: %v", msg, err)
 	}
 }
 
-// AssertError checks that an error is not nil.
+// AssertError fails the test when the error is nil.
 func AssertError(t interface{ Fatalf(format string, args ...any) }, err error, msg string) {
 	if err == nil {
 		t.Fatalf("%s: expected error, got nil", msg)

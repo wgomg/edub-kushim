@@ -12,6 +12,9 @@ var allowedSortColumns = map[string]string{
 	"created_at": "created_at",
 }
 
+// ListDocumentsWithSortParams are the paging and sorting parameters;
+// SortBy outside the allowed columns and a bad SortOrder fall back to
+// created_at DESC.
 type ListDocumentsWithSortParams struct {
 	Limit     int64
 	Offset    int64
@@ -19,6 +22,8 @@ type ListDocumentsWithSortParams struct {
 	SortOrder string
 }
 
+// ListDocumentsWithSort pages the documents with a whitelisted sort
+// column, so user input never reaches the ORDER BY unquoted.
 func (q *Queries) ListDocumentsWithSort(ctx context.Context, arg ListDocumentsWithSortParams) ([]ListDocumentsRow, error) {
 	col, ok := allowedSortColumns[arg.SortBy]
 	if !ok {

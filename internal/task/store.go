@@ -12,22 +12,35 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
+// ErrLockBusy reports that the maintenance lock is held by another
+// process. Claim attempts treat it as an idle round rather than an error.
 var ErrLockBusy = errors.New("maintenance lock busy")
 
+// Store is the persistence of the task lifecycle: creating tasks with
+// dedup keys, claiming pending tasks with claim tokens, completing,
+// failing and retrying them, plus the blocking-task variants that
+// coordinate through the maintenance lock and claim tokens. All methods
+// are safe for concurrent use.
 type Store struct {
 	client  *database.Client
 	queries *database.Queries
 	ownerID string
 }
 
+// NewStore builds the task store over the shared database client.
 func NewStore(client *database.Client) *Store {
 	return &Store{client: client, queries: client.Queries}
 }
 
+// SetOwnerID records the owner identity written on claims and batch
+// ownership rows.
 func (s *Store) SetOwnerID(id string) {
 	s.ownerID = id
 }
 
+// CreateTask inserts a task row and returns its id. An empty taskID
+// becomes a fresh UUID, an empty status becomes pending, and a non-empty
+// dedup key matching existing work rejects the creation.
 func (s *Store) CreateTask(
 	ctx context.Context,
 	taskType types.TaskType, batchID string,
@@ -60,6 +73,9 @@ func (s *Store) CreateTask(
 	return taskID, nil
 }
 
+// ClaimNextPending claims one pending task of the type, blocking types
+// through their dedicated protocol; ErrLockBusy surfaces when the
+// maintenance lock is held.
 func (s *Store) ClaimNextPending(ctx context.Context, taskType types.TaskType) (database.Task, uuid.UUID, error) {
 	if taskType.IsBlocking() {
 		return s.claimBlockingNextPending(ctx, taskType)
@@ -162,14 +178,18 @@ func (s *Store) claimBlockingNextPending(ctx context.Context, taskType types.Tas
 	return task, token, nil
 }
 
+// GetTask returns one task row by row id.
 func (s *Store) GetTask(ctx context.Context, id int64) (database.Task, error) {
 	return s.queries.GetTask(ctx, id)
 }
 
+// GetTaskByTaskID returns one task row by its task UUID.
 func (s *Store) GetTaskByTaskID(ctx context.Context, taskID string) (database.Task, error) {
 	return s.queries.GetTaskByTaskID(ctx, taskID)
 }
 
+// CompleteTask marks a task completed with its result payload, ignoring
+// rows that are no longer processing; the return is the rows updated.
 func (s *Store) CompleteTask(ctx context.Context, id int64, result json.RawMessage) (int64, error) {
 	return s.queries.CompleteTask(ctx, database.CompleteTaskParams{
 		ID:     id,
@@ -204,6 +224,9 @@ func (s *Store) withBlockingTransition(ctx context.Context, op string, id int64,
 	return rows, nil
 }
 
+// CompleteBlockingTask is the claim-token-checked form of CompleteTask:
+// the write lands only when the task is still processing under the given
+// claim.
 func (s *Store) CompleteBlockingTask(ctx context.Context, id int64, result json.RawMessage, token uuid.UUID) (int64, error) {
 	return s.withBlockingTransition(ctx, "complete", id, token, func(txQ *database.Queries) (int64, error) {
 		return txQ.CompleteBlockingTask(ctx, database.CompleteBlockingTaskParams{
@@ -214,6 +237,7 @@ func (s *Store) CompleteBlockingTask(ctx context.Context, id int64, result json.
 	})
 }
 
+// FailTask marks a task failed with an error message.
 func (s *Store) FailTask(ctx context.Context, id int64, errMsg string) error {
 	return s.queries.FailTask(ctx, database.FailTaskParams{
 		ID:    id,
@@ -221,6 +245,7 @@ func (s *Store) FailTask(ctx context.Context, id int64, errMsg string) error {
 	})
 }
 
+// FailBlockingTask is the claim-token-checked form of FailTask.
 func (s *Store) FailBlockingTask(ctx context.Context, id int64, errMsg string, token uuid.UUID) error {
 	_, err := s.withBlockingTransition(ctx, "fail", id, token, func(txQ *database.Queries) (int64, error) {
 		return txQ.FailBlockingTask(ctx, database.FailBlockingTaskParams{
@@ -232,6 +257,8 @@ func (s *Store) FailBlockingTask(ctx context.Context, id int64, errMsg string, t
 	return err
 }
 
+// SetPending re-queues a task with fresh payload after a retry-worthy
+// failure.
 func (s *Store) SetPending(ctx context.Context, id int64, payload json.RawMessage) error {
 	return s.queries.SetEnrichTaskPending(ctx, database.SetEnrichTaskPendingParams{
 		ID:      id,
@@ -239,10 +266,14 @@ func (s *Store) SetPending(ctx context.Context, id int64, payload json.RawMessag
 	})
 }
 
+// PauseBatch flips the batch into paused, the credit-error state that
+// blocks scanning until resumed.
 func (s *Store) PauseBatch(ctx context.Context, batchID string) error {
 	return s.queries.SetBatchPaused(ctx, batchID)
 }
 
+// Discard marks a task (and its waiting children) discarded, removing it
+// from the batch counts; the return is the children discarded.
 func (s *Store) Discard(ctx context.Context, id int64, errMsg string) (int64, error) {
 	return s.queries.DiscardEnrichTask(ctx, database.DiscardEnrichTaskParams{
 		ID:    id,

@@ -13,6 +13,10 @@ const (
 	maxPasswordLength = 128
 )
 
+// ValidatePassword enforces the password policy: at least twelve and at
+// most 128 characters, with at least one uppercase letter, one lowercase
+// letter, one digit and one special character. An invalid password is an
+// errs invalid-field error.
 func ValidatePassword(password string) error {
 	if password == "" {
 		return errs.EInvalid("password", errors.New("password is required"))

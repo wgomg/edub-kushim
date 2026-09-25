@@ -10,15 +10,18 @@ import (
 	"github.com/wgomg/edub-kushim/internal/service"
 )
 
+// DocumentTypeHandler is the document-type taxonomy API.
 type DocumentTypeHandler struct {
 	services *service.CrudServices
 	logger   *log.Logger
 }
 
+// NewDocumentTypeHandler wires the handler to the services.
 func NewDocumentTypeHandler(services *service.CrudServices, logger *log.Logger) *DocumentTypeHandler {
 	return &DocumentTypeHandler{services: services, logger: logger}
 }
 
+// List serves the paged document types with document counts.
 func (h *DocumentTypeHandler) List(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -60,6 +63,7 @@ func (h *DocumentTypeHandler) List(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(result)
 }
 
+// Create creates one document type from the JSON body.
 func (h *DocumentTypeHandler) Create(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -106,6 +110,7 @@ func (h *DocumentTypeHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// Update renames one document type.
 func (h *DocumentTypeHandler) Update(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -160,6 +165,7 @@ func (h *DocumentTypeHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// Delete removes one document type.
 func (h *DocumentTypeHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := ctx.Value("reqid").(string)
@@ -189,16 +195,20 @@ func (h *DocumentTypeHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// CreateDocumentTypeRequest is the body of a document type create.
 type CreateDocumentTypeRequest struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 }
 
+// UpdateDocumentTypeRequest is the body of a document type update.
 type UpdateDocumentTypeRequest struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 }
 
+// DocumentTypeResponse is a document type as the API shows it, with the
+// documents carrying it.
 type DocumentTypeResponse struct {
 	ID            int64  `json:"id"`
 	Name          string `json:"name"`

@@ -14,6 +14,9 @@ import (
 	"github.com/wgomg/edub-kushim/internal/log"
 )
 
+// LlmOpenAiCompatible is the OpenAI-compatible chat-completions
+// implementation of ContentAnalyzer, gated by the model catalog's
+// capabilities (thinking, temperature, structured output).
 type LlmOpenAiCompatible struct {
 	logger         *log.Logger
 	config         config.ToolConfig
@@ -56,6 +59,8 @@ type openaiResponse struct {
 	Usage   openaiUsage    `json:"usage"`
 }
 
+// NewLlmOpenAiCompatible wires the adapter; caps may be nil, in which
+// case the capability gates are skipped.
 func NewLlmOpenAiCompatible(logger *log.Logger, cfg config.ToolConfig, llmCfg *config.LlmConfig, caps *llm.ModelCapability, promptTemplate string, minTags, maxTags int, reg *llm.Registry) (*LlmOpenAiCompatible, error) {
 	return &LlmOpenAiCompatible{
 		logger:         logger,
@@ -195,6 +200,7 @@ func (l *LlmOpenAiCompatible) doRequest(ctx context.Context, reqBody map[string]
 	return &chatResp, nil
 }
 
+// Analyze runs the document analysis call against the compatible API.
 func (l *LlmOpenAiCompatible) Analyze(ctx context.Context, text string, docTypes []TypeRef, peopleTypes []TypeRef, tagSuggestions []string) (*AnalysisResult, error) {
 	prompt := BuildPrompt(text, docTypes, peopleTypes, tagSuggestions, l.promptTemplate, l.minTags, l.maxTags)
 
@@ -236,6 +242,7 @@ func (l *LlmOpenAiCompatible) Analyze(ctx context.Context, text string, docTypes
 	return analysisResult, nil
 }
 
+// AnalyzeDocType refines the document type against the compatible API.
 func (l *LlmOpenAiCompatible) AnalyzeDocType(ctx context.Context, prevResult *AnalysisResult, headTailText string, docTypes []TypeRef, metadata DocMetadata) (string, error) {
 	if prevResult.PassContext == nil {
 		return "", fmt.Errorf("pass context is nil")
@@ -321,6 +328,7 @@ func (l *LlmOpenAiCompatible) buildRequestMessages(system, user, assistant strin
 	return messages
 }
 
+// Adjudicate answers the same-intent pairs through the compatible API.
 func (l *LlmOpenAiCompatible) Adjudicate(ctx context.Context, pairs []TagPairEvidence) ([]TagVerdictResult, error) {
 	prompt := BuildAdjudicationPrompt(pairs)
 
@@ -343,6 +351,7 @@ func (l *LlmOpenAiCompatible) Adjudicate(ctx context.Context, pairs []TagPairEvi
 	return ParseAdjudicationResponse(responseContent, len(pairs))
 }
 
+// AdjudicateTagSplits decides splits through the compatible API.
 func (l *LlmOpenAiCompatible) AdjudicateTagSplits(ctx context.Context, tags []string) ([]TagSplitResult, error) {
 	prompt := BuildTagSplitPrompt(tags)
 
@@ -365,6 +374,7 @@ func (l *LlmOpenAiCompatible) AdjudicateTagSplits(ctx context.Context, tags []st
 	return ParseTagSplitResponse(responseContent, len(tags))
 }
 
+// JudgeTagQuality scores candidates through the compatible API.
 func (l *LlmOpenAiCompatible) JudgeTagQuality(ctx context.Context, text string, candidates []TagQualityCandidate) ([]TagQualityResult, error) {
 	prompt := BuildTagQualityPrompt(text, candidates)
 
@@ -387,6 +397,7 @@ func (l *LlmOpenAiCompatible) JudgeTagQuality(ctx context.Context, text string, 
 	return ParseTagQualityResponse(responseContent, len(candidates))
 }
 
+// JudgeTagIdentity decides canonical forms through the compatible API.
 func (l *LlmOpenAiCompatible) JudgeTagIdentity(ctx context.Context, candidates []TagIdentityCandidate) ([]TagIdentityResult, error) {
 	prompt := BuildTagIdentityPrompt(candidates)
 
@@ -409,6 +420,7 @@ func (l *LlmOpenAiCompatible) JudgeTagIdentity(ctx context.Context, candidates [
 	return ParseTagIdentityResponse(responseContent, len(candidates))
 }
 
+// Name identifies the OpenAI-compatible implementation.
 func (l *LlmOpenAiCompatible) Name() string {
 	return "openai-compatible"
 }

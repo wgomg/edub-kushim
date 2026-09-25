@@ -11,9 +11,13 @@ import (
 	"github.com/pressly/goose/v3"
 )
 
+// SchemaFS embeds the migration and seeder files applied at startup.
+//
 //go:embed sql/schema
 var SchemaFS embed.FS
 
+// InitializeSchema applies the embedded migrations (allowing missing
+// files so a parallel checkout can lag) and runs the idempotent seeders.
 func InitializeSchema(db *sql.DB) error {
 	goose.SetBaseFS(SchemaFS)
 	goose.SetDialect("postgres")
@@ -48,6 +52,8 @@ func InitializeSchema(db *sql.DB) error {
 	return nil
 }
 
+// ResetDatabase drops and re-creates the database through a maintenance
+// connection, for the test harness.
 func ResetDatabase(db *sql.DB) error {
 	goose.SetBaseFS(SchemaFS)
 	goose.SetDialect("postgres")

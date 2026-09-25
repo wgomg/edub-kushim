@@ -34,6 +34,11 @@ type ocrPageResult struct {
 	pageH    float64
 }
 
+// RunStandalone OCRs one file: images directly, everything else rendered
+// page by page through MuPDF, recognized by a page-worker pool of
+// Tesseract engines, and written back as a searchable PDF with an
+// invisible-text overlay at reduced DPI. It is the body of the internal-ocr
+// verb.
 func RunStandalone(inputPath, outputPath string, languages []string, dataDir string, ocrWorkers int) error {
 	suppressLeptonicaStderr()
 

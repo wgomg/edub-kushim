@@ -1,3 +1,9 @@
+// Package storage owns the documents' life on disk: the directory layout
+// under the storage root, intake support (content detection during scan,
+// copying into the consumption directory), the trash, orphaned and
+// quarantine flows, thumbnail paths, and the file helpers other packages
+// use (hashing, listing, copying). The subdirectory names in dirs.go are a
+// persisted data contract and must not change.
 package storage
 
 import (
@@ -6,14 +12,21 @@ import (
 	"path/filepath"
 )
 
+// TrashDir is where trashed documents wait until deleted or restored, one
+// subdirectory per document ID.
 func TrashDir(storageDir string) string {
 	return filepath.Join(storageDir, DirTrash)
 }
 
+// DocumentTrashDir is the trash subdirectory holding one document's files.
 func DocumentTrashDir(storageDir, documentID string) string {
 	return filepath.Join(TrashDir(storageDir), documentID)
 }
 
+// MoveToTrash moves a document's files out of the live layout into
+// trash/<documentID>/, tolerating files that do not exist so a partial
+// document still trashes, and returning the trash paths. The thumbnail is
+// moved only when its path is non-empty.
 func MoveToTrash(storageDir, documentID, originalPath, storagePath, thumbnailPath string) (newOriginal, newStorage string, err error) {
 	docTrash := DocumentTrashDir(storageDir, documentID)
 	originalsDir := filepath.Join(docTrash, DirOriginal)
@@ -49,6 +62,10 @@ func MoveToTrash(storageDir, documentID, originalPath, storagePath, thumbnailPat
 	return newOriginal, newStorage, nil
 }
 
+// RestoreFromTrash moves a trashed document back into the live layout,
+// skipping files that are missing so a partial document still restores, and
+// removing the document's trash directory once it is empty. Returns the
+// restored live paths.
 func RestoreFromTrash(storageDir, documentID, trashOriginalPath, trashStoragePath, thumbnailPath string) (newOriginal, newStorage string, err error) {
 	newOriginal = filepath.Join(storageDir, DirOriginal, filepath.Base(trashOriginalPath))
 	newStorage = filepath.Join(storageDir, DirProcessed, filepath.Base(trashStoragePath))
@@ -89,6 +106,8 @@ func RestoreFromTrash(storageDir, documentID, trashOriginalPath, trashStoragePat
 	return newOriginal, newStorage, nil
 }
 
+// RemoveFromTrash deletes a document's trash directory wholesale. It is
+// idempotent for an already-removed document.
 func RemoveFromTrash(storageDir, documentID string) error {
 	if err := os.RemoveAll(DocumentTrashDir(storageDir, documentID)); err != nil {
 		return fmt.Errorf("remove trash dir: %w", err)

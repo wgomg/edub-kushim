@@ -18,6 +18,8 @@ import (
 	_mime "github.com/wgomg/edub-kushim/internal/documents/mime"
 )
 
+// CalculateMD5 returns the hex MD5 of a file's contents, used for duplicate
+// detection at intake.
 func CalculateMD5(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -32,6 +34,9 @@ func CalculateMD5(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
+// ListFilePaths lists the regular files in src whose detected content type
+// matches the accepted extensions, oldest first by creation time, stopping
+// after maxFiles (zero means no limit). A missing directory is an error.
 func ListFilePaths(src string, exts []string, maxFiles int) ([]string, error) {
 	if _, err := os.Stat(src); os.IsNotExist(err) {
 		return nil, fmt.Errorf("directory `%s` does not exist", src)
@@ -114,6 +119,8 @@ func isSupportedEntry(src string, entry fs.DirEntry, supportedFiles map[string]b
 	return supportedFiles[strings.ToLower(mtype.Extension())], nil
 }
 
+// CountFilePaths counts the supported files in src without listing them;
+// a missing directory counts as zero.
 func CountFilePaths(src string, exts []string) (int, error) {
 	entries, err := os.ReadDir(src)
 	if err != nil {
@@ -137,6 +144,9 @@ func CountFilePaths(src string, exts []string) (int, error) {
 	return count, nil
 }
 
+// SameDevice reports whether two paths sit on the same filesystem device,
+// so a rename can replace a copy when moving files into the layout. A
+// missing target falls back to its parent directory.
 func SameDevice(a, b string) (bool, error) {
 	sa, err := os.Stat(a)
 	if err != nil {

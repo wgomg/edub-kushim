@@ -26,6 +26,10 @@ import (
 	itypes "github.com/wgomg/edub-kushim/internal/types"
 )
 
+// ConfigHandler is the configuration API: bootstrap, read and update of
+// the whole tree, the status of the environment migration, and the admin
+// user creation of first setup. It is the public path of the setup wizard,
+// then protected once authentication exists.
 type ConfigHandler struct {
 	getConfig   func() *config.Config
 	onConfigSet func(*config.Config)
@@ -37,6 +41,8 @@ type ConfigHandler struct {
 	OnBootstrap func(configDir string) (*config.Config, *database.Client, *task.Dispatcher, error)
 }
 
+// NewConfigHandler wires the config handler; the services attach after
+// bootstrap via SetServices.
 func NewConfigHandler(
 	getConfig func() *config.Config,
 	onConfigSet func(*config.Config),
@@ -56,6 +62,8 @@ func NewConfigHandler(
 	}
 }
 
+// SetServices attaches the lazily constructed services after bootstrap;
+// only set once.
 func (h *ConfigHandler) SetServices(client *database.Client, dispatcher *task.Dispatcher) {
 	h.dispatcher = dispatcher
 	if client != nil {
@@ -73,6 +81,8 @@ func (h *ConfigHandler) SetServices(client *database.Client, dispatcher *task.Di
 // tools are missing) before it can decide whether to show the login screen —
 // so it must expose only non-sensitive fields. Anything else (LLM tokens, DB
 // connection details, full status) belongs behind GetConfig/ConfigStatus.
+// Bootstrap runs the environment bootstrap and switches the wizard into
+// its post-bootstrap state.
 func (h *ConfigHandler) Bootstrap(w http.ResponseWriter, r *http.Request) {
 	cfg := h.getConfig()
 	if cfg == nil {
@@ -89,6 +99,7 @@ func (h *ConfigHandler) Bootstrap(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+// GetConfig serves the sanitized configuration view.
 func (h *ConfigHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	cfg := h.getConfig()
 	if cfg == nil {
@@ -107,6 +118,7 @@ var dbConnectionKeys = []string{
 	"database.database", "database.sslmode", "database.dsn",
 }
 
+// PutConfig validates and saves the submitted configuration.
 func (h *ConfigHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -549,6 +561,8 @@ func (h *ConfigHandler) enqueueStorageMigration(ctx context.Context, w http.Resp
 	return true
 }
 
+// ConfigStatus serves the migration status: readiness, tool failures and
+// pending or failed tasks.
 func (h *ConfigHandler) ConfigStatus(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -619,6 +633,7 @@ func (h *ConfigHandler) ConfigStatus(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+// RetryFailedConfig retries the environment's failed tasks.
 func (h *ConfigHandler) RetryFailedConfig(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -650,6 +665,7 @@ func (h *ConfigHandler) RetryFailedConfig(w http.ResponseWriter, r *http.Request
 	json.NewEncoder(w).Encode(map[string]int{"retried": retried})
 }
 
+// CreateAdminUser creates the first admin account during setup.
 func (h *ConfigHandler) CreateAdminUser(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -722,6 +738,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	json.NewEncoder(w).Encode(v)
 }
 
+// FailedTaskSummary is one environment task that failed.
 type FailedTaskSummary struct {
 	TaskID string `json:"task_id"`
 	Op     string `json:"op"`
@@ -729,11 +746,14 @@ type FailedTaskSummary struct {
 	Error  string `json:"error"`
 }
 
+// BootstrapResponse reports the bootstrap outcome: whether the server
+// now authenticates and which tools are still missing.
 type BootstrapResponse struct {
 	AuthEnabled  bool                  `json:"auth_enabled"`
 	MissingTools []config.ExternalTool `json:"missing_tools"`
 }
 
+// ConfigStatusResponse is the environment status the wizard polls.
 type ConfigStatusResponse struct {
 	Configured   bool                  `json:"configured"`
 	PendingTasks int                   `json:"pending_tasks"`
@@ -743,6 +763,7 @@ type ConfigStatusResponse struct {
 	MissingTools []config.ExternalTool `json:"missing_tools"`
 }
 
+// LoggingConfigResponse is the API view of the log rotation.
 type LoggingConfigResponse struct {
 	MaxSize    int  `json:"max_size"`
 	MaxBackups int  `json:"max_backups"`
@@ -750,12 +771,14 @@ type LoggingConfigResponse struct {
 	Compress   bool `json:"compress"`
 }
 
+// AppConfigResponse is the app section's API view.
 type AppConfigResponse struct {
 	Initialized bool                  `json:"initialized"`
 	LogLevel    string                `json:"log_level"`
 	Logging     LoggingConfigResponse `json:"logging"`
 }
 
+// StorageConfigResponse is the storage section's API view.
 type StorageConfigResponse struct {
 	ConsumptionDir string              `json:"consumption_dir"`
 	StorageDir     string              `json:"storage_dir"`
@@ -763,10 +786,13 @@ type StorageConfigResponse struct {
 	Trash          TrashConfigResponse `json:"trash"`
 }
 
+// TrashConfigResponse is the trash section's API view.
 type TrashConfigResponse struct {
 	RetentionDays int `json:"retention_days"`
 }
 
+// DatabaseConfigResponse is the database section's API view, without the
+// password.
 type DatabaseConfigResponse struct {
 	Host      string `json:"host"`
 	Port      int    `json:"port"`
@@ -777,6 +803,8 @@ type DatabaseConfigResponse struct {
 	Container string `json:"container"`
 }
 
+// ConfigResponse is the full configuration as the API shows it: every
+// section view plus the engines and file types the UI offers.
 type ConfigResponse struct {
 	App                AppConfigResponse               `json:"app"`
 	Server             ServerConfigResponse            `json:"server"`
@@ -790,6 +818,7 @@ type ConfigResponse struct {
 	AvailableFileTypes []AvailableFileType             `json:"available_file_types"`
 }
 
+// AvailableFileType is one ingest format the UI can offer.
 type AvailableFileType struct {
 	MimeType   string   `json:"mime_type"`
 	Label      string   `json:"label"`
@@ -797,6 +826,7 @@ type AvailableFileType struct {
 	Required   bool     `json:"required"`
 }
 
+// ServerConfigResponse is the server section's API view.
 type ServerConfigResponse struct {
 	Host                 string `json:"host"`
 	Port                 int    `json:"port"`
@@ -808,23 +838,27 @@ type ServerConfigResponse struct {
 	AuthEnabled          bool   `json:"auth_enabled"`
 }
 
+// PollingWindowResponse is one polling window.
 type PollingWindowResponse struct {
 	Start string `json:"start"`
 	End   string `json:"end"`
 }
 
+// PollingConfigResponse is the polling section's API view.
 type PollingConfigResponse struct {
 	Enabled  bool                    `json:"enabled"`
 	Interval int                     `json:"interval"`
 	Windows  []PollingWindowResponse `json:"windows"`
 }
 
+// ReclaimConfigResponse is the reclaim section's API view.
 type ReclaimConfigResponse struct {
 	Enabled        bool  `json:"enabled"`
 	MaxRetries     int   `json:"max_retries"`
 	StaleTaskAfter int64 `json:"stale_task_after"`
 }
 
+// ConsumerConfigResponse is the consumer section's API view.
 type ConsumerConfigResponse struct {
 	SupportedFiles   []string                 `json:"supported_files"`
 	Workers          int                      `json:"workers"`
@@ -838,23 +872,27 @@ type ConsumerConfigResponse struct {
 	Reclaim          ReclaimConfigResponse    `json:"reclaim"`
 }
 
+// DocxOdtConverterResponse is the converter section's API view.
 type DocxOdtConverterResponse struct {
 	Enabled bool   `json:"enabled"`
 	Binary  string `json:"binary"`
 	Timeout int    `json:"timeout"`
 }
 
+// TextExtractorResponse is the extractor section's API view.
 type TextExtractorResponse struct {
 	Engine  string `json:"engine"`
 	Timeout int    `json:"timeout"`
 }
 
+// PdfOptimizerResponse is the optimizer section's API view.
 type PdfOptimizerResponse struct {
 	Engine   string `json:"engine"`
 	Fallback string `json:"fallback"`
 	Timeout  int    `json:"timeout"`
 }
 
+// OCRResponse is the OCR section's API view.
 type OCRResponse struct {
 	Engine     string   `json:"engine"`
 	Languages  []string `json:"languages"`
@@ -863,6 +901,7 @@ type OCRResponse struct {
 	OcrWorkers int      `json:"ocr_workers"`
 }
 
+// ThumbnailConfigResponse is the thumbnail section's API view.
 type ThumbnailConfigResponse struct {
 	Enabled          bool    `json:"enabled"`
 	Engine           string  `json:"engine"`
@@ -875,6 +914,7 @@ type ThumbnailConfigResponse struct {
 	BackfillTime     string  `json:"backfill_time"`
 }
 
+// EnricherConfigResponse is the enricher section's API view.
 type EnricherConfigResponse struct {
 	Workers         int                          `json:"workers"`
 	TextReducer     TextReducerResponse          `json:"textreducer"`
@@ -886,18 +926,21 @@ type EnricherConfigResponse struct {
 	TagMeasure      TagMeasureConfigResponse     `json:"tag_measure"`
 }
 
+// TagQualityConfigResponse is the quality judge's API view.
 type TagQualityConfigResponse struct {
 	Enabled bool                      `json:"enabled"`
 	Timeout int                       `json:"timeout"`
 	Llm     TagAdjudicatorLlmResponse `json:"llm"`
 }
 
+// TagAdjudicatorConfigResponse is the adjudicator section's API view.
 type TagAdjudicatorConfigResponse struct {
 	Enabled bool                      `json:"enabled"`
 	Timeout int                       `json:"timeout"`
 	Llm     TagAdjudicatorLlmResponse `json:"llm"`
 }
 
+// TagAdjudicatorLlmResponse is one LLM endpoint of the judged steps.
 type TagAdjudicatorLlmResponse struct {
 	Adapter      string  `json:"adapter"`
 	Provider     string  `json:"provider"`
@@ -906,6 +949,7 @@ type TagAdjudicatorLlmResponse struct {
 	RequestDelay float64 `json:"request_delay"`
 }
 
+// TagReconcileConfigResponse is the reconcile section's API view.
 type TagReconcileConfigResponse struct {
 	Enabled              bool    `json:"enabled"`
 	ReportOnly           bool    `json:"report_only"`
@@ -917,24 +961,28 @@ type TagReconcileConfigResponse struct {
 	ProvisionalGraceDays int     `json:"provisional_grace_days"`
 }
 
+// TagMeasureConfigResponse is the measure section's API view.
 type TagMeasureConfigResponse struct {
 	Enabled  bool    `json:"enabled"`
 	Interval float64 `json:"interval"`
 	Time     string  `json:"time"`
 }
 
+// TextReducerResponse is the reducer section's API view.
 type TextReducerResponse struct {
 	Engine      string `json:"engine"`
 	Timeout     int    `json:"timeout"`
 	TargetWords int    `json:"target_words"`
 }
 
+// DocTypeRefinementResponse is the type-refinement section's API view.
 type DocTypeRefinementResponse struct {
 	Enabled   bool `json:"enabled"`
 	HeadWords int  `json:"head_words"`
 	TailWords int  `json:"tail_words"`
 }
 
+// ContentAnalyzerResponse is the analyzer section's API view.
 type ContentAnalyzerResponse struct {
 	Enabled            bool                      `json:"enabled"`
 	Timeout            int                       `json:"timeout"`
@@ -947,11 +995,13 @@ type ContentAnalyzerResponse struct {
 	PauseOnCreditError bool                      `json:"pause_on_credit_error"`
 }
 
+// FallbackConfigResponse is one fallback's API view.
 type FallbackConfigResponse struct {
 	Enabled bool              `json:"enabled"`
 	Llm     LlmConfigResponse `json:"llm"`
 }
 
+// LlmConfigResponse is one LLM endpoint's API view, without the token.
 type LlmConfigResponse struct {
 	Adapter         string  `json:"adapter"`
 	Provider        string  `json:"provider"`
@@ -963,6 +1013,7 @@ type LlmConfigResponse struct {
 	RequestDelay    float64 `json:"request_delay"`
 }
 
+// TagMatcherResponse is the matcher section's API view.
 type TagMatcherResponse struct {
 	Timeout           int           `json:"timeout"`
 	ReduceTargetWords int           `json:"reduce_target_words"`
@@ -970,11 +1021,13 @@ type TagMatcherResponse struct {
 	Hugot             HugotResponse `json:"hugot"`
 }
 
+// HugotResponse is the embedding-model section's API view.
 type HugotResponse struct {
 	Model   string `json:"model"`
 	Backend string `json:"backend"`
 }
 
+// BackupScheduleResponse is one backup schedule's API view.
 type BackupScheduleResponse struct {
 	Mode     string  `json:"mode"`
 	Interval float64 `json:"interval"`
@@ -983,12 +1036,14 @@ type BackupScheduleResponse struct {
 	Path     string  `json:"path"`
 }
 
+// BackupConfigResponse is the backup section's API view.
 type BackupConfigResponse struct {
 	Enabled   bool                     `json:"enabled"`
 	Path      string                   `json:"path"`
 	Schedules []BackupScheduleResponse `json:"schedules"`
 }
 
+// MirrorConfigResponse is the mirror section's API view.
 type MirrorConfigResponse struct {
 	Enabled  bool    `json:"enabled"`
 	Path     string  `json:"path"`
@@ -996,11 +1051,13 @@ type MirrorConfigResponse struct {
 	Time     string  `json:"time"`
 }
 
+// LlmModelsResponse is the model catalog as the config UI shows it.
 type LlmModelsResponse struct {
 	Adapters  map[string][]string        `json:"adapters"`
 	Providers map[string][]LlmModelEntry `json:"providers"`
 }
 
+// LlmModelEntry is one model in the UI's model catalog view.
 type LlmModelEntry struct {
 	ID           string `json:"id"`
 	Capabilities struct {
@@ -1013,6 +1070,7 @@ type LlmModelEntry struct {
 	} `json:"capabilities"`
 }
 
+// ConfigResponseFrom maps the finalized tree into the API view.
 func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	var resp ConfigResponse
 	resp.Consumer.Workers = cfg.Consumer.Workers

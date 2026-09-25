@@ -18,6 +18,8 @@ import (
 	"github.com/wgomg/edub-kushim/internal/log"
 )
 
+// MuPDF renders thumbnails through the MuPDF C library, at the configured
+// DPI, downscaling to the configured maximum width and JPEG quality.
 type MuPDF struct {
 	logger   *log.Logger
 	config   config.ToolConfig
@@ -32,14 +34,19 @@ func init() {
 	}
 }
 
+// Name identifies the engine.
 func (m *MuPDF) Name() string {
 	return config.Thumbnail.MuPDF
 }
 
+// CanHandle reports PDF and raster-image content types.
 func (m *MuPDF) CanHandle(mimeType string) bool {
 	return mime.IsPDF(mimeType) || mime.IsImage(mimeType)
 }
 
+// Generate renders the file's first page (or the image itself) to a temp
+// JPEG, downscales it to the width cap, and writes it to outputPath. The
+// paths must be absolute.
 func (m *MuPDF) Generate(ctx context.Context, docId, path, outputPath string) (width, height int, err error) {
 	tmpDir := os.TempDir()
 	ogName := filepath.Base(path)

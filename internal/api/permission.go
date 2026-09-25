@@ -6,6 +6,9 @@ import (
 	"github.com/wgomg/edub-kushim/internal/auth"
 )
 
+// RequireRole restricts a route to the allowed roles, answering 403 for
+// missing or unlisted roles. The role must have been put in the context
+// by AuthMiddleware.
 func RequireRole(allowed ...auth.Role) func(http.Handler) http.Handler {
 	allowedSet := make(map[auth.Role]bool, len(allowed))
 	for _, r := range allowed {
@@ -24,5 +27,3 @@ func RequireRole(allowed ...auth.Role) func(http.Handler) http.Handler {
 		})
 	}
 }
-
-

@@ -10,6 +10,10 @@ import (
 	"strings"
 )
 
+// CheckRestoreTooling verifies the restore path is runnable for the
+// configured database runtime: host needs psql, docker and podman need
+// the container CLI and a container name, remote is refused with manual
+// instructions.
 func CheckRestoreTooling(runtime, container string) error {
 	switch runtime {
 	case "", "host":
@@ -31,6 +35,9 @@ func CheckRestoreTooling(runtime, container string) error {
 	return nil
 }
 
+// RestoreDumpViaPSQL replays a SQL dump into the target database, running
+// psql on the host or exec'ing it inside the configured container; the
+// password rides through PGPASSWORD.
 func RestoreDumpViaPSQL(ctx context.Context, runtime, container, dsn, dumpPath string) error {
 	if err := CheckRestoreTooling(runtime, container); err != nil {
 		return err

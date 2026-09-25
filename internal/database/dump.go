@@ -14,6 +14,10 @@ import (
 
 const insertBatchSize = 100
 
+// DumpSchemaAndData writes a self-contained SQL dump of schema and data:
+// the schema preamble from the embedded migrations, the table data ordered
+// by foreign-key dependencies, and the sequence realignments, all inside
+// one transaction.
 func DumpSchemaAndData(ctx context.Context, db *sql.DB, schemaFS embed.FS, w io.Writer) error {
 	write := func(s string) error {
 		_, err := io.WriteString(w, s)
@@ -89,6 +93,8 @@ func DumpSchemaAndData(ctx context.Context, db *sql.DB, schemaFS embed.FS, w io.
 	return nil
 }
 
+// SQLDumpToFile dumps the database through DumpSchemaAndData into a
+// gzipped file at destPath.
 func SQLDumpToFile(ctx context.Context, db *sql.DB, schemaFS embed.FS, destPath string) error {
 	f, err := os.Create(destPath)
 	if err != nil {

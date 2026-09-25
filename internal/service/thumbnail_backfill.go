@@ -15,6 +15,10 @@ import (
 
 const backfillPageSize = 500
 
+// ThumbnailBackfill enqueues thumbnail tasks for documents that lack a
+// thumbnail: everything, one batch's worth, or a single document. It pages
+// the candidate documents and creates the tasks with per-document dedup
+// keys, skipping the ones already covered by pending thumbnail tasks.
 type ThumbnailBackfill struct {
 	queries      *database.Queries
 	logger       *log.Logger
@@ -22,6 +26,8 @@ type ThumbnailBackfill struct {
 	batchCreator BatchCreator
 }
 
+// NewThumbnailBackfill wires the enqueue path to the queries and the
+// task and batch creators.
 func NewThumbnailBackfill(queries *database.Queries, logger *log.Logger, taskCreator TaskCreator, batchCreator BatchCreator) *ThumbnailBackfill {
 	return &ThumbnailBackfill{
 		queries:      queries,
@@ -31,6 +37,9 @@ func NewThumbnailBackfill(queries *database.Queries, logger *log.Logger, taskCre
 	}
 }
 
+// BackfillAll enqueues thumbnails for every live document missing one,
+// skipping documents with a pending thumbnail task; documents with a
+// thumbnail on disk are ignored. An all-skipped run creates no batch.
 func (s *ThumbnailBackfill) BackfillAll(ctx context.Context) (batchID string, enqueued, skipped int, err error) {
 	runBatchID := uuid.New().String()
 	batchCreated := false
@@ -72,6 +81,7 @@ func (s *ThumbnailBackfill) BackfillAll(ctx context.Context) (batchID string, en
 	return runBatchID, enqueued, skipped, nil
 }
 
+// BackfillBatch enqueues thumbnails for the documents of one past batch.
 func (s *ThumbnailBackfill) BackfillBatch(ctx context.Context, batchID string) (newBatchID string, enqueued, skipped int, err error) {
 	rows, err := s.queries.ListDocumentsWithoutThumbnailsByBatch(ctx, sql.NullString{String: batchID, Valid: true})
 	if err != nil {
@@ -103,6 +113,8 @@ func (s *ThumbnailBackfill) BackfillBatch(ctx context.Context, batchID string) (
 	return runBatchID, enqueued, skipped, nil
 }
 
+// BackfillDocument enqueues one document's thumbnail task; documents
+// that already have a thumbnail are refused with a conflict.
 func (s *ThumbnailBackfill) BackfillDocument(ctx context.Context, documentUUID string) (batchID string, err error) {
 	_, err = s.queries.GetDocument(ctx, documentUUID)
 	if err != nil {

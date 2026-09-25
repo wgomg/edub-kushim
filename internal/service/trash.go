@@ -23,6 +23,10 @@ const (
 	thumbnailGracePeriod = 30 * time.Second
 )
 
+// TrashService is the soft-delete lifecycle: listing, soft-deleting,
+// restoring, permanent deletion, the hourly expired purge, and orphaned
+// thumbnail cleanup. RestoreDocument and PermanentlyDelete run under a
+// blocking task protocol against the batch owner.
 type TrashService struct {
 	client *database.Client
 	cfg    *config.Config
@@ -31,14 +35,18 @@ type TrashService struct {
 	cancel context.CancelFunc
 }
 
+// NewTrashService builds the trash service; the background purge runs
+// only after StartBackgroundPurge.
 func NewTrashService(client *database.Client, cfg *config.Config, logger *log.Logger) *TrashService {
 	return &TrashService{client: client, cfg: cfg, logger: logger}
 }
 
+// ListTrash pages the trashed documents.
 func (s *TrashService) ListTrash(ctx context.Context, limit, offset int32) ([]database.ListTrashDocumentsRow, error) {
 	return s.client.ListTrashDocuments(ctx, database.ListTrashDocumentsParams{Limit: limit, Offset: offset})
 }
 
+// GetTrashDocument returns one trashed document's row.
 func (s *TrashService) GetTrashDocument(ctx context.Context, documentID string) (database.GetTrashDocumentRow, error) {
 	row, err := s.client.GetTrashDocument(ctx, documentID)
 	if err != nil {
@@ -47,10 +55,13 @@ func (s *TrashService) GetTrashDocument(ctx context.Context, documentID string) 
 	return row, nil
 }
 
+// CountTrash counts the trashed documents.
 func (s *TrashService) CountTrash(ctx context.Context) (int64, error) {
 	return s.client.CountTrashDocuments(ctx)
 }
 
+// SoftDelete moves a document into the trash layout and flips its row to
+// trashed inside one transaction; either side failing rolls both back.
 func (s *TrashService) SoftDelete(ctx context.Context, documentID string) error {
 	doc, err := s.client.GetDocument(ctx, documentID)
 	if err != nil {
@@ -79,6 +90,8 @@ func (s *TrashService) SoftDelete(ctx context.Context, documentID string) error 
 	return nil
 }
 
+// RestoreDocument moves a trashed document back into the live layout and
+// flips its row back to live, again transactionally.
 func (s *TrashService) RestoreDocument(ctx context.Context, documentID string) error {
 	doc, err := s.GetTrashDocument(ctx, documentID)
 	if err != nil {
@@ -106,6 +119,8 @@ func (s *TrashService) RestoreDocument(ctx context.Context, documentID string) e
 	return nil
 }
 
+// PermanentlyDelete removes a trashed document's rows, its thumbnail and
+// its files (trash and live layout) inside one transaction.
 func (s *TrashService) PermanentlyDelete(ctx context.Context, documentID string) error {
 	doc, err := s.GetTrashDocument(ctx, documentID)
 	if err != nil {
@@ -128,6 +143,8 @@ func (s *TrashService) PermanentlyDelete(ctx context.Context, documentID string)
 	return nil
 }
 
+// PurgeExpired removes the trash rows whose retention grace has passed
+// and returns how many were purged.
 func (s *TrashService) PurgeExpired(ctx context.Context) (int64, error) {
 	deleted, err := s.client.PurgeExpiredDocuments(ctx, strconv.Itoa(s.cfg.Storage.Trash.RetentionDays))
 	if err != nil {
@@ -202,6 +219,8 @@ func (s *TrashService) activeTrashDocumentIDs(ctx context.Context) (map[string]s
 	return ids, rows.Err()
 }
 
+// CleanupOrphanedThumbnails deletes thumbnail files whose document is
+// gone, honoring the deletion grace period; dryRun only lists.
 func (s *TrashService) CleanupOrphanedThumbnails(ctx context.Context, dryRun bool) (removedPaths []string, err error) {
 	thumbRoot := filepath.Join(s.cfg.Storage.StorageDir, storage.DirThumbnails)
 	if _, err := os.Stat(thumbRoot); err != nil {
@@ -344,6 +363,8 @@ func isRecentlyModified(dirPath string, within time.Duration) bool {
 	return false
 }
 
+// StartBackgroundPurge runs the hourly expired-trash purge until Close;
+// calling it twice leaks a goroutine.
 func (s *TrashService) StartBackgroundPurge() {
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	go func() {
@@ -365,6 +386,7 @@ func (s *TrashService) StartBackgroundPurge() {
 	}()
 }
 
+// Close stops the background purge. Safe before Start.
 func (s *TrashService) Close() error {
 	if s.cancel != nil {
 		s.cancel()

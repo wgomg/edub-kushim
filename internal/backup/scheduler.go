@@ -10,11 +10,14 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 )
 
+// ScheduleTiming is a schedule's serialized form: interval in days and
+// the preferred time of day; Equal compares minutes only.
 type ScheduleTiming struct {
 	Interval float64 `json:"interval"`
 	Time     string  `json:"time"`
 }
 
+// Equal reports whether both schedules' intervals and times-of-day match.
 func (t ScheduleTiming) Equal(other ScheduleTiming) bool {
 	return t.Interval == other.Interval && preferredMinutes(t.Time) == preferredMinutes(other.Time)
 }
@@ -36,6 +39,10 @@ func preferredMinutes(preferredTime string) int {
 	return prefTime.Hour()*60 + prefTime.Minute()
 }
 
+// NextBackupTime returns the first occurrence strictly after the given
+// instant, honoring the preferred time of day; a sub-daily interval adds
+// a day once the same-day occurrences are past. Zero interval clamps to
+// one day; an empty or malformed time defaults to 02:00.
 func NextBackupTime(after time.Time, intervalDays float64, preferredTime string) time.Time {
 	if intervalDays <= 0 {
 		intervalDays = 1
@@ -66,6 +73,8 @@ func NextBackupTime(after time.Time, intervalDays float64, preferredTime string)
 	return candidate
 }
 
+// NextScheduledTime returns the next occurrence, treating any instant
+// before today's preferred time as same-day eligible.
 func NextScheduledTime(lastRun time.Time, intervalDays float64, preferredTime string) time.Time {
 	if intervalDays >= 1.0 {
 		return nextOccurrence(lastRun, preferredTime)
@@ -83,6 +92,8 @@ func nextOccurrence(now time.Time, preferredTime string) time.Time {
 	return candidate
 }
 
+// FirstRunAnchor returns the scheduled slot the first run would have
+// fallen into, the base the due checks phase off.
 func FirstRunAnchor(now time.Time, intervalDays float64, preferredTime string) time.Time {
 	if intervalDays <= 0 {
 		intervalDays = 1
@@ -94,6 +105,9 @@ func FirstRunAnchor(now time.Time, intervalDays float64, preferredTime string) t
 	return first.AddDate(0, 0, -int(intervalDays))
 }
 
+// IsBackupDue compares the schedule against the last completed backup of
+// the same mode in history: a recent successful run inside the current
+// window blocks.
 func IsBackupDue(ctx context.Context, queries *database.Queries, schedule config.BackupSchedule) (bool, error) {
 	recent, err := queries.CountRecentBackupTasksByMode(ctx, database.CountRecentBackupTasksByModeParams{
 		Column1: sql.NullString{String: "5", Valid: true},
@@ -114,6 +128,8 @@ func IsBackupDue(ctx context.Context, queries *database.Queries, schedule config
 	return dueFromHistory(recent, last.CompletedAt, schedule.Interval, schedule.Time, scheduleTimingFromPayload(last.Payload)), nil
 }
 
+// IsMirrorDue compares the mirror schedule against the last completed
+// mirror run's state.
 func IsMirrorDue(ctx context.Context, queries *database.Queries, schedule config.MirrorConfig) (bool, error) {
 	recent, err := queries.CountRecentMirrorTasks(ctx, sql.NullString{String: "5", Valid: true})
 	if err != nil {

@@ -323,7 +323,7 @@ This regenerates the type-safe query methods under `internal/database/*.sql.go`.
 ### Miscellaneous
 
 ```bash
-make fix    # runs go fix -tags "XLA,ORT" ./...
+make check  # go fix + go vet + revive (doc-comment rules in revive.toml; revive must be on PATH)
 ```
 
 ### Configuration reference
