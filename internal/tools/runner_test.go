@@ -1,11 +1,13 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -831,5 +833,41 @@ func TestRankTags_NilMatcher(t *testing.T) {
 	_, err := r.RankTags(context.Background(), "doc-1", nil)
 	if err == nil {
 		t.Fatal("expected error when matcher is nil")
+	}
+}
+
+func TestNewRunner_UnknownCapabilityLoggedAndSkipped(t *testing.T) {
+	var logs bytes.Buffer
+	logger := log.NewLoggerWithWriter(&logs)
+
+	r := NewRunner(logger, config.DefaultConfig(t.TempDir()), []string{"bogus"})
+
+	if want := `unknown capability "bogus" — skipped`; !strings.Contains(logs.String(), want) {
+		t.Errorf("expected log line containing %q, got %q", want, logs.String())
+	}
+	if r.textExtractor != nil || r.ocr != nil || r.pdfOptimizer != nil || r.thumbnailer != nil ||
+		r.documentConverter != nil || r.textReducer != nil || r.contentAnalyzer != nil || r.tagMatcher != nil {
+		t.Error("an unknown capability must leave every adapter nil")
+	}
+}
+
+func TestNewRunner_ConstructorFailureLogsCauseAndStaysNil(t *testing.T) {
+	var logs bytes.Buffer
+	logger := log.NewLoggerWithWriter(&logs)
+
+	cfg := config.DefaultConfig(t.TempDir())
+	cfg.Consumer.Thumbnail.Engine = config.Thumbnail.Imagemagick
+
+	r := NewRunner(logger, cfg, []string{"thumbnail"})
+
+	if want := "create thumbnailer: imagemagick thumbnail engine is not implemented yet"; !strings.Contains(logs.String(), want) {
+		t.Errorf("expected the constructor cause in the log, got %q", logs.String())
+	}
+	if r.thumbnailer != nil {
+		t.Error("a failed construction must leave the adapter nil")
+	}
+	_, err := r.GenerateThumbnail(context.Background(), "doc", "missing.pdf", "out.jpg")
+	if err == nil || !strings.Contains(err.Error(), "not configured") {
+		t.Errorf("expected a not-configured failure, got %v", err)
 	}
 }

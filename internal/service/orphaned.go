@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -30,7 +33,8 @@ type BatchCreator interface {
 
 // Orphaned administers the quarantined files the orphaned sweep finds:
 // list, quarantine, delete, move back into the consumption directory, and
-// re-consume through the task creators.
+// re-consume through the task creators. It also owns the orphaned-thumbnail
+// sweep, which deletes thumbnail files whose document is gone.
 type Orphaned struct {
 	queries      *database.Queries
 	cfg          *config.Config
@@ -320,4 +324,97 @@ func (s *Orphaned) ScanAndQuarantineAsync() {
 			s.logger.Info("", "orphaned scan: %d files quarantined", count)
 		}
 	}()
+}
+
+// CleanupOrphanedThumbnails deletes thumbnail files whose document is
+// gone, honoring the deletion grace period; dryRun only lists. Failures
+// along the way are logged and end the sweep without an error.
+func (s *Orphaned) CleanupOrphanedThumbnails(ctx context.Context, dryRun bool) (removedPaths []string, err error) {
+	thumbRoot := filepath.Join(s.cfg.Storage.StorageDir, storage.DirThumbnails)
+	if _, err := os.Stat(thumbRoot); err != nil {
+		if !os.IsNotExist(err) {
+			s.logger.Warn("", "thumbnail purge: stat thumbnails dir: %v", err)
+		}
+		return nil, nil
+	}
+
+	var docIDs []string
+	err = filepath.WalkDir(thumbRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			s.logger.Warn("", "thumbnail purge: walk %s: %v", path, err)
+			return nil
+		}
+		if d.IsDir() || filepath.Ext(d.Name()) != ".jpg" {
+			return nil
+		}
+		docIDs = append(docIDs, strings.TrimSuffix(d.Name(), ".jpg"))
+		return nil
+	})
+	if err != nil {
+		s.logger.Warn("", "thumbnail purge: walk thumbnails dir: %v", err)
+		return nil, nil
+	}
+	if len(docIDs) == 0 {
+		return nil, nil
+	}
+
+	existingRows, err := s.queries.GetDocumentIDsByDocumentIDs(ctx, docIDs)
+	if err != nil {
+		s.logger.Warn("", "thumbnail purge: query document ids: %v", err)
+		return nil, nil
+	}
+	existingIDs := make(map[string]struct{}, len(existingRows))
+	for _, row := range existingRows {
+		existingIDs[row.DocumentID] = struct{}{}
+	}
+
+	err = filepath.WalkDir(thumbRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			s.logger.Warn("", "thumbnail purge: walk %s: %v", path, err)
+			return nil
+		}
+		if ctx.Err() != nil {
+			return filepath.SkipAll
+		}
+		if d.IsDir() || filepath.Ext(d.Name()) != ".jpg" {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			s.logger.Warn("", "thumbnail purge: stat %s: %v", path, err)
+			return nil
+		}
+		if time.Since(info.ModTime()) < thumbnailGracePeriod {
+			return nil
+		}
+		docID := strings.TrimSuffix(d.Name(), ".jpg")
+		if _, ok := existingIDs[docID]; ok {
+			return nil
+		}
+		removedPaths = append(removedPaths, path)
+		if dryRun {
+			return nil
+		}
+		if err := os.Remove(path); err != nil {
+			s.logger.Warn("", "thumbnail purge: remove %s: %v", path, err)
+			return nil
+		}
+		removeEmptyThumbnailDirs(filepath.Dir(path))
+		return nil
+	})
+	if err != nil {
+		s.logger.Warn("", "thumbnail purge: walk thumbnails dir: %v", err)
+	}
+	return removedPaths, nil
+}
+
+const thumbnailGracePeriod = 30 * time.Second
+
+func removeEmptyThumbnailDirs(dirPath string) {
+	for range 4 {
+		if os.Remove(dirPath) != nil {
+			return
+		}
+		dirPath = filepath.Dir(dirPath)
+	}
 }

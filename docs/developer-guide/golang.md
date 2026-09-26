@@ -345,7 +345,7 @@ gets embeddings: it uses the client implementation.
 Services declare the *minimum* interface they need, then accept it:
 
 ```go
-// internal/service/orphaned.go:19 — Orphaned needs exactly two collaborators
+// internal/service/orphaned.go:24 — Orphaned needs exactly two collaborators
 type TaskCreator interface {
 	CreateTask(ctx context.Context, taskType, batchID string, payload json.RawMessage,
 		taskID, status, dedupKey string) (string, error)
@@ -733,7 +733,7 @@ fill the role.
 
 Periodic work is a ticker with `defer Stop`, selected against `ctx.Done()` —
 used by the heartbeat (`task/heartbeat.go:33`), config watcher
-(`config/watcher.go:66`), trash purge (`service/trash.go:350`), task drain
+(`config/watcher.go:66`), trash purge (`service/trash.go:248`), task drain
 (`database/migrate.go:36`), and queue housekeeping (`queue.go:142`):
 
 ```go
@@ -1151,25 +1151,21 @@ a synthetic admin — the whole server still works for local setups.
 `http.Server` with explicit timeouts (`ReadTimeout`, `WriteTimeout`,
 `IdleTimeout`), started in a goroutine, shut down gracefully via
 `server.Shutdown(ctx)` with a 30-second deadline and `srv.services.Close()` —
-which uses reflection to close every remaining service implementing `io.Closer`
-(`internal/service/crud.go:20`); the curation tag service (embedder) is closed
-explicitly first:
+a nil-safe explicit list of the members that own resources, today only `Trash`,
+whose `Close` stops the hourly purge (`internal/service/crud.go:23`); the
+curation tag service (embedder) is closed explicitly first:
 
 ```go
-func (s *CrudServices) Close() {
-	v := reflect.ValueOf(s).Elem()
-	t := v.Type()
-	for i := 0; i < t.NumField(); i++ {
-		f := v.Field(i)
-		if closer, ok := f.Interface().(io.Closer); ok && !f.IsNil() {
-			closer.Close()
-		}
+func (s *CrudServices) Close() error {
+	var errs []error
+	if s.Trash != nil {
+		errs = append(errs, s.Trash.Close())
 	}
+	return errors.Join(errs...)
 }
 ```
 
-This is the project's single use of the `reflect` package — a miniature
-dependency-closing loop.
+A member that starts owning resources is added to the explicit list.
 
 ---
 
@@ -1397,8 +1393,7 @@ sticks to `any`.
 | slog custom handlers | `internal/log/logger.go` |
 | Table-driven tests | `internal/log/logger_test.go:13` |
 | DB test harness | `internal/database/dbtest.go`, `internal/testutil/testutil.go` |
-| Generics | `internal/tools/runner.go:81`, `internal/service/result.go` |
-| Reflection | `internal/service/crud.go:23` |
+| Generics | `internal/tools/runner.go:135`, `internal/service/result.go` |
 
 ---
 
@@ -1411,7 +1406,7 @@ sticks to `any`.
 - **Translate at the boundary.** Services end with `errs.FromDB(err, op)`;
   handlers map kinds with `writeServiceError`.
 - **Accept interfaces, return structs.** Declare the smallest interface you need
-  (`internal/service/orphaned.go:19`) and add a `var _` compile-time assertion
+  (`internal/service/orphaned.go:24`) and add a `var _` compile-time assertion
   where it matters.
 - **Pass `ctx` first** and select on `ctx.Done()` in every long-running
   goroutine.

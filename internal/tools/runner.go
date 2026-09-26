@@ -6,7 +6,10 @@
 // configuration, applies each tool's timeout as a context deadline, and for
 // the analyzer calls walks the configured fallback chain on provider-level
 // failures. A capability that was not requested has a nil adapter and its
-// method fails fast.
+// method fails fast. Construction never fails: an adapter whose constructor
+// fails is logged with its cause and left nil, an unknown capability name is
+// logged and skipped, and a model-catalog load failure leaves only the
+// analyzer adapters unconfigured.
 package tools
 
 import (
@@ -152,8 +155,10 @@ func runWithTimeout[T any](ctx context.Context, fn func() (T, error)) (T, error)
 // names are the capability keys below ("textextractor", "ocr",
 // "converter", "pdfoptimizer", "thumbnail", "textreducer",
 // "contentanalyzer", "tagmatcher"); an unknown name is logged and skipped.
-// The model catalog is loaded from the config directory; a load failure is
-// logged, leaving the analyzer adapters unconfigured.
+// A requested adapter whose constructor fails is logged with its cause and
+// left nil, so the later "not configured" failure traces back to a cause
+// named here. The model catalog is loaded from the config directory; a load
+// failure is logged, leaving the analyzer adapters unconfigured.
 func NewRunner(logger *log.Logger, cfg *config.Config, tools []string) *Runner {
 	r := &Runner{logger: logger, config: cfg}
 
@@ -169,7 +174,11 @@ func NewRunner(logger *log.Logger, cfg *config.Config, tools []string) *Runner {
 				Command: cfg.Consumer.TextExtractor.Engine,
 				Timeout: time.Duration(cfg.Consumer.TextExtractor.Timeout) * time.Second,
 			}
-			r.textExtractor, _ = textextractor.NewTextExtractor(logger, toolCfg)
+			te, teErr := textextractor.NewTextExtractor(logger, toolCfg)
+			if teErr != nil {
+				logger.Error("", "create text extractor: %v", teErr)
+			}
+			r.textExtractor = te
 		case "ocr":
 			toolCfg := config.ToolConfig{
 				Command: cfg.Consumer.OCR.Engine,
@@ -180,22 +189,34 @@ func NewRunner(logger *log.Logger, cfg *config.Config, tools []string) *Runner {
 				ocrWorkers = max(1, runtime.NumCPU()/
 					max(cfg.Srv.MaxConcurrentBatches, 1)/max(cfg.Consumer.Workers, 1))
 			}
-			r.ocr, _ = ocr.NewOCR(logger, toolCfg, cfg.Consumer.PdfOptimizer.Engine, cfg.Consumer.OCR.Languages, cfg.Consumer.OCR.DataDir, ocrWorkers)
+			o, oErr := ocr.NewOCR(logger, toolCfg, cfg.Consumer.PdfOptimizer.Engine, cfg.Consumer.OCR.Languages, cfg.Consumer.OCR.DataDir, ocrWorkers)
+			if oErr != nil {
+				logger.Error("", "create ocr: %v", oErr)
+			}
+			r.ocr = o
 		case "pdfoptimizer":
 			toolCfg := config.ToolConfig{
 				Command: cfg.Consumer.PdfOptimizer.Engine,
 				Timeout: time.Duration(cfg.Consumer.PdfOptimizer.Timeout) * time.Second,
 			}
-			r.pdfOptimizer, _ = pdfoptimizer.NewPdfOptimizer(logger, toolCfg)
+			po, poErr := pdfoptimizer.NewPdfOptimizer(logger, toolCfg)
+			if poErr != nil {
+				logger.Error("", "create pdf optimizer: %v", poErr)
+			}
+			r.pdfOptimizer = po
 		case "thumbnail":
 			toolCfg := config.ToolConfig{
 				Command: cfg.Consumer.Thumbnail.Engine,
 				Timeout: time.Duration(cfg.Consumer.Thumbnail.Timeout) * time.Second,
 			}
-			r.thumbnailer, _ = thumbnail.NewThumbnailer(logger, toolCfg, cfg.Consumer.Thumbnail.DPI, cfg.Consumer.Thumbnail.MaxWidth, cfg.Consumer.Thumbnail.Quality)
+			th, thErr := thumbnail.NewThumbnailer(logger, toolCfg, cfg.Consumer.Thumbnail.DPI, cfg.Consumer.Thumbnail.MaxWidth, cfg.Consumer.Thumbnail.Quality)
+			if thErr != nil {
+				logger.Error("", "create thumbnailer: %v", thErr)
+			}
+			r.thumbnailer = th
 		case "converter":
 			if cfg.Consumer.Converter.Enabled {
-				r.documentConverter, _ = converter.NewDocumentConverter(
+				dc, dcErr := converter.NewDocumentConverter(
 					logger,
 					config.ToolConfig{
 						Command: cfg.Consumer.Converter.Binary,
@@ -203,13 +224,21 @@ func NewRunner(logger *log.Logger, cfg *config.Config, tools []string) *Runner {
 					},
 					cfg.Consumer.Converter.Binary,
 				)
+				if dcErr != nil {
+					logger.Error("", "create document converter: %v", dcErr)
+				}
+				r.documentConverter = dc
 			}
 		case "textreducer":
 			toolCfg := config.ToolConfig{
 				Command: cfg.Enricher.TextReducer.Engine,
 				Timeout: time.Duration(cfg.Enricher.TextReducer.Timeout) * time.Second,
 			}
-			r.textReducer, _ = textreducer.NewTextReducer(logger, toolCfg)
+			tr, trErr := textreducer.NewTextReducer(logger, toolCfg)
+			if trErr != nil {
+				logger.Error("", "create text reducer: %v", trErr)
+			}
+			r.textReducer = tr
 		case "contentanalyzer":
 			ca, caErr := analyzer.NewContentAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.Enricher.ContentAnalyzer.Timeout) * time.Second}, &cfg.Enricher.ContentAnalyzer.Llm, cfg.Enricher.ContentAnalyzer.PromptTemplate, cfg.Enricher.ContentAnalyzer.MinTags, cfg.Enricher.ContentAnalyzer.MaxTags, reg)
 			if caErr != nil {
@@ -248,6 +277,10 @@ func NewRunner(logger *log.Logger, cfg *config.Config, tools []string) *Runner {
 				r.fallbackAnalyzers = append(r.fallbackAnalyzers, fbCa)
 				r.fallbackMeta = append(r.fallbackMeta, fallbackMeta{Provider: fb.Llm.Provider, Model: fb.Llm.Model})
 			}
+		case "tagmatcher":
+			// no adapter to build: the matcher is injected by NewRunnerWithMatcher
+		default:
+			logger.Error("", "unknown capability %q — skipped", name)
 		}
 	}
 	return r

@@ -81,8 +81,8 @@ func newHandlerTestEnv(t *testing.T) *handlerTestEnv {
 
 	tagSvc, _ := newMockTagService(client)
 	peopleSvc := service.NewPeople(client.Queries, logger)
-	peopleTypeSvc := service.NewPeopleType(client.Queries, logger)
-	docTypeSvc := service.NewDocumentType(client.Queries, logger)
+	peopleTypeSvc := service.NewPeopleType(client.Queries)
+	docTypeSvc := service.NewDocumentType(client.Queries)
 	userSvc := service.NewUser(client.Queries)
 
 	batchSvc := service.NewBatch(client, 3)
@@ -90,7 +90,8 @@ func newHandlerTestEnv(t *testing.T) *handlerTestEnv {
 	reenrichSvc := service.NewReEnrich(client.Queries, workStore, batchSvc)
 
 	trashCfg := config.DefaultConfig("/tmp/test")
-	trashSvc := service.NewTrashService(client, trashCfg, logger)
+	orphanedSvc := service.NewOrphaned(client.Queries, trashCfg, logger, workStore, batchSvc)
+	trashSvc := service.NewTrash(client, trashCfg, logger, orphanedSvc)
 
 	tagMerge := curation.NewTagMerge(client, matcherClient, testutil.NewMockEmbedder(), logger)
 	tagIdentity := curation.NewTagIdentity(client.Queries, workStore, batchSvc)

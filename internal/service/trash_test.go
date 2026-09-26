@@ -7,27 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 )
-
-func newTestTrashService(t *testing.T) (*TrashService, *config.Config, *database.Client, func()) {
-	t.Helper()
-	client := database.NewTestClient(t)
-	database.ResetTestDatabase(client.DB())
-	logger := testutil.NewTestLogger()
-
-	configDir := t.TempDir()
-	cfg := config.DefaultConfig(configDir)
-	cfg.Storage.StorageDir = filepath.Join(configDir, "storage")
-	os.MkdirAll(cfg.Storage.StorageDir, 0755)
-
-	svc := NewTrashService(client, cfg, logger)
-
-	cleanup := func() { client.DB().Close() }
-	return svc, cfg, client, cleanup
-}
 
 func createTestThumbnail(t *testing.T, storageDir, docID string, mtime time.Time) string {
 	t.Helper()
@@ -42,7 +24,7 @@ func createTestThumbnail(t *testing.T, storageDir, docID string, mtime time.Time
 }
 
 func TestCleanupOrphanedThumbnails_RemovesOrphans(t *testing.T) {
-	svc, cfg, _, cleanup := newTestTrashService(t)
+	svc, cfg, _, _, cleanup := newTestOrphaned(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -61,7 +43,7 @@ func TestCleanupOrphanedThumbnails_RemovesOrphans(t *testing.T) {
 }
 
 func TestCleanupOrphanedThumbnails_DryRun(t *testing.T) {
-	svc, cfg, _, cleanup := newTestTrashService(t)
+	svc, cfg, _, _, cleanup := newTestOrphaned(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -79,7 +61,7 @@ func TestCleanupOrphanedThumbnails_DryRun(t *testing.T) {
 }
 
 func TestCleanupOrphanedThumbnails_SkipsExistingDocs(t *testing.T) {
-	svc, cfg, client, cleanup := newTestTrashService(t)
+	svc, cfg, client, _, cleanup := newTestOrphaned(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -98,7 +80,7 @@ func TestCleanupOrphanedThumbnails_SkipsExistingDocs(t *testing.T) {
 }
 
 func TestCleanupOrphanedThumbnails_RecencyGuard(t *testing.T) {
-	svc, cfg, _, cleanup := newTestTrashService(t)
+	svc, cfg, _, _, cleanup := newTestOrphaned(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -116,7 +98,7 @@ func TestCleanupOrphanedThumbnails_RecencyGuard(t *testing.T) {
 }
 
 func TestCleanupOrphanedThumbnails_MissingDir(t *testing.T) {
-	svc, cfg, _, cleanup := newTestTrashService(t)
+	svc, cfg, _, _, cleanup := newTestOrphaned(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -130,7 +112,7 @@ func TestCleanupOrphanedThumbnails_MissingDir(t *testing.T) {
 }
 
 func TestCleanupOrphanedThumbnails_PrunesEmptyDirs(t *testing.T) {
-	svc, cfg, _, cleanup := newTestTrashService(t)
+	svc, cfg, _, _, cleanup := newTestOrphaned(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -144,5 +126,25 @@ func TestCleanupOrphanedThumbnails_PrunesEmptyDirs(t *testing.T) {
 	dateDir := filepath.Join(cfg.Storage.StorageDir, "thumbnails", "2026", "08", "17", "12")
 	if _, err := os.Stat(dateDir); !os.IsNotExist(err) {
 		t.Fatal("empty date dir should be pruned after removing orphan")
+	}
+}
+
+func TestPurgeExpired_SweepsOrphanedThumbnailsEveryCycle(t *testing.T) {
+	orphaned, cfg, client, _, cleanup := newTestOrphaned(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	trash := NewTrash(client, cfg, testutil.NewTestLogger(), orphaned)
+
+	orphanID := "00000000-0000-0000-0000-000000000005"
+	past := time.Now().Add(-1 * time.Minute)
+	path := createTestThumbnail(t, cfg.Storage.StorageDir, orphanID, past)
+
+	deleted, err := trash.PurgeExpired(ctx)
+	testutil.AssertNoError(t, err, "purge")
+	testutil.AssertEqual(t, deleted, int64(0), "expired documents purged")
+
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("purge must run the orphaned-thumbnail sweep even when nothing was purged")
 	}
 }

@@ -136,7 +136,7 @@ func (h *DocumentTypeHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	req.Description = stripTags(req.Description)
 
-	results, err := h.services.DocumentType.Update(ctx, []service.DocTypeUpdatePair{
+	results, err := h.services.DocumentType.Update(ctx, []service.DocumentTypeUpdatePair{
 		{ID: id, Name: req.Name, Description: req.Description},
 	})
 	if err != nil {

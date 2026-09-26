@@ -161,13 +161,14 @@ Listens on a Unix socket (cleaned up on shutdown). Handles SIGTERM/SIGINT for gr
 ### Functions
 
 - `storageHandler(c, args) error` — Entry point for `kushim storage`. Routes subcommands: `orphans` and `thumbnails`.
-- `orphansHandler(c, args) error` — Manages orphaned files. Creates `docker.Orphaned` service from the container and dispatches to:
+- `newOrphanedService(c) (*service.Orphaned, error)` — Builds the orphaned-file service from the container: database client, task store, and batch service.
+- `orphansHandler(c, args) error` — Manages orphaned files. Builds the `service.Orphaned` service via `newOrphanedService(c)` and dispatches to:
   - `orphansList(svc, args)` — Lists pending orphaned files with ID, key, source dir, size, status
   - `orphansScan(svc, args)` — Runs detection + quarantine
   - `parseAndRun(svc, args, action)` — Parses `--id` flag and runs Delete/Restore
   - `parseAndRunOrAll(svc, args, single, bulk)` — Parses `--id` or `--all` and runs MoveToInbox
   - `orphansBulk(svc, args, label, action)` — Runs bulk action (DeleteAll, MoveAllToInbox)
-- `thumbnailsHandler(c, args) error` — Runs `kushim storage thumbnails cleanup [--dry-run]`. Creates a `service.TrashService` from the container and calls `CleanupOrphanedThumbnails`, printing each orphaned path and a summary (`--dry-run` lists without removing).
+- `thumbnailsHandler(c, args) error` — Runs `kushim storage thumbnails cleanup [--dry-run]`. Builds the `service.Orphaned` service via `newOrphanedService(c)` and calls `CleanupOrphanedThumbnails`, printing each orphaned path and a summary (`--dry-run` lists without removing).
 
 ### Subcommands
 

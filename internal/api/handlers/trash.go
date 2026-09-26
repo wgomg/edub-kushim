@@ -15,13 +15,13 @@ import (
 // purge, and the batch variants.
 type TrashHandler struct {
 	logger    *log.Logger
-	trashSvc  *service.TrashService
+	trashSvc  *service.Trash
 	getConfig func() *config.Config
 }
 
 // NewTrashHandler wires the handler to the trash service and the dynamic
 // config.
-func NewTrashHandler(logger *log.Logger, trashSvc *service.TrashService, getConfig func() *config.Config) *TrashHandler {
+func NewTrashHandler(logger *log.Logger, trashSvc *service.Trash, getConfig func() *config.Config) *TrashHandler {
 	return &TrashHandler{logger: logger, trashSvc: trashSvc, getConfig: getConfig}
 }
 

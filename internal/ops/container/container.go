@@ -244,8 +244,8 @@ func (c *Container) ensureDispatcher() error {
 	c.tag = curation.NewTag(client, c.logger, matcherClient)
 	c.merges = curation.NewTagMerge(client, matcherClient, matcherClient, c.logger)
 	peopleSvc := service.NewPeople(client.Queries, c.logger)
-	peopleTypeSvc := service.NewPeopleType(client.Queries, c.logger)
-	docTypeSvc := service.NewDocumentType(client.Queries, c.logger)
+	peopleTypeSvc := service.NewPeopleType(client.Queries)
+	docTypeSvc := service.NewDocumentType(client.Queries)
 
 	c.services = &service.CrudServices{
 		People: peopleSvc, PeopleType: peopleTypeSvc, DocumentType: docTypeSvc,
@@ -370,6 +370,8 @@ func (c *Container) Close() {
 		c.tag.Close()
 	}
 	if c.services != nil {
-		c.services.Close()
+		if err := c.services.Close(); err != nil {
+			c.logger.Error("", "close services: %v", err)
+		}
 	}
 }

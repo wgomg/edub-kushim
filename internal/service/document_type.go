@@ -6,7 +6,6 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
-	"github.com/wgomg/edub-kushim/internal/log"
 )
 
 // CreateDocumentTypeInput is one document type to create.
@@ -15,9 +14,9 @@ type CreateDocumentTypeInput struct {
 	Description string
 }
 
-// DocTypeUpdatePair is one document-type rename: id plus the new name
-// and description.
-type DocTypeUpdatePair struct {
+// DocumentTypeUpdatePair is one document-type rename: id plus the new
+// name and description.
+type DocumentTypeUpdatePair struct {
 	ID          int64
 	Name        string
 	Description string
@@ -26,12 +25,11 @@ type DocTypeUpdatePair struct {
 // DocumentType is the document-type taxonomy CRUD.
 type DocumentType struct {
 	queries *database.Queries
-	logger  *log.Logger
 }
 
 // NewDocumentType wires the document-type service.
-func NewDocumentType(queries *database.Queries, logger *log.Logger) *DocumentType {
-	return &DocumentType{queries: queries, logger: logger}
+func NewDocumentType(queries *database.Queries) *DocumentType {
+	return &DocumentType{queries: queries}
 }
 
 // Get returns one document type by id.
@@ -138,7 +136,7 @@ func (s *DocumentType) Create(ctx context.Context, inputs []CreateDocumentTypeIn
 }
 
 // Update renames document types in bulk, one result per pair.
-func (s *DocumentType) Update(ctx context.Context, pairs []DocTypeUpdatePair) ([]UpdateResult[database.DocumentType], error) {
+func (s *DocumentType) Update(ctx context.Context, pairs []DocumentTypeUpdatePair) ([]UpdateResult[database.DocumentType], error) {
 	results := make([]UpdateResult[database.DocumentType], len(pairs))
 
 	all, err := s.queries.ListAllDocumentTypes(ctx)

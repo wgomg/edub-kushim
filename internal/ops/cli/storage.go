@@ -35,6 +35,17 @@ func storageHandler(c *container.Container, args []string) error {
 	}
 }
 
+func newOrphanedService(c *container.Container) (*service.Orphaned, error) {
+	client, err := c.GetClient()
+	if err != nil {
+		return nil, fmt.Errorf("database: %w", err)
+	}
+
+	store := task.NewStore(client)
+	batchSvc := service.NewBatch(client, c.GetConfig().Consumer.Reclaim.MaxRetries)
+	return service.NewOrphaned(client.Queries, c.GetConfig(), c.GetLogger(), store, batchSvc), nil
+}
+
 func thumbnailsHandler(c *container.Container, args []string) error {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
 		fmt.Println("Usage: kushim storage thumbnails <action>")
@@ -55,12 +66,10 @@ func thumbnailsHandler(c *container.Container, args []string) error {
 	var dryRun bool
 	fp.Bool("--dry-run", &dryRun)
 
-	client, err := c.GetClient()
+	svc, err := newOrphanedService(c)
 	if err != nil {
-		return fmt.Errorf("database: %w", err)
+		return err
 	}
-
-	svc := service.NewTrashService(client, c.GetConfig(), c.GetLogger())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -96,14 +105,10 @@ func orphansHandler(c *container.Container, args []string) error {
 		return nil
 	}
 
-	client, err := c.GetClient()
+	svc, err := newOrphanedService(c)
 	if err != nil {
-		return fmt.Errorf("database: %w", err)
+		return err
 	}
-
-	store := task.NewStore(client)
-	batchSvc := service.NewBatch(client, c.GetConfig().Consumer.Reclaim.MaxRetries)
-	svc := service.NewOrphaned(client.Queries, c.GetConfig(), c.GetLogger(), store, batchSvc)
 
 	action := args[0]
 	remaining := args[1:]

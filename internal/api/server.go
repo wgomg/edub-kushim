@@ -93,8 +93,8 @@ func (s *Server) rebuild(client *database.Client) {
 	s.tagMerge = curation.NewTagMerge(client, s.matcherClient, s.matcherClient, s.logger)
 	services.Batch = service.NewBatch(client, cfg.Consumer.Reclaim.MaxRetries)
 	services.People = service.NewPeople(client.Queries, s.logger)
-	services.PeopleType = service.NewPeopleType(client.Queries, s.logger)
-	services.DocumentType = service.NewDocumentType(client.Queries, s.logger)
+	services.PeopleType = service.NewPeopleType(client.Queries)
+	services.DocumentType = service.NewDocumentType(client.Queries)
 	services.User = service.NewUser(client.Queries)
 
 	workStore := task.NewStore(client)
@@ -103,7 +103,7 @@ func (s *Server) rebuild(client *database.Client) {
 	services.Orphaned = service.NewOrphaned(client.Queries, cfg, s.logger, workStore, services.Batch)
 	services.Orphaned.ScanAndQuarantineAsync()
 
-	services.Trash = service.NewTrashService(client, cfg, s.logger)
+	services.Trash = service.NewTrash(client, cfg, s.logger, services.Orphaned)
 	services.Trash.StartBackgroundPurge()
 
 	services.ReEnrich = service.NewReEnrich(client.Queries, workStore, services.Batch)
@@ -174,7 +174,9 @@ func (s *Server) reconnectDB(newDB *sql.DB) {
 		s.tag.Close()
 	}
 	if s.services != nil {
-		s.services.Close()
+		if err := s.services.Close(); err != nil {
+			s.logger.Error("", "close services: %v", err)
+		}
 	}
 
 	s.rebuild(database.NewClient(newDB))
@@ -477,7 +479,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s.tag != nil {
 		s.tag.Close()
 	}
-	s.services.Close()
+	if err := s.services.Close(); err != nil {
+		s.logger.Error("", "close services: %v", err)
+	}
 
 	return nil
 }

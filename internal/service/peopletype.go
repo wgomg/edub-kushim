@@ -6,7 +6,6 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
-	"github.com/wgomg/edub-kushim/internal/log"
 )
 
 // CreatePeopleTypeInput is one people type to create.
@@ -26,12 +25,11 @@ type PeopleTypeUpdatePair struct {
 // PeopleType is the people-type taxonomy CRUD.
 type PeopleType struct {
 	queries *database.Queries
-	logger  *log.Logger
 }
 
 // NewPeopleType wires the people-type service.
-func NewPeopleType(queries *database.Queries, logger *log.Logger) *PeopleType {
-	return &PeopleType{queries: queries, logger: logger}
+func NewPeopleType(queries *database.Queries) *PeopleType {
+	return &PeopleType{queries: queries}
 }
 
 // Get returns one people type by id.

@@ -7,7 +7,7 @@
 - `Server`
   - **Fields**: `httpServer *http.Server`, `logger *log.Logger`, `addr string`, `cfg atomic.Pointer[config.Config]`, `matcherClient *matcher.MatcherClient`, `services *service.CrudServices`, `tag *curation.Tag`, `tagMerge *curation.TagMerge`, `tagIdentity *curation.TagIdentity`, `configWatcher *config.Watcher`, `pools struct { config *task.Pool }`
   - **Methods**:
-    - `NewServer(cfg config.Config, logger *log.Logger, db *sql.DB) *Server` — Creates a `MatcherClient` connected to `kushim-hugot.sock` in the config dir, builds `CrudServices` with `Batch`, `People`, `PeopleType`, `DocumentType`, `User`, `Orphaned`, `ErroredFiles`, `ReEnrich` services plus the curation tag services (`Tag` wired through `MatcherClient`, `TagMerge`, `TagIdentity`), creates dispatcher with only the `"config"` task type registered. Generates a random `SessionSecret` if none is configured (with a warning log). Registers routes and middleware chain (request → auth → parambag).
+    - `NewServer(cfg config.Config, logger *log.Logger, db *sql.DB) *Server` — Creates a `MatcherClient` connected to `kushim-hugot.sock` in the config dir, builds `CrudServices` with `Batch`, `People`, `PeopleType`, `DocumentType`, `User`, `Orphaned`, `ErroredFiles`, `ReEnrich`, `Trash` services plus the curation tag services (`Tag` wired through `MatcherClient`, `TagMerge`, `TagIdentity`), creates dispatcher with only the `"config"` task type registered. Generates a random `SessionSecret` if none is configured (with a warning log). Registers routes and middleware chain (request → auth → parambag).
     - `Start() error` — Probes matcher health (startup warning if unreachable), starts config pool, starts config file watcher (5s interval), then HTTP server
     - `Shutdown(ctx context.Context) error` — Stops config watcher, shuts down HTTP server, config pool, closes the tag service (embedder), then `services.Close()`
     - `Addr() string`
@@ -72,14 +72,14 @@
 ### Struct
 
 - `TrashHandler`
-  - **Fields**: `logger *log.Logger`, `trashSvc *service.TrashService`, `getConfig func() *config.Config`
+  - **Fields**: `logger *log.Logger`, `trashSvc *service.Trash`, `getConfig func() *config.Config`
   - **Methods**:
     - `NewTrashHandler(logger, trashSvc, getConfig) *TrashHandler`
     - `ListTrash(w, r)` — `GET /api/v1/trash` — Paginated trashed documents (`limit` default 50 max 100, `offset`), ordered by `deleted_at` DESC. Returns `TrashListResponse` with `documents`, `total` (via `CountTrash`), `limit`, `offset`.
     - `GetTrashDocument(w, r)` — `GET /api/v1/trash/{id}` — Full metadata for one trashed document (checksums, counts, language, type, timestamps — no filesystem paths). `404` if not in trash.
     - `RestoreDocument(w, r)` — `POST /api/v1/trash/{id}/restore` — Moves files back to `<storage>/originals|processed/` and clears `deleted_at`. `204`; `404` if not in trash; missing files are skipped (partial restore).
     - `PermanentlyDeleteDocument(w, r)` — `DELETE /api/v1/trash/{id}` — Deletes the DB row (junction tables cascade) first, then removes the document's trash dir best-effort. `204`; `404` if not in trash.
-    - `PurgeExpired(w, r)` — `POST /api/v1/trash/purge` — Deletes all trashed rows older than `storage.trash.retention_days`, then sweeps orphaned trash dirs. Returns `{"purged": N}`.
+    - `PurgeExpired(w, r)` — `POST /api/v1/trash/purge` — Deletes all trashed rows older than `storage.trash.retention_days`, sweeps orphaned trash dirs when rows were deleted, and always sweeps orphaned thumbnails in `storage/thumbnails/`. Returns `{"purged": N}`.
     - `BatchPermanentlyDelete(w, r)` — `POST /api/v1/trash/batch-delete` — Per-ID `PermanentlyDelete` with `deleted`/`failed` result; count validated against `max_batch_delete`.
     - `BatchRestore(w, r)` — `POST /api/v1/trash/batch-restore` — Per-ID `RestoreDocument` with `restored`/`failed` result; count validated against `max_batch_delete`.
 
@@ -416,8 +416,8 @@ See `AuthMiddleware` under `server.go` → Functions.
 
 ### Structs
 
-- `CrudServices` — `Batch *service.Batch`, `People *service.People`, `PeopleType *service.PeopleType`, `DocumentType *service.DocumentType`, `User *service.User`, `Orphaned *service.Orphaned`, `ErroredFiles *service.ErroredFiles`, `ReEnrich *service.ReEnrich`. The tag services (`Tag`, `TagMerge`, `TagIdentity`) live in `internal/tags/curation` and are held by the server and the handlers that use them.
-  - `Close()` — Uses reflection to iterate struct fields; calls `Close()` on every field implementing `io.Closer`. Automatically picks up new services added as fields. `Orphaned` and `ErroredFiles` do not implement `io.Closer` and are skipped silently.
+- `CrudServices` — `Batch *service.Batch`, `People *service.People`, `PeopleType *service.PeopleType`, `DocumentType *service.DocumentType`, `User *service.User`, `Orphaned *service.Orphaned`, `ErroredFiles *service.ErroredFiles`, `ReEnrich *service.ReEnrich`, `Trash *service.Trash`. The tag services (`Tag`, `TagMerge`, `TagIdentity`) live in `internal/tags/curation` and are held by the server and the handlers that use them.
+  - `Close() error` — Closes the members that own resources by name (today only `Trash`, whose `Close` stops the background purge) and returns the joined close failures. Nil-safe for compositions that omit `Trash`, such as the container's. A member that starts owning resources is added to this explicit list.
 
 ## DTOs (`handlers/user.go`)
 
