@@ -40,7 +40,7 @@ pieces:
 | `ContentAnalyzer` interface | `analyzer/adapter.go` | the capability contract |
 | Anthropic adapter | `analyzer/llm_anthropic.go` | Claude via `POST /messages` |
 | OpenAI-compatible adapter | `analyzer/openai_compatible.go` | anything with a `/chat/completions` API |
-| Shared prompt/parse logic | `analyzer/shared.go` | system prompt, template, JSON cleaning, errors |
+| Prompt, parse and gate logic | `analyzer/prompt.go` · `analyzer/facets.go` · `analyzer/gates.go` · the per-step files | system prompt, template, JSON cleaning, pre-flight errors, judged-step prompts/parsers |
 | Model catalog | `llm/registry.go` + `model_catalog.json` | per-model capabilities |
 | The enricher | `internal/enrichment/enricher.go` | orchestrates: reduce → match → analyze → persist |
 | Task handler | `internal/enrichment/enrich.go` | the `enrich` task type |
@@ -55,34 +55,34 @@ the whole batch pauses (§10).
 
 ## 2. The ContentAnalyzer interface
 
-`internal/llm/analyzer/adapter.go:20-47`:
+`internal/llm/analyzer/adapter.go:33-78`:
 
 ```go
 type TypeRef struct {
-	Name        string
-	Description string
+  Name        string
+  Description string
 }
 
 type ContentAnalyzer interface {
-	Analyze(ctx context.Context, text string, docTypes []TypeRef, peopleTypes []TypeRef, tagSuggestions []string) (*AnalysisResult, error)
-	AnalyzeDocType(ctx context.Context, prevResult *AnalysisResult, headTailText string, docTypes []TypeRef, metadata DocMetadata) (string, error)
-	Adjudicate(ctx context.Context, pairs []TagPairEvidence) ([]TagVerdictResult, error)
-	AdjudicateTagSplits(ctx context.Context, tags []string) ([]TagSplitResult, error)
-	JudgeTagQuality(ctx context.Context, text string, candidates []TagQualityCandidate) ([]TagQualityResult, error)
-	JudgeTagIdentity(ctx context.Context, candidates []TagIdentityCandidate) ([]TagIdentityResult, error)
-	Name() string
+  Analyze(ctx context.Context, text string, docTypes []TypeRef, peopleTypes []TypeRef, tagSuggestions []string) (*AnalysisResult, error)
+  AnalyzeDocType(ctx context.Context, prevResult *AnalysisResult, headTailText string, docTypes []TypeRef, metadata DocMetadata) (string, error)
+  Adjudicate(ctx context.Context, pairs []TagPairEvidence) ([]TagVerdictResult, error)
+  AdjudicateTagSplits(ctx context.Context, tags []string) ([]TagSplitResult, error)
+  JudgeTagQuality(ctx context.Context, text string, candidates []TagQualityCandidate) ([]TagQualityResult, error)
+  JudgeTagIdentity(ctx context.Context, candidates []TagIdentityCandidate) ([]TagIdentityResult, error)
+  Name() string
 }
 
 type AnalysisResult struct {
-	Title       string           `json:"title"`
-	DocType     string           `json:"type"`
-	Tags        []string         `json:"tags"`
-	TagDetails  []TagDetail      `json:"tag_details,omitempty"`
-	People      []PeopleResult   `json:"people"`
-	Language    string           `json:"language"`
-	Stats       *json.RawMessage `json:"stats"`
-	Prompt      string           `json:"prompt"`
-	PassContext *json.RawMessage `json:"-"`
+  Title       string           `json:"title"`
+  DocType     string           `json:"type"`
+  Tags        []string         `json:"tags"`
+  TagDetails  []TagDetail      `json:"tag_details,omitempty"`
+  People      []PeopleResult   `json:"people"`
+  Language    string           `json:"language"`
+  Stats       *json.RawMessage `json:"stats"`
+  Prompt      string           `json:"prompt"`
+  PassContext *json.RawMessage `json:"-"`
 }
 ```
 
@@ -127,7 +127,7 @@ type AnalysisResult struct {
   API response.
 - `Stats` carries the token usage, persisted as `task.result`.
 
-The factory (`adapter.go:38-49`) requires the model registry, looks up the
+The factory (`adapter.go:84-96`) requires the model registry, looks up the
 configured provider/model capabilities, and switches on `Llm.Adapter`:
 `"anthropic"` → the Anthropic adapter, anything else → the
 OpenAI-compatible adapter (the default branch — unknown adapter names
@@ -139,7 +139,7 @@ silently mean "openai-compatible").
 
 ### The system message
 
-`shared.go:30`:
+`prompt.go:11`:
 
 ```go
 const SystemMessage = "You are a helpful assistant specialized in document analysis and metadata extraction"
@@ -147,7 +147,7 @@ const SystemMessage = "You are a helpful assistant specialized in document analy
 
 ### The default prompt template
 
-`shared.go:134-142` — a Go `text/template` (not a string concat), the heart
+`prompt.go:13-21` — a Go `text/template` (not a string concat), the heart
 of the extraction contract:
 
 ```
@@ -177,11 +177,11 @@ Design points:
   prompt is guidance; `enricher.go` truncates server-side regardless.
 - **The constraint lists are injected** as template sub-blocks:
   `documentTypePrompt` (`"- Document type: choose one of the following:\n  -
-  %s (%s)\n"` per type, `shared.go:194-201`), `peopleTypePrompt`
-  (`"  Available types:\n    - %s (%s)\n"`, `shared.go:185-192`), and
+  %s (%s)\n"` per type, `prompt.go:79-86`), `peopleTypePrompt`
+  (`"  Available types:\n    - %s (%s)\n"`, `prompt.go:70-77`), and
   `tagsPrompt` (`" Every tag must either come from this list of existing tags
   or be a defensible standard subject term that this document specifically
-  warrants: '%s'"`, `shared.go` — the semantic-matcher suggestions,
+  warrants: '%s'"`, `prompt.go:88-97` — the semantic-matcher suggestions,
   comma-joined).
 - **Tag range is configurable**: the prompt asks for "Between `min_tags` and
   `max_tags`" tags (`enricher.contentanalyzer.min_tags`/`max_tags`, default
@@ -193,105 +193,112 @@ Design points:
   `racial scapegoating`, `newfoundland`, `bail spring replacement`).
 - **`customTemplate` overrides** when set in config
   (`ContentAnalyzer.PromptTemplate`); **any parse/execute error falls back
-  silently to the default** (`shared.go:162-165, 176-180`) — a broken custom
+  silently to the default** (`prompt.go:45-48, 60-65`) — a broken custom
   template degrades, it doesn't crash.
 - **Head/tail and metadata** feed the second call (§10):
-  `BuildDocTypePrompt` (`shared.go:262-278`) asks to re-evaluate the type
+  `BuildDocTypePrompt` (`prompt.go:143-159`) asks to re-evaluate the type
   from "the opening and closing sections of the full document", with context
   like `"600 total words, 12 pages, application/pdf"` (`DocMetadata.Format`,
-  `shared.go:245-260`).
+  `prompt.go:124-139`).
 
 ---
 
 ## 4. The Anthropic adapter
 
-`llm_anthropic.go`. Request shape highlights (`llm_anthropic.go:46-58`): the
+`llm_anthropic.go`. Request shape highlights (`llm_anthropic.go:50-62`): the
 struct has fields for `stop_sequences`, `stream`, `top_k` — **declared but
-never set** (streaming is hardcoded off, no stop sequences, no top-k). What
-is actually sent (`llm_anthropic.go:169-198`):
+never set** (streaming is hardcoded off, no stop sequences, no top-k).
+`buildRequest` (`llm_anthropic.go:173-185`) sets the envelope — model, max
+tokens, messages, system, `stream: false`, `cache_control: {type:
+"ephemeral"}` — then applies the reasoning and temperature gates; every call
+site goes through it:
 
 ```go
-reqBody := anthropicRequest{
-	Model:     l.llmCfg.Model,
-	MaxTokens: l.defaultMaxTokens(),
-	Messages: []anthropicMessage{
-		{Role: "user", Content: prompt},
-	},
-	System:       SystemMessage,                     // top-level field, not a message
-	Stream:       false,
-	CacheControl: &cacheControlEphemeral{Type: "ephemeral"},   // prompt caching
-}
-l.applyReasoning(&reqBody, reqBody.MaxTokens)
-l.applyTemperature(&reqBody, l.llmCfg.Temperature)
-...
-httpReq.Header.Set("x-api-key", l.llmCfg.Token)
-httpReq.Header.Set("anthropic-version", "2023-06-01")
-httpReq.Header.Set("Content-Type", "application/json")
+reqBody := l.buildRequest(SystemMessage,
+  []anthropicMessage{
+    {Role: "user", Content: prompt},
+  },
+  l.defaultMaxTokens(),
+  l.llmCfg.Temperature)
 ```
+
+`doRequest` (`llm_anthropic.go:187-250`) sets the headers (`x-api-key`,
+`anthropic-version: 2023-06-01`, `Content-Type`, `Accept`, plus the
+catalog-declared session header when present) and decodes the response.
 
 Anthropic-specific rules the adapter encodes:
 
 - **`max_tokens` is mandatory** — `defaultMaxTokens()` uses the catalog's
-  `MaxOutputTokens` or 4096 (`llm_anthropic.go:119-124`).
+  `MaxOutputTokens` or 4096 (`llm_anthropic.go:127-132`).
 - **`system` is a top-level field**, not a message role.
 - **`anthropic-version: 2023-06-01`** header, `x-api-key` auth (only when a
   token is set).
 - **Prompt caching**: `cache_control: {type: "ephemeral"}` on both calls —
   the system prompt + first user turn are cached across requests.
-- **Thinking modes** (`applyReasoning`, `llm_anthropic.go:126-154`),
+- **Thinking modes** (`applyReasoning`, `llm_anthropic.go:134-162`),
   catalog-gated by `caps.SupportsReasoning` and `ReasoningEffortLevels`:
   - reasoning off → `thinking: disabled`;
   - model without effort levels → `thinking: enabled` with a
     `budget_tokens` of `min(maxTokens/2, 32000)` (floor 1024,
-    `llm_anthropic.go:64-75`);
+    `llm_anthropic.go:73-79`);
   - model with effort levels → `output_config: {effort}` (default
     `"high"`), plus `thinking: enabled` **only for
     `claude-opus-4-5`**, which requires a manual budget alongside
     `output_config` (`anthropicManualThinkingModels`,
-    `llm_anthropic.go:60-62`).
+    `llm_anthropic.go:64-66`).
 - **Temperature is catalog-gated**: only sent when
-  `caps.SupportsTemperature` (`applyTemperature`, `llm_anthropic.go:156-160`)
+  `caps.SupportsTemperature` (`applyTemperature`, `llm_anthropic.go:164-168`)
   — newer models don't accept it. The doc-type call passes `temp = 0`.
 
-Response parsing (`llm_anthropic.go:216-254`): content blocks with
-`block.Type == "text"` are joined, then `cleanCodeBlock` +
-`ParseAnalysisResponse` (§6); usage → `Stats`; the full prompt is persisted
-in `Prompt`; `PassContext` serializes `{system, user_prompt}` for the replay.
+Response parsing (`llm_anthropic.go:187-250`): content blocks with
+`block.Type == "text"` are joined in `doRequest`, then `Analyze`
+(`llm_anthropic.go:252-289`) runs `ParseAnalysisResponse` (§6) over the
+cleaned text; usage → `Stats`; the full prompt is persisted in `Prompt`;
+`PassContext` serializes `{system, user_prompt}` for the replay.
 
-**`AnalyzeDocType` replays the conversation** (`llm_anthropic.go:259-374`):
+**`AnalyzeDocType` replays the conversation** (`llm_anthropic.go:292-343`):
 
 ```go
 Messages: []anthropicMessage{
-	{Role: "user", Content: passCtx.UserPrompt},
-	{Role: "assistant", Content: string(assistantJSON)},
-	{Role: "user", Content: docTypePrompt},
+  {Role: "user", Content: passCtx.UserPrompt},
+  {Role: "assistant", Content: string(assistantJSON)},
+  {Role: "user", Content: docTypePrompt},
 },
 ```
 
 — original user turn, then the previous assistant answer (built from the
 first result), then the new head/tail question. `MaxTokens: 256` since the
 answer is a single `type` field. Parsing tolerates both a bare `{"type": "..."}`
-and a full `AnalysisResult` (`llm_anthropic.go:361-373`).
+and a full `AnalysisResult` (`llm_anthropic.go:337-342`).
 
 ---
 
 ## 5. The OpenAI-compatible adapter
 
 `openai_compatible.go` targets any `/chat/completions` API. Request build
-(`openai_compatible.go:79-105`):
+(`buildRequestBody`, `openai_compatible.go:87-93`, delegating to
+`buildRequest`, `openai_compatible.go:95-113`):
 
 ```go
-body := map[string]any{
-	"model":    l.llmCfg.Model,
-	"messages": messages,          // system, user, optional assistant
-	"stream":   false,
+func (l *LlmOpenAiCompatible) buildRequestBody(system, user, assistant string, temp float64) map[string]any {
+  return l.buildRequest(l.buildRequestMessages(system, user, assistant), temp)
 }
-if l.caps != nil && l.caps.SupportsTemperature {
-	body["temperature"] = temp
-	body["top_p"] = 1
-}
-if l.caps != nil && l.caps.SupportsStructuredOutput {
-	body["response_format"] = &openaiResponseFormat{Type: "json_object"}
+
+func (l *LlmOpenAiCompatible) buildRequest(messages []openaiChatMessage, temp float64) map[string]any {
+  body := map[string]any{
+    "model":    l.llmCfg.Model,
+    "messages": messages,
+    "stream":   false,
+  }
+  if l.caps != nil && l.caps.SupportsTemperature {
+    body["temperature"] = temp
+    body["top_p"] = 1
+  }
+  if l.caps != nil && l.caps.SupportsStructuredOutput {
+    body["response_format"] = &openaiResponseFormat{Type: "json_object"}
+  }
+  l.addThinkingConfig(body)
+  return body
 }
 ```
 
@@ -299,20 +306,20 @@ if l.caps != nil && l.caps.SupportsStructuredOutput {
 - **`response_format: {type: "json_object"}`** only when the catalog says the
   model supports structured output — the API-level enforcement of the
   "return ONLY json" prompt instruction.
-- **Provider-specific reasoning knobs** (`openai_compatible.go:107-147`) — a
+- **Provider-specific reasoning knobs** (`openai_compatible.go:115-155`) — a
   switch on `Provider` because every vendor names it differently:
 
 ```go
 switch l.llmCfg.Provider {
 case "deepseek":
-	body["thinking"] = map[string]string{"type": "enabled"}
-	body["reasoning_effort"] = effort
+  body["thinking"] = map[string]string{"type": "enabled"}
+  body["reasoning_effort"] = effort
 case "qwen":
-	body["enable_thinking"] = true
+  body["enable_thinking"] = true
 case "zhipu":
-	body["thinking"] = map[string]string{"type": "enabled"}
+  body["thinking"] = map[string]string{"type": "enabled"}
 default:
-	body["reasoning_effort"] = effort
+  body["reasoning_effort"] = effort
 }
 ```
 
@@ -333,7 +340,7 @@ Schema:
 1. `strings.TrimSpace` on the response text.
 2. `cleanCodeBlock` (`internal/llm/analyzer/text.go`) — strips
    `` ```json `` / `` ``` `` fences and trims.
-3. `ParseAnalysisResponse` (`shared.go:444-483`) — decodes the wire shape
+3. `ParseAnalysisResponse` (`facets.go:51-91`) — decodes the wire shape
    (`title`, `type`, `tags`, `people`, `language`) and normalizes `tags`
    element by element: a JSON string becomes a tag with `category: other`; an
    object must carry a non-empty `term`, and its `category` is folded to the
@@ -342,7 +349,7 @@ Schema:
    fails the whole parse, and a missing/`null` `tags` key yields empty slices.
 
 If the top-level decode fails, the error embeds the raw text:
-`"LLM returned invalid JSON: %w\nraw: %s"` (`llm_anthropic.go:236-242`) — the
+`"LLM returned invalid JSON: %w\nraw: %s"` (`llm_anthropic.go:271-274`) — the
 raw response goes into the error so the failure is debuggable from the task
 log. The `AnalyzeDocType` fallback for a response with no `type` key re-parses
 through the same helper, so an object-shaped response still yields its
@@ -356,53 +363,53 @@ known list, language checked. The LLM's word is never persisted raw.
 
 ## 7. The error taxonomy
 
-Three typed errors in `shared.go:44-71`, each with a distinct recovery path
+Three typed errors in `gates.go:30-61`, each with a distinct recovery path
 in the enricher:
 
 ```go
 type ContentTooLargeError struct {       // pre-flight: estimated tokens > model budget
-	EstimatedTokens int
-	MaxInputTokens  int
+  EstimatedTokens int
+  MaxInputTokens  int
 }
 type TokenLimitError struct {            // provider rejected: context length exceeded
-	MaxTokens       int
-	RequestedTokens int
-	RawBody         string
+  MaxTokens       int
+  RequestedTokens int
+  RawBody         string
 }
 type InsufficientCreditsError struct {   // 402/429: billing problem
-	Provider   string
-	HTTPStatus int
-	RawBody    string
+  Provider   string
+  HTTPStatus int
+  RawBody    string
 }
 ```
 
 - **`ContentTooLargeError`** — thrown *before* the HTTP call by
-  `checkContentTooLarge` (`shared.go:90-99`): `estimateTokens(prompt) >
+  `checkContentTooLarge` (`gates.go:80-89`): `estimateTokens(prompt) >
   caps.MaxInputTokens`. Skipped when the catalog lacks a max-input value.
 - **`TokenLimitError`** — parsed from the provider's error body with a regex
-  (`shared.go:101-112`):
+  (`gates.go:91-102`):
 
 ```go
 var tokenLimitRE = regexp.MustCompile(
-	`maximum context length is (\d+) tokens.*?you requested (?:about )?(\d+) tokens`,
+  `maximum context length is (\d+) tokens.*?you requested (?:about )?(\d+) tokens`,
 )
 ```
 
-- **`InsufficientCreditsError`** (`shared.go:63-71`) — **HTTP 402 or 429** is
+- **`InsufficientCreditsError`** (`gates.go:53-61`) — **HTTP 402 or 429** is
   a credit error for any provider; plus a qwen special case: HTTP 400 with
   `"arrearage"` in the body.
 
 Both adapters return these typed errors; **there is no retry/backoff inside
 the adapters** — each call is a single HTTP request, and the
 enricher decides what to do (§10). Timeout enforcement comes from
-`runWithTimeout` at the runner level (`internal/tools/runner.go:96-113`); the
+`runWithTimeout` at the runner level (`internal/tools/runner.go:135-152`); the
 adapters' `http.Client` deliberately has no timeout of its own.
 
 **Provider fallback** — when `enricher.contentanalyzer.fallbacks` is configured
 (a list of `{enabled, llm}` blocks), the Runner builds one `ContentAnalyzer`
 per **enabled** entry (same factory, same prompt template) and keeps them in
 list order. `AnalyzeContent` and `AnalyzeDocType` classify each primary error
-with `isProviderError` (`runner.go:438-445`): anything that is *not* a
+with `isProviderError` (`runner.go:668-675`): anything that is *not* a
 request-side or lifecycle failure — i.e. not `ContentTooLargeError`,
 `TokenLimitError`, `context.Canceled`, or `context.DeadlineExceeded` — walks
 the fallback chain in order, retrying the same request through each enabled
@@ -428,9 +435,9 @@ caveats: `algorithms.md` §12.
 
 `internal/llm/registry.go` loads `model_catalog.json` — from disk
 (`<config-dir>/model_catalog.json` if present) or the embedded copy
-(`//go:embed model_catalog.json`, `registry.go:15-16`) — and indexes it.
+(`//go:embed model_catalog.json`, `registry.go:21-22`) — and indexes it.
 
-Catalog entry fields (`registry.go:49-63`): `provider`, `adapter`,
+Catalog entry fields (`registry.go:58-74`): `provider`, `adapter`,
 `model_id`, `display_name`, `official_url`, `session_header`,
 `max_input_tokens`, `max_output_tokens`, `reasoning`, `reasoning_efforts`,
 `supports_structured_output`, `supports_temperature`,
@@ -449,14 +456,15 @@ i, ok := r.index[key]
 return entryToCapability(entry)
 ```
 
-(`registry.go:182-194`). Lookups feed the API surface
+(`registry.go:185-213`). Lookups feed the API surface
 (`ModelsForProvider`, `ProvidersForAdapter`) and the capability gating in
 both adapters. **Unknown model → nil capabilities** → adapters degrade
 gracefully: no temperature, no reasoning, no structured output, no token
 pre-check.
 
-Note: the catalog has **no cost fields** — `entryToCapability`
-(`registry.go:168-180`) hardcodes zero input/output cost per token.
+Note: neither the catalog nor `ModelCapability` models per-token costs —
+`entryToCapability` (`registry.go:185-197`) maps only the capability flags
+and limits.
 
 ---
 
@@ -480,19 +488,19 @@ orchestrator. Step by step:
 
 ```go
 for i := range 2 {
-	// analyze...
-	switch {
-	case errors.As(err, &tooLarge), errors.As(err, &tokenLimit):
-		ratio := float64(maxTokens)/float64(actualTokens) * tokenBudgetRatio   // 0.9
-		newTarget := int(float64(llmContent.TargetWordCount) * ratio)
-		// re-reduce and retry once
-	case errors.As(err, &credErr):
-		return nil, &task.Error{
-			ReqID:      logId,
-			Err:        fmt.Errorf("LLM credit exhausted (%s): %w", provider, credErr),
-			PauseBatch: e.config.Enricher.ContentAnalyzer.PauseOnCreditError,   // default true
-		}
-	}
+  // analyze...
+  switch {
+  case errors.As(err, &tooLarge), errors.As(err, &tokenLimit):
+    ratio := float64(maxTokens)/float64(actualTokens) * tokenBudgetRatio   // 0.9
+    newTarget := int(float64(llmContent.TargetWordCount) * ratio)
+    // re-reduce and retry once
+  case errors.As(err, &credErr):
+    return nil, &task.Error{
+      ReqID:      logId,
+      Err:        fmt.Errorf("LLM credit exhausted (%s): %w", provider, credErr),
+      PauseBatch: e.config.Enricher.ContentAnalyzer.PauseOnCreditError,   // default true
+    }
+  }
 }
 ```
 
@@ -515,7 +523,7 @@ for i := range 2 {
    `DocMetadata`; `AnalyzeDocType` failure keeps the first-pass type (logged,
    not fatal).
 8. **Normalize tags** (`enricher.go:211`): `NormalizeTags` — the
-   normalization pipeline from `shared.go:382-394`.
+   normalization pipeline from `tagfilter.go:156-167`.
 9. **Canonicalize people** (`enricher.go:213-219`): Latin names as-is;
    non-Latin names use `NameRomanized` or an **anyascii transliteration**
    (`canonicalPersonName`, `enricher.go:426-441`); `NormalizedName =
@@ -528,7 +536,7 @@ for i := range 2 {
     `tags[facet]: drop <term> (category=… reason=…)` with `reason` one of
     `matches_document_type`, `model_self_classification`, `people_facet`,
     `forbidden_category`, `non_whitelisted_place`; `topic`/`other` and
-    untyped emissions pass through. `FilterTags` (`shared.go:276-383`) then
+    untyped emissions pass through. `FilterTags` (`tagfilter.go:123-140`) then
     drops tags that are >3 words, overlap with LLM people names, are
     multi-token subsets of known normalized names, overlap doc-type names, or
     are contained in the title; caps at 5.

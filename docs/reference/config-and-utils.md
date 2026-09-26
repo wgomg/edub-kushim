@@ -182,7 +182,7 @@ The helpers formerly grouped in `internal/utils/` live next to their owners.
 
 ### Functions
 
-`estimateTokens` (character-based token estimator for LLM budget checks — single pass counting CJK vs Latin runes, uses blended formula `cjk*1.5 + non_cjk/4` when CJK ratio > 10%, otherwise `total/4`), `estimateTokensFromWords` (`words × 1.3`), `cleanCodeBlock` (strips ` ```json ` / ` ``` ` fences and trims LLM responses), `ContainsNonLatin` (checks for CJK, Cyrillic, Arabic, Hebrew, Greek, Thai, Devanagari, Bengali, Hangul)
+`estimateTokens` (character-based token estimator for LLM budget checks — single pass counting CJK vs Latin runes, uses blended formula `cjk*1.5 + non_cjk/4` when CJK ratio > 10%, otherwise `total/4`), `cleanCodeBlock` (strips ` ```json ` / ` ``` ` fences and trims LLM responses), `ContainsNonLatin` (checks for CJK, Cyrillic, Arabic, Hebrew, Greek, Thai, Devanagari, Bengali, Hangul)
 
 ---
 

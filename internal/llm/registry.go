@@ -35,8 +35,8 @@ func SessionID() string {
 }
 
 // ModelCapability is what a cataloged model allows: reasoning support and
-// effort levels, temperature, prompt caching, structured output, the
-// context and output limits, and the cataloged per-token costs.
+// effort levels, temperature, prompt caching, structured output, and the
+// context and output limits.
 type ModelCapability struct {
 	SupportsReasoning        bool
 	ReasoningEffortLevels    []string
@@ -45,8 +45,6 @@ type ModelCapability struct {
 	SupportsStructuredOutput bool
 	MaxInputTokens           int
 	MaxOutputTokens          int
-	InputCostPerToken        float64
-	OutputCostPerToken       float64
 }
 
 // ProviderModel is one cataloged model of a provider, as exposed to the
@@ -193,8 +191,6 @@ func entryToCapability(e *catalogEntry) *ModelCapability {
 		SupportsStructuredOutput: e.SupportsStructuredOutput,
 		MaxInputTokens:           e.MaxInputTokens,
 		MaxOutputTokens:          e.MaxOutputTokens,
-		InputCostPerToken:        0,
-		OutputCostPerToken:       0,
 	}
 }
 
@@ -267,6 +263,8 @@ func (r *Registry) ModelsForProvider(provider string) []ProviderModel {
 // ProviderDefaultURL returns the provider's official URL from the
 // catalog, empty when unknown.
 func (r *Registry) ProviderDefaultURL(provider string) string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	return r.providerURLs[provider]
 }
 
@@ -281,15 +279,11 @@ func (r *Registry) ProviderSessionHeader(provider string) string {
 // ProviderAdapter returns the provider's adapter kind, custom when the
 // catalog does not name one.
 func (r *Registry) ProviderAdapter(provider string) string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	a := r.providerAdapters[provider]
 	if a == "" {
 		return "custom"
 	}
 	return a
-}
-
-// CatalogPath returns the path the registry was built from, the file
-// Reload re-reads.
-func (r *Registry) CatalogPath() string {
-	return r.catalogPath
 }

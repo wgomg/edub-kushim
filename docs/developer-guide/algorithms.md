@@ -113,14 +113,14 @@ standard word tokenizer (simple, language-agnostic, no stemming).
 var sentenceBreak = regexp.MustCompile(`[.!?]\s+|\n\n`)
 
 func splitSentences(text string) []string {
-	locs := sentenceBreak.FindAllStringIndex(text, -1)
-	...
-	for _, loc := range locs {
-		endOfPunct := loc[0] + 1        // keep the punctuation with its sentence
-		sentences = append(sentences, text[prev:endOfPunct])
-		prev = loc[1]
-	}
-	...
+    locs := sentenceBreak.FindAllStringIndex(text, -1)
+    ...
+    for _, loc := range locs {
+        endOfPunct := loc[0] + 1        // keep the punctuation with its sentence
+        sentences = append(sentences, text[prev:endOfPunct])
+        prev = loc[1]
+    }
+    ...
 }
 ```
 
@@ -133,12 +133,12 @@ sentence is never split across chunks:
 
 ```go
 if len(currentWords)+len(sentenceWords) > chunkSize && len(currentWords) > 0 {
-	lastSentence := lastSentenceWords(currentWords)
-	chunks = append(chunks, buildChunk(chunkId, currentWords, len(lastSentence), tokenRe))
-	chunkId++
-	currentWords = append(lastSentence, sentenceWords...)   // overlap
+    lastSentence := lastSentenceWords(currentWords)
+    chunks = append(chunks, buildChunk(chunkId, currentWords, len(lastSentence), tokenRe))
+    chunkId++
+    currentWords = append(lastSentence, sentenceWords...)   // overlap
 } else {
-	currentWords = append(currentWords, sentenceWords...)
+    currentWords = append(currentWords, sentenceWords...)
 }
 ```
 
@@ -161,10 +161,10 @@ whole text as the corpus — classic TF-IDF, per chunk:
 
 ```go
 for token, localFreq := range chunk.TokenFrequencies {
-	df := docFreq[token]
-	idf := math.Log((N + 1) / (float64(df) + 1))
-	tf := float64(localFreq) / float64(len(chunk.Tokens))
-	totalWeight += tf * idf
+    df := docFreq[token]
+    idf := math.Log((N + 1) / (float64(df) + 1))
+    tf := float64(localFreq) / float64(len(chunk.Tokens))
+    totalWeight += tf * idf
 }
 chunk.TFScore = totalWeight
 ```
@@ -189,13 +189,13 @@ are comparable in the blend.
 graph.Adjacency[i][i] = 1.0
 
 for i := range chunksLength {
-	for j := i + 1; j < chunksLength; j++ {
-		similarity := jaccardSimilarity(chunks[i].UniqueTokens, chunks[j].UniqueTokens)
-		if similarity > 0 {
-			graph.Adjacency[i][j] = similarity
-			graph.Adjacency[j][i] = similarity
-		}
-	}
+    for j := i + 1; j < chunksLength; j++ {
+        similarity := jaccardSimilarity(chunks[i].UniqueTokens, chunks[j].UniqueTokens)
+        if similarity > 0 {
+            graph.Adjacency[i][j] = similarity
+            graph.Adjacency[j][i] = similarity
+        }
+    }
 }
 ```
 
@@ -229,7 +229,7 @@ text's newline density — a cheap proxy for "structured document vs prose":
 ```go
 density := float64(lines) / float64(chars) * 1000
 if density > 20 {
-	return "decay"
+    return "decay"
 }
 return "cosine"
 ```
@@ -255,8 +255,8 @@ components with the weights 0.4 / 0.4 / 0.2:
 
 ```go
 chunks[i].FinalScore = (tf_weight * chunks[i].NormalizedTFScore) +
-	(graph_weight * chunks[i].NormalizedGraphScore) +
-	(position_weight * normalizedPosScore)
+    (graph_weight * chunks[i].NormalizedGraphScore) +
+    (position_weight * normalizedPosScore)
 ```
 
 All three components sum to 1 individually, so `FinalScore` is a proper
@@ -279,21 +279,21 @@ slices.SortFunc(remainingChunks, cmpChunk)
 currentWordCount := chunks[0].WordCount
 
 for len(remainingChunks) > 0 && currentWordCount < targetWordCount {
-	selected := remainingChunks[0]                        // best remaining
-	selectedChunks = append(selectedChunks, selected)
-	currentWordCount += selected.WordCount
+    selected := remainingChunks[0]                        // best remaining
+    selectedChunks = append(selectedChunks, selected)
+    currentWordCount += selected.WordCount
 
-	remainingChunks = remainingChunks[1:]
+    remainingChunks = remainingChunks[1:]
 
-	for i := range remainingChunks {
-		similarity := jaccardSimilarity(selected.UniqueTokens, remainingChunks[i].UniqueTokens)
-		if similarity > DiversityThreshold {              // 0.15
-			penalty := 1.0 - (similarity * (1.0 - MinPenalty))   // MinPenalty 0.1
-			remainingChunks[i].FinalScore *= penalty
-		}
-	}
+    for i := range remainingChunks {
+        similarity := jaccardSimilarity(selected.UniqueTokens, remainingChunks[i].UniqueTokens)
+        if similarity > DiversityThreshold {              // 0.15
+            penalty := 1.0 - (similarity * (1.0 - MinPenalty))   // MinPenalty 0.1
+            remainingChunks[i].FinalScore *= penalty
+        }
+    }
 
-	slices.SortFunc(remainingChunks, cmpChunk)            // re-sort after penalties
+    slices.SortFunc(remainingChunks, cmpChunk)            // re-sort after penalties
 }
 ```
 
@@ -317,7 +317,7 @@ for len(remainingChunks) > 0 && currentWordCount < targetWordCount {
 
 ```go
 slices.SortFunc(selectedChunks, func(a, b Chunk) int {
-	return cmp.Compare(a.Id, b.Id)
+    return cmp.Compare(a.Id, b.Id)
 })
 
 var reducedContent strings.Builder
@@ -325,14 +325,14 @@ reducedContent.WriteString(selectedChunks[0].RawText)
 prevId := selectedChunks[0].Id
 
 for _, chunk := range selectedChunks[1:] {
-	if chunk.Id == prevId+1 {
-		reducedContent.WriteString(" ")
-		// skip the overlap words that were already emitted at the end of the previous chunk
-		reducedContent.WriteString(strings.Join(chunk.Words[chunk.OverlapWords:], " "))
-	} else {
-		reducedContent.WriteString(" [...] ")
-		reducedContent.WriteString(chunk.RawText)
-	}
+    if chunk.Id == prevId+1 {
+        reducedContent.WriteString(" ")
+        // skip the overlap words that were already emitted at the end of the previous chunk
+        reducedContent.WriteString(strings.Join(chunk.Words[chunk.OverlapWords:], " "))
+    } else {
+        reducedContent.WriteString(" [...] ")
+        reducedContent.WriteString(chunk.RawText)
+    }
 }
 ```
 
@@ -362,15 +362,15 @@ Accent folding is a stateless per-call fold (`internal/textnorm/normalize.go`):
 // FoldAccents decomposes, drops combining marks (Mn), and recomposes.
 // Stateless per-call: transform.Chain is not safe for concurrent use.
 func FoldAccents(s string) string {
-	decomp := norm.NFD.String(s)
-	rs := []rune(decomp)
-	out := make([]rune, 0, len(rs))
-	for _, r := range rs {
-		if !unicode.Is(unicode.Mn, r) {
-			out = append(out, r)
-		}
-	}
-	return norm.NFC.String(string(out))
+    decomp := norm.NFD.String(s)
+    rs := []rune(decomp)
+    out := make([]rune, 0, len(rs))
+    for _, r := range rs {
+        if !unicode.Is(unicode.Mn, r) {
+            out = append(out, r)
+        }
+    }
+    return norm.NFC.String(string(out))
 }
 ```
 
@@ -422,27 +422,25 @@ LLM token counting without a tokenizer (`internal/llm/analyzer/text.go`):
 
 ```go
 func estimateTokens(text string) int {
-	var total, cjk int
-	for _, r := range text {
-		total++
-		if unicode.Is(unicode.Han, r) || unicode.Is(unicode.Hiragana, r) ||
-			unicode.Is(unicode.Katakana, r) || unicode.Is(unicode.Hangul, r) {
-			cjk++
-		}
-	}
-	...
-	if float64(cjk)/float64(total) > 0.10 {
-		return int(math.Ceil(float64(cjk)*1.5 + float64(total-cjk)/4.0))
-	}
-	return int(math.Ceil(float64(total) / 4.0))
+    var total, cjk int
+    for _, r := range text {
+    total++
+        if unicode.Is(unicode.Han, r) || unicode.Is(unicode.Hiragana, r) ||
+            unicode.Is(unicode.Katakana, r) || unicode.Is(unicode.Hangul, r) {
+            cjk++
+        }
+    }
+    ...
+    if float64(cjk)/float64(total) > 0.10 {
+        return int(math.Ceil(float64(cjk)*1.5 + float64(total-cjk)/4.0))
+    }
+    return int(math.Ceil(float64(total) / 4.0))
 }
 ```
 
 - Latin-heavy text: ~4 characters per token (the common rule of thumb).
 - CJK-heavy text (>10% Han/Hiragana/Katakana/Hangul): CJK chars count 1.5
   tokens each (they tokenize near 1:1 or worse), other chars 0.25.
-- `estimateTokensFromWords` (`internal/llm/analyzer/text.go`) is the word-based variant:
-  `words × 1.3`.
 
 This feeds the LLM pre-flight check (`checkContentTooLarge`) — the enricher
 shrinks the reduced text if the estimate exceeds the model's context window.
@@ -475,7 +473,7 @@ keeps memory flat for multi-GB files. `ListFilePaths` additionally sorts by
 | `TextRank.Reduce` | `tools.Runner.ReduceContent` (`internal/tools/runner.go:311-347`) | shrink text to `target_word_count` before LLM (target 2000) and tag matcher (target 4000) |
 | `TargetWordCount` | `internal/matcher/client.go:49-55` | negative config = fraction of document; floor 2000 |
 | `NormalizeForDB` | `internal/enrichment/enricher.go:426`, people/curation services | canonical DB keys for dedup/lookup |
-| `estimateTokens` | `analyzer/shared.go` `checkContentTooLarge` | LLM pre-flight budget check |
+| `estimateTokens` | `analyzer/gates.go` `checkContentTooLarge` | LLM pre-flight budget check |
 | `truncate` | `internal/enrichment/text.go:5-20` | title ≤ 127 chars |
 | `cleanCodeBlock` | both LLM adapters | strip fences before JSON parse |
 | `CalculateMD5` / SHA-512 | `internal/documents/consumption/scan.go` | content dedup + uniqueness |

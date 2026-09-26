@@ -6,10 +6,6 @@ import (
 	"unicode"
 )
 
-func estimateTokensFromWords(wordCount int) int {
-	return int(math.Round(float64(wordCount) * 1.3))
-}
-
 func estimateTokens(text string) int {
 	var total, cjk int
 	for _, r := range text {

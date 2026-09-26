@@ -141,8 +141,16 @@ internal/
 ├── llm/                    # LLM capability registry
 │   ├── analyzer/           # LLM classification adapters (capability-based)
 │   │   ├── adapter.go      # ContentAnalyzer interface + TypeRef + factory (adapter-based dispatch)
-│   │   ├── shared.go       # BuildPrompt, ParseAnalysisResponse, SeparateFacets, IsWhitelistedPlace, TagDetail, SystemMessage, ContentTooLargeError, TokenLimitError, checkContentTooLarge, parseTokenLimitError, FilterTags, NormalizeTags
-│   │   ├── text.go         # estimateTokens, estimateTokensFromWords, cleanCodeBlock, ContainsNonLatin
+│   │   ├── gates.go        # content/token/credit gates, their error types, token-usage stats, request pacing
+│   │   ├── prompt.go       # SystemMessage, BuildPrompt + template, DocMetadata, BuildDocTypePrompt, ExtractHeadTailWords
+│   │   ├── tagfilter.go    # NormalizeTags, FilterTags, TagFilter, SplitComponents
+│   │   ├── places.go       # country/continent whitelist, IsWhitelistedPlace
+│   │   ├── facets.go       # TagDetail + categories, ParseAnalysisResponse, SeparateFacets
+│   │   ├── adjudication.go # same-intent pair adjudication: prompt + parser
+│   │   ├── tag_split.go    # joint-tag split gate: prompt + parser
+│   │   ├── tag_quality.go  # quality rubric judge: prompt + parser
+│   │   ├── tag_identity.go # canonical-form judge: prompt + parser
+│   │   ├── text.go         # estimateTokens, cleanCodeBlock, ContainsNonLatin
 │   │   ├── openai_compatible.go # OpenAI-compatible API (absorbs former OpenAI, DeepSeek, Mistral, etc.)
 │   │   └── llm_anthropic.go # Anthropic Messages API with capability flags
 │   ├── model_catalog.json  # Manually curated model catalog (committed to repo)

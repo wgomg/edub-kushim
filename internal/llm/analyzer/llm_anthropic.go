@@ -167,6 +167,23 @@ func (l *LlmAnthropic) applyTemperature(reqBody *anthropicRequest, temp float64)
 	}
 }
 
+// buildRequest assembles the request every Anthropic call shares — model,
+// max tokens, messages, system, caching, and the reasoning and temperature
+// gates are set here, never at call sites.
+func (l *LlmAnthropic) buildRequest(system string, messages []anthropicMessage, maxTokens int, temp float64) anthropicRequest {
+	reqBody := anthropicRequest{
+		Model:        l.llmCfg.Model,
+		MaxTokens:    maxTokens,
+		Messages:     messages,
+		System:       system,
+		Stream:       false,
+		CacheControl: &cacheControlEphemeral{Type: "ephemeral"},
+	}
+	l.applyReasoning(&reqBody, reqBody.MaxTokens)
+	l.applyTemperature(&reqBody, temp)
+	return reqBody
+}
+
 func (l *LlmAnthropic) doRequest(ctx context.Context, reqBody anthropicRequest, errLabel string) (*anthropicResponse, string, error) {
 	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {
@@ -239,18 +256,12 @@ func (l *LlmAnthropic) Analyze(ctx context.Context, text string, docTypes []Type
 		return nil, err
 	}
 
-	reqBody := anthropicRequest{
-		Model:     l.llmCfg.Model,
-		MaxTokens: l.defaultMaxTokens(),
-		Messages: []anthropicMessage{
+	reqBody := l.buildRequest(SystemMessage,
+		[]anthropicMessage{
 			{Role: "user", Content: prompt},
 		},
-		System:       SystemMessage,
-		Stream:       false,
-		CacheControl: &cacheControlEphemeral{Type: "ephemeral"},
-	}
-	l.applyReasoning(&reqBody, reqBody.MaxTokens)
-	l.applyTemperature(&reqBody, l.llmCfg.Temperature)
+		l.defaultMaxTokens(),
+		l.llmCfg.Temperature)
 
 	chatResp, responseContent, err := l.doRequest(ctx, reqBody, "API error")
 	if err != nil {
@@ -308,20 +319,14 @@ func (l *LlmAnthropic) AnalyzeDocType(ctx context.Context, prevResult *AnalysisR
 		return "", err
 	}
 
-	reqBody := anthropicRequest{
-		Model:     l.llmCfg.Model,
-		MaxTokens: 256,
-		Messages: []anthropicMessage{
+	reqBody := l.buildRequest(passCtx.System,
+		[]anthropicMessage{
 			{Role: "user", Content: passCtx.UserPrompt},
 			{Role: "assistant", Content: string(assistantJSON)},
 			{Role: "user", Content: docTypePrompt},
 		},
-		System:       passCtx.System,
-		Stream:       false,
-		CacheControl: &cacheControlEphemeral{Type: "ephemeral"},
-	}
-	l.applyReasoning(&reqBody, reqBody.MaxTokens)
-	l.applyTemperature(&reqBody, 0)
+		256,
+		0)
 
 	_, responseContent, err := l.doRequest(ctx, reqBody, "doc type refinement")
 	if err != nil {
@@ -342,116 +347,48 @@ func (l *LlmAnthropic) AnalyzeDocType(ctx context.Context, prevResult *AnalysisR
 	return result.Type, nil
 }
 
-// Adjudicate answers the same-intent pairs through the Anthropic API.
-func (l *LlmAnthropic) Adjudicate(ctx context.Context, pairs []TagPairEvidence) ([]TagVerdictResult, error) {
-	prompt := BuildAdjudicationPrompt(pairs)
+// judgedAnthropic runs one judged step against the Anthropic API: the size
+// gate, the messages request with caching and reasoning, the labeled
+// transport call and the parser.
+func judgedAnthropic[T any](ctx context.Context, l *LlmAnthropic, system, prompt, label string, n int, parse func(string, int) (T, error)) (T, error) {
+	var zero T
 
-	if err := checkContentTooLarge(l.caps, AdjudicationSystemMessage+"\n"+prompt); err != nil {
-		return nil, err
+	if err := checkContentTooLarge(l.caps, system+"\n"+prompt); err != nil {
+		return zero, err
 	}
 
-	reqBody := anthropicRequest{
-		Model:     l.llmCfg.Model,
-		MaxTokens: l.defaultMaxTokens(),
-		Messages: []anthropicMessage{
+	reqBody := l.buildRequest(system,
+		[]anthropicMessage{
 			{Role: "user", Content: prompt},
 		},
-		System:       AdjudicationSystemMessage,
-		Stream:       false,
-		CacheControl: &cacheControlEphemeral{Type: "ephemeral"},
-	}
-	l.applyReasoning(&reqBody, reqBody.MaxTokens)
-	l.applyTemperature(&reqBody, 0)
+		l.defaultMaxTokens(),
+		0)
 
-	_, responseContent, err := l.doRequest(ctx, reqBody, "tag adjudication")
+	_, responseContent, err := l.doRequest(ctx, reqBody, label)
 	if err != nil {
-		return nil, err
+		return zero, err
 	}
-	return ParseAdjudicationResponse(responseContent, len(pairs))
+	return parse(responseContent, n)
+}
+
+// Adjudicate answers the same-intent pairs through the Anthropic API.
+func (l *LlmAnthropic) Adjudicate(ctx context.Context, pairs []TagPairEvidence) ([]TagVerdictResult, error) {
+	return judgedAnthropic(ctx, l, AdjudicationSystemMessage, BuildAdjudicationPrompt(pairs), "tag adjudication", len(pairs), ParseAdjudicationResponse)
 }
 
 // AdjudicateTagSplits decides splits through the Anthropic API.
 func (l *LlmAnthropic) AdjudicateTagSplits(ctx context.Context, tags []string) ([]TagSplitResult, error) {
-	prompt := BuildTagSplitPrompt(tags)
-
-	if err := checkContentTooLarge(l.caps, TagSplitSystemMessage+"\n"+prompt); err != nil {
-		return nil, err
-	}
-
-	reqBody := anthropicRequest{
-		Model:     l.llmCfg.Model,
-		MaxTokens: l.defaultMaxTokens(),
-		Messages: []anthropicMessage{
-			{Role: "user", Content: prompt},
-		},
-		System:       TagSplitSystemMessage,
-		Stream:       false,
-		CacheControl: &cacheControlEphemeral{Type: "ephemeral"},
-	}
-	l.applyReasoning(&reqBody, reqBody.MaxTokens)
-	l.applyTemperature(&reqBody, 0)
-
-	_, responseContent, err := l.doRequest(ctx, reqBody, "tag split adjudication")
-	if err != nil {
-		return nil, err
-	}
-	return ParseTagSplitResponse(responseContent, len(tags))
+	return judgedAnthropic(ctx, l, TagSplitSystemMessage, BuildTagSplitPrompt(tags), "tag split adjudication", len(tags), ParseTagSplitResponse)
 }
 
 // JudgeTagQuality scores candidates through the Anthropic API.
 func (l *LlmAnthropic) JudgeTagQuality(ctx context.Context, text string, candidates []TagQualityCandidate) ([]TagQualityResult, error) {
-	prompt := BuildTagQualityPrompt(text, candidates)
-
-	if err := checkContentTooLarge(l.caps, TagQualitySystemMessage+"\n"+prompt); err != nil {
-		return nil, err
-	}
-
-	reqBody := anthropicRequest{
-		Model:     l.llmCfg.Model,
-		MaxTokens: l.defaultMaxTokens(),
-		Messages: []anthropicMessage{
-			{Role: "user", Content: prompt},
-		},
-		System:       TagQualitySystemMessage,
-		Stream:       false,
-		CacheControl: &cacheControlEphemeral{Type: "ephemeral"},
-	}
-	l.applyReasoning(&reqBody, reqBody.MaxTokens)
-	l.applyTemperature(&reqBody, 0)
-
-	_, responseContent, err := l.doRequest(ctx, reqBody, "tag quality judge")
-	if err != nil {
-		return nil, err
-	}
-	return ParseTagQualityResponse(responseContent, len(candidates))
+	return judgedAnthropic(ctx, l, TagQualitySystemMessage, BuildTagQualityPrompt(text, candidates), "tag quality judge", len(candidates), ParseTagQualityResponse)
 }
 
 // JudgeTagIdentity decides canonical forms through the Anthropic API.
 func (l *LlmAnthropic) JudgeTagIdentity(ctx context.Context, candidates []TagIdentityCandidate) ([]TagIdentityResult, error) {
-	prompt := BuildTagIdentityPrompt(candidates)
-
-	if err := checkContentTooLarge(l.caps, TagIdentitySystemMessage+"\n"+prompt); err != nil {
-		return nil, err
-	}
-
-	reqBody := anthropicRequest{
-		Model:     l.llmCfg.Model,
-		MaxTokens: l.defaultMaxTokens(),
-		Messages: []anthropicMessage{
-			{Role: "user", Content: prompt},
-		},
-		System:       TagIdentitySystemMessage,
-		Stream:       false,
-		CacheControl: &cacheControlEphemeral{Type: "ephemeral"},
-	}
-	l.applyReasoning(&reqBody, reqBody.MaxTokens)
-	l.applyTemperature(&reqBody, 0)
-
-	_, responseContent, err := l.doRequest(ctx, reqBody, "tag identity judge")
-	if err != nil {
-		return nil, err
-	}
-	return ParseTagIdentityResponse(responseContent, len(candidates))
+	return judgedAnthropic(ctx, l, TagIdentitySystemMessage, BuildTagIdentityPrompt(candidates), "tag identity judge", len(candidates), ParseTagIdentityResponse)
 }
 
 // Name identifies the Anthropic implementation.

@@ -85,14 +85,14 @@ func (l *LlmOpenAiCompatible) baseURL() string {
 }
 
 func (l *LlmOpenAiCompatible) buildRequestBody(system, user, assistant string, temp float64) map[string]any {
-	messages := []openaiChatMessage{
-		{Role: "system", Content: system},
-		{Role: "user", Content: user},
-	}
-	if assistant != "" {
-		messages = append(messages, openaiChatMessage{Role: "assistant", Content: assistant})
-	}
+	return l.buildRequest(l.buildRequestMessages(system, user, assistant), temp)
+}
 
+// buildRequest assembles the body every compatible-API call shares: model,
+// messages, the stream flag, and the capability-gated envelope under the
+// model catalog's caps; any body-level field is set here, never at call
+// sites.
+func (l *LlmOpenAiCompatible) buildRequest(messages []openaiChatMessage, temp float64) map[string]any {
 	body := map[string]any{
 		"model":    l.llmCfg.Model,
 		"messages": messages,
@@ -276,20 +276,7 @@ func (l *LlmOpenAiCompatible) AnalyzeDocType(ctx context.Context, prevResult *An
 	messages := l.buildRequestMessages(passCtx.SystemMessage, passCtx.UserPrompt, string(assistantJSON))
 	messages = append(messages, openaiChatMessage{Role: "user", Content: docTypePrompt})
 
-	reqBody := map[string]any{
-		"model":    l.llmCfg.Model,
-		"messages": messages,
-		"stream":   false,
-	}
-
-	if l.caps != nil && l.caps.SupportsStructuredOutput {
-		reqBody["response_format"] = &openaiResponseFormat{Type: "json_object"}
-	}
-	if l.caps != nil && l.caps.SupportsTemperature {
-		reqBody["temperature"] = 0
-		reqBody["top_p"] = 1
-	}
-	l.addThinkingConfig(reqBody)
+	reqBody := l.buildRequest(messages, 0)
 
 	chatResp, err := l.doRequest(ctx, reqBody)
 	if err != nil {
@@ -328,96 +315,48 @@ func (l *LlmOpenAiCompatible) buildRequestMessages(system, user, assistant strin
 	return messages
 }
 
-// Adjudicate answers the same-intent pairs through the compatible API.
-func (l *LlmOpenAiCompatible) Adjudicate(ctx context.Context, pairs []TagPairEvidence) ([]TagVerdictResult, error) {
-	prompt := BuildAdjudicationPrompt(pairs)
+// judgedOpenAI runs one judged step against the compatible API: the size
+// gate, the request envelope, the labeled transport call, the empty
+// response check and the parser.
+func judgedOpenAI[T any](ctx context.Context, l *LlmOpenAiCompatible, system, prompt, label string, n int, parse func(string, int) (T, error)) (T, error) {
+	var zero T
 
-	if err := checkContentTooLarge(l.caps, AdjudicationSystemMessage+"\n"+prompt); err != nil {
-		return nil, err
+	if err := checkContentTooLarge(l.caps, system+"\n"+prompt); err != nil {
+		return zero, err
 	}
 
-	reqBody := l.buildRequestBody(AdjudicationSystemMessage, prompt, "", 0)
+	reqBody := l.buildRequestBody(system, prompt, "", 0)
 
 	chatResp, err := l.doRequest(ctx, reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("tag adjudication: %w", err)
+		return zero, fmt.Errorf("%s: %w", label, err)
 	}
 
 	if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message.Content == "" {
-		return nil, fmt.Errorf("empty response from LLM")
+		return zero, fmt.Errorf("empty response from LLM")
 	}
 
-	responseContent := strings.TrimSpace(chatResp.Choices[0].Message.Content)
-	return ParseAdjudicationResponse(responseContent, len(pairs))
+	return parse(chatResp.Choices[0].Message.Content, n)
+}
+
+// Adjudicate answers the same-intent pairs through the compatible API.
+func (l *LlmOpenAiCompatible) Adjudicate(ctx context.Context, pairs []TagPairEvidence) ([]TagVerdictResult, error) {
+	return judgedOpenAI(ctx, l, AdjudicationSystemMessage, BuildAdjudicationPrompt(pairs), "tag adjudication", len(pairs), ParseAdjudicationResponse)
 }
 
 // AdjudicateTagSplits decides splits through the compatible API.
 func (l *LlmOpenAiCompatible) AdjudicateTagSplits(ctx context.Context, tags []string) ([]TagSplitResult, error) {
-	prompt := BuildTagSplitPrompt(tags)
-
-	if err := checkContentTooLarge(l.caps, TagSplitSystemMessage+"\n"+prompt); err != nil {
-		return nil, err
-	}
-
-	reqBody := l.buildRequestBody(TagSplitSystemMessage, prompt, "", 0)
-
-	chatResp, err := l.doRequest(ctx, reqBody)
-	if err != nil {
-		return nil, fmt.Errorf("tag split adjudication: %w", err)
-	}
-
-	if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message.Content == "" {
-		return nil, fmt.Errorf("empty response from LLM")
-	}
-
-	responseContent := strings.TrimSpace(chatResp.Choices[0].Message.Content)
-	return ParseTagSplitResponse(responseContent, len(tags))
+	return judgedOpenAI(ctx, l, TagSplitSystemMessage, BuildTagSplitPrompt(tags), "tag split adjudication", len(tags), ParseTagSplitResponse)
 }
 
 // JudgeTagQuality scores candidates through the compatible API.
 func (l *LlmOpenAiCompatible) JudgeTagQuality(ctx context.Context, text string, candidates []TagQualityCandidate) ([]TagQualityResult, error) {
-	prompt := BuildTagQualityPrompt(text, candidates)
-
-	if err := checkContentTooLarge(l.caps, TagQualitySystemMessage+"\n"+prompt); err != nil {
-		return nil, err
-	}
-
-	reqBody := l.buildRequestBody(TagQualitySystemMessage, prompt, "", 0)
-
-	chatResp, err := l.doRequest(ctx, reqBody)
-	if err != nil {
-		return nil, fmt.Errorf("tag quality judge: %w", err)
-	}
-
-	if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message.Content == "" {
-		return nil, fmt.Errorf("empty response from LLM")
-	}
-
-	responseContent := strings.TrimSpace(chatResp.Choices[0].Message.Content)
-	return ParseTagQualityResponse(responseContent, len(candidates))
+	return judgedOpenAI(ctx, l, TagQualitySystemMessage, BuildTagQualityPrompt(text, candidates), "tag quality judge", len(candidates), ParseTagQualityResponse)
 }
 
 // JudgeTagIdentity decides canonical forms through the compatible API.
 func (l *LlmOpenAiCompatible) JudgeTagIdentity(ctx context.Context, candidates []TagIdentityCandidate) ([]TagIdentityResult, error) {
-	prompt := BuildTagIdentityPrompt(candidates)
-
-	if err := checkContentTooLarge(l.caps, TagIdentitySystemMessage+"\n"+prompt); err != nil {
-		return nil, err
-	}
-
-	reqBody := l.buildRequestBody(TagIdentitySystemMessage, prompt, "", 0)
-
-	chatResp, err := l.doRequest(ctx, reqBody)
-	if err != nil {
-		return nil, fmt.Errorf("tag identity judge: %w", err)
-	}
-
-	if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message.Content == "" {
-		return nil, fmt.Errorf("empty response from LLM")
-	}
-
-	responseContent := strings.TrimSpace(chatResp.Choices[0].Message.Content)
-	return ParseTagIdentityResponse(responseContent, len(candidates))
+	return judgedOpenAI(ctx, l, TagIdentitySystemMessage, BuildTagIdentityPrompt(candidates), "tag identity judge", len(candidates), ParseTagIdentityResponse)
 }
 
 // Name identifies the OpenAI-compatible implementation.

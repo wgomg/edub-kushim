@@ -51,9 +51,9 @@ in the recent tail:
   document *is*, not what it is *about* — and the schema already owns that facet:
   `document_type`, a closed, LLM-constrained list.
 - **F3 — rule-violating leaks.** `newfoundland`, `libya`. The prompt template
-  (`internal/llm/analyzer/shared.go:131`) already states *"Tags
+  (`internal/llm/analyzer/prompt.go:16`) already states *"Tags
   are conceptual categories — fields, domains, disciplines, periods, methods. Tags
-  are never specific people, works, or places."* The leaks pass anyway.
+  are never specific people or works."* The leaks pass anyway.
 - **F4 — wrong-granularity device tags.** `spinning reel repair`, `bail spring
   replacement`, `calculator teardown`, `segway maintenance` — legitimate topics for
   a repair-manual corpus, born at a granularity that never recurs while healthy
@@ -198,7 +198,7 @@ the §4 filters capture most of the value portably.
 
 Free, first, and with the last word — the position argued in *LLM-as-a-Judge Is Not
 an Oracle* [19]: deterministic guardrails over stochastic judges. This extends the
-existing `FilterTags`/`NewTagFilter` layer (`shared.go`), which already drops tags
+existing `FilterTags`/`NewTagFilter` layer (`tagfilter.go`), which already drops tags
 over three words, people-name overlaps, document-type token overlaps, and title
 containment. Hard gates belong **only** where classification is unambiguous — facet
 confusion — and their signal is the generator's own per-tag self-classification,

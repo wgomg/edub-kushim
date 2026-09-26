@@ -37,14 +37,7 @@ type ContentAnalyzer interface {
 
 - `TypeRef` — `Name string`, `Description string`. One entry of a type list offered to the model: the type's name and the description the prompt renders beside it; the enricher maps its loaded document-type and people-type rows to these refs before calling `Analyze`/`AnalyzeDocType`.
 - `AnalysisResult` — `Title`, `DocType`, `Tags []string` (canonical downstream field), `TagDetails []TagDetail` (typed mirror of `Tags`, consumed once by the enricher's facet gate, `omitempty` in JSON), `People []PeopleResult`, `Language`, `Stats *json.RawMessage`, `Prompt`, `PassContext *json.RawMessage` (`json:"-"`, the replayed prompts for the doc-type refinement call)
-- `TagDetail` — `Term string`, `Category string`, `IsStandardTerm bool` (`is_standard_term`). `Category` is one of the exported `TagCategory*` constants (`topic`, `form_genre`, `place`, `person`, `work`, `other`); the parse folds case/hyphen/space variants and maps anything missing or unknown to `other`. String-shaped tag entries are `other`; `IsStandardTerm` is `false` unless the model explicitly set it.
-- `DocMetadata` — `WordCount int32`, `PageCount int32`, `MimeType string`. Returned by `Format()` as a human-readable string (e.g. `"15234 total words, 42 pages, application/pdf"`). Returns empty string when all fields are zero/empty.
 - `PeopleResult` — `Name`, `NameRomanized` (optional, for non-Latin names), `Type`, `NormalizedName` (pre-populated by enricher via `canonicalPersonName` + `NormalizeForDB`, used by `FilterTags`, excluded from JSON serialization via `json:"-"`)
-- `TagPairEvidence` — `Query`, `Target`, `Sim`, `RunnerUpSim` (query-side runner-up similarity), `TargetRunnerUpTag`/`TargetRunnerUpSim` (target's nearest other store tag). Fed to `Adjudicate`'s prompt.
-- `TagVerdictResult` — `Index int`, `Verdict types.TagVerdict` (`same`/`variant`/`related`; zero verdict = ambiguous entry, caller keeps), `Direction string` (for `same`: which term is the precise one — `query`/`target`/`tie`; empty when absent).
-- `TagIdentityCandidate` — `Index int`, `Term string`, `ProposedFold string` (the mechanically proposed fold, empty when none). Fed to `JudgeTagIdentity`'s prompt.
-- `TagIdentityResult` — `Index int`, `FoldToBase`, `FoldPreservesDenotation`, `ConventionalForm bool` (the three binary criteria); `CriteriaRecord(proposedFold)` is the persisted evidence payload.
-- `TagSplitResult` — `Verdict TagSplitVerdict` (`keep`/`split`; zero verdict = ambiguous entry, caller keeps), `Components []string` (the split components, present only for a `split` verdict).
 
 ### Factory
 
@@ -52,47 +45,129 @@ type ContentAnalyzer interface {
 
 ---
 
-## `internal/llm/analyzer/shared.go`
-
-### Constants
-
-- `SystemMessage` (exported) — `"You are a helpful assistant specialized in document analysis and metadata extraction"`, used by both adapter implementations.
-- `maxTagWords` (3) — Word-count cap enforced by `TagFilter.Accept`/`FilterTags`.
-- `maxTagLength` (64) — Character cap enforced by `TagFilter.Accept`/`FilterTags`.
-- `TagCategoryTopic`/`TagCategoryFormGenre`/`TagCategoryPlace`/`TagCategoryPerson`/`TagCategoryWork`/`TagCategoryOther` (exported) — the closed category set of a `TagDetail`.
-- `TagSplitSystemMessage` (exported) — `"You are a tag-taxonomy classifier. Decide whether a tag denotes one concept or several distinct concepts."`
+## `internal/llm/analyzer/gates.go`
 
 ### Types
 
 - `ContentTooLargeError` — Returned by `checkContentTooLarge` when estimated tokens exceed the model's `MaxInputTokens`. Fields: `EstimatedTokens`, `MaxInputTokens`.
 - `TokenLimitError` — Returned by `parseTokenLimitError` when the provider error body matches the context-length exceeded regex. Fields: `MaxTokens`, `RequestedTokens`, `RawBody`.
-- `TagFilter` — Token sets built by `NewTagFilter(people, knownPeopleNormalized, title, docTypeNames)`; `Accept(tag string) bool` applies the same shape rules and token checks `FilterTags` uses (normalizes its input first). Shared so split components get the same per-document rules as emitted tags.
-- `TagDetail` — `Term string`, `Category string`, `IsStandardTerm bool`. The model's own classification of one tag; filled by `ParseAnalysisResponse`.
-- `FacetDrop` — `Term string`, `Category string`, `Reason string`. One tag dropped by `SeparateFacets`; `Reason` records why: `matches_document_type` / `model_self_classification` for `form_genre`, `people_facet` for `person`, `forbidden_category` for `work`, `non_whitelisted_place` for a `place` that is not a whitelisted country or continent.
-- `TagSplitVerdict` — `TagSplitKeep`/`TagSplitSplit`; zero verdict = ambiguous, callers keep.
 
 ### Functions
 
 - `checkContentTooLarge(caps *llm.ModelCapability, fullPrompt string) error` — Estimates tokens via the analyzer's `estimateTokens` and returns a `ContentTooLargeError` if the estimate exceeds `caps.MaxInputTokens`. Returns nil if `caps` is nil or `MaxInputTokens ≤ 0`.
 - `parseTokenLimitError(body []byte) error` — Matches provider error bodies against the regex `maximum context length is (\d+) tokens.*?you requested (?:about )?(\d+) tokens` and returns a `TokenLimitError` with the parsed counts. Returns nil on no match or zero values. Covers OpenAI, DeepSeek, and compatible providers; for Anthropic (different error format) it returns nil and the error propagates as generic API failure.
-- `BuildPrompt(text, docTypes, peopleTypes, tagSuggestions, customTemplate, minTags, maxTags) string` — Builds the system prompt with JSON output instructions including people types. Prompts the LLM to provide a `name_romanized` field for any name containing non-Latin characters (Korean, Arabic, Cyrillic, Hebrew, etc.). The default template asks for "Between `minTags` and `maxTags`" tags and forbids merging concepts with a conjunction; it also states the facet rules (tags describe subject matter, forms/genres belong in the document type, places only for countries and continents) and the typed tag contract — each tag is an object with `term`, `category`, `is_standard_term` — with one-line negative exemplars (`literary anthology`, `racial scapegoating`, `newfoundland`, `bail spring replacement`). When `customTemplate` is non-empty (after trimming whitespace), it is used as a Go `text/template` with placeholders `{{.DocTypePrompt}}`, `{{.TagsPrompt}}`, `{{.PeoplePrompt}}`, `{{.Text}}`, `{{.MinTags}}`, `{{.MaxTags}}`. On parse or execution error, falls back silently to the hardcoded default template. The rendered prompt is captured in `AnalysisResult.Prompt` for debugging.
-- `ParseAnalysisResponse(content string) (*AnalysisResult, error)` — Decodes one analysis response, accepting both tag shapes: a plain-string array (each entry becomes a tag with `category: other`) and an object array (`term`, `category`, `is_standard_term`), mixed arrays included. Elements that are neither a string nor an object with a non-empty `term` are skipped; `category` is folded via `normalizeTagCategory` (case, hyphens, spaces; unknown or missing → `other`). A missing or `null` `tags` key yields empty slices; a `tags` value that is not an array returns an error. Both adapters' `Analyze` and the missing-`type` fallback of `AnalyzeDocType` parse through this helper.
-- `normalizeTagCategory(raw string) string` — Lowercases and trims the raw value, folds `-` and spaces to `_`, and returns the matching `TagCategory*` constant or `TagCategoryOther`.
-- `NormalizeTags(raw []string) []string` — Converts LLM-extracted tags to canonical form via `textnorm.NormalizeTag` (NFKC, lowercase, dash family → space, accent folding, keeps letters of any Unicode script, digits, and `+ # .`, strips everything else, collapses whitespace), then deduplicates and rejects empty/whitespace-only results.
-- `SeparateFacets(tags []string, details []TagDetail, docTypeNames []string) ([]string, []FacetDrop)` — Deterministic facet gate. Drops typed tags by their `TagDetail.Category`: `form_genre` tags (they belong in the document type) are dropped with `Reason` = `matches_document_type` when the normalized term is an existing `document_type` name, `model_self_classification` otherwise; `person` (`people_facet`) and `work` (`forbidden_category`) tags are dropped; `place` survives only when the term is a whitelisted country or continent (`non_whitelisted_place` otherwise). `topic` and `other` always survive, as do tags with no matching detail row. Returns `tags` unchanged when there are no details (untyped emissions gate nothing). Runs after `NormalizeTags` and before `FilterTags`; the enricher logs every drop.
-- `IsWhitelistedPlace(term string) bool` — Reports whether the normalized term is a whitelisted country or continent. The embedded list covers the continents, UN member and observer states, contested or partially recognized states (`palestine`, `taiwan`, `kosovo`, `western sahara`, …), and common short or alternate names (`usa`, `uk`, `uae`, `drc`, `burma`, `holland`, …). Both sides of the lookup are normalized with `normalizeCore`, and a leading `the ` is ignored.
-- `FilterTags(tags, people, knownPeopleNormalized, title, docTypeNames, maxTags) []string` — Post-normalization deterministic tag cleaner. Drops tags with more than 3 tokens or more than 64 chars, tags sharing any token with a person's `NormalizedName` (pre-populated by the enricher via `canonicalPersonName` + `NormalizeForDB`), multi-word tags (≥2 tokens) whose full token set is a strict subset of a known person's normalized name (from the full `people` table, passed via `knownPeopleNormalized`), tags matching a doc-type name token, and tags whose token set is a subset of the document title's token set. Caps survivors at `maxTags` (`enricher.contentanalyzer.max_tags`, default 5) in emit order. Operates after `NormalizeTags` and before rank-based consolidation.
-- `SplitComponents(raw []string, filter *TagFilter) []string` — Normalizes adjudicated split components (`NormalizeTags`) and drops names that fail the shape rules or the filter's token checks; callers require 2..`max_tags` survivors.
-- `buildTokenUsageStats(prompt, completion, total int) *json.RawMessage` — Creates token usage stats JSON
-- `AdjudicationSystemMessage` (exported) — `"You are a tag-taxonomy classifier. Decide whether pairs of tag terms denote the same concept."`
-- `BuildAdjudicationPrompt(pairs []TagPairEvidence) string` — Builds the JSON-verdict prompt: per pair, the two terms, their embedding similarity, the query-side runner-up similarity, and the target's nearest other store tag.
-- `ParseAdjudicationResponse(content string, n int) ([]TagVerdictResult, error)` — Parses `{"pairs":[{"index":0,"verdict":"same"},...]}` (code-fenced or plain) into one result per pair; unknown verdict strings, out-of-range indices, and short slices leave the affected entries with a zero verdict (ambiguous → caller keeps). Invalid JSON returns an error.
-- `BuildTagSplitPrompt(tags []string) string` — Builds the JSON-verdict prompt for joint tags: per tag, decide `keep`/`split`, with the split components listed when splitting.
-- `ParseTagSplitResponse(content string, n int) ([]TagSplitResult, error)` — Parses `{"splits":[{"index":0,"verdict":"split","components":[...]},...]}` (code-fenced or plain) into one result per tag; unknown verdicts, out-of-range indices, and splits with fewer than two non-empty components leave the entry ambiguous (caller keeps). Invalid JSON returns an error.
+- `buildTokenUsageStats(prompt, completion, total int) *json.RawMessage` — Creates token usage stats JSON.
 
 ### Adapter integration
 
-Both `Analyze()` and `AnalyzeDocType()` call `checkContentTooLarge` with their constructed prompt before making any HTTP request. If it returns an error, the adapter returns the `ContentTooLargeError` directly — no API call is made, saving time and credits. Both adapter `doRequest()` methods (OpenAI's shared `doRequest`, Anthropic's shared `doRequest`) also call `parseTokenLimitError` on non-200 responses, catching provider-side context-length errors at response time. `Adjudicate()` follows the same path: `checkContentTooLarge` → request (temperature 0) → `doRequest` → `ParseAdjudicationResponse`.
+Both `Analyze()` and `AnalyzeDocType()` call `checkContentTooLarge` with their constructed prompt before making any HTTP request. If it returns an error, the adapter returns the `ContentTooLargeError` directly — no API call is made, saving time and credits. Both adapter `doRequest()` methods also call `parseTokenLimitError` on non-200 responses, catching provider-side context-length errors at response time. The four judged steps share one path per adapter (the generic `judgedOpenAI`/`judgedAnthropic` helper): `checkContentTooLarge` → request (temperature 0) → labeled `doRequest` → empty-content check → the step's parser.
+
+---
+
+## `internal/llm/analyzer/prompt.go`
+
+### Constants
+
+- `SystemMessage` (exported) — `"You are a helpful assistant specialized in document analysis and metadata extraction"`, used by both adapter implementations.
+
+### Types
+
+- `DocMetadata` — `WordCount int32`, `PageCount int32`, `MimeType string`. Returned by `Format()` as a human-readable string (e.g. `"15234 total words, 42 pages, application/pdf"`). Returns empty string when all fields are zero/empty.
+
+### Functions
+
+- `BuildPrompt(text, docTypes, peopleTypes, tagSuggestions, customTemplate, minTags, maxTags) string` — Builds the system prompt with JSON output instructions including people types. Prompts the LLM to provide a `name_romanized` field for any name containing non-Latin characters (Korean, Arabic, Cyrillic, Hebrew, etc.). The default template asks for "Between `minTags` and `maxTags`" tags and forbids merging concepts with a conjunction; it also states the facet rules (tags describe subject matter, forms/genres belong in the document type, places only for countries and continents) and the typed tag contract — each tag is an object with `term`, `category`, `is_standard_term` — with one-line negative exemplars (`literary anthology`, `racial scapegoating`, `newfoundland`, `bail spring replacement`). When `customTemplate` is non-empty (after trimming whitespace), it is used as a Go `text/template` with placeholders `{{.DocTypePrompt}}`, `{{.TagsPrompt}}`, `{{.PeoplePrompt}}`, `{{.Text}}`, `{{.MinTags}}`, `{{.MaxTags}}`. On parse or execution error, falls back silently to the hardcoded default template. The rendered prompt is captured in `AnalysisResult.Prompt` for debugging.
+
+---
+
+## `internal/llm/analyzer/tagfilter.go`
+
+### Constants
+
+- `maxTagWords` (3) — Word-count cap enforced by `TagFilter.Accept`/`FilterTags`.
+- `maxTagLength` (64) — Character cap enforced by `TagFilter.Accept`/`FilterTags`.
+
+### Types
+
+- `TagFilter` — Token sets built by `NewTagFilter(people, knownPeopleNormalized, title, docTypeNames)`; `Accept(tag string) bool` applies the same shape rules and token checks `FilterTags` uses (normalizes its input first). Shared so split components get the same per-document rules as emitted tags.
+
+### Functions
+
+- `NormalizeTags(raw []string) []string` — Converts LLM-extracted tags to canonical form via `textnorm.NormalizeTag` (NFKC, lowercase, dash family → space, accent folding, keeps letters of any Unicode script, digits, and `+ # .`, strips everything else, collapses whitespace), then deduplicates and rejects empty/whitespace-only results.
+- `FilterTags(tags, people, knownPeopleNormalized, title, docTypeNames, maxTags) []string` — Post-normalization deterministic tag cleaner. Drops tags with more than 3 tokens or more than 64 chars, tags sharing any token with a person's `NormalizedName` (pre-populated by the enricher via `canonicalPersonName` + `NormalizeForDB`), multi-word tags (≥2 tokens) whose full token set is a strict subset of a known person's normalized name (from the full `people` table, passed via `knownPeopleNormalized`), tags matching a doc-type name token, and tags whose token set is a subset of the document title's token set. Caps survivors at `maxTags` (`enricher.contentanalyzer.max_tags`, default 5) in emit order. Operates after `NormalizeTags` and before rank-based consolidation.
+- `SplitComponents(raw []string, filter *TagFilter) []string` — Normalizes adjudicated split components (`NormalizeTags`) and drops names that fail the shape rules or the filter's token checks; callers require 2..`max_tags` survivors.
+
+---
+
+## `internal/llm/analyzer/places.go`
+
+### Functions
+
+- `IsWhitelistedPlace(term string) bool` — Reports whether the normalized term is a whitelisted country or continent. The embedded list covers the continents, UN member and observer states, contested or partially recognized states (`palestine`, `taiwan`, `kosovo`, `western sahara`, …), and common short or alternate names (`usa`, `uk`, `uae`, `drc`, `burma`, `holland`, …). Both sides of the lookup are normalized with `normalizeCore`, and a leading `the ` is ignored.
+
+---
+
+## `internal/llm/analyzer/facets.go`
+
+### Constants
+
+- `TagCategoryTopic`/`TagCategoryFormGenre`/`TagCategoryPlace`/`TagCategoryPerson`/`TagCategoryWork`/`TagCategoryOther` (exported) — the closed category set of a `TagDetail`.
+
+### Types
+
+- `TagDetail` — `Term string`, `Category string`, `IsStandardTerm *bool` (`is_standard_term`). `Category` is one of the exported `TagCategory*` constants (`topic`, `form_genre`, `place`, `person`, `work`, `other`); the parse folds case/hyphen/space variants and maps anything missing or unknown to `other`. String-shaped tag entries are `other`; `IsStandardTerm` stays nil unless the model explicitly set it, so an omitted answer remains distinguishable from an explicit `false`.
+- `FacetDrop` — `Term string`, `Category string`, `Reason string`. One tag dropped by `SeparateFacets`; `Reason` records why: `matches_document_type` / `model_self_classification` for `form_genre`, `people_facet` for `person`, `forbidden_category` for `work`, `non_whitelisted_place` for a `place` that is not a whitelisted country or continent.
+
+### Functions
+
+- `ParseAnalysisResponse(content string) (*AnalysisResult, error)` — Decodes one analysis response, accepting both tag shapes: a plain-string array (each entry becomes a tag with `category: other`) and an object array (`term`, `category`, `is_standard_term`), mixed arrays included. Elements that are neither a string nor an object with a non-empty `term` are skipped; `category` is folded via `normalizeTagCategory` (case, hyphens, spaces; unknown or missing → `other`). A missing or `null` `tags` key yields empty slices; a `tags` value that is not an array returns an error. Both adapters' `Analyze` and the missing-`type` fallback of `AnalyzeDocType` parse through this helper.
+- `normalizeTagCategory(raw string) string` — Lowercases and trims the raw value, folds `-` and spaces to `_`, and returns the matching `TagCategory*` constant or `TagCategoryOther`.
+- `SeparateFacets(tags []string, details []TagDetail, docTypeNames []string) ([]string, []FacetDrop)` — Deterministic facet gate. Drops typed tags by their `TagDetail.Category`: `form_genre` tags (they belong in the document type) are dropped with `Reason` = `matches_document_type` when the normalized term is an existing `document_type` name, `model_self_classification` otherwise; `person` (`people_facet`) and `work` (`forbidden_category`) tags are dropped; `place` survives only when the term is a whitelisted country or continent (`non_whitelisted_place` otherwise). `topic` and `other` always survive, as do tags with no matching detail row. Returns `tags` unchanged when there are no details (untyped emissions gate nothing). Runs after `NormalizeTags` and before `FilterTags`; the enricher logs every drop.
+
+---
+
+## `internal/llm/analyzer/adjudication.go`
+
+### Constants
+
+- `AdjudicationSystemMessage` (exported) — `"You are a tag-taxonomy classifier. Decide whether pairs of tag terms denote one value."`
+
+### Types
+
+- `TagPairEvidence` — `Query`, `Target`, `Sim`, `RunnerUpSim` (query-side runner-up similarity), `TargetRunnerUpTag`/`TargetRunnerUpSim` (target's nearest other store tag). Fed to `Adjudicate`'s prompt.
+- `TagVerdictResult` — `Index int`, `Verdict types.TagVerdict` (`same`/`variant`/`related`; zero verdict = ambiguous entry, caller keeps), `Direction string` (for `same`: which term is the precise one — `query`/`target`/`tie`; empty when absent).
+
+### Functions
+
+- `BuildAdjudicationPrompt(pairs []TagPairEvidence) string` — Builds the JSON-verdict prompt: per pair, the two terms, their embedding similarity, the query-side runner-up similarity, and the target's nearest other store tag.
+- `ParseAdjudicationResponse(content string, n int) ([]TagVerdictResult, error)` — Parses `{"pairs":[{"index":0,"verdict":"same"},...]}` (code-fenced or plain) into one result per pair; unknown verdict strings, out-of-range indices, and short slices leave the affected entries with a zero verdict (ambiguous → caller keeps). Invalid JSON returns an error.
+
+---
+
+## `internal/llm/analyzer/tag_split.go`
+
+### Constants
+
+- `TagSplitSystemMessage` (exported) — `"You are a tag-taxonomy classifier. Decide whether a tag denotes one concept or several distinct concepts."`
+
+### Types
+
+- `TagSplitVerdict` — `TagSplitKeep`/`TagSplitSplit`; zero verdict = ambiguous, callers keep.
+- `TagSplitResult` — `Verdict TagSplitVerdict` (`keep`/`split`; zero verdict = ambiguous entry, caller keeps), `Components []string` (the split components, present only for a `split` verdict).
+
+### Functions
+
+- `BuildTagSplitPrompt(tags []string) string` — Builds the JSON-verdict prompt for joint tags: per tag, decide `keep`/`split`, with the split components listed when splitting.
+- `ParseTagSplitResponse(content string, n int) ([]TagSplitResult, error)` — Parses `{"splits":[{"index":0,"verdict":"split","components":[...]},...]}` (code-fenced or plain) into one result per tag; unknown verdicts, out-of-range indices, and splits with fewer than two non-empty components leave the entry ambiguous (caller keeps). Invalid JSON returns an error.
+
+---
+
+## `internal/llm/analyzer/tag_identity.go`
+
+### Types
+
+- `TagIdentityCandidate` — `Index int`, `Term string`, `ProposedFold string` (the mechanically proposed fold, empty when none). Fed to `JudgeTagIdentity`'s prompt.
+- `TagIdentityResult` — `Index int`, `FoldToBase`, `FoldPreservesDenotation`, `ConventionalForm bool` (the three binary criteria); `CriteriaRecord(proposedFold)` is the persisted evidence payload.
 
 ---
 
@@ -102,15 +177,16 @@ Both `Analyze()` and `AnalyzeDocType()` call `checkContentTooLarge` with their c
 
 `LlmOpenAiCompatible` — OpenAI-compatible `/chat/completions` API (absorbs former OpenAI, DeepSeek, Mistral, Groq, etc.)
 
-- Messages: system + user with `json_object` response format when `caps.SupportsResponseSchema`
-- Headers: `Authorization: Bearer {token}`
+- Messages: system + user (plus the assistant turn on the doc-type refinement call), assembled by `buildRequestMessages`
+- Headers: `Authorization: Bearer {token}`; the catalog-declared session header when the provider has one
+- Shared request assembly: `buildRequestMessages` → `buildRequestBody` → `buildRequest`, which sets `model`/`messages`/`stream` and applies the capability envelope
 - Dynamic request building based on `*ModelCapability`:
-  - Strips `reasoning_effort` if `!caps.SupportsReasoning`
-  - Strips `temperature` if `!caps.SupportsSamplingParams`
-  - Uses `response_format: {type: "json_object"}` only when `caps.SupportsResponseSchema`
+  - Adds `temperature`/`top_p` only when `caps.SupportsTemperature`
+  - Adds `response_format: {type: "json_object"}` only when `caps.SupportsStructuredOutput`
+  - Adds the thinking config only when `caps.SupportsReasoning`: provider-specific knobs (`thinking` for deepseek/zhipu, `enable_thinking` for qwen, `reasoning_effort` otherwise), with the disabled forms when `llmCfg.Reasoning` is false
 - Default provider URL from the registry's `ProviderDefaultURL(provider)`
 - Token usage from `usage` field
-- `Adjudicate` — reuses `buildRequestBody`/`doRequest` with temperature 0 and the `json_object` response format when `caps.SupportsResponseSchema`
+- The four judged steps (`Adjudicate`, `AdjudicateTagSplits`, `JudgeTagQuality`, `JudgeTagIdentity`) share `judgedOpenAI`: size gate → temperature-0 request → labeled `doRequest` → empty-response check → the step's parser
 
 ---
 
@@ -128,7 +204,9 @@ Both `Analyze()` and `AnalyzeDocType()` call `checkContentTooLarge` with their c
   - Reasoning enabled with effort levels → `output_config: {effort: ...}`; `thinking: {type: "adaptive"}` unless the model is in `anthropicManualThinkingModels`, which gets explicit `thinking: {type: "enabled"}` with budget
   - `max_tokens` fixed at `256` for the no-generation doc-type refinement pass, else `caps.MaxOutputTokens` (fallback 4096 when unset)
 - Token usage from `usage.input_tokens` + `usage.output_tokens`
-- Shared transport: `doRequest(ctx, reqBody, errLabel)` marshals, sends, and decodes one `/messages` call (headers, status/error parsing, text-block extraction); `Analyze`, `AnalyzeDocType`, and `Adjudicate` all go through it. `Adjudicate` uses temperature 0 and `AdjudicationSystemMessage`.
+- Shared request assembly: `buildRequest(system, messages, maxTokens, temp)` sets the envelope (model, max tokens, system, `stream: false`, ephemeral cache control) and applies the reasoning and temperature gates; `Analyze`, `AnalyzeDocType`, and the judged-step helper all go through it
+- Shared transport: `doRequest(ctx, reqBody, errLabel)` marshals, sends, and decodes one `/messages` call (headers, status/error parsing, text-block extraction)
+- The four judged steps share `judgedAnthropic`: size gate → temperature-0 request → labeled `doRequest` → the step's parser
 
 ---
 
@@ -234,23 +312,14 @@ requires replacing the file and restarting, or rebuilding the binary.
 
 ```go
 type ModelCapability struct {
-    MaxInputTokens          int
-    MaxOutputTokens         int
-    SupportsReasoning       bool
-    SupportsFunctionCalling bool
-    SupportsResponseSchema  bool
-    SupportsSamplingParams  bool
-    SupportsPromptCaching   bool
-    SupportsVision          bool
-    SupportsPDFInput        bool
-    SupportsOutputConfig    bool
-    ReasoningEffortLevels   []string
-    AdaptiveThinking        bool
-    InputCostPerToken       float64
-    OutputCostPerToken      float64
+    SupportsReasoning        bool
+    ReasoningEffortLevels    []string
+    SupportsTemperature      bool
+    SupportsPromptCaching    bool
+    SupportsStructuredOutput bool
+    MaxInputTokens           int
+    MaxOutputTokens          int
 }
-
-type Registry struct { ... }
 ```
 
 ### Registry API

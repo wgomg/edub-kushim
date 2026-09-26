@@ -434,16 +434,6 @@ func TestReload(t *testing.T) {
 	}
 }
 
-func TestCatalogPath(t *testing.T) {
-	r, err := NewRegistry(fixturePath(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r.CatalogPath() != fixturePath(t) {
-		t.Errorf("expected %q, got %q", fixturePath(t), r.CatalogPath())
-	}
-}
-
 func TestConcurrentAccess(t *testing.T) {
 	r, err := NewRegistry(fixturePath(t))
 	if err != nil {
@@ -462,6 +452,37 @@ func TestConcurrentAccess(t *testing.T) {
 	}
 
 	for range 10 {
+		<-done
+	}
+}
+
+func TestConcurrentReloadAndProviderReads(t *testing.T) {
+	r, err := NewRegistry(fixturePath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const readers = 16
+	done := make(chan bool, readers)
+	for range readers {
+		go func() {
+			for range 50 {
+				_ = r.ProviderDefaultURL("deepseek")
+				_ = r.ProviderAdapter("deepseek")
+				_ = r.ProviderSessionHeader("deepseek")
+			}
+			done <- true
+		}()
+	}
+
+	for range 50 {
+		if err := r.Reload(); err != nil {
+			t.Errorf("reload failed: %v", err)
+			break
+		}
+	}
+
+	for range readers {
 		<-done
 	}
 }

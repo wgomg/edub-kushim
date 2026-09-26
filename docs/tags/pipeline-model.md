@@ -273,7 +273,7 @@ system already has, how far it matches the model, and what the delta is.
 
 | Stage / duty | Existing mechanism | Status | Delta |
 |---|---|---|---|
-| **S1 Emission** | Typed generation contract, subject-matter rule, place rule, choose-or-justify, four negatives (`analyzer/shared.go`); suggestions injected from the store | Partial · re-criteria | Prompt teaches document relevance and dictionary standardness; no dimension/decomposition guidance |
+| **S1 Emission** | Typed generation contract, subject-matter rule, place rule, choose-or-justify, four negatives (`analyzer/prompt.go`); suggestions injected from the store | Partial · re-criteria | Prompt teaches document relevance and dictionary standardness; no dimension/decomposition guidance |
 | **S2 Facet ownership (P1)** | `SeparateFacets` category gate + country/continent whitelist (`internal/enrichment/enricher.go`) | Aligned | Untyped emissions degrade to string heuristics (accepted) |
 | **S3 Canonicality (P3)** | Consolidation policy gates/bands (`policy`), LLM adjudicator + verdict cache, merge review + dismissals, reconciler | Partial | Similarity band misses the variant classes; no extension-equality detector; merges are incident-driven, not a standing duty |
 | **S4 Atomicity (P4)** | Conjunction joint-tag split at emission (`enricher.go`, `internal/textnorm/tagjoint.go`) + stored-joint worklist (`reconcile/joint.go`) | Partial · conflict | Conjunction-only scope; no part-value/mass evidence; prospective vs retrospective test |
