@@ -107,7 +107,7 @@ func (s *Server) bootstrap(configDir string) (*config.Config, *database.Client, 
 	registry := task.NewRegistry()
 	registry.Register(types.Task.Type.Config, configtask.NewConfigTaskHandler(client.Queries, s.logger))
 
-	dispatcher := task.NewDispatcher(s.logger, store, registry)
+	dispatcher := task.NewDispatcher(store, registry)
 	runner := task.NewRunner(store, registry, s.logger)
 	s.pool = task.NewPool(s.logger, runner, 1, 5*time.Second, "config")
 	s.pool.Start(context.Background())

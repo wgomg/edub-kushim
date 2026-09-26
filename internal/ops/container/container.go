@@ -288,7 +288,7 @@ func (c *Container) ensureDispatcher() error {
 	registry.Register(types.Task.Type.TagMeasure, tags.NewTagMeasureTaskHandler(client.Queries, c.logger))
 	registry.Register(types.Task.Type.TagIdentity, admission.NewTagIdentityTaskHandler(client.Queries, c.logger))
 
-	c.dispatcher = task.NewDispatcher(c.logger, store, registry)
+	c.dispatcher = task.NewDispatcher(store, registry)
 	c.runner = task.NewRunner(store, registry, c.logger)
 
 	return nil

@@ -76,12 +76,11 @@ func NewEnricher(cfg *config.Config, logger *log.Logger, client *database.Client
 // Enrich runs the whole enrichment pass for one stored document and
 // returns the result payload stored on the task. The document row must
 // exist; progress callbacks update the task row. An empty document (no
-// usable text) skips the LLM steps and still updates what it can.
-func (e *Enricher) Enrich(ctx context.Context, document database.Document, progress ...task.ProgressFunc) (*json.RawMessage, error) {
+// usable text) skips the LLM steps and still updates what it can. report
+// must be non-nil; pass task.NoopProgress to report nothing.
+func (e *Enricher) Enrich(ctx context.Context, document database.Document, report task.ProgressFunc) (*json.RawMessage, error) {
 	logId := document.DocumentID
 	ctx = context.WithValue(ctx, "reqid", logId)
-
-	report := task.Progress(progress)
 
 	start := time.Now()
 	e.logger.Info(logId, "starting enrichment for file %s", document.StoragePath)

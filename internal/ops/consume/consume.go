@@ -188,7 +188,7 @@ func Run(c *container.Container, args []string) error {
 		owner := task.NewOwner(client, ownerID, pid, c.GetLogger(), c.GetConfig().Consumer.Reclaim.MaxRetries)
 		c.GetLogger().Info("", "consume: acquiring batch %s (PID=%d, ownerID=%s)", batchIDParam, pid, ownerID)
 
-		if err := owner.Acquire(ctx, batchIDParam, task.StaleAfter); err == task.ErrBatchLocked {
+		if err := owner.Acquire(ctx, batchIDParam); err == task.ErrBatchLocked {
 			if !force {
 				bo, boErr := client.GetBatchOwner(ctx, batchIDParam)
 				if boErr == nil {
@@ -343,7 +343,7 @@ func Run(c *container.Container, args []string) error {
 	ownerID := uuid.New().String()
 	owner := task.NewOwner(client, ownerID, os.Getpid(), c.GetLogger(), c.GetConfig().Consumer.Reclaim.MaxRetries)
 
-	if err := owner.Acquire(ctx, batchID, task.StaleAfter); err != nil {
+	if err := owner.Acquire(ctx, batchID); err != nil {
 		return fmt.Errorf("acquire batch %s: %w", batchID, err)
 	}
 

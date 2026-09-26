@@ -63,12 +63,10 @@ func (r *Runner) Next(ctx context.Context, taskType types.TaskType) (err error) 
 	}()
 
 	if task.Payload == nil {
-		_ = r.failTask(ctx, task, token, blocking, "task has nil payload")
-		reqID := ""
-		if tErr, ok := errors.AsType[*Error](err); ok {
-			reqID = tErr.ReqID
+		if failErr := r.failTask(ctx, task, token, blocking, "task has nil payload"); failErr != nil {
+			r.logger.Error(task.TaskID, "task %s has nil payload and fail-write failed: %v (stale sweep will reclaim)", task.TaskID, failErr)
 		}
-		r.logger.Error(reqID, "task %s has nil payload", task.TaskID)
+		r.logger.Error(task.TaskID, "task %s has nil payload", task.TaskID)
 		return nil
 	}
 
@@ -127,8 +125,8 @@ func (r *Runner) failTask(ctx context.Context, task database.Task, token uuid.UU
 }
 
 // completeTaskWithRetry calls CompleteTask with bounded retries and backoff.
-// The failure class is transient write contention (SQLITE_BUSY), so a few
-// retries cover the common case without infinite looping.
+// The failure class is transient write contention, so a few retries cover
+// the common case without infinite looping.
 func (r *Runner) completeTaskWithRetry(ctx context.Context, task database.Task, token uuid.UUID, blocking bool, result json.RawMessage) error {
 	const maxAttempts = 3
 	backoff := 50 * time.Millisecond

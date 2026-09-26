@@ -45,10 +45,10 @@ func (h *MirrorTaskHandler) DedupKey(payload json.RawMessage) string {
 func (h *MirrorTaskHandler) Handle(ctx context.Context, t task.Task) (out json.RawMessage, err error) {
 	progress := task.NewProgressTracker(h.queries, t.TaskID)
 	defer func() {
-		task.FinalizeBatchStatus(ctx, h.queries, t.BatchID, err != nil)
+		task.FinalizeBatchStatus(ctx, h.queries, h.logger, t.BatchID, err != nil)
 	}()
 
-	task.MarkBatchProcessing(ctx, h.queries, t.BatchID)
+	task.MarkBatchProcessing(ctx, h.queries, h.logger, t.BatchID)
 
 	var payload struct {
 		Path string `json:"path"`

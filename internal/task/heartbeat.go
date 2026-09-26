@@ -18,7 +18,8 @@ type Heartbeat struct {
 	logger   *log.Logger
 }
 
-// NewHeartbeat prepares the ticker for one batch owner.
+// NewHeartbeat prepares the ticker for one batch owner. logger must be
+// non-nil: the loop logs without a guard.
 func NewHeartbeat(owner *Owner, interval time.Duration, logger *log.Logger) *Heartbeat {
 	return &Heartbeat{
 		owner:    owner,
@@ -31,9 +32,7 @@ func NewHeartbeat(owner *Owner, interval time.Duration, logger *log.Logger) *Hea
 // Start runs the heartbeat loop until Stop or ctx cancellation.
 func (h *Heartbeat) Start(ctx context.Context) {
 	go func() {
-		if h.logger != nil {
-			h.logger.Info("", "heartbeat: started (ownerID=%s)", h.owner.OwnerID)
-		}
+		h.logger.Info("", "heartbeat: started (ownerID=%s)", h.owner.ownerID)
 		ticker := time.NewTicker(h.interval)
 		defer ticker.Stop()
 		for {
@@ -41,25 +40,17 @@ func (h *Heartbeat) Start(ctx context.Context) {
 			case <-ticker.C:
 				rows, err := h.owner.Heartbeat(ctx)
 				if err != nil {
-					if h.logger != nil {
-						h.logger.Error("", "heartbeat: %v", err)
-					}
+					h.logger.Error("", "heartbeat: %v", err)
 				} else if rows == 0 {
-					if h.logger != nil {
-						h.logger.Error("", "heartbeat: updated 0 rows (ownerID=%s — row missing or owner_id mismatch)", h.owner.OwnerID)
-					}
-				} else if h.logger != nil {
-					h.logger.Debug("", "heartbeat: tick ok (ownerID=%s)", h.owner.OwnerID)
+					h.logger.Error("", "heartbeat: updated 0 rows (ownerID=%s — row missing or owner_id mismatch)", h.owner.ownerID)
+				} else {
+					h.logger.Debug("", "heartbeat: tick ok (ownerID=%s)", h.owner.ownerID)
 				}
 			case <-h.done:
-				if h.logger != nil {
-					h.logger.Debug("", "heartbeat: stopped via done channel (ownerID=%s)", h.owner.OwnerID)
-				}
+				h.logger.Debug("", "heartbeat: stopped via done channel (ownerID=%s)", h.owner.ownerID)
 				return
 			case <-ctx.Done():
-				if h.logger != nil {
-					h.logger.Debug("", "heartbeat: stopped via ctx.Done (ownerID=%s)", h.owner.OwnerID)
-				}
+				h.logger.Debug("", "heartbeat: stopped via ctx.Done (ownerID=%s)", h.owner.ownerID)
 				return
 			}
 		}

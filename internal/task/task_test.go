@@ -388,7 +388,7 @@ func TestRunnerNilPayload(t *testing.T) {
 
 func TestDispatcher(t *testing.T) {
 	store, registry, _ := setupTaskTest(t)
-	dispatcher := NewDispatcher(testutil.NewTestLogger(), store, registry)
+	dispatcher := NewDispatcher(store, registry)
 
 	handler := newMockHandler()
 	registry.Register(types.Task.Type.Consume, handler)
@@ -407,7 +407,7 @@ func TestDispatcher(t *testing.T) {
 
 func TestDispatcherCustomStatus(t *testing.T) {
 	store, registry, _ := setupTaskTest(t)
-	dispatcher := NewDispatcher(testutil.NewTestLogger(), store, registry)
+	dispatcher := NewDispatcher(store, registry)
 	registry.Register(types.Task.Type.Config, newMockHandler())
 
 	_, err := dispatcher.Enqueue(context.Background(), types.Task.Type.Config, "", json.RawMessage(`{}`), "", types.Task.Status.Waiting)
@@ -416,7 +416,7 @@ func TestDispatcherCustomStatus(t *testing.T) {
 
 func TestDispatcherRejectsUnknownType(t *testing.T) {
 	store, registry, _ := setupTaskTest(t)
-	dispatcher := NewDispatcher(testutil.NewTestLogger(), store, registry)
+	dispatcher := NewDispatcher(store, registry)
 
 	_, err := dispatcher.Enqueue(context.Background(), "nonexistent", "", json.RawMessage(`{}`), "", "")
 	testutil.AssertError(t, err, "unknown type")
@@ -424,7 +424,7 @@ func TestDispatcherRejectsUnknownType(t *testing.T) {
 
 func TestDispatcherCustomID(t *testing.T) {
 	store, registry, _ := setupTaskTest(t)
-	dispatcher := NewDispatcher(testutil.NewTestLogger(), store, registry)
+	dispatcher := NewDispatcher(store, registry)
 	registry.Register(types.Task.Type.Config, newMockHandler())
 
 	taskID, err := dispatcher.Enqueue(context.Background(), types.Task.Type.Config, "", json.RawMessage(`{}`), "my-id", "")

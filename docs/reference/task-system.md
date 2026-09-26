@@ -85,7 +85,7 @@ The `Runner.Next` method uses `errors.As(err, &tErr)` to extract `ReqID` from ha
 
 - `Dispatcher` — thin coordinator that owns `Store` and `Registry`; exposes a concise `Enqueue` API
   - **Methods**:
-    - `NewDispatcher(logger, store, registry) *Dispatcher`
+    - `NewDispatcher(store, registry) *Dispatcher`
     - `Enqueue(ctx, taskType, batchID, payload, taskID string, status ...string) (string, error)` — validates task type, computes dedup key via registry, delegates persistence to store. Supports custom taskID and initial status (e.g., `"waiting"`)
 
 ## `crud.go`

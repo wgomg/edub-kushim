@@ -51,10 +51,10 @@ func RunBlocking(
 ) (out json.RawMessage, err error) {
 	progress := NewProgressTracker(queries, t.TaskID)
 	defer func() {
-		FinalizeBatchStatus(ctx, queries, t.BatchID, err != nil)
+		FinalizeBatchStatus(ctx, queries, logger, t.BatchID, err != nil)
 	}()
 
-	MarkBatchProcessing(ctx, queries, t.BatchID)
+	MarkBatchProcessing(ctx, queries, logger, t.BatchID)
 
 	release, err := database.HoldMaintenanceLock(ctx, queries, logger, label,
 		uuid.NullUUID{UUID: t.ClaimToken, Valid: true},

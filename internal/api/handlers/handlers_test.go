@@ -107,7 +107,7 @@ func newHandlerTestEnv(t *testing.T) *handlerTestEnv {
 
 	registry := task.NewRegistry()
 	registry.Register("config", configtask.NewConfigTaskHandler(client.Queries, logger))
-	dispatcher := task.NewDispatcher(logger, workStore, registry)
+	dispatcher := task.NewDispatcher(workStore, registry)
 
 	return &handlerTestEnv{
 		client:        client,

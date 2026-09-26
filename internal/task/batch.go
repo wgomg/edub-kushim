@@ -46,27 +46,28 @@ func (s OwnerState) String() string {
 // it live or stale, Heartbeat keeps it alive, and Release gives it up. The
 // consume driver and the blocking-task protocol use it.
 type Owner struct {
-	Queries    *database.Queries
-	OwnerID    string
-	PID        int
-	Logger     *log.Logger
+	queries    *database.Queries
+	ownerID    string
+	pid        int
+	logger     *log.Logger
 	client     *database.Client
 	maxRetries int32
 }
 
 // NewOwner prepares a batch owner; maxRetries bounds claim contention
-// retries.
+// retries. logger must be non-nil: every log site dereferences it without
+// a guard.
 func NewOwner(c *database.Client, ownerID string, pid int, logger *log.Logger, maxRetries int) *Owner {
-	return &Owner{Queries: c.Queries, OwnerID: ownerID, PID: pid, Logger: logger, client: c, maxRetries: int32(maxRetries)}
+	return &Owner{queries: c.Queries, ownerID: ownerID, pid: pid, logger: logger, client: c, maxRetries: int32(maxRetries)}
 }
 
-// Acquire takes a batch's ownership row, taking over a stale one and
-// refusing a live one with ErrBatchLocked.
-func (o *Owner) Acquire(ctx context.Context, batchID string, staleAfter time.Duration) error {
-	rows, err := o.Queries.TryInsertBatchOwner(ctx, database.TryInsertBatchOwnerParams{
+// Acquire takes a batch's ownership row, taking over one whose heartbeat is
+// older than StaleAfter and refusing a live one with ErrBatchLocked.
+func (o *Owner) Acquire(ctx context.Context, batchID string) error {
+	rows, err := o.queries.TryInsertBatchOwner(ctx, database.TryInsertBatchOwnerParams{
 		BatchID: batchID,
-		OwnerID: o.OwnerID,
-		Pid:     int64(o.PID),
+		OwnerID: o.ownerID,
+		Pid:     int64(o.pid),
 	})
 	if err != nil {
 		return fmt.Errorf("insert batch owner: %w", err)
@@ -75,11 +76,11 @@ func (o *Owner) Acquire(ctx context.Context, batchID string, staleAfter time.Dur
 		return nil
 	}
 
-	cutoff := time.Now().Add(-staleAfter)
-	rows, err = o.Queries.UpdateBatchOwnerIfStale(ctx, database.UpdateBatchOwnerIfStaleParams{
-		OwnerID:       o.OwnerID,
-		OwnerID_2:     o.OwnerID,
-		Pid:           int64(o.PID),
+	cutoff := time.Now().Add(-StaleAfter)
+	rows, err = o.queries.UpdateBatchOwnerIfStale(ctx, database.UpdateBatchOwnerIfStaleParams{
+		OwnerID:       o.ownerID,
+		OwnerID_2:     o.ownerID,
+		Pid:           int64(o.pid),
 		BatchID:       batchID,
 		LastHeartbeat: cutoff,
 	})
@@ -87,9 +88,7 @@ func (o *Owner) Acquire(ctx context.Context, batchID string, staleAfter time.Dur
 		return fmt.Errorf("update stale batch owner: %w", err)
 	}
 	if rows == 0 {
-		if o.Logger != nil {
-			o.Logger.Error("", "acquire batch %s failed: live owner holds it", batchID)
-		}
+		o.logger.Error("", "acquire batch %s failed: live owner holds it", batchID)
 		return ErrBatchLocked
 	}
 	return nil
@@ -98,16 +97,16 @@ func (o *Owner) Acquire(ctx context.Context, batchID string, staleAfter time.Dur
 // AcquireForce takes the ownership row regardless of who holds it, for
 // the takeover paths the cancel protocol drives.
 func (o *Owner) AcquireForce(ctx context.Context, batchID string) error {
-	rows, err := o.Queries.AcquireBatchOwnerForce(ctx, database.AcquireBatchOwnerForceParams{
+	rows, err := o.queries.AcquireBatchOwnerForce(ctx, database.AcquireBatchOwnerForceParams{
 		BatchID: batchID,
-		OwnerID: o.OwnerID,
-		Pid:     int64(o.PID),
+		OwnerID: o.ownerID,
+		Pid:     int64(o.pid),
 	})
 	if err != nil {
 		return fmt.Errorf("force acquire batch owner: %w", err)
 	}
-	if rows == 0 && o.Logger != nil {
-		o.Logger.Error("", "AcquireForce for batch %s returned 0 rows — batch_owner row not written (ownerID=%s, pid=%d)", batchID, o.OwnerID, o.PID)
+	if rows == 0 {
+		o.logger.Error("", "AcquireForce for batch %s returned 0 rows — batch_owner row not written (ownerID=%s, pid=%d)", batchID, o.ownerID, o.pid)
 	}
 	return nil
 }
@@ -115,7 +114,7 @@ func (o *Owner) AcquireForce(ctx context.Context, batchID string) error {
 // Heartbeat renews the owner's timestamp, returning the still-live
 // owner rows it saw (a zero row count means this owner's row is gone).
 func (o *Owner) Heartbeat(ctx context.Context) (int64, error) {
-	rows, err := o.Queries.HeartbeatBatchOwner(ctx, o.OwnerID)
+	rows, err := o.queries.HeartbeatBatchOwner(ctx, o.ownerID)
 	if err != nil {
 		return rows, fmt.Errorf("heartbeat: %w", err)
 	}
@@ -124,9 +123,9 @@ func (o *Owner) Heartbeat(ctx context.Context) (int64, error) {
 
 // Release gives the batch's ownership up.
 func (o *Owner) Release(ctx context.Context, batchID string) error {
-	_, err := o.Queries.ReleaseBatchOwner(ctx, database.ReleaseBatchOwnerParams{
+	_, err := o.queries.ReleaseBatchOwner(ctx, database.ReleaseBatchOwnerParams{
 		BatchID: batchID,
-		OwnerID: o.OwnerID,
+		OwnerID: o.ownerID,
 	})
 	if err != nil {
 		return fmt.Errorf("release batch owner: %w", err)
@@ -181,7 +180,7 @@ func (o *Owner) ResetProcessingByBatch(ctx context.Context, batchID string) (int
 
 // CleanupCompleted removes the ownership rows of completed batches.
 func (o *Owner) CleanupCompleted(ctx context.Context) error {
-	_, err := o.Queries.CleanupCompletedBatches(ctx)
+	_, err := o.queries.CleanupCompletedBatches(ctx)
 	if err != nil {
 		return fmt.Errorf("cleanup completed batches: %w", err)
 	}
@@ -196,18 +195,23 @@ func IsOrphaned(state OwnerState, pending, processing int64) bool {
 }
 
 // MarkBatchProcessing moves a batch to processing, ignoring rows that no
-// longer exist. It and FinalizeBatchStatus are the bookends of the
-// blocking-task protocol.
-func MarkBatchProcessing(ctx context.Context, queries *database.Queries, batchID string) {
+// longer exist; a failed write is logged, not returned. It and
+// FinalizeBatchStatus are the best-effort bookends of the blocking-task
+// protocol, called from defers with a non-nil logger.
+func MarkBatchProcessing(ctx context.Context, queries *database.Queries, logger *log.Logger, batchID string) {
 	if batchID == "" {
 		return
 	}
-	_ = queries.SetBatchProcessing(ctx, batchID)
+	if err := queries.SetBatchProcessing(ctx, batchID); err != nil {
+		logger.Error("", "mark batch %s processing failed: %v", batchID, err)
+	}
 }
 
 // FinalizeBatchStatus settles a batch as completed or failed based on the
-// body's error.
-func FinalizeBatchStatus(ctx context.Context, queries *database.Queries, batchID string, failed bool) {
+// body's error, once no sibling task is still pending or waiting. A failed
+// count query or status write is logged, not returned; logger must be
+// non-nil.
+func FinalizeBatchStatus(ctx context.Context, queries *database.Queries, logger *log.Logger, batchID string, failed bool) {
 	if batchID == "" {
 		return
 	}
@@ -218,6 +222,7 @@ func FinalizeBatchStatus(ctx context.Context, queries *database.Queries, batchID
 			Status:  status,
 		})
 		if err != nil {
+			logger.Error("", "finalize batch %s: count %s tasks: %v", batchID, status, err)
 			return
 		}
 		if count > 0 {
@@ -225,8 +230,12 @@ func FinalizeBatchStatus(ctx context.Context, queries *database.Queries, batchID
 		}
 	}
 	if failed {
-		_ = queries.SetBatchFailed(ctx, batchID)
-	} else {
-		_ = queries.SetBatchCompleted(ctx, batchID)
+		if err := queries.SetBatchFailed(ctx, batchID); err != nil {
+			logger.Error("", "finalize batch %s as failed: %v", batchID, err)
+		}
+		return
+	}
+	if err := queries.SetBatchCompleted(ctx, batchID); err != nil {
+		logger.Error("", "finalize batch %s as completed: %v", batchID, err)
 	}
 }

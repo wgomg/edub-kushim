@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
@@ -14,15 +13,13 @@ import (
 // registry, derives the dedup key, and creates the task row in the given
 // state. It is the seam the API and the CLI use to start work.
 type Dispatcher struct {
-	logger   *log.Logger
 	registry *Registry
 	store    *Store
 }
 
 // NewDispatcher wires the enqueue path to the store and the registry.
-func NewDispatcher(logger *log.Logger, store *Store, registry *Registry) *Dispatcher {
+func NewDispatcher(store *Store, registry *Registry) *Dispatcher {
 	return &Dispatcher{
-		logger:   logger,
 		registry: registry,
 		store:    store,
 	}

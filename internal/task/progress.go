@@ -22,14 +22,9 @@ type ProgressSnapshot struct {
 	UpdatedAt string  `json:"updated_at"`
 }
 
-// Progress returns a no-op callback when the slice is empty or its first
-// entry is nil, so handlers can always call the result.
-func Progress(progress []ProgressFunc) ProgressFunc {
-	if len(progress) > 0 && progress[0] != nil {
-		return progress[0]
-	}
-	return func(string, string, float64) {}
-}
+// NoopProgress is a ProgressFunc that reports nothing; callers with no
+// progress to report pass it where a callback is required.
+func NoopProgress(step, detail string, pct float64) {}
 
 // ProgressTracker persists progress snapshots onto a task row, throttled
 // to one write per step per second. Writes are best-effort: a failed write

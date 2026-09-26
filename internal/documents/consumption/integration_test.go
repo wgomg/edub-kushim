@@ -18,6 +18,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/documents/storage"
 	"github.com/wgomg/edub-kushim/internal/log"
+	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/types"
@@ -121,7 +122,7 @@ func TestConsumerProcessHappyPath(t *testing.T) {
 	testutil.AssertNoError(t, err, "file from path")
 
 	docID := uuid.New().String()
-	processed, err := consumer.Process(ctx, file, docID)
+	processed, err := consumer.Process(ctx, file, docID, task.NoopProgress)
 	testutil.AssertNoError(t, err, "consumer process")
 	testutil.AssertEqual(t, processed.DocumentID, docID, "document ID")
 
@@ -197,13 +198,13 @@ func TestConsumerDuplicateDetection(t *testing.T) {
 	pdfPath := filepath.Join(cfg.Storage.ConsumptionDir, "dup.pdf")
 	os.WriteFile(pdfPath, testutil.MinimalTextPDF("Same content same checksums"), 0644)
 	file1, _ := FileFromPath(pdfPath)
-	_, err := consumer.Process(ctx, file1, uuid.New().String())
+	_, err := consumer.Process(ctx, file1, uuid.New().String(), task.NoopProgress)
 	testutil.AssertNoError(t, err, "first process")
 
 	pdfPath2 := filepath.Join(cfg.Storage.ConsumptionDir, "dup2.pdf")
 	os.WriteFile(pdfPath2, testutil.MinimalTextPDF("Same content same checksums"), 0644)
 	file2, _ := FileFromPath(pdfPath2)
-	_, err = consumer.Process(ctx, file2, uuid.New().String())
+	_, err = consumer.Process(ctx, file2, uuid.New().String(), task.NoopProgress)
 	testutil.AssertError(t, err, "second process should fail as duplicate")
 
 	count := docCount(t, client.Queries)
@@ -229,7 +230,7 @@ func TestConsumerEmptyTextGoesToOcr(t *testing.T) {
 	pdfPath := filepath.Join(cfg.Storage.ConsumptionDir, "ocr-test.pdf")
 	os.WriteFile(pdfPath, testutil.MinimalTextPDF("Needs OCR"), 0644)
 	file, _ := FileFromPath(pdfPath)
-	_, err := consumer.Process(context.Background(), file, uuid.New().String())
+	_, err := consumer.Process(context.Background(), file, uuid.New().String(), task.NoopProgress)
 	testutil.AssertNoError(t, err, "process with OCR fallback")
 }
 
@@ -242,7 +243,7 @@ func TestConsumerTextExtractionFailure(t *testing.T) {
 	pdfPath := filepath.Join(cfg.Storage.ConsumptionDir, "fail.pdf")
 	os.WriteFile(pdfPath, testutil.MinimalTextPDF("Will fail"), 0644)
 	file, _ := FileFromPath(pdfPath)
-	_, err := consumer.Process(context.Background(), file, uuid.New().String())
+	_, err := consumer.Process(context.Background(), file, uuid.New().String(), task.NoopProgress)
 	testutil.AssertError(t, err, "extraction error should fail")
 
 	// File should be moved to error quarantine
@@ -264,7 +265,7 @@ func TestConsumerFileNotFound(t *testing.T) {
 		Name: "missing.pdf", OriginalPath: "/tmp/nonexistent-test-file.pdf",
 		MimeType: "application/pdf", Date: time.Now(),
 	}
-	_, err := consumer.Process(context.Background(), file, uuid.New().String())
+	_, err := consumer.Process(context.Background(), file, uuid.New().String(), task.NoopProgress)
 	testutil.AssertError(t, err, "missing file should fail")
 }
 
@@ -319,7 +320,7 @@ func TestConsumerProcessImageFile(t *testing.T) {
 	testutil.AssertEqual(t, file.MimeType, "image/png", "original type")
 
 	docID := uuid.New().String()
-	processed, err := consumer.Process(ctx, file, docID)
+	processed, err := consumer.Process(ctx, file, docID, task.NoopProgress)
 	testutil.AssertNoError(t, err, "process image")
 
 	t.Run("document record created", func(t *testing.T) {
@@ -630,7 +631,7 @@ func TestConsumerProcessDocxFile(t *testing.T) {
 	testutil.AssertEqual(t, file.MimeType, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "original type")
 
 	docID := uuid.New().String()
-	processed, err := consumer.Process(context.Background(), file, docID)
+	processed, err := consumer.Process(context.Background(), file, docID, task.NoopProgress)
 	testutil.AssertNoError(t, err, "process docx")
 
 	t.Run("document record created", func(t *testing.T) {
@@ -684,7 +685,7 @@ func TestConsumerProcessOdtFile(t *testing.T) {
 	testutil.AssertEqual(t, file.MimeType, "application/vnd.oasis.opendocument.text", "original type")
 
 	docID := uuid.New().String()
-	processed, err := consumer.Process(context.Background(), file, docID)
+	processed, err := consumer.Process(context.Background(), file, docID, task.NoopProgress)
 	testutil.AssertNoError(t, err, "process odt")
 
 	t.Run("document record created", func(t *testing.T) {
@@ -749,7 +750,7 @@ func TestConsumerProcessDocxFileDisabledConverter(t *testing.T) {
 	testutil.AssertNoError(t, err, "file from path")
 
 	docID := uuid.New().String()
-	processed, err := consumer.Process(context.Background(), file, docID)
+	processed, err := consumer.Process(context.Background(), file, docID, task.NoopProgress)
 	testutil.AssertNoError(t, err, "process docx with converter disabled")
 
 	t.Run("document record created with original type", func(t *testing.T) {
@@ -788,7 +789,7 @@ func TestConsumerConvertToPdfFailure(t *testing.T) {
 	testutil.CreateMinimalDocx(t, docxPath, "Hello")
 
 	file, _ := FileFromPath(docxPath)
-	_, err := consumer.Process(context.Background(), file, uuid.New().String())
+	_, err := consumer.Process(context.Background(), file, uuid.New().String(), task.NoopProgress)
 	testutil.AssertError(t, err, "conversion error should fail")
 
 	if _, err := os.Stat(docxPath); !os.IsNotExist(err) {

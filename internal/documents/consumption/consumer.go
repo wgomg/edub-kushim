@@ -138,12 +138,11 @@ func NewConsumerWithRunner(cfg *config.Config, logger *log.Logger, client *datab
 // the original into errors and wraps the cause in a task error carrying
 // the document id; after placement, the row commit and the file moves are
 // one transaction rolled back together on failure. documentID is the
-// caller's UUID, used in paths and logs.
-func (c *Consumer) Process(ctx context.Context, file File, documentID string, progress ...task.ProgressFunc) (File, error) {
+// caller's UUID, used in paths and logs. report must be non-nil; pass
+// task.NoopProgress to report nothing.
+func (c *Consumer) Process(ctx context.Context, file File, documentID string, report task.ProgressFunc) (File, error) {
 	start := time.Now()
 	c.logger.Info(documentID, "starting consumption for file %s", file.OriginalPath)
-
-	report := task.Progress(progress)
 
 	defer func() {
 		elapsed := time.Since(start)

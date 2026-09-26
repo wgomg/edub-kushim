@@ -50,14 +50,15 @@ func Get(ctx context.Context, queries *database.Queries, taskID string) (databas
 func ListFiltered(ctx context.Context, queries *database.Queries, f TaskFilter) ([]database.Task, error) {
 	// "active" is a filter pseudo-status, never a column value; combined
 	// with other filters it matches nothing by definition.
-	if f.Status == "active" && (f.BatchID != "" || f.TaskType != "") {
-		return []database.Task{}, nil
-	}
-	switch {
-	case f.Status == "active" && f.BatchID == "" && f.TaskType == "":
+	if f.Status == "active" {
+		if f.BatchID != "" || f.TaskType != "" {
+			return []database.Task{}, nil
+		}
 		return queries.ListActiveTasks(ctx, database.ListActiveTasksParams{
 			Limit: f.Limit, Offset: f.Offset,
 		})
+	}
+	switch {
 	case f.BatchID != "" && f.Status != "" && f.TaskType != "" && f.Limit > 0:
 		return queries.ListTasksByBatchAndStatusAndType(ctx, database.ListTasksByBatchAndStatusAndTypeParams{
 			BatchID:  sql.NullString{String: f.BatchID, Valid: true},
@@ -184,12 +185,13 @@ func Retry(ctx context.Context, client *database.Client, logger *log.Logger, tas
 	}
 
 	if task.TaskType == types.Task.Type.Consume && task.Payload != nil {
-		if onCompleted := consumeOnCompleted(*task.Payload); onCompleted != "" {
+		onCompleted, onCompletedThumbnail := consumeChildTaskIDs(*task.Payload)
+		if onCompleted != "" {
 			if _, err := client.Queries.SetEnrichTaskWaiting(ctx, onCompleted); err != nil {
 				logger.Error("", "restore enrich task %s after retry of consume %s failed: %v (will be recovered by activation or sweep)", onCompleted, taskID, err)
 			}
 		}
-		if onCompletedThumbnail := consumeOnCompletedThumbnail(*task.Payload); onCompletedThumbnail != "" {
+		if onCompletedThumbnail != "" {
 			if _, err := client.Queries.SetEnrichTaskWaiting(ctx, onCompletedThumbnail); err != nil {
 				logger.Error("", "restore thumbnail task %s after retry of consume %s failed: %v (will be recovered by activation or sweep)", onCompletedThumbnail, taskID, err)
 			}
@@ -198,18 +200,15 @@ func Retry(ctx context.Context, client *database.Client, logger *log.Logger, tas
 	return nil
 }
 
-func consumeOnCompleted(payload json.RawMessage) string {
+// consumeChildTaskIDs decodes the waiting child tasks of a consume task
+// payload: the enrich task and the optional thumbnail task queued behind
+// it. Decode failures read as no children, the same contract
+// recoverOnCompleted documents in the consumption package.
+func consumeChildTaskIDs(payload json.RawMessage) (onCompleted, onCompletedThumbnail string) {
 	var p struct {
-		OnCompleted string `json:"on_completed"`
-	}
-	_ = json.Unmarshal(payload, &p)
-	return p.OnCompleted
-}
-
-func consumeOnCompletedThumbnail(payload json.RawMessage) string {
-	var p struct {
+		OnCompleted          string `json:"on_completed"`
 		OnCompletedThumbnail string `json:"on_completed_thumbnail"`
 	}
 	_ = json.Unmarshal(payload, &p)
-	return p.OnCompletedThumbnail
+	return p.OnCompleted, p.OnCompletedThumbnail
 }

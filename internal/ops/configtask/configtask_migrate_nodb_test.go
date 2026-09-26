@@ -43,7 +43,7 @@ func TestMigrateStorage_NoOpReturnsErrNoOp(t *testing.T) {
 		NewStorageDir:     "/a",
 		OldConsumptionDir: "/b",
 		NewConsumptionDir: "/b",
-	})
+	}, task.NoopProgress)
 	if !errors.Is(err, ErrNoOp) {
 		t.Errorf("MigrateStorage no-op err = %v, want ErrNoOp", err)
 	}

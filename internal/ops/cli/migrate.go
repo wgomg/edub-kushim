@@ -10,6 +10,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/ops/configtask"
 	"github.com/wgomg/edub-kushim/internal/ops/container"
 	"github.com/wgomg/edub-kushim/internal/ops/flags"
+	"github.com/wgomg/edub-kushim/internal/task"
 )
 
 func migrateHandler(c *container.Container, args []string) error {
@@ -92,7 +93,7 @@ func migrateDatabaseHandler(c *container.Container, args []string) error {
 	}
 
 	fmt.Printf("Migrating database to %s@%s:%s/%s...\n", user, host, port, database)
-	if err := configtask.MigrateDatabase(context.Background(), c.GetLogger(), payload); err != nil {
+	if err := configtask.MigrateDatabase(context.Background(), c.GetLogger(), payload, task.NoopProgress); err != nil {
 		return err
 	}
 	fmt.Printf("Database %q is live and config.yaml updated.\n", database)
@@ -153,7 +154,7 @@ func migrateStorageHandler(c *container.Container, args []string) error {
 	}
 
 	fmt.Println("Migrating storage directories...")
-	if err := configtask.MigrateStorage(context.Background(), c.GetLogger(), payload); err != nil {
+	if err := configtask.MigrateStorage(context.Background(), c.GetLogger(), payload, task.NoopProgress); err != nil {
 		return err
 	}
 	fmt.Println("Storage files relocated and config.yaml updated.")

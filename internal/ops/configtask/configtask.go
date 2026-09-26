@@ -113,9 +113,9 @@ func (h *ConfigTaskHandler) DedupKey(payload json.RawMessage) string {
 // progress on the task row and settling the batch at the end.
 func (h *ConfigTaskHandler) Handle(ctx context.Context, t task.Task) (result json.RawMessage, err error) {
 	progress := task.NewProgressTracker(h.queries, t.TaskID)
-	task.MarkBatchProcessing(ctx, h.queries, t.BatchID)
+	task.MarkBatchProcessing(ctx, h.queries, h.logger, t.BatchID)
 	defer func() {
-		task.FinalizeBatchStatus(ctx, h.queries, t.BatchID, err != nil)
+		task.FinalizeBatchStatus(ctx, h.queries, h.logger, t.BatchID, err != nil)
 	}()
 
 	var p struct {
@@ -175,14 +175,13 @@ func (h *ConfigTaskHandler) handleMigrateDB(ctx context.Context, t task.Task, pr
 // the configured one: creates it, applies the schema and seeders, copies
 // the data, and swaps the connection. It refuses a destination that is
 // not the configured database plus the migration suffix. Equal
-// connections report ErrNoOp.
-func MigrateDatabase(ctx context.Context, logger *log.Logger, p MigrateDBPayload, progress ...task.ProgressFunc) error {
+// connections report ErrNoOp. report must be non-nil; pass
+// task.NoopProgress to report nothing.
+func MigrateDatabase(ctx context.Context, logger *log.Logger, p MigrateDBPayload, report task.ProgressFunc) error {
 	cfg, err := config.Load(p.ConfigDir)
 	if err != nil {
 		return fmt.Errorf("load config from %s: %w", p.ConfigDir, err)
 	}
-
-	report := task.Progress(progress)
 
 	if err := database.CheckRestoreTooling(cfg.Db.Runtime, cfg.Db.Container); err != nil {
 		return err
@@ -289,15 +288,14 @@ func (h *ConfigTaskHandler) handleMigrateStorage(ctx context.Context, t task.Tas
 // MigrateStorage moves the document layout to the new directories:
 // originals, processed files and thumbnails are renamed or copied into
 // the new tree, matching the old tree's structure. Equal directories
-// report ErrNoOp.
-func MigrateStorage(ctx context.Context, logger *log.Logger, p MigrateStoragePayload, progress ...task.ProgressFunc) error {
+// report ErrNoOp. report must be non-nil; pass task.NoopProgress to
+// report nothing.
+func MigrateStorage(ctx context.Context, logger *log.Logger, p MigrateStoragePayload, report task.ProgressFunc) error {
 	storageChanged := DirChanged(p.OldStorageDir, p.NewStorageDir)
 	consumptionChanged := DirChanged(p.OldConsumptionDir, p.NewConsumptionDir)
 	if !storageChanged && !consumptionChanged {
 		return ErrNoOp
 	}
-
-	report := task.Progress(progress)
 
 	cfg, err := config.Load(p.ConfigDir)
 	if err != nil {

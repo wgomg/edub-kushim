@@ -113,7 +113,7 @@ func (s *Server) rebuild(client *database.Client) {
 	registry := task.NewRegistry()
 	registry.Register(types.Task.Type.Config, configtask.NewConfigTaskHandler(client.Queries, s.logger))
 
-	dispatcher := task.NewDispatcher(s.logger, workStore, registry)
+	dispatcher := task.NewDispatcher(workStore, registry)
 	configRunner := task.NewRunner(configStore, registry, s.logger)
 
 	s.pools.config = task.NewPool(s.logger, configRunner, 1, 5*time.Second, "config")
