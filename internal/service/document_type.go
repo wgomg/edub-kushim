@@ -6,6 +6,7 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 // CreateDocumentTypeInput is one document type to create.
@@ -86,8 +87,8 @@ func (s *DocumentType) ListAllWithDocumentCount(ctx context.Context) ([]database
 
 // Create creates document types in bulk, deduplicating by normalized
 // name: conflicts resolve to the existing type, empty names are invalid.
-func (s *DocumentType) Create(ctx context.Context, inputs []CreateDocumentTypeInput) ([]CreateResult[database.DocumentType], error) {
-	results := make([]CreateResult[database.DocumentType], len(inputs))
+func (s *DocumentType) Create(ctx context.Context, inputs []CreateDocumentTypeInput) ([]types.CreateResult[database.DocumentType], error) {
+	results := make([]types.CreateResult[database.DocumentType], len(inputs))
 
 	existing, err := s.queries.ListAllDocumentTypes(ctx)
 	if err != nil {
@@ -101,12 +102,12 @@ func (s *DocumentType) Create(ctx context.Context, inputs []CreateDocumentTypeIn
 	for i, input := range inputs {
 		name := strings.TrimSpace(input.Name)
 		if name == "" {
-			results[i] = CreateResult[database.DocumentType]{Status: Invalid}
+			results[i] = types.CreateResult[database.DocumentType]{Status: types.Invalid}
 			continue
 		}
 
 		if existing, ok := existingMap[name]; ok {
-			results[i] = CreateResult[database.DocumentType]{Entity: existing, Status: Conflict}
+			results[i] = types.CreateResult[database.DocumentType]{Entity: existing, Status: types.Conflict}
 			continue
 		}
 
@@ -120,15 +121,15 @@ func (s *DocumentType) Create(ctx context.Context, inputs []CreateDocumentTypeIn
 				if err != nil {
 					return nil, errs.FromDB(err, "get document type by name after conflict "+name)
 				}
-				results[i] = CreateResult[database.DocumentType]{Entity: existing, Status: Conflict}
+				results[i] = types.CreateResult[database.DocumentType]{Entity: existing, Status: types.Conflict}
 				continue
 			}
 			return nil, errs.FromDB(err, "create document type "+name)
 		}
 
-		results[i] = CreateResult[database.DocumentType]{
+		results[i] = types.CreateResult[database.DocumentType]{
 			Entity: database.DocumentType{ID: id, Name: name, Description: strings.TrimSpace(input.Description)},
-			Status: Created,
+			Status: types.Created,
 		}
 	}
 
@@ -136,8 +137,8 @@ func (s *DocumentType) Create(ctx context.Context, inputs []CreateDocumentTypeIn
 }
 
 // Update renames document types in bulk, one result per pair.
-func (s *DocumentType) Update(ctx context.Context, pairs []DocumentTypeUpdatePair) ([]UpdateResult[database.DocumentType], error) {
-	results := make([]UpdateResult[database.DocumentType], len(pairs))
+func (s *DocumentType) Update(ctx context.Context, pairs []DocumentTypeUpdatePair) ([]types.UpdateResult[database.DocumentType], error) {
+	results := make([]types.UpdateResult[database.DocumentType], len(pairs))
 
 	all, err := s.queries.ListAllDocumentTypes(ctx)
 	if err != nil {
@@ -153,25 +154,25 @@ func (s *DocumentType) Update(ctx context.Context, pairs []DocumentTypeUpdatePai
 	for i, p := range pairs {
 		name := strings.TrimSpace(p.Name)
 		if name == "" {
-			results[i] = UpdateResult[database.DocumentType]{Status: UpdateInvalid}
+			results[i] = types.UpdateResult[database.DocumentType]{Status: types.UpdateInvalid}
 			continue
 		}
 
 		old, ok := itemMap[p.ID]
 		if !ok {
-			results[i] = UpdateResult[database.DocumentType]{Status: UpdateNotFound}
+			results[i] = types.UpdateResult[database.DocumentType]{Status: types.UpdateNotFound}
 			continue
 		}
 
 		desc := strings.TrimSpace(p.Description)
 
 		if name == old.Name && desc == old.Description {
-			results[i] = UpdateResult[database.DocumentType]{Entity: old, Status: Noop}
+			results[i] = types.UpdateResult[database.DocumentType]{Entity: old, Status: types.Noop}
 			continue
 		}
 
 		if existing, ok := nameMap[name]; ok && existing.ID != p.ID {
-			results[i] = UpdateResult[database.DocumentType]{Entity: existing, Status: UpdateConflict}
+			results[i] = types.UpdateResult[database.DocumentType]{Entity: existing, Status: types.UpdateConflict}
 			continue
 		}
 
@@ -185,15 +186,15 @@ func (s *DocumentType) Update(ctx context.Context, pairs []DocumentTypeUpdatePai
 				if e, ok := nameMap[name]; ok {
 					existing = e
 				}
-				results[i] = UpdateResult[database.DocumentType]{Entity: existing, Status: UpdateConflict}
+				results[i] = types.UpdateResult[database.DocumentType]{Entity: existing, Status: types.UpdateConflict}
 				continue
 			}
 			return nil, errs.FromDB(err, "update document type")
 		}
 
-		results[i] = UpdateResult[database.DocumentType]{
+		results[i] = types.UpdateResult[database.DocumentType]{
 			Entity: database.DocumentType{ID: p.ID, Name: name, Description: desc},
-			Status: Updated,
+			Status: types.Updated,
 		}
 	}
 
@@ -202,8 +203,8 @@ func (s *DocumentType) Update(ctx context.Context, pairs []DocumentTypeUpdatePai
 
 // Delete removes document types in bulk, reporting per id (deleted, not
 // found, or conflicting with referenced documents).
-func (s *DocumentType) Delete(ctx context.Context, ids []int64) ([]DeleteResult, error) {
-	results := make([]DeleteResult, len(ids))
+func (s *DocumentType) Delete(ctx context.Context, ids []int64) ([]types.DeleteResult, error) {
+	results := make([]types.DeleteResult, len(ids))
 
 	all, err := s.queries.ListAllDocumentTypes(ctx)
 	if err != nil {
@@ -216,19 +217,19 @@ func (s *DocumentType) Delete(ctx context.Context, ids []int64) ([]DeleteResult,
 
 	for i, id := range ids {
 		if _, ok := itemMap[id]; !ok {
-			results[i] = DeleteResult{ID: id, Status: DeleteNotFound}
+			results[i] = types.DeleteResult{ID: id, Status: types.DeleteNotFound}
 			continue
 		}
 
 		if err := s.queries.DeleteDocumentType(ctx, id); err != nil {
 			if errs.IsForeignKey(err) {
-				results[i] = DeleteResult{ID: id, Status: DeleteConflict}
+				results[i] = types.DeleteResult{ID: id, Status: types.DeleteConflict}
 				continue
 			}
 			return nil, errs.FromDB(err, "delete document type")
 		}
 
-		results[i] = DeleteResult{ID: id, Status: Deleted}
+		results[i] = types.DeleteResult{ID: id, Status: types.Deleted}
 	}
 
 	return results, nil

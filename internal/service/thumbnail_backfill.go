@@ -10,6 +10,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/log"
+	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
@@ -22,13 +23,13 @@ const backfillPageSize = 500
 type ThumbnailBackfill struct {
 	queries      *database.Queries
 	logger       *log.Logger
-	taskCreator  TaskCreator
-	batchCreator BatchCreator
+	taskCreator  types.TaskCreator
+	batchCreator types.BatchCreator
 }
 
 // NewThumbnailBackfill wires the enqueue path to the queries and the
 // task and batch creators.
-func NewThumbnailBackfill(queries *database.Queries, logger *log.Logger, taskCreator TaskCreator, batchCreator BatchCreator) *ThumbnailBackfill {
+func NewThumbnailBackfill(queries *database.Queries, logger *log.Logger, taskCreator types.TaskCreator, batchCreator types.BatchCreator) *ThumbnailBackfill {
 	return &ThumbnailBackfill{
 		queries:      queries,
 		logger:       logger,
@@ -45,7 +46,7 @@ func (s *ThumbnailBackfill) BackfillAll(ctx context.Context) (batchID string, en
 	batchCreated := false
 	defer func() {
 		if !batchCreated && enqueued > 0 {
-			s.deleteUnbatchedTasks(runBatchID)
+			s.cleanupUnbatched(runBatchID)
 		}
 	}()
 	var lastID int64
@@ -92,7 +93,7 @@ func (s *ThumbnailBackfill) BackfillBatch(ctx context.Context, batchID string) (
 	batchCreated := false
 	defer func() {
 		if !batchCreated && enqueued > 0 {
-			s.deleteUnbatchedTasks(runBatchID)
+			s.cleanupUnbatched(runBatchID)
 		}
 	}()
 	for _, row := range rows {
@@ -135,14 +136,18 @@ func (s *ThumbnailBackfill) BackfillDocument(ctx context.Context, documentUUID s
 		return "", errs.EConflict("backfill thumbnail", fmt.Errorf("document %s already has a thumbnail or a task is already queued", documentUUID))
 	}
 	if err := s.batchCreator.Create(ctx, runBatchID, types.Batch.Source.Thumbbackfill, types.Batch.Status.Queued); err != nil {
-		s.deleteUnbatchedTasks(runBatchID)
+		s.cleanupUnbatched(runBatchID)
 		return "", errs.FromDB(err, "create batch")
 	}
 	return runBatchID, nil
 }
 
-func (s *ThumbnailBackfill) deleteUnbatchedTasks(batchID string) {
-	if _, err := s.queries.DeleteTasksByBatch(context.Background(), sql.NullString{String: batchID, Valid: true}); err != nil {
+// cleanupUnbatched removes a batch's tasks after its creation failed, so
+// the orphaned tasks do not keep their dedup keys and block later runs.
+// The detached context is deliberate: the request that created the tasks
+// may already be cancelled, and the cleanup must still run.
+func (s *ThumbnailBackfill) cleanupUnbatched(batchID string) {
+	if err := task.DeleteBatchTasks(context.Background(), s.queries, batchID); err != nil {
 		s.logger.Error("", "cleanup of unbatched thumbnail tasks: %v", err)
 	}
 }

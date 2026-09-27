@@ -2,7 +2,10 @@
 // vocabulary: the batch sources and statuses, the task types and
 // statuses, and the tag verdicts, exposed as namespaced constant bags
 // (types.Batch.Source, types.Task.Type) with parse helpers for the wire
-// form. The database's enum columns mirror these values.
+// form. The database's enum columns mirror these values. It also holds
+// the shared CRUD result envelope (CreateResult, UpdateResult,
+// DeleteResult and their status types) and the TaskCreator and
+// BatchCreator interfaces the enqueue paths accept.
 package types
 
 import (

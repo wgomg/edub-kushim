@@ -59,7 +59,11 @@ func TestPlanIdentity_LogsPendingPairs(t *testing.T) {
 	}
 
 	ranked := []matcher.RankResult{mkRanked("democratic socialism", "social democracy", 0.81)}
-	_, plan, _ := a.PlanIdentity(context.Background(), 0, "", []string{"democratic socialism"}, ranked, map[string]struct{}{"social democracy": {}}, nil)
+	_, plan, _ := a.PlanIdentity(context.Background(), IdentityPlanInput{
+		Names:   []string{"democratic socialism"},
+		Ranked:  ranked,
+		DBNames: map[string]struct{}{"social democracy": {}},
+	}, "")
 
 	out := buf.String()
 	if !strings.Contains(out, "defer \"democratic socialism\" vs \"social democracy\" to review") {
@@ -105,7 +109,10 @@ func TestPlanIdentity_FoldStaysPendingWithoutJudge(t *testing.T) {
 		logger:  logger,
 	}
 
-	_, plan, _ := a.PlanIdentity(context.Background(), 0, "", []string{"buildings"}, nil, map[string]struct{}{}, nil)
+	_, plan, _ := a.PlanIdentity(context.Background(), IdentityPlanInput{
+		Names:   []string{"buildings"},
+		DBNames: map[string]struct{}{},
+	}, "")
 
 	if len(plan.Registrations) != 1 {
 		t.Fatalf("registrations = %d, want 1", len(plan.Registrations))
@@ -323,7 +330,7 @@ func TestAdjudicateIdentityPairs(t *testing.T) {
 		insertIdentityVerdict(t, q, "democratic socialism", "social democracy", "same", "target")
 
 		p := &identityPair{query: "democratic socialism", target: "social democracy"}
-		a.adjudicateIdentityPairs(context.Background(), 0, "", []*identityPair{p}, nil)
+		a.adjudicateIdentityPairs(context.Background(), 0, "", []*identityPair{p}, "")
 
 		adjAssertEqual(t, adj.called, 0, "adjudicator call count")
 		adjAssertEqual(t, p.decided, true, "pair decided")
@@ -342,7 +349,7 @@ func TestAdjudicateIdentityPairs(t *testing.T) {
 		}
 
 		p := &identityPair{query: "democratic socialism", target: "social democracy"}
-		a.adjudicateIdentityPairs(context.Background(), 0, "", []*identityPair{p}, nil)
+		a.adjudicateIdentityPairs(context.Background(), 0, "", []*identityPair{p}, "")
 
 		adjAssertEqual(t, adj.called, 1, "adjudicator call count")
 		adjAssertEqual(t, p.decided, true, "pair decided")
@@ -361,7 +368,7 @@ func TestAdjudicateIdentityPairs(t *testing.T) {
 		}
 
 		p := &identityPair{query: "democratic socialism", target: "social democracy"}
-		a.adjudicateIdentityPairs(context.Background(), 0, "", []*identityPair{p}, nil)
+		a.adjudicateIdentityPairs(context.Background(), 0, "", []*identityPair{p}, "")
 
 		adjAssertEqual(t, p.decided, true, "pair decided")
 		adjAssertEqual(t, string(p.verdict), "variant", "variant recorded")
@@ -375,7 +382,7 @@ func TestAdjudicateIdentityPairs(t *testing.T) {
 		}
 
 		p := &identityPair{query: "democratic socialism", target: "social democracy"}
-		a.adjudicateIdentityPairs(context.Background(), 0, "", []*identityPair{p}, nil)
+		a.adjudicateIdentityPairs(context.Background(), 0, "", []*identityPair{p}, "")
 
 		adjAssertEqual(t, p.decided, false, "pair stays undecided")
 		adjAssertEqual(t, countIdentityVerdicts(t, q, "democratic socialism", "social democracy"), 0, "no cached verdict rows")
@@ -407,7 +414,7 @@ func TestWriteVerdictEvent_ConflictReReadsStoredVerdict(t *testing.T) {
 		Query:  "democratic socialism",
 		Target: "social democracy",
 		Sim:    0.81,
-	}, bp, nil)
+	}, bp, "")
 
 	adjAssertEqual(t, string(bp.verdict), "variant", "stored verdict wins over conflicting fresh insert")
 	adjAssertEqual(t, bp.cached, true, "pair marked as cache-applied")

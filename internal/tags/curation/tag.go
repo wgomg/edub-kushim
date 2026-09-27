@@ -10,18 +10,14 @@ package curation
 
 import (
 	"context"
-	"database/sql"
-	"encoding/json"
-	"errors"
 
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/matcher"
-	"github.com/wgomg/edub-kushim/internal/service"
-	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/textnorm"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 // TagUpdatePair is one rename request: the tag's id and its new name.
@@ -184,434 +180,6 @@ func (s *Tag) PendingIdentityCounts(ctx context.Context, names []string) (map[st
 	return counts, nil
 }
 
-// Create plans and applies registrations for the names in one
-// transaction: conflicts resolve to the existing tag, aliases apply to
-// their canonical, and new tags are born (provisional where the identity
-// machinery flags them) and embedded into the matcher store.
-func (s *Tag) Create(ctx context.Context, names []string) ([]service.CreateResult[database.Tag], error) {
-	return s.create(ctx, names, false)
-}
-
-// CreateAndUnblock is Create plus clearing the deleted-tag blocklist
-// entries of everything it created, resolved or aliased, so the
-// cleared-blocklist path keeps working. The blocklist re-check inside the
-// plan is exempted for the same reason.
-func (s *Tag) CreateAndUnblock(ctx context.Context, names []string) ([]service.CreateResult[database.Tag], error) {
-	results, err := s.create(ctx, names, true)
-	if err != nil {
-		return nil, err
-	}
-	for _, r := range results {
-		switch r.Status {
-		case service.Created, service.Conflict, service.Apply, service.Alias:
-		default:
-			continue
-		}
-		if err := s.client.Queries.DeleteDeletedTag(ctx, r.Entity.Name); err != nil {
-			return nil, errs.FromDB(err, "clear deleted tag "+r.Entity.Name)
-		}
-	}
-	return results, nil
-}
-
-func (s *Tag) create(ctx context.Context, names []string, ignoreBlocklist bool) ([]service.CreateResult[database.Tag], error) {
-	plan, err := s.buildPlan(ctx, s.client.Queries, names, ignoreBlocklist)
-	if err != nil {
-		return nil, err
-	}
-
-	tx, err := s.client.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, errs.FromDB(err, "begin tag create")
-	}
-	defer tx.Rollback()
-
-	txQ := s.client.Queries.WithTx(tx)
-	results, newNames, err := s.CreatePlannedTx(ctx, txQ, plan, false)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := tx.Commit(); err != nil {
-		return nil, errs.FromDB(err, "commit tag create")
-	}
-
-	if len(newNames) > 0 {
-		s.encodeAndAddBatch(ctx, newNames)
-	}
-	return results, nil
-}
-
-// PlanRegistration plans the registrations for the names without running
-// any judging call in the request: identity evidence is recorded and
-// judgement happens out of band.
-func (s *Tag) PlanRegistration(ctx context.Context, names []string) (tags.Plan, error) {
-	return s.buildPlan(ctx, s.client.Queries, names, false)
-}
-
-func (s *Tag) buildPlan(ctx context.Context, q *database.Queries, names []string, ignoreBlocklist bool) (tags.Plan, error) {
-	view, err := s.storeView(ctx, q, names, ignoreBlocklist)
-	if err != nil {
-		return tags.Plan{}, err
-	}
-	plan := tags.PlanDeterministic(names, view)
-	plan.SkipBlocklistCheck = ignoreBlocklist
-	return plan, nil
-}
-
-func (s *Tag) storeView(ctx context.Context, q *database.Queries, names []string, ignoreBlocklist bool) (tags.StoreView, error) {
-	allTags, err := q.ListAllTags(ctx)
-	if err != nil {
-		return tags.StoreView{}, errs.FromDB(err, "load existing tags")
-	}
-	view := tags.StoreView{
-		Names:   make([]string, 0, len(allTags)),
-		Aliases: map[string]string{},
-		Blocked: map[string]struct{}{},
-	}
-	for _, t := range allTags {
-		view.Names = append(view.Names, t.Name)
-	}
-
-	aliases, err := tags.ResolveAliases(ctx, q, names)
-	if err != nil {
-		return tags.StoreView{}, errs.FromDB(err, "load tag aliases")
-	}
-	view.Aliases = aliases
-
-	if !ignoreBlocklist {
-		deleted, err := q.ListAllDeletedTags(ctx)
-		if err != nil {
-			return tags.StoreView{}, errs.FromDB(err, "load deleted tags")
-		}
-		for _, row := range deleted {
-			view.Blocked[row.Name] = struct{}{}
-		}
-	}
-	return view, nil
-}
-
-// CreatePlannedTx applies a planned registration set inside the caller's
-// transaction: it resolves each disposition against the live store, writes
-// the plan's aliases, records the plan's identity evidence, and promotes
-// non-provisional new tags unless quarantined. It returns the per-
-// registration results and the names it created.
-func (s *Tag) CreatePlannedTx(ctx context.Context, q *database.Queries, plan tags.Plan, quarantined bool) ([]service.CreateResult[database.Tag], []string, error) {
-	results := make([]service.CreateResult[database.Tag], len(plan.Registrations))
-	var newNames []string
-	var promoteIDs []int64
-
-	existingTags, err := q.ListAllTags(ctx)
-	if err != nil {
-		return nil, nil, errs.FromDB(err, "load existing tags")
-	}
-	existingMap := make(map[string]database.Tag, len(existingTags))
-	byKey := make(map[string]database.Tag, len(existingTags))
-	for _, t := range existingTags {
-		existingMap[t.Name] = t
-		if _, ok := byKey[tags.Key(t.Name)]; !ok {
-			byKey[tags.Key(t.Name)] = t
-		}
-	}
-
-	aliasNames := make([]string, 0, len(plan.Registrations)+len(plan.Aliases))
-	for _, reg := range plan.Registrations {
-		if name := textnorm.NormalizeTag(reg.Name); name != "" {
-			aliasNames = append(aliasNames, name)
-		}
-	}
-	for _, action := range plan.Aliases {
-		if name := textnorm.NormalizeTag(action.AliasName); name != "" {
-			aliasNames = append(aliasNames, name)
-		}
-	}
-	aliases, err := tags.ResolveAliases(ctx, q, aliasNames)
-	if err != nil {
-		return nil, nil, errs.FromDB(err, "load tag aliases")
-	}
-
-	blocked := map[string]struct{}{}
-	if !plan.SkipBlocklistCheck {
-		deleted, err := q.ListAllDeletedTags(ctx)
-		if err != nil {
-			return nil, nil, errs.FromDB(err, "load deleted tags")
-		}
-		for _, row := range deleted {
-			blocked[row.Name] = struct{}{}
-		}
-	}
-
-	for i, reg := range plan.Registrations {
-		name := textnorm.NormalizeTag(reg.Name)
-
-		if reg.Disposition == tags.DispositionInvalid {
-			results[i] = service.CreateResult[database.Tag]{Status: service.Invalid}
-			continue
-		}
-		if reg.Disposition == tags.DispositionAlias {
-			canonical, ok := existingMap[textnorm.NormalizeTag(reg.Resolved)]
-			if !ok {
-				results[i] = service.CreateResult[database.Tag]{Status: service.Invalid}
-				continue
-			}
-			results[i] = service.CreateResult[database.Tag]{Entity: canonical, Status: service.Alias}
-			continue
-		}
-		if name == "" {
-			results[i] = service.CreateResult[database.Tag]{Status: service.Invalid}
-			continue
-		}
-		if _, isBlocked := blocked[name]; isBlocked {
-			results[i] = service.CreateResult[database.Tag]{Status: service.Invalid}
-			continue
-		}
-
-		if canonicalName, ok := aliases[name]; ok {
-			canonical, ok := existingMap[canonicalName]
-			if !ok {
-				results[i] = service.CreateResult[database.Tag]{Status: service.Invalid}
-				continue
-			}
-			results[i] = service.CreateResult[database.Tag]{Entity: canonical, Status: service.Apply}
-			continue
-		}
-
-		if existing, ok := existingMap[name]; ok {
-			results[i] = service.CreateResult[database.Tag]{Entity: existing, Status: service.Conflict}
-			continue
-		}
-
-		if reg.Resolved != "" {
-			if canonical, ok := existingMap[textnorm.NormalizeTag(reg.Resolved)]; ok {
-				status := service.Apply
-				if reg.Disposition == tags.DispositionConflict {
-					status = service.Conflict
-				}
-				results[i] = service.CreateResult[database.Tag]{Entity: canonical, Status: status}
-				continue
-			}
-		}
-
-		if existing, ok := byKey[tags.Key(name)]; ok && existing.Name != name {
-			results[i] = service.CreateResult[database.Tag]{Entity: existing, Status: service.Apply}
-			continue
-		}
-
-		id, err := q.CreateTag(ctx, name)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				existing, err := q.GetTagByName(ctx, name)
-				if err != nil {
-					return nil, nil, errs.FromDB(err, "get tag by name after conflict "+name)
-				}
-				results[i] = service.CreateResult[database.Tag]{Entity: existing, Status: service.Conflict}
-				continue
-			}
-			return nil, nil, errs.FromDB(err, "create tag "+name)
-		}
-
-		created := database.Tag{ID: id, Name: name}
-		existingMap[name] = created
-		if _, ok := byKey[tags.Key(name)]; !ok {
-			byKey[tags.Key(name)] = created
-		}
-		results[i] = service.CreateResult[database.Tag]{Entity: created, Status: service.Created}
-		newNames = append(newNames, name)
-		if !reg.Provisional {
-			promoteIDs = append(promoteIDs, id)
-		}
-	}
-
-	for _, action := range plan.Aliases {
-		if _, isBlocked := blocked[textnorm.NormalizeTag(action.AliasName)]; isBlocked {
-			continue
-		}
-		if err := s.applyAliasAction(ctx, q, existingMap, action); err != nil {
-			return nil, nil, err
-		}
-	}
-
-	if err := s.recordIdentityEvidence(ctx, q, plan.Evidence); err != nil {
-		return nil, nil, err
-	}
-
-	if !quarantined && len(promoteIDs) > 0 {
-		if _, err := q.PromoteTags(ctx, promoteIDs); err != nil {
-			return nil, nil, errs.FromDB(err, "promote new tags")
-		}
-	}
-
-	return results, newNames, nil
-}
-
-// ApplyAliasPlan applies the planned alias actions in one transaction:
-// blocked names are skipped, the loser's own aliases are retargeted (no
-// alias chains), its documents are reassigned and its tag row deleted
-// when RemoveExistingTag is set, and the removed names leave the matcher
-// store after commit.
-func (s *Tag) ApplyAliasPlan(ctx context.Context, actions []tags.AliasAction) error {
-	if len(actions) == 0 {
-		return nil
-	}
-	tx, err := s.client.BeginTx(ctx, nil)
-	if err != nil {
-		return errs.FromDB(err, "begin alias plan")
-	}
-	defer tx.Rollback()
-	txQ := s.client.Queries.WithTx(tx)
-
-	existingTags, err := txQ.ListAllTags(ctx)
-	if err != nil {
-		return errs.FromDB(err, "load existing tags")
-	}
-	existing := make(map[string]database.Tag, len(existingTags))
-	for _, t := range existingTags {
-		existing[t.Name] = t
-	}
-
-	deleted, err := txQ.ListAllDeletedTags(ctx)
-	if err != nil {
-		return errs.FromDB(err, "load deleted tags")
-	}
-	blocked := make(map[string]struct{}, len(deleted))
-	for _, row := range deleted {
-		blocked[row.Name] = struct{}{}
-	}
-
-	var removed []string
-	for _, action := range actions {
-		if _, isBlocked := blocked[textnorm.NormalizeTag(action.AliasName)]; isBlocked {
-			continue
-		}
-		if err := s.applyAliasAction(ctx, txQ, existing, action); err != nil {
-			return err
-		}
-		if action.RemoveExistingTag {
-			removed = append(removed, action.AliasName)
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return errs.FromDB(err, "commit alias plan")
-	}
-	if len(removed) > 0 {
-		if err := s.embedder.RemoveFromStore(ctx, removed); err != nil {
-			s.logger.Error("", "tag service: remove aliased names from store: %v", err)
-		}
-	}
-	return nil
-}
-
-func (s *Tag) applyAliasAction(ctx context.Context, q *database.Queries, existing map[string]database.Tag, action tags.AliasAction) error {
-	aliasName := textnorm.NormalizeTag(action.AliasName)
-	canonicalName := textnorm.NormalizeTag(action.Canonical)
-	if aliasName == "" || canonicalName == "" || aliasName == canonicalName {
-		return nil
-	}
-
-	canonical, ok := existing[canonicalName]
-	if !ok {
-		tag, err := q.GetTagByName(ctx, canonicalName)
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil
-		}
-		if err != nil {
-			return errs.FromDB(err, "get alias target "+canonicalName)
-		}
-		canonical = tag
-	}
-
-	if _, err := q.GetTagAliasByName(ctx, aliasName); err == nil {
-		return nil
-	} else if !errors.Is(err, sql.ErrNoRows) {
-		return errs.FromDB(err, "get tag alias "+aliasName)
-	}
-
-	if action.RemoveExistingTag {
-		loser, err := q.GetTagForUpdateByName(ctx, aliasName)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return nil
-			}
-			return errs.FromDB(err, "get alias loser "+aliasName)
-		}
-		if loser.ID == canonical.ID {
-			return nil
-		}
-
-		reassigned, err := q.ReassignDocumentTags(ctx, database.ReassignDocumentTagsParams{
-			SourceID: loser.ID,
-			TargetID: canonical.ID,
-		})
-		if err != nil {
-			return errs.FromDB(err, "reassign document tags for alias "+aliasName)
-		}
-		if reassigned > 0 {
-			if err := q.ClearOrphanTagMarksByTagIDs(ctx, []int64{canonical.ID}); err != nil {
-				return errs.FromDB(err, "clear orphan tag marks for alias "+aliasName)
-			}
-		}
-		if _, err := q.DeleteDocumentTagsForTag(ctx, loser.ID); err != nil {
-			return errs.FromDB(err, "delete leftover document tags for alias "+aliasName)
-		}
-		// no alias chains: the loser's own aliases re-target the new canonical
-		if _, err := q.RetargetTagAliases(ctx, database.RetargetTagAliasesParams{
-			NewTagID: canonical.ID,
-			OldTagID: loser.ID,
-		}); err != nil {
-			return errs.FromDB(err, "retarget aliases for "+aliasName)
-		}
-		if err := q.DeleteTag(ctx, loser.ID); err != nil {
-			return errs.FromDB(err, "delete alias loser "+aliasName)
-		}
-	}
-
-	if _, err := q.InsertTagAlias(ctx, database.InsertTagAliasParams{
-		AliasName:      aliasName,
-		CanonicalTagID: canonical.ID,
-		RuleSetVersion: tags.IdentityRuleSetVersion,
-	}); err != nil {
-		return errs.FromDB(err, "insert tag alias "+aliasName)
-	}
-	return nil
-}
-
-func (s *Tag) recordIdentityEvidence(ctx context.Context, q *database.Queries, rows []tags.EvidenceRow) error {
-	for _, row := range rows {
-		candidate := textnorm.NormalizeTag(row.Candidate)
-		if candidate == "" {
-			continue
-		}
-		criteria := row.Criteria
-		if len(criteria) == 0 {
-			criteria = json.RawMessage("{}")
-		}
-		var partner sql.NullString
-		if p := textnorm.NormalizeTag(row.Partner); p != "" {
-			partner = sql.NullString{String: p, Valid: true}
-		}
-		var verdict, model sql.NullString
-		if row.Verdict != "" {
-			verdict = sql.NullString{String: row.Verdict, Valid: true}
-		}
-		if row.Model != "" {
-			model = sql.NullString{String: row.Model, Valid: true}
-		}
-		if _, err := q.InsertTagIdentityEvent(ctx, database.InsertTagIdentityEventParams{
-			Kind:           row.Kind,
-			Candidate:      candidate,
-			Partner:        partner,
-			Criteria:       criteria,
-			Verdict:        verdict,
-			Model:          model,
-			RuleSetVersion: tags.IdentityRuleSetVersion,
-		}); err != nil {
-			return errs.FromDB(err, "insert tag identity event "+candidate)
-		}
-	}
-	return nil
-}
-
 // AddToStore embeds the names into the matcher store, best-effort.
 func (s *Tag) AddToStore(ctx context.Context, names []string) {
 	if len(names) == 0 {
@@ -623,8 +191,8 @@ func (s *Tag) AddToStore(ctx context.Context, names []string) {
 // Update renames tags in bulk, returning one result per pair (invalid,
 // not found, no-op, conflict, or updated). Renamed promoted tags are
 // re-embedded and their old names leave the matcher store.
-func (s *Tag) Update(ctx context.Context, pairs []TagUpdatePair) ([]service.UpdateResult[database.Tag], error) {
-	results := make([]service.UpdateResult[database.Tag], len(pairs))
+func (s *Tag) Update(ctx context.Context, pairs []TagUpdatePair) ([]types.UpdateResult[database.Tag], error) {
+	results := make([]types.UpdateResult[database.Tag], len(pairs))
 	var newNames []string
 	type rename struct {
 		idx     int
@@ -647,23 +215,23 @@ func (s *Tag) Update(ctx context.Context, pairs []TagUpdatePair) ([]service.Upda
 	for i, p := range pairs {
 		name := textnorm.NormalizeTag(p.Name)
 		if name == "" {
-			results[i] = service.UpdateResult[database.Tag]{Status: service.UpdateInvalid}
+			results[i] = types.UpdateResult[database.Tag]{Status: types.UpdateInvalid}
 			continue
 		}
 
 		old, ok := tagMap[p.ID]
 		if !ok {
-			results[i] = service.UpdateResult[database.Tag]{Status: service.UpdateNotFound}
+			results[i] = types.UpdateResult[database.Tag]{Status: types.UpdateNotFound}
 			continue
 		}
 
 		if name == old.Name {
-			results[i] = service.UpdateResult[database.Tag]{Entity: old, Status: service.Noop}
+			results[i] = types.UpdateResult[database.Tag]{Entity: old, Status: types.Noop}
 			continue
 		}
 
 		if existing, ok := nameMap[name]; ok && existing.ID != p.ID {
-			results[i] = service.UpdateResult[database.Tag]{Entity: existing, Status: service.UpdateConflict}
+			results[i] = types.UpdateResult[database.Tag]{Entity: existing, Status: types.UpdateConflict}
 			continue
 		}
 
@@ -676,7 +244,7 @@ func (s *Tag) Update(ctx context.Context, pairs []TagUpdatePair) ([]service.Upda
 				if e, ok := nameMap[name]; ok {
 					existing = e
 				}
-				results[i] = service.UpdateResult[database.Tag]{Entity: existing, Status: service.UpdateConflict}
+				results[i] = types.UpdateResult[database.Tag]{Entity: existing, Status: types.UpdateConflict}
 				continue
 			}
 			return nil, errs.FromDB(err, "update tag")
@@ -703,7 +271,7 @@ func (s *Tag) Update(ctx context.Context, pairs []TagUpdatePair) ([]service.Upda
 			ID:   pairs[r.idx].ID,
 			Name: r.name,
 		}
-		results[r.idx] = service.UpdateResult[database.Tag]{Entity: updatedTag, Status: service.Updated}
+		results[r.idx] = types.UpdateResult[database.Tag]{Entity: updatedTag, Status: types.Updated}
 	}
 
 	return results, nil
@@ -712,8 +280,8 @@ func (s *Tag) Update(ctx context.Context, pairs []TagUpdatePair) ([]service.Upda
 // Delete removes tags and records each name in the deleted-tag blocklist
 // (kind blocked) so the same vocabulary is not recreated silently; their
 // names leave the matcher store.
-func (s *Tag) Delete(ctx context.Context, ids []int64) ([]service.DeleteResult, error) {
-	results := make([]service.DeleteResult, len(ids))
+func (s *Tag) Delete(ctx context.Context, ids []int64) ([]types.DeleteResult, error) {
+	results := make([]types.DeleteResult, len(ids))
 
 	allTags, err := s.client.Queries.ListAllTags(ctx)
 	if err != nil {
@@ -727,7 +295,7 @@ func (s *Tag) Delete(ctx context.Context, ids []int64) ([]service.DeleteResult, 
 	for i, id := range ids {
 		tag, ok := tagMap[id]
 		if !ok {
-			results[i] = service.DeleteResult{ID: id, Status: service.DeleteNotFound}
+			results[i] = types.DeleteResult{ID: id, Status: types.DeleteNotFound}
 			continue
 		}
 
@@ -745,7 +313,7 @@ func (s *Tag) Delete(ctx context.Context, ids []int64) ([]service.DeleteResult, 
 		if err := s.embedder.RemoveFromStore(ctx, []string{tag.Name}); err != nil {
 			s.logger.Error("", "tag service: remove from store: %v", err)
 		}
-		results[i] = service.DeleteResult{ID: id, Status: service.Deleted}
+		results[i] = types.DeleteResult{ID: id, Status: types.Deleted}
 	}
 
 	return results, nil
@@ -754,29 +322,29 @@ func (s *Tag) Delete(ctx context.Context, ids []int64) ([]service.DeleteResult, 
 // Promote promotes one provisional tag and embeds it; already-promoted
 // and not-found cases are reported through the status, and reason goes to
 // the audit log.
-func (s *Tag) Promote(ctx context.Context, id int64, reason string) (database.Tag, service.PromoteStatus, error) {
+func (s *Tag) Promote(ctx context.Context, id int64, reason string) (database.Tag, types.PromoteStatus, error) {
 	tag, err := s.Get(ctx, id)
 	if err != nil {
 		if errs.KindOf(err) == errs.KindNotFound {
-			return database.Tag{}, service.PromoteNotFound, nil
+			return database.Tag{}, types.PromoteNotFound, nil
 		}
-		return database.Tag{}, service.PromoteNotFound, err
+		return database.Tag{}, types.PromoteNotFound, err
 	}
 	if tag.PromotedAt.Valid {
-		return tag, service.PromoteAlreadyPromoted, nil
+		return tag, types.PromoteAlreadyPromoted, nil
 	}
 
 	promoted, err := s.client.Queries.PromoteTags(ctx, []int64{id})
 	if err != nil {
-		return tag, service.PromoteNotFound, errs.FromDB(err, "promote tag")
+		return tag, types.PromoteNotFound, errs.FromDB(err, "promote tag")
 	}
 	if promoted == 0 {
-		return tag, service.PromoteAlreadyPromoted, nil
+		return tag, types.PromoteAlreadyPromoted, nil
 	}
 
 	s.encodeAndAddBatch(ctx, []string{tag.Name})
 	s.logger.Info("", "tagquality[%s]: promote %q (reason=%s)", analyzer.TagQualityVersion, tag.Name, reason)
-	return tag, service.PromotePromoted, nil
+	return tag, types.PromotePromoted, nil
 }
 
 // ListDeleted pages the deleted-tag blocklist by name prefix with its

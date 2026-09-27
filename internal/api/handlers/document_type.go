@@ -8,6 +8,7 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/service"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 // DocumentTypeHandler is the document-type taxonomy API.
@@ -91,13 +92,13 @@ func (h *DocumentTypeHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch results[0].Status {
-	case service.Created:
+	case types.Created:
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(DocumentTypeResponse{
 			ID: results[0].Entity.ID, Name: results[0].Entity.Name, Description: results[0].Entity.Description,
 		})
-	case service.Conflict:
+	case types.Conflict:
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
 		json.NewEncoder(w).Encode(map[string]any{
@@ -145,12 +146,12 @@ func (h *DocumentTypeHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch results[0].Status {
-	case service.Updated, service.Noop:
+	case types.Updated, types.Noop:
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(DocumentTypeResponse{
 			ID: results[0].Entity.ID, Name: results[0].Entity.Name, Description: results[0].Entity.Description,
 		})
-	case service.UpdateConflict:
+	case types.UpdateConflict:
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
 		json.NewEncoder(w).Encode(map[string]any{
@@ -158,7 +159,7 @@ func (h *DocumentTypeHandler) Update(w http.ResponseWriter, r *http.Request) {
 			"name":        results[0].Entity.Name,
 			"description": results[0].Entity.Description,
 		})
-	case service.UpdateNotFound:
+	case types.UpdateNotFound:
 		http.Error(w, "Document type not found", http.StatusNotFound)
 	default:
 		http.Error(w, "Document type name is required", http.StatusBadRequest)
@@ -184,9 +185,9 @@ func (h *DocumentTypeHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch results[0].Status {
-	case service.Deleted:
+	case types.Deleted:
 		w.WriteHeader(http.StatusNoContent)
-	case service.DeleteConflict:
+	case types.DeleteConflict:
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
 		json.NewEncoder(w).Encode(map[string]string{"error": "in use"})

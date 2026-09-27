@@ -6,12 +6,12 @@ type AliasResolver interface {
 	Resolve(name string) string
 }
 
-// IdentityResolver maps every name to itself; NewExtensionReader uses it
+// SelfAliasResolver maps every name to itself; NewExtensionReader uses it
 // when no alias resolver is provided.
-type IdentityResolver struct{}
+type SelfAliasResolver struct{}
 
 // Resolve maps a name to itself.
-func (IdentityResolver) Resolve(name string) string { return name }
+func (SelfAliasResolver) Resolve(name string) string { return name }
 
 // Tag is one tag in a snapshot: id, name, and whether it is still
 // provisional.
@@ -93,7 +93,7 @@ type ExtensionReader struct {
 // identity mapping.
 func NewExtensionReader(aliases AliasResolver) *ExtensionReader {
 	if aliases == nil {
-		aliases = IdentityResolver{}
+		aliases = SelfAliasResolver{}
 	}
 	return &ExtensionReader{aliases: aliases}
 }

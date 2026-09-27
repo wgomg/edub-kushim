@@ -20,17 +20,6 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-// TaskCreator creates tasks; the task dispatcher satisfies it.
-type TaskCreator interface {
-	CreateTask(ctx context.Context, taskType types.TaskType, batchID string, payload json.RawMessage,
-		taskID string, status types.TaskStatus, dedupKey string) (string, error)
-}
-
-// BatchCreator creates batch rows.
-type BatchCreator interface {
-	Create(ctx context.Context, id string, source types.BatchSource, status types.BatchStatus) error
-}
-
 // Orphaned administers the quarantined files the orphaned sweep finds:
 // list, quarantine, delete, move back into the consumption directory, and
 // re-consume through the task creators. It also owns the orphaned-thumbnail
@@ -39,13 +28,13 @@ type Orphaned struct {
 	queries      *database.Queries
 	cfg          *config.Config
 	logger       *log.Logger
-	taskCreator  TaskCreator
-	batchCreator BatchCreator
+	taskCreator  types.TaskCreator
+	batchCreator types.BatchCreator
 }
 
 // NewOrphaned wires the admin to the storage config and the task and
 // batch creators.
-func NewOrphaned(queries *database.Queries, cfg *config.Config, logger *log.Logger, taskCreator TaskCreator, batchCreator BatchCreator) *Orphaned {
+func NewOrphaned(queries *database.Queries, cfg *config.Config, logger *log.Logger, taskCreator types.TaskCreator, batchCreator types.BatchCreator) *Orphaned {
 	return &Orphaned{
 		queries:      queries,
 		cfg:          cfg,

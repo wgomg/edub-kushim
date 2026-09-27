@@ -7,6 +7,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 	"github.com/wgomg/edub-kushim/internal/textnorm"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 func newTestPeople(t *testing.T) (*People, *database.Client) {
@@ -26,7 +27,7 @@ func TestPeople_Create(t *testing.T) {
 		})
 		testutil.AssertNoError(t, err, "create")
 		testutil.AssertEqual(t, len(results), 1, "one result")
-		testutil.AssertEqual(t, results[0].Status, Created, "created")
+		testutil.AssertEqual(t, results[0].Status, types.Created, "created")
 		testutil.AssertEqual(t, results[0].Entity.Name, "Alice", "name")
 		testutil.AssertEqual(t, results[0].Entity.NormalizedName, "alice", "normalized name")
 	})
@@ -36,13 +37,13 @@ func TestPeople_Create(t *testing.T) {
 			{Name: "Bob"},
 		})
 		testutil.AssertNoError(t, err, "create first")
-		testutil.AssertEqual(t, results[0].Status, Created, "created first")
+		testutil.AssertEqual(t, results[0].Status, types.Created, "created first")
 
 		results, err = svc.Create(ctx, []CreatePersonInput{
 			{Name: "Bob"},
 		})
 		testutil.AssertNoError(t, err, "create duplicate")
-		testutil.AssertEqual(t, results[0].Status, Conflict, "conflict on exact name")
+		testutil.AssertEqual(t, results[0].Status, types.Conflict, "conflict on exact name")
 		testutil.AssertEqual(t, results[0].Entity.Name, "Bob", "conflict entity name")
 	})
 
@@ -51,13 +52,13 @@ func TestPeople_Create(t *testing.T) {
 			{Name: "Carla"},
 		})
 		testutil.AssertNoError(t, err, "create first")
-		testutil.AssertEqual(t, results[0].Status, Created, "created first")
+		testutil.AssertEqual(t, results[0].Status, types.Created, "created first")
 
 		results, err = svc.Create(ctx, []CreatePersonInput{
 			{Name: "carla"},
 		})
 		testutil.AssertNoError(t, err, "create case-different")
-		testutil.AssertEqual(t, results[0].Status, Conflict, "conflict on normalized name")
+		testutil.AssertEqual(t, results[0].Status, types.Conflict, "conflict on normalized name")
 	})
 
 	t.Run("accent variant conflicts", func(t *testing.T) {
@@ -65,13 +66,13 @@ func TestPeople_Create(t *testing.T) {
 			{Name: "José"},
 		})
 		testutil.AssertNoError(t, err, "create accented")
-		testutil.AssertEqual(t, results[0].Status, Created, "created accented")
+		testutil.AssertEqual(t, results[0].Status, types.Created, "created accented")
 
 		results, err = svc.Create(ctx, []CreatePersonInput{
 			{Name: "Jose"},
 		})
 		testutil.AssertNoError(t, err, "create plain")
-		testutil.AssertEqual(t, results[0].Status, Conflict, "conflict on accent variant")
+		testutil.AssertEqual(t, results[0].Status, types.Conflict, "conflict on accent variant")
 	})
 
 	t.Run("empty name is invalid", func(t *testing.T) {
@@ -79,7 +80,7 @@ func TestPeople_Create(t *testing.T) {
 			{Name: "  "},
 		})
 		testutil.AssertNoError(t, err, "create empty")
-		testutil.AssertEqual(t, results[0].Status, Invalid, "invalid for whitespace-only")
+		testutil.AssertEqual(t, results[0].Status, types.Invalid, "invalid for whitespace-only")
 	})
 
 	t.Run("creates result entity includes normalizedName", func(t *testing.T) {
@@ -108,7 +109,7 @@ func TestPeople_Update(t *testing.T) {
 			{ID: davidID, Name: "David Jr"},
 		})
 		testutil.AssertNoError(t, err, "update")
-		testutil.AssertEqual(t, updateResults[0].Status, Updated, "updated")
+		testutil.AssertEqual(t, updateResults[0].Status, types.Updated, "updated")
 		testutil.AssertEqual(t, updateResults[0].Entity.Name, "David Jr", "new name")
 		testutil.AssertEqual(t, updateResults[0].Entity.NormalizedName, "david jr", "new normalizedName")
 	})
@@ -118,7 +119,7 @@ func TestPeople_Update(t *testing.T) {
 			{ID: eveID, Name: "Eve"},
 		})
 		testutil.AssertNoError(t, err, "update same")
-		testutil.AssertEqual(t, updateResults[0].Status, Noop, "noop")
+		testutil.AssertEqual(t, updateResults[0].Status, types.Noop, "noop")
 	})
 
 	t.Run("update conflict on exact name", func(t *testing.T) {
@@ -126,7 +127,7 @@ func TestPeople_Update(t *testing.T) {
 			{ID: eveID, Name: "David Jr"},
 		})
 		testutil.AssertNoError(t, err, "update conflict")
-		testutil.AssertEqual(t, updateResults[0].Status, UpdateConflict, "update conflict")
+		testutil.AssertEqual(t, updateResults[0].Status, types.UpdateConflict, "update conflict")
 	})
 
 	t.Run("update conflict on normalized name", func(t *testing.T) {
@@ -134,7 +135,7 @@ func TestPeople_Update(t *testing.T) {
 			{ID: eveID, Name: "david jr"},
 		})
 		testutil.AssertNoError(t, err, "update normalized conflict")
-		testutil.AssertEqual(t, updateResults[0].Status, UpdateConflict, "update conflict on normalized")
+		testutil.AssertEqual(t, updateResults[0].Status, types.UpdateConflict, "update conflict on normalized")
 	})
 
 	t.Run("not found for missing id", func(t *testing.T) {
@@ -142,7 +143,7 @@ func TestPeople_Update(t *testing.T) {
 			{ID: 999999, Name: "Ghost"},
 		})
 		testutil.AssertNoError(t, err, "update missing")
-		testutil.AssertEqual(t, updateResults[0].Status, UpdateNotFound, "not found")
+		testutil.AssertEqual(t, updateResults[0].Status, types.UpdateNotFound, "not found")
 	})
 
 	t.Run("empty name is invalid", func(t *testing.T) {
@@ -150,7 +151,7 @@ func TestPeople_Update(t *testing.T) {
 			{ID: eveID, Name: "  "},
 		})
 		testutil.AssertNoError(t, err, "update empty")
-		testutil.AssertEqual(t, updateResults[0].Status, UpdateInvalid, "invalid")
+		testutil.AssertEqual(t, updateResults[0].Status, types.UpdateInvalid, "invalid")
 	})
 
 	t.Run("accent variant update conflict", func(t *testing.T) {
@@ -159,7 +160,7 @@ func TestPeople_Update(t *testing.T) {
 			{ID: eveID, Name: "Dávid Jr"},
 		})
 		testutil.AssertNoError(t, err, "update accent conflict")
-		testutil.AssertEqual(t, updateResults[0].Status, UpdateConflict, "update conflict on accent variant")
+		testutil.AssertEqual(t, updateResults[0].Status, types.UpdateConflict, "update conflict on accent variant")
 	})
 }
 
@@ -175,13 +176,13 @@ func TestPeople_Delete(t *testing.T) {
 	t.Run("deletes existing person", func(t *testing.T) {
 		deleteResults, err := svc.Delete(ctx, []int64{frankID})
 		testutil.AssertNoError(t, err, "delete")
-		testutil.AssertEqual(t, deleteResults[0].Status, Deleted, "deleted")
+		testutil.AssertEqual(t, deleteResults[0].Status, types.Deleted, "deleted")
 	})
 
 	t.Run("not found for missing id", func(t *testing.T) {
 		deleteResults, err := svc.Delete(ctx, []int64{999999})
 		testutil.AssertNoError(t, err, "delete missing")
-		testutil.AssertEqual(t, deleteResults[0].Status, DeleteNotFound, "not found")
+		testutil.AssertEqual(t, deleteResults[0].Status, types.DeleteNotFound, "not found")
 	})
 }
 
@@ -192,7 +193,7 @@ func TestPeople_Count(t *testing.T) {
 	results, _ := svc.Create(ctx, []CreatePersonInput{
 		{Name: "CountTest"},
 	})
-	testutil.AssertEqual(t, results[0].Status, Created, "created")
+	testutil.AssertEqual(t, results[0].Status, types.Created, "created")
 
 	count, err := svc.Count(ctx)
 	testutil.AssertNoError(t, err, "count")

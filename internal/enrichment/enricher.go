@@ -23,7 +23,6 @@ import (
 	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/matcher"
-	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/tags/admission"
 	"github.com/wgomg/edub-kushim/internal/tags/curation"
@@ -31,6 +30,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/textnorm"
 	"github.com/wgomg/edub-kushim/internal/tools"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 const (
@@ -174,7 +174,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 		tagSuggestions = matchedTags.Tags
 		e.logger.Debug(logId, "tag matching: %d tags (%s)", len(tagSuggestions), time.Since(matchTagsStart))
 	}
-	tagSuggestions = e.admission.CanonicalSuggestions(ctx, tagSuggestions, &logId)
+	tagSuggestions = e.admission.CanonicalSuggestions(ctx, tagSuggestions, logId)
 
 	var analysis *tools.ContentAnalysisResult
 	report("analyze", "", 0)
@@ -293,8 +293,8 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 
 	analysis.Tags = analyzer.FilterTags(analysis.Tags, analysis.People, knownNormalized, analysis.Title, docTypeNames, e.config.Enricher.ContentAnalyzer.MaxTags)
 	tagFilter := analyzer.NewTagFilter(analysis.People, knownNormalized, analysis.Title, docTypeNames)
-	analysis.Tags = e.admission.SplitJointTags(ctx, analysis.Tags, tagFilter, &logId)
-	analysis.Tags = e.admission.ApplyDeletedTagPolicy(analysis.Tags, dbNames, blocklist, &logId)
+	analysis.Tags = e.admission.SplitJointTags(ctx, analysis.Tags, tagFilter, logId)
+	analysis.Tags = e.admission.ApplyDeletedTagPolicy(analysis.Tags, dbNames, blocklist, logId)
 
 	consolidateStart := time.Now()
 	report("consolidate", "", 0)
@@ -312,14 +312,20 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 		}
 	} else {
 		var consolidated []string
-		consolidated, identityPlan, decisions = e.admission.PlanIdentity(ctx, document.ID, document.DocumentID, analysis.Tags, ranked, dbNames, &logId)
+		consolidated, identityPlan, decisions = e.admission.PlanIdentity(ctx, admission.IdentityPlanInput{
+			DocID:      document.ID,
+			DocumentID: document.DocumentID,
+			Names:      analysis.Tags,
+			Ranked:     ranked,
+			DBNames:    dbNames,
+		}, logId)
 		analysis.Tags = consolidated
 		e.logger.Debug(logId, "post-LLM consolidation: %d tags (%s)", len(consolidated), time.Since(consolidateStart))
 	}
 	analysis.TagDetails = admission.RenameTagDetails(analysis.TagDetails, identityPlan)
 
 	if e.config.Enricher.TagQuality.Enabled {
-		analysis.Tags = e.admission.ApplyTagQuality(ctx, analysis, decisions, dbNames, llmContent.Text, document.ID, &logId)
+		analysis.Tags = e.admission.ApplyTagQuality(ctx, analysis, decisions, dbNames, llmContent.Text, document.ID, logId)
 	}
 
 	statsStr := "null"
@@ -372,7 +378,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 	seenTagIDs := make(map[int64]bool, len(results))
 	for i, r := range results {
 		switch r.Status {
-		case service.Created:
+		case types.Created:
 			e.logger.Debug(logId, "tag created %s", r.Entity.Name)
 			if quarantine {
 				e.logger.Info(logId, "tagquality[%s]: quarantine %q (reason=birth)", analyzer.TagQualityVersion, r.Entity.Name)
@@ -381,7 +387,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 				seenTagIDs[r.Entity.ID] = true
 				tagIDs = append(tagIDs, r.Entity.ID)
 			}
-		case service.Conflict, service.Apply, service.Alias:
+		case types.Conflict, types.Apply, types.Alias:
 			if !seenTagIDs[r.Entity.ID] {
 				seenTagIDs[r.Entity.ID] = true
 				tagIDs = append(tagIDs, r.Entity.ID)
@@ -410,7 +416,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 	}
 
 	if quarantine {
-		promotedNames = e.promoteEligible(ctx, txQ, results, &logId)
+		promotedNames = e.promoteEligible(ctx, txQ, results, logId)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -523,14 +529,10 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 	return analysis.Stats, nil
 }
 
-func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, results []service.CreateResult[database.Tag], logId *string) []string {
-	reqID := ""
-	if logId != nil {
-		reqID = *logId
-	}
+func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, results []types.CreateResult[database.Tag], reqID string) []string {
 	provisional := make(map[string]int64, len(results))
 	for _, r := range results {
-		if r.Status != service.Created && r.Status != service.Conflict {
+		if r.Status != types.Created && r.Status != types.Conflict {
 			continue
 		}
 		if r.Entity.PromotedAt.Valid {

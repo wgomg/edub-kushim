@@ -342,17 +342,17 @@ gets embeddings: it uses the client implementation.
 
 ### Small dependency interfaces
 
-Services declare the *minimum* interface they need, then accept it:
+The enqueue services accept the *minimum* interface they need:
 
 ```go
-// internal/service/orphaned.go:24 — Orphaned needs exactly two collaborators
+// internal/types/creators.go:9 — the two collaborators the enqueue paths accept
 type TaskCreator interface {
-	CreateTask(ctx context.Context, taskType, batchID string, payload json.RawMessage,
-		taskID, status, dedupKey string) (string, error)
+	CreateTask(ctx context.Context, taskType TaskType, batchID string, payload json.RawMessage,
+		taskID string, status TaskStatus, dedupKey string) (string, error)
 }
 
 type BatchCreator interface {
-	Create(ctx context.Context, id, source, status string) error
+	Create(ctx context.Context, id string, source BatchSource, status BatchStatus) error
 }
 ```
 
@@ -1342,7 +1342,7 @@ func runWithTimeout[T any](ctx context.Context, fn func() (T, error)) (T, error)
 
 ### Generic result envelopes
 
-`internal/service/result.go:3`:
+`internal/types/result.go:3`:
 
 ```go
 type CreateResult[T any] struct {
@@ -1393,7 +1393,7 @@ sticks to `any`.
 | slog custom handlers | `internal/log/logger.go` |
 | Table-driven tests | `internal/log/logger_test.go:13` |
 | DB test harness | `internal/database/dbtest.go`, `internal/testutil/testutil.go` |
-| Generics | `internal/tools/runner.go:135`, `internal/service/result.go` |
+| Generics | `internal/tools/runner.go:135`, `internal/types/result.go` |
 
 ---
 
@@ -1406,7 +1406,7 @@ sticks to `any`.
 - **Translate at the boundary.** Services end with `errs.FromDB(err, op)`;
   handlers map kinds with `writeServiceError`.
 - **Accept interfaces, return structs.** Declare the smallest interface you need
-  (`internal/service/orphaned.go:24`) and add a `var _` compile-time assertion
+  (`internal/types/creators.go:9`) and add a `var _` compile-time assertion
   where it matters.
 - **Pass `ctx` first** and select on `ctx.Done()` in every long-running
   goroutine.

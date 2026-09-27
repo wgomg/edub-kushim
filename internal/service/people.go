@@ -10,6 +10,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/textnorm"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 // CreatePersonInput is one person to create: the romanized name and the
@@ -119,8 +120,8 @@ func toNullString(s string) sql.NullString {
 // Create creates people in bulk, deduplicating by the DB-normalized
 // name: conflicts resolve to the existing person, invalid names are
 // rejected.
-func (s *People) Create(ctx context.Context, inputs []CreatePersonInput) ([]CreateResult[database.People], error) {
-	results := make([]CreateResult[database.People], len(inputs))
+func (s *People) Create(ctx context.Context, inputs []CreatePersonInput) ([]types.CreateResult[database.People], error) {
+	results := make([]types.CreateResult[database.People], len(inputs))
 
 	existing, err := s.queries.ListAllPeople(ctx)
 	if err != nil {
@@ -140,18 +141,18 @@ func (s *People) Create(ctx context.Context, inputs []CreatePersonInput) ([]Crea
 	for i, input := range inputs {
 		name := strings.TrimSpace(input.Name)
 		if name == "" {
-			results[i] = CreateResult[database.People]{Status: Invalid}
+			results[i] = types.CreateResult[database.People]{Status: types.Invalid}
 			continue
 		}
 
 		if existing, ok := existingMap[name]; ok {
-			results[i] = CreateResult[database.People]{Entity: existing, Status: Conflict}
+			results[i] = types.CreateResult[database.People]{Entity: existing, Status: types.Conflict}
 			continue
 		}
 
 		normName := textnorm.NormalizeForDB(name)
 		if existing, ok := normalizedMap[normName]; ok {
-			results[i] = CreateResult[database.People]{Entity: existing, Status: Conflict}
+			results[i] = types.CreateResult[database.People]{Entity: existing, Status: types.Conflict}
 			continue
 		}
 
@@ -168,15 +169,15 @@ func (s *People) Create(ctx context.Context, inputs []CreatePersonInput) ([]Crea
 				if err != nil {
 					return nil, errs.FromDB(err, "get people by name after conflict "+name)
 				}
-				results[i] = CreateResult[database.People]{Entity: existing, Status: Conflict}
+				results[i] = types.CreateResult[database.People]{Entity: existing, Status: types.Conflict}
 				continue
 			}
 			return nil, errs.FromDB(err, "create people "+name)
 		}
 
-		results[i] = CreateResult[database.People]{
+		results[i] = types.CreateResult[database.People]{
 			Entity: database.People{ID: id, Name: name, NameNative: nameNative, NormalizedName: normName},
-			Status: Created,
+			Status: types.Created,
 		}
 	}
 
@@ -185,8 +186,8 @@ func (s *People) Create(ctx context.Context, inputs []CreatePersonInput) ([]Crea
 
 // Update renames people in bulk, returning one result per pair (conflict,
 // not found, no-op, or updated).
-func (s *People) Update(ctx context.Context, pairs []PeopleUpdatePair) ([]UpdateResult[database.People], error) {
-	results := make([]UpdateResult[database.People], len(pairs))
+func (s *People) Update(ctx context.Context, pairs []PeopleUpdatePair) ([]types.UpdateResult[database.People], error) {
+	results := make([]types.UpdateResult[database.People], len(pairs))
 
 	allPeople, err := s.queries.ListAllPeople(ctx)
 	if err != nil {
@@ -208,31 +209,31 @@ func (s *People) Update(ctx context.Context, pairs []PeopleUpdatePair) ([]Update
 	for i, p := range pairs {
 		name := strings.TrimSpace(p.Name)
 		if name == "" {
-			results[i] = UpdateResult[database.People]{Status: UpdateInvalid}
+			results[i] = types.UpdateResult[database.People]{Status: types.UpdateInvalid}
 			continue
 		}
 
 		old, ok := peopleMap[p.ID]
 		if !ok {
-			results[i] = UpdateResult[database.People]{Status: UpdateNotFound}
+			results[i] = types.UpdateResult[database.People]{Status: types.UpdateNotFound}
 			continue
 		}
 
 		nameNative := toNullString(p.NameNative)
 
 		if name == old.Name && nameNative == old.NameNative {
-			results[i] = UpdateResult[database.People]{Entity: old, Status: Noop}
+			results[i] = types.UpdateResult[database.People]{Entity: old, Status: types.Noop}
 			continue
 		}
 
 		if existing, ok := nameMap[name]; ok && existing.ID != p.ID {
-			results[i] = UpdateResult[database.People]{Entity: existing, Status: UpdateConflict}
+			results[i] = types.UpdateResult[database.People]{Entity: existing, Status: types.UpdateConflict}
 			continue
 		}
 
 		normName := textnorm.NormalizeForDB(name)
 		if existing, ok := normalizedNameMap[normName]; ok && existing.ID != p.ID {
-			results[i] = UpdateResult[database.People]{Entity: existing, Status: UpdateConflict}
+			results[i] = types.UpdateResult[database.People]{Entity: existing, Status: types.UpdateConflict}
 			continue
 		}
 
@@ -247,15 +248,15 @@ func (s *People) Update(ctx context.Context, pairs []PeopleUpdatePair) ([]Update
 				if e, ok := nameMap[name]; ok {
 					existing = e
 				}
-				results[i] = UpdateResult[database.People]{Entity: existing, Status: UpdateConflict}
+				results[i] = types.UpdateResult[database.People]{Entity: existing, Status: types.UpdateConflict}
 				continue
 			}
 			return nil, errs.FromDB(err, "update people")
 		}
 
-		results[i] = UpdateResult[database.People]{
+		results[i] = types.UpdateResult[database.People]{
 			Entity: database.People{ID: p.ID, Name: name, NameNative: nameNative, NormalizedName: normName},
-			Status: Updated,
+			Status: types.Updated,
 		}
 	}
 
@@ -264,8 +265,8 @@ func (s *People) Update(ctx context.Context, pairs []PeopleUpdatePair) ([]Update
 
 // Delete removes people in bulk, reporting per id (deleted, not found,
 // or conflicting with referenced documents).
-func (s *People) Delete(ctx context.Context, ids []int64) ([]DeleteResult, error) {
-	results := make([]DeleteResult, len(ids))
+func (s *People) Delete(ctx context.Context, ids []int64) ([]types.DeleteResult, error) {
+	results := make([]types.DeleteResult, len(ids))
 
 	allPeople, err := s.queries.ListAllPeople(ctx)
 	if err != nil {
@@ -278,7 +279,7 @@ func (s *People) Delete(ctx context.Context, ids []int64) ([]DeleteResult, error
 
 	for i, id := range ids {
 		if _, ok := peopleMap[id]; !ok {
-			results[i] = DeleteResult{ID: id, Status: DeleteNotFound}
+			results[i] = types.DeleteResult{ID: id, Status: types.DeleteNotFound}
 			continue
 		}
 
@@ -286,7 +287,7 @@ func (s *People) Delete(ctx context.Context, ids []int64) ([]DeleteResult, error
 			return nil, errs.FromDB(err, "delete people")
 		}
 
-		results[i] = DeleteResult{ID: id, Status: Deleted}
+		results[i] = types.DeleteResult{ID: id, Status: types.Deleted}
 	}
 
 	return results, nil

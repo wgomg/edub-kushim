@@ -1,4 +1,4 @@
-package service
+package types
 
 // CreateResult pairs one entity with the outcome of its create request.
 type CreateResult[T any] struct {

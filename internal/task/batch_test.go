@@ -46,3 +46,11 @@ func TestFinalizeBatchStatusLogsCountFailure(t *testing.T) {
 		t.Errorf("count-query failure must be logged naming the batch, got:\n%s", logs.String())
 	}
 }
+
+func TestDeleteBatchTasksReturnsQueryError(t *testing.T) {
+	queries := closedTestDB(t)
+
+	if err := DeleteBatchTasks(context.Background(), queries, "batch-cleanup-fail"); err == nil {
+		t.Error("a failed cleanup must surface its error to the caller, not swallow it")
+	}
+}

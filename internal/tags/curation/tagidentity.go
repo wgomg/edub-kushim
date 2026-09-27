@@ -2,14 +2,13 @@ package curation
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
-	"github.com/wgomg/edub-kushim/internal/service"
+	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
@@ -17,13 +16,13 @@ import (
 // the machinery the admission resolver serves.
 type TagIdentity struct {
 	queries      *database.Queries
-	taskCreator  service.TaskCreator
-	batchCreator service.BatchCreator
+	taskCreator  types.TaskCreator
+	batchCreator types.BatchCreator
 }
 
 // NewTagIdentity wires the enqueue path to the queries and the batch and
 // task creators.
-func NewTagIdentity(queries *database.Queries, taskCreator service.TaskCreator, batchCreator service.BatchCreator) *TagIdentity {
+func NewTagIdentity(queries *database.Queries, taskCreator types.TaskCreator, batchCreator types.BatchCreator) *TagIdentity {
 	return &TagIdentity{
 		queries:      queries,
 		taskCreator:  taskCreator,
@@ -50,16 +49,8 @@ func (s *TagIdentity) Enqueue(ctx context.Context) (batchID string, alreadyQueue
 	}
 
 	if err := s.batchCreator.Create(ctx, batchID, types.Batch.Source.TagIdentity, types.Batch.Status.Queued); err != nil {
-		return "", false, errs.FromDB(errors.Join(err, s.deleteUnbatchedTasks(batchID)), "create tag identity batch")
+		return "", false, errs.FromDB(errors.Join(err, task.DeleteBatchTasks(context.Background(), s.queries, batchID)), "create tag identity batch")
 	}
 
 	return batchID, false, nil
-}
-
-// unbatched tasks would keep their dedup keys and block later runs
-func (s *TagIdentity) deleteUnbatchedTasks(batchID string) error {
-	if _, err := s.queries.DeleteTasksByBatch(context.Background(), sql.NullString{String: batchID, Valid: true}); err != nil {
-		return err
-	}
-	return nil
 }

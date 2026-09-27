@@ -12,7 +12,6 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
 	"github.com/wgomg/edub-kushim/internal/log"
-	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/textnorm"
@@ -354,9 +353,9 @@ func (r *IdentityResolver) applyFold(ctx context.Context, from, to string) (bool
 		return false, err
 	}
 	switch results[0].Status {
-	case service.Updated, service.Noop:
+	case types.Updated, types.Noop:
 		return true, nil
-	case service.UpdateConflict:
+	case types.UpdateConflict:
 		if err := r.tag.ApplyAliasPlan(ctx, []tags.AliasAction{{AliasName: from, Canonical: to, RemoveExistingTag: true}}); err != nil {
 			return false, err
 		}

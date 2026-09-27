@@ -476,13 +476,13 @@ func TestTagCrud(t *testing.T) {
 	t.Run("create tag", func(t *testing.T) {
 		r, err := env.tagSvc.Create(ctx, []string{"test-tag-1"})
 		testutil.AssertNoError(t, err, "create")
-		testutil.AssertEqual(t, r[0].Status, service.Created, "created")
+		testutil.AssertEqual(t, r[0].Status, itypes.Created, "created")
 	})
 
 	t.Run("duplicate tag", func(t *testing.T) {
 		r, err := env.tagSvc.Create(ctx, []string{"test-tag-1"})
 		testutil.AssertNoError(t, err, "duplicate")
-		testutil.AssertEqual(t, r[0].Status, service.Conflict, "conflict")
+		testutil.AssertEqual(t, r[0].Status, itypes.Conflict, "conflict")
 	})
 
 	t.Run("list tags", func(t *testing.T) {
@@ -498,7 +498,7 @@ func TestTagCrud(t *testing.T) {
 		if len(tags) > 0 {
 			r, err := env.tagSvc.Delete(ctx, []int64{tags[0].ID})
 			testutil.AssertNoError(t, err, "delete")
-			testutil.AssertEqual(t, r[0].Status, service.Deleted, "deleted")
+			testutil.AssertEqual(t, r[0].Status, itypes.Deleted, "deleted")
 		}
 	})
 }
@@ -512,7 +512,7 @@ func TestPeopleCrud(t *testing.T) {
 			{Name: "Alice Wonderland"},
 		})
 		testutil.AssertNoError(t, err, "create")
-		testutil.AssertEqual(t, r[0].Status, service.Created, "created")
+		testutil.AssertEqual(t, r[0].Status, itypes.Created, "created")
 	})
 
 	t.Run("duplicate person", func(t *testing.T) {
@@ -520,7 +520,7 @@ func TestPeopleCrud(t *testing.T) {
 			{Name: "Alice Wonderland"},
 		})
 		testutil.AssertNoError(t, err, "duplicate")
-		testutil.AssertEqual(t, r[0].Status, service.Conflict, "conflict")
+		testutil.AssertEqual(t, r[0].Status, itypes.Conflict, "conflict")
 	})
 
 	t.Run("search by prefix", func(t *testing.T) {
@@ -589,7 +589,7 @@ func TestDocumentTypeCrud(t *testing.T) {
 			{Name: "custom-type", Description: "Custom type"},
 		})
 		testutil.AssertNoError(t, err, "create")
-		testutil.AssertEqual(t, r[0].Status, service.Created, "created")
+		testutil.AssertEqual(t, r[0].Status, itypes.Created, "created")
 	})
 }
 

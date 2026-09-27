@@ -6,6 +6,7 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 // CreatePeopleTypeInput is one people type to create.
@@ -82,8 +83,8 @@ func (s *PeopleType) Search(ctx context.Context, prefix string, limit int32) ([]
 
 // Create creates people types in bulk, deduplicating by normalized name:
 // conflicts resolve to the existing type, empty names are invalid.
-func (s *PeopleType) Create(ctx context.Context, inputs []CreatePeopleTypeInput) ([]CreateResult[database.PeopleType], error) {
-	results := make([]CreateResult[database.PeopleType], len(inputs))
+func (s *PeopleType) Create(ctx context.Context, inputs []CreatePeopleTypeInput) ([]types.CreateResult[database.PeopleType], error) {
+	results := make([]types.CreateResult[database.PeopleType], len(inputs))
 
 	existing, err := s.queries.ListAllPeopleTypes(ctx)
 	if err != nil {
@@ -97,12 +98,12 @@ func (s *PeopleType) Create(ctx context.Context, inputs []CreatePeopleTypeInput)
 	for i, input := range inputs {
 		name := strings.TrimSpace(input.Name)
 		if name == "" {
-			results[i] = CreateResult[database.PeopleType]{Status: Invalid}
+			results[i] = types.CreateResult[database.PeopleType]{Status: types.Invalid}
 			continue
 		}
 
 		if existing, ok := existingMap[name]; ok {
-			results[i] = CreateResult[database.PeopleType]{Entity: existing, Status: Conflict}
+			results[i] = types.CreateResult[database.PeopleType]{Entity: existing, Status: types.Conflict}
 			continue
 		}
 
@@ -116,15 +117,15 @@ func (s *PeopleType) Create(ctx context.Context, inputs []CreatePeopleTypeInput)
 				if err != nil {
 					return nil, errs.FromDB(err, "get people type by name after conflict "+name)
 				}
-				results[i] = CreateResult[database.PeopleType]{Entity: existing, Status: Conflict}
+				results[i] = types.CreateResult[database.PeopleType]{Entity: existing, Status: types.Conflict}
 				continue
 			}
 			return nil, errs.FromDB(err, "create people type "+name)
 		}
 
-		results[i] = CreateResult[database.PeopleType]{
+		results[i] = types.CreateResult[database.PeopleType]{
 			Entity: database.PeopleType{ID: id, Name: name, Description: strings.TrimSpace(input.Description)},
-			Status: Created,
+			Status: types.Created,
 		}
 	}
 
@@ -133,8 +134,8 @@ func (s *PeopleType) Create(ctx context.Context, inputs []CreatePeopleTypeInput)
 
 // Update renames people types in bulk, one result per pair (conflict,
 // not found, no-op, or updated).
-func (s *PeopleType) Update(ctx context.Context, pairs []PeopleTypeUpdatePair) ([]UpdateResult[database.PeopleType], error) {
-	results := make([]UpdateResult[database.PeopleType], len(pairs))
+func (s *PeopleType) Update(ctx context.Context, pairs []PeopleTypeUpdatePair) ([]types.UpdateResult[database.PeopleType], error) {
+	results := make([]types.UpdateResult[database.PeopleType], len(pairs))
 
 	all, err := s.queries.ListAllPeopleTypes(ctx)
 	if err != nil {
@@ -150,25 +151,25 @@ func (s *PeopleType) Update(ctx context.Context, pairs []PeopleTypeUpdatePair) (
 	for i, p := range pairs {
 		name := strings.TrimSpace(p.Name)
 		if name == "" {
-			results[i] = UpdateResult[database.PeopleType]{Status: UpdateInvalid}
+			results[i] = types.UpdateResult[database.PeopleType]{Status: types.UpdateInvalid}
 			continue
 		}
 
 		old, ok := itemMap[p.ID]
 		if !ok {
-			results[i] = UpdateResult[database.PeopleType]{Status: UpdateNotFound}
+			results[i] = types.UpdateResult[database.PeopleType]{Status: types.UpdateNotFound}
 			continue
 		}
 
 		desc := strings.TrimSpace(p.Description)
 
 		if name == old.Name && desc == old.Description {
-			results[i] = UpdateResult[database.PeopleType]{Entity: old, Status: Noop}
+			results[i] = types.UpdateResult[database.PeopleType]{Entity: old, Status: types.Noop}
 			continue
 		}
 
 		if existing, ok := nameMap[name]; ok && existing.ID != p.ID {
-			results[i] = UpdateResult[database.PeopleType]{Entity: existing, Status: UpdateConflict}
+			results[i] = types.UpdateResult[database.PeopleType]{Entity: existing, Status: types.UpdateConflict}
 			continue
 		}
 
@@ -182,15 +183,15 @@ func (s *PeopleType) Update(ctx context.Context, pairs []PeopleTypeUpdatePair) (
 				if e, ok := nameMap[name]; ok {
 					existing = e
 				}
-				results[i] = UpdateResult[database.PeopleType]{Entity: existing, Status: UpdateConflict}
+				results[i] = types.UpdateResult[database.PeopleType]{Entity: existing, Status: types.UpdateConflict}
 				continue
 			}
 			return nil, errs.FromDB(err, "update people type")
 		}
 
-		results[i] = UpdateResult[database.PeopleType]{
+		results[i] = types.UpdateResult[database.PeopleType]{
 			Entity: database.PeopleType{ID: p.ID, Name: name, Description: desc},
-			Status: Updated,
+			Status: types.Updated,
 		}
 	}
 
@@ -199,8 +200,8 @@ func (s *PeopleType) Update(ctx context.Context, pairs []PeopleTypeUpdatePair) (
 
 // Delete removes people types in bulk, reporting per id (deleted, not
 // found, or conflicting with referenced people).
-func (s *PeopleType) Delete(ctx context.Context, ids []int64) ([]DeleteResult, error) {
-	results := make([]DeleteResult, len(ids))
+func (s *PeopleType) Delete(ctx context.Context, ids []int64) ([]types.DeleteResult, error) {
+	results := make([]types.DeleteResult, len(ids))
 
 	all, err := s.queries.ListAllPeopleTypes(ctx)
 	if err != nil {
@@ -213,19 +214,19 @@ func (s *PeopleType) Delete(ctx context.Context, ids []int64) ([]DeleteResult, e
 
 	for i, id := range ids {
 		if _, ok := itemMap[id]; !ok {
-			results[i] = DeleteResult{ID: id, Status: DeleteNotFound}
+			results[i] = types.DeleteResult{ID: id, Status: types.DeleteNotFound}
 			continue
 		}
 
 		if err := s.queries.DeletePeopleType(ctx, id); err != nil {
 			if errs.IsForeignKey(err) {
-				results[i] = DeleteResult{ID: id, Status: DeleteConflict}
+				results[i] = types.DeleteResult{ID: id, Status: types.DeleteConflict}
 				continue
 			}
 			return nil, errs.FromDB(err, "delete people type")
 		}
 
-		results[i] = DeleteResult{ID: id, Status: Deleted}
+		results[i] = types.DeleteResult{ID: id, Status: types.Deleted}
 	}
 
 	return results, nil

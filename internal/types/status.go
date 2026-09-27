@@ -1,4 +1,4 @@
-package service
+package types
 
 // CreateStatus is a create outcome: created, conflicting with an
 // existing name, invalid input, applied (existing store name resolved),

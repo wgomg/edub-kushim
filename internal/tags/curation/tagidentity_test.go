@@ -158,7 +158,7 @@ func TestTagIdentityEnqueue(t *testing.T) {
 }
 
 type capturingTaskCreator struct {
-	inner    service.TaskCreator
+	inner    types.TaskCreator
 	captured []string
 }
 

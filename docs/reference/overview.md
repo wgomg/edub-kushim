@@ -197,8 +197,6 @@ internal/
 ├── search/                 # Full-text search engine
 │   └── search.go           # Engine, Result (with Language, DocumentTypeID, checksums), Filter (structured search), sanitizeQuery, SearchStructured (returns results + total count)
 ├── service/                # Shared domain service package (people, document types, batches, trash, users)
-│   ├── status.go           # Shared CRUD enums (CreateStatus, UpdateStatus, DeleteStatus, PromoteStatus)
-│   ├── result.go           # Generic result types (CreateResult[T], UpdateResult[T], DeleteResult)
 │   ├── people.go           # People service (NewPeople, batch CRUD)
 │   ├── peopletype.go       # PeopleType service (NewPeopleType, batch CRUD)
 │   ├── document_type.go    # DocumentType service (NewDocumentType, batch CRUD)
@@ -220,10 +218,12 @@ internal/
 │   ├── identity.go         # Identity planning types (Disposition, AliasAction, Registration, Plan)
 │   ├── worklist.go         # Rule-set v0 worklist cuts (DeriveWorklists, Twin/Sibling/CompoundSplit)
 │   ├── algebra.go          # Extension algebra readings (Set, NewSet, MassOf, EvidenceState)
-│   ├── extension.go        # Read-only tag-store snapshot (NewSnapshot, Tag, Pair, AliasResolver, IdentityResolver)
+│   ├── extension.go        # Read-only tag-store snapshot (NewSnapshot, Tag, Pair, AliasResolver, SelfAliasResolver)
 │   ├── atomicity.go        # Compound shape classification (ClassifyShape, DeriveParts, MaxCompoundWords)
 │   ├── curation/           # Tag vocabulary services (operator and adapter-visible tag operations)
-│   │   ├── tag.go          # Tag service (NewTag, batch CRUD, provisional listing/promotion, embedder integration)
+│   │   ├── tag.go          # Tag service (NewTag, query delegates, rename/delete/promote, deleted-tag records, embedder integration)
+│   │   ├── registration.go # Planned tag registration (Create/CreateAndUnblock, PlanRegistration, CreatePlannedTx)
+│   │   ├── alias.go        # Alias-plan application (ApplyAliasPlan, applyAliasAction) + identity-evidence recording
 │   │   ├── tagmerge.go     # TagMerge service (NewTagMerge — explicit hard merge of two tags + merge-suggestion scan over embedding similarity and verdict history)
 │   │   └── tagidentity.go  # TagIdentity service (NewTagIdentity — enqueues the triggered identity runs)
 │   ├── admission/          # Tag admission (LLM adjudication seams + identity resolution)
@@ -234,7 +234,11 @@ internal/
 │   ├── policy/             # Pure candidate generation (identity + band subjects)
 │   │   └── policy.go       # Evaluate, Decision, Version — no logging, no config, no I/O
 │   └── reconcile/          # Scheduled re-adjudication
-│       ├── reconciler.go   # Reconciler — worklist + report (NewReconciler, Report, ProvisionalCounts)
+│       ├── reconciler.go   # Reconciler orchestrator (NewReconciler, Run, Report, ProvisionalCounts)
+│       ├── worklist.go     # Worklist build (buildWorklist, bootstrap, category ordering)
+│       ├── evidence.go     # Evidence pass (re-rank, band adjudication, hysteresis confirmation)
+│       ├── apply.go        # Apply pass (merge/keep flips, verdict upsert)
+│       ├── sweeps.go       # Orphan, provisional and identity-evidence sweeps
 │       ├── tagreconcile.go # TagReconcileTaskHandler (reconciler run + batch lifecycle)
 │       ├── bootstrap.go    # Log bootstrap parser (absorbed pairs and band-keep lines from the daemon's log rotations)
 │       └── joint.go        # Joint-tag split scan and component adjudication
@@ -263,7 +267,10 @@ internal/
 │       ├── adapter.go      # TextReducer interface + factory
 │       └── textrank.go     # TextRank: chunking, TF-IDF, weighted PageRank, diversity penalty
 ├── types/                  # Closed task-system vocabulary registry
-│   └── registry.go         # Batch sources, task types, statuses, validity/parse helpers
+│   ├── registry.go         # Batch sources, task types, statuses, validity/parse helpers
+│   ├── status.go           # Shared CRUD enums (CreateStatus, UpdateStatus, DeleteStatus, PromoteStatus)
+│   ├── result.go           # Generic result types (CreateResult[T], UpdateResult[T], DeleteResult)
+│   └── creators.go         # TaskCreator and BatchCreator interfaces the enqueue paths accept
 └── version/                # Application version
     └── version.go          # var Version = "3.0.0"
 

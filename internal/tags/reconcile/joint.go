@@ -10,9 +10,9 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
-	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/tags/policy"
 	"github.com/wgomg/edub-kushim/internal/textnorm"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 type jointEntry struct {
@@ -212,7 +212,7 @@ func (r *Reconciler) applyJointSplit(ctx context.Context, e *jointEntry, storeTa
 	var componentIDs []int64
 	for i, res := range results {
 		switch res.Status {
-		case service.Created, service.Conflict, service.Apply:
+		case types.Created, types.Conflict, types.Apply:
 			componentIDs = append(componentIDs, res.Entity.ID)
 		default:
 			return 0, fmt.Errorf("create component %q: invalid result", outputs[i])

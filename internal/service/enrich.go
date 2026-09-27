@@ -2,13 +2,13 @@ package service
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
+	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
@@ -17,13 +17,13 @@ import (
 // triggered run and a bulk run converge on whichever runs first.
 type ReEnrich struct {
 	queries      *database.Queries
-	taskCreator  TaskCreator
-	batchCreator BatchCreator
+	taskCreator  types.TaskCreator
+	batchCreator types.BatchCreator
 }
 
 // NewReEnrich wires the enqueue path to the queries and the task and
 // batch creators.
-func NewReEnrich(queries *database.Queries, taskCreator TaskCreator, batchCreator BatchCreator) *ReEnrich {
+func NewReEnrich(queries *database.Queries, taskCreator types.TaskCreator, batchCreator types.BatchCreator) *ReEnrich {
 	return &ReEnrich{
 		queries:      queries,
 		taskCreator:  taskCreator,
@@ -94,16 +94,8 @@ func (s *ReEnrich) ReEnrichMany(ctx context.Context, limit int64) (batchID strin
 	}
 
 	if err := s.batchCreator.Create(ctx, batchID, types.Batch.Source.Reenrich, types.Batch.Status.Queued); err != nil {
-		return "", enqueued, skipped, errs.FromDB(errors.Join(err, s.deleteUnbatchedTasks(batchID)), "create batch")
+		return "", enqueued, skipped, errs.FromDB(errors.Join(err, task.DeleteBatchTasks(context.Background(), s.queries, batchID)), "create batch")
 	}
 
 	return batchID, enqueued, skipped, nil
-}
-
-// unbatched tasks would keep their dedup keys and block later runs
-func (s *ReEnrich) deleteUnbatchedTasks(batchID string) error {
-	if _, err := s.queries.DeleteTasksByBatch(context.Background(), sql.NullString{String: batchID, Valid: true}); err != nil {
-		return err
-	}
-	return nil
 }

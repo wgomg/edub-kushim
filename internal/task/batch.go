@@ -239,3 +239,13 @@ func FinalizeBatchStatus(ctx context.Context, queries *database.Queries, logger 
 		logger.Error("", "finalize batch %s as completed: %v", batchID, err)
 	}
 }
+
+// DeleteBatchTasks removes every task of a batch that was never created.
+// Callers pass context.Background() deliberately: cleanup runs on the
+// failure path of batch creation, when the request context may already be
+// cancelled, and orphaned tasks would keep their dedup keys and block
+// later runs.
+func DeleteBatchTasks(ctx context.Context, queries *database.Queries, batchID string) error {
+	_, err := queries.DeleteTasksByBatch(ctx, sql.NullString{String: batchID, Valid: true})
+	return err
+}

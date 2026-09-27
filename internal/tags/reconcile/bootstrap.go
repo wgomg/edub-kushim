@@ -127,16 +127,12 @@ func addParsedPair(pairs map[string]*parsedPair, query, target, sim string, abso
 	if verdict.Valid() {
 		p.verdict = verdict
 	}
-	if docID != "" && !slicesContains(p.docIDs, docID) {
+	if docID != "" && !slices.Contains(p.docIDs, docID) {
 		p.docIDs = append(p.docIDs, docID)
 	}
 	if t.After(p.lastTime) {
 		p.lastTime = t
 	}
-}
-
-func slicesContains(list []string, s string) bool {
-	return slices.Contains(list, s)
 }
 
 // lineTime extracts the lumberjack file-handler timestamp prefix
