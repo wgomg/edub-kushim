@@ -191,7 +191,7 @@ The tag services and `Enricher` receive the client instead of a direct Hugot ref
 ```go
 matcherClient := matcher.NewMatcherClient(c.SocketPath(), matcher.MaxMatchBodyBytes(cfg.Enricher.TagMatcher.ReduceTargetWords))
 tagSvc := curation.NewTag(client, c.GetLogger(), matcherClient)
-enricher, err := enrichment.NewEnricher(cfg, c.GetLogger(), client, tagSvc, matcherClient)
+enricher := enrichment.NewEnricher(cfg, c.GetLogger(), client, tagSvc, matcherClient)
 registry.Register("consume", consumption.NewConsumeTaskHandler(consumer, store, c.GetLogger()))
 registry.Register("enrich", enrichment.NewEnrichTaskHandler(enricher, client.Queries, c.GetLogger()))
 registry.Register("config", configtask.NewConfigTaskHandler(client.Queries, c.GetLogger()))

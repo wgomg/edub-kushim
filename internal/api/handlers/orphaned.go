@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -50,11 +49,11 @@ func mapOrphanedFile(f database.OrphanedFile) map[string]any {
 // ListOrphaned serves the quarantined files.
 func (h *OrphanedHandler) ListOrphaned(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	files, err := h.svc.List(ctx)
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "list orphaned files", err)
+		writeServiceError(w, h.logger, reqID, "list orphaned files", err)
 		return
 	}
 
@@ -63,23 +62,21 @@ func (h *OrphanedHandler) ListOrphaned(w http.ResponseWriter, r *http.Request) {
 		result[i] = mapOrphanedFile(f)
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	writeJSON(w, http.StatusOK, result)
 }
 
 // ScanOrphaned runs one scan-and-quarantine sweep.
 func (h *OrphanedHandler) ScanOrphaned(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	count, err := h.svc.ScanAndQuarantine(ctx)
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "scan orphaned files", err)
+		writeServiceError(w, h.logger, reqID, "scan orphaned files", err)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	writeJSON(w, http.StatusOK, map[string]any{
 		"quarantined": count,
 	})
 }
@@ -87,7 +84,7 @@ func (h *OrphanedHandler) ScanOrphaned(w http.ResponseWriter, r *http.Request) {
 // DeleteOrphaned removes one quarantined file.
 func (h *OrphanedHandler) DeleteOrphaned(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
@@ -97,7 +94,7 @@ func (h *OrphanedHandler) DeleteOrphaned(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err := h.svc.Delete(ctx, id); err != nil {
-		writeServiceError(w, h.logger, &reqID, "delete orphaned file", err)
+		writeServiceError(w, h.logger, reqID, "delete orphaned file", err)
 		return
 	}
 
@@ -107,7 +104,7 @@ func (h *OrphanedHandler) DeleteOrphaned(w http.ResponseWriter, r *http.Request)
 // RestoreOrphaned re-consumes one quarantined file.
 func (h *OrphanedHandler) RestoreOrphaned(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
@@ -117,7 +114,7 @@ func (h *OrphanedHandler) RestoreOrphaned(w http.ResponseWriter, r *http.Request
 	}
 
 	if err := h.svc.Restore(ctx, id); err != nil {
-		writeServiceError(w, h.logger, &reqID, "restore orphaned file", err)
+		writeServiceError(w, h.logger, reqID, "restore orphaned file", err)
 		return
 	}
 
@@ -128,7 +125,7 @@ func (h *OrphanedHandler) RestoreOrphaned(w http.ResponseWriter, r *http.Request
 // directory.
 func (h *OrphanedHandler) MoveToInbox(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
@@ -138,7 +135,7 @@ func (h *OrphanedHandler) MoveToInbox(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.svc.MoveToInbox(ctx, id); err != nil {
-		writeServiceError(w, h.logger, &reqID, "move orphaned to inbox", err)
+		writeServiceError(w, h.logger, reqID, "move orphaned to inbox", err)
 		return
 	}
 
@@ -148,16 +145,15 @@ func (h *OrphanedHandler) MoveToInbox(w http.ResponseWriter, r *http.Request) {
 // DeleteAllOrphaned removes every quarantined file.
 func (h *OrphanedHandler) DeleteAllOrphaned(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	count, err := h.svc.DeleteAll(ctx)
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "delete all orphaned files", err)
+		writeServiceError(w, h.logger, reqID, "delete all orphaned files", err)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	writeJSON(w, http.StatusOK, map[string]any{
 		"deleted": count,
 	})
 }
@@ -166,16 +162,15 @@ func (h *OrphanedHandler) DeleteAllOrphaned(w http.ResponseWriter, r *http.Reque
 // directory.
 func (h *OrphanedHandler) MoveAllToInbox(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	count, err := h.svc.MoveAllToInbox(ctx)
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "move all orphaned to inbox", err)
+		writeServiceError(w, h.logger, reqID, "move all orphaned to inbox", err)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	writeJSON(w, http.StatusOK, map[string]any{
 		"moved": count,
 	})
 }

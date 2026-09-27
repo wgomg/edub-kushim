@@ -4,12 +4,11 @@ import (
 	"archive/zip"
 	"os"
 	"path/filepath"
+	"testing"
 )
 
 // CreateMinimalDocx writes a minimal valid DOCX file to the given path with the specified text content.
-func CreateMinimalDocx(t interface {
-	Fatalf(format string, args ...any)
-}, path, content string) {
+func CreateMinimalDocx(t testing.TB, path, content string) {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatalf("failed to create parent dir for %s: %v", path, err)
 	}
@@ -53,9 +52,7 @@ func CreateMinimalDocx(t interface {
 }
 
 // CreateMinimalOdt writes a minimal valid ODT file to the given path with the specified text content.
-func CreateMinimalOdt(t interface {
-	Fatalf(format string, args ...any)
-}, path, content string) {
+func CreateMinimalOdt(t testing.TB, path, content string) {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatalf("failed to create parent dir for %s: %v", path, err)
 	}

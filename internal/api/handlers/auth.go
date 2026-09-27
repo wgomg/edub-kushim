@@ -39,9 +39,7 @@ type loginResponse struct {
 }
 
 func writeUnauthorized(w http.ResponseWriter) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusUnauthorized)
-	json.NewEncoder(w).Encode(map[string]string{"error": "invalid username or password"})
+	writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid username or password"})
 }
 
 // Login verifies the credentials and sets the session cookie.
@@ -64,13 +62,13 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			writeUnauthorized(w)
 			return
 		}
-		reqID := requestID(r.Context())
+		reqID := log.ReqIDFrom(r.Context())
 		h.logger.Error(reqID, "auth login: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	token, err := auth.GenerateToken(user.ID, user.Username, user.Role, h.getConfig().Srv.SessionSecret)
+	token, err := auth.GenerateToken(user.ID, user.Username, auth.Role(user.Role), h.getConfig().Srv.SessionSecret)
 	if err != nil {
 		h.logger.Error("", "generate token: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -92,8 +90,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   86400,
 	})
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // Logout clears the session cookie.
@@ -113,7 +110,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 // MeHandler serves the authenticated user's identity.
 func (h *AuthHandler) MeHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	userID, _ := ctx.Value(auth.UserIDKey).(int64)
 	if userID == 0 {
@@ -127,11 +124,9 @@ func (h *AuthHandler) MeHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "User not found", http.StatusNotFound)
 			return
 		}
-		reqIDStr := reqID
-		writeServiceError(w, h.logger, &reqIDStr, "get me", err)
+		writeServiceError(w, h.logger, reqID, "get me", err)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(toUserResponse(user))
+	writeJSON(w, http.StatusOK, toUserResponse(user))
 }

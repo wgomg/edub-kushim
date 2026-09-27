@@ -694,7 +694,7 @@ func (r *Runner) AnalyzeContent(ctx context.Context, text string, docTypes []ana
 		return r.contentAnalyzer.Analyze(ctx, text, docTypes, peopleTypes, tagSuggestions)
 	})
 	if err != nil && isProviderError(err) {
-		reqID, _ := ctx.Value("reqid").(string)
+		reqID := log.ReqIDFrom(ctx)
 		r.logger.Warn(reqID, "primary analyzer (%s/%s) failed: %v",
 			r.config.Enricher.ContentAnalyzer.Llm.Provider, r.config.Enricher.ContentAnalyzer.Llm.Model, err)
 		for i, fb := range r.fallbackAnalyzers {
@@ -757,7 +757,7 @@ func (r *Runner) AnalyzeDocType(ctx context.Context, prevResult *ContentAnalysis
 		return r.contentAnalyzer.AnalyzeDocType(ctx, prev, headTailText, docTypes, metadata)
 	})
 	if err != nil && isProviderError(err) {
-		reqID, _ := ctx.Value("reqid").(string)
+		reqID := log.ReqIDFrom(ctx)
 		r.logger.Warn(reqID, "primary analyzer (%s/%s) failed doc-type refinement: %v",
 			r.config.Enricher.ContentAnalyzer.Llm.Provider, r.config.Enricher.ContentAnalyzer.Llm.Model, err)
 		for i, fb := range r.fallbackAnalyzers {

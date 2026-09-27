@@ -216,7 +216,7 @@ Tag and DB-key canonicalization, shared by the tag service, the enricher, the ma
 
 ### `normalize.go`
 
-`FoldAccents` (stateless NFD → drop Mn → NFC accent fold; the canonical fold shared by `NormalizeForDB` and `NormalizeTag`, safe for concurrent use), `NormalizeForDB` (NFKC → lowercase → dash/underscore to space → accent fold → strip non-`[a-z ]` → collapse whitespace)
+`canonicalHead` (the shared head both canonical forms start from: NFKC → lowercase/trim → dash and underscore variants to space → accent fold), `FoldAccents` (stateless NFD → drop Mn → NFC accent fold; the canonical fold shared by `NormalizeForDB` and `NormalizeTag`, safe for concurrent use), `NormalizeForDB` (canonical head → strip non-`[a-z ]` → collapse whitespace)
 
 ### `tagname.go`
 
@@ -232,7 +232,7 @@ Tag and DB-key canonicalization, shared by the tag service, the enricher, the ma
 
 ### Struct
 
-`ParamBag` — `NewParamBag(r)`, `Get`, `GetInt`, `GetInt64`, `GetBool`, `GetStrings`, `SetPathValue`
+`ParamBag` — `NewParamBag(r)`, `Get`, `GetInt`, `GetInt64`, `GetBool`, `GetStrings` (query parameters only; path values are read from the request with `r.PathValue`)
 
 ### Context helpers
 

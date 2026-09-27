@@ -480,7 +480,7 @@ optResult, err := o.optimizer.Optimize(ctx, docId, outPath)
 
 The optimizer is the `pdfoptimizer` tool: **Ghostscript** (`gs
 -dPDFSETTINGS=/ebook ...`) or the **MuPDF clean path** (`mupdf_pdf_clean_file`
-with `NewCleanOptions`, `mupdf_wrapper.go:291-340`), which replicates the
+with `NewCleanOptions`, `mupdf_wrapper.go:338-381`), which replicates the
 ebook settings: garbage collection, dedup, compression, content sanitization,
 image downsampling (colour/grayscale → 150 DPI JPEG @85, bitonal → 300 DPI
 CCITT Fax). The invisible text layer survives this pass — it's regular

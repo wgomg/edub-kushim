@@ -112,15 +112,13 @@ func (h *ConsumeHandler) enqueueBatchFiles(ctx context.Context, batchID string, 
 // missing; an empty inbox reports no batch.
 func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 	h.logger.Debug(reqID, "Consume requested")
 
 	cfg := h.getConfig()
 
 	if missing := config.MissingExternalToolErrors(cfg); len(missing) > 0 {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnprocessableEntity)
-		json.NewEncoder(w).Encode(map[string]any{
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
 			"error":         "Cannot consume: required external tools are not installed.",
 			"missing_tools": missing,
 		})
@@ -139,9 +137,7 @@ func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(paths) == 0 {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]any{
+		writeJSON(w, http.StatusOK, map[string]any{
 			"batch_id":    nil,
 			"total_files": 0,
 			"message":     "no files found",
@@ -151,22 +147,21 @@ func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 
 	batchID := uuid.New().String()
 
-	h.services.Batch.Create(ctx, batchID, types.Batch.Source.API, types.Batch.Status.Queued)
+	if err := h.services.Batch.Create(ctx, batchID, types.Batch.Source.API, types.Batch.Status.Queued); err != nil {
+		writeServiceError(w, h.logger, reqID, "create batch", err)
+		return
+	}
 
 	enqueued := h.enqueueBatchFiles(ctx, batchID, paths, reqID)
 
 	if enqueued == 0 {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]any{
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
 			"error": "no files could be enqueued",
 		})
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusAccepted)
-	json.NewEncoder(w).Encode(map[string]any{
+	writeJSON(w, http.StatusAccepted, map[string]any{
 		"batch_id":    batchID,
 		"total_files": len(paths),
 		"enqueued":    enqueued,
@@ -182,15 +177,13 @@ func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 // returns its served name.
 func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 	h.logger.Debug(reqID, "Upload requested")
 
 	cfg := h.getConfig()
 
 	if missing := config.MissingExternalToolErrors(cfg); len(missing) > 0 {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnprocessableEntity)
-		json.NewEncoder(w).Encode(map[string]any{
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
 			"error":         "Cannot consume: required external tools are not installed.",
 			"missing_tools": missing,
 		})
@@ -240,9 +233,7 @@ func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		}
 		if err != nil {
 			if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusRequestEntityTooLarge)
-				json.NewEncoder(w).Encode(map[string]any{
+				writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{
 					"error": fmt.Sprintf("upload exceeds max_upload_size (%d MB)", cfg.Srv.MaxUploadSize),
 				})
 				return
@@ -276,9 +267,7 @@ func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 
 		if copyErr != nil {
 			if _, ok := errors.AsType[*http.MaxBytesError](copyErr); ok {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusRequestEntityTooLarge)
-				json.NewEncoder(w).Encode(map[string]any{
+				writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{
 					"error": fmt.Sprintf("upload exceeds max_upload_size (%d MB)", cfg.Srv.MaxUploadSize),
 				})
 				return
@@ -309,9 +298,7 @@ func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if max := cfg.Consumer.MaxFilesPerBatch; max > 0 && len(accepted) > max {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnprocessableEntity)
-		json.NewEncoder(w).Encode(map[string]any{
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
 			"error":    fmt.Sprintf("too many files — max %d per batch", max),
 			"accepted": len(accepted),
 			"rejected": rejected,
@@ -320,9 +307,7 @@ func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(accepted) == 0 {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnprocessableEntity)
-		json.NewEncoder(w).Encode(map[string]any{
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
 			"error":    "no supported files",
 			"rejected": rejected,
 		})
@@ -341,17 +326,13 @@ func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	acceptedPaths = nil
 
 	if enqueued == 0 {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]any{
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
 			"error": "no files could be enqueued",
 		})
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusAccepted)
-	json.NewEncoder(w).Encode(map[string]any{
+	writeJSON(w, http.StatusAccepted, map[string]any{
 		"batch_id": batchID,
 		"accepted": len(accepted),
 		"rejected": rejected,

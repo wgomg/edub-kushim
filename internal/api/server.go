@@ -128,7 +128,7 @@ func (s *Server) rebuild(client *database.Client) {
 	getConfigFn := func() *config.Config { return s.cfg.Load() }
 
 	mux := registerRoutes(s.logger, client, dispatcher, getConfigFn, onConfigSet, services, workStore, s.tag, s.tagMerge, s.tagIdentity)
-	registerStaticRoutes(mux)
+	handlers.RegisterStaticRoutes(mux, static.WebFS())
 
 	s.services = services
 	s.client = client
@@ -149,7 +149,7 @@ func (s *Server) rebuild(client *database.Client) {
 		}
 		return &u, nil
 	}
-	handler := chainMiddleware(s.logger, getSecret, getAuthEnabled, validateAPIKey, getUserByID, mux)
+	handler := requestMiddleware(s.logger, AuthMiddleware(parambagMiddleware(mux), getSecret, getAuthEnabled, validateAPIKey, getUserByID))
 
 	if s.httpServer == nil {
 		s.httpServer = &http.Server{
@@ -181,29 +181,6 @@ func (s *Server) reconnectDB(newDB *sql.DB) {
 
 	s.rebuild(database.NewClient(newDB))
 	s.pools.config.Start(context.Background())
-}
-
-func registerStaticRoutes(mux *http.ServeMux) {
-	fsys := static.WebFS()
-	fileServer := http.FileServer(http.FS(fsys))
-
-	mux.HandleFunc("GET /{path...}", func(w http.ResponseWriter, r *http.Request) {
-		path := r.PathValue("path")
-		if path == "" {
-			fileServer.ServeHTTP(w, r)
-			return
-		}
-
-		f, err := fsys.Open(path)
-		if err != nil {
-			r.URL.Path = "/"
-			fileServer.ServeHTTP(w, r)
-			return
-		}
-		f.Close()
-
-		fileServer.ServeHTTP(w, r)
-	})
 }
 
 func registerRoutes(
@@ -373,15 +350,11 @@ func registerRoutes(
 	return mux
 }
 
-func chainMiddleware(logger *log.Logger, getSecret func() string, getAuthEnabled func() bool, validateAPIKey func(ctx context.Context, rawKey string) (*database.User, error), getUserByID func(ctx context.Context, id int64) (*database.User, error), h http.Handler) http.Handler {
-	return requestMiddleware(logger, AuthMiddleware(parambagMiddleware(h), getSecret, getAuthEnabled, validateAPIKey, getUserByID))
-}
-
 func requestMiddleware(logger *log.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		reqID := uuid.New().String()
 
-		ctx := context.WithValue(r.Context(), "reqid", reqID)
+		ctx := log.WithReqID(r.Context(), reqID)
 
 		logger.Info("", "%s %s REQID=%s", r.Method, r.URL.Path, reqID)
 

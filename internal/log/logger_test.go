@@ -2,6 +2,7 @@ package log
 
 import (
 	"bytes"
+	"context"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -463,5 +464,15 @@ func TestLevelName(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("levelName(%d) = %q, want %q", tt.slogLevel, got, tt.want)
 		}
+	}
+}
+
+func TestReqIDContextRoundTrip(t *testing.T) {
+	ctx := WithReqID(context.Background(), "req-7")
+	if got := ReqIDFrom(ctx); got != "req-7" {
+		t.Errorf("ReqIDFrom(WithReqID(...)) = %q, want %q", got, "req-7")
+	}
+	if got := ReqIDFrom(context.Background()); got != "" {
+		t.Errorf("ReqIDFrom without a stored id = %q, want empty", got)
 	}
 }

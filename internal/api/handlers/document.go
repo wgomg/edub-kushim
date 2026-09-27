@@ -62,7 +62,7 @@ func NewDocumentHandler(client *database.Client, logger *log.Logger, engine *sea
 // ListDocuments serves the paged document listing.
 func (h *DocumentHandler) ListDocuments(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	h.logger.Debug(reqID, "List documents requested")
 
@@ -138,19 +138,13 @@ func (h *DocumentHandler) ListDocuments(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		h.logger.Error(reqID, "Failed to encode documents response: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 // GetDocument serves one document's full view.
 func (h *DocumentHandler) GetDocument(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 	h.logger.Debug(reqID, "Get document requested")
 
 	documentId := r.PathValue("id")
@@ -161,7 +155,7 @@ func (h *DocumentHandler) GetDocument(w http.ResponseWriter, r *http.Request) {
 
 	doc, err := h.client.GetDocumentWithDetails(r.Context(), documentId)
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "get document", errs.FromDB(err, "get document"))
+		writeServiceError(w, h.logger, reqID, "get document", errs.FromDB(err, "get document"))
 		return
 	}
 
@@ -222,19 +216,13 @@ func (h *DocumentHandler) GetDocument(w http.ResponseWriter, r *http.Request) {
 		ModifiedAt:       doc.ModifiedAt.Time.Format("2006-01-02T15:04:05Z"),
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		h.logger.Error(reqID, "Failed to encode document response: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 // FilterLanguages serves the distinct stored languages.
 func (h *DocumentHandler) FilterLanguages(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 	h.logger.Debug(reqID, "Filter languages requested")
 
 	languages, err := h.client.DistinctLanguages(ctx)
@@ -244,18 +232,13 @@ func (h *DocumentHandler) FilterLanguages(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-
-	if err := json.NewEncoder(w).Encode(languages); err != nil {
-		h.logger.Error(reqID, "Failed to encode languages: %v", err)
-	}
+	writeJSON(w, http.StatusOK, languages)
 }
 
 // SearchDocuments serves the free-text full-text search.
 func (h *DocumentHandler) SearchDocuments(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 	h.logger.Debug(reqID, "Search documents requested")
 
 	pb := GetParamBag(r)
@@ -309,19 +292,13 @@ func (h *DocumentHandler) SearchDocuments(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		h.logger.Error(reqID, "Failed to encode search response: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 // SearchDocumentsStructured serves the filter search with total count.
 func (h *DocumentHandler) SearchDocumentsStructured(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 	h.logger.Debug(reqID, "Structured search requested")
 
 	var filter search.Filter
@@ -396,23 +373,18 @@ func (h *DocumentHandler) SearchDocumentsStructured(w http.ResponseWriter, r *ht
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-
 	searchResponse := SearchResponse{
 		Results: response,
 		Total:   total,
 	}
 
-	if err := json.NewEncoder(w).Encode(searchResponse); err != nil {
-		h.logger.Error(reqID, "Failed to encode search response: %v", err)
-	}
+	writeJSON(w, http.StatusOK, searchResponse)
 }
 
 // GetDocumentFile streams the stored file with its content type.
 func (h *DocumentHandler) GetDocumentFile(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	documentId := r.PathValue("id")
 	if documentId == "" {
@@ -422,7 +394,7 @@ func (h *DocumentHandler) GetDocumentFile(w http.ResponseWriter, r *http.Request
 
 	doc, err := h.client.GetDocument(ctx, documentId)
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "get document", errs.FromDB(err, "get document"))
+		writeServiceError(w, h.logger, reqID, "get document", errs.FromDB(err, "get document"))
 		return
 	}
 
@@ -439,7 +411,7 @@ func (h *DocumentHandler) GetDocumentFile(w http.ResponseWriter, r *http.Request
 // is none.
 func (h *DocumentHandler) GetDocumentThumbnail(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	documentId := r.PathValue("id")
 	if documentId == "" {
@@ -449,7 +421,7 @@ func (h *DocumentHandler) GetDocumentThumbnail(w http.ResponseWriter, r *http.Re
 
 	meta, err := h.client.GetDocumentThumbnailMeta(ctx, documentId)
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "get document", errs.FromDB(err, "get document"))
+		writeServiceError(w, h.logger, reqID, "get document", errs.FromDB(err, "get document"))
 		return
 	}
 
@@ -472,7 +444,7 @@ func (h *DocumentHandler) GetDocumentThumbnail(w http.ResponseWriter, r *http.Re
 // DownloadDocuments streams one document's file or a zip of several.
 func (h *DocumentHandler) DownloadDocuments(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	var req DocumentDownloadRequest
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB limit on request body
@@ -499,9 +471,7 @@ func (h *DocumentHandler) DownloadDocuments(w http.ResponseWriter, r *http.Reque
 	}
 
 	if len(req.DocumentIDs) == 0 {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "document_ids is required"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "document_ids is required"})
 		return
 	}
 
@@ -509,9 +479,7 @@ func (h *DocumentHandler) DownloadDocuments(w http.ResponseWriter, r *http.Reque
 	cfg := h.getConfig()
 
 	if len(ids) > cfg.Srv.MaxDownloadFiles {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{
+		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "too many documents, max: " + strconv.Itoa(cfg.Srv.MaxDownloadFiles),
 		})
 		return
@@ -528,9 +496,7 @@ func (h *DocumentHandler) DownloadDocuments(w http.ResponseWriter, r *http.Reque
 				invalidIDs = append(invalidIDs, id)
 			} else {
 				h.logger.Error(reqID, "download batch: get document %s: %v", id, err)
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusInternalServerError)
-				json.NewEncoder(w).Encode(map[string]string{"error": "internal server error"})
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 				return
 			}
 			continue
@@ -540,9 +506,7 @@ func (h *DocumentHandler) DownloadDocuments(w http.ResponseWriter, r *http.Reque
 	}
 
 	if len(invalidIDs) > 0 {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{
+		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "documents not found: " + strings.Join(invalidIDs, ", "),
 		})
 		return
@@ -550,9 +514,7 @@ func (h *DocumentHandler) DownloadDocuments(w http.ResponseWriter, r *http.Reque
 
 	maxSizeBytes := cfg.Srv.MaxDownloadSizeMB * 1024 * 1024
 	if totalSize > maxSizeBytes {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{
+		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "total size exceeds limit: " + strconv.FormatInt(totalSize, 10) + " > " + strconv.FormatInt(maxSizeBytes, 10),
 		})
 		return
@@ -615,8 +577,7 @@ func sanitizeFilename(title string) string {
 
 // SupportedMimeTypes serves the formats the pipeline ingests.
 func (h *DocumentHandler) SupportedMimeTypes(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(mime.Supported)
+	writeJSON(w, http.StatusOK, mime.Supported)
 }
 
 func uniqueStrings(s []string) []string {
@@ -635,7 +596,7 @@ func uniqueStrings(s []string) []string {
 // corrected text.
 func (h *DocumentHandler) UpdateDocument(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	documentID := r.PathValue("id")
 	if documentID == "" {
@@ -665,7 +626,7 @@ func (h *DocumentHandler) UpdateDocument(w http.ResponseWriter, r *http.Request)
 
 	docType, err := h.client.GetDocumentType(ctx, req.DocumentTypeID)
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "get document type", errs.FromDB(err, "get document type"))
+		writeServiceError(w, h.logger, reqID, "get document type", errs.FromDB(err, "get document type"))
 		return
 	}
 	if docType.ID == 0 {
@@ -679,7 +640,7 @@ func (h *DocumentHandler) UpdateDocument(w http.ResponseWriter, r *http.Request)
 
 	current, err := h.client.GetDocument(ctx, documentID)
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "get document", errs.FromDB(err, "get document"))
+		writeServiceError(w, h.logger, reqID, "get document", errs.FromDB(err, "get document"))
 		return
 	}
 
@@ -704,7 +665,7 @@ func (h *DocumentHandler) UpdateDocument(w http.ResponseWriter, r *http.Request)
 		DocumentID:     documentID,
 	})
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "update document", errs.FromDB(err, "update document"))
+		writeServiceError(w, h.logger, reqID, "update document", errs.FromDB(err, "update document"))
 		return
 	}
 
@@ -714,7 +675,7 @@ func (h *DocumentHandler) UpdateDocument(w http.ResponseWriter, r *http.Request)
 // ReEnrich enqueues one document's re-enrichment.
 func (h *DocumentHandler) ReEnrich(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	documentID := r.PathValue("id")
 	if documentID == "" {
@@ -724,13 +685,11 @@ func (h *DocumentHandler) ReEnrich(w http.ResponseWriter, r *http.Request) {
 
 	batchID, err := h.services.ReEnrich.ReEnrich(ctx, documentID)
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "re-enrich document", err)
+		writeServiceError(w, h.logger, reqID, "re-enrich document", err)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusAccepted)
-	json.NewEncoder(w).Encode(map[string]any{
+	writeJSON(w, http.StatusAccepted, map[string]any{
 		"batch_id": batchID,
 		"_links": map[string]string{
 			"tasks": "/api/v1/tasks?batch=" + batchID,
@@ -743,7 +702,7 @@ func (h *DocumentHandler) ReEnrich(w http.ResponseWriter, r *http.Request) {
 // DeleteDocument soft-deletes one document into the trash.
 func (h *DocumentHandler) DeleteDocument(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	documentID := r.PathValue("id")
 	if documentID == "" {
@@ -752,7 +711,7 @@ func (h *DocumentHandler) DeleteDocument(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err := h.services.Trash.SoftDelete(ctx, documentID); err != nil {
-		writeServiceError(w, h.logger, &reqID, "delete document", err)
+		writeServiceError(w, h.logger, reqID, "delete document", err)
 		return
 	}
 
@@ -762,7 +721,7 @@ func (h *DocumentHandler) DeleteDocument(w http.ResponseWriter, r *http.Request)
 // AddDocumentTag attaches one tag to a document.
 func (h *DocumentHandler) AddDocumentTag(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	documentID := r.PathValue("id")
 	if documentID == "" {
@@ -778,13 +737,13 @@ func (h *DocumentHandler) AddDocumentTag(w http.ResponseWriter, r *http.Request)
 
 	doc, err := h.client.GetDocument(ctx, documentID)
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "get document", errs.FromDB(err, "get document"))
+		writeServiceError(w, h.logger, reqID, "get document", errs.FromDB(err, "get document"))
 		return
 	}
 
 	_, err = h.tag.Get(ctx, req.TagID)
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "get tag", err)
+		writeServiceError(w, h.logger, reqID, "get tag", err)
 		return
 	}
 
@@ -793,7 +752,7 @@ func (h *DocumentHandler) AddDocumentTag(w http.ResponseWriter, r *http.Request)
 		TagID:      req.TagID,
 	})
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "add document tag", errs.FromDB(err, "add document tag"))
+		writeServiceError(w, h.logger, reqID, "add document tag", errs.FromDB(err, "add document tag"))
 		return
 	}
 	if err := h.client.ClearOrphanTagMarksByTagIDs(ctx, []int64{req.TagID}); err != nil {
@@ -806,7 +765,7 @@ func (h *DocumentHandler) AddDocumentTag(w http.ResponseWriter, r *http.Request)
 // RemoveDocumentTag detaches one tag from a document.
 func (h *DocumentHandler) RemoveDocumentTag(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	documentID := r.PathValue("id")
 	if documentID == "" {
@@ -822,7 +781,7 @@ func (h *DocumentHandler) RemoveDocumentTag(w http.ResponseWriter, r *http.Reque
 
 	doc, err := h.client.GetDocument(ctx, documentID)
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "get document", errs.FromDB(err, "get document"))
+		writeServiceError(w, h.logger, reqID, "get document", errs.FromDB(err, "get document"))
 		return
 	}
 
@@ -831,7 +790,7 @@ func (h *DocumentHandler) RemoveDocumentTag(w http.ResponseWriter, r *http.Reque
 		TagID:      req.TagID,
 	})
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "remove document tag", errs.FromDB(err, "remove document tag"))
+		writeServiceError(w, h.logger, reqID, "remove document tag", errs.FromDB(err, "remove document tag"))
 		return
 	}
 
@@ -842,7 +801,7 @@ func (h *DocumentHandler) RemoveDocumentTag(w http.ResponseWriter, r *http.Reque
 // per-document failures.
 func (h *DocumentHandler) BatchDeleteDocuments(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	var req BatchDeleteRequest
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
@@ -856,16 +815,12 @@ func (h *DocumentHandler) BatchDeleteDocuments(w http.ResponseWriter, r *http.Re
 	cfg := h.getConfig()
 
 	if len(ids) == 0 {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "document_ids is required"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "document_ids is required"})
 		return
 	}
 
 	if len(ids) > cfg.Srv.MaxBatchDelete {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{
+		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "too many documents, max: " + strconv.Itoa(cfg.Srv.MaxBatchDelete),
 		})
 		return
@@ -887,20 +842,18 @@ func (h *DocumentHandler) BatchDeleteDocuments(w http.ResponseWriter, r *http.Re
 		result.Deleted++
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	status := http.StatusOK
 	if result.Deleted == 0 && len(result.Failed) > 0 {
-		w.WriteHeader(http.StatusBadRequest)
-	} else {
-		w.WriteHeader(http.StatusOK)
+		status = http.StatusBadRequest
 	}
-	json.NewEncoder(w).Encode(result)
+	writeJSON(w, status, result)
 }
 
 // BatchAssignTags adds or removes tags over many documents, reporting
 // per-document failures.
 func (h *DocumentHandler) BatchAssignTags(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	var req BatchTagRequest
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
@@ -911,29 +864,23 @@ func (h *DocumentHandler) BatchAssignTags(w http.ResponseWriter, r *http.Request
 	}
 
 	if len(req.DocumentIDs) == 0 {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "document_ids is required"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "document_ids is required"})
 		return
 	}
 
 	if len(req.TagIDs) == 0 {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "tag_ids is required"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tag_ids is required"})
 		return
 	}
 
 	if req.Mode != "add" && req.Mode != "replace" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "mode must be 'add' or 'replace'"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "mode must be 'add' or 'replace'"})
 		return
 	}
 
 	for _, tagID := range req.TagIDs {
 		if _, err := h.tag.Get(ctx, tagID); err != nil {
-			writeServiceError(w, h.logger, &reqID, "validate tag", err)
+			writeServiceError(w, h.logger, reqID, "validate tag", err)
 			return
 		}
 	}
@@ -1027,19 +974,17 @@ func (h *DocumentHandler) BatchAssignTags(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	status := http.StatusOK
 	if result.Assigned == 0 && len(result.Failed) > 0 {
-		w.WriteHeader(http.StatusBadRequest)
-	} else {
-		w.WriteHeader(http.StatusOK)
+		status = http.StatusBadRequest
 	}
-	json.NewEncoder(w).Encode(result)
+	writeJSON(w, status, result)
 }
 
 // BatchSetDocumentType sets one document type over many documents.
 func (h *DocumentHandler) BatchSetDocumentType(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	var req BatchDocumentTypeRequest
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
@@ -1053,9 +998,7 @@ func (h *DocumentHandler) BatchSetDocumentType(w http.ResponseWriter, r *http.Re
 	cfg := h.getConfig()
 
 	if len(ids) == 0 {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "document_ids is required"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "document_ids is required"})
 		return
 	}
 
@@ -1065,9 +1008,7 @@ func (h *DocumentHandler) BatchSetDocumentType(w http.ResponseWriter, r *http.Re
 	}
 
 	if len(ids) > cfg.Srv.MaxBatchDelete {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{
+		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "too many documents, max: " + strconv.Itoa(cfg.Srv.MaxBatchDelete),
 		})
 		return
@@ -1075,7 +1016,7 @@ func (h *DocumentHandler) BatchSetDocumentType(w http.ResponseWriter, r *http.Re
 
 	docType, err := h.client.GetDocumentType(ctx, req.DocumentTypeID)
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "get document type", errs.FromDB(err, "get document type"))
+		writeServiceError(w, h.logger, reqID, "get document type", errs.FromDB(err, "get document type"))
 		return
 	}
 	if docType.ID == 0 {
@@ -1088,7 +1029,7 @@ func (h *DocumentHandler) BatchSetDocumentType(w http.ResponseWriter, r *http.Re
 		Column2:        ids,
 	})
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "set document type", errs.FromDB(err, "set document type"))
+		writeServiceError(w, h.logger, reqID, "set document type", errs.FromDB(err, "set document type"))
 		return
 	}
 
@@ -1103,19 +1044,17 @@ func (h *DocumentHandler) BatchSetDocumentType(w http.ResponseWriter, r *http.Re
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	status := http.StatusOK
 	if result.Updated == 0 && len(result.Failed) > 0 {
-		w.WriteHeader(http.StatusBadRequest)
-	} else {
-		w.WriteHeader(http.StatusOK)
+		status = http.StatusBadRequest
 	}
-	json.NewEncoder(w).Encode(result)
+	writeJSON(w, status, result)
 }
 
 // AddDocumentPeople attaches one person to a document with a role.
 func (h *DocumentHandler) AddDocumentPeople(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	documentID := r.PathValue("id")
 	if documentID == "" {
@@ -1131,19 +1070,19 @@ func (h *DocumentHandler) AddDocumentPeople(w http.ResponseWriter, r *http.Reque
 
 	doc, err := h.client.GetDocument(ctx, documentID)
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "get document", errs.FromDB(err, "get document"))
+		writeServiceError(w, h.logger, reqID, "get document", errs.FromDB(err, "get document"))
 		return
 	}
 
 	_, err = h.client.GetPeople(ctx, req.PeopleID)
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "get person", errs.FromDB(err, "get person"))
+		writeServiceError(w, h.logger, reqID, "get person", errs.FromDB(err, "get person"))
 		return
 	}
 
 	_, err = h.client.GetPeopleType(ctx, req.PeopleTypeID)
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "get people type", errs.FromDB(err, "get people type"))
+		writeServiceError(w, h.logger, reqID, "get people type", errs.FromDB(err, "get people type"))
 		return
 	}
 
@@ -1153,7 +1092,7 @@ func (h *DocumentHandler) AddDocumentPeople(w http.ResponseWriter, r *http.Reque
 		PeopleTypeID: req.PeopleTypeID,
 	})
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "add document people", errs.FromDB(err, "add document people"))
+		writeServiceError(w, h.logger, reqID, "add document people", errs.FromDB(err, "add document people"))
 		return
 	}
 
@@ -1163,7 +1102,7 @@ func (h *DocumentHandler) AddDocumentPeople(w http.ResponseWriter, r *http.Reque
 // RemoveDocumentPeople detaches one person role from a document.
 func (h *DocumentHandler) RemoveDocumentPeople(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	documentID := r.PathValue("id")
 	if documentID == "" {
@@ -1179,7 +1118,7 @@ func (h *DocumentHandler) RemoveDocumentPeople(w http.ResponseWriter, r *http.Re
 
 	doc, err := h.client.GetDocument(ctx, documentID)
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "get document", errs.FromDB(err, "get document"))
+		writeServiceError(w, h.logger, reqID, "get document", errs.FromDB(err, "get document"))
 		return
 	}
 
@@ -1189,7 +1128,7 @@ func (h *DocumentHandler) RemoveDocumentPeople(w http.ResponseWriter, r *http.Re
 		PeopleTypeID: req.PeopleTypeID,
 	})
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "remove document people", errs.FromDB(err, "remove document people"))
+		writeServiceError(w, h.logger, reqID, "remove document people", errs.FromDB(err, "remove document people"))
 		return
 	}
 

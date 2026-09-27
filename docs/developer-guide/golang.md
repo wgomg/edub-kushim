@@ -402,7 +402,7 @@ type BatchSummaryResponse struct {
 }
 ```
 
-`BatchCounts` (`internal/api/handlers/task.go:799`) holds the per-status task
+`BatchCounts` (`internal/api/handlers/task.go:777`) holds the per-status task
 histogram; embedding promotes its fields into both `BatchSummaryResponse` and
 `BatchOverviewItem`, so their JSON shape stays identical without redeclaring
 the counts.
@@ -469,7 +469,7 @@ PostgreSQL error codes are inspected through `errors.As` to a `*pgconn.PgError`
 (`IsConstraint`, `IsForeignKey`, `IsBusy` — unique violations, FK violations,
 deadlock/serialization).
 
-Handlers convert kinds to HTTP statuses (`internal/api/handlers/errors.go:20`):
+Handlers convert kinds to HTTP statuses (`internal/api/handlers/errors.go:14`):
 
 ```go
 kind := errs.KindOf(err)
@@ -540,11 +540,11 @@ const RoleKey contextKey = "role"
 role, _ := r.Context().Value(auth.RoleKey).(string)
 ```
 
-(`api/server.go:320` uses a raw `"reqid"` string key for the request ID;
-handlers read it back through the checked `requestID(ctx)` helper at
-`internal/api/handlers/errors.go:15`.)
+The request ID rides a typed key as well: `log.WithReqID` stores it and
+`log.ReqIDFrom` reads it back (`internal/log/logger.go:379-394`), so the
+key type stays unexported and the accessors are the only way in or out.
 
-The param bag rides the same mechanism (`internal/api/handlers/parambag.go:114`): a
+The param bag rides the same mechanism (`internal/api/handlers/parambag.go:110`): a
 private `contextKey` + `WithParamBag`/`GetParamBag` pair.
 
 **Timeouts are enforced independently of adapter cooperation.** Because not
@@ -1064,9 +1064,9 @@ implicit `cgo` build tag, and `edub` gets a stub or talks to `kushim` over the
 Unix socket instead.
 
 - **Stub twins**: `mupdf_wrapper.go` (`//go:build cgo`) and `mupdf_nocgo.go`
-  (`//go:build !cgo`) declare the same API; the stub uses relaxed signatures
-  (`pixmap any`, `opts any`) and degrades gracefully (`countPages()` returns 0,
-  so ingestion is not blocked).
+  (`//go:build !cgo`) declare the same API, including the `Pixmap` and
+  `CleanOptions` handle types, and the stubs degrade gracefully
+  (`countPages()` returns 0, so ingestion is not blocked).
 - **`init()` factory swap**: the OCR factory's default fails with a clear
   message; the cgo build overrides `newGosseract` in `init()`. Full mechanics
   in `cgo.md` §7.
@@ -1085,7 +1085,7 @@ across the boundary is in [`cgo.md`](cgo.md).
 ### Routing: Go 1.22 method patterns
 
 Routes are registered with method + wildcard patterns; `{id}` captures a path
-segment (`internal/api/server.go:199`):
+segment (`internal/api/server.go:223`):
 
 ```go
 mux.Handle("GET /api/v1/documents", RequireRole(viewer...)(http.HandlerFunc(docHandler.ListDocuments)))
@@ -1094,14 +1094,14 @@ mux.Handle("PUT /api/v1/documents/{id}", RequireRole(editor...)(http.HandlerFunc
 ```
 
 Handlers read the wildcard with `r.PathValue("id")` (e.g.
-`internal/api/handlers/tag.go:141`). The SPA fallback route uses the catch-all
-`GET /{path...}` (`server.go:146`), serving the embedded build and falling back
+`internal/api/handlers/tag.go:146`). The SPA fallback route uses the catch-all
+`GET /{path...}` (`internal/api/handlers/static.go:14`), serving the embedded build and falling back
 to `/` for client-side routing.
 
 ### Handler structs
 
 Each resource is a struct holding its dependencies; methods are the handlers
-(`internal/api/handlers/tag.go:32`):
+(`internal/api/handlers/tag.go:33`):
 
 ```go
 type TagHandler struct {
@@ -1123,21 +1123,19 @@ in `NewServer`.
 Middleware is `func(http.Handler) http.Handler`. Role gating is a middleware
 *factory* — `RequireRole(allowed ...auth.Role)` closes over the allowed roles
 and returns the middleware (`internal/api/permission.go:9`). The chain is
-built inside-out (`internal/api/server.go:316`):
+built inside-out at the single call site (`internal/api/server.go:152`):
 
 ```go
-func chainMiddleware(..., h http.Handler) http.Handler {
-	return requestMiddleware(logger,
-		AuthMiddleware(parambagMiddleware(h), getSecret, getAuthEnabled, validateAPIKey, getUserByID))
-}
+handler := requestMiddleware(s.logger,
+	AuthMiddleware(parambagMiddleware(mux), getSecret, getAuthEnabled, validateAPIKey, getUserByID))
 ```
 
 `requestMiddleware` injects a request ID and logs each request
-(`server.go:320`):
+(`server.go:353`):
 
 ```go
 reqID := uuid.New().String()
-ctx := context.WithValue(r.Context(), "reqid", reqID)
+ctx := log.WithReqID(r.Context(), reqID)
 logger.Info("", "%s %s REQID=%s", r.Method, r.URL.Path, reqID)
 next.ServeHTTP(w, r.WithContext(ctx))
 ```
@@ -1235,7 +1233,9 @@ No logrus/zap.
   logger.go:175).
 - **Request IDs**: logging methods take a `reqID string`; a non-empty value
   is prepended to the message as `REQID=<id>`, while an empty string logs
-  without the prefix. Callers pass the document id or the context's reqid.
+  without the prefix. Callers pass the document id, or in HTTP paths the id
+  stored by the middleware with `log.WithReqID` and read back with
+  `log.ReqIDFrom`.
 - **Test seams**: `NewDiscardLogger()` (slog's `DiscardHandler` at a level above
   Fatal) and `NewLoggerWithWriter(w)` are the standard test loggers.
 
@@ -1249,11 +1249,12 @@ Example call sites: `c.logger.Info(documentID, "starting consumption for file %s
 All tests use the stdlib `testing` package — no testify, no gomock, no
 testcontainers. The project rules:
 
-**Helpers with structural typing.** Test helpers accept the smallest interface
-they need instead of `*testing.T` (`internal/testutil/testutil.go:20`):
+**Helpers accept `testing.TB`.** Test helpers take `testing.TB` instead of
+`*testing.T`, so `*testing.T` and `*testing.B` both satisfy them
+(`internal/testutil/testutil.go:25`):
 
 ```go
-func NewTestConfig(t interface{ Fatalf(format string, args ...any) }) (*config.Config, func()) {
+func NewTestConfig(t testing.TB) (*config.Config, func()) {
 	configDir, err := os.MkdirTemp("", "edub-kushim-test-*")
 	if err != nil {
 		t.Fatalf("create temp config dir: %v", err)
@@ -1262,9 +1263,8 @@ func NewTestConfig(t interface{ Fatalf(format string, args ...any) }) (*config.C
 }
 ```
 
-`*testing.T` and `*testing.B` both satisfy it. Helpers call `t.Helper()` so
-failure lines point at the caller. Table-driven tests with subtests are the
-norm.
+Helpers call `t.Helper()` so failure lines point at the caller. Table-driven
+tests with subtests are the norm.
 
 **Hand-rolled mocks** are structs implementing the real interfaces, often with
 injectable function fields:
@@ -1290,7 +1290,7 @@ handler tests.
 
 **HTTP handler tests** drive handler structs directly with `httptest.NewRequest`
 + `httptest.NewRecorder`, after wiring the param bag and request ID into the
-request (`internal/api/handlers/handlers_test.go:122`).
+request (`internal/api/handlers/handlers_test.go:132`).
 
 **Isolated databases.** `database.NewTestDB(t)` (`internal/database/dbtest.go:16`)
 requires `TEST_DATABASE_URL` and creates a per-package database
@@ -1377,14 +1377,14 @@ sticks to `any`.
 | Struct embedding | `internal/database/client.go`, `internal/matcher/embedding_store.go`, `internal/auth/claims.go` |
 | Typed errors + `Unwrap` | `internal/errs/errs.go`, `internal/task/errors.go` |
 | `errors.Is`/`errors.As` | `internal/api/handlers/tag.go:17`, `internal/task/runner.go:62` |
-| Context values (typed keys) | `internal/auth/claims.go:30`, `internal/api/handlers/parambag.go:114`, `internal/api/server.go:320` |
+| Context values (typed keys) | `internal/auth/claims.go:30`, `internal/api/handlers/parambag.go:110`, `internal/api/server.go:357` |
 | Transactions (defer rollback) | `internal/service/batch.go:400`, `internal/documents/consumption/consumer.go:292` |
 | sqlc generated queries | `internal/database/document.sql.go`, `db.go`, `models.go` |
 | Migrations/seeds via embed | `internal/database/schema.go` |
 | Defaults-first config load | `internal/config/config.go:420` |
 | Viper writes-only | `internal/config/setup.go:76` |
-| Middleware chain | `internal/api/permission.go`, `internal/api/server.go:316` |
-| Go 1.22 routing + `PathValue` | `internal/api/server.go:199`, handlers |
+| Middleware chain | `internal/api/permission.go`, `internal/api/server.go:152` |
+| Go 1.22 routing + `PathValue` | `internal/api/server.go:223`, handlers |
 | `go:embed` assets | `internal/static/fs.go`, `internal/database/schema.go`, `internal/llm/registry.go`, `ocr/font_embed.go` |
 | cgo preamble + `#cgo` flags | `internal/cgo/mupdf_wrapper.go`, `ocr/tesseract_link.go` |
 | Stub twin (`!cgo`) | `internal/cgo/mupdf_nocgo.go` |

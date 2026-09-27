@@ -136,7 +136,7 @@ func req(t *testing.T, method, path string, body []byte) *http.Request {
 		r.Header.Set("Content-Type", "application/json")
 	}
 	r = WithParamBag(r, NewParamBag(r))
-	r = r.WithContext(context.WithValue(r.Context(), "reqid", "test-req"))
+	r = r.WithContext(log.WithReqID(r.Context(), "test-req"))
 	return r
 }
 
@@ -149,7 +149,7 @@ func TestHealthHandler(t *testing.T) {
 	w := rec()
 	// HealthHandler expects a reqid in the context
 	r := req(t, "GET", "/health", nil)
-	r = r.WithContext(context.WithValue(r.Context(), "reqid", "test-request-id"))
+	r = r.WithContext(log.WithReqID(r.Context(), "test-request-id"))
 	HealthHandler(w, r, env.logger)
 	testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
 
@@ -440,7 +440,7 @@ func TestDownloadDocumentsValidation(t *testing.T) {
 		r := httptest.NewRequest("POST", "/api/v1/documents/download", strings.NewReader(formBody))
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		r = WithParamBag(r, NewParamBag(r))
-		r = r.WithContext(context.WithValue(r.Context(), "reqid", "test-req"))
+		r = r.WithContext(log.WithReqID(r.Context(), "test-req"))
 		h.DownloadDocuments(w, r)
 		// MaxDownloadFiles=2, so 3 IDs should fail with "too many", not a parse error
 		if w.Code != http.StatusBadRequest {
@@ -458,7 +458,7 @@ func TestDownloadDocumentsValidation(t *testing.T) {
 		r := httptest.NewRequest("POST", "/api/v1/documents/download", strings.NewReader("document_ids=NOT_VALID_JSON"))
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		r = WithParamBag(r, NewParamBag(r))
-		r = r.WithContext(context.WithValue(r.Context(), "reqid", "test-req"))
+		r = r.WithContext(log.WithReqID(r.Context(), "test-req"))
 		h.DownloadDocuments(w, r)
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("expected 400, got %d", w.Code)
@@ -985,12 +985,12 @@ func TestGetDashboardAnalyticsError(t *testing.T) {
 	cancel()
 
 	reqID := "analytics-err"
-	analytics := h.buildDocumentAnalytics(ctx, &reqID)
+	analytics := h.buildDocumentAnalytics(ctx, reqID)
 	if analytics != nil {
 		t.Fatal("expected nil analytics when queries fail due to cancelled context")
 	}
 
-	analyticsOk := h.buildDocumentAnalytics(context.Background(), &reqID)
+	analyticsOk := h.buildDocumentAnalytics(context.Background(), reqID)
 	if analyticsOk == nil {
 		t.Fatal("expected non-nil analytics with normal context")
 	}
@@ -1774,7 +1774,7 @@ func TestProcessingHealthMissingTools(t *testing.T) {
 	testutil.AssertNoError(t, err, "create batch")
 
 	reqID := "missing-tools"
-	ph, err := h.buildProcessingHealth(ctx, &reqID)
+	ph, err := h.buildProcessingHealth(ctx, reqID)
 	testutil.AssertNoError(t, err, "build health")
 
 	if ph.MissingTools == 0 {
@@ -2014,7 +2014,7 @@ func TestErrorHelpers(t *testing.T) {
 
 	t.Run("sql no rows -> logs error", func(t *testing.T) {
 		w := rec()
-		writeServiceError(w, env.logger, nil, "get", sql.ErrNoRows)
+		writeServiceError(w, env.logger, "", "get", sql.ErrNoRows)
 		// errs.FromDB may return 500 for generic errors, so just verify we get a response
 		if w.Code != http.StatusNotFound && w.Code != http.StatusInternalServerError {
 			t.Fatalf("expected 404 or 500, got %d", w.Code)
@@ -2023,13 +2023,13 @@ func TestErrorHelpers(t *testing.T) {
 
 	t.Run("generic error -> 500", func(t *testing.T) {
 		w := rec()
-		writeServiceError(w, env.logger, nil, "do", fmt.Errorf("boom"))
+		writeServiceError(w, env.logger, "", "do", fmt.Errorf("boom"))
 		testutil.AssertEqual(t, w.Code, http.StatusInternalServerError, "500")
 	})
 }
 
 func TestWriteServiceErrorReqID(t *testing.T) {
-	logged := func(reqID *string) string {
+	logged := func(reqID string) string {
 		var buf bytes.Buffer
 		w := rec()
 		writeServiceError(w, log.NewLoggerWithWriter(&buf), reqID, "do", fmt.Errorf("boom"))
@@ -2038,13 +2038,13 @@ func TestWriteServiceErrorReqID(t *testing.T) {
 	}
 
 	reqID := "req-42"
-	if out := logged(&reqID); !strings.Contains(out, "REQID=req-42 do: boom") {
-		t.Errorf("expected the id resolved from the pointer in the log line, got:\n%s", out)
+	if out := logged(reqID); !strings.Contains(out, "REQID=req-42 do: boom") {
+		t.Errorf("expected the id in the log line, got:\n%s", out)
 	}
 
-	out := logged(nil)
+	out := logged("")
 	if strings.Contains(out, "REQID") {
-		t.Errorf("expected no id prefix for a nil reqID, got:\n%s", out)
+		t.Errorf("expected no id prefix for an empty reqID, got:\n%s", out)
 	}
 	if !strings.Contains(out, ": do: boom") {
 		t.Errorf("expected the message logged without an id, got:\n%s", out)

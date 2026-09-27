@@ -8,7 +8,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -48,7 +47,7 @@ func (h *APIKeyHandler) authorize(r *http.Request, targetID int64) bool {
 
 func (h *APIKeyHandler) issueKey(w http.ResponseWriter, r *http.Request, keyFunc func(context.Context, int64) (string, error), message string, status int) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	id, err := h.parseID(r)
 	if err != nil {
@@ -67,14 +66,12 @@ func (h *APIKeyHandler) issueKey(w http.ResponseWriter, r *http.Request, keyFunc
 			http.Error(w, "User not found", http.StatusNotFound)
 			return
 		}
-		writeServiceError(w, h.logger, &reqID, "api key operation", err)
+		writeServiceError(w, h.logger, reqID, "api key operation", err)
 		return
 	}
 
 	prefix := rawKey[:len("ek_")+9]
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(CreateAPIKeyResponse{
+	writeJSON(w, status, CreateAPIKeyResponse{
 		APIKey:  rawKey,
 		Prefix:  prefix,
 		Message: message,
@@ -94,7 +91,7 @@ func (h *APIKeyHandler) RotateKey(w http.ResponseWriter, r *http.Request) {
 // RevokeKey clears a user's API key.
 func (h *APIKeyHandler) RevokeKey(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	id, err := h.parseID(r)
 	if err != nil {
@@ -112,7 +109,7 @@ func (h *APIKeyHandler) RevokeKey(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "User not found", http.StatusNotFound)
 			return
 		}
-		writeServiceError(w, h.logger, &reqID, "revoke api key", err)
+		writeServiceError(w, h.logger, reqID, "revoke api key", err)
 		return
 	}
 
@@ -122,7 +119,7 @@ func (h *APIKeyHandler) RevokeKey(w http.ResponseWriter, r *http.Request) {
 // GetKeyStatus reports a user's key status without secrets.
 func (h *APIKeyHandler) GetKeyStatus(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	id, err := h.parseID(r)
 	if err != nil {
@@ -141,7 +138,7 @@ func (h *APIKeyHandler) GetKeyStatus(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "User not found", http.StatusNotFound)
 			return
 		}
-		writeServiceError(w, h.logger, &reqID, "get api key status", err)
+		writeServiceError(w, h.logger, reqID, "get api key status", err)
 		return
 	}
 
@@ -157,8 +154,7 @@ func (h *APIKeyHandler) GetKeyStatus(w http.ResponseWriter, r *http.Request) {
 		createdAt = &t
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(APIKeyStatusResponse{
+	writeJSON(w, http.StatusOK, APIKeyStatusResponse{
 		HasAPIKey:       hasKey,
 		APIKeyPrefix:    prefix,
 		APIKeyCreatedAt: createdAt,
@@ -173,7 +169,7 @@ func (h *APIKeyHandler) callerID(r *http.Request) int64 {
 // MeGenerateKey mints the calling user's own API key.
 func (h *APIKeyHandler) MeGenerateKey(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 	id := h.callerID(r)
 	if id == 0 {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -186,14 +182,12 @@ func (h *APIKeyHandler) MeGenerateKey(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "User not found", http.StatusNotFound)
 			return
 		}
-		writeServiceError(w, h.logger, &reqID, "generate api key", err)
+		writeServiceError(w, h.logger, reqID, "generate api key", err)
 		return
 	}
 
 	prefix := rawKey[:len("ek_")+9]
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(CreateAPIKeyResponse{
+	writeJSON(w, http.StatusCreated, CreateAPIKeyResponse{
 		APIKey:  rawKey,
 		Prefix:  prefix,
 		Message: "Save this API key — it will not be shown again",
@@ -203,7 +197,7 @@ func (h *APIKeyHandler) MeGenerateKey(w http.ResponseWriter, r *http.Request) {
 // MeRevokeKey revokes the calling user's API key.
 func (h *APIKeyHandler) MeRevokeKey(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 	id := h.callerID(r)
 	if id == 0 {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -215,7 +209,7 @@ func (h *APIKeyHandler) MeRevokeKey(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "User not found", http.StatusNotFound)
 			return
 		}
-		writeServiceError(w, h.logger, &reqID, "revoke api key", err)
+		writeServiceError(w, h.logger, reqID, "revoke api key", err)
 		return
 	}
 
@@ -225,7 +219,7 @@ func (h *APIKeyHandler) MeRevokeKey(w http.ResponseWriter, r *http.Request) {
 // MeRotateKey rotates the calling user's API key.
 func (h *APIKeyHandler) MeRotateKey(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 	id := h.callerID(r)
 	if id == 0 {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -238,13 +232,12 @@ func (h *APIKeyHandler) MeRotateKey(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "User not found", http.StatusNotFound)
 			return
 		}
-		writeServiceError(w, h.logger, &reqID, "rotate api key", err)
+		writeServiceError(w, h.logger, reqID, "rotate api key", err)
 		return
 	}
 
 	prefix := rawKey[:len("ek_")+9]
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(CreateAPIKeyResponse{
+	writeJSON(w, http.StatusOK, CreateAPIKeyResponse{
 		APIKey:  rawKey,
 		Prefix:  prefix,
 		Message: "Previous API key has been revoked. Save this new key — it will not be shown again",
@@ -254,7 +247,7 @@ func (h *APIKeyHandler) MeRotateKey(w http.ResponseWriter, r *http.Request) {
 // MeGetKeyStatus reports the calling user's key status.
 func (h *APIKeyHandler) MeGetKeyStatus(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 	id := h.callerID(r)
 	if id == 0 {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -267,7 +260,7 @@ func (h *APIKeyHandler) MeGetKeyStatus(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "User not found", http.StatusNotFound)
 			return
 		}
-		writeServiceError(w, h.logger, &reqID, "get api key status", err)
+		writeServiceError(w, h.logger, reqID, "get api key status", err)
 		return
 	}
 
@@ -283,8 +276,7 @@ func (h *APIKeyHandler) MeGetKeyStatus(w http.ResponseWriter, r *http.Request) {
 		createdAt = &t
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(APIKeyStatusResponse{
+	writeJSON(w, http.StatusOK, APIKeyStatusResponse{
 		HasAPIKey:       hasKey,
 		APIKeyPrefix:    prefix,
 		APIKeyCreatedAt: createdAt,

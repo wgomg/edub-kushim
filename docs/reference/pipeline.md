@@ -58,7 +58,7 @@
 
 - `Enricher` — `config`, `logger`, `client *database.Client` (transaction access for the persist step; `queries` is `client.Queries`), `runner`, `tag *curation.Tag` (tag persistence), `admission *admission.Adjudicator` (the admission seams, including its per-process memo of joint-tag split verdicts)
   - **Methods**:
-    - `NewEnricher(cfg, logger, client, tag *curation.Tag, matcher matcher.Matcher) (*Enricher, error)` — Creates runner via `NewRunnerWithMatcher` with textreducer, contentanalyzer, tagmatcher tools and builds the `Adjudicator` over the same runner; matcher is either a direct `*Hugot` (in `kushim` CLI) or a `*matcher.MatcherClient` (in `edub` API server) — both satisfy the same `matcher.Matcher` interface.
+    - `NewEnricher(cfg, logger, client, tag *curation.Tag, matcher matcher.Matcher) *Enricher` — Creates runner via `NewRunnerWithMatcher` with textreducer, contentanalyzer, tagmatcher tools and builds the `Adjudicator` over the same runner; matcher is either a direct `*Hugot` (in `kushim` CLI) or a `*matcher.MatcherClient` (in `edub` API server) — both satisfy the same `matcher.Matcher` interface.
       - `Enrich(ctx, document, report task.ProgressFunc) (*json.RawMessage, error)` — Full pipeline:
        1. Dual text reduction: LLM-targeted and tag-matching-targeted (via `matcher.TargetWordCount`)
        2. Fetch doc types, people types from DB; all tags via `tag.ListAll` (unfiltered — the novel-set comparison must see quarantined names). The enricher splits the rows in one pass: promoted names feed the embedding-store trust set and the `MatchTags` fallback vocabulary, while provisional names only feed the novel-set (`dbNames`) and the deleted-tag merge-target existence check.

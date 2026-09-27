@@ -60,7 +60,7 @@ func mirrorHandler(c *container.Container, args []string) error {
 	}
 
 	fmt.Printf("Mirroring %s -> %s\n", cfg.Storage.StorageDir, dest)
-	result, _, err := backup.RunLocked(ctx, client.Queries, c.GetLogger(), cfg.Storage.StorageDir, dest)
+	result, _, err := backup.RunLocked(ctx, client.Queries, c.GetLogger(), cfg.Storage.StorageDir, dest, nil, nil, uuid.NullUUID{})
 	if err != nil {
 		return fmt.Errorf("mirror failed: %w", err)
 	}

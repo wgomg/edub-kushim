@@ -201,6 +201,19 @@ type MuDocument struct {
 	p *C.fz_document
 }
 
+// Pixmap is a rendered page's pixel buffer as RenderPage hands it out;
+// release it with FreePixmap once the samples are consumed.
+type Pixmap struct {
+	p *C.fz_pixmap
+}
+
+// CleanOptions carries the PDF rewrite options PdfCleanFile applies.
+// Create one with NewCleanOptions; a nil *CleanOptions means MuPDF's
+// defaults.
+type CleanOptions struct {
+	p *C.pdf_clean_options
+}
+
 // NewMuContext creates a fresh MuPDF context. Contexts are not shared:
 // create one per unit of work and Close it when done. On non-cgo builds it
 // always fails.
@@ -248,7 +261,7 @@ func (d *MuDocument) ExtractPageText(ctx *MuContext, pageNum int) (string, error
 // copy; the pixmap is owned by the caller and must be released with
 // FreePixmap once rendering is done. Pages whose pixel count exceeds the
 // render limit fail instead of allocating unboundedly.
-func (d *MuDocument) RenderPage(ctx *MuContext, pageNum int, dpi float64) (width, height int, samples []byte, pixmap *C.fz_pixmap, err error) {
+func (d *MuDocument) RenderPage(ctx *MuContext, pageNum int, dpi float64) (width, height int, samples []byte, pixmap *Pixmap, err error) {
 	var p *C.fz_pixmap
 	var w, h C.int
 
@@ -258,13 +271,16 @@ func (d *MuDocument) RenderPage(ctx *MuContext, pageNum int, dpi float64) (width
 
 	// Copy samples before dropping pixmap — this was the leak in go-fitz.
 	samples = C.GoBytes(unsafe.Pointer(p.samples), C.int(p.w*p.h*C.int(p.n)))
-	return int(w), int(h), samples, p, nil
+	return int(w), int(h), samples, &Pixmap{p: p}, nil
 }
 
 // FreePixmap releases a pixmap returned by RenderPage. Safe to call with a
 // nil pixmap.
-func FreePixmap(ctx *MuContext, pixmap *C.fz_pixmap) {
-	C.fz_drop_pixmap(ctx.p, pixmap)
+func FreePixmap(ctx *MuContext, pixmap *Pixmap) {
+	if pixmap == nil {
+		return
+	}
+	C.fz_drop_pixmap(ctx.p, pixmap.p)
 }
 
 // Close closes the document.
@@ -282,24 +298,26 @@ func (c *MuContext) Close() {
 // PdfCleanFile rewrites a PDF, removing unused objects and optionally
 // applying optimizations (image downsampling, recompression, font subsetting).
 // Pass nil for opts to use MuPDF defaults.
-func (c *MuContext) PdfCleanFile(inputPath, outputPath string, opts *C.pdf_clean_options) error {
+func (c *MuContext) PdfCleanFile(inputPath, outputPath string, opts *CleanOptions) error {
 	cIn := C.CString(inputPath)
 	defer C.free(unsafe.Pointer(cIn))
 	cOut := C.CString(outputPath)
 	defer C.free(unsafe.Pointer(cOut))
 
-	// If opts has image recompress quality strings, they must be C strings.
-	// We allocate them here and free after the call.
-	var jpegQuality *C.char
-	if opts != nil && opts.image.color_lossy_image_recompress_quality != nil {
-		// Already a C string from NewCleanOptions, reuse it.
-		// But we need to free it after. Track it.
-		jpegQuality = opts.image.color_lossy_image_recompress_quality
+	var raw *C.pdf_clean_options
+	if opts != nil {
+		raw = opts.p
 	}
 
-	rc := C.mupdf_pdf_clean_file(c.p, cIn, cOut, opts)
+	// the JPEG quality C strings allocated by NewCleanOptions are freed
+	// here after the call
+	var jpegQuality *C.char
+	if raw != nil && raw.image.color_lossy_image_recompress_quality != nil {
+		jpegQuality = raw.image.color_lossy_image_recompress_quality
+	}
 
-	// Free the JPEG quality string if we allocated it.
+	rc := C.mupdf_pdf_clean_file(c.p, cIn, cOut, raw)
+
 	if jpegQuality != nil {
 		C.free(unsafe.Pointer(jpegQuality))
 	}
@@ -310,14 +328,14 @@ func (c *MuContext) PdfCleanFile(inputPath, outputPath string, opts *C.pdf_clean
 	return nil
 }
 
-// NewCleanOptions returns a pdf_clean_options struct configured to match
+// NewCleanOptions returns a pdf_clean_options handle configured to match
 // Ghostscript's -dPDFSETTINGS=/ebook: garbage collect, deduplicate, compress,
 // clean/sanitize content streams, downsample colour/grayscale images to 150 DPI
 // JPEG @85, and bitonal images to 300 DPI CCITT Fax.
 //
-// The returned struct contains a C string (JPEG quality) that is freed by
+// The returned handle owns a C string (JPEG quality) that is freed by
 // PdfCleanFile after the call completes.
-func NewCleanOptions() *C.pdf_clean_options {
+func NewCleanOptions() *CleanOptions {
 	cJpegQuality := C.CString("85")
 
 	opts := &C.pdf_clean_options{}
@@ -359,5 +377,5 @@ func NewCleanOptions() *C.pdf_clean_options {
 	opts.image.bitonal_image_subsample_to = 300
 	opts.image.bitonal_image_recompress_method = C.FZ_RECOMPRESS_FAX
 
-	return opts
+	return &CleanOptions{p: opts}
 }

@@ -22,9 +22,7 @@ func isMatcherUnavailable(err error) bool {
 }
 
 func matcherUnavailableResponse(w http.ResponseWriter) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusServiceUnavailable)
-	json.NewEncoder(w).Encode(map[string]string{
+	writeJSON(w, http.StatusServiceUnavailable, map[string]string{
 		"error": "matcher unavailable — tag store is offline",
 	})
 }
@@ -48,7 +46,7 @@ func NewTagHandler(tag *curation.Tag, merges *curation.TagMerge, identity *curat
 // document counts.
 func (h *TagHandler) List(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	pb := GetParamBag(r)
 	if pb == nil {
@@ -91,18 +89,17 @@ func (h *TagHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "list tags", err)
+		writeServiceError(w, h.logger, reqID, "list tags", err)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(TagListResponse{Results: responses, Total: total})
+	writeJSON(w, http.StatusOK, TagListResponse{Results: responses, Total: total})
 }
 
 // Create creates one tag from the JSON body.
 func (h *TagHandler) Create(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	var req CreateTagRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -122,22 +119,17 @@ func (h *TagHandler) Create(w http.ResponseWriter, r *http.Request) {
 			matcherUnavailableResponse(w)
 			return
 		}
-		writeServiceError(w, h.logger, &reqID, "create tag", err)
+		writeServiceError(w, h.logger, reqID, "create tag", err)
 		return
 	}
 
 	switch results[0].Status {
 	case types.Created:
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(TagResponse{ID: results[0].Entity.ID, Name: results[0].Entity.Name})
+		writeJSON(w, http.StatusCreated, TagResponse{ID: results[0].Entity.ID, Name: results[0].Entity.Name})
 	case types.Apply, types.Alias:
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(TagResponse{ID: results[0].Entity.ID, Name: results[0].Entity.Name})
+		writeJSON(w, http.StatusOK, TagResponse{ID: results[0].Entity.ID, Name: results[0].Entity.Name})
 	case types.Conflict:
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusConflict)
-		json.NewEncoder(w).Encode(map[string]any{
+		writeJSON(w, http.StatusConflict, map[string]any{
 			"id":   results[0].Entity.ID,
 			"name": results[0].Entity.Name,
 		})
@@ -149,7 +141,7 @@ func (h *TagHandler) Create(w http.ResponseWriter, r *http.Request) {
 // Update renames one tag.
 func (h *TagHandler) Update(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
@@ -176,18 +168,15 @@ func (h *TagHandler) Update(w http.ResponseWriter, r *http.Request) {
 			matcherUnavailableResponse(w)
 			return
 		}
-		writeServiceError(w, h.logger, &reqID, "update tag", err)
+		writeServiceError(w, h.logger, reqID, "update tag", err)
 		return
 	}
 
 	switch results[0].Status {
 	case types.Updated, types.Noop:
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(TagResponse{ID: results[0].Entity.ID, Name: results[0].Entity.Name})
+		writeJSON(w, http.StatusOK, TagResponse{ID: results[0].Entity.ID, Name: results[0].Entity.Name})
 	case types.UpdateConflict:
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusConflict)
-		json.NewEncoder(w).Encode(map[string]any{
+		writeJSON(w, http.StatusConflict, map[string]any{
 			"id":   results[0].Entity.ID,
 			"name": results[0].Entity.Name,
 		})
@@ -201,7 +190,7 @@ func (h *TagHandler) Update(w http.ResponseWriter, r *http.Request) {
 // Delete removes a tag and blocks its name.
 func (h *TagHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
@@ -216,7 +205,7 @@ func (h *TagHandler) Delete(w http.ResponseWriter, r *http.Request) {
 			matcherUnavailableResponse(w)
 			return
 		}
-		writeServiceError(w, h.logger, &reqID, "delete tag", err)
+		writeServiceError(w, h.logger, reqID, "delete tag", err)
 		return
 	}
 
@@ -232,7 +221,7 @@ func (h *TagHandler) Delete(w http.ResponseWriter, r *http.Request) {
 // verdicts and pending identity counts.
 func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	pb := GetParamBag(r)
 	if pb == nil {
@@ -245,12 +234,12 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := h.tag.ListProvisional(ctx, int32(limit), int32(offset))
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "list provisional tags", err)
+		writeServiceError(w, h.logger, reqID, "list provisional tags", err)
 		return
 	}
 	total, err := h.tag.CountProvisional(ctx)
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "count provisional tags", err)
+		writeServiceError(w, h.logger, reqID, "count provisional tags", err)
 		return
 	}
 
@@ -262,7 +251,7 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 		}
 		events, err := h.tag.LatestQualityEventsForNames(ctx, names)
 		if err != nil {
-			writeServiceError(w, h.logger, &reqID, "provisional tag verdicts", err)
+			writeServiceError(w, h.logger, reqID, "provisional tag verdicts", err)
 			return
 		}
 		verdicts := make(map[string]TagQualityVerdictInfo, len(events))
@@ -280,7 +269,7 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 		}
 		pending, err := h.tag.PendingIdentityCounts(ctx, names)
 		if err != nil {
-			writeServiceError(w, h.logger, &reqID, "provisional tag identity evidence", err)
+			writeServiceError(w, h.logger, reqID, "provisional tag identity evidence", err)
 			return
 		}
 		for i, t := range rows {
@@ -298,14 +287,13 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(ProvisionalTagListResponse{Results: responses, Total: total})
+	writeJSON(w, http.StatusOK, ProvisionalTagListResponse{Results: responses, Total: total})
 }
 
 // PromoteTag promotes one provisional tag, recording the reason.
 func (h *TagHandler) PromoteTag(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
@@ -316,7 +304,7 @@ func (h *TagHandler) PromoteTag(w http.ResponseWriter, r *http.Request) {
 
 	_, status, err := h.tag.Promote(ctx, id, "human-approve")
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "promote tag", err)
+		writeServiceError(w, h.logger, reqID, "promote tag", err)
 		return
 	}
 
@@ -333,17 +321,15 @@ func (h *TagHandler) PromoteTag(w http.ResponseWriter, r *http.Request) {
 // ReevaluateIdentity enqueues a fresh identity sweep for the vocabulary.
 func (h *TagHandler) ReevaluateIdentity(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	batchID, alreadyQueued, err := h.identity.Enqueue(ctx)
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "enqueue tag identity run", err)
+		writeServiceError(w, h.logger, reqID, "enqueue tag identity run", err)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusAccepted)
-	json.NewEncoder(w).Encode(map[string]any{
+	writeJSON(w, http.StatusAccepted, map[string]any{
 		"batch_id":       batchID,
 		"already_queued": alreadyQueued,
 	})
@@ -352,7 +338,7 @@ func (h *TagHandler) ReevaluateIdentity(w http.ResponseWriter, r *http.Request) 
 // Merge folds one tag into the target from the JSON body.
 func (h *TagHandler) Merge(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
@@ -373,12 +359,11 @@ func (h *TagHandler) Merge(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.merges.Merge(ctx, id, req.TargetID)
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "merge tag", err)
+		writeServiceError(w, h.logger, reqID, "merge tag", err)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(MergeTagResponse{
+	writeJSON(w, http.StatusOK, MergeTagResponse{
 		ID:         result.TargetID,
 		Name:       result.TargetName,
 		Reassigned: result.Reassigned,
@@ -388,7 +373,7 @@ func (h *TagHandler) Merge(w http.ResponseWriter, r *http.Request) {
 // ListDeleted serves the paged deleted-tag records.
 func (h *TagHandler) ListDeleted(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	pb := GetParamBag(r)
 	if pb == nil {
@@ -402,7 +387,7 @@ func (h *TagHandler) ListDeleted(w http.ResponseWriter, r *http.Request) {
 
 	rows, total, err := h.tag.ListDeleted(ctx, q, int32(limit), int32(offset))
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "list deleted tags", err)
+		writeServiceError(w, h.logger, reqID, "list deleted tags", err)
 		return
 	}
 
@@ -416,14 +401,13 @@ func (h *TagHandler) ListDeleted(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(DeletedTagListResponse{Results: responses, Total: total})
+	writeJSON(w, http.StatusOK, DeletedTagListResponse{Results: responses, Total: total})
 }
 
 // RestoreDeleted unblocks one deleted tag name.
 func (h *TagHandler) RestoreDeleted(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	name := strings.TrimSpace(r.PathValue("name"))
 	if name == "" {
@@ -437,18 +421,17 @@ func (h *TagHandler) RestoreDeleted(w http.ResponseWriter, r *http.Request) {
 			matcherUnavailableResponse(w)
 			return
 		}
-		writeServiceError(w, h.logger, &reqID, "restore deleted tag", err)
+		writeServiceError(w, h.logger, reqID, "restore deleted tag", err)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"name": row.Name, "kind": row.Kind})
+	writeJSON(w, http.StatusOK, map[string]any{"name": row.Name, "kind": row.Kind})
 }
 
 // MergeSuggestions serves the paged merge-review candidates.
 func (h *TagHandler) MergeSuggestions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	pb := GetParamBag(r)
 	if pb == nil {
@@ -469,18 +452,17 @@ func (h *TagHandler) MergeSuggestions(w http.ResponseWriter, r *http.Request) {
 			matcherUnavailableResponse(w)
 			return
 		}
-		writeServiceError(w, h.logger, &reqID, "merge suggestions", err)
+		writeServiceError(w, h.logger, reqID, "merge suggestions", err)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"results": suggestions})
+	writeJSON(w, http.StatusOK, map[string]any{"results": suggestions})
 }
 
 // DismissMergePair records the decision not to merge a pair.
 func (h *TagHandler) DismissMergePair(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	var req MergePairRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -489,7 +471,7 @@ func (h *TagHandler) DismissMergePair(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.merges.DismissPair(ctx, req.TagA, req.TagB); err != nil {
-		writeServiceError(w, h.logger, &reqID, "dismiss merge pair", err)
+		writeServiceError(w, h.logger, reqID, "dismiss merge pair", err)
 		return
 	}
 
@@ -499,7 +481,7 @@ func (h *TagHandler) DismissMergePair(w http.ResponseWriter, r *http.Request) {
 // RestoreMergePair makes a dismissed pair reviewable again.
 func (h *TagHandler) RestoreMergePair(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	var req MergePairRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -508,7 +490,7 @@ func (h *TagHandler) RestoreMergePair(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.merges.RestorePair(ctx, req.TagA, req.TagB); err != nil {
-		writeServiceError(w, h.logger, &reqID, "restore merge pair", err)
+		writeServiceError(w, h.logger, reqID, "restore merge pair", err)
 		return
 	}
 

@@ -42,7 +42,7 @@ func mapTrashDocument(row database.ListTrashDocumentsRow) TrashDocumentResponse 
 // ListTrash serves the paged trash listing.
 func (h *TrashHandler) ListTrash(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	pb := GetParamBag(r)
 	if pb == nil {
@@ -55,13 +55,13 @@ func (h *TrashHandler) ListTrash(w http.ResponseWriter, r *http.Request) {
 
 	documents, err := h.trashSvc.ListTrash(ctx, int32(limit), int32(offset))
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "list trash documents", err)
+		writeServiceError(w, h.logger, reqID, "list trash documents", err)
 		return
 	}
 
 	total, err := h.trashSvc.CountTrash(ctx)
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "count trash documents", err)
+		writeServiceError(w, h.logger, reqID, "count trash documents", err)
 		return
 	}
 
@@ -70,8 +70,7 @@ func (h *TrashHandler) ListTrash(w http.ResponseWriter, r *http.Request) {
 		response[i] = mapTrashDocument(doc)
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(TrashListResponse{
+	writeJSON(w, http.StatusOK, TrashListResponse{
 		Documents: response,
 		Total:     total,
 		Limit:     int32(limit),
@@ -82,7 +81,7 @@ func (h *TrashHandler) ListTrash(w http.ResponseWriter, r *http.Request) {
 // GetTrashDocument serves one trashed document.
 func (h *TrashHandler) GetTrashDocument(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	documentID := r.PathValue("id")
 	if documentID == "" {
@@ -92,12 +91,11 @@ func (h *TrashHandler) GetTrashDocument(w http.ResponseWriter, r *http.Request) 
 
 	doc, err := h.trashSvc.GetTrashDocument(ctx, documentID)
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "get trash document", err)
+		writeServiceError(w, h.logger, reqID, "get trash document", err)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	writeJSON(w, http.StatusOK, map[string]any{
 		"id":               doc.ID,
 		"document_id":      doc.DocumentID,
 		"title":            doc.Title,
@@ -119,7 +117,7 @@ func (h *TrashHandler) GetTrashDocument(w http.ResponseWriter, r *http.Request) 
 // RestoreDocument moves one document back out of the trash.
 func (h *TrashHandler) RestoreDocument(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	documentID := r.PathValue("id")
 	if documentID == "" {
@@ -128,7 +126,7 @@ func (h *TrashHandler) RestoreDocument(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.trashSvc.RestoreDocument(ctx, documentID); err != nil {
-		writeServiceError(w, h.logger, &reqID, "restore document", err)
+		writeServiceError(w, h.logger, reqID, "restore document", err)
 		return
 	}
 
@@ -138,7 +136,7 @@ func (h *TrashHandler) RestoreDocument(w http.ResponseWriter, r *http.Request) {
 // PermanentlyDeleteDocument removes one trashed document for good.
 func (h *TrashHandler) PermanentlyDeleteDocument(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	documentID := r.PathValue("id")
 	if documentID == "" {
@@ -147,7 +145,7 @@ func (h *TrashHandler) PermanentlyDeleteDocument(w http.ResponseWriter, r *http.
 	}
 
 	if err := h.trashSvc.PermanentlyDelete(ctx, documentID); err != nil {
-		writeServiceError(w, h.logger, &reqID, "permanently delete document", err)
+		writeServiceError(w, h.logger, reqID, "permanently delete document", err)
 		return
 	}
 
@@ -157,23 +155,22 @@ func (h *TrashHandler) PermanentlyDeleteDocument(w http.ResponseWriter, r *http.
 // PurgeExpired purges the trash rows past their retention.
 func (h *TrashHandler) PurgeExpired(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	count, err := h.trashSvc.PurgeExpired(ctx)
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "purge expired documents", err)
+		writeServiceError(w, h.logger, reqID, "purge expired documents", err)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"purged": count})
+	writeJSON(w, http.StatusOK, map[string]any{"purged": count})
 }
 
 // BatchPermanentlyDelete permanently deletes many trashed documents,
 // reporting per-document failures.
 func (h *TrashHandler) BatchPermanentlyDelete(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	var req BatchDeleteRequest
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
@@ -187,16 +184,12 @@ func (h *TrashHandler) BatchPermanentlyDelete(w http.ResponseWriter, r *http.Req
 	cfg := h.getConfig()
 
 	if len(ids) == 0 {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "document_ids is required"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "document_ids is required"})
 		return
 	}
 
 	if len(ids) > cfg.Srv.MaxBatchDelete {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{
+		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "too many documents, max: " + strconv.Itoa(cfg.Srv.MaxBatchDelete),
 		})
 		return
@@ -212,20 +205,18 @@ func (h *TrashHandler) BatchPermanentlyDelete(w http.ResponseWriter, r *http.Req
 		result.Deleted++
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	status := http.StatusOK
 	if result.Deleted == 0 && len(result.Failed) > 0 {
-		w.WriteHeader(http.StatusBadRequest)
-	} else {
-		w.WriteHeader(http.StatusOK)
+		status = http.StatusBadRequest
 	}
-	json.NewEncoder(w).Encode(result)
+	writeJSON(w, status, result)
 }
 
 // BatchRestore restores many trashed documents, reporting per-document
 // failures.
 func (h *TrashHandler) BatchRestore(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	var req BatchDeleteRequest
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
@@ -239,16 +230,12 @@ func (h *TrashHandler) BatchRestore(w http.ResponseWriter, r *http.Request) {
 	cfg := h.getConfig()
 
 	if len(ids) == 0 {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "document_ids is required"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "document_ids is required"})
 		return
 	}
 
 	if len(ids) > cfg.Srv.MaxBatchDelete {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{
+		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "too many documents, max: " + strconv.Itoa(cfg.Srv.MaxBatchDelete),
 		})
 		return
@@ -264,11 +251,9 @@ func (h *TrashHandler) BatchRestore(w http.ResponseWriter, r *http.Request) {
 		result.Restored++
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	status := http.StatusOK
 	if result.Restored == 0 && len(result.Failed) > 0 {
-		w.WriteHeader(http.StatusBadRequest)
-	} else {
-		w.WriteHeader(http.StatusOK)
+		status = http.StatusBadRequest
 	}
-	json.NewEncoder(w).Encode(result)
+	writeJSON(w, status, result)
 }

@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 
 	"github.com/wgomg/edub-kushim/internal/database"
@@ -61,12 +62,12 @@ func insertSearchDoc(t *testing.T, q *database.Queries, title, textContent strin
 		t.Fatalf("no document types: %v", err)
 	}
 
-	docID := testutil.FormatString("doc-%d", len(textContent))
+	docID := fmt.Sprintf("doc-%d", len(textContent))
 	_, err = q.CreateDocument(context.Background(), database.CreateDocumentParams{
 		DocumentID:     docID,
 		Title:          title,
-		Md5Checksum:    testutil.FormatString("md5-%d", len(textContent)),
-		Sha512Checksum: testutil.FormatString("sha512-%d", len(textContent)),
+		Md5Checksum:    fmt.Sprintf("md5-%d", len(textContent)),
+		Sha512Checksum: fmt.Sprintf("sha512-%d", len(textContent)),
 		OriginalType:   "application/pdf",
 		FileSize:       int64(len(textContent)),
 		OriginalPath:   "/tmp/" + title,

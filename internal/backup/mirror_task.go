@@ -72,7 +72,7 @@ func (h *MirrorTaskHandler) Handle(ctx context.Context, t task.Task) (out json.R
 		return nil, err
 	}
 
-	result, timestamp, err := RunLockedWithProgress(ctx, h.queries, h.logger, cfg.Storage.StorageDir, dest,
+	result, timestamp, err := RunLocked(ctx, h.queries, h.logger, cfg.Storage.StorageDir, dest,
 		func(count int64) { progress.Set("drain-wait", fmt.Sprintf("%d in-flight", count), 0) },
 		func() { progress.Set("sync", dest, 0) },
 		uuid.NullUUID{UUID: t.ClaimToken, Valid: true},

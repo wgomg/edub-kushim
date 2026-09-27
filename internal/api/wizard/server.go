@@ -68,7 +68,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("POST /wizard/config/retry", configHandler.RetryFailedConfig)
 	mux.HandleFunc("POST /wizard/admin-user", configHandler.CreateAdminUser)
 
-	registerStaticRoutes(mux)
+	handlers.RegisterStaticRoutes(mux, WebFS())
 
 	s.httpServer = &http.Server{
 		Addr:         s.addr,
@@ -136,27 +136,4 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 
 	return nil
-}
-
-func registerStaticRoutes(mux *http.ServeMux) {
-	fsys := WebFS()
-	fileServer := http.FileServer(http.FS(fsys))
-
-	mux.HandleFunc("GET /{path...}", func(w http.ResponseWriter, r *http.Request) {
-		path := r.PathValue("path")
-		if path == "" {
-			fileServer.ServeHTTP(w, r)
-			return
-		}
-
-		f, err := fsys.Open(path)
-		if err != nil {
-			r.URL.Path = "/"
-			fileServer.ServeHTTP(w, r)
-			return
-		}
-		_ = f.Close()
-
-		fileServer.ServeHTTP(w, r)
-	})
 }

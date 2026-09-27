@@ -25,7 +25,7 @@ func NewDocumentTypeHandler(services *service.CrudServices, logger *log.Logger) 
 // List serves the paged document types with document counts.
 func (h *DocumentTypeHandler) List(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	pb := GetParamBag(r)
 	if pb == nil {
@@ -41,7 +41,7 @@ func (h *DocumentTypeHandler) List(w http.ResponseWriter, r *http.Request) {
 	if q != "" {
 		dts, err := h.services.DocumentType.SearchByNameWithDocumentCount(ctx, q, int32(limit))
 		if err != nil {
-			writeServiceError(w, h.logger, &reqID, "list document types", err)
+			writeServiceError(w, h.logger, reqID, "list document types", err)
 			return
 		}
 		result = make([]DocumentTypeResponse, len(dts))
@@ -51,7 +51,7 @@ func (h *DocumentTypeHandler) List(w http.ResponseWriter, r *http.Request) {
 	} else {
 		dts, err := h.services.DocumentType.ListAllWithDocumentCount(ctx)
 		if err != nil {
-			writeServiceError(w, h.logger, &reqID, "list document types", err)
+			writeServiceError(w, h.logger, reqID, "list document types", err)
 			return
 		}
 		result = make([]DocumentTypeResponse, len(dts))
@@ -60,14 +60,13 @@ func (h *DocumentTypeHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	writeJSON(w, http.StatusOK, result)
 }
 
 // Create creates one document type from the JSON body.
 func (h *DocumentTypeHandler) Create(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	var req CreateDocumentTypeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -87,21 +86,17 @@ func (h *DocumentTypeHandler) Create(w http.ResponseWriter, r *http.Request) {
 		{Name: req.Name, Description: req.Description},
 	})
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "create document type", err)
+		writeServiceError(w, h.logger, reqID, "create document type", err)
 		return
 	}
 
 	switch results[0].Status {
 	case types.Created:
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(DocumentTypeResponse{
+		writeJSON(w, http.StatusCreated, DocumentTypeResponse{
 			ID: results[0].Entity.ID, Name: results[0].Entity.Name, Description: results[0].Entity.Description,
 		})
 	case types.Conflict:
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusConflict)
-		json.NewEncoder(w).Encode(map[string]any{
+		writeJSON(w, http.StatusConflict, map[string]any{
 			"id":          results[0].Entity.ID,
 			"name":        results[0].Entity.Name,
 			"description": results[0].Entity.Description,
@@ -114,7 +109,7 @@ func (h *DocumentTypeHandler) Create(w http.ResponseWriter, r *http.Request) {
 // Update renames one document type.
 func (h *DocumentTypeHandler) Update(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
@@ -141,20 +136,17 @@ func (h *DocumentTypeHandler) Update(w http.ResponseWriter, r *http.Request) {
 		{ID: id, Name: req.Name, Description: req.Description},
 	})
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "update document type", err)
+		writeServiceError(w, h.logger, reqID, "update document type", err)
 		return
 	}
 
 	switch results[0].Status {
 	case types.Updated, types.Noop:
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(DocumentTypeResponse{
+		writeJSON(w, http.StatusOK, DocumentTypeResponse{
 			ID: results[0].Entity.ID, Name: results[0].Entity.Name, Description: results[0].Entity.Description,
 		})
 	case types.UpdateConflict:
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusConflict)
-		json.NewEncoder(w).Encode(map[string]any{
+		writeJSON(w, http.StatusConflict, map[string]any{
 			"id":          results[0].Entity.ID,
 			"name":        results[0].Entity.Name,
 			"description": results[0].Entity.Description,
@@ -169,7 +161,7 @@ func (h *DocumentTypeHandler) Update(w http.ResponseWriter, r *http.Request) {
 // Delete removes one document type.
 func (h *DocumentTypeHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
@@ -180,7 +172,7 @@ func (h *DocumentTypeHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	results, err := h.services.DocumentType.Delete(ctx, []int64{id})
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "delete document type", err)
+		writeServiceError(w, h.logger, reqID, "delete document type", err)
 		return
 	}
 
@@ -188,9 +180,7 @@ func (h *DocumentTypeHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	case types.Deleted:
 		w.WriteHeader(http.StatusNoContent)
 	case types.DeleteConflict:
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusConflict)
-		json.NewEncoder(w).Encode(map[string]string{"error": "in use"})
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "in use"})
 	default:
 		http.Error(w, "Document type not found", http.StatusNotFound)
 	}

@@ -5,12 +5,13 @@
 The project has **20+ test packages and 375+ unit/integration tests**, with a three-tier
 run strategy (Go backend + web UI):
 
-- **`make test`** (17 packages, no database required) — LLM registry, config, API types,
+- **`make test`** (18 packages, no database required) — LLM registry, config, API types,
   tools runner, logging (`internal/log`), text normalization (`internal/textnorm`), tagmatch, storage walk, auth tokens,
   auth middleware + permissions, content analyzer (prompt building, tag filtering, token
   estimation), error classification (`errs`), worker pool lifecycle, mirror (rsync
   stats parsing, remote-target detection, destination guards), the task-system registry
-  (`types`), the tag extension algebra (`tags`), and the shared flag parser (`ops/flags`).
+  (`types`), the tag extension algebra (`tags`), the setup wizard routes
+  (`internal/api/wizard`), and the shared flag parser (`ops/flags`).
 - **`make test-db`** (8 additional packages, requires PostgreSQL) — database CRUD queries,
   search engine, task system (store/dispatcher/runner/pool), service layer (batch,
   orphaned, errored files, users, enrichment, API keys), the tag curation services

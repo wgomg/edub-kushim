@@ -173,26 +173,7 @@ func (e *Engine) Search(ctx context.Context, query string, limit, offset int32) 
 
 	results := make([]Result, len(rows))
 	for i, r := range rows {
-		results[i] = Result{
-			ID:             r.ID,
-			DocumentID:     r.DocumentID,
-			Title:          r.Title,
-			MD5Checksum:    r.Md5Checksum,
-			SHA512Checksum: r.Sha512Checksum,
-			FileSize:       r.FileSize,
-			PageCount:      int32(r.PageCount),
-			WordCount:      int32(r.WordCount),
-			CharCount:      int32(r.CharCount),
-			Language:       r.Language,
-			DocumentTypeID: r.DocumentTypeID,
-			CreatedAt:      r.CreatedAt.Time,
-			ModifiedAt:     r.ModifiedAt.Time,
-			OriginalPath:   r.OriginalPath,
-			StoragePath:    r.StoragePath,
-			HasThumbnail:   r.HasThumbnail,
-			Snippet:        r.Snippet,
-			Rank:           r.Rank,
-		}
+		results[i] = toResult(r)
 	}
 
 	return results, nil
@@ -251,29 +232,34 @@ func (e *Engine) SearchStructured(ctx context.Context, filter Filter) ([]Result,
 
 	results := make([]Result, len(rows))
 	for i, r := range rows {
-		results[i] = Result{
-			ID:             r.ID,
-			DocumentID:     r.DocumentID,
-			Title:          r.Title,
-			MD5Checksum:    r.Md5Checksum,
-			SHA512Checksum: r.Sha512Checksum,
-			FileSize:       r.FileSize,
-			PageCount:      int32(r.PageCount),
-			WordCount:      int32(r.WordCount),
-			CharCount:      int32(r.CharCount),
-			Language:       r.Language,
-			DocumentTypeID: r.DocumentTypeID,
-			CreatedAt:      r.CreatedAt.Time,
-			ModifiedAt:     r.ModifiedAt.Time,
-			OriginalPath:   r.OriginalPath,
-			StoragePath:    r.StoragePath,
-			HasThumbnail:   r.HasThumbnail,
-			Snippet:        r.Snippet,
-			Rank:           r.Rank,
-		}
+		results[i] = toResult(r)
 	}
 
 	return results, total, nil
+}
+
+// toResult maps one search row to the engine's result shape.
+func toResult(r database.FTSDocumentRow) Result {
+	return Result{
+		ID:             r.ID,
+		DocumentID:     r.DocumentID,
+		Title:          r.Title,
+		MD5Checksum:    r.Md5Checksum,
+		SHA512Checksum: r.Sha512Checksum,
+		FileSize:       r.FileSize,
+		PageCount:      int32(r.PageCount),
+		WordCount:      int32(r.WordCount),
+		CharCount:      int32(r.CharCount),
+		Language:       r.Language,
+		DocumentTypeID: r.DocumentTypeID,
+		CreatedAt:      r.CreatedAt.Time,
+		ModifiedAt:     r.ModifiedAt.Time,
+		OriginalPath:   r.OriginalPath,
+		StoragePath:    r.StoragePath,
+		HasThumbnail:   r.HasThumbnail,
+		Snippet:        r.Snippet,
+		Rank:           r.Rank,
+	}
 }
 
 func sanitizeQuery(q string) string {

@@ -29,7 +29,7 @@ func NewSavedSearchHandler(queries *database.Queries, logger *log.Logger) *Saved
 // Create stores one named structured filter.
 func (h *SavedSearchHandler) Create(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	var req CreateSavedSearchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -59,15 +59,13 @@ func (h *SavedSearchHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]int64{"id": id})
+	writeJSON(w, http.StatusCreated, map[string]int64{"id": id})
 }
 
 // List serves the saved searches of the requesting user.
 func (h *SavedSearchHandler) List(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	searches, err := h.queries.ListSavedSearches(ctx)
 	if err != nil {
@@ -86,14 +84,13 @@ func (h *SavedSearchHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	writeJSON(w, http.StatusOK, response)
 }
 
 // Delete removes one saved search.
 func (h *SavedSearchHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)

@@ -254,6 +254,7 @@ test-short:
 		./internal/documents/storage/ \
 		./internal/auth/ \
 		./internal/api/ \
+		./internal/api/wizard/ \
 		./internal/llm/analyzer/ \
 		./internal/errs/ \
 		./internal/task/ \
@@ -278,6 +279,7 @@ test-verbose:
 		./internal/documents/storage/ \
 		./internal/auth/ \
 		./internal/api/ \
+		./internal/api/wizard/ \
 		./internal/llm/analyzer/ \
 		./internal/errs/ \
 		./internal/task/ \

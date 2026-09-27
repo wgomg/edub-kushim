@@ -474,7 +474,7 @@ keeps memory flat for multi-GB files. `ListFilePaths` additionally sorts by
 | `TargetWordCount` | `internal/matcher/client.go:49-55` | negative config = fraction of document; floor 2000 |
 | `NormalizeForDB` | `internal/enrichment/enricher.go:426`, people/curation services | canonical DB keys for dedup/lookup |
 | `estimateTokens` | `analyzer/gates.go` `checkContentTooLarge` | LLM pre-flight budget check |
-| `truncate` | `internal/enrichment/text.go:5-20` | title ≤ 127 chars |
+| `truncate` | `internal/enrichment/enricher.go:709-724` | title ≤ 127 chars |
 | `cleanCodeBlock` | both LLM adapters | strip fences before JSON parse |
 | `CalculateMD5` / SHA-512 | `internal/documents/consumption/scan.go` | content dedup + uniqueness |
 | `stripTags` | textextractor output | remove HTML noise from extracted text |

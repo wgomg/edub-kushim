@@ -8,17 +8,16 @@ import (
 )
 
 // ParamBag is the per-request lookup of query parameters, installed by
-// middleware and read by the handlers.
+// middleware and read by the handlers. Path values are the router's
+// business: handlers read them through r.PathValue.
 type ParamBag struct {
 	queryValues map[string]string
-	pathValues  map[string]string
 }
 
 // NewParamBag snapshots the request's query parameters.
 func NewParamBag(r *http.Request) *ParamBag {
 	pb := &ParamBag{
 		queryValues: make(map[string]string),
-		pathValues:  make(map[string]string),
 	}
 
 	for key, values := range r.URL.Query() {
@@ -27,20 +26,12 @@ func NewParamBag(r *http.Request) *ParamBag {
 		}
 	}
 
-	// extract path parameters (if using path variables)
-	// these would be populated by the router/middleware
-	// for now, we'll leave this empty
-
 	return pb
 }
 
-// Get returns the parameter's value or the default; path values take
-// precedence over query values.
+// Get returns the parameter's value or the default.
 func (pb *ParamBag) Get(key, defaultValue string) string {
 	if val, ok := pb.queryValues[key]; ok {
-		return val
-	}
-	if val, ok := pb.pathValues[key]; ok {
 		return val
 	}
 	return defaultValue
@@ -114,12 +105,6 @@ func (pb *ParamBag) GetStrings(key string) []string {
 	}
 
 	return strings.Split(strVal, ",")
-}
-
-// SetPathValue records a router path parameter; it wins over the query
-// value of the same key.
-func (pb *ParamBag) SetPathValue(key, value string) {
-	pb.pathValues[key] = value
 }
 
 type contextKey string

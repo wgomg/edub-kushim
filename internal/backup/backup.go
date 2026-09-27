@@ -245,21 +245,36 @@ func ApplyRetention(backupDir string, mode BackupMode, keep int) error {
 	return nil
 }
 
-func createTarGz(dstPath, tmpDir, storageDir string, mode BackupMode) error {
+func createTarGz(dstPath, tmpDir, storageDir string, mode BackupMode) (err error) {
 	f, err := os.OpenFile(dstPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return fmt.Errorf("create archive: %w", err)
 	}
-	defer f.Close()
+	// A close error is the only report a failed flush gets, so each close
+	// is checked; a failure only surfaces when no earlier error already
+	// explains the run
+	defer func() {
+		if cerr := f.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("close archive file: %w", cerr)
+		}
+	}()
 
 	gw, err := gzip.NewWriterLevel(f, gzip.BestSpeed)
 	if err != nil {
 		return fmt.Errorf("create gzip writer: %w", err)
 	}
-	defer gw.Close()
+	defer func() {
+		if cerr := gw.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("close gzip writer: %w", cerr)
+		}
+	}()
 
 	tw := tar.NewWriter(gw)
-	defer tw.Close()
+	defer func() {
+		if cerr := tw.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("close tar writer: %w", cerr)
+		}
+	}()
 
 	entries, err := os.ReadDir(tmpDir)
 	if err != nil {

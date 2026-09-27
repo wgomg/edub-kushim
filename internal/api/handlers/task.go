@@ -47,7 +47,7 @@ func NewTaskHandler(services *service.CrudServices, client *database.Client, log
 // task list.
 func (h *TaskHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	pb := GetParamBag(r)
 	if pb == nil {
@@ -92,14 +92,13 @@ func (h *TaskHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
 		resp.Tasks = append(resp.Tasks, taskToResponse(t))
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // GetTask serves one task's row with its progress.
 func (h *TaskHandler) GetTask(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	taskID := r.PathValue("id")
 
@@ -114,15 +113,14 @@ func (h *TaskHandler) GetTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(taskDetailResponse(t))
+	writeJSON(w, http.StatusOK, taskDetailResponse(t))
 }
 
 // GetTagReconcileReport serves the latest completed reconcile task's
 // report.
 func (h *TaskHandler) GetTagReconcileReport(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	row, err := h.queries.GetLastCompletedTagReconcileTaskWithResult(ctx)
 	if err != nil {
@@ -145,8 +143,7 @@ func (h *TaskHandler) GetTagReconcileReport(w http.ResponseWriter, r *http.Reque
 		result = *row.Result
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(TagReconcileReportResponse{
+	writeJSON(w, http.StatusOK, TagReconcileReportResponse{
 		TaskID:      row.TaskID,
 		CompletedAt: completedAt,
 		Result:      result,
@@ -156,7 +153,7 @@ func (h *TaskHandler) GetTagReconcileReport(w http.ResponseWriter, r *http.Reque
 // RetryTask resets one failed task for reprocessing.
 func (h *TaskHandler) RetryTask(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	taskID := r.PathValue("id")
 
@@ -176,7 +173,7 @@ func (h *TaskHandler) RetryTask(w http.ResponseWriter, r *http.Request) {
 // RetryBatch resets one batch's failed tasks.
 func (h *TaskHandler) RetryBatch(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	batchID := r.PathValue("id")
 
@@ -187,14 +184,13 @@ func (h *TaskHandler) RetryBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]int64{"retried": retried})
+	writeJSON(w, http.StatusOK, map[string]int64{"retried": retried})
 }
 
 // ListBatches serves the batch summaries, optionally filtered by status.
 func (h *TaskHandler) ListBatches(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	pb := GetParamBag(r)
 	if pb == nil {
@@ -225,8 +221,7 @@ func (h *TaskHandler) ListBatches(w http.ResponseWriter, r *http.Request) {
 		resp.Batches = append(resp.Batches, batchSummaryToResponse(&s))
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func batchSummaryToResponse(s *service.BatchSummary) BatchSummaryResponse {
@@ -254,7 +249,7 @@ func batchSummaryToResponse(s *service.BatchSummary) BatchSummaryResponse {
 // analytics, processing health and storage usage.
 func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	items := make([]BatchOverviewItem, 0)
 	overviews, err := h.services.Batch.ListOverviews(ctx, 10, 0)
@@ -298,10 +293,10 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 		runningTasks = append(runningTasks, taskToResponse(t))
 	}
 
-	analytics := h.buildDocumentAnalytics(ctx, &reqID)
+	analytics := h.buildDocumentAnalytics(ctx, reqID)
 
 	var processingHealth *ProcessingHealth
-	ph, err := h.buildProcessingHealth(ctx, &reqID)
+	ph, err := h.buildProcessingHealth(ctx, reqID)
 	if err != nil {
 		h.logger.Error(reqID, "processing health: %v", err)
 	} else {
@@ -390,8 +385,7 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(DashboardResponse{
+	writeJSON(w, http.StatusOK, DashboardResponse{
 		RecentBatches: items,
 		RunningTasks: RunningTasksResponse{
 			Count: activeCount,
@@ -419,29 +413,25 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *TaskHandler) buildDocumentAnalytics(ctx context.Context, reqID *string) *DocumentAnalytics {
-	id := ""
-	if reqID != nil {
-		id = *reqID
-	}
+func (h *TaskHandler) buildDocumentAnalytics(ctx context.Context, reqID string) *DocumentAnalytics {
 	langRows, err := h.queries.LanguageDistribution(ctx)
 	if err != nil {
-		h.logger.Error(id, "language distribution: %v", err)
+		h.logger.Error(reqID, "language distribution: %v", err)
 		return nil
 	}
 	docTypeRows, err := h.queries.DocumentTypeDistribution(ctx)
 	if err != nil {
-		h.logger.Error(id, "document type distribution: %v", err)
+		h.logger.Error(reqID, "document type distribution: %v", err)
 		return nil
 	}
 	tagRows, err := h.queries.TagFrequency(ctx)
 	if err != nil {
-		h.logger.Error(id, "tag frequency: %v", err)
+		h.logger.Error(reqID, "tag frequency: %v", err)
 		return nil
 	}
 	missing, err := h.queries.MissingCounts(ctx)
 	if err != nil {
-		h.logger.Error(id, "missing counts: %v", err)
+		h.logger.Error(reqID, "missing counts: %v", err)
 		return nil
 	}
 
@@ -468,11 +458,7 @@ func (h *TaskHandler) buildDocumentAnalytics(ctx context.Context, reqID *string)
 	return analytics
 }
 
-func (h *TaskHandler) buildProcessingHealth(ctx context.Context, reqID *string) (*ProcessingHealth, error) {
-	id := ""
-	if reqID != nil {
-		id = *reqID
-	}
+func (h *TaskHandler) buildProcessingHealth(ctx context.Context, reqID string) (*ProcessingHealth, error) {
 	successRow, err := h.queries.TaskSuccessRate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("task success rate: %w", err)
@@ -496,7 +482,7 @@ func (h *TaskHandler) buildProcessingHealth(ctx context.Context, reqID *string) 
 
 	orphanedCount, err := h.services.Batch.CountOrphaned(ctx)
 	if err != nil {
-		h.logger.Debug(id, "count orphaned: %v", err)
+		h.logger.Debug(reqID, "count orphaned: %v", err)
 	}
 
 	missingTools := int64(0)
@@ -519,7 +505,7 @@ func (h *TaskHandler) buildProcessingHealth(ctx context.Context, reqID *string) 
 // GetBatchSummary serves one batch's per-status counts.
 func (h *TaskHandler) GetBatchSummary(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	batchID := r.PathValue("id")
 
@@ -530,8 +516,7 @@ func (h *TaskHandler) GetBatchSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(batchSummaryToResponse(s))
+	writeJSON(w, http.StatusOK, batchSummaryToResponse(s))
 
 	h.logger.Debug(reqID, "batch summary: %+v", s)
 }
@@ -539,7 +524,7 @@ func (h *TaskHandler) GetBatchSummary(w http.ResponseWriter, r *http.Request) {
 // ResumeBatch moves a paused batch back to queued.
 func (h *TaskHandler) ResumeBatch(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	batchID := r.PathValue("id")
 
@@ -551,9 +536,7 @@ func (h *TaskHandler) ResumeBatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !hasWork {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]any{
+		writeJSON(w, http.StatusOK, map[string]any{
 			"resumed": false,
 			"reason":  "batch is already settled",
 		})
@@ -562,9 +545,7 @@ func (h *TaskHandler) ResumeBatch(w http.ResponseWriter, r *http.Request) {
 
 	locked, err := h.services.Batch.IsLockedByLiveOwner(ctx, batchID)
 	if err == nil && locked {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusConflict)
-		json.NewEncoder(w).Encode(map[string]string{
+		writeJSON(w, http.StatusConflict, map[string]string{
 			"error": "batch is locked by a live owner",
 		})
 		return
@@ -584,9 +565,7 @@ func (h *TaskHandler) ResumeBatch(w http.ResponseWriter, r *http.Request) {
 
 	h.logger.Info(reqID, "enqueued batch %s for resumption", batchID)
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusAccepted)
-	json.NewEncoder(w).Encode(map[string]any{
+	writeJSON(w, http.StatusAccepted, map[string]any{
 		"resumed": true,
 	})
 }
@@ -595,7 +574,7 @@ func (h *TaskHandler) ResumeBatch(w http.ResponseWriter, r *http.Request) {
 // is signalled, and processing tasks are discarded when it steps down.
 func (h *TaskHandler) CancelBatch(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	batchID := r.PathValue("id")
 
@@ -623,8 +602,7 @@ func (h *TaskHandler) CancelBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	writeJSON(w, http.StatusOK, map[string]any{
 		"batch_id":             batchID,
 		"cancelled_pending":    pendingCancelled,
 		"cancelled_processing": processingCancelled,

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"testing"
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/log"
@@ -21,9 +22,7 @@ func NewTestLogger() *log.Logger {
 
 // NewTestConfig creates a Config for testing with temporary directories.
 // Returns the config and a cleanup function that removes the temp directory.
-func NewTestConfig(t interface {
-	Fatalf(format string, args ...any)
-}) (*config.Config, func()) {
+func NewTestConfig(t testing.TB) (*config.Config, func()) {
 	configDir, err := os.MkdirTemp("", "edub-kushim-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp config dir: %v", err)
@@ -116,9 +115,7 @@ startxref
 }
 
 // CreateTestPDF writes a minimal PDF holding the content to path.
-func CreateTestPDF(t interface {
-	Fatalf(format string, args ...any)
-}, path, content string) {
+func CreateTestPDF(t testing.TB, path, content string) {
 	data := MinimalTextPDF(content)
 	if err := os.WriteFile(path, data, 0644); err != nil {
 		t.Fatalf("failed to write test PDF: %v", err)
@@ -126,41 +123,28 @@ func CreateTestPDF(t interface {
 }
 
 // CreateTestFile writes data to the given path.
-func CreateTestFile(t interface {
-	Fatalf(format string, args ...any)
-}, path, content string) {
+func CreateTestFile(t testing.TB, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("failed to write test file: %v", err)
 	}
 }
 
-// FormatString formats like fmt.Sprintf, a helper for assert calls.
-func FormatString(format string, args ...any) string {
-	return fmt.Sprintf(format, args...)
-}
-
 // AssertEqual fails when the two values' string forms differ.
-func AssertEqual(t interface {
-	Fatalf(format string, args ...any)
-}, got, want any, msg string) {
+func AssertEqual(t testing.TB, got, want any, msg string) {
 	if fmt.Sprintf("%v", got) != fmt.Sprintf("%v", want) {
 		t.Fatalf("%s: got %v, want %v", msg, got, want)
 	}
 }
 
 // AssertNoError fails the test on a non-nil error.
-func AssertNoError(t interface {
-	Fatalf(format string, args ...any)
-}, err error, msg string) {
+func AssertNoError(t testing.TB, err error, msg string) {
 	if err != nil {
 		t.Fatalf("%s: unexpected error: %v", msg, err)
 	}
 }
 
 // AssertError fails the test when the error is nil.
-func AssertError(t interface {
-	Fatalf(format string, args ...any)
-}, err error, msg string) {
+func AssertError(t testing.TB, err error, msg string) {
 	if err == nil {
 		t.Fatalf("%s: expected error, got nil", msg)
 	}

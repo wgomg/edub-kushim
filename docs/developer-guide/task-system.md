@@ -571,7 +571,7 @@ Key formats in use:
 | Task type | Key | Source |
 |---|---|---|
 | consume | `consume:<md5>` (scan/restore paths) or the file path (direct CLI) | `scan.go:90-97`, `service/orphaned.go:183` |
-| enrich | `enrich:doc:<document_id>` | `internal/enrichment/enrich.go:51-60`, `service/enrich.go:47,72` |
+| enrich | `enrich:doc:<document_id>` | `internal/enrichment/enrich.go:62-73`, `service/enrich.go:47,72` |
 | backup | `backup:<UTC date>` | `internal/backup/backup_task.go:36-38` |
 | mirror | `mirror:<UTC date>` | `internal/backup/mirror_task.go` |
 | config | `config:tessdata:<lang>` / `config:hugot` / `config:migrate-db` / `config:migrate-storage` | `internal/ops/configtask/configtask.go` |
@@ -719,7 +719,7 @@ sweeps handle process death after the cutoff.
   (`service/batch.go:211-235`): now transactional — `RetryFailedTasksByBatch`
   then `RestoreDiscardedEnrichTasksByBatch` commit together, so the restore
   can't race task claiming.
-- **`POST /api/v1/batches/{id}/resume`** (`api/handlers/task.go:495-547`) —
+- **`POST /api/v1/batches/{id}/resume`** (`api/handlers/task.go:525-574`) —
   the full recovery: refuses if the batch is settled (no pending work) or
   locked by a live owner (409), then `ResetProcessingTasksByBatch` +
   `RequeueBatch` (`status = 'queued'`) — the daemon's notify/timer picks it

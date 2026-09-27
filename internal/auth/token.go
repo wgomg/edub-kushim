@@ -20,7 +20,7 @@ func GenerateSessionSecret() (string, error) {
 }
 
 // GenerateToken signs a 24-hour HS256 session token for the user.
-func GenerateToken(userID int64, username, role, secret string) (string, error) {
+func GenerateToken(userID int64, username string, role Role, secret string) (string, error) {
 	claims := Claims{
 		UserID:   userID,
 		Username: username,
@@ -46,7 +46,9 @@ func ValidateToken(tokenString string, secret string) (*Claims, error) {
 	}
 
 	claims, ok := token.Claims.(*Claims)
-	if !ok || !token.Valid {
+	if !ok {
+		// ParseWithClaims already rejects an invalid token, so only a
+		// claims type mismatch could reach here — which cannot happen.
 		return nil, jwt.ErrSignatureInvalid
 	}
 

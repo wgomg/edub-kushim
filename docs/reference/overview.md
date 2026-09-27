@@ -16,11 +16,13 @@ internal/
 │   │   ├── errored.go      # Errored file management handlers (list, download, delete, delete-all)
 │   │   ├── errors.go       # Shared error writing helpers
 │   │   ├── health.go       # Health check handler
+│   │   ├── json.go         # Shared JSON response writer (writeJSON)
 │   │   ├── llm.go          # LLM model catalog discovery handler
 │   │   ├── logs.go         # Log viewer handler
 │   │   ├── orphaned.go     # Orphaned file management handlers (list, scan, delete, restore, move-to-inbox)
 │   │   ├── people.go       # People + people-type CRUD handlers + request/response types
 │   │   ├── saved_search.go # Saved search CRUD handlers + request/response types
+│   │   ├── static.go       # RegisterStaticRoutes — embedded SPA serving with index fallback (shared with the wizard)
 │   │   ├── tag.go          # Tag CRUD handlers (list, create, update, delete, provisional queue, promote) + request/response types
 │   │   ├── task.go         # Task API handlers (list, get, batch summary, global summary with waiting status) + response types
 │   │   ├── trash.go        # Trash/soft-delete handlers (list, get, restore, permanent delete, batch, purge)
@@ -134,9 +136,8 @@ internal/
 │       ├── mupdf.go        # MuPDF page renderer (CGo)
 │       └── standalone.go   # RunStandalone thumbnail pipeline (subprocess entry)
 ├── enrichment/             # Enrichment engine (LLM pipeline) + its task handler
-│   ├── enricher.go         # Enricher: dual text reduction → tag matching → token budget pre-check + retry loop → LLM → consolidation → admission seams → people/tag/doc type with romanization + normalization
-│   ├── enrich.go           # EnrichTaskHandler (fetches document, calls Enricher.Enrich)
-│   └── text.go             # truncate — rune-aware title truncation with the "Unknown" sentinel
+│   ├── enricher.go         # Enricher: dual text reduction → tag matching → token budget pre-check + retry loop → LLM → consolidation → admission seams → people/tag/doc type with romanization + normalization; truncate (rune-aware title truncation with the "Unknown" sentinel)
+│   └── enrich.go           # EnrichTaskHandler (fetches document, calls Enricher.Enrich)
 ├── errs/                   # Error classification (kind, wrapping, FromDB/PgError mapping)
 ├── llm/                    # LLM capability registry
 │   ├── analyzer/           # LLM classification adapters (capability-based)
@@ -156,7 +157,7 @@ internal/
 │   ├── model_catalog.json  # Manually curated model catalog (committed to repo)
 │   └── registry.go         # Registry: loads catalog, Lookup, Adapters, ProvidersForAdapter, ModelsForProvider
 ├── log/                    # Structured logging and memory metrics
-│   ├── logger.go           # Logger (slog-based console/file handlers, numeric level filtering, reqID)
+│   ├── logger.go           # Logger (slog-based console/file handlers, numeric level filtering, reqID) + WithReqID/ReqIDFrom context accessors
 │   └── metrics.go          # Memory metrics (HeapInUse, RSS, NumGC), HumanDuration, FormatMemDelta, FormatBytes
 ├── matcher/                # Tag matcher: Hugot engine, RPC client, embedding cache
 │   ├── adapter.go          # Matcher, Embedder, EmbeddingStore interfaces

@@ -8,11 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
-
-	"golang.org/x/text/unicode/norm"
 )
 
-var tagSpaceRE = regexp.MustCompile(` +`)
 var tagDisallowedRE = regexp.MustCompile(`[^+#.\p{L}\p{Nd} ]`)
 
 // NormalizeTag applies the tag-name grammar: NFKC normalization, lowercase,
@@ -22,18 +19,9 @@ var tagDisallowedRE = regexp.MustCompile(`[^+#.\p{L}\p{Nd} ]`)
 // and counted. A name without any letter or digit normalizes to "", which
 // callers must treat as a rejected candidate.
 func NormalizeTag(s string) string {
-	s = norm.NFKC.String(s)
-	s = strings.ToLower(strings.TrimSpace(s))
-	s = strings.ReplaceAll(s, "-", " ")
-	s = strings.ReplaceAll(s, "_", " ")
-	s = strings.ReplaceAll(s, "\u2013", " ")
-	s = strings.ReplaceAll(s, "\u2014", " ")
-	s = strings.ReplaceAll(s, "\u2010", " ")
-	s = strings.ReplaceAll(s, "\u2011", " ")
-	s = strings.ReplaceAll(s, "\uFF0D", " ")
-	s = FoldAccents(s)
+	s = canonicalHead(s)
 	s = tagDisallowedRE.ReplaceAllString(s, "")
-	s = tagSpaceRE.ReplaceAllString(s, " ")
+	s = multiSpace.ReplaceAllString(s, " ")
 	s = strings.TrimSpace(s)
 	if !containsLetterOrDigit(s) {
 		return ""

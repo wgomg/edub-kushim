@@ -59,9 +59,9 @@ type Enricher struct {
 // curation tag service every tag write goes through, and the matcher. It
 // builds the tools runner (reduction, analysis, matching) and the
 // admission adjudicator from the same parts.
-func NewEnricher(cfg *config.Config, logger *log.Logger, client *database.Client, tag *curation.Tag, matcher matcher.Matcher) (*Enricher, error) {
+func NewEnricher(cfg *config.Config, logger *log.Logger, client *database.Client, tag *curation.Tag, matcher matcher.Matcher) *Enricher {
 	runner := tools.NewRunnerWithMatcher(logger, cfg, []string{"textreducer", "contentanalyzer", "tagmatcher"}, matcher)
-	e := &Enricher{
+	return &Enricher{
 		config:    cfg,
 		logger:    logger,
 		client:    client,
@@ -70,7 +70,6 @@ func NewEnricher(cfg *config.Config, logger *log.Logger, client *database.Client
 		runner:    runner,
 		admission: admission.NewAdjudicator(cfg, logger, client.Queries, runner),
 	}
-	return e, nil
 }
 
 // Enrich runs the whole enrichment pass for one stored document and
@@ -80,7 +79,7 @@ func NewEnricher(cfg *config.Config, logger *log.Logger, client *database.Client
 // must be non-nil; pass task.NoopProgress to report nothing.
 func (e *Enricher) Enrich(ctx context.Context, document database.Document, report task.ProgressFunc) (*json.RawMessage, error) {
 	logId := document.DocumentID
-	ctx = context.WithValue(ctx, "reqid", logId)
+	ctx = log.WithReqID(ctx, logId)
 
 	start := time.Now()
 	e.logger.Info(logId, "starting enrichment for file %s", document.StoragePath)
@@ -703,4 +702,23 @@ func (e *Enricher) ensureOCRLanguage(ctx context.Context, detectedLang string) {
 		e.mu.Unlock()
 		e.logger.Info("", "auto-detected OCR language %q added to consumer.ocr.languages", lang)
 	}()
+}
+
+// truncate caps s at maxLength runes, trimming trailing whitespace; a
+// blank s becomes "Unknown" rather than an empty title.
+func truncate(s string, maxLength int) string {
+	defaultString := "Unknown"
+
+	if strings.ReplaceAll(s, " ", "") == "" {
+		return defaultString
+	}
+
+	runes := []rune(s)
+	if len(runes) <= maxLength {
+		return s
+	}
+
+	trunc := string(runes[:maxLength])
+	trunc = strings.TrimRight(trunc, " \t\n\r")
+	return trunc
 }

@@ -19,7 +19,7 @@ type HealthResponse struct {
 // HealthHandler serves the liveness check.
 func HealthHandler(w http.ResponseWriter, r *http.Request, logger *log.Logger) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 	logger.Debug(reqID, "Health check requested")
 
 	response := HealthResponse{

@@ -199,25 +199,12 @@ func WriteState(dest string, state State) error {
 }
 
 // RunLocked acquires the maintenance lock (skipping cleanly when busy),
-// mirrors, and records the mirror task's completion; onWait reports the
-// queued count while waiting for the lock. Returns the result and the
-// lock token, with ok=false when the lock was busy.
-func RunLocked(ctx context.Context, queries *database.Queries, logger *log.Logger, storageDir, dest string, onWait ...func(count int64)) (*Result, string, error) {
-	var wait func(count int64)
-	if len(onWait) > 0 {
-		wait = onWait[0]
-	}
-	return runLocked(ctx, queries, logger, storageDir, dest, wait, nil, uuid.NullUUID{})
-}
-
-// RunLockedWithProgress is RunLocked with progress callbacks: onWait for
-// the lock wait, onSync when the sync starts. token, when valid, is the
-// blocking task's claim token the run settles.
-func RunLockedWithProgress(ctx context.Context, queries *database.Queries, logger *log.Logger, storageDir, dest string, onWait func(count int64), onSync func(), token uuid.NullUUID) (*Result, string, error) {
-	return runLocked(ctx, queries, logger, storageDir, dest, onWait, onSync, token)
-}
-
-func runLocked(ctx context.Context, queries *database.Queries, logger *log.Logger, storageDir, dest string, onWait func(count int64), onSync func(), token uuid.NullUUID) (*Result, string, error) {
+// mirrors, and records the mirror task's completion. onWait, when non-nil,
+// reports the queued count while waiting for the lock; onSync, when
+// non-nil, runs when the sync starts. token, when valid, is the blocking
+// task's claim token the run settles. The returned string is the state
+// timestamp.
+func RunLocked(ctx context.Context, queries *database.Queries, logger *log.Logger, storageDir, dest string, onWait func(count int64), onSync func(), token uuid.NullUUID) (*Result, string, error) {
 	stopHeartbeat := database.StartMaintenanceLockHeartbeat(ctx, queries, logger, 5*time.Minute, token)
 	defer stopHeartbeat()
 

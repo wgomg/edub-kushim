@@ -80,7 +80,7 @@ func toUserResponseFromRow(row database.ListUsersRow) UserResponse {
 // List serves the paged user listing.
 func (h *UserHandler) List(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	pb := GetParamBag(r)
 	if pb == nil {
@@ -93,13 +93,13 @@ func (h *UserHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	users, err := h.services.User.List(ctx, int32(limit), int32(offset))
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "list users", err)
+		writeServiceError(w, h.logger, reqID, "list users", err)
 		return
 	}
 
 	total, err := h.services.User.Count(ctx)
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "list users", err)
+		writeServiceError(w, h.logger, reqID, "list users", err)
 		return
 	}
 
@@ -108,14 +108,13 @@ func (h *UserHandler) List(w http.ResponseWriter, r *http.Request) {
 		responses[i] = toUserResponseFromRow(u)
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(UserListResponse{Users: responses, Total: total})
+	writeJSON(w, http.StatusOK, UserListResponse{Users: responses, Total: total})
 }
 
 // Get serves one user without the hash.
 func (h *UserHandler) Get(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
@@ -130,18 +129,17 @@ func (h *UserHandler) Get(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "User not found", http.StatusNotFound)
 			return
 		}
-		writeServiceError(w, h.logger, &reqID, "get user", err)
+		writeServiceError(w, h.logger, reqID, "get user", err)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(toUserResponse(user))
+	writeJSON(w, http.StatusOK, toUserResponse(user))
 }
 
 // Create creates one user from the JSON body.
 func (h *UserHandler) Create(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	var req CreateUserRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -158,24 +156,20 @@ func (h *UserHandler) Create(w http.ResponseWriter, r *http.Request) {
 	user, err := h.services.User.Create(ctx, req.Username, req.Password, req.Role)
 	if err != nil {
 		if errs.KindOf(err) == errs.KindConflict {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusConflict)
-			json.NewEncoder(w).Encode(map[string]string{"error": "username already exists"})
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "username already exists"})
 			return
 		}
-		writeServiceError(w, h.logger, &reqID, "create user", err)
+		writeServiceError(w, h.logger, reqID, "create user", err)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(toUserResponse(user))
+	writeJSON(w, http.StatusCreated, toUserResponse(user))
 }
 
 // Update changes one user's username, password and role.
 func (h *UserHandler) Update(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
@@ -199,23 +193,20 @@ func (h *UserHandler) Update(w http.ResponseWriter, r *http.Request) {
 	user, err := h.services.User.Update(ctx, id, req.Username, req.Password, req.Role)
 	if err != nil {
 		if errs.KindOf(err) == errs.KindConflict {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusConflict)
-			json.NewEncoder(w).Encode(map[string]string{"error": "username already exists"})
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "username already exists"})
 			return
 		}
-		writeServiceError(w, h.logger, &reqID, "update user", err)
+		writeServiceError(w, h.logger, reqID, "update user", err)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(toUserResponse(user))
+	writeJSON(w, http.StatusOK, toUserResponse(user))
 }
 
 // Delete removes one user.
 func (h *UserHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
@@ -230,12 +221,12 @@ func (h *UserHandler) Delete(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "User not found", http.StatusNotFound)
 			return
 		}
-		writeServiceError(w, h.logger, &reqID, "delete user", err)
+		writeServiceError(w, h.logger, reqID, "delete user", err)
 		return
 	}
 
 	if err := h.services.User.Delete(ctx, existing.ID); err != nil {
-		writeServiceError(w, h.logger, &reqID, "delete user", err)
+		writeServiceError(w, h.logger, reqID, "delete user", err)
 		return
 	}
 

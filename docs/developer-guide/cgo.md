@@ -212,35 +212,40 @@ The Go string is a **copy**; the C buffer is dropped right after. Never keep
 a Go slice pointing into C memory.
 
 **The pixmap lifecycle — and the leak that taught the lesson**
-(`mupdf_wrapper.go:228-246`):
+(`mupdf_wrapper.go:264-284`):
 
 ```go
-func (d *MuDocument) RenderPage(ctx *MuContext, pageNum int, dpi float64) (width, height int, samples []byte, pixmap *C.fz_pixmap, err error) {
+func (d *MuDocument) RenderPage(ctx *MuContext, pageNum int, dpi float64) (width, height int, samples []byte, pixmap *Pixmap, err error) {
 	...
 	// Copy samples before dropping pixmap — this was the leak in go-fitz.
 	samples = C.GoBytes(unsafe.Pointer(p.samples), C.int(p.w*p.h*C.int(p.n)))
-	return int(w), int(h), samples, p, nil
+	return int(w), int(h), samples, &Pixmap{p: p}, nil
 }
 
-// FreePixmap drops a pixmap. Must be called after RenderPage.
-func FreePixmap(ctx *MuContext, pixmap *C.fz_pixmap) {
-	C.fz_drop_pixmap(ctx.p, pixmap)
+// FreePixmap releases a pixmap returned by RenderPage. Safe to call with a
+// nil pixmap.
+func FreePixmap(ctx *MuContext, pixmap *Pixmap) {
+	if pixmap == nil {
+		return
+	}
+	C.fz_drop_pixmap(ctx.p, pixmap.p)
 }
 ```
 
-`RenderPage` returns **both** the copied `samples` (Go-owned, safe) and the
-live `pixmap` (C-owned) — the caller *must* call `FreePixmap` after it's
-done with the samples. The comment documents that an earlier wrapper
-(go-fitz) dropped the pixmap before copying, leaking the samples. The OCR
-pipeline calls `FreePixmap` right after queueing the render job
-(`ocr/standalone.go:82,143`).
+`RenderPage` returns **both** the copied `samples` (Go-owned, safe) and a
+live `Pixmap` handle owning the C buffer — the caller *must* call
+`FreePixmap` after it's done with the samples. The comment documents that an
+earlier wrapper (go-fitz) dropped the pixmap before copying, leaking the
+samples. The OCR pipeline calls `FreePixmap` right after queueing the render
+job (`ocr/standalone.go:82,143`).
 
 **C-allocated options with an embedded C string**
-(`mupdf_wrapper.go:291-340`): `NewCleanOptions` builds a
-`*C.pdf_clean_options` and allocates a `C.CString("85")` for the JPEG
-quality field; `PdfCleanFile` (which receives the struct) frees that string
-after the call (`mupdf_wrapper.go:271-283`). The ownership contract is
-documented in the doc comment — read it before reusing the options struct.
+(`mupdf_wrapper.go:338-381`): `NewCleanOptions` returns a `*CleanOptions`
+handle wrapping a `*C.pdf_clean_options` and allocates a `C.CString("85")`
+for the JPEG quality field; `PdfCleanFile` (which receives the handle) frees
+that string after the call (`mupdf_wrapper.go:301-329`). The ownership
+contract is documented in the doc comment — read it before reusing the
+options handle.
 
 The one-rule summary: **every `C.CString`, `C.CBytes`, `C.malloc`, or
 `fz_new_*` has exactly one owner, and the Go side frees it with `defer` or
@@ -251,7 +256,7 @@ explicitly documents who does.**
 ## 5. Go types wrapping C pointers
 
 The Go API hides `*C.fz_context` behind typed structs
-(`mupdf_wrapper.go:180-188`):
+(`mupdf_wrapper.go:194-202`):
 
 ```go
 type MuContext struct {
@@ -263,11 +268,15 @@ type MuDocument struct {
 }
 ```
 
+`Pixmap` and `CleanOptions` follow the same pattern
+(`mupdf_wrapper.go:204-215`), keeping `*C.fz_pixmap` and
+`*C.pdf_clean_options` out of every exported signature.
+
 - Methods take the *other* handle explicitly (`d.ExtractPageText(ctx, ...)`)
   because the context outlives documents — MuPDF requires the context for
   every drop call.
 - `Close` methods null the pointer after dropping
-  (`mupdf_wrapper.go:249-258`) so double-close is a no-op instead of a
+  (`mupdf_wrapper.go:286-296`) so double-close is a no-op instead of a
   double-free.
 - Numeric conversions are explicit everywhere: `C.int(pageNum)`,
   `int(C.fz_count_pages(ctx.p, d.p))`, `C.float(dpi)` — Go and C `int` are
@@ -280,20 +289,20 @@ type MuDocument struct {
 ## 6. The `!cgo` stub twin
 
 For every build without cgo, `mupdf_nocgo.go` (tag `//go:build !cgo`) provides
-the **same API with relaxed signatures**:
+the **same API with stub bodies**, including empty `Pixmap` and
+`CleanOptions` types so the signatures match the real build:
 
 ```go
-func (d *MuDocument) RenderPage(ctx *MuContext, pageNum int, dpi float64) (width, height int, samples []byte, pixmap any, err error) {
+func (d *MuDocument) RenderPage(ctx *MuContext, pageNum int, dpi float64) (width, height int, samples []byte, pixmap *Pixmap, err error) {
 	return 0, 0, nil, nil, errors.New("MuPDF not available without CGo")
 }
 ```
 
-- `pixmap any` and `opts any` instead of `*C.fz_pixmap` / `*C.pdf_clean_options`
-  — the stub must not reference C types that don't exist in a `CGO_ENABLED=0`
-  build. Callers that pass the pixmap through (like the OCR code) must
-  therefore also be cgo-gated or use `any`-safe handling.
+- The stubs must not reference C types that don't exist in a
+  `CGO_ENABLED=0` build, which is why `Pixmap`/`CleanOptions` are declared in
+  both files (`mupdf_nocgo.go:14-19`).
 - **Callers degrade gracefully**: `countPages()` returns 0 when the stub
-  errors, and ingestion is not blocked (`mupdf_nocgo.go:3-5` comment). The
+  errors, and ingestion is not blocked (`mupdf_nocgo.go:7-8` comment). The
   `edub` binary simply can't render or OCR; it relies on `kushim` for that.
 
 The two files must stay in sync manually — adding a method to the wrapper
@@ -422,7 +431,7 @@ exercise the C logic through the public Go API.
   and no other imports on the same line.
 - **Never return a Go slice/string pointing into C memory.** Always
   `C.GoBytes`/`C.GoString` copy, then drop the C object. The `go-fitz` leak
-  comment at `mupdf_wrapper.go:238` is the canonical cautionary tale.
+  comment at `mupdf_wrapper.go:272` is the canonical cautionary tale.
 - **Every `C.CString` needs its `defer C.free` immediately** — leaks are
   invisible (C heap) and don't show in Go's profiler.
 - **Go pointers must not be stored in C** (cgo pointer rules). The wrappers

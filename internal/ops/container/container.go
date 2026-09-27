@@ -259,10 +259,7 @@ func (c *Container) ensureDispatcher() error {
 		return err
 	}
 
-	enricher, err := enrichment.NewEnricher(c.cfg.Load(), c.logger, client, c.tag, matcherClient)
-	if err != nil {
-		return err
-	}
+	enricher := enrichment.NewEnricher(c.cfg.Load(), c.logger, client, c.tag, matcherClient)
 
 	registry := task.NewRegistry()
 	registry.Register(types.Task.Type.Consume, consumption.NewConsumeTaskHandler(consumer, store, client.Queries, c.logger))

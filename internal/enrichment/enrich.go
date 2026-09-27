@@ -56,12 +56,16 @@ func (h *EnrichTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMe
 }
 
 // DedupKey is the payload's document id, so one document never enriches
-// twice concurrently.
+// twice concurrently. A payload that does not decode, or carries no
+// document id, yields no key: the task then runs without deduplication
+// instead of being blocked.
 func (h *EnrichTaskHandler) DedupKey(payload json.RawMessage) string {
 	var p struct {
 		DocumentID string `json:"document_id"`
 	}
-	_ = json.Unmarshal(payload, &p)
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return ""
+	}
 	if p.DocumentID == "" {
 		return ""
 	}

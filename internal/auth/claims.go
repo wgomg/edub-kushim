@@ -30,7 +30,7 @@ func ValidRole(r string) bool {
 type Claims struct {
 	UserID   int64  `json:"user_id"`
 	Username string `json:"username"`
-	Role     string `json:"role"`
+	Role     Role   `json:"role"`
 	jwt.RegisteredClaims
 }
 

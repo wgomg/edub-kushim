@@ -42,7 +42,8 @@ type ConfigHandler struct {
 }
 
 // NewConfigHandler wires the config handler; the services attach after
-// bootstrap via SetServices.
+// bootstrap via SetServices. A nil client leaves the queries unset, so
+// the wizard can serve its pre-bootstrap routes.
 func NewConfigHandler(
 	getConfig func() *config.Config,
 	onConfigSet func(*config.Config),
@@ -51,15 +52,18 @@ func NewConfigHandler(
 	dispatcher *task.Dispatcher,
 	services *service.CrudServices,
 ) *ConfigHandler {
-	return &ConfigHandler{
+	h := &ConfigHandler{
 		getConfig:   getConfig,
 		onConfigSet: onConfigSet,
 		client:      client,
-		queries:     client.Queries,
 		logger:      logger,
 		dispatcher:  dispatcher,
 		services:    services,
 	}
+	if client != nil {
+		h.queries = client.Queries
+	}
+	return h
 }
 
 // SetServices attaches the lazily constructed services after bootstrap;
@@ -94,9 +98,7 @@ func (h *ConfigHandler) Bootstrap(w http.ResponseWriter, r *http.Request) {
 		MissingTools: config.MissingExternalToolErrors(cfg),
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(resp)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // GetConfig serves the sanitized configuration view.
@@ -108,9 +110,7 @@ func (h *ConfigHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 
 	resp := ConfigResponseFrom(cfg)
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(resp)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 var dbConnectionKeys = []string{
@@ -513,15 +513,7 @@ func (h *ConfigHandler) enqueueDBMigration(ctx context.Context, w http.ResponseW
 	}
 	payloadJSON, _ := json.Marshal(payload)
 
-	batchID := uuid.New().String()
-	h.services.Batch.Create(ctx, batchID, itypes.Batch.Source.Config, itypes.Batch.Status.Queued)
-
-	if _, err := h.dispatcher.Enqueue(ctx, itypes.Task.Type.Config, batchID, payloadJSON, ""); err != nil {
-		h.logger.Error("", "enqueue migration task: %v", err)
-		if delErr := h.queries.DeleteBatch(ctx, batchID); delErr != nil {
-			h.logger.Error("", "delete empty config batch %s: %v", batchID, delErr)
-		}
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to enqueue database migration"})
+	if !h.enqueueMigration(ctx, w, payloadJSON, "failed to enqueue database migration") {
 		return false
 	}
 
@@ -545,19 +537,33 @@ func (h *ConfigHandler) enqueueStorageMigration(ctx context.Context, w http.Resp
 	}
 	payloadJSON, _ := json.Marshal(payload)
 
-	batchID := uuid.New().String()
-	h.services.Batch.Create(ctx, batchID, itypes.Batch.Source.Config, itypes.Batch.Status.Queued)
-
-	if _, err := h.dispatcher.Enqueue(ctx, itypes.Task.Type.Config, batchID, payloadJSON, ""); err != nil {
-		h.logger.Error("", "enqueue storage migration task: %v", err)
-		if delErr := h.queries.DeleteBatch(ctx, batchID); delErr != nil {
-			h.logger.Error("", "delete empty config batch %s: %v", batchID, delErr)
-		}
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to enqueue storage migration"})
+	if !h.enqueueMigration(ctx, w, payloadJSON, "failed to enqueue storage migration") {
 		return false
 	}
 
 	h.logger.Info("", "storage migration queued: %s -> %s", cfg.Storage.StorageDir, payload.NewStorageDir)
+	return true
+}
+
+// enqueueMigration queues one migration task into a fresh config batch;
+// a failure is reported through the response writer and leaves no batch
+// behind. The caller has already claimed the task's dedup slot.
+func (h *ConfigHandler) enqueueMigration(ctx context.Context, w http.ResponseWriter, payloadJSON []byte, failure string) bool {
+	batchID := uuid.New().String()
+	if err := h.services.Batch.Create(ctx, batchID, itypes.Batch.Source.Config, itypes.Batch.Status.Queued); err != nil {
+		writeServiceError(w, h.logger, "", "create migration batch", err)
+		return false
+	}
+
+	if _, err := h.dispatcher.Enqueue(ctx, itypes.Task.Type.Config, batchID, payloadJSON, ""); err != nil {
+		h.logger.Error("", "enqueue migration task: %v", err)
+		if delErr := h.queries.DeleteBatch(ctx, batchID); delErr != nil {
+			h.logger.Error("", "delete empty config batch %s: %v", batchID, delErr)
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": failure})
+		return false
+	}
+
 	return true
 }
 
@@ -628,9 +634,7 @@ func (h *ConfigHandler) ConfigStatus(w http.ResponseWriter, r *http.Request) {
 		resp.MissingTools = config.FilterToolErrors(allTools)
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(resp)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // RetryFailedConfig retries the environment's failed tasks.
@@ -661,8 +665,7 @@ func (h *ConfigHandler) RetryFailedConfig(w http.ResponseWriter, r *http.Request
 		retried++
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]int{"retried": retried})
+	writeJSON(w, http.StatusOK, map[string]int{"retried": retried})
 }
 
 // CreateAdminUser creates the first admin account during setup.
@@ -689,12 +692,10 @@ func (h *ConfigHandler) CreateAdminUser(w http.ResponseWriter, r *http.Request) 
 	user, err := h.services.User.Create(ctx, req.Username, req.Password, "admin")
 	if err != nil {
 		if errs.KindOf(err) == errs.KindConflict {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusConflict)
-			json.NewEncoder(w).Encode(map[string]string{"error": "username already exists"})
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "username already exists"})
 			return
 		}
-		writeServiceError(w, h.logger, nil, "create admin user", err)
+		writeServiceError(w, h.logger, "", "create admin user", err)
 		return
 	}
 
@@ -703,9 +704,7 @@ func (h *ConfigHandler) CreateAdminUser(w http.ResponseWriter, r *http.Request) 
 		created = user.CreatedAt.Time.Format(time.RFC3339)
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(UserResponse{
+	writeJSON(w, http.StatusCreated, UserResponse{
 		ID:        user.ID,
 		Username:  user.Username,
 		Role:      "admin",
@@ -730,12 +729,6 @@ func sanitizeConfigStrings(v any) any {
 		}
 	}
 	return v
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
 }
 
 // FailedTaskSummary is one environment task that failed.

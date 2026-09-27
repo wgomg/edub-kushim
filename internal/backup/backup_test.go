@@ -458,3 +458,24 @@ func TestFileHash(t *testing.T) {
 		t.Errorf("hash = %s, want %s", got, want)
 	}
 }
+
+func TestCreateTarGzReportsCloseFailure(t *testing.T) {
+	// /dev/full accepts opens but fails every write with ENOSPC, so the
+	// flush error can only surface when the writers close
+	if _, err := os.Stat("/dev/full"); err != nil {
+		t.Skip("/dev/full unavailable: cannot force a flush failure")
+	}
+
+	tmpDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpDir, "payload.txt"), []byte("payload"), 0644); err != nil {
+		t.Fatalf("write payload: %v", err)
+	}
+
+	err := createTarGz("/dev/full", tmpDir, "", BackupModeDatabase)
+	if err == nil {
+		t.Fatal("createTarGz reported success although the archive could not be flushed")
+	}
+	if strings.Contains(err.Error(), "create archive") {
+		t.Fatalf("expected the open to succeed, got %q", err)
+	}
+}

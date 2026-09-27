@@ -375,3 +375,20 @@ func (l *Logger) Fatal(v ...any) {
 	}
 	os.Exit(1)
 }
+
+// reqIDKey is the context key the request id travels under; unexported so
+// the accessors below are the only way in and out.
+type reqIDKey struct{}
+
+// WithReqID stores the request id in ctx, where ReqIDFrom reads it back.
+// The id is the one the logging convention prepends as "REQID=<id>".
+func WithReqID(ctx context.Context, reqID string) context.Context {
+	return context.WithValue(ctx, reqIDKey{}, reqID)
+}
+
+// ReqIDFrom returns the request id stored in ctx, empty when none was
+// stored or the stored value is not a string.
+func ReqIDFrom(ctx context.Context) string {
+	id, _ := ctx.Value(reqIDKey{}).(string)
+	return id
+}

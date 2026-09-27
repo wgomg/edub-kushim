@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -34,11 +33,11 @@ func mapErroredFile(f service.ErroredFileInfo) map[string]any {
 // ListErrored serves the errors-directory listing.
 func (h *ErroredHandler) ListErrored(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	files, err := h.svc.List(ctx)
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "list errored files", err)
+		writeServiceError(w, h.logger, reqID, "list errored files", err)
 		return
 	}
 
@@ -47,13 +46,12 @@ func (h *ErroredHandler) ListErrored(w http.ResponseWriter, r *http.Request) {
 		result[i] = mapErroredFile(f)
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	writeJSON(w, http.StatusOK, result)
 }
 
 // DownloadErrored streams one errored original for inspection.
 func (h *ErroredHandler) DownloadErrored(w http.ResponseWriter, r *http.Request) {
-	reqID := requestID(r.Context())
+	reqID := log.ReqIDFrom(r.Context())
 
 	subdir := r.URL.Query().Get("subdir")
 	filename := r.URL.Query().Get("file")
@@ -65,7 +63,7 @@ func (h *ErroredHandler) DownloadErrored(w http.ResponseWriter, r *http.Request)
 
 	path, err := h.svc.GetPath(subdir, filename)
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "get errored file path", fmt.Errorf("invalid path: %w", err))
+		writeServiceError(w, h.logger, reqID, "get errored file path", fmt.Errorf("invalid path: %w", err))
 		return
 	}
 
@@ -94,7 +92,7 @@ func (h *ErroredHandler) DownloadErrored(w http.ResponseWriter, r *http.Request)
 
 // DeleteErrored removes one errored file.
 func (h *ErroredHandler) DeleteErrored(w http.ResponseWriter, r *http.Request) {
-	reqID := requestID(r.Context())
+	reqID := log.ReqIDFrom(r.Context())
 
 	subdir := r.URL.Query().Get("subdir")
 	filename := r.URL.Query().Get("file")
@@ -105,7 +103,7 @@ func (h *ErroredHandler) DeleteErrored(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.svc.Delete(subdir, filename); err != nil {
-		writeServiceError(w, h.logger, &reqID, "delete errored file", err)
+		writeServiceError(w, h.logger, reqID, "delete errored file", err)
 		return
 	}
 
@@ -115,16 +113,15 @@ func (h *ErroredHandler) DeleteErrored(w http.ResponseWriter, r *http.Request) {
 // DeleteAllErrored clears the whole errors directory.
 func (h *ErroredHandler) DeleteAllErrored(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reqID := requestID(ctx)
+	reqID := log.ReqIDFrom(ctx)
 
 	count, err := h.svc.DeleteAll(ctx)
 	if err != nil {
-		writeServiceError(w, h.logger, &reqID, "delete all errored files", err)
+		writeServiceError(w, h.logger, reqID, "delete all errored files", err)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	writeJSON(w, http.StatusOK, map[string]any{
 		"deleted": count,
 	})
 }

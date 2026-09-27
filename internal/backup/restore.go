@@ -180,7 +180,7 @@ func ReplaceFiles(extractDir string, db *sql.DB, dbCfg config.DatabaseConfig, ds
 			storageDir = filepath.Clean(storageDir)
 		}
 		if oldDir != "" && oldDir != storageDir {
-			if err := rewriteStoragePaths(context.Background(), db, oldDir, storageDir); err != nil {
+			if err := database.RewriteStoragePaths(context.Background(), db, oldDir, storageDir); err != nil {
 				return fmt.Errorf("rewrite storage paths: %w", err)
 			}
 		}
@@ -243,13 +243,6 @@ func ReplaceFiles(extractDir string, db *sql.DB, dbCfg config.DatabaseConfig, ds
 		fmt.Printf("Restored config saved as %s\n", restoredConfig)
 	}
 
-	return nil
-}
-
-func rewriteStoragePaths(ctx context.Context, db *sql.DB, oldDir, newDir string) error {
-	if err := database.RewriteStoragePaths(ctx, db, oldDir, newDir); err != nil {
-		return fmt.Errorf("rewrite storage paths: %w", err)
-	}
 	return nil
 }
 

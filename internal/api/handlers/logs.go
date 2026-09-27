@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"bufio"
-	"encoding/json"
 	"fmt"
 	"io"
 	"math"
@@ -41,12 +40,10 @@ func NewLogsHandler(getConfig func() *config.Config, logger *log.Logger) *LogsHa
 
 // ListLogs tails one process log, clamped between 100 and 5000 lines.
 func (h *LogsHandler) ListLogs(w http.ResponseWriter, r *http.Request) {
-	reqID := requestID(r.Context())
+	reqID := log.ReqIDFrom(r.Context())
 	name := r.PathValue("name")
 	if !allowedLogNames[name] {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "log not found"})
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "log not found"})
 		return
 	}
 
@@ -62,15 +59,11 @@ func (h *LogsHandler) ListLogs(w http.ResponseWriter, r *http.Request) {
 	f, err := os.Open(logPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]string{"error": "log not found"})
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "log not found"})
 			return
 		}
 		h.logger.Error(reqID, "open log file %s: %v", logPath, err)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": "failed to read log"})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to read log"})
 		return
 	}
 	defer f.Close()
@@ -78,9 +71,7 @@ func (h *LogsHandler) ListLogs(w http.ResponseWriter, r *http.Request) {
 	stat, err := f.Stat()
 	if err != nil {
 		h.logger.Error(reqID, "stat log file %s: %v", logPath, err)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": "failed to read log"})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to read log"})
 		return
 	}
 
@@ -92,9 +83,7 @@ func (h *LogsHandler) ListLogs(w http.ResponseWriter, r *http.Request) {
 		offset := stat.Size() - maxRead
 		if _, err := f.Seek(offset, io.SeekStart); err != nil {
 			h.logger.Error(reqID, "seek log file %s: %v", logPath, err)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]string{"error": "failed to read log"})
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to read log"})
 			return
 		}
 		reader = io.LimitReader(f, maxRead)
@@ -125,9 +114,7 @@ func (h *LogsHandler) ListLogs(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 			h.logger.Error(reqID, "read log file %s: %v", logPath, err)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]string{"error": "failed to read log"})
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to read log"})
 			return
 		}
 	}
@@ -160,6 +147,5 @@ func (h *LogsHandler) ListLogs(w http.ResponseWriter, r *http.Request) {
 	start := int(math.Max(0, float64(len(merged)-lines)))
 	result := merged[start:]
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"lines": result})
+	writeJSON(w, http.StatusOK, map[string]any{"lines": result})
 }
