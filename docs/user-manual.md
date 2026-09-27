@@ -2674,7 +2674,7 @@ enricher:
     enabled: false # disabled by default — enable after configuring LLM
     timeout: 120
     # min_tags: 3  # lower bound requested from the analyzer (default 3)
-    # max_tags: 5  # upper bound per document (default 5, max 20); also scales the matcher's suggestion list
+    # max_tags: 5  # scales the matcher's suggestion list (default 5, max 20); emitted tags are not capped
     # pause_on_credit_error: true  # pause batch on LLM provider credit/balance errors
     # prompt_template: ''  # optional custom LLM prompt; see docs for available placeholders
     # doc_type_refinement:
@@ -2796,7 +2796,7 @@ mirror:
 | `enricher.contentanalyzer`     | LLM-based document classification (adapter/provider/model)                         |
 | `enricher.contentanalyzer.llm` | Adapter/provider/model config (flat structure with capability flags)                |
 | `enricher.contentanalyzer.min_tags` | Lower bound of thematic tags requested from the analyzer (default `3`; validated `1 ≤ min ≤ max ≤ 20`) |
-| `enricher.contentanalyzer.max_tags` | Upper bound of thematic tags per document (default `5`, max `20`); also scales how many tag suggestions the matcher feeds the prompt (`TopN = 3 × max_tags`) |
+| `enricher.contentanalyzer.max_tags` | Scales how many tag suggestions the matcher feeds the prompt (`TopN = 3 × max_tags`; default `5`, max `20`). No longer caps emitted tags: the analyzer asks for at least `min_tags` and the filter applies no count cap |
 | `enricher.contentanalyzer.prompt_template` | Custom Go `text/template` for the LLM prompt; empty = built-in default |
 | `enricher.contentanalyzer.pause_on_credit_error` | Pause the batch when the LLM provider returns a credit/balance error (default `true`) |
 | `enricher.contentanalyzer.llm.request_delay` | Seconds to sleep after each LLM request (default `1`; `0` = off, max `60`) — for rate-limited providers |

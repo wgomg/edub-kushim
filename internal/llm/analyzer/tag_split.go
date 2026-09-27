@@ -9,8 +9,7 @@ import (
 // TagSplitVerdict is the split gate's answer for one tag.
 type TagSplitVerdict string
 
-// The two split verdicts: keep the tag whole, or split it into its
-// distinct concepts.
+// The two split verdicts: keep the tag whole, or split it into its parts.
 const (
 	TagSplitKeep  TagSplitVerdict = "keep"
 	TagSplitSplit TagSplitVerdict = "split"
@@ -23,19 +22,29 @@ type TagSplitResult struct {
 	Components []string
 }
 
-// TagSplitSystemMessage is the system prompt of the split gate.
-const TagSplitSystemMessage = "You are a tag-taxonomy classifier. Decide whether a tag denotes one concept or several distinct concepts."
+// TagSplitVersion pins the split gate's criteria text; the admission
+// driver's split log line carries it. The criteria changed in place under
+// the same verdict and response shape, so no cached verdict is
+// invalidated: split verdicts are in-process only.
+const TagSplitVersion = "v0"
 
-// BuildTagSplitPrompt renders the split gate's prompt: keep versus
-// genuinely distinct concepts, one entry per tag.
+// TagSplitSystemMessage is the system prompt of the split gate.
+const TagSplitSystemMessage = "You are a tag-taxonomy classifier. Decide whether a tag's words each name a subject a searcher would filter by on its own, and the tag is just their combination."
+
+// BuildTagSplitPrompt renders the split gate's prompt: for each tag, its
+// content words are the parts; the parts are subjects that work as tags on
+// their own and the phrase is just their combination (split), or the
+// phrase names one subject the parts cannot compose (keep). Unsettled
+// readings keep.
 func BuildTagSplitPrompt(tags []string) string {
 	var sb strings.Builder
-	sb.WriteString("For each tag below, decide whether it denotes one single concept or several distinct concepts that must become separate tags.\n")
-	sb.WriteString("Answer with ONLY a JSON object: {\"splits\":[{\"index\":0,\"verdict\":\"split\",\"components\":[\"first concept\",\"second concept\"]},...]}, one entry per tag, no explanations.\n")
+	sb.WriteString("For each tag below, take its content words as its parts; articles, conjunctions, and prepositions are not parts.\n")
+	sb.WriteString("Decide whether each part names a subject a searcher would filter by on its own, and whether the phrase is just their combination.\n")
+	sb.WriteString("Answer with ONLY a JSON object: {\"splits\":[{\"index\":0,\"verdict\":\"split\",\"components\":[\"first part\",\"second part\"]},...]}, one entry per tag, no explanations.\n")
 	sb.WriteString("Verdict must be exactly one of:\n")
-	sb.WriteString("- \"keep\": the tag denotes one single concept, including established proper names and set phrases\n")
-	sb.WriteString("- \"split\": the tag joins distinct concepts and must become separate tags; list the distinct concepts in \"components\"\n")
-	sb.WriteString("Use \"split\" only when the joined concepts are genuinely distinct and each deserves its own tag.\n\n")
+	sb.WriteString("- \"split\": every part names a subject that works as a tag on its own and the phrase is just their combination ('russian history' → 'russia', 'history'; 'philosophy of mind' → 'philosophy', 'mind'); list the parts in \"components\"\n")
+	sb.WriteString("- \"keep\": the phrase names one subject its parts cannot compose, or a part is not a subject on its own ('cold war', 'machine learning', 'climate change')\n")
+	sb.WriteString("When the reading is unsettled, answer \"keep\"; never force a split.\n\n")
 	for i, tag := range tags {
 		fmt.Fprintf(&sb, "Tag %d: %q\n", i, tag)
 	}

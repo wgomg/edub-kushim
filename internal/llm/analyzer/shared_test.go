@@ -75,8 +75,11 @@ func TestBuildPrompt_DefaultTemplate(t *testing.T) {
 	if !strings.Contains(result, "Analyze the excerpts") {
 		t.Error("expected output to start with default prompt header")
 	}
-	if !strings.Contains(result, "Between 3 and 5 thematic tags") {
-		t.Error("expected prompt to contain 'Between 3 and 5 thematic tags' from MinTags/MaxTags fields")
+	if !strings.Contains(result, "At least 3 tags") {
+		t.Error("expected prompt to contain 'At least 3 tags' from the MinTags field")
+	}
+	if strings.Contains(defaultPromptTemplate, "{{.MaxTags}}") {
+		t.Error("default template must not render the upper tag bound")
 	}
 }
 
@@ -478,10 +481,10 @@ func TestFilterTags(t *testing.T) {
 			want:            []string{"physics"},
 		},
 		{
-			name:            "caps at maxTags preserving order",
+			name:            "keeps every tag preserving order",
 			tags:            []string{"alpha", "bravo", "charlie", "delta", "echo", "foxtrot"},
 			knownNormalized: nil,
-			want:            []string{"alpha", "bravo", "charlie", "delta", "echo"},
+			want:            []string{"alpha", "bravo", "charlie", "delta", "echo", "foxtrot"},
 		},
 		{
 			name:            "nil people and empty title",
@@ -556,7 +559,7 @@ func TestFilterTags(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := FilterTags(tt.tags, tt.people, tt.knownNormalized, tt.title, tt.docTypeNames, 5)
+			got := FilterTags(tt.tags, NewTagFilter(tt.people, tt.knownNormalized, tt.title, tt.docTypeNames))
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("FilterTags(%v, %v, %v, %q, %v) = %v, want %v",
 					tt.tags, tt.people, tt.knownNormalized, tt.title, tt.docTypeNames, got, tt.want)
@@ -831,6 +834,9 @@ func TestBuildTagSplitPrompt(t *testing.T) {
 	}
 	if !strings.Contains(result, "split") || !strings.Contains(result, "keep") {
 		t.Error("prompt should mention both verdict options")
+	}
+	if !strings.Contains(result, "never force a split") {
+		t.Error("split criteria must keep unsettled readings instead of forcing a split")
 	}
 }
 

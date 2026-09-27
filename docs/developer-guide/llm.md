@@ -154,7 +154,7 @@ of the extraction contract:
 Analyze the excerpts of a document provided below and extract the following data:
 - Document title: The title as written in the document, in excerpts language, copied verbatim — never invent or append wording of your own; colons and subtitles are legitimate only when the original title itself has one. If no title line appears in the excerpts, use the first substantive line of the text as the title, still copied verbatim. Truncate to 127 characters if longer
 {{.DocTypePrompt}}
-- Tags: Between {{.MinTags}} and {{.MaxTags}} thematic tags describing the document's topics and domains. English only. ... Tags describe subject matter only; what the document is — its form or genre — belongs in the document type field, never in tags. Tags are never specific people or works. A place may be a tag only when it denotes a country or a continent — including contested or partially recognized states such as 'palestine' or 'taiwan' — never a city, province, region, or other sub-national place. ... Each tag is an object with keys: term, category, is_standard_term. Category is exactly one of: topic (subject matter), form_genre (what the document is), place, person, work, other. is_standard_term is true only when the term is widely-recognized standard terminology, not a coinage specific to this document. Do not emit tags like these: 'literary anthology' (a form — it belongs in the document type), 'racial scapegoating' (an argument specific to this document, not standard terminology), 'newfoundland' (a sub-national place — only countries and continents may be tags), 'bail spring replacement' (a device detail too narrow for a shared vocabulary).{{.TagsPrompt}}
+- Tags: At least {{.MinTags}} tags naming the broad subjects the document is about — the topics a reader would use to find other documents like this one. English only. ... Tags describe subject matter only; what the document is — its form or genre — belongs in the document type field, never in tags. Tags are never specific people or works. A place may be a tag only when it denotes a country or a continent — including contested or partially recognized states such as 'palestine' or 'taiwan' — never a city, province, region, or other sub-national place. ... When the parts of a phrase each name a subject that would work as a tag on its own, emit the parts as separate tags instead of the phrase — 'russia' and 'history', not 'russian history'; ... A fixed name or set phrase whose words are not subjects on their own stays whole ('cold war', 'machine learning', 'climate change'). ... Each tag is an object with keys: term, category, is_standard_term. Category is exactly one of: topic (subject matter), form_genre (what the document is), place, person, work, other. is_standard_term is true only when the term is widely-recognized standard terminology, not a coinage specific to this document. Do not emit tags like these: 'literary anthology' (a form — it belongs in the document type), 'racial scapegoating' (an argument specific to this document), 'newfoundland' (a sub-national place — only countries and continents may be tags).{{.TagsPrompt}}
 - People: People associated with the document. For each person provide: name (the person's name in their own native script/language ...), name_romanized (...), and a type from the list below. ...
 {{.PeoplePrompt}}- Language: 3-letter ISO 639-2 code (e.g. 'eng','spa','jpn',...). Detect the primary language even from noisy or mixed text. Only use 'und' as a last resort ...
 
@@ -183,14 +183,18 @@ Design points:
   or be a defensible standard subject term that this document specifically
   warrants: '%s'"`, `prompt.go:88-97` — the semantic-matcher suggestions,
   comma-joined).
-- **Tag range is configurable**: the prompt asks for "Between `min_tags` and
-  `max_tags`" tags (`enricher.contentanalyzer.min_tags`/`max_tags`, default
-  3/5) and forbids merging concepts with a conjunction; the post-processing
-  filter caps survivors at `max_tags`. The prompt also states the facet rule —
-  tags describe subject matter, forms/genres belong in the document type, and
-  a place is a tag only for countries and continents — plus one-line negative
+- **Tag count is a floor, not a range**: the prompt asks for "At least
+  `min_tags`" tags (`enricher.contentanalyzer.min_tags`, default 3) and the
+  post-processing filter applies no count cap; `max_tags` no longer bounds
+  emissions (it still scales the matcher's suggestion list, `TopN = 3 ×
+  max_tags`). The prompt forbids merging concepts with a conjunction and
+  instructs compound decomposition — when each part of a phrase would work as
+  a tag on its own, the parts are emitted instead of the phrase, while fixed
+  names and set phrases stay whole. It also states the facet rule — tags
+  describe subject matter, forms/genres belong in the document type, and a
+  place is a tag only for countries and continents — plus one-line negative
   exemplars for each known failure mode (`literary anthology`,
-  `racial scapegoating`, `newfoundland`, `bail spring replacement`).
+  `racial scapegoating`, `newfoundland`).
 - **`customTemplate` overrides** when set in config
   (`ContentAnalyzer.PromptTemplate`); **any parse/execute error falls back
   silently to the default** (`prompt.go:45-48, 60-65`) — a broken custom
@@ -536,10 +540,14 @@ for i := range 2 {
     `tags[facet]: drop <term> (category=… reason=…)` with `reason` one of
     `matches_document_type`, `model_self_classification`, `people_facet`,
     `forbidden_category`, `non_whitelisted_place`; `topic`/`other` and
-    untyped emissions pass through. `FilterTags` (`tagfilter.go:123-140`) then
+    untyped emissions pass through. `FilterTags` (`tagfilter.go:121-132`) then
     drops tags that are >3 words, overlap with LLM people names, are
     multi-token subsets of known normalized names, overlap doc-type names, or
-    are contained in the title; caps at 5.
+    are contained in the title, with no count cap. `Adjudicator.DecomposeTags`
+    (`adjudicator.go`) then replaces compound tags with their parts —
+    LLM-adjudicated when the tag adjudicator is enabled, conjunction joints
+    deterministically otherwise — and `Adjudicator.ApplyDeletedTagPolicy`
+    applies the deleted-tag blocklist after it.
 11. **Identity** (`enricher.go`, `identity.go`): `Runner.RankTags` ranks LLM
     tags against canonical existing tags, then the identity pipeline applies
     house form, aliases, and key equality, and `policy.Evaluate` generates

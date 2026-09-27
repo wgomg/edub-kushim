@@ -1,6 +1,6 @@
 // Package admission is the tag admission machinery the enricher delegates
-// to: split decisions on joint tags, pinned-policy verdicts on pair
-// matches, quality judging of novel tags, and identity resolution of
+// to: decomposition decisions on compound tags, pinned-policy verdicts on
+// pair matches, quality judging of novel tags, and identity resolution of
 // candidate names against the store. It returns decisions to the caller;
 // its own writes are the verdict and quality event rows it journals, plus
 // the identity resolver's alias applications through curation. The rules
@@ -20,6 +20,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
 	"github.com/wgomg/edub-kushim/internal/log"
+	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/tags/policy"
 	"github.com/wgomg/edub-kushim/internal/textnorm"
@@ -32,10 +33,10 @@ const (
 	tagQualityNoAnchorSimilarity = 0.60
 )
 
-// Adjudicator is the document-level admission machinery: it splits joint
-// tags, journals pair verdicts, and judges the quality of novel tags. The
-// enricher holds one and delegates the corresponding flow steps; the split
-// cache is shared across documents.
+// Adjudicator is the document-level admission machinery: it decomposes
+// compound tags, journals pair verdicts, and judges the quality of novel
+// tags. The enricher holds one and delegates the corresponding flow
+// steps; the split cache is shared across documents.
 type Adjudicator struct {
 	config     *config.Config
 	logger     *log.Logger
@@ -46,8 +47,9 @@ type Adjudicator struct {
 }
 
 // NewAdjudicator wires the machinery. When the LLM adjudicator or quality
-// judge is not configured, the corresponding steps degrade: splits fall
-// back to the plain grammar split and novel tags stay, born provisional.
+// judge is not configured, the corresponding steps degrade: conjunction
+// splits fall back to the plain grammar split and novel tags stay, born
+// provisional.
 func NewAdjudicator(cfg *config.Config, logger *log.Logger, queries *database.Queries, runner *tools.Runner) *Adjudicator {
 	return &Adjudicator{
 		config:  cfg,
@@ -62,25 +64,25 @@ type splitDecision struct {
 	components []string
 }
 
-// SplitJointTags asks the LLM adjudicator (or, without one, the plain
-// grammar split) which joint tags to split, validates the components
-// against the filter and the configured maximum, and returns the tag list
-// with approved splits expanded in place. Unapproved and non-joint tags
-// pass through, deduplicated.
-func (a *Adjudicator) SplitJointTags(ctx context.Context, tags []string, filter *analyzer.TagFilter, reqID string) []string {
+// DecomposeTags asks the LLM adjudicator (or, without one, the plain
+// grammar split for conjunction joints) which compound tags decompose
+// into dimension values, validates the verdict components against the
+// per-document filter and the compound's part-count bound, and returns
+// the tag list with approved decompositions expanded in place. Compounds
+// that are not split pass through, deduplicated.
+func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, filter *analyzer.TagFilter, reqID string) []string {
 	var candidates []string
-	for _, t := range tags {
-		if textnorm.SplitJointTag(t) != nil {
-			candidates = append(candidates, t)
+	for _, name := range names {
+		if tags.ClassifyShape(name) == tags.ShapeCompound {
+			candidates = append(candidates, name)
 		}
 	}
 	if len(candidates) == 0 {
-		return tags
+		return names
 	}
 
 	decisions := a.splitVerdicts(ctx, candidates, reqID)
 
-	maxComponents := a.config.Enricher.ContentAnalyzer.MaxTags
 	components := make(map[string][]string, len(candidates))
 	for _, candidate := range candidates {
 		d, ok := decisions[candidate]
@@ -88,18 +90,20 @@ func (a *Adjudicator) SplitJointTags(ctx context.Context, tags []string, filter 
 			continue
 		}
 		valid := analyzer.SplitComponents(d.components, filter)
-		if len(valid) < 2 || len(valid) > maxComponents {
+		// a compound has at most MaxCompoundWords content parts, so a
+		// verdict with more surviving components is malformed
+		if len(valid) < 2 || len(valid) > tags.MaxCompoundWords {
 			continue
 		}
 		components[candidate] = valid
 	}
 	if len(components) == 0 {
-		return tags
+		return names
 	}
 
-	out := make([]string, 0, len(tags)+len(components))
-	seen := make(map[string]bool, len(tags))
-	for _, t := range tags {
+	out := make([]string, 0, len(names)+len(components))
+	seen := make(map[string]bool, len(names))
+	for _, t := range names {
 		segments, ok := components[t]
 		if !ok {
 			if !seen[t] {
@@ -115,7 +119,7 @@ func (a *Adjudicator) SplitJointTags(ctx context.Context, tags []string, filter 
 			seen[segment] = true
 			out = append(out, segment)
 		}
-		a.logger.Info(reqID, "tag split: %q → %v", t, segments)
+		a.logger.Info(reqID, "tag split[%s]: %q → %v", analyzer.TagSplitVersion, t, segments)
 	}
 	return out
 }
@@ -181,8 +185,15 @@ func (a *Adjudicator) splitVerdicts(ctx context.Context, candidates []string, re
 	}
 
 	if !a.runner.HasTagAdjudicator() {
+		// without an adjudicator only conjunction joints split: the
+		// grammar split reads their explicit coordination, and blanket
+		// mechanical splitting of other compounds is not allowed
 		for _, name := range uncached {
-			decisions[name] = splitDecision{verdict: analyzer.TagSplitSplit, components: textnorm.SplitJointTag(name)}
+			segments := textnorm.SplitJointTag(name)
+			if segments == nil {
+				continue
+			}
+			decisions[name] = splitDecision{verdict: analyzer.TagSplitSplit, components: segments}
 		}
 		return decisions
 	}

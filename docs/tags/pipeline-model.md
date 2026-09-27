@@ -273,10 +273,10 @@ system already has, how far it matches the model, and what the delta is.
 
 | Stage / duty | Existing mechanism | Status | Delta |
 |---|---|---|---|
-| **S1 Emission** | Typed generation contract, subject-matter rule, place rule, choose-or-justify, four negatives (`analyzer/prompt.go`); suggestions injected from the store | Partial · re-criteria | Prompt teaches document relevance and dictionary standardness; no dimension/decomposition guidance |
+| **S1 Emission** | Typed generation contract, subject-matter rule, place rule, choose-or-justify, three negatives, dimension language and compound decomposition (`analyzer/prompt.go`); suggestions injected from the store | Partial | Coverage wording pending; the dictionary-standard selection language is retired |
 | **S2 Facet ownership (P1)** | `SeparateFacets` category gate + country/continent whitelist (`internal/enrichment/enricher.go`) | Aligned | Untyped emissions degrade to string heuristics (accepted) |
 | **S3 Canonicality (P3)** | Consolidation policy gates/bands (`policy`), LLM adjudicator + verdict cache, merge review + dismissals, reconciler | Partial | Similarity band misses the variant classes; no extension-equality detector; merges are incident-driven, not a standing duty |
-| **S4 Atomicity (P4)** | Conjunction joint-tag split at emission (`enricher.go`, `internal/textnorm/tagjoint.go`) + stored-joint worklist (`reconcile/joint.go`) | Partial · conflict | Conjunction-only scope; no part-value/mass evidence; prospective vs retrospective test |
+| **S4 Atomicity (P4)** | General compound decomposition at emission (`Adjudicator.DecomposeTags`, `analyzer` split gate) + stored-joint worklist (`reconcile/joint.go`) | Partial | No part-value/mass evidence; prospective vs retrospective test |
 | **S5 Admission decision** | Weak band + rubric judge + verdict cache; promotion gate (cached pass + ≥ 2 live documents) | Re-criteria · partial | Dictionary criteria; no set predicates among the features; no feature combination or abstention path (operating mode: pinned rules; fitting optional — definition §8.10) |
 | **S6 Lifecycle** | `promoted_at` quarantine/promotion, store trust boundary, sweep, blocklist | Aligned (birth/influence) · Absent (demotion) | Promotion is one-way today; demotion policy decided (definition §8.4), not implemented |
 | **S7 Vocabulary services** | Promoted-only store (`BuildTagCache`), suggestions, consolidation targets, promoted-names fallback | Aligned | — |
@@ -291,14 +291,15 @@ system already has, how far it matches the model, and what the delta is.
 
 **S1–S2 — emission and facet gate.** S2 is the model's P1 exactly: the typed category gate
 plus the country/continent whitelist, with the string heuristics as the untyped
-fallback. S1 is where the first re-criteria lives. The prompt asks for “widely-recognized
-standard terminology a general educated audience would know”, bans merging distinct
-concepts *with a conjunction*, and carries four canonical rejections — including
-`bail spring replacement` as “a device detail too narrow for a shared vocabulary”, a
-class the model disposes as device × operation rather than a rejection. It neither asks
-for values on dimensions nor teaches compound decomposition (`X of Y`, adjective + head,
-device + operation, both-parts-exist compounds). The suggestions surface is the
-vocabulary's only influence on emission.
+fallback. S1 carries the first re-criteria: the prompt asks for the document's broad
+subjects (the topics a reader would use to find other documents like this one), one
+subject per tag, and teaches compound decomposition — when the parts of a phrase each
+name a subject that would work as a tag on its own, the parts are emitted instead of the
+phrase (`X of Y`, adjective + head, device + operation, both-parts-exist compounds),
+while fixed names and set phrases stay whole. The dictionary-standard selection language
+is retired; the three canonical rejections that remain are form, unique argument, and
+sub-national place. Coverage wording (every applicable dimension) is still pending. The
+suggestions surface is the vocabulary's only influence on emission.
 
 **S3 — canonicality.** The mechanisms are substantial: the birth-time identity pipeline
 (M1–M4 with the same-intent gate, `tag_identity_event`, `tag_alias`), merge review with
@@ -310,15 +311,17 @@ sit outside the similarity band and never reach adjudication; merges are inciden
 and human rejection deletes names through the blocklist (terminal) where the model's
 disposition for a same-intent label is alias/merge.
 
-**S4 — atomicity.** Runtime, `textnorm.SplitJointTag` splits on the conjunctions `and`,
-`or`, `vs`, `versus`; the adjudicator can keep/split when enabled, and the reconciler
-re-uses the same detector for stored tags. P4 is wider than conjunctions and is a set
-test, not a surface one. One asymmetry matters for any plan: at emission time a novel
-compound has no extension and its parts may not exist as values, so the true test is not
-available prospectively — the report's reconstructibility test is a retrospective
-instrument, and the runtime can only approximate it. The old “no blanket splitting”
-decision remains true for the runtime; P4 does not overturn it, but the reconciliation
-must be stated (see the conflicts list below).
+**S4 — atomicity.** At emission, every compound candidate (2–3 words, Latin script,
+content parts) goes to the split gate: the adjudicator decides keep/split per tag when
+enabled, and without one only conjunction joints (`and`, `or`, `vs`, `versus` —
+`textnorm.SplitJointTag`) split mechanically while other compounds pass whole. The
+reconciler re-uses the conjunction detector for stored tags. P4 is wider than
+conjunctions and is a set test, not a surface one. One asymmetry matters for any plan:
+at emission time a novel compound has no extension and its parts may not exist as
+values, so the true test is not available prospectively — the report's
+reconstructibility test is a retrospective instrument, and the runtime can only
+approximate it. “No blanket mechanical splitting” remains the rule for the no-judge
+path; the adjudicated path approximates P4 per candidate.
 
 **S5 — admission.** The mechanics are the weak band (`tagQualityTLow`,
 `tagQualityNoAnchorSimilarity`), the four-criterion rubric judge (`subject_matter`,
@@ -346,7 +349,7 @@ correction — the revocable-influence principle (definition §6.5) has no lifec
 **S7–S8.** S7 matches the model's influence boundary exactly. S8 is the intersection
 algebra already `tagsAnd` in the structured search; what is missing is the completeness
 precondition — nothing measures whether a document carries the dimensions applicable to
-it, and the prompt's `min_tags`/`max_tags` bounds are a count, not coverage.
+it, and the prompt's `min_tags` floor is a count, not coverage.
 
 **Duties.** D1 has the merge/alias mechanics but no standing detector and no extension
 evidence; D2 has nothing beyond the observed class catalogs; D3 has nothing at all —
@@ -383,7 +386,7 @@ Ordered by what unlocks the rest, not by effort:
 5. **D2 · composition review — no axis expectations (definition §8.7, decided).** The
    compound-class worklists and extension-based checks. Needs D4; its outputs act
    through decompositions, which `atomicity.md` specifies generally and the runtime
-   covers for conjunctions today.
+   covers at emission today.
 6. **S6 · demotion — policy decided (2026-09-20); not implemented.** Triggers are
    supersession and the scheduled rule-reapplication sweep; revocation is
    influence-only, with existence, assignments, and history intact (definition §8.4).
@@ -401,8 +404,9 @@ Ordered by what unlocks the rest, not by effort:
    version and re-judging is the mechanical form; labels collected before the change are
    biased for training the layer (definition §6.6).
 2. **Conjunction-only splitting vs P4 — resolved (2026-09-20): the restriction is
-   retired.** General decomposition lands at emission (§6.6); until then the wider fan
-   stays retrospective.
+   retired.** General decomposition is live at emission (adjudicated; the conjunction
+   grammar split remains the no-judge fallback and the stored-tag worklist), and the
+   wider fan stays retrospective until the composition review lands.
 3. **Recurrence as gate vs weak prior — resolved (2026-09-20): the gate is retired.**
    The staged decision (§6.6) reads mass and the judge verdict as features; recurrence
    stops being read as quality evidence.
@@ -439,7 +443,7 @@ authority moves to features and rules keeps its mechanics and becomes a supplier
 
 | Incumbent component | Role under the model | What crosses the seam |
 |---|---|---|
-| Typed contract and prompt (`analyzer`) | the emission carrier — typed shape and negatives stay; dimension language, decomposition, and coverage are added | consumes the inventory and the canonical-form instruction; produces emissions and proposed names |
+| Typed contract and prompt (`analyzer`) | the emission carrier — typed shape and negatives stay; dimension language and decomposition are added; coverage wording is pending | consumes the inventory and the canonical-form instruction; produces emissions and proposed names |
 | Facet gates (`SeparateFacets`) | unchanged policy surface (P1) | facet drops; the place whitelist until its bug is fixed |
 | Seeded vocabulary (`seed-tags.sql`, `seed-tag-aliases.sql`) | the starting inventory: re-derived from the specs (broad, atomic, house form) and extended, with the place list materialized as values and the recognized alternate spellings as alias rows; inserted with influence | consumed by suggestions and as anchors; never a validation list |
 | Consolidation bands (`policy`) | candidate generation only: identity and gate subjects; similarity ranks, never decides | consumes emissions; produces gate subjects |
@@ -489,9 +493,9 @@ compute a retired signal may live on as feature providers.
 | Duplicated measurement helpers (`CountLiveTagDocumentsByTagIDs`, `TagPairEvidenceStats`) | subsumed by the extension algebra | the measurement substrate |
 
 Sequencing rules for the retirements: the guards and similarity auto-replace are
-retired — identity is gate-based at birth; the cap lifts only when the contract asks
-for coverage; the
-runtime splitting restriction lifts with the general decomposition; the blocklist's
+retired — identity is gate-based at birth; the emission cap is retired and the
+completeness contract adds the coverage requirement; the runtime splitting restriction
+is retired with the general decomposition; the blocklist's
 existing entries (258 names) get a reconciliation pass — same-intent twins become
 aliases, terminal rejects stay; and every retired criteria text rides the version bump
 that re-judges under its replacement.

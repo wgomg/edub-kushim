@@ -290,9 +290,9 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 	}
 	analysis.Tags = kept
 
-	analysis.Tags = analyzer.FilterTags(analysis.Tags, analysis.People, knownNormalized, analysis.Title, docTypeNames, e.config.Enricher.ContentAnalyzer.MaxTags)
 	tagFilter := analyzer.NewTagFilter(analysis.People, knownNormalized, analysis.Title, docTypeNames)
-	analysis.Tags = e.admission.SplitJointTags(ctx, analysis.Tags, tagFilter, logId)
+	analysis.Tags = analyzer.FilterTags(analysis.Tags, tagFilter)
+	analysis.Tags = e.admission.DecomposeTags(ctx, analysis.Tags, tagFilter, logId)
 	analysis.Tags = e.admission.ApplyDeletedTagPolicy(analysis.Tags, dbNames, blocklist, logId)
 
 	consolidateStart := time.Now()

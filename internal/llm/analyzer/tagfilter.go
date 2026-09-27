@@ -118,21 +118,15 @@ func (f *TagFilter) Accept(tag string) bool {
 	return !allInTitle
 }
 
-// FilterTags normalizes, deduplicates and filters the analysis tags
-// through the per-document rules, capped at maxTags.
-func FilterTags(tags []string, people []PeopleResult, knownPeopleNormalized []string, title string, docTypeNames []string, maxTags int) []string {
-	filter := NewTagFilter(people, knownPeopleNormalized, title, docTypeNames)
-
+// FilterTags drops the tags the per-document filter rejects; it applies
+// no count cap.
+func FilterTags(tags []string, filter *TagFilter) []string {
 	result := make([]string, 0, len(tags))
 	for _, tag := range tags {
 		if !filter.Accept(tag) {
 			continue
 		}
 		result = append(result, tag)
-	}
-
-	if len(result) > maxTags {
-		result = result[:maxTags]
 	}
 	return result
 }

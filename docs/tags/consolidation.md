@@ -17,7 +17,7 @@ concept from the vocabulary. Every failure, ambiguity, or outage defaults to
 
 - [The problem it solves](#the-problem-it-solves)
 - [How a tag is decided](#how-a-tag-is-decided)
-- [Joint tags](#joint-tags)
+- [Compound tags](#compound-tags)
 - [LLM adjudication (opt-in)](#llm-adjudication-opt-in)
 - [Tag quality judge (opt-in)](#tag-quality-judge-opt-in)
 - [Quarantine and promotion](#quarantine-and-promotion)
@@ -57,8 +57,8 @@ and review.
 
 ## How a tag is decided
 
-Per enrichment, after the LLM emits its tags (prompted for between `min_tags`
-and `max_tags`, default 3–5, and capped at `max_tags` by the filter):
+Per enrichment, after the LLM emits its tags (prompted for at least `min_tags`,
+default 3; the filter applies no count cap):
 
 1. Emitted names are canonicalized (`textnorm.NormalizeTag`: NFKC, lowercase,
    accent-folded; `+`, `#`, `.`, digits, and non-Latin scripts preserved —
@@ -69,10 +69,9 @@ and `max_tags`, default 3–5, and capped at `max_tags` by the filter):
    `person`, and `work` emissions are dropped, and `place` emissions survive
    only as countries or continents — every drop is logged as
    `tags[facet]: drop …`. `topic`/`other` and untyped emissions pass through.
-   `FilterTags` then drops deterministic garbage (see below), and a split pass
-   replaces tags that join concepts with a conjunction (`and`, `or`, `vs`,
-   `vs.`, `versus`) by their components — see
-   [Joint tags](#joint-tags) below.
+   `FilterTags` then drops deterministic garbage (see below), and a
+   decomposition pass replaces compound tags by their parts — see
+   [Compound tags](#compound-tags) below.
 3. The matcher daemon ranks each name against the tag store and returns up to
    two candidates with similarity scores, all at or above the **consideration
    floor** (`consolidation_similarity`, 0.80 for bge-m3).
@@ -103,34 +102,38 @@ recover history the database never captured.
 
 ---
 
-## Joint tags
+## Compound tags
 
-A tag that joins concepts with a conjunction (`and`, `or`, `vs`, `vs.`,
-`versus` — after normalization `&` is stripped, so "rock & roll" is not joint)
-is detected by `textnorm.SplitJointTag` and replaced by its components before
-consolidation, so "supply and demand" becomes `supply` + `demand` instead of a
-single tag that the matcher can never match cleanly.
+A compound tag whose parts each name a subject — `russian history`,
+`philosophy of mind`, `air fryer repair`, `supply and demand` — is replaced by
+its parts before consolidation, so `russian history` becomes `russia` +
+`history` instead of a single tag that the matcher can never match cleanly.
+Fixed names and set phrases whose words are not subjects on their own
+(`cold war`, `machine learning`, `climate change`) stay whole.
 
-- **Detection**: a canonical tag is joint when it has at least two segments
-  around a conjunction token that is neither leading nor trailing. Tags of
-  more than three tokens never reach the split pass — `FilterTags` drops them
-  first, so detectable joint tags are exactly the 2–3-word single-conjunction
-  forms.
+- **Detection**: every canonical tag of two to three words in Latin script
+  with at least one content part is a candidate (`tags.ClassifyShape` =
+  `ShapeCompound`); single-word, non-Latin, and function-word-only names never
+  reach the pass.
 - **Decision**: with the tag adjudicator enabled, the split decision is
-  LLM-adjudicated (`AdjudicateTagSplits`, same adjudicator as tag pairs) —
-  the LLM distinguishes a genuine joint ("supply and demand") from a proper
-  name or set phrase ("dungeons and dragons", "rock and roll") and returns the
-  components when splitting. Verdicts are memoized per tag name within the
-  enricher process, so a joint tag seen across documents is adjudicated once.
-  With the adjudicator disabled, all detected joint tags split
-  deterministically.
+  LLM-adjudicated (`AdjudicateTagSplits`, same adjudicator as tag pairs,
+  criteria pinned by `analyzer.TagSplitVersion`) — the parts are the tag's
+  content words, and the gate splits when each part names a subject a searcher
+  would filter by on its own and the phrase is just their combination, keeping
+  the tag when it names one subject the parts cannot compose; unsettled
+  readings keep. Verdicts are memoized per tag name within the enricher
+  process, so a compound seen across documents is adjudicated once. With the
+  adjudicator disabled, only conjunction joints (`and`, `or`, `vs`, `vs.`,
+  `versus` — detected by `textnorm.SplitJointTag`; after normalization `&` is
+  stripped, so "rock & roll" is not joint) split deterministically; every
+  other compound passes whole.
 - **Validation**: components pass the same rules as emitted tags — normalized,
   deduplicated, ≤3 words, ≤64 characters, no person/title/doc-type token
-  matches — and a split must yield between 2 and `max_tags` valid components;
-  anything else keeps the joint tag as-is. Split products may push a document
-  past `max_tags` — accepted; worst-case bound is 2 × `max_tags`.
+  matches — and a split must yield between 2 and `tags.MaxCompoundWords` (3)
+  valid components; anything else keeps the compound as-is. Emissions are not
+  count-capped.
 - **Retroactive cleanup**: the scheduled reconciliation task scans the store
-  for joint tags and splits them with document re-pointing — see
+  for conjunction joints and splits them with document re-pointing — see
   [Scheduled reconciliation](#scheduled-reconciliation).
 
 ---

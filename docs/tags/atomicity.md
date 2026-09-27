@@ -23,9 +23,11 @@ other languages or longer than three words (separate plan).
 - **`canonical-form-and-identity.md`** — the sibling. It decides the form each
   label takes and when two labels are one value; the adjective folding it specifies is
   assumed by §3.1.
-- **Existing machinery** — the conjunction splitter and the LLM adjudicator with its
-  cached, versioned verdicts are the precedent this spec extends: the splitter's scope
-  is conjunctions; this spec covers every multi-word candidate.
+- **Existing machinery** — the emission-time decomposition pass and the LLM adjudicator
+  with its cached, versioned verdicts are the precedent this spec extends: the pass
+  covers every compound candidate (adjudicated; conjunction joints split mechanically
+  without a judge), and the reconciler re-uses the conjunction detector for stored
+  tags. This spec supplies the measurement and the decision over those candidates.
 - **Free text** — tags are search shortcuts for dimensions; named specifics belong to
   free-text search, which composes with tag filters. A phrase being a fixed name is
   never by itself a reason to admit it. The unit branch exists for phrases whose parts

@@ -68,9 +68,8 @@ Already enforced elsewhere; listed so this spec does not restate them:
 - The generation contract asks the reader for the dimensions applicable to the
   document at emission, by the reading that produces the tags.
 - **Coverage, not salience.** The contract must deliver every dimension the document
-  is about — not a top-N ranking. Whatever caps or ranking pressure the current
-  emission carries are the re-criteria conflict to resolve, not a constraint this
-  spec accepts.
+  is about — not a top-N ranking. Caps or ranking pressure on the emission are the
+  re-criteria conflict to resolve, not a constraint this spec accepts.
 - **Inventory first, proposals as residue.** The reader applies the canonical
   inventory (promoted values plus provisional anchors) and proposes dimension names
   for what has none; proposals take the normal admission path (S3/S4) and are not
