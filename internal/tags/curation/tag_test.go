@@ -342,7 +342,7 @@ func TestTag_LatestQualityEventsForNames(t *testing.T) {
 	database.MustAddDocumentTag(t, client.Queries, docID, tagID)
 
 	// Insert a quality event.
-	criteria := []byte(`{"subject_matter":true,"standard_term":true,"not_person_place_work":true,"appropriately_broad":true}`)
+	criteria := []byte(`{"subject_matter":true,"dimension":true,"not_person_place_work":true,"atomic":true,"defer":false}`)
 	_, err := client.Queries.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
 		DocumentID:    docID,
 		TagName:       "quality-events-tag",
@@ -488,4 +488,44 @@ func TestTag_ApplyAliasPlan(t *testing.T) {
 			t.Error("a blocklisted name must never be aliased")
 		}
 	})
+}
+
+func TestTag_CreatePlannedTx_StoresNormalizedName(t *testing.T) {
+	svc, client := newTestTag(t)
+	ctx := context.Background()
+
+	tx, err := client.BeginTx(ctx, nil)
+	testutil.AssertNoError(t, err, "begin tx")
+	defer tx.Rollback()
+	txQ := client.WithTx(tx)
+
+	plan := tags.Plan{Registrations: []tags.Registration{{
+		Input:       "Boundary Topic",
+		Name:        "Boundary Topic",
+		Disposition: tags.DispositionRegister,
+	}}}
+	results, _, err := svc.CreatePlannedTx(ctx, txQ, plan, false)
+	testutil.AssertNoError(t, err, "create planned")
+	testutil.AssertEqual(t, len(results), 1, "one result")
+	testutil.AssertEqual(t, results[0].Status, types.Created, "created")
+	testutil.AssertEqual(t, results[0].Entity.Name, "boundary topic", "entity carries the normalized name")
+
+	if _, err := txQ.GetTagByName(ctx, "boundary topic"); err != nil {
+		t.Errorf("stored row under the normalized name: %v", err)
+	}
+}
+
+func TestTag_ApplyAliasPlan_StoresNormalizedName(t *testing.T) {
+	svc, client := newTestTag(t)
+	ctx := context.Background()
+
+	canonicalID := database.MustCreateTag(t, client.Queries, "boundary canonical")
+
+	testutil.AssertNoError(t, svc.ApplyAliasPlan(ctx, []tags.AliasAction{
+		{AliasName: "Boundary Loser", Canonical: "Boundary Canonical"},
+	}), "apply alias plan")
+
+	alias, err := client.Queries.GetTagAliasByName(ctx, "boundary loser")
+	testutil.AssertNoError(t, err, "alias stored under the normalized name")
+	testutil.AssertEqual(t, alias.CanonicalTagID, canonicalID, "alias target")
 }

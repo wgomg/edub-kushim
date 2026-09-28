@@ -107,21 +107,23 @@ type AnalysisResult struct {
   `BuildTagIdentityPrompt` and parsed by `ParseTagIdentityResponse` (a
   candidate without a complete verdict errors). Used by the tag gate when
   `enricher.tag_adjudicator.enabled` is true.
-- `JudgeTagQuality` — judges novel tags against a four-criteria rubric
-  (`subject_matter`, `standard_term`, `not_person_place_work`,
-  `appropriately_broad`) with a temperature-0 request built from
+- `JudgeTagQuality` — judges novel tags against the dimension rubric
+  (`subject_matter`, `dimension`, `not_person_place_work`, `atomic`, plus the
+  optional `defer` abstention) with a temperature-0 request built from
   `BuildTagQualityPrompt` (reduced document text plus one line per candidate
   with its term, typed category, and a whitelisted-place carve-out note) and
   parsed by `ParseTagQualityResponse` (a missing or partially specified
-  verdict for any candidate is an error, never a silent rejection). Used by
-  the enricher when `enricher.tag_quality.enabled` is true; see the
+  verdict for any candidate is an error, never a silent rejection; an omitted
+  `defer` reads as false). Used by the enricher when
+  `enricher.tag_quality.enabled` is true; see the
   [semantic matching guide](semantic-matching.md#rubric-judge-for-novel-tags).
-- `TagDetails` — the typed mirror of `Tags`, one `{term, category,
-  is_standard_term}` entry per tag. `category` is folded to `topic` /
-  `form_genre` / `place` / `person` / `work` / `other` (a missing or unknown
-  value becomes `other`), and string-shaped tag entries are `other` by
-  construction. Consumed once by the enricher's facet gate
-  (`SeparateFacets`, §10) — never persisted or returned to clients.
+- `TagDetails` — the typed mirror of `Tags`, one `{term, category}` entry per
+  annotated tag. `category` is folded to `topic` / `form_genre` / `place` /
+  `person` / `work` / `other` (a missing or unknown value becomes `other`),
+  and a plain-string tag entry yields no detail at all — an unannotated
+  emission, not a defaulted category. Consumed once by the enricher's facet
+  gate (`SeparateFacets`, §10) and the quality judge's feature pass — never
+  persisted or returned to clients.
 - `PassContext` (`json:"-"`) carries the exact system+user prompts from the
   first call so the second call can replay them — never serialized to the
   API response.
@@ -154,11 +156,11 @@ of the extraction contract:
 Analyze the excerpts of a document provided below and extract the following data:
 - Document title: The title as written in the document, in excerpts language, copied verbatim — never invent or append wording of your own; colons and subtitles are legitimate only when the original title itself has one. If no title line appears in the excerpts, use the first substantive line of the text as the title, still copied verbatim. Truncate to 127 characters if longer
 {{.DocTypePrompt}}
-- Tags: At least {{.MinTags}} tags naming the broad subjects the document is about — the topics a reader would use to find other documents like this one. English only. ... Tags describe subject matter only; what the document is — its form or genre — belongs in the document type field, never in tags. Tags are never specific people or works. A place may be a tag only when it denotes a country or a continent — including contested or partially recognized states such as 'palestine' or 'taiwan' — never a city, province, region, or other sub-national place. ... When the parts of a phrase each name a subject that would work as a tag on its own, emit the parts as separate tags instead of the phrase — 'russia' and 'history', not 'russian history'; ... A fixed name or set phrase whose words are not subjects on their own stays whole ('cold war', 'machine learning', 'climate change'). ... Each tag is an object with keys: term, category, is_standard_term. Category is exactly one of: topic (subject matter), form_genre (what the document is), place, person, work, other. is_standard_term is true only when the term is widely-recognized standard terminology, not a coinage specific to this document. Do not emit tags like these: 'literary anthology' (a form — it belongs in the document type), 'racial scapegoating' (an argument specific to this document), 'newfoundland' (a sub-national place — only countries and continents may be tags).{{.TagsPrompt}}
+- Tags: At least {{.MinTags}} tags naming the broad subjects the document is about — the topics a reader would use to find other documents like this one. English only. ... Tags describe subject matter only; what the document is — its form or genre — belongs in the document type field, never in tags. Tags are never specific people or works. A place may be a tag only when it denotes a country or a continent — including contested or partially recognized states such as 'palestine' or 'taiwan' — never a city, province, region, or other sub-national place. ... When the parts of a phrase each name a subject that would work as a tag on its own, emit the parts as separate tags instead of the phrase — 'russia' and 'history', not 'russian history'; ... A fixed name or set phrase whose words are not subjects on their own stays whole ('cold war', 'machine learning', 'climate change'). ... Each tag is an object with keys: term, category. Category is exactly one of: topic (subject matter), form_genre (what the document is), place, person, work, other. Do not emit tags like these: 'literary anthology' (a form — it belongs in the document type), 'racial scapegoating' (an argument specific to this document), 'newfoundland' (a sub-national place — only countries and continents may be tags).{{.TagsPrompt}}
 - People: People associated with the document. For each person provide: name (the person's name in their own native script/language ...), name_romanized (...), and a type from the list below. ...
 {{.PeoplePrompt}}- Language: 3-letter ISO 639-2 code (e.g. 'eng','spa','jpn',...). Detect the primary language even from noisy or mixed text. Only use 'und' as a last resort ...
 
-Return ONLY a json string without any explanations, numbers, additional text, text formatting or text/code blocks, with keys: title, type, tags (array of objects with keys: term, category, is_standard_term), people (array of objects with keys: name, name_romanized, type), language.
+Return ONLY a json string without any explanations, numbers, additional text, text formatting or text/code blocks, with keys: title, type, tags (array of objects with keys: term, category), people (array of objects with keys: name, name_romanized, type), language.
 
 Document Excerpts: {{.Text}}
 ```
@@ -167,7 +169,7 @@ Design points:
 
 - **The output contract is spelled out in the prompt**: "Return ONLY a json
   string ... with keys: title, type, tags, people, language" — with tags as
-  typed objects (`term`, `category`, `is_standard_term`). The adapters parse
+  typed objects (`term`, `category`). The adapters parse
   that shape and the older plain-string array alike (§6).
 - **Titles are copied, never composed**: the model returns the document's
   own title verbatim — no invented subtitles, summaries, or appended
@@ -558,20 +560,27 @@ for i := range 2 {
     batched LLM calls; `same` aliases the losing name, `variant`/`related`
     register both). Disabled, failing, or ambiguous adjudication leaves the
     claim pending — the candidate registers provisionally.
-12. **Tag quality judge** (`internal/tags/admission/adjudicator.go`, `Adjudicator.ApplyTagQuality`): only when
+12. **Tag admission decision** (`internal/tags/admission/adjudicator.go`, `Adjudicator.ApplyTagQuality`): only when
     `enricher.tag_quality.enabled` is true. Novel tags — consolidated outputs
-    whose normalized names are absent from the vocabulary — are first scored
-    by the deterministic weak band (`is_standard_term` +1/absent 0/−1,
-    category `other` −1, best store similarity below the internal
-    `no_anchor_similarity` 0.60 −1); a score below the internal
-    `t_low` (−1, i.e. ≤ −2) is dropped with a `tagquality[v1]: reject …
-    (reason=weak_score …)` line and never cached. Survivors resolve from the
-    `tag_quality_event` cache or go into one temperature-0 `JudgeTagQuality`
-    call per document; a verdict passes only when all four criteria are true,
-    and a whitelisted country/continent is never rejected for being a place.
-    Fresh verdicts record the judging model, cache-applied ones NULL. A judge
-    failure or timeout retries once and then keeps every novel tag — under the
-    gate those births are **provisional** (no verdict row).
+    whose normalized names are absent from the vocabulary — are resolved by the
+    pinned admission decision (`tags.DecideAdmission`) over their features: the
+    rubric judge's answers (from the `tag_quality_event` cache or one
+    temperature-0 `JudgeTagQuality` call per document) plus the emission's
+    deterministic signals (a detail annotated `other`, and a best store
+    similarity below the internal `no_anchor_similarity` 0.60 cut). The rubric
+    asks `subject_matter`, `dimension`, `not_person_place_work` and `atomic`,
+    with `defer` as the judge's abstention; the decision defers on abstention,
+    rejects on two or more failing signals, defers on exactly one (the gray
+    band), and admits when nothing fails. Rejections drop the tag for that
+    document — the registration and its pending identity evidence never reach
+    the store — and log `tagquality[v1]: reject … (reason=corroborated_failures
+    source=judge|cache …)`; defers are kept and logged too. A whitelisted
+    country/continent is never rejected for being a place. Fresh verdicts
+    record the judging model and the recorded outcome, cache-applied ones a
+    NULL model; cached rows re-run the decision over the stored rubric with the
+    current emission's deterministic signals. A judge failure or timeout
+    retries once and then keeps every novel tag with a defer decision — under
+    the gate those births are **provisional** (no verdict row).
 13. **Persist metadata** (`enricher.go:254-273`): title truncated to 127
     (`truncate`), doc type validated against the DB list (fallback
     `"undetermined"`), `UpdateDocumentMetadata`.
@@ -580,14 +589,19 @@ for i := range 2 {
     code is added to `consumer.ocr.languages` and persisted via
     `config.SaveMap` — for the gosseract engine the tessdata download runs
     in a goroutine and config persists only on success.
-15. **Tags to DB** (`enricher.go:331-392`): batch `Tag.CreateTx` on the persist
+15. **Tags to DB** (`enricher.go:331-392`): plan application
+    `Tag.CreatePlannedTx` on the persist
     transaction (`quarantine = enricher.tag_quality.enabled`), tolerating
-    conflicts; `ClearEnrichDocumentTags` + `AddDocumentTag` (`source = 'enrich'`)
+    conflicts; the plan carries the registrations, alias actions, and identity
+    evidence from the identity step, and a rejected novel name is dropped from
+    it before persist, so it is never stored. `ClearEnrichDocumentTags` +
+    `AddDocumentTag` (`source = 'enrich'`)
     per tag, plus orphan-mark clearing, all commit or roll back together. With
     the layer off every created tag is promoted atomically with its insert and
     the batch's new names are added to the embedding store after the commit;
     with the layer on births land provisional, `promoteEligible` runs inside the
-    transaction (cached pass verdict + ≥ 2 distinct live documents →
+    transaction (the emission's admission decision, or the cached verdict row
+    for provisionals already in the store, plus ≥ 2 distinct live documents →
     `PromoteTags`; trashed carriers do not count, and the same rule backs the
     reconciliation sweep), and only the promoted names are added to the store.
     Verdict-less provisionals are resolved later by the scheduled sweep or the
@@ -623,7 +637,7 @@ Under `enricher` (`internal/config/config.go:164-195`):
 | `tagmatcher.reduce_target_words` | `4000` | matcher reduction target |
 | `tagmatcher.hugot.*` | — | model/backend (§9 of the semantic-matching guide) |
 | `tag_adjudicator.enabled` / `timeout` / `llm.*` | `false` / analyzer timeout / analyzer llm | identity gate: fold confirmation and same-intent pair verdicts (semantic-matching guide) |
-| `tag_quality.enabled` / `timeout` / `llm.*` | `false` / analyzer timeout / analyzer llm | rubric verdicts for novel tags; the weak-band thresholds are internal v1 constants (`t_low = -1`, `no_anchor_similarity = 0.60`), not config keys |
+| `tag_quality.enabled` / `timeout` / `llm.*` | `false` / analyzer timeout / analyzer llm | rubric verdicts for novel tags; the decision thresholds are internal v1 constants (`no_anchor_similarity = 0.60`, promotion floor of 2 live documents), not config keys |
 
 Validation (`finalizeConfig`, `config.go:447-460`): when content analysis is
 enabled, `adapter`, `provider`, and `model` are all **required** — three
@@ -678,4 +692,4 @@ separate errors, so setup can't silently half-configure. `Reasoning` /
 
 ---
 
-*Last verified against the tree: 2026-09-15. If code and doc disagree, code wins.*
+*Last verified against the tree: 2026-09-28. If code and doc disagree, code wins.*

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 )
@@ -503,4 +504,53 @@ func TestReportProvisionalPresent(t *testing.T) {
 		t.Fatalf("provisional key missing or wrong type: %v", m["provisional"])
 	}
 	testutil.AssertEqual(t, int(prov["worklist"].(float64)), 0, "zero worklist")
+}
+
+func TestProvisionalOutcome(t *testing.T) {
+	r := &Reconciler{logger: testutil.NewTestLogger()}
+
+	cases := []struct {
+		name         string
+		decision     tags.AdmissionDecision
+		docs         int64
+		wantPromote  bool
+		wantDeferred bool
+	}{
+		{
+			name:         "admitted at the floor promotes",
+			decision:     tags.AdmissionDecision{Outcome: tags.AdmissionAdmit, Reason: tags.ReasonAdmitted},
+			docs:         2,
+			wantPromote:  true,
+			wantDeferred: false,
+		},
+		{
+			name:         "admitted below the floor stays a silent pending candidate",
+			decision:     tags.AdmissionDecision{Outcome: tags.AdmissionAdmit, Reason: tags.ReasonAdmitted},
+			docs:         1,
+			wantPromote:  false,
+			wantDeferred: false,
+		},
+		{
+			name:         "deferred at any mass stays for review",
+			decision:     tags.AdmissionDecision{Outcome: tags.AdmissionDefer, Reason: tags.ReasonSingleSignal},
+			docs:         5,
+			wantPromote:  false,
+			wantDeferred: true,
+		},
+		{
+			name:         "rejected at any mass stays for review",
+			decision:     tags.AdmissionDecision{Outcome: tags.AdmissionReject, Reason: tags.ReasonCorroborated},
+			docs:         5,
+			wantPromote:  false,
+			wantDeferred: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			promote, deferred := r.provisionalOutcome("provisional tag", tc.decision, tc.docs)
+			testutil.AssertEqual(t, promote, tc.wantPromote, "promote")
+			testutil.AssertEqual(t, deferred, tc.wantDeferred, "deferred")
+		})
+	}
 }

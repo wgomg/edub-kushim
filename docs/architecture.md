@@ -228,8 +228,8 @@ The enrichment pipeline:
      temperature, etc.) looked up from the model catalog registry. Returns structured JSON:
      title, type, tags, people (with types like author, sender), language.
      Tags are typed objects — `term`, `category` (`topic`, `form_genre`, `place`, `person`,
-     `work`, `other`), `is_standard_term` — so the model self-classifies what each term is;
-     plain-string tag arrays are still accepted and parsed into the same shape.
+     `work`, `other`) — so the model self-classifies what each term is;
+     plain-string tag arrays are still accepted and yield tags with no facet detail.
      For non-Latin names (Korean, Arabic, Cyrillic, etc.), the LLM is prompted to
      provide a `name_romanized` field alongside the original name.
      If the response is entirely empty, one automatic retry is performed.
@@ -298,33 +298,39 @@ The enrichment pipeline:
    restore, and the operator create path un-blocks the name it creates.
    When `enricher.tag_quality.enabled` is true, the kept set passes one more
    filter before it reaches the store: novel names (absent from the
-   vocabulary) are scored by a deterministic weak band and, above it, judged
-   by a four-criteria rubric (`subject_matter`, `standard_term`,
-   `not_person_place_work`, `appropriately_broad`) in one temperature-0 LLM
-   call per document. Verdicts are cached per `(tag_name, policy_version)` in
-   `tag_quality_event`, so a re-emitted name resolves without a call; a
-   weak-band score below the internal threshold, or a failing rubric
-   verdict, drops the tag for that document only. Judge failures retry once
-   and then keep every novel tag; the band thresholds are internal v1
-   constants, not config keys. Under the same gate that kept set is
+   vocabulary) are resolved by the pinned admission decision over their
+   features — the rubric judge's answers (one temperature-0 LLM call per
+   document, or the cached verdict row) plus the emission's deterministic
+   signals (a detail annotated `other`, and a best store similarity below the
+   internal `no_anchor_similarity` 0.60 cut). The rubric asks
+   `subject_matter`, `dimension`, `not_person_place_work` and `atomic`, and
+   offers `defer` as an abstention; the decision admits when nothing fails,
+   defers on a lone failing signal (or the judge's abstention), and rejects on
+   two or more — no single signal decides. Verdicts are cached per
+   `(tag_name, policy_version)` in `tag_quality_event` with the recorded
+   outcome, so a re-emitted name resolves without a call; a rejected name
+   drops the tag for that document only — its registration and pending
+   identity evidence never reach the store. Judge failures retry once and then
+   keep every novel tag with a defer decision; the decision thresholds are
+   internal v1 constants, not config keys. Under the same gate the kept set is
    quarantined: newborns are attached and searchable from birth but stay
    provisional (`tag.promoted_at` NULL) and out of the embedding store, so
    they never reach suggestions or consolidation targets. A provisional name
-   is promoted inline — inside the persist transaction — when it has a cached
-   passing verdict at the current `TagQualityVersion` and assignments on ≥2
-   distinct live documents (trashed carriers do not count); promotion is
-   one-way, and a verdict-less provisional (judge outage, re-emitted legacy
-   row) is never re-judged in flight — a name in the tag table is not novel,
-   so the judge does not see it again. Those names are resolved later by the
-   scheduled tag reconciliation, whose provisional phase promotes stored
-   passes and re-judges the rest, or by an operator through the provisional
-   review queue (`GET /api/v1/tags/provisional`,
-   `POST /api/v1/tags/{id}/promote`, and the tags page's "New tags"
-   tab); a rejection there is a normal tag delete and lands in the blocklist.
-   With the layer off, births are trusted as before.
+   is promoted inline — inside the persist transaction — when the admission
+   decision admits it and it has assignments on ≥2 distinct live documents
+   (trashed carriers do not count); provisionals already in the store are
+   decided from their cached verdict row. Promotion is one-way, and a
+   verdict-less provisional (judge outage) is never re-judged in flight — a
+   name in the tag table is not novel, so the judge does not see it again.
+   Those names are resolved later by the scheduled tag reconciliation, whose
+   provisional phase re-derives the decision from stored verdicts and
+   re-judges the rest, or by an operator through the provisional review queue
+   (`GET /api/v1/tags/provisional`, `POST /api/v1/tags/{id}/promote`, and the
+   tags page's "New tags" tab); a rejection there is a normal tag delete and
+   lands in the blocklist. With the layer off, births are trusted as before.
 6. **New Tag Store Update** — tag creation, the enrichment-owned `document_tag` sweep,
    and the per-tag assignments run in one database transaction per document
-   (`tag.CreateTx` on the transaction handle, with the quality gate as its
+   (`tag.CreatePlannedTx` on the transaction handle, with the quality gate as its
    quarantine parameter): new tags are created, only
    `enrich`-sourced assignment rows are cleared (manual assignments survive), the
    surviving tags are assigned with `source = 'enrich'`, and their orphan marks are

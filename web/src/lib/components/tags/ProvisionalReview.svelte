@@ -11,9 +11,10 @@
 
 	const criteria = [
 		{ key: 'subject_matter', label: 'subject matter' },
-		{ key: 'standard_term', label: 'standard term' },
+		{ key: 'dimension', label: 'dimension' },
 		{ key: 'not_person_place_work', label: 'not person/place/work' },
-		{ key: 'appropriately_broad', label: 'appropriately broad' }
+		{ key: 'atomic', label: 'atomic' },
+		{ key: 'defer', label: 'defer' }
 	];
 
 	const cardClass = 'rounded-lg border border-clay-800 bg-clay-900 p-4';
@@ -117,15 +118,24 @@
 		return tag.verdict.pass ? pillOk : pillWarn;
 	}
 
+	function verdictOutcome(tag) {
+		if (tag.verdict.outcome) return tag.verdict.outcome;
+		if (tag.verdict.pass) return 'admit';
+		return tag.verdict.criteria?.defer === true ? 'defer' : 'reject';
+	}
+
 	function verdictLabel(tag) {
 		if (!tag.verdict) return 'no verdict';
-		if (!tag.verdict.pass) return 'judge rejected';
-		return tag.document_count >= 2 ? 'eligible' : 'awaiting second document';
+		if (tag.verdict.pass) {
+			return tag.document_count >= 2 ? 'eligible' : 'awaiting second document';
+		}
+		return verdictOutcome(tag) === 'defer' ? 'deferred to review' : 'judge rejected';
 	}
 
 	function verdictTitle(tag) {
 		if (!tag.verdict) return 'Never judged — no verdict was recorded when this tag was born';
-		if (tag.verdict.pass) return 'The quality judge passed this tag';
+		if (tag.verdict.pass) return 'The quality judge admitted this tag';
+		if (verdictOutcome(tag) === 'defer') return 'The quality judge deferred this tag to review';
 		return 'The quality judge rejected this tag';
 	}
 
@@ -157,9 +167,9 @@
 </div>
 
 <p class="mb-4 max-w-3xl text-[0.8125rem] text-parchment-500">
-	New tags stay provisional until the quality judge passes them and a second document carries them.
-	Approve promotes a tag into the shared vocabulary; reject deletes it and blocks it from
-	enrichment.
+	New tags stay provisional until the admission decision admits them and a second live document
+	carries them; uncertain ones wait here for review. Approve promotes a tag into the shared
+	vocabulary; reject deletes it and blocks it from enrichment.
 </p>
 
 {#if loading}

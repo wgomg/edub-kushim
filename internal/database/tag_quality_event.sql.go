@@ -16,8 +16,8 @@ import (
 
 const insertTagQualityEvent = `-- name: InsertTagQualityEvent :execrows
 INSERT INTO tag_quality_event
-    (document_id, tag_name, criteria, pass, verdict_model, policy_version)
-VALUES ($1, $2, $3, $4, $5, $6)
+    (document_id, tag_name, criteria, pass, outcome, verdict_model, policy_version)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 ON CONFLICT (tag_name, policy_version) WHERE verdict_model IS NOT NULL DO NOTHING
 `
 
@@ -26,6 +26,7 @@ type InsertTagQualityEventParams struct {
 	TagName       string
 	Criteria      json.RawMessage
 	Pass          bool
+	Outcome       sql.NullString
 	VerdictModel  sql.NullString
 	PolicyVersion string
 }
@@ -36,6 +37,7 @@ func (q *Queries) InsertTagQualityEvent(ctx context.Context, arg InsertTagQualit
 		arg.TagName,
 		arg.Criteria,
 		arg.Pass,
+		arg.Outcome,
 		arg.VerdictModel,
 		arg.PolicyVersion,
 	)
@@ -47,7 +49,7 @@ func (q *Queries) InsertTagQualityEvent(ctx context.Context, arg InsertTagQualit
 
 const latestTagQualityEventsForNames = `-- name: LatestTagQualityEventsForNames :many
 SELECT DISTINCT ON (tag_name)
-       tag_name, criteria, pass, verdict_model, policy_version, verdict_at
+       tag_name, criteria, pass, outcome, verdict_model, policy_version, verdict_at
 FROM tag_quality_event
 WHERE policy_version = $1
   AND tag_name = ANY($2::text[])
@@ -63,6 +65,7 @@ type LatestTagQualityEventsForNamesRow struct {
 	TagName       string
 	Criteria      json.RawMessage
 	Pass          bool
+	Outcome       sql.NullString
 	VerdictModel  sql.NullString
 	PolicyVersion string
 	VerdictAt     time.Time
@@ -81,6 +84,7 @@ func (q *Queries) LatestTagQualityEventsForNames(ctx context.Context, arg Latest
 			&i.TagName,
 			&i.Criteria,
 			&i.Pass,
+			&i.Outcome,
 			&i.VerdictModel,
 			&i.PolicyVersion,
 			&i.VerdictAt,

@@ -358,8 +358,8 @@ func (s *TagMerge) DismissPair(ctx context.Context, tagA, tagB string) error {
 		return errs.FromDB(err, "get tag b for dismissal")
 	}
 	if err := s.client.Queries.UpsertTagMergeDismissal(ctx, database.UpsertTagMergeDismissalParams{
-		TagA: a,
-		TagB: b,
+		TagA: textnorm.NormalizeTag(a),
+		TagB: textnorm.NormalizeTag(b),
 	}); err != nil {
 		return errs.FromDB(err, "dismiss merge pair")
 	}
@@ -373,8 +373,8 @@ func (s *TagMerge) RestorePair(ctx context.Context, tagA, tagB string) error {
 		return err
 	}
 	if _, err := s.client.Queries.DeleteTagMergeDismissal(ctx, database.DeleteTagMergeDismissalParams{
-		TagA: a,
-		TagB: b,
+		TagA: textnorm.NormalizeTag(a),
+		TagB: textnorm.NormalizeTag(b),
 	}); err != nil {
 		return errs.FromDB(err, "restore merge pair")
 	}

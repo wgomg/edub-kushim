@@ -106,6 +106,21 @@ type provisionalEntry struct {
 	docs int64
 }
 
+// provisionalOutcome applies one provisional tag's decision: an admitted
+// decision at or above the live-mass floor promotes; a reject or defer
+// logs once and stays for review; an admit below the floor stays a silent
+// pending candidate.
+func (r *Reconciler) provisionalOutcome(name string, decision tags.AdmissionDecision, docs int64) (promote, deferred bool) {
+	if tags.DecidePromotion(decision.Outcome, docs) {
+		return true, false
+	}
+	if decision.Outcome != tags.AdmissionAdmit {
+		r.logger.Info("", "tag reconcile: provisional tag %q left for review (outcome=%s reason=%s)", name, decision.Outcome, decision.Reason)
+		return false, true
+	}
+	return false, false
+}
+
 func (r *Reconciler) sweepProvisionalTags(ctx context.Context, cfg *config.Config, report *Report) {
 	graceDays := cfg.Enricher.TagReconcile.ProvisionalGraceDays
 	cutoff := time.Now().Add(-time.Duration(graceDays) * 24 * time.Hour)
@@ -167,7 +182,8 @@ func (r *Reconciler) sweepProvisionalTags(ctx context.Context, cfg *config.Confi
 			rejudge = append(rejudge, &provisionalEntry{id: t.ID, name: t.Name, docs: docs})
 			continue
 		}
-		if !row.Pass || docs < 2 {
+		decision := admission.DecisionFromStored(row.Criteria, row.Pass, tags.AdmissionFeatures{})
+		if promote, _ := r.provisionalOutcome(t.Name, decision, docs); !promote {
 			continue
 		}
 
@@ -269,7 +285,8 @@ func (r *Reconciler) rejudgeProvisionalTags(ctx context.Context, cfg *config.Con
 			report.Provisional.Failed++
 			continue
 		}
-		pass, finalModel, err := r.recordProvisionalVerdict(ctx, docID, e.name, criteria, res.Passed(), model)
+		decision := tags.DecideAdmission(admission.JudgeFeatures(res, tags.AdmissionFeatures{}))
+		storedCriteria, pass, finalModel, err := r.recordProvisionalVerdict(ctx, docID, e.name, criteria, decision.Outcome == tags.AdmissionAdmit, decision.Outcome.String(), model)
 		if err != nil {
 			r.logger.Error("", "tag reconcile: record provisional verdict for %q: %v", e.name, err)
 			report.Provisional.Failed++
@@ -277,12 +294,11 @@ func (r *Reconciler) rejudgeProvisionalTags(ctx context.Context, cfg *config.Con
 		}
 		report.Provisional.Rejudged++
 
-		if !pass {
-			report.Provisional.Deferred++
-			r.logger.Info("", "tag reconcile: provisional tag %q rejected by the judge — deferred to the review queue", e.name)
-			continue
-		}
-		if e.docs < 2 {
+		decision = admission.DecisionFromStored(storedCriteria, pass, tags.AdmissionFeatures{})
+		if promote, deferred := r.provisionalOutcome(e.name, decision, e.docs); !promote {
+			if deferred {
+				report.Provisional.Deferred++
+			}
 			continue
 		}
 		if _, status, err := r.tag.Promote(ctx, e.id, "sweep"); err != nil {
@@ -294,32 +310,33 @@ func (r *Reconciler) rejudgeProvisionalTags(ctx context.Context, cfg *config.Con
 	}
 }
 
-func (r *Reconciler) recordProvisionalVerdict(ctx context.Context, docID int64, name string, criteria json.RawMessage, pass bool, model string) (bool, string, error) {
+func (r *Reconciler) recordProvisionalVerdict(ctx context.Context, docID int64, name string, criteria json.RawMessage, pass bool, outcome string, model string) (json.RawMessage, bool, string, error) {
 	verdictModel := sql.NullString{String: model, Valid: model != ""}
 	stored, err := r.client.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
 		DocumentID:    docID,
 		TagName:       textnorm.NormalizeTag(name),
 		Criteria:      criteria,
 		Pass:          pass,
+		Outcome:       sql.NullString{String: outcome, Valid: outcome != ""},
 		VerdictModel:  verdictModel,
 		PolicyVersion: analyzer.TagQualityVersion,
 	})
 	if err != nil {
-		return false, "", err
+		return nil, false, "", err
 	}
 	if stored > 0 || !verdictModel.Valid {
-		return pass, model, nil
+		return criteria, pass, model, nil
 	}
 
 	// another writer recorded a fresh verdict first — keep it, never overwrite
 	rows, err := r.tag.LatestQualityEventsForNames(ctx, []string{name})
 	if err != nil {
-		return false, "", err
+		return nil, false, "", err
 	}
 	if len(rows) == 0 {
-		return pass, model, nil
+		return criteria, pass, model, nil
 	}
-	return rows[0].Pass, verdictModelLabel(rows[0].VerdictModel), nil
+	return rows[0].Criteria, rows[0].Pass, verdictModelLabel(rows[0].VerdictModel), nil
 }
 
 func verdictModelLabel(model sql.NullString) string {

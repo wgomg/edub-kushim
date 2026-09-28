@@ -258,6 +258,7 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 		for _, e := range events {
 			info := TagQualityVerdictInfo{
 				Pass:      e.Pass,
+				Outcome:   e.Outcome.String,
 				Model:     e.VerdictModel.String,
 				VerdictAt: e.VerdictAt,
 			}
@@ -519,18 +520,23 @@ type DeletedTagListResponse struct {
 	Total   int64                `json:"total"`
 }
 
-// TagQualityCriteriaView is the API view of the four quality answers.
+// TagQualityCriteriaView is the API view of the judge's rubric answers;
+// a nil answer had no signal in the stored payload.
 type TagQualityCriteriaView struct {
 	SubjectMatter      *bool `json:"subject_matter"`
-	StandardTerm       *bool `json:"standard_term"`
+	Dimension          *bool `json:"dimension"`
 	NotPersonPlaceWork *bool `json:"not_person_place_work"`
-	AppropriatelyBroad *bool `json:"appropriately_broad"`
+	Atomic             *bool `json:"atomic"`
+	Defer              *bool `json:"defer"`
 }
 
 // TagQualityVerdictInfo is the latest recorded quality verdict for a
-// provisional tag, its criteria (nil when unjudged) and the model.
+// provisional tag: the pass flag, the recorded outcome (absent on rows
+// predating the outcome column), its criteria (nil when unjudged) and the
+// model.
 type TagQualityVerdictInfo struct {
 	Pass      bool                    `json:"pass"`
+	Outcome   string                  `json:"outcome,omitempty"`
 	Criteria  *TagQualityCriteriaView `json:"criteria"`
 	Model     string                  `json:"model,omitempty"`
 	VerdictAt time.Time               `json:"verdict_at"`

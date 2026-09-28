@@ -52,7 +52,7 @@ type ContentAnalyzer interface {
 	// AdjudicateTagSplits decides which joint tags split into components.
 	AdjudicateTagSplits(ctx context.Context, tags []string) ([]TagSplitResult, error)
 	// JudgeTagQuality scores candidate tags against the document text on
-	// the four quality criteria.
+	// the dimension rubric: the four criteria and the judge's abstention.
 	JudgeTagQuality(ctx context.Context, text string, candidates []TagQualityCandidate) ([]TagQualityResult, error)
 	// JudgeTagIdentity decides the canonical written form of candidate
 	// tags: folds, denotation preservation, conventional form.

@@ -146,9 +146,11 @@ type mockAdjudicator struct {
 	adjudicateFn func(ctx context.Context, pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error)
 	identityFn   func(ctx context.Context, candidates []analyzer.TagIdentityCandidate) ([]analyzer.TagIdentityResult, error)
 	splitFn      func(ctx context.Context, tags []string) ([]analyzer.TagSplitResult, error)
+	qualityFn    func(ctx context.Context, text string, candidates []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error)
 	called       int
 	identityCall int
 	splitCall    int
+	qualityCall  int
 }
 
 func (m *mockAdjudicator) Analyze(_ context.Context, _ string, _ []analyzer.TypeRef, _ []analyzer.TypeRef, _ []string) (*analyzer.AnalysisResult, error) {
@@ -175,7 +177,11 @@ func (m *mockAdjudicator) AdjudicateTagSplits(ctx context.Context, tags []string
 	return nil, nil
 }
 
-func (m *mockAdjudicator) JudgeTagQuality(_ context.Context, _ string, _ []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error) {
+func (m *mockAdjudicator) JudgeTagQuality(ctx context.Context, text string, candidates []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error) {
+	m.qualityCall++
+	if m.qualityFn != nil {
+		return m.qualityFn(ctx, text, candidates)
+	}
 	return nil, nil
 }
 
@@ -427,42 +433,6 @@ func TestWriteVerdictEvent_ConflictReReadsStoredVerdict(t *testing.T) {
 	adjAssertEqual(t, bp.model, "other-model", "stored model recorded")
 }
 
-func TestTagQualityScore(t *testing.T) {
-	tTrue := true
-	tFalse := false
-
-	tests := []struct {
-		name         string
-		standardTerm *bool
-		category     string
-		bestSim      float64
-		haveSim      bool
-		noAnchorSim  float64
-		want         int
-	}{
-		{"nil standard, topic, no sim", nil, "topic", 0, false, 0.6, 0},
-		{"true standard, topic, no sim", &tTrue, "topic", 0, false, 0.6, 1},
-		{"false standard, topic, no sim", &tFalse, "topic", 0, false, 0.6, -1},
-		{"nil standard, other, no sim", nil, "other", 0, false, 0.6, -1},
-		{"true standard, other, no sim", &tTrue, "other", 0, false, 0.6, 0},
-		{"false standard, other, no sim", &tFalse, "other", 0, false, 0.6, -2},
-		{"true standard, topic, sim above floor", &tTrue, "topic", 0.8, true, 0.6, 1},
-		{"true standard, topic, sim below floor", &tTrue, "topic", 0.5, true, 0.6, 0},
-		{"true standard, topic, sim==0 haveSim=false", &tTrue, "topic", 0, false, 0.6, 1},
-		{"false standard, other, sim below floor", &tFalse, "other", 0.4, true, 0.6, -3},
-		{"nil standard, other, sim below floor", nil, "other", 0.4, true, 0.6, -2},
-		{"true standard, topic, haveSim=false sim ignored", &tTrue, "topic", 0.5, false, 0.6, 1},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := tagQualityScore(tt.standardTerm, tt.category, tt.bestSim, tt.haveSim, tt.noAnchorSim)
-			if got != tt.want {
-				t.Errorf("tagQualityScore() = %d, want %d", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestTagQualityEvent_InsertAndCacheRead(t *testing.T) {
 	if os.Getenv("TEST_DATABASE_URL") == "" {
 		t.Skip("TEST_DATABASE_URL not set")
@@ -490,13 +460,14 @@ func TestTagQualityEvent_InsertAndCacheRead(t *testing.T) {
 		t.Fatalf("create test document: %v", err)
 	}
 
-	criteria := json.RawMessage(`{"subject_matter":true,"standard_term":true,"not_person_place_work":true,"appropriately_broad":true}`)
+	criteria := json.RawMessage(`{"subject_matter":true,"dimension":true,"not_person_place_work":true,"atomic":true,"defer":false}`)
 
 	n, err := q.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
 		DocumentID:    docID,
 		TagName:       "quantum physics",
 		Criteria:      criteria,
 		Pass:          true,
+		Outcome:       sql.NullString{String: "admit", Valid: true},
 		VerdictModel:  sql.NullString{String: "judge-model", Valid: true},
 		PolicyVersion: "v1",
 	})
@@ -538,6 +509,9 @@ func TestTagQualityEvent_InsertAndCacheRead(t *testing.T) {
 	if !rows[0].Pass {
 		t.Error("expected pass=true from cached row")
 	}
+	if rows[0].Outcome.String != "admit" || !rows[0].Outcome.Valid {
+		t.Errorf("expected outcome=admit from cached row, got %+v", rows[0].Outcome)
+	}
 	if rows[0].VerdictModel.String != "judge-model" {
 		t.Errorf("expected model=judge-model, got %q", rows[0].VerdictModel.String)
 	}
@@ -570,6 +544,195 @@ func TestTagQualityEvent_InsertAndCacheRead(t *testing.T) {
 	if rows[0].VerdictModel.Valid {
 		t.Errorf("expected NULL model for latest row, got %q", rows[0].VerdictModel.String)
 	}
+	if rows[0].Outcome.Valid {
+		t.Errorf("expected NULL outcome for the cache-applied row, got %q", rows[0].Outcome.String)
+	}
+}
+
+func TestDecisionFromStored(t *testing.T) {
+	rubric := func(subject, dimension, notPersonPlace, atomic, deferJudge bool) json.RawMessage {
+		return json.RawMessage(`{"subject_matter":` + boolJSON(subject) +
+			`,"dimension":` + boolJSON(dimension) +
+			`,"not_person_place_work":` + boolJSON(notPersonPlace) +
+			`,"atomic":` + boolJSON(atomic) +
+			`,"defer":` + boolJSON(deferJudge) + `}`)
+	}
+	legacy := json.RawMessage(`{"subject_matter":true,"standard_term":true,"not_person_place_work":true,"appropriately_broad":true}`)
+
+	cases := []struct {
+		name       string
+		criteria   json.RawMessage
+		pass       bool
+		features   tags.AdmissionFeatures
+		want       tags.AdmissionOutcome
+		wantReason string
+	}{
+		{"rubric with no failures admits whatever pass says", rubric(true, true, true, true, false), false, tags.AdmissionFeatures{}, tags.AdmissionAdmit, tags.ReasonAdmitted},
+		{"one failing rubric answer defers whatever pass says", rubric(true, false, true, true, false), true, tags.AdmissionFeatures{}, tags.AdmissionDefer, tags.ReasonSingleSignal},
+		{"two failing rubric answers reject", rubric(false, false, true, true, false), true, tags.AdmissionFeatures{}, tags.AdmissionReject, tags.ReasonCorroborated},
+		{"stored abstention defers", rubric(true, true, true, true, true), false, tags.AdmissionFeatures{}, tags.AdmissionDefer, tags.ReasonJudgeDefer},
+		{"caller deterministic signal joins the rubric", rubric(true, true, true, true, false), false, tags.AdmissionFeatures{CategoryOther: true}, tags.AdmissionDefer, tags.ReasonSingleSignal},
+		{"caller deterministic signals corroborate the rubric", rubric(true, true, true, true, false), false, tags.AdmissionFeatures{CategoryOther: true, NoAnchor: true}, tags.AdmissionReject, tags.ReasonCorroborated},
+		{"legacy rubric maps pass to admit", legacy, true, tags.AdmissionFeatures{}, tags.AdmissionAdmit, reasonLegacyPass},
+		{"legacy rubric maps pass to reject", legacy, false, tags.AdmissionFeatures{}, tags.AdmissionReject, reasonLegacyReject},
+		{"malformed criteria map pass to reject", json.RawMessage("not json"), false, tags.AdmissionFeatures{}, tags.AdmissionReject, reasonLegacyReject},
+		{"empty criteria map pass to admit", json.RawMessage(""), true, tags.AdmissionFeatures{}, tags.AdmissionAdmit, reasonLegacyPass},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := DecisionFromStored(tc.criteria, tc.pass, tc.features)
+			adjAssertEqual(t, got.Outcome, tc.want, "outcome")
+			adjAssertEqual(t, got.Reason, tc.wantReason, "reason")
+		})
+	}
+}
+
+func boolJSON(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
+}
+
+func TestApplyTagQuality(t *testing.T) {
+	a, q, adj := newTestAdjudicator(t)
+	a.config.Enricher.TagQuality.Llm = config.LlmConfig{Provider: "test", Model: "judge-model"}
+	setUnexportedField(t, a.runner, "tagQualityJudge", adj)
+	adj.qualityFn = func(_ context.Context, _ string, candidates []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error) {
+		results := make([]analyzer.TagQualityResult, len(candidates))
+		for i, c := range candidates {
+			results[i] = analyzer.TagQualityResult{
+				Index:              i,
+				SubjectMatter:      true,
+				Dimension:          true,
+				NotPersonPlaceWork: true,
+				Atomic:             true,
+			}
+			if c.Term == "phase conjugation" {
+				results[i].SubjectMatter = false
+				results[i].Dimension = false
+			}
+		}
+		return results, nil
+	}
+	ctx := context.Background()
+	docID, _ := database.CreateTestDocument(t, q, "quality-doc")
+	noStore := map[string]struct{}{}
+
+	qualityRow := func(t *testing.T, name string) database.LatestTagQualityEventsForNamesRow {
+		t.Helper()
+		rows, err := q.LatestTagQualityEventsForNames(ctx, database.LatestTagQualityEventsForNamesParams{
+			PolicyVersion: analyzer.TagQualityVersion,
+			TagNames:      []string{name},
+		})
+		if err != nil {
+			t.Fatalf("read quality row: %v", err)
+		}
+		if len(rows) != 1 {
+			t.Fatalf("quality rows for %q = %d, want 1", name, len(rows))
+		}
+		return rows[0]
+	}
+
+	t.Run("admitted novel tag is kept with an admit decision and a recorded outcome", func(t *testing.T) {
+		analysis := &tools.ContentAnalysisResult{
+			Tags:       []string{"wave mechanics"},
+			TagDetails: []analyzer.TagDetail{{Term: "wave mechanics", Category: analyzer.TagCategoryTopic}},
+		}
+		kept, decisions := a.ApplyTagQuality(ctx, analysis, nil, noStore, "text", docID, "")
+
+		adjAssertEqual(t, len(kept), 1, "kept tags")
+		adjAssertEqual(t, kept[0], "wave mechanics", "kept name")
+		adjAssertEqual(t, decisions["wave mechanics"].Outcome, tags.AdmissionAdmit, "decision outcome")
+		adjAssertEqual(t, decisions["wave mechanics"].Reason, tags.ReasonAdmitted, "decision reason")
+
+		row := qualityRow(t, "wave mechanics")
+		adjAssertEqual(t, row.Pass, true, "recorded pass")
+		adjAssertEqual(t, row.Outcome.String, "admit", "recorded outcome")
+		adjAssertEqual(t, row.VerdictModel.String, "judge-model", "recorded model")
+	})
+
+	t.Run("corroborated judge failure drops the tag and records the rejection", func(t *testing.T) {
+		analysis := &tools.ContentAnalysisResult{
+			Tags:       []string{"phase conjugation"},
+			TagDetails: []analyzer.TagDetail{{Term: "phase conjugation", Category: analyzer.TagCategoryTopic}},
+		}
+		kept, decisions := a.ApplyTagQuality(ctx, analysis, nil, noStore, "text", docID, "")
+
+		adjAssertEqual(t, len(kept), 0, "rejected tag is dropped")
+		if _, ok := decisions["phase conjugation"]; ok {
+			t.Errorf("rejected names must not carry a decision: %+v", decisions["phase conjugation"])
+		}
+
+		row := qualityRow(t, "phase conjugation")
+		adjAssertEqual(t, row.Pass, false, "recorded pass")
+		adjAssertEqual(t, row.Outcome.String, "reject", "recorded outcome")
+	})
+
+	t.Run("a lone deterministic signal defers instead of dropping", func(t *testing.T) {
+		analysis := &tools.ContentAnalysisResult{
+			Tags:       []string{"spin lattice"},
+			TagDetails: []analyzer.TagDetail{{Term: "spin lattice", Category: analyzer.TagCategoryOther}},
+		}
+		kept, decisions := a.ApplyTagQuality(ctx, analysis, nil, noStore, "text", docID, "")
+
+		adjAssertEqual(t, len(kept), 1, "gray-band tag is kept")
+		adjAssertEqual(t, decisions["spin lattice"].Outcome, tags.AdmissionDefer, "decision outcome")
+		adjAssertEqual(t, decisions["spin lattice"].Reason, tags.ReasonSingleSignal, "decision reason")
+
+		row := qualityRow(t, "spin lattice")
+		adjAssertEqual(t, row.Pass, false, "recorded pass")
+		adjAssertEqual(t, row.Outcome.String, "defer", "recorded outcome")
+	})
+
+	t.Run("cached rejection drops the tag without a judge call", func(t *testing.T) {
+		a2, q2, adj2 := newTestAdjudicator(t)
+		setUnexportedField(t, a2.runner, "tagQualityJudge", adj2)
+		if _, err := q2.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
+			DocumentID:    docID,
+			TagName:       "cached candidate",
+			Criteria:      json.RawMessage(`{"subject_matter":false,"dimension":false,"not_person_place_work":true,"atomic":true,"defer":false}`),
+			Pass:          false,
+			Outcome:       sql.NullString{String: "reject", Valid: true},
+			VerdictModel:  sql.NullString{String: "seed-model", Valid: true},
+			PolicyVersion: analyzer.TagQualityVersion,
+		}); err != nil {
+			t.Fatalf("seed cached rejection: %v", err)
+		}
+
+		analysis := &tools.ContentAnalysisResult{
+			Tags:       []string{"cached candidate"},
+			TagDetails: []analyzer.TagDetail{{Term: "cached candidate", Category: analyzer.TagCategoryTopic}},
+		}
+		kept, decisions := a2.ApplyTagQuality(ctx, analysis, nil, noStore, "text", docID, "")
+
+		adjAssertEqual(t, len(kept), 0, "cached rejection is applied")
+		adjAssertEqual(t, len(decisions), 0, "no decision for a dropped name")
+		adjAssertEqual(t, adj2.qualityCall, 0, "the cache answers without a judge call")
+	})
+
+	t.Run("judge unavailable keeps the tag with a defer decision and no row", func(t *testing.T) {
+		a2, q2, _ := newTestAdjudicator(t)
+		analysis := &tools.ContentAnalysisResult{
+			Tags:       []string{"tunneling effect"},
+			TagDetails: []analyzer.TagDetail{{Term: "tunneling effect", Category: analyzer.TagCategoryTopic}},
+		}
+		kept, decisions := a2.ApplyTagQuality(ctx, analysis, nil, noStore, "text", docID, "")
+
+		adjAssertEqual(t, len(kept), 1, "tag survives a judge outage")
+		adjAssertEqual(t, decisions["tunneling effect"].Outcome, tags.AdmissionDefer, "decision outcome")
+		adjAssertEqual(t, decisions["tunneling effect"].Reason, reasonJudgeUnavailable, "decision reason")
+
+		rows, err := q2.LatestTagQualityEventsForNames(ctx, database.LatestTagQualityEventsForNamesParams{
+			PolicyVersion: analyzer.TagQualityVersion,
+			TagNames:      []string{"tunneling effect"},
+		})
+		if err != nil {
+			t.Fatalf("read quality rows: %v", err)
+		}
+		adjAssertEqual(t, len(rows), 0, "no verdict row without a verdict")
+	})
 }
 
 func splitVerdictsAll(_ context.Context, names []string) ([]analyzer.TagSplitResult, error) {

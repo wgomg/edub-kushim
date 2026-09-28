@@ -61,3 +61,34 @@ func TestEncodeRows(t *testing.T) {
 		t.Errorf("numbers[%q] = %v, want 4", NumberMass, numbers[NumberMass])
 	}
 }
+
+func TestEncodeRows_NormalizesOperands(t *testing.T) {
+	raw, err := EncodeRows([]Record{{
+		Operator: OperatorReconstructibility,
+		Operands: []string{" World War II ", "Bike Repair"},
+		Numbers:  map[string]any{NumberExcessRatio: 0.5},
+		State:    StateInsufficient,
+	}})
+	if err != nil {
+		t.Fatalf("EncodeRows: %v", err)
+	}
+
+	var rows []struct {
+		Operands []string `json:"operands"`
+	}
+	if err := json.Unmarshal(raw, &rows); err != nil {
+		t.Fatalf("unmarshal rows: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("row count = %d, want 1", len(rows))
+	}
+	want := []string{"world war ii", "bike repair"}
+	if len(rows[0].Operands) != len(want) {
+		t.Fatalf("operands = %v, want %v", rows[0].Operands, want)
+	}
+	for i := range want {
+		if rows[0].Operands[i] != want[i] {
+			t.Errorf("operands[%d] = %q, want %q (normalized at the write boundary)", i, rows[0].Operands[i], want[i])
+		}
+	}
+}

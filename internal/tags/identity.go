@@ -110,6 +110,35 @@ func (p Plan) RemovedStoreNames() []string {
 	return out
 }
 
+// DropTagNames returns the plan without the registrations and pending
+// evidence rows of the given names, so a candidate the admission decision
+// rejected is never written; a registration matches by its output name or
+// by its raw input, since a deterministic plan's output is house-formed
+// and the caller holds emission names. Evidence naming a rejected partner
+// goes too, or a later fold could rename a kept candidate onto it.
+func (p Plan) DropTagNames(rejected map[string]bool) Plan {
+	if len(rejected) == 0 {
+		return p
+	}
+	registrations := make([]Registration, 0, len(p.Registrations))
+	for _, reg := range p.Registrations {
+		if rejected[reg.Name] || rejected[reg.Input] {
+			continue
+		}
+		registrations = append(registrations, reg)
+	}
+	evidence := make([]EvidenceRow, 0, len(p.Evidence))
+	for _, row := range p.Evidence {
+		if rejected[row.Candidate] || rejected[row.Partner] {
+			continue
+		}
+		evidence = append(evidence, row)
+	}
+	p.Registrations = registrations
+	p.Evidence = evidence
+	return p
+}
+
 // StoreView is the store state a plan is computed against: the live
 // names, the aliases that resolve them, and the blocklist.
 type StoreView struct {

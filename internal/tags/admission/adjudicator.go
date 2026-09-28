@@ -29,8 +29,15 @@ import (
 )
 
 const (
-	tagQualityTLow               = -1.0
+	// the pinned no-anchor similarity cut, carried over from the
+	// pre-definition quality gate and deliberately not operator-tunable
 	tagQualityNoAnchorSimilarity = 0.60
+
+	// reasons the interim paths record: no judge answered the candidate, or
+	// the cached row predates the dimension rubric
+	reasonJudgeUnavailable = "judge_unavailable"
+	reasonLegacyPass       = "legacy_pass"
+	reasonLegacyReject     = "legacy_reject"
 )
 
 // Adjudicator is the document-level admission machinery: it decomposes
@@ -286,40 +293,61 @@ func (a *Adjudicator) writeVerdictEvent(ctx context.Context, docId int64, d poli
 }
 
 type novelTag struct {
-	emitted  string
-	category string
-	standard *bool
-	bestSim  float64
-	haveSim  bool
+	emitted    string
+	category   string
+	haveDetail bool
+	bestSim    float64
+	haveSim    bool
 }
 
-func tagQualityScore(standardTerm *bool, category string, bestSim float64, haveSim bool, noAnchorSim float64) int {
-	score := 0
-	switch {
-	case standardTerm == nil:
-	case *standardTerm:
-		score += 1
-	default:
-		score -= 1
+// features reads the deterministic signals; a missing detail or
+// similarity is absence of evidence, not a failing signal
+// (docs/tags/definition-and-faceted-retrieval.md §6.6).
+func (n *novelTag) features() tags.AdmissionFeatures {
+	return tags.AdmissionFeatures{
+		CategoryOther: n.haveDetail && n.category == analyzer.TagCategoryOther,
+		NoAnchor:      n.haveSim && n.bestSim < tagQualityNoAnchorSimilarity,
 	}
-	if category == analyzer.TagCategoryOther {
-		score -= 1
-	}
-	if haveSim && bestSim < noAnchorSim {
-		score -= 1
-	}
-	return score
 }
 
-func isStandardLabel(v *bool) string {
-	switch {
-	case v == nil:
-		return "absent"
-	case *v:
-		return "true"
-	default:
-		return "false"
+// promptCategory is the category the judge sees: an unannotated emission
+// presents as other, while the feature stays absent.
+func (n *novelTag) promptCategory() string {
+	if !n.haveDetail {
+		return analyzer.TagCategoryOther
 	}
+	return n.category
+}
+
+// DecisionFromStored re-derives the admission decision from a cached
+// quality event row: rows carrying the current rubric re-run
+// tags.DecideAdmission over the stored judge answers plus whatever
+// deterministic features the caller has (callers without an emission
+// context pass a zero set); rows predating the rubric fall back to their
+// pass flag until the store reset wipes them.
+func DecisionFromStored(criteria json.RawMessage, pass bool, features tags.AdmissionFeatures) tags.AdmissionDecision {
+	var c analyzer.TagQualityCriteria
+	if err := json.Unmarshal(criteria, &c); err == nil {
+		if r, ok := c.Result(); ok {
+			return tags.DecideAdmission(JudgeFeatures(r, features))
+		}
+	}
+	if pass {
+		return tags.AdmissionDecision{Outcome: tags.AdmissionAdmit, Reason: reasonLegacyPass}
+	}
+	return tags.AdmissionDecision{Outcome: tags.AdmissionReject, Reason: reasonLegacyReject}
+}
+
+// JudgeFeatures folds the judge's rubric answers into a feature set; the
+// judge slots are overwritten and the deterministic features pass through
+// as given. Callers without an emission context pass a zero set.
+func JudgeFeatures(r analyzer.TagQualityResult, f tags.AdmissionFeatures) tags.AdmissionFeatures {
+	f.SubjectMatter = r.SubjectMatter
+	f.Dimension = r.Dimension
+	f.NotPersonPlaceWork = r.NotPersonPlaceWork
+	f.Atomic = r.Atomic
+	f.JudgeDefer = r.Defer
+	return f
 }
 
 func marshalTagQualityCriteria(r analyzer.TagQualityResult) json.RawMessage {
@@ -338,13 +366,28 @@ func tagQualityCriteriaLog(criteria json.RawMessage) string {
 	return c.String()
 }
 
-// ApplyTagQuality filters the analysis's tags through the quality gates:
-// the deterministic score rejects weak candidates outright, the verdict
-// cache reuses earlier decisions for the same tag name, and the LLM
-// quality judge settles the rest. Rejected tags are dropped from the
-// returned list; judge failures keep the tags, which are then born
-// provisional.
-func (a *Adjudicator) ApplyTagQuality(ctx context.Context, analysis *tools.ContentAnalysisResult, decisions []policy.Decision, dbNames map[string]struct{}, reducedText string, docId int64, reqID string) []string {
+// logAdmission keeps admits silent: the audit log stays on the failure
+// paths, where the reason matters.
+func (a *Adjudicator) logAdmission(reqID, name, source string, d tags.AdmissionDecision, criteria json.RawMessage, model string) {
+	if d.Outcome == tags.AdmissionAdmit {
+		return
+	}
+	if model == "" {
+		model = "cached"
+	}
+	a.logger.Info(reqID, "tagquality[%s]: %s %q (reason=%s source=%s model=%s criteria=%s)",
+		analyzer.TagQualityVersion, d.Outcome, name, d.Reason, source, model, tagQualityCriteriaLog(criteria))
+}
+
+// ApplyTagQuality filters the analysis's tags through the admission
+// decision: each novel candidate's features — the judge's rubric answers
+// from the verdict cache or a fresh judge call, plus the emission's
+// deterministic signals — resolve through tags.DecideAdmission. Rejected
+// tags are dropped from the returned list; deferred and admitted tags are
+// both kept, and every kept novel name's decision is returned so the
+// caller can drive promotion. A missing judge, judge failure, or context
+// cancellation keeps the tags, born provisional with a defer decision.
+func (a *Adjudicator) ApplyTagQuality(ctx context.Context, analysis *tools.ContentAnalysisResult, decisions []policy.Decision, dbNames map[string]struct{}, reducedText string, docId int64, reqID string) ([]string, map[string]tags.AdmissionDecision) {
 	typedByTerm := make(map[string]analyzer.TagDetail, len(analysis.TagDetails))
 	for _, d := range analysis.TagDetails {
 		typedByTerm[textnorm.NormalizeTag(d.Term)] = d
@@ -357,6 +400,7 @@ func (a *Adjudicator) ApplyTagQuality(ctx context.Context, analysis *tools.Conte
 	}
 
 	rejected := make(map[string]bool)
+	decided := make(map[string]tags.AdmissionDecision)
 	seenNovel := make(map[string]bool)
 	var novels []*novelTag
 	for _, out := range analysis.Tags {
@@ -370,21 +414,12 @@ func (a *Adjudicator) ApplyTagQuality(ctx context.Context, analysis *tools.Conte
 			continue
 		}
 		seenNovel[out] = true
-		n := &novelTag{emitted: out, category: analyzer.TagCategoryOther}
+		n := &novelTag{emitted: out}
 		if d, ok := typedByTerm[out]; ok {
-			n.standard = d.IsStandardTerm
-			if d.Category != "" {
-				n.category = d.Category
-			}
+			n.category, n.haveDetail = d.Category, true
 		}
 		if sim, ok := simByOutput[out]; ok && sim > 0 {
 			n.bestSim, n.haveSim = sim, true
-		}
-		if score := tagQualityScore(n.standard, n.category, n.bestSim, n.haveSim, tagQualityNoAnchorSimilarity); float64(score) < tagQualityTLow {
-			a.logger.Info(reqID, "tagquality[%s]: reject %q (reason=weak_score score=%d is_standard=%s category=%s best_sim=%.3f)",
-				analyzer.TagQualityVersion, out, score, isStandardLabel(n.standard), n.category, n.bestSim)
-			rejected[out] = true
-			continue
 		}
 		novels = append(novels, n)
 	}
@@ -412,25 +447,30 @@ func (a *Adjudicator) ApplyTagQuality(ctx context.Context, analysis *tools.Conte
 				uncached = append(uncached, n)
 				continue
 			}
-			a.writeTagQualityEvent(ctx, docId, n.emitted, row.Criteria, row.Pass, "", reqID)
-			if !row.Pass {
+			decision := DecisionFromStored(row.Criteria, row.Pass, n.features())
+			a.writeTagQualityEvent(ctx, docId, n.emitted, row.Criteria, row.Pass, row.Outcome.String, "", reqID)
+			a.logAdmission(reqID, n.emitted, "cache", decision, row.Criteria, row.VerdictModel.String)
+			if decision.Outcome == tags.AdmissionReject {
 				rejected[n.emitted] = true
-				a.logger.Info(reqID, "tagquality[%s]: reject %q (reason=judge cached=true model=%s criteria=%s)",
-					analyzer.TagQualityVersion, n.emitted, row.VerdictModel.String, tagQualityCriteriaLog(row.Criteria))
+				continue
 			}
+			decided[n.emitted] = decision
 		}
 	}
 
 	if len(uncached) > 0 {
 		if !a.runner.HasTagQualityJudge() {
 			a.logger.Error(reqID, "tagquality[%s]: judge not configured, keeping %d novel tags (born provisional)", analyzer.TagQualityVersion, len(uncached))
+			for _, n := range uncached {
+				decided[n.emitted] = tags.AdmissionDecision{Outcome: tags.AdmissionDefer, Reason: reasonJudgeUnavailable}
+			}
 		} else {
 			candidates := make([]analyzer.TagQualityCandidate, len(uncached))
 			for i, n := range uncached {
 				candidates[i] = analyzer.TagQualityCandidate{
 					Index:            i,
 					Term:             n.emitted,
-					Category:         n.category,
+					Category:         n.promptCategory(),
 					WhitelistedPlace: analyzer.IsWhitelistedPlace(n.emitted),
 				}
 			}
@@ -443,16 +483,22 @@ func (a *Adjudicator) ApplyTagQuality(ctx context.Context, analysis *tools.Conte
 			}
 			if err != nil {
 				a.logger.Error(reqID, "tagquality[%s]: judge failed, keeping %d novel tags (born provisional): %v", analyzer.TagQualityVersion, len(uncached), err)
+				for _, n := range uncached {
+					decided[n.emitted] = tags.AdmissionDecision{Outcome: tags.AdmissionDefer, Reason: reasonJudgeUnavailable}
+				}
 			} else {
 				model := a.config.ResolvedQualityLlm().Model
 				for i, r := range results {
 					n := uncached[i]
-					pass, criteria, finalModel := a.writeTagQualityEvent(ctx, docId, n.emitted, marshalTagQualityCriteria(r), r.Passed(), model, reqID)
-					if !pass {
+					outcome := tags.DecideAdmission(JudgeFeatures(r, n.features()))
+					pass, criteria, finalModel := a.writeTagQualityEvent(ctx, docId, n.emitted, marshalTagQualityCriteria(r), outcome.Outcome == tags.AdmissionAdmit, outcome.Outcome.String(), model, reqID)
+					decision := DecisionFromStored(criteria, pass, n.features())
+					a.logAdmission(reqID, n.emitted, "judge", decision, criteria, finalModel)
+					if decision.Outcome == tags.AdmissionReject {
 						rejected[n.emitted] = true
-						a.logger.Info(reqID, "tagquality[%s]: reject %q (reason=judge criteria=%s model=%s)",
-							analyzer.TagQualityVersion, n.emitted, tagQualityCriteriaLog(criteria), finalModel)
+						continue
 					}
+					decided[n.emitted] = decision
 				}
 			}
 		}
@@ -465,20 +511,21 @@ func (a *Adjudicator) ApplyTagQuality(ctx context.Context, analysis *tools.Conte
 		}
 		out = append(out, tag)
 	}
-	return out
+	return out, decided
 }
 
 // writeTagQualityEvent records a verdict row for this document. A fresh
 // verdict (model != "") writes the judged row; on conflict the row cached by
 // another worker wins for this document's decision, followed by a
 // cache-applied row with a NULL model, mirroring writeVerdictEvent.
-func (a *Adjudicator) writeTagQualityEvent(ctx context.Context, docId int64, name string, criteria json.RawMessage, pass bool, model string, reqID string) (bool, json.RawMessage, string) {
+func (a *Adjudicator) writeTagQualityEvent(ctx context.Context, docId int64, name string, criteria json.RawMessage, pass bool, outcome string, model string, reqID string) (bool, json.RawMessage, string) {
 	verdictModel := sql.NullString{String: model, Valid: model != ""}
 	n, err := a.queries.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
 		DocumentID:    docId,
 		TagName:       textnorm.NormalizeTag(name),
 		Criteria:      criteria,
 		Pass:          pass,
+		Outcome:       sql.NullString{String: outcome, Valid: outcome != ""},
 		VerdictModel:  verdictModel,
 		PolicyVersion: analyzer.TagQualityVersion,
 	})
@@ -507,6 +554,7 @@ func (a *Adjudicator) writeTagQualityEvent(ctx context.Context, docId int64, nam
 		TagName:       textnorm.NormalizeTag(name),
 		Criteria:      row.Criteria,
 		Pass:          row.Pass,
+		Outcome:       row.Outcome,
 		VerdictModel:  sql.NullString{},
 		PolicyVersion: analyzer.TagQualityVersion,
 	}); err != nil {

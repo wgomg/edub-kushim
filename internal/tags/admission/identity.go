@@ -609,8 +609,8 @@ func boolVerdict(value bool, whenTrue, whenFalse string) string {
 }
 
 // RenameTagDetails rewrites the analysis's tag details after identity
-// resolution so folded and applied outputs keep their category and
-// standard-term flags: each detail's term is replaced by its plan output.
+// resolution so folded and applied outputs keep their category: each
+// detail's term is replaced by its plan output.
 func RenameTagDetails(details []analyzer.TagDetail, plan tags.Plan) []analyzer.TagDetail {
 	outputByInput := make(map[string]string, len(plan.Registrations))
 	for _, reg := range plan.Registrations {

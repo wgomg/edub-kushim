@@ -420,6 +420,7 @@ type TagQualityEvent struct {
 	VerdictModel  sql.NullString
 	PolicyVersion string
 	VerdictAt     time.Time
+	Outcome       sql.NullString
 }
 
 type TagVerdictEvent struct {

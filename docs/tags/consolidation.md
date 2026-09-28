@@ -165,37 +165,46 @@ proposed folds and candidate neighbours with LLM calls:
 
 ## Tag quality judge (opt-in)
 
-Adjudication decides what is a duplicate of an existing tag; the quality judge
-decides what deserves to be born. With `enricher.tag_quality.enabled: true`
-(default `false`), the novel tags that survive consolidation — names absent
-from the vocabulary — are filtered before they are created:
+Adjudication decides what is a duplicate of an existing tag; the admission
+decision decides what deserves to be born. With
+`enricher.tag_quality.enabled: true` (default `false`), the novel tags that
+survive consolidation — names absent from the vocabulary — are decided before
+they are created:
 
-- **Weak band**: each candidate is scored from its typed emission —
-  `is_standard_term` +1 when true, 0 when absent, −1 when false; category
-  `other` −1; best store similarity below the internal floor (0.60) −1. A
-  score below the internal threshold (−1, i.e. ≤ −2) is dropped without
-  an LLM call, and the rejection is never cached — a later emission with
-  stronger evidence re-scores.
-- **Rubric verdict**: the survivors are judged in one temperature-0 LLM call
-  per document against four binary criteria — the tag is a subject matter (not
-  a form or genre), standard, widely-recognized terminology (not a coinage
-  specific to the document), not a person/work/non-whitelisted place, and
-  appropriately broad for a shared vocabulary. A verdict passes only when all
-  four are true. Whitelisted countries and continents are never rejected for
-  being a place, so the typed facet gate and this judge cannot disagree.
+- **Features**: each candidate carries the judge's four rubric answers —
+  `subject_matter`, `dimension` (a reusable dimension of content, not a
+  per-document detail or container word), `not_person_place_work`, and
+  `atomic` (one dimension, not a combination whose parts each work as tags) —
+  plus the judge's optional `defer` abstention, and the emission's
+  deterministic signals: a typed detail annotated `other`, and a best store
+  similarity below the internal no-anchor floor (0.60).
+- **Decision**: the pinned rule set (`tags.DecideAdmission`) defers on the
+  judge's abstention, rejects on two or more failing signals, defers on
+  exactly one (the gray band — no single signal decides), and admits when
+  nothing fails. Rejected names are dropped for that document and never
+  stored — their plan registrations and pending identity evidence are removed
+  before persist. A missing detail or similarity is absence of evidence, not
+  a failing signal.
+- **Judge call**: the uncached candidates are judged in one temperature-0 LLM
+  call per document; whitelisted countries and continents are never rejected
+  for being a place, so the typed facet gate and the judge cannot disagree.
 - **Cache**: verdicts are stored in the `tag_quality_event` table keyed by
-  `(tag_name, policy_version)`. A re-emitted name resolves from the cache with
-  no LLM call, whichever document produced it; a model or policy change is
-  reflected by bumping the version.
+  `(tag_name, policy_version)` with the recorded outcome
+  (`reject`/`defer`/`admit`). A re-emitted name resolves from the cache with
+  no LLM call — the decision re-runs over the stored rubric with the current
+  emission's deterministic signals — whichever document produced it; a model
+  or policy change is reflected by bumping the version. Rows predating the
+  rubric or the outcome column fall back to their `pass` flag until the store
+  reset retires them.
 - **Failure safety**: any timeout, provider error, or incomplete response
-  retries once and then keeps every novel tag — under the gate the birth is
-  provisional and carries no verdict, and enrichment never blocks or fails on
-  the judge.
-- **Logging**: rejections are logged as `tagquality[v1]: reject …` lines
-  (weak-band and judged variants both carry the reason), siblings of the
-  `consolidation[v1]` and `tags[facet]:` lines.
+  retries once and then keeps every novel tag with a defer decision — under
+  the gate the birth is provisional and carries no verdict, and enrichment
+  never blocks or fails on the judge.
+- **Logging**: rejections and defers are logged as `tagquality[v1]:` lines
+  carrying the outcome and reason, siblings of the `consolidation[v1]` and
+  `tags[facet]:` lines.
 
-Both band thresholds are internal v1 constants, not configuration keys; the
+The decision thresholds are pinned v1 constants, not configuration keys; the
 judge LLM and timeout inherit the content analyzer's unless the `llm` block
 overrides them, and a warning is logged when the resolved judge equals the
 generator.
@@ -204,15 +213,17 @@ generator.
 
 ## Quarantine and promotion
 
-With the gate on, the novel tags that survive the judge are **provisional**:
+With the gate on, the novel tags the decision keeps are **provisional**:
 they are attached to the document and searchable from birth, but
 `tag.promoted_at` is NULL and the name is excluded from the embedding store —
 so it is never suggested, never a consolidation target, and never part of the
 all-names fallback vocabulary (`BuildTagCache` embeds promoted tags only, and
 the enricher composes its fallback and consolidation sets from the promoted
 subset). Promotion is inline, one-way, and runs inside the persist
-transaction: a provisional name with a cached passing verdict at the current
-`TagQualityVersion` and assignments on at least two distinct **live** documents
+transaction: a provisional name the admission decision admits — its emission
+decision, or the cached verdict row mapped through the same decision for
+names the judge skipped — with assignments on at least two distinct **live**
+documents
 (trashed carriers are not evidence, in this check and in the reconciliation
 sweep alike) gets `promoted_at = now()` and enters the store after the commit.
 The `document_tag` primary key makes the count distinct-document, so a single
@@ -222,18 +233,21 @@ Verdict-less provisionals — judge outages and re-emitted legacy rows — are n
 re-judged in flight: a name already present in the tag table is not novel, so
 the judge never sees it again. They are re-judged by the scheduled
 reconciliation sweep once they pass `provisional_grace_days` (default 30): the
-sweep promotes names that already hold a cached passing verdict and ≥ 2 live
-documents, re-judges the rest oldest-first under the `max_rejudge` cap (one
+sweep promotes names whose stored verdict the decision re-derives as admit
+with ≥ 2 live documents, leaves defer and reject verdicts for review,
+re-judges the rest oldest-first under the `max_rejudge` cap (one
 judge call over the tag's first live document, one retry on failure, the
 verdict recorded through the same fresh-verdict/cache path the enricher uses),
-promotes a fresh pass at ≥ 2 live documents, and leaves a rejection queued for
-review. A missing judge, a tag with no live document text, and lookup or write
+promotes an admitted name at ≥ 2 live documents, and leaves a deferral or
+rejection queued for review. A missing judge, a tag with no live document text,
+and lookup or write
 failures are counted and skipped rather than failing the run, and the sweep
 never deletes a tag.
 
 Operators resolve what remains from the tags page's "New tags" tab or
 the API: `GET /api/v1/tags/provisional` lists provisional tags with a live
-`document_count` and the latest verdict (`null` when no verdict row exists),
+`document_count` and the latest verdict (`null` when no verdict row exists,
+labelled from the recorded outcome),
 and `POST /api/v1/tags/{id}/promote` promotes one through the same path the
 sweep uses. Rejecting a provisional tag is a normal tag delete, so the name
 lands in the `deleted_tag` blocklist and enrichment cannot resurrect it. The
@@ -313,11 +327,13 @@ anti-oscillating:
   **report-only** (it lists would-be actions and touches nothing), regardless
   of the `report_only` flag. The joint-tag scan shares both caps.
 - **Provisional hygiene:** the same run re-checks provisional tags older than
-  `provisional_grace_days` (default 30), oldest first. A stored passing verdict
-  plus ≥ 2 live documents promotes the name with no judge call; verdict-less
+  `provisional_grace_days` (default 30), oldest first. A stored verdict the
+  decision re-derives as admit
+  plus ≥ 2 live documents promotes the name with no judge call, while defer and
+  reject verdicts stay queued for review; verdict-less
   names are re-judged one at a time (the tag's first live document, reduced
-  with the tag-matcher arithmetic, one retry on failure) and promoted when they
-  pass; a rejection stays queued for the review surface. Zero-assignment rows
+  with the tag-matcher arithmetic, one retry on failure) and promoted when
+  admitted; a deferral or rejection stays queued for the review surface. Zero-assignment rows
   are only counted — the orphan sweep owns them — and a missing judge, a tag
   with no live document text, or a failed lookup/write is counted
   (`no_judge`/`skipped`/`failed`) without failing the run. Report-only runs

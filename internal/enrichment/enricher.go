@@ -323,8 +323,21 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 	}
 	analysis.TagDetails = admission.RenameTagDetails(analysis.TagDetails, identityPlan)
 
+	var qualityDecisions map[string]tags.AdmissionDecision
 	if e.config.Enricher.TagQuality.Enabled {
-		analysis.Tags = e.admission.ApplyTagQuality(ctx, analysis, decisions, dbNames, llmContent.Text, document.ID, logId)
+		planned := analysis.Tags
+		analysis.Tags, qualityDecisions = e.admission.ApplyTagQuality(ctx, analysis, decisions, dbNames, llmContent.Text, document.ID, logId)
+		kept := make(map[string]bool, len(analysis.Tags))
+		for _, name := range analysis.Tags {
+			kept[name] = true
+		}
+		rejected := make(map[string]bool)
+		for _, name := range planned {
+			if !kept[name] {
+				rejected[name] = true
+			}
+		}
+		identityPlan = identityPlan.DropTagNames(rejected)
 	}
 
 	statsStr := "null"
@@ -415,7 +428,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 	}
 
 	if quarantine {
-		promotedNames = e.promoteEligible(ctx, txQ, results, logId)
+		promotedNames = e.promoteEligible(ctx, txQ, results, qualityDecisions, logId)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -528,57 +541,51 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 	return analysis.Stats, nil
 }
 
-func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, results []types.CreateResult[database.Tag], reqID string) []string {
-	provisional := make(map[string]int64, len(results))
+func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, results []types.CreateResult[database.Tag], decisions map[string]tags.AdmissionDecision, reqID string) []string {
+	type candidate struct {
+		name string
+		id   int64
+	}
+	var candidates []candidate
+	seen := make(map[string]bool, len(results))
 	for _, r := range results {
 		if r.Status != types.Created && r.Status != types.Conflict {
 			continue
 		}
-		if r.Entity.PromotedAt.Valid {
+		if r.Entity.PromotedAt.Valid || seen[r.Entity.Name] {
 			continue
 		}
-		provisional[r.Entity.Name] = r.Entity.ID
+		seen[r.Entity.Name] = true
+		candidates = append(candidates, candidate{name: r.Entity.Name, id: r.Entity.ID})
 	}
-	if len(provisional) == 0 {
+	if len(candidates) == 0 {
 		return nil
 	}
 
-	names := make([]string, 0, len(provisional))
-	for name := range provisional {
-		names = append(names, name)
-	}
-	rows, err := q.LatestTagQualityEventsForNames(ctx, database.LatestTagQualityEventsForNamesParams{
-		PolicyVersion: analyzer.TagQualityVersion,
-		TagNames:      names,
-	})
-	if err != nil {
-		e.logger.Error(reqID, "tag quality promotion verdict lookup failed: %v", err)
-		return nil
-	}
-
-	type passRow struct {
-		name  string
-		id    int64
-		model string
-	}
-	var passed []passRow
-	for _, row := range rows {
-		if !row.Pass {
+	// the emission decided the novel names; a provisional already in the
+	// store was skipped there, so its cached verdict row decides it
+	decisionByName := make(map[string]tags.AdmissionDecision, len(candidates))
+	var undecided []string
+	for _, c := range candidates {
+		if decision, ok := decisions[c.name]; ok {
+			decisionByName[c.name] = decision
 			continue
 		}
-		id, ok := provisional[row.TagName]
-		if !ok {
-			continue
-		}
-		passed = append(passed, passRow{name: row.TagName, id: id, model: row.VerdictModel.String})
+		undecided = append(undecided, c.name)
 	}
-	if len(passed) == 0 {
-		return nil
+	if len(undecided) > 0 {
+		rows, err := e.tag.LatestQualityEventsForNames(ctx, undecided)
+		if err != nil {
+			e.logger.Error(reqID, "tag quality promotion verdict lookup failed: %v", err)
+		}
+		for _, row := range rows {
+			decisionByName[row.TagName] = admission.DecisionFromStored(row.Criteria, row.Pass, tags.AdmissionFeatures{})
+		}
 	}
 
-	ids := make([]int64, len(passed))
-	for i, p := range passed {
-		ids[i] = p.id
+	ids := make([]int64, len(candidates))
+	for i, c := range candidates {
+		ids[i] = c.id
 	}
 	counts, err := tags.NewStore(q).LiveMass(ctx, ids)
 	if err != nil {
@@ -586,14 +593,15 @@ func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, res
 		return nil
 	}
 
-	var eligible []passRow
+	var eligible []candidate
 	var promoteIDs []int64
-	for _, p := range passed {
-		if counts[p.id] < 2 {
+	for _, c := range candidates {
+		decision, ok := decisionByName[c.name]
+		if !ok || !tags.DecidePromotion(decision.Outcome, counts[c.id]) {
 			continue
 		}
-		eligible = append(eligible, p)
-		promoteIDs = append(promoteIDs, p.id)
+		eligible = append(eligible, c)
+		promoteIDs = append(promoteIDs, c.id)
 	}
 	if len(promoteIDs) == 0 {
 		return nil
@@ -605,13 +613,9 @@ func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, res
 	}
 
 	promoted := make([]string, len(eligible))
-	for i, p := range eligible {
-		model := p.model
-		if model == "" {
-			model = "cached"
-		}
-		e.logger.Info(reqID, "tagquality[%s]: promote %q (docs=%d model=%s)", analyzer.TagQualityVersion, p.name, counts[p.id], model)
-		promoted[i] = p.name
+	for i, c := range eligible {
+		e.logger.Info(reqID, "tagquality[%s]: promote %q (docs=%d reason=%s)", analyzer.TagQualityVersion, c.name, counts[c.id], decisionByName[c.name].Reason)
+		promoted[i] = c.name
 	}
 	return promoted
 }

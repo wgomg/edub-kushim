@@ -1019,22 +1019,19 @@ func TestParseAnalysisResponse(t *testing.T) {
 			name:    "string tags",
 			content: `{"title":"t","tags":["opioid crisis","physics"]}`,
 			want: &AnalysisResult{
-				Title: "t",
-				Tags:  []string{"opioid crisis", "physics"},
-				TagDetails: []TagDetail{
-					{Term: "opioid crisis", Category: TagCategoryOther},
-					{Term: "physics", Category: TagCategoryOther},
-				},
+				Title:      "t",
+				Tags:       []string{"opioid crisis", "physics"},
+				TagDetails: []TagDetail{},
 			},
 		},
 		{
 			name:    "object tags",
-			content: `{"title":"t","tags":[{"term":"opioid crisis","category":"topic","is_standard_term":true}]}`,
+			content: `{"title":"t","tags":[{"term":"opioid crisis","category":"topic"}]}`,
 			want: &AnalysisResult{
 				Title: "t",
 				Tags:  []string{"opioid crisis"},
 				TagDetails: []TagDetail{
-					{Term: "opioid crisis", Category: TagCategoryTopic, IsStandardTerm: new(true)},
+					{Term: "opioid crisis", Category: TagCategoryTopic},
 				},
 			},
 		},
@@ -1052,7 +1049,6 @@ func TestParseAnalysisResponse(t *testing.T) {
 			want: &AnalysisResult{
 				Tags: []string{"simple", "typed"},
 				TagDetails: []TagDetail{
-					{Term: "simple", Category: TagCategoryOther},
 					{Term: "typed", Category: TagCategoryPlace},
 				},
 			},
@@ -1062,7 +1058,7 @@ func TestParseAnalysisResponse(t *testing.T) {
 			content: `{"tags":[{"category":"topic"},"valid"]}`,
 			want: &AnalysisResult{
 				Tags:       []string{"valid"},
-				TagDetails: []TagDetail{{Term: "valid", Category: TagCategoryOther}},
+				TagDetails: []TagDetail{},
 			},
 		},
 		{
@@ -1070,7 +1066,7 @@ func TestParseAnalysisResponse(t *testing.T) {
 			content: `{"tags":[{"term":"  ","category":"topic"},"valid"]}`,
 			want: &AnalysisResult{
 				Tags:       []string{"valid"},
-				TagDetails: []TagDetail{{Term: "valid", Category: TagCategoryOther}},
+				TagDetails: []TagDetail{},
 			},
 		},
 		{
@@ -1078,7 +1074,7 @@ func TestParseAnalysisResponse(t *testing.T) {
 			content: `{"tags":[123,"valid"]}`,
 			want: &AnalysisResult{
 				Tags:       []string{"valid"},
-				TagDetails: []TagDetail{{Term: "valid", Category: TagCategoryOther}},
+				TagDetails: []TagDetail{},
 			},
 		},
 		{
@@ -1381,8 +1377,8 @@ func TestBuildTagQualityPrompt(t *testing.T) {
 	if !strings.Contains(prompt, "sub-national place") {
 		t.Error("prompt missing sub-national-place clause in criterion 3")
 	}
-	// Must contain the four criteria and the response format.
-	for _, kw := range []string{"subject_matter", "standard_term", "not_person_place_work", "appropriately_broad", "JSON"} {
+	// Must contain the four criteria, the abstention and the response format.
+	for _, kw := range []string{"subject_matter", "dimension", "not_person_place_work", "atomic", "defer", "JSON"} {
 		if !strings.Contains(prompt, kw) {
 			t.Errorf("prompt missing keyword %q", kw)
 		}
@@ -1397,8 +1393,8 @@ func TestParseTagQualityResponse_RoundTrip(t *testing.T) {
 
 	// Simulate a well-formed LLM response.
 	allTrue := `{"tags":[
-		{"index":0,"subject_matter":true,"standard_term":true,"not_person_place_work":true,"appropriately_broad":true},
-		{"index":1,"subject_matter":false,"standard_term":true,"not_person_place_work":true,"appropriately_broad":false}
+		{"index":0,"subject_matter":true,"dimension":true,"not_person_place_work":true,"atomic":true,"defer":false},
+		{"index":1,"subject_matter":false,"dimension":true,"not_person_place_work":true,"atomic":true,"defer":false}
 	]}`
 	results, err := ParseTagQualityResponse(allTrue, len(candidates))
 	if err != nil {
@@ -1407,11 +1403,11 @@ func TestParseTagQualityResponse_RoundTrip(t *testing.T) {
 	if len(results) != 2 {
 		t.Fatalf("expected 2 results, got %d", len(results))
 	}
-	if !results[0].Passed() {
-		t.Error("candidate 0 should pass")
+	if !results[0].SubjectMatter || !results[0].Dimension || !results[0].NotPersonPlaceWork || !results[0].Atomic || results[0].Defer {
+		t.Errorf("candidate 0 answers = %+v, want all criteria true and no defer", results[0])
 	}
-	if results[1].Passed() {
-		t.Error("candidate 1 should fail (subject_matter=false)")
+	if results[1].SubjectMatter || !results[1].Dimension {
+		t.Errorf("candidate 1 answers = %+v, want subject_matter=false", results[1])
 	}
 
 	// Prompt builder should produce a non-empty prompt.
@@ -1423,7 +1419,7 @@ func TestParseTagQualityResponse_RoundTrip(t *testing.T) {
 
 func TestParseTagQualityResponse_MissingIndex(t *testing.T) {
 	// Only 1 of 2 candidates returned — must error.
-	partial := `{"tags":[{"index":0,"subject_matter":true,"standard_term":true,"not_person_place_work":true,"appropriately_broad":true}]}`
+	partial := `{"tags":[{"index":0,"subject_matter":true,"dimension":true,"not_person_place_work":true,"atomic":true}]}`
 	results, err := ParseTagQualityResponse(partial, 2)
 	if err == nil {
 		t.Fatal("expected error for missing index, got nil")
@@ -1432,20 +1428,40 @@ func TestParseTagQualityResponse_MissingIndex(t *testing.T) {
 		t.Fatalf("expected 2 results even on error, got %d", len(results))
 	}
 	// Index 0 should be populated, index 1 should be zero-valued.
-	if !results[0].Passed() {
-		t.Error("index 0 should have been populated")
+	if !results[0].SubjectMatter || !results[0].Dimension {
+		t.Errorf("index 0 answers = %+v, want them populated", results[0])
 	}
-	if results[1].Passed() {
-		t.Error("index 1 should be zero-valued (all false)")
+	if results[1].SubjectMatter || results[1].Dimension || results[1].NotPersonPlaceWork || results[1].Atomic || results[1].Defer {
+		t.Errorf("index 1 answers = %+v, want zero-valued (all false)", results[1])
 	}
 }
 
 func TestParseTagQualityResponse_IncompleteVerdict(t *testing.T) {
 	// One criterion omitted (nil) — must error.
-	incomplete := `{"tags":[{"index":0,"subject_matter":true,"standard_term":true,"not_person_place_work":true}]}`
+	incomplete := `{"tags":[{"index":0,"subject_matter":true,"dimension":true,"not_person_place_work":true}]}`
 	_, err := ParseTagQualityResponse(incomplete, 1)
 	if err == nil {
 		t.Fatal("expected error for incomplete verdict, got nil")
+	}
+}
+
+func TestParseTagQualityResponse_DeferKey(t *testing.T) {
+	abstained := `{"tags":[{"index":0,"subject_matter":true,"dimension":true,"not_person_place_work":true,"atomic":true,"defer":true}]}`
+	results, err := ParseTagQualityResponse(abstained, 1)
+	if err != nil {
+		t.Fatalf("parse abstained: %v", err)
+	}
+	if !results[0].Defer {
+		t.Error("defer=true must read as the judge's abstention")
+	}
+
+	omitted := `{"tags":[{"index":0,"subject_matter":true,"dimension":true,"not_person_place_work":true,"atomic":true}]}`
+	results, err = ParseTagQualityResponse(omitted, 1)
+	if err != nil {
+		t.Fatalf("parse omitted defer: %v", err)
+	}
+	if results[0].Defer {
+		t.Error("an omitted defer reads as false, not abstention")
 	}
 }
 
@@ -1456,67 +1472,26 @@ func TestParseTagQualityResponse_InvalidJSON(t *testing.T) {
 	}
 }
 
-func TestTagQualityResult_Passed(t *testing.T) {
-	tests := []struct {
-		name string
-		r    TagQualityResult
-		want bool
-	}{
-		{"all true", TagQualityResult{SubjectMatter: true, StandardTerm: true, NotPersonPlaceWork: true, AppropriatelyBroad: true}, true},
-		{"one false", TagQualityResult{SubjectMatter: false, StandardTerm: true, NotPersonPlaceWork: true, AppropriatelyBroad: true}, false},
-		{"all false", TagQualityResult{}, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.r.Passed(); got != tt.want {
-				t.Errorf("Passed() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestTagDetail_PresenceSemantics(t *testing.T) {
-	// String-shape tag: IsStandardTerm must be nil (no evidence).
+	// String-shape tag: no annotation, so no detail entry.
 	stringTag := `{"title":"t","tags":["hello"]}`
 	result, err := ParseAnalysisResponse(stringTag)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if len(result.TagDetails) != 1 {
-		t.Fatalf("expected 1 detail, got %d", len(result.TagDetails))
-	}
-	if result.TagDetails[0].IsStandardTerm != nil {
-		t.Errorf("string-shape: IsStandardTerm should be nil, got %v", *result.TagDetails[0].IsStandardTerm)
+	if len(result.TagDetails) != 0 {
+		t.Fatalf("expected no detail for a string-shape tag, got %+v", result.TagDetails)
 	}
 
-	// Object with true: IsStandardTerm must be non-nil and true.
-	trueTag := `{"title":"t","tags":[{"term":"foo","category":"topic","is_standard_term":true}]}`
-	result, err = ParseAnalysisResponse(trueTag)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if result.TagDetails[0].IsStandardTerm == nil || !*result.TagDetails[0].IsStandardTerm {
-		t.Error("object true: IsStandardTerm should be *true")
-	}
-
-	// Object with false: IsStandardTerm must be non-nil and false.
-	falseTag := `{"title":"t","tags":[{"term":"bar","category":"topic","is_standard_term":false}]}`
-	result, err = ParseAnalysisResponse(falseTag)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if result.TagDetails[0].IsStandardTerm == nil || *result.TagDetails[0].IsStandardTerm {
-		t.Error("object false: IsStandardTerm should be *false")
-	}
-
-	// Object without key: IsStandardTerm must be nil (omitted).
+	// Object without the retired key: the detail carries only term and
+	// category.
 	omitTag := `{"title":"t","tags":[{"term":"baz","category":"topic"}]}`
 	result, err = ParseAnalysisResponse(omitTag)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if result.TagDetails[0].IsStandardTerm != nil {
-		t.Error("object omitted: IsStandardTerm should be nil")
+	if result.TagDetails[0].Term != "baz" || result.TagDetails[0].Category != TagCategoryTopic {
+		t.Errorf("object: detail = %+v, want term baz and category topic", result.TagDetails[0])
 	}
 }
 

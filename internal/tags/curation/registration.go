@@ -225,7 +225,7 @@ func (s *Tag) CreatePlannedTx(ctx context.Context, q *database.Queries, plan tag
 			continue
 		}
 
-		id, err := q.CreateTag(ctx, name)
+		id, err := q.CreateTag(ctx, textnorm.NormalizeTag(name))
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				existing, err := q.GetTagByName(ctx, name)

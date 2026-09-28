@@ -389,7 +389,7 @@ claim waits as pending evidence.
 
 ### Rubric judge for novel tags
 
-Consolidation decides what is a duplicate; the quality judge decides what
+Consolidation decides what is a duplicate; the admission decision decides what
 deserves to be born. With `enricher.tag_quality.enabled: true` (default
 `false`), the enricher filters the consolidated list **before persist**: only
 tags whose normalized names are absent from the tag table are candidates (a tag
@@ -397,45 +397,55 @@ that already exists was born long ago and is never re-judged in flight; a
 provisional name with no verdict row waits for the scheduled sweep or the
 review queue instead).
 
-Candidates first pass a deterministic **weak band** that scores the emitted
-evidence — `is_standard_term` +1 when true, 0 when absent, −1 when false;
-category `other` −1; best store similarity below the internal
-`no_anchor_similarity` (0.60) −1. A score below the internal `t_low` (−1,
-i.e. ≤ −2) drops the tag with a `tagquality[v1]: reject … (reason=weak_score
-…)` line and no LLM call. Weak rejections are deterministic per emission and
-are not cached: a later emission of the same name with better typed evidence
-re-scores and may reach the judge.
+Each candidate's features are resolved by the pinned rule set
+(`tags.DecideAdmission`):
 
-The survivors resolve in two steps:
+- the judge's four rubric answers — `subject_matter`, `dimension`,
+  `not_person_place_work`, `atomic` — plus its optional `defer` abstention,
+  from the verdict cache or a fresh judge call;
+- the emission's deterministic signals: a detail annotated `other`, and a best
+  store similarity below the internal `no_anchor_similarity` (0.60) cut.
+
+A judge abstention defers; two or more failing signals reject; exactly one
+defers to review (the gray band — no single signal decides); none admits. A
+rejection drops the tag for that document, and `Plan.DropTagNames` removes its
+registration and pending identity evidence before persist, so the name is never
+stored; it logs `tagquality[v1]: reject … (reason=corroborated_failures …)`.
+Defers are kept and logged too. A missing detail or similarity is absence of
+evidence, not a failing signal, so a well-judged string-shaped emission can
+still admit.
+
+The judge input resolves in two steps:
 
 1. **Verdict cache** — `LatestTagQualityEventsForNames` reads the latest row
    per name at the current `TagQualityVersion` from `tag_quality_event`.
-   Cached verdicts apply with no LLM call.
+   Cached verdicts apply with no LLM call; the decision re-runs over the
+   stored rubric with the current emission's deterministic signals, so a
+   cached row is evidence, not a frozen verdict.
 2. **Verdict** — one temperature-0 `JudgeTagQuality` call per document for
    the uncached names. The prompt carries the reduced document text (the same
    text the generator saw) and one line per candidate with its term, typed
    category, and — for whitelisted countries/continents — an explicit note
-   that the tag must not be rejected for being a place. A verdict passes only
-   when all four criteria are true: the tag is a subject matter (not a
-   form/genre), standard terminology (not a document-specific coinage), not a
-   person/work/non-whitelisted place, and appropriately broad for a shared
-   vocabulary.
+   that the tag must not be rejected for being a place.
 
-Fresh verdicts write a row with the judging model in `verdict_model`; the
-partial unique index on `(tag_name, policy_version) WHERE verdict_model IS NOT
-NULL` deduplicates concurrent workers, and a losing insert re-reads the cached
-verdict, applies it, and writes a cache-applied row with NULL `verdict_model`.
-A judge error, timeout, or incomplete response retries once and then keeps
-every novel tag with an error log — under the quality gate those kept names are
-born **provisional** (no verdict row), so they stay out of the vocabulary and
-await the reconciliation's re-judge.
+Fresh verdicts write a row with the judging model in `verdict_model` and the
+recorded outcome (`reject`/`defer`/`admit`); the partial unique index on
+`(tag_name, policy_version) WHERE verdict_model IS NOT NULL` deduplicates
+concurrent workers, and a losing insert re-reads the cached verdict, applies
+it, and writes a cache-applied row with NULL `verdict_model`. Rows predating
+the outcome column carry NULL and fall back to `pass`, and rows predating the
+rubric fall back to their `pass` flag (admit/reject) until the store reset
+retires them. A judge error, timeout, or incomplete response retries once and
+then keeps every novel tag with a defer decision and an error log — under the
+quality gate those kept names are born **provisional** (no verdict row), so
+they stay out of the vocabulary and await the reconciliation's re-judge.
 
 The judge LLM and timeout default to the content analyzer's
 (`ResolvedQualityLlm`/`ResolvedQualityTimeout`, resolved at use time); config
 validation logs a warning when the resolved judge equals the generator, since
 a shared model biases every verdict with the generator's own failure modes.
-The weak-band thresholds are provisional v1 constants in the enricher, not
-config keys.
+The decision thresholds (`no_anchor_similarity`, the 2-document promotion
+floor) are pinned v1 constants, not config keys.
 
 ### Promotion out of quarantine
 
@@ -447,8 +457,10 @@ the provisional rows the document just touched (fresh `Created` rows and
 `Conflict` rows whose `promoted_at` is invalid; a re-emitted trusted tag is
 skipped). A name promotes when both hold:
 
-- a **cached passing verdict** at the current `TagQualityVersion`
-  (`LatestTagQualityEventsForNames`), and
+- the **admission decision admits it** — the emission's own decision for names
+  judged this run, or, for a provisional already in the store (which the judge
+  skips), its cached verdict row mapped through the same decision with the
+  judge answers alone; and
 - assignments on **≥ 2 distinct live documents**
   (`CountLiveTagDocumentsByTagIDs` — the `document_tag` `(document_id, tag_id)`
   PK makes the count distinct, so a single document re-enriching itself stays
@@ -457,7 +469,8 @@ skipped). A name promotes when both hold:
 `PromoteTags` sets `promoted_at = now()` under `WHERE promoted_at IS NULL`, so
 concurrent promotions are idempotent, and the promoted names enter the store
 via `AddToStore` only after the commit (`tagquality[v1]: promote %q
-(docs=%d model=%s)`, `model` or `cached` for a cache-applied verdict).
+(docs=%d reason=%s)`). Deferred and rejected provisionals never promote here —
+they wait for review.
 Verdict-less provisionals — judge outages and re-emitted legacy rows — are not
 re-judged in flight: a name already present in the tag table is not novel, so
 `Adjudicator.ApplyTagQuality` never sees it again and no verdict row appears. Two surfaces
@@ -466,20 +479,24 @@ resolve them afterwards:
 - The **scheduled reconciliation sweep** (`internal/tags/reconcile`)
   re-checks provisional tags older than
   `enricher.tag_reconcile.provisional_grace_days` (default 30): a stored
-  passing verdict plus ≥ 2 live documents promotes without a judge call, and
-  verdict-less names are re-judged oldest-first under `max_rejudge` — the
+  verdict the decision re-derives as admit plus ≥ 2 live documents promotes
+  without a judge call, while defer and reject verdicts log `left for review
+  (outcome=… reason=…)` and stay; verdict-less names are re-judged
+  oldest-first under `max_rejudge` — the
   tag's first live document (`FirstDocumentIDForTag`, `GetDocumentTextForTagQuality`)
   reduced with `matcher.TargetWordCount`, one judge call per name, one
   retry on failure — with the verdict recorded through the enricher's
   fresh-verdict path (`InsertTagQualityEvent` with `DO NOTHING`, so a
-  concurrent fresh verdict is kept) and a fresh pass promoted immediately at
-  ≥ 2 live documents. Rejects, missing judges, and tags with no live document
-  text stay queued.
+  concurrent fresh verdict is kept) and an admitted name promoted immediately at
+  ≥ 2 live documents. Deferrals, rejections, missing judges, and tags with no
+  live document text stay queued.
 - The **review queue** (`GET /api/v1/tags/provisional`,
   `POST /api/v1/tags/{id}/promote`, and the tags page's editor-only "New
   tags" tab) is the operator path: it lists provisional names with their
-  live `document_count` and latest verdict — `null` for a name with no row —
-  and promotes one through the same `curation.Tag.Promote` method the sweep
+  live `document_count` and latest verdict — `null` for a name with no row,
+  labelled from the recorded outcome (`admit`/`defer`/`reject`) with a rubric
+  fallback for rows predating the outcome column — and promotes one through
+  the same `curation.Tag.Promote` method the sweep
   uses. A rejection is a normal tag delete, so the `deleted_tag` blocklist
   keeps the name from being reborn.
 
@@ -631,7 +648,7 @@ statements.
 
 1. **Tag CRUD** (`service/tag.go`): creates add the new names when the birth is
    trusted (`Create`/`CreateAndUnblock` promote what they create; a quarantined
-   `CreateTx` birth stays provisional), deletes call `RemoveFromStore`, and a
+   `CreatePlannedTx` birth stays provisional), deletes call `RemoveFromStore`, and a
    rename re-embeds the new name only when the renamed tag was promoted
    (`encodeAndAddBatch`, `service/tag.go:275-279`).
 2. **Daemon startup** (`internal/ops/cli/hugot.go`): `BuildTagCache` seeds the store
@@ -651,13 +668,15 @@ statements.
      and `runner.AdjudicateTags(ctx, pairs)` resolves the same-intent gate when
      `enricher.tag_adjudicator.enabled` is true (cache + evidence + batched LLM
      calls, §7); unresolved claims stay pending as identity evidence.
-   - `runner.JudgeTagQuality(ctx, reducedText, candidates)` filters the
+   - `runner.JudgeTagQuality(ctx, reducedText, candidates)` feeds the
      consolidated novel set when `enricher.tag_quality.enabled` is true
-     (weak band → cache → one rubric call per document, §7).
+     (cache → one rubric call per document → the pinned admission decision,
+     §7).
    - `promoteEligible` runs inside the persist transaction, after the tag
-     assignments and before the commit: a cached passing verdict at the
-     current policy version plus assignments on ≥ 2 distinct live documents →
-     `PromoteTags`, and the promoted names enter the store after the commit
+     assignments and before the commit: an admitted decision (the emission's,
+     or the cached verdict row for provisionals already in the store) plus
+     assignments on ≥ 2 distinct live documents → `PromoteTags`, and the
+     promoted names enter the store after the commit
      (§7).
 4. **API tag creation** triggers a store refresh through the same service.
 
@@ -666,8 +685,10 @@ statements.
 ## 12. Gotchas
 
 - **Tag names are canonical before they reach the store** — `textnorm.NormalizeTag`
-  (`internal/textnorm/tagname.go`) runs at the DB save chokepoints
-  (`curation.Tag.Create`/`Update`); the cache and the matcher use names
+  (`internal/textnorm/tagname.go`) runs at every tag-name write site: the DB save
+  chokepoints (`curation.Tag.Create`/`Update`), the plan application's tag and
+  verdict writes, alias writes, merge dismissals, and measurement operands;
+  the cache and the matcher use names
   verbatim, so store keys always equal DB names.
 - **The store is the tag universe.** Tags not in `entries` can never be
   suggested, and `Match` returns nothing when the store is empty — even if
@@ -703,13 +724,13 @@ statements.
   needed when deviating from the content analyzer's LLM (an empty
   `provider`/`model` copies the analyzer's `llm` wholesale).
 - **The quality judge is disabled by default** — novel tags are born
-  untouched until `enricher.tag_quality.enabled: true`. Its weak-band
-  thresholds are internal v1 constants (`t_low = -1`,
-  `no_anchor_similarity = 0.60`), deliberately not operator-tunable.
+  untouched until `enricher.tag_quality.enabled: true`. Its decision
+  thresholds are pinned v1 constants (`no_anchor_similarity = 0.60`, the
+  2-document promotion floor), deliberately not operator-tunable.
 - **Verdicts are cache-scoped to `policy.Version`** — bumping the policy
   version invalidates every cached verdict at once (old rows stay in the event
   table for analysis, they are simply never read for the new version).
 
 ---
 
-*Last verified against the tree: 2026-09-11. If code and doc disagree, code wins.*
+*Last verified against the tree: 2026-09-28. If code and doc disagree, code wins.*

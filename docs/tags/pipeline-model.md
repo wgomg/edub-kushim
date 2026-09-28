@@ -277,7 +277,7 @@ system already has, how far it matches the model, and what the delta is.
 | **S2 Facet ownership (P1)** | `SeparateFacets` category gate + country/continent whitelist (`internal/enrichment/enricher.go`) | Aligned | Untyped emissions degrade to string heuristics (accepted) |
 | **S3 Canonicality (P3)** | Consolidation policy gates/bands (`policy`), LLM adjudicator + verdict cache, merge review + dismissals, reconciler | Partial | Similarity band misses the variant classes; no extension-equality detector; merges are incident-driven, not a standing duty |
 | **S4 Atomicity (P4)** | General compound decomposition at emission (`Adjudicator.DecomposeTags`, `analyzer` split gate) + stored-joint worklist (`reconcile/joint.go`) | Partial | No part-value/mass evidence; prospective vs retrospective test |
-| **S5 Admission decision** | Weak band + rubric judge + verdict cache; promotion gate (cached pass + ≥ 2 live documents) | Re-criteria · partial | Dictionary criteria; no set predicates among the features; no feature combination or abstention path (operating mode: pinned rules; fitting optional — definition §8.10) |
+| **S5 Admission decision** | Rubric judge + verdict cache; pinned decision over the judge answers plus deterministic signals (`tags.DecideAdmission`); promotion = admitted + ≥ 2 live documents (`tags.DecidePromotion`) | Landed (pinned decision) · Absent (fitting) | No set predicates among the features (the P4 extension test is not a feature yet); the optional fitted form (calibration, distilled filter) is unshipped — the decision runs pinned and label-free; the repeat-disagreement rule is unshipped |
 | **S6 Lifecycle** | `promoted_at` quarantine/promotion, store trust boundary, sweep, blocklist | Aligned (birth/influence) · Absent (demotion) | Promotion is one-way today; demotion policy decided (definition §8.4), not implemented |
 | **S7 Vocabulary services** | Promoted-only store (`BuildTagCache`), suggestions, consolidation targets, promoted-names fallback | Aligned | — |
 | **S8 Retrieval** | Multi-tag AND filter (`internal/database/structured_search.go`, `tagsAnd`) | Aligned · Absent (completeness) | Coverage of dimensions is audited nowhere |
@@ -323,20 +323,25 @@ reconstructibility test is a retrospective instrument, and the runtime can only
 approximate it. “No blanket mechanical splitting” remains the rule for the no-judge
 path; the adjudicated path approximates P4 per candidate.
 
-**S5 — admission.** The mechanics are the weak band (`tagQualityTLow`,
-`tagQualityNoAnchorSimilarity`), the four-criterion rubric judge (`subject_matter`,
-`standard_term`, `not_person_place_work`, `appropriately_broad`), the verdict cache, and
-the promotion gate. The definition's §2.4/§7.1 diagnoses the judge's dictionary prior and
-flips the expected reject class: pre-coordinated compounds become rejects, corpus-valid
-values (repair-corpus terms) become admissible. The promotion gate is structurally
-conjunctive (verdict + ≥ 2 live documents), which can stand once the verdict's standard
-changes; recurrence, however, must stop being read as quality evidence and mass should
-enter as a feature. There is no feature-combining decision (fixed integer thresholds) and
-no abstention path — deferral currently happens only through judge failure, and the
-designed repeat-disagreement rule is unshipped. The design's label-gated refinement
-stages (conformal calibration; distilled filter) are the in-flight precursors of the
-optional fitted form (definition §8.10, staged); labels it would consume accrue under
-the old standard, which is the label-hygiene caveat of definition §6.6.
+**S5 — admission.** The mechanics are the rubric judge (`subject_matter`,
+`dimension`, `not_person_place_work`, `atomic`, plus the optional `defer`
+abstention), the verdict cache, and the pinned decision over the features:
+`tags.DecideAdmission` defers on the judge's abstention, rejects on two or
+more failing signals, defers on exactly one (the gray band), and admits when
+nothing fails; the emission's deterministic signals (a detail annotated
+`other`, a best store similarity below the no-anchor floor) join the judge
+answers. The definition's §2.4/§7.1 flipped the expected reject class:
+pre-coordinated compounds and document-specific coinages become rejects,
+corpus-valid values (repair-corpus terms) become admissible, and `defer`
+gives the judge an explicit abstention. `tags.DecidePromotion` keeps the
+definition's P2 recurrence floor — an admitted name with ≥ 2 live documents —
+so mass is a floor, not a feature of the decision. The remaining gaps are the
+set predicates among the features (the P4 extension test is not a feature yet)
+and the fitted refinement: the designed repeat-disagreement rule and the
+label-gated stages (conformal calibration; distilled filter) are unshipped
+precursors of the optional fitted form (definition §8.10, staged). Labels now
+accrue under the definition's criteria, satisfying the label-hygiene
+precondition of definition §6.6.
 
 **S6 — lifecycle.** Implemented as the model wants for birth and influence: a label
 exists and is searchable from birth; provisional values are excluded from every
@@ -450,7 +455,7 @@ authority moves to features and rules keeps its mechanics and becomes a supplier
 | Adjudicator and pair-verdict table | the same-intent gate reader; verdicts become evidence, never identity authority | consumes gate subjects; produces verdicts (features, labels) |
 | Merge review and dismissals | the canonicalization action surface: alias/merge dispositions, with review | consumes canonicalization worklists; produces alias/merge actions |
 | Reconciler (`reconcile`) | the retrospective action executor — decomposition, anchor creation, alias materialization, report-only first | consumes composition-review and canonicalization worklists; produces store changes and reports |
-| Weak band, rubric judge, quality verdict cache | feature providers for the decision over features; their conjunction stops being the decision | consumes candidates and documents; produces per-criterion booleans and cached features |
+| Rubric judge, quality verdict cache, admission decision | feature providers and the pinned decision over features — the judge's conjunction is no longer the verdict, and the decision carries an abstention path | consumes candidates and documents; produces per-criterion booleans, deterministic signals, cached features, and the disposition |
 | Quarantine and promotion gate | lifecycle mechanics (existence versus influence); promotion becomes one input to the staged decision | consumes birth and document events; produces provisional/promoted state |
 | Review queue | the deferral sink and the label source | consumes deferrals and flags; produces labels |
 | Blocklist | terminal rejects only — never same-intent twins | names that must never return |
@@ -483,13 +488,12 @@ compute a retired signal may live on as feature providers.
 
 | Incumbent rule, action, or text | Why it cannot stand | Replaced by |
 |---|---|---|
-| Weak-band reject (the ≤ −2 conjunction) | a single-signal decision; its three signals become features | the staged decision (§3) |
-| Promotion gate as a conjunctive rule (cached pass AND ≥ 2 documents) | a single-signal decision; mass and the judge verdict become rule-set inputs | the staged decision (§3) |
+| Promotion gate as a conjunctive rule (cached pass AND ≥ 2 documents) | mass still enters as a floor rather than a feature of the decision | the staged decision (§3) |
 | `max_tags` as a quality bound | a count cap contradicts coverage: the contract must deliver every applicable dimension | the completeness contract |
 | "Never split non-conjunctions" at runtime | contradicts P4's fan; the prospective/retrospective split was the interim | general decomposition at emission |
 | Reject-as-delete for provisional twins (name into the blocklist) | same-intent labels alias, never delete | the alias disposition; terminal rejects keep the blocklist |
 | Hard-merge deletion on the merge-review surface | the loser's name must remain resolvable | the alias disposition |
-| Legacy prompt and judge criteria (document relevance, dictionary standardness) | the definition re-derives both | the re-criteria, with the measurement-version bump |
+| Legacy prompt and judge criteria (document relevance, dictionary standardness) | the definition re-derives both | the re-criteria, landed in place under the same version; the store reset retires the cached rows |
 | Duplicated measurement helpers (`CountLiveTagDocumentsByTagIDs`, `TagPairEvidenceStats`) | subsumed by the extension algebra | the measurement substrate |
 
 Sequencing rules for the retirements: the guards and similarity auto-replace are
@@ -497,8 +501,8 @@ retired — identity is gate-based at birth; the emission cap is retired and the
 completeness contract adds the coverage requirement; the runtime splitting restriction
 is retired with the general decomposition; the blocklist's
 existing entries (258 names) get a reconciliation pass — same-intent twins become
-aliases, terminal rejects stay; and every retired criteria text rides the version bump
-that re-judges under its replacement.
+aliases, terminal rejects stay; and the retired criteria text changed in place under
+the same quality version, riding the store reset that retires the cached rows.
 
 Explicitly retained: facet gates (P1, with the place bug fixed), exact-key identity,
 quarantine and promotion mechanics, the review surfaces (with the actions above

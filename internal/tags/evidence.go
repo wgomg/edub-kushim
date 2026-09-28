@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/wgomg/edub-kushim/internal/textnorm"
 )
 
 // RuleSetVersion pins the algebra's rules and the worklist cuts; a bump
@@ -69,7 +70,8 @@ type measurementRow struct {
 }
 
 // EncodeRows serializes readings into the JSON stored on the measurement
-// rows. A nil caveat list encodes as an empty array, never null.
+// rows, with every tag-name operand normalized at this write boundary. A
+// nil caveat list encodes as an empty array, never null.
 func EncodeRows(records []Record) (json.RawMessage, error) {
 	rows := make([]measurementRow, 0, len(records))
 	for _, r := range records {
@@ -77,13 +79,17 @@ func EncodeRows(records []Record) (json.RawMessage, error) {
 		if err != nil {
 			return nil, err
 		}
+		operands := make([]string, len(r.Operands))
+		for i, op := range r.Operands {
+			operands[i] = textnorm.NormalizeTag(op)
+		}
 		caveats := r.Caveats
 		if caveats == nil {
 			caveats = []string{}
 		}
 		rows = append(rows, measurementRow{
 			Operator: string(r.Operator),
-			Operands: r.Operands,
+			Operands: operands,
 			Numbers:  numbers,
 			State:    string(r.State),
 			Caveats:  caveats,

@@ -6,14 +6,11 @@ import (
 	"strings"
 )
 
-// TagDetail is the model's per-tag annotation: the term, its facet
-// category, and whether the term is standard terminology. IsStandardTerm
-// is a pointer so an omitted answer stays distinguishable from a false
-// one.
+// TagDetail is the model's per-tag annotation: the term and its facet
+// category.
 type TagDetail struct {
-	Term           string `json:"term"`
-	Category       string `json:"category"`
-	IsStandardTerm *bool  `json:"is_standard_term"`
+	Term     string `json:"term"`
+	Category string `json:"category"`
 }
 
 // The tag facet categories the analysis prompt offers; anything the
@@ -46,8 +43,10 @@ type analysisWire struct {
 }
 
 // ParseAnalysisResponse parses the model's JSON answer into the result.
-// Tags may arrive as plain strings or as detail objects; categories
-// normalize to the vocabulary, with anything unknown becoming other.
+// Tags may arrive as plain strings or as detail objects; only object
+// entries carry an annotation, so a string entry yields a tag with no
+// detail entry. Categories normalize to the vocabulary, with anything
+// unknown becoming other.
 func ParseAnalysisResponse(content string) (*AnalysisResult, error) {
 	var wire analysisWire
 	if err := json.Unmarshal([]byte(content), &wire); err != nil {
@@ -65,7 +64,6 @@ func ParseAnalysisResponse(content string) (*AnalysisResult, error) {
 		var term string
 		if err := json.Unmarshal(el, &term); err == nil {
 			tags = append(tags, term)
-			details = append(details, TagDetail{Term: term, Category: TagCategoryOther})
 			continue
 		}
 		var d TagDetail

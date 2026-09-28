@@ -327,7 +327,7 @@ See `AuthMiddleware` under `server.go` → Functions.
 - `TagMatcherResponse` — `Engine string`, `Timeout int`, `ReduceTargetWords int`, `ChunkSize int`, `Hugot HugotResponse`
 - `HugotResponse` — `Model string`, `Backend string`
 - `TagAdjudicatorConfigResponse` — `Enabled bool`, `Timeout int`, `Llm TagAdjudicatorLlmResponse`
-- `TagQualityConfigResponse` — `Enabled bool`, `Timeout int`, `Llm TagAdjudicatorLlmResponse` (the weak-band thresholds are internal constants, absent from the response by design)
+- `TagQualityConfigResponse` — `Enabled bool`, `Timeout int`, `Llm TagAdjudicatorLlmResponse` (the decision thresholds are internal constants, absent from the response by design)
 - `TagAdjudicatorLlmResponse` — `Adapter string`, `Provider string`, `Model string`, `Token string` (omitempty), `RequestDelay float64`
 - `TagReconcileConfigResponse` — `Enabled bool`, `ReportOnly bool`, `Interval float64`, `Time string`, `MaxRejudge int`, `MaxRetag int`, `DeadTagGraceDays int`, `ProvisionalGraceDays int`
 - `TagMeasureConfigResponse` — `Enabled bool`, `Interval float64`, `Time string`
@@ -407,8 +407,8 @@ See `AuthMiddleware` under `server.go` → Functions.
 - `CreateTagRequest` — `Name string`
 - `UpdateTagRequest` — `Name string`
 - `TagResponse` — `ID int64`, `Name string` (reused from `document.go`)
-- `TagQualityCriteriaView` — `SubjectMatter *bool`, `StandardTerm *bool`, `NotPersonPlaceWork *bool`, `AppropriatelyBroad *bool` (JSON snake_case; `nil` means the criterion had no signal in the stored payload)
-- `TagQualityVerdictInfo` — `Pass bool`, `Criteria *TagQualityCriteriaView`, `Model string` (JSON `model`, omitted when empty — cache-applied rows carry no model), `VerdictAt time.Time`
+- `TagQualityCriteriaView` — `SubjectMatter *bool`, `Dimension *bool`, `NotPersonPlaceWork *bool`, `Atomic *bool`, `Defer *bool` (JSON snake_case; `nil` means the answer had no signal in the stored payload)
+- `TagQualityVerdictInfo` — `Pass bool`, `Outcome string` (JSON `outcome`, omitted when empty — the recorded `reject`/`defer`/`admit` disposition, absent on rows predating the outcome column), `Criteria *TagQualityCriteriaView`, `Model string` (JSON `model`, omitted when empty — cache-applied rows carry no model), `VerdictAt time.Time`
 - `ProvisionalTagResponse` — `ID int64`, `Name string`, `DocumentCount int64` (live, non-trashed documents only), `CreatedAt time.Time` (the list query coalesces NULL `created_at` to the current time), `Verdict *TagQualityVerdictInfo` (`null` when the name has no `tag_quality_event` row at the current policy version), `PendingIdentity int64` (unresolved identity claims referencing the tag on either side)
 - `ProvisionalTagListResponse` — `Results []ProvisionalTagResponse`, `Total int64` (all provisional tags with at least one assignment, independent of the page)
 

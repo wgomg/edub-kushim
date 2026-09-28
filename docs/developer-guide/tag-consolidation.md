@@ -195,11 +195,13 @@ same name hit M3 or the alias resolver — the self-healing loop.
 
 When `enricher.tag_quality.enabled` is true, `Adjudicator.ApplyTagQuality`
 (`enricher.go`) filters that kept set once more before persist: novel names
-(absent from the tag table) pass the deterministic weak band, resolve from the
-`tag_quality_event` cache, or go into one rubric call per document; rejected
-names are dropped for that document only. Survivors are born **provisional**
-and are promoted inline once a cached passing verdict and assignments on ≥2
-distinct live documents coincide; only promoted names enter the store. The judge's
+(absent from the tag table) resolve from the `tag_quality_event` cache or go
+into one rubric call per document, and the pinned admission decision over the
+rubric answers plus the emission's deterministic signals drops rejected names
+for that document only — their plan registrations and pending evidence never
+reach the store. Survivors are born **provisional**
+and are promoted inline once the admission decision admits them and assignments
+on ≥2 distinct live documents coincide; only promoted names enter the store. The judge's
 prompt, criteria, and cache semantics are documented in the
 [semantic matching guide](semantic-matching.md#rubric-judge-for-novel-tags),
 and the promotion rule — including the review queue and the reconciliation
@@ -647,8 +649,8 @@ delete — stay with the reconciler's worklists and the operator surfaces.
 - **Quarantined tags are invisible to the vocabulary** — with `tag_quality`
   on, a newborn is attached and searchable from birth but stays out of the
   embedding store — and therefore out of suggestions, consolidation targets,
-  and the all-names fallback — until it has a cached passing verdict and
-  assignments on ≥2 distinct live documents. Verdict-less births (judge
+  and the all-names fallback — until the admission decision admits it and
+  assignments on ≥2 distinct live documents coincide. Verdict-less births (judge
   outages) and re-emitted legacy provisionals never get a verdict row in
   flight — a name in the tag table is not novel, so the judge never sees it
   again — and stay provisional until the reconciliation sweep's provisional
@@ -686,4 +688,4 @@ delete — stay with the reconciler's worklists and the operator surfaces.
 
 ---
 
-*Last verified against the tree: 2026-09-22. If code and doc disagree, code wins.*
+*Last verified against the tree: 2026-09-28. If code and doc disagree, code wins.*

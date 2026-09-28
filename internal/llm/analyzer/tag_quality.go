@@ -15,75 +15,94 @@ type TagQualityCandidate struct {
 	WhitelistedPlace bool
 }
 
-// TagQualityResult is one candidate's rubric answers; Passed requires all
-// four criteria.
+// TagQualityResult is one candidate's rubric answers: the four criteria
+// plus the judge's abstention. The criteria are features, not a verdict —
+// the admission decision combines them.
 type TagQualityResult struct {
 	Index              int
 	SubjectMatter      bool
-	StandardTerm       bool
+	Dimension          bool
 	NotPersonPlaceWork bool
-	AppropriatelyBroad bool
-}
-
-// Passed reports whether the candidate satisfies all four quality
-// criteria.
-func (r TagQualityResult) Passed() bool {
-	return r.SubjectMatter && r.StandardTerm && r.NotPersonPlaceWork && r.AppropriatelyBroad
+	Atomic             bool
+	Defer              bool
 }
 
 // TagQualityCriteria is the persisted wire shape of one candidate's rubric
-// verdict. Pointer fields distinguish an omitted key from an explicit false.
+// verdict. Pointer fields distinguish an omitted key from an explicit
+// false; defer is optional, so an omitted defer reads as false.
 type TagQualityCriteria struct {
 	SubjectMatter      *bool `json:"subject_matter"`
-	StandardTerm       *bool `json:"standard_term"`
+	Dimension          *bool `json:"dimension"`
 	NotPersonPlaceWork *bool `json:"not_person_place_work"`
-	AppropriatelyBroad *bool `json:"appropriately_broad"`
+	Atomic             *bool `json:"atomic"`
+	Defer              *bool `json:"defer"`
 }
 
 // Criteria returns the persisted wire shape of the answers.
 func (r TagQualityResult) Criteria() TagQualityCriteria {
 	return TagQualityCriteria{
 		SubjectMatter:      &r.SubjectMatter,
-		StandardTerm:       &r.StandardTerm,
+		Dimension:          &r.Dimension,
 		NotPersonPlaceWork: &r.NotPersonPlaceWork,
-		AppropriatelyBroad: &r.AppropriatelyBroad,
+		Atomic:             &r.Atomic,
+		Defer:              &r.Defer,
 	}
 }
 
-// Complete reports whether all four answers were specified.
+// Complete reports whether all four criteria were specified.
 func (c TagQualityCriteria) Complete() bool {
-	return c.SubjectMatter != nil && c.StandardTerm != nil &&
-		c.NotPersonPlaceWork != nil && c.AppropriatelyBroad != nil
+	return c.SubjectMatter != nil && c.Dimension != nil &&
+		c.NotPersonPlaceWork != nil && c.Atomic != nil
+}
+
+// Result reads the persisted criteria back into rubric answers; the
+// second return is false when any criterion is missing.
+func (c TagQualityCriteria) Result() (TagQualityResult, bool) {
+	if !c.Complete() {
+		return TagQualityResult{}, false
+	}
+	return TagQualityResult{
+		SubjectMatter:      *c.SubjectMatter,
+		Dimension:          *c.Dimension,
+		NotPersonPlaceWork: *c.NotPersonPlaceWork,
+		Atomic:             *c.Atomic,
+		Defer:              c.Defer != nil && *c.Defer,
+	}, true
 }
 
 // String renders the answers for the audit log, treating an omitted
 // answer as false.
 func (c TagQualityCriteria) String() string {
-	return fmt.Sprintf("subject_matter=%t standard_term=%t not_person_place_work=%t appropriately_broad=%t",
+	return fmt.Sprintf("subject_matter=%t dimension=%t not_person_place_work=%t atomic=%t defer=%t",
 		c.SubjectMatter != nil && *c.SubjectMatter,
-		c.StandardTerm != nil && *c.StandardTerm,
+		c.Dimension != nil && *c.Dimension,
 		c.NotPersonPlaceWork != nil && *c.NotPersonPlaceWork,
-		c.AppropriatelyBroad != nil && *c.AppropriatelyBroad)
+		c.Atomic != nil && *c.Atomic,
+		c.Defer != nil && *c.Defer)
 }
 
-// TagQualityVersion pins the quality measurement generation: bump it
-// whenever the criteria text or the prompt changes, so cached verdicts
-// from an older generation never apply to a newer one.
+// TagQualityVersion pins the quality measurement generation: the criteria
+// text, the prompt, and the policy version of the cached verdict rows. The
+// criteria were re-derived from the tag definition in place under v1,
+// riding the planned store reset that wipes the cached verdict rows, so no
+// bump invalidates them; later criteria or prompt changes bump it so an
+// older generation's verdicts never apply.
 const TagQualityVersion = "v1"
 
 // TagQualitySystemMessage is the system prompt of the quality judge.
-const TagQualitySystemMessage = "You are a tag-quality judge. Decide whether each candidate tag is fit for a shared document vocabulary."
+const TagQualitySystemMessage = "You are a tag-quality judge. Decide whether each candidate tag is a reusable dimension for a shared document vocabulary."
 
-// BuildTagQualityPrompt renders the four-question rubric over the
-// document text and the candidate tags.
+// BuildTagQualityPrompt renders the dimension rubric over the document
+// text and the candidate tags.
 func BuildTagQualityPrompt(text string, candidates []TagQualityCandidate) string {
 	var sb strings.Builder
-	sb.WriteString("For each candidate tag below, answer four yes/no questions about its fitness as a tag for the document.\n")
+	sb.WriteString("For each candidate tag below, answer four yes/no questions about its fitness as a reusable dimension of the document.\n")
 	sb.WriteString("1. subject_matter: is the tag a subject matter of the document, not its form or genre?\n")
-	sb.WriteString("2. standard_term: is the tag standard, widely-recognized terminology, not a coinage specific to this document?\n")
+	sb.WriteString("2. dimension: is the tag a reusable dimension of content — a value a searcher would filter by on its own, expecting other documents to share it — not a per-document detail, a thesis, or a container word with no retrieval function?\n")
 	sb.WriteString("3. not_person_place_work: is the tag neither a person, nor a work, nor a place other than a whitelisted country or continent? A whitelisted country or continent is a legitimate place tag and passes this criterion; only a person, a work, or a sub-national place (a city, province, region, or other non-sovereign territory) fails it.\n")
-	sb.WriteString("4. appropriately_broad: is the tag appropriately broad for a shared vocabulary, not a per-document detail?\n")
-	sb.WriteString("Answer with ONLY a JSON object: {\"tags\":[{\"index\":0,\"subject_matter\":true,\"standard_term\":true,\"not_person_place_work\":true,\"appropriately_broad\":true},...]}, one entry per candidate, no explanations.\n\n")
+	sb.WriteString("4. atomic: is the tag one dimension, not a combination whose parts each work as tags on their own? A compound that survives decomposition as a named unit answers true.\n")
+	sb.WriteString("Also answer defer: set it true when you cannot decide whether the tag is a reusable dimension. Uncertainty defers to review; it never forces a label.\n")
+	sb.WriteString("Answer with ONLY a JSON object: {\"tags\":[{\"index\":0,\"subject_matter\":true,\"dimension\":true,\"not_person_place_work\":true,\"atomic\":true,\"defer\":false},...]}, one entry per candidate, no explanations.\n\n")
 	sb.WriteString("Document text:\n")
 	sb.WriteString(text)
 	sb.WriteString("\n\nCandidate tags:\n")
@@ -100,7 +119,7 @@ func BuildTagQualityPrompt(text string, candidates []TagQualityCandidate) string
 // ParseTagQualityResponse errors when any candidate lacks a fully
 // specified verdict: a zero-valued result must never be read as an
 // all-criteria-false rejection, or a truncated response would cache a
-// spurious permanent rejection.
+// spurious permanent rejection. An omitted defer reads as false.
 func ParseTagQualityResponse(content string, n int) ([]TagQualityResult, error) {
 	content = cleanCodeBlock(strings.TrimSpace(content))
 	var parsed struct {
@@ -124,9 +143,10 @@ func ParseTagQualityResponse(content string, n int) ([]TagQualityResult, error) 
 		results[t.Index] = TagQualityResult{
 			Index:              t.Index,
 			SubjectMatter:      *t.SubjectMatter,
-			StandardTerm:       *t.StandardTerm,
+			Dimension:          *t.Dimension,
 			NotPersonPlaceWork: *t.NotPersonPlaceWork,
-			AppropriatelyBroad: *t.AppropriatelyBroad,
+			Atomic:             *t.Atomic,
+			Defer:              t.Defer != nil && *t.Defer,
 		}
 		present[t.Index] = true
 	}

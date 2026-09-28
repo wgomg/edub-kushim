@@ -164,3 +164,50 @@ func TestPlanDeterministic(t *testing.T) {
 		})
 	}
 }
+
+func TestPlan_DropTagNames(t *testing.T) {
+	plan := Plan{
+		Registrations: []Registration{
+			{Input: "kept topic", Name: "kept topic", Disposition: DispositionRegister},
+			{Input: "world war ii", Name: "world war 2", Disposition: DispositionRegister},
+			{Input: "resolved loser", Resolved: "kept topic", Disposition: DispositionApply},
+			{Input: "dropped name", Name: "dropped name", Disposition: DispositionRegister},
+		},
+		Evidence: []EvidenceRow{
+			{Kind: IdentityKindSameIntent, Candidate: "kept topic", Partner: "dropped partner"},
+			{Kind: IdentityKindSameIntent, Candidate: "dropped candidate", Partner: "kept topic"},
+			{Kind: IdentityKindSameIntent, Candidate: "kept topic", Partner: "kept topic"},
+		},
+	}
+	rejected := map[string]bool{
+		"world war ii":      true,
+		"dropped name":      true,
+		"dropped partner":   true,
+		"dropped candidate": true,
+	}
+
+	out := plan.DropTagNames(rejected)
+
+	if len(out.Registrations) != 2 {
+		t.Fatalf("registrations = %d, want 2 (input-matched house-form and name-matched rejected dropped)", len(out.Registrations))
+	}
+	for _, reg := range out.Registrations {
+		if reg.Name == "dropped name" || reg.Input == "world war ii" {
+			t.Errorf("rejected registration survived: %+v", reg)
+		}
+	}
+	if len(out.Evidence) != 1 {
+		t.Fatalf("evidence = %d, want 1", len(out.Evidence))
+	}
+	if out.Evidence[0].Candidate != "kept topic" || out.Evidence[0].Partner != "kept topic" {
+		t.Errorf("kept evidence row = %+v", out.Evidence[0])
+	}
+	if len(plan.Registrations) != 4 || len(plan.Evidence) != 3 {
+		t.Errorf("DropTagNames mutated the receiver: registrations=%d evidence=%d", len(plan.Registrations), len(plan.Evidence))
+	}
+
+	unchanged := plan.DropTagNames(nil)
+	if len(unchanged.Registrations) != 4 || len(unchanged.Evidence) != 3 {
+		t.Errorf("empty rejected set must keep the plan: registrations=%d evidence=%d", len(unchanged.Registrations), len(unchanged.Evidence))
+	}
+}

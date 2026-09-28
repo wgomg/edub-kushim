@@ -135,7 +135,7 @@ func (s *Tag) applyAliasAction(ctx context.Context, q *database.Queries, existin
 	}
 
 	if _, err := q.InsertTagAlias(ctx, database.InsertTagAliasParams{
-		AliasName:      aliasName,
+		AliasName:      textnorm.NormalizeTag(aliasName),
 		CanonicalTagID: canonical.ID,
 		RuleSetVersion: tags.IdentityRuleSetVersion,
 	}); err != nil {
