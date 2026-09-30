@@ -135,6 +135,50 @@ func TestPlanIdentity_FoldStaysPendingWithoutJudge(t *testing.T) {
 	}
 }
 
+func TestPlanIdentity_StoreExactAppliesOntoExistingRow(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	q, db := database.NewTestQueries(t)
+	t.Cleanup(func() { db.Close() })
+
+	logger := log.NewDiscardLogger()
+	runner := &tools.Runner{}
+	setUnexportedField(t, runner, "logger", logger)
+	setUnexportedField(t, runner, "config", &config.Config{
+		Enricher: config.EnricherConfig{TagAdjudicator: config.TagAdjudicatorConfig{Timeout: 0}},
+	})
+
+	a := &Adjudicator{
+		config: &config.Config{
+			Enricher: config.EnricherConfig{TagAdjudicator: config.TagAdjudicatorConfig{Enabled: false}},
+		},
+		queries: q,
+		runner:  runner,
+		logger:  logger,
+	}
+
+	outs, plan, _ := a.PlanIdentity(context.Background(), IdentityPlanInput{
+		Names:   []string{"united states"},
+		DBNames: map[string]struct{}{"united states": {}},
+	}, "")
+
+	if len(plan.Registrations) != 1 {
+		t.Fatalf("registrations = %d, want 1", len(plan.Registrations))
+	}
+	reg := plan.Registrations[0]
+	adjAssertEqual(t, reg.Disposition, tags.DispositionApply, "store-exact emission applies")
+	// the writer resolves an Apply through its Name; an empty Name would
+	// classify the registration as Invalid and unlink the document
+	adjAssertEqual(t, reg.Name, "united states", "apply carries the emitted name")
+	adjAssertEqual(t, reg.Resolved, "united states", "apply resolves onto its own row")
+	adjAssertEqual(t, len(plan.Evidence), 0, "store-exact emission mints no identity evidence")
+	if len(outs) != 1 || outs[0] != "united states" {
+		t.Errorf("outputs = %v, want [united states]", outs)
+	}
+	adjAssertEqual(t, OutputByInput(plan)["united states"], "united states", "plan output mapping")
+}
+
 func mkRanked(kept, candTag string, sim float64) matcher.RankResult {
 	return matcher.RankResult{
 		KeptName:   kept,
@@ -752,17 +796,21 @@ func newSplitAdjudicator(t *testing.T, adj *mockAdjudicator, buf *bytes.Buffer) 
 	if buf != nil {
 		logger = log.NewLoggerWithWriter(buf)
 	}
-	runner := &tools.Runner{}
-	setUnexportedField(t, runner, "logger", logger)
-	setUnexportedField(t, runner, "config", &config.Config{
+	cfg := &config.Config{
 		Enricher: config.EnricherConfig{
 			TagAdjudicator: config.TagAdjudicatorConfig{Timeout: 0},
+			ContentAnalyzer: config.ContentAnalyzerConfig{
+				Llm: config.LlmConfig{Model: "test-model"},
+			},
 		},
-	})
+	}
+	runner := &tools.Runner{}
+	setUnexportedField(t, runner, "logger", logger)
+	setUnexportedField(t, runner, "config", cfg)
 	if adj != nil {
 		setUnexportedField(t, runner, "tagAdjudicator", adj)
 	}
-	return &Adjudicator{logger: logger, runner: runner}
+	return &Adjudicator{config: cfg, logger: logger, runner: runner}
 }
 
 func TestDecomposeTags_WithoutAdjudicator(t *testing.T) {
@@ -784,7 +832,7 @@ func TestDecomposeTags_WithoutAdjudicator(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := a.DecomposeTags(context.Background(), tt.in, filter, "")
+			got, _ := a.DecomposeTags(context.Background(), tt.in, nil, filter, "")
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("DecomposeTags(%v) = %v, want %v", tt.in, got, tt.want)
 			}
@@ -867,7 +915,7 @@ func TestDecomposeTags_SplitVerdicts(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			a := newSplitAdjudicator(t, &mockAdjudicator{splitFn: tt.splitFn}, nil)
 			filter := analyzer.NewTagFilter(nil, nil, tt.title, nil)
-			got := a.DecomposeTags(context.Background(), tt.names, filter, "")
+			got, _ := a.DecomposeTags(context.Background(), tt.names, nil, filter, "")
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("DecomposeTags(%v) = %v, want %v", tt.names, got, tt.want)
 			}
@@ -880,10 +928,14 @@ func TestDecomposeTags_MemoizesSplitVerdicts(t *testing.T) {
 	a := newSplitAdjudicator(t, adj, nil)
 	filter := analyzer.NewTagFilter(nil, nil, "", nil)
 
-	a.DecomposeTags(context.Background(), []string{"machine learning"}, filter, "")
-	a.DecomposeTags(context.Background(), []string{"machine learning"}, filter, "")
+	a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, filter, "")
+	_, cached := a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, filter, "")
 
 	adjAssertEqual(t, adj.splitCall, 1, "split adjudicator call count")
+	adjAssertEqual(t, len(cached), 1, "composition rows on the cache hit")
+	adjAssertEqual(t, cached[0].Disposition, tags.CompositionSplit, "cached verdict keeps its split")
+	adjAssertEqual(t, cached[0].Reason, tags.CompositionReasonCached, "cached verdict's reason")
+	adjAssertEqual(t, cached[0].Model, "", "a cache-applied verdict carries no model")
 }
 
 func TestDecomposeTags_SplitLogCarriesVersion(t *testing.T) {
@@ -891,10 +943,138 @@ func TestDecomposeTags_SplitLogCarriesVersion(t *testing.T) {
 	a := newSplitAdjudicator(t, &mockAdjudicator{splitFn: splitVerdictsAll}, &buf)
 	filter := analyzer.NewTagFilter(nil, nil, "", nil)
 
-	a.DecomposeTags(context.Background(), []string{"russian history"}, filter, "")
+	a.DecomposeTags(context.Background(), []string{"russian history"}, nil, filter, "")
 
 	want := "tag split[" + analyzer.TagSplitVersion + "]"
 	if !strings.Contains(buf.String(), want) {
 		t.Errorf("split log = %q, want it to carry %q", buf.String(), want)
+	}
+}
+
+func TestDecomposeTags_StoreKeyedCompoundSkipsJudgment(t *testing.T) {
+	var buf bytes.Buffer
+	adj := &mockAdjudicator{splitFn: splitVerdictsAll}
+	a := newSplitAdjudicator(t, adj, &buf)
+	filter := analyzer.NewTagFilter(nil, nil, "", nil)
+	storeKeys := map[string]struct{}{tags.Key("machine learning"): {}}
+
+	got, rows := a.DecomposeTags(context.Background(), []string{"machine learning"}, storeKeys, filter, "")
+
+	adjAssertEqual(t, adj.splitCall, 0, "a store-keyed compound never reaches the judge")
+	if !reflect.DeepEqual(got, []string{"machine learning"}) {
+		t.Errorf("DecomposeTags = %v, want the compound whole", got)
+	}
+	adjAssertEqual(t, len(rows), 0, "the skip writes no composition row")
+	if !strings.Contains(buf.String(), `skip "machine learning" (reason=store_existing)`) {
+		t.Errorf("skip must log its reason, got:\n%s", buf.String())
+	}
+}
+
+func TestDecomposeTags_CompositionRows(t *testing.T) {
+	keepAll := func(_ context.Context, _ []string) ([]analyzer.TagSplitResult, error) {
+		return []analyzer.TagSplitResult{{Verdict: analyzer.TagSplitKeep}}, nil
+	}
+	onePart := func(_ context.Context, _ []string) ([]analyzer.TagSplitResult, error) {
+		return []analyzer.TagSplitResult{{
+			Verdict:    analyzer.TagSplitSplit,
+			Components: []string{"machine"},
+		}}, nil
+	}
+	failJudge := func(context.Context, []string) ([]analyzer.TagSplitResult, error) {
+		return nil, context.DeadlineExceeded
+	}
+
+	tests := []struct {
+		name  string
+		adj   *mockAdjudicator // nil runs without an adjudicator
+		names []string
+		want  tags.CompositionRow
+	}{
+		{
+			name:  "fresh split verdict carries parts, judge, and model",
+			adj:   &mockAdjudicator{splitFn: splitVerdictsAll},
+			names: []string{"machine learning"},
+			want: tags.CompositionRow{
+				Candidate:       "machine learning",
+				Parts:           []string{"machine", "learning"},
+				Disposition:     tags.CompositionSplit,
+				Reason:          tags.CompositionReasonJudge,
+				CriteriaVersion: analyzer.TagSplitVersion,
+				Model:           "test-model",
+			},
+		},
+		{
+			name:  "keep verdict records the judge's keep with no parts",
+			adj:   &mockAdjudicator{splitFn: keepAll},
+			names: []string{"machine learning"},
+			want: tags.CompositionRow{
+				Candidate:       "machine learning",
+				Disposition:     tags.CompositionKeep,
+				Reason:          tags.CompositionReasonJudge,
+				CriteriaVersion: analyzer.TagSplitVersion,
+				Model:           "test-model",
+			},
+		},
+		{
+			name:  "components failing validation keep with their own reason",
+			adj:   &mockAdjudicator{splitFn: onePart},
+			names: []string{"machine learning"},
+			want: tags.CompositionRow{
+				Candidate:       "machine learning",
+				Disposition:     tags.CompositionKeep,
+				Reason:          tags.CompositionReasonInvalidComponents,
+				CriteriaVersion: analyzer.TagSplitVersion,
+				Model:           "test-model",
+			},
+		},
+		{
+			name:  "a failed judge keeps with judge_unavailable and no model",
+			adj:   &mockAdjudicator{splitFn: failJudge},
+			names: []string{"machine learning"},
+			want: tags.CompositionRow{
+				Candidate:       "machine learning",
+				Disposition:     tags.CompositionKeep,
+				Reason:          tags.CompositionReasonJudgeUnavailable,
+				CriteriaVersion: analyzer.TagSplitVersion,
+			},
+		},
+		{
+			name:  "the conjunction grammar fallback splits with its own reason",
+			adj:   nil,
+			names: []string{"supply and demand"},
+			want: tags.CompositionRow{
+				Candidate:       "supply and demand",
+				Parts:           []string{"supply", "demand"},
+				Disposition:     tags.CompositionSplit,
+				Reason:          tags.CompositionReasonConjunction,
+				CriteriaVersion: analyzer.TagSplitVersion,
+			},
+		},
+		{
+			name:  "without a judge a non-joint compound keeps as unavailable",
+			adj:   nil,
+			names: []string{"russian history"},
+			want: tags.CompositionRow{
+				Candidate:       "russian history",
+				Disposition:     tags.CompositionKeep,
+				Reason:          tags.CompositionReasonJudgeUnavailable,
+				CriteriaVersion: analyzer.TagSplitVersion,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := newSplitAdjudicator(t, tt.adj, nil)
+			filter := analyzer.NewTagFilter(nil, nil, "", nil)
+
+			_, rows := a.DecomposeTags(context.Background(), tt.names, nil, filter, "")
+
+			if len(rows) != 1 {
+				t.Fatalf("composition rows = %d, want 1", len(rows))
+			}
+			if !reflect.DeepEqual(rows[0], tt.want) {
+				t.Errorf("row = %+v, want %+v", rows[0], tt.want)
+			}
+		})
 	}
 }

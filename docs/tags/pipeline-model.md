@@ -276,8 +276,8 @@ system already has, how far it matches the model, and what the delta is.
 | **S1 Emission** | Typed generation contract, subject-matter rule, place rule, choose-or-justify, three negatives, dimension language and compound decomposition (`analyzer/prompt.go`); suggestions injected from the store | Partial | Coverage wording pending; the dictionary-standard selection language is retired |
 | **S2 Facet ownership (P1)** | `SeparateFacets` category gate + country/continent whitelist (`internal/enrichment/enricher.go`) | Aligned | Untyped emissions degrade to string heuristics (accepted) |
 | **S3 Canonicality (P3)** | Consolidation policy gates/bands (`policy`), LLM adjudicator + verdict cache, merge review + dismissals, reconciler | Partial | Similarity band misses the variant classes; no extension-equality detector; merges are incident-driven, not a standing duty |
-| **S4 Atomicity (P4)** | General compound decomposition at emission (`Adjudicator.DecomposeTags`, `analyzer` split gate) + stored-joint worklist (`reconcile/joint.go`) | Partial | No part-value/mass evidence; prospective vs retrospective test |
-| **S5 Admission decision** | Rubric judge + verdict cache; pinned decision over the judge answers plus deterministic signals (`tags.DecideAdmission`); promotion = admitted + ≥ 2 live documents (`tags.DecidePromotion`) | Landed (pinned decision) · Absent (fitting) | No set predicates among the features (the P4 extension test is not a feature yet); the optional fitted form (calibration, distilled filter) is unshipped — the decision runs pinned and label-free; the repeat-disagreement rule is unshipped |
+| **S4 Atomicity (P4)** | General compound decomposition at emission (`Adjudicator.DecomposeTags`, `analyzer` split gate — one `tag_composition_event` verdict row per judged compound) + stored-joint worklist (`reconcile/joint.go`) | Partial | No part-value/mass evidence; prospective vs retrospective test |
+| **S5 Admission decision** | Rubric judge + verdict cache; pinned decision over the judge answers plus deterministic signals (`tags.DecideAdmission`); promotion = admitted + the 10-live-document floor (`tags.DecidePromotion`, `tags.RecurrenceFloor`) | Landed (pinned decision) · Absent (fitting) | No set predicates among the features (the P4 extension test is not a feature yet); the optional fitted form (calibration, distilled filter) is unshipped — the decision runs pinned and label-free; the repeat-disagreement rule is unshipped |
 | **S6 Lifecycle** | `promoted_at` quarantine/promotion, store trust boundary, sweep, blocklist | Aligned (birth/influence) · Absent (demotion) | Promotion is one-way today; demotion policy decided (definition §8.4), not implemented |
 | **S7 Vocabulary services** | Promoted-only store (`BuildTagCache`), suggestions, consolidation targets, promoted-names fallback | Aligned | — |
 | **S8 Retrieval** | Multi-tag AND filter (`internal/database/structured_search.go`, `tagsAnd`) | Aligned · Absent (completeness) | Coverage of dimensions is audited nowhere |
@@ -312,7 +312,9 @@ and human rejection deletes names through the blocklist (terminal) where the mod
 disposition for a same-intent label is alias/merge.
 
 **S4 — atomicity.** At emission, every compound candidate (2–3 words, Latin script,
-content parts) goes to the split gate: the adjudicator decides keep/split per tag when
+content parts) whose key is not already in the store goes to the split gate
+(store-keyed compounds are applications and skip judgment, with no verdict row):
+the adjudicator decides keep/split per tag when
 enabled, and without one only conjunction joints (`and`, `or`, `vs`, `versus` —
 `textnorm.SplitJointTag`) split mechanically while other compounds pass whole. The
 reconciler re-uses the conjunction detector for stored tags. P4 is wider than
@@ -334,7 +336,7 @@ answers. The definition's §2.4/§7.1 flipped the expected reject class:
 pre-coordinated compounds and document-specific coinages become rejects,
 corpus-valid values (repair-corpus terms) become admissible, and `defer`
 gives the judge an explicit abstention. `tags.DecidePromotion` keeps the
-definition's P2 recurrence floor — an admitted name with ≥ 2 live documents —
+definition's P2 recurrence floor — an admitted name with ≥ 10 live documents —
 so mass is a floor, not a feature of the decision. The remaining gaps are the
 set predicates among the features (the P4 extension test is not a feature yet)
 and the fitted refinement: the designed repeat-disagreement rule and the
@@ -488,7 +490,7 @@ compute a retired signal may live on as feature providers.
 
 | Incumbent rule, action, or text | Why it cannot stand | Replaced by |
 |---|---|---|
-| Promotion gate as a conjunctive rule (cached pass AND ≥ 2 documents) | mass still enters as a floor rather than a feature of the decision | the staged decision (§3) |
+| Promotion gate as a conjunctive rule (cached pass AND the 10-document floor) | mass still enters as a floor rather than a feature of the decision | the staged decision (§3) |
 | `max_tags` as a quality bound | a count cap contradicts coverage: the contract must deliver every applicable dimension | the completeness contract |
 | "Never split non-conjunctions" at runtime | contradicts P4's fan; the prospective/retrospective split was the interim | general decomposition at emission |
 | Reject-as-delete for provisional twins (name into the blocklist) | same-intent labels alias, never delete | the alias disposition; terminal rejects keep the blocklist |

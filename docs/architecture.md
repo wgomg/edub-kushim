@@ -317,7 +317,7 @@ The enrichment pipeline:
    provisional (`tag.promoted_at` NULL) and out of the embedding store, so
    they never reach suggestions or consolidation targets. A provisional name
    is promoted inline — inside the persist transaction — when the admission
-   decision admits it and it has assignments on ≥2 distinct live documents
+   decision admits it and it has assignments on ≥10 distinct live documents
    (trashed carriers do not count); provisionals already in the store are
    decided from their cached verdict row. Promotion is one-way, and a
    verdict-less provisional (judge outage) is never re-judged in flight — a

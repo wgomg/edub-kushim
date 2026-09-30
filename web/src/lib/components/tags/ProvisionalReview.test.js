@@ -65,10 +65,10 @@ describe('ProvisionalReview verdict labels', () => {
 		await renderLabel(tag({ verdict: verdict({ outcome: 'reject' }) }), 'judge rejected');
 	});
 
-	it('labels a recorded admit as awaiting a second document', async () => {
+	it('labels a recorded admit as awaiting the promotion floor', async () => {
 		await renderLabel(
 			tag({ verdict: verdict({ pass: true, outcome: 'admit' }) }),
-			'awaiting second document'
+			'awaiting promotion floor'
 		);
 	});
 

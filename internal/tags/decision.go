@@ -95,9 +95,17 @@ func DecideAdmission(f AdmissionFeatures) AdmissionDecision {
 	}
 }
 
-// The promotion minimum of docs/tags/definition-and-faceted-retrieval.md
-// §4.3 (P2), in live documents: pinned until its calibration exists.
-const recurrenceFloor = 2
+// DecisionRuleSetVersion pins the admission and promotion rules; the
+// promote log lines carry it so rule changes are traceable. Nothing
+// stores it: both rules are pure and re-run over stored criteria.
+const DecisionRuleSetVersion = "v1"
+
+// RecurrenceFloor is the promotion minimum of
+// docs/tags/definition-and-faceted-retrieval.md §4.3 (P2), in live
+// documents: ten until its calibration exists (operator decision D8,
+// 2026-09-30). Same-batch mass counts — ten documents from one batch
+// remain a systematic proposal, where two are a compression artifact.
+const RecurrenceFloor = 10
 
 // DecidePromotion reports whether an admitted candidate accrues enough
 // live recurrence to leave provisional standing. Admission below the
@@ -105,5 +113,5 @@ const recurrenceFloor = 2
 // promotes here — the review queue arbitrates those through the human
 // action.
 func DecidePromotion(outcome AdmissionOutcome, liveMass int64) bool {
-	return outcome == AdmissionAdmit && liveMass >= recurrenceFloor
+	return outcome == AdmissionAdmit && liveMass >= RecurrenceFloor
 }

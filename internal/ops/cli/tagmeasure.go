@@ -53,6 +53,9 @@ func runTagMeasurePass(c *container.Container, client *database.Client, batchID 
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Hour)
 	defer cancel()
 
+	if err := logTagMeasureStart(ctx, c, client); err != nil {
+		return err
+	}
 	report, err := tags.NewRunner(client, nil).Run(ctx, uuid.New())
 	if err != nil {
 		return fmt.Errorf("tag measure: %w", err)
@@ -70,11 +73,25 @@ func runTagMeasureManual(c *container.Container, client *database.Client) error 
 	}
 	defer release()
 
+	if err := logTagMeasureStart(ctx, c, client); err != nil {
+		return err
+	}
 	report, err := tags.NewRunner(client, nil).Run(ctx, uuid.New())
 	if err != nil {
 		return fmt.Errorf("tag measure: %w", err)
 	}
 	return printTagMeasureReport(c, report, "")
+}
+
+// logTagMeasureStart records the sweep's opening line: how many tags the
+// store holds before the snapshot is read.
+func logTagMeasureStart(ctx context.Context, c *container.Container, client *database.Client) error {
+	count, err := client.Queries.CountTags(ctx)
+	if err != nil {
+		return fmt.Errorf("count tags: %w", err)
+	}
+	c.GetLogger().Info("", "tag measure run starting: %d tags in store", count)
+	return nil
 }
 
 func printTagMeasureReport(c *container.Container, report *tags.Report, batchID string) error {

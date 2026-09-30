@@ -188,18 +188,21 @@ func Run(c *container.Container, args []string) error {
 		owner := task.NewOwner(client, ownerID, pid, c.GetLogger(), c.GetConfig().Consumer.Reclaim.MaxRetries)
 		c.GetLogger().Info("", "consume: acquiring batch %s (PID=%d, ownerID=%s)", batchIDParam, pid, ownerID)
 
-		if err := owner.Acquire(ctx, batchIDParam); err == task.ErrBatchLocked {
-			if !force {
+		if force {
+			// the queue daemon pre-creates a placeholder owner row and
+			// forks with --force: take it directly instead of failing
+			// the plain Acquire against the live placeholder first
+			if err := owner.AcquireForce(ctx, batchIDParam); err != nil {
+				return fmt.Errorf("force acquire: %w", err)
+			}
+		} else if err := owner.Acquire(ctx, batchIDParam); err != nil {
+			if err == task.ErrBatchLocked {
 				bo, boErr := client.GetBatchOwner(ctx, batchIDParam)
 				if boErr == nil {
 					return fmt.Errorf("batch %s is being processed by PID %d (use --force to override)", batchIDParam, bo.Pid)
 				}
 				return fmt.Errorf("batch %s is being processed by another process (use --force to override)", batchIDParam)
 			}
-			if err := owner.AcquireForce(ctx, batchIDParam); err != nil {
-				return fmt.Errorf("force acquire: %w", err)
-			}
-		} else if err != nil {
 			return fmt.Errorf("acquire batch %s: %w", batchIDParam, err)
 		}
 

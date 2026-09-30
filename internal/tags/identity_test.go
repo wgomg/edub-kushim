@@ -33,6 +33,56 @@ func TestTieBreak(t *testing.T) {
 	}
 }
 
+func TestPluralStrip(t *testing.T) {
+	cases := []struct {
+		name string
+		want string
+	}{
+		{"servlets", "servlet"},
+		{"stories", "story"},
+		{"glass", "glass"},       // -ss endings never strip
+		{"status", "status"},     // -us endings never strip
+		{"analysis", "analysis"}, // -is endings never strip
+		{"news", "news"},         // too short to strip
+		{"Abcde", "Abcde"},       // only all-lowercase tokens strip
+		{"un_der", "un_der"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := pluralStrip(tc.name); got != tc.want {
+				t.Errorf("pluralStrip(%q) = %q, want %q", tc.name, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestProposedFold_PluralFallback(t *testing.T) {
+	// the two controls pin the dictionary membership each case depends on:
+	// an unknown plural must exercise the strip, a known word must not
+	if isEnglishWord("websockets") {
+		t.Fatalf("%q is in the lemmatizer dictionary; pick an out-of-dictionary plural for the strip fallback", "websockets")
+	}
+	if !isEnglishWord("chaos") {
+		t.Fatalf("%q is missing from the lemmatizer dictionary; pick an in-dictionary word for the no-strip guard", "chaos")
+	}
+	cases := []struct {
+		name string
+		want string
+	}{
+		{"servlets", "servlet"},     // the review's out-of-dictionary plural still proposes
+		{"websockets", "websocket"}, // unknown plural proposes through the strip fallback
+		{"stories", "story"},        // -ies becomes -y
+		{"chaos", ""},               // in-dictionary words never fall through to the strip
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ProposedFold(tc.name); got != tc.want {
+				t.Errorf("ProposedFold(%q) = %q, want %q", tc.name, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestPlanDeterministic(t *testing.T) {
 	noEvidence := map[string]int{}
 

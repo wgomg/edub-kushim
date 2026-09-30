@@ -3,7 +3,9 @@ package curation
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
@@ -263,6 +265,10 @@ func (s *Tag) CreatePlannedTx(ctx context.Context, q *database.Queries, plan tag
 		return nil, nil, err
 	}
 
+	if err := s.recordCompositionEvidence(ctx, q, plan.Composition); err != nil {
+		return nil, nil, err
+	}
+
 	if !quarantined && len(promoteIDs) > 0 {
 		if _, err := q.PromoteTags(ctx, promoteIDs); err != nil {
 			return nil, nil, errs.FromDB(err, "promote new tags")
@@ -270,4 +276,43 @@ func (s *Tag) CreatePlannedTx(ctx context.Context, q *database.Queries, plan tag
 	}
 
 	return results, newNames, nil
+}
+
+// recordCompositionEvidence writes the plan's decomposition verdicts as
+// evidence rows, normalizing candidate and part names at this write
+// boundary. Empty parts encode as an empty JSON array, never null, and a
+// rejected name's row stays: it documents the gate's verdict.
+func (s *Tag) recordCompositionEvidence(ctx context.Context, q *database.Queries, rows []tags.CompositionRow) error {
+	for _, row := range rows {
+		candidate := textnorm.NormalizeTag(row.Candidate)
+		if candidate == "" {
+			continue
+		}
+		parts := make([]string, 0, len(row.Parts))
+		for _, part := range row.Parts {
+			if p := textnorm.NormalizeTag(part); p != "" {
+				parts = append(parts, p)
+			}
+		}
+		encoded, err := json.Marshal(parts)
+		if err != nil {
+			return fmt.Errorf("encode tag composition parts %s: %w", candidate, err)
+		}
+		var model sql.NullString
+		if row.Model != "" {
+			model = sql.NullString{String: row.Model, Valid: true}
+		}
+		if err := q.InsertTagCompositionEvent(ctx, database.InsertTagCompositionEventParams{
+			DocumentID:      row.DocumentID,
+			Candidate:       candidate,
+			Parts:           encoded,
+			Disposition:     row.Disposition,
+			Reason:          row.Reason,
+			CriteriaVersion: row.CriteriaVersion,
+			Model:           model,
+		}); err != nil {
+			return errs.FromDB(err, "insert tag composition event "+candidate)
+		}
+	}
+	return nil
 }

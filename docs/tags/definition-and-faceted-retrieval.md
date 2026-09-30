@@ -358,7 +358,7 @@ properties follow:
 ### 4.3 The predicates
 
 Written as properties of extensions. Let `m` be a recurrence floor (the current system
-uses 2 as its promotion minimum; axis health in a mature vocabulary wants higher floors
+uses 10 as its promotion minimum; axis health in a mature vocabulary wants higher floors
 for the core).
 
 **(P1) Facet ownership** — precondition, not a set test: `t` belongs to the subject

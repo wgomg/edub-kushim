@@ -189,14 +189,16 @@ func (r *Reconciler) sweepProvisionalTags(ctx context.Context, cfg *config.Confi
 
 		if report.ReportOnly {
 			report.Provisional.Promoted++
-			r.logger.Info("", "tag reconcile (report-only): would promote %q (docs=%d model=%s)", t.Name, docs, verdictModelLabel(row.VerdictModel))
+			r.logger.Info("", "tag reconcile (report-only): would promote %q (docs=%d model=%s rule_set=decision-%s floor=%d)",
+				t.Name, docs, verdictModelLabel(row.VerdictModel), tags.DecisionRuleSetVersion, tags.RecurrenceFloor)
 			continue
 		}
 		if _, status, err := r.tag.Promote(ctx, t.ID, "sweep"); err != nil {
 			r.logger.Error("", "tag reconcile: promote provisional tag %q: %v", t.Name, err)
 		} else if status == types.PromotePromoted {
 			report.Provisional.Promoted++
-			r.logger.Info("", "tag reconcile: promoted %q (docs=%d model=%s)", t.Name, docs, verdictModelLabel(row.VerdictModel))
+			r.logger.Info("", "tag reconcile: promoted %q (docs=%d model=%s rule_set=decision-%s floor=%d)",
+				t.Name, docs, verdictModelLabel(row.VerdictModel), tags.DecisionRuleSetVersion, tags.RecurrenceFloor)
 		}
 	}
 
@@ -305,7 +307,8 @@ func (r *Reconciler) rejudgeProvisionalTags(ctx context.Context, cfg *config.Con
 			r.logger.Error("", "tag reconcile: promote provisional tag %q: %v", e.name, err)
 		} else if status == types.PromotePromoted {
 			report.Provisional.Promoted++
-			r.logger.Info("", "tag reconcile: promoted %q (docs=%d model=%s)", e.name, e.docs, finalModel)
+			r.logger.Info("", "tag reconcile: promoted %q (docs=%d model=%s rule_set=decision-%s floor=%d)",
+				e.name, e.docs, finalModel, tags.DecisionRuleSetVersion, tags.RecurrenceFloor)
 		}
 	}
 }

@@ -84,6 +84,37 @@ func TestTagSearch(t *testing.T) {
 	assertEqual(t, len(r), 2, "matches")
 }
 
+func TestListStoreTagKeys(t *testing.T) {
+	q, db := NewTestQueries(t)
+	defer db.Close()
+	resetDB(t, q)
+	ctx := context.Background()
+
+	canonicalID := MustCreateTag(t, q, "store key canonical")
+	MustCreateTag(t, q, "store key tag")
+	_, err := q.InsertTagAlias(ctx, InsertTagAliasParams{
+		AliasName:      "store key alias",
+		CanonicalTagID: canonicalID,
+		RuleSetVersion: "v1",
+	})
+	assertNoError(t, err, "insert alias")
+
+	keys, err := q.ListStoreTagKeys(ctx)
+	assertNoError(t, err, "list store keys")
+
+	present := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		present[k] = true
+	}
+	// the decomposition gate skips compounds whose key matches a tag name
+	// or an alias name, so both sides of the union must reach the caller
+	for _, want := range []string{"store key tag", "store key canonical", "store key alias"} {
+		if !present[want] {
+			t.Errorf("store keys missing %q: %v", want, keys)
+		}
+	}
+}
+
 func TestDocumentTags(t *testing.T) {
 	q, db := NewTestQueries(t)
 	defer db.Close()

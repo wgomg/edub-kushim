@@ -21,6 +21,11 @@ SELECT name FROM tag
 WHERE promoted_at IS NOT NULL
 ORDER BY created_at DESC;
 
+-- name: ListStoreTagKeys :many
+SELECT name AS key FROM tag
+UNION
+SELECT alias_name AS key FROM tag_alias;
+
 -- name: CreateTag :one
 INSERT INTO tag (name)
 VALUES ($1)

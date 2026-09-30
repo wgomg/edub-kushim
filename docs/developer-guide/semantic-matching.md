@@ -341,7 +341,7 @@ apply the existing label), and then candidate generation — every remaining
 candidate neighbour is kept as a **gate subject** with its similarity and
 runner-up recorded as adjudication evidence. Similarity never replaces or
 keeps on its own; gates and identity do. Each disposition is logged as
-`identity[v0]: apply|alias|defer|separate …`. Fallback results from the legacy
+`identity[v1]: apply|alias|defer|separate …`. Fallback results from the legacy
 daemon (no candidates) pass through `KeptName` verbatim. Style variants and
 aliases never reach the policy: M1 house form, M3 key equality, and the alias
 resolver apply the canonical value before ranking output is used.
@@ -351,7 +351,10 @@ resolver apply the canonical value before ranking output is used.
 Identity has two LLM paths, both under `enricher.tag_adjudicator.enabled`:
 
 1. **Folds** — a candidate with a mechanically proposed lexical fold (M2
-   signatures) is judged by one batched identity-judge call
+   signatures: the lemmatizer, plus a conservative plural strip for tokens the
+   dictionary does not know — a plural whose base form exists folds unless it
+   is the established name of the sense) is judged by one batched
+   identity-judge call
    (`JudgeTagIdentity`) answering three binary criteria: fold to base form
    (J1), fold preserves denotation (J2), conventional written form (J5). The
    fold applies only when all three confirm; a candidate whose criteria lack a
@@ -444,7 +447,7 @@ The judge LLM and timeout default to the content analyzer's
 (`ResolvedQualityLlm`/`ResolvedQualityTimeout`, resolved at use time); config
 validation logs a warning when the resolved judge equals the generator, since
 a shared model biases every verdict with the generator's own failure modes.
-The decision thresholds (`no_anchor_similarity`, the 2-document promotion
+The decision thresholds (`no_anchor_similarity`, the 10-document promotion
 floor) are pinned v1 constants, not config keys.
 
 ### Promotion out of quarantine
@@ -461,7 +464,7 @@ skipped). A name promotes when both hold:
   judged this run, or, for a provisional already in the store (which the judge
   skips), its cached verdict row mapped through the same decision with the
   judge answers alone; and
-- assignments on **≥ 2 distinct live documents**
+- assignments on **≥ 10 distinct live documents**
   (`CountLiveTagDocumentsByTagIDs` — the `document_tag` `(document_id, tag_id)`
   PK makes the count distinct, so a single document re-enriching itself stays
   at 1, and carriers whose document row is trashed do not count).
@@ -469,7 +472,8 @@ skipped). A name promotes when both hold:
 `PromoteTags` sets `promoted_at = now()` under `WHERE promoted_at IS NULL`, so
 concurrent promotions are idempotent, and the promoted names enter the store
 via `AddToStore` only after the commit (`tagquality[v1]: promote %q
-(docs=%d reason=%s)`). Deferred and rejected provisionals never promote here —
+(docs=%d reason=%s rule_set=decision-v1 floor=10)`). Deferred and rejected
+provisionals never promote here —
 they wait for review.
 Verdict-less provisionals — judge outages and re-emitted legacy rows — are not
 re-judged in flight: a name already present in the tag table is not novel, so
@@ -479,7 +483,7 @@ resolve them afterwards:
 - The **scheduled reconciliation sweep** (`internal/tags/reconcile`)
   re-checks provisional tags older than
   `enricher.tag_reconcile.provisional_grace_days` (default 30): a stored
-  verdict the decision re-derives as admit plus ≥ 2 live documents promotes
+  verdict the decision re-derives as admit plus ≥ 10 live documents promotes
   without a judge call, while defer and reject verdicts log `left for review
   (outcome=… reason=…)` and stay; verdict-less names are re-judged
   oldest-first under `max_rejudge` — the
@@ -488,7 +492,7 @@ resolve them afterwards:
   retry on failure — with the verdict recorded through the enricher's
   fresh-verdict path (`InsertTagQualityEvent` with `DO NOTHING`, so a
   concurrent fresh verdict is kept) and an admitted name promoted immediately at
-  ≥ 2 live documents. Deferrals, rejections, missing judges, and tags with no
+  ≥ 10 live documents. Deferrals, rejections, missing judges, and tags with no
   live document text stay queued.
 - The **review queue** (`GET /api/v1/tags/provisional`,
   `POST /api/v1/tags/{id}/promote`, and the tags page's editor-only "New
@@ -675,7 +679,7 @@ statements.
    - `promoteEligible` runs inside the persist transaction, after the tag
      assignments and before the commit: an admitted decision (the emission's,
      or the cached verdict row for provisionals already in the store) plus
-     assignments on ≥ 2 distinct live documents → `PromoteTags`, and the
+     assignments on ≥ 10 distinct live documents → `PromoteTags`, and the
      promoted names enter the store after the commit
      (§7).
 4. **API tag creation** triggers a store refresh through the same service.
@@ -726,11 +730,11 @@ statements.
 - **The quality judge is disabled by default** — novel tags are born
   untouched until `enricher.tag_quality.enabled: true`. Its decision
   thresholds are pinned v1 constants (`no_anchor_similarity = 0.60`, the
-  2-document promotion floor), deliberately not operator-tunable.
+  10-document promotion floor), deliberately not operator-tunable.
 - **Verdicts are cache-scoped to `policy.Version`** — bumping the policy
   version invalidates every cached verdict at once (old rows stay in the event
   table for analysis, they are simply never read for the new version).
 
 ---
 
-*Last verified against the tree: 2026-09-28. If code and doc disagree, code wins.*
+*Last verified against the tree: 2026-09-30. If code and doc disagree, code wins.*

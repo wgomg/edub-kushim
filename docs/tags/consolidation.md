@@ -96,7 +96,7 @@ longer decides anything. See [matcher.md](matcher.md) for the per-model value
 and the derivation.
 
 Every identity disposition is logged in the kushim (enrichment) log
-(`identity[v0]: apply|alias|defer|separate <name> …`), so the pipeline's
+(`identity[v1]: apply|alias|defer|separate <name> …`), so the pipeline's
 behavior is auditable after the fact — and so the reconciliation task can
 recover history the database never captured.
 
@@ -109,7 +109,9 @@ A compound tag whose parts each name a subject — `russian history`,
 its parts before consolidation, so `russian history` becomes `russia` +
 `history` instead of a single tag that the matcher can never match cleanly.
 Fixed names and set phrases whose words are not subjects on their own
-(`cold war`, `machine learning`, `climate change`) stay whole.
+(`cold war`, `machine learning`, `urban planning`) stay whole, and a compound
+whose key already exists in the store (names and aliases) is an application:
+it is skipped before judgment and never split.
 
 - **Detection**: every canonical tag of two to three words in Latin script
   with at least one content part is a candidate (`tags.ClassifyShape` =
@@ -119,14 +121,25 @@ Fixed names and set phrases whose words are not subjects on their own
   LLM-adjudicated (`AdjudicateTagSplits`, same adjudicator as tag pairs,
   criteria pinned by `analyzer.TagSplitVersion`) — the parts are the tag's
   content words, and the gate splits when each part names a subject a searcher
-  would filter by on its own and the phrase is just their combination, keeping
-  the tag when it names one subject the parts cannot compose; unsettled
-  readings keep. Verdicts are memoized per tag name within the enricher
+  would filter by on its own and the phrase is just their combination,
+  including a modifier before a generic head (`labor movement`, `bike
+  repair`); it keeps the tag when the phrase names one established subject the
+  parts cannot compose (`urban planning`). Compounds sharing a head and shape
+  take one reading, and unsettled readings keep. Verdicts are memoized per tag
+  name within the enricher
   process, so a compound seen across documents is adjudicated once. With the
   adjudicator disabled, only conjunction joints (`and`, `or`, `vs`, `vs.`,
   `versus` — detected by `textnorm.SplitJointTag`; after normalization `&` is
   stripped, so "rock & roll" is not joint) split deterministically; every
   other compound passes whole.
+- **Evidence**: every judged compound appends one `tag_composition_event`
+  verdict row — candidate, validated parts, `disposition`
+  (`split`/`keep`/`drop`), `reason`
+  (`judge`/`cached`/`conjunction`/`invalid_components`/`judge_unavailable`, or
+  `part_rejected` when an admitted part was rejected downstream and the split
+  degrades to `drop`), the criteria version, and the judge model (`NULL` for
+  cached verdicts and the conjunction fallback) — with a matching
+  `tag split[...]` log line per candidate.
 - **Validation**: components pass the same rules as emitted tags — normalized,
   deduplicated, ≤3 words, ≤64 characters, no person/title/doc-type token
   matches — and a split must yield between 2 and `tags.MaxCompoundWords` (3)
@@ -222,7 +235,7 @@ the enricher composes its fallback and consolidation sets from the promoted
 subset). Promotion is inline, one-way, and runs inside the persist
 transaction: a provisional name the admission decision admits — its emission
 decision, or the cached verdict row mapped through the same decision for
-names the judge skipped — with assignments on at least two distinct **live**
+names the judge skipped — with assignments on at least ten distinct **live**
 documents
 (trashed carriers are not evidence, in this check and in the reconciliation
 sweep alike) gets `promoted_at = now()` and enters the store after the commit.
@@ -234,11 +247,11 @@ re-judged in flight: a name already present in the tag table is not novel, so
 the judge never sees it again. They are re-judged by the scheduled
 reconciliation sweep once they pass `provisional_grace_days` (default 30): the
 sweep promotes names whose stored verdict the decision re-derives as admit
-with ≥ 2 live documents, leaves defer and reject verdicts for review,
+with ≥ 10 live documents, leaves defer and reject verdicts for review,
 re-judges the rest oldest-first under the `max_rejudge` cap (one
 judge call over the tag's first live document, one retry on failure, the
 verdict recorded through the same fresh-verdict/cache path the enricher uses),
-promotes an admitted name at ≥ 2 live documents, and leaves a deferral or
+promotes an admitted name at ≥ 10 live documents, and leaves a deferral or
 rejection queued for review. A missing judge, a tag with no live document text,
 and lookup or write
 failures are counted and skipped rather than failing the run, and the sweep
@@ -329,7 +342,7 @@ anti-oscillating:
 - **Provisional hygiene:** the same run re-checks provisional tags older than
   `provisional_grace_days` (default 30), oldest first. A stored verdict the
   decision re-derives as admit
-  plus ≥ 2 live documents promotes the name with no judge call, while defer and
+  plus ≥ 10 live documents promotes the name with no judge call, while defer and
   reject verdicts stay queued for review; verdict-less
   names are re-judged one at a time (the tag's first live document, reduced
   with the tag-matcher arithmetic, one retry on failure) and promoted when

@@ -69,43 +69,79 @@ func NewAdjudicator(cfg *config.Config, logger *log.Logger, queries *database.Qu
 type splitDecision struct {
 	verdict    analyzer.TagSplitVerdict
 	components []string
+	model      string
+	cached     bool
 }
 
 // DecomposeTags asks the LLM adjudicator (or, without one, the plain
 // grammar split for conjunction joints) which compound tags decompose
 // into dimension values, validates the verdict components against the
 // per-document filter and the compound's part-count bound, and returns
-// the tag list with approved decompositions expanded in place. Compounds
-// that are not split pass through, deduplicated.
-func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, filter *analyzer.TagFilter, reqID string) []string {
+// the tag list with approved decompositions expanded in place plus one
+// composition evidence row per judged candidate. A compound whose key
+// already exists in the store is an application, not a candidate: it is
+// skipped before judgment and produces no row. Compounds that are not
+// split pass through, deduplicated.
+func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKeys map[string]struct{}, filter *analyzer.TagFilter, reqID string) ([]string, []tags.CompositionRow) {
 	var candidates []string
+	seenCandidates := make(map[string]bool, len(names))
 	for _, name := range names {
-		if tags.ClassifyShape(name) == tags.ShapeCompound {
-			candidates = append(candidates, name)
+		if tags.ClassifyShape(name) != tags.ShapeCompound {
+			continue
 		}
+		if _, stored := storeKeys[tags.Key(name)]; stored {
+			a.logger.Debug(reqID, "tag split[%s]: skip %q (reason=store_existing)", analyzer.TagSplitVersion, name)
+			continue
+		}
+		if seenCandidates[name] {
+			continue
+		}
+		seenCandidates[name] = true
+		candidates = append(candidates, name)
 	}
 	if len(candidates) == 0 {
-		return names
+		return names, nil
 	}
 
 	decisions := a.splitVerdicts(ctx, candidates, reqID)
 
 	components := make(map[string][]string, len(candidates))
+	rows := make([]tags.CompositionRow, 0, len(candidates))
 	for _, candidate := range candidates {
 		d, ok := decisions[candidate]
-		if !ok || d.verdict != analyzer.TagSplitSplit {
-			continue
+		cached := ok && d.cached
+		row := tags.CompositionRow{Candidate: candidate, CriteriaVersion: analyzer.TagSplitVersion}
+		switch {
+		case !ok || d.verdict == "":
+			row.Disposition = tags.CompositionKeep
+			row.Reason = tags.CompositionReasonJudgeUnavailable
+		case d.verdict != analyzer.TagSplitSplit:
+			row.Disposition = tags.CompositionKeep
+			row.Reason, row.Model = splitSource(d)
+		default:
+			valid := analyzer.SplitComponents(d.components, filter)
+			// a compound has at most MaxCompoundWords content parts, so a
+			// verdict with more surviving components is malformed
+			if len(valid) < 2 || len(valid) > tags.MaxCompoundWords {
+				row.Disposition = tags.CompositionKeep
+				row.Reason = tags.CompositionReasonInvalidComponents
+				row.Model = d.model
+				break
+			}
+			components[candidate] = valid
+			row.Disposition = tags.CompositionSplit
+			row.Parts = valid
+			row.Reason, row.Model = splitSource(d)
 		}
-		valid := analyzer.SplitComponents(d.components, filter)
-		// a compound has at most MaxCompoundWords content parts, so a
-		// verdict with more surviving components is malformed
-		if len(valid) < 2 || len(valid) > tags.MaxCompoundWords {
-			continue
+		if row.Disposition == tags.CompositionSplit {
+			a.logger.Info(reqID, "tag split[%s]: split %q → %q", analyzer.TagSplitVersion, candidate, row.Parts)
+		} else {
+			a.logger.Info(reqID, "tag split[%s]: keep %q (reason=%s cached=%t)", analyzer.TagSplitVersion, candidate, row.Reason, cached)
 		}
-		components[candidate] = valid
+		rows = append(rows, row)
 	}
 	if len(components) == 0 {
-		return names
+		return names, rows
 	}
 
 	out := make([]string, 0, len(names)+len(components))
@@ -126,9 +162,23 @@ func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, filter 
 			seen[segment] = true
 			out = append(out, segment)
 		}
-		a.logger.Info(reqID, "tag split[%s]: %q → %v", analyzer.TagSplitVersion, t, segments)
 	}
-	return out
+	return out, rows
+}
+
+// splitSource names a split decision's verdict source and the model that
+// judged it: a cache hit has no fresh call behind it and no model; an
+// empty model without a cache hit is the conjunction grammar fallback;
+// a fresh judge call carries its model.
+func splitSource(d splitDecision) (reason, model string) {
+	switch {
+	case d.cached:
+		return tags.CompositionReasonCached, ""
+	case d.model == "":
+		return tags.CompositionReasonConjunction, ""
+	default:
+		return tags.CompositionReasonJudge, d.model
+	}
 }
 
 // ApplyDeletedTagPolicy rewrites a tag list through the deleted-tag
@@ -180,6 +230,7 @@ func (a *Adjudicator) splitVerdicts(ctx context.Context, candidates []string, re
 	var uncached []string
 	for _, name := range candidates {
 		if d, ok := a.splitCache[name]; ok {
+			d.cached = true
 			decisions[name] = d
 			continue
 		}
@@ -217,10 +268,10 @@ func (a *Adjudicator) splitVerdicts(ctx context.Context, candidates []string, re
 
 	a.splitMu.Lock()
 	defer a.splitMu.Unlock()
+	model := a.config.ResolvedAdjudicatorLlm().Model
 	for i, r := range results {
-		d := splitDecision{verdict: r.Verdict, components: r.Components}
-		decisions[uncached[i]] = d
-		a.splitCache[uncached[i]] = d
+		decisions[uncached[i]] = splitDecision{verdict: r.Verdict, components: r.Components, model: model}
+		a.splitCache[uncached[i]] = splitDecision{verdict: r.Verdict, components: r.Components}
 	}
 	return decisions
 }
@@ -366,16 +417,18 @@ func tagQualityCriteriaLog(criteria json.RawMessage) string {
 	return c.String()
 }
 
-// logAdmission keeps admits silent: the audit log stays on the failure
-// paths, where the reason matters.
+// logAdmission journals every decided candidate: admits at DEBUG,
+// rejections and defers at INFO where the reason matters. The model
+// label reads cached when no fresh judge call produced the verdict.
 func (a *Adjudicator) logAdmission(reqID, name, source string, d tags.AdmissionDecision, criteria json.RawMessage, model string) {
-	if d.Outcome == tags.AdmissionAdmit {
-		return
-	}
 	if model == "" {
 		model = "cached"
 	}
-	a.logger.Info(reqID, "tagquality[%s]: %s %q (reason=%s source=%s model=%s criteria=%s)",
+	level := a.logger.Info
+	if d.Outcome == tags.AdmissionAdmit {
+		level = a.logger.Debug
+	}
+	level(reqID, "tagquality[%s]: %s %q (reason=%s source=%s model=%s criteria=%s)",
 		analyzer.TagQualityVersion, d.Outcome, name, d.Reason, source, model, tagQualityCriteriaLog(criteria))
 }
 

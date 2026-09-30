@@ -126,9 +126,7 @@
 
 	function verdictLabel(tag) {
 		if (!tag.verdict) return 'no verdict';
-		if (tag.verdict.pass) {
-			return tag.document_count >= 2 ? 'eligible' : 'awaiting second document';
-		}
+		if (tag.verdict.pass) return 'awaiting promotion floor';
 		return verdictOutcome(tag) === 'defer' ? 'deferred to review' : 'judge rejected';
 	}
 
@@ -167,9 +165,9 @@
 </div>
 
 <p class="mb-4 max-w-3xl text-[0.8125rem] text-parchment-500">
-	New tags stay provisional until the admission decision admits them and a second live document
-	carries them; uncertain ones wait here for review. Approve promotes a tag into the shared
-	vocabulary; reject deletes it and blocks it from enrichment.
+	New tags stay provisional until the admission decision admits them and enough live documents carry
+	them to clear the promotion floor; uncertain ones wait here for review. Approve promotes a tag
+	into the shared vocabulary; reject deletes it and blocks it from enrichment.
 </p>
 
 {#if loading}

@@ -148,7 +148,7 @@ Both `Analyze()` and `AnalyzeDocType()` call `checkContentTooLarge` with their c
 
 ### Constants
 
-- `TagSplitVersion` (exported) — `"v0"`; pins the split gate's criteria text, carried in the admission driver's split log line. The criteria changed in place under the same verdict and response shape, so no cached verdict is invalidated (split verdicts are in-process only).
+- `TagSplitVersion` (exported) — `"v1"`; pins the split gate's criteria text, carried in the admission driver's split/keep/skip log lines and in every `tag_composition_event` row's `criteria_version`. v1 names the generic-head split class, asks one reading per family, keeps named units whole, and states that store existence is not the judge's criterion; the verdict and response shape are unchanged, and split verdicts are in-process only, so no cached verdict is invalidated.
 - `TagSplitSystemMessage` (exported) — `"You are a tag-taxonomy classifier. Decide whether a tag's words each name a subject a searcher would filter by on its own, and the tag is just their combination."`
 
 ### Types
@@ -158,7 +158,7 @@ Both `Analyze()` and `AnalyzeDocType()` call `checkContentTooLarge` with their c
 
 ### Functions
 
-- `BuildTagSplitPrompt(tags []string) string` — Builds the JSON-verdict prompt for compound tags: per tag, its content words are the parts; `split` when every part names a subject that works as a tag on its own and the phrase is just their combination, `keep` when the phrase names one subject the parts cannot compose or a part is not a subject on its own; unsettled readings keep, never force a split. Split components are listed when splitting.
+- `BuildTagSplitPrompt(tags []string) string` — Builds the JSON-verdict prompt for compound tags: per tag, its content words are the parts; `split` when every part names a subject that works as a tag on its own and the phrase is just their combination — a modifier before a generic head splits too (`labor movement`, `bike repair`) — `keep` when the phrase names one established subject the parts cannot compose; compounds sharing a head and shape take one reading, store existence is not the criterion, and unsettled readings keep, never force a split. Split components are listed when splitting.
 - `ParseTagSplitResponse(content string, n int) ([]TagSplitResult, error)` — Parses `{"splits":[{"index":0,"verdict":"split","components":[...]},...]}` (code-fenced or plain) into one result per tag; unknown verdicts, out-of-range indices, and splits with fewer than two non-empty components leave the entry ambiguous (caller keeps). Invalid JSON returns an error.
 
 ---

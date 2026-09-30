@@ -438,6 +438,35 @@ func (q *Queries) ListProvisionalTagsWithDocumentCount(ctx context.Context, arg 
 	return items, nil
 }
 
+const listStoreTagKeys = `-- name: ListStoreTagKeys :many
+SELECT name AS key FROM tag
+UNION
+SELECT alias_name AS key FROM tag_alias
+`
+
+func (q *Queries) ListStoreTagKeys(ctx context.Context) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listStoreTagKeys)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, err
+		}
+		items = append(items, key)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTags = `-- name: ListTags :many
 SELECT id, name, created_at, orphaned_since, promoted_at FROM tag ORDER BY created_at DESC LIMIT $1 OFFSET $2
 `

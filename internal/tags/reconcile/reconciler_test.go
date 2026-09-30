@@ -519,14 +519,14 @@ func TestProvisionalOutcome(t *testing.T) {
 		{
 			name:         "admitted at the floor promotes",
 			decision:     tags.AdmissionDecision{Outcome: tags.AdmissionAdmit, Reason: tags.ReasonAdmitted},
-			docs:         2,
+			docs:         10,
 			wantPromote:  true,
 			wantDeferred: false,
 		},
 		{
 			name:         "admitted below the floor stays a silent pending candidate",
 			decision:     tags.AdmissionDecision{Outcome: tags.AdmissionAdmit, Reason: tags.ReasonAdmitted},
-			docs:         1,
+			docs:         9,
 			wantPromote:  false,
 			wantDeferred: false,
 		},

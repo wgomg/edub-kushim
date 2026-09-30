@@ -15,8 +15,10 @@ import (
 )
 
 // IdentityRuleSetVersion pins the birth-time identity rules and the
-// judging body's criteria text; bump it when either changes.
-const IdentityRuleSetVersion = "v0"
+// judging body's criteria text; bump it when either changes. v1 adds the
+// plural rule to the fold-gate criteria; the store reset truncates
+// tag_identity_event, so no cached verdict survives to invalidate.
+const IdentityRuleSetVersion = "v1"
 
 // The IdentityKind* values name the evidence rows the identity machinery
 // records: base-form proposals, the fold gate, the conventional-form
@@ -88,13 +90,55 @@ type EvidenceRow struct {
 	Model     string
 }
 
+// The dispositions a composition row can carry: the compound split into
+// its parts, kept whole as a dimension, or dropped because an admitted
+// part was rejected downstream.
+const (
+	CompositionSplit = "split"
+	CompositionKeep  = "keep"
+	CompositionDrop  = "drop"
+)
+
+// The reasons a composition row carries: its verdict source — a fresh
+// judge call, a cached verdict, the conjunction grammar fallback, or
+// components that failed validation — the absence of a judge
+// (judge_unavailable), and the degrade reason when a split's part could
+// not survive admission (part_rejected, written by the enricher).
+const (
+	CompositionReasonJudge             = "judge"
+	CompositionReasonCached            = "cached"
+	CompositionReasonConjunction       = "conjunction"
+	CompositionReasonInvalidComponents = "invalid_components"
+	CompositionReasonJudgeUnavailable  = "judge_unavailable"
+	CompositionReasonPartRejected      = "part_rejected"
+)
+
+// CompositionRow is one decomposition verdict over a judged compound: the
+// document it belongs to, the candidate, the validated parts for split
+// rows (empty otherwise), the disposition, the verdict source or degrade
+// reason, and the split judge's model for fresh verdicts. CriteriaVersion
+// pins the split criteria the verdict was read under.
+type CompositionRow struct {
+	DocumentID      int64
+	Candidate       string
+	Parts           []string
+	Disposition     string
+	Reason          string
+	CriteriaVersion string
+	Model           string
+}
+
 // Plan is the deterministic identity plan for a batch of candidate
-// names: registrations, alias writes, and the evidence rows the judging
-// body must settle before anything is written.
+// names: registrations, alias writes, the evidence rows the judging
+// body must settle before anything is written, and the decomposition
+// verdicts the split gate recorded for its judged compounds (the
+// enricher stamps each row's document id and attaches them; the
+// planners leave them empty).
 type Plan struct {
 	Registrations      []Registration
 	Aliases            []AliasAction
 	Evidence           []EvidenceRow
+	Composition        []CompositionRow
 	SkipBlocklistCheck bool
 }
 
@@ -363,13 +407,22 @@ func ResolveAliases(ctx context.Context, q *database.Queries, names []string) (m
 }
 
 // ProposedFold proposes the lemma-folded form of a name, or "" when the
-// name is already in base form. A proposed fold is never written
-// unconfirmed; the judging body's gate decides.
+// name is already in base form. In-dictionary tokens fold through the
+// lemmatizer; a token the dictionary does not know falls back to a
+// conservative plural strip, so plurals the dictionary lacks still reach
+// the fold gate. A proposed fold is never written unconfirmed; the
+// judging body's gate decides.
 func ProposedFold(name string) string {
 	tokens := strings.Fields(name)
 	changed := false
 	for i, token := range tokens {
 		lemma := lemmaOf(token)
+		// unchanged means either a base form or a word outside the
+		// dictionary; only the unknown word takes the plural fallback,
+		// or known base forms ending in s would propose junk strips
+		if lemma == token && !isEnglishWord(token) {
+			lemma = pluralStrip(token)
+		}
 		if lemma != token {
 			tokens[i] = lemma
 			changed = true
@@ -379,6 +432,33 @@ func ProposedFold(name string) string {
 		return ""
 	}
 	return strings.Join(tokens, " ")
+}
+
+// pluralStrip applies the conservative plural fallback to one token the
+// lemmatizer leaves unchanged and does not know (ProposedFold's fallback):
+// all lowercase ASCII letters, length ≥ 5, -ies becomes -y and a final -s
+// that is not -ss, -us, or -is is dropped. Anything else stands.
+func pluralStrip(token string) string {
+	if len(token) < 5 || !isLowerASCII(token) {
+		return token
+	}
+	if strings.HasSuffix(token, "ies") {
+		return token[:len(token)-3] + "y"
+	}
+	if strings.HasSuffix(token, "s") && !strings.HasSuffix(token, "ss") &&
+		!strings.HasSuffix(token, "us") && !strings.HasSuffix(token, "is") {
+		return token[:len(token)-1]
+	}
+	return token
+}
+
+func isLowerASCII(token string) bool {
+	for i := 0; i < len(token); i++ {
+		if token[i] < 'a' || token[i] > 'z' {
+			return false
+		}
+	}
+	return true
 }
 
 // TieBreak is the deterministic tie-break for labels the direction

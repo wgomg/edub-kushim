@@ -454,7 +454,9 @@ duration of a long backup.
 The handlers own the lifecycle directly, keeping the status accurate even
 when `kushim queue` is not running: `MarkBatchProcessing` at start and
 `FinalizeBatchStatus` (completed/failed) at the end, once no sibling tasks
-remain active (`internal/task/batch.go`).
+remain active (`internal/task/batch.go`); the settle also logs one INFO
+summary line with the final status and the completed/failed/cancelled task
+counts (a failed count query is logged and never blocks the settle).
 Because these batches have no `batch_owner` row in that case, the service
 layer forces `Orphaned = false` for `config`/`backup`/`mirror` sources —
 otherwise the UI would show a bogus orphan state and a Resume button that
@@ -940,4 +942,4 @@ mid-run.
 
 ---
 
-*Last verified against the tree: 2026-08-03. If code and doc disagree, code wins.*
+*Last verified against the tree: 2026-09-30. If code and doc disagree, code wins.*

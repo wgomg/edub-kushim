@@ -380,6 +380,18 @@ type TagAlias struct {
 	CreatedAt      time.Time
 }
 
+type TagCompositionEvent struct {
+	ID              int64
+	DocumentID      int64
+	Candidate       string
+	Parts           json.RawMessage
+	Disposition     string
+	Reason          string
+	CriteriaVersion string
+	Model           sql.NullString
+	CreatedAt       time.Time
+}
+
 type TagIdentityEvent struct {
 	ID             int64
 	Kind           string

@@ -84,7 +84,10 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 			cand.resolved = canonical
 			continue
 		}
-		if existing, ok := byKey[tags.Key(cand.name)]; ok && existing != cand.name {
+		// any key hit resolves, equality included: a store-exact emission
+		// is an application onto its own row, never a fold or shape
+		// candidate, and mints no identity evidence
+		if existing, ok := byKey[tags.Key(cand.name)]; ok {
 			cand.resolved = existing
 		}
 	}
@@ -280,6 +283,7 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 		switch {
 		case cand.resolved != "":
 			reg.Disposition = tags.DispositionApply
+			reg.Name = cand.name
 			reg.Resolved = cand.resolved
 		case winnerByLoser[cand.name] != "":
 			reg.Disposition = tags.DispositionAlias
@@ -315,6 +319,12 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 		if output == "" {
 			output = reg.Resolved
 		}
+		resolved := ""
+		if reg.Resolved != "" {
+			resolved = fmt.Sprintf(" resolved=%q", reg.Resolved)
+		}
+		a.logger.Debug(reqID, "identity[%s]: %s %q%s provisional=%t",
+			tags.IdentityRuleSetVersion, reg.Disposition, output, resolved, reg.Provisional)
 		if output != "" && !seenOutputs[output] {
 			seenOutputs[output] = true
 			outputs = append(outputs, output)
@@ -367,13 +377,16 @@ func (a *Adjudicator) identityAnswers(ctx context.Context, flagged map[string]bo
 			uncached = append(uncached, cand)
 			continue
 		}
-		out[cand.name] = identityAnswer{
+		answer := identityAnswer{
 			FoldToBase:              entry[tags.IdentityKindBaseForm].Verdict.String == tags.IdentityVerdictFold,
 			FoldPreservesDenotation: entry[tags.IdentityKindFoldGate].Verdict.String == tags.IdentityVerdictConfirmed,
 			ConventionalForm:        entry[tags.IdentityKindConventionalForm].Verdict.String == tags.IdentityVerdictStands,
 			criteria:                entry[tags.IdentityKindBaseForm].Criteria,
 			model:                   entry[tags.IdentityKindBaseForm].Model.String,
 		}
+		out[cand.name] = answer
+		a.logger.Debug(reqID, "identity[%s]: %q fold_to_base=%t fold_preserves_denotation=%t conventional_form=%t cached=%t",
+			tags.IdentityRuleSetVersion, cand.name, answer.FoldToBase, answer.FoldPreservesDenotation, answer.ConventionalForm, true)
 	}
 
 	if len(uncached) == 0 {
@@ -401,13 +414,16 @@ func (a *Adjudicator) identityAnswers(ctx context.Context, flagged map[string]bo
 		}
 		model := a.config.ResolvedAdjudicatorLlm().Model
 		for i, r := range results {
-			out[batch[i].name] = identityAnswer{
+			answer := identityAnswer{
 				FoldToBase:              r.FoldToBase,
 				FoldPreservesDenotation: r.FoldPreservesDenotation,
 				ConventionalForm:        r.ConventionalForm,
 				criteria:                r.CriteriaRecord(batch[i].fold),
 				model:                   model,
 			}
+			out[batch[i].name] = answer
+			a.logger.Debug(reqID, "identity[%s]: %q fold_to_base=%t fold_preserves_denotation=%t conventional_form=%t cached=%t",
+				tags.IdentityRuleSetVersion, batch[i].name, answer.FoldToBase, answer.FoldPreservesDenotation, answer.ConventionalForm, false)
 		}
 	}
 	return out
@@ -608,10 +624,12 @@ func boolVerdict(value bool, whenTrue, whenFalse string) string {
 	return whenFalse
 }
 
-// RenameTagDetails rewrites the analysis's tag details after identity
-// resolution so folded and applied outputs keep their category: each
-// detail's term is replaced by its plan output.
-func RenameTagDetails(details []analyzer.TagDetail, plan tags.Plan) []analyzer.TagDetail {
+// OutputByInput maps each registration's normalized raw input to the
+// plan's output for it — the registered name, or the resolved canonical
+// when the plan applies an existing value. Callers translating names
+// they captured before the plan (tag details, composition parts) land on
+// the names the plan will write.
+func OutputByInput(plan tags.Plan) map[string]string {
 	outputByInput := make(map[string]string, len(plan.Registrations))
 	for _, reg := range plan.Registrations {
 		input := textnorm.NormalizeTag(reg.Input)
@@ -623,6 +641,14 @@ func RenameTagDetails(details []analyzer.TagDetail, plan tags.Plan) []analyzer.T
 			outputByInput[input] = output
 		}
 	}
+	return outputByInput
+}
+
+// RenameTagDetails rewrites the analysis's tag details after identity
+// resolution so folded and applied outputs keep their category: each
+// detail's term is replaced by its plan output.
+func RenameTagDetails(details []analyzer.TagDetail, plan tags.Plan) []analyzer.TagDetail {
+	outputByInput := OutputByInput(plan)
 	for i := range details {
 		if output, ok := outputByInput[textnorm.NormalizeTag(details[i].Term)]; ok {
 			details[i].Term = output

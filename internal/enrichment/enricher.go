@@ -134,6 +134,14 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 	if err != nil {
 		return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to retrieve tags: %w", err)}
 	}
+	storeTagKeys, err := e.queries.ListStoreTagKeys(ctx)
+	if err != nil {
+		return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to retrieve tag keys: %w", err)}
+	}
+	storeKeys := make(map[string]struct{}, len(storeTagKeys))
+	for _, key := range storeTagKeys {
+		storeKeys[tags.Key(key)] = struct{}{}
+	}
 	deletedTags, err := e.queries.ListAllDeletedTags(ctx)
 	if err != nil {
 		return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to retrieve deleted tags: %w", err)}
@@ -292,8 +300,8 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 
 	tagFilter := analyzer.NewTagFilter(analysis.People, knownNormalized, analysis.Title, docTypeNames)
 	analysis.Tags = analyzer.FilterTags(analysis.Tags, tagFilter)
-	analysis.Tags = e.admission.DecomposeTags(ctx, analysis.Tags, tagFilter, logId)
-	analysis.Tags = e.admission.ApplyDeletedTagPolicy(analysis.Tags, dbNames, blocklist, logId)
+	decomposed, compositionRows := e.admission.DecomposeTags(ctx, analysis.Tags, storeKeys, tagFilter, logId)
+	analysis.Tags = e.admission.ApplyDeletedTagPolicy(decomposed, dbNames, blocklist, logId)
 
 	consolidateStart := time.Now()
 	report("consolidate", "", 0)
@@ -322,8 +330,13 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 		e.logger.Debug(logId, "post-LLM consolidation: %d tags (%s)", len(consolidated), time.Since(consolidateStart))
 	}
 	analysis.TagDetails = admission.RenameTagDetails(analysis.TagDetails, identityPlan)
+	// the quality gate keys rejections by the plan's output names, so the
+	// gate's pre-plan parts are resolved through the same mapping before
+	// the rejection test
+	planOutputs := admission.OutputByInput(identityPlan)
 
 	var qualityDecisions map[string]tags.AdmissionDecision
+	rejected := make(map[string]bool)
 	if e.config.Enricher.TagQuality.Enabled {
 		planned := analysis.Tags
 		analysis.Tags, qualityDecisions = e.admission.ApplyTagQuality(ctx, analysis, decisions, dbNames, llmContent.Text, document.ID, logId)
@@ -331,7 +344,6 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 		for _, name := range analysis.Tags {
 			kept[name] = true
 		}
-		rejected := make(map[string]bool)
 		for _, name := range planned {
 			if !kept[name] {
 				rejected[name] = true
@@ -339,6 +351,32 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 		}
 		identityPlan = identityPlan.DropTagNames(rejected)
 	}
+
+	// a split whose part was rejected degrades to drop: the surviving
+	// parts keep their own admission verdicts, and the row records the
+	// compound's fate instead of letting it vanish
+	for i := range compositionRows {
+		row := &compositionRows[i]
+		row.DocumentID = document.ID
+		if row.Disposition != tags.CompositionSplit {
+			continue
+		}
+		for _, part := range row.Parts {
+			name := part
+			if output, ok := planOutputs[textnorm.NormalizeTag(part)]; ok {
+				name = output
+			}
+			if rejected[name] {
+				row.Disposition = tags.CompositionDrop
+				row.Reason = tags.CompositionReasonPartRejected
+				row.Parts = nil
+				e.logger.Info(logId, "tag split[%s]: drop %q (reason=part_rejected part=%q)",
+					analyzer.TagSplitVersion, row.Candidate, name)
+				break
+			}
+		}
+	}
+	identityPlan.Composition = compositionRows
 
 	statsStr := "null"
 	if analysis.Stats != nil {
@@ -433,6 +471,11 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 
 	if err := tx.Commit(); err != nil {
 		return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("commit tag transaction: %w", err)}
+	}
+
+	if len(tagIDs) == 0 {
+		e.logger.Warn(logId, "document enriched with %d tags, below min_tags floor %d",
+			len(tagIDs), e.config.Enricher.ContentAnalyzer.MinTags)
 	}
 
 	if quarantine {
@@ -614,7 +657,8 @@ func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, res
 
 	promoted := make([]string, len(eligible))
 	for i, c := range eligible {
-		e.logger.Info(reqID, "tagquality[%s]: promote %q (docs=%d reason=%s)", analyzer.TagQualityVersion, c.name, counts[c.id], decisionByName[c.name].Reason)
+		e.logger.Info(reqID, "tagquality[%s]: promote %q (docs=%d reason=%s rule_set=decision-%s floor=%d)",
+			analyzer.TagQualityVersion, c.name, counts[c.id], decisionByName[c.name].Reason, tags.DecisionRuleSetVersion, tags.RecurrenceFloor)
 		promoted[i] = c.name
 	}
 	return promoted

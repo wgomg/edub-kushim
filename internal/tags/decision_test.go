@@ -74,11 +74,11 @@ func TestDecidePromotion(t *testing.T) {
 		live    int64
 		want    bool
 	}{
-		{"admitted below the floor stays pending", AdmissionAdmit, 1, false},
-		{"admitted at the floor promotes", AdmissionAdmit, 2, true},
-		{"admitted above the floor promotes", AdmissionAdmit, 5, true},
-		{"deferred never promotes regardless of mass", AdmissionDefer, 5, false},
-		{"rejected never promotes regardless of mass", AdmissionReject, 2, false},
+		{"admitted below the floor stays pending", AdmissionAdmit, 9, false},
+		{"admitted at the floor promotes", AdmissionAdmit, 10, true},
+		{"admitted above the floor promotes", AdmissionAdmit, 11, true},
+		{"deferred never promotes regardless of mass", AdmissionDefer, 11, false},
+		{"rejected never promotes regardless of mass", AdmissionReject, 10, false},
 	}
 
 	for _, tc := range cases {

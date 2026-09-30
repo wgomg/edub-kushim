@@ -548,7 +548,12 @@ for i := range 2 {
     are contained in the title, with no count cap. `Adjudicator.DecomposeTags`
     (`adjudicator.go`) then replaces compound tags with their parts —
     LLM-adjudicated when the tag adjudicator is enabled, conjunction joints
-    deterministically otherwise — and `Adjudicator.ApplyDeletedTagPolicy`
+    deterministically otherwise. Compounds whose key already exists in the
+    store (names and aliases) are applications and are skipped before
+    judgment, and every judged compound records one `tag_composition_event`
+    verdict row (split with its validated parts, keep, or the reason it could
+    not be judged) with a matching `tag split[...]` log line.
+    `Adjudicator.ApplyDeletedTagPolicy`
     applies the deleted-tag blocklist after it.
 11. **Identity** (`enricher.go`, `identity.go`): `Runner.RankTags` ranks LLM
     tags against canonical existing tags, then the identity pipeline applies
@@ -574,7 +579,8 @@ for i := range 2 {
     band), and admits when nothing fails. Rejections drop the tag for that
     document — the registration and its pending identity evidence never reach
     the store — and log `tagquality[v1]: reject … (reason=corroborated_failures
-    source=judge|cache …)`; defers are kept and logged too. A whitelisted
+    source=judge|cache …)`; defers are kept and logged too, and admitted
+    candidates journal at DEBUG. A whitelisted
     country/continent is never rejected for being a place. Fresh verdicts
     record the judging model and the recorded outcome, cache-applied ones a
     NULL model; cached rows re-run the decision over the stored rubric with the
@@ -601,7 +607,8 @@ for i := range 2 {
     the batch's new names are added to the embedding store after the commit;
     with the layer on births land provisional, `promoteEligible` runs inside the
     transaction (the emission's admission decision, or the cached verdict row
-    for provisionals already in the store, plus ≥ 2 distinct live documents →
+    for provisionals already in the store, plus assignments that clear the
+    promotion floor — `tags.RecurrenceFloor`, 10 live documents →
     `PromoteTags`; trashed carriers do not count, and the same rule backs the
     reconciliation sweep), and only the promoted names are added to the store.
     Verdict-less provisionals are resolved later by the scheduled sweep or the
@@ -637,7 +644,7 @@ Under `enricher` (`internal/config/config.go:164-195`):
 | `tagmatcher.reduce_target_words` | `4000` | matcher reduction target |
 | `tagmatcher.hugot.*` | — | model/backend (§9 of the semantic-matching guide) |
 | `tag_adjudicator.enabled` / `timeout` / `llm.*` | `false` / analyzer timeout / analyzer llm | identity gate: fold confirmation and same-intent pair verdicts (semantic-matching guide) |
-| `tag_quality.enabled` / `timeout` / `llm.*` | `false` / analyzer timeout / analyzer llm | rubric verdicts for novel tags; the decision thresholds are internal v1 constants (`no_anchor_similarity = 0.60`, promotion floor of 2 live documents), not config keys |
+| `tag_quality.enabled` / `timeout` / `llm.*` | `false` / analyzer timeout / analyzer llm | rubric verdicts for novel tags; the decision thresholds are internal v1 constants (`no_anchor_similarity = 0.60`, promotion floor of 10 live documents), not config keys |
 
 Validation (`finalizeConfig`, `config.go:447-460`): when content analysis is
 enabled, `adapter`, `provider`, and `model` are all **required** — three
@@ -692,4 +699,4 @@ separate errors, so setup can't silently half-configure. `Reasoning` /
 
 ---
 
-*Last verified against the tree: 2026-09-28. If code and doc disagree, code wins.*
+*Last verified against the tree: 2026-09-30. If code and doc disagree, code wins.*

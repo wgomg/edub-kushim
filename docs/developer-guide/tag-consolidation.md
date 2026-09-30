@@ -88,7 +88,7 @@ admin and emission registration paths
   variants collapse without judging.
 - **M4 — tie-break** (`TieBreak`): fixed lexical order decides when the
   direction criteria do not separate two labels.
-- **Version**: `IdentityRuleSetVersion = "v0"` is stamped on every alias row and
+- **Version**: `IdentityRuleSetVersion = "v1"` is stamped on every alias row and
   identity-evidence row.
 - **`PlanDeterministic`** — the admin path's deterministic phase: normalization,
   M1 rewrites, alias lookup, key equality, M2 flagging. It never proposes a fold
@@ -138,7 +138,10 @@ transaction — adjudication stays outside it:
 
 - **Folds (J1/J2/J5)** — one identity-judge call per flagged candidate answers
   three binary criteria: fold to base form, fold preserves denotation,
-  conventional written form. A fold applies only when all three confirm; a
+  conventional written form. Proposals come from the lemmatizer and from a
+  conservative plural strip for tokens the dictionary does not know (a plural
+  whose base form exists folds unless it is the established name of the sense,
+  `data` stands). A fold applies only when all three confirm; a
   candidate whose criteria have no judge answer stays provisional with the
   three criteria recorded as pending evidence.
 - **Same-intent pairs (J3/J4)** — the pair adjudicator answers `same` /
@@ -179,13 +182,15 @@ transaction — adjudication stays outside it:
    shape pairs. Flagged candidates go into one batched identity-judge call
    (cache first: `tag_identity_event` at `IdentityRuleSetVersion`); flagged
    pairs go through the pair adjudicator. The result is a `tags.Plan` carrying
-   registrations, alias actions, and evidence rows, and per-disposition log
-   lines (`identity[v0]: apply|alias|defer|separate …`).
+   registrations, alias actions, evidence rows, and the composition rows the
+   decomposition gate judged, and per-disposition log
+   lines (`identity[v1]: apply|alias|defer|separate …`).
 4. **Application** (`CreatePlannedTx`) runs inside the caller's persist
    transaction: registrations (write-boundary normalization, blocklist
    re-check, provisional births, promotion when not quarantined), scheduled
-   alias actions (re-point, delete, flatten, alias row), and identity-evidence
-   rows. `RenameTagDetails` keeps the analyzer's typed metadata attached to
+   alias actions (re-point, delete, flatten, alias row), identity-evidence
+   rows, and the plan's composition evidence. `RenameTagDetails` keeps the
+   analyzer's typed metadata attached to
    folded or applied outputs.
 5. **Store hygiene** after the commit: promoted/new names enter the embedding
    store and removed alias names leave it.
@@ -200,8 +205,9 @@ into one rubric call per document, and the pinned admission decision over the
 rubric answers plus the emission's deterministic signals drops rejected names
 for that document only — their plan registrations and pending evidence never
 reach the store. Survivors are born **provisional**
-and are promoted inline once the admission decision admits them and assignments
-on ≥2 distinct live documents coincide; only promoted names enter the store. The judge's
+and are promoted inline once the admission decision admits them and their
+assignments clear the promotion floor (`tags.RecurrenceFloor`, 10 live
+documents); only promoted names enter the store. The judge's
 prompt, criteria, and cache semantics are documented in the
 [semantic matching guide](semantic-matching.md#rubric-judge-for-novel-tags),
 and the promotion rule — including the review queue and the reconciliation
@@ -526,8 +532,8 @@ predicts what the next apply would delete.
 **Provisional sweep**: after the orphan sweep, the same run walks provisional
 tags older than `enricher.tag_reconcile.provisional_grace_days` (default 30),
 oldest first. Zero-assignment rows are only counted — the orphan sweep owns
-their deletion. Rows whose latest verdict at `TagQualityVersion` passes and
-that hold ≥2 live documents are promoted through `curation.Tag.Promote` (the
+  their deletion. Rows whose latest verdict at `TagQualityVersion` passes and
+  that hold ≥10 live documents are promoted through `curation.Tag.Promote` (the
 same method behind `POST /api/v1/tags/{id}/promote`, so the log line and the
 store add match the operator path). Verdict-less rows are re-judged under the
 shared `max_rejudge` budget: `FirstDocumentIDForTag` picks the first live
@@ -539,7 +545,7 @@ whitelisted-place flag recomputed from the name — and a failure retries once
 unless the error carries `context.Canceled`/`DeadlineExceeded`. The verdict is
 written with `InsertTagQualityEvent`, the enricher's `DO NOTHING` conflict
 rule: a concurrent fresh verdict is kept and its `pass`/model drive the
-decision instead of being overwritten. A fresh pass promotes at ≥2 live
+decision instead of being overwritten. A fresh pass promotes at ≥10 live
 documents, a reject is deferred to the review queue, a tag with no live
 document text is skipped, a missing judge is reported as `no_judge`, and
 lookup or write failures as `failed`; the run never deletes a tag. Report-only
@@ -650,7 +656,8 @@ delete — stay with the reconciler's worklists and the operator surfaces.
   on, a newborn is attached and searchable from birth but stays out of the
   embedding store — and therefore out of suggestions, consolidation targets,
   and the all-names fallback — until the admission decision admits it and
-  assignments on ≥2 distinct live documents coincide. Verdict-less births (judge
+  its assignments clear the promotion floor (`tags.RecurrenceFloor`, 10 live
+  documents). Verdict-less births (judge
   outages) and re-emitted legacy provisionals never get a verdict row in
   flight — a name in the tag table is not novel, so the judge never sees it
   again — and stay provisional until the reconciliation sweep's provisional
@@ -675,7 +682,7 @@ delete — stay with the reconciler's worklists and the operator surfaces.
   `TimeoutStartSec` budget alongside model load and tag-cache build.
 - **Consolidation and identity logs live in the kushim (enrichment) log, not
   `hugot.log`** — since the policy moved enricher-side (`consolidation[v1]`
-  decisions, `identity[v0]` dispositions). `hugot.log` only holds the
+  decisions, `identity[v1]` dispositions). `hugot.log` only holds the
   pre-rewrite history (which is exactly what the bootstrap parser reads).
 - **Interface changes ripple** — `Matcher`/`Embedder` implementations include
   `*Hugot`, `*matcher.MatcherClient`, and the test doubles in
@@ -688,4 +695,4 @@ delete — stay with the reconciler's worklists and the operator surfaces.
 
 ---
 
-*Last verified against the tree: 2026-09-28. If code and doc disagree, code wins.*
+*Last verified against the tree: 2026-09-30. If code and doc disagree, code wins.*

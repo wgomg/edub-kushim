@@ -3,9 +3,12 @@ package curation
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"slices"
 	"testing"
 
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 	"github.com/wgomg/edub-kushim/internal/types"
@@ -513,6 +516,94 @@ func TestTag_CreatePlannedTx_StoresNormalizedName(t *testing.T) {
 	if _, err := txQ.GetTagByName(ctx, "boundary topic"); err != nil {
 		t.Errorf("stored row under the normalized name: %v", err)
 	}
+}
+
+func TestTag_CreatePlannedTx_WritesCompositionEvidence(t *testing.T) {
+	svc, client := newTestTag(t)
+	ctx := context.Background()
+	docID := database.CreateUniqueDocument(t, client.Queries, "composition-evidence")
+
+	tx, err := client.BeginTx(ctx, nil)
+	testutil.AssertNoError(t, err, "begin tx")
+	defer tx.Rollback()
+	txQ := client.WithTx(tx)
+
+	plan := tags.Plan{Composition: []tags.CompositionRow{
+		{
+			DocumentID:      docID,
+			Candidate:       "  Russian History ",
+			Parts:           []string{"Russia", "History"},
+			Disposition:     tags.CompositionSplit,
+			Reason:          tags.CompositionReasonJudge,
+			CriteriaVersion: analyzer.TagSplitVersion,
+			Model:           "judge-model",
+		},
+		{
+			DocumentID:      docID,
+			Candidate:       "Cold War",
+			Disposition:     tags.CompositionKeep,
+			Reason:          tags.CompositionReasonJudge,
+			CriteriaVersion: analyzer.TagSplitVersion,
+		},
+		{
+			DocumentID:      docID,
+			Candidate:       "Social Ecology",
+			Disposition:     tags.CompositionDrop,
+			Reason:          tags.CompositionReasonPartRejected,
+			CriteriaVersion: analyzer.TagSplitVersion,
+		},
+	}}
+	_, _, err = svc.CreatePlannedTx(ctx, txQ, plan, false)
+	testutil.AssertNoError(t, err, "create planned tx")
+	testutil.AssertNoError(t, tx.Commit(), "commit composition evidence")
+
+	rows, err := client.DB().QueryContext(ctx,
+		`SELECT candidate, parts::text, disposition, reason, criteria_version, model
+		 FROM tag_composition_event WHERE document_id = $1 ORDER BY id`, docID)
+	testutil.AssertNoError(t, err, "read composition evidence")
+	defer rows.Close()
+
+	type evidence struct {
+		candidate, parts, disposition, reason, criteriaVersion string
+		model                                                  sql.NullString
+	}
+	var got []evidence
+	for rows.Next() {
+		var e evidence
+		testutil.AssertNoError(t, rows.Scan(&e.candidate, &e.parts, &e.disposition, &e.reason, &e.criteriaVersion, &e.model), "scan composition evidence")
+		got = append(got, e)
+	}
+	testutil.AssertNoError(t, rows.Err(), "iterate composition evidence")
+	testutil.AssertEqual(t, len(got), 3, "one row per verdict")
+
+	// a NULL parts column would fail the scan: keep and drop rows encode
+	// the empty array instead
+	testutil.AssertEqual(t, got[0].candidate, "russian history", "candidate normalized at the write boundary")
+	testutil.AssertEqual(t, got[0].disposition, tags.CompositionSplit, "split disposition")
+	testutil.AssertEqual(t, got[0].reason, tags.CompositionReasonJudge, "split reason")
+	testutil.AssertEqual(t, got[0].criteriaVersion, analyzer.TagSplitVersion, "criteria version")
+	testutil.AssertEqual(t, got[0].model.Valid && got[0].model.String == "judge-model", true, "fresh verdict carries its model")
+	if !slices.Equal(decodeParts(t, got[0].parts), []string{"russia", "history"}) {
+		t.Errorf("split parts = %v, want [russia history]", decodeParts(t, got[0].parts))
+	}
+
+	testutil.AssertEqual(t, got[1].parts, "[]", "keep row encodes empty parts")
+	testutil.AssertEqual(t, got[1].disposition, tags.CompositionKeep, "keep disposition")
+	testutil.AssertEqual(t, got[1].model.Valid, false, "keep without a fresh judge carries no model")
+
+	testutil.AssertEqual(t, got[2].parts, "[]", "drop row encodes empty parts")
+	testutil.AssertEqual(t, got[2].disposition, tags.CompositionDrop, "part-rejected drop disposition")
+	testutil.AssertEqual(t, got[2].reason, tags.CompositionReasonPartRejected, "drop reason")
+	testutil.AssertEqual(t, got[2].model.Valid, false, "drop without a fresh judge carries no model")
+}
+
+func decodeParts(t *testing.T, raw string) []string {
+	t.Helper()
+	var parts []string
+	if err := json.Unmarshal([]byte(raw), &parts); err != nil {
+		t.Fatalf("decode parts %q: %v", raw, err)
+	}
+	return parts
 }
 
 func TestTag_ApplyAliasPlan_StoresNormalizedName(t *testing.T) {

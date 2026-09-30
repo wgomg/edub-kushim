@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/database"
@@ -208,9 +209,11 @@ func MarkBatchProcessing(ctx context.Context, queries *database.Queries, logger 
 }
 
 // FinalizeBatchStatus settles a batch as completed or failed based on the
-// body's error, once no sibling task is still pending or waiting. A failed
-// count query or status write is logged, not returned; logger must be
-// non-nil.
+// body's error, once no sibling task is still pending or waiting, and logs
+// one INFO summary line with the settle status and the
+// completed/failed/cancelled task counts. A failed count query or status
+// write is logged, not returned, and never blocks the settle; logger must
+// be non-nil.
 func FinalizeBatchStatus(ctx context.Context, queries *database.Queries, logger *log.Logger, batchID string, failed bool) {
 	if batchID == "" {
 		return
@@ -229,15 +232,29 @@ func FinalizeBatchStatus(ctx context.Context, queries *database.Queries, logger 
 			return
 		}
 	}
+	status := types.Batch.Status.Completed
 	if failed {
+		status = types.Batch.Status.Failed
 		if err := queries.SetBatchFailed(ctx, batchID); err != nil {
 			logger.Error("", "finalize batch %s as failed: %v", batchID, err)
 		}
-		return
-	}
-	if err := queries.SetBatchCompleted(ctx, batchID); err != nil {
+	} else if err := queries.SetBatchCompleted(ctx, batchID); err != nil {
 		logger.Error("", "finalize batch %s as completed: %v", batchID, err)
 	}
+
+	counts := make([]string, 0, 3)
+	for _, taskStatus := range []types.TaskStatus{types.Task.Status.Completed, types.Task.Status.Failed, types.Task.Status.Cancelled} {
+		count, err := queries.CountTasksByBatchAndStatus(ctx, database.CountTasksByBatchAndStatusParams{
+			BatchID: bid,
+			Status:  taskStatus,
+		})
+		if err != nil {
+			logger.Error("", "finalize batch %s: count %s tasks: %v", batchID, taskStatus, err)
+			return
+		}
+		counts = append(counts, fmt.Sprintf("%d %s", count, taskStatus))
+	}
+	logger.Info("", "batch %s settled as %s: %s", batchID, status, strings.Join(counts, ", "))
 }
 
 // DeleteBatchTasks removes every task of a batch that was never created.

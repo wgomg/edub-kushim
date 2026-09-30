@@ -23,18 +23,22 @@ type TagSplitResult struct {
 }
 
 // TagSplitVersion pins the split gate's criteria text; the admission
-// driver's split log line carries it. The criteria changed in place under
-// the same verdict and response shape, so no cached verdict is
-// invalidated: split verdicts are in-process only.
-const TagSplitVersion = "v0"
+// driver's split log line and every composition row carry it. v1 names
+// the generic-head split class, asks one reading per family, keeps named
+// units whole, and states that store existence is not the judge's
+// criterion. The verdict and response shape are unchanged, and split
+// verdicts are in-process only, so no cached verdict is invalidated.
+const TagSplitVersion = "v1"
 
 // TagSplitSystemMessage is the system prompt of the split gate.
 const TagSplitSystemMessage = "You are a tag-taxonomy classifier. Decide whether a tag's words each name a subject a searcher would filter by on its own, and the tag is just their combination."
 
 // BuildTagSplitPrompt renders the split gate's prompt: for each tag, its
 // content words are the parts; the parts are subjects that work as tags on
-// their own and the phrase is just their combination (split), or the
-// phrase names one subject the parts cannot compose (keep). Unsettled
+// their own and the phrase is just their combination (split, including a
+// modifier before a generic head), or the phrase names one established
+// subject the parts cannot compose (keep). Compounds sharing a head and
+// shape take one reading, store existence never decides, and unsettled
 // readings keep.
 func BuildTagSplitPrompt(tags []string) string {
 	var sb strings.Builder
@@ -42,8 +46,10 @@ func BuildTagSplitPrompt(tags []string) string {
 	sb.WriteString("Decide whether each part names a subject a searcher would filter by on its own, and whether the phrase is just their combination.\n")
 	sb.WriteString("Answer with ONLY a JSON object: {\"splits\":[{\"index\":0,\"verdict\":\"split\",\"components\":[\"first part\",\"second part\"]},...]}, one entry per tag, no explanations.\n")
 	sb.WriteString("Verdict must be exactly one of:\n")
-	sb.WriteString("- \"split\": every part names a subject that works as a tag on its own and the phrase is just their combination ('russian history' → 'russia', 'history'; 'philosophy of mind' → 'philosophy', 'mind'); list the parts in \"components\"\n")
-	sb.WriteString("- \"keep\": the phrase names one subject its parts cannot compose, or a part is not a subject on its own ('cold war', 'machine learning', 'climate change')\n")
+	sb.WriteString("- \"split\": every part names a subject that works as a tag on its own and the phrase is just their combination ('russian history' → 'russia', 'history'; 'philosophy of mind' → 'philosophy', 'mind'); a modifier before a generic head splits too, even when the phrase is familiar ('labor movement' → 'labor', 'movement'; 'bike repair' → 'bike', 'repair'); list the parts in \"components\"\n")
+	sb.WriteString("- \"keep\": the phrase names one established subject its parts cannot compose ('cold war', 'machine learning', 'urban planning')\n")
+	sb.WriteString("Judge by class, one reading per family: compounds sharing a head and shape take the same verdict, not one reading per instance ('political education', 'political philosophy', and 'political science' are one family).\n")
+	sb.WriteString("Whether the parts already exist in the store is not your criterion; judge only whether they compose the phrase.\n")
 	sb.WriteString("When the reading is unsettled, answer \"keep\"; never force a split.\n\n")
 	for i, tag := range tags {
 		fmt.Fprintf(&sb, "Tag %d: %q\n", i, tag)
