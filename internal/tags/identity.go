@@ -15,10 +15,12 @@ import (
 )
 
 // IdentityRuleSetVersion pins the birth-time identity rules and the
-// judging body's criteria text; bump it when either changes. v1 adds the
-// plural rule to the fold-gate criteria; the store reset truncates
-// tag_identity_event, so no cached verdict survives to invalidate.
-const IdentityRuleSetVersion = "v1"
+// judging body's criteria text; bump it when either changes. v1 added the
+// plural rule to the fold-gate criteria; v2 adds the derivational
+// adjective proposal to the mechanical proposal body, the criteria text
+// unchanged. The store reset truncates tag_identity_event, so no cached
+// verdict survives to invalidate.
+const IdentityRuleSetVersion = "v2"
 
 // The IdentityKind* values name the evidence rows the identity machinery
 // records: base-form proposals, the fold gate, the conventional-form
@@ -452,6 +454,71 @@ func pluralStrip(token string) string {
 	return token
 }
 
+// StoreNames builds the Key(name)-to-name view of a store's names, the
+// first name winning when two names share a key. Equality resolution and
+// derivational proposals read the same view, so both land on the same
+// store row.
+func StoreNames(names []string) map[string]string {
+	byKey := make(map[string]string, len(names))
+	for _, name := range names {
+		key := Key(name)
+		if _, ok := byKey[key]; !ok {
+			byKey[key] = name
+		}
+	}
+	return byKey
+}
+
+// ProposedDerivationalFold proposes the noun base of an adjective through
+// the derivational suffix transforms, or "" when no transform output is a
+// store value. The proposal is store-anchored: a base only exists when the
+// store already holds it, so a confirmed fold always resolves onto that
+// row, and two distinct store hits are ambiguity, not a fold. Irregular
+// demonyms outside the transform set stay; the judging body's gate decides
+// before anything is applied (docs/tags/atomicity.md §3.1,
+// docs/tags/canonical-form-and-identity.md §3.4). storeNames maps
+// Key(storeName) to the store's name.
+func ProposedDerivationalFold(name string, storeNames map[string]string) string {
+	if len(strings.Fields(name)) != 1 || len(name) < 6 || !isLowerASCII(name) {
+		return ""
+	}
+	hit := ""
+	for _, base := range derivationalBases(name) {
+		storeName, ok := storeNames[Key(base)]
+		if !ok {
+			continue
+		}
+		if hit != "" && storeName != hit {
+			return ""
+		}
+		hit = storeName
+	}
+	return hit
+}
+
+// derivationalBases returns the candidate base forms one suffix pass over
+// a name produces; the store decides which of them is real.
+func derivationalBases(name string) []string {
+	var bases []string
+	for _, t := range derivationalSuffixes {
+		if before, ok := strings.CutSuffix(name, t.suffix); ok {
+			bases = append(bases, before+t.replacement)
+		}
+	}
+	return bases
+}
+
+// derivationalSuffixes are the adjective→noun transforms the proposal
+// applies, pinned to the observed classes: -an and -n strip
+// (chilean→chile, american→america) and -al either strips or takes a final
+// s (political→politic, political→politics), whichever the store holds.
+var derivationalSuffixes = []struct{ suffix, replacement string }{
+	{"an", ""},
+	{"n", ""},
+	{"al", ""},
+	{"al", "s"},
+}
+
 func isLowerASCII(token string) bool {
 	for i := 0; i < len(token); i++ {
 		if token[i] < 'a' || token[i] > 'z' {
@@ -497,13 +564,7 @@ func stemOf(token string) string {
 // flagged shape relations register provisionally and leave pending
 // evidence rows for the judging body.
 func PlanDeterministic(names []string, view StoreView) Plan {
-	byKey := make(map[string]string, len(view.Names))
-	for _, name := range view.Names {
-		key := Key(name)
-		if _, ok := byKey[key]; !ok {
-			byKey[key] = name
-		}
-	}
+	byKey := StoreNames(view.Names)
 
 	ix := NewNameIndex(view.Names)
 	plan := Plan{}
@@ -548,7 +609,11 @@ func PlanDeterministic(names []string, view StoreView) Plan {
 				Partner:   existing,
 			})
 		}
-		if fold := ProposedFold(name); fold != "" && fold != name {
+		fold := ProposedFold(name)
+		if fold == "" || fold == name {
+			fold = ProposedDerivationalFold(name, byKey)
+		}
+		if fold != "" {
 			flagged = true
 			reg.Fold = fold
 			plan.Evidence = append(plan.Evidence,

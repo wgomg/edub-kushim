@@ -127,7 +127,11 @@ type AnalysisResult struct {
 - `PassContext` (`json:"-"`) carries the exact system+user prompts from the
   first call so the second call can replay them — never serialized to the
   API response.
-- `Stats` carries the token usage, persisted as `task.result`.
+- `Stats` carries the token usage, persisted as the `stats` member of the
+  enrich task result — the stored payload is the
+  `{"stats": …, "counts": …}` envelope, where `counts` carries the
+  per-document admission tallies (assignments, births, promotions, rejects,
+  defers, composition dispositions) the batch settle bookend aggregates.
 
 The factory (`adapter.go:84-96`) requires the model registry, looks up the
 configured provider/model capabilities, and switches on `Llm.Adapter`:
@@ -699,4 +703,4 @@ separate errors, so setup can't silently half-configure. `Reasoning` /
 
 ---
 
-*Last verified against the tree: 2026-09-30. If code and doc disagree, code wins.*
+*Last verified against the tree: 2026-10-01. If code and doc disagree, code wins.*

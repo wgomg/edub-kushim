@@ -143,13 +143,30 @@ func (r *IdentityResolver) resolveCandidates(ctx context.Context, cfg *config.Co
 	}
 	sort.Strings(names)
 
+	allTags, err := r.tag.ListAll(ctx)
+	if err != nil {
+		r.logger.Error("", "tag identity: list store names failed: %v", err)
+		report.Failed += len(candidates)
+		return
+	}
+	storeTagNames := make([]string, len(allTags))
+	for i, t := range allTags {
+		storeTagNames[i] = t.Name
+	}
+	storeNames := tags.StoreNames(storeTagNames)
+
 	model := cfg.ResolvedAdjudicatorLlm().Model
 	for start := 0; start < len(names); start += identityBatchSize {
 		end := min(start+identityBatchSize, len(names))
 		batch := names[start:end]
 		inputs := make([]analyzer.TagIdentityCandidate, len(batch))
+		proposals := make([]string, len(batch))
 		for i, name := range batch {
-			inputs[i] = analyzer.TagIdentityCandidate{Index: i, Term: name, ProposedFold: tags.ProposedFold(name)}
+			proposals[i] = tags.ProposedFold(name)
+			if proposals[i] == "" {
+				proposals[i] = tags.ProposedDerivationalFold(name, storeNames)
+			}
+			inputs[i] = analyzer.TagIdentityCandidate{Index: i, Term: name, ProposedFold: proposals[i]}
 		}
 		results, err := r.runner.JudgeTagIdentity(ctx, inputs)
 		if err == nil && len(results) != len(batch) {
@@ -162,7 +179,7 @@ func (r *IdentityResolver) resolveCandidates(ctx context.Context, cfg *config.Co
 		}
 		for i, result := range results {
 			entry := candidates[batch[i]]
-			criteria := result.CriteriaRecord(tags.ProposedFold(entry.name))
+			criteria := result.CriteriaRecord(proposals[i])
 			r.resolveRow(ctx, entry, tags.IdentityKindBaseForm,
 				boolVerdict(result.FoldToBase, tags.IdentityVerdictFold, tags.IdentityVerdictStand), criteria, model, report)
 			r.resolveRow(ctx, entry, tags.IdentityKindFoldGate,
@@ -177,7 +194,7 @@ func (r *IdentityResolver) resolveCandidates(ctx context.Context, cfg *config.Co
 			if !result.FoldToBase || !result.FoldPreservesDenotation {
 				continue
 			}
-			folded := tags.HouseForm(tags.ProposedFold(entry.name))
+			folded := tags.HouseForm(proposals[i])
 			if folded == "" || folded == entry.name {
 				continue
 			}

@@ -96,7 +96,7 @@ longer decides anything. See [matcher.md](matcher.md) for the per-model value
 and the derivation.
 
 Every identity disposition is logged in the kushim (enrichment) log
-(`identity[v1]: apply|alias|defer|separate <name> …`), so the pipeline's
+(`identity[v2]: apply|alias|defer|separate <name> …`), so the pipeline's
 behavior is auditable after the fact — and so the reconciliation task can
 recover history the database never captured.
 

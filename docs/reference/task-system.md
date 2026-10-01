@@ -143,7 +143,7 @@ The `Runner.Next` method uses `errors.As(err, &tErr)` to extract `ReqID` from ha
 - `EnrichTaskHandler` — `enricher *enrichment.Enricher`, `queries *database.Queries`
   - **Methods**:
     - `NewEnrichTaskHandler(enricher, queries) *EnrichTaskHandler`
-    - `Handle(ctx, t) (json.RawMessage, error)` — Unmarshals `{"document_id":"<uuid>"}`, calls `h.queries.GetDocument` (lookup by UUID), then `enricher.Enrich`
+    - `Handle(ctx, t) (json.RawMessage, error)` — Unmarshals `{"document_id":"<uuid>"}`, calls `h.queries.GetDocument` (lookup by UUID), then `enricher.Enrich`; the returned result is the `{"stats": …, "counts": …}` envelope (analyzer token usage plus the per-document admission counts the batch settle bookend aggregates)
     - `DedupKey(payload) string` — Returns `"enrich:doc:<uuid>"` or empty string
 
 ## `configtask` (`internal/ops/configtask/configtask.go`)

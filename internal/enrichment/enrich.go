@@ -43,7 +43,7 @@ func (h *EnrichTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMe
 		return nil, fmt.Errorf("document %s not found", p.DocumentID)
 	}
 
-	result, err := h.enricher.Enrich(ctx, document.ToDocument(), task.NewProgressTracker(h.queries, t.TaskID).Set)
+	result, counts, err := h.enricher.Enrich(ctx, document.ToDocument(), task.NewProgressTracker(h.queries, t.TaskID).Set)
 	{
 		mem := log.ReadMemFull()
 		h.logger.Debug(p.DocumentID, "post-enrich memory: %s", log.FormatMemFull(mem))
@@ -52,7 +52,41 @@ func (h *EnrichTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMe
 		return nil, err
 	}
 
-	return *result, nil
+	var stats json.RawMessage
+	if result != nil {
+		stats = *result
+	}
+	return marshalEnrichResult(stats, counts)
+}
+
+// enrichResult is the enrich task's stored result payload: the analyzer
+// stats plus the per-document counts the batch bookend aggregates. Counts
+// is nil only on payloads written before the envelope existed.
+type enrichResult struct {
+	Stats  json.RawMessage `json:"stats"`
+	Counts *DocumentCounts `json:"counts"`
+}
+
+// marshalEnrichResult serializes an enrich task's result envelope; a nil
+// stats serializes as JSON null, and stats that are not valid JSON return
+// the marshal error.
+func marshalEnrichResult(stats json.RawMessage, counts DocumentCounts) (json.RawMessage, error) {
+	payload, err := json.Marshal(enrichResult{Stats: stats, Counts: &counts})
+	if err != nil {
+		return nil, fmt.Errorf("marshal enrich result: %w", err)
+	}
+	return payload, nil
+}
+
+// CountsFromResult extracts the per-document counts from an enrich task's
+// stored result payload; ok is false for payloads written before the
+// envelope existed and for payloads that do not decode.
+func CountsFromResult(result json.RawMessage) (DocumentCounts, bool) {
+	var parsed enrichResult
+	if len(result) == 0 || json.Unmarshal(result, &parsed) != nil || parsed.Counts == nil {
+		return DocumentCounts{}, false
+	}
+	return *parsed.Counts, true
 }
 
 // DedupKey is the payload's document id, so one document never enriches

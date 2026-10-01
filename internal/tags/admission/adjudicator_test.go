@@ -179,6 +179,157 @@ func TestPlanIdentity_StoreExactAppliesOntoExistingRow(t *testing.T) {
 	adjAssertEqual(t, OutputByInput(plan)["united states"], "united states", "plan output mapping")
 }
 
+func TestPlanIdentity_ConfirmedFoldAppliesWithoutPendingRows(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	q, db := database.NewTestQueries(t)
+	t.Cleanup(func() { db.Close() })
+	// verdicts are cached by rule set, so a row left by another test would
+	// answer this run without the judge and mask the applied-fold path
+	if _, err := db.Exec("DELETE FROM tag_identity_event"); err != nil {
+		t.Fatalf("clear tag_identity_event: %v", err)
+	}
+
+	var buf bytes.Buffer
+	logger := log.NewLoggerWithWriter(&buf)
+	adj := &mockAdjudicator{
+		identityFn: func(_ context.Context, candidates []analyzer.TagIdentityCandidate) ([]analyzer.TagIdentityResult, error) {
+			results := make([]analyzer.TagIdentityResult, len(candidates))
+			for i := range candidates {
+				results[i] = analyzer.TagIdentityResult{
+					Index:                   i,
+					FoldToBase:              true,
+					FoldPreservesDenotation: true,
+					ConventionalForm:        true,
+				}
+			}
+			return results, nil
+		},
+	}
+	runner := &tools.Runner{}
+	setUnexportedField(t, runner, "logger", logger)
+	setUnexportedField(t, runner, "config", &config.Config{
+		Enricher: config.EnricherConfig{TagAdjudicator: config.TagAdjudicatorConfig{Timeout: 0}},
+	})
+	setUnexportedField(t, runner, "tagIdentityJudge", adj)
+
+	a := &Adjudicator{
+		config: &config.Config{
+			Enricher: config.EnricherConfig{
+				TagAdjudicator: config.TagAdjudicatorConfig{Enabled: true, Llm: config.LlmConfig{Model: "test-model"}},
+			},
+		},
+		queries: q,
+		runner:  runner,
+		logger:  logger,
+	}
+
+	_, plan, _ := a.PlanIdentity(context.Background(), IdentityPlanInput{
+		Names:   []string{"railways"},
+		DBNames: map[string]struct{}{},
+	}, "")
+
+	if len(plan.Registrations) != 1 {
+		t.Fatalf("registrations = %d, want 1", len(plan.Registrations))
+	}
+	reg := plan.Registrations[0]
+	adjAssertEqual(t, reg.Name, "railway", "confirmed fold registers the base name")
+	adjAssertEqual(t, reg.Fold, "", "an applied fold is settled, not left proposed")
+	adjAssertEqual(t, reg.Provisional, false, "a decided fold-birth is not provisional")
+
+	wantVerdicts := map[string]string{
+		tags.IdentityKindBaseForm:         tags.IdentityVerdictFold,
+		tags.IdentityKindFoldGate:         tags.IdentityVerdictConfirmed,
+		tags.IdentityKindConventionalForm: tags.IdentityVerdictStands,
+	}
+	for _, row := range plan.Evidence {
+		adjAssertEqual(t, row.Candidate, "railways", "evidence rides on the pre-fold name")
+		want, ok := wantVerdicts[row.Kind]
+		if !ok {
+			t.Errorf("unexpected evidence kind %q", row.Kind)
+			continue
+		}
+		adjAssertEqual(t, row.Verdict, want, "verdict for "+row.Kind)
+	}
+	adjAssertEqual(t, len(plan.Evidence), len(wantVerdicts), "a fold-birth mints no pending rows for the folded name")
+
+	if out := buf.String(); !strings.Contains(out, `fold applied "railways" -> "railway"`) {
+		t.Errorf("expected applied-fold log line, got:\n%s", out)
+	}
+}
+
+func TestPlanIdentity_DerivationalFoldResolvesOntoStoreNoun(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	q, db := database.NewTestQueries(t)
+	t.Cleanup(func() { db.Close() })
+	if _, err := db.Exec("DELETE FROM tag_identity_event"); err != nil {
+		t.Fatalf("clear tag_identity_event: %v", err)
+	}
+
+	var buf bytes.Buffer
+	logger := log.NewLoggerWithWriter(&buf)
+	var seen []analyzer.TagIdentityCandidate
+	adj := &mockAdjudicator{
+		identityFn: func(_ context.Context, candidates []analyzer.TagIdentityCandidate) ([]analyzer.TagIdentityResult, error) {
+			seen = append(seen, candidates...)
+			results := make([]analyzer.TagIdentityResult, len(candidates))
+			for i := range candidates {
+				results[i] = analyzer.TagIdentityResult{
+					Index:                   i,
+					FoldToBase:              true,
+					FoldPreservesDenotation: true,
+					ConventionalForm:        true,
+				}
+			}
+			return results, nil
+		},
+	}
+	runner := &tools.Runner{}
+	setUnexportedField(t, runner, "logger", logger)
+	setUnexportedField(t, runner, "config", &config.Config{
+		Enricher: config.EnricherConfig{TagAdjudicator: config.TagAdjudicatorConfig{Timeout: 0}},
+	})
+	setUnexportedField(t, runner, "tagIdentityJudge", adj)
+
+	a := &Adjudicator{
+		config: &config.Config{
+			Enricher: config.EnricherConfig{
+				TagAdjudicator: config.TagAdjudicatorConfig{Enabled: false, Llm: config.LlmConfig{Model: "test-model"}},
+			},
+		},
+		queries: q,
+		runner:  runner,
+		logger:  logger,
+	}
+
+	_, plan, _ := a.PlanIdentity(context.Background(), IdentityPlanInput{
+		Names:   []string{"political"},
+		DBNames: map[string]struct{}{"politics": {}},
+	}, "")
+
+	// the proposal is what the judge decides: it must arrive as the fold
+	// for the adjective, not be recomputed later at each consumer
+	if len(seen) != 1 {
+		t.Fatalf("judge candidates = %d, want 1", len(seen))
+	}
+	adjAssertEqual(t, seen[0].Term, "political", "the adjective reaches the judge")
+	adjAssertEqual(t, seen[0].ProposedFold, "politics", "the store noun is the proposed fold the judge decides")
+
+	if len(plan.Registrations) != 1 {
+		t.Fatalf("registrations = %d, want 1", len(plan.Registrations))
+	}
+	reg := plan.Registrations[0]
+	adjAssertEqual(t, reg.Disposition, tags.DispositionApply, "a confirmed store-anchored fold applies, never a twin birth")
+	adjAssertEqual(t, reg.Resolved, "politics", "the fold resolves onto the store noun")
+
+	if out := buf.String(); !strings.Contains(out, `fold applied "political" -> "politics"`) {
+		t.Errorf("expected applied-fold log line, got:\n%s", out)
+	}
+}
+
 func mkRanked(kept, candTag string, sim float64) matcher.RankResult {
 	return matcher.RankResult{
 		KeptName:   kept,

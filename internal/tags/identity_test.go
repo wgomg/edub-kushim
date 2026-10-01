@@ -83,6 +83,102 @@ func TestProposedFold_PluralFallback(t *testing.T) {
 	}
 }
 
+func TestProposedDerivationalFold(t *testing.T) {
+	cases := []struct {
+		name       string
+		input      string
+		storeNames map[string]string
+		want       string
+	}{
+		{
+			name:       "an suffix strips to the store noun",
+			input:      "chilean",
+			storeNames: map[string]string{"chile": "chile"},
+			want:       "chile",
+		},
+		{
+			name:       "final n strips to the store noun",
+			input:      "russian",
+			storeNames: map[string]string{"russia": "russia"},
+			want:       "russia",
+		},
+		{
+			name:       "al suffix proposes the store plural",
+			input:      "political",
+			storeNames: map[string]string{"politics": "politics"},
+			want:       "politics",
+		},
+		{
+			name:       "al suffix proposes the bare store noun",
+			input:      "political",
+			storeNames: map[string]string{"politic": "politic"},
+			want:       "politic",
+		},
+		{
+			name:  "two store hits are ambiguity, not a fold",
+			input: "political",
+			storeNames: map[string]string{
+				"politic":  "politic",
+				"politics": "politics",
+			},
+			want: "",
+		},
+		{
+			name:       "no transform output anchors to the store",
+			input:      "political",
+			storeNames: map[string]string{"social": "social"},
+			want:       "",
+		},
+		{
+			name:       "irregular demonym outside the transform set stays",
+			input:      "german",
+			storeNames: map[string]string{"germany": "germany"},
+			want:       "",
+		},
+		{
+			name:       "multi-token names never propose",
+			input:      "chilean people",
+			storeNames: map[string]string{"chile": "chile"},
+			want:       "",
+		},
+		{
+			name:       "names under the length guard never propose",
+			input:      "legal",
+			storeNames: map[string]string{"leg": "leg"},
+			want:       "",
+		},
+		{
+			name:       "uppercase names never propose",
+			input:      "Chilean",
+			storeNames: map[string]string{"chile": "chile"},
+			want:       "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ProposedDerivationalFold(tc.input, tc.storeNames); got != tc.want {
+				t.Errorf("ProposedDerivationalFold(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestStoreNames(t *testing.T) {
+	got := StoreNames([]string{"16th century", "sixteenth century", "russia"})
+
+	// "sixteenth century" house-forms onto "16th century"'s key; the first
+	// name wins so equality resolution and proposals hit one store row
+	if len(got) != 2 {
+		t.Fatalf("len(StoreNames) = %d, want 2 (the ordinal variant collapses onto one key)", len(got))
+	}
+	if got["16th century"] != "16th century" {
+		t.Errorf("key %q maps to %q, want the first name with that key", "16th century", got["16th century"])
+	}
+	if got["russia"] != "russia" {
+		t.Errorf("key %q maps to %q, want %q", "russia", got["russia"], "russia")
+	}
+}
+
 func TestPlanDeterministic(t *testing.T) {
 	noEvidence := map[string]int{}
 
@@ -166,6 +262,20 @@ func TestPlanDeterministic(t *testing.T) {
 			},
 			wantProv: true,
 			wantFold: "",
+		},
+		{
+			name:     "derivational base proposes onto the store noun",
+			view:     StoreView{Names: []string{"russia"}},
+			input:    "russian",
+			wantDisp: DispositionRegister,
+			wantName: "russian",
+			wantKinds: map[string]int{
+				IdentityKindBaseForm:         1,
+				IdentityKindFoldGate:         1,
+				IdentityKindConventionalForm: 1,
+			},
+			wantProv: true,
+			wantFold: "russia",
 		},
 	}
 

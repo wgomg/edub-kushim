@@ -427,14 +427,17 @@ per-batch worker. Batch-mode flow (`consume.go:95-200`):
    files — the batch is healed before work starts.
 4. **Heartbeat + pools**: `SetRunnerOwnerID(ownerID)`, start the heartbeat,
    start the consume and enrich pools (`pollBatch`), and monitor.
-5. **Terminal status** (`setBatchTerminalStatus`, `consume.go:628-655`):
-   `failed` if any task failed, else `completed` — skipping already-terminal
-   states. `ErrBatchPaused` is swallowed as success (the pause was the
+5. **Terminal status** (`setBatchTerminalStatus`, `consume.go:655-689`):
+   `failed` if any task failed, else `completed` — already-terminal states skip
+   only the settle write, never the bookend. The settle logs one INFO bookend
+   from the batch's task listing: completed/failed/cancelled counts plus the
+   aggregated per-document enrich counts when any completed enrich result
+   decoded. `ErrBatchPaused` is swallowed as success (the pause was the
    outcome).
 6. **Cleanup**: stop heartbeat, release the lease with a 5s timeout, trigger
    a post-batch orphan scan (`triggerOrphanScan`, 5-minute budget).
 
-`pollBatch` (`consume.go:532-626`) is the progress monitor: a 500ms ticker
+`pollBatch` (`consume.go:526-646`) is the progress monitor: a 500ms ticker
 watches the batch row, prints per-file transitions (pending→processing,
 →completed, →failed) from a `previous` map, detects the pause transition
 (`ErrBatchPaused`), and prints the summary when `remain == 0`. While a task
@@ -942,4 +945,4 @@ mid-run.
 
 ---
 
-*Last verified against the tree: 2026-09-30. If code and doc disagree, code wins.*
+*Last verified against the tree: 2026-10-01. If code and doc disagree, code wins.*

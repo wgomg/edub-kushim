@@ -72,12 +72,45 @@ func NewEnricher(cfg *config.Config, logger *log.Logger, client *database.Client
 	}
 }
 
+// DocumentCounts is one document's enrichment outcome tally, aggregated by
+// the batch bookend. Assignments is the tag assignments written
+// (len(tagIDs)); Births counts the novel tags born (types.Created persist
+// statuses); Promotions counts the provisional names that cleared the floor
+// (zero when the quality layer is off); Rejects counts the names the
+// quality gate dropped and Defers the admission deferrals (both zero when
+// the quality layer is off); Splits, Keeps and Drops count the composition
+// dispositions after the part-rejected degrade.
+type DocumentCounts struct {
+	Assignments int `json:"assignments"`
+	Births      int `json:"births"`
+	Promotions  int `json:"promotions"`
+	Rejects     int `json:"rejects"`
+	Defers      int `json:"defers"`
+	Splits      int `json:"splits"`
+	Keeps       int `json:"keeps"`
+	Drops       int `json:"drops"`
+}
+
+// Add accumulates another document's counts into c, so the batch bookend
+// sums a batch's documents without re-listing every field.
+func (c *DocumentCounts) Add(other DocumentCounts) {
+	c.Assignments += other.Assignments
+	c.Births += other.Births
+	c.Promotions += other.Promotions
+	c.Rejects += other.Rejects
+	c.Defers += other.Defers
+	c.Splits += other.Splits
+	c.Keeps += other.Keeps
+	c.Drops += other.Drops
+}
+
 // Enrich runs the whole enrichment pass for one stored document and
-// returns the result payload stored on the task. The document row must
-// exist; progress callbacks update the task row. An empty document (no
-// usable text) skips the LLM steps and still updates what it can. report
-// must be non-nil; pass task.NoopProgress to report nothing.
-func (e *Enricher) Enrich(ctx context.Context, document database.Document, report task.ProgressFunc) (*json.RawMessage, error) {
+// returns the result payload stored on the task plus the per-document
+// counts the batch bookend aggregates. The document row must exist;
+// progress callbacks update the task row. An empty document (no usable
+// text) skips the LLM steps and still updates what it can. report must be
+// non-nil; pass task.NoopProgress to report nothing.
+func (e *Enricher) Enrich(ctx context.Context, document database.Document, report task.ProgressFunc) (*json.RawMessage, DocumentCounts, error) {
 	logId := document.DocumentID
 	ctx = log.WithReqID(ctx, logId)
 
@@ -116,11 +149,11 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 
 	docTypes, err := e.queries.ListAllDocumentTypes(ctx)
 	if err != nil {
-		return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to retrieve document types: %w", err)}
+		return nil, DocumentCounts{}, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to retrieve document types: %w", err)}
 	}
 	peopleTypes, err := e.queries.ListAllPeopleTypes(ctx)
 	if err != nil {
-		return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to retrieve people types: %w", err)}
+		return nil, DocumentCounts{}, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to retrieve people types: %w", err)}
 	}
 	docTypeRefs := make([]analyzer.TypeRef, 0, len(docTypes))
 	for _, dt := range docTypes {
@@ -132,11 +165,11 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 	}
 	allTags, err := e.tag.ListAll(ctx)
 	if err != nil {
-		return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to retrieve tags: %w", err)}
+		return nil, DocumentCounts{}, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to retrieve tags: %w", err)}
 	}
 	storeTagKeys, err := e.queries.ListStoreTagKeys(ctx)
 	if err != nil {
-		return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to retrieve tag keys: %w", err)}
+		return nil, DocumentCounts{}, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to retrieve tag keys: %w", err)}
 	}
 	storeKeys := make(map[string]struct{}, len(storeTagKeys))
 	for _, key := range storeTagKeys {
@@ -144,7 +177,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 	}
 	deletedTags, err := e.queries.ListAllDeletedTags(ctx)
 	if err != nil {
-		return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to retrieve deleted tags: %w", err)}
+		return nil, DocumentCounts{}, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to retrieve deleted tags: %w", err)}
 	}
 	blocklist := make(map[string]database.ListAllDeletedTagsRow, len(deletedTags))
 	for _, row := range deletedTags {
@@ -205,23 +238,23 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 			actualTokens = tokErr.RequestedTokens
 		case errors.As(err, &credErr):
 			pauseBatch := e.config.Enricher.ContentAnalyzer.PauseOnCreditError
-			return nil, &task.Error{
+			return nil, DocumentCounts{}, &task.Error{
 				ReqID:      logId,
 				Err:        fmt.Errorf("LLM credit exhausted (%s): %w", credErr.Provider, credErr),
 				PauseBatch: pauseBatch,
 			}
 		default:
-			return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to analyze content: %w", err)}
+			return nil, DocumentCounts{}, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to analyze content: %w", err)}
 		}
 
 		if actualTokens <= 0 {
-			return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to analyze content: %w", err)}
+			return nil, DocumentCounts{}, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to analyze content: %w", err)}
 		}
 
 		ratio := float64(maxTokens) / float64(actualTokens) * tokenBudgetRatio
 		newTarget := int(float64(llmContent.TargetWordCount) * ratio)
 		if i == 1 || newTarget < minTargetWords {
-			return nil, &task.Error{
+			return nil, DocumentCounts{}, &task.Error{
 				ReqID: logId,
 				Err: fmt.Errorf("document too large for model %s/%s: %d tokens exceeds budget (max_input_tokens=%d)",
 					e.config.Enricher.ContentAnalyzer.Llm.Provider, e.config.Enricher.ContentAnalyzer.Llm.Model, actualTokens, maxTokens),
@@ -229,7 +262,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 		}
 		reduced, rerr := e.runner.ReduceContent(ctx, document.TextContent.String, chunkSize, newTarget)
 		if rerr != nil {
-			return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to reduce content: %w", rerr)}
+			return nil, DocumentCounts{}, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to reduce content: %w", rerr)}
 		}
 		llmContent = reduced
 	}
@@ -238,10 +271,10 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 		e.logger.Info(logId, "empty analysis result—retrying once")
 		analysis, err = e.runner.AnalyzeContent(ctx, llmContent.Text, docTypeRefs, peopleTypeRefs, tagSuggestions)
 		if err != nil {
-			return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to analyze content on retry: %w", err)}
+			return nil, DocumentCounts{}, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to analyze content on retry: %w", err)}
 		}
 		if isEmptyAnalysis(analysis) {
-			return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("analysis returned empty result after retry")}
+			return nil, DocumentCounts{}, &task.Error{ReqID: logId, Err: fmt.Errorf("analysis returned empty result after retry")}
 		}
 	}
 
@@ -286,7 +319,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 
 	existingPeople, err := e.queries.ListAllPeople(ctx)
 	if err != nil {
-		return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("list existing people: %w", err)}
+		return nil, DocumentCounts{}, &task.Error{ReqID: logId, Err: fmt.Errorf("list existing people: %w", err)}
 	}
 	knownNormalized := make([]string, 0, len(existingPeople))
 	for _, p := range existingPeople {
@@ -315,7 +348,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 		}
 		identityPlan, err = e.tag.PlanRegistration(ctx, analysis.Tags)
 		if err != nil {
-			return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("identity planning failed: %w", err)}
+			return nil, DocumentCounts{}, &task.Error{ReqID: logId, Err: fmt.Errorf("identity planning failed: %w", err)}
 		}
 	} else {
 		var consolidated []string
@@ -414,14 +447,14 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 
 	tx, err := e.client.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("begin tag transaction: %w", err)}
+		return nil, DocumentCounts{}, &task.Error{ReqID: logId, Err: fmt.Errorf("begin tag transaction: %w", err)}
 	}
 	defer tx.Rollback()
 	txQ := e.client.WithTx(tx)
 
 	results, newNames, err := e.tag.CreatePlannedTx(ctx, txQ, identityPlan, quarantine)
 	if err != nil {
-		return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("batch create tags: %w", err)}
+		return nil, DocumentCounts{}, &task.Error{ReqID: logId, Err: fmt.Errorf("batch create tags: %w", err)}
 	}
 
 	var tagIDs []int64
@@ -448,7 +481,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 	}
 
 	if err := txQ.ClearEnrichDocumentTags(ctx, document.ID); err != nil {
-		return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("clear document tags: %w", err)}
+		return nil, DocumentCounts{}, &task.Error{ReqID: logId, Err: fmt.Errorf("clear document tags: %w", err)}
 	}
 	for _, tagID := range tagIDs {
 		if err := txQ.AddDocumentTag(ctx, database.AddDocumentTagParams{
@@ -456,12 +489,12 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 			TagID:      tagID,
 			Source:     curation.DocumentTagSourceEnrich,
 		}); err != nil {
-			return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("add document tag: %w", err)}
+			return nil, DocumentCounts{}, &task.Error{ReqID: logId, Err: fmt.Errorf("add document tag: %w", err)}
 		}
 	}
 	if len(tagIDs) > 0 {
 		if err := txQ.ClearOrphanTagMarksByTagIDs(ctx, tagIDs); err != nil {
-			return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("clear orphan tag marks: %w", err)}
+			return nil, DocumentCounts{}, &task.Error{ReqID: logId, Err: fmt.Errorf("clear orphan tag marks: %w", err)}
 		}
 	}
 
@@ -470,7 +503,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 	}
 
 	if err := tx.Commit(); err != nil {
-		return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("commit tag transaction: %w", err)}
+		return nil, DocumentCounts{}, &task.Error{ReqID: logId, Err: fmt.Errorf("commit tag transaction: %w", err)}
 	}
 
 	if len(tagIDs) == 0 {
@@ -564,7 +597,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 	}
 
 	if err := e.queries.ClearDocumentPeople(ctx, document.ID); err != nil {
-		return nil, &task.Error{ReqID: logId, Err: fmt.Errorf("clear document people: %w", err)}
+		return nil, DocumentCounts{}, &task.Error{ReqID: logId, Err: fmt.Errorf("clear document people: %w", err)}
 	}
 
 	for _, dp := range docPeople {
@@ -577,11 +610,45 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 		}
 	}
 
+	counts := documentCounts(results, tagIDs, promotedNames, qualityDecisions, rejected, compositionRows)
 	if analysis.Stats == nil {
 		emptyStats := json.RawMessage("{}")
-		return &emptyStats, nil
+		return &emptyStats, counts, nil
 	}
-	return analysis.Stats, nil
+	return analysis.Stats, counts, nil
+}
+
+// documentCounts tallies one document's persist results plus the quality
+// gate's rejection set and deferral decisions into the counts the task
+// result carries. rejected and decisions are empty when the quality layer
+// is off, leaving their counts zero.
+func documentCounts(results []types.CreateResult[database.Tag], tagIDs []int64, promotedNames []string, decisions map[string]tags.AdmissionDecision, rejected map[string]bool, rows []tags.CompositionRow) DocumentCounts {
+	counts := DocumentCounts{
+		Assignments: len(tagIDs),
+		Promotions:  len(promotedNames),
+		Rejects:     len(rejected),
+	}
+	for _, r := range results {
+		if r.Status == types.Created {
+			counts.Births++
+		}
+	}
+	for _, d := range decisions {
+		if d.Outcome == tags.AdmissionDefer {
+			counts.Defers++
+		}
+	}
+	for _, row := range rows {
+		switch row.Disposition {
+		case tags.CompositionSplit:
+			counts.Splits++
+		case tags.CompositionKeep:
+			counts.Keeps++
+		case tags.CompositionDrop:
+			counts.Drops++
+		}
+	}
+	return counts
 }
 
 func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, results []types.CreateResult[database.Tag], decisions map[string]tags.AdmissionDecision, reqID string) []string {
@@ -646,6 +713,8 @@ func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, res
 		eligible = append(eligible, c)
 		promoteIDs = append(promoteIDs, c.id)
 	}
+	e.logger.Debug(reqID, "tagquality[%s]: promotion run considered=%d promoted=%d (rule_set=decision-%s floor=%d)",
+		analyzer.TagQualityVersion, len(candidates), len(promoteIDs), tags.DecisionRuleSetVersion, tags.RecurrenceFloor)
 	if len(promoteIDs) == 0 {
 		return nil
 	}

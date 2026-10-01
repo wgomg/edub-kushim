@@ -341,7 +341,7 @@ apply the existing label), and then candidate generation — every remaining
 candidate neighbour is kept as a **gate subject** with its similarity and
 runner-up recorded as adjudication evidence. Similarity never replaces or
 keeps on its own; gates and identity do. Each disposition is logged as
-`identity[v1]: apply|alias|defer|separate …`. Fallback results from the legacy
+`identity[v2]: apply|alias|defer|separate …`. Fallback results from the legacy
 daemon (no candidates) pass through `KeptName` verbatim. Style variants and
 aliases never reach the policy: M1 house form, M3 key equality, and the alias
 resolver apply the canonical value before ranking output is used.
@@ -350,11 +350,14 @@ resolver apply the canonical value before ranking output is used.
 
 Identity has two LLM paths, both under `enricher.tag_adjudicator.enabled`:
 
-1. **Folds** — a candidate with a mechanically proposed lexical fold (M2
-   signatures: the lemmatizer, plus a conservative plural strip for tokens the
-   dictionary does not know — a plural whose base form exists folds unless it
-   is the established name of the sense) is judged by one batched
-   identity-judge call
+1. **Folds** — a mechanically proposed lexical fold flags a candidate: the
+   lemmatizer and a conservative plural strip for tokens the dictionary does
+   not know (a plural whose base form exists folds unless it is the established
+   name of the sense), plus the store-anchored derivational transforms for
+   relational adjectives (`chilean` → `chile`, `political` → `politics`; a
+   transform only proposes when the noun twin already exists in the store, and
+   two distinct twins make the adjective stand). The flagged candidate is
+   judged by one batched identity-judge call
    (`JudgeTagIdentity`) answering three binary criteria: fold to base form
    (J1), fold preserves denotation (J2), conventional written form (J5). The
    fold applies only when all three confirm; a candidate whose criteria lack a
@@ -737,4 +740,4 @@ statements.
 
 ---
 
-*Last verified against the tree: 2026-09-30. If code and doc disagree, code wins.*
+*Last verified against the tree: 2026-10-01. If code and doc disagree, code wins.*

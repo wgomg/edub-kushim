@@ -23,6 +23,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/documents/consumption"
+	"github.com/wgomg/edub-kushim/internal/enrichment"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/ops/container"
 	"github.com/wgomg/edub-kushim/internal/ops/flags"
@@ -374,7 +375,7 @@ func runBatchThroughPools(ctx context.Context, cancel context.CancelFunc, c *con
 	err := pollBatch(ctx, run, c.GetLogger())
 	if err == nil {
 		batchSvc := service.NewBatch(run.client, c.GetConfig().Consumer.Reclaim.MaxRetries)
-		if setErr := setBatchTerminalStatus(ctx, run.client.Queries, batchSvc, run.batchID); setErr != nil {
+		if setErr := setBatchTerminalStatus(ctx, run.client.Queries, batchSvc, c.GetLogger(), run.batchID); setErr != nil {
 			c.GetLogger().Error("", "set batch terminal status %s: %v", run.batchID, setErr)
 		}
 	} else if errors.Is(err, ErrBatchPaused) {
@@ -644,14 +645,17 @@ func pollBatch(ctx context.Context, run batchRun, logger *log.Logger) error {
 	}
 }
 
-func setBatchTerminalStatus(ctx context.Context, queries *database.Queries, batchSvc *service.Batch, batchID string) error {
+// setBatchTerminalStatus settles a batch as completed or failed by its
+// tasks' statuses and logs one INFO bookend built from them — the task
+// status counts and, when completed enrich results decoded, the aggregated
+// per-document enrich counts. An already-terminal batch skips only the
+// settle write, never the bookend. A failed settle write is returned after
+// the bookend; a failed listing returns before it, because the bookend's
+// counts come from that listing.
+func setBatchTerminalStatus(ctx context.Context, queries *database.Queries, batchSvc *service.Batch, logger *log.Logger, batchID string) error {
 	batch, err := queries.GetBatch(ctx, batchID)
 	if err != nil {
 		return fmt.Errorf("get batch: %w", err)
-	}
-	switch batch.Status {
-	case types.Batch.Status.Completed, types.Batch.Status.Failed, types.Batch.Status.Cancelled, types.Batch.Status.Paused:
-		return nil
 	}
 
 	tasks, err := task.ListFiltered(ctx, queries, task.TaskFilter{BatchID: batchID})
@@ -659,18 +663,66 @@ func setBatchTerminalStatus(ctx context.Context, queries *database.Queries, batc
 		return fmt.Errorf("list tasks: %w", err)
 	}
 
-	hasFailed := false
-	for _, t := range tasks {
-		if t.Status == types.Task.Status.Failed {
-			hasFailed = true
-			break
+	status := batch.Status
+	var settleErr error
+	switch status {
+	case types.Batch.Status.Completed, types.Batch.Status.Failed, types.Batch.Status.Cancelled, types.Batch.Status.Paused:
+	default:
+		hasFailed := false
+		for _, t := range tasks {
+			if t.Status == types.Task.Status.Failed {
+				hasFailed = true
+				break
+			}
+		}
+		if hasFailed {
+			status = types.Batch.Status.Failed
+			settleErr = batchSvc.SetBatchFailed(ctx, batchID)
+		} else {
+			status = types.Batch.Status.Completed
+			settleErr = batchSvc.SetBatchCompleted(ctx, batchID)
 		}
 	}
 
-	if hasFailed {
-		return batchSvc.SetBatchFailed(ctx, batchID)
+	logBatchBookend(logger, batchID, status, tasks)
+	return settleErr
+}
+
+// logBatchBookend logs one INFO line with the batch's settle status, the
+// completed/failed/cancelled task counts, and — over completed enrich
+// tasks whose stored result decoded — the aggregated per-document enrich
+// counts.
+func logBatchBookend(logger *log.Logger, batchID string, status types.BatchStatus, tasks []database.Task) {
+	completed, failed, cancelled := 0, 0, 0
+	var totals enrichment.DocumentCounts
+	documents := 0
+	for _, t := range tasks {
+		switch t.Status {
+		case types.Task.Status.Completed:
+			completed++
+		case types.Task.Status.Failed:
+			failed++
+		case types.Task.Status.Cancelled:
+			cancelled++
+		}
+		if t.TaskType != types.Task.Type.Enrich || t.Status != types.Task.Status.Completed || t.Result == nil {
+			continue
+		}
+		counts, ok := enrichment.CountsFromResult(*t.Result)
+		if !ok {
+			continue
+		}
+		documents++
+		totals.Add(counts)
 	}
-	return batchSvc.SetBatchCompleted(ctx, batchID)
+
+	line := fmt.Sprintf("batch %s settled as %s: %d completed, %d failed, %d cancelled",
+		batchID, status, completed, failed, cancelled)
+	if documents > 0 {
+		line += fmt.Sprintf("; enrich: %d documents, %d assignments, %d births, %d promotions, %d rejects, %d defers, %d splits, %d keeps, %d drops",
+			documents, totals.Assignments, totals.Births, totals.Promotions, totals.Rejects, totals.Defers, totals.Splits, totals.Keeps, totals.Drops)
+	}
+	logger.Info("", "%s", line)
 }
 
 func triggerOrphanScan(c *container.Container) {

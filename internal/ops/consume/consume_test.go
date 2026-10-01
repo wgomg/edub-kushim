@@ -1,12 +1,15 @@
 package consume
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
@@ -146,7 +149,7 @@ func TestSetBatchTerminalStatus(t *testing.T) {
 		insertTask(t, "terminal-failed-ok", "terminal-failed", types.Task.Status.Completed)
 		insertTask(t, "terminal-failed-bad", "terminal-failed", types.Task.Status.Failed)
 
-		if err := setBatchTerminalStatus(ctx, client.Queries, batchSvc, "terminal-failed"); err != nil {
+		if err := setBatchTerminalStatus(ctx, client.Queries, batchSvc, log.NewDiscardLogger(), "terminal-failed"); err != nil {
 			t.Fatalf("setBatchTerminalStatus: %v", err)
 		}
 		if got, want := batchStatus(t, "terminal-failed"), types.Batch.Status.Failed; got != want {
@@ -159,7 +162,7 @@ func TestSetBatchTerminalStatus(t *testing.T) {
 		insertTask(t, "terminal-completed-1", "terminal-completed", types.Task.Status.Completed)
 		insertTask(t, "terminal-completed-2", "terminal-completed", types.Task.Status.Completed)
 
-		if err := setBatchTerminalStatus(ctx, client.Queries, batchSvc, "terminal-completed"); err != nil {
+		if err := setBatchTerminalStatus(ctx, client.Queries, batchSvc, log.NewDiscardLogger(), "terminal-completed"); err != nil {
 			t.Fatalf("setBatchTerminalStatus: %v", err)
 		}
 		if got, want := batchStatus(t, "terminal-completed"), types.Batch.Status.Completed; got != want {
@@ -171,11 +174,65 @@ func TestSetBatchTerminalStatus(t *testing.T) {
 		insertBatch(t, "terminal-settled", types.Batch.Status.Completed)
 		insertTask(t, "terminal-settled-bad", "terminal-settled", types.Task.Status.Failed)
 
-		if err := setBatchTerminalStatus(ctx, client.Queries, batchSvc, "terminal-settled"); err != nil {
+		var buf bytes.Buffer
+		if err := setBatchTerminalStatus(ctx, client.Queries, batchSvc, log.NewLoggerWithWriter(&buf), "terminal-settled"); err != nil {
 			t.Fatalf("setBatchTerminalStatus: %v", err)
 		}
 		if got, want := batchStatus(t, "terminal-settled"), types.Batch.Status.Completed; got != want {
 			t.Errorf("batch status = %q, want %q (a settled batch must keep its status)", got, want)
+		}
+		// the settle write is skipped for a terminal batch, the bookend is not
+		want := "batch terminal-settled settled as completed: 0 completed, 1 failed, 0 cancelled"
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("bookend line missing %q, got:\n%s", want, buf.String())
+		}
+	})
+}
+
+func TestLogBatchBookend(t *testing.T) {
+	result := func(payload string) *json.RawMessage {
+		raw := json.RawMessage(payload)
+		return &raw
+	}
+	bookend := func(batchID string, status types.BatchStatus, tasks []database.Task) string {
+		var buf bytes.Buffer
+		logBatchBookend(log.NewLoggerWithWriter(&buf), batchID, status, tasks)
+		return buf.String()
+	}
+
+	t.Run("aggregates completed enrich results into the line", func(t *testing.T) {
+		out := bookend("b1", types.Batch.Status.Completed, []database.Task{
+			{TaskType: types.Task.Type.Enrich, Status: types.Task.Status.Completed,
+				Result: result(`{"stats":{"prompt_tokens":1},"counts":{"assignments":3,"births":2,"promotions":1,"rejects":1,"defers":1,"splits":1,"keeps":1,"drops":0}}`)},
+			{TaskType: types.Task.Type.Enrich, Status: types.Task.Status.Completed,
+				Result: result(`{"stats":{"prompt_tokens":2},"counts":{"assignments":2,"births":1,"promotions":0,"rejects":0,"defers":2,"splits":0,"keeps":2,"drops":1}}`)},
+			{TaskType: types.Task.Type.Enrich, Status: types.Task.Status.Completed},
+			{TaskType: types.Task.Type.Consume, Status: types.Task.Status.Completed},
+			{TaskType: types.Task.Type.Consume, Status: types.Task.Status.Cancelled},
+		})
+		want := "batch b1 settled as completed: 4 completed, 0 failed, 1 cancelled" +
+			"; enrich: 2 documents, 5 assignments, 3 births, 1 promotions, 1 rejects, 3 defers, 1 splits, 3 keeps, 1 drops"
+		if !strings.Contains(out, want) {
+			t.Errorf("bookend line missing %q, got:\n%s", want, out)
+		}
+	})
+
+	t.Run("no enrich segment without decoded results", func(t *testing.T) {
+		out := bookend("b2", types.Batch.Status.Failed, []database.Task{
+			// a pre-envelope payload and a failed enrich task never count
+			{TaskType: types.Task.Type.Enrich, Status: types.Task.Status.Completed,
+				Result: result(`{"prompt_tokens":9}`)},
+			{TaskType: types.Task.Type.Enrich, Status: types.Task.Status.Failed,
+				Result: result(`{"stats":null,"counts":{"assignments":4}}`)},
+			{TaskType: types.Task.Type.Consume, Status: types.Task.Status.Completed},
+			{TaskType: types.Task.Type.Consume, Status: types.Task.Status.Failed},
+		})
+		want := "batch b2 settled as failed: 2 completed, 2 failed, 0 cancelled"
+		if !strings.Contains(out, want) {
+			t.Errorf("bookend line missing %q, got:\n%s", want, out)
+		}
+		if strings.Contains(out, "; enrich:") {
+			t.Errorf("bookend must not carry enrich counts without decoded results, got:\n%s", out)
 		}
 	})
 }

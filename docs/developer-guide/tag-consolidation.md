@@ -80,20 +80,25 @@ admin and emission registration paths
   `14`) convert to numeric house style; English dictionary words that happen to
   parse as roman numerals (`mix`, `mid`) are left alone. The rewrite is a style
   rewrite and is written directly at registration.
-- **M2 — shape signatures** (`ComputeSignature`): per-token lemma (golem) and
-  stem (snowball) signatures. They are evidence only — the stemmer's output is
-  never written, and a proposed fold (`ProposedFold`) is never applied
-  unconfirmed.
+- **M2 — shape signatures and fold proposals** (`ComputeSignature`,
+  `ProposedFold`, `ProposedDerivationalFold`): per-token lemma (golem) and stem
+  (snowball) signatures, the plural/lemma fold proposal, and the store-anchored
+  derivational transforms that reduce relational adjectives onto a noun the
+  store already holds (`chilean` → `chile`, `political` → `politics`). They are
+  evidence only — the stemmer's output is never written, and a proposed fold is
+  never applied unconfirmed.
 - **M3 — key equality** (`Key`): the identity key is the house form, so style
   variants collapse without judging.
 - **M4 — tie-break** (`TieBreak`): fixed lexical order decides when the
   direction criteria do not separate two labels.
-- **Version**: `IdentityRuleSetVersion = "v1"` is stamped on every alias row and
-  identity-evidence row.
+- **Version**: `IdentityRuleSetVersion = "v2"` is stamped on every alias row and
+  identity-evidence row; v2 includes the derivational adjective transforms in
+  the fold body.
 - **`PlanDeterministic`** — the admin path's deterministic phase: normalization,
-  M1 rewrites, alias lookup, key equality, M2 flagging. It never proposes a fold
-  for application, never adjudicates, and never makes an alias; flagged shape
-  relations register provisionally with pending evidence. `NameIndex` memoizes
+  M1 rewrites, alias lookup, key equality, and M2 flagging, including the
+  plural/lemma and derivational fold proposals. It never applies a fold, never
+  adjudicates, and never makes an alias; flagged shape relations and proposed
+  folds register provisionally with pending evidence. `NameIndex` memoizes
   keys and signatures per name so the flagging loops compare cached values.
 - **`ResolveAliases`** — the single alias resolver: normalizes and dedupes names
   and resolves them to canonical names in one query. It backs registration,
@@ -138,12 +143,15 @@ transaction — adjudication stays outside it:
 
 - **Folds (J1/J2/J5)** — one identity-judge call per flagged candidate answers
   three binary criteria: fold to base form, fold preserves denotation,
-  conventional written form. Proposals come from the lemmatizer and from a
+  conventional written form. Proposals come from the lemmatizer, from a
   conservative plural strip for tokens the dictionary does not know (a plural
   whose base form exists folds unless it is the established name of the sense,
-  `data` stands). A fold applies only when all three confirm; a
-  candidate whose criteria have no judge answer stays provisional with the
-  three criteria recorded as pending evidence.
+  `data` stands), and from the store-anchored derivational transforms for
+  relational adjectives (`chilean` → `chile`, `political` → `politics`): a
+  transform only proposes when the noun twin already exists in the store, and
+  two distinct store hits make the adjective stand. A fold applies only when
+  all three confirm; a candidate whose criteria have no judge answer stays
+  provisional with the three criteria recorded as pending evidence.
 - **Same-intent pairs (J3/J4)** — the pair adjudicator answers `same` /
   `variant` / `related`, plus a direction for `same` (`query`, `target`, or
   `tie`; a tie falls back to M4). `same` yields the alias disposition;
@@ -177,14 +185,17 @@ transaction — adjudication stays outside it:
    (`PlanRegistration`) for registration (enrichment never fails on
    consolidation).
 3. **Planning** (`Adjudicator.PlanIdentity`) runs outside the transaction: one alias-map
-   query, M1 house form, M3 key-equality application, M2 shape flagging through
-   a `NameIndex`, band subjects from the ranked decisions, and same-emission
+   query, M1 house form, M3 key-equality application, M2 shape flagging and fold
+   proposals (plural/lemma and derivational) through a `NameIndex`, band
+   subjects from the ranked decisions, and same-emission
    shape pairs. Flagged candidates go into one batched identity-judge call
    (cache first: `tag_identity_event` at `IdentityRuleSetVersion`); flagged
    pairs go through the pair adjudicator. The result is a `tags.Plan` carrying
    registrations, alias actions, evidence rows, and the composition rows the
    decomposition gate judged, and per-disposition log
-   lines (`identity[v1]: apply|alias|defer|separate …`).
+   lines (`identity[v2]: apply|alias|defer|separate …`), with the applied-fold
+   input→output mapping and the judge-unavailable mint at DEBUG
+   (`identity[v2]: fold applied …`, `identity[v2]: pending evidence minted …`).
 4. **Application** (`CreatePlannedTx`) runs inside the caller's persist
    transaction: registrations (write-boundary normalization, blocklist
    re-check, provisional births, promotion when not quarantined), scheduled
@@ -682,7 +693,7 @@ delete — stay with the reconciler's worklists and the operator surfaces.
   `TimeoutStartSec` budget alongside model load and tag-cache build.
 - **Consolidation and identity logs live in the kushim (enrichment) log, not
   `hugot.log`** — since the policy moved enricher-side (`consolidation[v1]`
-  decisions, `identity[v1]` dispositions). `hugot.log` only holds the
+  decisions, `identity[v2]` dispositions). `hugot.log` only holds the
   pre-rewrite history (which is exactly what the bootstrap parser reads).
 - **Interface changes ripple** — `Matcher`/`Embedder` implementations include
   `*Hugot`, `*matcher.MatcherClient`, and the test doubles in
@@ -695,4 +706,4 @@ delete — stay with the reconciler's worklists and the operator surfaces.
 
 ---
 
-*Last verified against the tree: 2026-09-30. If code and doc disagree, code wins.*
+*Last verified against the tree: 2026-10-01. If code and doc disagree, code wins.*

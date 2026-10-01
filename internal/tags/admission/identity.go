@@ -68,12 +68,11 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 	plan := tags.Plan{}
 	aliasMap := a.aliasMapFor(ctx, in.Names, reqID)
 
-	byKey := make(map[string]string, len(in.DBNames))
+	storeTagNames := make([]string, 0, len(in.DBNames))
 	for name := range in.DBNames {
-		if _, ok := byKey[tags.Key(name)]; !ok {
-			byKey[tags.Key(name)] = name
-		}
+		storeTagNames = append(storeTagNames, name)
 	}
+	byKey := tags.StoreNames(storeTagNames)
 
 	candidates := make([]*identityCandidate, len(in.Names))
 	for i, input := range in.Names {
@@ -118,6 +117,9 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 			continue
 		}
 		if fold := tags.ProposedFold(cand.name); fold != "" && fold != cand.name {
+			cand.fold = fold
+			flagged[cand.name] = true
+		} else if fold := tags.ProposedDerivationalFold(cand.name, byKey); fold != "" {
 			cand.fold = fold
 			flagged[cand.name] = true
 		}
@@ -185,10 +187,15 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 			continue
 		}
 		if existing, ok := byKey[tags.Key(folded)]; ok {
+			a.logger.Debug(reqID, "identity[%s]: fold applied %q -> %q", tags.IdentityRuleSetVersion, cand.name, existing)
 			cand.resolved = existing
 			continue
 		}
+		a.logger.Debug(reqID, "identity[%s]: fold applied %q -> %q", tags.IdentityRuleSetVersion, cand.name, folded)
 		cand.name = folded
+		// the fold is settled; only a genuinely pending fold keeps
+		// cand.fold set for the judge-unavailable check below
+		cand.fold = ""
 	}
 
 	a.adjudicateIdentityPairs(ctx, in.DocID, in.DocumentID, pairs, reqID)
@@ -306,6 +313,8 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 			}
 			if judgeUnavailable[cand.name] {
 				reg.Provisional = true
+				a.logger.Debug(reqID, "identity[%s]: pending evidence minted for %q (fold verdicts missing, judge unavailable)",
+					tags.IdentityRuleSetVersion, cand.name)
 				plan.Evidence = append(plan.Evidence,
 					tags.EvidenceRow{Kind: tags.IdentityKindBaseForm, Candidate: cand.name},
 					tags.EvidenceRow{Kind: tags.IdentityKindFoldGate, Candidate: cand.name},

@@ -3,6 +3,7 @@ package admission
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"os"
 	"testing"
 
@@ -164,6 +165,78 @@ func TestResolvePending_AdjudicatorDisabled(t *testing.T) {
 	testutil.AssertEqual(t, adj.called, 0, "no adjudication call")
 	testutil.AssertEqual(t, adj.identityCall, 0, "no judge call")
 	testutil.AssertEqual(t, pendingIdentityCount(t, client), int64(1), "evidence stays pending for the next run")
+}
+
+func TestResolvePending_DerivationalFoldOntoStoreNoun(t *testing.T) {
+	resolver, client, adj := newIdentityResolver(t, true)
+	ctx := context.Background()
+
+	database.MustCreateTag(t, client.Queries, "political")
+	// the noun comes from seed-tags.sql, which every reset reloads;
+	// creating it again would collide with the seeded row
+	storeNoun, err := client.Queries.GetTagByName(ctx, "politics")
+	testutil.AssertNoError(t, err, "seeded store noun politics")
+	politicsID := storeNoun.ID
+	seedPendingIdentityEvent(t, client, tags.IdentityKindBaseForm, "political", "")
+	seedPendingIdentityEvent(t, client, tags.IdentityKindFoldGate, "political", "")
+	seedPendingIdentityEvent(t, client, tags.IdentityKindConventionalForm, "political", "")
+
+	var seen []analyzer.TagIdentityCandidate
+	adj.identityFn = func(_ context.Context, candidates []analyzer.TagIdentityCandidate) ([]analyzer.TagIdentityResult, error) {
+		seen = append(seen, candidates...)
+		results := make([]analyzer.TagIdentityResult, len(candidates))
+		for i := range candidates {
+			results[i] = analyzer.TagIdentityResult{
+				Index:                   i,
+				FoldToBase:              true,
+				FoldPreservesDenotation: true,
+				ConventionalForm:        true,
+			}
+		}
+		return results, nil
+	}
+
+	report, err := resolver.ResolvePending(ctx, 100)
+	testutil.AssertNoError(t, err, "resolve pending")
+	testutil.AssertEqual(t, report.Pending, 3, "pending rows read")
+	testutil.AssertEqual(t, report.Resolved, 3, "criterion rows resolved")
+	testutil.AssertEqual(t, report.Folded, 1, "derivational fold applied")
+	testutil.AssertEqual(t, report.Failed, 0, "no failures")
+
+	// one proposal feeds the judge input, the stored criteria and the apply
+	// site, so every consumer must see the same store noun
+	if len(seen) != 1 {
+		t.Fatalf("judge candidates = %d, want 1", len(seen))
+	}
+	testutil.AssertEqual(t, seen[0].Term, "political", "the pending adjective reaches the judge")
+	testutil.AssertEqual(t, seen[0].ProposedFold, "politics", "the store noun is the proposed fold the judge decides")
+
+	rows, err := client.Queries.LatestTagIdentityEventsForCandidates(ctx, database.LatestTagIdentityEventsForCandidatesParams{
+		RuleSetVersion: tags.IdentityRuleSetVersion,
+		Candidates:     []string{"political"},
+	})
+	testutil.AssertNoError(t, err, "read resolved identity rows")
+	if len(rows) != 3 {
+		t.Fatalf("resolved rows = %d, want 3", len(rows))
+	}
+	var criteria struct {
+		ProposedFold string `json:"proposed_fold"`
+	}
+	if err := json.Unmarshal(rows[0].Criteria, &criteria); err != nil {
+		t.Fatalf("unmarshal criteria: %v", err)
+	}
+	testutil.AssertEqual(t, criteria.ProposedFold, "politics", "stored criteria carry the same proposal")
+
+	if _, err := client.Queries.GetTagByName(ctx, "political"); err == nil {
+		t.Error("unreduced adjective row must be gone after the fold")
+	}
+	if _, err := client.Queries.GetTagByName(ctx, "politics"); err != nil {
+		t.Errorf("store noun missing: %v", err)
+	}
+	alias, err := client.Queries.GetTagAliasByName(ctx, "political")
+	testutil.AssertNoError(t, err, "adjective name becomes an alias of the noun")
+	testutil.AssertEqual(t, alias.CanonicalTagID, politicsID, "alias points at the store noun")
+	testutil.AssertEqual(t, pendingIdentityCount(t, client), int64(0), "no pending rows left")
 }
 
 func TestResolvePending_FoldTargetDeleted(t *testing.T) {
